@@ -297,6 +297,11 @@
       "type": "object",
       "description": "The change-set document over every member (change-set.schema.json). Its digest equals digest."
     },
+    "lockTargets": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Added within contract version 1 by #4552, written by chant 0.124.55 and newer. The names the pull request's target locks take under ci.locks when any member is on the resource lock grain, sorted: each such member's row keys (estate <e> <address>, root <r> <address>, urn <urn>, stack <project>/<stack>, object <id>), and the component name of every component with a member on another grain. chant lock --from-report locks these in place of selection.waves. Absent when no member is on the resource grain."
+    },
     "hooks": {
       "type": "array",
       "description": "Added within contract version 1 by #4288, written by chant 0.124.41 and newer. The stage hooks the job ran, in order, from ci.hooks in the workspace declaration at base. Absent when it ran none.",

@@ -22,9 +22,10 @@
  *
  * - `member`: `<member>/<stack>`, the name in the wave's set digest;
  * - `planDigest` and `changeSet` from `pulumiPreviewPart`; for a member on
- *   the resource lock grain (`lockGrain`, default `resource` on plunge and
- *   `target` on stock Pulumi, as #4552 rules) the digest leaves `same` and
- *   `read` steps out (ruling B);
+ *   the resource lock grain (the step's `lockGrain`, else `ci.lockGrain`
+ *   through `DeployContext.lockGrain`, else `resource` on plunge and
+ *   `target` on stock Pulumi, #4552) the digest leaves `same` and `read`
+ *   steps out (ruling B);
  * - `outputs` from the stack step's planned outputs;
  * - `shape` from `pulumiPlanShape` (`./plan-shape.ts`);
  * - `artifact`: the engine, the shape, the digest, CrossGuard's findings,
@@ -104,6 +105,7 @@ import { pulumiExitOf } from "./exit-codes";
 import { pulumiMemberEngine, type PulumiMemberEngine, type PulumiMemberEngineSource } from "./member-engine";
 import { pulumiMemberPlannedOutputs } from "./member-outputs";
 import { pulumiPlanShape, pulumiShapeDifferences } from "./plan-shape";
+import { pulumiLockRows } from "./lock-rows";
 import {
   defaultPlungeRunner,
   defaultPulumiRunner,
@@ -139,7 +141,7 @@ export interface PulumiUpStepInput {
   engine?: PulumiMemberEngine;
   /** Where a relative `dir` resolves from. Default: the process's working directory. */
   cwd?: string;
-  /** The member's `ci.lockGrain` (#4552). Default: `resource` on plunge, `target` on stock Pulumi. */
+  /** The member's lock grain (#4552), over `ci.lockGrain`. Default: `ci.lockGrain`, else `resource` on plunge, `target` on stock Pulumi. */
   lockGrain?: PulumiLockGrain;
   /** CrossGuard packs for the preview and `up` (ruling 7). */
   policyPacks?: PulumiPolicyPack[];
@@ -327,12 +329,13 @@ interface Resolved {
   grain: PulumiLockGrain;
 }
 
-function resolveStep(input: PulumiUpStepInput, opts: PulumiUpOptions): Resolved {
+function resolveStep(input: PulumiUpStepInput, opts: PulumiUpOptions, declared?: PulumiLockGrain): Resolved {
   requireInput(input);
   const dir = stackDir(input);
   const member = pulumiUpMember(input);
   const picked = pulumiMemberEngine(dir, input.engine, opts.env ? { env: opts.env } : {});
-  const grain = input.lockGrain ?? pulumiDefaultLockGrain(picked.engine);
+  // #4552: the step's own grain, else ci.lockGrain as the caller read it at base, else the engine's default.
+  const grain = input.lockGrain ?? declared ?? pulumiDefaultLockGrain(picked.engine);
   if (grain === "resource" && picked.engine === "pulumi") throw new PulumiResourceGrainRefusedError(member);
   return { dir, member, engine: picked.engine, engineSource: picked.source, engineBecause: picked.because, grain };
 }
@@ -437,7 +440,7 @@ function isArtifact(value: unknown): value is PulumiUpArtifact {
 }
 
 async function planStack(ctx: DeployContext, input: PulumiUpStepInput, opts: PulumiUpOptions): Promise<CapabilityPlan> {
-  const r = resolveStep(input, opts);
+  const r = resolveStep(input, opts, ctx.lockGrain);
   const unresolved = [...(ctx.unresolvedInputs ?? [])].sort();
   if (unresolved.length > 0) return waitingStack(ctx, r, input, unresolved);
   const files = scratchFor(r, input, opts);
@@ -499,7 +502,7 @@ function upFailure(r: Resolved, err: unknown, policy: GatePolicyFindings): Error
 }
 
 async function runStack(ctx: DeployContext, input: PulumiUpStepInput, opts: PulumiUpOptions): Promise<PulumiUpStepOutput> {
-  const r = resolveStep(input, opts);
+  const r = resolveStep(input, opts, ctx.lockGrain);
   const handed = ctx.plans?.[r.member];
   const fromWave = isArtifact(handed);
   const targets = ctx.targets && ctx.targets.length > 0 ? ctx.targets : undefined;
@@ -625,6 +628,24 @@ export function createPulumiUpCapability(opts: PulumiUpOptions = {}): Capability
       });
     },
     releaseInputs: (input, ctx) => pulumiReleaseInputs(input, ctx),
+    // #4552: resource on plunge, the stack (target) on stock Pulumi.
+    defaultLockGrain(input) {
+      requireInput(input);
+      return pulumiDefaultLockGrain(pulumiMemberEngine(stackDir(input), input.engine, opts.env ? { env: opts.env } : {}).engine);
+    },
+    // Stock Pulumi keeps the stack grain: its backend's stack lock already orders updates, and nothing in it is per resource.
+    lockGrainRefusal(input, grain) {
+      if (grain !== "resource") return undefined;
+      requireInput(input);
+      const engine = pulumiMemberEngine(stackDir(input), input.engine, opts.env ? { env: opts.env } : {}).engine;
+      return engine === "pulumi" ? new PulumiResourceGrainRefusedError(pulumiUpMember(input)).message : undefined;
+    },
+    // URN rows, object rows, and the stack row when something may appear only at apply (./lock-rows.ts).
+    lockRows(input, plan) {
+      if (!plan.changeSet) return [];
+      const project = readProject(stackDir(input))?.name;
+      return pulumiLockRows(plan.changeSet, plan.member, { ...(typeof project === "string" ? { project } : {}), stack: input.stack });
+    },
   };
 }
 

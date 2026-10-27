@@ -342,6 +342,8 @@ export interface ParsedArgs {
   lockStage?: string;
   /** `chant lock --from-report <file>` (#4293): lock the components a `pr-plan.json` lists. */
   fromReport?: string;
+  /** `chant lock --alive <run>` (#4552): print `alive` or `dead` for a run that holds rows or the repo lock tag. */
+  aliveRun?: string;
   /** Every `--pr <n>`, in order: `chant release compose` (#4168 4.3) takes several. */
   prs?: number[];
   /** `chant release cut --channel <tag>` (#4168 4.3): the tag a publish of the release moves in place of `latest`. */

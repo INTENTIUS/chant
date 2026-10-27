@@ -458,6 +458,36 @@ Each glob list holds at least one glob, and `x-` keys are ignored. chant 0.124.4
 
 Under either value, `chant components pr-apply` refuses with `locked` when another open pull request holds a component it reaches, and applies nothing. A lock whose pull request merged or closed reads as released. With no `ci.locks`, pr-apply reads no locks. pr-apply takes the field from the declaration at base, so a pull request cannot turn its own locks off. [Lock the Targets a Pull Request Reaches](/chant/guide/target-locks/) sets it up. chant reads the field from 0.124.41, so a declaration that sets it needs `minReader` `0.124.41` or newer.
 
+### Lock grain
+
+`ci.lockGrain` says what one apply holds while it applies ([#4552](https://github.com/INTENTIUS/chant/issues/4552)). It sits beside `ci.locks` at the top level of `ci`, and a member may set its own in its `ci` block, which wins.
+
+```json
+"ci": {
+  "locks": "apply",
+  "lockGrain": "resource"
+}
+```
+
+| Value | What an apply holds |
+|---|---|
+| `target` | Nothing of its own: the engine's lock keeps two applies of one root, unit or stack apart. Target locks name components. |
+| `resource` | A lease on one row per resource the plan changes, taken before anything applies and released when the apply ends. Under `ci.locks`, a pull request locks those row keys in place of its component names, so two pull requests that change different resources of one stack can both apply before merge. |
+| `repo` | One apply at a time in the repository. The generated pipeline keeps it: one concurrency group on GitHub, one resource group on GitLab, and the lock tag `refs/tags/chant-apply-lock` on Forgejo. |
+
+Absent, each member takes its lexicon's default:
+
+| Engine | Default | Row keys |
+|---|---|---|
+| choudoufu | `resource` | `estate <estate> <address>`, or `root <root> <address>` for a root with no estate; the same for a moved instance's previous address; `object <id>` for anything but a create |
+| plunge | `resource` | `urn <urn>` for each changed resource, the root stack's URN included when its outputs change; `object <id>` for update, replace and delete; a single `stack <project>/<stack>` row in place of the URN rows when a component may register resources only at apply |
+| Terraform, tofu, Terragrunt | `target` | none: `resource` is refused by name |
+| stock Pulumi | `target` | none: `resource` is refused by name, since the backend's stack lock orders updates |
+
+One file per gate holds the rows for the whole workspace: `_locks/rows/<gate>.json` at the root of `chant/lifecycle`, never under a member's prefix. Two members that act on one object therefore meet on its row. The format is the one terragucci's apply rows used. A take is all or nothing. When the forge says a holder's run finished, its rows are taken over, and so are the rows of a lease older than `CHANT_LOCK_STALE` seconds (default 7200; terragucci's `TG_LOCK_STALE` is read as an alias). A `stack` row and every `urn` row of that stack hold each other. When another run holds a row, the apply stops with exit 5, `held`, and names that run.
+
+`chant components pr-apply` takes the lease, and so does an op wave that applies through a capability `step`. The wave reads the rows file of the pull-request loop's gate, `pr-apply`, unless its job passes another. An apply on merge and an apply before merge thus share one file. Like `ci.locks`, the grain comes from the declaration at base, so a change cannot pick its own. A `pulumi-up` step that sets `lockGrain` takes that grain instead. `ci.lockGrain` needs a `minReader` of `0.124.55` or newer.
+
 ### Policy
 
 `ci.policy` names the policy engine the pull-request jobs run over the change set ([#4294](https://github.com/INTENTIUS/chant/issues/4294)). Its settings are those the [table in Policy at the Gate](/chant/guide/gate-policy/#declare-the-policy) lists. Any other key is refused with `declaration-invalid` at `/ci/policy`, and so are `outcomes` and `allow_unattended`, since no rule lets a plan apply with nobody approving it (`packages/core/src/gate-policy.ts:293`). The jobs read the block and the policy directory at base, as [Policy at the Gate](/chant/guide/gate-policy/) describes. A declaration that sets it needs a `minReader` of `0.124.41` or newer, since an older chant refuses it.

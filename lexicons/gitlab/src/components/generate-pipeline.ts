@@ -64,6 +64,7 @@ import {
   PR_ENV_REPORT_DIR,
   PR_ENV_POST_JOB,
 } from "@intentius/chant/components/pr-pipeline";
+import { REPO_APPLY_GROUP } from "@intentius/chant/components/repo-lock";
 import { memberGitlabChanges, memberRepoPath, memberShellDir } from "@intentius/chant/lexicon";
 import { FORGE_TOKEN_VARS, GITLAB_DROP_FORGE_TOKENS } from "@intentius/chant/ci-handover";
 import { gitlabTradeIdTokens, gitlabTradeLines, TRADE_SPEC_ENV, type CloudTradeSpec } from "@intentius/chant/ci-identity";
@@ -440,7 +441,8 @@ function prLoopGitlabPipeline(
           stage,
           image,
           ...(i > 1 ? { needs: [applies[i - 1]!.name] } : {}),
-          resource_group: job.jobName === "record" ? prRecordGroup(env, member?.name) : prApplyGroup(env, member?.name),
+          // #4552: on the repo grain every apply of the repository shares one resource group.
+          resource_group: job.jobName === "record" ? prRecordGroup(env, member?.name) : loop.lockGrain === "repo" ? REPO_APPLY_GROUP : prApplyGroup(env, member?.name),
           // #4291: a wave after the first runs after one that failed, and blocks only what depends on the failure.
           rules: [{ if: job.jobName === "record" ? onMerge : onGreen, ...(job.wave && i > 1 ? { when: "always" } : {}) }],
           ...trading(applySpec(job)),

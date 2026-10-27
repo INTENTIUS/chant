@@ -47,6 +47,7 @@
  * `identity.gates` entry covers every member.
  */
 
+import { NEXT_RELEASE } from "./release-floors";
 import type { ChangeSetAction, ChangeSetDocument, ChangeSetEntry } from "./change-set";
 import { parsePulumiUrn, pulumiMayAppearParent } from "./pulumi-urn";
 import type { PrRequireOutcome } from "./pr-requires";
@@ -97,6 +98,9 @@ export const PR_REPORT_NOT_STARTED_FLOOR = "0.124.54";
 
 /** The first chant whose report can carry `groups`, `fallbacks`, and a member's `group` and `groupOutcome` (ws-107, #4446). */
 export const PR_REPORT_GROUPS_FLOOR = "0.124.54";
+
+/** The first chant whose report can carry `lockTargets` (#4552). */
+export const PR_REPORT_LOCK_TARGETS_FLOOR = NEXT_RELEASE;
 
 /** The gate a pull request's apply waits on, unless the pipeline names another. */
 export const PR_APPLY_GATE = "pr-apply";
@@ -549,6 +553,16 @@ export interface PrReport {
   };
   members: PrMember[];
   changeSet: ChangeSetDocument;
+  /**
+   * The names the pull request's target locks take under `ci.locks` (#4552,
+   * ruling D), sorted, when any member is on the resource lock grain: each
+   * such member's row keys, and the component name of every component with
+   * a member on another grain. `chant lock --from-report` locks these in
+   * place of `selection.waves`. Absent when no member is on the resource
+   * grain. Added within contract 1 by chant
+   * {@link PR_REPORT_LOCK_TARGETS_FLOOR}.
+   */
+  lockTargets?: string[];
   /**
    * The stage hooks the job ran (#4288), in order. Absent when it ran none.
    * Added within contract 1 by chant {@link PR_REPORT_HOOKS_FLOOR}.

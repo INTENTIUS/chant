@@ -61,6 +61,7 @@ import { computePlanDigest } from "../lifecycle/plan-digest";
 import type { GatePolicyExec, GatePolicyRun } from "../gate-policy";
 import type { WaveMember } from "../wave-engine";
 import type { OpWave, OpWaveRun, OpWavesSpec } from "./op-waves";
+import { resolvePlannedLock, type LockGrain, type PlannedLock } from "../lifecycle/lock-rows";
 
 /** A capability step a wave plans and applies each run through (#4545): `{ kind, ...input }`. */
 export interface OpWaveStep {
@@ -213,6 +214,8 @@ export interface OpWaveStepPlan {
   part?: ChangeSetPart;
   empty: boolean;
   destructive: boolean;
+  /** The run's lock grain and rows (#4552), which the apply leases on the resource grain. */
+  lock?: PlannedLock;
 }
 
 /** Whether a part changes nothing, and whether it destroys or replaces something. */
@@ -229,7 +232,7 @@ function resolveCapability(registry: CapabilityRegistry, kind: string): Capabili
 
 /** Plan one run through the spec's step (#4545), writing its plan file at `planPath` (relative to `cwd`) as a per-run `plan` command would. */
 export async function planOpWaveStep(
-  at: { spec: OpWavesSpec; wave: OpWave; cwd: string; registry: CapabilityRegistry; planPath: string },
+  at: { spec: OpWavesSpec; wave: OpWave; cwd: string; registry: CapabilityRegistry; planPath: string; lockGrain?: LockGrain | null },
   run: OpWaveRun,
 ): Promise<OpWaveStepPlan> {
   const { spec, wave, cwd, registry } = at;
@@ -237,8 +240,11 @@ export async function planOpWaveStep(
   if (!capability.plan) throw new Error(`the capability "${spec.step!.kind}" cannot plan, so its runs have no plan for the wave's gate to bind`);
   const input = opWaveStepInput(spec, wave, run);
   let planned: CapabilityPlan;
+  let lock: PlannedLock;
   try {
-    planned = await capability.plan(opWaveStepContext(spec, wave, run), input as never);
+    planned = await capability.plan({ ...opWaveStepContext(spec, wave, run), ...(at.lockGrain ? { lockGrain: at.lockGrain } : {}) }, input as never);
+    // #4552: the run's grain (declared at base, else its lexicon's) and, on the resource grain, the rows its apply leases.
+    lock = await resolvePlannedLock(capability, input, planned, at.lockGrain);
   } catch (err) {
     throw new Error(`planning ${run.target} through ${spec.step!.kind} failed: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -255,6 +261,7 @@ export async function planOpWaveStep(
     ...(planned.artifact !== undefined ? { artifact: planned.artifact } : {}),
     ...(planned.changeSet ? { part: planned.changeSet } : {}),
     ...effects,
+    lock,
   };
   const file = join(cwd, at.planPath);
   mkdirSync(dirname(file), { recursive: true });

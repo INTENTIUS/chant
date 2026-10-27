@@ -224,6 +224,14 @@ export interface PrLoopPipelineOptions {
    */
   locks?: "plan";
   /**
+   * `ci.lockGrain: repo` (#4552): one apply at a time in the repository.
+   * GitHub's apply jobs share the concurrency group `chant-apply-repo`,
+   * GitLab's the resource group of that name, and Forgejo's take the lock
+   * tag `refs/tags/chant-apply-lock` in the apply step (./repo-lock.ts). Set
+   * from the declaration at base. Absent: per environment and member.
+   */
+  lockGrain?: "repo";
+  /**
    * The cloud identity a pull request environment's jobs take (#4330), from
    * `ci.identity.cloud` (`resolvePrEnvCloudIdentity` in ../ci-identity.ts):
    * the apply identity of a rule that names the pull request environments.

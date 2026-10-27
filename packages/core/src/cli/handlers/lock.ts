@@ -6,6 +6,7 @@
  * chant lock <target>... --pr <n> [--stage plan|apply|lock] [--head <sha>] [--by <who>] [--gate <name>] [--forge <kind>] [--json]
  * chant lock --from-report <pr-plan.json> --pr <n> [--stage plan] [--forge <kind>] [--json]
  * chant lock --list [--gate <name>] [--json]
+ * chant lock --alive <run>
  * chant unlock --pr <n> [<target>...] [--gate <name>] [--json]
  * ```
  *
@@ -13,7 +14,14 @@
  * which are what `pr-apply` checks under `ci.locks`, or any other name a
  * pipeline locks by. `--from-report` reads them from a pull-request report
  * (`selection.waves`), so a lock job that runs the target branch's code can
- * lock what the plan job, which ran the pull request's code, selected.
+ * lock what the plan job, which ran the pull request's code, selected. When
+ * a member is on the resource lock grain (#4552) the report carries
+ * `lockTargets`, its row keys, and those are locked instead.
+ *
+ * `--alive <run>` prints `alive` or `dead` for a run that holds rows or the
+ * Forgejo repo lock tag (#4552): `dead` when the forge says the run
+ * finished, `alive` while it runs or when nobody can say. The lock tag's
+ * shell asks it before taking a lease over.
  *
  * `--forge` reads which holders are still open, so a lock whose pull
  * request merged or closed is taken over, and, with `--head`, posts the
@@ -77,13 +85,17 @@ const prName = (forge: PrForge | undefined) => (n: number) => (forge?.kind === "
 
 /** The components a `pr-plan.json` selected, and the head it planned, checked against `--pr`. */
 function fromReport(file: string, pr: number): { targets: string[]; head?: string } | { error: string } {
-  let doc: { pr?: unknown; head?: unknown; selection?: { waves?: unknown } };
+  let doc: { pr?: unknown; head?: unknown; selection?: { waves?: unknown }; lockTargets?: unknown };
   try {
     doc = JSON.parse(readFileSync(resolve(file), "utf8"));
   } catch (err) {
     return { error: `--from-report: could not read "${file}": ${err instanceof Error ? err.message : String(err)}` };
   }
   if (doc.pr !== pr) return { error: `--from-report: "${file}" is the report of ${doc.pr === null || doc.pr === undefined ? "no pull request" : `pull request ${String(doc.pr)}`}, not ${pr}` };
+  // #4552: a member on the resource grain locks its row keys, which the report lists.
+  if (Array.isArray(doc.lockTargets) && doc.lockTargets.every((t) => typeof t === "string" && t !== "")) {
+    return { targets: doc.lockTargets as string[], ...(typeof doc.head === "string" ? { head: doc.head } : {}) };
+  }
   const waves = doc.selection?.waves;
   if (!Array.isArray(waves) || !waves.every((w) => Array.isArray(w) && w.every((n) => typeof n === "string"))) {
     return { error: `--from-report: "${file}" has no selection.waves; pass a pr-plan.json that chant components pr-plan wrote` };
@@ -105,6 +117,14 @@ export async function runLock(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   const gate = gateOf(ctx);
   if (typeof gate !== "string") return fail(gate.error);
+
+  if (args.aliveRun !== undefined) {
+    const { forgeLockLiveness } = await import("../../lifecycle/resource-lock");
+    // The lease's age is the caller's to judge (the tag carries its own), so only the forge and the process are asked here.
+    const verdict = await forgeLockLiveness(process.env)({ run: args.aliveRun, at: new Date().toISOString() });
+    console.log(verdict);
+    return 0;
+  }
 
   if (args.list) {
     if (targetsOf(ctx).length > 0 || args.pr !== undefined) return fail("--list prints every lock; drop the targets and --pr");

@@ -80,6 +80,7 @@ export {
   type PulumiLockGrain,
 } from "./pulumi-up";
 export { pulumiPlanShape, pulumiShapeDifferences, type PulumiPlanShapeOptions } from "./plan-shape";
+export { pulumiLockRows } from "./lock-rows";
 export {
   pulumiEngineEvents,
   pulumiStreamPreview,

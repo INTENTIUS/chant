@@ -27,6 +27,7 @@
  * `@<component>.publish.*`) resolves.
  */
 
+import { resolvePlannedLock, type PlannedLock } from "../lifecycle/lock-rows";
 import type { PlanShape } from "./covered-round";
 import { assertTargetsAccepted, resolveStepInput, unresolvedWiringSources, type DriverComponent, type DriverPhase, type DriverStep } from "./driver";
 import { componentPlanDigest } from "./gate-plan";
@@ -45,7 +46,16 @@ import type { ChangeSetPart } from "../change-set";
  * merges a run's outputs; absent when no step's plan says.
  */
 export type WaveComponentPlan =
-  | { component: string; members: WaveMember[]; plans: Record<string, unknown>; parts: ChangeSetPart[]; outputs?: PlannedOutputs; shapes?: Record<string, PlanShape> }
+  | {
+      component: string;
+      members: WaveMember[];
+      plans: Record<string, unknown>;
+      parts: ChangeSetPart[];
+      outputs?: PlannedOutputs;
+      shapes?: Record<string, PlanShape>;
+      /** Each planned member's lock grain and rows (#4552), by member. Absent when no step planned. */
+      locks?: Record<string, PlannedLock>;
+    }
   | { component: string; error: string };
 
 /** A part with no entries, for a member whose planner describes no changes. `unbound` steps become its holes (#4155). */
@@ -103,6 +113,7 @@ export async function planWaveComponent(
     const parts: ChangeSetPart[] = [];
     let outputs: PlannedOutputs | undefined;
     const shapes: Record<string, PlanShape> = {};
+    const locks: Record<string, PlannedLock> = {};
     assertTargetsAccepted(component, registry, ctx);
     for (const step of capabilitySteps(component.deploy)) {
       const capability = registry.resolve(step.kind);
@@ -116,6 +127,8 @@ export async function planWaveComponent(
       if (planned.artifact !== undefined) plans[planned.member] = planned.artifact;
       if (planned.shape) shapes[planned.member] = { ...planned.shape, member: planned.member };
       if (planned.outputs) outputs = mergePlannedOutputs(outputs, planned.outputs);
+      // #4552: the member's grain (declared at base, else its lexicon's) and, on the resource grain, its rows.
+      locks[planned.member] = await resolvePlannedLock(capability, input, planned, ctx.lockGrain);
     }
     // #4155: the steps without a plan, which no member above covers.
     const planless = (step: DriverStep): boolean => !registry.has(step.kind) || registry.resolve(step.kind).plan === undefined;
@@ -144,7 +157,15 @@ export async function planWaveComponent(
         parts.push(emptyPart(member, read.unbound));
       }
     }
-    return { component: component.name, members, plans, parts, ...(outputs ? { outputs } : {}), ...(Object.keys(shapes).length > 0 ? { shapes } : {}) };
+    return {
+      component: component.name,
+      members,
+      plans,
+      parts,
+      ...(outputs ? { outputs } : {}),
+      ...(Object.keys(shapes).length > 0 ? { shapes } : {}),
+      ...(Object.keys(locks).length > 0 ? { locks } : {}),
+    };
   } catch (err) {
     return { component: component.name, error: err instanceof Error ? err.message : String(err) };
   }

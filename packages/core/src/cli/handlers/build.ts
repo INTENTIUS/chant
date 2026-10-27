@@ -177,6 +177,12 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
     locks = (await import("../../workspace/ci-locks")).ciLocksAt(resolve(args.path)) === "plan" ? "plan" : undefined;
   }
 
+  // #4552: ci.lockGrain: repo keeps one apply at a time in the repository, read from the declaration like ci.locks.
+  let lockGrain: "repo" | undefined;
+  if (found && args.prLoop) {
+    lockGrain = (await import("../../workspace/ci-lock-grain")).ciLockGrainAt(resolve(args.path), undefined, plan?.member.name) === "repo" ? "repo" : undefined;
+  }
+
   // Which lexicons support generate mode is a property of the loaded lexicon
   // plugins (those implementing `generateComponentPipeline`, #688), not a
   // hard-coded core list — `generateComponentsPipeline` returns a descriptive
@@ -198,7 +204,7 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
         : {}),
       // #3183: a plan job per pull request and an apply job per merge.
       // #4292: on the branch ci.branches routes the member to, when it routes it.
-      ...(args.prLoop ? { prLoop: { ...prLoopOption(args, reportUrl, reviewRules, isolatedRunners), ...(plan?.branch ? { branch: plan.branch } : {}), ...(identity ? { identity } : {}), ...(prEnvIdentity ? { prEnvIdentity } : {}), ...(locks ? { locks } : {}) } } : {}),
+      ...(args.prLoop ? { prLoop: { ...prLoopOption(args, reportUrl, reviewRules, isolatedRunners), ...(plan?.branch ? { branch: plan.branch } : {}), ...(identity ? { identity } : {}), ...(prEnvIdentity ? { prEnvIdentity } : {}), ...(locks ? { locks } : {}), ...(lockGrain ? { lockGrain } : {}) } } : {}),
       // #4002: the job image and the lines that install what it lacks, chant itself included.
       ...(args.image ? { image: args.image } : {}),
       ...(args.beforeScript?.length ? { beforeScript: args.beforeScript } : {}),

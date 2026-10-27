@@ -77,6 +77,7 @@
  * digest binds the group's, so the one approval binds the composition.
  */
 
+import { anyResourceGrain, lockTargetsOf, type LockGrain, type PlannedLock } from "../lifecycle/lock-rows";
 import { composeChangeSet, verifyChangeSetDigest, type ChangeSetDocument, type ChangeSetEntry, type ChangeSetPart } from "../change-set";
 import { evaluateGate, type GateCheck, type GateLedgerPort } from "../op/gate";
 import {
@@ -127,6 +128,8 @@ export interface PrPlanSetOptions {
   seededOutputs?: Record<string, Record<string, unknown>>;
   /** The addresses each component narrows to (#4300), by component: its steps' `DeployContext.targets`. */
   targets?: Readonly<Record<string, readonly string[]>>;
+  /** `ci.lockGrain` as declared at base (#4552); absent, each member takes its lexicon's default. */
+  lockGrain?: LockGrain;
   /**
    * Where the planning's events go (#4041): a `plan` phase with no
    * component, and in it one `plan` step per component, started as its wave
@@ -161,6 +164,13 @@ export interface PrPlanSet {
   plannedOutputs?: Record<string, string[]>;
   /** The shapes lexicons supplied with their plans (#4419), by member. */
   shapes?: Record<string, PlanShape>;
+  /**
+   * Each planned member's lock grain and rows (#4552), by member, with the
+   * component it belongs to. What a pull request locks under `ci.locks`
+   * (`lockTargetsOf`) and what its apply leases on the resource grain.
+   * Absent when no step planned.
+   */
+  locks?: Record<string, PlannedLock & { component: string }>;
   /** The groups planned as one (ws-107), in plan order of their first member. Absent when none. */
   groups?: PrPlanGroup[];
   /** The components that could have grouped and did not, with why (ws-107, ruling 1): the fan-out's `fallbacks`. */
@@ -211,6 +221,7 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
   const readsBy = new Map<string, PrMemberRead[]>();
   const plans: Record<string, Record<string, unknown>> = {};
   const shapes: Record<string, PlanShape> = {};
+  const locks: Record<string, PlannedLock & { component: string }> = {};
   let failed = false;
   const emit = options.onRunEvent;
   emit?.({ type: "phase-start", component: null, phase: PR_PLAN_PHASE });
@@ -306,6 +317,7 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
       plannedBy.set(p.component, p.outputs);
       plans[p.component] = p.plans;
       Object.assign(shapes, p.shapes);
+      for (const [member, lock] of Object.entries(p.locks ?? {})) locks[member] = { ...lock, component: p.component };
       for (const part of p.parts) {
         parts.push(part);
         componentOf.set(part.member.member, p.component);
@@ -345,6 +357,7 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
     ...(groups.length > 0 ? { groups } : {}),
     ...(options.plan.fallbacks?.length ? { fallbacks: options.plan.fallbacks } : {}),
     ...(Object.keys(shapes).length > 0 ? { shapes } : {}),
+    ...(Object.keys(locks).length > 0 ? { locks } : {}),
     ...(Object.keys(deployedOutputs).length > 0 ? { deployedOutputs } : {}),
     ...(Object.keys(plannedOutputs).length > 0 ? { plannedOutputs } : {}),
   };
@@ -501,6 +514,8 @@ export interface PrApplyOptions {
   set: PrPlanSet;
   /** The addresses each component narrows to (#4300), by component: its steps' `DeployContext.targets`. */
   targets?: Readonly<Record<string, readonly string[]>>;
+  /** `ci.lockGrain` as declared at base (#4552), for the plans a later round or a resume makes. */
+  lockGrain?: LockGrain;
   onProgress?: (event: RunProgressEvent) => void;
   /** Where the apply's events go (#4041): the fan-out's run events. */
   onRunEvent?: RunEventSink;
@@ -720,6 +735,7 @@ export async function applyPrSet(options: PrApplyOptions): Promise<PrApplyResult
       ...(options.vars ? { vars: options.vars } : {}),
       seededOutputs: run.componentOutputs,
       ...(options.targets ? { targets: options.targets } : {}),
+      ...(options.lockGrain ? { lockGrain: options.lockGrain } : {}),
     });
     for (const name of plan.order) roundOf.set(name, { round, set });
     const cover = roundCover(options, set, plan, run.componentOutputs, inChange, byName);
@@ -880,6 +896,8 @@ export interface PrResumeOptions {
   seededOutputs?: Record<string, Record<string, unknown>>;
   /** The addresses each component narrows to (#4300), by component: its steps' `DeployContext.targets`. */
   targets?: Readonly<Record<string, readonly string[]>>;
+  /** `ci.lockGrain` as declared at base (#4552), for the plans a later round or a resume makes. */
+  lockGrain?: LockGrain;
   /** The approved set, from the attempt record. */
   record: PrApplyRecord;
   /** Components an earlier attempt applied. */
@@ -962,6 +980,7 @@ export async function resumePrSet(options: PrResumeOptions): Promise<PrResume> {
     ...(options.vars ? { vars: options.vars } : {}),
     seededOutputs: { ...(options.seededOutputs ?? {}), ...options.record.planOutputs, ...fromGroup },
     ...(options.targets ? { targets: options.targets } : {}),
+    ...(options.lockGrain ? { lockGrain: options.lockGrain } : {}),
   });
   // #4422: decided as a round decides (`coveredRound`), by the same function a wave uses.
   const reasons = waveNotCovered(options.record.changeSet, fresh.doc, options.record.members);
@@ -1155,5 +1174,7 @@ export function prReport(input: PrReportInput): PrReport {
     ...(input.set.fallbacks?.length ? { fallbacks: input.set.fallbacks.map((f) => ({ ...f })) } : {}),
     members,
     changeSet: input.set.doc,
+    // #4552: under the resource grain a pull request locks row keys, so `chant lock --from-report` reads them here.
+    ...(anyResourceGrain(input.set.locks) ? { lockTargets: lockTargetsOf(input.plan.order, input.set.locks) } : {}),
   };
 }

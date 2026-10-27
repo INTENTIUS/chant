@@ -218,6 +218,9 @@
         "hooks": {
           "$ref": "#/$defs/ciHooks"
         },
+        "lockGrain": {
+          "$ref": "#/$defs/ciLockGrain"
+        },
         "locks": {
           "enum": ["apply", "plan"],
           "description": "When a pull request takes its target locks, _locks/<gate>.json on chant/lifecycle (#4293). apply: the pull request's apply takes them, and chant lock takes them by hand. plan: its plan takes them too, through chant lock --stage plan in a job that runs the target branch's code. Under either, chant components pr-apply refuses a target that another open pull request holds, and a lock whose pull request merged or closed reads as released. Absent: nothing is locked. Read from the declaration at base. Added in schema 1 by chant 0.124.41, so a declaration that uses it sets minReader to 0.124.41 or newer."
@@ -752,6 +755,9 @@
             },
             "hooks": {
               "$ref": "#/$defs/ciHooks"
+            },
+            "lockGrain": {
+              "$ref": "#/$defs/ciLockGrain"
             }
           }
         },
@@ -1910,6 +1916,10 @@
     "ciWorkflow": {
       "enum": ["trunk-curated", "trunk-curated+apply-on-merge", "apply-before-merge"],
       "description": "A prescribed delivery workflow (#4168). trunk-curated: a merge records the plan and deploys nothing; releases are cut from green commits and promoted through each member's environments, gated in the last. trunk-curated+apply-on-merge: the same, with the apply on merge turned back on. apply-before-merge (#4301, ws-106): the same as trunk-curated, and a person may also apply an open pull request's plan from its head under its gate, once it is approved, mergeable, undiverged and its checks passed (chant components pr-apply --before-merge); added by chant 0.124.42, so a declaration that uses it sets minReader to 0.124.42 or newer. chant workspace check reports what a member under one still lacks (WSP151), and chant ci init writes it. At the top level for every member, or on a member, which wins. Added in schema 1 by chant 0.124.34, so a declaration that uses it sets minReader to 0.124.34 or newer."
+    },
+    "ciLockGrain": {
+      "enum": ["target", "resource", "repo"],
+      "description": "What one apply holds while it applies (#4552). target: the component, root or stack; the engine's own lock keeps one target's applies apart. resource: a lease on one row per changed resource, in _locks/rows/<gate>.json at the root of chant/lifecycle, taken before the apply and released after, and under ci.locks a pull request locks those row keys in place of its component names. A held row stops the apply with exit 5. repo: one apply at a time in the repository, which the generated pipeline keeps. Absent: each member takes its lexicon's default, resource for choudoufu and plunge and target for Terraform, tofu, Terragrunt and stock Pulumi, which refuse resource. At the top level for every member, or on a member, which wins. Read from the declaration at base. Added in schema 1 by chant 0.124.55, so a declaration that uses it sets minReader to 0.124.55 or newer."
     },
     "ciHooks": {
       "type": "object",

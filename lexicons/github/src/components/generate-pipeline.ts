@@ -87,6 +87,7 @@ import {
   PR_ENV_SWEEP_CRON,
   PR_ENV_POST_JOB,
 } from "@intentius/chant/components/pr-pipeline";
+import { forgejoRepoLockLines, REPO_APPLY_GROUP } from "@intentius/chant/components/repo-lock";
 import { memberRepoPath } from "@intentius/chant/lexicon";
 import type {
   ComponentPipelineJob as GeneratedJob,
@@ -292,6 +293,8 @@ function prLoopGithubDoc(
   });
   const withIdToken = (permissions: Record<string, string>): Record<string, string> => (identity ? { ...permissions, "id-token": "write" } : permissions);
   const reportName = (job: typeof plan) => `chant-pr-${job.wave ? prApplyWaveJobName(job.wave) : job.jobName}`;
+  // #4552: on the repo grain a Forgejo apply takes the lock tag in its own step, before the command, since the runner does not queue on a concurrency group.
+  const repoLock = (job: typeof plan): string[] => (loop.lockGrain === "repo" && loop.forge === "forgejo" && job.jobName !== "record" ? forgejoRepoLockLines() : []);
   const steps = (job: typeof plan, name: string): Array<Record<string, unknown>> => [
     ...(identity ? [tradeStep(job.jobName === "record" ? identity.plan : identity.apply, job.jobName === "record" ? "plan" : "apply")] : []),
     checkoutStep(true),
@@ -307,9 +310,9 @@ function prLoopGithubDoc(
           name,
           id: WAVE_STEP_ID,
           env: { ...job.run.env, ...(job.wave > 1 ? { GREEN_SHA: `\${{ needs.${prApplyWaveJobName(job.wave - 1)}.outputs.${WAVE_GREEN_OUTPUT} }}` } : {}) },
-          run: [...(job.checkout ?? []), `echo "${WAVE_GREEN_OUTPUT}=$GREEN_SHA" >> "$GITHUB_OUTPUT"`, ...(job.setup ?? []), job.run.command].join("\n"),
+          run: [...(job.checkout ?? []), `echo "${WAVE_GREEN_OUTPUT}=$GREEN_SHA" >> "$GITHUB_OUTPUT"`, ...(job.setup ?? []), ...repoLock(job), job.run.command].join("\n"),
         }
-      : { name, env: job.run.env, run: [...(job.checkout ?? []), ...(job.setup ?? []), job.run.command].join("\n") },
+      : { name, env: job.run.env, run: [...(job.checkout ?? []), ...(job.setup ?? []), ...repoLock(job), job.run.command].join("\n") },
     ...runSteps(extraScript),
     ...(job.jobName === "apply" ? [saveRecord(job.wave)] : []),
     {
@@ -337,7 +340,8 @@ function prLoopGithubDoc(
     "runs-on": GITHUB_RUNNER,
     ...(needs.length > 0 ? { needs } : {}),
     container: image,
-    concurrency: concurrency(prApplyGroup(env, member?.name)),
+    // #4552: on the repo grain every apply of the repository shares one group.
+    concurrency: concurrency(loop.lockGrain === "repo" ? REPO_APPLY_GROUP : prApplyGroup(env, member?.name)),
     permissions: withIdToken({ contents: "write", "pull-requests": "write", statuses: "write" }),
     ...(job.wave ? { outputs: { [WAVE_GREEN_OUTPUT]: `\${{ steps.${WAVE_STEP_ID}.outputs.${WAVE_GREEN_OUTPUT} }}` } } : {}),
     steps: steps(job, name),

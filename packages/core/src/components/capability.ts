@@ -17,6 +17,7 @@ import { CHANT_EXIT } from "../exit-codes";
 import type { ReleaseIdentity } from "../telemetry-attribution";
 import type { ChangeSetPart } from "../change-set";
 import type { DeployAdoption } from "./adoption";
+import type { LockGrain, LockRow } from "../lifecycle/lock-rows";
 
 /**
  * Ambient information a capability's `run`/`rollback` receives, independent of
@@ -92,6 +93,13 @@ export interface DeployContext {
    * Absent: a plain deploy. See ./adoption.ts.
    */
   adoption?: DeployAdoption;
+  /**
+   * The member's `ci.lockGrain` (#4552), read from the declaration at base
+   * by the caller: the member's own, else the workspace's. Absent when
+   * neither sets one, and then the capability's `defaultLockGrain` holds. A
+   * step input's own grain (`pulumi-up`'s `lockGrain`) wins over it.
+   */
+  lockGrain?: LockGrain;
 }
 
 /**
@@ -192,6 +200,25 @@ export interface Capability<In = unknown, Out = unknown> {
    * is covered by its component's composition digest instead.
    */
   plan?(ctx: DeployContext, input: In): Promise<CapabilityPlan>;
+  /**
+   * Optional (#4552): the lock grain a member of this kind takes when
+   * `ci.lockGrain` sets none. `plan`, when given, is the member's plan. Absent:
+   * `target`. The terraform lexicon answers `resource` for choudoufu and
+   * `target` for Terraform, tofu and Terragrunt; the pulumi lexicon
+   * `resource` for plunge and `target` for stock Pulumi.
+   */
+  defaultLockGrain?(input: In, plan?: CapabilityPlan): LockGrain | Promise<LockGrain>;
+  /**
+   * Optional (#4552): why this member cannot take `grain`, or undefined when
+   * it can. A refusal names the engine, and stops the plan.
+   */
+  lockGrainRefusal?(input: In, grain: LockGrain, plan?: CapabilityPlan): string | undefined | Promise<string | undefined>;
+  /**
+   * Optional (#4552): the rows an apply of `plan` holds on the resource
+   * grain, one per changed resource, keyed as the lexicon keys them (see
+   * ../lifecycle/lock-rows.ts). Absent: the resource grain is refused.
+   */
+  lockRows?(input: In, plan: CapabilityPlan): LockRow[] | Promise<LockRow[]>;
   /**
    * Optional: the outputs `run` exposed when it last ran, read without
    * changing anything (#3183). A pull request's plan reads them for each

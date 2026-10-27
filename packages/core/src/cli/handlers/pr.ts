@@ -66,6 +66,7 @@
 
 import { spawnSync } from "node:child_process";
 import { CHANT_EXIT } from "../../exit-codes";
+import { anyResourceGrain, leaseRowsOf, lockTargetsOf, type LockGrain } from "../../lifecycle/lock-rows";
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { loadChantConfig, resolveAutoReleaseDisabled, type ChantConfig } from "../../config";
@@ -477,15 +478,50 @@ export function planAll(p: Prepared, onRunEvent?: RunEventSink): Promise<PrPlanS
   return hookedPlan(p, p.plan.order, () => planBare(p, onRunEvent));
 }
 
-export function planBare(p: Prepared, onRunEvent?: RunEventSink): Promise<PrPlanSet> {
+export async function planBare(p: Prepared, onRunEvent?: RunEventSink): Promise<PrPlanSet> {
+  const lockGrain = await declaredLockGrainOf(p);
   return planPrSet({
     components: p.components,
     plan: p.plan,
     registry: p.registry,
     env: p.env,
     seededOutputs: p.seededOutputs,
+    ...(lockGrain ? { lockGrain } : {}),
     ...(onRunEvent ? { onRunEvent } : {}),
   });
+}
+
+/**
+ * `ci.lockGrain` of the stage's member (#4552), read from the declaration at
+ * base like `ci.locks`, so a change cannot pick its own grain. Undefined when
+ * none is declared: each member then takes its lexicon's default.
+ */
+async function declaredLockGrainOf(p: Pick<Prepared, "base" | "member">): Promise<LockGrain | undefined> {
+  const { ciLockGrainAt } = await import("../../workspace/ci-lock-grain");
+  return ciLockGrainAt(process.cwd(), p.base, p.member) ?? undefined;
+}
+
+/**
+ * Lease the rows a set's members on the resource grain change (#4552),
+ * before anything applies: the refusal naming the run that holds one, the
+ * exit code when the rows file could not be written, or the lease to let go
+ * of once the apply ends (one that holds nothing when no member is on the
+ * resource grain).
+ */
+async function leaseSetRows(p: Prepared, set: Pick<PrPlanSet, "locks">): Promise<{ release(): Promise<boolean> } | { held: string } | number> {
+  const rows = leaseRowsOf(set.locks);
+  if (rows.length === 0) return { release: () => Promise.resolve(true) };
+  const { leaseLockRows } = await import("../../lifecycle/resource-lock");
+  let leased;
+  try {
+    leased = await leaseLockRows(p.gate, rows);
+  } catch (err) {
+    return fail(`could not hold the rows this apply changes in ${p.gate}, so nothing was applied: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (!leased.ok) return { held: `${leased.message}, so nothing was applied. Apply again once that run ends; a run that is gone, or whose lease is older than CHANT_LOCK_STALE seconds, is taken over.` };
+  for (const h of leased.tookOver) console.error(formatInfo(`took over the rows of run ${h.run}, which is gone`));
+  console.error(formatInfo(`holds ${leased.lease.keys.length} row${leased.lease.keys.length === 1 ? "" : "s"} of ${p.gate} while it applies`));
+  return leased.lease;
 }
 
 /**
@@ -948,6 +984,14 @@ async function prApply(ctx: CommandContext, stage: StageEvents, beforeMerge?: Pr
     );
   }
 
+  // #4552, ruling D: on the resource grain a pull request's locks name row keys, which only the plan knows.
+  const lockTargets = lockTargetsOf(p.plan.order, set.locks);
+  if (locks && anyResourceGrain(set.locks)) {
+    const held = await heldLocksOf(p, pr, lockTargets);
+    if (typeof held === "number") return held;
+    if (held) return stop(prReport({ ...base, approval: { status: "pending" }, status: "refused", refusal: "locked", message: held }), CHANT_EXIT.held);
+  }
+
   // #4022: keep the change set the gate binds on chant/lifecycle under its
   // digest before deciding the gate, so the plan an approval bound, or the
   // one a pending fact waits on, can be read once this job is gone.
@@ -982,10 +1026,14 @@ async function prApply(ctx: CommandContext, stage: StageEvents, beforeMerge?: Pr
   if (unspent) return stop(prReport({ ...base, approval, status: "refused", refusal: "policy-denied", message: unspent }), 1);
   // #4293, #4301: under ci.locks an apply before merge holds its targets until the pull request merges or closes.
   if (locks && beforeMerge && pr !== null) {
-    const taken = await takeApplyLocks(p, pr);
+    const taken = await takeApplyLocks(p, pr, lockTargets);
     if (typeof taken === "number") return taken;
     if (taken) return stop(prReport({ ...base, approval, status: "refused", refusal: "locked", message: taken }), CHANT_EXIT.held);
   }
+  // #4552: on the resource grain the apply leases the rows it changes, whatever ci.locks says, and lets go when it ends.
+  const lease = await leaseSetRows(p, set);
+  if (typeof lease === "number") return lease;
+  if ("held" in lease) return stop(prReport({ ...base, approval, status: "refused", refusal: "locked", message: lease.held }), CHANT_EXIT.held);
 
   // The record is written before the first component runs and again as each
   // one settles, so a run killed partway still knows what applied.
@@ -1022,7 +1070,10 @@ async function prApply(ctx: CommandContext, stage: StageEvents, beforeMerge?: Pr
   // #4288: the before-apply hooks, once the gate and the review let the apply through.
   const toApply = (resumed?.plan ?? p.plan).order.filter((name) => !completedSoFar.has(name));
   const beforeFailed = await runStageHook(p, "before-apply", toApply);
-  if (beforeFailed) return stop(prReport({ ...base, approval, status: "failed", message: beforeFailed }), 1);
+  if (beforeFailed) {
+    await lease.release();
+    return stop(prReport({ ...base, approval, status: "failed", message: beforeFailed }), 1);
+  }
 
   // #3999: a round planned after an upstream applied waits on a gate of its
   // own, under the same identity.gates rule and the same review checks.
@@ -1048,37 +1099,44 @@ async function prApply(ctx: CommandContext, stage: StageEvents, beforeMerge?: Pr
     return { satisfied: true, approval: roundApproval };
   };
 
-  const applied = await applyPrSet({
-    components: p.components,
-    plan: resumed?.plan ?? p.plan,
-    registry: p.registry,
-    env: p.env,
-    set,
-    gate: p.gate,
-    approval,
-    decideRound,
-    ...(resumed ? { resumed: prior } : {}),
-    // The apply is this run's waves, so the fan-out's own run framing is
-    // dropped. The log's lines go to stderr with or without --events-json.
-    onRunEvent: (body: RunEventBody) => {
-      events?.nested(body);
-      log(body);
-    },
-    ...(resumePath
-      ? {
-          onComponentSettled: (settled, outputs) => {
-            if (settled.status === "ok") {
-              completedSoFar.add(settled.component);
-              if (inputsNow[settled.component] !== undefined) inputsSoFar[settled.component] = inputsNow[settled.component]!;
-              if (outputs) outputsSoFar[settled.component] = outputs;
-            } else if (settled.status === "fail") {
-              failedSoFar.push(settled.component);
-            }
-            recordAttempt();
-          },
-        }
-      : {}),
-  });
+  const lockGrain = await declaredLockGrainOf(p);
+  let applied: Awaited<ReturnType<typeof applyPrSet>>;
+  try {
+    applied = await applyPrSet({
+      components: p.components,
+      plan: resumed?.plan ?? p.plan,
+      registry: p.registry,
+      env: p.env,
+      set,
+      ...(lockGrain ? { lockGrain } : {}),
+      gate: p.gate,
+      approval,
+      decideRound,
+      ...(resumed ? { resumed: prior } : {}),
+      // The apply is this run's waves, so the fan-out's own run framing is
+      // dropped. The log's lines go to stderr with or without --events-json.
+      onRunEvent: (body: RunEventBody) => {
+        events?.nested(body);
+        log(body);
+      },
+      ...(resumePath
+        ? {
+            onComponentSettled: (settled, outputs) => {
+              if (settled.status === "ok") {
+                completedSoFar.add(settled.component);
+                if (inputsNow[settled.component] !== undefined) inputsSoFar[settled.component] = inputsNow[settled.component]!;
+                if (outputs) outputsSoFar[settled.component] = outputs;
+              } else if (settled.status === "fail") {
+                failedSoFar.push(settled.component);
+              }
+              recordAttempt();
+            },
+          }
+        : {}),
+    });
+  } finally {
+    await lease.release();
+  }
   recordAttempt();
   // #4288: the after-apply hooks, for the components that applied.
   const afterFailed = await runStageHook(p, "after-apply", toApply.filter((name) => applied.run.completed.includes(name)), undefined, "the apply counts as failed though its components applied");
@@ -1110,12 +1168,12 @@ async function prApply(ctx: CommandContext, stage: StageEvents, beforeMerge?: Pr
  * `--forge` every lock counts. A lock file that cannot be read stops the
  * apply, since nothing then says the targets are free.
  */
-async function heldLocksOf(p: Prepared, pr: number | null): Promise<string | null | number> {
+async function heldLocksOf(p: Prepared, pr: number | null, targets: readonly string[] = p.plan.order): Promise<string | null | number> {
   const { heldTargetLocks, describeHeldTargetLocks } = await import("../../lifecycle/target-lock");
   const isOpen = p.forge?.pullRequestOpen?.bind(p.forge);
   let held;
   try {
-    held = await heldTargetLocks(p.gate, p.plan.order, pr, { ...(isOpen ? { isOpen } : {}) });
+    held = await heldTargetLocks(p.gate, targets, pr, { ...(isOpen ? { isOpen } : {}) });
   } catch (err) {
     return fail(`could not read the target locks of ${p.gate}, so nothing was applied: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -1195,13 +1253,13 @@ function earlyStop(ctx: CommandContext, forge: PrForge, at: { pr: number; base: 
  * refusal when another open pull request holds one, null once taken, or the
  * exit code when the locks could not be written.
  */
-async function takeApplyLocks(p: Prepared, pr: number): Promise<string | null | number> {
+async function takeApplyLocks(p: Prepared, pr: number, targets: readonly string[] = p.plan.order): Promise<string | null | number> {
   const { takeTargetLocks, describeHeldTargetLocks } = await import("../../lifecycle/target-lock");
   const isOpen = p.forge?.pullRequestOpen?.bind(p.forge);
   const by = process.env.GITHUB_ACTOR ?? process.env.GITLAB_USER_LOGIN ?? process.env.USER ?? "unknown";
   let result;
   try {
-    result = await takeTargetLocks(p.gate, p.plan.order, { pr, by, at: new Date().toISOString(), stage: "apply", head: p.head }, { ...(isOpen ? { isOpen } : {}) });
+    result = await takeTargetLocks(p.gate, targets, { pr, by, at: new Date().toISOString(), stage: "apply", head: p.head }, { ...(isOpen ? { isOpen } : {}) });
   } catch (err) {
     return fail(`could not take the target locks of ${p.gate}, so nothing was applied: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -1956,10 +2014,12 @@ async function prApplyWaves(
         ...planned,
         members: planned.members.filter((m) => inThisWave.has(m.component)),
         plans: Object.fromEntries(Object.entries(planned.plans).filter(([name]) => inThisWave.has(name))),
+        ...(planned.locks ? { locks: Object.fromEntries(Object.entries(planned.locks).filter(([, l]) => inThisWave.has(l.component))) } : {}),
       };
       entry = { wave: k, components: wavePlan.order, status: "applied", approval: "pull-request", gate: p.gate, digest: approvedSet.doc.digest, ...(approval.approvedBy ? { approvedBy: approval.approvedBy } : {}) };
     } else {
       const notApplied = Object.fromEntries(Object.entries(approvedSet.outputs).filter(([name]) => !completed.has(name)));
+      const waveGrain = await declaredLockGrainOf(p);
       const fresh = await hookedPlan(p, wavePlan.order, () =>
         planPrSet({
           components: p.components,
@@ -1967,6 +2027,7 @@ async function prApplyWaves(
           registry: p.registry,
           env: p.env,
           seededOutputs: { ...p.seededOutputs, ...notApplied, ...outputsSoFar },
+          ...(waveGrain ? { lockGrain: waveGrain } : {}),
           ...(events ? { onRunEvent: (body: RunEventBody) => events.emit(body) } : {}),
         }),
       );
@@ -2040,30 +2101,44 @@ async function prApplyWaves(
       setWave({ ...entry, status: "failed" });
       return stop(report({ status: "failed", message: waveBefore }), 1);
     }
-    const applied = await applyPrSet({
-      components: p.components,
-      plan: wavePlan,
-      registry: p.registry,
-      env: p.env,
-      set,
-      // One wave's fan-out numbers its wave 1; the events and the log carry the derivation's number.
-      onRunEvent: (body: RunEventBody) => {
-        const numbered = inWave(body, k);
-        events?.nested(numbered);
-        if (numbered.type !== "run-start") log(numbered);
-      },
-      onComponentSettled: (settled, outputs) => {
-        if (settled.status === "ok") {
-          completed.add(settled.component);
-          failedSoFar.delete(settled.component);
-          if (inputsNow[settled.component] !== undefined) inputsSoFar[settled.component] = inputsNow[settled.component]!;
-          if (outputs) outputsSoFar[settled.component] = outputs;
-        } else if (settled.status === "fail") {
-          failedSoFar.add(settled.component);
-        }
-        recordAttempt();
-      },
-    });
+    // #4552: on the resource grain the wave leases the rows it changes while it applies.
+    const waveLease = await leaseSetRows(p, set);
+    if (typeof waveLease === "number") return waveLease;
+    if ("held" in waveLease) {
+      setWave({ ...entry, status: "waiting" });
+      return stop(report({ status: "refused", refusal: "locked", message: `Wave ${k}: ${waveLease.held}` }), CHANT_EXIT.held);
+    }
+    const lockGrain = await declaredLockGrainOf(p);
+    let applied: Awaited<ReturnType<typeof applyPrSet>>;
+    try {
+      applied = await applyPrSet({
+        components: p.components,
+        plan: wavePlan,
+        registry: p.registry,
+        env: p.env,
+        set,
+        ...(lockGrain ? { lockGrain } : {}),
+        // One wave's fan-out numbers its wave 1; the events and the log carry the derivation's number.
+        onRunEvent: (body: RunEventBody) => {
+          const numbered = inWave(body, k);
+          events?.nested(numbered);
+          if (numbered.type !== "run-start") log(numbered);
+        },
+        onComponentSettled: (settled, outputs) => {
+          if (settled.status === "ok") {
+            completed.add(settled.component);
+            failedSoFar.delete(settled.component);
+            if (inputsNow[settled.component] !== undefined) inputsSoFar[settled.component] = inputsNow[settled.component]!;
+            if (outputs) outputsSoFar[settled.component] = outputs;
+          } else if (settled.status === "fail") {
+            failedSoFar.add(settled.component);
+          }
+          recordAttempt();
+        },
+      });
+    } finally {
+      await waveLease.release();
+    }
     for (const m of applied.members) after.set(m.member, m);
     for (const name of applied.run.completed) {
       completed.add(name);

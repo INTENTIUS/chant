@@ -46,6 +46,7 @@
  * `CapabilityRegistry` the caller supplies.
  */
 
+import type { LockGrain } from "../lifecycle/lock-rows";
 import { topoSort } from "../codegen/topo-sort";
 import { CHANT_EXIT } from "../exit-codes";
 import { kahnLayers } from "./layers";
@@ -1239,6 +1240,8 @@ export function deployContext(
     vars?: Record<string, unknown>;
     releaseIdentity?: (component: string) => ReleaseIdentity | undefined;
     targets?: Readonly<Record<string, readonly string[]>>;
+    /** `ci.lockGrain` as declared at base (#4552), for every step's `DeployContext.lockGrain`. */
+    lockGrain?: LockGrain;
   },
   component: string,
 ): DeployContext {
@@ -1248,6 +1251,7 @@ export function deployContext(
     env: options.env,
     component,
     ...(options.vars ? { vars: options.vars } : {}),
+    ...(options.lockGrain ? { lockGrain: options.lockGrain } : {}),
     ...(release ? { release: { ...release } } : {}),
     ...(targets && targets.length > 0 ? { targets: [...new Set(targets)].sort() } : {}),
   };
