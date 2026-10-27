@@ -6,10 +6,11 @@
  * - Applied values: `pulumi stack output --json --show-secrets=false` in the
  *   member's directory ({@link pulumiMemberStackOutputs}). With
  *   `applied: "export"` (or `CHANT_PULUMI_APPLIED_OUTPUTS=export` in the
- *   environment), chant runs nothing and reads the stack's outputs from the
- *   checked-in `stack-export.json` instead (`pulumiExportedStackOutputs`).
- *   That is for a machine with no pulumi login, where the export is what
- *   the member's pipeline last checked in.
+ *   environment), chant runs no engine and reads the stack's outputs from
+ *   the export instead (`pulumiExportedStackOutputs`): the one the last
+ *   apply through chant wrote to the index store (#4546), else the
+ *   checked-in `stack-export.json`. That is for a machine with no pulumi
+ *   login.
  * - Planned values: `pulumi preview --json` through `previewPulumiMemberRead`,
  *   the stack step's outputs read by `pulumiPlannedStackOutputs`. An output
  *   holding Pulumi's unknown sentinel is unknown, which core turns into a
@@ -39,7 +40,7 @@ import type { DeployContext } from "@intentius/chant/components/capability";
 import type { EngineMemberRef, EngineOutputSource, EnginePlannedOutputs } from "@intentius/chant/components/verbs/member-outputs";
 import type { ChangeSetPart } from "@intentius/chant/change-set";
 import { pulumiPlannedStackOutputs, pulumiExportedStackOutputs, type PulumiStackOutput } from "./stack-outputs";
-import { previewPulumiMemberRead, pulumiMemberStackOutputs, readMemberExport, type PulumiMemberEngine, type PulumiRunner } from "./run";
+import { memberExportOf, previewPulumiMemberRead, pulumiMemberStackOutputs, type PulumiMemberEngine, type PulumiRunner } from "./run";
 import { isSecret } from "./values";
 import { PULUMI_EXPORT_FILE } from "./workspace-member";
 
@@ -119,9 +120,9 @@ export function pulumiOutputSource(options: PulumiOutputSourceOptions = {}): Eng
     kinds: ["pulumi"],
     async applied(_ctx: DeployContext, ref: EngineMemberRef) {
       if (appliedFrom() === "export") {
-        const exported = readMemberExport(ref.dir);
+        const exported = await memberExportOf(ref.dir);
         if (exported === undefined) {
-          throw new Error(`member-outputs: Pulumi member "${ref.member}" has no readable ${PULUMI_EXPORT_FILE} in ${ref.dir}, and its outputs are read from the export (${PULUMI_APPLIED_OUTPUTS_ENV}=export)`);
+          throw new Error(`member-outputs: Pulumi member "${ref.member}" has no export in the index store and no readable ${PULUMI_EXPORT_FILE} in ${ref.dir}, and its outputs are read from the export (${PULUMI_APPLIED_OUTPUTS_ENV}=export)`);
         }
         return pulumiExportedOutputValues(exported);
       }
@@ -129,7 +130,7 @@ export function pulumiOutputSource(options: PulumiOutputSourceOptions = {}): Eng
     },
     async planned(_ctx: DeployContext, ref: EngineMemberRef) {
       const read = await previewPulumiMemberRead({ member: ref.member, dir: ref.dir, ...runners });
-      return pulumiMemberPlannedOutputs(ref.member, { ...read, exported: readMemberExport(ref.dir) });
+      return pulumiMemberPlannedOutputs(ref.member, { ...read, exported: await memberExportOf(ref.dir) });
     },
   };
 }

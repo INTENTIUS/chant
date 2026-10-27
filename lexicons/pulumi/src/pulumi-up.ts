@@ -59,8 +59,13 @@
  * failed with the stream's error and the URNs that landed.
  *
  * After `up`, the stack's outputs come from `stack output --json
- * --show-secrets=false`, secrets as `[secret]`. The stack export write is
- * #4546's.
+ * --show-secrets=false`, secrets as `[secret]`. Then `stack export --stack
+ * <s>` runs, its secrets are stripped, and it goes to the index store as
+ * the member's snapshot (#4546, `./stack-export-snapshot.ts`), at
+ * `<env>/<stack>__pulumi-export` on `refs/chant/snapshots` by default. The
+ * graph and the member's reads take it from there, so the member needs no
+ * checked-in `stack-export.json`. A failed export or write leaves the apply
+ * standing and says why in `exportSnapshot`.
  *
  * ## config
  *
@@ -85,6 +90,7 @@ import type { Capability, CapabilityPlan, DeployContext, ReleaseInputs, ReleaseI
 import { PlanShapeMovedError, type PlanShape } from "@intentius/chant/components/covered-round";
 import type { GatePolicyFindings } from "@intentius/chant/gate-policy";
 import { computePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
+import type { SnapshotStore } from "@intentius/chant/lifecycle/snapshot-store";
 import { parseYAML } from "@intentius/chant/yaml";
 import { pulumiPreviewPart } from "./change-set";
 import {
@@ -112,7 +118,7 @@ import {
   pulumiRunFailure,
   pulumiUpArgs,
   pulumiUpPreviewArgs,
-  readMemberExport,
+  memberExportOf,
   runAllowedPlunge,
   runAllowedPulumi,
   runApplyPlunge,
@@ -121,6 +127,7 @@ import {
   type PulumiRunner,
 } from "./run";
 import type { PulumiStep } from "./change-set";
+import { writePulumiExportSnapshot, type PulumiExportWrite } from "./stack-export-snapshot";
 
 /** The lock grain values of `ci.lockGrain` (#4552's ruling A). */
 export type PulumiLockGrain = "target" | "resource" | "repo";
@@ -160,6 +167,8 @@ export interface PulumiUpStepOutput {
   summary?: PulumiApplySummary;
   /** CrossGuard's findings from the preview the apply ran under. */
   policy?: GatePolicyFindings;
+  /** The stack export written to the index store after `up` (#4546), or why it was not. */
+  exportSnapshot?: PulumiExportWrite;
 }
 
 /** What `plan` hands `run` through `DeployContext.plans[member]`. */
@@ -248,6 +257,8 @@ export interface PulumiUpOptions {
   env?: Record<string, string | undefined>;
   /** Where scratch directories go. Default: the OS temp dir. */
   tmp?: string;
+  /** The index store the stack export goes to after `up` and the prior export is read from (#4546). Default: the project's; `null` writes nothing and reads the checked-in file only. */
+  snapshots?: SnapshotStore | null;
 }
 
 const STREAMING = { [PULUMI_STREAMING_PREVIEW_ENV]: "true" };
@@ -393,7 +404,7 @@ async function previewStack(
   const policy = pulumiPolicyFindings(pulumiPolicyEvents(stdout));
   // A mandatory violation that left the exit at 0 still denies: the gate reads the events, never the code alone.
   if (policy.denials.length > 0) throw new PulumiPolicyDeniedError(r.member, policy);
-  const prior = readMemberExport(r.dir);
+  const prior = await memberExportOf(r.dir, { stack: input.stack, ...(opts.snapshots !== undefined ? { store: opts.snapshots } : {}) });
   const part = pulumiPreviewPart({
     member: r.member,
     preview,
@@ -562,6 +573,15 @@ async function runStack(ctx: DeployContext, input: PulumiUpStepInput, opts: Pulu
       ...(opts.plunge ? { plunge: opts.plunge } : {}),
     });
     const summary = pulumiStreamSummary(stdout);
+    const exportSnapshot = await writePulumiExportSnapshot({
+      dir: r.dir,
+      stack: input.stack,
+      environment: ctx.env,
+      engine: r.engine,
+      ...(opts.run ? { run: opts.run } : {}),
+      ...(opts.plunge ? { plunge: opts.plunge } : {}),
+      ...(opts.snapshots !== undefined ? { store: opts.snapshots } : {}),
+    });
     const hasPolicy = approved.policy.warnings.length > 0 || approved.policy.denials.length > 0;
     return {
       member: r.member,
@@ -572,6 +592,7 @@ async function runStack(ctx: DeployContext, input: PulumiUpStepInput, opts: Pulu
       outputs,
       ...(summary ? { summary } : {}),
       ...(hasPolicy ? { policy: approved.policy } : {}),
+      exportSnapshot,
     };
   } finally {
     dropScratch(approved.scratch);

@@ -74,13 +74,13 @@ describe("the step", () => {
   });
 
   test("a step with no dir or stack is refused", async () => {
-    const cap = createPulumiUpCapability({ run: engine().run, env: {} });
+    const cap = createPulumiUpCapability({ run: engine().run, env: {}, snapshots: null });
     await expect(cap.plan!(ctx, { dir: "", stack: "floci" })).rejects.toThrow(/needs "dir"/);
     await expect(cap.plan!(ctx, { dir, stack: "" })).rejects.toThrow(/needs "stack"/);
   });
 
   test("a stock member on the resource grain is refused by name (#4552)", async () => {
-    const cap = createPulumiUpCapability({ run: engine().run, env: {} });
+    const cap = createPulumiUpCapability({ run: engine().run, env: {}, snapshots: null });
     await expect(cap.plan!(ctx, step({ engine: "pulumi", lockGrain: "resource" }))).rejects.toBeInstanceOf(PulumiResourceGrainRefusedError);
   });
 });
@@ -89,7 +89,7 @@ describe("plan on plunge", () => {
   test("streams the preview, saves the plan in a scratch dir and answers digest, part, shape and outputs", async () => {
     const plunge = engine();
     const scratch = tmp();
-    const cap = createPulumiUpCapability({ plunge: plunge.run, env: {}, tmp: scratch });
+    const cap = createPulumiUpCapability({ plunge: plunge.run, env: {}, tmp: scratch, snapshots: null });
     const planned = await cap.plan!(ctx, step({ engine: "plunge" }));
     const artifact = planned.artifact as PulumiUpArtifact;
     expect(plunge.calls).toHaveLength(1);
@@ -109,14 +109,14 @@ describe("plan on plunge", () => {
   });
 
   test("the target grain keeps every step in the digest", async () => {
-    const cap = createPulumiUpCapability({ plunge: engine().run, env: {}, tmp: tmp() });
+    const cap = createPulumiUpCapability({ plunge: engine().run, env: {}, tmp: tmp(), snapshots: null });
     const planned = await cap.plan!(ctx, step({ engine: "plunge", lockGrain: "target" }));
     expect(planned.planDigest).toBe(pulumiPreviewDigest(pulumiStreamPreview(stream)));
   });
 
   test("config goes into a scratch copy of the stack's file, passed as --config-file, never --config", async () => {
     const plunge = engine();
-    const cap = createPulumiUpCapability({ plunge: plunge.run, env: {}, tmp: tmp() });
+    const cap = createPulumiUpCapability({ plunge: plunge.run, env: {}, tmp: tmp(), snapshots: null });
     const planned = await cap.plan!(ctx, step({ engine: "plunge", config: { vpcId: "vpc-1", "aws:region": "us-east-1", later: undefined } }));
     const artifact = planned.artifact as PulumiUpArtifact;
     const args = plunge.calls[0].args;
@@ -128,7 +128,7 @@ describe("plan on plunge", () => {
 
   test("targets and policy packs pass to the preview in the fixed order", async () => {
     const plunge = engine();
-    const cap = createPulumiUpCapability({ plunge: plunge.run, env: {}, tmp: tmp() });
+    const cap = createPulumiUpCapability({ plunge: plunge.run, env: {}, tmp: tmp(), snapshots: null });
     const target = urn("aws:sqs/queue:Queue", "events");
     const planned = await cap.plan!({ ...ctx, targets: [target] }, step({ engine: "plunge", policyPacks: [{ dir: "/packs/org", config: "/packs/org.json" }] }));
     const args = plunge.calls[0].args;
@@ -138,31 +138,31 @@ describe("plan on plunge", () => {
 
   test("a mandatory CrossGuard violation denies the plan, whatever the exit", async () => {
     const violation = JSON.stringify({ policyEvent: { message: "no public buckets", policyName: "s3-private", policyPackName: "org", policyPackVersion: "1", enforcementLevel: "mandatory" } });
-    const failing = createPulumiUpCapability({ plunge: engine({ preview: () => exit(1, `${stream}${violation}\n`) }).run, env: {}, tmp: tmp() });
+    const failing = createPulumiUpCapability({ plunge: engine({ preview: () => exit(1, `${stream}${violation}\n`) }).run, env: {}, tmp: tmp(), snapshots: null });
     const err = await failing.plan!(ctx, step({ engine: "plunge" })).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(PulumiPolicyDeniedError);
     expect((err as PulumiPolicyDeniedError).findings.denials.map((d) => d.rule)).toEqual(["crossguard.org.s3-private"]);
     expect((err as PulumiPolicyDeniedError).exitCode).toBe(7);
-    const passing = createPulumiUpCapability({ plunge: engine({ preview: () => `${stream}${violation}\n` }).run, env: {}, tmp: tmp() });
+    const passing = createPulumiUpCapability({ plunge: engine({ preview: () => `${stream}${violation}\n` }).run, env: {}, tmp: tmp(), snapshots: null });
     await expect(passing.plan!(ctx, step({ engine: "plunge" }))).rejects.toBeInstanceOf(PulumiPolicyDeniedError);
   });
 
   test("Pulumi's policy exit denies too (#4553: policy is 7)", async () => {
-    const cap = createPulumiUpCapability({ plunge: engine({ preview: () => exit(5, stream) }).run, env: {}, tmp: tmp() });
+    const cap = createPulumiUpCapability({ plunge: engine({ preview: () => exit(5, stream) }).run, env: {}, tmp: tmp(), snapshots: null });
     await expect(cap.plan!(ctx, step({ engine: "plunge" }))).rejects.toBeInstanceOf(PulumiPolicyDeniedError);
   });
 
   test("a failed preview throws with the engine's error, and a missing binary says so", async () => {
     const diag = JSON.stringify({ diagnosticEvent: { message: "error: stack floci not found", severity: "error" } });
-    const failed = createPulumiUpCapability({ plunge: engine({ preview: () => exit(6, `${diag}\n`) }).run, env: {}, tmp: tmp() });
+    const failed = createPulumiUpCapability({ plunge: engine({ preview: () => exit(6, `${diag}\n`) }).run, env: {}, tmp: tmp(), snapshots: null });
     await expect(failed.plan!(ctx, step({ engine: "plunge" }))).rejects.toThrow(/plunge preview failed: error: stack floci not found/);
-    const missing = createPulumiUpCapability({ plunge: engine({ preview: () => Object.assign(new Error("spawn plunge ENOENT"), { code: "ENOENT" }) }).run, env: {}, tmp: tmp() });
+    const missing = createPulumiUpCapability({ plunge: engine({ preview: () => Object.assign(new Error("spawn plunge ENOENT"), { code: "ENOENT" }) }).run, env: {}, tmp: tmp(), snapshots: null });
     await expect(missing.plan!(ctx, step({ engine: "plunge" }))).rejects.toThrow(/plunge binary was not found/);
   });
 
   test("a stack whose config reads an output not known yet is a hole naming it", async () => {
     const plunge = engine();
-    const cap = createPulumiUpCapability({ plunge: plunge.run, env: {}, tmp: tmp() });
+    const cap = createPulumiUpCapability({ plunge: plunge.run, env: {}, tmp: tmp(), snapshots: null });
     const planned = await cap.plan!({ ...ctx, unresolvedInputs: ["network.vpcId"] }, step({ engine: "plunge", config: { vpcId: undefined } }));
     expect(plunge.calls).toEqual([]);
     expect(planned.artifact).toBeUndefined();
@@ -173,7 +173,7 @@ describe("plan on plunge", () => {
 describe("run on plunge", () => {
   test("applies the saved plan with plunge up --plan <file> --yes --json --stack, then reads the outputs", async () => {
     const plunge = engine();
-    const cap = createPulumiUpCapability({ plunge: plunge.run, env: {}, tmp: tmp() });
+    const cap = createPulumiUpCapability({ plunge: plunge.run, env: {}, tmp: tmp(), snapshots: null });
     const planned = await cap.plan!(ctx, step({ engine: "plunge" }));
     const artifact = planned.artifact as PulumiUpArtifact;
     const out = await cap.run({ ...ctx, plans: { [member]: artifact } }, step({ engine: "plunge" }));
@@ -191,7 +191,7 @@ describe("run on plunge", () => {
 
   test("plunge's exit 40 is a moved plan: core's mark, the table's 4", async () => {
     const plunge = engine({ up: () => exit(40, "", "error: the saved plan is stale") });
-    const cap = createPulumiUpCapability({ plunge: plunge.run, env: {}, tmp: tmp() });
+    const cap = createPulumiUpCapability({ plunge: plunge.run, env: {}, tmp: tmp(), snapshots: null });
     const artifact = (await cap.plan!(ctx, step({ engine: "plunge" }))).artifact;
     const err = await cap.run({ ...ctx, plans: { [member]: artifact } }, step({ engine: "plunge" })).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(PulumiPlanMovedError);
@@ -202,7 +202,7 @@ describe("run on plunge", () => {
   test("any other exit fails, naming what landed", async () => {
     const partial = upStream.split("\n").slice(0, 10).join("\n");
     const plunge = engine({ up: () => exit(4, partial, "error: RecordConflictError") });
-    const cap = createPulumiUpCapability({ plunge: plunge.run, env: {}, tmp: tmp() });
+    const cap = createPulumiUpCapability({ plunge: plunge.run, env: {}, tmp: tmp(), snapshots: null });
     const artifact = (await cap.plan!(ctx, step({ engine: "plunge" }))).artifact;
     const err = await cap.run({ ...ctx, plans: { [member]: artifact } }, step({ engine: "plunge" })).catch((e: unknown) => e);
     expect(isPlanMovedError(err)).toBe(false);
@@ -211,7 +211,7 @@ describe("run on plunge", () => {
 
   test("ruling D: with no approved plan it previews and applies in one go", async () => {
     const plunge = engine();
-    const cap = createPulumiUpCapability({ plunge: plunge.run, env: {}, tmp: tmp() });
+    const cap = createPulumiUpCapability({ plunge: plunge.run, env: {}, tmp: tmp(), snapshots: null });
     const out = await cap.run(ctx, step({ engine: "plunge" }));
     expect(plunge.calls.map((c) => c.args[0])).toEqual(["preview", "up", "stack"]);
     expect(out.fromWavePlan).toBe(false);
@@ -223,7 +223,7 @@ describe("run on stock Pulumi (ruling A)", () => {
 
   test("previews again, applies with pulumi up --yes --json --stack, and compares the stream with the approved shape", async () => {
     const pulumi = engine();
-    const cap = createPulumiUpCapability({ run: pulumi.run, env: {}, tmp: tmp() });
+    const cap = createPulumiUpCapability({ run: pulumi.run, env: {}, tmp: tmp(), snapshots: null });
     const planned = await cap.plan!(ctx, stock());
     expect(planned.planDigest).toBe(pulumiPreviewDigest(pulumiStreamPreview(stream)));
     const out = await cap.run({ ...ctx, plans: { [member]: planned.artifact } }, stock());
@@ -241,7 +241,7 @@ describe("run on stock Pulumi (ruling A)", () => {
     const extra = JSON.stringify({ resourcePreEvent: { metadata: { op: "create", urn: urn("aws:s3/bucket:Bucket", "extra"), type: "aws:s3/bucket:Bucket", new: { type: "aws:s3/bucket:Bucket", inputs: { bucket: "extra" } }, logical: true }, planning: true } });
     let previews = 0;
     const pulumi = engine({ preview: () => (++previews === 1 ? stream : `${stream}${extra}\n`) });
-    const cap = createPulumiUpCapability({ run: pulumi.run, env: {}, tmp: tmp() });
+    const cap = createPulumiUpCapability({ run: pulumi.run, env: {}, tmp: tmp(), snapshots: null });
     const artifact = (await cap.plan!(ctx, stock())).artifact;
     const err = await cap.run({ ...ctx, plans: { [member]: artifact } }, stock()).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(PlanShapeMovedError);
@@ -252,7 +252,7 @@ describe("run on stock Pulumi (ruling A)", () => {
   test("an up whose stream ran a step the approval did not hold fails the step, not moved", async () => {
     const extra = JSON.stringify({ resourcePreEvent: { metadata: { op: "create", urn: urn("aws:s3/bucket:Bucket", "drifted"), type: "aws:s3/bucket:Bucket", new: { type: "aws:s3/bucket:Bucket", inputs: { bucket: "drifted" } }, logical: true } } });
     const pulumi = engine({ up: () => `${upStream}${extra}\n` });
-    const cap = createPulumiUpCapability({ run: pulumi.run, env: {}, tmp: tmp() });
+    const cap = createPulumiUpCapability({ run: pulumi.run, env: {}, tmp: tmp(), snapshots: null });
     const artifact = (await cap.plan!(ctx, stock())).artifact;
     const err = await cap.run({ ...ctx, plans: { [member]: artifact } }, stock()).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(PulumiAppliedShapeError);
@@ -262,14 +262,14 @@ describe("run on stock Pulumi (ruling A)", () => {
 
   test("ruling D on stock: one preview, then up", async () => {
     const pulumi = engine();
-    const cap = createPulumiUpCapability({ run: pulumi.run, env: {}, tmp: tmp() });
+    const cap = createPulumiUpCapability({ run: pulumi.run, env: {}, tmp: tmp(), snapshots: null });
     await cap.run(ctx, stock());
     expect(pulumi.calls.map((c) => c.args[0])).toEqual(["preview", "up", "stack"]);
   });
 
   test("outputs reads the blind stack output", async () => {
     const pulumi = engine();
-    const cap = createPulumiUpCapability({ run: pulumi.run, env: {} });
+    const cap = createPulumiUpCapability({ run: pulumi.run, env: {}, snapshots: null });
     expect((await cap.outputs!(ctx, stock())).vpcId).toBe("vpc-05097b38");
     expect(pulumi.calls.map((c) => c.args)).toEqual([["stack", "output", "--json", "--show-secrets=false", "--stack", "floci"]]);
   });

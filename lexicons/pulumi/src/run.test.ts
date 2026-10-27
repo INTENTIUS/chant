@@ -49,6 +49,34 @@ function failure(message: string, fields: { code?: string; stdout?: string; stde
   return Object.assign(new Error(message), fields);
 }
 
+describe("stack export (#4546)", () => {
+  test("exactly stack export --stack <stack> reaches either runner", async () => {
+    const { run, calls } = fake(() => "{}");
+    await runAllowedPulumi(run, ["stack", "export", "--stack", "dev"], "/tmp");
+    await runAllowedPlunge(run, ["stack", "export", "--stack", "dev"], "/tmp");
+    expect(calls.map((c) => c.args)).toEqual([
+      ["stack", "export", "--stack", "dev"],
+      ["stack", "export", "--stack", "dev"],
+    ]);
+  });
+
+  test("--file, --show-secrets, --version, no stack and a flag for a stack are refused before the runner", async () => {
+    const { run, calls } = fake(() => "{}");
+    for (const args of [
+      ["stack", "export"],
+      ["stack", "export", "--stack", "dev", "--file", "stack-export.json"],
+      ["stack", "export", "--stack", "dev", "--show-secrets"],
+      ["stack", "export", "--stack", "dev", "--version", "3"],
+      ["stack", "export", "--stack", "--show-secrets"],
+      ["stack", "export", "--file", "x", "--stack", "dev"],
+    ]) {
+      await expect(runAllowedPulumi(run, args, "/tmp")).rejects.toThrow(/pulumi stack export --stack <stack>/);
+      await expect(runAllowedPlunge(run, args, "/tmp")).rejects.toThrow(/plunge stack export --stack <stack>/);
+    }
+    expect(calls).toEqual([]);
+  });
+});
+
 describe("the allow-list (ruling on #4450)", () => {
   test("only preview and refresh --preview-only reach the runner", async () => {
     const { run, calls } = fake(() => "{}");
@@ -307,7 +335,7 @@ describe("plunge graph (#4529, ruled on #4520 Q4 and Q6)", () => {
     const { run, calls } = fake(() => "{}");
     for (const args of allowed) await expect(runAllowedPulumi(run, args, dir)).rejects.toThrow(/only pulumi preview/);
     expect(calls).toEqual([]);
-    expect(PULUMI_ALLOWED_COMMANDS).toEqual([["preview"], ["refresh", "--preview-only"], ["stack", "output"]]);
+    expect(PULUMI_ALLOWED_COMMANDS).toEqual([["preview"], ["refresh", "--preview-only"], ["stack", "output"], ["stack", "export"]]);
   });
 
   test("plungeGraphArgs builds each of the four, in the allowed order", () => {

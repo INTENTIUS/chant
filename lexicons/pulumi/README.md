@@ -4,7 +4,7 @@ Pulumi lexicon for [chant](https://intentius.io/chant/). It adds your Pulumi pro
 
 | Read | Source | Module |
 |---|---|---|
-| the member's graph | the `pulumi stack export` checked in as `stack-export.json` | `src/workspace-member.ts` |
+| the member's graph | the `pulumi stack export` the last `pulumi-up` apply wrote to `refs/chant/snapshots`, else the one checked in as `stack-export.json` | `src/workspace-member.ts`, `src/stack-export-snapshot.ts` |
 | its change-set part | `pulumi preview --json` | `src/change-set.ts` |
 | its drift records | `pulumi refresh --preview-only --json --target <urn>`, one resource at a time | `src/drift-record.ts`, `src/drift-read.ts` |
 | its stack outputs, for another member's parameters | `pulumi stack output --json --show-secrets=false` (applied) and `pulumi preview --json` (planned) | `src/stack-outputs.ts`, `src/member-outputs.ts` |
@@ -24,6 +24,8 @@ A stack can be a component step, `{ kind: "pulumi-up", dir, stack }`, that plans
 Both forms may add `--config-file <file>`, then `--target <urn>` for each target, then `--policy-pack <dir>` with an optional `--policy-pack-config <file>`, in that order. Any other flag on `up` is refused.
 
 The preview streams its engine events (`PULUMI_ENABLE_STREAMING_JSON_PREVIEW=true`, `src/engine-events.ts`), so one run gives the change set and CrossGuard's findings. A mandatory violation denies the plan. On plunge the saved plan's stamp refuses a plan whose records moved (plunge exit 40, chant's moved code 4). On stock Pulumi the apply previews again, then compares the steps in `up`'s event stream with the approved shape (`src/plan-shape.ts`), and a step outside it fails the apply. A member on the resource lock grain, the default on plunge, leaves `same` and `read` steps out of its digest. The step's `config` is written into a scratch copy of `Pulumi.<stack>.yaml` and passed with `--config-file`, never `--config`, which writes the working tree's file. A release cut records the stack's directory (`releaseInputs`), unless its backend is a file path relative to that directory.
+
+After `up`, the capability runs `stack export --stack <s>`, replaces every secret with `[secret]`, drops the secrets provider's state, and writes the export through chant's index store as `<env>/<stack>__pulumi-export` ([#4546](https://github.com/INTENTIUS/chant/issues/4546), `refs/chant/snapshots` by default). The graph, the preview's prior state and the drift read take that export first, so a stack chant applies needs no checked-in `stack-export.json`. A failed export leaves the apply standing and says why in the step's `exportSnapshot` output.
 
 ## Drift: `chant workspace drift`
 

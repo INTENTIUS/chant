@@ -25,9 +25,11 @@ function chantConfig(member: string): string {
 import "@intentius/chant-lexicon-pulumi";
 
 /**
- * Reads the Pulumi program in ./infra as a member: its graph is the
- * stack-export.json checked in beside Pulumi.yaml. Refresh it after each
- * \`pulumi up\` with \`pulumi stack export --file stack-export.json\`.
+ * Reads the Pulumi program in ./infra as a member. Its graph is the stack
+ * export that chant's pulumi-up apply writes to refs/chant/snapshots after
+ * each update, so nothing is checked in. A stack applied outside chant can
+ * check in stack-export.json beside Pulumi.yaml instead, taken with
+ * \`pulumi stack export --file stack-export.json\` after each update.
  * \`dir\` is relative to this file (PUL101 warns on an absolute one).
  */
 export default {
