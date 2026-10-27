@@ -42,6 +42,7 @@ export const TILES = [
 	{ id: 'gcp-azure', label: 'GCP and Azure', blurb: 'Config Connector, ARM, GKE, AKS', room: 'gcp-azure', lexicons: ['gcp', 'azure'] },
 	{ id: 'ci', label: 'CI pipelines', blurb: 'GitHub Actions, GitLab CI, Forgejo', room: 'ci', lexicons: ['github', 'gitlab', 'forgejo'] },
 	{ id: 'fly', label: 'Fly and containers', blurb: 'Fly Machines, Sprites, Docker', room: 'fly', lexicons: ['fly', 'docker', 'render'] },
+	{ id: 'terraform-pulumi', label: 'Terraform and Pulumi', blurb: 'OpenTofu, choudoufu, plunge', room: 'terraform-pulumi', lexicons: ['terraform', 'pulumi'] },
 ];
 
 /** The roles: the line of chips under the tiles. */
@@ -116,7 +117,7 @@ export const ROOMS = [
 			{ label: 'Local testing on AWS', href: 'local-testing/aws' },
 			{ label: 'AWS EKS + Kubernetes', href: 'tutorials/eks-kubernetes' },
 			{ label: 'GitLab CI + AWS ALB', href: 'tutorials/gitlab-aws-alb' },
-			{ label: 'Carve out of Terraform', href: 'tutorials/terraform-carve-out' },
+			{ label: 'Move one resource from Terraform to CloudFormation', href: 'tutorials/terraform-carve-out' },
 		],
 		background: [
 			{ label: 'Lexicons', href: 'lexicons/overview' },
@@ -285,6 +286,44 @@ export const ROOMS = [
 		],
 	},
 	{
+		id: 'terraform-pulumi',
+		title: 'chant with Terraform, OpenTofu and Pulumi',
+		lede: 'For a team that runs Terraform or OpenTofu roots, or Pulumi programs: keep them as they are, add them to a chant workspace, and run them on choudoufu or plunge when you want ownership markers on the resources.',
+		works: [
+			'The terraform lexicon reads your `.tf` roots as they are, lints them, and plans and applies them through terraform, tofu or choudoufu',
+			'The pulumi lexicon reads a Pulumi program from its stack export and previews, and `pulumi up` still applies it',
+			'choudoufu, an OpenTofu fork, and plunge, a Pulumi fork, keep each resource\'s ownership as a marker on the resource itself',
+		],
+		differs: {},
+		first: {
+			note: 'For a Pulumi program, install `@intentius/chant-lexicon-pulumi` instead.',
+			command: { any: 'npm install --save-dev @intentius/chant-lexicon-terraform' },
+			link: { label: 'Terraform getting started', href: 'lexicons/terraform/getting-started' },
+			prompt: roomPrompt(
+				'terraform-pulumi',
+				'Add the Terraform or OpenTofu roots in this repository, or its Pulumi program, to a chant workspace.',
+				'For Terraform or OpenTofu, follow https://intentius.io/chant/lexicons/terraform/getting-started/. For Pulumi, follow https://intentius.io/chant/lexicons/pulumi/getting-started/.',
+				'Run `npx chant build` until it passes, and open a pull request with the config. Do not run `terraform apply`, `tofu apply` or `pulumi up`.',
+			),
+		},
+		examples: ['lexicons/terraform/examples/getting-started', 'lexicons/pulumi/examples/workspace-member', 'lexicons/pulumi/examples/plunge-member'],
+		tasks: [
+			{ label: 'Terraform getting started', href: 'lexicons/terraform/getting-started' },
+			{ label: 'Pulumi getting started', href: 'lexicons/pulumi/getting-started' },
+			{ label: 'Run a root on choudoufu', href: 'lexicons/terraform/ops#choudoufu' },
+			{ label: 'A member on plunge', href: 'lexicons/pulumi/plunge' },
+		],
+		background: [
+			{ label: 'Works with', href: 'concepts/comparison' },
+			{ label: 'Lifecycle Models', href: 'concepts/lifecycle-models' },
+		],
+		reference: [
+			{ label: 'Terraform lexicon', href: 'lexicons/terraform/' },
+			{ label: 'Pulumi lexicon', href: 'lexicons/pulumi/' },
+			{ label: 'Workspace kinds', href: 'reference/workspace-kinds' },
+		],
+	},
+	{
 		id: 'agents',
 		title: 'chant with a coding agent',
 		lede: 'For a team that hands infrastructure work to a coding agent: one prompt sets chant up, and the project carries the playbooks and tools the agent reads.',
@@ -450,7 +489,7 @@ export const ROOMS = [
 	{
 		id: 'evaluate',
 		title: 'Evaluating chant',
-		lede: 'For someone deciding whether chant fits: what it is, how it compares, and a project that runs on your own machine with no cloud account.',
+		lede: 'For someone deciding whether chant fits: how chant sits next to the tools you run, and a project to try on your own machine with no cloud account.',
 		works: [
 			'A getting-started example that teaches chant in levels, starting with build, lint and list on nothing but Node',
 			'Local emulators for AWS, Azure, GCP and Fly, so a deploy runs with no account',
@@ -473,8 +512,8 @@ export const ROOMS = [
 		],
 		background: [
 			{ label: 'Introduction', href: 'getting-started/introduction' },
-			{ label: 'What chant is', href: 'concepts/overview' },
-			{ label: 'How chant compares', href: 'concepts/comparison' },
+			{ label: 'Overview', href: 'concepts/overview' },
+			{ label: 'Works with', href: 'concepts/comparison' },
 			{ label: 'Philosophy', href: 'concepts/philosophy' },
 		],
 		reference: [

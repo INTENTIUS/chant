@@ -117,7 +117,7 @@ describe("carve advise --from <cdk.out>", () => {
     const text = formatCarveReport(r);
     expect(text).toContain("CDK cloud-assembly carve-out advisory");
     expect(text).toContain("Advises only");
-    expect(text).toContain("LEAVE IN CDK");
+    expect(text).toContain("STAYS IN CDK");
     expect(text).not.toMatch(/cdk deploy|cdk destroy|terraform state rm/i);
   });
 

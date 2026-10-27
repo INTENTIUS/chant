@@ -225,8 +225,8 @@ Commands:
                          --all-projects)
   migrate <file>        Translate a workflow between lexicons
                         (default: --from github --to gitlab)
-  carve advise          Read-only peelability advisor: rank which resources
-                        --from <dir>      are cheap to carve into native chant
+  carve advise          Read-only advisor: ranks which resources move
+                        --from <dir>      cleanly to a native lexicon
                         (--json, --report <path>). Emits nothing, changes nothing.
                         --from a Terraform dir needs @cdktn/hcl2json
                         (npm install -D @cdktn/hcl2json); --from a CDK cloud
@@ -641,9 +641,9 @@ Workspace (level 1, #2524):
                         the catalog-info.yaml files under dir, and shows what
                         it left out (#3178)
   workspace promote <member> [--state <tfstate>] [--lexicon <name>] [--dry-run] [--output <patch>] [--json]
-                        Move a member one rung up the kind ladder (terraform to
-                        choudoufu runs live-check and the adoption report;
-                        choudoufu or other to chant runs chant import), staged
+                        Change a member's kind (terraform to choudoufu runs
+                        live-check and the adoption report; choudoufu or
+                        other to chant runs chant import), staged
                         in a worktree and gated on the patch digest like upgrade
   workspace promote --all [--state-dir <dir>] [--state <member>=<tfstate>]... [--canary <member>] [--wave-size <n>] [--dry-run] [--json]
                         Adopt every terraform member into choudoufu in waves:

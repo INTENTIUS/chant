@@ -1,62 +1,54 @@
 ---
 title: State and Governance
-description: Why IaC depends on governance properties, and how chant keeps them without an authoritative state file
+description: The governance teams keep state for, and how chant keeps it with ownership markers on the cloud resources
 diataxis: explanation
 ---
 
-Infrastructure needs state, but that state does not have to be authoritative. The properties teams depend on are governance properties, and most of them hold without an authoritative state file.
+Teams keep state for governance, such as a known change set before apply. chant keeps that governance with markers on the cloud resources and snapshots in git.
 
-This page explains where chant draws that line. For the model that places chant on the three axes of state — where truth lives, reconciliation direction, and who answers "is this mine?" — see [Lifecycle Models](/chant/concepts/lifecycle-models/). For the tool-by-tool comparison see [How chant compares](/chant/concepts/comparison/). For the snapshot and diff mechanism see [Drift Detection](/chant/concepts/drift-detection/).
+[Lifecycle Models](/chant/concepts/lifecycle-models/) places chant on the three axes of state: where truth lives, reconciliation direction, and who answers "is this mine?". [Works with](/chant/concepts/comparison/) covers Terraform, OpenTofu and Pulumi estates in a chant workspace. [Drift Detection](/chant/concepts/drift-detection/) covers snapshots and diffs.
 
-## What a state file actually costs
+## State and governance
 
-The familiar costs of state are real. A global lock on every apply. An all-or-nothing change set. Secrets stored in the file because the tool needs them to diff. A corruption surface that can take a stack down.
-
-These are the costs of hosting an authoritative state file yourself. They are properties of self-managed state, not of authoritative state in general. Once that distinction is clear, the field sorts into a spectrum.
-
-## The spectrum of authoritative state
-
-| Model | Who hosts state | What you trade |
-|---|---|---|
-| Self-hosted (Terraform, Pulumi) | You run the backend | Full control, plus the lock, the backups, and the corruption risk |
-| Third-party SaaS | A vendor operates a state database for you | Operational burden gone, replaced by a vendor dependency and your state and secrets living in their system |
-| Platform-managed (CloudFormation, CDK) | The cloud hosts state as part of the service | No file to operate, in exchange for cloud lock-in and all-or-nothing applies |
-| Observational (chant) | No one, because state is a snapshot rather than a source of truth | No file to host or trust; the precise change set comes from live projection + cloud-side ownership instead |
-
-Every model except the last keeps authoritative state and only changes who operates it. The third-party tier is worth a closer look. It is usually a queryable database, sometimes the real-time graph people picture state evolving into. A faster, better-indexed source of truth is still a source of truth. It still has to be correct and current.
-
-## Governance is the part that matters
-
-Separate the requirement from the mechanism. The properties a team cannot give up are governance.
+The properties a team relies on are governance:
 
 - A known change set before apply
 - A lock so two operators do not collide
 - An audit trail that can be read later
 - Blast-radius limits so one change cannot touch everything
 
-Authoritative state is one mechanism that provides these. It is not the only one. When state is called essential, the essential thing is usually the governance, and authoritative state is the tool that happened to deliver it.
+Each tool provides them its own way.
 
-The observational model keeps the governance and drops the authority. Snapshots and diffs live in git, which gives audit and review. Linting runs on the static artifact before apply, which gives pre-apply validation. And the change set is not given up: [`chant lifecycle plan`](/chant/cli/lifecycle/) computes a precise create/update/delete set against the live system, using [ownership markers](/chant/configuration/config-file/#ownership) that live on the cloud resource rather than in a hosted state file. The plan survives without the file — the marker, not a record chant has to lock, is what makes `delete` precise. This makes the thesis stronger, not weaker: the file was never the essential part, and now even the one capability it seemed to monopolize comes from projection instead. See [Lifecycle Models](/chant/concepts/lifecycle-models/) for the full model.
+| Model | State kept by | Ownership read from |
+|---|---|---|
+| Terraform, OpenTofu or Pulumi on its stock engine | The backend you choose | The state |
+| CloudFormation and CDK | The cloud, as part of the stack | The stack |
+| Terraform and OpenTofu on choudoufu, Pulumi on plunge | The backend you choose, with your existing roots and programs | Markers on the resources, read live |
+| chant | A snapshot in git, kept as evidence | Markers on the resources, read live |
 
-## It plans, but it never applies
+## How chant keeps it
+
+Snapshots and diffs live in git, which gives audit and review. Linting runs on the static artifact before apply, which gives pre-apply validation. [`chant lifecycle plan`](/chant/cli/lifecycle/) computes a create/update/delete set against the live system from [ownership markers](/chant/configuration/config-file/#ownership) on the cloud resources. The marker on each resource makes a `delete` precise. See [Lifecycle Models](/chant/concepts/lifecycle-models/) for the full model.
+
+## Plans without applying
 
 chant computes the change set; it does not execute it. Two read-only commands sit on the observe side:
 
 - [`chant lifecycle diff`](/chant/cli/lifecycle/) — the three-way comparison. The default mode builds and compares declarations against the last snapshot, offline; `--live` queries the cloud and compares the live result against both the snapshot and the current build.
 - [`chant lifecycle plan`](/chant/cli/lifecycle/) — promotes the live diff to a typed create/update/delete change set you can act on.
 
-Both stop at producing the artifact. What to do about it is the orchestration's decision, whether that is a CI job, an agent, a human, or a [scheduled WatchOp](/chant/guide/watching-lifecycle/). A team comfortable with the observational model wires the plan to automation. A team that wants a strict gate wires the same artifact into its own approval flow. chant does not force either, because it does not own the apply.
+Both stop at producing the artifact. The orchestration decides the next step, whether that is a CI job, an agent, a human, or a [scheduled WatchOp](/chant/guide/watching-lifecycle/). A team comfortable with the observational model wires the plan to automation. A team that wants a strict gate wires the same artifact into its own approval flow. chant does not force either, because it does not own the apply.
 
 ## Blast radius at scale
 
 A common objection is that at scale a single change touches so many resources that verifying it means reading the whole estate.
 
-The scope of a change is bounded by the change, not the estate. A one-subnet change touches one subnet and its dependents whether the account holds a hundred resources or a hundred thousand. `chant lifecycle diff --live` queries the cloud for the declared resources through each lexicon's `describeResources()` method, not the entire account, so the read tracks what is declared rather than the size of the estate. The read is also bounded by the write already accepted, so reading the affected scope is less work than mutating it.
+The scope of a change is bounded by the change. A one-subnet change touches one subnet and its dependents whether the account holds a hundred resources or a hundred thousand. `chant lifecycle diff --live` queries the cloud for the declared resources through each lexicon's `describeResources()` method, not the entire account, so the read tracks what is declared rather than the size of the estate. The read is also bounded by the write already accepted, so reading the affected scope is less work than mutating it.
 
-There is one case where the affected scope approaches the whole estate, such as rotating a root credential or re-tagging everything. That is the exact change a human or a policy should gate. A scope that large is a signal to decompose or stage the change, not a cost to remove.
+There is one case where the affected scope approaches the whole estate, such as rotating a root credential or re-tagging everything. That is the exact change a human or a policy should gate. A scope that large is a signal to split or stage the change.
 
 ## Where truth lives
 
 In the observational model the live system is the source of truth. A snapshot is a baseline for the diff, and it is allowed to be stale, because a stale baseline is inconvenient while a stale source of truth is dangerous.
 
-The file was never the essential part. The governance around the artifact was. See [Drift Detection](/chant/concepts/drift-detection/) for how snapshots and diffs work, and [How chant compares](/chant/concepts/comparison/) for how this differs from Terraform, Pulumi, and CDK.
+See [Drift Detection](/chant/concepts/drift-detection/) for snapshots and diffs. [Works with](/chant/concepts/comparison/) covers chant next to the tools you already run.

@@ -6,7 +6,7 @@ diataxis: explanation
 
 import Diagram from '../../../components/Diagram.astro';
 
-Infrastructure tools check that YAML, HCL or SDK calls are well-formed. chant also checks whether what you declared makes sense in context.
+chant checks that your declarations make sense in context, with lint rules per lexicon.
 
 <Diagram name="philosophy-layers" alt="A deterministic core as the foundation, the lifecycle you choose built on it, and the agents and operators that act on it" caption="The deterministic core and the lifecycle built on it" />
 
@@ -18,11 +18,11 @@ Infrastructure tools check that YAML, HCL or SDK calls are well-formed. chant al
 
 ## A Compiler at the Core
 
-chant is a compiler: TypeScript in, spec-native output out. The approach was always available. Other tools built the deployment lifecycle into the compiler instead. chant keeps the compiler deterministic and builds those steps as separate layers you choose.
+chant is a compiler: TypeScript in, spec-native output out. chant keeps the compiler deterministic and builds deploy steps as separate layers you choose.
 
 ## TypeScript as Data
 
-Most IaC tools that use general-purpose languages — CDK, Pulumi, Terraform's CDK — work by *executing* your code. Your program runs, makes API calls, and the tool captures the result.
+chant's build reads exported resource objects without running cloud calls. A Pulumi program keeps running as it does, and the pulumi lexicon reads its stack export.
 
 The build runs only synthesis. It imports your `.ts` files, reads the resource objects they export, and emits output. It never calls a cloud API, reads or writes state, or deploys. The build turns your TypeScript into an artifact, deterministically and with no side effects. Deploying the artifact is a separate step.
 

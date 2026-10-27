@@ -89,7 +89,7 @@ A member is one directory, so workspaces or stacks that share a working director
 chant workspace promote <member> [--state <terraform.tfstate>] [--lexicon <lexicon>] [--dry-run] [--output <patch>] [--json]
 ```
 
-`promote` moves one member one rung up the kind ladder. It stages the change in a git worktree at HEAD and gates it on the patch digest, as [`workspace upgrade`](/chant/cli/workspace-upgrade/) does: the first run records a pending gate and exits 3, `chant approve workspace-promote <member>` approves that digest, and the same command run again applies the patch.
+`promote` changes one member's kind: terraform to choudoufu, or choudoufu or other to chant. It stages the change in a git worktree at HEAD and gates it on the patch digest, as [`workspace upgrade`](/chant/cli/workspace-upgrade/) does: the first run records a pending gate and exits 3, `chant approve workspace-promote <member>` approves that digest, and the same command run again applies the patch.
 
 | From | To | Staging runs |
 |---|---|---|
@@ -97,11 +97,11 @@ chant workspace promote <member> [--state <terraform.tfstate>] [--lexicon <lexic
 | `choudoufu` | `chant` | `chant import` of the member's directory (`--lexicon` defaults to `terraform`) |
 | `other` | `chant` | `chant import` (needs `--lexicon`) |
 
-A failing check stops before any gate is recorded, and the tree is unchanged. A member of kind `chant` has no rung above it.
+A failing check stops before any gate is recorded, and the tree is unchanged. A member of kind `chant` has no next kind.
 
-On the `terraform` to `choudoufu` rung the `live-import` report is printed, and with `--json` it is the `adoption` field: `{estate, state, entries, claimed, total}`, one entry per resource instance with its `address`, `type`, `status` (`VERIFIED`, `DRIFTED`, `MISSING`, `UNTAGGABLE` or `UNADMITTED_TYPE`), `liveId`, choudoufu's `detail`, and `claimed`, true for the two statuses `-approve` stamps. `--dry-run --json` is the read-only way to ask what adopting a root would claim: it stages and checks, records no gate, and leaves the tree as it was. A relative `--state` is resolved against the current directory before the staging runs.
+On the `terraform` to `choudoufu` change the `live-import` report is printed, and with `--json` it is the `adoption` field: `{estate, state, entries, claimed, total}`, one entry per resource instance with its `address`, `type`, `status` (`VERIFIED`, `DRIFTED`, `MISSING`, `UNTAGGABLE` or `UNADMITTED_TYPE`), `liveId`, choudoufu's `detail`, and `claimed`, true for the two statuses `-approve` stamps. `--dry-run --json` is the read-only way to ask what adopting a root would claim: it stages and checks, records no gate, and leaves the tree as it was. A relative `--state` is resolved against the current directory before the staging runs.
 
-The digest the gate binds covers the member, the rung, what the staging wrote outside the declaration and, for `choudoufu`, the digest of the `live-import` report, so the approval is for the report the approver read. A report that changes before the apply (a resource drifted, one went missing) is a new digest and waits for a new approval. On apply, the kind change is written into the declaration in the tree, so one member's uncommitted promotion does not block another's.
+The digest the gate binds covers the member, the kind change, what the staging wrote outside the declaration and, for `choudoufu`, the digest of the `live-import` report, so the approval is for the report the approver read. A report that changes before the apply (a resource drifted, one went missing) is a new digest and waits for a new approval. On apply, the kind change is written into the declaration in the tree, so one member's uncommitted promotion does not block another's.
 
 ### Promoting a workspace in waves
 

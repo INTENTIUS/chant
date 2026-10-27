@@ -15,7 +15,7 @@ Use none of the lifecycle layers and chant is a compiler whose output you deploy
 
 ## Hand Off to an Existing Pipeline
 
-`chant build` produces spec-native artifacts (CloudFormation, GitLab CI, Kubernetes manifests, etc.) and hands them off. You deploy them as you do today: a CI pipeline, ArgoCD, Terraform, a manual `kubectl apply`. You install only chant, and the lifecycle layers below go unused.
+`chant build` produces spec-native artifacts (CloudFormation, GitLab CI, Kubernetes manifests, etc.) and hands them off. You deploy them as you do today: a CI pipeline, ArgoCD, Terraform, a manual `kubectl apply`. You install only chant, and the lifecycle layers below go unused. A Terraform or OpenTofu root can join the workspace through the [terraform lexicon](/chant/lexicons/terraform/), and a Pulumi program through the [pulumi lexicon](/chant/lexicons/pulumi/). choudoufu and plunge run them with ownership markers.
 
 **Use this when:**
 - You already have a deployment pipeline you trust
@@ -115,6 +115,8 @@ the ops that need a machine.
 | Situation | Model |
 |-----------|-------|
 | I have ArgoCD / Terraform / an existing deploy pipeline | Hand off (existing pipeline) |
+| I run Terraform or OpenTofu roots | [terraform lexicon](/chant/lexicons/terraform/); choudoufu for ownership markers |
+| I run Pulumi programs | [pulumi lexicon](/chant/lexicons/pulumi/); plunge for ownership markers |
 | My deployment script is more than 50 lines and fails unpredictably | Ops |
 | I need a human approval gate mid-deploy | Ops (the gate is a fact either way) |
 | I have many deployable units each dragging its own pipeline | Components |

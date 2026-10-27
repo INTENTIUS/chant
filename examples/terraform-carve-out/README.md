@@ -1,8 +1,8 @@
-# Terraform carve-out
+# Move one Terraform resource to CloudFormation
 
-Practice carving a resource out of a Terraform estate into native chant,
-incrementally and reversibly. The `terraform/` directory is a small estate to
-carve from, with a `terraform.tfstate` so the whole flow runs **offline** — no
+Practice handing one resource from a Terraform estate to a CloudFormation
+stack, reversibly. The rest stays in Terraform. The `terraform/` directory is a
+small estate to carve from, with a `terraform.tfstate` so the whole flow runs **offline** — no
 cloud, no Terraform binary.
 
 ## Run the whole demo
@@ -27,14 +27,14 @@ The advisor parses HCL with `@cdktn/hcl2json`, installed on demand:
 npm install -D @cdktn/hcl2json
 ```
 
-## 1. See what is cheap to carve
+## 1. Rank the resources
 
 ```bash
 chant carve advise --from ./terraform
 ```
 
 The estate ranks into three bands: clean leaves (carve now), carvable with edits
-(has boundary work), and leave in Terraform (unmappable or load-bearing).
+(has boundary work), and stays in Terraform (unmappable or load-bearing).
 `aws_cloudwatch_log_group.api` is a clean leaf; `aws_vpc.main` is carvable with
 edits (three subnets depend on it); `random_pet.suffix` has no native mapping.
 
@@ -61,9 +61,9 @@ shape. (`--env <env>` adopts a CloudFormation-managed resource live instead.)
 chant build ./carveout/src --lexicon aws
 ```
 
-The first build **fails, deliberately**: the adopted bucket faithfully carries
-Terraform's missing security posture, and chant's post-synth audit refuses an
-S3 bucket without a public-access block and a TLS-only policy. Add both to
+The first build **fails, deliberately**: the adopted bucket keeps the estate's
+settings, and it has no public-access block or TLS-only policy. chant's
+post-synth audit refuses an S3 bucket without both. Add both to
 `src/assets.ts` (the tutorial shows the exact code) and the build produces a
 valid CloudFormation template. That audit is part of the value: chant tells
 you what is wrong with what you adopted.

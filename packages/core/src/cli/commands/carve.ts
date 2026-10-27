@@ -271,7 +271,7 @@ export function formatCarveReport(result: CarveAdviseResult): string {
   }
 
   lines.push(
-    `Bands: 80-100 carve now | 50-79 carve with boundary edits | 0-49 leave in ${cdk ? "CDK" : "Terraform"}`,
+    `Bands: 80-100 carve now | 50-79 carve with boundary edits | 0-49 stays in ${cdk ? "CDK" : "Terraform"}`,
   );
   if (cellWidth > 0) {
     lines.push(
@@ -306,7 +306,7 @@ function bandLabel(band: PeelabilityBand, cdk: boolean): string {
     case "leave in Terraform":
       // The band's name is part of the JSON contract and does not change per
       // source; only the heading a person reads does.
-      return cdk ? "LEAVE IN CDK" : "LEAVE IN TERRAFORM";
+      return cdk ? "STAYS IN CDK" : "STAYS IN TERRAFORM";
   }
 }
 

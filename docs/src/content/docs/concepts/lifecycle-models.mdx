@@ -7,9 +7,9 @@ diataxis: explanation
 import { Aside } from '@astrojs/starlight/components';
 import Diagram from '../../../components/Diagram.astro';
 
-Most infrastructure tools ship their lifecycle model inside the compiler, so you take both or neither. chant separates them: **pluggable lexicons in, pluggable lifecycles out, pure synthesis in the middle.** You bring the lifecycle and chant runs it.
+chant keeps the compiler and the lifecycle separate: **pluggable lexicons in, pluggable lifecycles out, pure synthesis in the middle.** You bring the lifecycle and chant runs it.
 
-<Aside type="note" title='What "lifecycle" means here'>
+<Aside type="note" title='The word "lifecycle"'>
 Three things wear this name; this page is careful about which:
 
 - **the lifecycle** (this page) — the *model*: how infrastructure is created, changed, reconciled, and retired.
@@ -19,7 +19,7 @@ Three things wear this name; this page is careful about which:
 The two "pluggable" axes are **not symmetric**. Lexicons are a shipped plugin contract — a registry with many implementations. Lifecycles today are rails you compose from Ops ([Contributing a Lifecycle](/chant/contributing/lifecycles/), Door 1); dropping a foreign lifecycle backend in (Door 2) is stated direction, not a shipped feature.
 </Aside>
 
-This page makes the axes explicit so the rest of the docs can point here instead of re-deriving the argument. For the cost side of the trade — what an authoritative state file actually buys and charges — see [State and Governance](/chant/concepts/governance/).
+This page makes the axes explicit so the rest of the docs can point here instead of re-deriving the argument. [State and Governance](/chant/concepts/governance/) covers the governance that teams keep state for.
 
 ## Three axes
 
@@ -29,7 +29,7 @@ Any lifecycle model is a point in a three-dimensional space.
 
 | Truth lives in… | Called | Examples |
 |---|---|---|
-| A state file | Authoritative | Terraform, Pulumi |
+| A state file | Authoritative | Terraform, OpenTofu and Pulumi on their stock engines |
 | The live system | Observational | query the cloud, diff against a snapshot |
 | The source code | Source-as-truth | GitOps reconcilers |
 
@@ -49,7 +49,7 @@ Any lifecycle model is a point in a three-dimensional space.
 | A live ownership marker | a tag/label on the cloud resource |
 | Nobody | the tool escalates rather than guessing |
 
-This third axis is the one most tools collapse into the first: they answer "is this mine?" from the same state file they host. chant separates them on purpose.
+chant answers this axis from a marker on the resource, apart from where truth lives. choudoufu and plunge move Terraform, OpenTofu and Pulumi estates to the live-marker row.
 
 ## Where chant sits
 
@@ -67,7 +67,7 @@ Declaration is your source — what your TypeScript exports. Ownership is a fact
 - **Strip the marker** — per-resource. The prune is marker-scoped, so an unmarked resource is foreign and never touched.
 - **Spec-true retain** — the target spec's own knob. CloudFormation `DeletionPolicy: Retain`, the K8s prune selector. chant passes it through rather than inventing one.
 
-No hosted state file decides this. A resource lives or dies based on what you declare and what its live marker says, which is why the snapshot can be deleted between runs with no change in behavior.
+The live marker decides this. A resource lives or dies on its declaration and its live marker, which is why the snapshot can be deleted between runs with no change in behavior.
 
 ## The dial
 
@@ -87,17 +87,17 @@ You turn the dial up per environment as trust and tooling allow. Nothing forces 
 
 ## The invariant that holds the line
 
-There is exactly one rule that prevents this model from quietly becoming the thing it avoids:
+One rule keeps this model observational:
 
 > The projection reads ownership from the live marker, never from the snapshot.
 
-The moment a *mutation* trusts the snapshot — uses it to decide what to create, update, or delete — the snapshot becomes load-bearing, and you have rebuilt an authoritative state file under a different name, with all its costs. chant's change set ([`chant lifecycle plan`](/chant/cli/lifecycle/)) reads ownership only from the live resource. The snapshot can be deleted between runs with no change in behavior. That is the test, and chant holds to it by construction.
+If a mutation took its deletes from the snapshot, the snapshot would act as authoritative state. chant takes that decision from the live marker instead. chant's change set ([`chant lifecycle plan`](/chant/cli/lifecycle/)) reads ownership only from the live resource. The snapshot can be deleted between runs with no change in behavior. That is the test, and chant holds to it by construction.
 
 ## See also
 
-- [State and Governance](/chant/concepts/governance/) — what a state file costs, and why governance is the part that matters
+- [State and Governance](/chant/concepts/governance/) — the governance teams keep state for, and how chant keeps it
 - [Drift Detection](/chant/concepts/drift-detection/) — the observe position, in depth
-- [How chant compares](/chant/concepts/comparison/) — these axes mapped across tools
+- [Works with](/chant/concepts/comparison/) — Terraform, OpenTofu and Pulumi estates in a chant workspace, and the choudoufu and plunge engines
 - [Ops](/chant/guide/ops/) — the reconcile (`ReconcileOp`) and apply (`ApplyOp`) workflows
 - [Contributing a Lifecycle](/chant/contributing/lifecycles/) — bring your own lifecycle: write one as Ops, or plug one in
 - [`lifecycle-reconcile-aws` example](https://github.com/INTENTIUS/chant/tree/main/lexicons/aws/examples/lifecycle-reconcile-aws) — the dial on a real stack: deploy -> drift -> diff -> reconcile / apply

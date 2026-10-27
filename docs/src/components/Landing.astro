@@ -26,9 +26,9 @@ const lexiconsDir = resolve(process.cwd(), '..', 'lexicons');
 const lexiconCount = readdirSync(lexiconsDir).filter((n) => statSync(join(lexiconsDir, n)).isDirectory()).length;
 
 const pillars = [
-	{ title: 'Plain TypeScript, no DSL and no YAML', href: '/concepts/typescript-as-data/' },
+	{ title: 'Plain TypeScript, checked in your editor', href: '/concepts/typescript-as-data/' },
 	{ title: 'Lint rules that check meaning', href: '/guide/linting/' },
-	{ title: 'CloudFormation, Kubernetes YAML and more', href: '/serialization/output-formats/' },
+	{ title: 'Works with Terraform, OpenTofu and Pulumi', href: '/concepts/comparison/' },
 	{ title: `${lexiconCount} lexicons, and a contract for your own`, href: '/lexicons/overview/' },
 	{ title: 'Observe, reconcile or apply, per environment', href: '/concepts/lifecycle-models/' },
 	{ title: 'Ops with gates and rollback', href: '/guide/ops/' },

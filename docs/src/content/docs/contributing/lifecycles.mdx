@@ -48,10 +48,10 @@ The second door is the **direction**, not a finished feature. The architecture i
 - **Ownership markers** — provider-native tags/labels ([ownership marking](/chant/configuration/config-file/#ownership)) let any lifecycle answer "is this mine?" from the resource itself.
 - **A runtime boundary** — `chant run --on <lexicon>` is a clean interface between *declaring* a workflow and choosing what hosts it.
 
-The intended end state is that a vendor's whole product becomes **one plugin under chant's pure synthesis** — you don't rip out Terraform, you plug it in as a lifecycle backend, and chant owns the socket.
+The intended end state is that an existing tool can run as a lifecycle backend next to chant's synthesis, so a Terraform estate keeps running as it does.
 
 <Aside type="caution">
-To be precise about what exists: the primitives above ship, and Door 1 (lifecycles as Ops) is real and complete. A drop-in "plug in Terraform as a backend" is **not** a shipped capability — it is the architectural direction these seams point toward. Treat this section as a design contract, not a feature list.
+To be precise: the primitives above ship, and Door 1 (lifecycles as Ops) is real and complete. The terraform lexicon runs terraform, tofu and choudoufu roots through Ops, and the pulumi lexicon reads stock and plunge members. A general backend contract for other tools is still direction. Treat this section as a design contract, not a feature list.
 </Aside>
 
 ## Why two doors, not one

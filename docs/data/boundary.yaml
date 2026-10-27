@@ -477,7 +477,7 @@ rows:
     concept: "workspace promote"
     owner: "chant"
     carrier: "chant workspace promote"
-    what: "Moves a member one rung up the kind ladder (other or terraform, then choudoufu, then chant) in a worktree and gates the patch on its digest (#3178). `--all` adopts every terraform member into choudoufu in waves, a canary first, one gate per root (#4461)."
+    what: "Changes a member's kind (terraform to choudoufu, or choudoufu or other to chant) in a worktree and gates the patch on its digest (#3178). `--all` adopts every terraform member into choudoufu in waves, a canary first, one gate per root (#4461)."
   - category: "command"
     concept: "workspace adopt-lineage"
     owner: "chant"

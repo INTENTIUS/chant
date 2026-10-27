@@ -1,5 +1,5 @@
 ---
-title: What chant is
+title: Overview
 description: The compiler at chant's core and the deploy steps built on it, in one picture. The other concept pages cover each part in depth.
 diataxis: explanation
 ---
@@ -16,7 +16,7 @@ Every value in the output traces to a line of source. The build makes no network
 
 ## The lifecycle is yours
 
-Most infrastructure tools ship the compiler and the deployment lifecycle as one product, so you take both or neither. chant separates them:
+In chant the compiler and the deploy steps are separate:
 
 > Pluggable lexicons in, pluggable lifecycles out, deterministic synthesis in the middle.
 
@@ -49,7 +49,7 @@ Every stage after Emit is optional. Hand a chant-built artifact to any deploymen
 
 ## Where chant draws the line
 
-chant hosts no authoritative state file, and the build path itself never touches your cloud. You bring the apply step, such as `kubectl` or a CI pipeline, or chant runs it for you through an Op. Keeping it out of the build keeps the core small and the output portable. [How chant compares](/chant/concepts/comparison/) works through the trade-offs against Terraform, CDK, and Pulumi.
+The build path never touches your cloud. You bring the apply step, such as `kubectl` or a CI pipeline, or chant runs it for you through an Op. Keeping it out of the build keeps the core small and the output portable. [Works with](/chant/concepts/comparison/) covers Terraform, OpenTofu and Pulumi estates in a chant workspace, and the choudoufu and plunge engines.
 
 ## The subset has a specification
 
