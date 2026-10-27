@@ -81,6 +81,18 @@ Roots written this way run as a [`chant components fan-out`](/chant/cli/componen
 
 A live choudoufu root in a gated wave goes through choudoufu's own set commands, which need choudoufu v0.22.0 or later. `plan` runs `choudoufu live-plan-set -json` over the root, and the wave's gate binds the plan that document holds. `run` passes the document and choudoufu's set digest to `choudoufu live-wave-apply`, which plans the root again and applies nothing when the plan moved. The fan-out then exits 4, the moved code in chant's exit-code table, as it does when choudoufu's `apply` refuses a wave's plan file. choudoufu's resume file is kept in the fan-out's `--resume` record, so the next attempt hands it back to choudoufu. The files live under `.chant/choudoufu-waves/<root>/`. A choudoufu root whose step passes `vars`, or whose entry in `terraform.roots` has var files or backend config, keeps the `plan -out` and `apply` path, since `live-plan-set` takes none of them. An older choudoufu is refused on the wave path only; plain terraform and tofu roots do not need it.
 
+### In op waves
+
+An op wave's spec can plan and apply each root through `terraform-apply` with `"step": { "kind": "terraform-apply", "root": "{target}" }` ([op waves](/chant/guide/op-waves/#plan-and-apply-through-a-capability), [#4545](https://github.com/INTENTIUS/chant/issues/4545)), so a product's wave jobs run the binary in chant. The step takes three more inputs, which came from terragucci's wave jobs:
+
+| Input | Effect |
+|---|---|
+| `lockTimeout` | `plan` and `apply` pass `-lock-timeout` with this duration, `5m` unless set. `false` passes none. A job whose `TF_CLI_ARGS` or `TF_CLI_ARGS_<command>` already sets `-lock-timeout` keeps its own. |
+| `cone` | A revision such as `origin/main`. A choudoufu root under a `live` block, other than an estate file, plans the cone of the change since it with `plan -cone`. The cone's targets join the plan digest, so an approval of one cone counts for no other, and such a root plans with `plan` instead of `live-plan-set`. Every other root plans in full. |
+| `reads` | `[{ var, root, output }]`: a variable set from another root's output, the way an Atmos stack's `!terraform.state` sets one. `root` names the `terraform.roots` entry whose state holds it and `output` is the output's name followed by keys into its value. Each upstream's `output -json` is read once and passed as `-var`, under the step's own `vars`. An upstream with no such output yet makes the root a hole that names it, so the root is never planned on a stand-in. |
+
+Every plan also writes its `show -json` beside the plan file, as `<plan file>.json`, and names it in the artifact as `planJson`. A wave's cost hold prices that file. `terraformCostHold({ approveAbove })` from `@intentius/chant-lexicon-terraform/cost-hold` gives the infracost command for it.
+
 ### In a composed run
 
 A composed run is described in [Composed runs](/chant/guide/composed-runs/); this is Terraform's way of doing it. Set `terraform.compose`:

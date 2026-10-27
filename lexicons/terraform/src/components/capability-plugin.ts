@@ -100,9 +100,31 @@
  * read the way `plan` reads a root's (`terraformPlannedOutputs`). The member
  * is not a `terraform.roots` entry of the reading project; its directory
  * comes from the workspace declaration.
+ *
+ * ## Op waves (#4545)
+ *
+ * The step is what an op wave's `step` names to plan and apply each root
+ * through chant (`chant run wave`), so terragucci's waves and plywood's run
+ * the engine in chant. Three inputs come from terragucci's wave callbacks:
+ *
+ * - `lockTimeout` (default `5m`, `false` for none): `plan` and `apply` wait
+ *   that long for another run's state lock, unless `TF_CLI_ARGS` sets
+ *   `-lock-timeout` already (`../lock-timeout.ts`).
+ * - `cone`: a revision. A live choudoufu root plans the cone of the change
+ *   since it (`plan -cone`, `../cone.ts`), and the cone's targets join the
+ *   plan digest, so an approval of one cone counts for no other. Such a root
+ *   plans with `plan`, never as a one-root set.
+ * - `reads`: vars read from another root's outputs, Atmos's
+ *   `!terraform.state` (`../state-reads.ts`). An upstream with no such output
+ *   yet makes the member a hole naming it, so the root is never planned on a
+ *   stand-in.
+ *
+ * Every plan also writes its `show -json` beside the plan file and names it
+ * as `artifact.planJson`, the document a wave's cost hold prices
+ * (`../cost-hold.ts`).
  */
 
-import { rmSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { Capability, DeployContext, CapabilityPlan, PlannedOutputs } from "@intentius/chant/components/capability";
 import { loadChantConfigUpward } from "@intentius/chant/config";
@@ -136,6 +158,9 @@ import { declaredVariables } from "../compose/root";
 import { terraformComposeGroup } from "./compose-group";
 import { markPlaceholderDriven, placeholderVars, waitingHole } from "./placeholder-preview";
 import { terraformReleaseInputs } from "./release-inputs";
+import { DEFAULT_LOCK_TIMEOUT, isLockTimeout } from "../lock-timeout";
+import { conePlanDigest, type PlanCone } from "../cone";
+import { fillStateReads, stateReadsProblems, waitingReadsReason, type TerraformStateRead } from "../state-reads";
 
 /** The `terraform-apply` step's input. */
 export interface TerraformApplyStepInput {
@@ -147,6 +172,12 @@ export interface TerraformApplyStepInput {
   cwd?: string;
   /** The root's files from here instead of its entry's `dir` (#4542): a promote under a release sets it to the recorded copy. */
   dir?: string;
+  /** How long `plan` and `apply` wait for a state lock (#4545). Default `"5m"`; `false` passes no flag. */
+  lockTimeout?: string | false;
+  /** choudoufu live roots (#4545): plan the cone of the change since this revision. */
+  cone?: string;
+  /** Vars read from other roots' outputs (#4545), Atmos's `!terraform.state`. The step's `vars` win over them. */
+  reads?: TerraformStateRead[];
 }
 
 /** What `terraform-apply` returns. `outputs` is what a dependent's `stackOutput()` reads. */
@@ -163,6 +194,48 @@ export interface TerraformApplyStepOutput {
 interface PlannedRoot {
   planFile: string;
   planDigest: string;
+  /** The plan's `show -json`, beside the plan file (#4545), for a cost hold to price. */
+  planJson?: string;
+  /** The cone the plan covered, when asked for one (#4545). */
+  cone?: PlanCone;
+}
+
+/** The lock timeout a step's plan and apply pass (#4545). */
+function lockTimeoutOf(input: TerraformApplyStepInput): { lockTimeout?: string } {
+  if (input.lockTimeout === false) return {};
+  const value = input.lockTimeout ?? DEFAULT_LOCK_TIMEOUT;
+  if (!isLockTimeout(value)) throw new Error(`terraform-apply: root "${input.root}": lockTimeout "${String(value)}" is not a duration such as "5m"`);
+  return { lockTimeout: value };
+}
+
+/**
+ * The step's input with its `reads` filled (#4545): each upstream's outputs
+ * read once, the values under the step's own `vars`. `waiting` when an
+ * upstream has no such output yet. Throws when a state cannot be read.
+ */
+async function withReads(input: TerraformApplyStepInput): Promise<{ input: TerraformApplyStepInput } | { waiting: string; upstreams: string[] }> {
+  const reads = input.reads ?? [];
+  if (reads.length === 0) return { input };
+  const problems = stateReadsProblems(reads);
+  if (problems.length > 0) throw new Error(`terraform-apply: root "${input.root}": ${problems.join("; ")}`);
+  const filled = await fillStateReads(reads, async (root) => {
+    const at = { root, ...(input.cwd ? { cwd: input.cwd } : {}) };
+    await terraformInit(at);
+    return terraformOutputs(at);
+  });
+  if (filled.errors.length > 0) throw new Error(`terraform-apply: root "${input.root}": ${filled.errors.join("; ")}`);
+  if (filled.waiting.length > 0) return { waiting: waitingReadsReason(filled.waiting), upstreams: [...new Set(filled.waiting.map((w) => w.read.root))].sort() };
+  return { input: { ...input, vars: { ...filled.vars, ...(input.vars ?? {}) } } };
+}
+
+/** A root whose reads wait on an upstream (#4545): a hole naming it, and a digest over the root and those upstreams. */
+function waitingOnReads(ctx: DeployContext, input: TerraformApplyStepInput, waiting: { waiting: string; upstreams: string[] }): CapabilityPlan {
+  const planDigest = computePlanDigest("terraform-apply-reads-waiting", { env: ctx.env, root: input.root, upstreams: waiting.upstreams });
+  const changeSet: ChangeSetPart = {
+    member: { member: input.root, lexicon: "terraform", planner: "chant", status: "planned", planDigest, holes: [{ address: input.root, type: "terraform_root", reason: waiting.waiting }] },
+    entries: [],
+  };
+  return { member: input.root, planDigest, changeSet };
 }
 
 const rootArgs = (input: TerraformApplyStepInput) => ({ root: input.root, ...(input.cwd ? { cwd: input.cwd } : {}), ...(input.dir ? { dir: input.dir } : {}) });
@@ -183,12 +256,27 @@ async function planRoot(input: TerraformApplyStepInput, targets?: string[]): Pro
     ...rootArgs(input),
     ...(input.vars ? { vars: input.vars } : {}),
     ...(targets && targets.length > 0 ? { targets } : {}),
+    ...lockTimeoutOf(input),
+    ...(input.cone && !(targets && targets.length > 0) ? { cone: input.cone } : {}),
     text: false,
   });
+  // #4545: the cone's targets join the digest, so an approval of this cone counts for no other.
+  const planDigest = conePlanDigest(planned.planDigest, planned.cone);
+  const changeSet = planned.changeSet && planDigest !== planned.planDigest ? { ...planned.changeSet, member: { ...planned.changeSet.member, planDigest } } : planned.changeSet;
+  // #4545: the plan document beside the plan file, which a wave's cost hold prices.
+  const planJson = join(planned.dir, `${planned.planFile}.json`);
+  let wrote = true;
+  try {
+    writeFileSync(planJson, JSON.stringify(planned.json));
+  } catch {
+    wrote = false;
+  }
   return {
     planFile: planned.planFile,
-    planDigest: planned.planDigest,
-    ...(planned.changeSet ? { changeSet: planned.changeSet } : {}),
+    planDigest,
+    ...(wrote ? { planJson } : {}),
+    ...(planned.cone ? { cone: planned.cone } : {}),
+    ...(changeSet ? { changeSet } : {}),
     json: planned.json,
   };
 }
@@ -426,6 +514,13 @@ async function runChoudoufuWave(
   return { root: input.root, planDigest: planned.planDigest, fromWavePlan: true, outputs };
 }
 
+/** The input a `run` that plans for itself plans with (#4545): its reads filled, or an error naming the upstream to apply first. */
+async function readsForRun(input: TerraformApplyStepInput): Promise<TerraformApplyStepInput> {
+  const read = await withReads(input);
+  if ("waiting" in read) throw new Error(`terraform-apply: root "${input.root}": ${read.waiting}`);
+  return read.input;
+}
+
 export const terraformApplyCapability: Capability<TerraformApplyStepInput, TerraformApplyStepOutput> = {
   kind: "terraform-apply",
   // A root's apply has no undo short of applying the previous configuration,
@@ -433,13 +528,17 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
   rollbackPolicy: "needs-opt-out",
   // #4300: `--target` passes through as `-target`, and the saved plan holds those addresses alone.
   targets: "accept",
-  async plan(ctx: DeployContext, input: TerraformApplyStepInput): Promise<CapabilityPlan> {
-    requireRoot(input);
+  async plan(ctx: DeployContext, given: TerraformApplyStepInput): Promise<CapabilityPlan> {
+    requireRoot(given);
+    // #4545: a root reading an upstream's output that is not there yet is a hole naming the upstream.
+    const read = await withReads(given);
+    if ("waiting" in read) return waitingOnReads(ctx, given, read);
+    const { input } = read;
     const unresolved = [...(ctx.unresolvedInputs ?? [])].sort();
     const targets = ctx.targets && ctx.targets.length > 0 ? ctx.targets : undefined;
     if (unresolved.length > 0) return previewRoot(ctx, input, unresolved, targets);
-    // A targeted root plans with `plan -target`, never as a choudoufu one-root set.
-    const wave = targets ? { wave: false } : await choudoufuWaveRoot({ ...rootArgs(input), ...(input.vars ? { vars: input.vars } : {}) });
+    // A targeted root plans with `plan -target`, and a cone plan with `plan -cone` (#4545), never as a choudoufu one-root set.
+    const wave = targets || input.cone ? { wave: false } : await choudoufuWaveRoot({ ...rootArgs(input), ...(input.vars ? { vars: input.vars } : {}) });
     if (wave.wave) {
       const set = await choudoufuPlanSet(rootArgs(input));
       const artifact: ChoudoufuWavePlannedRoot = {
@@ -484,10 +583,10 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
     if (isShapeArtifact(fromWave)) {
       // A root previewed with stand-ins (#4463): plan it now with the real
       // values, and apply that plan only when it is within the preview's shape.
-      const fresh = await planRoot(input, ctx.targets);
+      const fresh = await planRoot(await readsForRun(input), ctx.targets);
       const differences = planShapeDifferences(fromWave.shape, terraformPlanShape(fresh.json, input.root));
       if (differences.length > 0) throw new PlanShapeMovedError(input.root, differences);
-      const applied = await terraformApply({ ...rootArgs(input), planFile: fresh.planFile });
+      const applied = await terraformApply({ ...rootArgs(input), planFile: fresh.planFile, ...lockTimeoutOf(input) });
       if (!applied.applied) {
         throw new Error(`terraform-apply: root "${input.root}" refused the plan it was given (${applied.refused ?? "refused"}). ${applied.refusal ?? ""}`);
       }
@@ -496,8 +595,8 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
     }
     const planned: PlannedRoot = isPlannedRoot(fromWave)
       ? fromWave
-      : await planRoot(input, ctx.targets).then(({ planFile, planDigest }) => ({ planFile, planDigest }));
-    const applied = await terraformApply({ ...rootArgs(input), planFile: planned.planFile });
+      : await planRoot(await readsForRun(input), ctx.targets).then(({ planFile, planDigest }) => ({ planFile, planDigest }));
+    const applied = await terraformApply({ ...rootArgs(input), planFile: planned.planFile, ...lockTimeoutOf(input) });
     if (!applied.applied) {
       const message =
         `terraform-apply: root "${input.root}" refused the plan it was given (${applied.refused ?? "refused"}). ` +
