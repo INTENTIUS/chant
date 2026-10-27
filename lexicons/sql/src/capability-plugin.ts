@@ -43,6 +43,9 @@
  * `legacyExit: true` for one, and its moved plan is read from the line it
  * prints.
  *
+ * Both kinds take the `target` lock grain, the environment, and refuse
+ * `resource` by name (`./lock-grain.ts`, #4571).
+ *
  * The planning commands run without the writer's variables; only the apply
  * gets them (`readerEnv` in `./yodel-run.ts`).
  *
@@ -72,6 +75,7 @@ import { readChangeSetPartFile, type ChangeSetHole, type ChangeSetPart } from "@
 import { CHANT_EXIT, type ChantExitCode } from "@intentius/chant/exit-codes";
 import { sqlDeclarativePlanPart, type SqlDeclarativeChange } from "./change-set";
 import { yodelExitOf } from "./exit-codes";
+import { sqlDefaultLockGrain, sqlLockGrainRefusal } from "./lock-grain";
 import {
   defaultYodelRunner,
   readerEnv,
@@ -233,6 +237,9 @@ export function createSqlMigrateCapability(deps: SqlMigrateDeps = {}): Capabilit
     // A migration has no undo short of a revert, which is a change of its own (`yodel revert`).
     rollbackPolicy: "needs-opt-out",
     targets: { refuse: "sql-migrate applies an environment's pending migrations in chain order, so it cannot narrow to some objects" },
+    // #4571: the environment's history is the grain; resource is refused by name (./lock-grain.ts).
+    defaultLockGrain: () => sqlDefaultLockGrain(),
+    lockGrainRefusal: (_input, grain) => sqlLockGrainRefusal("sql-migrate", grain),
     async plan(_ctx: DeployContext, input: SqlMigrateStepInput): Promise<CapabilityPlan> {
       requireEnvironment(input);
       const cwd = cwdOf();
@@ -456,6 +463,9 @@ export function createSqlApplyCapability(deps: SqlApplyDeps = {}): Capability<Sq
     // An apply has no undo short of applying the previous build, which is a change of its own.
     rollbackPolicy: "needs-opt-out",
     targets: { refuse: "sql-apply applies a whole build, since its objects depend on each other in creation order" },
+    // #4571: the environment is the grain, as for sql-migrate.
+    defaultLockGrain: () => sqlDefaultLockGrain(),
+    lockGrainRefusal: (_input, grain) => sqlLockGrainRefusal("sql-apply", grain),
     async plan(_ctx: DeployContext, input: SqlApplyStepInput): Promise<CapabilityPlan> {
       requireApplyInput(input);
       const { part, dialect } = await planDeclarative(plan, input);

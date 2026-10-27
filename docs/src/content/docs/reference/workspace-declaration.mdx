@@ -483,6 +483,7 @@ Absent, each member takes its lexicon's default:
 | plunge | `resource` | `urn <urn>` for each changed resource, the root stack's URN included when its outputs change; `object <id>` for update, replace and delete; a single `stack <project>/<stack>` row in place of the URN rows when a component may register resources only at apply |
 | Terraform, tofu, Terragrunt | `target` | none: `resource` is refused by name |
 | stock Pulumi | `target` | none: `resource` is refused by name, since the backend's stack lock orders updates |
+| SQL (`sql-migrate`, `sql-apply`) | `target` | none: `resource` is refused by name, since an environment's migrations apply in chain order under its own lock, a KeeperMap row on ClickHouse and a session advisory lock on Postgres |
 
 One file per gate holds the rows for the whole workspace: `_locks/rows/<gate>.json` at the root of `chant/lifecycle`, never under a member's prefix. Two members that act on one object therefore meet on its row. The format is the one terragucci's apply rows used. A take is all or nothing. When the forge says a holder's run finished, its rows are taken over, and so are the rows of a lease older than `CHANT_LOCK_STALE` seconds (default 7200; terragucci's `TG_LOCK_STALE` is read as an alias). A `stack` row and every `urn` row of that stack hold each other. When another run holds a row, the apply stops with exit 5, `held`, and names that run.
 

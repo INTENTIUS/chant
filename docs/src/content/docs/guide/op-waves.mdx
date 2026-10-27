@@ -257,6 +257,8 @@ chant runs `yodel` with three argv and refuses any other: `yodel plan <env> --pa
 
 `sql-apply` takes `environment` and `build`, the `chant build` output. It plans the build against the environment's server as `chant sql plan` does. The apply goes through `clickhouseApply` or `postgresApply` by the build's dialect. A change the applier refuses fails the plan and names the migration Op to run instead. A ClickHouse rebuild is one such change. The apply plans again and sends nothing when the digest moved.
 
+Both kinds take the `target` lock grain, the environment ([#4571](https://github.com/INTENTIUS/chant/issues/4571)). SQL Yodeler already keeps two applies of one environment apart with its own lock, a KeeperMap row on ClickHouse and a session advisory lock on Postgres. A member that sets `ci.lockGrain: resource` is refused by name, since a migration chain applies in order.
+
 ## Runs found at plan time
 
 Some tools find a wave's runs at run time. A Terragrunt repo's waves are its units' dependency layers from `terragrunt find`, and a repo can grow a layer after its pipeline was rendered. Mark those waves `discover`, and the last one `rest`:
