@@ -204,6 +204,26 @@ export interface IREdge {
    * edges between the same pair that differ only in grain are two edges.
    */
   grain?: EdgeGrain;
+  /**
+   * Where the edge came from (behold#1025): `declared` (an AttrRef or an
+   * EntityReference), `observed` (the engine or the cloud reported it), or
+   * `derived` (a reference catalog rule matched an attribute value to another
+   * node, #4522). Absent reads as `declared` on a source IR and `observed` on
+   * a live one, which is what both meant before the field.
+   */
+  origin?: "declared" | "observed" | "derived";
+  /**
+   * With `origin: "derived"`: the rule that produced the edge,
+   * `<lexicon>:<from kind>:<path>` for a catalog rule and
+   * `<lexicon>:<from kind>:tag:<key>` for a typed tag rule.
+   */
+  rule?: string;
+  /**
+   * `reference` (the default when absent) or `containment`: the holder sits
+   * inside the target (a subnet in its VPC). A containment edge is also in
+   * `groups.byContainer`, so a renderer that draws boxes can skip the line.
+   */
+  relation?: "reference" | "containment";
 }
 
 /**
