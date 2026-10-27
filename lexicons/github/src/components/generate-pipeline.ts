@@ -63,7 +63,7 @@ import { CI_IMAGE, ciJobName, dirnameOf, fillCommand, GITHUB_JOB_TOKEN, GITHUB_R
 import { CHECKOUT_TOKEN_ENV, checkoutScript, dropForgeTokens, handoverOutputs, handoverTrap, takeOverScript } from "@intentius/chant/ci-handover";
 import { OIDC_REQUEST_VARS, TRADE_SPEC_ENV, tradeLine, type CloudTradeSpec } from "@intentius/chant/ci-identity";
 import {
-  APPLY_COMMENT,
+  prApplyComment,
   GREEN_TAG_PATTERN,
   GREEN_TICK_WORKFLOW,
   PR_APPLY_RECORD,
@@ -88,6 +88,7 @@ import {
   PR_ENV_POST_JOB,
 } from "@intentius/chant/components/pr-pipeline";
 import { memberRepoPath } from "@intentius/chant/lexicon";
+import { productStatusContext, resolveProductWords } from "@intentius/chant/ci-product-words";
 import type {
   ComponentPipelineJob as GeneratedJob,
   ComponentPipelineOptions as GenerateGithubOptions,
@@ -295,7 +296,7 @@ function prLoopGithubDoc(
   const steps = (job: typeof plan, name: string): Array<Record<string, unknown>> => [
     ...(identity ? [tradeStep(job.jobName === "record" ? identity.plan : identity.apply, job.jobName === "record" ? "plan" : "apply")] : []),
     checkoutStep(true),
-    ...runSteps(prLoopSetup(image)),
+    ...runSteps(prLoopSetup(image, loop.engineSetup)),
     ...runSteps(beforeScript),
     ...(job.build ? [{ name: "Build the templates", run: job.build[0] }, { name: "Lint the project", run: job.build[1] }] : []),
     ...(job.jobName === "apply" ? [restoreRecord(job.wave)] : []),
@@ -328,7 +329,7 @@ function prLoopGithubDoc(
     "github.event_name == 'issue_comment'",
     // Forgejo's payload says so with is_pull (terragucci comment-apply.ts:129 at e6cb431).
     forgejo ? "(github.event.issue.pull_request || github.event.is_pull)" : "github.event.issue.pull_request",
-    `startsWith(github.event.comment.body, '${APPLY_COMMENT}')`,
+    `startsWith(github.event.comment.body, '${prApplyComment(loop)}')`,
     ...(forgejo ? [] : ["contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.comment.author_association)"]),
   ].join(" && ");
   const applyJob = (job: typeof plan, needs: string[], name: string) => ({
@@ -370,7 +371,7 @@ function prLoopGithubDoc(
       env: { [CHECKOUT_TOKEN_ENV]: GITHUB_JOB_TOKEN },
       run: checkoutScript(true, true),
     },
-    ...[...prLoopSetup(image), ...beforeScript].map((line) => headStep(line)),
+    ...[...prLoopSetup(image, loop.engineSetup), ...beforeScript].map((line) => headStep(line)),
     ...(plan.build ? [headStep(plan.build[0]!, "Build the templates"), headStep(plan.build[1]!, "Lint the project")] : []),
     // The job's last step: a step after it would start beside whatever the change's code left running.
     {
@@ -380,14 +381,14 @@ function prLoopGithubDoc(
       run: [drop, ...handoverTrap(PR_LOOP_REPORT_DIR, forgeName), ...(plan.checkout ?? []), ...(plan.setup ?? []), plan.run.command, ...extraScript].join("\n"),
     },
   ];
-  const post = prLoopPostJob(forgeName, env, member?.name);
+  const post = prLoopPostJob(forgeName, env, member?.name, loop.words ? resolveProductWords(loop.words) : undefined);
   const noteSteps: Array<Record<string, unknown>> = [
     // The target branch's commit: the chant this job runs is the target branch's, and none of the change's code is here.
     { name: "Check out the target branch's commit", uses: CHECKOUT, with: { ref: "${{ github.event.pull_request.base.sha }}" } },
     ...runSteps(beforeScript),
     { name: "Take the plan report from the plan job", run: takeOverScript("plan", PR_LOOP_REPORT_DIR, forgeName) },
     { name: "Keep the plan report", if: "always()", uses: UPLOAD_ARTIFACT, with: { name: reportName(plan), path: reportPath, "if-no-files-found": "ignore", "include-hidden-files": true } },
-    { name: "Post the plan note and chant/plan", if: "always()", env: post.env, run: post.command },
+    { name: `Post the plan note and ${productStatusContext(resolveProductWords(loop.words), "plan")}`, if: "always()", env: post.env, run: post.command },
   ];
   // #4298: with a pull request environment the pull_request trigger fires on close too, and the plan skips that event.
   const prEnv = loop.prEnvironment ? prEnvGithubJobs(loop.forge ?? "github", image, beforeScript, extraScript, loop, member) : undefined;
@@ -547,7 +548,7 @@ function prEnvGithubJobs(
         env: { [CHECKOUT_TOKEN_ENV]: GITHUB_JOB_TOKEN },
         run: checkoutScript(true, true),
       },
-      ...[...prLoopSetup(image), ...beforeScript].map((line) => headStep(line)),
+      ...[...prLoopSetup(image, loop.engineSetup), ...beforeScript].map((line) => headStep(line)),
       ...(up.build ? [headStep(up.build[0]!, "Build the templates", { CHANT_ENV: up.env.CHANT_ENV! }), headStep(up.build[1]!, "Lint the project")] : []),
       // The job's last step: a step after it would start beside whatever the change's code left running.
       {
@@ -583,7 +584,7 @@ function prEnvGithubJobs(
     steps: [
       ...tradeStep,
       { uses: CHECKOUT, with: { "fetch-depth": 0, ...(ref ? { ref } : {}) } },
-      ...runSteps(prLoopSetup(image)),
+      ...runSteps(prLoopSetup(image, loop.engineSetup)),
       ...runSteps(beforeScript),
       { name, env: j.env, run: j.command },
       ...runSteps(extraScript),

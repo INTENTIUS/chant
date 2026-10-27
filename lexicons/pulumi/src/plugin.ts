@@ -34,6 +34,7 @@
  *   member's export, two more skills, `detectTemplate` for a stack export or
  *   a `Pulumi.yaml`, and three `chant init` templates (`./init-templates.ts`).
  */
+import { pulumiCiSetup } from "./ci-setup";
 import { basename, isAbsolute, resolve } from "node:path";
 import type { InitTemplateSet, LexiconPlugin } from "@intentius/chant/lexicon";
 import type { CompletionContext, HoverContext } from "@intentius/chant/lsp/types";
@@ -74,6 +75,11 @@ export const pulumiPlugin: LexiconPlugin = {
   name: "pulumi",
   serializer: pulumiSerializer,
   configSchema: pulumiConfigSchema,
+
+  // #4550: the engine install lines for the pull request pipeline's default image.
+  ciSetup(ctx: { dir: string }): string[] {
+    return pulumiCiSetup(ctx);
+  },
 
   // A pulumi workspace member's reader project (#3179): its checked-in stack
   // export, never the program. See ./workspace-member.ts. `chant workspace

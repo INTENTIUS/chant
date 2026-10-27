@@ -34,6 +34,7 @@
 
 import type { ChangeSetDocument } from "../change-set";
 import { persistChangeSet } from "../lifecycle/change-set-store";
+import { activeProductWords, approveLine, isChantWords } from "../ci-product-words";
 import {
   appendGateResolution,
   appendPendingGate,
@@ -1053,6 +1054,9 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
  * it.
  */
 export function approveCommand(op: string, gate: string, environment?: string, planDigest?: string, sealed = false): string {
+  // #4550: under a product's words (its bin set them), the product's approve line.
+  const words = activeProductWords();
+  if (!isChantWords(words)) return approveLine(words, { op, gate, digest: planDigest ?? "", sign: sealed, ...(environment !== undefined ? { target: environment } : {}) });
   return `chant approve ${op} ${gate}` +
     (environment === undefined ? "" : ` --env ${environment}`) +
     (planDigest === undefined ? "" : ` --plan ${planDigest}`) +

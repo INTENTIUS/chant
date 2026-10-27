@@ -1,4 +1,5 @@
 import type { AuditEntitiesInput, LexiconPlugin } from "@intentius/chant/lexicon";
+import { terraformCiSetup } from "./ci-setup";
 import { terraformBehaviourKinds } from "./behaviour/kinds";
 import type { CompletionContext, HoverContext } from "@intentius/chant/lsp/types";
 import type { Declarable } from "@intentius/chant/declarable";
@@ -83,6 +84,11 @@ export const terraformPlugin: LexiconPlugin = {
   referenceCatalog: TERRAFORM_REFERENCE_CATALOG,
   serializer: terraformSerializer,
   configSchema: terraformConfigSchema,
+
+  // #4550: the engine install lines for the pull request pipeline's default image.
+  ciSetup(ctx: { dir: string }): string[] {
+    return terraformCiSetup(ctx);
+  },
 
   // ── Required lifecycle methods ────────────────────────────────
 

@@ -14,6 +14,7 @@ import type { ArtifactIntegrity } from "./lexicon-integrity";
 import type { GatedWavePipelineOptions } from "./components/gated-wave-pipeline";
 import type { PrLoopPipelineOptions } from "./components/pr-pipeline";
 import type { OpWaveJob, OpWavesSpec } from "./op/op-waves";
+import type { ChangeSetDocument } from "./change-set";
 import type { OkfFile } from "./okf";
 import type { CompletionContext, CompletionItem, HoverContext, HoverInfo, CodeActionContext, CodeAction } from "./lsp/types";
 import type { McpToolContribution, McpResourceContribution } from "./mcp/types";
@@ -1444,6 +1445,27 @@ export interface LexiconPlugin {
    * lexicons implement this.
    */
   generateOpWavesPipeline?(spec: OpWavesSpec, options: OpWavesPipelineOptions): OpWavesPipelineResult;
+
+  /**
+   * The shell lines that install this lexicon's engine into the default CI
+   * image (#4550): OpenTofu, and choudoufu where a member uses it, for
+   * terraform; Pulumi, or plunge where the member's engine is plunge, for
+   * pulumi. The pull request pipeline joins the lines of the lexicons its
+   * project lists, in place of installing OpenTofu for everyone. A caller's
+   * own image turns them off. `dir` is the project the pipeline is for.
+   * Return none when the project needs nothing from this lexicon.
+   */
+  ciSetup?(ctx: { dir: string }): string[];
+
+  /**
+   * A section of the pull request note for one member (#4573): rows a
+   * resource table does not carry, rendered from the member's own part of
+   * the change set, such as a SQL member's statements with their class, the
+   * policy outcome per rule and its override line. chant places it under the
+   * member table, in a collapsed block, and leaves it out when the note would
+   * pass the forge's comment limit. Undefined for a member it has nothing for.
+   */
+  prNoteDetail?(input: { member: string; changeSet: ChangeSetDocument; stage: "plan" | "apply" | "record" }): { title?: string; lines: string[] } | undefined | Promise<{ title?: string; lines: string[] } | undefined>;
 
   /**
    * Host Op runs — the seam `chant run <op> --on <this lexicon>` dispatches to

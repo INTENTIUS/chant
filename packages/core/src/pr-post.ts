@@ -28,6 +28,7 @@ import { join } from "node:path";
 import { prNoteMarker, prStatusContext, prStatusDescription, prStatusState, renderPrNote, type PrOverdue, type PrReport } from "./pr-loop";
 import { forgePrincipalOf, type PrForge } from "./pr-forge";
 import { GITHUB_COMMENT_LIMIT, GITLAB_NOTE_LIMIT } from "./plan-summary";
+import { activeProductWords, type CiProductWords } from "./ci-product-words";
 
 /** The plan report's file under the report directory. */
 export const PR_PLAN_REPORT_FILE = "pr-plan.json";
@@ -156,13 +157,31 @@ export async function postPlanReport(input: PlanPostInput): Promise<PlanPostResu
   }
   if (note !== undefined) {
     try {
-      await input.forge.upsertNote(input.pr, prNoteMarker(input.env, input.member), note);
+      await upsertPlanNote(input.forge, input.pr, prNoteMarker(input.env, input.member), note);
     } catch (err) {
       warnings.push(`could not post the note on #${input.pr}: ${err instanceof Error ? err.message : String(err)}`);
       note = undefined;
     }
   }
   return { state, description: cut(description), noted: note !== undefined, ...(refused ? { refused } : {}), warnings };
+}
+
+/**
+ * Post the plan note, or update it. Under a product's words that carry
+ * `adoptMarkers` (#4550), a pull request with no chant note yet but a note the
+ * product posted before it moved onto chant's pipeline gets that note
+ * updated, with the old marker kept at its end, so the pull request keeps one
+ * note across the switch.
+ */
+export async function upsertPlanNote(forge: Pick<PrForge, "upsertNote" | "findComment" | "upsertComment">, pr: number, marker: string, note: string, words: CiProductWords = activeProductWords()): Promise<void> {
+  if (words.adoptMarkers.length > 0 && !(await forge.findComment(pr, marker))) {
+    for (const old of words.adoptMarkers) {
+      if (!(await forge.findComment(pr, old, { match: "anywhere" }))) continue;
+      await forge.upsertComment(pr, old, `${note}${note.endsWith("\n") ? "" : "\n"}${old}\n`, { match: "anywhere" });
+      return;
+    }
+  }
+  await forge.upsertNote(pr, marker, note);
 }
 
 /** What {@link postOpenPlanReports} posts for. */

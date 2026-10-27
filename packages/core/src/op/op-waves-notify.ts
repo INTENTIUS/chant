@@ -16,6 +16,7 @@
 
 import { makeNotifyEvent, notifyConfigProblem, sendNotify, type NotifyDelivery, type NotifyFields, type SendNotifyOptions } from "../notify";
 import { CHANT_EXIT } from "../exit-codes";
+import { approveCommand } from "./gate";
 import type { OpWavesSpec } from "./op-waves";
 import type { RunOpWaveResult } from "./op-waves-run";
 
@@ -50,7 +51,7 @@ export function opWaveNotifyFields(spec: OpWavesSpec, k: number, outcome: OpWave
       status: "waiting",
       summary: `${label} waits for an approval`,
       targets: decision.members.map((m) => m.member),
-      approve: { command: decision.approve ?? `chant approve ${decision.op} ${decision.gate} --plan ${decision.digest}`, ...review },
+      approve: { command: decision.approve ?? approveCommand(decision.op, decision.gate, undefined, decision.digest), ...review },
       ...(decision.heldOn
         ? { reason: `held on ${decision.heldOn.op} / ${decision.heldOn.gate} by ${decision.heldOn.hook}` }
         : decision.heldBy?.length

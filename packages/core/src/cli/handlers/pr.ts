@@ -111,6 +111,7 @@ import {
   type PrApproval,
   type PrBeforeMerge,
   type PrMember,
+  type PrMemberDetail,
   type PrPolicyReport,
   type PrReport,
   type PrWave,
@@ -119,6 +120,8 @@ import {
 } from "../../pr-loop";
 import { FORGE_KINDS, forgeFromEnv, forgePrincipalOf, type ForgeKind, type PrForge } from "../../pr-forge";
 import { GITHUB_COMMENT_LIMIT, GITLAB_NOTE_LIMIT } from "../../plan-summary";
+import { upsertPlanNote } from "../../pr-post";
+import { activeProductWords, productContext } from "../../ci-product-words";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import { formatError, formatInfo, formatSuccess, formatWarning } from "../format";
 import { reportUninstalledDependencies } from "../dependencies";
@@ -541,7 +544,7 @@ async function publish(forge: PrForge | undefined, report: PrReport, note: strin
   // member would put a line on every pull request for each member it skips.
   if (report.member && report.status === "nothing" && !report.overdue?.length && !report.migrations?.length) return;
   try {
-    await forge.upsertNote(report.pr, prNoteMarker(report.env, report.member), note);
+    await upsertPlanNote(forge, report.pr, prNoteMarker(report.env, report.member), note);
   } catch (err) {
     console.error(formatWarning({ message: `could not post the note on #${report.pr}: ${err instanceof Error ? err.message : String(err)}` }));
   }
@@ -568,6 +571,9 @@ async function finish(ctx: CommandContext, p: Prepared, report: PrReport, upload
   if (p.routedAway && report.status === "nothing" && !report.message) report = { ...report, message: p.routedAway };
   if (p.policyReport) report = { ...report, policy: p.policyReport };
   if (p.beforeMerge) report = { ...report, beforeMerge: p.beforeMerge };
+  // #4573: each member's section its lexicon renders from its own part of the change set.
+  const details = await memberDetails(p, report);
+  if (details.length > 0) report = { ...report, details };
   const note = noteFor(report, p.forge);
   writeOutputs(ctx, report, note, upload);
   if (!ctx.args.noStatus) await publish(p.forge, report, note);
@@ -771,6 +777,35 @@ async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> 
   }
   if (judged.stop) console.error(formatWarning({ message: judged.stop.message }));
   return status === "plan-failed" ? CHANT_EXIT.failed : judged.stop ? judged.stop.code : CHANT_EXIT.done;
+}
+
+/**
+ * The member detail sections (#4573): each lexicon the project lists that
+ * renders one (`prNoteDetail`) gets each member's part of the change set. A
+ * lexicon that cannot load, or throws, leaves the note as it was.
+ */
+async function memberDetails(p: Prepared, report: PrReport): Promise<PrMemberDetail[]> {
+  if (report.changeSet.members.length === 0) return [];
+  const { loadPlugin } = await import("../plugins");
+  const out: PrMemberDetail[] = [];
+  for (const name of lexiconNames(p.config.lexicons ?? [])) {
+    let plugin: Awaited<ReturnType<typeof loadPlugin>>;
+    try {
+      plugin = await loadPlugin(name);
+    } catch {
+      continue;
+    }
+    if (!plugin.prNoteDetail) continue;
+    for (const member of report.changeSet.members) {
+      try {
+        const detail = await plugin.prNoteDetail({ member: member.member, changeSet: report.changeSet, stage: report.stage });
+        if (detail && detail.lines.length > 0) out.push({ member: member.member, ...(detail.title ? { title: detail.title } : {}), lines: detail.lines });
+      } catch (err) {
+        console.error(formatWarning({ message: `the ${name} lexicon could not render ${member.member}'s detail: ${err instanceof Error ? err.message : String(err)}` }));
+      }
+    }
+  }
+  return out;
 }
 
 /**
@@ -1166,7 +1201,8 @@ async function beforeMergeChecks(ctx: CommandContext): Promise<PrBeforeMerge | n
     );
   }
   // The apply's own statuses never hold it back: chant ci run's, and the report's.
-  const ignore = [`chant/${gate}`, `chant/${PR_APPLY_GATE}`, prStatusContext("apply", member)];
+  // #4550: under a product's words its own prefix too.
+  const ignore = [...new Set([productContext(activeProductWords(), gate), productContext(activeProductWords(), PR_APPLY_GATE), `chant/${gate}`, `chant/${PR_APPLY_GATE}`, prStatusContext("apply", member)])];
   // No `only`: ws-106 gives the declaration no way to leave a check out, so all four are asked (#4336).
   const requires = await checkPrRequires(forge, args.pr, head, { ignore });
   for (const r of requires) console.error(formatInfo(`${r.name}: ${r.passed ? "passed" : r.pending ? "pending" : "unmet"}, ${r.reason}`));

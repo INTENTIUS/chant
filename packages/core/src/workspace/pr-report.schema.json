@@ -278,6 +278,20 @@
         }
       }
     },
+    "details": {
+      "type": "array",
+      "description": "Added within contract version 1 by #4573, written by the chant that carries CI_PRODUCT_FLOOR. A section per member that its lexicon rendered from its own part of the change set, as markdown lines the note places under the member table. Absent when no lexicon rendered one.",
+      "items": {
+        "type": "object",
+        "required": ["member", "lines"],
+        "additionalProperties": false,
+        "properties": {
+          "member": { "type": "string" },
+          "title": { "type": "string", "description": "The section's summary line. Absent: the member's name." },
+          "lines": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
     "fallbacks": {
       "type": "array",
       "description": "Added within contract version 1 by #4446, written by chant 0.124.54 and newer. Each component in the change whose capability declares planGroup and runGroup, that a read joins to another such component of its kind, and that ended in no group, sorted by component. Absent when none.",

@@ -52,7 +52,7 @@ The spec is a JSON file committed to the repository. Its jobs read it at run tim
 | `waves[].discover` | The runs come from `planWave` at plan time, not the spec ([Runs found at plan time](#runs-found-at-plan-time)) |
 | `waves[].rest` | On the last, discovering wave: once it applies, the job goes on through every wave the plan found |
 | `waves[].gate` | `always`, `on-destructive` or `never`. Default `always` |
-| `waves[].approval` | `ledger`, `pr-review` or `sealed`: which approvals count ([Which approvals count](#which-approvals-count)). Default `ledger` |
+| `waves[].approval` | `ledger`, `pr-review`, `sealed` or `pull-request`: which approvals count ([Which approvals count](#which-approvals-count)). Default `ledger` |
 | `waves[].point` | This wave's own decision point, in place of the spec's |
 | `waves[].shares` | Split a wide wave into a deciding job and this many share jobs |
 | `waves[].hooks` | This wave's own hooks, run after the spec's |
@@ -534,6 +534,7 @@ A wave's `approval` decides which approvals of its digest let it apply. Every mo
 | `ledger` (default) | any `chant approve` of the digest on `chant/lifecycle` | someone who can push to `chant/lifecycle` approved these plans, in whatever name they wrote |
 | `pr-review` | the merged pull request's approving review of its head, by a writer other than its author, when the head planned this digest; and any `chant approve` of the digest, as under `ledger` | a writer other than the author approved the change whose plans these are |
 | `sealed` | only a `chant approve --sign` whose seal verifies against the signers file at the base commit (`.chant/allowed_signers`, or the file `.chant/trust.json` names), for the approver it names | a listed person approved these plans |
+| `pull-request` | an approval of the pull request's gate (`approvals.pullRequest.gate` at base, under the spec's op) whose change set covers every member of the plans file's `changeSet`; and any `chant approve` of the digest, as under `ledger` | the reviewer approved the pull request's plan, and the wave plans only what it showed ([#4550](https://github.com/INTENTIUS/chant/issues/4550)) |
 
 ### `pr-review`
 

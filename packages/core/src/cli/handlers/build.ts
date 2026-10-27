@@ -10,6 +10,33 @@ import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import { findWorkspaceRoot } from "../../project-root";
 import { resolvePromotionSource } from "../../components/promote-order";
 import type { PrLoopPipelineOptions } from "../../components/pr-pipeline";
+import { activeProductWords, isChantWords } from "../../ci-product-words";
+
+/**
+ * The engine install lines the project's lexicons give (#4550,
+ * `LexiconPlugin.ciSetup`), for the default image. A lexicon that cannot
+ * load gives none; with none at all the pipeline keeps installing OpenTofu.
+ */
+async function engineSetupFor(path: string): Promise<string[]> {
+  const { loadPlugin, resolveProjectLexicons } = await import("../plugins");
+  const { engineSetupLines } = await import("../../components/pr-pipeline");
+  let names: string[];
+  try {
+    names = await resolveProjectLexicons(path);
+  } catch {
+    return [];
+  }
+  const lines: Array<string[] | undefined> = [];
+  for (const name of names) {
+    try {
+      const plugin = await loadPlugin(name);
+      lines.push(plugin.ciSetup?.({ dir: path }));
+    } catch {
+      // not installed: it gives no lines
+    }
+  }
+  return engineSetupLines(lines);
+}
 
 /**
  * The `prLoop` generator option from `--pr-loop`'s flags (#3183): the gate
@@ -26,7 +53,10 @@ import type { PrLoopPipelineOptions } from "../../components/pr-pipeline";
  * pull request before it merges, beside the record job.
  */
 function prLoopOption(args: CommandContext["args"], reportUrl: string | undefined, requireReview = false, requireRunnerStart = false): PrLoopPipelineOptions {
+  // #4550: a product's bin set its words; the generated jobs answer its comment and run its bin.
+  const words = activeProductWords();
   return {
+    ...(isChantWords(words) ? {} : { words }),
     ...(args.gate ? { gate: args.gate } : {}),
     ...(args.branch ? { branch: args.branch } : {}),
     ...(args.eventsJson ? { events: true } : {}),
@@ -177,6 +207,9 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
     locks = (await import("../../workspace/ci-locks")).ciLocksAt(resolve(args.path)) === "plan" ? "plan" : undefined;
   }
 
+  // #4550: the engine lines of the project's lexicons, in place of OpenTofu for every project.
+  const engineSetup = args.prLoop && !args.image ? await engineSetupFor(resolve(args.path)) : [];
+
   // Which lexicons support generate mode is a property of the loaded lexicon
   // plugins (those implementing `generateComponentPipeline`, #688), not a
   // hard-coded core list — `generateComponentsPipeline` returns a descriptive
@@ -198,7 +231,7 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
         : {}),
       // #3183: a plan job per pull request and an apply job per merge.
       // #4292: on the branch ci.branches routes the member to, when it routes it.
-      ...(args.prLoop ? { prLoop: { ...prLoopOption(args, reportUrl, reviewRules, isolatedRunners), ...(plan?.branch ? { branch: plan.branch } : {}), ...(identity ? { identity } : {}), ...(prEnvIdentity ? { prEnvIdentity } : {}), ...(locks ? { locks } : {}) } } : {}),
+      ...(args.prLoop ? { prLoop: { ...prLoopOption(args, reportUrl, reviewRules, isolatedRunners), ...(plan?.branch ? { branch: plan.branch } : {}), ...(identity ? { identity } : {}), ...(prEnvIdentity ? { prEnvIdentity } : {}), ...(locks ? { locks } : {}), ...(engineSetup.length > 0 ? { engineSetup } : {}) } } : {}),
       // #4002: the job image and the lines that install what it lacks, chant itself included.
       ...(args.image ? { image: args.image } : {}),
       ...(args.beforeScript?.length ? { beforeScript: args.beforeScript } : {}),

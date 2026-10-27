@@ -397,7 +397,7 @@ function prLoopGitlabPipeline(
   // The command runs through chant ci run (#4156), which writes the job's run record, signed when the CHANT_RUNNER_KEY variable is set.
   // #4221: a wave job hands the commit it applies to the next wave as GREEN_SHA, through a dotenv report.
   const handOff = (job: typeof plan): string[] => (job.wave ? [`echo "GREEN_SHA=$GREEN_SHA" > "$CI_PROJECT_DIR/${WAVE_GREEN_DOTENV}"`] : []);
-  const script = (job: typeof plan): string[] => [...prLoopSetup(image), ...enter, ...beforeScript, ...(job.checkout ?? []), ...handOff(job), ...(job.setup ?? []), ...(job.build ?? []), job.run.command, ...extraScript];
+  const script = (job: typeof plan): string[] => [...prLoopSetup(image, loop.engineSetup), ...enter, ...beforeScript, ...(job.checkout ?? []), ...handOff(job), ...(job.setup ?? []), ...(job.build ?? []), job.run.command, ...extraScript];
   // #4296: each job trades its OIDC token for its cloud identity before anything else in its script.
   const identity = loop.identity;
   const trading = (spec: CloudTradeSpec | undefined): Record<string, unknown> =>
@@ -408,7 +408,7 @@ function prLoopGitlabPipeline(
   const prEnv = loop.prEnvironment ? prEnvGitlabJobs(image, beforeScript, extraScript, enter, loop, member, named, onMergeRequest) : undefined;
   const stages = ["plan", PR_PLAN_NOTE_JOB, ...applies.map((a) => a.stage), ...(prEnv ? [PR_ENV_STAGE, PR_ENV_POST_STAGE] : [])];
   const noteJob = named(PR_PLAN_NOTE_JOB);
-  const post = prLoopPostJob("gitlab", env, member?.name);
+  const post = prLoopPostJob("gitlab", env, member?.name, loop.words ? { ...(loop.words.bin ? { bin: loop.words.bin } : {}) } : undefined);
   const doc: Record<string, unknown> = {
     // Included files merge their top-level keys, so a member's file carries
     // the rules every member shares and no name: two names would collide.
@@ -511,7 +511,7 @@ function prEnvGitlabJobs(
   const reportPath = member ? memberRepoPath(member, PR_ENV_REPORT_DIR) : PR_ENV_REPORT_DIR;
   const environment = "pr-$CI_MERGE_REQUEST_IID";
   const group = `chant-pr-env-${member ? `${member.name}-` : ""}$CI_MERGE_REQUEST_IID`;
-  const script = (j: typeof up): string[] => [...prLoopSetup(image), ...enter, ...beforeScript, ...(j.build ?? []), j.command, ...extraScript];
+  const script = (j: typeof up): string[] => [...prLoopSetup(image, loop.engineSetup), ...enter, ...beforeScript, ...(j.build ?? []), j.command, ...extraScript];
   const artifacts = { when: "always", paths: [reportPath] };
   // #4330: env-up, env-down and env-sweep trade the job's OIDC token for the pull request environments' identity first.
   const identity = loop.prEnvIdentity;
