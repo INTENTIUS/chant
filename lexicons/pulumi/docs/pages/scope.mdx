@@ -1,0 +1,38 @@
+---
+title: What the lexicon leaves out
+description: Why the Pulumi lexicon declares no resource types, imports no templates and contributes no MCP tools or resources
+diataxis: explanation
+---
+
+Most chant lexicons declare a platform's resources in TypeScript and
+serialize them. The Pulumi lexicon does not, and several parts of the lexicon
+contract follow from that. `chant dev check-lexicon` reports two of them as
+tier-2 gaps, and they stay gaps on purpose.
+
+## No resource types
+
+A Pulumi program is already code. Declaring its resources again in chant
+would give two sources for one stack, so the lexicon reads the program's
+results instead: the checked-in export for the graph, and `pulumi preview`,
+`pulumi refresh --preview-only` and `pulumi stack output` for the change set,
+drift and outputs. The serializer writes `{}` on every build, the generated
+registry is empty, and `generate`, `validate` and `coverage` do nothing.
+
+## No template import
+
+`detectTemplate` recognises a `pulumi stack export` document and a parsed
+`Pulumi.yaml`, so `chant import` names this lexicon for either file. There is
+no `templateParser`, so the import then stops with "does not support template
+import". Converting a stack to chant declarations would be the second source
+the previous section rules out.
+
+## No MCP tools or resources
+
+The lexicon has no `mcpTools()` and no `mcpResources()`, as in the terraform
+lexicon (#2220, #4494). The two contributions other lexicons make are a diff
+tool and a catalog resource. The diff tool compares one build's serializer
+output with the last, and this serializer writes `{}` on every build, so
+every diff would be empty. The catalog resource serves the generated resource
+registry, and this lexicon generates none. Declaring either one returning
+nothing would pass the check while giving an agent nothing. A member's
+preview, drift and graph already reach MCP through core's workspace tools.

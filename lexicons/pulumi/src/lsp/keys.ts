@@ -27,6 +27,9 @@ const RUNTIMES = [
   { value: "yaml", doc: "Pulumi YAML: resources, variables and outputs written in this file" },
 ];
 
+/** The `runtime` names a `Pulumi.yaml` takes, for `detectTemplate` (#4510). */
+export const PULUMI_RUNTIME_NAMES: readonly string[] = RUNTIMES.map((r) => r.value);
+
 /** `Pulumi.yaml`, keyed by dotted path from the document root. */
 export const PROJECT_KEYS: Record<string, KeyDoc[]> = {
   "": [

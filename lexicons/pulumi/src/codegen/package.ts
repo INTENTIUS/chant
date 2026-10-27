@@ -8,7 +8,7 @@
  * same way). What the bundle does carry is the manifest, with the
  * `chantVersion` a consumer checks, and the lint and post-synth rule sources
  * under `dist/rules/`, which the docs pipeline reads for the rules page, and
- * the `chant-pulumi` skill (#4494).
+ * the skills under `src/skills/` (#4494, #4510).
  */
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
