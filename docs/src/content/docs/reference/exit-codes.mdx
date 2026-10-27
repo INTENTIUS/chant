@@ -50,6 +50,17 @@ The pulumi lexicon maps Pulumi and plunge codes (`pulumiExitOf` in `@intentius/c
 
 A Pulumi older than its exit-code taxonomy exits 1 for everything, which maps to 1.
 
+## Commands with outcomes of their own
+
+Three commands report outcomes beyond a plan or an apply, and each maps them onto the table.
+
+| Command and outcome | Code |
+|---|---|
+| `chant workspace records --require attested`, a record printed is not attested | 3 |
+| `chant workspace work claim`, `renew` or `release`, lease held by another worker or won by another writer (`lease-held`, `lease-race`, `lease-push-rejected`) | 5 |
+| `chant workspace work`, `lease-not-held` or `lease-token-mismatch` | 1 |
+| `chant audit`, no audit lexicon installed | 1 |
+
 ## Changes from earlier releases
 
-Before this table, a moved plan exited 3 outside op waves; it now exits 4, apart from a gate's 3. A held lock exited 3 as well and is now 5. A policy denial exited 3 at apply and 1 at plan, and is now 7 at both. `chant lifecycle drift` refuses a read with 1 in place of 3; its `{"refused": ...}` line on stdout is unchanged, and `chant workspace drift` reads that line from a member on either version. An error a lexicon throws with `exitCode: 3` still reads as a moved plan for one more release.
+Before this table, a moved plan exited 3 outside op waves; it now exits 4, apart from a gate's 3. A held lock exited 3 as well and is now 5. A policy denial exited 3 at apply and 1 at plan, and is now 7 at both. `chant lifecycle drift` refuses a read with 1 in place of 3; its `{"refused": ...}` line on stdout is unchanged, and `chant workspace drift` reads that line from a member on either version. An error a lexicon throws with `exitCode: 3` still reads as a moved plan for one more release. The three commands in the commands table above each used 2 for their own outcome: records for an unattested record, work for a refused lease and audit for a missing lexicon. Drift owns 2 now.
