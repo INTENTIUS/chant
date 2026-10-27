@@ -33,6 +33,7 @@ import { warnOnLegacyDigests, withoutReadFlags, type LegacyDigestFlag } from "./
 import { appendReleaseRecordLine, readReleaseLedgerLines, listLedgerEnvironments as gitListLedgerEnvironments, type LedgerLocation } from "./git";
 import { parseReleaseLedger, validateReleaseRecord } from "./release-read";
 import type { GateResolutionRecord } from "./gate-ledger";
+import { NEXT_RELEASE } from "../release-floors";
 
 // The pure readers live apart, so a bundle can import them without git (#3865).
 export { validateReleaseRecord, parseReleaseLedger, releaseLedgerLines, readReleaseRecords, listReleaseEnvironmentsOn } from "./release-read";
@@ -74,6 +75,13 @@ export const RUN_ORIGIN_CHANT_FLOOR = "0.124.30";
 
 /** The first chant that writes `runOrigin.jobId` and `runOrigin.attempt`, for a forge job that ran `chant ci run` (#4156). */
 export const RUN_ORIGIN_JOB_FLOOR = "0.124.32";
+
+/**
+ * The first chant that writes and reads `releaseVersion` on a release record
+ * (#4595). A record from an older chant has none, and a reader lists it by
+ * digest.
+ */
+export const RELEASE_VERSION_FLOOR = NEXT_RELEASE;
 
 /**
  * The gate resolution that admitted a deploy (#4020): the gate's address in the
@@ -260,6 +268,16 @@ export interface ReleaseRecord {
    * ({@link isApplyRecord}).
    */
   digestKind?: ReleaseDigestKind;
+  /**
+   * Optional: the version the publish gave this release (#4595), such as a
+   * module's `1.4.0` or a package's `2.0.0-rc.1`, when the component has
+   * versions of its own. `version` is taken by the record's schema version,
+   * so the field has this name. Written from {@link RELEASE_VERSION_FLOOR};
+   * absent on older records and on deploys that name no version. The
+   * release catalog (./release-catalog.ts) lists a version by it, and a
+   * record without one by its digest.
+   */
+  releaseVersion?: string;
 }
 
 /** What a release record's `digest` names when it is not an artifact digest (#4274). */
@@ -400,6 +418,8 @@ export async function appendReleaseRecord(
   opts?: { cwd?: string },
 ): Promise<{ commit: string; record: ReleaseRecord }> {
   const missing = validateReleaseRecord(input);
+  // #4595: a version, when given, is a non-empty string, so a reader never sees `""` or a number.
+  if (input.releaseVersion !== undefined && (typeof input.releaseVersion !== "string" || input.releaseVersion.length === 0)) missing.push("releaseVersion");
   if (missing.length > 0) throw new InvalidReleaseRecordError(missing);
 
   // `flags` are read-side only (#2514); a record passed back in never persists them.

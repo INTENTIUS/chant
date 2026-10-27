@@ -95,6 +95,9 @@ const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: str
   { file: "docs/src/content/docs/reference/workspace-declaration.mdx", text: "`ci.lockGrain` needs a `minReader` of `{v}` or newer.", count: 1, floor: "CI_LOCK_GRAIN_FLOOR" },
   { file: "packages/core/src/workspace/pr-report.schema.json", text: "Added within contract version 1 by #4552, written by chant {v} and newer.", count: 1, floor: "PR_REPORT_LOCK_TARGETS_FLOOR" },
   { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "| `pr-report` | `lockTargets` | {v} |", count: 1, floor: "PR_REPORT_LOCK_TARGETS_FLOOR" },
+  { file: "packages/core/src/workspace/release-catalog.schema.json", text: "Written by chant {v} and newer (RELEASE_CATALOG_FLOOR).", count: 1, floor: "RELEASE_CATALOG_FLOOR" },
+  { file: "docs/src/content/docs/reference/release-catalog.mdx", text: "Both need chant {v} or newer (`RELEASE_CATALOG_FLOOR`).", count: 1, floor: "RELEASE_CATALOG_FLOOR" },
+  { file: "docs/src/content/docs/reference/release-catalog.mdx", text: "chant {v} and newer write and read it (`RELEASE_VERSION_FLOOR`).", count: 1, floor: "RELEASE_VERSION_FLOOR" },
 ];
 
 interface Args {
