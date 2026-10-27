@@ -76,6 +76,19 @@ export type IdentityCloud = (typeof IDENTITY_CLOUDS)[number];
 /** The first chant that reads `ci.identity.cloud.pulumi` (#4549): a declaration that sets it needs this `minReader`. */
 export const PULUMI_CLOUD_IDENTITY_FLOOR = NEXT_RELEASE;
 
+/**
+ * The first chant that reads `ci.identity.cloud.azure.database` (#4572): the
+ * trade also asks Entra for a token Azure Database for PostgreSQL accepts.
+ * A declaration that sets it needs this `minReader`.
+ */
+export const AZURE_DATABASE_TOKEN_FLOOR = NEXT_RELEASE;
+
+/** The Entra scope of Azure Database for PostgreSQL's sign-in tokens (#4572). */
+export const AZURE_DATABASE_SCOPE = "https://ossrdbms-aad.database.windows.net/.default";
+
+/** The variable the trade sets to the database token with `azure.database` (#4572); the sql lexicon's `entra` token source reads it. */
+export const AZURE_DATABASE_TOKEN_ENV = "AZURE_DATABASE_ACCESS_TOKEN";
+
 /** One rule: the environments, members and targets it covers, and their two identities. */
 export interface CloudIdentityRule {
   /** Environment-name globs. Absent: every environment. */
@@ -128,6 +141,13 @@ export interface AzureCloudIdentity {
   audience?: string;
   /** The Entra authority host, for an emulator. Default `https://login.microsoftonline.com`. */
   authority?: string;
+  /**
+   * Also trade for a database token (#4572): a second client credentials
+   * grant per identity, for {@link AZURE_DATABASE_SCOPE}, set as
+   * {@link AZURE_DATABASE_TOKEN_ENV}. The sql lexicon's `entra` token source
+   * signs in to Azure Database for PostgreSQL with it. Default false.
+   */
+  database?: boolean;
   rules: CloudIdentityRule[];
 }
 
@@ -164,7 +184,7 @@ export interface CloudIdentityDeclaration {
 export interface CloudTradeSpec {
   aws?: { role?: string; targets?: Array<{ targets: string[]; role: string }>; region: string; audience: string; endpoint?: string };
   gcp?: { serviceAccount?: string; targets?: Array<{ targets: string[]; serviceAccount: string }>; provider: string; audience: string; stsEndpoint?: string; iamEndpoint?: string };
-  azure?: { clientId?: string; targets?: Array<{ targets: string[]; clientId: string }>; tenantId: string; audience: string; subscriptionId?: string; authority?: string };
+  azure?: { clientId?: string; targets?: Array<{ targets: string[]; clientId: string }>; tenantId: string; audience: string; subscriptionId?: string; authority?: string; database?: boolean };
   /** Pulumi Cloud (#4549): `token` is the identity, such as `team:deployers`. */
   pulumi?: { token?: string; targets?: Array<{ targets: string[]; token: string }>; organization: string; audience: string; apiUrl?: string };
 }
@@ -267,7 +287,7 @@ export function ruleFor(rules: readonly CloudIdentityRule[], env: string, member
 const providerPath = (p: string): string => p.replace(/^(https:)?\/\/iam\.googleapis\.com\//, "");
 
 /** Where each cloud trades, the same for every identity of the cloud. */
-function cloudPlace(decl: CloudIdentityDeclaration, cloud: IdentityCloud): Record<string, string> {
+function cloudPlace(decl: CloudIdentityDeclaration, cloud: IdentityCloud): Record<string, string | boolean> {
   if (cloud === "aws") {
     const a = decl.aws!;
     return { region: a.region ?? "us-east-1", audience: a.audience ?? "sts.amazonaws.com", ...(a.endpoint ? { endpoint: a.endpoint } : {}) };
@@ -292,6 +312,7 @@ function cloudPlace(decl: CloudIdentityDeclaration, cloud: IdentityCloud): Recor
     audience: z.audience ?? "api://AzureADTokenExchange",
     ...(z.subscriptionId ? { subscriptionId: z.subscriptionId } : {}),
     ...(z.authority ? { authority: z.authority } : {}),
+    ...(z.database ? { database: true } : {}),
   };
 }
 
@@ -542,7 +563,7 @@ export const OIDC_REQUEST_VARS = ["ACTIONS_ID_TOKEN_REQUEST_TOKEN", "ACTIONS_ID_
 export const TRADED_VARS: Record<IdentityCloud, readonly string[]> = {
   aws: ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_REGION", "AWS_DEFAULT_REGION"],
   gcp: ["GOOGLE_OAUTH_ACCESS_TOKEN", "CLOUDSDK_AUTH_ACCESS_TOKEN"],
-  azure: ["AZURE_ACCESS_TOKEN", "AZURE_CLIENT_ID", "AZURE_TENANT_ID", "ARM_CLIENT_ID", "ARM_TENANT_ID", "AZURE_SUBSCRIPTION_ID", "ARM_SUBSCRIPTION_ID"],
+  azure: ["AZURE_ACCESS_TOKEN", "AZURE_CLIENT_ID", "AZURE_TENANT_ID", "ARM_CLIENT_ID", "ARM_TENANT_ID", "AZURE_SUBSCRIPTION_ID", "ARM_SUBSCRIPTION_ID", AZURE_DATABASE_TOKEN_ENV],
   pulumi: ["PULUMI_ACCESS_TOKEN", "PULUMI_BACKEND_URL"],
 };
 
@@ -625,7 +646,9 @@ export const TRADE_JS = [
   'for(const cid of ids("azure")){',
   'const at=json(await post(host+"/"+encodeURIComponent(z.tenantId)+"/oauth2/v2.0/token",{"content-type":"application/x-www-form-urlencoded"},new URLSearchParams({client_id:cid,scope:"https://management.azure.com/.default",grant_type:"client_credentials",client_assertion_type:"urn:ietf:params:oauth:client-assertion-type:jwt-bearer",client_assertion:tok}).toString()),"Entra").access_token;',
   'if(!clean(at))throw new Error("Entra gave no token for "+cid);',
-  "by.azure[cid]={AZURE_ACCESS_TOKEN:at,AZURE_CLIENT_ID:cid,AZURE_TENANT_ID:z.tenantId,ARM_CLIENT_ID:cid,ARM_TENANT_ID:z.tenantId,...(z.subscriptionId?{AZURE_SUBSCRIPTION_ID:z.subscriptionId,ARM_SUBSCRIPTION_ID:z.subscriptionId}:{})};secrets.push(at);said.push(cid)}",
+  // #4572: with azure.database, a second grant for Azure Database for PostgreSQL's scope.
+  `let db;if(z.database){db=json(await post(host+"/"+encodeURIComponent(z.tenantId)+"/oauth2/v2.0/token",{"content-type":"application/x-www-form-urlencoded"},new URLSearchParams({client_id:cid,scope:${JSON.stringify(AZURE_DATABASE_SCOPE)},grant_type:"client_credentials",client_assertion_type:"urn:ietf:params:oauth:client-assertion-type:jwt-bearer",client_assertion:tok}).toString()),"Entra").access_token;if(!clean(db))throw new Error("Entra gave no database token for "+cid);secrets.push(db)}`,
+  `by.azure[cid]={AZURE_ACCESS_TOKEN:at,AZURE_CLIENT_ID:cid,AZURE_TENANT_ID:z.tenantId,ARM_CLIENT_ID:cid,ARM_TENANT_ID:z.tenantId,...(z.subscriptionId?{AZURE_SUBSCRIPTION_ID:z.subscriptionId,ARM_SUBSCRIPTION_ID:z.subscriptionId}:{}),...(db?{${AZURE_DATABASE_TOKEN_ENV}:db}:{})};secrets.push(at);said.push(cid)}`,
   "if(z.clientId)Object.assign(vars,by.azure[z.clientId])}",
   // #4549: Pulumi Cloud's OAuth token exchange, one access token per identity (pulumiTokenRequest).
   'if(spec.pulumi){const p=spec.pulumi;const tok=await idToken("pulumi",p.audience);by.pulumi={};',

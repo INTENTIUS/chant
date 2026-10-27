@@ -95,6 +95,8 @@ const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: str
   { file: "docs/src/content/docs/reference/workspace-declaration.mdx", text: "`ci.lockGrain` needs a `minReader` of `{v}` or newer.", count: 1, floor: "CI_LOCK_GRAIN_FLOOR" },
   { file: "packages/core/src/workspace/pr-report.schema.json", text: "Added within contract version 1 by #4552, written by chant {v} and newer.", count: 1, floor: "PR_REPORT_LOCK_TARGETS_FLOOR" },
   { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "| `pr-report` | `lockTargets` | {v} |", count: 1, floor: "PR_REPORT_LOCK_TARGETS_FLOOR" },
+  { file: "packages/core/src/workspace/declaration.schema.json", text: "Added in schema 1 by chant {v}, so a declaration that sets database sets minReader to {v} or newer.", count: 1, floor: "AZURE_DATABASE_TOKEN_FLOOR" },
+  { file: "docs/src/content/docs/guide/security-cloud-identities.mdx", text: "sets `minReader` to chant `{v}` or newer (`AZURE_DATABASE_TOKEN_FLOOR`)", count: 1, floor: "AZURE_DATABASE_TOKEN_FLOOR" },
 ];
 
 interface Args {
