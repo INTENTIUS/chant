@@ -787,9 +787,21 @@ On GitHub and Forgejo the job asks for its token at run time, with the audience 
 
 A job that applies with an identity is only as separate as the forge and the cloud make it. The forge's environment rules and protected runners decide which refs may run a group's job, and the cloud role's trust decides which token may assume it.
 
+## Stand down for a newer commit
+
+With `"standDown": true` on the spec, an apply steps aside when a newer commit on the branch will apply the same targets ([#4581](https://github.com/INTENTIUS/chant/issues/4581)). The job then applies nothing and exits 6, `superseded`.
+
+```json
+{ "name": "migrate", "op": "migrate", "standDown": true, "step": { "kind": "sql-migrate", "environment": "{target}", "spec": "yodel-waves.json" }, "waves": [...] }
+```
+
+The branch is `GITHUB_REF_NAME` on GitHub and Forgejo, `CI_COMMIT_BRANCH` on GitLab, else the checked-out branch. chant fetches its tip from `origin`. A tip that is another commit and contains this one is newer. chant then reads the spec file at that tip. The apply stands down only when that spec still runs on the branch and has a wave of this one's name listing every target here. A `discover` wave counts for any target. Anything chant cannot tell goes ahead and applies. That covers a missing branch or `origin` and a failed fetch. So does a tip that does not contain this commit, as after a force-push, or a spec at the tip that drops a target.
+
+The check comes after the wave's holds are settled and its lock grain's lease is taken, and before its approval is spent. A wave on the resource grain lets go of its rows before it exits. The job's run record has `wave.outcome` `stood-down`, with the newer commit and its branch in `wave.supersededBy`, and its status is `ok`. No notification goes out. An apply command can still write `stood-down` to `CHANT_APPLY_OUTCOME` itself. SQL Yodeler's `YODEL_STAND_DOWN` and terragucci's `newerPush` do this today, and either can leave it to chant once its chant has `OP_WAVE_STAND_DOWN_FLOOR`.
+
 ## The run record
 
-Each `chant run wave` job appends one run record to `<env>/runs__<name>.jsonl` on `chant/lifecycle`, however it ends ([#4551](https://github.com/INTENTIUS/chant/issues/4551)). The record goes under the environment the spec's `labels.Env` names, else `local`, as every Op's does. The spec's `labels` are copied onto it. The record has one phase per wave the job walked, `wave-<k>`, and one step per run target: `ok` when it applied, `fail` when it failed, and `skipped` when it moved, was blocked or waited. Its `wave` field names the spec, the wave, the job (`wave`, `decide`, `share` or `group`), the set digest, the exit code and the runs applied, failed, moved and blocked, so a deciding job and its share jobs join on `wave.digest`. `chant ledger runs --where op=<name>` lists them. `--no-record` and `CHANT_NO_RECORD` write none. `wave.targets` holds each run target whose apply the job started ([#4555](https://github.com/INTENTIUS/chant/issues/4555)). An entry keeps the start time and the duration, which is also the step's `durationMs`. It keeps the facts the capability gave too.
+Each `chant run wave` job appends one run record to `<env>/runs__<name>.jsonl` on `chant/lifecycle`, however it ends ([#4551](https://github.com/INTENTIUS/chant/issues/4551)). The record goes under the environment the spec's `labels.Env` names, else `local`, as every Op's does. The spec's `labels` are copied onto it. The record has one phase per wave the job walked, `wave-<k>`, and one step per run target: `ok` when it applied, `fail` when it failed, and `skipped` when it moved, was blocked or waited. Its `wave` field names the spec, the wave, the job (`wave`, `decide`, `share` or `group`), the set digest, the exit code and the runs applied, failed, moved and blocked, so a deciding job and its share jobs join on `wave.digest`. `chant ledger runs --where op=<name>` lists them. `--no-record` and `CHANT_NO_RECORD` write none. `wave.targets` holds each run target whose apply the job started ([#4555](https://github.com/INTENTIUS/chant/issues/4555)). An entry keeps the start time and the duration, which is also the step's `durationMs`. It keeps the facts the capability gave too. A job that stood down for a newer commit names it in `wave.supersededBy` (`branch`, `commit`).
 
 ## Traces
 
