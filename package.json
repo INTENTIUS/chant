@@ -19,6 +19,7 @@
     "generate:fold-coverage": "tsx scripts/generate-fold-coverage.ts",
     "generate:audit-rules-doc": "tsx scripts/generate-audit-rules-doc.ts",
     "generate:plan-previews": "tsx scripts/generate-plan-previews-doc.ts",
+    "generate:graph-schema": "tsx scripts/generate-graph-schema.ts",
     "generate:tsconfig-paths": "tsx scripts/tsconfig-lexicon-paths.ts",
     "sweep:prior-art": "tsx scripts/prior-art-sweep.ts",
     "typecheck": "tsx scripts/typecheck.ts",

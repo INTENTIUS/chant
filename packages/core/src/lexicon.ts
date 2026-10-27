@@ -1,4 +1,5 @@
 import type { InstanceObservation } from "./instance-nodes";
+import type { EngineFacts } from "./engine-facts";
 import type { CapabilityPack } from "./capabilities/view";
 import type { Serializer } from "./serializer";
 import type { Declarable } from "./declarable";
@@ -2500,6 +2501,14 @@ export interface ResourceMetadata {
    * a delete, and never escalates `unknown` to one.
    */
   ownership?: "owned" | "foreign" | "unknown";
+  /**
+   * What an ownership engine (choudoufu, plunge) observed about this resource
+   * (#4520, #4527), read from the engine's graph document. `buildLiveGraphIr`
+   * copies it onto the node beside `physicalId`. Never read for a decision:
+   * the change set reads {@link ownership}, and no change set, lifecycle step
+   * or Op imports `EngineFacts`. Absent unless an engine supplied it.
+   */
+  facts?: EngineFacts;
   /**
    * The stack/env identity read off the resource's own ownership marker
    * (#1222) — the tags/labels/metadata chant stamped at synthesis, read back

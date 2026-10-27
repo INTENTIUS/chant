@@ -32,6 +32,8 @@ export * from "./discovery/cache";
 export * from "./build";
 export * from "./env";
 export * from "./graph-ir";
+// Engine facts and the engine graph document (#4527): types for readers that show the graph.
+export * from "./engine-facts";
 export * from "./graph-detail";
 export * from "./graph-mermaid";
 export * from "./graph-dot";
