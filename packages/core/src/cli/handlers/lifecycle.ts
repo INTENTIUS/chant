@@ -1,5 +1,5 @@
 import { lexiconNames } from "../../lexicon-module";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { commandBuildParams } from "../build-params-cli";
 import { build } from "../../build";
 import { takeSnapshot } from "../../lifecycle/snapshot";
@@ -19,6 +19,9 @@ import {
   type ObservationBaseline,
 } from "../../lifecycle/observation-baseline";
 import { computeBuildDigest, declaredDefinitions, diffDigests } from "../../lifecycle/digest";
+import { diffDeclaredAgainstIndex, indexDriftDocument, type IndexDriftResult } from "../../lifecycle/index-drift";
+import { joinCell, parseIndexRef, readIndexRef, type IndexRead } from "../../lifecycle/index-join";
+import { CHANT_VERSION } from "../../chant-version";
 import { diffLive, diffLiveArtifacts, diffSnapshots, missingRow, type LiveDiffResult, type LiveArtifactDiffResult, type SnapshotDiffResult } from "../../lifecycle/live-diff";
 import { buildChangeSet, renderChangeSet, renderChangeSetMarkdown, gitlabMrReport, unobservedPlanNotice, type ChangeSet, type HeldEntitySet } from "../../lifecycle/change-set";
 import { mergeReceiptEntries, observedValueResolver, planReceipts, readReceiptValue, type ReceiptReading } from "../../lifecycle/receipt-plan";
@@ -346,6 +349,22 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
     });
   }
 
+  // `--index <ref>` (#4526): the observed side is an index version in the
+  // store, not a live read and not a snapshot.
+  const indexMode = args.index !== undefined;
+  if (indexMode && (args.live || (args.betweenA && args.betweenB))) {
+    console.error(formatError({
+      message: `chant lifecycle diff takes --index or ${args.live ? "--live" : "--between"}, not both`,
+      hint: "--index compares source with an index version in the store; --live reads the estate now; --between compares two snapshots",
+    }));
+    return 1;
+  }
+  const indexRef = indexMode ? parseIndexRef(String(args.index)) : undefined;
+  if (indexRef && "error" in indexRef) {
+    console.error(formatError({ message: indexRef.error, hint: indexRef.hint }));
+    return 1;
+  }
+
   // Filter serializers to target lexicon before building
   const targetSerializers = lexiconFilter
     ? plugins.filter((p) => p.name === lexiconFilter).map((p) => p.serializer)
@@ -359,6 +378,17 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
   if (!declaredParams) return 1;
   const store = await resolveSnapshotStore({ config });
   await store.fetch();
+
+  let indexRead: Extract<IndexRead, { doc: unknown }> | undefined;
+  if (indexRef && !("error" in indexRef)) {
+    const read = await readIndexRef(store, indexRef);
+    if ("error" in read) {
+      console.error(formatError({ message: read.error, ...(read.hint ? { hint: read.hint } : {}) }));
+      return 1;
+    }
+    indexRead = read;
+  }
+  const indexResults: IndexDriftResult[] = [];
 
   // One target per stack (single-stack projects: exactly one), each built from
   // its own scoped root and diffed against its own live stack name (#932).
@@ -374,7 +404,7 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
   // Accepted-deviation baseline (#1014). Read once for the whole run — it is
   // env-keyed, not stack-keyed, and every deep pass subtracts from the same
   // committed set. Absent is the normal state (nothing accepted yet).
-  const baseline = args.live ? await readObservationBaseline(environment, { config }) : null;
+  const baseline = args.live || indexRead ? await readObservationBaseline(environment, { config }) : null;
   const accepted: Record<string, DeviationToAccept[]> = {};
   // Effect receipts across every target's build (#1833) — `--update-baseline`
   // refuses to accept drift on them (the effect step is their only writer),
@@ -385,7 +415,7 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
   // Floci), so `--live` is self-sufficient even when the ambient shell never
   // exported e.g. AWS_ENDPOINT_URL. Ambient always wins when it's already set.
   // Scoped to just the live reads below — restored in `finally`.
-  const liveLexicons = args.live ? plugins.filter((p) => p.describeResources || p.listArtifacts) : [];
+  const liveLexicons = args.live && !indexRead ? plugins.filter((p) => p.describeResources || p.listArtifacts) : [];
   const endpointResult = applyLiveEndpoint(config.environments, environment, liveLexicons);
   if (endpointResult.notice) console.error(formatWarning({ message: endpointResult.notice }));
 
@@ -472,6 +502,26 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
           if (target.stack) perStackJson[target.stack] = r.byLexicon;
           else combinedLexiconsJson = r.byLexicon;
         }
+      } else if (indexRead) {
+        const r = runLifecycleDiffIndex({
+          read: indexRead,
+          lexicons: lexiconFilter ? [lexiconFilter] : builtLexicons,
+          plugins,
+          buildResult,
+          baseline,
+          member: basename(projectRoot),
+          stack: target.stack,
+          region: target.region,
+          json,
+          projectRoot,
+        });
+        indexResults.push(r);
+        for (const [lexicon, part] of Object.entries(r.byLexicon)) {
+          if (args.updateBaseline) (accepted[lexicon] ??= []).push(...deviationsToAccept(part.deep));
+        }
+        if (args.updateBaseline) {
+          for (const name of collectEffectReceipts(buildResult.entities).keys()) receiptEntities.add(name);
+        }
       } else {
         await runLifecycleDiffDigest({ environment, lexicons, buildResult, stack: target.stack, store });
       }
@@ -480,8 +530,38 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
     // `--update-baseline` (#1014): record what the deep pass just reported as
     // accepted, so it stops re-alerting. Runs before the summary lines so the
     // "no drift" verdict below still describes the run that produced it.
-    if (args.live && args.updateBaseline) {
+    if ((args.live || indexRead) && args.updateBaseline) {
       await recordAcceptedBaseline(environment, baseline, accepted, json, receiptEntities, config);
+    }
+
+    if (indexRead) {
+      // Drift records, drift document v1 (#4526).
+      if (json) console.log(JSON.stringify(indexDriftDocument(indexResults, CHANT_VERSION)));
+      else {
+        const sum = (k: keyof IndexDriftResult["counts"]) => indexResults.reduce((n, r) => n + r.counts[k], 0);
+        const ref = indexResults[0]?.ref;
+        const declaredCount = sum("declared");
+        const drift = sum("properties") + sum("pending");
+        const notObserved = sum("notObserved");
+        if (anyBuildError) {
+          // the build error is already printed
+        } else if (declaredCount === 0) {
+          console.error(formatWarning({ message: "No declared entities to compare with the index" }));
+        } else if (drift === 0) {
+          console.error(
+            notObserved > 0
+              ? formatWarning({
+                  message: `No drift detected against index ${ref} across ${sum("bound")} bound entity(ies), but ${notObserved} declared entity(ies) are not observed by it: that part of the estate is unknown, not clean`,
+                })
+              : formatSuccess(`No drift detected against index ${ref} across ${declaredCount} declared entity(ies)`),
+          );
+        } else {
+          console.error(formatWarning({
+            message: `Drift against index ${ref}: ${sum("properties")} property difference(s) on ${sum("drifted")} entity(ies), ${sum("pending")} declared entity(ies) absent from it, ${notObserved} not observed`,
+          }));
+        }
+      }
+      return anyBuildError ? 1 : 0;
     }
 
     if (args.live) {
@@ -989,6 +1069,76 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome
   }
 
   return { byLexicon, totalDrift, totalUnobserved, totalLexiconsChecked, toAccept };
+}
+
+interface IndexDiffArgs {
+  read: Extract<IndexRead, { doc: unknown }>;
+  lexicons: string[];
+  plugins: CommandContext["plugins"];
+  buildResult: BuildResult;
+  baseline: ObservationBaseline | null;
+  member: string;
+  stack?: string;
+  region?: string;
+  json: boolean;
+  projectRoot: string;
+}
+
+/**
+ * `chant lifecycle diff <env> --index <ref>` for one stack (#4526): every
+ * declared entity joined to the index version, the bound ones deep-diffed
+ * against their indexed trees, the rest reported with their join verdict.
+ * Reads nothing but the store. See ../../lifecycle/index-drift.ts.
+ */
+function runLifecycleDiffIndex(args: IndexDiffArgs): IndexDriftResult {
+  const entities = new Map<string, DeclaredEntities>();
+  for (const lexicon of args.lexicons) entities.set(lexicon, new Map());
+  for (const [name, entity] of args.buildResult.entities) {
+    const forLexicon = entities.get(entity.lexicon);
+    if (!forLexicon || !isObservableDeclarable(entity)) continue;
+    const pathOrigins = getPathProvenance(entity);
+    forLexicon.set(name, {
+      entityType: entity.entityType,
+      props: (entity.props != null ? entity.props : {}) as Record<string, unknown>,
+      ...(pathOrigins ? { pathOrigins } : {}),
+    });
+  }
+  const result = diffDeclaredAgainstIndex({
+    doc: args.read.doc,
+    version: args.read.version,
+    entities,
+    lexicons: args.plugins,
+    baseline: args.baseline,
+    member: args.member,
+    ...(args.stack ? { stack: args.stack } : {}),
+    ...(args.region ? { region: args.region } : {}),
+    chant: CHANT_VERSION,
+  });
+  if (args.json) return result;
+
+  const { stamp } = args.read.doc;
+  const by = stamp.source.version ? `${stamp.source.name} ${stamp.source.version}` : stamp.source.name;
+  if (args.stack) console.log(`\n${formatBold(`■ stack ${args.stack}`)}`);
+  console.log(`index ${result.ref}, read ${stamp.observedAt} by ${by}`);
+  const provenanceOf = (name: string): EntityProvenance | undefined => {
+    const entity = args.buildResult.entities.get(name);
+    return entity ? getProvenance(entity) : undefined;
+  };
+  for (const [lexicon, part] of Object.entries(result.byLexicon)) {
+    const rows = Object.entries(part.joins).sort(([a], [b]) => a.localeCompare(b));
+    const bound = rows.filter(([, j]) => j.verdict === "bound").length;
+    console.log(formatBold(`\n${lexicon}: ${bound}/${rows.length} declared entity(ies) bound to the index`));
+    const unbound = rows.filter(([, j]) => j.verdict !== "bound");
+    if (unbound.length > 0) {
+      console.log(formatBold("\nNOT COMPARED (the join did not bind; never diffed):"));
+      for (const [name, j] of unbound) {
+        const detail = "detail" in j ? `: ${j.detail}` : j.verdict === "absent" ? ": the index listed its type and location and does not hold it" : "";
+        console.log(`  ? ${name} ${joinCell(j) ?? ""}${detail}`);
+      }
+    }
+    renderDeepDiff(lexicon, part.deep, provenanceOf, args.projectRoot);
+  }
+  return result;
 }
 
 /**

@@ -11,6 +11,7 @@ chant lifecycle snapshot <env> [lexicon] [--deep] [--ambient] [--src <dir>]
 chant lifecycle show <env>
 chant lifecycle diff <env> [--live] [--namespace <ns>] [--update-baseline] [--src <dir>]
 chant lifecycle diff <env> --between <refA> <refB> [lexicon] [--json]
+chant lifecycle diff <env> --index <ref> [lexicon] [--update-baseline] [--json]
 chant lifecycle plan <env> [lexicon] [--json] [--owned] [--namespace <ns>] [--report gitlab-mr|markdown] [--src <dir>]
 chant lifecycle rollback [env] --to <ref> [--dry-run]
 chant lifecycle affected --base <ref> [--head <ref>] [--include-dependents] [--json]
@@ -248,6 +249,21 @@ chant lifecycle diff prod --live --update-baseline   # accept it, with a commit 
 ```
 
 Acceptance is value-bound. The accepted value stops alerting; a later change *away* from it is drift again, reported with all three axes (declared, live, and the accepted baseline). The baseline is never authority for a deploy. Deleting it brings the suppressed alerts back and changes nothing else.
+
+#### `--index <ref>`: drift without a deploy
+
+`--index` compares source with an index version in the snapshot store instead of a live read. It needs no deploy and reads no cloud, so it works for source chant never applied, such as the files `chant import --index` wrote. The ref is the one `chant search --index` takes: `<scope key>`, `<scope key>@latest` or `<scope key>@<version>`.
+
+```bash
+chant import --index cloud/aws/000000000000/0123456789ab --all --output src/
+chant lifecycle diff dev --index cloud/aws/000000000000/0123456789ab
+```
+
+Each declared entity is joined to the index the way `chant search --index` joins it, through its lexicon's index match. A bound entity's property tree is compared with its indexed resource's, normalized with the lexicon's hooks, and the observation baseline is subtracted as it is for `--live`. `--update-baseline` accepts what the run reported, value-bound as above.
+
+An entity that does not bind is reported with its join verdict and is never diffed. When the index listed its type and location and holds nothing with its identity, it is pending. When the index did not cover it, or the declaration spells no identity, or two indexed resources carry it, it is not observed. An uncovered entity is never drifted and never in sync.
+
+`--json` prints one drift document (`drift: "v1"`), a record per declared entity. Every record's read is `live-read`, observed at the index's `stamp.observedAt`, and the join verdict of an entity that did not bind is in `evidence.engineCode`.
 
 #### `--between <refA> <refB>` — two saved snapshots
 
