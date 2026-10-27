@@ -27,6 +27,7 @@ import type { LexiconConfigSchema } from "./lexicon-config";
 import type { RuleMeta } from "./audit/catalog";
 import type { ReferenceCatalog } from "./graph-refs";
 import type { ListedTypeMapping } from "./lifecycle/type-listing";
+import type { IndexIdentity } from "./lifecycle/identity-match";
 import type { IREdge, LexiconGraphEdges, LexiconUnreadSource, LexiconWorkspaceLinks, LexiconWorkspaceOutputs } from "./graph-ir";
 import type { DescribeResourcesResult, UnobservedReason } from "./observation";
 import type { ReadDriftOptions, ReadDriftResult } from "./drift-record";
@@ -2207,6 +2208,18 @@ export interface LexiconPlugin {
    * substrate as unknown-kind nodes.
    */
   listedTypes?: ListedTypeMapping;
+
+  /**
+   * How this lexicon's declared entities match indexed resources by identity
+   * (#4523): the identifier a declaration's props spell (aws: the
+   * CloudFormation `primaryIdentifier`), or why there is none (a
+   * server-assigned id). `matchDeclaredToIndex`
+   * (./lifecycle/identity-match.ts) runs it against an index version, and the
+   * identity-match edge pass (./lifecycle/derive-edges.ts) uses it to name
+   * this lexicon's indexed nodes. Data plus pure functions. Opt-in: a lexicon
+   * whose live read already matches by name or state does not need it.
+   */
+  indexIdentity?: IndexIdentity;
 
   /**
    * This lexicon's capability pack (#4375): its mapping onto the
