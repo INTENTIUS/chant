@@ -1,0 +1,23 @@
+---
+title: CI Products on chant
+description: Where a CI feature for Terraform, OpenTofu or Pulumi goes, so that terragucci and plywood share it through chant
+diataxis: explanation
+---
+
+[terragucci](https://intentius.io/terragucci/) is pull-request automation for Terraform and OpenTofu, and [plywood](https://intentius.io/plywood/) is pull-request automation for Pulumi. Both run on chant's CI runtime and share its features as far as they can ([#4530](https://github.com/INTENTIUS/chant/issues/4530)). A team on either engine gets the same gates, approvals and records, in its own engine's words.
+
+## Where a feature goes
+
+A feature goes in the first of these homes that fits it:
+
+1. chant CI core, when both products share it.
+2. chant's [terraform](/chant/lexicons/terraform/) or [pulumi](/chant/lexicons/pulumi/) lexicon, when the capability belongs to one engine. Cone plans and Atmos reads live in the terraform lexicon and stack export in the pulumi lexicon, and each lexicon parses its engine's plans and drift and runs its apply.
+3. The product. It holds its words and presets, its config defaults and init templates, and its docs.
+
+Extending chant CI is the default. A feature stays inside one product only for a reason that belongs to its audience, such as a Terraform or Pulumi convention, and never for convenience.
+
+Pulumi stacks plan and apply as components through the pulumi lexicon ([#4541](https://github.com/INTENTIUS/chant/issues/4541)), and Op waves plan and apply through chant's capabilities for both products ([#4545](https://github.com/INTENTIUS/chant/issues/4545)). The pulumi member reads its graph from the stack export the apply writes ([#4546](https://github.com/INTENTIUS/chant/issues/4546)) and follows StackReference targets between members ([#4547](https://github.com/INTENTIUS/chant/issues/4547)). The pull-request note and the exit codes are chant's too ([#4548](https://github.com/INTENTIUS/chant/issues/4548), [#4553](https://github.com/INTENTIUS/chant/issues/4553)), and so are the cloud identities ([#4549](https://github.com/INTENTIUS/chant/issues/4549)). One chant pipeline runs both products, and each product names its statuses and commands in its own words, `/terragucci apply` or `/plywood up` ([#4550](https://github.com/INTENTIUS/chant/issues/4550)).
+
+## Records
+
+Approvals and gate decisions go in the workspace [ledger](/chant/cli/ledger/), and so do overrides and the records of applies and runs ([#4551](https://github.com/INTENTIUS/chant/issues/4551)). A product keeps no record store of its own. Before a product adds storage for a record, check whether the ledger already holds it.
