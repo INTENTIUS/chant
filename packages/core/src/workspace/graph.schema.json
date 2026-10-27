@@ -569,7 +569,7 @@
         },
         "instanceRollup": {
           "type": "object",
-          "description": "Added in contract 1 by #4489, written by chant 0.124.53 and newer. On a block node whose count or for_each the declared graph cannot count: why it stays one node, with no instance nodes under it. Absent on a block that is not expanded and on one whose instances are listed. The read contract lists every form that is rolled up and its code.",
+          "description": "Added in contract 1 by #4489, written by chant 0.124.54 and newer. On a block node whose count or for_each the declared graph cannot count: why it stays one node, with no instance nodes under it. Absent on a block that is not expanded and on one whose instances are listed. The read contract lists every form that is rolled up and its code.",
           "required": ["code", "argument", "expression"],
           "properties": {
             "code": {
@@ -592,7 +592,7 @@
         },
         "facts": {
           "type": "object",
-          "description": "Added in contract 1 by #4529, written by chant 0.124.53 and newer. What an ownership engine observed about the node: ownership, markers, ownedBy, cloudIds, recordVersions and observedAt, each optional, in the shape of EngineFacts (packages/core/src/graph-schema/graph.schema.json). Set on a Pulumi member on plunge from its checked-in engine-graph.json. Never read for a decision."
+          "description": "Added in contract 1 by #4529, written by chant 0.124.54 and newer. What an ownership engine observed about the node: ownership, markers, ownedBy, cloudIds, recordVersions and observedAt, each optional, in the shape of EngineFacts (packages/core/src/graph-schema/graph.schema.json). Set on a Pulumi member on plunge from its checked-in engine-graph.json. Never read for a decision."
         },
         "nested": {
           "type": "string",
@@ -653,7 +653,7 @@
         },
         "grain": {
           "enum": ["block", "instance", "property"],
-          "description": "Added in contract 1 by #4529, written by chant 0.124.53 and newer. What the edge joins: two blocks, two instances, or a property of one instance to another. A Pulumi member's dependencies and parent edges are instance; a plunge member's property edges are property. Absent when the source does not say."
+          "description": "Added in contract 1 by #4529, written by chant 0.124.54 and newer. What the edge joins: two blocks, two instances, or a property of one instance to another. A Pulumi member's dependencies and parent edges are instance; a plunge member's property edges are property. Absent when the source does not say."
         },
         "member": {
           "type": "string"

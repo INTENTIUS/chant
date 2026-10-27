@@ -61,7 +61,7 @@
         },
         "templates": {
           "type": "array",
-          "description": "The investigation templates (#4531), the catalog's second kind of entry: each a fixed query about one resource, as a chant search path pattern or as Cypher for behold's graph pane. Added within contract 1 by #4531, written by chant 0.124.53 and newer; a document without it is from an older chant.",
+          "description": "The investigation templates (#4531), the catalog's second kind of entry: each a fixed query about one resource, as a chant search path pattern or as Cypher for behold's graph pane. Added within contract 1 by #4531, written by chant 0.124.54 and newer; a document without it is from an older chant.",
           "items": {
             "$ref": "#/$defs/template"
           }
