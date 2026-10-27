@@ -176,7 +176,11 @@ function floorFiles(rev: string | undefined): string[] {
  * NEXT_RELEASE names a version that has a release (#4501): those floors
  * shipped and must be literals before NEXT_RELEASE moves on.
  */
-export function shippedSymbolic(next: string, named: Floor[], known: Set<string>): string[] {
+export function shippedSymbolic(next: string, named: Floor[], known: Set<string>, stamp?: string): string[] {
+  // A working tree stamped with NEXT_RELEASE is release-pack.sh packing that
+  // release: its own release/npm/<next> tag already exists, but the floors
+  // ship as NEXT_RELEASE in this pack and are frozen after it reaches npm.
+  if (stamp === next) return [];
   if (!known.has(next)) return [];
   return named
     .filter((f) => f.symbolic)
@@ -312,7 +316,7 @@ function check(args: Args): number {
   const allowed = new Set([...known, ...args.release, ...(stamp ? [stamp] : [])]);
   const named = [{ name: "NEXT_RELEASE", file: CONSTANT_FILE, version: next }, ...floors(read, args.rev, next)];
   problems.push(...unreleasedFloors(named, allowed, args.npm));
-  problems.push(...shippedSymbolic(next, named, known));
+  problems.push(...shippedSymbolic(next, named, known, stamp));
 
   const where = args.rev ? `at ${args.rev}` : "in the working tree";
   if (problems.length > 0) {
