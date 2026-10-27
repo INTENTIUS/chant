@@ -36,6 +36,14 @@ export interface RefRule {
   match?: "id" | "arn" | "name" | "any";
   /** Constrain the target kind (disambiguates identifier collisions). */
   targetKind?: string;
+  /**
+   * The target kind when the rule runs over indexed nodes (#4522, ruled on
+   * INTENTIUS/behold#1023 Q4), for a rule that has no {@link targetKind}
+   * because its values are logical ids (`enrichLiveAttrs`), which are unique.
+   * Over an index the same path holds a physical value, often a name, so the
+   * target kind is what keeps it from joining whatever else has that name.
+   */
+  indexedTargetKind?: string;
   /** `reference` → an edge; `containment` → a boundary hint (#779), not an edge. */
   relation: "reference" | "containment";
   /** Edge / containment label (e.g. "in VPC", "sg", "targets"). */
@@ -61,10 +69,29 @@ export interface RefRule {
   viaAttr?: string;
 }
 
+/**
+ * A typed tag rule (#4522, ruled on INTENTIUS/behold#1023 Q5): a tag whose
+ * key names a cloud id, read off an indexed node's `tags`. Tags make edges
+ * only through these, never by matching equal tag values, because two
+ * objects can carry the same value for any reason.
+ */
+export interface TagRefRule {
+  /** Holder kind; absent for every kind of this lexicon. */
+  from?: string;
+  /** The exact tag key, or a key prefix ending in `/` whose remainder is the value. */
+  key: string;
+  /** `value`: the tag's value is the id. `key-suffix`: the key after {@link key} is (`kubernetes.io/cluster/<name>`). */
+  read: "value" | "key-suffix";
+  targetKind: string;
+  label?: string;
+}
+
 /** A lexicon's reference knowledge — its identity map and reference rules. */
 export interface ReferenceCatalog {
   identities: IdentityRule[];
   refs: RefRule[];
+  /** Typed tag rules, used over indexed nodes only (#4522). */
+  tagRefs?: TagRefRule[];
 }
 
 /** `child` is contained by `parent` (subnet ∈ VPC). For #779's boundary boxes. */
@@ -193,6 +220,9 @@ export function reconstructEdges(nodes: IRNode[], catalog: ReferenceCatalog): Re
       if (rule.from !== node.kind) continue;
       for (const value of readPath(node.attrs, rule.path)) {
         const candidates = index.get(value) ?? [];
+        // `chant graph --live` keeps its first-candidate pick: its values are
+        // logical ids and physical ids, which name one node. An index refuses
+        // the pick instead (reconstructIndexedEdges, #4522).
         const match = rule.targetKind ? candidates.find((c) => c.kind === rule.targetKind) : candidates[0];
         if (!match) {
           dangling.push({ from: node.id, path: rule.path, value, ...(rule.targetKind ? { targetKind: rule.targetKind } : {}) });
@@ -260,4 +290,217 @@ export function containmentGroups(pairs: ContainmentPair[]): Record<string, stri
   const out: Record<string, string[]> = {};
   for (const parent of [...byParent.keys()].sort()) out[parent] = [...byParent.get(parent)!].sort();
   return out;
+}
+
+// ── Indexed nodes (#4522) ────────────────────────────────────────────────────
+
+/** One lexicon's catalog, named, so a derived edge can say which rule made it. */
+export interface NamedCatalog {
+  lexicon: string;
+  catalog: ReferenceCatalog;
+}
+
+/**
+ * Where an indexed node's identifiers are unique (INTENTIUS/behold#1023 Q2):
+ * its substrate and account, subscription, project or cluster, plus its
+ * region for a regional type. A global type (IAM, Route 53, CloudFront) has
+ * no region, and is matched by account only.
+ */
+export interface IndexedNodeScope {
+  /** `<substrate>/<scopeId>`. */
+  account: string;
+  /** The region or location; undefined for a global type. */
+  region?: string;
+}
+
+/** A reference whose value matched several nodes: no edge is drawn (behold#1023 Q3). */
+export interface AmbiguousRef {
+  from: string;
+  rule: string;
+  path: string;
+  value: string;
+  /** Every node the value matched, sorted. */
+  candidates: string[];
+}
+
+/** A reference whose target is not in the index, with the rule that read it. */
+export interface IndexedDanglingRef extends DanglingRef {
+  rule: string;
+}
+
+export interface IndexedEdges {
+  /** Reference and containment edges, each `origin: "derived"` with its `rule`. */
+  edges: IREdge[];
+  containment: ContainmentPair[];
+  dangling: IndexedDanglingRef[];
+  ambiguous: AmbiguousRef[];
+}
+
+/** Values a masking or normalization pass wrote: never an identifier. */
+const PLACEHOLDER_VALUES: ReadonlySet<string> = new Set(["[REDACTED]", "<chant:unresolved>", "<masked>"]);
+
+/** The attribute a rule reads through, as a declared graph's `viaAttr` names it: `SecurityGroupIds[]` is `SecurityGroupIds`. */
+function topAttr(path: string): string {
+  const first = path.split(".")[0];
+  return first.endsWith("[]") ? first.slice(0, -2) : first;
+}
+
+/** `<lexicon>:<from kind>:<path>`, the id a derived edge carries. */
+export function refRuleId(lexicon: string, from: string, path: string): string {
+  return `${lexicon}:${from}:${path}`;
+}
+
+const byString = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
+/**
+ * Derive edges over indexed nodes (#4522) with each lexicon's catalog, under
+ * the rules ruled on INTENTIUS/behold#1023:
+ *
+ * - the join key is the scoped value: a reference on a node in region R
+ *   matches nodes of the same account in R, and global nodes of the same
+ *   account; a reference on a global node matches global nodes only;
+ * - a rule's target kind is `targetKind`, else `indexedTargetKind`;
+ * - a value that matches more than one node draws no edge and is returned in
+ *   `ambiguous` with every candidate, in place of {@link reconstructEdges}'
+ *   first-candidate pick, so two reads of one account in another node order
+ *   give the same edges;
+ * - tags make edges only through a catalog's typed `tagRefs`.
+ *
+ * A node is matched by its id, physical id, native id, cloud ids, and the
+ * catalog's identity paths. Rules apply to nodes of their own lexicon. Pure.
+ */
+export function reconstructIndexedEdges(
+  nodes: readonly IRNode[],
+  catalogs: readonly NamedCatalog[],
+  scopeOf: (node: IRNode) => IndexedNodeScope,
+): IndexedEdges {
+  const sorted = [...nodes].sort((a, b) => byString(a.id, b.id));
+  const keyOf = (scope: IndexedNodeScope, value: string) => `${scope.account}\u0000${scope.region ?? ""}\u0000${value}`;
+  const index = new Map<string, Map<string, string>>();
+  const add = (scope: IndexedNodeScope, value: string | undefined, node: IRNode): void => {
+    if (value === undefined || value === "" || PLACEHOLDER_VALUES.has(value)) return;
+    const k = keyOf(scope, value);
+    (index.get(k) ?? index.set(k, new Map()).get(k)!).set(node.id, node.kind);
+  };
+  const identities = catalogs.flatMap((c) => c.catalog.identities);
+  for (const node of sorted) {
+    const scope = scopeOf(node);
+    add(scope, node.id, node);
+    add(scope, node.physicalId, node);
+    add(scope, node.nativeId, node);
+    for (const c of node.facts?.cloudIds ?? []) add(scope, c.value, node);
+    for (const rule of identities) {
+      if (rule.kind !== node.kind) continue;
+      for (const p of rule.ids) for (const v of readPath(node.attrs, p)) add(scope, v, node);
+    }
+  }
+
+  const lookup = (holder: IRNode, value: string): Map<string, string> => {
+    const scope = scopeOf(holder);
+    const out = new Map<string, string>();
+    const keys = scope.region !== undefined ? [keyOf(scope, value), keyOf({ account: scope.account }, value)] : [keyOf(scope, value)];
+    for (const k of keys) for (const [id, kind] of index.get(k) ?? []) out.set(id, kind);
+    return out;
+  };
+
+  const edges = new Map<string, IREdge>();
+  const containment = new Map<string, ContainmentPair>();
+  // Keyed by holder, rule and value: two rules with one id (the describe-shape
+  // and template-shape rules for the same path) report a reference once.
+  const dangling = new Map<string, IndexedDanglingRef>();
+  const ambiguous = new Map<string, AmbiguousRef>();
+
+  const resolve = (
+    holder: IRNode,
+    value: string,
+    rule: { id: string; path: string; targetKind?: string; relation: "reference" | "containment"; via: string; label?: string },
+  ): void => {
+    if (PLACEHOLDER_VALUES.has(value)) return;
+    const found = lookup(holder, value);
+    let candidates = [...found.entries()].filter(([, kind]) => rule.targetKind === undefined || kind === rule.targetKind).map(([id]) => id);
+    if (candidates.includes(holder.id)) {
+      if (candidates.length === 1) return; // a self-reference (an SG rule to its own group)
+      candidates = candidates.filter((id) => id !== holder.id);
+    }
+    candidates.sort(byString);
+    if (candidates.length === 0) {
+      dangling.set(`${holder.id}|${rule.id}|${value}`, { from: holder.id, path: rule.path, value, rule: rule.id, ...(rule.targetKind ? { targetKind: rule.targetKind } : {}) });
+      return;
+    }
+    if (candidates.length > 1) {
+      ambiguous.set(`${holder.id}|${rule.id}|${value}`, { from: holder.id, rule: rule.id, path: rule.path, value, candidates });
+      return;
+    }
+    const to = candidates[0];
+    const key = `${holder.id}|${to}|${rule.via}|${rule.relation}`;
+    const prev = edges.get(key);
+    // Two rules can draw one edge (the describe-shape and template-shape rules
+    // read the same attribute); the smaller rule id is kept, so the result
+    // does not depend on catalog order.
+    if (!prev || byString(rule.id, prev.rule!) < 0) {
+      edges.set(key, {
+        from: holder.id,
+        to,
+        kind: "ref",
+        viaAttr: rule.via,
+        grain: "property",
+        origin: "derived",
+        rule: rule.id,
+        relation: rule.relation,
+      });
+    }
+    if (rule.relation === "containment") {
+      const ck = `${holder.id}|${to}`;
+      const prevPair = containment.get(ck);
+      if (!prevPair || (rule.label !== undefined && (prevPair.label === undefined || byString(rule.label, prevPair.label) < 0))) {
+        containment.set(ck, { child: holder.id, parent: to, ...(rule.label ? { label: rule.label } : {}) });
+      }
+    }
+  };
+
+  for (const node of sorted) {
+    for (const { lexicon, catalog } of catalogs) {
+      if (node.lexicon !== lexicon) continue;
+      for (const rule of catalog.refs) {
+        if (rule.from !== node.kind) continue;
+        const spec = {
+          id: refRuleId(lexicon, rule.from, rule.path),
+          path: rule.path,
+          targetKind: rule.targetKind ?? rule.indexedTargetKind,
+          relation: rule.relation,
+          via: rule.viaAttr ?? topAttr(rule.path),
+          ...(rule.label ? { label: rule.label } : {}),
+        };
+        for (const value of new Set(readPath(node.attrs, rule.path))) resolve(node, value, spec);
+      }
+      for (const rule of catalog.tagRefs ?? []) {
+        if (rule.from !== undefined && rule.from !== node.kind) continue;
+        const tags = node.tags ?? {};
+        const spec = {
+          id: refRuleId(lexicon, rule.from ?? node.kind, `tag:${rule.key}`),
+          path: `tag:${rule.key}`,
+          targetKind: rule.targetKind,
+          relation: "reference" as const,
+          via: "Tags",
+          ...(rule.label ? { label: rule.label } : {}),
+        };
+        if (rule.read === "value") {
+          const v = tags[rule.key];
+          if (typeof v === "string" && v !== "") resolve(node, v, spec);
+        } else {
+          for (const k of Object.keys(tags).sort()) {
+            if (k.startsWith(rule.key) && k.length > rule.key.length) resolve(node, k.slice(rule.key.length), spec);
+          }
+        }
+      }
+    }
+  }
+
+  const edgeKey = (e: IREdge) => `${e.from}|${e.to}|${e.viaAttr ?? ""}|${e.relation ?? ""}`;
+  return {
+    edges: [...edges.values()].sort((a, b) => byString(edgeKey(a), edgeKey(b))),
+    containment: [...containment.values()].sort((a, b) => byString(`${a.child}|${a.parent}`, `${b.child}|${b.parent}`)),
+    dangling: [...dangling.values()].sort((a, b) => byString(`${a.from}|${a.rule}|${a.value}`, `${b.from}|${b.rule}|${b.value}`)),
+    ambiguous: [...ambiguous.values()].sort((a, b) => byString(`${a.from}|${a.rule}|${a.value}`, `${b.from}|${b.rule}|${b.value}`)),
+  };
 }

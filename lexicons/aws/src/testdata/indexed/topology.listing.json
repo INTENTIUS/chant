@@ -1,0 +1,350 @@
+{
+  "listing": "v1",
+  "source": {
+    "name": "behold-lister",
+    "version": "0.0.0-fixture"
+  },
+  "scope": {
+    "substrate": "aws",
+    "scopeId": "000000000000",
+    "locations": [
+      "us-east-1"
+    ],
+    "types": [
+      "AWS::EC2::Instance",
+      "AWS::EC2::InternetGateway",
+      "AWS::EC2::Route",
+      "AWS::EC2::RouteTable",
+      "AWS::EC2::SecurityGroup",
+      "AWS::EC2::Subnet",
+      "AWS::EC2::SubnetRouteTableAssociation",
+      "AWS::EC2::VPC",
+      "AWS::EC2::VPCGatewayAttachment",
+      "AWS::EKS::Cluster"
+    ]
+  },
+  "startedAt": "2026-10-26T09:00:00.000Z",
+  "completedAt": "2026-10-26T09:00:06.000Z",
+  "resources": [
+    {
+      "listedType": "AWS::EC2::VPC",
+      "location": "us-east-1",
+      "nativeId": "vpc-0a1",
+      "cloudIds": [
+        {
+          "kind": "import-id",
+          "value": "vpc-0a1"
+        }
+      ],
+      "tags": {},
+      "properties": {
+        "VpcId": "vpc-0a1",
+        "CidrBlock": "10.0.0.0/16"
+      },
+      "observedAt": "2026-10-26T09:00:01.000Z"
+    },
+    {
+      "listedType": "AWS::EC2::Subnet",
+      "location": "us-east-1",
+      "nativeId": "subnet-0pub",
+      "cloudIds": [
+        {
+          "kind": "import-id",
+          "value": "subnet-0pub"
+        }
+      ],
+      "tags": {
+        "kubernetes.io/cluster/shop": "shared"
+      },
+      "properties": {
+        "SubnetId": "subnet-0pub",
+        "VpcId": "vpc-0a1",
+        "CidrBlock": "10.0.1.0/24",
+        "AvailabilityZone": "us-east-1a",
+        "Tags": [
+          {
+            "Key": "kubernetes.io/cluster/shop",
+            "Value": "shared"
+          }
+        ]
+      },
+      "observedAt": "2026-10-26T09:00:01.000Z"
+    },
+    {
+      "listedType": "AWS::EC2::Subnet",
+      "location": "us-east-1",
+      "nativeId": "subnet-0priv",
+      "cloudIds": [
+        {
+          "kind": "import-id",
+          "value": "subnet-0priv"
+        }
+      ],
+      "tags": {},
+      "properties": {
+        "SubnetId": "subnet-0priv",
+        "VpcId": "vpc-0a1",
+        "CidrBlock": "10.0.2.0/24",
+        "AvailabilityZone": "us-east-1a"
+      },
+      "observedAt": "2026-10-26T09:00:01.000Z"
+    },
+    {
+      "listedType": "AWS::EC2::InternetGateway",
+      "location": "us-east-1",
+      "nativeId": "igw-0a1",
+      "cloudIds": [
+        {
+          "kind": "import-id",
+          "value": "igw-0a1"
+        }
+      ],
+      "tags": {},
+      "properties": {
+        "InternetGatewayId": "igw-0a1"
+      },
+      "observedAt": "2026-10-26T09:00:01.000Z"
+    },
+    {
+      "listedType": "AWS::EC2::VPCGatewayAttachment",
+      "location": "us-east-1",
+      "nativeId": "IGW|vpc-0a1",
+      "cloudIds": [
+        {
+          "kind": "import-id",
+          "value": "IGW|vpc-0a1"
+        }
+      ],
+      "tags": {},
+      "properties": {
+        "VpcId": "vpc-0a1",
+        "InternetGatewayId": "igw-0a1"
+      },
+      "observedAt": "2026-10-26T09:00:01.000Z"
+    },
+    {
+      "listedType": "AWS::EC2::RouteTable",
+      "location": "us-east-1",
+      "nativeId": "rtb-0pub",
+      "cloudIds": [
+        {
+          "kind": "import-id",
+          "value": "rtb-0pub"
+        }
+      ],
+      "tags": {},
+      "properties": {
+        "RouteTableId": "rtb-0pub",
+        "VpcId": "vpc-0a1"
+      },
+      "observedAt": "2026-10-26T09:00:01.000Z"
+    },
+    {
+      "listedType": "AWS::EC2::Route",
+      "location": "us-east-1",
+      "nativeId": "rtb-0pub|0.0.0.0/0",
+      "cloudIds": [
+        {
+          "kind": "import-id",
+          "value": "rtb-0pub|0.0.0.0/0"
+        }
+      ],
+      "tags": {},
+      "properties": {
+        "RouteTableId": "rtb-0pub",
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "GatewayId": "igw-0a1"
+      },
+      "observedAt": "2026-10-26T09:00:01.000Z"
+    },
+    {
+      "listedType": "AWS::EC2::SubnetRouteTableAssociation",
+      "location": "us-east-1",
+      "nativeId": "rtbassoc-0pub",
+      "cloudIds": [
+        {
+          "kind": "import-id",
+          "value": "rtbassoc-0pub"
+        }
+      ],
+      "tags": {},
+      "properties": {
+        "Id": "rtbassoc-0pub",
+        "SubnetId": "subnet-0pub",
+        "RouteTableId": "rtb-0pub"
+      },
+      "observedAt": "2026-10-26T09:00:01.000Z"
+    },
+    {
+      "listedType": "AWS::EC2::SecurityGroup",
+      "location": "us-east-1",
+      "nativeId": "sg-0web",
+      "cloudIds": [
+        {
+          "kind": "import-id",
+          "value": "sg-0web"
+        }
+      ],
+      "tags": {},
+      "properties": {
+        "GroupId": "sg-0web",
+        "GroupName": "web",
+        "GroupDescription": "web",
+        "VpcId": "vpc-0a1",
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 22,
+            "ToPort": 22,
+            "CidrIp": "0.0.0.0/0"
+          }
+        ]
+      },
+      "observedAt": "2026-10-26T09:00:01.000Z"
+    },
+    {
+      "listedType": "AWS::EC2::SecurityGroup",
+      "location": "us-east-1",
+      "nativeId": "sg-0db",
+      "cloudIds": [
+        {
+          "kind": "import-id",
+          "value": "sg-0db"
+        }
+      ],
+      "tags": {},
+      "properties": {
+        "GroupId": "sg-0db",
+        "GroupName": "db",
+        "GroupDescription": "db",
+        "VpcId": "vpc-0a1",
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 5432,
+            "ToPort": 5432,
+            "SourceSecurityGroupId": "sg-0web"
+          }
+        ]
+      },
+      "observedAt": "2026-10-26T09:00:01.000Z"
+    },
+    {
+      "listedType": "AWS::EC2::Instance",
+      "location": "us-east-1",
+      "nativeId": "i-0web",
+      "cloudIds": [
+        {
+          "kind": "import-id",
+          "value": "i-0web"
+        }
+      ],
+      "tags": {},
+      "properties": {
+        "InstanceId": "i-0web",
+        "ImageId": "ami-0abc",
+        "InstanceType": "t3.micro",
+        "SubnetId": "subnet-0pub",
+        "SecurityGroupIds": [
+          "sg-0web"
+        ]
+      },
+      "observedAt": "2026-10-26T09:00:01.000Z"
+    },
+    {
+      "listedType": "AWS::EC2::Instance",
+      "location": "us-east-1",
+      "nativeId": "i-0batch",
+      "cloudIds": [
+        {
+          "kind": "import-id",
+          "value": "i-0batch"
+        }
+      ],
+      "tags": {},
+      "properties": {
+        "InstanceId": "i-0batch",
+        "ImageId": "ami-0abc",
+        "InstanceType": "t3.micro",
+        "SubnetId": "subnet-0priv",
+        "SecurityGroupIds": [
+          "sg-0web"
+        ]
+      },
+      "observedAt": "2026-10-26T09:00:01.000Z"
+    },
+    {
+      "listedType": "AWS::EKS::Cluster",
+      "location": "us-east-1",
+      "nativeId": "shop",
+      "cloudIds": [
+        {
+          "kind": "arn",
+          "value": "arn:aws:eks:us-east-1:000000000000:cluster/shop"
+        },
+        {
+          "kind": "import-id",
+          "value": "shop"
+        }
+      ],
+      "tags": {},
+      "properties": {
+        "Name": "shop"
+      },
+      "observedAt": "2026-10-26T09:00:01.000Z"
+    }
+  ],
+  "coverage": [
+    {
+      "listedType": "AWS::EC2::Instance",
+      "location": "us-east-1",
+      "verdict": "listed"
+    },
+    {
+      "listedType": "AWS::EC2::InternetGateway",
+      "location": "us-east-1",
+      "verdict": "listed"
+    },
+    {
+      "listedType": "AWS::EC2::Route",
+      "location": "us-east-1",
+      "verdict": "listed"
+    },
+    {
+      "listedType": "AWS::EC2::RouteTable",
+      "location": "us-east-1",
+      "verdict": "listed"
+    },
+    {
+      "listedType": "AWS::EC2::SecurityGroup",
+      "location": "us-east-1",
+      "verdict": "listed"
+    },
+    {
+      "listedType": "AWS::EC2::Subnet",
+      "location": "us-east-1",
+      "verdict": "listed"
+    },
+    {
+      "listedType": "AWS::EC2::SubnetRouteTableAssociation",
+      "location": "us-east-1",
+      "verdict": "listed"
+    },
+    {
+      "listedType": "AWS::EC2::VPC",
+      "location": "us-east-1",
+      "verdict": "listed"
+    },
+    {
+      "listedType": "AWS::EC2::VPCGatewayAttachment",
+      "location": "us-east-1",
+      "verdict": "listed"
+    },
+    {
+      "listedType": "AWS::EKS::Cluster",
+      "location": "us-east-1",
+      "verdict": "listed"
+    }
+  ],
+  "notes": []
+}
