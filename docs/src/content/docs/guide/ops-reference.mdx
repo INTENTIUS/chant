@@ -103,7 +103,7 @@ phase("Diff", [
 
 `from` is a dot-path into the return value; when omitted, the whole return value is stringified. `chant run <name> --json` prints the record the run wrote with its outcomes on it, which is the same document `chant operator log` reads back later.
 
-A step that fails returns nothing, but its activity may have learned some outputs before it failed. It publishes those by setting `knownOutputs` on the error it throws, with `withKnownOutputs(err, outputs)` from `@intentius/chant/op`, and the step's `outcomeAttribute` paths are read from that object instead ([#4512](https://github.com/INTENTIUS/chant/issues/4512)). `terraformInit` does this: it resolves the root's directory before `terraform init` runs, so a run whose init fails still records `TerraformRootPath`.
+A step that fails returns nothing, but its activity may have learned some outputs before it failed. It publishes those by setting `knownOutputs` on the error it throws, with `withKnownOutputs(err, outputs)` from `@intentius/chant/op`, and the step's `outcomeAttribute` paths are read from that object instead ([#4512](https://github.com/INTENTIUS/chant/issues/4512)). `terraformInit` resolves the root's directory before `terraform init` runs and publishes it this way, so a run whose init fails still records `TerraformRootPath`.
 
 ## Progress and gate state
 
