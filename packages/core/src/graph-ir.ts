@@ -1487,12 +1487,22 @@ export function collectUnobserved(observations: LiveObservation[]): Record<strin
  * `runtime` = live, undeclared, owner chain reaches a declared entity (#1077). */
 type OverlayNodeStatus = "good" | "warn" | "accent" | "neutral" | "runtime";
 
+/**
+ * The overlay paint on one node. `_ownership` (#4534, behold#906 Q2) is
+ * chant's own marker verdict, {@link IRNode.ownership}, beside `_status`, so
+ * `chant search` answers ownership with no grammar of its own:
+ * `attr:_ownership=foreign`, `--show _ownership`, `--count-by attr:_ownership`.
+ * It is `owned` or `foreign`; absent means unknown (no marker channel on the
+ * read, or a node nobody observed). It never reads `facts.ownership`, the
+ * engine's verdict, which stays for display (#4520 Q1).
+ */
 function tagStatus(n: IRNode, status: OverlayNodeStatus, unobserved?: UnobservedEntity): IRNode {
   return {
     ...n,
     attrs: {
       ...n.attrs,
       _status: status,
+      ...(n.ownership ? { _ownership: n.ownership } : {}),
       ...(unobserved ? { _unobserved: unobserved.reason } : {}),
     },
   };

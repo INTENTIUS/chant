@@ -139,6 +139,13 @@ describe("the shipped templates", () => {
     }
   });
 
+  it("ownership returns chant's verdict and the engine's as two columns, as behold's stub does (behold#906 Q4, behold#1031)", () => {
+    const t = investigationTemplates().find((x) => x.id === "ownership")!;
+    expect(t.query.text).toContain("r.ownership AS ownership");
+    expect(t.query.text).toContain("r.engineOwnership AS engineOwnership");
+    expect(t.query.text).not.toMatch(/coalesce\(/i);
+  });
+
   it("refuses a value that would add a second search term, a missing input and an unknown one", () => {
     const t = investigationTemplates().find((x) => x.id === "paths-to-kind")!;
     expect(() => expandTemplate(t, { node: "WebHost", kind: "aws_vpc cap:blast" })).toThrow(/not one search term/);

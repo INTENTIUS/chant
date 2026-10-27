@@ -55,6 +55,7 @@ together.
 | `attr:<name>` | attribute `<name>` is present |
 | `attr:<name>=<val>` | attribute `<name>` equals/contains `<val>` |
 | `tag:<key>=<val>` | a `Tags` entry with `Key=<key>` and `Value` containing `<val>` |
+| `id:<cloud id>` | the node's observed physical id, or one of its engine facts' cloud ids, is exactly `<cloud id>` (`id:i-0abc123`, `id:arn:aws:s3:::my-bucket`). See [Cloud ids](#cloud-ids) |
 | `->kind:X`, `->attr:…`, `->tag:…` | node has an edge **to** a node matching the right side |
 | `<-kind:X`, `<-attr:…`, `<-tag:…` | node has an edge **from** a node matching the right side |
 | `->*X`, `<-*X` | the far end matching `X` is any number of hops away, one or more |
@@ -465,7 +466,7 @@ exits 1. The code is one of the read contract's
   "error": {
     "code": "query-invalid",
     "message": "\"effectiveIngress:tcp:22\" is not a term — there is no \"effectiveIngress:\" prefix",
-    "hint": "for an attribute, say attr:effectiveIngress=tcp:22; the prefixes are kind:, attr:, tag:, and ->/<- for edges"
+    "hint": "for an attribute, say attr:effectiveIngress=tcp:22; the prefixes are kind:, attr:, tag:, id:, and ->/<- for edges"
   }
 }
 ```
@@ -503,6 +504,49 @@ topology are not advertised in that case, since nothing was read to compute
 them. The rows printed are what the source declares, labelled as such; answer
 from a recorded snapshot with `--at latest` or drop `--live` for a declared-only
 query.
+
+## Ownership
+
+On a live or recorded answer (`--live`, `--at`), each node the read observed
+carries `_ownership` beside `_status` ([#4534](https://github.com/INTENTIUS/chant/issues/4534)).
+It is chant's own verdict from the resource's marker, the tags or labels chant
+stamps ([`ownership`](/chant/configuration/config-file/#ownership)): `owned` when
+the resource carries chant's marker, `foreign` when the read found none. A node with no
+`_ownership` is unknown: the lexicon has no marker channel on that read, or
+nobody observed the node. It is an attribute like any other, so the usual terms
+read it:
+
+```bash
+# observed resources chant's marker does not claim
+chant search --live --env prod "attr:_ownership=foreign"
+
+# the verdict beside each row, and a count by it
+chant search --live --env prod "kind:aws_s3_bucket" --show _ownership
+chant search --live --env prod "" --count-by attr:_ownership
+```
+
+On a choudoufu live root the verdict comes from choudoufu's marker sweep:
+a bound resource is `owned` and one another estate's marker holds is
+`foreign`. The engine's own verdict (`bound`, `unowned`, `pending`, `foreign`)
+is in the node's engine facts and is never read by a search term. A pulumi
+member's nodes have no `_ownership`, since chant reads plunge's records and not
+its markers. A live read selects owned resources only, so on Kubernetes an
+object with no chant label does not reach the answer at all.
+
+## Cloud ids
+
+`id:<cloud id>` finds a resource from an id you hold, an ARN from an alert or an
+instance id from a log line ([#4534](https://github.com/INTENTIUS/chant/issues/4534)).
+It reads the node's observed `physicalId`, and the `cloudIds` of its engine facts
+(a choudoufu or plunge node, or an indexed one). The match is exact, case
+included, and the whole rest of the term is the id, so an ARN's colons need no
+quoting. A bare word reads neither field. A declared-only search has no physical
+ids, so use it with `--live`, `--at` or an index.
+
+```bash
+chant search --live --env prod "id:i-0abc123"
+chant search --at latest --env prod "id:arn:aws:s3:::my-bucket" --show _ownership
+```
 
 ## Query-scoped drift
 
