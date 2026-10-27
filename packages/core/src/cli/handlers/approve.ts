@@ -158,11 +158,24 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
   // has applied since #2126 (`../handlers/run.ts`'s `runOpApprove`). Reading
   // only `--actor` here meant every README that teaches `--approver you`
   // recorded the shell user instead (#2192).
+  // #4575: a person at a terminal sees the plan and types the target's name
+  // first, and the approval binds the digest they were shown. --yes, --json,
+  // CI and no terminal record as before.
+  let plan = ctx.args.plan;
+  const confirm = await import("./approve-confirm");
+  if (await confirm.interactiveApproval(ctx.args)) {
+    const answered = await confirm.confirmApproval(opName, gate, {
+      ...(plan !== undefined ? { plan } : {}),
+      ...(ctx.args.env !== undefined ? { environment: ctx.args.env } : {}),
+    });
+    if (answered.status === "refused") return answered.code;
+    if (answered.status === "confirmed") plan = answered.plan;
+  }
   const outcome = await recordGateApproval(opName, gate, {
     actor: ctx.args.approver ?? ctx.args.actor,
     note: ctx.args.note,
     url: ctx.args.url,
-    plan: ctx.args.plan,
+    plan,
     ...(ctx.args.env !== undefined ? { environment: ctx.args.env } : {}),
     allowSameOrigin: ctx.args.allowSameOrigin,
     ...(ctx.args.roles ? { roles: ctx.args.roles } : {}),
