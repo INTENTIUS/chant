@@ -85,6 +85,11 @@ import type { HeadPlans, MergedReview, ReviewSource } from "./gate-review";
 import type { TrustPolicy } from "../workspace/trust/policy";
 import type { GateSigners } from "../lifecycle/gate-seal";
 import { ciRunIdFromEnv } from "./gate-run-locator";
+import { appendRunRecord, DEFAULT_RUN_ENV } from "../lifecycle/run-ledger";
+import { pushLifecycleReport } from "../lifecycle/git";
+import { resolveCiJob } from "../lifecycle/release-ledger";
+import type { OpRunRecordInput, OpRunStepRecord, OpRunWave } from "./runtime";
+import type { ChangeSetDocument } from "../change-set";
 import {
   changeInvolvement, quorumProblems, quorumRuleLine, quorumRulesFor, quorumWaiting, recordedReviewApprovals, ruleNeedsProof, samePrincipal, trustQuorumJudge,
   type GateQuorumJudge, type GateQuorumRule, type GateQuorumRuleProgress, type QuorumJudgement,
@@ -191,6 +196,15 @@ export interface OpWavePlansFile {
   members?: WaveMember[];
   /** On a discovering wave (#3821): how many waves the product found, which a `rest` wave walks to. */
   waves?: number;
+  /**
+   * The change-set document the product composed for the wave's plans
+   * (#4551, `composeChangeSet`). chant stores it under its digest in
+   * `_change-sets/` before the wave's pending fact, which cites it as
+   * `changeSet`, so the plans an approval was asked for stay readable. A
+   * document whose content does not hash to its digest is logged and left
+   * out; it never blocks the gate.
+   */
+  changeSet?: ChangeSetDocument;
 }
 
 /** What chant writes to `{runs}` for a wave-level command or a hook (#3762). */
@@ -288,6 +302,8 @@ export interface OpWaveDecision {
   digestOver?: "changing";
   /** The fields the plans file added to the pending fact (#3821). */
   pending?: Record<string, unknown>;
+  /** The digest of the change set the plans file gave, stored in `_change-sets/` and cited by the pending fact (#4551). */
+  changeSet?: string;
   /** The pending fact carries `neverOverMcp`, set by the spec here or at base (#3821). */
   neverOverMcp?: true;
   /** While waiting (#3821): the pending fact that stands for the digest, this run's own when `recorded`. */
@@ -650,6 +666,29 @@ export interface RunOpWaveOptions {
   outcomeDir?: string;
   /** The commits after base up to the applied head, for `Requested-by:` trailers (#4333). Default: `git log`. */
   commits?: (base: string, head: string) => { sha: string; message: string }[];
+  /**
+   * Where the job's run record goes (#4551): one record per job, on every
+   * way it ends. Default {@link gitOpWaveRunPort} over `cwd` when `gates` is
+   * not given; a caller that passes its own `gates` port passes this too, or
+   * the job records no run.
+   */
+  runs?: OpWaveRunPort;
+}
+
+/** Where an op wave job's run record goes (#4551). */
+export interface OpWaveRunPort {
+  append(record: OpRunRecordInput): Promise<{ pushWarning?: string } | void>;
+}
+
+/** The run ledger on `chant/lifecycle` (#4551): `appendRunRecord`, then a push. Honours `--no-record` through the git layer. */
+export function gitOpWaveRunPort(opts?: { cwd?: string }): OpWaveRunPort {
+  return {
+    async append(record) {
+      await appendRunRecord(record, opts);
+      const { pushWarning } = await pushLifecycleReport(opts);
+      return pushWarning ? { pushWarning } : {};
+    },
+  };
 }
 
 export interface RunOpWaveResult {
@@ -809,6 +848,10 @@ function planRuns(at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: string;
   const count = Array.isArray(parsed) ? undefined : (parsed as { waves?: unknown }).waves;
   if (count !== undefined && (!Number.isInteger(count) || (count as number) < 0)) throw new Error(`the plans file of wave ${k} (${plans}): \`waves\` must be the number of waves found, a whole number`);
   const pending = Array.isArray(parsed) ? undefined : pendingFields((parsed as { pending?: unknown }).pending, `the plans file of wave ${k} (${plans})`);
+  const changeSetDoc = Array.isArray(parsed) ? undefined : (parsed as { changeSet?: unknown }).changeSet;
+  if (changeSetDoc !== undefined && (changeSetDoc === null || typeof changeSetDoc !== "object" || Array.isArray(changeSetDoc))) {
+    throw new Error(`the plans file of wave ${k} (${plans}): \`changeSet\` must be a change-set document`);
+  }
   const members = runs.map((run) => {
     const m = member(run.target, run.op ?? spec.op, byTarget.get(run.target)!);
     const path = join(cwd, opWavePlanPath(spec, k, run.target));
@@ -830,6 +873,7 @@ function planRuns(at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: string;
     ...(overriders && overridersSource ? { overridersSource: overridersSource as string } : {}),
     ...(extras ? { extras } : {}),
     ...(count !== undefined ? { waves: count as number } : {}),
+    ...(changeSetDoc !== undefined ? { changeSet: changeSetDoc as ChangeSetDocument } : {}),
   };
 }
 
@@ -843,6 +887,8 @@ interface PlannedRuns {
   overridersSource?: string;
   /** Digest members that are not runs, such as the wave's cost (#3821). */
   extras?: WaveMember[];
+  /** The change-set document the plans file gave (#4551). */
+  changeSet?: ChangeSetDocument;
   /** How many waves the product found (#3821), for a `rest` wave. */
   waves?: number;
 }
@@ -1196,8 +1242,148 @@ function noteHooksAtBase(ctx: WaveContext, rules: OpWaveBaseRules): void {
  * its plan command found.
  */
 export async function runOpWave(options: RunOpWaveOptions): Promise<RunOpWaveResult> {
+  assertOpWavesSpec(options.spec);
+  // #4551: one run record per job, on every way the job ends.
+  const started = new Date().toISOString();
+  let result: RunOpWaveResult;
+  try {
+    result = await runOpWaveJob(options);
+  } catch (err) {
+    await recordOpWaveRun(options, started, { error: err });
+    throw err;
+  }
+  await recordOpWaveRun(options, started, { result });
+  return result;
+}
+
+/** The run ledger's status and failure for a job's exit code (#4551), by chant's exit-code table. */
+function opWaveRunStatus(result: RunOpWaveResult): { status: OpRunRecordInput["status"]; failure?: { code: string; reason: string } } {
+  const d = result.decision;
+  switch (result.exitCode) {
+    case CHANT_EXIT.done:
+    case CHANT_EXIT.held:
+    case CHANT_EXIT.superseded:
+      return { status: "ok" };
+    case CHANT_EXIT.waiting:
+      return { status: d?.point?.question ? "waiting" : "gated" };
+    case CHANT_EXIT.moved:
+      return { status: "fail", failure: { code: "moved", reason: `plans moved since the decision: ${result.moved.join(", ") || "(none named)"}` } };
+    case CHANT_EXIT.denied:
+      return { status: "fail", failure: { code: "denied", reason: d?.refused?.message ?? `the policy denied ${d?.refused?.runs.join(", ") ?? "a run"}, and no override counts` } };
+    case CHANT_EXIT.declined:
+      return { status: "fail", failure: { code: "point-refused", reason: d?.refused?.message ?? "the gate's decision point was answered with an answer it does not pass on" } };
+    default:
+      return { status: "fail", failure: { code: "command-failed", reason: result.failed.length > 0 ? `failed: ${result.failed.join(", ")}` : "the wave job failed" } };
+  }
+}
+
+/**
+ * The run record of one `chant run wave` job (#4551): one phase per wave the
+ * job walked, one step per run target. A run that applied is `ok`, one that
+ * failed `fail`, and one that moved, was blocked or waited `skipped`.
+ */
+export function opWaveRunRecord(
+  options: Pick<RunOpWaveOptions, "spec" | "wave" | "decide" | "share" | "group">,
+  times: { started: string; ended: string; gitSha?: string; runOrigin?: OpRunRecordInput["runOrigin"] },
+  outcome: { result: RunOpWaveResult } | { error: unknown },
+): OpRunRecordInput {
   const { spec } = options;
-  assertOpWavesSpec(spec);
+  const result: RunOpWaveResult = "result" in outcome ? outcome.result : { exitCode: CHANT_EXIT.failed, applied: [], failed: [], moved: [], hooks: [] };
+  const d = result.decision;
+  const applied = new Set(result.applied);
+  const failedRuns = new Set(result.failed);
+  const walked = result.rest?.length ? result.rest.map((r) => r.wave) : [options.wave];
+  const last = walked[walked.length - 1];
+  const phases = walked.map((k) => {
+    const targets = k === last && d ? d.members.map((m) => m.member) : (spec.waves[k - 1]?.runs ?? []).map((r) => r.target);
+    const steps: OpRunStepRecord[] = targets.map((t) => ({
+      fn: t,
+      status: failedRuns.has(t) ? "fail" : applied.has(t) ? "ok" : "skipped",
+      durationMs: 0,
+    }));
+    const status: "ok" | "fail" | "skipped" = steps.some((x) => x.status === "fail") ? "fail" : steps.length > 0 && steps.every((x) => x.status === "skipped") ? "skipped" : "ok";
+    return { name: `wave-${k}`, status, steps };
+  });
+  const verdict: ReturnType<typeof opWaveRunStatus> = "error" in outcome
+    ? { status: "fail", failure: { code: "command-failed", reason: outcome.error instanceof Error ? outcome.error.message : String(outcome.error) } }
+    : opWaveRunStatus(result);
+  const wave: OpRunWave = {
+    spec: spec.name,
+    number: options.wave,
+    name: spec.waves[options.wave - 1]?.name ?? `wave-${options.wave}`,
+    job: options.decide ? "decide" : options.group !== undefined ? "group" : options.share !== undefined ? "share" : "wave",
+    ...(options.share !== undefined ? { share: options.share } : {}),
+    ...(options.group !== undefined ? { group: options.group } : {}),
+    ...(d?.digest ? { digest: d.digest } : {}),
+    exitCode: result.exitCode,
+    ...(result.outcome && result.outcome.outcome !== "replan" ? { outcome: result.outcome.outcome } : {}),
+    applied: [...result.applied],
+    failed: [...result.failed],
+    moved: [...result.moved],
+    ...(result.blocked && Object.keys(result.blocked).length > 0 ? { blocked: { ...result.blocked } } : {}),
+  };
+  const labels = { ...(spec.labels ?? {}) };
+  return {
+    op: spec.name,
+    env: labels.Env ?? DEFAULT_RUN_ENV,
+    started: times.started,
+    ended: times.ended,
+    status: verdict.status,
+    labels,
+    outcomes: {},
+    phases,
+    ...(verdict.status === "gated" && d ? { gate: { name: d.gate, since: d.waitingSince ?? times.ended, ...(d.op !== spec.name ? { op: d.op } : {}) } } : {}),
+    ...(verdict.status === "waiting" && d?.point?.question ? { point: { ...d.point.question, since: d.waitingSince ?? times.ended } } : {}),
+    ...(times.gitSha ? { gitSha: times.gitSha } : {}),
+    ...(times.runOrigin ? { runOrigin: times.runOrigin } : {}),
+    ...(verdict.failure ? { failure: { ...verdict.failure, exitCode: result.exitCode } } : {}),
+    wave,
+  };
+}
+
+/** Append the job's run record (#4551). A failed write warns and never changes the job's exit code. */
+async function recordOpWaveRun(options: RunOpWaveOptions, started: string, outcome: { result: RunOpWaveResult } | { error: unknown }): Promise<void> {
+  const cwd = options.cwd ?? process.cwd();
+  const port = options.runs ?? (options.gates ? undefined : gitOpWaveRunPort({ cwd }));
+  if (!port) return;
+  const log = options.log ?? ((line: string) => console.error(line));
+  let gitSha = options.head;
+  if (gitSha === undefined) {
+    try {
+      gitSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    } catch {
+      gitSha = undefined;
+    }
+  }
+  const ci = resolveCiJob();
+  const record = opWaveRunRecord(options, { started, ended: new Date().toISOString(), ...(gitSha ? { gitSha } : {}), ...(ci ? { runOrigin: ci.runOrigin } : {}) }, outcome);
+  try {
+    const wrote = await port.append(record);
+    if (wrote && wrote.pushWarning) log(`wave ${options.wave}: the run record was written and not pushed: ${wrote.pushWarning}`);
+  } catch (err) {
+    log(`wave ${options.wave}: could not record the run on the run ledger: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/**
+ * Store the change-set document a wave's plans file gave (#4551), so the
+ * pending fact can cite it. A document that is not one, or does not hash to
+ * its digest, is logged and left out; it never blocks the gate.
+ */
+async function storeWaveChangeSet(options: RunOpWaveOptions, ctx: WaveContext, decision: OpWaveDecision, doc: ChangeSetDocument): Promise<void> {
+  const ledger = options.gates ?? gitGateLedgerPort({ cwd: ctx.cwd });
+  if (!ledger.storeChangeSet) return;
+  try {
+    await ledger.storeChangeSet(doc);
+    decision.changeSet = doc.digest;
+  } catch (err) {
+    ctx.log(`wave ${ctx.k} (${ctx.wave.name}): the plans file's change set was not stored, so the pending fact cites none: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/** One job's plan, decide and apply, which {@link runOpWave} records. */
+async function runOpWaveJob(options: RunOpWaveOptions): Promise<RunOpWaveResult> {
+  const { spec } = options;
   const log = options.log ?? ((line: string) => console.error(line));
   const cwd = options.cwd ?? process.cwd();
   const outcomeDir = options.outcomeDir ?? opWaveOutcomeDir(spec);
@@ -1417,6 +1603,7 @@ type OpWavePlanned =
       overriders?: string[];
       overridersSource?: string;
       extras?: WaveMember[];
+      changeSet?: ChangeSetDocument;
     }
   | {
       kind: "share";
@@ -1560,7 +1747,7 @@ async function planOpWave(options: RunOpWaveOptions, { k, pass }: WaveAttempt<Ru
   const before = await runBeforePlanHooks(ctx, rules.hooks, wave.runs);
   if (before.failed) return { end: failed(ctx, `a hook before the plan failed, so nothing in wave ${k} was planned or applied`) };
   if (before.waitingOn) return { end: await decided(ctx, decision, recordPath, before.waitingOn) };
-  const { members, pending, overriders, overridersSource, extras, waves: found } = planRuns(ctx, wave.runs, wave.discover === true);
+  const { members, pending, overriders, overridersSource, extras, waves: found, changeSet } = planRuns(ctx, wave.runs, wave.discover === true);
   if (wave.discover) {
     wave = { ...wave, runs: members.map((m) => ({ target: m.member, ...(m.op !== spec.op ? { op: m.op } : {}) })) };
     ctx.wave = wave;
@@ -1586,6 +1773,7 @@ async function planOpWave(options: RunOpWaveOptions, { k, pass }: WaveAttempt<Ru
       ...(overriders ? { overriders } : {}),
       ...(overridersSource ? { overridersSource } : {}),
       ...(extras ? { extras } : {}),
+      ...(changeSet ? { changeSet } : {}),
     },
   };
 }
@@ -1640,6 +1828,7 @@ async function decideOpWave(
   }
   if (extras) decision.extras = extras;
   if (pending) decision.pending = pending;
+  if (planned.changeSet) await storeWaveChangeSet(options, ctx, decision, planned.changeSet);
   const after = await runHooks(ctx, "after-plan", planned.rules.hooks["after-plan"], wave.runs, planned.planned, digest);
   if (after.failed) return { end: failed(ctx, `a hook after the plan failed, so nothing in wave ${k} was applied`) };
   holds.push(...planned.before, ...after.holds);
@@ -1916,7 +2105,7 @@ async function settleGate(options: RunOpWaveOptions, ctx: WaveContext, decision:
     now,
     ...(spent ? { spent } : {}),
     // #3861: the approval mode the wave asked under, for readers deciding which approvals count.
-    fields: { ...decision.pending, approvalMode: approval },
+    fields: { ...decision.pending, ...(decision.changeSet ? { changeSet: decision.changeSet } : {}), approvalMode: approval },
     ...(decision.neverOverMcp ? { neverOverMcp: true } : {}),
   });
   if (check.satisfied) {
@@ -2089,7 +2278,7 @@ async function settleQuorumGate(options: RunOpWaveOptions, ctx: WaveContext, dec
     description: (typeof decision.pending?.description === "string" ? decision.pending.description : undefined) ?? `wave ${k} (${wave.name}): ${members.length} run${members.length === 1 ? "" : "s"}, gate ${policy}, approval ${approval}${held}`,
     now,
     ...(spent ? { spent } : {}),
-    fields: { ...decision.pending, approvalMode: approval },
+    fields: { ...decision.pending, ...(decision.changeSet ? { changeSet: decision.changeSet } : {}), approvalMode: approval },
     ...(decision.neverOverMcp ? { neverOverMcp: true } : {}),
     approval: { quorum: rules, mode: "log-only" },
     judge,
@@ -2142,7 +2331,7 @@ async function settlePointGate(options: RunOpWaveOptions, ctx: WaveContext, deci
     planDigest: digest,
     ...(options.now ? { now: options.now } : {}),
     // #3863: the plans file's pending fields and the spec's neverOverMcp, as settleGate passes them.
-    fields: { ...decision.pending, approvalMode: decision.approval },
+    fields: { ...decision.pending, ...(decision.changeSet ? { changeSet: decision.changeSet } : {}), approvalMode: decision.approval },
     ...(decision.neverOverMcp ? { neverOverMcp: true } : {}),
   });
   if (check.satisfied) {

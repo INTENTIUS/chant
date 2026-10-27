@@ -193,6 +193,8 @@ The plans file may also carry `pending`, an object of fields the product adds to
 
 chant's own fields win. A `pending` that sets one of them (`op`, `gate`, `planDigest`, `timestamp`, `expiresAt` and the rest) fails the wave; `description` is the one it may set.
 
+A product can hand chant the change-set document it composed for the wave's plans as `changeSet` in the same file ([#4551](https://github.com/INTENTIUS/chant/issues/4551)). chant stores it under its digest in `_change-sets/` before the pending fact, and the fact cites that digest as `changeSet`. A refusal or a respond job then reads the plans the approval was asked for with `chant change-set show <digest>`. `chant approve` copies `changeSet` onto an approval of the fact's plan. A document whose content does not hash to its digest is logged and left out, and the wave still waits.
+
 The plans file may also carry `members`: digest members that are not runs, each with a name no run has. A product whose approval depends on more than the plans puts that in the digest this way. With a cost threshold, for example, the wave's monthly cost goes in, so an approval at one cost does not apply at another:
 
 ```json
@@ -732,6 +734,10 @@ On GitHub and Forgejo the job asks for its token at run time, with the audience 
 
 A job that applies with an identity is only as separate as the forge and the cloud make it. The forge's environment rules and protected runners decide which refs may run a group's job, and the cloud role's trust decides which token may assume it.
 
+## The run record
+
+Each `chant run wave` job appends one run record to `<env>/runs__<name>.jsonl` on `chant/lifecycle`, however it ends ([#4551](https://github.com/INTENTIUS/chant/issues/4551)). The record goes under the environment the spec's `labels.Env` names, else `local`, as every Op's does. The spec's `labels` are copied onto it. The record has one phase per wave the job walked, `wave-<k>`, and one step per run target: `ok` when it applied, `fail` when it failed, and `skipped` when it moved, was blocked or waited. Its `wave` field names the spec, the wave, the job (`wave`, `decide`, `share` or `group`), the set digest, the exit code and the runs applied, failed, moved and blocked, so a deciding job and its share jobs join on `wave.digest`. `chant ledger runs --where op=<name>` lists them. `--no-record` and `CHANT_NO_RECORD` write none.
+
 ## Exit codes
 
 With `notify` in the spec, a job that exits 1, 3, 4 or 7 also posts an event saying so ([Notify](/chant/guide/notify/)). A delivery that fails never changes the exit code.
@@ -745,6 +751,7 @@ With `notify` in the spec, a job that exits 1, 3, 4 or 7 also posts an event say
 | 5 | The apply applied nothing: another run holds what it changes |
 | 6 | The apply stood down for a newer run |
 | 7 | The product's policy denied a run and no override counts for it; nothing in the wave was applied |
+| 8 | The gate's decision point was answered with an answer it does not pass on; nothing in the wave was applied |
 
 ## Deciding a gate in your own tool
 

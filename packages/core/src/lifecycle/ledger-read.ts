@@ -40,12 +40,14 @@ export const LEDGER_TIME_COLUMN: Record<QueryTable, string | null> = {
   deploys: "timestamp",
   releases: null,
   cuts: "timestamp",
+  applies: "timestamp",
+  pr_envs: "timestamp",
 };
 
 /** The columns that hold JSON, which this read prints parsed. */
-const JSON_COLUMNS = new Set(["attributes", "labels", "outcomes", "promoted_from", "restores", "redeploys", "artifacts"]);
+const JSON_COLUMNS = new Set(["attributes", "labels", "outcomes", "promoted_from", "restores", "redeploys", "artifacts", "wave", "request", "detail", "components", "approvers"]);
 /** The columns that hold an ISO instant. */
-const TIME_COLUMNS = new Set(["last_updated", "observed_at", "started", "ended", "timestamp", "expires_at"]);
+const TIME_COLUMNS = new Set(["last_updated", "observed_at", "started", "ended", "timestamp", "expires_at", "approved_at", "finished_at"]);
 /** INTEGER columns that hold 0 or 1, which this read prints as booleans. */
 const BOOLEAN_COLUMNS = new Set(["signed", "empty"]);
 

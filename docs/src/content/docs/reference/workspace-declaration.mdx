@@ -1068,6 +1068,9 @@ chant records each lifecycle fact on the orphan branch `chant/lifecycle`, and ke
 | Op run records | `<ledger><env>/runs__<op>.jsonl` |
 | Converge tick records | `<ledger><env>/converge.jsonl` |
 | Gate facts, pending and resolved | `<ledger>_gates/<op>.jsonl` |
+| Applies under an approval, and how each ended | `<ledger>_gates/<op>/applied.jsonl` |
+| A gated request's attachment, such as a migration's proof | `<ledger>_gates/<op>/requests/<digest>.json` ([#4551](https://github.com/INTENTIUS/chant/issues/4551)) |
+| Pull request environments | `<ledger>_pr-envs/records.jsonl` |
 | Build manifests | `<ledger>_builds/<digest>.json` |
 | Stored change sets | `<ledger>_change-sets/<digest>.json`, pruned by [retention](#retention) |
 | Releases, their cuts and template bytes | `<ledger>_releases/<digest>.json`, `<ledger>_releases/cuts.jsonl` and `<ledger>_releases/templates/<digest>.txt`; the release files and templates are pruned by [retention](#retention) |

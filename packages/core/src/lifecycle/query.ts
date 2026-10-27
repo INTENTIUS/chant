@@ -13,7 +13,11 @@
  * - the gate ledgers, `_gates/<op>.jsonl` (`./gate-ledger.ts`);
  * - the deploy records, `<env>/releases.jsonl` (`./release-read.ts`);
  * - the releases and their cuts, `_releases/<digest>.json` and
- *   `_releases/cuts.jsonl` (`./release-store.ts`).
+ *   `_releases/cuts.jsonl` (`./release-store.ts`);
+ * - the applies under an approval, `_gates/<op>/applied.jsonl`
+ *   (`./gate-applied.ts`), each joined with its `finished` line (#4551);
+ * - the pull request environments, `_pr-envs/records.jsonl`
+ *   (`../components/pr-environment.ts`, #4551).
  *
  * The tables are a contract. {@link QUERY_SCHEMA_VERSION} names it, and the
  * `chant_schema` table lists every table and column with the version, so a
@@ -36,6 +40,9 @@ import { parseReleaseLedger, releaseLedgerLines } from "./release-read";
 import { CUTS_FILE, parseCuts, parseRelease, RELEASES_DIR, verifyReleaseDigest } from "./release-store";
 import { opOfRunLedgerFile, parseRunLedger } from "./run-ledger";
 import type { LifecycleSnapshot } from "./types";
+import { appliedGatePath, finishedApply, parseAppliedGateFile } from "./gate-applied";
+import { PR_ENV_LEDGER_DIR, PR_ENV_LEDGER_FILE, parsePrEnvRecords } from "../components/pr-environment";
+import { NEXT_RELEASE } from "../release-floors";
 
 /** The version of the table schema below. */
 export const QUERY_SCHEMA_VERSION = 1;
@@ -70,15 +77,33 @@ export const QUERY_TABLES = {
    * Op names its root only by key and Init is what resolves it. A run whose
    * `terraform init` itself failed still names it (#4512).
    */
-  runs: [["member", "TEXT"], ["id", "TEXT"], ["op", "TEXT"], ["env", "TEXT"], ["started", "TEXT"], ["ended", "TEXT"], ["status", "TEXT"], ["git_sha", "TEXT"], ["forge", "TEXT"], ["run_url", "TEXT"], ["failure_code", "TEXT"], ["failure_reason", "TEXT"], ["failed_phase", "TEXT"], ["gate", "TEXT"], ["steward", "TEXT"], ["labels", "TEXT"], ["outcomes", "TEXT"], ["root_member", "TEXT"]],
-  /** One row per gate ledger line: `kind` is `pending` or `resolution`. `signed` is 1 for a sealed approval. */
-  gates: [["member", "TEXT"], ["op", "TEXT"], ["gate", "TEXT"], ["kind", "TEXT"], ["timestamp", "TEXT"], ["resolved_by", "TEXT"], ["relayed_by", "TEXT"], ["approver_kind", "TEXT"], ["plan_digest", "TEXT"], ["environment", "TEXT"], ["release_digest", "TEXT"], ["git_sha", "TEXT"], ["run_id", "TEXT"], ["url", "TEXT"], ["note", "TEXT"], ["expires_at", "TEXT"], ["origin", "TEXT"], ["empty", "INTEGER"], ["signed", "INTEGER"]],
+  runs: [["member", "TEXT"], ["id", "TEXT"], ["op", "TEXT"], ["env", "TEXT"], ["started", "TEXT"], ["ended", "TEXT"], ["status", "TEXT"], ["git_sha", "TEXT"], ["forge", "TEXT"], ["run_url", "TEXT"], ["failure_code", "TEXT"], ["failure_reason", "TEXT"], ["failed_phase", "TEXT"], ["gate", "TEXT"], ["steward", "TEXT"], ["labels", "TEXT"], ["outcomes", "TEXT"], ["root_member", "TEXT"], ["wave", "TEXT"]],
+  /**
+   * One row per gate ledger line: `kind` is `pending` or `resolution`.
+   * `signed` is 1 for a sealed approval. `change_set` (#4551) is the digest
+   * of the stored change set the line cites; `request` (#4551) is the gated
+   * request a pending fact asks for, as JSON.
+   */
+  gates: [["member", "TEXT"], ["op", "TEXT"], ["gate", "TEXT"], ["kind", "TEXT"], ["timestamp", "TEXT"], ["resolved_by", "TEXT"], ["relayed_by", "TEXT"], ["approver_kind", "TEXT"], ["plan_digest", "TEXT"], ["environment", "TEXT"], ["release_digest", "TEXT"], ["git_sha", "TEXT"], ["run_id", "TEXT"], ["url", "TEXT"], ["note", "TEXT"], ["expires_at", "TEXT"], ["origin", "TEXT"], ["empty", "INTEGER"], ["signed", "INTEGER"], ["change_set", "TEXT"], ["request", "TEXT"]],
   /** One row per deploy record in `<env>/releases.jsonl`. `promoted_from`, `restores` and `redeploys` are JSON. */
   deploys: [["member", "TEXT"], ["env", "TEXT"], ["component", "TEXT"], ["digest", "TEXT"], ["git_sha", "TEXT"], ["run_id", "TEXT"], ["forge", "TEXT"], ["run_url", "TEXT"], ["timestamp", "TEXT"], ["actor", "TEXT"], ["approver", "TEXT"], ["release_digest", "TEXT"], ["digest_kind", "TEXT"], ["promoted_from", "TEXT"], ["restores", "TEXT"], ["redeploys", "TEXT"]],
   /** One row per release file whose content hashes to its digest. `envs` joins its targets' environments with commas; `artifacts` is JSON. */
   releases: [["member", "TEXT"], ["release_digest", "TEXT"], ["release_member", "TEXT"], ["git_sha", "TEXT"], ["envs", "TEXT"], ["artifacts", "TEXT"]],
   /** One row per line of `_releases/cuts.jsonl`. `signed` is 1 for a signed cut. */
   cuts: [["member", "TEXT"], ["release_digest", "TEXT"], ["label", "TEXT"], ["actor", "TEXT"], ["timestamp", "TEXT"], ["run_id", "TEXT"], ["forge", "TEXT"], ["channel", "TEXT"], ["signed", "INTEGER"], ["composed_base", "TEXT"]],
+  /**
+   * One row per `applied` or `changes` line of `_gates/<op>/applied.jsonl`
+   * (#4551): an apply under an approval, with the approval it spent, joined
+   * with the `finished` line that says how it ended. `finished_at`, `result`
+   * and `detail` are NULL while it has none. `wave` and `detail` are JSON.
+   */
+  applies: [["member", "TEXT"], ["op", "TEXT"], ["gate", "TEXT"], ["kind", "TEXT"], ["plan_digest", "TEXT"], ["approved_at", "TEXT"], ["approved_by", "TEXT"], ["timestamp", "TEXT"], ["run_id", "TEXT"], ["git_sha", "TEXT"], ["wave", "TEXT"], ["finished_at", "TEXT"], ["result", "TEXT"], ["detail", "TEXT"]],
+  /**
+   * One row per line of `_pr-envs/records.jsonl` (#4551): a pull request
+   * environment applied (`up`) or torn down (`down`). `env_member` is the
+   * workspace member the record names; `components` and `approvers` are JSON.
+   */
+  pr_envs: [["member", "TEXT"], ["kind", "TEXT"], ["pr", "INTEGER"], ["env", "TEXT"], ["env_member", "TEXT"], ["template", "TEXT"], ["git_sha", "TEXT"], ["components", "TEXT"], ["plan_digest", "TEXT"], ["result", "TEXT"], ["by", "TEXT"], ["timestamp", "TEXT"], ["expires_at", "TEXT"], ["approvers", "TEXT"], ["reason", "TEXT"], ["run_url", "TEXT"]],
 } as const satisfies Record<string, ReadonlyArray<readonly [string, ColumnType]>>;
 
 /**
@@ -96,6 +121,16 @@ export const LEDGER_ROOT_MEMBER_FLOOR = "0.124.54";
  * them, which reads as unknown.
  */
 export const QUERY_OWNERSHIP_COLUMNS_FLOOR = "0.124.54";
+
+/**
+ * The first chant that writes `wave` on a `runs` row and `change_set` and
+ * `request` on a `gates` row (#4551). Columns added within version 1: a row
+ * from an older chant lacks them.
+ */
+export const LEDGER_WAVE_COLUMNS_FLOOR = NEXT_RELEASE;
+
+/** The first chant with the `applies` and `pr_envs` tables (#4551), added within version 1. */
+export const LEDGER_APPLIES_FLOOR = NEXT_RELEASE;
 
 export type QueryTable = keyof typeof QUERY_TABLES;
 
@@ -210,6 +245,8 @@ function gateRow(member: string | null, r: GateResolutionRecord | PendingGateRec
     origin: str(origin),
     empty: bit(res?.empty === true),
     signed: bit(res?.seal !== undefined),
+    change_set: str((r as { changeSet?: unknown }).changeSet),
+    request: pending ? json((r as PendingGateRecord).request) : null,
   };
 }
 
@@ -281,7 +318,7 @@ export async function loadQueryData(ledgers: readonly QueryLedger[]): Promise<Qu
           const { records, malformed: bad } = parseRunLedger(text);
           malformed.runs += bad;
           for (const r of records) {
-            data.runs.push({ member, id: r.id, op: r.op, env: r.env, started: r.started, ended: r.ended, status: r.status, git_sha: str(r.gitSha), forge: str(r.runOrigin?.forge), run_url: str(r.runOrigin?.url), failure_code: str(r.failure?.code), failure_reason: str(r.failure?.reason), failed_phase: str(r.failure?.phase), gate: str(r.gate?.name), steward: str(r.steward), labels: json(r.labels ?? {}), outcomes: json(r.outcomes ?? {}), root_member: rootMemberOf(r.outcomes, ownerOfPath) });
+            data.runs.push({ member, id: r.id, op: r.op, env: r.env, started: r.started, ended: r.ended, status: r.status, git_sha: str(r.gitSha), forge: str(r.runOrigin?.forge), run_url: str(r.runOrigin?.url), failure_code: str(r.failure?.code), failure_reason: str(r.failure?.reason), failed_phase: str(r.failure?.phase), gate: str(r.gate?.name), steward: str(r.steward), labels: json(r.labels ?? {}), outcomes: json(r.outcomes ?? {}), root_member: rootMemberOf(r.outcomes, ownerOfPath), wave: json(r.wave) });
           }
         }
       }
@@ -296,6 +333,25 @@ export async function loadQueryData(ledgers: readonly QueryLedger[]): Promise<Qu
         // Both kinds share the file; ledger order is time order, so they are merged back by timestamp.
         const lines = [...pending, ...resolutions].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
         for (const r of lines) data.gates.push(gateRow(member, r));
+      }
+      // #4551: each op's applies, `_gates/<op>/applied.jsonl`, joined with their finished lines.
+      // A port lists a subdirectory by its name, or (a flat one) by its files' paths under it.
+      const ops = [...new Set((await port.list(GATES_DIR)).map((n) => n.split("/")[0]!).filter((n) => !n.includes(".")))].sort();
+      for (const name of ops) {
+        const { dir, file } = appliedGatePath(name);
+        const text = await port.read(dir, file);
+        if (text === null) continue;
+        const { applied, finished } = parseAppliedGateFile(text);
+        for (const a of applied) {
+          const done = finishedApply(finished, a);
+          data.applies.push({ member, op: a.op || name, gate: a.gate, kind: a.kind, plan_digest: a.planDigest, approved_at: a.approvedAt, approved_by: str(a.approvedBy), timestamp: a.timestamp, run_id: str(a.runId), git_sha: str(a.commit), wave: json(a.wave), finished_at: str(done?.timestamp), result: str(done?.result), detail: json(done?.detail) });
+        }
+      }
+    }
+    if (trees.includes(PR_ENV_LEDGER_DIR)) {
+      const text = await port.read(PR_ENV_LEDGER_DIR, PR_ENV_LEDGER_FILE);
+      for (const r of parsePrEnvRecords(text)) {
+        data.pr_envs.push({ member, kind: r.kind, pr: r.pr, env: r.env, env_member: str(r.member), template: str(r.template), git_sha: str(r.commit), components: json(r.components), plan_digest: str(r.planDigest), result: str(r.result), by: str(r.by), timestamp: str(r.timestamp), expires_at: str(r.expiresAt), approvers: json(r.approvedBy), reason: str(r.reason), run_url: str(r.runUrl) });
       }
     }
     if (trees.includes(RELEASES_DIR)) {

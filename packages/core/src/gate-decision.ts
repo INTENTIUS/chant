@@ -425,6 +425,9 @@ export function reviewApproval(merged: MergedReview, headDigest: string | undefi
   return { approved: true, review: { ...seen, approvers: merged.approvers } };
 }
 
+// #4551: a gated request's shape and digest, for a product deciding one without git.
+export { gatedRequestDigest, gatedRequestOf, type GatedRequest } from "./lifecycle/gated-request-digest";
+
 // ── the decision ─────────────────────────────────────────────────────────
 
 /** The gate ledger lines of one op, as `chant/lifecycle` holds them in `_gates/<op>.jsonl`. */

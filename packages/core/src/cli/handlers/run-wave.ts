@@ -8,10 +8,39 @@ import { relative, resolve } from "node:path";
 import { notifyOpWave } from "../../op/op-waves-notify";
 import { parseOpWavesSpec, recordOpWaveHeadPlans, runOpWave } from "../../op/op-waves-run";
 import type { OpWavesSpec } from "../../op/op-waves";
-import { formatError } from "../format";
+import { formatError, formatWarning } from "../format";
+import { ledgerRecordingOff, NO_RECORD_ENV, noRecordEndNote, noRecordStartNote, resetNoRecordLedger } from "../../lifecycle/no-record";
 import type { CommandContext } from "../registry";
 
+/**
+ * `chant run wave`, with recording off under `--no-record` or
+ * `CHANT_NO_RECORD` (#4551), as `chant run` does (`./run.ts`): the flag sets
+ * `CHANT_NO_RECORD` for the length of the job, so the ledger seam and every
+ * chant process a hook starts see the same choice, and the job says so
+ * before it starts and after it ends. Kept here, not imported from ./run.ts,
+ * so the wave-job runtime bundle stays small.
+ */
 export async function runOpWaveCommand(ctx: CommandContext): Promise<number> {
+  const flagged = ctx.args.noRecord === true;
+  if (!flagged && !ledgerRecordingOff()) return runOpWaveJobCommand(ctx);
+  const source = flagged ? "--no-record" : `${NO_RECORD_ENV}=${process.env[NO_RECORD_ENV]}`;
+  const prior = process.env[NO_RECORD_ENV];
+  if (flagged) process.env[NO_RECORD_ENV] = "1";
+  resetNoRecordLedger();
+  console.error(formatWarning({ message: noRecordStartNote(source) }));
+  try {
+    return await runOpWaveJobCommand(ctx);
+  } finally {
+    console.error(formatWarning({ message: noRecordEndNote(source) }));
+    resetNoRecordLedger();
+    if (flagged) {
+      if (prior === undefined) delete process.env[NO_RECORD_ENV];
+      else process.env[NO_RECORD_ENV] = prior;
+    }
+  }
+}
+
+async function runOpWaveJobCommand(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   const specFile = args.opsSpec;
   if (specFile && args.recordPlans) {

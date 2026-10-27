@@ -385,6 +385,13 @@ export interface OpWavesSpec {
   /** The base gate name. Default: `name`. */
   gate?: string;
   /**
+   * Labels copied onto each job's run record (#4551), as an Op's `labels`
+   * are. `Env` names the environment the record goes under,
+   * `<Env>/runs__<name>.jsonl`; without it the record goes under `local`, as
+   * an Op's does.
+   */
+  labels?: Record<string, string>;
+  /**
    * The name of wave k's gate (#3821): `{gate}` is the base gate name and
    * `{k}` the wave's number. Default `"{gate}-wave-{k}"`. A product moving
    * its own wave gates onto these waves names its old pattern here (such as
@@ -671,6 +678,12 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
   }
   assertOpWaveHooks(where, spec.hooks);
   if (spec.waves.length === 0) throw new Error(`${where} has no waves.`);
+  if (spec.labels !== undefined) {
+    const l = spec.labels as unknown;
+    if (l === null || typeof l !== "object" || Array.isArray(l) || !Object.values(l as Record<string, unknown>).every((v) => typeof v === "string")) {
+      throw new Error(`${where}: \`labels\` must map names to strings, such as { "Env": "prod" }.`);
+    }
+  }
   if (spec.resume !== undefined && (typeof spec.resume.schedule !== "string" || spec.resume.schedule.trim().split(/\s+/).length !== 5)) {
     throw new Error(`${where}: resume.schedule must be a five-field cron expression, such as "*/10 * * * *".`);
   }

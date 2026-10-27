@@ -675,6 +675,8 @@ async function runPhase(
           ...(gates.planDigest !== undefined ? { planDigest: gates.planDigest } : {}),
           // #4045: and under a release, only for that release.
           ...(gates.releaseGate ? { releaseDigest: gates.releaseGate.releaseDigest } : {}),
+          // #4551: a release gate's plan digest is its change set's, so the fact cites it.
+          ...(gates.releaseGate && gates.planDigest !== undefined ? { fields: { changeSet: gates.planDigest } } : {}),
           ...(gates.releaseGate?.verifyEmpty ? { verifyEmpty: gates.releaseGate.verifyEmpty } : {}),
           ...(gate.description ? { description: gate.description } : {}),
           ...(gate.timeout ? { timeout: gate.timeout } : {}),
