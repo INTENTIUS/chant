@@ -49,6 +49,11 @@
       "types": "./dist/registry/index.d.ts",
       "default": "./dist/registry/index.js"
     },
+    "./registry/edge": {
+      "development": "./src/registry/edge/index.ts",
+      "types": "./dist/registry/edge/index.d.ts",
+      "default": "./dist/registry/edge/index.js"
+    },
     "./lint/post-synth": {
       "development": "./src/lint/post-synth/index.ts",
       "types": "./dist/lint/post-synth/index.d.ts",
