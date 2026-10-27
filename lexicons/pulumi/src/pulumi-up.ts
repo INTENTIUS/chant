@@ -104,6 +104,7 @@ import { pulumiExitOf } from "./exit-codes";
 import { pulumiMemberEngine, type PulumiMemberEngine, type PulumiMemberEngineSource } from "./member-engine";
 import { pulumiMemberPlannedOutputs } from "./member-outputs";
 import { pulumiPlanShape, pulumiShapeDifferences } from "./plan-shape";
+import { pulumiTraceFacts } from "./trace-facts";
 import {
   defaultPlungeRunner,
   defaultPulumiRunner,
@@ -625,6 +626,8 @@ export function createPulumiUpCapability(opts: PulumiUpOptions = {}): Capability
       });
     },
     releaseInputs: (input, ctx) => pulumiReleaseInputs(input, ctx),
+    // #4555: the stack, the engine and the summary's counts, for the step's span and run record.
+    traceFacts: (input, outcome) => pulumiTraceFacts(input, outcome),
   };
 }
 

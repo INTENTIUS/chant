@@ -11,6 +11,8 @@
 
 import { NEXT_RELEASE } from "./release-floors";
 import type { CiProductWords, CiProductWordsInput } from "./ci-product-words";
+import type { ProductMcpHook } from "./cli/mcp/product-tools";
+import { OTLP_EXPORTER_FLOOR } from "./otlp";
 
 /**
  * The first chant with the product pipeline (#4550): the words, the
@@ -73,7 +75,26 @@ export { upsertPlanNote } from "./pr-post";
  * onto, and for the `chant ...` lines the generated jobs run through it. The
  * CLI loads on the first call, so importing this entry stays light.
  */
-export async function runChantInProcess(argv: string[], words: CiProductWordsInput | CiProductWords): Promise<number> {
+export async function runChantInProcess(argv: string[], words: CiProductWordsInput | CiProductWords, options: { mcp?: ProductMcpHook } = {}): Promise<number> {
   const { runCommandInProcess } = await import("./cli/main");
-  return runCommandInProcess(argv, { words });
+  return runCommandInProcess(argv, { words, ...(options.mcp ? { mcp: options.mcp } : {}) });
 }
+
+/**
+ * Telemetry and MCP (#4555). A product's bin configures the exporter once
+ * with its prefix (`configureOtlp({ prefix })`, or leaves it to its words),
+ * and passes its MCP tools as `runChantInProcess(["serve", "mcp"], words, {
+ * mcp: hook })`. Feature-detect on `configureOtlp` and
+ * `PRODUCT_MCP_HOOK_FLOOR`: present means both are.
+ */
+export const PRODUCT_MCP_HOOK_FLOOR = OTLP_EXPORTER_FLOOR;
+export type { ProductMcpContext, ProductMcpHook } from "./cli/mcp/product-tools";
+export {
+  activeOtlp,
+  configureOtlp,
+  OTLP_EXPORTER_FLOOR,
+  RunEventTrace,
+  type CapabilityTraceFacts,
+  type CapabilityTraceSpan,
+  type OtlpExporter,
+} from "./otlp";

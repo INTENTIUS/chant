@@ -511,7 +511,10 @@ Ops:
                         --group <name> applies one job group's runs.
                         --record-plans (no --wave), in a pull request's
                         pipeline: plan every wave at its head and record the
-                        digests a pr-review approval mode compares
+                        digests a pr-review approval mode compares.
+                        --events-json streams the job's run events (#4555);
+                        with OTEL_EXPORTER_OTLP_ENDPOINT set, the job sends
+                        its trace there
   run resume [--op <name>] [--gate <name>]  Start again each CI job that
                         waits at a gate an approval now answers, through the
                         forge's API (#3683); approves nothing. --gate resumes
@@ -1575,9 +1578,19 @@ function commandRunsNoConfig(def: CommandDef, args: ParsedArgs): boolean {
  *
  * `words` (#4550) are a CI product's words (`@intentius/chant/ci-product`):
  * the product's bin passes them, so the command renders in the product's
- * words while it runs.
+ * words while it runs. `mcp` (#4555) is its tool hook, which `chant serve
+ * mcp` serves beside chant's own tools.
  */
-export async function runCommandInProcess(argv: string[], options: { words?: CiProductWordsInput | CiProductWords } = {}): Promise<number> {
+export async function runCommandInProcess(
+  argv: string[],
+  options: { words?: CiProductWordsInput | CiProductWords; mcp?: import("./mcp/product-tools").ProductMcpHook } = {},
+): Promise<number> {
+  // #4555: a product's tools on `chant serve mcp`, through its tool hook.
+  if (options.mcp) {
+    const { withProductMcpHook } = await import("./mcp/product-tools");
+    const { mcp, ...rest } = options;
+    return withProductMcpHook(mcp, () => runCommandInProcess(argv, rest));
+  }
   // #4550: a product's bin calls chant with its words; every status, note and
   // approve line the command writes takes them, and the earlier words come
   // back once it settles.

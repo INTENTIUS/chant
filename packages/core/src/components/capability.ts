@@ -17,6 +17,7 @@ import { CHANT_EXIT } from "../exit-codes";
 import type { ReleaseIdentity } from "../telemetry-attribution";
 import type { ChangeSetPart } from "../change-set";
 import type { DeployAdoption } from "./adoption";
+import type { CapabilityTraceFacts } from "../otlp";
 
 /**
  * Ambient information a capability's `run`/`rollback` receives, independent of
@@ -269,6 +270,16 @@ export interface Capability<In = unknown, Out = unknown> {
    * its files can't be deployed from a copy, which the cut prints.
    */
   releaseInputs?(input: In, ctx: ReleaseInputsContext): Promise<ReleaseInputs | ReleaseInputsUnbound | null> | ReleaseInputs | ReleaseInputsUnbound | null;
+  /**
+   * Optional (#4555): what this capability knows about one `run`, for the
+   * step's span and its op-wave run record. Engine facts go in `attributes`
+   * (the root or stack, the binary, resource counts), and the pieces the
+   * engine timed, such as each resource's provider call, in `spans`. Core
+   * writes every key under the CI product's prefix. Called after `run`
+   * returned (`output`) or threw (`error`); a throw here, or undefined,
+   * leaves the step with core's own facts.
+   */
+  traceFacts?(input: In, outcome: { output: Out } | { error: unknown }): Promise<CapabilityTraceFacts | undefined> | CapabilityTraceFacts | undefined;
   /**
    * Optional (#4435, ws-107): plan `members` as one, in one call. Declared
    * together with `runGroup`; a capability with only one of the two never

@@ -8,12 +8,14 @@
  * registration in read-only mode, so a new tool has to be put on one side
  * before it can ship.
  *
- * Contributed tools (a lexicon's `mcpTools()`, and the product tool hook
- * chant#4555 adds) are served only when they declare `readOnly: true`.
+ * Contributed tools (a lexicon's `mcpTools()`, and a product's tools through
+ * the hook chant#4555 adds, ./product-tools.ts) are served only when they
+ * declare `readOnly: true`.
  */
 
 import { workspaceReadTools, workspaceWriteTools } from "./workspace-tools";
 import { ledgerReadTools } from "./ledger-tools";
+import { reportReadTools } from "./report-tools";
 
 /**
  * Core tools that change nothing, served in both modes.
@@ -35,6 +37,7 @@ export const READ_ONLY_CORE_TOOLS: ReadonlySet<string> = new Set([
   "op-status",
   "op-report",
   ...ledgerReadTools.map((t) => t.name),
+  ...reportReadTools.map((t) => t.name),
   ...workspaceReadTools.map((t) => t.name),
 ]);
 
