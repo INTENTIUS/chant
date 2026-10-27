@@ -68,6 +68,10 @@ describe("the document", () => {
     expect(reaches.rule).toBe("reaches(r, x; action?) := r:Role ->{0,}can-assume ->grants($action) x");
     expect(reaches.notEvaluated).toContain('Resource "*"');
     expect(doc.helpers.map((h) => h.name)).toEqual(["in-sg", "ingress-of", "world-open", "allows", "denies", "pivot"]);
+    // #4531: the investigation templates ride on the same document.
+    expect(doc.templates.map((t) => t.id)).toContain("ownership");
+    expect(doc.templates.find((t) => t.id === "dependents")?.query).toEqual({ kind: "path", text: "->*{{node}}" });
+    expect(schema.$defs.result.properties.templates.description).toContain("written by chant");
     for (const c of doc.capabilities) {
       expect(c.answers.length, c.name).toBeGreaterThan(0);
       expect(c.search, c.name).toBe(c.shape === "set" ? `cap:${c.name}` : `->[cap=${c.name}]`);
