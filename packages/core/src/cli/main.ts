@@ -590,6 +590,12 @@ Ops:
                         --resume then starts the CI job that waits at the
                         gate again (GitHub re-run, GitLab retry, Forgejo
                         dispatch) with CHANT_FORGE_TOKEN
+                        At a terminal it shows the stored plan and asks you
+                        to type the target's name (the environment, else the
+                        gate) before recording; a wrong answer exits 8, a
+                        plan that moved while you were asked exits 4.
+                        --yes, --json, CI and no terminal record as before
+                        (#4575)
                         On op policy-override the gate is the subject a
                         policy denied: --rule <id> names each rule that
                         denied it and --reason <text> says why the plan goes
