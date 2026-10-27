@@ -103,6 +103,7 @@ import {
   describePlanChanged,
   PR_APPLY_GATE,
   prApproveCommand,
+  prApproveCommands,
   prNoteMarker,
   prOp,
   prStatusDescription,
@@ -809,7 +810,7 @@ async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> 
   printMembers(report);
   if (status === "planned") {
     console.error(formatInfo(`plan    : ${report.digest}`));
-    console.error(formatInfo(approval.status === "approved" ? `approved by ${(approval.approvedBy ?? []).join(", ")}` : `approve : ${prApproveCommand(report)}`));
+    console.error(formatInfo(approval.status === "approved" ? `approved by ${(approval.approvedBy ?? []).join(", ")}` : `approve : ${prApproveCommands(report).join("; ")}`));
   }
   if (judged.stop) console.error(formatWarning({ message: judged.stop.message }));
   // #4550: a capability's policy denial (pulumi-up's CrossGuard) exits as a denial, 7, not as a failed plan.

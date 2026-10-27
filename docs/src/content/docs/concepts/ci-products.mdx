@@ -37,10 +37,13 @@ A product passes chant one object of words from `@intentius/chant/ci-product` an
 | `gateName` | `{gate}-wave-{k}` | `wave-{k}` | `wave-{k}` |
 | `prGate` | `pr-apply` | unused | `up` |
 | `approval` | `pull-request` | `per-wave` | `pull-request` |
+| `applyMode` | `release` | `on-merge` | `on-merge` |
 
 Status contexts come out as `<product>/<stage>`, such as `plywood/preview`, with `/<member>` after it inside a workspace member. A job answers the comment `/<product> <command>`. Job names and note markers stay chant's, and so do ledger paths and artifact names: people never type them, and readers of the ledger key on them. `assertProductWords` refuses a word outside `[a-z0-9-]` or two stages with one word. It also refuses a command the pipeline has no job for.
 
-The approve and override templates take `{op}`, `{gate}` and `{digest}` among their placeholders. `{target}` is the wave's run target. A product that approves by environment writes `approve {target} --plan {digest}`.
+The approve and override templates take `{op}`, `{gate}` and `{digest}` among their placeholders. `{target}` is the wave's run target. A product that approves by environment writes `approve {target} --plan {digest}`. The note then prints one approve line per member, each naming its own target.
+
+The note's sentence on the merge follows `applyMode`. With `on-merge` the waves apply in order, each under its own gate for `per-wave` or under the pull request's approval for `pull-request`. A `release` product's merge records the plan for a release to deploy. For `before-merge`, the apply comment runs the plan on the open pull request and the merge records it. A product that names an `op` or approves per wave gets `on-merge` by default, and `productPipelineJobs` sets the mode from the jobs it builds.
 
 The plan side is the pull request loop's: `pr-plan`, then `pr-post` in a job that holds the forge token. The apply on merge runs on [Op waves](/chant/guide/op-waves/) with a job per wave. The spec is `.chant/op-waves/<op>.spec.json`, and chant reads it at the base commit. Under `approval: per-wave` each wave waits for an approval of its own digest. Under `approval: pull-request` the pull request's approval applies every wave whose plan its change set covers, and a wave whose plan moved waits at its own gate.
 

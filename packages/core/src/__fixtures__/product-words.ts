@@ -28,3 +28,17 @@ export const TERRAGUCCI = {
   adoptMarkers: ["<!-- terragucci:waves -->"],
 };
 
+/** sql-yodeler's words (its src/ci-words.ts at integration/ci-products), for the note's probe (#4601). */
+export const YODEL = {
+  product: "yodel",
+  stages: { plan: "plan", apply: "apply", record: "record", check: "check", drift: "drift", lock: "lock", approval: "approval", control: "control" },
+  verbs: { plan: ["plan", "planned"] as [string, string], apply: ["apply", "applied"] as [string, string] },
+  noun: ["environment", "environments"] as [string, string],
+  commands: {},
+  approve: "yodel approve {target} --plan {digest} {sign}",
+  override: "yodel override {target} --rule {rule} --reason <text>",
+  op: "yodel-apply",
+  gateName: "yodel-apply-wave-{k}",
+  approval: "per-wave" as const,
+  bin: "yodel chant",
+};

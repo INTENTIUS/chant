@@ -13,7 +13,7 @@ import {
   setActiveProductWords,
   withProductWords,
 } from "./ci-product-words";
-import { PLYWOOD, TERRAGUCCI } from "./__fixtures__/product-words";
+import { PLYWOOD, TERRAGUCCI, YODEL } from "./__fixtures__/product-words";
 
 afterEach(() => {
   setActiveProductWords(undefined);
@@ -39,6 +39,16 @@ describe("a CI product's words (#4550)", () => {
     const yodel = assertProductWords({ product: "yodel", approve: "yodel approve {target} --plan {digest}", override: "yodel override {target} --rule {rule} --reason {reason}" });
     expect(approveLine(yodel, { op: "migrate", gate: "wave-1", digest: "sha256:abc", target: "prod/acme" })).toBe("yodel approve prod/acme --plan sha256:abc");
     expect(overrideLine(yodel, { op: "policy-override", rules: ["no-drop"], target: "prod/acme", reason: "planned" })).toBe("yodel override prod/acme --rule no-drop --reason planned");
+  });
+
+  test("the apply mode follows the words: waves on merge for a product with an op or per-wave approvals, else a release (#4601)", () => {
+    expect(CHANT_WORDS.applyMode).toBe("release");
+    expect(assertProductWords(PLYWOOD).applyMode).toBe("on-merge");
+    expect(assertProductWords(TERRAGUCCI).applyMode).toBe("on-merge");
+    expect(assertProductWords(YODEL).applyMode).toBe("on-merge");
+    expect(assertProductWords({ product: "acme" }).applyMode).toBe("release");
+    expect(assertProductWords({ ...PLYWOOD, applyMode: "before-merge" }).applyMode).toBe("before-merge");
+    expect(productWordsProblems(resolveProductWords({ applyMode: "later" as never })).some((p) => /applyMode is "later"/.test(p))).toBe(true);
   });
 
   test("words that could reach a shell or collide are refused", () => {

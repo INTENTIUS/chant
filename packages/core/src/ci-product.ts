@@ -29,6 +29,7 @@ export {
   CHANT_APPROVE_TEMPLATE,
   CHANT_OVERRIDE_TEMPLATE,
   CHANT_WORDS,
+  CI_PRODUCT_APPLY_MODES,
   CI_PRODUCT_COMMANDS,
   CI_PRODUCT_STAGES,
   CiProductWordsError,
@@ -46,6 +47,7 @@ export {
   withProductWords,
   type ApproveLineInput,
   type CiProductAlias,
+  type CiProductApplyMode,
   type CiProductApproval,
   type CiProductCommand,
   type CiProductStage,
@@ -66,7 +68,7 @@ export {
   type ProductPipelineOptions,
 } from "./components/product-pipeline";
 export { prApplyComment, prLoopSetup, engineSetupLines, withProductBin } from "./components/pr-pipeline";
-export { renderPrNote, prStatusContext, prApproveCommand, type PrMemberDetail } from "./pr-loop";
+export { renderPrNote, prStatusContext, prApproveCommand, prApproveCommands, prApproveTargets, prMergeSentence, type PrMemberDetail } from "./pr-loop";
 export { upsertPlanNote } from "./pr-post";
 
 /**
