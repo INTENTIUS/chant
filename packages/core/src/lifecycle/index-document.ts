@@ -129,8 +129,8 @@ export interface IndexNote {
  * none does (not observed). An exact entry wins over a wildcard one, and a
  * wildcard on one side over a wildcard on both.
  */
-export function indexCoverageFor(coverage: readonly CoverageEntry[], listedType: string, location: string): CoverageEntry | undefined {
-  let best: CoverageEntry | undefined;
+export function indexCoverageFor<E extends Pick<CoverageEntry, "listedType" | "location"> = CoverageEntry>(coverage: readonly E[], listedType: string, location: string): E | undefined {
+  let best: E | undefined;
   let bestScore = -1;
   for (const e of coverage) {
     const typeHit = e.listedType === listedType ? 2 : e.listedType === "*" ? 0 : -1;

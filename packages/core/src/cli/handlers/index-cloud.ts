@@ -16,6 +16,15 @@ export async function runIndexCommand(ctx: CommandContext): Promise<number> {
   const a = ctx.args;
   const action = a.fix ? "--fix" : a.live ? "--live" : a.write ? "--write" : a.yes ? "--yes" : a.op ? "--op" : undefined;
   const words = [...(a.positionals ?? (a.path && a.path !== "." ? [a.path] : []))];
+  if (words[0] === "diff") {
+    // #4533 — `chant index diff <a> [<b>]` reads two stored versions; it takes no action flag either.
+    if (action) {
+      process.stderr.write(`chant index diff: refused ${action}: the diff only reads the store\n`);
+      return 2;
+    }
+    const { runIndexDiff } = await import("./index-diff");
+    return runIndexDiff([...words.slice(1), ...(a.json ? ["--json"] : []), ...(a.help ? ["--help"] : [])]);
+  }
   if (action) words.push(action);
   if (a.json) words.push("--json");
   if (a.help) words.push("--help");

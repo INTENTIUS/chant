@@ -1,0 +1,127 @@
+{
+  "index": "v1",
+  "stamp": {
+    "source": {
+      "kind": "cloud",
+      "name": "behold-lister",
+      "version": "0.0.0"
+    },
+    "scope": {
+      "kind": "cloud",
+      "substrate": "aws",
+      "scopeId": "000000000000",
+      "locations": [
+        "us-east-1"
+      ],
+      "types": [
+        "AWS::IAM::Role",
+        "AWS::S3::Bucket",
+        "AWS::SQS::Queue"
+      ]
+    },
+    "scopeKey": "cloud/aws/000000000000/5c1f0e2a9b7d",
+    "observedAt": "2026-10-26T13:00:00Z",
+    "completedAt": "2026-10-26T13:00:04Z",
+    "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "coverage": [
+    {
+      "listedType": "AWS::IAM::Role",
+      "location": "us-east-1",
+      "verdict": "listed"
+    },
+    {
+      "listedType": "AWS::S3::Bucket",
+      "location": "us-east-1",
+      "verdict": "listed"
+    },
+    {
+      "listedType": "AWS::SQS::Queue",
+      "location": "us-east-1",
+      "verdict": "read-failed",
+      "detail": "ListResources returned ThrottlingException"
+    }
+  ],
+  "graph": {
+    "version": 1,
+    "nodes": [
+      {
+        "id": "aws/000000000000/us-east-1/AWS::IAM::Role/app-role",
+        "kind": "AWS::IAM::Role",
+        "lexicon": "aws",
+        "attrs": {
+          "RoleName": "app-role",
+          "Path": "/"
+        },
+        "physicalId": "app-role",
+        "listedType": "AWS::IAM::Role",
+        "location": "us-east-1",
+        "nativeId": "app-role",
+        "facts": {
+          "observedAt": "2026-10-26T13:00:00Z"
+        }
+      },
+      {
+        "id": "aws/000000000000/us-east-1/AWS::S3::Bucket/new-bucket",
+        "kind": "AWS::S3::Bucket",
+        "lexicon": "aws",
+        "attrs": {
+          "BucketName": "new-bucket"
+        },
+        "physicalId": "new-bucket",
+        "listedType": "AWS::S3::Bucket",
+        "location": "us-east-1",
+        "nativeId": "new-bucket",
+        "facts": {
+          "observedAt": "2026-10-26T13:00:00Z"
+        }
+      },
+      {
+        "id": "aws/000000000000/us-east-1/AWS::S3::Bucket/web-logs",
+        "kind": "AWS::S3::Bucket",
+        "lexicon": "aws",
+        "attrs": {
+          "BucketName": "web-logs",
+          "VersioningConfiguration": {
+            "Status": "Enabled"
+          },
+          "Tags": [
+            {
+              "Key": "env",
+              "Value": "dev"
+            }
+          ]
+        },
+        "physicalId": "web-logs",
+        "listedType": "AWS::S3::Bucket",
+        "location": "us-east-1",
+        "nativeId": "web-logs",
+        "facts": {
+          "observedAt": "2026-10-26T13:00:00Z"
+        },
+        "tags": {
+          "env": "dev"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "from": "aws/000000000000/us-east-1/AWS::IAM::Role/app-role",
+        "to": "aws/000000000000/us-east-1/AWS::S3::Bucket/web-logs",
+        "kind": "ref",
+        "viaAttr": "Policies",
+        "origin": "derived",
+        "rule": "aws:AWS::IAM::Role:Policies"
+      },
+      {
+        "from": "aws/000000000000/us-east-1/AWS::IAM::Role/app-role",
+        "to": "aws/000000000000/us-east-1/AWS::S3::Bucket/new-bucket",
+        "kind": "ref",
+        "viaAttr": "Policies",
+        "origin": "derived",
+        "rule": "aws:AWS::IAM::Role:Policies"
+      }
+    ],
+    "groups": {}
+  }
+}
