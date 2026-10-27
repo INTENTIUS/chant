@@ -173,7 +173,9 @@ Commands:
                         terms, ->* / ->{1,3} for depth, ->[via=attr] / [to=attr]
                         by attribute; --live or --snapshot <ref> (also --at
                         <ref>) with --env <name> reads the estate or a
-                        recorded snapshot; --show <attr>,
+                        recorded snapshot; --index <scope key>[@<version>]
+                        answers from an index version, joined to the
+                        declared rows, or alone with no project; --show <attr>,
                         --count-by kind|module|attr:<name>, --explain prints
                         paths, --json, --check-live,
                         --check-snapshot, --fail-on-drift; cap:<name> and

@@ -181,6 +181,7 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `usage-invalid` | error, `search` and `capabilities` | A flag that needs another one it lacks, or two that don't go together, such as `--check-live` without `--snapshot`. |
 | `environment-unknown` | error and member, `search` | `--env` names an environment the project's chant config does not declare. |
 | `snapshot-unavailable` | error and member, `search` | `--snapshot` names a snapshot chant can't replay: none is recorded for the environment, or the ref is one replay does not take. |
+| `index-unavailable` | error and member, `search` | `--index` names an index version chant can't read: none is recorded under the scope key in the store, or its stamp is not the scope or version asked for. |
 | `build-failed` | error and member, `search` | The project's build, or one of its build roots, failed, so the graph the search would answer over is incomplete. |
 | `snapshot-at-revision` | error, `search` | `workspace search` was given `--snapshot` and `--at`: a snapshot replays the estate as recorded over the source in the working tree, not at a revision. |
 | `lexicon-has-no-mapping` | lexicon, `capabilities` | The lexicon ships no capability mapping, so no capability rule can read its resources ([#4375](https://github.com/INTENTIUS/chant/issues/4375)). |

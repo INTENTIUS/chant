@@ -57,6 +57,7 @@ export const REASONS = {
   "environment-unknown": "--env names an environment the project's chant config does not declare.",
   "snapshot-unavailable": "--snapshot names a snapshot chant can't replay: none is recorded for the environment, or the ref is one replay does not take.",
   "build-failed": "The project's build, or one of its build roots, failed, so the graph search would answer over is incomplete.",
+  "index-unavailable": "--index names an index version chant can't read: none is recorded under the scope key in the store, or its stamp is not the scope or version asked for.",
   "snapshot-at-revision": "workspace search was given --snapshot and --at: a snapshot replays the estate as recorded over the source in the working tree, not at a revision.",
   "member-chant-too-old": "The member's chant predates the document asked for: it has no such command, or prints it without the read contract.",
   // the capabilities catalog (#4375): why a lexicon can't supply a capability.

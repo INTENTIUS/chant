@@ -8,6 +8,7 @@ diataxis: reference
 
 ```
 chant search "<query>" [--live | --snapshot <ref>] [--env <name>] [flags]
+chant search "<query>" --index <scope key>[@<version>] [flags]
 chant search ["<query>"] --count-by <kind | module | attr:<name>> [flags]
 ```
 
@@ -236,6 +237,7 @@ with its own path:
 | `--live` | `boolean` | `false` | Query live state overlaid on the declared graph (requires `--env`) |
 | `--snapshot` | `string` | — | Answer from a recorded snapshot instead of reading the estate now (`latest`; requires `--env`; mutually exclusive with `--live`) |
 | `--at` | `string` | — | The same as `--snapshot`, kept for compatibility. Elsewhere in the [read contract](/chant/reference/workspace-read-contract/) `--at` is a git revision, so [`chant workspace search`](/chant/cli/workspace-search/) takes only `--snapshot` |
+| `--index` | `string` | — | Answer from an index version in the store instead of reading the estate: `<scope key>`, `<scope key>@latest` or `<scope key>@<version>` (see [Index mode](#index-mode)). Mutually exclusive with `--live`, `--snapshot` and `--ambient` |
 | `--env` | `string` | — | Environment to observe (must be in `chant.config` `environments` when declared) |
 | `--src` | `string` | config `sourceDir` or `.` | Source directory to discover/build |
 | `--show` | `string` | — | Comma-separated attribute names to append to each result row |
@@ -455,6 +457,7 @@ exits 1. The code is one of the read contract's
 | `environment-unknown` | `--env` names an environment the config does not declare |
 | `snapshot-unavailable` | no snapshot is recorded for the environment, or the ref is not one replay takes |
 | `build-failed` | the build of a `--live` read failed, or a build root failed to render |
+| `index-unavailable` | `--index` names no version the store holds under that scope key, or a version stamped for another scope or version |
 
 ```json
 {
@@ -503,6 +506,58 @@ topology are not advertised in that case, since nothing was read to compute
 them. The rows printed are what the source declares, labelled as such; answer
 from a recorded snapshot with `--at latest` or drop `--live` for a declared-only
 query.
+
+## Index mode
+
+`--index <ref>` answers from an index version: a stamped, read-only graph of
+observed resources that `behold index` wrote to the project's
+[snapshot store](/chant/cli/lifecycle/#where-snapshots-are-kept). Nothing is
+read from the cloud.
+
+The ref starts with the index's `stamp.scopeKey`, for example
+`cloud/aws/000000000000/0123456789ab`. Add `@latest` (the default) or
+`@<version>` to pick a version. A version is a name the store lists, such as
+`20261026T090000Z-0123456789ab`, and the `.json` suffix is optional. A full
+store path ending in `/<version>.json` works too.
+
+With a project, the rows are the declared graph. This is the canvas `--live`
+uses, per stack when `chant.config` declares stacks. Each declared row is
+joined to the index through its lexicon's index match. For aws the match is
+the CloudFormation `primaryIdentifier` the declaration spells. It is looked
+for in the region of the entity's stack, and at `global` for the global types
+such as IAM roles. Every row gets one verdict, and a row that did not bind
+prints its verdict where the physical id would go:
+
+| Verdict | Printed | Meaning |
+|---|---|---|
+| `bound` | the native id | one indexed resource carries the identity; its observed attributes are on the row |
+| `absent` | `(absent)` | the index listed that type and location and holds no such resource |
+| `not-observed` | `(not observed: <reason>)` | the index did not look. `filtered` is a type or location outside its scope or tag filter, or an index of another substrate. `not-reached` means nothing covered it. `unsupported-kind` means the lexicon has no index match |
+| `no-binding` | `(no-binding)` | the declaration spells no identity to match by (a server-assigned id such as a queue URL, or a `Ref`), or it names no region and nothing matched |
+| `ambiguous` | `(ambiguous: N candidates)` | two or more indexed resources carry the identity, and none is bound |
+
+An indexed resource that no declared row binds is not a row, just as an
+undeclared resource is not a row of a `--live` answer. Only the aws lexicon
+has an index match today. Rows of the other lexicons read
+`not observed: unsupported-kind`.
+
+With no project (no lexicon in a `chant.config` or in source), the index is
+the whole graph. Each indexed resource is a row with its path-style id and its
+native id. The query grammar applies as it does to a declared graph, edge
+terms walk the index's derived edges, and `tag:` reads each resource's tags.
+
+The provenance line names the version and when it was read:
+
+```
+— observed from index cloud/aws/000000000000/0123456789ab@20261026T090000Z-0123456789ab taken 2026-10-26T09:00:00.000Z · bound 2/5 · absent 1 · no-binding 2
+— index only, no project · cloud/aws/000000000000/0123456789ab@20261026T090000Z-0123456789ab taken 2026-10-26T09:00:00.000Z by behold-lister 0.4.0 · 12 rows
+```
+
+Under `--json`, `source.kind` is `index`, and `source` carries the ref, the
+scope key, the version, `observedAt`, the digest, `by` and `project`. Each
+declared match carries a `join` object with its `verdict` and `detail`. A
+bound row's `join` adds `node` and `nativeId`. A row that is not observed adds
+`reason`, and an ambiguous one adds `candidates`.
 
 ## Query-scoped drift
 
@@ -554,6 +609,10 @@ chant search "tag:Environment=prod"
 chant search "kind:EC2::Instance attr:internetFacing=true" --live --env dev
 chant search "kind:Instance ->attr:MapPublicIpOnLaunch=true" --live --env dev --explain
 
+# from an index version, with or without a project
+chant search "kind:S3::Bucket" --index cloud/aws/000000000000/0123456789ab
+chant search "tag:team=data" --index cloud/aws/000000000000/0123456789ab@20261026T090000Z-0123456789ab --json
+
 # how many of each
 chant search --count-by kind
 chant search "kind:Terraform::Resource" --count-by module
@@ -569,4 +628,4 @@ chant search "kind:EC2::Instance" --env prod --live --check-snapshot --fail-on-d
 | Code | Meaning |
 |------|---------|
 | 0 | Query ran (including zero matches — prints `(no matches)`), including a scoped check that found drift without `--fail-on-drift` |
-| 1 | Missing query (without `--count-by`), a query the grammar refuses, a `--count-by` value that is not a grouping, missing/unknown `--env`, build failure in `--live` mode, a build root (`terraform.roots`, `k8s.kustomize.roots`) that failed to render, a `--live`/`--check-live` read that failed for at least one lexicon (rows are printed, marked unobserved), `--check-live`/`--check-snapshot` used without its required flag, `--fail-on-drift` used without either, or `--fail-on-drift` with drift found |
+| 1 | An `--index` ref that names no readable version, missing query (without `--count-by`), a query the grammar refuses, a `--count-by` value that is not a grouping, missing/unknown `--env`, build failure in `--live` mode, a build root (`terraform.roots`, `k8s.kustomize.roots`) that failed to render, a `--live`/`--check-live` read that failed for at least one lexicon (rows are printed, marked unobserved), `--check-live`/`--check-snapshot` used without its required flag, `--fail-on-drift` used without either, or `--fail-on-drift` with drift found |
