@@ -198,7 +198,7 @@
           "member": { "type": "string", "description": "The member's name in the change set: the root, for a terraform-family step." },
           "component": { "type": "string" },
           "planDigest": { "type": ["string", "null"], "description": "What a gate on this member alone binds. null when it failed to plan." },
-          "status": { "enum": ["planned", "plan-failed", "applied", "failed", "blocked", "waiting", "not-started"], "description": "waiting (#3999): held back because its plan read an upstream output that applied as another value, or was known only after apply; it waits on an approval of its plan in rounds. not-started (ws-107, #4440, written by chant 0.124.53 and newer): a member of a group whose apply stopped before its part began." },
+          "status": { "enum": ["planned", "plan-failed", "applied", "failed", "blocked", "waiting", "not-started"], "description": "waiting (#3999): held back because its plan read an upstream output that applied as another value, or was known only after apply; it waits on an approval of its plan in rounds. not-started (ws-107, #4440, written by chant 0.124.54 and newer): a member of a group whose apply stopped before its part began." },
           "counts": {
             "type": "object",
             "required": ["create", "update", "replace", "delete"],
@@ -241,17 +241,17 @@
           },
           "round": { "type": "integer", "minimum": 2, "description": "Apply stage (#3999): the round whose plan it applied or waits on, when not the first. planDigest and counts are that round's." },
           "held": { "type": "string", "description": "Apply stage (#3999): why the first round's plan did not apply." },
-          "group": { "type": "integer", "minimum": 0, "description": "Added within contract version 1 by #4446, written by chant 0.124.53 and newer. The index in groups of the group the member planned and applied with. Absent when it is in no group." },
+          "group": { "type": "integer", "minimum": 0, "description": "Added within contract version 1 by #4446, written by chant 0.124.54 and newer. The index in groups of the group the member planned and applied with. Absent when it is in no group." },
           "groupOutcome": {
             "enum": ["applied", "partial", "failed", "not-started", "no-changes"],
-            "description": "Added within contract version 1 by #4446, written by chant 0.124.53 and newer. Apply stage: how the member's part of its group's apply ended, as the capability said. applied and no-changes give status applied, and what applied stays applied; partial and failed give status failed; not-started gives status not-started. pr-apply --resume plans partial, failed and not-started members again. Absent when the group did not run."
+            "description": "Added within contract version 1 by #4446, written by chant 0.124.54 and newer. Apply stage: how the member's part of its group's apply ended, as the capability said. applied and no-changes give status applied, and what applied stays applied; partial and failed give status failed; not-started gives status not-started. pr-apply --resume plans partial, failed and not-started members again. Absent when the group did not run."
           }
         }
       }
     },
     "groups": {
       "type": "array",
-      "description": "Added within contract version 1 by #4446, written by chant 0.124.53 and newer. The groups of components one capability planned and applied as one (ws-107), in plan order of their first member. On a resumed apply, what is left of each approved group, grouped again. Absent when none formed.",
+      "description": "Added within contract version 1 by #4446, written by chant 0.124.54 and newer. The groups of components one capability planned and applied as one (ws-107), in plan order of their first member. On a resumed apply, what is left of each approved group, grouped again. Absent when none formed.",
       "items": {
         "type": "object",
         "required": ["capability", "components", "wave", "digest"],
@@ -280,7 +280,7 @@
     },
     "fallbacks": {
       "type": "array",
-      "description": "Added within contract version 1 by #4446, written by chant 0.124.53 and newer. Each component in the change whose capability declares planGroup and runGroup, that a read joins to another such component of its kind, and that ended in no group, sorted by component. Absent when none.",
+      "description": "Added within contract version 1 by #4446, written by chant 0.124.54 and newer. Each component in the change whose capability declares planGroup and runGroup, that a read joins to another such component of its kind, and that ended in no group, sorted by component. Absent when none.",
       "items": {
         "type": "object",
         "required": ["component", "capability", "kind", "reason"],
