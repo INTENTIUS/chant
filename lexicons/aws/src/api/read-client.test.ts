@@ -21,7 +21,7 @@ import {
   xmlError,
   type AwsReadHttp,
 } from "./read-client";
-import { EMPTY_PAYLOAD_SHA256 } from "./sigv4";
+import { EMPTY_PAYLOAD_SHA256 } from "./signing";
 
 const respond = (text: string, status = 200): ReturnType<AwsReadHttp> => Promise.resolve({ status, text });
 
@@ -246,7 +246,7 @@ describe("the region an endpoint override cannot carry in its host", () => {
 });
 
 /**
- * The signing decision, as the client makes it. `./sigv4.test.ts` proves the
+ * The signing decision, as the client makes it. `./signing.test.ts` proves the
  * signature is correct against AWS's own vectors; these prove the client only
  * produces one when it should.
  */

@@ -5,8 +5,9 @@
  * SDK client is built (no client to hold a mutating command, no default
  * provider chain) and no dependency is added. The cloud lister's Cloud
  * Control calls, the object-store S3 client (../object-store/s3.ts), the
- * snapshot store's S3 medium (../lifecycle/snapshot-store-s3.ts) and the
- * terraform lexicon's state client all sign through {@link signV4}, and S3's
+ * snapshot store's S3 medium (../lifecycle/snapshot-store-s3.ts), the
+ * terraform lexicon's state client and the aws lexicon's Cloud Control and
+ * CloudFormation reads (#4583) all sign through {@link signV4}, and S3's
  * presigned links through {@link presignV4}.
  */
 
@@ -55,7 +56,9 @@ function canonicalQuery(url: URL): string {
  * the answer unless `omitHost`. The URL's pathname is the canonical URI as
  * it stands, so a caller encodes a key once (S3's rule) before it signs.
  * `payloadHash` stands in for hashing `body`; `contentSha256` sends it as
- * `x-amz-content-sha256`, which S3 requires.
+ * `x-amz-content-sha256`, which S3 requires. A header named (any case) in
+ * `unsignedHeaders` is sent but left out of the signature, for headers a
+ * proxy or agent may rewrite in transit, such as `user-agent` (#4583).
  */
 export function signV4(input: {
   method: string;
@@ -69,6 +72,7 @@ export function signV4(input: {
   payloadHash?: string;
   contentSha256?: boolean;
   omitHost?: boolean;
+  unsignedHeaders?: Iterable<string>;
 }): Record<string, string> {
   const url = new URL(input.url);
   const { amzDate, dateStamp } = amzDates(input.now);
@@ -80,7 +84,8 @@ export function signV4(input: {
   if (input.contentSha256) headers["x-amz-content-sha256"] = payloadHash;
   if (input.credentials.sessionToken) headers["x-amz-security-token"] = input.credentials.sessionToken;
 
-  const names = Object.keys(headers).sort();
+  const unsigned = new Set([...(input.unsignedHeaders ?? [])].map((n) => n.toLowerCase()));
+  const names = Object.keys(headers).filter((n) => !unsigned.has(n)).sort();
   const canonicalHeaders = names.map((n) => `${n}:${headers[n]}\n`).join("");
   const signedHeaders = names.join(";");
   const canonicalRequest = [input.method.toUpperCase(), url.pathname || "/", canonicalQuery(url), canonicalHeaders, signedHeaders, payloadHash].join("\n");

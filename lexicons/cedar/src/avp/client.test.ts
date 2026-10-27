@@ -1,7 +1,7 @@
 /**
  * The AVP transport's signing decision (#1686 follow-up).
  *
- * `lexicons/aws/src/api/sigv4.test.ts` proves a SigV4 signature is correct
+ * `lexicons/aws/src/api/signing.test.ts` proves a SigV4 signature is correct
  * against AWS's own vectors. Nothing here re-proves that — cedar does not hold
  * the implementation and deliberately does not import it. What these cover is
  * the decision the client makes: whether a signer runs at all, what request it

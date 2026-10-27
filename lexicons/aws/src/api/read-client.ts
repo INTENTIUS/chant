@@ -20,7 +20,7 @@
  * ## Signing
  *
  * Requests are signed with SigV4 (#1686) when credentials resolve — see
- * `./sigv4.ts`, which holds the implementation so that cedar's AVP client can
+ * `./signing.ts`, which signs through core's signer (#4583) so that cedar's AVP client can
  * adopt the same one rather than growing a second. With none injected, they
  * resolve through the AWS CLI's chain (`./credential-chain.ts`, the one
  * `chant lifecycle whoami` walks) once per process, by
@@ -46,9 +46,9 @@
  */
 import { homedir } from "node:os";
 import { transportCredentials } from "./credential-chain";
-import { resolveCredentials, signRequest, type AwsCredentialSource } from "./sigv4";
+import { resolveCredentials, signRequest, type AwsCredentialSource } from "./signing";
 
-export type { AwsCredentials, AwsCredentialResolver, AwsCredentialSource } from "./sigv4";
+export type { AwsCredentials, AwsCredentialResolver, AwsCredentialSource } from "./signing";
 
 const DEFAULT_REGION = "us-east-1";
 const CFN_API_VERSION = "2010-05-15";

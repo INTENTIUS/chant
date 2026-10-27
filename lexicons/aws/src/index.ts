@@ -99,7 +99,7 @@ export {
   resolveCredentials,
   EMPTY_PAYLOAD_SHA256,
   type SigV4Request,
-} from "./api/sigv4";
+} from "./api/signing";
 
 // Intrinsics
 export {
