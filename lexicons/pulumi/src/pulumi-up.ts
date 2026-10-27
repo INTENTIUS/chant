@@ -74,6 +74,16 @@
  * is never used, since it saves into the working tree's file. A key with no
  * `:` is the project's own (`<project>:<key>`).
  *
+ * ## StackReference (#4547)
+ *
+ * `declaredReads` reads each step's export for its `StackReference`s
+ * (`./stack-references.ts`) and reports each as a read of the other
+ * `pulumi-up` step that applies the referenced stack, so core orders the
+ * reader after it, holds the reader when it fails, and leaves the reader a
+ * hole while the upstream's plan cannot say an output it reads. A reference
+ * to a stack no step applies adds no edge and is named on the plan's
+ * artifact under `stackReferences.outside`.
+ *
  * ## releases (#4542)
  *
  * `releaseInputs` answers the stack's directory, so a release cut records it
@@ -86,7 +96,17 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import type { ChangeSetPart } from "@intentius/chant/change-set";
-import type { Capability, CapabilityPlan, DeployContext, ReleaseInputs, ReleaseInputsContext, ReleaseInputsUnbound } from "@intentius/chant/components/capability";
+import type {
+  Capability,
+  CapabilityPlan,
+  DeclaredRead,
+  DeclaredReadMember,
+  DeclaredReadsContext,
+  DeployContext,
+  ReleaseInputs,
+  ReleaseInputsContext,
+  ReleaseInputsUnbound,
+} from "@intentius/chant/components/capability";
 import { PlanShapeMovedError, type PlanShape } from "@intentius/chant/components/covered-round";
 import type { GatePolicyFindings } from "@intentius/chant/gate-policy";
 import { computePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
@@ -128,6 +148,7 @@ import {
 } from "./run";
 import type { PulumiStep } from "./change-set";
 import { writePulumiExportSnapshot, type PulumiExportWrite } from "./stack-export-snapshot";
+import { pointerSegment, pulumiStackReferences, stackReferenceOwner } from "./stack-references";
 
 /** The lock grain values of `ci.lockGrain` (#4552's ruling A). */
 export type PulumiLockGrain = "target" | "resource" | "repo";
@@ -150,6 +171,14 @@ export interface PulumiUpStepInput {
   lockGrain?: PulumiLockGrain;
   /** CrossGuard packs for the preview and `up` (ruling 7). */
   policyPacks?: PulumiPolicyPack[];
+  /**
+   * The outputs of other stacks this stack's program reads through
+   * `StackReference` (#4547), by the reference's name, then output. Core
+   * writes them from `declaredReads` as `stackOutput()` references, so the
+   * stack plans after the ones it reads and waits while their plans cannot
+   * say a value. Never passed to the engine: the program reads them itself.
+   */
+  stackReferences?: Record<string, Record<string, unknown>>;
 }
 
 /** What `run` returns. */
@@ -190,6 +219,11 @@ export interface PulumiUpArtifact {
   configFile?: string;
   /** CrossGuard's findings from the plan's preview. */
   policy: GatePolicyFindings;
+  /**
+   * The stack's `StackReference`s (#4547): `read`, wired to another step of
+   * the project, and `outside`, which add no edge, each with why.
+   */
+  stackReferences?: { read: string[]; outside: { name: string; why: string }[] };
 }
 
 /** plunge refused a saved plan whose records moved, or one with no stamp (exit 40). `planMoved` is core's moved mark. */
@@ -417,7 +451,7 @@ async function previewStack(
   return { part, preview, shape, policy, prior };
 }
 
-/** The member of a stack whose `config` reads outputs not known yet: a hole naming them, no plan. */
+/** The member of a stack whose `config` or `StackReference`s read outputs not known yet: a hole naming them, no plan. */
 function waitingStack(ctx: DeployContext, r: Resolved, input: PulumiUpStepInput, unresolved: string[]): CapabilityPlan {
   const config = Object.fromEntries(Object.entries(input.config ?? {}).map(([k, v]) => [k, v === undefined ? null : v]));
   const planDigest = computePlanDigest("pulumi-up-unresolved", { env: ctx.env, member: r.member, stack: input.stack, config, unresolved });
@@ -433,7 +467,7 @@ function waitingStack(ctx: DeployContext, r: Resolved, input: PulumiUpStepInput,
         {
           address: r.member,
           type: "pulumi:pulumi:Stack",
-          reason: `the stack's config reads ${unresolved.join(", ")}, known only once ${unresolved.length === 1 ? "that applies" : "those apply"}; it is planned again then`,
+          reason: `the stack reads ${unresolved.join(", ")}, known only once ${unresolved.length === 1 ? "that applies" : "those apply"}; it is planned again then`,
         },
       ],
     },
@@ -460,6 +494,7 @@ async function planStack(ctx: DeployContext, input: PulumiUpStepInput, opts: Pul
     throw err;
   }
   const planDigest = read.part.member.planDigest!;
+  const references = stackReferencesOf(read.prior, input);
   const planned = pulumiMemberPlannedOutputs(r.member, { part: read.part, preview: read.preview, ...(read.prior !== undefined ? { exported: read.prior } : {}) });
   const artifact: PulumiUpArtifact = {
     kind: "pulumi-up",
@@ -474,6 +509,7 @@ async function planStack(ctx: DeployContext, input: PulumiUpStepInput, opts: Pul
     ...(files.planFile ? { planFile: files.planFile } : {}),
     ...(files.configFile ? { configFile: files.configFile } : {}),
     policy: read.policy,
+    ...(references ? { stackReferences: references } : {}),
   };
   return {
     member: r.member,
@@ -484,6 +520,62 @@ async function planStack(ctx: DeployContext, input: PulumiUpStepInput, opts: Pul
     shape: read.shape,
     ...(ctx.targets?.length ? { targets: ctx.targets } : {}),
   };
+}
+
+/** The export's `StackReference`s, split into the ones core wired into `stackReferences` and the rest; undefined when it holds none. */
+function stackReferencesOf(exported: unknown, input: PulumiUpStepInput): PulumiUpArtifact["stackReferences"] | undefined {
+  const refs = pulumiStackReferences(exported);
+  if (refs.length === 0) return undefined;
+  const wired = new Set(Object.keys(input.stackReferences ?? {}));
+  const read = refs.filter((r) => wired.has(r.name)).map((r) => r.name);
+  const outside = refs
+    .filter((r) => !wired.has(r.name))
+    .map((r) => ({
+      name: r.name,
+      why:
+        r.outputs.length === 0 && r.secretOutputs.length > 0
+          ? "every output the export recorded for it is secret, and chant reads outputs blind"
+          : r.outputs.length === 0
+            ? "the export recorded no output for it"
+            : "no other pulumi-up step in this project applies that stack",
+    }));
+  return { read: [...new Set(read)].sort(), outside };
+}
+
+/**
+ * `declaredReads` (#4547): each step's `StackReference`s, read from its
+ * export (the index store's, else the checked-in one), as reads of the one
+ * other `pulumi-up` step whose project and stack the reference names, one
+ * per output the export recorded that is not secret, placed at
+ * `/stackReferences/<reference name>/<output>`.
+ */
+export async function pulumiDeclaredReads(
+  ctx: DeclaredReadsContext,
+  members: readonly DeclaredReadMember[],
+  opts: { exportStore?: SnapshotStore | null } = {},
+): Promise<DeclaredRead[]> {
+  const steps = members
+    .map((m) => {
+      const step = m.step as unknown as PulumiUpStepInput;
+      if (typeof step?.dir !== "string" || typeof step.stack !== "string") return undefined;
+      const dir = isAbsolute(step.dir) ? step.dir : resolve(ctx.root, step.cwd ?? ".", step.dir);
+      const project = readProject(dir)?.name;
+      return { m, step, dir, project: typeof project === "string" ? project : basename(dir) };
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== undefined);
+  const owners = steps.map((s) => ({ component: s.m.component, project: s.project, stack: s.step.stack }));
+  const out: DeclaredRead[] = [];
+  for (const s of steps) {
+    const exported = await memberExportOf(s.dir, { stack: s.step.stack, ...(opts.exportStore !== undefined ? { store: opts.exportStore } : {}) });
+    for (const ref of pulumiStackReferences(exported)) {
+      const found = stackReferenceOwner(ref, { component: s.m.component, project: s.project }, owners);
+      if (!("owner" in found)) continue;
+      for (const output of ref.outputs) {
+        out.push({ reader: s.m.component, index: s.m.index, upstream: found.owner.component, output, at: `/stackReferences/${pointerSegment(ref.name)}/${pointerSegment(output)}` });
+      }
+    }
+  }
+  return out;
 }
 
 /** An `up` that exited non-zero, read through the exit-code table (#4553). */
@@ -646,6 +738,7 @@ export function createPulumiUpCapability(opts: PulumiUpOptions = {}): Capability
       });
     },
     releaseInputs: (input, ctx) => pulumiReleaseInputs(input, ctx),
+    declaredReads: (ctx, members) => pulumiDeclaredReads(ctx, members, opts.snapshots !== undefined ? { exportStore: opts.snapshots } : {}),
   };
 }
 

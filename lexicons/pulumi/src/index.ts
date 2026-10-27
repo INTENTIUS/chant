@@ -98,6 +98,7 @@ export { pulumiAuditCatalog } from "./lint/audit-catalog";
 // The Preview/Drift watch composite and its step builders (#4494).
 export { PulumiWatchOp, type PulumiWatchOpConfig, type PulumiWatchOpResources } from "./composites/pulumi-watch-op";
 export { gatedStackExport, gatedStackCancel, gatedStackMove, moveLeftovers, PULUMI_STACK_OPS_OP, type PulumiStackOpOutcome, type PulumiStackOpCommon, type PulumiStackOpKind } from "./stack-ops";
+export { pulumiStackReferences, parsePulumiStackName, stackReferenceOwner, PULUMI_STACK_REFERENCE_TYPE, type PulumiStackReference } from "./stack-references";
 export { PulumiAdoptOp, type PulumiAdoptOpConfig, type PulumiAdoptOpResources, type PulumiAdoptStack } from "./composites/pulumi-adopt-op";
 export { parsePlungeAdoptView, pulumiAdoptDigest, adoptBucketTarget, type PlungeAdoptView, type PlungeAdoptStatus } from "./adopt";
 export { pulumiPreview as pulumiPreviewStep, pulumiDrift as pulumiDriftStep } from "./op/builders";
