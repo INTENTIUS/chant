@@ -905,11 +905,13 @@ export interface ScheduledOpSpec {
    * token (the checkout's fetches get the job's token and nothing after
    * them does) and hands the review on as job outputs. The second checks
    * nothing out, takes the review as data and posts it as one note with the
-   * write token (`postReviewNote`). GitHub and Forgejo only: a GitLab merge
-   * request pipeline hands every job the project's unprotected variables, so
-   * the gitlab generator refuses this by name. The trigger must be
-   * `pull_request` and the finding-mode `report`, since the first job posts
-   * nothing.
+   * write token (`postReviewNote`). On GitLab (#4544) the first job keeps the
+   * review as an artifact of the merge request pipeline, and the second runs
+   * in a pipeline of the default branch, started by a schedule with
+   * `CHANT_REVIEW_NOTES` set to `1`, which holds the protected token and posts
+   * every open merge request's review (`postOpenReviewNotes`). The trigger
+   * must be `pull_request` and the finding-mode `report`, since the first job
+   * posts nothing.
    */
   reviewAgent?: boolean;
 }

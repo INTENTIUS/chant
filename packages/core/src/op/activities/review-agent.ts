@@ -36,6 +36,7 @@ import { promisify } from "node:util";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import type { ChangeSetDocument, ChangeSetEntry } from "../../change-set";
+import type { PrForge } from "../../pr-forge";
 import { baseRefFrom } from "./pr-refs";
 import { markerSlug, reconcilePr, suppliedMarker } from "./reconcile";
 
@@ -599,6 +600,79 @@ export function createPostReviewNote(deps: Pick<ReviewAgentDeps, "post" | "env" 
       ...(posted.mergeRequest ? { mergeRequest: posted.mergeRequest } : {}),
     };
   };
+}
+
+/** What {@link postOpenReviewNotes} posts for (#4544). */
+export interface OpenReviewNotesInput {
+  /** A GitLab client with {@link PrForge.mergeRequestJobs} and {@link PrForge.jobArtifact}, holding the write token. */
+  forge: PrForge;
+  /** The branch the merge requests merge into. */
+  branch: string;
+  /** The review job's name in the merge request pipeline. */
+  job: string;
+  /** The review directory from the repository root, as the review job kept it as its artifact. */
+  artifactDir: string;
+  /** The Op that ran the review. It comes from the generated file, never from the artifact, and keys the note's marker. */
+  op: string;
+}
+
+/** What {@link postOpenReviewNotes} did for one merge request. */
+export interface OpenReviewPost {
+  pr: number;
+  head: string;
+  /** The note's URL when it was posted or already said the same. */
+  url?: string;
+  risk?: ReviewRisk | "unknown";
+  /** Why nothing was posted: the review job has not succeeded, or its artifact holds no record that reads as one. */
+  skipped?: string;
+}
+
+/**
+ * Post the review of every open merge request into `branch` whose review job
+ * succeeded (#4544), from a pipeline of the default branch that holds the
+ * write token. This is GitLab's note side of the split: a merge request
+ * pipeline is built from the merge request's own files and gets no protected
+ * variable, so the token lives only here, in a job that checks nothing out.
+ *
+ * GitLab says which merge requests are open, their heads and their newest
+ * pipeline's review job. The one file {@link REVIEW_RECORD} of that job's
+ * artifacts is read as data, with the same field checks as
+ * {@link postReviewNote} ({@link readReviewRecord}). The head the note
+ * records comes from GitLab, never from the record. The note is the Op's one
+ * sticky note, `reviewMarker(op)` first as `comment` mode writes it, and a
+ * note that already says the same is left alone.
+ */
+export async function postOpenReviewNotes(input: OpenReviewNotesInput): Promise<{ posts: OpenReviewPost[]; warnings: string[] }> {
+  const { forge } = input;
+  if (typeof input.op !== "string" || input.op.trim() === "") throw new Error("postOpenReviewNotes needs `op`, the name of the Op whose review this is: it keys the note's marker.");
+  if (!forge.mergeRequestJobs || !forge.jobArtifact) {
+    throw new Error(`posting reviews from a pipeline of the default branch reads the review jobs of open merge requests, which ${forge.kind} cannot say; it is for GitLab`);
+  }
+  const marker = reviewMarker(input.op);
+  const path = `${input.artifactDir.replace(/^\.\//, "").replace(/\/+$/, "")}/${REVIEW_RECORD}`;
+  const posts: OpenReviewPost[] = [];
+  const warnings: string[] = [];
+  for (const job of await forge.mergeRequestJobs(input.branch, input.job)) {
+    if (job.status !== "success") {
+      posts.push({ pr: job.pr, head: job.head, skipped: `the review job is ${job.status}` });
+      continue;
+    }
+    try {
+      const text = await forge.jobArtifact(job.id, path);
+      const record = text === undefined ? undefined : readReviewRecord(text);
+      if (!record) {
+        posts.push({ pr: job.pr, head: job.head, skipped: text === undefined ? `the review job kept no ${path}` : "the review record does not read as one" });
+        continue;
+      }
+      const risk = record.exitCode === 0 ? riskOf(record.review) : "unknown";
+      const body = `${marker}\n\n${reviewNoteBody({ ...record, head: job.head })}`;
+      const url = await forge.upsertNote(job.pr, marker, body);
+      posts.push({ pr: job.pr, head: job.head, risk, ...(url ? { url } : {}) });
+    } catch (err) {
+      warnings.push(`!${job.pr}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return { posts, warnings };
 }
 
 /** {@link createPostReviewNote} with the real forge. */
