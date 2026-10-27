@@ -5,10 +5,12 @@
  * (scripts/release-pack.sh) and `just release` must ask it.
  */
 
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { freezeFloorSource, freezeTextList, nextPatch, releasedVersions, shippedSymbolic, unreleasedFloors } from "./release-floors";
+import { freezeFloorSource, freezeTextList, nextPatch, releasedVersions, shippedSymbolic, splitFreeze, staleFloorTests, unreleasedFloors } from "./release-floors";
 
 const root = join(import.meta.dirname, "..");
 
@@ -94,9 +96,10 @@ describe("release floors --freeze (#4501)", () => {
   });
 
   it("empties NEXT_RELEASE_TEXT in the script and keeps the rest", () => {
-    // The live list is empty right after a freeze, so seed it with entries
-    // first; the frozen output must then be the live script again.
-    const live = readFileSync(join(root, "scripts/release-floors.ts"), "utf8");
+    // The live list holds whatever floors were added since the last release,
+    // so start from it emptied, seed it with entries, and freezing must give
+    // back the emptied script.
+    const live = freezeTextList(readFileSync(join(root, "scripts/release-floors.ts"), "utf8"));
     const marker = "  // --freeze empties this list after a release ships (#4501); each entry is one line.\n";
     expect(live).toContain(marker);
     const src = live.replace(
@@ -115,6 +118,15 @@ describe("release floors --freeze (#4501)", () => {
     expect(out.slice(out.indexOf("interface Args"))).toBe(src.slice(src.indexOf("interface Args")));
     expect(freezeTextList(out)).toBe(out);
     expect(out).toBe(live);
+  });
+
+  it("keeps the entries of a floor that stays NEXT_RELEASE (#4540)", () => {
+    const live = freezeTextList(readFileSync(join(root, "scripts/release-floors.ts"), "utf8"));
+    const marker = "  // --freeze empties this list after a release ships (#4501); each entry is one line.\n";
+    const shipped = '  { file: "a.json", text: "chant {v}", count: 1, floor: "SHIPPED_FLOOR" },\n';
+    const later = '  { file: "b.mdx", text: "chant {v} or newer", count: 1, floor: "LATER_FLOOR" },\n';
+    const out = freezeTextList(live.replace(marker, marker + shipped + later), new Set(["LATER_FLOOR"]));
+    expect(out).toBe(live.replace(marker, marker + later));
   });
 
   it("moves NEXT_RELEASE to the next patch by default", () => {
@@ -137,5 +149,84 @@ describe("release floors --freeze (#4501)", () => {
     expect(shippedSymbolic("0.124.53", named, releasedVersions(["release/npm/0.124.53"]), "0.124.53")).toEqual([]);
     // A stamp for some other version doesn't excuse a shipped NEXT_RELEASE.
     expect(shippedSymbolic("0.124.53", named, releasedVersions(["release/npm/0.124.53"]), "0.124.54").length).toBeGreaterThan(0);
+  });
+});
+
+describe("release floors --freeze, scoped to the release commit (#4540)", () => {
+  it("freezes only the named floors and keeps the import the others still need", () => {
+    const src = ['import { NEXT_RELEASE } from "./release-floors";', "export const SHIPPED_FLOOR = NEXT_RELEASE;", "export const LATER_FLOOR = NEXT_RELEASE;", ""].join("\n");
+    const out = freezeFloorSource(src, "0.124.54", new Set(["SHIPPED_FLOOR"]));
+    expect(out).toBe(['import { NEXT_RELEASE } from "./release-floors";', 'export const SHIPPED_FLOOR = "0.124.54";', "export const LATER_FLOOR = NEXT_RELEASE;", ""].join("\n"));
+    expect(freezeFloorSource(src, "0.124.54", new Set())).toBe(src);
+  });
+
+  it("a floor that appears after the release commit stays NEXT_RELEASE", () => {
+    const atRelease = [
+      { name: "SHIPPED_FLOOR", file: "packages/core/src/a.ts", version: "0.124.54", symbolic: true },
+      { name: "OLD_FLOOR", file: "packages/core/src/a.ts", version: "0.124.30" },
+    ];
+    const now = [
+      ...atRelease,
+      // DEPLOY_ADOPT_FLOOR's case: merged after the 0.124.54 cut, never shipped in it.
+      { name: "DEPLOY_ADOPT_FLOOR", file: "packages/core/src/b.ts", version: "0.124.54", symbolic: true },
+    ];
+    expect(splitFreeze(atRelease, now)).toEqual({ freeze: ["SHIPPED_FLOOR"], keep: ["DEPLOY_ADOPT_FLOOR"] });
+  });
+
+  it("names the tests a freeze leaves stale", () => {
+    const tests = [
+      { file: "packages/core/src/a.test.ts", src: "expect(SHIPPED_FLOOR).toBe(NEXT_RELEASE);" },
+      { file: "packages/core/src/b.test.ts", src: "expect(LATER_FLOOR).toBe(NEXT_RELEASE);" },
+      { file: "packages/core/src/x-bundle.test.ts", src: '"packages/core/src/plan-summary.ts",\n"packages/core/src/release-floors.ts",' },
+    ];
+    expect(staleFloorTests(tests, new Set(["SHIPPED_FLOOR"]), true)).toEqual([
+      "packages/core/src/a.test.ts: asserts toBe(NEXT_RELEASE) and names SHIPPED_FLOOR, which now hold the literal; assert the version",
+      "packages/core/src/x-bundle.test.ts: lists packages/core/src/release-floors.ts in an expected module list; a frozen floor file no longer imports it, so check the bundle still does",
+    ]);
+    expect(staleFloorTests(tests, new Set(["SHIPPED_FLOOR"]), false)).toHaveLength(1);
+  });
+
+  it("freezes a repository's floors against its release tag, leaving one merged after it", () => {
+    const repo = mkdtempSync(join(tmpdir(), "chant-release-floors-"));
+    try {
+      const write = (file: string, text: string) => {
+        mkdirSync(dirname(join(repo, file)), { recursive: true });
+        writeFileSync(join(repo, file), text);
+      };
+      const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", ...args], { cwd: repo, encoding: "utf-8" });
+      git("init", "-q");
+      write("scripts/release-floors.ts", readFileSync(join(root, "scripts/release-floors.ts"), "utf8"));
+      write("packages/core/src/release-floors.ts", 'export const NEXT_RELEASE = "0.124.54";\n');
+      write("packages/core/src/a.ts", 'import { NEXT_RELEASE } from "./release-floors";\nexport const SHIPPED_FLOOR = NEXT_RELEASE;\n');
+      git("add", "-A");
+      git("commit", "-q", "-m", "cut");
+      git("tag", "release/npm/0.124.54");
+      write("packages/core/src/b.ts", 'import { NEXT_RELEASE } from "./release-floors";\nexport const LATER_FLOOR = NEXT_RELEASE;\n');
+      git("add", "-A");
+      git("commit", "-q", "-m", "after the cut");
+      const tsx = join(root, "node_modules", ".bin", "tsx");
+      const printed = execFileSync(tsx, ["scripts/release-floors.ts", "--freeze", "0.124.54"], { cwd: repo, encoding: "utf-8" });
+      expect(printed).toContain("left on NEXT_RELEASE, merged after 0.124.54's commit: LATER_FLOOR");
+      expect(readFileSync(join(repo, "packages/core/src/a.ts"), "utf8")).toBe('export const SHIPPED_FLOOR = "0.124.54";\n');
+      expect(readFileSync(join(repo, "packages/core/src/b.ts"), "utf8")).toContain("export const LATER_FLOOR = NEXT_RELEASE;");
+      expect(readFileSync(join(repo, "packages/core/src/release-floors.ts"), "utf8")).toBe('export const NEXT_RELEASE = "0.124.55";\n');
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses with no release tag and no --rev", () => {
+    const repo = mkdtempSync(join(tmpdir(), "chant-release-floors-"));
+    try {
+      mkdirSync(join(repo, "scripts"), { recursive: true });
+      mkdirSync(join(repo, "packages/core/src"), { recursive: true });
+      writeFileSync(join(repo, "scripts/release-floors.ts"), readFileSync(join(root, "scripts/release-floors.ts"), "utf8"));
+      writeFileSync(join(repo, "packages/core/src/release-floors.ts"), 'export const NEXT_RELEASE = "0.124.54";\n');
+      execFileSync("git", ["init", "-q"], { cwd: repo });
+      const tsx = join(root, "node_modules", ".bin", "tsx");
+      expect(() => execFileSync(tsx, ["scripts/release-floors.ts", "--freeze", "0.124.54"], { cwd: repo, encoding: "utf-8", stdio: "pipe" })).toThrow(/no release\/npm\/0\.124\.54 or chant-v0\.124\.54 tag.*--rev/s);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 });
