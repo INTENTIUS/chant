@@ -49,13 +49,18 @@ export function detectPackageManager(dir?: string): "bun" | "npm" {
   return "npm";
 }
 
-/** The MCP registration chant writes: one stdio server named `chant`. */
-export function generateMcpConfig(pm: "bun" | "npm"): string {
+/**
+ * The MCP registration chant writes: one stdio server named `chant`. With
+ * `readOnly` (`chant init --mcp-read-only`, chant#4543) it registers
+ * `chant serve mcp --read-only`, which serves only the tools that change
+ * nothing.
+ */
+export function generateMcpConfig(pm: "bun" | "npm", options: { readOnly?: boolean } = {}): string {
   const config = {
     mcpServers: {
       chant: {
         command: pm === "bun" ? "bunx" : "npx",
-        args: ["chant", "serve", "mcp"],
+        args: ["chant", "serve", "mcp", ...(options.readOnly ? ["--read-only"] : [])],
       },
     },
   };

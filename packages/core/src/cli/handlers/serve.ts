@@ -21,7 +21,8 @@ export async function runServeMcp(ctx: CommandContext): Promise<number> {
     ({ plugins, instructions } = await loadWorkspacePlugins(process.cwd()));
   }
   // #2707 — at or inside a declared workspace, the workspace tools are served too.
-  const server = new McpServer(plugins, { instructions, workspace: { cwd: process.cwd() } });
+  // chant#4543 — --read-only serves only the tools that change nothing.
+  const server = new McpServer(plugins, { instructions, workspace: { cwd: process.cwd() }, readOnly: ctx.args.readOnly === true });
   await server.start();
   await new Promise(() => {});
   return 0; // unreachable
