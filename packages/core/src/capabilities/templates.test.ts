@@ -9,7 +9,6 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { GraphIR } from "../graph-ir";
 import { __searchInternals, resolveKindTerms } from "../cli/handlers/search";
-import { NEXT_RELEASE } from "../release-floors";
 import {
   CAPABILITY_TEMPLATES_FLOOR,
   TemplateCatalogError,
@@ -206,7 +205,7 @@ describe("the export", () => {
     expect(parseTemplates(onDisk)).toEqual(investigationTemplates());
   });
 
-  it("carries its floor at the next release", () => {
-    expect(CAPABILITY_TEMPLATES_FLOOR).toBe(NEXT_RELEASE);
+  it("carries its floor at 0.124.54, where it shipped", () => {
+    expect(CAPABILITY_TEMPLATES_FLOOR).toBe("0.124.54");
   });
 });

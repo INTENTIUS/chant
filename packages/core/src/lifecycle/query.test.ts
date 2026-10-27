@@ -1,6 +1,5 @@
 import { describe, expect, test } from "vitest";
 import type { LedgerReadPort } from "./ledger-port";
-import { NEXT_RELEASE } from "../release-floors";
 import { firstWord, formatQueryResult, loadQueryData, QUERY_OWNERSHIP_COLUMNS_FLOOR, QUERY_SCHEMA_VERSION, QUERY_TABLES, QueryError, runQuery, SCHEMA_TABLE } from "./query";
 import { makeRelease } from "./release-store";
 
@@ -152,8 +151,8 @@ describe("chant query (#4297)", () => {
       expect(who.rows).toEqual([{ stack: "shop", name: "web", marker_stack: "shop" }]);
     });
 
-    test("carry their floor at the next release", () => {
-      expect(QUERY_OWNERSHIP_COLUMNS_FLOOR).toBe(NEXT_RELEASE);
+    test("carry their floor at 0.124.54, where they shipped", () => {
+      expect(QUERY_OWNERSHIP_COLUMNS_FLOOR).toBe("0.124.54");
     });
   });
 });
