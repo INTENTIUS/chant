@@ -31,6 +31,7 @@
  * rule authors.
  */
 import { exec } from "node:child_process";
+import { CHANT_EXIT } from "../../exit-codes";
 import { promisify } from "node:util";
 import {
   evaluatePredicate,
@@ -178,7 +179,7 @@ async function observeStatusRows(env: string, signal?: AbortSignal): Promise<Com
  * no longer has to reconstruct a gate from an error string, and no longer
  * writes the pending fact on the executor's behalf.
  */
-const GATED_EXIT_CODE = 3;
+const GATED_EXIT_CODE = CHANT_EXIT.waiting;
 
 /**
  * The gate a gated `chant run` stopped at, read off its JSON result (#2119) —

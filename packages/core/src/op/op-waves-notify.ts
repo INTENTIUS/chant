@@ -15,6 +15,7 @@
  */
 
 import { makeNotifyEvent, notifyConfigProblem, sendNotify, type NotifyDelivery, type NotifyFields, type SendNotifyOptions } from "../notify";
+import { CHANT_EXIT } from "../exit-codes";
 import type { OpWavesSpec } from "./op-waves";
 import type { RunOpWaveResult } from "./op-waves-run";
 
@@ -37,7 +38,7 @@ export function opWaveNotifyFields(spec: OpWavesSpec, k: number, outcome: OpWave
     ...(decision?.digest ? { digest: decision.digest } : {}),
     exitCode: result.exitCode,
   };
-  if (result.exitCode === 3) {
+  if (result.exitCode === CHANT_EXIT.waiting) {
     if (!decision) return undefined;
     // A share job's wait (or a job group's, #3914) was announced by its deciding job, unless a hook in this job held it (#3762).
     const heldHere = result.hooks.filter((h) => h.outcome === "held");
@@ -59,7 +60,7 @@ export function opWaveNotifyFields(spec: OpWavesSpec, k: number, outcome: OpWave
           : {}),
     };
   }
-  if (result.exitCode === 8 && decision?.refused?.reason === "point") {
+  if (result.exitCode === CHANT_EXIT.declined && decision?.refused?.reason === "point") {
     // #3836: the gate's decision point was answered with an answer it does not pass on.
     return {
       ...base,
@@ -70,7 +71,7 @@ export function opWaveNotifyFields(spec: OpWavesSpec, k: number, outcome: OpWave
       ...(decision.refused.message ? { reason: decision.refused.message } : {}),
     };
   }
-  if (result.exitCode === 7 && decision?.refused) {
+  if (result.exitCode === CHANT_EXIT.denied && decision?.refused) {
     // #3821: the product's policy denied a run, and no override counts for it.
     return {
       ...base,
@@ -85,8 +86,8 @@ export function opWaveNotifyFields(spec: OpWavesSpec, k: number, outcome: OpWave
     };
   }
   // #3821: an apply that stood down for a newer run is no news; one held by another run is refused.
-  if (result.exitCode === 6 && result.outcome?.outcome === "stood-down") return undefined;
-  if (result.exitCode === 5 && result.outcome?.outcome === "held") {
+  if (result.exitCode === CHANT_EXIT.superseded && result.outcome?.outcome === "stood-down") return undefined;
+  if (result.exitCode === CHANT_EXIT.held && result.outcome?.outcome === "held") {
     const holder = result.outcome.holder;
     return {
       ...base,
@@ -97,7 +98,7 @@ export function opWaveNotifyFields(spec: OpWavesSpec, k: number, outcome: OpWave
       reason: result.outcome.reason ?? `another run${holder ? `, ${holder.run},` : ""} holds what the apply changes; apply again once it is done`,
     };
   }
-  if (result.exitCode === 4) {
+  if (result.exitCode === CHANT_EXIT.moved) {
     return {
       ...base,
       event: "refused",

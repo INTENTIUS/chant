@@ -23,6 +23,7 @@
  * request holds a target (nothing is locked), 1 on an error.
  */
 import { readFileSync } from "node:fs";
+import { CHANT_EXIT } from "../../exit-codes";
 import { resolve } from "node:path";
 import type { CommandContext } from "../registry";
 import { formatError, formatInfo, formatSuccess, formatWarning } from "../format";
@@ -39,8 +40,8 @@ import {
   type TargetLockStage,
 } from "../../lifecycle/target-lock";
 
-/** The exit for a target another open pull request holds: 3, as a run stopped at a gate exits (`GATED_EXIT_CODE` in ./run.ts). */
-const HELD_EXIT_CODE = 3;
+/** The exit for a target another open pull request holds: `CHANT_EXIT.held`, 5 (#4553). */
+const HELD_EXIT_CODE = CHANT_EXIT.held;
 
 /** The status `chant lock --head <sha> --forge <kind>` posts. */
 export const LOCK_STATUS_CONTEXT = "chant/lock";

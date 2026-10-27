@@ -47,6 +47,7 @@
  */
 
 import { topoSort } from "../codegen/topo-sort";
+import { CHANT_EXIT } from "../exit-codes";
 import { kahnLayers } from "./layers";
 import { evaluateGate, gitGateLedgerPort, type GateDigestMismatch, type GateLedgerPort } from "../op/gate";
 import { gateName } from "../op/gate-name";
@@ -1139,7 +1140,7 @@ export function planMovedIn(results: readonly DriverComponentResult[]): boolean 
  * command that runs capability steps ends a failed run with it.
  */
 export function failedRunExitCode(results: readonly DriverComponentResult[]): number {
-  return planMovedIn(results) ? PLAN_MOVED_EXIT_CODE : 1;
+  return planMovedIn(results) ? PLAN_MOVED_EXIT_CODE : CHANT_EXIT.failed;
 }
 
 function errMessage(err: unknown): string {

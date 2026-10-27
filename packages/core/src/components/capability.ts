@@ -13,6 +13,7 @@
  */
 
 import type { PlanShape } from "./covered-round";
+import { CHANT_EXIT } from "../exit-codes";
 import type { ReleaseIdentity } from "../telemetry-attribution";
 import type { ChangeSetPart } from "../change-set";
 import type { DeployAdoption } from "./adoption";
@@ -485,24 +486,32 @@ export type CapabilityOutput<C> = C extends Capability<unknown, infer Out> ? Out
 
 /**
  * The exit code of a command whose capability step refused a plan that moved
- * since it was approved: 3, the code `pr-apply` gives a moved digest and a
- * run gives a gate (#3997).
+ * since it was approved: `CHANT_EXIT.moved`, 4, the code `pr-apply` gives a
+ * moved digest (#3997, #4553). Before #4553 it was 3, a gate's code.
  */
-export const PLAN_MOVED_EXIT_CODE = 3;
+export const PLAN_MOVED_EXIT_CODE = CHANT_EXIT.moved;
+
+/**
+ * The moved-plan code before #4553. A lexicon built against an older core
+ * may still set it on the error it throws for a moved plan; read for one
+ * release, then dropped.
+ */
+const LEGACY_PLAN_MOVED_EXIT_CODE = 3;
 
 /**
  * Whether `err` is a `run`'s refusal to apply a plan from
  * `DeployContext.plans` because the target moved since it was planned
  * (#3997). The mark is a `planMoved: true` property, not a class, so a
- * lexicon built against an older core can set it. An `exitCode` of
- * {@link PLAN_MOVED_EXIT_CODE} on the error is the same mark. Any other
+ * lexicon built against an older core can set it. An `exitCode` of 3 on
+ * the error, the moved code before #4553, is the same mark for one more
+ * release; a lexicon sets `planMoved` and core picks the number. Any other
  * `exitCode` is ignored: a failed step exits 1, so a capability can't pick
  * the process's exit code.
  */
 export function isPlanMovedError(err: unknown): boolean {
   if (typeof err !== "object" || err === null) return false;
   const e = err as { planMoved?: unknown; exitCode?: unknown };
-  return e.planMoved === true || e.exitCode === PLAN_MOVED_EXIT_CODE;
+  return e.planMoved === true || e.exitCode === LEGACY_PLAN_MOVED_EXIT_CODE;
 }
 
 /**

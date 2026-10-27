@@ -20,6 +20,7 @@
  *   is how `workspace status` finds it under the steward.
  */
 import { spawn } from "node:child_process";
+import { CHANT_EXIT } from "../exit-codes";
 import type { ActivityFn, ActivityProfile } from "./activity-registry";
 import { runOpLocally, OpRunFailure } from "./local-executor";
 import type { ActivityStep, OpConfig } from "./types";
@@ -64,7 +65,7 @@ export interface BesideHandle {
 export type BesideLauncher = (start: BesideStart) => BesideHandle;
 
 /** The exit code `chant run` gives a run that stopped at a gate or on an open decision point. */
-const WAITING_EXIT = 3;
+const WAITING_EXIT = CHANT_EXIT.waiting;
 
 /**
  * Start `chant run <op>` as a process of its own: the same node, loader and

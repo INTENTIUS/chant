@@ -40,6 +40,7 @@
  */
 
 import type { ChantConfig } from "../config";
+import { CHANT_EXIT } from "../exit-codes";
 import { environmentEndpoint, environmentName, isEnvironmentPattern, isOwnershipParamRef, matchesDeclaredEnvironment, resolveOwnershipStack, type EnvironmentDeclaration } from "../config-environments";
 import type { OwnershipMarker } from "../ownership";
 import { executeTeardown, planTeardown, type TeardownPlan, type TeardownPlanEntry, type TeardownReport } from "../lifecycle/teardown";
@@ -66,8 +67,8 @@ export const PR_ENV_STATUS_CONTEXT = "chant/pr-env";
 /** The variable a component's build reads the template's name from. */
 export const PR_ENV_TEMPLATE_VAR = "CHANT_ENV_TEMPLATE";
 
-/** Exit codes: done, failed or refused, and waiting on an approval. */
-export const PR_ENV_EXIT = { done: 0, failed: 1, waiting: 3 } as const;
+/** Exit codes, from the table (#4553): done, failed or refused, and waiting on an approval. */
+export const PR_ENV_EXIT = { done: CHANT_EXIT.done, failed: CHANT_EXIT.failed, waiting: CHANT_EXIT.waiting } as const;
 
 /** The environment of pull request `pr`. */
 export function prEnvironmentName(pr: number): string {

@@ -102,8 +102,13 @@ export const DRIFT_READS_BY_KIND: Record<string, readonly DriftRead[]> = {
 /** The kinds whose engine reads one resource on its own, for `--resource`. */
 export const DRIFT_RESOURCE_KINDS: readonly string[] = ["choudoufu", "pulumi"];
 
-/** The exit status `chant lifecycle drift` gives a refused read (`../cli/handlers/lifecycle-drift.ts`). */
-const MEMBER_REFUSED_EXIT = 3;
+/**
+ * The exit statuses a refused `chant lifecycle drift` read can carry
+ * (`../cli/handlers/lifecycle-drift.ts`): 1 since #4553, 3 from a reader
+ * project on an older chant. The `{"refused": ...}` stdout line is what says
+ * the read was refused.
+ */
+const MEMBER_REFUSED_EXITS: readonly number[] = [1, 3];
 
 const USAGE =
   "chant workspace drift [dir] --member <name> [--read <state|plan|refresh|live-read|ownership>] [--resource <addr>] [--env <env>] [--components] [--stream] [-o <file>]";
@@ -282,7 +287,7 @@ export async function readWorkspaceDrift(query: DriftQuery): Promise<DriftReadRe
       return { lines: [start, ...settled.records.map(driftRecordLine), settled.line] };
     }
 
-    if (result.exitCode === MEMBER_REFUSED_EXIT) {
+    if (MEMBER_REFUSED_EXITS.includes(result.exitCode)) {
       let refused: { code?: string; message?: string } | undefined;
       try {
         refused = (JSON.parse(result.stdout.trim().split("\n").pop() ?? "") as { refused?: { code?: string; message?: string } }).refused;

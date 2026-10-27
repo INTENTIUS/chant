@@ -95,9 +95,9 @@ A policy that does not run, or prints no result chant can read, is an error (`pa
 
 ## Override a denial
 
-At the plan stage the report's `policy` holds the denial, and the commit status fails. The note lists each rule that denied and the override command. `pr-plan` records nothing and exits 1 (`packages/core/src/cli/handlers/pr.ts:647`).
+At the plan stage the report's `policy` holds the denial, and the commit status fails. The note lists each rule that denied and the override command. `pr-plan` records nothing and exits 7 (`packages/core/src/cli/handlers/pr.ts:647`).
 
-At the apply stage a denial with no override refuses with `policy-denied` and exits 3. The first refusal records the denial on `_gates/policy-override.jsonl` (`packages/core/src/cli/handlers/pr.ts:543`). Its subject is the gate's op, `pr-<n>`, and it binds the change set's digest and the rules. A person listed in `.chant/overriders` at base then overrides it:
+At the apply stage a denial with no override refuses with `policy-denied` and exits 7, the [exit-code table](/chant/reference/exit-codes/)'s code for a denial at either stage. The first refusal records the denial on `_gates/policy-override.jsonl` (`packages/core/src/cli/handlers/pr.ts:543`). Its subject is the gate's op, `pr-<n>`, and it binds the change set's digest and the rules. A person listed in `.chant/overriders` at base then overrides it:
 
 ```bash
 chant approve policy-override pr-12 --rule main.deny_public_bucket --reason "the bucket is the public docs site"

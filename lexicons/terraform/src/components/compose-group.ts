@@ -341,7 +341,7 @@ function waitingGroup(ctx: GroupContext, members: readonly GroupMember<StepInput
   return { members: plans, digest: computePlanDigest("terraform-apply-group-unresolved", { components: ctx.components, unresolved: waits }) };
 }
 
-/** A composed plan that no longer matches the one approved. Core's moved-plan mark, so nothing applies and the command exits 3. */
+/** A composed plan that no longer matches the one approved. Core's moved-plan mark, so nothing applies and the command exits `CHANT_EXIT.moved`, 4 (#4553). */
 export class ComposedPlanMovedError extends Error {
   readonly planMoved = true;
   constructor(message: string) {

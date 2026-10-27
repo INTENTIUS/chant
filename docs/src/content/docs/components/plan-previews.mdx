@@ -83,7 +83,7 @@ A component's members come from its steps that have `plan`, one member per such 
 
 ## Capabilities with plan
 
-Six capabilities have `plan`. Each section below says what the plan reads and what the note shows. It also says what holds the apply to the approved plan. A step that finds its target moved since the approved plan applies nothing, and the command exits 3 ([#3997](https://github.com/INTENTIUS/chant/issues/3997)).
+Six capabilities have `plan`. Each section below says what the plan reads and what the note shows. It also says what holds the apply to the approved plan. A step that finds its target moved since the approved plan applies nothing, and the command exits 4 ([#3997](https://github.com/INTENTIUS/chant/issues/3997)).
 
 ### `arm-deploy`
 
@@ -194,9 +194,9 @@ On merge the apply plans the root again once its upstream applied. That round is
 
 No preview is possible when a variable holding the unknown read is not declared, when the unknown sits inside a larger value, when a `count` or `for_each` reads a stand-in, or when the placeholder plan fails, for example on a `validation` block. Then the member stays a hole saying `inputs from <component>; planned again once they apply; no preview: <why>`, with no plan file. Otherwise the plan has no holes.
 
-The digest covers the plan's resource changes, output changes and action invocations. Timestamps, versions and prior state are left out. `run` applies the plan file the plan wrote with `apply <plan file>`. When choudoufu refuses that plan file, the step fails as a moved plan and the command exits 3. Plain terraform and tofu refuse a stale plan file too, and the command exits 1, because chant does not tell that error from others.
+The digest covers the plan's resource changes, output changes and action invocations. Timestamps, versions and prior state are left out. `run` applies the plan file the plan wrote with `apply <plan file>`. When choudoufu refuses that plan file, the step fails as a moved plan and the command exits 4. Plain terraform and tofu refuse a stale plan file too, and the command exits 1, because chant does not tell that error from others.
 
-A live choudoufu root that `live-plan-set` can plan as chant would, one with no var files, no `vars` and no backend config, is planned as a one-root set instead. `run` hands choudoufu that set and its digest with `live-wave-apply`, and choudoufu's refusal of a moved set exits 3.
+A live choudoufu root that `live-plan-set` can plan as chant would, one with no var files, no `vars` and no backend config, is planned as a one-root set instead. `run` hands choudoufu that set and its digest with `live-wave-apply`, and choudoufu's refusal of a moved set exits 4.
 
 Its `outputs` runs `output -json` in the root after an `init`. The plan reads the root's future outputs from `show -json`, in the same way as for a choudoufu member above.
 
@@ -204,7 +204,7 @@ Its `outputs` runs `output -json` in the root after an `init`. The plan reads th
 
 A component with no step that has `plan` is one member under the component's name. Its row reads `planned` with a count of 0 in every column, and its group in the plan summary says `no changes`. That row says nothing about what the component will change, since the plan had nothing to ask.
 
-The member's plan digest is the component's composition digest, the one its own gates bind. It is computed over the component's declaration and the environment with its vars. Every step's input goes in as written, and since [#4155](https://github.com/INTENTIUS/chant/issues/4155) so does the content of each local file or directory a step deploys from. A commit pushed after review that changes a chart, a values file or a site's tree moves the digest, and `pr-apply` exits 3 as it does for a moved cfn or k8s plan.
+The member's plan digest is the component's composition digest, the one its own gates bind. It is computed over the component's declaration and the environment with its vars. Every step's input goes in as written, and since [#4155](https://github.com/INTENTIUS/chant/issues/4155) so does the content of each local file or directory a step deploys from. A commit pushed after review that changes a chart, a values file or a site's tree moves the digest, and `pr-apply` exits 4 as it does for a moved cfn or k8s plan.
 
 These are the paths the digest reads, from the step's literal input (`packages/core/src/components/deploy-inputs.ts`):
 

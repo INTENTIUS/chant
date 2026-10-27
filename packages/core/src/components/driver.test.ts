@@ -1192,7 +1192,7 @@ describe("a step that refuses a moved plan (#3997)", () => {
     expect(isPlanMovedError("planMoved")).toBe(false);
   });
 
-  it("marks the failed step's record, and failedRunExitCode answers 3 for it and 1 for any other failure", async () => {
+  it("marks the failed step's record, and failedRunExitCode answers 4 for it and 1 for any other failure", async () => {
     const run = async (mark: object) => {
       const registry = new CapabilityRegistry();
       registry.register(fakeCapability("apply", { run: () => { throw Object.assign(new Error("refused"), mark); } }).capability);
@@ -1201,10 +1201,10 @@ describe("a step that refuses a moved plan (#3997)", () => {
     };
     const moved = await run({ exitCode: 3 });
     expect(moved.records[0]).toMatchObject({ status: "fail", planMoved: true });
-    expect(failedRunExitCode([moved])).toBe(3);
+    expect(failedRunExitCode([moved])).toBe(4);
     const other = await run({ exitCode: 7 });
     expect(other.records[0]).not.toHaveProperty("planMoved");
     expect(failedRunExitCode([other])).toBe(1);
-    expect(failedRunExitCode([other, moved])).toBe(3);
+    expect(failedRunExitCode([other, moved])).toBe(4);
   });
 });

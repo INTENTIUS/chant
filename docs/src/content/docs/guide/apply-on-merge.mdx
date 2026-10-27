@@ -74,7 +74,7 @@ A member that reads an output known only after apply and whose fresh plan is not
 
 ## When the plan changed after review
 
-The apply plans every member before it applies any. It applies each member's plan in dependency order once the merges' approvals cover the plan or an approval stands for its digest. The note and the `chant/apply` status follow. When an approval of the green commit's gate stands for another digest, something moved after that approval. A later commit or a change in the live state each does it. Then the apply stops with exit 3:
+The apply plans every member before it applies any. It applies each member's plan in dependency order once the merges' approvals cover the plan or an approval stands for its digest. The note and the `chant/apply` status follow. When an approval of the green commit's gate stands for another digest, something moved after that approval. A later commit or a change in the live state each does it. Then the apply stops with exit 4, the [moved](/chant/reference/exit-codes/) code:
 
 ```
 The plan changed after review, so nothing was applied. approved: jcs1-sha256:d181...; planned now: jcs1-sha256:cef9.... Read the new plan, and if it is right, approve it: chant approve pr-2 pr-apply --plan jcs1-sha256:cef9... --approver <you> --sign; then run the apply again.
@@ -82,7 +82,7 @@ The plan changed after review, so nothing was applied. approved: jcs1-sha256:d18
 
 The note and the report carry the same message. Read the new plan in `.chant/pr/pr-apply.json`, which the job keeps as an artifact. If it is right, approve it and re-run the job.
 
-The target can also move after that check, while the apply runs. A step that finds it moved applies nothing for its member and fails it: a `cfn-deploy` change set, a `kubectl-apply` dry run, or a choudoufu root's apply that differs from the approved plan. The apply then exits 3 as well, and the members before it stay applied. Plain terraform and tofu refuse a stale plan file too, but chant does not tell that error from others, so it exits 1.
+The target can also move after that check, while the apply runs. A step that finds it moved applies nothing for its member and fails it: a `cfn-deploy` change set, a `kubectl-apply` dry run, or a choudoufu root's apply that differs from the approved plan. The apply then exits 4 as well, and the members before it stay applied. Plain terraform and tofu refuse a stale plan file too, but chant does not tell that error from others, so it exits 1.
 
 ## Follow an apply while it runs
 

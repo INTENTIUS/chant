@@ -58,3 +58,5 @@ export { pulumiAuditCatalog } from "./lint/audit-catalog";
 // The Preview/Drift watch composite and its step builders (#4494).
 export { PulumiWatchOp, type PulumiWatchOpConfig, type PulumiWatchOpResources } from "./composites/pulumi-watch-op";
 export { pulumiPreview as pulumiPreviewStep, pulumiDrift as pulumiDriftStep } from "./op/builders";
+// Pulumi and plunge exit statuses on chant's exit-code table (#4553).
+export { pulumiExitOf, pulumiPlanMoved, PULUMI_EXIT, PLUNGE_PLAN_MOVED_EXIT } from "./exit-codes";

@@ -1,4 +1,5 @@
 import { lexiconNames } from "../../lexicon-module";
+import { CHANT_EXIT } from "../../exit-codes";
 import { resolve, dirname, basename } from "node:path";
 import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { loadChantConfig, resolveAutoReleaseDisabled, InvalidChantConfigError, type ChantConfig } from "../../config";
@@ -46,7 +47,7 @@ import { runOpGenerate } from "./run-generate";
  * job that treats it as a failure would page someone for a decision nobody has
  * made yet.
  */
-export const GATED_EXIT_CODE = 3;
+export const GATED_EXIT_CODE = CHANT_EXIT.waiting;
 
 /**
  * The exit code this invocation gives a gated run — {@link GATED_EXIT_CODE}

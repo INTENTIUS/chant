@@ -29,6 +29,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { CHANT_EXIT } from "../exit-codes";
 import { resolve } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext, ParsedArgs } from "../cli/registry";
@@ -48,7 +49,7 @@ import { appendWorkspaceRun, type WorkspaceRunRecord, type WorkspaceRunStep } fr
 import { appendWorkspaceGatePending, type WorkspaceGateCover, type WorkspaceGatePending } from "./workspace-gates";
 
 /** `chant run`'s exit code for a run that stopped at an unapproved gate (`GATED_EXIT_CODE`). */
-const GATED_EXIT = 3;
+const GATED_EXIT = CHANT_EXIT.waiting;
 
 const USAGE =
   "chant workspace run <member>/<op>... [--env <env>] [--gate <name>] [--dry-run] [--json] | chant workspace run --dependents-of <member> --op <op> [--env <env>] [--gate <name>] [--dry-run] [--json] | chant workspace run approve <gate> [--plan <digest>] [--approver <principal>]";

@@ -20,13 +20,18 @@
  */
 
 import { basename, resolve } from "node:path";
+import { CHANT_EXIT } from "../../exit-codes";
 import { loadChantConfig } from "../../config";
 import { DRIFT_READS, encodeDriftLine, type DriftLine, type DriftRead, type ReadDriftRefusalCode } from "../../drift-record";
 import { formatError } from "../format";
 import type { CommandContext } from "../registry";
 
-/** The exit status of a refused read. */
-export const DRIFT_REFUSED_EXIT = 3;
+/**
+ * The exit status of a refused read: `CHANT_EXIT.failed` (#4553; 3 before).
+ * The `{"refused": ...}` line on stdout says why, and `chant workspace drift`
+ * reads that line, so the code carries nothing more.
+ */
+export const DRIFT_REFUSED_EXIT = CHANT_EXIT.failed;
 
 const USAGE = "chant lifecycle drift [--member <name>] [--read <state|plan|refresh|live-read|ownership>] [--resource <addr>]";
 
