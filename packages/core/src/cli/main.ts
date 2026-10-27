@@ -258,6 +258,12 @@ Commands:
                                           applied) and path. Read-only.
 
 CI:
+  ci check --base <rev> [<target>...] [--output <dir>] [--json]
+                        Run the ci.hooks.check hooks the workspace declaration
+                        at --base names, once each, or once per target with
+                        perRun, with no forge token or cloud credentials in
+                        their environment. Writes check-hooks.json under
+                        --output (default .chant/check); exits 1 when one failed.
   ci last-green [--json] [--from <rev>]  The newest first-parent commit of
                         ci.green's branch, or of --from, with a ci/green tag
                         and no ci/revoked tag. Reads local tags only; fetch
@@ -1646,6 +1652,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "ci tick", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiTick(ctx) },
   { name: "ci workflow", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiWorkflow(ctx) },
   { name: "ci init", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-init")).runCiInit(ctx) },
+  // #4556: the ci.hooks.check hooks at base, for a product's check job.
+  { name: "ci check", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/ci-check")).runCiCheck(ctx) },
   // #4094: one pull-request job as a pipeline Op in a fresh checkout, the chant runner's first slice.
   { name: "ci run", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-run")).runCiRun(ctx) },
   // #4098: the run index at the report URL.

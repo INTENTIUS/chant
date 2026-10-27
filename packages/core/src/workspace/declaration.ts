@@ -29,7 +29,7 @@ import type { SecurityGroup } from "./security";
 import { joinPath, type WorkspaceTree } from "./tree";
 import { loadAjv2020 } from "./ajv2020";
 import { readChantPackageVersion } from "../package-version";
-import { assertPrLoopHooks, type OpWaveHooks } from "../op/op-waves";
+import { assertPrLoopHooks, type CiHooks } from "../op/op-waves";
 import { quorumProblems, type GateQuorumSpec } from "../op/gate-quorum";
 import { gateBaseApprovalProblems, type GateApprovalMode, type GatePolicyRef } from "../op/gate-approval";
 import { assertGatePolicySettings, type GatePolicySettings } from "../gate-policy";
@@ -322,7 +322,7 @@ export interface CiDeclaration {
    * `pr-record` and `pr-apply` read them from the declaration at base.
    * Absent when the declaration sets none.
    */
-  hooks?: OpWaveHooks;
+  hooks?: CiHooks;
   /**
    * `ci.branches` (#4292): branch name to member-name globs. A member a glob
    * matches applies from that branch alone; the others apply from every
@@ -705,7 +705,7 @@ export interface Member {
   /** The member's own `ci.workflow` (#4168 step 6), which wins over the top level's; null when it names none. */
   ciWorkflow: CiWorkflow | null;
   /** The member's own `ci.hooks` (#4288), run after the top level's; null when it names none. */
-  ciHooks: OpWaveHooks | null;
+  ciHooks: CiHooks | null;
   suppress: Suppression[];
   /** The entry's JSON Pointer in the file, for messages. */
   pointer: string;
@@ -1305,14 +1305,14 @@ function retentionOf(raw: unknown): RetentionOverride | null {
 }
 
 /** A `ci.hooks` block (#4288), refused when a pull-request job could not run it. Null when absent. */
-function ciHooksOf(raw: unknown, pointer: string, at: (pointer: string, key?: boolean) => ErrorLocation): OpWaveHooks | null {
+function ciHooksOf(raw: unknown, pointer: string, at: (pointer: string, key?: boolean) => ErrorLocation): CiHooks | null {
   if (raw === undefined) return null;
   try {
-    assertPrLoopHooks(pointer.slice(1).replace(/\//g, "."), raw as OpWaveHooks);
+    assertPrLoopHooks(pointer.slice(1).replace(/\//g, "."), raw as CiHooks);
   } catch (err) {
     throw new WorkspaceReadError("declaration-invalid", err instanceof Error ? err.message : String(err), at(pointer));
   }
-  return structuredClone(raw as OpWaveHooks);
+  return structuredClone(raw as CiHooks);
 }
 
 /** A `ci.branches` or `ci.labels` map, copied without its `x-` keys. */

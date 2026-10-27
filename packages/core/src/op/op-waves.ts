@@ -97,6 +97,7 @@ import { quorumProblems, type GateQuorumRule } from "./gate-quorum";
 import { notifyConfigProblem, type NotifyConfig } from "../notify";
 import { WAVE_GATE_NAME_PATTERN, waveGateNameFrom, waveShare } from "../wave-layout";
 import { waveOutcomeFileName } from "../wave-blocked";
+import { NEXT_RELEASE } from "../release-floors";
 
 /**
  * The variables a wave job reads its notify secrets from, for the lexicons
@@ -206,6 +207,20 @@ export type OpWaveHookMoment = "before-observe" | "before-plan" | "after-plan" |
  * waiting, or refused by a policy denial.
  */
 export const OP_WAVE_HOOK_MOMENTS: readonly OpWaveHookMoment[] = ["before-observe", "before-plan", "after-plan", "after-gate", "before-apply", "after-apply"];
+
+/**
+ * The check moment (#4556): `ci.hooks.check`, run in a product's check job,
+ * once, or once per target with `perRun`. It comes before any plan, so a
+ * hook has no `{plan}` and cannot hold for an approval. It is a `ci.hooks`
+ * moment only; an Op waves spec has no check job.
+ */
+export const CHECK_HOOK_MOMENT = "check";
+
+/** A moment a hook runs at: an Op waves or pull-request moment, or `check` (#4556). */
+export type CiHookMoment = OpWaveHookMoment | typeof CHECK_HOOK_MOMENT;
+
+/** The first chant that reads and runs `ci.hooks.check` (#4556). A declaration that uses it sets `minReader` to it. */
+export const CI_CHECK_HOOK_FLOOR = NEXT_RELEASE;
 
 /**
  * Who runs the `before.apply` and `after.apply` hooks (#3804). `chant`: the
@@ -991,6 +1006,7 @@ export function assertOpWaveHooks(where: string, hooks: OpWaveHooks | undefined)
       }
       continue;
     }
+    if (side === "check") throw new Error(`${where}: hooks.check runs in a product's check job, so it belongs in ci.hooks of the workspace declaration, not in an Op waves spec.`);
     if (side !== "before" && side !== "after") throw new Error(`${where}: hooks.${side} is not a moment; use hooks.before or hooks.after (or hooks.apply.runBy).`);
     if (stages === null || typeof stages !== "object" || Array.isArray(stages)) throw new Error(`${where}: hooks.${side} must be { "plan"?: [...], "apply"?: [...] }.`);
     for (const [stage, list] of Object.entries(stages as Record<string, unknown>)) {
@@ -1035,14 +1051,49 @@ export function assertOpWaveHooks(where: string, hooks: OpWaveHooks | undefined)
  */
 export const PR_LOOP_HOOK_MOMENTS: readonly OpWaveHookMoment[] = ["before-observe", "before-plan", "after-plan", "after-gate", "before-apply", "after-apply"];
 
+/** `ci.hooks` in the workspace declaration: the Op waves moments, and `check` (#4556). */
+export interface CiHooks extends OpWaveHooks {
+  /** Run in the check job (#4556), once, or once per target with `perRun`. Read at base like every moment. */
+  check?: OpWaveHook[];
+}
+
 /**
  * Refuse `ci.hooks` a pull-request job could not run (#4288): what
  * {@link assertOpWaveHooks} refuses, plus `apply.runBy`, since chant itself
- * runs a pull request's apply.
+ * runs a pull request's apply, and a `check` hook that names a plan or asks
+ * for an approval (#4556).
  */
-export function assertPrLoopHooks(where: string, hooks: OpWaveHooks | undefined): void {
-  assertOpWaveHooks(where, hooks);
+export function assertPrLoopHooks(where: string, hooks: CiHooks | undefined): void {
+  if (hooks !== undefined && hooks !== null && typeof hooks === "object" && !Array.isArray(hooks) && "check" in hooks) {
+    const { check, ...rest } = hooks;
+    assertCheckHooks(where, check);
+    assertOpWaveHooks(where, rest);
+  } else {
+    assertOpWaveHooks(where, hooks);
+  }
   if (hooks?.apply !== undefined) throw new Error(`${where}: hooks.apply.runBy is for an Op waves spec; chant runs a pull request's apply, so it runs the apply-stage hooks itself.`);
+}
+
+/** Refuse `ci.hooks.check` hooks the check job could not run (#4556). */
+export function assertCheckHooks(where: string, list: unknown): void {
+  if (!Array.isArray(list)) throw new Error(`${where}: hooks.check must be a list of hooks.`);
+  list.forEach((hook: OpWaveHook, i: number) => {
+    const which = `hooks.check[${i}]${hook && typeof hook === "object" && typeof hook.name === "string" ? ` (${hook.name})` : ""}`;
+    if (!hook || typeof hook !== "object") throw new Error(`${where}: ${which} must be { "command": [...], "name"?, "onFailure"?, "perRun"?, "targets"? }.`);
+    assertArgv(where, `${which}.command`, hook.command);
+    if (hook.onFailure === "approve") throw new Error(`${where}: ${which} has onFailure "approve", but the check runs before any plan, so there is nothing to approve. Use "fail".`);
+    if (hook.onFailure !== undefined && hook.onFailure !== "fail") throw new Error(`${where}: ${which} has onFailure "${hook.onFailure}"; use "fail".`);
+    if (hook.perRun !== undefined && typeof hook.perRun !== "boolean") throw new Error(`${where}: ${which}.perRun must be true or false.`);
+    if (hook.targets !== undefined && (!Array.isArray(hook.targets) || hook.targets.length === 0 || !hook.targets.every((t) => typeof t === "string" && t !== ""))) {
+      throw new Error(`${where}: ${which}.targets must be a non-empty list of targets or patterns, such as ["prod/*"].`);
+    }
+    const plan = hook.command.find((part) => part.includes("{plan}"));
+    if (plan) throw new Error(`${where}: ${which} runs before any plan, so it has no {plan} ("${plan}").`);
+    if (!hook.perRun) {
+      const target = hook.command.find((part) => part.includes("{target}"));
+      if (target) throw new Error(`${where}: ${which} runs once for the check, so it has no {target} ("${target}"). Set "perRun": true.`);
+    }
+  });
 }
 
 /** The hooks of each moment for wave `name`: the spec's, then the wave's own. */

@@ -45,12 +45,36 @@ A member can set its own `ci.hooks`. They run after the top level's (`packages/c
 | `after.gate` | pr-apply | once the pull request's gate decided, whatever it decided |
 | `before.apply` | pr-apply | once the gate and the review let the apply through |
 | `after.apply` | pr-apply | after the apply, for the components that applied |
+| `check` | a product's check job, through `chant ci check` | before any plan, once, or once per target with `perRun` |
 
 The plan-side moments wrap the plan in `hookedPlan` (`packages/core/src/cli/handlers/pr.ts:307`). The apply-side moments wrap `applyPrSet` (`packages/core/src/cli/handlers/pr.ts:715`, `:774`). With `--wave-gate`, each wave runs its own plan-side and apply-side hooks for its components.
 
 `hooks.apply.runBy` is refused, since chant runs a pull request's apply (`packages/core/src/op/op-waves.ts`, `assertPrLoopHooks`). `onFailure: "approve"` on `after.gate` is refused as in an Op waves job, since the gate has already decided.
 
 An `after.gate` hook runs in pr-apply right after the gate is decided (`runGateHook` in `packages/core/src/cli/handlers/pr.ts`). Its environment adds `CHANT_GATE_STATUS` (`approved`, or `waiting` when no approval of the digest stands), `CHANT_GATE_OP`, `CHANT_GATE` and `CHANT_GATE_DIGEST`. When the gate waits, the hooks still run, and the stage then ends as a refusal whatever they came to. pr-plan and pr-record decide no gate to act on, so they run no `after.gate` hook. A gate decided again for a later wave under `--wave-gate` runs none either.
+
+## The check moment
+
+`ci.hooks.check` runs the linters a repository already uses (tflint, checkov, trivy, pre-commit and the Pulumi side's equivalents) in the check job, the job that runs before any plan ([#4556](https://github.com/INTENTIUS/chant/issues/4556)). A hook takes the same shape as the other moments, with two limits: `onFailure` is `fail`, and a hook has no `{plan}`. A declaration that names `onFailure: "approve"` or `{plan}` on a check hook is refused, since nothing is planned yet to approve.
+
+```json
+{
+  "ci": {
+    "hooks": {
+      "check": [
+        { "name": "tflint", "command": ["tflint", "--chdir", "{target}"], "perRun": true },
+        { "name": "pre-commit", "command": ["pre-commit", "run", "--all-files"] }
+      ]
+    }
+  }
+}
+```
+
+The check job runs `chant ci check --base <rev> [<target>...]`, or a product calls `runCheckHooks` from `@intentius/chant/components/check-hooks`. The hooks are read at base, as every moment is, so a change cannot remove a required check. The targets are the roots, stacks or components the change touches. A `perRun` hook runs once for each, with `{target}` and `CHANT_TARGET`, and `targets` matches their names as above.
+
+A check hook's environment holds no forge token and no cloud credentials, and the OIDC request variables are dropped as well (`checkHookEnv`). It reads the change and nothing else. Its environment adds `CHANT_HOOK=check`, `CHANT_CHECK=1`, `CHANT_RUNS` and `CHANT_HOOKS_BASE`. The report is `check-hooks.json` under `--output` (default `.chant/check`). Each row names a hook call and its target and gives the call's result and exit code. The product copies the rows into its own check report. The command exits 1 when a hook failed and 0 when every hook passed or none is declared.
+
+A product's `init` adds a hook with `writeCiHook(root, "check", hook)`, which writes `ci.hooks.check` in the declaration and keeps the file's formatting, replacing a hook of the same name so that `init` can run again. A declaration that uses `check` sets `minReader` to chant `0.124.55` or newer.
 
 ## What a hook sees
 
