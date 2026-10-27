@@ -25,6 +25,15 @@
  *   ones are dropped.
  * - {@link pulumiStreamSummary}: the `summaryEvent`, and plunge's
  *   per-resource timings (INTENTIUS/plunge#55) when the steps carry them.
+ * - {@link pulumiStreamTimings}: those timings alone, by URN. plunge puts
+ *   `metadata.plungeTimings` on each `resOutputsEvent` and
+ *   `resOpFailedEvent` of `up --json`: one entry per provider call (`kind:
+ *   "provider"`, `call` one of check, diff, create, read, update, delete)
+ *   and per write or delete of the resource's record (`kind: "record"`),
+ *   each with `startedAt` and `durationMs`, and `failed` when it failed.
+ *   Every call is on exactly one event, and a replacement's create and
+ *   delete steps split a URN's calls over two events, so the reader joins
+ *   them. Stock Pulumi prints no such field, and the reader then finds none.
  *
  * During `up`, the engine may first preview: those `resourcePreEvent`s carry
  * `planning: true`. {@link pulumiAppliedSteps} keeps only the steps the update
@@ -69,8 +78,45 @@ export interface PulumiEventStep {
   detailedDiff?: Record<string, { diffKind?: string; inputDiff?: boolean }> | null;
   logical?: boolean;
   provider?: string;
-  /** plunge's per-resource timings (INTENTIUS/plunge#55), when the fork prints them. */
+  /** plunge's per-resource timings (INTENTIUS/plunge#55), when the fork prints them. Read with {@link plungeTimingOf}. */
   plungeTimings?: unknown[];
+}
+
+/** What a plunge timing times: a provider call, or a write of the resource's own record. */
+export type PlungeTimingKind = "provider" | "record";
+
+/** The calls plunge times (INTENTIUS/plunge#55), by kind. */
+export const PLUNGE_TIMING_CALLS: Readonly<Record<PlungeTimingKind, readonly string[]>> = {
+  provider: ["check", "diff", "create", "read", "update", "delete"],
+  record: ["write", "delete"],
+};
+
+/** One entry of `metadata.plungeTimings` (INTENTIUS/plunge#55). */
+export interface PlungeTiming {
+  kind: PlungeTimingKind;
+  /** For `provider`: check, diff, create, read, update or delete. For `record`: write or delete. */
+  call: string;
+  /** RFC 3339, to the nanosecond. */
+  startedAt: string;
+  /** Fractional milliseconds. */
+  durationMs: number;
+  /** Set when the call failed. A conditional record write that lost to another run counts as failed. */
+  failed?: boolean;
+}
+
+/**
+ * `value` as a {@link PlungeTiming}, or undefined when it is not one. A
+ * `call` outside the kind's list is kept, so a newer plunge's calls still
+ * read; an entry with no kind, no start or a negative duration is dropped.
+ */
+export function plungeTimingOf(value: unknown): PlungeTiming | undefined {
+  if (!isObject(value)) return undefined;
+  const v = value as Record<string, unknown>;
+  if (v.kind !== "provider" && v.kind !== "record") return undefined;
+  if (typeof v.call !== "string" || v.call === "") return undefined;
+  if (typeof v.startedAt !== "string" || !Number.isFinite(Date.parse(v.startedAt))) return undefined;
+  if (typeof v.durationMs !== "number" || !Number.isFinite(v.durationMs) || v.durationMs < 0) return undefined;
+  return { kind: v.kind, call: v.call, startedAt: v.startedAt, durationMs: v.durationMs, ...(v.failed === true ? { failed: true } : {}) };
 }
 
 /** `apitype.StepEventStateMetadata`. */
@@ -295,19 +341,34 @@ export interface PulumiApplySummary {
   /** `succeeded`, `failed` or `cancelled`, when the engine says. */
   result?: string;
   maybeCorrupt?: boolean;
-  /** plunge's per-resource timings (INTENTIUS/plunge#55), by URN, when the steps carry them. */
-  timings?: Record<string, unknown[]>;
+  /** plunge's per-resource timings (INTENTIUS/plunge#55), by URN, in stream order, when the steps carry them. */
+  timings?: Record<string, PlungeTiming[]>;
+}
+
+/**
+ * plunge's per-resource timings in `up --json` (INTENTIUS/plunge#55), by URN:
+ * every valid entry of `metadata.plungeTimings` on each `resOutputsEvent`
+ * and `resOpFailedEvent`, joined across a URN's events in stream order. A
+ * stock Pulumi stream gives `{}`.
+ */
+export function pulumiStreamTimings(stream: string | readonly PulumiEngineEvent[]): Record<string, PlungeTiming[]> {
+  const events = typeof stream === "string" ? pulumiEngineEvents(stream) : stream;
+  const timings: Record<string, PlungeTiming[]> = {};
+  for (const e of events) {
+    for (const m of [e.resOutputsEvent?.metadata, e.resOpFailedEvent?.metadata]) {
+      if (!m?.urn || !Array.isArray(m.plungeTimings)) continue;
+      const read = m.plungeTimings.map(plungeTimingOf).filter((t): t is PlungeTiming => t !== undefined);
+      if (read.length > 0) (timings[m.urn] ??= []).push(...read);
+    }
+  }
+  return timings;
 }
 
 /** The stream's `summaryEvent`, with plunge's timings when present. Undefined when the stream has no summary. */
 export function pulumiStreamSummary(stream: string | readonly PulumiEngineEvent[]): PulumiApplySummary | undefined {
   const events = typeof stream === "string" ? pulumiEngineEvents(stream) : stream;
   const s = events.map((e) => e.summaryEvent).find((x): x is PulumiSummaryEvent => isObject(x));
-  const timings: Record<string, unknown[]> = {};
-  for (const e of events) {
-    const m = e.resOutputsEvent?.metadata ?? e.resourcePreEvent?.metadata;
-    if (m?.urn && Array.isArray(m.plungeTimings) && m.plungeTimings.length > 0) timings[m.urn] = m.plungeTimings;
-  }
+  const timings = pulumiStreamTimings(events);
   if (!s) return undefined;
   return {
     resourceChanges: isObject(s.resourceChanges) ? (s.resourceChanges as Record<string, number>) : {},
