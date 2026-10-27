@@ -123,7 +123,8 @@ export { loadActivityContracts, mergeActivityContracts } from "./activity-contra
 export type { LexiconActivityContractContributor } from "./activity-contract-registry";
 export { ACTIVITY_PROFILES, ACTIVITY_PROFILE_NAMES, MAX_STEP_TIMEOUT } from "./activity-profiles";
 export type { ActivityProfile, ActivityProfileName } from "./activity-profiles";
-export { NonRetryableActivityError, nonRetryableFailure } from "./activity-failure";
+export { NonRetryableActivityError, nonRetryableFailure, KNOWN_OUTPUTS_KEY, withKnownOutputs, knownOutputsOf } from "./activity-failure";
+export type { ErrorWithKnownOutputs } from "./activity-failure";
 export { runOpLocally, parseDuration, OpRunFailure } from "./local-executor";
 export type { StepRecord, OpRunResult, RunOpOptions } from "./local-executor";
 export { currentOpRun, withOpRunContext } from "./run-context";
