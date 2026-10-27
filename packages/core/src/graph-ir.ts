@@ -9,6 +9,7 @@ import { subTemplateRefs } from "./graph-sub-template";
 import type { ResourceMetadata } from "./lexicon";
 import { entityInstanceRollup, observedInstanceNodeId, type InstanceRollup } from "./instance-nodes";
 import type { RootRead, UnobservedEntity } from "./observation";
+import type { EdgeGrain, EngineFacts } from "./engine-facts";
 
 export { subTemplateRefs };
 
@@ -123,6 +124,14 @@ export interface IRNode {
    * `./instance-nodes.ts`.
    */
   instanceRollup?: InstanceRollup;
+  /**
+   * Live-only: what an ownership engine (choudoufu, plunge) observed about
+   * this node (#4520, #4527), copied from `ResourceMetadata.facts` or read
+   * from the engine's graph document. For people and for readers that show
+   * the graph. Nothing in chant decides from it, and {@link ownership} keeps
+   * its own meaning. Absent unless an engine supplied it. See `./engine-facts.ts`.
+   */
+  facts?: EngineFacts;
 }
 
 /**
@@ -162,6 +171,14 @@ export interface IREdge {
    * this to route the edge between groups. Absent on every in-pipeline edge.
    */
   crossPipeline?: boolean;
+  /**
+   * What the edge joins (#4520): two blocks, two instances, or a property of
+   * one instance to another. Set by an engine's graph (choudoufu: `block`;
+   * plunge: `instance` for dependencies, parents and providers, `property`
+   * for property dependencies). Absent when the source does not say. Two
+   * edges between the same pair that differ only in grain are two edges.
+   */
+  grain?: EdgeGrain;
 }
 
 /**
@@ -948,7 +965,8 @@ function collectEdges(
 
 /** Stable key for deduping and sorting an edge. */
 function edgeKey(e: IREdge): string {
-  return `${e.from}\0${e.to}\0${e.viaAttr ?? ""}`;
+  // `grain` joins the key only when set, so an edge without one keys as before.
+  return `${e.from}\0${e.to}\0${e.viaAttr ?? ""}${e.grain ? `\0${e.grain}` : ""}`;
 }
 
 /**
@@ -1297,6 +1315,8 @@ export function buildLiveGraphIr(observations: LiveObservation[]): GraphIR {
       // ownership above, since `unowned`/`foreign`/`unknown` all mean "no
       // declared owner", which is simply the absence of this field.
       if (meta.ownerChain?.root === "declared") node.runtimeOwner = meta.ownerChain.entity;
+      // An engine's facts (#4527) ride beside `physicalId`, as the engine gave them.
+      if (meta.facts) node.facts = meta.facts;
       nodes.push(node);
       (byLexicon[lexicon] ??= []).push(name);
       // A live lexicon maps to one deployable stack, same as the source IR.
@@ -1323,6 +1343,7 @@ export function buildLiveGraphIr(observations: LiveObservation[]): GraphIR {
         };
         if (inst.physicalId) child.physicalId = inst.physicalId;
         if (inst.ownership === "owned" || inst.ownership === "foreign") child.ownership = inst.ownership;
+        if (inst.facts) child.facts = inst.facts;
         nodes.push(child);
         (byLexicon[lexicon] ??= []).push(id);
         (byStack[lexicon] ??= []).push(id);
@@ -1349,7 +1370,9 @@ export function buildLiveGraphIr(observations: LiveObservation[]): GraphIR {
   for (const observation of observations) {
     for (const edge of observation.edges ?? []) {
       if (!observedIds.has(edge.from) || !observedIds.has(edge.to)) continue;
-      const key = `${edge.from}\u0000${edge.to}\u0000${edge.viaAttr ?? ""}\u0000${edge.toAttr ?? ""}`;
+      // `grain` is in the key (#4527): a block edge and an instance edge
+      // between the same pair stay two edges.
+      const key = `${edge.from}\u0000${edge.to}\u0000${edge.viaAttr ?? ""}\u0000${edge.toAttr ?? ""}\u0000${edge.grain ?? ""}`;
       if (seen.has(key)) continue;
       seen.add(key);
       edges.push(edge);
@@ -1359,7 +1382,8 @@ export function buildLiveGraphIr(observations: LiveObservation[]): GraphIR {
     (a, b) =>
       a.from.localeCompare(b.from) ||
       a.to.localeCompare(b.to) ||
-      (a.viaAttr ?? "").localeCompare(b.viaAttr ?? ""),
+      (a.viaAttr ?? "").localeCompare(b.viaAttr ?? "") ||
+      (a.grain ?? "").localeCompare(b.grain ?? ""),
   );
 
   // Stack exports (#1279) land on the IR's `exports`, the same place the
@@ -1488,7 +1512,7 @@ export function overlayGraphs(live: GraphIR, declared: GraphIR, opts?: OverlayOp
  *
  * Each declared node is classified against live observation and tagged `_status`:
  *   - **managed** (declared + provisioned) → `good`, carrying the observed
- *     `physicalId` / `ownership` onto the declared node
+ *     `physicalId` / `ownership` / engine `facts` onto the declared node
  *   - **pending** (declared, provider confirmed absent) → `accent`
  *   - **unobserved** (declared, chant could not look — #1089) → `neutral`, with
  *     the reason on `_unobserved`. A wrong-cluster or unsupported-kind read used
@@ -1524,6 +1548,7 @@ export function sourceOverlayGraphs(declared: GraphIR, live: GraphIR, opts?: Ove
     const merged: IRNode = { ...n }; // managed — carry the observed identity
     if (obs.physicalId) merged.physicalId = obs.physicalId;
     if (obs.ownership) merged.ownership = obs.ownership;
+    if (obs.facts) merged.facts = obs.facts;
     // ...and what was observed ABOUT it (#1279). The declared canvas holds what
     // the source says; the observation holds what the account says, and a fact
     // like `VpcId` exists only on the second. Dropping it here made every
