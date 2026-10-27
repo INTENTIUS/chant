@@ -38,12 +38,11 @@
  *  - Two versions with the same `stamp.digest` hold the same graph and
  *    coverage: the diff is `unchanged` and nothing is walked.
  */
-import { NEXT_RELEASE } from "../release-floors";
 import { indexCoverageFor, isIndexVersionName, type CoverageEntry, type IndexDocument } from "./index-document";
 import type { SnapshotStore } from "./snapshot-store";
 
 /** The first chant that exports the index diff and `chant index diff`. */
-export const INDEX_DIFF_FLOOR = NEXT_RELEASE;
+export const INDEX_DIFF_FLOOR = "0.124.54";
 
 /**
  * The words a comparison against an index uses (#4533, shared with #4526).

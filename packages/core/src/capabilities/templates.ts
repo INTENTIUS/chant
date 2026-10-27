@@ -22,11 +22,10 @@
  * as query parameters, never spliced into the text: the resource's key is
  * `$key` and every other input is `$<name>`.
  */
-import { NEXT_RELEASE } from "../release-floors";
 import data from "./templates.json" with { type: "json" };
 
 /** The first chant whose capabilities document carries `templates` (#4531). */
-export const CAPABILITY_TEMPLATES_FLOOR = NEXT_RELEASE;
+export const CAPABILITY_TEMPLATES_FLOOR = "0.124.54";
 
 /** The version of templates.json's shape. */
 export const TEMPLATES_DATA_VERSION = 1;

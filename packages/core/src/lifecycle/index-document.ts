@@ -32,10 +32,9 @@
 import { createHash } from "node:crypto";
 import type { GraphIR } from "../graph-ir";
 import type { UnobservedReason } from "../observation";
-import { NEXT_RELEASE } from "../release-floors";
 
 /** The first chant that writes an index document to the store. */
-export const INDEX_DOCUMENT_FLOOR = NEXT_RELEASE;
+export const INDEX_DOCUMENT_FLOOR = "0.124.54";
 
 /** Who produced an index. */
 export type IndexSourceKind = "cloud" | "engine" | "chant";

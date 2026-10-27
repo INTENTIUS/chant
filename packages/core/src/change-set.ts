@@ -45,7 +45,6 @@
 import { computePlanDigest } from "./lifecycle/plan-digest";
 import type { ChangeSet as LifecycleChangeSet, ChangeSetEntry as LifecycleEntry } from "./lifecycle/change-set";
 import type { ChangeSet as ReconcileChangeSet } from "./reconcile";
-import { NEXT_RELEASE } from "./release-floors";
 
 /** The schema a change-set document names in `$schema`. */
 export const CHANGE_SET_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/change-set/v1/change-set.schema.json";
@@ -54,10 +53,10 @@ export const CHANGE_SET_SCHEMA_ID = "https://intentius.io/chant/schemas/workspac
 export const CHANGE_SET_CONTRACT = 1;
 
 /** The first chant whose change set can carry a member's `group` (ws-107, #4440). */
-export const CHANGE_SET_GROUP_FLOOR = NEXT_RELEASE;
+export const CHANGE_SET_GROUP_FLOOR = "0.124.54";
 
 /** The first chant whose change set can carry a member's `placeholders` (#4463). */
-export const CHANGE_SET_PLACEHOLDERS_FLOOR = NEXT_RELEASE;
+export const CHANGE_SET_PLACEHOLDERS_FLOOR = "0.124.54";
 
 /** What a planner proposes for one resource. `no-op`, `read` and `forget` appear only when the planner reports them. */
 export type ChangeSetAction = "create" | "update" | "replace" | "delete" | "read" | "no-op" | "forget";
