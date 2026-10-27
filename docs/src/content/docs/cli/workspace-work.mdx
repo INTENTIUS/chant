@@ -131,7 +131,8 @@ Each claim also has `attempt`, which says whether it counts toward the item's at
 |---|---|
 | 0 | The lease was written. |
 | 1 | The command could not run: a usage error, an unreadable kind, an id no work record has, or a claim on a closed item. For `evidence`, also any refusal, with its code in `error.code`. |
-| 2 | The lease was refused. `refused.code` says why. `history` and `evidence` never exit 2. |
+| 5 | The lease was refused because another worker or writer holds it or won it: `lease-held`, `lease-race`, `lease-push-rejected`. The code is `held` in the [exit codes](/chant/reference/exit-codes/) table. |
+| 1 | Also the refusals `lease-not-held` and `lease-token-mismatch`: nobody holds the lease, or the token is stale. `refused.code` says which. `history` and `evidence` never exit 5. |
 
 ## Output
 

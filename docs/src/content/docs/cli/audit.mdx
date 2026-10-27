@@ -402,4 +402,4 @@ pinned to `--fail-on error`. See [Rule
 Configuration](/chant/lint-rules/configuration/#the-chant-audit-failure-severity-floor-chant-2113)
 for the full explanation.
 
-Independent of `--fail-on`, the command exits 2 when no audit lexicon is installed (nothing was inspected, see [Prerequisites](#prerequisites)) and 1 on a hard failure such as an unreachable repo or a missing path.
+Independent of `--fail-on`, the command exits 1 when no audit lexicon is installed (nothing was inspected, see [Prerequisites](#prerequisites)) and on a hard failure such as an unreachable repo or a missing path. Exit 2 is the [drift](/chant/reference/exit-codes/) code and audit never returns it.
