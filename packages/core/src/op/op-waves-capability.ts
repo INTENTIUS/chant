@@ -20,7 +20,9 @@
  *
  * - Plan: `capability.plan` per run. The run's member digest is the plan's
  *   `planDigest`; `empty` and `destructive` come from its change-set part
- *   (no entry but `no-op` and `read`; a `delete` or `replace`). A member
+ *   (no entry but `no-op` and `read`; a `delete` or `replace`), and a plan
+ *   whose `destructive` names a class of the engine's own is destructive
+ *   too (#4569, the sql lexicon's `sql-migrate`). A member
  *   whose part has holes and no artifact cannot apply, so planning fails
  *   with the holes' reasons. The parts compose into the wave's change-set
  *   document, which the pending fact cites (#4551).
@@ -248,6 +250,8 @@ export async function planOpWaveStep(
     throw new Error(`${run.target} was not planned: ${holes.map((h) => h.reason).join("; ")}`);
   }
   const effects = partEffects(planned.changeSet);
+  // #4569: the engine's own destructive classes count too (a rewrite, a revoke), not only a delete or replace.
+  if ((planned.destructive?.length ?? 0) > 0) effects.destructive = true;
   const plan: OpWaveStepPlan = {
     target: run.target,
     member: planned.member,

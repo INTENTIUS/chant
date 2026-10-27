@@ -137,6 +137,14 @@ export interface CapabilityPlan {
    * approval covers it. Absent, core derives the shape from `changeSet`.
    */
   shape?: PlanShape;
+  /**
+   * The engine's own reasons the plan is destructive (#4569), sorted, when it
+   * classes more as destructive than a delete or replace in the change set
+   * (a Postgres table rewrite, a revoke, a ClickHouse mutation). An op wave
+   * counts a plan that names any as destructive, which `on-destructive`
+   * waits on. Absent or empty: the change set alone decides.
+   */
+  destructive?: string[];
 }
 
 /**
