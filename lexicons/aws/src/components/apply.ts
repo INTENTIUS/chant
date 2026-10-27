@@ -1022,6 +1022,11 @@ export function createCfnDeployCapability(
       }
     },
     async run(ctx, input) {
+      // #4537: `run --components <name> --adopt <file>` adopts into this stack instead of a plain deploy.
+      if (ctx.adoption) {
+        const { runCfnAdoption } = await import("./cfn-adopt-run");
+        return runCfnAdoption(executor, ctx, input, ctx.adoption);
+      }
       const stack = input.stack ?? ctx.component;
       const onReplace = input.onReplace ?? "block";
       const changeSet = await executor.cloudformation.createChangeSet({
@@ -1131,7 +1136,7 @@ export function createCfnDeployCapability(
 }
 
 /** Flatten the wired `inputs` map plus `imageRef` (already resolved by the driver) to plain string CloudFormation parameters. */
-function flattenCfnInputs(input: CfnDeployInput): Record<string, string> | undefined {
+export function flattenCfnInputs(input: CfnDeployInput): Record<string, string> | undefined {
   const params: Record<string, string> = {};
   for (const [key, value] of Object.entries(input.inputs ?? {})) {
     params[key] = typeof value === "string" ? value : JSON.stringify(value);

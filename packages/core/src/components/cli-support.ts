@@ -52,6 +52,7 @@ import { existsSync, statSync } from "node:fs";
 import { getHeadCommit } from "../lifecycle/git";
 import { buildCapabilityRegistry } from "./capability-plugin-loader";
 import type { CapabilityRegistry } from "./capability";
+import type { DeployAdoption } from "./adoption";
 import type { FanOutPlan } from "./fan-out";
 import { componentSetFanOut, formRunGroups, planAndRunComponentGroup } from "./groups";
 import { applyConfigDefaults } from "./config-defaults";
@@ -401,6 +402,12 @@ export interface RunComponentsOptions {
    */
   targets?: Readonly<Record<string, readonly string[]>>;
   /**
+   * `--adopt <adoption-file>` (#4537): adopt the file's resources into the
+   * one component this run names, through its deploy step's
+   * `DeployContext.adoption`. Refused with `all` or a list.
+   */
+  adoption?: DeployAdoption;
+  /**
    * chant #1051 — opt-in: discover `*.component.ts` files in a sandboxed
    * child process (`chant run --components <name|all> --sandbox`) instead of
    * in the CLI's own process. See `discoverComponents`'s `sandbox` option
@@ -735,6 +742,9 @@ export async function runComponents(
     return { success: false, selected: [], error: `--target names ${outside.join(", ")}, which this run does not run` };
   }
   const targeted = Object.keys(narrowed).length > 0 ? { targets: narrowed } : {};
+  if (options.adoption && (selector === "all" || isComponentList(selector))) {
+    return { success: false, selected: [], error: `--adopt adopts into one component's stack; name one component, not ${selector === "all" ? "all" : "a list"}` };
+  }
   // Cross-component/cross-stack outputs to resolve references against. Seeded
   // from a caller (a downstream CI job passing an upstream job's dumped
   // outputs via `--seed-outputs`); grows as this run's components complete.
@@ -829,7 +839,7 @@ export async function runComponents(
     emit?.({ type: "component-start", wave: 1, component: componentName });
     const componentResult = await runComponentDeploy(
       resolvedTargets[0],
-      deployContext({ env, releaseIdentity, ...targeted }, componentName),
+      { ...deployContext({ env, releaseIdentity, ...targeted }, componentName), ...(options.adoption ? { adoption: options.adoption } : {}) },
       registry,
       componentOutputs,
       undefined,

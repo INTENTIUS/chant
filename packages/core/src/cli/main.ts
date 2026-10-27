@@ -538,6 +538,15 @@ Ops:
                         commit and runtime on every line (#4041). Also on
                         run <op>, components promote|rollback|redeploy,
                         fan-out, pr-plan and pr-apply
+                        --adopt <adoption-file>: one component's cfn-deploy
+                        step adopts the file's indexed resources into its
+                        stack: an IMPORT change set without markers, then a
+                        tags-only UPDATE that writes them. Each change set
+                        is shown and asked about before it runs (--yes
+                        approves; with no terminal and no --yes, nothing
+                        runs). If the marker step stops after a good import,
+                        a plain deploy of the same template writes the
+                        markers (#4537)
   operator               Run scheduled ticks for discovered ConvergeOps
                         locally (#1485): acquire/renew a per-op
                         lease (git ref CAS), tick on --interval, record every
