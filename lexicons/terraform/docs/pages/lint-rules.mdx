@@ -981,8 +981,12 @@ nothing else. The two blocks still differ in what they do:
   outputs to the location it names, so `terraform_remote_state` readers keep
   working. When the live declaration has no `record_store`, choudoufu derives the
   record store from the backend's bucket (s3, gcs and azurerm) and prints it on
-  every `init` and `plan` (INTENTIUS/choudoufu#2293). An explicit `record_store`
-  wins. TF024 reports this at `info`, naming where records will go.
+  every `init` and `plan` (INTENTIUS/choudoufu#2293). The bucket has to be a
+  literal in the block: one passed only with `-backend-config` is not read, and
+  azurerm also needs `storage_account_name`, `container_name` and
+  `resource_group_name`. An explicit `record_store` wins. TF024 reports this at
+  `info`, naming where records will go, and TF046 guards the local-store case
+  in CI.
 - A `cloud` block is dropped entirely: no outputs are published to it and no store
   is derived from it. TF024 reports this at `warning`.
 
@@ -2381,3 +2385,63 @@ remote_state {
 
 From `fixtures/TF045/positive/root.hcl`, which sets no constraint. The fixture
 directory also holds a unit that includes it.
+
+## TF046: a live root resolves to the local record store in a CI run
+
+A live root whose record store, as choudoufu resolves it, is the local store,
+linted in a CI job. Severity `error`, and off by default.
+
+**Why it matters.** The local store is a directory beside the module. A CI
+runner starts with an empty one on every run, so an ordinary resource still
+binds by its marker but a record-backed resource is proposed for create again.
+
+**How the store is resolved.** The same way choudoufu resolves it
+(INTENTIUS/choudoufu#2293), and the same reading TF024 uses for its message:
+
+- A `record_store` block in the `live` block or `estate.chdf.hcl` always wins.
+  `record_store "local"` fires; any other kind is quiet.
+- With no `record_store`, a `backend "s3"`, `"gcs"` or `"azurerm"` block beside
+  the live block gives a derived store and the rule is quiet. s3 and gcs need a
+  literal `bucket`; azurerm needs literal `storage_account_name`,
+  `container_name` and `resource_group_name`.
+- Anything else is the local store and fires: no backend block, a backend with
+  no record store counterpart (`local`, `consul`, `http`), or one whose bucket
+  comes only from `-backend-config`. The message gives the reason choudoufu
+  prints.
+
+A Terragrunt unit whose `remote_state`, backend `generate` block or `include`
+writes the backend file at run time is not judged, since chant cannot read
+the file choudoufu will see.
+
+**CI.** `CI` set to anything but `false` or `0`, or `GITHUB_ACTIONS`,
+`GITLAB_CI`, `FORGEJO_ACTIONS`, `GITEA_ACTIONS` or `TF_BUILD` set to `true`.
+Outside CI the rule says nothing.
+
+**The fix.** Keep or add the backend block with a literal bucket, or declare a
+`record_store` in the `live` block or the sidecar. An emulator or test lane
+that uses the local store on purpose sets `CHANT_ALLOW_LOCAL_RECORD_STORE=1`.
+One root opts out with `# chant-ignore-block: TF046` above the `terraform`
+block that holds `live`, or `# chant-ignore-file: TF046` in its
+`estate.chdf.hcl`.
+
+**Off by default.** TF046 is a `report-only` rule. terragucci turns it on for
+its users. Enable it in chant with `lint.presets: { terraform: "all" }` or a
+`lint.rules` entry.
+
+**Prior art.** No tool in the survey covers this; see the lineage file.
+
+```hcl
+terraform {
+  required_version = ">= 1.5.0"
+
+  live {
+    estate = "fixture-estate"
+  }
+}
+
+resource "null_resource" "first" {}
+```
+
+From `fixtures/TF046/implied-local/main.tf`. `explicit-local`,
+`backend-config-only`, `azurerm-no-resource-group` and `sidecar-implied` fire
+too; `derived-s3` and `explicit-s3-beside-local-backend` do not.
