@@ -377,7 +377,10 @@ function fixConfig(text: string): string {
 
 const FLY_EDITS: Edit[] = [
   {
-    find: /import \{ FlySite \} from "@intentius\/chud-runtime\/lexicon";\n/,
+    // The quotes are character classes so tsc-alias, which rewrites anything
+    // shaped like `from "<path>"` in the build, leaves the escaped slashes
+    // alone (chant#4591: it dropped them, and dist/ failed to parse).
+    find: /import \{ FlySite \} from ["]@intentius\/chud-runtime\/lexicon["];\n/,
     replace: "",
     required: "the FlySite import from @intentius/chud-runtime/lexicon",
     unless: /^(?![\s\S]*FlySite)/,
