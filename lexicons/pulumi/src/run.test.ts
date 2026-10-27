@@ -11,6 +11,7 @@ import { describe, expect, test } from "vitest";
 import {
   engineEnv,
   PLUNGE_GRAPH_COMMANDS,
+  plungeAdoptArgs,
   plungeGraphArgs,
   plungeMemberGraph,
   previewPulumiMember,
@@ -19,6 +20,7 @@ import {
   pulumiExportStack,
   pulumiPreviewArgs,
   refreshPulumiMember,
+  runAdoptPlunge,
   runAllowedPlunge,
   runAllowedPulumi,
   runApplyPlunge,
@@ -48,6 +50,38 @@ function fake(answer: (args: string[]) => string | Error): { run: PulumiRunner; 
 function failure(message: string, fields: { code?: string; stdout?: string; stderr?: string }): Error {
   return Object.assign(new Error(message), fields);
 }
+
+describe("plunge stack adopt (#4562)", () => {
+  test("the preview form passes runAllowedPlunge, and only runAdoptPlunge runs --yes", async () => {
+    const { run, calls } = fake(() => "{}");
+    await runAllowedPlunge(run, plungeAdoptArgs({ stack: "dev" }), "/tmp");
+    await runAllowedPlunge(run, plungeAdoptArgs({ stack: "dev", file: "/tmp/s.json" }), "/tmp");
+    await runAdoptPlunge(run, plungeAdoptArgs({ stack: "dev", yes: true }), "/tmp");
+    await runAdoptPlunge(run, plungeAdoptArgs({ stack: "dev", yes: true, file: "/tmp/s.json" }), "/tmp");
+    expect(calls.map((c) => c.args)).toEqual([
+      ["stack", "adopt", "--json", "--stack", "dev"],
+      ["stack", "adopt", "--json", "--stack", "dev", "--file", "/tmp/s.json"],
+      ["stack", "adopt", "--json", "--yes", "--stack", "dev"],
+      ["stack", "adopt", "--json", "--yes", "--stack", "dev", "--file", "/tmp/s.json"],
+    ]);
+  });
+
+  test("--yes through the read entry point, the adopt-file route, other flags and stock pulumi are refused", async () => {
+    const { run, calls } = fake(() => "{}");
+    await expect(runAllowedPlunge(run, plungeAdoptArgs({ stack: "dev", yes: true }), "/tmp")).rejects.toThrow(/not plunge stack adopt --json --yes/);
+    await expect(runAllowedPulumi(run, plungeAdoptArgs({ stack: "dev" }), "/tmp")).rejects.toThrow(/not pulumi stack adopt/);
+    for (const args of [
+      ["stack", "adopt", "--json", "--stack", "dev", "--adopt", "a.yaml"],
+      ["stack", "adopt", "--json", "--yes", "--stack", "dev", "--index-store", "/x"],
+      ["stack", "adopt", "--yes", "--stack", "dev"],
+      ["stack", "adopt", "--json", "--yes", "--stack", "--file"],
+      ["stack", "adopt", "--json", "--stack", "dev"],
+    ]) {
+      await expect(runAdoptPlunge(run, args, "/tmp")).rejects.toThrow(/chant adopts a stack onto plunge only as/);
+    }
+    expect(calls).toEqual([]);
+  });
+});
 
 describe("stack export (#4546)", () => {
   test("exactly stack export --stack <stack> reaches either runner", async () => {

@@ -27,6 +27,10 @@ The preview streams its engine events (`PULUMI_ENABLE_STREAMING_JSON_PREVIEW=tru
 
 After `up`, the capability runs `stack export --stack <s>`, replaces every secret with `[secret]`, drops the secrets provider's state, and writes the export through chant's index store as `<env>/<stack>__pulumi-export` ([#4546](https://github.com/INTENTIUS/chant/issues/4546), `refs/chant/snapshots` by default). The graph, the preview's prior state and the drift read take that export first, so a stack chant applies needs no checked-in `stack-export.json`. A failed export leaves the apply standing and says why in the step's `exportSnapshot` output.
 
+## Adoption: `PulumiAdoptOp`
+
+`PulumiAdoptOp` (`src/composites/pulumi-adopt-op.ts`, [#4562](https://github.com/INTENTIUS/chant/issues/4562)) adopts stock stacks onto plunge's per-resource records, the pulumi twin of `TerraformAdoptOp`. Its phases are Check (the shared bucket check on the backend's bucket), Export (`pulumi stack export --stack <s>` into a scratch file), then per stack Preview (`plunge stack adopt --json`), a gate bound to the preview's digest, and Adopt (`plunge stack adopt --json --yes`, through `runAdoptPlunge`). `from: { backend }` or `from: { file }` adopts an export with `--file`, the route from Pulumi Cloud. Gates and the run are recorded on the workspace ledger.
+
 ## Drift: `chant workspace drift`
 
 `chant workspace drift --member <pulumi member> [--resource <urn>] [--stream]` runs `chant lifecycle drift` in the member's reader project, which calls this lexicon's `readDrift`. A stock member is read with one `pulumi refresh --preview-only --json --target <urn>` per resource in its checked-in `stack-export.json`. A member on plunge is read with `plunge drift --resource <urn> --stream` per resource. `--resource` reads one URN. The only read is `refresh`.

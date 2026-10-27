@@ -12,7 +12,25 @@
  *     per resource (`plunge drift --resource <urn> --stream` on plunge), as
  *     drift counts.
  *
- * Neither changes the stack. See `./pulumi.ts`.
+ *   - pulumiAdoptCheck, pulumiAdoptExport, pulumiAdoptPreview, pulumiAdopt:
+ *     `PulumiAdoptOp`'s steps (#4562), the shared bucket check, the stock
+ *     checkpoint's export, `plunge stack adopt --json` and, after the gate,
+ *     `plunge stack adopt --json --yes`. See `./pulumi-adopt.ts`.
+ *
+ * Only `pulumiAdopt` changes anything: it writes plunge's records. See
+ * `./pulumi.ts`.
  */
 export { pulumiPreview, pulumiDrift } from "./pulumi";
+export { pulumiAdoptCheck, pulumiAdoptExport, pulumiAdoptPreview, pulumiAdopt } from "./pulumi-adopt";
+export type {
+  PulumiAdoptStackArgs,
+  PulumiAdoptCheckArgs,
+  PulumiAdoptCheckResult,
+  PulumiAdoptExportArgs,
+  PulumiAdoptExportResult,
+  PulumiAdoptPreviewArgs,
+  PulumiAdoptPreviewResult,
+  PulumiAdoptArgs,
+  PulumiAdoptResult,
+} from "./pulumi-adopt";
 export type { PulumiMemberArgs, PulumiPreviewArgs, PulumiPreviewResult, PulumiDriftArgs, PulumiDriftResult } from "./pulumi";

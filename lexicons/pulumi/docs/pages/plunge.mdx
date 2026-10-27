@@ -36,6 +36,8 @@ stock backend, is not reported.
 | applied outputs | `plunge stack output --json --show-secrets=false` | no |
 | drift | `plunge drift --resource <urn> --stream --stack <name>`, per resource | no |
 | engine facts | `plunge graph --json --stack <name>`, once per member | no |
+| adoption preview | `plunge stack adopt --json --stack <name> [--file <file>]`, from `PulumiAdoptOp` | no |
+| adoption | `plunge stack adopt --json --yes --stack <name> [--file <file>]`, from `PulumiAdoptOp` after its gate | writes plunge's records |
 
 `runAllowedPlunge` refuses any other argv before it reaches the binary, as
 ruled on [#4476](https://github.com/INTENTIUS/chant/issues/4476). For
@@ -101,3 +103,33 @@ plunge stack export --file stack-export.json
 ```
 
 Every check on [The stack export](../stack-export/) applies to it.
+
+## Adopting a stock stack
+
+`PulumiAdoptOp` moves stock Pulumi stacks onto plunge's records, one wave
+per stack, behind a gate:
+
+```typescript
+import { PulumiAdoptOp } from "@intentius/chant-lexicon-pulumi";
+
+export const { op } = PulumiAdoptOp({
+  name: "adopt-infra",
+  stacks: [{ member: "infra", dir: "./infra", stack: "dev" }],
+});
+```
+
+The Check phase runs chant's shared bucket check on the bucket the
+`plunge+` backend URL names and refuses a stack whose bucket fails a
+setting that is not waived (`allow_insecure` on the URL,
+`PLUNGE_ALLOW_INSECURE`, or the stack's `allowInsecure`). The Export phase
+takes each stack's stock checkpoint with `pulumi stack export --stack
+<name>` into a scratch file, which is the copy to import if you back out.
+For each stack, Preview runs `plunge stack adopt --json`, the gate binds
+that document's digest, and Adopt runs it again with `--yes`. A stack
+coming from Pulumi Cloud sets `from: { backend: "https://api.pulumi.com" }`,
+and one exported by hand sets `from: { file }`; plunge then adopts the
+export with `--file`.
+
+Each gate waits on the workspace ledger until `chant approve <op> <gate>`,
+and the run is recorded there like any Op run. Adoption calls no cloud API.
+The next `plunge up` adds the `plunge-stack` and `plunge-urn` tags.
