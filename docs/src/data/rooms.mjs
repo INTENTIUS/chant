@@ -117,7 +117,7 @@ export const ROOMS = [
 			{ label: 'Local testing on AWS', href: 'local-testing/aws' },
 			{ label: 'AWS EKS + Kubernetes', href: 'tutorials/eks-kubernetes' },
 			{ label: 'GitLab CI + AWS ALB', href: 'tutorials/gitlab-aws-alb' },
-			{ label: 'Move one resource from Terraform to CloudFormation', href: 'tutorials/terraform-carve-out' },
+			{ label: 'Move one Terraform resource to a native lexicon', href: 'tutorials/terraform-carve-out' },
 		],
 		background: [
 			{ label: 'Lexicons', href: 'lexicons/overview' },
