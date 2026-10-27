@@ -16,11 +16,22 @@
  * Every terraform `resource` block is `Terraform::Resource` to chant. A rule
  * keyed on that would apply to a VPC and an instance alike, so the nodes
  * `./request.ts` builds for the resolver carry the **provider type** as their
- * `kind` — `aws_subnet` — and the rules here are keyed the same way. That is
- * also why this catalog is not declared on the plugin as `referenceCatalog`:
- * `chant graph --live` builds its nodes with `kind: "Terraform::Resource"`
- * and attributes that carry no arguments at all, so declaring it there would
- * be a catalog that matched nothing and looked like coverage.
+ * `kind` — `aws_subnet` — and the rules here are keyed the same way.
+ *
+ * ## On the plugin (#4535)
+ *
+ * The plugin declares it as `referenceCatalog` since #4535, so a reader that
+ * asks every lexicon of a graph for its catalog (behold#1030's gate, before
+ * behold#1005 retires behold's name matcher) finds terraform's. What it
+ * matches depends on the nodes. A declared or live `chant graph` node is
+ * `Terraform::Resource`, with its provider type in `attrs.type` and no
+ * arguments in `attrs`, so no rule here reads it: those graphs keep the edges
+ * the HCL references and the state dependencies give them, and gain none. A
+ * node whose `kind` is the provider type and whose `attrs` are the block's
+ * arguments (`./request.ts`'s, an engine's instance roster) is what the rules
+ * are for. `chant graph --live` merges a catalog's edges with the
+ * observation's own since #4535; before, any catalog replaced them, which is
+ * what kept this one off the plugin.
  *
  * ## Two relations, and why the split matters to an engine
  *

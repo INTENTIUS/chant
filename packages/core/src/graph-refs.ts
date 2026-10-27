@@ -46,6 +46,16 @@ export interface RefRule {
   indexedTargetKind?: string;
   /** `reference` → an edge; `containment` → a boundary hint (#779), not an edge. */
   relation: "reference" | "containment";
+  /**
+   * The path holds a reference only sometimes (#4535): an env var's value, a
+   * selector's label, a binding subject that may be a user. A value that
+   * names no node of the rule's kind is then not reported as dangling, since
+   * most such values are not references at all, and a path read by several
+   * rules (one per target kind) would otherwise report every value matched by
+   * one rule as dangling under the others. A match is still a typed, scoped
+   * match, and two candidates still draw no edge.
+   */
+  optional?: boolean;
   /** Edge / containment label (e.g. "in VPC", "sg", "targets"). */
   label?: string;
   /**
@@ -225,6 +235,7 @@ export function reconstructEdges(nodes: IRNode[], catalog: ReferenceCatalog): Re
         // the pick instead (reconstructIndexedEdges, #4522).
         const match = rule.targetKind ? candidates.find((c) => c.kind === rule.targetKind) : candidates[0];
         if (!match) {
+          if (rule.optional) continue;
           dangling.push({ from: node.id, path: rule.path, value, ...(rule.targetKind ? { targetKind: rule.targetKind } : {}) });
           continue;
         }
@@ -413,7 +424,7 @@ export function reconstructIndexedEdges(
   const resolve = (
     holder: IRNode,
     value: string,
-    rule: { id: string; path: string; targetKind?: string; relation: "reference" | "containment"; via: string; label?: string },
+    rule: { id: string; path: string; targetKind?: string; relation: "reference" | "containment"; via: string; label?: string; optional?: boolean },
   ): void => {
     if (PLACEHOLDER_VALUES.has(value)) return;
     const found = lookup(holder, value);
@@ -424,6 +435,7 @@ export function reconstructIndexedEdges(
     }
     candidates.sort(byString);
     if (candidates.length === 0) {
+      if (rule.optional) return;
       dangling.set(`${holder.id}|${rule.id}|${value}`, { from: holder.id, path: rule.path, value, rule: rule.id, ...(rule.targetKind ? { targetKind: rule.targetKind } : {}) });
       return;
     }
@@ -470,6 +482,7 @@ export function reconstructIndexedEdges(
           relation: rule.relation,
           via: rule.viaAttr ?? topAttr(rule.path),
           ...(rule.label ? { label: rule.label } : {}),
+          ...(rule.optional ? { optional: true } : {}),
         };
         for (const value of new Set(readPath(node.attrs, rule.path))) resolve(node, value, spec);
       }

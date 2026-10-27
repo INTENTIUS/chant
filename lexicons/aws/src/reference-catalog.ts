@@ -39,6 +39,11 @@ export const awsReferenceCatalog: ReferenceCatalog = {
     { kind: "AWS::Route53::HostedZone", ids: ["Id"] },
     { kind: "AWS::EKS::Cluster", ids: ["Name", "Arn"] },
     { kind: "AWS::CloudFormation::Stack", ids: ["StackId"] },
+    // #4535: a record set is named by its record name, which is what a CNAME
+    // in the same zone points at; a bucket by its name, which is what a
+    // workload's env var carries (behold#166, ../../k8s/src/reference-catalog.ts).
+    { kind: "AWS::Route53::RecordSet", ids: ["Name"] },
+    { kind: "AWS::S3::Bucket", ids: ["BucketName"] },
   ],
   refs: [
     // ── containment (→ boundary boxes, #779) ──
@@ -132,6 +137,10 @@ export const awsReferenceCatalog: ReferenceCatalog = {
     { from: "AWS::ECS::TaskDefinition", path: "ContainerDefinitions[].LogConfiguration.Options.awslogs-group", targetKind: "AWS::Logs::LogGroup", relation: "reference", label: "logs to" },
     { from: "AWS::EC2::SecurityGroup", path: "SecurityGroupIngress[].SourceSecurityGroupId", targetKind: "AWS::EC2::SecurityGroup", relation: "reference", label: "allows" },
     { from: "AWS::Route53::RecordSet", path: "HostedZoneId", targetKind: "AWS::Route53::HostedZone", relation: "containment", label: "in zone" },
+    // A CNAME to another record of the estate (#4535: example-three-cloud's
+    // latency record for gcp points at gcp.three-cloud.example.). Optional,
+    // since most record values are addresses or hostnames outside it.
+    { from: "AWS::Route53::RecordSet", path: "ResourceRecords[]", targetKind: "AWS::Route53::RecordSet", relation: "reference", label: "aliases", optional: true },
   ],
   // Tags that name a cloud id in their key or value (behold#1023 Q5). Used
   // over indexed nodes only. No rule matches equal tag values in general.

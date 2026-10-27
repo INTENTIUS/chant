@@ -1,0 +1,336 @@
+{
+  "$comment": "The dns member of behold origin/integration/consolidation-graph example-three-cloud, read with chant on integration/consolidation-graph (#4535): chant graph src --format ir --detail 3, ids prefixed with the member as behold composes them.",
+  "nodes": [
+    {
+      "id": "dns/awsCheck",
+      "kind": "AWS::Route53::HealthCheck",
+      "lexicon": "aws",
+      "attrs": {
+        "HealthCheckId": {
+          "$ref": "awsCheck.HealthCheckId"
+        },
+        "HealthCheckConfig": {
+          "Type": "HTTP",
+          "FullyQualifiedDomainName": {
+            "$ref": "awsEndpoint"
+          },
+          "ResourcePath": "/",
+          "RequestInterval": 10,
+          "FailureThreshold": 1
+        }
+      }
+    },
+    {
+      "id": "dns/awsEndpoint",
+      "kind": "AWS::CloudFormation::Parameter",
+      "lexicon": "aws",
+      "attrs": {
+        "parameterType": "String",
+        "description": "The aws member's load balancer hostname"
+      }
+    },
+    {
+      "id": "dns/awsRecord",
+      "kind": "AWS::Route53::RecordSet",
+      "lexicon": "aws",
+      "attrs": {
+        "HostedZoneId": {
+          "$ref": "zone.Id"
+        },
+        "Name": "www.three-cloud.example.",
+        "Type": "CNAME",
+        "TTL": "60",
+        "SetIdentifier": "aws",
+        "Region": "us-east-1",
+        "ResourceRecords": [
+          {
+            "$ref": "awsEndpoint"
+          }
+        ],
+        "HealthCheckId": {
+          "$ref": "awsCheck.HealthCheckId"
+        }
+      }
+    },
+    {
+      "id": "dns/azureCheck",
+      "kind": "AWS::Route53::HealthCheck",
+      "lexicon": "aws",
+      "attrs": {
+        "HealthCheckId": {
+          "$ref": "azureCheck.HealthCheckId"
+        },
+        "HealthCheckConfig": {
+          "Type": "HTTP",
+          "FullyQualifiedDomainName": {
+            "$ref": "azureEndpoint"
+          },
+          "ResourcePath": "/",
+          "RequestInterval": 10,
+          "FailureThreshold": 1
+        }
+      }
+    },
+    {
+      "id": "dns/azureEndpoint",
+      "kind": "AWS::CloudFormation::Parameter",
+      "lexicon": "aws",
+      "attrs": {
+        "parameterType": "String",
+        "description": "The azure member's Container App hostname"
+      }
+    },
+    {
+      "id": "dns/azureRecord",
+      "kind": "AWS::Route53::RecordSet",
+      "lexicon": "aws",
+      "attrs": {
+        "HostedZoneId": {
+          "$ref": "zone.Id"
+        },
+        "Name": "www.three-cloud.example.",
+        "Type": "CNAME",
+        "TTL": "60",
+        "SetIdentifier": "azure",
+        "Region": "eu-west-1",
+        "ResourceRecords": [
+          {
+            "$ref": "azureEndpoint"
+          }
+        ],
+        "HealthCheckId": {
+          "$ref": "azureCheck.HealthCheckId"
+        }
+      }
+    },
+    {
+      "id": "dns/front-door",
+      "kind": "Chant::Op",
+      "lexicon": "chant",
+      "attrs": {
+        "name": "front-door",
+        "overview": "Apply dns, aws, azure and gcp to the emulators, turn Azure off, wait for its health check to fail, export the page to ../export",
+        "phases": [
+          {
+            "name": "Apply",
+            "steps": [
+              {
+                "kind": "activity",
+                "fn": "shellCmd",
+                "args": {
+                  "cmd": "cd .. && ./node_modules/.bin/tsx scripts/front-door.ts apply"
+                },
+                "profile": "atMostOnce",
+                "timeout": "15m"
+              }
+            ]
+          },
+          {
+            "name": "Turn Azure off",
+            "steps": [
+              {
+                "kind": "activity",
+                "fn": "shellCmd",
+                "args": {
+                  "cmd": "cd .. && ./node_modules/.bin/tsx scripts/front-door.ts azure-off"
+                },
+                "profile": "atMostOnce",
+                "timeout": "15m"
+              }
+            ]
+          },
+          {
+            "name": "Wait for Route 53",
+            "steps": [
+              {
+                "kind": "activity",
+                "fn": "shellCmd",
+                "args": {
+                  "cmd": "cd .. && ./node_modules/.bin/tsx scripts/front-door.ts wait"
+                },
+                "profile": "atMostOnce",
+                "timeout": "15m"
+              }
+            ]
+          },
+          {
+            "name": "Export",
+            "steps": [
+              {
+                "kind": "activity",
+                "fn": "shellCmd",
+                "args": {
+                  "cmd": "cd .. && ./node_modules/.bin/tsx scripts/front-door.ts export --out export"
+                },
+                "profile": "atMostOnce",
+                "timeout": "15m"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "dns/gcpCheck",
+      "kind": "AWS::Route53::HealthCheck",
+      "lexicon": "aws",
+      "attrs": {
+        "HealthCheckId": {
+          "$ref": "gcpCheck.HealthCheckId"
+        },
+        "HealthCheckConfig": {
+          "Type": "HTTP",
+          "IPAddress": {
+            "$ref": "gcpEndpoint"
+          },
+          "Port": 80,
+          "ResourcePath": "/",
+          "RequestInterval": 10,
+          "FailureThreshold": 1
+        }
+      }
+    },
+    {
+      "id": "dns/gcpEndpoint",
+      "kind": "AWS::CloudFormation::Parameter",
+      "lexicon": "aws",
+      "attrs": {
+        "parameterType": "String",
+        "description": "The gcp member's load balancer IP address"
+      }
+    },
+    {
+      "id": "dns/gcpOrigin",
+      "kind": "AWS::Route53::RecordSet",
+      "lexicon": "aws",
+      "attrs": {
+        "HostedZoneId": {
+          "$ref": "zone.Id"
+        },
+        "Name": "gcp.three-cloud.example.",
+        "Type": "A",
+        "TTL": "60",
+        "ResourceRecords": [
+          {
+            "$ref": "gcpEndpoint"
+          }
+        ]
+      }
+    },
+    {
+      "id": "dns/gcpRecord",
+      "kind": "AWS::Route53::RecordSet",
+      "lexicon": "aws",
+      "attrs": {
+        "HostedZoneId": {
+          "$ref": "zone.Id"
+        },
+        "Name": "www.three-cloud.example.",
+        "Type": "CNAME",
+        "TTL": "60",
+        "SetIdentifier": "gcp",
+        "Region": "ap-northeast-1",
+        "ResourceRecords": [
+          "gcp.three-cloud.example."
+        ],
+        "HealthCheckId": {
+          "$ref": "gcpCheck.HealthCheckId"
+        }
+      }
+    },
+    {
+      "id": "dns/zone",
+      "kind": "AWS::Route53::HostedZone",
+      "lexicon": "aws",
+      "attrs": {
+        "Id": {
+          "$ref": "zone.Id"
+        },
+        "NameServers": {
+          "$ref": "zone.NameServers"
+        },
+        "Name": "three-cloud.example."
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "dns/awsCheck",
+      "to": "dns/awsEndpoint",
+      "kind": "ref",
+      "viaAttr": "HealthCheckConfig"
+    },
+    {
+      "from": "dns/awsRecord",
+      "to": "dns/awsCheck",
+      "kind": "ref",
+      "viaAttr": "HealthCheckId"
+    },
+    {
+      "from": "dns/awsRecord",
+      "to": "dns/awsEndpoint",
+      "kind": "ref",
+      "viaAttr": "ResourceRecords"
+    },
+    {
+      "from": "dns/awsRecord",
+      "to": "dns/zone",
+      "kind": "ref",
+      "viaAttr": "HostedZoneId"
+    },
+    {
+      "from": "dns/azureCheck",
+      "to": "dns/azureEndpoint",
+      "kind": "ref",
+      "viaAttr": "HealthCheckConfig"
+    },
+    {
+      "from": "dns/azureRecord",
+      "to": "dns/azureCheck",
+      "kind": "ref",
+      "viaAttr": "HealthCheckId"
+    },
+    {
+      "from": "dns/azureRecord",
+      "to": "dns/azureEndpoint",
+      "kind": "ref",
+      "viaAttr": "ResourceRecords"
+    },
+    {
+      "from": "dns/azureRecord",
+      "to": "dns/zone",
+      "kind": "ref",
+      "viaAttr": "HostedZoneId"
+    },
+    {
+      "from": "dns/gcpCheck",
+      "to": "dns/gcpEndpoint",
+      "kind": "ref",
+      "viaAttr": "HealthCheckConfig"
+    },
+    {
+      "from": "dns/gcpOrigin",
+      "to": "dns/gcpEndpoint",
+      "kind": "ref",
+      "viaAttr": "ResourceRecords"
+    },
+    {
+      "from": "dns/gcpOrigin",
+      "to": "dns/zone",
+      "kind": "ref",
+      "viaAttr": "HostedZoneId"
+    },
+    {
+      "from": "dns/gcpRecord",
+      "to": "dns/gcpCheck",
+      "kind": "ref",
+      "viaAttr": "HealthCheckId"
+    },
+    {
+      "from": "dns/gcpRecord",
+      "to": "dns/zone",
+      "kind": "ref",
+      "viaAttr": "HostedZoneId"
+    }
+  ]
+}

@@ -30,6 +30,7 @@ import { K8sParser } from "./import/parser";
 import { K8sGenerator } from "./import/generator";
 import { k8sDeepNormalizationHooks } from "./deep-observe-hooks";
 import { k8sListedTypes } from "./listed-types";
+import { k8sReferenceCatalog } from "./reference-catalog";
 import { LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
 import { k8sConfigSchema } from "./config-schema";
 import type { K8sChantConfig } from "./config";
@@ -809,4 +810,8 @@ const { deployment, service, serviceMonitor, prometheusRule } = MonitoredService
 
   // Cloud inventory type names to kinds, for an indexed resource (#4521).
   listedTypes: k8sListedTypes,
+
+  // How its resources reference each other, for chant's catalog pass over an
+  // index and a declared graph (#4535; behold#1005 retires behold's matcher on it).
+  referenceCatalog: k8sReferenceCatalog,
 };

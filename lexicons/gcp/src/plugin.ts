@@ -29,6 +29,7 @@ import { gcpCompletions } from "./lsp/completions";
 import { gcpHover } from "./lsp/hover";
 import { gcpDeepNormalizationHooks } from "./deep-observe-hooks";
 import { gcpListedTypes } from "./listed-types";
+import { gcpReferenceCatalog } from "./reference-catalog";
 
 export const gcpPlugin: LexiconPlugin = {
   name: "gcp",
@@ -420,6 +421,10 @@ export const bucket = new StorageBucket({
 
   // Cloud inventory type names to kinds, for an indexed resource (#4521).
   listedTypes: gcpListedTypes,
+
+  // How its resources reference each other, for chant's catalog pass over an
+  // index and a declared graph (#4535; behold#1005 retires behold's matcher on it).
+  referenceCatalog: gcpReferenceCatalog,
 
   /**
    * Runtime health (#4177, #4239): Cloud Run services, backend services and IAM
