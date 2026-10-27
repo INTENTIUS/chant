@@ -131,6 +131,10 @@ export interface ParsedArgs {
    * before anything parsed it, so there was no way to decline the write.
    */
   skipMcp?: boolean;
+  /** `chant serve mcp --read-only` (chant#4543): serve only the tools that change nothing. */
+  readOnly?: boolean;
+  /** `chant init --mcp-read-only` (chant#4543): write `.mcp.json` registering `chant serve mcp --read-only`. */
+  mcpReadOnly?: boolean;
   /** `chant import --type <ResourceType>` selector */
   selectType?: string;
   /** `chant import --name <name>` selector */

@@ -84,6 +84,8 @@ const BOOLEAN_FLAGS = new Set([
   "--fail-on-drift",
   "--durable-requests",
   "--skip-mcp",
+  "--read-only",
+  "--mcp-read-only",
   "--current",
   "--uncommitted",
   "--allow-code",
@@ -139,6 +141,8 @@ export function parseArgs(args: string[]): ParsedArgs {
     reportFile: undefined,
     skill: undefined,
     skipMcp: undefined,
+    readOnly: undefined,
+    mcpReadOnly: undefined,
     src: undefined,
     env: undefined,
   };
@@ -325,6 +329,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.skill = args[++i];
     } else if (arg === "--skip-mcp") {
       result.skipMcp = true;
+    } else if (arg === "--read-only") {
+      result.readOnly = true;
+    } else if (arg === "--mcp-read-only") {
+      result.mcpReadOnly = true;
     } else if (arg === "--src") {
       result.src = args[++i];
     } else if (arg === "--env") {

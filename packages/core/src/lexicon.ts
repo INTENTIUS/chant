@@ -1603,7 +1603,11 @@ export interface LexiconPlugin {
   composites?(): CompositeEntry[];
 
   // MCP
-  /** Return MCP tool contributions */
+  /**
+   * Return MCP tool contributions. A tool is served by
+   * `chant serve mcp --read-only` only when it sets `readOnly: true`
+   * (chant#4543); the flag is a promise that the tool changes nothing.
+   */
   mcpTools?(): McpToolContribution[];
 
   /** Return MCP resource contributions */
