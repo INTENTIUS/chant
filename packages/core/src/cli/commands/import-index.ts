@@ -17,7 +17,7 @@ import { dirname, join, relative, resolve } from "path";
 import type { GeneratedFile } from "../../import/generator";
 import type { LexiconPlugin } from "../../lexicon";
 import type { DeclaredEntity } from "../../lifecycle/identity-match";
-import { isIndexVersionName, type IndexDocument } from "../../lifecycle/index-document";
+import type { IndexDocument } from "../../lifecycle/index-document";
 import {
   declaredNodes,
   indexImportHeader,
@@ -69,31 +69,23 @@ function asDocuments(parsed: unknown, from: string): IndexDocument[] {
 }
 
 /**
- * The documents an index ref names: a file path, or `<scopeKey>` (the latest
- * version) or `<scopeKey>@<version>` in the store chant.config's `snapshots`
+ * The documents an index ref names: a file path, or a store ref in the
+ * grammar `chant search --index` reads (`<scopeKey>[@latest|@<version>]`,
+ * ../../lifecycle/index-join.ts), from the store chant.config's `snapshots`
  * picks (#4519).
  */
 export async function loadIndexDocuments(ref: string, cwd: string): Promise<IndexDocument[]> {
   const asFile = resolve(cwd, ref);
   if (existsSync(asFile)) return asDocuments(JSON.parse(readFileSync(asFile, "utf-8")), ref);
-  const at = ref.lastIndexOf("@");
-  const suffix = at > 0 ? ref.slice(at + 1) : "";
-  const version = suffix && isIndexVersionName(suffix.endsWith(".json") ? suffix : `${suffix}.json`)
-    ? (suffix.endsWith(".json") ? suffix : `${suffix}.json`)
-    : undefined;
-  const scopeKey = version ? ref.slice(0, at) : ref;
+  const { parseIndexRef, readIndexRef } = await import("../../lifecycle/index-join");
+  const parsed = parseIndexRef(ref);
+  if ("error" in parsed) throw new Error(`no file of that name, and ${parsed.error}; ${parsed.hint}`);
   const { resolveSnapshotStore } = await import("../../lifecycle/snapshot-store");
   const store = await resolveSnapshotStore({ cwd });
   await store.fetch();
-  const doc = version ? await store.readIndexAt(scopeKey, version) : await store.readIndexLatest(scopeKey);
-  if (!doc) {
-    throw new Error(
-      version
-        ? `no index version ${version} under ${scopeKey} in ${store.where}`
-        : `no index version under ${scopeKey} in ${store.where}, and no file of that name`,
-    );
-  }
-  return [doc];
+  const read = await readIndexRef(store, parsed);
+  if ("error" in read) throw new Error(read.hint ? `${read.error}; ${read.hint}` : read.error);
+  return [read.doc];
 }
 
 /**
