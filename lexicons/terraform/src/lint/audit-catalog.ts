@@ -552,6 +552,19 @@ export const terraformAuditCatalog: Record<string, RuleMeta> = {
       'Set `terragrunt_version_constraint = ">= 1.1.0"` in the root config. Off by default; judged only across the configs scanned.',
     yamlBased: false,
   },
+  TF046: {
+    id: "TF046",
+    tier: "report-only",
+    fixKind: "guidance",
+    category: "correctness",
+    title: "Live root resolves to the local record store in a CI run",
+    remediation:
+      "Keep or add a `backend` block of type s3, gcs or azurerm with a literal bucket, so choudoufu " +
+      "derives the record store from it, or declare `record_store` in the live block or `estate.chdf.hcl`. " +
+      "The rule is off by default and terragucci turns it on for its users; an emulator or test lane " +
+      "that keeps the local store on purpose sets `CHANT_ALLOW_LOCAL_RECORD_STORE=1`.",
+    yamlBased: false,
+  },
 };
 
 // Prior art credits, if any, live beside the rules in ./audit-lineage.ts (see
