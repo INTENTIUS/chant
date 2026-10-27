@@ -283,6 +283,21 @@ describe("parseCFNSchema", () => {
     });
   });
 
+  test("keeps the handlers section as its sorted operation names (#4536)", () => {
+    const schema = JSON.stringify({
+      typeName: "AWS::Test::Handled",
+      properties: { Name: { type: "string" } },
+      handlers: { read: { permissions: ["test:Get"] }, create: { permissions: ["test:Create"] }, delete: { permissions: [] } },
+      additionalProperties: false,
+    });
+    expect(parseCFNSchema(schema).resource.handlers).toEqual(["create", "delete", "read"]);
+  });
+
+  test("omits handlers when the schema has none, as a legacy type does (#4536)", () => {
+    const schema = JSON.stringify({ typeName: "AWS::Test::Legacy", properties: { Name: { type: "string" } }, additionalProperties: false });
+    expect(parseCFNSchema(schema).resource.handlers).toBeUndefined();
+  });
+
   test("omits tagging when not taggable", () => {
     const schema = JSON.stringify({
       typeName: "AWS::Test::NotTaggable",
