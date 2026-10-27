@@ -21,6 +21,10 @@
  * - for a stack being adopted onto plunge (#4562), `plunge stack adopt
  *   --json --stack <stack> [--file <file>]`, which classifies and writes
  *   nothing; the `--yes` form is {@link runAdoptPlunge}'s alone;
+ * - plunge's resource move plan (#4578, INTENTIUS/plunge#56), `plunge stack
+ *   move --stack <s> --dest <d> <urn>... --json`, which writes nothing; the
+ *   writes of the gated stack operations are {@link runGatedPulumi}'s and
+ *   {@link runGatedPlunge}'s alone;
  * - for a member on plunge, its engine graph (#4529, ruled on #4520), as
  *   exactly one of `plunge graph --json`, `plunge graph --json --stack
  *   <stack>`, `plunge graph --json --versions` and `plunge graph --json
@@ -250,10 +254,15 @@ function allowedPlungeGraph(args: string[]): boolean {
  */
 export async function runAllowedPlunge(run: PulumiRunner, args: string[], cwd: string, env?: Record<string, string>): Promise<{ stdout: string }> {
   const drift = args[0] === "drift" && args.includes("--resource") && args.includes("--stream") && wellFormedStack(args);
-  const allowed = drift || ((args[0] === "preview" || args[0] === "stack") && allowedRead(args)) || allowedPlungeGraph(args) || allowedPlungeAdopt(args, false);
+  const allowed =
+    drift ||
+    ((args[0] === "preview" || args[0] === "stack") && allowedRead(args)) ||
+    allowedPlungeGraph(args) ||
+    allowedPlungeAdopt(args, false) ||
+    allowedPlungeMove(args, false);
   if (!allowed) {
     throw new Error(
-      `chant runs only plunge drift --resource <urn> --stream, plunge preview, plunge stack output --json --show-secrets=false, plunge stack export --stack <stack>, ${PLUNGE_ADOPT_COMMANDS[0]} and ${PLUNGE_GRAPH_COMMANDS.join(", ")} for a Pulumi member, not plunge ${args.join(" ")}`,
+      `chant runs only plunge drift --resource <urn> --stream, plunge preview, plunge stack output --json --show-secrets=false, plunge stack export --stack <stack>, ${PLUNGE_ADOPT_COMMANDS[0]}, ${PLUNGE_GATED_COMMANDS[0]} and ${PLUNGE_GRAPH_COMMANDS.join(", ")} for a Pulumi member, not plunge ${args.join(" ")}`,
     );
   }
   return run(args, env ? { cwd, env } : { cwd });
@@ -437,6 +446,79 @@ function allowedPlungeAdopt(args: string[], yes: boolean): boolean {
 export async function runAdoptPlunge(run: PulumiRunner, args: string[], cwd: string, env?: Record<string, string>): Promise<{ stdout: string }> {
   if (!allowedPlungeAdopt(args, true)) {
     throw new Error(`chant adopts a stack onto plunge only as ${PLUNGE_ADOPT_COMMANDS[1]}, not plunge ${args.join(" ")}`);
+  }
+  return run(args, env ? { cwd, env } : { cwd });
+}
+
+/**
+ * The gated stack operations' writes (#4578), for `./stack-ops.ts` alone,
+ * each run only after its gated request (#4551) is approved and spent on the
+ * ledger. Fixed forms; any other flag, order or value is refused:
+ *
+ * - `pulumi cancel --yes --stack <stack>`: releases a stuck update's lock;
+ * - `pulumi state move --source <stack> --dest <stack> --yes <urn>...`: moves
+ *   resources between stock stacks, never `--include-parents`.
+ */
+export const PULUMI_GATED_COMMANDS: readonly string[] = [
+  "pulumi cancel --yes --stack <stack>",
+  "pulumi state move --source <stack> --dest <stack> --yes <urn>...",
+];
+
+/**
+ * plunge's resource move (INTENTIUS/plunge#56) in its two forms. The first
+ * prints the plan and writes nothing, so it passes {@link runAllowedPlunge};
+ * the second moves and passes {@link runGatedPlunge} only.
+ */
+export const PLUNGE_GATED_COMMANDS: readonly string[] = [
+  "plunge stack move --stack <stack> --dest <stack> <urn>... --json",
+  "plunge stack move --stack <stack> --dest <stack> <urn>... --json --yes",
+];
+
+const isUrn = (v: string | undefined): v is string => typeof v === "string" && v.startsWith("urn:pulumi:");
+
+/** `cancel --yes --stack <stack>`. */
+export function pulumiCancelArgs(opts: { stack: string }): string[] {
+  return ["cancel", "--yes", "--stack", opts.stack];
+}
+
+/** `state move --source <s> --dest <d> --yes <urn>...`. */
+export function pulumiStateMoveArgs(opts: { source: string; dest: string; urns: readonly string[] }): string[] {
+  return ["state", "move", "--source", opts.source, "--dest", opts.dest, "--yes", ...opts.urns];
+}
+
+/** `stack move --stack <s> --dest <d> <urn>... --json [--yes]`. */
+export function plungeMoveArgs(opts: { source: string; dest: string; urns: readonly string[]; yes?: boolean }): string[] {
+  return ["stack", "move", "--stack", opts.source, "--dest", opts.dest, ...opts.urns, "--json", ...(opts.yes ? ["--yes"] : [])];
+}
+
+function allowedPlungeMove(args: string[], yes: boolean): boolean {
+  if (args[0] !== "stack" || args[1] !== "move" || args[2] !== "--stack" || !isValue(args[3]) || args[4] !== "--dest" || !isValue(args[5])) return false;
+  const tail = yes ? ["--json", "--yes"] : ["--json"];
+  const urns = args.slice(6, args.length - tail.length);
+  return urns.length > 0 && urns.every(isUrn) && tail.every((t, i) => args[args.length - tail.length + i] === t);
+}
+
+function allowedGatedPulumi(args: string[]): boolean {
+  if (args[0] === "cancel") return args.length === 4 && args[1] === "--yes" && args[2] === "--stack" && isValue(args[3]);
+  if (args[0] === "state" && args[1] === "move") {
+    const urns = args.slice(7);
+    return args[2] === "--source" && isValue(args[3]) && args[4] === "--dest" && isValue(args[5]) && args[6] === "--yes" && urns.length > 0 && urns.every(isUrn);
+  }
+  return false;
+}
+
+/** Run one of {@link PULUMI_GATED_COMMANDS}, refusing any other argv. Only `./stack-ops.ts` calls it, after the request is spent. */
+export async function runGatedPulumi(run: PulumiRunner, args: string[], cwd: string, env?: Record<string, string>): Promise<{ stdout: string }> {
+  if (!allowedGatedPulumi(args)) {
+    throw new Error(`chant runs a gated Pulumi stack operation only as ${PULUMI_GATED_COMMANDS.join(" or ")}, not pulumi ${args.join(" ")}`);
+  }
+  return run(args, env ? { cwd, env } : { cwd });
+}
+
+/** Run the moving form of {@link PLUNGE_GATED_COMMANDS}, refusing any other argv. Only `./stack-ops.ts` calls it, after the request is spent. */
+export async function runGatedPlunge(run: PulumiRunner, args: string[], cwd: string, env?: Record<string, string>): Promise<{ stdout: string }> {
+  if (!allowedPlungeMove(args, true)) {
+    throw new Error(`chant moves plunge resources only as ${PLUNGE_GATED_COMMANDS[1]}, not plunge ${args.join(" ")}`);
   }
   return run(args, env ? { cwd, env } : { cwd });
 }

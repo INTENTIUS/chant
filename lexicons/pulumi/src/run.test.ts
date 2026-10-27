@@ -13,6 +13,11 @@ import {
   PLUNGE_GRAPH_COMMANDS,
   plungeAdoptArgs,
   plungeGraphArgs,
+  plungeMoveArgs,
+  pulumiCancelArgs,
+  pulumiStateMoveArgs,
+  runGatedPlunge,
+  runGatedPulumi,
   plungeMemberGraph,
   previewPulumiMember,
   PULUMI_ALLOWED_COMMANDS,
@@ -50,6 +55,43 @@ function fake(answer: (args: string[]) => string | Error): { run: PulumiRunner; 
 function failure(message: string, fields: { code?: string; stdout?: string; stderr?: string }): Error {
   return Object.assign(new Error(message), fields);
 }
+
+describe("gated stack operations (#4578)", () => {
+  const u = "urn:pulumi:net::shop::aws:s3/bucketV2:BucketV2::logs";
+  test("each fixed form reaches its runner", async () => {
+    const { run, calls } = fake(() => "{}");
+    await runGatedPulumi(run, pulumiCancelArgs({ stack: "dev" }), "/tmp");
+    await runGatedPulumi(run, pulumiStateMoveArgs({ source: "net", dest: "app", urns: [u] }), "/tmp");
+    await runAllowedPlunge(run, plungeMoveArgs({ source: "net", dest: "app", urns: [u] }), "/tmp");
+    await runGatedPlunge(run, plungeMoveArgs({ source: "net", dest: "app", urns: [u], yes: true }), "/tmp");
+    expect(calls.map((c) => c.args)).toEqual([
+      ["cancel", "--yes", "--stack", "dev"],
+      ["state", "move", "--source", "net", "--dest", "app", "--yes", u],
+      ["stack", "move", "--stack", "net", "--dest", "app", u, "--json"],
+      ["stack", "move", "--stack", "net", "--dest", "app", u, "--json", "--yes"],
+    ]);
+  });
+
+  test("no other form gets through, and the read entry points refuse the writes", async () => {
+    const { run, calls } = fake(() => "{}");
+    for (const args of [
+      ["cancel", "--stack", "dev"],
+      ["cancel", "--yes", "--stack", "dev", "--force"],
+      ["state", "move", "--source", "net", "--dest", "app", "--yes", "--include-parents", u],
+      ["state", "move", "--source", "net", "--dest", "app", u],
+      ["state", "move", "--source", "net", "--dest", "app", "--yes"],
+      ["state", "delete", u],
+      ["stack", "import", "--file", "x.json"],
+    ]) {
+      await expect(runGatedPulumi(run, args, "/tmp")).rejects.toThrow(/gated Pulumi stack operation only as/);
+    }
+    await expect(runGatedPlunge(run, plungeMoveArgs({ source: "net", dest: "app", urns: [u] }), "/tmp")).rejects.toThrow(/moves plunge resources only as/);
+    await expect(runGatedPlunge(run, ["stack", "move", "--dest", "app", u, "--json", "--yes"], "/tmp")).rejects.toThrow(/moves plunge resources only as/);
+    await expect(runAllowedPlunge(run, plungeMoveArgs({ source: "net", dest: "app", urns: [u], yes: true }), "/tmp")).rejects.toThrow(/not plunge stack move/);
+    await expect(runAllowedPulumi(run, pulumiCancelArgs({ stack: "dev" }), "/tmp")).rejects.toThrow(/not pulumi cancel/);
+    expect(calls).toEqual([]);
+  });
+});
 
 describe("plunge stack adopt (#4562)", () => {
   test("the preview form passes runAllowedPlunge, and only runAdoptPlunge runs --yes", async () => {
