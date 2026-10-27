@@ -1458,6 +1458,15 @@ export interface LexiconPlugin {
   ciSetup?(ctx: { dir: string }): string[];
 
   /**
+   * The job services this lexicon's CI jobs start beside them (#4572,
+   * `./components/ci-services.ts`): throwaway servers such as the sql
+   * lexicon's replay server per dialect, each image pinned by the lexicon.
+   * A product's job renders them for its forge. `dir` is the project the
+   * pipeline is for. Return none when the project needs none.
+   */
+  ciServices?(ctx: { dir: string }): import("./components/ci-services").CiService[];
+
+  /**
    * A section of the pull request note for one member (#4573): rows a
    * resource table does not carry, rendered from the member's own part of
    * the change set, such as a SQL member's statements with their class, the

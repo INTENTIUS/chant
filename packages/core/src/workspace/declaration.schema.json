@@ -298,6 +298,7 @@
                     "subscriptionId": { "type": "string", "minLength": 1, "description": "Set as AZURE_SUBSCRIPTION_ID and ARM_SUBSCRIPTION_ID when given." },
                     "audience": { "type": "string", "minLength": 1, "description": "The OIDC token's audience. Default api://AzureADTokenExchange." },
                     "authority": { "type": "string", "pattern": "^https?://", "description": "The Entra authority host, for an emulator. Default https://login.microsoftonline.com." },
+                    "database": { "type": "boolean", "description": "Also trade each identity for an Azure Database for PostgreSQL token, set as AZURE_DATABASE_ACCESS_TOKEN, which the sql lexicon's entra token source signs in with (#4572). Default false. Added in schema 1 by chant 0.124.55, so a declaration that sets database sets minReader to 0.124.55 or newer." },
                     "rules": { "$ref": "#/$defs/ciCloudIdentityRules" }
                   }
                 },

@@ -107,6 +107,8 @@ An identity names the access asked for. `team:<name>` asks for a team's, `user:<
 
 In Pulumi Cloud, register the forge as an OIDC issuer of the organization and give it two authorization policies: the pull request's subject may get the preview credential, and the protected branch's subject may get the up one. The trade only asks; those policies decide. A declaration that sets the block needs chant 0.124.55 or newer as its `minReader` (`PULUMI_CLOUD_IDENTITY_FLOOR`).
 
+A SQL member on Azure Database for PostgreSQL signs in with an Entra token for the database's own scope, and the ARM token above is for another scope. With `"database": true` on `ci.identity.cloud.azure`, the trade makes a second grant per identity for that scope (`AZURE_DATABASE_SCOPE` in `packages/core/src/ci-identity.ts`) and sets the result as `AZURE_DATABASE_ACCESS_TOKEN`. The sql lexicon's `entra` token source reads that variable before it tries `az`, so the job's image needs no Azure CLI. AWS and GCP need no extra setting, because `rds-iam` signs its token with the traded AWS keys and `cloud-sql-iam` signs in with the traded Google access token. Older chant releases refuse the key, so a declaration that sets `database` also sets `minReader` to chant `0.124.55` or newer (`AZURE_DATABASE_TOKEN_FLOOR`).
+
 ## Which job takes which identity
 
 | Job | Identity | Runs |
