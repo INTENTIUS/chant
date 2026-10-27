@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { LedgerReadPort } from "./ledger-port";
-import { firstWord, formatQueryResult, loadQueryData, QUERY_SCHEMA_VERSION, QUERY_TABLES, QueryError, runQuery, SCHEMA_TABLE } from "./query";
+import { NEXT_RELEASE } from "../release-floors";
+import { firstWord, formatQueryResult, loadQueryData, QUERY_OWNERSHIP_COLUMNS_FLOOR, QUERY_SCHEMA_VERSION, QUERY_TABLES, QueryError, runQuery, SCHEMA_TABLE } from "./query";
 import { makeRelease } from "./release-store";
 
 /** A port over a map of `<dir>/<file>` to text, the shape `gitLedgerReadPort` reads. */
@@ -87,5 +88,72 @@ describe("chant query (#4297)", () => {
     await expect(runQuery("WITH x AS (SELECT 1) INSERT INTO runs (id) SELECT * FROM x", load)).rejects.toBeInstanceOf(QueryError);
     await expect(runQuery("SELECT nope FROM runs", load)).rejects.toThrow(/does not run/);
     expect(firstWord("-- note\n /* c */ select 1")).toBe("select");
+  });
+
+  describe("ownership columns on resources (#4534)", () => {
+    // A choudoufu live root read through the terraform lexicon, and a k8s
+    // root whose labels name the stack and env. Engine facts are the
+    // snapshot's `facts`; chant's marker is its `marker`.
+    const owned = port({
+      "prod/estate__terraform.json": JSON.stringify({
+        lexicon: "terraform",
+        environment: "prod",
+        commit: "d".repeat(40),
+        timestamp: "2026-10-26T00:00:00Z",
+        resources: {
+          "aws_s3_bucket.logs": { type: "aws_s3_bucket", status: "bound", physicalId: "acme-logs", ownership: "owned", marker: { stack: "acme", env: "aws_s3_bucket.logs" }, facts: { ownership: "bound", ownedBy: "marker" } },
+          "aws_sqs_queue.jobs": { type: "aws_sqs_queue", status: "unowned", ownership: "foreign", facts: { ownership: "unowned" } },
+          "aws_eip.pool": { type: "aws_eip", status: "bound", ownership: "owned", facts: { ownership: "bound", ownedBy: "record" } },
+        },
+      }),
+      "prod/shop__k8s.json": JSON.stringify({
+        lexicon: "k8s",
+        environment: "prod",
+        commit: "e".repeat(40),
+        timestamp: "2026-10-26T00:00:00Z",
+        resources: { web: { type: "K8s::Apps::Deployment", status: "Available", physicalId: "default/web", ownership: "owned", marker: { stack: "shop", env: "prod" } } },
+      }),
+    });
+
+    test("are listed in schema v1, after the existing columns", async () => {
+      const cols = QUERY_TABLES.resources.map(([c]) => c);
+      expect(cols.slice(0, 13)).toEqual(["member", "env", "stack", "lexicon", "name", "type", "physical_id", "status", "last_updated", "ownership", "attributes", "git_sha", "observed_at"]);
+      expect(cols.slice(13)).toEqual(["marker_stack", "marker_env", "engine_ownership", "engine_owned_by"]);
+      const load = await loadQueryData([]);
+      const r = await runQuery(`SELECT column_name, version FROM ${SCHEMA_TABLE} WHERE table_name = 'resources' AND column_name IN ('ownership', 'marker_stack', 'marker_env', 'engine_ownership', 'engine_owned_by') ORDER BY position`, load);
+      expect(r.rows.map((x) => x.column_name)).toEqual(["ownership", "marker_stack", "marker_env", "engine_ownership", "engine_owned_by"]);
+      expect(new Set(r.rows.map((x) => x.version))).toEqual(new Set([1]));
+    });
+
+    test("project the snapshot's marker and engine facts, NULL when unknown", async () => {
+      const load = await loadQueryData([{ member: null, port: owned }]);
+      const by = Object.fromEntries(load.data.resources.map((r) => [r.name, r]));
+      expect(by["aws_s3_bucket.logs"]).toMatchObject({ ownership: "owned", marker_stack: "acme", marker_env: "aws_s3_bucket.logs", engine_ownership: "bound", engine_owned_by: "marker" });
+      expect(by["aws_sqs_queue.jobs"]).toMatchObject({ ownership: "foreign", marker_stack: null, marker_env: null, engine_ownership: "unowned", engine_owned_by: null });
+      expect(by.web).toMatchObject({ lexicon: "k8s", ownership: "owned", marker_stack: "shop", marker_env: "prod", engine_ownership: null, engine_owned_by: null });
+    });
+
+    test("are NULL on a snapshot that predates them", async () => {
+      const load = await loadQueryData([{ member: null, port: ledger }]);
+      for (const r of load.data.resources) {
+        expect(r).toMatchObject({ marker_stack: null, marker_env: null, engine_ownership: null, engine_owned_by: null });
+      }
+    });
+
+    test("count by both verdicts without the graph peer", async () => {
+      const load = await loadQueryData([{ member: null, port: owned }]);
+      const r = await runQuery("SELECT lexicon, ownership, engine_ownership, count(*) AS n FROM resources GROUP BY 1, 2, 3 ORDER BY 1, 2, 3", load);
+      expect(r.rows).toEqual([
+        { lexicon: "k8s", ownership: "owned", engine_ownership: null, n: 1 },
+        { lexicon: "terraform", ownership: "foreign", engine_ownership: "unowned", n: 1 },
+        { lexicon: "terraform", ownership: "owned", engine_ownership: "bound", n: 2 },
+      ]);
+      const who = await runQuery("SELECT stack, name, marker_stack FROM resources WHERE physical_id = 'default/web'", load);
+      expect(who.rows).toEqual([{ stack: "shop", name: "web", marker_stack: "shop" }]);
+    });
+
+    test("carry their floor at the next release", () => {
+      expect(QUERY_OWNERSHIP_COLUMNS_FLOOR).toBe(NEXT_RELEASE);
+    });
   });
 });

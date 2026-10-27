@@ -15,6 +15,19 @@ vi.mock("./git", () => ({
   pushLifecycle: () => pushLifecycleMock(),
 }));
 
+// Snapshots are written through the index store (#4519); this store hands each write to the mocks above.
+vi.mock("./snapshot-store", async () => {
+  const { fakeSnapshotStore } = await import("./snapshot-store-fake");
+  const store = fakeSnapshotStore({
+    write: async (environment, key, json) => ({ written: true, version: (await writeSnapshotMock(environment, key, json)) as string }),
+    publish: async () => {
+      await pushLifecycleMock();
+      return { status: "pushed" };
+    },
+  });
+  return { resolveSnapshotStore: async () => store };
+});
+
 const { takeSnapshot } = await import("./snapshot");
 
 function makeBuildResult(entitiesByLexicon: Record<string, string[]>): BuildResult {

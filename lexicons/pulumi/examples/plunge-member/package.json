@@ -1,0 +1,10 @@
+{
+  "name": "@intentius/chant-lexicon-pulumi-example-plunge-member",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@intentius/chant-lexicon-pulumi": "workspace:*",
+    "@intentius/chant": "workspace:*"
+  }
+}

@@ -29,8 +29,11 @@
  * parameter that reads a secret output reads nothing: pass secrets through
  * the engine's own secret store, not chant parameters.
  *
- * The stack is the member's selected stack: the declaration names none, so
- * neither command passes `--stack`.
+ * Both commands pass `--stack` (#4514), by #4496's rule (`./run.ts`'s
+ * `memberStack`): the member's declared stack, else the stack the checked-in
+ * `stack-export.json` names in its URNs. The workspace declaration names no
+ * stack for a member, so here it is the export's. A member with no export,
+ * or one whose URNs name more than one stack, reads the selected stack.
  */
 import type { DeployContext } from "@intentius/chant/components/capability";
 import type { EngineMemberRef, EngineOutputSource, EnginePlannedOutputs } from "@intentius/chant/components/verbs/member-outputs";

@@ -34,6 +34,20 @@ export {
 } from "./config-environments";
 import { EXECUTOR_FORGES, isOwnershipParamRef, resolveOwnershipStack, type EnvironmentDeclaration, type OwnershipEnv } from "./config-environments";
 
+/** An s3 index store's settings (#4519, ./lifecycle/snapshot-store-s3.ts). */
+const S3StoreSettingsShape = {
+  bucket: z.string().min(1),
+  prefix: z.string().optional(),
+  region: z.string().min(1).optional(),
+  endpoint: z.string().url().optional(),
+  forcePathStyle: z.boolean().optional(),
+  credentials: z.object({
+    accessKeyId: z.string().min(1),
+    secretAccessKey: z.string().min(1),
+    sessionToken: z.string().min(1).optional(),
+  }).strict().optional(),
+};
+
 /**
  * Zod schema for ChantConfig validation.
  */
@@ -139,6 +153,20 @@ export const ChantConfigSchema = z.object({
   exclude: z.array(z.string().min(1)).optional(),
   include: z.array(z.string().min(1)).optional(),
   rootOnly: z.boolean().optional(),
+  // Strict: a misspelt key would send snapshots somewhere nobody looks (#4519).
+  snapshots: z.discriminatedUnion("store", [
+    z.object({ store: z.literal("git-ref"), ref: z.string().regex(/^refs\/chant\//).optional(), readOrphanBranch: z.boolean().optional() }).strict(),
+    z.object({ store: z.literal("orphan-branch") }).strict(),
+    z.object({ store: z.literal("local"), dir: z.string().min(1).optional() }).strict(),
+    z.object({ store: z.literal("s3"), ...S3StoreSettingsShape }).strict(),
+    z.object({ store: z.literal("none") }).strict(),
+  ]).optional(),
+  observationBaseline: z.object({
+    store: z.enum(["file", "git-ref", "s3", "none"]),
+    dir: z.string().min(1).optional(),
+    ref: z.string().regex(/^refs\/chant\//).optional(),
+    s3: z.object(S3StoreSettingsShape).strict().optional(),
+  }).strict().optional(),
 }).passthrough();
 
 /**
@@ -504,6 +532,22 @@ export interface ChantConfig {
    * in a project with no `chant.workspace.json`.
    */
   rootOnly?: boolean;
+
+  /**
+   * Where snapshots and every other index are kept (#4519): `git-ref`
+   * (default, `refs/chant/snapshots`, still reading `chant/lifecycle` for
+   * snapshots written before), `local` (a directory), `s3` (a bucket under a
+   * prefix), `none`, or `orphan-branch` (read-only). `CHANT_SNAPSHOT_STORE`
+   * and its companions override it. See `./lifecycle/snapshot-store.ts`.
+   */
+  snapshots?: import("./lifecycle/snapshot-store").SnapshotStoreConfig;
+
+  /**
+   * Where accepted observation deviations are kept (#4519): `file` (default,
+   * `.chant/observation-baseline/<env>.json`, committed and reviewed),
+   * `git-ref`, `s3` or `none`. See `./lifecycle/observation-baseline.ts`.
+   */
+  observationBaseline?: import("./lifecycle/observation-baseline").ObservationBaselineStoreConfig;
 }
 
 /**

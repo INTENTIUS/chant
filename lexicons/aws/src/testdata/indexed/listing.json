@@ -1,0 +1,69 @@
+{
+  "listing": "v1",
+  "source": { "name": "behold-lister", "version": "0.0.0-fixture" },
+  "scope": { "substrate": "aws", "scopeId": "000000000000", "locations": ["us-east-1"], "types": ["AWS::EC2::Volume", "AWS::IoTFleetHub::Application", "AWS::RDS::DBInstance", "AWS::S3::Bucket"] },
+  "startedAt": "2026-10-26T09:00:00.000Z",
+  "completedAt": "2026-10-26T09:00:04.000Z",
+  "resources": [
+    {
+      "listedType": "AWS::RDS::DBInstance",
+      "location": "us-east-1",
+      "nativeId": "orders-db",
+      "cloudIds": [{ "kind": "arn", "value": "arn:aws:rds:us-east-1:000000000000:db:orders-db" }, { "kind": "import-id", "value": "orders-db" }],
+      "tags": { "tofu-estate": "shop" },
+      "properties": {
+        "DBInstanceIdentifier": "orders-db",
+        "DBInstanceArn": "arn:aws:rds:us-east-1:000000000000:db:orders-db",
+        "Engine": "postgres",
+        "StorageEncrypted": true,
+        "MasterUserPassword": "<masked>",
+        "Tags": [{ "Key": "tofu-estate", "Value": "shop" }]
+      },
+      "observedAt": "2026-10-26T09:00:01.000Z",
+      "facts": { "markers": { "owner": "shop", "encoding": "escaped", "source": "live" }, "cloudIds": [{ "kind": "arn", "value": "arn:aws:rds:us-east-1:000000000000:db:orders-db" }, { "kind": "import-id", "value": "orders-db" }], "observedAt": "2026-10-26T09:00:01.000Z" }
+    },
+    {
+      "listedType": "AWS::RDS::DBInstance",
+      "location": "us-east-1",
+      "nativeId": "reports-db",
+      "cloudIds": [{ "kind": "import-id", "value": "reports-db" }],
+      "tags": {},
+      "properties": { "DBInstanceIdentifier": "reports-db", "Engine": "postgres", "StorageEncrypted": false },
+      "observedAt": "2026-10-26T09:00:01.000Z"
+    },
+    {
+      "listedType": "AWS::EC2::Volume",
+      "location": "us-east-1",
+      "nativeId": "vol-0a1b2c3d4e5f60718",
+      "cloudIds": [{ "kind": "import-id", "value": "vol-0a1b2c3d4e5f60718" }],
+      "tags": {},
+      "properties": { "VolumeId": "vol-0a1b2c3d4e5f60718", "AvailabilityZone": "us-east-1a", "Size": 20, "Encrypted": true },
+      "observedAt": "2026-10-26T09:00:02.000Z"
+    },
+    {
+      "listedType": "AWS::S3::Bucket",
+      "location": "us-east-1",
+      "nativeId": "shop-assets",
+      "cloudIds": [{ "kind": "arn", "value": "arn:aws:s3:::shop-assets" }, { "kind": "import-id", "value": "shop-assets" }],
+      "tags": {},
+      "properties": { "BucketName": "shop-assets", "Arn": "arn:aws:s3:::shop-assets" },
+      "observedAt": "2026-10-26T09:00:03.000Z"
+    },
+    {
+      "listedType": "AWS::IoTFleetHub::Application",
+      "location": "us-east-1",
+      "nativeId": "fleet-console",
+      "cloudIds": [{ "kind": "import-id", "value": "fleet-console" }],
+      "tags": {},
+      "properties": { "ApplicationName": "fleet-console", "RoleArn": "arn:aws:iam::000000000000:role/fleet" },
+      "observedAt": "2026-10-26T09:00:03.000Z"
+    }
+  ],
+  "coverage": [
+    { "listedType": "AWS::EC2::Volume", "location": "us-east-1", "verdict": "listed" },
+    { "listedType": "AWS::IoTFleetHub::Application", "location": "us-east-1", "verdict": "listed" },
+    { "listedType": "AWS::RDS::DBInstance", "location": "us-east-1", "verdict": "listed" },
+    { "listedType": "AWS::S3::Bucket", "location": "us-east-1", "verdict": "listed" }
+  ],
+  "notes": []
+}

@@ -238,7 +238,7 @@ export const policy = new BucketPolicy({
 
 A knowledge concept's `binds` frontmatter key (an OKF v0.2 bundle read from the project's `knowledge/` directory, or wherever `knowledge.dir` points) must name a discovered entity's logical name. A name that resolves to nothing is a stale binding. The entity was renamed or removed, or the concept named something that never existed.
 
-This is a post-synth check run by `chant build` over the whole build result, alongside COR023/COR024. Per the OKF binding design (#1059), the spec permits broken links, so a stale binding is a warning. A concept with no `binds` never triggers this check, and neither does a project with no knowledge bundle.
+`chant build` runs it as a post-synth check next to COR023/COR024. Per the OKF binding design (#1059), the spec permits broken links, so a stale binding is a warning. A concept with no `binds` never triggers this check, and neither does a project with no knowledge bundle.
 
 **Severity:** warning
 

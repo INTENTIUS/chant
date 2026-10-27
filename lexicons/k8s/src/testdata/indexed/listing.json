@@ -1,0 +1,67 @@
+{
+  "listing": "v1",
+  "source": { "name": "behold-lister", "version": "0.0.0-fixture" },
+  "scope": { "substrate": "kubernetes", "scopeId": "kind-dev", "locations": "*", "types": "*" },
+  "startedAt": "2026-10-26T09:00:00.000Z",
+  "completedAt": "2026-10-26T09:00:02.000Z",
+  "resources": [
+    {
+      "listedType": "apps/v1/Deployment",
+      "location": "shop",
+      "nativeId": "shop/web",
+      "cloudIds": [{ "kind": "k8s-uid", "value": "5f1c2a8e-0000-4000-8000-000000000001" }],
+      "tags": { "app": "web", "app.kubernetes.io/managed-by": "chant" },
+      "properties": {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "name": "web",
+          "namespace": "shop",
+          "uid": "5f1c2a8e-0000-4000-8000-000000000001",
+          "resourceVersion": "4711",
+          "generation": 3,
+          "creationTimestamp": "2026-10-20T00:00:00Z",
+          "labels": { "app": "web", "app.kubernetes.io/managed-by": "chant" }
+        },
+        "spec": { "replicas": 2, "selector": { "matchLabels": { "app": "web" } } },
+        "status": { "readyReplicas": 2 }
+      },
+      "observedAt": "2026-10-26T09:00:01.000Z"
+    },
+    {
+      "listedType": "v1/Secret",
+      "location": "shop",
+      "nativeId": "shop/db-credentials",
+      "cloudIds": [{ "kind": "k8s-uid", "value": "5f1c2a8e-0000-4000-8000-000000000002" }],
+      "tags": {},
+      "properties": {
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": { "name": "db-credentials", "namespace": "shop" },
+        "type": "Opaque",
+        "data": { "app.conf": "<masked>" }
+      },
+      "observedAt": "2026-10-26T09:00:01.000Z"
+    },
+    {
+      "listedType": "kustomize.toolkit.fluxcd.io/v1/Kustomization",
+      "location": "flux-system",
+      "nativeId": "flux-system/apps",
+      "cloudIds": [{ "kind": "k8s-uid", "value": "5f1c2a8e-0000-4000-8000-000000000003" }],
+      "tags": {},
+      "properties": { "apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization", "metadata": { "name": "apps", "namespace": "flux-system" }, "spec": { "path": "./apps", "prune": true } },
+      "observedAt": "2026-10-26T09:00:01.000Z"
+    },
+    {
+      "listedType": "widgets.example.com/v1alpha1/Widget",
+      "location": "shop",
+      "nativeId": "shop/w1",
+      "cloudIds": [{ "kind": "k8s-uid", "value": "5f1c2a8e-0000-4000-8000-000000000004" }],
+      "tags": {},
+      "properties": { "apiVersion": "widgets.example.com/v1alpha1", "kind": "Widget", "metadata": { "name": "w1", "namespace": "shop" }, "spec": { "size": 3 } },
+      "observedAt": "2026-10-26T09:00:01.000Z"
+    }
+  ],
+  "coverage": [{ "listedType": "*", "location": "*", "verdict": "listed" }],
+  "notes": [{ "code": "default-types", "message": "events and leases were left out of types \"*\"" }]
+}

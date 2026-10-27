@@ -1,6 +1,6 @@
 ---
 title: Config File
-description: "Complete reference for chant.config.ts"
+description: "Complete reference for the project configuration file"
 diataxis: reference
 ---
 
@@ -10,11 +10,11 @@ import configFullSrc from '../../../../../lexicons/aws/examples/docs-snippets/sr
 
 chant uses a `chant.config.ts` file at the project root for configuration.
 
-## Minimal Config
+## Minimal example
 
 <Code code={configMinimalSrc} lang="typescript" title="chant.config.ts" />
 
-## Full Config
+## Every option
 
 <Code code={configFullSrc} lang="typescript" title="chant.config.ts" />
 
@@ -116,6 +116,21 @@ Where [`chant generate`](/chant/cli/codegen/) writes the typed code it generates
 codegen: { outDir: "infra/generated" },
 ```
 
+### `snapshots`
+
+Where [`chant lifecycle snapshot`](/chant/cli/lifecycle/#where-snapshots-are-kept) and every other index are kept ([#4519](https://github.com/INTENTIUS/chant/issues/4519)). The default is `{ store: "git-ref" }`, the `refs/chant/snapshots` ref. The other stores are `local` (a directory) and `s3` (a bucket), plus `none` and the read-only `orphan-branch`. `CHANT_SNAPSHOT_STORE` overrides the store for one run.
+
+```typescript
+snapshots: { store: "local", dir: ".chant/store" },
+snapshots: { store: "s3", bucket: "acme-chant", prefix: "infra/chant", endpoint: "http://localhost:4566", credentials: { accessKeyId: "test", secretAccessKey: "test" } },
+```
+
+A misspelt key is refused. An `s3` store with an `endpoint` signs only with the credentials given here or in `CHANT_SNAPSHOT_S3_ACCESS_KEY_ID` and `CHANT_SNAPSHOT_S3_SECRET_ACCESS_KEY`.
+
+### `observationBaseline`
+
+Where `chant lifecycle diff --live --update-baseline` keeps accepted deviations. The default is `{ store: "file" }`. It writes one file per environment under `.chant/observation-baseline/` for you to commit. `git-ref` writes `refs/chant/observation-baseline`. `s3` writes under the `s3` settings given here, else the `snapshots` store's. `none` keeps nothing.
+
 ### `environments`
 
 An optional array of environment names the project deploys to. Each environment is a name chant passes to the commands below, with no config block of its own.
@@ -132,7 +147,7 @@ A `*` in an entry makes it a glob pattern that declares a family of environments
 environments: ["staging", "prod", "pr-*"],
 ```
 
-`--env pr-42` (and, with a param-bound `ownership.env`, `--param env=pr-42`) is then legal; any name no entry covers is still rejected. Matching is literal first, then by pattern; `*` matches any run of characters and is the whole pattern syntax, with no `?`, character classes or regex. A pattern entry can carry an `endpoint` like any other entry, and a literal entry always wins over a pattern for the same name.
+`--env pr-42` (and, with a param-bound `ownership.env`, `--param env=pr-42`) is then legal; any name no entry covers is still rejected. Matching is literal first, then by pattern; `*` matches any run of characters and is the only wildcard; `?`, character classes and regex are not supported. A pattern entry can carry an `endpoint` like any other entry, and a literal entry always wins over a pattern for the same name.
 
 To point an environment's `--live` reads at a specific endpoint, give it an object with `name` and `endpoint` instead of a bare name:
 
@@ -174,7 +189,7 @@ environments: [
 ],
 ```
 
-chant doesn't run or dispatch it. [`chant workspace graph --composites`](/chant/cli/workspace-graph/#composites-and-components) prints it on each component's environment, so a reader such as behold knows that a release there goes through CI. A pattern entry can carry one too, and a literal entry wins over a pattern.
+chant doesn't run or dispatch it. [`chant workspace graph --composites`](/chant/cli/workspace-graph/#composites-and-components) prints it on each component's environment, so a reader such as behold knows that a release there goes through CI. Pattern entries take an executor the same way.
 
 ### `lint.extends`
 

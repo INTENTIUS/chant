@@ -9,6 +9,7 @@ import {
 import { memoryGateLedgerPort, type GateLedgerPort } from "./gate";
 import { computePlanDigest } from "../lifecycle/plan-digest";
 import { renderHuman } from "./local-output";
+import { knownOutputsOf, withKnownOutputs } from "./activity-failure";
 
 // #3521: whether the workspace seals a gate is read from identity.gates in the
 // working directory; a test says which gates are sealed instead.
@@ -261,6 +262,85 @@ describe("runOpLocally — outcomeAttribute", () => {
     const result = await runOpLocally(config, new Map([["noop", noop]]), PROFILES);
     expect(result.records[0].outcome).toBeUndefined();
     expect(result.records[0].outcomes).toBeUndefined();
+  });
+});
+
+describe("runOpLocally — a failed step records the outputs it knew (#4512)", () => {
+  /** The failed run's records, off the OpRunFailure it rejects with. */
+  async function failedRecords(config: OpConfig, activities: Map<string, ActivityFn>, profiles = PROFILES) {
+    const failure = await runOpLocally(config, activities, profiles).then(
+      () => undefined,
+      (err: unknown) => err,
+    );
+    expect(failure).toBeInstanceOf(OpRunFailure);
+    return (failure as OpRunFailure).result.records;
+  }
+
+  const initConfig = op({
+    phases: [
+      { name: "Init", steps: [{ kind: "activity", fn: "init", outcomeAttribute: [{ name: "TerraformRootPath", from: "rootPath" }, { name: "Workspace", from: "workspace" }] }] },
+      { name: "Plan", steps: [{ kind: "activity", fn: "plan" }] },
+    ],
+  });
+
+  test("a failed step's outcomes come from the known outputs on its error", async () => {
+    const init: ActivityFn = async () => {
+      throw withKnownOutputs(new Error("terraform init: backend unreachable"), { dir: "/w/estates/aws", rootPath: "estates/aws" });
+    };
+    let planRan = false;
+    const plan: ActivityFn = async () => {
+      planRan = true;
+      return {};
+    };
+    const records = await failedRecords(initConfig, new Map<string, ActivityFn>([["init", init], ["plan", plan]]));
+    expect(records[0]).toMatchObject({ phase: "Init", fn: "init", status: "fail", error: expect.stringContaining("backend unreachable") });
+    // Workspace is not among the known outputs, so it is left off.
+    expect(records[0].outcomes).toEqual([{ name: "TerraformRootPath", value: "estates/aws" }]);
+    expect(records[0].outcome).toEqual({ name: "TerraformRootPath", value: "estates/aws" });
+    // A failed phase ends the run there: Plan does not run, and a failure (unlike
+    // a gate, a decision point or a stopped claim) leaves no record for it.
+    expect(planRan).toBe(false);
+    expect(records.filter((r) => r.phase === "Plan")).toEqual([]);
+  });
+
+  test("a failed step with no known outputs records no outcome, as before", async () => {
+    const init: ActivityFn = async () => {
+      throw new Error("chant.config.ts failed to evaluate");
+    };
+    const records = await failedRecords(initConfig, new Map<string, ActivityFn>([["init", init], ["plan", async () => ({})]]));
+    expect(records[0].status).toBe("fail");
+    expect(records[0].outcome).toBeUndefined();
+    expect(records[0].outcomes).toBeUndefined();
+  });
+
+  test("a property set by hand, without core's helper, is read the same way", async () => {
+    const init: ActivityFn = async () => {
+      throw Object.assign(new Error("init failed"), { knownOutputs: { rootPath: "roots/app", workspace: "prod" } });
+    };
+    const records = await failedRecords(initConfig, new Map<string, ActivityFn>([["init", init], ["plan", async () => ({})]]));
+    expect(records[0].outcomes).toEqual([{ name: "TerraformRootPath", value: "roots/app" }, { name: "Workspace", value: "prod" }]);
+  });
+
+  test("after retries, the last attempt's known outputs are the ones recorded", async () => {
+    let calls = 0;
+    const init: ActivityFn = async () => {
+      calls++;
+      throw withKnownOutputs(new Error(`attempt ${calls}`), { rootPath: `attempt-${calls}` });
+    };
+    const config = op({
+      phases: [{ name: "Init", steps: [{ kind: "activity", fn: "init", outcomeAttribute: { name: "TerraformRootPath", from: "rootPath" } }] }],
+    });
+    const records = await failedRecords(config, new Map<string, ActivityFn>([["init", init]]));
+    expect(calls).toBe(3);
+    expect(records[0].outcomes).toEqual([{ name: "TerraformRootPath", value: "attempt-3" }]);
+  });
+
+  test("a thrown non-Error keeps its message when known outputs are attached", async () => {
+    expect(withKnownOutputs("plain string", { a: 1 }).message).toBe("plain string");
+    expect(knownOutputsOf(withKnownOutputs("plain string", { a: 1 }))).toEqual({ a: 1 });
+    expect(knownOutputsOf(new Error("none"))).toBeUndefined();
+    expect(knownOutputsOf(Object.assign(new Error("list"), { knownOutputs: ["x"] }))).toBeUndefined();
+    expect(knownOutputsOf(undefined)).toBeUndefined();
   });
 });
 

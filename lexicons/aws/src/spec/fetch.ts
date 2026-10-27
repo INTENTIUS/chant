@@ -33,6 +33,11 @@ export interface CFNSchema {
     cloudFormationSystemTags?: boolean;
     tagProperty?: string;
   };
+  /**
+   * The resource provider's handlers (`create`, `read`, `update`, `delete`,
+   * `list`), each with its IAM permissions. A legacy type has none (#4536).
+   */
+  handlers?: Record<string, unknown>;
   additionalProperties?: boolean;
 }
 

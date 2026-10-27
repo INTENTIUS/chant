@@ -19,6 +19,7 @@ import { descendModules } from "./hcl/descend";
 import { TERRAFORM_STATE_OWNERSHIP_KEYS } from "./state-ownership";
 import { terraformCommands } from "./commands";
 import { terraformCapabilityPack } from "./capabilities/adapter";
+import { TERRAFORM_REFERENCE_CATALOG } from "./behaviour/reference-catalog";
 
 const loadSkills = createSkillsLoader(import.meta.url, [
   {
@@ -78,6 +79,8 @@ export const terraformPlugin: LexiconPlugin = {
   behaviourKinds: terraformBehaviourKinds,
   name: "terraform",
   capabilityPack: terraformCapabilityPack,
+  // Keyed by provider type (#2360); see its module doc for which nodes it reads (#4535).
+  referenceCatalog: TERRAFORM_REFERENCE_CATALOG,
   serializer: terraformSerializer,
   configSchema: terraformConfigSchema,
 

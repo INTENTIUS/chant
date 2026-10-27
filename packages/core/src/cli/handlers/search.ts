@@ -25,6 +25,17 @@ import { formatError, formatWarning } from "../format";
 import { adjacencyOf, walkBreadthFirst } from "../../graph-walk";
 import type { CommandContext } from "../registry";
 import { SEARCH_CONTRACT_VERSION, SEARCH_OUTPUT_SCHEMA_ID, type SearchErrorCode, type SearchFailure, type SearchHead } from "../../workspace/search-contract";
+import { isNoLexiconDetected } from "../../detectLexicon";
+import {
+  countJoins,
+  formatIndexRef,
+  indexOnlyGraph,
+  joinCell,
+  joinDeclaredToIndex,
+  parseIndexRef,
+  readIndexRef,
+  type IndexJoin,
+} from "../../lifecycle/index-join";
 
 /**
  * `chant search <query> [--live --env <name>]` — answer an estate question with
@@ -38,10 +49,16 @@ import { SEARCH_CONTRACT_VERSION, SEARCH_OUTPUT_SCHEMA_ID, type SearchErrorCode,
  *                        on a terraform resource, its type (kind:aws_instance, kind:aws_iam_)
  *   tag:<key>=<val>      a Tags entry with Key=key and Value containing val
  *   attr:<name>=<val>    attribute <name> equals/contains <val>
+ *   id:<cloud id>        physicalId or an engine cloudIds value is exactly <cloud id> (#4534)
  *   ->kind:X / ->attr:.. this node has an edge TO a node matching the right side
  *   <-kind:X / <-attr:.. this node has an edge FROM a node matching the right side
  *   ->*X, ->{n}X, ->{m,n}X  the far end is any depth / n / m..n hops away (#4359)
  *   ->[via=a]X, ->[to=a]X   only edges through consumer attr a / reading producer attr a
+ *
+ * `--index <ref>` (#4525) answers from an index version in the store instead
+ * of a live read: the declared rows joined to it through each lexicon's index
+ * match, each row with its verdict, or, with no project, the index alone.
+ * See ../../lifecycle/index-join.ts.
  *
  * The edge operators are the point of "edge-aware" search (#1139): a small
  * model shouldn't hand-join instance→subnet→public across many results — one
@@ -88,6 +105,10 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
 
   let ir: GraphIR;
   let source: AnswerSource = { kind: "declared" };
+  // Each declared row's join verdict against an index version (#4525).
+  let joins: Record<string, IndexJoin> | undefined;
+  // The lexicons a capability term reads an index-only graph through.
+  let indexPlugins: readonly LexiconPlugin[] | undefined;
   // Lexicons whose live read threw (#1263). "Nothing observed" and "could not
   // observe" are different claims; this is what carries the second one.
   const liveFailures: string[] = [];
@@ -113,7 +134,14 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   let driftFailure = false;
   // Why --check-snapshot had nothing to check against, for --json (#4367).
   let driftUnavailable: string | undefined;
-  if (args.live || snapshotRef) {
+  if (args.index !== undefined) {
+    const answered = await indexAnswer(ctx, String(args.index), projectPath, resolve(args.src ?? config.sourceDir ?? "."), config);
+    if ("error" in answered) return refuse(answered.error);
+    ir = answered.ir;
+    source = answered.source;
+    joins = answered.joins;
+    indexPlugins = answered.plugins;
+  } else if (args.live || snapshotRef) {
     // checkSearchArgs refused a live or snapshot read without one.
     const environment = String(args.env);
     // Membership via matchesDeclaredEnvironment (#1221): handles `{ name,
@@ -334,7 +362,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   ir = enrichEffectiveTopology(ir);
   // Capability terms (#4375) read the graph through the lexicons' mappings.
   if (terms.some(usesCapability)) {
-    const refused = await bindCapabilities(ctx, projectPath, ir, terms);
+    const refused = await bindCapabilities(ctx, projectPath, ir, terms, indexPlugins);
     if (refused) return refuse({ code: "query-invalid", ...refused });
   }
   // Resolve `kind:` terms against what is actually in this graph, before any
@@ -371,10 +399,10 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
       source.kind === "live" && !matches.some((n) => n.physicalId) && args.env
         ? (await hasSnapshot(String(args.env))) ? "yes" : undefined
         : undefined;
-    const env = args.env && source.kind !== "declared" ? String(args.env) : undefined;
-    const provenanceText = provenanceLine(matches, source, recorded, liveFailures, [...derivedUsed(terms, matches, ir), ...capabilitiesUsed(terms)]).replace(/^— /, "");
+    const env = args.env && (source.kind === "live" || source.kind === "snapshot") ? String(args.env) : undefined;
+    const provenanceText = provenanceLine(matches, source, recorded, liveFailures, [...derivedUsed(terms, matches, ir), ...capabilitiesUsed(terms)], joins).replace(/^— /, "");
     const capNotes = capabilityNotes(terms, ir, source);
-    const plannedCreates = source.kind !== "declared" && liveFailures.length === 0 ? plannedCreateCount(matches) : 0;
+    const plannedCreates = (source.kind === "live" || source.kind === "snapshot") && liveFailures.length === 0 ? plannedCreateCount(matches) : 0;
     const driftJson = drift
       ? searchDriftJson(drift, matches.length, driftAgainst, snapshotDepth)
       : driftUnavailable !== undefined
@@ -402,6 +430,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
           ...(capNotes.length > 0 ? { capabilities: capNotes } : {}),
           ...(args.explain ? { explain: explainData(terms, matches, ir, nodeById) } : {}),
           ...(driftJson ? { drift: driftJson } : {}),
+          ...(joins ? { joins } : {}),
         }),
         };
     console.log(JSON.stringify(payload));
@@ -411,6 +440,8 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   }
   if (matches.length === 0) {
     console.log(countBy ? "(no matches) · 0 total" : "(no matches)");
+    // An index answer names the version it read, rows or not (#4525).
+    if (source.kind === "index") provenance(matches, source, undefined, [], [], joins);
     availableAttrs(terms, ir);
     if (args.explain) explain(terms, matches, ir, nodeById, query);
     for (const n of liveNotes) console.error(formatWarning({ message: n }));
@@ -420,7 +451,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     for (const line of formatCounts(countGroups(matches, countBy, hasManyTerraformRoots(ir)), countBy)) console.log(line);
   } else {
     for (const n of matches) {
-      console.log(formatRow(n, show));
+      console.log(formatRow(n, show, joins?.[n.id]));
     }
   }
   const backed = source.kind === "declared" || matches.some((n) => n.physicalId);
@@ -430,7 +461,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     source.kind === "live" && !matches.some((n) => n.physicalId) && args.env
       ? (await hasSnapshot(String(args.env))) ? "yes" : undefined
       : undefined;
-  provenance(matches, source, recorded, liveFailures, [...derivedUsed(terms, matches, ir), ...capabilitiesUsed(terms)]);
+  provenance(matches, source, recorded, liveFailures, [...derivedUsed(terms, matches, ir), ...capabilitiesUsed(terms)], joins);
   for (const c of capabilityNotes(terms, ir, source)) {
     if (c.notEvaluated.length > 0) console.log(`— ${c.name} does not evaluate: ${c.notEvaluated.join("; ")}`);
   }
@@ -481,7 +512,7 @@ export type SearchArgsCheck =
  * `--snapshot`, or plain search's `--at`.
  */
 export function checkSearchArgs(
-  args: { countBy?: string; checkLive?: boolean; checkSnapshot?: boolean; failOnDrift?: boolean; live?: boolean; env?: string },
+  args: { countBy?: string; checkLive?: boolean; checkSnapshot?: boolean; failOnDrift?: boolean; live?: boolean; env?: string; index?: string; ambient?: boolean },
   query: string,
   snapshot: { ref?: string; flag: string },
 ): SearchArgsCheck {
@@ -534,6 +565,22 @@ export function checkSearchArgs(
       },
     };
   }
+  // An index version (#4525) is a third observation, so it excludes the other
+  // two, and a live read's own flags mean nothing against it.
+  if (args.index !== undefined) {
+    const other = args.live ? "--live" : snapshot.ref ? flag : args.ambient ? "--ambient" : undefined;
+    if (other) {
+      return {
+        error: {
+          code: "usage-invalid",
+          message: `chant search takes --index or ${other}, not both`,
+          hint: "--index answers from an index version in the store; --live reads the estate now; a snapshot replays a chant recording",
+        },
+      };
+    }
+    const ref = parseIndexRef(args.index);
+    if ("error" in ref) return { error: { code: "usage-invalid", message: ref.error, hint: ref.hint } };
+  }
   if ((args.live || snapshot.ref) && !args.env) {
     const needs = snapshot.ref ? flag : "--live";
     return { error: { code: "usage-invalid", message: `chant search ${needs} needs an environment: ${needs} --env <name>` } };
@@ -558,6 +605,78 @@ const BUILD_ROOT_FAILED = {
   message: "chant search: a build root failed to render, so the graph it would answer over is incomplete",
   hint: "fix the error above; `chant graph . --format ir` reports the same one",
 } as const;
+
+/** What `--index` answers over (#4525), or why it can't. */
+type IndexAnswer =
+  | { ir: GraphIR; source: AnswerSource & { kind: "index" }; joins?: Record<string, IndexJoin>; plugins?: readonly LexiconPlugin[] }
+  | { error: { code: SearchErrorCode; message: string; hint?: string } };
+
+/**
+ * Read the index version `--index` names from the project's store and build
+ * the graph the query runs over (#4525). With a project: the declared canvas
+ * `--live` would use (per stack when the config declares stacks, so ids
+ * match), every node joined to the index through its lexicon's index match.
+ * With no project (no lexicon in a config or in source): the index alone.
+ * No cloud is read either way.
+ */
+async function indexAnswer(
+  ctx: CommandContext,
+  refText: string,
+  projectPath: string,
+  srcDir: string,
+  config: Awaited<ReturnType<typeof loadChantConfig>>["config"],
+): Promise<IndexAnswer> {
+  const ref = parseIndexRef(refText);
+  if ("error" in ref) return { error: { code: "usage-invalid", message: ref.error, hint: ref.hint } };
+  const { resolveSnapshotStore } = await import("../../lifecycle/snapshot-store");
+  const store = await resolveSnapshotStore({ cwd: projectPath, config: config as unknown as { snapshots?: unknown } });
+  await store.fetch();
+  const read = await readIndexRef(store, ref);
+  if ("error" in read) return { error: { code: "index-unavailable", message: read.error, ...(read.hint ? { hint: read.hint } : {}) } };
+  const { doc } = read;
+  const { stamp } = doc;
+  const base = {
+    kind: "index" as const,
+    index: formatIndexRef(stamp.scopeKey, read.version),
+    scopeKey: stamp.scopeKey,
+    version: read.version.replace(/\.json$/, ""),
+    observedAt: stamp.observedAt,
+    ...(stamp.completedAt ? { completedAt: stamp.completedAt } : {}),
+    digest: stamp.digest,
+    by: stamp.source.version ? `${stamp.source.name} ${stamp.source.version}` : stamp.source.name,
+  };
+
+  let lexicons: string[] | undefined;
+  try {
+    lexicons = await resolveProjectLexicons(projectPath);
+  } catch (err) {
+    if (!isNoLexiconDetected(err)) throw err;
+  }
+  if (!lexicons) {
+    // No project: the index is the graph. Its nodes' lexicons, where they are
+    // installed, still map capability terms onto it.
+    const named = [...new Set(doc.graph.nodes.filter((n) => !n.unmappedKind).map((n) => n.lexicon))].sort();
+    let plugins: LexiconPlugin[] = [];
+    try {
+      plugins = named.length > 0 ? await loadPlugins(named) : [];
+    } catch {
+      plugins = [];
+    }
+    return { ir: indexOnlyGraph(doc), source: { ...base, project: false }, plugins };
+  }
+
+  const plugins = ctx.plugins.length > 0 ? ctx.plugins : await loadPlugins(lexicons);
+  const stacks = (config.stacks ?? []).map((s) => ({ name: s.name, region: s.region, src: s.src }));
+  const declared =
+    stacks.length > 0
+      ? await buildDeclaredPerStack(stacks, projectPath, (g, entities) => withLexiconEdges(g, plugins, entities))
+      : await declaredGraph(ctx, projectPath, srcDir, plugins);
+  if (!declared) return { error: BUILD_ROOT_FAILED };
+  const joined = joinDeclaredToIndex(declared, doc, plugins, {
+    regionOf: (id) => stacks.find((st) => id.startsWith(`${st.name}::`))?.region,
+  });
+  return { ir: joined.ir, source: { ...base, project: true }, joins: joined.joins };
+}
 
 /**
  * The declared graph a search answers over (#4362, #4365, #4368): discovery,
@@ -599,7 +718,7 @@ async function declaredGraph(
  * they report on.
  */
 export async function printCapabilities(
-  args: { json?: boolean; live?: boolean; env?: string; snapshot?: string; at?: string; countBy?: string; explain?: boolean; show?: string },
+  args: { json?: boolean; live?: boolean; env?: string; snapshot?: string; at?: string; index?: string; countBy?: string; explain?: boolean; show?: string },
   query: string,
   lexicons: string[],
 ): Promise<number> {
@@ -607,7 +726,7 @@ export async function printCapabilities(
   const extra = [
     // `args.path` is "." when no query was given.
     ...(query && query !== "." ? [`the query "${query}"`] : []),
-    ...(["live", "env", "snapshot", "at", "countBy", "explain", "show"] as const)
+    ...(["live", "env", "snapshot", "at", "index", "countBy", "explain", "show"] as const)
       .filter((k) => args[k] !== undefined && args[k] !== false)
       .map((k) => `--${k.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`),
   ];
@@ -709,8 +828,9 @@ async function bindCapabilities(
   projectPath: string,
   ir: GraphIR,
   terms: Term[],
+  given?: readonly LexiconPlugin[],
 ): Promise<{ message: string; hint?: string } | undefined> {
-  let plugins: readonly LexiconPlugin[] = ctx.plugins;
+  let plugins: readonly LexiconPlugin[] = given ?? ctx.plugins;
   if (plugins.length === 0) {
     try {
       plugins = await loadPlugins(await resolveProjectLexicons(projectPath));
@@ -819,7 +939,24 @@ export type AnswerSource =
   | { kind: "declared" }
   | ({ kind: "live" } & ReadDepth)
   /** `snapshot` is the ref asked for (`latest`), `commit` the snapshot commit it named (#4374). */
-  | { kind: "snapshot"; snapshot?: string; commit: string; timestamp: string };
+  | { kind: "snapshot"; snapshot?: string; commit: string; timestamp: string }
+  /**
+   * `--index <ref>` (#4525): the index version answered from and its stamp.
+   * `index` is the ref resolved (`<scope key>@<version>`); `by` the source
+   * that wrote it; `project` false when there was no project, so every row
+   * is an indexed node.
+   */
+  | {
+      kind: "index";
+      index: string;
+      scopeKey: string;
+      version: string;
+      observedAt: string;
+      completedAt?: string;
+      digest: string;
+      by: string;
+      project: boolean;
+    };
 
 
 
@@ -936,7 +1073,9 @@ function provenanceLine(
   recorded?: string,
   liveFailures: string[] = [],
   derived: string[] = [],
+  joins?: Record<string, IndexJoin>,
 ): string {
+  if (source.kind === "index") return indexProvenance(matches, source, joins);
   const line = provenanceBase(matches, source, recorded, liveFailures, derived);
   // The plan read fell back (#4384): say to what, on whichever line this is.
   return source.kind === "live" ? line + fellBackText(source) : line;
@@ -948,6 +1087,23 @@ function fellBackText(source: ReadDepth): string {
   // A live root has no state read to fall to: live-plan answered alone.
   const to = source.planFellBackTo === "live" ? "live-plan alone" : source.planFellBackTo;
   return ` · the plan read fell back to ${to}`;
+}
+
+/**
+ * The provenance line of an `--index` answer (#4525): the version read and
+ * when, then how the declared rows joined, every verdict counted, so a row
+ * that did not bind is never read as one that did.
+ */
+function indexProvenance(matches: IRNode[], source: AnswerSource & { kind: "index" }, joins?: Record<string, IndexJoin>): string {
+  const taken = `taken ${source.observedAt}`;
+  if (!source.project) {
+    return `— index only, no project · ${source.index} ${taken} by ${source.by} · ${matches.length} ${matches.length === 1 ? "row" : "rows"}`;
+  }
+  const counts = countJoins(joins ?? {}, matches.map((n) => n.id));
+  const rest = (["absent", "not-observed", "no-binding", "ambiguous"] as const)
+    .filter((v) => counts[v] > 0)
+    .map((v) => `${v === "not-observed" ? "not observed" : v} ${counts[v]}`);
+  return `— observed from index ${source.index} ${taken} · bound ${counts.bound}/${matches.length}${rest.length > 0 ? ` · ${rest.join(" · ")}` : ""}`;
 }
 
 function provenanceBase(
@@ -963,6 +1119,7 @@ function provenanceBase(
     const from = derived.length > 0 ? ` · ${derived.join(", ")} derived from declared references` : "";
     return `— declared only · no observation · physical ids unavailable${from}`;
   }
+  if (source.kind === "index") return indexProvenance(matches, source);
   const bound = matches.filter((n) => n.physicalId).length;
   const what = source.kind === "live" ? "live read" : "snapshot";
   if (liveFailures.length > 0) {
@@ -1031,8 +1188,9 @@ function provenance(
   recorded?: string,
   liveFailures: string[] = [],
   derived: string[] = [],
+  joins?: Record<string, IndexJoin>,
 ): void {
-  console.log(provenanceLine(matches, source, recorded, liveFailures, derived));
+  console.log(provenanceLine(matches, source, recorded, liveFailures, derived, joins));
 }
 
 /** Union `LiveObservation.resources` across lexicons into one name-keyed map. */
@@ -1321,7 +1479,7 @@ function describeTerm(t: Term): string {
 function leafText(x: Term): string {
   if (x.kind === "cap") return `cap:${x.a}`;
   return x.kind === "kind" ? `kind:${x.a}` : x.kind === "attr" ? `attr:${x.a}${x.b !== undefined ? "=" + x.b : ""}`
-    : x.kind === "tag" ? `tag:${x.a}${x.b !== undefined ? "=" + x.b : ""}` : `"${x.a}"`;
+    : x.kind === "tag" ? `tag:${x.a}${x.b !== undefined ? "=" + x.b : ""}` : x.kind === "id" ? `id:${x.a}` : `"${x.a}"`;
 }
 
 /**
@@ -1380,6 +1538,8 @@ export interface SearchJson {
     unobserved?: string;
     show?: Record<string, unknown>;
     paths: { term: string; dir: "out" | "in"; hops: PathHop[]; because?: { capability: string; id: string; hops: PathHop[] }[] }[];
+    /** `--index` with a project (#4525): how the declared row joined to the index version. */
+    join?: IndexJoin;
   }[];
   provenance?: string;
   /** Present when every match is a planned create (#4372): how many. See the schema. */
@@ -1446,6 +1606,7 @@ function searchJson(
     capabilities?: SearchJson["capabilities"];
     explain?: ReturnType<typeof explainData>;
     drift?: SearchDriftJson;
+    joins?: Record<string, IndexJoin>;
   } = {},
 ): SearchJson {
   const show = extra.show ?? [];
@@ -1468,6 +1629,7 @@ function searchJson(
           hops: p.hops,
           ...(p.because ? { because: p.because } : {}),
         })),
+        ...(extra.joins?.[n.id] ? { join: extra.joins[n.id] } : {}),
       };
     }),
     ...(extra.provenance !== undefined ? { provenance: extra.provenance } : {}),
@@ -1496,7 +1658,7 @@ function termText(t: Term): string {
 }
 
 export interface Term {
-  kind: "word" | "kind" | "tag" | "attr" | "edge" | "cap";
+  kind: "word" | "kind" | "tag" | "attr" | "edge" | "cap" | "id";
   /** `!term` — the node must NOT satisfy this (#1280). */
   negated?: boolean;
   a: string;
@@ -1602,25 +1764,64 @@ function displayKind(n: IRNode): string | undefined {
   return terraformType(n) ?? n.kind;
 }
 
-function parseLeaf(tok: string): Term {
-  const cap = /^cap:(.*)$/i.exec(tok);
-  if (cap) {
-    if (!parseCapabilityCall(cap[1])) {
-      throw new QueryError(
-        `"${tok}" is not a capability term`,
-        "name a capability, with arguments in parentheses when it takes any: cap:internet-reachable, cap:open-ingress(22); chant search --capabilities lists them",
-      );
-    }
-    return { kind: "cap", a: cap[1] };
-  }
-  const m = /^(kind|tag|attr):(.*)$/i.exec(tok);
-  if (m) {
-    const key = m[1].toLowerCase() as Term["kind"];
-    const rest = m[2];
+/**
+ * The leaf prefixes the grammar reads (`kind:`, `attr:`, `tag:`, `id:`, `cap:`),
+ * each with its parser. A new prefix is one entry here, one `Term` kind, and
+ * its case in {@link matchTerm}; the unknown-prefix refusal lists the
+ * entries marked `listed`, in this order.
+ */
+interface LeafPrefix {
+  prefix: string;
+  /** Named in the unknown-prefix hint. */
+  listed: boolean;
+  /** `rest` is what follows the colon; `tok` the whole token, for messages. */
+  parse(rest: string, tok: string): Term;
+}
+
+/** `name` or `name=value` after a prefix. */
+function keyValueLeaf(kind: "kind" | "tag" | "attr"): LeafPrefix["parse"] {
+  return (rest) => {
     const eq = rest.indexOf("=");
-    if (eq >= 0) return { kind: key, a: rest.slice(0, eq), b: rest.slice(eq + 1) };
-    return { kind: key, a: rest };
-  }
+    return eq >= 0 ? { kind, a: rest.slice(0, eq), b: rest.slice(eq + 1) } : { kind, a: rest };
+  };
+}
+
+const LEAF_PREFIXES: readonly LeafPrefix[] = [
+  { prefix: "kind", listed: true, parse: keyValueLeaf("kind") },
+  { prefix: "attr", listed: true, parse: keyValueLeaf("attr") },
+  { prefix: "tag", listed: true, parse: keyValueLeaf("tag") },
+  {
+    // `id:<cloud id>` (#4534, behold#906 Q3): the whole rest is the id, colons
+    // and `=` included, since an ARN has both.
+    prefix: "id",
+    listed: true,
+    parse: (rest, tok) => {
+      if (rest === "") {
+        throw new QueryError(`"${tok}" needs a cloud id`, "name the id exactly as the cloud prints it: id:i-0abc123, id:arn:aws:s3:::my-bucket");
+      }
+      return { kind: "id", a: rest };
+    },
+  },
+  {
+    prefix: "cap",
+    listed: false,
+    parse: (rest, tok) => {
+      if (!parseCapabilityCall(rest)) {
+        throw new QueryError(
+          `"${tok}" is not a capability term`,
+          "name a capability, with arguments in parentheses when it takes any: cap:internet-reachable, cap:open-ingress(22); chant search --capabilities lists them",
+        );
+      }
+      return { kind: "cap", a: rest };
+    },
+  },
+];
+
+function parseLeaf(tok: string): Term {
+  // A prefix is matched case-insensitively, as it always was.
+  const prefixed = /^([A-Za-z][A-Za-z0-9_]*):(.*)$/.exec(tok);
+  const known = prefixed ? LEAF_PREFIXES.find((p) => p.prefix === prefixed[1].toLowerCase()) : undefined;
+  if (prefixed && known) return known.parse(prefixed[2], tok);
   // `name:value` with a prefix the grammar does not have. This parsed as a
   // free-text word and matched nothing, which is the worst available outcome:
   // an agent looking for SSH reachability wrote
@@ -1635,9 +1836,10 @@ function parseLeaf(tok: string): Term {
   if (bad) {
     const name = bad[1];
     const value = tok.slice(name.length + 1);
+    const prefixes = LEAF_PREFIXES.filter((p) => p.listed).map((p) => `${p.prefix}:`).join(", ");
     throw new QueryError(
       `"${tok}" is not a term — there is no "${name}:" prefix`,
-      `for an attribute, say attr:${name}=${value || "<value>"}; the prefixes are kind:, attr:, tag:, and ->/<- for edges`,
+      `for an attribute, say attr:${name}=${value || "<value>"}; the prefixes are ${prefixes}, and ->/<- for edges`,
     );
   }
   return { kind: "word", a: tok };
@@ -1825,9 +2027,15 @@ function matchTerm(n: IRNode, t: Term, ir?: GraphIR, byId?: Map<string, IRNode>)
     const val = attrString((attrs as Record<string, unknown>)[t.a]);
     return t.b === undefined ? t.a in attrs : val.toLowerCase().includes(t.b.toLowerCase());
   }
+  if (t.kind === "id") return hasCloudId(n, t.a);
   if (t.kind === "tag") {
     const tags = (attrs as Record<string, unknown>)["Tags"];
-    if (!Array.isArray(tags)) return false;
+    if (!Array.isArray(tags)) {
+      // An indexed node keeps its tags as a map (#4521), not a Tags list.
+      return Object.entries(n.tags ?? {}).some(
+        ([key, val]) => key.toLowerCase() === t.a.toLowerCase() && (t.b === undefined || String(val).toLowerCase().includes(t.b.toLowerCase())),
+      );
+    }
     return tags.some((tag) => {
       const key = attrString((tag as Record<string, unknown>)?.Key);
       const val = attrString((tag as Record<string, unknown>)?.Value);
@@ -1842,6 +2050,18 @@ function matchTerm(n: IRNode, t: Term, ir?: GraphIR, byId?: Map<string, IRNode>)
     .map(([, v]) => attrString(v));
   const hay = [n.id, n.kind, ...values].join(" ").toLowerCase();
   return hay.includes(t.a.toLowerCase());
+}
+
+/**
+ * Whether a node carries `id` as one of its cloud ids (#4534): its observed
+ * `physicalId`, or any value in its engine facts' `cloudIds` (an ARN, an
+ * import id, a self-link). The match is exact, case included: a cloud id is
+ * an identifier, and a substring of one names another object. A bare word
+ * never reads either field.
+ */
+function hasCloudId(n: IRNode, id: string): boolean {
+  if (n.physicalId === id) return true;
+  return (n.facts?.cloudIds ?? []).some((c) => c.value === id);
 }
 
 /**
@@ -1918,7 +2138,15 @@ function findPath(n: IRNode, t: Term, ir: GraphIR, byId: Map<string, IRNode>): P
   return found ? found.hops : null;
 }
 
+/**
+ * A cloud-listed node's path-style id (behold#1025 Q2,
+ * `<substrate>/<scopeId>/<location>/<listedType>/<nativeId>`), printed whole:
+ * its listed type holds `::`, which is not a stack qualification.
+ */
+const INDEX_NODE_ID = /^(aws|azure|gcp|kubernetes)\/[^/]+\/[^/]+\/[^/]+\/./;
+
 function bareId(id: string): string {
+  if (INDEX_NODE_ID.test(id)) return id;
   return id.includes("::") ? id.slice(id.lastIndexOf("::") + 2) : id;
 }
 
@@ -2044,16 +2272,21 @@ function formatHops(hops: PathHop[], start: string): string {
     .join("; ");
 }
 
-function formatRow(n: IRNode, show: string[]): string {
+function formatRow(n: IRNode, show: string[], join?: IndexJoin): string {
   const attrs = (n.attrs ?? {}) as Record<string, unknown>;
   // Display the bare logical id, not the `${stack}::` qualification (#1162).
-  const displayId = n.id.includes("::") ? n.id.slice(n.id.lastIndexOf("::") + 2) : n.id;
+  const displayId = bareId(n.id);
   // A terraform resource shows its type (#4366); its IR kind is `Terraform::Resource` for all of them.
   const parts: string[] = [displayId, displayKind(n) ?? ""];
   // Prefer the node-level live physicalId (set by the overlay), then attrs;
   // skip source-mode AttrRef placeholders (objects).
   const physical = (n as { physicalId?: unknown }).physicalId ?? attrs["physicalId"] ?? attrs["InstanceId"] ?? attrs["Id"];
-  if (physical != null && typeof physical !== "object") parts.push(String(physical));
+  // A row joined to an index (#4525) that did not bind says which verdict it
+  // got where the physical id would go: a declared InstanceId is not one the
+  // index confirmed.
+  const cell = join ? joinCell(join) : undefined;
+  if (cell) parts.push(cell);
+  else if (physical != null && typeof physical !== "object") parts.push(String(physical));
   // A row nobody could read says so where its physical id would go (#1263). A
   // blank there reads as "declared, not provisioned", which the read never
   // established; the reason is the tri-state's (#1089).

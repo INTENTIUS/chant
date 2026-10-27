@@ -102,7 +102,7 @@
     },
     "row": {
       "type": "object",
-      "description": "One row, keyed by column. Every row starts with member: the workspace member whose ledger it came from, or null outside a workspace. A value is a string, a number, a boolean, an object or array (a JSON column), or null. A runs row's root_member, added within version 1 by #4500, written by chant 0.124.53 and newer, is the member whose directory holds the terraform root a TerraformApplyOp run applied, or null when that is unknown (another kind of run, or a run whose Init step did not finish, #4508); a row from an older chant lacks it.",
+      "description": "One row, keyed by column. Every row starts with member: the workspace member whose ledger it came from, or null outside a workspace. A value is a string, a number, a boolean, an object or array (a JSON column), or null. A runs row's root_member, added within version 1 by #4500, written by chant 0.124.53 and newer, is the member whose directory holds the terraform root a TerraformApplyOp run applied, or null when that is unknown (another kind of run, or a run whose Init step failed before it resolved the root, #4508; a failed terraform init still names it, #4512); a row from an older chant lacks it. A resources row's marker_stack, marker_env, engine_ownership and engine_owned_by, added within version 1 by #4534, written by chant 0.124.53 and newer, are the stack and env the resource's chant marker names and an ownership engine's verdict and what bound the node (never read for a decision), or null when unknown; a row from an older chant lacks them.",
       "required": [
         "member"
       ],

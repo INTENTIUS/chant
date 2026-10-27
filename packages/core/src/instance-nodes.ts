@@ -41,6 +41,8 @@
  * Imports nothing at run time, so it bundles with `./change-set.ts`.
  */
 
+import type { EngineFacts } from "./engine-facts";
+
 /**
  * Why the declared graph leaves an expanded block as one node (#4489): the
  * codes of a block node's `instanceRollup`. Each is in the read contract's
@@ -235,6 +237,8 @@ export interface InstanceObservation {
   physicalId?: string;
   /** Same meaning as `ResourceMetadata.ownership`, on a present instance. */
   ownership?: "owned" | "foreign" | "unknown";
+  /** Same meaning as `ResourceMetadata.facts` (#4527), on a present instance. Never read for a decision. */
+  facts?: EngineFacts;
   /** The lexicon's status word for this instance, as on `ResourceMetadata.status`. */
   status?: string;
   /** Why it was not observed, on a not-observed instance. An `UnobservedReason`. */

@@ -18,6 +18,9 @@ const readReleaseLedgerMock = vi.fn();
 const pushLifecycleMock = vi.fn();
 const resolveTargetsMock = vi.fn();
 const ran: string[] = [];
+/** #4516: the reads the fake `import-apply` declares, and the order its steps ran in. */
+let importReads: Array<{ reader: string; upstream: string; output: string; at: string }> = [];
+const importApplied: Array<{ component: string; input: unknown }> = [];
 const stepInputs: Array<{ kind: string; input: unknown }> = [];
 let releaseFixture: { release: import("../../lifecycle/release-store").Release; label: string | null } | null = null;
 let storedTemplate: string | null = null;
@@ -64,6 +67,15 @@ vi.mock("../../components/fan-out-support", () => ({
       if (ctx.component === failApplyFor) throw applyError ?? new Error("apply failed");
       return {};
     });
+    // #4516: a stack step whose template imports another component's export, found by `declaredReads`.
+    registry.register({
+      kind: "import-apply",
+      declaredReads: (_ctx: unknown, members: ReadonlyArray<{ component: string }>) => importReads.filter((r) => members.some((m) => m.component === r.reader)),
+      async run(ctx: DeployContext, input: unknown) {
+        importApplied.push({ component: ctx.component, input });
+        return { outputs: { VpcId: `${ctx.component}-vpc` } };
+      },
+    } as never);
     // #4045: a planner whose member is provisional.
     registry.register({
       kind: "plan-provisional",
@@ -226,6 +238,8 @@ beforeEach(() => {
   removedTemplates.length = 0;
   ran.length = 0;
   stepInputs.length = 0;
+  importReads = [];
+  importApplied.length = 0;
   writtenTemplates.length = 0;
   releaseFixture = null;
   storedTemplate = null;
@@ -426,6 +440,56 @@ describe("chant components promote", () => {
     expect(await runComponentsPromote(ctx({}))).toBe(1);
     expect(errors.join("\n")).toMatch(/no publish step/);
     expect(ran).toEqual([]);
+  });
+});
+
+describe("chant components promote orders an importer after its exporter (#4516)", () => {
+  /** A component that publishes its image and applies one stack. */
+  const stackComponent = (name: string): DriverComponent => ({
+    name,
+    deploy: [
+      { phase: "Build", steps: [{ kind: "docker-build", context: ".", into: "api.tar" }] },
+      { phase: "Publish", steps: [{ kind: "publish-image", from: "archive:api.tar" }] },
+      { phase: "Apply", steps: [{ kind: "import-apply", stack: name }] },
+    ],
+  });
+  // Discovered importer first, so only the read can put network ahead of it.
+  const app = stackComponent("app");
+  const network = stackComponent("network");
+  const read = { reader: "app", upstream: "network", output: "VpcId", at: "/imports/Net-VpcId" };
+
+  beforeEach(() => {
+    readReleaseLedgerMock.mockResolvedValue({ records: [{ ...staging, component: "app" }, { ...staging, component: "network" }], malformed: 0 });
+    resolveTargetsMock.mockResolvedValue({ success: true, targets: [app, network] });
+  });
+
+  test("a template's Fn::ImportValue of another promoted component's export deploys the exporter first and hands the importer its output", async () => {
+    importReads = [read];
+    expect(await runComponentsPromote(ctx({}))).toBe(0);
+    expect(importApplied.map((a) => a.component)).toEqual(["network", "app"]);
+    expect(importApplied[1]!.input).toMatchObject({ stack: "app", imports: { "Net-VpcId": "network-vpc" } });
+    expect(appendReleaseRecordMock).toHaveBeenCalledTimes(2);
+  });
+
+  test("with no declared read the two deploy as one wave and the importer gets no imports", async () => {
+    expect(await runComponentsPromote(ctx({}))).toBe(0);
+    expect(importApplied.map((a) => a.component).sort()).toEqual(["app", "network"]);
+    expect((importApplied.find((a) => a.component === "app")!.input as Record<string, unknown>).imports).toBeUndefined();
+  });
+
+  test("a read of a component this promote does not deploy is left out: the importer deploys alone", async () => {
+    importReads = [read];
+    resolveTargetsMock.mockResolvedValue({ success: true, targets: [app] });
+    expect(await runComponentsPromote(ctx({ component: "app" }))).toBe(0);
+    expect(importApplied.map((a) => a.component)).toEqual(["app"]);
+    expect((importApplied[0]!.input as Record<string, unknown>).imports).toBeUndefined();
+  });
+
+  test("--dry-run with a declared read still deploys nothing", async () => {
+    importReads = [read];
+    expect(await runComponentsPromote(ctx({ dryRun: true, json: true }))).toBe(0);
+    expect(importApplied).toEqual([]);
+    expect(appendReleaseRecordMock).not.toHaveBeenCalled();
   });
 });
 

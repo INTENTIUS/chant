@@ -32,3 +32,39 @@ export class NonRetryableActivityError extends Error {
 export function nonRetryableFailure(message: string, type: string): NonRetryableActivityError {
   return new NonRetryableActivityError(message, type);
 }
+
+/**
+ * The property a failing activity sets on the error it throws to publish
+ * outputs it already knew when it failed (chant#4512). terraformInit knows its
+ * root's directory once the root resolves and before `terraform init` runs, so
+ * a failed init still names the root it was for.
+ *
+ * It is a plain property, not a class, so a lexicon can set it without
+ * importing anything newer from core: an executor that predates it reads the
+ * error as any other failure.
+ */
+export const KNOWN_OUTPUTS_KEY = "knownOutputs";
+
+/** An activity error carrying the outputs it knew before it failed (chant#4512). */
+export type ErrorWithKnownOutputs = Error & { [KNOWN_OUTPUTS_KEY]: Record<string, unknown> };
+
+/**
+ * Attach `outputs` to `err` as the outputs the activity knew when it failed,
+ * and hand the error back for the activity to rethrow. A thrown non-Error is
+ * wrapped in one, so its message survives.
+ */
+export function withKnownOutputs(err: unknown, outputs: Record<string, unknown>): ErrorWithKnownOutputs {
+  const e = err instanceof Error ? err : new Error(String(err));
+  return Object.assign(e, { [KNOWN_OUTPUTS_KEY]: outputs });
+}
+
+/**
+ * The outputs a failed activity published on its error (chant#4512), or
+ * undefined when it published none. An executor resolves a failed step's
+ * `outcomeAttribute` paths against these, as it does against a result.
+ */
+export function knownOutputsOf(err: unknown): Record<string, unknown> | undefined {
+  if (typeof err !== "object" || err === null) return undefined;
+  const known = (err as Record<string, unknown>)[KNOWN_OUTPUTS_KEY];
+  return typeof known === "object" && known !== null && !Array.isArray(known) ? (known as Record<string, unknown>) : undefined;
+}

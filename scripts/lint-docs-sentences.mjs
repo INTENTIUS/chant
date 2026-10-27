@@ -78,9 +78,13 @@ function docFiles(dir) {
  * same sentence on every task page, written once in docs/src/prompts.mjs and
  * held word for word by scripts/lint-prompts.mjs, and the "Read <the page's
  * URL>." line a prompt opens with reads as a fragment once the URL is taken
- * out. A page with no prompt block is read as before, less a one-line prompt
- * (`prompt: setup`). Blanking keeps every
- * offset, so lines still map onto the source file.
+ * out. A page with no prompt block gets the same treatment less the prompt:
+ * only its description is kept (chant#4518). Before that, the fences, the
+ * title and keys like `diataxis:` ran together into one "sentence" that
+ * counted as a colon reveal on every page. A one-line prompt
+ * (`prompt: setup`) names the setup prompt in prompts.mjs and is dropped
+ * with the other keys. Every line keeps its place, so lines still map onto
+ * the source file.
  */
 const READ_PAGE = /^\s*Read https:\/\/intentius\.io\/chant\/\S*\.$/;
 const PROMPT_BLOCK = /^prompt:\s*[|>][+-]?\s*$/;
@@ -90,8 +94,6 @@ function promptProse(text) {
   const m = /^---\n([\s\S]*?)\n---(?=\n|$)/.exec(text);
   if (!m) return text;
   const lines = m[0].split("\n");
-  // `prompt: setup` names the setup prompt in prompts.mjs; its line is blanked.
-  if (!lines.some((line) => PROMPT_BLOCK.test(line))) return lines.map((line) => (/^prompt:/.test(line) ? blank(line) : line)).join("\n") + text.slice(m[0].length);
   let inPrompt = false;
   const kept = lines.map((line) => {
     if (PROMPT_BLOCK.test(line)) {
@@ -110,6 +112,30 @@ function promptProse(text) {
   return kept.join("\n") + text.slice(m[0].length);
 }
 
+/**
+ * Reference labels that open a paragraph or a list item: `**Fix:**` and
+ * `**Severity:**` on the lint-rule pages, `**Symptom:**` and `**Cause:**` on
+ * the troubleshooting pages. Each is a field name, not a sentence, and the
+ * colon-reveal rule read every one as a nameplate (chant#4518). The label is
+ * blanked to spaces, so the sentence after it is still linted and offsets
+ * hold. A thematic break (a `---` line between sections) is blanked too:
+ * with the labels gone, the breaks that close each rule's section were read
+ * as the opening word of three sentences in a row. So is an MDX page's
+ * `import ... from '...'` line, which is code: config-file.mdx's two snippet
+ * imports read as five fragments and two near-duplicate sentences.
+ */
+const REFERENCE_LABEL = /^(\s*(?:[-*+]\s+)?)\*\*(?:Fix|Severity|Symptom|Cause):\*\*/gm;
+const THEMATIC_BREAK = /^ {0,3}(?:-{3,}|\*{3,}|_{3,})[ \t]*$/gm;
+const MDX_IMPORT = /^import\s[^\n]*\sfrom\s+(['"])[^'"\n]+\1;?[ \t]*$/gm;
+
+function blankNonProse(text) {
+  const blank = (s) => s.replace(/[^\n]/g, " ");
+  return text
+    .replace(REFERENCE_LABEL, (all, lead) => lead + blank(all.slice(lead.length)))
+    .replace(THEMATIC_BREAK, blank)
+    .replace(MDX_IMPORT, blank);
+}
+
 /** 1-based line of a prose-text offset — extractProse blanks non-prose but
  * preserves every offset, so spans map straight onto the source file. */
 function lineOf(text, offset) {
@@ -125,7 +151,7 @@ const detail = [];
 for (const file of files) {
   const rel = relative(join(here, ".."), file);
   const text = readFileSync(file, "utf8");
-  const prose = extractProse(promptProse(text));
+  const prose = extractProse(blankNonProse(promptProse(text)));
   const doc = buildDocAnalysis(prose);
   const { findings, errors } = runRules(RULES, doc);
   for (const e of errors) detail.push(`${rel}: rule ${e.ruleId} errored: ${e.message}`);

@@ -9,6 +9,7 @@ import { subTemplateRefs } from "./graph-sub-template";
 import type { ResourceMetadata } from "./lexicon";
 import { entityInstanceRollup, observedInstanceNodeId, type InstanceRollup } from "./instance-nodes";
 import type { RootRead, UnobservedEntity } from "./observation";
+import type { EdgeGrain, EngineFacts } from "./engine-facts";
 
 export { subTemplateRefs };
 
@@ -123,6 +124,41 @@ export interface IRNode {
    * `./instance-nodes.ts`.
    */
   instanceRollup?: InstanceRollup;
+  /**
+   * What an ownership engine (choudoufu, plunge) observed about this node
+   * (#4520, #4527). On a live node it is copied from `ResourceMetadata.facts`.
+   * On a declared node it comes from the entity's {@link entityFacts}: the
+   * pulumi lexicon reads a plunge member's checked-in `engine-graph.json`
+   * beside its stack export (#4529). For people and for readers that show
+   * the graph. Nothing in chant decides from it, and {@link ownership} keeps
+   * its own meaning. Absent unless an engine supplied it. See `./engine-facts.ts`.
+   */
+  facts?: EngineFacts;
+  /**
+   * Indexed nodes only (#4521, behold#1025): the inventory API's own type
+   * name, as the cloud lister read it: `AWS::S3::Bucket`,
+   * `microsoft.storage/storageaccounts`, `storage.googleapis.com/Bucket`,
+   * `apps/v1/Deployment`. Absent on every node a cloud listing did not make.
+   */
+  listedType?: string;
+  /**
+   * Indexed nodes only: the region or location the object was listed in,
+   * `global` for a global type, a namespace or `cluster` for Kubernetes.
+   */
+  location?: string;
+  /**
+   * Indexed nodes only: the identifier the listing returned, Cloud Control's
+   * `Identifier`, the ARM id, the asset `name`, or `namespace/name`.
+   */
+  nativeId?: string;
+  /** Indexed nodes only: tags or labels as read, masked by key. Where markers come from. */
+  tags?: Record<string, string>;
+  /**
+   * Indexed nodes only: true when no lexicon kind maps the listed type. The
+   * node keeps `kind` = {@link listedType} and `lexicon` = the substrate, and
+   * is never dropped (#4521).
+   */
+  unmappedKind?: boolean;
 }
 
 /**
@@ -162,6 +198,34 @@ export interface IREdge {
    * this to route the edge between groups. Absent on every in-pipeline edge.
    */
   crossPipeline?: boolean;
+  /**
+   * What the edge joins (#4520): two blocks, two instances, or a property of
+   * one instance to another. Set by an engine's graph (choudoufu: `block`;
+   * plunge: `instance` for dependencies, parents and providers, `property`
+   * for property dependencies). Absent when the source does not say. Two
+   * edges between the same pair that differ only in grain are two edges.
+   */
+  grain?: EdgeGrain;
+  /**
+   * Where the edge came from (behold#1025): `declared` (an AttrRef or an
+   * EntityReference), `observed` (the engine or the cloud reported it), or
+   * `derived` (a reference catalog rule matched an attribute value to another
+   * node, #4522). Absent reads as `declared` on a source IR and `observed` on
+   * a live one, which is what both meant before the field.
+   */
+  origin?: "declared" | "observed" | "derived";
+  /**
+   * With `origin: "derived"`: the rule that produced the edge,
+   * `<lexicon>:<from kind>:<path>` for a catalog rule and
+   * `<lexicon>:<from kind>:tag:<key>` for a typed tag rule.
+   */
+  rule?: string;
+  /**
+   * `reference` (the default when absent) or `containment`: the holder sits
+   * inside the target (a subnet in its VPC). A containment edge is also in
+   * `groups.byContainer`, so a renderer that draws boxes can skip the line.
+   */
+  relation?: "reference" | "containment";
 }
 
 /**
@@ -314,6 +378,8 @@ export interface EntityReference {
   viaAttr?: string;
   /** The producer-side attribute referenced (`IREdge.toAttr`), when the reference named exactly one. */
   toAttr?: string;
+  /** What the reference joins (`IREdge.grain`, #4529), when its source says. */
+  grain?: EdgeGrain;
 }
 
 /** True when `value` has the {@link EntityReference} shape. */
@@ -355,6 +421,19 @@ export function entityReferences(entity: Declarable): readonly EntityReference[]
 export function entityStack(entity: Declarable): string | undefined {
   const stack = (entity as unknown as { stack?: unknown }).stack;
   return typeof stack === "string" && stack.length > 0 ? stack : undefined;
+}
+
+/**
+ * What an ownership engine observed about an entity (#4529), or undefined.
+ * Duck-typed like {@link entityStack}: the pulumi lexicon sets `facts` on a
+ * plunge member's entity from the member's checked-in engine graph. It is
+ * defined non-enumerable there, so a chant older than this reader does not
+ * project it into `attrs`. {@link buildGraphIr} copies it onto the node, and
+ * nothing in chant decides from it (see `IRNode.facts`).
+ */
+export function entityFacts(entity: Declarable): EngineFacts | undefined {
+  const facts = (entity as unknown as { facts?: unknown }).facts;
+  return typeof facts === "object" && facts !== null && !Array.isArray(facts) ? (facts as EngineFacts) : undefined;
 }
 
 /**
@@ -810,7 +889,8 @@ function subEnvelope(sub: SubForm, seen: Set<unknown>, reverse: Map<object, stri
 // entity's place in the graph, not declared configuration, and both are read
 // directly, so projecting them into `attrs` would only restate an edge and a
 // group key the IR already carries.
-const SKIP_KEYS = new Set(["lexicon", "entityType", "kind", "attributes", "Ref", "references", "stack"]);
+// `facts` (#4529) is an engine's observation, carried onto `IRNode.facts`, not configuration.
+const SKIP_KEYS = new Set(["lexicon", "entityType", "kind", "attributes", "Ref", "references", "stack", "facts"]);
 
 /** The config bag of a node, paired with each key. Lexicon entities keep their
  * declared props in a (usually non-enumerable) `props` object; simpler entities
@@ -870,6 +950,7 @@ function collectEdges(
       kind: "ref",
       ...(ref.viaAttr ? { viaAttr: ref.viaAttr } : {}),
       ...(ref.toAttr ? { toAttr: ref.toAttr } : {}),
+      ...(ref.grain === "block" || ref.grain === "instance" || ref.grain === "property" ? { grain: ref.grain } : {}),
     });
   }
   const seen = new Set<unknown>();
@@ -948,7 +1029,8 @@ function collectEdges(
 
 /** Stable key for deduping and sorting an edge. */
 function edgeKey(e: IREdge): string {
-  return `${e.from}\0${e.to}\0${e.viaAttr ?? ""}`;
+  // `grain` joins the key only when set, so an edge without one keys as before.
+  return `${e.from}\0${e.to}\0${e.viaAttr ?? ""}${e.grain ? `\0${e.grain}` : ""}`;
 }
 
 /**
@@ -987,6 +1069,8 @@ export function buildGraphIr(
     if (prov?.compositeInstance) node.compositeInstance = prov.compositeInstance;
     const file = relFile(prov?.sourceFile, projectPath);
     if (file) node.sourceLoc = { file };
+    const facts = entityFacts(entity);
+    if (facts) node.facts = facts;
     nodes.push(node);
 
     (byLexicon[entity.lexicon] ??= []).push(name);
@@ -1297,6 +1381,8 @@ export function buildLiveGraphIr(observations: LiveObservation[]): GraphIR {
       // ownership above, since `unowned`/`foreign`/`unknown` all mean "no
       // declared owner", which is simply the absence of this field.
       if (meta.ownerChain?.root === "declared") node.runtimeOwner = meta.ownerChain.entity;
+      // An engine's facts (#4527) ride beside `physicalId`, as the engine gave them.
+      if (meta.facts) node.facts = meta.facts;
       nodes.push(node);
       (byLexicon[lexicon] ??= []).push(name);
       // A live lexicon maps to one deployable stack, same as the source IR.
@@ -1323,6 +1409,7 @@ export function buildLiveGraphIr(observations: LiveObservation[]): GraphIR {
         };
         if (inst.physicalId) child.physicalId = inst.physicalId;
         if (inst.ownership === "owned" || inst.ownership === "foreign") child.ownership = inst.ownership;
+        if (inst.facts) child.facts = inst.facts;
         nodes.push(child);
         (byLexicon[lexicon] ??= []).push(id);
         (byStack[lexicon] ??= []).push(id);
@@ -1349,7 +1436,9 @@ export function buildLiveGraphIr(observations: LiveObservation[]): GraphIR {
   for (const observation of observations) {
     for (const edge of observation.edges ?? []) {
       if (!observedIds.has(edge.from) || !observedIds.has(edge.to)) continue;
-      const key = `${edge.from}\u0000${edge.to}\u0000${edge.viaAttr ?? ""}\u0000${edge.toAttr ?? ""}`;
+      // `grain` is in the key (#4527): a block edge and an instance edge
+      // between the same pair stay two edges.
+      const key = `${edge.from}\u0000${edge.to}\u0000${edge.viaAttr ?? ""}\u0000${edge.toAttr ?? ""}\u0000${edge.grain ?? ""}`;
       if (seen.has(key)) continue;
       seen.add(key);
       edges.push(edge);
@@ -1359,7 +1448,8 @@ export function buildLiveGraphIr(observations: LiveObservation[]): GraphIR {
     (a, b) =>
       a.from.localeCompare(b.from) ||
       a.to.localeCompare(b.to) ||
-      (a.viaAttr ?? "").localeCompare(b.viaAttr ?? ""),
+      (a.viaAttr ?? "").localeCompare(b.viaAttr ?? "") ||
+      (a.grain ?? "").localeCompare(b.grain ?? ""),
   );
 
   // Stack exports (#1279) land on the IR's `exports`, the same place the
@@ -1397,12 +1487,22 @@ export function collectUnobserved(observations: LiveObservation[]): Record<strin
  * `runtime` = live, undeclared, owner chain reaches a declared entity (#1077). */
 type OverlayNodeStatus = "good" | "warn" | "accent" | "neutral" | "runtime";
 
+/**
+ * The overlay paint on one node. `_ownership` (#4534, behold#906 Q2) is
+ * chant's own marker verdict, {@link IRNode.ownership}, beside `_status`, so
+ * `chant search` answers ownership with no grammar of its own:
+ * `attr:_ownership=foreign`, `--show _ownership`, `--count-by attr:_ownership`.
+ * It is `owned` or `foreign`; absent means unknown (no marker channel on the
+ * read, or a node nobody observed). It never reads `facts.ownership`, the
+ * engine's verdict, which stays for display (#4520 Q1).
+ */
 function tagStatus(n: IRNode, status: OverlayNodeStatus, unobserved?: UnobservedEntity): IRNode {
   return {
     ...n,
     attrs: {
       ...n.attrs,
       _status: status,
+      ...(n.ownership ? { _ownership: n.ownership } : {}),
       ...(unobserved ? { _unobserved: unobserved.reason } : {}),
     },
   };
@@ -1488,7 +1588,7 @@ export function overlayGraphs(live: GraphIR, declared: GraphIR, opts?: OverlayOp
  *
  * Each declared node is classified against live observation and tagged `_status`:
  *   - **managed** (declared + provisioned) → `good`, carrying the observed
- *     `physicalId` / `ownership` onto the declared node
+ *     `physicalId` / `ownership` / engine `facts` onto the declared node
  *   - **pending** (declared, provider confirmed absent) → `accent`
  *   - **unobserved** (declared, chant could not look — #1089) → `neutral`, with
  *     the reason on `_unobserved`. A wrong-cluster or unsupported-kind read used
@@ -1524,6 +1624,7 @@ export function sourceOverlayGraphs(declared: GraphIR, live: GraphIR, opts?: Ove
     const merged: IRNode = { ...n }; // managed — carry the observed identity
     if (obs.physicalId) merged.physicalId = obs.physicalId;
     if (obs.ownership) merged.ownership = obs.ownership;
+    if (obs.facts) merged.facts = obs.facts;
     // ...and what was observed ABOUT it (#1279). The declared canvas holds what
     // the source says; the observation holds what the account says, and a fact
     // like `VpcId` exists only on the second. Dropping it here made every

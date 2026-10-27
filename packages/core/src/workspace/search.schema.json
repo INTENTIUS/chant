@@ -112,7 +112,8 @@
                 "enum": [
                   "declared",
                   "live",
-                  "snapshot"
+                  "snapshot",
+                  "index"
                 ]
               },
               "notEvaluated": {
@@ -253,7 +254,8 @@
                 "usage-invalid",
                 "environment-unknown",
                 "snapshot-unavailable",
-                "build-failed"
+                "build-failed",
+                "index-unavailable"
               ]
             },
             "message": {
@@ -289,7 +291,7 @@
       }
     },
     "source": {
-      "description": "Which observation answered. `declared` is the source graph; `live` reads the account now; `snapshot` replays a recorded lifecycle snapshot. In the workspace form the top-level source names the axis asked for, and each member's source names the snapshot commit it replayed.",
+      "description": "Which observation answered. `declared` is the source graph; `live` reads the account now; `snapshot` replays a recorded lifecycle snapshot; `index` answers from an index version in the store (`--index`, #4525). In the workspace form the top-level source names the axis asked for, and each member's source names the snapshot commit it replayed.",
       "type": "object",
       "required": [
         "kind"
@@ -299,8 +301,41 @@
           "enum": [
             "declared",
             "live",
-            "snapshot"
+            "snapshot",
+            "index"
           ]
+        },
+        "index": {
+          "type": "string",
+          "description": "`index` only: the index version answered from, as `<scope key>@<version>`."
+        },
+        "scopeKey": {
+          "type": "string",
+          "description": "`index` only: the index's `stamp.scopeKey`, the store path of its source and scope."
+        },
+        "version": {
+          "type": "string",
+          "description": "`index` only: the version name, `<observedAt>-<digest12>`."
+        },
+        "observedAt": {
+          "type": "string",
+          "description": "`index` only: when the read that wrote the index started, ISO UTC."
+        },
+        "completedAt": {
+          "type": "string",
+          "description": "`index` only: when that read's last call returned, when the index records it."
+        },
+        "digest": {
+          "type": "string",
+          "description": "`index` only: the index document's digest."
+        },
+        "by": {
+          "type": "string",
+          "description": "`index` only: the source that wrote the index, with its version when it has one, such as `behold-lister 0.4.0`."
+        },
+        "project": {
+          "type": "boolean",
+          "description": "`index` only: false when there was no project, so every row is an indexed node; true when the rows are declared and each carries a `join`."
         },
         "env": {
           "type": "string",
@@ -389,6 +424,68 @@
             "$ref": "#/$defs/path"
           },
           "description": "One per positive edge term and cap: term the node matched through. Empty when the query has none."
+        },
+        "join": {
+          "$ref": "#/$defs/indexJoin"
+        }
+      }
+    },
+    "indexJoin": {
+      "description": "`--index` with a project (#4525): how the declared row joined to the index version, through its lexicon's index match. `bound` names the indexed node; `absent` means the index listed the type and location and holds no such resource; `not-observed` means the index did not look, with the reason; `no-binding` means the declaration spells no identity to match by; `ambiguous` names every candidate and binds none.",
+      "type": "object",
+      "required": [
+        "verdict"
+      ],
+      "properties": {
+        "verdict": {
+          "enum": [
+            "bound",
+            "absent",
+            "not-observed",
+            "no-binding",
+            "ambiguous"
+          ]
+        },
+        "listedType": {
+          "type": "string",
+          "description": "The inventory type the declaration's identity belongs to."
+        },
+        "identifier": {
+          "type": "string",
+          "description": "The identifier the declaration spells, as the index's nativeId spells it."
+        },
+        "location": {
+          "type": "string",
+          "description": "The location the identity was looked for in."
+        },
+        "node": {
+          "type": "string",
+          "description": "`bound`: the indexed node's id."
+        },
+        "nativeId": {
+          "type": "string",
+          "description": "`bound`: the indexed node's native id."
+        },
+        "reason": {
+          "enum": [
+            "read-failed",
+            "no-credentials",
+            "no-binding",
+            "unsupported-kind",
+            "filtered",
+            "not-reached"
+          ],
+          "description": "`not-observed`: why the index has no verdict for the row."
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "`ambiguous`: every indexed node carrying the identity."
+        },
+        "detail": {
+          "type": "string"
         }
       }
     },
@@ -750,7 +847,8 @@
                     "usage-invalid",
                     "environment-unknown",
                     "snapshot-unavailable",
-                    "build-failed"
+                    "build-failed",
+                    "index-unavailable"
                   ],
                   "description": "A member that ran and refused carries its own search refusal code. `member-chant-too-old` is a member whose chant prints no search document of the contract, or, for a query with a capability term, no capability view (#4378)."
                 },

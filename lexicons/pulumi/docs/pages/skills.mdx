@@ -1,0 +1,20 @@
+---
+title: Skills
+description: The agent skills the Pulumi lexicon ships, and what each one covers
+diataxis: reference
+---
+
+The lexicon ships three skills. `chant init` writes them into the project's
+`skills/` directory, and the lexicon's bundle carries them for any agent that
+loads skills from installed lexicons.
+
+| Skill | Covers |
+|---|---|
+| `chant-pulumi` | adding a Pulumi program as a workspace member, reading its preview and drift, and watching it with `PulumiWatchOp` |
+| `chant-pulumi-stack-export` | taking and refreshing `stack-export.json`, and what to do for each of PUL001 to PUL015 |
+| `chant-pulumi-plunge` | a member on plunge: how chant decides, the plunge commands, and the watch |
+
+Each skill lists only the commands chant runs, which change nothing, and
+tells the agent not to run `pulumi up`, `pulumi destroy`, `pulumi import` or a
+refresh without `--preview-only`. Where a fix needs one of those, the skill
+has the agent name the command for the stack's owner and stop.

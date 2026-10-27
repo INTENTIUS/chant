@@ -1,4 +1,5 @@
 import type { InstanceObservation } from "./instance-nodes";
+import type { EngineFacts } from "./engine-facts";
 import type { CapabilityPack } from "./capabilities/view";
 import type { Serializer } from "./serializer";
 import type { Declarable } from "./declarable";
@@ -25,6 +26,9 @@ import type { OwnershipChannel, OwnershipMarker } from "./ownership";
 import type { LexiconConfigSchema } from "./lexicon-config";
 import type { RuleMeta } from "./audit/catalog";
 import type { ReferenceCatalog } from "./graph-refs";
+import type { ListedTypeMapping } from "./lifecycle/type-listing";
+import type { IndexIdentity } from "./lifecycle/identity-match";
+import type { IndexImportCodegen } from "./lifecycle/index-import";
 import type { IREdge, LexiconGraphEdges, LexiconUnreadSource, LexiconWorkspaceLinks, LexiconWorkspaceOutputs } from "./graph-ir";
 import type { DescribeResourcesResult, UnobservedReason } from "./observation";
 import type { ReadDriftOptions, ReadDriftResult } from "./drift-record";
@@ -2196,6 +2200,39 @@ export interface LexiconPlugin {
   referenceCatalog?: ReferenceCatalog;
 
   /**
+   * How a cloud inventory API's type names map to this lexicon's kinds
+   * (#4521): CloudFormation types for aws, lowercase ARM types for azure,
+   * Cloud Asset types for gcp, group/version/kind for k8s. `typeListing`
+   * (./lifecycle/type-listing.ts) reads it to type an indexed resource, then
+   * normalizes its properties with {@link deepNormalizationHooks}. Data plus
+   * pure functions. Opt-in: a lexicon without it leaves listed objects of its
+   * substrate as unknown-kind nodes.
+   */
+  listedTypes?: ListedTypeMapping;
+
+  /**
+   * How this lexicon's declared entities match indexed resources by identity
+   * (#4523): the identifier a declaration's props spell (aws: the
+   * CloudFormation `primaryIdentifier`), or why there is none (a
+   * server-assigned id). `matchDeclaredToIndex`
+   * (./lifecycle/identity-match.ts) runs it against an index version, and the
+   * identity-match edge pass (./lifecycle/derive-edges.ts) uses it to name
+   * this lexicon's indexed nodes. Data plus pure functions. Opt-in: a lexicon
+   * whose live read already matches by name or state does not need it.
+   */
+  indexIdentity?: IndexIdentity;
+
+  /**
+   * How this lexicon writes an indexed resource as source (#4524, `chant
+   * import --index`): the import IR for one indexed node, a value as a
+   * reference to another imported node, and a parameter for a masked value.
+   * Core hands the IR to {@link templateGenerator}, the codegen a template
+   * import uses. Data plus pure functions. Opt-in: an indexed node of a
+   * lexicon without it is reported as unsupported and written nowhere.
+   */
+  indexImport?: IndexImportCodegen;
+
+  /**
    * This lexicon's capability pack (#4375): its mapping onto the
    * lexicon-neutral view the capability rules read (labels, edge names,
    * attributes, policy documents, inline blocks, link resources), as data,
@@ -2500,6 +2537,14 @@ export interface ResourceMetadata {
    * a delete, and never escalates `unknown` to one.
    */
   ownership?: "owned" | "foreign" | "unknown";
+  /**
+   * What an ownership engine (choudoufu, plunge) observed about this resource
+   * (#4520, #4527), read from the engine's graph document. `buildLiveGraphIr`
+   * copies it onto the node beside `physicalId`. Never read for a decision:
+   * the change set reads {@link ownership}, and no change set, lifecycle step
+   * or Op imports `EngineFacts`. Absent unless an engine supplied it.
+   */
+  facts?: EngineFacts;
   /**
    * The stack/env identity read off the resource's own ownership marker
    * (#1222) — the tags/labels/metadata chant stamped at synthesis, read back

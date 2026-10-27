@@ -1,0 +1,380 @@
+{
+  "$comment": "The gcp member of behold origin/integration/consolidation-graph example-three-cloud, read with chant on integration/consolidation-graph (#4535): chant graph src --format ir --detail 3, ids prefixed with the member as behold composes them. status_*, uid and namespace attribute refs dropped.",
+  "nodes": [
+    {
+      "id": "gcp/networkSubnet",
+      "kind": "GCP::Compute::Subnetwork",
+      "lexicon": "gcp",
+      "attrs": {
+        "name": {
+          "$ref": "networkSubnet.name"
+        },
+        "metadata": {
+          "name": "three-cloud-apps",
+          "labels": {
+            "app.kubernetes.io/name": "three-cloud",
+            "app.kubernetes.io/managed-by": "chant",
+            "app.kubernetes.io/component": "subnet"
+          }
+        },
+        "region": "asia-northeast1",
+        "ipCidrRange": "10.30.0.0/24",
+        "privateIpGoogleAccess": true,
+        "networkRef": {
+          "name": {
+            "$ref": "networkVpc.name"
+          }
+        }
+      }
+    },
+    {
+      "id": "gcp/networkVpc",
+      "kind": "GCP::Compute::Network",
+      "lexicon": "gcp",
+      "attrs": {
+        "name": {
+          "$ref": "networkVpc.name"
+        },
+        "metadata": {
+          "name": "three-cloud-vpc",
+          "labels": {
+            "app.kubernetes.io/name": "three-cloud",
+            "app.kubernetes.io/managed-by": "chant",
+            "app.kubernetes.io/component": "network"
+          }
+        },
+        "autoCreateSubnetworks": false,
+        "routingMode": "REGIONAL"
+      }
+    },
+    {
+      "id": "gcp/webAddress",
+      "kind": "GCP::Compute::Address",
+      "lexicon": "gcp",
+      "attrs": {
+        "name": {
+          "$ref": "webAddress.name"
+        },
+        "metadata": {
+          "name": "three-cloud-ip",
+          "labels": {
+            "app.kubernetes.io/name": "three-cloud",
+            "app.kubernetes.io/managed-by": "chant",
+            "app.kubernetes.io/component": "address"
+          }
+        },
+        "location": "global"
+      }
+    },
+    {
+      "id": "gcp/webBackend",
+      "kind": "GCP::Compute::BackendService",
+      "lexicon": "gcp",
+      "attrs": {
+        "name": {
+          "$ref": "webBackend.name"
+        },
+        "metadata": {
+          "name": "three-cloud-backend",
+          "labels": {
+            "app.kubernetes.io/name": "three-cloud",
+            "app.kubernetes.io/managed-by": "chant",
+            "app.kubernetes.io/component": "backend"
+          }
+        },
+        "location": "global",
+        "loadBalancingScheme": "EXTERNAL_MANAGED",
+        "protocol": "HTTP",
+        "backend": [
+          {
+            "group": {
+              "networkEndpointGroupRef": {
+                "name": {
+                  "$ref": "webNeg.name"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "gcp/webNeg",
+      "kind": "GCP::Compute::RegionNetworkEndpointGroup",
+      "lexicon": "gcp",
+      "attrs": {
+        "name": {
+          "$ref": "webNeg.name"
+        },
+        "metadata": {
+          "name": "three-cloud-neg",
+          "labels": {
+            "app.kubernetes.io/name": "three-cloud",
+            "app.kubernetes.io/managed-by": "chant",
+            "app.kubernetes.io/component": "neg"
+          }
+        },
+        "region": "asia-northeast1",
+        "networkEndpointType": "SERVERLESS",
+        "cloudRun": {
+          "serviceRef": {
+            "name": {
+              "$ref": "webService.name"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "gcp/webProxy",
+      "kind": "GCP::Compute::TargetHTTPProxy",
+      "lexicon": "gcp",
+      "attrs": {
+        "name": {
+          "$ref": "webProxy.name"
+        },
+        "metadata": {
+          "name": "three-cloud-proxy",
+          "labels": {
+            "app.kubernetes.io/name": "three-cloud",
+            "app.kubernetes.io/managed-by": "chant",
+            "app.kubernetes.io/component": "proxy"
+          }
+        },
+        "location": "global",
+        "urlMapRef": {
+          "name": {
+            "$ref": "webUrlMap.name"
+          }
+        }
+      }
+    },
+    {
+      "id": "gcp/webPublicAccess",
+      "kind": "GCP::Iam::PolicyMember",
+      "lexicon": "gcp",
+      "attrs": {
+        "name": {
+          "$ref": "webPublicAccess.name"
+        },
+        "metadata": {
+          "name": "three-cloud-site-public",
+          "labels": {
+            "app.kubernetes.io/name": "three-cloud-site",
+            "app.kubernetes.io/managed-by": "chant",
+            "app.kubernetes.io/component": "iam"
+          }
+        },
+        "member": "allUsers",
+        "role": "roles/run.invoker",
+        "resourceRef": {
+          "apiVersion": "run.cnrm.cloud.google.com/v1beta1",
+          "kind": "RunService",
+          "name": "three-cloud-site"
+        }
+      }
+    },
+    {
+      "id": "gcp/webRule",
+      "kind": "GCP::Compute::ForwardingRule",
+      "lexicon": "gcp",
+      "attrs": {
+        "name": {
+          "$ref": "webRule.name"
+        },
+        "metadata": {
+          "name": "three-cloud-rule",
+          "labels": {
+            "app.kubernetes.io/name": "three-cloud",
+            "app.kubernetes.io/managed-by": "chant",
+            "app.kubernetes.io/component": "forwarding-rule"
+          }
+        },
+        "location": "global",
+        "loadBalancingScheme": "EXTERNAL_MANAGED",
+        "portRange": "80",
+        "ipAddress": {
+          "addressRef": {
+            "name": {
+              "$ref": "webAddress.name"
+            }
+          }
+        },
+        "target": {
+          "targetHTTPProxyRef": {
+            "name": {
+              "$ref": "webProxy.name"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "gcp/webRuntime",
+      "kind": "GCP::Iam::ServiceAccount",
+      "lexicon": "gcp",
+      "attrs": {
+        "name": {
+          "$ref": "webRuntime.name"
+        },
+        "metadata": {
+          "name": "three-cloud-run",
+          "labels": {
+            "app.kubernetes.io/name": "three-cloud",
+            "app.kubernetes.io/managed-by": "chant",
+            "app.kubernetes.io/component": "service-account"
+          }
+        },
+        "displayName": "three-cloud Cloud Run runtime"
+      }
+    },
+    {
+      "id": "gcp/webService",
+      "kind": "GCP::Run::Service",
+      "lexicon": "gcp",
+      "attrs": {
+        "name": {
+          "$ref": "webService.name"
+        },
+        "metadata": {
+          "name": "three-cloud-site",
+          "labels": {
+            "app.kubernetes.io/name": "three-cloud-site",
+            "app.kubernetes.io/managed-by": "chant",
+            "app.kubernetes.io/component": "service"
+          }
+        },
+        "location": "asia-northeast1",
+        "projectRef": {
+          "external": "three-cloud"
+        },
+        "template": {
+          "maxInstanceRequestConcurrency": 80,
+          "scaling": {
+            "minInstanceCount": 1,
+            "maxInstanceCount": 1
+          },
+          "containers": [
+            {
+              "image": "traefik/whoami:v1.10",
+              "ports": [
+                {
+                  "containerPort": 80,
+                  "name": "http1"
+                }
+              ],
+              "resources": {
+                "limits": {
+                  "cpu": "1000m",
+                  "memory": "512Mi"
+                }
+              }
+            }
+          ],
+          "serviceAccountRef": {
+            "name": "three-cloud-run"
+          },
+          "vpcAccess": {
+            "egress": "PRIVATE_RANGES_ONLY",
+            "networkInterfaces": [
+              {
+                "networkRef": {
+                  "name": {
+                    "$ref": "networkVpc.name"
+                  }
+                },
+                "subnetworkRef": {
+                  "name": {
+                    "$ref": "networkSubnet.name"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "gcp/webUrlMap",
+      "kind": "GCP::Compute::URLMap",
+      "lexicon": "gcp",
+      "attrs": {
+        "name": {
+          "$ref": "webUrlMap.name"
+        },
+        "metadata": {
+          "name": "three-cloud-map",
+          "labels": {
+            "app.kubernetes.io/name": "three-cloud",
+            "app.kubernetes.io/managed-by": "chant",
+            "app.kubernetes.io/component": "url-map"
+          }
+        },
+        "location": "global",
+        "defaultService": {
+          "backendServiceRef": {
+            "name": {
+              "$ref": "webBackend.name"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "gcp/networkSubnet",
+      "to": "gcp/networkVpc",
+      "kind": "ref",
+      "viaAttr": "networkRef"
+    },
+    {
+      "from": "gcp/webBackend",
+      "to": "gcp/webNeg",
+      "kind": "ref",
+      "viaAttr": "backend"
+    },
+    {
+      "from": "gcp/webNeg",
+      "to": "gcp/webService",
+      "kind": "ref",
+      "viaAttr": "cloudRun"
+    },
+    {
+      "from": "gcp/webProxy",
+      "to": "gcp/webUrlMap",
+      "kind": "ref",
+      "viaAttr": "urlMapRef"
+    },
+    {
+      "from": "gcp/webRule",
+      "to": "gcp/webAddress",
+      "kind": "ref",
+      "viaAttr": "ipAddress"
+    },
+    {
+      "from": "gcp/webRule",
+      "to": "gcp/webProxy",
+      "kind": "ref",
+      "viaAttr": "target"
+    },
+    {
+      "from": "gcp/webService",
+      "to": "gcp/networkSubnet",
+      "kind": "ref",
+      "viaAttr": "template"
+    },
+    {
+      "from": "gcp/webService",
+      "to": "gcp/networkVpc",
+      "kind": "ref",
+      "viaAttr": "template"
+    },
+    {
+      "from": "gcp/webUrlMap",
+      "to": "gcp/webBackend",
+      "kind": "ref",
+      "viaAttr": "defaultService"
+    }
+  ]
+}

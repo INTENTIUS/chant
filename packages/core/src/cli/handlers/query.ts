@@ -1,7 +1,8 @@
 /**
  * `chant query "<sql>" [dir] [--member <name>] [--json]` (#4297): one
- * read-only SQL statement over the snapshots, Op runs, gates, deploys and
- * releases on the local `chant/lifecycle` branch. The tables and the engine
+ * read-only SQL statement over the snapshots in the index store (#4519) and
+ * the Op runs, gates, deploys and releases on the local `chant/lifecycle`
+ * branch. The tables and the engine
  * live in `../../lifecycle/query.ts`; this reads the ledgers and prints.
  *
  * Inside a workspace every member's ledger is read, each row naming its
@@ -34,7 +35,11 @@ export async function queryLedgers(cwd: string, members?: readonly string[], at?
     const commit = resolveLedgerRevision(repo, at);
     return (member: string | null) => revisionLedgerReadPort(repo, commit, member === null ? "" : memberLedgerPrefix([member]));
   })();
-  if (!found) return [{ member: null, port: atPort ? atPort(null) : gitLedgerReadPort({ cwd }) }];
+  // Snapshots come from the index store (#4519). `--at` names a commit of
+  // chant/lifecycle, so it reads that commit's snapshots as before.
+  const { resolveSnapshotStore, snapshotReadPort } = await import("../../lifecycle/snapshot-store");
+  const store = at === undefined ? await resolveSnapshotStore({ cwd: found?.dir ?? cwd }) : undefined;
+  if (!found) return [{ member: null, port: atPort ? atPort(null) : gitLedgerReadPort({ cwd }), ...(store ? { snapshots: snapshotReadPort(store, { cwd }) } : {}) }];
   // Workspace code loads only when there is a workspace, so a level-0 project never pays for it.
   const { readDeclaration, WorkspaceReadError } = await import("../../workspace/declaration");
   const { workingTree } = await import("../../workspace/tree");
@@ -66,7 +71,12 @@ export async function queryLedgers(cwd: string, members?: readonly string[], at?
   };
   return declaration.members
     .filter((m) => !wanted || wanted.has(m.name))
-    .map((m) => ({ member: m.name, port: atPort ? atPort(m.dir === "." ? null : m.name) : gitLedgerReadPort({ cwd: found.dir, member: m.dir === "." ? "." : m.name }), ownerOfPath }));
+    .map((m) => ({
+      member: m.name,
+      port: atPort ? atPort(m.dir === "." ? null : m.name) : gitLedgerReadPort({ cwd: found.dir, member: m.dir === "." ? "." : m.name }),
+      ...(store ? { snapshots: snapshotReadPort(store, { cwd: found.dir, member: m.dir === "." ? "." : m.name }) } : {}),
+      ownerOfPath,
+    }));
 }
 
 export async function runQueryCommand(ctx: CommandContext): Promise<number> {

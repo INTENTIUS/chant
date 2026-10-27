@@ -37,7 +37,7 @@ workspace run ws-0c6f…: ok
 
 ### Running a member's dependents
 
-`--dependents-of <member> --op <op>` runs `<op>` in every member that links to `<member>`, directly or through other members, nearest first, and not in `<member>` itself. A dependent that declares no such Op, or that is not a composed `chant` member, is listed as skipped. This is the step a producer's apply calls to bring its consumers up to date:
+`--dependents-of <member> --op <op>` runs `<op>` in every member that links to `<member>` directly or through other members, nearest first. It skips `<member>` itself. A dependent that declares no such Op, or that is not a composed `chant` member, is listed as skipped. This is the step a producer's apply calls to bring its consumers up to date:
 
 ```
 $ chant workspace run --dependents-of network --op plan --dry-run

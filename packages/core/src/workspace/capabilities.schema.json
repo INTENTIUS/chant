@@ -58,6 +58,13 @@
               }
             }
           }
+        },
+        "templates": {
+          "type": "array",
+          "description": "The investigation templates (#4531), the catalog's second kind of entry: each a fixed query about one resource, as a chant search path pattern or as Cypher for behold's graph pane. Added within contract 1 by #4531, written by chant 0.124.53 and newer; a document without it is from an older chant.",
+          "items": {
+            "$ref": "#/$defs/template"
+          }
         }
       }
     },
@@ -181,6 +188,97 @@
         "rule": {
           "type": "string",
           "description": "The rule as written, one alternative per line."
+        }
+      }
+    },
+    "template": {
+      "type": "object",
+      "required": [
+        "id",
+        "title",
+        "question",
+        "inputs",
+        "reads",
+        "query"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$"
+        },
+        "title": {
+          "type": "string"
+        },
+        "question": {
+          "type": "string",
+          "description": "The question it answers, in people's words."
+        },
+        "sources": {
+          "type": "array",
+          "description": "The sources whose nodes it applies to; absent means every source.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "inputs": {
+          "type": "array",
+          "description": "What it is filled with. The first is the resource, the only one of kind resource. A path pattern fills {{<name>}}; a Cypher query binds the resource as $key and each other input as $<name>. A scope input says where the query is read and appears in neither.",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "kind",
+              "description"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "resource",
+                  "scope",
+                  "term"
+                ],
+                "description": "resource: a name, an IR id, a block address or a cloud ID, resolved to one node. scope: an environment or estate. term: one search term, such as a kind or a capability call."
+              },
+              "description": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "reads": {
+          "enum": [
+            "source",
+            "live",
+            "snapshots",
+            "session"
+          ],
+          "description": "What answering reads: the declared source, a live read, recorded snapshots, or only the graph loaded into the session."
+        },
+        "query": {
+          "type": "object",
+          "required": [
+            "kind",
+            "text"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "path",
+                "cypher"
+              ],
+              "description": "path: a chant search query, which needs no graph database. cypher: a read-only Cypher statement for behold's graph pane."
+            },
+            "text": {
+              "type": "string"
+            }
+          }
+        },
+        "note": {
+          "type": "string",
+          "description": "What it does not answer, said where it is offered."
         }
       }
     },

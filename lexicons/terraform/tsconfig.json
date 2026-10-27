@@ -1,10 +1,23 @@
 {
+  "//": [
+    "The editor and `tsc -p lexicons/terraform` config (chant #4511). It sets its own exclude so",
+    "it does not inherit the root's `**/*.test.ts`, which left this lexicon's tests outside the",
+    "program. The published build is tsconfig.build.json, which still excludes tests. The",
+    "*-op.ts lint fixtures stay out: they are planted inputs, as in the root and typecheck configs."
+  ],
   "extends": "../../tsconfig.json",
   "compilerOptions": {
-    "rootDir": "./src",
+    "rootDir": "../..",
     "outDir": "./dist"
   },
   "include": [
-    "src/**/*"
+    "src/**/*",
+    "examples/examples.test.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "**/dist/**",
+    "**/docs/**",
+    "src/lint/rules/fixtures/**/*-op.ts"
   ]
 }

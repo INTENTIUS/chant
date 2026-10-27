@@ -28,6 +28,22 @@ export const awsReferenceCatalog: ReferenceCatalog = {
     { kind: "AWS::ECS::Service", ids: ["ServiceArn"] },
     { kind: "AWS::ECS::TaskDefinition", ids: ["TaskDefinitionArn"] },
     { kind: "AWS::RDS::DBInstance", ids: ["DBInstanceArn", "Endpoint.Address"] },
+    // Targets of the CloudFormation-shape rules an index needs (#4522, the
+    // missing rules counted on INTENTIUS/behold#1023). Over an index each
+    // node is also matched by its Cloud Control identifier and its cloud ids,
+    // so a role's ARN joins even though the deep hooks prune `Arn`.
+    { kind: "AWS::RDS::DBSubnetGroup", ids: ["DBSubnetGroupName"] },
+    { kind: "AWS::IAM::Role", ids: ["Arn", "RoleName"] },
+    { kind: "AWS::EC2::EIP", ids: ["AllocationId", "PublicIp"] },
+    { kind: "AWS::Logs::LogGroup", ids: ["LogGroupName", "Arn"] },
+    { kind: "AWS::Route53::HostedZone", ids: ["Id"] },
+    { kind: "AWS::EKS::Cluster", ids: ["Name", "Arn"] },
+    { kind: "AWS::CloudFormation::Stack", ids: ["StackId"] },
+    // #4535: a record set is named by its record name, which is what a CNAME
+    // in the same zone points at; a bucket by its name, which is what a
+    // workload's env var carries (behold#166, ../../k8s/src/reference-catalog.ts).
+    { kind: "AWS::Route53::RecordSet", ids: ["Name"] },
+    { kind: "AWS::S3::Bucket", ids: ["BucketName"] },
   ],
   refs: [
     // ── containment (→ boundary boxes, #779) ──
@@ -86,25 +102,52 @@ export const awsReferenceCatalog: ReferenceCatalog = {
     // intrinsics to bare logical ids (= node ids), so these match by node id; the
     // property names are the CFN template shape (SecurityGroupIds, Cluster, …),
     // which differs from the describe/SDK shape above. No targetKind needed —
-    // logical ids are unique.
-    { from: "AWS::EC2::Subnet", path: "VpcId", relation: "containment", label: "in VPC" },
-    { from: "AWS::EC2::SecurityGroup", path: "VpcId", relation: "containment", label: "in VPC" },
-    { from: "AWS::EC2::RouteTable", path: "VpcId", relation: "containment", label: "in VPC" },
-    { from: "AWS::EC2::Instance", path: "SubnetId", relation: "containment", label: "in subnet" },
-    { from: "AWS::EC2::Instance", path: "SecurityGroupIds[]", relation: "reference", label: "sg" },
-    { from: "AWS::EC2::NatGateway", path: "SubnetId", relation: "containment", label: "in subnet" },
-    { from: "AWS::EC2::Route", path: "RouteTableId", relation: "reference", label: "in" },
-    { from: "AWS::EC2::Route", path: "GatewayId", relation: "reference", label: "via" },
-    { from: "AWS::EC2::Route", path: "NatGatewayId", relation: "reference", label: "via" },
-    { from: "AWS::ElasticLoadBalancingV2::LoadBalancer", path: "Subnets[]", relation: "containment", label: "in subnet" },
-    { from: "AWS::ElasticLoadBalancingV2::LoadBalancer", path: "SecurityGroups[]", relation: "reference", label: "sg" },
-    { from: "AWS::ElasticLoadBalancingV2::TargetGroup", path: "VpcId", relation: "containment", label: "in VPC" },
-    { from: "AWS::ElasticLoadBalancingV2::Listener", path: "LoadBalancerArn", relation: "reference", label: "on" },
-    { from: "AWS::ElasticLoadBalancingV2::Listener", path: "DefaultActions[].TargetGroupArn", relation: "reference", label: "forwards to" },
-    { from: "AWS::ECS::Service", path: "Cluster", relation: "reference", label: "in cluster" },
-    { from: "AWS::ECS::Service", path: "TaskDefinition", relation: "reference", label: "runs" },
-    { from: "AWS::ECS::Service", path: "LoadBalancers[].TargetGroupArn", relation: "reference", label: "registered in" },
-    { from: "AWS::RDS::DBInstance", path: "DBSubnetGroupName", relation: "reference", label: "subnets" },
-    { from: "AWS::RDS::DBInstance", path: "VPCSecurityGroups[]", relation: "reference", label: "sg" },
+    // logical ids are unique. Over an index (#4522) the same paths hold physical
+    // values, some of them names, so each carries the `indexedTargetKind` it
+    // takes there (ruled on INTENTIUS/behold#1023 Q4).
+    { from: "AWS::EC2::Subnet", path: "VpcId", indexedTargetKind: "AWS::EC2::VPC", relation: "containment", label: "in VPC" },
+    { from: "AWS::EC2::SecurityGroup", path: "VpcId", indexedTargetKind: "AWS::EC2::VPC", relation: "containment", label: "in VPC" },
+    { from: "AWS::EC2::RouteTable", path: "VpcId", indexedTargetKind: "AWS::EC2::VPC", relation: "containment", label: "in VPC" },
+    { from: "AWS::EC2::Instance", path: "SubnetId", indexedTargetKind: "AWS::EC2::Subnet", relation: "containment", label: "in subnet" },
+    { from: "AWS::EC2::Instance", path: "SecurityGroupIds[]", indexedTargetKind: "AWS::EC2::SecurityGroup", relation: "reference", label: "sg" },
+    { from: "AWS::EC2::NatGateway", path: "SubnetId", indexedTargetKind: "AWS::EC2::Subnet", relation: "containment", label: "in subnet" },
+    { from: "AWS::EC2::Route", path: "RouteTableId", indexedTargetKind: "AWS::EC2::RouteTable", relation: "reference", label: "in" },
+    { from: "AWS::EC2::Route", path: "GatewayId", indexedTargetKind: "AWS::EC2::InternetGateway", relation: "reference", label: "via" },
+    { from: "AWS::EC2::Route", path: "NatGatewayId", indexedTargetKind: "AWS::EC2::NatGateway", relation: "reference", label: "via" },
+    { from: "AWS::ElasticLoadBalancingV2::LoadBalancer", path: "Subnets[]", indexedTargetKind: "AWS::EC2::Subnet", relation: "containment", label: "in subnet" },
+    { from: "AWS::ElasticLoadBalancingV2::LoadBalancer", path: "SecurityGroups[]", indexedTargetKind: "AWS::EC2::SecurityGroup", relation: "reference", label: "sg" },
+    { from: "AWS::ElasticLoadBalancingV2::TargetGroup", path: "VpcId", indexedTargetKind: "AWS::EC2::VPC", relation: "containment", label: "in VPC" },
+    { from: "AWS::ElasticLoadBalancingV2::Listener", path: "LoadBalancerArn", indexedTargetKind: "AWS::ElasticLoadBalancingV2::LoadBalancer", relation: "reference", label: "on" },
+    { from: "AWS::ElasticLoadBalancingV2::Listener", path: "DefaultActions[].TargetGroupArn", indexedTargetKind: "AWS::ElasticLoadBalancingV2::TargetGroup", relation: "reference", label: "forwards to" },
+    { from: "AWS::ECS::Service", path: "Cluster", indexedTargetKind: "AWS::ECS::Cluster", relation: "reference", label: "in cluster" },
+    { from: "AWS::ECS::Service", path: "TaskDefinition", indexedTargetKind: "AWS::ECS::TaskDefinition", relation: "reference", label: "runs" },
+    { from: "AWS::ECS::Service", path: "LoadBalancers[].TargetGroupArn", indexedTargetKind: "AWS::ElasticLoadBalancingV2::TargetGroup", relation: "reference", label: "registered in" },
+    { from: "AWS::RDS::DBInstance", path: "DBSubnetGroupName", indexedTargetKind: "AWS::RDS::DBSubnetGroup", relation: "reference", label: "subnets" },
+    { from: "AWS::RDS::DBInstance", path: "VPCSecurityGroups[]", indexedTargetKind: "AWS::EC2::SecurityGroup", relation: "reference", label: "sg" },
+
+    // ── CloudFormation property shape, as Cloud Control returns it (#4522) ──
+    // The rules INTENTIUS/behold#1023's count found missing for an index of
+    // example-three-cloud. Targeted, so they hold over physical values and over
+    // logical ids alike.
+    { from: "AWS::EC2::VPCGatewayAttachment", path: "VpcId", targetKind: "AWS::EC2::VPC", relation: "reference", label: "attaches to" },
+    { from: "AWS::EC2::VPCGatewayAttachment", path: "InternetGatewayId", targetKind: "AWS::EC2::InternetGateway", relation: "reference", label: "attaches" },
+    { from: "AWS::EC2::NatGateway", path: "AllocationId", targetKind: "AWS::EC2::EIP", relation: "reference", label: "address" },
+    { from: "AWS::ECS::TaskDefinition", path: "ExecutionRoleArn", targetKind: "AWS::IAM::Role", relation: "reference", label: "execution role" },
+    { from: "AWS::ECS::TaskDefinition", path: "TaskRoleArn", targetKind: "AWS::IAM::Role", relation: "reference", label: "task role" },
+    { from: "AWS::ECS::TaskDefinition", path: "ContainerDefinitions[].LogConfiguration.Options.awslogs-group", targetKind: "AWS::Logs::LogGroup", relation: "reference", label: "logs to" },
+    { from: "AWS::EC2::SecurityGroup", path: "SecurityGroupIngress[].SourceSecurityGroupId", targetKind: "AWS::EC2::SecurityGroup", relation: "reference", label: "allows" },
+    { from: "AWS::Route53::RecordSet", path: "HostedZoneId", targetKind: "AWS::Route53::HostedZone", relation: "containment", label: "in zone" },
+    // A CNAME to another record of the estate (#4535: example-three-cloud's
+    // latency record for gcp points at gcp.three-cloud.example.). Optional,
+    // since most record values are addresses or hostnames outside it.
+    { from: "AWS::Route53::RecordSet", path: "ResourceRecords[]", targetKind: "AWS::Route53::RecordSet", relation: "reference", label: "aliases", optional: true },
+  ],
+  // Tags that name a cloud id in their key or value (behold#1023 Q5). Used
+  // over indexed nodes only. No rule matches equal tag values in general.
+  tagRefs: [
+    { key: "aws:cloudformation:stack-id", read: "value", targetKind: "AWS::CloudFormation::Stack", label: "in stack" },
+    { key: "aws:eks:cluster-name", read: "value", targetKind: "AWS::EKS::Cluster", label: "cluster" },
+    { key: "eks:cluster-name", read: "value", targetKind: "AWS::EKS::Cluster", label: "cluster" },
+    { key: "kubernetes.io/cluster/", read: "key-suffix", targetKind: "AWS::EKS::Cluster", label: "cluster" },
   ],
 };

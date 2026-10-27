@@ -10,7 +10,7 @@
 
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { clearMemberLedgerCache, memberLedgerPrefix, MemberLedgerError, resolveMemberLedger } from "./member-ledger";
@@ -192,19 +192,37 @@ describe("every lifecycle store writes under the member path (#2538)", () => {
     const web = join(root, "services/web");
     await writeSnapshot("prod", "k8s", '{"from":"api"}', { cwd: api });
     await writeSnapshot("prod", "k8s", '{"from":"web"}', { cwd: web });
-    await writeObservationBaseline(emptyBaseline("prod"), { cwd: api });
+    // Written from a subdirectory of the member: the baseline still lands under the member.
+    await writeObservationBaseline(emptyBaseline("prod"), { cwd: join(api, "src") });
 
     const files = branchFiles(root);
-    expect(files).toContain("_members/api/prod/k8s.json");
-    expect(files).toContain("_members/web/prod/k8s.json");
-    expect(files.filter((f) => f.startsWith("_members/api/prod/") && f !== "_members/api/prod/k8s.json")).toHaveLength(1);
-    expect(files.every((f) => f.startsWith("_members/"))).toBe(true);
+    expect(files).toEqual(["_members/api/prod/k8s.json", "_members/web/prod/k8s.json"]);
     expect([...(await readEnvironmentSnapshots("prod", { cwd: web })).values()]).toEqual(['{"from":"web"}']);
+    // The baseline's home is a file under the project since #4519
+    // (.chant/observation-baseline/<env>.json), and the project is the member's directory.
+    expect(existsSync(join(api, ".chant/observation-baseline/prod.json"))).toBe(true);
+    expect(existsSync(join(api, "src/.chant"))).toBe(false);
+    expect(existsSync(join(web, ".chant"))).toBe(false);
+    expect(existsSync(join(root, ".chant"))).toBe(false);
     expect(await readObservationBaseline("prod", { cwd: api })).toMatchObject({ environment: "prod" });
     expect(await readObservationBaseline("prod", { cwd: web })).toBeNull();
+    expect(await readObservationBaseline("prod", { cwd: root })).toBeNull();
     // A member's history lists only the commits that touched its ledger.
     expect(await listSnapshots({ cwd: web })).toHaveLength(1);
-    expect(await listSnapshots({ cwd: root })).toHaveLength(3);
+    expect(await listSnapshots({ cwd: root })).toHaveLength(2);
+  });
+
+  test("an observation baseline on the git-ref home is under the member path", async () => {
+    const root = workspace();
+    const api = join(root, "services/api");
+    const web = join(root, "services/web");
+    const store = { store: "git-ref" as const };
+    await writeObservationBaseline(emptyBaseline("prod"), { cwd: api, store });
+    const onRef = git(["ls-tree", "-r", "--name-only", "refs/chant/observation-baseline"], root).split("\n").filter(Boolean);
+    expect(onRef).toEqual(["_members/api/prod.json"]);
+    expect(await readObservationBaseline("prod", { cwd: api, store })).toMatchObject({ environment: "prod" });
+    expect(await readObservationBaseline("prod", { cwd: web, store })).toBeNull();
+    expect(await readObservationBaseline("prod", { cwd: root, store })).toBeNull();
   });
 
   test("runs and converge records", async () => {

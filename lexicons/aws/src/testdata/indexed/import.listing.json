@@ -1,0 +1,126 @@
+{
+  "listing": "v1",
+  "source": { "name": "behold-lister", "version": "0.0.0-fixture" },
+  "scope": {
+    "substrate": "aws",
+    "scopeId": "000000000000",
+    "locations": ["us-east-1"],
+    "types": "*"
+  },
+  "startedAt": "2026-10-26T10:00:00.000Z",
+  "completedAt": "2026-10-26T10:00:04.000Z",
+  "resources": [
+    {
+      "listedType": "AWS::EC2::VPC",
+      "location": "us-east-1",
+      "nativeId": "vpc-0imp",
+      "cloudIds": [{ "kind": "arn", "value": "arn:aws:ec2:us-east-1:000000000000:vpc/vpc-0imp" }, { "kind": "import-id", "value": "vpc-0imp" }],
+      "tags": { "Name": "shop", "aws:cloudformation:stack-name": "old-stack" },
+      "properties": {
+        "VpcId": "vpc-0imp",
+        "CidrBlock": "10.40.0.0/16",
+        "EnableDnsSupport": true,
+        "Tags": [{ "Key": "Name", "Value": "shop" }, { "Key": "aws:cloudformation:stack-name", "Value": "old-stack" }]
+      },
+      "observedAt": "2026-10-26T10:00:01.000Z"
+    },
+    {
+      "listedType": "AWS::EC2::Subnet",
+      "location": "us-east-1",
+      "nativeId": "subnet-0imp",
+      "cloudIds": [{ "kind": "arn", "value": "arn:aws:ec2:us-east-1:000000000000:subnet/subnet-0imp" }, { "kind": "import-id", "value": "subnet-0imp" }],
+      "tags": { "Name": "shop-a" },
+      "properties": {
+        "SubnetId": "subnet-0imp",
+        "VpcId": "vpc-0imp",
+        "CidrBlock": "10.40.1.0/24",
+        "AvailabilityZone": "us-east-1a",
+        "Tags": [{ "Key": "Name", "Value": "shop-a" }]
+      },
+      "observedAt": "2026-10-26T10:00:01.000Z"
+    },
+    {
+      "listedType": "AWS::EC2::SecurityGroup",
+      "location": "us-east-1",
+      "nativeId": "sg-0imp",
+      "cloudIds": [{ "kind": "arn", "value": "arn:aws:ec2:us-east-1:000000000000:security-group/sg-0imp" }, { "kind": "import-id", "value": "sg-0imp" }],
+      "tags": {},
+      "properties": {
+        "GroupId": "sg-0imp",
+        "GroupDescription": "shop web",
+        "VpcId": "vpc-0imp"
+      },
+      "observedAt": "2026-10-26T10:00:01.000Z"
+    },
+    {
+      "listedType": "AWS::IAM::Role",
+      "location": "global",
+      "nativeId": "imp-task-role",
+      "cloudIds": [{ "kind": "arn", "value": "arn:aws:iam::000000000000:role/imp-task-role" }, { "kind": "import-id", "value": "imp-task-role" }],
+      "tags": {},
+      "properties": {
+        "RoleName": "imp-task-role",
+        "Arn": "arn:aws:iam::000000000000:role/imp-task-role",
+        "RoleId": "AROAIMPTASKROLE00000",
+        "AssumeRolePolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Principal": { "Service": "ecs-tasks.amazonaws.com" }, "Action": "sts:AssumeRole" }] }
+      },
+      "observedAt": "2026-10-26T10:00:02.000Z"
+    },
+    {
+      "listedType": "AWS::ECS::TaskDefinition",
+      "location": "us-east-1",
+      "nativeId": "arn:aws:ecs:us-east-1:000000000000:task-definition/imp:1",
+      "cloudIds": [{ "kind": "arn", "value": "arn:aws:ecs:us-east-1:000000000000:task-definition/imp:1" }],
+      "tags": {},
+      "properties": {
+        "TaskDefinitionArn": "arn:aws:ecs:us-east-1:000000000000:task-definition/imp:1",
+        "Family": "imp",
+        "Cpu": "256",
+        "Memory": "512",
+        "TaskRoleArn": "arn:aws:iam::000000000000:role/imp-task-role"
+      },
+      "observedAt": "2026-10-26T10:00:02.000Z"
+    },
+    {
+      "listedType": "AWS::RDS::DBInstance",
+      "location": "us-east-1",
+      "nativeId": "imp-db",
+      "cloudIds": [{ "kind": "arn", "value": "arn:aws:rds:us-east-1:000000000000:db:imp-db" }, { "kind": "import-id", "value": "imp-db" }],
+      "tags": {},
+      "properties": {
+        "DBInstanceIdentifier": "imp-db",
+        "DBInstanceArn": "arn:aws:rds:us-east-1:000000000000:db:imp-db",
+        "DBInstanceClass": "db.t3.micro",
+        "Engine": "postgres",
+        "MasterUsername": "app",
+        "MasterUserPassword": "[REDACTED]",
+        "Endpoint": { "Address": "imp-db.local", "Port": "5432" }
+      },
+      "observedAt": "2026-10-26T10:00:03.000Z"
+    },
+    {
+      "listedType": "AWS::S3::Bucket",
+      "location": "us-east-1",
+      "nativeId": "imp-assets",
+      "cloudIds": [{ "kind": "arn", "value": "arn:aws:s3:::imp-assets" }, { "kind": "import-id", "value": "imp-assets" }],
+      "tags": { "team": "shop" },
+      "properties": {
+        "BucketName": "imp-assets",
+        "Arn": "arn:aws:s3:::imp-assets",
+        "Tags": [{ "Key": "team", "Value": "shop" }]
+      },
+      "observedAt": "2026-10-26T10:00:03.000Z"
+    },
+    {
+      "listedType": "AWS::Example::NotGenerated",
+      "location": "us-east-1",
+      "nativeId": "x-1",
+      "cloudIds": [],
+      "tags": {},
+      "properties": { "Name": "x-1" },
+      "observedAt": "2026-10-26T10:00:03.000Z"
+    }
+  ],
+  "coverage": [{ "listedType": "*", "location": "*", "verdict": "listed" }],
+  "notes": []
+}

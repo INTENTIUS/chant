@@ -8,6 +8,7 @@ diataxis: reference
 
 ```
 chant search "<query>" [--live | --snapshot <ref>] [--env <name>] [flags]
+chant search "<query>" --index <scope key>[@<version>] [flags]
 chant search ["<query>"] --count-by <kind | module | attr:<name>> [flags]
 ```
 
@@ -55,6 +56,7 @@ together.
 | `attr:<name>` | attribute `<name>` is present |
 | `attr:<name>=<val>` | attribute `<name>` equals/contains `<val>` |
 | `tag:<key>=<val>` | a `Tags` entry with `Key=<key>` and `Value` containing `<val>` |
+| `id:<cloud id>` | the node's observed physical id, or one of its engine facts' cloud ids, is exactly `<cloud id>` (`id:i-0abc123`, `id:arn:aws:s3:::my-bucket`). See [Cloud ids](#cloud-ids) |
 | `->kind:X`, `->attr:…`, `->tag:…` | node has an edge **to** a node matching the right side |
 | `<-kind:X`, `<-attr:…`, `<-tag:…` | node has an edge **from** a node matching the right side |
 | `->*X`, `<-*X` | the far end matching `X` is any number of hops away, one or more |
@@ -236,6 +238,7 @@ with its own path:
 | `--live` | `boolean` | `false` | Query live state overlaid on the declared graph (requires `--env`) |
 | `--snapshot` | `string` | — | Answer from a recorded snapshot instead of reading the estate now (`latest`; requires `--env`; mutually exclusive with `--live`) |
 | `--at` | `string` | — | The same as `--snapshot`, kept for compatibility. Elsewhere in the [read contract](/chant/reference/workspace-read-contract/) `--at` is a git revision, so [`chant workspace search`](/chant/cli/workspace-search/) takes only `--snapshot` |
+| `--index` | `string` | — | Answer from an index version in the store instead of reading the estate: `<scope key>`, `<scope key>@latest` or `<scope key>@<version>` (see [Index mode](#index-mode)). Mutually exclusive with `--live`, `--snapshot` and `--ambient` |
 | `--env` | `string` | — | Environment to observe (must be in `chant.config` `environments` when declared) |
 | `--src` | `string` | config `sourceDir` or `.` | Source directory to discover/build |
 | `--show` | `string` | — | Comma-separated attribute names to append to each result row |
@@ -455,6 +458,7 @@ exits 1. The code is one of the read contract's
 | `environment-unknown` | `--env` names an environment the config does not declare |
 | `snapshot-unavailable` | no snapshot is recorded for the environment, or the ref is not one replay takes |
 | `build-failed` | the build of a `--live` read failed, or a build root failed to render |
+| `index-unavailable` | `--index` names no version the store holds under that scope key, or a version stamped for another scope or version |
 
 ```json
 {
@@ -465,7 +469,7 @@ exits 1. The code is one of the read contract's
   "error": {
     "code": "query-invalid",
     "message": "\"effectiveIngress:tcp:22\" is not a term — there is no \"effectiveIngress:\" prefix",
-    "hint": "for an attribute, say attr:effectiveIngress=tcp:22; the prefixes are kind:, attr:, tag:, and ->/<- for edges"
+    "hint": "for an attribute, say attr:effectiveIngress=tcp:22; the prefixes are kind:, attr:, tag:, id:, and ->/<- for edges"
   }
 }
 ```
@@ -503,6 +507,101 @@ topology are not advertised in that case, since nothing was read to compute
 them. The rows printed are what the source declares, labelled as such; answer
 from a recorded snapshot with `--at latest` or drop `--live` for a declared-only
 query.
+
+## Ownership
+
+On a live or recorded answer (`--live`, `--at`), each node the read observed
+carries `_ownership` beside `_status` ([#4534](https://github.com/INTENTIUS/chant/issues/4534)).
+It is chant's own verdict from the resource's marker, the tags or labels chant
+stamps ([`ownership`](/chant/configuration/config-file/#ownership)): `owned` when
+the resource carries chant's marker, `foreign` when the read found none. A node with no
+`_ownership` is unknown: the lexicon has no marker channel on that read, or
+nobody observed the node. It is an attribute like any other, so the usual terms
+read it:
+
+```bash
+# observed resources chant's marker does not claim
+chant search --live --env prod "attr:_ownership=foreign"
+
+# the verdict beside each row, and a count by it
+chant search --live --env prod "kind:aws_s3_bucket" --show _ownership
+chant search --live --env prod "" --count-by attr:_ownership
+```
+
+On a choudoufu live root the verdict comes from choudoufu's marker sweep:
+a bound resource is `owned` and one another estate's marker holds is
+`foreign`. The engine's own verdict (`bound`, `unowned`, `pending`, `foreign`)
+is in the node's engine facts and is never read by a search term. A pulumi
+member's nodes have no `_ownership`, since chant reads plunge's records and not
+its markers. A live read selects owned resources only, so on Kubernetes an
+object with no chant label does not reach the answer at all.
+
+## Cloud ids
+
+`id:<cloud id>` finds a resource from an id you hold, an ARN from an alert or an
+instance id from a log line ([#4534](https://github.com/INTENTIUS/chant/issues/4534)).
+It reads the node's observed `physicalId`, and the `cloudIds` of its engine facts
+(a choudoufu or plunge node, or an indexed one). The match is exact, case
+included, and the whole rest of the term is the id, so an ARN's colons need no
+quoting. A bare word reads neither field. A declared-only search has no physical
+ids, so use it with `--live`, `--at` or an index.
+
+```bash
+chant search --live --env prod "id:i-0abc123"
+chant search --at latest --env prod "id:arn:aws:s3:::my-bucket" --show _ownership
+```
+
+## Index mode
+
+`--index <ref>` answers from an index version: a stamped, read-only graph of
+observed resources that `behold index` wrote to the project's
+[snapshot store](/chant/cli/lifecycle/#where-snapshots-are-kept). Nothing is
+read from the cloud.
+
+The ref starts with the index's `stamp.scopeKey`, for example
+`cloud/aws/000000000000/0123456789ab`. Add `@latest` (the default) or
+`@<version>` to pick a version. A version is a name the store lists, such as
+`20261026T090000Z-0123456789ab`, and the `.json` suffix is optional. A full
+store path ending in `/<version>.json` works too.
+
+With a project, the rows are the declared graph. This is the canvas `--live`
+uses, per stack when `chant.config` declares stacks. Each declared row is
+joined to the index through its lexicon's index match. For aws the match is
+the CloudFormation `primaryIdentifier` the declaration spells. It is looked
+for in the region of the entity's stack, and at `global` for the global types
+such as IAM roles. Every row gets one verdict, and a row that did not bind
+prints its verdict where the physical id would go:
+
+| Verdict | Printed | Meaning |
+|---|---|---|
+| `bound` | the native id | one indexed resource carries the identity; its observed attributes are on the row |
+| `absent` | `(absent)` | the index listed that type and location and holds no such resource |
+| `not-observed` | `(not observed: <reason>)` | the index did not look. `filtered` is a type or location outside its scope or tag filter, or an index of another substrate. `not-reached` means nothing covered it. `unsupported-kind` means the lexicon has no index match |
+| `no-binding` | `(no-binding)` | the declaration spells no identity to match by (a server-assigned id such as a queue URL, or a `Ref`), or it names no region and nothing matched |
+| `ambiguous` | `(ambiguous: N candidates)` | two or more indexed resources carry the identity, and none is bound |
+
+An indexed resource that no declared row binds is not a row, just as an
+undeclared resource is not a row of a `--live` answer. Only the aws lexicon
+has an index match today. Rows of the other lexicons read
+`not observed: unsupported-kind`.
+
+With no project (no lexicon in a `chant.config` or in source), the index is
+the whole graph. Each indexed resource is a row with its path-style id and its
+native id. The query grammar applies as it does to a declared graph, edge
+terms walk the index's derived edges, and `tag:` reads each resource's tags.
+
+The provenance line names the version and when it was read:
+
+```
+— observed from index cloud/aws/000000000000/0123456789ab@20261026T090000Z-0123456789ab taken 2026-10-26T09:00:00.000Z · bound 2/5 · absent 1 · no-binding 2
+— index only, no project · cloud/aws/000000000000/0123456789ab@20261026T090000Z-0123456789ab taken 2026-10-26T09:00:00.000Z by behold-lister 0.4.0 · 12 rows
+```
+
+Under `--json`, `source.kind` is `index`, and `source` carries the ref, the
+scope key, the version, `observedAt`, the digest, `by` and `project`. Each
+declared match carries a `join` object with its `verdict` and `detail`. A
+bound row's `join` adds `node` and `nativeId`. A row that is not observed adds
+`reason`, and an ambiguous one adds `candidates`.
 
 ## Query-scoped drift
 
@@ -554,6 +653,10 @@ chant search "tag:Environment=prod"
 chant search "kind:EC2::Instance attr:internetFacing=true" --live --env dev
 chant search "kind:Instance ->attr:MapPublicIpOnLaunch=true" --live --env dev --explain
 
+# from an index version, with or without a project
+chant search "kind:S3::Bucket" --index cloud/aws/000000000000/0123456789ab
+chant search "tag:team=data" --index cloud/aws/000000000000/0123456789ab@20261026T090000Z-0123456789ab --json
+
 # how many of each
 chant search --count-by kind
 chant search "kind:Terraform::Resource" --count-by module
@@ -569,4 +672,4 @@ chant search "kind:EC2::Instance" --env prod --live --check-snapshot --fail-on-d
 | Code | Meaning |
 |------|---------|
 | 0 | Query ran (including zero matches — prints `(no matches)`), including a scoped check that found drift without `--fail-on-drift` |
-| 1 | Missing query (without `--count-by`), a query the grammar refuses, a `--count-by` value that is not a grouping, missing/unknown `--env`, build failure in `--live` mode, a build root (`terraform.roots`, `k8s.kustomize.roots`) that failed to render, a `--live`/`--check-live` read that failed for at least one lexicon (rows are printed, marked unobserved), `--check-live`/`--check-snapshot` used without its required flag, `--fail-on-drift` used without either, or `--fail-on-drift` with drift found |
+| 1 | An `--index` ref that names no readable version, missing query (without `--count-by`), a query the grammar refuses, a `--count-by` value that is not a grouping, missing/unknown `--env`, build failure in `--live` mode, a build root (`terraform.roots`, `k8s.kustomize.roots`) that failed to render, a `--live`/`--check-live` read that failed for at least one lexicon (rows are printed, marked unobserved), `--check-live`/`--check-snapshot` used without its required flag, `--fail-on-drift` used without either, or `--fail-on-drift` with drift found |

@@ -493,6 +493,48 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "`awsApply` writes the change set the plan produced, over the same transport the read client uses.",
   },
   {
+    file: "packages/core/src/cloud-lister/transport.ts",
+    primitives: ["node:http", "node:https"],
+    phase: "apply",
+    destination: "AWS Cloud Control, Azure Resource Graph, GCP Cloud Asset Inventory or a Kubernetes API server, or the `--endpoint` a run names",
+    why: "`chant index` (#4532) lists one scope through its inventory API. The transport sends only the five allowlisted reads, and pins every call to the run's endpoint when it names one.",
+  },
+  {
+    file: "packages/core/src/lifecycle/snapshot-store-s3.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the bucket the `s3` index store names: the configured `endpoint` (`snapshots.endpoint` or `CHANT_SNAPSHOT_S3_ENDPOINT`, an emulator or MinIO) when there is one, else `s3.<region>.amazonaws.com`",
+    why: "Only a project whose `snapshots` store is `s3` (#4519) reaches it, when a snapshot or an index version is written, read or listed. Requests are signed with SigV4 by hand, with no AWS SDK. Against an endpoint the store refuses unless credentials are explicit (`snapshots.credentials` or `CHANT_SNAPSHOT_S3_*`) and never reads the default AWS chain, so an emulator run cannot sign with a real account's keys. The default `git-ref` store and the `local` and `none` stores open no connection.",
+  },
+  {
+    file: "packages/core/src/lifecycle/snapshot-store.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the `s3` store's bucket, through `packages/core/src/lifecycle/snapshot-store-s3.ts`",
+    why: "Opens the store a project chooses (#4519) and hands an injected `fetch` to the s3 medium; it opens no connection of its own. The `git-ref` store's `git fetch` and `git push` of `refs/chant/snapshots` are child processes, not in-process egress.",
+  },
+  {
+    file: "lexicons/terraform/src/report.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the address `chant terraform report --to <url>` names, such as a demo's emulator bucket (`http://floci:4566/<bucket>/<prefix>`)",
+    why: "`httpStore` sends unsigned `GET` and `PUT` of a run report, its change set and the index rows under that base. It signs nothing, so it cannot write to AWS S3 or any store that asks for credentials. `--out <dir>` writes files instead and reaches nothing.",
+  },
+  {
+    file: "lexicons/terraform/src/state/object-store.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "a root's state backend: an S3-compatible bucket and STS, Google Cloud Storage, Google STS and IAM Credentials, or Azure Blob Storage and Entra ID, at the endpoints the backend configuration names",
+    why: "`defaultFetch` is the transport the s3, gcs and azurerm state clients (`state/s3.ts`, `state/gcs.ts`, `state/azure-blob.ts`) use when nothing is injected. A composed `terraform-apply` group (#4444, #4447) reaches it to lock, read and write each root's state; a local backend never does.",
+  },
+  {
+    file: "lexicons/terraform/src/state/root-states.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "each root's state backend, through `lexicons/terraform/src/state/object-store.ts`",
+    why: "`RootStates` takes every lock, pulls each state, writes it back and keeps an unwritten one beside it for a composed run, handing an injected `fetch` to the state stores; it opens no connection of its own.",
+  },
+  {
     file: "lexicons/aws/src/receipt-store.ts",
     primitives: ["fetch"],
     phase: "apply",
@@ -1162,11 +1204,64 @@ function blankLiterals(source: string): string {
 }
 
 /**
- * The global `fetch` used as a VALUE — `fetch(url)`, `?? fetch`, `= fetch`.
+ * The global `fetch` used as a VALUE: `fetch(url)`, `?? fetch`, `= fetch`.
  * `typeof fetch` is excluded: a parameter typed as a fetch is indirection, and
  * the value still comes from whoever called it.
+ *
+ * So is `fetch` as the name of something being declared: a method
+ * (`async fetch() {}`, the git-backed snapshot stores' `fetch()` that runs
+ * `git fetch`), an object literal's key (`fetch: async () => {}`), a class
+ * field, a parameter or a binding. Those name a member, not the global; the
+ * regex this replaced counted them and listed the snapshot stores and a test
+ * harness's fake as network callers. Reading the syntax tree tells the two
+ * apart where a regex over the text cannot.
+ *
+ * An options type's `fetch?: X` still counts. That is how a module says it
+ * takes an injectable fetch and hands it on, and the catalogue keeps a row
+ * for each such pass-through (`gate-resume.ts`, `fly-release.ts`) naming the
+ * module that dials.
  */
-const GLOBAL_FETCH = /(?<!typeof\s)(?<![.\w$])fetch(?![\w$])/;
+function usesGlobalFetch(source: string): boolean {
+  const file = ts.createSourceFile("scan.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isIdentifier(node) && node.text === "fetch" && isValueReference(node)) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return found;
+}
+
+function isValueReference(id: ts.Identifier): boolean {
+  const parent = id.parent;
+  // `globalThis.fetch` is the global; `this.medium.fetch` and `opts.fetch` are not.
+  if (ts.isPropertyAccessExpression(parent) && parent.name === id) {
+    return ts.isIdentifier(parent.expression) && parent.expression.text === "globalThis";
+  }
+  if (ts.isQualifiedName(parent) || ts.isTypeQueryNode(parent) || ts.isTypeOfExpression(parent)) return false;
+  if (ts.isBindingElement(parent) && (parent.name === id || parent.propertyName === id)) return false;
+  if (
+    (ts.isPropertyAssignment(parent) ||
+      ts.isPropertyDeclaration(parent) ||
+      ts.isMethodDeclaration(parent) ||
+      ts.isMethodSignature(parent) ||
+      ts.isGetAccessorDeclaration(parent) ||
+      ts.isSetAccessorDeclaration(parent) ||
+      ts.isParameter(parent) ||
+      ts.isVariableDeclaration(parent) ||
+      ts.isFunctionDeclaration(parent) ||
+      ts.isImportSpecifier(parent) ||
+      ts.isEnumMember(parent)) &&
+    parent.name === id
+  ) {
+    return false;
+  }
+  return true;
+}
 
 const IMPORT_STATEMENT = /import\s+([\s\S]*?)\s+from\s*["']([^"']+)["']|import\s*["']([^"']+)["']/g;
 
@@ -1201,7 +1296,7 @@ export function egressPrimitivesIn(source: string): EgressPrimitive[] {
   const code = blankLiterals(source);
   const withStrings = stripComments(source);
 
-  if (GLOBAL_FETCH.test(code)) found.add("fetch");
+  if (usesGlobalFetch(source)) found.add("fetch");
 
   for (const match of withStrings.matchAll(DYNAMIC_IMPORT)) {
     if (DATABASE_CLIENT_PACKAGES.has(match[1]!)) found.add("database-client-package");

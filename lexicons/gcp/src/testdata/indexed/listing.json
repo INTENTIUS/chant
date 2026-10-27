@@ -1,0 +1,54 @@
+{
+  "listing": "v1",
+  "source": { "name": "behold-lister", "version": "0.0.0-fixture" },
+  "scope": { "substrate": "gcp", "scopeId": "plc-corpus", "locations": "*", "types": "*" },
+  "startedAt": "2026-10-26T09:00:00.000Z",
+  "completedAt": "2026-10-26T09:00:02.000Z",
+  "resources": [
+    {
+      "listedType": "storage.googleapis.com/Bucket",
+      "location": "us",
+      "nativeId": "//storage.googleapis.com/projects/_/buckets/shop-assets",
+      "cloudIds": [
+        { "kind": "provider-id", "value": "//storage.googleapis.com/projects/_/buckets/shop-assets" },
+        { "kind": "self-link", "value": "https://www.googleapis.com/storage/v1/b/shop-assets" }
+      ],
+      "tags": { "managed-by": "chant", "chant-stack": "shop" },
+      "properties": {
+        "name": "//storage.googleapis.com/projects/_/buckets/shop-assets",
+        "assetType": "storage.googleapis.com/Bucket",
+        "project": "projects/123456789",
+        "displayName": "shop-assets",
+        "location": "us",
+        "additionalAttributes": { "selfLink": "https://www.googleapis.com/storage/v1/b/shop-assets" }
+      },
+      "observedAt": "2026-10-26T09:00:01.000Z"
+    },
+    {
+      "listedType": "sqladmin.googleapis.com/Instance",
+      "location": "us-central1",
+      "nativeId": "//cloudsql.googleapis.com/projects/plc-corpus/instances/orders",
+      "cloudIds": [{ "kind": "provider-id", "value": "//cloudsql.googleapis.com/projects/plc-corpus/instances/orders" }],
+      "tags": {},
+      "properties": {
+        "name": "//cloudsql.googleapis.com/projects/plc-corpus/instances/orders",
+        "assetType": "sqladmin.googleapis.com/Instance",
+        "displayName": "orders",
+        "location": "us-central1",
+        "additionalAttributes": { "rootPassword": "<masked>" }
+      },
+      "observedAt": "2026-10-26T09:00:01.000Z"
+    },
+    {
+      "listedType": "cloudbilling.googleapis.com/ProjectBillingInfo",
+      "location": "global",
+      "nativeId": "//cloudbilling.googleapis.com/projects/plc-corpus/billingInfo",
+      "cloudIds": [{ "kind": "provider-id", "value": "//cloudbilling.googleapis.com/projects/plc-corpus/billingInfo" }],
+      "tags": {},
+      "properties": { "name": "//cloudbilling.googleapis.com/projects/plc-corpus/billingInfo", "assetType": "cloudbilling.googleapis.com/ProjectBillingInfo" },
+      "observedAt": "2026-10-26T09:00:01.000Z"
+    }
+  ],
+  "coverage": [{ "listedType": "*", "location": "*", "verdict": "listed" }],
+  "notes": []
+}

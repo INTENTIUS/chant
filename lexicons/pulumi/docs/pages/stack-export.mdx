@@ -1,0 +1,70 @@
+---
+title: The stack export
+description: The checked-in stack-export.json a Pulumi member's graph is read from, and the build checks PUL001 to PUL015 that read it
+diataxis: reference
+---
+
+A Pulumi member's graph is read from one file, the `pulumi stack export`
+checked in beside `Pulumi.yaml` as `stack-export.json`. chant never runs the
+program or `pulumi` to build the graph, so the file is everything the graph
+knows about the member, and an export that is stale or damaged gives a graph
+that is wrong in the same way.
+
+## Taking it
+
+In the member's directory, with the stack selected:
+
+```bash
+pulumi stack export --file stack-export.json
+```
+
+Take it again after each `pulumi up` and commit it. A member on plunge uses
+`plunge stack export` the same way. Never pass `--show-secrets`: the file is
+committed, and the default export keeps each secret encrypted with the
+stack's secrets provider.
+
+## What chant reads from it
+
+| Field | Used for |
+|---|---|
+| `deployment.resources[].urn` | the node id, `<member>/<type>::<name>`, and the drift read's targets |
+| `deployment.resources[].type` | the node's type; providers and the root stack get no node |
+| `deployment.resources[].parent`, `dependencies` | the node's edges |
+| `deployment.pending_operations` | PUL002 |
+| the root stack's `outputs` | applied outputs, with `CHANT_PULUMI_APPLIED_OUTPUTS=export` |
+
+Inputs and outputs are never copied into the graph.
+
+## The checks
+
+A build that reads a member, through `pulumi.member` in `chant.config.ts` or
+the reader project `chant workspace graph` writes, runs these post-synth
+checks over the export. Each is silent in a build that reads no member.
+`chant audit` shows the same titles and remediations from the lexicon's audit
+catalog.
+
+| Id | Severity | Reports | Fix |
+|---|---|---|---|
+| PUL001 | warning | no `stack-export.json`, or one that is not JSON; the member has no nodes | take the export |
+| PUL002 | warning | `pending_operations` left by an interrupted update | `pulumi refresh`, then export again |
+| PUL003 | error | secret values in plaintext, from `--show-secrets` | export again without it, and rotate the secrets the commit exposed |
+| PUL004 | warning | `delete: true`, the old object of a replacement whose delete failed | `pulumi up` retries the delete; export again |
+| PUL005 | warning | `pendingReplacement: true`, deleted for a replacement that was never created | `pulumi up` finishes it; export again |
+| PUL006 | info | `taint: true`; the next update replaces the resource | expect the replace, or `pulumi state untaint` |
+| PUL007 | warning | `pulumi.member.stack` is not the stack the export's URNs name | export that stack, or fix the config |
+| PUL008 | warning | URNs from more than one stack or project | replace the file with one export |
+| PUL009 | warning | the URNs' project is not `Pulumi.yaml`'s `name` | export this member's own stack |
+| PUL010 | warning | a `parent` or dependency the export does not hold | replace the file with a fresh export |
+| PUL011 | warning | two entries for one URN, neither pending deletion | replace the file with a fresh export |
+| PUL012 | info | `external: true`, resources the program reads and does not manage | none; their drift is another owner's |
+| PUL013 | warning | a `version` other than 3, or none | export with the Pulumi CLI |
+| PUL014 | info | no resources besides the stack and its providers | export again once the stack is deployed |
+| PUL015 | warning | `engine: "pulumi"` on a program with a plunge backend URL | drop `engine`, or set it to `"plunge"` |
+
+PUL003 is the only error, so it is the only one that fails `chant build`. It
+is also the only one `chant audit` lists as merge-worthy and security; the
+others are report-only. PUL101, a lint rule over source rather than the
+export, warns when `pulumi.member.dir` is written as an absolute path.
+
+The `chant-pulumi-stack-export` skill carries this table for an agent, with
+the commands the stack's owner runs for each fix.

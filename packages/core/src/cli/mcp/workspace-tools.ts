@@ -127,7 +127,7 @@ export const workspaceReadTools: ToolDefinition[] = [
     name: "workspace-search",
     description:
       "Answer an estate question over every chant member of the workspace with a few rows instead of the whole graph: chant workspace search <query> --json (search.schema.json, #4374). Returns that document unchanged. Each member is searched under its own chant and alone, ids are <member>/<id> as workspace-graph names the same nodes, and a member that can't be searched is listed with a reason code, never as zero matches. " +
-      "The query is space-separated terms that must all match: a bare word (substring of id, kind or attributes), kind:<substr> (a Terraform resource matches its type, kind:aws_instance), attr:<name>=<value>, tag:<key>=<value>, and edge terms ->X (this node references a node matching X) and <-X (referenced by one); ->*X is any depth, ->{2}X or ->{1,3}X a number of hops, ->[via=attr]X and ->[to=attr]X pick the edge by attribute, and !term negates. " +
+      "The query is space-separated terms that must all match: a bare word (substring of id, kind or attributes), kind:<substr> (a Terraform resource matches its type, kind:aws_instance), attr:<name>=<value>, tag:<key>=<value>, id:<cloud id> (exact, over physical and cloud ids), and edge terms ->X (this node references a node matching X) and <-X (referenced by one); ->*X is any depth, ->{2}X or ->{1,3}X a number of hops, ->[via=attr]X and ->[to=attr]X pick the edge by attribute, and !term negates. " +
       "at is the git revision of the source; snapshot (with env) answers from a recorded lifecycle snapshot such as latest. They are two different times, and at refuses a snapshot ref.",
     inputSchema: {
       type: "object",

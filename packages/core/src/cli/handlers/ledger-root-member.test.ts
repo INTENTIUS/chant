@@ -12,6 +12,7 @@ import { dirname, join } from "node:path";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import type { ActivityFn, ActivityProfile } from "../../op/activity-registry";
 import { OpRunFailure, runOpLocally } from "../../op/local-executor";
+import { withKnownOutputs } from "../../op/activity-failure";
 import type { OpConfig } from "../../op/types";
 import { clearMemberLedgerCache } from "../../lifecycle/member-ledger";
 import { readLedgerTable } from "../../lifecycle/ledger-read";
@@ -103,11 +104,42 @@ describe("chant ledger runs: root_member (#4482)", () => {
     expect(doc.rows.map((r) => [r.op, r.root_member])).toEqual([["plain", null]]);
   });
 
-  it("leaves root_member null, meaning unknown, when Init fails, with the declared root key in labels (#4508)", async () => {
+  it("names root_member on a failed run when Init knew the root before it failed (#4512)", async () => {
     const root = workspace();
     const activities = new Map<string, ActivityFn>([
+      // What terraformInit throws when `terraform init` itself fails: the root resolved first.
       ["terraformInit", async () => {
-        throw new Error("terraform init: backend unreachable");
+        throw withKnownOutputs(new Error("terraform init: backend unreachable"), { dir: join(root, "estates/aws"), rootPath: "estates/aws" });
+      }],
+      ["terraformPlan", async () => ({ changed: true })],
+      ["terraformApply", async () => ({ applied: true })],
+    ]);
+    const failure = await runOpLocally(config, activities, PROFILES, undefined, { ledger: { cwd: join(root, "app") } }).then(
+      () => undefined,
+      (err: unknown) => err,
+    );
+    expect(failure).toBeInstanceOf(OpRunFailure);
+    expect((failure as OpRunFailure).result.status).toBe("fail");
+
+    const doc = await readLedgerTable("runs", () => queryLedgers(root), { where: ["root_member=aws"] });
+    if ("error" in doc) throw new Error(doc.error.message);
+    expect(doc.rows).toHaveLength(1);
+    expect(doc.rows[0]).toMatchObject({
+      member: "app",
+      op: "aws-apply",
+      status: "fail",
+      root_member: "aws",
+      labels: { Apply: "true", TerraformRoot: "aws" },
+      outcomes: { TerraformRootPath: "estates/aws" },
+    });
+  });
+
+  it("leaves root_member null, meaning unknown, when Init fails before it knows the root, with the declared root key in labels (#4508)", async () => {
+    const root = workspace();
+    const activities = new Map<string, ActivityFn>([
+      // Failing before the root resolved (a chant.config.ts that throws), so no known outputs.
+      ["terraformInit", async () => {
+        throw new Error("chant.config.ts: evaluation failed");
       }],
       ["terraformPlan", async () => ({ changed: true })],
       ["terraformApply", async () => ({ applied: true })],

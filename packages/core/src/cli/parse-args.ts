@@ -249,6 +249,11 @@ export function parseArgs(args: string[]): ParsedArgs {
       const v = args[++i];
       if (!v || v.startsWith("-")) throw new Error("--parser-option needs key or key=value: --parser-option acceptLossyV1");
       (result.parserOption ??= []).push(v);
+    } else if (arg === "--tag") {
+      // `chant import --index <ref> --tag key=value` (#4524), repeatable: every tag must match.
+      const v = args[++i];
+      if (!v || v.startsWith("-") || !v.includes("=")) throw new Error("--tag needs key=value: --tag team=payments");
+      (result.selectTags ??= []).push(v);
     } else if (arg === "--type") {
       result.selectType = args[++i];
     } else if (arg === "--name") {
@@ -996,9 +1001,14 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.tags = args[++i];
       if (!result.tags || result.tags.startsWith("-")) throw new Error("--tags needs a tag glob: --tags 'v*'");
     } else if (arg === "--index") {
-      // #2551 — `chant workspace adopt-lineage --index <file>`.
+      // #2551 — `chant workspace adopt-lineage --index <file>`; #4525 — `chant search --index <ref>`;
+      // #4526 — `chant lifecycle diff <env> --index <ref>`.
       result.index = args[++i];
-      if (!result.index || result.index.startsWith("-")) throw new Error("--index needs a hash index file: --index <file>");
+      if (!result.index || result.index.startsWith("-")) throw new Error("--index needs a value: --index <file> for workspace adopt-lineage, --index <scope key>[@<version>] for search and lifecycle diff");
+    } else if (arg === "--adopt-out") {
+      // #4536 — `chant import --index <ref> --adopt-out <file>`: write the adoption file (`adopt: v1`) for what was imported.
+      result.adoptOut = args[++i];
+      if (!result.adoptOut || result.adoptOut.startsWith("-")) throw new Error("--adopt-out needs a file: --adopt-out <file>");
     } else if (arg === "--remove") {
       // #2552 — `chant workspace import --remove` removes the export member instead of writing it again.
       result.remove = true;

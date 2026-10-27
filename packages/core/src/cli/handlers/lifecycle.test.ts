@@ -45,6 +45,27 @@ vi.mock("../../lifecycle/git", () => ({
   readBlobFromPath: (...args: unknown[]) => readBlobFromPathMock(...args),
   writeBlobToPath: (...args: unknown[]) => writeBlobToPathMock(...args),
 }));
+// Snapshots are read through the index store (#4519); this one hands each read to the mocks above.
+vi.mock("../../lifecycle/snapshot-store", async () => {
+  const { fakeSnapshotStore } = await import("../../lifecycle/snapshot-store-fake");
+  const store = fakeSnapshotStore({
+    readLatest: async (environment, key) => (await readSnapshotMock(environment, key)) as string | null,
+    list: async (opts) => ((await listSnapshotsMock(opts)) as Array<{ commit: string; date: string; message: string }>).map((e) => ({ version: e.commit, date: e.date, message: e.message })),
+    fetch: async () => {
+      await fetchLifecycleMock();
+    },
+  });
+  return {
+    resolveSnapshotStore: async () => store,
+    readEnvironmentSnapshotsFrom: async (_store: unknown, environment: string) => readEnvironmentSnapshotsMock(environment),
+  };
+});
+// The baseline is a file under .chant/ (#4519); the write is mocked so a test never writes into the checkout.
+const saveObservationBaselineMock = vi.fn();
+vi.mock("../../lifecycle/observation-baseline", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lifecycle/observation-baseline")>()),
+  saveObservationBaseline: (...args: unknown[]) => saveObservationBaselineMock(...args),
+}));
 vi.mock("../../lifecycle/snapshot", () => ({
   takeSnapshot: (...args: unknown[]) => takeSnapshotMock(...args),
 }));
@@ -138,6 +159,8 @@ describe("runLifecycleDiff --live", () => {
     readBlobFromPathMock.mockResolvedValue(null); // no accepted baseline recorded
     writeBlobToPathMock.mockReset();
     writeBlobToPathMock.mockResolvedValue("sha");
+    saveObservationBaselineMock.mockReset();
+    saveObservationBaselineMock.mockResolvedValue({ where: ".chant/observation-baseline/prod.json", published: "file" });
     pushLifecycleMock.mockReset();
     pushLifecycleMock.mockResolvedValue(true);
   });
@@ -715,27 +738,26 @@ describe("runLifecycleDiff --live", () => {
       expect(output).toContain("could not be observed — that part of the estate is unknown, not clean");
     });
 
-    test("--update-baseline writes what was reported and pushes it", async () => {
+    test("--update-baseline writes what was reported to the baseline file", async () => {
       await runDiff([withDeep()], { updateBaseline: true });
-      expect(writeBlobToPathMock).toHaveBeenCalledTimes(1);
-      const [environment, filename, content] = writeBlobToPathMock.mock.calls[0] as [string, string, string];
-      expect(environment).toBe("prod");
-      expect(filename).toBe("observation-baseline.json");
-      const written = JSON.parse(content) as {
-        lexicons: { aws: { bucket: { accepted: Array<{ path: string; value: unknown }> } } };
-      };
+      expect(saveObservationBaselineMock).toHaveBeenCalledTimes(1);
+      const [written] = saveObservationBaselineMock.mock.calls[0] as [
+        { environment: string; lexicons: { aws: { bucket: { accepted: Array<{ path: string; value: unknown }> } } } },
+      ];
+      expect(written.environment).toBe("prod");
       // Only drift is accepted. A held field needs no acceptance: it was never
       // reported as a deviation to begin with (#2160).
       expect(written.lexicons.aws.bucket.accepted.map((a) => a.path)).toEqual(["Versioning"]);
-      expect(pushLifecycleMock).toHaveBeenCalled();
-      expect(stderrBuf.join("\n")).toContain("accepted 1 deviation(s)");
+      // Never on the orphan branch again (#4519).
+      expect(writeBlobToPathMock).not.toHaveBeenCalled();
+      expect(stderrBuf.join("\n")).toContain("accepted 1 deviation(s) into .chant/observation-baseline/prod.json");
     });
 
     test("--update-baseline with nothing reported writes nothing", async () => {
       await runDiff([
         withDeep({ observeResourcesDeep: staticDeepObservation({}) }),
       ], { updateBaseline: true });
-      expect(writeBlobToPathMock).not.toHaveBeenCalled();
+      expect(saveObservationBaselineMock).not.toHaveBeenCalled();
       expect(stderrBuf.join("\n")).toContain("nothing to accept");
     });
   });

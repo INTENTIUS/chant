@@ -1,12 +1,14 @@
 /**
- * `chant query "<sql>"` (#4297): one read-only SQL statement over what
- * `chant/lifecycle` holds, run in this process with no server.
+ * `chant query "<sql>"` (#4297): one read-only SQL statement over the
+ * snapshots and the Ops records, run in this process with no server.
  *
  * The rows come from the ledgers chant already writes:
  *
  * - the snapshots, `<env>/<lexicon>.json` and `<env>/<stack>__<lexicon>.json`
  *   (`./git.ts` `snapshotStorageKey`), each lexicon's `describeResources`
- *   read, so the inventory works for every lexicon;
+ *   read, so the inventory works for every lexicon. They are read through the
+ *   index store (./snapshot-store.ts, #4519) when the ledger names one, so
+ *   the tables are the same whichever store holds them;
  * - the Op run ledgers, `<env>/runs__<op>.jsonl` (`./run-ledger.ts`);
  * - the gate ledgers, `_gates/<op>.jsonl` (`./gate-ledger.ts`);
  * - the deploy records, `<env>/releases.jsonl` (`./release-read.ts`);
@@ -48,8 +50,16 @@ type ColumnType = "TEXT" | "INTEGER";
  * for a project outside a workspace.
  */
 export const QUERY_TABLES = {
-  /** One row per resource in each environment's newest snapshot. `attributes` is JSON. */
-  resources: [["member", "TEXT"], ["env", "TEXT"], ["stack", "TEXT"], ["lexicon", "TEXT"], ["name", "TEXT"], ["type", "TEXT"], ["physical_id", "TEXT"], ["status", "TEXT"], ["last_updated", "TEXT"], ["ownership", "TEXT"], ["attributes", "TEXT"], ["git_sha", "TEXT"], ["observed_at", "TEXT"]],
+  /**
+   * One row per resource in each environment's newest snapshot. `attributes`
+   * is JSON. `ownership` is chant's marker verdict; `marker_stack` and
+   * `marker_env` (#4534) are the stack and env that marker names, read off
+   * the resource. `engine_ownership` and `engine_owned_by` (#4534) are an
+   * ownership engine's verdict and what bound the node (choudoufu, plunge;
+   * the snapshot's `facts.ownership` and `facts.ownedBy`), shown beside
+   * chant's and never in place of it. NULL means unknown.
+   */
+  resources: [["member", "TEXT"], ["env", "TEXT"], ["stack", "TEXT"], ["lexicon", "TEXT"], ["name", "TEXT"], ["type", "TEXT"], ["physical_id", "TEXT"], ["status", "TEXT"], ["last_updated", "TEXT"], ["ownership", "TEXT"], ["attributes", "TEXT"], ["git_sha", "TEXT"], ["observed_at", "TEXT"], ["marker_stack", "TEXT"], ["marker_env", "TEXT"], ["engine_ownership", "TEXT"], ["engine_owned_by", "TEXT"]],
   /** One row per snapshot file: what was observed, when, and how many resources it holds. */
   snapshots: [["member", "TEXT"], ["env", "TEXT"], ["stack", "TEXT"], ["lexicon", "TEXT"], ["git_sha", "TEXT"], ["observed_at", "TEXT"], ["depth", "TEXT"], ["resources", "INTEGER"], ["unobserved", "INTEGER"]],
   /**
@@ -57,8 +67,9 @@ export const QUERY_TABLES = {
    * (#4482) is the workspace member whose directory holds the terraform root
    * a TerraformApplyOp run applied, read off its `TerraformRootPath` outcome.
    * NULL means unknown (#4508): any other run, outside a workspace, or a run
-   * whose Init step never finished, since the Op names its root only by key
-   * and Init is what resolves the root's directory.
+   * whose Init step failed before it resolved the root's directory, since the
+   * Op names its root only by key and Init is what resolves it. A run whose
+   * `terraform init` itself failed still names it (#4512).
    */
   runs: [["member", "TEXT"], ["id", "TEXT"], ["op", "TEXT"], ["env", "TEXT"], ["started", "TEXT"], ["ended", "TEXT"], ["status", "TEXT"], ["git_sha", "TEXT"], ["forge", "TEXT"], ["run_url", "TEXT"], ["failure_code", "TEXT"], ["failure_reason", "TEXT"], ["failed_phase", "TEXT"], ["gate", "TEXT"], ["steward", "TEXT"], ["labels", "TEXT"], ["outcomes", "TEXT"], ["root_member", "TEXT"]],
   /** One row per gate ledger line: `kind` is `pending` or `resolution`. `signed` is 1 for a sealed approval. */
@@ -78,6 +89,15 @@ export const QUERY_TABLES = {
  */
 export const LEDGER_ROOT_MEMBER_FLOOR = NEXT_RELEASE;
 
+/**
+ * The first chant that writes `marker_stack`, `marker_env`,
+ * `engine_ownership` and `engine_owned_by` on a `resources` row, in
+ * `chant query` and in `chant ledger resources --json` (#4534). Columns added
+ * within version 1: a reader treats a row from an older chant as lacking
+ * them, which reads as unknown.
+ */
+export const QUERY_OWNERSHIP_COLUMNS_FLOOR = NEXT_RELEASE;
+
 export type QueryTable = keyof typeof QUERY_TABLES;
 
 /** The table that describes the others: one row per column, with the schema version. */
@@ -93,6 +113,12 @@ export type QueryData = Record<QueryTable, QueryRow[]>;
 export interface QueryLedger {
   member: string | null;
   port: LedgerReadPort;
+  /**
+   * The snapshot family of the index store (#4519, `snapshotReadPort`). Given,
+   * the `resources` and `snapshots` rows come from it and snapshot files on
+   * `port` are skipped. Absent, they come from `port`, as before the store.
+   */
+  snapshots?: LedgerReadPort;
   /**
    * The member whose directory holds a workspace-relative path, or null
    * (#4482). Given in a workspace; without it `root_member` is NULL.
@@ -139,7 +165,25 @@ function snapshotRows(member: string | null, env: string, file: string, s: Lifec
   const resources = Object.entries(s.resources);
   data.snapshots.push({ member, env, stack, lexicon: s.lexicon, ...at, depth: s.depth ?? "identity", resources: resources.length, unobserved: Object.keys(s.unobserved ?? {}).length });
   for (const [name, r] of resources) {
-    data.resources.push({ member, env, stack, lexicon: s.lexicon, name, type: str(r?.type), physical_id: str(r?.physicalId), status: str(r?.status), last_updated: str(r?.lastUpdated), ownership: str(r?.ownership), attributes: json(r?.attributes), ...at });
+    data.resources.push({
+      member,
+      env,
+      stack,
+      lexicon: s.lexicon,
+      name,
+      type: str(r?.type),
+      physical_id: str(r?.physicalId),
+      status: str(r?.status),
+      last_updated: str(r?.lastUpdated),
+      ownership: str(r?.ownership),
+      attributes: json(r?.attributes),
+      ...at,
+      // Read as data from the snapshot (#4534): a projection for people, never a decision.
+      marker_stack: str(r?.marker?.stack),
+      marker_env: str(r?.marker?.env),
+      engine_ownership: str(r?.facts?.ownership),
+      engine_owned_by: str(r?.facts?.ownedBy),
+    });
   }
 }
 
@@ -192,11 +236,27 @@ function rootMemberOf(outcomes: Record<string, unknown> | undefined, ownerOfPath
 export async function loadQueryData(ledgers: readonly QueryLedger[]): Promise<QueryLoad> {
   const data = empty<QueryRow[]>(() => []) as QueryData;
   const malformed = empty(() => 0);
-  for (const { member, port, ownerOfPath } of ledgers) {
+  for (const { member, port, ownerOfPath, snapshots } of ledgers) {
+    if (snapshots) {
+      for (const env of (await snapshots.trees()).filter((t) => !t.startsWith("_")).sort()) {
+        for (const file of (await snapshots.list(env)).sort()) {
+          if (!file.endsWith(".json")) continue;
+          const text = await snapshots.read(env, file);
+          let parsed: unknown;
+          try {
+            parsed = text === null ? null : JSON.parse(text);
+          } catch {
+            parsed = null;
+          }
+          if (isSnapshot(parsed)) snapshotRows(member, env, file, parsed, data);
+        }
+      }
+    }
     const trees = (await port.trees()).sort();
     for (const env of trees.filter((t) => !t.startsWith("_"))) {
       for (const file of (await port.list(env)).sort()) {
         if (file.endsWith(".json")) {
+          if (snapshots) continue;
           const text = await port.read(env, file);
           let parsed: unknown;
           try {

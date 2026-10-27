@@ -4,7 +4,7 @@ import type { ResourceDefinition } from "./types";
 import type { LexiconPlugin } from "../../lexicon";
 import { collectComposites } from "./tools/composites";
 import { getContext } from "./resources/context";
-import { readSnapshot, readEnvironmentSnapshots } from "../../lifecycle/git";
+import { readEnvironmentSnapshotsFrom, resolveSnapshotStore } from "../../lifecycle/snapshot-store";
 import { discoverOps } from "../../op/discover";
 import { createLocalOpRuntime } from "../../op/runtimes/local";
 import { loadOkfBundle } from "../../okf-read";
@@ -224,14 +224,15 @@ export async function handleResourcesRead(
     const environment = parts[0];
     const lexicon = parts[1];
 
+    const store = await resolveSnapshotStore();
     if (lexicon) {
-      const content = await readSnapshot(environment, lexicon);
+      const content = await store.readLatest(environment, lexicon);
       if (!content) throw new Error(`No snapshot found for ${environment}/${lexicon}`);
       return {
         contents: [{ uri, mimeType: "application/json", text: content }],
       };
     } else {
-      const snapshots = await readEnvironmentSnapshots(environment);
+      const snapshots = await readEnvironmentSnapshotsFrom(store, environment);
       const result: Record<string, unknown> = {};
       for (const [lex, content] of snapshots) {
         result[lex] = JSON.parse(content);

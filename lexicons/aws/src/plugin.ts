@@ -3,6 +3,9 @@ import { createRequire } from "module";
 import { awsBehaviourKinds } from "./behaviour-kinds";
 import { detectTemplate } from "./detect";
 import { awsCapabilityPack } from "./capabilities/pack";
+import { awsListedTypes } from "./listed-types";
+import { awsIndexIdentity } from "./index-identity";
+import { awsIndexImport } from "./index-import";
 import type { LexiconPlugin, IntrinsicDef, ObservationResult, DeepObservationResult, DependencyObservation, DescribeIdentityOptions, DescribeIdentityResult, DisruptionQuery, DisruptionVerdict, ResourceMetadata, ExportedTemplate, ResourceSelector, InitTemplateSet, StackStatusObservation } from "@intentius/chant/lexicon";
 const require = createRequire(moduleSourceUrl(import.meta.url));
 import type { LintRule } from "@intentius/chant/lint/rule";
@@ -97,6 +100,13 @@ export const awsPlugin: LexiconPlugin = {
   // Live edge reconstruction for `chant graph --live` (#778).
   referenceCatalog: awsReferenceCatalog,
   capabilityPack: awsCapabilityPack,
+
+  // Cloud inventory type names to kinds, for an indexed resource (#4521).
+  listedTypes: awsListedTypes,
+  // Declared entities to indexed resources by primaryIdentifier (#4523).
+  indexIdentity: awsIndexIdentity,
+  // Indexed resources as CloudFormation import IR, for `chant import --index` (#4524).
+  indexImport: awsIndexImport,
 
   lintRules(): LintRule[] {
     const rulesDir = join(dirname(fileURLToPath(import.meta.url)), "lint", "rules");

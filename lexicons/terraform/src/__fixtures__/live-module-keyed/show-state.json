@@ -1,0 +1,146 @@
+{
+  "format_version": "1.0",
+  "terraform_version": "1.13.0",
+  "values": {
+    "root_module": {
+      "child_modules": [
+        {
+          "resources": [
+            {
+              "address": "module.app[0].aws_cloudwatch_log_group.logs",
+              "mode": "managed",
+              "type": "aws_cloudwatch_log_group",
+              "name": "logs",
+              "provider_name": "registry.opentofu.org/hashicorp/aws",
+              "schema_version": 0,
+              "values": {
+                "arn": "arn:aws:logs:us-east-1:000000000000:log-group:/module-keyed-estate/app-0",
+                "id": "/module-keyed-estate/app-0",
+                "name": "/module-keyed-estate/app-0"
+              },
+              "sensitive_values": {}
+            },
+            {
+              "address": "module.app[0].aws_eip.pool[0]",
+              "mode": "managed",
+              "type": "aws_eip",
+              "name": "pool",
+              "index": 0,
+              "provider_name": "registry.opentofu.org/hashicorp/aws",
+              "schema_version": 0,
+              "values": {
+                "allocation_id": "eipalloc-0a41c7d2e9b3f5061",
+                "domain": "vpc",
+                "id": "eipalloc-0a41c7d2e9b3f5061"
+              },
+              "sensitive_values": {}
+            },
+            {
+              "address": "module.app[0].aws_eip.pool[1]",
+              "mode": "managed",
+              "type": "aws_eip",
+              "name": "pool",
+              "index": 1,
+              "provider_name": "registry.opentofu.org/hashicorp/aws",
+              "schema_version": 0,
+              "values": {
+                "allocation_id": "eipalloc-0b52d8e3fac4061f2",
+                "domain": "vpc",
+                "id": "eipalloc-0b52d8e3fac4061f2"
+              },
+              "sensitive_values": {}
+            }
+          ],
+          "address": "module.app[0]"
+        },
+        {
+          "resources": [
+            {
+              "address": "module.app[1].aws_cloudwatch_log_group.logs",
+              "mode": "managed",
+              "type": "aws_cloudwatch_log_group",
+              "name": "logs",
+              "provider_name": "registry.opentofu.org/hashicorp/aws",
+              "schema_version": 0,
+              "values": {
+                "arn": "arn:aws:logs:us-east-1:000000000000:log-group:/module-keyed-estate/app-1",
+                "id": "/module-keyed-estate/app-1",
+                "name": "/module-keyed-estate/app-1"
+              },
+              "sensitive_values": {}
+            },
+            {
+              "address": "module.app[1].aws_eip.pool[0]",
+              "mode": "managed",
+              "type": "aws_eip",
+              "name": "pool",
+              "index": 0,
+              "provider_name": "registry.opentofu.org/hashicorp/aws",
+              "schema_version": 0,
+              "values": {
+                "allocation_id": "eipalloc-0c63e9f40bd5172a3",
+                "domain": "vpc",
+                "id": "eipalloc-0c63e9f40bd5172a3"
+              },
+              "sensitive_values": {}
+            },
+            {
+              "address": "module.app[1].aws_eip.pool[1]",
+              "mode": "managed",
+              "type": "aws_eip",
+              "name": "pool",
+              "index": 1,
+              "provider_name": "registry.opentofu.org/hashicorp/aws",
+              "schema_version": 0,
+              "values": {
+                "allocation_id": "eipalloc-0d74fa051ce6283b4",
+                "domain": "vpc",
+                "id": "eipalloc-0d74fa051ce6283b4"
+              },
+              "sensitive_values": {}
+            }
+          ],
+          "address": "module.app[1]"
+        },
+        {
+          "resources": [
+            {
+              "address": "module.edge[\"east\"].aws_cloudwatch_log_group.front",
+              "mode": "managed",
+              "type": "aws_cloudwatch_log_group",
+              "name": "front",
+              "provider_name": "registry.opentofu.org/hashicorp/aws",
+              "schema_version": 0,
+              "values": {
+                "arn": "arn:aws:logs:us-east-1:000000000000:log-group:/module-keyed-estate/edge-east",
+                "id": "/module-keyed-estate/edge-east",
+                "name": "/module-keyed-estate/edge-east"
+              },
+              "sensitive_values": {}
+            }
+          ],
+          "address": "module.edge[\"east\"]"
+        },
+        {
+          "resources": [
+            {
+              "address": "module.edge[\"west\"].aws_cloudwatch_log_group.front",
+              "mode": "managed",
+              "type": "aws_cloudwatch_log_group",
+              "name": "front",
+              "provider_name": "registry.opentofu.org/hashicorp/aws",
+              "schema_version": 0,
+              "values": {
+                "arn": "arn:aws:logs:us-east-1:000000000000:log-group:/module-keyed-estate/edge-west",
+                "id": "/module-keyed-estate/edge-west",
+                "name": "/module-keyed-estate/edge-west"
+              },
+              "sensitive_values": {}
+            }
+          ],
+          "address": "module.edge[\"west\"]"
+        }
+      ]
+    }
+  }
+}
