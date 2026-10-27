@@ -323,6 +323,7 @@ export default defineConfig({
 						{ label: 'Behaviour Coverage', slug: 'reference/behaviour-coverage' },
 						{ label: 'Level-0 Exceptions', slug: 'reference/level-0-exceptions' },
 						{ label: 'Publish Targets', slug: 'reference/publish-targets' },
+						{ label: 'Release Catalog', slug: 'reference/release-catalog' },
 						{ label: 'Security Features', slug: 'reference/security-features' },
 						{ label: 'CI Workflows', slug: 'reference/ci-workflows' },
 						{ label: 'Exit Codes', slug: 'reference/exit-codes' },

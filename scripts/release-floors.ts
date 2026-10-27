@@ -97,6 +97,9 @@ const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: str
   { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "| `pr-report` | `lockTargets` | {v} |", count: 1, floor: "PR_REPORT_LOCK_TARGETS_FLOOR" },
   { file: "packages/core/src/workspace/declaration.schema.json", text: "Added in schema 1 by chant {v}, so a declaration that sets database sets minReader to {v} or newer.", count: 1, floor: "AZURE_DATABASE_TOKEN_FLOOR" },
   { file: "docs/src/content/docs/guide/security-cloud-identities.mdx", text: "sets `minReader` to chant `{v}` or newer (`AZURE_DATABASE_TOKEN_FLOOR`)", count: 1, floor: "AZURE_DATABASE_TOKEN_FLOOR" },
+  { file: "packages/core/src/workspace/release-catalog.schema.json", text: "Written by chant {v} and newer (RELEASE_CATALOG_FLOOR).", count: 1, floor: "RELEASE_CATALOG_FLOOR" },
+  { file: "docs/src/content/docs/reference/release-catalog.mdx", text: "Both need chant {v} or newer (`RELEASE_CATALOG_FLOOR`).", count: 1, floor: "RELEASE_CATALOG_FLOOR" },
+  { file: "docs/src/content/docs/reference/release-catalog.mdx", text: "chant {v} and newer write and read it (`RELEASE_VERSION_FLOOR`).", count: 1, floor: "RELEASE_VERSION_FLOOR" },
 ];
 
 interface Args {
