@@ -168,6 +168,8 @@ export interface ParsedArgs {
   /** `chant workspace adopt-lineage --tags <glob>` and `hash-index --tags` (#2551): the tags to compare. */
   tags?: string;
   /** `chant workspace adopt-lineage --index <file>` (#2551): a cached hash index. `chant search --index <ref>` (#4525) and `chant lifecycle diff <env> --index <ref>` (#4526): an index version. */
+  /** `chant import --index <ref> --adopt-out <file>` (#4536): where to write the adoption file. */
+  adoptOut?: string;
   index?: string;
   /** `chant workspace versions --available` (#2551): list each git template's version tags. */
   available?: boolean;

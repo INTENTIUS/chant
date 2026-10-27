@@ -2,16 +2,90 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://intentius.io/chant/schemas/graph/v1/graph.schema.json",
   "title": "chant-graph/v1",
-  "description": "Generated from chant core's TypeScript types (packages/core/src/engine-facts.ts, packages/core/src/lifecycle/index-document.ts) by `npm run generate:graph-schema`; do not edit by hand. Two documents: an engine graph (`#/$defs/EngineGraphDocument`, what `choudoufu live-graph -json` and `plunge graph --json` print, chant#4520) and an index version (`#/$defs/IndexDocument`, behold#1025). Objects are closed so a writer's test catches a misspelled field; a reader ignores fields it does not know.",
+  "description": "Generated from chant core's TypeScript types (packages/core/src/engine-facts.ts, packages/core/src/lifecycle/index-document.ts, packages/core/src/lifecycle/adoption-file.ts) by `npm run generate:graph-schema`; do not edit by hand. Three documents: an engine graph (`#/$defs/EngineGraphDocument`, what `choudoufu live-graph -json` and `plunge graph --json` print, chant#4520), an index version (`#/$defs/IndexDocument`, behold#1025) and an adoption file (`#/$defs/AdoptionFile`, the `adopt: v1` input choudoufu, plunge and chant adopt from, chant#4536). Objects are closed so a writer's test catches a misspelled field; a reader ignores fields it does not know.",
   "anyOf": [
     {
       "$ref": "#/$defs/EngineGraphDocument"
     },
     {
       "$ref": "#/$defs/IndexDocument"
+    },
+    {
+      "$ref": "#/$defs/AdoptionFile"
     }
   ],
   "$defs": {
+    "AdoptionFile": {
+      "description": "An adoption file (`adopt: \"v1\"`): one index version and the nodes to adopt from it.",
+      "type": "object",
+      "properties": {
+        "adopt": {
+          "const": "v1"
+        },
+        "index": {
+          "$ref": "#/$defs/AdoptionIndexRef"
+        },
+        "select": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AdoptionSelection"
+          }
+        }
+      },
+      "required": [
+        "adopt",
+        "index",
+        "select"
+      ],
+      "additionalProperties": false
+    },
+    "AdoptionIndexRef": {
+      "description": "The index version an adoption file reads from.",
+      "type": "object",
+      "properties": {
+        "scopeKey": {
+          "description": "The version's `stamp.scopeKey`: `cloud/<substrate>/<scopeId>/<scope digest>`.",
+          "type": "string"
+        },
+        "version": {
+          "description": "The version's file name under the scope key: `<observedAt>-<digest12>.json`.",
+          "type": "string"
+        },
+        "digest": {
+          "description": "The version's `stamp.digest`, sha256 hex. A `sha256:` prefix is accepted and ignored.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "scopeKey",
+        "version",
+        "digest"
+      ],
+      "additionalProperties": false
+    },
+    "AdoptionSelection": {
+      "description": "One node to adopt.",
+      "type": "object",
+      "properties": {
+        "node": {
+          "description": "The index node id: `<substrate>/<scopeId>/<location>/<listedType>/<nativeId>`.",
+          "type": "string"
+        },
+        "as": {
+          "description": "The engine's address for the object: a Terraform address for choudoufu, a URN name and parent for plunge, an entity (logical) name for chant.",
+          "type": "string"
+        },
+        "type": {
+          "description": "The engine's type (`aws_lb`, `aws:s3/bucket:Bucket`, `AWS::S3::Bucket`). Left out only when the node's listed type joins to exactly one engine type; an engine refuses an ambiguous join without it, naming every candidate.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "node",
+        "as"
+      ],
+      "additionalProperties": false
+    },
     "ChantIndexScope": {
       "description": "A chant source: a snapshot or `chant graph --format ir`. Today's snapshot key, unchanged.",
       "type": "object",

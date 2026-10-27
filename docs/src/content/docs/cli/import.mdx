@@ -78,6 +78,7 @@ The exit rule is `importExitCode` in `packages/core/src/cli/commands/import-repo
 | `--tag <key=value>` | With `--index`, select nodes that carry this tag. Repeatable; every tag must match |
 | `--select <file\|ids>` | With `--index`, select these node ids: a JSON file of ids, or a comma-separated list |
 | `--all` | With `--index`, select every node in the index |
+| `--adopt-out <file>` | With `--index`, also write an adoption file for what was imported (see [Adoption file](#adoption-file---adopt-out)) |
 | `-o, --output <dir>` | Output directory (default: `./infra/`) |
 | `--force` | Overwrite existing files |
 | `--agents` | Import this machine's **agent configuration** instead of a template file (see below) |
@@ -110,6 +111,12 @@ How each resource is written:
 Resources of one lexicon and one region go in one directory. A global resource, such as an IAM role, joins the only region when there is one. With one group the files go straight into the output directory. With several, each group gets `<lexicon>/<location>/`.
 
 The same index and selection give byte-identical files. The command also writes a report, `chant-index-import.json`, beside them or to `--report <path>`. The report gives each selected resource's identity and cloud ids. The identity is the substrate and account, then the listed type and location, then the native id. Each entry says whether the resource was imported, declared or unsupported, and lists its references and parameters. Adoption reads it.
+
+### Adoption file (`--adopt-out`)
+
+`--adopt-out <file>` also writes an adoption file, `adopt: "v1"`. It names the index version by scope key, version name and digest. It lists each imported resource by node id, with its logical id as `as` and its lexicon kind as `type`. Declared and unsupported resources are left out. An import that read more than one index version writes no adoption file, since the file names one version.
+
+choudoufu, plunge and chant all adopt from this file. Each one refuses a file whose digest does not match the version it loads, and a node that version does not hold. Its JSON Schema is `#/$defs/AdoptionFile` in `packages/core/src/graph-schema/graph.schema.json`.
 
 ## Importing agent configuration (`--agents`)
 

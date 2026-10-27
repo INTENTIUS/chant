@@ -8,6 +8,7 @@ import Ajv2020 from "ajv/dist/2020";
 import { GRAPH_SCHEMA_FIXTURES, GRAPH_SCHEMA_FIXTURE_DEFS } from "./fixtures";
 import { GRAPH_SCHEMA_FIXTURE_DIR, GRAPH_SCHEMA_ID, GRAPH_SCHEMA_PATH, generateGraphSchema, staleGraphSchemaFiles } from "./generate";
 import { validateIndexDocument, type IndexDocument } from "../lifecycle/index-document";
+import { adoptionFileProblemsAgainst, type AdoptionFile } from "../lifecycle/adoption-file";
 import { GRAPH_IR_VERSION } from "../graph-ir";
 
 const schema = JSON.parse(readFileSync(GRAPH_SCHEMA_PATH, "utf-8")) as { $id: string; $defs: Record<string, unknown> };
@@ -24,9 +25,9 @@ describe("graph schema sync (#4527)", () => {
     expect(stale).toEqual([]);
   });
 
-  it("covers both documents in one set, with the engine facts and edge grain", () => {
+  it("covers the three documents in one set, with the engine facts and edge grain", () => {
     const generated = generateGraphSchema() as { $defs: Record<string, unknown> };
-    for (const def of ["EngineGraphDocument", "IndexDocument", "GraphIR", "IRNode", "IREdge", "EngineFacts", "EngineGraphMeta", "EdgeGrain"]) {
+    for (const def of ["EngineGraphDocument", "IndexDocument", "AdoptionFile", "AdoptionSelection", "AdoptionIndexRef", "GraphIR", "IRNode", "IREdge", "EngineFacts", "EngineGraphMeta", "EdgeGrain"]) {
       expect(Object.keys(generated.$defs)).toContain(def);
     }
   });
@@ -50,6 +51,10 @@ describe("graph schema fixtures (#4527)", () => {
 
   it("the index fixture's stamp agrees with itself", () => {
     expect(() => validateIndexDocument(GRAPH_SCHEMA_FIXTURES.index as IndexDocument)).not.toThrow();
+  });
+
+  it("the adoption fixture names the index fixture's version, digest and node (#4536)", () => {
+    expect(adoptionFileProblemsAgainst(fixture("adopt") as unknown as AdoptionFile, fixture("index") as unknown as IndexDocument)).toEqual([]);
   });
 
   it("each engine fixture names its engine and carries facts and grain", () => {
@@ -119,6 +124,24 @@ describe("graph schema refusals (#4527)", () => {
     const doc = base();
     doc.meta._behaviour = { engine: "x" };
     expect(engine(doc)).toBe(true);
+  });
+
+  it("refuses an adoption file at another version, with no select, or with a misspelled field (#4536)", () => {
+    const adopt = validator("AdoptionFile");
+    const base = () => clone(fixture("adopt")) as Record<string, unknown> & { select: Array<Record<string, unknown>> };
+    expect(adopt(base())).toBe(true);
+    const v2 = base();
+    v2.adopt = "v2";
+    expect(adopt(v2)).toBe(false);
+    const noSelect = base();
+    delete (noSelect as { select?: unknown }).select;
+    expect(adopt(noSelect)).toBe(false);
+    const typo = base();
+    typo.select[0]!.address = "aws_s3_bucket.x";
+    expect(adopt(typo)).toBe(false);
+    const noType = base();
+    delete noType.select[0]!.type;
+    expect(adopt(noType)).toBe(true);
   });
 
   it("refuses an index coverage verdict outside listed and the unobserved reasons", () => {

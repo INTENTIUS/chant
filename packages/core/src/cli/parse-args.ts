@@ -1005,6 +1005,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       // #4526 — `chant lifecycle diff <env> --index <ref>`.
       result.index = args[++i];
       if (!result.index || result.index.startsWith("-")) throw new Error("--index needs a value: --index <file> for workspace adopt-lineage, --index <scope key>[@<version>] for search and lifecycle diff");
+    } else if (arg === "--adopt-out") {
+      // #4536 — `chant import --index <ref> --adopt-out <file>`: write the adoption file (`adopt: v1`) for what was imported.
+      result.adoptOut = args[++i];
+      if (!result.adoptOut || result.adoptOut.startsWith("-")) throw new Error("--adopt-out needs a file: --adopt-out <file>");
     } else if (arg === "--remove") {
       // #2552 — `chant workspace import --remove` removes the export member instead of writing it again.
       result.remove = true;
