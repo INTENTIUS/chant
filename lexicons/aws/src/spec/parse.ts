@@ -80,6 +80,14 @@ export interface ParsedResource {
   conditionalCreateOnly: string[];
   replacementStrategy?: "delete_then_create" | "create_then_delete";
   tagging?: ResourceTagging;
+  /**
+   * The schema's `handlers` section as its operation names, sorted
+   * (`["create", "delete", "list", "read", "update"]`). The permissions each
+   * handler lists are left out. Absent when the schema has no handlers, as a
+   * legacy type does. CloudFormation can import a type with `create` and
+   * `read` (../importable.ts, #4536).
+   */
+  handlers?: string[];
 }
 
 /** How a type's tags are written: a `[{Key, Value}]` list or a key-to-value map. */
@@ -223,6 +231,9 @@ export function parseCFNSchema(data: string | Buffer): SchemaParseResult {
     };
   }
 
+  // --- Handlers (#4536): which operations the resource provider implements ---
+  const handlers = schema.handlers && typeof schema.handlers === "object" ? Object.keys(schema.handlers).sort() : [];
+
   // --- Replacement strategy ---
   let replacementStrategy: ParsedResource["replacementStrategy"];
   if (schema.replacementStrategy === "delete_then_create" || schema.replacementStrategy === "create_then_delete") {
@@ -252,6 +263,7 @@ export function parseCFNSchema(data: string | Buffer): SchemaParseResult {
       conditionalCreateOnly: stripPointerPaths(schema.conditionalCreateOnlyProperties ?? [], schema),
       ...(replacementStrategy && { replacementStrategy }),
       ...(tagging && { tagging }),
+      ...(handlers.length > 0 && { handlers }),
     },
     propertyTypes: boundedPropertyTypes,
     enums,

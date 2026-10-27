@@ -34,6 +34,8 @@ export interface LexiconEntry {
   conditionalCreateOnly?: string[];
   replacementStrategy?: "delete_then_create" | "create_then_delete";
   tagging?: ResourceTagging;
+  /** The registry schema's handler operations, sorted (#4536). Absent for a legacy type. */
+  handlers?: string[];
   runtimeDeprecations?: Record<string, string>;
 }
 
@@ -81,6 +83,7 @@ export function generateLexiconJSON(
         ...(r.resource.conditionalCreateOnly?.length && { conditionalCreateOnly: r.resource.conditionalCreateOnly }),
         ...(r.resource.replacementStrategy && { replacementStrategy: r.resource.replacementStrategy }),
         ...(r.resource.tagging && { tagging: r.resource.tagging }),
+        ...(r.resource.handlers?.length && { handlers: r.resource.handlers }),
         ...(runtimeDepr && { runtimeDeprecations: runtimeDepr }),
       };
     },

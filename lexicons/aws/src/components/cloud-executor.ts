@@ -81,8 +81,8 @@ export interface CfnChangeSet {
   statusReason?: string;
   /** True the first time this stack is created (no prior stack exists). */
   isCreate: boolean;
-  /** The change set's type: CREATE for a stack that does not exist yet or was never executed, else UPDATE. */
-  changeSetType?: "CREATE" | "UPDATE";
+  /** The change set's type: CREATE for a stack that does not exist yet or was never executed, else UPDATE; IMPORT for an adoption (#4536). */
+  changeSetType?: "CREATE" | "UPDATE" | "IMPORT";
   /**
    * True when no stack existed before this change set, so CloudFormation made
    * an empty `REVIEW_IN_PROGRESS` stack to hold it. A plan that deletes the
@@ -97,6 +97,18 @@ export interface CfnCreateChangeSetArgs {
   stackName: string;
   templatePath: string;
   parameters?: Record<string, string>;
+}
+
+/** One existing resource an IMPORT change set brings under a stack (#4536). */
+export interface CfnResourceToImport {
+  resourceType: string;
+  logicalResourceId: string;
+  /** The type's primary identifier properties and their values (`{ BucketName: "logs" }`). */
+  resourceIdentifier: Record<string, string>;
+}
+
+export interface CfnCreateImportChangeSetArgs extends CfnCreateChangeSetArgs {
+  resourcesToImport: CfnResourceToImport[];
 }
 
 export interface CfnExecuteChangeSetArgs {
@@ -114,6 +126,14 @@ export interface CfnStackStatus {
 export interface CloudFormationClient {
   /** Create (but do not execute) a changeset, returning its proposed changes for preview/safety checks. */
   createChangeSet(args: CfnCreateChangeSetArgs): Promise<CfnChangeSet>;
+  /**
+   * Create (but do not execute) an IMPORT change set that brings existing
+   * resources under the stack (#4536, chant's CloudFormation adoption). A
+   * stack that does not exist yet is created by it. No stack tags are sent:
+   * chant's markers are written by the UPDATE that follows. Optional: a
+   * client without it cannot adopt.
+   */
+  createImportChangeSet?(args: CfnCreateImportChangeSetArgs): Promise<CfnChangeSet>;
   /** Execute a previously created changeset. */
   executeChangeSet(args: CfnExecuteChangeSetArgs): Promise<void>;
   /** Delete a changeset without executing it (used when a safety policy blocks the apply). */
@@ -583,6 +603,53 @@ const realCloudFormation: CloudFormationClient = {
       changeSetType,
       stackCreated: !existed,
       changes: await readCfnChanges(described, describeNested),
+    };
+  },
+  async createImportChangeSet(args) {
+    const changeSetName = `cs-import-${Date.now()}`;
+    const params = Object.entries(args.parameters ?? {})
+      .map(([k, v]) => `ParameterKey=${k},ParameterValue=${v}`)
+      .join(" ");
+    const paramFlag = params ? ` --parameters ${params}` : "";
+    let body = "";
+    try {
+      body = readFileSync(args.templatePath, "utf8");
+    } catch { /* unreadable template — create-change-set reports it */ }
+    const capabilities = awsDeployCapabilitiesForBody(body).join(" ");
+    const { existed } = await cfnChangeSetType(args.stackName);
+    const dir = mkdtempSync(join(tmpdir(), "chant-cfn-import-"));
+    try {
+      const resourcesFile = join(dir, "resources-to-import.json");
+      writeFileSync(
+        resourcesFile,
+        JSON.stringify(
+          args.resourcesToImport.map((r) => ({ ResourceType: r.resourceType, LogicalResourceId: r.logicalResourceId, ResourceIdentifier: r.resourceIdentifier })),
+        ),
+      );
+      await run(
+        `aws cloudformation create-change-set --stack-name ${q(args.stackName)} --change-set-name ${q(changeSetName)} ` +
+          `--change-set-type IMPORT --resources-to-import file://${resourcesFile} ` +
+          `--template-body file://${args.templatePath} --capabilities ${capabilities}${paramFlag}`,
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    await run(
+      `aws cloudformation wait change-set-create-complete --stack-name ${q(args.stackName)} --change-set-name ${q(changeSetName)}`,
+    ).catch(() => undefined);
+    const { stdout } = await run(
+      `aws cloudformation describe-change-set --stack-name ${q(args.stackName)} --change-set-name ${q(changeSetName)}`,
+    );
+    const described = JSON.parse(stdout) as DescribedCfnChangeSet;
+    return {
+      changeSetName,
+      stackName: args.stackName,
+      status: described.Status,
+      statusReason: described.StatusReason ?? undefined,
+      isCreate: false,
+      changeSetType: "IMPORT",
+      stackCreated: !existed,
+      changes: await readCfnChanges(described, async () => ({ Status: "CREATE_COMPLETE" })),
     };
   },
   async executeChangeSet(args) {
