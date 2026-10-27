@@ -18,6 +18,9 @@
  *   index store after an apply (#4546, `./stack-export-snapshot.ts`). The
  *   default export keeps secret ciphertext, which is stripped before the
  *   store sees it; `--show-secrets`, `--file` and `--version` are refused;
+ * - for a stack being adopted onto plunge (#4562), `plunge stack adopt
+ *   --json --stack <stack> [--file <file>]`, which classifies and writes
+ *   nothing; the `--yes` form is {@link runAdoptPlunge}'s alone;
  * - for a member on plunge, its engine graph (#4529, ruled on #4520), as
  *   exactly one of `plunge graph --json`, `plunge graph --json --stack
  *   <stack>`, `plunge graph --json --versions` and `plunge graph --json
@@ -247,10 +250,10 @@ function allowedPlungeGraph(args: string[]): boolean {
  */
 export async function runAllowedPlunge(run: PulumiRunner, args: string[], cwd: string, env?: Record<string, string>): Promise<{ stdout: string }> {
   const drift = args[0] === "drift" && args.includes("--resource") && args.includes("--stream") && wellFormedStack(args);
-  const allowed = drift || ((args[0] === "preview" || args[0] === "stack") && allowedRead(args)) || allowedPlungeGraph(args);
+  const allowed = drift || ((args[0] === "preview" || args[0] === "stack") && allowedRead(args)) || allowedPlungeGraph(args) || allowedPlungeAdopt(args, false);
   if (!allowed) {
     throw new Error(
-      `chant runs only plunge drift --resource <urn> --stream, plunge preview, plunge stack output --json --show-secrets=false, plunge stack export --stack <stack> and ${PLUNGE_GRAPH_COMMANDS.join(", ")} for a Pulumi member, not plunge ${args.join(" ")}`,
+      `chant runs only plunge drift --resource <urn> --stream, plunge preview, plunge stack output --json --show-secrets=false, plunge stack export --stack <stack>, ${PLUNGE_ADOPT_COMMANDS[0]} and ${PLUNGE_GRAPH_COMMANDS.join(", ")} for a Pulumi member, not plunge ${args.join(" ")}`,
     );
   }
   return run(args, env ? { cwd, env } : { cwd });
@@ -386,6 +389,54 @@ export async function runApplyPulumi(run: PulumiRunner, args: string[], cwd: str
 export async function runApplyPlunge(run: PulumiRunner, args: string[], cwd: string, env?: Record<string, string>): Promise<{ stdout: string }> {
   if (!allowedPlungeUp(args)) {
     throw new Error(`chant applies a plunge stack only as ${PULUMI_APPLY_COMMANDS[0]}, not plunge ${args.join(" ")}`);
+  }
+  return run(args, env ? { cwd, env } : { cwd });
+}
+
+/**
+ * The two `plunge stack adopt` argv chant runs (#4562), for
+ * `PulumiAdoptOp`'s activities alone. The first classifies and writes
+ * nothing (plunge's `--json` without `--yes`), so it passes through
+ * {@link runAllowedPlunge} like any read. The second writes the records and
+ * goes through {@link runAdoptPlunge} only, after the Op's gate. `--adopt`
+ * and `--index-store` (an adoption file over an index version) are refused,
+ * as is any other flag.
+ */
+export const PLUNGE_ADOPT_COMMANDS: readonly string[] = [
+  "plunge stack adopt --json --stack <stack> [--file <file>]",
+  "plunge stack adopt --json --yes --stack <stack> [--file <file>]",
+];
+
+/** `stack adopt --json [--yes] --stack <stack> [--file <file>]`, in that order. */
+export function plungeAdoptArgs(opts: { stack: string; file?: string; yes?: boolean }): string[] {
+  return ["stack", "adopt", "--json", ...(opts.yes ? ["--yes"] : []), "--stack", opts.stack, ...(opts.file ? ["--file", opts.file] : [])];
+}
+
+function allowedPlungeAdopt(args: string[], yes: boolean): boolean {
+  if (args[0] !== "stack" || args[1] !== "adopt" || args[2] !== "--json") return false;
+  let i = 3;
+  if (yes) {
+    if (args[i] !== "--yes") return false;
+    i++;
+  }
+  if (args[i] !== "--stack" || !isValue(args[i + 1])) return false;
+  i += 2;
+  if (args[i] === "--file") {
+    if (!isValue(args[i + 1])) return false;
+    i += 2;
+  }
+  return i === args.length;
+}
+
+/**
+ * Run `plunge stack adopt --json --yes` for `PulumiAdoptOp`'s Adopt step
+ * (#4562), refusing any argv but the second form in
+ * {@link PLUNGE_ADOPT_COMMANDS}. It writes plunge's records and touches no
+ * cloud object.
+ */
+export async function runAdoptPlunge(run: PulumiRunner, args: string[], cwd: string, env?: Record<string, string>): Promise<{ stdout: string }> {
+  if (!allowedPlungeAdopt(args, true)) {
+    throw new Error(`chant adopts a stack onto plunge only as ${PLUNGE_ADOPT_COMMANDS[1]}, not plunge ${args.join(" ")}`);
   }
   return run(args, env ? { cwd, env } : { cwd });
 }

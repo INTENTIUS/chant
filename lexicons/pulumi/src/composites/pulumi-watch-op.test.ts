@@ -35,8 +35,8 @@ describe("PulumiWatchOp (#4494)", () => {
     expect(validateActivitySteps(props({ ...BASE, engine: "plunge" }), contracts)).toEqual([]);
   });
 
-  test("the activities module exports exactly the two activities", () => {
+  test("the activities module exports exactly the activities, the watch's two and the adopt op's four (#4562)", () => {
     const fns = Object.entries(activities).filter(([, v]) => typeof v === "function").map(([k]) => k).sort();
-    expect(fns).toEqual(["pulumiDrift", "pulumiPreview"]);
+    expect(fns).toEqual(["pulumiAdopt", "pulumiAdoptCheck", "pulumiAdoptExport", "pulumiAdoptPreview", "pulumiDrift", "pulumiPreview"]);
   });
 });
