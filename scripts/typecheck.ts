@@ -26,7 +26,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -65,6 +65,52 @@ function failingFiles(): { files: Set<string>; raw: string } {
   return { files, raw };
 }
 
+/**
+ * Lexicons whose own tsconfig.json must typecheck their tests, cleanly (chant #4511).
+ *
+ * A lexicon's tsconfig.json with no `exclude` inherits the root's `**\/*.test.ts`, so
+ * `tsc -p lexicons/<name>` (and an editor on that config) never saw the tests. Each
+ * lexicon named here sets its own exclude. This pass runs that config with no baseline
+ * and also fails if a test file on disk is missing from the program, so an exclude that
+ * drops tests again shows up here instead of going quiet.
+ */
+const LEXICON_TEST_CONFIGS: readonly string[] = ["lexicons/terraform"];
+
+/** `*.test.ts` files under `dir`, repo-relative, skipping node_modules, dist and docs. */
+function testFilesUnder(dir: string): string[] {
+  const entries = readdirSync(join(repoRoot, dir), { recursive: true, encoding: "utf-8" });
+  return entries
+    .map((entry) => join(dir, entry))
+    .filter((file) => file.endsWith(".test.ts"))
+    .filter((file) => !/(^|\/)(node_modules|dist|docs)\//.test(file))
+    .sort();
+}
+
+/** Typecheck one lexicon's tsconfig.json; return the problems found, empty when clean. */
+function lexiconTestProblems(dir: string): string[] {
+  let out = "";
+  let failed = false;
+  try {
+    out = execFileSync(
+      join(repoRoot, "scripts", "tsc7.sh"),
+      ["--noEmit", "--declaration", "false", "--declarationMap", "false", "--listFiles", "-p", dir],
+      { cwd: repoRoot, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024 },
+    );
+  } catch (error) {
+    const e = error as { stdout?: string; stderr?: string };
+    out = `${e.stdout ?? ""}${e.stderr ?? ""}`;
+    failed = true;
+  }
+  const lines = out.split("\n");
+  const problems = lines.filter((line) => /\): error TS\d+:/.test(line));
+  if (failed && problems.length === 0) problems.push(`tsc -p ${dir} failed:\n${out}`);
+  const listed = new Set(lines.filter((line) => line.startsWith("/")).map((line) => relative(repoRoot, line.trim())));
+  for (const file of testFilesUnder(dir)) {
+    if (!listed.has(file)) problems.push(`${file} is not in tsc -p ${dir}'s program`);
+  }
+  return problems;
+}
+
 function readBaseline(): Baseline {
   if (!existsSync(BASELINE)) return { note: "", files: [] };
   return JSON.parse(readFileSync(BASELINE, "utf-8")) as Baseline;
@@ -91,6 +137,16 @@ function main(): void {
     writeFileSync(BASELINE, `${JSON.stringify(baseline, null, 2)}\n`);
     console.error(`Wrote ${baseline.files.length} file(s) to ${relative(repoRoot, BASELINE)}`);
     return;
+  }
+
+  const lexiconProblems = LEXICON_TEST_CONFIGS.flatMap((dir) => lexiconTestProblems(dir));
+  if (lexiconProblems.length > 0) {
+    console.error(`\n${lexiconProblems.length} problem(s) in the lexicon test configs (#4511):\n`);
+    for (const problem of lexiconProblems) console.error(`  ${problem}`);
+    console.error(
+      "\nEach config in LEXICON_TEST_CONFIGS must typecheck every test file under it with\n" +
+        "no errors. There is no baseline for these.\n",
+    );
   }
 
   const baseline = new Set(readBaseline().files);
@@ -121,10 +177,10 @@ function main(): void {
     );
   }
 
-  if (regressions.length === 0 && fixed.length === 0) {
+  if (regressions.length === 0 && fixed.length === 0 && lexiconProblems.length === 0) {
     console.error(
       `Repo-wide typecheck: ${files.size} known failure(s), no regressions. ` +
-        `(${baseline.size} baselined)`,
+        `(${baseline.size} baselined; ${LEXICON_TEST_CONFIGS.join(", ")} test configs clean)`,
     );
     return;
   }
