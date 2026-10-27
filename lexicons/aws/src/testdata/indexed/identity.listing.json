@@ -1,0 +1,65 @@
+{
+  "listing": "v1",
+  "source": { "name": "behold-lister", "version": "0.0.0-fixture" },
+  "scope": {
+    "substrate": "aws",
+    "scopeId": "000000000000",
+    "locations": ["us-east-1"],
+    "types": ["AWS::EC2::Instance", "AWS::IAM::Role", "AWS::S3::Bucket", "AWS::SQS::Queue"]
+  },
+  "startedAt": "2026-10-26T09:00:00.000Z",
+  "completedAt": "2026-10-26T09:00:03.000Z",
+  "resources": [
+    {
+      "listedType": "AWS::S3::Bucket",
+      "location": "us-east-1",
+      "nativeId": "cli-made-assets",
+      "cloudIds": [{ "kind": "arn", "value": "arn:aws:s3:::cli-made-assets" }, { "kind": "import-id", "value": "cli-made-assets" }],
+      "tags": {},
+      "properties": { "BucketName": "cli-made-assets", "Arn": "arn:aws:s3:::cli-made-assets" },
+      "observedAt": "2026-10-26T09:00:01.000Z"
+    },
+    {
+      "listedType": "AWS::IAM::Role",
+      "location": "global",
+      "nativeId": "cli-made-role",
+      "cloudIds": [{ "kind": "arn", "value": "arn:aws:iam::000000000000:role/cli-made-role" }, { "kind": "import-id", "value": "cli-made-role" }],
+      "tags": {},
+      "properties": {
+        "RoleName": "cli-made-role",
+        "Arn": "arn:aws:iam::000000000000:role/cli-made-role",
+        "AssumeRolePolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Principal": { "Service": "lambda.amazonaws.com" }, "Action": "sts:AssumeRole" }] }
+      },
+      "observedAt": "2026-10-26T09:00:01.000Z"
+    },
+    {
+      "listedType": "AWS::SQS::Queue",
+      "location": "us-east-1",
+      "nativeId": "http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/cli-made-queue",
+      "cloudIds": [{ "kind": "arn", "value": "arn:aws:sqs:us-east-1:000000000000:cli-made-queue" }],
+      "tags": {},
+      "properties": {
+        "QueueName": "cli-made-queue",
+        "QueueUrl": "http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/cli-made-queue",
+        "Arn": "arn:aws:sqs:us-east-1:000000000000:cli-made-queue"
+      },
+      "observedAt": "2026-10-26T09:00:02.000Z"
+    },
+    {
+      "listedType": "AWS::EC2::Instance",
+      "location": "us-east-1",
+      "nativeId": "i-0a1b2c3d4e5f60718",
+      "cloudIds": [{ "kind": "import-id", "value": "i-0a1b2c3d4e5f60718" }],
+      "tags": {},
+      "properties": { "InstanceId": "i-0a1b2c3d4e5f60718", "InstanceType": "t3.micro", "ImageId": "ami-0abcdef1234567890" },
+      "observedAt": "2026-10-26T09:00:02.000Z"
+    }
+  ],
+  "coverage": [
+    { "listedType": "AWS::EC2::Instance", "location": "us-east-1", "verdict": "listed" },
+    { "listedType": "AWS::IAM::Role", "location": "global", "verdict": "listed" },
+    { "listedType": "AWS::S3::Bucket", "location": "us-east-1", "verdict": "listed" },
+    { "listedType": "AWS::SQS::Queue", "location": "us-east-1", "verdict": "listed" }
+  ],
+  "notes": []
+}

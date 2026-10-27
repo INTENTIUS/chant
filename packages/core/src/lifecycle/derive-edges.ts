@@ -24,23 +24,33 @@
  *   (Q7, {@link deriveEdgesAcross}), and each edge is stored in its holder's
  *   document. Edges are per read and never carried to another read.
  *
- * Identity matches between attribute values and cloud ids are behold#1023's
- * separate pass, not this one. Pure.
+ * After the catalog pass, the identity-match pass (#4523, behold#1023 Q1)
+ * runs over the same nodes: an attribute value equal to the native id or ARN
+ * of a node whose lexicon declares an `indexIdentity` draws an edge whose
+ * `rule` starts `identity-match:`, under the same scoped join key, and a
+ * value naming several nodes draws none and is recorded in an
+ * `ambiguous-identity` note with every candidate. A pair the catalog joined
+ * gets no second edge. Pure.
  */
 import type { GraphIR, IRDanglingRef, IRNode } from "../graph-ir";
 import {
   containmentGroups,
+  reconstructIdentityEdges,
   reconstructIndexedEdges,
+  type IdentityOwners,
   type IndexedNodeScope,
   type NamedCatalog,
   type ReferenceCatalog,
 } from "../graph-refs";
+import type { IndexIdentity } from "./identity-match";
 import { indexDocumentDigest, type IndexDocument, type IndexNote } from "./index-document";
 
 /** What {@link deriveEdges} needs from a lexicon. A `LexiconPlugin` is one. */
 export interface EdgeLexicon {
   name: string;
   referenceCatalog?: ReferenceCatalog;
+  /** Its identity rule (#4523): when present, the identity-match pass can name this lexicon's nodes. */
+  indexIdentity?: IndexIdentity;
 }
 
 /** Locations that hold global types: AWS's `global`, Kubernetes' cluster-scoped objects. */
@@ -107,10 +117,17 @@ export function deriveEdgesAcross(docs: readonly IndexDocument[], lexicons: read
   });
 
   const derived = reconstructIndexedEdges(all, named, (n) => scopes.get(n.id)!);
+  const owners: IdentityOwners[] = [...lexicons]
+    .filter((l) => l.indexIdentity !== undefined)
+    .sort((a, b) => byString(a.name, b.name))
+    .map((l) => ({ lexicon: l.name, ...(l.indexIdentity!.nodeIdentities ? { identities: l.indexIdentity!.nodeIdentities } : {}) }));
+  const identity = owners.length > 0
+    ? reconstructIdentityEdges(all, owners, (n) => scopes.get(n.id)!, derived.edges)
+    : { edges: [], ambiguous: [] };
 
   return docs.map((d, i) => {
     const mine = (from: string) => holderDoc.get(from) === i;
-    const edges = [...d.graph.edges.filter((e) => e.origin !== "derived"), ...derived.edges.filter((e) => mine(e.from))];
+    const edges = [...d.graph.edges.filter((e) => e.origin !== "derived"), ...derived.edges.filter((e) => mine(e.from)), ...identity.edges.filter((e) => mine(e.from))];
     const pairs = derived.containment.filter((p) => mine(p.child));
     const dangling = new Map<string, IRDanglingRef>();
     for (const r of [
@@ -120,11 +137,17 @@ export function deriveEdgesAcross(docs: readonly IndexDocument[], lexicons: read
       dangling.set(`${r.from}\u0000${r.kind}\u0000${r.path}\u0000${r.value}`, r);
     }
 
-    const notes: IndexNote[] = (d.notes ?? []).filter((n) => n.kind !== "no-catalog" && n.kind !== "ambiguous-reference");
+    const notes: IndexNote[] = (d.notes ?? []).filter((n) => n.kind !== "no-catalog" && n.kind !== "ambiguous-reference" && n.kind !== "ambiguous-identity");
     for (const a of derived.ambiguous.filter((x) => mine(x.from))) {
       notes.push({
         kind: "ambiguous-reference",
         message: `${a.from} ${a.path} = ${JSON.stringify(a.value)} matches ${a.candidates.length} nodes (${a.candidates.join(", ")}); rule ${a.rule} drew no edge`,
+      });
+    }
+    for (const a of identity.ambiguous.filter((x) => mine(x.from))) {
+      notes.push({
+        kind: "ambiguous-identity",
+        message: `${a.from} ${a.path} = ${JSON.stringify(a.value)} names ${a.candidates.length} nodes (${a.candidates.join(", ")}); the identity-match pass drew no edge`,
       });
     }
     const counts = new Map<string, number>();
