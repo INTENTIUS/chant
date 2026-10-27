@@ -58,6 +58,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Capability, CapabilityPlan, CapabilityRegistry, DeployContext } from "../components/capability";
 import { isPlanMovedError } from "../components/capability";
+import type { CapabilityTraceFacts } from "../otlp";
 import { composeChangeSet, type ChangeSetDocument, type ChangeSetPart } from "../change-set";
 import { computePlanDigest } from "../lifecycle/plan-digest";
 import type { GatePolicyExec, GatePolicyRun } from "../gate-policy";
@@ -289,8 +290,32 @@ export async function planOpWaveStep(
   return plan;
 }
 
-/** How one run's apply through its step came out. */
-export type OpWaveStepApply = { outcome: "applied"; output: unknown } | { outcome: "moved"; reason: string } | { outcome: "failed"; reason: string };
+/** How one run's apply through its step came out, with what the capability knew about it (#4555). */
+export type OpWaveStepApply = ({ outcome: "applied"; output: unknown } | { outcome: "moved"; reason: string } | { outcome: "failed"; reason: string }) & { facts?: CapabilityTraceFacts };
+
+/**
+ * A step's facts for its span and run record (#4555): the plan's resource
+ * counts by action, which core reads from the plan's change-set part, and
+ * whatever the capability's `traceFacts` adds. A `traceFacts` that throws
+ * is left out.
+ */
+export async function opWaveStepFacts(
+  capability: Capability<never, unknown>,
+  input: unknown,
+  plan: OpWaveStepPlan,
+  outcome: { output: unknown } | { error: unknown },
+): Promise<CapabilityTraceFacts | undefined> {
+  const counts: Record<string, number> = {};
+  for (const e of plan.part?.entries ?? []) counts[`resources.${e.action}`] = (counts[`resources.${e.action}`] ?? 0) + 1;
+  let own: CapabilityTraceFacts | undefined;
+  try {
+    own = await capability.traceFacts?.(input as never, outcome);
+  } catch {
+    own = undefined;
+  }
+  const attributes = { member: plan.member, kind: capability.kind, ...counts, ...(own?.attributes ?? {}) };
+  return { attributes, ...(own?.spans?.length ? { spans: own.spans } : {}) };
+}
 
 /** Apply one run through the spec's step (#4545), with the plan the gate decided. */
 export async function applyOpWaveStep(at: { spec: OpWavesSpec; wave: OpWave; registry: CapabilityRegistry }, run: OpWaveRun, plan: OpWaveStepPlan): Promise<OpWaveStepApply> {
@@ -302,12 +327,15 @@ export async function applyOpWaveStep(at: { spec: OpWavesSpec; wave: OpWave; reg
     return { outcome: "failed", reason: err instanceof Error ? err.message : String(err) };
   }
   const ctx: DeployContext = { ...opWaveStepContext(spec, wave, run), ...(plan.artifact !== undefined ? { plans: { [plan.member]: plan.artifact } } : {}) };
+  const input = opWaveStepInput(spec, wave, run);
   try {
-    const output = await capability.run(ctx, opWaveStepInput(spec, wave, run) as never);
-    return { outcome: "applied", output };
+    const output = await capability.run(ctx, input as never);
+    const facts = await opWaveStepFacts(capability, input, plan, { output });
+    return { outcome: "applied", output, ...(facts ? { facts } : {}) };
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
-    return isPlanMovedError(err) ? { outcome: "moved", reason } : { outcome: "failed", reason };
+    const facts = await opWaveStepFacts(capability, input, plan, { error: err });
+    return { ...(isPlanMovedError(err) ? { outcome: "moved" as const, reason } : { outcome: "failed" as const, reason }), ...(facts ? { facts } : {}) };
   }
 }
 

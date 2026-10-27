@@ -243,9 +243,22 @@ Runs one read-only SQL statement over the snapshots in the index store and the r
 | `sql` | `string` | Yes | The SQL statement |
 | `member` | `string[]` | No | Only these members' ledgers (`--member`) |
 
+### `report`
+
+Reads one file a pull request stage kept in the report store: the URL a CI product's tool hook names, else the workspace's `ci.reportUrl` ([#4555](https://github.com/INTENTIUS/chant/issues/4555)). The store is the one `pr-plan --report-url` and `pr-apply --report-url` write, under `<pr>/<commit>[/<member>]`. The server reads it with its own credentials (`gs://` and `az://` through chant's object-store clients, `s3://` through the AWS CLI, `file://` from disk) and writes nothing. A JSON file comes back parsed under `document`, and an events file as its list of `events`. A missing file is an error result.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `pr` | `string` | Yes | The pull request number, or `unknown` for a `pr-apply` that found none |
+| `commit` | `string` | Yes | The full commit sha the stage ran on |
+| `member` | `string` | No | The workspace member, for a member's loop |
+| `file` | `string` | Yes | One of `pr-plan.json`, `pr-apply.json`, `change-set.json`, `pr-plan.events.jsonl`, `pr-apply.events.jsonl`, `pr-record.events.jsonl` |
+
 ### Plugin Tools
 
 Lexicon plugins can add tools. Plugin tools are namespaced as `{pluginName}:{toolName}` to avoid conflicts with core tools. A plugin tool that changes nothing declares `readOnly: true`, which is what lets the [read-only server](#read-only-mode) serve it.
+
+A CI product adds its tools the same way through its tool hook ([#4555](https://github.com/INTENTIUS/chant/issues/4555)). The product's bin runs `runChantInProcess(["serve", "mcp"], words, { mcp: hook })` from `@intentius/chant/ci-product`, and each tool is registered as `{product}:{toolName}`. Started through the hook, the server is read-only unless the hook sets `readOnly: false`, and `--read-only` keeps it read-only either way. In that mode a product tool is served only when it declares `readOnly: true`, and chant refuses to start when a served tool's name begins with a write word such as `apply` or `lock`, or holds a strong one such as `approve` or `merge` anywhere. terragucci's own server made the same check. The hook's `tools(ctx)` gets `ctx.reports()`, a reader of the report store that cannot write.
 
 ## Read-only mode
 
@@ -253,9 +266,9 @@ Lexicon plugins can add tools. Plugin tools are namespaced as `{pluginName}:{too
 
 | Served | Left out |
 |---|---|
-| `build` (it writes no file), `lint` without `fix`, `explain`, `search`, `composites`, `capabilities`, `lifecycle-diff`, `op-list`, `op-status`, `op-report`, `ledger`, `query`, and the workspace reads | `import`, `scaffold`, `lifecycle-snapshot`, `op-run`, `op-approve`, and the workspace writes (`records-*`, `points-*`) |
+| `build` (it writes no file), `lint` without `fix`, `explain`, `search`, `composites`, `capabilities`, `lifecycle-diff`, `op-list`, `op-status`, `op-report`, `ledger`, `query`, `report`, and the workspace reads | `import`, `scaffold`, `lifecycle-snapshot`, `op-run`, `op-approve`, and the workspace writes (`records-*`, `points-*`) |
 
-A plugin tool is served only when it declares `readOnly: true`. The `initialize` result's `instructions` say the server is read-only. The resources are all reads and are served unchanged.
+A plugin tool, or a CI product's tool, is served only when it declares `readOnly: true`. The `initialize` result's `instructions` say the server is read-only. The resources are all reads and are served unchanged.
 
 The lists live in `packages/core/src/cli/mcp/read-only.ts`. A core tool on neither list is refused when a read-only server starts, so a new tool has to be sorted before it can ship, and a test fails when a mutating tool is registered in the mode.
 
@@ -272,7 +285,7 @@ Running `chant init --mcp-read-only` writes the read-only form into `.mcp.json`,
 }
 ```
 
-A product built on chant switches it on for its own server by constructing `McpServer` with `readOnly: true`.
+A product built on chant switches it on for its own server by constructing `McpServer` with `readOnly: true`, or gets it by default by passing its tools as a [tool hook](#plugin-tools).
 
 ## Workspace tools
 

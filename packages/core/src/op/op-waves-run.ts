@@ -88,7 +88,10 @@ import { ciRunIdFromEnv } from "./gate-run-locator";
 import { appendRunRecord, DEFAULT_RUN_ENV } from "../lifecycle/run-ledger";
 import { pushLifecycleReport } from "../lifecycle/git";
 import { resolveCiJob } from "../lifecycle/release-ledger";
-import type { OpRunRecordInput, OpRunStepRecord, OpRunWave } from "./runtime";
+import type { OpRunRecordInput, OpRunStepRecord, OpRunWave, OpRunWaveTarget } from "./runtime";
+import { activeOtlp, RunEventTrace, type CapabilityTraceFacts, type OtlpExporter } from "../otlp";
+import { joinRunEventSinks, resolveRunEventRun, type RunEventSink } from "../run-event-stream";
+import { OpWaveRunEvents } from "./op-waves-events";
 import type { ChangeSetDocument, ChangeSetPart } from "../change-set";
 import type { CapabilityRegistry } from "../components/capability";
 import type { LockGrain } from "../lifecycle/lock-rows";
@@ -750,6 +753,18 @@ export interface RunOpWaveOptions {
   lockGate?: string;
   /** Whether a run holding rows still runs (#4552). Default: the forge's answer, with the lease's age. */
   lockLiveness?: LockLiveness;
+  /**
+   * Where the job's run events go (#4555), on the run-event contract: a
+   * phase `wave-<k>` per wave and a step per run target, settled as the
+   * run record says. `chant run wave --events-json` passes its stream.
+   */
+  events?: RunEventSink;
+  /**
+   * The OTLP exporter the job's trace goes through (#4555). Default: the
+   * process's ({@link activeOtlp}), which is off unless the environment
+   * names an endpoint. `false` sends none.
+   */
+  otlp?: OtlpExporter | false;
 }
 
 /** Where an op wave job's run record goes (#4551). */
@@ -797,6 +812,8 @@ export interface RunOpWaveResult {
   blocked?: Record<string, string>;
   /** The hooks that ran (#3762). */
   hooks: OpWaveHookOutcome[];
+  /** Each target the job applied or tried to (#4555): when, how long, and what its capability knew. */
+  targets?: Record<string, OpRunWaveTarget>;
 }
 
 /** What one wave job works with. */
@@ -1503,15 +1520,72 @@ export async function runOpWave(options: RunOpWaveOptions): Promise<RunOpWaveRes
   assertOpWavesSpec(options.spec);
   // #4551: one run record per job, on every way the job ends.
   const started = new Date().toISOString();
+  // #4555: the job's run events and its trace, when a reader or an exporter wants them.
+  const events = await openOpWaveEvents(options);
+  if (events) jobEvents.set(options, events);
+  events?.start();
   let result: RunOpWaveResult;
   try {
     result = await runOpWaveJob(options);
   } catch (err) {
-    await recordOpWaveRun(options, started, { error: err });
+    const record = await recordOpWaveRun(options, started, { error: err });
+    await closeOpWaveEvents(options, events, record);
     throw err;
   }
-  await recordOpWaveRun(options, started, { result });
+  const record = await recordOpWaveRun(options, started, { result });
+  await closeOpWaveEvents(options, events, record, result);
   return result;
+}
+
+/** Each running job's events (#4555), by its options, which every step of the job is handed. */
+const jobEvents = new WeakMap<RunOpWaveOptions, OpWaveRunEvents>();
+
+/** The job's run events (#4555): to `options.events`, and to a trace when the exporter is on. Undefined when neither wants them. */
+async function openOpWaveEvents(options: RunOpWaveOptions): Promise<OpWaveRunEvents | undefined> {
+  const log = options.log ?? ((line: string) => console.error(line));
+  let exporter: OtlpExporter | undefined;
+  try {
+    exporter = options.otlp === false ? undefined : (options.otlp ?? activeOtlp());
+  } catch (err) {
+    log(`wave ${options.wave}: no trace is sent: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (!options.events && !exporter) return undefined;
+  let trace: RunEventTrace | undefined;
+  if (exporter) {
+    const run = await resolveRunEventRun({ kind: "op", name: options.spec.name, cwd: options.cwd ?? process.cwd() });
+    trace = new RunEventTrace(run, { exporter });
+  }
+  return new OpWaveRunEvents(joinRunEventSinks(options.events, trace?.sink)!, trace);
+}
+
+/** Settle the job's events from its run record and send its trace (#4555). A trace that does not go out is a line in the log, never a change of exit code. */
+async function closeOpWaveEvents(options: RunOpWaveOptions, events: OpWaveRunEvents | undefined, record: OpRunRecordInput, result?: RunOpWaveResult): Promise<void> {
+  if (!events) return;
+  jobEvents.delete(options);
+  events.finish(record, { ...(result ? { moved: result.moved } : {}), ...(result?.blocked ? { blocked: result.blocked } : {}) });
+  const problem = await events.trace?.flush();
+  if (problem) (options.log ?? ((line: string) => console.error(line)))(`wave ${options.wave}: the trace was not sent: ${problem}`);
+}
+
+/** A target's apply began (#4555): its start time for the record, and its `step-start`. */
+function targetStarted(options: RunOpWaveOptions, k: number, target: string): number {
+  jobEvents.get(options)?.stepStart(k, target);
+  return Date.now();
+}
+
+/** A target's apply ended (#4555): its time and facts on the result, and its `step-settle`. */
+function targetSettled(options: RunOpWaveOptions, result: RunOpWaveResult, k: number, target: string, startedMs: number, status: "ok" | "failed" | "skipped", opts: { error?: string; facts?: CapabilityTraceFacts } = {}): void {
+  const durationMs = Math.max(0, Date.now() - startedMs);
+  result.targets = {
+    ...result.targets,
+    [target]: {
+      startedAt: new Date(startedMs).toISOString(),
+      durationMs,
+      ...(opts.facts?.attributes ? { attributes: opts.facts.attributes } : {}),
+      ...(opts.facts?.spans?.length ? { spans: opts.facts.spans } : {}),
+    },
+  };
+  jobEvents.get(options)?.stepSettle(k, target, status, durationMs, opts);
 }
 
 /** The run ledger's status and failure for a job's exit code (#4551), by chant's exit-code table. */
@@ -1557,7 +1631,7 @@ export function opWaveRunRecord(
     const steps: OpRunStepRecord[] = targets.map((t) => ({
       fn: t,
       status: failedRuns.has(t) ? "fail" : applied.has(t) ? "ok" : "skipped",
-      durationMs: 0,
+      durationMs: result.targets?.[t]?.durationMs ?? 0,
     }));
     const status: "ok" | "fail" | "skipped" = steps.some((x) => x.status === "fail") ? "fail" : steps.length > 0 && steps.every((x) => x.status === "skipped") ? "skipped" : "ok";
     return { name: `wave-${k}`, status, steps };
@@ -1579,6 +1653,7 @@ export function opWaveRunRecord(
     failed: [...result.failed],
     moved: [...result.moved],
     ...(result.blocked && Object.keys(result.blocked).length > 0 ? { blocked: { ...result.blocked } } : {}),
+    ...(result.targets && Object.keys(result.targets).length > 0 ? { targets: { ...result.targets } } : {}),
   };
   const labels = { ...(spec.labels ?? {}) };
   return {
@@ -1600,10 +1675,9 @@ export function opWaveRunRecord(
 }
 
 /** Append the job's run record (#4551). A failed write warns and never changes the job's exit code. */
-async function recordOpWaveRun(options: RunOpWaveOptions, started: string, outcome: { result: RunOpWaveResult } | { error: unknown }): Promise<void> {
+async function recordOpWaveRun(options: RunOpWaveOptions, started: string, outcome: { result: RunOpWaveResult } | { error: unknown }): Promise<OpRunRecordInput> {
   const cwd = options.cwd ?? process.cwd();
   const port = options.runs ?? (options.gates ? undefined : gitOpWaveRunPort({ cwd }));
-  if (!port) return;
   const log = options.log ?? ((line: string) => console.error(line));
   let gitSha = options.head;
   if (gitSha === undefined) {
@@ -1615,12 +1689,15 @@ async function recordOpWaveRun(options: RunOpWaveOptions, started: string, outco
   }
   const ci = resolveCiJob();
   const record = opWaveRunRecord(options, { started, ended: new Date().toISOString(), ...(gitSha ? { gitSha } : {}), ...(ci ? { runOrigin: ci.runOrigin } : {}) }, outcome);
+  // The record is built either way: the job's run events settle from it (#4555).
+  if (!port) return record;
   try {
     const wrote = await port.append(record);
     if (wrote && wrote.pushWarning) log(`wave ${options.wave}: the run record was written and not pushed: ${wrote.pushWarning}`);
   } catch (err) {
     log(`wave ${options.wave}: could not record the run on the run ledger: ${err instanceof Error ? err.message : String(err)}`);
   }
+  return record;
 }
 
 /**
@@ -1689,6 +1766,8 @@ async function runOpWaveLoop(options: RunOpWaveOptions, log: (line: string) => v
   const { spec } = options;
   const last = spec.waves[spec.waves.length - 1]!;
   const rest: NonNullable<RunOpWaveResult["rest"]> = [];
+  // #4555: each wave a `rest` job walks keeps its targets' times.
+  const targets: Record<string, OpRunWaveTarget> = {};
   const result = await runWaveLoop<OpWavePlanned, OpWaveDecided, RunOpWaveResult>({
     first: options.wave,
     plan: (at) => planOpWave(options, at, at.k === options.wave ? skip : undefined),
@@ -1708,6 +1787,7 @@ async function runOpWaveLoop(options: RunOpWaveOptions, log: (line: string) => v
     },
     onward(k, outcome) {
       applied.push(...outcome.applied);
+      Object.assign(targets, outcome.targets ?? {});
       // #3821: a `rest` wave goes on through the waves its plan command found.
       const found = outcome.decision?.discovered?.waves;
       const onward = k >= spec.waves.length && last.rest === true && options.share === undefined && options.group === undefined && !options.decide && outcome.exitCode === 0 && found !== undefined && k < found;
@@ -1716,7 +1796,8 @@ async function runOpWaveLoop(options: RunOpWaveOptions, log: (line: string) => v
       return onward;
     },
   });
-  return { ...result, applied, ...(rest.length > 0 ? { rest } : {}) };
+  const timed = { ...targets, ...(result.targets ?? {}) };
+  return { ...result, applied, ...(rest.length > 0 ? { rest } : {}), ...(Object.keys(timed).length > 0 ? { targets: timed } : {}) };
 }
 
 /** What the earlier outcome files hold for a job (#4322): the runs they block, or why the job does not run at all. */
@@ -2937,7 +3018,11 @@ async function applyLeased(
   if (spec.applyWave) {
     const runsPath = writeRunsFile(ctx, runs, planned, decision.digest);
     const argv = opWaveArgv(spec.applyWave, { op: spec.op, wave: wave.name, runs: runsPath, plans: opWavePlansPath(spec, k) });
+    // #4555: one call applies every run, so each run's step spans that call.
+    const startedMs = runs.map((r) => targetStarted(options, k, r.target))[0] ?? Date.now();
     const got = await callApply(options, ctx, decision, runs, planned, argv, { label: `wave ${k} (${wave.name})`, key: "hooks", runsPath }, recordPath);
+    const settle: "ok" | "failed" | "skipped" = got.outcome === "applied" ? "ok" : got.outcome === "failed" ? "failed" : "skipped";
+    for (const r of runs) targetSettled(options, result, k, r.target, startedMs, settle);
     if (got.outcome === "applied-nothing") nothing = got.said;
     else if (got.outcome === "applied") {
       result.applied.push(...runs.map((r) => r.target));
@@ -2967,7 +3052,12 @@ async function applyLeased(
           continue;
         }
         const registry = await opWaveRegistry(options, ctx.cwd, options.capabilities);
+        const startedMs = targetStarted(options, k, run.target);
         const got = await applyOpWaveStep({ spec, wave, registry }, run, plan);
+        targetSettled(options, result, k, run.target, startedMs, got.outcome === "applied" ? "ok" : got.outcome === "moved" ? "skipped" : "failed", {
+          ...(got.outcome !== "applied" ? { error: got.reason } : {}),
+          ...(got.facts ? { facts: got.facts } : {}),
+        });
         if (got.outcome === "applied") result.applied.push(run.target);
         else if (got.outcome === "moved") {
           log(`${run.target}: its plan moved since wave ${k} was decided, so it was not applied: ${got.reason}`);
@@ -2982,7 +3072,9 @@ async function applyLeased(
       // Under runBy "apply" each run's apply runs its own apply-stage hooks, over a runs file of that run alone.
       const runsPath = byApply ? writeRunsFile(ctx, [run], planned, decision.digest, `.chant/op-waves/${spec.name}/wave-${k}/${key}.runs.json`) : opWaveRunsPath(spec, k);
       const argv = opWaveArgv(spec.apply ?? OP_WAVE_DEFAULT_APPLY, { op: run.op ?? spec.op, target: run.target, wave: wave.name, plan: opWavePlanPath(spec, k, run.target) });
+      const startedMs = targetStarted(options, k, run.target);
       const got = await callApply(options, ctx, decision, [run], planned, argv, { label: run.target, key: `${key}.hooks`, runsPath }, recordPath);
+      targetSettled(options, result, k, run.target, startedMs, got.outcome === "applied" ? "ok" : got.outcome === "failed" ? "failed" : "skipped");
       if (got.outcome === "applied-nothing") {
         nothing = got.said;
         break;

@@ -68,10 +68,19 @@ async function runOpWaveJobCommand(ctx: CommandContext): Promise<number> {
   }
   let spec: OpWavesSpec | undefined;
   const job = { ...(args.share !== undefined ? { share: args.share } : {}), ...(args.group !== undefined ? { group: args.group } : {}) };
+  if (args.eventsJson && args.json) {
+    console.error(formatError({ message: "--events-json and --json both print to stdout", hint: "Pass one. --events-json prints the job's run events; --json prints its result." }));
+    return 1;
+  }
   try {
     const path = resolve(specFile);
     spec = parseOpWavesSpec(readFileSync(path, "utf-8"), `--spec ${specFile}`);
+    // #4555: --events-json streams the job's run events, a phase per wave and a step per run target.
+    const stream = args.eventsJson
+      ? await (await import("../run-events")).openCliRunEvents(args, { kind: "op", name: spec.name, cwd: process.cwd() })
+      : undefined;
     const result = await runOpWave({
+      ...(stream ? { events: stream.emit } : {}),
       spec,
       specFile: relative(process.cwd(), path),
       wave: args.wave,

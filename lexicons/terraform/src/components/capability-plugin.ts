@@ -160,6 +160,7 @@ import { declaredVariables } from "../compose/root";
 import { terraformComposeGroup } from "./compose-group";
 import { markPlaceholderDriven, placeholderVars, waitingHole } from "./placeholder-preview";
 import { terraformReleaseInputs } from "./release-inputs";
+import { terraformTraceFacts } from "./trace-facts";
 import { DEFAULT_LOCK_TIMEOUT, isLockTimeout } from "../lock-timeout";
 import { conePlanDigest, type PlanCone } from "../cone";
 import { fillStateReads, stateReadsProblems, waitingReadsReason, type TerraformStateRead } from "../state-reads";
@@ -606,6 +607,8 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
     if (Array.isArray(kept)) return kept;
     return plan.changeSet ? terraformLockRowsFromPart(input.root, plan.changeSet) : [];
   },
+  // #4555: the root and the binary, for the step's span and run record.
+  traceFacts: async (input, outcome) => terraformTraceFacts(input, outcome, (await rootDir(input).catch(() => undefined))?.binary),
   planGroup: (ctx, members) => terraformComposeGroup.planGroup(ctx, members),
   runGroup: (ctx, run, members) => terraformComposeGroup.runGroup(ctx, run, members),
   async run(ctx: DeployContext, input: TerraformApplyStepInput): Promise<TerraformApplyStepOutput> {

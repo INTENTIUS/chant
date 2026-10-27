@@ -112,6 +112,7 @@ import { pulumiMemberEngine, type PulumiMemberEngine, type PulumiMemberEngineSou
 import { pulumiMemberPlannedOutputs } from "./member-outputs";
 import { pulumiPlanShape, pulumiShapeDifferences } from "./plan-shape";
 import { pulumiLockRows } from "./lock-rows";
+import { pulumiTraceFacts } from "./trace-facts";
 import {
   defaultPlungeRunner,
   defaultPulumiRunner,
@@ -667,6 +668,8 @@ export function createPulumiUpCapability(opts: PulumiUpOptions = {}): Capability
       const project = readProject(stackDir(input))?.name;
       return pulumiLockRows(plan.changeSet, plan.member, { ...(typeof project === "string" ? { project } : {}), stack: input.stack });
     },
+    // #4555: the stack, the engine and the summary's counts, for the step's span and run record.
+    traceFacts: (input, outcome) => pulumiTraceFacts(input, outcome),
   };
 }
 

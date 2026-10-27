@@ -787,7 +787,22 @@ A job that applies with an identity is only as separate as the forge and the clo
 
 ## The run record
 
-Each `chant run wave` job appends one run record to `<env>/runs__<name>.jsonl` on `chant/lifecycle`, however it ends ([#4551](https://github.com/INTENTIUS/chant/issues/4551)). The record goes under the environment the spec's `labels.Env` names, else `local`, as every Op's does. The spec's `labels` are copied onto it. The record has one phase per wave the job walked, `wave-<k>`, and one step per run target: `ok` when it applied, `fail` when it failed, and `skipped` when it moved, was blocked or waited. Its `wave` field names the spec, the wave, the job (`wave`, `decide`, `share` or `group`), the set digest, the exit code and the runs applied, failed, moved and blocked, so a deciding job and its share jobs join on `wave.digest`. `chant ledger runs --where op=<name>` lists them. `--no-record` and `CHANT_NO_RECORD` write none.
+Each `chant run wave` job appends one run record to `<env>/runs__<name>.jsonl` on `chant/lifecycle`, however it ends ([#4551](https://github.com/INTENTIUS/chant/issues/4551)). The record goes under the environment the spec's `labels.Env` names, else `local`, as every Op's does. The spec's `labels` are copied onto it. The record has one phase per wave the job walked, `wave-<k>`, and one step per run target: `ok` when it applied, `fail` when it failed, and `skipped` when it moved, was blocked or waited. Its `wave` field names the spec, the wave, the job (`wave`, `decide`, `share` or `group`), the set digest, the exit code and the runs applied, failed, moved and blocked, so a deciding job and its share jobs join on `wave.digest`. `chant ledger runs --where op=<name>` lists them. `--no-record` and `CHANT_NO_RECORD` write none. `wave.targets` holds each run target whose apply the job started ([#4555](https://github.com/INTENTIUS/chant/issues/4555)). An entry keeps the start time and the duration, which is also the step's `durationMs`. It keeps the facts the capability gave too.
+
+## Traces
+
+With `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) set, each `chant run wave` job sends one trace as OTLP/JSON over HTTP when it ends ([#4555](https://github.com/INTENTIUS/chant/issues/4555)). `TRACEPARENT` joins it to a trace the pipeline already started. `OTEL_EXPORTER_OTLP_HEADERS` adds headers to the request. `OTEL_TRACES_EXPORTER=none` turns it off, as does `OTEL_SDK_DISABLED=true`. A collector that refuses the trace, or that cannot be reached, costs the job one line in its log. The exit code stays the job's own.
+
+| Span | Under | Attributes |
+|---|---|---|
+| `op <name>`, the job | `TRACEPARENT`'s span, when set | `run.id`, `run.kind`, `run.runtime`, `status`, `failure.code`, `vcs.ref.head.revision` |
+| `wave-<k>` | the job | `phase`, `status` |
+| each run target | its wave | `step`, `status`, `member`, `kind`, `resources.<action>` from the plan, and the capability's facts |
+| each timed resource | its run target | what the capability timed, such as plunge's provider calls |
+| `gate:<name>`, on a job that waits | its wave | `status: gated`, with a `gate-waiting` event |
+
+Every attribute chant writes is under the CI product's name: `chant.status` on chant's own jobs, `terragucci.root` and `plywood.stack` under the products. The terraform lexicon adds `root` and `binary`. The pulumi lexicon adds `stack`, `engine` and the `up.<op>` counts from the update's summary.
+
 
 ## Exit codes
 

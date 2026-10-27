@@ -22,7 +22,15 @@ export async function runServeMcp(ctx: CommandContext): Promise<number> {
   }
   // #2707 — at or inside a declared workspace, the workspace tools are served too.
   // chant#4543 — --read-only serves only the tools that change nothing.
-  const server = new McpServer(plugins, { instructions, workspace: { cwd: process.cwd() }, readOnly: ctx.args.readOnly === true });
+  // chant#4555 — a product's bin that set its tool hook serves its tools too, read-only unless the hook says otherwise.
+  const { activeProductMcpHook } = await import("../mcp/product-tools");
+  const product = activeProductMcpHook();
+  const server = new McpServer(plugins, {
+    instructions,
+    workspace: { cwd: process.cwd() },
+    ...(ctx.args.readOnly === true ? { readOnly: true } : {}),
+    ...(product ? { product } : {}),
+  });
   await server.start();
   await new Promise(() => {});
   return 0; // unreachable

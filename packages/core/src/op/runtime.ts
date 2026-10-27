@@ -22,6 +22,7 @@ import type { WaitingPoint } from "./steward-points";
 import type { GateResolutionRecord } from "../lifecycle/gate-ledger";
 import type { RunOrigin } from "../lifecycle/release-ledger";
 import { NEXT_RELEASE } from "../release-floors";
+import type { CapabilityTraceSpan } from "../otlp";
 import type { RunComponentsOptions, RunComponentsResult } from "../components/cli-support";
 
 /**
@@ -239,6 +240,26 @@ export interface OpRunWave {
   moved: string[];
   /** Runs a failure blocked, each with the run that blocked it. */
   blocked?: Record<string, string>;
+  /**
+   * Each run target the job applied or tried to apply (#4555): when its
+   * apply started, how long it took, and what its capability knew about it
+   * (engine facts, and the resources it timed, such as plunge's provider
+   * calls and record writes). The same facts are the attributes and child
+   * spans of the target's span in the job's trace. Written by the same
+   * chant as `wave` itself.
+   */
+  targets?: Record<string, OpRunWaveTarget>;
+}
+
+/** One run target's apply in an op wave job (#4555). */
+export interface OpRunWaveTarget {
+  /** When its apply started, ISO-8601. */
+  startedAt: string;
+  durationMs: number;
+  /** Engine facts, as the trace writes them before the product's prefix. */
+  attributes?: Record<string, string | number | boolean>;
+  /** The pieces the engine timed. */
+  spans?: CapabilityTraceSpan[];
 }
 
 /** The first chant that writes {@link OpRunRecord.wave}, a run record per op wave job (#4551). */

@@ -17,6 +17,8 @@ import { setGateOrigin } from "../../lifecycle/gate-origin";
 import { createOpListTool, createOpRunTool, createOpStatusTool, createOpApproveTool, createOpReportTool } from "./op-tools";
 import { buildResourcesList, handleResourcesRead } from "./resource-handlers";
 import { createLedgerTools } from "./ledger-tools";
+import { createReportTools } from "./report-tools";
+import { activeProductMcpHook, productMcpContext, productToolsServed, type ProductMcpHook } from "./product-tools";
 import { MUTATING_CORE_TOOLS, READ_ONLY_CORE_TOOLS, ReadOnlyRegistrationError, servesContributedTool } from "./read-only";
 import { CHANT_VERSION } from "../version";
 
@@ -141,13 +143,21 @@ export class McpServer {
    * `READ_ONLY_CORE_TOOLS` (./read-only.ts), `lint` without `fix`, the
    * workspace reads without the writes, and the plugin tools that declare
    * `readOnly: true`.
+   *
+   * `options.product` (chant#4555) is a CI product's tool hook
+   * (./product-tools.ts): its tools are registered as `<product>:<name>`,
+   * under the same read-only rule as a plugin's, and a read-only server
+   * refuses to start with one named as a write. With a hook and no
+   * `readOnly`, the server is read-only unless the hook says otherwise.
    */
-  constructor(plugins?: LexiconPlugin[], options: { instructions?: string; workspace?: WorkspaceToolsOptions; readOnly?: boolean } = {}) {
+  constructor(plugins?: LexiconPlugin[], options: { instructions?: string; workspace?: WorkspaceToolsOptions; readOnly?: boolean; product?: ProductMcpHook } = {}) {
     this.plugins = plugins ?? [];
-    this.readOnly = options.readOnly === true;
+    const product = options.product;
+    this.readOnly = options.readOnly ?? (product ? product.readOnly !== false : false);
+    const said = [options.instructions, product?.instructions].filter((s): s is string => s !== undefined);
     this.instructions = this.readOnly
-      ? [options.instructions, READ_ONLY_INSTRUCTIONS].filter((s): s is string => s !== undefined).join("\n\n")
-      : options.instructions;
+      ? [...said, READ_ONLY_INSTRUCTIONS].join("\n\n")
+      : said.length > 0 ? said.join("\n\n") : undefined;
     const cwd = options.workspace?.cwd ?? process.cwd();
     // Register core tools
     this.registerCoreTool(buildTool, handleBuild);
@@ -177,6 +187,9 @@ export class McpServer {
     // The ledger read contract and chant query (chant#4543), in both modes.
     for (const t of createLedgerTools({ cwd, chantCommand: options.workspace?.chantCommand })) this.registerCoreTool(t.definition, t.handler);
 
+    // The report store (chant#4555), in both modes: the product hook's store, else ci.reportUrl.
+    for (const t of createReportTools({ cwd, ...(product?.reportUrl ? { reportUrl: product.reportUrl } : {}) })) this.registerCoreTool(t.definition, t.handler);
+
     // Workspace reads and record writes (#2707), inside a declared workspace only.
     if (options.workspace && findWorkspaceRoot(options.workspace.cwd)) {
       for (const t of createWorkspaceTools(options.workspace)) this.registerCoreTool(t.definition, t.handler);
@@ -187,6 +200,13 @@ export class McpServer {
       for (const plugin of plugins) {
         this.registerPluginTools(plugin);
         this.registerPluginResources(plugin);
+      }
+    }
+
+    // A CI product's tools (chant#4555), read-only by default as chant#4543 rules for contributed tools.
+    if (product) {
+      for (const tool of productToolsServed(product, productMcpContext(product, cwd, this.readOnly))) {
+        this.registerTool({ name: namespacedToolName(product.product, tool.name), description: tool.description, inputSchema: tool.inputSchema }, tool.handler);
       }
     }
   }
@@ -449,6 +469,11 @@ export async function startMcpServer(options: { readOnly?: boolean } = {}): Prom
     // Start without plugins if resolution fails
   }
 
-  const server = new McpServer(plugins, { workspace: { cwd: process.cwd() }, readOnly: options.readOnly });
+  const product = activeProductMcpHook();
+  const server = new McpServer(plugins, {
+    workspace: { cwd: process.cwd() },
+    ...(options.readOnly ? { readOnly: true } : {}),
+    ...(product ? { product } : {}),
+  });
   server.start();
 }
