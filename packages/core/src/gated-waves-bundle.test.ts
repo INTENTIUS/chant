@@ -48,7 +48,6 @@ describe("the gated-wave bundle", () => {
       "packages/core/src/intrinsic.ts",
       "packages/core/src/lifecycle/plan-digest.ts",
       // The next-release floor constant (#4480): no imports.
-      "packages/core/src/release-floors.ts",
     ]);
     expect(bytes).toBeLessThan(24 * 1024);
   });

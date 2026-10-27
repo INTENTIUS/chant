@@ -313,6 +313,27 @@ Under [`--no-record`](#a-test-run---no-record) a component's gate fails instead,
 
 `--target <component>:<address>` (repeatable) plans and applies only that address of the component. A target that names a component the run does not run refuses it, and so does a step whose verb can't narrow. See [Plan and Apply a Few Resources](/chant/guide/resource-targeting/).
 
+#### Adopting indexed resources: `--adopt`
+
+`--adopt <adoption-file>` adopts existing resources into one component's CloudFormation stack instead of deploying it plainly ([#4537](https://github.com/INTENTIUS/chant/issues/4537)). The file is the one [`chant import --index <ref> --adopt-out <file>`](/chant/cli/import/#adoption-file---adopt-out) writes. The component's source is what that import generated, built into the template its `cfn-deploy` step deploys.
+
+```bash
+chant run --components web --env prod --adopt adopt.json
+```
+
+The command reads the index version the file names from the project's snapshot store and refuses a file that does not match it. The `cfn-deploy` step then runs two change sets:
+
+1. An IMPORT change set of the template without chant's markers. It brings each selected resource under the stack by its identifier.
+2. An UPDATE of the template as built. It writes chant's marker tags on the imported resources and may change nothing else.
+
+Each change set is printed before it runs. The marker change set lists every marker write as tags only. Then the command asks whether to execute it. `--yes` answers yes. With no terminal and no `--yes`, the command prints the IMPORT change set, deletes it and imports nothing, so a CI job can show the adoption before anyone approves it.
+
+The run is refused before any change set is made when the file does not match its index version, when the template declares no resource under a selected logical id or declares another type, and when a type cannot be imported or its tags can only be set at create. It is also refused when a resource has no `DeletionPolicy` or is already in the stack. A template that would also create a resource is refused too. The marker UPDATE is refused before it runs if it would change more than the tag property, replace a resource, or touch a resource that was not imported. A refused or declined change set is deleted.
+
+If the marker step stops after a good import, the resources stay in the stack without chant markers. They keep their `DeletionPolicy`, which `chant import --index` writes as `Retain`. A plain deploy of the same template, the same command without `--adopt`, writes the markers. The command's output says so.
+
+`--adopt` takes one component on the local runtime. It is refused with `all` or a list. A component with no `cfn-deploy` step fails the run, because no step took the adoption.
+
 #### Cross-job outputs: `--dump-outputs` and `--seed-outputs`
 
 A single-component run in one CI job can reference a component that ran in an earlier job. `--dump-outputs <file>` writes the accumulated cross-component and cross-stack outputs after the run as JSON keyed by component name. It is written even when the run fails, so a resumed run still has what completed. `--seed-outputs <file>` (repeatable) loads such files before the run, so a `stackOutput()` or `@<dep>.publish.*` reference to an upstream component resolves.
@@ -433,6 +454,8 @@ A run without `--release` writes records with no `releaseDigest`, even when `HEA
 | `--force` | Required for `run cancel` |
 | `--progress-json` | Stream one NDJSON progress record per line to stdout while the run executes |
 | `--events-json` | Stream the run's events to stdout, one `run-event.schema.json` line each |
+| `--adopt <adoption-file>` | Adopt the file's indexed resources into the component's CloudFormation stack: an IMPORT change set, then a tags-only marker UPDATE, each reviewed before it runs (`run --components <name>`). See [Adopting indexed resources](#adopting-indexed-resources---adopt) |
+| `--yes` | Execute each `--adopt` change set after printing it, without asking (`run --components <name> --adopt`) |
 | `--dump-outputs <file>` | After the run, write the accumulated cross-component outputs as JSON to `file` (`run --components`) |
 | `--seed-outputs <file>` | Before the run, load outputs written by `--dump-outputs`; repeatable (`run --components`) |
 | `--digest-file <file>` | After a successful run, write one `<component>=<digest>` line per release the run recorded (`run --components`) |

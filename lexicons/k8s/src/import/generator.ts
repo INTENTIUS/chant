@@ -12,6 +12,8 @@ import {
   isEmbeddedReference,
   renderEmbeddedReference,
 } from "@intentius/chant/import/embedded";
+import { SECRET_DECLARATION_ENTITY_TYPE } from "@intentius/chant/secret-provenance";
+import { isMaskedValueRef } from "../index-import";
 
 const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 
@@ -131,8 +133,13 @@ export class K8sGenerator implements TypeScriptGenerator {
   /** The imports for embedded content the current `generate()` call references (#2962). */
   private scope = new EmbeddedImportScope("");
 
+  /** Whether the current `generate()` call wrote a `maskedValue(...)` (chant import --index, #4538). */
+  private usesMaskedValue = false;
+
   generate(ir: TemplateIR): GeneratedFile[] {
     const lines: string[] = [];
+    this.usesMaskedValue = false;
+    let usesDeclareSecret = false;
 
     // Collect which constructors are needed
     const usedConstructors = new Set<string>();
@@ -161,6 +168,13 @@ export class K8sGenerator implements TypeScriptGenerator {
 
     // Emit resources
     for (const resource of ir.resources) {
+      // A Secret `chant import --index` read masked: a referenced secret the user supplies (#4538).
+      if (resource.type === SECRET_DECLARATION_ENTITY_TYPE) {
+        usesDeclareSecret = true;
+        lines.push(`export const ${resource.logicalId} = declareSecret(${this.emitLiteral(resource.properties, 0, resource.type)});`);
+        lines.push("");
+        continue;
+      }
       const cls = this.resolveClass(resource.type);
       if (!cls) {
         lines.push(`// TODO: unsupported type ${resource.type} (${resource.logicalId})`);
@@ -182,9 +196,31 @@ export class K8sGenerator implements TypeScriptGenerator {
     const code = lines.join("\n").replace(/"(?:[^"\\\n]|\\.)*"/g, '""');
     for (const m of code.matchAll(/\bnew ([A-Z][A-Za-z0-9_]*)\(/g)) usedConstructors.add(m[1]);
     const imports = [...usedConstructors].sort().join(", ");
-    const head = [`import { ${imports} } from "@intentius/chant-lexicon-k8s";`, ...this.scope.lines(), ""];
+    const head = [
+      ...(usesDeclareSecret ? [`import { declareSecret } from "@intentius/chant";`] : []),
+      ...(imports ? [`import { ${imports} } from "@intentius/chant-lexicon-k8s";`] : []),
+      ...this.scope.lines(),
+      "",
+    ];
+    if (this.usesMaskedValue) head.push(...this.maskedValueHelper(ir), "");
 
     return [{ path: "main.ts", content: [...head, ...lines].join("\n") }];
+  }
+
+  /**
+   * The helper a value masked in the index reads its environment variable
+   * through, with the parameters it stands for listed above it.
+   */
+  private maskedValueHelper(ir: TemplateIR): string[] {
+    return [
+      "// Values the index masked. Set each environment variable before building:",
+      ...ir.parameters.map((p) => `//   ${p.name}: ${(p.description ?? "").replace(/\r?\n/g, " ")}`),
+      "function maskedValue(name: string): any {",
+      "  const raw = process.env[name];",
+      "  if (raw === undefined) throw new Error(`${name} is not set: the value was masked in the index`);",
+      "  return /^\\s*[[{]/.test(raw) ? JSON.parse(raw) : raw;",
+      "}",
+    ];
   }
 
   /**
@@ -207,7 +243,7 @@ export class K8sGenerator implements TypeScriptGenerator {
     parentType: string,
   ): void {
     for (const [key, value] of Object.entries(props)) {
-      if (value === undefined || value === null) continue;
+      if (value === undefined || value === null || isMaskedValueRef(value)) continue;
 
       // Special case: "ports" on Service resources → ServicePort
       if (key === "ports" && SERVICE_PORT_TYPES.has(parentType)) {
@@ -254,6 +290,7 @@ export class K8sGenerator implements TypeScriptGenerator {
   private emitValue(key: string, value: unknown, depth: number, parentType: string): string {
     if (value === null || value === undefined) return "undefined";
     if (isEmbeddedReference(value)) return renderEmbeddedReference(value, this.scope, depth * 2);
+    if (isMaskedValueRef(value)) return this.emitLiteral(value, depth, parentType);
 
     // Special case: "ports" on Service → ServicePort constructor
     if (key === "ports" && SERVICE_PORT_TYPES.has(parentType) && Array.isArray(value)) {
@@ -287,6 +324,7 @@ export class K8sGenerator implements TypeScriptGenerator {
     const innerIndent = "  ".repeat(depth + 1);
 
     const emitted = items.map((item) => {
+      if (isMaskedValueRef(item)) return this.emitLiteral(item, depth + 1, parentType);
       if (typeof item === "object" && item !== null && !Array.isArray(item)) {
         const propsStr = this.emitProps(item as Record<string, unknown>, depth + 1, parentType);
         return `new ${constructor}(${propsStr})`;
@@ -303,6 +341,10 @@ export class K8sGenerator implements TypeScriptGenerator {
   private emitLiteral(value: unknown, depth: number, parentType: string): string {
     if (value === null || value === undefined) return "undefined";
     if (isEmbeddedReference(value)) return renderEmbeddedReference(value, this.scope, depth * 2);
+    if (isMaskedValueRef(value)) {
+      this.usesMaskedValue = true;
+      return `maskedValue(${JSON.stringify(value.__k8sMaskedValue)})`;
+    }
     if (typeof value === "string") return JSON.stringify(value);
     if (typeof value === "number" || typeof value === "boolean") return String(value);
 

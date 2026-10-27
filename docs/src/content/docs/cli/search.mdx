@@ -569,8 +569,15 @@ uses, per stack when `chant.config` declares stacks. Each declared row is
 joined to the index through its lexicon's index match. For aws the match is
 the CloudFormation `primaryIdentifier` the declaration spells. It is looked
 for in the region of the entity's stack, and at `global` for the global types
-such as IAM roles. Every row gets one verdict, and a row that did not bind
-prints its verdict where the physical id would go:
+such as IAM roles. For k8s the match is the object's kind with its
+namespace and name, as the declaration spells them. A namespaced object is looked for at its
+namespace as `<namespace>/<name>`, and a cluster-scoped one at `cluster` by
+name. The kind is matched at any version, so an index that listed
+`apps/v1beta2` still binds a declared `apps/v1` Deployment. The uid is
+assigned by the API server, so no declaration can match by it. A k8s
+declaration with no `metadata.namespace` reads `no-binding`. Every row gets
+one verdict, and a row that did not bind prints its verdict where the
+physical id would go:
 
 | Verdict | Printed | Meaning |
 |---|---|---|
@@ -581,8 +588,8 @@ prints its verdict where the physical id would go:
 | `ambiguous` | `(ambiguous: N candidates)` | two or more indexed resources carry the identity, and none is bound |
 
 An indexed resource that no declared row binds is not a row, just as an
-undeclared resource is not a row of a `--live` answer. Only the aws lexicon
-has an index match today. Rows of the other lexicons read
+undeclared resource is not a row of a `--live` answer. The aws and k8s
+lexicons have an index match today. Rows of the other lexicons read
 `not observed: unsupported-kind`.
 
 With no project (no lexicon in a `chant.config` or in source), the index is

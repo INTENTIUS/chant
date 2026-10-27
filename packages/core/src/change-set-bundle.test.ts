@@ -57,7 +57,6 @@ describe("the change-set bundle", () => {
       "packages/core/src/lifecycle/plan-digest.ts",
       "packages/core/src/plan-summary.ts",
       // The next-release floor constant (#4480): no imports.
-      "packages/core/src/release-floors.ts",
     ]);
     const bytes = result.outputFiles.reduce((n, f) => n + f.contents.byteLength, 0);
     expect(bytes).toBeLessThan(BUDGET_BYTES);

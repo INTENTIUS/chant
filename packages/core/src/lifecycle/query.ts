@@ -36,7 +36,6 @@ import { parseReleaseLedger, releaseLedgerLines } from "./release-read";
 import { CUTS_FILE, parseCuts, parseRelease, RELEASES_DIR, verifyReleaseDigest } from "./release-store";
 import { opOfRunLedgerFile, parseRunLedger } from "./run-ledger";
 import type { LifecycleSnapshot } from "./types";
-import { NEXT_RELEASE } from "../release-floors";
 
 /** The version of the table schema below. */
 export const QUERY_SCHEMA_VERSION = 1;
@@ -87,7 +86,7 @@ export const QUERY_TABLES = {
  * and in `chant ledger runs --json` (#4482, #4500). A contract field added
  * within version 1: a reader treats a row from an older chant as lacking it.
  */
-export const LEDGER_ROOT_MEMBER_FLOOR = NEXT_RELEASE;
+export const LEDGER_ROOT_MEMBER_FLOOR = "0.124.54";
 
 /**
  * The first chant that writes `marker_stack`, `marker_env`,
@@ -96,7 +95,7 @@ export const LEDGER_ROOT_MEMBER_FLOOR = NEXT_RELEASE;
  * within version 1: a reader treats a row from an older chant as lacking
  * them, which reads as unknown.
  */
-export const QUERY_OWNERSHIP_COLUMNS_FLOOR = NEXT_RELEASE;
+export const QUERY_OWNERSHIP_COLUMNS_FLOOR = "0.124.54";
 
 export type QueryTable = keyof typeof QUERY_TABLES;
 

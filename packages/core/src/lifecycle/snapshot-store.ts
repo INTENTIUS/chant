@@ -57,7 +57,6 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync,
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { getRuntime } from "../runtime-adapter";
-import { NEXT_RELEASE } from "../release-floors";
 import {
   fetchLifecycle,
   ledgerDir,
@@ -83,7 +82,7 @@ import {
 import { S3Medium, type S3Fetch, type S3StoreSettings } from "./snapshot-store-s3";
 
 /** The first chant that writes snapshots through the store, to `refs/chant/snapshots` by default. */
-export const SNAPSHOT_STORE_FLOOR = NEXT_RELEASE;
+export const SNAPSHOT_STORE_FLOOR = "0.124.54";
 
 /** The ref the default store writes. */
 export const SNAPSHOT_REF = "refs/chant/snapshots";

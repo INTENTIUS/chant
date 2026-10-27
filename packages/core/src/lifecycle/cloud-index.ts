@@ -94,14 +94,13 @@ import {
   type SubstrateTarget,
 } from "../cloud-lister/index";
 import type { TlsOptions } from "../cloud-lister/transport";
-import { NEXT_RELEASE } from "../release-floors";
 import { deriveEdges, type EdgeLexicon } from "./derive-edges";
 import type { IndexDocument } from "./index-document";
 import { createSnapshotStore, resolveSnapshotStore, snapshotStoreConfig, type SnapshotStore, type StoreWrite } from "./snapshot-store";
 import { typeListing, type ListingLexicon } from "./type-listing";
 
 /** The first chant with `chant index` and {@link runCloudIndex} / {@link indexCloud}. */
-export const CLOUD_INDEX_FLOOR = NEXT_RELEASE;
+export const CLOUD_INDEX_FLOOR = "0.124.54";
 
 /** What typing and edge derivation read from a lexicon. A `LexiconPlugin` is one. */
 export type IndexLexicon = ListingLexicon & EdgeLexicon;

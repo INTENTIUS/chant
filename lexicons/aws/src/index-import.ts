@@ -24,6 +24,7 @@ import { moduleSourceUrl } from "@intentius/chant/module-source";
 import type { IRNode } from "@intentius/chant/graph-ir";
 import type { IndexImportCodegen, IndexImportTarget } from "@intentius/chant/lifecycle/index-import";
 import type { ParameterIR } from "@intentius/chant/import/parser";
+import { awsKindForListedType } from "./listed-types";
 
 const require = createRequire(moduleSourceUrl(import.meta.url));
 
@@ -49,7 +50,24 @@ function defaultManifest(): ReadonlyMap<string, ImportManifestEntry> {
   return cachedManifest;
 }
 
-const CFN_TYPE = /^AWS::[A-Za-z0-9]+::[A-Za-z0-9]+$/;
+/**
+ * Whether `type` is a resource type this lexicon can write: the listed-type
+ * rule (./listed-types.ts) against the registry's kinds. The organization
+ * segment is not pinned to `AWS`, so `Alexa::ASK::Skill` imports. With no
+ * registry (a checkout that has not generated) every well-formed
+ * CloudFormation type does, as the listed-type mapping assumes.
+ */
+export function isImportableAwsType(type: string, manifest: ReadonlyMap<string, ImportManifestEntry> = defaultManifest()): boolean {
+  return awsKindForListedType(type, manifest.size > 0 ? manifestKinds(manifest) : null) !== undefined;
+}
+
+const kindSets = new WeakMap<ReadonlyMap<string, ImportManifestEntry>, ReadonlySet<string>>();
+
+function manifestKinds(manifest: ReadonlyMap<string, ImportManifestEntry>): ReadonlySet<string> {
+  let kinds = kindSets.get(manifest);
+  if (!kinds) kindSets.set(manifest, (kinds = new Set(manifest.keys())));
+  return kinds;
+}
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -113,7 +131,7 @@ export function createAwsIndexImport(manifest?: ReadonlyMap<string, ImportManife
   const m = () => manifest ?? defaultManifest();
   return {
     resource(node: IRNode) {
-      if (!CFN_TYPE.test(node.kind)) return { unsupported: `${node.kind} is not a CloudFormation resource type` };
+      if (!isImportableAwsType(node.kind, m())) return { unsupported: `${node.kind} is not a CloudFormation resource type the aws lexicon generates` };
       // Retain on every imported resource until a person changes it in source
       // (#4536, ruled on choudoufu#2284 Q4): CloudFormation deletes at stack
       // level and reads no per-resource marker, so an adopted object is never

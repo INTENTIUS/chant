@@ -25,7 +25,7 @@ import { declaredNodes, planIndexImport, type IndexImportSelection } from "@inte
 import { typeListing, type ListingLexicon, type ListingResult } from "@intentius/chant/lifecycle/type-listing";
 import { indexImportReportJson, renderIndexImport } from "@intentius/chant/cli/commands/import-index";
 import type { LexiconPlugin } from "@intentius/chant/lexicon";
-import { awsImportProperties, createAwsIndexImport } from "./index-import";
+import { awsImportProperties, createAwsIndexImport, isImportableAwsType } from "./index-import";
 import { awsKindForListedType } from "./listed-types";
 import { awsPlugin } from "./plugin";
 import { awsSerializer } from "./serializer";
@@ -234,6 +234,21 @@ describe("chant import --index on the aws fixture", () => {
     expect(role.cloudIds).toContainEqual({ kind: "arn", value: "arn:aws:iam::000000000000:role/imp-task-role" });
     // The global role joins the only region, so one file holds everything.
     expect(plan.groups.map((g) => g.dir)).toEqual([""]);
+  });
+
+  test("a type outside the AWS organization imports when the registry has it (#4538)", () => {
+    const rows = new Map(MANIFEST);
+    rows.set("Alexa::ASK::Skill", { resourceType: "Alexa::ASK::Skill", kind: "resource", attrs: {} });
+    const seam = createAwsIndexImport(rows);
+    const skill = { id: "aws:Alexa::ASK::Skill:amzn1.ask.skill.1", kind: "Alexa::ASK::Skill", lexicon: "aws", attrs: { SkillPackage: { Overrides: {} } } };
+    expect(seam.resource(skill)).toMatchObject({ type: "Alexa::ASK::Skill", properties: { SkillPackage: { Overrides: {} } } });
+    expect(isImportableAwsType("Alexa::ASK::Skill", rows)).toBe(true);
+    // Not in the registry, or not a CloudFormation type at all: refused.
+    expect(seam.resource({ ...skill, kind: "Alexa::ASK::Other" })).toEqual({ unsupported: expect.stringMatching(/not a CloudFormation resource type/) });
+    expect(isImportableAwsType("AWS::S3", rows)).toBe(false);
+    // With no registry, the listed-type rule's shape check alone decides.
+    expect(isImportableAwsType("Alexa::ASK::Skill", new Map())).toBe(true);
+    expect(isImportableAwsType("not-a-type", new Map())).toBe(false);
   });
 
   test("the plugin declares the seam", () => {

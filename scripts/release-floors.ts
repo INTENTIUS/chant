@@ -69,29 +69,6 @@ const FLOOR_RE = /export const ([A-Z0-9_]+_FLOOR) = (?:"(\d+\.\d+\.\d+)"|(NEXT_R
  */
 const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: string }[] = [
   // --freeze empties this list after a release ships (#4501); each entry is one line.
-  { file: "packages/core/src/workspace/change-set.schema.json", text: "by #4440, written by chant {v} and newer", count: 1, floor: "CHANGE_SET_GROUP_FLOOR" },
-  { file: "packages/core/src/workspace/pr-report.schema.json", text: "#4440, written by chant {v} and newer", count: 1, floor: "PR_REPORT_NOT_STARTED_FLOOR" },
-  { file: "packages/core/src/workspace/pr-report.schema.json", text: "#4446, written by chant {v} and newer", count: 4, floor: "PR_REPORT_GROUPS_FLOOR" },
-  { file: "docs/src/content/docs/reference/change-set.mdx", text: "Part of the digest when present. Written by chant {v} and newer", count: 1, floor: "CHANGE_SET_GROUP_FLOOR" },
-  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "`members[].status` value `not-started` | {v} |", count: 1, floor: "PR_REPORT_GROUPS_FLOOR" },
-  { file: "packages/core/src/workspace/change-set.schema.json", text: "by #4463, written by chant {v} and newer", count: 1, floor: "change-set placeholders (#4463)" },
-  { file: "docs/src/content/docs/reference/change-set.mdx", text: "Absent otherwise. Written by chant {v} and newer", count: 1, floor: "change-set placeholders (#4463)" },
-  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "`members[].placeholders` | {v} |", count: 1, floor: "change-set placeholders (#4463)" },
-  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "`entries[].instanceOf` | {v} |", count: 1, floor: "instance nodes (#4454)" },
-  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "`nodes[].instanceOf`, `nodes[].instanceKey` | {v} |", count: 1, floor: "instance nodes (#4454)" },
-  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "`nodes[].instanceScope` | {v} |", count: 1, floor: "instance nodes under a module call (#4486)" },
-  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "`nodes[].instanceRollup` | {v} |", count: 1, floor: "instance rollups (#4489)" },
-  { file: "packages/core/src/workspace/graph.schema.json", text: "by #4489, written by chant {v} and newer", count: 1, floor: "instance rollups (#4489)" },
-  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "the `root_member` column of `chant query`'s `runs` | {v} |", count: 1, floor: "LEDGER_ROOT_MEMBER_FLOOR" },
-  { file: "packages/core/src/workspace/ledger.schema.json", text: "by #4500, written by chant {v} and newer", count: 1, floor: "LEDGER_ROOT_MEMBER_FLOOR" },
-  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "the same columns of `chant query`'s `resources` | {v} |", count: 1, floor: "QUERY_OWNERSHIP_COLUMNS_FLOOR" },
-  { file: "packages/core/src/workspace/ledger.schema.json", text: "by #4534, written by chant {v} and newer", count: 1, floor: "QUERY_OWNERSHIP_COLUMNS_FLOOR" },
-  { file: "docs/src/content/docs/cli/query.mdx", text: "added within version 1, written by chant {v} and newer", count: 1, floor: "QUERY_OWNERSHIP_COLUMNS_FLOOR" },
-  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "`nodes[].facts`, `edges[].grain` | {v} |", count: 1, floor: "ENGINE_FACTS_FLOOR" },
-  { file: "packages/core/src/workspace/graph.schema.json", text: "by #4529, written by chant {v} and newer", count: 2, floor: "ENGINE_FACTS_FLOOR" },
-  { file: "packages/core/src/workspace/capabilities.schema.json", text: "by #4531, written by chant {v} and newer", count: 1, floor: "CAPABILITY_TEMPLATES_FLOOR" },
-  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "`templates[]` | {v} |", count: 1, floor: "CAPABILITY_TEMPLATES_FLOOR" },
-  { file: "docs/src/content/docs/reference/capabilities.mdx", text: "templates are written by chant `{v}` and newer", count: 1, floor: "CAPABILITY_TEMPLATES_FLOOR" },
 ];
 
 interface Args {
