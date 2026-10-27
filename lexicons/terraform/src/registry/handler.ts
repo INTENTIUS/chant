@@ -30,7 +30,8 @@ export type RegistryHandler = (request: Request) => Promise<Response>;
 
 const contentType = (key: string): string => (key.endsWith(".tar.gz") || key.endsWith(".tgz") ? "application/gzip" : key.endsWith(".json") || /(^|\/)(versions|download)$/.test(key) ? "application/json" : "application/octet-stream");
 
-const asText = (body: string | Uint8Array): string => (typeof body === "string" ? body : Buffer.from(body).toString("utf-8"));
+// TextEncoder and TextDecoder, not Buffer: an edge runtime (a Cloudflare Worker without nodejs_compat) has no Buffer.
+const asText = (body: string | Uint8Array): string => (typeof body === "string" ? body : new TextDecoder().decode(body));
 
 /** Answers GET and HEAD for a registry's files, adding `X-Terraform-Get` to each download answer. */
 export function registryHandler(files: RegistryFiles, options: RegistryHandlerOptions = {}): RegistryHandler {
@@ -59,7 +60,7 @@ export function registryHandler(files: RegistryFiles, options: RegistryHandlerOp
         return done(new Response(method === "HEAD" ? null : answer.body, { status: answer.status, headers: answer.headers }));
       }
     }
-    const bytes = typeof body === "string" ? Buffer.from(body, "utf-8") : body;
+    const bytes = typeof body === "string" ? new TextEncoder().encode(body) : body;
     const headers = { "content-type": contentType(key), "content-length": String(bytes.byteLength) };
     return done(new Response(method === "HEAD" ? null : new Uint8Array(bytes), { status: 200, headers }));
   };
