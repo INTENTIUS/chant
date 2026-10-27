@@ -249,6 +249,11 @@ export function parseArgs(args: string[]): ParsedArgs {
       const v = args[++i];
       if (!v || v.startsWith("-")) throw new Error("--parser-option needs key or key=value: --parser-option acceptLossyV1");
       (result.parserOption ??= []).push(v);
+    } else if (arg === "--tag") {
+      // `chant import --index <ref> --tag key=value` (#4524), repeatable: every tag must match.
+      const v = args[++i];
+      if (!v || v.startsWith("-") || !v.includes("=")) throw new Error("--tag needs key=value: --tag team=payments");
+      (result.selectTags ??= []).push(v);
     } else if (arg === "--type") {
       result.selectType = args[++i];
     } else if (arg === "--name") {

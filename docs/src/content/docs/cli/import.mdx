@@ -11,6 +11,7 @@ chant import <template-file> [flags]
 chant import --from <env> [flags]
 chant import --kustomize <dir> [flags]
 chant import --agents [flags]
+chant import --index <ref> [selection] [flags]
 ```
 
 ## Description
@@ -73,6 +74,10 @@ The exit rule is `importExitCode` in `packages/core/src/cli/commands/import-repo
 | `--owned` | With `--from`, restrict to chant-owned resources — those carrying the live [ownership marker](/chant/configuration/config-file/#ownership) |
 | `--verbatim` | With `--from`, keep server-defaulted fields instead of stripping to declared shape |
 | `--skip-undeclarable` | With `--from`, import what can be declared and warn about each live object that cannot be (the sql lexicon fails the import on them otherwise) |
+| `--index <ref>` | Import indexed resources instead of a template file (see [Importing from an index](#importing-from-an-index---index)) |
+| `--tag <key=value>` | With `--index`, select nodes that carry this tag. Repeatable; every tag must match |
+| `--select <file\|ids>` | With `--index`, select these node ids: a JSON file of ids, or a comma-separated list |
+| `--all` | With `--index`, select every node in the index |
 | `-o, --output <dir>` | Output directory (default: `./infra/`) |
 | `--force` | Overwrite existing files |
 | `--agents` | Import this machine's **agent configuration** instead of a template file (see below) |
@@ -85,6 +90,26 @@ Live import may emit sensitive values (keys, tokens, passwords) into generated s
 
 `--agents` is the exception: it rewrites literal credentials to `${VAR}` references rather than copying them, and reports which sites it redacted. Review the output anyway.
 :::
+
+## Importing from an index (`--index`)
+
+`--index <ref>` writes source for resources an index holds, such as one `behold index` wrote. Nothing is applied and nothing is written to the cloud. The output is source for a person to review and commit.
+
+The ref is a JSON file, or a version in the project's index store. A file holds one index document, or a list of the documents of one read. A store ref is `<scopeKey>` for the latest version, or `<scopeKey>@<version>`. See [Where snapshots are kept](/chant/cli/lifecycle/#where-snapshots-are-kept).
+
+Name what to import. `--type` and `--name` take comma-separated lists of types and native ids. `--tag key=value` repeats. `--select` takes node ids, for example from a query. `--all` takes every node. The command refuses to run without one of these.
+
+How each resource is written:
+
+- Each node goes through its lexicon's `indexImport` seam and then its `templateGenerator()`, the same codegen a template import uses. The aws lexicon has the seam. Any other node is reported as unsupported and written nowhere.
+- A node the project already declares is reported as declared with the entity's name. It is not imported again. The identity matcher decides this.
+- A derived edge becomes a reference when its target is imported into the same file. In aws this is `Ref` when the value is the target's identifier, and `GetAtt(..., "Arn")` when it is the target's ARN. Otherwise the value stays a literal, and a comment at the top of the file names the edge and why.
+- A value the index masked is never written. Each one becomes a parameter to fill in. The aws lexicon writes a `String` parameter with `NoEcho`.
+- Read-only properties are left out. The aws lexicon also leaves out tags whose key starts with `aws:`.
+
+Resources of one lexicon and one region go in one directory. A global resource, such as an IAM role, joins the only region when there is one. With one group the files go straight into the output directory. With several, each group gets `<lexicon>/<location>/`.
+
+The same index and selection give byte-identical files. The command also writes a report, `chant-index-import.json`, beside them or to `--report <path>`. The report gives each selected resource's identity and cloud ids. The identity is the substrate and account, then the listed type and location, then the native id. Each entry says whether the resource was imported, declared or unsupported, and lists its references and parameters. Adoption reads it.
 
 ## Importing agent configuration (`--agents`)
 
@@ -202,6 +227,9 @@ chant import --from prod --name my-bucket --output src/
 
 # Keep server-defaulted fields
 chant import --from prod --verbatim
+
+# Import the buckets and their tagged roles from an index file
+chant import --index index.json --type AWS::S3::Bucket,AWS::IAM::Role --tag team=shop --output src/imported/
 
 # Render an overlay and import what it produces
 chant import --kustomize ./k8s/overlays/prod --output src/

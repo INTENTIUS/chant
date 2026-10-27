@@ -3,6 +3,8 @@ import { describeCommand, printDescribeResult } from "../commands/describe";
 import { importCommand, importFromContent, importFromLive, importFromLiveStacks, printImportResult } from "../commands/import";
 import { loadChantConfig } from "../../config";
 import { resolve } from "path";
+import { existsSync, readFileSync } from "fs";
+import type { IndexImportSelection } from "../../lifecycle/index-import";
 import { auditCommand, printAuditResult, type AuditFormat, type AuditTier, type AuditFailOn } from "../commands/audit";
 import type { ReportTheme } from "../../audit/report-html";
 import { AGENT_RUNTIMES, AGENT_SCOPES, type AgentRuntime, type AgentScope } from "../../agents/types";
@@ -248,6 +250,55 @@ export async function runDescribe(ctx: CommandContext): Promise<number> {
   return result.success ? 0 : 1;
 }
 
+/**
+ * The selection for `chant import --index` (#4524). `--type` and `--name`
+ * take comma-separated lists, `--tag key=value` repeats, `--select` is a JSON
+ * file of node ids (a list of ids, of `{ id }` or `{ node }` objects, or an
+ * object holding `nodes` or `results`) or a comma-separated list of ids, and
+ * `--all` takes every node.
+ */
+export function indexSelectionFromArgs(args: CommandContext["args"]): IndexImportSelection | Error {
+  const list = (v?: string) => (v ? v.split(",").map((s) => s.trim()).filter(Boolean) : undefined);
+  const selection: IndexImportSelection = {};
+  if (args.all) selection.all = true;
+  const types = list(args.selectType);
+  if (types) selection.types = types;
+  const names = list(args.selectName);
+  if (names) selection.names = names;
+  if (args.selectTags && args.selectTags.length > 0) {
+    const tags: Record<string, string> = {};
+    for (const t of args.selectTags) {
+      const eq = t.indexOf("=");
+      tags[t.slice(0, eq)] = t.slice(eq + 1);
+    }
+    selection.tags = tags;
+  }
+  if (args.selectAddress) {
+    const path = resolve(args.selectAddress);
+    if (existsSync(path)) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(readFileSync(path, "utf-8"));
+      } catch (err) {
+        return new Error(`--select ${args.selectAddress} is not JSON: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      const rows = Array.isArray(parsed)
+        ? parsed
+        : parsed && typeof parsed === "object"
+          ? ((parsed as { nodes?: unknown[]; results?: unknown[] }).nodes ?? (parsed as { results?: unknown[] }).results ?? [])
+          : [];
+      const ids = rows
+        .map((r) => (typeof r === "string" ? r : r && typeof r === "object" ? ((r as { id?: unknown }).id ?? (r as { node?: unknown }).node) : undefined))
+        .filter((x): x is string => typeof x === "string");
+      if (ids.length === 0) return new Error(`--select ${args.selectAddress} names no node ids`);
+      selection.nodes = ids;
+    } else {
+      selection.nodes = list(args.selectAddress);
+    }
+  }
+  return selection;
+}
+
 export async function runImport(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
 
@@ -327,6 +378,27 @@ export async function runImport(ctx: CommandContext): Promise<number> {
       parserOptions: args.parserOption,
     });
     printImportResult(result);
+    return result.success ? 0 : 1;
+  }
+
+  // `--index <ref>` (#4524): typed source for indexed resources; nothing is applied.
+  if (args.index) {
+    const { importFromIndex, summarizeIndexImport } = await import("../commands/import-index");
+    const selection = indexSelectionFromArgs(args);
+    if (selection instanceof Error) {
+      console.error(formatError({ message: selection.message }));
+      return 1;
+    }
+    const result = await importFromIndex({
+      index: args.index,
+      selection,
+      output: args.output,
+      force: args.force,
+      report: args.reportFile,
+      src: args.src,
+    });
+    printImportResult(result);
+    if (result.report) console.error(summarizeIndexImport(result.report));
     return result.success ? 0 : 1;
   }
 

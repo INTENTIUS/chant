@@ -1384,6 +1384,7 @@ Examples:
   chant import manifest.yaml --lexicon k8s --output ./infra/
   chant import dash.json --lexicon grafana --parser-option acceptLossyV1
   chant import --from prod --name my-bucket --output src/
+  chant import --index index.json --type AWS::S3::Bucket --output src/imported/
   chant lint ./infra/
   chant lint ./infra/ --format sarif
   chant lint ./infra/ --watch

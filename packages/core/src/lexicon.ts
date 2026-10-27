@@ -28,6 +28,7 @@ import type { RuleMeta } from "./audit/catalog";
 import type { ReferenceCatalog } from "./graph-refs";
 import type { ListedTypeMapping } from "./lifecycle/type-listing";
 import type { IndexIdentity } from "./lifecycle/identity-match";
+import type { IndexImportCodegen } from "./lifecycle/index-import";
 import type { IREdge, LexiconGraphEdges, LexiconUnreadSource, LexiconWorkspaceLinks, LexiconWorkspaceOutputs } from "./graph-ir";
 import type { DescribeResourcesResult, UnobservedReason } from "./observation";
 import type { ReadDriftOptions, ReadDriftResult } from "./drift-record";
@@ -2220,6 +2221,16 @@ export interface LexiconPlugin {
    * whose live read already matches by name or state does not need it.
    */
   indexIdentity?: IndexIdentity;
+
+  /**
+   * How this lexicon writes an indexed resource as source (#4524, `chant
+   * import --index`): the import IR for one indexed node, a value as a
+   * reference to another imported node, and a parameter for a masked value.
+   * Core hands the IR to {@link templateGenerator}, the codegen a template
+   * import uses. Data plus pure functions. Opt-in: an indexed node of a
+   * lexicon without it is reported as unsupported and written nowhere.
+   */
+  indexImport?: IndexImportCodegen;
 
   /**
    * This lexicon's capability pack (#4375): its mapping onto the
