@@ -111,25 +111,53 @@ export function handoverKeys(forge: HandoverForge): string[] {
 export const HANDOVER_NOTE_FILES = ["pr-plan.json", "pr-note.md"] as const;
 
 /**
+ * What a product changes in the handover (#4554). Left out, each is chant's
+ * own, and the scripts are the ones chant's generated jobs run.
+ */
+export interface HandoverOptions {
+  /** The files a report too large to hand on whole is cut to. Default {@link HANDOVER_NOTE_FILES}. */
+  noteFiles?: readonly string[];
+  /** The name the log lines start with. Default `chant`. */
+  label?: string;
+}
+
+/** A shell or JS string literal's body holds none of these, so a label or file name can't break out of the script. */
+function assertPlain(what: string, values: readonly string[]): void {
+  for (const v of values) if (!/^[A-Za-z0-9._\/-]+$/.test(v)) throw new Error(`the handover's ${what} ${JSON.stringify(v)} may hold only letters, digits, dots, dashes, underscores and slashes`);
+}
+
+/**
  * Packs the report directory (argv 1) into the step's output file (argv 2):
  * every regular file, found without following a link, as gzipped JSON in
  * base64, cut into the forge's chunks. A report too large is cut to
- * {@link HANDOVER_NOTE_FILES}, and to none when even those are too large.
+ * {@link HANDOVER_NOTE_FILES} (or `opts.noteFiles`), and to none when even
+ * those are too large.
  */
-export function packJs(forge: HandoverForge): string {
+export function packJs(forge: HandoverForge, opts: HandoverOptions = {}): string {
   const { chunk, parts } = HANDOVER_LIMITS[forge];
+  const files = opts.noteFiles ?? HANDOVER_NOTE_FILES;
+  const label = opts.label ?? "chant";
+  assertPlain("note file", files);
+  assertPlain("label", [label]);
+  const own = opts.noteFiles === undefined && opts.label === undefined;
+  const tooLarge = own
+    ? 'if(b.length>CHUNK*PARTS){b=pack({});console.error("chant: the plan report is too large to hand to the note job, even cut to the report and the note; it hands on none of it")}'
+    : `if(b.length>CHUNK*PARTS){b=pack({});console.error("${label}: the report is too large to hand to the next job, even cut to ${files.join(", ")}; it hands on none of it")}`;
+  const cut = own
+    ? 'else console.error("chant: the plan report is too large to hand to the note job whole; it hands on pr-plan.json and pr-note.md")}'
+    : `else console.error("${label}: the report is too large to hand to the next job whole; it hands on ${files.join(", ")}")}`;
   return [
     'const fs=require("fs"),p=require("path"),z=require("zlib");',
     "const [dir,out]=process.argv.slice(1);",
-    `const CHUNK=${chunk},PARTS=${parts},NOTE=${JSON.stringify(HANDOVER_NOTE_FILES)};`,
+    `const CHUNK=${chunk},PARTS=${parts},NOTE=${JSON.stringify(files)};`,
     "const all={};",
     'const walk=(d,r)=>{let n=[];try{n=fs.readdirSync(d).sort()}catch{return}for(const x of n){const f=p.join(d,x),k=r?r+"/"+x:x;let s;try{s=fs.lstatSync(f)}catch{continue}if(s.isDirectory())walk(f,k);else if(s.isFile())all[k]=fs.readFileSync(f).toString("base64")}};',
     'walk(dir,"");',
     'const pack=(o)=>z.gzipSync(JSON.stringify(o)).toString("base64");',
     "let b=pack(all);",
     "if(b.length>CHUNK*PARTS){b=pack(Object.fromEntries(Object.entries(all).filter(([k])=>NOTE.includes(k))));",
-    'if(b.length>CHUNK*PARTS){b=pack({});console.error("chant: the plan report is too large to hand to the note job, even cut to the report and the note; it hands on none of it")}',
-    'else console.error("chant: the plan report is too large to hand to the note job whole; it hands on pr-plan.json and pr-note.md")}',
+    tooLarge,
+    cut,
     'let o="";for(let i=0;i*CHUNK<b.length;i++)o+="report_"+i+"="+b.slice(i*CHUNK,(i+1)*CHUNK)+"\\n";',
     "fs.appendFileSync(out,o);",
   ].join("");
@@ -159,13 +187,18 @@ export const UNPACK_JS = [
 /**
  * The lines of the plan step, after {@link dropForgeTokens}: when the step
  * ends, however it ends, its report directory (`dir`, from the directory the
- * step starts in) goes into the step's outputs.
+ * step starts in) goes into the step's outputs. With `before`, the shell
+ * function it names runs first in the trap, such as a product's sweep of
+ * the processes the step started (#4554).
  */
-export function handoverTrap(dir: string, forge: HandoverForge): string[] {
+export function handoverTrap(dir: string, forge: HandoverForge, opts: HandoverOptions & { before?: string } = {}): string[] {
+  const label = opts.label ?? "chant";
+  if (opts.before !== undefined && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(opts.before)) throw new Error(`the handover's before ${JSON.stringify(opts.before)} must be a shell function's name`);
+  const what = opts.label === undefined ? "the plan report could not be handed to the note job" : "the report could not be handed to the next job";
   return [
     `chant_report="$PWD/${dir}"`,
-    `chant_handover() { node -e '${packJs(forge)}' "$chant_report" "\${GITHUB_OUTPUT:-/dev/null}" || echo "chant: the plan report could not be handed to the note job" >&2; }`,
-    "trap chant_handover EXIT",
+    `chant_handover() { node -e '${packJs(forge, opts)}' "$chant_report" "\${GITHUB_OUTPUT:-/dev/null}" || echo "${label}: ${what}" >&2; }`,
+    opts.before ? `trap '${opts.before}; chant_handover' EXIT` : "trap chant_handover EXIT",
   ];
 }
 
@@ -180,9 +213,11 @@ export function handoverOutputs(step: string, forge: HandoverForge): Record<stri
  * heredoc whose end no JSON string can be, so the change's outputs stay data.
  */
 export function takeOverScript(job: string, dir: string, forge: HandoverForge): string {
+  // #4554: the log lines name the job the report came from.
+  const unpack = job === "plan" ? UNPACK_JS : UNPACK_JS.replaceAll("the plan job", `the ${job} job`);
   return [
     "set -u",
-    `node -e '${UNPACK_JS}' ${dir} <<'END_OF_REPORT'`,
+    `node -e '${unpack}' ${dir} <<'END_OF_REPORT'`,
     ...handoverKeys(forge).map((k) => `\${{ toJSON(needs.${job}.outputs.${k}) }}`),
     "END_OF_REPORT",
   ].join("\n");
@@ -190,6 +225,16 @@ export function takeOverScript(job: string, dir: string, forge: HandoverForge): 
 
 /** The variable the checkout script reads the job's token from. */
 export const CHECKOUT_TOKEN_ENV = "CHANT_CHECKOUT_TOKEN";
+
+/** What a product changes in {@link checkoutScript} (#4554). */
+export interface CheckoutOptions {
+  /** The variable the job's token is read from. Default {@link CHECKOUT_TOKEN_ENV}. */
+  tokenEnv?: string;
+  /** A variable that, when the step sets it, names the ref to fetch and check out in place of the run's commit. */
+  refEnv?: string;
+  /** The remote-tracking ref a ref outside `refs/` is fetched into: `refs/remotes/origin/<headName>`. Default `chant-head`. */
+  headName?: string;
+}
 
 /**
  * Checks the run's commit out with git, as actions/checkout does without
@@ -204,7 +249,13 @@ export const CHECKOUT_TOKEN_ENV = "CHANT_CHECKOUT_TOKEN";
  * private repository (`requireLifecycleLedger` in ./lifecycle/git.ts reads
  * the local branch when the fetch fails).
  */
-export function checkoutScript(history: boolean, ledger = false): string {
+export function checkoutScript(history: boolean, ledger = false, opts: CheckoutOptions = {}): string {
+  const token = opts.tokenEnv ?? CHECKOUT_TOKEN_ENV;
+  const head = opts.headName ?? "chant-head";
+  for (const [k, v] of [["tokenEnv", token], ...(opts.refEnv !== undefined ? [["refEnv", opts.refEnv]] : [])] as const) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(v)) throw new Error(`checkoutScript's ${k} ${JSON.stringify(v)} is not a variable name`);
+  }
+  if (!/^[A-Za-z0-9._-]+$/.test(head)) throw new Error(`checkoutScript's headName ${JSON.stringify(head)} is not a branch name`);
   const fetchLine = history
     ? `git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"`
     : 'git -c protocol.version=2 fetch -q --no-tags --prune --no-recurse-submodules --depth=1 origin "+$want:$target"';
@@ -213,18 +264,18 @@ export function checkoutScript(history: boolean, ledger = false): string {
     'git config --global --add safe.directory "$PWD" 2>/dev/null || true',
     "[ -d .git ] || git init -q .",
     'git remote get-url origin >/dev/null 2>&1 || git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"',
-    `if [ -n "\${${CHECKOUT_TOKEN_ENV}:-}" ]; then`,
-    `  chant_auth="$(printf 'x-access-token:%s' "$${CHECKOUT_TOKEN_ENV}" | base64 | tr -d '\\n')"`,
+    `if [ -n "\${${token}:-}" ]; then`,
+    `  chant_auth="$(printf 'x-access-token:%s' "$${token}" | base64 | tr -d '\\n')"`,
     '  export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $chant_auth"',
     "  unset chant_auth",
     "fi",
-    'ref="$GITHUB_REF"',
-    'want="$GITHUB_SHA"',
+    opts.refEnv ? `ref="\${${opts.refEnv}:-$GITHUB_REF}"` : 'ref="$GITHUB_REF"',
+    opts.refEnv ? `want="\${${opts.refEnv}:-$GITHUB_SHA}"` : 'want="$GITHUB_SHA"',
     'case "$ref" in',
     '  refs/heads/*) target="refs/remotes/origin/${ref#refs/heads/}" ;;',
     '  refs/tags/*) target="$ref" ;;',
     '  refs/*) target="refs/remotes/${ref#refs/}" ;;',
-    '  *) target="refs/remotes/origin/chant-head" ;;',
+    `  *) target="refs/remotes/origin/${head}" ;;`,
     "esac",
     "if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi",
     fetchLine,

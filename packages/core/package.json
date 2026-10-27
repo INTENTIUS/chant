@@ -118,6 +118,11 @@
       "default": "./src/notify.ts"
     },
     "./wave-runtime.mjs": "./dist/wave-runtime.mjs",
+    "./object-store": {
+      "development": "./src/object-store/index.ts",
+      "types": "./dist/object-store/index.d.ts",
+      "default": "./src/object-store/index.ts"
+    },
     "./*": {
       "development": "./src/*.ts",
       "types": "./dist/*.d.ts",

@@ -379,7 +379,7 @@ wave 2/3: app, api
   web: blocked by app, not run
 ```
 
-`--report-url <url>` copies the report, the change set and, with `--events-json`, the stage's run events to `<url>/<pr>/<commit>/`, where a reader outside CI can fetch them. The events go up again as each wave and component settles, so the URL shows an apply in progress. `<url>` is `s3://<bucket>/<prefix>`, uploaded with the AWS CLI and the credentials in the job's environment, or `file://<directory>`. A failed upload is a warning and the stage's outcome stands. [Pull request reports](/chant/reference/workspace-read-contract/#pull-request-reports) gives the layout.
+`--report-url <url>` copies the report, the change set and, with `--events-json`, the stage's run events to `<url>/<pr>/<commit>/`, where a reader outside CI can fetch them. The events go up again as each wave and component settles, so the URL shows an apply in progress. `<url>` is `s3://<bucket>/<prefix>`, uploaded with the AWS CLI and the credentials in the job's environment, `gs://<bucket>/<prefix>` or `az://<account>/<container>/<prefix>`, uploaded with chant's own Google Cloud Storage and Azure Blob clients and the job's credentials ([#4554](https://github.com/INTENTIUS/chant/issues/4554)), or `file://<directory>`. A failed upload is a warning and the stage's outcome stands. [Pull request reports](/chant/reference/workspace-read-contract/#pull-request-reports) gives the layout.
 
 With `--events-json` each stage also keeps its stream in a file on the host, as [`chant run events`](/chant/cli/run/#run-events-run) describes. In CI, set `CHANT_RUN_EVENTS_DIR` to a directory the job keeps as an artifact, such as `.chant/pr/run-events`, since a CI checkout's git directory is gone with the job.
 
