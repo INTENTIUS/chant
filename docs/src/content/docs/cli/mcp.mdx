@@ -224,7 +224,7 @@ Return a markdown report for an Op's latest run.
 
 ### `ledger`
 
-One ledger's rows from the local `chant/lifecycle` branch: runs `chant ledger <table> --json` with the chant the server runs as, in the server's directory, and returns the document it printed, unchanged ([#4363](https://github.com/INTENTIUS/chant/issues/4363)). Inside a workspace every member's ledger is read and each row names its member. It never fetches.
+Returns one ledger's rows from the local `chant/lifecycle` branch by calling `chant ledger <table> --json`. The output comes back as printed ([#4363](https://github.com/INTENTIUS/chant/issues/4363)). Inside a workspace every member's ledger is read and each row names its member. It never fetches.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -236,7 +236,7 @@ One ledger's rows from the local `chant/lifecycle` branch: runs `chant ledger <t
 
 ### `query`
 
-One read-only SQL statement over the snapshots in the index store and the runs, gates, deploys and releases on the local `chant/lifecycle` branch: runs `chant query -- <sql> --json` and returns the document unchanged ([#4297](https://github.com/INTENTIUS/chant/issues/4297)). A statement that writes is refused by the query engine.
+Runs one read-only SQL statement over the snapshots in the index store and the runs, gates, deploys and releases on the local `chant/lifecycle` branch, through `chant query -- <sql> --json`, and returns the document as printed ([#4297](https://github.com/INTENTIUS/chant/issues/4297)). A statement that writes is refused by the query engine.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -249,7 +249,7 @@ Lexicon plugins can add tools. Plugin tools are namespaced as `{pluginName}:{too
 
 ## Read-only mode
 
-`chant serve mcp --read-only` serves an agent the ledger, the workspace graph, runs, gates and snapshots, and no tool that can change them ([#4543](https://github.com/INTENTIUS/chant/issues/4543)). It registers no tool that runs an Op, resolves a gate, writes a file or a record, or captures a snapshot to the store. This sits beside [`neverOverMcp`](#ops-kept-from-agents): that flag keeps one Op from agents on the ordinary server, and read-only mode keeps every Op, gate and record from them.
+`chant serve mcp --read-only` gives an agent read access to the ledger and the workspace graph, and to runs, gates and snapshots. It has no tool that can change them ([#4543](https://github.com/INTENTIUS/chant/issues/4543)). It registers no tool that runs an Op or resolves a gate, and none that writes to the repository or the snapshot store. [`neverOverMcp`](#ops-kept-from-agents) keeps one Op from agents on the ordinary server. Read-only mode withholds every mutating tool from them.
 
 | Served | Left out |
 |---|---|
@@ -259,7 +259,7 @@ A plugin tool is served only when it declares `readOnly: true`. The `initialize`
 
 The lists live in `packages/core/src/cli/mcp/read-only.ts`. A core tool on neither list is refused when a read-only server starts, so a new tool has to be sorted before it can ship, and a test fails when a mutating tool is registered in the mode.
 
-`chant init --mcp-read-only` writes the read-only form into `.mcp.json`:
+Running `chant init --mcp-read-only` writes the read-only form into `.mcp.json`, as below.
 
 ```json
 {
