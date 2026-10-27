@@ -1001,9 +1001,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.tags = args[++i];
       if (!result.tags || result.tags.startsWith("-")) throw new Error("--tags needs a tag glob: --tags 'v*'");
     } else if (arg === "--index") {
-      // #2551 — `chant workspace adopt-lineage --index <file>`; #4525 — `chant search --index <ref>`.
+      // #2551 — `chant workspace adopt-lineage --index <file>`; #4525 — `chant search --index <ref>`;
+      // #4526 — `chant lifecycle diff <env> --index <ref>`.
       result.index = args[++i];
-      if (!result.index || result.index.startsWith("-")) throw new Error("--index needs a value: --index <file> for workspace adopt-lineage, --index <scope key>[@<version>] for search");
+      if (!result.index || result.index.startsWith("-")) throw new Error("--index needs a value: --index <file> for workspace adopt-lineage, --index <scope key>[@<version>] for search and lifecycle diff");
     } else if (arg === "--remove") {
       // #2552 — `chant workspace import --remove` removes the export member instead of writing it again.
       result.remove = true;

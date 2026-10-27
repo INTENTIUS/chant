@@ -1052,6 +1052,13 @@ export function liveDiffDriftRecords(input: LiveDiffDriftInput): DriftRecord[] {
 export interface DeepDiffDriftInput extends DriftAdapterBase {
   /** `chant lifecycle diff --live --deep --json`'s deep result, parsed. */
   diff: DeepDiffResult;
+  /**
+   * The command for `evidence.command`, when the deep result came from
+   * somewhere other than a live read: `chant lifecycle diff --index <ref>`
+   * (#4526) diffs against an index version. Default
+   * `chant lifecycle diff --live --deep`.
+   */
+  command?: string;
 }
 
 /**
@@ -1064,7 +1071,7 @@ export interface DeepDiffDriftInput extends DriftAdapterBase {
  */
 export function deepDiffDriftRecords(input: DeepDiffDriftInput): DriftRecord[] {
   const { diff } = input;
-  const evidence = chantEvidence(input, "chant lifecycle diff --live --deep");
+  const evidence = chantEvidence(input, input.command ?? "chant lifecycle diff --live --deep");
   const out = new Map<string, DriftRecord>();
   const put = (name: string, rest: Pick<DriftRecord, "status"> & Partial<DriftRecord>) => {
     if (!out.has(name)) out.set(name, driftRecord({ ...base(input, "chant", "live-read", name), evidence, ...rest }));

@@ -1065,6 +1065,8 @@ Lifecycle (alias: lc):
                             (lexicons with a deep reader also report
                             property-level drift; --update-baseline records
                             what it reports as accepted so it stops alerting)
+                            --index <ref>: compare source with an index version
+                            in the store, no deploy and no cloud read (#4526)
   lifecycle plan <env>      Typed change set (create/update/delete/adopt) vs live
                             --deep: also report properties declared
                             heldElsewhere(). Never changes what the plan
