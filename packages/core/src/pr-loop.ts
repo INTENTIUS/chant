@@ -47,7 +47,8 @@
  * `identity.gates` entry covers every member.
  */
 
-import type { ChangeSetAction, ChangeSetDocument } from "./change-set";
+import type { ChangeSetAction, ChangeSetDocument, ChangeSetEntry } from "./change-set";
+import { parsePulumiUrn, pulumiMayAppearParent } from "./pulumi-urn";
 import type { PrRequireOutcome } from "./pr-requires";
 import { renderMigrationLines, type PrMigrationFile } from "./pr-migrations";
 import { GITHUB_COMMENT_LIMIT, groupChangeSet, renderPlanSummaryMarkdown } from "./plan-summary";
@@ -789,12 +790,103 @@ function approvalLines(report: PrReport, approver: string): string[] {
 }
 
 /**
+ * One row of the note for a change-set entry the planner marked `mayAppear`
+ * (#4548): a resource a component registers inside an `apply()` that the
+ * preview could not run, so it is known only when the apply runs.
+ */
+export interface PrMayAppearRow {
+  member: string;
+  /**
+   * The component resource that registers it, as `<type> <name>`. Only the
+   * type when the entry names no single component (its URN carries the parent
+   * type chain, not the parent's name), and `the stack` when it has none.
+   */
+  component: string;
+  /** The resource, as `<type> <name>`; absent on the entry that stands for whatever the component may register. */
+  resource?: string;
+  /** The entry's action: `create` for the stand-in entry, else what the plan says about a resource the last deployment holds. */
+  action: ChangeSetAction;
+}
+
+const typeAndName = (urn: string): string => {
+  const p = parsePulumiUrn(urn);
+  return p ? `${p.type} ${p.name}` : urn;
+};
+
+/**
+ * The note's rows for the `mayAppear` entries of a change set, sorted by
+ * member and component. A stand-in entry (`pulumiMayAppearAddress`) names its
+ * component from its own address. Any other entry names the component whose
+ * stand-in entry in the same member sits on its parent type chain, when one
+ * does; else the type of its parent.
+ */
+export function prMayAppearRows(doc: Pick<ChangeSetDocument, "entries">): PrMayAppearRow[] {
+  const flagged = new Map<string, Array<{ urn: string; chain: string }>>();
+  for (const e of doc.entries) {
+    if (e.mayAppear !== true) continue;
+    const parent = pulumiMayAppearParent(e.address);
+    const parsed = parent ? parsePulumiUrn(parent) : undefined;
+    if (!parent || !parsed) continue;
+    flagged.set(e.member, [...(flagged.get(e.member) ?? []), { urn: parent, chain: parsed.qualifiedType }]);
+  }
+  const componentOf = (e: ChangeSetEntry): string => {
+    const parsed = parsePulumiUrn(e.address);
+    if (!parsed) return "the stack";
+    const parents = parsed.parentTypes.join("$");
+    const under = (flagged.get(e.member) ?? []).filter((c) => parents === c.chain || parents.startsWith(`${c.chain}$`));
+    // The nearest component: the longest chain that holds the entry.
+    const longest = Math.max(-1, ...under.map((c) => c.chain.length));
+    const nearest = under.filter((c) => c.chain.length === longest);
+    if (nearest.length === 1) return typeAndName(nearest[0].urn);
+    return parsed.parentTypes.at(-1) ?? "the stack";
+  };
+  const rows: PrMayAppearRow[] = [];
+  for (const e of doc.entries) {
+    if (e.mayAppear !== true) continue;
+    const parent = pulumiMayAppearParent(e.address);
+    rows.push(parent ? { member: e.member, component: typeAndName(parent), action: e.action } : { member: e.member, component: componentOf(e), resource: typeAndName(e.address), action: e.action });
+  }
+  const key = (r: PrMayAppearRow) => `${r.member}\u0000${r.component}\u0000${r.resource === undefined ? "" : `\u0001${r.resource}`}`;
+  return rows.sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
+}
+
+/**
+ * The words of one may-appear row's last cell. `apply` is the product's word
+ * for the apply (a fixed slot, #4550): plywood's is `up`.
+ */
+export function prMayAppearText(row: PrMayAppearRow, apply = "apply"): string {
+  if (row.resource === undefined) return `may register at ${apply}`;
+  if (row.action === "delete") return `planned to delete, and may register again at ${apply}`;
+  return `missing from the preview, and may register at ${apply}`;
+}
+
+/**
+ * The may-appear lines of the note (#4548): a row per `mayAppear` entry,
+ * naming the component resource that registers it.
+ */
+function mayAppearLines(report: PrReport, apply: string): string[] {
+  const rows = prMayAppearRows(report.changeSet);
+  if (rows.length === 0) return [];
+  const out = [
+    "",
+    `Registered inside an \`apply()\` the preview could not run, so known only at ${apply}:`,
+    "",
+    "| Member | Component resource | Resource | At " + apply + " |",
+    "|---|---|---|---|",
+  ];
+  for (const r of rows) out.push(`| ${code(r.member)} | ${code(r.component)} | ${r.resource === undefined ? "any resource it registers" : code(r.resource)} | ${prMayAppearText(r, apply)} |`);
+  return out;
+}
+
+/**
  * The pull-request note: the stage's headline, a row per member, the digest
  * and the approval, then the grouped plan summary (#3188) in whatever room
  * `limit` leaves. The note starts with {@link prNoteMarker}, so the same
- * comment is updated by every push and by the apply.
+ * comment is updated by every push and by the apply. `applyWord` is the
+ * product's word for the apply in the may-appear rows (#4548), `apply` by
+ * default.
  */
-export function renderPrNote(report: PrReport, options: { limit?: number; approver?: string } = {}): string {
+export function renderPrNote(report: PrReport, options: { limit?: number; approver?: string; applyWord?: string } = {}): string {
   const limit = options.limit ?? GITHUB_COMMENT_LIMIT;
   const out: string[] = [
     prNoteMarker(report.env, report.member),
@@ -830,6 +922,7 @@ export function renderPrNote(report: PrReport, options: { limit?: number; approv
       out.push("", "A member whose inputs moved applied the plan it was approved with. The next run plans it against the new values.");
     }
   }
+  out.push(...mayAppearLines(report, options.applyWord ?? "apply"));
   const blocked = blockedLine(report.members);
   if (blocked) out.push("", blocked);
   out.push(...groupLines(report));
