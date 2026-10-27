@@ -5,6 +5,7 @@ export * from "./snapshot";
 export * from "./snapshot-store";
 export * from "./snapshot-store-s3";
 export * from "./index-document";
+export * from "./index-diff";
 export * from "./live-diff";
 export * from "./deep-diff";
 export * from "./deep-observe";

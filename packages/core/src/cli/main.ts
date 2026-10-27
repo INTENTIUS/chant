@@ -198,6 +198,9 @@ Commands:
                         --account|--subscription|--project|--cluster, --regions,
                         --types, --tag k=v, --endpoint, --store <spec>, --json
                         (chant index --help for the rest)
+  index diff <a> [<b>]  What changed between two index versions of one scope:
+                        <scopeKey>/<version>, or <scopeKey> for its last two.
+                        --store <spec>, --json (chant index diff --help)
   generate             Generate typed code from sources chant.config declares
                         (k8s.crds, helm.charts) into src/generated/<lexicon>/
                         (codegen.outDir); --check exits 1 when the committed
@@ -1825,6 +1828,12 @@ async function main(): Promise<void> {
   // --regions, --endpoint, ...) that core's one flat parser does not know, and
   // must refuse an action flag (--apply, --yes, ...) that the parser would
   // accept. So its argv goes to its own parser, before parseArgs.
+  if (rawArgv[0] === "index" && rawArgv[1] === "diff") {
+    // #4533 — `chant index diff <a> [<b>]`: two stored versions of one scope.
+    const { runIndexDiff } = await import("./handlers/index-diff");
+    await flushAndExit(await runIndexDiff(rawArgv.slice(2)));
+    return;
+  }
   if (rawArgv[0] === "index") {
     const { runCloudIndex } = await import("../lifecycle/cloud-index");
     await flushAndExit(await runCloudIndex(rawArgv.slice(1)));
