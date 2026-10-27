@@ -45,6 +45,21 @@ export type DeclaredIdentity =
       identifier: string;
       /** A global type is indexed once per account at location `global`. */
       global: boolean;
+      /**
+       * The location the declaration itself names, ahead of the entity's
+       * region: a Kubernetes namespace, or `cluster` for a cluster-scoped
+       * kind. Absent: `global` or the region.
+       */
+      location?: string;
+      /**
+       * Match indexed nodes by this lexicon kind instead of by
+       * `listedType`, for a substrate whose listed type carries a version
+       * the kind does not (Kubernetes' `apps/v1/Deployment` is
+       * `K8s::Apps::Deployment` at any version). Coverage is still read for
+       * `listedType`, so a version the index did not list reads not
+       * observed, never absent.
+       */
+      entityKind?: string;
     }
   | {
       kind: "unmatchable";
@@ -186,14 +201,18 @@ export function matchDeclaredToIndex(
 ): IdentityMatchResult {
   cloudScopes(docs, identity.substrate);
 
-  // listedType -> nativeId -> nodes
+  // listedType -> nativeId -> nodes, and the same keyed by lexicon kind
   const byIdentity = new Map<string, Map<string, IRNode[]>>();
+  const byKind = new Map<string, Map<string, IRNode[]>>();
+  const add = (index: Map<string, Map<string, IRNode[]>>, t: string, n: IRNode) => {
+    const m = index.get(t) ?? index.set(t, new Map()).get(t)!;
+    (m.get(n.nativeId!) ?? m.set(n.nativeId!, []).get(n.nativeId!)!).push(n);
+  };
   for (const d of docs) {
     for (const n of d.graph.nodes) {
       if (n.nativeId === undefined) continue;
-      const t = listedTypeOf(n);
-      const m = byIdentity.get(t) ?? byIdentity.set(t, new Map()).get(t)!;
-      (m.get(n.nativeId) ?? m.set(n.nativeId, []).get(n.nativeId)!).push(n);
+      add(byIdentity, listedTypeOf(n), n);
+      if (!n.unmappedKind) add(byKind, n.kind, n);
     }
   }
 
@@ -207,8 +226,8 @@ export function matchDeclaredToIndex(
     }
     const { listedType, identifier } = declared;
     const region = entity.region ?? options.region;
-    const location = declared.global ? "global" : region;
-    const all = byIdentity.get(listedType)?.get(identifier) ?? [];
+    const location = declared.location ?? (declared.global ? "global" : region);
+    const all = (declared.entityKind !== undefined ? byKind.get(declared.entityKind) : byIdentity.get(listedType))?.get(identifier) ?? [];
     const inScope = location === undefined ? all : all.filter((n) => n.location === location);
     const candidates = [...new Set(inScope.map((n) => n.id))].sort(byString);
 
