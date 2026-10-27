@@ -89,6 +89,12 @@ export const PLANNERS: Record<string, PlannerNote> = {
     shows: "no entries: the member plans and applies through its own pipeline. A hole per output known only after it applies",
     anchor: "member-outputs",
   },
+  "pulumi-up": {
+    source: "lexicons/pulumi/src/pulumi-up.ts",
+    reads: "`pulumi preview --json --show-sames` (or `plunge preview` with `--save-plan`) in the stack's directory, streamed as engine events, with CrossGuard's policy events",
+    shows: "a create, update, replace or delete per URN, and each top-level input the change writes with its value before and after",
+    anchor: "pulumi-up",
+  },
   "terraform-apply": {
     source: "lexicons/terraform/src/components/capability-plugin.ts",
     reads: "`terraform plan` (or tofu or choudoufu) in the root, against its state, with a typed placeholder for each variable that reads an output not known yet",

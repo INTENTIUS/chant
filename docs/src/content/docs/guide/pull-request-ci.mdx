@@ -139,7 +139,7 @@ The plan job needs credentials that can read, list and dry-run apply the manifes
 
 ### Other capabilities
 
-`cfn-deploy`, `kubectl-apply` and `terraform-apply` are the capabilities with `plan`. A component whose steps include none of them, such as one that runs `helm-upgrade`, is a member under its own name with a count of 0 in every column. Its digest covers the component's declaration and the files its steps deploy from ([#4155](https://github.com/INTENTIUS/chant/issues/4155)). [Plan previews](/chant/components/plan-previews/) lists every capability and what the note shows for each, and says what to check for a component that cannot plan.
+`cfn-deploy`, `kubectl-apply`, `terraform-apply` and `pulumi-up` are the capabilities with `plan`. `pulumi-up` plans and applies a Pulumi or plunge stack, and needs no flag of its own in the generated pipeline ([#4541](https://github.com/INTENTIUS/chant/issues/4541)). A component whose steps include none of them, such as one that runs `helm-upgrade`, is a member under its own name with a count of 0 in every column. Its digest covers the component's declaration and the files its steps deploy from ([#4155](https://github.com/INTENTIUS/chant/issues/4155)). [Plan previews](/chant/components/plan-previews/) lists every capability and what the note shows for each, and says what to check for a component that cannot plan.
 
 ## Generate the pipeline
 

@@ -33,6 +33,14 @@ export {
   readMemberExport,
   defaultPulumiRunner,
   PULUMI_ALLOWED_COMMANDS,
+  PULUMI_APPLY_COMMANDS,
+  runApplyPulumi,
+  runApplyPlunge,
+  pulumiUpArgs,
+  plungeUpArgs,
+  pulumiUpPreviewArgs,
+  type PulumiPolicyPack,
+  type PulumiApplyTail,
   type PulumiRunner,
   type PreviewPulumiMemberOptions,
   type PulumiMemberPreview,
@@ -52,7 +60,39 @@ export {
   type PulumiAppliedFrom,
   type PulumiOutputSourceOptions,
 } from "./member-outputs";
-export { pulumiCapabilityPlugin } from "./capability-plugin";
+export { pulumiCapabilityPlugin, PULUMI_VERB_FAMILIES } from "./capability-plugin";
+// The apply capability (#4541): a Pulumi or plunge stack as a component step that plans and applies.
+export {
+  createPulumiUpCapability,
+  pulumiUpCapability,
+  pulumiUpMember,
+  pulumiReleaseInputs,
+  pulumiScratchConfig,
+  pulumiDefaultLockGrain,
+  PulumiPlanMovedError,
+  PulumiPolicyDeniedError,
+  PulumiAppliedShapeError,
+  PulumiResourceGrainRefusedError,
+  type PulumiUpStepInput,
+  type PulumiUpStepOutput,
+  type PulumiUpArtifact,
+  type PulumiUpOptions,
+  type PulumiLockGrain,
+} from "./pulumi-up";
+export { pulumiPlanShape, pulumiShapeDifferences, type PulumiPlanShapeOptions } from "./plan-shape";
+export {
+  pulumiEngineEvents,
+  pulumiStreamPreview,
+  pulumiAppliedSteps,
+  pulumiPolicyEvents,
+  pulumiPolicyFindings,
+  pulumiStreamSummary,
+  crossGuardRule,
+  PULUMI_STREAMING_PREVIEW_ENV,
+  type PulumiEngineEvent,
+  type PulumiPolicyViolation,
+  type PulumiApplySummary,
+} from "./engine-events";
 export { readPulumiDrift, type PulumiDriftRunners } from "./drift-read";
 export { pulumiAuditCatalog } from "./lint/audit-catalog";
 // The Preview/Drift watch composite and its step builders (#4494).
