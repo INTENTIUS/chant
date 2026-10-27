@@ -417,7 +417,7 @@ A commit that leaves the window still pending is rewritten `unbuilt`, for the re
 }
 ```
 
-The value takes the same forms as `--report-url`: `s3://<bucket>/<prefix>`, `gs://<bucket>/<prefix>`, `az://<account>/<container>/<prefix>` or `file://<directory>`, with an absolute directory. The `gs://` and `az://` forms need a `minReader` of 0.124.55 or newer ([#4554](https://github.com/INTENTIUS/chant/issues/4554)). Any other value, an `https://` URL included, is refused with `declaration-invalid` at `/ci/reportUrl`, since no job can upload there. A trailing slash is dropped. `chant build --pr-loop`, `chant ci run`, `chant ci serve` and `chant ci runs` use it when `--report-url` is not given, and the flag wins when it is. `chant workspace ls --json` prints it as `ci.reportUrl`. The field can stand without `green`. Read by chant 0.124.32 and newer, so set `minReader` with it.
+The value takes the same forms as `--report-url`. Those are `s3://<bucket>/<prefix>`, `gs://<bucket>/<prefix>`, `az://<account>/<container>/<prefix>` and `file://<directory>`, with an absolute directory. Any other value, an `https://` URL included, is refused with `declaration-invalid` at `/ci/reportUrl`, since no job can upload there. A trailing slash is dropped. `chant build --pr-loop`, `chant ci run`, `chant ci serve` and `chant ci runs` use it when `--report-url` is not given, and the flag wins when it is. `chant workspace ls --json` prints it as `ci.reportUrl`. The field can stand without `green`. Read by chant 0.124.32 and newer, so set `minReader` with it, and set it to 0.124.55 or newer when the value is a `gs://` or `az://` one ([#4554](https://github.com/INTENTIUS/chant/issues/4554)).
 
 ### Stage hooks
 
@@ -1068,9 +1068,9 @@ chant records each lifecycle fact on the orphan branch `chant/lifecycle`, and ke
 | Op run records | `<ledger><env>/runs__<op>.jsonl` |
 | Converge tick records | `<ledger><env>/converge.jsonl` |
 | Gate facts, pending and resolved | `<ledger>_gates/<op>.jsonl` |
-| Applies under an approval, and how each ended | `<ledger>_gates/<op>/applied.jsonl` |
-| A gated request's attachment, such as a migration's proof | `<ledger>_gates/<op>/requests/<digest>.json` ([#4551](https://github.com/INTENTIUS/chant/issues/4551)) |
-| Pull request environments | `<ledger>_pr-envs/records.jsonl` |
+| Each apply that ran under an approval, and how it ended | `<ledger>_gates/<op>/applied.jsonl` |
+| The attachment a gated request carries, such as a migration's proof | `<ledger>_gates/<op>/requests/<digest>.json` ([#4551](https://github.com/INTENTIUS/chant/issues/4551)) |
+| One record for each environment a pull request has opened | `<ledger>_pr-envs/records.jsonl` |
 | Build manifests | `<ledger>_builds/<digest>.json` |
 | Stored change sets | `<ledger>_change-sets/<digest>.json`, pruned by [retention](#retention) |
 | Releases, their cuts and template bytes | `<ledger>_releases/<digest>.json`, `<ledger>_releases/cuts.jsonl` and `<ledger>_releases/templates/<digest>.txt`; the release files and templates are pruned by [retention](#retention) |
