@@ -48,13 +48,33 @@
  * the OIDC token. chant trades it, so the change's code never holds a token
  * another client could be traded for; a tool that needs the OIDC token
  * itself cannot plan under this block.
+ *
+ * Pulumi Cloud (#4549) is traded the same way, through its OAuth token
+ * exchange (`POST <apiUrl>/api/oauth/token`, RFC 8693), for a Pulumi access
+ * token in PULUMI_ACCESS_TOKEN. Its identities name the token asked for:
+ * `team:<name>`, `user:<login>`, `organization` or `organization:admin`. So
+ * the plan and record jobs preview with one token, the apply jobs run `up`
+ * with another, and the pull request's program never sees the `up` token.
+ * No long-lived Pulumi token sits in the forge's secrets.
  */
 
 import { readFileSync } from "node:fs";
+import { NEXT_RELEASE } from "./release-floors";
 
-/** The clouds `ci.identity.cloud` names. */
+/** The cloud providers `ci.identity.cloud` names. */
 export const CLOUDS = ["aws", "gcp", "azure"] as const;
 export type Cloud = (typeof CLOUDS)[number];
+
+/**
+ * Every key of `ci.identity.cloud`: the cloud providers and Pulumi Cloud
+ * (#4549), whose access tokens are traded the same way. {@link CLOUDS}
+ * keeps the providers alone, as a Terraform product reads them.
+ */
+export const IDENTITY_CLOUDS = [...CLOUDS, "pulumi"] as const;
+export type IdentityCloud = (typeof IDENTITY_CLOUDS)[number];
+
+/** The first chant that reads `ci.identity.cloud.pulumi` (#4549): a declaration that sets it needs this `minReader`. */
+export const PULUMI_CLOUD_IDENTITY_FLOOR = NEXT_RELEASE;
 
 /** One rule: the environments, members and targets it covers, and their two identities. */
 export interface CloudIdentityRule {
@@ -111,11 +131,28 @@ export interface AzureCloudIdentity {
   rules: CloudIdentityRule[];
 }
 
+/**
+ * Pulumi Cloud (#4549). The rules' identities name the access token traded
+ * for: `team:<name>` (a team token), `user:<login>` (a personal token),
+ * `organization` or `organization:admin` (an organization token). The
+ * organization's OIDC issuer policies decide which a forge token may get.
+ */
+export interface PulumiCloudIdentity {
+  /** The Pulumi organization. */
+  organization: string;
+  /** The OIDC token's audience. Default `urn:pulumi:org:<organization>`. */
+  audience?: string;
+  /** The Pulumi Cloud API, for a self-hosted one or a fake. Default `https://api.pulumi.com`; when set, the trade sets PULUMI_BACKEND_URL to it too. */
+  apiUrl?: string;
+  rules: CloudIdentityRule[];
+}
+
 /** `ci.identity.cloud` as the declaration holds it. */
 export interface CloudIdentityDeclaration {
   aws?: AwsCloudIdentity;
   gcp?: GcpCloudIdentity;
   azure?: AzureCloudIdentity;
+  pulumi?: PulumiCloudIdentity;
 }
 
 /**
@@ -128,10 +165,12 @@ export interface CloudTradeSpec {
   aws?: { role?: string; targets?: Array<{ targets: string[]; role: string }>; region: string; audience: string; endpoint?: string };
   gcp?: { serviceAccount?: string; targets?: Array<{ targets: string[]; serviceAccount: string }>; provider: string; audience: string; stsEndpoint?: string; iamEndpoint?: string };
   azure?: { clientId?: string; targets?: Array<{ targets: string[]; clientId: string }>; tenantId: string; audience: string; subscriptionId?: string; authority?: string };
+  /** Pulumi Cloud (#4549): `token` is the identity, such as `team:deployers`. */
+  pulumi?: { token?: string; targets?: Array<{ targets: string[]; token: string }>; organization: string; audience: string; apiUrl?: string };
 }
 
 /** The key a cloud's trade names its identity under. */
-export const IDENTITY_KEY = { aws: "role", gcp: "serviceAccount", azure: "clientId" } as const;
+export const IDENTITY_KEY = { aws: "role", gcp: "serviceAccount", azure: "clientId", pulumi: "token" } as const;
 
 /** A pipeline's two trades: the plan and record jobs', and the apply jobs'. */
 export interface PipelineCloudIdentity {
@@ -228,7 +267,7 @@ export function ruleFor(rules: readonly CloudIdentityRule[], env: string, member
 const providerPath = (p: string): string => p.replace(/^(https:)?\/\/iam\.googleapis\.com\//, "");
 
 /** Where each cloud trades, the same for every identity of the cloud. */
-function cloudPlace(decl: CloudIdentityDeclaration, cloud: Cloud): Record<string, string> {
+function cloudPlace(decl: CloudIdentityDeclaration, cloud: IdentityCloud): Record<string, string> {
   if (cloud === "aws") {
     const a = decl.aws!;
     return { region: a.region ?? "us-east-1", audience: a.audience ?? "sts.amazonaws.com", ...(a.endpoint ? { endpoint: a.endpoint } : {}) };
@@ -243,6 +282,10 @@ function cloudPlace(decl: CloudIdentityDeclaration, cloud: Cloud): Record<string
       ...(g.iamEndpoint ? { iamEndpoint: g.iamEndpoint } : {}),
     };
   }
+  if (cloud === "pulumi") {
+    const p = decl.pulumi!;
+    return { organization: p.organization, audience: p.audience ?? pulumiAudience(p.organization), ...(p.apiUrl ? { apiUrl: p.apiUrl } : {}) };
+  }
   const z = decl.azure!;
   return {
     tenantId: z.tenantId,
@@ -253,7 +296,7 @@ function cloudPlace(decl: CloudIdentityDeclaration, cloud: Cloud): Record<string
 }
 
 /** One cloud's trade: its own identity, the targets that take another, and where it trades. */
-function cloudTrade(decl: CloudIdentityDeclaration, cloud: Cloud, own: string | undefined, targets: Array<{ targets: string[]; id: string }>): Record<string, unknown> {
+function cloudTrade(decl: CloudIdentityDeclaration, cloud: IdentityCloud, own: string | undefined, targets: Array<{ targets: string[]; id: string }>): Record<string, unknown> {
   const key = IDENTITY_KEY[cloud];
   return {
     ...(own !== undefined ? { [key]: own } : {}),
@@ -275,7 +318,7 @@ export function resolveCloudIdentity(decl: CloudIdentityDeclaration | undefined,
   if (!decl) return undefined;
   const plan: Record<string, unknown> = {};
   const apply: Record<string, unknown> = {};
-  for (const cloud of CLOUDS) {
+  for (const cloud of IDENTITY_CLOUDS) {
     const rules = decl[cloud]?.rules;
     if (!rules) continue;
     const covering = rules.filter((r) => matches(r.environments, env) && matches(r.members, member));
@@ -299,7 +342,7 @@ export function resolveTargetCloudIdentity(decl: CloudIdentityDeclaration | unde
   if (!decl) return undefined;
   const plan: Record<string, unknown> = {};
   const apply: Record<string, unknown> = {};
-  for (const cloud of CLOUDS) {
+  for (const cloud of IDENTITY_CLOUDS) {
     const rule = decl[cloud] && ruleFor(decl[cloud]!.rules, env, member, target);
     if (!rule) continue;
     plan[cloud] = cloudTrade(decl, cloud, rule.plan, []);
@@ -324,7 +367,7 @@ export const PR_ENV_IDENTITY_PROBE = "pr-1";
 export function resolvePrEnvCloudIdentity(decl: CloudIdentityDeclaration | undefined, member?: string): CloudTradeSpec | undefined {
   if (!decl) return undefined;
   const named: CloudIdentityDeclaration = {};
-  for (const cloud of CLOUDS) {
+  for (const cloud of IDENTITY_CLOUDS) {
     const c = decl[cloud];
     if (c) (named as Record<string, unknown>)[cloud] = { ...c, rules: c.rules.filter((r) => r.environments !== undefined) };
   }
@@ -359,13 +402,13 @@ export function cloudIdentityGroups(decl: CloudIdentityDeclaration | undefined, 
   const byKey = new Map<string, { base: string; group: CloudIdentityGroup }>();
   for (const target of targets) {
     const identity = resolveTargetCloudIdentity(decl, env, member, target);
-    const key = JSON.stringify(identity ? CLOUDS.map((c) => [identity.plan[c] ? tradeIdentities({ [c]: identity.plan[c] }) : [], identity.apply[c] ? tradeIdentities({ [c]: identity.apply[c] }) : []]) : null);
+    const key = JSON.stringify(identity ? IDENTITY_CLOUDS.map((c) => [identity.plan[c] ? tradeIdentities({ [c]: identity.plan[c] }) : [], identity.apply[c] ? tradeIdentities({ [c]: identity.apply[c] }) : []]) : null);
     const at = byKey.get(key);
     if (at) {
       at.group.targets.push(target);
       continue;
     }
-    const rule = CLOUDS.map((c) => decl?.[c] && ruleFor(decl[c]!.rules, env, member, target)).find((r) => r?.targets !== undefined);
+    const rule = IDENTITY_CLOUDS.map((c) => decl?.[c] && ruleFor(decl[c]!.rules, env, member, target)).find((r) => r?.targets !== undefined);
     const named = rule ? (rule.name ?? (nameFrom(rule.targets![0]!) || "group")) : DEFAULT_IDENTITY_GROUP;
     // An Op wave's own jobs are `decide` and `share-<i>` (./op/op-waves.ts), so a group takes neither name.
     const base = named === "decide" || /^share-\d+$/.test(named) ? `${named}-targets` : named;
@@ -420,9 +463,9 @@ export function oneApplyIdentityProblem(spec: CloudTradeSpec): string | undefine
   return undefined;
 }
 
-/** The clouds a trade covers, in {@link CLOUDS} order. */
-export function tradedClouds(spec: CloudTradeSpec): Cloud[] {
-  return CLOUDS.filter((c) => spec[c] !== undefined);
+/** The clouds a trade covers, in {@link IDENTITY_CLOUDS} order. */
+export function tradedClouds(spec: CloudTradeSpec): IdentityCloud[] {
+  return IDENTITY_CLOUDS.filter((c) => spec[c] !== undefined);
 }
 
 /** Every identity a trade names, once each: the roles, the service accounts, the client ids, its targets' too (#4332). */
@@ -444,23 +487,47 @@ export function tradeIdentities(spec: CloudTradeSpec): string[] {
  */
 export function cloudIdentityProblems(decl: CloudIdentityDeclaration): Array<{ pointer: string; message: string }> {
   const out: Array<{ pointer: string; message: string }> = [];
-  for (const cloud of CLOUDS) {
+  for (const cloud of IDENTITY_CLOUDS) {
     const rules = decl[cloud]?.rules ?? [];
     const applies = new Set(rules.map((r) => r.apply));
     rules.forEach((r, i) => {
       const pointer = `/ci/identity/cloud/${cloud}/rules/${i}`;
       if (r.plan === r.apply) out.push({ pointer, message: `ci.identity.cloud.${cloud}.rules[${i}] plans and applies as ${r.plan}; the plan runs the pull request's code, so give it an identity of its own` });
       else if (applies.has(r.plan)) out.push({ pointer, message: `ci.identity.cloud.${cloud}.rules[${i}] plans as ${r.plan}, which another rule applies as; the plan runs the pull request's code, so give it an identity no rule applies as` });
+      if (cloud === "pulumi") {
+        for (const side of ["plan", "apply"] as const) {
+          if (!pulumiTokenRequest(r[side])) out.push({ pointer: `${pointer}/${side}`, message: `ci.identity.cloud.pulumi.rules[${i}].${side} is ${JSON.stringify(r[side])}; a Pulumi Cloud identity is team:<name>, user:<login>, organization or organization:admin` });
+        }
+      }
     });
   }
   return out;
 }
 
+/** The OIDC audience Pulumi Cloud's token exchange takes for `organization` (#4549). */
+export function pulumiAudience(organization: string): string {
+  return `urn:pulumi:org:${organization}`;
+}
+
+/**
+ * The token a Pulumi Cloud identity asks the exchange for (#4549): its
+ * `requested_token_type` and `scope`, or undefined when `identity` is none
+ * of `team:<name>`, `user:<login>`, `organization`, `organization:admin`.
+ * The trade script reads identities the same way.
+ */
+export function pulumiTokenRequest(identity: string): { tokenType: string; scope?: string } | undefined {
+  const m = /^(team|user):([^\s:]+)$/.exec(identity);
+  if (m) return { tokenType: `urn:pulumi:token-type:access_token:${m[1] === "team" ? "team" : "personal"}`, scope: identity };
+  if (identity === "organization") return { tokenType: "urn:pulumi:token-type:access_token:organization" };
+  if (identity === "organization:admin") return { tokenType: "urn:pulumi:token-type:access_token:organization", scope: "admin" };
+  return undefined;
+}
+
 /** The variable the trade step reads its {@link CloudTradeSpec} from, as JSON. */
 export const TRADE_SPEC_ENV = "CHANT_CLOUD_TRADE";
 
-/** The GitLab `id_tokens` variable a cloud's token comes in: `CHANT_ID_TOKEN_AWS`, `_GCP`, `_AZURE`. */
-export function idTokenVar(cloud: Cloud): string {
+/** The GitLab `id_tokens` variable a cloud's token comes in: `CHANT_ID_TOKEN_AWS`, `_GCP`, `_AZURE`, `_PULUMI`. */
+export function idTokenVar(cloud: IdentityCloud): string {
   return `CHANT_ID_TOKEN_${cloud.toUpperCase()}`;
 }
 
@@ -469,13 +536,14 @@ export function idTokenVar(cloud: Cloud): string {
  * the GitLab `id_tokens` variables the trade reads. A step that runs the
  * change's code starts without them, once the trade is done.
  */
-export const OIDC_REQUEST_VARS = ["ACTIONS_ID_TOKEN_REQUEST_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_URL", ...CLOUDS.map(idTokenVar), TRADE_SPEC_ENV] as const;
+export const OIDC_REQUEST_VARS = ["ACTIONS_ID_TOKEN_REQUEST_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_URL", ...IDENTITY_CLOUDS.map(idTokenVar), TRADE_SPEC_ENV] as const;
 
 /** The variables the trade sets, per cloud. */
-export const TRADED_VARS: Record<Cloud, readonly string[]> = {
+export const TRADED_VARS: Record<IdentityCloud, readonly string[]> = {
   aws: ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_REGION", "AWS_DEFAULT_REGION"],
   gcp: ["GOOGLE_OAUTH_ACCESS_TOKEN", "CLOUDSDK_AUTH_ACCESS_TOKEN"],
   azure: ["AZURE_ACCESS_TOKEN", "AZURE_CLIENT_ID", "AZURE_TENANT_ID", "ARM_CLIENT_ID", "ARM_TENANT_ID", "AZURE_SUBSCRIPTION_ID", "ARM_SUBSCRIPTION_ID"],
+  pulumi: ["PULUMI_ACCESS_TOKEN", "PULUMI_BACKEND_URL"],
 };
 
 /**
@@ -497,7 +565,7 @@ export const CLOUD_TARGETS_ENV = "CHANT_CLOUD_TARGETS";
 /** The file {@link CLOUD_TARGETS_ENV} names: per cloud, the job's own identity, the targets that take another, and each identity's variables. */
 export interface CloudTargetsFile {
   version: 1;
-  clouds: Partial<Record<Cloud, { default?: string; targets: Array<{ targets: string[]; identity: string }>; vars: Record<string, Record<string, string>> }>>;
+  clouds: Partial<Record<IdentityCloud, { default?: string; targets: Array<{ targets: string[]; identity: string }>; vars: Record<string, Record<string, string>> }>>;
 }
 
 /**
@@ -559,6 +627,17 @@ export const TRADE_JS = [
   'if(!clean(at))throw new Error("Entra gave no token for "+cid);',
   "by.azure[cid]={AZURE_ACCESS_TOKEN:at,AZURE_CLIENT_ID:cid,AZURE_TENANT_ID:z.tenantId,ARM_CLIENT_ID:cid,ARM_TENANT_ID:z.tenantId,...(z.subscriptionId?{AZURE_SUBSCRIPTION_ID:z.subscriptionId,ARM_SUBSCRIPTION_ID:z.subscriptionId}:{})};secrets.push(at);said.push(cid)}",
   "if(z.clientId)Object.assign(vars,by.azure[z.clientId])}",
+  // #4549: Pulumi Cloud's OAuth token exchange, one access token per identity (pulumiTokenRequest).
+  'if(spec.pulumi){const p=spec.pulumi;const tok=await idToken("pulumi",p.audience);by.pulumi={};',
+  'const api=trim(p.apiUrl||"https://api.pulumi.com");',
+  'for(const id of ids("pulumi")){',
+  'const m=/^(team|user):([^\\s:]+)$/.exec(id),org=id==="organization"||id==="organization:admin";if(!m&&!org)throw new Error("Pulumi Cloud has no token for "+id);',
+  'const f={audience:"urn:pulumi:org:"+p.organization,grant_type:"urn:ietf:params:oauth:grant-type:token-exchange",subject_token_type:"urn:ietf:params:oauth:token-type:id_token",requested_token_type:"urn:pulumi:token-type:access_token:"+(m?(m[1]==="team"?"team":"personal"):"organization"),subject_token:tok};',
+  'if(m)f.scope=id;else if(id==="organization:admin")f.scope="admin";',
+  'const at=json(await post(api+"/api/oauth/token",{"content-type":"application/x-www-form-urlencoded",accept:"application/json"},new URLSearchParams(f).toString()),"Pulumi Cloud").access_token;',
+  'if(!clean(at))throw new Error("Pulumi Cloud gave no token for "+id);',
+  'by.pulumi[id]={PULUMI_ACCESS_TOKEN:at,...(p.apiUrl?{PULUMI_BACKEND_URL:api}:{})};secrets.push(at);said.push("Pulumi Cloud "+id)}',
+  "if(p.token)Object.assign(vars,by.pulumi[p.token])}",
   // #4332: with targets, every identity's variables go in a file of their own, outside the checkout.
   'const clouds=Object.keys(by);if(clouds.some((c)=>(spec[c].targets||[]).length>0)){',
   'const doc={version:1,clouds:{}};for(const c of clouds){const s=spec[c];doc.clouds[c]={...(s[KEY[c]]?{default:s[KEY[c]]}:{}),targets:(s.targets||[]).map((t)=>({targets:t.targets,identity:t[KEY[c]]})),vars:by[c]}}',
@@ -614,7 +693,7 @@ export function targetCloudEnv(env: Readonly<Record<string, string | undefined>>
   const path = env[CLOUD_TARGETS_ENV];
   if (!path) return out;
   const file = readTargetsFile(path, read);
-  for (const cloud of CLOUDS) {
+  for (const cloud of IDENTITY_CLOUDS) {
     const c = file.clouds[cloud];
     if (!c) continue;
     const id = targetIdentityIn(c, target);

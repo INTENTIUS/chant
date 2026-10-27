@@ -69,6 +69,9 @@ const FLOOR_RE = /export const ([A-Z0-9_]+_FLOOR) = (?:"(\d+\.\d+\.\d+)"|(NEXT_R
  */
 const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: string }[] = [
   // --freeze empties this list after a release ships (#4501); each entry is one line.
+  { file: "packages/core/src/workspace/declaration.schema.json", text: "organization or organization:admin. Added in schema 1 by chant {v}, so a declaration that uses it sets minReader to {v} or newer.", count: 1, floor: "PULUMI_CLOUD_IDENTITY_FLOOR" },
+  { file: "docs/src/content/docs/guide/security-cloud-identities.mdx", text: "needs chant {v} or newer as its `minReader` (`PULUMI_CLOUD_IDENTITY_FLOOR`)", count: 1, floor: "PULUMI_CLOUD_IDENTITY_FLOOR" },
+  { file: "docs/src/content/docs/reference/workspace-declaration.mdx", text: "`apiUrl` (default `https://api.pulumi.com`). Needs a `minReader` of {v} or newer.", count: 1, floor: "PULUMI_CLOUD_IDENTITY_FLOOR" },
 ];
 
 interface Args {

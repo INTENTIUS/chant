@@ -20,7 +20,7 @@ import { RETENTION_KINDS, type RetentionOverride } from "../lifecycle/retention-
 import { parseReportUrl } from "../pr-report-url";
 import schema from "./declaration.schema.json" with { type: "json" };
 import { routeConflicts } from "./ci-branches";
-import { cloudIdentityProblems, CLOUDS, type CloudIdentityDeclaration } from "../ci-identity";
+import { cloudIdentityProblems, IDENTITY_CLOUDS, type CloudIdentityDeclaration } from "../ci-identity";
 import { expandGlob } from "./glob";
 import { EXAMPLES_KIND, holdsChantProject, REPO_KIND } from "./kinds";
 import { parseJsonText, pointerToken, type TextLocation } from "./jsonc";
@@ -343,7 +343,8 @@ export interface CiDeclaration {
   policy?: GatePolicySettings;
   /**
    * `ci.identity` (#4296): `cloud` gives each cloud's plan and apply
-   * identities by environment and member globs (../ci-identity.ts).
+   * identities by environment and member globs (../ci-identity.ts), and
+   * Pulumi Cloud's preview and up tokens under `pulumi` (#4549).
    * Absent when unset.
    */
   identity?: { cloud: CloudIdentityDeclaration };
@@ -1337,7 +1338,8 @@ function ciPolicyOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorL
  */
 function cloudIdentityOf(raw: CloudIdentityDeclaration, at: (pointer: string, key?: boolean) => ErrorLocation): CloudIdentityDeclaration {
   const out: CloudIdentityDeclaration = {};
-  for (const cloud of CLOUDS) {
+  // #4549: Pulumi Cloud's identities are read with the clouds'.
+  for (const cloud of IDENTITY_CLOUDS) {
     const c = raw[cloud];
     if (c === undefined) continue;
     const kept = Object.fromEntries(Object.entries(c).filter(([k]) => !k.startsWith("x-")));

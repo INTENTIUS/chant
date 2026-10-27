@@ -300,6 +300,19 @@
                     "authority": { "type": "string", "pattern": "^https?://", "description": "The Entra authority host, for an emulator. Default https://login.microsoftonline.com." },
                     "rules": { "$ref": "#/$defs/ciCloudIdentityRules" }
                   }
+                },
+                "pulumi": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "patternProperties": { "^x-": true },
+                  "required": ["organization", "rules"],
+                  "description": "Pulumi Cloud access tokens (#4549), traded through Pulumi Cloud's OAuth token exchange and set as PULUMI_ACCESS_TOKEN: the plan and record jobs preview with the plan token, the apply jobs run up with the apply token. The rules' identities are team:<name>, user:<login>, organization or organization:admin. Added in schema 1 by chant 0.124.55, so a declaration that uses it sets minReader to 0.124.55 or newer.",
+                  "properties": {
+                    "organization": { "type": "string", "minLength": 1, "description": "The Pulumi organization." },
+                    "audience": { "type": "string", "minLength": 1, "description": "The OIDC token's audience. Default urn:pulumi:org:<organization>." },
+                    "apiUrl": { "type": "string", "pattern": "^https?://", "description": "The Pulumi Cloud API, for a self-hosted one or a fake. Default https://api.pulumi.com. When set, the trade sets PULUMI_BACKEND_URL to it too." },
+                    "rules": { "$ref": "#/$defs/ciCloudIdentityRules" }
+                  }
                 }
               }
             }
