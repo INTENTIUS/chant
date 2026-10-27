@@ -34,7 +34,7 @@ With `ci.locks: plan` in the declaration, `chant build --components --pr-loop --
 | `lock` | After the plan job succeeds | `chant lock --from-report .chant/pr/pr-plan.json --stage plan` |
 | `unlock` | When the pull request closes | `chant unlock --pr <n>` |
 
-The plan job runs the pull request's code, so it writes nothing to `chant/lifecycle`. Both new jobs check out the target branch's commit instead, so they run the target branch's `chant` and none of the pull request's code. The `lock` job takes the plan's report from the plan job's outputs and locks the components it selected. The `unlock` job needs no report. The workflow now also fires on `closed`, and the plan job skips that event.
+The plan job runs the pull request's code, so it writes nothing to `chant/lifecycle`. Both new jobs check out the target branch's commit instead, so they run the target branch's `chant` and none of the pull request's code. Of the two, `lock` takes the plan's report from the plan job's outputs and locks the components it selected, while `unlock` needs no report. The workflow now also fires on `closed`, and the plan job skips that event.
 
 Each new push to the pull request plans again and locks again. A component the new head no longer reaches is released ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/lifecycle/target-lock.ts#L281)). The unlock job tidies the file. Without it, a lock whose pull request closed still reads as released, because `--forge` asks GitHub whether each holder is open ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/lifecycle/target-lock.ts#L285)).
 
