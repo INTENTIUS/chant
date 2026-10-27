@@ -236,6 +236,8 @@ async function fanOut(ctx: CommandContext, projectPath: string, config: ChantCon
     return 1;
   }
 
+  // #4516: one registry finds the declared reads (a template's Fn::ImportValue) that order the fan-out and runs it.
+  const registry = await fanOutRegistry(projectPath, config);
   let derived;
   try {
     derived = await deriveFanOut({
@@ -244,6 +246,7 @@ async function fanOut(ctx: CommandContext, projectPath: string, config: ChantCon
       sandbox: args.sandbox,
       buildParams: paramsResolution.provenance,
       config,
+      registry,
       ...(args.canary?.length ? { canary: args.canary } : {}),
     });
   } catch (err) {
@@ -389,7 +392,6 @@ async function fanOut(ctx: CommandContext, projectPath: string, config: ChantCon
     }
   }
 
-  const registry = await fanOutRegistry(projectPath, config);
   const env = args.env ?? "local";
 
   // A completed component's recorded outputs win over a `--seed-outputs`

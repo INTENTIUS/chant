@@ -55,6 +55,7 @@ import type { CapabilityRegistry } from "./capability";
 import type { FanOutPlan } from "./fan-out";
 import { componentSetFanOut, formRunGroups, planAndRunComponentGroup } from "./groups";
 import { applyConfigDefaults } from "./config-defaults";
+import { withDeclaredReads } from "./declared-reads";
 import { loadChantConfig, type ChantConfig } from "../config";
 
 /** One component in `chant list --components` output. */
@@ -550,6 +551,13 @@ export interface ResolvedComponentTargets {
   targets: DriverComponent[];
   /** For a list selector (#3950): the dependencies the closure added that the list did not name, in discovery order. */
   added?: string[];
+  /**
+   * For a list selector: the names the list gave, and every enabled component
+   * the closure was taken over (#4516). `runComponents` takes the closure again
+   * once the declared reads are written in, so a listed importer pulls in the
+   * component whose export it reads.
+   */
+  list?: { named: string[]; enabled: DriverComponent[] };
   /** Component name to the environments it declares (#3153), for the components that declare any (#4330). */
   sites?: Record<string, ComponentEnvironmentDeclaration[]>;
   error?: string;
@@ -655,6 +663,14 @@ function resolveComponentList(
   }
 
   const enabled = withoutDisabled(discovered, all);
+  return { success: true, ...dependencyClosure(names, enabled), list: { named: names, enabled } };
+}
+
+/**
+ * `names` and every component of `enabled` they depend on, transitively, in
+ * `enabled`'s order, and which of those the names did not give (#3950).
+ */
+export function dependencyClosure(names: readonly string[], enabled: readonly DriverComponent[]): { targets: DriverComponent[]; added: string[] } {
   const byName = new Map(enabled.map((c) => [c.name, c]));
   const included = new Set<string>();
   const visit = (name: string): void => {
@@ -667,7 +683,7 @@ function resolveComponentList(
 
   const targets = enabled.filter((c) => included.has(c.name));
   const named = new Set(names);
-  return { success: true, targets, added: targets.map((c) => c.name).filter((n) => !named.has(n)) };
+  return { targets, added: targets.map((c) => c.name).filter((n) => !named.has(n)) };
 }
 
 export async function runComponents(
@@ -679,13 +695,6 @@ export async function runComponents(
   if (!resolved.success) {
     return { success: false, selected: [], error: resolved.error };
   }
-  const targets = resolved.targets;
-  const narrowed = options.targets ?? {};
-  const outside = Object.keys(narrowed).filter((name) => !targets.some((c) => c.name === name));
-  if (outside.length > 0) {
-    return { success: false, selected: [], error: `--target names ${outside.join(", ")}, which this run does not run` };
-  }
-  const targeted = Object.keys(narrowed).length > 0 ? { targets: narrowed } : {};
 
   // (#629) Resolve `chant.config.ts`'s `sbom`/`signing`/`vulnPolicy` sections
   // and fill their defaults into every recognized step (`generate-sbom`,
@@ -705,8 +714,27 @@ export async function runComponents(
       lexicons: lexiconNames(config.lexicons),
     }));
   const env = options.env ?? "local";
-  const selected = targets.map((c) => c.name);
-  const resolvedTargets = targets.map((component) => applyConfigDefaults(component, config));
+  // #4516: the reads a capability finds in its steps' files (a template's
+  // Fn::ImportValue) order a set run as `deriveFanOut` orders a fan-out, so an
+  // importer runs after the component whose export it reads. A list takes its
+  // closure again with them written in, so a listed importer pulls in its
+  // exporter. A single name runs on its own, against seeded outputs.
+  let resolvedTargets: DriverComponent[];
+  let added = resolved.added ?? [];
+  if (resolved.list) {
+    const enabled = await withDeclaredReads(resolved.list.enabled.map((component) => applyConfigDefaults(component, config)), registry, path);
+    ({ targets: resolvedTargets, added } = dependencyClosure(resolved.list.named, enabled));
+  } else {
+    const defaulted = resolved.targets.map((component) => applyConfigDefaults(component, config));
+    resolvedTargets = selector === "all" ? await withDeclaredReads(defaulted, registry, path) : defaulted;
+  }
+  const selected = resolvedTargets.map((c) => c.name);
+  const narrowed = options.targets ?? {};
+  const outside = Object.keys(narrowed).filter((name) => !selected.includes(name));
+  if (outside.length > 0) {
+    return { success: false, selected: [], error: `--target names ${outside.join(", ")}, which this run does not run` };
+  }
+  const targeted = Object.keys(narrowed).length > 0 ? { targets: narrowed } : {};
   // Cross-component/cross-stack outputs to resolve references against. Seeded
   // from a caller (a downstream CI job passing an upstream job's dumped
   // outputs via `--seed-outputs`); grows as this run's components complete.
@@ -734,7 +762,7 @@ export async function runComponents(
       if (isComponentList(selector) && options.onPlan) {
         // Resolved here, before dispatch, so the order is printed before any
         // component runs.
-        options.onPlan({ order: grouped.order, waves: grouped.waves.filter((w) => w.length > 0), added: resolved.added ?? [] });
+        options.onPlan({ order: grouped.order, waves: grouped.waves.filter((w) => w.length > 0), added });
       }
       const byName = new Map(resolvedTargets.map((c) => [c.name, c]));
       const groups: InterpretGroups | undefined = grouped.groups?.length
