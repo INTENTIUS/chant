@@ -6,3 +6,5 @@
 export * from "./edge";
 export * from "./worker";
 export * from "./lambda-edge";
+export * from "./token-source";
+export * from "./sigv4-web";
