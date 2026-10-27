@@ -44,6 +44,11 @@
       "types": "./dist/state/index.d.ts",
       "default": "./dist/state/index.js"
     },
+    "./registry": {
+      "development": "./src/registry/index.ts",
+      "types": "./dist/registry/index.d.ts",
+      "default": "./dist/registry/index.js"
+    },
     "./lint/post-synth": {
       "development": "./src/lint/post-synth/index.ts",
       "types": "./dist/lint/post-synth/index.d.ts",
