@@ -12,6 +12,9 @@
  *   host is answered with a short-lived signed URL, so the CLIs' tarball fetch
  *   (go-getter, which sends no token) needs no `.netrc`. With auth off the
  *   location is the tarball's plain URL, as stored.
+ * - With `auth` set, a provider mirror's `<version>.json` (chant#4564) is
+ *   answered with each archive's URL signed the same way, so the CLIs'
+ *   archive fetch passes too.
  *
  * Only web-standard APIs (Request, Response, URL, crypto.subtle,
  * TextEncoder), so the same code runs in a Cloudflare Worker, Lambda@Edge on
@@ -20,6 +23,7 @@
  */
 import { DISCOVERY, keyFor } from "../address";
 import { registryHandler, type RegistryFiles } from "../handler";
+import { isMirrorVersionPath } from "../mirror-paths";
 import { downloadAnswer, downloadLocation, isDownloadPath } from "../writer";
 
 /** Read auth: the tokens accepted and how tarball URLs are signed. */
@@ -137,7 +141,9 @@ export function registryEdgeGate(options: RegistryEdgeOptions): (request: Reques
       if (!allowed && !protocolFile && key) allowed = await verifySignedUrl(url, key, now());
       if (!allowed) return done(unauthorized());
     }
-    if (!isDownloadPath(path) || (method !== "GET" && method !== "HEAD")) return undefined;
+    if (method !== "GET" && method !== "HEAD") return undefined;
+    if (auth && isMirrorVersionPath(path)) return signedMirrorVersion(request, url, path, options, auth, now(), done);
+    if (!isDownloadPath(path)) return undefined;
     let file: { body?: string | Uint8Array };
     try {
       file = await options.files(keyFor(options.prefix, path));
@@ -155,6 +161,32 @@ export function registryEdgeGate(options: RegistryEdgeOptions): (request: Reques
     const answer = downloadAnswer(location);
     return done(new Response(method === "HEAD" ? null : answer.body, { status: answer.status, headers: answer.headers }));
   };
+}
+
+/** A mirror version file with each archive on this host signed; undefined (served as stored) when it is not the protocol's JSON. */
+async function signedMirrorVersion(request: Request, url: URL, path: string, options: RegistryEdgeOptions, auth: EdgeAuth, nowMs: number, done: (res: Response) => Response): Promise<Response | undefined> {
+  const key = signingKeyOf(auth);
+  if (!key) return undefined;
+  let file: { body?: string | Uint8Array };
+  try {
+    file = await options.files(keyFor(options.prefix, path));
+  } catch {
+    return done(new Response(null, { status: 502 }));
+  }
+  if (file.body === undefined) return done(new Response(null, { status: 404 }));
+  let doc: { archives?: Record<string, { url?: unknown }> };
+  try {
+    doc = JSON.parse(typeof file.body === "string" ? file.body : new TextDecoder().decode(file.body));
+  } catch {
+    return undefined;
+  }
+  for (const archive of Object.values(doc.archives ?? {})) {
+    if (!archive || typeof archive.url !== "string") continue;
+    const resolved = new URL(archive.url, url);
+    if (resolved.origin === url.origin) archive.url = await signLocation(resolved.toString(), key, nowMs, auth.ttl);
+  }
+  const body = `${JSON.stringify(doc)}\n`;
+  return done(new Response(request.method.toUpperCase() === "HEAD" ? null : body, { status: 200, headers: { "content-type": "application/json" } }));
 }
 
 /** The whole function: the gate, then every other file served from the bucket by `registryHandler`. */
