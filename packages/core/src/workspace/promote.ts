@@ -51,6 +51,7 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
+import { CHANT_EXIT } from "../exit-codes";
 import { copyFileSync, existsSync, mkdirSync, realpathSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -67,7 +68,7 @@ import { setProperty } from "./json-edit";
 import { workingTree } from "./tree";
 
 export const PROMOTE_PLAN_KIND = "workspace-promote";
-export const PROMOTE_GATED_EXIT = 3;
+export const PROMOTE_GATED_EXIT = CHANT_EXIT.waiting;
 const USAGE = [
   "chant workspace promote <member> [--state <terraform.tfstate>] [--lexicon <lexicon>] [--dry-run] [--output <patch file>] [--json]",
   "chant workspace promote --all [--state-dir <dir>] [--state <member>=<terraform.tfstate>]... [--canary <member>] [--wave-size <n>] [--dry-run] [--json]",

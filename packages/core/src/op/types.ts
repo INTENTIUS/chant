@@ -10,6 +10,7 @@ import type { ActivityProfileName } from "./activity-profiles";
 import type { StepOutputRef } from "./step-output-ref";
 import type { GateApproval } from "./gate-approval";
 import type { GatePoint } from "./gate-point";
+import { CHANT_EXIT } from "../exit-codes";
 
 export interface OpConfig {
   /** Kebab-case identifier. Names the Op's output directory (`dist/ops/<name>/`), and is the name `chant run <name>` and another Op's `depends` refer to. */
@@ -78,8 +79,8 @@ export interface OpConfig {
   failOn?: "drift";
 }
 
-/** The exit code `chant run` returns for a completed run that found drift, under `failOn: "drift"` or `--fail-on-drift` (#3675). */
-export const DRIFT_EXIT_CODE = 2;
+/** The exit code `chant run` returns for a completed run that found drift, under `failOn: "drift"` or `--fail-on-drift` (#3675): `CHANT_EXIT.drift`. */
+export const DRIFT_EXIT_CODE = CHANT_EXIT.drift;
 
 /**
  * The id under which a run's work lease is published to its steps (#2748):

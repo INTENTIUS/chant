@@ -161,3 +161,5 @@ export * from "./run-event";
 export { Op, phase, activity, gate, kubectlApply, helmInstall, waitForStack,
          gitlabPipeline, lifecycleSnapshot, shell, teardown, OpResource } from "./op/index";
 export type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep } from "./op/index";
+// The exit-code table (#4553): one set of codes for every command and both products.
+export { CHANT_EXIT, chantExitName, type ChantExitCode, type ChantExitName } from "./exit-codes";

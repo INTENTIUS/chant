@@ -325,6 +325,7 @@ export default defineConfig({
 						{ label: 'Publish Targets', slug: 'reference/publish-targets' },
 						{ label: 'Security Features', slug: 'reference/security-features' },
 						{ label: 'CI Workflows', slug: 'reference/ci-workflows' },
+						{ label: 'Exit Codes', slug: 'reference/exit-codes' },
 						{ label: 'Change-Set Document', slug: 'reference/change-set' },
 						{ label: 'Drift Record', slug: 'reference/drift-record' },
 						{ label: 'Lineage Lock', slug: 'reference/lineage-lock' },

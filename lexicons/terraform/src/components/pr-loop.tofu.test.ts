@@ -298,7 +298,7 @@ describe.skipIf(!BINARY)(`the pull-request loop over five ${BINARY ?? "terraform
     write("roots/a/main.tf", ROOTS.a.replace("a-v1", "a-v4"));
     git("commit", "-qam", "a v4");
 
-    expect(await merge(2)).toBe(3);
+    expect(await merge(2)).toBe(4);
     const refused = report("apply");
     expect(refused.status).toBe("refused");
     expect(refused.refusal).toBe("plan-changed");

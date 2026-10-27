@@ -287,7 +287,7 @@ chainSuite("with terraform.compose, three roots plan and apply as one group", { 
     writeFileSync(join(loop.dir, "roots/a/main.tf"), CHAIN.a!.replace("a-v1", "a-v4"));
     loop.git("commit", "-qam", "a v4");
 
-    expect(await loop.merge(2)).toBe(3);
+    expect(await loop.merge(2)).toBe(4);
     const refused = loop.report("apply");
     expect(refused.status).toBe("refused");
     expect(refused.refusal).toBe("plan-changed");

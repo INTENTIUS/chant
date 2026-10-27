@@ -52,6 +52,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, posix } from "node:path";
+import { CHANT_EXIT } from "../exit-codes";
 import {
   decideWaveGate,
   runWaveLoop,
@@ -1324,7 +1325,7 @@ function opWaveBefore(options: RunOpWaveOptions, dir: string): OpWaveBefore {
       ? `Nothing in wave ${k} (${wave.name}) ran: ${shown} waits at its gate. Approve it and run that wave's job again, then this one.`
       : `Nothing in wave ${k} (${wave.name}) ran: ${shown} did not apply, and only a failure lets the waves after it go on.`;
     const status = waiting.length > 0 ? "waiting" : "not-applied";
-    return { blocked: new Map(), stop: { exitCode: waiting.length > 0 ? 3 : 1, line, members: Object.fromEntries((wave.runs ?? []).map((r) => [r.target, { status }])) } };
+    return { blocked: new Map(), stop: { exitCode: waiting.length > 0 ? CHANT_EXIT.waiting : CHANT_EXIT.failed, line, members: Object.fromEntries((wave.runs ?? []).map((r) => [r.target, { status }])) } };
   }
   const runs = wave.runs ?? [];
   const index = new Map(runs.map((r, i) => [r.target, i]));
@@ -1366,9 +1367,9 @@ function writeOpWaveOutcome(options: RunOpWaveOptions, dir: string, result: RunO
     const moved = new Set(result.moved);
     const otherwise: WaveMemberOutcome["status"] =
       result.exitCode === 0 ? (options.decide ? "decided" : "unchanged")
-      : result.exitCode === 3 ? "waiting"
-      : result.exitCode === 7 || result.exitCode === 8 ? "refused"
-      : result.exitCode >= 4 && result.exitCode <= 6 ? "not-applied"
+      : result.exitCode === CHANT_EXIT.waiting ? "waiting"
+      : result.exitCode === CHANT_EXIT.denied || result.exitCode === CHANT_EXIT.declined ? "refused"
+      : result.exitCode >= CHANT_EXIT.moved && result.exitCode <= CHANT_EXIT.superseded ? "not-applied"
       : "failed";
     for (const t of targets) {
       const by = result.blocked?.[t];
@@ -1480,7 +1481,7 @@ async function planOpWave(options: RunOpWaveOptions, { k, pass }: WaveAttempt<Ru
     ctx.gateRule = { approval: decision.approval, base: decision.base, neverOverMcp: decision.neverOverMcp === true };
     if (decision.status === "waiting" || decision.status === "refused") {
       log(`wave ${k} (${wave.name}) is ${decision.status === "refused" ? "refused by its policy" : `waiting on ${decision.heldOn?.gate ?? decision.gate}`}; nothing applied. ${decision.approve ?? ""}`.trim());
-      return { end: { ...result, exitCode: decision.status === "refused" ? refusedExit(decision) : 3 } };
+      return { end: { ...result, exitCode: decision.status === "refused" ? refusedExit(decision) : CHANT_EXIT.waiting } };
     }
     // The share runs the hooks its deciding job read at base, around its own slice.
     if (wave.discover) {
@@ -1683,7 +1684,7 @@ async function decideOpWave(
 async function applyOpWave(options: RunOpWaveOptions, planned: OpWavePlanned, decidedWave: OpWaveDecided): Promise<RunOpWaveResult> {
   const { ctx, decision } = planned;
   await applyStage(options, ctx, decision, decidedWave.runs, planned.planned, decidedWave.earlierHolds, decidedWave.recordPath);
-  if (planned.kind === "share" && ctx.result.exitCode === 0 && ctx.result.moved.length > 0) ctx.result.exitCode = 4;
+  if (planned.kind === "share" && ctx.result.exitCode === 0 && ctx.result.moved.length > 0) ctx.result.exitCode = CHANT_EXIT.moved;
   return ctx.result;
 }
 
@@ -1707,15 +1708,15 @@ async function decided(ctx: WaveContext, decision: OpWaveDecision, recordPath: s
   const hook = await runGateHooks(ctx, decision, recordPath);
   if (decision.status === "waiting") {
     log(`Nothing in wave ${k} or after it ran. ${decision.heldOn ? `It waits on ${decision.heldOn.op} / ${decision.heldOn.gate}.` : "Read the plans, then"} approve: ${decision.approve} (with --resume, the approval also starts this job again)`);
-    return { ...result, exitCode: 3 };
+    return { ...result, exitCode: CHANT_EXIT.waiting };
   }
   if (decision.status === "refused" && decision.refused?.reason === "point") {
     log(`Nothing in wave ${k} (${wave.name}) or after it ran: ${decision.refused.message}`);
-    return { ...result, exitCode: 8 };
+    return { ...result, exitCode: CHANT_EXIT.declined };
   }
   if (decision.status === "refused") {
     log(`Nothing in wave ${k} (${wave.name}) or after it ran: the policy denied ${decision.refused?.runs.join(", ")}, and no override counts for ${decision.refused?.runs.length === 1 ? "it" : "them"}.`);
-    return { ...result, exitCode: 7 };
+    return { ...result, exitCode: CHANT_EXIT.denied };
   }
   if (hook.failed) return failed(ctx, `wave ${k} (${wave.name}): ${hook.failed}, so nothing in it was applied`);
   return result;
@@ -1734,7 +1735,7 @@ function markHeldOn(decision: OpWaveDecision, heldOn: OpWaveHeldOn): void {
 async function waitOnOther(ctx: WaveContext, decision: OpWaveDecision, heldOn: OpWaveHeldOn): Promise<RunOpWaveResult> {
   markHeldOn(decision, heldOn);
   ctx.log(`${shareLabel(ctx.options)} of wave ${ctx.k} (${ctx.wave.name}) waits on ${heldOn.op} / ${heldOn.gate}; nothing in it applied. Approve: ${heldOn.approve}`);
-  return { ...ctx.result, decision, exitCode: 3 };
+  return { ...ctx.result, decision, exitCode: CHANT_EXIT.waiting };
 }
 
 /**
@@ -1883,7 +1884,7 @@ async function spendOverrides(ctx: WaveContext, decision: OpWaveDecision): Promi
 
 /** The exit code of a refused wave: 8 when its decision point refused it (#3836), 7 when the product's policy did (#3821). */
 function refusedExit(decision: OpWaveDecision): number {
-  return decision.refused?.reason === "point" ? 8 : 7;
+  return decision.refused?.reason === "point" ? CHANT_EXIT.declined : CHANT_EXIT.denied;
 }
 
 function failed(ctx: WaveContext, line: string): RunOpWaveResult {
@@ -2200,7 +2201,7 @@ async function settleHolds(
     // #3821: the gate decided again, and the wave now waits: the after-gate hooks hear so.
     if (recordPath) await runGateHooks(ctx, decision, recordPath);
     log(`wave ${k} (${wave.name}) is held by ${holds.join(", ")}, and nobody approved ${decision.digest}; nothing applied. Approve: ${decision.approve}`);
-    result.exitCode = 3;
+    result.exitCode = CHANT_EXIT.waiting;
     return false;
   }
   log(`wave ${k} (${wave.name}) is held by ${holds.join(", ")}, and ${decision.approvedBy} approved its digest`);
@@ -2363,7 +2364,7 @@ async function applyStage(
         await runGateHooks(ctx, decision, recordPath);
       }
       result.decision = decision;
-      result.exitCode = 3;
+      result.exitCode = CHANT_EXIT.waiting;
       return;
     }
     holds.push(...before.holds);
@@ -2429,12 +2430,12 @@ async function applyStage(
       return;
     }
     result.outcome = nothing;
-    result.exitCode = nothing.outcome === "stood-down" ? 6 : 5;
+    result.exitCode = nothing.outcome === "stood-down" ? CHANT_EXIT.superseded : CHANT_EXIT.held;
     if (recordPath) writeRecord(recordPath, decision, result);
     return;
   }
   if (waiting) {
-    result.exitCode = decision.status === "refused" ? refusedExit(decision) : 3;
+    result.exitCode = decision.status === "refused" ? refusedExit(decision) : CHANT_EXIT.waiting;
     return;
   }
   if (result.failed.length > 0) {

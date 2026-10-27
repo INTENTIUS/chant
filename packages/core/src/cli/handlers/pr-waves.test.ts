@@ -302,7 +302,7 @@ describe("pr-apply --wave-gate: wave 2's plan differs from the pull request's", 
     const digest = await movedChange();
     const stale = "jcs1-sha256:" + "0".repeat(64);
     gateLedger = memoryGateLedgerPort({ resolutions: [resolution("pr-apply", digest), resolution("release-wave-2", stale, "github:bob")] });
-    expect(await runComponentsPrApply(wave(2))).toBe(3);
+    expect(await runComponentsPrApply(wave(2))).toBe(4);
     expect(ran).toEqual(["net"]);
     const r = await report();
     expect(r).toMatchObject({ status: "refused", refusal: "wave-plan-changed" });

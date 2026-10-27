@@ -65,6 +65,7 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { CHANT_EXIT } from "../../exit-codes";
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { loadChantConfig, resolveAutoReleaseDisabled, type ChantConfig } from "../../config";
@@ -668,9 +669,9 @@ async function judgePolicy(p: Prepared, at: { stage: "plan" | "apply"; op: strin
     const why = err instanceof Error ? err.message : String(err);
     if (at.stage === "plan") {
       console.error(formatWarning({ message: `could not read the override ledger, so no override reads as standing: ${why}` }));
-      return { held, stop: { refusal: "policy-denied", code: 1, message: `The policy denied this plan: ${denied}.` } };
+      return { held, stop: { refusal: "policy-denied", code: CHANT_EXIT.denied, message: `The policy denied this plan: ${denied}.` } };
     }
-    return { held, stop: { refusal: "policy-denied", code: GATED_EXIT_CODE, message: `The policy denied this plan (${denied}), and the override ledger could not be read or written: ${why}. Nothing was applied.` } };
+    return { held, stop: { refusal: "policy-denied", code: CHANT_EXIT.denied, message: `The policy denied this plan (${denied}), and the override ledger could not be read or written: ${why}. Nothing was applied.` } };
   }
   if (decided.status === "overridden") {
     report.override = decided.override;
@@ -685,7 +686,7 @@ async function judgePolicy(p: Prepared, at: { stage: "plan" | "apply"; op: strin
     held,
     stop: {
       refusal: "policy-denied",
-      code: at.stage === "plan" ? 1 : GATED_EXIT_CODE,
+      code: CHANT_EXIT.denied,
       message: `The policy denied this plan: ${denied}.${moved} Nothing was applied. ${who} override it: ${decided.command}`,
     },
   };
@@ -769,7 +770,7 @@ async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> 
     console.error(formatInfo(approval.status === "approved" ? `approved by ${(approval.approvedBy ?? []).join(", ")}` : `approve : ${prApproveCommand(report)}`));
   }
   if (judged.stop) console.error(formatWarning({ message: judged.stop.message }));
-  return status === "plan-failed" || judged.stop ? 1 : 0;
+  return status === "plan-failed" ? CHANT_EXIT.failed : judged.stop ? judged.stop.code : CHANT_EXIT.done;
 }
 
 /**
@@ -881,7 +882,7 @@ async function prApply(ctx: CommandContext, stage: StageEvents, beforeMerge?: Pr
       const set: PrPlanSet = { doc: composeChangeSet([]), members: [], plans: {}, outputs: {}, failed: false };
       return stopper(ctx, p, events, upload)(
         prReport({ stage: "apply", pr, env: p.env, ...(p.member ? { member: p.member } : {}), base: p.base, head: p.head, op, gate: p.gate, plan: p.plan, signal: p.signal, set, approval: { status: "pending" }, status: "refused", refusal: "locked", message: held }),
-        GATED_EXIT_CODE,
+        CHANT_EXIT.held,
       );
     }
   }
@@ -966,7 +967,7 @@ async function prApply(ctx: CommandContext, stage: StageEvents, beforeMerge?: Pr
     // #4323: the after-gate hooks hear the decision, a refusal too; only a failure that would have applied changes the outcome.
     const afterGate = await runGateHook(p, { op, digest: set.doc.digest, satisfied: decided.satisfied }, p.plan.order);
     if (afterGate && decided.satisfied) return stop(prReport({ ...base, approval, status: "failed", message: afterGate }), 1);
-    if (!decided.satisfied) return stop(prReport({ ...base, approval, status: "refused", refusal: decided.refusal, message: decided.message }), GATED_EXIT_CODE);
+    if (!decided.satisfied) return stop(prReport({ ...base, approval, status: "refused", refusal: decided.refusal, message: decided.message }), decided.refusal === "plan-changed" ? CHANT_EXIT.moved : CHANT_EXIT.waiting);
     via = decided.via;
   }
 
@@ -983,7 +984,7 @@ async function prApply(ctx: CommandContext, stage: StageEvents, beforeMerge?: Pr
   if (locks && beforeMerge && pr !== null) {
     const taken = await takeApplyLocks(p, pr);
     if (typeof taken === "number") return taken;
-    if (taken) return stop(prReport({ ...base, approval, status: "refused", refusal: "locked", message: taken }), GATED_EXIT_CODE);
+    if (taken) return stop(prReport({ ...base, approval, status: "refused", refusal: "locked", message: taken }), CHANT_EXIT.held);
   }
 
   // The record is written before the first component runs and again as each
@@ -1093,7 +1094,7 @@ async function prApply(ctx: CommandContext, stage: StageEvents, beforeMerge?: Pr
   });
   // A component that stopped at a gate of its own leaves the apply waiting on
   // a person. A step that refused its plan because the target moved since
-  // the approval exits 3, as a moved digest does before anything applies (#3997).
+  // the approval exits 4 (moved), as a moved digest does before anything applies (#3997, #4553).
   const exit = afterFailed ? 1 : applied.status === "applied" ? 0 : applied.status === "waiting" ? GATED_EXIT_CODE : failedRunExitCode(applied.run.results);
   if (green && applied.status === "applied") await recordGreenApplied(p, green, set.doc.digest, approval, via);
   const code = await stop(report, exit, applied.run.status === "gated" ? "gated" : undefined);
@@ -1877,7 +1878,7 @@ async function prApplyWaves(
     // #4323: the after-gate hooks hear the decision, a refusal too.
     const afterGate = await runGateHook(p, { op, digest: set.doc.digest, satisfied: decided.satisfied }, p.plan.order);
     if (afterGate && decided.satisfied) return stop(report({ status: "failed", message: afterGate }), 1);
-    if (!decided.satisfied) return stop(report({ status: "refused", refusal: decided.refusal, message: decided.message }), GATED_EXIT_CODE);
+    if (!decided.satisfied) return stop(report({ status: "refused", refusal: decided.refusal, message: decided.message }), decided.refusal === "plan-changed" ? CHANT_EXIT.moved : CHANT_EXIT.waiting);
     via = decided.via;
     planned = set;
   }
@@ -2020,7 +2021,7 @@ async function prApplyWaves(
                 `Read the new plan, and if it is right, approve it: ${approveLine}; then run the wave's apply again.`
               : `Wave ${k} was planned after the waves before it applied, and the pull request's approved plan does not cover it: ${moved.join("; ")}. ` +
                 `Nothing in wave ${k} was applied. Read its plan, and if it is right, approve it: ${approveLine}; then run the wave's apply again.`;
-          return stop(report({ status: "refused", refusal: waveApproval.status === "changed" ? "wave-plan-changed" : "wave-not-approved", message }), GATED_EXIT_CODE);
+          return stop(report({ status: "refused", refusal: waveApproval.status === "changed" ? "wave-plan-changed" : "wave-not-approved", message }), waveApproval.status === "changed" ? CHANT_EXIT.moved : CHANT_EXIT.waiting);
         }
         const waveReview = await review(waveApproval.approvedBy ?? [], `Wave ${k}'s plan`);
         if (waveReview && "error" in waveReview) return fail(waveReview.error);

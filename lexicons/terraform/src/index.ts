@@ -208,3 +208,5 @@ export {
   type TerraformLiveRead,
   type TerraformPredictOptions,
 } from "./behaviour";
+// terraform, tofu and choudoufu exit statuses on chant's exit-code table (#4553).
+export { terraformExitOf, terraformPlanMoved, type TerraformExitSource } from "./exit-codes";

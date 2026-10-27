@@ -58,13 +58,13 @@ afterEach(() => {
 });
 
 describe("chant lock and chant unlock", () => {
-  test("lock takes named targets, a second pull request exits 3 naming the holder, unlock frees them", async () => {
+  test("lock takes named targets, a second pull request exits 5 naming the holder, unlock frees them", async () => {
     const taken = await run(["lock", "web", "api", "--pr", "1", "--by", "alice", "--json"]);
     expect(taken.code).toBe(0);
     expect(JSON.parse(taken.out)).toMatchObject({ gate: "pr-apply", pr: 1, ok: true, stage: "lock", taken: ["api", "web"] });
 
     const held = await run(["lock", "web", "--pr", "2", "--by", "bob"]);
-    expect(held.code).toBe(3);
+    expect(held.code).toBe(5);
     expect(held.err).toContain("web is locked by pull request 1 (locked with chant lock by alice), so pull request 2 is not locked");
 
     const listed = await run(["lock", "--list", "--json"]);
