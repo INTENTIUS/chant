@@ -89,6 +89,7 @@ import {
 } from "@intentius/chant/components/pr-pipeline";
 import { memberRepoPath } from "@intentius/chant/lexicon";
 import { productStatusContext, resolveProductWords } from "@intentius/chant/ci-product-words";
+import { controlDispatchJob } from "@intentius/chant/control/dispatch";
 import type {
   ComponentPipelineJob as GeneratedJob,
   ComponentPipelineOptions as GenerateGithubOptions,
@@ -381,6 +382,29 @@ function prLoopGithubDoc(
       run: [drop, ...handoverTrap(PR_LOOP_REPORT_DIR, forgeName), ...(plan.checkout ?? []), ...(plan.setup ?? []), plan.run.command, ...extraScript].join("\n"),
     },
   ];
+  // #4568: once the last apply on merge succeeded, one job tells the control repo this member applied.
+  const lastGreen = loop.control && !loop.applyBeforeMerge && greenJobs.length > 0 ? greenJobs[greenJobs.length - 1]![0] : undefined;
+  const controlJobs: Array<[string, Record<string, unknown>]> = [];
+  if (loop.control && lastGreen) {
+    // A wave job hands on the commit it applied; a single apply job applies the green commit its trigger names.
+    const sha = loop.waveGate ? `\${{ needs.${lastGreen}.outputs.${WAVE_GREEN_OUTPUT} }}` : forgejo ? "${{ github.sha }}" : "${{ github.event.workflow_run.head_sha || github.sha }}";
+    const dispatch = controlDispatchJob(forgeName, loop.control.target, sha, {
+      ...(loop.words ? { words: loop.words } : {}),
+      ...(loop.control.sentCheck ? { sentCheck: loop.control.sentCheck } : {}),
+      ...(loop.control.markSent ? { markSent: loop.control.markSent } : {}),
+    });
+    controlJobs.push([
+      dispatch.name,
+      {
+        needs: [lastGreen],
+        if: `success() && (${onGreen})`,
+        "runs-on": GITHUB_RUNNER,
+        container: image,
+        permissions: loop.control.markSent ? { contents: "read", statuses: "write" } : { contents: "read" },
+        steps: [{ name: dispatch.stepName, ...(rooted ? {} : { "working-directory": "." }), env: { ...dispatch.env, ...(loop.control.sentCheck || loop.control.markSent ? { GITHUB_TOKEN: GITHUB_JOB_TOKEN } : {}) }, run: dispatch.script }],
+      },
+    ]);
+  }
   const post = prLoopPostJob(forgeName, env, member?.name, loop.words ? resolveProductWords(loop.words) : undefined);
   const noteSteps: Array<Record<string, unknown>> = [
     // The target branch's commit: the chant this job runs is the target branch's, and none of the change's code is here.
@@ -449,6 +473,7 @@ function prLoopGithubDoc(
     },
     ...lockJobs,
     ...Object.fromEntries(applyJobs),
+    ...Object.fromEntries(controlJobs),
     ...(prEnv ? prEnv.jobs : {}),
   };
   const applyNames = applyJobs.map(([name]) => name);
@@ -471,7 +496,7 @@ function prLoopGithubDoc(
     ...(rooted ? {} : { defaults: { run: { "working-directory": member!.dir } } }),
     env: { ...options.variables, CHANT_ENV: env },
     jobsDoc,
-    stages: ["plan", PR_PLAN_NOTE_JOB, ...(locks ? [PR_LOCK_JOB, PR_UNLOCK_JOB] : []), ...applyNames, ...(prEnv ? ["env-up", PR_ENV_POST_JOB, "env-down", "env-sweep"] : [])],
+    stages: ["plan", PR_PLAN_NOTE_JOB, ...(locks ? [PR_LOCK_JOB, PR_UNLOCK_JOB] : []), ...applyNames, ...controlJobs.map(([name]) => name), ...(prEnv ? ["env-up", PR_ENV_POST_JOB, "env-down", "env-sweep"] : [])],
     jobs: [
       { jobName: "plan", component: "pull request plan", stage: "plan", needs: [] },
       { jobName: PR_PLAN_NOTE_JOB, component: "pull request plan note", stage: PR_PLAN_NOTE_JOB, needs: ["plan"] },
@@ -488,6 +513,7 @@ function prLoopGithubDoc(
         // The record runs on a push and the apply on a green commit, so only the waves need each other.
         needs: i > 1 ? [applyNames[i - 1]] : [],
       })),
+      ...controlJobs.map(([name]) => ({ jobName: name, component: "control repo dispatch", stage: name, needs: [lastGreen!] })),
       ...(prEnv ? prEnv.listed : []),
     ],
   };
