@@ -78,7 +78,7 @@ const choudoufu: EngineGraphDocument = {
       facts: {
         ownership: "bound",
         ownedBy: "marker",
-        markers: { owner: "web", address: "module.app[0].aws_eip.pool[1]", encoding: "escaped", source: "live" },
+        markers: { owner: "web", address: "module.app:0.aws_eip.pool:1", encoding: "escaped", source: "live" },
         cloudIds: [{ kind: "import-id", value: "eipalloc-0abc" }],
         observedAt: "2026-10-26T12:00:00Z",
       },

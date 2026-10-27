@@ -2,7 +2,8 @@
 // readers that show the graph, never for a decision. Nothing under a change
 // set, the lifecycle or an Op names `EngineFacts` or imports
 // ./engine-facts.ts, so a delete, a plan or a gate cannot start reading a
-// fact without this test failing. `IRNode.ownership` and
+// fact without this test failing. The only files let through are the ones
+// CARRIES_FACTS_ONLY names, each with its reason. `IRNode.ownership` and
 // `ResourceMetadata.ownership` keep feeding the painters and the change set.
 import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -33,6 +34,22 @@ function walk(dir: string, out: string[] = []): string[] {
   }
   return out;
 }
+
+/**
+ * Files under a decision path that carry engine facts without deciding on
+ * them, by repo-relative path, each with why. Adding one needs the same
+ * check: read the file and confirm no create, delete, adopt, plan or gate
+ * choice reads a fact. A file that does decide on facts gets its code fixed,
+ * never an entry here.
+ */
+const CARRIES_FACTS_ONLY: Readonly<Record<string, string>> = {
+  // #4521: types a cloud listing into index nodes. It copies the listing's
+  // markers, cloud ids and observedAt into IRNode.facts and returns the node;
+  // nothing in it branches on a fact's value. Pure, no I/O, and nothing it
+  // returns is an Op, a change set or a gate.
+  "packages/core/src/lifecycle/type-listing.ts":
+    "#4521 index typing: copies listed facts into IRNode.facts for the index and decides nothing on them",
+};
 
 /** Every source file on a decision path: core's change set, lifecycle and Ops, and each lexicon's Ops and change-set files. */
 function decisionPathFiles(): string[] {
@@ -70,9 +87,19 @@ describe("engine facts never reach a decision path (#4527)", () => {
   it("no file there names EngineFacts or imports engine-facts", () => {
     const offenders: string[] = [];
     for (const file of decisionPathFiles()) {
+      if (relative(repo, file) in CARRIES_FACTS_ONLY) continue;
       for (const hit of engineFactsUses(readFileSync(file, "utf-8"))) offenders.push(`${relative(repo, file)}:${hit}`);
     }
     expect(offenders).toEqual([]);
+  });
+
+  it("each exemption names a file on a decision path that still uses engine facts", () => {
+    const files = new Set(decisionPathFiles().map((f) => relative(repo, f)));
+    for (const [file, reason] of Object.entries(CARRIES_FACTS_ONLY)) {
+      expect(files.has(file), `${file} is not on a decision path; drop its exemption`).toBe(true);
+      expect(engineFactsUses(readFileSync(join(repo, file), "utf-8")).length, `${file} no longer uses engine facts; drop its exemption`).toBeGreaterThan(0);
+      expect(reason.trim()).not.toBe("");
+    }
   });
 
   it("catches a BREAK: an import of the type, of the module, or a use by name", () => {

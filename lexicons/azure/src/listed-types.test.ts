@@ -14,7 +14,9 @@ const here = import.meta.dirname;
 const surface = JSON.parse(readFileSync(join(here, "..", "surface.snapshot.json"), "utf-8")) as {
   entries: Record<string, { kind: string; resourceType: string }>;
 };
-const KINDS = Object.values(surface.entries).filter((e) => e.kind === "resource").map((e) => e.resourceType);
+// A kind is a resource type; the surface can name one type under two exports
+// (AppService and WebApp are both Microsoft.Web/sites), so the kinds are a set.
+const KINDS = [...new Set(Object.values(surface.entries).filter((e) => e.kind === "resource").map((e) => e.resourceType))];
 const INDEX = azureListedTypeIndex(KINDS);
 const listing = JSON.parse(readFileSync(join(here, "testdata", "indexed", "listing.json"), "utf-8")) as ListingResult;
 

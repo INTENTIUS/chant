@@ -16,7 +16,9 @@ import type { ListedTypeMapping } from "@intentius/chant/lifecycle/type-listing"
 
 const require = createRequire(moduleSourceUrl(import.meta.url));
 
-const CFN_TYPE = /^AWS::[A-Za-z0-9]+::[A-Za-z0-9]+$/;
+// A CloudFormation type name: `<Organization>::<Service>::<Resource>`. The
+// organization is not always AWS (`Alexa::ASK::Skill`), so it is not pinned.
+const CFN_TYPE = /^[A-Za-z0-9]+::[A-Za-z0-9]+::[A-Za-z0-9]+$/;
 
 let cachedKinds: ReadonlySet<string> | null | undefined;
 

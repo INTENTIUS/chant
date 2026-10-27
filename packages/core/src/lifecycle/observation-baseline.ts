@@ -273,18 +273,29 @@ export function observationBaselineStoreConfig(
   return { ...(base.store === kind ? base : {}), store: kind };
 }
 
-async function resolveLocation(opts?: ObservationBaselineLocation): Promise<{ cwd: string; store: ObservationBaselineStoreConfig; snapshots?: unknown }> {
+async function resolveLocation(
+  opts?: ObservationBaselineLocation,
+): Promise<{ cwd: string; projectDir: string; store: ObservationBaselineStoreConfig; snapshots?: unknown }> {
   const cwd = resolve(opts?.cwd ?? process.cwd());
+  const { findProjectConfigPastFragments, loadChantConfigUpward } = await import("../config");
   let config: ObservationBaselineLocation["config"] = opts?.config;
   if (!opts?.store && config === undefined) {
     try {
-      const { loadChantConfigUpward } = await import("../config");
       config = (await loadChantConfigUpward(cwd)).config;
     } catch {
       config = undefined;
     }
   }
-  return { cwd, store: opts?.store ?? observationBaselineStoreConfig(config?.observationBaseline), snapshots: config?.snapshots };
+  // The `file` home is relative to the project, not to wherever the command
+  // ran: a run from a member's subdirectory writes under that member's own
+  // directory, as every other store writes under its member path (#2538).
+  const projectDir = findProjectConfigPastFragments(cwd).dir;
+  return { cwd, projectDir, store: opts?.store ?? observationBaselineStoreConfig(config?.observationBaseline), snapshots: config?.snapshots };
+}
+
+/** The `file` home's path for one environment, under the project directory. */
+function baselineFile(projectDir: string, store: ObservationBaselineStoreConfig, env: string): string {
+  return join(projectDir, store.dir ?? OBSERVATION_BASELINE_DIR, `${env}.json`);
 }
 
 async function s3For(store: ObservationBaselineStoreConfig, snapshots: unknown) {
@@ -325,14 +336,14 @@ export async function readObservationBaseline(
   environment: string,
   opts?: ObservationBaselineLocation,
 ): Promise<ObservationBaseline | null> {
-  const { cwd, store, snapshots } = await resolveLocation(opts);
+  const { cwd, projectDir, store, snapshots } = await resolveLocation(opts);
   let text: string | null = null;
   switch (store.store) {
     case "none":
       return null;
     case "file":
       try {
-        text = readFileSync(join(cwd, store.dir ?? OBSERVATION_BASELINE_DIR, `${encodeIndexSegment(environment)}.json`), "utf8");
+        text = readFileSync(baselineFile(projectDir, store, encodeIndexSegment(environment)), "utf8");
       } catch {
         text = null;
       }
@@ -363,7 +374,7 @@ export async function saveObservationBaseline(
   baseline: ObservationBaseline,
   opts?: ObservationBaselineLocation,
 ): Promise<SavedObservationBaseline> {
-  const { cwd, store, snapshots } = await resolveLocation(opts);
+  const { cwd, projectDir, store, snapshots } = await resolveLocation(opts);
   const where = await observationBaselineWhere(baseline.environment, { cwd, store, ...(snapshots !== undefined ? { config: { snapshots } } : {}) });
   const content = serializeBaseline(baseline);
   const env = encodeIndexSegment(baseline.environment);
@@ -371,7 +382,7 @@ export async function saveObservationBaseline(
     case "none":
       return { where, published: "none" };
     case "file": {
-      const file = join(cwd, store.dir ?? OBSERVATION_BASELINE_DIR, `${env}.json`);
+      const file = baselineFile(projectDir, store, env);
       mkdirSync(dirname(file), { recursive: true });
       const tmp = `${file}.${process.pid}.tmp`;
       writeFileSync(tmp, content);

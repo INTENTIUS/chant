@@ -43,6 +43,7 @@ describe("Cloud Control types to aws kinds", () => {
   it("a type outside the lexicon, or not a CloudFormation name, has no kind", () => {
     expect(awsKindForListedType("AWS::IoTFleetHub::Application", KINDS)).toBeUndefined();
     expect(awsKindForListedType("aws_s3_bucket", KINDS)).toBeUndefined();
+    expect(awsKindForListedType("Alexa::ASK::Skill", KINDS)).toBe("Alexa::ASK::Skill");
   });
 
   it("the plugin declares the mapping for the aws substrate", () => {
@@ -89,7 +90,8 @@ describe("the aws fixture listing as typed nodes", () => {
       const e = new CapabilityEngine(buildView(g, resolvePacks([awsCapabilityPack])), shippedRules().rules);
       return [...e.set("encrypted-at-rest", e.bind("encrypted-at-rest", [] as never)).keys()].map(displayName).sort();
     };
-    expect(answer(declared)).toEqual(["orders-db", "vol-0a1b2c3d4e5f60718"]);
+    // aws.paths: S3 buckets are always encrypted at rest; the unencrypted database is the one left out.
+    expect(answer(declared)).toEqual(["orders-db", "shop-assets", "vol-0a1b2c3d4e5f60718"]);
     expect(answer(doc.graph)).toEqual(answer(declared));
   });
 });
