@@ -1,7 +1,8 @@
 /**
  * A local emulator of every service the OIDC trade (#4296, ../ci-identity.ts)
  * talks to, for tests: the forge's token request URL, AWS STS, Google's STS
- * and IAM credentials, and Entra's token endpoint. It answers with test
+ * and IAM credentials, Entra's token endpoint, and Pulumi Cloud's OAuth
+ * token exchange (#4549), a fake that never reaches api.pulumi.com. It answers with test
  * values only and keeps every request, so a test can say which identity
  * was asked for and how many tokens were minted.
  */
@@ -20,6 +21,8 @@ export interface EmulatorLog {
   impersonated: string[];
   /** Each Azure client a token was traded for, with the token. */
   clients: Array<{ clientId: string; token: string }>;
+  /** Each Pulumi Cloud token exchange (#4549): the token type and scope asked for, the exchange's audience, and the OIDC token. */
+  pulumi: Array<{ tokenType: string; scope?: string; audience: string; token: string }>;
 }
 
 export interface OidcEmulator {
@@ -42,6 +45,11 @@ export function emulatedCredentials(identity: string): { accessKeyId: string; se
   return { accessKeyId: `ASIATEST${tag}`, secret: `secret-${tag}`, token: `session-${tag}` };
 }
 
+/** The test Pulumi access token the emulator hands out for a Pulumi Cloud identity (#4549): it names the identity. */
+export function emulatedPulumiToken(identity: string): string {
+  return `pul-${emulatedCredentials(identity).token}`;
+}
+
 const body = (req: IncomingMessage): Promise<string> =>
   new Promise((ok) => {
     let b = "";
@@ -51,7 +59,7 @@ const body = (req: IncomingMessage): Promise<string> =>
 
 /** Start the emulator on a free local port. */
 export async function startOidcEmulator(): Promise<OidcEmulator> {
-  const log: EmulatorLog = { minted: [], assumed: [], impersonated: [], clients: [] };
+  const log: EmulatorLog = { minted: [], assumed: [], impersonated: [], clients: [], pulumi: [] };
   const server: Server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     const text = await body(req);
@@ -98,6 +106,26 @@ export async function startOidcEmulator(): Promise<OidcEmulator> {
       log.clients.push({ clientId, token });
       return send(200, { access_token: `azure.${emulatedCredentials(clientId).token}`, token_type: "Bearer" });
     }
+    if (url.pathname === "/pulumi/api/oauth/token") {
+      const form = new URLSearchParams(text);
+      const token = form.get("subject_token") ?? "";
+      const tokenType = form.get("requested_token_type") ?? "";
+      const audience = form.get("audience") ?? "";
+      if (
+        form.get("grant_type") !== "urn:ietf:params:oauth:grant-type:token-exchange" ||
+        form.get("subject_token_type") !== "urn:ietf:params:oauth:token-type:id_token" ||
+        !tokenType.startsWith("urn:pulumi:token-type:access_token:") ||
+        !audience.startsWith("urn:pulumi:org:") ||
+        !token.startsWith("eyJ")
+      ) {
+        return send(400, { error: "invalid_request" });
+      }
+      const scope = form.get("scope") ?? undefined;
+      log.pulumi.push({ tokenType, ...(scope !== undefined ? { scope } : {}), audience, token });
+      const kind = tokenType.slice("urn:pulumi:token-type:access_token:".length);
+      const identity = kind === "organization" ? (scope === "admin" ? "organization:admin" : "organization") : (scope ?? "");
+      return send(200, { access_token: emulatedPulumiToken(identity), issued_token_type: tokenType, token_type: "Bearer", expires_in: 7200, scope: scope ?? "" });
+    }
     send(404, { message: `no route ${url.pathname}` });
   });
   await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok));
@@ -111,6 +139,7 @@ export async function startOidcEmulator(): Promise<OidcEmulator> {
         ...(spec.aws ? { aws: { ...spec.aws, endpoint: `${url}/aws` } } : {}),
         ...(spec.gcp ? { gcp: { ...spec.gcp, stsEndpoint: `${url}/gcp-sts`, iamEndpoint: `${url}/gcp-iam` } } : {}),
         ...(spec.azure ? { azure: { ...spec.azure, authority: `${url}/azure` } } : {}),
+        ...(spec.pulumi ? { pulumi: { ...spec.pulumi, apiUrl: `${url}/pulumi` } } : {}),
       };
     },
     close: () => new Promise<void>((ok) => server.close(() => ok())),
