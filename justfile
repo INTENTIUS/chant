@@ -371,6 +371,14 @@ release bump="patch" *args:
     while read -r t; do
       [ -n "$t" ] && versions+=("${t#release/npm/}")
     done < <(git tag -l 'release/npm/*')
+    # A label in the release ledger is spent even when its publish never
+    # reached npm and its tag was deleted (#1481): labels bind once, so the
+    # next cut counts them too (0.124.53 was cut, failed in release-pack
+    # before npm, and can't be cut again).
+    git fetch --quiet origin chant/lifecycle:refs/remotes/origin/chant/lifecycle 2>/dev/null || true
+    while read -r l; do
+      [ -n "$l" ] && versions+=("$l")
+    done < <(cd release && npx tsx ../packages/core/src/cli/main.ts release list --json 2>/dev/null | jq -r '.releases[]?.label // empty' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || true)
     next=$(release_next "$(release_max "${versions[@]}")" "$RELEASE_BUMP")
     rtag=$(release_reference_tag "$next")
     # Refuse a cut whose floors name a version that is neither released nor
