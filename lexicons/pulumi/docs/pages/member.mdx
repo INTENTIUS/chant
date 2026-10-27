@@ -17,7 +17,8 @@ list is the whole of what chant runs for a Pulumi member:
 
 | Read | Stock member | Member on plunge | Changes the stack |
 |---|---|---|---|
-| graph | none; the checked-in `stack-export.json` | the same | no |
+| graph | none; the export in the index store, else the checked-in `stack-export.json` | the same | no |
+| export after an apply | `pulumi stack export --stack <name>`, from the `pulumi-up` apply only | `plunge stack export --stack <name>`, the same | no |
 | change set | `pulumi preview --json` | `plunge preview --json` | no |
 | drift | `pulumi refresh --preview-only --json --stack <name> --target <urn>` | `plunge drift --resource <urn> --stream --stack <name>` | no |
 | applied outputs | `pulumi stack output --json`, `--show-secrets` absent or `=false` | `plunge stack output --json`, the same | no |
@@ -45,8 +46,11 @@ refreshed.
 
 ## The graph
 
-The graph is the `pulumi stack export` JSON checked in beside `Pulumi.yaml`
-as `stack-export.json`. A node's id is `<member>/<qualified type>::<name>`,
+The graph is the stack's `pulumi stack export`. After each apply through the
+`pulumi-up` capability, chant writes the export to its index store
+(`refs/chant/snapshots` by default) with every secret blinded, and the graph
+reads it from there. A stack applied outside chant checks the export in
+beside `Pulumi.yaml` as `stack-export.json` instead. A node's id is `<member>/<qualified type>::<name>`,
 the URN after its stack and project, so `urn:pulumi:dev::shop::aws:s3/bucketV2:BucketV2::assets`
 in member `infra` is `infra/aws:s3/bucketV2:BucketV2::assets`. The change set
 and the drift records put a resource on the same node by the same rule

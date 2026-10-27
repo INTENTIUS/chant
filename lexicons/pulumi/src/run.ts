@@ -13,6 +13,11 @@
  *   it is refused;
  * - for a member on plunge, `plunge preview`, the same blind
  *   `plunge stack output --json`, and `plunge drift --resource <urn> --stream`;
+ * - `pulumi stack export --stack <stack>` (`plunge stack export` on plunge),
+ *   exactly that, for the export the `pulumi-up` capability writes to the
+ *   index store after an apply (#4546, `./stack-export-snapshot.ts`). The
+ *   default export keeps secret ciphertext, which is stripped before the
+ *   store sees it; `--show-secrets`, `--file` and `--version` are refused;
  * - for a member on plunge, its engine graph (#4529, ruled on #4520), as
  *   exactly one of `plunge graph --json`, `plunge graph --json --stack
  *   <stack>`, `plunge graph --json --versions` and `plunge graph --json
@@ -97,6 +102,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import type { ChangeSetPart } from "@intentius/chant/change-set";
 import type { DriftAdapterBase, DriftRecord } from "@intentius/chant/drift-record";
+import type { SnapshotStore } from "@intentius/chant/lifecycle/snapshot-store";
 import type { UnobservedReason } from "@intentius/chant/observation";
 import { isPulumiNodeless, parsePulumiUrn } from "@intentius/chant/pulumi-urn";
 import { pulumiExportResources, pulumiPreviewPart } from "./change-set";
@@ -134,7 +140,17 @@ export const defaultPulumiRunner: PulumiRunner = (args, opts) =>
  * with one of these. Any of them may name its stack with `--stack <name>`
  * (#4496, #4514), which {@link wellFormedStack} checks.
  */
-export const PULUMI_ALLOWED_COMMANDS: readonly (readonly string[])[] = [["preview"], ["refresh", "--preview-only"], ["stack", "output"]];
+export const PULUMI_ALLOWED_COMMANDS: readonly (readonly string[])[] = [["preview"], ["refresh", "--preview-only"], ["stack", "output"], ["stack", "export"]];
+
+/**
+ * Exactly `stack export --stack <stack>` (#4546): the export printed to
+ * stdout with secrets encrypted. `--file` writes the working tree,
+ * `--show-secrets` prints plaintext and `--version` reads another update, so
+ * none is allowed.
+ */
+function allowedStackExport(args: string[]): boolean {
+  return args.length === 4 && args[0] === "stack" && args[1] === "export" && args[2] === "--stack" && wellFormedStack(args);
+}
 
 /**
  * A `stack output` argv that prints no secret: `--json`, and
@@ -170,6 +186,7 @@ function allowedRead(args: string[]): boolean {
   if (!wellFormedStack(args)) return false;
   if (!PULUMI_ALLOWED_COMMANDS.some((prefix) => prefix.every((a, i) => args[i] === a))) return false;
   if (args[0] === "refresh") return args.includes("--preview-only");
+  if (args[0] === "stack" && args[1] === "export") return allowedStackExport(args);
   if (args[0] === "stack") return blindStackOutput(args);
   if (args[0] === "preview") return !refusedPreviewFlag(args);
   return true;
@@ -178,7 +195,9 @@ function allowedRead(args: string[]): boolean {
 /** Run `args` through `run`, refusing any argv that is not an allowed read. `env` is added to the engine's environment. */
 export async function runAllowedPulumi(run: PulumiRunner, args: string[], cwd: string, env?: Record<string, string>): Promise<{ stdout: string }> {
   if (!allowedRead(args)) {
-    throw new Error(`chant runs only pulumi preview and pulumi refresh --preview-only, and pulumi stack output --json --show-secrets=false, for a Pulumi member, not pulumi ${args.join(" ")}`);
+    throw new Error(
+      `chant runs only pulumi preview and pulumi refresh --preview-only, pulumi stack output --json --show-secrets=false and pulumi stack export --stack <stack>, for a Pulumi member, not pulumi ${args.join(" ")}`,
+    );
   }
   return run(args, env ? { cwd, env } : { cwd });
 }
@@ -231,7 +250,7 @@ export async function runAllowedPlunge(run: PulumiRunner, args: string[], cwd: s
   const allowed = drift || ((args[0] === "preview" || args[0] === "stack") && allowedRead(args)) || allowedPlungeGraph(args);
   if (!allowed) {
     throw new Error(
-      `chant runs only plunge drift --resource <urn> --stream, plunge preview, plunge stack output --json --show-secrets=false and ${PLUNGE_GRAPH_COMMANDS.join(", ")} for a Pulumi member, not plunge ${args.join(" ")}`,
+      `chant runs only plunge drift --resource <urn> --stream, plunge preview, plunge stack output --json --show-secrets=false, plunge stack export --stack <stack> and ${PLUNGE_GRAPH_COMMANDS.join(", ")} for a Pulumi member, not plunge ${args.join(" ")}`,
     );
   }
   return run(args, env ? { cwd, env } : { cwd });
@@ -410,7 +429,11 @@ export function memberStack(opts: { declared?: string; exported?: unknown; urns?
   return opts.declared || pulumiExportStack(opts.exported) || (opts.urns?.length ? soleStack(opts.urns) : undefined);
 }
 
-/** The checked-in `pulumi stack export`, parsed, or undefined when there is none or it does not read. */
+/**
+ * The checked-in `pulumi stack export`, parsed, or undefined when there is
+ * none or it does not read. The member's reads below take the index store's
+ * export first ({@link memberExportOf}, #4546) and come here when it has none.
+ */
 export function readMemberExport(dir: string): unknown {
   const file = join(dir, PULUMI_EXPORT_FILE);
   if (!existsSync(file)) return undefined;
@@ -419,6 +442,18 @@ export function readMemberExport(dir: string): unknown {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * The member's export for a read (#4546): the one the `pulumi-up` capability
+ * wrote to the index store after the stack's last apply through chant, else
+ * the checked-in {@link PULUMI_EXPORT_FILE}. `store: null` skips the store.
+ * Loaded lazily, since `./stack-export-snapshot.ts` imports this module.
+ */
+export async function memberExportOf(dir: string, opts: { stack?: string; store?: SnapshotStore | null } = {}): Promise<unknown> {
+  if (opts.store === null) return readMemberExport(dir);
+  const { readMemberExportStored } = await import("./stack-export-snapshot");
+  return (await readMemberExportStored(dir, { ...(opts.stack ? { stack: opts.stack } : {}), ...(opts.store !== undefined ? { store: opts.store } : {}) }))?.doc;
 }
 
 /** What a failed engine run left: its output, its exit status when it ran, and whether the binary was missing. */
@@ -482,6 +517,8 @@ export interface PreviewPulumiMemberOptions {
   run?: PulumiRunner;
   /** Runs plunge, for a member on plunge. */
   plunge?: PulumiRunner;
+  /** The index store the member's export is read from first (#4546). Default: the project's; `null` reads the checked-in file only. */
+  exportStore?: SnapshotStore | null;
 }
 
 /** A member's preview: its change-set part, and the preview document it was read from (`{}` when none printed). */
@@ -499,7 +536,7 @@ export interface PulumiMemberPreview {
  */
 export async function previewPulumiMemberRead(opts: PreviewPulumiMemberOptions): Promise<PulumiMemberPreview> {
   const engine = pulumiMemberEngine(opts.dir, opts.engine).engine;
-  const prior = readMemberExport(opts.dir);
+  const prior = await memberExportOf(opts.dir, { ...(opts.stack ? { stack: opts.stack } : {}), ...(opts.exportStore !== undefined ? { store: opts.exportStore } : {}) });
   const stack = memberStack({ declared: opts.stack, exported: prior, urns: opts.targets });
   const args = pulumiPreviewArgs({ stack, targets: opts.targets });
   const common = { member: opts.member, ...(stack ? { stack } : {}), ...(prior !== undefined ? { prior } : {}), ...(opts.targets?.length ? { targeted: true } : {}) };
@@ -543,6 +580,8 @@ export interface PulumiMemberStackOutputsOptions {
   engine?: PulumiMemberEngine;
   run?: PulumiRunner;
   plunge?: PulumiRunner;
+  /** The index store the member's export is read from first (#4546). Default: the project's; `null` reads the checked-in file only. */
+  exportStore?: SnapshotStore | null;
 }
 
 /**
@@ -553,7 +592,8 @@ export interface PulumiMemberStackOutputsOptions {
  */
 export async function pulumiMemberStackOutputs(opts: PulumiMemberStackOutputsOptions): Promise<Record<string, unknown>> {
   const engine = pulumiMemberEngine(opts.dir, opts.engine).engine;
-  const args = pulumiStackOutputArgs({ stack: memberStack({ declared: opts.stack, exported: readMemberExport(opts.dir) }) });
+  const exported = opts.stack ? undefined : await memberExportOf(opts.dir, opts.exportStore !== undefined ? { store: opts.exportStore } : {});
+  const args = pulumiStackOutputArgs({ stack: memberStack({ declared: opts.stack, exported }) });
   const command = `${engine} ${args.join(" ")}`;
   let stdout: string;
   try {
@@ -587,6 +627,8 @@ export interface RefreshPulumiMemberOptions extends DriftAdapterBase {
   run?: PulumiRunner;
   /** Runs plunge, for a member on plunge. */
   plunge?: PulumiRunner;
+  /** The index store the member's export is read from first (#4546). Default: the project's; `null` reads the checked-in file only. */
+  exportStore?: SnapshotStore | null;
 }
 
 function unobservedFor(f: RunFailure): { reason: UnobservedReason; detail: string } {
@@ -602,12 +644,12 @@ function unobservedFor(f: RunFailure): { reason: UnobservedReason; detail: strin
  * The member's drift records, one `--target`ed `pulumi refresh
  * --preview-only --json` per URN, run one after another. A run that fails
  * makes its URN's record not-observed and the others still read. With no
- * URNs given and no export to take them from, one untargeted refresh, which
+ * URNs given and no export to take them from (the store's or the checked-in one), one untargeted refresh, which
  * throws when it fails, since no record names a resource to hang it on.
  */
 export async function refreshPulumiMember(opts: RefreshPulumiMemberOptions): Promise<DriftRecord[]> {
   const run = opts.run ?? defaultPulumiRunner;
-  const exported = readMemberExport(opts.dir);
+  const exported = await memberExportOf(opts.dir, { ...(opts.stack ? { stack: opts.stack } : {}), ...(opts.exportStore !== undefined ? { store: opts.exportStore } : {}) });
   const urns =
     opts.urns ??
     (exported === undefined ? undefined : pulumiExportResources(exported).filter((r) => !isPulumiNodeless(r.type)).map((r) => r.urn));
@@ -679,6 +721,8 @@ export interface PlungeMemberGraphOptions {
   /** Pass `--versions`: each node lists its record's versions, one version listing per record (#4520 Q6). Off by default. */
   versions?: boolean;
   plunge?: PulumiRunner;
+  /** The index store the member's export is read from first (#4546). Default: the project's; `null` reads the checked-in file only. */
+  exportStore?: SnapshotStore | null;
 }
 
 /** What one `plunge graph` run gave: the parsed document, or why there is none. */
@@ -698,7 +742,8 @@ export type PlungeMemberGraphRead =
  * {@link pulumiMemberEngine}; nothing here runs stock `pulumi`.
  */
 export async function plungeMemberGraph(opts: PlungeMemberGraphOptions): Promise<PlungeMemberGraphRead> {
-  const stack = memberStack({ declared: opts.stack, exported: readMemberExport(opts.dir) });
+  const exported = opts.stack ? undefined : await memberExportOf(opts.dir, opts.exportStore !== undefined ? { store: opts.exportStore } : {});
+  const stack = memberStack({ declared: opts.stack, exported });
   const args = plungeGraphArgs({ stack, ...(opts.versions ? { versions: true } : {}) });
   const command = `plunge ${args.join(" ")}`;
   const at = { command, ...(stack ? { stack } : {}) };

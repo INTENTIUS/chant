@@ -30,7 +30,8 @@ stock backend, is not reported.
 
 | Read | Command | Changes the stack |
 |---|---|---|
-| graph | none; the checked-in `stack-export.json` | no |
+| graph | none; the export in the index store, else the checked-in `stack-export.json` | no |
+| export after an apply | `plunge stack export --stack <name>`, from the `pulumi-up` apply only | no |
 | change set | `plunge preview --json` | no |
 | applied outputs | `plunge stack output --json --show-secrets=false` | no |
 | drift | `plunge drift --resource <urn> --stream --stack <name>`, per resource | no |
@@ -90,8 +91,10 @@ comes back not-observed with plunge's reason.
 
 ## The export
 
-The graph needs the same `stack-export.json` a stock member checks in, taken
-with plunge:
+A stack chant applies with `pulumi-up` gets its export written to the index
+store after each `plunge up`, as a stock stack does. A stack applied outside
+chant checks in the same `stack-export.json` a stock member does, taken with
+plunge:
 
 ```bash
 plunge stack export --file stack-export.json

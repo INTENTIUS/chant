@@ -3,10 +3,13 @@
  *
  * `chant workspace graph` writes a reader project for a member of kind
  * `pulumi`, with `pulumi.member` in its config (see `workspace-kinds.json`).
- * The plugin's `buildRoots` hook calls {@link readPulumiMember}, which reads
- * the `pulumi stack export` JSON the member has checked in, at
- * {@link PULUMI_EXPORT_FILE} in its directory. The graph read never runs the
- * program or `pulumi`: with no export there are no nodes, and
+ * The plugin's `buildRoots` hook calls {@link readPulumiMember} with the
+ * `pulumi stack export` the index store holds for the member (#4546): the
+ * `pulumi-up` capability writes it, secrets stripped, after each apply
+ * (`./stack-export-snapshot.ts`, `refs/chant/snapshots` by default). When
+ * the store holds none, the read takes the export the member has checked in,
+ * at {@link PULUMI_EXPORT_FILE} in its directory. The graph read never runs
+ * the program or `pulumi`: with no export there are no nodes, and
  * `meta.pulumiMember` says `exported: false` and why.
  *
  * The kind lived in the terraform lexicon until #4453 moved it here. The
@@ -65,8 +68,10 @@ export interface PulumiMemberConfig {
 
 /** What the read found, carried on the graph's `meta.pulumiMember`. */
 export interface PulumiMemberReport {
-  /** The export read, relative to the member's directory. */
+  /** The export read: relative to the member's directory, or `<store>:<env>/<key>` for the index store's. */
   export?: string;
+  /** Where the export came from (#4546): the index store, or the checked-in file. Absent on a read before #4546. */
+  exportSource?: "store" | "file";
   objects: number;
   /** False when the member has no readable export. */
   exported: boolean;
@@ -112,7 +117,16 @@ interface ExportedResource {
   dependencies?: unknown;
 }
 
-export function readPulumiMember(opts: { member: PulumiMemberConfig }): {
+/** An export the index store held for the member, read by the caller (#4546). */
+export interface PulumiMemberStoredExport {
+  doc: unknown;
+  /** The store, for messages. */
+  where: string;
+  /** `<env>/<stack>__pulumi-export`. */
+  key: string;
+}
+
+export function readPulumiMember(opts: { member: PulumiMemberConfig; stored?: PulumiMemberStoredExport }): {
   entities: Map<string, Declarable>;
   warnings: string[];
   report: PulumiMemberReport;
@@ -128,16 +142,20 @@ export function readPulumiMember(opts: { member: PulumiMemberConfig }): {
   });
 
   const file = join(member.dir, PULUMI_EXPORT_FILE);
-  if (!existsSync(file)) {
-    return missing(`no ${PULUMI_EXPORT_FILE} in the member; run \`pulumi stack export --file ${PULUMI_EXPORT_FILE}\` and check it in, and chant will read it (the graph read does not run the program)`);
+  const stored = opts.stored;
+  const exportName = stored ? `${stored.where}:${stored.key}` : PULUMI_EXPORT_FILE;
+  if (!stored && !existsSync(file)) {
+    return missing(
+      `no export in the index store and no ${PULUMI_EXPORT_FILE} in the member; an apply through chant's pulumi-up writes the export to the store, or run \`pulumi stack export --file ${PULUMI_EXPORT_FILE}\` and check it in (the graph read does not run the program)`,
+    );
   }
   let resources: ExportedResource[];
   let pendingOperations = 0;
   let doc: { deployment?: { resources?: unknown; pending_operations?: unknown } };
   try {
-    doc = JSON.parse(readFileSync(file, "utf-8")) as { deployment?: { resources?: unknown; pending_operations?: unknown } };
+    doc = (stored ? stored.doc : JSON.parse(readFileSync(file, "utf-8"))) as { deployment?: { resources?: unknown; pending_operations?: unknown } };
     const list = doc?.deployment?.resources;
-    if (list !== undefined && !Array.isArray(list)) return missing(`${PULUMI_EXPORT_FILE} has a deployment.resources that is not a list`);
+    if (list !== undefined && !Array.isArray(list)) return missing(`${exportName} has a deployment.resources that is not a list`);
     resources = (list ?? []) as ExportedResource[];
     const pending = doc?.deployment?.pending_operations;
     pendingOperations = Array.isArray(pending) ? pending.length : 0;
@@ -192,7 +210,7 @@ export function readPulumiMember(opts: { member: PulumiMemberConfig }): {
     entities.set(key, entity);
   }
 
-  const report: PulumiMemberReport = { export: PULUMI_EXPORT_FILE, objects: entities.size, exported: true };
+  const report: PulumiMemberReport = { export: exportName, exportSource: stored ? "store" : "file", objects: entities.size, exported: true };
   if (pendingOperations > 0) report.pendingOperations = pendingOperations;
   if (engine) report.engineGraph = engine.report.read ? { ...engine.report, facts: withFacts, propertyEdges } : engine.report;
   return { entities, warnings, report, doc };
@@ -259,7 +277,7 @@ export interface PulumiMemberRead {
   engine?: "pulumi" | "plunge";
   /** `pulumi.member.stack`, when the config sets it. */
   stack?: string;
-  /** The parsed `stack-export.json`; undefined when there is none or it is not JSON. */
+  /** The parsed export, the index store's or the checked-in `stack-export.json`; undefined when there is none or it is not JSON. */
   doc?: unknown;
 }
 

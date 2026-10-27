@@ -75,8 +75,8 @@ export const pulumiPlugin: LexiconPlugin = {
   serializer: pulumiSerializer,
   configSchema: pulumiConfigSchema,
 
-  // A pulumi workspace member's reader project (#3179): its checked-in stack
-  // export, never the program. See ./workspace-member.ts. `chant workspace
+  // A pulumi workspace member's reader project (#3179): its stack export from
+  // the index store, else the checked-in one, never the program. See ./workspace-member.ts. `chant workspace
   // graph` writes `dir` absolute; a project that writes the namespace itself
   // can write it relative to the project root (#4468).
   async buildRoots(ctx) {
@@ -86,7 +86,11 @@ export const pulumiPlugin: LexiconPlugin = {
     if (!configured) return { entities: new Map() };
     const member =
       ctx.projectRoot && !isAbsolute(configured.dir) ? { ...configured, dir: resolve(ctx.projectRoot, configured.dir) } : configured;
-    const read = readPulumiMember({ member });
+    // The export the last apply through chant wrote to the index store
+    // (#4546), else the checked-in stack-export.json.
+    const { readStoredPulumiExport } = await import("./stack-export-snapshot");
+    const fromStore = await readStoredPulumiExport({ dir: member.dir, ...(member.stack ? { stack: member.stack } : {}) });
+    const read = readPulumiMember({ member, ...(fromStore ? { stored: { doc: fromStore.doc, where: fromStore.where, key: fromStore.key } } : {}) });
     setLastMemberReport(read.report);
     setLastMemberRead({
       dir: member.dir,
