@@ -590,6 +590,10 @@
             }
           }
         },
+        "facts": {
+          "type": "object",
+          "description": "Added in contract 1 by #4529, written by chant 0.124.53 and newer. What an ownership engine observed about the node: ownership, markers, ownedBy, cloudIds, recordVersions and observedAt, each optional, in the shape of EngineFacts (packages/core/src/graph-schema/graph.schema.json). Set on a Pulumi member on plunge from its checked-in engine-graph.json. Never read for a decision."
+        },
         "nested": {
           "type": "string",
           "description": "For a node read through a nested workspace (#2551): the nested workspace's member it belongs to. `member` is then the outer member, and the id is `<member>/<nested>/<id>`."
@@ -646,6 +650,10 @@
         "crossPipeline": {
           "type": "boolean",
           "description": "Added in contract 1 by #3922. True when the edge leaves the pipeline `from` belongs to (#3910): a reusable-workflow call, a `workflow_run` trigger, a GitLab child or multi-project trigger, an include. Absent on every in-pipeline edge."
+        },
+        "grain": {
+          "enum": ["block", "instance", "property"],
+          "description": "Added in contract 1 by #4529, written by chant 0.124.53 and newer. What the edge joins: two blocks, two instances, or a property of one instance to another. A Pulumi member's dependencies and parent edges are instance; a plunge member's property edges are property. Absent when the source does not say."
         },
         "member": {
           "type": "string"

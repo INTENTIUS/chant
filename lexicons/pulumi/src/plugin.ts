@@ -11,13 +11,16 @@
  * - the change-set adapter over `pulumi preview --json` (`./change-set.ts`);
  * - the drift adapter over `pulumi refresh --preview-only --json`
  *   (`./drift-record.ts`);
- * - the runner that calls those two commands and no other (`./run.ts`);
+ * - the runner that calls those commands and no other (`./run.ts`);
  * - the stack outputs `member-outputs` feeds into chant parameters
  *   (`./stack-outputs.ts`, `./member-outputs.ts`, #4455), contributed
  *   through {@link pulumiCapabilityPlugin} (`./capability-plugin.ts`);
  * - `readDrift`, which `chant workspace drift --member <pulumi member>`
  *   reaches through `chant lifecycle drift` in the member's reader project
  *   (`./drift-read.ts`);
+ * - `describeResources`, engine facts for a member on plunge from `plunge
+ *   graph --json` (`./describe-resources.ts`, #4529), and a plunge member's
+ *   checked-in `engine-graph.json` in the member read (`./engine-graph.ts`);
  * - the checks a pulumi surface admits (#4468): PUL101 over `pulumi.member`
  *   in source, PUL001 and PUL002 over the member read (`./lint/`);
  * - completion and hover over `Pulumi.yaml`, a stack's `Pulumi.<stack>.yaml`,
@@ -98,6 +101,18 @@ export const pulumiPlugin: LexiconPlugin = {
   graphMeta() {
     const report = lastMemberReport();
     return report ? { pulumiMember: report } : undefined;
+  },
+
+  /**
+   * Engine facts for a member on plunge (#4529): one `plunge graph --json
+   * --stack <stack>`, each node's facts on `ResourceMetadata.facts`, and
+   * `ownership: "unknown"` on every resource, so nothing decides from it. A
+   * stock member runs nothing and is not-observed. See
+   * `./describe-resources.ts`.
+   */
+  async describeResources(options) {
+    const { describePulumiResources } = await import("./describe-resources");
+    return describePulumiResources(options);
   },
 
   /**

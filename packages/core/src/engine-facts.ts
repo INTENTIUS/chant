@@ -17,9 +17,18 @@
  * types and ./lifecycle/index-document.ts (`npm run generate:graph-schema`).
  */
 import type { GraphIR } from "./graph-ir";
+import { NEXT_RELEASE } from "./release-floors";
 
 /** The format of {@link EngineGraphMeta}. Moves only for a change a reader could not ignore. */
 export const ENGINE_GRAPH_FORMAT = 1;
+
+/**
+ * The first chant whose graph carries `nodes[].facts` and `edges[].grain`
+ * (#4527, #4529): a live read through an engine, and a plunge member's
+ * checked-in `engine-graph.json` in the pulumi lexicon's member read. A
+ * reader treats a graph from an older chant as having neither.
+ */
+export const ENGINE_FACTS_FLOOR = NEXT_RELEASE;
 
 /** The marker values an engine read or recorded for one node. */
 export interface EngineMarkers {

@@ -84,6 +84,8 @@ const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: str
   { file: "packages/core/src/workspace/graph.schema.json", text: "by #4489, written by chant {v} and newer", count: 1, floor: "instance rollups (#4489)" },
   { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "the `root_member` column of `chant query`'s `runs` | {v} |", count: 1, floor: "LEDGER_ROOT_MEMBER_FLOOR" },
   { file: "packages/core/src/workspace/ledger.schema.json", text: "by #4500, written by chant {v} and newer", count: 1, floor: "LEDGER_ROOT_MEMBER_FLOOR" },
+  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "`nodes[].facts`, `edges[].grain` | {v} |", count: 1, floor: "ENGINE_FACTS_FLOOR" },
+  { file: "packages/core/src/workspace/graph.schema.json", text: "by #4529, written by chant {v} and newer", count: 2, floor: "ENGINE_FACTS_FLOOR" },
 ];
 
 interface Args {

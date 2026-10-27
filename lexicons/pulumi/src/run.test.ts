@@ -8,7 +8,21 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { engineEnv, previewPulumiMember, pulumiMemberEngine, pulumiExportStack, pulumiPreviewArgs, refreshPulumiMember, runAllowedPlunge, runAllowedPulumi, type PulumiRunner } from "./run";
+import {
+  engineEnv,
+  PLUNGE_GRAPH_COMMANDS,
+  plungeGraphArgs,
+  plungeMemberGraph,
+  previewPulumiMember,
+  PULUMI_ALLOWED_COMMANDS,
+  pulumiMemberEngine,
+  pulumiExportStack,
+  pulumiPreviewArgs,
+  refreshPulumiMember,
+  runAllowedPlunge,
+  runAllowedPulumi,
+  type PulumiRunner,
+} from "./run";
 
 const testdata = join(import.meta.dirname, "testdata");
 const text = (...path: string[]) => readFileSync(join(testdata, ...path), "utf-8");
@@ -225,5 +239,89 @@ describe("a member on plunge (#4453)", () => {
       ["plunge", "drifted"],
       ["plunge", "not-observed"],
     ]);
+  });
+});
+
+describe("plunge graph (#4529, ruled on #4520 Q4 and Q6)", () => {
+  const dir = join(testdata, "plunge-graph");
+  const allowed = [
+    ["graph", "--json"],
+    ["graph", "--json", "--stack", "dev"],
+    ["graph", "--json", "--versions"],
+    ["graph", "--json", "--stack", "dev", "--versions"],
+  ];
+
+  test("each of the four argv reaches the plunge runner", async () => {
+    for (const args of allowed) {
+      const { run, calls } = fake(() => "{}");
+      await runAllowedPlunge(run, args, dir);
+      expect(calls).toEqual([{ args, cwd: dir }]);
+    }
+    expect(PLUNGE_GRAPH_COMMANDS).toEqual(["plunge graph --json", "plunge graph --json --stack <stack>", "plunge graph --json --versions", "plunge graph --json --stack <stack> --versions"]);
+  });
+
+  test.each([
+    ["without --json, which plunge refuses too", ["graph"]],
+    ["--versions without --json", ["graph", "--versions"]],
+    ["--show-secrets", ["graph", "--json", "--show-secrets"]],
+    ["--show-secrets=false", ["graph", "--json", "--show-secrets=false"]],
+    ["--show-secrets with a stack", ["graph", "--json", "--stack", "dev", "--show-secrets"]],
+    ["--outputs", ["graph", "--json", "--outputs"]],
+    ["--show-outputs", ["graph", "--json", "--stack", "dev", "--versions", "--show-outputs"]],
+    ["--stack with no name", ["graph", "--json", "--stack"]],
+    ["--stack with a flag for a name", ["graph", "--json", "--stack", "--versions"]],
+    ["--stack with an empty name", ["graph", "--json", "--stack", ""]],
+    ["-s for --stack", ["graph", "--json", "-s", "dev"]],
+    ["two stacks", ["graph", "--json", "--stack", "dev", "--stack", "prod"]],
+    ["--versions before --stack", ["graph", "--json", "--versions", "--stack", "dev"]],
+    ["--json after --stack", ["graph", "--stack", "dev", "--json"]],
+    ["--json twice", ["graph", "--json", "--json"]],
+    ["--versions twice", ["graph", "--json", "--versions", "--versions"]],
+    ["a positional argument", ["graph", "--json", "dev"]],
+    ["--versions=true", ["graph", "--json", "--versions=true"]],
+    ["upstream's stack graph", ["stack", "graph", "--json"]],
+  ])("refused before the runner: %s", async (_why, args) => {
+    const { run, calls } = fake(() => "{}");
+    await expect(runAllowedPlunge(run, args, dir)).rejects.toThrow(/only plunge drift --resource <urn> --stream/);
+    expect(calls).toEqual([]);
+  });
+
+  test("the refusal names the four argv", async () => {
+    const { run } = fake(() => "{}");
+    const refused = await runAllowedPlunge(run, ["graph", "--json", "--show-secrets"], dir).catch((e: Error) => e.message);
+    for (const command of PLUNGE_GRAPH_COMMANDS) expect(refused).toContain(command);
+    expect(refused).toMatch(/not plunge graph --json --show-secrets$/);
+  });
+
+  test("stock pulumi gets no graph argv, and its list is unchanged", async () => {
+    const { run, calls } = fake(() => "{}");
+    for (const args of allowed) await expect(runAllowedPulumi(run, args, dir)).rejects.toThrow(/only pulumi preview/);
+    expect(calls).toEqual([]);
+    expect(PULUMI_ALLOWED_COMMANDS).toEqual([["preview"], ["refresh", "--preview-only"], ["stack", "output"]]);
+  });
+
+  test("plungeGraphArgs builds each of the four, in the allowed order", () => {
+    expect(plungeGraphArgs()).toEqual(allowed[0]);
+    expect(plungeGraphArgs({ stack: "dev" })).toEqual(allowed[1]);
+    expect(plungeGraphArgs({ versions: true })).toEqual(allowed[2]);
+    expect(plungeGraphArgs({ stack: "dev", versions: true })).toEqual(allowed[3]);
+  });
+
+  test("plungeMemberGraph passes the stack the export names, and no --versions unless asked", async () => {
+    const { run, calls } = fake(() => text("plunge-graph", "engine-graph.json"));
+    const read = await plungeMemberGraph({ dir, plunge: run });
+    expect(calls).toEqual([{ args: ["graph", "--json", "--stack", "dev"], cwd: dir }]);
+    expect(read).toMatchObject({ ok: true, command: "plunge graph --json --stack dev", stack: "dev" });
+    await plungeMemberGraph({ dir, stack: "qa", versions: true, plunge: run });
+    expect(calls[1].args).toEqual(["graph", "--json", "--stack", "qa", "--versions"]);
+  });
+
+  test("a plunge without the command, a missing binary, and no JSON each say why", async () => {
+    const old = fake(() => failure("Command failed: plunge graph --json --stack dev", { stderr: 'error: unknown command "graph" for "plunge"\n' }));
+    expect(await plungeMemberGraph({ dir, plunge: old.run })).toMatchObject({ ok: false, reason: "read-failed", detail: expect.stringMatching(/no `plunge graph` \(INTENTIUS\/plunge#40\)/) });
+    const missing = fake(() => failure("spawn plunge ENOENT", { code: "ENOENT" }));
+    expect(await plungeMemberGraph({ dir, plunge: missing.run })).toMatchObject({ ok: false, detail: "the plunge binary was not found on PATH" });
+    const blank = fake(() => "");
+    expect(await plungeMemberGraph({ dir, plunge: blank.run })).toMatchObject({ ok: false, detail: "plunge graph --json --stack dev printed no JSON" });
   });
 });

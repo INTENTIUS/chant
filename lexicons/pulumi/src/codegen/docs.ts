@@ -18,7 +18,10 @@ applied by \`pulumi up\` as before. chant reads it four ways.
 The graph read never runs \`pulumi\`. The other reads run those commands, or
 \`plunge preview\`, \`plunge stack output\` and \`plunge drift\` for a member on
 plunge, as ruled on [#4476](https://github.com/INTENTIUS/chant/issues/4476).
-Nothing else runs, so chant never changes a stack.
+A member on plunge also has its engine facts read with \`plunge graph --json\`
+([#4529](https://github.com/INTENTIUS/chant/issues/4529)), which reads
+plunge's records and calls no provider. Nothing else runs, so chant never
+changes a stack.
 
 See [Getting Started](getting-started/) to add a Pulumi member to a
 workspace, and [The pulumi member](member/) for what each read returns.

@@ -125,9 +125,11 @@ export interface IRNode {
    */
   instanceRollup?: InstanceRollup;
   /**
-   * Live-only: what an ownership engine (choudoufu, plunge) observed about
-   * this node (#4520, #4527), copied from `ResourceMetadata.facts` or read
-   * from the engine's graph document. For people and for readers that show
+   * What an ownership engine (choudoufu, plunge) observed about this node
+   * (#4520, #4527). On a live node it is copied from `ResourceMetadata.facts`.
+   * On a declared node it comes from the entity's {@link entityFacts}: the
+   * pulumi lexicon reads a plunge member's checked-in `engine-graph.json`
+   * beside its stack export (#4529). For people and for readers that show
    * the graph. Nothing in chant decides from it, and {@link ownership} keeps
    * its own meaning. Absent unless an engine supplied it. See `./engine-facts.ts`.
    */
@@ -331,6 +333,8 @@ export interface EntityReference {
   viaAttr?: string;
   /** The producer-side attribute referenced (`IREdge.toAttr`), when the reference named exactly one. */
   toAttr?: string;
+  /** What the reference joins (`IREdge.grain`, #4529), when its source says. */
+  grain?: EdgeGrain;
 }
 
 /** True when `value` has the {@link EntityReference} shape. */
@@ -372,6 +376,19 @@ export function entityReferences(entity: Declarable): readonly EntityReference[]
 export function entityStack(entity: Declarable): string | undefined {
   const stack = (entity as unknown as { stack?: unknown }).stack;
   return typeof stack === "string" && stack.length > 0 ? stack : undefined;
+}
+
+/**
+ * What an ownership engine observed about an entity (#4529), or undefined.
+ * Duck-typed like {@link entityStack}: the pulumi lexicon sets `facts` on a
+ * plunge member's entity from the member's checked-in engine graph. It is
+ * defined non-enumerable there, so a chant older than this reader does not
+ * project it into `attrs`. {@link buildGraphIr} copies it onto the node, and
+ * nothing in chant decides from it (see `IRNode.facts`).
+ */
+export function entityFacts(entity: Declarable): EngineFacts | undefined {
+  const facts = (entity as unknown as { facts?: unknown }).facts;
+  return typeof facts === "object" && facts !== null && !Array.isArray(facts) ? (facts as EngineFacts) : undefined;
 }
 
 /**
@@ -827,7 +844,8 @@ function subEnvelope(sub: SubForm, seen: Set<unknown>, reverse: Map<object, stri
 // entity's place in the graph, not declared configuration, and both are read
 // directly, so projecting them into `attrs` would only restate an edge and a
 // group key the IR already carries.
-const SKIP_KEYS = new Set(["lexicon", "entityType", "kind", "attributes", "Ref", "references", "stack"]);
+// `facts` (#4529) is an engine's observation, carried onto `IRNode.facts`, not configuration.
+const SKIP_KEYS = new Set(["lexicon", "entityType", "kind", "attributes", "Ref", "references", "stack", "facts"]);
 
 /** The config bag of a node, paired with each key. Lexicon entities keep their
  * declared props in a (usually non-enumerable) `props` object; simpler entities
@@ -887,6 +905,7 @@ function collectEdges(
       kind: "ref",
       ...(ref.viaAttr ? { viaAttr: ref.viaAttr } : {}),
       ...(ref.toAttr ? { toAttr: ref.toAttr } : {}),
+      ...(ref.grain === "block" || ref.grain === "instance" || ref.grain === "property" ? { grain: ref.grain } : {}),
     });
   }
   const seen = new Set<unknown>();
@@ -1005,6 +1024,8 @@ export function buildGraphIr(
     if (prov?.compositeInstance) node.compositeInstance = prov.compositeInstance;
     const file = relFile(prov?.sourceFile, projectPath);
     if (file) node.sourceLoc = { file };
+    const facts = entityFacts(entity);
+    if (facts) node.facts = facts;
     nodes.push(node);
 
     (byLexicon[entity.lexicon] ??= []).push(name);
