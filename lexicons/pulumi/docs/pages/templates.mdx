@@ -1,0 +1,27 @@
+---
+title: Project templates
+description: The chant init templates the Pulumi lexicon offers, and the files each writes
+diataxis: reference
+---
+
+`chant init --lexicon pulumi` writes a chant project that reads an existing
+Pulumi program. No template writes a Pulumi program: the lexicon declares no
+resource types, and the program stays the source of truth. Each template
+expects the program in `./infra`, the directory that holds `Pulumi.yaml` and
+the checked-in `stack-export.json`. Change `dir` in `chant.config.ts` if yours
+is elsewhere.
+
+| Template | Writes | For |
+|---|---|---|
+| default | `chant.config.ts` with `pulumi.member`, and `src/infra.ts`, which declares nothing | reading the member's graph into the project's build, so the build checks run against its export |
+| `watch` | the default's files and `src/watch.op.ts`, a `PulumiWatchOp` on a 06:00 cron | previewing the member and reading its drift every morning |
+| `plunge` | the `watch` files, with `engine: "plunge"` on the member and on the Op | the same watch for a member on plunge |
+
+```bash
+npx chant init --lexicon pulumi --template watch
+```
+
+`--template` also records the template in the project's template lock, as
+for any lexicon. The `scheduled-watch` and `plunge-member`
+[examples](../examples/) are the finished forms of the `watch` and `plunge`
+templates, with a program in `infra/`.

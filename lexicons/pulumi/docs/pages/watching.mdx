@@ -1,0 +1,72 @@
+---
+title: Watching a member
+description: Preview a Pulumi member and read its drift on a schedule with PulumiWatchOp, which never applies
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/lexicons/pulumi/watching/.
+  Add a `PulumiWatchOp` for the Pulumi member I name, in `src/<member>-watch.op.ts`, with the schedule I give you, and add `"pulumi"` to `lexicons` in `chant.config.ts` if it is not there.
+  Run `npx chant build` and `npx chant lint` and fix what they report. Open a pull request with the Op. Print the `chant run <name> --no-record` command for a person to run; do not run the Op.
+  Do not run `pulumi up`, `pulumi destroy`, `pulumi import` or `pulumi refresh` without `--preview-only`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+`PulumiWatchOp` previews one Pulumi member and reads its drift, as an Op
+that `chant run` runs once and `chant operator` runs on a cron. Both of its
+phases run commands from the list on [The pulumi member](../member/#what-chant-runs),
+so a watch reports and the stack's owner acts. There is no apply phase and no
+option that adds one. The `scheduled-watch` and `plunge-member` examples in
+`lexicons/pulumi/examples/` each carry one.
+
+## Declare the Op
+
+```ts
+import { PulumiWatchOp } from "@intentius/chant-lexicon-pulumi";
+
+export const { op } = PulumiWatchOp({
+  name: "infra-watch",
+  member: "infra",
+  dir: "./infra",
+  stack: "dev",
+  schedule: "0 6 * * *",
+});
+
+export default op;
+```
+
+Put it in `src/` or `ops/` as `<name>.op.ts`, and list `pulumi` in the
+project's `lexicons` so the two activities load.
+
+| Field | Meaning |
+|---|---|
+| `name` | the Op's name, kebab-case; `chant run <name>` runs it |
+| `member` | the member's name, as the change set and the drift records name it |
+| `dir` | the directory that holds `Pulumi.yaml`, relative to the project root |
+| `stack` | the stack to read; default, the one the directory has selected |
+| `engine` | `pulumi` or `plunge`; default, what `Pulumi.yaml`'s backend URL says |
+| `drift` | `false` leaves the Drift phase out; default `true` |
+| `schedule` | a cron expression, set on the Op as `schedule` with `overlap: "skip"` |
+
+## What a run does
+
+| Phase | Activity | Runs | Outcome |
+|---|---|---|---|
+| Preview | `pulumiPreview` | `pulumi preview --json --show-sames` | `Changes`, true when the preview plans a create, update, replace or delete, or a resource that may appear |
+| Drift | `pulumiDrift` | one `pulumi refresh --preview-only --json --target <urn>` per resource in `stack-export.json` | `Drift`, the drifted and missing count |
+
+A member on plunge runs `plunge preview --json` and
+`plunge drift --resource <urn> --stream` instead (see [A member on plunge](../plunge/)).
+The Drift phase reads the URNs from the checked-in export, so a stale export
+leaves new resources unread; [The stack export](../stack-export/) covers
+keeping it current.
+
+## Run it
+
+Once, on the local executor, with the stack's credentials in the environment:
+
+```bash
+chant run infra-watch --no-record
+```
+
+On its cron, `chant operator` ticks it, and `generateOpsPipeline` renders the
+same `schedule` as a CI workflow's cron. A run that overlaps the previous one
+is skipped.

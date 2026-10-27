@@ -1,0 +1,25 @@
+name: shop
+description: The bucket the shop's assets are served from
+runtime: yaml
+backend:
+  url: plunge+file://./.plunge-state
+
+config:
+  bucketPrefix:
+    type: string
+    default: shop-assets
+
+resources:
+  assets:
+    type: aws:s3:BucketV2
+    properties:
+      bucketPrefix: ${bucketPrefix}
+  assetsVersioning:
+    type: aws:s3:BucketVersioningV2
+    properties:
+      bucket: ${assets.id}
+      versioningConfiguration:
+        status: Enabled
+
+outputs:
+  assetsBucket: ${assets.bucket}

@@ -1,0 +1,58 @@
+---
+title: A member on plunge
+description: How chant decides a Pulumi member runs on plunge, and the plunge commands it runs for the change set, outputs and drift
+diataxis: reference
+---
+
+plunge is a Pulumi fork with its own state backends. A Pulumi member can run
+on it, and chant then runs `plunge` where it would run `pulumi`. The member
+kind, the graph and the node ids are the same. The `plunge-member` example in
+`lexicons/pulumi/examples/` is a workspace with one such member.
+
+## How chant decides
+
+| Source | Says plunge when | Read |
+|---|---|---|
+| `pulumi.member.engine` | it is `"plunge"` | first; when set, it decides |
+| `Pulumi.yaml` `backend.url` | it starts with `plunge` (`plunge+file://...`, `plunge://...`) | when the config sets no engine |
+
+Nothing else is read: not `PULUMI_BACKEND_URL`, not the CLI's login state.
+Two checkouts of one repository therefore agree on the engine whatever their
+environments hold. `PulumiWatchOp`'s `engine` field and the activities follow
+the same rule.
+
+A config that says `engine: "pulumi"` for a program whose backend URL is a
+plunge URL runs stock `pulumi` against a backend it cannot open. PUL015
+reports that at build time. The other way round, `engine: "plunge"` with a
+stock backend, is not reported.
+
+## What chant runs
+
+| Read | Command | Changes the stack |
+|---|---|---|
+| graph | none; the checked-in `stack-export.json` | no |
+| change set | `plunge preview --json` | no |
+| applied outputs | `plunge stack output --json --show-secrets=false` | no |
+| drift | `plunge drift --resource <urn> --stream --stack <name>`, per resource | no |
+
+`runAllowedPlunge` refuses any other argv before it reaches the binary, as
+ruled on [#4476](https://github.com/INTENTIUS/chant/issues/4476).
+
+## Drift
+
+`plunge drift --stream` prints drift-record NDJSON, one record per line, so
+chant decodes it rather than mapping a refresh's steps. Each record is placed
+on a node by the same URN rule the graph uses (`@intentius/chant/pulumi-urn`).
+A resource plunge cannot read, such as a component with no cloud object,
+comes back not-observed with plunge's reason.
+
+## The export
+
+The graph needs the same `stack-export.json` a stock member checks in, taken
+with plunge:
+
+```bash
+plunge stack export --file stack-export.json
+```
+
+Every check on [The stack export](../stack-export/) applies to it.

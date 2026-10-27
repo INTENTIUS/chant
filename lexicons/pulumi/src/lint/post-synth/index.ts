@@ -2,8 +2,34 @@
 import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
 import { pul001 } from "./pul001";
 import { pul002 } from "./pul002";
+import { pul003 } from "./pul003";
+import { pul004 } from "./pul004";
+import { pul005 } from "./pul005";
+import { pul006 } from "./pul006";
+import { pul007 } from "./pul007";
+import { pul008 } from "./pul008";
+import { pul009 } from "./pul009";
+import { pul010 } from "./pul010";
+import { pul011 } from "./pul011";
+import { pul012 } from "./pul012";
+import { pul013 } from "./pul013";
+import { pul014 } from "./pul014";
+import { pul015 } from "./pul015";
 
 export const postSynthChecks: PostSynthCheck[] = [
   pul001,
   pul002,
+  pul003,
+  pul004,
+  pul005,
+  pul006,
+  pul007,
+  pul008,
+  pul009,
+  pul010,
+  pul011,
+  pul012,
+  pul013,
+  pul014,
+  pul015,
 ];

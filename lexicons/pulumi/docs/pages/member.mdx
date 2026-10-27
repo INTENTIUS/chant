@@ -88,12 +88,9 @@ target the refresh did not reach is not-observed. See the
 ### A member on plunge
 
 A member runs on plunge when its config says `engine: "plunge"`, or when
-`Pulumi.yaml` has a `backend.url` starting with `plunge` (`plunge+file://...`,
-`plunge://...`). Only `Pulumi.yaml` is read, never `PULUMI_BACKEND_URL` or the
-CLI's login state, so every checkout gets the same answer. Its drift is
-`plunge drift --resource <urn> --stream` per resource, whose drift-record
-NDJSON chant decodes and places on nodes by the URN rule. Its preview and
-stack outputs run the same argv under `plunge`.
+`Pulumi.yaml` has a `backend.url` starting with `plunge`. Its drift is
+`plunge drift --resource <urn> --stream` per resource. [A member on plunge](../plunge/)
+covers the rule and the commands.
 
 ## Outputs
 
@@ -136,26 +133,15 @@ passes as `--stack`, and defaults to the one the export's URNs name. The build r
 | PUL101 | lint | `pulumi.member.dir` written as an absolute path |
 | PUL001 | post-synth | a member read with no nodes, with the reason |
 | PUL002 | post-synth | an export that records pending operations from an interrupted update |
+| PUL003 to PUL015 | post-synth | what else the export says about the stack: plaintext secrets, half-finished replacements, the wrong stack or project, a damaged file |
 
-`chant audit` gives PUL001 and PUL002 a title, a remediation and the
-`report-only` tier from the lexicon's audit catalog.
+[The stack export](../stack-export/) lists every check with its fix, and
+`chant audit` gives each a title and a remediation from the lexicon's audit
+catalog.
 
 ## Watching a member
 
 `PulumiWatchOp` (#4494) previews one member and reads its drift, on a
 `schedule` or with `chant run`. It runs the commands in the table above and
-never applies.
-
-```ts
-import { PulumiWatchOp } from "@intentius/chant-lexicon-pulumi";
-
-export const { op } = PulumiWatchOp({ name: "infra-watch", member: "infra", dir: "./infra", schedule: "0 6 * * *" });
-```
-
-| Phase | Activity | Outcome |
-|---|---|---|
-| Preview | `pulumiPreview`: `pulumi preview --json` | `Changes`, true when the preview plans a change or a resource may appear |
-| Drift | `pulumiDrift`: one targeted `pulumi refresh --preview-only` per resource | `Drift`, the drifted and missing count |
-
-`drift: false` leaves the Drift phase out. The project lists `pulumi` among
-its lexicons so the two activities load.
+never applies. [Watching a member](../watching/) has its fields, phases and
+outcomes.

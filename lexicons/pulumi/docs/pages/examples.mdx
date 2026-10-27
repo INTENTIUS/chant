@@ -1,0 +1,41 @@
+---
+title: Examples
+description: The three example workspaces shipped in lexicons/pulumi/examples and what each one shows
+diataxis: reference
+---
+
+Each example is a chant project beside a Pulumi program in `infra/`, with a
+checked-in `stack-export.json`, so the graph builds without Pulumi installed.
+`chant dev check-lexicon lexicons/pulumi` builds all three, and
+`examples/examples.test.ts` holds what each one reads.
+
+| Example | Shows |
+|---|---|
+| `workspace-member` | a Pulumi YAML program declared as a member of kind `pulumi`, and its export read into the project's own build |
+| `scheduled-watch` | the same member with `src/watch.op.ts`, a `PulumiWatchOp` that previews it and reads its drift every morning |
+| `plunge-member` | the program on a `plunge+file://` backend, so every read runs under `plunge`, with a watch that sets no `engine` |
+
+All three read the same two resources, a bucket and its versioning, with an
+edge from the versioning to the bucket, and none of them triggers a build
+check.
+
+## workspace-member
+
+`chant.workspace.json` pins `@intentius/chant-lexicon-pulumi` and declares
+`infra` as a member. `chant.config.ts` sets `pulumi.member` so `chant build`
+and `chant lint` run the lexicon's checks against the export. `src/` declares
+nothing. [Getting Started](../getting-started/) builds this layout step by
+step.
+
+## scheduled-watch
+
+`src/watch.op.ts` is the Op from [Watching a member](../watching/). Its steps
+are validated against the activities' contracts when the example builds. Run
+it once with `chant run infra-watch --no-record`, given a selected `dev`
+stack and its credentials.
+
+## plunge-member
+
+`infra/Pulumi.yaml` names `plunge+file://./.plunge-state`, and nothing else
+in the project mentions plunge. That URL is what moves the preview, outputs
+and drift to `plunge`; see [A member on plunge](../plunge/).

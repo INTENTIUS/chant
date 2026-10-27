@@ -44,6 +44,8 @@ export interface PulumiMemberConfig {
   label?: string;
   /** What runs the stack, when the config says; see `./run.ts`'s `pulumiMemberEngine`. The graph read ignores it. */
   engine?: "pulumi" | "plunge";
+  /** The stack the drift read passes as `--stack`, when the config says. The graph read ignores it. */
+  stack?: string;
 }
 
 /** What the read found, carried on the graph's `meta.pulumiMember`. */
@@ -76,6 +78,8 @@ export function readPulumiMember(opts: { member: PulumiMemberConfig }): {
   entities: Map<string, Declarable>;
   warnings: string[];
   report: PulumiMemberReport;
+  /** The parsed export, when there is one that reads as JSON. The post-synth checks read it; `meta` does not carry it. */
+  doc?: unknown;
 } {
   const { member } = opts;
   const label = member.label ?? basename(member.dir);
@@ -91,8 +95,9 @@ export function readPulumiMember(opts: { member: PulumiMemberConfig }): {
   }
   let resources: ExportedResource[];
   let pendingOperations = 0;
+  let doc: { deployment?: { resources?: unknown; pending_operations?: unknown } };
   try {
-    const doc = JSON.parse(readFileSync(file, "utf-8")) as { deployment?: { resources?: unknown; pending_operations?: unknown } };
+    doc = JSON.parse(readFileSync(file, "utf-8")) as { deployment?: { resources?: unknown; pending_operations?: unknown } };
     const list = doc?.deployment?.resources;
     if (list !== undefined && !Array.isArray(list)) return missing(`${PULUMI_EXPORT_FILE} has a deployment.resources that is not a list`);
     resources = (list ?? []) as ExportedResource[];
@@ -132,7 +137,37 @@ export function readPulumiMember(opts: { member: PulumiMemberConfig }): {
 
   const report: PulumiMemberReport = { export: PULUMI_EXPORT_FILE, objects: entities.size, exported: true };
   if (pendingOperations > 0) report.pendingOperations = pendingOperations;
-  return { entities, warnings: [], report };
+  return { entities, warnings: [], report, doc };
+}
+
+/**
+ * What the last member read in this process saw, for the post-synth checks
+ * PUL003 to PUL015 (`./lint/post-synth/`). It holds the parsed export, so it
+ * stays in the process and never reaches the graph's `meta`, which carries
+ * only {@link PulumiMemberReport}.
+ */
+export interface PulumiMemberRead {
+  /** The member's directory, absolute. */
+  dir: string;
+  /** The label the entities are keyed by. */
+  label: string;
+  /** `pulumi.member.engine`, when the config sets it. */
+  engine?: "pulumi" | "plunge";
+  /** `pulumi.member.stack`, when the config sets it. */
+  stack?: string;
+  /** The parsed `stack-export.json`; undefined when there is none or it is not JSON. */
+  doc?: unknown;
+}
+
+let lastRead: PulumiMemberRead | undefined;
+
+/** Left by the plugin's `buildRoots` beside the report; see {@link PulumiMemberRead}. */
+export function setLastMemberRead(read: PulumiMemberRead | undefined): void {
+  lastRead = read;
+}
+
+export function lastMemberRead(): PulumiMemberRead | undefined {
+  return lastRead;
 }
 
 let lastReport: PulumiMemberReport | undefined;

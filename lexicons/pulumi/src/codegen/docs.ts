@@ -22,6 +22,9 @@ Nothing else runs, so chant never changes a stack.
 
 See [Getting Started](getting-started/) to add a Pulumi member to a
 workspace, and [The pulumi member](member/) for what each read returns.
+[The stack export](stack-export/) covers the file the graph is read from and
+the checks that read it, [Watching a member](watching/) the \`PulumiWatchOp\`
+composite, and [A member on plunge](plunge/) members that run on plunge.
 `;
 
 /**

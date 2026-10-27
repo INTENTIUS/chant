@@ -26,20 +26,25 @@
  * - audit metadata for PUL001 and PUL002 (`./lint/audit-catalog.ts`), the
  *   `chant-pulumi` skill (`./skills/`), and the `PulumiWatchOp` composite
  *   over the `pulumiPreview` and `pulumiDrift` activities (`./composites/`,
- *   `./op/`), following the terraform lexicon (#4494).
+ *   `./op/`), following the terraform lexicon (#4494);
+ * - the tier-2 contract's remainder (#4510): PUL003 to PUL015 over the
+ *   member's export, two more skills, `detectTemplate` for a stack export or
+ *   a `Pulumi.yaml`, and three `chant init` templates (`./init-templates.ts`).
  */
-import { isAbsolute, resolve } from "node:path";
-import type { LexiconPlugin } from "@intentius/chant/lexicon";
+import { basename, isAbsolute, resolve } from "node:path";
+import type { InitTemplateSet, LexiconPlugin } from "@intentius/chant/lexicon";
 import type { CompletionContext, HoverContext } from "@intentius/chant/lsp/types";
 import { createSkillsLoader } from "@intentius/chant/lexicon-plugin-helpers";
 import { pulumiConfigSchema, type PulumiConfig } from "./config";
 import { pulumiSerializer } from "./serializer";
-import { lastMemberReport, readPulumiMember, setLastMemberReport } from "./workspace-member";
+import { lastMemberReport, readPulumiMember, setLastMemberRead, setLastMemberReport } from "./workspace-member";
 import { rules } from "./lint/rules";
 import { postSynthChecks } from "./lint/post-synth";
 import { pulumiAuditCatalog } from "./lint/audit-catalog";
 import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
+import { PULUMI_RUNTIME_NAMES } from "./lsp/keys";
+import { pulumiInitTemplates } from "./init-templates";
 
 const loadSkills = createSkillsLoader(import.meta.url, [
   {
@@ -47,6 +52,18 @@ const loadSkills = createSkillsLoader(import.meta.url, [
     name: "chant-pulumi",
     description:
       "Add a Pulumi program to a chant workspace as a member, read its preview into the change set and its refresh as drift, and watch it with PulumiWatchOp",
+  },
+  {
+    file: "chant-pulumi-stack-export.md",
+    name: "chant-pulumi-stack-export",
+    description:
+      "Keep a Pulumi member's checked-in stack-export.json current and clean, and fix what PUL001 to PUL015 report about it",
+  },
+  {
+    file: "chant-pulumi-plunge.md",
+    name: "chant-pulumi-plunge",
+    description:
+      "Read a Pulumi member that runs on plunge (a plunge backend URL or engine plunge), with plunge preview, plunge stack output and plunge drift",
   },
 ]);
 
@@ -61,12 +78,20 @@ export const pulumiPlugin: LexiconPlugin = {
   // can write it relative to the project root (#4468).
   async buildRoots(ctx) {
     setLastMemberReport(undefined);
+    setLastMemberRead(undefined);
     const configured = (ctx.config as { pulumi?: PulumiConfig }).pulumi?.member;
     if (!configured) return { entities: new Map() };
     const member =
       ctx.projectRoot && !isAbsolute(configured.dir) ? { ...configured, dir: resolve(ctx.projectRoot, configured.dir) } : configured;
     const read = readPulumiMember({ member });
     setLastMemberReport(read.report);
+    setLastMemberRead({
+      dir: member.dir,
+      label: member.label ?? basename(member.dir),
+      ...(member.engine ? { engine: member.engine } : {}),
+      ...(member.stack ? { stack: member.stack } : {}),
+      ...(read.doc !== undefined ? { doc: read.doc } : {}),
+    });
     return { entities: read.entities, warnings: read.warnings };
   },
 
@@ -108,6 +133,45 @@ export const pulumiPlugin: LexiconPlugin = {
    * tier-2 "registers" checks stay honest gaps rather than stubs.
    */
   skills: loadSkills,
+
+  /**
+   * A `pulumi stack export` document or a parsed `Pulumi.yaml`, recognised by
+   * content (#4510), so `chant import` names this lexicon for either and then
+   * says it has no template import, rather than finding no lexicon at all.
+   *
+   * A stack export is `{ version: <number>, deployment: { ... } }` with the
+   * deployment holding a `manifest` or a `resources` list. A `Pulumi.yaml` has
+   * a string `name` and a `runtime` that is one of Pulumi's runtime names,
+   * as a string or as `{ name }`. Nothing else Pulumi writes carries either
+   * shape, and neither matches a CloudFormation template, a Kubernetes
+   * manifest or a Compose file. Anything else, a raw string included, is
+   * false: neither file is read from text here.
+   */
+  detectTemplate(data: unknown) {
+    if (typeof data !== "object" || data === null || Array.isArray(data)) return false;
+    const doc = data as Record<string, unknown>;
+    const deployment = doc.deployment as Record<string, unknown> | undefined;
+    if (typeof doc.version === "number" && typeof deployment === "object" && deployment !== null && !Array.isArray(deployment)) {
+      return typeof deployment.manifest === "object" || Array.isArray(deployment.resources);
+    }
+    if (typeof doc.name !== "string" || doc.name.length === 0) return false;
+    const runtime = doc.runtime as unknown;
+    const runtimeName =
+      typeof runtime === "string" ? runtime : typeof runtime === "object" && runtime !== null ? (runtime as { name?: unknown }).name : undefined;
+    return typeof runtimeName === "string" && PULUMI_RUNTIME_NAMES.includes(runtimeName);
+  },
+
+  /**
+   * `chant init --lexicon pulumi [--template <name>]` (#4510): a project that
+   * reads one Pulumi member, by default; `watch`, the same project with a
+   * `PulumiWatchOp`; and `plunge`, the watch for a member on plunge. See
+   * `./init-templates.ts`.
+   */
+  initTemplates(template?: string): InitTemplateSet {
+    if (template === "watch") return pulumiInitTemplates.watch;
+    if (template === "plunge") return pulumiInitTemplates.plunge;
+    return pulumiInitTemplates.member;
+  },
 
   completionProvider(ctx: CompletionContext) {
     return completions(ctx);
