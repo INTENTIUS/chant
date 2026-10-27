@@ -36,13 +36,9 @@ export interface StoreHints {
   azure?: string;
 }
 
-export class StoreError extends Error {}
-
-/** A conditional write that lost: the object changed (412) or another write to it was in flight (409). */
-export class StoreConflict extends StoreError {}
-
-/** A condition on a write: the version the object must still have (an ETag, a generation), or `*` for "there is no object yet". */
-export type StoreCondition = { ifMatch: string } | { ifNoneMatch: "*" };
+// The errors and write conditions live in ./errors.ts, which imports nothing (chant#4589).
+export { StoreError, StoreConflict, isStoreConflict, type StoreCondition } from "./errors";
+import { StoreError, type StoreCondition } from "./errors";
 
 export interface ObjectStore {
   /** `s3://<bucket>`, `gs://<bucket>` or `az://<account>/<container>`, for messages. */

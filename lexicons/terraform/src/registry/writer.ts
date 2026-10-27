@@ -21,7 +21,9 @@
  * The writer takes the store it writes to, so the bucket clients stay with
  * whoever owns them (chant#4554 moves terragucci's into core).
  */
-import { StoreConflict, type StoreCondition } from "../state/object-store";
+// The errors module alone, never the object-store index: its clients import Node built-ins, and the
+// edge function (./edge) reaches this file for the download answer (chant#4589).
+import { isStoreConflict, type StoreCondition } from "@intentius/chant/object-store/errors";
 import { DISCOVERY, MODULES_V1, keyFor, type RegistryAddress } from "./address";
 import { compareSemver, formatSemver, parseSemver, type Semver } from "./semver";
 
@@ -129,8 +131,6 @@ export interface WriteVersionOptions {
   retries?: number;
 }
 
-const defaultIsConflict = (e: unknown): boolean => e instanceof StoreConflict || (e instanceof Error && (e.name === "StoreConflict" || e.constructor.name === "StoreConflict"));
-
 /** Writes one version: discovery when it differs, the tarball, the download answer, release.json, then the versions list. */
 export async function writeVersion(store: RegistryWriteStore, addr: RegistryAddress, version: Semver, files: VersionFiles, options: WriteVersionOptions = {}): Promise<void> {
   const discovery = discoveryDoc();
@@ -141,7 +141,7 @@ export async function writeVersion(store: RegistryWriteStore, addr: RegistryAddr
   await store.put(files.download.key, files.download.body, "application/json");
   await store.put(files.meta.key, files.meta.body, "application/json");
   const key = keyFor(options.prefix, `${addr.path}/versions`);
-  const isConflict = options.isConflict ?? defaultIsConflict;
+  const isConflict = options.isConflict ?? isStoreConflict;
   const retries = options.retries ?? 3;
   // Read, add, write only over the copy read: two publishes at once cannot drop each other's version.
   for (let attempt = 0; ; attempt++) {
