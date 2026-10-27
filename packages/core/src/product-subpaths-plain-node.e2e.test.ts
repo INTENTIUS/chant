@@ -17,9 +17,10 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { transformSync } from "esbuild";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 const coreRoot = resolve(import.meta.dirname, "..");
@@ -161,7 +162,34 @@ function importEach(specifiers: readonly string[]): { specifier: string; from?: 
   return JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", source], { cwd: consumer, env, encoding: "utf-8" }));
 }
 
+/** Every .js and .mjs file under `dir`. */
+function compiledFiles(dir: string): string[] {
+  return readdirSync(dir).flatMap((name) => {
+    const path = join(dir, name);
+    if (statSync(path).isDirectory()) return name === "node_modules" ? [] : compiledFiles(path);
+    return /\.m?js$/.test(name) ? [path] : [];
+  });
+}
+
 describe("product subpaths under plain Node (chant#4591)", () => {
+  test("every compiled module in both tarballs parses", () => {
+    // A product's bundler parses every module an import reaches, dynamic ones
+    // too. tsc-alias once rewrote a regex shaped like an import and left a
+    // file Node could not parse (chud-lexicon-exit.js).
+    const unparsed: string[] = [];
+    for (const pkg of ["@intentius/chant", "@intentius/chant-lexicon-terraform"]) {
+      for (const file of compiledFiles(join(consumer, "node_modules", pkg, "dist"))) {
+        try {
+          transformSync(readFileSync(file, "utf-8"), { format: "esm", loader: "js", logLevel: "silent" });
+        } catch (e) {
+          unparsed.push(`${file}: ${(e as { errors?: { text: string }[] }).errors?.[0]?.text ?? String(e)}`);
+        }
+      }
+    }
+    expect(unparsed).toEqual([]);
+  });
+
+
   test("every core subpath a product loads imports from dist/", () => {
     const results = importEach(CORE_SUBPATHS.map((s) => (s ? `@intentius/chant/${s}` : "@intentius/chant")));
     expect(results.filter((r) => r.error)).toEqual([]);

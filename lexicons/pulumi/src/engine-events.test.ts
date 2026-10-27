@@ -114,12 +114,14 @@ describe("an up's stream", () => {
   });
 
   test("the summary carries the counts, and plunge's timings when a step has them (plunge#55)", () => {
-    const timed = JSON.stringify({ resOutputsEvent: { metadata: { op: "update", urn: urn("aws:sqs/queue:Queue", "events"), plungeTimings: [{ phase: "update", ms: 812 }] } } });
+    // plunge#55's shape; an entry in any other shape is dropped (#4579).
+    const entry = { kind: "provider", call: "update", startedAt: "2026-10-27T12:00:00.123456789Z", durationMs: 812.4 };
+    const timed = JSON.stringify({ resOutputsEvent: { metadata: { op: "update", urn: urn("aws:sqs/queue:Queue", "events"), plungeTimings: [entry, { phase: "update", ms: 812 }] } } });
     expect(pulumiStreamSummary(`${up}${timed}\n`)).toEqual({
       resourceChanges: { delete: 2, replace: 2, same: 11, update: 2 },
       durationSeconds: 4,
       result: "succeeded",
-      timings: { [urn("aws:sqs/queue:Queue", "events")]: [{ phase: "update", ms: 812 }] },
+      timings: { [urn("aws:sqs/queue:Queue", "events")]: [entry] },
     });
     expect(pulumiStreamSummary("")).toBeUndefined();
   });

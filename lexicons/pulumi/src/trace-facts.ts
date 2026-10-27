@@ -11,10 +11,15 @@
  *   up.duration_s, up.result  the summary's duration and result, when it gives them
  *   up.maybe_corrupt          set when the engine said the update may have left state corrupt
  *   up.from_wave_plan         whether `run` applied the plan the wave decided
+ *   plunge.*                  on plunge, the totals of its per-resource timings (./plunge-timings.ts)
+ *
+ * On plunge the facts also carry a span per resource it timed, with a child
+ * per provider call and record write (INTENTIUS/plunge#55, chant#4579).
  */
 
 import type { CapabilityTraceFacts } from "@intentius/chant/otlp";
 import type { PulumiApplySummary } from "./engine-events";
+import { plungeTimingSpans, plungeTimingTotals } from "./plunge-timings";
 import type { PulumiUpStepInput, PulumiUpStepOutput } from "./pulumi-up";
 
 type Attrs = NonNullable<CapabilityTraceFacts["attributes"]>;
@@ -44,6 +49,7 @@ function fromError(error: unknown): { member?: string; summary?: PulumiApplySumm
 export function pulumiTraceFacts(input: PulumiUpStepInput, outcome: { output: PulumiUpStepOutput } | { error: unknown }): CapabilityTraceFacts {
   if ("output" in outcome && outcome.output) {
     const o = outcome.output;
+    const spans = plungeTimingSpans(o.summary?.timings);
     return {
       attributes: {
         stack: o.stack,
@@ -51,16 +57,21 @@ export function pulumiTraceFacts(input: PulumiUpStepInput, outcome: { output: Pu
         engine: o.engine,
         "up.from_wave_plan": o.fromWavePlan,
         ...pulumiSummaryAttributes(o.summary),
+        ...plungeTimingTotals(o.summary?.timings),
       },
+      ...(spans.length > 0 ? { spans } : {}),
     };
   }
   const e = fromError("error" in outcome ? outcome.error : undefined);
+  const spans = plungeTimingSpans(e.summary?.timings);
   return {
     attributes: {
       ...(typeof input?.stack === "string" ? { stack: input.stack } : {}),
       ...(e.member ? { member: e.member } : {}),
       ...(input?.engine ? { engine: input.engine } : {}),
       ...pulumiSummaryAttributes(e.summary),
+      ...plungeTimingTotals(e.summary?.timings),
     },
+    ...(spans.length > 0 ? { spans } : {}),
   };
 }

@@ -33,6 +33,7 @@ import { looksLikePostgres } from "./migrate/from-postgres/detect";
 import { sqlWorkspaceOutputs } from "./workspace-outputs";
 import { CDC_TEMPLATE, DEFAULT_TEMPLATE, EVENTS_TEMPLATE, POSTGRES_EVENTS_TEMPLATE, POSTGRES_TEMPLATE, POSTGRES_TENANT_TEMPLATE } from "./init-templates";
 import { compositeCatalog } from "./composites/catalog";
+import { sqlCiServices, sqlCiSetup } from "./ci-setup";
 
 export const sqlPlugin: LexiconPlugin = {
   name: "sql",
@@ -44,6 +45,14 @@ export const sqlPlugin: LexiconPlugin = {
 
   /** chant's marker is a trailer on the object's comment (#3208, ./clickhouse/ownership.ts). */
   ownershipChannel: SQL_OWNERSHIP_CHANNEL,
+
+  // #4572: the setup lines for the pull request pipeline's default image, and the replay server per dialect.
+  ciSetup(ctx: { dir: string }): string[] {
+    return sqlCiSetup(ctx);
+  },
+  ciServices(ctx: { dir: string }) {
+    return sqlCiServices(ctx);
+  },
 
   async generate(options?: { verbose?: boolean }): Promise<void> {
     const { generate, writeGeneratedFiles } = await import("./codegen/generate");

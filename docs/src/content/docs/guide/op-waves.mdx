@@ -803,7 +803,7 @@ With `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) set
 | each timed resource | its run target | what the capability timed, such as plunge's provider calls |
 | `gate:<name>`, on a job that waits | its wave | `status: gated`, with a `gate-waiting` event |
 
-Every attribute chant writes is under the CI product's name: `chant.status` on chant's own jobs, `terragucci.root` and `plywood.stack` under the products. The terraform lexicon adds `root` and `binary`. The pulumi lexicon adds `stack`, `engine` and the `up.<op>` counts from the update's summary.
+Every attribute chant writes is under the CI product's name: `chant.status` on chant's own jobs, `terragucci.root` and `plywood.stack` under the products. The terraform lexicon adds `root` and `binary`. The pulumi lexicon adds `stack`, `engine` and the `up.<op>` counts from the update's summary. On plunge it also reads the per-resource timings plunge prints in `up --json` ([#4579](https://github.com/INTENTIUS/chant/issues/4579), [plunge#55](https://github.com/INTENTIUS/plunge/issues/55)). Each resource it timed becomes a span under the stack's span, with a child span for each provider call and record write, and the same spans go under the stack's entry in `wave.targets`. The stack's span gets the totals: `plunge.calls`, `plunge.provider_ms`, `plunge.record_ms` and the slowest call. A stock Pulumi update prints no timings, so its stack has no resource spans.
 
 
 ## Exit codes

@@ -102,13 +102,16 @@ export function signV4(input: {
 /**
  * A presigned GET (Signature Version 4 in the query string, #4554): whoever
  * holds the URL reads that one object for `seconds`. Only `host` is signed,
- * and the payload is UNSIGNED-PAYLOAD.
+ * and the payload is UNSIGNED-PAYLOAD. A query the URL already carries is
+ * signed with the rest (#4572): an RDS IAM token is the presigned
+ * `?Action=connect&DBUser=<user>` of the database's host and port.
  */
 export function presignV4(input: { url: string; region: string; service: string; credentials: AwsStaticCredentials; seconds: number; now: Date }): string {
   const url = new URL(input.url);
   const { amzDate, dateStamp } = amzDates(input.now);
   const scope = `${dateStamp}/${input.region}/${input.service}/aws4_request`;
   const params: Record<string, string> = {
+    ...Object.fromEntries(url.searchParams),
     "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
     "X-Amz-Credential": `${input.credentials.accessKeyId}/${scope}`,
     "X-Amz-Date": amzDate,
