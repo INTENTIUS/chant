@@ -234,6 +234,12 @@ export interface OpRunWave {
   exitCode: number;
   /** Set when the apply applied nothing and nothing failed: another run held it, or it stood down for a newer one. */
   outcome?: "held" | "stood-down";
+  /**
+   * The newer commit an apply stood down for (#4581), when chant found it
+   * on the branch itself (the spec's `standDown`). An apply command that
+   * wrote `stood-down` names none.
+   */
+  supersededBy?: { branch: string; commit: string };
   applied: string[];
   failed: string[];
   /** Runs a share job did not apply because their plan moved since the decision. */
