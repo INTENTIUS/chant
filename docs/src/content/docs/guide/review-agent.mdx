@@ -58,7 +58,22 @@ The generator then writes two jobs (`lexicons/github/src/components/review-jobs.
 
 The note job names the Op itself and takes the pull request's head from the event. The first job ran the change's code, so everything it hands on is data. Each field of the record is checked, a digest that is not a digest is dropped, and an HTML comment in the model's text is escaped (`packages/core/src/op/activities/review-agent.ts:508`). terragucci splits its own the same way, with a `review` job and a `review-note` job (`render-review.ts` in that repository).
 
-The generator refuses the option on a trigger with no pull request, with a finding-mode other than `report`, and with a `permissions` entry that writes anything but `id-token` (`lexicons/github/src/components/review-jobs.ts:50`). It does not build the split on GitLab. A merge request pipeline hands every job the project's unprotected variables, so the model's job could not be kept apart from a token that writes, and the gitlab generator refuses the option by name (`lexicons/gitlab/src/components/generate-op-pipeline.ts:214`). On GitLab, use `findingMode: "comment"`.
+The generator refuses the option on a trigger with no pull request, with a finding-mode other than `report`, and with a `permissions` entry that writes anything but `id-token` (`lexicons/github/src/components/review-jobs.ts:50`). The gitlab generator refuses the same three (`lexicons/gitlab/src/components/review-jobs.ts`).
+
+### On GitLab
+
+GitLab has no per-job token scopes, and a merge request pipeline is built from the merge request's own files. Every job in it gets the project's unprotected variables. So the gitlab generator keeps the token out of that pipeline altogether, as the plan note does:
+
+- The review job, named after the Op, runs in the merge request pipeline. Its script starts by unsetting every forge token variable, then runs `chant run pr-review`, and it keeps `.chant/review` as its artifact for 7 days.
+- The note job, `pr-review-note`, runs only in a pipeline of the default branch started with `CHANT_REVIEW_NOTES` set to `1`. It checks nothing out (`GIT_STRATEGY: none`), installs the chant release the generator belongs to, and runs `postOpenReviewNotes` (`packages/core/src/op/activities/review-agent.ts`). For each open merge request into the trigger's branches whose newest pipeline's review job succeeded, it reads `review.json` from that job's artifacts as data, with the same field checks as `postReviewNote`, and posts or updates the Op's note. The head the note records is the one GitLab names for the merge request.
+
+Set the project up once:
+
+1. Add `CHANT_FORGE_TOKEN` under Settings > CI/CD > Variables as a project or group access token with the `api` scope, and mark it protected and masked. A protected variable reaches only pipelines of protected branches and tags, so no merge request pipeline gets it. Keep the default branch protected.
+2. Create a Pipeline Schedule on the default branch (Settings > CI/CD > Schedules, or Build > Pipeline schedules) with the variable `CHANT_REVIEW_NOTES` set to `1`. Every 5 or 10 minutes is a common choice. A person can also start a pipeline of the default branch with that variable, or a pipeline trigger can.
+3. Leave `GITLAB_TOKEN` and `CHANT_GITLAB_TOKEN` unset, or protected too. The review job unsets them, but an unprotected token still reaches every other job of a merge request pipeline.
+
+A review shows up on the merge request when the next scheduled pipeline runs after the review job succeeds. A note that already says the same is left alone, so a schedule that runs often edits nothing.
 
 Forgejo's runner ignores `permissions:`, so the dialect drops them. The step still starts without the token variables, which covers a runner that puts its token in a step's environment.
 

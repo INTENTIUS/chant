@@ -103,6 +103,15 @@
  * internal and always wins at the job over a same-named spec entry, so a
  * caller cannot point the gate block somewhere the `artifacts:` declaration
  * beside it does not also point.
+ *
+ * `reviewAgent` (#4544) splits the review in two, as on GitHub and Forgejo,
+ * with GitLab's own shape (`./review-jobs.ts`). The review job runs in the
+ * merge request pipeline, unsets every forge token variable and keeps the
+ * review as its artifact. Its note job runs in a pipeline of the default
+ * branch that a schedule starts with `CHANT_REVIEW_NOTES` set to `1`, checks
+ * nothing out and posts each open merge request's review with the protected
+ * `CHANT_FORGE_TOKEN`. The header says to create that schedule and protect
+ * the token.
  */
 
 import {
@@ -129,6 +138,7 @@ import type {
 } from "@intentius/chant/lexicon";
 
 import { emitGitlabFile } from "./ci-jobs";
+import { assertReviewSplit, GITLAB_REVIEW_NOTES_VAR, gitlabReviewJobs, REVIEW_DIR, reviewNoteJobName } from "./review-jobs";
 
 export type { GenerateGitlabOpOptions, GenerateGitlabOpResult };
 
@@ -199,24 +209,6 @@ function assertTriggerSupportsMode(name: string, mode: OpFindingMode, trigger: O
       `request that triggered the run, but its trigger is "${trigger.kind}". A ${trigger.kind} pipeline has ` +
       `no merge request to post on. Give it a { kind: "pull_request" } trigger, or use findingMode "issue" ` +
       `or "merge-request".`,
-  );
-}
-
-/**
- * Refuse `reviewAgent` (#4326). The split posts the review from a second job
- * that holds the forge write token, and a GitLab merge request pipeline hands
- * every job the project's unprotected CI/CD variables, the review job's
- * included. A token protected enough to stay out of it is not available to a
- * job of that pipeline either, so the post has to start from a pipeline of
- * the default branch, which this generator does not build. The refusal names
- * the Op and the way out rather than emitting a review job that holds the token.
- */
-function assertNoReviewSplit(spec: ScheduledOpSpec): void {
-  if (!spec.reviewAgent) return;
-  throw new Error(
-    `Scheduled Op "${spec.name}" sets reviewAgent, which keeps the model's job free of the forge write token and posts the note from a second job. ` +
-      `A GitLab merge request pipeline hands every job the project's unprotected variables, so the gitlab generator does not build that split. ` +
-      `Drop reviewAgent and run the review with findingMode "comment" (the model command still runs with a cleared environment), or generate this Op for GitHub or Forgejo.`,
   );
 }
 
@@ -303,6 +295,9 @@ export function generateGitlabOpPipeline(
 
   const opLines: string[] = [];
   let anyCron = false;
+  let anyReview = false;
+  // The note job of each split review (#4544), emitted after the Op jobs.
+  const noteJobs: string[] = [];
 
   for (const spec of ops) {
     const subject = `Scheduled Op "${spec.name}"`;
@@ -311,12 +306,21 @@ export function generateGitlabOpPipeline(
     const findingMode = spec.findingMode ?? "report";
     const trigger = resolveOpTrigger(spec);
     assertTriggerSupportsMode(spec.name, findingMode, trigger);
-    assertNoReviewSplit(spec);
+    // A split review (#4544): the merge request pipeline runs the model with no forge token, and a pipeline of the default branch posts.
+    const split = spec.reviewAgent === true;
+    if (split) assertReviewSplit(spec.name, trigger, findingMode, spec.permissions);
     if (trigger.kind === "cron") anyCron = true;
 
     const jobName = jobPrefix + ciJobName(spec.name);
     jobs.push({ jobName, op: spec.name, trigger, findingMode });
     opLines.push(headerLineFor(spec, trigger, jobName, findingMode));
+    if (split) {
+      anyReview = true;
+      opLines.push(
+        `#     reviewAgent: the review job holds no forge token and keeps its review as an artifact; ${reviewNoteJobName(jobName)} posts it` +
+          ` from a pipeline of the default branch started with ${GITLAB_REVIEW_NOTES_VAR}="1"`,
+      );
+    }
     if (spec.environment) {
       assertGitlabEnvironment(spec.name, spec.environment);
       opLines.push(environmentLine(spec.environment));
@@ -340,6 +344,27 @@ export function generateGitlabOpPipeline(
       ...(gated ? { [GATE_SUMMARY_VAR]: gateSummary } : {}),
     };
 
+    const rulesFor = changes && trigger.kind !== "cron" ? rules.map((r) => ({ ...r, changes })) : rules;
+    if (split) {
+      const { review, note } = gitlabReviewJobs({
+        name: spec.name,
+        jobName,
+        stage,
+        image,
+        rules: rulesFor,
+        script: [...cdLine, ...setupScript, ...beforeScript, invocation.join(" "), ...extraScript],
+        ...(spec.variables ? { variables: spec.variables } : {}),
+        ...(idTokens ? { idTokens } : {}),
+        artifactDir: member ? memberRepoPath(member, REVIEW_DIR) : REVIEW_DIR,
+        ...(trigger.kind === "pull_request" && trigger.branches?.length ? { branches: trigger.branches } : {}),
+      });
+      doc[jobName] = { ...review, ...(spec.environment ? { environment: environmentDoc(spec.environment) } : {}) };
+      const noteName = reviewNoteJobName(jobName);
+      doc[noteName] = note;
+      noteJobs.push(noteName);
+      continue;
+    }
+
     doc[jobName] = {
       stage,
       image,
@@ -349,7 +374,7 @@ export function generateGitlabOpPipeline(
       ...(idTokens ? { id_tokens: idTokens } : {}),
       ...(spec.environment ? { environment: environmentDoc(spec.environment) } : {}),
       ...nonEmpty("variables", jobVariables),
-      rules: changes && trigger.kind !== "cron" ? rules.map((r) => ({ ...r, changes })) : rules,
+      rules: rulesFor,
       script: [...cdLine, ...setupScript, ...beforeScript, invocation.join(" "), ...extraScript],
       // `when: always` because the run this publishes for is the green one: a
       // gated apply succeeds, and the block is the only thing that says a
@@ -375,10 +400,20 @@ export function generateGitlabOpPipeline(
       "# that job runs on that schedule.",
     );
   }
+  if (anyReview) {
+    headerLines.push(
+      "#",
+      "# A reviewAgent Op's note job posts from a pipeline of the default branch,",
+      `# never from the merge request's own. Create a Pipeline Schedule on the`,
+      `# default branch with ${GITLAB_REVIEW_NOTES_VAR}="1", and make CHANT_FORGE_TOKEN`,
+      "# (a token with the api scope) a protected, masked CI/CD variable so no",
+      "# merge request pipeline gets it.",
+    );
+  }
   headerLines.push("#", ...opLines);
 
   const yaml = emitGitlabFile(
-    [["stages", doc.stages], ...(doc.variables ? [["variables", doc.variables] as const] : []), ...jobs.map(({ jobName }) => [jobName, doc[jobName]] as const)],
+    [["stages", doc.stages], ...(doc.variables ? [["variables", doc.variables] as const] : []), ...jobs.map(({ jobName }) => [jobName, doc[jobName]] as const), ...noteJobs.map((name) => [name, doc[name]] as const)],
     headerLines,
   );
 

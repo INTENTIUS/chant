@@ -30,6 +30,18 @@ The table is printed from `SECURITY_FEATURES` in `packages/core/src/workspace/se
 | Plan steps hold no forge token | on: the plan job's contract, a listed exception | regenerate the pipeline | none | none |
 | Separate plan and apply cloud identities | off: no job requests an OIDC token | `ci.identity.cloud` | none | none |
 
+## Forge tokens on each forge
+
+A job that runs the change's code holds no forge write token, and the job that posts runs code from the target branch only. Each forge keeps them apart its own way.
+
+| Job | GitHub | Forgejo | GitLab |
+|---|---|---|---|
+| Plan | the plan step starts without the token variables | the same, and `permissions:` dropped since the runner ignores it | a merge request pipeline job that unsets the token variables, with the token a protected variable it never gets |
+| Plan note | a job of the same workflow posts from the plan's outputs | as GitHub | the `plan-note` job, in a pipeline of the target branch started with `CHANT_PLAN_NOTES=1` |
+| Review agent (`reviewAgent: true`) | the review job holds `contents: read`; `<op>-note` posts with `pull-requests: write` | as GitHub, with the token variables unset in the review job | the review job runs in the merge request pipeline and keeps its review as an artifact; `<op>-note` posts from a pipeline of the default branch started with `CHANT_REVIEW_NOTES=1` |
+
+The review agent's split is described in [Review a pull request with a model](/chant/guide/review-agent/#keep-the-model-away-from-the-forge-token).
+
 ## Groups
 
 | Group | Check | How-to |
