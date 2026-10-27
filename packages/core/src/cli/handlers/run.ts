@@ -35,6 +35,7 @@ import { maybePersistBuildManifest } from "../../components/manifest-persistence
 import { failedRunExitCode, type DriverComponentResult } from "../../components/driver";
 import { isComponentList, type ComponentRunPlan, type RunComponentsResult } from "../../components/cli-support";
 import { parseComponentTargets } from "../../components/capability";
+import { adoptionReview, loadDeployAdoption, type DeployAdoption } from "../../components/adoption";
 import { isApplyRecord, resolveCiRun, type ReleaseRecord, type RunOrigin } from "../../lifecycle/release-ledger";
 import { gateAdmission, gateApprover } from "../../components/promote";
 import { runOpGenerate } from "./run-generate";
@@ -1211,11 +1212,34 @@ async function runComponentSelection(ctx: CommandContext): Promise<number> {
     console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
     return 1;
   }
+  // #4537: `--adopt <file>`, the resources the component's deploy step adopts into its stack.
+  let adoption: DeployAdoption | undefined;
+  if (ctx.args.adopt) {
+    const refused = adoptRefusal(selector, runtime.name);
+    if (refused) {
+      console.error(formatError(refused));
+      return 1;
+    }
+    try {
+      adoption = {
+        ...(await loadDeployAdoption(ctx.args.adopt, { cwd: projectPath })),
+        review: adoptionReview({
+          yes: ctx.args.yes === true,
+          write: (line) => console.error(line),
+          ...(process.stdin.isTTY && !ctx.args.yes ? { ask: promptYesNo } : {}),
+        }),
+      };
+    } catch (err) {
+      console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+      return 1;
+    }
+  }
   let result: RunComponentsResult;
   try {
     result = await runtime.runComponents(projectPath, selector, {
       env: ctx.args.env,
       ...(targets ? { targets } : {}),
+      ...(adoption ? { adoption } : {}),
       componentOutputs: seededOutputs,
       onProgress,
       ...(events ? { onRunEvent: events.emit } : {}),
@@ -1247,6 +1271,12 @@ async function runComponentSelection(ctx: CommandContext): Promise<number> {
 
   if (result.run) {
     if (ctx.args.json) renderDriverJson(result.run); else renderDriverHuman(result.run);
+  }
+
+  // #4537: how the adoption ended, after the run's own render, and a run in which no step took it.
+  if (adoption) {
+    const notTaken = renderAdoptionOutcome(adoption, selector);
+    if (notTaken && result.success) return 1;
   }
 
   // Gated (#2119): the same fact-and-stop the Op path takes, and the same
@@ -1319,6 +1349,56 @@ async function runComponentSelection(ctx: CommandContext): Promise<number> {
   // (#3997). `--gated-exit` doesn't remap it: the run failed.
   if (result.success) return 0;
   return result.run ? failedRunExitCode(result.run.results) : 1;
+}
+
+/** Why `run --components <selector> --adopt` cannot run here, or `undefined` (#4537). */
+export function adoptRefusal(selector: string, runtime: string): { message: string; hint: string } | undefined {
+  if (selector === "all" || isComponentList(selector)) {
+    return {
+      message: `--adopt adopts into one component's stack; name one component, not ${selector === "all" ? "all" : "a list"}`,
+      hint: "chant run --components <name> --env <env> --adopt <adoption-file>",
+    };
+  }
+  if (runtime !== "local") {
+    return { message: `--adopt runs on the built-in local runtime only, not "${runtime}"`, hint: "Omit --on, or pass --on local." };
+  }
+  return undefined;
+}
+
+/**
+ * Print how a `--adopt` run's adoption ended (#4537). Returns true when no
+ * deploy step took the adoption, which the command treats as a failure.
+ */
+function renderAdoptionOutcome(adoption: DeployAdoption, selector: string): boolean {
+  const outcome = adoption.outcome;
+  if (!outcome) {
+    console.error(formatError({
+      message: `--adopt: no deploy step of "${selector}" took the adoption, so nothing was adopted`,
+      hint: "Adoption runs in a cfn-deploy step (the aws lexicon). Check the component deploys a CloudFormation stack.",
+    }));
+    return true;
+  }
+  const head = `adoption into ${outcome.member}: ${outcome.status}${outcome.step && outcome.status !== "adopted" ? ` at the ${outcome.step} step` : ""}`;
+  console.error(outcome.status === "adopted" ? formatSuccess(head) : formatWarning({ message: head }));
+  for (const line of outcome.lines) console.error(`  ${line}`);
+  return false;
+}
+
+/** Ask a yes/no question on the terminal; anything but y or yes, and EOF, is no. */
+async function promptYesNo(question: string): Promise<boolean> {
+  const { createInterface } = await import("node:readline");
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
+  return new Promise((resolvePrompt) => {
+    let answered = false;
+    rl.question(question, (answer) => {
+      answered = true;
+      resolvePrompt(/^y(es)?$/i.test(answer.trim()));
+      rl.close();
+    });
+    rl.on("close", () => {
+      if (!answered) resolvePrompt(false);
+    });
+  });
 }
 
 /**

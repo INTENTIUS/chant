@@ -157,6 +157,13 @@ export interface CloudFormationClient {
    * change to an export is in use, and refuses nothing.
    */
   listImports?(exportName: string): Promise<string[]>;
+  /**
+   * The logical ids of the stack's resources now (`ListStackResources`,
+   * #4537), sorted; empty when the stack does not exist. Adoption refuses a
+   * resource already in the stack. Optional: a client without it cannot
+   * adopt.
+   */
+  listStackResources?(stackName: string): Promise<string[]>;
 }
 
 // ── ECS ──────────────────────────────────────────────────────────────────��─
@@ -693,6 +700,24 @@ const realCloudFormation: CloudFormationClient = {
       token = page.NextToken;
     } while (token);
     return [...new Set(stacks)].sort();
+  },
+  async listStackResources(stackName) {
+    const ids: string[] = [];
+    let token: string | undefined;
+    do {
+      let stdout: string;
+      try {
+        ({ stdout } = await run(`aws cloudformation list-stack-resources --stack-name ${q(stackName)}${token ? ` --next-token ${q(token)}` : ""}`));
+      } catch (err) {
+        // A stack that does not exist yet holds nothing; the IMPORT change set creates it.
+        if (/does not exist/i.test(err instanceof Error ? err.message : String(err))) return [];
+        throw err;
+      }
+      const page = JSON.parse(stdout) as { StackResourceSummaries?: Array<{ LogicalResourceId: string }>; NextToken?: string };
+      ids.push(...(page.StackResourceSummaries ?? []).map((r) => r.LogicalResourceId));
+      token = page.NextToken;
+    } while (token);
+    return [...new Set(ids)].sort();
   },
   async waitForStack(stackName, opts) {
     const intervalMs = opts?.intervalMs ?? 10_000;

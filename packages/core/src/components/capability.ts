@@ -15,6 +15,7 @@
 import type { PlanShape } from "./covered-round";
 import type { ReleaseIdentity } from "../telemetry-attribution";
 import type { ChangeSetPart } from "../change-set";
+import type { DeployAdoption } from "./adoption";
 
 /**
  * Ambient information a capability's `run`/`rollback` receives, independent of
@@ -81,6 +82,15 @@ export interface DeployContext {
    * component refuses before anything plans or runs. Absent: the whole step.
    */
   targets?: string[];
+  /**
+   * `--adopt <adoption-file>` (#4537): the resources to adopt into this
+   * component's stack, the index version they come from, and the review
+   * every change set the adoption makes goes through before it executes. A
+   * deploy step that can adopt takes it by setting `outcome`; a step that
+   * cannot ignores it, and the command refuses a run no step took it in.
+   * Absent: a plain deploy. See ./adoption.ts.
+   */
+  adoption?: DeployAdoption;
 }
 
 /**
