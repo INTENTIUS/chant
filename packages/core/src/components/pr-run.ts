@@ -461,6 +461,8 @@ export async function decidePrGate(
     op: input.op,
     gate: input.gate,
     planDigest: input.digest,
+    // #4551: the gate's digest is the change set's, so the fact cites it as readers expect.
+    fields: { changeSet: input.digest },
     ...(input.description ? { description: input.description } : {}),
     ...(input.now ? { now: input.now } : {}),
   });

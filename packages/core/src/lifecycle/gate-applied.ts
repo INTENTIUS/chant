@@ -70,6 +70,12 @@ export interface FinishedGateRecord {
   applied: string;
   result: "applied" | "failed";
   timestamp: string;
+  /**
+   * A product's flat facts about the finished apply (#4551), such as a gated
+   * export's content digest or the version ids before and after. Never a
+   * state's contents.
+   */
+  detail?: Record<string, string | number | boolean>;
 }
 
 /** Where the applied lines of `op` live on `chant/lifecycle`: the directory and the file, as `writeBlobToPath` takes them. */

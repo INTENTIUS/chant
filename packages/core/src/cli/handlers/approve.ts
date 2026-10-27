@@ -462,6 +462,9 @@ export async function recordGateApproval(
   // approval of another plan names none, and no release gate counts it.
   const releaseDigest =
     standing?.releaseDigest !== undefined && samePlanDigest(planDigest, standing.planDigest) ? standing.releaseDigest : undefined;
+  // #4551: and the change set the fact cites, so the approval names the plans it was asked for.
+  const changeSet =
+    standing?.changeSet !== undefined && samePlanDigest(planDigest, standing.planDigest) ? standing.changeSet : undefined;
   // #4033 (ws-105): a release gate whose release was cut from a revoked
   // commit is superseded. Its promote refuses the release, so an approval of
   // it would count for nothing; refuse it here, whatever plan is named.
@@ -684,6 +687,7 @@ export async function recordGateApproval(
     ...(checkpointDigest !== undefined ? { checkpointDigest } : {}),
     ...(environment !== undefined ? { environment } : {}),
     ...(releaseDigest !== undefined ? { releaseDigest } : {}),
+    ...(changeSet !== undefined ? { changeSet } : {}),
     // #4020: the commit and run the gate waited on, off the fact this approves.
     ...(standing?.gitSha ? { gitSha: standing.gitSha } : {}),
     ...(standing?.runId ? { runId: standing.runId } : {}),

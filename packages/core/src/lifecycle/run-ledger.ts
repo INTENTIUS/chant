@@ -38,7 +38,7 @@ import { randomUUID } from "node:crypto";
 import { sortedJsonReplacer } from "../utils";
 import type { OpConfig } from "../op/types";
 import type { StepRecord } from "../op/local-executor";
-import { opRunFailureOf, type OpRunRecord, type OpRunRecordInput, type OpRunPhaseRecord, type OpRunStepRecord } from "../op/runtime";
+import { opRunFailureOf, opRunWaveOf, type OpRunRecord, type OpRunRecordInput, type OpRunPhaseRecord, type OpRunStepRecord } from "../op/runtime";
 import { readBlobFromPath, readPathSha, readBlobBySha, writeBlobToPath, RefCASConflictError, type LedgerLocation } from "./git";
 
 /** Prefix folding the per-op run ledgers into one flat name under `<env>/`. See the module doc. */
@@ -242,6 +242,12 @@ export function parseRunLedger(content: string): { records: OpRunRecord[]; malfo
         const failure = opRunFailureOf(parsed.failure);
         if (failure) parsed.failure = failure;
         else delete parsed.failure;
+      }
+      // #4551: and so is a `wave` that is not one.
+      if ("wave" in parsed) {
+        const wave = opRunWaveOf(parsed.wave);
+        if (wave) parsed.wave = wave;
+        else delete parsed.wave;
       }
       records.push(parsed as OpRunRecord);
     } catch {

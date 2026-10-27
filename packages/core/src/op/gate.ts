@@ -32,6 +32,8 @@
  * decision without an orphan branch on disk.
  */
 
+import type { ChangeSetDocument } from "../change-set";
+import { persistChangeSet } from "../lifecycle/change-set-store";
 import {
   appendGateResolution,
   appendPendingGate,
@@ -124,6 +126,13 @@ export interface GateLedgerPort {
   writeCheckpoint?(checkpoint: GateCheckpoint): Promise<void>;
   /** The text of a run's checkpoint, or null when there is none (#3947). */
   readCheckpoint?(op: string, runId: string): Promise<string | null>;
+  /**
+   * Store a change-set document under its digest in `_change-sets/`
+   * (#4551), before the pending fact that cites it as `changeSet`. Throws for
+   * a document that is not one or does not hash to its digest. Absent on a
+   * port that keeps none, and the fact then cites none.
+   */
+  storeChangeSet?(doc: ChangeSetDocument): Promise<void>;
 }
 
 /** A workspace's rule for which approvals of a gate count (#3163): a signed approval, from a class when it names one. */
@@ -190,6 +199,10 @@ export function gitGateLedgerPort(opts?: { cwd?: string }): GateLedgerPort {
     async readCheckpoint(op, runId) {
       await requireLifecycleLedger(opts);
       return readGateCheckpointText(op, runId, opts);
+    },
+    async storeChangeSet(doc) {
+      // Pushed with the pending fact that cites it.
+      await persistChangeSet(doc, opts);
     },
     async readApplied(op) {
       await requireLifecycleLedger(opts);

@@ -9,6 +9,8 @@
 
 import type { PrForge } from "../pr-forge";
 import type { PrEnvPorts } from "./pr-env-run";
+import type { GateApprovalSource } from "../op/op-waves";
+import type { GateSigners } from "../lifecycle/gate-seal";
 import {
   PR_ENV_LEDGER_DIR,
   PR_ENV_LEDGER_FILE,
@@ -50,7 +52,21 @@ export function forgePrEnvPublisher(forge: PrForge, warn: (message: string) => v
  * ledger read without writing a pending fact. With `forge`, the note and
  * status are posted and the sweep asks it whether a pull request is open.
  */
-export function lifecyclePrEnvPorts(opts: { cwd?: string; forge?: PrForge; log?: (line: string) => void; warn?: (message: string) => void } = {}): PrEnvPorts {
+export function lifecyclePrEnvPorts(
+  opts: {
+    cwd?: string;
+    forge?: PrForge;
+    log?: (line: string) => void;
+    warn?: (message: string) => void;
+    /**
+     * Which approvals of the `pr-env` gate count (#4551), for a product whose
+     * gate is `sealed`: decided with `decideGateApproval` under `mode`, with
+     * `signers` the signers at base. Absent, any approval of the digest on the
+     * ledger counts, as before.
+     */
+    approval?: { mode: GateApprovalSource; signers?: GateSigners };
+  } = {},
+): PrEnvPorts {
   const at = opts.cwd ? { cwd: opts.cwd } : undefined;
   const warn = opts.warn ?? (() => {});
   const forge = opts.forge;
@@ -61,10 +77,11 @@ export function lifecyclePrEnvPorts(opts: { cwd?: string; forge?: PrForge; log?:
       return parsePrEnvRecords(await readBlobFromPath(PR_ENV_LEDGER_DIR, PR_ENV_LEDGER_FILE, at));
     },
     async appendRecord(record) {
-      const { appendLedgerLine, fetchLifecycle, pushLifecycleReport } = await import("../lifecycle/git");
+      const { fetchLifecycle, pushLifecycleReport } = await import("../lifecycle/git");
+      const { appendPrEnvRecord } = await import("./pr-env-ledger");
       try {
         await fetchLifecycle(at).catch(() => false);
-        await appendLedgerLine(PR_ENV_LEDGER_DIR, PR_ENV_LEDGER_FILE, JSON.stringify(record), `Pull request environment ${record.env} ${record.kind} (${record.result})`, at);
+        await appendPrEnvRecord(record, at);
         const pushed = await pushLifecycleReport(at);
         if (pushed.pushWarning) warn(pushed.pushWarning);
       } catch (err) {
@@ -72,8 +89,16 @@ export function lifecyclePrEnvPorts(opts: { cwd?: string; forge?: PrForge; log?:
       }
     },
     async decideGate(input) {
-      const { approvalOf, decidePrGate, readOnlyLedger } = await import("./pr-run");
       const { gitGateLedgerPort } = await import("../op/gate");
+      if (opts.approval) {
+        // #4551: the product's approval mode, decided as chant decides any plan-bound gate.
+        const { decideGateApproval } = await import("../gate-decision");
+        const ledger = await gitGateLedgerPort(at).read(input.op);
+        const decided = decideGateApproval({ ledger, gate: input.gate, planDigest: input.digest, mode: opts.approval.mode, ...(opts.approval.signers ? { signers: opts.approval.signers } : {}) });
+        if (decided.status === "approved") return { status: "approved", ...(decided.via === "ledger" ? { approvedBy: [decided.resolution.resolvedBy] } : {}) };
+        return { status: decided.mismatched ? "changed" : "pending" };
+      }
+      const { approvalOf, decidePrGate, readOnlyLedger } = await import("./pr-run");
       const approval = approvalOf(await decidePrGate(readOnlyLedger(gitGateLedgerPort(at)), input));
       return { status: approval.status, ...(approval.approvedBy ? { approvedBy: approval.approvedBy } : {}) };
     },

@@ -21,6 +21,7 @@ import type { StepRecord, OpRunResult } from "./local-executor";
 import type { WaitingPoint } from "./steward-points";
 import type { GateResolutionRecord } from "../lifecycle/gate-ledger";
 import type { RunOrigin } from "../lifecycle/release-ledger";
+import { NEXT_RELEASE } from "../release-floors";
 import type { RunComponentsOptions, RunComponentsResult } from "../components/cli-support";
 
 /**
@@ -205,6 +206,53 @@ export interface OpRunRecord {
    * on a run nothing explained.
    */
   failure?: OpRunFailureReason;
+  /**
+   * The op wave job this record is for (#4551): one record per `chant run
+   * wave` job, under the spec's name as `op`. Optional within contract 1,
+   * written by chant {@link OP_WAVE_RUN_RECORD_FLOOR} and newer; absent on
+   * every other run.
+   */
+  wave?: OpRunWave;
+}
+
+/** Which op wave job a run record is for, and how it ended (#4551). */
+export interface OpRunWave {
+  /** The spec's name, as `op` holds it. */
+  spec: string;
+  /** The wave the job was started for, 1-based. */
+  number: number;
+  /** That wave's name. */
+  name: string;
+  /** `wave` for a whole wave, `decide` for a wide wave's deciding job, `share` or `group` for its apply jobs. */
+  job: "wave" | "decide" | "share" | "group";
+  share?: number;
+  group?: string;
+  /** The set digest the job decided or applied under. Jobs of one wave join on it. */
+  digest?: string;
+  /** The job's exit code, as `chant run wave` exited (chant's exit-code table, #4553). */
+  exitCode: number;
+  /** Set when the apply applied nothing and nothing failed: another run held it, or it stood down for a newer one. */
+  outcome?: "held" | "stood-down";
+  applied: string[];
+  failed: string[];
+  /** Runs a share job did not apply because their plan moved since the decision. */
+  moved: string[];
+  /** Runs a failure blocked, each with the run that blocked it. */
+  blocked?: Record<string, string>;
+}
+
+/** The first chant that writes {@link OpRunRecord.wave}, a run record per op wave job (#4551). */
+export const OP_WAVE_RUN_RECORD_FLOOR = NEXT_RELEASE;
+
+/** `value` as an {@link OpRunWave}, or undefined when it is not one, so a reader drops a malformed field and keeps the record. */
+export function opRunWaveOf(value: unknown): OpRunWave | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const v = value as Record<string, unknown>;
+  const names = (x: unknown): x is string[] => Array.isArray(x) && x.every((t) => typeof t === "string");
+  if (typeof v.spec !== "string" || !Number.isInteger(v.number) || typeof v.name !== "string" || !Number.isInteger(v.exitCode)) return undefined;
+  if (v.job !== "wave" && v.job !== "decide" && v.job !== "share" && v.job !== "group") return undefined;
+  if (!names(v.applied) || !names(v.failed) || !names(v.moved)) return undefined;
+  return v as unknown as OpRunWave;
 }
 
 /** Why a run failed, on {@link OpRunRecord.failure} and on the run's `run-settle` event (#4094). */
