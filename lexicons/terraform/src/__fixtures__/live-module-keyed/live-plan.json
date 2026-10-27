@@ -1,0 +1,87 @@
+{
+  "estate": "module-keyed-estate",
+  "choudoufu_version": "",
+  "upstream_version": "1.13.0",
+  "bound": [
+    {
+      "addr": "module.app[0].aws_cloudwatch_log_group.logs",
+      "type": "aws_cloudwatch_log_group",
+      "identity": "/module-keyed-estate/app-0",
+      "identity_values": {
+        "name": "/module-keyed-estate/app-0"
+      },
+      "source": "derived"
+    },
+    {
+      "addr": "module.app[0].aws_eip.pool[0]",
+      "type": "aws_eip",
+      "identity": "eipalloc-0a41c7d2e9b3f5061",
+      "source": "marker"
+    },
+    {
+      "addr": "module.app[0].aws_eip.pool[1]",
+      "type": "aws_eip",
+      "identity": "eipalloc-0b52d8e3fac4061f2",
+      "source": "marker"
+    },
+    {
+      "addr": "module.app[1].aws_eip.pool[0]",
+      "type": "aws_eip",
+      "identity": "eipalloc-0c63e9f40bd5172a3",
+      "source": "marker"
+    },
+    {
+      "addr": "module.app[1].aws_eip.pool[1]",
+      "type": "aws_eip",
+      "identity": "eipalloc-0d74fa051ce6283b4",
+      "source": "marker"
+    }
+  ],
+  "omissions": [
+    {
+      "addr": "module.app[1].aws_cloudwatch_log_group.logs",
+      "reason": "ABSENT",
+      "detail": "The provider reports no aws_cloudwatch_log_group exists with identity \"/module-keyed-estate/app-1\", so this resource has not been created yet. The plan will propose creating it."
+    },
+    {
+      "addr": "module.edge[\"east\"].aws_cloudwatch_log_group.front",
+      "reason": "UNOWNED",
+      "detail": "A live aws_cloudwatch_log_group already exists with identity \"/module-keyed-estate/edge-east\" and carries no tofu-estate marker, so this estate does not own it and the plan proposes creating the resource this configuration declares - which, for a type whose name must be unique, the cloud will refuse while the unowned one holds it. Adopt it by writing tofu-estate=\"module-keyed-estate\" and tofu-address=\"module.edge:east.aws_cloudwatch_log_group.front\" onto it, then re-run; or set policy { declared_untagged = \"adopt\" } in the live block to have this run adopt it for you; or point this resource at a name nobody is using."
+    },
+    {
+      "addr": "module.edge[\"west\"].aws_cloudwatch_log_group.front",
+      "reason": "UNOWNED",
+      "detail": "A live aws_cloudwatch_log_group already exists with identity \"/module-keyed-estate/edge-west\" and carries tofu-estate=\"other-estate\", so it belongs to another estate and nothing in this plan reads, changes or destroys it. Taking it over is something you do deliberately: `live-mv -from-estate=other-estate` rewrites the marker to this estate one address at a time, and `live-import -approve` stamps this estate's markers over the resources a state file lists. Or point this resource at a name nobody is using. See live/MARKERS.md, \"Ownership semantics\"."
+    }
+  ],
+  "unowned": [
+    {
+      "addr": "module.edge[\"east\"].aws_cloudwatch_log_group.front",
+      "type": "aws_cloudwatch_log_group",
+      "identity": "/module-keyed-estate/edge-east",
+      "adopt_tofu_estate": "module-keyed-estate",
+      "adopt_tofu_address": "module.edge:east.aws_cloudwatch_log_group.front"
+    },
+    {
+      "addr": "module.edge[\"west\"].aws_cloudwatch_log_group.front",
+      "type": "aws_cloudwatch_log_group",
+      "identity": "/module-keyed-estate/edge-west",
+      "tofu_estate": "other-estate"
+    }
+  ],
+  "foreign": null,
+  "adoptable": [],
+  "swept": [],
+  "diagnostics": [
+    {
+      "severity": "warning",
+      "summary": "Live resource outside this estate",
+      "detail": "A live aws_cloudwatch_log_group already exists with identity \"/module-keyed-estate/edge-east\" and carries no tofu-estate marker, so this estate does not own it and the plan proposes creating the resource this configuration declares - which, for a type whose name must be unique, the cloud will refuse while the unowned one holds it. Adopt it by writing tofu-estate=\"module-keyed-estate\" and tofu-address=\"module.edge:east.aws_cloudwatch_log_group.front\" onto it, then re-run; or set policy { declared_untagged = \"adopt\" } in the live block to have this run adopt it for you; or point this resource at a name nobody is using."
+    },
+    {
+      "severity": "warning",
+      "summary": "Live resource outside this estate",
+      "detail": "A live aws_cloudwatch_log_group already exists with identity \"/module-keyed-estate/edge-west\" and carries tofu-estate=\"other-estate\", so it belongs to another estate and nothing in this plan reads, changes or destroys it. Taking it over is something you do deliberately: `live-mv -from-estate=other-estate` rewrites the marker to this estate one address at a time, and `live-import -approve` stamps this estate's markers over the resources a state file lists. Or point this resource at a name nobody is using. See live/MARKERS.md, \"Ownership semantics\"."
+    }
+  ]
+}

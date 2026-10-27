@@ -345,10 +345,24 @@ export function classifyStateOwnership(address: string, index: StateIndex): "own
   return index.rows.has(address) ? "owned" : "unknown";
 }
 
+/**
+ * True when `instance` is the module call `address` itself or sits beneath it,
+ * at any instance key. `address` is a declared module address with no keys
+ * (`module.app`, `module.outer.module.inner`); a state or live-plan address
+ * carries them (`module.app[0]`, `module.outer["a"].module.inner[1].aws_eip.x`),
+ * so the keys come off before the prefix test (#4513).
+ */
+function underModule(instance: string, address: string): boolean {
+  const block = blockAddressOf(instance);
+  return block === address || block.startsWith(`${address}.`);
+}
+
 /** True when the state carries at least one resource beneath `module.<name>`. */
 function moduleIsLive(address: string, index: StateIndex): boolean {
-  if (index.modules.has(address)) return true;
-  for (const key of index.rows.keys()) if (key.startsWith(`${address}.`)) return true;
+  // A keyed call's child_modules[] entries are `module.app[0]`, never
+  // `module.app`, and so are its rows' prefixes (#4513).
+  for (const module of index.modules) if (underModule(module, address)) return true;
+  for (const key of index.rows.keys()) if (underModule(key, address)) return true;
   return false;
 }
 
@@ -536,9 +550,9 @@ export function instancesOf(address: string, index: LivePlanIndex): string[] {
 
 /** True when the document names any instance under `module.<name>`, at any depth. */
 function liveModuleMembers(address: string, index: LivePlanIndex): string[] {
-  return index.addresses.filter(
-    (a) => a === address || a.startsWith(`${address}.`) || a.startsWith(`${address}[`),
-  );
+  // Keys stripped first, so a nested call under a keyed one
+  // (`module.outer[0].module.inner["a"].…`) is a member too (#4513).
+  return index.addresses.filter((a) => underModule(a, address));
 }
 
 /** One instance's verdict, before a block aggregates its instances. */
