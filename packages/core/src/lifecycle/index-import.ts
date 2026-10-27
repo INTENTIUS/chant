@@ -70,9 +70,13 @@ export interface IndexImportCodegen {
    * properties a declaration can hold (server-assigned fields left out), or
    * why the node cannot be written. `attributes` are resource-level
    * attributes under the lexicon's own keys (the aws lexicon writes
-   * `DeletionPolicy: Retain` on every imported resource, #4536).
+   * `DeletionPolicy: Retain` on every imported resource, #4536). `notes`
+   * go into the file's header comment after the logical id (the k8s
+   * lexicon names the keys of a Secret it writes as a referenced secret).
    */
-  resource(node: IRNode): { type: string; properties: Record<string, unknown>; attributes?: Record<string, unknown> } | { unsupported: string };
+  resource(
+    node: IRNode,
+  ): { type: string; properties: Record<string, unknown>; attributes?: Record<string, unknown>; notes?: readonly string[] } | { unsupported: string };
   /**
    * `value`, held by another node, as a reference to `target` in this
    * lexicon's IR, or undefined when the value is not one the lexicon can
@@ -335,30 +339,32 @@ function rewriteAtPath(
   return { tree: walk(tree, 0, "") as Record<string, unknown>, changed };
 }
 
-/** Every string leaf, outside `Tags`, as a dotted path (identity-match edges name no path). */
-function stringLeafPaths(tree: unknown, at = ""): string[] {
+/**
+ * A leaf's path: dotted with indices for the report and the header, and as
+ * exact segments for reading and writing it, since a key may hold a dot (a
+ * k8s ConfigMap's `db.password`).
+ */
+interface LeafPath {
+  at: string;
+  parts: Array<string | number>;
+}
+
+const childPath = (p: LeafPath, key: string | number): LeafPath => ({
+  at: typeof key === "number" ? `${p.at}[${key}]` : p.at === "" ? key : `${p.at}.${key}`,
+  parts: [...p.parts, key],
+});
+
+const ROOT: LeafPath = { at: "", parts: [] };
+
+/** Every string leaf, outside `Tags` (identity-match edges name no path). */
+function stringLeafPaths(tree: unknown, at: LeafPath = ROOT): LeafPath[] {
   if (typeof tree === "string") return [at];
-  if (Array.isArray(tree)) return tree.flatMap((v, j) => stringLeafPaths(v, `${at}[${j}]`));
+  if (Array.isArray(tree)) return tree.flatMap((v, j) => stringLeafPaths(v, childPath(at, j)));
   if (tree === null || typeof tree !== "object") return [];
   return Object.keys(tree as Record<string, unknown>)
     .sort(byString)
-    .filter((k) => !(at === "" && (k === "Tags" || k === "tags")))
-    .flatMap((k) => stringLeafPaths((tree as Record<string, unknown>)[k], at === "" ? k : `${at}.${k}`));
-}
-
-/** A path with explicit indices (`a[2].b`) as readPath/rewriteAtPath segments over one leaf. */
-function exactPathParts(path: string): Array<string | number> {
-  const out: Array<string | number> = [];
-  for (const seg of path.split(".")) {
-    const m = /^([^[]*)((?:\[\d+\])*)$/.exec(seg);
-    if (!m) {
-      out.push(seg);
-      continue;
-    }
-    if (m[1] !== "") out.push(m[1]);
-    for (const idx of m[2].matchAll(/\[(\d+)\]/g)) out.push(Number(idx[1]));
-  }
-  return out;
+    .filter((k) => !(at.parts.length === 0 && (k === "Tags" || k === "tags")))
+    .flatMap((k) => stringLeafPaths((tree as Record<string, unknown>)[k], childPath(at, k)));
 }
 
 function setExact(tree: unknown, parts: ReadonlyArray<string | number>, value: unknown): unknown {
@@ -384,14 +390,14 @@ function getExact(tree: unknown, parts: ReadonlyArray<string | number>): unknown
   return cur;
 }
 
-/** Every masked leaf, as a dotted path with indices, in key order. */
-function maskedPaths(tree: unknown, at = ""): string[] {
+/** Every masked leaf, in key order. */
+function maskedPaths(tree: unknown, at: LeafPath = ROOT): LeafPath[] {
   if (tree === MASKED) return [at];
-  if (Array.isArray(tree)) return tree.flatMap((v, j) => maskedPaths(v, `${at}[${j}]`));
+  if (Array.isArray(tree)) return tree.flatMap((v, j) => maskedPaths(v, childPath(at, j)));
   if (tree === null || typeof tree !== "object") return [];
   return Object.keys(tree as Record<string, unknown>)
     .sort(byString)
-    .flatMap((k) => maskedPaths((tree as Record<string, unknown>)[k], at === "" ? k : `${at}.${k}`));
+    .flatMap((k) => maskedPaths((tree as Record<string, unknown>)[k], childPath(at, k)));
 }
 
 function identityOf(doc: IndexDocument, node: IRNode): IndexImportResourceReport["identity"] {
@@ -442,7 +448,14 @@ export function planIndexImport(
     .sort((a, b) => byString(`${a.from}\u0000${a.rule ?? ""}\u0000${a.to}`, `${b.from}\u0000${b.rule ?? ""}\u0000${b.to}`));
 
   const reports = new Map<string, IndexImportResourceReport>();
-  const writable: Array<{ node: IRNode; codegen: IndexImportCodegen; type: string; properties: Record<string, unknown>; attributes?: Record<string, unknown> }> = [];
+  const writable: Array<{
+    node: IRNode;
+    codegen: IndexImportCodegen;
+    type: string;
+    properties: Record<string, unknown>;
+    attributes?: Record<string, unknown>;
+    notes?: readonly string[];
+  }> = [];
   for (const node of nodes) {
     if (!nodeSelected(node, sel)) continue;
     const doc = docOf.get(node.id)!;
@@ -479,7 +492,14 @@ export function planIndexImport(
       continue;
     }
     reports.set(node.id, { ...base, status: "imported" });
-    writable.push({ node, codegen: lexicon.indexImport, type: r.type, properties: r.properties, ...(r.attributes ? { attributes: r.attributes } : {}) });
+    writable.push({
+      node,
+      codegen: lexicon.indexImport,
+      type: r.type,
+      properties: r.properties,
+      ...(r.attributes ? { attributes: r.attributes } : {}),
+      ...(r.notes && r.notes.length > 0 ? { notes: r.notes } : {}),
+    });
   }
 
   // Groups: lexicon + location. Global nodes join their lexicon's only regional group, when there is one.
@@ -522,6 +542,7 @@ export function planIndexImport(
       report.group = dir;
       let props = w.properties;
       const references: IndexImportReference[] = [];
+      for (const note of w.notes ?? []) header.push(`${logicalId}: ${note}`);
 
       for (const e of edges.filter((x) => x.from === w.node.id)) {
         const target = nodeById.get(e.to);
@@ -569,13 +590,12 @@ export function planIndexImport(
           changed.push(...r.changed);
         } else {
           for (const leaf of stringLeafPaths(props)) {
-            const parts = exactPathParts(leaf);
-            const v = getExact(props, parts);
+            const v = getExact(props, leaf.parts);
             if (typeof v !== "string") continue;
             const ref = w.codegen.reference(v, t);
             if (ref === undefined) continue;
-            props = setExact(props, parts, ref) as Record<string, unknown>;
-            changed.push(leaf);
+            props = setExact(props, leaf.parts, ref) as Record<string, unknown>;
+            changed.push(leaf.at);
           }
         }
         if (changed.length === 0) {
@@ -586,12 +606,12 @@ export function planIndexImport(
       }
 
       const params: string[] = [];
-      for (const at of maskedPaths(props)) {
+      for (const { at, parts } of maskedPaths(props)) {
         let name = `${logicalId}${pascalWords(at)}`;
         for (let i = 2; usedParams.has(name); i++) name = `${logicalId}${pascalWords(at)}${i}`;
         usedParams.add(name);
         parameters.push(w.codegen.secretParameter(name, { node: w.node, logicalId, path: at }));
-        props = setExact(props, exactPathParts(at), w.codegen.parameterReference(name)) as Record<string, unknown>;
+        props = setExact(props, parts, w.codegen.parameterReference(name)) as Record<string, unknown>;
         params.push(name);
         parameterReports.push({ name, node: w.node.id, path: at, group: dir });
         header.push(`${logicalId}.${at} was masked in the index; fill in the parameter ${name}`);

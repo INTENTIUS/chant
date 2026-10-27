@@ -102,11 +102,31 @@ Name what to import. `--type` and `--name` take comma-separated lists of types a
 
 How each resource is written:
 
-- Each node goes through its lexicon's `indexImport` seam and then its `templateGenerator()`, the same codegen a template import uses. The aws lexicon has the seam. Any other node is reported as unsupported and written nowhere.
+- Each node goes through its lexicon's `indexImport` seam and then its `templateGenerator()`, the same codegen a template import uses. The aws and k8s lexicons have the seam. Any other node is reported as unsupported and written nowhere.
 - A node the project already declares is reported as declared with the entity's name. It is not imported again. The identity matcher decides this.
 - A derived edge becomes a reference when its target is imported into the same file. In aws this is `Ref` when the value is the target's identifier, and `GetAtt(..., "Arn")` when it is the target's ARN. Otherwise the value stays a literal, and a comment at the top of the file names the edge and why.
-- A value the index masked is never written. Each one becomes a parameter to fill in. The aws lexicon writes a `String` parameter with `NoEcho`.
-- Read-only properties are left out. The aws lexicon also leaves out tags whose key starts with `aws:`.
+- A value the index masked is never written. Each one becomes a parameter to fill in. The aws lexicon writes a `String` parameter with `NoEcho`. Kubernetes has no parameters; see [Masked values in k8s](#masked-values-in-k8s).
+- Read-only properties are left out. The aws lexicon also leaves out tags whose key starts with `aws:`. In k8s, whatever the API server writes is left out. That covers `status` and the uid, and also server-assigned fields such as a Service's `clusterIP`. Values equal to the server's defaults go too. So do chant's ownership labels, since the build writes them again.
+- In k8s, an object with `metadata.ownerReferences` is refused, because its controller makes it. Import the owner instead. Events and service account token Secrets are refused too.
+- A k8s reference stays a literal name, which is how one object names another in Kubernetes.
+
+### Masked values in k8s
+
+The index masks every value of a Secret's `data` and `stringData`. Such a Secret is written as a referenced secret:
+
+```ts
+import { declareSecret } from "@intentius/chant";
+
+export const SecretDbCredentials = declareSecret({
+  name: "db-credentials",
+  provenance: "referenced",
+  scope: "shop",
+});
+```
+
+The build writes no Secret for it. The Secret stays in the cluster and you supply it out of band. A sops file declared as `committed-encrypted` is one way to do that. The header comment names the Secret's type and key names, and no value is written.
+
+Any other masked value is read from an environment variable when you build. This covers a ConfigMap key such as `db.password`, which is masked by its name. The generated file calls `maskedValue("CONFIG_MAP_APP_DATA_DB_PASSWORD")`, and the variable is the parameter's name in upper snake case. The build fails when the variable is unset. A value that starts with `{` or `[` is parsed as JSON, for an object the index masked whole.
 
 Resources of one lexicon and one region go in one directory. A global resource, such as an IAM role, joins the only region when there is one. With one group the files go straight into the output directory. With several, each group gets `<lexicon>/<location>/`.
 

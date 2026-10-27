@@ -151,6 +151,20 @@ describe("planIndexImport", () => {
     expect(indexImportHeader(plan, g)).toContain(`fill in the parameter ${lid}Password`);
   });
 
+  test("a masked value under a key that holds a dot is replaced at that key (#4538)", () => {
+    const cm = node("Fake::Map", "r1", "map-1", { Data: { "db.host": "h", "db.password": MASKED } });
+    const one = planIndexImport([docOf([cm], [])], { all: true }, LEX);
+    const lid = one.report.resources[0].logicalId!;
+    expect(one.groups[0].ir.resources[0].properties).toEqual({ Data: { "db.host": "h", "db.password": { param: `${lid}DataDbPassword` } } });
+    expect(one.report.parameters.map((p) => p.path)).toEqual(["Data.db.password"]);
+  });
+
+  test("a codegen's notes go into the header after the logical id (#4538)", () => {
+    const noting: IndexImportCodegen = { ...fake, resource: (n) => ({ type: n.kind, properties: n.attrs, notes: ["supplied out of band"] }) };
+    const one = planIndexImport([docOf([net], [])], { all: true }, [{ name: "fake", indexImport: noting }]);
+    expect(one.groups[0].header).toEqual([`${one.report.resources[0].logicalId}: supplied out of band`]);
+  });
+
   test("an edge into another group stays a literal, and the header names the edge", () => {
     const g2 = plan.groups.find((x) => x.location === "r2")!;
     const farIr = g2.ir.resources[0];

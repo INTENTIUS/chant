@@ -30,6 +30,8 @@ import { K8sParser } from "./import/parser";
 import { K8sGenerator } from "./import/generator";
 import { k8sDeepNormalizationHooks } from "./deep-observe-hooks";
 import { k8sListedTypes } from "./listed-types";
+import { k8sIndexIdentity } from "./index-identity";
+import { k8sIndexImport } from "./index-import";
 import { k8sReferenceCatalog } from "./reference-catalog";
 import { LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
 import { k8sConfigSchema } from "./config-schema";
@@ -814,4 +816,12 @@ const { deployment, service, serviceMonitor, prometheusRule } = MonitoredService
   // How its resources reference each other, for chant's catalog pass over an
   // index and a declared graph (#4535; behold#1005 retires behold's matcher on it).
   referenceCatalog: k8sReferenceCatalog,
+
+  // Declared objects matched to indexed ones by apiVersion/kind, namespace and
+  // name; the server-assigned uid names a node to the identity edge pass (#4538).
+  indexIdentity: k8sIndexIdentity,
+
+  // `chant import --index`: an indexed object as source; a masked Secret as a
+  // referenced secret, any other masked value read from the environment (#4538).
+  indexImport: k8sIndexImport,
 };
