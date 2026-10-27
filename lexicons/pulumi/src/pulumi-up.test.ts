@@ -295,3 +295,40 @@ describe("releaseInputs (#4542)", () => {
     expect(pulumiReleaseInputs({ dir: "plunge-member", stack: "floci" }, { memberDir: testdata })).toMatchObject({ field: "dir", dir: "plunge-member" });
   });
 });
+
+describe("a step pinned to its engine release (#4592)", () => {
+  test("engineVersion runs the versioned binary, through the same argv checks", async () => {
+    const pinned = engine();
+    const path = engine();
+    const bins: string[] = [];
+    const cap = createPulumiUpCapability({
+      plunge: path.run,
+      runAt: (bin) => {
+        bins.push(bin);
+        return pinned.run;
+      },
+      env: {},
+      tmp: tmp(),
+      snapshots: null,
+    });
+    await cap.plan!(ctx, step({ engine: "plunge", engineVersion: "0.1.0" }));
+    expect(bins).toEqual(["/opt/chant/plunge-0.1.0/plunge"]);
+    expect(pinned.calls).toHaveLength(1);
+    expect(pinned.calls[0].args[0]).toBe("preview");
+    expect(path.calls).toHaveLength(0);
+  });
+
+  test("without engineVersion the runner on PATH runs", async () => {
+    const path = engine();
+    const cap = createPulumiUpCapability({ plunge: path.run, runAt: () => { throw new Error("no pinned binary"); }, env: {}, tmp: tmp(), snapshots: null });
+    await cap.plan!(ctx, step({ engine: "plunge" }));
+    expect(path.calls).toHaveLength(1);
+  });
+
+  test("a version a shell would read as more is refused before anything runs", async () => {
+    const path = engine();
+    const cap = createPulumiUpCapability({ plunge: path.run, env: {}, tmp: tmp(), snapshots: null });
+    await expect(cap.plan!(ctx, step({ engine: "plunge", engineVersion: "0.1.0 && id" }))).rejects.toThrow(/pulumi-up/);
+    expect(path.calls).toHaveLength(0);
+  });
+});
