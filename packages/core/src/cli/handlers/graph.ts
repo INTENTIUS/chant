@@ -387,7 +387,13 @@ async function runGraphLive(
   let containment: ContainmentPair[] = [];
   if (catalogs.length > 0) {
     const reconstructed = reconstructEdges(ir.nodes, mergeCatalogs(catalogs));
-    ir = { ...ir, edges: reconstructed.edges };
+    // Merge, never replace, as `search --live` does (#1273). An observation
+    // can carry edges of its own (terraform's state dependencies, #4520's
+    // engine facts), and a catalog on one observing lexicon used to wipe every
+    // lexicon's: the reason terraform's catalog stayed off its plugin until
+    // #4535.
+    const seen = new Set(ir.edges.map((e) => `${e.from}|${e.to}|${e.viaAttr ?? ""}`));
+    ir = { ...ir, edges: [...ir.edges, ...reconstructed.edges.filter((e) => !seen.has(`${e.from}|${e.to}|${e.viaAttr ?? ""}`))] };
     containment = reconstructed.containment;
   }
 

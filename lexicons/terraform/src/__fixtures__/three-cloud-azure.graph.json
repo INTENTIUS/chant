@@ -1,0 +1,290 @@
+{
+  "$comment": "The azure member (a choudoufu estate) of behold origin/integration/consolidation-graph example-three-cloud, read with chant on integration/consolidation-graph (#4535): chant workspace graph --member azure, the read behold composes. The source attribute (the file text) dropped.",
+  "nodes": [
+    {
+      "id": "azure/azure/azurerm_container_app_environment.site",
+      "kind": "Terraform::Resource",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "azurerm_container_app_environment.site",
+        "type": "azurerm_container_app_environment",
+        "name": "site",
+        "file": "site.tf",
+        "root": "azure",
+        "line": 51,
+        "mode": "live",
+        "estate": "three-cloud-azure",
+        "lockFile": false
+      }
+    },
+    {
+      "id": "azure/azure/azurerm_container_app.web",
+      "kind": "Terraform::Resource",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "azurerm_container_app.web",
+        "type": "azurerm_container_app",
+        "name": "web",
+        "file": "site.tf",
+        "root": "azure",
+        "line": 65,
+        "mode": "live",
+        "estate": "three-cloud-azure",
+        "lockFile": false
+      }
+    },
+    {
+      "id": "azure/azure/azurerm_log_analytics_workspace.logs",
+      "kind": "Terraform::Resource",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "azurerm_log_analytics_workspace.logs",
+        "type": "azurerm_log_analytics_workspace",
+        "name": "logs",
+        "file": "site.tf",
+        "root": "azure",
+        "line": 37,
+        "mode": "live",
+        "estate": "three-cloud-azure",
+        "lockFile": false
+      }
+    },
+    {
+      "id": "azure/azure/azurerm_resource_group.site",
+      "kind": "Terraform::Resource",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "azurerm_resource_group.site",
+        "type": "azurerm_resource_group",
+        "name": "site",
+        "file": "site.tf",
+        "root": "azure",
+        "line": 7,
+        "mode": "live",
+        "estate": "three-cloud-azure",
+        "lockFile": false
+      }
+    },
+    {
+      "id": "azure/azure/azurerm_subnet.apps",
+      "kind": "Terraform::Resource",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "azurerm_subnet.apps",
+        "type": "azurerm_subnet",
+        "name": "apps",
+        "file": "site.tf",
+        "root": "azure",
+        "line": 20,
+        "mode": "live",
+        "estate": "three-cloud-azure",
+        "lockFile": false
+      }
+    },
+    {
+      "id": "azure/azure/azurerm_user_assigned_identity.web",
+      "kind": "Terraform::Resource",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "azurerm_user_assigned_identity.web",
+        "type": "azurerm_user_assigned_identity",
+        "name": "web",
+        "file": "site.tf",
+        "root": "azure",
+        "line": 45,
+        "mode": "live",
+        "estate": "three-cloud-azure",
+        "lockFile": false
+      }
+    },
+    {
+      "id": "azure/azure/azurerm_virtual_network.network",
+      "kind": "Terraform::Resource",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "azurerm_virtual_network.network",
+        "type": "azurerm_virtual_network",
+        "name": "network",
+        "file": "site.tf",
+        "root": "azure",
+        "line": 13,
+        "mode": "live",
+        "estate": "three-cloud-azure",
+        "lockFile": false
+      }
+    },
+    {
+      "id": "azure/azure/live",
+      "kind": "Terraform::Live",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "live",
+        "file": "main.tf",
+        "root": "azure",
+        "mode": "live",
+        "estate": "three-cloud-azure",
+        "lockFile": false
+      }
+    },
+    {
+      "id": "azure/azure/output.azureEndpoint",
+      "kind": "Terraform::Output",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "output.azureEndpoint",
+        "file": "site.tf",
+        "root": "azure",
+        "line": 102,
+        "mode": "live",
+        "estate": "three-cloud-azure",
+        "lockFile": false
+      }
+    },
+    {
+      "id": "azure/azure/provider.azurerm",
+      "kind": "Terraform::Provider",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "provider.azurerm",
+        "file": "main.tf",
+        "root": "azure",
+        "line": 35,
+        "mode": "live",
+        "estate": "three-cloud-azure",
+        "lockFile": false
+      }
+    },
+    {
+      "id": "azure/azure/terraform",
+      "kind": "Terraform::Terraform",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "terraform",
+        "file": "main.tf",
+        "root": "azure",
+        "line": 13,
+        "mode": "live",
+        "estate": "three-cloud-azure",
+        "lockFile": false
+      }
+    },
+    {
+      "id": "azure/azure/var.floci_az_host",
+      "kind": "Terraform::Variable",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "var.floci_az_host",
+        "file": "main.tf",
+        "root": "azure",
+        "line": 25,
+        "mode": "live",
+        "estate": "three-cloud-azure",
+        "lockFile": false
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "azure/azure/azurerm_container_app_environment.site",
+      "to": "azure/azure/azurerm_log_analytics_workspace.logs",
+      "kind": "ref",
+      "viaAttr": "log_analytics_workspace_id"
+    },
+    {
+      "from": "azure/azure/azurerm_container_app_environment.site",
+      "to": "azure/azure/azurerm_resource_group.site",
+      "kind": "ref",
+      "viaAttr": "location"
+    },
+    {
+      "from": "azure/azure/azurerm_container_app_environment.site",
+      "to": "azure/azure/azurerm_resource_group.site",
+      "kind": "ref",
+      "viaAttr": "resource_group_name"
+    },
+    {
+      "from": "azure/azure/azurerm_container_app_environment.site",
+      "to": "azure/azure/azurerm_subnet.apps",
+      "kind": "ref",
+      "viaAttr": "infrastructure_subnet_id"
+    },
+    {
+      "from": "azure/azure/azurerm_container_app.web",
+      "to": "azure/azure/azurerm_container_app_environment.site",
+      "kind": "ref",
+      "viaAttr": "container_app_environment_id"
+    },
+    {
+      "from": "azure/azure/azurerm_container_app.web",
+      "to": "azure/azure/azurerm_resource_group.site",
+      "kind": "ref",
+      "viaAttr": "resource_group_name"
+    },
+    {
+      "from": "azure/azure/azurerm_container_app.web",
+      "to": "azure/azure/azurerm_user_assigned_identity.web",
+      "kind": "ref",
+      "viaAttr": "identity"
+    },
+    {
+      "from": "azure/azure/azurerm_log_analytics_workspace.logs",
+      "to": "azure/azure/azurerm_resource_group.site",
+      "kind": "ref",
+      "viaAttr": "location"
+    },
+    {
+      "from": "azure/azure/azurerm_log_analytics_workspace.logs",
+      "to": "azure/azure/azurerm_resource_group.site",
+      "kind": "ref",
+      "viaAttr": "resource_group_name"
+    },
+    {
+      "from": "azure/azure/azurerm_subnet.apps",
+      "to": "azure/azure/azurerm_resource_group.site",
+      "kind": "ref",
+      "viaAttr": "resource_group_name"
+    },
+    {
+      "from": "azure/azure/azurerm_subnet.apps",
+      "to": "azure/azure/azurerm_virtual_network.network",
+      "kind": "ref",
+      "viaAttr": "virtual_network_name"
+    },
+    {
+      "from": "azure/azure/azurerm_user_assigned_identity.web",
+      "to": "azure/azure/azurerm_resource_group.site",
+      "kind": "ref",
+      "viaAttr": "location"
+    },
+    {
+      "from": "azure/azure/azurerm_user_assigned_identity.web",
+      "to": "azure/azure/azurerm_resource_group.site",
+      "kind": "ref",
+      "viaAttr": "resource_group_name"
+    },
+    {
+      "from": "azure/azure/azurerm_virtual_network.network",
+      "to": "azure/azure/azurerm_resource_group.site",
+      "kind": "ref",
+      "viaAttr": "location"
+    },
+    {
+      "from": "azure/azure/azurerm_virtual_network.network",
+      "to": "azure/azure/azurerm_resource_group.site",
+      "kind": "ref",
+      "viaAttr": "resource_group_name"
+    },
+    {
+      "from": "azure/azure/output.azureEndpoint",
+      "to": "azure/azure/azurerm_container_app.web",
+      "kind": "ref",
+      "viaAttr": "value"
+    },
+    {
+      "from": "azure/azure/provider.azurerm",
+      "to": "azure/azure/var.floci_az_host",
+      "kind": "ref",
+      "viaAttr": "metadata_host"
+    }
+  ]
+}
