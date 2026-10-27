@@ -191,6 +191,13 @@ Commands:
                         --where <field><op><value> (= != < <= > >= ~,
                         repeatable), --since <time|7d>, --at <rev> of
                         chant/lifecycle, --member <name>, --json
+  index <substrate>     Read one aws account, azure subscription, gcp project
+                        or kubernetes cluster through its inventory API, type
+                        it, derive its edges and write one index version to
+                        the index store. Read-only: refuses action flags.
+                        --account|--subscription|--project|--cluster, --regions,
+                        --types, --tag k=v, --endpoint, --store <spec>, --json
+                        (chant index --help for the rest)
   generate             Generate typed code from sources chant.config declares
                         (k8s.crds, helm.charts) into src/generated/<lexicon>/
                         (codegen.outDir); --check exits 1 when the committed
@@ -1582,6 +1589,10 @@ export const commandRegistry: CommandDef[] = [
   // #4297 — SQL over the snapshots, runs, gates, deploys and releases on chant/lifecycle. Imported on first use.
   { name: "query", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/query")).runQueryCommand(ctx) },
   { name: "ledger", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/ledger")).runLedgerCommand(ctx) },
+  // chant#4532 — a read-only cloud index. main() hands `index`'s raw argv to
+  // its own parser before parseArgs; this entry answers "is it a verb" and
+  // runs the words a caller already parsed (substrate, --json, --help).
+  { name: "index", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/index-cloud")).runIndexCommand(ctx) },
   // chant#2591 — `import --agents` and `audit` read chant.config statically
   // and never evaluate it (chant#2589 for audit, which audits code it must not run).
   { name: "import", handler: runImport, runsNoConfig: (args) => args.agents === true },
@@ -1809,6 +1820,16 @@ async function main(): Promise<void> {
   // something imports it. A no-op from source.
   installCompiledCli();
   const rawArgv = process.argv.slice(2);
+
+  // chant#4532 — `chant index <substrate>` takes its own flags (--account,
+  // --regions, --endpoint, ...) that core's one flat parser does not know, and
+  // must refuse an action flag (--apply, --yes, ...) that the parser would
+  // accept. So its argv goes to its own parser, before parseArgs.
+  if (rawArgv[0] === "index") {
+    const { runCloudIndex } = await import("../lifecycle/cloud-index");
+    await flushAndExit(await runCloudIndex(rawArgv.slice(1)));
+    return;
+  }
 
   let args: ParsedArgs;
   try {
