@@ -132,6 +132,7 @@ import {
   pulumiStreamError,
   pulumiStreamPreview,
   pulumiStreamSummary,
+  pulumiStreamTimings,
   type PulumiApplySummary,
 } from "./engine-events";
 import { CHANT_EXIT } from "@intentius/chant/exit-codes";
@@ -279,6 +280,23 @@ export class PulumiAppliedShapeError extends Error {
   ) {
     super(`"${member}": pulumi up ran steps the approved plan did not hold: ${differences.join("; ")}. The update ran; check the stack and plan it again.`);
     this.name = "PulumiAppliedShapeError";
+  }
+}
+
+/**
+ * An `up` that failed (#4553's failed outcome). It carries the stream's
+ * summary, plunge's per-resource timings included (#4579), so the run record
+ * and the trace (`./trace-facts.ts` reads `member` and `summary` off the
+ * error) keep what ran before it stopped.
+ */
+export class PulumiUpFailedError extends Error {
+  constructor(
+    public readonly member: string,
+    message: string,
+    public readonly summary?: PulumiApplySummary,
+  ) {
+    super(message);
+    this.name = "PulumiUpFailedError";
   }
 }
 
@@ -617,7 +635,20 @@ function upFailure(r: Resolved, err: unknown, policy: GatePolicyFindings): Error
     ...(failed.length > 0 ? [`failed: ${failed.join(", ")}`] : []),
     ...(landed.length > 0 ? [`landed before it stopped: ${landed.join(", ")}`] : ["nothing landed"]),
   ].join("; ");
-  return new Error(`pulumi-up: "${r.member}": ${r.engine} up failed (exit ${f.exitCode ?? "unknown"}): ${why}. ${detail}`);
+  return new PulumiUpFailedError(r.member, `pulumi-up: "${r.member}": ${r.engine} up failed (exit ${f.exitCode ?? "unknown"}): ${why}. ${detail}`, failedUpSummary(stream));
+}
+
+/**
+ * What a failed `up`'s stream still says (#4579): its `summaryEvent`, or,
+ * when the engine stopped before printing one, the per-resource timings
+ * plunge put on the steps that ran (`resOutputsEvent`, `resOpFailedEvent`),
+ * under `result: "failed"`. Undefined when the stream holds neither.
+ */
+export function failedUpSummary(stream: string): PulumiApplySummary | undefined {
+  const summary = pulumiStreamSummary(stream);
+  if (summary) return summary;
+  const timings = pulumiStreamTimings(stream);
+  return Object.keys(timings).length > 0 ? { resourceChanges: {}, result: "failed", timings } : undefined;
 }
 
 async function runStack(ctx: DeployContext, input: PulumiUpStepInput, opts: PulumiUpOptions): Promise<PulumiUpStepOutput> {
