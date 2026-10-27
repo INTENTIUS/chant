@@ -94,8 +94,19 @@ describe("release floors --freeze (#4501)", () => {
   });
 
   it("empties NEXT_RELEASE_TEXT in the script and keeps the rest", () => {
-    const src = readFileSync(join(root, "scripts/release-floors.ts"), "utf8");
+    // The live list is empty right after a freeze, so seed it with entries
+    // first; the frozen output must then be the live script again.
+    const live = readFileSync(join(root, "scripts/release-floors.ts"), "utf8");
+    const marker = "  // --freeze empties this list after a release ships (#4501); each entry is one line.\n";
+    expect(live).toContain(marker);
+    const src = live.replace(
+      marker,
+      marker +
+        '  { file: "packages/core/src/workspace/change-set.schema.json", text: "by #4440, written by chant {v} and newer", count: 1, floor: "CHANGE_SET_GROUP_FLOOR" },\n' +
+        '  { file: "docs/src/content/docs/reference/capabilities.mdx", text: "templates are written by chant `{v}` and newer", count: 1, floor: "CAPABILITY_TEMPLATES_FLOOR" },\n',
+    );
     const out = freezeTextList(src);
+    expect(freezeTextList(live)).toBe(live);
     const list = out.slice(out.indexOf("const NEXT_RELEASE_TEXT:"), out.indexOf("\n];\n", out.indexOf("const NEXT_RELEASE_TEXT:")) + 4);
     // The declaration line carries the type `{ file: string; ... }`; only entry lines must go.
     expect(list).not.toMatch(/^\s*\{ file: /m);
@@ -103,6 +114,7 @@ describe("release floors --freeze (#4501)", () => {
     expect(out.length).toBeLessThan(src.length);
     expect(out.slice(out.indexOf("interface Args"))).toBe(src.slice(src.indexOf("interface Args")));
     expect(freezeTextList(out)).toBe(out);
+    expect(out).toBe(live);
   });
 
   it("moves NEXT_RELEASE to the next patch by default", () => {

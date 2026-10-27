@@ -42,7 +42,6 @@ describe("the pull-request loop bundle", () => {
       "packages/core/src/pr-loop.ts",
       "packages/core/src/pr-migrations.ts",
       // The next-release floor constant (#4480): no imports.
-      "packages/core/src/release-floors.ts",
     ]);
     // About 89 KB today, after the hooks line (#4288), the blocked set (#4291), the scheduled-run reads (#4289) the requires checks (#4301) and the migration notes (#4407), about 97 KB; with the group lines (#4446), about 100 KB.
     // 110 KB is the ruled ceiling (#4481, ruling 12, 2026-10-25), not a figure to lower by trimming note text.
