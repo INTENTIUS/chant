@@ -53,6 +53,8 @@ import type { ChangeSetPart } from "@intentius/chant/change-set";
 import type { TerraformConfig, TerraformRootConfig } from "../../config";
 import { detectLiveEstate } from "./live-detect";
 import { backendConfigValues } from "../../backend-config";
+import { lockTimeoutArgs } from "../../lock-timeout";
+import { coneArgs, readPlanCone, type PlanCone } from "../../cone";
 import {
   parseAdoptionCommands,
   readAdoptionLedger,
@@ -239,6 +241,19 @@ export interface TerraformPlanArgs extends TerraformRootArgs {
    * the text, such as the `terraform-apply` capability. Default: `true`.
    */
   text?: boolean;
+  /**
+   * How long the plan waits for another run's state lock (#4545), passed as
+   * `-lock-timeout` unless `TF_CLI_ARGS` or `TF_CLI_ARGS_plan` names one.
+   * Default: no flag, terraform's own (no wait).
+   */
+  lockTimeout?: string;
+  /**
+   * choudoufu only (#4545): plan the cone of the change since this revision
+   * (`-cone=<base>`) on a root under a `live` block that is not an estate
+   * file. Any other root, binary, or a plan with `targets` or `destroy`,
+   * plans in full. {@link TerraformPlanResult.cone} says which it was.
+   */
+  cone?: string;
 }
 
 export interface TerraformApplyArgs extends TerraformRootArgs {
@@ -259,6 +274,8 @@ export interface TerraformApplyArgs extends TerraformRootArgs {
    * separate to pass.
    */
   planFile?: string;
+  /** How long the apply waits for another run's state lock (#4545), as {@link TerraformPlanArgs.lockTimeout}. */
+  lockTimeout?: string;
 }
 
 export interface TerraformShowArgs extends TerraformRootArgs {
@@ -375,6 +392,8 @@ export interface TerraformPlanResult extends PlanChangeCounts {
    * `composeChangeSet` and bind the run's gate to the document's digest.
    */
   changeSet: ChangeSetPart;
+  /** Set when the plan was asked for a cone (#4545): the cone it planned, or why it planned the whole estate. */
+  cone?: PlanCone;
 }
 
 /**
@@ -625,9 +644,12 @@ export function terraformPlanCommand(opts: {
   vars?: Record<string, unknown>;
   destroy?: boolean;
   targets?: string[];
+  /** Extra flags after the fixed ones (#4545): `-lock-timeout`, `-cone`. */
+  extra?: readonly string[];
 }): string {
   const parts = [opts.binary, "plan", "-input=false", "-detailed-exitcode"];
   if (opts.destroy) parts.push("-destroy");
+  for (const flag of opts.extra ?? []) parts.push(quoteArg(flag));
   for (const target of [...new Set(opts.targets ?? [])].sort()) parts.push(`-target=${quoteArg(target)}`);
   for (const varFile of opts.varFiles ?? []) parts.push(`-var-file=${quoteArg(varFile)}`);
   for (const [name, value] of Object.entries(opts.vars ?? {}).sort(([a], [b]) => a.localeCompare(b))) {
@@ -644,8 +666,9 @@ export function terraformPlanCommand(opts: {
  * block, and a matched one applies without re-prompting, exactly as stock's
  * own `apply <planfile>` does, so no `-auto-approve` is needed or passed.
  */
-export function terraformApplyCommand(opts: { binary: string; planFile: string }): string {
-  return `${opts.binary} apply -input=false ${quoteArg(opts.planFile)}`;
+export function terraformApplyCommand(opts: { binary: string; planFile: string; extra?: readonly string[] }): string {
+  const extra = (opts.extra ?? []).map((f) => ` ${quoteArg(f)}`).join("");
+  return `${opts.binary} apply -input=false${extra} ${quoteArg(opts.planFile)}`;
 }
 
 /**
@@ -1083,9 +1106,13 @@ export async function terraformPlan(
   args: TerraformPlanArgs,
   signal?: AbortSignal,
 ): Promise<TerraformPlanResult> {
-  const { binary, root, dir } = await resolveRoot(args, signal);
+  const { binary, root, dir, live } = await resolveRoot(args, signal);
   const planFile = args.planFile ?? DEFAULT_PLAN_FILE;
   const env = terraformEnvironment(root);
+  const lock = args.lockTimeout !== undefined ? lockTimeoutArgs("plan", args.lockTimeout) : [];
+  // #4545: a cone only on a live root that is not an estate file; -target and -destroy plan in full.
+  const fixed = [...(args.destroy ? ["-destroy"] : []), ...((args.targets ?? []).length > 0 ? ["-target"] : [])];
+  const cone = args.cone !== undefined ? coneArgs(binary, args.cone, fixed, live && !existsSync(join(dir, "estate.chdf.hcl"))) : [];
   const cmd = terraformPlanCommand({
     binary,
     planFile,
@@ -1093,12 +1120,15 @@ export async function terraformPlan(
     ...(args.vars ? { vars: args.vars } : {}),
     ...(args.destroy ? { destroy: true } : {}),
     ...(args.targets && args.targets.length > 0 ? { targets: args.targets } : {}),
+    ...(cone.length + lock.length > 0 ? { extra: [...cone, ...lock] } : {}),
   });
 
   let changed: boolean;
+  let output = "";
   try {
     const { stdout, stderr } = await run(cmd, dir, env, signal);
     report(stdout, stderr);
+    output = `${stdout}\n${stderr}`;
     changed = false;
   } catch (err) {
     // An abort or a spawn failure carries no numeric exit code. That is not
@@ -1112,6 +1142,7 @@ export async function terraformPlan(
       );
     }
     report(failure.stdout ?? "", failure.stderr ?? "");
+    output = `${failure.stdout ?? ""}\n${failure.stderr ?? ""}`;
     changed = true;
   }
 
@@ -1133,6 +1164,7 @@ export async function terraformPlan(
       ...((root.estate ?? root.workspace) ? { scope: root.estate ?? root.workspace } : {}),
     }),
     ...countPlanChanges(json),
+    ...(cone.length > 0 ? { cone: readPlanCone(output, join(dir, planFile), args.cone!) } : {}),
   };
 }
 
@@ -1184,7 +1216,8 @@ export async function terraformApply(
   }
 
   const planFile = args.planFile!;
-  const cmd = terraformApplyCommand({ binary, planFile });
+  const lock = args.lockTimeout !== undefined ? lockTimeoutArgs("apply", args.lockTimeout) : [];
+  const cmd = terraformApplyCommand({ binary, planFile, ...(lock.length > 0 ? { extra: lock } : {}) });
 
   try {
     const { stdout, stderr } = await run(cmd, dir, terraformEnvironment(root), signal);

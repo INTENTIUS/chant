@@ -97,6 +97,9 @@ import { quorumProblems, type GateQuorumRule } from "./gate-quorum";
 import { notifyConfigProblem, type NotifyConfig } from "../notify";
 import { WAVE_GATE_NAME_PATTERN, waveGateNameFrom, waveShare } from "../wave-layout";
 import { waveOutcomeFileName } from "../wave-blocked";
+import { opWaveHoldsProblems, opWaveStepProblems, type OpWaveHolds, type OpWaveStep } from "./op-waves-capability";
+
+export type { OpWaveCostFormat, OpWaveCostHold, OpWaveHolds, OpWaveStep } from "./op-waves-capability";
 
 /**
  * The variables a wave job reads its notify secrets from, for the lexicons
@@ -242,6 +245,12 @@ export interface OpWaveRun {
    * one job applies the wave (no `shares`, no `jobs`).
    */
   dependsOn?: string[];
+  /**
+   * With the spec's `step` (#4545): this run's own input, laid over the
+   * step's (its vars, the outputs it reads). Strings have `{target}`, `{op}`
+   * and `{wave}` filled, as the step's do.
+   */
+  input?: Record<string, unknown>;
 }
 
 /**
@@ -429,6 +438,22 @@ export interface OpWavesSpec {
   plan?: string[];
   /** Apply one run whose plan is at `{plan}`. Default `chant run {op} --env {target}`. */
   apply?: string[];
+  /**
+   * Plan and apply each run through a capability (#4545), in place of
+   * `plan` and `apply`: `{ kind, ...input }`, as a component's deploy step,
+   * with `{target}`, `{op}` and `{wave}` filled in each string and a run's
+   * `input` laid over it. `capability.plan` gives the run's plan digest and
+   * change set; `capability.run` applies that plan, and a plan it refuses as
+   * moved exits 4. See `./op-waves-capability.ts`.
+   */
+  step?: OpWaveStep;
+  /**
+   * Holds the wave runs over its plans (#4545), read at the base commit
+   * with the policy: `policy` runs the workspace's `ci.policy` over each
+   * run's change set, `cost` prices the runs and holds the wave over a
+   * monthly change. See `./op-waves-capability.ts`.
+   */
+  holds?: OpWaveHolds;
   /**
    * Plan every run of a wave in one call (#3762), in place of `plan`. `{runs}`
    * is a file chant writes, `{ "wave", "number", "runs": [{ "target", "op" }] }`;
@@ -655,7 +680,11 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
   if (spec.apply !== undefined && spec.applyWave !== undefined) {
     throw new Error(`${where} has both \`apply\` and \`applyWave\`. A wave is applied one run at a time or all at once; give one.`);
   }
-  if (spec.planWave !== undefined) {
+  if (spec.step !== undefined) {
+    // #4545: a step plans and applies; its problems include a command set beside it.
+    const problems = opWaveStepProblems(spec);
+    if (problems.length > 0) throw new Error(`${where}: ${problems.join("; ")}.`);
+  } else if (spec.planWave !== undefined) {
     assertArgv(where, "planWave", spec.planWave);
     if (!spec.planWave.some((part) => part.includes("{plans}"))) {
       throw new Error(`${where}: the \`planWave\` command never names {plans}, the file it writes each run's plan digest to.`);
@@ -678,6 +707,10 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
   }
   assertOpWaveHooks(where, spec.hooks);
   if (spec.waves.length === 0) throw new Error(`${where} has no waves.`);
+  {
+    const problems = opWaveHoldsProblems(spec.holds);
+    if (problems.length > 0) throw new Error(`${where}: ${problems.join("; ")}.`);
+  }
   if (spec.labels !== undefined) {
     const l = spec.labels as unknown;
     if (l === null || typeof l !== "object" || Array.isArray(l) || !Object.values(l as Record<string, unknown>).every((v) => typeof v === "string")) {
