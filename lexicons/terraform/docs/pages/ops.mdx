@@ -230,7 +230,7 @@ Four more activities exist for a live root, alongside the four stock ones:
 
 `choudoufuLivePlan`, `choudoufuLiveLs`, `choudoufuLiveCheck`, `choudoufuAdopt` and `choudoufuPlanSet` exist as typed step builders too, the same shape as the four above (`root` positional, `opts` the activity's own args minus `root`). `choudoufuLivePlan`/`choudoufuLiveLs` default to the `longInfra`/`fastIdempotent` profiles respectively the same way `terraformPlan`/`terraformShow` do; `choudoufuLiveCheck` defaults to `fastIdempotent`, no cloud calls, no state; `choudoufuAdopt` defaults to `longInfra`, one tagging round trip per resource; `choudoufuPlanSet` defaults to `longInfra`.
 
-TF001 (no remote backend) does not fire on a live root, since a `backend` block is exactly what choudoufu refuses there. TF024, TF025 and TF026 are the live-root equivalents; see [Lint Rules](../lint-rules/).
+TF001 (no remote backend) does not fire on a live root, since choudoufu ignores a `backend` block there: it keeps the block only to publish outputs to and, with no `record_store` declared, to derive the record store from. TF024 reports what choudoufu does with the block; TF024, TF025 and TF026 are the live-root equivalents; see [Lint Rules](../lint-rules/).
 
 ### TerraformApplyOp on a live root
 

@@ -76,8 +76,8 @@
  *
  * TF024 (#2103, live root declares a backend/cloud block) credits choudoufu's
  * own `RuleStateBackend`, `internal/live/lint/issue.go` of
- * github.com/INTENTIUS/choudoufu: the identical condition, checked the same
- * way this fork checks it at `init` before any command runs. TF025 (a live
+ * github.com/INTENTIUS/choudoufu: the same condition, which choudoufu has
+ * reported as a warning since its #2213 (the block is ignored, not refused). TF025 (a live
  * root's non-default `terraform.workspace`) has no entry: its workspace half
  * is refused at the CLI argument-parsing layer there
  * (`internal/command/live_mode.go`), not by a dedicated lint rule under
