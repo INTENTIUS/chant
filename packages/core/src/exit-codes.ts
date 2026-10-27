@@ -1,9 +1,10 @@
 /**
  * chant's one exit-code table (#4553), for every command that runs, gates or
  * applies a plan, and for both products built on chant CI (terragucci and
- * plywood). The terraform and pulumi lexicons map their engines' own codes
+ * plywood). The terraform, pulumi and sql lexicons map their engines' own codes
  * onto it (`terraformExitOf` in `@intentius/chant-lexicon-terraform/exit-codes`,
- * `pulumiExitOf` in `@intentius/chant-lexicon-pulumi`), and a product passes
+ * `pulumiExitOf` in `@intentius/chant-lexicon-pulumi`, `sqlExitOf` in
+ * `@intentius/chant-lexicon-sql/exit-codes`), and a product passes
  * the code through unchanged.
  *
  * The numbers are the ones op waves already used, so a pipeline reading op
