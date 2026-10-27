@@ -120,5 +120,10 @@ describe("release floors --freeze (#4501)", () => {
     expect(shippedSymbolic("0.124.53", named, releasedVersions(["release/npm/0.124.53"]))).toEqual([
       "packages/core/src/change-set.ts: GROUP_FLOOR is NEXT_RELEASE, and 0.124.53 has shipped; run `just release-floors --freeze 0.124.53`",
     ]);
+    // release-pack.sh stamps the tree with the version it packs; that pack is
+    // the release, so its own tag doesn't make its floors "shipped" yet.
+    expect(shippedSymbolic("0.124.53", named, releasedVersions(["release/npm/0.124.53"]), "0.124.53")).toEqual([]);
+    // A stamp for some other version doesn't excuse a shipped NEXT_RELEASE.
+    expect(shippedSymbolic("0.124.53", named, releasedVersions(["release/npm/0.124.53"]), "0.124.54").length).toBeGreaterThan(0);
   });
 });
