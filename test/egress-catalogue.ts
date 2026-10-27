@@ -493,6 +493,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "`awsApply` writes the change set the plan produced, over the same transport the read client uses.",
   },
   {
+    file: "packages/core/src/cloud-lister/transport.ts",
+    primitives: ["node:http", "node:https"],
+    phase: "apply",
+    destination: "AWS Cloud Control, Azure Resource Graph, GCP Cloud Asset Inventory or a Kubernetes API server, or the `--endpoint` a run names",
+    why: "`chant index` (#4532) lists one scope through its inventory API. The transport sends only the five allowlisted reads, and pins every call to the run's endpoint when it names one.",
+  },
+  {
     file: "lexicons/aws/src/receipt-store.ts",
     primitives: ["fetch"],
     phase: "apply",
