@@ -50,8 +50,16 @@ type ColumnType = "TEXT" | "INTEGER";
  * for a project outside a workspace.
  */
 export const QUERY_TABLES = {
-  /** One row per resource in each environment's newest snapshot. `attributes` is JSON. */
-  resources: [["member", "TEXT"], ["env", "TEXT"], ["stack", "TEXT"], ["lexicon", "TEXT"], ["name", "TEXT"], ["type", "TEXT"], ["physical_id", "TEXT"], ["status", "TEXT"], ["last_updated", "TEXT"], ["ownership", "TEXT"], ["attributes", "TEXT"], ["git_sha", "TEXT"], ["observed_at", "TEXT"]],
+  /**
+   * One row per resource in each environment's newest snapshot. `attributes`
+   * is JSON. `ownership` is chant's marker verdict; `marker_stack` and
+   * `marker_env` (#4534) are the stack and env that marker names, read off
+   * the resource. `engine_ownership` and `engine_owned_by` (#4534) are an
+   * ownership engine's verdict and what bound the node (choudoufu, plunge;
+   * the snapshot's `facts.ownership` and `facts.ownedBy`), shown beside
+   * chant's and never in place of it. NULL means unknown.
+   */
+  resources: [["member", "TEXT"], ["env", "TEXT"], ["stack", "TEXT"], ["lexicon", "TEXT"], ["name", "TEXT"], ["type", "TEXT"], ["physical_id", "TEXT"], ["status", "TEXT"], ["last_updated", "TEXT"], ["ownership", "TEXT"], ["attributes", "TEXT"], ["git_sha", "TEXT"], ["observed_at", "TEXT"], ["marker_stack", "TEXT"], ["marker_env", "TEXT"], ["engine_ownership", "TEXT"], ["engine_owned_by", "TEXT"]],
   /** One row per snapshot file: what was observed, when, and how many resources it holds. */
   snapshots: [["member", "TEXT"], ["env", "TEXT"], ["stack", "TEXT"], ["lexicon", "TEXT"], ["git_sha", "TEXT"], ["observed_at", "TEXT"], ["depth", "TEXT"], ["resources", "INTEGER"], ["unobserved", "INTEGER"]],
   /**
@@ -80,6 +88,15 @@ export const QUERY_TABLES = {
  * within version 1: a reader treats a row from an older chant as lacking it.
  */
 export const LEDGER_ROOT_MEMBER_FLOOR = NEXT_RELEASE;
+
+/**
+ * The first chant that writes `marker_stack`, `marker_env`,
+ * `engine_ownership` and `engine_owned_by` on a `resources` row, in
+ * `chant query` and in `chant ledger resources --json` (#4534). Columns added
+ * within version 1: a reader treats a row from an older chant as lacking
+ * them, which reads as unknown.
+ */
+export const QUERY_OWNERSHIP_COLUMNS_FLOOR = NEXT_RELEASE;
 
 export type QueryTable = keyof typeof QUERY_TABLES;
 
@@ -148,7 +165,25 @@ function snapshotRows(member: string | null, env: string, file: string, s: Lifec
   const resources = Object.entries(s.resources);
   data.snapshots.push({ member, env, stack, lexicon: s.lexicon, ...at, depth: s.depth ?? "identity", resources: resources.length, unobserved: Object.keys(s.unobserved ?? {}).length });
   for (const [name, r] of resources) {
-    data.resources.push({ member, env, stack, lexicon: s.lexicon, name, type: str(r?.type), physical_id: str(r?.physicalId), status: str(r?.status), last_updated: str(r?.lastUpdated), ownership: str(r?.ownership), attributes: json(r?.attributes), ...at });
+    data.resources.push({
+      member,
+      env,
+      stack,
+      lexicon: s.lexicon,
+      name,
+      type: str(r?.type),
+      physical_id: str(r?.physicalId),
+      status: str(r?.status),
+      last_updated: str(r?.lastUpdated),
+      ownership: str(r?.ownership),
+      attributes: json(r?.attributes),
+      ...at,
+      // Read as data from the snapshot (#4534): a projection for people, never a decision.
+      marker_stack: str(r?.marker?.stack),
+      marker_env: str(r?.marker?.env),
+      engine_ownership: str(r?.facts?.ownership),
+      engine_owned_by: str(r?.facts?.ownedBy),
+    });
   }
 }
 

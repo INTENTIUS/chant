@@ -35,7 +35,7 @@ Every table starts with `member`. A column marked JSON holds JSON text for `json
 
 | Table | One row per | Columns |
 |---|---|---|
-| `resources` | resource in an environment's snapshot | `env`, `stack`, `lexicon`, `name`, `type`, `physical_id`, `status`, `last_updated`, `ownership`, `attributes` (JSON), `git_sha`, `observed_at` |
+| `resources` | resource in an environment's snapshot | `env`, `stack`, `lexicon`, `name`, `type`, `physical_id`, `status`, `last_updated`, `ownership`, `attributes` (JSON), `git_sha`, `observed_at`, `marker_stack`, `marker_env`, `engine_ownership`, `engine_owned_by` (see [Ownership](#ownership)) |
 | `snapshots` | snapshot file, `<env>/<lexicon>.json` or `<env>/<stack>__<lexicon>.json` | `env`, `stack`, `lexicon`, `git_sha`, `observed_at`, `depth`, `resources` (INTEGER), `unobserved` (INTEGER) |
 | `runs` | Op run record, `<env>/runs__<op>.jsonl` | `id`, `op`, `env`, `started`, `ended`, `status`, `git_sha`, `forge`, `run_url`, `failure_code`, `failure_reason`, `failed_phase`, `gate`, `steward`, `labels` (JSON), `outcomes` (JSON), `root_member`, the member whose directory holds the root a TerraformApplyOp run applied ([#4482](https://github.com/INTENTIUS/chant/issues/4482)) |
 | `gates` | gate ledger line, `_gates/<op>.jsonl` | `op`, `gate`, `kind` (`pending` or `resolution`), `timestamp`, `resolved_by`, `relayed_by`, `approver_kind`, `plan_digest`, `environment`, `release_digest`, `git_sha`, `run_id`, `url`, `note`, `expires_at`, `origin`, `empty` (INTEGER), `signed` (INTEGER) |
@@ -45,6 +45,29 @@ Every table starts with `member`. A column marked JSON holds JSON text for `json
 | `chant_schema` | column of every table above | `version` (INTEGER), `table_name`, `column_name`, `type`, `position` (INTEGER) |
 
 The columns are listed in `QUERY_TABLES` (`packages/core/src/lifecycle/query.ts:49`).
+
+## Ownership
+
+Four columns of `resources` say who holds a resource, beside `ownership`
+([#4534](https://github.com/INTENTIUS/chant/issues/4534)). `ownership` is chant's
+verdict from the resource's marker: `owned`, `foreign` or `unknown`.
+`marker_stack` and `marker_env` are the stack and env that marker names, read off
+the resource, and are NULL when the read carries no marker or the lexicon's
+channel does not return one. On aws's stack read every resource of a marked
+stack carries that stack's identity. `engine_ownership` and `engine_owned_by` are
+an ownership engine's own answer, from the engine facts a choudoufu live root or a
+plunge member records: `bound`, `unowned`, `pending` or `foreign`, and `marker`,
+`record` or `name` for what bound it. They are NULL for every other resource.
+chant decides nothing from them. A pulumi member stays `unknown` in `ownership`,
+because chant reads plunge's records and not its markers, so its answer is in the
+engine columns.
+
+```
+chant query "SELECT member, env, lexicon, ownership, engine_ownership, count(*) AS n FROM resources GROUP BY 1, 2, 3, 4, 5"
+chant query "SELECT member, env, stack, name, ownership, marker_stack FROM resources WHERE physical_id = 'i-0abc123'"
+```
+
+The four columns were added within version 1, written by chant 0.124.53 and newer, so a row that an older chant's snapshot holds has all four NULL and reads as unknown.
 
 ## Schema version
 

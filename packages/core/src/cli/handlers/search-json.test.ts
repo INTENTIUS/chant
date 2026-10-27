@@ -229,7 +229,7 @@ describe("search --json refusals are a document with error, exit 1 (#4367)", () 
       error: {
         code: "query-invalid",
         message: "\"effectiveIngress:tcp:22\" is not a term — there is no \"effectiveIngress:\" prefix",
-        hint: "for an attribute, say attr:effectiveIngress=tcp:22; the prefixes are kind:, attr:, tag:, and ->/<- for edges",
+        hint: "for an attribute, say attr:effectiveIngress=tcp:22; the prefixes are kind:, attr:, tag:, id:, and ->/<- for edges",
       },
     });
     expect(err.join("\n")).toContain("is not a term");

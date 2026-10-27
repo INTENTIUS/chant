@@ -38,6 +38,7 @@ import { SEARCH_CONTRACT_VERSION, SEARCH_OUTPUT_SCHEMA_ID, type SearchErrorCode,
  *                        on a terraform resource, its type (kind:aws_instance, kind:aws_iam_)
  *   tag:<key>=<val>      a Tags entry with Key=key and Value containing val
  *   attr:<name>=<val>    attribute <name> equals/contains <val>
+ *   id:<cloud id>        physicalId or an engine cloudIds value is exactly <cloud id> (#4534)
  *   ->kind:X / ->attr:.. this node has an edge TO a node matching the right side
  *   <-kind:X / <-attr:.. this node has an edge FROM a node matching the right side
  *   ->*X, ->{n}X, ->{m,n}X  the far end is any depth / n / m..n hops away (#4359)
@@ -1321,7 +1322,7 @@ function describeTerm(t: Term): string {
 function leafText(x: Term): string {
   if (x.kind === "cap") return `cap:${x.a}`;
   return x.kind === "kind" ? `kind:${x.a}` : x.kind === "attr" ? `attr:${x.a}${x.b !== undefined ? "=" + x.b : ""}`
-    : x.kind === "tag" ? `tag:${x.a}${x.b !== undefined ? "=" + x.b : ""}` : `"${x.a}"`;
+    : x.kind === "tag" ? `tag:${x.a}${x.b !== undefined ? "=" + x.b : ""}` : x.kind === "id" ? `id:${x.a}` : `"${x.a}"`;
 }
 
 /**
@@ -1496,7 +1497,7 @@ function termText(t: Term): string {
 }
 
 export interface Term {
-  kind: "word" | "kind" | "tag" | "attr" | "edge" | "cap";
+  kind: "word" | "kind" | "tag" | "attr" | "edge" | "cap" | "id";
   /** `!term` — the node must NOT satisfy this (#1280). */
   negated?: boolean;
   a: string;
@@ -1613,6 +1614,15 @@ function parseLeaf(tok: string): Term {
     }
     return { kind: "cap", a: cap[1] };
   }
+  // `id:<cloud id>` (#4534, behold#906 Q3): the whole rest is the id, colons
+  // and `=` included, since an ARN has both.
+  const id = /^id:(.*)$/i.exec(tok);
+  if (id) {
+    if (id[1] === "") {
+      throw new QueryError(`"${tok}" needs a cloud id`, "name the id exactly as the cloud prints it: id:i-0abc123, id:arn:aws:s3:::my-bucket");
+    }
+    return { kind: "id", a: id[1] };
+  }
   const m = /^(kind|tag|attr):(.*)$/i.exec(tok);
   if (m) {
     const key = m[1].toLowerCase() as Term["kind"];
@@ -1637,7 +1647,7 @@ function parseLeaf(tok: string): Term {
     const value = tok.slice(name.length + 1);
     throw new QueryError(
       `"${tok}" is not a term — there is no "${name}:" prefix`,
-      `for an attribute, say attr:${name}=${value || "<value>"}; the prefixes are kind:, attr:, tag:, and ->/<- for edges`,
+      `for an attribute, say attr:${name}=${value || "<value>"}; the prefixes are kind:, attr:, tag:, id:, and ->/<- for edges`,
     );
   }
   return { kind: "word", a: tok };
@@ -1825,6 +1835,7 @@ function matchTerm(n: IRNode, t: Term, ir?: GraphIR, byId?: Map<string, IRNode>)
     const val = attrString((attrs as Record<string, unknown>)[t.a]);
     return t.b === undefined ? t.a in attrs : val.toLowerCase().includes(t.b.toLowerCase());
   }
+  if (t.kind === "id") return hasCloudId(n, t.a);
   if (t.kind === "tag") {
     const tags = (attrs as Record<string, unknown>)["Tags"];
     if (!Array.isArray(tags)) return false;
@@ -1842,6 +1853,18 @@ function matchTerm(n: IRNode, t: Term, ir?: GraphIR, byId?: Map<string, IRNode>)
     .map(([, v]) => attrString(v));
   const hay = [n.id, n.kind, ...values].join(" ").toLowerCase();
   return hay.includes(t.a.toLowerCase());
+}
+
+/**
+ * Whether a node carries `id` as one of its cloud ids (#4534): its observed
+ * `physicalId`, or any value in its engine facts' `cloudIds` (an ARN, an
+ * import id, a self-link). The match is exact, case included: a cloud id is
+ * an identifier, and a substring of one names another object. A bare word
+ * never reads either field.
+ */
+function hasCloudId(n: IRNode, id: string): boolean {
+  if (n.physicalId === id) return true;
+  return (n.facts?.cloudIds ?? []).some((c) => c.value === id);
 }
 
 /**
