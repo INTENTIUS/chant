@@ -157,7 +157,7 @@ A member that can't be searched is listed with a reason code and never as zero m
 | `member-chant-too-old` | the member's chant prints no search document of the read contract: it predates `workspace member-run`, has no `search` command or flag the read needs, or prints `search --json` from before the contract |
 | `command-failed` | the member's `chant search` exited with a failure and printed no document |
 | `output-unreadable` | it printed something that isn't a search document |
-| `query-invalid`, `usage-invalid`, `environment-unknown`, `snapshot-unavailable`, `build-failed` | the member's own search refused, with this code: for example `snapshot-unavailable` for a member with no snapshot recorded for the environment |
+| `query-invalid`, `usage-invalid`, `environment-unknown`, `snapshot-unavailable`, `build-failed`, `index-unavailable` | the member's own search refused, with this code: for example `snapshot-unavailable` for a member with no snapshot recorded for the environment |
 | `dir-missing`, `unknown-kind`, `kind-probe-failed`, `kind-not-run` | as for [`workspace graph`](/chant/cli/workspace-graph/) |
 
 A refusal of the whole search is a document with `error: { code, message, hint? }` and no `members`. Its code is one of the declaration's codes, `revision-unknown`, `not-a-git-repository`, `live-at-revision`, `snapshot-at-revision`, `query-invalid` or `usage-invalid`. The [read contract](/chant/reference/workspace-read-contract/#reason-codes) lists them all.

@@ -35,6 +35,8 @@ export const SEARCH_ERROR_CODES = [
   "snapshot-unavailable",
   /** The build, or a build root, failed: the graph would be incomplete. */
   "build-failed",
+  /** --index names no index version the store holds, or one stamped for another scope (#4525). */
+  "index-unavailable",
 ] as const satisfies readonly ReasonCode[];
 export type SearchErrorCode = (typeof SEARCH_ERROR_CODES)[number];
 

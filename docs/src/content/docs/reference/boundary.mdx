@@ -51,7 +51,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 10 | 0 | 0 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 12 | 0 | 0 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 293 | 0 | 0 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 294 | 0 | 0 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 18 | 0 | 0 | 0 | 0 |
 | WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 65 | 0 | 0 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 | 0 | 0 |
@@ -221,6 +221,7 @@ Each row follows, in the order of the table above.
 | reason code | `usage-invalid` | chant | capabilities.schema.json, search.schema.json | search was given a flag that needs another one it lacks, or two that don't go together, such as --check-live without --snapshot. |
 | reason code | `environment-unknown` | chant | search.schema.json | --env names an environment the project's chant config does not declare. |
 | reason code | `snapshot-unavailable` | chant | search.schema.json | --snapshot names a snapshot chant can't replay: none is recorded for the environment, or the ref is one replay does not take. |
+| reason code | `index-unavailable` | chant | search.schema.json | --index names an index version chant can't read: none is recorded under the scope key in the store, or its stamp is not the scope or version asked for. |
 | reason code | `build-failed` | chant | search.schema.json | The project's build, or one of its build roots, failed, so the graph search would answer over is incomplete. |
 | reason code | `snapshot-at-revision` | chant | search.schema.json | workspace search was given --snapshot and --at: a snapshot replays the estate as recorded over the source in the working tree, not at a revision. |
 | reason code | `member-chant-too-old` | chant | search.schema.json | The member's chant predates the document asked for: it has no such command, or prints it without the read contract. |
