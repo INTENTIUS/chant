@@ -552,7 +552,8 @@ export function atomKey(a: GrantAtom): string {
   return `${a.revoke ? "REVOKE " : ""}${a.privilege}${a.column !== undefined ? `(${a.column})` : ""} ON ${a.target}${a.option ? " WITH GRANT OPTION" : ""}`;
 }
 
-function grantAtoms(ddl: string, defaultDatabase: string): Array<{ grantees: string[]; atoms: GrantAtom[] }> {
+/** Each statement's grantees and atoms. A bare table is qualified with `defaultDatabase`, or left bare when it is undefined. */
+function grantAtoms(ddl: string, defaultDatabase: string | undefined): Array<{ grantees: string[]; atoms: GrantAtom[] }> {
   const out: Array<{ grantees: string[]; atoms: GrantAtom[] }> = [];
   for (const statement of splitLines(ddl)) {
     const tokens = tokenizeText(statement, 0);
@@ -565,7 +566,7 @@ function grantAtoms(ddl: string, defaultDatabase: string): Array<{ grantees: str
       const parts = sigOf(tokens, node.target)
         .filter((t) => !(t.kind === "punct" && t.text === "."))
         .map((t) => unquote(t.text));
-      target = parts.length >= 2 ? `${parts[0]}.${parts[1]}` : parts[0] === "*" ? "*" : `${defaultDatabase}.${parts[0]}`;
+      target = parts.length >= 2 ? `${parts[0]}.${parts[1]}` : parts[0] === "*" || defaultDatabase === undefined ? parts[0] : `${defaultDatabase}.${parts[0]}`;
     }
     for (const item of node.items) {
       const sig = sigOf(tokens, item);
@@ -643,6 +644,52 @@ export function grantsCanonical(ddl: string, grantee: string, defaultDatabase = 
     foldAtoms(atoms)
       .map((a) => [atomKey(a), JSON.stringify(a)] as const)
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+  );
+}
+
+/**
+ * The atoms one grant declaration gives, one per grantee (#4582): `key` is
+ * the atom as the declaration spells its target (a bare table stays bare),
+ * which is how the deep diff addresses it on both sides; `atom` has the
+ * target qualified with `defaultDatabase`, which is what the server is asked
+ * about.
+ */
+export function declaredGrantAtoms(ddl: string, defaultDatabase = "default"): Array<{ grantee: string; key: string; atom: GrantAtom }> {
+  const spelled = grantAtoms(ddl, undefined);
+  const resolved = grantAtoms(ddl, defaultDatabase);
+  const out: Array<{ grantee: string; key: string; atom: GrantAtom }> = [];
+  spelled.forEach((g, i) => {
+    for (const grantee of g.grantees) {
+      g.atoms.forEach((a, j) => out.push({ grantee, key: atomKey(a), atom: resolved[i]!.atoms[j]! }));
+    }
+  });
+  return out;
+}
+
+/**
+ * Whether a grantee holding `have` (its `SHOW GRANTS` atoms) holds `a`: the
+ * same atom, or one the server folds it under (the table's privilege for a
+ * column's, the database's for a table's, `*.*` for any), with a grant or
+ * admin option at least as wide, and no partial revoke the server holds
+ * taking part of it back.
+ */
+export function holdsAtom(have: readonly GrantAtom[], a: GrantAtom): boolean {
+  if (a.role !== undefined) return have.some((b) => b.role === a.role && (b.option ?? false) >= (a.option ?? false));
+  const granted = have.some(
+    (b) =>
+      !b.revoke &&
+      b.role === undefined &&
+      b.privilege === a.privilege &&
+      (b.option ?? false) >= (a.option ?? false) &&
+      ((b.target === a.target && (b.column === undefined || b.column === a.column)) || (b.column === undefined && covers(b.target!, a.target!))),
+  );
+  if (!granted) return false;
+  return !have.some(
+    (r) =>
+      r.revoke === true &&
+      r.privilege === a.privilege &&
+      (r.target === a.target || (a.column === undefined && covers(a.target!, r.target!))) &&
+      (a.column === undefined || r.column === undefined || r.column === a.column),
   );
 }
 

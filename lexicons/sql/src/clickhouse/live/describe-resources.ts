@@ -1,6 +1,8 @@
 /**
  * `describeResources()` for the ClickHouse dialect: which declared databases,
- * tables and views exist on the environment's server.
+ * tables and views exist on the environment's server. A grant declaration is
+ * present when the server has every grantee it names, and missing when it
+ * lacks one (#4582); which privileges the grantee holds is the deep diff's.
  *
  * One read of `system.databases`, `system.tables` and `system.functions` per
  * run, then a lookup per declared entity, so N entities are three queries,
@@ -26,6 +28,7 @@ import {
 import { bindClickHouse, classifyClickHouseFailure, type BindOptions, type ClickHouseTarget } from "./bind";
 import { ACCESS_ENTITY_TYPES, ACCESS_UNMANAGED_DETAIL, accessOf, readLiveAccess, readLiveSchema, type DeclaredAccess, type LiveObject } from "./catalog";
 import { CLICKHOUSE_ENTITY_TYPES } from "../entities";
+import { granteesOf } from "../access";
 import { objectKey } from "../plan/normalize";
 import { isChantManaged, readMarker, stripMarker } from "../ownership";
 
@@ -71,7 +74,18 @@ function adapter(options: BindOptions & { owned?: boolean; access?: (defaultData
         return { unobserved: { reason: "filtered", detail: ACCESS_UNMANAGED_DETAIL } };
       }
       if (entity.type === CLICKHOUSE_ENTITY_TYPES.grant) {
-        return { unobserved: { reason: "unsupported-kind", detail: "a grant is compared as part of its grantees' grants, which chant sql plan reports" } };
+        let grantees: string[];
+        try {
+          grantees = granteesOf(String(entity.props.ddl ?? ""));
+        } catch (err) {
+          return { unobserved: { reason: "read-failed", detail: `the grant does not parse: ${(err as Error).message}` } };
+        }
+        const gone = grantees.find((g) => !byKey.has(objectKey({ type: entity.type, name: g })));
+        const queried = `${target.endpoint.url} grants ${gone ?? grantees.join(", ")}`;
+        if (gone !== undefined || grantees.length === 0) return { absent: true, queried };
+        // A grant carries no comment, so no marker: like a user or a role, it is never chant's by marker.
+        if (options.owned) return { unobserved: { reason: "filtered", detail: "a grant carries no chant ownership marker and owned was requested" }, queried };
+        return { present: { type: entity.type, physicalId: `grants ${grantees.join(", ")}`, status: "", ownership: "foreign" }, queried };
       }
       const { database, name } = declaredAddress(entity, target.defaultDatabase);
       const queried = `${target.endpoint.url} ${database ? `${database}.` : ""}${name}`;
@@ -112,5 +126,15 @@ export async function describeResources(
     const entity = options.entities.get(name);
     return { name, type: entity?.entityType ?? "", props: entity?.props ?? {} };
   });
-  return observeEntities(declared, adapter({ ...options, access: (db) => accessOf(options.entities, db) }));
+  const grantees = [...options.entities.values()]
+    .filter((e) => e.entityType === CLICKHOUSE_ENTITY_TYPES.grant)
+    .flatMap((e) => {
+      try {
+        return granteesOf(String(e.props.ddl ?? ""));
+      } catch {
+        return [];
+      }
+    });
+  const access = (db: string): DeclaredAccess[] => [...accessOf(options.entities, db), ...[...new Set(grantees)].map((name) => ({ kind: "grants", name }))];
+  return observeEntities(declared, adapter({ ...options, access }));
 }

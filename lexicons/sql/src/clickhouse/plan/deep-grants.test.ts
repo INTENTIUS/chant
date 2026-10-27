@@ -1,8 +1,8 @@
 /**
  * The grants the deep read reports as pending (#3733): what an apply would
- * grant or revoke from each declared grantee, so a privilege granted by hand
- * after an approval moves the plan digest. The server is a stub answering the
- * queries `readLiveAccess` sends.
+ * send a grantee holding a privilege no declaration gives it, so a privilege
+ * granted by hand after an approval moves the plan digest. The server is a
+ * stub answering the queries `readLiveAccess` sends.
  */
 
 import { describe, expect, test, vi } from "vitest";
@@ -55,9 +55,14 @@ describe("pendingGrants (#3733)", () => {
     ]);
   });
 
-  test("a grantee the server does not hold yet is given every declared grant", async () => {
+  test("a grantee that only lacks declared grants has nothing pending: each declaration reports them (#4582)", async () => {
+    held = { app: ["GRANT SELECT ON shop.events TO app"] };
+    expect(await pendingGrants(target, declared)).toEqual([]);
+  });
+
+  test("a grantee the server does not have has nothing pending: the thin diff reports it missing (#4582)", async () => {
     held = {};
-    expect((await pendingGrants(target, declared)).map((p) => p.change)).toEqual(["GRANT SELECT ON `shop`.`events` TO `app`; GRANT SELECT ON `shop`.`orders` TO `app`"]);
+    expect(await pendingGrants(target, declared)).toEqual([]);
   });
 
   test("no grant declarations read nothing", async () => {
