@@ -62,10 +62,10 @@ The generator refuses the option on a trigger with no pull request, with a findi
 
 ### On GitLab
 
-GitLab has no per-job token scopes, and a merge request pipeline is built from the merge request's own files. Every job in it gets the project's unprotected variables. So the gitlab generator keeps the token out of that pipeline altogether, as the plan note does:
+GitLab has no per-job token scopes, and a merge request pipeline is built from the merge request's own files, with the project's unprotected variables in each of its jobs. So the gitlab generator keeps the token out of that pipeline altogether, as the plan note does:
 
-- The review job, named after the Op, runs in the merge request pipeline. Its script starts by unsetting every forge token variable, then runs `chant run pr-review`, and it keeps `.chant/review` as its artifact for 7 days.
-- The note job, `pr-review-note`, runs only in a pipeline of the default branch started with `CHANT_REVIEW_NOTES` set to `1`. It checks nothing out (`GIT_STRATEGY: none`), installs the chant release the generator belongs to, and runs `postOpenReviewNotes` (`packages/core/src/op/activities/review-agent.ts`). For each open merge request into the trigger's branches whose newest pipeline's review job succeeded, it reads `review.json` from that job's artifacts as data, with the same field checks as `postReviewNote`, and posts or updates the Op's note. The head the note records is the one GitLab names for the merge request.
+- The review job, named after the Op, runs in the merge request pipeline. Its script unsets every forge token variable before `chant run pr-review`, and `.chant/review` stays as its artifact for 7 days.
+- `pr-review-note` runs only in a pipeline of the default branch started with `CHANT_REVIEW_NOTES` set to `1`, with no checkout (`GIT_STRATEGY: none`). It installs the pinned chant release and calls `postOpenReviewNotes` (`packages/core/src/op/activities/review-agent.ts`). For each open merge request into the trigger's branches whose newest pipeline's review job succeeded, `review.json` is read from that job's artifacts as data, under `readReviewRecord`'s field checks, and the Op's note is posted or updated. The head the note records is the one GitLab names for the merge request.
 
 Set the project up once:
 
