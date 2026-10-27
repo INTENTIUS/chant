@@ -45,8 +45,44 @@ import type { ChangeSetPart } from "../change-set";
  * merges a run's outputs; absent when no step's plan says.
  */
 export type WaveComponentPlan =
-  | { component: string; members: WaveMember[]; plans: Record<string, unknown>; parts: ChangeSetPart[]; outputs?: PlannedOutputs; shapes?: Record<string, PlanShape> }
-  | { component: string; error: string };
+  | { component: string; members: WaveMember[]; plans: Record<string, unknown>; parts: ChangeSetPart[]; outputs?: PlannedOutputs; shapes?: Record<string, PlanShape>; policy?: CapabilityPolicyFindings[] }
+  | { component: string; error: string; policy?: CapabilityPolicyFindings[] };
+
+/** A policy engine's findings a capability's plan carried for one member (#4550): `denied` when the plan threw `policyDenied`. */
+export interface CapabilityPolicyFindings {
+  member: string;
+  denied: boolean;
+  denials: Array<{ rule: string; message: string }>;
+  holds: Array<{ rule: string; message: string }>;
+  warnings: string[];
+}
+
+const findingList = (v: unknown): Array<{ rule: string; message: string }> =>
+  Array.isArray(v) ? v.filter((f): f is { rule: string; message: string } => typeof f?.rule === "string" && typeof f?.message === "string").map((f) => ({ rule: f.rule, message: f.message })) : [];
+
+/**
+ * The findings a capability's plan or its policy error carries (#4550), in
+ * the gate-policy shape (`{ denials, holds, warnings }`) that chant#4541's
+ * `pulumi-up` puts on its artifact as `policy` and on a
+ * `PulumiPolicyDeniedError` as `findings`. Undefined when there are none.
+ */
+export function capabilityPolicyOf(member: string, findings: unknown, denied: boolean): CapabilityPolicyFindings | undefined {
+  if (findings === null || typeof findings !== "object") return denied ? { member, denied, denials: [], holds: [], warnings: [] } : undefined;
+  const f = findings as { denials?: unknown; holds?: unknown; warnings?: unknown };
+  const out = {
+    member,
+    denied,
+    denials: findingList(f.denials),
+    holds: findingList(f.holds),
+    warnings: Array.isArray(f.warnings) ? f.warnings.filter((w): w is string => typeof w === "string") : [],
+  };
+  return denied || out.denials.length + out.holds.length + out.warnings.length > 0 ? out : undefined;
+}
+
+/** Whether `err` is a capability's policy denial (#4550): the `policyDenied: true` mark, as `planMoved` marks a moved plan. */
+export function isPolicyDeniedError(err: unknown): err is { policyDenied: true; member?: unknown; findings?: unknown } {
+  return typeof err === "object" && err !== null && (err as { policyDenied?: unknown }).policyDenied === true;
+}
 
 /** A part with no entries, for a member whose planner describes no changes. `unbound` steps become its holes (#4155). */
 function emptyPart(member: WaveMember, unbound: ComponentDeployInputs["unbound"] = []): ChangeSetPart {
@@ -103,6 +139,7 @@ export async function planWaveComponent(
     const parts: ChangeSetPart[] = [];
     let outputs: PlannedOutputs | undefined;
     const shapes: Record<string, PlanShape> = {};
+    const policy: CapabilityPolicyFindings[] = [];
     assertTargetsAccepted(component, registry, ctx);
     for (const step of capabilitySteps(component.deploy)) {
       const capability = registry.resolve(step.kind);
@@ -114,6 +151,9 @@ export async function planWaveComponent(
       members.push(member);
       parts.push(planned.changeSet ?? emptyPart(member));
       if (planned.artifact !== undefined) plans[planned.member] = planned.artifact;
+      // #4550: advisory findings the plan carried (pulumi-up's CrossGuard), for the note.
+      const found = capabilityPolicyOf(planned.member, (planned.artifact as { policy?: unknown } | undefined)?.policy, false);
+      if (found) policy.push(found);
       if (planned.shape) shapes[planned.member] = { ...planned.shape, member: planned.member };
       if (planned.outputs) outputs = mergePlannedOutputs(outputs, planned.outputs);
     }
@@ -144,9 +184,14 @@ export async function planWaveComponent(
         parts.push(emptyPart(member, read.unbound));
       }
     }
-    return { component: component.name, members, plans, parts, ...(outputs ? { outputs } : {}), ...(Object.keys(shapes).length > 0 ? { shapes } : {}) };
+    return { component: component.name, members, plans, parts, ...(outputs ? { outputs } : {}), ...(Object.keys(shapes).length > 0 ? { shapes } : {}), ...(policy.length > 0 ? { policy } : {}) };
   } catch (err) {
-    return { component: component.name, error: err instanceof Error ? err.message : String(err) };
+    const message = err instanceof Error ? err.message : String(err);
+    if (isPolicyDeniedError(err)) {
+      const denied = capabilityPolicyOf(typeof err.member === "string" ? err.member : component.name, err.findings, true)!;
+      return { component: component.name, error: message, policy: [denied] };
+    }
+    return { component: component.name, error: message };
   }
 }
 

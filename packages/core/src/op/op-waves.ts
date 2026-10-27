@@ -129,9 +129,17 @@ export type GateApprovalSource =
   /** As `ledger`, and the merged pull request's review of its head, by a writer other than its author. */
   | "pr-review"
   /** Only a resolution sealed by a key the signers file at base lists for its approver. */
-  | "sealed";
+  | "sealed"
+  /**
+   * As `ledger`, and the pull request's approval (#4550, ruling B): an
+   * approval of the pull request's gate (`approvals.pullRequest.gate` at
+   * base) whose change set covers every run of the wave's plan applies the
+   * wave without a second approval. A wave whose plan moved waits at its own
+   * gate. plywood's preset.
+   */
+  | "pull-request";
 
-export const GATE_APPROVAL_SOURCES: readonly GateApprovalSource[] = ["ledger", "pr-review", "sealed"];
+export const GATE_APPROVAL_SOURCES: readonly GateApprovalSource[] = ["ledger", "pr-review", "sealed", "pull-request"];
 
 /** What a failing hook does: fail the wave, or hold it for an approval of its set digest. */
 export type OpWaveHookFailure = "fail" | "approve";
@@ -589,6 +597,14 @@ export interface OpWavesApprovals {
   reviewLedger?: string;
   /** Who else was involved in a change, for `quorum` (#4333). Read at the base commit. */
   involved?: OpWavesInvolved;
+  /**
+   * The pull request's gate a wave under `approval: "pull-request"` takes
+   * its approval from (#4550): `{ "gate": "up" }`, recorded under the spec's
+   * op. Read at the base commit, so a change cannot name the gate its own
+   * waves are judged by. Needs the plans file's `changeSet`, which the
+   * approval's change set must cover.
+   */
+  pullRequest?: { gate: string };
 }
 
 /**
@@ -756,12 +772,24 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
         if (problems.length > 0) throw new Error(`${where}: ${problems.join("; ")}.`);
         continue;
       }
-      if (key !== "spend") throw new Error(`${where}: approvals.${key} is not a setting; the ones there are approvals.spend, approvals.quorum, approvals.reviewLedger and approvals.involved.`);
+      if (key === "pullRequest") {
+        // #4550: the pull request's gate a pull-request wave takes its approval from, read at base.
+        const gate = (value as { gate?: unknown } | null)?.gate;
+        if (value === null || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some((k) => k !== "gate") || typeof gate !== "string" || !OP_LEDGER_NAME.test(gate)) {
+          throw new Error(`${where}: approvals.pullRequest must be { "gate": "<gate>" }, the pull request's gate, such as "up".`);
+        }
+        continue;
+      }
+      if (key !== "spend") throw new Error(`${where}: approvals.${key} is not a setting; the ones there are approvals.spend, approvals.quorum, approvals.reviewLedger, approvals.involved and approvals.pullRequest.`);
       if (typeof value !== "boolean") throw new Error(`${where}: approvals.spend must be true or false.`);
     }
     if ((a as OpWavesApprovals).quorum?.length && (spec.point !== undefined || spec.waves.some((w) => w.point !== undefined))) {
       throw new Error(`${where}: approvals.quorum and a decision point are both set; a gate that asks a point takes its deciders and quorum from the point, so drop one of them.`);
     }
+  }
+  // #4550: a wave that takes the pull request's approval needs to know its gate.
+  if (spec.waves.some((w) => w.approval === "pull-request") && !spec.approvals?.pullRequest) {
+    throw new Error(`${where}: a wave with approval "pull-request" takes the pull request's approval, so the spec needs approvals.pullRequest: { "gate": "<gate>" }.`);
   }
   if (spec.gateName !== undefined) {
     if (typeof spec.gateName !== "string" || !spec.gateName.includes("{k}") || /\s/.test(spec.gateName)) {

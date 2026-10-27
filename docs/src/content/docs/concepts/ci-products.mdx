@@ -21,3 +21,29 @@ Pulumi stacks plan and apply as components through the pulumi lexicon ([#4541](h
 ## Records
 
 Approvals and gate decisions go in the workspace [ledger](/chant/cli/ledger/), and so do overrides and the records of applies and runs ([#4551](https://github.com/INTENTIUS/chant/issues/4551)). A product keeps no record store of its own. Before a product adds storage for a record, check whether the ledger already holds it.
+
+## The product pipeline
+
+A product passes chant one object of words from `@intentius/chant/ci-product` and gets its pull request jobs from `productPipelineJobs`. terragucci's jobs and plywood's come from the same generator. The words fill fixed slots in chant's sentences.
+
+| Slot | chant | terragucci | plywood |
+|---|---|---|---|
+| `product` | `chant` | `terragucci` | `plywood` |
+| `stages.plan` and `stages.apply` | `plan` and `apply` | `plan` and `apply` | `preview` and `up` |
+| `noun` | member | root | stack |
+| `commands` | `apply` | `plan` `apply` `lock` `unlock` `agent` | `preview` `up` `lock` `unlock` |
+| `approve` | `chant approve {op} {gate} --plan {digest} ...` | `terragucci approve {gate} --plan {digest} {sign}` | `plywood approve {gate} --plan {digest} {sign}` |
+| `op` | the spec's | `tf-apply` | `pulumi-up` |
+| `gateName` | `{gate}-wave-{k}` | `wave-{k}` | `wave-{k}` |
+| `prGate` | `pr-apply` | unused | `up` |
+| `approval` | `pull-request` | `per-wave` | `pull-request` |
+
+Status contexts come out as `<product>/<stage>`, such as `plywood/preview`, with `/<member>` after it inside a workspace member. A job answers the comment `/<product> <command>`. Job names and note markers stay chant's, and so do ledger paths and artifact names: people never type them, and readers of the ledger key on them. `assertProductWords` refuses a word outside `[a-z0-9-]` or two stages with one word. It also refuses a command the pipeline has no job for.
+
+The approve and override templates take `{op}`, `{gate}` and `{digest}` among their placeholders. `{target}` is the wave's run target. A product that approves by environment writes `approve {target} --plan {digest}`.
+
+The plan side is the pull request loop's: `pr-plan`, then `pr-post` in a job that holds the forge token. The apply on merge runs on [Op waves](/chant/guide/op-waves/) with a job per wave. The spec is `.chant/op-waves/<op>.spec.json`, and chant reads it at the base commit. Under `approval: per-wave` each wave waits for an approval of its own digest. Under `approval: pull-request` the pull request's approval applies every wave whose plan its change set covers, and a wave whose plan moved waits at its own gate.
+
+The generated jobs run the product's bin, named by `bin`. The bin calls chant in process with its words through `runChantInProcess`. The words live in the product package at its pinned version, and the repository holds no words file.
+
+Through `prNoteDetail` a lexicon may add a section under a member's row in the note, such as a SQL member's statements with their class. chant leaves a section out, and names the member, when the note would pass the forge's comment limit. Install lines for the engine come from `ciSetup`. The terraform lexicon gives OpenTofu and adds choudoufu for a root that runs it. The pulumi lexicon gives Pulumi, or plunge when the member's engine is plunge.

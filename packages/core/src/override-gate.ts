@@ -38,6 +38,7 @@ import { spawnSync } from "node:child_process";
 import { OVERRIDE_GATE_OP } from "./op/gate-name";
 import { latestPendingGate } from "./lifecycle/gate-ledger-select";
 import { samePlanDigest } from "./lifecycle/plan-digest";
+import { activeProductWords, isChantWords, overrideLine } from "./ci-product-words";
 import { gateSealRefusal, type GateSigners } from "./lifecycle/gate-seal";
 import { DEFAULT_SIGNERS_PATH } from "./workspace/trust/trust-files";
 import type { GateResolutionRecord, PendingGateRecord } from "./lifecycle/gate-ledger";
@@ -76,6 +77,9 @@ export function overrideDigest(subject: string, planDigest: string, rules: reado
 
 /** The command that overrides a denial. */
 export function overrideCommand(subject: string, rules: readonly string[], sealed = false): string {
+  // #4550: under a product's words, the product's override line, with the denied member as {target}.
+  const words = activeProductWords();
+  if (!isChantWords(words)) return overrideLine(words, { op: OVERRIDE_OP, target: subject, rules: sortedRules(rules), sign: sealed });
   return `chant approve ${OVERRIDE_OP} ${subject} ${sortedRules(rules).map((r) => `--rule ${r}`).join(" ")} --reason "<why>"${sealed ? " --sign" : ""}`;
 }
 

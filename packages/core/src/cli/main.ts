@@ -1,5 +1,6 @@
 #!/usr/bin/env tsx
 
+import { withProductWords, type CiProductWords, type CiProductWordsInput } from "../ci-product-words";
 import { resolve } from "node:path";
 import { isEntryPoint } from "./is-entry-point";
 import { formatSuccess, formatError } from "./format";
@@ -1571,8 +1572,16 @@ function commandRunsNoConfig(def: CommandDef, args: ParsedArgs): boolean {
  * checked, plugins are loaded when the command needs them, and the handler
  * runs. A `process.exit` inside (loadPluginsOrExit's, say) is the caller's to
  * catch.
+ *
+ * `words` (#4550) are a CI product's words (`@intentius/chant/ci-product`):
+ * the product's bin passes them, so the command renders in the product's
+ * words while it runs.
  */
-export async function runCommandInProcess(argv: string[]): Promise<number> {
+export async function runCommandInProcess(argv: string[], options: { words?: CiProductWordsInput | CiProductWords } = {}): Promise<number> {
+  // #4550: a product's bin calls chant with its words; every status, note and
+  // approve line the command writes takes them, and the earlier words come
+  // back once it settles.
+  if (options.words) return withProductWords(options.words, () => runCommandInProcess(argv));
   const args = parseArgs(argv);
   const match = resolveCommand(args, commandRegistry);
   if (!match) {

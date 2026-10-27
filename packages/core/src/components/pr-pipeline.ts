@@ -94,6 +94,7 @@ import { layerWaves } from "../gated-waves";
 import type { DriverComponent } from "./driver";
 import type { GatedWavePipelineOptions } from "./gated-wave-pipeline";
 import type { CloudTradeSpec, PipelineCloudIdentity } from "../ci-identity";
+import { commentLine, resolveProductWords, type CiProductWords, type CiProductWordsInput } from "../ci-product-words";
 
 /** The variable `chant ci run` reads its runner key from (`RUNNER_KEY_ENV` in ../workspace/ci-green.ts). */
 const RUNNER_KEY_ENV = "CHANT_RUNNER_KEY";
@@ -121,9 +122,25 @@ export const PR_LOOP_SETUP = [
   "command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)",
 ];
 
-/** The setup lines for a pipeline running in `image`: the install when it is the default image, none otherwise. */
-export function prLoopSetup(image: string): string[] {
-  return image === PR_LOOP_IMAGE ? PR_LOOP_SETUP : [];
+/**
+ * The setup lines for a pipeline running in `image`: the install when it is
+ * the default image, none otherwise. `engine` is the lines the project's
+ * lexicons give (#4550, `LexiconPlugin.ciSetup`, {@link engineSetupLines}):
+ * Pulumi or plunge for a Pulumi member, OpenTofu for a Terraform one. Absent,
+ * OpenTofu, as before.
+ */
+export function prLoopSetup(image: string, engine?: readonly string[]): string[] {
+  if (image !== PR_LOOP_IMAGE) return [];
+  return engine && engine.length > 0 ? [...engine] : PR_LOOP_SETUP;
+}
+
+/**
+ * Join the setup lines each lexicon gives (#4550), each line once, in the
+ * order the lexicons come. A project whose lexicons give none gets none, and
+ * {@link prLoopSetup} then falls back to OpenTofu.
+ */
+export function engineSetupLines(perLexicon: ReadonlyArray<readonly string[] | undefined>): string[] {
+  return [...new Set(perLexicon.flatMap((lines) => lines ?? []))];
 }
 
 /**
@@ -232,6 +249,16 @@ export interface PrLoopPipelineOptions {
    * Absent: they request no OIDC token.
    */
   prEnvIdentity?: CloudTradeSpec;
+  /**
+   * The product's words (#4550, `@intentius/chant/ci-product`): the comment
+   * a job answers, and with `bin` the command every job runs in place of
+   * `chant`, whose bin passes the rest to chant in process with the words.
+   * The statuses and the note take the words in the running job, from the
+   * bin. Absent: chant's.
+   */
+  words?: CiProductWordsInput | CiProductWords;
+  /** The engine install lines of the project's lexicons (#4550), for {@link prLoopSetup}. */
+  engineSetup?: string[];
 }
 
 /** The lock job's step names and commands (#4327), shared by the GitHub-shaped generators. */
@@ -373,6 +400,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
     checkout: [pullRequestCheckout(forge)],
     run: { command: ciRun("apply").join(" "), env: runEnv(earlyEnv) },
   };
+  const bin = options.words?.bin;
   return [
     {
       jobName: "plan",
@@ -392,7 +420,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
       ...build,
       run: { command: ciRun("record").join(" "), env: runEnv(applyEnv) },
     },
-  ];
+  ].map((job) => jobWithBin(job as PrLoopJob, bin));
 }
 
 /** The name of the job that posts the plan's note and status (#4295). */
@@ -414,10 +442,10 @@ export const PR_PLAN_NOTE_JOB = "plan-note";
  * asks GitLab for each open merge request's plan job and reads its report
  * from the job's artifacts.
  */
-export function prLoopPostJob(forge: ForgeKind, env: string, member?: string): { command: string; env: Record<string, string> } {
+export function prLoopPostJob(forge: ForgeKind, env: string, member?: string, words?: Pick<CiProductWordsInput, "bin">): { command: string; env: Record<string, string> } {
   if (forge === "gitlab") {
     return {
-      command: ["chant", "components", "pr-post", "--open", "--env", env, "--output", PR_LOOP_REPORT_DIR, "--forge", forge, ...(member ? ["--member", member] : [])].join(" "),
+      command: withProductBin(["chant", "components", "pr-post", "--open", "--env", env, "--output", PR_LOOP_REPORT_DIR, "--forge", forge, ...(member ? ["--member", member] : [])].join(" "), words?.bin),
       env: {},
     };
   }
@@ -428,7 +456,7 @@ export function prLoopPostJob(forge: ForgeKind, env: string, member?: string): {
     "--result", '"$PLAN_RESULT"',
   ].join(" ");
   return {
-    command,
+    command: withProductBin(command, words?.bin),
     env: { PR_NUMBER: "${{ github.event.pull_request.number }}", HEAD_SHA: "${{ github.sha }}", PLAN_RESULT: "${{ needs.plan.result }}", GITHUB_TOKEN: GITHUB_JOB_TOKEN },
   };
 }
@@ -554,6 +582,37 @@ export const GITLAB_APPLY_PR_VAR = "CHANT_APPLY_PR";
 
 /** The comment that starts the apply before merge on GitHub and Forgejo (#4301). */
 export const APPLY_COMMENT = "/chant apply";
+
+/** The comment that starts the apply before merge under the pipeline's words (#4550): `/plywood up`, else {@link APPLY_COMMENT}. */
+export function prApplyComment(options: Pick<PrLoopPipelineOptions, "words"> = {}): string {
+  return commentLine(resolveProductWords(options.words), "apply") ?? APPLY_COMMENT;
+}
+
+/** `chant` at the start of a command, or after a shell `$(`, `(`, `&&` or space. */
+const CHANT_WORD = /(^|[\s"(]|\$\()chant (?=[a-z])/g;
+
+/**
+ * A command line with the product's bin in place of `chant` (#4550): `npx
+ * --no-install plywood components pr-plan ...`. A `chant ci run` line also
+ * passes `--chant <bin>`, so the command it runs goes through the bin too.
+ */
+export function withProductBin(line: string, bin: string | undefined): string {
+  if (!bin) return line;
+  const swapped = line.replace(CHANT_WORD, (_m, before: string) => `${before}${bin} `);
+  return swapped.replace(new RegExp(`^${bin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} ci run ([a-z-]+) `), (m) => `${m}--chant ${JSON.stringify(bin)} `);
+}
+
+/** Every command of `job` through {@link withProductBin}. */
+function jobWithBin<T extends Pick<PrLoopJob, "command" | "run"> & Partial<Pick<PrLoopJob, "build" | "checkout" | "setup">>>(job: T, bin: string | undefined): T {
+  if (!bin) return job;
+  return {
+    ...job,
+    command: withProductBin(job.command, bin),
+    run: { ...job.run, command: withProductBin(job.run.command, bin) },
+    ...(job.build ? { build: job.build.map((l) => withProductBin(l, bin)) } : {}),
+    ...(job.checkout ? { checkout: job.checkout.map((l) => withProductBin(l, bin)) } : {}),
+  };
+}
 
 /**
  * The line that checks out pull request `$PR_NUMBER`'s head (#4301) in a job

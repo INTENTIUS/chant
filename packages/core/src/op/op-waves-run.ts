@@ -276,8 +276,16 @@ export interface OpWaveDecision {
    */
   status: "approved" | "not-required" | "waiting" | "refused";
   approvedBy?: string;
-  /** How the approval arrived: a resolution on the ledger, the merged pull request's review (#3684), or a decision point's answer (#3836). */
-  via?: "ledger" | "pr-review" | "point";
+  /**
+   * How the approval arrived: a resolution on the ledger, the merged pull
+   * request's review (#3684), a decision point's answer (#3836), or the pull
+   * request's approval covering the wave's plans (#4550).
+   */
+  via?: "ledger" | "pr-review" | "point" | "pull-request";
+  /** Under `pull-request` (#4550): the gate the pull request's approval is recorded at, read at base. */
+  pullRequestGate?: string;
+  /** Under `pull-request`: the approved change set that covered the wave, or why none did. */
+  coveredBy?: { digest?: string; reason?: string };
   /**
    * The decision point the gate asks, as read at base (#3836), and what it
    * said: the open `question` while the wave waits, the `answer` once it is
@@ -549,6 +557,8 @@ export interface OpWaveBaseRules {
   holds?: OpWaveHolds;
   /** Set when `holds` at base cannot be read: none runs, and the wave waits for a person. */
   holdsRefused?: string;
+  /** `approvals.pullRequest.gate` at base (#4550): the pull request's gate a `pull-request` wave takes its approval from. */
+  pullRequestGate?: string;
 }
 
 const noHooks = (): Record<OpWaveHookMoment, OpWaveHook[]> =>
@@ -581,7 +591,7 @@ export function readOpWavePolicy(
   const spend = (spec as { approvals?: { spend?: unknown } }).approvals?.spend === true;
   const neverOverMcp = (spec as { neverOverMcp?: unknown }).neverOverMcp === true;
   // #3836: the gate's decision point, the spec's for a wave the base does not have yet.
-  const asks = { ...pointAtBase(spec, name, `${specFile} at ${sha.slice(0, 12)}`), ...quorumAtBase(spec, `${specFile} at ${sha.slice(0, 12)}`), ...holdsAtBase(spec, `${specFile} at ${sha.slice(0, 12)}`) };
+  const asks = { ...pointAtBase(spec, name, `${specFile} at ${sha.slice(0, 12)}`), ...quorumAtBase(spec, `${specFile} at ${sha.slice(0, 12)}`), ...holdsAtBase(spec, `${specFile} at ${sha.slice(0, 12)}`), ...pullRequestGateAtBase(spec) };
   const wave = spec.waves.find((w) => w.name === name);
   if (!wave) return { ...absent, spend, neverOverMcp, ...asks };
   const policy = wave.gate ?? "always";
@@ -598,6 +608,12 @@ export function readOpWavePolicy(
     rules.hooksRefused = `the hooks at base cannot be run (${err instanceof Error ? err.message : String(err)})`;
   }
   return rules;
+}
+
+/** `approvals.pullRequest.gate` at base (#4550), when it names a gate. */
+function pullRequestGateAtBase(spec: OpWavesSpec): Pick<OpWaveBaseRules, "pullRequestGate"> {
+  const gate = (spec as { approvals?: { pullRequest?: { gate?: unknown } } }).approvals?.pullRequest?.gate;
+  return typeof gate === "string" && OP_LEDGER_NAME.test(gate) ? { pullRequestGate: gate } : {};
 }
 
 /** The approval rules at base (#4290), or why they cannot be read. A spec at base with none has none. */
@@ -682,6 +698,12 @@ export interface RunOpWaveOptions {
   reviews?: ReviewSource;
   /** The plans recorded for a pull request's head. Default: read from `chant/lifecycle`. */
   headPlans?: (name: string, head: string) => Promise<HeadPlans | null>;
+  /**
+   * The change set stored under a digest, for a `pull-request` gate (#4550):
+   * the one the pull request's approval names. Default: `_change-sets/` on
+   * the local `chant/lifecycle`.
+   */
+  changeSets?: (digest: string) => Promise<ChangeSetDocument | undefined>;
   /** The signers policy at base, for a `sealed` gate. Default: read from the base commit. */
   trust?: (base: string) => TrustPolicy;
   /** The signers at base, for a sealed override of a policy denial (#3821). Default: `gateSignersAt` from `@intentius/chant/gate-decision`. */
@@ -774,6 +796,8 @@ interface WaveContext {
   gateRule: { approval: GateApprovalSource; base: string; neverOverMcp: boolean };
   /** With a `step` (#4545): each run's plan through it, by target, which its apply hands back. */
   steps?: Map<string, OpWaveStepPlan>;
+  /** The plans file's change set (#4551), which a `pull-request` gate checks the pull request's approval against (#4550). */
+  changeSetDoc?: ChangeSetDocument;
 }
 
 function planRun(opts: { spec: OpWavesSpec; wave: number; cwd: string; exec: OpWaveExec }, waveName: string, run: OpWaveRun): OpWaveMember {
@@ -2010,6 +2034,9 @@ async function decideOpWave(
   if (extras) decision.extras = extras;
   if (pending) decision.pending = pending;
   if (planned.changeSet) await storeWaveChangeSet(options, ctx, decision, planned.changeSet);
+  // #4550: a pull-request wave checks the pull request's approval against the plans file's change set.
+  if (planned.changeSet) ctx.changeSetDoc = planned.changeSet;
+  if (decision.approval === "pull-request" && planned.rules.pullRequestGate) decision.pullRequestGate = planned.rules.pullRequestGate;
   const after = await runHooks(ctx, "after-plan", planned.rules.hooks["after-plan"], wave.runs, planned.planned, digest);
   if (after.failed) return { end: failed(ctx, `a hook after the plan failed, so nothing in wave ${k} was applied`) };
   holds.push(...planned.before, ...after.holds);
@@ -2306,6 +2333,23 @@ async function settleGate(options: RunOpWaveOptions, ctx: WaveContext, decision:
   if (used) {
     ctx.log(`wave ${k} (${wave.name}): the approval of ${digest} by ${used.approvedBy} at ${used.approvedAt} is spent: a wave applied under it at ${used.timestamp}. Applying it again needs a new approval`);
   }
+  if (approval === "pull-request") {
+    const covered = await approveByPullRequest(options, ctx, decision, ledger);
+    decision.coveredBy = covered.digest ? { digest: covered.digest } : { reason: covered.reason };
+    if (covered.digest) {
+      for (const key of ["pendingFact", "recorded", "waitingSince", "mismatch"] as const) delete decision[key];
+      decision.status = "approved";
+      decision.via = "pull-request";
+      decision.approvedBy = covered.approvedBy;
+      decision.approvedAt = covered.approvedAt;
+      ctx.log(`wave ${k} (${wave.name}) applies under the pull request's approval of ${covered.digest} at ${decision.pullRequestGate}, which covers its plans`);
+      return;
+    }
+    ctx.log(`wave ${k} (${wave.name}): the pull request's approval does not cover it (${covered.reason}), so it waits at its own gate ${gate}`);
+    decision.status = "waiting";
+    decision.approve = approveCommand(spec.name, gate, undefined, digest);
+    return;
+  }
   if (approval === "pr-review") {
     const byReview = await approveByReview(options, { op: spec.name, gate, k, digest, cwd, now, port: ledger, ...(spent ? { spent } : {}) });
     decision.review = byReview.review;
@@ -2323,6 +2367,53 @@ async function settleGate(options: RunOpWaveOptions, ctx: WaveContext, decision:
   }
   decision.status = "waiting";
   decision.approve = approveCommand(spec.name, gate, undefined, digest, approval === "sealed");
+}
+
+/**
+ * Under `approval: "pull-request"` (#4550, ruling B): find an approval of the
+ * pull request's gate, under the spec's op, whose change set covers every
+ * member of this wave's plans (`planCoveredBy`, as a resume checks a wave
+ * against the pull request's approval). The newest such approval wins. A
+ * spent one counts for nothing under the spend rule. Needs the plans file's
+ * change set; without one the wave waits at its own gate.
+ */
+async function approveByPullRequest(
+  options: RunOpWaveOptions,
+  ctx: WaveContext,
+  decision: OpWaveDecision,
+  ledger: GateLedgerPort,
+): Promise<{ digest?: string; approvedBy?: string; approvedAt?: string; reason: string }> {
+  const prGate = decision.pullRequestGate;
+  if (!prGate) return { reason: "the spec at base names no approvals.pullRequest.gate" };
+  const fresh = ctx.changeSetDoc;
+  if (!fresh) return { reason: "the plans file carries no change set to check the approval against" };
+  const { planCoveredBy } = await import("../components/pr-run");
+  const read = options.changeSets ?? (async (d: string) => {
+    const { readStoredChangeSet } = await import("../lifecycle/change-set-store");
+    const got = await readStoredChangeSet(d, { cwd: ctx.cwd });
+    return got.status === "found" ? got.document : undefined;
+  });
+  const { resolutions } = await ledger.read(ctx.spec.name);
+  const spent = decision.spend === "base" ? ((await ledger.readApplied?.(ctx.spec.name)) ?? []).filter((a) => a.gate === prGate) : [];
+  const approvals = resolutions.filter((r) => r.gate === prGate && (r.changeSet ?? r.planDigest)).sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1));
+  if (approvals.length === 0) return { reason: `no approval stands at ${prGate}` };
+  let reason = `no approval at ${prGate} covers it`;
+  for (const r of approvals) {
+    const digest = (r.changeSet ?? r.planDigest)!;
+    if (spent.some((a) => a.planDigest === digest && a.approvedAt === r.timestamp)) {
+      reason = `the approval of ${digest} at ${prGate} is spent`;
+      continue;
+    }
+    const approved = await read(digest).catch(() => undefined);
+    if (!approved) {
+      reason = `the change set ${digest} the approval names is not stored`;
+      continue;
+    }
+    const why = fresh.members.map((m) => planCoveredBy(approved, fresh, m.member)).find((w) => w !== undefined);
+    if (why === undefined) return { digest, approvedBy: r.resolvedBy, approvedAt: r.timestamp, reason: "" };
+    reason = why;
+  }
+  return { reason };
 }
 
 /** The commits after `base` up to `head`, merge commits left out, for the `Requested-by:` trailers on them (#4333). */
