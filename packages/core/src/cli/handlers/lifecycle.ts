@@ -3,7 +3,8 @@ import { resolve } from "node:path";
 import { commandBuildParams } from "../build-params-cli";
 import { build } from "../../build";
 import { takeSnapshot } from "../../lifecycle/snapshot";
-import { readSnapshot, readSnapshotAt, readEnvironmentSnapshots, listSnapshots, fetchLifecycle, pushLifecycle, snapshotStorageKey, StaleLifecycleBranchError } from "../../lifecycle/git";
+import { snapshotStorageKey, StaleLifecycleBranchError } from "../../lifecycle/git";
+import { readEnvironmentSnapshotsFrom, resolveSnapshotStore, type SnapshotStore } from "../../lifecycle/snapshot-store";
 import { deepDiffForLexicon, type DeclaredEntities } from "../../lifecycle/deep-observe";
 import { countUnclaimed, countPending, countPropertyDrift, countHeld, suspiciousHeld, type DeepDiffResult, type DeepEntityHeld } from "../../lifecycle/deep-diff";
 import { describePathOrigin, getPathProvenance, getProvenance, type EntityProvenance } from "../../provenance";
@@ -13,8 +14,7 @@ import {
   baselineForLexicon,
   emptyBaseline,
   readObservationBaseline,
-  writeObservationBaseline,
-  OBSERVATION_BASELINE_FILE,
+  saveObservationBaseline,
   type DeviationToAccept,
   type ObservationBaseline,
 } from "../../lifecycle/observation-baseline";
@@ -52,6 +52,9 @@ import type { ObservationLexicon, ResourceMetadata, ArtifactMetadata } from "../
 import type { BuildResult } from "../../build";
 import type { ParsedArgs } from "../registry";
 import type { ChantConfig } from "../../config";
+
+/** The config fields the observation baseline reads (#4519). */
+type LoadedChantConfigLike = { observationBaseline?: unknown; snapshots?: unknown };
 
 /**
  * Resolve the build root for a lifecycle command. The project root (where
@@ -146,6 +149,7 @@ export async function runLifecycleSnapshot(ctx: CommandContext): Promise<number>
   // from its own scoped root — so its logical ids match what it deploys — and
   // snapshots against its own live stack name (#932).
   const targets = resolveStackTargets(args, config);
+  const store = await resolveSnapshotStore({ cwd: projectPath, config });
   let anySnapshotSaved = false;
   let anyHardError = false;
 
@@ -188,6 +192,7 @@ export async function runLifecycleSnapshot(ctx: CommandContext): Promise<number>
           deep: args.deep,
           ambient: args.ambient,
           ambientKinds: projectKinds,
+          store,
         });
       } catch (err) {
         if (err instanceof StaleLifecycleBranchError) {
@@ -213,7 +218,10 @@ export async function runLifecycleSnapshot(ctx: CommandContext): Promise<number>
         const counts = result.snapshots
           .map((s) => `${s.lexicon}(${Object.keys(s.resources).length})`)
           .join(" ");
-        console.error(formatSuccess(`${prefix}Snapshot saved to chant/lifecycle (${counts})`));
+        // `none` keeps nothing, and says so: the observation still ran (#4519).
+        console.error(result.store && !result.store.written
+          ? formatWarning({ message: `${prefix}Snapshot observed, not kept: the store is ${result.store.where} (${counts})` })
+          : formatSuccess(`${prefix}Snapshot saved to ${store.where} (${counts})`));
       }
       if (result.errors.length > 0) anyHardError = true;
     }
@@ -237,10 +245,11 @@ export async function runLifecycleShow(ctx: CommandContext): Promise<number> {
   }
 
   // Fetch from remote first
-  await fetchLifecycle();
+  const store = await resolveSnapshotStore();
+  await store.fetch();
 
   if (lexiconFilter) {
-    const content = await readSnapshot(environment, lexiconFilter);
+    const content = await store.readLatest(environment, lexiconFilter);
     if (!content) {
       console.error(formatError({ message: `No snapshot found for ${environment}/${lexiconFilter}` }));
       return 1;
@@ -249,7 +258,7 @@ export async function runLifecycleShow(ctx: CommandContext): Promise<number> {
     const snapshot: LifecycleSnapshot = JSON.parse(content);
     printSnapshotTable(snapshot);
   } else {
-    const snapshots = await readEnvironmentSnapshots(environment);
+    const snapshots = await readEnvironmentSnapshotsFrom(store, environment);
     if (snapshots.size === 0) {
       console.error(formatError({ message: `No snapshots found for environment "${environment}"` }));
       return 1;
@@ -348,7 +357,8 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
   // the caller asked for rather than the parameter defaults (#1483).
   const declaredParams = await commandBuildParams(config.buildParams, args);
   if (!declaredParams) return 1;
-  await fetchLifecycle();
+  const store = await resolveSnapshotStore({ config });
+  await store.fetch();
 
   // One target per stack (single-stack projects: exactly one), each built from
   // its own scoped root and diffed against its own live stack name (#932).
@@ -364,7 +374,7 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
   // Accepted-deviation baseline (#1014). Read once for the whole run — it is
   // env-keyed, not stack-keyed, and every deep pass subtracts from the same
   // committed set. Absent is the normal state (nothing accepted yet).
-  const baseline = args.live ? await readObservationBaseline(environment) : null;
+  const baseline = args.live ? await readObservationBaseline(environment, { config }) : null;
   const accepted: Record<string, DeviationToAccept[]> = {};
   // Effect receipts across every target's build (#1833) — `--update-baseline`
   // refuses to accept drift on them (the effect step is their only writer),
@@ -440,6 +450,7 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
           plugins,
           buildResult,
           json,
+          store,
           stack: target.stack,
           region: target.region,
           componentStacks,
@@ -462,7 +473,7 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
           else combinedLexiconsJson = r.byLexicon;
         }
       } else {
-        await runLifecycleDiffDigest({ environment, lexicons, buildResult, stack: target.stack });
+        await runLifecycleDiffDigest({ environment, lexicons, buildResult, stack: target.stack, store });
       }
     }
 
@@ -470,7 +481,7 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
     // accepted, so it stops re-alerting. Runs before the summary lines so the
     // "no drift" verdict below still describes the run that produced it.
     if (args.live && args.updateBaseline) {
-      await recordAcceptedBaseline(environment, baseline, accepted, json, receiptEntities);
+      await recordAcceptedBaseline(environment, baseline, accepted, json, receiptEntities, config);
     }
 
     if (args.live) {
@@ -523,6 +534,7 @@ async function recordAcceptedBaseline(
   accepted: Record<string, DeviationToAccept[]>,
   json: boolean,
   receipts?: ReadonlySet<string>,
+  config?: ChantConfig | LoadedChantConfigLike,
 ): Promise<void> {
   const total = Object.values(accepted).reduce((n, d) => n + d.length, 0);
   if (total === 0) {
@@ -541,13 +553,16 @@ async function recordAcceptedBaseline(
     for (const [lexicon, deviations] of Object.entries(accepted)) {
       next = acceptDeviations(next, lexicon, deviations, { receipts });
     }
-    await writeObservationBaseline(next);
-    const pushed = await pushLifecycle();
+    // A file under .chant/observation-baseline/ by default (#4519): commit it
+    // with the change that needed it, so the acceptance is reviewed.
+    const saved = await saveObservationBaseline(next, config ? { config } : undefined);
     if (!json) {
-      console.error(formatSuccess(
-        `--update-baseline: accepted ${total} deviation(s) into ${environment}/${OBSERVATION_BASELINE_FILE} on chant/lifecycle` +
-          (pushed ? " (pushed)" : " (local only — no remote configured or push refused)"),
-      ));
+      const note =
+        saved.published === "pushed" ? " (pushed)"
+          : saved.published === "file" ? " (commit it to keep it)"
+            : saved.published === "none" ? " (the baseline store is none: nothing kept)"
+              : " (local only — no remote configured or push refused)";
+      console.error(formatSuccess(`--update-baseline: accepted ${total} deviation(s) into ${saved.where}${note}`));
     }
   } catch (err) {
     console.error(formatError({
@@ -571,8 +586,9 @@ interface BetweenDiffArgs {
  * two-way delta per lexicon.
  */
 async function runLifecycleDiffBetween(args: BetweenDiffArgs): Promise<number> {
-  await fetchLifecycle();
   const { config } = await loadChantConfig(resolve("."));
+  const store = await resolveSnapshotStore({ config });
+  await store.fetch();
   const lexicons = args.lexiconFilter ? [args.lexiconFilter] : lexiconNames(config.lexicons ?? []);
   if (lexicons.length === 0) {
     console.error(formatError({ message: "No lexicons to diff — pass a lexicon or declare `lexicons` in chant.config." }));
@@ -590,8 +606,8 @@ async function runLifecycleDiffBetween(args: BetweenDiffArgs): Promise<number> {
 
   const byLexicon: Record<string, SnapshotDiffResult> = {};
   for (const lexicon of lexicons) {
-    const prev = parseResources(await readSnapshotAt(args.environment, lexicon, args.refA));
-    const next = parseResources(await readSnapshotAt(args.environment, lexicon, args.refB));
+    const prev = parseResources(await store.readAt(args.environment, lexicon, args.refA));
+    const next = parseResources(await store.readAt(args.environment, lexicon, args.refB));
     if (prev === null && next === null) {
       if (!args.json) console.error(formatWarning({ message: `${lexicon}: not captured at either ref — skipping` }));
       continue;
@@ -625,6 +641,8 @@ interface DigestDiffArgs {
   environment: string;
   lexicons: string[];
   buildResult: BuildResult;
+  /** Where the previous digest is read (#4519). */
+  store: SnapshotStore;
   /** Deployed stack name for a multi-stack project (#932); scopes the snapshot read. */
   stack?: string;
 }
@@ -634,7 +652,7 @@ async function runLifecycleDiffDigest(args: DigestDiffArgs): Promise<number> {
   if (args.stack) console.log(`\n${formatBold(`■ stack ${args.stack}`)}`);
 
   for (const lexicon of args.lexicons) {
-    const content = await readSnapshot(args.environment, snapshotStorageKey(lexicon, args.stack));
+    const content = await args.store.readLatest(args.environment, snapshotStorageKey(lexicon, args.stack));
     let previousDigest = undefined;
     if (content) {
       const snapshot: LifecycleSnapshot = JSON.parse(content);
@@ -679,6 +697,8 @@ interface LiveDiffArgs {
   lexicons: string[];
   plugins: ObservationLexicon[];
   buildResult: BuildResult;
+  /** Where the "then" side is read (#4519). */
+  store: SnapshotStore;
   /** Emit machine-readable JSON on stdout instead of the human report (#852). */
   json: boolean;
   /** Deployed stack name for a multi-stack project (#932); scopes the live
@@ -857,7 +877,7 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome
 
     // Read previous snapshot once; both flows pull what they need.
     let prevSnapshot: LifecycleSnapshot | undefined;
-    const content = await readSnapshot(args.environment, snapshotStorageKey(lexiconName, args.stack));
+    const content = await args.store.readLatest(args.environment, snapshotStorageKey(lexiconName, args.stack));
     if (content) prevSnapshot = JSON.parse(content);
 
     let lexiconChecked = false;
@@ -1264,7 +1284,8 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
-  await fetchLifecycle();
+  const store = await resolveSnapshotStore({ config });
+  await store.fetch();
 
   const lexicons = lexiconFilter ? [lexiconFilter] : Array.from(buildResult.manifest.lexicons);
 
@@ -1424,7 +1445,8 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
         }
       }
 
-      const content = await readSnapshot(environment, lexiconName);
+      // Evidence only (#4519): the change set never makes a decision from it.
+      const content = await store.readLatest(environment, lexiconName);
       const observedThen = content ? (JSON.parse(content) as LifecycleSnapshot).resources : undefined;
 
       const cs = buildChangeSet(environment, {
@@ -1745,17 +1767,20 @@ async function promptProdTeardown(environment: string): Promise<boolean> {
 export async function runLifecycleLog(ctx: CommandContext): Promise<number> {
   const environment = ctx.args.extraPositional;
 
-  await fetchLifecycle();
+  const store = await resolveSnapshotStore();
+  await store.fetch();
 
-  const entries = await listSnapshots({ environment });
+  const entries = await store.list({ ...(environment ? { environment } : {}) });
   if (entries.length === 0) {
     console.error(formatError({ message: "No state snapshots found" }));
     return 1;
   }
 
+  // A git store's version is a commit; s3's an object version, local's a time.
+  const isCommit = (v: string) => /^[0-9a-f]{40}$/.test(v);
   for (const entry of entries) {
     const date = entry.date.split("T")[0];
-    console.log(`${entry.commit.slice(0, 7)}  ${date}  ${entry.message}`);
+    console.log(`${isCommit(entry.version) ? entry.version.slice(0, 7) : entry.version}  ${date}  ${entry.key ?? entry.message}`);
   }
 
   return 0;

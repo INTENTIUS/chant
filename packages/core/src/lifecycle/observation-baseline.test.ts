@@ -1,5 +1,14 @@
-import { describe, test, expect } from "vitest";
+import { afterEach, describe, test, expect } from "vitest";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync as readFile, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { writeBlobToPath } from "./git";
 import {
+  observationBaselineStoreConfig,
+  readObservationBaseline,
+  saveObservationBaseline,
+  OBSERVATION_BASELINE_FILE,
   acceptDeviations,
   acceptedDeviation,
   baselineForLexicon,
@@ -141,5 +150,67 @@ describe("acceptDeviations refuses effect receipts (#1833)", () => {
       { entity: "Role", type: "AWS::IAM::Role", path: "MaxSessionDuration", value: 7200 },
     ], { now, receipts: new Set(["migratedReceipt"]) });
     expect(baselineForLexicon(b, "aws").Role.accepted).toHaveLength(1);
+  });
+});
+
+// ── Where it lives (#4519) ──────────────────────────────────────────────────
+
+describe("the baseline's home", () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+  const repo = (): string => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "baseline-home-")));
+    dirs.push(dir);
+    const git = (args: string[]) => execFileSync("git", args, { cwd: dir, encoding: "utf8" });
+    git(["init", "-q", "-b", "main"]);
+    git(["config", "user.email", "test@chant.dev"]);
+    git(["config", "user.name", "Test"]);
+    writeFileSync(join(dir, "README.md"), "fixture\n");
+    git(["add", "README.md"]);
+    git(["commit", "-q", "-m", "init"]);
+    return dir;
+  };
+  const accepted = () =>
+    acceptDeviations(emptyBaseline("prod"), "aws", [{ entity: "Assets", path: "Tags[0].Value", value: "platform" }], { now: "2026-10-26T00:00:00.000Z" });
+
+  test("the default is a file under .chant/observation-baseline/, written for review and never on the orphan branch", async () => {
+    const cwd = repo();
+    const saved = await saveObservationBaseline(accepted(), { cwd, config: {} });
+    expect(saved).toMatchObject({ where: join(".chant", "observation-baseline", "prod.json"), published: "file" });
+    const file = join(cwd, ".chant", "observation-baseline", "prod.json");
+    expect(parseBaseline(readFile(file, "utf8"))).toEqual(accepted());
+    expect(await readObservationBaseline("prod", { cwd, config: {} })).toEqual(accepted());
+    expect(() => execFileSync("git", ["rev-parse", "--verify", "-q", "refs/heads/chant/lifecycle"], { cwd })).toThrow();
+  });
+
+  test("a baseline written on chant/lifecycle before #4519 is still read when no file holds one", async () => {
+    const cwd = repo();
+    await writeBlobToPath("prod", OBSERVATION_BASELINE_FILE, serializeBaseline(accepted()), "legacy", { cwd });
+    expect(await readObservationBaseline("prod", { cwd, config: {} })).toEqual(accepted());
+  });
+
+  test("none keeps nothing and reads nothing", async () => {
+    const cwd = repo();
+    const store = { store: "none" as const };
+    expect((await saveObservationBaseline(accepted(), { cwd, store })).published).toBe("none");
+    expect(existsSync(join(cwd, ".chant"))).toBe(false);
+    expect(await readObservationBaseline("prod", { cwd, store })).toBeNull();
+  });
+
+  test("git-ref writes refs/chant/observation-baseline and reads it back", async () => {
+    const cwd = repo();
+    const store = { store: "git-ref" as const };
+    const saved = await saveObservationBaseline(accepted(), { cwd, store });
+    expect(saved.where).toBe("refs/chant/observation-baseline:prod.json");
+    expect(saved.published).toBe("local");
+    expect(await readObservationBaseline("prod", { cwd, store })).toEqual(accepted());
+  });
+
+  test("the environment overrides chant.config.ts", () => {
+    expect(observationBaselineStoreConfig(undefined, {})).toEqual({ store: "file" });
+    expect(observationBaselineStoreConfig({ store: "git-ref" }, { CHANT_OBSERVATION_BASELINE_STORE: "none" })).toEqual({ store: "none" });
+    expect(() => observationBaselineStoreConfig({ store: "branch" }, {})).toThrow(/not one of/);
   });
 });

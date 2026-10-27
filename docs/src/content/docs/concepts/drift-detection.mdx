@@ -10,7 +10,7 @@ Drift is the gap between what you declared in source and what's actually deploye
 
 ## The observational snapshot model
 
-`chant lifecycle snapshot <env>` writes a record of what was observed in the cloud at a point in time. It's stored on a `chant/lifecycle` orphan branch in your repo. There's no central state server, no lock file, no encrypted backend.
+`chant lifecycle snapshot <env>` writes a record of what was observed in the cloud at a point in time. It's stored in the project's [snapshot store](/chant/cli/lifecycle/#where-snapshots-are-kept), the `refs/chant/snapshots` ref in your repo by default. There's no central state server, no lock file, no encrypted backend.
 
 This is the opposite of how Terraform, Pulumi, and CDK/CloudFormation think about state. Those tools treat state as **authoritative** — the state file *is* the truth, and `apply` reconciles the cloud to match. The state file must be locked during writes, secured against tampering, and protected from corruption because deployments depend on it.
 
@@ -89,7 +89,7 @@ Depth is opt-in per lexicon and changes nothing for the others. All five resourc
 
 Some deviations are permanent facts of the account: a mandatory tag another team stamps on everything, a bucket setting an org policy flips on, a role an operator attached by hand that everyone agreed to keep. Without somewhere to record "yes, we know, leave it", a deep diff is a report nobody reads twice.
 
-[`chant lifecycle diff <env> --live --update-baseline`](/chant/cli/lifecycle/#--update-baseline--accept-a-deviation) records every property deviation that run reported as **accepted**, into `<env>/observation-baseline.json` on the same `chant/lifecycle` orphan branch the snapshots use. Accepting is an explicit act with a git commit behind it, and it is **value-bound**: what you accept is the live value at that moment, not the path. Accept `VersioningConfiguration.Status = Enabled` and a later flip to `Suspended` is drift again, reported with all three values (declared, live, accepted) so the reader sees what moved and from what.
+[`chant lifecycle diff <env> --live --update-baseline`](/chant/cli/lifecycle/#--update-baseline--accept-a-deviation) records every property deviation that run reported as **accepted**, into `.chant/observation-baseline/<env>.json` in the project. You commit that file with the change that needed it. Accepting is an explicit act with a git commit behind it, and it is **value-bound**: what you accept is the live value at that moment, not the path. Accept `VersioningConfiguration.Status = Enabled` and a later flip to `Suspended` is drift again, reported with all three values (declared, live, accepted) so the reader sees what moved and from what.
 
 Two boundaries keep the baseline honest:
 

@@ -10,7 +10,8 @@ import { observeDeep } from "./deep-observe";
 import type { DeepResourceObservation } from "../deep-observation";
 import { computeBuildDigest } from "./digest";
 import { collectDependencies, collectAmbient } from "./observe";
-import { writeSnapshot, snapshotStorageKey, getHeadCommit, pushLifecycle } from "./git";
+import { snapshotStorageKey, getHeadCommit } from "./git";
+import { resolveSnapshotStore, type SnapshotStore, type StorePublish } from "./snapshot-store";
 import { sortedJsonReplacer } from "../utils";
 import { formatUnobserved, normalizeObservation, unobservedAll, type UnobservedEntity } from "../observation";
 // One list of secret-bearing property names for both observation depths
@@ -72,9 +73,12 @@ function validateResources(
 
 export interface TakeSnapshotResult {
   snapshots: LifecycleSnapshot[];
+  /** The version the last write made: a commit on a git store, an object version on s3. Empty when nothing was written. */
   commit: string;
   warnings: string[];
   errors: string[];
+  /** Where the snapshots went (`refs/chant/snapshots`, a directory, `s3://...`), and whether they were kept (#4519). */
+  store?: { kind: SnapshotStore["kind"]; where: string; written: boolean; publish?: StorePublish };
 }
 
 /**
@@ -93,6 +97,8 @@ export async function takeSnapshot(
     /** Kinds the PROJECT manages, not just this stack — a region whose stack
      * declares no security group still has a default one (#1278). */
     ambientKinds?: string[];
+    /** The index store to write to (#4519). Default: the project's, from `snapshots` in chant.config.ts. */
+    store?: SnapshotStore;
   },
 ): Promise<TakeSnapshotResult> {
   const stack = opts?.stack;
@@ -285,21 +291,31 @@ export async function takeSnapshot(
     }
   }
 
-  // Write all successful snapshots to git
+  // Write every successful snapshot through the index store (#4519). Masking
+  // already happened above, so the store never sees a secret.
+  const store = opts?.store ?? (await resolveSnapshotStore({ cwd: opts?.cwd }));
   let commitSha = "";
+  let written = false;
   for (const snapshot of snapshots) {
     const json = JSON.stringify(snapshot, sortedJsonReplacer, 2);
-    commitSha = await writeSnapshot(
+    const result = await store.write(
       snapshot.environment,
       snapshotStorageKey(snapshot.lexicon, snapshot.stack),
       json,
-      opts,
+      opts?.cwd ? { cwd: opts.cwd } : undefined,
     );
+    if (result.written) {
+      written = true;
+      commitSha = result.version ?? commitSha;
+    } else if (result.reason) {
+      warnings.push(`${snapshot.lexicon}: snapshot not kept: ${result.reason}`);
+    }
   }
 
   // Push to remote
-  if (snapshots.length > 0) {
-    await pushLifecycle(opts);
+  const publish = written ? await store.publish() : undefined;
+  if (publish && (publish.status === "stale" || publish.status === "failed")) {
+    warnings.push(`snapshot kept locally in ${store.where}, not pushed: ${publish.detail ?? publish.status}`);
   }
 
   return {
@@ -307,5 +323,6 @@ export async function takeSnapshot(
     commit: commitSha,
     warnings,
     errors,
+    store: { kind: store.kind, where: store.where, written, ...(publish ? { publish } : {}) },
   };
 }

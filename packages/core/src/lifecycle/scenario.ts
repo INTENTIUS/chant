@@ -48,9 +48,10 @@ export interface ScenarioGivenFile {
 
 /**
  * `given: snapshot("prod")` — the last snapshot recorded for that environment
- * on the `chant/lifecycle` orphan branch (one file per lexicon, read via
- * `readSnapshot`/`readEnvironmentSnapshots`, ../lifecycle/git.ts), replayed
- * exactly as `chant lifecycle plan` reads its own prior snapshot.
+ * in the project's index store (one file per lexicon, read through
+ * ./snapshot-store.ts, #4519), replayed exactly as `chant lifecycle plan`
+ * reads its own prior snapshot. With no store (`none`) a scenario names a
+ * checked-in fixture instead.
  */
 export interface ScenarioGivenEnv {
   readonly kind: "env";

@@ -1,12 +1,14 @@
 /**
- * `chant query "<sql>"` (#4297): one read-only SQL statement over what
- * `chant/lifecycle` holds, run in this process with no server.
+ * `chant query "<sql>"` (#4297): one read-only SQL statement over the
+ * snapshots and the Ops records, run in this process with no server.
  *
  * The rows come from the ledgers chant already writes:
  *
  * - the snapshots, `<env>/<lexicon>.json` and `<env>/<stack>__<lexicon>.json`
  *   (`./git.ts` `snapshotStorageKey`), each lexicon's `describeResources`
- *   read, so the inventory works for every lexicon;
+ *   read, so the inventory works for every lexicon. They are read through the
+ *   index store (./snapshot-store.ts, #4519) when the ledger names one, so
+ *   the tables are the same whichever store holds them;
  * - the Op run ledgers, `<env>/runs__<op>.jsonl` (`./run-ledger.ts`);
  * - the gate ledgers, `_gates/<op>.jsonl` (`./gate-ledger.ts`);
  * - the deploy records, `<env>/releases.jsonl` (`./release-read.ts`);
@@ -94,6 +96,12 @@ export type QueryData = Record<QueryTable, QueryRow[]>;
 export interface QueryLedger {
   member: string | null;
   port: LedgerReadPort;
+  /**
+   * The snapshot family of the index store (#4519, `snapshotReadPort`). Given,
+   * the `resources` and `snapshots` rows come from it and snapshot files on
+   * `port` are skipped. Absent, they come from `port`, as before the store.
+   */
+  snapshots?: LedgerReadPort;
   /**
    * The member whose directory holds a workspace-relative path, or null
    * (#4482). Given in a workspace; without it `root_member` is NULL.
@@ -193,11 +201,27 @@ function rootMemberOf(outcomes: Record<string, unknown> | undefined, ownerOfPath
 export async function loadQueryData(ledgers: readonly QueryLedger[]): Promise<QueryLoad> {
   const data = empty<QueryRow[]>(() => []) as QueryData;
   const malformed = empty(() => 0);
-  for (const { member, port, ownerOfPath } of ledgers) {
+  for (const { member, port, ownerOfPath, snapshots } of ledgers) {
+    if (snapshots) {
+      for (const env of (await snapshots.trees()).filter((t) => !t.startsWith("_")).sort()) {
+        for (const file of (await snapshots.list(env)).sort()) {
+          if (!file.endsWith(".json")) continue;
+          const text = await snapshots.read(env, file);
+          let parsed: unknown;
+          try {
+            parsed = text === null ? null : JSON.parse(text);
+          } catch {
+            parsed = null;
+          }
+          if (isSnapshot(parsed)) snapshotRows(member, env, file, parsed, data);
+        }
+      }
+    }
     const trees = (await port.trees()).sort();
     for (const env of trees.filter((t) => !t.startsWith("_"))) {
       for (const file of (await port.list(env)).sort()) {
         if (file.endsWith(".json")) {
+          if (snapshots) continue;
           const text = await port.read(env, file);
           let parsed: unknown;
           try {

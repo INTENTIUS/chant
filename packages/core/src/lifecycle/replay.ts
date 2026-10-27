@@ -14,7 +14,7 @@
  * answer most questions but never all of them.
  */
 
-import { readEnvironmentSnapshots } from "./git";
+import { readEnvironmentSnapshotsFrom, resolveSnapshotStore, type SnapshotStore } from "./snapshot-store";
 import { unqualifiedKey } from "./identity";
 import type { LiveObservation } from "../graph-ir";
 import type { LifecycleSnapshot, ObservationDepth } from "./types";
@@ -29,7 +29,7 @@ import type { LifecycleSnapshot, ObservationDepth } from "./types";
  * is shared. Nothing downstream needs to know which source it got.
  *
  * `latest` is the only ref for now. A specific commit is the natural extension
- * and the storage already supports it (`readSnapshotAt`), but "answer from what
+ * and the store already supports it (`SnapshotStore.readAt`), but "answer from what
  * is recorded" is the question worth settling first.
  */
 /**
@@ -40,9 +40,10 @@ import type { LifecycleSnapshot, ObservationDepth } from "./types";
  * failure here means the caller says the plain version of the message, never
  * that the command fails.
  */
-export async function hasSnapshot(environment: string): Promise<boolean> {
+export async function hasSnapshot(environment: string, opts?: { store?: SnapshotStore }): Promise<boolean> {
   try {
-    return (await readEnvironmentSnapshots(environment)).size > 0;
+    const store = opts?.store ?? (await resolveSnapshotStore());
+    return (await store.keys(environment)).length > 0;
   } catch {
     return false;
   }
@@ -52,6 +53,8 @@ export async function replaySnapshots(
   environment: string,
   ref: string,
   scopedStacks: Set<string>,
+  /** The index store to read (#4519). Default: the project's. */
+  opts?: { store?: SnapshotStore },
 ): Promise<
   | { observations: LiveObservation[]; commit: string; timestamp: string; depth: ObservationDepth }
   | { error: string; hint?: string }
@@ -62,7 +65,8 @@ export async function replaySnapshots(
       hint: "a specific snapshot commit is not wired up yet",
     };
   }
-  const stored = await readEnvironmentSnapshots(environment);
+  const store = opts?.store ?? (await resolveSnapshotStore());
+  const stored = await readEnvironmentSnapshotsFrom(store, environment);
   if (stored.size === 0) {
     return {
       error: `No snapshots found for environment "${environment}"`,
