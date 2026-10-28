@@ -1275,7 +1275,7 @@ describe("runOp dispatcher: --components routes to runOpComponents", () => {
     const exit = await runOp({ args: makeArgs({ path: "svc", components: true }), plugins: [], serializers: [] });
 
     expect(exit).toBe(0);
-    expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "svc", { env: undefined, componentOutputs: {}, buildParams: [] });
+    expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "svc", { env: undefined, componentOutputs: {}, buildParams: [], rowLease: { take: expect.any(Function) } });
     expect(discoverOpsMock).not.toHaveBeenCalled();
     vi.restoreAllMocks();
   });
@@ -1493,7 +1493,7 @@ describe("runOpComponents", () => {
     const exit = await runOpComponents({ args: makeArgs({ path: "svc" }), plugins: [], serializers: [] });
 
     expect(exit).toBe(0);
-    expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "svc", { env: undefined, componentOutputs: {}, buildParams: [] });
+    expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "svc", { env: undefined, componentOutputs: {}, buildParams: [], rowLease: { take: expect.any(Function) } });
     const printed = stderrWrite.mock.calls.map((c) => String(c[0])).join("");
     expect(printed).toContain("interpret run completed");
     vi.restoreAllMocks();
@@ -1505,7 +1505,7 @@ describe("runOpComponents", () => {
 
     await runOpComponents({ args: makeArgs({ path: "svc", env: "staging" }), plugins: [], serializers: [] });
 
-    expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "svc", { env: "staging", componentOutputs: {}, buildParams: [] });
+    expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "svc", { env: "staging", componentOutputs: {}, buildParams: [], rowLease: { take: expect.any(Function) } });
     vi.restoreAllMocks();
   });
 
@@ -1601,6 +1601,8 @@ describe("runOpComponents", () => {
       componentOutputs: {},
       onProgress: undefined,
       buildParams: [],
+      // In a git work tree the run leases its rows (#4594).
+      rowLease: { take: expect.any(Function) },
     });
     expect(stdoutWrite).not.toHaveBeenCalled();
     vi.restoreAllMocks();
@@ -1626,7 +1628,7 @@ describe("runOpComponents", () => {
     const exit = await runOpComponents({ args: makeArgs({ path: "all" }), plugins: [], serializers: [] });
 
     expect(exit).toBe(0);
-    expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "all", { env: undefined, componentOutputs: {}, buildParams: [] });
+    expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "all", { env: undefined, componentOutputs: {}, buildParams: [], rowLease: { take: expect.any(Function) } });
     const printed = stderrWrite.mock.calls.map((c) => String(c[0])).join("");
     expect(printed).toContain("shared-alb");
     expect(printed).toContain("search-service");

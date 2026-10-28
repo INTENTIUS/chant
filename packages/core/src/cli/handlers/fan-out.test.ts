@@ -334,17 +334,17 @@ describe("proof: a mid-run failure blocks its subtree and leaves the independent
   });
 });
 
-describe("a step that refuses its plan because the plan moved exits 3 (#3997)", () => {
-  test("marked planMoved: exit 3, and its subtree is blocked as for any failure", async () => {
+describe("a step that refuses its plan because the plan moved exits 4 (#3997, #4553)", () => {
+  test("marked planMoved: exit 4, and its subtree is blocked as for any failure", async () => {
     refusal = { "cluster-a": planMovedError("cluster-a") };
-    expect(await runComponentsFanOut(ctx({ base: "main", env: "test" }))).toBe(3);
+    expect(await runComponentsFanOut(ctx({ base: "main", env: "test" }))).toBe(4);
     expect(ran).not.toContain("app-one");
     expect(ran).toContain("app-three");
   });
 
-  test("an exitCode of 3 on the step's error is the same mark", async () => {
+  test("an exitCode of 3 on the step's error, the moved code before #4553, is the same mark", async () => {
     refusal = { "cluster-a": exitCodeError("cluster-a", 3) };
-    expect(await runComponentsFanOut(ctx({ base: "main", env: "test" }))).toBe(3);
+    expect(await runComponentsFanOut(ctx({ base: "main", env: "test" }))).toBe(4);
   });
 
   test("any other exitCode is ignored, and the failure exits 1", async () => {
@@ -352,10 +352,10 @@ describe("a step that refuses its plan because the plan moved exits 3 (#3997)", 
     expect(await runComponentsFanOut(ctx({ base: "main", env: "test" }))).toBe(1);
   });
 
-  test("one moved plan beside another failure still exits 3", async () => {
+  test("one moved plan beside another failure still exits 4", async () => {
     refusal = { "cluster-a": planMovedError("cluster-a") };
     failing = ["cluster-b"];
-    expect(await runComponentsFanOut(ctx({ base: "main", env: "test" }))).toBe(3);
+    expect(await runComponentsFanOut(ctx({ base: "main", env: "test" }))).toBe(4);
   });
 });
 
@@ -601,11 +601,11 @@ describe("gated waves (#3049): one gate per wave, bound to the wave's set digest
   }
 
   test.each([
-    ["marked planMoved", 3, () => planMovedError("net")],
-    ["with exitCode 3", 3, () => exitCodeError("net", 3)],
+    ["marked planMoved", 4, () => planMovedError("net")],
+    ["with exitCode 3", 4, () => exitCodeError("net", 3)],
     ["with exitCode 7", 1, () => exitCodeError("net", 7)],
     ["unmarked", 1, () => new Error("net failed")],
-  ])("an approved wave whose step fails with an error %s exits %i (#3997)", async (_label, code, error) => {
+  ])("an approved wave whose step fails with an error %s exits %i (#3997, #4553)", async (_label, code, error) => {
     const run = () => runComponentsFanOut(ctx({ base: "main", env: "test", waveGate: "release" }));
     await approveWave1(run);
     refusal = { net: error() };

@@ -1,6 +1,6 @@
 /**
- * `chant run --components` exits 3 when a step refuses a plan that moved
- * since it was approved (#3997), on the single-component path and on the
+ * `chant run --components` exits 4 when a step refuses a plan that moved
+ * since it was approved (#3997; 3 before #4553), on the single-component path and on the
  * driver's `all` and list paths. Discovery and the capability registry are
  * fakes; the run is the real `runComponents` on the local runtime.
  */
@@ -75,13 +75,13 @@ afterEach(() => {
 });
 
 const marks: Array<[string, number, object]> = [
-  ["marked planMoved", 3, { planMoved: true }],
-  ["with exitCode 3", 3, { exitCode: 3 }],
+  ["marked planMoved", 4, { planMoved: true }],
+  ["with exitCode 3", 4, { exitCode: 3 }],
   ["with exitCode 7", 1, { exitCode: 7 }],
   ["unmarked", 1, {}],
 ];
 
-describe("chant run --components: a step that refuses a moved plan exits 3 (#3997)", () => {
+describe("chant run --components: a step that refuses a moved plan exits 4 (#3997, #4553)", () => {
   test.each(marks)("one component, its step refusing %s: exit %i", async (_label, code, mark) => {
     refusal.set("app", Object.assign(new Error("app: refusing to apply, the plan moved"), mark));
     expect(await runOpComponents(ctx("app"))).toBe(code);
@@ -92,8 +92,8 @@ describe("chant run --components: a step that refuses a moved plan exits 3 (#399
     expect(await runOpComponents(ctx("all"))).toBe(code);
   });
 
-  test("a list that pulls in a dependency whose step refuses a moved plan exits 3", async () => {
+  test("a list that pulls in a dependency whose step refuses a moved plan exits 4", async () => {
     refusal.set("net", Object.assign(new Error("net: refusing to apply, the plan moved"), { planMoved: true }));
-    expect(await runOpComponents(ctx("app,net"))).toBe(3);
+    expect(await runOpComponents(ctx("app,net"))).toBe(4);
   });
 });
