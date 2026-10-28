@@ -25,6 +25,9 @@
  *   move --stack <s> --dest <d> <urn>... --json`, which writes nothing; the
  *   writes of the gated stack operations are {@link runGatedPulumi}'s and
  *   {@link runGatedPlunge}'s alone;
+ * - for a review stack alone (`pr-<n>`, INTENTIUS/plywood#15), `stack
+ *   init`, `destroy --yes` and `stack rm --yes`, through
+ *   {@link runReviewStackPulumi} and {@link runReviewStackPlunge} only;
  * - for a member on plunge, its engine graph (#4529, ruled on #4520), as
  *   exactly one of `plunge graph --json`, `plunge graph --json --stack
  *   <stack>`, `plunge graph --json --versions` and `plunge graph --json
@@ -532,6 +535,91 @@ export async function runGatedPlunge(run: PulumiRunner, args: string[], cwd: str
   if (!allowedPlungeMove(args, true)) {
     throw new Error(`chant moves plunge resources only as ${PLUNGE_GATED_COMMANDS[1]}, not plunge ${args.join(" ")}`);
   }
+  return run(args, env ? { cwd, env } : { cwd });
+}
+
+/**
+ * Review stacks (#4541's deferral, INTENTIUS/plywood#15): a stack per open
+ * pull request, made from a template stack's config and removed when the
+ * pull request closes or its TTL passes. Fixed forms, for a review stack
+ * name only ({@link isReviewStackName}), so no path here can create,
+ * destroy or remove any other stack:
+ *
+ * - `stack init <pr-stack> --no-select [--copy-config-from <stack>]`: the
+ *   review stack, with the template's config. It selects nothing, so the
+ *   checkout's selected stack stays as it was;
+ * - `destroy --yes --json --stack <pr-stack>`: deletes the review stack's
+ *   resources, never `--target`, `--exclude` or `--remove`;
+ * - `stack rm --yes --stack <pr-stack>`: removes the emptied stack, never
+ *   `--force`, so a stack that still holds resources is refused by the
+ *   engine itself.
+ *
+ * The same three run under `plunge` for a member on plunge.
+ * {@link runReviewStackPulumi} and {@link runReviewStackPlunge} refuse any
+ * other argv; the read entry points above refuse all three.
+ */
+export const PULUMI_REVIEW_STACK_COMMANDS: readonly string[] = [
+  "pulumi stack init <pr-stack> --no-select [--copy-config-from <stack>]",
+  "pulumi destroy --yes --json --stack <pr-stack>",
+  "pulumi stack rm --yes --stack <pr-stack>",
+];
+
+/** A review stack's own name: `pr-<n>`, or `pr-<n>-<suffix>` in lowercase letters, digits and `-`. */
+export const REVIEW_STACK_NAME = /^pr-[0-9]+(?:-[a-z0-9][a-z0-9-]*)?$/;
+
+/**
+ * Whether `stack` names a review stack: its last segment matches
+ * {@link REVIEW_STACK_NAME}, after at most an organization and a project
+ * (`acme/shop/pr-12`).
+ */
+export function isReviewStackName(stack: string | undefined): stack is string {
+  if (typeof stack !== "string") return false;
+  const parts = stack.split("/");
+  return parts.length <= 3 && parts.slice(0, -1).every((p) => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(p)) && REVIEW_STACK_NAME.test(parts[parts.length - 1]!);
+}
+
+/** `stack init <pr-stack> --no-select [--copy-config-from <stack>]`. */
+export function reviewStackInitArgs(opts: { stack: string; copyConfigFrom?: string }): string[] {
+  return ["stack", "init", opts.stack, "--no-select", ...(opts.copyConfigFrom ? ["--copy-config-from", opts.copyConfigFrom] : [])];
+}
+
+/** `destroy --yes --json --stack <pr-stack>`. */
+export function reviewStackDestroyArgs(opts: { stack: string }): string[] {
+  return ["destroy", "--yes", "--json", "--stack", opts.stack];
+}
+
+/** `stack rm --yes --stack <pr-stack>`. */
+export function reviewStackRmArgs(opts: { stack: string }): string[] {
+  return ["stack", "rm", "--yes", "--stack", opts.stack];
+}
+
+/** Exactly one of {@link PULUMI_REVIEW_STACK_COMMANDS}, on a review stack. */
+export function allowedReviewStack(args: readonly string[]): boolean {
+  if (args[0] === "stack" && args[1] === "init") {
+    if (!isReviewStackName(args[2]) || args[3] !== "--no-select") return false;
+    if (args.length === 4) return true;
+    return args.length === 6 && args[4] === "--copy-config-from" && isValue(args[5]) && args[5] !== args[2];
+  }
+  if (args[0] === "destroy") return args.length === 5 && args[1] === "--yes" && args[2] === "--json" && args[3] === "--stack" && isReviewStackName(args[4]);
+  if (args[0] === "stack" && args[1] === "rm") return args.length === 5 && args[2] === "--yes" && args[3] === "--stack" && isReviewStackName(args[4]);
+  return false;
+}
+
+function reviewStackRefusal(engine: "pulumi" | "plunge", args: readonly string[]): Error {
+  return new Error(
+    `chant creates, destroys and removes only review stacks (pr-<n>), as ${PULUMI_REVIEW_STACK_COMMANDS.map((c) => c.replace(/^pulumi/, engine)).join(", ")}; not ${engine} ${args.join(" ")}`,
+  );
+}
+
+/** Run one of {@link PULUMI_REVIEW_STACK_COMMANDS} under `pulumi`, refusing any other argv or stack. */
+export async function runReviewStackPulumi(run: PulumiRunner, args: string[], cwd: string, env?: Record<string, string>): Promise<{ stdout: string }> {
+  if (!allowedReviewStack(args)) throw reviewStackRefusal("pulumi", args);
+  return run(args, env ? { cwd, env } : { cwd });
+}
+
+/** The same forms under `plunge`, for a member on plunge. */
+export async function runReviewStackPlunge(run: PulumiRunner, args: string[], cwd: string, env?: Record<string, string>): Promise<{ stdout: string }> {
+  if (!allowedReviewStack(args)) throw reviewStackRefusal("plunge", args);
   return run(args, env ? { cwd, env } : { cwd });
 }
 
