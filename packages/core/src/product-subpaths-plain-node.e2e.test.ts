@@ -38,6 +38,7 @@ const CORE_SUBPATHS = [
   "bucket-check",
   "change-set",
   "ci-control",
+  "ci-estate",
   "ci-handover",
   "ci-identity",
   "ci-product",
