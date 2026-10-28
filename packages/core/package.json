@@ -93,6 +93,13 @@
       "import": "./dist/op/activities/index.js",
       "default": "./src/op/activities/index.ts"
     },
+    "./template-request": {
+      "development": "./src/template-request/index.ts",
+      "types": "./dist/template-request/index.d.ts",
+      "import": "./dist/template-request/index.js",
+      "default": "./src/template-request/index.ts"
+    },
+    "./template-request/*.schema.json": "./src/template-request/*.schema.json",
     "./components": {
       "development": "./src/components/index.ts",
       "types": "./dist/components/index.d.ts",
