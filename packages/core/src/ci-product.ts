@@ -89,7 +89,9 @@ export {
   componentWaveOutputsFile,
   componentWaveSteps,
   componentWavesSpec,
+  productAgentSpec,
   productCommand,
+  productDriftAgent,
   productPipelineJobs,
   productWavesSpec,
   productWavesSpecFile,
@@ -97,6 +99,7 @@ export {
   type ComponentWaveStepOptions,
   type ComponentWaveSteps,
   type ComponentWavesSpecOptions,
+  type ProductAgentOptions,
   type ProductPipelineJobs,
   type ProductPipelineOptions,
 } from "./components/product-pipeline";
@@ -115,6 +118,14 @@ export async function runChantInProcess(argv: string[], words: CiProductWordsInp
   const { runCommandInProcess } = await import("./cli/main");
   return runCommandInProcess(argv, { words, ...(options.mcp ? { mcp: options.mcp } : {}), ...(options.wave ? { wave: options.wave } : {}) });
 }
+
+/**
+ * The agent job (#4616): `productPipelineJobs(forge, env, { words, agent })`
+ * returns the agent's Op spec, and `productDriftAgent` the `agent` of a
+ * scheduled drift Op; `chant run --generate` writes both. Feature-detect on
+ * `CI_AGENT_FLOOR`.
+ */
+export { CI_AGENT_FLOOR, agentForbiddenPaths, type AgentSettings, type OpAgentSpec } from "./ci-agent";
 
 /**
  * After-plan hooks in a wave job's process (#4614): `runChantInProcess(["run",

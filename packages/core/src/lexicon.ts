@@ -1,4 +1,6 @@
 import type { InstanceObservation } from "./instance-nodes";
+import type { CiRunner } from "./ci-jobs";
+import type { OpAgentSpec } from "./ci-agent";
 import type { EngineFacts } from "./engine-facts";
 import type { CapabilityPack } from "./capabilities/view";
 import type { Serializer } from "./serializer";
@@ -74,6 +76,7 @@ export type { ReferenceCatalog, IdentityRule, RefRule } from "./graph-refs";
 // An observation can report relationships (#1271/#1273), so a lexicon needs the
 // edge type from the same entry it imports the plugin contract from.
 export type { IREdge } from "./graph-ir";
+export type { OpAgentSpec } from "./ci-agent";
 
 // The observation contract (#1089), re-exported from the same entry so a
 // lexicon's `describeResources` can report NOT-OBSERVED without a second
@@ -915,6 +918,22 @@ export interface ScheduledOpSpec {
    * posts nothing.
    */
   reviewAgent?: boolean;
+  /**
+   * Where this Op's generated jobs run (#4616): a runner label, a list of
+   * labels, or on GitHub a runner group, as an Op wave's `runner` (#3914).
+   * `runs-on` on GitHub and Forgejo, `tags` on GitLab; a runner group on
+   * GitLab or Forgejo is refused. Default: the forge's default runner.
+   */
+  runner?: CiRunner;
+  /**
+   * The agent jobs (#4616, ../ci-agent.ts). `on: "comment"`: this spec is the
+   * agent's own workflow, answering `/<product> agent <ask>` on a pull
+   * request, and `trigger` is not read. `on: "drift"`: the agent and push
+   * jobs follow this Op's job and run when its run exits with chant's
+   * `drift` code, opening or updating a pull request from the agent's
+   * branch. The model's job holds no write token; the push job does.
+   */
+  agent?: OpAgentSpec;
 }
 
 /**

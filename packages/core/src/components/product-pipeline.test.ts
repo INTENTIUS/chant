@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { componentWaveOutputsFile, componentWaveSteps, componentWavesSpec, productPipelineJobs, productWavesSpec } from "./product-pipeline";
+import { componentWaveOutputsFile, componentWaveSteps, componentWavesSpec, productDriftAgent, productPipelineJobs, productWavesSpec } from "./product-pipeline";
 import { prApplyComment, prLoopSetup, PR_LOOP_IMAGE, PR_LOOP_SETUP, withProductBin } from "./pr-pipeline";
 import { PLYWOOD, TERRAGUCCI } from "../__fixtures__/product-words";
 import type { OpWavesSpec } from "../op/op-waves";
@@ -139,3 +139,30 @@ describe("the lock and unlock comments (#4588)", () => {
     expect(productPipelineJobs("github", "production", { words: PLYWOOD, waves }).locks).toBeUndefined();
   });
 });
+
+describe("the agent (#4616)", () => {
+  const words = { ...PLYWOOD, commands: { ...PLYWOOD.commands, agent: "agent" as const } };
+
+  test("returns the agent's Op spec for its comment, with the settings checked", () => {
+    const pw = productPipelineJobs("github", "production", { words, agent: { maxRuns: 5, timeout: 20, keyEnv: "MODEL_KEY", runner: "agents" } });
+    expect(pw.agent?.comment).toBe("/plywood agent");
+    expect(pw.agent?.spec).toEqual({
+      name: "plywood-agent",
+      trigger: { kind: "pull_request" },
+      agent: { on: "comment", comment: "/plywood agent", maxRuns: 5, timeout: 20, keyEnv: "MODEL_KEY" },
+      runner: "agents",
+    });
+    expect(() => productPipelineJobs("github", "production", { words, agent: { timeout: 0 } })).toThrow(/timeout/);
+  });
+
+  test("a product whose words name no agent command gets no agent", () => {
+    expect(productPipelineJobs("github", "production", { words: PLYWOOD, agent: true }).agent).toBeUndefined();
+    expect(productPipelineJobs("github", "production", { words: PLYWOOD }).agent).toBeUndefined();
+  });
+
+  test("the drift agent of a scheduled drift Op", () => {
+    expect(productDriftAgent(words, "plywood-drift-app", { maxRuns: 2 })).toEqual({ on: "drift", maxRuns: 2 });
+    expect(() => productDriftAgent(words, "plywood-drift-app", { branch: "../x" })).toThrow(/branch/);
+  });
+});
+

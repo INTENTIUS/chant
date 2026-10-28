@@ -79,7 +79,7 @@ import {
   environmentDoc,
   fillCommand,
   GITHUB_JOB_TOKEN,
-  GITHUB_RUNNER,
+  githubRunsOn,
   mergePermissions,
   nonEmpty,
   permissionsFor,
@@ -97,6 +97,9 @@ import type {
 } from "@intentius/chant/lexicon";
 import { checkoutStep, concurrency, emitWorkflowYAML, jobTokenEnv, onTrigger, opConcurrencyGroup, runSteps } from "./ci-jobs";
 import { assertReviewSplit, reviewJobs, reviewNoteJobName } from "./review-jobs";
+import { resolveAgentSpec } from "@intentius/chant/ci-agent";
+import { activeProductWords } from "@intentius/chant/ci-product-words";
+import { agentJobName, agentPushJobName, driftRunOutputs, driftRunStep, githubAgentJobs } from "./agent-jobs";
 
 export type { GenerateGithubOpOptions, GenerateGithubOpResult };
 
@@ -162,6 +165,13 @@ export interface GithubOpPipelineDoc {
    * dialect transforms this job on its own terms.
    */
   reviewNoteDoc?: Record<string, unknown>;
+  /**
+   * The agent jobs (#4616), when the spec sets `agent`: the agent job and
+   * the push job. Kept out of {@link jobsDoc} so a member's
+   * `working-directory` default stays on the Op's own job: these check out
+   * at the repository root.
+   */
+  agentDoc?: Record<string, unknown>;
 }
 
 /** One generated file: a suggested name plus its pipeline document, pre-emission. */
@@ -361,12 +371,12 @@ function gateNoticeScript(version: string): string {
  * no branch and merges nothing. The Forgejo dialect drops them, as it drops
  * every scope but `id-token`.
  */
-function gateNoticeJob(applyJobName: string, image: string): Record<string, unknown> {
+function gateNoticeJob(applyJobName: string, image: string, runner?: ScheduledOpSpec["runner"]): Record<string, unknown> {
   const output = (name: string) => "${{ needs." + applyJobName + ".outputs." + name + ' }}';
   return {
     needs: applyJobName,
     if: `needs.${applyJobName}.outputs.gated == 'true'`,
-    "runs-on": GITHUB_RUNNER,
+    "runs-on": githubRunsOn(runner),
     container: image,
     permissions: { contents: "read", issues: "write", "pull-requests": "write" },
     steps: [
@@ -415,6 +425,7 @@ function assertTriggerSupportsMode(name: string, mode: OpFindingMode, trigger: O
 export function buildGithubOpPipelineDocs(
   ops: ScheduledOpSpec[],
   options: GenerateGithubOpOptions = {},
+  forge: "github" | "forgejo" = "github",
 ): { files: GithubOpPipelineFile[]; jobs: OpPipelineJob[] } {
   const image = options.image ?? CI_IMAGE;
   const runCommand = options.runCommand ?? ["chant", "run", "{name}"];
@@ -424,7 +435,41 @@ export function buildGithubOpPipelineDocs(
   const files: GithubOpPipelineFile[] = [];
   const jobs: OpPipelineJob[] = [];
 
+  const words = activeProductWords();
   for (const spec of ops) {
+    // #4616: the comment agent is a workflow of its own, on pull request comments; the spec's trigger is not read.
+    if (spec.agent?.on === "comment") {
+      const settings = resolveAgentSpec(spec.name, spec.agent, words.product);
+      const jobName = ciJobName(spec.name);
+      const setup = spec.setup ?? [];
+      assertSetupSteps(spec.name, setup);
+      jobs.push({ jobName, op: spec.name, trigger: { kind: "pull_request" }, findingMode: "report" });
+      const { agent, push } = githubAgentJobs({
+        forge,
+        jobName,
+        image,
+        settings,
+        ...(spec.runner !== undefined ? { runner: spec.runner } : {}),
+        setup: setup.map(setupStepDoc),
+        beforeScript,
+        ...(spec.agent.tokenEnv ? { tokenEnv: spec.agent.tokenEnv } : {}),
+        ...(words.bin ? { bin: words.bin } : {}),
+      });
+      files.push({
+        name: `${spec.name}.yml`,
+        doc: {
+          name: spec.name,
+          on: { issue_comment: { types: ["created"] } },
+          ...nonEmpty("env", options.variables),
+          // One agent run at a time, so two asks never count the limit at once.
+          concurrency: concurrency(jobName),
+          permissions: { contents: "read" },
+          jobsDoc: {},
+          agentDoc: { [jobName]: agent, [agentPushJobName(jobName)]: push },
+        },
+      });
+      continue;
+    }
     const findingMode = spec.findingMode ?? "report";
     const trigger = resolveOpTrigger(spec);
     assertTriggerSupportsMode(spec.name, findingMode, trigger);
@@ -438,6 +483,11 @@ export function buildGithubOpPipelineDocs(
     // A split review (#4326) runs the change's code beside a model: no step of that job holds a forge token.
     const split = spec.reviewAgent === true;
     if (split) assertReviewSplit(spec.name, trigger, findingMode, spec.permissions);
+    // #4616: a drift agent follows the Op's job, which hands its output on and says whether it found drift.
+    const driftAgent = spec.agent?.on === "drift" ? resolveAgentSpec(spec.name, spec.agent, words.product) : undefined;
+    if (driftAgent && (split || trigger.kind === "push")) {
+      throw new Error(`Scheduled Op "${spec.name}" sets a drift agent, which follows a drift check's run; give it a cron or pull_request trigger and no reviewAgent.`);
+    }
     const stepEnv = split ? {} : jobTokenEnv(findingMode !== "report");
 
     const setup = spec.setup ?? [];
@@ -457,7 +507,9 @@ export function buildGithubOpPipelineDocs(
     steps.push(
       gated
         ? gatedRunStep(RUN_STEP_ID, spec.name, invocation, stepEnv)
-        : { run: invocation, env: stepEnv },
+        : driftAgent
+          ? driftRunStep(invocation, stepEnv, forge)
+          : { run: invocation, env: stepEnv },
     );
     steps.push(...runSteps(extraScript));
 
@@ -490,7 +542,7 @@ export function buildGithubOpPipelineDocs(
       ),
       jobsDoc: {
         [jobName]: {
-          "runs-on": GITHUB_RUNNER,
+          "runs-on": githubRunsOn(spec.runner),
           container: image,
           // Per-Op credentials (#2290): job-level `env:`, one level more
           // specific than `options.variables`'s workflow-level `env:` above,
@@ -511,16 +563,35 @@ export function buildGithubOpPipelineDocs(
                   ]),
                 ),
               }
-            : {}),
+            : driftAgent
+              ? { outputs: driftRunOutputs(forge) }
+              : {}),
           steps,
         },
       },
-      ...(gated ? { gatedNoticeDoc: { [`${jobName}-gate-notice`]: gateNoticeJob(jobName, image) } } : {}),
+      ...(gated ? { gatedNoticeDoc: { [`${jobName}-gate-notice`]: gateNoticeJob(jobName, image, spec.runner) } } : {}),
     };
+    if (driftAgent) {
+      const name = agentJobName(jobName, "drift");
+      const { agent, push } = githubAgentJobs({
+        forge,
+        jobName: name,
+        image,
+        settings: driftAgent,
+        ...(spec.runner !== undefined ? { runner: spec.runner } : {}),
+        setup: setup.map(setupStepDoc),
+        beforeScript,
+        ...(spec.agent?.tokenEnv ? { tokenEnv: spec.agent.tokenEnv } : {}),
+        ...(words.bin ? { bin: words.bin } : {}),
+        after: jobName,
+      });
+      doc.agentDoc = { [name]: agent, [agentPushJobName(name)]: push };
+    }
     // A split review (#4326): the Op's job is the review job, and the note job rides beside it.
     if (review) {
-      doc.jobsDoc = { [jobName]: { ...review.review, ...(spec.environment ? { environment: environmentDoc(spec.environment) } : {}) } };
-      doc.reviewNoteDoc = { [reviewNoteJobName(jobName)]: review.note };
+      const runsOn = spec.runner !== undefined ? { "runs-on": githubRunsOn(spec.runner) } : {};
+      doc.jobsDoc = { [jobName]: { ...review.review, ...runsOn, ...(spec.environment ? { environment: environmentDoc(spec.environment) } : {}) } };
+      doc.reviewNoteDoc = { [reviewNoteJobName(jobName)]: { ...review.note, ...runsOn } };
     }
 
     files.push({ name: `${spec.name}.yml`, doc });
@@ -580,8 +651,8 @@ export function emitOpPipelineYAML(doc: GithubOpPipelineDoc): string {
   // The gated-apply notice job rides in `jobs:` beside the Op's own job; it
   // is carried separately on the doc so a dialect transforms it on its own.
   // A dialect's `header` note (#2257) is absent on github.
-  const { gatedNoticeDoc, reviewNoteDoc, ...workflow } = doc;
-  return emitWorkflowYAML({ ...workflow, jobsDoc: { ...doc.jobsDoc, ...(gatedNoticeDoc ?? {}), ...(reviewNoteDoc ?? {}) } });
+  const { gatedNoticeDoc, reviewNoteDoc, agentDoc, ...workflow } = doc;
+  return emitWorkflowYAML({ ...workflow, jobsDoc: { ...doc.jobsDoc, ...(gatedNoticeDoc ?? {}), ...(reviewNoteDoc ?? {}), ...(agentDoc ?? {}) } });
 }
 
 /**
