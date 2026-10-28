@@ -265,6 +265,11 @@ CI:
                         perRun, with no forge token or cloud credentials in
                         their environment. Writes check-hooks.json under
                         --output (default .chant/check); exits 1 when one failed.
+  ci check-job          The apply-job guard: compare the forge environment,
+                        ref and runner the forge gives this job with the
+                        expectation in CHANT_JOB_GUARD, which a generated
+                        op-wave job carries. Exits 1, one line per value
+                        that differs, before any credential is taken.
   ci forge-check [--env <env>] [--member <name>] [--forge <forge>] [--repo <owner/name>] [--branch <default>] [--require-clouds] [--json]
                         Read the forge, each cloud's trust policy and Pulumi
                         Cloud's OIDC policies against the pipelines
@@ -520,6 +525,11 @@ Ops:
                         --record-plans (no --wave), in a pull request's
                         pipeline: plan every wave at its head and record the
                         digests a pr-review approval mode compares.
+                        --approval-status (no --wave) --forge <kind>
+                        --pr <n> --head <sha> --base <sha>, or --open on
+                        GitLab: post <product>/approval on an open pull
+                        request's head, pending while a pr-review wave its
+                        gate will hold has no approving review (#4630).
                         --waves-outcome (no --wave), after the last wave:
                         print how the wave jobs' outcome files add up
                         (applied, partial, unchanged, waiting, failed), the
@@ -629,6 +639,14 @@ Ops:
                         applies it once, if .chant/overriders at base lists
                         --actor
 
+  audit-log attribute --input <drift.json> [--audit-log aws[:<region>]]
+                        Name who changed each drifted attribute of a drift
+                        document: a known write by design, else the cloud
+                        audit log's last writer (#4632)
+  audit-log unrecorded --audit-log aws[:<region>] --op <op>[,...] --since <time>
+                        Report the audit log's writes no recorded apply on
+                        the run ledger made; exits 2 when there are some
+                        (#4632)
   notify relay          Serve the relay that approves a waiting gate from a
                         Slack button or a Teams reply (#4611): verifies the
                         chat signature and the button's notify reference,
@@ -1180,14 +1198,26 @@ Component release ledger + status:
                             [--forge github|gitlab|forgejo] posts them);
                             --target <address> narrows every member's plan
                             to the address, --target <member>:<address>
-                            one member's (#4620); applies nothing
+                            one member's (#4620); --comment-targets adds the
+                            --target addresses of the preview comment in
+                            CHANT_PREVIEW_COMMENT (#4626); --refresh refreshes
+                            each step's state first and --target-dependents
+                            plans what depends on each target too, refused
+                            by name for a step that cannot (#4627);
+                            --parallelism <n> plans at
+                            most n members of a wave at once (#4625);
+                            applies nothing
   components pr-post       Post the plan note and the chant/plan status
                             from the report pr-plan --no-status wrote
                             (--pr <n> --head <sha> --env <env> --forge
                             <kind>), in a job that runs none of the
                             change's code (#4295); --open posts every
                             open merge request's from a GitLab pipeline
-                            of the target branch (#4328)
+                            of the target branch (#4328); --respond
+                            description=check --decide-backend <name>
+                            --decide-model <id> asks whether the
+                            description leaves out a destroy or a
+                            replacement and posts the finding (#4629)
   components pr-record     On merge (#4168): plan the same members again,
                             store the change set and write the merge record
                             _merges/<commit>.json; applies and refuses
@@ -1234,6 +1264,14 @@ Component release ledger + status:
                             approved, mergeable, undiverged and green;
                             --requires <list> asks only the checks it
                             names (approved,mergeable,undiverged,checks);
+                            --merge auto --merge-token-env <VAR> merges the
+                            pull request once every member applied and the
+                            records are pushed, with that token alone and
+                            the applied head checked again (#4636);
+                            --respond <list> turns the failed apply's
+                            triage and the refused apply's diff on or off
+                            (wave-refused=diff|off,apply-failed=triage|off,
+                            #4629);
                             --events-json, both commands: the run-event
                             stream on stdout; --report-url <s3 or file URL>,
                             both commands: copy the report, the change set
@@ -1730,6 +1768,8 @@ export const commandRegistry: CommandDef[] = [
   // #4556: the ci.hooks.check hooks at base, for a product's check job.
   { name: "ci check", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/ci-check")).runCiCheck(ctx) },
   // #4608: the live forge, cloud trust policies and Pulumi Cloud's OIDC policies against ci.identity.cloud. Read-only.
+  // #4624: the apply-job guard, from the expectation the job carries.
+  { name: "ci check-job", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/ci-check-job")).runCiCheckJob(ctx) },
   { name: "ci forge-check", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/ci-forge-check")).runCiForgeCheck(ctx) },
   // #4094: one pull-request job as a pipeline Op in a fresh checkout, the chant runner's first slice.
   { name: "ci run", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-run")).runCiRun(ctx) },
@@ -1790,6 +1830,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "approve", handler: runApprove },
   // #4293 — target locks a pull request holds on chant/lifecycle. Imported on first use.
   // #4611 — approve a waiting gate from a chat click. Imported on first use.
+  { name: "audit-log attribute", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/audit-log")).runAuditLogAttribute(ctx) },
+  { name: "audit-log unrecorded", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/audit-log")).runAuditLogUnrecorded(ctx) },
   { name: "notify relay", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/notify-relay")).runNotifyRelay(ctx) },
   { name: "lock", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/lock")).runLock(ctx) },
   { name: "unlock", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/lock")).runUnlock(ctx) },

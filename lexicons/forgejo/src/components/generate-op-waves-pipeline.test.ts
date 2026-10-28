@@ -115,8 +115,9 @@ describe("an Op wave's jobs by cloud identity (#4332)", () => {
     expect(Object.keys(jobs)).toEqual(["wave-1-prod-decide", "wave-1-prod-a", "wave-1-prod-default"]);
     for (const job of Object.values(jobs)) {
       expect(job.permissions).toEqual({ "id-token": "write" });
-      expect(job.steps[0]!.env![TRADE_SPEC_ENV]).toBeDefined();
-      expect(job.steps[1]!.uses).toContain("checkout");
+      // #4624: the apply-job guard comes first, then the trade, then the checkout.
+      expect(job.steps[1]!.env![TRADE_SPEC_ENV]).toBeDefined();
+      expect(job.steps[2]!.uses).toContain("checkout");
     }
   });
 

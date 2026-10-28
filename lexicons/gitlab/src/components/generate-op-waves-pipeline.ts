@@ -49,6 +49,13 @@
  * unsetting the control repo's token variables and the product's two
  * secret names; the dispatch step reads the token from the product's
  * variable alone and hands it to curl on its stdin (#4568).
+ *
+ * Each wave job's script starts with the apply-job guard (#4624,
+ * `@intentius/chant/ci-job-guard`), before the trade: it stops the job
+ * unless `CI_COMMIT_REF_NAME` is one of the spec's branches and protected,
+ * `CI_ENVIRONMENT_NAME` is the job's environment, and `CI_RUNNER_TAGS`
+ * holds each of the job's tags. The guard exits 1, which the job allows
+ * as it allows a failed run; the next wave's jobs carry the guard too.
  */
 
 import {
@@ -73,6 +80,8 @@ import {
   opWaveOutcomeDir,
   opWavesControlTarget,
   opWavesLastJobs,
+  OP_WAVES_APPROVAL_STATUS_VAR,
+  opWavesApprovalStatusCommand,
   opWavesOutcomeCommand,
   opWavesRecordPlansCommand,
   opWavesResumeCommand,
@@ -81,6 +90,8 @@ import {
 import { CONTROL_OUTCOME_VAR, CONTROL_TOKEN_VARS, controlDispatchJob } from "@intentius/chant/control/dispatch";
 import type { OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
 import { gitlabTradeIdTokens, gitlabTradeLines, TRADE_SPEC_ENV } from "@intentius/chant/ci-identity";
+import { JOB_GUARD_ENV, jobGuardLine, jobGuardSpec, opWaveJobLabel } from "@intentius/chant/ci-job-guard";
+import { resolveProductWords } from "@intentius/chant/ci-product-words";
 import { emitGitlabFile } from "./ci-jobs";
 
 /** Render an Op waves spec as one GitLab CI file, `<name>.gitlab-ci.yml` unless `opsFileName` names another. */
@@ -107,6 +118,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
     }
   }
   const specTags = gitlabTags(spec.runner);
+  const product = resolveProductWords(options.words ?? {}).product;
 
   const byReview = spec.waves.some((w) => w.approval === "pr-review");
   const stages = [...(byReview ? ["plans"] : []), ...spec.waves.map((wave, i) => `wave-${i + 1}-${wave.name}`)];
@@ -130,6 +142,18 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
         script: [...dropControl, ...(options.beforeScript ?? []), opWavesRecordPlansCommand(options.specFile, options.bin).join(" ")],
       },
     ]);
+    // #4630: a GitLab approval starts no pipeline, so a schedule of the target branch posts every open merge request's status.
+    entries.push([
+      `${spec.name}-approval-status`,
+      {
+        stage: "plans",
+        image,
+        ...(specTags ? { tags: specTags } : {}),
+        variables: { ...GITLAB_FULL_HISTORY },
+        rules: [{ if: `${GITLAB_SCHEDULE_SOURCE} && $${OP_WAVES_APPROVAL_STATUS_VAR} == "1"` }],
+        script: [...dropControl, ...(options.beforeScript ?? []), opWavesApprovalStatusCommand(options.specFile, "gitlab", options.bin).join(" ")],
+      },
+    ]);
   }
   for (const job of jobs) {
     const wave = spec.waves[job.wave - 1]!;
@@ -141,6 +165,16 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
     const cloud = group?.cloud ?? wave.cloud;
     const declared = gitlabIdTokensDoc(group?.idTokens ?? wave.idTokens);
     const idTokens = cloud ? { ...declared, ...gitlabTradeIdTokens(cloud) } : declared;
+    // #4624: the apply-job guard, the script's first line, before the trade.
+    const runner = group?.runner ?? wave.runner ?? spec.runner;
+    const guard = jobGuardSpec({
+      forge: "gitlab",
+      job: opWaveJobLabel(spec.name, job),
+      product,
+      ...(environment ? { environment: environment.name } : {}),
+      branches: pushBranches(spec.branches),
+      ...(runner !== undefined ? { runner } : {}),
+    });
     entries.push([
       job.jobName,
       {
@@ -150,10 +184,10 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
         resource_group: `${spec.name}-${wave.name}`,
         ...(environment ? { environment: environmentDoc(environment) } : {}),
         ...(idTokens ? { id_tokens: idTokens } : {}),
-        variables: { ...GITLAB_FULL_HISTORY, ...(wave.variables ?? {}), ...(group?.variables ?? {}), ...(cloud ? { [TRADE_SPEC_ENV]: JSON.stringify(cloud) } : {}) },
+        variables: { ...GITLAB_FULL_HISTORY, ...(wave.variables ?? {}), ...(group?.variables ?? {}), ...(cloud ? { [TRADE_SPEC_ENV]: JSON.stringify(cloud) } : {}), [JOB_GUARD_ENV]: JSON.stringify(guard) },
         rules,
         ...(job.needs.length > 0 ? { needs: job.needs } : {}),
-        script: [...(cloud ? gitlabTradeLines() : []), ...dropControl, ...setup, ...(options.beforeScript ?? []), job.command.join(" "), ...(options.extraScript ?? [])],
+        script: [jobGuardLine(), ...(cloud ? gitlabTradeLines() : []), ...dropControl, ...setup, ...(options.beforeScript ?? []), job.command.join(" "), ...(options.extraScript ?? [])],
         // #4322: a run that failed, or was blocked, lets the next wave run; any other failure stops it.
         allow_failure: { exit_codes: [1] },
         artifacts: { when: "always", paths: [...(job.kind === "decide" ? [job.record!] : []), `${opWaveOutcomeDir(spec)}/`], expire_in: "30 days" },
@@ -214,6 +248,9 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
     "# failure, and the waves after it run what does not depend on those runs.",
     ...(spec.resume
       ? [`# The ${spec.name}-resume job retries it for you in a pipeline schedule; give the schedule the cron "${spec.resume.schedule}".`]
+      : []),
+    ...(byReview
+      ? [`# The ${spec.name}-approval-status job posts each open merge request's approval status from a pipeline schedule that sets ${OP_WAVES_APPROVAL_STATUS_VAR}=1.`]
       : []),
     ...(control ? [`# After the last wave, the control-dispatch job tells ${control.repo} how the waves ended.`] : []),
   ];

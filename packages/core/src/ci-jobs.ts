@@ -44,6 +44,14 @@ export const CI_IMAGE = "node:22";
 export const DEFAULT_BRANCH = "main";
 
 /**
+ * Where the pull request environment jobs (#4298) write their reports, kept
+ * as a CI artifact. It lives here, with no imports, so `pr-env` code that
+ * needs only the path (./components/pr-environment.ts and the pr-env-run
+ * bundle) does not load ./components/pr-pipeline.ts.
+ */
+export const PR_ENV_REPORT_DIR = ".chant/pr-env";
+
+/**
  * The branches a push trigger filters on: the ones given, or
  * {@link DEFAULT_BRANCH} when none are. An empty list is none, on every
  * forge.

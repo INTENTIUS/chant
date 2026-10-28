@@ -88,8 +88,10 @@
 import type { ForgeKind } from "../pr-forge";
 import { PR_APPLY_GATE } from "../pr-loop";
 import { parseRequiresList } from "../pr-requires";
-import { CI_IMAGE, GITHUB_JOB_TOKEN } from "../ci-jobs";
-import { withoutForgeTokens } from "../ci-handover";
+import { CI_IMAGE, GITHUB_JOB_TOKEN, githubSecret, PR_ENV_REPORT_DIR, type CiRunner } from "../ci-jobs";
+import { FORGE_TOKEN_VARS, withoutForgeTokens } from "../ci-handover";
+import { OIDC_REQUEST_VARS } from "../ci-identity";
+import { parallelismProblem } from "../parallelism";
 import { EMPTY_TREE_SHA } from "./changed-files";
 import { layerWaves } from "../gated-waves";
 import type { DriverComponent } from "./driver";
@@ -187,6 +189,14 @@ export interface PrLoopPipelineOptions {
    * four. Only with `applyBeforeMerge`.
    */
   applyRequires?: readonly string[];
+  /**
+   * Merge the pull request once its update before merge applied (#4636):
+   * `pr-apply --merge auto --merge-token-env <tokenEnv>`. The token is the
+   * merge's alone: on GitHub and Forgejo the job maps it from the secret of
+   * that name, on GitLab it is a protected variable the project sets. Only
+   * with `applyBeforeMerge`.
+   */
+  applyMerge?: { tokenEnv: string; method?: "merge" | "squash" | "rebase" };
   /**
    * Stream each job's run events (#4007): `--events-json` on both commands,
    * and `CHANT_RUN_EVENTS_DIR` set to {@link PR_LOOP_EVENTS_DIR}. Default false.
@@ -295,6 +305,116 @@ export interface PrLoopPipelineOptions {
    * Default false.
    */
   previewComment?: boolean;
+  /**
+   * Where the pull request loop's jobs run (#4625), by stage: `plan` for the
+   * plan and the comment preview, `apply` for the apply jobs, the record
+   * job and a pull request environment's up, down and sweep, and `default`
+   * for every other job (the note jobs, the lock jobs, the control
+   * dispatch) and for a stage left out. A plywood `runners` key maps
+   * `preview` onto `plan` and `up` onto `apply`. Absent: the forge's
+   * default runner.
+   */
+  runners?: PrLoopRunners;
+  /**
+   * Variables for the jobs that plan or apply (#4625): the plan, the
+   * comment preview, the apply and the record. Values as the forge reads
+   * them; a name of a forge token or a token request variable is refused.
+   */
+  variables?: Record<string, string>;
+  /**
+   * Secrets passed to the same jobs (#4625), as `{ <variable>: <secret> }`:
+   * the repository secret named `<secret>` as `<variable>`. GitHub and
+   * Forgejo map `secrets.<secret>`; GitLab, where every job has the CI/CD
+   * variables, maps `$<secret>` when the names differ. The plan job still
+   * drops the forge tokens before the change's code runs, and a passed name
+   * of a forge token is refused.
+   */
+  secrets?: Record<string, string>;
+  /**
+   * How many members of a wave the plan job plans at once (#4625): `pr-plan
+   * --parallelism <n>`, on the plan and the comment preview. Absent: all of
+   * a wave's members at once.
+   */
+  parallelism?: number;
+  /**
+   * The plan narrows to the `--target` addresses of the preview comment
+   * (#4626): `pr-plan --comment-targets`, which reads the comment from
+   * {@link PREVIEW_COMMENT_ENV}. {@link prCommentPreviewJob} sets it on its
+   * own plan; a caller never needs to.
+   */
+  commentTargets?: boolean;
+  /**
+   * The plan and the comment preview refresh each step's state first
+   * (#4627): `pr-plan --refresh`, pulumi/actions' `refresh`. A member whose
+   * capability cannot is refused by name. Default false.
+   */
+  refresh?: boolean;
+  /**
+   * Stale marking (#4628): the plan note carries the target branch's commit
+   * it was posted against, and a `stale-notes` job on each push to the
+   * target branch marks every open pull request's note posted against
+   * another commit stale, naming the plan comment under `previewComment`,
+   * and sets its plan status back to pending ({@link prStaleJob}). Set
+   * from `--stale-notes` beside `--pr-loop`. Default false.
+   */
+  staleNotes?: boolean;
+}
+
+/** The variable the comment preview's plan reads the comment from (#4626); never a shell argument. */
+export const PREVIEW_COMMENT_ENV = "CHANT_PREVIEW_COMMENT";
+
+/** Where the pull request loop's jobs run, by stage (#4625). */
+export interface PrLoopRunners {
+  plan?: CiRunner;
+  apply?: CiRunner;
+  default?: CiRunner;
+}
+
+/** A pull request loop job's stage for its runner (#4625). */
+export type PrLoopRunnerStage = keyof PrLoopRunners;
+
+/** The runner of `stage` (#4625): the stage's own, else `default`, else undefined for the forge's default. */
+export function prLoopRunner(options: Pick<PrLoopPipelineOptions, "runners">, stage: PrLoopRunnerStage): CiRunner | undefined {
+  return options.runners?.[stage] ?? options.runners?.default;
+}
+
+/**
+ * The runner stage of a pull request loop job by its name (#4625), with a
+ * workspace member's `<member>-` prefix taken off first: the plan and the
+ * comment preview plan; the apply jobs, the record job and a pull request
+ * environment's up, down and sweep apply; every other job runs on the
+ * default.
+ */
+export function prLoopJobStage(name: string, member?: string): PrLoopRunnerStage {
+  const bare = member && name.startsWith(`${member}-`) ? name.slice(member.length + 1) : name;
+  if (bare === "plan" || bare === PR_COMMENT_PREVIEW_JOB) return "plan";
+  if (bare === "apply" || bare === "record" || /^apply-wave-\d+$/.test(bare) || bare === "env-up" || bare === "env-down" || bare === "env-sweep") return "apply";
+  return "default";
+}
+
+/**
+ * The variables and passed secrets of the jobs that plan or apply (#4625),
+ * as the forge spells them. Throws on a name the loop sets itself or a
+ * forge token, which the plan must be able to drop.
+ */
+export function prLoopPassedEnv(forge: ForgeKind, options: Pick<PrLoopPipelineOptions, "variables" | "secrets">): Record<string, string> {
+  const reserved = new Set<string>([...FORGE_TOKEN_VARS, ...OIDC_REQUEST_VARS, "BASE_SHA", "PR_NUMBER", "HEAD_SHA", "GREEN_SHA", "CHANT_RUN_EVENTS_DIR", "CHANT_RUNNER_KEY"]);
+  const out: Record<string, string> = {};
+  const name = /^[A-Za-z_][A-Za-z0-9_]*$/;
+  for (const [key, value] of Object.entries(options.variables ?? {})) {
+    if (!name.test(key)) throw new Error(`the pull request jobs' variable ${JSON.stringify(key)} is not a variable name`);
+    if (reserved.has(key)) throw new Error(`the pull request jobs' variable ${key} is one the jobs set or drop themselves; give it another name`);
+    out[key] = value;
+  }
+  for (const [key, secret] of Object.entries(options.secrets ?? {})) {
+    if (!name.test(key) || !name.test(secret)) throw new Error(`the passed secret ${JSON.stringify(key)}: ${JSON.stringify(secret)} must map a variable name to a secret name`);
+    if (reserved.has(key)) throw new Error(`the passed secret ${key} is a name the jobs set or drop themselves, and the plan job drops the forge tokens before the change's code runs; pass it under another name`);
+    if (key in out) throw new Error(`${key} is both a variable and a passed secret of the pull request jobs; give one`);
+    if (forge === "gitlab") {
+      if (key !== secret) out[key] = `$${secret}`;
+    } else out[key] = githubSecret(secret);
+  }
+  return out;
 }
 
 /** The lock job's step names and commands (#4327), shared by the GitHub-shaped generators. */
@@ -428,13 +548,15 @@ export function prCommentPreviewJob(forge: ForgeKind, env: string, options: PrLo
   const comment = commentLine(words, "plan");
   if (!comment) throw new Error(`--preview-comment answers /${words.product} <plan command>, and the words name no plan command; name one in the words' commands, or drop --preview-comment`);
   // The plan job's own command: the apply side's options never reach it, so they are left out here.
-  const { applyBeforeMerge: _early, applyRequires: _requires, applyOnMerge: _onMerge, ...planSide } = options;
-  const [plan] = prLoopJobs(forge, env, planSide, member);
+  const { applyBeforeMerge: _early, applyRequires: _requires, applyMerge: _merge, applyOnMerge: _onMerge, ...planSide } = options;
+  // #4626: the comment's --target addresses narrow the preview, read from the comment in a variable.
+  const [plan] = prLoopJobs(forge, env, { ...planSide, commentTargets: true }, member);
   const github = forge !== "gitlab";
   const prNumber = github ? "${{ github.event.issue.number }}" : `$${GITLAB_PREVIEW_PR_VAR}`;
+  // GitLab: whoever starts the target-branch pipeline passes the comment as CHANT_PREVIEW_COMMENT, a pipeline variable every job has.
   const fromComment = (jobEnv: Record<string, string>): Record<string, string> => {
     const { BASE_SHA: _base, ...rest } = jobEnv;
-    return github ? { ...rest, PR_NUMBER: prNumber } : { ...rest, PR_NUMBER: prNumber, BASE_SHA: "$CI_COMMIT_SHA" };
+    return github ? { ...rest, PR_NUMBER: prNumber, [PREVIEW_COMMENT_ENV]: "${{ github.event.comment.body }}" } : { ...rest, PR_NUMBER: prNumber, BASE_SHA: "$CI_COMMIT_SHA" };
   };
   const branch = options.branch ?? "main";
   const base = github
@@ -446,9 +568,12 @@ export function prCommentPreviewJob(forge: ForgeKind, env: string, options: PrLo
       "--env", env, "--output", PR_LOOP_REPORT_DIR, "--forge", forge,
       ...(member ? ["--member", member] : []),
       ...(github ? ["--result", '"$PLAN_RESULT"'] : []),
+      // #4628: the target branch's commit the preview measured from, for the note's tip line.
+      ...(options.staleNotes ? ["--tip", '"$TIP_SHA"'] : []),
     ].join(" "),
     words.bin,
   );
+  const tipEnv: Record<string, string> = options.staleNotes ? { TIP_SHA: github ? "${{ github.sha }}" : "$CI_COMMIT_SHA" } : {};
   return {
     jobName: PR_COMMENT_PREVIEW_JOB,
     noteJobName: PR_COMMENT_PREVIEW_NOTE_JOB,
@@ -463,12 +588,13 @@ export function prCommentPreviewJob(forge: ForgeKind, env: string, options: PrLo
             PR_NUMBER: prNumber,
             HEAD_SHA: `\${{ needs.${PR_COMMENT_PREVIEW_JOB}.outputs.${PREVIEW_HEAD_OUTPUT} }}`,
             PLAN_RESULT: `\${{ needs.${PR_COMMENT_PREVIEW_JOB}.result }}`,
+            ...tipEnv,
             GITHUB_TOKEN: GITHUB_JOB_TOKEN,
           },
         }
       : {
           command: postCommand,
-          env: { PR_NUMBER: prNumber },
+          env: { PR_NUMBER: prNumber, ...tipEnv },
           setup: ['HEAD_SHA="$(git ls-remote origin "refs/merge-requests/$PR_NUMBER/head" | cut -f1)" && export HEAD_SHA'],
         },
     ...(github ? {} : { gitlabVar: GITLAB_PREVIEW_PR_VAR }),
@@ -517,6 +643,8 @@ export interface PrLoopJob {
    * pipeline never gets.
    */
   run: { command: string; env: Record<string, string> };
+  /** Where the job runs (#4625), from the loop's `runners`: the plan's or the apply's, else `default`. Absent: the forge's default. */
+  runner?: CiRunner;
 }
 
 /** The lines `build` (#4088) runs before a job's command: the build, then the lint. Empty without the option. */
@@ -541,6 +669,10 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
   const asked = options.applyRequires ? parseRequiresList(options.applyRequires) : undefined;
   if (asked && "error" in asked) throw new Error(asked.error);
   const requires = early && asked ? ["--requires", asked.checks.join(",")] : [];
+  if (options.applyMerge && !early) throw new Error("--merge auto merges a pull request after its update before merge, so it needs --apply-before-merge");
+  if (options.applyMerge && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(options.applyMerge.tokenEnv)) throw new Error(`the merge token variable ${JSON.stringify(options.applyMerge.tokenEnv)} is not a variable name`);
+  // #4636: the merge after the update, with its own token.
+  const merge = early && options.applyMerge ? ["--merge", "auto", "--merge-token-env", options.applyMerge.tokenEnv, ...(options.applyMerge.method ? ["--merge-method", options.applyMerge.method] : [])] : [];
   const common = [
     "--env", env, "--gate", gate, "--output", PR_LOOP_REPORT_DIR, "--forge", forge,
     ...(member ? ["--member", member] : []),
@@ -550,15 +682,27 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
   const github = forge !== "gitlab";
   const buildLines = prLoopBuildLines(env, options);
   const build = buildLines.length > 0 ? { build: buildLines } : {};
+  // #4625: the caller's variables and passed secrets, in every job that plans or applies.
   const jobEnv: Record<string, string> = {
+    ...prLoopPassedEnv(forge, options),
     ...(github ? { GITHUB_TOKEN: GITHUB_JOB_TOKEN } : {}),
     ...(options.events ? { CHANT_RUN_EVENTS_DIR: PR_LOOP_EVENTS_DIR } : {}),
   };
+  const planRunner = prLoopRunner(options, "plan");
+  if (options.parallelism !== undefined) {
+    const problem = parallelismProblem("parallelism", options.parallelism);
+    if (problem) throw new Error(`the pull request plan's ${problem}`);
+  }
+  const parallelism = options.parallelism !== undefined ? ["--parallelism", String(options.parallelism)] : [];
+  const applyRunner = prLoopRunner(options, "apply");
   // #4156: the flags `chant ci run` rebuilds `command` from. It finds the member from the directory it runs in.
   const ciRun = (job: PrLoopJob["jobName"]): string[] => [
     "chant", "ci", "run", job, "--in-place", ...(job === "plan" ? ["--no-push"] : []),
     ...(job === "apply" && !early ? [] : ["--base", '"$BASE_SHA"']), ...(job === "plan" || (job === "apply" && early) ? ["--pr", '"$PR_NUMBER"'] : []),
-    ...(job === "apply" && early ? ["--apply-before-merge", ...requires] : []),
+    ...(job === "apply" && early ? ["--apply-before-merge", ...requires, ...merge] : []),
+    ...(job === "plan" ? parallelism : []),
+    ...(job === "plan" && options.commentTargets ? ["--comment-targets"] : []),
+    ...(job === "plan" && options.refresh ? ["--refresh"] : []),
     "--env", env, "--gate", gate, "--forge", forge,
     ...(job !== "record" && options.waveGate ? ["--wave-gate", options.waveGate] : []),
     ...(job !== "plan" && options.branch ? ["--branch", JSON.stringify(options.branch)] : []),
@@ -576,8 +720,9 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
   const greenBranch = github ? JSON.stringify(options.branch ?? "main") : options.branch ? JSON.stringify(options.branch) : "$CI_DEFAULT_BRANCH";
   const applyEnv = github ? { BASE_SHA: "${{ github.event.before }}", ...jobEnv } : { BASE_SHA: "$CI_COMMIT_BEFORE_SHA", ...jobEnv };
   // #4301: the apply before merge runs in a job of the target branch, whose commit is the base, at the pull request's head.
+  const mergeSecret = github && options.applyMerge ? { [options.applyMerge.tokenEnv]: `\${{ secrets.${options.applyMerge.tokenEnv} }}` } : {};
   const earlyEnv = github
-    ? { BASE_SHA: "${{ github.sha }}", PR_NUMBER: "${{ github.event.issue.number }}", ...jobEnv }
+    ? { BASE_SHA: "${{ github.sha }}", PR_NUMBER: "${{ github.event.issue.number }}", ...jobEnv, ...mergeSecret }
     : { BASE_SHA: "$CI_COMMIT_SHA", PR_NUMBER: `$${GITLAB_APPLY_PR_VAR}`, ...jobEnv };
   const greenApply: PrLoopJob = {
     // #4168 step 9: the apply applies the newest green commit, measured from the one applied before it.
@@ -591,6 +736,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
     env: jobEnv,
     checkout: [greenCheckout(greenBranch)],
     greenBranch,
+    ...(applyRunner !== undefined ? { runner: applyRunner } : {}),
     ...build,
     run: { command: ciRun("apply").join(" "), env: runEnv(jobEnv) },
   };
@@ -598,12 +744,13 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
     // #4301: the requires checks run inside pr-apply, before any of the head's code loads.
     jobName: "apply",
     command: [
-      "chant", "components", "pr-apply", "--before-merge", ...requires, "--base", '"$BASE_SHA"', "--pr", '"$PR_NUMBER"', ...common,
+      "chant", "components", "pr-apply", "--before-merge", ...requires, ...merge, "--base", '"$BASE_SHA"', "--pr", '"$PR_NUMBER"', ...common,
       ...(options.requireReview === true ? ["--require-review"] : []),
       "--resume", PR_APPLY_RECORD,
     ].join(" "),
     env: earlyEnv,
     checkout: [pullRequestCheckout(forge)],
+    ...(applyRunner !== undefined ? { runner: applyRunner } : {}),
     run: { command: ciRun("apply").join(" "), env: runEnv(earlyEnv) },
   };
   const bin = options.words?.bin;
@@ -611,9 +758,10 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
     {
       jobName: "plan",
       // With `waveGate` the plan's note says the later waves may stop at their own gates (#4003).
-      command: ["chant", "components", "pr-plan", "--base", '"$BASE_SHA"', "--pr", '"$PR_NUMBER"', ...common, ...(options.waveGate ? ["--wave-gate", options.waveGate] : []), "--no-status"].join(" "),
+      command: ["chant", "components", "pr-plan", "--base", '"$BASE_SHA"', "--pr", '"$PR_NUMBER"', ...common, ...(options.waveGate ? ["--wave-gate", options.waveGate] : []), ...parallelism, ...(options.commentTargets ? ["--comment-targets"] : []), ...(options.refresh ? ["--refresh"] : []), "--no-status"].join(" "),
       env: planEnv,
       ...build,
+      ...(planRunner !== undefined ? { runner: planRunner } : {}),
       // #4328: no runner key either. The step drops it, but the job's environment is the pull request's code's too.
       run: { command: ciRun("plan").join(" "), env: planEnv },
     },
@@ -624,6 +772,8 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
       env: applyEnv,
       setup: [github ? githubBaseFallback(options.branch) : gitlabBaseFallback(options.branch)],
       ...build,
+      // The record runs on merge, where the apply would.
+      ...(applyRunner !== undefined ? { runner: applyRunner } : {}),
       run: { command: ciRun("record").join(" "), env: runEnv(applyEnv) },
     },
   ].map((job) => jobWithBin(job as PrLoopJob, bin));
@@ -648,11 +798,13 @@ export const PR_PLAN_NOTE_JOB = "plan-note";
  * asks GitLab for each open merge request's plan job and reads its report
  * from the job's artifacts.
  */
-export function prLoopPostJob(forge: ForgeKind, env: string, member?: string, words?: Pick<CiProductWordsInput, "bin">): { command: string; env: Record<string, string> } {
+export function prLoopPostJob(forge: ForgeKind, env: string, member?: string, words?: Pick<CiProductWordsInput, "bin">, opts: { staleNotes?: boolean } = {}): { command: string; env: Record<string, string> } {
+  // #4628: with staleNotes the note carries the target branch's commit, so a later push can mark it stale.
+  const tip = opts.staleNotes ? ["--tip", '"$TIP_SHA"'] : [];
   if (forge === "gitlab") {
     return {
-      command: withProductBin(["chant", "components", "pr-post", "--open", "--env", env, "--output", PR_LOOP_REPORT_DIR, "--forge", forge, ...(member ? ["--member", member] : [])].join(" "), words?.bin),
-      env: {},
+      command: withProductBin(["chant", "components", "pr-post", "--open", "--env", env, "--output", PR_LOOP_REPORT_DIR, "--forge", forge, ...(member ? ["--member", member] : []), ...tip].join(" "), words?.bin),
+      env: opts.staleNotes ? { TIP_SHA: "$CI_COMMIT_SHA" } : {},
     };
   }
   const command = [
@@ -660,10 +812,42 @@ export function prLoopPostJob(forge: ForgeKind, env: string, member?: string, wo
     "--env", env, "--output", PR_LOOP_REPORT_DIR, "--forge", forge,
     ...(member ? ["--member", member] : []),
     "--result", '"$PLAN_RESULT"',
+    ...tip,
   ].join(" ");
   return {
     command: withProductBin(command, words?.bin),
-    env: { PR_NUMBER: "${{ github.event.pull_request.number }}", HEAD_SHA: "${{ github.sha }}", PLAN_RESULT: "${{ needs.plan.result }}", GITHUB_TOKEN: GITHUB_JOB_TOKEN },
+    env: {
+      PR_NUMBER: "${{ github.event.pull_request.number }}",
+      HEAD_SHA: "${{ github.sha }}",
+      PLAN_RESULT: "${{ needs.plan.result }}",
+      ...(opts.staleNotes ? { TIP_SHA: "${{ github.event.pull_request.base.sha }}" } : {}),
+      GITHUB_TOKEN: GITHUB_JOB_TOKEN,
+    },
+  };
+}
+
+/** The job that marks the open pull requests' notes stale after a push to the target branch (#4628). */
+export const PR_STALE_JOB = "stale-notes";
+
+/**
+ * The stale job's command and the values it reads (#4628), with
+ * `staleNotes`: on a push to the target branch, at its commit, `pr-post
+ * --stale` marks each open pull request's note posted against another
+ * commit stale and sets its plan status back to pending. It names the plan
+ * comment with `previewComment`. Undefined without `staleNotes`.
+ */
+export function prStaleJob(forge: ForgeKind, env: string, options: Pick<PrLoopPipelineOptions, "staleNotes" | "previewComment" | "branch" | "words"> = {}, member?: string): { command: string; env: Record<string, string> } | undefined {
+  if (!options.staleNotes) return undefined;
+  const words = resolveProductWords(options.words);
+  const command = [
+    "chant", "components", "pr-post", "--stale", "--tip", '"$TIP_SHA"', "--env", env, "--forge", forge,
+    ...(options.branch ? ["--branch", JSON.stringify(options.branch)] : []),
+    ...(member ? ["--member", member] : []),
+    ...(options.previewComment ? ["--preview-comment"] : []),
+  ].join(" ");
+  return {
+    command: withProductBin(command, words.bin),
+    env: forge === "gitlab" ? { TIP_SHA: "$CI_COMMIT_SHA" } : { TIP_SHA: "${{ github.sha }}", GITHUB_TOKEN: GITHUB_JOB_TOKEN },
   };
 }
 
@@ -873,8 +1057,7 @@ export function githubBaseFallback(branch?: string): string {
   return pushBaseFallback(JSON.stringify(branch ?? "main"), "$GITHUB_SHA");
 }
 
-/** Where the pull request environment jobs (#4298) write their reports, kept as a CI artifact. */
-export const PR_ENV_REPORT_DIR = ".chant/pr-env";
+export { PR_ENV_REPORT_DIR } from "../ci-jobs";
 
 /** The cron the generated `env-sweep` job runs on (#4298): hourly, at a minute off the hour. */
 export const PR_ENV_SWEEP_CRON = "17 * * * *";

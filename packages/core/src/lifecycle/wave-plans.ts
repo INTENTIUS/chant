@@ -22,7 +22,21 @@ export interface HeadPlans {
   /** The commit the waves were planned at: a pull request's head. */
   head: string;
   timestamp: string;
-  waves: Array<{ wave: number; name: string; digest: string }>;
+  waves: Array<HeadPlanWave>;
+}
+
+/**
+ * One wave's plan at the head. `changes` and `destructive` (#4630) are the
+ * plan's facts a gate policy reads: some run changes something, some run's
+ * plan is destructive. A record from an older chant has neither, and a
+ * reader takes such a wave as changing.
+ */
+export interface HeadPlanWave {
+  wave: number;
+  name: string;
+  digest: string;
+  changes?: boolean;
+  destructive?: boolean;
 }
 
 /** Where {@link HeadPlans} for `head` live on `chant/lifecycle`: `_wave-plans/<name>/<head>.json`. */
@@ -50,9 +64,9 @@ export function parseHeadPlans(text: string | null): HeadPlans | null {
   const waves: HeadPlans["waves"] = [];
   for (const w of r.waves) {
     if (w === null || typeof w !== "object") return null;
-    const { wave, name, digest } = w as Record<string, unknown>;
+    const { wave, name, digest, changes, destructive } = w as Record<string, unknown>;
     if (typeof wave !== "number" || typeof name !== "string" || typeof digest !== "string") return null;
-    waves.push({ wave, name, digest });
+    waves.push({ wave, name, digest, ...(typeof changes === "boolean" ? { changes } : {}), ...(typeof destructive === "boolean" ? { destructive } : {}) });
   }
   return { version: 1, name: r.name, head: r.head, timestamp: r.timestamp, waves };
 }

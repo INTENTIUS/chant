@@ -95,9 +95,11 @@ import type { CloudTradeSpec } from "../ci-identity";
 import { gatePointProblems, type GatePoint } from "./gate-point";
 import { quorumProblems, type GateQuorumRule } from "./gate-quorum";
 import { notifyConfigProblem, type NotifyConfig } from "../notify";
+// Types only: the small bundles that carry this module stay without ../ci-respond.ts (#4629).
+import type { CiResponses } from "../ci-respond";
 import { WAVE_GATE_NAME_PATTERN, waveGateNameFrom, waveShare } from "../wave-layout";
 import { waveOutcomeFileName } from "../wave-blocked";
-import { opWaveHoldsProblems, opWaveStepProblems, type OpWaveHolds, type OpWaveStep } from "./op-waves-capability-spec";
+import { opWaveHoldsProblems, opWaveParallelismProblems, opWaveStepProblems, type OpWaveHolds, type OpWaveStep } from "./op-waves-capability-spec";
 import { opWaveReleaseProblems, type OpWaveReleaseNames } from "./op-waves-release";
 import { CONTROL_DISPATCH_JOB, CONTROL_NAME, controlSettingsProblems, resolveControlTarget, type ControlSettingsInput, type ControlTarget } from "../control/dispatch";
 
@@ -388,6 +390,8 @@ export interface OpWave {
   hooks?: OpWaveHooks;
   /** Where this wave's jobs run (#3914). Default: the spec's `runner`. */
   runner?: OpWaveRunner;
+  /** How many of the wave's runs apply at once (#4625), over the spec's `parallelism`. */
+  parallelism?: number;
   /**
    * The OIDC tokens this wave's jobs get (#3914), as `{ <variable>: <audience> }`;
    * see {@link OpWaveJobGroup.idTokens}. With `jobs`, these are the deciding
@@ -487,6 +491,13 @@ export interface OpWavesSpec {
    */
   step?: OpWaveStep;
   /**
+   * How many runs of a wave apply at once (#4625), a wave's own
+   * `parallelism` winning. Default 1, one at a time. Over 1 it needs `step`:
+   * a run whose wave lists one of its `dependsOn` before it waits for that
+   * one, and is blocked when it failed, as one at a time.
+   */
+  parallelism?: number;
+  /**
    * Holds the wave runs over its plans (#4545), read at the base commit
    * with the policy: `policy` runs the workspace's `ci.policy` over each
    * run's change set, `cost` prices the runs and holds the wave over a
@@ -553,6 +564,14 @@ export interface OpWavesSpec {
    * `../notify.ts`.
    */
   notify?: NotifyConfig;
+  /**
+   * The responses a wave job posts (#4629, `../ci-respond.ts`): a refused
+   * wave's diff (`wave-refused: diff`, on by default) and a failed apply's
+   * triage (`apply-failed: triage`, on by default), on the pull request the
+   * wave applies or a tracking issue. `off` turns one off. A job's
+   * `CHANT_RESPOND` sits under these.
+   */
+  respond?: CiResponses;
   /**
    * The control repo (#4617, `@intentius/chant/ci-control`): once the last
    * wave ran, a `control-dispatch` job tells the control repo how the waves
@@ -756,6 +775,19 @@ export function opWavesRecordPlansCommand(specFile: string, bin?: string): strin
   return [...opWaveBinArgv(bin), "run", "wave", "--spec", specFile, "--record-plans"];
 }
 
+/**
+ * The command a `pr-review` spec's approval status job runs (#4630),
+ * through the product's bin: `--pr`, `--head` and `--base` from the
+ * pull request event on GitHub and Forgejo, `--open` on GitLab.
+ */
+/** The GitLab variable a pipeline schedule sets to `1` to post every open merge request's approval status (#4630). */
+export const OP_WAVES_APPROVAL_STATUS_VAR = "CHANT_APPROVAL_STATUS";
+
+export function opWavesApprovalStatusCommand(specFile: string, forge: "github" | "gitlab" | "forgejo", bin?: string): string[] {
+  const at = forge === "gitlab" ? ["--open"] : ["--pr", '"$PR_NUMBER"', "--head", '"$HEAD_SHA"', "--base", '"$BASE_SHA"'];
+  return [...opWaveBinArgv(bin), "run", "wave", "--spec", specFile, "--approval-status", ...at, "--forge", forge];
+}
+
 /** The default apply command. */
 export const OP_WAVE_DEFAULT_APPLY = ["chant", "run", "{op}", "--env", "{target}"];
 
@@ -934,9 +966,25 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
   }
   if (spec.neverOverMcp !== undefined && typeof spec.neverOverMcp !== "boolean") throw new Error(`${where}: neverOverMcp must be true or false.`);
   if (spec.runner !== undefined) assertOpWaveRunner(where, "runner", spec.runner);
+  {
+    const problems = opWaveParallelismProblems(spec);
+    if (problems.length > 0) throw new Error(`${where}: ${problems[0]}.`);
+  }
   if (spec.notify !== undefined) {
     const problem = notifyConfigProblem(spec.notify, "notify");
     if (problem) throw new Error(`${where}: ${problem}`);
+  }
+  if (spec.respond !== undefined) {
+    const respond = spec.respond as unknown;
+    if (respond === null || typeof respond !== "object" || Array.isArray(respond)) throw new Error(`${where}: respond must be an object of event to mode, such as { "wave-refused": "off" }.`);
+    // The wave events and their modes, as ../ci-respond.ts's CI_RESPONSES has them.
+    const modes: Record<string, readonly string[]> = { "wave-refused": ["diff", "off"], "apply-failed": ["triage", "off"] };
+    for (const [event, mode] of Object.entries(respond as Record<string, unknown>)) {
+      if (event === "description") throw new Error(`${where}: respond: the description check runs in the plan-note job, so an op waves spec takes only wave-refused and apply-failed.`);
+      const allowed = modes[event];
+      if (!allowed) throw new Error(`${where}: respond names no event ${JSON.stringify(event)}; the events are wave-refused and apply-failed.`);
+      if (typeof mode !== "string" || !allowed.includes(mode)) throw new Error(`${where}: respond: ${event} takes ${allowed.join(" or ")}, not ${JSON.stringify(mode)}.`);
+    }
   }
   const names = new Set<string>();
   for (const wave of spec.waves) {
@@ -1037,8 +1085,8 @@ const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 /** The key each cloud of a `cloud` trade names its identity under (`IDENTITY_KEY` in ../ci-identity.ts, kept here so this module imports none of it). */
 const CLOUD_IDENTITY_KEY: Record<string, string> = { aws: "role", gcp: "serviceAccount", azure: "clientId", pulumi: "token" };
 
-/** Refuse a `cloud` (#4332) the trade could not run: an unknown cloud, one that names no identity, or no audience. */
-function assertOpWaveCloud(where: string, field: string, cloud: unknown): void {
+/** Refuse a `cloud` (#4332) the trade could not run: an unknown cloud, one that names no identity, or no audience. Scheduled Ops check theirs with it too (#4631). */
+export function assertOpWaveCloud(where: string, field: string, cloud: unknown): void {
   if (cloud === null || typeof cloud !== "object" || Array.isArray(cloud) || Object.keys(cloud).length === 0) throw new Error(`${where}: ${field} must name one or more of aws, gcp, azure and pulumi.`);
   for (const [name, c] of Object.entries(cloud as Record<string, unknown>)) {
     const key = CLOUD_IDENTITY_KEY[name];

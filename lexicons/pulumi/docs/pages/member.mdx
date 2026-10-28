@@ -24,6 +24,7 @@ list is the whole of what chant runs for a Pulumi member:
 | applied outputs | `pulumi stack output --json`, `--show-secrets` absent or `=false` | `plunge stack output --json`, the same | no |
 | planned outputs | the change set's preview | the same | no |
 | engine facts | none | `plunge graph --json --stack <name>`, or the checked-in `engine-graph.json` ([A member on plunge](../plunge/)) | no |
+| check stage | `pulumi install`, then `pulumi about --json` | `plunge install`, then `plunge about --json` | no |
 
 `runAllowedPulumi` and `runAllowedPlunge` refuse any other argv before it
 reaches the binary, and `stack output` with secrets shown is refused too.
@@ -34,6 +35,18 @@ except the drift read, which names the stack with `--stack` ([#4496](https://git
 `pulumi.member.stack` when the config sets it, else the stack the checked-in
 export's URNs name. A checked-in member with no selected stack can still be
 refreshed.
+
+## The check stage
+
+`chant ci check` runs three steps for each pulumi member after the `ci.hooks.check` hooks ([#4633](https://github.com/INTENTIUS/chant/issues/4633)), so `plywood check` runs them too:
+
+| Step | Runs | Fails when |
+|---|---|---|
+| `pulumi-install` | `pulumi install` in the member's directory (`plunge install` on plunge) | the install exits non-zero, or the member has no `Pulumi.yaml` |
+| `stack-config` | nothing; each `Pulumi.<stack>.yaml` is read against `Pulumi.yaml`'s `config:` block | a key with a type and no default is unset, a value does not read as its type, or a `secret: true` key is in plain text |
+| `pulumi-about` | `pulumi about --json`, with `--stack` when the member declares one | it prints no JSON |
+
+The stacks are the project's stack files, in `stackConfigDir` when `Pulumi.yaml` sets it, plus the member's declared stack. The steps run with the check job's environment, which holds no forge token and no cloud credential, so neither command can write a stack. `runCheckPulumi` refuses any other argv. Each step's result is in `check-hooks.json` under `steps`, and a failed one names the member and stack and makes the check exit 1.
 
 ## The member kind
 
@@ -79,6 +92,18 @@ that apart from a real removal
 ([#4497](https://github.com/INTENTIUS/chant/issues/4497)). The full table is
 under [Pulumi plans](/chant/reference/change-set/#pulumi-plans).
 
+## Preview tips
+
+The pull request note gets a tips section for each pulumi member whose change set shows one of these patterns ([#4634](https://github.com/INTENTIUS/chant/issues/4634)). Each row starts with the tip's id, and a product's note ends with its own command for the fix, such as `plywood tips rename-without-aliases`.
+
+| Tip | Found when |
+|---|---|
+| `rename-without-aliases` | the preview deletes a resource and creates one of the same type whose name has the same stem (`assets` and `assets-v2`), or the same name under another parent |
+| `replace-on-name` | a replace that creates before it deletes is forced by a name input (`name`, `<x>Name`, `bucket`) |
+| `unknown-in-apply` | an entry may register at up, because the preview could not list it |
+
+A rename with `aliases` previews as `same` or `update` under the new URN, so a delete and a create of one type and stem in one preview is the rename without them. The stem is the name up to its first `-`, `_`, `.`, `:` or `/`. The tips are read from the change set alone, so stack config and `protect` give none.
+
 ## Drift
 
 `chant workspace drift --member <member> [--resource <urn>] [--stream]` runs
@@ -106,11 +131,27 @@ The consumer lists `pulumi` among its lexicons.
 | Outputs | Source |
 |---|---|
 | applied | `pulumi stack output --json --show-secrets=false`, or the checked-in export with `CHANT_PULUMI_APPLIED_OUTPUTS=export` |
-| planned | `pulumi preview --json --show-sames`: the export's outputs when it plans nothing to apply, every output unknown when it plans a change |
+| planned | `pulumi preview --json --show-sames`: the export's outputs when it plans nothing to apply; when it plans a change, the outputs it leaves alone keep the export's value and the rest are unknown |
 
 A real preview prints the stack's step with no outputs (recorded against the
-plunge corpus, #4475), so chant cannot read a planned value off it. A
-planned output that is unknown leaves the consumer
+plunge corpus, #4475), so chant cannot read a planned value off it. Instead
+each output is traced by value to the export's resource properties that hold
+it ([#4635](https://github.com/INTENTIUS/chant/issues/4635)). An output is
+unknown when one of those resources is replaced or deleted, or updated with a
+diff naming the property, or when it is held only by a property the provider
+computes on an update. It keeps the export's value when its resources are
+unchanged, or when it is an `id`, `arn` or `urn`, or an input the diff leaves
+alone. An output no property holds, such as one the program builds from a
+template string, is unknown. In the recorded VPC replace, `vpcId`,
+`securityGroupId`, `vpcParameterName` and `workerQueueUrls` are unknown and
+the other eight outputs keep their values. `pulumi-up`'s plan lists each
+verdict and the property behind it on its artifact under `plannedOutputs`.
+
+A stack that reads another through `StackReference` ([#4547](https://github.com/INTENTIUS/chant/issues/4547))
+plans now when every output it reads keeps its value. When one is unknown,
+the reading stack is a hole naming the read, the note lists it under "Known
+only after apply", and the stack is previewed again after the producer's
+`up`. A planned output that is unknown leaves the consumer
 planned without it, the change set has a hole on `<member>#outputs` naming
 it, and on merge the consumer waits for the member's apply and is planned
 again. The member part's `pulumi-preview` digest is the plan digest, so a

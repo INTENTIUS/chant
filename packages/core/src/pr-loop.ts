@@ -47,6 +47,7 @@
  * `identity.gates` entry covers every member.
  */
 
+import { NEXT_RELEASE } from "./release-floors";
 import type { ChangeSetAction, ChangeSetDocument, ChangeSetEntry } from "./change-set";
 import { parsePulumiUrn, pulumiMayAppearParent } from "./pulumi-urn";
 import type { PrRequireOutcome } from "./pr-requires";
@@ -102,6 +103,9 @@ export const PR_REPORT_GROUPS_FLOOR = "0.124.54";
 
 /** The first chant whose report can carry `lockTargets` (#4552). */
 export const PR_REPORT_LOCK_TARGETS_FLOOR = "0.124.55";
+
+/** The first chant whose report carries {@link PrReport.narrowed} (#4626). */
+export const PR_REPORT_NARROWED_FLOOR = NEXT_RELEASE;
 
 /** The first chant whose report carries {@link PrReport.crossStackEdges} (#4617). */
 export const PR_REPORT_CROSS_STACK_FLOOR = "0.124.55";
@@ -592,6 +596,13 @@ export interface PrReport {
    * {@link PR_REPORT_LOCK_TARGETS_FLOOR}.
    */
   lockTargets?: string[];
+  /**
+   * Plan stage (#4626): the addresses each component's plan was narrowed to
+   * with `pr-plan --target`, from the command line or the comment, by
+   * component. The note and the status say so. Absent when nothing was
+   * narrowed. Added within contract 1 by chant {@link PR_REPORT_NARROWED_FLOOR}.
+   */
+  narrowed?: Record<string, string[]>;
   /**
    * The stacks outside the workspace a member reads (#4617, a Pulumi
    * `StackReference` no step here applies, #4547), each marked stale,
@@ -1108,6 +1119,8 @@ export function renderPrNote(report: PrReport, options: { limit?: number; approv
         (m.groupOutcome === "partial" ? ", applied in part" : m.groupOutcome === "no-changes" ? ", no changes" : "") +
         (m.inputsMoved?.length ? `, inputs from ${m.inputsMoved.join(", ")} moved` : "") +
         (placeholders.length > 0 ? `, previewed with placeholders for ${placeholders.map(code).join(", ")}` : "") +
+        // #4626: a member whose plan was narrowed says to what.
+        (report.narrowed?.[m.component] ? `, narrowed to ${report.narrowed[m.component]!.map(code).join(", ")}` : "") +
         (holes.length > 0 ? `; ${holes.length > 2 ? `${holes[0]}; and ${holes.length - 1} more, listed under Holes` : holes.join("; ")}` : "");
       // A member whose plan has holes and no entries says nothing about what
       // it changes, so its counts are unknown, not zero (#4084).
@@ -1119,6 +1132,7 @@ export function renderPrNote(report: PrReport, options: { limit?: number; approv
       out.push("", `A ${noun} whose inputs moved ${words.verbs.apply[1]} the plan it was approved with. The next run plans it against the new values.`);
     }
   }
+  out.push(...narrowedLines(report, words));
   out.push(...mayAppearLines(report, options.applyWord ?? words.stages.apply));
   const blocked = blockedLine(report.members);
   if (blocked) out.push("", blocked);
@@ -1219,6 +1233,18 @@ function memberDetailSections(report: PrReport, room: number, noun: string): str
   return out.length > 0 ? out.join("\n") + "\n" : "";
 }
 
+/**
+ * The note's line for a narrowed plan (#4626): which of the plan's
+ * components were narrowed and to how many addresses, and that the plan on
+ * merge is of each whole, in the product's words.
+ */
+function narrowedLines(report: PrReport, words: CiProductWords): string[] {
+  const narrowed = Object.entries(report.narrowed ?? {}).filter(([, a]) => a.length > 0);
+  if (narrowed.length === 0) return [];
+  const each = narrowed.map(([c, a]) => `${code(c)} to ${a.map(code).join(", ")}`).join("; ");
+  return ["", `This ${words.verbs.plan[0]} was narrowed with \`--target\`: ${each}. The approval binds the narrowed plan. On merge each ${words.noun[0]} is ${words.verbs.plan[1]} whole.`];
+}
+
 /** A commit status's description, at most 140 characters (GitHub's limit). */
 export function prStatusDescription(report: PrReport, words: CiProductWords = activeProductWords()): string {
   const n = report.members.length;
@@ -1235,7 +1261,9 @@ export function prStatusDescription(report: PrReport, words: CiProductWords = ac
       break;
     case "planned": {
       const unknown = report.members.filter((m) => memberHoleReasons(report, m.member).length > 0).length;
-      text = `${many(n)}: ${sum.change} to change, ${sum.destroy} to destroy or replace${unknown > 0 ? `, ${unknown} with holes` : ""}${digest}`;
+      // #4626: a narrowed plan says so in its status.
+      const narrowed = Object.values(report.narrowed ?? {}).filter((a) => a.length > 0).length;
+      text = `${many(n)}${narrowed > 0 ? ` (${narrowed} narrowed with --target)` : ""}: ${sum.change} to change, ${sum.destroy} to destroy or replace${unknown > 0 ? `, ${unknown} with holes` : ""}${digest}`;
       break;
     }
     case "plan-failed":

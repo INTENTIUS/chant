@@ -318,6 +318,8 @@ export interface ParsedArgs {
   decide?: boolean;
   /** `chant run wave --record-plans` (#3684) — plan every wave at a pull request's head and record the digests for a `pr-review` gate. */
   recordPlans?: boolean;
+  /** `chant run wave --approval-status` (#4630) — post `<product>/approval` on an open pull request's head under `pr-review`. */
+  approvalStatus?: boolean;
   /** `chant run wave --waves-outcome` (#4617) — print how every wave job's outcome file adds up: the outcome a control dispatch carries. */
   wavesOutcome?: boolean;
   /** `chant run wave --share <i>` (#3679) — apply share `i` of a decided wide wave. */
@@ -333,6 +335,14 @@ export interface ParsedArgs {
    * (`prPlanTargets`).
    */
   targets?: string[];
+  /** `chant components pr-plan --comment-targets` (#4626): narrow to the `--target` addresses of the preview comment in CHANT_PREVIEW_COMMENT. */
+  commentTargets?: boolean;
+  /** `chant components pr-plan --refresh` (#4627): refresh each step's state before it plans. */
+  refresh?: boolean;
+  /** `chant components pr-plan --target-dependents` (#4627): plan what depends on each --target too. */
+  targetDependents?: boolean;
+  /** `chant components pr-plan --parallelism <n>` (#4625): how many members of a wave plan at once. */
+  parallelism?: number;
   /** `chant components fan-out --canary <component>` (#3049), repeatable — components that form wave 1. */
   canary?: string[];
   /**
@@ -409,6 +419,18 @@ export interface ParsedArgs {
    * and checks. Absent: all four. A check left out passes as "not required".
    */
   requires?: string[];
+  /** `pr-apply --before-merge --merge manual|auto` (#4636): who merges once the update applied. */
+  merge?: string;
+  /** `pr-apply --merge auto --merge-token-env <VAR>` (#4636): the variable holding the only token the merge uses. */
+  mergeTokenEnv?: string;
+  /** `pr-apply --merge auto --merge-method merge|squash|rebase` (#4636). */
+  mergeMethod?: string;
+  /** `--respond wave-refused=off,description=check` (#4629): the responses pr-apply, pr-post and the wave jobs post. */
+  respond?: string[];
+  /** `pr-post --decide-backend <name>` (#4629): the `decide.backends` entry the description check asks. */
+  decideBackend?: string;
+  /** `pr-post --decide-model <id>` (#4629): the pinned model the description check asks. */
+  decideModel?: string;
   /**
    * `chant build --pr-loop --apply-before-merge` and `chant ci run apply
    * --apply-before-merge` (#4301): the pipeline's apply job applies an open
@@ -419,6 +441,12 @@ export interface ParsedArgs {
   previewComment?: boolean;
   /** `chant build --pr-loop --pr-build` (#4088) — build and lint before pr-plan and pr-apply. */
   prBuild?: boolean;
+  /** `chant build --pr-loop --pr-runner <stage>=<label>[,<label>...]` (#4625), repeatable: a stage's runner, plan, apply or default. */
+  prRunners?: Partial<Record<"plan" | "apply" | "default", string[]>>;
+  /** `chant build --pr-loop --pr-variable <NAME>=<value>` (#4625), repeatable: a variable of the jobs that plan or apply. */
+  prVariables?: Record<string, string>;
+  /** `chant build --pr-loop --pr-secret <NAME>=<secret>` (#4625), repeatable: a secret passed to the jobs that plan or apply. */
+  prSecrets?: Record<string, string>;
   /** `chant ci serve --build-command <line>` (#4169) — the line that builds a commit a `ci/build/<sha>` tag asks for, in a worktree of it. */
   ciBuildCommand?: string;
   /** `chant ci serve --land` (#4168 4.4) — fast-forward the target branch to each pushed `chant/land/<name>` branch whose `ci.green.preMerge` phases pass on it. */
@@ -519,6 +547,12 @@ export interface ParsedArgs {
   bys?: string[];
   /** `chant workspace points --open` (#2739): only the questions still open. */
   open?: boolean;
+  /** `chant build --pr-loop --stale-notes` (#4628): the note carries its target commit, and a push to the target branch marks open notes stale. */
+  staleNotes?: boolean;
+  /** `chant components pr-post --stale` (#4628): mark the open pull requests' notes stale after the target branch moved. */
+  stale?: boolean;
+  /** `chant components pr-post --tip <sha>` (#4628): the target branch's commit, which the note carries, or with --stale its commit now. */
+  tip?: string;
   /** `chant workspace points ask <point> --inputs <file|-|json>` (#2739): the inputs, as a JSON object. */
   inputs?: string;
   /** `chant workspace points ask <point> --candidates <file|-|json>` (#3403): an ad-hoc point's question and candidates. */
@@ -867,6 +901,8 @@ export interface ParsedArgs {
   op?: string;
   /** `chant operator log --since <iso>` (#2029) — only entries at or after this ISO-8601 instant. `chant workspace records --since <rev>` (#2673) — the revision to compare the records with. `chant workspace metrics --since <date>` (#4039) — the start of the window the metrics count. */
   since?: string;
+  /** `chant audit-log attribute|unrecorded --audit-log aws[:<region>]` (#4632): the cloud audit log to read. */
+  auditLog?: string;
   /** `chant ledger`, `chant workspace records` and `chant workspace runs --where <field><op><value>` (#4363): typed filters, repeatable, all of which have to hold. */
   where?: string[];
   /** `chant operator log --limit <n>` (#2029) — keep only the newest n entries (still printed oldest-first). */

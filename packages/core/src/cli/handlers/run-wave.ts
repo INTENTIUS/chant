@@ -56,6 +56,7 @@ async function runOpWaveJobCommand(ctx: CommandContext): Promise<number> {
       return 1;
     }
   }
+  if (specFile && args.approvalStatus) return runApprovalStatus(ctx, specFile);
   if (specFile && args.wavesOutcome) {
     // #4617: the outcome the control job's dispatch carries, from every wave job's outcome file.
     try {
@@ -118,11 +119,87 @@ async function runOpWaveJobCommand(ctx: CommandContext): Promise<number> {
     if (args.json) console.log(JSON.stringify(result, null, 2));
     // #3761: tell people, when the spec says where. Delivery never changes the exit code.
     await notifyOpWave(spec, args.wave, { result }, job);
+    // #4629: a refused wave's diff and a failed apply's triage, on the pull request or a tracking issue.
+    await respondWave(spec, args.wave, { result });
     return result.exitCode;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(formatError({ message }));
-    if (spec) await notifyOpWave(spec, args.wave, { error: message }, job);
+    if (spec) {
+      await notifyOpWave(spec, args.wave, { error: message }, job);
+      await respondWave(spec, args.wave, { error: message });
+    }
     return 1;
+  }
+}
+
+/**
+ * The wave job's responses (#4629), through the forge the job's variables
+ * name. A job with no forge token posts nothing. Never throws.
+ */
+async function respondWave(spec: OpWavesSpec, k: number, outcome: import("../../op/op-waves-notify").OpWaveOutcome): Promise<void> {
+  try {
+    const { respondOpWave, triageOfOpWave } = await import("../../ci-respond-run");
+    const { resolveResponses } = await import("../../ci-respond");
+    const responses = resolveResponses(spec.respond);
+    if (responses["wave-refused"] === "off" && responses["apply-failed"] === "off") return;
+    if (outcome.result && outcome.result.exitCode === 0 && !triageOfOpWave(spec, k, outcome)) return;
+    const { detectForge, forgeFromEnv } = await import("../../pr-forge");
+    const kind = detectForge();
+    if (!kind) return;
+    let forge;
+    try {
+      forge = forgeFromEnv(kind);
+    } catch {
+      return;
+    }
+    const head = process.env.GITHUB_SHA ?? process.env.CI_COMMIT_SHA;
+    await respondOpWave(spec, k, outcome, { forge, ...(head ? { head } : {}) });
+  } catch (err) {
+    console.error(formatWarning({ message: `the wave's responses were not posted: ${err instanceof Error ? err.message : String(err)}` }));
+  }
+}
+
+/**
+ * `chant run wave --spec <file> --approval-status` (#4630): post
+ * `<product>/approval` on an open pull request's head, from its recorded
+ * plans and its reviews. `--pr`, `--head` and `--base` name one pull
+ * request (GitHub and Forgejo); `--open` posts on every open one into
+ * `--branch` (GitLab's scheduled pipeline). It exits 0 once it posted, and
+ * 1 when it could not.
+ */
+async function runApprovalStatus(ctx: CommandContext, specFile: string): Promise<number> {
+  const { args } = ctx;
+  const fail = (message: string): number => {
+    console.error(formatError({ message }));
+    return 1;
+  };
+  const { FORGE_KINDS, forgeFromEnv } = await import("../../pr-forge");
+  if (!args.forge || !(FORGE_KINDS as readonly string[]).includes(args.forge)) return fail(`--approval-status posts on a forge: --forge ${FORGE_KINDS.join("|")}`);
+  let spec: OpWavesSpec;
+  let forge;
+  try {
+    spec = parseOpWavesSpec(readFileSync(resolve(specFile), "utf-8"), `--spec ${specFile}`);
+    forge = forgeFromEnv(args.forge as (typeof FORGE_KINDS)[number]);
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err));
+  }
+  const { postApprovalStatus, postOpenApprovalStatuses } = await import("../../op/approval-status");
+  const file = relative(process.cwd(), resolve(specFile));
+  try {
+    if (args.open) {
+      const branch = args.branch ?? process.env.CI_COMMIT_BRANCH;
+      if (!branch) return fail("--approval-status --open posts for the pull requests into a branch: run it in a branch pipeline, or pass --branch <branch>");
+      const done = await postOpenApprovalStatuses({ spec, specFile: file, forge, branch });
+      for (const w of done.warnings) console.error(formatWarning({ message: w }));
+      for (const p of done.posted) console.error(`!${p.pr}: ${p.status.state}: ${p.status.description}`);
+      return done.warnings.length > 0 && done.posted.length === 0 ? 1 : 0;
+    }
+    if (args.pr === undefined || !args.head || !args.base) return fail("--approval-status needs the pull request, its head and its base: --pr <n> --head <sha> --base <sha>, or --open");
+    const status = await postApprovalStatus({ spec, specFile: file, forge, pr: args.pr, head: args.head, base: args.base });
+    console.error(`#${args.pr}: ${status.state}: ${status.description}`);
+    return 0;
+  } catch (err) {
+    return fail(`the approval status was not posted: ${err instanceof Error ? err.message : String(err)}`);
   }
 }

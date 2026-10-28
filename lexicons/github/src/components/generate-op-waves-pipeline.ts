@@ -62,6 +62,15 @@
  * step holds the control token: the `tokenSecret` secret, mapped into
  * `CHANT_CONTROL_TOKEN` and handed to curl on its stdin
  * (`controlDispatchScript`, #4568).
+ *
+ * Every wave, deciding and share job starts with the apply-job guard
+ * (#4624, `@intentius/chant/ci-job-guard`), before the trade and the
+ * checkout: it stops the job unless `GITHUB_REF` is one of the spec's
+ * branches, the job runs in its forge environment (read from an OIDC
+ * token's claims, so only in a job that may request one), and, for a
+ * runner whose labels include `self-hosted`, on a self-hosted runner. The
+ * forgejo generator passes `forge: "forgejo"`, which checks the ref and
+ * runner only.
  */
 
 import {
@@ -71,6 +80,7 @@ import {
   opWaveOutcomeDir,
   opWavesControlTarget,
   opWavesLastJobs,
+  opWavesApprovalStatusCommand,
   opWavesOutcomeCommand,
   opWavesRecordPlansCommand,
   opWavesResumeCommand,
@@ -93,6 +103,8 @@ import {
   setupStepDoc,
 } from "@intentius/chant/ci-jobs";
 import { OIDC_REQUEST_VARS, TRADE_SPEC_ENV, tradeLine, type CloudTradeSpec } from "@intentius/chant/ci-identity";
+import { JOB_GUARD_ENV, jobGuardLine, jobGuardSpec, opWaveJobLabel } from "@intentius/chant/ci-job-guard";
+import { resolveProductWords } from "@intentius/chant/ci-product-words";
 import { checkoutStep, concurrency, DOWNLOAD_ARTIFACT, downloadArtifactStep, keepRecordStep, runSteps } from "./ci-jobs";
 import { emitOpPipelineYAML, type GithubOpPipelineDoc } from "./generate-op-pipeline";
 
@@ -113,8 +125,11 @@ export function opWaveOutcomeArtifact(spec: Pick<OpWavesSpec, "name">, jobName: 
 export function buildGithubOpWavesDoc(
   spec: OpWavesSpec,
   options: OpWavesPipelineOptions,
+  dialect: { forge?: "github" | "forgejo" } = {},
 ): { doc: GithubOpPipelineDoc; jobs: OpWavesPipelineResult["jobs"]; resumeDoc?: GithubOpPipelineDoc; plansDoc?: GithubOpPipelineDoc } {
   const jobs = opWaveJobs(spec, options.specFile, { bin: options.bin });
+  const forge = dialect.forge ?? "github";
+  const product = resolveProductWords(options.words ?? {}).product;
   const image = options.image ?? OP_WAVES_IMAGE;
   const byReview = spec.waves.some((w) => w.approval === "pr-review");
   for (const wave of spec.waves) {
@@ -134,7 +149,21 @@ export function buildGithubOpWavesDoc(
     const group = opWaveGroupOf(spec, job);
     // #4332: the job's cloud identities, traded before the checkout.
     const cloud = group?.cloud ?? wave.cloud;
-    const steps: Array<Record<string, unknown>> = [...(cloud ? [tradeStep(cloud)] : []), checkoutStep(true)];
+    const environment = group?.environment ?? wave.environment;
+    const idTokens = group?.idTokens ?? wave.idTokens;
+    const idToken = idTokens !== undefined || cloud !== undefined;
+    const runner = group?.runner ?? wave.runner ?? spec.runner;
+    // #4624: the guard first, before the trade and the checkout.
+    const guard = guardStep({
+      forge,
+      job: opWaveJobLabel(spec.name, job),
+      product,
+      ...(environment && forge === "github" ? { environment: environment.name } : {}),
+      branches: pushBranches(spec.branches),
+      ...(runner !== undefined ? { runner } : {}),
+      idToken,
+    });
+    const steps: Array<Record<string, unknown>> = [guard, ...(cloud ? [tradeStep(cloud)] : []), checkoutStep(true)];
     if (job.kind === "share") {
       steps.push(downloadArtifactStep(`Download wave ${job.wave}'s decision`, opWaveRecordArtifact(spec, job.wave), dirnameOf(job.record!)));
     }
@@ -151,11 +180,8 @@ export function buildGithubOpWavesDoc(
       steps.push(keepRecordStep(`Keep wave ${job.wave}'s decision`, opWaveRecordArtifact(spec, job.wave), job.record!));
     }
     steps.push(keepRecordStep(`Keep the job's outcome`, opWaveOutcomeArtifact(spec, job.jobName), job.outcome));
-    const environment = group?.environment ?? wave.environment;
-    const idTokens = group?.idTokens ?? wave.idTokens;
-    const idToken = idTokens !== undefined || cloud !== undefined;
     jobsDoc[job.jobName] = {
-      "runs-on": githubRunsOn(group?.runner ?? wave.runner ?? spec.runner),
+      "runs-on": githubRunsOn(runner),
       ...(job.needs.length > 0 ? { needs: job.needs } : {}),
       // #4322: a wave's jobs run after a failure in the wave before; a share job runs only on its deciding job's success.
       ...(job.needs.length > 0 && job.kind !== "share" ? { if: "!cancelled()" } : {}),
@@ -188,7 +214,7 @@ export function buildGithubOpWavesDoc(
     doc,
     jobs,
     ...(spec.resume ? { resumeDoc: buildResumeDoc(spec, options) } : {}),
-    ...(byReview ? { plansDoc: buildPlansDoc(spec, options) } : {}),
+    ...(byReview ? { plansDoc: buildPlansDoc(spec, options, forge) } : {}),
   };
 }
 
@@ -256,19 +282,52 @@ function buildResumeDoc(spec: OpWavesSpec, options: OpWavesPipelineOptions): Git
   };
 }
 
-/** The pull request workflow a `pr-review` wave needs (#3684): record the digests each head plans. */
-function buildPlansDoc(spec: OpWavesSpec, options: OpWavesPipelineOptions): GithubOpPipelineDoc {
+/**
+ * The pull request workflow a `pr-review` wave needs (#3684): record the
+ * digests each head plans. The `approval-status` job after it (#4630) posts
+ * `<product>/approval` on the head, and runs alone on each review submitted
+ * or dismissed. It holds a read token that may write statuses and nothing
+ * else.
+ */
+function buildPlansDoc(spec: OpWavesSpec, options: OpWavesPipelineOptions, forge: "github" | "forgejo"): GithubOpPipelineDoc {
   const steps: Array<Record<string, unknown>> = [checkoutStep(true), ...(spec.waves[0]?.setup ?? []).map(setupStepDoc), ...runSteps(options.beforeScript ?? [])];
   steps.push({ name: "Plan every wave at the head and record its digests", run: opWavesRecordPlansCommand(options.specFile, options.bin).join(" ") });
+  const statusSteps: Array<Record<string, unknown>> = [checkoutStep(true), ...runSteps(options.beforeScript ?? [])];
+  statusSteps.push({
+    name: "Post the approval status on the head",
+    run: opWavesApprovalStatusCommand(options.specFile, forge, options.bin).join(" "),
+    env: {
+      GITHUB_TOKEN: GITHUB_JOB_TOKEN,
+      PR_NUMBER: "${{ github.event.pull_request.number }}",
+      HEAD_SHA: "${{ github.event.pull_request.head.sha }}",
+      BASE_SHA: "${{ github.event.pull_request.base.sha }}",
+    },
+  });
   return {
     name: `${spec.name}-plans`,
-    on: { pull_request: { branches: pushBranches(spec.branches) } },
+    on: { pull_request: { branches: pushBranches(spec.branches) }, pull_request_review: { types: ["submitted", "dismissed"] } },
     ...nonEmpty("env", options.variables),
-    concurrency: concurrency(spec.name + "-plans-${{ github.event.number }}", true),
+    concurrency: concurrency(spec.name + "-plans-${{ github.event_name }}-${{ github.event.pull_request.number }}", true),
     // contents: write pushes the record to chant/lifecycle.
     permissions: { contents: "write" },
-    jobsDoc: { "record-plans": { "runs-on": githubRunsOn(spec.runner), container: options.image ?? OP_WAVES_IMAGE, steps } },
+    jobsDoc: {
+      "record-plans": { if: "github.event_name == 'pull_request'", "runs-on": githubRunsOn(spec.runner), container: options.image ?? OP_WAVES_IMAGE, steps },
+      "approval-status": {
+        needs: ["record-plans"],
+        // On a review the record-plans job is skipped, and the status reads the plans an earlier push recorded.
+        if: "${{ always() && (needs.record-plans.result == 'success' || needs.record-plans.result == 'skipped') }}",
+        "runs-on": githubRunsOn(spec.runner),
+        container: options.image ?? OP_WAVES_IMAGE,
+        permissions: { contents: "read", "pull-requests": "read", statuses: "write" },
+        steps: statusSteps,
+      },
+    },
   };
+}
+
+/** The apply-job guard step (#4624): the job's expectation in CHANT_JOB_GUARD, checked by `node -e` from `/`. */
+function guardStep(input: Parameters<typeof jobGuardSpec>[0]): Record<string, unknown> {
+  return { name: "Check the job runs where the spec set it to run", env: { [JOB_GUARD_ENV]: JSON.stringify(jobGuardSpec(input)) }, run: jobGuardLine() };
 }
 
 /** The step that trades the job's OIDC token for `cloud` (#4332), writing the credentials to GITHUB_ENV. */

@@ -34,11 +34,12 @@ import {
   type CiProductWords,
   type CiProductWordsInput,
 } from "../ci-product-words";
-import { prCommentLockJobs, prCommentPreviewJob, prLoopJobs, prLoopPostJob, withProductBin, type PrCommentLockJob, type PrCommentPreviewJob, type PrLoopJob, type PrLoopPipelineOptions } from "./pr-pipeline";
+import { prCommentLockJobs, prCommentPreviewJob, prLoopJobs, prLoopPostJob, prLoopRunner, prStaleJob, withProductBin, type PrCommentLockJob, type PrCommentPreviewJob, type PrLoopJob, type PrLoopPipelineOptions } from "./pr-pipeline";
 import type { DriverComponent } from "./driver";
 import type { ScheduledOpSpec } from "../lexicon";
 import type { CiRunner } from "../ci-jobs";
 import { resolveAgentSpec, type OpAgentSpec } from "../ci-agent";
+import { CI_RESPOND_ENV, respondList, type CiResponses } from "../ci-respond";
 
 /** Where the generator writes a product's waves spec, which chant reads at base (#4550). */
 export const PRODUCT_WAVES_SPEC_DIR = ".chant/op-waves";
@@ -79,6 +80,19 @@ export interface ProductPipelineOptions extends Omit<PrLoopPipelineOptions, "wor
    * the merge.
    */
   componentWaves?: { components: readonly Pick<DriverComponent, "name" | "dependsOn">[]; waveGate?: string; base?: string };
+  /**
+   * The responses to pipeline events (#4629, `../ci-respond.ts`): a refused
+   * wave's diff and a failed apply's triage, on by default, and the
+   * description check, off by default. The apply jobs carry them as
+   * `CHANT_RESPOND`, the waves spec as its `respond`.
+   */
+  respond?: CiResponses;
+  /**
+   * The decide service the description check asks (#4629): a
+   * `decide.backends` entry of chant.config at the target branch, and the
+   * pinned model. Needed with `respond.description: "check"`.
+   */
+  decide?: { backend: string; model: string };
 }
 
 /** The jobs of one product pipeline. */
@@ -94,7 +108,7 @@ export interface ProductPipelineJobs {
    * `chant/lifecycle` that sets `CHANT_CONTROL_DIR`, so the note marks the
    * cross-stack edges.
    */
-  post: { command: string; env: Record<string, string>; control?: ControlNoteCheckout };
+  post: { command: string; env: Record<string, string>; control?: ControlNoteCheckout; runner?: CiRunner };
   /** The record job, when no waves apply on merge. */
   record?: PrLoopJob;
   /** The apply before merge, answering the apply comment, with `applyBeforeMerge`. */
@@ -108,13 +122,20 @@ export interface ProductPipelineJobs {
    * `/<product> lock` keeps the locks the plan took, `/<product> unlock`
    * releases them. The forge lexicons render the same jobs.
    */
-  locks?: PrCommentLockJob[];
+  locks?: Array<PrCommentLockJob & { runner?: CiRunner }>;
   /**
    * The comment preview (#4620), with `previewComment`: `/<product> <plan
    * word>` plans the pull request's head again with a read token, and the
    * job after it posts the note. The forge lexicons render the same jobs.
    */
-  preview?: PrCommentPreviewJob;
+  preview?: PrCommentPreviewJob & { noteRunner?: CiRunner };
+  /**
+   * The stale marking (#4628), with `staleNotes`: the command and values of
+   * the job that runs on a push to the target branch and marks each open
+   * pull request's note posted against another commit stale. The forge
+   * lexicons render the same job, `stale-notes`.
+   */
+  stale?: { command: string; env: Record<string, string>; runner?: CiRunner };
   /**
    * The agent (#4616), with `agent`: the comment it answers, `/<product>
    * agent <ask>`, and the scheduled Op spec whose generated workflow runs
@@ -188,9 +209,13 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   const built: CiProductApplyMode = options.waves || options.componentWaves ? "on-merge" : options.applyBeforeMerge ? "before-merge" : "release";
   const applyMode: CiProductApplyMode = options.words.applyMode === "before-merge" && options.applyBeforeMerge ? "before-merge" : built;
   const words = assertProductWords({ ...options.words, applyMode }, { jobs });
-  const { waves: given, wavesSpecFile, member, agent: _agent, componentWaves, ...loop } = options;
+  const { waves: given, wavesSpecFile, member, agent: _agent, componentWaves, respond, decide, ...loop } = options;
+  if (respond?.description === "check" && !decide) throw new Error("respond.description: check asks a decide service, so the pipeline needs decide: { backend, model }");
   const prLoop: PrLoopPipelineOptions = { ...loop, words, gate: options.gate ?? words.prGate };
   const [plan, apply, record] = prLoopJobs(forge, env, prLoop, member);
+  // #4625: the jobs with no stage of their own run on the default runner.
+  const runnerOfDefault = prLoopRunner(options, "default");
+  const defaultRunner: { runner?: CiRunner } = runnerOfDefault !== undefined ? { runner: runnerOfDefault } : {};
   const comments: Partial<Record<CiProductCommand, string>> = {};
   for (const c of jobs) {
     const line = commentLine(words, c);
@@ -198,17 +223,27 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   }
   // #4619: the loop's control target, else the waves spec's.
   const controlTarget = options.control?.target ?? (given?.control ? opWavesControlTarget(given.control) : undefined);
+  // #4629: the responses ride on the apply and note jobs as CHANT_RESPOND, and the description check's service on the note job's line.
+  const list = respond ? respondList(respond) : "";
+  const respondEnv: Record<string, string> = list ? { [CI_RESPOND_ENV]: list } : {};
+  const withRespond = (job: PrLoopJob): PrLoopJob => (list ? { ...job, env: { ...job.env, ...respondEnv }, run: { ...job.run, env: { ...job.run.env, ...respondEnv } } } : job);
+  const postJob = prLoopPostJob(forge, env, member, words, { ...(options.staleNotes ? { staleNotes: true } : {}) });
+  const post = respond?.description === "check" && decide
+    ? { command: `${postJob.command} --decide-backend ${JSON.stringify(decide.backend)} --decide-model ${JSON.stringify(decide.model)}`, env: { ...postJob.env, ...respondEnv } }
+    : list ? { ...postJob, env: { ...postJob.env, ...respondEnv } } : postJob;
   const out: ProductPipelineJobs = {
     words,
     plan: plan!,
-    post: { ...prLoopPostJob(forge, env, member, words), ...(controlTarget ? { control: controlNoteCheckout(forge, controlTarget, words) } : {}) },
+    post: { ...post, ...(controlTarget ? { control: controlNoteCheckout(forge, controlTarget, words) } : {}), ...defaultRunner },
     comments,
-    ...(options.applyBeforeMerge ? { applyBeforeMerge: apply! } : {}),
+    ...(options.applyBeforeMerge ? { applyBeforeMerge: withRespond(apply!) } : {}),
   };
   const locks = prCommentLockJobs(forge, { locks: options.locks, words });
-  if (locks.length > 0) out.locks = locks;
+  if (locks.length > 0) out.locks = locks.map((job) => ({ ...job, ...defaultRunner }));
+  const stale = prStaleJob(forge, env, prLoop, member);
+  if (stale) out.stale = { ...stale, ...defaultRunner };
   const preview = prCommentPreviewJob(forge, env, prLoop, member);
-  if (preview) out.preview = preview;
+  if (preview) out.preview = { ...preview, ...(defaultRunner.runner !== undefined ? { noteRunner: defaultRunner.runner } : {}) };
   // #4616: the agent answers its comment from a workflow of its own, generated from this spec.
   const agentComment = options.agent ? comments.agent : undefined;
   if (options.agent && agentComment) {
@@ -221,7 +256,20 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
     ? componentWavesSpec(componentWaves.components, words, componentWaveSteps({ ...(words.bin ? { bin: words.bin } : {}), env, base: componentWaves.base ?? "HEAD^1", ...(member ? { member } : {}), op, gate: prLoop.gate }), { ...(componentWaves.waveGate ? { gate: componentWaves.waveGate } : {}) })
     : undefined);
   if (!spec) return { ...out, record: record! };
-  const named = productWavesSpec(spec, words);
+  const wavesRespond = respond ? Object.fromEntries(Object.entries(respond).filter(([e]) => e !== "description")) : {};
+  // #4625: the waves run on the apply runner and with the plan's parallelism, unless the spec names its own.
+  const applyRunner = prLoopRunner(options, "apply");
+  const named = {
+    ...productWavesSpec(
+      {
+        ...spec,
+        ...(spec.runner === undefined && applyRunner !== undefined ? { runner: applyRunner } : {}),
+        ...(spec.parallelism === undefined && options.parallelism !== undefined && spec.step !== undefined ? { parallelism: options.parallelism } : {}),
+      },
+      words,
+    ),
+    ...(Object.keys(wavesRespond).length > 0 ? { respond: { ...(spec.respond ?? {}), ...wavesRespond } } : {}),
+  };
   const specFile = wavesSpecFile ?? productWavesSpecFile(named.name);
   return { ...out, waves: { spec: named, specFile, jobs: opWaveJobs(named, specFile, { bin: words.bin }) } };
 }

@@ -1187,13 +1187,17 @@ export function ciLoopOptions(args: CommandContext["args"]): PrLoopPipelineOptio
     ...(args.requireReview === true ? { requireReview: true } : {}),
     ...(args.applyBeforeMerge ? { applyBeforeMerge: true } : {}),
     ...(args.requires ? { applyRequires: args.requires } : {}),
+    ...(args.merge === "auto" && args.mergeTokenEnv ? { applyMerge: { tokenEnv: args.mergeTokenEnv, ...(args.mergeMethod ? { method: args.mergeMethod as "merge" | "squash" | "rebase" } : {}) } } : {}),
+    ...(args.parallelism !== undefined ? { parallelism: args.parallelism } : {}),
+    ...(args.commentTargets ? { commentTargets: true } : {}),
+    ...(args.refresh ? { refresh: true } : {}),
   };
 }
 
 const USAGE =
   "chant ci run plan|record|apply|env-up|env-post|env-down|env-sweep --env <env> --base <sha> [--pr <n>] [--commit <sha>] [--head <sha>] [--result <r>] [--forge github|gitlab|forgejo] " +
   "[--gate <name>] [--wave-gate <name>] [--wave <k>] [--branch <name>] [--events-json] [--report-url <url>] [--run-index-limit <n>] [--image <image>] [--before-script <line>]... " +
-  "[--pr-build] [--pr-build-command <line>] [--require-review] [--apply-before-merge [--requires <list>]] [--no-status] [--status-url <url template>] " +
+  "[--pr-build] [--pr-build-command <line>] [--parallelism <n>] [--comment-targets] [--refresh] [--require-review] [--apply-before-merge [--requires <list>] [--merge auto --merge-token-env <VAR> [--merge-method <m>]]] [--no-status] [--status-url <url template>] " +
   "[--chant <command>] [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>] [-o <dir>] [--in-place | --local] [--no-push] [--verbose] | chant ci run --at <sha> | chant ci run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]";
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;

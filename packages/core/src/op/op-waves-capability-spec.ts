@@ -73,6 +73,26 @@ export function opWaveStepProblems(spec: Pick<OpWavesSpec, "step" | "plan" | "ap
   return problems;
 }
 
+/**
+ * What is wrong with the spec's and each wave's `parallelism` (#4625), empty
+ * when nothing is. Runs applied at once need the capability step, whose
+ * apply is one call per run with no gate in it. The whole-number check
+ * matches ../parallelism.ts's parallelismProblem, kept here so the spec
+ * module (and the bundles that hold it) do not load that file's run loop.
+ */
+export function opWaveParallelismProblems(spec: Pick<OpWavesSpec, "parallelism" | "step" | "waves">): string[] {
+  const problems: string[] = [];
+  for (const [field, value] of [["parallelism", spec.parallelism] as const, ...spec.waves.map((w) => [`wave "${w.name}" parallelism`, w.parallelism] as const)]) {
+    if (value === undefined) continue;
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+      problems.push(`${field} is ${JSON.stringify(value)}; give a whole number of 1 or more, the most that run at once`);
+    } else if (value > 1 && spec.step === undefined) {
+      problems.push(`${field} is ${value}, and runs apply at once only through \`step\`; drop it or give step`);
+    }
+  }
+  return problems;
+}
+
 /** What is wrong with a spec's `holds`, empty when nothing is. */
 export function opWaveHoldsProblems(holds: unknown): string[] {
   if (holds === undefined) return [];

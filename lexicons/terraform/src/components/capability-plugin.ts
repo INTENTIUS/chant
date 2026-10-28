@@ -544,6 +544,13 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
   rollbackPolicy: "needs-opt-out",
   // #4300: `--target` passes through as `-target`, and the saved plan holds those addresses alone.
   targets: "accept",
+  // #4627: `plan` refreshes the root's state before it plans unless told `-refresh=false`, which chant never passes,
+  // so `--refresh` asks for what every plan does and the digest still binds it. `-target` plans a resource with what it
+  // depends on and never what depends on it, so `--target-dependents` has nothing to map onto.
+  planFlags: {
+    refresh: "accept",
+    targetDependents: { refuse: "terraform and tofu plan a -target with what it depends on, never what depends on it, so there is no flag to widen it to its dependents; name each dependent with --target" },
+  },
   async plan(ctx: DeployContext, given: TerraformApplyStepInput): Promise<CapabilityPlan> {
     requireRoot(given);
     // #4545: a root reading an upstream's output that is not there yet is a hole naming the upstream.

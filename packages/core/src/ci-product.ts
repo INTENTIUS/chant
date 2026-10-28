@@ -9,6 +9,7 @@
  * and `assertProductWords` present means the rest is too.
  */
 
+import { NEXT_RELEASE } from "./release-floors";
 import type { CiProductWords, CiProductWordsInput } from "./ci-product-words";
 import type { ProductMcpHook } from "./cli/mcp/product-tools";
 import type { ProductWaveHook } from "./op/op-waves-after-plan";
@@ -114,6 +115,39 @@ export { prApplyComment, prCommentLockJobs, prCommentPreviewJob, prLoopSetup, en
 export { CI_SERVICES_FLOOR, engineServices, githubServices, gitlabServices, serviceWaitLine, servicesJobEnv, type CiService } from "./components/ci-services";
 export { renderPrNote, prStatusContext, prApproveCommand, prApproveCommands, prApproveTargets, prMergeSentence, type PrMemberDetail } from "./pr-loop";
 export { upsertPlanNote } from "./pr-post";
+
+/**
+ * The approval status before merge (#4630): under a `pr-review` wave, the
+ * op waves generators add a job that posts `<product>/approval` on each
+ * open pull request's head. A product feature-detects on
+ * `APPROVAL_STATUS_FLOOR`.
+ */
+export const APPROVAL_STATUS_FLOOR = NEXT_RELEASE;
+export { approvalStatusOf, headWaveHolds, postApprovalStatus, postOpenApprovalStatuses, type ApprovalStatus, type ApprovalStatusInput } from "./op/approval-status";
+
+/**
+ * Responses to pipeline events (#4629): a refused wave's diff, a failed
+ * apply's triage and the pull request description check, in the product's
+ * words. `productPipelineJobs(forge, env, { words, respond, decide })` turns
+ * them on and off; a product feature-detects on `CI_RESPOND_FLOOR`.
+ */
+export const CI_RESPOND_FLOOR = NEXT_RELEASE;
+export {
+  CI_RESPOND_DEFAULTS,
+  CI_RESPOND_ENV,
+  CI_RESPONSES,
+  parseRespondList,
+  renderRefusedDiff,
+  renderTriage,
+  respondList,
+  resolveResponses,
+  type CiRespondEvent,
+  type CiResponses,
+  type DescriptionFinding,
+  type FailedApply,
+  type RefusedDiff,
+} from "./ci-respond";
+export { respondDescription, respondOpWave, respondPrApply, triageOfOpWave, triageOfPrReport, refusedOfOpWave, refusedOfPrReport } from "./ci-respond-run";
 
 /**
  * Run one chant command line in this process with the product's words

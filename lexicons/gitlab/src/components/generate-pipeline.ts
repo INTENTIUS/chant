@@ -34,12 +34,14 @@
 
 import {
   assertGitlabBranch,
+  assertRunnerLabels,
   CI_IMAGE,
   ciJobName,
   fillCommand,
   GITLAB_FULL_HISTORY,
   GITLAB_MERGE_REQUEST_SOURCE,
   gitlabPushRule,
+  gitlabTags,
 } from "@intentius/chant/ci-jobs";
 import { resolveComponentGraph, type DriverComponent } from "@intentius/chant/components/driver";
 import { hasPublishStep, promoteArchivePaths } from "@intentius/chant/components/promote";
@@ -65,6 +67,10 @@ import {
   prCommentPreviewJob,
   PR_ENV_REPORT_DIR,
   PR_ENV_POST_JOB,
+  PR_STALE_JOB,
+  prStaleJob,
+  prLoopJobStage,
+  prLoopRunner,
 } from "@intentius/chant/components/pr-pipeline";
 import { REPO_APPLY_GROUP } from "@intentius/chant/components/repo-lock";
 import { memberGitlabChanges, memberRepoPath, memberShellDir } from "@intentius/chant/lexicon";
@@ -441,9 +447,12 @@ function prLoopGitlabPipeline(
   const previewRule = preview ? `$CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/ && $${preview.gitlabVar} =~ /^[0-9]+$/ && $CI_COMMIT_BRANCH == ${targetBranch}` : undefined;
   const previewName = preview ? named(preview.jobName) : undefined;
   const previewNoteName = preview ? named(preview.noteJobName) : undefined;
-  const stages = ["plan", PR_PLAN_NOTE_JOB, ...commentLocks.map((c) => c.job.jobName), ...(preview ? [preview.jobName, preview.noteJobName] : []), ...applies.map((a) => a.stage), ...(control ? [control.name] : []), ...(prEnv ? [PR_ENV_STAGE, PR_ENV_POST_STAGE] : [])];
+  // #4628: a push to the target branch marks the open merge requests' notes posted against another commit stale.
+  const stale = prStaleJob("gitlab", env, loop, member?.name);
+  const staleName = stale ? named(PR_STALE_JOB) : undefined;
+  const stages = ["plan", PR_PLAN_NOTE_JOB, ...(stale ? [PR_STALE_JOB] : []), ...commentLocks.map((c) => c.job.jobName), ...(preview ? [preview.jobName, preview.noteJobName] : []), ...applies.map((a) => a.stage), ...(control ? [control.name] : []), ...(prEnv ? [PR_ENV_STAGE, PR_ENV_POST_STAGE] : [])];
   const noteJob = named(PR_PLAN_NOTE_JOB);
-  const post = prLoopPostJob("gitlab", env, member?.name, loop.words ? { ...(loop.words.bin ? { bin: loop.words.bin } : {}) } : undefined);
+  const post = prLoopPostJob("gitlab", env, member?.name, loop.words ? { ...(loop.words.bin ? { bin: loop.words.bin } : {}) } : undefined, { ...(loop.staleNotes ? { staleNotes: true } : {}) });
   // #4619: with a control repo named, the note job reads its chant/lifecycle, read-only, so pr-post marks the cross-stack edges.
   const controlRead = loop.control ? controlNoteCheckout("gitlab", loop.control.target, loop.words ?? {}) : undefined;
   const doc: Record<string, unknown> = {
@@ -468,8 +477,15 @@ function prLoopGitlabPipeline(
       stage: PR_PLAN_NOTE_JOB,
       image,
       rules: [{ if: onPlanNotes }],
+      ...(Object.keys(post.env).length > 0 ? { variables: post.env } : {}),
       script: [...enter, ...beforeScript, ...(controlRead ? [controlRead.script] : []), post.command],
     },
+    ...(stale && staleName
+      ? {
+          // The pushed commit of the target branch: none of a merge request's code is here.
+          [staleName]: { stage: PR_STALE_JOB, image, rules: [{ if: onMerge }], variables: stale.env, script: [...enter, ...beforeScript, stale.command] },
+        }
+      : {}),
     ...Object.fromEntries(
       commentLocks.map(({ job, name, rule }) => [
         name,
@@ -567,6 +583,7 @@ function prLoopGitlabPipeline(
   const jobs: GeneratedJob[] = [
     { jobName: planJob, component: "merge request plan", stage: "plan", needs: [] },
     { jobName: noteJob, component: "merge request plan note", stage: PR_PLAN_NOTE_JOB, needs: [] },
+    ...(stale && staleName ? [{ jobName: staleName, component: "merge request stale notes", stage: PR_STALE_JOB, needs: [] }] : []),
     ...commentLocks.map(({ job, name }) => ({ jobName: name, component: `merge request ${job.command} comment`, stage: job.jobName, needs: [] })),
     ...(preview && previewName && previewNoteName
       ? [
@@ -583,7 +600,16 @@ function prLoopGitlabPipeline(
     ...(controlJob ? [{ jobName: controlJob, component: "control repo dispatch", stage: control!.name, needs: [lastGreen!] }] : []),
     ...(prEnv ? prEnv.listed : []),
   ];
-  const yaml = emitGitlabFile(["workflow", "stages", "variables", planJob, noteJob, ...commentLocks.map((c) => c.name), ...(previewName && previewNoteName ? [previewName, previewNoteName] : []), ...applies.map((a) => a.name), ...(controlJob ? [controlJob] : []), ...Object.keys(prEnv?.jobs ?? {})].map((key) => [key, doc[key]] as const));
+  // #4625: each job on its stage's runner tags, the plan side's, the apply side's, or the default.
+  if (loop.runners) {
+    for (const stage of ["plan", "apply", "default"] as const) assertRunnerLabels("The merge-request pipeline", `runners.${stage}`, loop.runners[stage], "GitLab");
+    for (const job of jobs) {
+      const tags = gitlabTags(prLoopRunner(loop, prLoopJobStage(job.jobName, member?.name)));
+      const entry = doc[job.jobName] as Record<string, unknown> | undefined;
+      if (tags && entry) doc[job.jobName] = { ...entry, tags };
+    }
+  }
+  const yaml = emitGitlabFile(["workflow", "stages", "variables", planJob, noteJob, ...(staleName ? [staleName] : []), ...commentLocks.map((c) => c.name), ...(previewName && previewNoteName ? [previewName, previewNoteName] : []), ...applies.map((a) => a.name), ...(controlJob ? [controlJob] : []), ...Object.keys(prEnv?.jobs ?? {})].map((key) => [key, doc[key]] as const));
   return { yaml, stages, jobs, env };
 }
 

@@ -56,7 +56,7 @@ export const PR_ENV_LEDGER_DIR = "_pr-envs";
 export const PR_ENV_LEDGER_FILE = "records.jsonl";
 
 /** Where `pr-env` writes its report and note unless `--output` says. */
-export { PR_ENV_REPORT_DIR } from "./pr-pipeline";
+export { PR_ENV_REPORT_DIR } from "../ci-jobs";
 
 /** The file `pr-env up --no-push` writes its record to under `--output`, for `pr-env post` (#4295). */
 export const PR_ENV_RECORD_FILE = "pr-env-record.json";

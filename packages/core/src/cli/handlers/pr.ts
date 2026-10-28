@@ -122,7 +122,7 @@ import {
 import { FORGE_KINDS, forgeFromEnv, forgePrincipalOf, type ForgeKind, type PrForge } from "../../pr-forge";
 import { GITHUB_COMMENT_LIMIT, GITLAB_NOTE_LIMIT } from "../../plan-summary";
 import { upsertPlanNote } from "../../pr-post";
-import { activeProductWords, productContext } from "../../ci-product-words";
+import { activeProductWords, commandWord, parseProductComment, productContext } from "../../ci-product-words";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import { formatError, formatInfo, formatSuccess, formatWarning } from "../format";
 import { reportUninstalledDependencies } from "../dependencies";
@@ -135,9 +135,10 @@ import type { CommandContext } from "../registry";
 import { parseArgs } from "../parse-args";
 import { withComponentEndpoint } from "../component-endpoint";
 import type { ComponentChangeSignal, FanOutPlan } from "../../components/fan-out";
-import { assertTargetsAccepted, failedRunExitCode, type DriverComponent } from "../../components/driver";
-import { TargetsRefusedError, type CapabilityRegistry } from "../../components/capability";
+import { assertPlanFlagsAccepted, assertTargetsAccepted, failedRunExitCode, type DriverComponent } from "../../components/driver";
+import { PLAN_FLAG_ARGS, PlanFlagRefusedError, TargetsRefusedError, type CapabilityRegistry } from "../../components/capability";
 import { prPlanTargets } from "../../components/pr-targets";
+import { PREVIEW_COMMENT_ENV } from "../../components/pr-pipeline";
 import type { ComponentEnvironmentDeclaration } from "../../components/component";
 import { prLoopHooksAt, runPrHooks, type PrHoldSettled, type PrHookPlace, type PrLoopHooks } from "../../components/pr-hooks";
 import { decidePrPolicyOverride, policyReviewOf, prLoopPolicyAt, prPolicyReport, runPrPolicy, spendPrPolicyOverride, type PrLoopPolicy } from "../../components/pr-policy";
@@ -181,6 +182,11 @@ export interface Prepared {
   hookPlace?: PrHookPlace;
   /** `pr-plan --target` (#4620): the addresses each planned member's capability plan narrows to. */
   targets?: Record<string, string[]>;
+  /** `pr-plan --parallelism <n>` (#4625): how many members of a wave plan at once. */
+  parallelism?: number;
+  /** `pr-plan --refresh` and `--target-dependents` (#4627). */
+  refresh?: boolean;
+  targetDependents?: boolean;
   /**
    * Set when `ci.branches` or `ci.labels` (#4292) leave the member out of this
    * stage: why. The plan is then empty, so the stage reports `nothing`.
@@ -223,6 +229,10 @@ export async function prepare(ctx: CommandContext, stage: "plan" | "apply" | "re
   // #4620: a target narrows the preview; an apply or a record covers what the approved plan covers.
   if (stage !== "plan" && args.targets && args.targets.length > 0) {
     return fail(`pr-${stage} applies or records what the pull request's approved plan covers, so it takes no --target`, "Narrow the plan with pr-plan --target, and approve that plan.");
+  }
+  // #4627: refresh and target dependents change what the preview plans, as a target does.
+  if (stage !== "plan" && (args.refresh || args.targetDependents)) {
+    return fail(`pr-${stage} applies or records what the pull request's approved plan covers, so it takes no ${args.refresh ? "--refresh" : "--target-dependents"}`, "Plan with pr-plan --refresh or --target-dependents, and approve that plan.");
   }
   let member: string | undefined;
   if (args.members?.length) {
@@ -502,7 +512,56 @@ export async function planBare(p: Prepared, onRunEvent?: RunEventSink): Promise<
     policyBase: p.base,
     ...(onRunEvent ? { onRunEvent } : {}),
     ...(p.targets ? { targets: p.targets } : {}),
+    ...(p.parallelism !== undefined ? { parallelism: p.parallelism } : {}),
+    ...(p.refresh ? { refresh: true } : {}),
+    ...(p.targetDependents ? { targetDependents: true } : {}),
   });
+}
+
+/**
+ * `pr-plan --refresh` and `--target-dependents` (#4627), from the line or
+ * the preview comment: set on `p`, or the exit code when a planned member's
+ * capability cannot honour one, named before anything plans, as
+ * {@link narrowToTargets} does for targets. `--target-dependents` needs a
+ * target.
+ */
+function planWithFlags(p: Prepared, flags: { refresh?: boolean; targetDependents?: boolean }): number | undefined {
+  if (!flags.refresh && !flags.targetDependents) return undefined;
+  if (flags.targetDependents && !p.targets) return fail("--target-dependents widens a --target to what depends on it, and nothing was narrowed", "Give --target <address> with it.");
+  const byName = new Map(p.components.map((c) => [c.name, c]));
+  for (const name of p.plan.order) {
+    const component = byName.get(name);
+    if (!component) continue;
+    try {
+      assertPlanFlagsAccepted(component, p.registry, { ...(flags.refresh ? { refresh: true } : {}), ...(flags.targetDependents && p.targets?.[name] ? { targetDependents: true } : {}) });
+    } catch (err) {
+      if (err instanceof PlanFlagRefusedError) return fail(`${err.message}, so nothing was planned`, `Drop ${PLAN_FLAG_ARGS[err.flag]}, or plan only members whose steps take it.`);
+      throw err;
+    }
+  }
+  if (flags.refresh) p.refresh = true;
+  if (flags.targetDependents) p.targetDependents = true;
+  console.error(formatInfo(`planning with ${[flags.refresh ? "--refresh" : "", flags.targetDependents ? "--target-dependents" : ""].filter(Boolean).join(" and ")}`));
+  return undefined;
+}
+
+/**
+ * `pr-plan --comment-targets` (#4626): the `--target` addresses of the
+ * preview comment in {@link PREVIEW_COMMENT_ENV}, read with the product's
+ * grammar, or the exit code when the comment is refused. No comment, or one
+ * with no target: none. The checks `--target` makes follow in
+ * {@link narrowToTargets}.
+ */
+function commentTargets(env: NodeJS.ProcessEnv = process.env): { targets: string[]; refresh?: true; targetDependents?: true } | number {
+  const body = env[PREVIEW_COMMENT_ENV];
+  if (body === undefined || body.trim() === "") return { targets: [] };
+  const words = activeProductWords();
+  const parsed = parseProductComment(words, body, env);
+  if (parsed === undefined) return { targets: [] };
+  if (parsed.kind === "refused") return fail(`the preview comment is refused: ${parsed.reason}, so nothing was planned`, `/${words.product} ${commandWord(words, "plan") ?? "plan"} --target <address> narrows the preview to the address.`);
+  if (parsed.kind !== "plan") return { targets: [] };
+  // #4627: the comment's --refresh and --target-dependents too.
+  return { targets: parsed.targets ?? [], ...(parsed.refresh ? { refresh: true as const } : {}), ...(parsed.targetDependents ? { targetDependents: true as const } : {}) };
 }
 
 /**
@@ -813,8 +872,14 @@ async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> 
   }
   const p = await prepare(ctx, "plan");
   if (typeof p === "number") return p;
-  const narrowed = narrowToTargets(p, ctx.args.targets);
+  // #4626: the preview comment's --target addresses, read from the comment the job carries in a variable.
+  const fromComment = ctx.args.commentTargets ? commentTargets() : { targets: [] };
+  if (typeof fromComment === "number") return fromComment;
+  const narrowed = narrowToTargets(p, [...(ctx.args.targets ?? []), ...fromComment.targets]);
   if (narrowed !== undefined) return narrowed;
+  const flagged = planWithFlags(p, { refresh: ctx.args.refresh === true || fromComment.refresh === true, targetDependents: ctx.args.targetDependents === true || fromComment.targetDependents === true });
+  if (flagged !== undefined) return flagged;
+  if (ctx.args.parallelism !== undefined) p.parallelism = ctx.args.parallelism;
   const op = prOp(ctx.args.pr, p.member);
   placeHooks(ctx, p, "plan", op);
   const upload = openUpload(stage, "plan", ctx.args.pr, p);
@@ -955,6 +1020,9 @@ export function runComponentsPrApply(ctx: CommandContext): Promise<number> {
     // #4301: an apply before merge asks the forge its requires checks before any of the head's code loads, the config included.
     let beforeMerge: PrBeforeMerge | undefined;
     if (ctx.args.requires && !ctx.args.beforeMerge) return fail("--requires names the checks of an apply before merge, so it needs --before-merge --pr <n>");
+    // #4636: the merge after the update, checked before anything applies.
+    const mergeProblem = await mergeArgsProblem(ctx.args);
+    if (mergeProblem) return fail(mergeProblem);
     if (ctx.args.beforeMerge) {
       const checked = await beforeMergeChecks(ctx);
       if (typeof checked === "number") return checked;
@@ -1268,7 +1336,63 @@ async function prApply(ctx: CommandContext, stage: StageEvents, beforeMerge?: Pr
   if (green && applied.status === "applied") await recordGreenApplied(p, green, set.doc.digest, approval, via);
   const code = await stop(report, exit, applied.run.status === "gated" ? "gated" : undefined);
   if (applied.status === "applied" && !afterFailed) console.error(formatSuccess(`applied the plan ${report.digest} approved by ${(approval.approvedBy ?? []).join(", ")}`));
+  // #4636: an update before merge that applied every member merges the pull request, never the other way round.
+  if (code === 0 && beforeMerge && pr !== null && args.merge === "auto" && applied.status === "applied" && !afterFailed) return mergeAfterUpdate(ctx, p, pr);
   return code;
+}
+
+/** `--merge`, `--merge-token-env` and `--merge-method` as one problem, or undefined when they hold together. */
+async function mergeArgsProblem(args: CommandContext["args"]): Promise<string | undefined> {
+  const { PR_APPLY_MERGES, PR_MERGE_METHODS } = await import("../../pr-merge");
+  if (args.merge === undefined) {
+    if (args.mergeTokenEnv || args.mergeMethod) return "--merge-token-env and --merge-method go with --merge auto";
+    return undefined;
+  }
+  if (!(PR_APPLY_MERGES as readonly string[]).includes(args.merge)) return `--merge takes ${PR_APPLY_MERGES.join(" or ")}, not ${args.merge}`;
+  if (args.merge === "manual") return args.mergeTokenEnv || args.mergeMethod ? "--merge manual leaves the merge to a person, so it takes no --merge-token-env or --merge-method" : undefined;
+  if (!args.beforeMerge) return "--merge auto merges a pull request once its update before merge applied, so it needs --before-merge --pr <n>";
+  if (!args.mergeTokenEnv) return "--merge auto merges with a token of its own, never the job's: --merge-token-env <VAR> (on GitLab a protected variable)";
+  if (args.mergeMethod && !(PR_MERGE_METHODS as readonly string[]).includes(args.mergeMethod)) return `--merge-method takes ${PR_MERGE_METHODS.join(", ")}, not ${args.mergeMethod}`;
+  return undefined;
+}
+
+/**
+ * The merge after an update before merge applied (#4636): the apply's
+ * records pushed to the ledger, the head checked again, then the forge's
+ * merge with the token `--merge-token-env` names alone. A refusal is posted
+ * on the pull request and exits as waiting (3); the update stays applied.
+ */
+async function mergeAfterUpdate(ctx: CommandContext, p: Prepared, pr: number): Promise<number> {
+  const { mergeAfterApply, mergeTokenEnv } = await import("../../pr-merge");
+  const { pushLifecycleReport } = await import("../../lifecycle/git");
+  const kind = p.forge?.kind ?? (ctx.args.forge as ForgeKind | undefined);
+  if (!kind) return fail("--merge auto needs --forge <kind> to merge on");
+  const env = mergeTokenEnv(ctx.args.mergeTokenEnv!);
+  if ("error" in env) {
+    console.error(formatWarning({ message: `the pull request was not merged: ${env.error}` }));
+    return CHANT_EXIT.waiting;
+  }
+  let forge: PrForge;
+  try {
+    forge = forgeFromEnv(kind, env);
+  } catch (err) {
+    console.error(formatWarning({ message: `the pull request was not merged: ${err instanceof Error ? err.message : String(err)}` }));
+    return CHANT_EXIT.waiting;
+  }
+  const pushed = await pushLifecycleReport();
+  const merged = await mergeAfterApply({
+    forge,
+    pr,
+    head: p.head,
+    ...(ctx.args.mergeMethod ? { method: ctx.args.mergeMethod as "merge" | "squash" | "rebase" } : {}),
+    recorded: { pushed: pushed.pushed, ...(pushed.pushWarning ? { warning: pushed.pushWarning } : {}) },
+  });
+  if (merged.merged) {
+    console.error(formatSuccess(`merged ${kind === "gitlab" ? `!${pr}` : `#${pr}`} at ${p.head.slice(0, 12)}${merged.sha ? ` as ${merged.sha.slice(0, 12)}` : ""}`));
+    return 0;
+  }
+  console.error(formatWarning({ message: `the pull request was not merged: ${merged.reason}${merged.posted ? "; the reason is posted on it" : ""}` }));
+  return CHANT_EXIT.waiting;
 }
 
 /**
@@ -1635,11 +1759,29 @@ function stopper(ctx: CommandContext, p: Prepared, events: RunEventStream | unde
   return async (report: PrReport, code: number, settle?: RunEventSettleStatus): Promise<number> => {
     events?.settle(settle ?? settleOf(report.status), report.status === "plan-failed" || report.status === "failed" ? report.message ?? `pr-${report.stage} ${report.status}` : undefined);
     await finish(ctx, p, report, upload);
+    // #4629: a failed apply's triage and a refused apply's diff, on the pull request.
+    if (report.stage === "apply" && (report.status === "failed" || report.status === "refused") && !ctx.args.noStatus) await respondApply(ctx, p, report);
     console.error((code === 0 ? formatInfo : (m: string) => formatWarning({ message: m }))(`pr-${report.stage}: ${report.status}${report.refusal ? ` (${report.refusal})` : ""}`));
     if (report.message) console.error(report.message);
     printMembers(report);
     return code;
   };
+}
+
+/** The responses an apply's report calls for (#4629), from `--respond` over `CHANT_RESPOND`. Never throws. */
+async function respondApply(ctx: CommandContext, p: Prepared, report: PrReport): Promise<void> {
+  try {
+    const { parseRespondList } = await import("../../ci-respond");
+    const given = ctx.args.respond ? parseRespondList(ctx.args.respond) : {};
+    if ("error" in given) {
+      console.error(formatWarning({ message: `no response was posted: ${given.error}` }));
+      return;
+    }
+    const { respondPrApply } = await import("../../ci-respond-run");
+    await respondPrApply(p.forge, report, given);
+  } catch (err) {
+    console.error(formatWarning({ message: `the apply's responses were not posted: ${err instanceof Error ? err.message : String(err)}` }));
+  }
 }
 
 /** Why `--require-review` does not count an approval, or why the reviews could not be read. */
@@ -2574,6 +2716,7 @@ function writeWaveChangeSet(ctx: CommandContext, wave: number, doc: PrPlanSet["d
  */
 export async function runComponentsPrPost(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
+  if (args.stale) return runComponentsPrPostStale(ctx);
   if (args.open) return runComponentsPrPostOpen(ctx);
   if (args.pr === undefined) return fail("pr-post needs the pull or merge request: --pr <n>");
   if (!args.head || !/^[0-9a-f]{40}$/.test(args.head)) return fail("pr-post needs the full commit the plan job checked out: --head <sha>");
@@ -2588,6 +2731,8 @@ export async function runComponentsPrPost(ctx: CommandContext): Promise<number> 
   }
   const { postPlanReport } = await import("../../pr-post");
   const member = args.members?.[0];
+  const description = await descriptionCheckOf(ctx, forge);
+  if (typeof description === "number") return description;
   const posted = await postPlanReport({
     forge,
     dir: resolve(args.output ?? PR_REPORT_DIR),
@@ -2598,10 +2743,84 @@ export async function runComponentsPrPost(ctx: CommandContext): Promise<number> 
     ...(args.planResult ? { result: args.planResult } : {}),
     // #4289: the plan job could not ask the forge, so the note job does, from the Ops at the commit it checked out.
     overdue: () => overdueOps(forge, member),
+    ...(description ? { description } : {}),
+    // #4628: the target branch's commit for the note's tip line, and the job summary where the forge keeps one.
+    ...(args.tip ? { baseTip: args.tip } : {}),
+    ...(args.forge !== "gitlab" && process.env.GITHUB_STEP_SUMMARY ? { summaryFile: process.env.GITHUB_STEP_SUMMARY } : {}),
   });
   for (const message of posted.warnings) console.error(formatWarning({ message }));
   if (posted.refused) console.error(formatWarning({ message: `the plan report was not used: ${posted.refused}` }));
   console.error(formatInfo(`pr-post: ${prStatusContext("plan", member)} ${posted.state}: ${posted.description}${posted.noted ? "; note posted" : ""}`));
+  return 0;
+}
+
+/**
+ * The description check pr-post runs after the note (#4629), when the
+ * responses turn it on (`--respond description=check`, or `CHANT_RESPOND`):
+ * the `decide.backends` entry `--decide-backend` names, from chant.config
+ * at the commit this job checked out (the target branch's, never the pull
+ * request's), and the model `--decide-model` pins. On with no backend is
+ * refused, so a pipeline that asks for the check learns it never ran.
+ */
+async function descriptionCheckOf(ctx: CommandContext, forge: PrForge): Promise<((report: PrReport) => Promise<void>) | undefined | number> {
+  const { parseRespondList, resolveResponses } = await import("../../ci-respond");
+  const given = ctx.args.respond ? parseRespondList(ctx.args.respond) : {};
+  if ("error" in given) return fail(given.error);
+  if (resolveResponses(given, process.env, (m) => console.error(formatWarning({ message: m }))).description !== "check") return undefined;
+  const name = ctx.args.decideBackend;
+  if (!name || !ctx.args.decideModel) return fail("the description check asks a decide service, so it needs --decide-backend <name> and --decide-model <id>", "Name a decide.backends entry of chant.config, or turn the check off: --respond description=off");
+  const { loadChantConfig } = await import("../../config");
+  let backend;
+  try {
+    const loaded = await loadChantConfig(process.cwd());
+    backend = loaded.config.decide?.backends?.[name];
+  } catch (err) {
+    return fail(`could not read decide.backends from chant.config: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (!backend) return fail(`the description check names the backend ${name}, and chant.config has no decide.backends.${name}`);
+  const { backendDescriptionAsk, respondDescription } = await import("../../ci-respond-run");
+  const ask = backendDescriptionAsk(backend, { name, model: ctx.args.decideModel, cwd: process.cwd() });
+  return async (report) => {
+    await respondDescription(forge, report, { ask });
+  };
+}
+
+/**
+ * `pr-post --stale --tip <sha> --env <env> --forge <kind> [--branch <branch>]
+ * [--member <name>] [--preview-comment]` (#4628): after a push to the target
+ * branch, mark each open pull request's note that was posted against
+ * another commit stale, naming the comment that previews again with
+ * `--preview-comment`, and set its plan status back to pending
+ * (`markStaleNotes`, ../../pr-post.ts). The branch is `--branch`, else the
+ * job's (`GITHUB_REF_NAME`, `CI_COMMIT_BRANCH`). It exits 0 once it has
+ * marked, as `pr-post` does.
+ */
+async function runComponentsPrPostStale(ctx: CommandContext): Promise<number> {
+  const { args } = ctx;
+  if (args.pr !== undefined || args.head) return fail("pr-post --stale finds each open pull request and its head itself, so it takes no --pr or --head");
+  if (!args.tip) return fail("pr-post --stale needs the target branch's commit now: --tip <sha>");
+  if (!args.env) return fail("pr-post needs the environment the plan was for: --env <env>");
+  if (!args.forge || !(FORGE_KINDS as readonly string[]).includes(args.forge)) return fail(`pr-post posts to a forge: --forge ${FORGE_KINDS.join("|")}`);
+  if (args.members && args.members.length > 1) return fail(`pr-post takes one --member, not ${args.members.join(", ")}`);
+  const branch = args.branch ?? process.env.CI_COMMIT_BRANCH ?? process.env.GITHUB_REF_NAME;
+  if (!branch) return fail("pr-post --stale marks the notes of the pull requests into a branch: run it in a job of a push, or pass --branch <branch>");
+  let forge: PrForge;
+  try {
+    forge = forgeFromEnv(args.forge as ForgeKind);
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err));
+  }
+  const member = args.members?.[0];
+  const { markStaleNotes } = await import("../../pr-post");
+  let done: Awaited<ReturnType<typeof markStaleNotes>>;
+  try {
+    done = await markStaleNotes({ forge, branch, tip: args.tip, env: args.env, ...(member ? { member } : {}), ...(args.previewComment ? { previewComment: true } : {}) });
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err));
+  }
+  for (const message of done.warnings) console.error(formatWarning({ message }));
+  const marked = done.marks.filter((m) => m.marked).map((m) => `#${m.pr}`);
+  console.error(formatInfo(`pr-post --stale: ${marked.length > 0 ? `marked ${marked.join(", ")} stale` : "no note to mark"} after ${branch} moved to ${args.tip.slice(0, 12)}`));
   return 0;
 }
 
@@ -2632,6 +2851,8 @@ async function runComponentsPrPostOpen(ctx: CommandContext): Promise<number> {
   const top = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" });
   if (top.status !== 0) return fail("pr-post --open reads the plan report's path from the repository root, and this directory is not in a git repository");
   const member = args.members?.[0];
+  const description = await descriptionCheckOf(ctx, forge);
+  if (typeof description === "number") return description;
   const artifactDir = relative(realpathSync(top.stdout.trim()), resolve(args.output ?? PR_REPORT_DIR)).split(sep).join("/");
   const { postOpenPlanReports } = await import("../../pr-post");
   const { gitlabPlanJobName } = await import("../../components/pr-pipeline");
@@ -2646,6 +2867,9 @@ async function runComponentsPrPostOpen(ctx: CommandContext): Promise<number> {
       ...(member ? { member } : {}),
       // #4289: the Ops at the commit this pipeline checked out, the target branch's.
       overdue: () => overdueOps(forge, member),
+      ...(description ? { description } : {}),
+      // #4628: the target branch's commit this pipeline runs at, which each note's tip line names.
+      ...(args.tip ? { baseTip: args.tip } : {}),
     });
   } catch (err) {
     return fail(err instanceof Error ? err.message : String(err));

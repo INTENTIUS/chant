@@ -97,6 +97,7 @@ const BOOLEAN_FLAGS = new Set([
   "--generated",
   "--decide",
   "--record-plans",
+  "--approval-status",
   "--waves-outcome",
   "--loopback",
   "--artifacts",
@@ -452,6 +453,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.decide = true;
     } else if (arg === "--record-plans") {
       result.recordPlans = true;
+    } else if (arg === "--approval-status") {
+      // `chant run wave --spec <file> --approval-status` (#4630): post <product>/approval on an open pull request's head.
+      result.approvalStatus = true;
     } else if (arg === "--waves-outcome") {
       result.wavesOutcome = true;
     } else if (arg === "--group") {
@@ -469,6 +473,21 @@ export function parseArgs(args: string[]): ParsedArgs {
       const raw = args[++i];
       if (!raw || raw.startsWith("-")) throw new Error("--target needs an address: --target <component>:<address>, or on pr-plan --target <address>");
       (result.targets ??= []).push(raw);
+    } else if (arg === "--refresh") {
+      // `chant components pr-plan --refresh` (#4627).
+      result.refresh = true;
+    } else if (arg === "--target-dependents") {
+      // `chant components pr-plan --target-dependents` (#4627).
+      result.targetDependents = true;
+    } else if (arg === "--comment-targets") {
+      // `chant components pr-plan --comment-targets` (#4626): the preview comment's --target addresses.
+      result.commentTargets = true;
+    } else if (arg === "--parallelism") {
+      // `chant components pr-plan --parallelism <n>` (#4625): members of a wave planned at once.
+      const raw = args[++i];
+      const n = Number(raw);
+      if (!Number.isInteger(n) || n < 1) throw new Error(`--parallelism needs a whole number of 1 or more: got "${raw ?? ""}"`);
+      result.parallelism = n;
     } else if (arg === "--canary") {
       const raw = args[++i];
       if (!raw || raw.startsWith("-")) throw new Error("--canary needs a component name: --canary <name>[,<name>...]");
@@ -542,6 +561,28 @@ export function parseArgs(args: string[]): ParsedArgs {
       const value = args[++i];
       if (value === undefined || value.startsWith("-")) throw new Error("--requires needs a list of checks: --requires approved,mergeable,undiverged,checks");
       result.requires = value.split(",").map((v) => v.trim()).filter(Boolean);
+    } else if (arg === "--respond") {
+      // `chant components pr-apply|pr-post --respond wave-refused=off,description=check` (#4629).
+      const value = args[++i];
+      if (value === undefined || value.startsWith("-")) throw new Error("--respond needs a list of responses: --respond wave-refused=diff,apply-failed=off,description=check");
+      result.respond = [...(result.respond ?? []), value];
+    } else if (arg === "--decide-backend") {
+      // `chant components pr-post --decide-backend <name>` (#4629): the description check's backend.
+      const value = args[++i];
+      if (value === undefined || value.startsWith("-")) throw new Error("--decide-backend needs the name of a decide.backends entry");
+      result.decideBackend = value;
+    } else if (arg === "--decide-model") {
+      // `chant components pr-post --decide-model <id>` (#4629): the description check's pinned model.
+      const value = args[++i];
+      if (value === undefined || value.startsWith("-")) throw new Error("--decide-model needs a model id");
+      result.decideModel = value;
+    } else if (arg === "--merge" || arg === "--merge-token-env" || arg === "--merge-method") {
+      // `chant components pr-apply --before-merge --merge auto --merge-token-env <VAR>` (#4636).
+      const value = args[++i];
+      if (value === undefined || value.startsWith("-")) throw new Error(`${arg} needs a value: --merge manual|auto, --merge-token-env <VAR>, --merge-method merge|squash|rebase`);
+      if (arg === "--merge") result.merge = value;
+      else if (arg === "--merge-token-env") result.mergeTokenEnv = value;
+      else result.mergeMethod = value;
     } else if (arg === "--apply-before-merge") {
       // `chant build --pr-loop --apply-before-merge` and `chant ci run apply --apply-before-merge` (#4301): the job that applies before merge.
       result.applyBeforeMerge = true;
@@ -554,6 +595,21 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--pr-env") {
       // `chant build --pr-loop --pr-env` (#4298): add the pull request environment's jobs.
       result.prEnv = true;
+    } else if (arg === "--pr-runner") {
+      // `chant build --pr-loop --pr-runner <stage>=<label>[,<label>...]` (#4625).
+      const raw = args[++i] ?? "";
+      const m = /^(plan|apply|default)=(.+)$/.exec(raw);
+      if (!m) throw new Error(`--pr-runner needs <stage>=<label>[,<label>...], the stage plan, apply or default: got "${raw}"`);
+      const labels = m[2]!.split(",").map((l) => l.trim()).filter(Boolean);
+      if (labels.length === 0) throw new Error(`--pr-runner ${m[1]} names no label`);
+      (result.prRunners ??= {})[m[1] as "plan" | "apply" | "default"] = labels;
+    } else if (arg === "--pr-variable" || arg === "--pr-secret") {
+      // `chant build --pr-loop --pr-variable <NAME>=<value>` and `--pr-secret <NAME>=<secret>` (#4625).
+      const raw = args[++i] ?? "";
+      const at = raw.indexOf("=");
+      if (at < 1) throw new Error(`${arg} needs <NAME>=<${arg === "--pr-secret" ? "secret" : "value"}>: got "${raw}"`);
+      const into = arg === "--pr-secret" ? (result.prSecrets ??= {}) : (result.prVariables ??= {});
+      into[raw.slice(0, at)] = raw.slice(at + 1);
     } else if (arg === "--pr-build") {
       // `chant build --pr-loop --pr-build` (#4088), and `chant ci run --pr-build` (#4094).
       result.prBuild = true;
@@ -776,6 +832,17 @@ export function parseArgs(args: string[]): ParsedArgs {
       if (!result.by || result.by.startsWith("-")) throw new Error("--by needs the reviewer: --by <principal>");
       // Repeatable for `workspace points answer` (#2739): each person who answered.
       (result.bys ??= []).push(result.by);
+    } else if (arg === "--stale-notes") {
+      // `chant build --pr-loop --stale-notes` (#4628).
+      result.staleNotes = true;
+    } else if (arg === "--stale") {
+      // `chant components pr-post --stale` (#4628).
+      result.stale = true;
+    } else if (arg === "--tip") {
+      // `chant components pr-post --tip <sha>` (#4628).
+      const raw = args[++i];
+      if (!raw || !/^[0-9a-f]{40}$/.test(raw)) throw new Error(`--tip needs the target branch's full commit sha: got "${raw ?? ""}"`);
+      result.tip = raw;
     } else if (arg === "--open") {
       // `chant workspace points --open` (#2739): only the questions still open.
       result.open = true;
@@ -1104,6 +1171,11 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.resource = value;
     } else if (arg === "--since") {
       result.since = args[++i];
+    } else if (arg === "--audit-log") {
+      // `chant audit-log attribute|unrecorded --audit-log aws[:<region>]` (#4632).
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error("--audit-log needs the log: --audit-log aws[:<region>]");
+      result.auditLog = value;
     } else if (arg === "--limit") {
       // Parsed here, validated by the handler — `parseArgs` reports shape, not
       // policy, the same split every other value flag here uses.

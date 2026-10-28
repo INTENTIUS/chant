@@ -11,8 +11,10 @@
  * program on floci (see their READMEs): `stack output --json
  * --show-secrets=false` prints a secret output as the string `"[secret]"`,
  * and `preview --json` plans no stack outputs, so a settled preview gives
- * the export's and a preview with changes leaves every output unknown. No
- * binary runs here.
+ * the export's. A preview with changes traces each output to the export's
+ * resources (#4635): the replaced VPC's and security group's ids, the
+ * deleted parameter's name and the deleted queue's URL are unknown, and the
+ * rest keep the export's value. No binary runs here.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -48,6 +50,9 @@ const withoutSecret = (file: string): Record<string, unknown> =>
   Object.fromEntries(Object.entries(JSON.parse(text(file, "stack-output.json")) as Record<string, unknown>).filter(([, v]) => v !== "[secret]"));
 const APPLIED = withoutSecret("pulumi-outputs");
 const PLUNGE_APPLIED = withoutSecret("plunge-outputs");
+/** The outputs preview-replaced.json moves (#4635): the replaced VPC's and security group's ids, the deleted parameter's name, the deleted queue's URL. */
+const MOVED = ["securityGroupId", "vpcId", "vpcParameterName", "workerQueueUrls"];
+const KEPT = Object.fromEntries(Object.entries(APPLIED).filter(([k]) => !MOVED.includes(k)));
 
 function fake(answer: (args: string[]) => string): { run: PulumiRunner; calls: string[][] } {
   const calls: string[][] = [];
@@ -126,11 +131,12 @@ describe("pulumiOutputSource", () => {
     expect(cli.calls).toEqual([["preview", "--json", "--show-sames", "--stack", "floci"]]);
   });
 
-  test("planned values: a preview with changes (a replaced VPC) leaves every output unknown, the secret neither known nor unknown", async () => {
+  test("planned values: a preview with changes (a replaced VPC) leaves the outputs it moves unknown and keeps the rest, the secret neither known nor unknown", async () => {
     const read = await previewPulumiMemberRead({ member: "aws", dir: AWS_DIR, run: awsCli({ preview: "preview-replaced.json" }).run });
     const planned = pulumiMemberPlannedOutputs("aws", { ...read, exported: JSON.parse(text("pulumi-outputs", "stack-export.json")) });
-    expect(planned).toMatchObject({ known: {}, unknown: Object.keys(APPLIED).sort(), changes: true, planDigest: read.part.member.planDigest });
+    expect(planned).toMatchObject({ known: KEPT, unknown: MOVED, changes: true, planDigest: read.part.member.planDigest });
     expect(planned.unknown).not.toContain("dbPasswordValue");
+    expect(planned.known).not.toHaveProperty("dbPasswordValue");
   });
 
   test("a member on plunge runs the same commands under plunge, never pulumi", async () => {
@@ -279,9 +285,9 @@ describe("dns against a Pulumi output (#4455)", () => {
     const records = set.members.find((m) => m.member === "records")!;
     expect(records.unknownInputs).toEqual(["aws.vpcId"]);
     expect(records.reads).toEqual([{ upstream: "aws", outputs: ["vpcId"], unknown: ["vpcId"] }]);
-    // Every output the stack publishes is unknown while its preview has changes: one hole each.
+    // Each output the preview moves is unknown while it has changes: one hole each (#4635).
     const holes = set.doc.members.find((m) => m.member === memberOutputsMemberName("aws"))!.holes;
-    expect(holes).toHaveLength(Object.keys(APPLIED).length);
+    expect(holes.map((h) => h.address)).toEqual(MOVED.map((o) => `aws.${o}`));
     expect(holes).toContainEqual({ address: "aws.vpcId", type: "output", reason: "aws.vpcId is known only after aws applies; what reads it is planned again then" });
 
     // Merged before aws's own pipeline applied: the read refuses, so records is blocked behind it.
@@ -305,6 +311,22 @@ describe("dns against a Pulumi output (#4455)", () => {
       held: "its plan read aws.vpcId before that output applied as another value",
     });
     expect(w.state.recordsRan).toEqual([]);
+  });
+
+  test("a reader of an output the preview leaves alone plans now with the export's value (#4635)", async () => {
+    const w = world({ preview: "preview-replaced.json" });
+    const estate: DriverComponent[] = [
+      ESTATE[0]!,
+      { ...ESTATE[1]!, deploy: [{ phase: "Apply", steps: [{ kind: "fake-records", inputs: { bucket: { stackOutput: { stack: "aws", name: "siteBucketName" } } } }] }] } as DriverComponent,
+    ];
+    const plan = planFanOut({ components: estate, changed: ["aws"] });
+    const set = await planPrSet({ components: estate, plan, registry: w.registry, env: "local" });
+    expect(set.failed).toBe(false);
+    expect(w.state.recordsPlanned).toEqual([{ inputs: { bucket: "rec-ts-site" } }]);
+    const records = set.members.find((m) => m.member === "records")!;
+    expect(records.unknownInputs).toBeUndefined();
+    expect(records.reads).toEqual([{ upstream: "aws", outputs: ["siteBucketName"] }]);
+    expect(set.plannedOutputs).toEqual({ aws: Object.keys(KEPT).sort() });
   });
 
   test("run refuses while the stack's preview has changes left", async () => {
