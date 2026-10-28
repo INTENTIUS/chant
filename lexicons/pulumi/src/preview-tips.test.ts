@@ -99,14 +99,15 @@ describe("replace-on-name", () => {
 
 describe("unknown-in-apply", () => {
   test("a component whose child waits on an unknown may register more at up", () => {
-    const steps = recorded();
+    // The JSON recording: the stream omits a component's custom: false, which signal 1 of the change set reads.
+    const steps = structuredClone((JSON.parse(readFileSync(join(TESTDATA, "pulumi-preview", "preview.json"), "utf8")) as { steps: PulumiStep[] }).steps);
     const child = steps.find((s) => s.urn?.endsWith("Site$aws:s3/bucket:Bucket::docs-assets"))!;
     child.op = "update";
     child.newState = { ...child.newState!, inputs: { ...(child.newState!.inputs as object), tags: "04da6b54-80e4-46f7-96ec-b56ff0331ba9" } };
     child.diffReasons = ["tags"];
     const tips = pulumiPreviewTips(doc(steps).entries);
     expect(tips.map((t) => t.id)).toEqual(["unknown-in-apply"]);
-    expect(tips[0]!.address).toContain("corpus:index:Site::docs");
+    expect(tips[0]!.address).toContain("corpus:index:Site$*::docs");
   });
 });
 
