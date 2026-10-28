@@ -79,6 +79,23 @@ describe("PulumiAdoptOp", () => {
     expect(preview.args?.file).toMatchObject({ step: "export-1", path: "file" });
   });
 
+  test("the stack's backend reaches all four steps, Preview and Adopt included", () => {
+    const backend = "plunge+s3://state?region=us-east-1";
+    const op = props({
+      name: "adopt",
+      stacks: [
+        { member: "infra", dir: "./infra", stack: "dev", backend },
+        { member: "web", dir: "./web", stack: "dev" },
+      ],
+    });
+    const steps = op.phases.flatMap((p) => p.steps as ActivityStep[]).filter((s) => s.fn?.startsWith("pulumiAdopt"));
+    const infra = steps.filter((s) => s.args?.member === "infra");
+    expect(infra.map((s) => s.fn)).toEqual(["pulumiAdoptCheck", "pulumiAdoptExport", "pulumiAdoptPreview", "pulumiAdopt"]);
+    for (const s of infra) expect(s.args?.backend).toBe(backend);
+    // A stack without one leaves each step to resolve it (plywood.yml, PULUMI_BACKEND_URL, Pulumi.yaml).
+    for (const s of steps.filter((s) => s.args?.member === "web")) expect(s.args?.backend).toBeUndefined();
+  });
+
   test("its steps validate against the activities' contracts", () => {
     const op = props({
       name: "adopt",
@@ -205,6 +222,24 @@ describe("the activities", () => {
       throw Object.assign(new Error("exit 255"), { code: 255, stdout: view("refused", { refusals: [{ code: "pending-operations", reason: "the checkpoint has 1 pending operation" }] }) });
     };
     await expect(adoptPreview(stack, { plunge: refused })).rejects.toThrow(/pending-operations: the checkpoint has 1 pending operation\. Nothing was written/);
+  });
+
+  test("preview and adopt hand plunge the stack's backend, resolved as the Check step resolves it", async () => {
+    const envs: (Record<string, string> | undefined)[] = [];
+    const plunge: PulumiRunner = async (_args, opts) => {
+      envs.push(opts.env);
+      return { stdout: view("would-adopt") };
+    };
+    const backend = "plunge+s3://state?region=us-east-1";
+    await adoptPreview({ ...stack, backend }, { plunge, env: { PULUMI_BACKEND_URL: "file:///tmp/elsewhere" } });
+    await adoptStack({ ...stack, backend }, { plunge, env: { PULUMI_BACKEND_URL: "file:///tmp/elsewhere" } });
+    expect(envs).toEqual([{ PULUMI_BACKEND_URL: backend }, { PULUMI_BACKEND_URL: backend }]);
+    // With no step backend, the environment's is the one named.
+    envs.length = 0;
+    const dir = mkdtempSync(join(tmpdir(), "adopt-test-"));
+    await adoptPreview({ ...stack, dir }, { plunge, env: { PULUMI_BACKEND_URL: "plunge+file:///tmp/s" } });
+    await adoptPreview({ ...stack, dir }, { plunge, env: {} });
+    expect(envs).toEqual([{ PULUMI_BACKEND_URL: "plunge+file:///tmp/s" }, undefined]);
   });
 
   test("adopt runs the --yes form and says whether it matched the approved digest", async () => {
