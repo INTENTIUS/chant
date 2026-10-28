@@ -473,6 +473,8 @@ describe("CrossGuard packs read at base (#4613)", () => {
     const stack = join(top, "stack");
     mkdirSync(join(stack, "guard"), { recursive: true });
     for (const f of ["Pulumi.yaml", "stack-export.json"]) copyFileSync(join(dir, f), join(stack, f));
+    // An installed checkout, so the step runs no install before the preview (plywood#22).
+    mkdirSync(join(stack, "node_modules"));
     writeFileSync(join(stack, "guard", "index.ts"), "// no-public-bucket: mandatory\n");
     git(top, "add", ".");
     git(top, "commit", "-q", "-m", "base");
@@ -516,5 +518,46 @@ describe("CrossGuard packs read at base (#4613)", () => {
     const cap = createPulumiUpCapability({ run: pulumi.run, env: {}, tmp: tmp(), snapshots: null });
     await expect(cap.plan!({ ...ctx, policyBase: "f".repeat(40) }, step({ dir: stack, engine: "pulumi", policyPacks: [{ dir: "guard" }] }))).rejects.toThrow(/names no commit/);
     expect(pulumi.calls).toHaveLength(0);
+  });
+});
+
+describe("an in-place checkout (plywood#22)", () => {
+  /** A checkout of the corpus program: Pulumi.yaml, package.json and, unless left out, a lockfile; no node_modules. */
+  function checkout(lockfile = true): string {
+    const stack = tmp();
+    for (const f of ["Pulumi.yaml", "stack-export.json"]) copyFileSync(join(dir, f), join(stack, f));
+    writeFileSync(join(stack, "package.json"), "{}\n");
+    if (lockfile) writeFileSync(join(stack, "package-lock.json"), "{}\n");
+    return stack;
+  }
+
+  test("a Node checkout with a lockfile and no node_modules gets one install, with the step's backend, before the first preview", async () => {
+    const stack = checkout();
+    const pulumi = engine();
+    const cap = createPulumiUpCapability({ run: pulumi.run, env: {}, tmp: tmp(), snapshots: null });
+    const planned = await cap.plan!(ctx, step({ dir: stack, engine: "pulumi", backend: "s3://shop-state" }));
+    expect(pulumi.calls[0]).toMatchObject({ args: ["install"], cwd: stack, env: { PULUMI_BACKEND_URL: "s3://shop-state" } });
+    expect(pulumi.calls[1]!.args[0]).toBe("preview");
+
+    await cap.run({ ...ctx, plans: { [planned.member]: planned.artifact as PulumiUpArtifact } }, step({ dir: stack, engine: "pulumi", backend: "s3://shop-state" }));
+    expect(pulumi.calls.filter((c) => c.args[0] === "install")).toHaveLength(1);
+    expect(pulumi.calls.some((c) => c.args[0] === "up")).toBe(true);
+  });
+
+  test("a Node checkout with no lockfile is refused by name before the engine runs", async () => {
+    const stack = checkout(false);
+    const pulumi = engine();
+    const cap = createPulumiUpCapability({ run: pulumi.run, env: {}, tmp: tmp(), snapshots: null });
+    await expect(cap.plan!(ctx, step({ dir: stack, engine: "pulumi" }))).rejects.toThrow(/no lockfile .* beside its package.json/);
+    expect(pulumi.calls).toHaveLength(0);
+  });
+
+  test("an installed checkout runs no install", async () => {
+    const stack = checkout();
+    mkdirSync(join(stack, "node_modules"));
+    const pulumi = engine();
+    const cap = createPulumiUpCapability({ run: pulumi.run, env: {}, tmp: tmp(), snapshots: null });
+    await cap.plan!(ctx, step({ dir: stack, engine: "pulumi" }));
+    expect(pulumi.calls.map((c) => c.args[0])).not.toContain("install");
   });
 });

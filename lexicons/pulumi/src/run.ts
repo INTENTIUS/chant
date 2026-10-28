@@ -644,11 +644,11 @@ export async function runReviewStackPlunge(run: PulumiRunner, args: string[], cw
 }
 
 /**
- * The install chant runs in a release's recorded copy of a program (#4542),
+ * The install chant runs in a program's directory before its first engine
+ * run, a release's recorded copy (#4542) or a job's checkout (plywood#22),
  * for `./release-copy.ts` alone: exactly `pulumi install` or `plunge
- * install`, no flag. The cut records tracked files only, so the copy has no
- * `node_modules` or virtualenv; the CLI's install follows `Pulumi.yaml`'s
- * runtime options and the recorded lockfile.
+ * install`, no flag. Neither has `node_modules` or a virtualenv; the CLI's
+ * install follows `Pulumi.yaml`'s runtime options and the lockfile.
  */
 export const PULUMI_INSTALL_COMMANDS: readonly string[] = ["pulumi install", "plunge install"];
 
