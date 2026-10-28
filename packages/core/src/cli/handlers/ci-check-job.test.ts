@@ -40,25 +40,25 @@ describe("chant ci check-job on GitHub", () => {
 
   test("refuses another forge environment", async () => {
     const code = await runCiCheckJob(ctx, withSpec(gh, { GITHUB_REF: "refs/heads/main", ...tokenEnv }), tokenFetch({ environment: "staging", runner_environment: "self-hosted" }));
-    expect(code).toBe(1);
+    expect(code).toBe(9);
     expect(errors[0]).toContain("forge environment: expected prod, found staging");
   });
 
   test("refuses a job that cannot read its environment", async () => {
     const code = await runCiCheckJob(ctx, withSpec(gh, { GITHUB_REF: "refs/heads/main" }), noFetch);
-    expect(code).toBe(1);
+    expect(code).toBe(9);
     expect(errors[0]).toContain("it needs the id-token: write permission");
   });
 
   test("refuses another ref", async () => {
     const code = await runCiCheckJob(ctx, withSpec(gh, { GITHUB_REF: "refs/heads/feature", ...tokenEnv }), tokenFetch({ environment: "prod", runner_environment: "self-hosted" }));
-    expect(code).toBe(1);
+    expect(code).toBe(9);
     expect(errors[0]).toContain("ref: expected refs/heads/main, found refs/heads/feature");
   });
 
   test("refuses a hosted runner where the spec asks for a self-hosted one", async () => {
     const code = await runCiCheckJob(ctx, withSpec(gh, { GITHUB_REF: "refs/heads/main", ...tokenEnv }), tokenFetch({ environment: "prod", runner_environment: "github-hosted" }));
-    expect(code).toBe(1);
+    expect(code).toBe(9);
     expect(errors[0]).toContain("runner: expected self-hosted, found github-hosted");
   });
 });
@@ -73,18 +73,18 @@ describe("chant ci check-job on GitLab", () => {
   });
 
   test("refuses another environment", async () => {
-    expect(await runCiCheckJob(ctx, withSpec(gl, { ...ok, CI_ENVIRONMENT_NAME: "dev" }), noFetch)).toBe(1);
+    expect(await runCiCheckJob(ctx, withSpec(gl, { ...ok, CI_ENVIRONMENT_NAME: "dev" }), noFetch)).toBe(9);
     expect(errors[0]).toBe("plywood check-job: wave 1 (prod) of deploy: forge environment: expected prod, found dev");
   });
 
   test("refuses another ref, and an unprotected one", async () => {
-    expect(await runCiCheckJob(ctx, withSpec(gl, { ...ok, CI_COMMIT_REF_NAME: "feature", CI_COMMIT_REF_PROTECTED: "false" }), noFetch)).toBe(1);
+    expect(await runCiCheckJob(ctx, withSpec(gl, { ...ok, CI_COMMIT_REF_NAME: "feature", CI_COMMIT_REF_PROTECTED: "false" }), noFetch)).toBe(9);
     expect(errors).toContain("plywood check-job: wave 1 (prod) of deploy: ref: expected main, found feature");
     expect(errors).toContain("plywood check-job: wave 1 (prod) of deploy: ref: expected a protected ref (CI_COMMIT_REF_PROTECTED true), found false");
   });
 
   test("refuses a runner without the job's tags", async () => {
-    expect(await runCiCheckJob(ctx, withSpec(gl, { ...ok, CI_RUNNER_TAGS: "shared" }), noFetch)).toBe(1);
+    expect(await runCiCheckJob(ctx, withSpec(gl, { ...ok, CI_RUNNER_TAGS: "shared" }), noFetch)).toBe(9);
     expect(errors[0]).toContain("runner: expected tags deploy, found shared");
   });
 });
@@ -98,17 +98,17 @@ describe("chant ci check-job on Forgejo", () => {
   });
 
   test("refuses another ref", async () => {
-    expect(await runCiCheckJob(ctx, withSpec(fj, { GITHUB_REF: "refs/heads/dev" }), noFetch)).toBe(1);
+    expect(await runCiCheckJob(ctx, withSpec(fj, { GITHUB_REF: "refs/heads/dev" }), noFetch)).toBe(9);
     expect(errors[0]).toContain("ref: expected refs/heads/main, found refs/heads/dev");
   });
 
   test("refuses a hosted runner", async () => {
-    expect(await runCiCheckJob(ctx, withSpec(fj, { GITHUB_REF: "refs/heads/main", RUNNER_ENVIRONMENT: "github-hosted" }), noFetch)).toBe(1);
+    expect(await runCiCheckJob(ctx, withSpec(fj, { GITHUB_REF: "refs/heads/main", RUNNER_ENVIRONMENT: "github-hosted" }), noFetch)).toBe(9);
     expect(errors[0]).toContain("runner: expected self-hosted, found github-hosted");
   });
 });
 
 test("no expectation in the job stops it", async () => {
-  expect(await runCiCheckJob(ctx, {}, noFetch)).toBe(1);
+  expect(await runCiCheckJob(ctx, {}, noFetch)).toBe(9);
   expect(errors[0]).toContain(`${JOB_GUARD_ENV} is not set`);
 });

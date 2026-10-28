@@ -6,8 +6,9 @@ import { DRIFT_EXIT_CODE } from "./op/types";
 import { PR_ENV_EXIT } from "./components/pr-environment";
 
 describe("the exit-code table (#4553)", () => {
-  test("has one name per code, 0 to 8", () => {
-    expect(Object.values(CHANT_EXIT)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
+  test("has one name per code, 0 to 9", () => {
+    expect(Object.values(CHANT_EXIT)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(chantExitName(9)).toBe("misplaced");
     expect(chantExitName(4)).toBe("moved");
     expect(chantExitName(40)).toBeUndefined();
   });

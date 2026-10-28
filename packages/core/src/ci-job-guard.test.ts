@@ -7,6 +7,7 @@
 import { spawnSync } from "node:child_process";
 import { describe, expect, test } from "vitest";
 import { checkJob, describeJobGuard, JOB_GUARD_ENV, JOB_GUARD_JS, jobGuardSpec, jobSeen, opWaveJobLabel, parseJobGuardSpec, type JobGuardSpec } from "./ci-job-guard";
+import { CHANT_EXIT } from "./exit-codes";
 
 const jwt = (claims: Record<string, unknown>): string => `h.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.s`;
 
@@ -135,7 +136,7 @@ describe("the node -e program agrees with checkJob", () => {
     test(name, async () => {
       const r = run(spec, env);
       const want = describeJobGuard(spec, checkJob(spec, await jobSeen(spec, env, (() => Promise.reject(new Error("no fetch"))) as unknown as typeof fetch)));
-      expect(r.status).toBe(want.ok ? 0 : 1);
+      expect(r.status).toBe(want.ok ? 0 : CHANT_EXIT.misplaced);
       expect(r.stdout.trim().split("\n").filter(Boolean)).toEqual(want.out);
       expect(r.stderr.trim().split("\n").filter(Boolean)).toEqual(want.err);
     });
@@ -143,7 +144,7 @@ describe("the node -e program agrees with checkJob", () => {
 
   test("a missing variable stops the job", () => {
     const r = spawnSync(process.execPath, ["-e", JOB_GUARD_JS], { env: { PATH: process.env.PATH ?? "" }, encoding: "utf-8" });
-    expect(r.status).toBe(1);
+    expect(r.status).toBe(CHANT_EXIT.misplaced);
     expect(r.stderr).toContain(`${JOB_GUARD_ENV} is not JSON`);
   });
 

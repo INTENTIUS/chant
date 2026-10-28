@@ -3,8 +3,8 @@
  * product that renders its own jobs (`plywood ci check-job`, `terragucci ci
  * check-job` through the product's bin). It reads the job's expectation
  * from CHANT_JOB_GUARD, as the generated op-wave step does, checks it
- * against what the forge tells the job, and exits chant's `failed` (1)
- * with one line per value that differs. See ../../ci-job-guard.ts.
+ * against what the forge tells the job, and exits chant's `misplaced` (9)
+ * with one line per value that differs, or when the variable holds no spec. See ../../ci-job-guard.ts.
  */
 import type { CommandContext } from "../registry";
 
@@ -19,7 +19,7 @@ export async function runCiCheckJob(_ctx: CommandContext, env: NodeJS.ProcessEnv
     spec = parseJobGuardSpec(env[JOB_GUARD_ENV]);
   } catch (err) {
     console.error(`${activeProductWords().product} check-job: ${err instanceof Error ? err.message : String(err)}`);
-    return CHANT_EXIT.failed;
+    return CHANT_EXIT.misplaced;
   }
   if (spec.product === undefined) {
     const product = activeProductWords().product;
@@ -29,5 +29,5 @@ export async function runCiCheckJob(_ctx: CommandContext, env: NodeJS.ProcessEnv
   const { ok, out, err } = describeJobGuard(spec, checkJob(spec, seen));
   for (const line of out) console.log(line);
   for (const line of err) console.error(line);
-  return ok ? CHANT_EXIT.done : CHANT_EXIT.failed;
+  return ok ? CHANT_EXIT.done : CHANT_EXIT.misplaced;
 }
