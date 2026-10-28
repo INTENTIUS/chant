@@ -299,6 +299,56 @@ describe("releaseInputs (#4542)", () => {
   });
 });
 
+describe("the step's backend (plywood#22)", () => {
+  const store = "plunge+s3://plywood-tutorial-plunge?region=us-east-1&endpoint=http://floci:4566&s3ForcePathStyle=true";
+
+  test("plunge's preview, up and output read each get it as PULUMI_BACKEND_URL, over the job's", async () => {
+    const plunge = engine();
+    const cap = createPulumiUpCapability({ plunge: plunge.run, env: { PULUMI_BACKEND_URL: "file:///tmp/plywood-tutorial-backend" }, tmp: tmp(), snapshots: null });
+    const planned = await cap.plan!(ctx, step({ engine: "plunge", backend: store }));
+    await cap.run({ ...ctx, plans: { [member]: planned.artifact as PulumiUpArtifact } }, step({ engine: "plunge", backend: store }));
+    expect(plunge.calls.map((c) => c.args[0])).toEqual(["preview", "up", "stack"]);
+    for (const c of plunge.calls) expect(c.env?.PULUMI_BACKEND_URL).toBe(store);
+    // The preview keeps its streaming flag beside the backend.
+    expect(plunge.calls[0].env).toEqual({ [PULUMI_STREAMING_PREVIEW_ENV]: "true", PULUMI_BACKEND_URL: store });
+  });
+
+  test("stock Pulumi's preview, up and output read get it too, and outputs() reads through it", async () => {
+    const pulumi = engine();
+    const s3 = "s3://plywood-tutorial-state?region=us-east-1&endpoint=http://floci:4566&use_path_style=true";
+    const cap = createPulumiUpCapability({ run: pulumi.run, env: {}, tmp: tmp(), snapshots: null });
+    const planned = await cap.plan!(ctx, step({ engine: "pulumi", backend: s3 }));
+    await cap.run({ ...ctx, plans: { [member]: planned.artifact as PulumiUpArtifact } }, step({ engine: "pulumi", backend: s3 }));
+    await cap.outputs!(ctx, step({ engine: "pulumi", backend: s3 }));
+    expect(pulumi.calls.length).toBeGreaterThanOrEqual(4);
+    for (const c of pulumi.calls) expect(c.env?.PULUMI_BACKEND_URL).toBe(s3);
+  });
+
+  test("a plunge+ backend picks plunge where the job's PULUMI_BACKEND_URL would have picked stock Pulumi", async () => {
+    const plunge = engine();
+    const pulumi = engine();
+    const cap = createPulumiUpCapability({ run: pulumi.run, plunge: plunge.run, env: { PULUMI_BACKEND_URL: "file:///tmp/b" }, tmp: tmp(), snapshots: null });
+    const planned = await cap.plan!(ctx, step({ backend: store }));
+    expect((planned.artifact as PulumiUpArtifact).engine).toBe("plunge");
+    expect(pulumi.calls).toHaveLength(0);
+    expect(cap.defaultLockGrain!(step({ backend: store }))).toBe("resource");
+  });
+
+  test("without it nothing changes: no PULUMI_BACKEND_URL is added", async () => {
+    const plunge = engine();
+    const cap = createPulumiUpCapability({ plunge: plunge.run, env: {}, tmp: tmp(), snapshots: null });
+    await cap.plan!(ctx, step({ engine: "plunge" }));
+    expect(plunge.calls[0].env).toEqual({ [PULUMI_STREAMING_PREVIEW_ENV]: "true" });
+  });
+
+  test("an empty backend is refused before anything runs", async () => {
+    const plunge = engine();
+    const cap = createPulumiUpCapability({ plunge: plunge.run, env: {}, tmp: tmp(), snapshots: null });
+    await expect(cap.plan!(ctx, step({ engine: "plunge", backend: " " }))).rejects.toThrow(/"backend" is the stack's backend URL/);
+    expect(plunge.calls).toHaveLength(0);
+  });
+});
+
 describe("a step pinned to its engine release (#4592)", () => {
   test("engineVersion runs the versioned binary, through the same argv checks", async () => {
     const pinned = engine();

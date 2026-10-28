@@ -211,6 +211,15 @@ export interface PulumiUpStepInput {
   /** `pulumi` or `plunge`; see `pulumiMemberEngine`. */
   engine?: PulumiMemberEngine;
   /**
+   * The stack's backend URL (INTENTIUS/plywood#22), such as
+   * `plunge+s3://...` or `s3://...`: every engine command the step runs
+   * (preview, up, the stack output and export reads, a review stack's init)
+   * gets it as `PULUMI_BACKEND_URL`, over the job's own. It also answers the
+   * engine where `pulumiMemberEngine` would read `PULUMI_BACKEND_URL`.
+   * Absent: the job's `PULUMI_BACKEND_URL` or `Pulumi.yaml`'s, as before.
+   */
+  backend?: string;
+  /**
    * The engine release this stack is pinned to (#4592): the step runs
    * `<engineRoot>/<engine>-<engineVersion>/<engine>`, the path the pulumi
    * lexicon's install lines write (`pulumiInstallLine`, `plungeInstallLine`,
@@ -540,18 +549,34 @@ interface Resolved {
   engineSource: PulumiMemberEngineSource;
   engineBecause: string;
   grain: PulumiLockGrain;
+  /** The step's `backend`, every engine command's `PULUMI_BACKEND_URL`. */
+  backend?: string;
+}
+
+/** The environment the engine is picked from: the job's, with the step's backend as `PULUMI_BACKEND_URL`. */
+function engineEnv(input: Pick<PulumiUpStepInput, "backend">, opts: PulumiUpOptions): { env?: Record<string, string | undefined> } {
+  if (input.backend === undefined) return opts.env ? { env: opts.env } : {};
+  return { env: { ...(opts.env ?? process.env), PULUMI_BACKEND_URL: input.backend } };
+}
+
+/** `run` with `PULUMI_BACKEND_URL` set to the step's backend over whatever env the call passes. */
+function withBackend(run: PulumiRunner, backend: string): PulumiRunner {
+  return (args, o) => run(args, { ...o, env: { ...(o.env ?? {}), PULUMI_BACKEND_URL: backend } });
 }
 
 function resolveStep(input: PulumiUpStepInput, opts: PulumiUpOptions, declared?: PulumiLockGrain): Resolved {
   requireInput(input);
+  if (input.backend !== undefined && (typeof input.backend !== "string" || input.backend.trim() === "")) {
+    throw new Error('pulumi-up: "backend" is the stack\'s backend URL, such as plunge+s3://<bucket> or s3://<bucket>');
+  }
   const dir = stackDir(input);
   const member = pulumiUpMember(input);
-  const picked = pulumiMemberEngine(dir, input.engine, opts.env ? { env: opts.env } : {});
+  const picked = pulumiMemberEngine(dir, input.engine, engineEnv(input, opts));
   // #4552: the step's own grain, else ci.lockGrain as the caller read it at base, else the engine's default.
   const grain = input.lockGrain ?? declared ?? pulumiDefaultLockGrain(picked.engine);
   if (grain === "resource" && picked.engine === "pulumi") throw new PulumiResourceGrainRefusedError(member);
   const engineBin = pulumiUpEngineBin(input, picked.engine);
-  return { dir, member, engine: picked.engine, ...(engineBin ? { engineBin } : {}), engineSource: picked.source, engineBecause: picked.because, grain };
+  return { dir, member, engine: picked.engine, ...(engineBin ? { engineBin } : {}), engineSource: picked.source, engineBecause: picked.because, grain, ...(input.backend ? { backend: input.backend } : {}) };
 }
 
 /**
@@ -574,8 +599,8 @@ export function pulumiUpEngineBin(input: Pick<PulumiUpStepInput, "engineVersion"
 }
 
 /** The `run` and `plunge` options for the stack output and export reads: the pinned binary's for both when the step names one (#4592), else the caller's. */
-function runnerOptions(r: Pick<Resolved, "engineBin">, opts: PulumiUpOptions): { run?: PulumiRunner; plunge?: PulumiRunner } {
-  if (r.engineBin) {
+function runnerOptions(r: Pick<Resolved, "engineBin" | "backend">, opts: PulumiUpOptions): { run?: PulumiRunner; plunge?: PulumiRunner } {
+  if (r.engineBin || r.backend) {
     const { pulumi, plunge } = runnersFor(r, opts);
     return { run: pulumi, plunge };
   }
@@ -583,12 +608,16 @@ function runnerOptions(r: Pick<Resolved, "engineBin">, opts: PulumiUpOptions): {
 }
 
 /** The runners a resolved step uses: the pinned binary's when it names one, else the options' or the PATH default. */
-function runnersFor(r: Pick<Resolved, "engineBin">, opts: PulumiUpOptions): { pulumi: PulumiRunner; plunge: PulumiRunner } {
+function runnersFor(r: Pick<Resolved, "engineBin" | "backend">, opts: PulumiUpOptions): { pulumi: PulumiRunner; plunge: PulumiRunner } {
+  let out: { pulumi: PulumiRunner; plunge: PulumiRunner };
   if (r.engineBin) {
     const pinned = opts.runAt ? opts.runAt(r.engineBin) : engineRunnerAt(r.engineBin);
-    return { pulumi: pinned, plunge: pinned };
+    out = { pulumi: pinned, plunge: pinned };
+  } else {
+    out = { pulumi: opts.run ?? defaultPulumiRunner, plunge: opts.plunge ?? defaultPlungeRunner };
   }
-  return { pulumi: opts.run ?? defaultPulumiRunner, plunge: opts.plunge ?? defaultPlungeRunner };
+  // plywood#22: the step's backend reaches every command, whichever call site runs it.
+  return r.backend ? { pulumi: withBackend(out.pulumi, r.backend), plunge: withBackend(out.plunge, r.backend) } : out;
 }
 
 /** The scratch directory, the config copy in it and plunge's plan file path. */
@@ -1027,13 +1056,13 @@ export function createPulumiUpCapability(opts: PulumiUpOptions = {}): Capability
     // #4552: resource on plunge, the stack (target) on stock Pulumi.
     defaultLockGrain(input) {
       requireInput(input);
-      return pulumiDefaultLockGrain(pulumiMemberEngine(stackDir(input), input.engine, opts.env ? { env: opts.env } : {}).engine);
+      return pulumiDefaultLockGrain(pulumiMemberEngine(stackDir(input), input.engine, engineEnv(input, opts)).engine);
     },
     // Stock Pulumi keeps the stack grain: its backend's stack lock already orders updates, and nothing in it is per resource.
     lockGrainRefusal(input, grain) {
       if (grain !== "resource") return undefined;
       requireInput(input);
-      const engine = pulumiMemberEngine(stackDir(input), input.engine, opts.env ? { env: opts.env } : {}).engine;
+      const engine = pulumiMemberEngine(stackDir(input), input.engine, engineEnv(input, opts)).engine;
       return engine === "pulumi" ? new PulumiResourceGrainRefusedError(pulumiUpMember(input)).message : undefined;
     },
     // URN rows, object rows, and the stack row when something may appear only at apply (./lock-rows.ts).
