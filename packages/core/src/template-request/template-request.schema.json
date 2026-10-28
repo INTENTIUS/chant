@@ -57,7 +57,12 @@
     "requestedBy": {
       "type": "string",
       "minLength": 1,
-      "description": "Who asked: the forge login of the person, or the identity an agent runs as."
+      "description": "Who asked, as the forge vouches for it: the login of the run's actor, a person or the identity an agent runs as."
+    },
+    "claimedBy": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The person the client says filled the form or asked the agent, when it names one. The forge does not vouch for it, so a reader shows it as claimed, next to requestedBy."
     },
     "via": {
       "enum": [

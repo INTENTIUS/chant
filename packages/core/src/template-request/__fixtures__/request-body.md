@@ -5,6 +5,7 @@
 | Template | `acme/bucket/aws` |
 | Version | `1.0.0` |
 | Requested by | `alice` |
+| Claimed by (as given by the client; the forge does not vouch for it) | `bob` |
 | Through | an agent over MCP |
 
 | Input | Value |
@@ -34,6 +35,7 @@ Nothing was applied or approved. This pull request only adds files; it is planne
     ]
   },
   "requestedBy": "alice",
+  "claimedBy": "bob",
   "via": "mcp"
 }
 ```
