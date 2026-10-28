@@ -51,7 +51,8 @@ import {
 } from "../lifecycle/gate-ledger";
 import { describePlanDigest, samePlanDigest } from "../lifecycle/plan-digest";
 import { isModelAuthored } from "../lifecycle/gate-origin";
-import { appliedGatePath, isApprovalSpent, parseAppliedGateLines, type AppliedGateRecord } from "../lifecycle/gate-applied";
+import { appliedGatePath, isApprovalSpent, parseAppliedGateLines, type AppliedGateRecord, type FinishedGateRecord } from "../lifecycle/gate-applied";
+import { gatedRequestAttachmentPath } from "../lifecycle/gated-request-digest";
 import { sortedJsonReplacer } from "../utils";
 import { gateContextDigest, type GateApprover, type GateBaseApproval, type ResolvedGateApproval } from "./gate-approval";
 import {
@@ -118,6 +119,19 @@ export interface GateLedgerPort {
   readApplied?(op: string): Promise<AppliedGateRecord[]>;
   /** Record that a wave is about to apply under an approval (#3784), which spends it. */
   appendApplied?(record: AppliedGateRecord): Promise<{ pushed: boolean; pushWarning?: string }>;
+  /**
+   * Record how an apply under an approval ended (#4623): a `finished` line in
+   * the same `_gates/<op>/applied.jsonl`, naming the applied line's time.
+   * Absent on a port that keeps none.
+   */
+  appendFinished?(record: FinishedGateRecord): Promise<{ pushed: boolean; pushWarning?: string }>;
+  /**
+   * Store a file a held request carries, such as a migration's proof, at
+   * `_gates/<op>/requests/<digest>.json` (#4623), once, before the pending
+   * fact that asks for it. Pushed with that fact. Absent on a port that
+   * keeps none.
+   */
+  storeRequestAttachment?(op: string, digest: string, text: string): Promise<void>;
   /**
    * Store the checkpoint of a run that stops at a gate that resumes (#3947),
    * at `_gates/<op>/checkpoints/<runId>.json`. Written before the pending
@@ -212,30 +226,43 @@ export function gitGateLedgerPort(opts?: { cwd?: string }): GateLedgerPort {
       return text ? parseAppliedGateLines(text) : [];
     },
     async appendApplied(record) {
-      const { dir, file } = appliedGatePath(record.op);
-      const line = JSON.stringify(record, sortedJsonReplacer);
-      // #3985: write on top of the remote's ledger, not a local copy another
-      // writer has since moved past, so the push that follows can land.
+      return appendAppliedFileLine(record.op, record as unknown as Record<string, unknown>, `Applied under ${record.gate}`);
+    },
+    async appendFinished(record) {
+      return appendAppliedFileLine(record.op, record as unknown as Record<string, unknown>, `Finished under ${record.gate}`);
+    },
+    async storeRequestAttachment(op, digest, text) {
+      const { dir, file } = gatedRequestAttachmentPath(op, digest);
       await requireLifecycleLedger(opts);
-      let lastErr: unknown;
-      // The same append-and-retry as a ledger line: another writer to the branch is the ordinary case.
-      for (let attempt = 1; attempt <= 5; attempt++) {
-        try {
-          const prior = await readPathSha(dir, file, opts);
-          const existing = prior ? await readBlobBySha(prior, opts) : null;
-          await writeBlobToPath(dir, file, existing ? `${existing.replace(/\n$/, "")}\n${line}\n` : `${line}\n`, `Applied under ${record.gate}`, {
-            ...opts,
-            expectPriorPathSha: prior,
-          });
-          return pushLifecycleReport(opts);
-        } catch (err) {
-          if (!(err instanceof RefCASConflictError)) throw err;
-          lastErr = err;
-        }
-      }
-      throw lastErr;
+      if ((await readPathSha(dir, file, opts)) === null) await writeBlobToPath(dir, file, text, `Request on ${op}: ${digest}`, opts);
     },
   };
+
+  /** Append one line to `_gates/<op>/applied.jsonl` on top of the remote's ledger, retrying on a concurrent writer, and push. */
+  async function appendAppliedFileLine(op: string, record: Record<string, unknown>, message: string): Promise<{ pushed: boolean; pushWarning?: string }> {
+    const { dir, file } = appliedGatePath(op);
+    const line = JSON.stringify(record, sortedJsonReplacer);
+    // #3985: write on top of the remote's ledger, not a local copy another
+    // writer has since moved past, so the push that follows can land.
+    await requireLifecycleLedger(opts);
+    let lastErr: unknown;
+    // The same append-and-retry as a ledger line: another writer to the branch is the ordinary case.
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      try {
+        const prior = await readPathSha(dir, file, opts);
+        const existing = prior ? await readBlobBySha(prior, opts) : null;
+        await writeBlobToPath(dir, file, existing ? `${existing.replace(/\n$/, "")}\n${line}\n` : `${line}\n`, message, {
+          ...opts,
+          expectPriorPathSha: prior,
+        });
+        return pushLifecycleReport(opts);
+      } catch (err) {
+        if (!(err instanceof RefCASConflictError)) throw err;
+        lastErr = err;
+      }
+    }
+    throw lastErr;
+  }
 }
 
 /** A gate ledger held in memory — what a test, or a caller that has already read the ledger, hands {@link evaluateGate}. */
@@ -245,6 +272,10 @@ export function memoryGateLedgerPort(
   appended: PendingGateRecord[];
   resolved: GateResolutionRecord[];
   applied: AppliedGateRecord[];
+  /** The finished lines appended (#4623). */
+  finished: FinishedGateRecord[];
+  /** Stored request attachments by `<op>/<digest>` (#4623). */
+  attachments: Map<string, string>;
   /** Checkpoint texts by `<op>/<runId>` (#3947). */
   checkpoints: Map<string, string>;
 } {
@@ -254,11 +285,22 @@ export function memoryGateLedgerPort(
   const resolved: GateResolutionRecord[] = [];
   const applied: AppliedGateRecord[] = [...(seed.applied ?? [])];
   const checkpoints = new Map<string, string>();
+  const finished: FinishedGateRecord[] = [];
+  const attachments = new Map<string, string>();
   return {
     appended,
     resolved,
     applied,
+    finished,
+    attachments,
     checkpoints,
+    async appendFinished(record) {
+      finished.push(record);
+      return { pushed: true };
+    },
+    async storeRequestAttachment(op, digest, text) {
+      if (!attachments.has(`${op}/${digest}`)) attachments.set(`${op}/${digest}`, text);
+    },
     async writeCheckpoint(checkpoint) {
       checkpoints.set(`${checkpoint.op}/${checkpoint.runId}`, gateCheckpointText(checkpoint));
     },

@@ -42,3 +42,8 @@ export function gatedRequestOf(value: unknown): GatedRequest | undefined {
   if (typeof f !== "object" || f === null || Array.isArray(f) || !Object.values(f).every((x) => typeof x === "string")) return undefined;
   return { kind: v.kind, subject: v.subject, by: v.by, at: v.at, fields: { ...(f as Record<string, string>) } };
 }
+
+/** Where a request's attachment, such as a migration's proof, is stored on `chant/lifecycle`: `_gates/<op>/requests/<digest>.json`. */
+export function gatedRequestAttachmentPath(op: string, digest: string): { dir: string; file: string } {
+  return { dir: `_gates/${op}/requests`, file: `${digest.replace(/:/g, "_")}.json` };
+}
