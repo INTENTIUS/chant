@@ -80,6 +80,7 @@ import {
   opWaveOutcomeDir,
   opWavesControlTarget,
   opWavesLastJobs,
+  opWavesApprovalStatusCommand,
   opWavesOutcomeCommand,
   opWavesRecordPlansCommand,
   opWavesResumeCommand,
@@ -213,7 +214,7 @@ export function buildGithubOpWavesDoc(
     doc,
     jobs,
     ...(spec.resume ? { resumeDoc: buildResumeDoc(spec, options) } : {}),
-    ...(byReview ? { plansDoc: buildPlansDoc(spec, options) } : {}),
+    ...(byReview ? { plansDoc: buildPlansDoc(spec, options, forge) } : {}),
   };
 }
 
@@ -281,18 +282,46 @@ function buildResumeDoc(spec: OpWavesSpec, options: OpWavesPipelineOptions): Git
   };
 }
 
-/** The pull request workflow a `pr-review` wave needs (#3684): record the digests each head plans. */
-function buildPlansDoc(spec: OpWavesSpec, options: OpWavesPipelineOptions): GithubOpPipelineDoc {
+/**
+ * The pull request workflow a `pr-review` wave needs (#3684): record the
+ * digests each head plans. The `approval-status` job after it (#4630) posts
+ * `<product>/approval` on the head, and runs alone on each review submitted
+ * or dismissed. It holds a read token that may write statuses and nothing
+ * else.
+ */
+function buildPlansDoc(spec: OpWavesSpec, options: OpWavesPipelineOptions, forge: "github" | "forgejo"): GithubOpPipelineDoc {
   const steps: Array<Record<string, unknown>> = [checkoutStep(true), ...(spec.waves[0]?.setup ?? []).map(setupStepDoc), ...runSteps(options.beforeScript ?? [])];
   steps.push({ name: "Plan every wave at the head and record its digests", run: opWavesRecordPlansCommand(options.specFile, options.bin).join(" ") });
+  const statusSteps: Array<Record<string, unknown>> = [checkoutStep(true), ...runSteps(options.beforeScript ?? [])];
+  statusSteps.push({
+    name: "Post the approval status on the head",
+    run: opWavesApprovalStatusCommand(options.specFile, forge, options.bin).join(" "),
+    env: {
+      GITHUB_TOKEN: GITHUB_JOB_TOKEN,
+      PR_NUMBER: "${{ github.event.pull_request.number }}",
+      HEAD_SHA: "${{ github.event.pull_request.head.sha }}",
+      BASE_SHA: "${{ github.event.pull_request.base.sha }}",
+    },
+  });
   return {
     name: `${spec.name}-plans`,
-    on: { pull_request: { branches: pushBranches(spec.branches) } },
+    on: { pull_request: { branches: pushBranches(spec.branches) }, pull_request_review: { types: ["submitted", "dismissed"] } },
     ...nonEmpty("env", options.variables),
-    concurrency: concurrency(spec.name + "-plans-${{ github.event.number }}", true),
+    concurrency: concurrency(spec.name + "-plans-${{ github.event_name }}-${{ github.event.pull_request.number }}", true),
     // contents: write pushes the record to chant/lifecycle.
     permissions: { contents: "write" },
-    jobsDoc: { "record-plans": { "runs-on": githubRunsOn(spec.runner), container: options.image ?? OP_WAVES_IMAGE, steps } },
+    jobsDoc: {
+      "record-plans": { if: "github.event_name == 'pull_request'", "runs-on": githubRunsOn(spec.runner), container: options.image ?? OP_WAVES_IMAGE, steps },
+      "approval-status": {
+        needs: ["record-plans"],
+        // On a review the record-plans job is skipped, and the status reads the plans an earlier push recorded.
+        if: "${{ always() && (needs.record-plans.result == 'success' || needs.record-plans.result == 'skipped') }}",
+        "runs-on": githubRunsOn(spec.runner),
+        container: options.image ?? OP_WAVES_IMAGE,
+        permissions: { contents: "read", "pull-requests": "read", statuses: "write" },
+        steps: statusSteps,
+      },
+    },
   };
 }
 

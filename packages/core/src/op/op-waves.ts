@@ -776,6 +776,19 @@ export function opWavesRecordPlansCommand(specFile: string, bin?: string): strin
   return [...opWaveBinArgv(bin), "run", "wave", "--spec", specFile, "--record-plans"];
 }
 
+/**
+ * The command a `pr-review` spec's approval status job runs (#4630),
+ * through the product's bin: `--pr`, `--head` and `--base` from the
+ * pull request event on GitHub and Forgejo, `--open` on GitLab.
+ */
+/** The GitLab variable a pipeline schedule sets to `1` to post every open merge request's approval status (#4630). */
+export const OP_WAVES_APPROVAL_STATUS_VAR = "CHANT_APPROVAL_STATUS";
+
+export function opWavesApprovalStatusCommand(specFile: string, forge: "github" | "gitlab" | "forgejo", bin?: string): string[] {
+  const at = forge === "gitlab" ? ["--open"] : ["--pr", '"$PR_NUMBER"', "--head", '"$HEAD_SHA"', "--base", '"$BASE_SHA"'];
+  return [...opWaveBinArgv(bin), "run", "wave", "--spec", specFile, "--approval-status", ...at, "--forge", forge];
+}
+
 /** The default apply command. */
 export const OP_WAVE_DEFAULT_APPLY = ["chant", "run", "{op}", "--env", "{target}"];
 

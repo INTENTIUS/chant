@@ -117,6 +117,15 @@ export { renderPrNote, prStatusContext, prApproveCommand, prApproveCommands, prA
 export { upsertPlanNote } from "./pr-post";
 
 /**
+ * The approval status before merge (#4630): under a `pr-review` wave, the
+ * op waves generators add a job that posts `<product>/approval` on each
+ * open pull request's head. A product feature-detects on
+ * `APPROVAL_STATUS_FLOOR`.
+ */
+export const APPROVAL_STATUS_FLOOR = NEXT_RELEASE;
+export { approvalStatusOf, headWaveHolds, postApprovalStatus, postOpenApprovalStatuses, type ApprovalStatus, type ApprovalStatusInput } from "./op/approval-status";
+
+/**
  * Responses to pipeline events (#4629): a refused wave's diff, a failed
  * apply's triage and the pull request description check, in the product's
  * words. `productPipelineJobs(forge, env, { words, respond, decide })` turns

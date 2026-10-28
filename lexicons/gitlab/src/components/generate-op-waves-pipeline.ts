@@ -80,6 +80,8 @@ import {
   opWaveOutcomeDir,
   opWavesControlTarget,
   opWavesLastJobs,
+  OP_WAVES_APPROVAL_STATUS_VAR,
+  opWavesApprovalStatusCommand,
   opWavesOutcomeCommand,
   opWavesRecordPlansCommand,
   opWavesResumeCommand,
@@ -138,6 +140,18 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
         variables: { ...GITLAB_FULL_HISTORY },
         rules: [{ if: GITLAB_MERGE_REQUEST_SOURCE }],
         script: [...dropControl, ...(options.beforeScript ?? []), opWavesRecordPlansCommand(options.specFile, options.bin).join(" ")],
+      },
+    ]);
+    // #4630: a GitLab approval starts no pipeline, so a schedule of the target branch posts every open merge request's status.
+    entries.push([
+      `${spec.name}-approval-status`,
+      {
+        stage: "plans",
+        image,
+        ...(specTags ? { tags: specTags } : {}),
+        variables: { ...GITLAB_FULL_HISTORY },
+        rules: [{ if: `${GITLAB_SCHEDULE_SOURCE} && $${OP_WAVES_APPROVAL_STATUS_VAR} == "1"` }],
+        script: [...dropControl, ...(options.beforeScript ?? []), opWavesApprovalStatusCommand(options.specFile, "gitlab", options.bin).join(" ")],
       },
     ]);
   }
@@ -234,6 +248,9 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
     "# failure, and the waves after it run what does not depend on those runs.",
     ...(spec.resume
       ? [`# The ${spec.name}-resume job retries it for you in a pipeline schedule; give the schedule the cron "${spec.resume.schedule}".`]
+      : []),
+    ...(byReview
+      ? [`# The ${spec.name}-approval-status job posts each open merge request's approval status from a pipeline schedule that sets ${OP_WAVES_APPROVAL_STATUS_VAR}=1.`]
       : []),
     ...(control ? [`# After the last wave, the control-dispatch job tells ${control.repo} how the waves ended.`] : []),
   ];
