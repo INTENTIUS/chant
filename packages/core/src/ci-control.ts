@@ -11,6 +11,8 @@
  * - The control repo's projects and defaults as `control-entry` records on
  *   its workspace ledger (./control/records.ts).
  * - Reconcile over the product's generator (./control/reconcile.ts).
+ * - Each project's `consumers.json` joined into one consumer list per
+ *   release version, for the release catalog (./control/consumers.ts, #4600).
  *
  * A product holds the words, the settings it writes into an entry and their
  * check, its generator and its docs. It feature-detects this entry until the
@@ -114,3 +116,16 @@ export {
   type ReconcileProject,
   type ReconcileTarget,
 } from "./control/reconcile";
+export {
+  CONSUMERS_CONTRACT,
+  CONSUMERS_FILE,
+  consumersDocument,
+  joinControlConsumers,
+  parseConsumersDocument,
+  readControlConsumers,
+  type ConsumersDocument,
+  type ControlConsumers,
+  type JoinedConsumers,
+  type ProjectConsumers,
+  type ProjectConsumersReader,
+} from "./control/consumers";
