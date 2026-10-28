@@ -95,7 +95,8 @@ import type { CloudTradeSpec } from "../ci-identity";
 import { gatePointProblems, type GatePoint } from "./gate-point";
 import { quorumProblems, type GateQuorumRule } from "./gate-quorum";
 import { notifyConfigProblem, type NotifyConfig } from "../notify";
-import { parseRespondList, type CiResponses } from "../ci-respond";
+// Types only: the small bundles that carry this module stay without ../ci-respond.ts (#4629).
+import type { CiResponses } from "../ci-respond";
 import { WAVE_GATE_NAME_PATTERN, waveGateNameFrom, waveShare } from "../wave-layout";
 import { waveOutcomeFileName } from "../wave-blocked";
 import { NEXT_RELEASE } from "../release-floors";
@@ -981,9 +982,14 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
   if (spec.respond !== undefined) {
     const respond = spec.respond as unknown;
     if (respond === null || typeof respond !== "object" || Array.isArray(respond)) throw new Error(`${where}: respond must be an object of event to mode, such as { "wave-refused": "off" }.`);
-    const parsed = parseRespondList(Object.entries(respond as Record<string, unknown>).map(([e, m]) => `${e}=${String(m)}`));
-    if ("error" in parsed) throw new Error(`${where}: respond: ${parsed.error.replace(/^--respond /, "")}.`);
-    if (parsed.description !== undefined) throw new Error(`${where}: respond: the description check runs in the plan-note job, so an op waves spec takes only wave-refused and apply-failed.`);
+    // The wave events and their modes, as ../ci-respond.ts's CI_RESPONSES has them.
+    const modes: Record<string, readonly string[]> = { "wave-refused": ["diff", "off"], "apply-failed": ["triage", "off"] };
+    for (const [event, mode] of Object.entries(respond as Record<string, unknown>)) {
+      if (event === "description") throw new Error(`${where}: respond: the description check runs in the plan-note job, so an op waves spec takes only wave-refused and apply-failed.`);
+      const allowed = modes[event];
+      if (!allowed) throw new Error(`${where}: respond names no event ${JSON.stringify(event)}; the events are wave-refused and apply-failed.`);
+      if (typeof mode !== "string" || !allowed.includes(mode)) throw new Error(`${where}: respond: ${event} takes ${allowed.join(" or ")}, not ${JSON.stringify(mode)}.`);
+    }
   }
   const names = new Set<string>();
   for (const wave of spec.waves) {

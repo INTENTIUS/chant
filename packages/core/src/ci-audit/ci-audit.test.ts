@@ -104,8 +104,8 @@ describe("drift attribution over chant's drift document (#4632)", () => {
     });
     expect(attributions.map((a) => [a.member, a.path, a.source, a.actor])).toEqual([
       ["app", "versioning", "audit", "human"],
-      ["edge", "forceDestroy", "unattributed", undefined],
       ["edge", "acl", "unattributed", undefined],
+      ["edge", "forceDestroy", "unattributed", undefined],
       ["web", "desired_count", "table", "controller"],
     ]);
     expect(notes).toEqual(["edge: the audit log is unavailable: AccessDenied"]);
