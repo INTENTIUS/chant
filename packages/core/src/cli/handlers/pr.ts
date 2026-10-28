@@ -66,7 +66,7 @@
 
 import { spawnSync } from "node:child_process";
 import { CHANT_EXIT } from "../../exit-codes";
-import { anyResourceGrain, leaseRowsOf, lockTargetsOf, type LockGrain } from "../../lifecycle/lock-rows";
+import { anyResourceGrain, leaseRowsOf as leaseRowsOfLocks, lockTargetsOf, type LockGrain } from "../../lifecycle/lock-rows";
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { loadChantConfig, resolveAutoReleaseDisabled, type ChantConfig } from "../../config";
@@ -513,19 +513,34 @@ async function declaredLockGrainOf(p: Pick<Prepared, "base" | "member">): Promis
  * resource grain).
  */
 async function leaseSetRows(p: Prepared, set: Pick<PrPlanSet, "locks">): Promise<{ release(): Promise<boolean> } | { held: string } | number> {
-  const rows = leaseRowsOf(set.locks);
+  const leased = await leaseRowsOf(p, set);
+  return "failed" in leased ? fail(leased.failed) : leased;
+}
+
+/**
+ * {@link leaseSetRows} without printing a failure (#4594), for a later round
+ * of `applyPrSet` (`leaseRound`), which records it on the round, and for a
+ * pull request environment's apply, which reports it.
+ */
+export async function leaseRowsOf(p: Pick<Prepared, "gate">, set: Pick<PrPlanSet, "locks">, label = "this apply"): Promise<{ release(): Promise<boolean> } | { held: string } | { failed: string }> {
+  const rows = leaseRowsOfLocks(set.locks);
   if (rows.length === 0) return { release: () => Promise.resolve(true) };
   const { leaseLockRows } = await import("../../lifecycle/resource-lock");
   let leased;
   try {
     leased = await leaseLockRows(p.gate, rows);
   } catch (err) {
-    return fail(`could not hold the rows this apply changes in ${p.gate}, so nothing was applied: ${err instanceof Error ? err.message : String(err)}`);
+    return { failed: `could not hold the rows ${label} changes in ${p.gate}, so nothing of it was applied: ${err instanceof Error ? err.message : String(err)}` };
   }
-  if (!leased.ok) return { held: `${leased.message}, so nothing was applied. Apply again once that run ends; a run that is gone, or whose lease is older than CHANT_LOCK_STALE seconds, is taken over.` };
+  if (!leased.ok) return { held: `${leased.message}, so nothing of ${label} was applied. Apply again once that run ends; a run that is gone, or whose lease is older than CHANT_LOCK_STALE seconds, is taken over.` };
   for (const h of leased.tookOver) console.error(formatInfo(`took over the rows of run ${h.run}, which is gone`));
-  console.error(formatInfo(`holds ${leased.lease.keys.length} row${leased.lease.keys.length === 1 ? "" : "s"} of ${p.gate} while it applies`));
+  console.error(formatInfo(`${label} holds ${leased.lease.keys.length} row${leased.lease.keys.length === 1 ? "" : "s"} of ${p.gate} while it applies`));
   return leased.lease;
+}
+
+/** `applyPrSet`'s `leaseRound` (#4594): a round after the first leases the rows its own plan locks. */
+export function leaseRoundRows(p: Pick<Prepared, "gate">): NonNullable<Parameters<typeof applyPrSet>[0]["leaseRound"]> {
+  return ({ round, set }) => leaseRowsOf(p, set, `round ${round}`);
 }
 
 /**
@@ -1153,6 +1168,8 @@ async function prApply(ctx: CommandContext, stage: StageEvents, beforeMerge?: Pr
       gate: p.gate,
       approval,
       decideRound,
+      // #4594: a later round's plan may change rows the first did not, so it leases its own.
+      leaseRound: leaseRoundRows(p),
       ...(resumed ? { resumed: prior } : {}),
       // The apply is this run's waves, so the fan-out's own run framing is
       // dropped. The log's lines go to stderr with or without --events-json.
@@ -1189,12 +1206,23 @@ async function prApply(ctx: CommandContext, stage: StageEvents, beforeMerge?: Pr
     members: applied.members,
     ...(resumed ? { resumed: resumed.completed } : {}),
     ...(applied.rounds ? { rounds: applied.rounds } : {}),
-    ...(applied.status === "waiting" ? { message: waitingMessage(op, applied.rounds) } : {}),
+    ...(applied.held ? { message: applied.held } : applied.leaseFailed ? { message: applied.leaseFailed } : applied.status === "waiting" ? { message: waitingMessage(op, applied.rounds) } : {}),
   });
   // A component that stopped at a gate of its own leaves the apply waiting on
   // a person. A step that refused its plan because the target moved since
   // the approval exits 4 (moved), as a moved digest does before anything applies (#3997, #4553).
-  const exit = afterFailed ? 1 : applied.status === "applied" ? 0 : applied.status === "waiting" ? GATED_EXIT_CODE : failedRunExitCode(applied.run.results);
+  // A later round whose rows another run holds exits 5 (held, #4594).
+  const exit = afterFailed
+    ? 1
+    : applied.held
+      ? CHANT_EXIT.held
+      : applied.status === "applied"
+        ? 0
+        : applied.status === "waiting"
+          ? GATED_EXIT_CODE
+          : applied.leaseFailed
+            ? 1
+            : failedRunExitCode(applied.run.results);
   if (green && applied.status === "applied") await recordGreenApplied(p, green, set.doc.digest, approval, via);
   const code = await stop(report, exit, applied.run.status === "gated" ? "gated" : undefined);
   if (applied.status === "applied" && !afterFailed) console.error(formatSuccess(`applied the plan ${report.digest} approved by ${(approval.approvedBy ?? []).join(", ")}`));

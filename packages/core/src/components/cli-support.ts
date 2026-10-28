@@ -53,6 +53,8 @@ import { getHeadCommit } from "../lifecycle/git";
 import { buildCapabilityRegistry } from "./capability-plugin-loader";
 import type { CapabilityRegistry } from "./capability";
 import type { DeployAdoption } from "./adoption";
+import type { LockGrain } from "../lifecycle/lock-rows";
+import type { RowLeasePort } from "./row-lease";
 import type { FanOutPlan } from "./fan-out";
 import { componentSetFanOut, formRunGroups, planAndRunComponentGroup } from "./groups";
 import { applyConfigDefaults } from "./config-defaults";
@@ -395,6 +397,10 @@ export function findComponentGate(component: DriverComponent): { gate: string } 
 export interface RunComponentsOptions {
   /** Target environment name, threaded into every capability's `DeployContext.env` (default: "local"). */
   env?: string;
+  /** `ci.lockGrain` as declared (#4594), for every step's `DeployContext.lockGrain`. Absent: each step takes its lexicon's default. */
+  lockGrain?: LockGrain;
+  /** The run's row lease (#4594): a step or group on the resource grain leases its rows through it before it applies. Absent: no lease. */
+  rowLease?: RowLeasePort;
   /**
    * The addresses each component's steps narrow to (#4300), by component
    * (`--target <component>:<address>`). A name the run does not run refuses
@@ -741,7 +747,12 @@ export async function runComponents(
   if (outside.length > 0) {
     return { success: false, selected: [], error: `--target names ${outside.join(", ")}, which this run does not run` };
   }
-  const targeted = Object.keys(narrowed).length > 0 ? { targets: narrowed } : {};
+  const targeted = {
+    ...(Object.keys(narrowed).length > 0 ? { targets: narrowed } : {}),
+    // #4594: the grain and the lease reach every step through its DeployContext.
+    ...(options.lockGrain ? { lockGrain: options.lockGrain } : {}),
+    ...(options.rowLease ? { rowLease: options.rowLease } : {}),
+  };
   if (options.adoption && (selector === "all" || isComponentList(selector))) {
     return { success: false, selected: [], error: `--adopt adopts into one component's stack; name one component, not ${selector === "all" ? "all" : "a list"}` };
   }

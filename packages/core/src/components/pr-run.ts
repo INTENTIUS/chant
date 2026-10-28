@@ -554,6 +554,15 @@ export interface PrApplyOptions {
    */
   approval?: PrApproval;
   decideRound?: (round: { round: number; gate: string; set: PrPlanSet; plan: FanOutPlan; notCovered?: string }) => Promise<PrRoundDecision>;
+  /**
+   * Lease the rows a later round's plan locks (#4594), once its gate lets it
+   * apply and before it does: the lease to let go of when the round ends,
+   * `held` naming the run that holds a row, or `failed` when the rows file
+   * could not be written. Either stops the apply with the round unapplied.
+   * The first round's rows are the caller's to lease, from `set.locks`.
+   * Absent: no round takes a lease.
+   */
+  leaseRound?: (round: { round: number; set: PrPlanSet }) => Promise<{ release(): Promise<boolean> } | { held: string } | { failed: string }>;
 }
 
 /** How a round's gate was decided: whether it applies, and where its approval stands. */
@@ -574,6 +583,10 @@ export interface PrApplyResult {
   run: FanOutRunResult;
   /** Each round after the first, in order. Absent when nothing was held back. */
   rounds?: PrRound[];
+  /** A later round's rows were held by another run (#4594), so it did not apply: why. The command exits 5. */
+  held?: string;
+  /** A later round's rows could not be leased (#4594), so it did not apply: why. The command exits 1. */
+  leaseFailed?: string;
 }
 
 /**
@@ -729,7 +742,8 @@ export async function applyPrSet(options: PrApplyOptions): Promise<PrApplyResult
   const rounds: PrRound[] = [];
   /** Per component, the round that applied it or holds it, and that round's set, after the first. */
   const roundOf = new Map<string, { round: number; set: PrPlanSet }>();
-  let stopped: "waiting" | "plan-failed" | undefined;
+  let stopped: "waiting" | "plan-failed" | "held" | "lease-failed" | undefined;
+  let stoppedBy: string | undefined;
   while (run.held && run.held.length > 0 && run.status === "ok" && options.decideRound) {
     const round = rounds.length + 2;
     const gate = prRoundGate(options.gate ?? PR_APPLY_GATE, round);
@@ -776,7 +790,26 @@ export async function applyPrSet(options: PrApplyOptions): Promise<PrApplyResult
       stopped = "waiting";
       break;
     }
-    const next = await runRound(plan, set, set.outputs, run.componentOutputs);
+    // #4594: the round's own rows, leased as the first round's were, since its plan may change resources the first did not.
+    const lease = options.leaseRound ? await options.leaseRound({ round, set }) : undefined;
+    if (lease && "held" in lease) {
+      record("held", decision.approval, lease.held, decision.covered);
+      stopped = "held";
+      stoppedBy = lease.held;
+      break;
+    }
+    if (lease && "failed" in lease) {
+      record("failed", decision.approval, lease.failed, decision.covered);
+      stopped = "lease-failed";
+      stoppedBy = lease.failed;
+      break;
+    }
+    let next: FanOutRunResult;
+    try {
+      next = await runRound(plan, set, set.outputs, run.componentOutputs);
+    } finally {
+      await lease?.release();
+    }
     record(next.status === "fail" ? "failed" : "applied", decision.approval, undefined, decision.covered);
     run = joinRuns(run, next);
   }
@@ -814,8 +847,15 @@ export async function applyPrSet(options: PrApplyOptions): Promise<PrApplyResult
     return { ...asPlanned, status: "failed", ...(error ? { error } : {}) };
   });
   const status: PrApplyResult["status"] =
-    run.status !== "ok" || stopped === "plan-failed" ? "failed" : held.size > 0 || stopped === "waiting" ? "waiting" : "applied";
-  return { members, status, run, ...(rounds.length > 0 ? { rounds } : {}) };
+    run.status !== "ok" || stopped === "plan-failed" || stopped === "lease-failed" ? "failed" : held.size > 0 || stopped === "waiting" || stopped === "held" ? "waiting" : "applied";
+  return {
+    members,
+    status,
+    run,
+    ...(rounds.length > 0 ? { rounds } : {}),
+    ...(stopped === "held" && stoppedBy ? { held: stoppedBy } : {}),
+    ...(stopped === "lease-failed" && stoppedBy ? { leaseFailed: stoppedBy } : {}),
+  };
 }
 
 const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);

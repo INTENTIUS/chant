@@ -56,6 +56,8 @@ import type { DeployContext } from "./capability";
 import { groupsByComponent, narrowGroups, planAndRunComponentGroup, runComponentGroup } from "./groups";
 import { planWaveComponent, type WaveComponentPlan } from "./wave-plan";
 import { computePlanDigest } from "../lifecycle/plan-digest";
+import { leaseRowsOf, type LockGrain, type LockRow } from "../lifecycle/lock-rows";
+import { isLockRowsHeldError, type RowLease, type RowLeasePort } from "./row-lease";
 import { decideWaveGate, runWaveLoop, waveGateName, waveSetDigest, type WaveMember, type WaveRecord } from "../wave-engine";
 
 /** The sink a fan-out emits to: run events, and the older stream through them. */
@@ -191,6 +193,16 @@ export interface FanOutRunOptions {
   vars?: Record<string, unknown>;
   /** The addresses each component narrows to (#4300), by component: its steps' `DeployContext.targets`. */
   targets?: Readonly<Record<string, readonly string[]>>;
+  /** `ci.lockGrain` as declared (#4594), for every step's `DeployContext.lockGrain`. Absent: each step takes its lexicon's default. */
+  lockGrain?: LockGrain;
+  /**
+   * The run's row lease (#4594). Each step on the resource grain leases its
+   * rows through it, a group leases its members' rows in one take, and under
+   * `waveGate` each wave leases the rows its plans lock before it applies.
+   * Not with `plans`: a caller that planned beforehand leases those rows
+   * itself, as pr-apply does. Absent: no lease.
+   */
+  rowLease?: RowLeasePort;
   /** Outputs of components this run is not running: the ones the plan lists in `seeds`. */
   componentOutputs?: Record<string, Record<string, unknown>>;
   onProgress?: (event: RunProgressEvent) => void;
@@ -330,6 +342,9 @@ export async function runFanOut(
   }
   if (options.waveGate && options.plans) {
     throw new Error("a gated-wave fan-out plans each wave itself, so it takes no plans made beforehand");
+  }
+  if (options.rowLease && options.plans) {
+    throw new Error("a fan-out handed plans made beforehand leases their rows where they were planned, so it takes no row lease");
   }
   if (options.waveGate && plan.groups?.length) {
     throw new Error("a gated-wave fan-out plans component by component, so it takes no groups");
@@ -631,6 +646,8 @@ async function runGatedWaves(
     contexts: Map<string, DeployContext>;
     members: WaveMember[];
     plansFor: Map<string, Record<string, unknown>>;
+    /** The rows each component's plan locks on the resource grain (#4594). */
+    rowsFor: Map<string, LockRow[]>;
     waveFailures: Array<{ component: string; error?: string }>;
   }
   /** `next`: go on to the next wave. `stop`: the run ends here. */
@@ -665,6 +682,7 @@ async function runGatedWaves(
 
       const members: WaveMember[] = [];
       const plansFor = new Map<string, Record<string, unknown>>();
+      const rowsFor = new Map<string, LockRow[]>();
       const waveFailures: Array<{ component: string; error?: string }> = [];
       for (const p of planned) {
         if ("error" in p) {
@@ -673,8 +691,9 @@ async function runGatedWaves(
         }
         members.push(...p.members);
         plansFor.set(p.component, p.plans);
+        rowsFor.set(p.component, leaseRowsOf(p.locks));
       }
-      return { go: { runnable, gateName, contexts, members, plansFor, waveFailures } };
+      return { go: { runnable, gateName, contexts, members, plansFor, rowsFor, waveFailures } };
     },
 
     digest(_at, { members, plansFor, waveFailures }) {
@@ -741,24 +760,55 @@ async function runGatedWaves(
       return { go: { check, record, toRun } };
     },
 
-    async apply({ k: waveNum }, { contexts, plansFor, waveFailures }, { check, record, toRun }) {
+    async apply({ k: waveNum }, { contexts, plansFor, rowsFor, waveFailures }, { check, record, toRun }) {
       emit?.({ type: "wave-start", wave: waveNum, components: toRun });
-      const waveResults = await Promise.all(
-        toRun.map(async (name) => {
-          emit?.({ type: "component-start", wave: waveNum, component: name });
-          const plans = plansFor.get(name)!;
-          const ctx = { ...contexts.get(name)!, ...(Object.keys(plans).length > 0 ? { plans } : {}) };
-          const result = await runComponentDeploy(byName.get(name)!, ctx, registry, componentOutputs, undefined, gates, emit);
-          emit?.({
-            type: "component-settle",
-            wave: waveNum,
-            component: name,
-            status: result.status === "fail" ? "failed" : result.status,
-          });
-          options.onComponentSettled?.(result, componentOutputs[name]);
-          return result;
-        }),
-      );
+      // #4594: the rows of the plans the wave's gate approved, in one take before anything of the wave applies.
+      const rows = toRun.flatMap((name) => rowsFor.get(name) ?? []);
+      let waveLease: RowLease | undefined;
+      if (options.rowLease && rows.length > 0) {
+        try {
+          waveLease = await options.rowLease.take(rows, `wave ${waveNum}`);
+        } catch (err) {
+          const error = err instanceof Error ? err.message : String(err);
+          const held = isLockRowsHeldError(err);
+          for (const name of toRun) {
+            results.push({ component: name, ok: false, status: "fail", records: [{ component: name, phase: "Apply", kind: "lock-rows", status: "fail", durationMs: 0, error, ...(held ? { held: true as const } : {}) }] });
+            failed.push(name);
+            waveFailures.push({ component: name, error });
+            emit?.({ type: "component-settle", wave: waveNum, component: name, status: "failed" });
+            markBlocked(name);
+          }
+          const settled: WaveRecord = { ...record, status: "failed", approvedBy: check.resolution.resolvedBy, failed: waveFailures };
+          waves.push(settled);
+          options.onWaveSettled?.(settled);
+          emit?.({ type: "wave-settle", wave: waveNum, status: "failed" });
+          skips.blocked(blockedBy);
+          return "next";
+        }
+      }
+      let waveResults: DriverComponentResult[];
+      try {
+        waveResults = await Promise.all(
+          toRun.map(async (name) => {
+            emit?.({ type: "component-start", wave: waveNum, component: name });
+            const plans = plansFor.get(name)!;
+            // The wave holds the rows already, so its steps take no lease of their own.
+            const { rowLease: _leased, ...own } = contexts.get(name)!;
+            const ctx = { ...own, ...(Object.keys(plans).length > 0 ? { plans } : {}) };
+            const result = await runComponentDeploy(byName.get(name)!, ctx, registry, componentOutputs, undefined, gates, emit);
+            emit?.({
+              type: "component-settle",
+              wave: waveNum,
+              component: name,
+              status: result.status === "fail" ? "failed" : result.status,
+            });
+            options.onComponentSettled?.(result, componentOutputs[name]);
+            return result;
+          }),
+        );
+      } finally {
+        await waveLease?.release();
+      }
       results.push(...waveResults);
 
       for (const result of waveResults) {

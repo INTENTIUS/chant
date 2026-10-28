@@ -61,6 +61,8 @@ import { planAndRunComponentGroup, runComponentGroup } from "./groups";
 import type { Release } from "../lifecycle/release-store";
 import type { RunProgressEvent } from "./run-progress";
 import type { RunEventSink } from "../run-event-stream";
+import type { LockGrain } from "../lifecycle/lock-rows";
+import type { RowLeasePort } from "./row-lease";
 
 /**
  * Step kinds that produce an artifact at build time: the build family, and the
@@ -651,6 +653,10 @@ export interface RunPromotionOptions {
   groupRuns?: readonly GroupRun[];
   /** A promote with no release gate to bind plans each group in its wave (#4465). */
   planGroupsAtWave?: boolean;
+  /** `ci.lockGrain` as declared (#4594), for every step's `DeployContext.lockGrain`. */
+  lockGrain?: LockGrain;
+  /** The run's row lease (#4594): a step or group on the resource grain leases its rows through it before it applies. Absent: no lease. */
+  rowLease?: RowLeasePort;
 }
 
 /** The run in `runs` that plans exactly the members of `group`. */
@@ -678,6 +684,8 @@ export async function runPromotion(options: RunPromotionOptions): Promise<Driver
     const item = plan.items.find((i) => i.component === component);
     return item ? { version: item.digest, revision: item.source.gitSha } : undefined;
   };
+  // #4594: the grain and the row lease reach every step and group.
+  const leasing = { ...(options.lockGrain ? { lockGrain: options.lockGrain } : {}), ...(options.rowLease ? { rowLease: options.rowLease } : {}) };
   // ws-107 (#4465): a group applies as one, through its approved plan.
   const grouped = options.grouped?.groups?.length ? options.grouped : undefined;
   const byName = new Map(targets.map((c) => [c.name, c]));
@@ -691,7 +699,7 @@ export async function runPromotion(options: RunPromotionOptions): Promise<Driver
             components: byName,
             registry,
             env: plan.to,
-            ctxOf: (name: string) => deployContext({ env: plan.to, releaseIdentity }, name),
+            ctxOf: (name: string) => deployContext({ env: plan.to, releaseIdentity, ...leasing }, name),
             componentOutputs,
           };
           const approved = approvedRunOf(options.groupRuns, group);
@@ -708,6 +716,7 @@ export async function runPromotion(options: RunPromotionOptions): Promise<Driver
       releases: expected,
       // #3061: the workload's service.version and vcs.ref.head.revision are the earlier release's own.
       releaseIdentity,
+      ...leasing,
       ...(groups ? { groups } : {}),
       ...(options.onProgress ? { onProgress: options.onProgress } : {}),
       ...(options.onRunEvent ? { onRunEvent: options.onRunEvent } : {}),

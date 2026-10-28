@@ -187,7 +187,7 @@ async function prEnvUp(ctx: CommandContext): Promise<number> {
 }
 
 async function up(ctx: CommandContext, pr: number, derived: Exclude<ReturnType<typeof derivePrEnvironment>, { refusal: string }>, ttl: string): Promise<number> {
-  const { prepare, planAll, placeHooks, runStageHook } = await import("./pr");
+  const { prepare, planAll, placeHooks, runStageHook, leaseRowsOf, leaseRoundRows } = await import("./pr");
   const p = await prepare(ctx, "plan");
   if (typeof p === "number") return p;
   // ci.hooks (#4288), read at base as the other pull-request jobs read them, around the plan and the apply.
@@ -200,7 +200,7 @@ async function up(ctx: CommandContext, pr: number, derived: Exclude<ReturnType<t
     stack: derived.stack,
     ...(p.member ? { member: p.member } : {}),
     ...(derived.endpoint ? { endpoint: derived.endpoint } : {}),
-    adapter: componentsPrEnvAdapter(p, { planAll, runStageHook }),
+    adapter: componentsPrEnvAdapter(p, { planAll, runStageHook, leaseRowsOf, leaseRoundRows }),
     ports: cliPorts(ctx, p.forge),
     actor: actor(),
     ...(p.forge?.runUrl ? { runUrl: p.forge.runUrl } : {}),
@@ -216,7 +216,15 @@ async function up(ctx: CommandContext, pr: number, derived: Exclude<ReturnType<t
  * component's site in `pr-<n>`, carried over from the template's (#4330,
  * `prEnvironmentSite`).
  */
-function componentsPrEnvAdapter(p: Prepared, run: { planAll: typeof import("./pr").planAll; runStageHook: typeof import("./pr").runStageHook }): PrEnvAdapter {
+function componentsPrEnvAdapter(
+  p: Prepared,
+  run: {
+    planAll: typeof import("./pr").planAll;
+    runStageHook: typeof import("./pr").runStageHook;
+    leaseRowsOf: typeof import("./pr").leaseRowsOf;
+    leaseRoundRows: typeof import("./pr").leaseRoundRows;
+  },
+): PrEnvAdapter {
   let set: PrPlanSet | undefined;
   const rows = (target: PrEnvTarget, status: (component: string) => string): PrEnvReportRow[] =>
     p.plan.order.map((component) => {
@@ -243,11 +251,21 @@ function componentsPrEnvAdapter(p: Prepared, run: { planAll: typeof import("./pr
       const planned = set!;
       const hookStop = await run.runStageHook(p, "before-apply", p.plan.order, planned);
       if (hookStop) return { status: "stopped", rows: rows(target, () => "planned"), message: hookStop };
-      const applied = await applyPrSet({ components: p.components, plan: p.plan, registry: p.registry, env: target.env, set: planned, gate: PR_ENV_GATE });
+      // #4594: on the resource grain the environment's apply leases the rows its plan changes, in the pull-request loop's rows file, as pr-apply does.
+      const lease = await run.leaseRowsOf(p, planned, target.env);
+      if ("held" in lease) return { status: "stopped", held: true, rows: rows(target, () => "planned"), message: lease.held };
+      if ("failed" in lease) return { status: "stopped", rows: rows(target, () => "planned"), message: lease.failed };
+      let applied: Awaited<ReturnType<typeof applyPrSet>>;
+      try {
+        applied = await applyPrSet({ components: p.components, plan: p.plan, registry: p.registry, env: target.env, set: planned, gate: PR_ENV_GATE, leaseRound: run.leaseRoundRows(p) });
+      } finally {
+        await lease.release();
+      }
       const afterHook = await run.runStageHook(p, "after-apply", p.plan.order, planned, "the environment stands as applied");
       const status = (component: string) => applied.members.find((m) => m.component === component)?.status ?? "planned";
       return {
         status: applied.status === "applied" ? "applied" : applied.status === "waiting" ? "waiting" : "failed",
+        ...(applied.held ? { held: true, message: applied.held } : applied.leaseFailed ? { message: applied.leaseFailed } : {}),
         rows: rows(target, status),
         ...(afterHook ? { afterFailure: afterHook } : {}),
       };

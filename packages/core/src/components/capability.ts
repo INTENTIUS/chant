@@ -18,6 +18,7 @@ import type { ReleaseIdentity } from "../telemetry-attribution";
 import type { ChangeSetPart } from "../change-set";
 import type { DeployAdoption } from "./adoption";
 import type { LockGrain, LockRow } from "../lifecycle/lock-rows";
+import type { RowLeasePort } from "./row-lease";
 import type { CapabilityTraceFacts } from "../otlp";
 
 /**
@@ -101,6 +102,14 @@ export interface DeployContext {
    * step input's own grain (`pulumi-up`'s `lockGrain`) wins over it.
    */
   lockGrain?: LockGrain;
+  /**
+   * The run's row lease (#4594), set by an apply path that plans inside its
+   * steps (`run --components`, `components fan-out`, a promote). The driver
+   * takes it around a step on the resource grain (./row-lease.ts); a
+   * capability never calls it. Absent where the caller leases the rows its
+   * plan knows (pr-apply, op waves) or takes no lease.
+   */
+  rowLease?: RowLeasePort;
 }
 
 /**

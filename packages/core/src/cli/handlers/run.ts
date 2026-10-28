@@ -1237,8 +1237,12 @@ async function runComponentSelection(ctx: CommandContext): Promise<number> {
   }
   let result: RunComponentsResult;
   try {
+    // #4594: ci.lockGrain, and on the resource grain each step's row lease in the pull-request loop's rows file.
+    const { applyLeaseOptions } = await import("../../components/apply-lease");
+    const leasing = await applyLeaseOptions(process.cwd());
     result = await runtime.runComponents(projectPath, selector, {
       env: ctx.args.env,
+      ...leasing,
       ...(targets ? { targets } : {}),
       ...(adoption ? { adoption } : {}),
       componentOutputs: seededOutputs,

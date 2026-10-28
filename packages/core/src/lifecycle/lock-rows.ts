@@ -124,6 +124,20 @@ export async function resolvePlannedLock(capability: LockGrainHooks, input: unkn
 }
 
 /**
+ * A member's grain before anything planned (#4594), by the order
+ * {@link resolvePlannedLock} uses: the step input's own `lockGrain`, else the
+ * declared grain, else the lexicon's default asked without a plan, else
+ * `target`. An apply path that plans only on the resource grain asks this
+ * first, so a member on any other grain applies as it did before.
+ */
+export async function lockGrainBeforePlan(capability: LockGrainHooks, input: unknown, declared: LockGrain | null | undefined): Promise<LockGrain> {
+  const own = (input as { lockGrain?: unknown } | null | undefined)?.lockGrain;
+  if (isLockGrain(own)) return own;
+  if (declared) return declared;
+  return capability.defaultLockGrain ? await capability.defaultLockGrain(input as never) : "target";
+}
+
+/**
  * The names a pull request's target locks take under `ci.locks` (ruling D):
  * the row keys of each member on the resource grain, and the component's own
  * name for every component with a member on another grain (or with no

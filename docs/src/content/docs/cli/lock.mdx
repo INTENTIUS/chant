@@ -46,7 +46,7 @@ A target the same pull request already holds stays its own and gets the new head
 
 `--by` names who took the lock and defaults to `GITHUB_ACTOR`, then `GITLAB_USER_LOGIN`, then `USER`. The `--json` form prints `{ gate, pr, ok, stage, taken, released, expired, pushed }`, or `{ gate, pr, ok: false, held }` when a target is held.
 
-`chant lock --list` prints one line per lock of the gate, in the order of the file's targets. Each line holds the target and the fields of its lock. The `--json` form prints `{ gate, path, locks }`.
+`chant lock --list` prints one line per lock of the gate, in the order of the file's targets. Each line holds the target and the fields of its lock. After the locks come the apply rows of the gate's rows file, `_locks/rows/<gate>.json` ([lock grain](/chant/reference/workspace-declaration/#lock-grain)), one line per row sorted by key ([#4594](https://github.com/INTENTIUS/chant/issues/4594)). A row's line gives its key and `run <id>` for the run holding it, then the time that run took it and the run's page when the forge gave one. The `--json` form prints `{ gate, path, locks, rowsPath, rows }`, where `rows` maps each key to its holder `{ run, at, url?, sha? }`.
 
 `chant lock --alive <run>` prints `alive` or `dead` for a CI run that holds apply rows or the Forgejo repo lock tag. It prints `dead` once the forge says the run finished. The forge is asked with `CHANT_FORGE_TOKEN`, else terragucci's `TG_TOKEN`. It prints `alive` while the run goes on or when nothing can say. The lock tag's shell in a generated Forgejo pipeline asks it before it takes a lease over.
 

@@ -50,7 +50,7 @@ Forgejo gets the same jobs from the same generator. On GitLab the commands are t
 
 On a choudoufu root or a plunge stack the locks name resources, since those engines keep one record per resource ([#4552](https://github.com/INTENTIUS/chant/issues/4552)). Under `ci.locks` a pull request then locks the row keys its plan changes, such as `estate e01 aws_s3_bucket.logs` or `urn urn:pulumi:dev::site::aws:s3/bucket:Bucket::logs`, so two pull requests that change different resources of one stack both apply before merge. The plan report lists them as `lockTargets`, and the lock job takes them from there. A stack whose components may register resources only at apply locks `stack <project>/<stack>`, which holds every resource of the stack.
 
-Each apply on that grain also leases its rows in `_locks/rows/pr-apply.json` while it runs. It does so whether or not `ci.locks` is set. A row another run holds stops the apply with exit 5 and names that run. Set `ci.lockGrain` to `target` to lock components again, or to `repo` for one apply at a time in the repository. [Lock grain](/chant/reference/workspace-declaration/#lock-grain) has the values and the row keys per engine.
+Each apply on that grain also leases its rows in `_locks/rows/pr-apply.json` while it runs, from `pr-apply`, `chant run --components`, `chant components fan-out`, a promote or a pull request environment ([#4594](https://github.com/INTENTIUS/chant/issues/4594)). It does so whether or not `ci.locks` is set. A row another run holds stops the apply with exit 5 and names that run. Set `ci.lockGrain` to `target` to lock components again, or to `repo` for one apply at a time in the repository. [Lock grain](/chant/reference/workspace-declaration/#lock-grain) has the values and the row keys per engine.
 
 ## See who holds what
 
@@ -61,7 +61,10 @@ npx chant lock --list
 ```
 app	pull request 12	plan	alice	2026-10-22T10:00:00.000Z
 net	pull request 12	plan	alice	2026-10-22T10:00:00.000Z
+estate e01 aws_s3_bucket.logs	run 4711	2026-10-22T10:05:00.000Z	https://github.com/acme/infra/actions/runs/4711
 ```
+
+The last line is an apply row on the resource grain, with the run that holds it. A row stays until that run ends, or until its lease is older than `CHANT_LOCK_STALE` seconds and another apply takes it over.
 
 ## Release a stuck lock
 
