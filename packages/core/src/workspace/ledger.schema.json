@@ -43,9 +43,10 @@
             "releases",
             "cuts",
             "applies",
-            "pr_envs"
+            "pr_envs",
+            "control_entries"
           ],
-          "description": "The table read: resources and snapshots from each lexicon's snapshots, runs from the Op run ledgers, gates from _gates/, deploys from <env>/releases.jsonl, releases and cuts from _releases/, applies from _gates/<op>/applied.jsonl and pr_envs from _pr-envs/records.jsonl. applies and pr_envs were added within version 1 by #4551, read by chant 0.124.55 and newer."
+          "description": "The table read: resources and snapshots from each lexicon's snapshots, runs from the Op run ledgers, gates from _gates/, deploys from <env>/releases.jsonl, releases and cuts from _releases/, applies from _gates/<op>/applied.jsonl and pr_envs from _pr-envs/records.jsonl. applies and pr_envs were added within version 1 by #4551, read by chant 0.124.55 and newer. control_entries, from the control repo's _control/entries.jsonl, was added within version 1 by #4593, read by chant 0.124.55 and newer."
         },
         "columns": {
           "type": "array",

@@ -17,7 +17,9 @@
  * - the applies under an approval, `_gates/<op>/applied.jsonl`
  *   (`./gate-applied.ts`), each joined with its `finished` line (#4551);
  * - the pull request environments, `_pr-envs/records.jsonl`
- *   (`../components/pr-environment.ts`, #4551).
+ *   (`../components/pr-environment.ts`, #4551);
+ * - the control repo's entries, `_control/entries.jsonl`
+ *   (`../control/records.ts`, #4568, #4593).
  *
  * The tables are a contract. {@link QUERY_SCHEMA_VERSION} names it, and the
  * `chant_schema` table lists every table and column with the version, so a
@@ -42,6 +44,7 @@ import { opOfRunLedgerFile, parseRunLedger } from "./run-ledger";
 import type { LifecycleSnapshot } from "./types";
 import { appliedGatePath, finishedApply, parseAppliedGateFile } from "./gate-applied";
 import { PR_ENV_LEDGER_DIR, PR_ENV_LEDGER_FILE, parsePrEnvRecords } from "../components/pr-environment";
+import { CONTROL_LEDGER_DIR, CONTROL_LEDGER_FILE, parseControlEntries } from "../control/records";
 import { NEXT_RELEASE } from "../release-floors";
 
 /** The version of the table schema below. */
@@ -104,6 +107,16 @@ export const QUERY_TABLES = {
    * workspace member the record names; `components` and `approvers` are JSON.
    */
   pr_envs: [["member", "TEXT"], ["kind", "TEXT"], ["pr", "INTEGER"], ["env", "TEXT"], ["env_member", "TEXT"], ["template", "TEXT"], ["git_sha", "TEXT"], ["components", "TEXT"], ["plan_digest", "TEXT"], ["result", "TEXT"], ["by", "TEXT"], ["timestamp", "TEXT"], ["expires_at", "TEXT"], ["approvers", "TEXT"], ["reason", "TEXT"], ["run_url", "TEXT"]],
+  /**
+   * One row per line of the control repo's `_control/entries.jsonl` (#4568,
+   * #4593): one version of a project's entry or of the shared defaults.
+   * `digest` is the version's own, `prev_digest` the digest of the version
+   * it replaced (NULL for an entry's first). `current` is 1 on the newest
+   * version of each id, which is the entry's state now (a `retired` one
+   * closes it). `settings` and `estates` are JSON. A line whose digest does
+   * not match it is counted malformed and left out.
+   */
+  control_entries: [["member", "TEXT"], ["id", "TEXT"], ["entry", "TEXT"], ["project", "TEXT"], ["state", "TEXT"], ["product", "TEXT"], ["settings", "TEXT"], ["estates", "TEXT"], ["by", "TEXT"], ["timestamp", "TEXT"], ["digest", "TEXT"], ["prev_digest", "TEXT"], ["current", "INTEGER"]],
 } as const satisfies Record<string, ReadonlyArray<readonly [string, ColumnType]>>;
 
 /**
@@ -131,6 +144,9 @@ export const LEDGER_WAVE_COLUMNS_FLOOR = NEXT_RELEASE;
 
 /** The first chant with the `applies` and `pr_envs` tables (#4551), added within version 1. */
 export const LEDGER_APPLIES_FLOOR = NEXT_RELEASE;
+
+/** The first chant with the `control_entries` table (#4593), added within version 1. */
+export const LEDGER_CONTROL_ENTRIES_FLOOR = NEXT_RELEASE;
 
 export type QueryTable = keyof typeof QUERY_TABLES;
 
@@ -353,6 +369,16 @@ export async function loadQueryData(ledgers: readonly QueryLedger[]): Promise<Qu
       for (const r of parsePrEnvRecords(text)) {
         data.pr_envs.push({ member, kind: r.kind, pr: r.pr, env: r.env, env_member: str(r.member), template: str(r.template), git_sha: str(r.commit), components: json(r.components), plan_digest: str(r.planDigest), result: str(r.result), by: str(r.by), timestamp: str(r.timestamp), expires_at: str(r.expiresAt), approvers: json(r.approvedBy), reason: str(r.reason), run_url: str(r.runUrl) });
       }
+    }
+    // #4593: the control repo's entries, every version, the newest of each id marked current.
+    if (trees.includes(CONTROL_LEDGER_DIR)) {
+      const { records, malformed: bad } = parseControlEntries(await port.read(CONTROL_LEDGER_DIR, CONTROL_LEDGER_FILE));
+      malformed.control_entries += bad.length;
+      const newest = new Map<string, number>();
+      records.forEach((r, i) => newest.set(r.id, i));
+      records.forEach((r, i) => {
+        data.control_entries.push({ member, id: r.id, entry: r.entry, project: r.project, state: r.state, product: r.product, settings: json(r.settings), estates: json(r.estates), by: str(r.by), timestamp: r.at, digest: r.digest, prev_digest: r.prev, current: bit(newest.get(r.id) === i) });
+      });
     }
     if (trees.includes(RELEASES_DIR)) {
       for (const file of (await port.list(RELEASES_DIR)).sort()) {
