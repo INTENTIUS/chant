@@ -49,7 +49,7 @@ describe("the pull-request loop bundle", () => {
       "packages/core/src/release-floors.ts",
     ]);
     // About 89 KB today, after the hooks line (#4288), the blocked set (#4291), the scheduled-run reads (#4289) the requires checks (#4301) and the migration notes (#4407), about 97 KB; with the group lines (#4446), about 100 KB.
-    // 110 KB is the ruled ceiling (#4481, ruling 12, 2026-10-25), not a figure to lower by trimming note text.
-    expect(result.outputFiles.reduce((n, f) => n + f.contents.byteLength, 0)).toBeLessThan(110 * 1024);
+    // 120 KB (122,880 bytes) is the ruled ceiling: raised from 110 KB by the maintainer ruling of 2026-10-27 on #4481. It is not a figure to lower by trimming note text.
+    expect(result.outputFiles.reduce((n, f) => n + f.contents.byteLength, 0)).toBeLessThan(122_880);
   });
 });
