@@ -56,6 +56,8 @@ export type WaveComponentPlan =
       policy?: CapabilityPolicyFindings[];
       /** Each planned member's lock grain and rows (#4552), by member. Absent when no step planned. */
       locks?: Record<string, PlannedLock>;
+      /** Each planned member's location in a pull request's environment (#4609), by member. Absent when no step gave one. */
+      locations?: Record<string, string>;
     }
   | { component: string; error: string; policy?: CapabilityPolicyFindings[] };
 
@@ -152,6 +154,7 @@ export async function planWaveComponent(
     const shapes: Record<string, PlanShape> = {};
     const policy: CapabilityPolicyFindings[] = [];
     const locks: Record<string, PlannedLock> = {};
+    const locations: Record<string, string> = {};
     assertTargetsAccepted(component, registry, ctx);
     for (const step of capabilitySteps(component.deploy)) {
       const capability = registry.resolve(step.kind);
@@ -168,6 +171,8 @@ export async function planWaveComponent(
       if (found) policy.push(found);
       if (planned.shape) shapes[planned.member] = { ...planned.shape, member: planned.member };
       if (planned.outputs) outputs = mergePlannedOutputs(outputs, planned.outputs);
+      // #4609: where the member's copy lives in a pull request's environment (a review stack).
+      if (typeof planned.location === "string" && planned.location !== "") locations[planned.member] = planned.location;
       // #4552: the member's grain (declared at base, else its lexicon's) and, on the resource grain, its rows.
       locks[planned.member] = await resolvePlannedLock(capability, input, planned, ctx.lockGrain);
     }
@@ -207,6 +212,7 @@ export async function planWaveComponent(
       ...(Object.keys(shapes).length > 0 ? { shapes } : {}),
       ...(policy.length > 0 ? { policy } : {}),
       ...(Object.keys(locks).length > 0 ? { locks } : {}),
+      ...(Object.keys(locations).length > 0 ? { locations } : {}),
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

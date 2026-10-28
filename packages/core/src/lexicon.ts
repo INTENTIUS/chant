@@ -1484,6 +1484,26 @@ export interface LexiconPlugin {
   prNoteDetail?(input: { member: string; changeSet: ChangeSetDocument; stage: "plan" | "apply" | "record" }): { title?: string; lines: string[] } | undefined | Promise<{ title?: string; lines: string[] } | undefined>;
 
   /**
+   * Whether `ci.prEnvironment.template` names one of this lexicon's own
+   * stacks rather than a chant.config.ts environment (#4609). The pulumi
+   * lexicon takes `<project>/<stack>`, plywood's `review_stacks.template`.
+   * Returns a short description of the stack when it does, for the log line,
+   * and undefined when it does not, so `pr-env up` checks the template
+   * against the declared environments as before.
+   */
+  prEnvTemplate?(template: string): string | undefined;
+
+  /**
+   * A teardown for what this lexicon made in a pull request's environment
+   * and its own `teardownOwned` does not reach (#4609): the pulumi lexicon
+   * removes each review stack `pr-<n>` the environment's record names in
+   * `locations`. `pr-env down` and `sweep` run it beside the lexicons'
+   * teardowns, under the same marker check. `cwd` is the project root the
+   * locations are relative to.
+   */
+  prEnvTeardown?(ctx: { cwd: string }): import("./components/pr-environment").PrEnvTeardownAdapter | undefined;
+
+  /**
    * Host Op runs — the seam `chant run <op> --on <this lexicon>` dispatches to
    * (#2121, epic #2114). Core ships one provider of its own, `local`, and
    * selects it when no `--on` is passed; a lexicon that can start, watch,

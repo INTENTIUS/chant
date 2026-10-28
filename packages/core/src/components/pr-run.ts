@@ -171,6 +171,12 @@ export interface PrPlanSet {
    * Absent when no step planned.
    */
   locks?: Record<string, PlannedLock & { component: string }>;
+  /**
+   * Where each planned member's copy lives in a pull request's environment
+   * (#4609), by component, then member: a review stack, as its capability
+   * said. Absent when no step gave one.
+   */
+  locations?: Record<string, Record<string, string>>;
   /** The groups planned as one (ws-107), in plan order of their first member. Absent when none. */
   groups?: PrPlanGroup[];
   /** The components that could have grouped and did not, with why (ws-107, ruling 1): the fan-out's `fallbacks`. */
@@ -226,6 +232,7 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
   const plans: Record<string, Record<string, unknown>> = {};
   const shapes: Record<string, PlanShape> = {};
   const locks: Record<string, PlannedLock & { component: string }> = {};
+  const locations: Record<string, Record<string, string>> = {};
   let failed = false;
   // #4550: the findings capabilities' plans carried, and a policy denial among them.
   const capabilityPolicy: CapabilityPolicyFindings[] = [];
@@ -325,6 +332,7 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
       plans[p.component] = p.plans;
       Object.assign(shapes, p.shapes);
       for (const [member, lock] of Object.entries(p.locks ?? {})) locks[member] = { ...lock, component: p.component };
+      if (p.locations && Object.keys(p.locations).length > 0) locations[p.component] = { ...p.locations };
       for (const part of p.parts) {
         parts.push(part);
         componentOf.set(part.member.member, p.component);
@@ -367,6 +375,7 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
     ...(options.plan.fallbacks?.length ? { fallbacks: options.plan.fallbacks } : {}),
     ...(Object.keys(shapes).length > 0 ? { shapes } : {}),
     ...(Object.keys(locks).length > 0 ? { locks } : {}),
+    ...(Object.keys(locations).length > 0 ? { locations } : {}),
     ...(Object.keys(deployedOutputs).length > 0 ? { deployedOutputs } : {}),
     ...(Object.keys(plannedOutputs).length > 0 ? { plannedOutputs } : {}),
   };

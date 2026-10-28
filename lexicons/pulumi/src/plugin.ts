@@ -32,7 +32,10 @@
  *   `./op/`), following the terraform lexicon (#4494);
  * - the tier-2 contract's remainder (#4510): PUL003 to PUL015 over the
  *   member's export, two more skills, `detectTemplate` for a stack export or
- *   a `Pulumi.yaml`, and three `chant init` templates (`./init-templates.ts`).
+ *   a `Pulumi.yaml`, and three `chant init` templates (`./init-templates.ts`);
+ * - review stacks in a pull request's environment (#4609): `prEnvTemplate`
+ *   takes a `<project>/<stack>` template, and `prEnvTeardown` removes the
+ *   environment's `pr-<n>` stacks (`./review-stack.ts`).
  */
 import { pulumiCiSetup } from "./ci-setup";
 import { basename, isAbsolute, resolve } from "node:path";
@@ -49,6 +52,7 @@ import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
 import { PULUMI_RUNTIME_NAMES } from "./lsp/keys";
 import { pulumiInitTemplates } from "./init-templates";
+import { pulumiTemplateStack, reviewStackTeardown } from "./review-stack";
 
 const loadSkills = createSkillsLoader(import.meta.url, [
   {
@@ -79,6 +83,16 @@ export const pulumiPlugin: LexiconPlugin = {
   // #4550: the engine install lines for the pull request pipeline's default image.
   ciSetup(ctx: { dir: string }): string[] {
     return pulumiCiSetup(ctx);
+  },
+
+  // #4609: a ci.prEnvironment.template of the form <project>/<stack> names a Pulumi stack, so it needs no chant.config.ts environment.
+  prEnvTemplate(template: string): string | undefined {
+    return pulumiTemplateStack(template) ? `the Pulumi stack ${template}` : undefined;
+  },
+
+  // #4609: pr-env down and the sweep destroy and remove each review stack the environment's record names (./review-stack.ts).
+  prEnvTeardown(ctx: { cwd: string }) {
+    return reviewStackTeardown({ cwd: ctx.cwd });
   },
 
   // A pulumi workspace member's reader project (#3179): its stack export from

@@ -72,6 +72,8 @@ export { pulumiCapabilityPlugin, PULUMI_VERB_FAMILIES } from "./capability-plugi
 // The apply capability (#4541): a Pulumi or plunge stack as a component step that plans and applies.
 export {
   createPulumiUpCapability,
+  pulumiReviewStep,
+  PR_ENV_TEMPLATE_VARIABLE,
   pulumiUpCapability,
   pulumiUpMember,
   pulumiReleaseInputs,
@@ -108,7 +110,22 @@ export { pulumiAuditCatalog } from "./lint/audit-catalog";
 export { PulumiWatchOp, type PulumiWatchOpConfig, type PulumiWatchOpResources } from "./composites/pulumi-watch-op";
 export { gatedStackExport, gatedStackCancel, gatedStackMove, moveLeftovers, PULUMI_STACK_OPS_OP, type PulumiStackOpOutcome, type PulumiStackOpCommon, type PulumiStackOpKind } from "./stack-ops";
 // Review stacks (INTENTIUS/plywood#15): pr-<n> stacks only.
-export { initReviewStack, removeReviewStack, type ReviewStackOptions, type ReviewStackOutcome } from "./review-stack";
+export {
+  initReviewStack,
+  removeReviewStack,
+  parseReviewStackLocation,
+  prNumberOf,
+  pulumiTemplateStack,
+  reviewConfigSource,
+  reviewStackFor,
+  reviewStackLocation,
+  reviewStackTeardown,
+  REVIEW_STACK_TEARDOWN,
+  type ReviewStackOptions,
+  type ReviewStackOutcome,
+  type ReviewStackTeardown,
+  type ReviewStackTeardownOptions,
+} from "./review-stack";
 export { pulumiStackReferences, parsePulumiStackName, stackReferenceOwner, PULUMI_STACK_REFERENCE_TYPE, type PulumiStackReference } from "./stack-references";
 export { PulumiAdoptOp, type PulumiAdoptOpConfig, type PulumiAdoptOpResources, type PulumiAdoptStack } from "./composites/pulumi-adopt-op";
 export { parsePlungeAdoptView, pulumiAdoptDigest, adoptBucketTarget, type PlungeAdoptView, type PlungeAdoptStatus } from "./adopt";

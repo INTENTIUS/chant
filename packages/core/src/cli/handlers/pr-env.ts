@@ -43,6 +43,7 @@ import { isEmptyChangeSet } from "../../change-set";
 import {
   PR_ENV_EXIT,
   PR_ENV_GATE,
+  PR_ENV_LOCATION_SEPARATOR,
   PR_ENV_RECORD_FILE,
   PR_ENV_REPORT_DIR,
   acceptHandedRecord,
@@ -53,6 +54,7 @@ import {
   prEnvStatusState,
   prEnvironmentName,
   prEnvironmentSite,
+  prEnvTemplateOwner,
   renderPrEnvNote,
   ttlMs,
   type PrEnvReport,
@@ -172,7 +174,9 @@ async function prEnvUp(ctx: CommandContext): Promise<number> {
     );
   }
   const { config } = await loadChantConfig(projectPath).catch(() => ({ config: {} as ChantConfig }));
-  const derived = derivePrEnvironment(config, setting.template, pr);
+  // #4609: a template a lexicon takes as its own stack (plywood's project/stack) needs no chant.config.ts environment.
+  const owner = prEnvTemplateOwner(ctx.plugins, setting.template);
+  const derived = derivePrEnvironment(config, setting.template, pr, owner ? { templateOwner: owner } : {});
   if ("refusal" in derived) return fail(derived.refusal);
 
   // The build sees pr-<n> as its environment and the template's name beside it.
@@ -182,7 +186,7 @@ async function prEnvUp(ctx: CommandContext): Promise<number> {
     ...ctx,
     args: { ...args, env: derived.env, param: [...(args.param ?? []).filter((p) => !p.startsWith(`${derived.param}=`)), `${derived.param}=${derived.env}`] },
   };
-  console.error(formatInfo(`pr-env up: ${derived.env}, derived from ${derived.template}${derived.endpoint ? ` at ${derived.endpoint}` : ""}, marker ${derived.stack}/${derived.env}`));
+  console.error(formatInfo(`pr-env up: ${derived.env}, derived from ${owner ? owner.describe : derived.template}${derived.endpoint ? ` at ${derived.endpoint}` : ""}, marker ${derived.stack}/${derived.env}`));
   return withComponentEndpoint(envCtx, () => up(envCtx, pr, derived, setting.ttl), { config: { ...config, environments: derived.environments }, environment: derived.env });
 }
 
@@ -232,8 +236,20 @@ function componentsPrEnvAdapter(
       const sum = (k: "create" | "update" | "replace" | "delete") => ms.reduce((n, m) => n + m.counts[k], 0);
       const found = prEnvironmentSite(p.sites?.[component], target.template, target.env);
       const site = found ? { ...(found.runtime ? { runtime: found.runtime } : {}), ...(found.url ? { url: found.url } : {}), ...(found.domain ? { domain: found.domain } : {}) } : undefined;
-      return { component, status: status(component), create: sum("create"), update: sum("update"), replace: sum("replace"), delete: sum("delete"), ...(site && Object.keys(site).length > 0 ? { site } : {}) };
+      const location = locationOf(component);
+      return { component, status: status(component), create: sum("create"), update: sum("update"), replace: sum("replace"), delete: sum("delete"), ...(location ? { location } : {}), ...(site && Object.keys(site).length > 0 ? { site } : {}) };
     });
+  // #4609: each component's copies in pr-<n> (a review stack per pulumi-up step), as their plans said, joined in member order.
+  const locationOf = (component: string): string | undefined => {
+    const by = set?.locations?.[component];
+    if (!by) return undefined;
+    const all = Object.keys(by).sort().map((m) => by[m]!);
+    return all.length > 0 ? all.join(PR_ENV_LOCATION_SEPARATOR) : undefined;
+  };
+  const locations = (): Record<string, string> | undefined => {
+    const out = Object.fromEntries(p.plan.order.map((c) => [c, locationOf(c)]).filter((e): e is [string, string] => e[1] !== undefined));
+    return Object.keys(out).length > 0 ? out : undefined;
+  };
   return {
     async plan(target) {
       if (p.plan.order.length === 0) return { digest: "", empty: true, rows: [], ...(p.routedAway ? { message: p.routedAway } : {}) };
@@ -267,6 +283,7 @@ function componentsPrEnvAdapter(
         status: applied.status === "applied" ? "applied" : applied.status === "waiting" ? "waiting" : "failed",
         ...(applied.held ? { held: true, message: applied.held } : applied.leaseFailed ? { message: applied.leaseFailed } : {}),
         rows: rows(target, status),
+        ...(locations() ? { locations: locations()! } : {}),
         ...(afterHook ? { afterFailure: afterHook } : {}),
       };
     },
@@ -334,12 +351,14 @@ async function prEnvPost(ctx: CommandContext): Promise<number> {
  * `ci.prEnvironment.teardown` names in the declaration at this commit
  * (#4330), which the down and sweep jobs check out from the base branch.
  */
-async function teardownSources(): Promise<{ config: ChantConfig; adapters: PrEnvTeardownAdapter[] }> {
+async function teardownSources(ctx: CommandContext): Promise<{ config: ChantConfig; adapters: PrEnvTeardownAdapter[] }> {
   const projectPath = resolve(".");
   const { config } = await loadChantConfig(projectPath).catch(() => ({ config: {} as ChantConfig }));
   const { scopeSource } = await import("../../workspace/write-scope");
   const hook = scopeSource(projectPath, "HEAD").declaration?.ci?.prEnvironment?.teardown;
-  return { config, adapters: hook ? [commandTeardownAdapter(hook, { cwd: projectPath })] : [] };
+  // #4609: what lexicons made outside their own teardown, such as the pulumi lexicon's review stacks.
+  const fromLexicons = (ctx.plugins ?? []).map((p) => p.prEnvTeardown?.({ cwd: projectPath })).filter((a): a is PrEnvTeardownAdapter => a !== undefined);
+  return { config, adapters: [...fromLexicons, ...(hook ? [commandTeardownAdapter(hook, { cwd: projectPath })] : [])] };
 }
 
 async function prEnvDown(ctx: CommandContext): Promise<number> {
@@ -355,7 +374,7 @@ async function prEnvDown(ctx: CommandContext): Promise<number> {
     reason,
     ...(member ? { member } : {}),
     ports: cliPorts(ctx, forge),
-    ...(await teardownSources()),
+    ...(await teardownSources(ctx)),
     plugins: ctx.plugins,
     commit: await headCommit(),
     actor: actor(),
@@ -378,7 +397,7 @@ async function prEnvSweep(ctx: CommandContext): Promise<number> {
   if (typeof forge === "number") return forge;
   const result = await prEnvSweepRun({
     ports: cliPorts(ctx, forge),
-    ...(await teardownSources()),
+    ...(await teardownSources(ctx)),
     plugins: ctx.plugins,
     commit: await headCommit(),
     actor: actor(),

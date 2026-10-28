@@ -13,7 +13,7 @@
  */
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { describe, expect, test } from "vitest";
 import { isPlanMovedError, type DeployContext } from "@intentius/chant/components/capability";
 import { PlanShapeMovedError } from "@intentius/chant/components/covered-round";
@@ -22,7 +22,9 @@ import { pulumiStreamPreview, PULUMI_STREAMING_PREVIEW_ENV } from "./engine-even
 import {
   createPulumiUpCapability,
   pulumiReleaseInputs,
+  pulumiReviewStep,
   pulumiScratchConfig,
+  PR_ENV_TEMPLATE_VARIABLE,
   pulumiUpMember,
   PulumiAppliedShapeError,
   PulumiPlanMovedError,
@@ -330,5 +332,78 @@ describe("a step pinned to its engine release (#4592)", () => {
     const cap = createPulumiUpCapability({ plunge: path.run, env: {}, tmp: tmp(), snapshots: null });
     await expect(cap.plan!(ctx, step({ engine: "plunge", engineVersion: "0.1.0 && id" }))).rejects.toThrow(/pulumi-up/);
     expect(path.calls).toHaveLength(0);
+  });
+});
+
+// ── #4609: review stacks in a pull request's environment ────────────────────
+
+describe("review stacks in a pull request's environment (#4609)", () => {
+  const prCtx: DeployContext = { env: "pr-12", component: "site" };
+  const reviewMember = "corpus-aws-ts/pr-12";
+  const location = (engineName: string, stack: string) => `${engineName}:${relative(process.cwd(), dir) || "."}#${stack}`;
+
+  test("outside pr-<n> the step keeps its own stack", () => {
+    expect(pulumiReviewStep(step(), "prod")).toEqual({ step: step() });
+    expect(pulumiReviewStep(step(), "pr-12", "corpus-aws-ts/staging")).toEqual({ step: step({ stack: "pr-12" }), review: { stack: "pr-12", copyConfigFrom: "staging" } });
+    expect(pulumiReviewStep(step({ reviewSuffix: "web" }), "pr-12")).toMatchObject({ review: { stack: "pr-12-web", copyConfigFrom: "floci" } });
+  });
+
+  test("plan initializes pr-<n> from the template's stack, then previews pr-<n> and gives its location", async () => {
+    const plunge = engine();
+    const cap = createPulumiUpCapability({ plunge: plunge.run, env: { [PR_ENV_TEMPLATE_VARIABLE]: "corpus-aws-ts/staging" }, tmp: tmp(), snapshots: null });
+    const planned = await cap.plan!(prCtx, step({ engine: "plunge" }));
+    const artifact = planned.artifact as PulumiUpArtifact;
+    expect(plunge.calls.map((c) => c.args)).toEqual([
+      ["stack", "init", "pr-12", "--no-select", "--copy-config-from", "staging"],
+      ["preview", "--json", "--show-sames", "--stack", "pr-12", "--save-plan", artifact.planFile],
+    ]);
+    expect(plunge.calls[0]!.cwd).toBe(dir);
+    expect(planned.member).toBe(reviewMember);
+    expect(artifact.stack).toBe("pr-12");
+    expect(planned.location).toBe(location("plunge", "pr-12"));
+  });
+
+  test("with no template naming this project's stack, the config comes from the step's own stack", async () => {
+    const pulumi = engine();
+    const cap = createPulumiUpCapability({ run: pulumi.run, env: { [PR_ENV_TEMPLATE_VARIABLE]: "staging" }, tmp: tmp(), snapshots: null });
+    await cap.plan!(prCtx, step({ engine: "pulumi" }));
+    expect(pulumi.calls[0]!.args).toEqual(["stack", "init", "pr-12", "--no-select", "--copy-config-from", "floci"]);
+  });
+
+  test("a review stack that exists already is previewed and updated", async () => {
+    const calls: string[][] = [];
+    const base = engine();
+    const run: PulumiRunner = async (args, opts) => {
+      if (args[0] === "stack" && args[1] === "init") {
+        calls.push(args);
+        throw Object.assign(new Error("exit 255"), { code: 255, stderr: "error: stack 'pr-12' already exists" });
+      }
+      return base.run(args, opts);
+    };
+    const cap = createPulumiUpCapability({ plunge: run, env: {}, tmp: tmp(), snapshots: null });
+    const planned = await cap.plan!(prCtx, step({ engine: "plunge" }));
+    expect(calls).toHaveLength(1);
+    expect(planned.member).toBe(reviewMember);
+  });
+
+  test("run applies the plan to pr-<n>, never to the template's stack", async () => {
+    const plunge = engine();
+    const cap = createPulumiUpCapability({ plunge: plunge.run, env: {}, tmp: tmp(), snapshots: null });
+    const planned = await cap.plan!(prCtx, step({ engine: "plunge" }));
+    const artifact = planned.artifact as PulumiUpArtifact;
+    const out = await cap.run({ ...prCtx, plans: { [reviewMember]: artifact } }, step({ engine: "plunge" }));
+    expect(plunge.calls.map((c) => c.args).slice(2)).toEqual([
+      ["up", "--plan", artifact.planFile, "--yes", "--json", "--stack", "pr-12"],
+      ["stack", "output", "--json", "--show-secrets=false", "--stack", "pr-12"],
+    ]);
+    expect(out).toMatchObject({ member: reviewMember, stack: "pr-12", fromWavePlan: true });
+    expect(plunge.calls.some((c) => c.args.includes("floci"))).toBe(false);
+  });
+
+  test("a step whose config waits on an upstream still names its review stack's location", async () => {
+    const cap = createPulumiUpCapability({ plunge: engine().run, env: {}, tmp: tmp(), snapshots: null });
+    const planned = await cap.plan!({ ...prCtx, unresolvedInputs: ["db.url"] }, step({ engine: "plunge" }));
+    expect(planned.member).toBe(reviewMember);
+    expect(planned.location).toBe(location("plunge", "pr-12"));
   });
 });

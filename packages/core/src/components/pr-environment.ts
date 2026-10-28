@@ -64,6 +64,13 @@ export const PR_ENV_RECORD_FILE = "pr-env-record.json";
 /** The commit status context the up and down jobs set. */
 export const PR_ENV_STATUS_CONTEXT = "chant/pr-env";
 
+/**
+ * What joins a component's locations when it has more than one copy
+ * (#4609): a component with two `pulumi-up` steps has two review stacks,
+ * kept on the record as one string under the component's name.
+ */
+export const PR_ENV_LOCATION_SEPARATOR = ", ";
+
 /** The variable a component's build reads the template's name from. */
 export const PR_ENV_TEMPLATE_VAR = "CHANT_ENV_TEMPLATE";
 
@@ -129,17 +136,41 @@ export type PrEnvDerivation =
       environments: EnvironmentDeclaration[] | undefined;
       /** The endpoint the environment's plans and applies use, if any. */
       endpoint?: string;
+      /** The lexicon whose own stack the template names (#4609), when it is not a chant.config.ts environment. */
+      templateOwner?: string;
     }
   | { refusal: string };
+
+/**
+ * A lexicon that takes `ci.prEnvironment.template` as one of its own stacks
+ * (#4609): the pulumi lexicon takes `<project>/<stack>`, so plywood's
+ * `review_stacks.template` needs no chant.config.ts environment of that name.
+ * `describe` says which stack, for the log line.
+ */
+export interface PrEnvTemplateOwner {
+  lexicon: string;
+  describe: string;
+}
+
+/** The first lexicon among `plugins` that takes `template` as its own stack (`prEnvTemplate`), or undefined. */
+export function prEnvTemplateOwner(plugins: ReadonlyArray<{ name: string; prEnvTemplate?(template: string): string | undefined }> | undefined, template: string): PrEnvTemplateOwner | undefined {
+  for (const p of plugins ?? []) {
+    const describe = p.prEnvTemplate?.(template);
+    if (describe) return { lexicon: p.name, describe };
+  }
+  return undefined;
+}
 
 /**
  * Derive pull request `pr`'s environment from `template` and the project's
  * config. Refused when the resources it creates could not be told apart
  * from the template's: marking is off, or `ownership.env` is a literal (every
  * resource would carry that literal) or unset. Refused too when the config
- * would not take the name, or does not declare the template.
+ * would not take the name, or does not declare the template. A template a
+ * lexicon takes as its own stack (`opts.templateOwner`, #4609) needs no
+ * declared environment of that name, and carries no endpoint of its own.
  */
-export function derivePrEnvironment(config: ChantConfig, template: string, pr: number): PrEnvDerivation {
+export function derivePrEnvironment(config: ChantConfig, template: string, pr: number, opts: { templateOwner?: PrEnvTemplateOwner } = {}): PrEnvDerivation {
   const env = prEnvironmentName(pr);
   const stack = resolveOwnershipStack(config);
   if (stack === undefined) {
@@ -158,7 +189,7 @@ export function derivePrEnvironment(config: ChantConfig, template: string, pr: n
   }
   const declared = config.environments;
   if (declared && declared.length > 0) {
-    if (!declared.some((e) => environmentName(e) === template)) {
+    if (!opts.templateOwner && !declared.some((e) => environmentName(e) === template)) {
       return { refusal: `${env}: ci.prEnvironment.template is ${template}, which chant.config.ts's environments do not declare` };
     }
     if (!matchesDeclaredEnvironment(declared, env)) {
@@ -169,9 +200,9 @@ export function derivePrEnvironment(config: ChantConfig, template: string, pr: n
       return { refusal: `${env} is declared outright in chant.config.ts's environments, so it is not a pull request's to create or tear down; declare "pr-*" instead` };
     }
   }
-  const endpoint = environmentEndpoint(declared, env) ?? environmentEndpoint(declared, template);
+  const endpoint = environmentEndpoint(declared, env) ?? (opts.templateOwner ? undefined : environmentEndpoint(declared, template));
   const environments = declared ? [endpoint ? { name: env, endpoint } : env, ...declared] : undefined;
-  return { env, template, stack, param: own.param, environments, ...(endpoint ? { endpoint } : {}) };
+  return { env, template, stack, param: own.param, environments, ...(endpoint ? { endpoint } : {}), ...(opts.templateOwner ? { templateOwner: opts.templateOwner.lexicon } : {}) };
 }
 
 /** The placeholder a template's site URL or domain names the environment with (#4330). */

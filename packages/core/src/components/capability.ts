@@ -163,6 +163,14 @@ export interface CapabilityPlan {
    * waits on. Absent or empty: the change set alone decides.
    */
   destructive?: string[];
+  /**
+   * Where this member's copy lives in a pull request's environment (#4609),
+   * as the capability says: `pulumi-up` answers `<engine>:<dir>#<stack>` for
+   * the review stack `pr-<n>` it planned. `pr-env up` keeps it on the
+   * environment's record under `locations`, where the lexicon's teardown
+   * reads it back. Absent outside a pull request's environment.
+   */
+  location?: string;
 }
 
 /**
