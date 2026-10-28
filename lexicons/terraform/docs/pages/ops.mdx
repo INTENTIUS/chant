@@ -108,6 +108,20 @@ A lock release, a state migration's writes and a pull request's copy of a root r
 
 The plugin registers the same operations as `terraform-state-unlock`, `terraform-state-push` and `terraform-copy`. A run of the first two that still waits throws an error whose `exitCode` is 3.
 
+### Actions outside waves
+
+A Terraform `action` block (Terraform 1.14 or newer) can run on its own as a day-2 action, such as a key rotation or a cache flush. `invokeAction` in `@intentius/chant-lexicon-terraform/action-ops` runs it under a gated request, with fixed arguments only:
+
+1. `plan -input=false -no-color -invoke=<address> -out=<file>`, then `show -json <file>`. The address must be one of the plan's `action_invocations`, or the call is refused with `unknown-action`.
+2. A request at `tf-action` with the subject `<root>:<address>`. Its digest binds the address, the commit and the plan's `action_invocations`, so a plan whose action input changed after the approval asks again. Until an approval by someone other than the requester counts, the call answers `gated` and exits 3.
+3. Once one counts, the approval is spent, `apply <file>` runs, and the finished line records `result: applied` (or `failed`) with `detail.result` set to `ok` (or `failed`), the exit code and the last lines of output. Asking again for a request that applied answers `spent` and runs nothing.
+
+The address is `action.<type>.<label>`, after any number of `module.<name>.` steps, with instance keys such as `[0]` or `["blue"]`. An action declared in a child module is invoked by its module address, such as `module.app.action.aws_lambda_invoke.rotate`. Anything else is refused with `action-address` before anything runs.
+
+Only Terraform invokes an action. An OpenTofu or choudoufu binary is refused with `action-engine`, naming the engine, before any binary runs. A `terraform` binary older than 1.14 is refused the same way, from the version the caller passes or the one `version -json` prints.
+
+The plugin registers the operation as `terraform-action`. A run that still waits throws an error whose `exitCode` is 3.
+
 ### In a composed run
 
 A composed run is described in [Composed runs](/chant/guide/composed-runs/); this is Terraform's way of doing it. Set `terraform.compose`:

@@ -92,6 +92,29 @@ describe("the comment grammar (moved from terragucci's comment.ts)", () => {
     expect(parseProductComment(pw, "/plywood lock everything")).toMatchObject({ kind: "refused" });
   });
 
+  test("an action command names one member and one action, and nothing else (#4653)", () => {
+    const words = assertProductWords({ ...TERRAGUCCI, commands: { ...TERRAGUCCI.commands, action: "action" as const } });
+    expect(parseProductComment(words, "/terragucci action apps/orders action.aws_lambda_invoke.rotate")).toEqual({ kind: "action", member: "apps/orders", address: "action.aws_lambda_invoke.rotate" });
+    expect(parseProductComment(words, "/terragucci action apps/orders module.app.action.aws_lambda_invoke.rotate")).toEqual({ kind: "action", member: "apps/orders", address: "module.app.action.aws_lambda_invoke.rotate" });
+    expect(parseProductComment(words, '/terragucci action apps/orders module.app["blue"].action.t.l[0]')).toEqual({ kind: "action", member: "apps/orders", address: 'module.app["blue"].action.t.l[0]' });
+    for (const bad of [
+      "/terragucci action",
+      "/terragucci action apps/orders",
+      "/terragucci action apps/orders action.t.l extra",
+      "/terragucci action ../etc action.t.l",
+      "/terragucci action apps/orders -target=x",
+      "/terragucci action apps/orders action.t.l;id",
+      "/terragucci action apps/orders $(id)",
+      "/terragucci action apps/orders action.t.l\nrm",
+    ]) {
+      expect(parseProductComment(words, bad.replace("\\n", "\n"))).toMatchObject({ kind: "refused" });
+    }
+    // A product without the word does not read it.
+    expect(parseProductComment(tg, "/terragucci action apps/orders action.t.l")).toMatchObject({ kind: "refused", reason: expect.stringMatching(/the commands are/) });
+    expect(commentLine(words, "action")).toBe("/terragucci action");
+    expect(productWordsProblems(words, { jobs: ["plan", "apply", "lock", "unlock", "agent"] })).toContain("commands.action needs a action job, and the pipeline has none");
+  });
+
   test("an alias reads only where its variable turns it on", () => {
     expect(parseProductComment(tg, "atlantis plan -d envs/dev/orders")).toBeUndefined();
     expect(parseProductComment(tg, "atlantis plan -d ./envs/dev/orders/", { TG_ATLANTIS_COMMENTS: "1" })).toEqual({ kind: "plan", member: "envs/dev/orders" });
