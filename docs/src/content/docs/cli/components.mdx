@@ -21,6 +21,7 @@ chant components fan-out (--base <ref> [--head <ref>] [--include-dependents]
                                 [--dump-outputs <file>] [--progress-json | --events-json]
 chant components pr-plan --base <ref> --pr <n> [--env <env>] [--gate <name>]
                                 [--forge github|gitlab|forgejo] [--member <name>]
+                                [--target <address> | --target <component>:<address>]
                                 [--output <dir>] [--json] [--events-json] [--report-url <url>]
 chant components pr-post --pr <n> --head <sha> --env <env> --forge github|gitlab|forgejo
                                 [--member <name>] [--output <dir>] [--result <result>]
@@ -492,6 +493,7 @@ The [generated pull-request pipeline](/chant/guide/apply-on-merge/#finish-an-app
 | `--green` | `pr-apply` only. Apply the green commit at `HEAD`, measured from the green commit last applied to `--env` (`_green-applies/<env>.json` on `chant/lifecycle`), under the approved plans of the merges between when they cover the plan, else at the gate under op `green-<sha>`. Takes no `--pr`. A `HEAD` with no counting `ci/green` tag is refused, and the commit last applied exits 0. See [which commit applies](/chant/guide/apply-on-merge/#which-commit-applies-and-under-whose-approval). |
 | `--before-merge` | `pr-apply` only, chant 0.124.42 and newer ([#4301](https://github.com/INTENTIUS/chant/issues/4301)). Apply open pull request `--pr` at `HEAD`, its head, before it merges. Needs `--forge`. It refuses with `before-merge-off` (exit 1) unless the declaration at base sets `ci.workflow` to `apply-before-merge`, and with `requires-unmet` (exit 3) unless the forge says the pull request is approved, mergeable, undiverged and green. Both run before any of the head's code loads. Then the pull request's gate decides as on merge, and under `ci.locks` it takes `apply` locks. Takes no `--green` or `--wave-gate`. See [apply a pull request before it merges](/chant/guide/apply-before-merge/). |
 | `--pr <n>` | The pull or merge request. Required for `pr-plan`. |
+| `--target <address>` | `pr-plan` only ([#4620](https://github.com/INTENTIUS/chant/issues/4620)). Narrow the plan to this address, passed to each planned member's capability: `-target` for a Terraform root, `--target` for a Pulumi stack. A bare address narrows every member the pull request plans. `--target <component>:<address>` narrows that component alone. A value is read as a component's when the text before its first `:` is a component's name, so a Pulumi URN stays a bare address. Repeatable. The targets join each member's digest, so an approval of the narrowed plan covers no other. A member whose capability cannot narrow, such as `sql-migrate` or `cfn-deploy`, is refused by name before anything plans (exit 1). `pr-apply` and `pr-record` take no `--target`. |
 | `--env <env>` | Environment each member deploys into. Defaults to `local`. |
 | `--gate <name>` | The gate's name. Defaults to `pr-apply`. |
 | `--forge <kind>` | `github`, `gitlab` or `forgejo`. Post the note and the status, with the client read from the CI job's environment. |

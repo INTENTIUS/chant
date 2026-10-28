@@ -465,8 +465,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.share = share;
     } else if (arg === "--target") {
       // `chant components fan-out|run --components --target <component>:<address>` (#4300), repeatable.
+      // `chant components pr-plan --target <address>` (#4620) also takes a bare address; fan-out and run refuse one.
       const raw = args[++i];
-      if (!raw || raw.startsWith("-") || !raw.includes(":")) throw new Error("--target needs a component and an address: --target <component>:<address>");
+      if (!raw || raw.startsWith("-")) throw new Error("--target needs an address: --target <component>:<address>, or on pr-plan --target <address>");
       (result.targets ??= []).push(raw);
     } else if (arg === "--canary") {
       const raw = args[++i];
@@ -547,6 +548,9 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--apply-on-merge") {
       // `chant build --pr-loop --apply-on-merge` and `chant ci serve --apply-on-merge` (#4168): opt into applying on merge.
       result.applyOnMerge = true;
+    } else if (arg === "--preview-comment") {
+      // `chant build --pr-loop --preview-comment` (#4620): the job that answers `/<product> <plan word>` with a preview.
+      result.previewComment = true;
     } else if (arg === "--pr-env") {
       // `chant build --pr-loop --pr-env` (#4298): add the pull request environment's jobs.
       result.prEnv = true;

@@ -1289,7 +1289,7 @@ export function deployContext(
  * such verb, in composition order. A step whose kind is not registered
  * refuses too. Does nothing when `ctx.targets` is absent.
  */
-export function assertTargetsAccepted(component: DriverComponent, registry: CapabilityRegistry, ctx: DeployContext): void {
+export function assertTargetsAccepted(component: DriverComponent, registry: CapabilityRegistry, ctx: Pick<DeployContext, "targets">): void {
   if (!ctx.targets || ctx.targets.length === 0) return;
   const walk = (steps: DriverPhase["steps"]): void => {
     for (const step of steps) {

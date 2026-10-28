@@ -1178,7 +1178,9 @@ Component release ledger + status:
                             the ones that depend on them, and write the
                             report and note (--base <ref> --pr <n>
                             [--forge github|gitlab|forgejo] posts them);
-                            applies nothing
+                            --target <address> narrows every member's plan
+                            to the address, --target <member>:<address>
+                            one member's (#4620); applies nothing
   components pr-post       Post the plan note and the chant/plan status
                             from the report pr-plan --no-status wrote
                             (--pr <n> --head <sha> --env <env> --forge

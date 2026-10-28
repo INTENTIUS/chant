@@ -65,6 +65,14 @@ export { driftNotifyFields, productNotifySource, productNotifyWords, productSend
 
 /** The first chant with `chant notify relay` and the notify relay buttons (#4611). */
 export const NOTIFY_RELAY_FLOOR = NEXT_RELEASE;
+
+/**
+ * The first chant whose product pipeline has the comment preview
+ * (`previewComment`, `build --pr-loop --preview-comment`) and whose
+ * `components pr-plan` takes `--target` (#4620). A product feature-detects
+ * `prCommentPreviewJob` and this constant together.
+ */
+export const PR_PREVIEW_FLOOR = NEXT_RELEASE;
 export {
   decideRelayClick,
   handleRelayRequest,
@@ -103,7 +111,7 @@ export {
   type ProductPipelineJobs,
   type ProductPipelineOptions,
 } from "./components/product-pipeline";
-export { prApplyComment, prCommentLockJobs, prLoopSetup, engineSetupLines, withProductBin, type PrCommentLockJob } from "./components/pr-pipeline";
+export { prApplyComment, prCommentLockJobs, prCommentPreviewJob, prLoopSetup, engineSetupLines, withProductBin, type PrCommentLockJob, type PrCommentPreviewJob } from "./components/pr-pipeline";
 export { CI_SERVICES_FLOOR, engineServices, githubServices, gitlabServices, serviceWaitLine, servicesJobEnv, type CiService } from "./components/ci-services";
 export { renderPrNote, prStatusContext, prApproveCommand, prApproveCommands, prApproveTargets, prMergeSentence, type PrMemberDetail } from "./pr-loop";
 export { upsertPlanNote } from "./pr-post";

@@ -135,8 +135,9 @@ import type { CommandContext } from "../registry";
 import { parseArgs } from "../parse-args";
 import { withComponentEndpoint } from "../component-endpoint";
 import type { ComponentChangeSignal, FanOutPlan } from "../../components/fan-out";
-import { failedRunExitCode, type DriverComponent } from "../../components/driver";
-import type { CapabilityRegistry } from "../../components/capability";
+import { assertTargetsAccepted, failedRunExitCode, type DriverComponent } from "../../components/driver";
+import { TargetsRefusedError, type CapabilityRegistry } from "../../components/capability";
+import { prPlanTargets } from "../../components/pr-targets";
 import type { ComponentEnvironmentDeclaration } from "../../components/component";
 import { prLoopHooksAt, runPrHooks, type PrHoldSettled, type PrHookPlace, type PrLoopHooks } from "../../components/pr-hooks";
 import { decidePrPolicyOverride, policyReviewOf, prLoopPolicyAt, prPolicyReport, runPrPolicy, spendPrPolicyOverride, type PrLoopPolicy } from "../../components/pr-policy";
@@ -178,6 +179,8 @@ export interface Prepared {
   hookFailed?: string;
   /** Where the stage's hooks run, once its op is known. */
   hookPlace?: PrHookPlace;
+  /** `pr-plan --target` (#4620): the addresses each planned member's capability plan narrows to. */
+  targets?: Record<string, string[]>;
   /**
    * Set when `ci.branches` or `ci.labels` (#4292) leave the member out of this
    * stage: why. The plan is then empty, so the stage reports `nothing`.
@@ -217,6 +220,10 @@ export async function prepare(ctx: CommandContext, stage: "plan" | "apply" | "re
     );
   }
   if (args.fromAffected) return fail(`pr-${stage} derives the change itself; drop --from-affected`);
+  // #4620: a target narrows the preview; an apply or a record covers what the approved plan covers.
+  if (stage !== "plan" && args.targets && args.targets.length > 0) {
+    return fail(`pr-${stage} applies or records what the pull request's approved plan covers, so it takes no --target`, "Narrow the plan with pr-plan --target, and approve that plan.");
+  }
   let member: string | undefined;
   if (args.members?.length) {
     const checked = await checkMember(projectPath, args.members);
@@ -494,7 +501,32 @@ export async function planBare(p: Prepared, onRunEvent?: RunEventSink): Promise<
     // #4613: a step's own policy engine (CrossGuard) reads its packs at the base, as ci.policy is.
     policyBase: p.base,
     ...(onRunEvent ? { onRunEvent } : {}),
+    ...(p.targets ? { targets: p.targets } : {}),
   });
+}
+
+/**
+ * `pr-plan --target` (#4620): the addresses by member, set on `p`, or the
+ * exit code when a value is refused or a targeted member has a capability
+ * that cannot narrow, which is named before anything plans.
+ */
+function narrowToTargets(p: Prepared, values: readonly string[] | undefined): number | undefined {
+  if (!values || values.length === 0) return undefined;
+  const resolved = prPlanTargets(values, p.plan.order, new Set(p.components.map((c) => c.name)));
+  if ("error" in resolved) return fail(resolved.error, "--target <address> narrows every member the pull request plans; --target <member>:<address> narrows one.");
+  const { targets } = resolved;
+  const byName = new Map(p.components.map((c) => [c.name, c]));
+  for (const [name, addresses] of Object.entries(targets)) {
+    try {
+      assertTargetsAccepted(byName.get(name)!, p.registry, { targets: addresses });
+    } catch (err) {
+      if (err instanceof TargetsRefusedError) return fail(`${err.message}, so nothing was planned`, "Drop --target, or name a member whose steps can narrow: --target <member>:<address>.");
+      throw err;
+    }
+  }
+  p.targets = targets;
+  console.error(formatInfo(`narrowed to ${Object.entries(targets).map(([name, a]) => `${name}: ${a.join(", ")}`).join("; ") || "nothing planned"}`));
+  return undefined;
 }
 
 /**
@@ -781,6 +813,8 @@ async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> 
   }
   const p = await prepare(ctx, "plan");
   if (typeof p === "number") return p;
+  const narrowed = narrowToTargets(p, ctx.args.targets);
+  if (narrowed !== undefined) return narrowed;
   const op = prOp(ctx.args.pr, p.member);
   placeHooks(ctx, p, "plan", op);
   const upload = openUpload(stage, "plan", ctx.args.pr, p);

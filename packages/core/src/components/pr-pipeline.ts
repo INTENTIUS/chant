@@ -287,6 +287,14 @@ export interface PrLoopPipelineOptions {
    * which applies no default branch.
    */
   control?: { target: ControlTarget; sentCheck?: string; markSent?: string };
+  /**
+   * A comment preview (#4620): `/<product> <plan word>` on a pull request
+   * plans its head again in a job that holds only a read token, and a job
+   * after it posts the note ({@link prCommentPreviewJob}). The words must
+   * name a `plan` command. Set from `--preview-comment` beside `--pr-loop`.
+   * Default false.
+   */
+  previewComment?: boolean;
 }
 
 /** The lock job's step names and commands (#4327), shared by the GitHub-shaped generators. */
@@ -356,6 +364,115 @@ export function prCommentLockJobs(forge: ForgeKind, options: Pick<PrLoopPipeline
     });
   }
   return out;
+}
+
+/** The job answering `/<product> <plan word>` (#4620). */
+export const PR_COMMENT_PREVIEW_JOB = "comment-preview";
+/** The job that posts the comment preview's note and status (#4620). */
+export const PR_COMMENT_PREVIEW_NOTE_JOB = "comment-preview-note";
+/** The GitLab variable a pipeline of the target branch is started with to preview a merge request again (#4620). */
+export const GITLAB_PREVIEW_PR_VAR = "CHANT_PREVIEW_PR";
+/** The variable the GitHub-shaped preview job's checkout script reads the pull request's head ref from (#4620). */
+export const PREVIEW_REF_ENV = "CHANT_PREVIEW_REF";
+/** The preview job's output that carries the commit it checked out, set before any of the change's code runs (#4620). */
+export const PREVIEW_HEAD_OUTPUT = "head";
+
+/** The comment preview's two jobs (#4620): the plan at the pull request's head, and the post after it. */
+export interface PrCommentPreviewJob {
+  jobName: typeof PR_COMMENT_PREVIEW_JOB;
+  noteJobName: typeof PR_COMMENT_PREVIEW_NOTE_JOB;
+  /** The comment it answers, `/<product> <plan word>`. */
+  comment: string;
+  /**
+   * The plan job's command, as the pull request's plan job runs it, with
+   * `PR_NUMBER` from the comment (or {@link GITLAB_PREVIEW_PR_VAR}) and
+   * `BASE_SHA` left to {@link base}.
+   */
+  plan: PrLoopJob;
+  /** The shell line that sets `BASE_SHA` to the target branch's commit, run after the checkout. */
+  base: string;
+  /**
+   * GitHub and Forgejo: the ref the checkout script fetches through
+   * {@link PREVIEW_REF_ENV}. GitLab: the line that checks out the merge
+   * request's head, in the job's own clone.
+   */
+  head: { ref: string } | { line: string };
+  /** The post job's command, the values it reads, and on GitLab the line that finds the head it posts for. */
+  post: { command: string; env: Record<string, string>; setup?: string[] };
+  /** On GitLab, the variable a pipeline of the target branch is started with. */
+  gitlabVar?: string;
+}
+
+/**
+ * The comment preview (#4620), with `previewComment`: `/<product> <plan
+ * word>` on an open pull request runs the plan job's `pr-plan` again at the
+ * pull request's head, in a job that holds only a read token and drops it
+ * before the change's code runs, as the plan job does (#4295). The job after
+ * it checks out the target branch's commit, takes the report back and posts
+ * the note and the plan status with `pr-post`, as `plan-note` does.
+ *
+ * On GitHub the commenter must be able to write, as for the lock and unlock
+ * comments (#4588); Forgejo's payload says nothing of the commenter. GitLab
+ * starts no pipeline on a note, so there both jobs run in a pipeline of the
+ * target branch started with {@link GITLAB_PREVIEW_PR_VAR} set to the merge
+ * request's iid. The plan job unsets the forge tokens before it checks out
+ * the merge request's head, and the post job finds that head again with `git
+ * ls-remote`; a report for another head is refused by `pr-post`.
+ *
+ * Undefined without `previewComment`. Throws when the words name no `plan`
+ * command, since no comment would start the job.
+ */
+export function prCommentPreviewJob(forge: ForgeKind, env: string, options: PrLoopPipelineOptions = {}, member?: string): PrCommentPreviewJob | undefined {
+  if (!options.previewComment) return undefined;
+  const words = resolveProductWords(options.words);
+  const comment = commentLine(words, "plan");
+  if (!comment) throw new Error(`--preview-comment answers /${words.product} <plan command>, and the words name no plan command; name one in the words' commands, or drop --preview-comment`);
+  // The plan job's own command: the apply side's options never reach it, so they are left out here.
+  const { applyBeforeMerge: _early, applyRequires: _requires, applyOnMerge: _onMerge, ...planSide } = options;
+  const [plan] = prLoopJobs(forge, env, planSide, member);
+  const github = forge !== "gitlab";
+  const prNumber = github ? "${{ github.event.issue.number }}" : `$${GITLAB_PREVIEW_PR_VAR}`;
+  const fromComment = (jobEnv: Record<string, string>): Record<string, string> => {
+    const { BASE_SHA: _base, ...rest } = jobEnv;
+    return github ? { ...rest, PR_NUMBER: prNumber } : { ...rest, PR_NUMBER: prNumber, BASE_SHA: "$CI_COMMIT_SHA" };
+  };
+  const branch = options.branch ?? "main";
+  const base = github
+    ? `BASE_SHA="$(git rev-parse --verify "refs/remotes/origin/${branch.replace(/"/g, "")}^{commit}")" && export BASE_SHA`
+    : 'BASE_SHA="$CI_COMMIT_SHA" && export BASE_SHA';
+  const postCommand = withProductBin(
+    [
+      "chant", "components", "pr-post", "--pr", '"$PR_NUMBER"', "--head", '"$HEAD_SHA"',
+      "--env", env, "--output", PR_LOOP_REPORT_DIR, "--forge", forge,
+      ...(member ? ["--member", member] : []),
+      ...(github ? ["--result", '"$PLAN_RESULT"'] : []),
+    ].join(" "),
+    words.bin,
+  );
+  return {
+    jobName: PR_COMMENT_PREVIEW_JOB,
+    noteJobName: PR_COMMENT_PREVIEW_NOTE_JOB,
+    comment,
+    plan: { ...plan!, env: fromComment(plan!.env), run: { ...plan!.run, env: fromComment(plan!.run.env) } },
+    base,
+    head: github ? { ref: `refs/pull/${prNumber}/head` } : { line: pullRequestCheckout("gitlab") },
+    post: github
+      ? {
+          command: postCommand,
+          env: {
+            PR_NUMBER: prNumber,
+            HEAD_SHA: `\${{ needs.${PR_COMMENT_PREVIEW_JOB}.outputs.${PREVIEW_HEAD_OUTPUT} }}`,
+            PLAN_RESULT: `\${{ needs.${PR_COMMENT_PREVIEW_JOB}.result }}`,
+            GITHUB_TOKEN: GITHUB_JOB_TOKEN,
+          },
+        }
+      : {
+          command: postCommand,
+          env: { PR_NUMBER: prNumber },
+          setup: ['HEAD_SHA="$(git ls-remote origin "refs/merge-requests/$PR_NUMBER/head" | cut -f1)" && export HEAD_SHA'],
+        },
+    ...(github ? {} : { gitlabVar: GITLAB_PREVIEW_PR_VAR }),
+  };
 }
 
 /** One job's command and the forge values it reads, as environment variables for its step. */
