@@ -32,9 +32,54 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assertGatePolicySource, type GatePolicySource, type ResolvedGatePolicySource } from "./policy-source";
 
-export type { GatePolicySource, ResolvedGatePolicySource } from "./policy-source";
+// `ci.policy.source` (#4613): its shape and check, here so this module
+// bundles alone (#4294). `./policy-source.ts` fetches it.
+
+/** `ci.policy.source`: where the shared rules live. */
+export interface GatePolicySource {
+  /** The repository: an `https://`, `http://`, `ssh://` or `file://` URL, or `git@<host>:<path>`. */
+  repo: string;
+  /** A tag, a branch or a full commit. */
+  ref: string;
+  /** The Rego directory inside the repository. Default `policy`. */
+  path?: string;
+}
+
+/** The source as fetched: what a report and a decision record. */
+export interface ResolvedGatePolicySource {
+  /** The repository, with any user and password left out. */
+  repo: string;
+  ref: string;
+  /** The commit the ref named when the job fetched it. */
+  commit: string;
+  /** The Rego directory inside the repository. */
+  path: string;
+}
+
+const REPO = /^(https?:\/\/[^\s/]+\/\S+|ssh:\/\/[^\s/]+\/\S+|file:\/\/\/?\S+|[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:\S+)$/;
+const REF = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
+
+/** `source`, checked. Throws with what is wrong. `where` names it, such as `ci.policy.source`. */
+export function assertGatePolicySource(where: string, raw: unknown): asserts raw is GatePolicySource {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) throw new Error(`${where} must be { repo, ref, path? }`);
+  const o = raw as Record<string, unknown>;
+  for (const key of Object.keys(o)) {
+    if (key !== "repo" && key !== "ref" && key !== "path") throw new Error(`${where}.${key} is not a setting; the settings are repo, ref and path`);
+  }
+  if (typeof o.repo !== "string" || !REPO.test(o.repo) || o.repo.startsWith("-")) {
+    throw new Error(`${where}.repo must be a git URL (https://, ssh://, file:// or git@<host>:<path>)`);
+  }
+  if (typeof o.ref !== "string" || !REF.test(o.ref) || o.ref.includes("..") || o.ref.endsWith("/")) {
+    throw new Error(`${where}.ref must be a tag, a branch or a commit`);
+  }
+  if (o.path !== undefined) {
+    if (typeof o.path !== "string" || o.path.trim() === "") throw new Error(`${where}.path must be a non-empty string`);
+    if (o.path.startsWith("/") || o.path.split("/").includes("..")) throw new Error(`${where}.path must be a directory inside the source repository`);
+  }
+}
+
+
 
 /** The result shapes chant reads: conftest's and OPA's. */
 export const GATE_POLICY_ENGINES = ["conftest", "opa"] as const;

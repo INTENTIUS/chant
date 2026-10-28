@@ -6,7 +6,7 @@
  * the ledger reads and writes are in `./gated-request.ts`.
  */
 import { createHash } from "node:crypto";
-import { sortedJsonReplacer } from "../utils";
+import { sortedJsonReplacer } from "../sorted-json";
 
 /** One request: what it asks for, of what, by whom and when. */
 export interface GatedRequest {

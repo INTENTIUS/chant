@@ -281,7 +281,7 @@ describe("the plan trade with targets, run against the emulator (#4332)", () => 
 });
 
 describe("the ci-identity bundle (#4332)", () => {
-  test("holds ci-identity.ts alone, with no glob library, and stays small", async () => {
+  test("holds ci-identity.ts and the floor constant alone, with no glob library, and stays small", async () => {
     const result = await build({
       entryPoints: [join(REPO, "packages", "core", "src", "ci-identity.ts")],
       bundle: true,
@@ -292,7 +292,11 @@ describe("the ci-identity bundle (#4332)", () => {
       outdir: "out",
       logLevel: "silent",
     });
-    expect(Object.keys(result.metafile.inputs).map((i) => i.replace(/^.*?packages\//, "packages/"))).toEqual(["packages/core/src/ci-identity.ts"]);
+    expect(Object.keys(result.metafile.inputs).map((i) => i.replace(/^.*?packages\//, "packages/"))).toEqual([
+      // The next-release floor constant (#4480, the #4549 token floors): no imports.
+      "packages/core/src/release-floors.ts",
+      "packages/core/src/ci-identity.ts",
+    ]);
     expect(result.outputFiles.reduce((n, f) => n + f.contents.byteLength, 0)).toBeLessThan(24 * 1024);
   });
 });
