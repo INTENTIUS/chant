@@ -13,6 +13,9 @@ import {
   getHeadCommit,
   pushLifecycle,
   pushLifecycleReport,
+  pushLifecycleRebasing,
+  LifecyclePushLostError,
+  LIFECYCLE_PUSH_TRIES,
   StaleLifecycleBranchError,
   appendReleaseRecordLine,
   readReleaseLedgerLines,
@@ -524,6 +527,103 @@ describe("lifecycle/git", () => {
     expect(err.name).toBe("StaleLifecycleBranchError");
     expect(err.expected).toBeNull();
     expect(err.message).toContain("moved");
+  });
+
+  // #4551: a pr handler's push (the merge record pr-record writes) fetches, replays and pushes again, as publishRef does.
+  describe("pushLifecycleRebasing", () => {
+    /** A, and B with its own copy of the branch: the record job's checkout, taken before A pushes again. */
+    async function twoWriters(): Promise<{ a: string; b: string; remotePath: string; done: () => Promise<void> }> {
+      const { clonePath: a, remotePath, cleanup } = await setupClonePair();
+      const b = join(tmpdir(), `chant-state-clone-b-${Date.now()}-${Math.random()}`);
+      git(["clone", "-q", remotePath, b], tmpdir());
+      git(["config", "user.email", "record@chant.dev"], b);
+      git(["config", "user.name", "Record"], b);
+      await writeSnapshot("prod", "aws", JSON.stringify({ a: 1 }), { cwd: a });
+      expect(await pushLifecycle({ cwd: a })).toBe(true);
+      git(["fetch", "-q", "origin", "chant/lifecycle:chant/lifecycle"], b);
+      git(["fetch", "-q", "origin", "+refs/heads/chant/lifecycle:refs/remotes/origin/chant/lifecycle"], b);
+      return {
+        a,
+        b,
+        remotePath,
+        done: async () => {
+          await cleanup();
+          const { rm } = await import("node:fs/promises");
+          await rm(b, { recursive: true, force: true });
+        },
+      };
+    }
+    /** A moves the remote on behind B's back, as a wave job pushing beside the record job does. */
+    async function advance(a: string, filename: string, content: string): Promise<void> {
+      git(["fetch", "-q", "origin", "+refs/heads/chant/lifecycle:refs/remotes/origin/chant/lifecycle"], a);
+      await writeBlobToPath("prod", filename, content, `wave: ${filename}`, { cwd: a });
+      expect(await pushLifecycle({ cwd: a })).toBe(true);
+    }
+
+    test("a push another writer beat between checkout and push replays on the remote's tip and lands, with both writes kept", async () => {
+      const { a, b, remotePath, done } = await twoWriters();
+      try {
+        await advance(a, "wave.json", '{"wave":1}');
+        await writeBlobToPath("prod", "merge.json", '{"merge":1}', "Merge record: abc", { cwd: b });
+        // The single push refuses, as pr-record's did before.
+        expect((await pushLifecycleReport({ cwd: b })).pushed).toBe(false);
+
+        expect(await pushLifecycleRebasing({ cwd: b })).toEqual({ pushed: true });
+        const tip = git(["rev-parse", "refs/heads/chant/lifecycle"], remotePath).stdout.trim();
+        expect(git(["rev-parse", "refs/heads/chant/lifecycle"], b).stdout.trim()).toBe(tip);
+        expect(git(["show", `${tip}:prod/merge.json`], remotePath).stdout).toBe('{"merge":1}');
+        expect(git(["show", `${tip}:prod/wave.json`], remotePath).stdout).toBe('{"wave":1}');
+        expect(git(["show", `${tip}:prod/aws.json`], remotePath).stdout).toBe(JSON.stringify({ a: 1 }));
+        // B's commit sits on A's, with its own message and author.
+        expect(git(["log", "-1", "--format=%s|%an|%ae", tip], remotePath).stdout.trim()).toBe("Merge record: abc|Record|record@chant.dev");
+        expect(git(["log", "-1", "--format=%s", `${tip}^`], remotePath).stdout.trim()).toBe("wave: wave.json");
+        // The lease now names the tip that landed, so the next push needs no retry.
+        expect(git(["rev-parse", "refs/remotes/origin/chant/lifecycle"], b).stdout.trim()).toBe(tip);
+        expect(git(["rev-parse", "--verify", "--quiet", "refs/chant/lifecycle-rebase"], b).exitCode).not.toBe(0);
+      } finally {
+        await done();
+      }
+    });
+
+    test("a commit that changes the file the other writer changed is refused by name, and the local write is kept", async () => {
+      const { a, b, done } = await twoWriters();
+      try {
+        await advance(a, "merge.json", '{"merge":"wave"}');
+        await writeBlobToPath("prod", "merge.json", '{"merge":"record"}', "Merge record: abc", { cwd: b });
+        const local = git(["rev-parse", "refs/heads/chant/lifecycle"], b).stdout.trim();
+        const err = await pushLifecycleRebasing({ cwd: b }).catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(LifecyclePushLostError);
+        expect((err as LifecyclePushLostError).name).toBe("LifecyclePushLostError");
+        expect((err as Error).message).toContain('"Merge record: abc"');
+        expect((err as Error).message).toContain("changes files the other writer changed too");
+        expect(git(["rev-parse", "refs/heads/chant/lifecycle"], b).stdout.trim()).toBe(local);
+      } finally {
+        await done();
+      }
+    });
+
+    test(`a remote that refuses every push fails after ${LIFECYCLE_PUSH_TRIES} tries with LifecyclePushLostError`, async () => {
+      const { b, remotePath, done } = await twoWriters();
+      try {
+        const hook = join(remotePath, "hooks", "update");
+        writeFileSync(hook, "#!/bin/sh\necho 'another writer is mid-push' >&2\nexit 1\n", { mode: 0o755 });
+        await writeBlobToPath("prod", "merge.json", '{"merge":1}', "Merge record: abc", { cwd: b });
+        const err = await pushLifecycleRebasing({ cwd: b }).catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(LifecyclePushLostError);
+        expect((err as LifecyclePushLostError).tries).toBe(LIFECYCLE_PUSH_TRIES);
+        expect((err as Error).message).toContain(`chant/lifecycle was not pushed to "origin" after ${LIFECYCLE_PUSH_TRIES} tries`);
+      } finally {
+        await done();
+      }
+    });
+
+    test("no remote reads as the local note, as pushLifecycleReport says it", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        await writeSnapshot("prod", "aws", JSON.stringify({ a: 1 }), { cwd: dir });
+        expect(await pushLifecycleRebasing({ cwd: dir })).toEqual({ pushed: false, pushWarning: LIFECYCLE_LOCAL_NOTE });
+      });
+    });
   });
 
   // ── Release ledger plumbing (#568) ──────────────────────────────────────
