@@ -1,0 +1,277 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/release-catalog/v1/release-catalog.schema.json",
+  "title": "chant release catalog",
+  "description": "The release catalog (#4595): every component a repo publishes, each with its versions, read from the release ledger only. A product writes it beside its registry (terragucci at <prefix>/catalog/index.json) and renders it with renderCatalogSite. Version 1 of its contract. Readers ignore fields they do not know; a field is only ever added within a version. Written by chant 0.124.55 and newer (RELEASE_CATALOG_FLOOR).",
+  "type": "object",
+  "required": [
+    "$schema",
+    "contract",
+    "chant",
+    "generatedAt",
+    "components"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "https://intentius.io/chant/schemas/workspace/release-catalog/v1/release-catalog.schema.json"
+    },
+    "contract": {
+      "const": 1
+    },
+    "chant": {
+      "type": "string",
+      "description": "The chant that wrote the catalog."
+    },
+    "generatedAt": {
+      "type": "string",
+      "description": "ISO-8601 time the catalog was built, given by the caller."
+    },
+    "components": {
+      "type": "array",
+      "description": "Sorted by name.",
+      "items": {
+        "$ref": "#/$defs/component"
+      }
+    }
+  },
+  "$defs": {
+    "fields": {
+      "type": "object",
+      "description": "Engine fields, one object per engine key (terraform, npm). Core reads none of them.",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "component": {
+      "type": "object",
+      "required": [
+        "name",
+        "latest",
+        "fields",
+        "versions"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "latest": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The newest active version, its version or its digest when it has none; null when no version is active."
+        },
+        "fields": {
+          "$ref": "#/$defs/fields"
+        },
+        "versions": {
+          "type": "array",
+          "description": "Newest first.",
+          "items": {
+            "$ref": "#/$defs/version"
+          }
+        }
+      }
+    },
+    "version": {
+      "type": "object",
+      "required": [
+        "version",
+        "digest",
+        "commit",
+        "time",
+        "actor",
+        "envs",
+        "status",
+        "changelog",
+        "attestation",
+        "consumers",
+        "fields"
+      ],
+      "properties": {
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The release record's releaseVersion, or null for a record that names none, which is listed by digest."
+        },
+        "digest": {
+          "type": "string",
+          "minLength": 1
+        },
+        "commit": {
+          "type": "string",
+          "minLength": 1
+        },
+        "time": {
+          "type": "string",
+          "description": "The earliest record of this release."
+        },
+        "actor": {
+          "type": "string"
+        },
+        "envs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "status": {
+          "type": "object",
+          "required": [
+            "state",
+            "reason",
+            "replacement",
+            "actor",
+            "time"
+          ],
+          "properties": {
+            "state": {
+              "enum": [
+                "active",
+                "deprecated",
+                "yanked"
+              ]
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "replacement": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The version to move to instead."
+            },
+            "actor": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "time": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "changelog": {
+          "type": "object",
+          "required": [
+            "bump",
+            "entries"
+          ],
+          "properties": {
+            "bump": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "enum": [
+                    "major",
+                    "minor",
+                    "patch"
+                  ]
+                }
+              ]
+            },
+            "entries": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "kind",
+                  "sha",
+                  "subject"
+                ],
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "breaking",
+                      "feat",
+                      "fix",
+                      "other"
+                    ]
+                  },
+                  "sha": {
+                    "type": "string"
+                  },
+                  "subject": {
+                    "type": "string"
+                  },
+                  "scope": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "attestation": {
+          "type": "object",
+          "required": [
+            "state",
+            "verify",
+            "identity"
+          ],
+          "properties": {
+            "state": {
+              "enum": [
+                "verified",
+                "signed",
+                "unsigned"
+              ]
+            },
+            "verify": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The command a consumer runs to check the attestation."
+            },
+            "identity": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "consumers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "root"
+            ],
+            "properties": {
+              "repo": {
+                "type": "string"
+              },
+              "root": {
+                "type": "string"
+              },
+              "file": {
+                "type": "string"
+              },
+              "address": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "fields": {
+          "$ref": "#/$defs/fields"
+        }
+      }
+    }
+  }
+}

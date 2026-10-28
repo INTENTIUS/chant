@@ -272,6 +272,18 @@ export const defaultPlungeRunner: PulumiRunner = (args, opts) =>
   execFileAsync("plunge", args, { cwd: opts.cwd, maxBuffer: 256 * 1024 * 1024, env: engineEnv({ ...process.env, ...opts.env }) });
 
 /**
+ * A runner for the engine binary at `bin`, an absolute path (#4592): a
+ * stack pinned to its own release runs the binary its install line wrote
+ * (`ciEngineDir` in ./ci-setup.ts) rather than whichever is on PATH. Only
+ * the binary changes; the argv still goes through the same allowlists
+ * (`runAllowedPulumi`, `runAllowedPlunge`, the apply checks) before it runs.
+ */
+export function engineRunnerAt(bin: string): PulumiRunner {
+  if (!bin.startsWith("/")) throw new Error(`an engine binary is an absolute path, not ${JSON.stringify(bin)}`);
+  return (args, opts) => execFileAsync(bin, args, { cwd: opts.cwd, maxBuffer: 256 * 1024 * 1024, env: engineEnv({ ...process.env, ...opts.env }) });
+}
+
+/**
  * The two `up` argv chant runs, for the `pulumi-up` capability's `run` alone
  * (#4541; ruling 1 on INTENTIUS/plywood#1 widened #4450 and #4476 so the
  * capability applies, from an apply job holding the apply identity only).

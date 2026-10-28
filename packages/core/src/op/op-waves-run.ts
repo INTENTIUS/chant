@@ -97,6 +97,7 @@ import type { CapabilityRegistry } from "../components/capability";
 import type { LockGrain } from "../lifecycle/lock-rows";
 import type { LockLiveness } from "../lifecycle/resource-lock";
 import type { GatePolicyExec } from "../gate-policy";
+import { gitOpWaveNewerCommit, opWaveStandDownReason, tipAppliesTargets, type OpWaveNewerCommitPort } from "./op-waves-stand-down";
 import {
   applyOpWaveStep,
   opWaveCosts,
@@ -753,6 +754,10 @@ export interface RunOpWaveOptions {
   lockGate?: string;
   /** Whether a run holding rows still runs (#4552). Default: the forge's answer, with the lease's age. */
   lockLiveness?: LockLiveness;
+  /** Overrides the spec's `standDown` (#4581). */
+  standDown?: boolean;
+  /** How the job finds a newer commit on its branch (#4581). Default: fetch the branch from `origin` ({@link gitOpWaveNewerCommit}). */
+  newerCommit?: OpWaveNewerCommitPort;
   /**
    * Where the job's run events go (#4555), on the run-event contract: a
    * phase `wave-<k>` per wave and a step per run target, settled as the
@@ -797,6 +802,8 @@ export interface RunOpWaveResult {
   outcome?: OpWaveApplyOutcome;
   /** Set when the apply asked to plan again (#3821); {@link runOpWave} does, so a caller sees it only on a pass that gave up. */
   replan?: { reason?: string };
+  /** The newer commit on the branch the apply stood down for (#4581), with `outcome` `stood-down` and exit 6. */
+  supersededBy?: { branch: string; commit: string };
   /** The waves a `rest` wave's job ran (#3821), in order, with how each ended. */
   rest?: Array<{ wave: number; exitCode: number; digest?: string }>;
   decision?: OpWaveDecision;
@@ -1649,6 +1656,7 @@ export function opWaveRunRecord(
     ...(d?.digest ? { digest: d.digest } : {}),
     exitCode: result.exitCode,
     ...(result.outcome && result.outcome.outcome !== "replan" ? { outcome: result.outcome.outcome } : {}),
+    ...(result.supersededBy ? { supersededBy: { ...result.supersededBy } } : {}),
     applied: [...result.applied],
     failed: [...result.failed],
     moved: [...result.moved],
@@ -2992,10 +3000,46 @@ async function applyStage(
     return;
   }
   try {
+    // #4581: under the lease the grain took, a newer commit that applies the same targets makes this apply stand down.
+    if (await standDownForNewer(options, ctx, decision, runs, recordPath)) return;
     await applyLeased(options, ctx, decision, runs, planned, byApply, recordPath);
   } finally {
     if (lease && !(await lease.release())) log(`wave ${k} (${wave.name}): could not let go of the rows it held; the next apply takes them over once this run is gone`);
   }
+}
+
+/**
+ * Stand down for a newer commit (#4581), when the spec's `standDown` (or
+ * the job's option) asks: a newer commit on the branch whose spec at the
+ * tip applies every one of `runs` in this wave makes the wave apply
+ * nothing, with the `stood-down` outcome and exit 6. The approval is left
+ * unspent. True when it stood down.
+ */
+async function standDownForNewer(options: RunOpWaveOptions, ctx: WaveContext, decision: OpWaveDecision, runs: readonly OpWaveRun[], recordPath?: string): Promise<boolean> {
+  const { spec, k, wave, cwd, log, result } = ctx;
+  if (!(options.standDown ?? spec.standDown === true)) return false;
+  const newer = await (options.newerCommit ?? gitOpWaveNewerCommit)(cwd, options.head);
+  if (!newer) return false;
+  const targets = runs.map((r) => r.target);
+  let atTip: OpWavesSpec | null;
+  try {
+    const { text } = (options.show ?? gitShowAtBase)(newer.tip, options.specFile.replace(/^\.\//, "").split("\\").join(posix.sep), cwd);
+    atTip = text === null ? null : parseOpWavesSpec(text, `${options.specFile} at ${newer.tip.slice(0, 12)}`);
+  } catch (err) {
+    log(`wave ${k} (${wave.name}): ${newer.branch} has a newer commit ${newer.tip.slice(0, 12)}, and its spec cannot be read (${err instanceof Error ? err.message : String(err)}), so this job applies`);
+    return false;
+  }
+  if (!tipAppliesTargets(atTip, newer.branch, wave.name, targets)) {
+    log(`wave ${k} (${wave.name}): ${newer.branch} has a newer commit ${newer.tip.slice(0, 12)}, and its wave does not apply every target of this job, so this job applies`);
+    return false;
+  }
+  const reason = opWaveStandDownReason(newer, targets);
+  log(`wave ${k} (${wave.name}): standing down, nothing applied: ${reason}`);
+  result.outcome = { outcome: "stood-down", reason };
+  result.supersededBy = { branch: newer.branch, commit: newer.tip };
+  result.exitCode = CHANT_EXIT.superseded;
+  if (recordPath) writeRecord(recordPath, decision, result);
+  return true;
 }
 
 /** {@link applyStage} once its holds are settled and, on the resource grain, its rows held. */

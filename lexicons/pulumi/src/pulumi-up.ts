@@ -138,6 +138,7 @@ import {
 import { CHANT_EXIT } from "@intentius/chant/exit-codes";
 import { pulumiExitOf } from "./exit-codes";
 import { pulumiMemberEngine, type PulumiMemberEngine, type PulumiMemberEngineSource } from "./member-engine";
+import { ciEngineDir, ciRelease, CI_ENGINE_ROOT } from "./ci-setup";
 import { pulumiMemberPlannedOutputs } from "./member-outputs";
 import { pulumiPlanShape, pulumiShapeDifferences } from "./plan-shape";
 import { pulumiLockRows } from "./lock-rows";
@@ -145,6 +146,7 @@ import { pulumiTraceFacts } from "./trace-facts";
 import {
   defaultPlungeRunner,
   defaultPulumiRunner,
+  engineRunnerAt,
   plungeUpArgs,
   pulumiMemberStackOutputs,
   pulumiRunFailure,
@@ -178,6 +180,17 @@ export interface PulumiUpStepInput {
   config?: Record<string, unknown>;
   /** `pulumi` or `plunge`; see `pulumiMemberEngine`. */
   engine?: PulumiMemberEngine;
+  /**
+   * The engine release this stack is pinned to (#4592): the step runs
+   * `<engineRoot>/<engine>-<engineVersion>/<engine>`, the path the pulumi
+   * lexicon's install lines write (`pulumiInstallLine`, `plungeInstallLine`,
+   * `ciEngineDir`), instead of the binary on PATH. A semver such as
+   * `3.272.0`, or for plunge its own release such as `0.1.0`. Absent: the
+   * binary on PATH, as before.
+   */
+  engineVersion?: string;
+  /** Where the versioned installs live, as the install lines' `root` (#4592). Default `/opt/chant`. Needs `engineVersion`. */
+  engineRoot?: string;
   /** Where a relative `dir` resolves from. Default: the process's working directory. */
   cwd?: string;
   /** The member's lock grain (#4552), over `ci.lockGrain`. Default: `ci.lockGrain`, else `resource` on plunge, `target` on stock Pulumi. */
@@ -317,6 +330,8 @@ export function pulumiDefaultLockGrain(engine: PulumiMemberEngine): PulumiLockGr
 export interface PulumiUpOptions {
   run?: PulumiRunner;
   plunge?: PulumiRunner;
+  /** The runner for a pinned binary (#4592), by its path. Default: {@link engineRunnerAt}. */
+  runAt?: (bin: string) => PulumiRunner;
   /** The job environment the engine is picked from. Default: `process.env`. */
   env?: Record<string, string | undefined>;
   /** Where scratch directories go. Default: the OS temp dir. */
@@ -397,6 +412,8 @@ interface Resolved {
   dir: string;
   member: string;
   engine: PulumiMemberEngine;
+  /** The pinned binary's absolute path (#4592), when the step names `engineVersion`. */
+  engineBin?: string;
   engineSource: PulumiMemberEngineSource;
   engineBecause: string;
   grain: PulumiLockGrain;
@@ -410,7 +427,45 @@ function resolveStep(input: PulumiUpStepInput, opts: PulumiUpOptions, declared?:
   // #4552: the step's own grain, else ci.lockGrain as the caller read it at base, else the engine's default.
   const grain = input.lockGrain ?? declared ?? pulumiDefaultLockGrain(picked.engine);
   if (grain === "resource" && picked.engine === "pulumi") throw new PulumiResourceGrainRefusedError(member);
-  return { dir, member, engine: picked.engine, engineSource: picked.source, engineBecause: picked.because, grain };
+  const engineBin = pulumiUpEngineBin(input, picked.engine);
+  return { dir, member, engine: picked.engine, ...(engineBin ? { engineBin } : {}), engineSource: picked.source, engineBecause: picked.because, grain };
+}
+
+/**
+ * The binary a step pinned with `engineVersion` runs (#4592): the versioned
+ * path the install lines write. Undefined without `engineVersion`, so the
+ * binary on PATH runs. A version or root a shell or path would read as
+ * more is refused, as the install lines refuse it.
+ */
+export function pulumiUpEngineBin(input: Pick<PulumiUpStepInput, "engineVersion" | "engineRoot">, engine: PulumiMemberEngine): string | undefined {
+  if (input.engineVersion === undefined) {
+    if (input.engineRoot !== undefined) throw new Error('pulumi-up: "engineRoot" needs "engineVersion", the release installed under it');
+    return undefined;
+  }
+  try {
+    ciRelease(engine, input.engineVersion);
+    return `${ciEngineDir(engine, input.engineVersion, input.engineRoot ?? CI_ENGINE_ROOT)}/${engine}`;
+  } catch (err) {
+    throw new Error(`pulumi-up: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/** The `run` and `plunge` options for the stack output and export reads: the pinned binary's for both when the step names one (#4592), else the caller's. */
+function runnerOptions(r: Pick<Resolved, "engineBin">, opts: PulumiUpOptions): { run?: PulumiRunner; plunge?: PulumiRunner } {
+  if (r.engineBin) {
+    const { pulumi, plunge } = runnersFor(r, opts);
+    return { run: pulumi, plunge };
+  }
+  return { ...(opts.run ? { run: opts.run } : {}), ...(opts.plunge ? { plunge: opts.plunge } : {}) };
+}
+
+/** The runners a resolved step uses: the pinned binary's when it names one, else the options' or the PATH default. */
+function runnersFor(r: Pick<Resolved, "engineBin">, opts: PulumiUpOptions): { pulumi: PulumiRunner; plunge: PulumiRunner } {
+  if (r.engineBin) {
+    const pinned = opts.runAt ? opts.runAt(r.engineBin) : engineRunnerAt(r.engineBin);
+    return { pulumi: pinned, plunge: pinned };
+  }
+  return { pulumi: opts.run ?? defaultPulumiRunner, plunge: opts.plunge ?? defaultPlungeRunner };
 }
 
 /** The scratch directory, the config copy in it and plunge's plan file path. */
@@ -454,8 +509,8 @@ async function previewStack(
   try {
     ({ stdout } =
       r.engine === "plunge"
-        ? await runAllowedPlunge(opts.plunge ?? defaultPlungeRunner, args, r.dir, STREAMING)
-        : await runAllowedPulumi(opts.run ?? defaultPulumiRunner, args, r.dir, STREAMING));
+        ? await runAllowedPlunge(runnersFor(r, opts).plunge, args, r.dir, STREAMING)
+        : await runAllowedPulumi(runnersFor(r, opts).pulumi, args, r.dir, STREAMING));
   } catch (err) {
     const f = pulumiRunFailure(err);
     if (f.missingBinary) throw new Error(`pulumi-up: "${r.member}": the ${r.engine} binary was not found on PATH; install ${r.engine} to plan this stack`);
@@ -514,7 +569,8 @@ function isArtifact(value: unknown): value is PulumiUpArtifact {
 
 /** A release's copy of the program, made runnable before its first engine run (#4542). */
 async function readyCopy(r: Resolved, opts: PulumiUpOptions): Promise<void> {
-  await prepareReleaseCopy({ dir: r.dir, member: r.member, engine: r.engine, run: r.engine === "plunge" ? (opts.plunge ?? defaultPlungeRunner) : (opts.run ?? defaultPulumiRunner) });
+  const runners = runnersFor(r, opts);
+  await prepareReleaseCopy({ dir: r.dir, member: r.member, engine: r.engine, run: r.engine === "plunge" ? runners.plunge : runners.pulumi });
 }
 
 async function planStack(ctx: DeployContext, input: PulumiUpStepInput, opts: PulumiUpOptions): Promise<CapabilityPlan> {
@@ -686,7 +742,7 @@ async function runStack(ctx: DeployContext, input: PulumiUpStepInput, opts: Pulu
         throw new Error(`pulumi-up: "${r.member}": the saved plan ${approved.planFile ?? "(none)"} is not on this machine; plan the stack in the apply job, then apply`);
       }
       try {
-        ({ stdout } = await runApplyPlunge(opts.plunge ?? defaultPlungeRunner, plungeUpArgs({ plan: approved.planFile, stack: input.stack, ...tail }), r.dir));
+        ({ stdout } = await runApplyPlunge(runnersFor(r, opts).plunge, plungeUpArgs({ plan: approved.planFile, stack: input.stack, ...tail }), r.dir));
       } catch (err) {
         throw upFailure(r, err, approved.policy);
       }
@@ -698,7 +754,7 @@ async function runStack(ctx: DeployContext, input: PulumiUpStepInput, opts: Pulu
         if (differences.length > 0) throw new PlanShapeMovedError(r.member, differences);
       }
       try {
-        ({ stdout } = await runApplyPulumi(opts.run ?? defaultPulumiRunner, pulumiUpArgs({ stack: input.stack, ...tail }), r.dir));
+        ({ stdout } = await runApplyPulumi(runnersFor(r, opts).pulumi, pulumiUpArgs({ stack: input.stack, ...tail }), r.dir));
       } catch (err) {
         throw upFailure(r, err, approved.policy);
       }
@@ -712,8 +768,7 @@ async function runStack(ctx: DeployContext, input: PulumiUpStepInput, opts: Pulu
       dir: r.dir,
       stack: input.stack,
       engine: r.engine,
-      ...(opts.run ? { run: opts.run } : {}),
-      ...(opts.plunge ? { plunge: opts.plunge } : {}),
+      ...runnerOptions(r, opts),
     });
     const summary = pulumiStreamSummary(stdout);
     const exportSnapshot = await writePulumiExportSnapshot({
@@ -721,8 +776,7 @@ async function runStack(ctx: DeployContext, input: PulumiUpStepInput, opts: Pulu
       stack: input.stack,
       environment: ctx.env,
       engine: r.engine,
-      ...(opts.run ? { run: opts.run } : {}),
-      ...(opts.plunge ? { plunge: opts.plunge } : {}),
+      ...runnerOptions(r, opts),
       ...(opts.snapshots !== undefined ? { store: opts.snapshots } : {}),
     });
     const hasPolicy = approved.policy.warnings.length > 0 || approved.policy.denials.length > 0;
@@ -784,8 +838,7 @@ export function createPulumiUpCapability(opts: PulumiUpOptions = {}): Capability
         dir: r.dir,
         stack: input.stack,
         engine: r.engine,
-        ...(opts.run ? { run: opts.run } : {}),
-        ...(opts.plunge ? { plunge: opts.plunge } : {}),
+        ...runnerOptions(r, opts),
       });
     },
     releaseInputs: (input, ctx) => pulumiReleaseInputs(input, ctx),

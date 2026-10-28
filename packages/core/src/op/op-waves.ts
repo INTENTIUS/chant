@@ -442,6 +442,14 @@ export interface OpWavesSpec {
   /** Branches whose pushes run the waves. Default `["main"]`. */
   branches?: string[];
   /**
+   * An apply stands down when a newer commit on the branch will apply the
+   * same targets (#4581): its wave applies nothing, the job exits 6
+   * (`superseded`), and its run record says so. Checked once the wave's
+   * holds are settled and its lock grain's lease is taken, before the
+   * approval is spent. See `./op-waves-stand-down.ts`. Default false.
+   */
+  standDown?: boolean;
+  /**
    * Where every job the spec renders runs unless a wave or a job group names
    * another (#3914). Default: the forge's default runner (`ubuntu-latest` on
    * GitHub, the dialect's label on Forgejo, no `tags` on GitLab).
@@ -737,6 +745,7 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
     }
   }
   assertOpWaveHooks(where, spec.hooks);
+  if (spec.standDown !== undefined && typeof spec.standDown !== "boolean") throw new Error(`${where}: \`standDown\` must be true or false.`);
   if (spec.waves.length === 0) throw new Error(`${where} has no waves.`);
   {
     const problems = opWaveHoldsProblems(spec.holds);
