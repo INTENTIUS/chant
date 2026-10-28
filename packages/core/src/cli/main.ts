@@ -639,6 +639,14 @@ Ops:
                         applies it once, if .chant/overriders at base lists
                         --actor
 
+  audit-log attribute --input <drift.json> [--audit-log aws[:<region>]]
+                        Name who changed each drifted attribute of a drift
+                        document: a known write by design, else the cloud
+                        audit log's last writer (#4632)
+  audit-log unrecorded --audit-log aws[:<region>] --op <op>[,...] --since <time>
+                        Report the audit log's writes no recorded apply on
+                        the run ledger made; exits 2 when there are some
+                        (#4632)
   notify relay          Serve the relay that approves a waiting gate from a
                         Slack button or a Teams reply (#4611): verifies the
                         chat signature and the button's notify reference,
@@ -1818,6 +1826,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "approve", handler: runApprove },
   // #4293 — target locks a pull request holds on chant/lifecycle. Imported on first use.
   // #4611 — approve a waiting gate from a chat click. Imported on first use.
+  { name: "audit-log attribute", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/audit-log")).runAuditLogAttribute(ctx) },
+  { name: "audit-log unrecorded", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/audit-log")).runAuditLogUnrecorded(ctx) },
   { name: "notify relay", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/notify-relay")).runNotifyRelay(ctx) },
   { name: "lock", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/lock")).runLock(ctx) },
   { name: "unlock", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/lock")).runUnlock(ctx) },

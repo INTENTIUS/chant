@@ -889,6 +889,8 @@ export interface ParsedArgs {
   op?: string;
   /** `chant operator log --since <iso>` (#2029) — only entries at or after this ISO-8601 instant. `chant workspace records --since <rev>` (#2673) — the revision to compare the records with. `chant workspace metrics --since <date>` (#4039) — the start of the window the metrics count. */
   since?: string;
+  /** `chant audit-log attribute|unrecorded --audit-log aws[:<region>]` (#4632): the cloud audit log to read. */
+  auditLog?: string;
   /** `chant ledger`, `chant workspace records` and `chant workspace runs --where <field><op><value>` (#4363): typed filters, repeatable, all of which have to hold. */
   where?: string[];
   /** `chant operator log --limit <n>` (#2029) — keep only the newest n entries (still printed oldest-first). */

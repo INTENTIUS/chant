@@ -1,0 +1,59 @@
+{
+  "Events": [
+    {
+      "EventId": "w1",
+      "EventName": "PutBucketPolicy",
+      "EventTime": "2026-10-25T10:00:30Z",
+      "Resources": [
+        {
+          "ResourceName": "arn:aws:s3:::acme-logs"
+        }
+      ],
+      "CloudTrailEvent": "{\"eventID\": \"w1\", \"eventName\": \"PutBucketPolicy\", \"eventTime\": \"2026-10-25T10:00:30Z\", \"readOnly\": false, \"userAgent\": \"pulumi/3.140.0\", \"userIdentity\": {\"type\": \"AssumedRole\", \"arn\": \"arn:aws:sts::111111111111:assumed-role/plywood-up/GitHubActions\", \"sessionContext\": {\"sessionIssuer\": {\"userName\": \"plywood-up\"}}}, \"resources\": [{\"ARN\": \"arn:aws:s3:::acme-logs\"}]}"
+    },
+    {
+      "EventId": "w2",
+      "EventName": "PutBucketVersioning",
+      "EventTime": "2026-10-25T13:00:00Z",
+      "Resources": [
+        {
+          "ResourceName": "arn:aws:s3:::acme-logs"
+        }
+      ],
+      "CloudTrailEvent": "{\"eventID\": \"w2\", \"eventName\": \"PutBucketVersioning\", \"eventTime\": \"2026-10-25T13:00:00Z\", \"readOnly\": false, \"userAgent\": \"console.amazonaws.com\", \"userIdentity\": {\"type\": \"AssumedRole\", \"arn\": \"arn:aws:sts::111111111111:assumed-role/AWSReservedSSO_Admin_abc/lee@example.com\", \"sessionContext\": {\"sessionIssuer\": {\"userName\": \"AWSReservedSSO_Admin_abc\"}}}, \"resources\": [{\"ARN\": \"arn:aws:s3:::acme-logs\"}]}"
+    },
+    {
+      "EventId": "w3",
+      "EventName": "SetDesiredCapacity",
+      "EventTime": "2026-10-25T13:05:00Z",
+      "Resources": [
+        {
+          "ResourceName": "web"
+        }
+      ],
+      "CloudTrailEvent": "{\"eventID\": \"w3\", \"eventName\": \"SetDesiredCapacity\", \"eventTime\": \"2026-10-25T13:05:00Z\", \"readOnly\": false, \"userAgent\": \"console.amazonaws.com\", \"userIdentity\": {\"type\": \"AWSService\", \"invokedBy\": \"autoscaling.amazonaws.com\"}, \"resources\": [{\"ARN\": \"arn:aws:autoscaling:us-east-1:111111111111:autoScalingGroup:x:autoScalingGroupName/web\"}]}"
+    },
+    {
+      "EventId": "w4",
+      "EventName": "PutBucketAcl",
+      "EventTime": "2026-10-25T10:01:00Z",
+      "Resources": [
+        {
+          "ResourceName": "arn:aws:s3:::acme-logs"
+        }
+      ],
+      "CloudTrailEvent": "{\"eventID\": \"w4\", \"eventName\": \"PutBucketAcl\", \"eventTime\": \"2026-10-25T10:01:00Z\", \"readOnly\": false, \"userAgent\": \"console.amazonaws.com\", \"userIdentity\": {\"type\": \"AssumedRole\", \"arn\": \"arn:aws:sts::111111111111:assumed-role/AWSReservedSSO_Admin_abc/lee@example.com\", \"sessionContext\": {\"sessionIssuer\": {\"userName\": \"AWSReservedSSO_Admin_abc\"}}}, \"resources\": [{\"ARN\": \"arn:aws:s3:::acme-logs\"}]}"
+    },
+    {
+      "EventId": "w5",
+      "EventName": "PutBucketLogging",
+      "EventTime": "2026-10-28T11:50:00Z",
+      "Resources": [
+        {
+          "ResourceName": "arn:aws:s3:::acme-logs"
+        }
+      ],
+      "CloudTrailEvent": "{\"eventID\": \"w5\", \"eventName\": \"PutBucketLogging\", \"eventTime\": \"2026-10-28T11:50:00Z\", \"readOnly\": false, \"userAgent\": \"console.amazonaws.com\", \"userIdentity\": {\"type\": \"AssumedRole\", \"arn\": \"arn:aws:sts::111111111111:assumed-role/AWSReservedSSO_Admin_abc/lee@example.com\", \"sessionContext\": {\"sessionIssuer\": {\"userName\": \"AWSReservedSSO_Admin_abc\"}}}, \"resources\": [{\"ARN\": \"arn:aws:s3:::acme-logs\"}]}"
+    }
+  ]
+}
