@@ -116,14 +116,14 @@ export const pulumiAdoptExportContract = activityContract(
 
 export const pulumiAdoptPreviewContract = activityContract(
   "pulumiAdoptPreview",
-  z.strictObject({ ...adoptStackArgs, file: z.string().optional() }),
+  z.strictObject({ ...adoptStackArgs, file: z.string().optional(), backend: z.string().optional() }),
   z.object(adoptPreviewReturns),
   memberEntity,
 );
 
 export const pulumiAdoptContract = activityContract(
   "pulumiAdopt",
-  z.strictObject({ ...adoptStackArgs, file: z.string().optional(), planDigest: z.string().optional() }),
+  z.strictObject({ ...adoptStackArgs, file: z.string().optional(), backend: z.string().optional(), planDigest: z.string().optional() }),
   z.object({ ...adoptPreviewReturns, matchesApproved: z.boolean().optional() }),
   memberEntity,
 );
