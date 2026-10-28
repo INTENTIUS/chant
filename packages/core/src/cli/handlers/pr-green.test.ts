@@ -44,7 +44,7 @@ vi.mock("../../lifecycle/gate-change-set", () => ({
 }));
 vi.mock("../../lifecycle/git", async () => {
   const actual = await vi.importActual<typeof import("../../lifecycle/git")>("../../lifecycle/git");
-  return { ...actual, pushLifecycleReport: async () => ({}) };
+  return { ...actual, pushLifecycleReport: async () => ({}), pushLifecycleRebasing: async () => ({}) };
 });
 const applied: GreenApplyRecord[] = [];
 vi.mock("../../lifecycle/green-apply", async () => {

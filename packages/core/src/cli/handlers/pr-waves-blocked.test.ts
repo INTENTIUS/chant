@@ -50,7 +50,7 @@ vi.mock("../../lifecycle/gate-change-set", () => ({
 }));
 vi.mock("../../lifecycle/git", async () => {
   const actual = await vi.importActual<typeof import("../../lifecycle/git")>("../../lifecycle/git");
-  return { ...actual, pushLifecycleReport: async () => { throw new Error("pr-waves.test must not push chant/lifecycle"); } };
+  return { ...actual, pushLifecycleReport: async () => { throw new Error("pr-waves.test must not push chant/lifecycle"); }, pushLifecycleRebasing: async () => { throw new Error("pr-waves.test must not push chant/lifecycle"); } };
 });
 
 // The declaration at base sets no hooks, policy, security group or lock, and the change adds no migration (#4502).

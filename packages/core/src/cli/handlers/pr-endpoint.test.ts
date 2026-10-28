@@ -53,7 +53,7 @@ vi.mock("../../lifecycle/gate-change-set", () => ({
 }));
 vi.mock("../../lifecycle/git", async () => {
   const actual = await vi.importActual<typeof import("../../lifecycle/git")>("../../lifecycle/git");
-  return { ...actual, pushLifecycleReport: async () => { throw new Error("pr-endpoint.test must not push chant/lifecycle"); } };
+  return { ...actual, pushLifecycleReport: async () => { throw new Error("pr-endpoint.test must not push chant/lifecycle"); }, pushLifecycleRebasing: async () => { throw new Error("pr-endpoint.test must not push chant/lifecycle"); } };
 });
 
 vi.mock("./run", () => ({

@@ -44,14 +44,20 @@ vi.mock("../../lifecycle/gate-change-set", () => ({
 }));
 vi.mock("../../lifecycle/git", async () => {
   const actual = await vi.importActual<typeof import("../../lifecycle/git")>("../../lifecycle/git");
-  return { ...actual, pushLifecycleReport: async () => { throw new Error("pr.test must not push chant/lifecycle"); } };
+  return { ...actual, pushLifecycleReport: async () => { throw new Error("pr.test must not push chant/lifecycle"); }, pushLifecycleRebasing: async () => pushRebasing() };
 });
+// The record's push: never the real one. A test that writes the record sets what it answers.
+let pushRebasing: () => Promise<{ pushed: boolean; pushWarning?: string }> = async () => {
+  throw new Error("pr.test must not push chant/lifecycle");
+};
 
 // #4168: the record job writes the merge record on chant/lifecycle. Captured here, never written.
+// `recordWrites` makes the write say it wrote, so the record job pushes.
 const written: Array<Record<string, unknown>> = [];
+let recordWrites = false;
 vi.mock("../../lifecycle/merge-record", async () => {
   const actual = await vi.importActual<typeof import("../../lifecycle/merge-record")>("../../lifecycle/merge-record");
-  return { ...actual, writeMergeRecord: async (r: Record<string, unknown>) => (written.push(r), { commit: null, written: false }) };
+  return { ...actual, writeMergeRecord: async (r: Record<string, unknown>) => (written.push(r), recordWrites ? { commit: "c".repeat(40), written: true } : { commit: null, written: false }) };
 });
 
 vi.mock("./run", () => ({
@@ -131,6 +137,10 @@ beforeEach(async () => {
   errors = [];
   applied = [];
   written.length = 0;
+  recordWrites = false;
+  pushRebasing = async () => {
+    throw new Error("pr.test must not push chant/lifecycle");
+  };
   failing.clear();
   refusal.clear();
   onRun = (r) => applied.push(r);
@@ -189,6 +199,28 @@ describe("pr-record (#4168)", () => {
     expect(await runComponentsPrRecord(ctx({}))).toBe(0);
     expect(report("record")).toMatchObject({ pr: null, op: "pr-unknown", approval: { status: "pending" } });
     expect(written[0]).toMatchObject({ source: { kind: "direct-push" }, op: null, plan: "unapproved" });
+  });
+
+  // #4551: the merge record goes out through the fetch-replay-retry push, and one that never reaches the remote fails the job.
+  test("a merge record pushed through the retrying push exits 0", async () => {
+    recordWrites = true;
+    let pushes = 0;
+    pushRebasing = async () => (pushes++, { pushed: true });
+    expect(await runComponentsPrRecord(ctx({ pr: 12 }))).toBe(0);
+    expect(pushes).toBe(1);
+  });
+
+  test("a merge record the remote never takes fails the job with LifecyclePushLostError's words, and the report is still written", async () => {
+    const { LifecyclePushLostError } = await vi.importActual<typeof import("../../lifecycle/git")>("../../lifecycle/git");
+    recordWrites = true;
+    pushRebasing = async () => {
+      throw new LifecyclePushLostError("origin", 3, "another writer pushed before each try");
+    };
+    expect(await runComponentsPrRecord(ctx({ pr: 12 }))).toBe(1);
+    expect(report("record")).toMatchObject({ status: "recorded", pr: 12 });
+    const said = errors.join("\n");
+    expect(said).toContain(`the merge record for ${HEAD} was written but not pushed`);
+    expect(said).toContain('chant/lifecycle was not pushed to "origin" after 3 tries');
   });
 
   test("a member that fails to plan is recorded as plan-failed and exits 1", async () => {
