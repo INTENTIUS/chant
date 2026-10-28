@@ -99,6 +99,21 @@
  * (`plunge install`) in the copy when its runtime needs one, and refuses a
  * Node copy with no lockfile by name, since an install would take today's
  * versions rather than the release's.
+ *
+ * ## review stacks (#4609)
+ *
+ * When `DeployContext.env` is a pull request's environment `pr-<n>` (`chant
+ * components pr-env up`), the step applies its review stack instead of its
+ * own: the step's stack with the last segment replaced by `pr-<n>` (or
+ * `pr-<n>-<reviewSuffix>`), so `acme/shop/dev` becomes `acme/shop/pr-12`.
+ * Before the first preview, `plan` runs `stack init <pr-stack> --no-select
+ * --copy-config-from <template>` (`initReviewStack`, `./review-stack.ts`),
+ * where the template is `CHANT_ENV_TEMPLATE`'s stack when it names a stack of
+ * this project (`<project>/<stack>`, plywood's `review_stacks.template`),
+ * else the step's own stack. A stack that exists already is updated. The
+ * plan gives core the stack's `location`, `<engine>:<dir>#<stack>`, which
+ * `pr-env up` keeps on the environment's record and `pr-env down` and the
+ * TTL sweep read back to destroy and remove it (`reviewStackTeardown`).
  */
 
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -164,6 +179,7 @@ import type { PulumiStep } from "./change-set";
 import { writePulumiExportSnapshot, type PulumiExportWrite } from "./stack-export-snapshot";
 import { pointerSegment, pulumiStackReferences, stackReferenceOwner } from "./stack-references";
 import { prepareReleaseCopy } from "./release-copy";
+import { initReviewStack, reviewConfigSource, reviewStackFor, reviewStackLocation } from "./review-stack";
 
 /** The lock grain values of `ci.lockGrain` (#4552's ruling A). */
 export type PulumiLockGrain = "target" | "resource" | "repo";
@@ -205,6 +221,12 @@ export interface PulumiUpStepInput {
    * say a value. Never passed to the engine: the program reads them itself.
    */
   stackReferences?: Record<string, Record<string, unknown>>;
+  /**
+   * In a pull request's environment (#4609), the review stack is
+   * `pr-<n>-<reviewSuffix>` rather than `pr-<n>`: lowercase letters, digits
+   * and `-`, as plywood's `review_stacks.name` allows. Ignored elsewhere.
+   */
+  reviewSuffix?: string;
 }
 
 /** What `run` returns. */
@@ -396,6 +418,33 @@ export function pulumiScratchConfig(dir: string, stack: string, config: Record<s
   return `${JSON.stringify({ ...doc, config: merged }, null, 2)}\n`;
 }
 
+/** The variable `pr-env up` sets to `ci.prEnvironment.template` (core's `PR_ENV_TEMPLATE_VAR`). */
+export const PR_ENV_TEMPLATE_VARIABLE = "CHANT_ENV_TEMPLATE";
+
+/**
+ * The step as it applies in `env` (#4609): with its review stack in place of
+ * its own stack in a pull request's environment, and the stack it copies its
+ * config from. The step unchanged, with no review, anywhere else.
+ */
+export function pulumiReviewStep(input: PulumiUpStepInput, env: string | undefined, template?: string): { step: PulumiUpStepInput; review?: { stack: string; copyConfigFrom?: string } } {
+  requireInput(input);
+  const stack = reviewStackFor(input.stack, env, input.reviewSuffix);
+  if (!stack) return { step: input };
+  const project = readProject(stackDir(input))?.name;
+  const copyConfigFrom = reviewConfigSource({ stack: input.stack, ...(typeof project === "string" ? { project } : {}) }, template, stack);
+  return { step: { ...input, stack }, review: { stack, ...(copyConfigFrom ? { copyConfigFrom } : {}) } };
+}
+
+function templateOf(opts: PulumiUpOptions): string | undefined {
+  const v = (opts.env ?? process.env)[PR_ENV_TEMPLATE_VARIABLE];
+  return typeof v === "string" && v !== "" ? v : undefined;
+}
+
+/** The review stack's location on the environment's record: `<engine>:<dir>#<stack>`, `dir` relative to the working directory core runs in. */
+function locationOf(r: Resolved, stack: string): string {
+  return reviewStackLocation(r.engine, relative(process.cwd(), r.dir) || ".", stack);
+}
+
 /** A plan file name with nothing a path could read into. */
 const fileSafe = (s: string): string => s.replace(/[^A-Za-z0-9._-]+/g, "_");
 
@@ -573,11 +622,24 @@ async function readyCopy(r: Resolved, opts: PulumiUpOptions): Promise<void> {
   await prepareReleaseCopy({ dir: r.dir, member: r.member, engine: r.engine, run: r.engine === "plunge" ? runners.plunge : runners.pulumi });
 }
 
-async function planStack(ctx: DeployContext, input: PulumiUpStepInput, opts: PulumiUpOptions): Promise<CapabilityPlan> {
+async function planStack(ctx: DeployContext, original: PulumiUpStepInput, opts: PulumiUpOptions): Promise<CapabilityPlan> {
+  // #4609: in pr-<n>, the review stack, made from the template before its first preview.
+  const { step: input, review } = pulumiReviewStep(original, ctx.env, templateOf(opts));
   const r = resolveStep(input, opts, ctx.lockGrain);
+  const location = review ? { location: locationOf(r, review.stack) } : {};
   const unresolved = [...(ctx.unresolvedInputs ?? [])].sort();
-  if (unresolved.length > 0) return waitingStack(ctx, r, input, unresolved);
+  if (unresolved.length > 0) return { ...waitingStack(ctx, r, input, unresolved), ...location };
   await readyCopy(r, opts);
+  if (review) {
+    const runners = runnersFor(r, opts);
+    await initReviewStack({
+      dir: r.dir,
+      stack: review.stack,
+      engine: r.engine,
+      run: r.engine === "plunge" ? runners.plunge : runners.pulumi,
+      ...(review.copyConfigFrom ? { template: review.copyConfigFrom } : {}),
+    });
+  }
   const files = scratchFor(r, input, opts);
   let read: StackPreview;
   try {
@@ -612,6 +674,7 @@ async function planStack(ctx: DeployContext, input: PulumiUpStepInput, opts: Pul
     outputs: { known: planned.known, unknown: planned.unknown },
     shape: read.shape,
     ...(ctx.targets?.length ? { targets: ctx.targets } : {}),
+    ...location,
   };
 }
 
@@ -707,7 +770,9 @@ export function failedUpSummary(stream: string): PulumiApplySummary | undefined 
   return Object.keys(timings).length > 0 ? { resourceChanges: {}, result: "failed", timings } : undefined;
 }
 
-async function runStack(ctx: DeployContext, input: PulumiUpStepInput, opts: PulumiUpOptions): Promise<PulumiUpStepOutput> {
+async function runStack(ctx: DeployContext, original: PulumiUpStepInput, opts: PulumiUpOptions): Promise<PulumiUpStepOutput> {
+  // #4609: in pr-<n>, the review stack the plan made and previewed.
+  const { step: input } = pulumiReviewStep(original, ctx.env, templateOf(opts));
   const r = resolveStep(input, opts, ctx.lockGrain);
   const handed = ctx.plans?.[r.member];
   const fromWave = isArtifact(handed);
@@ -719,7 +784,7 @@ async function runStack(ctx: DeployContext, input: PulumiUpStepInput, opts: Pulu
   if (fromWave) {
     approved = handed;
   } else {
-    const planned = await planStack(ctx, input, opts);
+    const planned = await planStack(ctx, original, opts);
     if (!isArtifact(planned.artifact)) {
       throw new Error(`pulumi-up: "${r.member}": the stack's config reads outputs not known yet (${(ctx.unresolvedInputs ?? []).join(", ")}), so it cannot apply`);
     }
@@ -832,7 +897,8 @@ export function createPulumiUpCapability(opts: PulumiUpOptions = {}): Capability
     plan: (ctx, input) => planStack(ctx, input, opts),
     run: (ctx, input) => runStack(ctx, input, opts),
     // The outputs standing now, for a dependent planned before this stack applies.
-    async outputs(_ctx, input) {
+    async outputs(ctx, original) {
+      const { step: input } = pulumiReviewStep(original, ctx.env, templateOf(opts));
       const r = resolveStep(input, opts);
       return pulumiMemberStackOutputs({
         dir: r.dir,
@@ -858,7 +924,9 @@ export function createPulumiUpCapability(opts: PulumiUpOptions = {}): Capability
     lockRows(input, plan) {
       if (!plan.changeSet) return [];
       const project = readProject(stackDir(input))?.name;
-      return pulumiLockRows(plan.changeSet, plan.member, { ...(typeof project === "string" ? { project } : {}), stack: input.stack });
+      // #4609: the stack the plan previewed, the review stack in pr-<n>.
+      const stack = isArtifact(plan.artifact) ? plan.artifact.stack : input.stack;
+      return pulumiLockRows(plan.changeSet, plan.member, { ...(typeof project === "string" ? { project } : {}), stack });
     },
     // #4555: the stack, the engine and the summary's counts, for the step's span and run record.
     traceFacts: (input, outcome) => pulumiTraceFacts(input, outcome),
