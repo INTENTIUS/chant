@@ -91,7 +91,10 @@ describe("the exporter's settings (#4555)", () => {
   });
 
   test("names why grpc and a non-http URL send nothing", () => {
-    expect(otlpFromEnv({ OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:4317", OTEL_EXPORTER_OTLP_PROTOCOL: "grpc" })).toMatchObject({ traces: undefined, skipped: [expect.stringContaining("grpc")] });
+    // Nothing is sent, so the settings carry no traces endpoint at all.
+    const grpc = otlpFromEnv({ OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:4317", OTEL_EXPORTER_OTLP_PROTOCOL: "grpc" });
+    expect(grpc).toMatchObject({ skipped: [expect.stringContaining("grpc")] });
+    expect(grpc?.traces).toBeUndefined();
     expect(otlpFromEnv({ OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "unix:///sock" })?.skipped[0]).toContain("not an http or https URL");
   });
 

@@ -148,6 +148,7 @@ describe("an op wave job's run events and trace (#4555)", () => {
     h.done();
   });
 
+  // The gate-waiting op is the one the gate is recorded under, the spec's name, which chant approve takes.
   test("a job that waits at its gate ends its stream on a gate step, and otlp: false sends nothing", async () => {
     c = await collector();
     const gated: OpWavesSpec = { ...spec, waves: [{ ...spec.waves[0]!, gate: "always" }] };
@@ -175,7 +176,7 @@ describe("an op wave job's run events and trace (#4555)", () => {
       ["phase-settle", "gated"],
       ["run-settle", "gated"],
     ]);
-    expect(events.find((e) => e.type === "gate-waiting")).toMatchObject({ op: "tf-apply", step: expect.stringMatching(/^gate:/) });
+    expect(events.find((e) => e.type === "gate-waiting")).toMatchObject({ op: "roots", step: expect.stringMatching(/^gate:/) });
     expect(c.bodies).toHaveLength(0);
     h.done();
   });

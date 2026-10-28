@@ -203,7 +203,7 @@ The plans file may also carry `members`: digest members that are not runs, each 
 
 They are in the digest whatever `digest.over` says, and they never run.
 
-`applyWave` gets a runs file that lists the approved set: each run with the `planDigest` it was approved or let through at, and the wave's `digest`. A non-zero exit counts every run in the set as failed.
+`applyWave` gets a runs file that lists the approved set: each run with the `planDigest` it was approved or let through at, and the wave's `digest`. A non-zero exit counts every run in the set as failed, unless the call writes `{ "applied": [<target>...] }` to `CHANT_APPLY_RUNS_RESULT`, a path it gets. Then only the other runs count as failed, and a later wave blocks only the runs that depend on them. `chant components apply-wave` writes it.
 
 Every apply call, `apply` or `applyWave`, also gets `CHANT_APPLY_OUTCOME`, a path. An apply that applied nothing, for a reason that is not a failure, writes one of these there:
 

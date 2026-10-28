@@ -79,7 +79,9 @@ async function relay(deps: RelayDeps, s: RelaySettings = settings) {
   const teams = async (text: string, user = "aad-ana", secret = TEAMS_SECRET) => {
     const body = JSON.stringify({ type: "message", text, from: { aadObjectId: user, name: "Ana" } });
     const res = await fetch(`${url}/teams`, { method: "POST", headers: { "content-type": "application/json", authorization: teamsSignature(secret, body) }, body });
-    return { status: res.status, json: (await res.json()) as { text: string } };
+    // A refused signature answers 401 in plain text; a reply the relay makes is Teams' JSON.
+    const raw = await res.text();
+    return { status: res.status, json: (res.headers.get("content-type")?.includes("json") ? JSON.parse(raw) : { text: raw }) as { text: string } };
   };
   return { url, posted, slack, teams };
 }

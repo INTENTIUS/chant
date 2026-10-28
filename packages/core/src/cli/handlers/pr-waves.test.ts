@@ -167,8 +167,12 @@ async function planAndApprove(): Promise<string> {
   return digest;
 }
 
+const home = process.cwd();
+
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "pr-waves-"));
+  // pr-apply runs each wave's op waves in its working directory (#4588), so the job's .chant/op-waves lands in the scratch dir.
+  process.chdir(dir);
   record = join(dir, "resume", "pr-apply.json");
   errors = [];
   ran = [];
@@ -186,6 +190,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  process.chdir(home);
   await rm(dir, { recursive: true, force: true });
 });
 

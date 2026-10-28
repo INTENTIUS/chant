@@ -318,6 +318,16 @@
               "outcome": "passed"
             }
           ]
+        },
+        "targets": {
+          "t1": {
+            "startedAt": 0,
+            "durationMs": 0
+          },
+          "t2": {
+            "startedAt": 0,
+            "durationMs": 0
+          }
         }
       },
       "ledger": {
@@ -406,7 +416,8 @@
         "CHANT_RUNS": ".chant/op-waves/migrations/wave-1/runs.json",
         "CHANT_HOLD": ".chant/op-waves/migrations/wave-1/hold.json",
         "CHANT_TARGET": "t1",
-        "CHANT_PLAN": ".chant/op-waves/migrations/wave-1/t1.plan.json"
+        "CHANT_PLAN": ".chant/op-waves/migrations/wave-1/t1.plan.json",
+        "CHANT_PLAN_DIGEST": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
       },
       "read": {
         "CHANT_RUNS": {
@@ -443,7 +454,8 @@
         "CHANT_RUNS": ".chant/op-waves/migrations/wave-1/runs.json",
         "CHANT_HOLD": ".chant/op-waves/migrations/wave-1/hold.json",
         "CHANT_TARGET": "t2",
-        "CHANT_PLAN": ".chant/op-waves/migrations/wave-1/t2.plan.json"
+        "CHANT_PLAN": ".chant/op-waves/migrations/wave-1/t2.plan.json",
+        "CHANT_PLAN_DIGEST": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
       },
       "read": {
         "CHANT_RUNS": {
@@ -541,7 +553,8 @@
         "CHANT_RUNS": ".chant/op-waves/migrations/wave-1/runs.json",
         "CHANT_HOLD": ".chant/op-waves/migrations/wave-1/hold.json",
         "CHANT_TARGET": "t1",
-        "CHANT_PLAN": ".chant/op-waves/migrations/wave-1/t1.plan.json"
+        "CHANT_PLAN": ".chant/op-waves/migrations/wave-1/t1.plan.json",
+        "CHANT_PLAN_DIGEST": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
       },
       "read": {
         "CHANT_RUNS": {
@@ -578,7 +591,8 @@
         "CHANT_RUNS": ".chant/op-waves/migrations/wave-1/runs.json",
         "CHANT_HOLD": ".chant/op-waves/migrations/wave-1/hold.json",
         "CHANT_TARGET": "t2",
-        "CHANT_PLAN": ".chant/op-waves/migrations/wave-1/t2.plan.json"
+        "CHANT_PLAN": ".chant/op-waves/migrations/wave-1/t2.plan.json",
+        "CHANT_PLAN_DIGEST": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
       },
       "read": {
         "CHANT_RUNS": {
@@ -680,7 +694,8 @@
             {
               "target": "t1",
               "op": "migrate",
-              "plan": ".chant/op-waves/migrations/wave-1/t1.plan.json"
+              "plan": ".chant/op-waves/migrations/wave-1/t1.plan.json",
+              "planDigest": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
             }
           ],
           "runsFile": ".chant/op-waves/migrations/wave-1/runs.json",
@@ -745,7 +760,8 @@
             {
               "target": "t2",
               "op": "migrate",
-              "plan": ".chant/op-waves/migrations/wave-1/t2.plan.json"
+              "plan": ".chant/op-waves/migrations/wave-1/t2.plan.json",
+              "planDigest": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
             }
           ],
           "runsFile": ".chant/op-waves/migrations/wave-1/runs.json",
@@ -870,7 +886,8 @@
         {
           "target": "t1",
           "op": "migrate",
-          "plan": ".chant/op-waves/migrations/wave-1/t1.plan.json"
+          "plan": ".chant/op-waves/migrations/wave-1/t1.plan.json",
+          "planDigest": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
         }
       ],
       "runsFile": ".chant/op-waves/migrations/wave-1/runs.json",
@@ -924,7 +941,8 @@
         {
           "target": "t2",
           "op": "migrate",
-          "plan": ".chant/op-waves/migrations/wave-1/t2.plan.json"
+          "plan": ".chant/op-waves/migrations/wave-1/t2.plan.json",
+          "planDigest": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
         }
       ],
       "runsFile": ".chant/op-waves/migrations/wave-1/runs.json",

@@ -270,7 +270,8 @@ describe("pr-apply --before-merge (#4301)", () => {
     onRun = (r) => void ran.push(r);
     expect(await runComponentsPrApply(ctx({}))).toBe(0);
     expect(ran).toEqual(["net", "app"]);
-    expect(taken).toEqual([{ gate: "pr-apply", targets: ["net", "app"], holder: expect.objectContaining({ pr: 12, stage: "apply", head: HEAD }) }]);
+    // #4552: the lock targets go to the lock file sorted (lockTargetsOf).
+    expect(taken).toEqual([{ gate: "pr-apply", targets: ["app", "net"], holder: expect.objectContaining({ pr: 12, stage: "apply", head: HEAD }) }]);
     expect(await applyReport()).toMatchObject({ status: "applied", beforeMerge: { requires: expect.any(Array) } });
   });
 });

@@ -31,6 +31,12 @@
             }
           ],
           "status": "not-required"
+        },
+        "targets": {
+          "dev": {
+            "startedAt": 0,
+            "durationMs": 0
+          }
         }
       },
       "ledger": {
@@ -212,6 +218,12 @@
           "via": "ledger",
           "approvedBy": "alice",
           "approvedAt": "2026-10-10T00:00:00Z"
+        },
+        "targets": {
+          "staging": {
+            "startedAt": 0,
+            "durationMs": 0
+          }
         }
       },
       "ledger": {
@@ -328,7 +340,8 @@
             {
               "target": "dev",
               "op": "migrate",
-              "plan": ".chant/op-waves/migrations/wave-1/dev.plan.json"
+              "plan": ".chant/op-waves/migrations/wave-1/dev.plan.json",
+              "planDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
             }
           ],
           "runsFile": ".chant/op-waves/migrations/wave-1/runs.json",
@@ -391,7 +404,8 @@
             {
               "target": "staging",
               "op": "migrate",
-              "plan": ".chant/op-waves/migrations/wave-2/staging.plan.json"
+              "plan": ".chant/op-waves/migrations/wave-2/staging.plan.json",
+              "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             }
           ],
           "runsFile": ".chant/op-waves/migrations/wave-2/runs.json",
@@ -452,7 +466,8 @@
         {
           "target": "dev",
           "op": "migrate",
-          "plan": ".chant/op-waves/migrations/wave-1/dev.plan.json"
+          "plan": ".chant/op-waves/migrations/wave-1/dev.plan.json",
+          "planDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
         }
       ],
       "runsFile": ".chant/op-waves/migrations/wave-1/runs.json",
@@ -495,7 +510,8 @@
         {
           "target": "staging",
           "op": "migrate",
-          "plan": ".chant/op-waves/migrations/wave-2/staging.plan.json"
+          "plan": ".chant/op-waves/migrations/wave-2/staging.plan.json",
+          "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
       ],
       "runsFile": ".chant/op-waves/migrations/wave-2/runs.json",

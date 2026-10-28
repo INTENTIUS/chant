@@ -77,7 +77,7 @@ import {
   type WaveMemberOutcome,
 } from "../wave-blocked";
 import { approveCommand, evaluateGate, gitGateLedgerPort, type GateCheck, type GateDigestMismatch, type GateLedgerPort } from "./gate";
-import type { GateAnswerRef, PendingGateRecord } from "../lifecycle/gate-ledger";
+import type { GateAnswerRef, PendingGateInput, PendingGateRecord } from "../lifecycle/gate-ledger";
 import type { GatePointAsker } from "../point-decision";
 import type { WaitingPoint } from "./steward-points";
 import { isApprovalSpent, type AppliedGateRecord, type FinishedGateRecord } from "../lifecycle/gate-applied";
@@ -2728,7 +2728,17 @@ async function settleGate(options: RunOpWaveOptions, ctx: WaveContext, decision:
   // #3784: under the spend rule at base, an approval a wave already applied under counts for nothing.
   const spent: AppliedGateRecord[] | undefined = decision.spend === "base" ? ((await ledger.readApplied?.(spec.name)) ?? []).filter((a) => a.gate === gate) : undefined;
   const held = decision.heldBy?.length ? `, held by ${decision.heldBy.join(", ")}` : "";
-  const check = await decideWaveGate(port, {
+  // Under the pull request's approval the pending fact waits for the coverage check: a wave the
+  // pull request's approval covers applies with no pending line at its own gate (#4588).
+  let deferred: PendingGateInput | undefined;
+  const deciding: typeof port = approval !== "pull-request" ? port : {
+    ...port,
+    async appendPending(input) {
+      deferred = input;
+      return { record: { version: 1, kind: "pending", ...input } as PendingGateRecord, pushed: false };
+    },
+  };
+  const check = await decideWaveGate(deciding, {
     op: spec.name,
     gate,
     digest,
@@ -2767,6 +2777,11 @@ async function settleGate(options: RunOpWaveOptions, ctx: WaveContext, decision:
       decision.approvedAt = covered.approvedAt;
       ctx.log(`wave ${k} (${wave.name}) applies under the pull request's approval of ${covered.digest} at ${decision.pullRequestGate}, which covers its plans`);
       return;
+    }
+    if (deferred) {
+      const written = await port.appendPending(deferred);
+      decision.pendingFact = written.record;
+      decision.waitingSince = written.record.timestamp;
     }
     ctx.log(`wave ${k} (${wave.name}): the pull request's approval does not cover it (${covered.reason}), so it waits at its own gate ${gate}`);
     decision.status = "waiting";
@@ -3093,7 +3108,28 @@ async function settleHolds(
 }
 
 /** How one apply call came out. `applied` with a `problem`: the runs applied, and the wave still fails. `applied-nothing`: the apply said why (#3821). */
-type ApplyCall = { outcome: "applied"; problem?: string } | { outcome: "failed" | "waiting" } | { outcome: "applied-nothing"; said: OpWaveApplyOutcome };
+type ApplyCall =
+  | { outcome: "applied"; problem?: string }
+  | { outcome: "failed"; applied?: string[] }
+  | { outcome: "waiting" }
+  | { outcome: "applied-nothing"; said: OpWaveApplyOutcome };
+
+/**
+ * The runs a failed `applyWave` call says it applied (#4291 on op waves):
+ * `{ "applied": [<target>...] }` at `CHANT_APPLY_RUNS_RESULT`. Absent or
+ * unreadable, none did, as before.
+ */
+function readAppliedRuns(path: string, label: string, log: (line: string) => void): string[] | undefined {
+  if (!existsSync(path)) return undefined;
+  try {
+    const got = JSON.parse(readFileSync(path, "utf-8")) as { applied?: unknown };
+    if (Array.isArray(got?.applied) && got.applied.every((t) => typeof t === "string")) return got.applied as string[];
+  } catch {
+    // Read as absent below.
+  }
+  log(`${label}: CHANT_APPLY_RUNS_RESULT is not { "applied": [<target>...] }, so no run counts as applied`);
+  return undefined;
+}
 
 /** Read what an apply wrote to `CHANT_APPLY_OUTCOME` (#3821), or undefined when it wrote nothing. A file that says something else is logged and ignored. */
 function readApplyOutcome(path: string, label: string, log: (line: string) => void): OpWaveApplyOutcome | undefined {
@@ -3133,6 +3169,7 @@ async function callApply(
   const filePath = `${dir}/${call.key}.json`;
   const resultPath = `${dir}/${call.key}-result.json`;
   const outcomePath = `${dir}/${call.key}-outcome.json`;
+  const appliedRunsPath = `${dir}/${call.key}-runs-result.json`;
   const handed: Partial<Record<OpWaveHookMoment, OpWaveHook[]>> = {};
   if (byApply) {
     for (const m of ["before-apply", "after-apply"] as const) if (decision.hooks?.[m]?.length) handed[m] = decision.hooks[m];
@@ -3160,9 +3197,10 @@ async function callApply(
     writeFileSync(join(cwd, filePath), JSON.stringify(file, null, 2) + "\n");
     rmSync(join(cwd, resultPath), { force: true });
     rmSync(join(cwd, outcomePath), { force: true });
+    if (call.wave) rmSync(join(cwd, appliedRunsPath), { force: true });
     let code: number;
     try {
-      const env = { CHANT_HOOKS: filePath, CHANT_APPLY_OUTCOME: outcomePath, ...(byApply ? { CHANT_HOOKS_RESULT: resultPath } : {}) };
+      const env = { CHANT_HOOKS: filePath, CHANT_APPLY_OUTCOME: outcomePath, ...(call.wave ? { CHANT_APPLY_RUNS_RESULT: appliedRunsPath } : {}), ...(byApply ? { CHANT_HOOKS_RESULT: resultPath } : {}) };
       // #4588: an applyWave its caller runs in process.
       code = call.wave && options.waveExec ? await options.waveExec(argv, cwd, env) : exec(argv, cwd, env);
     } catch (err) {
@@ -3183,7 +3221,12 @@ async function callApply(
       log(`${call.label}: the apply applied nothing: ${said.outcome}${said.reason ? ` (${said.reason})` : ""}${said.holder ? `, held by run ${said.holder.run}` : ""}`);
       return { outcome: "applied-nothing", said };
     }
-    if (!byApply) return { outcome: code === 0 ? "applied" : "failed" };
+    // #4291: a failed applyWave that says which runs applied fails only the others.
+    const failedCall = (): ApplyCall => {
+      const applied = call.wave ? readAppliedRuns(join(cwd, appliedRunsPath), call.label, log) : undefined;
+      return { outcome: "failed", ...(applied?.length ? { applied } : {}) };
+    };
+    if (!byApply) return code === 0 ? { outcome: "applied" } : failedCall();
     let back: OpWaveHooksResult | null = null;
     try {
       back = JSON.parse(readFileSync(join(cwd, resultPath), "utf-8")) as OpWaveHooksResult;
@@ -3206,7 +3249,7 @@ async function callApply(
     }
     const afterFailed = outcomes.find((o) => o.moment === "after-apply" && o.outcome === "failed");
     if (afterFailed) return { outcome: "applied", problem: `${call.label} applied, and then the after-apply hook ${afterFailed.name} failed` };
-    if (code !== 0) return { outcome: "failed" };
+    if (code !== 0) return failedCall();
     const skipped = (["before-apply", "after-apply"] as const).filter((m) => handed[m] && !moments.includes(m));
     if (skipped.length > 0) {
       return { outcome: "applied", problem: `${call.label}: the apply exited 0 without running its ${skipped.join(" and ")} hooks (runOpWaveApplyHooks with CHANT_HOOKS), which the spec at base hands it` };
@@ -3335,14 +3378,22 @@ async function applyLeased(
     // #4555: one call applies every run, so each run's step spans that call.
     const startedMs = runs.map((r) => targetStarted(options, k, r.target))[0] ?? Date.now();
     const got = await callApply(options, ctx, decision, runs, planned, argv, { label: `wave ${k} (${wave.name})`, key: "hooks", runsPath, wave: true }, recordPath);
-    const settle: "ok" | "failed" | "skipped" = got.outcome === "applied" ? "ok" : got.outcome === "failed" ? "failed" : "skipped";
-    for (const r of runs) targetSettled(options, result, k, r.target, startedMs, settle);
+    const said = new Set(got.outcome === "failed" ? (got.applied ?? []) : []);
+    const settle = (target: string): "ok" | "failed" | "skipped" => (got.outcome === "applied" || said.has(target) ? "ok" : got.outcome === "failed" ? "failed" : "skipped");
+    for (const r of runs) targetSettled(options, result, k, r.target, startedMs, settle(r.target));
     if (got.outcome === "applied-nothing") nothing = got.said;
     else if (got.outcome === "applied") {
       result.applied.push(...runs.map((r) => r.target));
       if (got.problem) problems.push(got.problem);
     } else if (got.outcome === "waiting") waiting = true;
-    else {
+    else if (said.size > 0) {
+      // #4291: the apply said which runs applied, so a failure blocks only what depends on the others.
+      const applied = runs.filter((r) => said.has(r.target)).map((r) => r.target);
+      const failedRuns = runs.filter((r) => !said.has(r.target)).map((r) => r.target);
+      log(`wave ${k} (${wave.name}): apply failed for ${failedRuns.join(", ")}; ${applied.join(", ")} applied`);
+      result.applied.push(...applied);
+      result.failed.push(...failedRuns);
+    } else {
       log(`wave ${k} (${wave.name}): apply failed, so none of ${runs.map((r) => r.target).join(", ")} counts as applied`);
       result.failed.push(...runs.map((r) => r.target));
     }
