@@ -14,6 +14,12 @@
  * credentials.tfrc.json's `credentials` block, found by core's
  * `terraform/credentials` reader. The token goes in the `Authorization`
  * header and nowhere else; an error names the variable to set, never a value.
+ *
+ * A host with no service discovery of its own, such as a Nexus repository
+ * (chant#4605), is read through `services`: the modules.v1 URL per host, as
+ * a CLI's `host` block gives it, held in memory so no CLI config file is
+ * written. Such a host may be a bare name with no dot, as a `host` block's
+ * label may be.
  */
 import { gunzipSync } from "node:zlib";
 import { credentialsHost, terraformToken, tokenVariable, type CredentialsOptions } from "@intentius/chant/terraform/credentials";
@@ -46,14 +52,27 @@ export interface RegistryReadOptions {
   token?: string | false;
   /** Where the default token lookup reads (a test passes its own env and files). */
   credentials?: CredentialsOptions;
+  /**
+   * The modules.v1 URL per registry host, read in place of the host's
+   * `/.well-known/terraform.json`, as a CLI's `host "<name>" { services = {...} }`
+   * block does. A host named here is taken as a registry host even without a dot.
+   */
+  services?: Record<string, string>;
+  /**
+   * A whole `Authorization` header value sent on every request to the
+   * registry, in place of the bearer token, such as Nexus's basic
+   * credentials before its bearer form (3.95). Never printed.
+   */
+  authorization?: string;
 }
 
 /** The token a read sends to a host, by the options. */
 export const readToken = (host: string, o: RegistryReadOptions): string | undefined => (o.token === false ? undefined : (o.token ?? terraformToken(host, o.credentials)));
 
-const httpGet = async (fetchFn: RegistryFetch, url: string, token?: string): Promise<Response> => {
+const httpGet = async (fetchFn: RegistryFetch, url: string, token?: string, authorization?: string): Promise<Response> => {
+  const auth = authorization ?? (token ? `Bearer ${token}` : undefined);
   try {
-    return await fetchFn(url, { method: "GET", redirect: "follow", ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}) });
+    return await fetchFn(url, { method: "GET", redirect: "follow", ...(auth ? { headers: { Authorization: auth } } : {}) });
   } catch (e) {
     const cause = (e as { cause?: { message?: string } }).cause?.message;
     throw new RegistryError(`${url}: ${(e as Error).message}${cause ? ` (${cause})` : ""}`);
@@ -70,13 +89,26 @@ const answered = (url: string, status: number, host: string, token: string | und
 
 const optionsOf = (o: RegistryFetch | RegistryReadOptions | undefined): RegistryReadOptions => (typeof o === "function" ? { fetch: o } : (o ?? {}));
 
+/** The modules.v1 URL `services` names for a host, matched without case. */
+const serviceFor = (host: string, o: RegistryReadOptions): string | undefined => {
+  if (!o.services) return undefined;
+  const h = host.toLowerCase();
+  for (const [k, v] of Object.entries(o.services)) if (k.toLowerCase() === h) return v;
+  return undefined;
+};
+
+/** A source split by the hosts the options know as well as by the usual host shape. */
+const sourceOf = (source: string, o: RegistryReadOptions) => parseRegistrySource(source, Object.keys(o.services ?? {}));
+
 /** The modules.v1 base a host's service discovery names, ending in `/`. */
 export async function modulesBase(host: string, options?: RegistryFetch | RegistryReadOptions): Promise<string> {
   const o = optionsOf(options);
+  const mapped = serviceFor(host, o);
+  if (mapped !== undefined) return mapped.endsWith("/") ? mapped : `${mapped}/`;
   const disco = `${o.scheme ?? "https"}://${host}/${DISCOVERY}`;
   const token = readToken(host, o);
-  const res = await httpGet(o.fetch ?? globalFetch, disco, token);
-  if (!res.ok) throw answered(disco, res.status, host, token);
+  const res = await httpGet(o.fetch ?? globalFetch, disco, token, o.authorization);
+  if (!res.ok) throw answered(disco, res.status, host, token ?? o.authorization);
   let base: unknown;
   try {
     base = ((await res.json()) as Record<string, unknown>)["modules.v1"];
@@ -91,13 +123,13 @@ export async function modulesBase(host: string, options?: RegistryFetch | Regist
 /** Every version a registry lists for a module; none when it has no versions file. */
 export async function registryVersions(source: string, options?: RegistryFetch | RegistryReadOptions): Promise<string[]> {
   const o = optionsOf(options);
-  const s = parseRegistrySource(source);
+  const s = sourceOf(source, o);
   if (!s) throw new RegistryError(`${source} is not a registry source`);
   const token = readToken(s.host, o);
   const url = `${await modulesBase(s.host, { ...o, token: token ?? false })}${s.namespace}/${s.name}/${s.system}/versions`;
-  const res = await httpGet(o.fetch ?? globalFetch, url, token);
+  const res = await httpGet(o.fetch ?? globalFetch, url, token, o.authorization);
   if (res.status === 404) return [];
-  if (!res.ok) throw answered(url, res.status, s.host, token);
+  if (!res.ok) throw answered(url, res.status, s.host, token ?? o.authorization);
   return readVersions(await res.text());
 }
 
@@ -126,13 +158,13 @@ export async function locationFromAnswer(res: Response, reads: DownloadReader = 
 /** Where a registry says one version is, resolved against the download URL when it is relative. */
 export async function registryLocation(source: string, version: string, options?: RegistryFetch | RegistryLocationOptions): Promise<string> {
   const o = optionsOf(options) as RegistryLocationOptions;
-  const s = parseRegistrySource(source);
+  const s = sourceOf(source, o);
   if (!s) throw new RegistryError(`${source} is not a registry source`);
   const token = readToken(s.host, o);
   const url = `${await modulesBase(s.host, { ...o, token: token ?? false })}${s.namespace}/${s.name}/${s.system}/${version}/download`;
-  const res = await httpGet(o.fetch ?? globalFetch, url, token);
+  const res = await httpGet(o.fetch ?? globalFetch, url, token, o.authorization);
   if (res.status === 404) throw new RegistryError(`${s.host}/${s.namespace}/${s.name}/${s.system} has no version ${version}`);
-  if (!res.ok) throw answered(url, res.status, s.host, token);
+  if (!res.ok) throw answered(url, res.status, s.host, token ?? o.authorization);
   const reads = o.reads ?? "either";
   let location = await locationFromAnswer(res, reads);
   if (!location) {

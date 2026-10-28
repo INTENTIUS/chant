@@ -79,11 +79,14 @@ export interface RegistrySource {
  * source is not one: `host/ns/name/system`, with an optional `//subdir` and
  * query. The host must look like one (a dot, a port, or `localhost`), so a
  * three-part public registry source with no host is not taken for one.
+ * `hosts` names bare hosts a CLI `host` block declares (a Nexus repository's
+ * name, chant#4605), which are taken as hosts too.
  */
-export function parseRegistrySource(source: string): RegistrySource | undefined {
+export function parseRegistrySource(source: string, hosts: readonly string[] = []): RegistrySource | undefined {
   const base = source.split("?")[0]!.split("//")[0]!;
   const m = /^([a-z0-9.-]+(?::\d+)?)\/([^/]+)\/([^/]+)\/([^/]+)$/i.exec(base);
-  if (!m || (!m[1]!.includes(".") && !m[1]!.includes(":") && m[1] !== "localhost")) return undefined;
+  const known = (h: string) => hosts.some((k) => k.toLowerCase() === h.toLowerCase());
+  if (!m || (!m[1]!.includes(".") && !m[1]!.includes(":") && m[1] !== "localhost" && !known(m[1]!))) return undefined;
   return { host: m[1]!.toLowerCase(), namespace: m[2]!, name: m[3]!, system: m[4]! };
 }
 
