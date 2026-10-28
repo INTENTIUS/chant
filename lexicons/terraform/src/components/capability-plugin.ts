@@ -164,6 +164,7 @@ import { terraformTraceFacts } from "./trace-facts";
 import { DEFAULT_LOCK_TIMEOUT, isLockTimeout } from "../lock-timeout";
 import { conePlanDigest, type PlanCone } from "../cone";
 import { fillStateReads, stateReadsProblems, waitingReadsReason, type TerraformStateRead } from "../state-reads";
+import { terraformStateOpCapabilities } from "../state-ops";
 
 /** The `terraform-apply` step's input. */
 export interface TerraformApplyStepInput {
@@ -648,6 +649,9 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
 
 export const TERRAFORM_VERB_FAMILIES = {
   apply: ["terraform-apply"],
+  // #4618: the binary runs outside waves, each a fixed operation; the two that change state on their own run under a gated request.
+  state: ["terraform-state-unlock", "terraform-state-push"],
+  copy: ["terraform-copy"],
 } as const;
 
 export const terraformCapabilityPlugin: CapabilityPlugin = {
@@ -656,7 +660,7 @@ export const terraformCapabilityPlugin: CapabilityPlugin = {
     return ownPackageVersion(import.meta.url);
   },
   capabilities(): Array<Capability<never, unknown>> {
-    return [terraformApplyCapability as Capability<never, unknown>];
+    return [terraformApplyCapability as Capability<never, unknown>, ...terraformStateOpCapabilities.map((c) => c as unknown as Capability<never, unknown>)];
   },
   families(): Record<string, readonly string[]> {
     return TERRAFORM_VERB_FAMILIES;
