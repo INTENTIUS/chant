@@ -1,0 +1,43 @@
+---
+title: "chant e2e safe-run"
+description: Run a command with no real cloud in reach, then scan its output for a real cloud answering
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant e2e safe-run [--scan <dir>]... -- <command...>
+```
+
+The e2e harness's no-real-cloud wrapper, for drivers that are not TypeScript. A bash script such as a stack's `smoke.sh` runs its steps under it and records a result only when it exits 0.
+
+## Environment
+
+The command runs with:
+
+- every variable with an `AWS_`, `AZURE_`, `ARM_`, `GOOGLE_`, `CLOUDSDK_` or `GCE_` prefix unset (`GOOGLE_APPLICATION_CREDENTIALS` is one), and no `PULUMI_ACCESS_TOKEN`
+- floci's test credentials, empty AWS config files, and an empty `CLOUDSDK_CONFIG` and `AZURE_CONFIG_DIR`
+- `GCE_METADATA_HOST` pointing at a closed loopback port
+- `PULUMI_BACKEND_URL` set to a `file://` directory, unless it is already set to a local backend (`file://`, `plunge+file://`, or a plunge store on a loopback emulator). Any other backend is refused.
+- `PULUMI_SKIP_UPDATE_CHECK=true`
+
+## Scan
+
+After the command exits, the wrapper scans its output and every file under each `--scan` directory for what a real cloud answers to a fake or missing credential: `UnrecognizedClientException`, `InvalidClientTokenId`, `invalid_grant`, `AADSTS`, `CREDENTIALS_MISSING`, and a `401` on a line naming `googleapis.com`, `amazonaws.com`, `azure.com` or `windows.net`. A `--scan` directory that does not exist counts as a hit, since it could not be checked.
+
+The command's output passes through to your terminal and is also written to a log in a fresh temp directory, whose path is printed on stderr.
+
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| the command's own | The scan printed `CLEAN` |
+| 3 | The scan found real-cloud lines, which are printed as `<file>:<line>:<text>`. Record nothing. |
+| 2 | No command given, a refused backend, or the command could not start |
+
+## Example
+
+```bash
+chant e2e safe-run --scan ./out -- bash stack/smoke.sh && record-result
+```

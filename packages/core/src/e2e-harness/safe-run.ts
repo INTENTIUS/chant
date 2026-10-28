@@ -120,8 +120,8 @@ export class SafeRun {
   readonly env: Record<string, string>;
   readonly logFile: string;
 
-  constructor(private readonly o: SafeEnvOptions & { logFile?: string; scan?: string[] }) {
-    this.env = safeRunEnv(o);
+  constructor(private readonly o: SafeEnvOptions & { logFile?: string; scan?: string[]; echo?: boolean }, base: Record<string, string | undefined> = process.env) {
+    this.env = safeRunEnv(o, base);
     this.logFile = o.logFile ?? join(o.scratch, "safe-run.log");
     appendFileSync(this.logFile, `e2e-safe-run: ${new Date().toISOString()} PULUMI_BACKEND_URL=${this.env.PULUMI_BACKEND_URL} CLOUDSDK_CONFIG=${this.env.CLOUDSDK_CONFIG}\n`);
   }
@@ -137,8 +137,14 @@ export class SafeRun {
     this.log(`e2e-safe-run: command: ${command.map((a) => JSON.stringify(a)).join(" ")}`);
     return new Promise((resolve, reject) => {
       const child = spawn(file, args, { env: { ...this.env, ...extra }, stdio: ["ignore", "pipe", "pipe"] });
-      child.stdout.on("data", (b: Buffer) => appendFileSync(this.logFile, b));
-      child.stderr.on("data", (b: Buffer) => appendFileSync(this.logFile, b));
+      child.stdout.on("data", (b: Buffer) => {
+        appendFileSync(this.logFile, b);
+        if (this.o.echo) process.stdout.write(b);
+      });
+      child.stderr.on("data", (b: Buffer) => {
+        appendFileSync(this.logFile, b);
+        if (this.o.echo) process.stderr.write(b);
+      });
       child.on("error", reject);
       child.on("close", (code) => resolve(code ?? 1));
     });
