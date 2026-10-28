@@ -17,7 +17,9 @@
  *   control repo's record of each one in `_control/applied.jsonl`
  *   (./control/applied.ts, #4617).
  * - Cross-stack edges marked stale, current or unknown from the entries
- *   and those records, for the pull request note (./control/edges.ts).
+ *   and those records, for the pull request note (./control/edges.ts), and
+ *   the note job's read-only fetch of the control repo's `chant/lifecycle`
+ *   that sets `CHANT_CONTROL_DIR` (`controlNoteCheckout`, #4619).
  *
  * A product holds the words, the settings it writes into an entry and their
  * check, its generator and its docs. It feature-detects this entry until the
@@ -33,6 +35,9 @@ export const CI_CONTROL_FLOOR = NEXT_RELEASE;
 
 /** The first chant that records the applies a dispatch carries and marks cross-stack edges (#4617). `recordControlAppliedFromEnv` present means the rest is too. */
 export const CONTROL_APPLIED_FLOOR = NEXT_RELEASE;
+
+/** The first chant whose note jobs read the control repo for the cross-stack edges (#4619). `controlNoteCheckout` present means the rest is too. */
+export const CONTROL_NOTE_CHECKOUT_FLOOR = NEXT_RELEASE;
 
 export {
   CONTROL_APPLY_OUTCOMES,
@@ -61,6 +66,7 @@ export {
   controlDispatchJob,
   controlDispatchRequest,
   controlDispatchScript,
+  controlNoteCheckout,
   controlPipelineFileName,
   controlPipelinePath,
   controlPipelineSpec,
@@ -75,6 +81,7 @@ export {
   type ControlDispatchJobSpec,
   type ControlDispatchRequest,
   type ControlDispatchScriptOptions,
+  type ControlNoteCheckout,
   type ControlPipelineSpec,
   type ControlSettingsInput,
   type ControlTarget,

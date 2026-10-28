@@ -3,6 +3,7 @@ import { componentWaveOutputsFile, componentWaveSteps, componentWavesSpec, produ
 import { prApplyComment, prLoopSetup, PR_LOOP_IMAGE, PR_LOOP_SETUP, withProductBin } from "./pr-pipeline";
 import { PLYWOOD, TERRAGUCCI } from "../__fixtures__/product-words";
 import type { OpWavesSpec } from "../op/op-waves";
+import { resolveControlTarget } from "../control/dispatch";
 
 const waves: OpWavesSpec = {
   name: "apply",
@@ -163,6 +164,26 @@ describe("the agent (#4616)", () => {
   test("the drift agent of a scheduled drift Op", () => {
     expect(productDriftAgent(words, "plywood-drift-app", { maxRuns: 2 })).toEqual({ on: "drift", maxRuns: 2 });
     expect(() => productDriftAgent(words, "plywood-drift-app", { branch: "../x" })).toThrow(/branch/);
+  });
+});
+
+// #4619: with a control repo on the loop or on the waves spec, the note job reads it before pr-post.
+describe("the note job's read of the control repo (#4619)", () => {
+  test("the waves spec's control gives the note job its read step", () => {
+    const pw = productPipelineJobs("gitlab", "production", { words: PLYWOOD, waves: { ...waves, control: { repo: "gitlab.com/acme/control", op: "deploy", member: "shop" } } });
+    expect(pw.post.control?.script).toContain("'https://gitlab.com/acme/control.git' '+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle'");
+    expect(pw.post.control?.script).toContain('export CHANT_CONTROL_DIR="$chant_control_dir"');
+    expect(pw.post.control?.script).toContain("plywood: could not read the control repo");
+  });
+
+  test("the loop's control does too, with the read secret it names", () => {
+    const target = resolveControlTarget({ repo: "github.com/acme/control", op: "deploy", readTokenSecret: "TG_CONTROL_READ" }, "network");
+    const tg = productPipelineJobs("github", "production", { words: TERRAGUCCI, control: { target } });
+    expect(tg.post.control?.env).toEqual({ CHANT_CONTROL_READ_TOKEN: "${{ secrets.TG_CONTROL_READ || github.token }}" });
+  });
+
+  test("without a control repo the note job reads none", () => {
+    expect(productPipelineJobs("forgejo", "production", { words: PLYWOOD, waves }).post.control).toBeUndefined();
   });
 });
 

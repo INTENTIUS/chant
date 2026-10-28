@@ -23,7 +23,8 @@
 
 import type { ForgeKind } from "../pr-forge";
 import { layerWaves } from "../gated-waves";
-import { opWaveBinArgv, opWaveJobs, type OpWave, type OpWaveJob, type OpWavesSpec } from "../op/op-waves";
+import { opWaveBinArgv, opWaveJobs, opWavesControlTarget, type OpWave, type OpWaveJob, type OpWavesSpec } from "../op/op-waves";
+import { controlNoteCheckout, type ControlNoteCheckout } from "../control/dispatch";
 import {
   assertProductWords,
   CHANT_WORDS,
@@ -86,8 +87,14 @@ export interface ProductPipelineJobs {
   words: CiProductWords;
   /** The plan job: `pr-plan` with the words. */
   plan: PrLoopJob;
-  /** The plan-note job: `pr-post`. */
-  post: { command: string; env: Record<string, string> };
+  /**
+   * The plan-note job: `pr-post`. With a control repo named on the loop's
+   * `control` or the waves spec's (#4619), `control` is the step the note
+   * job runs before `pr-post`: a read-only fetch of the control repo's
+   * `chant/lifecycle` that sets `CHANT_CONTROL_DIR`, so the note marks the
+   * cross-stack edges.
+   */
+  post: { command: string; env: Record<string, string>; control?: ControlNoteCheckout };
   /** The record job, when no waves apply on merge. */
   record?: PrLoopJob;
   /** The apply before merge, answering the apply comment, with `applyBeforeMerge`. */
@@ -183,10 +190,12 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
     const line = commentLine(words, c);
     if (line) comments[c] = line;
   }
+  // #4619: the loop's control target, else the waves spec's.
+  const controlTarget = options.control?.target ?? (given?.control ? opWavesControlTarget(given.control) : undefined);
   const out: ProductPipelineJobs = {
     words,
     plan: plan!,
-    post: prLoopPostJob(forge, env, member, words),
+    post: { ...prLoopPostJob(forge, env, member, words), ...(controlTarget ? { control: controlNoteCheckout(forge, controlTarget, words) } : {}) },
     comments,
     ...(options.applyBeforeMerge ? { applyBeforeMerge: apply! } : {}),
   };

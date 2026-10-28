@@ -67,3 +67,33 @@ describe("the drift agent on GitLab", () => {
     expect(() => gen({ name: "drift-app", trigger: { kind: "cron", schedule: "0 6 * * *" }, runner: { group: "infra" } })).toThrow(/runner group/);
   });
 });
+
+// #4619: a member's drift Op runs in the member's directory, and its artifact keeps the drift there.
+describe("the drift agent of a workspace member on GitLab", () => {
+  const out = generateGitlabOpPipeline([{ name: "drift-app", trigger: { kind: "cron", schedule: "0 6 * * *" }, agent: { on: "drift", maxCostUsd: 4 } }], { member: { name: "app", dir: "stacks/app" } });
+  const doc = parseYAML(out.files[0]!.yaml) as unknown as Record<string, Job>;
+  const op = doc["app-drift-app"]!;
+  const agent = doc["app-drift-app-agent"]!;
+  const push = doc["app-drift-app-agent-push"]!;
+
+  test("the drift check runs in the member's directory and keeps the drift under it", () => {
+    expect(op.script[0]).toBe("cd stacks/app");
+    expect(op.artifacts?.paths).toEqual(["stacks/app/.chant/agent"]);
+    expect(op.artifacts?.reports).toEqual({ dotenv: "stacks/app/.chant/agent/drift.env" });
+  });
+
+  test("the agent and push jobs read the member's own drift output", () => {
+    expect(agent.script.some((l) => l.startsWith("cd "))).toBe(false);
+    expect(agent.script.find((l) => l.includes("agent prepare"))).toBe("chant agent prepare --forge gitlab --output stacks/app/.chant/agent");
+    expect(agent.script.at(-1)).toBe("chant agent run --forge gitlab --output stacks/app/.chant/agent");
+    expect(agent.artifacts?.paths).toEqual(["stacks/app/.chant/agent"]);
+    expect(push.script[0]).toContain("stacks/app/.chant/agent/decision.json");
+    expect(push.script.at(-1)).toBe("chant agent land --forge gitlab --output stacks/app/.chant/agent");
+  });
+
+  test("the money limit reaches both jobs and the file's header", () => {
+    expect(agent.variables?.CHANT_AGENT_MAX_COST_USD).toBe("4");
+    expect(push.variables?.CHANT_AGENT_MAX_COST_USD).toBe("4");
+    expect(out.files[0]!.yaml).toContain("and to $4 a day of recorded cost");
+  });
+});

@@ -91,7 +91,7 @@ import {
 import { forgejoRepoLockLines, REPO_APPLY_GROUP } from "@intentius/chant/components/repo-lock";
 import { memberRepoPath } from "@intentius/chant/lexicon";
 import { productStatusContext, resolveProductWords } from "@intentius/chant/ci-product-words";
-import { controlDispatchJob } from "@intentius/chant/control/dispatch";
+import { controlDispatchJob, controlNoteCheckout } from "@intentius/chant/control/dispatch";
 import type {
   ComponentPipelineJob as GeneratedJob,
   ComponentPipelineOptions as GenerateGithubOptions,
@@ -411,12 +411,15 @@ function prLoopGithubDoc(
     ]);
   }
   const post = prLoopPostJob(forgeName, env, member?.name, loop.words ? resolveProductWords(loop.words) : undefined);
+  // #4619: with a control repo named, the note job reads its chant/lifecycle, read-only, so pr-post marks the cross-stack edges.
+  const controlRead = loop.control ? controlNoteCheckout(forgeName, loop.control.target, loop.words ?? {}) : undefined;
   const noteSteps: Array<Record<string, unknown>> = [
     // The target branch's commit: the chant this job runs is the target branch's, and none of the change's code is here.
     { name: "Check out the target branch's commit", uses: CHECKOUT, with: { ref: "${{ github.event.pull_request.base.sha }}" } },
     ...runSteps(beforeScript),
     { name: "Take the plan report from the plan job", run: takeOverScript("plan", PR_LOOP_REPORT_DIR, forgeName) },
     { name: "Keep the plan report", if: "always()", uses: UPLOAD_ARTIFACT, with: { name: reportName(plan), path: reportPath, "if-no-files-found": "ignore", "include-hidden-files": true } },
+    ...(controlRead ? [{ name: controlRead.stepName, if: "always()", env: controlRead.env, run: controlRead.script }] : []),
     { name: `Post the plan note and ${productStatusContext(resolveProductWords(loop.words), "plan")}`, if: "always()", env: post.env, run: post.command },
   ];
   // #4298: with a pull request environment the pull_request trigger fires on close too, and the plan skips that event.

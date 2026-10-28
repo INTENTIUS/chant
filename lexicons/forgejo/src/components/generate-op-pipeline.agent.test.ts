@@ -30,3 +30,17 @@ describe("the comment agent on Forgejo", () => {
     expect(() => doc({ name: "drift-app", trigger: { kind: "cron", schedule: "0 6 * * *" }, runner: { group: "infra" } })).toThrow(/runner group/);
   });
 });
+
+// #4619: on Forgejo too, a member's drift Op hands its own output on, and the agent job takes it at the root.
+describe("the drift agent of a workspace member on Forgejo", () => {
+  const out = generateForgejoOpPipeline([{ name: "drift-app", trigger: { kind: "cron", schedule: "0 6 * * *" }, agent: { on: "drift" } }], { member: { name: "app", dir: "stacks/app" } });
+  const d = parseYAML(out.files[0]!.yaml) as unknown as { jobs: Record<string, { defaults?: { run?: { "working-directory"?: string } }; steps: Array<{ name?: string; run?: string }> }> };
+
+  test("the drift check runs in the member's directory, and the agent job reads what it handed on", () => {
+    expect(d.jobs["drift-app"]!.defaults?.run?.["working-directory"]).toBe("stacks/app");
+    const agent = d.jobs["drift-app-agent"]!;
+    expect(agent.defaults).toBeUndefined();
+    expect(agent.steps.find((s) => s.name === "Take the drift from the drift check")!.run).toContain(" .chant/agent <<");
+    expect(agent.steps.some((s) => s.run?.includes("chant agent prepare --forge forgejo --output .chant/agent"))).toBe(true);
+  });
+});
