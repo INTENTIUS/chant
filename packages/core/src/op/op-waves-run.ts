@@ -53,6 +53,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, posix } from "node:path";
 import { CHANT_EXIT } from "../exit-codes";
+import type { ResolvedGatePolicySource } from "../policy-source";
 import {
   decideWaveGate,
   runWaveLoop,
@@ -373,6 +374,13 @@ export interface OpWaveDecision {
   extras?: WaveMember[];
   /** On a discovering wave (#3821): how many waves the plan command found. */
   discovered?: { waves?: number };
+  /**
+   * `ci.policy.source` as `holds.policy` fetched it (#4613): the shared
+   * repository, its ref and the commit the ref named, so the decision names
+   * the rules its runs were judged by. Absent when the rules came from the
+   * workspace at base, or no policy ran.
+   */
+  ciPolicySource?: ResolvedGatePolicySource;
 }
 
 /**
@@ -1035,10 +1043,13 @@ async function planWaveRuns(
   const { spec, k, wave, cwd } = at;
   if (!spec.step) return planRuns({ ...at, ...(at.options.waveExec ? { waveExec: at.options.waveExec } : {}) }, runs, discover);
   const registry = await opWaveRegistry(at.options, cwd, at.options.capabilities);
-  const lockGrain = at.options.lockGrain ?? (await declaredLockGrain(cwd, (at as { gateRule?: { base: string } }).gateRule?.base ?? at.options.base));
+  const base = (at as { gateRule?: { base: string } }).gateRule?.base ?? at.options.base;
+  const lockGrain = at.options.lockGrain ?? (await declaredLockGrain(cwd, base));
+  // #4613: a step's own policy engine (CrossGuard) reads its packs at the base the wave's rules were read at.
+  const policyBase = base && base !== "HEAD" ? base : undefined;
   const plans: OpWaveStepPlan[] = [];
   for (const run of runs) {
-    const plan = await planOpWaveStep({ spec, wave, cwd, registry, planPath: opWavePlanPath(spec, k, run.target), lockGrain }, run);
+    const plan = await planOpWaveStep({ spec, wave, cwd, registry, planPath: opWavePlanPath(spec, k, run.target), lockGrain, ...(policyBase ? { policyBase } : {}) }, run);
     at.steps?.set(run.target, plan);
     plans.push(plan);
   }
@@ -1128,10 +1139,10 @@ async function runWaveHolds(
   members: OpWaveMember[],
   parts: ReadonlyMap<string, ChangeSetPart> | undefined,
   base: string,
-): Promise<{ holds: string[]; extras: WaveMember[]; rows: Map<string, OpRunPolicyRow> } | { failed: string }> {
+): Promise<{ holds: string[]; extras: WaveMember[]; rows: Map<string, OpRunPolicyRow>; policySource?: ResolvedGatePolicySource } | { failed: string }> {
   const { spec, k, wave, cwd, log, options } = ctx;
   // #4614: each run's ci.policy row, which the after-plan hooks and the run record read.
-  const out = { holds: [] as string[], extras: [] as WaveMember[], rows: new Map<string, OpRunPolicyRow>() };
+  const out: { holds: string[]; extras: WaveMember[]; rows: Map<string, OpRunPolicyRow>; policySource?: ResolvedGatePolicySource } = { holds: [], extras: [], rows: new Map<string, OpRunPolicyRow>() };
   if (!holds) return out;
   if (holds.policy) {
     const missing = members.filter((m) => !parts?.has(m.member)).map((m) => m.member);
@@ -1152,6 +1163,10 @@ async function runWaveHolds(
     }
     if ("note" in got) log(`wave ${k} (${wave.name}): ${got.note}`);
     else {
+      if (got.source) {
+        out.policySource = got.source;
+        log(`wave ${k} (${wave.name}): ci.policy read from ${got.source.repo}@${got.source.ref} at commit ${got.source.commit}`);
+      }
       for (const m of members) {
         const v = got.verdicts.get(m.member);
         if (v && v.result !== "error") {
@@ -2230,6 +2245,8 @@ async function planOpWave(options: RunOpWaveOptions, { k, pass }: WaveAttempt<Ru
     holds.push(...held.holds);
     if (held.extras.length > 0) extras = [...(extras ?? []), ...held.extras];
     policyRows = held.rows;
+    // #4613: the decision names the shared policy commit its runs were judged by.
+    if (held.policySource) decision.ciPolicySource = held.policySource;
   }
   // #4614: the after-plan hooks in the job's process, before the set digest and the gate.
   const inProcess = await runAfterPlan(ctx, members, parts, policyRows);

@@ -11,7 +11,8 @@
  * `stack output`. No pulumi or plunge binary runs here, and nothing reaches
  * a backend.
  */
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { describe, expect, test } from "vitest";
@@ -405,5 +406,63 @@ describe("review stacks in a pull request's environment (#4609)", () => {
     const planned = await cap.plan!({ ...prCtx, unresolvedInputs: ["db.url"] }, step({ engine: "plunge" }));
     expect(planned.member).toBe(reviewMember);
     expect(planned.location).toBe(location("plunge", "pr-12"));
+  });
+});
+
+describe("CrossGuard packs read at base (#4613)", () => {
+  const git = (cwd: string, ...args: string[]): string => execFileSync("git", args, { cwd, encoding: "utf-8" }).trim();
+
+  /** A repo holding the corpus stack and a pack `guard` beside it: mandatory at base, advisory on the head. */
+  function repo(): { stack: string; base: string } {
+    const top = realpathSync(tmp());
+    git(top, "init", "-q", "-b", "main");
+    git(top, "config", "user.email", "t@example.com");
+    git(top, "config", "user.name", "t");
+    const stack = join(top, "stack");
+    mkdirSync(join(stack, "guard"), { recursive: true });
+    for (const f of ["Pulumi.yaml", "stack-export.json"]) copyFileSync(join(dir, f), join(stack, f));
+    writeFileSync(join(stack, "guard", "index.ts"), "// no-public-bucket: mandatory\n");
+    git(top, "add", ".");
+    git(top, "commit", "-q", "-m", "base");
+    const base = git(top, "rev-parse", "HEAD");
+    writeFileSync(join(stack, "guard", "index.ts"), "// no-public-bucket: advisory\n");
+    git(top, "commit", "-q", "-am", "head");
+    return { stack, base };
+  }
+
+  test("with a policy base, the preview and up run the base's copy of a pack the head changed", async () => {
+    const { stack, base } = repo();
+    const pulumi = engine();
+    const cap = createPulumiUpCapability({ run: pulumi.run, env: {}, tmp: tmp(), snapshots: null });
+    const planned = await cap.plan!({ ...ctx, policyBase: base }, step({ dir: stack, engine: "pulumi", policyPacks: [{ dir: "guard" }] }));
+    const args = pulumi.calls[0]!.args;
+    const pack = args[args.indexOf("--policy-pack") + 1]!;
+    expect(pack).not.toBe(join(stack, "guard"));
+    expect(readFileSync(join(pack, "index.ts"), "utf-8")).toContain("mandatory");
+    const artifact = planned.artifact as PulumiUpArtifact;
+    expect(artifact.policyPacks?.base).toBe(base);
+    expect(artifact.policyPacks?.notes).toEqual([expect.stringMatching(/guard differs on this change/)]);
+
+    await cap.run({ ...ctx, plans: { [planned.member]: artifact } }, step({ dir: stack, engine: "pulumi", policyPacks: [{ dir: "guard" }] }));
+    const up = pulumi.calls.find((c) => c.args[0] === "up")!.args;
+    expect(up[up.indexOf("--policy-pack") + 1]).toBe(pack);
+  });
+
+  test("without a policy base, the step's packs pass as they stand", async () => {
+    const { stack } = repo();
+    const pulumi = engine();
+    const cap = createPulumiUpCapability({ run: pulumi.run, env: {}, tmp: tmp(), snapshots: null });
+    const planned = await cap.plan!(ctx, step({ dir: stack, engine: "pulumi", policyPacks: [{ dir: "guard" }] }));
+    const args = pulumi.calls[0]!.args;
+    expect(args[args.indexOf("--policy-pack") + 1]).toBe("guard");
+    expect((planned.artifact as PulumiUpArtifact).policyPacks).toBeUndefined();
+  });
+
+  test("a base that names no commit stops the plan before the engine runs", async () => {
+    const { stack } = repo();
+    const pulumi = engine();
+    const cap = createPulumiUpCapability({ run: pulumi.run, env: {}, tmp: tmp(), snapshots: null });
+    await expect(cap.plan!({ ...ctx, policyBase: "f".repeat(40) }, step({ dir: stack, engine: "pulumi", policyPacks: [{ dir: "guard" }] }))).rejects.toThrow(/names no commit/);
+    expect(pulumi.calls).toHaveLength(0);
   });
 });

@@ -62,6 +62,7 @@ import type { CapabilityTraceFacts } from "../otlp";
 import { composeChangeSet, type ChangeSetDocument, type ChangeSetPart } from "../change-set";
 import { computePlanDigest } from "../lifecycle/plan-digest";
 import type { GatePolicyExec, GatePolicyRun } from "../gate-policy";
+import type { ResolvedGatePolicySource } from "../policy-source";
 import type { WaveMember } from "../wave-engine";
 import type { OpWave, OpWaveRun, OpWavesSpec } from "./op-waves";
 import { resolvePlannedLock, type LockGrain, type PlannedLock } from "../lifecycle/lock-rows";
@@ -235,7 +236,7 @@ function resolveCapability(registry: CapabilityRegistry, kind: string): Capabili
 
 /** Plan one run through the spec's step (#4545), writing its plan file at `planPath` (relative to `cwd`) as a per-run `plan` command would. */
 export async function planOpWaveStep(
-  at: { spec: OpWavesSpec; wave: OpWave; cwd: string; registry: CapabilityRegistry; planPath: string; lockGrain?: LockGrain | null },
+  at: { spec: OpWavesSpec; wave: OpWave; cwd: string; registry: CapabilityRegistry; planPath: string; lockGrain?: LockGrain | null; policyBase?: string },
   run: OpWaveRun,
 ): Promise<OpWaveStepPlan> {
   const { spec, wave, cwd, registry } = at;
@@ -245,7 +246,7 @@ export async function planOpWaveStep(
   let planned: CapabilityPlan;
   let lock: PlannedLock;
   try {
-    planned = await capability.plan({ ...opWaveStepContext(spec, wave, run), ...(at.lockGrain ? { lockGrain: at.lockGrain } : {}) }, input as never);
+    planned = await capability.plan({ ...opWaveStepContext(spec, wave, run), ...(at.lockGrain ? { lockGrain: at.lockGrain } : {}), ...(at.policyBase ? { policyBase: at.policyBase } : {}) }, input as never);
     // #4552: the run's grain (declared at base, else its lexicon's) and, on the resource grain, the rows its apply leases.
     lock = await resolvePlannedLock(capability, input, planned, at.lockGrain);
   } catch (err) {
@@ -362,7 +363,7 @@ export interface OpWaveRunVerdict {
 export async function opWavePolicyVerdicts(
   at: { spec: Pick<OpWavesSpec, "name">; gate: string; env: string; base: string; head: string; cwd: string; exec?: GatePolicyExec },
   parts: ReadonlyMap<string, ChangeSetPart>,
-): Promise<{ verdicts: Map<string, OpWaveRunVerdict> } | { note: string }> {
+): Promise<{ verdicts: Map<string, OpWaveRunVerdict>; source?: ResolvedGatePolicySource } | { note: string }> {
   const { prLoopPolicyAt, runPrPolicy } = await import("../components/pr-policy");
   const read = prLoopPolicyAt(at.cwd, at.base);
   if (!read.settings) return { note: read.note ?? `holds.policy: the declaration at ${at.base.slice(0, 12)} names no ci.policy, so no policy runs` };
@@ -373,7 +374,7 @@ export async function opWavePolicyVerdicts(
     const reason = verdict.result === "error" ? verdict.error : [...verdict.denials, ...verdict.holds].map((f) => f.message).filter(Boolean).join("; ") || undefined;
     verdicts.set(target, { result: verdict.result, rules: verdict.rules, holds: [...new Set(verdict.holds.map((h) => h.rule))].sort(), ...(reason ? { reason } : {}) });
   }
-  return { verdicts };
+  return { verdicts, ...(read.source ? { source: read.source } : {}) };
 }
 
 /** One run's estimate: the monthly change, or why there is none. */

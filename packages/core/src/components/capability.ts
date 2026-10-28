@@ -103,6 +103,15 @@ export interface DeployContext {
    */
   lockGrain?: LockGrain;
   /**
+   * The commit the caller reads policy at (#4613): the base a pull request
+   * or an op wave is measured from. A step that runs a policy engine of its
+   * own, such as `pulumi-up`'s CrossGuard packs, reads the packs and
+   * `ci.policy.packs` at this commit (`../policy-packs.ts`), so a change
+   * cannot loosen what judges it. Absent outside those jobs: the step reads
+   * its packs where they stand.
+   */
+  policyBase?: string;
+  /**
    * The run's row lease (#4594), set by an apply path that plans inside its
    * steps (`run --components`, `components fan-out`, a promote). The driver
    * takes it around a step on the resource grain (./row-lease.ts); a

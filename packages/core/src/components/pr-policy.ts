@@ -23,11 +23,18 @@
  *
  * A policy also reads `input.review` (#4326): the risk the pull request's
  * review note names, when the review agent posted one ({@link policyReviewOf}).
+ *
+ * `ci.policy.source` (#4613) names a shared repository and ref instead of
+ * the workspace's own directory. The source is named at base, fetched once
+ * per job (`../policy-source.ts`), and the commit its ref named goes on the
+ * verdict and the report, so a decision names the rules it used. A source
+ * that cannot be fetched is an error, and nothing applies.
  */
 
 import { readDeclaration, WorkspaceReadError } from "../workspace/declaration";
 import { locateWorkspace } from "../workspace/which-chant";
 import type { WorkspaceTree } from "../workspace/tree";
+import { fetchGatePolicySourceOnce, type ResolvedGatePolicySource } from "../policy-source";
 import {
   checkGatePolicy,
   DEFAULT_POLICY_PATH,
@@ -48,8 +55,16 @@ export interface PrLoopPolicy {
   settings?: GatePolicySettings;
   /** The commit it was read at. */
   base: string;
-  /** The tree of the declaration's directory at base, where the policy directory is read. */
+  /**
+   * Where the policy directory is read: the tree of the declaration's
+   * directory at base, or with `ci.policy.source` the shared repository's
+   * tree at the commit its ref named.
+   */
   tree?: WorkspaceTree;
+  /** The shared source the tree is (#4613), with the commit fetched. */
+  source?: ResolvedGatePolicySource;
+  /** Why the source named at base could not be read. Every policy run is then an error. */
+  error?: string;
   /** A line for the log when no policy runs because the base has no declaration, or could not be read. */
   note?: string;
 }
@@ -72,7 +87,11 @@ export function prLoopPolicyAt(cwd: string, base: string): PrLoopPolicy {
   try {
     const located = locateWorkspace(cwd, base);
     const settings = readDeclaration(located.tree).ci?.policy;
-    return { base, ...(settings ? { settings, tree: located.tree } : {}) };
+    if (!settings) return { base };
+    if (!settings.source) return { base, settings, tree: located.tree };
+    const fetched = fetchGatePolicySourceOnce(settings.source);
+    if ("error" in fetched) return { base, settings, error: fetched.error };
+    return { base, settings, tree: fetched.tree, source: fetched.source };
   } catch (err) {
     const missing = err instanceof WorkspaceReadError && (err.code === "declaration-missing" || err.code === "not-a-git-repository");
     const why = err instanceof Error ? err.message : String(err);
@@ -147,15 +166,33 @@ export async function policyReviewOf(forge: PrForge | undefined, pr: number | nu
   return { found: true, risk: result.risk, head: result.head };
 }
 
-/** Run the policy over `input`. Undefined when the base sets no policy. */
+/** The Rego directory a read names: the source's `path`, else `ci.policy.path`, else the default, and whether one was named. */
+export function prPolicyPath(read: Pick<PrLoopPolicy, "settings" | "source">): { path: string; named: boolean } {
+  const named = read.source ? read.settings?.source?.path : read.settings?.path;
+  return { path: read.source?.path ?? named ?? DEFAULT_POLICY_PATH, named: named !== undefined };
+}
+
+/**
+ * Run the policy over `input`. Undefined when the base sets no policy, or
+ * sets only `packs` (CrossGuard, run by the pulumi lexicon's preview) and
+ * names no Rego directory that exists.
+ */
 export function runPrPolicy(read: PrLoopPolicy, input: PrPolicyInput, exec?: GatePolicyExec): GatePolicyVerdict | undefined {
-  if (!read.settings || !read.tree) return undefined;
+  if (!read.settings) return undefined;
   const engine = read.settings.engine ?? "conftest";
-  const path = read.settings.path ?? DEFAULT_POLICY_PATH;
+  const source = read.source ? { source: read.source } : {};
+  if (read.error !== undefined) return { result: "error", engine, denials: [], rules: [], holds: [], warnings: [], error: read.error };
+  if (!read.tree) return undefined;
+  const { path, named } = prPolicyPath(read);
+  // ci.policy with only packs: no Rego runs unless its directory is there.
+  if (!named && read.settings.packs?.length && read.tree.stat(path) === undefined) return undefined;
   const exported = exportGatePolicy(read.tree, path);
-  if ("error" in exported) return { result: "error", engine, denials: [], rules: [], holds: [], warnings: [], error: exported.error };
+  if ("error" in exported) {
+    const where = read.source ? `${read.source.repo}@${read.source.ref} (${read.source.commit.slice(0, 12)})` : "base";
+    return { result: "error", engine, denials: [], rules: [], holds: [], warnings: [], error: read.source ? `the policy directory ${path} does not exist in ${where}` : exported.error, ...source };
+  }
   try {
-    return checkGatePolicy({ settings: read.settings, input, policyDir: exported.dir, cwd: process.cwd(), ...(exec ? { exec } : {}) });
+    return { ...checkGatePolicy({ settings: read.settings, input, policyDir: exported.dir, cwd: process.cwd(), ...(exec ? { exec } : {}) }), ...source };
   } finally {
     exported.cleanup();
   }
@@ -172,6 +209,7 @@ export function prPolicyReport(verdict: GatePolicyVerdict, base: string): PrPoli
     holds: verdict.holds,
     warnings: verdict.warnings,
     ...(verdict.error !== undefined ? { error: verdict.error } : {}),
+    ...(verdict.source ? { source: { ...verdict.source } } : {}),
   };
 }
 

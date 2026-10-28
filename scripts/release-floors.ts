@@ -104,6 +104,10 @@ const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: str
   { file: "packages/core/src/workspace/release-catalog.schema.json", text: "Written by chant {v} and newer (RELEASE_CATALOG_FLOOR).", count: 1, floor: "RELEASE_CATALOG_FLOOR" },
   { file: "docs/src/content/docs/reference/release-catalog.mdx", text: "Both need chant {v} or newer (`RELEASE_CATALOG_FLOOR`)", count: 1, floor: "RELEASE_CATALOG_FLOOR" },
   { file: "docs/src/content/docs/reference/release-catalog.mdx", text: "chant {v} and newer write and read it (`RELEASE_VERSION_FLOOR`).", count: 1, floor: "RELEASE_VERSION_FLOOR" },
+  { file: "packages/core/src/workspace/declaration.schema.json", text: "source and packs were added in schema 1 by chant {v}, so a declaration that sets either sets minReader to {v} or newer.", count: 1, floor: "CI_POLICY_SOURCE_FLOOR" },
+  { file: "packages/core/src/workspace/pr-report.schema.json", text: "Added within contract version 1 by #4613, written by chant {v} and newer.", count: 1, floor: "CI_POLICY_SOURCE_FLOOR" },
+  { file: "docs/src/content/docs/guide/gate-policy.mdx", text: "`source` and `packs` need a `minReader` of `{v}` or newer (`CI_POLICY_SOURCE_FLOOR`).", count: 1, floor: "CI_POLICY_SOURCE_FLOOR" },
+  { file: "docs/src/content/docs/reference/workspace-declaration.mdx", text: "need a `minReader` of `{v}` or newer (`CI_POLICY_SOURCE_FLOOR`).", count: 1, floor: "CI_POLICY_SOURCE_FLOOR" },
 ];
 
 interface Args {

@@ -394,7 +394,19 @@
             "digest": { "type": "string", "description": "The override digest: the op, the plan digest and the rules." }
           }
         },
-        "overrideCommand": { "type": "string", "description": "While denied: the command that overrides the denial." }
+        "overrideCommand": { "type": "string", "description": "While denied: the command that overrides the denial." },
+        "source": {
+          "type": "object",
+          "required": ["repo", "ref", "commit", "path"],
+          "additionalProperties": false,
+          "description": "ci.policy.source as the job fetched it: the shared repository (no user or password), its ref, the commit the ref named and the Rego directory inside it. Absent when the rules came from the workspace at base. Added within contract version 1 by #4613, written by chant 0.124.55 and newer.",
+          "properties": {
+            "repo": { "type": "string" },
+            "ref": { "type": "string" },
+            "commit": { "type": "string" },
+            "path": { "type": "string" }
+          }
+        }
       }
     }
   },

@@ -491,6 +491,8 @@ export async function planBare(p: Prepared, onRunEvent?: RunEventSink): Promise<
     env: p.env,
     seededOutputs: p.seededOutputs,
     ...(lockGrain ? { lockGrain } : {}),
+    // #4613: a step's own policy engine (CrossGuard) reads its packs at the base, as ci.policy is.
+    policyBase: p.base,
     ...(onRunEvent ? { onRunEvent } : {}),
   });
 }
@@ -1165,6 +1167,7 @@ async function prApply(ctx: CommandContext, stage: StageEvents, beforeMerge?: Pr
       env: p.env,
       set,
       ...(lockGrain ? { lockGrain } : {}),
+      policyBase: p.base,
       gate: p.gate,
       approval,
       decideRound,
@@ -1789,6 +1792,7 @@ async function tryResume(p: Prepared, attempt: FanOutAttempt, file: string, op: 
     registry: p.registry,
     env: p.env,
     seededOutputs: p.seededOutputs,
+    policyBase: p.base,
     record,
     completed,
     applied: outputs,
@@ -2225,7 +2229,7 @@ async function planComponentRuns(p: Prepared, files: WaveStepFiles): Promise<{ s
   const plan = names.length > 0 ? namedWavePlan(p, names) : { ...p.plan, order: [], waves: [] };
   if ("error" in plan) return plan;
   const lockGrain = await declaredLockGrainOf(p);
-  const set = await planPrSet({ components: p.components, plan, registry: p.registry, env: p.env, seededOutputs: { ...p.seededOutputs, ...files.outputs }, ...(lockGrain ? { lockGrain } : {}) });
+  const set = await planPrSet({ components: p.components, plan, registry: p.registry, env: p.env, seededOutputs: { ...p.seededOutputs, ...files.outputs }, ...(lockGrain ? { lockGrain } : {}), policyBase: p.base });
   return { set, plan };
 }
 
@@ -2267,7 +2271,7 @@ async function applyComponentWave(p: Prepared, files: WaveStepFiles, opts: { noR
   const release = autoReleaseRun(`wave-${Date.now()}`);
   let applied: Awaited<ReturnType<typeof applyPrSet>>;
   try {
-    applied = await applyPrSet({ components: p.components, plan, registry: p.registry, env: p.env, set, gate: p.gate, ...(lockGrain ? { lockGrain } : {}) });
+    applied = await applyPrSet({ components: p.components, plan, registry: p.registry, env: p.env, set, gate: p.gate, ...(lockGrain ? { lockGrain } : {}), policyBase: p.base });
   } finally {
     await lease.release();
   }

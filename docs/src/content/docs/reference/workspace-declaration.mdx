@@ -491,7 +491,7 @@ Every apply takes the lease on this grain ([#4594](https://github.com/INTENTIUS/
 
 ### Policy
 
-`ci.policy` names the policy engine the pull-request jobs run over the change set ([#4294](https://github.com/INTENTIUS/chant/issues/4294)). Its settings are those the [table in Policy at the Gate](/chant/guide/gate-policy/#declare-the-policy) lists. Any other key is refused with `declaration-invalid` at `/ci/policy`, and so are `outcomes` and `allow_unattended`, since no rule lets a plan apply with nobody approving it (`packages/core/src/gate-policy.ts:293`). The jobs read the block and the policy directory at base, as [Policy at the Gate](/chant/guide/gate-policy/) describes. A declaration that sets it needs a `minReader` of `0.124.41` or newer, since an older chant refuses it.
+`ci.policy` names the policy engine the pull-request jobs run over the change set ([#4294](https://github.com/INTENTIUS/chant/issues/4294)). Its settings are those the [table in Policy at the Gate](/chant/guide/gate-policy/#declare-the-policy) lists. Any other key is refused with `declaration-invalid` at `/ci/policy`, and so are `outcomes` and `allow_unattended`, since no rule lets a plan apply with nobody approving it (`packages/core/src/gate-policy.ts:293`). The jobs read the block and the policy directory at base, as [Policy at the Gate](/chant/guide/gate-policy/) describes. A declaration that sets it needs a `minReader` of `0.124.41` or newer, since an older chant refuses it. The `source` and `packs` settings ([#4613](https://github.com/INTENTIUS/chant/issues/4613)) need a `minReader` of `0.124.55` or newer (`CI_POLICY_SOURCE_FLOOR`).
 
 ### Cloud identities
 
