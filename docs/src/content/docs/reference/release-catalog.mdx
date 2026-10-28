@@ -16,6 +16,12 @@ A release record already uses `version` for its schema version (always `1`). The
 
 A release is deprecated, yanked or restored by appending a line to `<env>/release-status.jsonl`, beside the environment's `releases.jsonl` ([#4596](https://github.com/INTENTIUS/chant/issues/4596)). `appendReleaseStatus` in `packages/core/src/lifecycle/release-status.ts` writes it under the member's ledger path and honours `--no-record`, and the caller pushes. A line is keyed by `component`, `env` and `digest`, and carries the new `status` with the `actor` and `timestamp` that set it. It may also carry the `releaseVersion`, a `reason` and a `replacement`. The newest line for a component and digest is the release's status, so a restore is one more line with `status: "active"`. Anyone who may publish may append one. No approval gate applies, since the line records who did it and why. `statusOf(records, component, digest)` answers for one release, and `catalogStatusInputs(records)` passes the lines to the catalog builder. `chant ledger release_status` and `chant query` list every line (`RELEASE_STATUS_FLOOR`).
 
+## Changelog
+
+`releaseChangelog(commits)` in `packages/core/src/lifecycle/release-changelog.ts` turns the commits a version shipped, each `{ sha, message }`, into its changelog ([#4597](https://github.com/INTENTIUS/chant/issues/4597)). Each commit becomes one entry with its sha, its conventional-commit scope when it has one, and the description after the `type(scope):` prefix. A subject that is not a conventional commit is kept whole under `other`. The groups are `breaking` (a `type!:` subject, or a `BREAKING CHANGE` or `BREAKING-CHANGE` footer), `feat`, `fix` and `other`.
+
+The bump follows terragucci's `bumpFor`. Any breaking commit makes it `major`, otherwise any `feat` makes it `minor`, and anything else gives `patch`, since a changed component is always published at a new version. Pass `entries` and `bump` to the builder's `changelogs` input. The caller reads the commits from git; the function itself reads nothing.
+
 ## Catalog input
 
 `buildReleaseCatalog(input, { generatedAt, chant })` takes:
