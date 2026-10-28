@@ -469,6 +469,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       const raw = args[++i];
       if (!raw || raw.startsWith("-")) throw new Error("--target needs an address: --target <component>:<address>, or on pr-plan --target <address>");
       (result.targets ??= []).push(raw);
+    } else if (arg === "--comment-targets") {
+      // `chant components pr-plan --comment-targets` (#4626): the preview comment's --target addresses.
+      result.commentTargets = true;
     } else if (arg === "--parallelism") {
       // `chant components pr-plan --parallelism <n>` (#4625): members of a wave planned at once.
       const raw = args[++i];

@@ -1185,7 +1185,9 @@ Component release ledger + status:
                             [--forge github|gitlab|forgejo] posts them);
                             --target <address> narrows every member's plan
                             to the address, --target <member>:<address>
-                            one member's (#4620); --parallelism <n> plans at
+                            one member's (#4620); --comment-targets adds the
+                            --target addresses of the preview comment in
+                            CHANT_PREVIEW_COMMENT (#4626); --parallelism <n> plans at
                             most n members of a wave at once (#4625);
                             applies nothing
   components pr-post       Post the plan note and the chant/plan status

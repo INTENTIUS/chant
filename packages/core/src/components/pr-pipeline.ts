@@ -328,7 +328,17 @@ export interface PrLoopPipelineOptions {
    * a wave's members at once.
    */
   parallelism?: number;
+  /**
+   * The plan narrows to the `--target` addresses of the preview comment
+   * (#4626): `pr-plan --comment-targets`, which reads the comment from
+   * {@link PREVIEW_COMMENT_ENV}. {@link prCommentPreviewJob} sets it on its
+   * own plan; a caller never needs to.
+   */
+  commentTargets?: boolean;
 }
+
+/** The variable the comment preview's plan reads the comment from (#4626); never a shell argument. */
+export const PREVIEW_COMMENT_ENV = "CHANT_PREVIEW_COMMENT";
 
 /** Where the pull request loop's jobs run, by stage (#4625). */
 export interface PrLoopRunners {
@@ -516,12 +526,14 @@ export function prCommentPreviewJob(forge: ForgeKind, env: string, options: PrLo
   if (!comment) throw new Error(`--preview-comment answers /${words.product} <plan command>, and the words name no plan command; name one in the words' commands, or drop --preview-comment`);
   // The plan job's own command: the apply side's options never reach it, so they are left out here.
   const { applyBeforeMerge: _early, applyRequires: _requires, applyOnMerge: _onMerge, ...planSide } = options;
-  const [plan] = prLoopJobs(forge, env, planSide, member);
+  // #4626: the comment's --target addresses narrow the preview, read from the comment in a variable.
+  const [plan] = prLoopJobs(forge, env, { ...planSide, commentTargets: true }, member);
   const github = forge !== "gitlab";
   const prNumber = github ? "${{ github.event.issue.number }}" : `$${GITLAB_PREVIEW_PR_VAR}`;
+  // GitLab: whoever starts the target-branch pipeline passes the comment as CHANT_PREVIEW_COMMENT, a pipeline variable every job has.
   const fromComment = (jobEnv: Record<string, string>): Record<string, string> => {
     const { BASE_SHA: _base, ...rest } = jobEnv;
-    return github ? { ...rest, PR_NUMBER: prNumber } : { ...rest, PR_NUMBER: prNumber, BASE_SHA: "$CI_COMMIT_SHA" };
+    return github ? { ...rest, PR_NUMBER: prNumber, [PREVIEW_COMMENT_ENV]: "${{ github.event.comment.body }}" } : { ...rest, PR_NUMBER: prNumber, BASE_SHA: "$CI_COMMIT_SHA" };
   };
   const branch = options.branch ?? "main";
   const base = github
@@ -658,6 +670,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
     ...(job === "apply" && !early ? [] : ["--base", '"$BASE_SHA"']), ...(job === "plan" || (job === "apply" && early) ? ["--pr", '"$PR_NUMBER"'] : []),
     ...(job === "apply" && early ? ["--apply-before-merge", ...requires] : []),
     ...(job === "plan" ? parallelism : []),
+    ...(job === "plan" && options.commentTargets ? ["--comment-targets"] : []),
     "--env", env, "--gate", gate, "--forge", forge,
     ...(job !== "record" && options.waveGate ? ["--wave-gate", options.waveGate] : []),
     ...(job !== "plan" && options.branch ? ["--branch", JSON.stringify(options.branch)] : []),
@@ -712,7 +725,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
     {
       jobName: "plan",
       // With `waveGate` the plan's note says the later waves may stop at their own gates (#4003).
-      command: ["chant", "components", "pr-plan", "--base", '"$BASE_SHA"', "--pr", '"$PR_NUMBER"', ...common, ...(options.waveGate ? ["--wave-gate", options.waveGate] : []), ...parallelism, "--no-status"].join(" "),
+      command: ["chant", "components", "pr-plan", "--base", '"$BASE_SHA"', "--pr", '"$PR_NUMBER"', ...common, ...(options.waveGate ? ["--wave-gate", options.waveGate] : []), ...parallelism, ...(options.commentTargets ? ["--comment-targets"] : []), "--no-status"].join(" "),
       env: planEnv,
       ...build,
       ...(planRunner !== undefined ? { runner: planRunner } : {}),
