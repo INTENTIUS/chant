@@ -28,7 +28,7 @@
  * `./notify-verify.ts` (`./notify-bundle.test.ts`).
  */
 
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { DEFAULT_HEADER_PREFIX, signWebhook, webhookHeaderNames } from "./notify-verify";
 
 export { DEFAULT_HEADER_PREFIX, DEFAULT_TOLERANCE_SECONDS, signWebhook, verifyWebhook, webhookHeaderNames } from "./notify-verify";
@@ -184,8 +184,69 @@ function facts(e: NotifyEvent): { title: string; value: string; link?: string }[
   return out;
 }
 
-/** A Slack incoming webhook's body: one mrkdwn text, with the approve command as code and the links as links. */
-export function slackMessage(e: NotifyEvent): { text: string } {
+// ── relay buttons (#4611) ────────────────────────────────────────────────
+
+/** The Slack buttons' action ids, which `chant notify relay` reads. */
+export const RELAY_APPROVE_ACTION = "chant-approve";
+export const RELAY_DECLINE_ACTION = "chant-decline";
+
+/** What a relay button carries: the waiting event it was posted for, signed with the relay key. */
+export interface RelayRef {
+  /** The event's `id`, `source` and `at`. */
+  id: string;
+  source: string;
+  at: string;
+  gate: string;
+  digest: string;
+}
+
+const relayMac = (key: string, payload: string): string => createHmac("sha256", key).update(`chant-relay.${payload}`, "utf8").digest("hex");
+
+/** The ref of a waiting event a relay can approve, or undefined for any other event. */
+export function relayRefOf(e: NotifyEvent): RelayRef | undefined {
+  if (e.event !== "waiting" || !e.digest || !e.wave?.gate) return undefined;
+  return { id: e.id, source: e.source, at: e.at, gate: e.wave.gate, digest: e.digest };
+}
+
+/** `<base64url JSON>.<hex HMAC>`: the button value, signed with `key` so the relay knows its own notify posted it. */
+export function relayToken(key: string, ref: RelayRef): string {
+  const payload = Buffer.from(JSON.stringify({ v: 1, ...ref }), "utf8").toString("base64url");
+  return `${payload}.${relayMac(key, payload)}`;
+}
+
+/** The ref a token carries when `key` signed it, or why it is refused. A ref older than `maxAgeSeconds` is stale. */
+export function readRelayToken(key: string | undefined, token: string, options: { now?: Date; maxAgeSeconds?: number } = {}): { ok: true; ref: RelayRef } | { ok: false; reason: string } {
+  if (!key) return { ok: false, reason: "the relay has no key to check the button with" };
+  const [payload, mac, extra] = token.split(".");
+  if (!payload || !mac || extra !== undefined) return { ok: false, reason: "the button carries no chant notify reference" };
+  const expected = Buffer.from(relayMac(key, payload));
+  const given = Buffer.from(mac);
+  if (given.length !== expected.length || !timingSafeEqual(given, expected)) return { ok: false, reason: "the button was not signed with this relay's key" };
+  let ref: Partial<RelayRef> & { v?: unknown };
+  try {
+    ref = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+  } catch {
+    return { ok: false, reason: "the button's reference is not JSON" };
+  }
+  if (ref.v !== 1 || [ref.id, ref.source, ref.at, ref.gate, ref.digest].some((v) => typeof v !== "string" || v === "")) return { ok: false, reason: "the button's reference is not a chant.notify/v1 waiting event" };
+  const at = Date.parse(ref.at!);
+  const now = (options.now ?? new Date()).getTime();
+  const maxAge = options.maxAgeSeconds ?? DEFAULT_RELAY_MAX_AGE_SECONDS;
+  if (!Number.isFinite(at) || at - now > 5 * 60_000) return { ok: false, reason: "the event's time is in the future" };
+  if (now - at > maxAge * 1000) return { ok: false, reason: `the event is more than ${String(maxAge)}s old; approve from the newer message, or at a shell` };
+  return { ok: true, ref: { id: ref.id!, source: ref.source!, at: ref.at!, gate: ref.gate!, digest: ref.digest! } };
+}
+
+/** How old a relay button may be, in seconds: a day, a gate's default timeout. */
+export const DEFAULT_RELAY_MAX_AGE_SECONDS = 24 * 60 * 60;
+
+/** What a chat message adds for the relay: the signed button value. */
+export interface RelayButtons {
+  token: string;
+}
+
+/** A Slack incoming webhook's body: one mrkdwn text, with the approve command as code and the links as links. With `relay`, Approve and Decline buttons (#4611). */
+export function slackMessage(e: NotifyEvent, relay?: RelayButtons): { text: string; blocks?: unknown[] } {
   const lines = [`*${notifyHeadline(e)}*`];
   for (const f of facts(e)) {
     if (f.title === "Review and approve") lines.push(`${f.title}: <${f.link}|pull request ${e.approve!.review!.pr}>, then run it again`);
@@ -193,12 +254,21 @@ export function slackMessage(e: NotifyEvent): { text: string } {
     else if (f.link) lines.push(`${f.title}: <${f.link}>`);
     else lines.push(`${f.title}: ${f.value}`);
   }
-  return { text: lines.join("\n") };
+  const text = lines.join("\n");
+  if (!relay) return { text };
+  const button = (label: string, action: string, style?: string) => ({ type: "button", text: { type: "plain_text", text: label }, action_id: action, value: relay.token, ...(style ? { style } : {}) });
+  return {
+    text,
+    blocks: [
+      { type: "section", text: { type: "mrkdwn", text } },
+      { type: "actions", elements: [button("Approve", RELAY_APPROVE_ACTION, "primary"), button("Decline", RELAY_DECLINE_ACTION)] },
+    ],
+  };
 }
 
-/** A Teams incoming webhook's body (a Workflows webhook): one Adaptive Card, with buttons that open the review page and the run. */
-export function teamsMessage(e: NotifyEvent): Record<string, unknown> {
-  const all = facts(e);
+/** A Teams incoming webhook's body (a Workflows webhook): one Adaptive Card, with buttons that open the review page and the run. With `relay`, the reply that approves through the relay (#4611). */
+export function teamsMessage(e: NotifyEvent, relay?: RelayButtons): Record<string, unknown> {
+  const all = [...facts(e), ...(relay ? [{ title: "Approve in chat", value: `mention the relay and reply: approve ${relay.token}` }] : [])];
   const actions = [
     ...(e.approve?.review ? [{ type: "Action.OpenUrl", title: "Review and approve", url: e.approve.review.url }] : []),
     ...(e.run?.url ? [{ type: "Action.OpenUrl", title: "Open the run", url: e.run.url }] : []),
@@ -236,22 +306,28 @@ export interface NotifyConfig {
   teams?: string;
   /** The events to send. Default: all of them. */
   events?: NotifyEventKind[];
+  /**
+   * The variable holding the key `chant notify relay` checks buttons with
+   * (#4611). Set, a waiting event's Slack message carries Approve and
+   * Decline buttons, and its Teams card the reply that approves.
+   */
+  relay?: string;
 }
 
 const VARIABLE = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const SETTINGS = ["webhook", "key", "slack", "teams", "events"];
+const SETTINGS = ["webhook", "key", "slack", "teams", "events", "relay"];
 
 /** The first problem with a {@link NotifyConfig}, or undefined. `where` prefixes the message. */
 export function notifyConfigProblem(value: unknown, where = "notify"): string | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return `${where}: expected { webhook, key, slack, teams, events }`;
   const v = value as Record<string, unknown>;
   for (const k of Object.keys(v)) if (!SETTINGS.includes(k)) return `${where}.${k}: unknown setting (expected ${SETTINGS.join(", ")})`;
-  for (const k of ["webhook", "key", "slack", "teams"] as const) {
+  for (const k of ["webhook", "key", "slack", "teams", "relay"] as const) {
     const n = v[k];
     if (n === undefined) continue;
     if (typeof n !== "string" || !VARIABLE.test(n)) {
-      const what = k === "key" ? "signing key" : "URL";
-      return `${where}.${k}: the name of the environment variable that holds the ${what}, never the ${k === "key" ? "key" : "URL"} itself`;
+      const what = k === "key" ? "signing key" : k === "relay" ? "relay key" : "URL";
+      return `${where}.${k}: the name of the environment variable that holds the ${what}, never the ${k === "key" || k === "relay" ? "key" : "URL"} itself`;
     }
   }
   if (v.webhook !== undefined && v.key === undefined) return `${where}.key: a webhook needs a signing key; name the variable that holds it`;
@@ -266,7 +342,7 @@ export function notifyConfigProblem(value: unknown, where = "notify"): string | 
 /** The environment variables a configuration names, for a pipeline to map its secrets into. */
 export function notifyVariables(config: NotifyConfig | undefined): string[] {
   if (!config) return [];
-  return [config.webhook, config.key, config.slack, config.teams].filter((n): n is string => typeof n === "string" && n !== "");
+  return [config.webhook, config.key, config.slack, config.teams, config.relay].filter((n): n is string => typeof n === "string" && n !== "");
 }
 
 /** The request {@link sendNotify} posts to the webhook: the event as JSON, signed with `key` over `<timestamp>.<body>`. */
@@ -392,7 +468,12 @@ export async function sendNotify(config: NotifyConfig | undefined, event: Notify
       return webhookRequest(event, key, { ...(options.now !== undefined ? { now: options.now } : {}), ...(options.prefix ? { prefix: options.prefix } : {}), ...(options.userAgent ? { userAgent: options.userAgent } : {}) });
     });
   }
-  if (config.slack) await deliver("slack", config.slack, () => json((options.render?.slack ?? slackMessage)(event)));
-  if (config.teams) await deliver("teams", config.teams, () => json((options.render?.teams ?? teamsMessage)(event)));
+  // #4611: a waiting event's buttons, when the relay's key is set.
+  const ref = relayRefOf(event);
+  const relayKey = config.relay ? env[config.relay] : undefined;
+  if (config.relay && ref && !relayKey) log(`notify: ${config.relay} is not set, so the message carries no relay buttons`);
+  const buttons = ref && relayKey ? { token: relayToken(relayKey, ref) } : undefined;
+  if (config.slack) await deliver("slack", config.slack, () => json(options.render?.slack ? options.render.slack(event) : slackMessage(event, buttons)));
+  if (config.teams) await deliver("teams", config.teams, () => json(options.render?.teams ? options.render.teams(event) : teamsMessage(event, buttons)));
   return out;
 }

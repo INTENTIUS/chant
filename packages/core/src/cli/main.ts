@@ -617,6 +617,17 @@ Ops:
                         applies it once, if .chant/overriders at base lists
                         --actor
 
+  notify relay          Serve the relay that approves a waiting gate from a
+                        Slack button or a Teams reply (#4611): verifies the
+                        chat signature and the button's notify reference,
+                        maps the clicker through the signers file at base,
+                        and records chant approve --plan <digest> --actor
+                        <principal> --relayed-by <relay>. Settings come from
+                        CHANT_RELAY_KEY, SLACK_SIGNING_SECRET,
+                        TEAMS_WEBHOOK_SECRET, CHANT_RELAY_PRINCIPAL,
+                        CHANT_RELAY_MAX_AGE, CHANT_RELAY_HOST (default
+                        127.0.0.1) and CHANT_RELAY_PORT (default 8787)
+
   lock <target>...      Lock targets for a pull request on chant/lifecycle
                         (--pr <n>, --stage plan|apply|lock, --head <sha>,
                         --by <who>, --gate <name>, --json). --from-report
@@ -1756,6 +1767,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "operator", handler: runOperator },
   { name: "approve", handler: runApprove },
   // #4293 — target locks a pull request holds on chant/lifecycle. Imported on first use.
+  // #4611 — approve a waiting gate from a chat click. Imported on first use.
+  { name: "notify relay", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/notify-relay")).runNotifyRelay(ctx) },
   { name: "lock", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/lock")).runLock(ctx) },
   { name: "unlock", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/lock")).runUnlock(ctx) },
 
