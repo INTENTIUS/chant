@@ -18,6 +18,9 @@
  * a member is on the resource lock grain (#4552) the report carries
  * `lockTargets`, its row keys, and those are locked instead.
  *
+ * `--list` prints the target locks, then the apply rows of the gate's rows
+ * file (#4552, #4594), each with the run that holds it and when it took it.
+ *
  * `--alive <run>` prints `alive` or `dead` for a run that holds rows or the
  * Forgejo repo lock tag (#4552): `dead` when the forge says the run
  * finished, `alive` while it runs or when nobody can say. The lock tag's
@@ -129,18 +132,34 @@ export async function runLock(ctx: CommandContext): Promise<number> {
   if (args.list) {
     if (targetsOf(ctx).length > 0 || args.pr !== undefined) return fail("--list prints every lock; drop the targets and --pr");
     let file;
+    let held;
     try {
       file = await readTargetLocks(gate);
+      // #4594: the apply rows of the gate (#4552), each with the run that holds it.
+      const { readLockRows } = await import("../../lifecycle/resource-lock");
+      held = await readLockRows(gate);
     } catch (err) {
       return fail(err instanceof Error ? err.message : String(err));
     }
     const rows = Object.entries(file.locks).sort(([a], [b]) => a.localeCompare(b));
+    const leased = Object.entries(held.rows)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, run]) => ({ key, holder: held.holders[run]! }));
     if (args.json) {
-      console.log(JSON.stringify({ gate, path: await targetLockPathAt(gate), locks: Object.fromEntries(rows) }, null, 2));
+      const { lockRowsPath } = await import("../../lifecycle/resource-lock");
+      console.log(
+        JSON.stringify(
+          { gate, path: await targetLockPathAt(gate), locks: Object.fromEntries(rows), rowsPath: lockRowsPath(gate), rows: Object.fromEntries(leased.map((r) => [r.key, r.holder])) },
+          null,
+          2,
+        ),
+      );
       return 0;
     }
     if (rows.length === 0) console.error(formatInfo(`no target locks on ${gate}`));
     for (const [target, l] of rows) console.log(`${target}\tpull request ${l.pr}\t${l.stage}\t${l.by}\t${l.at}`);
+    if (leased.length === 0) console.error(formatInfo(`no apply rows held on ${gate}`));
+    for (const { key, holder } of leased) console.log(`${key}\trun ${holder.run}\t${holder.at}${holder.url ? `\t${holder.url}` : ""}`);
     return 0;
   }
 

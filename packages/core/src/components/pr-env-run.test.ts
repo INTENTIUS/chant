@@ -125,6 +125,25 @@ describe("up", () => {
     expect(r.exit).toBe(1);
     expect(p.records).toEqual([]);
   });
+
+  test("an apply whose rows another run holds is refused with exit 5 and keeps no record (#4594)", async () => {
+    const p = ports({ status: "approved" });
+    const message = "run 4711 (https://forge.example/runs/4711) is applying net: aws_vpc.main, so nothing of pr-12 was applied";
+    const adapter: PrEnvAdapter = { ...roots(), apply: async (_t, { planned }) => ({ status: "stopped", held: true, rows: planned.rows, message }) };
+    const r = await prEnvUp({ ...UP, adapter, ports: p });
+    expect(r.exit).toBe(5);
+    expect(r.report).toMatchObject({ status: "refused", message });
+    expect(p.records).toEqual([]);
+  });
+
+  test("a later round whose rows another run holds exits 5, and what applied before it is kept as live (#4594)", async () => {
+    const p = ports({ status: "approved" });
+    const adapter: PrEnvAdapter = { ...roots(), apply: async (_t, { planned }) => ({ status: "waiting", held: true, rows: planned.rows, message: "run 4711 is applying app: aws_lb.web" }) };
+    const r = await prEnvUp({ ...UP, adapter, ports: p });
+    expect(r.exit).toBe(5);
+    expect(p.records).toHaveLength(1);
+    expect(p.records[0]).toMatchObject({ kind: "up", result: "failed" });
+  });
 });
 
 /** A teardown adapter over the roots the record names: each root's copy, with the marker its key's suffix says. */

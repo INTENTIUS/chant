@@ -47,6 +47,7 @@
  */
 
 import type { LockGrain } from "../lifecycle/lock-rows";
+import { isLockRowsHeldError, leaseCapabilityStep, type RowLease, type RowLeasePort } from "./row-lease";
 import { topoSort } from "../codegen/topo-sort";
 import { CHANT_EXIT } from "../exit-codes";
 import { kahnLayers } from "./layers";
@@ -161,6 +162,8 @@ export interface DriverStepRecord {
   error?: string;
   /** Set on a failed step whose capability refused a plan that moved since it was approved (`isPlanMovedError`, #3997). */
   planMoved?: true;
+  /** Set on a failed step or group member whose rows another live run holds (#4594): nothing of it applied, and the command exits 5. */
+  held?: true;
   /** Set on a `gate` step that passed (#2119): who resolved it, when, and at what address. */
   approval?: {
     gate: string;
@@ -588,9 +591,13 @@ async function runCapabilityStep(
   const { kind, ...rest } = step;
   const resolvedInput = resolveStepInput(rest, phaseOutputs, componentOutputs);
   const start = Date.now();
+  let lease: RowLease | undefined;
   try {
     const capability = registry.resolve(kind);
-    const output = await capability.run(ctx, resolvedInput as never);
+    // #4594: on the resource grain, a run that plans inside its steps leases the step's rows first and applies the plan it leased for.
+    const leased = await leaseCapabilityStep(capability, ctx, resolvedInput);
+    lease = leased.lease;
+    const output = await capability.run(leased.ctx, resolvedInput as never);
     return {
       record: {
         component: ctx.component,
@@ -613,9 +620,12 @@ async function runCapabilityStep(
         durationMs: Date.now() - start,
         error: errMessage(err),
         ...(isPlanMovedError(err) ? { planMoved: true as const } : {}),
+        ...(isLockRowsHeldError(err) ? { held: true as const } : {}),
       },
       resolvedInput,
     };
+  } finally {
+    await lease?.release();
   }
 }
 
@@ -1137,13 +1147,19 @@ export function planMovedIn(results: readonly DriverComponentResult[]): boolean 
   return results.some((r) => r.records.some((s) => s.planMoved === true));
 }
 
+/** Whether a step or group member in `results` found its rows held by another live run (#4594). */
+export function rowsHeldIn(results: readonly DriverComponentResult[]): boolean {
+  return results.some((r) => r.records.some((s) => s.held === true));
+}
+
 /**
  * The exit code of a run that failed: {@link PLAN_MOVED_EXIT_CODE} when a
- * step refused a plan that moved since it was approved, 1 otherwise. Every
- * command that runs capability steps ends a failed run with it.
+ * step refused a plan that moved since it was approved, 5 (`held`) when a
+ * step's rows were held by another run (#4594), 1 otherwise. Every command
+ * that runs capability steps ends a failed run with it.
  */
 export function failedRunExitCode(results: readonly DriverComponentResult[]): number {
-  return planMovedIn(results) ? PLAN_MOVED_EXIT_CODE : CHANT_EXIT.failed;
+  return planMovedIn(results) ? PLAN_MOVED_EXIT_CODE : rowsHeldIn(results) ? CHANT_EXIT.held : CHANT_EXIT.failed;
 }
 
 function errMessage(err: unknown): string {
@@ -1193,6 +1209,10 @@ export interface InterpretRunOptions {
   targets?: Readonly<Record<string, readonly string[]>>;
   /** Groups applied as one (ws-107, #4465). See {@link InterpretGroups}. Absent: every component runs its own deploy. */
   groups?: InterpretGroups;
+  /** `ci.lockGrain` as declared (#4594), for every step's `DeployContext.lockGrain`. Absent: each step takes its lexicon's default. */
+  lockGrain?: LockGrain;
+  /** The run's row lease (#4594): each step on the resource grain leases its rows through it (./row-lease.ts). Absent: no lease. */
+  rowLease?: RowLeasePort;
 }
 
 /**
@@ -1242,6 +1262,8 @@ export function deployContext(
     targets?: Readonly<Record<string, readonly string[]>>;
     /** `ci.lockGrain` as declared at base (#4552), for every step's `DeployContext.lockGrain`. */
     lockGrain?: LockGrain;
+    /** The run's row lease (#4594), for every step's `DeployContext.rowLease`. */
+    rowLease?: RowLeasePort;
   },
   component: string,
 ): DeployContext {
@@ -1252,6 +1274,7 @@ export function deployContext(
     component,
     ...(options.vars ? { vars: options.vars } : {}),
     ...(options.lockGrain ? { lockGrain: options.lockGrain } : {}),
+    ...(options.rowLease ? { rowLease: options.rowLease } : {}),
     ...(release ? { release: { ...release } } : {}),
     ...(targets && targets.length > 0 ? { targets: [...new Set(targets)].sort() } : {}),
   };

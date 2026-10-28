@@ -151,8 +151,8 @@
               "approved": { "type": "string", "pattern": "^(?:jcs1-)?sha256:[0-9a-f]{64}$" }
             }
           },
-          "status": { "enum": ["applied", "failed", "waiting", "plan-failed"] },
-          "message": { "type": "string", "description": "With waiting: why an approval that stands does not count under --require-review." },
+          "status": { "enum": ["applied", "failed", "waiting", "plan-failed", "held"], "description": "held (added within contract version 1 by #4594): another run holds a row the round's plan changes on the resource lock grain, so the round did not apply and the command exited 5." },
+          "message": { "type": "string", "description": "With waiting: why an approval that stands does not count under --require-review. With held: the run that holds the rows." },
           "covered": {
             "type": "object",
             "required": ["digest", "filledInputs"],

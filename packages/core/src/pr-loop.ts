@@ -289,9 +289,13 @@ export interface PrRound {
   /** The components planned again, in apply order. */
   components: string[];
   approval: PrApproval;
-  /** `waiting`: no approval stands for `digest`. `plan-failed`: a member failed to plan, so the round did not apply. */
-  status: "applied" | "failed" | "waiting" | "plan-failed";
-  /** With `waiting`: why an approval that stands does not count (`--require-review`). */
+  /**
+   * `waiting`: no approval stands for `digest`. `plan-failed`: a member failed
+   * to plan, so the round did not apply. `held`: another run holds a row the
+   * round changes (#4594), so it did not apply; `message` names that run.
+   */
+  status: "applied" | "failed" | "waiting" | "plan-failed" | "held";
+  /** With `waiting`: why an approval that stands does not count (`--require-review`). With `held`: the run holding the rows. */
   message?: string;
   /**
    * The first approval covered this round's plan (#4419): no gate of its own was

@@ -60,6 +60,8 @@ import {
 } from "./capability";
 import type { FanOutGroup, FanOutGroupFallback, FanOutPlan } from "./fan-out";
 import { bindTargets, type WaveComponentPlan } from "./wave-plan";
+import { resolvePlannedLock } from "../lifecycle/lock-rows";
+import { groupLockRows, isLockRowsHeldError, type RowLease } from "./row-lease";
 
 /** Whether a capability declares the pair; one with only one of the two never gets a group (ws-107). */
 function groupsCapable(capability: Capability<never, unknown>): boolean {
@@ -682,6 +684,8 @@ export async function planComponentGroup(options: PlanComponentGroupOptions): Pr
       const plan = bindGroup(own, digest, unknown);
       runPlans[m.component] = plan;
       const shapes: Record<string, PlanShape> | undefined = own.shape ? { [plan.member]: { ...own.shape, member: plan.member } } : undefined;
+      // #4594: each member's grain and rows, as a component planned alone carries them, so a pull request locks and leases a group's rows too.
+      const lock = await resolvePlannedLock(capability, m.input, plan, m.ctx.lockGrain);
       plans.push({
         component: m.component,
         members: [{ member: plan.member, planDigest: plan.planDigest }],
@@ -689,6 +693,7 @@ export async function planComponentGroup(options: PlanComponentGroupOptions): Pr
         parts: [plan.changeSet!],
         ...(own.outputs ? { outputs: own.outputs } : {}),
         ...(shapes ? { shapes } : {}),
+        locks: { [plan.member]: lock },
       });
     }
     return { plans, digest, run: { ...(planned.artifact !== undefined ? { artifact: planned.artifact } : {}), digest, plans: runPlans } };
@@ -746,18 +751,19 @@ export async function runComponentGroup(options: RunComponentGroupOptions): Prom
     durationMs: Date.now() - start,
     ...body,
   });
-  const everyMember = (status: "failed" | "not-started", error: string, planMoved = false): ComponentGroupRunResult => ({
+  const everyMember = (status: "failed" | "not-started", error: string, planMoved = false, held = false): ComponentGroupRunResult => ({
     results: group.components.map((name) => ({
       component: name,
       ok: false,
       status: "fail" as const,
-      records: [record(name, { status: status === "failed" ? "fail" : "skipped", error, ...(planMoved ? { planMoved: true as const } : {}) })],
+      records: [record(name, { status: status === "failed" ? "fail" : "skipped", error, ...(planMoved ? { planMoved: true as const } : {}), ...(held ? { held: true as const } : {}) })],
     })),
     notStarted: status === "not-started" ? [...group.components] : [],
     outcomes: Object.fromEntries(group.components.map((name) => [name, status])),
   });
 
   let outcome: CapabilityGroupOutcome;
+  let lease: RowLease | undefined;
   try {
     if (!options.run) throw new Error(`no approved plan of the group ${group.components.join(", ")} to apply`);
     const capability = options.registry.resolve(group.capability);
@@ -768,10 +774,19 @@ export async function runComponentGroup(options: RunComponentGroupOptions): Prom
       return { ...options.ctxOf(component), ...(plan ? { plans: { [plan.member]: plan } } : {}) };
     };
     const members = groupMembers(group, options.components, options.registry, ctxOf, options.componentOutputs);
+    // #4594: a run that plans inside its steps leases the rows of every member's plan in one take before the group applies.
+    const port = options.ctxOf(group.components[0]!).rowLease;
+    if (port) {
+      const rows = await groupLockRows(capability, members, run.plans, options.ctxOf(group.components[0]!).lockGrain);
+      lease = await port.take(rows, `the group ${group.components.join(", ")}`);
+    }
     outcome = await capability.runGroup!(groupContext(group, options.env, options.vars), run, members as never);
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
+    if (isLockRowsHeldError(err)) return everyMember("not-started", error, false, true);
     return isPlanMovedError(err) ? everyMember("not-started", `not started: ${error}`, true) : everyMember("failed", error);
+  } finally {
+    await lease?.release();
   }
 
   const results: DriverComponentResult[] = [];

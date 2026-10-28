@@ -641,6 +641,9 @@ async function deployPlanIn(
     runId,
     cwd: project.projectPath,
   });
+  // #4594: ci.lockGrain, and on the resource grain the row lease each step and group takes in the pull-request loop's rows file.
+  const { applyLeaseOptions } = await import("../../components/apply-lease");
+  const leasing = await applyLeaseOptions(process.cwd());
   let run: Awaited<ReturnType<typeof runPromotion>>;
   let staged: import("../../components/promote-rounds").PromoteRoundsResult | undefined;
   // #4168 step 4: a wave at a time when a dependent read an upstream's plan,
@@ -669,6 +672,7 @@ async function deployPlanIn(
             componentOutputs: outputs,
             gates: port,
             releaseGate: binding,
+            ...leasing,
             ...(grouped?.groups?.length ? { grouped, groupRuns } : {}),
             ...(args.progressJson ? { onProgress: ndjsonProgressSink() } : {}),
             ...(events ? { onRunEvent: events.emit } : {}),
@@ -683,6 +687,7 @@ async function deployPlanIn(
         componentOutputs: seededOutputs,
         gates: port,
         ...(releaseGate ? { releaseGate } : {}),
+        ...leasing,
         // #4465: with no release gate to bind, nothing planned the groups beforehand, so each plans in its wave.
         ...(grouped?.groups?.length ? { grouped, groupRuns, planGroupsAtWave: bound === undefined } : {}),
         ...(args.progressJson ? { onProgress: ndjsonProgressSink() } : {}),

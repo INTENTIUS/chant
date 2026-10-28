@@ -88,6 +88,33 @@ describe("chant lock and chant unlock", () => {
     expect(wrong.err).toContain("is the report of pull request 4, not 5");
   });
 
+  test("--list shows the apply rows of the gate with the run that holds each (#4594)", async () => {
+    const { takeLockRows } = await import("../../lifecycle/resource-lock");
+    const holder = { run: "4711", at: "2026-10-27T10:00:00.000Z", url: "https://forge.example/acme/infra/actions/runs/4711" };
+    const rows = [
+      { key: "urn urn:pulumi:dev::site::aws:s3/bucket:Bucket::logs", target: "site", address: "logs" },
+      { key: "estate e01 aws_s3_bucket.logs", target: "e01", address: "aws_s3_bucket.logs" },
+    ];
+    expect(await takeLockRows("pr-apply", rows, holder, { cwd: repo, alive: async () => "alive" })).toMatchObject({ ok: true });
+
+    const text = await run(["lock", "--list"]);
+    expect(text.code).toBe(0);
+    expect(text.out).toContain("estate e01 aws_s3_bucket.logs\trun 4711\t2026-10-27T10:00:00.000Z\thttps://forge.example/acme/infra/actions/runs/4711");
+    expect(text.out).toContain("urn urn:pulumi:dev::site::aws:s3/bucket:Bucket::logs\trun 4711");
+    expect(text.err).toContain("no target locks on pr-apply");
+
+    const json = JSON.parse((await run(["lock", "--list", "--json"])).out);
+    expect(json.rowsPath).toBe("_locks/rows/pr-apply.json");
+    expect(Object.keys(json.rows)).toEqual(["estate e01 aws_s3_bucket.logs", "urn urn:pulumi:dev::site::aws:s3/bucket:Bucket::logs"]);
+    expect(json.rows["estate e01 aws_s3_bucket.logs"]).toEqual(holder);
+  });
+
+  test("--list says no apply rows are held when the rows file is empty (#4594)", async () => {
+    const listed = await run(["lock", "--list", "--json"]);
+    expect(JSON.parse(listed.out)).toMatchObject({ gate: "pr-apply", rows: {} });
+    expect((await run(["lock", "--list"])).err).toContain("no apply rows held on pr-apply");
+  });
+
   test("refuses without --pr or targets, an unknown stage, and a gate that is not a file name", async () => {
     expect((await run(["lock", "web"])).err).toContain("--pr <n>");
     expect((await run(["lock", "--pr", "1"])).err).toContain("needs the targets");

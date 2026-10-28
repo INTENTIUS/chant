@@ -458,10 +458,15 @@ async function fanOut(ctx: CommandContext, projectPath: string, config: ChantCon
   // wave and apply as one group; under --wave-gate none forms (ruling 1).
   const runPlan = await formRunGroups({ components: derived.components, plan: derived.plan, registry, env, ...(waveGate ? { waveGate: true } : {}) });
 
+  // #4594: ci.lockGrain, and on the resource grain the row lease each step, group or gated wave takes in the pull-request loop's rows file.
+  const { applyLeaseOptions } = await import("../../components/apply-lease");
+  const leasing = await applyLeaseOptions(process.cwd());
+
   let result;
   try {
     result = await runFanOut(runPlan, derived.components, registry, {
       env,
+      ...leasing,
       ...(runPlan.groups?.length ? { planGroupsAtWave: true } : {}),
       releaseIdentity: () => (revision ? { revision } : {}),
       componentOutputs,

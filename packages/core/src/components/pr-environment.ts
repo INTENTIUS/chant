@@ -67,8 +67,8 @@ export const PR_ENV_STATUS_CONTEXT = "chant/pr-env";
 /** The variable a component's build reads the template's name from. */
 export const PR_ENV_TEMPLATE_VAR = "CHANT_ENV_TEMPLATE";
 
-/** Exit codes, from the table (#4553): done, failed or refused, and waiting on an approval. */
-export const PR_ENV_EXIT = { done: CHANT_EXIT.done, failed: CHANT_EXIT.failed, waiting: CHANT_EXIT.waiting } as const;
+/** Exit codes, from the table (#4553): done, failed or refused, waiting on an approval, and rows another run holds (#4594). */
+export const PR_ENV_EXIT = { done: CHANT_EXIT.done, failed: CHANT_EXIT.failed, waiting: CHANT_EXIT.waiting, held: CHANT_EXIT.held } as const;
 
 /** The environment of pull request `pr`. */
 export function prEnvironmentName(pr: number): string {
