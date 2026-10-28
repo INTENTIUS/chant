@@ -12,16 +12,16 @@
  * `deprecatedPins` (../registry/deprecated.ts) checks them against it.
  *
  * The `terragucci_module_pin` metric keeps reading the plan; this is the
- * source-side view of the same calls. It folds into chant#3924's
- * `usedSources` once that lands.
+ * source-side view of the same calls. The normal form is chant#3924's
+ * (../registry/source-forms.ts), shared with `usedSources` (../sources.ts).
  */
 import { join, relative } from "node:path";
 import type { Hcl2Json } from "@intentius/chant/terraform/hcl2json";
 import { MODULE_TYPE, TERRAGRUNT_SOURCE_TYPE, parseTerraformRootDir, type TerraformEntity } from "../hcl/parse";
+import { normalizeModuleSource, PUBLIC_REGISTRY_HOST } from "../registry/source-forms";
 import { readModulePin, type ModuleCallPin } from "./source";
 
-/** The public registry's host, which a source with no host names. */
-export const PUBLIC_REGISTRY_HOST = "registry.terraform.io";
+export { normalizeModuleSource, PUBLIC_REGISTRY_HOST };
 
 /** One module call in a consuming repo. */
 export interface ModuleConsumer {
@@ -49,27 +49,6 @@ export interface ModuleConsumer {
 /** A source names a local directory, not a published module. */
 export function isLocalSource(source: string): boolean {
   return source.startsWith("./") || source.startsWith("../");
-}
-
-/**
- * The module a pin-free source names, written one way: a registry source
- * with no host gets the public registry's, a host is lowercased, and
- * Terragrunt's `tfr:///ns/name/system` and `tfr://host/ns/name/system`
- * become the plain registry form. Other sources (git, OCI, an archive URL)
- * are kept as they are.
- */
-export function normalizeModuleSource(module: string): string {
-  let s = module.trim();
-  const tfr = /^tfr:\/\/([^/]*)\/(.*)$/.exec(s);
-  if (tfr) s = `${tfr[1] || PUBLIC_REGISTRY_HOST}/${tfr[2]}`;
-  const [base, ...rest] = s.split("//");
-  const parts = base!.split("/");
-  const registryShaped = (n: number) => parts.length === n && parts.every((p) => p.length > 0) && !base!.includes(":");
-  if (registryShaped(3) && !/[.]/.test(parts[0]!)) return [`${PUBLIC_REGISTRY_HOST}/${base}`, ...rest].join("//");
-  if (parts.length === 4 && /^[a-z0-9.-]+(?::\d+)?$/i.test(parts[0]!) && (parts[0]!.includes(".") || parts[0]!.includes(":") || parts[0] === "localhost")) {
-    return [`${parts[0]!.toLowerCase()}/${parts.slice(1).join("/")}`, ...rest].join("//");
-  }
-  return s;
 }
 
 function str(v: unknown): string | undefined {

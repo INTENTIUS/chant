@@ -6,7 +6,9 @@
  * their config keys and presets and call this. The module targets that
  * publish a version to a hosted registry (GitLab first) are under ./targets
  * (chant#4603). ./docs reads a module's README, inputs, outputs and
- * examples for its release catalog page (chant#4598).
+ * examples for its release catalog page (chant#4598). ./source-forms puts
+ * module sources and provider addresses in one normal form, and
+ * ../used-sources lists the ones a root uses (chant#3924).
  */
 
 export * from "./address";
@@ -22,4 +24,6 @@ export * from "./targets";
 export * from "./docs";
 export * from "./catalog-read";
 export * from "./deprecated";
-export { moduleConsumers, normalizeModuleSource, isLocalSource, PUBLIC_REGISTRY_HOST, type ModuleConsumer } from "../pin/consumers";
+export * from "./source-forms";
+export { moduleConsumers, isLocalSource, type ModuleConsumer } from "../pin/consumers";
+export { usedSources, type UsedSource, type UnreadSource, type UsedSourcesOptions } from "../used-sources";
