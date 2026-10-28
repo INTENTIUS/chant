@@ -1,4 +1,6 @@
 import type { InstanceObservation } from "./instance-nodes";
+import type { CiRunner } from "./ci-jobs";
+import type { OpAgentSpec } from "./ci-agent";
 import type { EngineFacts } from "./engine-facts";
 import type { CapabilityPack } from "./capabilities/view";
 import type { Serializer } from "./serializer";
@@ -14,6 +16,7 @@ import type { ArtifactIntegrity } from "./lexicon-integrity";
 import type { GatedWavePipelineOptions } from "./components/gated-wave-pipeline";
 import type { PrLoopPipelineOptions } from "./components/pr-pipeline";
 import type { OpWaveJob, OpWavesSpec } from "./op/op-waves";
+import type { ChangeSetDocument } from "./change-set";
 import type { OkfFile } from "./okf";
 import type { CompletionContext, CompletionItem, HoverContext, HoverInfo, CodeActionContext, CodeAction } from "./lsp/types";
 import type { McpToolContribution, McpResourceContribution } from "./mcp/types";
@@ -73,6 +76,7 @@ export type { ReferenceCatalog, IdentityRule, RefRule } from "./graph-refs";
 // An observation can report relationships (#1271/#1273), so a lexicon needs the
 // edge type from the same entry it imports the plugin contract from.
 export type { IREdge } from "./graph-ir";
+export type { OpAgentSpec } from "./ci-agent";
 
 // The observation contract (#1089), re-exported from the same entry so a
 // lexicon's `describeResources` can report NOT-OBSERVED without a second
@@ -905,13 +909,31 @@ export interface ScheduledOpSpec {
    * token (the checkout's fetches get the job's token and nothing after
    * them does) and hands the review on as job outputs. The second checks
    * nothing out, takes the review as data and posts it as one note with the
-   * write token (`postReviewNote`). GitHub and Forgejo only: a GitLab merge
-   * request pipeline hands every job the project's unprotected variables, so
-   * the gitlab generator refuses this by name. The trigger must be
-   * `pull_request` and the finding-mode `report`, since the first job posts
-   * nothing.
+   * write token (`postReviewNote`). On GitLab (#4544) the first job keeps the
+   * review as an artifact of the merge request pipeline, and the second runs
+   * in a pipeline of the default branch, started by a schedule with
+   * `CHANT_REVIEW_NOTES` set to `1`, which holds the protected token and posts
+   * every open merge request's review (`postOpenReviewNotes`). The trigger
+   * must be `pull_request` and the finding-mode `report`, since the first job
+   * posts nothing.
    */
   reviewAgent?: boolean;
+  /**
+   * Where this Op's generated jobs run (#4616): a runner label, a list of
+   * labels, or on GitHub a runner group, as an Op wave's `runner` (#3914).
+   * `runs-on` on GitHub and Forgejo, `tags` on GitLab; a runner group on
+   * GitLab or Forgejo is refused. Default: the forge's default runner.
+   */
+  runner?: CiRunner;
+  /**
+   * The agent jobs (#4616, ../ci-agent.ts). `on: "comment"`: this spec is the
+   * agent's own workflow, answering `/<product> agent <ask>` on a pull
+   * request, and `trigger` is not read. `on: "drift"`: the agent and push
+   * jobs follow this Op's job and run when its run exits with chant's
+   * `drift` code, opening or updating a pull request from the agent's
+   * branch. The model's job holds no write token; the push job does.
+   */
+  agent?: OpAgentSpec;
 }
 
 /**
@@ -976,6 +998,19 @@ export interface OpWavesPipelineOptions
   extends Pick<ComponentPipelineOptions, "image" | "beforeScript" | "extraScript" | "variables" | "opsStage" | "opsFileName"> {
   /** The spec's path from the repository root. Every job runs `chant run wave --spec <specFile>`. */
   specFile: string;
+  /**
+   * The command every job runs in place of `chant` (#4607): a product's
+   * `words.bin`, such as `npx --no-install plywood`. `chant run --generate`
+   * fills it from the active product words, so a product's bin that runs
+   * the generator in process gets its own bin in the jobs. Absent: `chant`.
+   */
+  bin?: string;
+  /**
+   * The product's words (#4617), for the control dispatch a spec's
+   * `control` adds: its event type and messages. `chant run --generate`
+   * fills it from the active product words. Absent: chant's.
+   */
+  words?: import("./ci-product-words").CiProductWordsInput | import("./ci-product-words").CiProductWords;
 }
 
 /** An Op waves pipeline: one file, and its jobs in order. */
@@ -1444,6 +1479,56 @@ export interface LexiconPlugin {
   generateOpWavesPipeline?(spec: OpWavesSpec, options: OpWavesPipelineOptions): OpWavesPipelineResult;
 
   /**
+   * The shell lines that install this lexicon's engine into the default CI
+   * image (#4550): OpenTofu, and choudoufu where a member uses it, for
+   * terraform; Pulumi, or plunge where the member's engine is plunge, for
+   * pulumi. The pull request pipeline joins the lines of the lexicons its
+   * project lists, in place of installing OpenTofu for everyone. A caller's
+   * own image turns them off. `dir` is the project the pipeline is for.
+   * Return none when the project needs nothing from this lexicon.
+   */
+  ciSetup?(ctx: { dir: string }): string[];
+
+  /**
+   * The job services this lexicon's CI jobs start beside them (#4572,
+   * `./components/ci-services.ts`): throwaway servers such as the sql
+   * lexicon's replay server per dialect, each image pinned by the lexicon.
+   * A product's job renders them for its forge. `dir` is the project the
+   * pipeline is for. Return none when the project needs none.
+   */
+  ciServices?(ctx: { dir: string }): import("./components/ci-services").CiService[];
+
+  /**
+   * A section of the pull request note for one member (#4573): rows a
+   * resource table does not carry, rendered from the member's own part of
+   * the change set, such as a SQL member's statements with their class, the
+   * policy outcome per rule and its override line. chant places it under the
+   * member table, in a collapsed block, and leaves it out when the note would
+   * pass the forge's comment limit. Undefined for a member it has nothing for.
+   */
+  prNoteDetail?(input: { member: string; changeSet: ChangeSetDocument; stage: "plan" | "apply" | "record" }): { title?: string; lines: string[] } | undefined | Promise<{ title?: string; lines: string[] } | undefined>;
+
+  /**
+   * Whether `ci.prEnvironment.template` names one of this lexicon's own
+   * stacks rather than a chant.config.ts environment (#4609). The pulumi
+   * lexicon takes `<project>/<stack>`, plywood's `review_stacks.template`.
+   * Returns a short description of the stack when it does, for the log line,
+   * and undefined when it does not, so `pr-env up` checks the template
+   * against the declared environments as before.
+   */
+  prEnvTemplate?(template: string): string | undefined;
+
+  /**
+   * A teardown for what this lexicon made in a pull request's environment
+   * and its own `teardownOwned` does not reach (#4609): the pulumi lexicon
+   * removes each review stack `pr-<n>` the environment's record names in
+   * `locations`. `pr-env down` and `sweep` run it beside the lexicons'
+   * teardowns, under the same marker check. `cwd` is the project root the
+   * locations are relative to.
+   */
+  prEnvTeardown?(ctx: { cwd: string }): import("./components/pr-environment").PrEnvTeardownAdapter | undefined;
+
+  /**
    * Host Op runs — the seam `chant run <op> --on <this lexicon>` dispatches to
    * (#2121, epic #2114). Core ships one provider of its own, `local`, and
    * selects it when no `--on` is passed; a lexicon that can start, watch,
@@ -1603,7 +1688,11 @@ export interface LexiconPlugin {
   composites?(): CompositeEntry[];
 
   // MCP
-  /** Return MCP tool contributions */
+  /**
+   * Return MCP tool contributions. A tool is served by
+   * `chant serve mcp --read-only` only when it sets `readOnly: true`
+   * (chant#4543); the flag is a promise that the tool changes nothing.
+   */
   mcpTools?(): McpToolContribution[];
 
   /** Return MCP resource contributions */

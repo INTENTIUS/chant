@@ -216,6 +216,16 @@
           "via": "ledger",
           "approvedBy": "alice",
           "approvedAt": "2026-10-10T00:00:00Z"
+        },
+        "targets": {
+          "t1": {
+            "startedAt": 0,
+            "durationMs": 0
+          },
+          "t2": {
+            "startedAt": 0,
+            "durationMs": 0
+          }
         }
       },
       "ledger": {
@@ -445,7 +455,8 @@
             {
               "target": "t1",
               "op": "migrate",
-              "plan": ".chant/op-waves/migrations/wave-1/t1.plan.json"
+              "plan": ".chant/op-waves/migrations/wave-1/t1.plan.json",
+              "planDigest": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
             }
           ],
           "runsFile": ".chant/op-waves/migrations/wave-1/runs.json",
@@ -496,7 +507,8 @@
             {
               "target": "t2",
               "op": "migrate",
-              "plan": ".chant/op-waves/migrations/wave-1/t2.plan.json"
+              "plan": ".chant/op-waves/migrations/wave-1/t2.plan.json",
+              "planDigest": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
             }
           ],
           "runsFile": ".chant/op-waves/migrations/wave-1/runs.json",
@@ -575,7 +587,8 @@
         {
           "target": "t1",
           "op": "migrate",
-          "plan": ".chant/op-waves/migrations/wave-1/t1.plan.json"
+          "plan": ".chant/op-waves/migrations/wave-1/t1.plan.json",
+          "planDigest": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
         }
       ],
       "runsFile": ".chant/op-waves/migrations/wave-1/runs.json",
@@ -615,7 +628,8 @@
         {
           "target": "t2",
           "op": "migrate",
-          "plan": ".chant/op-waves/migrations/wave-1/t2.plan.json"
+          "plan": ".chant/op-waves/migrations/wave-1/t2.plan.json",
+          "planDigest": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
         }
       ],
       "runsFile": ".chant/op-waves/migrations/wave-1/runs.json",

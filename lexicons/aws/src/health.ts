@@ -27,7 +27,7 @@ import {
   xmlLeaves,
   type AwsReadClientOptions,
 } from "./api/read-client";
-import { resolveCredentials, signRequest } from "./api/sigv4";
+import { resolveCredentials, signRequest } from "./api/signing";
 import { stackDoesNotExist } from "./stack-errors";
 
 export const AWS_HEALTH_TYPES = ["AWS::Route53::HealthCheck", "AWS::ECS::Service"] as const;

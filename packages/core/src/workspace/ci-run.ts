@@ -93,6 +93,7 @@ import { holdsForgeToken, withoutForgeTokens } from "../ci-handover";
 import { postPlanReport } from "../pr-post";
 import { overdueOpsAt } from "../op/schedule-overdue";
 import { PR_APPLY_GATE, type PrOverdue } from "../pr-loop";
+import { activeProductWords, productContext, type CiProductWords } from "../ci-product-words";
 import type { CommandContext } from "../cli/registry";
 import { formatError, formatWarning } from "../cli/format";
 import { CHANT_CI_RUN_FORGE_ENV, CHANT_CI_RUN_ID_ENV, FORGE_RUN_ENV, resolveCiJob, type RunOrigin } from "../lifecycle/release-ledger";
@@ -414,8 +415,9 @@ const cut = (text: string, max = STATUS_DESCRIPTION): string => (text.length > m
  * `chant/<gate>`, which is `chant/pr-apply` unless `--gate` renamed the gate.
  * pr-plan's own status is `chant/plan` (../pr-loop.ts), a different context.
  */
-export function ciStatusContext(job: CiJobName, gate?: string): string {
-  return job === "apply" ? `chant/${gate ?? PR_APPLY_GATE}` : `chant/${CI_JOB_OPS[job]}`;
+export function ciStatusContext(job: CiJobName, gate?: string, words: CiProductWords = activeProductWords()): string {
+  // #4550: every context chant posts takes the product's prefix, so a product's repository shows no `chant/` check.
+  return productContext(words, job === "apply" ? (gate ?? PR_APPLY_GATE) : CI_JOB_OPS[job]);
 }
 
 /**
@@ -1184,13 +1186,14 @@ export function ciLoopOptions(args: CommandContext["args"]): PrLoopPipelineOptio
     ...(args.waveGate ? { waveGate: args.waveGate } : {}),
     ...(args.requireReview === true ? { requireReview: true } : {}),
     ...(args.applyBeforeMerge ? { applyBeforeMerge: true } : {}),
+    ...(args.requires ? { applyRequires: args.requires } : {}),
   };
 }
 
 const USAGE =
   "chant ci run plan|record|apply|env-up|env-post|env-down|env-sweep --env <env> --base <sha> [--pr <n>] [--commit <sha>] [--head <sha>] [--result <r>] [--forge github|gitlab|forgejo] " +
   "[--gate <name>] [--wave-gate <name>] [--wave <k>] [--branch <name>] [--events-json] [--report-url <url>] [--run-index-limit <n>] [--image <image>] [--before-script <line>]... " +
-  "[--pr-build] [--pr-build-command <line>] [--require-review] [--apply-before-merge] [--no-status] [--status-url <url template>] " +
+  "[--pr-build] [--pr-build-command <line>] [--require-review] [--apply-before-merge [--requires <list>]] [--no-status] [--status-url <url template>] " +
   "[--chant <command>] [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>] [-o <dir>] [--in-place | --local] [--no-push] [--verbose] | chant ci run --at <sha> | chant ci run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]";
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;

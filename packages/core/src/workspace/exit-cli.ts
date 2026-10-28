@@ -14,6 +14,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { CHANT_EXIT } from "../exit-codes";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -29,7 +30,7 @@ import { spawnChant } from "./lineage-upgrade";
 const USAGE = "chant workspace exit [<member>...] [--member <name>] [--dry-run] [--drill] [--output <patch file>] [--json]";
 
 /** The exit code of a gated exit: the same as `chant run`'s gated run. */
-export const EXIT_GATED = 3;
+export const EXIT_GATED = CHANT_EXIT.waiting;
 
 const EXIT_DIR = ".chant/exit";
 

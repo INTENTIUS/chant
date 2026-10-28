@@ -71,6 +71,7 @@ import { activeAttestors, type CommitAttestor, type ProvenanceLevel } from "./tr
 import { policyAtBase, recordProvenance, resolveBase, type BaseSource, type RecordProvenance } from "./trust/provenance";
 import { returnedPolicy, type TrustPolicy } from "./trust/policy";
 import type { SealedRecord } from "./trust/seal";
+import { CHANT_EXIT } from "../exit-codes";
 
 /** The version of the `records` output this chant writes. */
 export const RECORDS_CONTRACT_VERSION = 1;
@@ -81,8 +82,8 @@ export const RECORDS_OUTPUT_SCHEMA_ID = "https://intentius.io/chant/schemas/work
 const USAGE =
   "chant workspace records [--kind <kind file>] [--current] [--uncommitted | --at <rev>] [--base <rev>] [--require attested] [--where <field><op><value>]... [--json] | chant workspace records [--kind <kind file>] --since <rev|session id> [--at <rev>] [--json] | chant workspace records pin <path> [--kind <kind file>] | chant workspace records new|amend|review|close (#2670, #2693)";
 
-/** Exit code when the read worked and a record falls below `--require`. */
-export const EXIT_BELOW_REQUIRED = 2;
+/** Exit code when the read worked and a record falls below `--require`: a record that does not count yet waits for a person (#4585). */
+export const EXIT_BELOW_REQUIRED = CHANT_EXIT.waiting;
 
 export interface RecordsQuery {
   kind: string;

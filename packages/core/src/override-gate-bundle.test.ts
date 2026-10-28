@@ -29,6 +29,8 @@ describe("the override-gate bundle", () => {
       expect(inputs.filter((i) => pattern.test(i)), String(pattern)).toEqual([]);
     }
     expect(inputs.map((i) => i.replace(/^.*?packages\//, "packages/")).sort()).toEqual([
+      // The product's override line (#4550): no imports.
+      "packages/core/src/ci-product-words.ts",
       "packages/core/src/content-digest.ts",
       "packages/core/src/declarable.ts",
       "packages/core/src/effect-receipt.ts",

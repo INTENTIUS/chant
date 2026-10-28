@@ -26,6 +26,7 @@ import { formatWarning } from "../format";
 import { lexiconPackagesToInstall, lexiconSourceLabel, pathLexiconMap, recordedLexiconModules } from "../../lexicon-module";
 import { readConfigFieldsStatically, readLexiconDeclarationsStatically, unknownPathLexiconsNotice } from "../../config-static";
 import { findProjectConfigPastFragments } from "../../config";
+import { CHANT_EXIT } from "../../exit-codes";
 
 export type AuditFormat = "stylish" | "json" | "sarif" | "markdown" | "html";
 export type AuditTier = "merge-worthy" | "all";
@@ -122,8 +123,8 @@ export interface AuditCommandResult {
   warnings?: AuditWarning[];
 }
 
-/** Exit code when the audit had no lexicons to look with. Distinct from 1 (findings / failure). */
-export const NO_LEXICONS_EXIT_CODE = 2;
+/** Exit code when the audit had no lexicons to look with: a config failure, so `failed` (#4585). */
+export const NO_LEXICONS_EXIT_CODE = CHANT_EXIT.failed;
 
 /**
  * What to tell the user about lexicons that did not load: an `npm i` line for

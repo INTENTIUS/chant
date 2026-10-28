@@ -131,6 +131,10 @@ export interface ParsedArgs {
    * before anything parsed it, so there was no way to decline the write.
    */
   skipMcp?: boolean;
+  /** `chant serve mcp --read-only` (chant#4543): serve only the tools that change nothing. */
+  readOnly?: boolean;
+  /** `chant init --mcp-read-only` (chant#4543): write `.mcp.json` registering `chant serve mcp --read-only`. */
+  mcpReadOnly?: boolean;
   /** `chant import --type <ResourceType>` selector */
   selectType?: string;
   /** `chant import --name <name>` selector */
@@ -314,6 +318,8 @@ export interface ParsedArgs {
   decide?: boolean;
   /** `chant run wave --record-plans` (#3684) — plan every wave at a pull request's head and record the digests for a `pr-review` gate. */
   recordPlans?: boolean;
+  /** `chant run wave --waves-outcome` (#4617) — print how every wave job's outcome file adds up: the outcome a control dispatch carries. */
+  wavesOutcome?: boolean;
   /** `chant run wave --share <i>` (#3679) — apply share `i` of a decided wide wave. */
   share?: number;
   /** `chant run wave --group <name>` (#3914) — apply one job group's runs of a decided wave. */
@@ -322,6 +328,9 @@ export interface ParsedArgs {
    * `chant components fan-out --target <component>:<address>` and `chant run
    * --components --target ...` (#4300), repeatable: the addresses a
    * component's steps narrow to. Raw values; `parseComponentTargets` groups them.
+   * `chant components pr-plan --target <address>` (#4620) takes a bare
+   * address too, for every member the pull request plans
+   * (`prPlanTargets`).
    */
   targets?: string[];
   /** `chant components fan-out --canary <component>` (#3049), repeatable — components that form wave 1. */
@@ -338,6 +347,8 @@ export interface ParsedArgs {
   lockStage?: string;
   /** `chant lock --from-report <file>` (#4293): lock the components a `pr-plan.json` lists. */
   fromReport?: string;
+  /** `chant lock --alive <run>` (#4552): print `alive` or `dead` for a run that holds rows or the repo lock tag. */
+  aliveRun?: string;
   /** Every `--pr <n>`, in order: `chant release compose` (#4168 4.3) takes several. */
   prs?: number[];
   /** `chant release cut --channel <tag>` (#4168 4.3): the tag a publish of the release moves in place of `latest`. */
@@ -348,6 +359,8 @@ export interface ParsedArgs {
    * read from the CI job's environment.
    */
   forge?: string;
+  /** `chant ci forge-check --require-clouds` (#4608): fail a cloud left unchecked for want of credentials too. */
+  requireClouds?: boolean;
   /**
    * `chant components pr-apply --require-review` (#3183) — count an approval
    * only when its approver has a standing approving review on the pull
@@ -391,11 +404,19 @@ export interface ParsedArgs {
    */
   beforeMerge?: boolean;
   /**
+   * `chant components pr-apply --before-merge --requires <list>` (#4607): the
+   * requires checks to ask, a comma list of approved, mergeable, undiverged
+   * and checks. Absent: all four. A check left out passes as "not required".
+   */
+  requires?: string[];
+  /**
    * `chant build --pr-loop --apply-before-merge` and `chant ci run apply
    * --apply-before-merge` (#4301): the pipeline's apply job applies an open
    * pull request before it merges, and a merge records.
    */
   applyBeforeMerge?: boolean;
+  /** `chant build --pr-loop --preview-comment` (#4620): a job answers `/<product> <plan word>` by previewing the pull request's head again. */
+  previewComment?: boolean;
   /** `chant build --pr-loop --pr-build` (#4088) — build and lint before pr-plan and pr-apply. */
   prBuild?: boolean;
   /** `chant ci serve --build-command <line>` (#4169) — the line that builds a commit a `ci/build/<sha>` tag asks for, in a worktree of it. */
@@ -761,6 +782,18 @@ export interface ParsedArgs {
   digestFile?: string;
   /** `chant run --components <name> --seed-outputs <file>` (repeatable) — before the run, load each JSON outputs file (as written by `--dump-outputs`) and seed cross-component/cross-stack resolution with it, so a `stackOutput()`/`@<dep>.publish.*` reference to a component that ran in an earlier job resolves. */
   seedOutputs?: string[];
+  /**
+   * `chant lock --keep --pr <n>` (#4588): take again, at stage `lock`, every
+   * target lock the pull request holds now, so the locks its plan took stay
+   * until it closes or `chant unlock`. What `/<product> lock` runs.
+   */
+  keepLocks?: boolean;
+  /** `chant components plan-wave|apply-wave --runs <file>` (#4588): the runs file `chant run wave` writes, `{runs}`. */
+  runsFile?: string;
+  /** `chant components plan-wave|apply-wave --plans <file>` (#4588): the wave's plans file, `{plans}`. */
+  plansFile?: string;
+  /** `chant components plan-wave|apply-wave --wave-outputs <file>` (#4588): the outputs earlier waves' components left; apply-wave adds its own. */
+  waveOutputs?: string;
   /** `chant build --fold` (#1022/#1023, epic #1019) — opt-in: fold source modules statically instead of importing/running them; folds resource constructors and composite factory calls, falling back to run per-file for anything the folder can't represent (a cross-file-only reference, a re-export, `export default`, …). Also settable project-wide via `chant.config.ts`'s `build.fold: true`; the flag always wins when set. Default (flag omitted): the existing run path, unchanged. */
   fold?: boolean;
   /** `chant build --sandbox` (#1045 Phase 2) — opt-in: run-fallback source files (or every file, without `--fold`) execute together, isolated, in one sandboxed child process instead of in-process. Also settable project-wide via `chant.config.ts`'s `build.sandbox: true`; the flag always wins when set. Default (flag omitted): in-process execution, unchanged. */

@@ -38,16 +38,19 @@
     ".": {
       "development": "./src/index.ts",
       "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
       "default": "./src/index.ts"
     },
     "./yaml": {
       "development": "./src/yaml.ts",
       "types": "./dist/yaml.d.ts",
+      "import": "./dist/yaml.js",
       "default": "./src/yaml.ts"
     },
     "./cli": {
       "development": "./src/cli/index.ts",
       "types": "./dist/cli/index.d.ts",
+      "import": "./dist/cli/index.js",
       "default": "./src/cli/index.ts"
     },
     "./workspace/*.schema.json": "./src/workspace/*.schema.json",
@@ -57,46 +60,55 @@
     "./workspace/factory-rules": {
       "development": "./src/workspace/factory-rules.ts",
       "types": "./dist/workspace/factory-rules.d.ts",
+      "import": "./dist/workspace/factory-rules.js",
       "default": "./src/workspace/factory-rules.ts"
     },
     "./workspace/conformance": {
       "development": "./src/workspace/conformance/index.ts",
       "types": "./dist/workspace/conformance/index.d.ts",
+      "import": "./dist/workspace/conformance/index.js",
       "default": "./src/workspace/conformance/index.mjs"
     },
     "./workspace/conformance/vitest": {
       "development": "./src/workspace/conformance/vitest.ts",
       "types": "./dist/workspace/conformance/vitest.d.ts",
+      "import": "./dist/workspace/conformance/vitest.js",
       "default": "./src/workspace/conformance/vitest.ts"
     },
     "./cli/*": {
       "development": "./src/cli/*.ts",
       "types": "./dist/cli/*.d.ts",
+      "import": "./dist/cli/*.js",
       "default": "./src/cli/*.ts"
     },
     "./op": {
       "development": "./src/op/index.ts",
       "types": "./dist/op/index.d.ts",
+      "import": "./dist/op/index.js",
       "default": "./src/op/index.ts"
     },
     "./op/activities": {
       "development": "./src/op/activities/index.ts",
       "types": "./dist/op/activities/index.d.ts",
+      "import": "./dist/op/activities/index.js",
       "default": "./src/op/activities/index.ts"
     },
     "./components": {
       "development": "./src/components/index.ts",
       "types": "./dist/components/index.d.ts",
+      "import": "./dist/components/index.js",
       "default": "./src/components/index.ts"
     },
     "./testing": {
       "development": "./src/testing.ts",
       "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js",
       "default": "./src/testing.ts"
     },
     "./agents": {
       "development": "./src/agents/index.ts",
       "types": "./dist/agents/index.d.ts",
+      "import": "./dist/agents/index.js",
       "default": "./src/agents/index.ts"
     },
     "./notify-verify": {
@@ -118,9 +130,17 @@
       "default": "./src/notify.ts"
     },
     "./wave-runtime.mjs": "./dist/wave-runtime.mjs",
+    "./bucket-check/fixtures/*.json": "./src/bucket-check/fixtures/*.json",
+    "./object-store": {
+      "development": "./src/object-store/index.ts",
+      "types": "./dist/object-store/index.d.ts",
+      "import": "./dist/object-store/index.js",
+      "default": "./src/object-store/index.ts"
+    },
     "./*": {
       "development": "./src/*.ts",
       "types": "./dist/*.d.ts",
+      "import": "./dist/*.js",
       "default": "./src/*.ts"
     }
   },

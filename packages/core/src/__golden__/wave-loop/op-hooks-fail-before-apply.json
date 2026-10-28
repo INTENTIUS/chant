@@ -215,7 +215,8 @@
         "CHANT_RUNS": ".chant/op-waves/migrations/wave-1/runs.json",
         "CHANT_HOLD": ".chant/op-waves/migrations/wave-1/hold.json",
         "CHANT_TARGET": "t1",
-        "CHANT_PLAN": ".chant/op-waves/migrations/wave-1/t1.plan.json"
+        "CHANT_PLAN": ".chant/op-waves/migrations/wave-1/t1.plan.json",
+        "CHANT_PLAN_DIGEST": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
       },
       "read": {
         "CHANT_RUNS": {
@@ -252,7 +253,8 @@
         "CHANT_RUNS": ".chant/op-waves/migrations/wave-1/runs.json",
         "CHANT_HOLD": ".chant/op-waves/migrations/wave-1/hold.json",
         "CHANT_TARGET": "t2",
-        "CHANT_PLAN": ".chant/op-waves/migrations/wave-1/t2.plan.json"
+        "CHANT_PLAN": ".chant/op-waves/migrations/wave-1/t2.plan.json",
+        "CHANT_PLAN_DIGEST": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
       },
       "read": {
         "CHANT_RUNS": {

@@ -11,7 +11,13 @@ import { describe, expect, test } from "vitest";
 import {
   engineEnv,
   PLUNGE_GRAPH_COMMANDS,
+  plungeAdoptArgs,
   plungeGraphArgs,
+  plungeMoveArgs,
+  pulumiCancelArgs,
+  pulumiStateMoveArgs,
+  runGatedPlunge,
+  runGatedPulumi,
   plungeMemberGraph,
   previewPulumiMember,
   PULUMI_ALLOWED_COMMANDS,
@@ -19,8 +25,15 @@ import {
   pulumiExportStack,
   pulumiPreviewArgs,
   refreshPulumiMember,
+  runAdoptPlunge,
   runAllowedPlunge,
   runAllowedPulumi,
+  runApplyPlunge,
+  runApplyPulumi,
+  plungeUpArgs,
+  pulumiUpArgs,
+  pulumiUpPreviewArgs,
+  PULUMI_APPLY_COMMANDS,
   type PulumiRunner,
 } from "./run";
 
@@ -42,6 +55,103 @@ function fake(answer: (args: string[]) => string | Error): { run: PulumiRunner; 
 function failure(message: string, fields: { code?: string; stdout?: string; stderr?: string }): Error {
   return Object.assign(new Error(message), fields);
 }
+
+describe("gated stack operations (#4578)", () => {
+  const u = "urn:pulumi:net::shop::aws:s3/bucketV2:BucketV2::logs";
+  test("each fixed form reaches its runner", async () => {
+    const { run, calls } = fake(() => "{}");
+    await runGatedPulumi(run, pulumiCancelArgs({ stack: "dev" }), "/tmp");
+    await runGatedPulumi(run, pulumiStateMoveArgs({ source: "net", dest: "app", urns: [u] }), "/tmp");
+    await runAllowedPlunge(run, plungeMoveArgs({ source: "net", dest: "app", urns: [u] }), "/tmp");
+    await runGatedPlunge(run, plungeMoveArgs({ source: "net", dest: "app", urns: [u], yes: true }), "/tmp");
+    expect(calls.map((c) => c.args)).toEqual([
+      ["cancel", "--yes", "--stack", "dev"],
+      ["state", "move", "--source", "net", "--dest", "app", "--yes", u],
+      ["stack", "move", "--stack", "net", "--dest", "app", u, "--json"],
+      ["stack", "move", "--stack", "net", "--dest", "app", u, "--json", "--yes"],
+    ]);
+  });
+
+  test("no other form gets through, and the read entry points refuse the writes", async () => {
+    const { run, calls } = fake(() => "{}");
+    for (const args of [
+      ["cancel", "--stack", "dev"],
+      ["cancel", "--yes", "--stack", "dev", "--force"],
+      ["state", "move", "--source", "net", "--dest", "app", "--yes", "--include-parents", u],
+      ["state", "move", "--source", "net", "--dest", "app", u],
+      ["state", "move", "--source", "net", "--dest", "app", "--yes"],
+      ["state", "delete", u],
+      ["stack", "import", "--file", "x.json"],
+    ]) {
+      await expect(runGatedPulumi(run, args, "/tmp")).rejects.toThrow(/gated Pulumi stack operation only as/);
+    }
+    await expect(runGatedPlunge(run, plungeMoveArgs({ source: "net", dest: "app", urns: [u] }), "/tmp")).rejects.toThrow(/moves plunge resources only as/);
+    await expect(runGatedPlunge(run, ["stack", "move", "--dest", "app", u, "--json", "--yes"], "/tmp")).rejects.toThrow(/moves plunge resources only as/);
+    await expect(runAllowedPlunge(run, plungeMoveArgs({ source: "net", dest: "app", urns: [u], yes: true }), "/tmp")).rejects.toThrow(/not plunge stack move/);
+    await expect(runAllowedPulumi(run, pulumiCancelArgs({ stack: "dev" }), "/tmp")).rejects.toThrow(/not pulumi cancel/);
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("plunge stack adopt (#4562)", () => {
+  test("the preview form passes runAllowedPlunge, and only runAdoptPlunge runs --yes", async () => {
+    const { run, calls } = fake(() => "{}");
+    await runAllowedPlunge(run, plungeAdoptArgs({ stack: "dev" }), "/tmp");
+    await runAllowedPlunge(run, plungeAdoptArgs({ stack: "dev", file: "/tmp/s.json" }), "/tmp");
+    await runAdoptPlunge(run, plungeAdoptArgs({ stack: "dev", yes: true }), "/tmp");
+    await runAdoptPlunge(run, plungeAdoptArgs({ stack: "dev", yes: true, file: "/tmp/s.json" }), "/tmp");
+    expect(calls.map((c) => c.args)).toEqual([
+      ["stack", "adopt", "--json", "--stack", "dev"],
+      ["stack", "adopt", "--json", "--stack", "dev", "--file", "/tmp/s.json"],
+      ["stack", "adopt", "--json", "--yes", "--stack", "dev"],
+      ["stack", "adopt", "--json", "--yes", "--stack", "dev", "--file", "/tmp/s.json"],
+    ]);
+  });
+
+  test("--yes through the read entry point, the adopt-file route, other flags and stock pulumi are refused", async () => {
+    const { run, calls } = fake(() => "{}");
+    await expect(runAllowedPlunge(run, plungeAdoptArgs({ stack: "dev", yes: true }), "/tmp")).rejects.toThrow(/not plunge stack adopt --json --yes/);
+    await expect(runAllowedPulumi(run, plungeAdoptArgs({ stack: "dev" }), "/tmp")).rejects.toThrow(/not pulumi stack adopt/);
+    for (const args of [
+      ["stack", "adopt", "--json", "--stack", "dev", "--adopt", "a.yaml"],
+      ["stack", "adopt", "--json", "--yes", "--stack", "dev", "--index-store", "/x"],
+      ["stack", "adopt", "--yes", "--stack", "dev"],
+      ["stack", "adopt", "--json", "--yes", "--stack", "--file"],
+      ["stack", "adopt", "--json", "--stack", "dev"],
+    ]) {
+      await expect(runAdoptPlunge(run, args, "/tmp")).rejects.toThrow(/chant adopts a stack onto plunge only as/);
+    }
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("stack export (#4546)", () => {
+  test("exactly stack export --stack <stack> reaches either runner", async () => {
+    const { run, calls } = fake(() => "{}");
+    await runAllowedPulumi(run, ["stack", "export", "--stack", "dev"], "/tmp");
+    await runAllowedPlunge(run, ["stack", "export", "--stack", "dev"], "/tmp");
+    expect(calls.map((c) => c.args)).toEqual([
+      ["stack", "export", "--stack", "dev"],
+      ["stack", "export", "--stack", "dev"],
+    ]);
+  });
+
+  test("--file, --show-secrets, --version, no stack and a flag for a stack are refused before the runner", async () => {
+    const { run, calls } = fake(() => "{}");
+    for (const args of [
+      ["stack", "export"],
+      ["stack", "export", "--stack", "dev", "--file", "stack-export.json"],
+      ["stack", "export", "--stack", "dev", "--show-secrets"],
+      ["stack", "export", "--stack", "dev", "--version", "3"],
+      ["stack", "export", "--stack", "--show-secrets"],
+      ["stack", "export", "--file", "x", "--stack", "dev"],
+    ]) {
+      await expect(runAllowedPulumi(run, args, "/tmp")).rejects.toThrow(/pulumi stack export --stack <stack>/);
+      await expect(runAllowedPlunge(run, args, "/tmp")).rejects.toThrow(/plunge stack export --stack <stack>/);
+    }
+    expect(calls).toEqual([]);
+  });
+});
 
 describe("the allow-list (ruling on #4450)", () => {
   test("only preview and refresh --preview-only reach the runner", async () => {
@@ -208,9 +318,13 @@ describe("a member on plunge (#4453)", () => {
   const dir = join(testdata, "plunge-member");
 
   test("the engine: the config first, then a plunge backend URL in Pulumi.yaml, else pulumi", () => {
-    expect(pulumiMemberEngine(dir)).toEqual({ engine: "plunge", because: "Pulumi.yaml names the plunge backend plunge+file:///var/lib/plunge/site" });
+    expect(pulumiMemberEngine(dir, undefined, { env: {} })).toEqual({
+      engine: "plunge",
+      because: "Pulumi.yaml names the plunge backend plunge+file:///var/lib/plunge/site",
+      source: "Pulumi.yaml",
+    });
     expect(pulumiMemberEngine(dir, "pulumi").engine).toBe("pulumi");
-    expect(pulumiMemberEngine(join(testdata, "pulumi-member")).engine).toBe("pulumi");
+    expect(pulumiMemberEngine(join(testdata, "pulumi-member"), undefined, { env: {} }).engine).toBe("pulumi");
     expect(pulumiMemberEngine(join(testdata, "pulumi-member"), "plunge").engine).toBe("plunge");
   });
 
@@ -297,7 +411,7 @@ describe("plunge graph (#4529, ruled on #4520 Q4 and Q6)", () => {
     const { run, calls } = fake(() => "{}");
     for (const args of allowed) await expect(runAllowedPulumi(run, args, dir)).rejects.toThrow(/only pulumi preview/);
     expect(calls).toEqual([]);
-    expect(PULUMI_ALLOWED_COMMANDS).toEqual([["preview"], ["refresh", "--preview-only"], ["stack", "output"]]);
+    expect(PULUMI_ALLOWED_COMMANDS).toEqual([["preview"], ["refresh", "--preview-only"], ["stack", "output"], ["stack", "export"]]);
   });
 
   test("plungeGraphArgs builds each of the four, in the allowed order", () => {
@@ -323,5 +437,64 @@ describe("plunge graph (#4529, ruled on #4520 Q4 and Q6)", () => {
     expect(await plungeMemberGraph({ dir, plunge: missing.run })).toMatchObject({ ok: false, detail: "the plunge binary was not found on PATH" });
     const blank = fake(() => "");
     expect(await plungeMemberGraph({ dir, plunge: blank.run })).toMatchObject({ ok: false, detail: "plunge graph --json --stack dev printed no JSON" });
+  });
+});
+
+describe("the apply entry points (#4541)", () => {
+  const tail = { configFile: "/tmp/c/Pulumi.floci.yaml", targets: ["urn:a", "urn:b"], policyPacks: [{ dir: "/packs/org", config: "/packs/org.json" }, { dir: "/packs/team" }] };
+
+  test("the read entry points still refuse up", async () => {
+    const { run, calls } = fake(() => "{}");
+    await expect(runAllowedPulumi(run, pulumiUpArgs({ stack: "floci" }), "/tmp")).rejects.toThrow(/only pulumi preview/);
+    await expect(runAllowedPlunge(run, plungeUpArgs({ plan: "/tmp/p.json", stack: "floci" }), "/tmp")).rejects.toThrow(/only plunge drift/);
+    expect(calls).toEqual([]);
+  });
+
+  test("the fixed forms pass, with the tail in its order", async () => {
+    const { run, calls } = fake(() => "");
+    await runApplyPulumi(run, pulumiUpArgs({ stack: "floci", ...tail }), "/tmp");
+    await runApplyPlunge(run, plungeUpArgs({ plan: "/tmp/p.json", stack: "floci", ...tail }), "/tmp");
+    expect(calls.map((c) => c.args)).toEqual([
+      ["up", "--yes", "--json", "--stack", "floci", "--config-file", "/tmp/c/Pulumi.floci.yaml", "--target", "urn:a", "--target", "urn:b", "--policy-pack", "/packs/org", "--policy-pack-config", "/packs/org.json", "--policy-pack", "/packs/team"],
+      ["up", "--plan", "/tmp/p.json", "--yes", "--json", "--stack", "floci", "--config-file", "/tmp/c/Pulumi.floci.yaml", "--target", "urn:a", "--target", "urn:b", "--policy-pack", "/packs/org", "--policy-pack-config", "/packs/org.json", "--policy-pack", "/packs/team"],
+    ]);
+    expect(PULUMI_APPLY_COMMANDS).toHaveLength(2);
+  });
+
+  test("anything off the list is refused before the runner", async () => {
+    const { run, calls } = fake(() => "");
+    const base = pulumiUpArgs({ stack: "floci" });
+    for (const extra of [["--skip-preview"], ["--refresh"], ["--show-secrets"], ["--replace", "urn:a"], ["--target-replace", "urn:a"], ["--target-dependents"], ["--exclude", "urn:a"], ["--remote"], ["--continue-on-error"], ["--config", "k=v"], ["--plan", "/tmp/p.json"]]) {
+      await expect(runApplyPulumi(run, [...base, ...extra], "/tmp")).rejects.toThrow(/applies a Pulumi stack only as/);
+    }
+    for (const args of [
+      ["up", "--json", "--yes", "--stack", "floci"],
+      ["up", "--yes", "--json"],
+      ["up", "--yes", "--json", "--stack", "--yes"],
+      ["up", "--yes", "--json", "--stack", "floci", "--target"],
+      ["up", "--yes", "--json", "--stack", "floci", "--target", "urn:a", "--config-file", "/tmp/c"],
+      ["destroy", "--yes", "--json", "--stack", "floci"],
+    ]) {
+      await expect(runApplyPulumi(run, args, "/tmp")).rejects.toThrow(/applies a Pulumi stack only as/);
+    }
+    for (const args of [
+      ["up", "--yes", "--json", "--stack", "floci"],
+      ["up", "--plan", "--yes", "--json", "--stack", "floci"],
+      ["up", "--plan", "/tmp/p.json", "--yes", "--json", "--stack", "floci", "--skip-preview"],
+    ]) {
+      await expect(runApplyPlunge(run, args, "/tmp")).rejects.toThrow(/applies a plunge stack only as/);
+    }
+    expect(calls).toEqual([]);
+  });
+
+  test("a preview with --show-secrets or --import-file is refused; --save-plan and the tail pass", async () => {
+    const { run, calls } = fake(() => "");
+    for (const extra of [["--show-secrets"], ["--show-secrets=true"], ["--import-file", "/tmp/i.json"], ["--import-file=/tmp/i.json"]]) {
+      await expect(runAllowedPulumi(run, ["preview", "--json", ...extra], "/tmp")).rejects.toThrow(/only pulumi preview/);
+      await expect(runAllowedPlunge(run, ["preview", "--json", ...extra], "/tmp")).rejects.toThrow(/only plunge drift/);
+    }
+    expect(calls).toEqual([]);
+    await runAllowedPlunge(run, pulumiUpPreviewArgs({ stack: "floci", savePlan: "/tmp/p.json", ...tail }), "/tmp", { PULUMI_ENABLE_STREAMING_JSON_PREVIEW: "true" });
+    expect(calls[0].args.slice(0, 7)).toEqual(["preview", "--json", "--show-sames", "--stack", "floci", "--save-plan", "/tmp/p.json"]);
   });
 });

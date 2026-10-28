@@ -2,7 +2,7 @@
  * The AWS credential chain, as the AWS CLI walks it, for `chant lifecycle
  * whoami` (#3954).
  *
- * `resolveCredentials` (./sigv4.ts) reads the three environment variables and
+ * `resolveCredentials` (./signing.ts) reads the three environment variables and
  * nothing else. That is right for the read transport's synchronous signing
  * seam, and it made whoami wrong for anyone whose shell holds a profile rather
  * than keys: `AWS_PROFILE=dev` with an SSO session came back as "no identity
@@ -55,7 +55,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { AwsReadError, assumeRole, type AwsReadClientOptions } from "./read-client";
-import type { AwsCredentials } from "./sigv4";
+import type { AwsCredentials } from "./signing";
 
 /** One HTTP exchange for the SSO portal and OIDC calls. Injected by tests. */
 export type CredentialChainHttp = (
@@ -613,7 +613,7 @@ async function walkForTransport(options: CredentialChainOptions, now: () => Date
  * What the native read transport signs with when the caller injected nothing:
  * the same chain whoami walks, so `lifecycle diff --live` signs as the
  * principal whoami reports. The signing seam (`AwsCredentialResolver` in
- * ./sigv4.ts) is synchronous and the chain is not, so the transport awaits
+ * ./signing.ts) is synchronous and the chain is not, so the transport awaits
  * this once before a request and passes the literal credentials in.
  *
  * Environment keys answer directly, as in the chain. Otherwise the walk is

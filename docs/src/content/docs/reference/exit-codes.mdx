@@ -1,0 +1,81 @@
+---
+title: Exit Codes
+description: The exit-code table chant commands and both chant CI products share, with each engine lexicon's mapping of its engine's codes.
+diataxis: reference
+---
+
+chant has one exit-code table ([#4553](https://github.com/INTENTIUS/chant/issues/4553)), `CHANT_EXIT` in `@intentius/chant/exit-codes`. Every command that plans or applies exits by it, the op-wave jobs and `pr-apply` included. terragucci and plywood pass the code through unchanged, so a pipeline reads the same number from either product.
+
+| Code | Name | Meaning |
+|---|---|---|
+| 0 | `done` | Applied, or nothing to do. |
+| 1 | `failed` | Something broke, and no approval changes it. Usage and config errors are 1 too. |
+| 2 | `drift` | A run asked to fail on drift (`--fail-on-drift`, `failOn: "drift"`) found some. |
+| 3 | `waiting` | Stopped for a person: a gate, an open decision point, a review that does not count yet, unmet requires, an earlier wave waiting, or no pull request found. |
+| 4 | `moved` | An approved plan no longer matches the plan that would apply now, so nothing applied. |
+| 5 | `held` | Another run or open pull request holds a lock on a target or resource this changes, so nothing applied. |
+| 6 | `superseded` | A newer push applies instead. |
+| 7 | `denied` | The policy denied the plan and no override counts. The same at plan and at apply. |
+| 8 | `declined` | A decision point answered with an answer the gate does not pass on. |
+
+`--gated-exit <code>` remaps 3 and nothing else. A pipeline that routes 7 to the override flow still sees a red job.
+
+A policy that could not run is 1, as is a failure to record the override an apply runs under. On GitLab the op-wave jobs set `allow_failure: exit_codes: [1]`, so 3 to 8 stop the next wave.
+
+## Engine mappings
+
+The terraform lexicon maps the outcomes of OpenTofu and Terraform, and of choudoufu (`terraformExitOf` in `@intentius/chant-lexicon-terraform`). It never sets the process's code itself: for a moved plan it throws an error core marks as moved, and core exits 4.
+
+| Engine outcome | Code |
+|---|---|
+| `plan -detailed-exitcode` 0 or 2 | the plan's answer, never a job's exit. 2 under a drift check is 2 |
+| any 1 | 1 |
+| choudoufu `apply <planfile>` 3, approval mismatch | 4 |
+| choudoufu `apply <planfile>` 3, plan made against another estate | 1: the pipeline handed the wrong file, and no approval fixes that |
+| choudoufu `live-wave-apply` 3, set moved | 4 |
+| choudoufu `live-wave-apply` 4 or `live-plan-set` 4, a root failed | 1 |
+| a composed plan that moved | 4 |
+| `live-affected` 2, `live-cone` 2 | answers to chant's planner, never a job's exit |
+
+The pulumi lexicon maps Pulumi and plunge codes (`pulumiExitOf` in `@intentius/chant-lexicon-pulumi`). Pulumi's own numbers overlap chant's with other meanings (Pulumi's 3 is an authentication failure), so no raw Pulumi code passes through.
+
+| Pulumi or plunge | Code |
+|---|---|
+| 0 | 0 |
+| 5, policy violation from a mandatory CrossGuard pack | 7 |
+| 7, changes found under `--expect-no-changes` in a drift job | 2 |
+| plunge 40, a moved or unstamped plan | 4 |
+| a moved preview shape on stock Pulumi | 4 |
+| 1, 2 configuration, 3 authentication, 4 resource, 6 stack not found, 8 cancelled, 9 timeout, 10 await, 255 | 1 |
+
+A Pulumi older than its exit-code taxonomy exits 1 for everything, which maps to 1.
+
+The sql lexicon maps the outcomes of the versioned migration engine, sql-yodeler (`sqlExitOf` and `yodelExitOf` in `@intentius/chant-lexicon-sql`). A refusal that no approval fixes is 1; one a person can clear is 3.
+
+| Engine outcome | Code |
+|---|---|
+| applied, or nothing pending | 0 |
+| a wave plan that moved, or an approval of another digest | 4 |
+| a policy rule denies the plan and no override counts | 7 |
+| another apply holds the history lock | 5 |
+| a newer commit on the branch applies the same environment | 6 |
+| an apply stopped at its gate, pending migrations under `yodel status`, a migration the required environment has not applied, a change that needs an Op the engine does not run, a manual step | 3 |
+| drift found by `yodel drift` | 2 |
+| a checksum mismatch, a fork, an out-of-order migration, an applied migration gone from the directory, reader and writer one identity, a write run with the reader, `yodel lint` errors | 1 |
+
+A yodel on this table passes its code through. An older yodel exits 4 for every refusal and 3 for lint errors, so `yodelExitOf` with `legacy: true` reads both as 1. Its 2 stays 2 from `yodel drift` and is 3 from any other verb.
+
+## Commands with outcomes of their own
+
+Three commands report outcomes beyond a plan or an apply, and each maps them onto the table.
+
+| Command and outcome | Code |
+|---|---|
+| `chant workspace records --require attested`, a record printed is not attested | 3 |
+| `chant workspace work claim`, `renew` or `release`, lease held by another worker or won by another writer (`lease-held`, `lease-race`, `lease-push-rejected`) | 5 |
+| `chant workspace work`, `lease-not-held` or `lease-token-mismatch` | 1 |
+| `chant audit`, no audit lexicon installed | 1 |
+
+## Changes from earlier releases
+
+Before this table, a moved plan exited 3 outside op waves; it now exits 4, apart from a gate's 3. A held lock exited 3 as well and is now 5. A policy denial exited 3 at apply and 1 at plan, and is now 7 at both. `chant lifecycle drift` refuses a read with 1 in place of 3; its `{"refused": ...}` line on stdout is unchanged, and `chant workspace drift` reads that line from a member on either version. An error a lexicon throws with `exitCode: 3` still reads as a moved plan for one more release. The three commands in the commands table above each used 2 for their own outcome: records for an unattested record, work for a refused lease and audit for a missing lexicon. Drift owns 2 now.

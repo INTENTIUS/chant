@@ -18,10 +18,15 @@
  * server's, that copy is what is reported, with the server in `observedOn`,
  * which the drift report prints as `seen on`.
  *
- * Where the profile manages access, the grants an apply would give or take
- * from each declared grantee are reported as `pending` (#3733), the same
- * statements `chant sql plan` plans (SQLCH273, SQLCH274), so a privilege
- * granted or revoked by hand after an approval moves the plan digest.
+ * Where the profile manages access, each grant declaration is read as
+ * `grants.<grantee>.<atom>` (#4582): a privilege or role it declares that the
+ * grantee does not hold (revoked by hand, SQLCH273) is `absent` drift on that
+ * declaration. A grant declaration whose grantee the server does not have is
+ * not read here; the thin diff reports it missing. A privilege a grantee holds
+ * that no declaration gives (granted by hand, SQLCH274) belongs to no one
+ * declaration, so it is reported as `pending` (#3733) with every statement an
+ * apply would send that grantee, as `chant sql plan` plans them. Either way a
+ * privilege granted or revoked by hand after an approval moves the plan digest.
  */
 
 import {
@@ -39,7 +44,7 @@ import { sqlString } from "../apply/statements";
 import { stripMarkerFromStatement } from "../ownership";
 import { database, dictionary, func, policy, quota, role, settingsProfile, table, user, view, CLICKHOUSE_ENTITY_TYPES, type ColumnDef } from "../entities";
 import { canonicalObject, grantsObject, objectKey, type CanonicalColumn, type CanonicalObject } from "./normalize";
-import { grantStatement, grantsByGrantee, revokeStatement, type GrantAtom } from "../access";
+import { atomKey, declaredGrantAtoms, grantStatement, grantsByGrantee, holdsAtom, revokeStatement, type GrantAtom } from "../access";
 import { renderFor } from "../topology";
 
 type Props = Record<string, unknown>;
@@ -47,8 +52,48 @@ type Props = Record<string, unknown>;
 // `concurrently` is how a Postgres index is created, not a property of it.
 const PRUNED = new Set(["ddl", "source", "lineage", "reads", "to", "orReplace", "ifNotExists", "concurrently"]);
 
+/** What a held grant atom reads as, on both sides of the diff. */
+const GRANTED = "granted";
+
+/**
+ * A grant declaration's tree as the diff compares it (#4582):
+ * `{ grants: { <grantee>: { <atom>: "granted" } } }`, each atom as the
+ * declaration spells it. The reader writes the live side in the same shape,
+ * with the atoms the grantee holds. Undefined when the statement does not
+ * parse as a grant.
+ */
+export function declaredGrantTree(ddl: string): Props | undefined {
+  try {
+    const grants: Record<string, Record<string, string>> = {};
+    for (const { grantee, key } of declaredGrantAtoms(ddl)) (grants[grantee] ??= {})[key] = GRANTED;
+    return { grants };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * A grant declaration's live tree (#4582): each atom it declares that the
+ * grantee holds, keyed as {@link declaredGrantTree} keys it. Undefined when
+ * the server does not have one of its grantees.
+ */
+export function liveGrantTree(ddl: string, held: ReadonlyMap<string, readonly GrantAtom[]>, defaultDatabase: string): Props | undefined {
+  const grants: Record<string, Record<string, string>> = {};
+  for (const { grantee, key, atom } of declaredGrantAtoms(ddl, defaultDatabase)) {
+    const have = held.get(grantee);
+    if (!have) return undefined;
+    if (holdsAtom(have, atom)) (grants[grantee] ??= {})[key] = GRANTED;
+  }
+  return Object.keys(grants).length > 0 ? { grants } : {};
+}
+
 export const sqlDeepNormalizationHooks: DeepNormalizationHooks = {
   prune: (node) => PRUNED.has(node.pattern.split(/[.[]/)[0]!),
+  // A grant declaration is compared atom by atom (#4582); the reader writes the live side in this shape.
+  prepare: (tree, { entityType, side }) => {
+    if (entityType !== CLICKHOUSE_ENTITY_TYPES.grant || side !== "declared" || typeof tree.ddl !== "string") return tree;
+    return declaredGrantTree(tree.ddl) ?? tree;
+  },
 };
 
 function liveProps(o: LiveObject): Props {
@@ -259,9 +304,11 @@ export async function observeResourcesDeep(
     return deepObservation({}, unobserved);
   }
   const pending: DeepPendingChange[] = [];
+  let held: Map<string, GrantAtom[]> | undefined;
   if (target.access === true) {
     try {
-      pending.push(...(await pendingGrants(target, options.entities)));
+      held = await heldGrants(target, options.entities);
+      pending.push(...(await pendingGrants(target, options.entities, held)));
     } catch (err) {
       const why = classifyClickHouseFailure(err);
       for (const name of options.entityNames) {
@@ -281,12 +328,15 @@ export async function observeResourcesDeep(
       continue;
     }
     if (entity.entityType === CLICKHOUSE_ENTITY_TYPES.grant) {
-      if (unobserved[name]) continue;
-      unobserved[name] = {
-        type: entity.entityType,
-        reason: "unsupported-kind",
-        detail: "a grant is compared as part of its grantees' grants: what an apply would grant or revoke is listed as pending (SQLCH273, SQLCH274)",
-      };
+      if (unobserved[name] || !held) continue;
+      const ddl = String(entity.props.ddl ?? "");
+      try {
+        const properties = liveGrantTree(ddl, held, target.defaultDatabase);
+        // A grantee the server does not have: the thin diff reports the declaration missing.
+        if (properties) resources[name] = { type: entity.entityType, physicalId: `grants ${[...new Set(declaredGrantAtoms(ddl).map((a) => a.grantee))].join(", ")}`, properties };
+      } catch (err) {
+        unobserved[name] = { type: entity.entityType, reason: "read-failed", detail: `the grant does not parse: ${(err as Error).message}` };
+      }
       continue;
     }
     const props = entity.props;
@@ -331,37 +381,58 @@ export async function observeResourcesDeep(
   return deepObservation(resources, unobserved, pending);
 }
 
+const grantDeclarations = (entities: ReadonlyMap<string, { entityType: string; props: Record<string, unknown> }>) =>
+  grantsByGrantee([...entities].map(([name, e]) => ({ export: name, type: e.entityType, ddl: String(e.props.ddl ?? "") })));
+
 /**
- * The grants an apply would give or take from each declared grantee (#3733),
- * as `chant sql plan` compares them: the declared grants against what
- * `SHOW GRANTS FOR` prints, atom by atom. One change per grantee, its
- * REVOKEs before its GRANTs as the applier sends them, with the grant
- * declarations behind it. A grantee the server does not hold yet is given
- * every declared grant.
+ * What the server holds for each declared grantee, as `SHOW GRANTS FOR`
+ * prints it, folded into atoms. A grantee the server does not have is left
+ * out.
+ */
+export async function heldGrants(target: ClickHouseTarget, entities: ReadonlyMap<string, { entityType: string; props: Record<string, unknown> }>): Promise<Map<string, GrantAtom[]>> {
+  const declared = grantDeclarations(entities);
+  if (declared.length === 0) return new Map();
+  const live = await readLiveAccess(target, declared.map((g) => ({ kind: "grants", name: g.grantee })));
+  return new Map(
+    live
+      .filter((o) => o.type === CLICKHOUSE_ENTITY_TYPES.grant)
+      .map((o) => [o.name, Object.values(grantsObject(o.statement, o.name, target.defaultDatabase).access ?? {}).map((json) => JSON.parse(json) as GrantAtom)]),
+  );
+}
+
+/**
+ * The grantees holding a privilege or role no declaration gives them
+ * (#3733), as `chant sql plan` compares them: the declared grants against
+ * what `SHOW GRANTS FOR` prints, atom by atom. One change per such grantee,
+ * every statement an apply would send it, its REVOKEs before its GRANTs as
+ * the applier sends them, with the grant declarations behind it. A grantee
+ * that only lacks declared grants has nothing pending: each declaration
+ * reports those as `absent` drift of its own (#4582). A grantee the server
+ * does not have is the thin diff's missing.
  */
 export async function pendingGrants(
   target: ClickHouseTarget,
   entities: ReadonlyMap<string, { entityType: string; props: Record<string, unknown> }>,
+  held?: ReadonlyMap<string, readonly GrantAtom[]>,
 ): Promise<DeepPendingChange[]> {
-  const declared = grantsByGrantee([...entities].map(([name, e]) => ({ export: name, type: e.entityType, ddl: String(e.props.ddl ?? "") })));
+  const declared = grantDeclarations(entities);
   if (declared.length === 0) return [];
-  const live = await readLiveAccess(target, declared.map((g) => ({ kind: "grants", name: g.grantee })));
-  const held = new Map(live.filter((o) => o.type === CLICKHOUSE_ENTITY_TYPES.grant).map((o) => [o.name, grantsObject(o.statement, o.name, target.defaultDatabase).access ?? {}]));
+  const live = held ?? (await heldGrants(target, entities));
   const atom = (json: string) => JSON.parse(json) as GrantAtom;
   const out: DeepPendingChange[] = [];
   for (const g of declared) {
+    const atoms = live.get(g.grantee);
+    if (!atoms) continue;
+    const have = Object.fromEntries(atoms.map((a) => [atomKey(a), JSON.stringify(a)]));
     const want = grantsObject(g.ddl, g.grantee, target.defaultDatabase).access ?? {};
-    const have = held.get(g.grantee) ?? {};
-    const statements = [
-      ...Object.keys(have)
-        .filter((k) => !(k in want))
-        .map((k) => revokeStatement(atom(have[k]!), g.grantee)),
-      ...Object.keys(want)
-        .filter((k) => !(k in have))
-        .map((k) => grantStatement(atom(want[k]!), g.grantee)),
-    ];
-    if (statements.length === 0) continue;
-    out.push({ subject: `grants ${g.grantee}`, change: statements.join("; "), entities: [...g.exports].sort() });
+    const revokes = Object.keys(have)
+      .filter((k) => !(k in want))
+      .map((k) => revokeStatement(atom(have[k]!), g.grantee));
+    if (revokes.length === 0) continue;
+    const grants = Object.keys(want)
+      .filter((k) => !(k in have))
+      .map((k) => grantStatement(atom(want[k]!), g.grantee));
+    out.push({ subject: `grants ${g.grantee}`, change: [...revokes, ...grants].join("; "), entities: [...g.exports].sort() });
   }
   return out;
 }

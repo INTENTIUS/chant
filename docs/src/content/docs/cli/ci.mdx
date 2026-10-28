@@ -27,6 +27,8 @@ chant ci serve --forge forgejo|github|git --repo <owner/repo> --env <env> [--int
 chant ci serve --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]
 chant ci run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]
 chant ci init --workflow trunk-curated|trunk-curated+apply-on-merge|apply-before-merge [--forge github|gitlab|forgejo] [--security <group>]... [--yes]
+chant ci check --base <rev> [<target>...] [--output <dir>] [--json]
+chant ci forge-check [--env <env>] [--member <name>] [--forge github|gitlab|forgejo] [--repo <owner/name>] [--branch <default>] [--require-clouds] [--json]
 chant ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>]
                   [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>]
                   [--runner-key-secret <NAME>]
@@ -472,6 +474,40 @@ chant ci serve --forge forgejo --repo demo/estate --env local
 `ci run` uses the host's key too when it is given no `--key` and no `CHANT_RUNNER_KEY`. As with the variable, a host key the commit's trust config doesn't list leaves the run unsigned, with a warning only under `signedSince`.
 
 `ci serve` takes no webhook yet. It polls, so the host needs no inbound port, and a webhook checked with an HMAC secret is a follow-up.
+
+## ci check
+
+`chant ci check --base <rev> [<target>...]` runs the `ci.hooks.check` hooks the workspace declaration at `--base` names ([#4556](https://github.com/INTENTIUS/chant/issues/4556)). A product's check job runs it before any plan. Each target is a root, stack or component the change touches, and a `perRun` hook runs once per target. The hooks run with no forge token or cloud credentials in their environment. `check-hooks.json` under `--output` (default `.chant/check`) lists each hook's result, and `--json` prints it. The command exits 1 when a hook failed, and 0 when every hook passed or none is declared. [Hooks on Pull-Request Jobs](/chant/guide/pull-request-hooks/#the-check-moment) has the shape.
+
+## ci forge-check
+
+`chant ci forge-check` reads the forge, each cloud identity's trust and Pulumi Cloud's OIDC policies, and compares them with the pull-request pipelines `ci.identity.cloud` gives the workspace ([#4608](https://github.com/INTENTIUS/chant/issues/4608)). Each pipeline has three jobs: the plan job on the pull request, and the record and apply jobs on the default branch. `--env` picks the environment (default `production`), and `--member` one member; without it every member is read. Each identity should trust its own jobs and no other subject. The check prints one row per setting:
+
+| Where | Row |
+|---|---|
+| GitHub | each protected branch has branch protection or a ruleset, the default branch requires the plan status, each apply environment deploys from the default branch only, each apply runner group is limited to selected workflows |
+| GitLab | each protected branch is protected, merge requests need a passing pipeline, each apply environment is protected, the apply runners take protected refs only |
+| Forgejo | each protected branch has a rule, and the default branch's rule checks the plan status |
+| AWS | each role's trust policy admits its jobs' subjects and audience, and nothing wider (`iam:GetRole`) |
+| GCP | the workload identity provider's attribute condition is its jobs' condition, or a narrower one |
+| Azure | each app's federated credentials are its jobs', and no other |
+| Pulumi Cloud | the forge is a registered OIDC issuer of the organization, and the issuer's policies grant each token to its own jobs alone |
+
+The plan status is the product's, such as `chant/plan` or `plywood/preview`. Each required status also gets a row for whether it has been posted on the default branch's head. One not posted yet reads `unknown`, since the pipeline may not have run.
+
+A row reads `match` or `mismatch`. It reads `unknown` when the setting could not be read, such as a scope the token lacks or a GitLab edition without protected environments, and `not-checked` when no credentials for that cloud are set. Credentials come from the environment:
+
+| For | Variables |
+|---|---|
+| The forge | `GH_TOKEN`, `GITLAB_TOKEN` or `FORGEJO_TOKEN` |
+| AWS | `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, or a profile with static keys |
+| GCP | `GOOGLE_OAUTH_ACCESS_TOKEN` |
+| Azure | `AZURE_GRAPH_TOKEN`, a Microsoft Graph token |
+| Pulumi Cloud | `PULUMI_ACCESS_TOKEN`, an organization admin's |
+
+On a laptop pass `--forge` and `--repo`; in a forge job both come from the job. `--branch` sets the default branch when the repository read cannot.
+
+The command only reads. Every request is a GET, or the one POST of IAM's `GetRole`, and anything else is refused before it is sent. It exits 1 on a mismatch, and with `--require-clouds` also when a cloud went unchecked; otherwise 0. `--json` prints the rows. terragucci's `terragucci forge check` and plywood's `plywood forge check` run the same check from `@intentius/chant/forge-check`.
 
 ## ci init
 

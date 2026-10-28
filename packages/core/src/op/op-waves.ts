@@ -97,6 +97,12 @@ import { quorumProblems, type GateQuorumRule } from "./gate-quorum";
 import { notifyConfigProblem, type NotifyConfig } from "../notify";
 import { WAVE_GATE_NAME_PATTERN, waveGateNameFrom, waveShare } from "../wave-layout";
 import { waveOutcomeFileName } from "../wave-blocked";
+import { NEXT_RELEASE } from "../release-floors";
+import { opWaveHoldsProblems, opWaveStepProblems, type OpWaveHolds, type OpWaveStep } from "./op-waves-capability-spec";
+import { opWaveReleaseProblems, type OpWaveReleaseNames } from "./op-waves-release";
+import { CONTROL_DISPATCH_JOB, CONTROL_NAME, controlSettingsProblems, resolveControlTarget, type ControlSettingsInput, type ControlTarget } from "../control/dispatch";
+
+export type { OpWaveCostFormat, OpWaveCostHold, OpWaveHolds, OpWaveStep } from "./op-waves-capability-spec";
 
 /**
  * The variables a wave job reads its notify secrets from, for the lexicons
@@ -125,9 +131,17 @@ export type GateApprovalSource =
   /** As `ledger`, and the merged pull request's review of its head, by a writer other than its author. */
   | "pr-review"
   /** Only a resolution sealed by a key the signers file at base lists for its approver. */
-  | "sealed";
+  | "sealed"
+  /**
+   * As `ledger`, and the pull request's approval (#4550, ruling B): an
+   * approval of the pull request's gate (`approvals.pullRequest.gate` at
+   * base) whose change set covers every run of the wave's plan applies the
+   * wave without a second approval. A wave whose plan moved waits at its own
+   * gate. plywood's preset.
+   */
+  | "pull-request";
 
-export const GATE_APPROVAL_SOURCES: readonly GateApprovalSource[] = ["ledger", "pr-review", "sealed"];
+export const GATE_APPROVAL_SOURCES: readonly GateApprovalSource[] = ["ledger", "pr-review", "sealed", "pull-request"];
 
 /** What a failing hook does: fail the wave, or hold it for an approval of its set digest. */
 export type OpWaveHookFailure = "fail" | "approve";
@@ -175,7 +189,8 @@ export interface OpWaveHook {
   /**
    * Argv template. `{op}`, `{wave}` and `{runs}` (the runs file, see
    * `opWaveRunsPath`) are filled in; a `perRun` hook also gets `{target}`
-   * and, once the run is planned, `{plan}`.
+   * and, once the run is planned, `{plan}`, and `{planJson}` when the run's
+   * plan names the engine's plan document (`artifact.planJson`, #4614).
    */
   command: string[];
   /** Default `"fail"`. `"approve"` holds the wave for an approval of its set digest whatever its policy says. Not allowed after apply. */
@@ -206,6 +221,20 @@ export type OpWaveHookMoment = "before-observe" | "before-plan" | "after-plan" |
  * waiting, or refused by a policy denial.
  */
 export const OP_WAVE_HOOK_MOMENTS: readonly OpWaveHookMoment[] = ["before-observe", "before-plan", "after-plan", "after-gate", "before-apply", "after-apply"];
+
+/**
+ * The check moment (#4556): `ci.hooks.check`, run in a product's check job,
+ * once, or once per target with `perRun`. It comes before any plan, so a
+ * hook has no `{plan}` and cannot hold for an approval. It is a `ci.hooks`
+ * moment only; an Op waves spec has no check job.
+ */
+export const CHECK_HOOK_MOMENT = "check";
+
+/** A moment a hook runs at: an Op waves or pull-request moment, or `check` (#4556). */
+export type CiHookMoment = OpWaveHookMoment | typeof CHECK_HOOK_MOMENT;
+
+/** The first chant that reads and runs `ci.hooks.check` (#4556). A declaration that uses it sets `minReader` to it. */
+export const CI_CHECK_HOOK_FLOOR = NEXT_RELEASE;
 
 /**
  * Who runs the `before.apply` and `after.apply` hooks (#3804). `chant`: the
@@ -242,6 +271,18 @@ export interface OpWaveRun {
    * one job applies the wave (no `shares`, no `jobs`).
    */
   dependsOn?: string[];
+  /**
+   * With the spec's `step` (#4545): this run's own input, laid over the
+   * step's (its vars, the outputs it reads). Strings have `{target}`, `{op}`
+   * and `{wave}` filled, as the step's do.
+   */
+  input?: Record<string, unknown>;
+  /**
+   * With the spec's `step` (#4615): the environment and component this run's
+   * release record goes under, over the spec's `release`. Strings have
+   * `{target}`, `{op}` and `{wave}` filled. See `./op-waves-release.ts`.
+   */
+  release?: OpWaveReleaseNames;
 }
 
 /**
@@ -385,6 +426,13 @@ export interface OpWavesSpec {
   /** The base gate name. Default: `name`. */
   gate?: string;
   /**
+   * Labels copied onto each job's run record (#4551), as an Op's `labels`
+   * are. `Env` names the environment the record goes under,
+   * `<Env>/runs__<name>.jsonl`; without it the record goes under `local`, as
+   * an Op's does.
+   */
+  labels?: Record<string, string>;
+  /**
    * The name of wave k's gate (#3821): `{gate}` is the base gate name and
    * `{k}` the wave's number. Default `"{gate}-wave-{k}"`. A product moving
    * its own wave gates onto these waves names its old pattern here (such as
@@ -402,6 +450,14 @@ export interface OpWavesSpec {
   neverOverMcp?: boolean;
   /** Branches whose pushes run the waves. Default `["main"]`. */
   branches?: string[];
+  /**
+   * An apply stands down when a newer commit on the branch will apply the
+   * same targets (#4581): its wave applies nothing, the job exits 6
+   * (`superseded`), and its run record says so. Checked once the wave's
+   * holds are settled and its lock grain's lease is taken, before the
+   * approval is spent. See `./op-waves-stand-down.ts`. Default false.
+   */
+  standDown?: boolean;
   /**
    * Where every job the spec renders runs unless a wave or a job group names
    * another (#3914). Default: the forge's default runner (`ubuntu-latest` on
@@ -422,6 +478,30 @@ export interface OpWavesSpec {
   plan?: string[];
   /** Apply one run whose plan is at `{plan}`. Default `chant run {op} --env {target}`. */
   apply?: string[];
+  /**
+   * Plan and apply each run through a capability (#4545), in place of
+   * `plan` and `apply`: `{ kind, ...input }`, as a component's deploy step,
+   * with `{target}`, `{op}` and `{wave}` filled in each string and a run's
+   * `input` laid over it. `capability.plan` gives the run's plan digest and
+   * change set; `capability.run` applies that plan, and a plan it refuses as
+   * moved exits 4. See `./op-waves-capability.ts`.
+   */
+  step?: OpWaveStep;
+  /**
+   * Holds the wave runs over its plans (#4545), read at the base commit
+   * with the policy: `policy` runs the workspace's `ci.policy` over each
+   * run's change set, `cost` prices the runs and holds the wave over a
+   * monthly change. See `./op-waves-capability.ts`.
+   */
+  holds?: OpWaveHolds;
+  /**
+   * With a `step` (#4615): each run it applied gets a release record on its
+   * environment's ledger, so `chant components rollback` reads it. `env`
+   * and `component` name the ledger and the component (default `labels.Env`,
+   * else the wave's name, and the run's target); a run's own `release` wins.
+   * `false` writes none. See `./op-waves-release.ts`.
+   */
+  release?: OpWaveReleaseNames | false;
   /**
    * Plan every run of a wave in one call (#3762), in place of `plan`. `{runs}`
    * is a file chant writes, `{ "wave", "number", "runs": [{ "target", "op" }] }`;
@@ -474,6 +554,71 @@ export interface OpWavesSpec {
    * `../notify.ts`.
    */
   notify?: NotifyConfig;
+  /**
+   * The control repo (#4617, `@intentius/chant/ci-control`): once the last
+   * wave ran, a `control-dispatch` job tells the control repo how the waves
+   * ended (`applied`, `partial`, `unchanged`, `waiting` or `failed`, from
+   * the wave jobs' outcome files), and the control repo records it and runs
+   * this member's dependents when something applied. See
+   * {@link OpWavesControl}.
+   */
+  control?: OpWavesControl;
+}
+
+/**
+ * An Op waves spec's `control` (#4617): the control settings a product
+ * reads from its config, in chant's spelling (`ControlSettingsInput`), with
+ * `member` named, since a spec has no repository name to default it to.
+ * The job maps the `tokenSecret` secret into `CHANT_CONTROL_TOKEN` for its
+ * one step, as the pull request loop's `control` does (#4568).
+ */
+export interface OpWavesControl extends ControlSettingsInput {
+  /** The member's name in the control repo's workspace. */
+  member: string;
+  /** A shell line that prints 1 when the commit was told about already (`controlDispatchScript`'s `sentCheck`). */
+  sentCheck?: string;
+  /** A shell line run once the control repo took the dispatch (`controlDispatchScript`'s `markSent`). */
+  markSent?: string;
+}
+
+/** The first chant whose Op waves specs take `control` (#4617). A product feature-detects this name. */
+export const OP_WAVES_CONTROL_FLOOR = NEXT_RELEASE;
+
+/** The control dispatch job's name in an Op waves pipeline (#4617). */
+export const OP_WAVES_CONTROL_JOB = CONTROL_DISPATCH_JOB;
+
+/** The problems with a spec's `control` (#4617), each naming its key. */
+export function opWavesControlProblems(control: unknown): string[] {
+  const problems = controlSettingsProblems(control, "control");
+  if (problems.length > 0) return problems;
+  const c = control as Record<string, unknown>;
+  const out: string[] = [];
+  if (!(typeof c.member === "string" && CONTROL_NAME.test(c.member))) out.push("control.member must name this repo in the control repo's workspace: an Op waves spec has no repository name to default it to");
+  for (const key of ["sentCheck", "markSent"] as const) {
+    if (c[key] !== undefined && !(typeof c[key] === "string" && c[key] !== "" && !(c[key] as string).includes("\n"))) out.push(`control.${key} must be one shell line`);
+  }
+  return out;
+}
+
+/** The control target of a spec's `control` (#4617), its defaults filled in. */
+export function opWavesControlTarget(control: OpWavesControl): ControlTarget {
+  const { sentCheck: _s, markSent: _m, ...settings } = control;
+  return resolveControlTarget(settings, control.member);
+}
+
+/**
+ * The command the control job runs before its dispatch (#4617): reads every
+ * wave job's outcome file and prints the outcome word, through the
+ * product's bin when it has one.
+ */
+export function opWavesOutcomeCommand(specFile: string, bin?: string): string[] {
+  return [...opWaveBinArgv(bin), "run", "wave", "--spec", specFile, "--waves-outcome"];
+}
+
+/** The jobs the control job needs (#4617): the last wave's applying jobs, as a next wave would need them. */
+export function opWavesLastJobs(jobs: readonly OpWaveJob[]): string[] {
+  const last = jobs.reduce((max, j) => Math.max(max, j.wave), 0);
+  return jobs.filter((j) => j.wave === last && j.kind !== "decide").map((j) => j.jobName);
 }
 
 /** Which runs a wave's set digest covers (#3821). */
@@ -542,6 +687,14 @@ export interface OpWavesApprovals {
   reviewLedger?: string;
   /** Who else was involved in a change, for `quorum` (#4333). Read at the base commit. */
   involved?: OpWavesInvolved;
+  /**
+   * The pull request's gate a wave under `approval: "pull-request"` takes
+   * its approval from (#4550): `{ "gate": "up" }`, recorded under the spec's
+   * op. Read at the base commit, so a change cannot name the gate its own
+   * waves are judged by. Needs the plans file's `changeSet`, which the
+   * approval's change set must cover.
+   */
+  pullRequest?: { gate: string };
 }
 
 /**
@@ -584,9 +737,24 @@ export interface OpWavesResume {
   schedule: string;
 }
 
-/** The command a resume job runs. */
-export function opWavesResumeCommand(spec: Pick<OpWavesSpec, "name">): string[] {
-  return ["chant", "run", "resume", "--op", spec.name];
+/**
+ * The words a generated job runs in place of `chant` (#4607): a product's
+ * `words.bin`, such as `npx --no-install plywood`, split on spaces. Absent
+ * or blank: `chant`.
+ */
+export function opWaveBinArgv(bin?: string): string[] {
+  const words = (bin ?? "").split(/\s+/).filter(Boolean);
+  return words.length > 0 ? words : ["chant"];
+}
+
+/** The command a resume job runs, through the product's bin when it has one (#4607). */
+export function opWavesResumeCommand(spec: Pick<OpWavesSpec, "name">, bin?: string): string[] {
+  return [...opWaveBinArgv(bin), "run", "resume", "--op", spec.name];
+}
+
+/** The command a `pr-review` spec's plans job runs on a pull request (#3684), through the product's bin (#4607). */
+export function opWavesRecordPlansCommand(specFile: string, bin?: string): string[] {
+  return [...opWaveBinArgv(bin), "run", "wave", "--spec", specFile, "--record-plans"];
 }
 
 /** The default apply command. */
@@ -641,6 +809,11 @@ const NAME = /^[a-z0-9][a-z0-9_-]*$/;
 export function assertOpWavesSpec(spec: OpWavesSpec): void {
   const where = `Op waves "${spec.name}"`;
   if (!NAME.test(spec.name)) throw new Error(`${where}: the name must be lowercase letters, digits, "-" and "_"`);
+  if (spec.control !== undefined) {
+    // #4617: the control repo's settings, checked as the pull request loop's are.
+    const problems = opWavesControlProblems(spec.control);
+    if (problems.length > 0) throw new Error(`${where}: ${problems.join("; ")}.`);
+  }
   if (!spec.op) throw new Error(`${where} names no \`op\`. Name the Op a run runs when it names none.`);
   if (spec.plan !== undefined && spec.planWave !== undefined) {
     throw new Error(`${where} has both \`plan\` and \`planWave\`. A wave is planned one run at a time or all at once; give one.`);
@@ -648,7 +821,11 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
   if (spec.apply !== undefined && spec.applyWave !== undefined) {
     throw new Error(`${where} has both \`apply\` and \`applyWave\`. A wave is applied one run at a time or all at once; give one.`);
   }
-  if (spec.planWave !== undefined) {
+  if (spec.step !== undefined) {
+    // #4545: a step plans and applies; its problems include a command set beside it.
+    const problems = opWaveStepProblems(spec);
+    if (problems.length > 0) throw new Error(`${where}: ${problems.join("; ")}.`);
+  } else if (spec.planWave !== undefined) {
     assertArgv(where, "planWave", spec.planWave);
     if (!spec.planWave.some((part) => part.includes("{plans}"))) {
       throw new Error(`${where}: the \`planWave\` command never names {plans}, the file it writes each run's plan digest to.`);
@@ -670,7 +847,22 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
     }
   }
   assertOpWaveHooks(where, spec.hooks);
+  if (spec.standDown !== undefined && typeof spec.standDown !== "boolean") throw new Error(`${where}: \`standDown\` must be true or false.`);
+  {
+    const problems = opWaveReleaseProblems(spec);
+    if (problems.length > 0) throw new Error(`${where}: ${problems.join("; ")}.`);
+  }
   if (spec.waves.length === 0) throw new Error(`${where} has no waves.`);
+  {
+    const problems = opWaveHoldsProblems(spec.holds);
+    if (problems.length > 0) throw new Error(`${where}: ${problems.join("; ")}.`);
+  }
+  if (spec.labels !== undefined) {
+    const l = spec.labels as unknown;
+    if (l === null || typeof l !== "object" || Array.isArray(l) || !Object.values(l as Record<string, unknown>).every((v) => typeof v === "string")) {
+      throw new Error(`${where}: \`labels\` must map names to strings, such as { "Env": "prod" }.`);
+    }
+  }
   if (spec.resume !== undefined && (typeof spec.resume.schedule !== "string" || spec.resume.schedule.trim().split(/\s+/).length !== 5)) {
     throw new Error(`${where}: resume.schedule must be a five-field cron expression, such as "*/10 * * * *".`);
   }
@@ -695,12 +887,24 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
         if (problems.length > 0) throw new Error(`${where}: ${problems.join("; ")}.`);
         continue;
       }
-      if (key !== "spend") throw new Error(`${where}: approvals.${key} is not a setting; the ones there are approvals.spend, approvals.quorum, approvals.reviewLedger and approvals.involved.`);
+      if (key === "pullRequest") {
+        // #4550: the pull request's gate a pull-request wave takes its approval from, read at base.
+        const gate = (value as { gate?: unknown } | null)?.gate;
+        if (value === null || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some((k) => k !== "gate") || typeof gate !== "string" || !OP_LEDGER_NAME.test(gate)) {
+          throw new Error(`${where}: approvals.pullRequest must be { "gate": "<gate>" }, the pull request's gate, such as "up".`);
+        }
+        continue;
+      }
+      if (key !== "spend") throw new Error(`${where}: approvals.${key} is not a setting; the ones there are approvals.spend, approvals.quorum, approvals.reviewLedger, approvals.involved and approvals.pullRequest.`);
       if (typeof value !== "boolean") throw new Error(`${where}: approvals.spend must be true or false.`);
     }
     if ((a as OpWavesApprovals).quorum?.length && (spec.point !== undefined || spec.waves.some((w) => w.point !== undefined))) {
       throw new Error(`${where}: approvals.quorum and a decision point are both set; a gate that asks a point takes its deciders and quorum from the point, so drop one of them.`);
     }
+  }
+  // #4550: a wave that takes the pull request's approval needs to know its gate.
+  if (spec.waves.some((w) => w.approval === "pull-request") && !spec.approvals?.pullRequest) {
+    throw new Error(`${where}: a wave with approval "pull-request" takes the pull request's approval, so the spec needs approvals.pullRequest: { "gate": "<gate>" }.`);
   }
   if (spec.gateName !== undefined) {
     if (typeof spec.gateName !== "string" || !spec.gateName.includes("{k}") || /\s/.test(spec.gateName)) {
@@ -832,14 +1036,14 @@ function assertOpWaveDependsOn(where: string, spec: OpWavesSpec): void {
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /** The key each cloud of a `cloud` trade names its identity under (`IDENTITY_KEY` in ../ci-identity.ts, kept here so this module imports none of it). */
-const CLOUD_IDENTITY_KEY: Record<string, string> = { aws: "role", gcp: "serviceAccount", azure: "clientId" };
+const CLOUD_IDENTITY_KEY: Record<string, string> = { aws: "role", gcp: "serviceAccount", azure: "clientId", pulumi: "token" };
 
 /** Refuse a `cloud` (#4332) the trade could not run: an unknown cloud, one that names no identity, or no audience. */
 function assertOpWaveCloud(where: string, field: string, cloud: unknown): void {
-  if (cloud === null || typeof cloud !== "object" || Array.isArray(cloud) || Object.keys(cloud).length === 0) throw new Error(`${where}: ${field} must name one or more of aws, gcp and azure.`);
+  if (cloud === null || typeof cloud !== "object" || Array.isArray(cloud) || Object.keys(cloud).length === 0) throw new Error(`${where}: ${field} must name one or more of aws, gcp, azure and pulumi.`);
   for (const [name, c] of Object.entries(cloud as Record<string, unknown>)) {
     const key = CLOUD_IDENTITY_KEY[name];
-    if (!key) throw new Error(`${where}: ${field}.${name} is not a cloud; use aws, gcp or azure.`);
+    if (!key) throw new Error(`${where}: ${field}.${name} is not a cloud; use aws, gcp, azure or pulumi.`);
     const t = c as Record<string, unknown> | null;
     const targets = t?.targets;
     const targetsOk = targets === undefined || (Array.isArray(targets) && targets.every((e) => e && Array.isArray((e as { targets?: unknown }).targets) && typeof (e as Record<string, unknown>)[key] === "string"));
@@ -978,6 +1182,7 @@ export function assertOpWaveHooks(where: string, hooks: OpWaveHooks | undefined)
       }
       continue;
     }
+    if (side === "check") throw new Error(`${where}: hooks.check runs in a product's check job, so it belongs in ci.hooks of the workspace declaration, not in an Op waves spec.`);
     if (side !== "before" && side !== "after") throw new Error(`${where}: hooks.${side} is not a moment; use hooks.before or hooks.after (or hooks.apply.runBy).`);
     if (stages === null || typeof stages !== "object" || Array.isArray(stages)) throw new Error(`${where}: hooks.${side} must be { "plan"?: [...], "apply"?: [...] }.`);
     for (const [stage, list] of Object.entries(stages as Record<string, unknown>)) {
@@ -1004,9 +1209,9 @@ export function assertOpWaveHooks(where: string, hooks: OpWaveHooks | undefined)
           throw new Error(`${where}: ${which}.targets must be a non-empty list of targets or patterns, such as ["prod/*"].`);
         }
         if (!hook.perRun) {
-          const named = hook.command.find((part) => part.includes("{target}") || part.includes("{plan}"));
-          if (named) throw new Error(`${where}: ${which} runs once for the wave, so it has no {target} or {plan} ("${named}"). Set "perRun": true, or read the runs from {runs}.`);
-        } else if (side === "before" && (stage === "plan" || stage === "observe") && hook.command.some((part) => part.includes("{plan}"))) {
+          const named = hook.command.find((part) => part.includes("{target}") || part.includes("{plan}") || part.includes("{planJson}"));
+          if (named) throw new Error(`${where}: ${which} runs once for the wave, so it has no {target}, {plan} or {planJson} ("${named}"). Set "perRun": true, or read the runs from {runs}.`);
+        } else if (side === "before" && (stage === "plan" || stage === "observe") && hook.command.some((part) => part.includes("{plan}") || part.includes("{planJson}"))) {
           throw new Error(`${where}: ${which} runs before the plan, so it has no {plan} yet.`);
         }
       });
@@ -1022,14 +1227,49 @@ export function assertOpWaveHooks(where: string, hooks: OpWaveHooks | undefined)
  */
 export const PR_LOOP_HOOK_MOMENTS: readonly OpWaveHookMoment[] = ["before-observe", "before-plan", "after-plan", "after-gate", "before-apply", "after-apply"];
 
+/** `ci.hooks` in the workspace declaration: the Op waves moments, and `check` (#4556). */
+export interface CiHooks extends OpWaveHooks {
+  /** Run in the check job (#4556), once, or once per target with `perRun`. Read at base like every moment. */
+  check?: OpWaveHook[];
+}
+
 /**
  * Refuse `ci.hooks` a pull-request job could not run (#4288): what
  * {@link assertOpWaveHooks} refuses, plus `apply.runBy`, since chant itself
- * runs a pull request's apply.
+ * runs a pull request's apply, and a `check` hook that names a plan or asks
+ * for an approval (#4556).
  */
-export function assertPrLoopHooks(where: string, hooks: OpWaveHooks | undefined): void {
-  assertOpWaveHooks(where, hooks);
+export function assertPrLoopHooks(where: string, hooks: CiHooks | undefined): void {
+  if (hooks !== undefined && hooks !== null && typeof hooks === "object" && !Array.isArray(hooks) && "check" in hooks) {
+    const { check, ...rest } = hooks;
+    assertCheckHooks(where, check);
+    assertOpWaveHooks(where, rest);
+  } else {
+    assertOpWaveHooks(where, hooks);
+  }
   if (hooks?.apply !== undefined) throw new Error(`${where}: hooks.apply.runBy is for an Op waves spec; chant runs a pull request's apply, so it runs the apply-stage hooks itself.`);
+}
+
+/** Refuse `ci.hooks.check` hooks the check job could not run (#4556). */
+export function assertCheckHooks(where: string, list: unknown): void {
+  if (!Array.isArray(list)) throw new Error(`${where}: hooks.check must be a list of hooks.`);
+  list.forEach((hook: OpWaveHook, i: number) => {
+    const which = `hooks.check[${i}]${hook && typeof hook === "object" && typeof hook.name === "string" ? ` (${hook.name})` : ""}`;
+    if (!hook || typeof hook !== "object") throw new Error(`${where}: ${which} must be { "command": [...], "name"?, "onFailure"?, "perRun"?, "targets"? }.`);
+    assertArgv(where, `${which}.command`, hook.command);
+    if (hook.onFailure === "approve") throw new Error(`${where}: ${which} has onFailure "approve", but the check runs before any plan, so there is nothing to approve. Use "fail".`);
+    if (hook.onFailure !== undefined && hook.onFailure !== "fail") throw new Error(`${where}: ${which} has onFailure "${hook.onFailure}"; use "fail".`);
+    if (hook.perRun !== undefined && typeof hook.perRun !== "boolean") throw new Error(`${where}: ${which}.perRun must be true or false.`);
+    if (hook.targets !== undefined && (!Array.isArray(hook.targets) || hook.targets.length === 0 || !hook.targets.every((t) => typeof t === "string" && t !== ""))) {
+      throw new Error(`${where}: ${which}.targets must be a non-empty list of targets or patterns, such as ["prod/*"].`);
+    }
+    const plan = hook.command.find((part) => part.includes("{plan}"));
+    if (plan) throw new Error(`${where}: ${which} runs before any plan, so it has no {plan} ("${plan}").`);
+    if (!hook.perRun) {
+      const target = hook.command.find((part) => part.includes("{target}"));
+      if (target) throw new Error(`${where}: ${which} runs once for the check, so it has no {target} ("${target}"). Set "perRun": true.`);
+    }
+  });
 }
 
 /** The hooks of each moment for wave `name`: the spec's, then the wave's own. */
@@ -1058,15 +1298,16 @@ export function opWaveShare<T extends { target: string }>(runs: readonly T[], sh
 
 /**
  * The jobs of an Op waves pipeline, in order. `specFile` is the spec's path
- * from the job's working directory, which every command names.
+ * from the job's working directory, which every command names. `bin` is the
+ * product's command in place of `chant` (#4607, {@link opWaveBinArgv}).
  */
-export function opWaveJobs(spec: OpWavesSpec, specFile: string): OpWaveJob[] {
+export function opWaveJobs(spec: OpWavesSpec, specFile: string, options: { bin?: string } = {}): OpWaveJob[] {
   assertOpWavesSpec(spec);
   const jobs: OpWaveJob[] = [];
   let previous: string[] = [];
   spec.waves.forEach((wave, index) => {
     const k = index + 1;
-    const command = ["chant", "run", "wave", "--spec", specFile, "--wave", String(k), ...(spec.base ? ["--base", spec.base] : [])];
+    const command = [...opWaveBinArgv(options.bin), "run", "wave", "--spec", specFile, "--wave", String(k), ...(spec.base ? ["--base", spec.base] : [])];
     const prefix = `wave-${k}-${wave.name}`;
     const shares = wave.shares ?? 1;
     if (shares === 1 && wave.jobs === undefined) {

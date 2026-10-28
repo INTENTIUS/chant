@@ -1,17 +1,23 @@
 ---
 title: CI Products on chant
-description: Where a CI feature for Terraform, OpenTofu or Pulumi goes, so that terragucci and plywood share it through chant
+description: Where a CI feature for Terraform, OpenTofu, Pulumi or SQL goes, so that terragucci, plywood and SQL Yodeler share it through chant
 diataxis: explanation
 ---
 
-[terragucci](https://intentius.io/terragucci/) is pull-request automation for Terraform and OpenTofu, and [plywood](https://intentius.io/plywood/) is pull-request automation for Pulumi. Both run on chant's CI runtime and share its features as far as they can ([#4530](https://github.com/INTENTIUS/chant/issues/4530)). A team on either engine gets the same gates, approvals and records, in its own engine's words.
+[terragucci](https://intentius.io/terragucci/) is pull-request automation for Terraform and OpenTofu, and [plywood](https://intentius.io/plywood/) is pull-request automation for Pulumi. [SQL Yodeler](https://intentius.io/sql-yodeler/) does the same for SQL schema changes on ClickHouse and Postgres. All three run on chant's CI runtime and share its features as far as they can ([#4530](https://github.com/INTENTIUS/chant/issues/4530)). A team on any of these engines gets the same gates, approvals and records, in its own engine's words.
+
+| Changes to | chant entry point | CI product |
+|---|---|---|
+| Terraform and OpenTofu roots | the [terraform lexicon](/chant/lexicons/terraform/) | terragucci |
+| Pulumi stacks | the [pulumi lexicon](/chant/lexicons/pulumi/) | plywood |
+| SQL schemas | the [sql lexicon](/chant/lexicons/sql/) | SQL Yodeler |
 
 ## Where a feature goes
 
 A feature goes in the first of these homes that fits it:
 
 1. chant CI core, when both products share it.
-2. chant's [terraform](/chant/lexicons/terraform/) or [pulumi](/chant/lexicons/pulumi/) lexicon, when the capability belongs to one engine. Cone plans and Atmos reads live in the terraform lexicon and stack export in the pulumi lexicon, and each lexicon parses its engine's plans and drift and runs its apply.
+2. chant's [terraform](/chant/lexicons/terraform/), [pulumi](/chant/lexicons/pulumi/) or [sql](/chant/lexicons/sql/) lexicon, when the capability belongs to one engine. Cone plans and Atmos reads live in the terraform lexicon, stack export in the pulumi lexicon and destructive classes in the sql lexicon, and each lexicon parses its engine's plans and drift and runs its apply.
 3. The product. It holds its words and presets, its config defaults and init templates, and its docs.
 
 Extending chant CI is the default. A feature stays inside one product only for a reason that belongs to its audience, such as a Terraform or Pulumi convention, and never for convenience.
@@ -21,3 +27,90 @@ Pulumi stacks plan and apply as components through the pulumi lexicon ([#4541](h
 ## Records
 
 Approvals and gate decisions go in the workspace [ledger](/chant/cli/ledger/), and so do overrides and the records of applies and runs ([#4551](https://github.com/INTENTIUS/chant/issues/4551)). A product keeps no record store of its own. Before a product adds storage for a record, check whether the ledger already holds it.
+
+## The product pipeline
+
+A product passes chant one object of words from `@intentius/chant/ci-product` and gets its pull request jobs from `productPipelineJobs`. terragucci's jobs and plywood's come from the same generator. The words fill fixed slots in chant's sentences.
+
+| Slot | chant | terragucci | plywood | SQL Yodeler |
+|---|---|---|---|---|
+| `product` | `chant` | `terragucci` | `plywood` | `yodel` |
+| `stages.plan` and `stages.apply` | `plan` and `apply` | `plan` and `apply` | `preview` and `up` | `plan` and `apply` |
+| `noun` | member | root | stack | environment |
+| `commands` | `apply` | `plan` `apply` `lock` `unlock` `agent` | `preview` `up` `lock` `unlock` | none |
+| `approve` | `chant approve {op} {gate} --plan {digest} ...` | `terragucci approve {gate} --plan {digest} {sign}` | `plywood approve {gate} --plan {digest} {sign}` | `yodel approve {target} --plan {digest} {sign}` |
+| `op` | the spec's | `tf-apply` | `pulumi-up` | `yodel-apply` |
+| `gateName` | `{gate}-wave-{k}` | `wave-{k}` | `wave-{k}` | `yodel-apply-wave-{k}` |
+| `prGate` | `pr-apply` | unused | `up` | unused |
+| `approval` | `pull-request` | `per-wave` | `pull-request` | `per-wave` |
+| `applyMode` | `release` | `on-merge` | `on-merge` | `on-merge` |
+| `notify.source` | `chant` | `terragucci` | `plywood` | `yodel` |
+
+SQL Yodeler names no comment command, since its migrations apply only after the merge, and no `/yodel` comment starts an apply. It keeps the op and gate names it recorded before it moved onto chant, so approvals already on `chant/lifecycle` still count.
+
+Status contexts come out as `<product>/<stage>`, such as `plywood/preview`, with `/<member>` after it inside a workspace member. A job answers the comment `/<product> <command>`. Job names and note markers stay chant's, and so do ledger paths and artifact names: people never type them, and readers of the ledger key on them. `assertProductWords` refuses a word outside `[a-z0-9-]` or two stages with one word. It also refuses a command the pipeline has no job for.
+
+The approve and override templates take `{op}`, `{gate}` and `{digest}` among their placeholders. `{target}` is the wave's run target. A product that approves by environment writes `approve {target} --plan {digest}`. The note then prints one approve line per member, each naming its own target.
+
+The note's sentence on the merge follows `applyMode`. With `on-merge` the waves apply in order, each under its own gate for `per-wave` or under the pull request's approval for `pull-request`. A `release` product's merge records the plan for a release to deploy. For `before-merge`, the apply comment runs the plan on the open pull request and the merge records it. A product that names an `op` or approves per wave gets `on-merge` by default, and `productPipelineJobs` sets the mode from the jobs it builds.
+
+The plan side is the pull request loop's: `pr-plan`, then `pr-post` in a job that holds the forge token. The apply on merge runs on [Op waves](/chant/guide/op-waves/) with a job per wave. The spec is `.chant/op-waves/<op>.spec.json`, and chant reads it at the base commit. Under `approval: per-wave` each wave waits for an approval of its own digest. Under `approval: pull-request` the pull request's approval applies every wave whose plan its change set covers, and a wave whose plan moved waits at its own gate. A product's approve verb can find the gate from the digest alone: `pendingGatesByPlan(digest)` and `chant run pending --plan <digest>` return each standing pending gate whose plan or change set is that digest, with the pull request a `pr-<n>` op names ([#4607](https://github.com/INTENTIUS/chant/issues/4607)).
+
+With `ci.locks: plan`, and words that name the `lock` and `unlock` commands, the pipeline answers `/<product> lock` and `/<product> unlock` ([#4588](https://github.com/INTENTIUS/chant/issues/4588)). The lock comment runs `chant lock --keep`, which keeps the locks the plan took until the pull request closes. The unlock comment runs `chant unlock`, which releases them. Both jobs run at the target branch's commit. On GitHub the commenter needs write access, as for the apply comment. GitLab starts no pipeline on a note, so there each job runs in a pipeline of the target branch started with `CHANT_LOCK_PR` or `CHANT_UNLOCK_PR` set to the merge request's iid. `productPipelineJobs` returns the two jobs as `locks`, and the forge lexicons write them.
+
+With `previewComment` (`chant build --pr-loop --preview-comment`), and words that name a `plan` command, the pipeline answers `/<product> <plan word>`, such as `/plywood preview` ([#4620](https://github.com/INTENTIUS/chant/issues/4620)). The `comment-preview` job plans the pull request's head again with the plan job's `pr-plan`, holding only a read token, which it drops before the change's code runs. After it, `comment-preview-note` posts the note and the plan status with `pr-post` from the target branch's commit. Only someone with write access starts a preview on GitHub. GitLab needs a target-branch pipeline started with `CHANT_PREVIEW_PR`, the merge request's iid, and there the preview unsets the forge tokens and takes the runner's credentials out of `origin` before any of the merge request's code runs. `productPipelineJobs` returns the jobs as `preview`. A product finds the feature through `prCommentPreviewJob` and `PR_PREVIEW_FLOOR`, which also mark `pr-plan --target`.
+
+The generated jobs run the product's bin, named by `bin`. The Op waves pipeline does too: `chant run --generate` run through the bin writes the bin into each wave job, the resume job and the plans job ([#4607](https://github.com/INTENTIUS/chant/issues/4607)). The bin calls chant in process with its words through `runChantInProcess`. The words live in the product package at its pinned version, and the repository holds no words file.
+
+Through `prNoteDetail` a lexicon may add a section under a member's row in the note, such as a SQL member's statements with their class. chant leaves a section out, and names the member, when the note would pass the forge's comment limit. Install lines for the engine come from `ciSetup`. The terraform lexicon gives OpenTofu and adds choudoufu for a root that runs it. The pulumi lexicon gives Pulumi, or plunge when the member's engine is plunge.
+A SQL project's setup checks for Node 22 and installs the project's packages, which carry the dialect's client. Through `ciServices` it adds the replay server for each dialect the project declares, on the image the lexicon's emulator runs.
+
+## SQL schema changes
+
+SQL Yodeler keeps its versioned migration engine, which owns the migrations directory and its checksums and guards the history table with its own apply lock. The engine has an audience of its own in database teams, as choudoufu has for Terraform and plunge for Pulumi. chant's sql lexicon runs it from a wave through the `sql-migrate` capability, with a fixed list of `yodel` argv as the pulumi lexicon runs plunge ([#4569](https://github.com/INTENTIUS/chant/issues/4569), [SQL members](/chant/guide/op-waves/#sql-members)). The `sql-apply` capability applies a declarative build with the lexicon's own appliers. Both plan into a change-set part with the destructive classes that the `on-destructive` gate policy reads.
+
+The rest is chant's, as for the other two products. The sql lexicon maps the engine's outcomes onto the one [exit-code table](/chant/reference/exit-codes/) ([#4570](https://github.com/INTENTIUS/chant/issues/4570)). It gives a SQL member the `target` lock grain, its environment, and refuses `resource` by name ([#4571](https://github.com/INTENTIUS/chant/issues/4571)). The database token sources for RDS IAM, Cloud SQL IAM and Entra mint from what chant's cloud identity trade leaves ([#4572](https://github.com/INTENTIUS/chant/issues/4572)), and `chant lifecycle diff --live` reports ClickHouse grants as drift ([#4582](https://github.com/INTENTIUS/chant/issues/4582)). A wave that a newer commit will apply anyway stands down in core ([#4581](https://github.com/INTENTIUS/chant/issues/4581)), and `chant approve` at a terminal asks for the environment's name before it records the approval ([#4575](https://github.com/INTENTIUS/chant/issues/4575)). SQL Yodeler's own [chant CI page](https://intentius.io/sql-yodeler/chant-ci/) lists which part of a project's pipeline each side holds.
+
+## The control repo
+
+A control repo runs the work that crosses repositories, for terragucci and plywood alike ([#4568](https://github.com/INTENTIUS/chant/issues/4568)). The pieces come from `@intentius/chant/ci-control`.
+
+Set `control` on the pull request loop and each member's pipeline gets a `control-dispatch` job after its last apply on merge. The job tells the control repo the member applied: a `repository_dispatch` of `<product>-applied` on GitHub, a pipeline trigger on GitLab, and a workflow dispatch on Forgejo. The job maps the product's secret into `CHANT_CONTROL_TOKEN` for its one step, and curl reads the token on stdin, so it stays off every command line. On GitLab the plan job unsets that variable along with the forge tokens. A product's bin can send the same request in process with `dispatchControl`.
+
+A product that applies on merge through op waves sets `control` on the spec instead. After the last wave, whatever it did, a `control-dispatch` job sends the dispatch with the outcome the wave jobs add up to: `applied`, `partial`, `unchanged`, `waiting` or `failed` ([#4617](https://github.com/INTENTIUS/chant/issues/4617), [Tell the control repo](/chant/guide/op-waves/#tell-the-control-repo)).
+
+The control repo's own pipeline is `<product>-dependents.yml`, written by each forge lexicon's `generateControlPipeline`. It checks the member and Op names it was given, then runs `chant workspace run --dependents-of <member> --op <op>`, one member at a time. A dispatch that carries an outcome is recorded first, as a `control-applied` line of `_control/applied.jsonl` on the control repo's `chant/lifecycle`, and its dependents run only when something applied. The job pushes the record with its own token. A control repo whose chant predates `CONTROL_APPLIED_FLOOR` says so and records nothing.
+
+The control repo's projects and its shared defaults are `control-entry` records on the control repo's ledger, in `_control/entries.jsonl`. Each line is one version of one entry and names the digest of the version it replaces, so a write that raced another is refused. A retired entry is no longer read. chant checks each record's shape, and the product passes a check for the settings it writes.
+
+`reconcileProjects` brings each project's pipeline in line with the entries. It clones the project and runs the product's generator in the clone. A dry run reports what would change. An apply pushes `<product>/pipeline` and opens a pull request there, or updates the one already open. It never writes a default branch. Each project names the variable its token is in, and the default is `CHANT_<FORGE>_TOKEN` for its forge. git reads the token from its environment.
+
+The release catalog lists the consumers of each version across every project the control repo names ([#4600](https://github.com/INTENTIUS/chant/issues/4600)). A `consumers.json` in each project lists the versions its roots pin and where each call sits. `consumersDocument` writes it from the product's scan, and the terraform lexicon's `moduleConsumers` fills it for terragucci. `readControlConsumers(entries, read)` reads each project entry's file through the product's reader and joins them with `joinControlConsumers`. The result has one consumer list per version, with each consumer named by its project, and it goes to `buildReleaseCatalog` as its `consumers`. A project with no file is listed as missing. A file with problems adds the entries it could read, and each problem names the project.
+
+### Cross-stack edges
+
+A member can read a stack that no member of its workspace applies, such as a Pulumi `StackReference` to a stack in another repository. The pull request note lists each such read in a table with the stack's owner and a mark ([#4617](https://github.com/INTENTIUS/chant/issues/4617)). The owner is the project whose control entry lists the stack among its `estates`. The mark compares the owner's newest apply on the control repo's record with the reader's last update, taken from its stack export:
+
+| Mark | When |
+|---|---|
+| `stale` | The owner applied after the reader last updated, so the reader holds outputs that may have changed since |
+| `current` | The reader updated after the owner's last apply |
+| `unknown` | No entry claims the stack, two do, the owner has no apply on record, the reader has not updated, or the control repo was not read |
+
+The plan job reads no control repo, so the report it writes marks every edge `unknown`. The job that posts the note marks them again from a checkout of the control repo named by `CHANT_CONTROL_DIR`, with its `chant/lifecycle` fetched. When the pull request loop's `control` or the waves spec's names a control repo, the generated note job does that fetch itself on GitHub, GitLab and Forgejo ([#4619](https://github.com/INTENTIUS/chant/issues/4619)). It fetches `chant/lifecycle` alone into a new directory outside the checkout, with the read secret (`readTokenSecret`) or else the job's token, and sets `CHANT_CONTROL_DIR` to it. A control repo it cannot read leaves a warning and every edge `unknown`. A product that writes its own note job takes the same step from `productPipelineJobs` as `post.control`. It takes only each edge's reader, stack and last update from the report. Only names and times are compared, never an output's value. An entry's `settings.member` names the owner's member in the control repo's workspace, and the default is the repository's name.
+
+## Traces and agent tools
+
+chant exports the traces for both products ([#4555](https://github.com/INTENTIUS/chant/issues/4555)). A `chant run wave` job writes run events on the [run-event contract](/chant/reference/workspace-read-contract/#run-events). Each wave is a phase of the job, and each run target is a step. When `OTEL_EXPORTER_OTLP_ENDPOINT` is set, the job sends one trace as OTLP/JSON over HTTP. The job is the trace's first span. Each wave is a span below it, each root or stack a span in its wave, and each resource the engine timed a span under its root or stack. Attributes carry the product's name as their namespace, `terragucci.root` or `plywood.stack`, taken from the words the product's bin set. A bin whose words are not set yet calls `configureOtlp({ prefix })` once. The lexicons add the engine's facts. The terraform lexicon names the root and its binary. The pulumi lexicon names the stack and its engine, and copies the counts from the summary of `up --json`. Core adds the plan's resource counts by action.
+
+A product's agent tools run on chant's MCP server rather than a server of its own. Its bin passes them as a tool hook, `runChantInProcess(["serve", "mcp"], words, { mcp: hook })`, and chant registers each as `<product>:<name>`. A server started through the hook is read-only unless the hook says `readOnly: false`. On a read-only server a product tool is served only when it declares `readOnly: true`, and the server refuses to start with one whose name says it would approve, apply, override or write. The tools read the report store through `ctx.reports()` with the server's own credentials. The core [`report`](/chant/cli/mcp/#report) tool reads the files a pull request stage kept there.
+
+## The estate page and delivery metrics
+
+Both products build their estate page from the workspace ledger with `@intentius/chant/ci-estate` ([#4612](https://github.com/INTENTIUS/chant/issues/4612)). The page reads the `runs`, `gates`, `applies` and `pr_envs` tables of the [read contract](/chant/reference/workspace-read-contract/). A Terraform member and a Pulumi member both apply through `chant run wave`, and each wave job writes a run record, so one function reads both. `buildLedgerEstate` returns three things from one read of the ledger. The first is the page's data, with a section per member. Each section shows the waves of the newest commit and how long a waiting wave has waited. Below them come the newest drift check and the live pull request environments. The second is the delivery metrics, and the third lists the drift checks that are overdue.
+
+A drift check is a run whose `Drift` outcome says whether it found drift, as a `WatchOp` records it. A check that names the drifted roots or stacks in a `DriftedRoots` outcome narrows the match to those. A scheduled check is overdue once its cron has fired twice since the member's newest check on the ledger. The plan note uses the same rule. The text names the product and uses its words for drift and for a member.
+
+The delivery metrics are the four DORA numbers per member and for the estate, over the newest eight weeks. Deployment frequency counts applied waves, and the share jobs of one wave count once. Lead time starts at the first job that planned the wave's digest, or at the commit when the product passes `commitTime`. It is split at the gate by the pending fact and the approval the apply spent. Change failure rate counts failed waves and applied waves that drift followed within a week. Time to restore runs from a failure to the next apply of those targets, or from drift found to a clean check. The file is `dora.json` in terragucci's shape, with `<product>.dora/v1` as its schema. When `OTEL_EXPORTER_OTLP_ENDPOINT` or `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` is set, the same numbers go out as OTLP gauges named `<product>_dora_*`.
+
+`writeEstate` puts `estate.html`, `estate.json` and `dora.json` below the report URL, under `estate/` by default. A product adds its own sections through `sections`, such as terragucci's inventory and versions of each root. A product loads the module through a feature-detect until its chant floor reaches `CI_ESTATE_FLOOR`.

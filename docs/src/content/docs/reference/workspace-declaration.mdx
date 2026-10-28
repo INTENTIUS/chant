@@ -417,11 +417,11 @@ A commit that leaves the window still pending is rewritten `unbuilt`, for the re
 }
 ```
 
-The value takes the same two forms as `--report-url`: `s3://<bucket>/<prefix>` or `file://<directory>`, with an absolute directory. Any other value, an `https://` URL included, is refused with `declaration-invalid` at `/ci/reportUrl`, since no job can upload there. A trailing slash is dropped. `chant build --pr-loop`, `chant ci run`, `chant ci serve` and `chant ci runs` use it when `--report-url` is not given, and the flag wins when it is. `chant workspace ls --json` prints it as `ci.reportUrl`. The field can stand without `green`. Read by chant 0.124.32 and newer, so set `minReader` with it.
+The value takes the same forms as `--report-url`. Those are `s3://<bucket>/<prefix>`, `gs://<bucket>/<prefix>`, `az://<account>/<container>/<prefix>` and `file://<directory>`, with an absolute directory. Any other value, an `https://` URL included, is refused with `declaration-invalid` at `/ci/reportUrl`, since no job can upload there. A trailing slash is dropped. `chant build --pr-loop`, `chant ci run`, `chant ci serve` and `chant ci runs` use it when `--report-url` is not given, and the flag wins when it is. `chant workspace ls --json` prints it as `ci.reportUrl`. The field can stand without `green`. Read by chant 0.124.32 and newer, so set `minReader` with it, and set it to 0.124.55 or newer when the value is a `gs://` or `az://` one ([#4554](https://github.com/INTENTIUS/chant/issues/4554)).
 
 ### Stage hooks
 
-`ci.hooks` holds the stage hooks the pull-request jobs run ([#4288](https://github.com/INTENTIUS/chant/issues/4288)). The shape is an Op waves spec's `hooks`: `before.observe`, `before.plan`, `after.plan`, `after.gate`, `before.apply` and `after.apply`, each a list of `{ command, name?, onFailure?, perRun?, targets? }`. A member's own `ci.hooks` run after the top level's. `apply.runBy` is refused with `declaration-invalid` at `/ci/hooks` (`packages/core/src/workspace/declaration.ts:1201`). The jobs read the block at base, as [Hooks on Pull-Request Jobs](/chant/guide/pull-request-hooks/) describes. A declaration with `ci.hooks` needs chant 0.124.41 or newer to read it.
+`ci.hooks` holds the stage hooks the pull-request jobs run ([#4288](https://github.com/INTENTIUS/chant/issues/4288)). The shape is an Op waves spec's `hooks`: `before.observe`, `before.plan`, `after.plan`, `after.gate`, `before.apply` and `after.apply`, each a list of `{ command, name?, onFailure?, perRun?, targets? }`. A member's own `ci.hooks` run after the top level's. `apply.runBy` is refused with `declaration-invalid` at `/ci/hooks` (`packages/core/src/workspace/declaration.ts:1201`). The jobs read the block at base, as [Hooks on Pull-Request Jobs](/chant/guide/pull-request-hooks/) describes. A declaration with `ci.hooks` needs chant 0.124.41 or newer to read it. The `check` list holds the hooks a product's check job runs through `chant ci check` before any plan, where `onFailure: "approve"` and `{plan}` are refused ([#4556](https://github.com/INTENTIUS/chant/issues/4556)), and a declaration that uses it sets `minReader` to `0.124.55` or newer.
 
 ### Branches and labels
 
@@ -458,9 +458,40 @@ Each glob list holds at least one glob, and `x-` keys are ignored. chant 0.124.4
 
 Under either value, `chant components pr-apply` refuses with `locked` when another open pull request holds a component it reaches, and applies nothing. A lock whose pull request merged or closed reads as released. With no `ci.locks`, pr-apply reads no locks. pr-apply takes the field from the declaration at base, so a pull request cannot turn its own locks off. [Lock the Targets a Pull Request Reaches](/chant/guide/target-locks/) sets it up. chant reads the field from 0.124.41, so a declaration that sets it needs `minReader` `0.124.41` or newer.
 
+### Lock grain
+
+`ci.lockGrain` says what one apply holds while it applies ([#4552](https://github.com/INTENTIUS/chant/issues/4552)). It sits beside `ci.locks` at the top level of `ci`, and a member may set its own in its `ci` block, which wins.
+
+```json
+"ci": {
+  "locks": "apply",
+  "lockGrain": "resource"
+}
+```
+
+| Value | What an apply holds |
+|---|---|
+| `target` | Nothing of its own: the engine's lock keeps two applies of one root, unit or stack apart. Target locks name components. |
+| `resource` | A lease on one row per resource the plan changes, taken before anything applies and released when the apply ends. Under `ci.locks`, a pull request locks those row keys in place of its component names, so two pull requests that change different resources of one stack can both apply before merge. |
+| `repo` | One apply at a time in the repository. The generated pipeline keeps it: one concurrency group on GitHub, one resource group on GitLab, and the lock tag `refs/tags/chant-apply-lock` on Forgejo. |
+
+Absent, each member takes its lexicon's default:
+
+| Engine | Default | Row keys |
+|---|---|---|
+| choudoufu | `resource` | `estate <estate> <address>`, or `root <root> <address>` for a root with no estate; the same for a moved instance's previous address; `object <id>` for anything but a create |
+| plunge | `resource` | `urn <urn>` for each changed resource, the root stack's URN included when its outputs change; `object <id>` for update, replace and delete; a single `stack <project>/<stack>` row in place of the URN rows when a component may register resources only at apply |
+| Terraform, tofu, Terragrunt | `target` | none: `resource` is refused by name |
+| stock Pulumi | `target` | none: `resource` is refused by name, since the backend's stack lock orders updates |
+| SQL (`sql-migrate`, `sql-apply`) | `target` | none: `resource` is refused by name, since an environment's migrations apply in chain order under its own lock, a KeeperMap row on ClickHouse and a session advisory lock on Postgres |
+
+One file per gate holds the rows for the whole workspace: `_locks/rows/<gate>.json` at the root of `chant/lifecycle`, never under a member's prefix. Two members that act on one object therefore meet on its row. The format is the one terragucci's apply rows used. A take is all or nothing. When the forge says a holder's run finished, its rows are taken over, and so are the rows of a lease older than `CHANT_LOCK_STALE` seconds (default 7200; terragucci's `TG_LOCK_STALE` is read as an alias). A `stack` row and every `urn` row of that stack hold each other. When another run holds a row, the apply stops with exit 5, `held`, and names that run.
+
+Every apply takes the lease on this grain ([#4594](https://github.com/INTENTIUS/chant/issues/4594)). `chant components pr-apply` and an op wave with a capability `step` lease the rows their plan already holds. `chant run --components`, `chant components fan-out`, `promote`, `rollback` and `redeploy` plan each step before it applies, lease that plan's rows, then apply the plan they leased for. Components that plan and apply as one group lease every member's rows in one take, and under `--wave-gate` a wave leases the rows of the plans its gate approved. A pull request environment's apply leases as `pr-apply` does. A round that `pr-apply` plans after an upstream applies leases its own rows before it applies, and a held row stops that round with exit 5. All of these read the rows file of the pull-request loop's gate, `pr-apply`, unless an op wave's job passes another. An apply on merge and an apply before merge thus share one file. Outside a git work tree `run`, `fan-out` and `promote` take no lease, since no ledger is there to hold rows. Like `ci.locks`, the grain comes from the declaration at base, so a change cannot pick its own. A `pulumi-up` step that sets `lockGrain` takes that grain instead. `ci.lockGrain` needs a `minReader` of `0.124.55` or newer.
+
 ### Policy
 
-`ci.policy` names the policy engine the pull-request jobs run over the change set ([#4294](https://github.com/INTENTIUS/chant/issues/4294)). Its settings are those the [table in Policy at the Gate](/chant/guide/gate-policy/#declare-the-policy) lists. Any other key is refused with `declaration-invalid` at `/ci/policy`, and so are `outcomes` and `allow_unattended`, since no rule lets a plan apply with nobody approving it (`packages/core/src/gate-policy.ts:293`). The jobs read the block and the policy directory at base, as [Policy at the Gate](/chant/guide/gate-policy/) describes. A declaration that sets it needs a `minReader` of `0.124.41` or newer, since an older chant refuses it.
+`ci.policy` names the policy engine the pull-request jobs run over the change set ([#4294](https://github.com/INTENTIUS/chant/issues/4294)). Its settings are those the [table in Policy at the Gate](/chant/guide/gate-policy/#declare-the-policy) lists. Any other key is refused with `declaration-invalid` at `/ci/policy`, and so are `outcomes` and `allow_unattended`, since no rule lets a plan apply with nobody approving it (`packages/core/src/gate-policy.ts:293`). The jobs read the block and the policy directory at base, as [Policy at the Gate](/chant/guide/gate-policy/) describes. A declaration that sets it needs a `minReader` of `0.124.41` or newer, since an older chant refuses it. The `source` and `packs` settings ([#4613](https://github.com/INTENTIUS/chant/issues/4613)) need a `minReader` of `0.124.55` or newer (`CI_POLICY_SOURCE_FLOOR`).
 
 ### Cloud identities
 
@@ -480,7 +511,8 @@ Under either value, `chant components pr-apply` refuses with `locked` when anoth
 |---|---|
 | `aws` | Its identities are role ARNs. It takes `rules`, and may set `region` (default `us-east-1`), `audience` (default `sts.amazonaws.com`) and an emulator's `endpoint`. |
 | `gcp` | Its identities are service account emails. It takes `provider`, the workload identity provider's name, and `rules`, and may set `audience` (default `https://iam.googleapis.com/<provider>`), `stsEndpoint` and `iamEndpoint`. |
-| `azure` | Its identities are client ids. It takes `tenantId` and `rules`, and may set `subscriptionId`, `audience` (default `api://AzureADTokenExchange`) and `authority`. |
+| `azure` | Its identities are client ids. It takes `tenantId` and `rules`, and may set `subscriptionId`, `audience` (default `api://AzureADTokenExchange`), `authority`, and `database` (#4572), which also trades for an Azure Database for PostgreSQL token in `AZURE_DATABASE_ACCESS_TOKEN` and needs a `minReader` of `AZURE_DATABASE_TOKEN_FLOOR`. |
+| `pulumi` | Pulumi Cloud access tokens ([#4549](https://github.com/INTENTIUS/chant/issues/4549)). Its identities are `team:<name>`, `user:<login>`, `organization` or `organization:admin`. It takes `organization` and `rules`, and may set `audience` (default `urn:pulumi:org:<organization>`) and `apiUrl` (default `https://api.pulumi.com`). Needs a `minReader` of 0.124.55 or newer. See [preview and up with separate Pulumi Cloud tokens](/chant/guide/security-cloud-identities/#preview-and-up-with-separate-pulumi-cloud-tokens). |
 | `rules[]` | Each rule has a `plan` and an `apply` identity and may set `environments` and `members` globs. The first rule that matches the pipeline's environment and member wins. |
 | `rules[].targets` | Target globs inside the member, such as Terraform roots ([#4332](https://github.com/INTENTIUS/chant/issues/4332)): `*` within one `/` segment, `**` across segments, `?` one character. A target takes the first rule that covers its environment, member and target. A Terraform root matches by its key in `terraform.roots` or by its directory relative to the project. The plan job trades for every plan identity the member's targets take, and an Op wave applies in one job per apply identity. See [give targets their own identities](/chant/guide/security-cloud-identities/#give-targets-inside-a-member-their-own-identities). |
 | `rules[].name` | The name of the apply job group the rule's targets form, lowercase letters, digits, `-` and `_`. Default: from the first target glob. |
@@ -1062,11 +1094,15 @@ chant records each lifecycle fact on the orphan branch `chant/lifecycle`, and ke
 | Store | Path |
 |---|---|
 | Release records | `<ledger><env>/releases.jsonl` |
+| Release status (deprecated, yanked, restored) | `<ledger><env>/release-status.jsonl` ([#4596](https://github.com/INTENTIUS/chant/issues/4596)) |
 | State snapshots | `<ledger><env>/<lexicon>.json`, with a `<stack>__` prefix for a project with several stacks |
 | Accepted observation baseline | `<ledger><env>/observation-baseline.json` |
 | Op run records | `<ledger><env>/runs__<op>.jsonl` |
 | Converge tick records | `<ledger><env>/converge.jsonl` |
 | Gate facts, pending and resolved | `<ledger>_gates/<op>.jsonl` |
+| Each apply that ran under an approval, and how it ended | `<ledger>_gates/<op>/applied.jsonl` |
+| The attachment a gated request carries, such as a migration's proof | `<ledger>_gates/<op>/requests/<digest>.json` ([#4551](https://github.com/INTENTIUS/chant/issues/4551)) |
+| One record for each environment a pull request has opened | `<ledger>_pr-envs/records.jsonl` |
 | Build manifests | `<ledger>_builds/<digest>.json` |
 | Stored change sets | `<ledger>_change-sets/<digest>.json`, pruned by [retention](#retention) |
 | Releases, their cuts and template bytes | `<ledger>_releases/<digest>.json`, `<ledger>_releases/cuts.jsonl` and `<ledger>_releases/templates/<digest>.txt`; the release files and templates are pruned by [retention](#retention) |

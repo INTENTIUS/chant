@@ -52,7 +52,7 @@ The spec is a JSON file committed to the repository. Its jobs read it at run tim
 | `waves[].discover` | The runs come from `planWave` at plan time, not the spec ([Runs found at plan time](#runs-found-at-plan-time)) |
 | `waves[].rest` | On the last, discovering wave: once it applies, the job goes on through every wave the plan found |
 | `waves[].gate` | `always`, `on-destructive` or `never`. Default `always` |
-| `waves[].approval` | `ledger`, `pr-review` or `sealed`: which approvals count ([Which approvals count](#which-approvals-count)). Default `ledger` |
+| `waves[].approval` | `ledger`, `pr-review`, `sealed` or `pull-request`: which approvals count ([Which approvals count](#which-approvals-count)). Default `ledger` |
 | `waves[].point` | This wave's own decision point, in place of the spec's |
 | `waves[].shares` | Split a wide wave into a deciding job and this many share jobs |
 | `waves[].hooks` | This wave's own hooks, run after the spec's |
@@ -79,7 +79,7 @@ chant run --generate gitlab --spec waves.json
 chant run --generate forgejo --spec waves.json
 ```
 
-Run it from the repository root. GitHub and Forgejo get `<name>.yml` in their workflow directory, and GitLab gets `<name>.gitlab-ci.yml` at the root for `.gitlab-ci.yml` to include. The file can also hold `{ "waves": <spec>, "options": { ... } }`, where `options` sets the image, `beforeScript`, `extraScript` and `variables` for every job. The default image is `node:22`, which has git; install chant in it with `beforeScript`. From code, `generateOpWavesPipeline(spec, lexicon, { specFile })` in `@intentius/chant/op` does the same thing.
+Run it from the repository root. GitHub and Forgejo get `<name>.yml` in their workflow directory, and GitLab gets `<name>.gitlab-ci.yml` at the root for `.gitlab-ci.yml` to include. The file can also hold `{ "waves": <spec>, "options": { ... } }`, where `options` sets the image, `beforeScript`, `extraScript` and `variables` for every job. The default image is `node:22`, which has git; install chant in it with `beforeScript`. From code, `generateOpWavesPipeline(spec, lexicon, { specFile })` in `@intentius/chant/op` does the same thing. Its `bin` option puts a CI product's command in place of `chant` in every job line, and a product's bin that runs the generator in process gets its own bin there without passing it ([#4607](https://github.com/INTENTIUS/chant/issues/4607)).
 
 Each wave is one job, `wave-<k>-<name>`, and it needs the job before it. A push to the branch runs wave 1. If a wave waits at its gate, the waves after it do not run. If a run in it fails, the next wave's job still runs and blocks only the runs that depend on the failed one (below).
 
@@ -93,9 +93,9 @@ A run can list the runs it needs applied first:
 
 Each entry is a target of an earlier wave, or of a run listed before it in the same wave (`assertOpWaveDependsOn`, `packages/core/src/op/op-waves.ts:745`). Inside one wave this needs a single job to apply it, so a wave with `shares` or `jobs` takes only dependencies on earlier waves.
 
-Each wave job writes an outcome file, `.chant/op-waves/<name>/outcomes/outcome-wave-<k>.json`, and the forge keeps it whatever the job's exit code. The next wave's job downloads them and reads them (`opWaveBefore`, `packages/core/src/op/op-waves-run.ts:1273`). A run that failed, or was blocked, blocks the runs that depend on it. A blocked run is neither planned nor applied, and the log names the failed run it traces back to. A run with no failed dependency applies. Exit 1 means one of the job's own runs failed or was blocked.
+Each wave job writes an outcome file, `.chant/op-waves/<name>/outcomes/outcome-wave-<k>.json`, and the forge keeps it whatever the job's exit code. The next wave's job downloads them and reads them (`opWaveBefore`, `packages/core/src/op/op-waves-run.ts:1623`). A run that failed, or was blocked, blocks the runs that depend on it. A blocked run is neither planned nor applied, and the log names the failed run it traces back to. A run with no failed dependency applies. Exit 1 means one of the job's own runs failed or was blocked.
 
-A run that waits at its gate (exit 3), or one that was refused or held, still stops the waves after it, because those runs did not apply. On GitHub and Forgejo the later jobs get `if: !cancelled()` (`lexicons/github/src/components/generate-op-waves-pipeline.ts:136`). On GitLab each job is `allow_failure: { exit_codes: [1] }`, so only exit 1 lets the next wave run (`lexicons/gitlab/src/components/generate-op-waves-pipeline.ts`). Regenerate the pipeline to get them ([#4322](https://github.com/INTENTIUS/chant/issues/4322)).
+A run that waits at its gate (exit 3), or one that was refused or held, still stops the waves after it, because those runs did not apply. On GitHub and Forgejo the later jobs get `if: !cancelled()` (`lexicons/github/src/components/generate-op-waves-pipeline.ts:139`). On GitLab each job is `allow_failure: { exit_codes: [1] }`, so only exit 1 lets the next wave run (`lexicons/gitlab/src/components/generate-op-waves-pipeline.ts`). Regenerate the pipeline to get them ([#4322](https://github.com/INTENTIUS/chant/issues/4322)).
 
 ## Run waves in a slim image
 
@@ -193,6 +193,8 @@ The plans file may also carry `pending`, an object of fields the product adds to
 
 chant's own fields win. A `pending` that sets one of them (`op`, `gate`, `planDigest`, `timestamp`, `expiresAt` and the rest) fails the wave; `description` is the one it may set.
 
+A product can hand chant the change-set document it composed for the wave's plans as `changeSet` in the same file ([#4551](https://github.com/INTENTIUS/chant/issues/4551)). chant stores it under its digest in `_change-sets/` before the pending fact, and the fact cites that digest as `changeSet`. A refusal or a respond job then reads the plans the approval was asked for with `chant change-set show <digest>`. `chant approve` copies `changeSet` onto an approval of the fact's plan. A document whose content does not hash to its digest is logged and left out, and the wave still waits.
+
 The plans file may also carry `members`: digest members that are not runs, each with a name no run has. A product whose approval depends on more than the plans puts that in the digest this way. With a cost threshold, for example, the wave's monthly cost goes in, so an approval at one cost does not apply at another:
 
 ```json
@@ -201,7 +203,7 @@ The plans file may also carry `members`: digest members that are not runs, each 
 
 They are in the digest whatever `digest.over` says, and they never run.
 
-`applyWave` gets a runs file that lists the approved set: each run with the `planDigest` it was approved or let through at, and the wave's `digest`. A non-zero exit counts every run in the set as failed.
+`applyWave` gets a runs file that lists the approved set: each run with the `planDigest` it was approved or let through at, and the wave's `digest`. A non-zero exit counts every run in the set as failed, unless the call writes `{ "applied": [<target>...] }` to `CHANT_APPLY_RUNS_RESULT`, a path it gets. Then only the other runs count as failed, and a later wave blocks only the runs that depend on them. `chant components apply-wave` writes it.
 
 Every apply call, `apply` or `applyWave`, also gets `CHANT_APPLY_OUTCOME`, a path. An apply that applied nothing, for a reason that is not a failure, writes one of these there:
 
@@ -216,6 +218,61 @@ Every apply call, `apply` or `applyWave`, also gets `CHANT_APPLY_OUTCOME`, a pat
 `plan` and `planWave` cannot both be given, and neither can `apply` and `applyWave`. Either kind of plan can go with either kind of apply.
 
 `shares` keeps working. The deciding job plans the whole wave in one call. Each share job calls `planWave` with a runs file of its own slice, and calls `applyWave` with only the runs whose plan digest still matches the decision.
+
+## Waves of components
+
+A spec can take its waves from a project's component graph, with each run a component ([#4588](https://github.com/INTENTIUS/chant/issues/4588)). `componentWavesSpec` in `@intentius/chant/ci-product` builds one wave per layer of `dependsOn`. Its `planWave` and `applyWave` come from `componentWaveSteps`:
+
+```json
+{
+  "planWave": ["chant", "components", "plan-wave", "--runs", "{runs}", "--plans", "{plans}", "--env", "prod", "--base", "HEAD^1", "--wave-outputs", ".chant/op-waves/release/outputs.json"],
+  "applyWave": ["chant", "components", "apply-wave", "--runs", "{runs}", "--plans", "{plans}", "--env", "prod", "--base", "HEAD^1", "--wave-outputs", ".chant/op-waves/release/outputs.json"]
+}
+```
+
+`chant components plan-wave` plans the wave's components through their capabilities, against the outputs the waves before it left in the `--wave-outputs` file. It writes one digest per component over its members' plans, and the wave's change set. `chant components apply-wave` plans the approved runs again and exits 4 when a component's plan is not the one approved. Otherwise it leases the rows on the resource [lock grain](/chant/reference/workspace-declaration/#lock-grain) and applies the wave. Each applied component's release is recorded, and its outputs go into the file for the next wave.
+
+[`pr-apply --wave-gate`](/chant/guide/apply-on-merge/#a-gate-per-wave-on-merge) runs its waves on this spec, with both steps in its own process against the change it already derived. The spec is chant's own, so the job reads it from memory rather than from the base commit. Its op is the apply's own, `pr-<n>` or `green-<sha>`. Every wave takes `approval: pull-request` with the pull request's gate. A wave whose plan the approved change set covers applies under that approval, and a wave whose plan moved waits at `<gate>-wave-<k>`. A product's `productPipelineJobs` takes the same waves with `componentWaves: { components }` when it has no spec of its own.
+
+## Plan and apply through a capability
+
+A spec can name a `step` in place of `plan` and `apply` ([#4545](https://github.com/INTENTIUS/chant/issues/4545)). Each run is then planned and applied in the wave's own process, through the capability a component's deploy step would name: `terraform-apply` from the terraform lexicon, `pulumi-up` from the pulumi lexicon, or any kind a capability plugin adds.
+
+```json
+{
+  "name": "tf-apply",
+  "op": "tf-apply",
+  "step": { "kind": "terraform-apply", "root": "{target}", "lockTimeout": "5m" },
+  "waves": [
+    { "name": "network", "runs": [{ "target": "network" }] },
+    { "name": "apps", "runs": [{ "target": "api", "input": { "vars": { "size": "small" } } }, { "target": "web" }] }
+  ]
+}
+```
+
+The step is `{ kind, ...input }`. chant fills `{target}`, `{op}` and `{wave}` in each string of the input for every run, and lays the run's own `input` over it, so one step covers every root of the pipeline and a run adds its own vars or reads.
+
+- The plan is `capability.plan` for each run. Its `planDigest` is the run's member digest. The run is `empty` when its change-set part has no entry but `no-op` and `read`, and `destructive` when one entry deletes or replaces. A member with holes and no artifact fails the plan with the holes' reasons. The parts are composed into the wave's change-set document, and the pending fact cites it as the plans file's `changeSet` would.
+- The apply is `capability.run` with the plan's artifact in `ctx.plans`, so the run applies the plan the gate decided. A run the capability refuses as moved applies nothing, the job lists it under `moved` and exits 4. Any other error fails the run.
+- Each run's plan file at `{plan}` carries `planDigest`, `member`, `artifact` and `changeSet`, so a `perRun` hook can read the plan.
+
+The capabilities are the project's, built the way `chant run --components` builds them from `chant.config`. A product that runs chant in process passes its own registry as `capabilities` to `runOpWave`. A `step` replaces the four commands, so the spec refuses it beside any of them. It also refuses `discover`, which only `planWave` can report, and `hooks.apply.runBy: "apply"`, since no apply command exists to hand the hooks to. Shares and job groups work as with commands: each share plans its slice through the step again and applies the runs whose digest still matches the decision.
+
+The wave-job runtime (`wave-runtime.mjs`) does not carry the config loader, so a spec with a `step` needs the full `@intentius/chant` install, or a product's own bin that passes `capabilities`.
+
+### SQL members
+
+The sql lexicon adds two kinds ([#4569](https://github.com/INTENTIUS/chant/issues/4569)). `sql-migrate` runs SQL Yodeler's versioned migration engine, and `sql-apply` applies a declarative build with the lexicon's own appliers.
+
+```json
+{ "step": { "kind": "sql-migrate", "environment": "{target}", "spec": "yodel-waves.json" } }
+```
+
+chant runs `yodel` with three argv and refuses any other: `yodel plan <env> --part <file>`, `yodel apply <env> --wave-plan <file> --spec <spec>` and `yodel apply <env> --wave-apply <file> --spec <spec>`. Each may end with `--dir`, `--op` and `--allow-out-of-order`, in that order. The plan gives the member's change-set part, one entry per object the pending migrations touch. The wave plan's digest is the one the gate binds. Its destructive steps come back as the plan's `destructive` classes, such as `pg-rewrite`. A wave under `on-destructive` waits on them. The apply hands the engine the decided plan. The engine plans again under its lock and checks the wave's decision and the ledger's approval itself. A plan that moved is refused and the job exits 4. The two planning commands run without `YODEL_ROLE` and the writer's variables, so the writer reaches only the apply. A step without `spec` plans the migrations under their own digest and never applies. `chant components pr-plan` uses it that way.
+
+`sql-apply` takes `environment` and `build`, the `chant build` output. It plans the build against the environment's server as `chant sql plan` does. The apply goes through `clickhouseApply` or `postgresApply` by the build's dialect. A change the applier refuses fails the plan and names the migration Op to run instead. A ClickHouse rebuild is one such change. The apply plans again and sends nothing when the digest moved.
+
+Both kinds take the `target` lock grain, the environment ([#4571](https://github.com/INTENTIUS/chant/issues/4571)). SQL Yodeler already keeps two applies of one environment apart with its own lock, a KeeperMap row on ClickHouse and a session advisory lock on Postgres. A member that sets `ci.lockGrain: resource` is refused by name, since a migration chain applies in order.
 
 ## Runs found at plan time
 
@@ -260,13 +317,13 @@ Hooks are commands that run before and after a wave's plan and apply, inside the
 
 | Hook field | Meaning |
 |---|---|
-| `command` | Argv. `{op}`, `{wave}` and `{runs}` are filled in. A `perRun` hook also gets `{target}`, and `{plan}` once the run is planned |
+| `command` | Argv. `{op}`, `{wave}` and `{runs}` are filled in. A `perRun` hook also gets `{target}`, and `{plan}` once the run is planned. `{planJson}` is the engine's plan document when the run's plan names one, such as the `show -json` file `terraform-apply` writes ([#4614](https://github.com/INTENTIUS/chant/issues/4614)) |
 | `name` | The hook's name in the log and in `--json`. Default: its command |
 | `perRun` | Run the hook once per run, rather than once for the wave |
 | `onFailure` | `fail` (default) or `approve` |
 | `targets` | Runs the hook is for: targets, or patterns where `*` matches within one `/` segment and `**` across segments ([#4288](https://github.com/INTENTIUS/chant/issues/4288)). A `perRun` hook runs for the matching runs. A hook that runs once runs when any run matches, or before a `discover` wave's plan, when no run is known yet. Default: every run |
 
-The spec's `hooks` run first, then the wave's own `hooks`. The environment carries `CHANT_OP_WAVES`, `CHANT_WAVE`, `CHANT_WAVE_NUMBER`, `CHANT_HOOK` (such as `after-plan`) and `CHANT_RUNS`, plus `CHANT_TARGET` and, once the run is planned, `CHANT_PLAN` for a `perRun` hook. The runs file at `{runs}` lists each run, with its plan once planned.
+The spec's `hooks` run first, then the wave's own `hooks`. The environment carries `CHANT_OP_WAVES`, `CHANT_WAVE`, `CHANT_WAVE_NUMBER`, `CHANT_HOOK` (such as `after-plan`) and `CHANT_RUNS`, plus `CHANT_TARGET` and, once the run is planned, `CHANT_PLAN` for a `perRun` hook. A planned run's hook also gets `CHANT_PLAN_DIGEST`. When the plan names a plan document, `CHANT_PLAN_JSON` holds its path. The runs file at `{runs}` lists each run, with its plan once planned.
 
 | When | Runs | A failure with `fail` |
 |---|---|---|
@@ -308,7 +365,9 @@ A hook can hold the wave on a gate other than the wave's own, with a digest of i
 { "op": "tf-migrate", "gate": "split-queues", "digest": "sha256:...", "description": "move the queues to their own root", "pending": { "members": [] } }
 ```
 
-`op` defaults to the spec's name. chant settles that gate under the wave's approval mode, read at base. `sealed` counts only sealed approvals, and `pr-review` counts the ledger alone. If nobody has approved the digest, chant records a pending fact for it with the `pending` fields. The wave waits (exit 3). The pending fact carries `wave: { number, name, op }` (the wave and the spec's name), so a reader can tell which wave is held even when the hook wrote its own `description`. The decision's `heldOn` and `approve` then name that gate. Once someone approves it, chant runs the hook again with `CHANT_HOLD_APPROVED` (JSON: `op`, `gate`, `digest`, `approvedBy`, `approvedAt`). That run either passes, and the wave goes on, or holds the wave on a further gate the same way ([#3847](https://github.com/INTENTIUS/chant/issues/3847)). Approvals of the other gate are not spent: a product that must run its step once records that it ran.
+`op` defaults to the spec's name. chant settles that gate under the wave's approval mode, read at base. `sealed` counts only sealed approvals, and `pr-review` counts the ledger alone. If nobody has approved the digest, chant records a pending fact for it with the `pending` fields. The wave waits (exit 3). The pending fact carries `wave: { number, name, op }` (the wave and the spec's name), so a reader can tell which wave is held even when the hook wrote its own `description`. The decision's `heldOn` and `approve` then name that gate. Once someone approves it, chant runs the hook again with `CHANT_HOLD_APPROVED` (JSON: `op`, `gate`, `digest`, `approvedBy`, `approvedAt`). That run either passes, and the wave goes on, or holds the wave on a further gate the same way ([#3847](https://github.com/INTENTIUS/chant/issues/3847)). Approvals of the other gate are not spent unless the hold asks chant to record it.
+
+A hold with `"record": true` has chant record the gate the way it records a gated request ([#4623](https://github.com/INTENTIUS/chant/issues/4623)). Before the approved re-run, chant appends an `applied` line to `_gates/<op>/applied.jsonl`, which spends the approval. If that line does not reach the remote, the hook does not run again. A digest that already has an applied line under the gate does not run again either. The re-run gets `CHANT_HOLD_FINISHED`, a path beside `CHANT_HOLD`, and writes `{ "result": "applied" | "failed", "detail": { ... } }` there. chant then appends the `finished` line with that result and detail, leaving out any detail value that is an object or an array. Without the file, the exit code gives the result (0 is `applied`) and the line has no detail. `"attachment"` in the hold is text chant stores once at `_gates/<op>/requests/<digest>.json` before the pending fact, whose `proof` field is its SHA-256. `CHANT_HOLD_FINISHED` is set only when chant wrote the applied line, so a product that writes these lines itself on an older chant can tell which case it is in.
 
 A change with two state migrations, where the second plans against the states the first writes, uses that: the approved run applies the first, writes `CHANT_HOLD` for the second's gate and digest, and exits non-zero. chant settles that gate in turn. Approved, it runs the hook again; otherwise the wave waits on it (exit 3), and `heldOn.after` lists the gates approved before it. Each re-run also gets `CHANT_HOLDS_APPROVED`, a JSON array of every approval the call went through so far, oldest first. A re-run that holds again on a gate and digest already approved fails the wave, and so does one hook call asking for more than 10 gates in turn (`OP_WAVE_MAX_CHAINED_HOLDS`).
 
@@ -366,6 +425,34 @@ runOpWaveApplyHooks(hooks, "after-apply", { skip: "nothing to apply" });
 A skip runs no hook and records the moment with outcome `skipped` and the reason, in the wave's result and the decision record's `outcomes`. Chant counts the moment as handled, so the wave does not fail. A skip without a reason throws.
 
 With a per-run `apply`, each run's call runs the apply-stage hooks for that run alone, so a hook that runs once for the wave runs once per run, under that run's lock.
+
+### Hooks in the job's process
+
+A product that runs the wave job in its own process can pass after-plan hooks as functions ([#4614](https://github.com/INTENTIUS/chant/issues/4614)). It passes `afterPlan` to `runOpWave`, or `{ wave: { afterPlan, capabilities } }` to `runChantInProcess(["run", "wave", ...], words, ...)` from `@intentius/chant/ci-product`. This is how a product with a `step` builds its wave report, its own policy rows and the plan files its later jobs read from chant's plans, without planning anything itself.
+
+```ts
+import { runOpWave } from "@intentius/chant/op";
+
+await runOpWave({
+  spec, specFile, wave: 1, capabilities,
+  afterPlan: {
+    name: "report",
+    run: (r) => {
+      const view = buildView(r.target, readFileSync(r.planJson!, "utf-8"));
+      writeFileSync(`plans/${r.target}.json`, view);
+      return { policy: myPolicy(r.target, view), files: [`plans/${r.target}.json`] };
+    },
+  },
+});
+```
+
+Each hook is called once per planned run, in the order the wave lists its runs. The call comes after the wave's [holds](#wave-holds) and before the set digest is taken. A share or group job calls it for its own slice. The call names the run and its plan: `target`, `planDigest`, and the paths `plan` (the `{plan}` file) and `planJson`. It also carries the capability's `artifact` and the run's `changeSet` part. In `policy` it has the row chant's `holds.policy` gave the run.
+
+The answer is optional. Its `policy` rows are `{ source, result, rules, reason? }`, with `result` one of `passed`, `warned`, `denied` or `held`. A `denied` row denies the run as a [policy denial](#policy-denials) does, so an override of its rules counts. A `held` row holds the wave for a person. The `files` it names stay in the job's directory. The rows and files go on the job's run record under `wave.plans`.
+
+A hook that throws, or answers in a shape chant cannot read, has failed. With the default `onFailure: "fail"` the wave exits 1 before the gate, and nothing is approved or applied. Under `"approve"` it holds the wave and the hooks after it still run. `targets` limits a hook to the runs it matches, as for a command hook. A product feature-detects this on `OP_WAVE_AFTER_PLAN_FLOOR`.
+
+The spec's command hooks at `after.plan` still run at the same point, after the set digest and before the gate settles. When those hooks call back into the product's own process, pass `hookExec`, an exec that returns a promise, such as `spawnExecAsync`. The job then waits for each hook without blocking the event loop, so the product's process can answer the call.
 
 ### Hooks outside the waves
 
@@ -532,6 +619,7 @@ A wave's `approval` decides which approvals of its digest let it apply. Every mo
 | `ledger` (default) | any `chant approve` of the digest on `chant/lifecycle` | someone who can push to `chant/lifecycle` approved these plans, in whatever name they wrote |
 | `pr-review` | the merged pull request's approving review of its head, by a writer other than its author, when the head planned this digest; and any `chant approve` of the digest, as under `ledger` | a writer other than the author approved the change whose plans these are |
 | `sealed` | only a `chant approve --sign` whose seal verifies against the signers file at the base commit (`.chant/allowed_signers`, or the file `.chant/trust.json` names), for the approver it names | a listed person approved these plans |
+| `pull-request` | an approval of the pull request's gate (`approvals.pullRequest.gate` at base, under the spec's op) whose change set covers every member of the plans file's `changeSet`; and any `chant approve` of the digest, as under `ledger` | the reviewer approved the pull request's plan, and the wave plans only what it showed ([#4550](https://github.com/INTENTIUS/chant/issues/4550)) |
 
 ### `pr-review`
 
@@ -644,7 +732,19 @@ A plan file can also say the product's policy holds a run for a person ([#4294](
 { "runs": [{ "target": "network/iam", "planDigest": "jcs1-sha256:...", "held": { "rules": ["main.hold_iam"], "reason": "an IAM role changes" } }] }
 ```
 
-Such a run holds its wave until a person approves the set digest. This happens under `gate: "never"` too, the way a hook with `onFailure: "approve"` holds a wave. The decision's `heldBy` names it as `policy on <target> (<rules>)` (`packages/core/src/op/op-waves-run.ts:1636`). A denial on the same run still refuses the wave. `@intentius/chant/gate-policy` runs conftest or OPA and gives the rules a product writes here ([Policy at the Gate](/chant/guide/gate-policy/#for-a-product-with-its-own-input)).
+Such a run holds its wave until a person approves the set digest. This happens under `gate: "never"` too, the way a hook with `onFailure: "approve"` holds a wave. The decision's `heldBy` names it as `policy on <target> (<rules>)` (`packages/core/src/op/op-waves-run.ts:1987`). A denial on the same run still refuses the wave. `@intentius/chant/gate-policy` runs conftest or OPA and gives the rules a product writes here ([Policy at the Gate](/chant/guide/gate-policy/#for-a-product-with-its-own-input)).
+
+## Wave holds
+
+`holds` turns on holds chant runs over a wave's plans itself ([#4545](https://github.com/INTENTIUS/chant/issues/4545)), so a product does not need its own hook for them. They are read at the base commit with the policy. A `policy` hold set at base or in the change holds either way, so a change can add it and cannot drop it. A `cost` hold at base wins over the change's.
+
+```json
+{ "holds": { "policy": true, "cost": { "command": ["infracost", "breakdown", "--path", "{planJson}", "--format", "json", "--log-level", "error"], "approveAbove": 100 } } }
+```
+
+With `policy: true`, the deciding job runs the workspace's `ci.policy`, read from the declaration at base as the pull-request jobs read it ([Policy at the Gate](/chant/guide/gate-policy/)), over each run's change-set part. A deny rule marks the run `denied` and a hold rule marks it `held`, exactly as a plan file's [denials](#policy-denials) and [holds](#policy-holds) do. A policy that cannot run fails the wave. The decision's `ciPolicySource` names the commit of `ci.policy.source` that judged the runs. Each run needs a change-set part, which a `step` always gives and a `plan` command gives as `changeSet` in its plan file.
+
+With `cost`, chant runs `command` once for each run whose plan changes something. `{target}` and `{plan}` are filled in, and `{planJson}` gets the engine's plan document when the capability's artifact names one (`terraform-apply` writes `show -json` beside its plan file). The command prints the estimate: infracost's JSON by default, or `{ "monthlyDelta": <number> }` with `format: "chant"`. chant sums the monthly change over the wave. When the sum is over `approveAbove`, or a run could not be priced, the wave waits for a person whatever its gate says. `heldBy` gives the reason. The sum is a member of the set digest, `(monthly cost)`, so an approval at one cost does not apply at another, and `--record-plans` puts the same member in the head's digest. The terraform lexicon's preset is `terraformCostHold({ approveAbove })` from `@intentius/chant-lexicon-terraform/cost-hold`.
 
 ## Keep a product's gate names
 
@@ -732,6 +832,74 @@ On GitHub and Forgejo the job asks for its token at run time, with the audience 
 
 A job that applies with an identity is only as separate as the forge and the cloud make it. The forge's environment rules and protected runners decide which refs may run a group's job, and the cloud role's trust decides which token may assume it.
 
+## Stand down for a newer commit
+
+With `"standDown": true` on the spec, an apply steps aside when a newer commit on the branch will apply the same targets ([#4581](https://github.com/INTENTIUS/chant/issues/4581)). The job then applies nothing and exits 6, `superseded`.
+
+```json
+{ "name": "migrate", "op": "migrate", "standDown": true, "step": { "kind": "sql-migrate", "environment": "{target}", "spec": "yodel-waves.json" }, "waves": [...] }
+```
+
+The branch is `GITHUB_REF_NAME` on GitHub and Forgejo, `CI_COMMIT_BRANCH` on GitLab, else the checked-out branch. chant fetches its tip from `origin`. A tip that is another commit and contains this one is newer. chant then reads the spec file at that tip. The apply stands down only when that spec still runs on the branch and has a wave of this one's name listing every target here. A `discover` wave counts for any target. Anything chant cannot tell goes ahead and applies. That covers a missing branch or `origin` and a failed fetch. So does a tip that does not contain this commit, as after a force-push, or a spec at the tip that drops a target.
+
+The check comes after the wave's holds are settled and its lock grain's lease is taken, and before its approval is spent. A wave on the resource grain lets go of its rows before it exits. The job's run record has `wave.outcome` `stood-down`, with the newer commit and its branch in `wave.supersededBy`, and its status is `ok`. No notification goes out. An apply command can still write `stood-down` to `CHANT_APPLY_OUTCOME` itself. SQL Yodeler's `YODEL_STAND_DOWN` and terragucci's `newerPush` do this today, and either can leave it to chant once its chant has `OP_WAVE_STAND_DOWN_FLOOR`.
+
+## Tell the control repo
+
+With `control` on the spec, the pipeline tells a control repo how the waves ended once the last wave ran ([#4617](https://github.com/INTENTIUS/chant/issues/4617)). The control repo then runs this member's dependents, as it does after the pull request loop's apply ([The control repo](/chant/concepts/ci-products/#the-control-repo)).
+
+```json
+{ "name": "stacks", "op": "pulumi-up", "control": { "repo": "github.com/acme/control", "op": "deploy", "member": "network", "tokenSecret": "CONTROL_TOKEN" }, "waves": [...] }
+```
+
+`control` takes the pull request loop's settings: `repo`, `op`, `forge`, `tokenSecret`, `readTokenSecret`, `ref` and `apiBase`. `member` is required here, since a spec has no repository name to default it to. `sentCheck` and `markSent` are the product's shell lines that find and set the commit's control status.
+
+The `control-dispatch` job needs the last wave's jobs. On GitHub and Forgejo it runs after them unless the run was cancelled, so a failed run does not stop it. On GitLab a last wave whose runs failed lets it run, and a wave that waits at its gate stops it with the waves after it. The job reads every wave job's outcome file and adds them up with `chant run wave --spec <file> --waves-outcome`, through the product's bin:
+
+| Outcome | When |
+|---|---|
+| `applied` | A run applied, and every other run applied or had nothing to apply |
+| `partial` | Some runs applied, and others failed, were blocked, refused or wait |
+| `unchanged` | No run had anything to apply |
+| `waiting` | Nothing applied, and a wave waits for an approval |
+| `failed` | Nothing applied, and a run failed, was refused or blocked, or no wave wrote an outcome |
+
+The dispatch carries that outcome with the member, the Op and the pushed commit. Only its step holds the token: the `tokenSecret` secret, mapped into `CHANT_CONTROL_TOKEN` and handed to curl on its stdin. On GitLab a CI/CD variable reaches every job, so each wave job, the resume job and the record-plans job unset the control repo's token variables first, and the job adds up the outcome in a subshell without them.
+
+The control repo records each dispatch that carries an outcome as a `control-applied` line of `_control/applied.jsonl` on its `chant/lifecycle`, and runs the dependents only after `applied` or `partial`. A pull request note reads those records to mark a stack another repository applies as stale, current or unknown ([Cross-stack edges](/chant/concepts/ci-products/#cross-stack-edges)).
+
+## The run record
+
+Each `chant run wave` job appends one run record to `<env>/runs__<name>.jsonl` on `chant/lifecycle`, however it ends ([#4551](https://github.com/INTENTIUS/chant/issues/4551)). The record goes under the environment the spec's `labels.Env` names, else `local`, as every Op's does. The spec's `labels` are copied onto it. The record has one phase per wave the job walked, `wave-<k>`, and one step per run target: `ok` when it applied, `fail` when it failed, and `skipped` when it moved, was blocked or waited. Its `wave` field names the spec, the wave, the job (`wave`, `decide`, `share` or `group`), the set digest, the exit code and the runs applied, failed, moved and blocked, so a deciding job and its share jobs join on `wave.digest`. `chant ledger runs --where op=<name>` lists them. `--no-record` and `CHANT_NO_RECORD` write none. `wave.targets` holds each run target whose apply the job started ([#4555](https://github.com/INTENTIUS/chant/issues/4555)). An entry keeps the start time and the duration, which is also the step's `durationMs`. It keeps the facts the capability gave too. A job that stood down for a newer commit names it in `wave.supersededBy` (`branch`, `commit`). `wave.plans` holds each planned run with policy rows, from `holds.policy` or a hook in the job's process, and the files those hooks wrote ([#4614](https://github.com/INTENTIUS/chant/issues/4614)).
+
+## Release records
+
+A spec with a `step` also records each run it applied on its environment's release ledger, as `chant components promote` records each component it deploys ([#4615](https://github.com/INTENTIUS/chant/issues/4615)). `chant components rollback <env> --component <name>` then reads stacks and roots applied through op waves. The record goes under `labels.Env`, else the wave's name, and names the run's target as its component. The spec's `release` changes both, and a run's own `release` wins over it. Their strings take `{target}`, `{op}` and `{wave}`, as the step's input does. In this spec every stack records under its wave's name, and the prod stack records as `shop`.
+
+```json
+{ "name": "pulumi-up", "op": "pulumi-up", "step": { "kind": "pulumi-up" }, "release": { "env": "{wave}", "component": "{target}" },
+  "waves": [{ "name": "prod", "runs": [{ "target": "shop/prod", "release": { "component": "shop" } }] }] }
+```
+
+When a release cut from the applied commit records the component's templates for that environment, the record names that release and carries its templates digest. A rollback to it runs under the release, through the plan and the release gate ([#4542](https://github.com/INTENTIUS/chant/issues/4542)). With no such release, the record holds the run's plan digest with `digestKind: plan`, as a pull request's apply records it. `workspace status` lists it, and rollback passes over it, since there are no recorded files to apply again. So cut the release before the waves run (`chant release cut` on the merge commit), and each wave's apply joins it. `"release": false` writes no records. A record that cannot be written costs one line in the log, and the job keeps its exit code.
+
+## Traces
+
+With `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) set, each `chant run wave` job sends one trace as OTLP/JSON over HTTP when it ends ([#4555](https://github.com/INTENTIUS/chant/issues/4555)). `TRACEPARENT` joins it to a trace the pipeline already started. `OTEL_EXPORTER_OTLP_HEADERS` adds headers to the request. `OTEL_TRACES_EXPORTER=none` turns it off, as does `OTEL_SDK_DISABLED=true`. A collector that refuses the trace, or that cannot be reached, costs the job one line in its log. The exit code stays the job's own.
+
+| Span | Under | Attributes |
+|---|---|---|
+| `op <name>`, the job | `TRACEPARENT`'s span, when set | `run.id`, `run.kind`, `run.runtime`, `status`, `failure.code`, `vcs.ref.head.revision` |
+| `wave-<k>` | the job | `phase`, `status` |
+| each run target | its wave | `step`, `status`, `member`, `kind`, `resources.<action>` from the plan, and the capability's facts |
+| each timed resource | its run target | what the capability timed, such as plunge's provider calls |
+| `gate:<name>`, on a job that waits | its wave | `status: gated`, with a `gate-waiting` event |
+
+Every attribute chant writes is under the CI product's name: `chant.status` on chant's own jobs, `terragucci.root` and `plywood.stack` under the products. The terraform lexicon adds `root` and `binary`. The pulumi lexicon adds `stack`, `engine` and the `up.<op>` counts from the update's summary. On plunge it also reads the per-resource timings plunge prints in `up --json` ([#4579](https://github.com/INTENTIUS/chant/issues/4579), [plunge#55](https://github.com/INTENTIUS/plunge/issues/55)). Each resource it timed becomes a span under the stack's span, with a child span for each provider call and record write, and the same spans go under the stack's entry in `wave.targets`. The stack's span gets the totals: `plunge.calls`, `plunge.provider_ms`, `plunge.record_ms` and the slowest call. A stock Pulumi update prints no timings, so its stack has no resource spans.
+
+On plunge, the stack's `step-settle` event in `--events-json` also carries `resources`, one entry per timed resource ([#4615](https://github.com/INTENTIUS/chant/issues/4615)). An entry names the resource by its URN with its type and name. It says `ok` or `failed`, and gives the time the resource took and how many calls it made. The job's log prints one line for each, such as `shop/dev: assets (aws:s3/bucket:Bucket) ok in 412 ms, 3 calls`. The lines come once the stack's update ends, since plunge prints its timings with each step's outputs. A capability gives them as `resources` in its trace facts, and a step whose engine reports none has no `resources`.
+
+
 ## Exit codes
 
 With `notify` in the spec, a job that exits 1, 3, 4 or 7 also posts an event saying so ([Notify](/chant/guide/notify/)). A delivery that fails never changes the exit code.
@@ -745,6 +913,7 @@ With `notify` in the spec, a job that exits 1, 3, 4 or 7 also posts an event say
 | 5 | The apply applied nothing: another run holds what it changes |
 | 6 | The apply stood down for a newer run |
 | 7 | The product's policy denied a run and no override counts for it; nothing in the wave was applied |
+| 8 | The gate's decision point was answered with an answer it does not pass on; nothing in the wave was applied |
 
 ## Deciding a gate in your own tool
 

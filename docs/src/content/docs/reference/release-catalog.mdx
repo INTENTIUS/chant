@@ -1,0 +1,99 @@
+---
+title: Release Catalog
+description: The release catalog document and the static site chant renders from it.
+diataxis: reference
+---
+
+A release catalog lists every component a repository publishes and every version of each, with the facts a consumer checks before pinning one. It is read from the [release ledger](/chant/reference/workspace-read-contract/) only: each publish appends a release record, and the catalog groups those records by component and version ([#4595](https://github.com/INTENTIUS/chant/issues/4595)). A product writes the catalog beside its registry and renders it as a static site. terragucci writes it under `<prefix>/catalog/` for its module registry, and plywood can use the same code for npm packages, since core carries no engine word.
+
+The model lives in `packages/core/src/lifecycle/release-catalog.ts` and the site in `packages/core/src/lifecycle/release-catalog-site.ts`, imported as `@intentius/chant/lifecycle/release-catalog` and `@intentius/chant/lifecycle/release-catalog-site`, with the schema at `packages/core/src/workspace/release-catalog.schema.json`. Both need chant 0.124.55 or newer (`RELEASE_CATALOG_FLOOR`), so a product reaches them through a feature-detect until that release ships.
+
+## Release versions
+
+A release record already uses `version` for its schema version (always `1`). The version a publish gives a release, such as `1.4.0` for a module or `2.0.0-rc.1` for a package, is recorded as `releaseVersion`. chant 0.124.55 and newer write and read it (`RELEASE_VERSION_FLOOR`). A record without it still parses, and the catalog lists that release by its digest. A value that is not a non-empty string is refused by `appendReleaseRecord` and dropped on read, so the rest of the record still reads.
+
+## Release status
+
+A release is deprecated, yanked or restored by appending a line to `<env>/release-status.jsonl`, beside the environment's `releases.jsonl` ([#4596](https://github.com/INTENTIUS/chant/issues/4596)). `appendReleaseStatus` in `packages/core/src/lifecycle/release-status.ts` writes it under the member's ledger path and honours `--no-record`, and the caller pushes. A line is keyed by `component`, `env` and `digest`, and carries the new `status` with the `actor` and `timestamp` that set it. It may also carry the `releaseVersion`, a `reason` and a `replacement`. The newest line for a component and digest is the release's status, so a restore is one more line with `status: "active"`. Anyone who may publish may append one. No approval gate applies, since the line records who did it and why. `statusOf(records, component, digest)` answers for one release, and `catalogStatusInputs(records)` passes the lines to the catalog builder. `chant ledger release_status` and `chant query` list every line (`RELEASE_STATUS_FLOOR`).
+
+## Changelog
+
+`releaseChangelog(commits)` in `packages/core/src/lifecycle/release-changelog.ts` turns the commits a version shipped, each `{ sha, message }`, into its changelog ([#4597](https://github.com/INTENTIUS/chant/issues/4597)). Each commit becomes one entry with its sha, its conventional-commit scope when it has one, and the description after the `type(scope):` prefix. A subject that is not a conventional commit is kept whole under `other`. The groups are `breaking` (a `type!:` subject, or a `BREAKING CHANGE` or `BREAKING-CHANGE` footer), `feat`, `fix` and `other`.
+
+The bump follows terragucci's `bumpFor`. Any breaking commit makes it `major`, otherwise any `feat` makes it `minor`, and anything else gives `patch`, since a changed component is always published at a new version. Pass `entries` and `bump` to the builder's `changelogs` input. The caller reads the commits from git; the function itself reads nothing.
+
+## Catalog input
+
+`buildReleaseCatalog(input, { generatedAt, chant })` takes:
+
+| Input | Joined by | Gives each version |
+|---|---|---|
+| `releases` | component, then `releaseVersion` or digest | `digest`, `commit`, `time` (the earliest record), `actor`, `envs` |
+| `statuses` | digest, else version | `status`: the latest record by time wins, so a restore is one more record with `active` |
+| `changelogs` | version or digest | `changelog`: `bump` and `entries` |
+| `consumers` | version or digest | `consumers`: repo, root, file and address of each call |
+| `attestations` | digest | `attestation`: `verified`, `signed` or `unsigned`, the `verify` command, the signing identity |
+| `fields` | component, or version or digest | `fields[<engine>]`, merged per engine key |
+
+An input that matches no release is left out. The builder validates its result against the schema and throws `ReleaseCatalogError` with one line per problem, so an engine field JSON cannot hold fails before anything is written. `parseReleaseCatalog(text)` reads a catalog back and keeps any field this chant does not know.
+
+## Document shape
+
+```json
+{
+  "$schema": "https://intentius.io/chant/schemas/workspace/release-catalog/v1/release-catalog.schema.json",
+  "contract": 1,
+  "chant": "0.125.0",
+  "generatedAt": "2026-10-27T00:00:00.000Z",
+  "components": [
+    {
+      "name": "vpc/aws",
+      "latest": "1.1.0",
+      "fields": { "terraform": { "source": "registry.acme.dev/acme/vpc/aws" } },
+      "versions": [
+        {
+          "version": "2.0.0",
+          "digest": "sha256:9f...",
+          "commit": "4c1e...",
+          "time": "2026-10-03T00:00:00.000Z",
+          "actor": "ci",
+          "envs": ["registry"],
+          "status": { "state": "yanked", "reason": "breaks routes", "replacement": "1.1.0", "actor": "ana", "time": "2026-10-05T00:00:00.000Z" },
+          "changelog": { "bump": "major", "entries": [{ "kind": "breaking", "sha": "ab12...", "subject": "drop the ipv4 default" }] },
+          "attestation": { "state": "signed", "verify": "cosign verify-blob --bundle vpc.bundle vpc.tgz", "identity": "ci@acme" },
+          "consumers": [{ "repo": "acme/live", "root": "prod", "file": "prod/main.tf", "address": "module.vpc" }],
+          "fields": {}
+        }
+      ]
+    }
+  ]
+}
+```
+
+Components are sorted by name and versions are newest first. `latest` is the newest active version, by its version or by its digest when it has none, and `null` when no version is active. Readers ignore fields they do not know, and a field is only ever added within contract version 1.
+
+## Static site
+
+`renderCatalogSite(catalog, sections, { title })` returns the site's files, each with `path`, `contentType` and `bytes`, sorted by path:
+
+| Path | Holds |
+|---|---|
+| `index.html` | Every component with its latest version, and a search box |
+| `index.json` | The catalog itself, which the search box and `terragucci modules` read |
+| `style.css`, `search.js` | The page style and the client-side search |
+| `<component>/index.html` | The component's versions, and its engine sections |
+| `<component>/<version>/index.html` | One version: status, digest, commit, attestation, changelog, consumers, engine sections |
+
+A `/` in a component name becomes a directory, and any other character outside `A-Z a-z 0-9 . _ -` becomes `_`. The package `@acme/widgets` is therefore at `_acme/widgets/`. A release listed by digest `sha256:9f...` is at `sha256_9f.../` under its component. Every link is relative, so the site works under any prefix. The same catalog renders the same bytes, and a caller skips the files that did not change.
+
+An engine adds its parts through `sections`. Both `sections.component(component)` and `sections.version(component, version)` return a list of `{ title, body }`. The body's `kind` is one of `text`, `code`, `table` or `html`, and a table carries its own columns and rows. Text and table cells are escaped. An `html` body is written as given, so only pass HTML the engine built itself.
+
+A page of a deprecated or yanked version says so, with its reason, and links the replacement when the catalog lists it.
+
+## Terraform modules
+
+The terraform lexicon fills the `terraform` key ([#4598](https://github.com/INTENTIUS/chant/issues/4598)). `moduleDocs(dir, { parser, terraformDocs })` in `lexicons/terraform/src/registry/docs.ts` reads a module directory with chant's HCL parse, `.tf` and `.tf.json` alike. The result holds the module's README and its `examples/` directories. Each input keeps what its `variable` block declares. A sensitive input never carries its default. The outputs and the `required_providers` entries come from the same parse.
+
+When the module has a `.terraform-docs.yml` and the caller passes a `terraformDocs` runner, the runner is called with that file and its markdown becomes the page's body, with `docsFrom: "terraform-docs"`. Without the file, without a runner, or when the runner finds no binary or fails, the page is built from the parse alone, with `docsFrom: "hcl"` and a `note` naming the reason. `terraformCatalogFields(docs, address)` gives the version's `terraform` fields. `terraformCatalogSections()` turns those fields into the version page's tables for `renderCatalogSite`, with a usage block that pins the version. The markdown is shown as preformatted text, so a module's README never writes HTML into the page.
+
+The lexicon also reads the catalog back ([#4599](https://github.com/INTENTIUS/chant/issues/4599)). `moduleConsumers(repo, roots, parser)` in `lexicons/terraform/src/pin/consumers.ts` lists every module call in the given roots from their source files, Terragrunt units included, and never reads a plan, so it runs in a check job. Local calls are left out. Each call names where it sits (root, file and block) and the module it calls, with the pin kept apart from the module's address. `readRegistryCatalog(registry)` fetches `catalog/index.json` with the token the CLIs would send the host. With the edge function's `auth: token` check on, this reader is the way in, and a browser reaches the catalog over the network-private path. `deprecatedPins(consumers, catalog)` gives a warning for each call on a deprecated version and a refusal for each call on a yanked one, with the reason and the version to move to. The registry handler serves `.html`, `.css`, `.js` and `.svg` files with their own content types, so the catalog pages render in a browser.

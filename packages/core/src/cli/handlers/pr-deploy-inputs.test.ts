@@ -1,7 +1,7 @@
 /**
  * #4155: a pull request's approval binds the files a step without a `plan`
  * deploys from. A chart changed after approval, or a function's sources
- * beside a planning step, moves the digest and pr-apply exits 3. A build
+ * beside a planning step, moves the digest and pr-apply exits 4 (moved, #4553). A build
  * whose output differs every time does not.
  */
 
@@ -148,10 +148,10 @@ describe("a Helm chart changed after approval (#4155)", () => {
     expect(await runComponentsPrApply(ctx({ pr: 12 }))).toBe(0);
   });
 
-  test("a file in the chart changed: pr-apply exits 3 and applies nothing", async () => {
+  test("a file in the chart changed: pr-apply exits 4 and applies nothing", async () => {
     await planAndApprove();
     await write("chart/templates/deployment.yaml", "replicas: 20\n");
-    expect(await runComponentsPrApply(ctx({ pr: 12 }))).toBe(3);
+    expect(await runComponentsPrApply(ctx({ pr: 12 }))).toBe(4);
     const report = JSON.parse(await readFile(join(dir, "pr-apply.json"), "utf8"));
     expect(report.status).not.toBe("applied");
   });
@@ -159,10 +159,10 @@ describe("a Helm chart changed after approval (#4155)", () => {
   test("a file added to the chart, or a changed values file, does the same", async () => {
     await planAndApprove();
     await write("chart/templates/service.yaml", "port: 80\n");
-    expect(await runComponentsPrApply(ctx({ pr: 12 }))).toBe(3);
+    expect(await runComponentsPrApply(ctx({ pr: 12 }))).toBe(4);
     await planAndApprove();
     await write("values-prod.yaml", "image: other\n");
-    expect(await runComponentsPrApply(ctx({ pr: 12 }))).toBe(3);
+    expect(await runComponentsPrApply(ctx({ pr: 12 }))).toBe(4);
   });
 });
 
@@ -186,10 +186,10 @@ describe("a function's sources beside a planning step (#4155)", () => {
     expect(JSON.stringify(plan)).toContain("api#inputs");
   });
 
-  test("a changed source moves the digest: pr-apply exits 3", async () => {
+  test("a changed source moves the digest: pr-apply exits 4", async () => {
     await planAndApprove();
     await write("fn/index.js", "export const handler = () => 2;\n");
-    expect(await runComponentsPrApply(ctx({ pr: 12 }))).toBe(3);
+    expect(await runComponentsPrApply(ctx({ pr: 12 }))).toBe(4);
   });
 
   test("an unchanged rebuild whose output differs every run still applies under the approval", async () => {

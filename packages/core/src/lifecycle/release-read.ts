@@ -46,6 +46,8 @@ export function parseReleaseLedger(lines: readonly string[]): { records: Release
         malformed++;
         continue;
       }
+      // #4595: a `releaseVersion` that is not a non-empty string is dropped; the record still reads, listed by digest.
+      if ("releaseVersion" in parsed && (typeof parsed.releaseVersion !== "string" || parsed.releaseVersion.length === 0)) delete (parsed as { releaseVersion?: unknown }).releaseVersion;
       records.push(flagLegacyDigest(parsed, [parsed.digest, parsed.manifestDigest, parsed.inputDigest]));
     } catch {
       malformed++;

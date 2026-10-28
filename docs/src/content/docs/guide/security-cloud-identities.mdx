@@ -13,7 +13,7 @@ import { Aside } from '@astrojs/starlight/components';
 
 The plan job of a [pull-request pipeline](/chant/guide/pull-request-ci/) runs the pull request's code. If it holds the identity the apply uses, a pull request can change the cloud before anyone approves it. `ci.identity.cloud` gives the plan and the apply an identity each, per cloud ([#4296](https://github.com/INTENTIUS/chant/issues/4296)). The plan job trades its OIDC token for the plan identity before the change is checked out. After that no step of the job holds a token or can ask for one.
 
-The three clouds AWS, GCP and Azure are covered on the three forges. It is off until the block is in the declaration, and no security group turns it on.
+The three clouds AWS, GCP and Azure, and Pulumi Cloud's access tokens, are covered on the three forges. It is off until the block is in the declaration, and no security group turns it on.
 
 ## Declare the identities
 
@@ -84,6 +84,31 @@ The deciding job trades for every plan role of the wave's targets, and each grou
 
 The pull-request pipeline applies a member in one job. With `--apply-on-merge` or `--apply-before-merge`, `chant build --pr-loop` refuses a member whose targets apply as more than one role in a cloud (`packages/core/src/cli/handlers/build.ts:156`). Apply such a member through Op waves; its plan and record jobs still trade for every plan role as above. A declaration whose rules set `targets` or `name` needs chant 0.124.45 or newer as its `minReader`.
 
+## Preview and up with separate Pulumi Cloud tokens
+
+A Pulumi program logs in to Pulumi Cloud with an access token. Under `ci.identity.cloud.pulumi` the plan and record jobs trade the job's OIDC token for a preview credential and the apply jobs for an up credential, through Pulumi Cloud's OAuth exchange ([#4549](https://github.com/INTENTIUS/chant/issues/4549)). The pull request's program previews with the preview credential and never sees the up one, and no long-lived Pulumi secret sits in the forge's secrets.
+
+```json
+"ci": {
+  "identity": {
+    "cloud": {
+      "pulumi": {
+        "organization": "acme",
+        "rules": [
+          { "environments": ["prod"], "plan": "team:prod-preview", "apply": "team:prod-deploy" }
+        ]
+      }
+    }
+  }
+}
+```
+
+An identity names the access asked for. `team:<name>` asks for a team's, `user:<login>` for a person's, and `organization` or `organization:admin` for the organization's (`pulumiTokenRequest` in `packages/core/src/ci-identity.ts`). Any other value is refused with `declaration-invalid` at that rule. The OIDC audience defaults to `urn:pulumi:org:<organization>`; set `audience` to change it. `apiUrl` points the trade at a self-hosted Pulumi Cloud, and then the trade sets `PULUMI_BACKEND_URL` to it as well. Rules, targets and the job split work as they do for the clouds.
+
+In Pulumi Cloud, register the forge as an OIDC issuer of the organization and give it two authorization policies: the pull request's subject may get the preview credential, and the protected branch's subject may get the up one. The trade only asks; those policies decide. A declaration that sets the block needs chant 0.124.55 or newer as its `minReader` (`PULUMI_CLOUD_IDENTITY_FLOOR`).
+
+A SQL member on Azure Database for PostgreSQL signs in with an Entra token for the database's own scope, and the ARM token above is for another scope. With `"database": true` on `ci.identity.cloud.azure`, the trade makes a second grant per identity for that scope (`AZURE_DATABASE_SCOPE` in `packages/core/src/ci-identity.ts`) and sets the result as `AZURE_DATABASE_ACCESS_TOKEN`. The sql lexicon's `entra` token source reads that variable before it tries `az`, so the job's image needs no Azure CLI. AWS and GCP need no extra setting, because `rds-iam` signs its token with the traded AWS keys and `cloud-sql-iam` signs in with the traded Google access token. Older chant releases refuse the key, so a declaration that sets `database` also sets `minReader` to chant `0.124.55` or newer (`AZURE_DATABASE_TOKEN_FLOOR`).
+
 ## Which job takes which identity
 
 | Job | Identity | Runs |
@@ -109,6 +134,7 @@ The trade is a script run with `node -e` from `/`, so it reads none of the check
 | AWS | STS `AssumeRoleWithWebIdentity` (`ci-identity.ts:509`) | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_REGION` |
 | GCP | Google's STS token exchange, then IAM `generateAccessToken` for the service account (`ci-identity.ts:517`) | `GOOGLE_OAUTH_ACCESS_TOKEN`, `CLOUDSDK_AUTH_ACCESS_TOKEN` |
 | Azure | Entra's client credentials grant with the token as the client assertion (`ci-identity.ts:526`) | `AZURE_ACCESS_TOKEN`, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and the `ARM_` spellings |
+| Pulumi Cloud | the OAuth exchange at `<apiUrl>/api/oauth/token`, asking for the identity's type and scope | `PULUMI_ACCESS_TOKEN`, and `PULUMI_BACKEND_URL` when `apiUrl` is set |
 
 On GitHub and Forgejo the trade appends the variables to `GITHUB_ENV` and masks each secret in the job's log (`ci-identity.ts:539`). GitLab's script sources a file of `export` lines and then deletes it. The file sits outside the project directory with mode 0600. A value with a space, a newline or anything outside printable ASCII is refused, so a reply cannot add a variable of its own (`ci-identity.ts:493`). The minted token is written nowhere.
 
@@ -131,6 +157,8 @@ The trade only asks. The cloud decides whom to answer, so each identity's trust 
 | Forgejo | the pull request's ref | the target branch's ref, the one claim its token has |
 
 Never trust an apply identity to the pull request's subject.
+
+`chant ci forge-check` reads each identity's live trust and lists every subject it admits beyond its jobs ([chant ci](/chant/cli/ci/#ci-forge-check)). For Pulumi Cloud it reads the organization's OIDC issuers and their policies. The record job plans the merged commit with the plan identity, so the check expects the plan identity's trust to admit the default branch's subject as well as the pull request's.
 
 <Aside type="caution" title="A pull request can edit its own workflow">
 On every forge a pull request from the repository can change the workflow file. A changed plan job could skip the drop, but its token still carries the pull request's subject. The apply identity's trust is what refuses it, so check that trust before you rely on the split.

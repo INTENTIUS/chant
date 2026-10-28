@@ -66,6 +66,7 @@ export {
 
 // The plan shape of a `show -json` plan (#4436), for core's `coveredRound`.
 export { terraformPlanShape, type TerraformPlanShapeOptions } from "./plan-shape";
+export { terraformLockRows, terraformLockRowsFromPart, terraformDefaultLockGrain, terraformLockGrainRefusal } from "./lock-rows";
 
 // Composed runs (#4419, #4438): which roots compose, in what order, and why
 // the others fall back. Off unless `terraform.compose.enabled` is set.
@@ -208,3 +209,5 @@ export {
   type TerraformLiveRead,
   type TerraformPredictOptions,
 } from "./behaviour";
+// terraform, tofu and choudoufu exit statuses on chant's exit-code table (#4553).
+export { terraformExitOf, terraformPlanMoved, type TerraformExitSource } from "./exit-codes";

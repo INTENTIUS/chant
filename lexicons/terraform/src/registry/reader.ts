@@ -1,0 +1,225 @@
+/**
+ * Reading a module registry the way the CLIs do: service discovery, the
+ * versions list, a version's download location, and a tarball's bytes.
+ * Lifted from terragucci's `publish/registry.ts` (18f6431595) for chant#4565.
+ *
+ * `registryLocation` reads the download answer in one of three ways:
+ * `terraform` takes only the `X-Terraform-Get` header (200 or 204), `tofu`
+ * takes the JSON body's `location` on a 200 and the header otherwise, and the
+ * default takes either, header first. A test that wants to know whether
+ * Terraform can install from a registry asks with `reads: "terraform"`.
+ *
+ * Every request to the registry's host carries the token the CLIs would send
+ * it (chant#4563): `TF_TOKEN_<host>`, else the CLI config's or
+ * credentials.tfrc.json's `credentials` block, found by core's
+ * `terraform/credentials` reader. The token goes in the `Authorization`
+ * header and nowhere else; an error names the variable to set, never a value.
+ *
+ * A host with no service discovery of its own, such as a Nexus repository
+ * (chant#4605), is read through `services`: the modules.v1 URL per host, as
+ * a CLI's `host` block gives it, held in memory so no CLI config file is
+ * written. Such a host may be a bare name with no dot, as a `host` block's
+ * label may be.
+ *
+ * With `proxies` (chant#4606), a module whose host a proxy stands for is
+ * read through the proxy: an Artifactory remote repository at
+ * `<proxy host>/<repo>__<ns>/<name>/<system>`, a Nexus proxy or group
+ * repository through its host block's modules.v1 URL. A source with no host
+ * is read at registry.terraform.io, so through the proxy that stands for it.
+ */
+import { gunzipSync } from "node:zlib";
+import { credentialsHost, terraformToken, tokenVariable, type CredentialsOptions } from "@intentius/chant/terraform/credentials";
+import { DISCOVERY, parseRegistrySource, type RegistrySource } from "./address";
+import { DEFAULT_PROXY_UPSTREAM, proxyLabels, proxyRoute, type RegistryProxy } from "./proxies";
+import { DOWNLOAD_HEADER, readVersions } from "./writer";
+
+/** The fetch the reader calls: the global fetch's shape. */
+export type RegistryFetch = (url: string, init?: RequestInit) => Promise<Response>;
+
+const globalFetch: RegistryFetch = (url, init) => fetch(url, init);
+
+export class RegistryError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RegistryError";
+  }
+}
+
+/** How a download answer is read. */
+export type DownloadReader = "terraform" | "tofu" | "either";
+
+export interface RegistryReadOptions {
+  fetch?: RegistryFetch;
+  /** The URL scheme service discovery is fetched over. Default https, as both CLIs use. */
+  scheme?: "https" | "http";
+  /**
+   * The bearer token sent to the registry's host. Default: the one the CLIs
+   * would send (`TF_TOKEN_<host>`, then the credentials files). `false` sends none.
+   */
+  token?: string | false;
+  /** Where the default token lookup reads (a test passes its own env and files). */
+  credentials?: CredentialsOptions;
+  /**
+   * The modules.v1 URL per registry host, read in place of the host's
+   * `/.well-known/terraform.json`, as a CLI's `host "<name>" { services = {...} }`
+   * block does. A host named here is taken as a registry host even without a dot.
+   */
+  services?: Record<string, string>;
+  /**
+   * A whole `Authorization` header value sent on every request to the
+   * registry, in place of the bearer token, such as Nexus's basic
+   * credentials before its bearer form (3.95). Never printed.
+   */
+  authorization?: string;
+  /** Registry proxies in front of upstream hosts; a read of a module at an upstream goes through its proxy. */
+  proxies?: readonly RegistryProxy[];
+}
+
+/** The token a read sends to a host, by the options. */
+export const readToken = (host: string, o: RegistryReadOptions): string | undefined => (o.token === false ? undefined : (o.token ?? terraformToken(host, o.credentials)));
+
+const httpGet = async (fetchFn: RegistryFetch, url: string, token?: string, authorization?: string): Promise<Response> => {
+  const auth = authorization ?? (token ? `Bearer ${token}` : undefined);
+  try {
+    return await fetchFn(url, { method: "GET", redirect: "follow", ...(auth ? { headers: { Authorization: auth } } : {}) });
+  } catch (e) {
+    const cause = (e as { cause?: { message?: string } }).cause?.message;
+    throw new RegistryError(`${url}: ${(e as Error).message}${cause ? ` (${cause})` : ""}`);
+  }
+};
+
+/** The error for a status that is not OK, saying where a token goes when the registry refused one. */
+const answered = (url: string, status: number, host: string, token: string | undefined): RegistryError => {
+  if (status !== 401 && status !== 403) return new RegistryError(`${url} answered ${status}`);
+  const variable = tokenVariable(host);
+  const where = variable ? `${variable} or a credentials "${credentialsHost(host)}" block` : `a credentials "${credentialsHost(host) ?? host}" block in credentials.tfrc.json`;
+  return new RegistryError(token ? `${url} answered ${status}: the registry refused the token for ${host}` : `${url} answered ${status}: the registry wants a token; set ${where}`);
+};
+
+const optionsOf = (o: RegistryFetch | RegistryReadOptions | undefined): RegistryReadOptions => (typeof o === "function" ? { fetch: o } : (o ?? {}));
+
+/** The modules.v1 URL `services` names for a host, matched without case. */
+const serviceFor = (host: string, o: RegistryReadOptions): string | undefined => {
+  if (!o.services) return undefined;
+  const h = host.toLowerCase();
+  for (const [k, v] of Object.entries(o.services)) if (k.toLowerCase() === h) return v;
+  return undefined;
+};
+
+/** A source split by the hosts the options know as well as by the usual host shape. */
+const sourceOf = (source: string, o: RegistryReadOptions) => parseRegistrySource(source, [...Object.keys(o.services ?? {}), ...proxyLabels(o.proxies)]);
+
+/**
+ * Where a read of `source` goes: the source as written, or, when a proxy
+ * stands for its host, the proxy's host and namespace, with the options
+ * carrying the proxy's modules.v1 URL when it has one. A source with no host
+ * is taken at registry.terraform.io only when proxies are given, so a read
+ * without them refuses it as before.
+ */
+function readTarget(source: string, o: RegistryReadOptions): { s: RegistrySource; o: RegistryReadOptions } | undefined {
+  let s = sourceOf(source, o);
+  if (!s && o.proxies?.length) {
+    const base = source.split("?")[0]!.split("//")[0]!;
+    const parts = base.split("/");
+    if (parts.length === 3 && parts.every((p) => /^[0-9A-Za-z][0-9A-Za-z_-]*$/.test(p))) s = { host: DEFAULT_PROXY_UPSTREAM, namespace: parts[0]!, name: parts[1]!, system: parts[2]! };
+  }
+  if (!s) return undefined;
+  const r = proxyRoute(s, o.proxies);
+  if (!r) return { s, o };
+  return { s: { ...s, host: r.host, namespace: r.namespace }, o: r.modules ? { ...o, services: { ...o.services, [r.host]: r.modules } } : o };
+}
+
+/** The modules.v1 base a host's service discovery names, ending in `/`. */
+export async function modulesBase(host: string, options?: RegistryFetch | RegistryReadOptions): Promise<string> {
+  const o = optionsOf(options);
+  const mapped = serviceFor(host, o);
+  if (mapped !== undefined) return mapped.endsWith("/") ? mapped : `${mapped}/`;
+  const disco = `${o.scheme ?? "https"}://${host}/${DISCOVERY}`;
+  const token = readToken(host, o);
+  const res = await httpGet(o.fetch ?? globalFetch, disco, token, o.authorization);
+  if (!res.ok) throw answered(disco, res.status, host, token ?? o.authorization);
+  let base: unknown;
+  try {
+    base = ((await res.json()) as Record<string, unknown>)["modules.v1"];
+  } catch {
+    throw new RegistryError(`${disco} is not JSON`);
+  }
+  if (typeof base !== "string") throw new RegistryError(`${disco} names no modules.v1`);
+  const url = new URL(base, disco).toString();
+  return url.endsWith("/") ? url : `${url}/`;
+}
+
+/** Every version a registry lists for a module; none when it has no versions file. */
+export async function registryVersions(source: string, options?: RegistryFetch | RegistryReadOptions): Promise<string[]> {
+  const t = readTarget(source, optionsOf(options));
+  if (!t) throw new RegistryError(`${source} is not a registry source`);
+  const { s, o } = t;
+  const token = readToken(s.host, o);
+  const url = `${await modulesBase(s.host, { ...o, token: token ?? false })}${s.namespace}/${s.name}/${s.system}/versions`;
+  const res = await httpGet(o.fetch ?? globalFetch, url, token, o.authorization);
+  if (res.status === 404) return [];
+  if (!res.ok) throw answered(url, res.status, s.host, token ?? o.authorization);
+  return readVersions(await res.text());
+}
+
+export interface RegistryLocationOptions extends RegistryReadOptions {
+  /** Which CLI's reading to follow. Default `either`. */
+  reads?: DownloadReader;
+}
+
+/** The location a download answer gives, read as `reads` says, or undefined when it gives none that way. */
+export async function locationFromAnswer(res: Response, reads: DownloadReader = "either"): Promise<string | undefined> {
+  const header = res.headers.get(DOWNLOAD_HEADER) || undefined;
+  if (reads === "terraform") return res.status === 200 || res.status === 204 ? header : undefined;
+  let body: string | undefined;
+  if (res.status === 200) {
+    try {
+      const doc = (await res.json()) as { location?: unknown };
+      if (typeof doc.location === "string" && doc.location) body = doc.location;
+    } catch {
+      // OpenTofu fails on a 200 whose body is not JSON, before it looks at the header.
+      if (reads === "tofu") return undefined;
+    }
+  }
+  return reads === "tofu" ? (body ?? header) : (header ?? body);
+}
+
+/** Where a registry says one version is, resolved against the download URL when it is relative. */
+export async function registryLocation(source: string, version: string, options?: RegistryFetch | RegistryLocationOptions): Promise<string> {
+  const t = readTarget(source, optionsOf(options));
+  if (!t) throw new RegistryError(`${source} is not a registry source`);
+  const s = t.s;
+  const o = t.o as RegistryLocationOptions;
+  const token = readToken(s.host, o);
+  const url = `${await modulesBase(s.host, { ...o, token: token ?? false })}${s.namespace}/${s.name}/${s.system}/${version}/download`;
+  const res = await httpGet(o.fetch ?? globalFetch, url, token, o.authorization);
+  if (res.status === 404) throw new RegistryError(`${s.host}/${s.namespace}/${s.name}/${s.system} has no version ${version}`);
+  if (!res.ok) throw answered(url, res.status, s.host, token ?? o.authorization);
+  const reads = o.reads ?? "either";
+  let location = await locationFromAnswer(res, reads);
+  if (!location) {
+    throw new RegistryError(reads === "terraform" ? `${url} sends no ${DOWNLOAD_HEADER} header, and Terraform reads only the header` : `${url} names no location`);
+  }
+  if (/^(\.{0,2}\/)/.test(location)) location = new URL(location, url).toString();
+  return location;
+}
+
+/**
+ * The module archive a tarball location holds, uncompressed: the bytes a
+ * release's digest is of. The host's token goes along only when the location
+ * has no query string; a signed URL carries its own grant, and a bucket
+ * refuses a request that has both a signature and an `Authorization` header.
+ */
+export async function fetchTarball(location: string, options?: RegistryFetch | RegistryReadOptions): Promise<Buffer> {
+  const o = optionsOf(options);
+  const u = new URL(location);
+  const token = u.search || (u.protocol !== "https:" && u.protocol !== "http:") ? undefined : readToken(u.host, o);
+  const res = await httpGet(o.fetch ?? globalFetch, location, token);
+  if (!res.ok) throw answered(location, res.status, u.host, token);
+  const body = Buffer.from(await res.arrayBuffer());
+  try {
+    return gunzipSync(body);
+  } catch {
+    throw new RegistryError(`${location} is not a gzip archive`);
+  }
+}

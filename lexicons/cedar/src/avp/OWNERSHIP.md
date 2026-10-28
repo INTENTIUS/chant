@@ -98,7 +98,7 @@ this file: a new read path that cannot see the description must not be added to
 
 The reader was an emulator-and-test transport when #1652 landed, because its requests
 were unsigned and real AWS rejects those. SigV4 now exists in the aws lexicon
-(`lexicons/aws/src/api/sigv4.ts`, chant #1686) and `src/avp/client.ts` uses it — through
+(`lexicons/aws/src/api/signing.ts` over core's signer, chant #1686 and #4583) and `src/avp/client.ts` uses it — through
 a function on `AvpClientOptions`, not through an import.
 
 The reason is the same one that kept `src/avp/embed.ts` free of the aws lexicon: a

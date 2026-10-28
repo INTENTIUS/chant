@@ -1,0 +1,15 @@
+[
+  {
+    "component": "vpc",
+    "version": "1.2.0",
+    "consumers": [
+      { "root": "units/network", "file": "units/network/terragrunt.hcl", "address": "terragrunt.terraform" },
+      { "root": "live/prod", "file": "live/prod/main.tf", "address": "module.vpc" }
+    ]
+  },
+  {
+    "component": "cache",
+    "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "consumers": [{ "root": "services/api", "file": "services/api/cache.tf", "address": "module.cache" }]
+  }
+]

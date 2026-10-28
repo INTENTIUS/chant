@@ -352,6 +352,8 @@ export function planLifecycleGc(input: GcInput): LifecycleGcPlan {
       if (new Date(p.expiresAt).getTime() <= nowMs) continue;
       const detail = `${p.op}/${p.gate}${p.environment ? ` in ${p.environment}` : ""}`;
       if (p.planDigest) keepFile(m.changeSets.get(digestKey(p.planDigest)), { code: "pending-gate", detail });
+      // #4551: an op wave's fact cites its change set apart from its set digest.
+      if (p.changeSet && p.changeSet !== p.planDigest) keepFile(m.changeSets.get(digestKey(p.changeSet)), { code: "pending-gate", detail });
       if (p.releaseDigest) keepFile(m.releases.get(digestKey(p.releaseDigest)), { code: "pending-gate", detail });
     }
 

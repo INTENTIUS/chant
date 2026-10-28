@@ -37,6 +37,16 @@
             "waves": 4
           }
         },
+        "targets": {
+          "b/db": {
+            "startedAt": 0,
+            "durationMs": 0
+          },
+          "c/app": {
+            "startedAt": 0,
+            "durationMs": 0
+          }
+        },
         "rest": [
           {
             "wave": 2,
@@ -87,7 +97,8 @@
       ],
       "env": {
         "CHANT_HOOKS": ".chant/op-waves/tf-apply/wave-2/hooks.json",
-        "CHANT_APPLY_OUTCOME": ".chant/op-waves/tf-apply/wave-2/hooks-outcome.json"
+        "CHANT_APPLY_OUTCOME": ".chant/op-waves/tf-apply/wave-2/hooks-outcome.json",
+        "CHANT_APPLY_RUNS_RESULT": ".chant/op-waves/tf-apply/wave-2/hooks-runs-result.json"
       },
       "read": {
         "CHANT_HOOKS": {
@@ -104,7 +115,8 @@
             {
               "target": "b/db",
               "op": "tf-apply",
-              "plan": ".chant/op-waves/tf-apply/wave-2/b_db.plan.json"
+              "plan": ".chant/op-waves/tf-apply/wave-2/b_db.plan.json",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
             }
           ],
           "runsFile": ".chant/op-waves/tf-apply/wave-2/runs.json",
@@ -152,7 +164,8 @@
       ],
       "env": {
         "CHANT_HOOKS": ".chant/op-waves/tf-apply/wave-3/hooks.json",
-        "CHANT_APPLY_OUTCOME": ".chant/op-waves/tf-apply/wave-3/hooks-outcome.json"
+        "CHANT_APPLY_OUTCOME": ".chant/op-waves/tf-apply/wave-3/hooks-outcome.json",
+        "CHANT_APPLY_RUNS_RESULT": ".chant/op-waves/tf-apply/wave-3/hooks-runs-result.json"
       },
       "read": {
         "CHANT_HOOKS": {
@@ -169,7 +182,8 @@
             {
               "target": "c/app",
               "op": "tf-apply",
-              "plan": ".chant/op-waves/tf-apply/wave-3/c_app.plan.json"
+              "plan": ".chant/op-waves/tf-apply/wave-3/c_app.plan.json",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
             }
           ],
           "runsFile": ".chant/op-waves/tf-apply/wave-3/runs.json",
@@ -230,7 +244,8 @@
         {
           "target": "b/db",
           "op": "tf-apply",
-          "plan": ".chant/op-waves/tf-apply/wave-2/b_db.plan.json"
+          "plan": ".chant/op-waves/tf-apply/wave-2/b_db.plan.json",
+          "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
         }
       ],
       "runsFile": ".chant/op-waves/tf-apply/wave-2/runs.json",
@@ -298,7 +313,8 @@
         {
           "target": "c/app",
           "op": "tf-apply",
-          "plan": ".chant/op-waves/tf-apply/wave-3/c_app.plan.json"
+          "plan": ".chant/op-waves/tf-apply/wave-3/c_app.plan.json",
+          "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
         }
       ],
       "runsFile": ".chant/op-waves/tf-apply/wave-3/runs.json",

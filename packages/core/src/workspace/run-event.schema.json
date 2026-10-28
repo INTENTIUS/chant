@@ -252,7 +252,24 @@
             },
             "durationMs": { "type": ["integer", "null"], "minimum": 0, "description": "How long it ran, or null when the writer did not time it." },
             "error": { "type": "string", "description": "With status failed, what failed." },
-            "message": { "type": "string", "description": "Why a step skipped, gated or waited, for a person." }
+            "message": { "type": "string", "description": "Why a step skipped, gated or waited, for a person." },
+            "resources": {
+              "type": "array",
+              "description": "Added within contract version 1 by #4615, written by chant 0.124.55 and newer. What the step did to each resource, when its engine reported it, such as plunge's per-resource timings on a pulumi-up step. A reader that does not know it ignores it.",
+              "items": {
+                "type": "object",
+                "required": ["resource", "status", "durationMs"],
+                "properties": {
+                  "resource": { "type": "string", "minLength": 1, "description": "The engine's id for it: a URN, an address." },
+                  "type": { "type": "string" },
+                  "name": { "type": "string" },
+                  "status": { "enum": ["ok", "failed"] },
+                  "startedAt": { "type": "string" },
+                  "durationMs": { "type": ["number", "null"], "minimum": 0 },
+                  "calls": { "type": "integer", "minimum": 0 }
+                }
+              }
+            }
           }
         }
       ]

@@ -22,6 +22,7 @@ export async function runInit(ctx: CommandContext): Promise<number> {
     skill: args.skill,
     force: args.force,
     skipMcp: args.skipMcp,
+    mcpReadOnly: args.mcpReadOnly,
     skipInstall: true,
   });
   await printInitResult(result, { skipInstall: false, cwd: args.path });

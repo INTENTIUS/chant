@@ -9,3 +9,8 @@ It was not recorded from a run.
 
 `drift-record.test.ts` also reads the recorded fixtures one directory up: `live-plan.json`,
 `live-ls.json`, `show-state.json`, `show-plan.json` and `live-plan-depth/`.
+
+`../drift-rows/` holds two hand-written plans for `drift-rows.test.ts` (#4580), also not recorded
+from a run: `refresh-plan.json`, a stock root's refresh-only plan whose `resource_drift` has an update,
+a delete, a create and a data row, and `live-root-plan.json`, a full plan of a root under live resource
+markers with a create, a delete, an update, both replacement orders, a no-op and two data rows.

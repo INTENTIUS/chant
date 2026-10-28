@@ -158,11 +158,24 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
   // has applied since #2126 (`../handlers/run.ts`'s `runOpApprove`). Reading
   // only `--actor` here meant every README that teaches `--approver you`
   // recorded the shell user instead (#2192).
+  // #4575: a person at a terminal sees the plan and types the target's name
+  // first, and the approval binds the digest they were shown. --yes, --json,
+  // CI and no terminal record as before.
+  let plan = ctx.args.plan;
+  const confirm = await import("./approve-confirm");
+  if (await confirm.interactiveApproval(ctx.args)) {
+    const answered = await confirm.confirmApproval(opName, gate, {
+      ...(plan !== undefined ? { plan } : {}),
+      ...(ctx.args.env !== undefined ? { environment: ctx.args.env } : {}),
+    });
+    if (answered.status === "refused") return answered.code;
+    if (answered.status === "confirmed") plan = answered.plan;
+  }
   const outcome = await recordGateApproval(opName, gate, {
     actor: ctx.args.approver ?? ctx.args.actor,
     note: ctx.args.note,
     url: ctx.args.url,
-    plan: ctx.args.plan,
+    plan,
     ...(ctx.args.env !== undefined ? { environment: ctx.args.env } : {}),
     allowSameOrigin: ctx.args.allowSameOrigin,
     ...(ctx.args.roles ? { roles: ctx.args.roles } : {}),
@@ -449,6 +462,9 @@ export async function recordGateApproval(
   // approval of another plan names none, and no release gate counts it.
   const releaseDigest =
     standing?.releaseDigest !== undefined && samePlanDigest(planDigest, standing.planDigest) ? standing.releaseDigest : undefined;
+  // #4551: and the change set the fact cites, so the approval names the plans it was asked for.
+  const changeSet =
+    standing?.changeSet !== undefined && samePlanDigest(planDigest, standing.planDigest) ? standing.changeSet : undefined;
   // #4033 (ws-105): a release gate whose release was cut from a revoked
   // commit is superseded. Its promote refuses the release, so an approval of
   // it would count for nothing; refuse it here, whatever plan is named.
@@ -671,6 +687,7 @@ export async function recordGateApproval(
     ...(checkpointDigest !== undefined ? { checkpointDigest } : {}),
     ...(environment !== undefined ? { environment } : {}),
     ...(releaseDigest !== undefined ? { releaseDigest } : {}),
+    ...(changeSet !== undefined ? { changeSet } : {}),
     // #4020: the commit and run the gate waited on, off the fact this approves.
     ...(standing?.gitSha ? { gitSha: standing.gitSha } : {}),
     ...(standing?.runId ? { runId: standing.runId } : {}),

@@ -13,9 +13,13 @@
  */
 
 import type { PlanShape } from "./covered-round";
+import { CHANT_EXIT } from "../exit-codes";
 import type { ReleaseIdentity } from "../telemetry-attribution";
 import type { ChangeSetPart } from "../change-set";
 import type { DeployAdoption } from "./adoption";
+import type { LockGrain, LockRow } from "../lifecycle/lock-rows";
+import type { RowLeasePort } from "./row-lease";
+import type { CapabilityTraceFacts } from "../otlp";
 
 /**
  * Ambient information a capability's `run`/`rollback` receives, independent of
@@ -91,6 +95,30 @@ export interface DeployContext {
    * Absent: a plain deploy. See ./adoption.ts.
    */
   adoption?: DeployAdoption;
+  /**
+   * The member's `ci.lockGrain` (#4552), read from the declaration at base
+   * by the caller: the member's own, else the workspace's. Absent when
+   * neither sets one, and then the capability's `defaultLockGrain` holds. A
+   * step input's own grain (`pulumi-up`'s `lockGrain`) wins over it.
+   */
+  lockGrain?: LockGrain;
+  /**
+   * The commit the caller reads policy at (#4613): the base a pull request
+   * or an op wave is measured from. A step that runs a policy engine of its
+   * own, such as `pulumi-up`'s CrossGuard packs, reads the packs and
+   * `ci.policy.packs` at this commit (`../policy-packs.ts`), so a change
+   * cannot loosen what judges it. Absent outside those jobs: the step reads
+   * its packs where they stand.
+   */
+  policyBase?: string;
+  /**
+   * The run's row lease (#4594), set by an apply path that plans inside its
+   * steps (`run --components`, `components fan-out`, a promote). The driver
+   * takes it around a step on the resource grain (./row-lease.ts); a
+   * capability never calls it. Absent where the caller leases the rows its
+   * plan knows (pr-apply, op waves) or takes no lease.
+   */
+  rowLease?: RowLeasePort;
 }
 
 /**
@@ -136,6 +164,22 @@ export interface CapabilityPlan {
    * approval covers it. Absent, core derives the shape from `changeSet`.
    */
   shape?: PlanShape;
+  /**
+   * The engine's own reasons the plan is destructive (#4569), sorted, when it
+   * classes more as destructive than a delete or replace in the change set
+   * (a Postgres table rewrite, a revoke, a ClickHouse mutation). An op wave
+   * counts a plan that names any as destructive, which `on-destructive`
+   * waits on. Absent or empty: the change set alone decides.
+   */
+  destructive?: string[];
+  /**
+   * Where this member's copy lives in a pull request's environment (#4609),
+   * as the capability says: `pulumi-up` answers `<engine>:<dir>#<stack>` for
+   * the review stack `pr-<n>` it planned. `pr-env up` keeps it on the
+   * environment's record under `locations`, where the lexicon's teardown
+   * reads it back. Absent outside a pull request's environment.
+   */
+  location?: string;
 }
 
 /**
@@ -191,6 +235,25 @@ export interface Capability<In = unknown, Out = unknown> {
    * is covered by its component's composition digest instead.
    */
   plan?(ctx: DeployContext, input: In): Promise<CapabilityPlan>;
+  /**
+   * Optional (#4552): the lock grain a member of this kind takes when
+   * `ci.lockGrain` sets none. `plan`, when given, is the member's plan. Absent:
+   * `target`. The terraform lexicon answers `resource` for choudoufu and
+   * `target` for Terraform, tofu and Terragrunt; the pulumi lexicon
+   * `resource` for plunge and `target` for stock Pulumi.
+   */
+  defaultLockGrain?(input: In, plan?: CapabilityPlan): LockGrain | Promise<LockGrain>;
+  /**
+   * Optional (#4552): why this member cannot take `grain`, or undefined when
+   * it can. A refusal names the engine, and stops the plan.
+   */
+  lockGrainRefusal?(input: In, grain: LockGrain, plan?: CapabilityPlan): string | undefined | Promise<string | undefined>;
+  /**
+   * Optional (#4552): the rows an apply of `plan` holds on the resource
+   * grain, one per changed resource, keyed as the lexicon keys them (see
+   * ../lifecycle/lock-rows.ts). Absent: the resource grain is refused.
+   */
+  lockRows?(input: In, plan: CapabilityPlan): LockRow[] | Promise<LockRow[]>;
   /**
    * Optional: the outputs `run` exposed when it last ran, read without
    * changing anything (#3183). A pull request's plan reads them for each
@@ -257,6 +320,28 @@ export interface Capability<In = unknown, Out = unknown> {
    */
   declaredReads?(ctx: DeclaredReadsContext, members: readonly DeclaredReadMember[]): Promise<DeclaredRead[]> | DeclaredRead[];
   /**
+   * Optional (#4542): the local files a step deploys from when its input
+   * names them indirectly, as `terraform-apply` names a root by key. A
+   * release cut records them for the step's component, with their paths
+   * from the member's directory kept, and a promote or rollback under that
+   * release writes them under `.chant/release-templates/<digest>/` and sets
+   * the step's {@link ReleaseInputs.field} to the recorded copy of
+   * {@link ReleaseInputs.dir}, so the step plans the release's files. Null
+   * when the step deploys nothing local; {@link ReleaseInputsUnbound} when
+   * its files can't be deployed from a copy, which the cut prints.
+   */
+  releaseInputs?(input: In, ctx: ReleaseInputsContext): Promise<ReleaseInputs | ReleaseInputsUnbound | null> | ReleaseInputs | ReleaseInputsUnbound | null;
+  /**
+   * Optional (#4555): what this capability knows about one `run`, for the
+   * step's span and its op-wave run record. Engine facts go in `attributes`
+   * (the root or stack, the binary, resource counts), and the pieces the
+   * engine timed, such as each resource's provider call, in `spans`. Core
+   * writes every key under the CI product's prefix. Called after `run`
+   * returned (`output`) or threw (`error`); a throw here, or undefined,
+   * leaves the step with core's own facts.
+   */
+  traceFacts?(input: In, outcome: { output: Out } | { error: unknown }): Promise<CapabilityTraceFacts | undefined> | CapabilityTraceFacts | undefined;
+  /**
    * Optional (#4435, ws-107): plan `members` as one, in one call. Declared
    * together with `runGroup`; a capability with only one of the two never
    * gets a group. Throwing makes every member plan-failed.
@@ -315,6 +400,27 @@ export interface ReportedGroupRead {
    * output it names.
    */
   output?: string;
+}
+
+/** What `releaseInputs` is asked with (#4542). */
+export interface ReleaseInputsContext {
+  /** The member's directory, which the answer's paths are relative to. */
+  memberDir: string;
+}
+
+/** The files a step deploys from (#4542), each relative to the member's directory. */
+export interface ReleaseInputs {
+  /** The step field a promote under a release sets to the recorded copy of {@link dir}. */
+  field: string;
+  /** The directory the step runs in. One of {@link paths}. */
+  dir: string;
+  /** Every directory and file the step reads, {@link dir} included. */
+  paths: string[];
+}
+
+/** A step whose files a release can't deploy from a copy (#4542), and why. */
+export interface ReleaseInputsUnbound {
+  unbound: string;
 }
 
 /** What `declaredReads` is asked with (#4466). */
@@ -485,24 +591,32 @@ export type CapabilityOutput<C> = C extends Capability<unknown, infer Out> ? Out
 
 /**
  * The exit code of a command whose capability step refused a plan that moved
- * since it was approved: 3, the code `pr-apply` gives a moved digest and a
- * run gives a gate (#3997).
+ * since it was approved: `CHANT_EXIT.moved`, 4, the code `pr-apply` gives a
+ * moved digest (#3997, #4553). Before #4553 it was 3, a gate's code.
  */
-export const PLAN_MOVED_EXIT_CODE = 3;
+export const PLAN_MOVED_EXIT_CODE = CHANT_EXIT.moved;
+
+/**
+ * The moved-plan code before #4553. A lexicon built against an older core
+ * may still set it on the error it throws for a moved plan; read for one
+ * release, then dropped.
+ */
+const LEGACY_PLAN_MOVED_EXIT_CODE = 3;
 
 /**
  * Whether `err` is a `run`'s refusal to apply a plan from
  * `DeployContext.plans` because the target moved since it was planned
  * (#3997). The mark is a `planMoved: true` property, not a class, so a
- * lexicon built against an older core can set it. An `exitCode` of
- * {@link PLAN_MOVED_EXIT_CODE} on the error is the same mark. Any other
+ * lexicon built against an older core can set it. An `exitCode` of 3 on
+ * the error, the moved code before #4553, is the same mark for one more
+ * release; a lexicon sets `planMoved` and core picks the number. Any other
  * `exitCode` is ignored: a failed step exits 1, so a capability can't pick
  * the process's exit code.
  */
 export function isPlanMovedError(err: unknown): boolean {
   if (typeof err !== "object" || err === null) return false;
   const e = err as { planMoved?: unknown; exitCode?: unknown };
-  return e.planMoved === true || e.exitCode === PLAN_MOVED_EXIT_CODE;
+  return e.planMoved === true || e.exitCode === LEGACY_PLAN_MOVED_EXIT_CODE;
 }
 
 /**

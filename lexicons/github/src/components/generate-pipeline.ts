@@ -63,7 +63,7 @@ import { CI_IMAGE, ciJobName, dirnameOf, fillCommand, GITHUB_JOB_TOKEN, GITHUB_R
 import { CHECKOUT_TOKEN_ENV, checkoutScript, dropForgeTokens, handoverOutputs, handoverTrap, takeOverScript } from "@intentius/chant/ci-handover";
 import { OIDC_REQUEST_VARS, TRADE_SPEC_ENV, tradeLine, type CloudTradeSpec } from "@intentius/chant/ci-identity";
 import {
-  APPLY_COMMENT,
+  prApplyComment,
   GREEN_TAG_PATTERN,
   GREEN_TICK_WORKFLOW,
   PR_APPLY_RECORD,
@@ -80,6 +80,10 @@ import {
   PR_UNLOCK_JOB,
   PR_UNLOCK_COMMAND,
   prLockCommand,
+  prCommentLockJobs,
+  prCommentPreviewJob,
+  PREVIEW_REF_ENV,
+  PREVIEW_HEAD_OUTPUT,
   prLoopWaveJobs,
   prLoopWithWaves,
   prEnvJobs,
@@ -87,7 +91,10 @@ import {
   PR_ENV_SWEEP_CRON,
   PR_ENV_POST_JOB,
 } from "@intentius/chant/components/pr-pipeline";
+import { forgejoRepoLockLines, REPO_APPLY_GROUP } from "@intentius/chant/components/repo-lock";
 import { memberRepoPath } from "@intentius/chant/lexicon";
+import { productStatusContext, resolveProductWords } from "@intentius/chant/ci-product-words";
+import { controlDispatchJob, controlNoteCheckout } from "@intentius/chant/control/dispatch";
 import type {
   ComponentPipelineJob as GeneratedJob,
   ComponentPipelineOptions as GenerateGithubOptions,
@@ -137,6 +144,8 @@ export interface GithubPipelineDoc {
 
 /** The plan job's last step, whose outputs carry its report to the plan-note job (#4295). */
 const PLAN_STEP_ID = "plan";
+/** The comment preview's checkout step (#4620), whose output names the head it checked out. */
+const PREVIEW_HEAD_STEP_ID = "head";
 
 /** The output a gated apply wave hands the green commit it applies through, and the step that sets it (#4221). */
 const WAVE_GREEN_OUTPUT = "green-sha";
@@ -292,10 +301,12 @@ function prLoopGithubDoc(
   });
   const withIdToken = (permissions: Record<string, string>): Record<string, string> => (identity ? { ...permissions, "id-token": "write" } : permissions);
   const reportName = (job: typeof plan) => `chant-pr-${job.wave ? prApplyWaveJobName(job.wave) : job.jobName}`;
+  // #4552: on the repo grain a Forgejo apply takes the lock tag in its own step, before the command, since the runner does not queue on a concurrency group.
+  const repoLock = (job: typeof plan): string[] => (loop.lockGrain === "repo" && loop.forge === "forgejo" && job.jobName !== "record" ? forgejoRepoLockLines() : []);
   const steps = (job: typeof plan, name: string): Array<Record<string, unknown>> => [
     ...(identity ? [tradeStep(job.jobName === "record" ? identity.plan : identity.apply, job.jobName === "record" ? "plan" : "apply")] : []),
     checkoutStep(true),
-    ...runSteps(prLoopSetup(image)),
+    ...runSteps(prLoopSetup(image, loop.engineSetup)),
     ...runSteps(beforeScript),
     ...(job.build ? [{ name: "Build the templates", run: job.build[0] }, { name: "Lint the project", run: job.build[1] }] : []),
     ...(job.jobName === "apply" ? [restoreRecord(job.wave)] : []),
@@ -307,9 +318,9 @@ function prLoopGithubDoc(
           name,
           id: WAVE_STEP_ID,
           env: { ...job.run.env, ...(job.wave > 1 ? { GREEN_SHA: `\${{ needs.${prApplyWaveJobName(job.wave - 1)}.outputs.${WAVE_GREEN_OUTPUT} }}` } : {}) },
-          run: [...(job.checkout ?? []), `echo "${WAVE_GREEN_OUTPUT}=$GREEN_SHA" >> "$GITHUB_OUTPUT"`, ...(job.setup ?? []), job.run.command].join("\n"),
+          run: [...(job.checkout ?? []), `echo "${WAVE_GREEN_OUTPUT}=$GREEN_SHA" >> "$GITHUB_OUTPUT"`, ...(job.setup ?? []), ...repoLock(job), job.run.command].join("\n"),
         }
-      : { name, env: job.run.env, run: [...(job.checkout ?? []), ...(job.setup ?? []), job.run.command].join("\n") },
+      : { name, env: job.run.env, run: [...(job.checkout ?? []), ...(job.setup ?? []), ...repoLock(job), job.run.command].join("\n") },
     ...runSteps(extraScript),
     ...(job.jobName === "apply" ? [saveRecord(job.wave)] : []),
     {
@@ -328,7 +339,7 @@ function prLoopGithubDoc(
     "github.event_name == 'issue_comment'",
     // Forgejo's payload says so with is_pull (terragucci comment-apply.ts:129 at e6cb431).
     forgejo ? "(github.event.issue.pull_request || github.event.is_pull)" : "github.event.issue.pull_request",
-    `startsWith(github.event.comment.body, '${APPLY_COMMENT}')`,
+    `startsWith(github.event.comment.body, '${prApplyComment(loop)}')`,
     ...(forgejo ? [] : ["contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.comment.author_association)"]),
   ].join(" && ");
   const applyJob = (job: typeof plan, needs: string[], name: string) => ({
@@ -337,7 +348,8 @@ function prLoopGithubDoc(
     "runs-on": GITHUB_RUNNER,
     ...(needs.length > 0 ? { needs } : {}),
     container: image,
-    concurrency: concurrency(prApplyGroup(env, member?.name)),
+    // #4552: on the repo grain every apply of the repository shares one group.
+    concurrency: concurrency(loop.lockGrain === "repo" ? REPO_APPLY_GROUP : prApplyGroup(env, member?.name)),
     permissions: withIdToken({ contents: "write", "pull-requests": "write", statuses: "write" }),
     ...(job.wave ? { outputs: { [WAVE_GREEN_OUTPUT]: `\${{ steps.${WAVE_STEP_ID}.outputs.${WAVE_GREEN_OUTPUT} }}` } } : {}),
     steps: steps(job, name),
@@ -370,7 +382,7 @@ function prLoopGithubDoc(
       env: { [CHECKOUT_TOKEN_ENV]: GITHUB_JOB_TOKEN },
       run: checkoutScript(true, true),
     },
-    ...[...prLoopSetup(image), ...beforeScript].map((line) => headStep(line)),
+    ...[...prLoopSetup(image, loop.engineSetup), ...beforeScript].map((line) => headStep(line)),
     ...(plan.build ? [headStep(plan.build[0]!, "Build the templates"), headStep(plan.build[1]!, "Lint the project")] : []),
     // The job's last step: a step after it would start beside whatever the change's code left running.
     {
@@ -380,14 +392,40 @@ function prLoopGithubDoc(
       run: [drop, ...handoverTrap(PR_LOOP_REPORT_DIR, forgeName), ...(plan.checkout ?? []), ...(plan.setup ?? []), plan.run.command, ...extraScript].join("\n"),
     },
   ];
-  const post = prLoopPostJob(forgeName, env, member?.name);
+  // #4568: once the last apply on merge succeeded, one job tells the control repo this member applied.
+  const lastGreen = loop.control && !loop.applyBeforeMerge && greenJobs.length > 0 ? greenJobs[greenJobs.length - 1]![0] : undefined;
+  const controlJobs: Array<[string, Record<string, unknown>]> = [];
+  if (loop.control && lastGreen) {
+    // A wave job hands on the commit it applied; a single apply job applies the green commit its trigger names.
+    const sha = loop.waveGate ? `\${{ needs.${lastGreen}.outputs.${WAVE_GREEN_OUTPUT} }}` : forgejo ? "${{ github.sha }}" : "${{ github.event.workflow_run.head_sha || github.sha }}";
+    const dispatch = controlDispatchJob(forgeName, loop.control.target, sha, {
+      ...(loop.words ? { words: loop.words } : {}),
+      ...(loop.control.sentCheck ? { sentCheck: loop.control.sentCheck } : {}),
+      ...(loop.control.markSent ? { markSent: loop.control.markSent } : {}),
+    });
+    controlJobs.push([
+      dispatch.name,
+      {
+        needs: [lastGreen],
+        if: `success() && (${onGreen})`,
+        "runs-on": GITHUB_RUNNER,
+        container: image,
+        permissions: loop.control.markSent ? { contents: "read", statuses: "write" } : { contents: "read" },
+        steps: [{ name: dispatch.stepName, ...(rooted ? {} : { "working-directory": "." }), env: { ...dispatch.env, ...(loop.control.sentCheck || loop.control.markSent ? { GITHUB_TOKEN: GITHUB_JOB_TOKEN } : {}) }, run: dispatch.script }],
+      },
+    ]);
+  }
+  const post = prLoopPostJob(forgeName, env, member?.name, loop.words ? resolveProductWords(loop.words) : undefined);
+  // #4619: with a control repo named, the note job reads its chant/lifecycle, read-only, so pr-post marks the cross-stack edges.
+  const controlRead = loop.control ? controlNoteCheckout(forgeName, loop.control.target, loop.words ?? {}) : undefined;
   const noteSteps: Array<Record<string, unknown>> = [
     // The target branch's commit: the chant this job runs is the target branch's, and none of the change's code is here.
     { name: "Check out the target branch's commit", uses: CHECKOUT, with: { ref: "${{ github.event.pull_request.base.sha }}" } },
     ...runSteps(beforeScript),
     { name: "Take the plan report from the plan job", run: takeOverScript("plan", PR_LOOP_REPORT_DIR, forgeName) },
     { name: "Keep the plan report", if: "always()", uses: UPLOAD_ARTIFACT, with: { name: reportName(plan), path: reportPath, "if-no-files-found": "ignore", "include-hidden-files": true } },
-    { name: "Post the plan note and chant/plan", if: "always()", env: post.env, run: post.command },
+    ...(controlRead ? [{ name: controlRead.stepName, if: "always()", env: controlRead.env, run: controlRead.script }] : []),
+    { name: `Post the plan note and ${productStatusContext(resolveProductWords(loop.words), "plan")}`, if: "always()", env: post.env, run: post.command },
   ];
   // #4298: with a pull request environment the pull_request trigger fires on close too, and the plan skips that event.
   const prEnv = loop.prEnvironment ? prEnvGithubJobs(loop.forge ?? "github", image, beforeScript, extraScript, loop, member) : undefined;
@@ -428,6 +466,82 @@ function prLoopGithubDoc(
         },
       }
     : {};
+  // #4588: `/<product> lock` and `/<product> unlock` comments, at the target branch's commit, so none of the change's code runs.
+  const commentLocks = prCommentLockJobs(forgeName, loop);
+  const commentLockJobs: Record<string, unknown> = Object.fromEntries(
+    commentLocks.map((job) => [
+      job.jobName,
+      {
+        if: [
+          "github.event_name == 'issue_comment'",
+          forgejo ? "(github.event.issue.pull_request || github.event.is_pull)" : "github.event.issue.pull_request",
+          `startsWith(github.event.comment.body, '${job.comment}')`,
+          ...(forgejo ? [] : ["contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.comment.author_association)"]),
+        ].join(" && "),
+        "runs-on": GITHUB_RUNNER,
+        container: image,
+        permissions: { contents: "write", "pull-requests": "read", statuses: "write" },
+        steps: [
+          { name: "Check out the target branch's commit", uses: CHECKOUT, with: { "fetch-depth": 0 } },
+          ...runSteps(beforeScript),
+          { name: job.command === "lock" ? "Keep the locks the pull request's plan took" : "Release the pull request's locks", env: job.env, run: job.line },
+        ],
+      },
+    ]),
+  );
+  // #4620: `/<product> <plan word>` plans the pull request's head again with a read token; the job after it posts the note.
+  const preview = prCommentPreviewJob(forgeName, env, loop, member?.name);
+  const previewJobs: Record<string, unknown> = preview
+    ? {
+        [preview.jobName]: {
+          if: [
+            "github.event_name == 'issue_comment'",
+            forgejo ? "(github.event.issue.pull_request || github.event.is_pull)" : "github.event.issue.pull_request",
+            `startsWith(github.event.comment.body, '${preview.comment}')`,
+            ...(forgejo ? [] : ["contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.comment.author_association)"]),
+          ].join(" && "),
+          "runs-on": GITHUB_RUNNER,
+          container: image,
+          permissions: withIdToken({ contents: "read" }),
+          outputs: { ...handoverOutputs(PLAN_STEP_ID, forgeName), [PREVIEW_HEAD_OUTPUT]: `\${{ steps.${PREVIEW_HEAD_STEP_ID}.outputs.${PREVIEW_HEAD_OUTPUT} }}` },
+          steps: [
+            ...(identity ? [tradeStep(identity.plan, "plan")] : []),
+            // The head is read here, before any of the change's code runs, so the post job names the commit this job planned.
+            {
+              name: "Check out the pull request's head",
+              id: PREVIEW_HEAD_STEP_ID,
+              ...(rooted ? {} : { "working-directory": "." }),
+              env: { [CHECKOUT_TOKEN_ENV]: GITHUB_JOB_TOKEN, [PREVIEW_REF_ENV]: "ref" in preview.head ? preview.head.ref : "" },
+              run: [checkoutScript(true, true, { refEnv: PREVIEW_REF_ENV }), `echo "${PREVIEW_HEAD_OUTPUT}=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"`].join("\n"),
+            },
+            ...[...prLoopSetup(image, loop.engineSetup), ...beforeScript].map((line) => headStep(line)),
+            ...(preview.plan.build ? [headStep(preview.plan.build[0]!, "Build the templates"), headStep(preview.plan.build[1]!, "Lint the project")] : []),
+            {
+              name: "Preview the members this pull request reaches",
+              id: PLAN_STEP_ID,
+              env: preview.plan.run.env,
+              run: [drop, ...handoverTrap(PR_LOOP_REPORT_DIR, forgeName), preview.base, ...(preview.plan.setup ?? []), preview.plan.run.command, ...extraScript].join("\n"),
+            },
+          ],
+        },
+        [preview.noteJobName]: {
+          needs: [preview.jobName],
+          if: `always() && github.event_name == 'issue_comment' && (needs.${preview.jobName}.result == 'success' || needs.${preview.jobName}.result == 'failure')`,
+          "runs-on": GITHUB_RUNNER,
+          container: image,
+          permissions: { actions: "read", contents: "read", "pull-requests": "write", statuses: "write" },
+          steps: [
+            // The target branch's commit, which an issue_comment run checks out: none of the change's code is here.
+            { name: "Check out the target branch's commit", uses: CHECKOUT },
+            ...runSteps(beforeScript),
+            { name: "Take the preview report from the preview job", run: takeOverScript(preview.jobName, PR_LOOP_REPORT_DIR, forgeName) },
+            { name: "Keep the preview report", if: "always()", uses: UPLOAD_ARTIFACT, with: { name: `chant-pr-${preview.jobName}`, path: reportPath, "if-no-files-found": "ignore", "include-hidden-files": true } },
+            ...(controlRead ? [{ name: controlRead.stepName, if: "always()", env: controlRead.env, run: controlRead.script }] : []),
+            { name: `Post the preview note and ${productStatusContext(resolveProductWords(loop.words), "plan")}`, if: "always()", env: preview.post.env, run: preview.post.command },
+          ],
+        },
+      }
+    : {};
   const jobsDoc: Record<string, unknown> = {
     plan: {
       if: closes ? "github.event_name == 'pull_request' && github.event.action != 'closed'" : "github.event_name == 'pull_request'",
@@ -447,7 +561,10 @@ function prLoopGithubDoc(
       steps: noteSteps,
     },
     ...lockJobs,
+    ...commentLockJobs,
+    ...previewJobs,
     ...Object.fromEntries(applyJobs),
+    ...Object.fromEntries(controlJobs),
     ...(prEnv ? prEnv.jobs : {}),
   };
   const applyNames = applyJobs.map(([name]) => name);
@@ -461,8 +578,8 @@ function prLoopGithubDoc(
     on.pull_request = { branches: [branch], types: ["opened", "synchronize", "reopened", "closed"] };
     on.schedule = [{ cron: PR_ENV_SWEEP_CRON }];
   }
-  // #4301: a /chant apply comment starts the apply before merge.
-  if (loop.applyBeforeMerge) on.issue_comment = { types: ["created"] };
+  // #4301: a /chant apply comment starts the apply before merge. #4588: and a lock or unlock comment its job.
+  if (loop.applyBeforeMerge || commentLocks.length > 0 || preview) on.issue_comment = { types: ["created"] };
   return {
     name: member ? `chant-pr.${member.name}.${env}` : `chant-pr-${env}`,
     environment: env,
@@ -470,7 +587,7 @@ function prLoopGithubDoc(
     ...(rooted ? {} : { defaults: { run: { "working-directory": member!.dir } } }),
     env: { ...options.variables, CHANT_ENV: env },
     jobsDoc,
-    stages: ["plan", PR_PLAN_NOTE_JOB, ...(locks ? [PR_LOCK_JOB, PR_UNLOCK_JOB] : []), ...applyNames, ...(prEnv ? ["env-up", PR_ENV_POST_JOB, "env-down", "env-sweep"] : [])],
+    stages: ["plan", PR_PLAN_NOTE_JOB, ...(locks ? [PR_LOCK_JOB, PR_UNLOCK_JOB] : []), ...commentLocks.map((j) => j.jobName), ...(preview ? [preview.jobName, preview.noteJobName] : []), ...applyNames, ...controlJobs.map(([name]) => name), ...(prEnv ? ["env-up", PR_ENV_POST_JOB, "env-down", "env-sweep"] : [])],
     jobs: [
       { jobName: "plan", component: "pull request plan", stage: "plan", needs: [] },
       { jobName: PR_PLAN_NOTE_JOB, component: "pull request plan note", stage: PR_PLAN_NOTE_JOB, needs: ["plan"] },
@@ -480,6 +597,13 @@ function prLoopGithubDoc(
             { jobName: PR_UNLOCK_JOB, component: "pull request unlock", stage: PR_UNLOCK_JOB, needs: [] },
           ]
         : []),
+      ...commentLocks.map((j) => ({ jobName: j.jobName, component: `pull request ${j.command} comment`, stage: j.jobName, needs: [] })),
+      ...(preview
+        ? [
+            { jobName: preview.jobName, component: "pull request preview comment", stage: preview.jobName, needs: [] },
+            { jobName: preview.noteJobName, component: "pull request preview comment note", stage: preview.noteJobName, needs: [preview.jobName] },
+          ]
+        : []),
       ...applyNames.map((name, i) => ({
         jobName: name,
         component: name === "record" ? "merge record" : loop.applyBeforeMerge ? "apply before merge" : loop.waveGate ? `green apply, wave ${i}` : "green apply",
@@ -487,6 +611,7 @@ function prLoopGithubDoc(
         // The record runs on a push and the apply on a green commit, so only the waves need each other.
         needs: i > 1 ? [applyNames[i - 1]] : [],
       })),
+      ...controlJobs.map(([name]) => ({ jobName: name, component: "control repo dispatch", stage: name, needs: [lastGreen!] })),
       ...(prEnv ? prEnv.listed : []),
     ],
   };
@@ -547,7 +672,7 @@ function prEnvGithubJobs(
         env: { [CHECKOUT_TOKEN_ENV]: GITHUB_JOB_TOKEN },
         run: checkoutScript(true, true),
       },
-      ...[...prLoopSetup(image), ...beforeScript].map((line) => headStep(line)),
+      ...[...prLoopSetup(image, loop.engineSetup), ...beforeScript].map((line) => headStep(line)),
       ...(up.build ? [headStep(up.build[0]!, "Build the templates", { CHANT_ENV: up.env.CHANT_ENV! }), headStep(up.build[1]!, "Lint the project")] : []),
       // The job's last step: a step after it would start beside whatever the change's code left running.
       {
@@ -583,7 +708,7 @@ function prEnvGithubJobs(
     steps: [
       ...tradeStep,
       { uses: CHECKOUT, with: { "fetch-depth": 0, ...(ref ? { ref } : {}) } },
-      ...runSteps(prLoopSetup(image)),
+      ...runSteps(prLoopSetup(image, loop.engineSetup)),
       ...runSteps(beforeScript),
       { name, env: j.env, run: j.command },
       ...runSteps(extraScript),

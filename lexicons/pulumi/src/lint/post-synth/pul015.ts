@@ -2,7 +2,8 @@
  * PUL015: the config says stock pulumi for a member on a plunge backend.
  *
  * `pulumi.member.engine` decides which binary runs the member's preview,
- * outputs and drift; with none set, a `backend.url` in `Pulumi.yaml` that
+ * outputs and drift; with none set, `plywood.yml`'s engine, a `plunge`
+ * `PULUMI_BACKEND_URL`, or a `backend.url` in `Pulumi.yaml` that
  * starts with `plunge` means plunge (`../../run.ts`, `pulumiMemberEngine`).
  * The config wins, so `engine: "pulumi"` on a program whose backend is
  * `plunge+file://...` or `plunge://...` runs stock `pulumi` against a

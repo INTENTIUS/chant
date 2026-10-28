@@ -13,6 +13,21 @@
  *   it is refused;
  * - for a member on plunge, `plunge preview`, the same blind
  *   `plunge stack output --json`, and `plunge drift --resource <urn> --stream`;
+ * - `pulumi stack export --stack <stack>` (`plunge stack export` on plunge),
+ *   exactly that, for the export the `pulumi-up` capability writes to the
+ *   index store after an apply (#4546, `./stack-export-snapshot.ts`). The
+ *   default export keeps secret ciphertext, which is stripped before the
+ *   store sees it; `--show-secrets`, `--file` and `--version` are refused;
+ * - for a stack being adopted onto plunge (#4562), `plunge stack adopt
+ *   --json --stack <stack> [--file <file>]`, which classifies and writes
+ *   nothing; the `--yes` form is {@link runAdoptPlunge}'s alone;
+ * - plunge's resource move plan (#4578, INTENTIUS/plunge#56), `plunge stack
+ *   move --stack <s> --dest <d> <urn>... --json`, which writes nothing; the
+ *   writes of the gated stack operations are {@link runGatedPulumi}'s and
+ *   {@link runGatedPlunge}'s alone;
+ * - for a review stack alone (`pr-<n>`, INTENTIUS/plywood#15), `stack
+ *   init`, `destroy --yes` and `stack rm --yes`, through
+ *   {@link runReviewStackPulumi} and {@link runReviewStackPlunge} only;
  * - for a member on plunge, its engine graph (#4529, ruled on #4520), as
  *   exactly one of `plunge graph --json`, `plunge graph --json --stack
  *   <stack>`, `plunge graph --json --versions` and `plunge graph --json
@@ -30,8 +45,21 @@
  *
  * {@link PULUMI_ALLOWED_COMMANDS} is the pulumi half, and
  * {@link runAllowedPulumi} and {@link runAllowedPlunge} refuse any argv
- * outside the list before it reaches the runner, so no later caller can make
- * this module apply. A workspace that wants nothing run for applied outputs
+ * outside the list before it reaches the runner, so no read path can make
+ * this module apply. A preview is also refused with `--show-secrets` or
+ * `--import-file` (#4541), which write files chant never wants written.
+ *
+ * ## Applies (#4541)
+ *
+ * Ruling 1 on INTENTIUS/plywood#1 widened #4450 and #4476: the `pulumi-up`
+ * capability (`./pulumi-up.ts`) applies a stack, from an apply job holding
+ * the apply identity only. It does so through two separate entry points,
+ * {@link runApplyPulumi} and {@link runApplyPlunge}, each checking the argv
+ * against one fixed form in {@link PULUMI_APPLY_COMMANDS}. Nothing but that
+ * capability's `run` calls them, and the read entry points above still
+ * refuse `up`.
+ *
+ * A workspace that wants nothing run for applied outputs
  * sets `CHANT_PULUMI_APPLIED_OUTPUTS=export` (or `applied: "export"` on the
  * source), and they are read from the checked-in `stack-export.json`.
  *
@@ -63,14 +91,18 @@
  * {@link pulumiMemberEngine} decides, first rule that answers:
  *
  * 1. the member's config says `engine: "pulumi"` or `"plunge"`;
- * 2. `Pulumi.yaml` names a backend whose URL starts with `plunge`
+ * 2. the nearest `plywood.yml` (the member's directory up to the repo
+ *    root) says `engine:`, or names a `backend:` URL starting with `plunge`;
+ * 3. `PULUMI_BACKEND_URL` in the job environment starts with `plunge`;
+ * 4. `Pulumi.yaml` names a backend whose URL starts with `plunge`
  *    (`backend: { url: "plunge+file:///..." }`, `plunge://...`), plunge's
  *    backend scheme;
- * 3. otherwise `pulumi`.
+ * 5. otherwise `pulumi`.
  *
- * Only `Pulumi.yaml` is read, never `PULUMI_BACKEND_URL` or the CLI's
- * login state, so the answer is the same on every machine that checks the
- * member out.
+ * The result carries `source`, the rule that answered, for the plan output.
+ * Rule 3 reads the job's environment, so a machine that logs in to a plunge
+ * backend by variable gets plunge, as the CLI does; the checked-in files
+ * (rules 2 and 4) give the same answer wherever the member is checked out.
  *
  * The runner is injectable, so the tests run no binary.
  */
@@ -80,6 +112,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import type { ChangeSetPart } from "@intentius/chant/change-set";
 import type { DriftAdapterBase, DriftRecord } from "@intentius/chant/drift-record";
+import type { SnapshotStore } from "@intentius/chant/lifecycle/snapshot-store";
 import type { UnobservedReason } from "@intentius/chant/observation";
 import { isPulumiNodeless, parsePulumiUrn } from "@intentius/chant/pulumi-urn";
 import { pulumiExportResources, pulumiPreviewPart } from "./change-set";
@@ -90,8 +123,13 @@ import { PULUMI_EXPORT_FILE } from "./workspace-member";
 
 const execFileAsync = promisify(execFile);
 
-/** Runs the pulumi binary with these arguments in `cwd`. Injectable so tests need no binary. */
-export type PulumiRunner = (args: string[], opts: { cwd: string }) => Promise<{ stdout: string }>;
+/**
+ * Runs the pulumi binary with these arguments in `cwd`. Injectable so tests
+ * need no binary. `env` holds variables added to the engine's environment
+ * ({@link engineEnv}) for this run only, such as
+ * `PULUMI_ENABLE_STREAMING_JSON_PREVIEW` for the pulumi-up preview (#4541).
+ */
+export type PulumiRunner = (args: string[], opts: { cwd: string; env?: Record<string, string> }) => Promise<{ stdout: string }>;
 
 /**
  * The engine's environment: no update check, and no PULUMI_SKIP_CONFIRMATIONS, which stands for `--yes` and
@@ -104,7 +142,7 @@ export function engineEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessE
 }
 
 export const defaultPulumiRunner: PulumiRunner = (args, opts) =>
-  execFileAsync("pulumi", args, { cwd: opts.cwd, maxBuffer: 256 * 1024 * 1024, env: engineEnv() });
+  execFileAsync("pulumi", args, { cwd: opts.cwd, maxBuffer: 256 * 1024 * 1024, env: engineEnv({ ...process.env, ...opts.env }) });
 
 /**
  * The only `pulumi` commands chant runs (ruling on #4450, widened by the
@@ -112,7 +150,17 @@ export const defaultPulumiRunner: PulumiRunner = (args, opts) =>
  * with one of these. Any of them may name its stack with `--stack <name>`
  * (#4496, #4514), which {@link wellFormedStack} checks.
  */
-export const PULUMI_ALLOWED_COMMANDS: readonly (readonly string[])[] = [["preview"], ["refresh", "--preview-only"], ["stack", "output"]];
+export const PULUMI_ALLOWED_COMMANDS: readonly (readonly string[])[] = [["preview"], ["refresh", "--preview-only"], ["stack", "output"], ["stack", "export"]];
+
+/**
+ * Exactly `stack export --stack <stack>` (#4546): the export printed to
+ * stdout with secrets encrypted. `--file` writes the working tree,
+ * `--show-secrets` prints plaintext and `--version` reads another update, so
+ * none is allowed.
+ */
+function allowedStackExport(args: string[]): boolean {
+  return args.length === 4 && args[0] === "stack" && args[1] === "export" && args[2] === "--stack" && wellFormedStack(args);
+}
 
 /**
  * A `stack output` argv that prints no secret: `--json`, and
@@ -132,20 +180,36 @@ function wellFormedStack(args: string[]): boolean {
   return args.every((a, i) => a !== "--stack" || (typeof args[i + 1] === "string" && args[i + 1].length > 0 && !args[i + 1].startsWith("-")));
 }
 
+/**
+ * A preview flag that writes what chant must not have written (#4541): any
+ * form of `--show-secrets`, which with `--save-plan` puts plaintext secrets
+ * in the plan file (plunge `preview.go:723-726`), and `--import-file`, which
+ * writes a file chant never reads.
+ */
+const PREVIEW_REFUSED_FLAGS = ["--show-secrets", "--import-file"];
+
+function refusedPreviewFlag(args: string[]): boolean {
+  return args.some((a) => PREVIEW_REFUSED_FLAGS.some((f) => a === f || a.startsWith(`${f}=`)));
+}
+
 function allowedRead(args: string[]): boolean {
   if (!wellFormedStack(args)) return false;
   if (!PULUMI_ALLOWED_COMMANDS.some((prefix) => prefix.every((a, i) => args[i] === a))) return false;
   if (args[0] === "refresh") return args.includes("--preview-only");
+  if (args[0] === "stack" && args[1] === "export") return allowedStackExport(args);
   if (args[0] === "stack") return blindStackOutput(args);
+  if (args[0] === "preview") return !refusedPreviewFlag(args);
   return true;
 }
 
-/** Run `args` through `run`, refusing any argv that is not an allowed read. */
-export async function runAllowedPulumi(run: PulumiRunner, args: string[], cwd: string): Promise<{ stdout: string }> {
+/** Run `args` through `run`, refusing any argv that is not an allowed read. `env` is added to the engine's environment. */
+export async function runAllowedPulumi(run: PulumiRunner, args: string[], cwd: string, env?: Record<string, string>): Promise<{ stdout: string }> {
   if (!allowedRead(args)) {
-    throw new Error(`chant runs only pulumi preview and pulumi refresh --preview-only, and pulumi stack output --json --show-secrets=false, for a Pulumi member, not pulumi ${args.join(" ")}`);
+    throw new Error(
+      `chant runs only pulumi preview and pulumi refresh --preview-only, pulumi stack output --json --show-secrets=false and pulumi stack export --stack <stack>, for a Pulumi member, not pulumi ${args.join(" ")}`,
+    );
   }
-  return run(args, { cwd });
+  return run(args, env ? { cwd, env } : { cwd });
 }
 
 /**
@@ -191,20 +255,392 @@ function allowedPlungeGraph(args: string[]): boolean {
  * same preview and blind stack output it runs under `pulumi`, and the
  * stack's engine graph from its records (#4529). None writes.
  */
-export async function runAllowedPlunge(run: PulumiRunner, args: string[], cwd: string): Promise<{ stdout: string }> {
+export async function runAllowedPlunge(run: PulumiRunner, args: string[], cwd: string, env?: Record<string, string>): Promise<{ stdout: string }> {
   const drift = args[0] === "drift" && args.includes("--resource") && args.includes("--stream") && wellFormedStack(args);
-  const allowed = drift || ((args[0] === "preview" || args[0] === "stack") && allowedRead(args)) || allowedPlungeGraph(args);
+  const allowed =
+    drift ||
+    ((args[0] === "preview" || args[0] === "stack") && allowedRead(args)) ||
+    allowedPlungeGraph(args) ||
+    allowedPlungeAdopt(args, false) ||
+    allowedPlungeMove(args, false);
   if (!allowed) {
     throw new Error(
-      `chant runs only plunge drift --resource <urn> --stream, plunge preview, plunge stack output --json --show-secrets=false and ${PLUNGE_GRAPH_COMMANDS.join(", ")} for a Pulumi member, not plunge ${args.join(" ")}`,
+      `chant runs only plunge drift --resource <urn> --stream, plunge preview, plunge stack output --json --show-secrets=false, plunge stack export --stack <stack>, ${PLUNGE_ADOPT_COMMANDS[0]}, ${PLUNGE_GATED_COMMANDS[0]} and ${PLUNGE_GRAPH_COMMANDS.join(", ")} for a Pulumi member, not plunge ${args.join(" ")}`,
     );
   }
-  return run(args, { cwd });
+  return run(args, env ? { cwd, env } : { cwd });
 }
 
-export const defaultPlungeRunner: PulumiRunner = (args, opts) => execFileAsync("plunge", args, { cwd: opts.cwd, maxBuffer: 256 * 1024 * 1024, env: engineEnv() });
+export const defaultPlungeRunner: PulumiRunner = (args, opts) =>
+  execFileAsync("plunge", args, { cwd: opts.cwd, maxBuffer: 256 * 1024 * 1024, env: engineEnv({ ...process.env, ...opts.env }) });
 
-export { pulumiMemberEngine, type PulumiMemberEngine } from "./member-engine";
+/**
+ * A runner for the engine binary at `bin`, an absolute path (#4592): a
+ * stack pinned to its own release runs the binary its install line wrote
+ * (`ciEngineDir` in ./ci-setup.ts) rather than whichever is on PATH. Only
+ * the binary changes; the argv still goes through the same allowlists
+ * (`runAllowedPulumi`, `runAllowedPlunge`, the apply checks) before it runs.
+ */
+export function engineRunnerAt(bin: string): PulumiRunner {
+  if (!bin.startsWith("/")) throw new Error(`an engine binary is an absolute path, not ${JSON.stringify(bin)}`);
+  return (args, opts) => execFileAsync(bin, args, { cwd: opts.cwd, maxBuffer: 256 * 1024 * 1024, env: engineEnv({ ...process.env, ...opts.env }) });
+}
+
+/**
+ * The two `up` argv chant runs, for the `pulumi-up` capability's `run` alone
+ * (#4541; ruling 1 on INTENTIUS/plywood#1 widened #4450 and #4476 so the
+ * capability applies, from an apply job holding the apply identity only).
+ * The order is fixed and nothing else gets through. `<…>` stands for a value
+ * that is not empty and does not start with `-`; `[…]` is optional; `…`
+ * repeats.
+ *
+ * `up` is refused with `--skip-preview`, `--refresh`, `--show-secrets`,
+ * `--replace`, `--target-replace`, `--target-dependents`, `--exclude`,
+ * `--remote`, `--continue-on-error`, `--config` and any flag not here, since
+ * none of them is in the list.
+ */
+export const PULUMI_APPLY_COMMANDS: readonly string[] = [
+  "plunge up --plan <file> --yes --json --stack <stack> [--config-file <file>] [--target <urn>]... [--policy-pack <dir> [--policy-pack-config <file>]]...",
+  "pulumi up --yes --json --stack <stack> [--config-file <file>] [--target <urn>]... [--policy-pack <dir> [--policy-pack-config <file>]]...",
+];
+
+/** A CrossGuard pack the preview and `up` run (ruling 7: in the preview job, feeding chant's gate). */
+export interface PulumiPolicyPack {
+  /** The pack's directory. */
+  dir: string;
+  /** Its `--policy-pack-config` file. */
+  config?: string;
+}
+
+/** What the apply argv carry after the stack. */
+export interface PulumiApplyTail {
+  /** A scratch copy of the stack's config file, passed as `--config-file` (#4541): never `--config`, which writes the working tree's file. */
+  configFile?: string;
+  targets?: readonly string[];
+  policyPacks?: readonly PulumiPolicyPack[];
+}
+
+function tailArgs(t: PulumiApplyTail): string[] {
+  return [
+    ...(t.configFile ? ["--config-file", t.configFile] : []),
+    ...(t.targets ?? []).flatMap((u) => ["--target", u]),
+    ...(t.policyPacks ?? []).flatMap((p) => ["--policy-pack", p.dir, ...(p.config ? ["--policy-pack-config", p.config] : [])]),
+  ];
+}
+
+/**
+ * The preview the `pulumi-up` capability runs (#4541): the member's preview
+ * argv, with `--save-plan <file>` on plunge, then the apply tail. It goes
+ * through {@link runAllowedPulumi} or {@link runAllowedPlunge} like every
+ * other preview.
+ */
+export function pulumiUpPreviewArgs(opts: { stack: string; savePlan?: string } & PulumiApplyTail): string[] {
+  return ["preview", "--json", "--show-sames", "--stack", opts.stack, ...(opts.savePlan ? ["--save-plan", opts.savePlan] : []), ...tailArgs(opts)];
+}
+
+/** `plunge up --plan <file> --yes --json --stack <stack>` and the tail: the first of {@link PULUMI_APPLY_COMMANDS}. */
+export function plungeUpArgs(opts: { plan: string; stack: string } & PulumiApplyTail): string[] {
+  return ["up", "--plan", opts.plan, "--yes", "--json", "--stack", opts.stack, ...tailArgs(opts)];
+}
+
+/** `pulumi up --yes --json --stack <stack>` and the tail: the second of {@link PULUMI_APPLY_COMMANDS}. */
+export function pulumiUpArgs(opts: { stack: string } & PulumiApplyTail): string[] {
+  return ["up", "--yes", "--json", "--stack", opts.stack, ...tailArgs(opts)];
+}
+
+const isValue = (v: string | undefined): v is string => typeof v === "string" && v.length > 0 && !v.startsWith("-");
+
+/** Whether `rest` is exactly an apply tail, in its order. */
+function wellFormedTail(rest: string[]): boolean {
+  let i = 0;
+  if (rest[i] === "--config-file") {
+    if (!isValue(rest[i + 1])) return false;
+    i += 2;
+  }
+  while (rest[i] === "--target") {
+    if (!isValue(rest[i + 1])) return false;
+    i += 2;
+  }
+  while (rest[i] === "--policy-pack") {
+    if (!isValue(rest[i + 1])) return false;
+    i += 2;
+    if (rest[i] === "--policy-pack-config") {
+      if (!isValue(rest[i + 1])) return false;
+      i += 2;
+    }
+  }
+  return i === rest.length;
+}
+
+/** Exactly `plunge up --plan <file> --yes --json --stack <stack>` and a tail. */
+function allowedPlungeUp(args: string[]): boolean {
+  return (
+    args[0] === "up" &&
+    args[1] === "--plan" &&
+    isValue(args[2]) &&
+    args[3] === "--yes" &&
+    args[4] === "--json" &&
+    args[5] === "--stack" &&
+    isValue(args[6]) &&
+    wellFormedTail(args.slice(7))
+  );
+}
+
+/** Exactly `pulumi up --yes --json --stack <stack>` and a tail. */
+function allowedPulumiUp(args: string[]): boolean {
+  return args[0] === "up" && args[1] === "--yes" && args[2] === "--json" && args[3] === "--stack" && isValue(args[4]) && wellFormedTail(args.slice(5));
+}
+
+/**
+ * Run `pulumi up` for the `pulumi-up` capability (#4541), refusing any argv
+ * but the stock form in {@link PULUMI_APPLY_COMMANDS}. Only the capability's
+ * `run` calls this; no read path reaches it, and {@link runAllowedPulumi}
+ * still refuses `up`.
+ */
+export async function runApplyPulumi(run: PulumiRunner, args: string[], cwd: string, env?: Record<string, string>): Promise<{ stdout: string }> {
+  if (!allowedPulumiUp(args)) {
+    throw new Error(`chant applies a Pulumi stack only as ${PULUMI_APPLY_COMMANDS[1]}, not pulumi ${args.join(" ")}`);
+  }
+  return run(args, env ? { cwd, env } : { cwd });
+}
+
+/**
+ * Run `plunge up --plan` for the `pulumi-up` capability (#4541), refusing
+ * any argv but the plunge form in {@link PULUMI_APPLY_COMMANDS}. plunge
+ * refuses a saved plan whose records moved, or one with no stamp, before
+ * anything changes (exit 40).
+ */
+export async function runApplyPlunge(run: PulumiRunner, args: string[], cwd: string, env?: Record<string, string>): Promise<{ stdout: string }> {
+  if (!allowedPlungeUp(args)) {
+    throw new Error(`chant applies a plunge stack only as ${PULUMI_APPLY_COMMANDS[0]}, not plunge ${args.join(" ")}`);
+  }
+  return run(args, env ? { cwd, env } : { cwd });
+}
+
+/**
+ * The two `plunge stack adopt` argv chant runs (#4562), for
+ * `PulumiAdoptOp`'s activities alone. The first classifies and writes
+ * nothing (plunge's `--json` without `--yes`), so it passes through
+ * {@link runAllowedPlunge} like any read. The second writes the records and
+ * goes through {@link runAdoptPlunge} only, after the Op's gate. `--adopt`
+ * and `--index-store` (an adoption file over an index version) are refused,
+ * as is any other flag.
+ */
+export const PLUNGE_ADOPT_COMMANDS: readonly string[] = [
+  "plunge stack adopt --json --stack <stack> [--file <file>]",
+  "plunge stack adopt --json --yes --stack <stack> [--file <file>]",
+];
+
+/** `stack adopt --json [--yes] --stack <stack> [--file <file>]`, in that order. */
+export function plungeAdoptArgs(opts: { stack: string; file?: string; yes?: boolean }): string[] {
+  return ["stack", "adopt", "--json", ...(opts.yes ? ["--yes"] : []), "--stack", opts.stack, ...(opts.file ? ["--file", opts.file] : [])];
+}
+
+function allowedPlungeAdopt(args: string[], yes: boolean): boolean {
+  if (args[0] !== "stack" || args[1] !== "adopt" || args[2] !== "--json") return false;
+  let i = 3;
+  if (yes) {
+    if (args[i] !== "--yes") return false;
+    i++;
+  }
+  if (args[i] !== "--stack" || !isValue(args[i + 1])) return false;
+  i += 2;
+  if (args[i] === "--file") {
+    if (!isValue(args[i + 1])) return false;
+    i += 2;
+  }
+  return i === args.length;
+}
+
+/**
+ * Run `plunge stack adopt --json --yes` for `PulumiAdoptOp`'s Adopt step
+ * (#4562), refusing any argv but the second form in
+ * {@link PLUNGE_ADOPT_COMMANDS}. It writes plunge's records and touches no
+ * cloud object.
+ */
+export async function runAdoptPlunge(run: PulumiRunner, args: string[], cwd: string, env?: Record<string, string>): Promise<{ stdout: string }> {
+  if (!allowedPlungeAdopt(args, true)) {
+    throw new Error(`chant adopts a stack onto plunge only as ${PLUNGE_ADOPT_COMMANDS[1]}, not plunge ${args.join(" ")}`);
+  }
+  return run(args, env ? { cwd, env } : { cwd });
+}
+
+/**
+ * The gated stack operations' writes (#4578), for `./stack-ops.ts` alone,
+ * each run only after its gated request (#4551) is approved and spent on the
+ * ledger. Fixed forms; any other flag, order or value is refused:
+ *
+ * - `pulumi cancel --yes --stack <stack>`: releases a stuck update's lock;
+ * - `pulumi state move --source <stack> --dest <stack> --yes <urn>...`: moves
+ *   resources between stock stacks, never `--include-parents`.
+ */
+export const PULUMI_GATED_COMMANDS: readonly string[] = [
+  "pulumi cancel --yes --stack <stack>",
+  "pulumi state move --source <stack> --dest <stack> --yes <urn>...",
+];
+
+/**
+ * plunge's resource move (INTENTIUS/plunge#56) in its two forms. The first
+ * prints the plan and writes nothing, so it passes {@link runAllowedPlunge};
+ * the second moves and passes {@link runGatedPlunge} only.
+ */
+export const PLUNGE_GATED_COMMANDS: readonly string[] = [
+  "plunge stack move --stack <stack> --dest <stack> <urn>... --json",
+  "plunge stack move --stack <stack> --dest <stack> <urn>... --json --yes",
+];
+
+const isUrn = (v: string | undefined): v is string => typeof v === "string" && v.startsWith("urn:pulumi:");
+
+/** `cancel --yes --stack <stack>`. */
+export function pulumiCancelArgs(opts: { stack: string }): string[] {
+  return ["cancel", "--yes", "--stack", opts.stack];
+}
+
+/** `state move --source <s> --dest <d> --yes <urn>...`. */
+export function pulumiStateMoveArgs(opts: { source: string; dest: string; urns: readonly string[] }): string[] {
+  return ["state", "move", "--source", opts.source, "--dest", opts.dest, "--yes", ...opts.urns];
+}
+
+/** `stack move --stack <s> --dest <d> <urn>... --json [--yes]`. */
+export function plungeMoveArgs(opts: { source: string; dest: string; urns: readonly string[]; yes?: boolean }): string[] {
+  return ["stack", "move", "--stack", opts.source, "--dest", opts.dest, ...opts.urns, "--json", ...(opts.yes ? ["--yes"] : [])];
+}
+
+function allowedPlungeMove(args: string[], yes: boolean): boolean {
+  if (args[0] !== "stack" || args[1] !== "move" || args[2] !== "--stack" || !isValue(args[3]) || args[4] !== "--dest" || !isValue(args[5])) return false;
+  const tail = yes ? ["--json", "--yes"] : ["--json"];
+  const urns = args.slice(6, args.length - tail.length);
+  return urns.length > 0 && urns.every(isUrn) && tail.every((t, i) => args[args.length - tail.length + i] === t);
+}
+
+function allowedGatedPulumi(args: string[]): boolean {
+  if (args[0] === "cancel") return args.length === 4 && args[1] === "--yes" && args[2] === "--stack" && isValue(args[3]);
+  if (args[0] === "state" && args[1] === "move") {
+    const urns = args.slice(7);
+    return args[2] === "--source" && isValue(args[3]) && args[4] === "--dest" && isValue(args[5]) && args[6] === "--yes" && urns.length > 0 && urns.every(isUrn);
+  }
+  return false;
+}
+
+/** Run one of {@link PULUMI_GATED_COMMANDS}, refusing any other argv. Only `./stack-ops.ts` calls it, after the request is spent. */
+export async function runGatedPulumi(run: PulumiRunner, args: string[], cwd: string, env?: Record<string, string>): Promise<{ stdout: string }> {
+  if (!allowedGatedPulumi(args)) {
+    throw new Error(`chant runs a gated Pulumi stack operation only as ${PULUMI_GATED_COMMANDS.join(" or ")}, not pulumi ${args.join(" ")}`);
+  }
+  return run(args, env ? { cwd, env } : { cwd });
+}
+
+/** Run the moving form of {@link PLUNGE_GATED_COMMANDS}, refusing any other argv. Only `./stack-ops.ts` calls it, after the request is spent. */
+export async function runGatedPlunge(run: PulumiRunner, args: string[], cwd: string, env?: Record<string, string>): Promise<{ stdout: string }> {
+  if (!allowedPlungeMove(args, true)) {
+    throw new Error(`chant moves plunge resources only as ${PLUNGE_GATED_COMMANDS[1]}, not plunge ${args.join(" ")}`);
+  }
+  return run(args, env ? { cwd, env } : { cwd });
+}
+
+/**
+ * Review stacks (#4541's deferral, INTENTIUS/plywood#15): a stack per open
+ * pull request, made from a template stack's config and removed when the
+ * pull request closes or its TTL passes. Fixed forms, for a review stack
+ * name only ({@link isReviewStackName}), so no path here can create,
+ * destroy or remove any other stack:
+ *
+ * - `stack init <pr-stack> --no-select [--copy-config-from <stack>]`: the
+ *   review stack, with the template's config. It selects nothing, so the
+ *   checkout's selected stack stays as it was;
+ * - `destroy --yes --json --stack <pr-stack>`: deletes the review stack's
+ *   resources, never `--target`, `--exclude` or `--remove`;
+ * - `stack rm --yes --stack <pr-stack>`: removes the emptied stack, never
+ *   `--force`, so a stack that still holds resources is refused by the
+ *   engine itself.
+ *
+ * The same three run under `plunge` for a member on plunge.
+ * {@link runReviewStackPulumi} and {@link runReviewStackPlunge} refuse any
+ * other argv; the read entry points above refuse all three.
+ */
+export const PULUMI_REVIEW_STACK_COMMANDS: readonly string[] = [
+  "pulumi stack init <pr-stack> --no-select [--copy-config-from <stack>]",
+  "pulumi destroy --yes --json --stack <pr-stack>",
+  "pulumi stack rm --yes --stack <pr-stack>",
+];
+
+/** A review stack's own name: `pr-<n>`, or `pr-<n>-<suffix>` in lowercase letters, digits and `-`. */
+export const REVIEW_STACK_NAME = /^pr-[0-9]+(?:-[a-z0-9][a-z0-9-]*)?$/;
+
+/**
+ * Whether `stack` names a review stack: its last segment matches
+ * {@link REVIEW_STACK_NAME}, after at most an organization and a project
+ * (`acme/shop/pr-12`).
+ */
+export function isReviewStackName(stack: string | undefined): stack is string {
+  if (typeof stack !== "string") return false;
+  const parts = stack.split("/");
+  return parts.length <= 3 && parts.slice(0, -1).every((p) => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(p)) && REVIEW_STACK_NAME.test(parts[parts.length - 1]!);
+}
+
+/** `stack init <pr-stack> --no-select [--copy-config-from <stack>]`. */
+export function reviewStackInitArgs(opts: { stack: string; copyConfigFrom?: string }): string[] {
+  return ["stack", "init", opts.stack, "--no-select", ...(opts.copyConfigFrom ? ["--copy-config-from", opts.copyConfigFrom] : [])];
+}
+
+/** `destroy --yes --json --stack <pr-stack>`. */
+export function reviewStackDestroyArgs(opts: { stack: string }): string[] {
+  return ["destroy", "--yes", "--json", "--stack", opts.stack];
+}
+
+/** `stack rm --yes --stack <pr-stack>`. */
+export function reviewStackRmArgs(opts: { stack: string }): string[] {
+  return ["stack", "rm", "--yes", "--stack", opts.stack];
+}
+
+/** Exactly one of {@link PULUMI_REVIEW_STACK_COMMANDS}, on a review stack. */
+export function allowedReviewStack(args: readonly string[]): boolean {
+  if (args[0] === "stack" && args[1] === "init") {
+    if (!isReviewStackName(args[2]) || args[3] !== "--no-select") return false;
+    if (args.length === 4) return true;
+    return args.length === 6 && args[4] === "--copy-config-from" && isValue(args[5]) && args[5] !== args[2];
+  }
+  if (args[0] === "destroy") return args.length === 5 && args[1] === "--yes" && args[2] === "--json" && args[3] === "--stack" && isReviewStackName(args[4]);
+  if (args[0] === "stack" && args[1] === "rm") return args.length === 5 && args[2] === "--yes" && args[3] === "--stack" && isReviewStackName(args[4]);
+  return false;
+}
+
+function reviewStackRefusal(engine: "pulumi" | "plunge", args: readonly string[]): Error {
+  return new Error(
+    `chant creates, destroys and removes only review stacks (pr-<n>), as ${PULUMI_REVIEW_STACK_COMMANDS.map((c) => c.replace(/^pulumi/, engine)).join(", ")}; not ${engine} ${args.join(" ")}`,
+  );
+}
+
+/** Run one of {@link PULUMI_REVIEW_STACK_COMMANDS} under `pulumi`, refusing any other argv or stack. */
+export async function runReviewStackPulumi(run: PulumiRunner, args: string[], cwd: string, env?: Record<string, string>): Promise<{ stdout: string }> {
+  if (!allowedReviewStack(args)) throw reviewStackRefusal("pulumi", args);
+  return run(args, env ? { cwd, env } : { cwd });
+}
+
+/** The same forms under `plunge`, for a member on plunge. */
+export async function runReviewStackPlunge(run: PulumiRunner, args: string[], cwd: string, env?: Record<string, string>): Promise<{ stdout: string }> {
+  if (!allowedReviewStack(args)) throw reviewStackRefusal("plunge", args);
+  return run(args, env ? { cwd, env } : { cwd });
+}
+
+/**
+ * The install chant runs in a release's recorded copy of a program (#4542),
+ * for `./release-copy.ts` alone: exactly `pulumi install` or `plunge
+ * install`, no flag. The cut records tracked files only, so the copy has no
+ * `node_modules` or virtualenv; the CLI's install follows `Pulumi.yaml`'s
+ * runtime options and the recorded lockfile.
+ */
+export const PULUMI_INSTALL_COMMANDS: readonly string[] = ["pulumi install", "plunge install"];
+
+/** Run `install` with no flag in a release copy, refusing any other argv. The runner picks the binary. */
+export async function runReleaseInstall(run: PulumiRunner, args: string[], cwd: string, env?: Record<string, string>): Promise<{ stdout: string }> {
+  if (args.length !== 1 || args[0] !== "install") {
+    throw new Error(`chant installs a release copy's dependencies only as ${PULUMI_INSTALL_COMMANDS.join(" or ")}, not ${args.join(" ")}`);
+  }
+  return run(args, env ? { cwd, env } : { cwd });
+}
+
+export { pulumiMemberEngine, readPlywoodEngine, type PulumiMemberEngine, type PulumiMemberEngineSource, type PulumiMemberEngineOptions } from "./member-engine";
 
 /** The argv chant runs for a member's applied outputs, after `pulumi` (#4455). Secrets stay blinded. */
 export function pulumiStackOutputArgs(opts: { stack?: string } = {}): string[] {
@@ -243,7 +679,11 @@ export function memberStack(opts: { declared?: string; exported?: unknown; urns?
   return opts.declared || pulumiExportStack(opts.exported) || (opts.urns?.length ? soleStack(opts.urns) : undefined);
 }
 
-/** The checked-in `pulumi stack export`, parsed, or undefined when there is none or it does not read. */
+/**
+ * The checked-in `pulumi stack export`, parsed, or undefined when there is
+ * none or it does not read. The member's reads below take the index store's
+ * export first ({@link memberExportOf}, #4546) and come here when it has none.
+ */
 export function readMemberExport(dir: string): unknown {
   const file = join(dir, PULUMI_EXPORT_FILE);
   if (!existsSync(file)) return undefined;
@@ -254,23 +694,44 @@ export function readMemberExport(dir: string): unknown {
   }
 }
 
-interface RunFailure {
+/**
+ * The member's export for a read (#4546): the one the `pulumi-up` capability
+ * wrote to the index store after the stack's last apply through chant, else
+ * the checked-in {@link PULUMI_EXPORT_FILE}. `store: null` skips the store.
+ * Loaded lazily, since `./stack-export-snapshot.ts` imports this module.
+ */
+export async function memberExportOf(dir: string, opts: { stack?: string; store?: SnapshotStore | null } = {}): Promise<unknown> {
+  if (opts.store === null) return readMemberExport(dir);
+  const { readMemberExportStored } = await import("./stack-export-snapshot");
+  return (await readMemberExportStored(dir, { ...(opts.stack ? { stack: opts.stack } : {}), ...(opts.store !== undefined ? { store: opts.store } : {}) }))?.doc;
+}
+
+/** What a failed engine run left: its output, its exit status when it ran, and whether the binary was missing. */
+export interface PulumiRunFailure {
   stdout?: string;
   stderr?: string;
   message: string;
   missingBinary: boolean;
+  /** The process's exit status, when it ran and exited (`execFile`'s numeric `code`). */
+  exitCode?: number;
 }
 
-function failureOf(err: unknown): RunFailure {
-  const e = err as (NodeJS.ErrnoException & { stdout?: unknown; stderr?: unknown }) | undefined;
+type RunFailure = PulumiRunFailure;
+
+/** A runner's thrown error read as a {@link PulumiRunFailure}. */
+export function pulumiRunFailure(err: unknown): PulumiRunFailure {
+  const e = err as (Omit<NodeJS.ErrnoException, "code"> & { code?: unknown; stdout?: unknown; stderr?: unknown }) | undefined;
   const message = err instanceof Error ? err.message : String(err);
   return {
     ...(typeof e?.stdout === "string" ? { stdout: e.stdout } : {}),
     ...(typeof e?.stderr === "string" ? { stderr: e.stderr } : {}),
     message,
     missingBinary: e?.code === "ENOENT" || /ENOENT|command not found/.test(message),
+    ...(typeof e?.code === "number" ? { exitCode: e.code } : {}),
   };
 }
+
+const failureOf = pulumiRunFailure;
 
 function parseJson(text: string | undefined): unknown {
   if (!text) return undefined;
@@ -306,6 +767,8 @@ export interface PreviewPulumiMemberOptions {
   run?: PulumiRunner;
   /** Runs plunge, for a member on plunge. */
   plunge?: PulumiRunner;
+  /** The index store the member's export is read from first (#4546). Default: the project's; `null` reads the checked-in file only. */
+  exportStore?: SnapshotStore | null;
 }
 
 /** A member's preview: its change-set part, and the preview document it was read from (`{}` when none printed). */
@@ -323,7 +786,7 @@ export interface PulumiMemberPreview {
  */
 export async function previewPulumiMemberRead(opts: PreviewPulumiMemberOptions): Promise<PulumiMemberPreview> {
   const engine = pulumiMemberEngine(opts.dir, opts.engine).engine;
-  const prior = readMemberExport(opts.dir);
+  const prior = await memberExportOf(opts.dir, { ...(opts.stack ? { stack: opts.stack } : {}), ...(opts.exportStore !== undefined ? { store: opts.exportStore } : {}) });
   const stack = memberStack({ declared: opts.stack, exported: prior, urns: opts.targets });
   const args = pulumiPreviewArgs({ stack, targets: opts.targets });
   const common = { member: opts.member, ...(stack ? { stack } : {}), ...(prior !== undefined ? { prior } : {}), ...(opts.targets?.length ? { targeted: true } : {}) };
@@ -367,6 +830,8 @@ export interface PulumiMemberStackOutputsOptions {
   engine?: PulumiMemberEngine;
   run?: PulumiRunner;
   plunge?: PulumiRunner;
+  /** The index store the member's export is read from first (#4546). Default: the project's; `null` reads the checked-in file only. */
+  exportStore?: SnapshotStore | null;
 }
 
 /**
@@ -377,7 +842,8 @@ export interface PulumiMemberStackOutputsOptions {
  */
 export async function pulumiMemberStackOutputs(opts: PulumiMemberStackOutputsOptions): Promise<Record<string, unknown>> {
   const engine = pulumiMemberEngine(opts.dir, opts.engine).engine;
-  const args = pulumiStackOutputArgs({ stack: memberStack({ declared: opts.stack, exported: readMemberExport(opts.dir) }) });
+  const exported = opts.stack ? undefined : await memberExportOf(opts.dir, opts.exportStore !== undefined ? { store: opts.exportStore } : {});
+  const args = pulumiStackOutputArgs({ stack: memberStack({ declared: opts.stack, exported }) });
   const command = `${engine} ${args.join(" ")}`;
   let stdout: string;
   try {
@@ -411,6 +877,8 @@ export interface RefreshPulumiMemberOptions extends DriftAdapterBase {
   run?: PulumiRunner;
   /** Runs plunge, for a member on plunge. */
   plunge?: PulumiRunner;
+  /** The index store the member's export is read from first (#4546). Default: the project's; `null` reads the checked-in file only. */
+  exportStore?: SnapshotStore | null;
 }
 
 function unobservedFor(f: RunFailure): { reason: UnobservedReason; detail: string } {
@@ -426,12 +894,12 @@ function unobservedFor(f: RunFailure): { reason: UnobservedReason; detail: strin
  * The member's drift records, one `--target`ed `pulumi refresh
  * --preview-only --json` per URN, run one after another. A run that fails
  * makes its URN's record not-observed and the others still read. With no
- * URNs given and no export to take them from, one untargeted refresh, which
+ * URNs given and no export to take them from (the store's or the checked-in one), one untargeted refresh, which
  * throws when it fails, since no record names a resource to hang it on.
  */
 export async function refreshPulumiMember(opts: RefreshPulumiMemberOptions): Promise<DriftRecord[]> {
   const run = opts.run ?? defaultPulumiRunner;
-  const exported = readMemberExport(opts.dir);
+  const exported = await memberExportOf(opts.dir, { ...(opts.stack ? { stack: opts.stack } : {}), ...(opts.exportStore !== undefined ? { store: opts.exportStore } : {}) });
   const urns =
     opts.urns ??
     (exported === undefined ? undefined : pulumiExportResources(exported).filter((r) => !isPulumiNodeless(r.type)).map((r) => r.urn));
@@ -503,6 +971,8 @@ export interface PlungeMemberGraphOptions {
   /** Pass `--versions`: each node lists its record's versions, one version listing per record (#4520 Q6). Off by default. */
   versions?: boolean;
   plunge?: PulumiRunner;
+  /** The index store the member's export is read from first (#4546). Default: the project's; `null` reads the checked-in file only. */
+  exportStore?: SnapshotStore | null;
 }
 
 /** What one `plunge graph` run gave: the parsed document, or why there is none. */
@@ -522,7 +992,8 @@ export type PlungeMemberGraphRead =
  * {@link pulumiMemberEngine}; nothing here runs stock `pulumi`.
  */
 export async function plungeMemberGraph(opts: PlungeMemberGraphOptions): Promise<PlungeMemberGraphRead> {
-  const stack = memberStack({ declared: opts.stack, exported: readMemberExport(opts.dir) });
+  const exported = opts.stack ? undefined : await memberExportOf(opts.dir, opts.exportStore !== undefined ? { store: opts.exportStore } : {});
+  const stack = memberStack({ declared: opts.stack, exported });
   const args = plungeGraphArgs({ stack, ...(opts.versions ? { versions: true } : {}) });
   const command = `plunge ${args.join(" ")}`;
   const at = { command, ...(stack ? { stack } : {}) };

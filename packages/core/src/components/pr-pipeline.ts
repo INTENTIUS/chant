@@ -87,6 +87,7 @@
 
 import type { ForgeKind } from "../pr-forge";
 import { PR_APPLY_GATE } from "../pr-loop";
+import { parseRequiresList } from "../pr-requires";
 import { CI_IMAGE, GITHUB_JOB_TOKEN } from "../ci-jobs";
 import { withoutForgeTokens } from "../ci-handover";
 import { EMPTY_TREE_SHA } from "./changed-files";
@@ -94,6 +95,8 @@ import { layerWaves } from "../gated-waves";
 import type { DriverComponent } from "./driver";
 import type { GatedWavePipelineOptions } from "./gated-wave-pipeline";
 import type { CloudTradeSpec, PipelineCloudIdentity } from "../ci-identity";
+import { commentLine, resolveProductWords, type CiProductWords, type CiProductWordsInput } from "../ci-product-words";
+import type { ControlTarget } from "../control/dispatch";
 
 /** The variable `chant ci run` reads its runner key from (`RUNNER_KEY_ENV` in ../workspace/ci-green.ts). */
 const RUNNER_KEY_ENV = "CHANT_RUNNER_KEY";
@@ -121,9 +124,25 @@ export const PR_LOOP_SETUP = [
   "command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)",
 ];
 
-/** The setup lines for a pipeline running in `image`: the install when it is the default image, none otherwise. */
-export function prLoopSetup(image: string): string[] {
-  return image === PR_LOOP_IMAGE ? PR_LOOP_SETUP : [];
+/**
+ * The setup lines for a pipeline running in `image`: the install when it is
+ * the default image, none otherwise. `engine` is the lines the project's
+ * lexicons give (#4550, `LexiconPlugin.ciSetup`, {@link engineSetupLines}):
+ * Pulumi or plunge for a Pulumi member, OpenTofu for a Terraform one. Absent,
+ * OpenTofu, as before.
+ */
+export function prLoopSetup(image: string, engine?: readonly string[]): string[] {
+  if (image !== PR_LOOP_IMAGE) return [];
+  return engine && engine.length > 0 ? [...engine] : PR_LOOP_SETUP;
+}
+
+/**
+ * Join the setup lines each lexicon gives (#4550), each line once, in the
+ * order the lexicons come. A project whose lexicons give none gets none, and
+ * {@link prLoopSetup} then falls back to OpenTofu.
+ */
+export function engineSetupLines(perLexicon: ReadonlyArray<readonly string[] | undefined>): string[] {
+  return [...new Set(perLexicon.flatMap((lines) => lines ?? []))];
 }
 
 /**
@@ -162,6 +181,12 @@ export interface PrLoopPipelineOptions {
    * `waveGate` nor `build`.
    */
   applyBeforeMerge?: boolean;
+  /**
+   * The requires checks the apply before merge asks (#4607): a product's
+   * `apply.requires`, passed as `pr-apply --requires <list>`. Absent: all
+   * four. Only with `applyBeforeMerge`.
+   */
+  applyRequires?: readonly string[];
   /**
    * Stream each job's run events (#4007): `--events-json` on both commands,
    * and `CHANT_RUN_EVENTS_DIR` set to {@link PR_LOOP_EVENTS_DIR}. Default false.
@@ -224,6 +249,14 @@ export interface PrLoopPipelineOptions {
    */
   locks?: "plan";
   /**
+   * `ci.lockGrain: repo` (#4552): one apply at a time in the repository.
+   * GitHub's apply jobs share the concurrency group `chant-apply-repo`,
+   * GitLab's the resource group of that name, and Forgejo's take the lock
+   * tag `refs/tags/chant-apply-lock` in the apply step (./repo-lock.ts). Set
+   * from the declaration at base. Absent: per environment and member.
+   */
+  lockGrain?: "repo";
+  /**
    * The cloud identity a pull request environment's jobs take (#4330), from
    * `ci.identity.cloud` (`resolvePrEnvCloudIdentity` in ../ci-identity.ts):
    * the apply identity of a rule that names the pull request environments.
@@ -232,6 +265,36 @@ export interface PrLoopPipelineOptions {
    * Absent: they request no OIDC token.
    */
   prEnvIdentity?: CloudTradeSpec;
+  /**
+   * The product's words (#4550, `@intentius/chant/ci-product`): the comment
+   * a job answers, and with `bin` the command every job runs in place of
+   * `chant`, whose bin passes the rest to chant in process with the words.
+   * The statuses and the note take the words in the running job, from the
+   * bin. Absent: chant's.
+   */
+  words?: CiProductWordsInput | CiProductWords;
+  /** The engine install lines of the project's lexicons (#4550), for {@link prLoopSetup}. */
+  engineSetup?: string[];
+  /**
+   * The control repo (#4568, `@intentius/chant/ci-control`): after the last
+   * apply on merge succeeds, a `control-dispatch` job tells the control
+   * repo this member applied, and the control repo runs its dependents.
+   * The job maps the target's secret into `CHANT_CONTROL_TOKEN` for its one
+   * step; on GitLab, where a CI/CD variable reaches every job, the plan job
+   * unsets it with the forge tokens. `sentCheck` and `markSent` are the
+   * product's shell lines that find and set the commit's control status.
+   * Needs `applyOnMerge` or `waveGate`; ignored under `applyBeforeMerge`,
+   * which applies no default branch.
+   */
+  control?: { target: ControlTarget; sentCheck?: string; markSent?: string };
+  /**
+   * A comment preview (#4620): `/<product> <plan word>` on a pull request
+   * plans its head again in a job that holds only a read token, and a job
+   * after it posts the note ({@link prCommentPreviewJob}). The words must
+   * name a `plan` command. Set from `--preview-comment` beside `--pr-loop`.
+   * Default false.
+   */
+  previewComment?: boolean;
 }
 
 /** The lock job's step names and commands (#4327), shared by the GitHub-shaped generators. */
@@ -245,6 +308,172 @@ export function prLockCommand(forge: ForgeKind): string {
 
 /** `chant unlock` for the pull request that closed; reads `PR_NUMBER`. */
 export const PR_UNLOCK_COMMAND = 'chant unlock --pr "$PR_NUMBER"';
+
+/** The job answering `/<product> lock` (#4588). */
+export const PR_COMMENT_LOCK_JOB = "comment-lock";
+/** The job answering `/<product> unlock` (#4588). */
+export const PR_COMMENT_UNLOCK_JOB = "comment-unlock";
+
+/** The GitLab variables a pipeline of the target branch is started with to lock or unlock a merge request (#4588), as `CHANT_APPLY_PR` applies one. */
+export const GITLAB_LOCK_PR_VAR = "CHANT_LOCK_PR";
+export const GITLAB_UNLOCK_PR_VAR = "CHANT_UNLOCK_PR";
+
+/** A comment lock or unlock job (#4588): the comment it answers, its command, and the values the command reads. */
+export interface PrCommentLockJob {
+  jobName: typeof PR_COMMENT_LOCK_JOB | typeof PR_COMMENT_UNLOCK_JOB;
+  /** Which comment command it answers. */
+  command: "lock" | "unlock";
+  /** The comment, `/<product> <word>`. */
+  comment: string;
+  /** The command line. Reads `$PR_NUMBER`. */
+  line: string;
+  /** The values it reads, as the forge spells them. On GitLab `PR_NUMBER` comes from {@link GITLAB_LOCK_PR_VAR} or {@link GITLAB_UNLOCK_PR_VAR}. */
+  env: Record<string, string>;
+  /** On GitLab, the variable a pipeline of the target branch is started with. */
+  gitlabVar?: string;
+}
+
+/**
+ * The comment lock and unlock jobs (#4588), under `ci.locks: plan` when the
+ * words name the `lock` and `unlock` commands. `/<product> lock` runs `chant
+ * lock --keep`, which keeps the locks the pull request's plan took until it
+ * closes; `/<product> unlock` runs `chant unlock`, which releases them. Both
+ * run at the target branch's commit, so no code of the change runs, and
+ * GitHub asks for a commenter who can write as it does for the apply
+ * comment. GitLab starts no pipeline on a note, so there each job runs in a
+ * pipeline of the target branch started with {@link GITLAB_LOCK_PR_VAR} or
+ * {@link GITLAB_UNLOCK_PR_VAR} set to the merge request's iid.
+ */
+export function prCommentLockJobs(forge: ForgeKind, options: Pick<PrLoopPipelineOptions, "locks" | "words"> = {}): PrCommentLockJob[] {
+  if (options.locks !== "plan") return [];
+  const words = resolveProductWords(options.words);
+  const github = forge !== "gitlab";
+  const out: PrCommentLockJob[] = [];
+  for (const command of ["lock", "unlock"] as const) {
+    const comment = commentLine(words, command);
+    if (!comment) continue;
+    const gitlabVar = command === "lock" ? GITLAB_LOCK_PR_VAR : GITLAB_UNLOCK_PR_VAR;
+    const line = command === "lock" ? ["chant", "lock", "--keep", "--pr", '"$PR_NUMBER"', "--forge", forge].join(" ") : PR_UNLOCK_COMMAND;
+    out.push({
+      jobName: command === "lock" ? PR_COMMENT_LOCK_JOB : PR_COMMENT_UNLOCK_JOB,
+      command,
+      comment,
+      line: withProductBin(line, words.bin),
+      env: github ? { PR_NUMBER: "${{ github.event.issue.number }}", GITHUB_TOKEN: GITHUB_JOB_TOKEN } : { PR_NUMBER: `$${gitlabVar}` },
+      ...(github ? {} : { gitlabVar }),
+    });
+  }
+  return out;
+}
+
+/** The job answering `/<product> <plan word>` (#4620). */
+export const PR_COMMENT_PREVIEW_JOB = "comment-preview";
+/** The job that posts the comment preview's note and status (#4620). */
+export const PR_COMMENT_PREVIEW_NOTE_JOB = "comment-preview-note";
+/** The GitLab variable a pipeline of the target branch is started with to preview a merge request again (#4620). */
+export const GITLAB_PREVIEW_PR_VAR = "CHANT_PREVIEW_PR";
+/** The variable the GitHub-shaped preview job's checkout script reads the pull request's head ref from (#4620). */
+export const PREVIEW_REF_ENV = "CHANT_PREVIEW_REF";
+/** The preview job's output that carries the commit it checked out, set before any of the change's code runs (#4620). */
+export const PREVIEW_HEAD_OUTPUT = "head";
+
+/** The comment preview's two jobs (#4620): the plan at the pull request's head, and the post after it. */
+export interface PrCommentPreviewJob {
+  jobName: typeof PR_COMMENT_PREVIEW_JOB;
+  noteJobName: typeof PR_COMMENT_PREVIEW_NOTE_JOB;
+  /** The comment it answers, `/<product> <plan word>`. */
+  comment: string;
+  /**
+   * The plan job's command, as the pull request's plan job runs it, with
+   * `PR_NUMBER` from the comment (or {@link GITLAB_PREVIEW_PR_VAR}) and
+   * `BASE_SHA` left to {@link base}.
+   */
+  plan: PrLoopJob;
+  /** The shell line that sets `BASE_SHA` to the target branch's commit, run after the checkout. */
+  base: string;
+  /**
+   * GitHub and Forgejo: the ref the checkout script fetches through
+   * {@link PREVIEW_REF_ENV}. GitLab: the line that checks out the merge
+   * request's head, in the job's own clone.
+   */
+  head: { ref: string } | { line: string };
+  /** The post job's command, the values it reads, and on GitLab the line that finds the head it posts for. */
+  post: { command: string; env: Record<string, string>; setup?: string[] };
+  /** On GitLab, the variable a pipeline of the target branch is started with. */
+  gitlabVar?: string;
+}
+
+/**
+ * The comment preview (#4620), with `previewComment`: `/<product> <plan
+ * word>` on an open pull request runs the plan job's `pr-plan` again at the
+ * pull request's head, in a job that holds only a read token and drops it
+ * before the change's code runs, as the plan job does (#4295). The job after
+ * it checks out the target branch's commit, takes the report back and posts
+ * the note and the plan status with `pr-post`, as `plan-note` does.
+ *
+ * On GitHub the commenter must be able to write, as for the lock and unlock
+ * comments (#4588); Forgejo's payload says nothing of the commenter. GitLab
+ * starts no pipeline on a note, so there both jobs run in a pipeline of the
+ * target branch started with {@link GITLAB_PREVIEW_PR_VAR} set to the merge
+ * request's iid. The plan job unsets the forge tokens before it checks out
+ * the merge request's head, and the post job finds that head again with `git
+ * ls-remote`; a report for another head is refused by `pr-post`.
+ *
+ * Undefined without `previewComment`. Throws when the words name no `plan`
+ * command, since no comment would start the job.
+ */
+export function prCommentPreviewJob(forge: ForgeKind, env: string, options: PrLoopPipelineOptions = {}, member?: string): PrCommentPreviewJob | undefined {
+  if (!options.previewComment) return undefined;
+  const words = resolveProductWords(options.words);
+  const comment = commentLine(words, "plan");
+  if (!comment) throw new Error(`--preview-comment answers /${words.product} <plan command>, and the words name no plan command; name one in the words' commands, or drop --preview-comment`);
+  // The plan job's own command: the apply side's options never reach it, so they are left out here.
+  const { applyBeforeMerge: _early, applyRequires: _requires, applyOnMerge: _onMerge, ...planSide } = options;
+  const [plan] = prLoopJobs(forge, env, planSide, member);
+  const github = forge !== "gitlab";
+  const prNumber = github ? "${{ github.event.issue.number }}" : `$${GITLAB_PREVIEW_PR_VAR}`;
+  const fromComment = (jobEnv: Record<string, string>): Record<string, string> => {
+    const { BASE_SHA: _base, ...rest } = jobEnv;
+    return github ? { ...rest, PR_NUMBER: prNumber } : { ...rest, PR_NUMBER: prNumber, BASE_SHA: "$CI_COMMIT_SHA" };
+  };
+  const branch = options.branch ?? "main";
+  const base = github
+    ? `BASE_SHA="$(git rev-parse --verify "refs/remotes/origin/${branch.replace(/"/g, "")}^{commit}")" && export BASE_SHA`
+    : 'BASE_SHA="$CI_COMMIT_SHA" && export BASE_SHA';
+  const postCommand = withProductBin(
+    [
+      "chant", "components", "pr-post", "--pr", '"$PR_NUMBER"', "--head", '"$HEAD_SHA"',
+      "--env", env, "--output", PR_LOOP_REPORT_DIR, "--forge", forge,
+      ...(member ? ["--member", member] : []),
+      ...(github ? ["--result", '"$PLAN_RESULT"'] : []),
+    ].join(" "),
+    words.bin,
+  );
+  return {
+    jobName: PR_COMMENT_PREVIEW_JOB,
+    noteJobName: PR_COMMENT_PREVIEW_NOTE_JOB,
+    comment,
+    plan: { ...plan!, env: fromComment(plan!.env), run: { ...plan!.run, env: fromComment(plan!.run.env) } },
+    base,
+    head: github ? { ref: `refs/pull/${prNumber}/head` } : { line: pullRequestCheckout("gitlab") },
+    post: github
+      ? {
+          command: postCommand,
+          env: {
+            PR_NUMBER: prNumber,
+            HEAD_SHA: `\${{ needs.${PR_COMMENT_PREVIEW_JOB}.outputs.${PREVIEW_HEAD_OUTPUT} }}`,
+            PLAN_RESULT: `\${{ needs.${PR_COMMENT_PREVIEW_JOB}.result }}`,
+            GITHUB_TOKEN: GITHUB_JOB_TOKEN,
+          },
+        }
+      : {
+          command: postCommand,
+          env: { PR_NUMBER: prNumber },
+          setup: ['HEAD_SHA="$(git ls-remote origin "refs/merge-requests/$PR_NUMBER/head" | cut -f1)" && export HEAD_SHA'],
+        },
+    ...(github ? {} : { gitlabVar: GITLAB_PREVIEW_PR_VAR }),
+  };
+}
 
 /** One job's command and the forge values it reads, as environment variables for its step. */
 export interface PrLoopJob {
@@ -308,6 +537,10 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
   if (early && options.applyOnMerge) throw new Error("--apply-before-merge applies an open pull request and a merge records, so it takes no --apply-on-merge; pass one of them");
   if (early && options.waveGate) throw new Error("--apply-before-merge applies the pull request's plan in one job, so it takes no --wave-gate");
   if (early && (options.build || options.buildCommand)) throw new Error("--apply-before-merge runs no build before its requires checks, so it takes no --pr-build or --pr-build-command yet");
+  if (options.applyRequires && !early) throw new Error("--requires names the checks of an apply before merge, so it needs --apply-before-merge");
+  const asked = options.applyRequires ? parseRequiresList(options.applyRequires) : undefined;
+  if (asked && "error" in asked) throw new Error(asked.error);
+  const requires = early && asked ? ["--requires", asked.checks.join(",")] : [];
   const common = [
     "--env", env, "--gate", gate, "--output", PR_LOOP_REPORT_DIR, "--forge", forge,
     ...(member ? ["--member", member] : []),
@@ -325,7 +558,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
   const ciRun = (job: PrLoopJob["jobName"]): string[] => [
     "chant", "ci", "run", job, "--in-place", ...(job === "plan" ? ["--no-push"] : []),
     ...(job === "apply" && !early ? [] : ["--base", '"$BASE_SHA"']), ...(job === "plan" || (job === "apply" && early) ? ["--pr", '"$PR_NUMBER"'] : []),
-    ...(job === "apply" && early ? ["--apply-before-merge"] : []),
+    ...(job === "apply" && early ? ["--apply-before-merge", ...requires] : []),
     "--env", env, "--gate", gate, "--forge", forge,
     ...(job !== "record" && options.waveGate ? ["--wave-gate", options.waveGate] : []),
     ...(job !== "plan" && options.branch ? ["--branch", JSON.stringify(options.branch)] : []),
@@ -365,7 +598,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
     // #4301: the requires checks run inside pr-apply, before any of the head's code loads.
     jobName: "apply",
     command: [
-      "chant", "components", "pr-apply", "--before-merge", "--base", '"$BASE_SHA"', "--pr", '"$PR_NUMBER"', ...common,
+      "chant", "components", "pr-apply", "--before-merge", ...requires, "--base", '"$BASE_SHA"', "--pr", '"$PR_NUMBER"', ...common,
       ...(options.requireReview === true ? ["--require-review"] : []),
       "--resume", PR_APPLY_RECORD,
     ].join(" "),
@@ -373,6 +606,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
     checkout: [pullRequestCheckout(forge)],
     run: { command: ciRun("apply").join(" "), env: runEnv(earlyEnv) },
   };
+  const bin = options.words?.bin;
   return [
     {
       jobName: "plan",
@@ -392,7 +626,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
       ...build,
       run: { command: ciRun("record").join(" "), env: runEnv(applyEnv) },
     },
-  ];
+  ].map((job) => jobWithBin(job as PrLoopJob, bin));
 }
 
 /** The name of the job that posts the plan's note and status (#4295). */
@@ -414,10 +648,10 @@ export const PR_PLAN_NOTE_JOB = "plan-note";
  * asks GitLab for each open merge request's plan job and reads its report
  * from the job's artifacts.
  */
-export function prLoopPostJob(forge: ForgeKind, env: string, member?: string): { command: string; env: Record<string, string> } {
+export function prLoopPostJob(forge: ForgeKind, env: string, member?: string, words?: Pick<CiProductWordsInput, "bin">): { command: string; env: Record<string, string> } {
   if (forge === "gitlab") {
     return {
-      command: ["chant", "components", "pr-post", "--open", "--env", env, "--output", PR_LOOP_REPORT_DIR, "--forge", forge, ...(member ? ["--member", member] : [])].join(" "),
+      command: withProductBin(["chant", "components", "pr-post", "--open", "--env", env, "--output", PR_LOOP_REPORT_DIR, "--forge", forge, ...(member ? ["--member", member] : [])].join(" "), words?.bin),
       env: {},
     };
   }
@@ -428,7 +662,7 @@ export function prLoopPostJob(forge: ForgeKind, env: string, member?: string): {
     "--result", '"$PLAN_RESULT"',
   ].join(" ");
   return {
-    command,
+    command: withProductBin(command, words?.bin),
     env: { PR_NUMBER: "${{ github.event.pull_request.number }}", HEAD_SHA: "${{ github.sha }}", PLAN_RESULT: "${{ needs.plan.result }}", GITHUB_TOKEN: GITHUB_JOB_TOKEN },
   };
 }
@@ -554,6 +788,37 @@ export const GITLAB_APPLY_PR_VAR = "CHANT_APPLY_PR";
 
 /** The comment that starts the apply before merge on GitHub and Forgejo (#4301). */
 export const APPLY_COMMENT = "/chant apply";
+
+/** The comment that starts the apply before merge under the pipeline's words (#4550): `/plywood up`, else {@link APPLY_COMMENT}. */
+export function prApplyComment(options: Pick<PrLoopPipelineOptions, "words"> = {}): string {
+  return commentLine(resolveProductWords(options.words), "apply") ?? APPLY_COMMENT;
+}
+
+/** `chant` at the start of a command, or after a shell `$(`, `(`, `&&` or space. */
+const CHANT_WORD = /(^|[\s"(]|\$\()chant (?=[a-z])/g;
+
+/**
+ * A command line with the product's bin in place of `chant` (#4550): `npx
+ * --no-install plywood components pr-plan ...`. A `chant ci run` line also
+ * passes `--chant <bin>`, so the command it runs goes through the bin too.
+ */
+export function withProductBin(line: string, bin: string | undefined): string {
+  if (!bin) return line;
+  const swapped = line.replace(CHANT_WORD, (_m, before: string) => `${before}${bin} `);
+  return swapped.replace(new RegExp(`^${bin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} ci run ([a-z-]+) `), (m) => `${m}--chant ${JSON.stringify(bin)} `);
+}
+
+/** Every command of `job` through {@link withProductBin}. */
+function jobWithBin<T extends Pick<PrLoopJob, "command" | "run"> & Partial<Pick<PrLoopJob, "build" | "checkout" | "setup">>>(job: T, bin: string | undefined): T {
+  if (!bin) return job;
+  return {
+    ...job,
+    command: withProductBin(job.command, bin),
+    run: { ...job.run, command: withProductBin(job.run.command, bin) },
+    ...(job.build ? { build: job.build.map((l) => withProductBin(l, bin)) } : {}),
+    ...(job.checkout ? { checkout: job.checkout.map((l) => withProductBin(l, bin)) } : {}),
+  };
+}
 
 /**
  * The line that checks out pull request `$PR_NUMBER`'s head (#4301) in a job

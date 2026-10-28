@@ -17,6 +17,7 @@ import {
   livePrEnvironments,
   ownedEntries,
   parsePrEnvRecords,
+  prEnvTemplateOwner,
   prEnvStatusState,
   releaseTargetRefusal,
   renderPrEnvNote,
@@ -81,6 +82,34 @@ describe("deriving a pull request's environment", () => {
     expect(derivePrEnvironment(noPattern, "staging", 7)).toMatchObject({ refusal: expect.stringContaining('add "pr-*"') });
     const literal = { ...CONFIG, environments: ["staging", "pr-7", "pr-*"] } as ChantConfig;
     expect(derivePrEnvironment(literal, "staging", 7)).toMatchObject({ refusal: expect.stringContaining("declared outright") });
+  });
+});
+
+describe("a template a lexicon takes as its own stack (#4609)", () => {
+  const pulumiLike = { name: "pulumi", prEnvTemplate: (t: string) => (/^[^/]+\/[^/]+$/.test(t) ? `the Pulumi stack ${t}` : undefined) };
+
+  test("the first lexicon that takes the template answers, and none takes a plain environment name", () => {
+    expect(prEnvTemplateOwner([{ name: "aws" }, pulumiLike], "shop/dev")).toEqual({ lexicon: "pulumi", describe: "the Pulumi stack shop/dev" });
+    expect(prEnvTemplateOwner([{ name: "aws" }, pulumiLike], "staging")).toBeUndefined();
+    expect(prEnvTemplateOwner(undefined, "shop/dev")).toBeUndefined();
+  });
+
+  test("a stack-name template needs no chant.config.ts environment and takes no template endpoint", () => {
+    const owner = prEnvTemplateOwner([pulumiLike], "shop/dev")!;
+    const d = derivePrEnvironment(CONFIG, "shop/dev", 7, { templateOwner: owner });
+    expect(d).toMatchObject({ env: "pr-7", template: "shop/dev", stack: "shop", templateOwner: "pulumi" });
+    if ("refusal" in d) throw new Error(d.refusal);
+    expect(d.endpoint).toBeUndefined();
+    // Without the owner the same template is refused as before.
+    expect(derivePrEnvironment(CONFIG, "shop/dev", 7)).toMatchObject({ refusal: expect.stringContaining("do not declare") });
+  });
+
+  test("the other checks still hold for a stack-name template", () => {
+    const owner = { lexicon: "pulumi", describe: "the Pulumi stack shop/dev" };
+    expect(derivePrEnvironment({ ...CONFIG, environments: ["staging"] } as ChantConfig, "shop/dev", 7, { templateOwner: owner })).toMatchObject({ refusal: expect.stringContaining('add "pr-*"') });
+    expect(derivePrEnvironment({ ...CONFIG, ownership: undefined } as ChantConfig, "shop/dev", 7, { templateOwner: owner })).toMatchObject({ refusal: expect.stringContaining("no ownership.stack") });
+    const own = { ...CONFIG, environments: ["staging", { name: "pr-*", endpoint: "http://localhost:9000" }] } as ChantConfig;
+    expect(derivePrEnvironment(own, "shop/dev", 7, { templateOwner: owner })).toMatchObject({ endpoint: "http://localhost:9000" });
   });
 });
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env tsx
 
+import { withProductWords, type CiProductWords, type CiProductWordsInput } from "../ci-product-words";
 import { resolve } from "node:path";
 import { isEntryPoint } from "./is-entry-point";
 import { formatSuccess, formatError } from "./format";
@@ -258,6 +259,20 @@ Commands:
                                           applied) and path. Read-only.
 
 CI:
+  ci check --base <rev> [<target>...] [--output <dir>] [--json]
+                        Run the ci.hooks.check hooks the workspace declaration
+                        at --base names, once each, or once per target with
+                        perRun, with no forge token or cloud credentials in
+                        their environment. Writes check-hooks.json under
+                        --output (default .chant/check); exits 1 when one failed.
+  ci forge-check [--env <env>] [--member <name>] [--forge <forge>] [--repo <owner/name>] [--branch <default>] [--require-clouds] [--json]
+                        Read the forge, each cloud's trust policy and Pulumi
+                        Cloud's OIDC policies against the pipelines
+                        ci.identity.cloud gives --env (default production):
+                        apply environments, branch protection, required
+                        statuses, and each identity trusted to its own jobs.
+                        Read-only; exits 1 on a mismatch, and with
+                        --require-clouds on a cloud it had no credentials for.
   ci last-green [--json] [--from <rev>]  The newest first-parent commit of
                         ci.green's branch, or of --from, with a ci/green tag
                         and no ci/revoked tag. Reads local tags only; fetch
@@ -504,7 +519,14 @@ Ops:
                         --group <name> applies one job group's runs.
                         --record-plans (no --wave), in a pull request's
                         pipeline: plan every wave at its head and record the
-                        digests a pr-review approval mode compares
+                        digests a pr-review approval mode compares.
+                        --waves-outcome (no --wave), after the last wave:
+                        print how the wave jobs' outcome files add up
+                        (applied, partial, unchanged, waiting, failed), the
+                        outcome a control dispatch carries (#4617)
+                        --events-json streams the job's run events (#4555);
+                        with OTEL_EXPORTER_OTLP_ENDPOINT set, the job sends
+                        its trace there
   run resume [--op <name>] [--gate <name>]  Start again each CI job that
                         waits at a gate an approval now answers, through the
                         forge's API (#3683); approves nothing. --gate resumes
@@ -513,6 +535,10 @@ Ops:
                         stopped once its run is gone (#3858). --dry-run
                         starts nothing; with --json it says per gate whether
                         it would resume and why
+  run pending --plan <digest> [--op <name>]  List the gates waiting on a
+                        plan digest, newest first, with the pull request a
+                        pr-<n> gate belongs to (#4607). --json prints
+                        { plan, gates }
   run --generate <provider>  Write one CI pipeline file per scheduled Op for
                         github, gitlab or forgejo (#2533), from every Op that
                         declares a schedule or from --spec <file.json>.
@@ -590,12 +616,29 @@ Ops:
                         --resume then starts the CI job that waits at the
                         gate again (GitHub re-run, GitLab retry, Forgejo
                         dispatch) with CHANT_FORGE_TOKEN
+                        At a terminal it shows the stored plan and asks you
+                        to type the target's name (the environment, else the
+                        gate) before recording; a wrong answer exits 8, a
+                        plan that moved while you were asked exits 4.
+                        --yes, --json, CI and no terminal record as before
+                        (#4575)
                         On op policy-override the gate is the subject a
                         policy denied: --rule <id> names each rule that
                         denied it and --reason <text> says why the plan goes
                         out anyway; the next run that plans the same digest
                         applies it once, if .chant/overriders at base lists
                         --actor
+
+  notify relay          Serve the relay that approves a waiting gate from a
+                        Slack button or a Teams reply (#4611): verifies the
+                        chat signature and the button's notify reference,
+                        maps the clicker through the signers file at base,
+                        and records chant approve --plan <digest> --actor
+                        <principal> --relayed-by <relay>. Settings come from
+                        CHANT_RELAY_KEY, SLACK_SIGNING_SECRET,
+                        TEAMS_WEBHOOK_SECRET, CHANT_RELAY_PRINCIPAL,
+                        CHANT_RELAY_MAX_AGE, CHANT_RELAY_HOST (default
+                        127.0.0.1) and CHANT_RELAY_PORT (default 8787)
 
   lock <target>...      Lock targets for a pull request on chant/lifecycle
                         (--pr <n>, --stage plan|apply|lock, --head <sha>,
@@ -1135,7 +1178,9 @@ Component release ledger + status:
                             the ones that depend on them, and write the
                             report and note (--base <ref> --pr <n>
                             [--forge github|gitlab|forgejo] posts them);
-                            applies nothing
+                            --target <address> narrows every member's plan
+                            to the address, --target <member>:<address>
+                            one member's (#4620); applies nothing
   components pr-post       Post the plan note and the chant/plan status
                             from the report pr-plan --no-status wrote
                             (--pr <n> --head <sha> --env <env> --forge
@@ -1148,6 +1193,12 @@ Component release ledger + status:
                             _merges/<commit>.json; applies and refuses
                             nothing, and a plan that differs from the
                             approved one sets a failing chant/record status
+  agent prepare|run|land   The agent jobs (#4616) the Op generator writes for
+                            a spec's agent: prepare decides from the comment or
+                            the drift check and the ledger's run count, run
+                            runs the model command with no forge token, land
+                            pushes the change, opens or updates the pull
+                            request and records the run (--forge <kind>)
   components pr-env        An environment per open pull request (#4298): up
                             --base <ref> --pr <n> applies the change to pr-<n>,
                             derived from ci.prEnvironment.template, once an
@@ -1168,10 +1219,10 @@ Component release ledger + status:
                             member's loop, gate op pr-<n>-<member>;
                             --resume <file> finishes an apply that failed
                             partway under the same approval;
-                            --wave-gate <name>: apply a wave at a time, each
-                            planned after the one before applied, a moved
-                            wave waiting at <name>-wave-<k>, with --wave <k>
-                            for one wave per CI job;
+                            --wave-gate <name>: apply a wave at a time on op
+                            waves, each planned after the one before applied,
+                            a moved wave waiting at <name>-wave-<k>, with
+                            --wave <k> for one wave per CI job;
                             --green: apply the green commit at HEAD, measured
                             from the one last applied to --env, under the
                             approved plans of the merges since, else at gate
@@ -1181,10 +1232,22 @@ Component release ledger + status:
                             declaration at base sets ci.workflow to
                             apply-before-merge and the forge says it is
                             approved, mergeable, undiverged and green;
+                            --requires <list> asks only the checks it
+                            names (approved,mergeable,undiverged,checks);
                             --events-json, both commands: the run-event
                             stream on stdout; --report-url <s3 or file URL>,
                             both commands: copy the report, the change set
                             and the events to <url>/<pr>/<commit>/)
+  components plan-wave --runs <file> --plans <file> --base <ref> --env <env>
+                           Plan one op wave's components through their
+                           capabilities and write the wave's plans file
+                           with its change set (#4588); --wave-outputs
+                           <file> seeds the outputs earlier waves left
+  components apply-wave --runs <file> --plans <file> --base <ref> --env <env>
+                           Plan the approved runs again, exit 4 when a plan
+                           moved, else apply them and add their outputs to
+                           --wave-outputs (#4588). Both are the steps of the
+                           waves pr-apply --wave-gate runs on op waves
   components release <env> Append one immutable release record
                             (--component <name> --digest <sha256:...>
                              [--git-sha <sha>] [--run-id <id>] [--actor <name>]);
@@ -1251,7 +1314,8 @@ Local:
 
 Servers:
   serve lsp             Start the LSP server (stdio)
-  serve mcp             Start the MCP server (stdio)
+  serve mcp             Start the MCP server (stdio); --read-only serves only
+                        the tools that read (ledger, graph, runs) and run nothing
 
 Project:
   update (alias: sync)  Sync lexicon types into .chant/types/ (does not install
@@ -1278,6 +1342,7 @@ Options:
                         records its lineage in .chant/workspace.lock.json
   --skill <name>        Init: install only this skill from the lexicon
   --skip-mcp            Init: scaffold without writing the project's .mcp.json
+  --mcp-read-only       Init: register \`chant serve mcp --read-only\` in .mcp.json
   --fix                 Auto-fix fixable issues (lint command)
   --force               Force overwrite existing files (import command)
   -w, --watch           Watch for changes and rebuild/re-lint (build, lint)
@@ -1557,8 +1622,32 @@ function commandRunsNoConfig(def: CommandDef, args: ParsedArgs): boolean {
  * checked, plugins are loaded when the command needs them, and the handler
  * runs. A `process.exit` inside (loadPluginsOrExit's, say) is the caller's to
  * catch.
+ *
+ * `words` (#4550) are a CI product's words (`@intentius/chant/ci-product`):
+ * the product's bin passes them, so the command renders in the product's
+ * words while it runs. `mcp` (#4555) is its tool hook, which `chant serve
+ * mcp` serves beside chant's own tools.
  */
-export async function runCommandInProcess(argv: string[]): Promise<number> {
+export async function runCommandInProcess(
+  argv: string[],
+  options: { words?: CiProductWordsInput | CiProductWords; mcp?: import("./mcp/product-tools").ProductMcpHook; wave?: import("../op/op-waves-after-plan").ProductWaveHook } = {},
+): Promise<number> {
+  // #4614: a product's after-plan hooks and capabilities on `chant run wave`, in its own process.
+  if (options.wave) {
+    const { withProductWaveHook } = await import("../op/op-waves-after-plan");
+    const { wave, ...rest } = options;
+    return withProductWaveHook(wave, () => runCommandInProcess(argv, rest));
+  }
+  // #4555: a product's tools on `chant serve mcp`, through its tool hook.
+  if (options.mcp) {
+    const { withProductMcpHook } = await import("./mcp/product-tools");
+    const { mcp, ...rest } = options;
+    return withProductMcpHook(mcp, () => runCommandInProcess(argv, rest));
+  }
+  // #4550: a product's bin calls chant with its words; every status, note and
+  // approve line the command writes takes them, and the earlier words come
+  // back once it settles.
+  if (options.words) return withProductWords(options.words, () => runCommandInProcess(argv));
   const args = parseArgs(argv);
   const match = resolveCommand(args, commandRegistry);
   if (!match) {
@@ -1638,6 +1727,10 @@ export const commandRegistry: CommandDef[] = [
   { name: "ci tick", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiTick(ctx) },
   { name: "ci workflow", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiWorkflow(ctx) },
   { name: "ci init", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-init")).runCiInit(ctx) },
+  // #4556: the ci.hooks.check hooks at base, for a product's check job.
+  { name: "ci check", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/ci-check")).runCiCheck(ctx) },
+  // #4608: the live forge, cloud trust policies and Pulumi Cloud's OIDC policies against ci.identity.cloud. Read-only.
+  { name: "ci forge-check", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/ci-forge-check")).runCiForgeCheck(ctx) },
   // #4094: one pull-request job as a pipeline Op in a fresh checkout, the chant runner's first slice.
   { name: "ci run", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-run")).runCiRun(ctx) },
   // #4098: the run index at the report URL.
@@ -1687,6 +1780,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "run wave", handler: runOpWaveCommand },
   // #3683 — start the CI jobs that wait at gates whose approval arrived. Imported on first use.
   { name: "run resume", handler: async (ctx) => (await import("./handlers/gate-resume")).runResumeCommand(ctx) },
+  // #4607 — the pending gates a plan digest waits at, with their pull request. Imported on first use.
+  { name: "run pending", handler: async (ctx) => (await import("./handlers/gate-pending")).runPendingCommand(ctx) },
   { name: "run", handler: runOp },
 
   { name: "operator status", handler: runOperatorStatus },
@@ -1694,6 +1789,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "operator", handler: runOperator },
   { name: "approve", handler: runApprove },
   // #4293 — target locks a pull request holds on chant/lifecycle. Imported on first use.
+  // #4611 — approve a waiting gate from a chat click. Imported on first use.
+  { name: "notify relay", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/notify-relay")).runNotifyRelay(ctx) },
   { name: "lock", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/lock")).runLock(ctx) },
   { name: "unlock", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/lock")).runUnlock(ctx) },
 
@@ -1796,9 +1893,16 @@ export const commandRegistry: CommandDef[] = [
   // #3183 — the pull-request loop the generated CI runs. Imported on first use.
   { name: "components pr-plan", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/pr")).runComponentsPrPlan(ctx) },
   { name: "components pr-apply", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/pr")).runComponentsPrApply(ctx) },
+  // #4588: the component plan-wave and apply-wave steps a component waves spec runs (pr-apply --wave-gate on op waves).
+  { name: "components plan-wave", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/pr")).runComponentsPlanWave(ctx) },
+  { name: "components apply-wave", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/pr")).runComponentsApplyWave(ctx) },
   // #4295: posts from the plan report in a job that runs none of the change's code, so it loads no plugins.
   { name: "components pr-post", handler: async (ctx) => (await import("./handlers/pr")).runComponentsPrPost(ctx) },
   { name: "components pr-record", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/pr")).runComponentsPrRecord(ctx) },
+  // #4616: the agent jobs' three steps. Imported on first use; none loads plugins.
+  { name: "agent prepare", handler: async (ctx) => (await import("./handlers/agent")).runAgentCommandLine(ctx) },
+  { name: "agent run", handler: async (ctx) => (await import("./handlers/agent")).runAgentCommandLine(ctx) },
+  { name: "agent land", handler: async (ctx) => (await import("./handlers/agent")).runAgentCommandLine(ctx) },
   { name: "components pr-env", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/pr-env")).runComponentsPrEnv(ctx) },
   { name: "components status", requiresPlugins: true, handler: runComponentsStatus },
   { name: "components release", handler: runComponentsReleaseRecord },

@@ -33,6 +33,54 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+// `ci.policy.source` (#4613): its shape and check, here so this module
+// bundles alone (#4294). `./policy-source.ts` fetches it.
+
+/** `ci.policy.source`: where the shared rules live. */
+export interface GatePolicySource {
+  /** The repository: an `https://`, `http://`, `ssh://` or `file://` URL, or `git@<host>:<path>`. */
+  repo: string;
+  /** A tag, a branch or a full commit. */
+  ref: string;
+  /** The Rego directory inside the repository. Default `policy`. */
+  path?: string;
+}
+
+/** The source as fetched: what a report and a decision record. */
+export interface ResolvedGatePolicySource {
+  /** The repository, with any user and password left out. */
+  repo: string;
+  ref: string;
+  /** The commit the ref named when the job fetched it. */
+  commit: string;
+  /** The Rego directory inside the repository. */
+  path: string;
+}
+
+const REPO = /^(https?:\/\/[^\s/]+\/\S+|ssh:\/\/[^\s/]+\/\S+|file:\/\/\/?\S+|[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:\S+)$/;
+const REF = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
+
+/** `source`, checked. Throws with what is wrong. `where` names it, such as `ci.policy.source`. */
+export function assertGatePolicySource(where: string, raw: unknown): asserts raw is GatePolicySource {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) throw new Error(`${where} must be { repo, ref, path? }`);
+  const o = raw as Record<string, unknown>;
+  for (const key of Object.keys(o)) {
+    if (key !== "repo" && key !== "ref" && key !== "path") throw new Error(`${where}.${key} is not a setting; the settings are repo, ref and path`);
+  }
+  if (typeof o.repo !== "string" || !REPO.test(o.repo) || o.repo.startsWith("-")) {
+    throw new Error(`${where}.repo must be a git URL (https://, ssh://, file:// or git@<host>:<path>)`);
+  }
+  if (typeof o.ref !== "string" || !REF.test(o.ref) || o.ref.includes("..") || o.ref.endsWith("/")) {
+    throw new Error(`${where}.ref must be a tag, a branch or a commit`);
+  }
+  if (o.path !== undefined) {
+    if (typeof o.path !== "string" || o.path.trim() === "") throw new Error(`${where}.path must be a non-empty string`);
+    if (o.path.startsWith("/") || o.path.split("/").includes("..")) throw new Error(`${where}.path must be a directory inside the source repository`);
+  }
+}
+
+
+
 /** The result shapes chant reads: conftest's and OPA's. */
 export const GATE_POLICY_ENGINES = ["conftest", "opa"] as const;
 export type GatePolicyEngine = (typeof GATE_POLICY_ENGINES)[number];
@@ -44,8 +92,26 @@ export const DEFAULT_POLICY_PATH = "policy";
 export interface GatePolicySettings {
   /** The result shape, and the default command. Default `conftest`. */
   engine?: GatePolicyEngine;
-  /** The policy directory, relative to the declaration at base. Default {@link DEFAULT_POLICY_PATH}. */
+  /**
+   * The policy directory, relative to the declaration at base. Default
+   * {@link DEFAULT_POLICY_PATH}. Refused beside `source`, whose own `path`
+   * names the directory inside the shared repository.
+   */
   path?: string;
+  /**
+   * A shared policy repository pinned by ref (#4613), read in place of the
+   * workspace's own directory. The ref is fetched by the job, never taken
+   * from the pull request's head.
+   */
+  source?: GatePolicySource;
+  /**
+   * CrossGuard packs every Pulumi stack's preview runs (#4613): each `dir`
+   * relative to the declaration at base, or to the top of `source` when it
+   * is set, and copied from there, so a pull request cannot drop or edit
+   * the packs that judge it. `config` is the pack's
+   * `--policy-pack-config` file, read the same way.
+   */
+  packs?: GatePolicyPack[];
   /** The package to read. conftest default: every namespace. opa default: `main`. */
   namespace?: string;
   /**
@@ -54,6 +120,12 @@ export interface GatePolicySettings {
    * prints the result shape `engine` names.
    */
   command?: string[];
+}
+
+/** One CrossGuard pack named by `ci.policy.packs`. */
+export interface GatePolicyPack {
+  dir: string;
+  config?: string;
 }
 
 /** A rule that matched, and what it said. */
@@ -83,6 +155,8 @@ export interface GatePolicyVerdict {
   holds: GatePolicyFinding[];
   warnings: string[];
   error?: string;
+  /** The shared source the rules came from (#4613), with the commit read. Absent when they came from the workspace at base. */
+  source?: ResolvedGatePolicySource;
 }
 
 export const DENY_RULE = /^(deny|violation)(_[A-Za-z0-9]+)*$/;
@@ -279,20 +353,35 @@ export function exportGatePolicy(tree: GatePolicyTree, path: string): { dir: str
 
 /** The settings, checked. Throws with what is wrong. `where` names them, such as `ci.policy`. */
 export function assertGatePolicySettings(where: string, raw: unknown): asserts raw is GatePolicySettings {
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) throw new Error(`${where} must be { engine?, path?, namespace?, command? }`);
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) throw new Error(`${where} must be { engine?, path?, source?, namespace?, command?, packs? }`);
+  if ("path" in raw && "source" in raw) throw new Error(`${where}.path and ${where}.source cannot both be set; with a source, ${where}.source.path names the directory inside it`);
   for (const [key, value] of Object.entries(raw)) {
     if (key === "engine") {
       if (!(GATE_POLICY_ENGINES as readonly unknown[]).includes(value)) throw new Error(`${where}.engine must be ${GATE_POLICY_ENGINES.join(" or ")}, the result shape the command prints`);
     } else if (key === "path" || key === "namespace") {
       if (typeof value !== "string" || value.trim() === "") throw new Error(`${where}.${key} must be a non-empty string`);
       if (key === "path" && (value.startsWith("/") || value.split("/").includes(".."))) throw new Error(`${where}.path must be a directory inside the workspace, relative to its declaration`);
+    } else if (key === "source") {
+      assertGatePolicySource(`${where}.source`, value);
+    } else if (key === "packs") {
+      if (!Array.isArray(value) || value.length === 0) throw new Error(`${where}.packs must be a non-empty list of { dir, config? }`);
+      value.forEach((p: unknown, i: number) => {
+        const at = `${where}.packs[${i}]`;
+        if (p === null || typeof p !== "object" || Array.isArray(p)) throw new Error(`${at} must be { dir, config? }`);
+        for (const [k, v] of Object.entries(p)) {
+          if (k !== "dir" && k !== "config") throw new Error(`${at}.${k} is not a setting; the settings are dir and config`);
+          if (typeof v !== "string" || v.trim() === "") throw new Error(`${at}.${k} must be a non-empty string`);
+          if (v.startsWith("/") || v.split("/").includes("..")) throw new Error(`${at}.${k} must be a path inside the workspace, or inside the source when one is set`);
+        }
+        if (typeof (p as { dir?: unknown }).dir !== "string") throw new Error(`${at}.dir is required`);
+      });
     } else if (key === "command") {
       if (!Array.isArray(value) || value.length === 0 || !value.every((a) => typeof a === "string" && a !== "")) throw new Error(`${where}.command must be argv, a non-empty list of strings`);
       if (!value.some((a: string) => a.includes("{input}"))) throw new Error(`${where}.command must pass the input file as {input}`);
     } else if (key === "outcomes" || key === "allow_unattended" || key === "allowUnattended") {
       throw new Error(`${where}.${key}: chant's policy step denies and holds only; a non-empty plan always waits for a person (ws-104), so there is no unattended outcome`);
     } else {
-      throw new Error(`${where}.${key} is not a setting; the settings are engine, path, namespace and command`);
+      throw new Error(`${where}.${key} is not a setting; the settings are engine, path, source, namespace, command and packs`);
     }
   }
 }

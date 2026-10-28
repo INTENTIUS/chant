@@ -212,6 +212,16 @@
           "via": "point",
           "approvedBy": "alice",
           "approvedAt": "2026-10-11T00:00:00.000Z"
+        },
+        "targets": {
+          "db": {
+            "startedAt": 0,
+            "durationMs": 0
+          },
+          "net": {
+            "startedAt": 0,
+            "durationMs": 0
+          }
         }
       },
       "ledger": {
@@ -348,7 +358,8 @@
             {
               "target": "db",
               "op": "apply",
-              "plan": ".chant/op-waves/tf-apply/wave-1/db.plan.json"
+              "plan": ".chant/op-waves/tf-apply/wave-1/db.plan.json",
+              "planDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
             }
           ],
           "runsFile": ".chant/op-waves/tf-apply/wave-1/runs.json",
@@ -384,7 +395,8 @@
             {
               "target": "net",
               "op": "apply",
-              "plan": ".chant/op-waves/tf-apply/wave-1/net.plan.json"
+              "plan": ".chant/op-waves/tf-apply/wave-1/net.plan.json",
+              "planDigest": "sha256:nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn"
             }
           ],
           "runsFile": ".chant/op-waves/tf-apply/wave-1/runs.json",
@@ -429,7 +441,8 @@
         {
           "target": "db",
           "op": "apply",
-          "plan": ".chant/op-waves/tf-apply/wave-1/db.plan.json"
+          "plan": ".chant/op-waves/tf-apply/wave-1/db.plan.json",
+          "planDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
         }
       ],
       "runsFile": ".chant/op-waves/tf-apply/wave-1/runs.json",
@@ -453,7 +466,8 @@
         {
           "target": "net",
           "op": "apply",
-          "plan": ".chant/op-waves/tf-apply/wave-1/net.plan.json"
+          "plan": ".chant/op-waves/tf-apply/wave-1/net.plan.json",
+          "planDigest": "sha256:nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn"
         }
       ],
       "runsFile": ".chant/op-waves/tf-apply/wave-1/runs.json",

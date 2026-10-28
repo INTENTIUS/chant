@@ -29,6 +29,8 @@ describe("the pr-env-run bundle", () => {
       "packages/core/src/change-set.ts",
       "packages/core/src/ci-handover.ts",
       "packages/core/src/ci-jobs.ts",
+      // The product's words (#4550): gate and status names, no imports.
+      "packages/core/src/ci-product-words.ts",
       "packages/core/src/components/changed-files.ts",
       "packages/core/src/components/pr-env-run.ts",
       "packages/core/src/components/pr-environment.ts",
@@ -37,6 +39,8 @@ describe("the pr-env-run bundle", () => {
       "packages/core/src/content-digest.ts",
       "packages/core/src/declarable.ts",
       "packages/core/src/effect-receipt.ts",
+      // The exit-code table (#4553): no imports.
+      "packages/core/src/exit-codes.ts",
       "packages/core/src/gated-waves.ts",
       "packages/core/src/intrinsic.ts",
       "packages/core/src/lifecycle/plan-digest.ts",
@@ -48,7 +52,12 @@ describe("the pr-env-run bundle", () => {
       "packages/core/src/plan-summary.ts",
       "packages/core/src/pr-loop.ts",
       "packages/core/src/pr-migrations.ts",
+      // The pull request's requires checks (#4607): type imports only.
+      "packages/core/src/pr-requires.ts",
+      // The Pulumi URN rule (#4548, the may-appear rows): no imports.
+      "packages/core/src/pulumi-urn.ts",
       // The next-release floor constant (#4480): no imports.
+      "packages/core/src/release-floors.ts",
     ]);
     expect(inputs.some((i) => /node_modules\/(ajv|js-yaml)\//.test(i) || i.endsWith("/op/gate.ts") || i.endsWith("/src/config.ts") || i.endsWith("/ts-loader.ts"))).toBe(false);
     expect(result.outputFiles.reduce((n, f) => n + f.contents.byteLength, 0)).toBeLessThan(40 * 1024);

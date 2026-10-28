@@ -20,7 +20,7 @@ import { RETENTION_KINDS, type RetentionOverride } from "../lifecycle/retention-
 import { parseReportUrl } from "../pr-report-url";
 import schema from "./declaration.schema.json" with { type: "json" };
 import { routeConflicts } from "./ci-branches";
-import { cloudIdentityProblems, CLOUDS, type CloudIdentityDeclaration } from "../ci-identity";
+import { cloudIdentityProblems, IDENTITY_CLOUDS, type CloudIdentityDeclaration } from "../ci-identity";
 import { expandGlob } from "./glob";
 import { EXAMPLES_KIND, holdsChantProject, REPO_KIND } from "./kinds";
 import { parseJsonText, pointerToken, type TextLocation } from "./jsonc";
@@ -29,7 +29,7 @@ import type { SecurityGroup } from "./security";
 import { joinPath, type WorkspaceTree } from "./tree";
 import { loadAjv2020 } from "./ajv2020";
 import { readChantPackageVersion } from "../package-version";
-import { assertPrLoopHooks, type OpWaveHooks } from "../op/op-waves";
+import { assertPrLoopHooks, type CiHooks } from "../op/op-waves";
 import { quorumProblems, type GateQuorumSpec } from "../op/gate-quorum";
 import { gateBaseApprovalProblems, type GateApprovalMode, type GatePolicyRef } from "../op/gate-approval";
 import { assertGatePolicySettings, type GatePolicySettings } from "../gate-policy";
@@ -301,6 +301,14 @@ export type CiWorkflow = "trunk-curated" | "trunk-curated+apply-on-merge" | "app
  */
 export type CiLocks = "apply" | "plan";
 
+/**
+ * What one apply holds while it applies, and what a pull request's target
+ * locks name under `ci.locks` (#4552, ../lifecycle/lock-rows.ts). `target`:
+ * the component, root or stack. `resource`: one row per changed resource.
+ * `repo`: one apply at a time in the repository.
+ */
+export type CiLockGrain = "target" | "resource" | "repo";
+
 /** The declaration's `ci` block (#3573). */
 export interface CiDeclaration {
   green: CiGreen | null;
@@ -308,6 +316,8 @@ export interface CiDeclaration {
   workflow?: CiWorkflow;
   /** `ci.locks` (#4293): when a pull request takes its target locks; absent when the declaration sets none, and then nothing is locked. */
   locks?: CiLocks;
+  /** `ci.lockGrain` (#4552): the grain every member takes unless it names its own; absent when the declaration sets none, and then each member takes its lexicon's default. */
+  lockGrain?: CiLockGrain;
   /**
    * `ci.reportUrl` (#4160): where the pull-request jobs copy their reports
    * and `chant ci run` keeps the run index, `<reportUrl>/runs/index.json`.
@@ -322,7 +332,7 @@ export interface CiDeclaration {
    * `pr-record` and `pr-apply` read them from the declaration at base.
    * Absent when the declaration sets none.
    */
-  hooks?: OpWaveHooks;
+  hooks?: CiHooks;
   /**
    * `ci.branches` (#4292): branch name to member-name globs. A member a glob
    * matches applies from that branch alone; the others apply from every
@@ -343,7 +353,8 @@ export interface CiDeclaration {
   policy?: GatePolicySettings;
   /**
    * `ci.identity` (#4296): `cloud` gives each cloud's plan and apply
-   * identities by environment and member globs (../ci-identity.ts).
+   * identities by environment and member globs (../ci-identity.ts), and
+   * Pulumi Cloud's preview and up tokens under `pulumi` (#4549).
    * Absent when unset.
    */
   identity?: { cloud: CloudIdentityDeclaration };
@@ -704,7 +715,9 @@ export interface Member {
   /** The member's own `ci.workflow` (#4168 step 6), which wins over the top level's; null when it names none. */
   ciWorkflow: CiWorkflow | null;
   /** The member's own `ci.hooks` (#4288), run after the top level's; null when it names none. */
-  ciHooks: OpWaveHooks | null;
+  ciHooks: CiHooks | null;
+  /** The member's own `ci.lockGrain` (#4552), which wins over the top level's; null when it names none. */
+  ciLockGrain: CiLockGrain | null;
   suppress: Suppression[];
   /** The entry's JSON Pointer in the file, for messages. */
   pointer: string;
@@ -1027,6 +1040,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
       security: [...((e.security as SecurityGroup[] | undefined) ?? [])],
       ciWorkflow: ((e.ci as { workflow?: CiWorkflow } | undefined)?.workflow) ?? null,
       ciHooks: ciHooksOf((e.ci as { hooks?: unknown } | undefined)?.hooks, `${pointer}/ci/hooks`, at),
+      ciLockGrain: ((e.ci as { lockGrain?: CiLockGrain } | undefined)?.lockGrain) ?? null,
       suppress,
       pointer,
     };
@@ -1304,14 +1318,14 @@ function retentionOf(raw: unknown): RetentionOverride | null {
 }
 
 /** A `ci.hooks` block (#4288), refused when a pull-request job could not run it. Null when absent. */
-function ciHooksOf(raw: unknown, pointer: string, at: (pointer: string, key?: boolean) => ErrorLocation): OpWaveHooks | null {
+function ciHooksOf(raw: unknown, pointer: string, at: (pointer: string, key?: boolean) => ErrorLocation): CiHooks | null {
   if (raw === undefined) return null;
   try {
-    assertPrLoopHooks(pointer.slice(1).replace(/\//g, "."), raw as OpWaveHooks);
+    assertPrLoopHooks(pointer.slice(1).replace(/\//g, "."), raw as CiHooks);
   } catch (err) {
     throw new WorkspaceReadError("declaration-invalid", err instanceof Error ? err.message : String(err), at(pointer));
   }
-  return structuredClone(raw as OpWaveHooks);
+  return structuredClone(raw as CiHooks);
 }
 
 /** A `ci.branches` or `ci.labels` map, copied without its `x-` keys. */
@@ -1337,7 +1351,8 @@ function ciPolicyOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorL
  */
 function cloudIdentityOf(raw: CloudIdentityDeclaration, at: (pointer: string, key?: boolean) => ErrorLocation): CloudIdentityDeclaration {
   const out: CloudIdentityDeclaration = {};
-  for (const cloud of CLOUDS) {
+  // #4549: Pulumi Cloud's identities are read with the clouds'.
+  for (const cloud of IDENTITY_CLOUDS) {
     const c = raw[cloud];
     if (c === undefined) continue;
     const kept = Object.fromEntries(Object.entries(c).filter(([k]) => !k.startsWith("x-")));
@@ -1351,7 +1366,7 @@ function cloudIdentityOf(raw: CloudIdentityDeclaration, at: (pointer: string, ke
 
 function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocation): CiDeclaration | null {
   if (raw === undefined) return null;
-  const block = raw as { reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; identity?: { cloud?: CloudIdentityDeclaration }; branches?: Record<string, string[]>; labels?: Record<string, string[]>; locks?: CiLocks; policy?: unknown; prEnvironment?: { template: string; ttl?: string; teardown?: { name?: string; command: string[]; lexicons?: string[] } }; green?: { branch: string | string[]; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource } };
+  const block = raw as { reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; identity?: { cloud?: CloudIdentityDeclaration }; branches?: Record<string, string[]>; labels?: Record<string, string[]>; locks?: CiLocks; lockGrain?: CiLockGrain; policy?: unknown; prEnvironment?: { template: string; ttl?: string; teardown?: { name?: string; command: string[]; lexicons?: string[] } }; green?: { branch: string | string[]; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource } };
   const hooks = ciHooksOf(block.hooks, "/ci/hooks", at);
   const policy = ciPolicyOf(block.policy, at);
   const workflow = {
@@ -1360,6 +1375,7 @@ function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocatio
     ...(block.branches !== undefined ? { branches: globMap(block.branches) } : {}),
     ...(block.labels !== undefined ? { labels: globMap(block.labels) } : {}),
     ...(block.locks !== undefined ? { locks: block.locks } : {}),
+    ...(block.lockGrain !== undefined ? { lockGrain: block.lockGrain } : {}),
     ...(policy ? { policy } : {}),
     ...(block.identity?.cloud !== undefined ? { identity: { cloud: cloudIdentityOf(block.identity.cloud, at) } } : {}),
     ...(block.prEnvironment !== undefined

@@ -61,11 +61,15 @@ import {
   prLoopWaveJobs,
   prLoopWithWaves,
   prEnvJobs,
+  prCommentLockJobs,
+  prCommentPreviewJob,
   PR_ENV_REPORT_DIR,
   PR_ENV_POST_JOB,
 } from "@intentius/chant/components/pr-pipeline";
+import { REPO_APPLY_GROUP } from "@intentius/chant/components/repo-lock";
 import { memberGitlabChanges, memberRepoPath, memberShellDir } from "@intentius/chant/lexicon";
 import { FORGE_TOKEN_VARS, GITLAB_DROP_FORGE_TOKENS } from "@intentius/chant/ci-handover";
+import { CONTROL_TOKEN_VARS, controlDispatchJob, controlNoteCheckout } from "@intentius/chant/control/dispatch";
 import { gitlabTradeIdTokens, gitlabTradeLines, TRADE_SPEC_ENV, type CloudTradeSpec } from "@intentius/chant/ci-identity";
 import type {
   ComponentPipelineJob as GeneratedJob,
@@ -358,6 +362,9 @@ function gitlabPlanNotesRule(branch: string): string {
   return `$CI_PIPELINE_SOURCE =~ /^(schedule|web|api|trigger)$/ && $${GITLAB_PLAN_NOTES_VAR} == "1" && $CI_COMMIT_BRANCH == ${branch}`;
 }
 
+/** Drops the credentials GitLab's runner writes into origin's URL (#4620), before a merge request's code runs in a pipeline of the target branch. */
+const GITLAB_SCRUB_ORIGIN = `git remote set-url origin "$(git remote get-url origin | sed -E 's#//[^@/]*@#//#')"`;
+
 /** The rule of a pipeline for a pushed `ci/green/` tag (#4168 step 9), which runs the apply under apply on merge. */
 const GITLAB_GREEN_TAG_RULE = '$CI_COMMIT_TAG =~ /^ci\\/green\\//';
 
@@ -397,7 +404,7 @@ function prLoopGitlabPipeline(
   // The command runs through chant ci run (#4156), which writes the job's run record, signed when the CHANT_RUNNER_KEY variable is set.
   // #4221: a wave job hands the commit it applies to the next wave as GREEN_SHA, through a dotenv report.
   const handOff = (job: typeof plan): string[] => (job.wave ? [`echo "GREEN_SHA=$GREEN_SHA" > "$CI_PROJECT_DIR/${WAVE_GREEN_DOTENV}"`] : []);
-  const script = (job: typeof plan): string[] => [...prLoopSetup(image), ...enter, ...beforeScript, ...(job.checkout ?? []), ...handOff(job), ...(job.setup ?? []), ...(job.build ?? []), job.run.command, ...extraScript];
+  const script = (job: typeof plan): string[] => [...prLoopSetup(image, loop.engineSetup), ...enter, ...beforeScript, ...(job.checkout ?? []), ...handOff(job), ...(job.setup ?? []), ...(job.build ?? []), job.run.command, ...extraScript];
   // #4296: each job trades its OIDC token for its cloud identity before anything else in its script.
   const identity = loop.identity;
   const trading = (spec: CloudTradeSpec | undefined): Record<string, unknown> =>
@@ -406,13 +413,43 @@ function prLoopGitlabPipeline(
   const applySpec = (job: typeof plan): CloudTradeSpec | undefined => (identity ? (job.jobName === "record" ? identity.plan : identity.apply) : undefined);
   // #4298: a pull request environment's jobs, in a stage of their own after the plan.
   const prEnv = loop.prEnvironment ? prEnvGitlabJobs(image, beforeScript, extraScript, enter, loop, member, named, onMergeRequest) : undefined;
-  const stages = ["plan", PR_PLAN_NOTE_JOB, ...applies.map((a) => a.stage), ...(prEnv ? [PR_ENV_STAGE, PR_ENV_POST_STAGE] : [])];
+  // #4568: once the last apply on merge succeeded, one job tells the control repo this member applied.
+  const lastGreen = loop.control && !loop.applyBeforeMerge && greens.length > 0 ? greens[greens.length - 1]!.name : undefined;
+  const control =
+    loop.control && lastGreen
+      ? controlDispatchJob("gitlab", loop.control.target, loop.waveGate ? "$GREEN_SHA" : "$CI_COMMIT_SHA", {
+          ...(loop.words ? { words: loop.words } : {}),
+          ...(loop.control.sentCheck ? { sentCheck: loop.control.sentCheck } : {}),
+          ...(loop.control.markSent ? { markSent: loop.control.markSent } : {}),
+        })
+      : undefined;
+  const controlJob = control ? named(control.name) : undefined;
+  // A CI/CD variable reaches every job, so the plan job drops the control repo's tokens with the forge tokens.
+  const dropControl = loop.control
+    ? [`unset ${[...new Set([...CONTROL_TOKEN_VARS, loop.control.target.tokenSecret, loop.control.target.readTokenSecret])].join(" ")}`]
+    : [];
+  // #4588: `/<product> lock` and `/<product> unlock`: GitLab starts no pipeline on a note, so each runs in a
+  // pipeline of the target branch started with CHANT_LOCK_PR or CHANT_UNLOCK_PR set, as the apply before merge does.
+  const targetBranch = loop.branch ? JSON.stringify(loop.branch) : "$CI_DEFAULT_BRANCH";
+  const commentLocks = prCommentLockJobs("gitlab", loop).map((job) => ({
+    job,
+    name: named(job.jobName),
+    rule: `$CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/ && $${job.gitlabVar} =~ /^[0-9]+$/ && $CI_COMMIT_BRANCH == ${targetBranch}`,
+  }));
+  // #4620: `/<product> <plan word>`: a pipeline of the target branch started with CHANT_PREVIEW_PR set previews the merge request's head again.
+  const preview = prCommentPreviewJob("gitlab", env, loop, member?.name);
+  const previewRule = preview ? `$CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/ && $${preview.gitlabVar} =~ /^[0-9]+$/ && $CI_COMMIT_BRANCH == ${targetBranch}` : undefined;
+  const previewName = preview ? named(preview.jobName) : undefined;
+  const previewNoteName = preview ? named(preview.noteJobName) : undefined;
+  const stages = ["plan", PR_PLAN_NOTE_JOB, ...commentLocks.map((c) => c.job.jobName), ...(preview ? [preview.jobName, preview.noteJobName] : []), ...applies.map((a) => a.stage), ...(control ? [control.name] : []), ...(prEnv ? [PR_ENV_STAGE, PR_ENV_POST_STAGE] : [])];
   const noteJob = named(PR_PLAN_NOTE_JOB);
-  const post = prLoopPostJob("gitlab", env, member?.name);
+  const post = prLoopPostJob("gitlab", env, member?.name, loop.words ? { ...(loop.words.bin ? { bin: loop.words.bin } : {}) } : undefined);
+  // #4619: with a control repo named, the note job reads its chant/lifecycle, read-only, so pr-post marks the cross-stack edges.
+  const controlRead = loop.control ? controlNoteCheckout("gitlab", loop.control.target, loop.words ?? {}) : undefined;
   const doc: Record<string, unknown> = {
     // Included files merge their top-level keys, so a member's file carries
     // the rules every member shares and no name: two names would collide.
-    workflow: { ...(member ? {} : { name: `chant-pr-${env}` }), rules: [{ if: onMergeRequest }, { if: onMerge }, { if: onPlanNotes }, ...(greens.length > 0 ? [{ if: onGreen }] : []), ...(prEnv ? [{ if: GITLAB_SCHEDULE_RULE }] : [])] },
+    workflow: { ...(member ? {} : { name: `chant-pr-${env}` }), rules: [{ if: onMergeRequest }, { if: onMerge }, { if: onPlanNotes }, ...(greens.length > 0 ? [{ if: onGreen }] : []), ...commentLocks.map((c) => ({ if: c.rule })), ...(previewRule ? [{ if: previewRule }] : []), ...(prEnv ? [{ if: GITLAB_SCHEDULE_RULE }] : [])] },
     stages,
     variables: { ...options.variables, CHANT_ENV: env, ...GITLAB_FULL_HISTORY },
     [planJob]: {
@@ -423,7 +460,7 @@ function prLoopGitlabPipeline(
       variables: { ...plan.run.env, ...tradeVars(identity?.plan) },
       // #4295: the merge request's code runs in this job, so the job's shell drops the forge tokens first.
       // #4296: with identity, the trade runs before that, and the same unset drops the token variables too.
-      script: [...(identity ? gitlabTradeLines(FORGE_TOKEN_VARS) : [GITLAB_DROP_FORGE_TOKENS]), ...script(plan)],
+      script: [...(identity ? gitlabTradeLines(FORGE_TOKEN_VARS) : [GITLAB_DROP_FORGE_TOKENS]), ...dropControl, ...script(plan)],
       artifacts: { when: "always", paths: [reportPath] },
     },
     // #4295, #4328: a job of the target branch's pipeline posts each open merge request's note and status from its plan job's report.
@@ -431,8 +468,55 @@ function prLoopGitlabPipeline(
       stage: PR_PLAN_NOTE_JOB,
       image,
       rules: [{ if: onPlanNotes }],
-      script: [...enter, ...beforeScript, post.command],
+      script: [...enter, ...beforeScript, ...(controlRead ? [controlRead.script] : []), post.command],
     },
+    ...Object.fromEntries(
+      commentLocks.map(({ job, name, rule }) => [
+        name,
+        // The target branch's commit, so none of the merge request's code runs here.
+        { stage: job.jobName, image, rules: [{ if: rule }], variables: job.env, script: [...enter, ...beforeScript, job.line] },
+      ]),
+    ),
+    ...(preview && previewName && previewNoteName && previewRule
+      ? {
+          [previewName]: {
+            stage: preview.jobName,
+            image,
+            rules: [{ if: previewRule }],
+            ...trading(identity?.plan),
+            variables: { ...preview.plan.run.env, ...tradeVars(identity?.plan) },
+            // A pipeline of the target branch holds the protected tokens, so the job drops them before it checks out the merge request's head.
+            script: [
+              ...(identity ? gitlabTradeLines(FORGE_TOKEN_VARS) : [GITLAB_DROP_FORGE_TOKENS]),
+              ...dropControl,
+              "unset CHANT_RUNNER_KEY",
+              ...("line" in preview.head ? [preview.head.line] : []),
+              // The ledger while the clone can still fetch it: the plan reads the gate ledger from the local branch.
+              "git fetch -q --no-tags origin '+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle' 2>/dev/null || true",
+              // The runner's clone keeps the job token in origin's URL; the merge request's code never sees it.
+              GITLAB_SCRUB_ORIGIN,
+              preview.base,
+              ...prLoopSetup(image, loop.engineSetup),
+              ...enter,
+              ...beforeScript,
+              ...(preview.plan.setup ?? []),
+              ...(preview.plan.build ?? []),
+              preview.plan.run.command,
+              ...extraScript,
+            ],
+            artifacts: { when: "always", paths: [reportPath] },
+          },
+          [previewNoteName]: {
+            stage: preview.noteJobName,
+            image,
+            needs: [{ job: previewName, artifacts: true }],
+            rules: [{ if: previewRule, when: "always" }],
+            variables: preview.post.env,
+            // The target branch's commit: the job's own clone, where none of the merge request's code runs.
+            script: [...enter, ...beforeScript, ...(controlRead ? [controlRead.script] : []), ...(preview.post.setup ?? []), preview.post.command],
+          },
+        }
+      : {}),
     ...Object.fromEntries(
       applies.map(({ job, name, stage }, i) => [
         name,
@@ -440,7 +524,8 @@ function prLoopGitlabPipeline(
           stage,
           image,
           ...(i > 1 ? { needs: [applies[i - 1]!.name] } : {}),
-          resource_group: job.jobName === "record" ? prRecordGroup(env, member?.name) : prApplyGroup(env, member?.name),
+          // #4552: on the repo grain every apply of the repository shares one resource group.
+          resource_group: job.jobName === "record" ? prRecordGroup(env, member?.name) : loop.lockGrain === "repo" ? REPO_APPLY_GROUP : prApplyGroup(env, member?.name),
           // #4291: a wave after the first runs after one that failed, and blocks only what depends on the failure.
           rules: [{ if: job.jobName === "record" ? onMerge : onGreen, ...(job.wave && i > 1 ? { when: "always" } : {}) }],
           ...trading(applySpec(job)),
@@ -462,20 +547,43 @@ function prLoopGitlabPipeline(
         },
       ]),
     ),
+    ...(control && controlJob
+      ? {
+          [controlJob]: {
+            stage: control.name,
+            image,
+            needs: [lastGreen],
+            rules: [{ if: onGreen }],
+            // The runner sets a needed job's dotenv values when the script starts, so the commit is read there.
+            script: [
+              ...Object.entries(control.env).map(([k, v]) => `export ${k}="${v}"`),
+              `bash <<'CONTROL_DISPATCH' || exit $?\n${control.script}\nCONTROL_DISPATCH`,
+            ],
+          },
+        }
+      : {}),
   ...(prEnv ? prEnv.jobs : {}),
   };
   const jobs: GeneratedJob[] = [
     { jobName: planJob, component: "merge request plan", stage: "plan", needs: [] },
     { jobName: noteJob, component: "merge request plan note", stage: PR_PLAN_NOTE_JOB, needs: [] },
+    ...commentLocks.map(({ job, name }) => ({ jobName: name, component: `merge request ${job.command} comment`, stage: job.jobName, needs: [] })),
+    ...(preview && previewName && previewNoteName
+      ? [
+          { jobName: previewName, component: "merge request preview comment", stage: preview.jobName, needs: [] },
+          { jobName: previewNoteName, component: "merge request preview comment note", stage: preview.noteJobName, needs: [previewName] },
+        ]
+      : []),
     ...applies.map(({ job, name, stage }, i) => ({
       jobName: name,
       component: job.wave ? `green apply, wave ${job.wave}` : job.jobName === "record" ? "merge record" : loop.applyBeforeMerge ? "apply before merge" : "green apply",
       stage,
       needs: i > 1 ? [applies[i - 1]!.name] : [],
     })),
+    ...(controlJob ? [{ jobName: controlJob, component: "control repo dispatch", stage: control!.name, needs: [lastGreen!] }] : []),
     ...(prEnv ? prEnv.listed : []),
   ];
-  const yaml = emitGitlabFile(["workflow", "stages", "variables", planJob, noteJob, ...applies.map((a) => a.name), ...Object.keys(prEnv?.jobs ?? {})].map((key) => [key, doc[key]] as const));
+  const yaml = emitGitlabFile(["workflow", "stages", "variables", planJob, noteJob, ...commentLocks.map((c) => c.name), ...(previewName && previewNoteName ? [previewName, previewNoteName] : []), ...applies.map((a) => a.name), ...(controlJob ? [controlJob] : []), ...Object.keys(prEnv?.jobs ?? {})].map((key) => [key, doc[key]] as const));
   return { yaml, stages, jobs, env };
 }
 
@@ -511,7 +619,7 @@ function prEnvGitlabJobs(
   const reportPath = member ? memberRepoPath(member, PR_ENV_REPORT_DIR) : PR_ENV_REPORT_DIR;
   const environment = "pr-$CI_MERGE_REQUEST_IID";
   const group = `chant-pr-env-${member ? `${member.name}-` : ""}$CI_MERGE_REQUEST_IID`;
-  const script = (j: typeof up): string[] => [...prLoopSetup(image), ...enter, ...beforeScript, ...(j.build ?? []), j.command, ...extraScript];
+  const script = (j: typeof up): string[] => [...prLoopSetup(image, loop.engineSetup), ...enter, ...beforeScript, ...(j.build ?? []), j.command, ...extraScript];
   const artifacts = { when: "always", paths: [reportPath] };
   // #4330: env-up, env-down and env-sweep trade the job's OIDC token for the pull request environments' identity first.
   const identity = loop.prEnvIdentity;

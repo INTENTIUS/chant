@@ -88,10 +88,11 @@ export const terraformAuditCatalog: Record<string, RuleMeta> = {
     tier: "merge-worthy",
     fixKind: "guidance",
     category: "correctness",
-    title: "Live root declares a backend or cloud block, which choudoufu refuses",
+    title: "Live root declares a backend or cloud block, which choudoufu ignores",
     remediation:
-      "Remove the `backend`/`cloud` block from the live root's terraform block; a live root's prior " +
-      "state is a projection rebuilt from the live system every run, so there is no state to store.",
+      "Keep a `backend` block if other roots read this estate's outputs or the record store should be " +
+      "derived from its bucket; declare `record_store` to put records elsewhere. Remove a `cloud` block, " +
+      "which choudoufu drops entirely, or swap it for a `backend` block.",
     yamlBased: false,
   },
   TF025: {
@@ -549,6 +550,31 @@ export const terraformAuditCatalog: Record<string, RuleMeta> = {
     title: "No Terragrunt config sets terragrunt_version_constraint",
     remediation:
       'Set `terragrunt_version_constraint = ">= 1.1.0"` in the root config. Off by default; judged only across the configs scanned.',
+    yamlBased: false,
+  },
+  TF046: {
+    id: "TF046",
+    tier: "report-only",
+    fixKind: "guidance",
+    category: "correctness",
+    title: "Live root resolves to the local record store in a CI run",
+    remediation:
+      "Keep or add a `backend` block of type s3, gcs or azurerm with a literal bucket, so choudoufu " +
+      "derives the record store from it, or declare `record_store` in the live block or `estate.chdf.hcl`. " +
+      "The rule is off by default and terragucci turns it on for its users; an emulator or test lane " +
+      "that keeps the local store on purpose sets `CHANT_ALLOW_LOCAL_RECORD_STORE=1`.",
+    yamlBased: false,
+  },
+  TF047: {
+    id: "TF047",
+    tier: "report-only",
+    fixKind: "guidance",
+    category: "correctness",
+    title: "Live root pins a module version the known-module catalog has no row for, or one with refusals",
+    remediation:
+      "Run `choudoufu live-check` on the root to see each refused site, or pin a version whose examples are clear in " +
+      "the static tier of choudoufu's module table (https://intentius.io/choudoufu/aws/compatibility/#modules). " +
+      "Off by default; terragucci turns it on for its users.",
     yamlBased: false,
   },
 };

@@ -12,6 +12,7 @@
  */
 
 import { writeFileSync } from "node:fs";
+import { CHANT_EXIT } from "../exit-codes";
 import { resolve } from "node:path";
 import { formatError, formatInfo, formatSuccess, formatWarning } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
@@ -24,7 +25,7 @@ import { applyStagedUpgrade, describeStaged, stageUpgrade, type ChantRunner, typ
 const USAGE = "chant workspace upgrade [<scope>] [--to <ref|dir>] [--source <repo>[#<member>]] [--allow-code] [--dry-run] [--output <patch file>] [--json]";
 
 /** The exit code of a gated upgrade: the same as `chant run`'s gated run. */
-export const UPGRADE_GATED_EXIT = 3;
+export const UPGRADE_GATED_EXIT = CHANT_EXIT.waiting;
 
 export interface UpgradeCommandOptions {
   root: string;

@@ -76,8 +76,8 @@
  *
  * TF024 (#2103, live root declares a backend/cloud block) credits choudoufu's
  * own `RuleStateBackend`, `internal/live/lint/issue.go` of
- * github.com/INTENTIUS/choudoufu: the identical condition, checked the same
- * way this fork checks it at `init` before any command runs. TF025 (a live
+ * github.com/INTENTIUS/choudoufu: the same condition, which choudoufu has
+ * reported as a warning since its #2213 (the block is ignored, not refused). TF025 (a live
  * root's non-default `terraform.workspace`) has no entry: its workspace half
  * is refused at the CLI argument-parsing layer there
  * (`internal/command/live_mode.go`), not by a dedicated lint rule under
@@ -110,6 +110,18 @@
  * a root's mode, and no surveyed tool has an Op model to read: choudoufu lints
  * HCL, and every tflint ruleset, tfsec/trivy-checks and the Sentinel policies
  * do the same. There is nothing upstream to credit.
+ *
+ * TF046 (chant#4561, a live root on the local record store in a CI run) has
+ * no entry. choudoufu prints where records go on every run and reports a
+ * `record_store.note` in `live-check -json` (INTENTIUS/choudoufu#2293), but
+ * it has no `internal/live/lint` rule for the local store, and no surveyed
+ * tool knows about record stores. TF044 is the nearest neighbour, for a
+ * Terragrunt state backend.
+ *
+ * TF047 (chant#4560, a live root pins a module version the known-module
+ * catalog has no row for, or one with refusals) has no entry. Its data is
+ * choudoufu's own module table (choudoufu#2292), vendored; no surveyed tool
+ * checks a module pin against a measured compatibility table.
  */
 import type { Lineage } from "@intentius/chant/audit/catalog";
 

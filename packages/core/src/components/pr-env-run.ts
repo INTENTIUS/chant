@@ -87,6 +87,12 @@ export interface PrEnvApplied {
    * failed), so no record is kept.
    */
   status: "applied" | "failed" | "waiting" | "stopped";
+  /**
+   * Another run holds a row this apply changes (#4594). With `stopped`,
+   * nothing applied; with `waiting`, a later round did not. `up` exits 5
+   * either way, and `message` names the run.
+   */
+  held?: boolean;
   /** The rows again, with each component's status after the apply. */
   rows: PrEnvReportRow[];
   /** Where each component's copy lives, kept on the record for the teardown (a suffixed state key). */
@@ -252,7 +258,11 @@ export async function prEnvUp(input: PrEnvUpInput): Promise<PrEnvRunResult> {
     applied = { status: "failed", rows: planned.rows, message: messageOf(err) };
   }
   if (applied.status === "stopped") {
-    return settle({ ...base, digest, status: "failed", components: applied.rows, ...(approvedBy ? { approvedBy } : {}), ...(applied.message ? { message: applied.message } : {}) }, PR_ENV_EXIT.failed);
+    // #4594: rows another run holds refuse the apply, exit 5; nothing applied, so no record is kept.
+    return settle(
+      { ...base, digest, status: applied.held ? "refused" : "failed", components: applied.rows, ...(approvedBy ? { approvedBy } : {}), ...(applied.message ? { message: applied.message } : {}) },
+      applied.held ? PR_ENV_EXIT.held : PR_ENV_EXIT.failed,
+    );
   }
   const ok = applied.status === "applied";
   const now = (input.now ?? (() => new Date()))();
@@ -285,7 +295,7 @@ export async function prEnvUp(input: PrEnvUpInput): Promise<PrEnvRunResult> {
   ports.log?.(`pr-env up: ${env} ${ok ? "applied" : applied.status}; it expires ${expiresAt}`);
   return settle(
     { ...base, digest, status: ok ? "applied" : "failed", components: applied.rows, ...(approvedBy ? { approvedBy } : {}), expiresAt, ...(message ? { message } : {}) },
-    ok && !applied.afterFailure ? PR_ENV_EXIT.done : PR_ENV_EXIT.failed,
+    ok && !applied.afterFailure ? PR_ENV_EXIT.done : applied.held ? PR_ENV_EXIT.held : PR_ENV_EXIT.failed,
     record,
   );
 }

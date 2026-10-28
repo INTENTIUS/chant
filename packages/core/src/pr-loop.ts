@@ -47,10 +47,14 @@
  * `identity.gates` entry covers every member.
  */
 
-import type { ChangeSetAction, ChangeSetDocument } from "./change-set";
+import { NEXT_RELEASE } from "./release-floors";
+import type { ChangeSetAction, ChangeSetDocument, ChangeSetEntry } from "./change-set";
+import { parsePulumiUrn, pulumiMayAppearParent } from "./pulumi-urn";
 import type { PrRequireOutcome } from "./pr-requires";
 import { renderMigrationLines, type PrMigrationFile } from "./pr-migrations";
 import { GITHUB_COMMENT_LIMIT, groupChangeSet, renderPlanSummaryMarkdown } from "./plan-summary";
+import { activeProductWords, approveLine, commentLine, isChantWords, overrideLine, productStatusContext, type CiProductWords } from "./ci-product-words";
+import type { CrossStackEdge } from "./control/edges";
 
 /** The schema a pull-request report names in `$schema`. */
 export const PR_REPORT_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/pr-report/v1/pr-report.schema.json";
@@ -97,6 +101,12 @@ export const PR_REPORT_NOT_STARTED_FLOOR = "0.124.54";
 /** The first chant whose report can carry `groups`, `fallbacks`, and a member's `group` and `groupOutcome` (ws-107, #4446). */
 export const PR_REPORT_GROUPS_FLOOR = "0.124.54";
 
+/** The first chant whose report can carry `lockTargets` (#4552). */
+export const PR_REPORT_LOCK_TARGETS_FLOOR = NEXT_RELEASE;
+
+/** The first chant whose report carries {@link PrReport.crossStackEdges} (#4617). */
+export const PR_REPORT_CROSS_STACK_FLOOR = NEXT_RELEASE;
+
 /** The gate a pull request's apply waits on, unless the pipeline names another. */
 export const PR_APPLY_GATE = "pr-apply";
 
@@ -132,8 +142,13 @@ export const PR_STATUS_CONTEXTS = { plan: "chant/plan", apply: "chant/apply", re
 /** A pull-request loop stage: plan on the pull request, then record (#4168) or, opted in, apply on merge. */
 export type PrStage = keyof typeof PR_STATUS_CONTEXTS;
 
-/** A stage's status context: `chant/plan`, or `chant/plan/<member>` for a workspace member's pipeline. */
-export function prStatusContext(stage: PrStage, member?: string): string {
+/**
+ * A stage's status context: `chant/plan`, or `chant/plan/<member>` for a
+ * workspace member's pipeline. Under a product's words (#4550) the prefix and
+ * the stage word are the product's: `plywood/preview/shop-dev`.
+ */
+export function prStatusContext(stage: PrStage, member?: string, words: CiProductWords = activeProductWords()): string {
+  if (!isChantWords(words)) return productStatusContext(words, stage, member);
   return member ? `${PR_STATUS_CONTEXTS[stage]}/${member}` : PR_STATUS_CONTEXTS[stage];
 }
 
@@ -278,9 +293,13 @@ export interface PrRound {
   /** The components planned again, in apply order. */
   components: string[];
   approval: PrApproval;
-  /** `waiting`: no approval stands for `digest`. `plan-failed`: a member failed to plan, so the round did not apply. */
-  status: "applied" | "failed" | "waiting" | "plan-failed";
-  /** With `waiting`: why an approval that stands does not count (`--require-review`). */
+  /**
+   * `waiting`: no approval stands for `digest`. `plan-failed`: a member failed
+   * to plan, so the round did not apply. `held`: another run holds a row the
+   * round changes (#4594), so it did not apply; `message` names that run.
+   */
+  status: "applied" | "failed" | "waiting" | "plan-failed" | "held";
+  /** With `waiting`: why an approval that stands does not count (`--require-review`). With `held`: the run holding the rows. */
   message?: string;
   /**
    * The first approval covered this round's plan (#4419): no gate of its own was
@@ -435,6 +454,8 @@ export interface PrPolicyReport {
   override?: { by: string; at: string; reason: string; digest: string };
   /** While denied: the command that overrides the denial. */
   overrideCommand?: string;
+  /** `ci.policy.source` as fetched (#4613): the shared repository, its ref, the commit read and the Rego directory. */
+  source?: { repo: string; ref: string; commit: string; path: string };
 }
 
 /**
@@ -537,6 +558,20 @@ export interface PrReport {
   groups?: PrGroup[];
   /** The components that could have grouped and did not, with why (#4446), sorted. Absent when none. Since {@link PR_REPORT_GROUPS_FLOOR}. */
   fallbacks?: PrGroupFallback[];
+  /**
+   * A section per member that its lexicon rendered from its own part of the
+   * change set (#4573), placed under the member table: rows a resource table
+   * does not carry, such as a SQL member's statements and their class. Absent
+   * when no lexicon rendered one. Added within contract 1 by the chant that
+   * carries `CI_PRODUCT_FLOOR` (`@intentius/chant/ci-product`).
+   */
+  details?: PrMemberDetail[];
+  /**
+   * The policy findings capabilities' plans carried (#4550), one entry per
+   * member with any. Absent when none did. Added within contract 1 by the
+   * chant that carries `CI_PRODUCT_FLOOR`.
+   */
+  capabilityPolicy?: PrCapabilityPolicy[];
   /** Component names: which changed, which run because they depend on one, and what the change touched that no component deploys. */
   selection: {
     changed: string[];
@@ -548,6 +583,26 @@ export interface PrReport {
   };
   members: PrMember[];
   changeSet: ChangeSetDocument;
+  /**
+   * The names the pull request's target locks take under `ci.locks` (#4552,
+   * ruling D), sorted, when any member is on the resource lock grain: each
+   * such member's row keys, and the component name of every component with
+   * a member on another grain. `chant lock --from-report` locks these in
+   * place of `selection.waves`. Absent when no member is on the resource
+   * grain. Added within contract 1 by chant
+   * {@link PR_REPORT_LOCK_TARGETS_FLOOR}.
+   */
+  lockTargets?: string[];
+  /**
+   * The stacks outside the workspace a member reads (#4617, a Pulumi
+   * `StackReference` no step here applies, #4547), each marked stale,
+   * current or unknown from the control repo's entries and apply records
+   * (`./control/edges.ts`). The plan job marks every one unknown, since it
+   * reads no control repo; the job that posts the note marks them again
+   * from a checkout of it. Absent when no member reads one. Added within
+   * contract 1 by chant {@link PR_REPORT_CROSS_STACK_FLOOR}.
+   */
+  crossStackEdges?: CrossStackEdge[];
   /**
    * The stage hooks the job ran (#4288), in order. Absent when it ran none.
    * Added within contract 1 by chant {@link PR_REPORT_HOOKS_FLOOR}.
@@ -565,6 +620,29 @@ export interface PrReport {
    * {@link PR_REPORT_BEFORE_MERGE_FLOOR}.
    */
   beforeMerge?: PrBeforeMerge;
+}
+
+/**
+ * A policy engine's findings a capability's plan carried for one member
+ * (#4550, from chant#4541's `pulumi-up`: CrossGuard in the preview job).
+ * `denied`: the capability refused the plan (`policyDenied`), so the stage
+ * exits 7. Otherwise the findings are advisory and the note lists them.
+ */
+export interface PrCapabilityPolicy {
+  member: string;
+  denied: boolean;
+  denials: Array<{ rule: string; message: string }>;
+  holds: Array<{ rule: string; message: string }>;
+  warnings: string[];
+}
+
+/** One member's detail section (#4573): markdown lines its lexicon rendered. */
+export interface PrMemberDetail {
+  member: string;
+  /** The section's summary line. Default: the member's name. */
+  title?: string;
+  /** Markdown lines. A table, a list, or both; chant adds nothing inside. */
+  lines: string[];
 }
 
 /** The counts a member's entries add up to. */
@@ -585,51 +663,90 @@ export function memberHoleReasons(report: Pick<PrReport, "changeSet">, member: s
   return [...new Set((m?.holes ?? []).map((h) => h.reason))];
 }
 
-/** The approve command a reviewer runs for this report's digest. */
-export function prApproveCommand(report: Pick<PrReport, "op" | "gate" | "digest">, approver = "<you>"): string {
+/**
+ * The approve command a reviewer runs for this report's digest: the product's
+ * approve line under its words (#4550). `target` fills the template's
+ * `{target}` (#4601): the member the line approves, such as sql-yodeler's
+ * environment.
+ */
+export function prApproveCommand(report: Pick<PrReport, "op" | "gate" | "digest"> & { target?: string }, approver = "<you>", words: CiProductWords = activeProductWords()): string {
+  if (!isChantWords(words)) return approveLine(words, { op: report.op, gate: report.gate, digest: report.digest, approver, sign: true, ...(report.target !== undefined ? { target: report.target } : {}) });
   return `chant approve ${report.op} ${report.gate} --plan ${report.digest} --approver ${approver} --sign`;
+}
+
+/**
+ * The targets the product's approve line names (#4601), one line each: none
+ * when its template has no `{target}`; else the workspace member the report
+ * is for, else each member in the report, else the environment.
+ */
+export function prApproveTargets(report: Pick<PrReport, "env"> & Partial<Pick<PrReport, "member" | "members">>, words: CiProductWords = activeProductWords()): string[] {
+  if (!words.approve.includes("{target}")) return [];
+  if (report.member) return [report.member];
+  const names = [...new Set((report.members ?? []).map((m) => m.member))];
+  return names.length > 0 ? names : [report.env];
+}
+
+/** Every approve command the report asks for: one per {@link prApproveTargets}, or the one line when the template names no target. */
+export function prApproveCommands(
+  report: Pick<PrReport, "op" | "gate" | "digest" | "env"> & Partial<Pick<PrReport, "member" | "members">>,
+  approver = "<you>",
+  words: CiProductWords = activeProductWords(),
+): string[] {
+  const targets = prApproveTargets(report, words);
+  if (targets.length === 0) return [prApproveCommand(report, approver, words)];
+  return targets.map((target) => prApproveCommand({ op: report.op, gate: report.gate, digest: report.digest, target }, approver, words));
 }
 
 /**
  * The refusal when the approved digest is not the planned one: both digests,
  * that nothing applied, and how to close it.
  */
-export function describePlanChanged(report: Pick<PrReport, "op" | "gate" | "digest" | "approval">): string {
+export function describePlanChanged(report: Pick<PrReport, "op" | "gate" | "digest" | "approval"> & Partial<Pick<PrReport, "env" | "member" | "members">>): string {
+  const approve = report.env !== undefined ? prApproveCommands({ ...report, env: report.env }).join("; ") : prApproveCommand(report);
   return (
     `The plan changed after review, so nothing was applied. ` +
     `approved: ${report.approval.approved ?? "(none)"}; planned now: ${report.digest}. ` +
-    `Read the new plan, and if it is right, approve it: ${prApproveCommand(report)}; then run the apply again.`
+    `Read the new plan, and if it is right, approve it: ${approve}; then run the apply again.`
   );
 }
 
 const short = (sha: string): string => sha.slice(0, 12);
 const code = (s: string): string => "`" + s.replaceAll("`", "'") + "`";
 
-const STATUS_WORDS: Record<PrMemberStatus, string> = {
-  planned: "planned",
-  "plan-failed": "plan failed",
-  applied: "applied",
-  failed: "apply failed",
-  blocked: "blocked",
-  waiting: "waiting on its new plan",
-  "not-started": "not started",
-};
+/** A member's status in the note, in the product's verbs (#4550): chant's `planned`, plywood's `previewed`. */
+function statusWords(words: CiProductWords): Record<PrMemberStatus, string> {
+  const [plan, planned] = words.verbs.plan;
+  const [apply, applied] = words.verbs.apply;
+  return {
+    planned,
+    "plan-failed": `${plan} failed`,
+    applied,
+    failed: `${apply} failed`,
+    blocked: "blocked",
+    waiting: "waiting on its new plan",
+    "not-started": "not started",
+  };
+}
 
-function headline(report: PrReport): string {
+const capital = (w: string): string => w.charAt(0).toUpperCase() + w.slice(1);
+
+function headline(report: PrReport, words: CiProductWords): string {
   const n = report.members.length;
-  const members = `${n} member${n === 1 ? "" : "s"}`;
+  const members = `${n} ${words.noun[n === 1 ? 0 : 1]}`;
+  const [plan, planned] = words.verbs.plan;
+  const applied = words.verbs.apply[1];
   switch (report.status) {
     case "nothing":
-      return "Nothing to plan: no component deploys what this change touches.";
+      return `Nothing to ${plan}: no component deploys what this change touches.`;
     case "planned":
-      return `Planned ${members}.`;
+      return `${capital(planned)} ${members}.`;
     case "recorded":
       return `Recorded the plan of ${members} on merge. Nothing applied: a release that carries this commit deploys it.`;
     case "plan-failed":
       if (report.hooks?.some((h) => h.outcome === "failed")) return "A hook failed, so nothing can apply.";
-      return `Planning failed for ${report.members.filter((m) => m.status === "plan-failed").length} of ${members}, so nothing can apply.`;
+      return `${isChantWords(words) ? "Planning" : `The ${plan}`} failed for ${report.members.filter((m) => m.status === "plan-failed").length} of ${members}, so nothing can apply.`;
     case "applied":
-      return `Applied ${members}.`;
+      return `${capital(applied)} ${members}.`;
     case "failed": {
       const blocked = report.members.filter((m) => m.status === "blocked").length;
       const notStarted = report.members.filter((m) => m.status === "not-started").length;
@@ -638,14 +755,14 @@ function headline(report: PrReport): string {
     case "wave-applied": {
       const applied = (report.waves ?? []).filter((w) => w.status === "applied").map((w) => w.wave);
       const total = report.selection.waves.length;
-      return `Applied wave ${applied.at(-1) ?? "?"} of ${total}. The next wave runs in its own job.`;
+      return `${capital(words.verbs.apply[1])} wave ${applied.at(-1) ?? "?"} of ${total}. The next wave runs in its own job.`;
     }
     case "refused": {
       const waiting = report.waves?.find((w) => w.status === "waiting");
       return waiting ? `Wave ${waiting.wave} waits at its gate ${code(waiting.gate)}; nothing in it applied.` : "The apply refused.";
     }
     case "waiting":
-      return `Applied ${report.members.filter((m) => m.status === "applied").length} of ${members}; ${report.members.filter((m) => m.status === "waiting").length} wait on an approval of the plan made after their upstream applied.`;
+      return `${capital(applied)} ${report.members.filter((m) => m.status === "applied").length} of ${members}; ${report.members.filter((m) => m.status === "waiting").length} wait on an approval of the plan made after their upstream applied.`;
   }
 }
 
@@ -654,6 +771,27 @@ function headline(report: PrReport): string {
  * component that failed, and that the rest went on. Undefined when nothing
  * is blocked.
  */
+/**
+ * The cross-stack edges (#4617): a table of each stack outside the
+ * workspace a member reads, its owner and its mark, and a line naming the
+ * stale ones, whose reader holds outputs that may have changed since.
+ */
+function crossStackLines(report: Pick<PrReport, "crossStackEdges">): string[] {
+  const edges = report.crossStackEdges ?? [];
+  if (edges.length === 0) return [];
+  const day = (iso?: string): string => (iso ? iso.replace(/\.\d+Z$/, "Z") : "never");
+  const out = ["", "| Reader | Reads stack | Owner | Edge | Why |", "|---|---|---|---|---|"];
+  for (const e of edges) {
+    const why = e.ownerApplied ? `${e.why} (owner applied ${day(e.ownerApplied.at)} at ${code(e.ownerApplied.sha.slice(0, 12))}, reader updated ${day(e.lastUpdate)})` : e.why;
+    out.push(`| ${code(e.member)} | ${code(e.stack)} | ${e.owner ? code(e.owner) : "?"} | ${e.status} | ${why} |`);
+  }
+  const stale = edges.filter((e) => e.status === "stale");
+  if (stale.length > 0) {
+    out.push("", `Stale: ${stale.map((e) => `${code(e.member)} reads ${code(e.stack)}`).join("; ")}. The owner applied since the reader last updated, so this plan reads its outputs as they are now and the reader's last update read older ones.`);
+  }
+  return out;
+}
+
 function blockedLine(members: readonly PrMember[]): string | undefined {
   const byRoot = new Map<string, Set<string>>();
   for (const m of members) {
@@ -730,6 +868,31 @@ function policyLines(report: PrReport): string[] {
   return out;
 }
 
+/**
+ * The findings capabilities' plans carried (#4550), in the product's words:
+ * a denial with the product's override line, then each advisory finding as
+ * a row.
+ */
+function capabilityPolicyLines(report: PrReport, words: CiProductWords): string[] {
+  const all = report.capabilityPolicy ?? [];
+  if (all.length === 0) return [];
+  const out: string[] = [];
+  for (const p of all.filter((x) => x.denied)) {
+    out.push("", `The policy in ${code(p.member)}'s ${words.verbs.plan[0]} denied it, so nothing can apply:`, ...p.denials.map((d) => `- ${code(d.rule)}: ${d.message}`));
+    if (p.denials.length > 0) out.push("", `A person the overriders file at base lists may override it: ${code(overrideLine(words, { op: "policy-override", gate: report.gate, target: p.member, rules: p.denials.map((d) => d.rule) }))}`);
+  }
+  const rows = all.flatMap((p) => [
+    ...(p.denied ? [] : p.denials).map((d) => [p.member, d.rule, "denied", d.message]),
+    ...p.holds.map((d) => [p.member, d.rule, "advisory", d.message]),
+    ...p.warnings.map((w) => [p.member, "", "warning", w]),
+  ]);
+  if (rows.length > 0) {
+    out.push("", `| ${capital(words.noun[0])} | Rule | Finding | Message |`, "|---|---|---|---|");
+    for (const [m, rule, kind, message] of rows) out.push(`| ${code(m!)} | ${rule ? code(rule) : ""} | ${kind} | ${message!.replaceAll("|", "\\|").replaceAll("\n", " ")} |`);
+  }
+  return out;
+}
+
 /** Who a wave applied or waits under, as a table cell. */
 function waveApproval(w: PrWave): string {
   const whose = w.approval === "pull-request" ? "the pull request's" : "its own";
@@ -742,7 +905,7 @@ function waveApproval(w: PrWave): string {
  * saying which approval it applied under, then for a wave that waits the
  * reason its plan moved and the approve command for its new plan.
  */
-function waveLines(report: PrReport, approver: string): string[] {
+function waveLines(report: PrReport, approver: string, words: CiProductWords): string[] {
   const waves = report.waves ?? [];
   if (waves.length === 0) return [];
   const out = ["", "| Wave | Components | Status | Approval |", "|---:|---|---|---|"];
@@ -756,7 +919,7 @@ function waveLines(report: PrReport, approver: string): string[] {
       `Read wave ${w.wave}'s plan, ${code(w.digest)}, and approve it with:`,
       "",
       "```",
-      prApproveCommand({ op: report.op, gate: w.gate, digest: w.digest }, approver),
+      ...waveApproveCommands(report, w, approver, words),
       "```",
       "",
       "Then run the wave's apply job again.",
@@ -765,7 +928,38 @@ function waveLines(report: PrReport, approver: string): string[] {
   return out;
 }
 
-function approvalLines(report: PrReport, approver: string): string[] {
+/** A waiting wave's approve lines: one per component when the product's template names `{target}` (#4601). */
+function waveApproveCommands(report: PrReport, w: PrWave, approver: string, words: CiProductWords): string[] {
+  const targets = words.approve.includes("{target}") ? (w.components.length > 0 ? w.components : [report.env]) : [];
+  if (targets.length === 0) return [prApproveCommand({ op: report.op, gate: w.gate, digest: w.digest }, approver, words)];
+  return targets.map((target) => prApproveCommand({ op: report.op, gate: w.gate, digest: w.digest, target }, approver, words));
+}
+
+/**
+ * The note's sentence on what the merge does with the plan (#4601), by the
+ * product's apply mode. chant's words keep chant's sentence, which covers
+ * the record on merge and the opt-in apply on merge alike.
+ */
+export function prMergeSentence(report: Pick<PrReport, "gate">, words: CiProductWords = activeProductWords()): string {
+  const applied = words.verbs.apply[1];
+  switch (words.applyMode) {
+    case "on-merge": {
+      if (words.approval === "per-wave") {
+        return `On merge the waves are ${applied} in order, each under an approval of its own gate for its own plan. A wave whose plan moved since this note waits at its gate for a new approval.`;
+      }
+      const waveGate = words.gateName.replace("{gate}", report.gate).replace("{k}", "<k>");
+      return `On merge the waves are ${applied} in order under this approval, each while its plan is one this approval covers. A wave whose plan moved waits at its own gate, ${code(waveGate)}, for an approval of its own.`;
+    }
+    case "before-merge": {
+      const comment = commentLine(words, "apply");
+      return `Before merge, ${comment ? code(comment) : "the apply job"} runs this plan once the pull request is approved, mergeable and green, and only while the plan is still this one; if it moved, the apply refuses and names both digests. The merge records what was ${applied}.`;
+    }
+    case "release":
+      return "On merge the plan is recorded, and a release deploys it. With apply on merge it applies if the plan is still this one; if it moved, the apply refuses and names both digests.";
+  }
+}
+
+function approvalLines(report: PrReport, approver: string, words: CiProductWords): string[] {
   const a = report.approval;
   if (report.status === "nothing") return [];
   if (a.status === "approved") return [`Approved by ${(a.approvedBy ?? []).map(code).join(", ")} for this digest.`];
@@ -774,33 +968,129 @@ function approvalLines(report: PrReport, approver: string): string[] {
       ? [`An approval stands for ${code(a.approved ?? "(none)")}, not for this digest: the plan changed since it was approved.`]
       : [report.stage === "record" ? "No approval stands for this plan. The release gate decides before it deploys." : "Not approved yet."];
   if (report.stage === "plan" && report.status === "planned") {
+    const commands = prApproveCommands(report, approver, words);
     lines.push(
       "",
-      "A reviewer who approved this pull request approves the plan with:",
+      commands.length > 1 ? `A reviewer who approved this pull request approves each ${words.noun[0]}'s plan with:` : "A reviewer who approved this pull request approves the plan with:",
       "",
       "```",
-      prApproveCommand(report, approver),
+      ...commands,
       "```",
       "",
-      "On merge the plan is recorded, and a release deploys it. With apply on merge it applies if the plan is still this one; if it moved, the apply refuses and names both digests.",
+      prMergeSentence(report, words),
     );
   }
   return lines;
 }
 
 /**
+ * One row of the note for a change-set entry the planner marked `mayAppear`
+ * (#4548): a resource a component registers inside an `apply()` that the
+ * preview could not run, so it is known only when the apply runs.
+ */
+export interface PrMayAppearRow {
+  member: string;
+  /**
+   * The component resource that registers it, as `<type> <name>`. Only the
+   * type when the entry names no single component (its URN carries the parent
+   * type chain, not the parent's name), and `the stack` when it has none.
+   */
+  component: string;
+  /** The resource, as `<type> <name>`; absent on the entry that stands for whatever the component may register. */
+  resource?: string;
+  /** The entry's action: `create` for the stand-in entry, else what the plan says about a resource the last deployment holds. */
+  action: ChangeSetAction;
+}
+
+const typeAndName = (urn: string): string => {
+  const p = parsePulumiUrn(urn);
+  return p ? `${p.type} ${p.name}` : urn;
+};
+
+/**
+ * The note's rows for the `mayAppear` entries of a change set, sorted by
+ * member and component. A stand-in entry (`pulumiMayAppearAddress`) names its
+ * component from its own address. Any other entry names the component whose
+ * stand-in entry in the same member sits on its parent type chain, when one
+ * does; else the type of its parent.
+ */
+export function prMayAppearRows(doc: Pick<ChangeSetDocument, "entries">): PrMayAppearRow[] {
+  const flagged = new Map<string, Array<{ urn: string; chain: string }>>();
+  for (const e of doc.entries) {
+    if (e.mayAppear !== true) continue;
+    const parent = pulumiMayAppearParent(e.address);
+    const parsed = parent ? parsePulumiUrn(parent) : undefined;
+    if (!parent || !parsed) continue;
+    flagged.set(e.member, [...(flagged.get(e.member) ?? []), { urn: parent, chain: parsed.qualifiedType }]);
+  }
+  const componentOf = (e: ChangeSetEntry): string => {
+    const parsed = parsePulumiUrn(e.address);
+    if (!parsed) return "the stack";
+    const parents = parsed.parentTypes.join("$");
+    const under = (flagged.get(e.member) ?? []).filter((c) => parents === c.chain || parents.startsWith(`${c.chain}$`));
+    // The nearest component: the longest chain that holds the entry.
+    const longest = Math.max(-1, ...under.map((c) => c.chain.length));
+    const nearest = under.filter((c) => c.chain.length === longest);
+    if (nearest.length === 1) return typeAndName(nearest[0].urn);
+    return parsed.parentTypes.at(-1) ?? "the stack";
+  };
+  const rows: PrMayAppearRow[] = [];
+  for (const e of doc.entries) {
+    if (e.mayAppear !== true) continue;
+    const parent = pulumiMayAppearParent(e.address);
+    rows.push(parent ? { member: e.member, component: typeAndName(parent), action: e.action } : { member: e.member, component: componentOf(e), resource: typeAndName(e.address), action: e.action });
+  }
+  const key = (r: PrMayAppearRow) => `${r.member}\u0000${r.component}\u0000${r.resource === undefined ? "" : `\u0001${r.resource}`}`;
+  return rows.sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
+}
+
+/**
+ * The words of one may-appear row's last cell. `apply` is the product's word
+ * for the apply (a fixed slot, #4550): plywood's is `up`.
+ */
+export function prMayAppearText(row: PrMayAppearRow, apply = "apply"): string {
+  if (row.resource === undefined) return `may register at ${apply}`;
+  if (row.action === "delete") return `planned to delete, and may register again at ${apply}`;
+  return `missing from the preview, and may register at ${apply}`;
+}
+
+/**
+ * The may-appear lines of the note (#4548): a row per `mayAppear` entry,
+ * naming the component resource that registers it.
+ */
+function mayAppearLines(report: PrReport, apply: string): string[] {
+  const rows = prMayAppearRows(report.changeSet);
+  if (rows.length === 0) return [];
+  const out = [
+    "",
+    `Registered inside an \`apply()\` the preview could not run, so known only at ${apply}:`,
+    "",
+    "| Member | Component resource | Resource | At " + apply + " |",
+    "|---|---|---|---|",
+  ];
+  for (const r of rows) out.push(`| ${code(r.member)} | ${code(r.component)} | ${r.resource === undefined ? "any resource it registers" : code(r.resource)} | ${prMayAppearText(r, apply)} |`);
+  return out;
+}
+
+/**
  * The pull-request note: the stage's headline, a row per member, the digest
  * and the approval, then the grouped plan summary (#3188) in whatever room
  * `limit` leaves. The note starts with {@link prNoteMarker}, so the same
- * comment is updated by every push and by the apply.
+ * comment is updated by every push and by the apply. `applyWord` is the
+ * product's word for the apply in the may-appear rows (#4548), `apply` by
+ * default.
  */
-export function renderPrNote(report: PrReport, options: { limit?: number; approver?: string } = {}): string {
+export function renderPrNote(report: PrReport, options: { limit?: number; approver?: string; applyWord?: string; words?: CiProductWords } = {}): string {
   const limit = options.limit ?? GITHUB_COMMENT_LIMIT;
+  // #4550: the product's words in chant's sentences (ruling D: fixed slots).
+  const words = options.words ?? activeProductWords();
+  const STATUS_WORDS = statusWords(words);
+  const noun = words.noun[0];
   const out: string[] = [
     prNoteMarker(report.env, report.member),
-    `### chant ${report.stage} for ${code(report.env)}${report.member ? ` in member ${code(report.member)}` : ""}`,
+    `### ${words.product} ${words.stages[report.stage]} for ${code(report.env)}${report.member ? ` in ${noun} ${code(report.member)}` : ""}`,
     "",
-    `${headline(report)} Head ${code(short(report.head))}, measured from ${code(short(report.base))}.`,
+    `${headline(report, words)} Head ${code(short(report.head))}, measured from ${code(short(report.base))}.`,
   ];
   if (report.message) out.push("", `> ${report.message.split("\n").join("\n> ")}`);
   for (const o of report.overdue ?? []) out.push("", `Warning: ${o.message}`);
@@ -808,7 +1098,7 @@ export function renderPrNote(report: PrReport, options: { limit?: number; approv
     out.push("", `Resumed under the same approval: ${report.resumed.applied.map(code).join(", ")} applied in an earlier attempt and did not run again.`);
   }
   if (report.members.length > 0) {
-    out.push("", "| Member | Component | Status | Create | Update | Replace | Delete |", "|---|---|---|---:|---:|---:|---:|");
+    out.push("", `| ${capital(noun)} | Component | Status | Create | Update | Replace | Delete |`, "|---|---|---|---:|---:|---:|---:|");
     for (const m of report.members) {
       const holes = memberHoleReasons(report, m.member);
       // #4463: a member planned with stand-in values says so, naming them.
@@ -827,13 +1117,15 @@ export function renderPrNote(report: PrReport, options: { limit?: number; approv
       out.push(`| ${code(m.member)} | ${m.component} | ${status} | ${n("create")} | ${n("update")} | ${n("replace")} | ${n("delete")} |`);
     }
     if (report.members.some((m) => m.inputsMoved?.length)) {
-      out.push("", "A member whose inputs moved applied the plan it was approved with. The next run plans it against the new values.");
+      out.push("", `A ${noun} whose inputs moved ${words.verbs.apply[1]} the plan it was approved with. The next run plans it against the new values.`);
     }
   }
+  out.push(...mayAppearLines(report, options.applyWord ?? words.stages.apply));
   const blocked = blockedLine(report.members);
   if (blocked) out.push("", blocked);
+  out.push(...crossStackLines(report));
   out.push(...groupLines(report));
-  out.push(...waveLines(report, options.approver ?? "<you>"));
+  out.push(...waveLines(report, options.approver ?? "<you>", words));
   // #4288: the hooks that did not pass, by name; a passed hook is a count.
   const hooks = report.hooks ?? [];
   if (hooks.length > 0) {
@@ -842,6 +1134,7 @@ export function renderPrNote(report: PrReport, options: { limit?: number; approv
     out.push("", `Hooks: ${passed} passed${other.length > 0 ? `; ${other.join("; ")}` : ""}.`);
   }
   out.push(...policyLines(report));
+  out.push(...capabilityPolicyLines(report, words));
   out.push(...renderMigrationLines(report.migrations));
   if (report.selection.unclaimed.length > 0) {
     out.push("", `Changed, and deployed by no component: ${report.selection.unclaimed.map(code).join(", ")}.`);
@@ -882,28 +1175,55 @@ export function renderPrNote(report: PrReport, options: { limit?: number; approv
     if (r.notCovered) out.push("", `Round ${r.round}'s plan is not covered by the approval of ${code(report.digest)}: ${r.notCovered}.`);
     if (r.status === "waiting") {
       if (r.message) out.push("", `> ${r.message}`);
-      out.push("", `${what}. Not approved yet. Approve it, then run the apply again with the same \`--resume\` record:`, "", "```", prApproveCommand({ op: report.op, gate: r.gate, digest: r.digest }, options.approver ?? "<you>"), "```");
+      out.push("", `${what}. Not approved yet. Approve it, then run the apply again with the same \`--resume\` record:`, "", "```", prApproveCommand({ op: report.op, gate: r.gate, digest: r.digest }, options.approver ?? "<you>", words), "```");
     } else {
       out.push("", `${what}: ${r.status === "applied" ? `applied, approved by ${(r.approval.approvedBy ?? []).map(code).join(", ")}` : r.status === "plan-failed" ? "a member failed to plan" : "the apply failed"}.`);
     }
   }
   if (report.status !== "nothing") {
-    out.push("", `Plan digest: ${code(report.digest)}`, "", ...approvalLines(report, options.approver ?? "<you>"));
+    out.push("", `Plan digest: ${code(report.digest)}`, "", ...approvalLines(report, options.approver ?? "<you>", words));
   }
   // #4003: with a gate per wave, a later wave's plan on merge may differ from this one.
   if (report.stage === "plan" && report.status === "planned" && report.waveGate) {
-    out.push("", `On merge each wave after the first is planned again once the waves before it apply, and a wave whose plan moved stops at its own gate, ${code(`${report.waveGate}-wave-<k>`)}, for approval.`);
+    out.push("", `On merge each wave after the first is planned again once the waves before it apply, and a wave whose plan moved stops at its own gate, ${code(words.gateName.replace("{gate}", report.waveGate).replace("{k}", "<k>"))}, for approval.`);
   }
-  const head = out.join("\n") + "\n";
+  let head = out.join("\n") + "\n";
+  // #4573: each member's lexicon-rendered section, kept within the comment limit with room left for the summary.
+  head += memberDetailSections(report, limit - [...head].length - 400, noun);
   if (report.status === "nothing" || report.changeSet.members.length === 0) return head;
   const room = limit - [...head].length - 1;
   if (room < 400) return head;
   return head + "\n" + renderPlanSummaryMarkdown(groupChangeSet(report.changeSet), { limit: room, command: "chant change-set summary .chant/pr/change-set.json" });
 }
 
+/**
+ * The member detail sections (#4573), each in a `<details>` block under the
+ * member it belongs to. A section that does not fit in `room` is left out
+ * and named, so the note stays within the forge's comment limit.
+ */
+function memberDetailSections(report: PrReport, room: number, noun: string): string {
+  const out: string[] = [];
+  let used = 0;
+  const left: string[] = [];
+  for (const d of report.details ?? []) {
+    if (d.lines.length === 0) continue;
+    const block = ["", `<details><summary>${d.title ?? `${capital(noun)} ${code(d.member)}`}</summary>`, "", ...d.lines, "", "</details>"].join("\n");
+    const size = [...block].length;
+    if (used + size > room - 200) {
+      left.push(d.member);
+      continue;
+    }
+    used += size;
+    out.push(block);
+  }
+  if (left.length > 0) out.push("", `Left out to keep this note within the comment limit: the detail of ${left.map(code).join(", ")}. The report artifact carries it.`);
+  return out.length > 0 ? out.join("\n") + "\n" : "";
+}
+
 /** A commit status's description, at most 140 characters (GitHub's limit). */
-export function prStatusDescription(report: PrReport): string {
+export function prStatusDescription(report: PrReport, words: CiProductWords = activeProductWords()): string {
   const n = report.members.length;
+  const many = (k: number): string => `${k} ${words.noun[k === 1 ? 0 : 1]}`;
   const sum = report.members.reduce(
     (acc, m) => ({ change: acc.change + m.counts.create + m.counts.update + m.counts.replace, destroy: acc.destroy + m.counts.delete + m.counts.replace }),
     { change: 0, destroy: 0 },
@@ -916,17 +1236,17 @@ export function prStatusDescription(report: PrReport): string {
       break;
     case "planned": {
       const unknown = report.members.filter((m) => memberHoleReasons(report, m.member).length > 0).length;
-      text = `${n} member${n === 1 ? "" : "s"}: ${sum.change} to change, ${sum.destroy} to destroy or replace${unknown > 0 ? `, ${unknown} with holes` : ""}${digest}`;
+      text = `${many(n)}: ${sum.change} to change, ${sum.destroy} to destroy or replace${unknown > 0 ? `, ${unknown} with holes` : ""}${digest}`;
       break;
     }
     case "plan-failed":
-      text = `a member failed to plan${digest}`;
+      text = `a ${words.noun[0]} failed to ${words.verbs.plan[0]}${digest}`;
       break;
     case "recorded":
-      text = `recorded ${n} member${n === 1 ? "" : "s"}: ${report.approval.status === "approved" ? "the approved plan" : report.approval.status === "changed" ? "the plan differs from the approved one" : "no approval for this plan"}${digest}`;
+      text = `recorded ${many(n)}: ${report.approval.status === "approved" ? "the approved plan" : report.approval.status === "changed" ? "the plan differs from the approved one" : "no approval for this plan"}${digest}`;
       break;
     case "applied":
-      text = `applied ${n} member${n === 1 ? "" : "s"}${digest}`;
+      text = `${words.verbs.apply[1]} ${many(n)}${digest}`;
       break;
     case "wave-applied": {
       const last = (report.waves ?? []).filter((w) => w.status === "applied").at(-1);

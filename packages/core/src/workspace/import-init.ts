@@ -23,6 +23,7 @@ import {
   type TfcInput,
 } from "./import-source";
 import { WorkspaceReadError } from "./declaration";
+import { terraformToken } from "../terraform/credentials";
 
 export const IMPORT_USAGE =
   "chant workspace init --from tfc --org <organization> [--input <export.json>] [--token <token>] [dir] [--name <name>] [--yes]\n" +
@@ -48,8 +49,9 @@ export async function loadProposal(source: ImportSource, root: string, args: Com
     let input: TfcInput;
     if (args.input) input = readInputFile("tfc", resolve(args.input)) as TfcInput;
     else {
-      const token = args.token ?? env.TFE_TOKEN ?? env.TF_TOKEN_app_terraform_io;
-      if (!token) throw new Error("--from tfc needs --input <export.json>, or a token in --token, TFE_TOKEN or TF_TOKEN_app_terraform_io");
+      // The CLIs' lookup (chant#4563): TF_TOKEN_app_terraform_io, then the CLI config and credentials.tfrc.json.
+      const token = args.token ?? env.TFE_TOKEN ?? terraformToken("app.terraform.io", { env });
+      if (!token) throw new Error("--from tfc needs --input <export.json>, or a token in --token, TFE_TOKEN, TF_TOKEN_app_terraform_io or credentials.tfrc.json");
       if (!args.org) throw new Error("--from tfc needs --org <organization>");
       input = await fetchTfc({ organization: args.org, token, fetcher: deps.fetcher });
     }

@@ -32,8 +32,12 @@
  *   `./op/`), following the terraform lexicon (#4494);
  * - the tier-2 contract's remainder (#4510): PUL003 to PUL015 over the
  *   member's export, two more skills, `detectTemplate` for a stack export or
- *   a `Pulumi.yaml`, and three `chant init` templates (`./init-templates.ts`).
+ *   a `Pulumi.yaml`, and three `chant init` templates (`./init-templates.ts`);
+ * - review stacks in a pull request's environment (#4609): `prEnvTemplate`
+ *   takes a `<project>/<stack>` template, and `prEnvTeardown` removes the
+ *   environment's `pr-<n>` stacks (`./review-stack.ts`).
  */
+import { pulumiCiSetup } from "./ci-setup";
 import { basename, isAbsolute, resolve } from "node:path";
 import type { InitTemplateSet, LexiconPlugin } from "@intentius/chant/lexicon";
 import type { CompletionContext, HoverContext } from "@intentius/chant/lsp/types";
@@ -48,6 +52,7 @@ import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
 import { PULUMI_RUNTIME_NAMES } from "./lsp/keys";
 import { pulumiInitTemplates } from "./init-templates";
+import { pulumiTemplateStack, reviewStackTeardown } from "./review-stack";
 
 const loadSkills = createSkillsLoader(import.meta.url, [
   {
@@ -75,8 +80,23 @@ export const pulumiPlugin: LexiconPlugin = {
   serializer: pulumiSerializer,
   configSchema: pulumiConfigSchema,
 
-  // A pulumi workspace member's reader project (#3179): its checked-in stack
-  // export, never the program. See ./workspace-member.ts. `chant workspace
+  // #4550: the engine install lines for the pull request pipeline's default image.
+  ciSetup(ctx: { dir: string }): string[] {
+    return pulumiCiSetup(ctx);
+  },
+
+  // #4609: a ci.prEnvironment.template of the form <project>/<stack> names a Pulumi stack, so it needs no chant.config.ts environment.
+  prEnvTemplate(template: string): string | undefined {
+    return pulumiTemplateStack(template) ? `the Pulumi stack ${template}` : undefined;
+  },
+
+  // #4609: pr-env down and the sweep destroy and remove each review stack the environment's record names (./review-stack.ts).
+  prEnvTeardown(ctx: { cwd: string }) {
+    return reviewStackTeardown({ cwd: ctx.cwd });
+  },
+
+  // A pulumi workspace member's reader project (#3179): its stack export from
+  // the index store, else the checked-in one, never the program. See ./workspace-member.ts. `chant workspace
   // graph` writes `dir` absolute; a project that writes the namespace itself
   // can write it relative to the project root (#4468).
   async buildRoots(ctx) {
@@ -86,7 +106,11 @@ export const pulumiPlugin: LexiconPlugin = {
     if (!configured) return { entities: new Map() };
     const member =
       ctx.projectRoot && !isAbsolute(configured.dir) ? { ...configured, dir: resolve(ctx.projectRoot, configured.dir) } : configured;
-    const read = readPulumiMember({ member });
+    // The export the last apply through chant wrote to the index store
+    // (#4546), else the checked-in stack-export.json.
+    const { readStoredPulumiExport } = await import("./stack-export-snapshot");
+    const fromStore = await readStoredPulumiExport({ dir: member.dir, ...(member.stack ? { stack: member.stack } : {}) });
+    const read = readPulumiMember({ member, ...(fromStore ? { stored: { doc: fromStore.doc, where: fromStore.where, key: fromStore.key } } : {}) });
     setLastMemberReport(read.report);
     setLastMemberRead({
       dir: member.dir,

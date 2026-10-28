@@ -1438,7 +1438,7 @@ describe("a group planned and applied as one (ws-107, #4440)", () => {
     const set = await planPrSet({ components: ABC, plan, registry: moved.registry, env: "prod" });
     const stopped = await applyPrSet({ components: ABC, plan, registry: moved.registry, env: "prod", set });
     expect(stopped.members.map((m) => m.status)).toEqual(["not-started", "not-started", "not-started"]);
-    expect(failedRunExitCode(stopped.run.results)).toBe(3);
+    expect(failedRunExitCode(stopped.run.results)).toBe(4);
 
     const broken = groupWorld({ group: true });
     broken.runThrows = new Error("connection reset");

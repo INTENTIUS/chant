@@ -10,13 +10,15 @@ diataxis: reference
 chant lock <target>... --pr <n> [--stage plan|apply|lock] [--head <sha>] [--by <who>]
                        [--gate <name>] [--forge github|gitlab|forgejo] [--json]
 chant lock --from-report <pr-plan.json> --pr <n> [--stage plan] [--head <sha>] [--forge <kind>] [--json]
+chant lock --keep --pr <n> [--head <sha>] [--gate <name>] [--forge <kind>] [--json]
 chant lock --list [--gate <name>] [--json]
+chant lock --alive <run>
 chant unlock --pr <n> [<target>...] [--gate <name>] [--json]
 ```
 
 A pull request that holds a target lock keeps every other pull request from applying or locking that target until it merges or closes ([#4293](https://github.com/INTENTIUS/chant/issues/4293)). A target is any name; the pull-request loop uses the component names that `chant components pr-plan` selects, and under [`ci.locks`](/chant/reference/workspace-declaration/#locks) `pr-apply` checks them. [Lock the Targets a Pull Request Reaches](/chant/guide/target-locks/) sets the jobs up.
 
-The locks of one gate are kept in one file, `_locks/<gate>.json` on `chant/lifecycle` ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/lifecycle/target-lock.ts#L101)). The gate is `pr-apply` unless `--gate` names another, as in `pr-plan` and `pr-apply`, and in a workspace member the file sits under the member's ledger prefix, `_members/<member>/_locks/<gate>.json`.
+The locks of one gate are kept in one file, `_locks/<gate>.json` on `chant/lifecycle` ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/lifecycle/target-lock.ts#L102)). The gate is `pr-apply` unless `--gate` names another, as in `pr-plan` and `pr-apply`, and in a workspace member the file sits under the member's ledger prefix, `_members/<member>/_locks/<gate>.json`.
 
 ```json
 {
@@ -29,9 +31,9 @@ The locks of one gate are kept in one file, `_locks/<gate>.json` on `chant/lifec
 
 ## lock
 
-`chant lock` locks each target for `--pr`. When another open pull request holds one of them, nothing is locked and the command exits 3 with each holder named. When the targets are free, it writes the file and pushes `chant/lifecycle`, and the lock counts only once the remote has it. If the remote refuses the push because another job moved the branch first, chant drops its own commit, reads the branch again and decides again ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/lifecycle/target-lock.ts#L240)), so two jobs that lock one target at the same moment cannot both win. In a repository with no remote, the local write decides.
+`chant lock` locks each target for `--pr`. When another open pull request holds one of them, nothing is locked and the command exits 5 ([held](/chant/reference/exit-codes/)) with each holder named. When the targets are free, it writes the file and pushes `chant/lifecycle`, and the lock counts only once the remote has it. If the remote refuses the push because another job moved the branch first, chant drops its own commit, reads the branch again and decides again ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/lifecycle/target-lock.ts#L255)), so two jobs that lock one target at the same moment cannot both win. In a repository with no remote, the local write decides.
 
-A target the same pull request already holds stays its own and gets the new head. `--stage` records how the lock was taken, which decides what happens to the pull request's own earlier locks ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/lifecycle/target-lock.ts#L281), [source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/lifecycle/target-lock.ts#L293)):
+A target the same pull request already holds stays its own and gets the new head. `--stage` records how the lock was taken, which decides what happens to the pull request's own earlier locks ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/lifecycle/target-lock.ts#L296), [source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/lifecycle/target-lock.ts#L308)):
 
 | Stage | Taken by | Over the pull request's own locks |
 |---|---|---|
@@ -39,13 +41,17 @@ A target the same pull request already holds stays its own and gets the new head
 | `plan` | the lock job under `ci.locks: plan` | keeps its `lock` and `apply` locks as they are, and releases its plan locks on targets it no longer reaches |
 | `apply` | an apply | takes over its plan locks |
 
-`--from-report <file>` takes the targets from a `pr-plan.json` that `chant components pr-plan` wrote, which means every component in its `selection.waves` ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/cli/handlers/lock.ts#L90)). The report's `pr` must match `--pr`, and its `head` becomes the lock's head unless `--head` is given. This lets a lock job that runs the target branch's code lock what the plan job selected without running the pull request's code itself.
+`--from-report <file>` takes the targets from a `pr-plan.json` that `chant components pr-plan` wrote, which means every component in its `selection.waves` ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/cli/handlers/lock.ts#L103)). When a member is on the resource [lock grain](/chant/reference/workspace-declaration/#lock-grain), the report carries `lockTargets` instead. It lists that member's row keys (`urn <urn>` or `estate <estate> <address>`) and the component names of the rest. Those are what the command locks, so two pull requests that change different resources of one stack each hold only their own rows ([#4552](https://github.com/INTENTIUS/chant/issues/4552)). A `stack <project>/<stack>` row and the `urn` rows of that stack hold each other. The report's `pr` must match `--pr`, and its `head` becomes the lock's head unless `--head` is given. This lets a lock job that runs the target branch's code lock what the plan job selected without running the pull request's code itself.
 
-`--forge <kind>` asks the forge whether each holder is still open, with the client read from the job's environment as `pr-plan` reads it. A lock whose pull request merged or closed then reads as released, and the write that takes it over drops it from the file ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/lifecycle/target-lock.ts#L285)). Without `--forge` every lock counts as held and only `chant unlock` releases one ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/lifecycle/target-lock.ts#L161)). Given a head commit as well, the command posts the `chant/lock` status on it: a success names what the pull request holds, and a failure names who holds what.
+`--forge <kind>` asks the forge whether each holder is still open, with the client read from the job's environment as `pr-plan` reads it. A lock whose pull request merged or closed then reads as released, and the write that takes it over drops it from the file ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/lifecycle/target-lock.ts#L300)). Without `--forge` every lock counts as held and only `chant unlock` releases one ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/lifecycle/target-lock.ts#L166)). Given a head commit as well, the command posts the `chant/lock` status on it: a success names what the pull request holds, and a failure names who holds what.
 
 `--by` names who took the lock and defaults to `GITHUB_ACTOR`, then `GITLAB_USER_LOGIN`, then `USER`. The `--json` form prints `{ gate, pr, ok, stage, taken, released, expired, pushed }`, or `{ gate, pr, ok: false, held }` when a target is held.
 
-`chant lock --list` prints one line per lock of the gate, in the order of the file's targets. Each line holds the target and the fields of its lock. The `--json` form prints `{ gate, path, locks }`.
+`chant lock --keep --pr <n>` takes again, at stage `lock`, every lock the pull request holds now ([#4588](https://github.com/INTENTIUS/chant/issues/4588)). Those are the components or row keys its plan locked under `ci.locks: plan`. A plan lock is let go once a later plan no longer reaches the target, and a kept lock stays until the pull request closes or `chant unlock` releases it. A `/<product> lock` comment runs it at the target branch's commit, so none of the change's code runs. A pull request that holds no lock yet fails with exit 1 and a line saying its plan has to run first.
+
+`chant lock --list` prints one line per lock of the gate, in the order of the file's targets. Each line holds the target and the fields of its lock. After the locks come the apply rows of the gate's rows file, `_locks/rows/<gate>.json` ([lock grain](/chant/reference/workspace-declaration/#lock-grain)), one line per row sorted by key ([#4594](https://github.com/INTENTIUS/chant/issues/4594)). A row's line gives its key and `run <id>` for the run holding it, then the time that run took it and the run's page when the forge gave one. The `--json` form prints `{ gate, path, locks, rowsPath, rows }`, where `rows` maps each key to its holder `{ run, at, url?, sha? }`.
+
+`chant lock --alive <run>` prints `alive` or `dead` for a CI run that holds apply rows or the Forgejo repo lock tag. It prints `dead` once the forge says the run finished. The forge is asked with `CHANT_FORGE_TOKEN`, else terragucci's `TG_TOKEN`. It prints `alive` while the run goes on or when nothing can say. The lock tag's shell in a generated Forgejo pipeline asks it before it takes a lease over.
 
 ## unlock
 
@@ -57,4 +63,4 @@ A target the same pull request already holds stays its own and gets the new head
 |---|---|
 | 0 | locked, listed or released |
 | 1 | a usage error, or `chant/lifecycle` could not be read or pushed |
-| 3 | another open pull request holds a target, and nothing was locked ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/cli/handlers/lock.ts#L43)) |
+| 5 | another open pull request holds a target, and nothing was locked ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/cli/handlers/lock.ts#L51)) |

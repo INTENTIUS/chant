@@ -32,6 +32,8 @@ describe("the pull-request loop bundle", () => {
       expect(inputs.filter((i) => pattern.test(i)), String(pattern)).toEqual([]);
     }
     expect(inputs.map((i) => i.replace(/^.*?packages\//, "packages/")).sort()).toEqual([
+      // The product's words (#4550): no imports.
+      "packages/core/src/ci-product-words.ts",
       "packages/core/src/content-digest.ts",
       "packages/core/src/declarable.ts",
       "packages/core/src/effect-receipt.ts",
@@ -41,10 +43,13 @@ describe("the pull-request loop bundle", () => {
       "packages/core/src/pr-forge.ts",
       "packages/core/src/pr-loop.ts",
       "packages/core/src/pr-migrations.ts",
+      // The Pulumi URN rule (#4548, the may-appear rows): no imports.
+      "packages/core/src/pulumi-urn.ts",
       // The next-release floor constant (#4480): no imports.
+      "packages/core/src/release-floors.ts",
     ]);
     // About 89 KB today, after the hooks line (#4288), the blocked set (#4291), the scheduled-run reads (#4289) the requires checks (#4301) and the migration notes (#4407), about 97 KB; with the group lines (#4446), about 100 KB.
-    // 110 KB is the ruled ceiling (#4481, ruling 12, 2026-10-25), not a figure to lower by trimming note text.
-    expect(result.outputFiles.reduce((n, f) => n + f.contents.byteLength, 0)).toBeLessThan(110 * 1024);
+    // 120 KB (122,880 bytes) is the ruled ceiling: raised from 110 KB by the maintainer ruling of 2026-10-27 on #4481. It is not a figure to lower by trimming note text.
+    expect(result.outputFiles.reduce((n, f) => n + f.contents.byteLength, 0)).toBeLessThan(122_880);
   });
 });

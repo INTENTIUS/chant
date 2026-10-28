@@ -1,0 +1,70 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.8",
+  "resource_drift": [
+    {
+      "address": "aws_s3_bucket.ignored",
+      "mode": "managed",
+      "type": "aws_s3_bucket",
+      "change": { "actions": ["update"], "before": { "bucket": "ignored" }, "after": { "bucket": "ignored-too" } }
+    }
+  ],
+  "resource_changes": [
+    {
+      "address": "aws_s3_bucket.assets",
+      "mode": "managed",
+      "type": "aws_s3_bucket",
+      "name": "assets",
+      "change": { "actions": ["create"], "before": null, "after": { "bucket": "acme-assets" }, "after_unknown": { "arn": true, "id": true } }
+    },
+    {
+      "address": "aws_sqs_queue.stray",
+      "mode": "managed",
+      "type": "aws_sqs_queue",
+      "name": "stray",
+      "change": { "actions": ["delete"], "before": { "name": "acme-stray", "id": "https://sqs.local/000000000000/acme-stray" }, "after": null }
+    },
+    {
+      "address": "aws_lambda_function.api",
+      "mode": "managed",
+      "type": "aws_lambda_function",
+      "name": "api",
+      "change": { "actions": ["update"], "before": { "function_name": "acme-api", "memory_size": 256, "version": "7" }, "after": { "function_name": "acme-api", "memory_size": 512 }, "after_unknown": { "version": true } }
+    },
+    {
+      "address": "aws_iam_role.deployer",
+      "mode": "managed",
+      "type": "aws_iam_role",
+      "name": "deployer",
+      "change": { "actions": ["delete", "create"], "before": { "name": "acme-deployer-old", "arn": "arn:aws:iam::000000000000:role/acme-deployer-old" }, "after": { "name": "acme-deployer" }, "after_unknown": { "arn": true } }
+    },
+    {
+      "address": "aws_security_group.edge",
+      "mode": "managed",
+      "type": "aws_security_group",
+      "name": "edge",
+      "change": { "actions": ["create", "delete"], "before": { "name": "", "id": "sg-0001" }, "after": { "name": "" }, "after_unknown": { "id": true } }
+    },
+    {
+      "address": "aws_s3_bucket.steady",
+      "mode": "managed",
+      "type": "aws_s3_bucket",
+      "name": "steady",
+      "change": { "actions": ["no-op"], "before": { "bucket": "acme-steady" }, "after": { "bucket": "acme-steady" } }
+    },
+    {
+      "address": "data.aws_region.here",
+      "mode": "data",
+      "type": "aws_region",
+      "name": "here",
+      "change": { "actions": ["read"], "before": null, "after": { "name": "us-east-1" } }
+    },
+    {
+      "address": "data.aws_caller_identity.me",
+      "mode": "data",
+      "type": "aws_caller_identity",
+      "name": "me",
+      "change": { "actions": ["update"], "before": { "account_id": "000000000000" }, "after": { "account_id": "000000000001" } }
+    }
+  ]
+}

@@ -27,7 +27,9 @@ Put `ci.policy` in `chant.workspace.json`, and put the Rego in the directory tha
 | Setting | Means | Default |
 |---|---|---|
 | `engine` | The result shape the command prints: `conftest` (`conftest test --output json`) or `opa` (`opa eval --format json`) | `conftest` |
-| `path` | The policy directory, relative to the declaration | `policy` |
+| `path` | The policy directory, relative to the declaration. Refused beside `source` | `policy` |
+| `source` | A shared policy repository, `{ repo, ref, path? }`, read in place of `path` ([below](#share-one-rule-set-across-repositories)) | none |
+| `packs` | CrossGuard packs every `pulumi-up` preview runs, each `{ dir, config? }` ([below](#crossguard-packs-at-base)) | none |
 | `namespace` | The package to read | conftest: every namespace. opa: `main` |
 | `command` | argv to run in place of the engine's own. `{policy}` is the policy directory, `{input}` the input file | the engine's own (`packages/core/src/gate-policy.ts:181`) |
 
@@ -93,11 +95,40 @@ Both jobs read `ci.policy` and the policy directory from the commit the change i
 
 A policy that does not run, or prints no result chant can read, is an error (`packages/core/src/gate-policy.ts:231`). `pr-plan` fails its status. `pr-apply` refuses with `policy-error` and exits 1 before anything applies (`packages/core/src/cli/handlers/pr.ts:524`).
 
+## Share one rule set across repositories
+
+`source` names a git repository and a ref, so several workspaces read one rule set ([#4613](https://github.com/INTENTIUS/chant/issues/4613)). `repo` is an `https://`, `ssh://` or `file://` URL, or `git@<host>:<path>`. `ref` is a tag, a branch or a full commit. `path` is the Rego directory inside the repository, `policy` by default.
+
+```json
+{
+  "ci": {
+    "policy": {
+      "engine": "opa",
+      "source": { "repo": "https://git.example.com/platform/policy.git", "ref": "v3", "path": "rego" }
+    }
+  }
+}
+```
+
+The source is named in the declaration at base, like every other setting, so a pull request that points it at a looser ref is still judged by the ref its base names. The job fetches that ref into a scratch repository under the OS temp dir, once per job (`packages/core/src/policy-source.ts`), with the job's own git credentials. A tag or branch is fetched alone; a commit the server does not hand out by itself is found after fetching every branch and tag. The commit the ref named goes on the report's `policy.source` and on an Op wave's decision as `ciPolicySource`, so each decision names the rules it used. A user and password in the URL are left out of both. When the source cannot be fetched or has no Rego directory at the ref, the policy is an error and nothing applies.
+
+Pin a tag or a commit when the rules should change only through a pull request to the workspace, since a branch moves under every workspace that names it. `source` and `packs` need a `minReader` of `0.124.55` or newer (`CI_POLICY_SOURCE_FLOOR`).
+
+## CrossGuard packs at base
+
+A Pulumi stack's preview runs CrossGuard packs, either listed in the step's `policyPacks` or in `ci.policy.packs`. Under `pr-plan`, `pr-apply` and an Op wave, the pulumi lexicon copies them out of the base commit before the preview runs (`packages/core/src/policy-packs.ts`), so a pack changed on the head does nothing to its own pull request:
+
+- Each `ci.policy.packs` entry is read from the declaration's directory at base, or from the top of `source` when one is set. A listed pack that is missing there is an error, and the preview does not run.
+- Each step pack inside the repository is copied from base. One the base lacks was added by the change, and runs once it merges. One that differs on the head runs as the base has it. Each of these is a note in the job's log.
+- A step pack outside the repository, such as one the job's image installs, runs where it is.
+
+The step's packs come from the head's component file, so a change that drops one from its own step loses that pack. List a pack in `ci.policy.packs` when the change must not be able to drop it. A copy holds the files git tracks, and links to the checkout's `node_modules`, `venv` or `.venv` when the pack directory has one. A pack from the source has no install beside it, so it needs one the engine can load as it stands.
+
 ## Override a denial
 
-At the plan stage the report's `policy` holds the denial, and the commit status fails. The note lists each rule that denied and the override command. `pr-plan` records nothing and exits 1 (`packages/core/src/cli/handlers/pr.ts:647`).
+At the plan stage the report's `policy` holds the denial, and the commit status fails. The note lists each rule that denied and the override command. `pr-plan` records nothing and exits 7 (`packages/core/src/cli/handlers/pr.ts:647`).
 
-At the apply stage a denial with no override refuses with `policy-denied` and exits 3. The first refusal records the denial on `_gates/policy-override.jsonl` (`packages/core/src/cli/handlers/pr.ts:543`). Its subject is the gate's op, `pr-<n>`, and it binds the change set's digest and the rules. A person listed in `.chant/overriders` at base then overrides it:
+At the apply stage a denial with no override refuses with `policy-denied` and exits 7, the [exit-code table](/chant/reference/exit-codes/)'s code for a denial at either stage. The first refusal records the denial on `_gates/policy-override.jsonl` (`packages/core/src/cli/handlers/pr.ts:543`). Its subject is the gate's op, `pr-<n>`, and it binds the change set's digest and the rules. A person listed in `.chant/overriders` at base then overrides it:
 
 ```bash
 chant approve policy-override pr-12 --rule main.deny_public_bucket --reason "the bucket is the public docs site"
@@ -107,7 +138,7 @@ Add `--sign` when the gate is sealed. The next `pr-apply` finds the override and
 
 ## In the report
 
-`pr-plan.json` and `pr-apply.json` carry `policy` (the `pr-report` schema in the [workspace read contract](/chant/reference/workspace-read-contract/)) with `result` (`passed`, `denied`, `held` or `error`), `engine`, `base`, `denials`, `rules`, `holds` and `warnings`. An overridden denial adds `override`, and one that still stands adds `overrideCommand`. Reports from chant 0.124.41 on carry these fields.
+`pr-plan.json` and `pr-apply.json` carry `policy` (the `pr-report` schema in the [workspace read contract](/chant/reference/workspace-read-contract/)) with `result` (`passed`, `denied`, `held` or `error`), `engine`, `base`, `denials`, `rules`, `holds` and `warnings`. An overridden denial adds `override`, and one that still stands adds `overrideCommand`. Reports from chant 0.124.41 on carry these fields. A policy read from `source` adds `source`, with `repo`, `ref`, `commit` and `path`.
 
 ## For a product with its own input
 

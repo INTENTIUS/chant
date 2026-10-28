@@ -12,9 +12,18 @@
  * newer run (exit 6) sends nothing. A share job of a waiting wave sends nothing, since its deciding
  * job already did, unless a hook in the share job itself held it (#3762). Delivery is `../notify.ts`: it never throws, and the job's exit code
  * is what the wave decided.
+ *
+ * The event's `source`, the summary's wave label and verbs, and the
+ * webhook's header prefix come from the active product's words (#4610):
+ * plywood's job sends `source: plywood` with `x-plywood-*` headers, and
+ * chant's own words send what they always sent.
  */
 
 import { makeNotifyEvent, notifyConfigProblem, sendNotify, type NotifyDelivery, type NotifyFields, type SendNotifyOptions } from "../notify";
+import { activeProductWords, isChantWords, notifyWaveLabel, type CiProductWords } from "../ci-product-words";
+import { productNotifySource, productSendOptions } from "../notify-product";
+import { CHANT_EXIT } from "../exit-codes";
+import { approveCommand } from "./gate";
 import type { OpWavesSpec } from "./op-waves";
 import type { RunOpWaveResult } from "./op-waves-run";
 
@@ -22,22 +31,30 @@ import type { RunOpWaveResult } from "./op-waves-run";
 export type OpWaveOutcome = { result: RunOpWaveResult; error?: undefined } | { result?: undefined; error: string };
 
 /** The event a wave job sends, or undefined when it sends none. */
-export function opWaveNotifyFields(spec: OpWavesSpec, k: number, outcome: OpWaveOutcome, job: { share?: number; group?: string } = {}): NotifyFields | undefined {
+export function opWaveNotifyFields(
+  spec: OpWavesSpec,
+  k: number,
+  outcome: OpWaveOutcome,
+  job: { share?: number; group?: string } = {},
+  words: CiProductWords = activeProductWords(),
+): NotifyFields | undefined {
   const wave = spec.waves[k - 1];
   const name = wave?.name;
-  const label = `wave ${k}${name ? ` (${name})` : ""} of ${spec.name}`;
+  const label = notifyWaveLabel(words, { k, ...(name ? { name } : {}), spec: spec.name });
+  const source = productNotifySource(words);
+  const [applyVerb, appliedVerb] = words.verbs.apply;
   if (outcome.error !== undefined) {
-    return { source: "chant", event: "failed", summary: `${label} failed`, wave: { number: k, ...(name ? { name } : {}) }, targets: [], reason: outcome.error, exitCode: 1 };
+    return { source, event: "failed", summary: `${label} failed`, wave: { number: k, ...(name ? { name } : {}) }, targets: [], reason: outcome.error, exitCode: 1 };
   }
   const { result } = outcome;
   const decision = result.decision;
   const base = {
-    source: "chant",
+    source,
     wave: { number: k, ...(name ? { name } : {}), ...(decision?.gate ? { gate: decision.gate } : {}) },
     ...(decision?.digest ? { digest: decision.digest } : {}),
     exitCode: result.exitCode,
   };
-  if (result.exitCode === 3) {
+  if (result.exitCode === CHANT_EXIT.waiting) {
     if (!decision) return undefined;
     // A share job's wait (or a job group's, #3914) was announced by its deciding job, unless a hook in this job held it (#3762).
     const heldHere = result.hooks.filter((h) => h.outcome === "held");
@@ -49,7 +66,7 @@ export function opWaveNotifyFields(spec: OpWavesSpec, k: number, outcome: OpWave
       status: "waiting",
       summary: `${label} waits for an approval`,
       targets: decision.members.map((m) => m.member),
-      approve: { command: decision.approve ?? `chant approve ${decision.op} ${decision.gate} --plan ${decision.digest}`, ...review },
+      approve: { command: decision.approve ?? approveCommand(decision.op, decision.gate, undefined, decision.digest), ...chantApprove(words, decision), ...review },
       ...(decision.heldOn
         ? { reason: `held on ${decision.heldOn.op} / ${decision.heldOn.gate} by ${decision.heldOn.hook}` }
         : decision.heldBy?.length
@@ -59,7 +76,7 @@ export function opWaveNotifyFields(spec: OpWavesSpec, k: number, outcome: OpWave
           : {}),
     };
   }
-  if (result.exitCode === 8 && decision?.refused?.reason === "point") {
+  if (result.exitCode === CHANT_EXIT.declined && decision?.refused?.reason === "point") {
     // #3836: the gate's decision point was answered with an answer it does not pass on.
     return {
       ...base,
@@ -70,7 +87,7 @@ export function opWaveNotifyFields(spec: OpWavesSpec, k: number, outcome: OpWave
       ...(decision.refused.message ? { reason: decision.refused.message } : {}),
     };
   }
-  if (result.exitCode === 7 && decision?.refused) {
+  if (result.exitCode === CHANT_EXIT.denied && decision?.refused) {
     // #3821: the product's policy denied a run, and no override counts for it.
     return {
       ...base,
@@ -85,19 +102,19 @@ export function opWaveNotifyFields(spec: OpWavesSpec, k: number, outcome: OpWave
     };
   }
   // #3821: an apply that stood down for a newer run is no news; one held by another run is refused.
-  if (result.exitCode === 6 && result.outcome?.outcome === "stood-down") return undefined;
-  if (result.exitCode === 5 && result.outcome?.outcome === "held") {
+  if (result.exitCode === CHANT_EXIT.superseded && result.outcome?.outcome === "stood-down") return undefined;
+  if (result.exitCode === CHANT_EXIT.held && result.outcome?.outcome === "held") {
     const holder = result.outcome.holder;
     return {
       ...base,
       event: "refused",
       status: "held",
-      summary: `${label} applied nothing: another run${holder ? ` (${holder.run})` : ""} holds what it changes`,
+      summary: `${label} ${appliedVerb} nothing: another run${holder ? ` (${holder.run})` : ""} holds what it changes`,
       targets: decision?.members.map((m) => m.member) ?? [],
       reason: result.outcome.reason ?? `another run${holder ? `, ${holder.run},` : ""} holds what the apply changes; apply again once it is done`,
     };
   }
-  if (result.exitCode === 4) {
+  if (result.exitCode === CHANT_EXIT.moved) {
     return {
       ...base,
       event: "refused",
@@ -116,12 +133,18 @@ export function opWaveNotifyFields(spec: OpWavesSpec, k: number, outcome: OpWave
       ...base,
       event: "failed",
       status: "failed",
-      summary: `${label} failed: ${result.failed.length > 0 ? `${result.failed.join(", ")} did not apply` : `exit ${result.exitCode}`}`,
+      summary: `${label} failed: ${result.failed.length > 0 ? `${result.failed.join(", ")} did not ${applyVerb}` : `exit ${result.exitCode}`}`,
       targets: result.failed,
-      ...(result.failed.length > 0 ? { reason: `the apply command failed for ${result.failed.join(", ")}` } : {}),
+      ...(result.failed.length > 0 ? { reason: `the ${applyVerb} command failed for ${result.failed.join(", ")}` } : {}),
     };
   }
   return undefined;
+}
+
+/** chant's own approve line beside a product's (`approve.chant` in the event), so a receiver that runs chant can approve too. */
+function chantApprove(words: CiProductWords, decision: { op: string; gate: string; digest?: string }): { chant?: string } {
+  if (isChantWords(words) || !decision.digest) return {};
+  return { chant: `chant approve ${decision.op} ${decision.gate} --plan ${decision.digest}` };
 }
 
 /** `, share 2,`, `, job group prod,` or `, share 2 of job group prod,`; empty for a wave's own job. */
@@ -141,9 +164,11 @@ export async function notifyOpWave(
   // A spec whose notify the run refused (it may name a URL in place of a variable) sends nothing.
   if (!spec.notify || notifyConfigProblem(spec.notify) !== undefined) return [];
   try {
-    const fields = opWaveNotifyFields(spec, k, outcome, job);
+    const words = activeProductWords();
+    const fields = opWaveNotifyFields(spec, k, outcome, job, words);
     if (!fields) return [];
-    return await sendNotify(spec.notify, makeNotifyEvent(fields, { ...(options.env ? { env: options.env } : {}) }), options);
+    // #4610: the product's header prefix, unless the caller names one.
+    return await sendNotify(spec.notify, makeNotifyEvent(fields, { ...(options.env ? { env: options.env } : {}) }), productSendOptions(words, options));
   } catch (e) {
     (options.log ?? ((line: string) => process.stderr.write(line + "\n")))(`notify: nothing was sent: ${e instanceof Error ? e.message : String(e)}`);
     return [];

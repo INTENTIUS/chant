@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { SOURCE_EXPORT_CONDITIONS } from "../../module-source";
+import { chantPackageSourceTarget } from "../../ts-loader";
 
 /**
  * chant #1045 Phase 2 — bundles the generated sandbox driver (`./driver.ts`)
@@ -185,6 +186,29 @@ function externalTrustedPackagesPlugin(): { plugin: esbuild.Plugin; readPaths: s
   return { plugin, readPaths };
 }
 
+/**
+ * chant#4591: chant core's exports give an ESM import its compiled
+ * `dist/*.js` (the `import` condition), so a product can load the installed
+ * chant under plain Node. esbuild always matches `import`. The driver names
+ * chant's own modules by their `src/*.ts` path (`chantSourceDir`), so a
+ * project's or a compiled lexicon's import of `@intentius/chant` has to land
+ * on that same source, or the bundle carries a second copy of core with its
+ * own registries and classes. Lexicons are left alone: they bundle from the
+ * `dist/*.js` they ship, as before.
+ */
+function chantCoreSourcePlugin(): esbuild.Plugin {
+  return {
+    name: "chant-sandbox-core-source",
+    setup(build) {
+      build.onResolve({ filter: /^@intentius\/chant(?:\/.*)?$/ }, (args) => {
+        if (!args.importer) return undefined;
+        const target = chantPackageSourceTarget(args.path, args.importer);
+        return target === undefined ? undefined : { path: target };
+      });
+    },
+  };
+}
+
 export interface BundleResult {
   /** Absolute, REALPATH'd path to the bundled entry file — this and {@link bundleDir} are what the caller grants `--allow-fs-read` to. macOS's `/tmp` is a symlink to `/private/tmp`; an un-canonicalized path here would silently fail to match Node's own (already-canonicalized) permission check. */
   bundlePath: string;
@@ -225,7 +249,7 @@ export async function bundleDriver(driverSource: string): Promise<BundleResult> 
       // Setting `conditions` replaces esbuild's default ["module"], so it is
       // kept, and compiled the option is left out as before.
       ...(SOURCE_EXPORT_CONDITIONS.length > 0 ? { conditions: ["module", ...SOURCE_EXPORT_CONDITIONS] } : {}),
-      plugins: [plugin],
+      plugins: [chantCoreSourcePlugin(), plugin],
     });
   } catch (err) {
     rmSync(bundleDir, { recursive: true, force: true });

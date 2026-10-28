@@ -7,7 +7,8 @@
  * already allow: `pulumi preview --json` (or `plunge preview --json`) and
  * `pulumi refresh --preview-only --json --target <urn>` (or `plunge drift
  * --resource <urn> --stream`). Neither changes the stack. There is no apply
- * activity, because chant never runs `pulumi up`.
+ * activity: a stack applies as a component step through the `pulumi-up`
+ * capability (`../../pulumi-up.ts`, #4541), the only caller of `up`.
  *
  * `dir` is the member's directory, where `Pulumi.yaml` is, resolved against
  * `cwd` (default: the process's working directory, the project root on a

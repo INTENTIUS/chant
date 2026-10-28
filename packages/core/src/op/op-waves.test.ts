@@ -976,6 +976,118 @@ describe("gates and holds a product's wave needs (#3821)", () => {
     again.done();
   });
 
+  test("a hold with record: chant spends the held gate before the re-run and writes its finished line with the hook's detail (#4623)", async () => {
+    const migrate = { name: "migrate", command: ["migrate", "{runs}"], onFailure: "approve" as const };
+    const spec: OpWavesSpec = { ...tg, hooks: { before: { plan: [migrate] }, after: tg.hooks!.after } };
+    const proof = JSON.stringify({ name: "split-queues", roots: ["queues"] });
+    const seen: { applied: number; finishedEnv?: string }[] = [];
+    let gatesRef: ReturnType<typeof memoryGateLedgerPort> | undefined;
+    const hook = (argv: string[], env: Record<string, string>, dir: string) => {
+      if (argv[0] !== "migrate") return 0;
+      if (env.CHANT_HOLD_APPROVED) {
+        seen.push({ applied: gatesRef!.applied.filter((a) => a.op === "tf-migrate").length, ...(env.CHANT_HOLD_FINISHED ? { finishedEnv: env.CHANT_HOLD_FINISHED } : {}) });
+        writeFileSync(join(dir, env.CHANT_HOLD_FINISHED!), JSON.stringify({ result: "applied", detail: { result: "applied", roots: "queues", "queues.after": "v2", nested: { no: 1 } } }));
+        return 0;
+      }
+      writeFileSync(join(dir, env.CHANT_HOLD!), JSON.stringify({ op: "tf-migrate", gate: "split-queues", digest: digest("m"), record: true, attachment: proof, pending: { commit: "abc123", members: [] } }));
+      return 3;
+    };
+
+    // Waiting: the attachment is stored once, and the pending fact names its digest.
+    const h = harness({ vpc: { planDigest: digest("1") }, dns: { planDigest: digest("2") } }, { hook, atBase: spec });
+    const gates = memoryGateLedgerPort();
+    gatesRef = gates;
+    const waiting = await run(h, gates, spec);
+    expect(waiting.exitCode).toBe(3);
+    expect(gates.attachments.get(`tf-migrate/${digest("m")}`)).toBe(proof);
+    expect(gates.appended[0]).toMatchObject({ op: "tf-migrate", gate: "split-queues", proof: expect.stringMatching(/^sha256:[0-9a-f]{64}$/) });
+    expect(gates.applied).toEqual([]);
+    h.done();
+
+    // Approved: the applied line is on the ledger before the re-run, and the finished line after it carries the flat detail.
+    const again = harness({ vpc: { planDigest: digest("1"), empty: true }, dns: { planDigest: digest("2"), empty: true } }, { hook, atBase: spec });
+    const approved = memoryGateLedgerPort({ resolutions: [{ version: 1, op: "tf-migrate", gate: "split-queues", resolvedBy: "alice", timestamp: "2026-10-10T00:00:00Z", planDigest: digest("m") }] });
+    gatesRef = approved;
+    const result = await run(again, approved, spec);
+    expect(result.exitCode).toBe(0);
+    expect(seen).toEqual([{ applied: 1, finishedEnv: ".chant/op-waves/" + spec.name + "/wave-1/hold-finished.json" }]);
+    const spent = approved.applied.find((a) => a.op === "tf-migrate")!;
+    expect(spent).toMatchObject({ kind: "applied", gate: "split-queues", planDigest: digest("m"), approvedBy: "alice", approvedAt: "2026-10-10T00:00:00Z", commit: "abc123", wave: { number: 1 } });
+    expect(approved.finished).toEqual([
+      expect.objectContaining({ kind: "finished", op: "tf-migrate", gate: "split-queues", planDigest: digest("m"), applied: spent.timestamp, result: "applied", detail: { result: "applied", roots: "queues", "queues.after": "v2" } }),
+    ]);
+    again.done();
+  });
+
+  test("a recorded hold whose digest applied already does not run again, and one whose spend is not pushed does not run (#4623)", async () => {
+    const migrate = { name: "migrate", command: ["migrate", "{runs}"], onFailure: "approve" as const };
+    const spec: OpWavesSpec = { ...tg, hooks: { before: { plan: [migrate] }, after: tg.hooks!.after } };
+    let reruns = 0;
+    const hook = (argv: string[], env: Record<string, string>, dir: string) => {
+      if (argv[0] !== "migrate") return 0;
+      if (env.CHANT_HOLD_APPROVED) {
+        reruns++;
+        return 0;
+      }
+      writeFileSync(join(dir, env.CHANT_HOLD!), JSON.stringify({ op: "tf-migrate", gate: "split-queues", digest: digest("m"), record: true }));
+      return 3;
+    };
+    const approval = { version: 1 as const, op: "tf-migrate", gate: "split-queues", resolvedBy: "alice", timestamp: "2026-10-10T00:00:00Z", planDigest: digest("m") };
+    const plans = { vpc: { planDigest: digest("1"), empty: true }, dns: { planDigest: digest("2"), empty: true } };
+
+    const spentAlready = harness(plans, { hook, atBase: spec });
+    const gates = memoryGateLedgerPort({
+      resolutions: [approval],
+      applied: [{ version: 1, kind: "applied", op: "tf-migrate", gate: "split-queues", planDigest: digest("m"), approvedAt: approval.timestamp, approvedBy: "alice", timestamp: "2026-10-11T00:00:00Z" }],
+    });
+    const logs: string[] = [];
+    const result = await run(spentAlready, gates, spec, (m) => logs.push(m));
+    expect(result.exitCode).not.toBe(0);
+    expect(reruns).toBe(0);
+    expect(logs.join("\n")).toContain("applied already under the approval by alice");
+    expect(gates.finished).toEqual([]);
+    spentAlready.done();
+
+    const unpushed = harness(plans, { hook, atBase: spec });
+    const memory = memoryGateLedgerPort({ resolutions: [approval] });
+    const result2 = await run(unpushed, { ...memory, appendApplied: async () => ({ pushed: false, pushWarning: 'the push of chant/lifecycle to "origin" failed' }) }, spec);
+    expect(result2.exitCode).not.toBe(0);
+    expect(reruns).toBe(0);
+    unpushed.done();
+  });
+
+  test("a recorded hold's re-run that writes no finished file is finished by its exit code; a hold without record gets no CHANT_HOLD_FINISHED (#4623)", async () => {
+    const migrate = { name: "migrate", command: ["migrate", "{runs}"], onFailure: "approve" as const };
+    const spec: OpWavesSpec = { ...tg, hooks: { before: { plan: [migrate] }, after: tg.hooks!.after } };
+    const approval = { version: 1 as const, op: "tf-migrate", gate: "split-queues", resolvedBy: "alice", timestamp: "2026-10-10T00:00:00Z", planDigest: digest("m") };
+    const plans = { vpc: { planDigest: digest("1"), empty: true }, dns: { planDigest: digest("2"), empty: true } };
+    const envs: Record<string, string>[] = [];
+    const hookWith = (record: boolean) => (argv: string[], env: Record<string, string>, dir: string) => {
+      if (argv[0] !== "migrate") return 0;
+      if (env.CHANT_HOLD_APPROVED) {
+        envs.push(env);
+        return 0;
+      }
+      writeFileSync(join(dir, env.CHANT_HOLD!), JSON.stringify({ op: "tf-migrate", gate: "split-queues", digest: digest("m"), ...(record ? { record: true } : {}) }));
+      return 3;
+    };
+
+    const recorded = harness(plans, { hook: hookWith(true), atBase: spec });
+    const gates = memoryGateLedgerPort({ resolutions: [approval] });
+    expect((await run(recorded, gates, spec)).exitCode).toBe(0);
+    expect(gates.finished).toEqual([expect.objectContaining({ gate: "split-queues", result: "applied" })]);
+    expect(gates.finished[0]).not.toHaveProperty("detail");
+    recorded.done();
+
+    const plain = harness(plans, { hook: hookWith(false), atBase: spec });
+    const other = memoryGateLedgerPort({ resolutions: [approval] });
+    expect((await run(plain, other, spec)).exitCode).toBe(0);
+    expect(envs[1]).not.toHaveProperty("CHANT_HOLD_FINISHED");
+    expect(other.applied.filter((a) => a.op === "tf-migrate")).toEqual([]);
+    expect(other.finished).toEqual([]);
+    plain.done();
+  });
+
   test("an approved re-run holds the wave on a further gate: two migrations wait, then apply in turn (#3847)", async () => {
     const migrate = { name: "migrate", command: ["migrate", "{runs}"], onFailure: "approve" as const };
     const spec: OpWavesSpec = { ...tg, hooks: { before: { plan: [migrate] }, after: tg.hooks!.after } };

@@ -68,7 +68,9 @@
  * each step's op, URN, provider, id, inputs before and after, `diffReasons`,
  * `replaceReasons` and `detailedDiff`, sorted by URN and op. It leaves out
  * `config`, `duration`, `diagnostics` and `changeSummary`, and the states'
- * outputs, which at preview are the last deployment's or unknown.
+ * outputs, which at preview are the last deployment's or unknown. For a
+ * member on the resource lock grain the `pulumi-up` capability passes
+ * `changedOnly` (#4541, ruling B), which leaves `same` and `read` steps out.
  *
  * The fixtures under `testdata/pulumi-preview` are recorded from pulumi
  * 3.272.0 against the plunge corpus's aws-ts program on floci (#4475). What
@@ -149,13 +151,29 @@ export function pulumiExportResources(doc: unknown): PulumiExportedResource[] {
 
 const byString = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
+/** Step ops that change nothing: what {@link PulumiPreviewDigestOptions.changedOnly} leaves out of the digest. */
+export const PULUMI_UNCHANGED_OPS: ReadonlySet<string> = new Set(["same", "read"]);
+
+export interface PulumiPreviewDigestOptions {
+  /**
+   * Leave `same` and `read` steps out (#4541, ruling B): set for a member on
+   * the resource lock grain, so a pull request that lands on other resources
+   * of the stack does not move this one's digest. plunge's plan stamp still
+   * refuses a moved record among the steps that change.
+   */
+  changedOnly?: boolean;
+}
+
 /**
  * The member's plan digest: `computePlanDigest("pulumi-preview", …)` over
  * what each step proposes, sorted by URN and op, so two renderings of one
- * preview agree. See the module comment for what it leaves out.
+ * preview agree. See the module comment for what it leaves out. With
+ * `changedOnly`, `same` and `read` steps are left out too, under the label
+ * `pulumi-preview-changed`, so the two digests never collide.
  */
-export function pulumiPreviewDigest(preview: unknown): string {
+export function pulumiPreviewDigest(preview: unknown, opts: PulumiPreviewDigestOptions = {}): string {
   const steps = (pulumiSteps(preview) ?? [])
+    .filter((s) => !opts.changedOnly || !PULUMI_UNCHANGED_OPS.has(s.op ?? ""))
     .map((s) => ({
       op: s.op ?? null,
       urn: s.urn ?? null,
@@ -168,12 +186,16 @@ export function pulumiPreviewDigest(preview: unknown): string {
       detailedDiff: s.detailedDiff ?? null,
     }))
     .sort((a, b) => byString(`${a.urn}\u0000${a.op}`, `${b.urn}\u0000${b.op}`));
-  return computePlanDigest("pulumi-preview", steps);
+  return computePlanDigest(opts.changedOnly ? "pulumi-preview-changed" : "pulumi-preview", steps);
 }
 
 const REPLACE_OPS = new Set(["replace", "create-replacement", "delete-replaced"]);
 
 /** The action and disruption one URN's steps mean, or undefined for an op the change set has no action for. */
+export function pulumiStepsAction(steps: PulumiStep[]): { action: ChangeSetAction; disruption?: ChangeSetDisruption; importing?: true } | undefined {
+  return actionOf(steps);
+}
+
 function actionOf(steps: PulumiStep[]): { action: ChangeSetAction; disruption?: ChangeSetDisruption; importing?: true } | undefined {
   const ops = steps.map((s) => s.op ?? "");
   if (ops.includes("import-replacement")) return { action: "replace", disruption: "replace", importing: true };
@@ -275,6 +297,8 @@ export interface PulumiPreviewPartInput {
   targeted?: boolean;
   /** The preview failed: the member is failed with this error, and keeps whatever steps it printed. */
   error?: string;
+  /** Digest options (#4541, ruling B): `changedOnly` for a member on the resource lock grain. */
+  digest?: PulumiPreviewDigestOptions;
 }
 
 /**
@@ -397,7 +421,7 @@ export function pulumiPreviewPart(input: PulumiPreviewPartInput): ChangeSetPart 
       ...scope,
       status: failed ? "failed" : "planned",
       ...(failed ? { error: input.error } : {}),
-      planDigest: failed ? null : pulumiPreviewDigest(input.preview),
+      planDigest: failed ? null : pulumiPreviewDigest(input.preview, input.digest),
       holes,
     },
     entries,

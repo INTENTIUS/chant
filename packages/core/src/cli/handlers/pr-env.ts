@@ -43,6 +43,7 @@ import { isEmptyChangeSet } from "../../change-set";
 import {
   PR_ENV_EXIT,
   PR_ENV_GATE,
+  PR_ENV_LOCATION_SEPARATOR,
   PR_ENV_RECORD_FILE,
   PR_ENV_REPORT_DIR,
   acceptHandedRecord,
@@ -53,6 +54,7 @@ import {
   prEnvStatusState,
   prEnvironmentName,
   prEnvironmentSite,
+  prEnvTemplateOwner,
   renderPrEnvNote,
   ttlMs,
   type PrEnvReport,
@@ -172,7 +174,9 @@ async function prEnvUp(ctx: CommandContext): Promise<number> {
     );
   }
   const { config } = await loadChantConfig(projectPath).catch(() => ({ config: {} as ChantConfig }));
-  const derived = derivePrEnvironment(config, setting.template, pr);
+  // #4609: a template a lexicon takes as its own stack (plywood's project/stack) needs no chant.config.ts environment.
+  const owner = prEnvTemplateOwner(ctx.plugins, setting.template);
+  const derived = derivePrEnvironment(config, setting.template, pr, owner ? { templateOwner: owner } : {});
   if ("refusal" in derived) return fail(derived.refusal);
 
   // The build sees pr-<n> as its environment and the template's name beside it.
@@ -182,12 +186,12 @@ async function prEnvUp(ctx: CommandContext): Promise<number> {
     ...ctx,
     args: { ...args, env: derived.env, param: [...(args.param ?? []).filter((p) => !p.startsWith(`${derived.param}=`)), `${derived.param}=${derived.env}`] },
   };
-  console.error(formatInfo(`pr-env up: ${derived.env}, derived from ${derived.template}${derived.endpoint ? ` at ${derived.endpoint}` : ""}, marker ${derived.stack}/${derived.env}`));
+  console.error(formatInfo(`pr-env up: ${derived.env}, derived from ${owner ? owner.describe : derived.template}${derived.endpoint ? ` at ${derived.endpoint}` : ""}, marker ${derived.stack}/${derived.env}`));
   return withComponentEndpoint(envCtx, () => up(envCtx, pr, derived, setting.ttl), { config: { ...config, environments: derived.environments }, environment: derived.env });
 }
 
 async function up(ctx: CommandContext, pr: number, derived: Exclude<ReturnType<typeof derivePrEnvironment>, { refusal: string }>, ttl: string): Promise<number> {
-  const { prepare, planAll, placeHooks, runStageHook } = await import("./pr");
+  const { prepare, planAll, placeHooks, runStageHook, leaseRowsOf, leaseRoundRows } = await import("./pr");
   const p = await prepare(ctx, "plan");
   if (typeof p === "number") return p;
   // ci.hooks (#4288), read at base as the other pull-request jobs read them, around the plan and the apply.
@@ -200,7 +204,7 @@ async function up(ctx: CommandContext, pr: number, derived: Exclude<ReturnType<t
     stack: derived.stack,
     ...(p.member ? { member: p.member } : {}),
     ...(derived.endpoint ? { endpoint: derived.endpoint } : {}),
-    adapter: componentsPrEnvAdapter(p, { planAll, runStageHook }),
+    adapter: componentsPrEnvAdapter(p, { planAll, runStageHook, leaseRowsOf, leaseRoundRows }),
     ports: cliPorts(ctx, p.forge),
     actor: actor(),
     ...(p.forge?.runUrl ? { runUrl: p.forge.runUrl } : {}),
@@ -216,7 +220,15 @@ async function up(ctx: CommandContext, pr: number, derived: Exclude<ReturnType<t
  * component's site in `pr-<n>`, carried over from the template's (#4330,
  * `prEnvironmentSite`).
  */
-function componentsPrEnvAdapter(p: Prepared, run: { planAll: typeof import("./pr").planAll; runStageHook: typeof import("./pr").runStageHook }): PrEnvAdapter {
+function componentsPrEnvAdapter(
+  p: Prepared,
+  run: {
+    planAll: typeof import("./pr").planAll;
+    runStageHook: typeof import("./pr").runStageHook;
+    leaseRowsOf: typeof import("./pr").leaseRowsOf;
+    leaseRoundRows: typeof import("./pr").leaseRoundRows;
+  },
+): PrEnvAdapter {
   let set: PrPlanSet | undefined;
   const rows = (target: PrEnvTarget, status: (component: string) => string): PrEnvReportRow[] =>
     p.plan.order.map((component) => {
@@ -224,8 +236,20 @@ function componentsPrEnvAdapter(p: Prepared, run: { planAll: typeof import("./pr
       const sum = (k: "create" | "update" | "replace" | "delete") => ms.reduce((n, m) => n + m.counts[k], 0);
       const found = prEnvironmentSite(p.sites?.[component], target.template, target.env);
       const site = found ? { ...(found.runtime ? { runtime: found.runtime } : {}), ...(found.url ? { url: found.url } : {}), ...(found.domain ? { domain: found.domain } : {}) } : undefined;
-      return { component, status: status(component), create: sum("create"), update: sum("update"), replace: sum("replace"), delete: sum("delete"), ...(site && Object.keys(site).length > 0 ? { site } : {}) };
+      const location = locationOf(component);
+      return { component, status: status(component), create: sum("create"), update: sum("update"), replace: sum("replace"), delete: sum("delete"), ...(location ? { location } : {}), ...(site && Object.keys(site).length > 0 ? { site } : {}) };
     });
+  // #4609: each component's copies in pr-<n> (a review stack per pulumi-up step), as their plans said, joined in member order.
+  const locationOf = (component: string): string | undefined => {
+    const by = set?.locations?.[component];
+    if (!by) return undefined;
+    const all = Object.keys(by).sort().map((m) => by[m]!);
+    return all.length > 0 ? all.join(PR_ENV_LOCATION_SEPARATOR) : undefined;
+  };
+  const locations = (): Record<string, string> | undefined => {
+    const out = Object.fromEntries(p.plan.order.map((c) => [c, locationOf(c)]).filter((e): e is [string, string] => e[1] !== undefined));
+    return Object.keys(out).length > 0 ? out : undefined;
+  };
   return {
     async plan(target) {
       if (p.plan.order.length === 0) return { digest: "", empty: true, rows: [], ...(p.routedAway ? { message: p.routedAway } : {}) };
@@ -243,12 +267,23 @@ function componentsPrEnvAdapter(p: Prepared, run: { planAll: typeof import("./pr
       const planned = set!;
       const hookStop = await run.runStageHook(p, "before-apply", p.plan.order, planned);
       if (hookStop) return { status: "stopped", rows: rows(target, () => "planned"), message: hookStop };
-      const applied = await applyPrSet({ components: p.components, plan: p.plan, registry: p.registry, env: target.env, set: planned, gate: PR_ENV_GATE });
+      // #4594: on the resource grain the environment's apply leases the rows its plan changes, in the pull-request loop's rows file, as pr-apply does.
+      const lease = await run.leaseRowsOf(p, planned, target.env);
+      if ("held" in lease) return { status: "stopped", held: true, rows: rows(target, () => "planned"), message: lease.held };
+      if ("failed" in lease) return { status: "stopped", rows: rows(target, () => "planned"), message: lease.failed };
+      let applied: Awaited<ReturnType<typeof applyPrSet>>;
+      try {
+        applied = await applyPrSet({ components: p.components, plan: p.plan, registry: p.registry, env: target.env, set: planned, gate: PR_ENV_GATE, leaseRound: run.leaseRoundRows(p) });
+      } finally {
+        await lease.release();
+      }
       const afterHook = await run.runStageHook(p, "after-apply", p.plan.order, planned, "the environment stands as applied");
       const status = (component: string) => applied.members.find((m) => m.component === component)?.status ?? "planned";
       return {
         status: applied.status === "applied" ? "applied" : applied.status === "waiting" ? "waiting" : "failed",
+        ...(applied.held ? { held: true, message: applied.held } : applied.leaseFailed ? { message: applied.leaseFailed } : {}),
         rows: rows(target, status),
+        ...(locations() ? { locations: locations()! } : {}),
         ...(afterHook ? { afterFailure: afterHook } : {}),
       };
     },
@@ -316,12 +351,14 @@ async function prEnvPost(ctx: CommandContext): Promise<number> {
  * `ci.prEnvironment.teardown` names in the declaration at this commit
  * (#4330), which the down and sweep jobs check out from the base branch.
  */
-async function teardownSources(): Promise<{ config: ChantConfig; adapters: PrEnvTeardownAdapter[] }> {
+async function teardownSources(ctx: CommandContext): Promise<{ config: ChantConfig; adapters: PrEnvTeardownAdapter[] }> {
   const projectPath = resolve(".");
   const { config } = await loadChantConfig(projectPath).catch(() => ({ config: {} as ChantConfig }));
   const { scopeSource } = await import("../../workspace/write-scope");
   const hook = scopeSource(projectPath, "HEAD").declaration?.ci?.prEnvironment?.teardown;
-  return { config, adapters: hook ? [commandTeardownAdapter(hook, { cwd: projectPath })] : [] };
+  // #4609: what lexicons made outside their own teardown, such as the pulumi lexicon's review stacks.
+  const fromLexicons = (ctx.plugins ?? []).map((p) => p.prEnvTeardown?.({ cwd: projectPath })).filter((a): a is PrEnvTeardownAdapter => a !== undefined);
+  return { config, adapters: [...fromLexicons, ...(hook ? [commandTeardownAdapter(hook, { cwd: projectPath })] : [])] };
 }
 
 async function prEnvDown(ctx: CommandContext): Promise<number> {
@@ -337,7 +374,7 @@ async function prEnvDown(ctx: CommandContext): Promise<number> {
     reason,
     ...(member ? { member } : {}),
     ports: cliPorts(ctx, forge),
-    ...(await teardownSources()),
+    ...(await teardownSources(ctx)),
     plugins: ctx.plugins,
     commit: await headCommit(),
     actor: actor(),
@@ -360,7 +397,7 @@ async function prEnvSweep(ctx: CommandContext): Promise<number> {
   if (typeof forge === "number") return forge;
   const result = await prEnvSweepRun({
     ports: cliPorts(ctx, forge),
-    ...(await teardownSources()),
+    ...(await teardownSources(ctx)),
     plugins: ctx.plugins,
     commit: await headCommit(),
     actor: actor(),

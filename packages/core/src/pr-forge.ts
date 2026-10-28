@@ -71,6 +71,21 @@ export interface CommitStatus {
   targetUrl?: string;
 }
 
+/**
+ * One commit status as the forge reports it (#4554): each context's newest,
+ * read back by {@link PrForge.commitStatuses}. `state` is the forge's own
+ * word (`success`, `failure`, `pending`, `error` on GitHub and Forgejo;
+ * GitLab's `success`, `failed`, `running`, `canceled` and the rest).
+ */
+export interface ReadCommitStatus {
+  context: string;
+  state: string;
+  description?: string;
+  targetUrl?: string;
+  /** GitLab: whether a failed job was allowed to fail. */
+  allowFailure?: boolean;
+}
+
 /** A commit status's state, as a caller names it. */
 export type ForgeStatusState = "pending" | "running" | "success" | "failed" | "failure" | "canceled" | "error";
 
@@ -220,6 +235,15 @@ export interface PullRequest {
   head: string;
   /** Its base (target) branch. */
   base?: string;
+}
+
+/** A pull request's head, as {@link PrForge.pullRequestHead} reads it (#4616). */
+export interface PullRequestHead {
+  sha: string;
+  branch: string;
+  open: boolean;
+  /** The branch lives in this repository, not a fork. */
+  sameRepo: boolean;
 }
 
 /** An open pull request as `chant ci serve` polls it (#4095). */
@@ -417,6 +441,14 @@ export interface PrForge {
   /** GitHub and Forgejo (#4095): the commit `branch` points at, or undefined when there is no such branch. */
   branchHead?(branch: string): Promise<string | undefined>;
   /**
+   * The head of pull request `pr` (#4616): its commit and branch, whether it
+   * is open, and whether the branch lives in this repository rather than a
+   * fork. Undefined when the forge does not know the pull request.
+   */
+  pullRequestHead?(pr: number): Promise<PullRequestHead | undefined>;
+  /** GitHub and Forgejo (#4616): whether `login` may push to this repository (write, maintain or admin). */
+  userCanWrite?(login: string): Promise<boolean>;
+  /**
    * When a scheduled Op's generated job last ran from its schedule or by hand
    * (#4289). GitHub reads the workflow `workflow` names and its `schedule` and
    * `workflow_dispatch` runs. Forgejo reads the repository's runs and keeps
@@ -465,6 +497,39 @@ export interface PrForge {
   jobArtifact?(id: number, path: string): Promise<string | undefined>;
   /** GitLab (#4328): the target URL of the newest commit status named `context` on `sha`, or undefined when there is none or it has no URL. */
   statusUrl?(sha: string, context: string): Promise<string | undefined>;
+  /** The repository's default branch (#4554). `main` when the forge names none. */
+  defaultBranch?(): Promise<string>;
+  /**
+   * The commit statuses on `sha` (#4554): each context's newest, newest
+   * first. Commit statuses only; GitHub's check runs are not among them.
+   * `ref` (#4584) keeps the statuses reported for that branch: GitLab
+   * scopes statuses to a ref and filters on it. GitHub and Forgejo statuses
+   * belong to the commit alone, so they read the same with or without it.
+   */
+  commitStatuses?(sha: string, ref?: string): Promise<ReadCommitStatus[]>;
+}
+
+/** Each context's newest status, newest first, from statuses in any order with a numeric `id` (GitLab) or newest first (GitHub, Forgejo). */
+function newestStatuses(items: unknown[], name: "context" | "name"): ReadCommitStatus[] {
+  const ordered = items.filter(isObject).map((st, i) => ({ st, at: num(st.id) ?? -i }));
+  if (name === "name") ordered.sort((a, b) => b.at - a.at);
+  const seen = new Set<string>();
+  const out: ReadCommitStatus[] = [];
+  for (const { st } of ordered) {
+    const context = str(st[name]);
+    if (!context || seen.has(context)) continue;
+    seen.add(context);
+    const description = str(st.description);
+    const targetUrl = str(st.target_url);
+    out.push({
+      context,
+      state: str(st.state) ?? str(st.status) ?? "",
+      ...(description ? { description } : {}),
+      ...(targetUrl ? { targetUrl } : {}),
+      ...(typeof st.allow_failure === "boolean" ? { allowFailure: st.allow_failure } : {}),
+    });
+  }
+  return out;
 }
 
 /**
@@ -1098,6 +1163,41 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
       return out.sort((a, b) => a.number - b.number);
     },
     branchHead: branchTip,
+    async pullRequestHead(pr) {
+      let got: unknown;
+      try {
+        got = await api.call("GET", `${repo}/pulls/${pr}`);
+      } catch (err) {
+        if (err instanceof ForgeApiError && err.status === 404) return undefined;
+        throw err;
+      }
+      if (!isObject(got) || !isObject(got.head)) return undefined;
+      const sha = str(got.head.sha);
+      const branch = str(got.head.ref);
+      if (!sha || !branch) return undefined;
+      const open = got.state === "open" && got.merged !== true;
+      return { sha, branch, open, sameRepo: fromHere(got, branch) };
+    },
+    async userCanWrite(login) {
+      let got: unknown;
+      try {
+        got = await api.call("GET", `${repo}/collaborators/${encodeURIComponent(login)}/permission`);
+      } catch (err) {
+        if (err instanceof ForgeApiError && (err.status === 404 || err.status === 403)) return false;
+        throw err;
+      }
+      // GitHub says admin, maintain, write, triage, read or none; Forgejo owner, admin, write, read or none.
+      const level = isObject(got) ? str(got.permission) : undefined;
+      return level === "admin" || level === "maintain" || level === "write" || level === "owner";
+    },
+    async defaultBranch() {
+      const got = await api.call("GET", repo);
+      return (isObject(got) ? str(got.default_branch) : undefined) ?? "main";
+    },
+    async commitStatuses(sha) {
+      // Statuses on GitHub and Forgejo belong to the commit; there is no ref to filter by (#4584).
+      return newestStatuses(await api.list(`${repo}/commits/${sha}/statuses`, pageParams, pageSize), "context");
+    },
     async scheduledRuns(q) {
       const file = encodeURIComponent(q.workflow);
       if (kind === "github") {
@@ -1474,8 +1574,31 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
       }
       return out.sort((a, b) => a.pr - b.pr);
     },
+    async pullRequestHead(mr) {
+      let got: unknown;
+      try {
+        got = await api.call("GET", `${notes}/${mr}`);
+      } catch (err) {
+        if (err instanceof ForgeApiError && err.status === 404) return undefined;
+        throw err;
+      }
+      if (!isObject(got)) return undefined;
+      const sha = str(got.sha);
+      const branch = str(got.source_branch);
+      if (!sha || !branch) return undefined;
+      const own = num(got.source_project_id) === undefined || num(got.source_project_id) === num(got.target_project_id);
+      return { sha, branch, open: got.state === "opened", sameRepo: own };
+    },
     async jobArtifact(id, path) {
       return api.text(`${project}/jobs/${id}/artifacts/${path.split("/").map(encodeURIComponent).join("/")}`);
+    },
+    async defaultBranch() {
+      const got = await api.call("GET", project);
+      return (isObject(got) ? str(got.default_branch) : undefined) ?? "main";
+    },
+    async commitStatuses(sha, ref) {
+      const only = ref ? `&ref=${encodeURIComponent(ref)}` : "";
+      return newestStatuses(await api.list(`${project}/repository/commits/${sha}/statuses?all=true${only}`, pageParams, 100), "name");
     },
     async statusUrl(sha, context) {
       const statuses = await api.list(`${project}/repository/commits/${sha}/statuses?all=true&name=${encodeURIComponent(context)}`, pageParams, 100);

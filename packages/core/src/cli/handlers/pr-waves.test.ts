@@ -5,7 +5,8 @@
  * applies under that approval when the approved plan covers it, or waits at
  * `<gate>-wave-2` when it moved. Git, the change signal, the derivation and
  * the gate ledger are fakes; the planning, the coverage check and the apply
- * are the real ones.
+ * are the real ones. Since #4588 each wave runs on op waves through the
+ * component plan-wave and apply-wave steps, in pr-apply's own process.
  */
 
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -166,8 +167,12 @@ async function planAndApprove(): Promise<string> {
   return digest;
 }
 
+const home = process.cwd();
+
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "pr-waves-"));
+  // pr-apply runs each wave's op waves in its working directory (#4588), so the job's .chant/op-waves lands in the scratch dir.
+  process.chdir(dir);
   record = join(dir, "resume", "pr-apply.json");
   errors = [];
   ran = [];
@@ -185,6 +190,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  process.chdir(home);
   await rm(dir, { recursive: true, force: true });
 });
 
@@ -302,7 +308,7 @@ describe("pr-apply --wave-gate: wave 2's plan differs from the pull request's", 
     const digest = await movedChange();
     const stale = "jcs1-sha256:" + "0".repeat(64);
     gateLedger = memoryGateLedgerPort({ resolutions: [resolution("pr-apply", digest), resolution("release-wave-2", stale, "github:bob")] });
-    expect(await runComponentsPrApply(wave(2))).toBe(3);
+    expect(await runComponentsPrApply(wave(2))).toBe(4);
     expect(ran).toEqual(["net"]);
     const r = await report();
     expect(r).toMatchObject({ status: "refused", refusal: "wave-plan-changed" });

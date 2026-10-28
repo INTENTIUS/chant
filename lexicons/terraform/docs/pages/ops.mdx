@@ -79,7 +79,34 @@ export const app: Component = {
 
 Roots written this way run as a [`chant components fan-out`](/chant/cli/components/#components-fan-out). With `--wave-gate <name>`, each wave of roots is planned once the wave before it has applied, and its gate binds the wave's set digest. The member is the root's name and its plan digest is the step's `planDigest`, so a wave's digest is the change-set digest of its roots. `run` applies the saved plan the wave approved. terraform and tofu refuse a saved plan whose state moved, and choudoufu refuses one whose live plan changed, so either way the approved plan is the one applied or nothing is.
 
-A live choudoufu root in a gated wave goes through choudoufu's own set commands, which need choudoufu v0.22.0 or later. `plan` runs `choudoufu live-plan-set -json` over the root, and the wave's gate binds the plan that document holds. `run` passes the document and choudoufu's set digest to `choudoufu live-wave-apply`, which plans the root again and applies nothing when the plan moved. The fan-out then exits 3, as it does when choudoufu's `apply` refuses a wave's plan file. choudoufu's resume file is kept in the fan-out's `--resume` record, so the next attempt hands it back to choudoufu. The files live under `.chant/choudoufu-waves/<root>/`. A choudoufu root whose step passes `vars`, or whose entry in `terraform.roots` has var files or backend config, keeps the `plan -out` and `apply` path, since `live-plan-set` takes none of them. An older choudoufu is refused on the wave path only; plain terraform and tofu roots do not need it.
+A live choudoufu root in a gated wave goes through choudoufu's own set commands, which need choudoufu v0.22.0 or later. `plan` runs `choudoufu live-plan-set -json` over the root, and the wave's gate binds the plan that document holds. `run` passes the document and choudoufu's set digest to `choudoufu live-wave-apply`, which plans the root again and applies nothing when the plan moved. The fan-out then exits 4, the moved code in chant's exit-code table, as it does when choudoufu's `apply` refuses a wave's plan file. choudoufu's resume file is kept in the fan-out's `--resume` record, so the next attempt hands it back to choudoufu. The files live under `.chant/choudoufu-waves/<root>/`. A choudoufu root whose step passes `vars`, or whose entry in `terraform.roots` has var files or backend config, keeps the `plan -out` and `apply` path, since `live-plan-set` takes none of them. An older choudoufu is refused on the wave path only; plain terraform and tofu roots do not need it.
+
+### In op waves
+
+An op wave's spec can plan and apply each root through `terraform-apply` with `"step": { "kind": "terraform-apply", "root": "{target}" }` ([op waves](/chant/guide/op-waves/#plan-and-apply-through-a-capability), [#4545](https://github.com/INTENTIUS/chant/issues/4545)), so a product's wave jobs run the binary in chant. The step takes three more inputs, which came from terragucci's wave jobs:
+
+| Input | Effect |
+|---|---|
+| `lockTimeout` | `plan` and `apply` pass `-lock-timeout` with this duration, `5m` unless set. `false` passes none. A job whose `TF_CLI_ARGS` or `TF_CLI_ARGS_<command>` already sets `-lock-timeout` keeps its own. |
+| `cone` | A revision such as `origin/main`. A choudoufu root under a `live` block, other than an estate file, plans the cone of the change since it with `plan -cone`. The cone's targets join the plan digest, so an approval of one cone counts for no other, and such a root plans with `plan` instead of `live-plan-set`. Every other root plans in full. |
+| `reads` | `[{ var, root, output }]`: a variable set from another root's output, the way an Atmos stack's `!terraform.state` sets one. `root` names the `terraform.roots` entry whose state holds it and `output` is the output's name followed by keys into its value. Each upstream's `output -json` is read once and passed as `-var`, under the step's own `vars`. An upstream with no such output yet makes the root a hole that names it, so the root is never planned on a stand-in. |
+
+Every plan also writes its `show -json` beside the plan file, as `<plan file>.json`, and names it in the artifact as `planJson`. A wave's cost hold prices that file. `terraformCostHold({ approveAbove })` from `@intentius/chant-lexicon-terraform/cost-hold` gives the infracost command for it.
+
+### State operations outside waves
+
+A lock release, a state migration's writes and a pull request's copy of a root run the binary outside any wave ([#4618](https://github.com/INTENTIUS/chant/issues/4618)). `@intentius/chant-lexicon-terraform/state-ops` has each as a fixed operation: the caller names the root, the binary and what the operation acts on, and never passes arguments of its own.
+
+| Operation | Runs | Gate |
+|---|---|---|
+| `forceUnlockState` | `force-unlock -force -no-color <id>` | a gated request |
+| `pushStateFile` | `state push [-lock=false] [-force] <file>` | a gated request whose attachment is the migration's proof |
+| `planStateCheck` | `plan [-lock=false] -out`, then `show -json` | none, it writes nothing |
+| `planCopy`, `applyPlanFile` | `init -reconfigure -backend-config=<k>=<v>`, `plan [-destroy] -out`, `show -json`, then `apply <plan>` | the `pr-env` gate of the pull request environment |
+
+`gatedStateOp` puts the gate around an operation. It asks for the request with `requestGate`, reusing the time of a standing request with the same fields so the digest stays the same between runs, and acts only once an approval counts. It spends the approval with `spendGatedRequest` before it acts, so two jobs never act on one approval, and records how the act ended with `finishGatedRequest`. A check passed as `beforeSpend` can stop it with the approval left unspent, for a fact that can change while the request waited. The requests wait at `tf-unlock`, `tf-migrate` and `tf-state-export`, and `chant approve <op> <root> --plan <digest>` approves one. The records are those of a gated request ([#4551](https://github.com/INTENTIUS/chant/issues/4551)): the pending fact in `_gates/<op>.jsonl` and the applied and finished lines in `_gates/<op>/applied.jsonl`, which `chant ledger` lists.
+
+The plugin registers the same operations as `terraform-state-unlock`, `terraform-state-push` and `terraform-copy`. A run of the first two that still waits throws an error whose `exitCode` is 3.
 
 ### In a composed run
 
@@ -99,7 +126,7 @@ Roots wired only in HCL join a group too: `terraform-apply` reports to core each
 
 Each root keeps its own part of the change set, plan shape and outputs, as if it had planned alone. Its plan digest has the group's folded in, and the group's digest covers the composed plan and the generated files, so an approval of one composition never applies another. A change set that looks empty while a member reads a value the group's apply computes is not passed without an approval.
 
-For roots with state, the run pulls each root's state, plans against the merged state, and after the apply writes each changed state back to its own backend, upstreams first. The plan stage takes no lock. The apply plans again under each state's lock, applies only when that plan is the one approved, and exits 3 otherwise. A state that cannot be written is kept beside it as `<key>.chant-unwritten`, its lock stays held, and the next run writes it first; a leftover `.terragucci-unwritten` is read the same way. When every root runs choudoufu against a `live` estate, the estates plan and apply as one choudoufu run with no state handling, and each root's values are read from a plan made after the apply.
+For roots with state, the run pulls each root's state, plans against the merged state, and after the apply writes each changed state back to its own backend, upstreams first. The plan stage takes no lock. The apply plans again under each state's lock, applies only when that plan is the one approved, and exits 4 (moved) otherwise. A state that cannot be written is kept beside it as `<key>.chant-unwritten`, its lock stays held, and the next run writes it first; a leftover `.terragucci-unwritten` is read the same way. When every root runs choudoufu against a `live` estate, the estates plan and apply as one choudoufu run with no state handling, and each root's values are read from a plan made after the apply.
 
 What applied stays applied. The report gives each member's outcome (`applied`, `partial`, `failed`, `not-started`, `no-changes`), and components outside the group read each member's outputs as they read a root applied alone.
 
@@ -138,7 +165,7 @@ The composed runs shipped with a first answer to twelve questions, and the maint
 - [ws-108](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-108-how-each-lexicon-composes.md) stays `decided` (ruling 8).
 - The composed estate root keeps re-exporting each estate's outputs as `<module>__<name>` (ruling 10), which the post-apply reads and `report.ts`'s unknown-output check read.
 - When the post-apply plan's state carries no root outputs for an estate, its outputs fall back to that plan's planned outputs (ruling 11), so a state choudoufu builds from records does not leave a downstream read unknown after a successful apply.
-- The `pr-loop` bundle ceiling stays 110 KB (ruling 12, `pr-loop-bundle.test.ts`).
+- The `pr-loop` bundle ceiling is 120 KB (122,880 bytes; maintainer ruling of 2026-10-27 on #4481, `pr-loop-bundle.test.ts`).
 
 Ruling 7, one backend reader in place of the two in `compose/hcl.ts` and `state/backend.ts`, is [#4478](https://github.com/INTENTIUS/chant/issues/4478).
 
@@ -230,7 +257,7 @@ Four more activities exist for a live root, alongside the four stock ones:
 
 `choudoufuLivePlan`, `choudoufuLiveLs`, `choudoufuLiveCheck`, `choudoufuAdopt` and `choudoufuPlanSet` exist as typed step builders too, the same shape as the four above (`root` positional, `opts` the activity's own args minus `root`). `choudoufuLivePlan`/`choudoufuLiveLs` default to the `longInfra`/`fastIdempotent` profiles respectively the same way `terraformPlan`/`terraformShow` do; `choudoufuLiveCheck` defaults to `fastIdempotent`, no cloud calls, no state; `choudoufuAdopt` defaults to `longInfra`, one tagging round trip per resource; `choudoufuPlanSet` defaults to `longInfra`.
 
-TF001 (no remote backend) does not fire on a live root, since a `backend` block is exactly what choudoufu refuses there. TF024, TF025 and TF026 are the live-root equivalents; see [Lint Rules](../lint-rules/).
+TF001 (no remote backend) does not fire on a live root, since choudoufu ignores a `backend` block there: it keeps the block only to publish outputs to and, with no `record_store` declared, to derive the record store from. TF024 reports what choudoufu does with the block; TF024, TF025 and TF026 are the live-root equivalents; see [Lint Rules](../lint-rules/).
 
 ### TerraformApplyOp on a live root
 

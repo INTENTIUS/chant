@@ -117,6 +117,12 @@
           "approvedBy": "alice",
           "approvedAt": "2026-10-10T00:00:00Z",
           "spentAt": "2026-10-11T00:00:00.000Z"
+        },
+        "targets": {
+          "t3": {
+            "startedAt": 0,
+            "durationMs": 0
+          }
         }
       },
       "ledger": {
@@ -191,6 +197,12 @@
           "approvedBy": "alice",
           "approvedAt": "2026-10-10T00:00:00Z",
           "spentAt": "2026-10-11T00:00:00.000Z"
+        },
+        "targets": {
+          "t1": {
+            "startedAt": 0,
+            "durationMs": 0
+          }
         }
       },
       "ledger": {
@@ -281,7 +293,8 @@
             {
               "target": "t3",
               "op": "migrate",
-              "plan": ".chant/op-waves/migrations/wave-3/t3.plan.json"
+              "plan": ".chant/op-waves/migrations/wave-3/t3.plan.json",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
             }
           ],
           "runsFile": ".chant/op-waves/migrations/wave-3/runs.json",
@@ -335,7 +348,8 @@
             {
               "target": "t1",
               "op": "migrate",
-              "plan": ".chant/op-waves/migrations/wave-3/t1.plan.json"
+              "plan": ".chant/op-waves/migrations/wave-3/t1.plan.json",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
             }
           ],
           "runsFile": ".chant/op-waves/migrations/wave-3/runs.json",
@@ -404,7 +418,8 @@
         {
           "target": "t1",
           "op": "migrate",
-          "plan": ".chant/op-waves/migrations/wave-3/t1.plan.json"
+          "plan": ".chant/op-waves/migrations/wave-3/t1.plan.json",
+          "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
         }
       ],
       "runsFile": ".chant/op-waves/migrations/wave-3/runs.json",
@@ -431,7 +446,8 @@
         {
           "target": "t3",
           "op": "migrate",
-          "plan": ".chant/op-waves/migrations/wave-3/t3.plan.json"
+          "plan": ".chant/op-waves/migrations/wave-3/t3.plan.json",
+          "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
         }
       ],
       "runsFile": ".chant/op-waves/migrations/wave-3/runs.json",

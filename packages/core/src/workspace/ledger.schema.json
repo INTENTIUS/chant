@@ -41,9 +41,13 @@
             "gates",
             "deploys",
             "releases",
-            "cuts"
+            "cuts",
+            "applies",
+            "pr_envs",
+            "control_entries",
+            "release_status"
           ],
-          "description": "The table read: resources and snapshots from each lexicon's snapshots, runs from the Op run ledgers, gates from _gates/, deploys from <env>/releases.jsonl, releases and cuts from _releases/."
+          "description": "The table read: resources and snapshots from each lexicon's snapshots, runs from the Op run ledgers, gates from _gates/, deploys from <env>/releases.jsonl, releases and cuts from _releases/, applies from _gates/<op>/applied.jsonl and pr_envs from _pr-envs/records.jsonl. applies and pr_envs were added within version 1 by #4551, read by chant 0.124.55 and newer. control_entries, from the control repo's _control/entries.jsonl, was added within version 1 by #4593, read by chant 0.124.55 and newer. release_status, from <env>/release-status.jsonl, was added within version 1 by #4596, read by chant 0.124.55 and newer."
         },
         "columns": {
           "type": "array",
@@ -102,7 +106,7 @@
     },
     "row": {
       "type": "object",
-      "description": "One row, keyed by column. Every row starts with member: the workspace member whose ledger it came from, or null outside a workspace. A value is a string, a number, a boolean, an object or array (a JSON column), or null. A runs row's root_member, added within version 1 by #4500, written by chant 0.124.54 and newer, is the member whose directory holds the terraform root a TerraformApplyOp run applied, or null when that is unknown (another kind of run, or a run whose Init step failed before it resolved the root, #4508; a failed terraform init still names it, #4512); a row from an older chant lacks it. A resources row's marker_stack, marker_env, engine_ownership and engine_owned_by, added within version 1 by #4534, written by chant 0.124.54 and newer, are the stack and env the resource's chant marker names and an ownership engine's verdict and what bound the node (never read for a decision), or null when unknown; a row from an older chant lacks them.",
+      "description": "One row, keyed by column. Every row starts with member: the workspace member whose ledger it came from, or null outside a workspace. A value is a string, a number, a boolean, an object or array (a JSON column), or null. A runs row's root_member, added within version 1 by #4500, written by chant 0.124.54 and newer, is the member whose directory holds the terraform root a TerraformApplyOp run applied, or null when that is unknown (another kind of run, or a run whose Init step failed before it resolved the root, #4508; a failed terraform init still names it, #4512); a row from an older chant lacks it. A resources row's marker_stack, marker_env, engine_ownership and engine_owned_by, added within version 1 by #4534, written by chant 0.124.54 and newer, are the stack and env the resource's chant marker names and an ownership engine's verdict and what bound the node (never read for a decision), or null when unknown; a row from an older chant lacks them. A runs row's wave and a gates row's change_set and request, added within version 1 by #4551, read by chant 0.124.55 and newer, are the op wave job a run record is for, the stored change set a gate line cites and the gated request a pending fact asks for, or null.",
       "required": [
         "member"
       ],

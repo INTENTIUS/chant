@@ -1,75 +1,39 @@
 /**
- * SigV4 (#1686), checked against AWS's own published vectors.
+ * The aws lexicon's signing surface (#1686) over core's SigV4 signer (#4583).
  *
- * A signing implementation that is only tested against itself proves nothing —
- * it will happily agree with its own mistake. Three of the fixtures below are
- * values AWS publishes: the derived signing key from the documentation's
- * "deriving the signing key" example, and the canonical request hash and
- * signature of `get-vanilla` from the `aws-sig-v4-test-suite`. If a refactor
- * breaks canonicalization, those three stop matching.
+ * A signing implementation that is only tested against itself proves nothing,
+ * so the first block checks core's signer against `get-vanilla` from AWS's
+ * `aws-sig-v4-test-suite`. The Cloud Control vector further down was recorded
+ * from this lexicon's own signer before #4583 replaced it with core's: if the
+ * header set the lexicon signs drifts, that signature stops matching.
  *
  * Nothing here touches the network; there is nothing to touch. Signing is a
  * pure function of the request and the clock.
  */
 import { describe, test, expect } from "vitest";
-import { createHmac } from "node:crypto";
-import {
-  EMPTY_PAYLOAD_SHA256,
-  amzDate,
-  canonicalHeaders,
-  canonicalRequest,
-  resolveCredentials,
-  sha256Hex,
-  signRequest,
-  signingKey,
-  stringToSign,
-} from "./sigv4";
+import { sha256Hex, signV4 } from "@intentius/chant/cloud-lister/sigv4";
+import { EMPTY_PAYLOAD_SHA256, UNSIGNED_HEADERS, resolveCredentials, signRequest } from "./signing";
 
 /** The example secret AWS uses throughout its Signature Version 4 documentation. */
 const SECRET = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY";
 const ACCESS_KEY = "AKIDEXAMPLE";
 
-describe("the published vectors", () => {
-  test("the signing key matches the documented derivation", () => {
-    // AWS, "Examples of how to derive a signing key for Signature Version 4":
-    // 20120215 / us-east-1 / iam.
-    expect(signingKey(SECRET, "20120215", "us-east-1", "iam").toString("hex")).toBe(
-      "f4780e2d9f65fa895f9c67b32ce1baf0b0d8a43505a000a1a9e090d414db404d",
-    );
-  });
-
-  test("get-vanilla canonicalizes and signs exactly as the test suite says", () => {
-    const { canonical, signed } = canonicalRequest(
-      "GET",
-      new URL("https://example.amazonaws.com/"),
-      { host: "example.amazonaws.com", "x-amz-date": "20150830T123600Z" },
-      EMPTY_PAYLOAD_SHA256,
-    );
-
-    expect(canonical).toBe(
-      [
-        "GET",
-        "/",
-        "",
-        "host:example.amazonaws.com",
-        "x-amz-date:20150830T123600Z",
-        "",
-        "host;x-amz-date",
-        EMPTY_PAYLOAD_SHA256,
-      ].join("\n"),
-    );
-    expect(signed).toBe("host;x-amz-date");
-
-    const scope = "20150830/us-east-1/service/aws4_request";
-    const sts = stringToSign("20150830T123600Z", scope, canonical);
-    expect(sts).toBe(
-      "AWS4-HMAC-SHA256\n20150830T123600Z\n" +
-        `${scope}\nbb579772317eb040ac9ed261061d46c1f17a8133879d6129b6e1c25292927e63`,
-    );
-
-    const key = signingKey(SECRET, "20150830", "us-east-1", "service");
-    expect(createHmac("sha256", key).update(sts, "utf8").digest("hex")).toBe(
-      "5fa00fa31553b73ebf1942676e86291e8372ff2a2260956d9b8aae1d763fbf31",
+describe("the published vector", () => {
+  test("get-vanilla signs exactly as the test suite says", () => {
+    const headers = signV4({
+      method: "GET",
+      url: "https://example.amazonaws.com/",
+      headers: {},
+      body: "",
+      region: "us-east-1",
+      service: "service",
+      credentials: { accessKeyId: ACCESS_KEY, secretAccessKey: SECRET },
+      now: new Date("2015-08-30T12:36:00Z"),
+    });
+    expect(headers.authorization).toBe(
+      "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, " +
+        "SignedHeaders=host;x-amz-date, " +
+        "Signature=5fa00fa31553b73ebf1942676e86291e8372ff2a2260956d9b8aae1d763fbf31",
     );
   });
 
@@ -78,40 +42,78 @@ describe("the published vectors", () => {
   });
 });
 
-describe("header canonicalization", () => {
-  test("names lowercase and sort, values trim and collapse inner runs", () => {
-    expect(
-      canonicalHeaders({
-        "X-Amz-Date": "20150830T123600Z",
-        "Content-Type": "  application/json  ",
-        Host: "example.amazonaws.com",
-        "My-Header": "a   b\tc",
-      }),
-    ).toEqual({
-      canonical:
-        "content-type:application/json\nhost:example.amazonaws.com\n" +
-        "my-header:a b c\nx-amz-date:20150830T123600Z\n",
-      signed: "content-type;host;my-header;x-amz-date",
+describe("the Cloud Control vector (#4583)", () => {
+  // Recorded from lexicons/aws/src/api/sigv4.ts, the lexicon's own signer,
+  // with these inputs, before it was removed in favour of core's.
+  const request = {
+    method: "POST",
+    url: "https://cloudcontrolapi.us-east-1.amazonaws.com/",
+    headers: {
+      "content-type": "application/x-amz-json-1.0",
+      "x-amz-target": "CloudApiService.GetResource",
+      "user-agent": "chant/0.124.34",
+      "x-amzn-trace-id": "Root=1-5759e988-bd862e3fe1be46a994272793",
+    },
+    body: JSON.stringify({ TypeName: "AWS::S3::Bucket", Identifier: "chant-example-bucket" }),
+    service: "cloudcontrolapi",
+    region: "us-east-1",
+    now: new Date("2015-08-30T12:36:00Z"),
+  };
+
+  test("a GetResource read signs to the recorded signature, user-agent and trace id unsigned", () => {
+    const headers = signRequest({ ...request, credentials: { accessKeyId: ACCESS_KEY, secretAccessKey: SECRET } });
+    expect(headers).toEqual({
+      "content-type": "application/x-amz-json-1.0",
+      "x-amz-target": "CloudApiService.GetResource",
+      "user-agent": "chant/0.124.34",
+      "x-amzn-trace-id": "Root=1-5759e988-bd862e3fe1be46a994272793",
+      "x-amz-date": "20150830T123600Z",
+      "x-amz-content-sha256": "0748e7c18ab9933c78b1a34cd08c91183112acfa9918aea20ba2f1a6d33ef3d0",
+      authorization:
+        "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/cloudcontrolapi/aws4_request, " +
+        "SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date;x-amz-target, " +
+        "Signature=f8f2bbebcf51eed1126eca37ab3e614b540f0d769eb64ec2a0c5ee811b168f51",
     });
   });
 
-  test("sorting is by byte, so an uppercase name still sorts by its lowercase form", () => {
-    expect(canonicalHeaders({ Zeta: "1", alpha: "2", MIDDLE: "3" }).signed).toBe("alpha;middle;zeta");
+  test("with a session token, the token is sent, signed, and the signature is the recorded one", () => {
+    const headers = signRequest({
+      ...request,
+      credentials: { accessKeyId: ACCESS_KEY, secretAccessKey: SECRET, sessionToken: "FwoGZXIvYXdzEXAMPLE" },
+    });
+    expect(headers["x-amz-security-token"]).toBe("FwoGZXIvYXdzEXAMPLE");
+    expect(headers.authorization).toBe(
+      "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/cloudcontrolapi/aws4_request, " +
+        "SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-target, " +
+        "Signature=99fef393d5ff5ad524823b03476535fa00631828cc22dae15f8f3cfe9d18ab69",
+    );
   });
+});
 
-  test("the unsignable headers are left out — signing what a proxy rewrites is an intermittent 403", () => {
-    const { signed } = canonicalHeaders({
-      authorization: "stale",
+describe("header set", () => {
+  test("the unsigned headers are sent but left out of the signature", () => {
+    const caller = {
       "user-agent": "chant",
       "x-amzn-trace-id": "Root=1-x",
       connection: "keep-alive",
       expect: "100-continue",
-      host: "example.amazonaws.com",
+    };
+    const headers = signRequest({
+      method: "POST",
+      url: "https://cloudformation.us-east-1.amazonaws.com/",
+      headers: { ...caller, authorization: "stale" },
+      body: "",
+      service: "cloudformation",
+      region: "us-east-1",
+      credentials: { accessKeyId: ACCESS_KEY, secretAccessKey: SECRET },
+      now: new Date("2015-08-30T12:36:00Z"),
     });
-    expect(signed).toBe("host");
+    for (const [name, value] of Object.entries(caller)) expect(headers[name]).toBe(value);
+    expect(headers.authorization).toContain("SignedHeaders=host;x-amz-content-sha256;x-amz-date,");
+    expect([...UNSIGNED_HEADERS].sort()).toEqual(["authorization", "connection", "expect", "user-agent", "x-amzn-trace-id"]);
   });
 
-  test("a bodyless request hashes to the empty-payload constant, not to a hash of nothing-in-particular", () => {
+  test("a bodyless request hashes to the empty-payload constant", () => {
     const headers = signRequest({
       method: "POST",
       url: "https://cloudformation.us-east-1.amazonaws.com/",
@@ -123,20 +125,6 @@ describe("header canonicalization", () => {
       now: new Date("2015-08-30T12:36:00Z"),
     });
     expect(headers["x-amz-content-sha256"]).toBe(EMPTY_PAYLOAD_SHA256);
-  });
-
-  test("the query string sorts by name then value, RFC 3986 encoded", () => {
-    const { canonical } = canonicalRequest(
-      "GET",
-      new URL("https://example.amazonaws.com/?b=2&a=z&a=a&c=hi%20there*"),
-      { host: "example.amazonaws.com" },
-      EMPTY_PAYLOAD_SHA256,
-    );
-    expect(canonical.split("\n")[2]).toBe("a=a&a=z&b=2&c=hi%20there%2A");
-  });
-
-  test("amzDate is ISO-8601 basic, which is what X-Amz-Date wants", () => {
-    expect(amzDate(new Date("2015-08-30T12:36:00.123Z"))).toBe("20150830T123600Z");
   });
 });
 

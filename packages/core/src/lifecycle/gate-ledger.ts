@@ -48,6 +48,14 @@ import type { GateApprover, GatePolicyDecision, ResolvedGateApproval } from "../
 import type { GateApprovalSource } from "../op/op-waves";
 import type { GateRunLocator } from "../op/gate-run-locator";
 import { readBlobFromPath, readPathSha, readBlobBySha, writeBlobToPath, RefCASConflictError, type LedgerLocation } from "./git";
+import { NEXT_RELEASE } from "../release-floors";
+import { gatedRequestOf, type GatedRequest } from "./gated-request-digest";
+
+/** The first chant that writes `changeSet` on a pending fact and an approval (#4551). */
+export const GATE_CHANGE_SET_FLOOR = NEXT_RELEASE;
+
+/** The first chant that writes `request` on a pending fact and reads gated requests (#4551). */
+export const GATED_REQUEST_FLOOR = NEXT_RELEASE;
 
 // The facts a pending record is written with live apart, so a bundle can import them without git (#3816).
 export { DEFAULT_GATE_EXPIRY, isApprovalUrl, resolveApprovalUrl } from "./gate-pending";
@@ -171,6 +179,13 @@ export interface GateResolutionRecord {
    * 0.124.28.
    */
   releaseDigest?: string;
+  /**
+   * The change set this approval was asked for (#4551), copied off the
+   * pending fact it answers when it approves that fact's plan: the digest of
+   * a document in `_change-sets/`. Absent on an approval of another plan,
+   * and on a resolution written before {@link GATE_CHANGE_SET_FLOOR}.
+   */
+  changeSet?: string;
   /**
    * The resolution passes a release gate over an empty change set (#4045,
    * ws-104 question 6): the promote wrote it itself, with the actor running
@@ -391,6 +406,15 @@ export interface PendingGateRecord {
    */
   releaseDigest?: string;
   /**
+   * The change set this gate waits on (#4551): the digest of a document in
+   * `_change-sets/` (`./change-set-store.ts`), stored before this fact, so a
+   * refusal or a respond job reads the plans the approval is asked for. An op
+   * wave sets it from its plans file's `changeSet`; a pull-request or release
+   * gate, whose `planDigest` is already a change set's digest, sets it to the
+   * same value. Absent on a fact written before {@link GATE_CHANGE_SET_FLOOR}.
+   */
+  changeSet?: string;
+  /**
    * The channel the run that reached this gate was driven from (chant#2384).
    *
    * This is the half a resolution is compared against: a gate reached over MCP
@@ -433,6 +457,14 @@ export interface PendingGateRecord {
    * not `chant approve`.
    */
   answer?: GateAnswerRef;
+  /**
+   * The request this fact asks an approval of (#4551), on a gated request for
+   * an op that has no wave, such as a state export or a lock release
+   * (`./gated-request.ts`). `planDigest` is its `gatedRequestDigest`. Absent
+   * on every other fact, and on one written before chant
+   * {@link GATED_REQUEST_FLOOR}.
+   */
+  request?: GatedRequest;
 }
 
 export type PendingGateInput = Omit<PendingGateRecord, "version" | "kind">;
@@ -594,7 +626,8 @@ export function parseGateLedger(
         continue;
       }
       // #4020: a commit or run id of the wrong type is dropped, so a reader can trust the type without losing the line.
-      for (const key of ["gitSha", "runId"] as const) {
+      // #4551: and so is a `changeSet` that is not a digest.
+      for (const key of ["gitSha", "runId", "changeSet"] as const) {
         const v: unknown = (parsed as Record<string, unknown>)[key];
         if (v !== undefined && typeof v !== "string") delete (parsed as Record<string, unknown>)[key];
       }
@@ -609,6 +642,8 @@ export function parseGateLedger(
         if (w !== undefined && !(w && typeof w === "object" && typeof w.number === "number" && typeof w.name === "string")) delete rec.wave;
         const h = (parsed as { heldBy?: unknown }).heldBy as Partial<PendingGateHeldBy> | null | undefined;
         if (h !== undefined && !(h && typeof h === "object" && typeof h.hook === "string" && typeof h.moment === "string")) delete rec.heldBy;
+        // #4551: a `request` of the wrong shape is dropped too.
+        if ((parsed as { request?: unknown }).request !== undefined && !gatedRequestOf((parsed as { request?: unknown }).request)) delete rec.request;
         pending.push(rec);
         continue;
       }

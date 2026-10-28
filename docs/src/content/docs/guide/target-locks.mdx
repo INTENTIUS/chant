@@ -36,7 +36,7 @@ With `ci.locks: plan` in the declaration, `chant build --components --pr-loop --
 
 The plan job runs the pull request's code, so it writes nothing to `chant/lifecycle`. Both new jobs check out the target branch's commit instead, so they run the target branch's `chant` and none of the pull request's code. Of the two, `lock` takes the plan's report from the plan job's outputs and locks the components it selected, while `unlock` needs no report. The workflow now also fires on `closed`, and the plan job skips that event.
 
-Each new push to the pull request plans again and locks again. A component the new head no longer reaches is released ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/lifecycle/target-lock.ts#L281)). The unlock job tidies the file. Without it, a lock whose pull request closed still reads as released, because `--forge` asks GitHub whether each holder is open ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/lifecycle/target-lock.ts#L285)).
+Each new push to the pull request plans again and locks again. A component the new head no longer reaches is released ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/lifecycle/target-lock.ts#L296)). The unlock job tidies the file. Without it, a lock whose pull request closed still reads as released, because `--forge` asks GitHub whether each holder is open ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/lifecycle/target-lock.ts#L300)).
 
 A held pull request does not lock again on its own when the holder merges. Re-run its lock job, or push to it.
 
@@ -45,6 +45,12 @@ A fork's pull request gets a read-only token, so its lock job cannot push `chant
 To block the merge of a pull request whose components another one holds, make `chant/lock` a required status in the branch protection rule.
 
 Forgejo gets the same jobs from the same generator. On GitLab the commands are the same, but the pipeline does not write the jobs yet. Run `chant lock` in a job that checks out the target branch and has the plan job's `.chant/pr` as an artifact, with `--forge gitlab`.
+
+## Lock resources instead of components
+
+On a choudoufu root or a plunge stack the locks name resources, since those engines keep one record per resource ([#4552](https://github.com/INTENTIUS/chant/issues/4552)). Under `ci.locks` a pull request then locks the row keys its plan changes, such as `estate e01 aws_s3_bucket.logs` or `urn urn:pulumi:dev::site::aws:s3/bucket:Bucket::logs`, so two pull requests that change different resources of one stack both apply before merge. The plan report lists them as `lockTargets`, and the lock job takes them from there. A stack whose components may register resources only at apply locks `stack <project>/<stack>`, which holds every resource of the stack.
+
+Each apply on that grain also leases its rows in `_locks/rows/pr-apply.json` while it runs, from `pr-apply`, `chant run --components`, `chant components fan-out`, a promote or a pull request environment ([#4594](https://github.com/INTENTIUS/chant/issues/4594)). It does so whether or not `ci.locks` is set. A row another run holds stops the apply with exit 5 and names that run. Set `ci.lockGrain` to `target` to lock components again, or to `repo` for one apply at a time in the repository. [Lock grain](/chant/reference/workspace-declaration/#lock-grain) has the values and the row keys per engine.
 
 ## See who holds what
 
@@ -55,7 +61,10 @@ npx chant lock --list
 ```
 app	pull request 12	plan	alice	2026-10-22T10:00:00.000Z
 net	pull request 12	plan	alice	2026-10-22T10:00:00.000Z
+estate e01 aws_s3_bucket.logs	run 4711	2026-10-22T10:05:00.000Z	https://github.com/acme/infra/actions/runs/4711
 ```
+
+The last line is an apply row on the resource grain, with the run that holds it. A row stays until that run ends, or until its lease is older than `CHANT_LOCK_STALE` seconds and another apply takes it over.
 
 ## Release a stuck lock
 
@@ -75,4 +84,4 @@ npx chant unlock --pr 12
 npx chant lock net --pr 31 --by alice
 ```
 
-A later plan of pull request 31 keeps that lock as it is, so the plan job cannot drop it ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/lifecycle/target-lock.ts#L293)).
+A later plan of pull request 31 keeps that lock as it is, so the plan job cannot drop it ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/lifecycle/target-lock.ts#L308)).

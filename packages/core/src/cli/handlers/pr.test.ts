@@ -331,7 +331,7 @@ describe("--resume carries only an unchanged input (#4081)", () => {
 describe("--report-url (#4007)", () => {
   test("refuses a URL it can't upload to, before anything plans", async () => {
     expect(await runComponentsPrPlan(ctx({ pr: 12, reportUrl: "https://example.invalid/reports" }))).toBe(1);
-    expect(errors.join("\n")).toMatch(/takes an s3:\/\/<bucket>\/<prefix> or file:\/\/<directory> URL/);
+    expect(errors.join("\n")).toMatch(/takes an s3:\/\/<bucket>\/<prefix>, gs:\/\/<bucket>\/<prefix>, az:\/\/<account>\/<container>\/<prefix> or file:\/\/<directory> URL/);
     expect(out).toEqual([]);
   });
 
@@ -394,7 +394,7 @@ describe("pr-apply under ci.locks (#4293)", () => {
     };
     let ran = false;
     onRun = () => void (ran = true);
-    expect(await runComponentsPrApply(ctx({ pr: 12, eventsJson: false }))).toBe(3);
+    expect(await runComponentsPrApply(ctx({ pr: 12, eventsJson: false }))).toBe(5);
     expect(asked).toEqual([{ gate: "pr-apply", targets: ["net", "app"], pr: 12 }]);
     expect(ran).toBe(false);
     const { readFile } = await import("node:fs/promises");
@@ -548,11 +548,11 @@ describe("--require-review: whoever wrote the change never counts (#4000)", () =
 
 describe("pr-apply: a step that refuses its plan because the plan moved (#3997)", () => {
   test.each([
-    ["marked planMoved", 3, { planMoved: true }],
-    ["with exitCode 3", 3, { exitCode: 3 }],
+    ["marked planMoved", 4, { planMoved: true }],
+    ["with exitCode 3", 4, { exitCode: 3 }],
     ["with exitCode 7", 1, { exitCode: 7 }],
     ["unmarked", 1, {}],
-  ])("an error %s exits %i, after the gate passed", async (_label, code, mark) => {
+  ])("an error %s exits %i, after the gate passed (#4553)", async (_label, code, mark) => {
     await planAndApprove();
     refusal.set("app", Object.assign(new Error("app: refusing to apply, the plan moved"), mark));
     expect(await runComponentsPrApply(ctx({ pr: 12, eventsJson: false }))).toBe(code);
@@ -626,9 +626,9 @@ describe("ci.policy on the pull-request path (#4294)", () => {
   });
   const approve = (digest: string) => ({ version: 1 as const, kind: "resolution" as const, op: "pr-12", gate: "pr-apply", resolvedBy: "github:alice", timestamp: new Date(Date.now() - 1000).toISOString(), planDigest: digest });
 
-  test("pr-plan reports the denial, fails its status and exits 1, and records nothing", async () => {
+  test("pr-plan reports the denial, fails its status and exits 7, and records nothing", async () => {
     policyVerdict = denied();
-    expect(await runComponentsPrPlan(ctx({ pr: 12, eventsJson: false }))).toBe(1);
+    expect(await runComponentsPrPlan(ctx({ pr: 12, eventsJson: false }))).toBe(7);
     const report = JSON.parse(readFileSync(join(dir, "pr-plan.json"), "utf8"));
     expect(report).toMatchObject({ status: "planned", policy: { result: "denied", rules: ["main.deny_public"], overrideCommand: expect.stringContaining("chant approve policy-override pr-12 --rule main.deny_public") } });
     expect(gateLedger.appended).toEqual([]);
@@ -642,7 +642,7 @@ describe("ci.policy on the pull-request path (#4294)", () => {
     policyVerdict = denied();
     const ran: string[] = [];
     onRun = (r) => ran.push(r);
-    expect(await runComponentsPrApply(ctx({ pr: 12, eventsJson: false }))).toBe(3);
+    expect(await runComponentsPrApply(ctx({ pr: 12, eventsJson: false }))).toBe(7);
     const report = JSON.parse(readFileSync(join(dir, "pr-apply.json"), "utf8"));
     expect(report).toMatchObject({ status: "refused", refusal: "policy-denied", policy: { result: "denied" } });
     expect(report.message).toContain("github:carol may override it");

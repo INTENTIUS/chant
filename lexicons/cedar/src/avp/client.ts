@@ -14,8 +14,9 @@
  *
  * ## Signing
  *
- * SigV4 lives once, in `lexicons/aws/src/api/sigv4.ts` (#1686). This module
- * does not import it. A cedar → aws dependency edge would make the vendor-
+ * SigV4 lives once, in core's `cloud-lister/sigv4.ts`, which the aws lexicon's
+ * `signRequest` (`lexicons/aws/src/api/signing.ts`) calls (#1686, #4583). This
+ * module does not import it. A cedar → aws dependency edge would make the vendor-
  * neutral lexicon unbuildable without the AWS one, which is the same rule that
  * kept `src/avp/embed.ts` free of the aws lexicon: the seam is the data shape.
  * So the signer arrives as a function on {@link AvpClientOptions}, typed here

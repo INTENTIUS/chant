@@ -4,15 +4,27 @@ description: The checked-in stack-export.json a Pulumi member's graph is read fr
 diataxis: reference
 ---
 
-A Pulumi member's graph is read from one file, the `pulumi stack export`
-checked in beside `Pulumi.yaml` as `stack-export.json`. chant never runs the
-program or `pulumi` to build the graph, so the file is everything the graph
-knows about the member, and an export that is stale or damaged gives a graph
-that is wrong in the same way.
+A Pulumi member's graph is read from its `pulumi stack export`. chant never
+runs the program or `pulumi` to build the graph, so the export is everything
+the graph knows about the member, and an export that is stale or damaged
+gives a graph that is wrong in the same way.
 
-## Taking it
+## Stacks chant applies
 
-In the member's directory, with the stack selected:
+A stack applied through the `pulumi-up` capability needs no file. After each
+`up`, chant runs `pulumi stack export --stack <stack>` (`plunge stack export`
+on plunge), replaces every secret with `[secret]`, drops the secrets
+provider's `state`, and writes the export to its index store as
+`<env>/<stack>__pulumi-export.json`, on `refs/chant/snapshots` unless
+`snapshots` in `chant.config.ts` names another store. The graph, the
+preview's prior state, the drift read and `CHANT_PULUMI_APPLIED_OUTPUTS=export`
+read that export first, and read a checked-in `stack-export.json` only when
+the store holds none.
+
+## Taking it by hand
+
+For a stack applied outside chant, in the member's directory, with the stack
+selected:
 
 ```bash
 pulumi stack export --file stack-export.json

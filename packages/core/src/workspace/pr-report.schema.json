@@ -151,8 +151,8 @@
               "approved": { "type": "string", "pattern": "^(?:jcs1-)?sha256:[0-9a-f]{64}$" }
             }
           },
-          "status": { "enum": ["applied", "failed", "waiting", "plan-failed"] },
-          "message": { "type": "string", "description": "With waiting: why an approval that stands does not count under --require-review." },
+          "status": { "enum": ["applied", "failed", "waiting", "plan-failed", "held"], "description": "held (added within contract version 1 by #4594): another run holds a row the round's plan changes on the resource lock grain, so the round did not apply and the command exited 5." },
+          "message": { "type": "string", "description": "With waiting: why an approval that stands does not count under --require-review. With held: the run that holds the rows." },
           "covered": {
             "type": "object",
             "required": ["digest", "filledInputs"],
@@ -278,6 +278,36 @@
         }
       }
     },
+    "capabilityPolicy": {
+      "type": "array",
+      "description": "Added within contract version 1 by #4550, written by the chant that carries CI_PRODUCT_FLOOR. The policy findings a capability's plan carried, such as CrossGuard's in pulumi-up's preview, one entry per member with any, sorted by member. denied: the capability refused the plan, and the stage exits 7. Absent when none.",
+      "items": {
+        "type": "object",
+        "required": ["member", "denied", "denials", "holds", "warnings"],
+        "additionalProperties": false,
+        "properties": {
+          "member": { "type": "string" },
+          "denied": { "type": "boolean" },
+          "denials": { "type": "array", "items": { "type": "object", "required": ["rule", "message"], "additionalProperties": false, "properties": { "rule": { "type": "string" }, "message": { "type": "string" } } } },
+          "holds": { "type": "array", "items": { "type": "object", "required": ["rule", "message"], "additionalProperties": false, "properties": { "rule": { "type": "string" }, "message": { "type": "string" } } } },
+          "warnings": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "details": {
+      "type": "array",
+      "description": "Added within contract version 1 by #4573, written by the chant that carries CI_PRODUCT_FLOOR. A section per member that its lexicon rendered from its own part of the change set, as markdown lines the note places under the member table. Absent when no lexicon rendered one.",
+      "items": {
+        "type": "object",
+        "required": ["member", "lines"],
+        "additionalProperties": false,
+        "properties": {
+          "member": { "type": "string" },
+          "title": { "type": "string", "description": "The section's summary line. Absent: the member's name." },
+          "lines": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
     "fallbacks": {
       "type": "array",
       "description": "Added within contract version 1 by #4446, written by chant 0.124.54 and newer. Each component in the change whose capability declares planGroup and runGroup, that a read joins to another such component of its kind, and that ended in no group, sorted by component. Absent when none.",
@@ -296,6 +326,35 @@
     "changeSet": {
       "type": "object",
       "description": "The change-set document over every member (change-set.schema.json). Its digest equals digest."
+    },
+    "lockTargets": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Added within contract version 1 by #4552, written by chant 0.124.55 and newer. The names the pull request's target locks take under ci.locks when any member is on the resource lock grain, sorted: each such member's row keys (estate <e> <address>, root <r> <address>, urn <urn>, stack <project>/<stack>, object <id>), and the component name of every component with a member on another grain. chant lock --from-report locks these in place of selection.waves. Absent when no member is on the resource grain."
+    },
+    "crossStackEdges": {
+      "type": "array",
+      "description": "Added within contract version 1 by #4617, written by chant 0.124.55 and newer. Each stack outside the workspace a member reads (a Pulumi StackReference no step applies), marked stale, current or unknown from the control repo's entries and apply records. The plan job marks each one unknown; the job that posts the note marks them again from a checkout of the control repo. Absent when no member reads one.",
+      "items": {
+        "type": "object",
+        "required": ["member", "stack", "status", "why"],
+        "additionalProperties": false,
+        "properties": {
+          "member": { "type": "string", "description": "The member that reads the stack." },
+          "stack": { "type": "string", "description": "The stack's name as the program wrote it." },
+          "lastUpdate": { "type": "string", "description": "When the reader last updated, from its stack export. Absent when it has not." },
+          "status": { "enum": ["stale", "current", "unknown"], "description": "stale: the owner applied after the reader last updated. current: the reader updated after the owner's last apply. unknown: anything else, said in why." },
+          "owner": { "type": "string", "description": "The project the control repo's entries give the stack to." },
+          "ownerApplied": {
+            "type": "object",
+            "required": ["at", "sha", "outcome"],
+            "additionalProperties": false,
+            "properties": { "at": { "type": "string" }, "sha": { "type": "string" }, "outcome": { "type": "string" } },
+            "description": "The owner's newest apply on the control repo's record."
+          },
+          "why": { "type": "string", "description": "The reason for the mark, as printed." }
+        }
+      }
     },
     "hooks": {
       "type": "array",
@@ -359,7 +418,19 @@
             "digest": { "type": "string", "description": "The override digest: the op, the plan digest and the rules." }
           }
         },
-        "overrideCommand": { "type": "string", "description": "While denied: the command that overrides the denial." }
+        "overrideCommand": { "type": "string", "description": "While denied: the command that overrides the denial." },
+        "source": {
+          "type": "object",
+          "required": ["repo", "ref", "commit", "path"],
+          "additionalProperties": false,
+          "description": "ci.policy.source as the job fetched it: the shared repository (no user or password), its ref, the commit the ref named and the Rego directory inside it. Absent when the rules came from the workspace at base. Added within contract version 1 by #4613, written by chant 0.124.55 and newer.",
+          "properties": {
+            "repo": { "type": "string" },
+            "ref": { "type": "string" },
+            "commit": { "type": "string" },
+            "path": { "type": "string" }
+          }
+        }
       }
     }
   },

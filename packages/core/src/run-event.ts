@@ -19,7 +19,7 @@
  * {@link runEventOfProgress} and {@link runEventsOfStepRecord} say how each
  * maps onto this contract.
  *
- * This module imports no runtime code beyond the chant version (`./chant-version.ts`), so a consumer
+ * This module imports no runtime code beyond the chant version (`./chant-version.ts`) and the release floors (`./release-floors.ts`), so a consumer
  * can import the types and the writer without loading the rest of chant. It
  * lives outside `workspace/` so that a level-0 import of `@intentius/chant`
  * loads no workspace module (#2526).
@@ -29,6 +29,7 @@ import type { RunProgressEvent } from "./components/run-progress";
 import type { RunOrigin } from "./lifecycle/release-ledger";
 import type { StepRecord } from "./op/local-executor";
 import { CHANT_VERSION } from "./chant-version";
+import { NEXT_RELEASE } from "./release-floors";
 
 /** The schema's `$id`, which every event carries as `$schema`. */
 export const RUN_EVENT_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/run-event/v1/run-event.schema.json";
@@ -215,7 +216,34 @@ export interface RunEventStepSettle {
   error?: string;
   /** Why the step skipped, gated or waited, for a person. */
   message?: string;
+  /**
+   * What the step did to each resource, when its engine reported it (#4615),
+   * such as plunge's per-resource timings on a `pulumi-up` step. Optional,
+   * added within contract 1 by chant {@link RUN_EVENT_RESOURCES_FLOOR}; a
+   * reader that does not know it ignores it.
+   */
+  resources?: RunEventResource[];
 }
+
+/** One resource a step changed or tried to (#4615). */
+export interface RunEventResource {
+  /** The engine's id for it: a URN, an address. */
+  resource: string;
+  /** Its type, when the engine names one. */
+  type?: string;
+  /** Its name, when the engine names one apart from the id. */
+  name?: string;
+  status: "ok" | "failed";
+  /** When the engine started on it, ISO-8601, when it says. */
+  startedAt?: string;
+  /** How long the engine spent on it, or null when it did not time it. */
+  durationMs: number | null;
+  /** How many engine calls it took (provider calls, record writes), when the engine counts them. */
+  calls?: number;
+}
+
+/** The first chant that writes `resources` on `step-settle` (#4615). */
+export const RUN_EVENT_RESOURCES_FLOOR = NEXT_RELEASE;
 
 /** The run stopped at a gate nobody has approved, or a decision point nobody has answered. */
 export interface RunEventGateWaiting {

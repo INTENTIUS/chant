@@ -11,6 +11,8 @@
  * - the plan step of the lexicon's own migration Ops, `ClickHouseRebuildOp`
  *   and `PostgresMigrationOp`. {@link clickhouseRebuildPart} and
  *   {@link postgresMigrationPart}.
+ * - a declarative plan's classified changes, as the `sql-apply` capability
+ *   plans them (#4569). {@link sqlDeclarativePlanPart}.
  *
  * Each returns a part with planner `sql`, so it composes with every other
  * member's in `composeChangeSet`, and a gate that binds the document gets its
@@ -352,4 +354,76 @@ export function postgresMigrationPart(input: SqlOpPlanPartInput): ChangeSetPart 
   if (!migration) throw new Error("postgresMigrationPart: the plan names no migration");
   const table = migration.split(".").slice(0, -1).join(".") || migration;
   return opPart(input, "PostgresMigrationOp", "migrate", table, "Postgres::Table");
+}
+
+// ── a declarative plan ────────────────────────────────────────────────────────
+
+/**
+ * One classified change of a declarative plan (`chant sql plan`): a build
+ * against the environment's server, as the dialects' classifiers write it.
+ */
+export interface SqlDeclarativeChange {
+  /** The object, as the plan labels it. */
+  object: string;
+  field: string;
+  rule: string;
+  class: string;
+  before?: string;
+  after?: string;
+  destructive?: boolean;
+}
+
+export interface SqlDeclarativePlanPartInput {
+  member: string;
+  dialect: "clickhouse" | "postgres";
+  /** The environment it plans into: the member's and every entry's `scope`. */
+  environment: string;
+  changes: readonly SqlDeclarativeChange[];
+  /** What the plan could not read (#3653), as holes. */
+  holes?: ChangeSetHole[];
+  /** Default `"sql"`. */
+  lexicon?: string;
+}
+
+/** The entry type a declarative change gets: the classified change names no object kind. */
+const DECLARATIVE_TYPE = { clickhouse: "ClickHouse::Object", postgres: "Postgres::Object" } as const;
+
+/** The digest of a declarative plan: the dialect, the environment and every change, sorted. */
+export function sqlDeclarativePlanDigest(input: Pick<SqlDeclarativePlanPartInput, "dialect" | "environment" | "changes">): string {
+  const changes = input.changes
+    .map((c) => ({ object: c.object, field: c.field, rule: c.rule, class: c.class, before: c.before ?? null, after: c.after ?? null, destructive: c.destructive === true }))
+    .sort((a, b) => (a.object === b.object ? (a.field < b.field ? -1 : a.field > b.field ? 1 : 0) : a.object < b.object ? -1 : 1));
+  return computePlanDigest("sql-declarative-plan", { dialect: input.dialect, environment: input.environment, changes });
+}
+
+/**
+ * A declarative plan's part (#4569): one entry per object the changes touch,
+ * the action and disruption from their classes as for a versioned plan, the
+ * fields as attributes. Its digest is {@link sqlDeclarativePlanDigest}.
+ */
+export function sqlDeclarativePlanPart(input: SqlDeclarativePlanPartInput): ChangeSetPart {
+  const lexicon = input.lexicon ?? SQL_CHANGE_SET_LEXICON;
+  const byAddress = new Map<string, ObjectChanges>();
+  for (const c of input.changes) {
+    let o = byAddress.get(c.object);
+    if (!o) {
+      o = { address: c.object, type: DECLARATIVE_TYPE[input.dialect], classes: [], actions: [], destructive: false, ops: [], manual: [], sql: [], fields: new Map() };
+      byAddress.set(c.object, o);
+    }
+    o.classes.push(c.class);
+    if (c.destructive) o.destructive = true;
+    o.fields.set(c.field, { rule: c.rule, class: c.class, field: c.field, ...(c.before !== undefined ? { before: c.before } : {}), ...(c.after !== undefined ? { after: c.after } : {}), ...(c.destructive ? { destructive: true } : {}) });
+  }
+  return {
+    member: {
+      member: input.member,
+      lexicon,
+      planner: "sql",
+      scope: input.environment,
+      status: "planned",
+      planDigest: sqlDeclarativePlanDigest(input),
+      holes: input.holes ?? [],
+    },
+    entries: entriesOf(input.member, lexicon, input.environment, [...byAddress.values()]),
+  };
 }

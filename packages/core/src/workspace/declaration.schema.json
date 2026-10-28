@@ -218,6 +218,9 @@
         "hooks": {
           "$ref": "#/$defs/ciHooks"
         },
+        "lockGrain": {
+          "$ref": "#/$defs/ciLockGrain"
+        },
         "locks": {
           "enum": ["apply", "plan"],
           "description": "When a pull request takes its target locks, _locks/<gate>.json on chant/lifecycle (#4293). apply: the pull request's apply takes them, and chant lock takes them by hand. plan: its plan takes them too, through chant lock --stage plan in a job that runs the target branch's code. Under either, chant components pr-apply refuses a target that another open pull request holds, and a lock whose pull request merged or closed reads as released. Absent: nothing is locked. Read from the declaration at base. Added in schema 1 by chant 0.124.41, so a declaration that uses it sets minReader to 0.124.41 or newer."
@@ -228,7 +231,7 @@
         "reportUrl": {
           "type": "string",
           "minLength": 1,
-          "description": "Where the pull-request jobs copy their reports and events, and where chant ci run keeps the run index, <reportUrl>/runs/index.json (#4160): an s3://<bucket>/<prefix> or file://<directory> URL, as --report-url takes. chant build --pr-loop, chant ci run, chant ci serve and chant ci runs use it when --report-url is not given, and the flag wins. Readers find it in chant workspace ls --json as ci.reportUrl. Added in schema 1 by chant 0.124.32, so a declaration that uses it sets minReader to 0.124.32 or newer."
+          "description": "Where the pull-request jobs copy their reports and events, and where chant ci run keeps the run index, <reportUrl>/runs/index.json (#4160): an s3://<bucket>/<prefix>, gs://<bucket>/<prefix>, az://<account>/<container>/<prefix> or file://<directory> URL, as --report-url takes. gs:// and az:// URLs (#4554) need minReader 0.124.55 or newer. chant build --pr-loop, chant ci run, chant ci serve and chant ci runs use it when --report-url is not given, and the flag wins. Readers find it in chant workspace ls --json as ci.reportUrl. Added in schema 1 by chant 0.124.32, so a declaration that uses it sets minReader to 0.124.32 or newer."
         },
         "branches": {
           "type": "object",
@@ -298,6 +301,20 @@
                     "subscriptionId": { "type": "string", "minLength": 1, "description": "Set as AZURE_SUBSCRIPTION_ID and ARM_SUBSCRIPTION_ID when given." },
                     "audience": { "type": "string", "minLength": 1, "description": "The OIDC token's audience. Default api://AzureADTokenExchange." },
                     "authority": { "type": "string", "pattern": "^https?://", "description": "The Entra authority host, for an emulator. Default https://login.microsoftonline.com." },
+                    "database": { "type": "boolean", "description": "Also trade each identity for an Azure Database for PostgreSQL token, set as AZURE_DATABASE_ACCESS_TOKEN, which the sql lexicon's entra token source signs in with (#4572). Default false. Added in schema 1 by chant 0.124.55, so a declaration that sets database sets minReader to 0.124.55 or newer." },
+                    "rules": { "$ref": "#/$defs/ciCloudIdentityRules" }
+                  }
+                },
+                "pulumi": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "patternProperties": { "^x-": true },
+                  "required": ["organization", "rules"],
+                  "description": "Pulumi Cloud access tokens (#4549), traded through Pulumi Cloud's OAuth token exchange and set as PULUMI_ACCESS_TOKEN: the plan and record jobs preview with the plan token, the apply jobs run up with the apply token. The rules' identities are team:<name>, user:<login>, organization or organization:admin. Added in schema 1 by chant 0.124.55, so a declaration that uses it sets minReader to 0.124.55 or newer.",
+                  "properties": {
+                    "organization": { "type": "string", "minLength": 1, "description": "The Pulumi organization." },
+                    "audience": { "type": "string", "minLength": 1, "description": "The OIDC token's audience. Default urn:pulumi:org:<organization>." },
+                    "apiUrl": { "type": "string", "pattern": "^https?://", "description": "The Pulumi Cloud API, for a self-hosted one or a fake. Default https://api.pulumi.com. When set, the trade sets PULUMI_BACKEND_URL to it too." },
                     "rules": { "$ref": "#/$defs/ciCloudIdentityRules" }
                   }
                 }
@@ -739,6 +756,9 @@
             },
             "hooks": {
               "$ref": "#/$defs/ciHooks"
+            },
+            "lockGrain": {
+              "$ref": "#/$defs/ciLockGrain"
             }
           }
         },
@@ -1898,13 +1918,17 @@
       "enum": ["trunk-curated", "trunk-curated+apply-on-merge", "apply-before-merge"],
       "description": "A prescribed delivery workflow (#4168). trunk-curated: a merge records the plan and deploys nothing; releases are cut from green commits and promoted through each member's environments, gated in the last. trunk-curated+apply-on-merge: the same, with the apply on merge turned back on. apply-before-merge (#4301, ws-106): the same as trunk-curated, and a person may also apply an open pull request's plan from its head under its gate, once it is approved, mergeable, undiverged and its checks passed (chant components pr-apply --before-merge); added by chant 0.124.42, so a declaration that uses it sets minReader to 0.124.42 or newer. chant workspace check reports what a member under one still lacks (WSP151), and chant ci init writes it. At the top level for every member, or on a member, which wins. Added in schema 1 by chant 0.124.34, so a declaration that uses it sets minReader to 0.124.34 or newer."
     },
+    "ciLockGrain": {
+      "enum": ["target", "resource", "repo"],
+      "description": "What one apply holds while it applies (#4552). target: the component, root or stack; the engine's own lock keeps one target's applies apart. resource: a lease on one row per changed resource, in _locks/rows/<gate>.json at the root of chant/lifecycle, taken before the apply and released after, and under ci.locks a pull request locks those row keys in place of its component names. A held row stops the apply with exit 5. repo: one apply at a time in the repository, which the generated pipeline keeps. Absent: each member takes its lexicon's default, resource for choudoufu and plunge and target for Terraform, tofu, Terragrunt and stock Pulumi, which refuse resource. At the top level for every member, or on a member, which wins. Read from the declaration at base. Added in schema 1 by chant 0.124.55, so a declaration that uses it sets minReader to 0.124.55 or newer."
+    },
     "ciHooks": {
       "type": "object",
-      "description": "Stage hooks the pull-request jobs run (#4288), in the shape an Op waves spec's hooks take: before.observe, before.plan, after.plan, before.apply and after.apply, each a list of { command, name?, onFailure?, perRun?, targets? }. targets are component names or patterns. chant components pr-plan, pr-record and pr-apply read them from the declaration at base, the top level's first and then the member's. after.gate and apply.runBy are refused. Added in schema 1 by chant 0.124.41, so a declaration that uses it sets minReader to 0.124.41 or newer."
+      "description": "Stage hooks the pull-request jobs run (#4288), in the shape an Op waves spec's hooks take: before.observe, before.plan, after.plan, before.apply and after.apply, each a list of { command, name?, onFailure?, perRun?, targets? }. targets are component names or patterns. chant components pr-plan, pr-record and pr-apply read them from the declaration at base, the top level's first and then the member's. after.gate and apply.runBy are refused. Added in schema 1 by chant 0.124.41, so a declaration that uses it sets minReader to 0.124.41 or newer. check (#4556) is a list of hooks a product's check job runs through chant ci check, before any plan, with onFailure fail and no {plan}; added in schema 1 by chant 0.124.55, so a declaration that uses check sets minReader to 0.124.55 or newer."
     },
     "ciPolicy": {
       "type": "object",
-      "description": "Gate-time policy on the pull-request jobs (#4294): a policy engine run over the change set, with the policy read at base. engine names the result shape the command prints, conftest (the default) or opa. path is the policy directory, relative to the declaration (default policy). namespace is the package to read. command replaces the engine's own argv, with {policy} for the policy directory exported from base and {input} for the input file. deny rules refuse the apply unless an override counts; hold rules make the plan wait for a person's approval; warn rules are advice. There is no unattended outcome. Added in schema 1 by chant 0.124.41, so a declaration that uses it sets minReader to 0.124.41 or newer."
+      "description": "Gate-time policy on the pull-request jobs (#4294): a policy engine run over the change set, with the policy read at base. engine names the result shape the command prints, conftest (the default) or opa. path is the policy directory, relative to the declaration (default policy). namespace is the package to read. command replaces the engine's own argv, with {policy} for the policy directory exported from base and {input} for the input file. deny rules refuse the apply unless an override counts; hold rules make the plan wait for a person's approval; warn rules are advice. There is no unattended outcome. source (#4613) is { repo, ref, path? }: a shared repository whose ref the job fetches, read in place of path, with the commit read recorded on the report and the wave's decision; path inside it defaults to policy, and path beside source is refused. packs (#4613) is a list of { dir, config? }: CrossGuard packs every pulumi-up preview runs, copied from the declaration's directory at base, or from the top of source when it is set. Added in schema 1 by chant 0.124.41, so a declaration that uses it sets minReader to 0.124.41 or newer; source and packs were added in schema 1 by chant 0.124.55, so a declaration that sets either sets minReader to 0.124.55 or newer."
     },
     "ciPhaseName": {
       "type": "string",

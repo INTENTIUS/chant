@@ -1,0 +1,79 @@
+---
+title: Let an Agent Change Code on Request
+description: Generate the agent jobs that answer an agent comment on a pull request, or follow a drift check, with a spend limit and the write token kept out of the model's job.
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/agent-jobs/.
+  Add an agent to the scheduled Op spec I name, with the limit I give you, and regenerate its workflow with chant run --generate.
+  Open a pull request with the change, and say in its description which secret holds the model's key and which holds the push token.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+This guide is for a repository that wants a coding agent to change code when someone asks, or when a drift check finds the cloud has moved. The agent runs as two generated jobs from a scheduled Op spec's `agent` ([#4616](https://github.com/INTENTIUS/chant/issues/4616)). The first runs the model with a read token. The second holds the write token and lands the change.
+
+Nothing the agent does applies, approves or merges. A change it pushes plans like any other, and a person reviews it.
+
+## Answer a comment
+
+Add a spec whose `agent` has `on: "comment"`, and generate it with `chant run --generate github --spec <file>` (or `gitlab`, `forgejo`):
+
+```json
+{
+  "ops": [
+    {
+      "name": "chant-agent",
+      "agent": { "on": "comment", "comment": "/chant agent", "maxRuns": 10, "timeout": 30 },
+      "runner": "ubuntu-latest"
+    }
+  ]
+}
+```
+
+A comment such as `/chant agent add a cost-center tag to the bucket` on a pull request starts it. The ask is read with the product's comment grammar (`parseProductComment`, `packages/core/src/ci-product-words.ts:473`): one line, plain text, at most 2,000 characters. On GitHub the comment must come from an owner, member or collaborator. On Forgejo, which has no author association, `chant agent prepare` asks the forge whether the commenter can write (`packages/core/src/ci-agent.ts`). A pull request from a fork is refused, since the agent pushes only to this repository's branches.
+
+The agent's change is one commit on the pull request's branch, pushed without force. Its message carries `Requested-by:` with the commenter's login.
+
+A CI product gets the same spec from `productPipelineJobs(forge, env, { words, agent })`, which returns it as `agent.spec` beside the comment it answers, in the product's words.
+
+## Follow a drift check
+
+Set `agent` with `on: "drift"` on the drift check's own spec:
+
+```json
+{ "name": "drift-app", "trigger": { "kind": "cron", "schedule": "0 6 * * *" }, "findingMode": "issue", "agent": { "on": "drift", "maxRuns": 2 } }
+```
+
+The drift check's job keeps its output, and when its run exits with chant's `drift` code (2) the agent job runs with that output in the prompt. The change goes to a branch of the agent's own, `<product>/agent/<name>` unless `branch` names another, and opens a pull request into the default branch. The next drift replaces the branch with a lease and updates the same pull request, as long as every tip on the branch is the agent's. A person's commit on it stops the agent there.
+
+For a workspace member the drift check runs in the member's directory and the agent jobs run at the repository root. Each reads the member's own drift output. On GitHub and Forgejo the drift check hands its output to the agent job as job outputs. On GitLab the drift check keeps it in its artifact under `<member>/.chant/agent`, and both agent jobs use that directory.
+
+## The spend limit
+
+`maxRuns` is the most runs a day. Each run leaves one run record on the workspace ledger, under op `<name>` in environment `env` (`local` by default). Its outcome names who asked and how the run ended. It also keeps the commit or pull request the run made, and the prompt's digest beside what the command said it cost. `chant agent prepare` counts the records of the last 24 hours before the model starts, and `chant agent land` counts them again before it pushes. A run over the limit is said on the pull request and recorded as `stopped`.
+
+`maxCostUsd` is the most US dollars the agent's runs may cost a day. The cost of each run is the one its run record keeps, as the command reported it, and the sum covers the same 24 hours as `maxRuns`. A run whose command reported no cost adds nothing. The sum is checked before a run starts, so the run that passes the limit still finishes, and the next one is stopped. The two limits can be set together, and either one stops a run.
+
+`timeout` is the minutes the model command may run, 30 by default. At the limit the command is stopped and the push job lands nothing. Each job's own timeout is 15 minutes longer, which leaves room for the checkout and the setup.
+
+By default the command is Claude Code with the file tools alone, its turns limited by `maxTurns`. A command of your own reads the prompt on stdin and may write `{ model, cost_usd, input_tokens, output_tokens }` to `$CHANT_AGENT_USAGE`, which the run record keeps.
+
+## Which job holds which token
+
+Each job holds only what its own steps need.
+
+| Job | Holds | Runs |
+|---|---|---|
+| agent | a read token in the checkout and the decision step; the model's key (`keyEnv`, `ANTHROPIC_API_KEY` by default) in its last step alone | `chant agent prepare`, then `chant agent run` in a worktree of the commit, with no forge token in its environment |
+| push | the push token: the `tokenEnv` secret, else the job token | `chant agent land`, which applies the patch, refuses a guarded path, commits, pushes, opens or updates the pull request and records the run |
+
+A push made with GitHub's job token starts no workflow, so the pull request is planned again only when `tokenEnv` names a token of a user or an app.
+
+On GitLab the comment agent runs in a pipeline of the default branch started with `CHANT_AGENT_PR` set to the merge request's iid and `CHANT_AGENT_ASK` to the ask, since GitLab starts no pipeline on a note. The push job runs under environment `<name>-push`. Scope the push token (`CHANT_FORGE_TOKEN` unless `tokenEnv` names another) to that environment, protected and masked, so the agent job never holds it.
+
+## Paths an agent may not change
+
+The push job refuses a change that touches CI files, `.chant/`, `chant.workspace.json`, the chant config, code owners, `.claude/`, `.cursor/`, `.mcp.json`, or a `CLAUDE.md`, `AGENTS.md`, `.gitattributes` or `.gitmodules` in any directory. `guarded` adds a product's own files, and a trailing `/` names a directory. The prompt lists the same paths, and the push job enforces them either way.
+
+## Where the jobs run
+
+`runner` names where every job of the spec runs: a label, a list of labels, or on GitHub a runner group (`{ "group": "infra", "labels": ["linux"] }`). It is `runs-on` on GitHub and Forgejo and `tags` on GitLab. A runner group is refused on GitLab and Forgejo. The field works on any scheduled Op spec, with an agent or without one.

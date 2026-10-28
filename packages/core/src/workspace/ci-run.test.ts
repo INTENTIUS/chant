@@ -513,7 +513,7 @@ describe("chant ci run, then ci tick from runs (#4094)", () => {
     ] }));
     expect(at([ok("build"), fail("apply", 1)])).toEqual({ code: "failed", reason: "members cluster-a failed (stack CREATE_FAILED), cluster-b failed", phase: "apply", exitCode: 1 });
     writeFileSync(join(dir, "pr-apply.json"), JSON.stringify({ status: "refused", refusal: "plan-changed", message: "the plan changed after review\nsecond line" }));
-    expect(at([ok("build"), fail("apply", 3)])).toEqual({ code: "plan-changed", reason: "the plan changed after review", phase: "apply", exitCode: 3 });
+    expect(at([ok("build"), fail("apply", 4)])).toEqual({ code: "plan-changed", reason: "the plan changed after review", phase: "apply", exitCode: 4 });
     // A report that says the job did its work leaves the command's failure.
     writeFileSync(join(dir, "pr-apply.json"), JSON.stringify({ status: "applied", members: [] }));
     expect(at([ok("build"), fail("apply", 1)])!.code).toBe("command-failed");

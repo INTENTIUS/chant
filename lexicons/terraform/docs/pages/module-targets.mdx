@@ -1,0 +1,62 @@
+---
+title: Module Targets
+description: The hosted module registries the terraform lexicon publishes a module version to, with each host's call, credentials and version floor.
+diataxis: reference
+---
+
+A module target publishes one module version to a hosted registry on chant core's publish-target contract. Every target uploads the archive the bucket registry serves and the attestation signs, so one content digest holds on every host. The targets live in `lexicons/terraform/src/registry/targets/`. A product such as terragucci names them under its own config keys.
+
+| Target | Factory | Write credentials | Upload |
+|---|---|---|---|
+| GitLab | `gitlabModuleTarget` | `GITLAB_TOKEN`, else `CI_JOB_TOKEN` | the gzip tarball |
+| HCP Terraform, Terraform Enterprise | `hcpModuleTarget` | `TFE_TOKEN`, else the CLI credentials for the host | the gzip tarball |
+| Artifactory | `artifactoryModuleTarget` | basic: `JFROG_USER` and `JFROG_ACCESS_TOKEN` | a zip of the tarball's files |
+| Nexus Repository | `nexusModuleTarget` | basic: `NEXUS_USER` and `NEXUS_TOKEN` | a zip of the tarball's files |
+
+None of the four hosts has a call to deprecate a module version, so a deprecation shows in the bucket registry's catalog only.
+
+## Zip archives
+
+Artifactory takes a module only as a zip, and Nexus recommends one. Both targets repack the attested tarball as a zip with the same files, paths and modes, in the same order, so the same tarball always gives the same zip. The zip's archive comment names the tarball's content digest and the revision. A later publish reads that comment to tell whether the host already holds this content. A zip uploaded by hand has no such comment, so it never passes for the release's version.
+
+## Artifactory
+
+The repository is a local Terraform repository with the Module/Provider registry type. The target sends one `PUT <url>/<repo>/<namespace>/<name>/<system>/<version>.zip`, where `url` is the Artifactory base such as `https://acme.jfrog.io/artifactory`. Consumers write the repository key and the namespace joined by a double underscore:
+
+```hcl
+module "vpc" {
+  source  = "acme.jfrog.io/terraform-local__acme/vpc/aws"
+  version = "1.2.0"
+}
+```
+
+The target reads the version back through the registry protocol at that source, with `TF_TOKEN_<host>` when it is set, else the access token. Artifactory indexes a deploy after the upload answers, so the target waits up to 30 seconds (`waitMs`) for the version to be listed. If it never shows, an admin can run Recalculate Index on the repository.
+
+## Nexus Repository
+
+Hosted Terraform repositories need Nexus 3.89.0 or later. Nexus 3.95.0 adds the bearer token call for CLI reads and stops caching a "not found" answer right after an upload. On earlier versions the target waits up to 30 seconds for the new version to be listed.
+
+The target sends one `PUT <url>/repository/<repo>/v1/modules/<namespace>/<name>/<system>/<version>/<name>-<version>.zip` with basic credentials. Nexus has no registry host to discover, so consumers add a `host` block to their CLI configuration. `nexusHostBlock({ url, repo })` prints it:
+
+```hcl
+host "terraform-hosted" {
+  services = {
+    "modules.v1" = "https://nexus.example.com/repository/terraform-hosted/v1/modules/"
+  }
+}
+```
+
+Sources then start with the block's label, as in `terraform-hosted/acme/vpc/aws`. The label defaults to the repository's name. A name with characters a host name cannot have, such as `_`, needs the `host` option. The target reads the version back with the same block held in memory and writes no CLI config file. It sends `TF_TOKEN_<nexus host>` when that is set, else the token Nexus 3.95 issues for the basic credentials, else the basic credentials.
+
+Sonatype's page on creating a Terraform repository says GPG signing is mandatory for hosted repositories, and the same page says signing is optional for modules. Until someone confirms the rule on an instance, create the hosted repository with a signing key. The effect of a module upload to a repository with no key is not documented.
+
+## Proxies
+
+An Artifactory remote or virtual repository, or a Nexus proxy or group repository, can stand in front of an upstream registry such as registry.terraform.io. The lexicon's source forms and registry reader take a `proxies` list, so a source written through a proxy compares equal to the plain upstream source and reads go through the proxy.
+
+| Proxy | Entry | Source through it |
+|---|---|---|
+| Artifactory | `artifactoryProxy("acme.jfrog.io", "tf-remote")` | `acme.jfrog.io/tf-remote__terraform-aws-modules/vpc/aws` |
+| Nexus | `nexusProxy({ url: "https://nexus.example.com", repo: "tf-proxy" })` | `terraform-aws-modules/vpc/aws`, behind a `host "registry.terraform.io"` block |
+
+A provider through Artifactory uses the same joiner, as in `acme.jfrog.io/tf-remote__hashicorp/aws`. A Nexus entry's label defaults to its upstream, and the `host` option names another label. Each entry stands for registry.terraform.io unless its `upstream` names another host.

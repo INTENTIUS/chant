@@ -7,7 +7,7 @@ diataxis: reference
 ## Synopsis
 
 ```
-chant serve mcp [path]
+chant serve mcp [path] [--read-only]
 ```
 
 ## Description
@@ -222,9 +222,70 @@ Return a markdown report for an Op's latest run.
 | `name` | `string` | Yes | Op name |
 | `runtime` | `string` | No | Runtime to address: a lexicon name with an `opRuntime`, or `local` (the default) |
 
+### `ledger`
+
+Returns one ledger's rows from the local `chant/lifecycle` branch by calling `chant ledger <table> --json`. The output comes back as printed ([#4363](https://github.com/INTENTIUS/chant/issues/4363)). Inside a workspace every member's ledger is read and each row names its member. It never fetches.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `table` | `string` | Yes | One of `resources`, `snapshots`, `runs`, `gates`, `deploys`, `releases`, `cuts` |
+| `member` | `string[]` | No | Only these members' ledgers (`--member`) |
+| `where` | `string[]` | No | Typed filters, each `<field><op><value>` (`--where`) |
+| `since` | `string` | No | Only rows at or after this time (`--since`) |
+| `at` | `string` | No | Read the ledger as this commit of `chant/lifecycle` held it (`--at`) |
+
+### `query`
+
+Runs one read-only SQL statement over the snapshots in the index store and the runs, gates, deploys and releases on the local `chant/lifecycle` branch, through `chant query -- <sql> --json`, and returns the document as printed ([#4297](https://github.com/INTENTIUS/chant/issues/4297)). A statement that writes is refused by the query engine.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `sql` | `string` | Yes | The SQL statement |
+| `member` | `string[]` | No | Only these members' ledgers (`--member`) |
+
+### `report`
+
+Reads one file a pull request stage kept in the report store: the URL a CI product's tool hook names, else the workspace's `ci.reportUrl` ([#4555](https://github.com/INTENTIUS/chant/issues/4555)). The store is the one `pr-plan --report-url` and `pr-apply --report-url` write, under `<pr>/<commit>[/<member>]`. The server reads it with its own credentials (`gs://` and `az://` through chant's object-store clients, `s3://` through the AWS CLI, `file://` from disk) and writes nothing. A JSON file comes back parsed under `document`, and an events file as its list of `events`. A missing file is an error result.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `pr` | `string` | Yes | The pull request number, or `unknown` for a `pr-apply` that found none |
+| `commit` | `string` | Yes | The full commit sha the stage ran on |
+| `member` | `string` | No | The workspace member, for a member's loop |
+| `file` | `string` | Yes | One of `pr-plan.json`, `pr-apply.json`, `change-set.json`, `pr-plan.events.jsonl`, `pr-apply.events.jsonl`, `pr-record.events.jsonl` |
+
 ### Plugin Tools
 
-Lexicon plugins can add tools. Plugin tools are namespaced as `{pluginName}:{toolName}` to avoid conflicts with core tools.
+Lexicon plugins can add tools. Plugin tools are namespaced as `{pluginName}:{toolName}` to avoid conflicts with core tools. A plugin tool that changes nothing declares `readOnly: true`, which is what lets the [read-only server](#read-only-mode) serve it.
+
+A CI product adds its tools the same way through its tool hook ([#4555](https://github.com/INTENTIUS/chant/issues/4555)). The product's bin runs `runChantInProcess(["serve", "mcp"], words, { mcp: hook })` from `@intentius/chant/ci-product`, and each tool is registered as `{product}:{toolName}`. Started through the hook, the server is read-only unless the hook sets `readOnly: false`, and `--read-only` keeps it read-only either way. In that mode a product tool is served only when it declares `readOnly: true`, and chant refuses to start when a served tool's name begins with a write word such as `apply` or `lock`, or holds a strong one such as `approve` or `merge` anywhere. terragucci's own server made the same check. The hook's `tools(ctx)` gets `ctx.reports()`, a reader of the report store that cannot write.
+
+## Read-only mode
+
+`chant serve mcp --read-only` gives an agent read access to the ledger and the workspace graph, and to runs, gates and snapshots. It has no tool that can change them ([#4543](https://github.com/INTENTIUS/chant/issues/4543)). It registers no tool that runs an Op or resolves a gate, and none that writes to the repository or the snapshot store. [`neverOverMcp`](#ops-kept-from-agents) keeps one Op from agents on the ordinary server. Read-only mode withholds every mutating tool from them.
+
+| Served | Left out |
+|---|---|
+| `build` (it writes no file), `lint` without `fix`, `explain`, `search`, `composites`, `capabilities`, `lifecycle-diff`, `op-list`, `op-status`, `op-report`, `ledger`, `query`, `report`, and the workspace reads | `import`, `scaffold`, `lifecycle-snapshot`, `op-run`, `op-approve`, and the workspace writes (`records-*`, `points-*`) |
+
+A plugin tool, or a CI product's tool, is served only when it declares `readOnly: true`. The `initialize` result's `instructions` say the server is read-only. The resources are all reads and are served unchanged.
+
+The lists live in `packages/core/src/cli/mcp/read-only.ts`. A core tool on neither list is refused when a read-only server starts, so a new tool has to be sorted before it can ship, and a test fails when a mutating tool is registered in the mode.
+
+Running `chant init --mcp-read-only` writes the read-only form into `.mcp.json`, as below.
+
+```json
+{
+  "mcpServers": {
+    "chant": {
+      "command": "npx",
+      "args": ["chant", "serve", "mcp", "--read-only"]
+    }
+  }
+}
+```
+
+A product built on chant switches it on for its own server by constructing `McpServer` with `readOnly: true`, or gets it by default by passing its tools as a [tool hook](#plugin-tools).
 
 ## Workspace tools
 
@@ -320,6 +381,8 @@ If your agent doesn't auto-detect the MCP config, configure the server manually.
 ```bash
 chant serve mcp
 ```
+
+Add `--read-only` for an agent that should only read; see [Read-only mode](#read-only-mode).
 
 The server communicates over stdin/stdout using JSON-RPC 2.0 with line-based framing (one JSON object per line).
 

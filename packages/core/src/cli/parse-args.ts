@@ -74,6 +74,7 @@ const BOOLEAN_FLAGS = new Set([
   "--unsigned",
   "--in-place",
   "--require-runner-start",
+  "--require-clouds",
   "--no-push",
   "--list",
   "--no-require-review",
@@ -84,6 +85,8 @@ const BOOLEAN_FLAGS = new Set([
   "--fail-on-drift",
   "--durable-requests",
   "--skip-mcp",
+  "--read-only",
+  "--mcp-read-only",
   "--current",
   "--uncommitted",
   "--allow-code",
@@ -94,6 +97,7 @@ const BOOLEAN_FLAGS = new Set([
   "--generated",
   "--decide",
   "--record-plans",
+  "--waves-outcome",
   "--loopback",
   "--artifacts",
   "--push",
@@ -139,6 +143,8 @@ export function parseArgs(args: string[]): ParsedArgs {
     reportFile: undefined,
     skill: undefined,
     skipMcp: undefined,
+    readOnly: undefined,
+    mcpReadOnly: undefined,
     src: undefined,
     env: undefined,
   };
@@ -325,6 +331,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.skill = args[++i];
     } else if (arg === "--skip-mcp") {
       result.skipMcp = true;
+    } else if (arg === "--read-only") {
+      result.readOnly = true;
+    } else if (arg === "--mcp-read-only") {
+      result.mcpReadOnly = true;
     } else if (arg === "--src") {
       result.src = args[++i];
     } else if (arg === "--env") {
@@ -379,6 +389,14 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.digestFile = args[++i];
     } else if (arg === "--seed-outputs") {
       (result.seedOutputs ??= []).push(args[++i]);
+    } else if (arg === "--keep") {
+      // `chant lock --keep --pr <n>` (#4588): keep the locks the pull request's plan took, as `/<product> lock` asks.
+      result.keepLocks = true;
+    } else if (arg === "--runs" || arg === "--plans" || arg === "--wave-outputs") {
+      // `chant components plan-wave|apply-wave` (#4588): the op-waves runs and plans files, and the outputs the waves hand on.
+      const value = args[++i];
+      if (value === undefined || value.startsWith("-")) throw new Error(`${arg} needs a file`);
+      result[({ "--runs": "runsFile", "--plans": "plansFile", "--wave-outputs": "waveOutputs" } as const)[arg]] = value;
     } else if (arg === "--detail") {
       result.detail = Number(args[++i]);
     } else if (arg === "--lens") {
@@ -434,6 +452,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.decide = true;
     } else if (arg === "--record-plans") {
       result.recordPlans = true;
+    } else if (arg === "--waves-outcome") {
+      result.wavesOutcome = true;
     } else if (arg === "--group") {
       const raw = args[++i];
       if (!raw || raw.startsWith("-")) throw new Error("--group needs a job group's name: --group <name>");
@@ -445,8 +465,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.share = share;
     } else if (arg === "--target") {
       // `chant components fan-out|run --components --target <component>:<address>` (#4300), repeatable.
+      // `chant components pr-plan --target <address>` (#4620) also takes a bare address; fan-out and run refuse one.
       const raw = args[++i];
-      if (!raw || raw.startsWith("-") || !raw.includes(":")) throw new Error("--target needs a component and an address: --target <component>:<address>");
+      if (!raw || raw.startsWith("-")) throw new Error("--target needs an address: --target <component>:<address>, or on pr-plan --target <address>");
       (result.targets ??= []).push(raw);
     } else if (arg === "--canary") {
       const raw = args[++i];
@@ -466,6 +487,9 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--forge") {
       result.forge = args[++i];
       if (!result.forge || result.forge.startsWith("-")) throw new Error("--forge needs a forge: --forge github|gitlab|forgejo");
+    } else if (arg === "--require-clouds") {
+      // `chant ci forge-check --require-clouds` (#4608).
+      result.requireClouds = true;
     } else if (arg === "--require-review") {
       result.requireReview = true;
     } else if (arg === "--list") {
@@ -475,6 +499,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant lock --stage plan|apply|lock` (#4293): how the lock was taken.
       result.lockStage = args[++i];
       if (!result.lockStage || result.lockStage.startsWith("-")) throw new Error("--stage needs plan, apply or lock: --stage <stage>");
+    } else if (arg === "--alive") {
+      // `chant lock --alive <run>` (#4552): print whether a run holding rows or the repo lock tag still runs.
+      result.aliveRun = args[++i];
+      if (!result.aliveRun || result.aliveRun.startsWith("-")) throw new Error("--alive needs a run id: --alive <run>");
     } else if (arg === "--from-report") {
       // `chant lock --from-report <pr-plan.json>` (#4293): lock the components a pull-request report lists.
       result.fromReport = args[++i];
@@ -482,7 +510,7 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--report-url") {
       // `chant components pr-plan|pr-apply --report-url <url>` (#4007).
       const url = args[++i];
-      if (!url || url.startsWith("-")) throw new Error("--report-url needs a URL: --report-url s3://<bucket>/<prefix> or file://<directory>");
+      if (!url || url.startsWith("-")) throw new Error("--report-url needs a URL: --report-url s3://<bucket>/<prefix>, gs://<bucket>/<prefix>, az://<account>/<container>/<prefix> or file://<directory>");
       result.reportUrl = url;
     } else if (arg === "--result") {
       // `chant components pr-post --result <result>` (#4295): the plan job's own result, which fails the status when it failed.
@@ -509,12 +537,20 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--before-merge") {
       // `chant components pr-apply --before-merge` (#4301, ws-106): apply an open pull request's plan from its head.
       result.beforeMerge = true;
+    } else if (arg === "--requires") {
+      // `chant components pr-apply --before-merge --requires approved,checks` (#4607): the checks a product's `apply.requires` names.
+      const value = args[++i];
+      if (value === undefined || value.startsWith("-")) throw new Error("--requires needs a list of checks: --requires approved,mergeable,undiverged,checks");
+      result.requires = value.split(",").map((v) => v.trim()).filter(Boolean);
     } else if (arg === "--apply-before-merge") {
       // `chant build --pr-loop --apply-before-merge` and `chant ci run apply --apply-before-merge` (#4301): the job that applies before merge.
       result.applyBeforeMerge = true;
     } else if (arg === "--apply-on-merge") {
       // `chant build --pr-loop --apply-on-merge` and `chant ci serve --apply-on-merge` (#4168): opt into applying on merge.
       result.applyOnMerge = true;
+    } else if (arg === "--preview-comment") {
+      // `chant build --pr-loop --preview-comment` (#4620): the job that answers `/<product> <plan word>` with a preview.
+      result.previewComment = true;
     } else if (arg === "--pr-env") {
       // `chant build --pr-loop --pr-env` (#4298): add the pull request environment's jobs.
       result.prEnv = true;

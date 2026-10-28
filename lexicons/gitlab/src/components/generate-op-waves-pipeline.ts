@@ -37,6 +37,18 @@
  * entry per cloud, and its script starts by trading them for those
  * identities and unsetting the token variables, before any line of the
  * checkout runs.
+ *
+ * With `control` on the spec (#4617), a `control-dispatch` job in a
+ * `control` stage needs the last wave's jobs, whose artifacts hold every
+ * job's outcome file. It adds them up with `chant run wave --waves-outcome`
+ * (through the product's bin) into `CHANT_CONTROL_OUTCOME` and sends the
+ * control repo one dispatch carrying it and `$CI_COMMIT_SHA`. A last wave
+ * whose runs failed (exit 1) still lets it run; a wave that waits at its
+ * gate stops it with the waves, and it runs once the retried job carries
+ * on. A CI/CD variable reaches every job, so every other job starts by
+ * unsetting the control repo's token variables and the product's two
+ * secret names; the dispatch step reads the token from the product's
+ * variable alone and hands it to curl on its stdin (#4568).
  */
 
 import {
@@ -55,14 +67,25 @@ import {
   nonEmpty,
   pushBranches,
 } from "@intentius/chant/ci-jobs";
-import { opWaveGroupOf, opWaveJobs, opWaveOutcomeDir, opWavesResumeCommand, type OpWavesSpec } from "@intentius/chant/op/op-waves";
+import {
+  opWaveGroupOf,
+  opWaveJobs,
+  opWaveOutcomeDir,
+  opWavesControlTarget,
+  opWavesLastJobs,
+  opWavesOutcomeCommand,
+  opWavesRecordPlansCommand,
+  opWavesResumeCommand,
+  type OpWavesSpec,
+} from "@intentius/chant/op/op-waves";
+import { CONTROL_OUTCOME_VAR, CONTROL_TOKEN_VARS, controlDispatchJob } from "@intentius/chant/control/dispatch";
 import type { OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
 import { gitlabTradeIdTokens, gitlabTradeLines, TRADE_SPEC_ENV } from "@intentius/chant/ci-identity";
 import { emitGitlabFile } from "./ci-jobs";
 
 /** Render an Op waves spec as one GitLab CI file, `<name>.gitlab-ci.yml` unless `opsFileName` names another. */
 export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWavesPipelineOptions): OpWavesPipelineResult {
-  const jobs = opWaveJobs(spec, options.specFile);
+  const jobs = opWaveJobs(spec, options.specFile, { bin: options.bin });
   const image = options.image ?? CI_IMAGE;
   const subject = `Op waves "${spec.name}"`;
   const rules = pushBranches(spec.branches).map((branch) => {
@@ -87,6 +110,10 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
 
   const byReview = spec.waves.some((w) => w.approval === "pr-review");
   const stages = [...(byReview ? ["plans"] : []), ...spec.waves.map((wave, i) => `wave-${i + 1}-${wave.name}`)];
+  // #4617: the control repo's token variables, which every job but the dispatch drops first.
+  const control = spec.control ? opWavesControlTarget(spec.control) : undefined;
+  const dropControl = control ? [`unset ${[...new Set([...CONTROL_TOKEN_VARS, control.tokenSecret, control.readTokenSecret])].join(" ")}`] : [];
+  if (control) stages.push("control");
   if (spec.resume) stages.push("resume");
   const entries: Array<readonly [string, unknown]> = [["stages", stages]];
   const variables = nonEmpty("variables", options.variables).variables;
@@ -100,7 +127,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
         ...(specTags ? { tags: specTags } : {}),
         variables: { ...GITLAB_FULL_HISTORY },
         rules: [{ if: GITLAB_MERGE_REQUEST_SOURCE }],
-        script: [...(options.beforeScript ?? []), ["chant", "run", "wave", "--spec", options.specFile, "--record-plans"].join(" ")],
+        script: [...dropControl, ...(options.beforeScript ?? []), opWavesRecordPlansCommand(options.specFile, options.bin).join(" ")],
       },
     ]);
   }
@@ -126,10 +153,45 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
         variables: { ...GITLAB_FULL_HISTORY, ...(wave.variables ?? {}), ...(group?.variables ?? {}), ...(cloud ? { [TRADE_SPEC_ENV]: JSON.stringify(cloud) } : {}) },
         rules,
         ...(job.needs.length > 0 ? { needs: job.needs } : {}),
-        script: [...(cloud ? gitlabTradeLines() : []), ...setup, ...(options.beforeScript ?? []), job.command.join(" "), ...(options.extraScript ?? [])],
+        script: [...(cloud ? gitlabTradeLines() : []), ...dropControl, ...setup, ...(options.beforeScript ?? []), job.command.join(" "), ...(options.extraScript ?? [])],
         // #4322: a run that failed, or was blocked, lets the next wave run; any other failure stops it.
         allow_failure: { exit_codes: [1] },
         artifacts: { when: "always", paths: [...(job.kind === "decide" ? [job.record!] : []), `${opWaveOutcomeDir(spec)}/`], expire_in: "30 days" },
+      },
+    ]);
+  }
+  if (control) {
+    const dispatch = controlDispatchJob("gitlab", control, "$CI_COMMIT_SHA", {
+      ...(options.words ? { words: options.words } : {}),
+      ...(spec.control!.sentCheck ? { sentCheck: spec.control!.sentCheck } : {}),
+      ...(spec.control!.markSent ? { markSent: spec.control!.markSent } : {}),
+      outcome: true,
+    });
+    entries.push([
+      dispatch.name,
+      {
+        stage: "control",
+        image,
+        ...(specTags ? { tags: specTags } : {}),
+        rules,
+        // The last wave's jobs hand on every job's outcome file through their artifacts.
+        needs: opWavesLastJobs(jobs),
+        // The setup and the outcome run in a subshell without the control token, and only the outcome reaches stdout.
+        script: [
+          [
+            'outcome="$(',
+            ...dropControl,
+            "{ :",
+            ...setupOf[0]!,
+            ...(options.beforeScript ?? []),
+            "} 1>&2",
+            opWavesOutcomeCommand(options.specFile, options.bin).join(" "),
+            ')" || exit 1',
+          ].join("\n"),
+          `export ${CONTROL_OUTCOME_VAR}="$outcome"`,
+          ...Object.entries(dispatch.env).map(([k, v]) => `export ${k}="${v}"`),
+          `bash <<'CONTROL_DISPATCH' || exit $?\n${dispatch.script}\nCONTROL_DISPATCH`,
+        ],
       },
     ]);
   }
@@ -141,7 +203,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
         image,
         ...(specTags ? { tags: specTags } : {}),
         rules: [{ if: GITLAB_SCHEDULE_SOURCE }],
-        script: [...(options.beforeScript ?? []), opWavesResumeCommand(spec).join(" ")],
+        script: [...dropControl, ...(options.beforeScript ?? []), opWavesResumeCommand(spec, options.bin).join(" ")],
       },
     ]);
   }
@@ -153,6 +215,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
     ...(spec.resume
       ? [`# The ${spec.name}-resume job retries it for you in a pipeline schedule; give the schedule the cron "${spec.resume.schedule}".`]
       : []),
+    ...(control ? [`# After the last wave, the control-dispatch job tells ${control.repo} how the waves ended.`] : []),
   ];
   const name = options.opsFileName ?? `${spec.name}.gitlab-ci.yml`;
   return { files: [{ name, yaml: emitGitlabFile(entries, header) }], jobs };

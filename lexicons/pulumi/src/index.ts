@@ -33,6 +33,22 @@ export {
   readMemberExport,
   defaultPulumiRunner,
   PULUMI_ALLOWED_COMMANDS,
+  PULUMI_APPLY_COMMANDS,
+  runApplyPulumi,
+  runApplyPlunge,
+  pulumiUpArgs,
+  plungeUpArgs,
+  pulumiUpPreviewArgs,
+  PULUMI_REVIEW_STACK_COMMANDS,
+  REVIEW_STACK_NAME,
+  isReviewStackName,
+  reviewStackInitArgs,
+  reviewStackDestroyArgs,
+  reviewStackRmArgs,
+  runReviewStackPulumi,
+  runReviewStackPlunge,
+  type PulumiPolicyPack,
+  type PulumiApplyTail,
   type PulumiRunner,
   type PreviewPulumiMemberOptions,
   type PulumiMemberPreview,
@@ -52,9 +68,67 @@ export {
   type PulumiAppliedFrom,
   type PulumiOutputSourceOptions,
 } from "./member-outputs";
-export { pulumiCapabilityPlugin } from "./capability-plugin";
+export { pulumiCapabilityPlugin, PULUMI_VERB_FAMILIES } from "./capability-plugin";
+// The apply capability (#4541): a Pulumi or plunge stack as a component step that plans and applies.
+export {
+  createPulumiUpCapability,
+  pulumiReviewStep,
+  PR_ENV_TEMPLATE_VARIABLE,
+  pulumiUpCapability,
+  pulumiUpMember,
+  pulumiReleaseInputs,
+  pulumiScratchConfig,
+  pulumiDefaultLockGrain,
+  PulumiPlanMovedError,
+  PulumiPolicyDeniedError,
+  PulumiAppliedShapeError,
+  PulumiResourceGrainRefusedError,
+  type PulumiUpStepInput,
+  type PulumiUpStepOutput,
+  type PulumiUpArtifact,
+  type PulumiUpOptions,
+  type PulumiLockGrain,
+} from "./pulumi-up";
+export { pulumiPlanShape, pulumiShapeDifferences, type PulumiPlanShapeOptions } from "./plan-shape";
+export { pulumiLockRows } from "./lock-rows";
+export {
+  pulumiEngineEvents,
+  pulumiStreamPreview,
+  pulumiAppliedSteps,
+  pulumiPolicyEvents,
+  pulumiPolicyFindings,
+  pulumiStreamSummary,
+  crossGuardRule,
+  PULUMI_STREAMING_PREVIEW_ENV,
+  type PulumiEngineEvent,
+  type PulumiPolicyViolation,
+  type PulumiApplySummary,
+} from "./engine-events";
 export { readPulumiDrift, type PulumiDriftRunners } from "./drift-read";
 export { pulumiAuditCatalog } from "./lint/audit-catalog";
 // The Preview/Drift watch composite and its step builders (#4494).
 export { PulumiWatchOp, type PulumiWatchOpConfig, type PulumiWatchOpResources } from "./composites/pulumi-watch-op";
+export { gatedStackExport, gatedStackCancel, gatedStackMove, moveLeftovers, diyStackLockIds, pulumiStackLockIds, type PulumiStackLocks, PULUMI_STACK_OPS_OP, type PulumiStackOpOutcome, type PulumiStackOpCommon, type PulumiStackOpKind } from "./stack-ops";
+// Review stacks (INTENTIUS/plywood#15): pr-<n> stacks only.
+export {
+  initReviewStack,
+  removeReviewStack,
+  parseReviewStackLocation,
+  prNumberOf,
+  pulumiTemplateStack,
+  reviewConfigSource,
+  reviewStackFor,
+  reviewStackLocation,
+  reviewStackTeardown,
+  REVIEW_STACK_TEARDOWN,
+  type ReviewStackOptions,
+  type ReviewStackOutcome,
+  type ReviewStackTeardown,
+  type ReviewStackTeardownOptions,
+} from "./review-stack";
+export { pulumiStackReferences, parsePulumiStackName, stackReferenceOwner, PULUMI_STACK_REFERENCE_TYPE, type PulumiStackReference } from "./stack-references";
+export { PulumiAdoptOp, type PulumiAdoptOpConfig, type PulumiAdoptOpResources, type PulumiAdoptStack } from "./composites/pulumi-adopt-op";
+export { parsePlungeAdoptView, pulumiAdoptDigest, adoptBucketTarget, type PlungeAdoptView, type PlungeAdoptStatus } from "./adopt";
 export { pulumiPreview as pulumiPreviewStep, pulumiDrift as pulumiDriftStep } from "./op/builders";
+// Pulumi and plunge exit statuses on chant's exit-code table (#4553).
+export { pulumiExitOf, pulumiPlanMoved, PULUMI_EXIT, PLUNGE_PLAN_MOVED_EXIT } from "./exit-codes";

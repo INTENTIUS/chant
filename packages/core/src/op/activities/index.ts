@@ -164,7 +164,7 @@ export type {
 // The review agent (#4299): a model reviews the change set against the pull
 // request's own text and posts one sticky note. Only the activity and its
 // marker are re-exported, since the registry collects every exported function.
-export { parseReviewResult, postReviewNote, readReviewRecord, REVIEW_DIR_ENV, REVIEW_MARKER_PREFIX, REVIEW_RECORD, reviewAgent, reviewMarker } from "./review-agent";
+export { parseReviewResult, postReviewNote, quoted, readReviewRecord, REVIEW_DATA_TAGS, REVIEW_DIR_ENV, REVIEW_MARKER_PREFIX, REVIEW_RECORD, reviewAgent, reviewMarker } from "./review-agent";
 export type { PostReviewNoteArgs, PostReviewNoteResult, ReviewAgentArgs, ReviewAgentResult, ReviewAgentMode, ReviewRecord, ReviewRisk } from "./review-agent";
 
 // The propose-only template upgrade (#2550). Loads the workspace code on first

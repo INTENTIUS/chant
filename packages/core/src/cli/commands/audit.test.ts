@@ -291,7 +291,7 @@ describe("auditCommand", () => {
   describe("lexicon coverage (#1623)", () => {
     const MIXED = fileURLToPath(new URL("./__fixtures__/audit-coverage", import.meta.url));
 
-    test("zero lexicons: says it had nothing to look with, names each file's lexicon, prints the npx line, exits 2", async () => {
+    test("zero lexicons: says it had nothing to look with, names each file's lexicon, prints the npx line, exits 1", async () => {
       const result = await auditCommand({ path: MIXED, plugins: [] });
       expect(result.success).toBe(true);
       expect(result.status).toBe("no-lexicons");

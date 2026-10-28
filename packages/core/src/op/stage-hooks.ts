@@ -9,7 +9,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { opWaveHookRuns, type OpWaveHook, type OpWaveHookMoment } from "./op-waves";
+import { opWaveHookRuns, type CiHookMoment, type OpWaveHook } from "./op-waves";
 
 /** What one moment's hooks came to, before any hold on another gate is settled. */
 export interface HookListOutcome {
@@ -38,11 +38,36 @@ export interface OpWaveHoldRequest {
   description?: string;
   /** Fields for the pending fact, as a plans file's `pending`. */
   pending?: Record<string, unknown>;
+  /**
+   * chant records the held gate like a gated request (#4623): an applied
+   * line in `_gates/<op>/applied.jsonl` before the approved re-run, which
+   * spends the approval, and a finished line after it with the detail the
+   * re-run writes to `CHANT_HOLD_FINISHED`. A digest already applied under
+   * this gate does not run again.
+   */
+  record?: boolean;
+  /**
+   * A file the request carries, such as a migration's proof, as text. chant
+   * stores it once at `_gates/<op>/requests/<digest>.json` before the
+   * pending fact, and the fact's `proof` is its SHA-256 (#4623).
+   */
+  attachment?: string;
+}
+
+/**
+ * What a hook's approved re-run writes to `CHANT_HOLD_FINISHED` (#4623) when
+ * its hold asked chant to `record` the gate: how the work under the approval
+ * ended and the product's flat facts for the finished line. Without the
+ * file, the re-run's exit code says how it ended and the line has no detail.
+ */
+export interface OpWaveHoldFinished {
+  result: "applied" | "failed";
+  detail?: Record<string, string | number | boolean>;
 }
 
 /** One hook's run (#3762). */
 export interface OpWaveHookOutcome {
-  moment: OpWaveHookMoment;
+  moment: CiHookMoment;
   name: string;
   /** The run, for a `perRun` hook. */
   target?: string;
@@ -58,6 +83,10 @@ export interface OpWaveHookRun {
   op: string;
   /** The run's plan file, once planned. */
   plan?: string;
+  /** The run's plan digest, once planned (#4614). */
+  planDigest?: string;
+  /** The engine's plan document, once planned, when the run's plan names one (`artifact.planJson`, #4614). */
+  planJson?: string;
 }
 
 /** Runs one argv; returns its exit code. `env` is added to the job's environment. Injected so tests run no processes. */
@@ -83,10 +112,11 @@ export const spawnExecAsync: OpWaveAsyncExec = (argv, cwd, env) =>
 /** Fill one argv template. A placeholder whose value is not given is left as it is. */
 export function opWaveArgv(
   template: readonly string[],
-  values: { op: string; wave: string; target?: string; plan?: string; runs?: string; plans?: string },
+  values: { op: string; wave: string; target?: string; plan?: string; planJson?: string; runs?: string; plans?: string },
 ): string[] {
   const pairs: Array<[string, string | undefined]> = [
     ["{op}", values.op],
+    ["{planJson}", values.planJson],
     ["{target}", values.target],
     ["{wave}", values.wave],
     ["{plans}", values.plans],
@@ -110,7 +140,7 @@ export function pendingFields(value: unknown, where: string): Record<string, unk
 export interface OtherGateHold {
   label: string;
   name: string;
-  moment: OpWaveHookMoment;
+  moment: CiHookMoment;
   target?: string;
   argv: string[];
   env: Record<string, string>;
@@ -124,11 +154,53 @@ export function readHoldRequest(path: string, log: (line: string) => void, label
     const r = JSON.parse(readFileSync(path, "utf-8")) as Partial<OpWaveHoldRequest>;
     if (typeof r.gate !== "string" || r.gate === "" || typeof r.digest !== "string" || r.digest === "") throw new Error("it names no gate and digest");
     if (r.op !== undefined && (typeof r.op !== "string" || r.op === "")) throw new Error("its op is not a name");
-    return { gate: r.gate, digest: r.digest, ...(r.op ? { op: r.op } : {}), ...(typeof r.description === "string" ? { description: r.description } : {}), ...(r.pending ? { pending: pendingFields(r.pending, `the hold ${label} wrote`) ?? {} } : {}) };
+    if (r.record !== undefined && typeof r.record !== "boolean") throw new Error("its record is not true or false");
+    if (r.attachment !== undefined && typeof r.attachment !== "string") throw new Error("its attachment is not text");
+    return {
+      gate: r.gate,
+      digest: r.digest,
+      ...(r.op ? { op: r.op } : {}),
+      ...(typeof r.description === "string" ? { description: r.description } : {}),
+      ...(r.pending ? { pending: pendingFields(r.pending, `the hold ${label} wrote`) ?? {} } : {}),
+      ...(r.record ? { record: true } : {}),
+      ...(r.attachment !== undefined ? { attachment: r.attachment } : {}),
+    };
   } catch (err) {
     log(`${label} wrote a hold file that cannot be read (${err instanceof Error ? err.message : String(err)}), so it holds the wave on its set digest`);
     return undefined;
   }
+}
+
+/**
+ * Read what a hook's approved re-run wrote to `CHANT_HOLD_FINISHED` (#4623).
+ * Undefined when it wrote nothing; a file that is not one is logged and read
+ * as nothing. A detail value that is not a string, number or boolean is
+ * left out, so the finished line stays flat.
+ */
+export function readHoldFinished(path: string, log: (line: string) => void, label: string): OpWaveHoldFinished | undefined {
+  if (!existsSync(path)) return undefined;
+  try {
+    const r = JSON.parse(readFileSync(path, "utf-8")) as Partial<OpWaveHoldFinished>;
+    if (r.result !== "applied" && r.result !== "failed") throw new Error('its result is not "applied" or "failed"');
+    if (r.detail === undefined) return { result: r.result };
+    if (r.detail === null || typeof r.detail !== "object" || Array.isArray(r.detail)) throw new Error("its detail is not an object");
+    const detail: Record<string, string | number | boolean> = {};
+    const dropped: string[] = [];
+    for (const [key, value] of Object.entries(r.detail)) {
+      if (typeof value === "string" || typeof value === "boolean" || (typeof value === "number" && Number.isFinite(value))) detail[key] = value;
+      else dropped.push(key);
+    }
+    if (dropped.length > 0) log(`${label}: the finished detail's ${dropped.join(", ")} ${dropped.length === 1 ? "is" : "are"} not a string, number or boolean, so the finished line leaves ${dropped.length === 1 ? "it" : "them"} out`);
+    return { result: r.result, ...(Object.keys(detail).length > 0 ? { detail } : {}) };
+  } catch (err) {
+    log(`${label} wrote a finished file that cannot be read (${err instanceof Error ? err.message : String(err)}), so its exit code says how it ended`);
+    return undefined;
+  }
+}
+
+/** Where a hook's approved re-run writes how it ended (#4623): beside the hold file. */
+export function holdFinishedPath(holdPath: string): string {
+  return /hold\.json$/.test(holdPath) ? holdPath.replace(/hold\.json$/, "hold-finished.json") : `${holdPath}.finished.json`;
 }
 
 /** Where hooks run: the wave they belong to and the job's tools. */
@@ -160,7 +232,7 @@ interface HookCall {
  */
 function* hookListSteps(
   at: Omit<HookPlace, "exec">,
-  moment: OpWaveHookMoment,
+  moment: CiHookMoment,
   hooks: readonly OpWaveHook[] | undefined,
   runs: readonly OpWaveHookRun[],
   runsPath: string,
@@ -183,8 +255,15 @@ function* hookListSteps(
     const calls = hook.perRun
       ? mine.map((run) => ({
           target: run.target as string | undefined,
-          argv: opWaveArgv(hook.command, { op: run.op, wave: waveName, target: run.target, runs: runsPath, ...(run.plan ? { plan: run.plan } : {}) }),
-          env: { ...env, CHANT_TARGET: run.target, ...(run.plan ? { CHANT_PLAN: run.plan } : {}) } as Record<string, string>,
+          argv: opWaveArgv(hook.command, { op: run.op, wave: waveName, target: run.target, runs: runsPath, ...(run.plan ? { plan: run.plan } : {}), ...(run.planJson ? { planJson: run.planJson } : {}) }),
+          env: {
+            ...env,
+            CHANT_TARGET: run.target,
+            ...(run.plan ? { CHANT_PLAN: run.plan } : {}),
+            // #4614: the plan's digest and the engine's plan document, for a product that builds its report from chant's plans.
+            ...(run.planDigest ? { CHANT_PLAN_DIGEST: run.planDigest } : {}),
+            ...(run.planJson ? { CHANT_PLAN_JSON: run.planJson } : {}),
+          } as Record<string, string>,
         }))
       : [{ target: undefined, argv: opWaveArgv(hook.command, { op, wave: waveName, runs: runsPath }), env: env as Record<string, string> }];
     for (const call of calls) {
@@ -230,7 +309,7 @@ function didNotRun(call: HookCall, err: unknown, log: (line: string) => void): n
  */
 export function runHookList(
   at: HookPlace,
-  moment: OpWaveHookMoment,
+  moment: CiHookMoment,
   hooks: readonly OpWaveHook[] | undefined,
   runs: readonly OpWaveHookRun[],
   runsPath: string,
@@ -254,7 +333,7 @@ export function runHookList(
 /** {@link runHookList} with an exec that returns a promise (#4334). */
 export async function runHookListAsync(
   at: Omit<HookPlace, "exec"> & { exec: OpWaveAsyncExec },
-  moment: OpWaveHookMoment,
+  moment: CiHookMoment,
   hooks: readonly OpWaveHook[] | undefined,
   runs: readonly OpWaveHookRun[],
   runsPath: string,
@@ -337,7 +416,7 @@ function stageRun(out: HookListOutcome, name: string, keep = false): StageHooksR
  * gate (`CHANT_HOLD`) is counted as a plain hold, unless `keepOtherGates` is
  * set (#4323): then it comes back in `otherGates` for the caller to settle.
  */
-export function runStageHooks(moment: OpWaveHookMoment, hooks: readonly OpWaveHook[] | undefined, options: RunStageHooksOptions): StageHooksRun {
+export function runStageHooks(moment: CiHookMoment, hooks: readonly OpWaveHook[] | undefined, options: RunStageHooksOptions): StageHooksRun {
   const place = { ...stagePlace(options), exec: options.exec ?? spawnExec };
   return stageRun(runHookList(place, moment, hooks, options.runs, options.runsFile, options.env), options.name, options.keepOtherGates);
 }
@@ -348,7 +427,7 @@ export function runStageHooks(moment: OpWaveHookMoment, hooks: readonly OpWaveHo
  * still run one after another. Give each concurrent call its own `holdFile`
  * and `runsFile`.
  */
-export async function runStageHooksAsync(moment: OpWaveHookMoment, hooks: readonly OpWaveHook[] | undefined, options: RunStageHooksAsyncOptions): Promise<StageHooksRun> {
+export async function runStageHooksAsync(moment: CiHookMoment, hooks: readonly OpWaveHook[] | undefined, options: RunStageHooksAsyncOptions): Promise<StageHooksRun> {
   const place = { ...stagePlace(options), exec: options.exec ?? spawnExecAsync };
   return stageRun(await runHookListAsync(place, moment, hooks, options.runs, options.runsFile, options.env), options.name, options.keepOtherGates);
 }

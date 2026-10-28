@@ -118,7 +118,7 @@ A quota and a settings profile are changed with `ALTER`, never `CREATE ... OR RE
 
 The revokes run before the grants. A user's `DEFAULT ROLE` names roles the user must already hold, so when the build also declares grants to the user, it is set after them.
 
-`chant lifecycle diff --live` observes users, roles, row policies, quotas and settings profiles, so one changed by hand shows as property drift. A `grant` declaration is reported as unobserved, since it is compared as part of its grantee's list. The grants and revokes an apply would make are listed under PENDING instead, one line per grantee with the statements, the same ones `chant sql plan` reports. A gated `ApplyOp` binds its approval to that diff, so a privilege granted or revoked by hand after the approval moves the plan digest, and the apply stops at the gate until the new plan is approved.
+`chant lifecycle diff --live` observes users, roles, row policies, quotas and settings profiles, so one changed by hand shows as property drift. Each `grant` declaration is read privilege by privilege: one the grantee no longer holds (revoked by hand) shows as property drift on that declaration, at `grants.<grantee>.<privilege> ON <target>`, and a grant whose grantee the server does not have is missing. A privilege or role a grantee holds that no declaration gives it (granted by hand) belongs to no one declaration, so it is listed under PENDING, one line per grantee with every statement an apply would send it, the same ones `chant sql plan` reports. A gated `ApplyOp` binds its approval to that diff, so a privilege granted or revoked by hand after the approval moves the plan digest, and the apply stops at the gate until the new plan is approved.
 
 ## Topologies
 

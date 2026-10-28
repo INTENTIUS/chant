@@ -462,10 +462,15 @@ async function deployPlanIn(
   // #4026: under a release, the deploy reads the templates the release
   // recorded for this environment, checked against their digests.
   let pinnedFiles: import("../../components/release-promote").PinnedTemplate[] = [];
+  // #4542: read before the pin too, since a capability names the files of a step that names them indirectly (a terraform root).
+  const registry = await fanOutRegistry(project.projectPath, project.config);
   if (under) {
     const { pinReleaseTemplates } = await import("../../components/release-promote");
     const { readReleaseTemplate } = await import("../../lifecycle/release-store");
-    const pinned = await pinReleaseTemplates(prepared, under.release, under.target, (digest, encoding) => readReleaseTemplate(digest, undefined, encoding));
+    const pinned = await pinReleaseTemplates(prepared, under.release, under.target, (digest, encoding) => readReleaseTemplate(digest, undefined, encoding), {
+      registry,
+      memberDir: project.projectPath,
+    });
     if ("errors" in pinned) {
       for (const message of pinned.errors) console.error(formatError({ message }));
       console.error(formatError({ message: `nothing was deployed` }));
@@ -532,7 +537,6 @@ async function deployPlanIn(
     }
   }
 
-  const registry = await fanOutRegistry(project.projectPath, project.config);
   // #4516: the reads a capability finds in its steps' files (a template's
   // Fn::ImportValue) order the promote as `deriveFanOut` orders a fan-out, so
   // an importer deploys after the exporter it reads. Read once the release's
@@ -637,6 +641,9 @@ async function deployPlanIn(
     runId,
     cwd: project.projectPath,
   });
+  // #4594: ci.lockGrain, and on the resource grain the row lease each step and group takes in the pull-request loop's rows file.
+  const { applyLeaseOptions } = await import("../../components/apply-lease");
+  const leasing = await applyLeaseOptions(process.cwd());
   let run: Awaited<ReturnType<typeof runPromotion>>;
   let staged: import("../../components/promote-rounds").PromoteRoundsResult | undefined;
   // #4168 step 4: a wave at a time when a dependent read an upstream's plan,
@@ -665,6 +672,7 @@ async function deployPlanIn(
             componentOutputs: outputs,
             gates: port,
             releaseGate: binding,
+            ...leasing,
             ...(grouped?.groups?.length ? { grouped, groupRuns } : {}),
             ...(args.progressJson ? { onProgress: ndjsonProgressSink() } : {}),
             ...(events ? { onRunEvent: events.emit } : {}),
@@ -679,6 +687,7 @@ async function deployPlanIn(
         componentOutputs: seededOutputs,
         gates: port,
         ...(releaseGate ? { releaseGate } : {}),
+        ...leasing,
         // #4465: with no release gate to bind, nothing planned the groups beforehand, so each plans in its wave.
         ...(grouped?.groups?.length ? { grouped, groupRuns, planGroupsAtWave: bound === undefined } : {}),
         ...(args.progressJson ? { onProgress: ndjsonProgressSink() } : {}),
@@ -1088,6 +1097,17 @@ export async function runComponentsRollback(ctx: CommandContext): Promise<number
   }
   const refused = await refuseRevokedRestore("rollback", plan, records);
   if (refused !== undefined) return refused;
+  // #4542: a component with no artifact (a terraform root) was recorded with
+  // the templates digest of the release it deployed from, so it rolls back
+  // under that release: its recorded files, planned and bound to the release gate.
+  const item = plan.items[0];
+  if (item?.source.digestKind === "templates" && item.source.releaseDigest !== undefined) {
+    const under = await resolveUnderRelease(item.source.releaseDigest, env, "rollback", () =>
+      "Roll back to a release cut from a green commit; `chant release list` marks the revoked releases.",
+    );
+    if (typeof under === "number") return under;
+    return deployPlan(ctx, "rollback", plan, project, who.actor, rollbackRecord, under);
+  }
   return deployPlan(ctx, "rollback", plan, project, who.actor, rollbackRecord);
 }
 

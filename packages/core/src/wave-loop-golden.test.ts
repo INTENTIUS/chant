@@ -182,7 +182,8 @@ async function opScenario(
       }
       out.push({ ...(label ? { label } : {}), job: { wave: rest.wave, decide: rest.decide, share: rest.share }, result, ledger: ledgerOf(gates), calls: h.calls.slice(from).length, logs: h.logs.slice(logFrom).length });
     }
-    await expect(JSON.stringify(h.transcript({ jobs: out }), null, 2) + "\n").toMatchFileSnapshot(`${GOLDEN}/op-${name}.json`);
+    // A target's start time and duration (#4555) are the clock's, so they read as 0, as in the fan-out goldens.
+    await expect(JSON.stringify(scrubDurations(h.transcript({ jobs: out })), null, 2) + "\n").toMatchFileSnapshot(`${GOLDEN}/op-${name}.json`);
   } finally {
     h.done();
   }

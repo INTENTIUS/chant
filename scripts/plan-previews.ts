@@ -26,6 +26,7 @@ import { helmCapabilityPlugin } from "../lexicons/helm/src/components/capability
 import { k8sCapabilityPlugin } from "../lexicons/k8s/src/components/capability-plugin";
 import { otelCapabilityPlugin } from "../lexicons/otel/src/build/capability-plugin";
 import { pulumiCapabilityPlugin } from "../lexicons/pulumi/src/capability-plugin";
+import { sqlCapabilityPlugin } from "../lexicons/sql/src/capability-plugin";
 import { terraformCapabilityPlugin } from "../lexicons/terraform/src/components/capability-plugin";
 
 /**
@@ -43,6 +44,7 @@ export const PLUGINS: ReadonlyArray<{ lexicon: string; exportName: string; plugi
   { lexicon: "k8s", exportName: "k8sCapabilityPlugin", plugin: k8sCapabilityPlugin },
   { lexicon: "otel", exportName: "otelCapabilityPlugin", plugin: otelCapabilityPlugin },
   { lexicon: "pulumi", exportName: "pulumiCapabilityPlugin", plugin: pulumiCapabilityPlugin },
+  { lexicon: "sql", exportName: "sqlCapabilityPlugin", plugin: sqlCapabilityPlugin },
   { lexicon: "terraform", exportName: "terraformCapabilityPlugin", plugin: terraformCapabilityPlugin },
 ];
 
@@ -89,11 +91,47 @@ export const PLANNERS: Record<string, PlannerNote> = {
     shows: "no entries: the member plans and applies through its own pipeline. A hole per output known only after it applies",
     anchor: "member-outputs",
   },
+  "pulumi-up": {
+    source: "lexicons/pulumi/src/pulumi-up.ts",
+    reads: "`pulumi preview --json --show-sames` (or `plunge preview` with `--save-plan`) in the stack's directory, streamed as engine events, with CrossGuard's policy events",
+    shows: "a create, update, replace or delete per URN, and each top-level input the change writes with its value before and after",
+    anchor: "pulumi-up",
+  },
+  "sql-apply": {
+    source: "lexicons/sql/src/capability-plugin.ts",
+    reads: "the declarative build diffed against the environment's server, per dialect (Postgres or ClickHouse)",
+    shows: "an entry per database object the build changes; a change the applier does not make in place fails the plan, naming the Op to run instead",
+    anchor: "sql-apply",
+  },
+  "sql-migrate": {
+    source: "lexicons/sql/src/capability-plugin.ts",
+    reads: "`yodel plan <env> --part` for the pending migrations, and in an op wave `yodel apply <env> --wave-plan`",
+    shows: "an entry per object the pending migrations touch, and in an op wave the wave plan's destructive steps",
+    anchor: "sql-migrate",
+  },
   "terraform-apply": {
     source: "lexicons/terraform/src/components/capability-plugin.ts",
     reads: "`terraform plan` (or tofu or choudoufu) in the root, against its state, with a typed placeholder for each variable that reads an output not known yet",
     shows: "every resource change with its action, and each changed top-level attribute with its value before and after",
     anchor: "terraform-apply",
+  },
+  "terraform-copy": {
+    source: "lexicons/terraform/src/state-ops.ts",
+    reads: "`plan` (or a destroy plan) of the root initialised under its copy's backend settings, read with `show -json`",
+    shows: "every resource change the copy would make, as for terraform-apply",
+    anchor: "terraform-copy",
+  },
+  "terraform-state-push": {
+    source: "lexicons/terraform/src/state-ops.ts",
+    reads: "nothing from the backend: the step's own facts, the roots whose state files it would push",
+    shows: "no entries: a digest over the roots, which the gated request binds",
+    anchor: "terraform-state-push",
+  },
+  "terraform-state-unlock": {
+    source: "lexicons/terraform/src/state-ops.ts",
+    reads: "nothing from the backend: the step's own facts, the lock ID and its location",
+    shows: "no entries: a digest over the lock ID and location, which the gated request binds",
+    anchor: "terraform-state-unlock",
   },
 };
 

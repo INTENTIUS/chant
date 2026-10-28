@@ -16,7 +16,9 @@ chant run log <name> [flags]
 chant run events <run> [--json] [--follow]
 chant run wave --spec <file> --wave <k> [--decide | --share <i> | --group <name> [--share <i>]] [--base <ref>]
 chant run resume [--op <name>] [--gate <name>] [--dry-run] [--json]
+chant run pending --plan <digest> [--op <name>] [--json]
 chant run wave --spec <file> --record-plans
+chant run wave --spec <file> --waves-outcome [--json]
 chant run --components <name|all|a,b,c> [flags]
 chant run --generate <provider> [--spec <file>] [--output <dir>] [--format json]
 ```
@@ -266,6 +268,8 @@ chant run wave --spec waves.json --wave 4 --group prod --share 2
 
 The wave's runs are planned with the spec's `plan` command, or with one `planWave` call. Its gate policy and its stage hooks are read from the spec file at `--base` (default: the spec's `base`, else `HEAD^1`). A wave the policy holds waits on `<gate>-wave-<k>` under op `<name>`, bound to the set digest over its runs' plan digests, and exits 3 until that digest is approved. `--decide` plans and decides without applying, for a wide wave's deciding job. `--share <i>` applies share `i` of a decided wide wave, refusing a run whose plan moved since the decision. `--group <name>` does the same for one [job group](/chant/guide/op-waves/#runners-and-job-groups) of a decided wave, and with `--share <i>` for one share of that group. A hook with `onFailure: approve` that fails makes the wave wait whatever its policy. `--json` prints the decision, which runs applied and how each hook ran.
 
+With `--events-json` the job streams its [run events](/chant/reference/workspace-read-contract/#run-events) to stdout, in place of the `--json` document ([#4555](https://github.com/INTENTIUS/chant/issues/4555)). Each wave the job walks is a phase `wave-<k>`, and each run target is a step that starts and settles as its apply does. A job that waits at its gate ends on a `gate:<name>` step with `gate-waiting`. The job sends its trace to `OTEL_EXPORTER_OTLP_ENDPOINT` whenever that is set. The [Op waves guide](/chant/guide/op-waves/#traces) lists the spans.
+
 ### `run resume`
 
 Starts again each CI job that waits at a gate an approval now answers, through the forge's API: a GitHub re-run, a GitLab job retry, or a Forgejo workflow dispatch. It reads every gate ledger on `chant/lifecycle`, or `--op`'s alone, and approves nothing. A rendered [Op waves](/chant/guide/op-waves/#on-a-schedule) pipeline runs it on a schedule when the spec sets `resume`.
@@ -286,6 +290,19 @@ A pending fact whose answering approval a wave already applied under (`approvals
 A gate that asks a decision point counts as answered once its question has an answer the gate passes on. The command reads the workspace's questions for it, including those held on `chant/lifecycle` ([#3835](https://github.com/INTENTIUS/chant/issues/3835)). A pending fact recorded outside CI names no job, and is listed as such. A run still going, already successful, or already resumed is left alone, so the command is safe to run every few minutes. The token comes from `CHANT_FORGE_TOKEN`, else `GITHUB_TOKEN`, `GH_TOKEN` or `GITLAB_TOKEN`; [Resume the waiting job](/chant/guide/op-waves/#resume-the-waiting-job) lists the access each forge needs. It exits 1 when a forge refuses a call or no token is set.
 
 `--record-plans`, in a pull request's pipeline, plans every wave at the pull request's head and records each wave's digest on `chant/lifecycle`. A wave whose `approval` is `pr-review` compares its digest with that record after the merge ([Which approvals count](/chant/guide/op-waves/#which-approvals-count)).
+
+After the last wave, `--waves-outcome` reads every wave job's outcome file under `.chant/op-waves/<name>/outcomes` and prints one word on stdout: `applied`, `partial`, `unchanged`, `waiting` or `failed` ([#4617](https://github.com/INTENTIUS/chant/issues/4617)). The counts by status go to stderr. With `--json` it prints `{ outcome, applied, counts }`. A spec's `control-dispatch` job sends that word to the control repo ([Tell the control repo](/chant/guide/op-waves/#tell-the-control-repo)). It exits 0 whatever the outcome, and 1 when the spec does not read.
+
+### `run pending`
+
+Lists the gates waiting on a plan digest, newest first ([#4607](https://github.com/INTENTIUS/chant/issues/4607)). A gate counts when its newest pending fact has the digest as its plan or its change set, has not expired, and has no approval or rejection recorded since. A `pr-<n>` or `pr-<n>-<member>` op names its pull request, so a product's approve verb can take the digest the note printed and find the op, the gate and the pull request from it.
+
+```bash
+chant run pending --plan sha256:3f2a...
+chant run pending --plan sha256:3f2a... --op pulumi-up --json
+```
+
+`--op` reads one op's gate ledger; without it every gate ledger on `chant/lifecycle` is read. `--json` prints `{ plan, gates }`, each gate with `op`, `gate`, `pr` and `member` when the op names them, `matched` (`planDigest` or `changeSet`), `environment`, `wave`, `url`, `timestamp` and `expiresAt`. It exits 0 when it read the ledgers, whether or not a gate matched, and 1 when they cannot be read. From code, `pendingGatesByPlan(digest)` in `@intentius/chant/ci-product` returns the same list.
 
 ### `run --components <name|all|a,b,c>`
 
@@ -438,6 +455,7 @@ A run without `--release` writes records with no `releaseDigest`, even when `HEA
 | `--wave <k>` | The wave to run, from 1 (`run wave`) |
 | `--decide` | Plan the wave and decide its gate without applying it (`run wave`) |
 | `--record-plans` | Plan every wave at a pull request's head and record the digests a `pr-review` wave compares (`run wave`) |
+| `--waves-outcome` | Print how the wave jobs' outcome files add up, the outcome a control dispatch carries (`run wave`) |
 | `--share <i>` | Apply share `i` of a decided wide wave, or with `--group`, of that job group (`run wave`) |
 | `--group <name>` | Apply one job group's runs of a decided wave (`run wave`) |
 | `--base <ref>` | The commit the wave's gate policy is read from (`run wave`) |
@@ -475,7 +493,7 @@ A run without `--release` writes records with no `releaseDigest`, even when `HEA
 | 1 | Error (the run failed, the Op was not found, the runtime was unreachable) |
 | 3 | Gated: the run stopped at an unapproved gate and recorded the pending fact. For `run wave`, the wave waits for an approval of its set digest. For `--components`, also a step that refused a plan that moved since it was approved ([#3997](https://github.com/INTENTIUS/chant/issues/3997)) |
 | 4 | `run wave --share`: a run's plan moved since its wave was decided, so it was not applied |
-| `--gated-exit <code>` | The gated outcome only, remapped to `<code>`. 0 and 1 keep their meanings above for every other outcome, and a moved plan still exits 3 |
+| `--gated-exit <code>` | The gated outcome only, remapped to `<code>`. 0 and 1 keep their meanings above for every other outcome, and a moved plan still exits 4 ([exit codes](/chant/reference/exit-codes/)) |
 
 ## See Also
 

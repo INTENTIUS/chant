@@ -32,17 +32,33 @@
  * environment the job gives it, the way the aws lexicon's `s3-sync` does.
  * chant passes it no credential and prints none: a failed upload prints the
  * CLI's own error line.
+ *
+ * Two more (#4554): `gs://<bucket>/<prefix>` and `az://<account>/<container>/
+ * <prefix>` go through chant core's object-store clients (./object-store),
+ * which read the job's credentials from its environment the way terragucci's
+ * report uploads do: GOOGLE_APPLICATION_CREDENTIALS (or a traded
+ * GOOGLE_OAUTH_ACCESS_TOKEN) for GCS, and AZURE_STORAGE_KEY or the ARM_
+ * OIDC variables for Azure Blob Storage. An older chant refuses either
+ * scheme, so a declaration whose `ci.reportUrl` uses one needs
+ * {@link REPORT_URL_CLOUDS_FLOOR} as its `minReader`.
  */
 
 import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { NEXT_RELEASE } from "./release-floors";
+import type { ObjectStore } from "./object-store/common";
+
+/** The first chant that reads a `gs://` or `az://` report URL (#4554). */
+export const REPORT_URL_CLOUDS_FLOOR = NEXT_RELEASE;
 
 /** Where `--report-url` points. */
 export type ReportTarget =
   | { scheme: "file"; url: string; dir: string }
-  | { scheme: "s3"; url: string; bucket: string; prefix: string };
+  | { scheme: "s3"; url: string; bucket: string; prefix: string }
+  | { scheme: "gs"; url: string; bucket: string; prefix: string }
+  | { scheme: "az"; url: string; account: string; container: string; prefix: string };
 
 /** `--report-url` read, or why it can't be. `name` is what the error calls the value: the flag, or `ci.reportUrl` (#4160). */
 export function parseReportUrl(raw: string, name = "--report-url"): ReportTarget | { error: string } {
@@ -62,7 +78,18 @@ export function parseReportUrl(raw: string, name = "--report-url"): ReportTarget
     const prefix = s3[2]!.replace(/\/+$/, "");
     return { scheme: "s3", url: `s3://${s3[1]}${prefix ? `/${prefix}` : ""}`, bucket: s3[1]!, prefix };
   }
-  return { error: `${name} ${url}: takes an s3://<bucket>/<prefix> or file://<directory> URL` };
+  // #4554: a GCS bucket and an Azure container, named as terragucci's reports.bucket names them.
+  const gs = /^gs:\/\/([a-z0-9][a-z0-9._-]{1,221}[a-z0-9])(?:\/(.*))?$/.exec(url);
+  if (gs) {
+    const prefix = (gs[2] ?? "").replace(/\/+$/, "");
+    return { scheme: "gs", url: `gs://${gs[1]}${prefix ? `/${prefix}` : ""}`, bucket: gs[1]!, prefix };
+  }
+  const az = /^az:\/\/([a-z0-9]{3,24})\/([a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){2,62})(?:\/(.*))?$/.exec(url);
+  if (az) {
+    const prefix = (az[3] ?? "").replace(/\/+$/, "");
+    return { scheme: "az", url: `az://${az[1]}/${az[2]}${prefix ? `/${prefix}` : ""}`, account: az[1]!, container: az[2]!, prefix };
+  }
+  return { error: `${name} ${url}: takes an s3://<bucket>/<prefix>, gs://<bucket>/<prefix>, az://<account>/<container>/<prefix> or file://<directory> URL` };
 }
 
 /** The key a stage's files are kept under, below the URL: `<pr>/<commit>[/<member>]`. */
@@ -103,8 +130,33 @@ export const realAwsCli: AwsCli = (args, stdin) =>
     child.stdin.end(stdin);
   });
 
-/** A put for `target`. `aws` replaces the AWS CLI in a test. */
-export function reportPut(target: ReportTarget, aws: AwsCli = realAwsCli): ReportPut {
+/**
+ * The object-store client for a `gs://` or `az://` target (#4554), made once
+ * on first use from the job's environment. `store` replaces it in a test.
+ */
+export type ReportStore = () => Promise<ObjectStore>;
+
+function cloudStore(target: Extract<ReportTarget, { scheme: "gs" | "az" }>, env: NodeJS.ProcessEnv = process.env): ReportStore {
+  let made: Promise<ObjectStore> | undefined;
+  return () =>
+    (made ??= import("./object-store/index").then((m) =>
+      target.scheme === "gs"
+        ? new m.GcsClient(m.gcsFromEnv({ bucket: target.bucket, setting: "the report URL" }, env))
+        : new m.AzureBlobClient(m.azureFromEnv({ account: target.account, container: target.container, setting: "the report URL" }, env)),
+    ));
+}
+
+/** A key below a cloud target's prefix. */
+const cloudKey = (target: { prefix: string }, key: string): string => `${target.prefix ? `${target.prefix}/` : ""}${key}`;
+
+/** A put for `target`. `aws` replaces the AWS CLI in a test, and `store` a GCS or Azure client. */
+export function reportPut(target: ReportTarget, aws: AwsCli = realAwsCli, store?: ReportStore): ReportPut {
+  if (target.scheme === "gs" || target.scheme === "az") {
+    const open = store ?? cloudStore(target);
+    return async (key, body, contentType) => {
+      await (await open()).put(cloudKey(target, key), body, contentType);
+    };
+  }
   if (target.scheme === "file") {
     return async (key, body) => {
       const path = join(target.dir, ...key.split("/"));
@@ -149,8 +201,12 @@ export const realAwsRead: AwsRead = (args) =>
 /** What the AWS CLI says about an object that does not exist. */
 const S3_ABSENT = /\(404\)|Not Found|NoSuchKey|does not exist/i;
 
-/** A get for `target`. `aws` replaces the AWS CLI in a test. */
-export function reportGet(target: ReportTarget, aws: AwsRead = realAwsRead): ReportGet {
+/** A get for `target`. `aws` replaces the AWS CLI in a test, and `store` a GCS or Azure client. */
+export function reportGet(target: ReportTarget, aws: AwsRead = realAwsRead, store?: ReportStore): ReportGet {
+  if (target.scheme === "gs" || target.scheme === "az") {
+    const open = store ?? cloudStore(target);
+    return async (key) => (await (await open()).get(cloudKey(target, key))) ?? null;
+  }
   if (target.scheme === "file") {
     return async (key) => {
       try {
