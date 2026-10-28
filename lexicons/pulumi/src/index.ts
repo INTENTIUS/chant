@@ -39,6 +39,14 @@ export {
   pulumiUpArgs,
   plungeUpArgs,
   pulumiUpPreviewArgs,
+  PULUMI_REVIEW_STACK_COMMANDS,
+  REVIEW_STACK_NAME,
+  isReviewStackName,
+  reviewStackInitArgs,
+  reviewStackDestroyArgs,
+  reviewStackRmArgs,
+  runReviewStackPulumi,
+  runReviewStackPlunge,
   type PulumiPolicyPack,
   type PulumiApplyTail,
   type PulumiRunner,
@@ -99,6 +107,8 @@ export { pulumiAuditCatalog } from "./lint/audit-catalog";
 // The Preview/Drift watch composite and its step builders (#4494).
 export { PulumiWatchOp, type PulumiWatchOpConfig, type PulumiWatchOpResources } from "./composites/pulumi-watch-op";
 export { gatedStackExport, gatedStackCancel, gatedStackMove, moveLeftovers, PULUMI_STACK_OPS_OP, type PulumiStackOpOutcome, type PulumiStackOpCommon, type PulumiStackOpKind } from "./stack-ops";
+// Review stacks (INTENTIUS/plywood#15): pr-<n> stacks only.
+export { initReviewStack, removeReviewStack, type ReviewStackOptions, type ReviewStackOutcome } from "./review-stack";
 export { pulumiStackReferences, parsePulumiStackName, stackReferenceOwner, PULUMI_STACK_REFERENCE_TYPE, type PulumiStackReference } from "./stack-references";
 export { PulumiAdoptOp, type PulumiAdoptOpConfig, type PulumiAdoptOpResources, type PulumiAdoptStack } from "./composites/pulumi-adopt-op";
 export { parsePlungeAdoptView, pulumiAdoptDigest, adoptBucketTarget, type PlungeAdoptView, type PlungeAdoptStatus } from "./adopt";
