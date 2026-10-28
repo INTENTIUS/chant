@@ -101,6 +101,14 @@ export const pulumiPlugin: LexiconPlugin = {
     return pulumiCheckSteps();
   },
 
+  // #4634: preview tips (rename without aliases, a replace forced by a name, what may register at up) as a note section per member.
+  async prNoteDetail(input) {
+    if (input.stage !== "plan") return undefined;
+    const [{ pulumiTipsDetail }, { activeProductWords }] = await Promise.all([import("./preview-tips"), import("@intentius/chant/ci-product-words")]);
+    const words = activeProductWords();
+    return pulumiTipsDetail({ member: input.member, changeSet: input.changeSet, words: { product: words.product, noun: words.noun } });
+  },
+
   // A pulumi workspace member's reader project (#3179): its stack export from
   // the index store, else the checked-in one, never the program. See ./workspace-member.ts. `chant workspace
   // graph` writes `dir` absolute; a project that writes the namespace itself

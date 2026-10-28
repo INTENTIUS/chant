@@ -92,6 +92,18 @@ that apart from a real removal
 ([#4497](https://github.com/INTENTIUS/chant/issues/4497)). The full table is
 under [Pulumi plans](/chant/reference/change-set/#pulumi-plans).
 
+## Preview tips
+
+The pull request note gets a tips section for each pulumi member whose change set shows one of these patterns ([#4634](https://github.com/INTENTIUS/chant/issues/4634)). Each row starts with the tip's id, and a product's note ends with its own command for the fix, such as `plywood tips rename-without-aliases`.
+
+| Tip | Found when |
+|---|---|
+| `rename-without-aliases` | the preview deletes a resource and creates one of the same type whose name has the same stem (`assets` and `assets-v2`), or the same name under another parent |
+| `replace-on-name` | a replace that creates before it deletes is forced by a name input (`name`, `<x>Name`, `bucket`) |
+| `unknown-in-apply` | an entry may register at up, because the preview could not list it |
+
+A rename with `aliases` previews as `same` or `update` under the new URN, so a delete and a create of one type and stem in one preview is the rename without them. The stem is the name up to its first `-`, `_`, `.`, `:` or `/`. The tips are read from the change set alone, so stack config and `protect` give none.
+
 ## Drift
 
 `chant workspace drift --member <member> [--resource <urn>] [--stream]` runs
