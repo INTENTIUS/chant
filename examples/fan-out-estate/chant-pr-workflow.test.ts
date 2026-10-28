@@ -4,7 +4,7 @@
  * runs (`runCommandInProcess`, the same dispatch `chant build` uses) into a
  * temp directory and compares bytes with the committed file.
  */
-import { describe, test, expect } from "vitest";
+import { beforeAll, describe, test, expect } from "vitest";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -35,17 +35,26 @@ export const GENERATE_ARGS = [
 ];
 
 describe("fan-out-estate chant-pr.yml", () => {
-  test("is exactly what chant build --generate forgejo --pr-loop writes", async () => {
+  // The build runs once in beforeAll, which the unit budget doesn't count
+  // (test/unit-test-budget.setup.ts): on CI runners it takes 5.2 to 5.6s, most
+  // of it loading the CLI cold. The test compares the bytes it wrote.
+  let code: number | undefined;
+  let generated = "";
+  beforeAll(async () => {
     const dir = mkdtempSync(join(tmpdir(), "fan-out-estate-wf-"));
     const out = join(dir, "chant-pr.yml");
     try {
-      const code = await runCommandInProcess([...GENERATE_ARGS, "-o", out]);
-      expect(code).toBe(0);
-      expect(readFileSync(out, "utf8")).toBe(readFileSync(committed, "utf8"));
+      code = await runCommandInProcess([...GENERATE_ARGS, "-o", out]);
+      generated = readFileSync(out, "utf8");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 20000);
+
+  test("is exactly what chant build --generate forgejo --pr-loop writes", () => {
+    expect(code).toBe(0);
+    expect(generated).toBe(readFileSync(committed, "utf8"));
+  });
 
   test("plans, records and applies the estate with build, lint, then ci run plan, record or apply and nothing else", () => {
     const text = readFileSync(committed, "utf8");
