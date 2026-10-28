@@ -29,6 +29,13 @@ vi.mock("../../config", async () => {
   return { ...actual, loadChantConfigUpward: (...args: unknown[]) => loadChantConfigUpwardMock(...args) };
 });
 
+// #4550's engine lines load each lexicon the project lists, and with path "." that is this repository's every lexicon,
+// 10 to 20s cold. The generator is mocked here, so no test reads the lines: the project lists none.
+vi.mock("../plugins", async () => {
+  const actual = await vi.importActual<typeof import("../plugins")>("../plugins");
+  return { ...actual, resolveProjectLexicons: async () => [] };
+});
+
 const { runBuild } = await import("./build");
 
 function makeArgs(overrides: Partial<ParsedArgs> = {}): ParsedArgs {

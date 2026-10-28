@@ -4,6 +4,17 @@ import { prApplyComment, prLoopSetup, PR_LOOP_IMAGE, PR_LOOP_SETUP, withProductB
 import { PLYWOOD, TERRAGUCCI } from "../__fixtures__/product-words";
 import type { OpWavesSpec } from "../op/op-waves";
 import { resolveControlTarget } from "../control/dispatch";
+import type { CiProductCommand } from "../ci-product-words";
+
+/**
+ * `w` with only the commands (and aliases) a pipeline with `jobs` answers:
+ * #4550 refuses words naming a command the pipeline has no job for, so a
+ * test that builds fewer jobs passes words that name fewer commands.
+ */
+function only<W extends { commands: Record<string, CiProductCommand>; aliases?: readonly { command: CiProductCommand }[] }>(w: W, ...jobs: CiProductCommand[]): W {
+  const commands = Object.fromEntries(Object.entries(w.commands).filter(([, c]) => jobs.includes(c)));
+  return { ...w, commands, ...(w.aliases ? { aliases: w.aliases.filter((a) => jobs.includes(a.command)) } : {}) };
+}
 
 const waves: OpWavesSpec = {
   name: "apply",
@@ -29,7 +40,7 @@ describe("the product pipeline (#4550)", () => {
   });
 
   test("the plan side runs the product's bin, and ci run passes it on", () => {
-    const pw = productPipelineJobs("github", "production", { words: PLYWOOD });
+    const pw = productPipelineJobs("github", "production", { words: only(PLYWOOD, "plan") });
     expect(pw.plan.command.startsWith("npx --no-install plywood components pr-plan ")).toBe(true);
     expect(pw.plan.command).toContain("--gate up");
     expect(pw.plan.run.command.startsWith('npx --no-install plywood ci run plan --chant "npx --no-install plywood" --in-place')).toBe(true);
@@ -39,11 +50,11 @@ describe("the product pipeline (#4550)", () => {
   });
 
   test("the apply on merge runs on op waves through the product's bin", () => {
-    const pw = productPipelineJobs("github", "production", { words: PLYWOOD, waves });
+    const pw = productPipelineJobs("github", "production", { words: only(PLYWOOD, "plan", "apply"), waves });
     expect(pw.record).toBeUndefined();
     expect(pw.waves!.specFile).toBe(".chant/op-waves/pulumi-up.spec.json");
     expect(pw.waves!.jobs[0]!.command.slice(0, 6)).toEqual(["npx", "--no-install", "plywood", "run", "wave", "--spec"]);
-    expect(pw.comments).toEqual({ apply: "/plywood up" });
+    expect(pw.comments).toEqual({ plan: "/plywood preview", apply: "/plywood up" });
   });
 
   test("the approval preset: per wave for terragucci, the pull request's digest for plywood", () => {
@@ -56,11 +67,11 @@ describe("the product pipeline (#4550)", () => {
   });
 
   test("the words the jobs carry take the apply mode the jobs build (#4601)", () => {
-    expect(productPipelineJobs("github", "production", { words: PLYWOOD, waves }).words.applyMode).toBe("on-merge");
-    expect(productPipelineJobs("github", "production", { words: PLYWOOD }).words.applyMode).toBe("release");
-    expect(productPipelineJobs("github", "production", { words: PLYWOOD, applyBeforeMerge: true }).words.applyMode).toBe("before-merge");
-    expect(productPipelineJobs("github", "production", { words: { ...PLYWOOD, applyMode: "before-merge" }, waves, applyBeforeMerge: true }).words.applyMode).toBe("before-merge");
-    expect(productPipelineJobs("github", "production", { words: { ...PLYWOOD, applyMode: "before-merge" }, waves }).words.applyMode).toBe("on-merge");
+    expect(productPipelineJobs("github", "production", { words: only(PLYWOOD, "plan", "apply"), waves }).words.applyMode).toBe("on-merge");
+    expect(productPipelineJobs("github", "production", { words: only(PLYWOOD, "plan") }).words.applyMode).toBe("release");
+    expect(productPipelineJobs("github", "production", { words: only(PLYWOOD, "plan", "apply"), applyBeforeMerge: true }).words.applyMode).toBe("before-merge");
+    expect(productPipelineJobs("github", "production", { words: { ...only(PLYWOOD, "plan", "apply"), applyMode: "before-merge" }, waves, applyBeforeMerge: true }).words.applyMode).toBe("before-merge");
+    expect(productPipelineJobs("github", "production", { words: { ...only(PLYWOOD, "plan", "apply"), applyMode: "before-merge" }, waves }).words.applyMode).toBe("on-merge");
   });
 
   test("a command with no job is refused", () => {
@@ -114,7 +125,7 @@ describe("pr-apply --wave-gate on op waves (#4588)", () => {
   });
 
   test("productPipelineJobs takes the component graph's waves when the product has no spec of its own", () => {
-    const jobs = productPipelineJobs("github", "production", { words: PLYWOOD, componentWaves: { components: graph } });
+    const jobs = productPipelineJobs("github", "production", { words: only(PLYWOOD, "plan", "apply"), componentWaves: { components: graph } });
     expect(jobs.waves!.spec.name).toBe("pulumi-up");
     expect(jobs.waves!.spec.planWave!.slice(3, 5)).toEqual(["components", "plan-wave"]);
     expect(jobs.waves!.spec.planWave).toContain("HEAD^1");
@@ -137,7 +148,7 @@ describe("the lock and unlock comments (#4588)", () => {
   });
 
   test("no comment jobs without locks: plan", () => {
-    expect(productPipelineJobs("github", "production", { words: PLYWOOD, waves }).locks).toBeUndefined();
+    expect(productPipelineJobs("github", "production", { words: only(PLYWOOD, "plan", "apply"), waves }).locks).toBeUndefined();
   });
 });
 
@@ -145,7 +156,7 @@ describe("the agent (#4616)", () => {
   const words = { ...PLYWOOD, commands: { ...PLYWOOD.commands, agent: "agent" as const } };
 
   test("returns the agent's Op spec for its comment, with the settings checked", () => {
-    const pw = productPipelineJobs("github", "production", { words, agent: { maxRuns: 5, timeout: 20, keyEnv: "MODEL_KEY", runner: "agents" } });
+    const pw = productPipelineJobs("github", "production", { words: only(words, "plan", "agent"), agent: { maxRuns: 5, timeout: 20, keyEnv: "MODEL_KEY", runner: "agents" } });
     expect(pw.agent?.comment).toBe("/plywood agent");
     expect(pw.agent?.spec).toEqual({
       name: "plywood-agent",
@@ -153,12 +164,12 @@ describe("the agent (#4616)", () => {
       agent: { on: "comment", comment: "/plywood agent", maxRuns: 5, timeout: 20, keyEnv: "MODEL_KEY" },
       runner: "agents",
     });
-    expect(() => productPipelineJobs("github", "production", { words, agent: { timeout: 0 } })).toThrow(/timeout/);
+    expect(() => productPipelineJobs("github", "production", { words: only(words, "plan", "agent"), agent: { timeout: 0 } })).toThrow(/timeout/);
   });
 
   test("a product whose words name no agent command gets no agent", () => {
-    expect(productPipelineJobs("github", "production", { words: PLYWOOD, agent: true }).agent).toBeUndefined();
-    expect(productPipelineJobs("github", "production", { words: PLYWOOD }).agent).toBeUndefined();
+    expect(productPipelineJobs("github", "production", { words: only(PLYWOOD, "plan"), agent: true }).agent).toBeUndefined();
+    expect(productPipelineJobs("github", "production", { words: only(PLYWOOD, "plan") }).agent).toBeUndefined();
   });
 
   test("the drift agent of a scheduled drift Op", () => {
@@ -170,7 +181,7 @@ describe("the agent (#4616)", () => {
 // #4619: with a control repo on the loop or on the waves spec, the note job reads it before pr-post.
 describe("the note job's read of the control repo (#4619)", () => {
   test("the waves spec's control gives the note job its read step", () => {
-    const pw = productPipelineJobs("gitlab", "production", { words: PLYWOOD, waves: { ...waves, control: { repo: "gitlab.com/acme/control", op: "deploy", member: "shop" } } });
+    const pw = productPipelineJobs("gitlab", "production", { words: only(PLYWOOD, "plan", "apply"), waves: { ...waves, control: { repo: "gitlab.com/acme/control", op: "deploy", member: "shop" } } });
     expect(pw.post.control?.script).toContain("'https://gitlab.com/acme/control.git' '+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle'");
     expect(pw.post.control?.script).toContain('export CHANT_CONTROL_DIR="$chant_control_dir"');
     expect(pw.post.control?.script).toContain("plywood: could not read the control repo");
@@ -178,12 +189,12 @@ describe("the note job's read of the control repo (#4619)", () => {
 
   test("the loop's control does too, with the read secret it names", () => {
     const target = resolveControlTarget({ repo: "github.com/acme/control", op: "deploy", readTokenSecret: "TG_CONTROL_READ" }, "network");
-    const tg = productPipelineJobs("github", "production", { words: TERRAGUCCI, control: { target } });
+    const tg = productPipelineJobs("github", "production", { words: only(TERRAGUCCI, "plan"), control: { target } });
     expect(tg.post.control?.env).toEqual({ CHANT_CONTROL_READ_TOKEN: "${{ secrets.TG_CONTROL_READ || github.token }}" });
   });
 
   test("without a control repo the note job reads none", () => {
-    expect(productPipelineJobs("forgejo", "production", { words: PLYWOOD, waves }).post.control).toBeUndefined();
+    expect(productPipelineJobs("forgejo", "production", { words: only(PLYWOOD, "plan", "apply"), waves }).post.control).toBeUndefined();
   });
 });
 

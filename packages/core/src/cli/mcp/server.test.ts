@@ -1630,11 +1630,12 @@ describe("McpServer", () => {
 
       const toolsRes = await s.handleRequest({ jsonrpc: "2.0", id: 2, method: "tools/list" });
       const tools = (toolsRes.result as { tools: Array<{ name: string }> }).tools;
-      expect(tools).toHaveLength(15);
+      // ledger and query from #4543, report from #4555.
+      expect(tools).toHaveLength(18);
       expect(tools.map((t) => t.name).sort()).toEqual([
-        "build", "capabilities", "composites", "explain", "import", "lifecycle-diff", "lifecycle-snapshot", "lint",
+        "build", "capabilities", "composites", "explain", "import", "ledger", "lifecycle-diff", "lifecycle-snapshot", "lint",
         "op-approve", "op-list", "op-report", "op-run", "op-status",
-        "scaffold", "search",
+        "query", "report", "scaffold", "search",
       ]);
 
       const resourcesRes = await s.handleRequest({ jsonrpc: "2.0", id: 3, method: "resources/list" });
@@ -1646,7 +1647,7 @@ describe("McpServer", () => {
       const s = new McpServer([]);
       const toolsRes = await s.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
       const tools = (toolsRes.result as { tools: Array<{ name: string }> }).tools;
-      expect(tools).toHaveLength(15);
+      expect(tools).toHaveLength(18);
     });
   });
 });

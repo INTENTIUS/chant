@@ -87,7 +87,8 @@ async function fakeForge(routes: Record<string, (body?: Record<string, unknown>)
 }
 
 async function runNotice(env: Record<string, string>): Promise<string> {
-  const { stdout } = await run(process.execPath, ["--import", "tsx", "notice.mjs"], {
+  // chant here is the source tree, with no dist/: the development condition picks src/*.ts over the import condition's dist/*.js (#4591).
+  const { stdout } = await run(process.execPath, ["--conditions=development", "--import", "tsx", "notice.mjs"], {
     cwd: jobDir(),
     env: {
       PATH: process.env.PATH ?? "",
