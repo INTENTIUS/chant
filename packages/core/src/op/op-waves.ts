@@ -100,8 +100,7 @@ import type { CiResponses } from "../ci-respond";
 import { WAVE_GATE_NAME_PATTERN, waveGateNameFrom, waveShare } from "../wave-layout";
 import { waveOutcomeFileName } from "../wave-blocked";
 import { NEXT_RELEASE } from "../release-floors";
-import { parallelismProblem } from "../parallelism";
-import { opWaveHoldsProblems, opWaveStepProblems, type OpWaveHolds, type OpWaveStep } from "./op-waves-capability-spec";
+import { opWaveHoldsProblems, opWaveParallelismProblems, opWaveStepProblems, type OpWaveHolds, type OpWaveStep } from "./op-waves-capability-spec";
 import { opWaveReleaseProblems, type OpWaveReleaseNames } from "./op-waves-release";
 import { CONTROL_DISPATCH_JOB, CONTROL_NAME, controlSettingsProblems, resolveControlTarget, type ControlSettingsInput, type ControlTarget } from "../control/dispatch";
 
@@ -968,12 +967,9 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
   }
   if (spec.neverOverMcp !== undefined && typeof spec.neverOverMcp !== "boolean") throw new Error(`${where}: neverOverMcp must be true or false.`);
   if (spec.runner !== undefined) assertOpWaveRunner(where, "runner", spec.runner);
-  // #4625: runs applied at once need the capability step, whose apply is one call per run with no gate in it.
-  for (const [field, value] of [["parallelism", spec.parallelism] as const, ...spec.waves.map((w) => [`wave "${w.name}" parallelism`, w.parallelism] as const)]) {
-    if (value === undefined) continue;
-    const problem = parallelismProblem(field, value);
-    if (problem) throw new Error(`${where}: ${problem}.`);
-    if (value > 1 && spec.step === undefined) throw new Error(`${where}: ${field} is ${value}, and runs apply at once only through \`step\`; drop it or give step.`);
+  {
+    const problems = opWaveParallelismProblems(spec);
+    if (problems.length > 0) throw new Error(`${where}: ${problems[0]}.`);
   }
   if (spec.notify !== undefined) {
     const problem = notifyConfigProblem(spec.notify, "notify");

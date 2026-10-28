@@ -675,6 +675,11 @@ export class ForgeApiError extends Error {
   }
 }
 
+/** The forge answered 404. */
+const notFound = (err: unknown): boolean => err instanceof ForgeApiError && err.status === 404;
+
+const byNumber = (a: { number: number }, b: { number: number }): number => a.number - b.number;
+
 const DEFAULT_HOST: Record<ForgeKind, string | null> = { github: "github.com", gitlab: "gitlab.com", forgejo: null };
 
 /** `<forge>:<login>` on the forge's default host, `<forge>@<host>:<login>` elsewhere, lower-cased (#3163's form). */
@@ -900,6 +905,22 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
     const url = str(v.html_url);
     return { number, title: str(v.title) ?? "", body: str(v.body) ?? "", head: head ?? "", ...(base ? { base } : {}), ...(url ? { url } : {}) };
   };
+  /**
+   * The open pull requests; GitHub takes `filter` server-side, Forgejo's list
+   * takes none and is matched by the caller. Forgejo answers the list with
+   * 404 while it still counts the repository as empty (just after the first
+   * push). That is no pull request; a repository that is really missing 404s
+   * on its own read too.
+   */
+  const openPulls = async (filter: string): Promise<unknown[]> => {
+    try {
+      return await api.list(`${repo}/pulls?state=open${kind === "github" ? filter : ""}`, pageParams, pageSize);
+    } catch (err) {
+      if (kind !== "forgejo" || !notFound(err)) throw err;
+      await api.call("GET", repo);
+      return [];
+    }
+  };
   /** A pull request whose head branch lives in this repository, not a fork. */
   const fromHere = (v: unknown, head: string): boolean => {
     if (!isObject(v) || !isObject(v.head) || v.head.ref !== head) return false;
@@ -950,7 +971,7 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
     try {
       b = await api.call("GET", `${repo}/branches/${branch.split("/").map(encodeURIComponent).join("/")}`);
     } catch (err) {
-      if (err instanceof ForgeApiError && err.status === 404) return undefined;
+      if (notFound(err)) return undefined;
       throw err;
     }
     // GitHub names the commit `sha`, Forgejo `id`.
@@ -1084,7 +1105,7 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
         const got = await api.call("GET", `${repo}/pulls/${pr}`);
         return isObject(got) && got.state === "open" && got.merged !== true;
       } catch (err) {
-        if (err instanceof ForgeApiError && err.status === 404) return false;
+        if (notFound(err)) return false;
         throw err;
       }
     },
@@ -1094,7 +1115,7 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
           const pr = await api.call("GET", `${repo}/commits/${sha}/pull`);
           return isObject(pr) && typeof pr.number === "number" ? pr.number : null;
         } catch (err) {
-          if (err instanceof ForgeApiError && err.status === 404) return null;
+          if (notFound(err)) return null;
           throw err;
         }
       }
@@ -1121,33 +1142,12 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
       // GitHub filters by `owner:branch` server-side; Forgejo's list takes no
       // head filter, so every open page is read and matched here.
       const owner = opts.repo.split("/")[0];
-      const query = kind === "github" ? `?state=open&head=${encodeURIComponent(`${owner}:${head}`)}` : "?state=open";
-      let listed: unknown[];
-      try {
-        listed = await api.list(`${repo}/pulls${query}`, pageParams, pageSize);
-      } catch (err) {
-        // Forgejo answers the list with 404 while it still counts the repository
-        // as empty (just after the first push). That is no pull request; a
-        // repository that is really missing 404s on its own read too.
-        if (kind !== "forgejo" || !(err instanceof ForgeApiError) || err.status !== 404) throw err;
-        await api.call("GET", repo);
-        return undefined;
-      }
-      const open = listed.filter((p) => fromHere(p, head));
-      return open.map(pull).filter((p): p is PullRequest => p !== undefined).sort((a, b) => a.number - b.number)[0];
+      const open = (await openPulls(`&head=${encodeURIComponent(`${owner}:${head}`)}`)).filter((p) => fromHere(p, head));
+      return open.map(pull).filter((p): p is PullRequest => p !== undefined).sort(byNumber)[0];
     },
     async openPullRequests(base) {
       // GitHub filters by base server-side; Forgejo's list is matched here.
-      const query = kind === "github" ? `?state=open&base=${encodeURIComponent(base)}` : "?state=open";
-      let listed: unknown[];
-      try {
-        listed = await api.list(`${repo}/pulls${query}`, pageParams, pageSize);
-      } catch (err) {
-        // Forgejo answers 404 while it counts the repository as empty, as findPullRequest notes.
-        if (kind !== "forgejo" || !(err instanceof ForgeApiError) || err.status !== 404) throw err;
-        await api.call("GET", repo);
-        return [];
-      }
+      const listed = await openPulls(`&base=${encodeURIComponent(base)}`);
       const out: OpenPullRequest[] = [];
       for (const v of listed) {
         if (!isObject(v) || !isObject(v.head) || !isObject(v.base)) continue;
@@ -1160,7 +1160,7 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
         const author = isObject(v.user) ? str(v.user.login) : undefined;
         out.push({ number, head, headSha, base: into, ...(baseSha ? { baseSha } : {}), ...(author ? { author } : {}), fork: !fromHere(v, head) });
       }
-      return out.sort((a, b) => a.number - b.number);
+      return out.sort(byNumber);
     },
     branchHead: branchTip,
     async pullRequestHead(pr) {
@@ -1168,7 +1168,7 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
       try {
         got = await api.call("GET", `${repo}/pulls/${pr}`);
       } catch (err) {
-        if (err instanceof ForgeApiError && err.status === 404) return undefined;
+        if (notFound(err)) return undefined;
         throw err;
       }
       if (!isObject(got) || !isObject(got.head)) return undefined;
@@ -1336,6 +1336,8 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
     return { id, body: str(v.description) ?? "", ...(created ? { created } : {}), ...(str(v.title) !== undefined ? { title: str(v.title) } : {}), ...(author ? { author } : {}), ...(url ? { url } : {}) };
   };
   const notes = `${project}/merge_requests`;
+  /** The open merge requests from (`source`) or into (`target`) `branch`. */
+  const openMrs = (end: "source" | "target", branch: string): Promise<unknown[]> => api.list(`${notes}?state=opened&${end}_branch=${encodeURIComponent(branch)}`, pageParams, 100);
   const mergeRequest = (v: unknown): PullRequest | undefined => {
     if (!isObject(v)) return undefined;
     const number = num(v.iid);
@@ -1457,7 +1459,7 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
         try {
           member = await api.call("GET", `${project}/members/all/${id}`);
         } catch (err) {
-          if (err instanceof ForgeApiError && err.status === 404) return `${login} is not a member`;
+          if (notFound(err)) return `${login} is not a member`;
           return `could not read ${login}'s access (${err instanceof Error ? err.message : String(err)})`;
         }
         const level = isObject(member) ? (num(member.access_level) ?? 0) : 0;
@@ -1510,7 +1512,7 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
         const got = await api.call("GET", `${notes}/${mr}`);
         return isObject(got) && got.state === "opened";
       } catch (err) {
-        if (err instanceof ForgeApiError && err.status === 404) return false;
+        if (notFound(err)) return false;
         throw err;
       }
     },
@@ -1528,13 +1530,13 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
       return mergeRequest(made) ?? { number: 0, title, body: spec.body, head: spec.head, base };
     },
     async findPullRequest(head) {
-      const open = await api.list(`${notes}?state=opened&source_branch=${encodeURIComponent(head)}`, pageParams, 100);
+      const open = await openMrs("source", head);
       return open
         // A fork's merge request into this project has another source project.
         .filter((m) => isObject(m) && m.source_branch === head && (m.source_project_id === undefined || m.source_project_id === m.project_id))
         .map(mergeRequest)
         .filter((m): m is PullRequest => m !== undefined)
-        .sort((a, b) => a.number - b.number)[0];
+        .sort(byNumber)[0];
     },
     async scheduledRuns(q) {
       // The variable the gitlab lexicon's generated Op file selects a scheduled job by.
@@ -1552,7 +1554,7 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
     // #4628: the open merge requests into `base`, for the stale marking a push to it runs.
     async openPullRequests(base) {
       const out: OpenPullRequest[] = [];
-      for (const m of await api.list(`${notes}?state=opened&target_branch=${encodeURIComponent(base)}`, pageParams, 100)) {
+      for (const m of await openMrs("target", base)) {
         if (!isObject(m)) continue;
         const number = num(m.iid);
         const head = str(m.source_branch);
@@ -1564,11 +1566,11 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
         const fork = num(m.source_project_id) !== undefined && num(m.source_project_id) !== num(m.target_project_id);
         out.push({ number, head, headSha, base, ...(baseSha ? { baseSha } : {}), ...(author ? { author } : {}), fork });
       }
-      return out.sort((a, b) => a.number - b.number);
+      return out.sort(byNumber);
     },
     async mergeRequestJobs(branch, job) {
       const out: MergeRequestJob[] = [];
-      const open = await api.list(`${notes}?state=opened&target_branch=${encodeURIComponent(branch)}`, pageParams, 100);
+      const open = await openMrs("target", branch);
       for (const m of open) {
         if (!isObject(m)) continue;
         const iid = num(m.iid);
@@ -1596,7 +1598,7 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
       try {
         got = await api.call("GET", `${notes}/${mr}`);
       } catch (err) {
-        if (err instanceof ForgeApiError && err.status === 404) return undefined;
+        if (notFound(err)) return undefined;
         throw err;
       }
       if (!isObject(got)) return undefined;

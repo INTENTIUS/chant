@@ -88,7 +88,7 @@
 import type { ForgeKind } from "../pr-forge";
 import { PR_APPLY_GATE } from "../pr-loop";
 import { parseRequiresList } from "../pr-requires";
-import { CI_IMAGE, GITHUB_JOB_TOKEN, githubSecret, type CiRunner } from "../ci-jobs";
+import { CI_IMAGE, GITHUB_JOB_TOKEN, githubSecret, PR_ENV_REPORT_DIR, type CiRunner } from "../ci-jobs";
 import { FORGE_TOKEN_VARS, withoutForgeTokens } from "../ci-handover";
 import { OIDC_REQUEST_VARS } from "../ci-identity";
 import { parallelismProblem } from "../parallelism";
@@ -1057,8 +1057,7 @@ export function githubBaseFallback(branch?: string): string {
   return pushBaseFallback(JSON.stringify(branch ?? "main"), "$GITHUB_SHA");
 }
 
-/** Where the pull request environment jobs (#4298) write their reports, kept as a CI artifact. */
-export const PR_ENV_REPORT_DIR = ".chant/pr-env";
+export { PR_ENV_REPORT_DIR } from "../ci-jobs";
 
 /** The cron the generated `env-sweep` job runs on (#4298): hourly, at a minute off the hour. */
 export const PR_ENV_SWEEP_CRON = "17 * * * *";

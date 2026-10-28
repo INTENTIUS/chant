@@ -177,7 +177,8 @@ describe("a pr-review wave (#3684)", () => {
     const h = harness(digest("a"));
     let written: unknown;
     const recorded = await recordOpWaveHeadPlans({ spec: spec("pr-review"), cwd: h.cwd, exec: h.exec, head: HEAD, now: "t", write: async (p) => void (written = p) });
-    expect(recorded.waves).toEqual([{ wave: 1, name: "prod", digest: set(digest("a")) }]);
+    // #4630: the record keeps whether the wave changes anything and whether it is destructive.
+    expect(recorded.waves).toEqual([{ wave: 1, name: "prod", digest: set(digest("a")), changes: true, destructive: false }]);
     expect(written).toEqual(recorded);
   });
 });
