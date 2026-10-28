@@ -46,7 +46,13 @@ export interface TemplateRequest {
   addon?: string;
   /** The values given, by input name. */
   inputs: Record<string, unknown>;
+  /** Who asked, as the forge vouches for it: the login of the run's actor. */
   requestedBy: string;
+  /**
+   * The person the client says filled the form or asked the agent, when it
+   * names one. The forge does not vouch for it; it is shown as claimed.
+   */
+  claimedBy?: string;
   via: TemplateRequestVia;
 }
 
@@ -106,7 +112,7 @@ const ATTESTATION_RANK: Record<AttestationState, number> = { unsigned: 0, signed
 
 /** Fill `$schema` and `contract` into a request. */
 export function makeTemplateRequest(input: TemplateRequestInput): TemplateRequest {
-  const { kind, template, version, app, addon, inputs, requestedBy, via } = input;
+  const { kind, template, version, app, addon, inputs, requestedBy, claimedBy, via } = input;
   return {
     $schema: TEMPLATE_REQUEST_SCHEMA_ID,
     contract: TEMPLATE_REQUEST_CONTRACT,
@@ -117,6 +123,7 @@ export function makeTemplateRequest(input: TemplateRequestInput): TemplateReques
     ...(addon !== undefined ? { addon } : {}),
     inputs,
     requestedBy,
+    ...(claimedBy !== undefined ? { claimedBy } : {}),
     via,
   };
 }

@@ -1,7 +1,8 @@
 /**
  * The pull request body for a template request (#4651), and the read that
  * recovers the request from it. The body names the template, the version,
- * each input on its own row, the requester and where the request came from,
+ * each input on its own row, the requester (and the claimed requester, when
+ * the client names one) and where the request came from,
  * and says that nothing was applied or approved. The request itself follows
  * in a fenced block whose info string is `json` and the schema id, so behold
  * and an audit read it from the pull request without a second file.
@@ -41,6 +42,7 @@ export function requestBody(request: TemplateRequest, words: CiProductWords = ac
     `| Template | ${code(request.template)} |`,
     `| Version | ${code(request.version)} |`,
     `| Requested by | ${code(request.requestedBy)} |`,
+    ...(request.claimedBy !== undefined ? [`| Claimed by (as given by the client; the forge does not vouch for it) | ${code(request.claimedBy)} |`] : []),
     `| Through | ${VIA[request.via]} |`,
     "",
   ];

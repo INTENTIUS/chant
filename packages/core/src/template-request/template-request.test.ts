@@ -27,6 +27,7 @@ import {
   TemplateSpecError,
   templateName,
   templateSpecProblems,
+  validateTemplateRequest,
   type TemplateRequest,
   type TemplateRequestRefusalCode,
 } from "./index";
@@ -110,7 +111,7 @@ describe("schemas", () => {
     expect(requestSchema.$id).toBe(TEMPLATE_REQUEST_SCHEMA_ID);
     expect(TEMPLATE_REQUEST_SCHEMA_ID.endsWith("template-request/v1/template-request.schema.json")).toBe(true);
     expect(TEMPLATE_SPEC_SCHEMA_ID.endsWith("template-request/v1/template.schema.json")).toBe(true);
-    expect(Object.keys(requestSchema.properties).sort()).toEqual(["$schema", "addon", "app", "contract", "inputs", "kind", "requestedBy", "template", "version", "via"]);
+    expect(Object.keys(requestSchema.properties).sort()).toEqual(["$schema", "addon", "app", "claimedBy", "contract", "inputs", "kind", "requestedBy", "template", "version", "via"]);
   });
 
   test("the input kinds are the schema's, and each is documented there", () => {
@@ -242,7 +243,16 @@ describe("requestBranch", () => {
 
 describe("requestBody", () => {
   const words = resolveProductWords({ product: "terragucci" });
-  const request = base({ inputs: { bucket_name: "orders-data", tags: { team: "pay|ments" }, readers: ["svc-a", "svc-b"] }, via: "mcp" });
+  const request = makeTemplateRequest({
+    kind: "app",
+    template: "acme/bucket/aws",
+    version: "1.0.0",
+    app: "orders",
+    inputs: { bucket_name: "orders-data", tags: { team: "pay|ments" }, readers: ["svc-a", "svc-b"] },
+    requestedBy: "alice",
+    claimedBy: "bob",
+    via: "mcp",
+  });
 
   test("matches the golden", async () => {
     await expect(requestBody(request, words)).toMatchFileSnapshot("./__fixtures__/request-body.md");
@@ -261,6 +271,20 @@ describe("requestBody", () => {
     expect(body).toContain("add-on `cache` for app `orders`");
     expect(parseRequestBody(body)).toEqual(addon);
     expect(parseRequestBody(body.replace(/\n/g, "\r\n"))).toEqual(addon);
+  });
+
+  test("a claimed requester gets its own row, labelled as claimed, only when set", () => {
+    const body = requestBody(request, words);
+    expect(body).toContain("| Claimed by (as given by the client; the forge does not vouch for it) | `bob` |");
+    expect(parseRequestBody(body)?.claimedBy).toBe("bob");
+    const without = base();
+    expect(without).not.toHaveProperty("claimedBy");
+    const plain = requestBody(without, words);
+    expect(plain).not.toContain("Claimed by");
+    expect(parseRequestBody(plain)).toEqual(without);
+    expect(parseRequestBody(plain)).not.toHaveProperty("claimedBy");
+    expect(validateTemplateRequest({ ...without, claimedBy: "" }).length).toBeGreaterThan(0);
+    expect(validateTemplateRequest({ ...without, claimedBy: 7 }).length).toBeGreaterThan(0);
   });
 
   test("a body without the block, or with a broken one, carries no request", () => {
