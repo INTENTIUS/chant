@@ -315,7 +315,8 @@ describe("a step pinned to its engine release (#4592)", () => {
       snapshots: null,
     });
     await cap.plan!(ctx, step({ engine: "plunge", engineVersion: "0.1.0" }));
-    expect(bins).toEqual(["/opt/chant/plunge-0.1.0/plunge"]);
+    // The release copy (#4542) and the preview each resolve the runner; both get the pinned path.
+    expect(new Set(bins)).toEqual(new Set(["/opt/chant/plunge-0.1.0/plunge"]));
     expect(pinned.calls).toHaveLength(1);
     expect(pinned.calls[0].args[0]).toBe("preview");
     expect(path.calls).toHaveLength(0);
@@ -398,7 +399,8 @@ describe("review stacks in a pull request's environment (#4609)", () => {
       ["stack", "output", "--json", "--show-secrets=false", "--stack", "pr-12"],
     ]);
     expect(out).toMatchObject({ member: reviewMember, stack: "pr-12", fromWavePlan: true });
-    expect(plunge.calls.some((c) => c.args.includes("floci"))).toBe(false);
+    // Only the stack init names the template's stack, as --copy-config-from; no preview, up or output does.
+    expect(plunge.calls.slice(1).some((c) => c.args.includes("floci"))).toBe(false);
   });
 
   test("a step whose config waits on an upstream still names its review stack's location", async () => {

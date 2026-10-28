@@ -101,7 +101,13 @@ describe("export", () => {
     expect(l.finished[0]).toMatchObject({ result: "applied", detail: { resources: expect.any(Number) } });
     expect(JSON.stringify(l.finished)).not.toContain("ciphertext");
 
-    expect((await gatedStackExport({ ...common, dir: stackDir(), stack: "dev", engine: "pulumi", out: join(outside(), "again.json") })).status).toBe("spent");
+    // The same request again (its `at` kept) answers spent and runs nothing.
+    expect((await gatedStackExport({ ...common, now: first.request.at, dir: stackDir(), stack: "dev", engine: "pulumi", out: join(outside(), "again.json") })).status).toBe("spent");
+    // A later export is a new request: it waits for its own approval, and the spent one runs nothing again.
+    const again = await gatedStackExport({ ...common, now: "2000-01-01T00:00:00.000Z", dir: stackDir(), stack: "dev", engine: "pulumi", out: join(outside(), "again.json") });
+    expect(again.status).toBe("waiting");
+    expect(again.digest).not.toBe(first.digest);
+    expect(pulumi.calls).toHaveLength(1);
   });
 
   test("refused in CI, inside a git working tree, and over an existing file, before anything is asked", async () => {

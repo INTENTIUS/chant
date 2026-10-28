@@ -29,7 +29,7 @@ describe("pulumiPlugin", () => {
   test("buildRoots reads the member's export and graphMeta reports it", async () => {
     const roots = await pulumiPlugin.buildRoots!({ config: { pulumi: { member: { dir: member, label: "infra" } } } } as never);
     expect([...roots.entities.keys()]).toContain("infra/aws:s3/bucket:Bucket::assets");
-    expect(pulumiPlugin.graphMeta!(roots.entities)).toEqual({ pulumiMember: { export: "stack-export.json", objects: 5, exported: true } });
+    expect(pulumiPlugin.graphMeta!(roots.entities)).toEqual({ pulumiMember: { export: "stack-export.json", exportSource: "file", objects: 5, exported: true } });
   });
 
   test("with no member in the config, no entities and no report", async () => {

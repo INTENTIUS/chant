@@ -8,6 +8,7 @@
  * to a fake collector on 127.0.0.1. No pulumi or plunge binary runs here, and
  * nothing reaches a backend or a real endpoint.
  */
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -173,7 +174,9 @@ describe("a plunge up's timings in its run record and trace (#4579 acceptance, a
     const registry = new CapabilityRegistry().register(cap as Capability<never, unknown>);
     const spec: OpWavesSpec = { name: "stacks", op: "pulumi-up", step: { kind: "pulumi-up", dir, stack: "floci", engine: engineName }, waves: [{ name: "floci", runs: [{ target: "site" }], gate: "never" }] };
     const cwd = mkdtempSync(join(tmpdir(), "plunge-timings-wave-"));
-    const show: OpWaveShowAtBase = () => ({ sha: "b".repeat(40), text: JSON.stringify(spec) });
+    // The wave's base is a real commit: a CrossGuard step reads its policy packs there (#4613).
+    const base = execFileSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf-8" }).trim();
+    const show: OpWaveShowAtBase = () => ({ sha: base, text: JSON.stringify(spec) });
     const records: OpRunRecordInput[] = [];
     const result = await runOpWave({
       spec,

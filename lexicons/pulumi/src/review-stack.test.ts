@@ -188,11 +188,12 @@ describe("the review stack teardown (#4609)", () => {
       ]),
     );
     expect(torn.dropped).toBe(0);
+    // The teardown plan orders its entries by name (lifecycle/teardown.ts), so infra/edge comes first.
     expect(pulumi.calls).toEqual([
-      ["destroy", "--yes", "--json", "--stack", "pr-12"],
-      ["stack", "rm", "--yes", "--stack", "pr-12"],
       ["destroy", "--yes", "--json", "--stack", "pr-12-edge"],
       ["stack", "rm", "--yes", "--stack", "pr-12-edge"],
+      ["destroy", "--yes", "--json", "--stack", "pr-12"],
+      ["stack", "rm", "--yes", "--stack", "pr-12"],
     ]);
     expect(plunge.calls).toEqual([
       ["destroy", "--yes", "--json", "--stack", "acme/api/pr-12"],
