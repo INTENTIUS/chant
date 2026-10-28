@@ -52,6 +52,12 @@ export interface HeldVersion {
   content: string;
   /** The revision the host keeps for it, when it keeps one. */
   revision?: string;
+  /**
+   * The host's status for a version it has not finished taking in, such as
+   * HCP's `pending` before its archive is parsed (chant#4604). Absent for a
+   * version consumers can install; `content` is empty while it is set.
+   */
+  status?: string;
 }
 
 /** The reads a module target answers beside the contract. They read, and change nothing. */
