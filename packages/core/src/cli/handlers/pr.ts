@@ -181,6 +181,8 @@ export interface Prepared {
   hookPlace?: PrHookPlace;
   /** `pr-plan --target` (#4620): the addresses each planned member's capability plan narrows to. */
   targets?: Record<string, string[]>;
+  /** `pr-plan --parallelism <n>` (#4625): how many members of a wave plan at once. */
+  parallelism?: number;
   /**
    * Set when `ci.branches` or `ci.labels` (#4292) leave the member out of this
    * stage: why. The plan is then empty, so the stage reports `nothing`.
@@ -502,6 +504,7 @@ export async function planBare(p: Prepared, onRunEvent?: RunEventSink): Promise<
     policyBase: p.base,
     ...(onRunEvent ? { onRunEvent } : {}),
     ...(p.targets ? { targets: p.targets } : {}),
+    ...(p.parallelism !== undefined ? { parallelism: p.parallelism } : {}),
   });
 }
 
@@ -815,6 +818,7 @@ async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> 
   if (typeof p === "number") return p;
   const narrowed = narrowToTargets(p, ctx.args.targets);
   if (narrowed !== undefined) return narrowed;
+  if (ctx.args.parallelism !== undefined) p.parallelism = ctx.args.parallelism;
   const op = prOp(ctx.args.pr, p.member);
   placeHooks(ctx, p, "plan", op);
   const upload = openUpload(stage, "plan", ctx.args.pr, p);

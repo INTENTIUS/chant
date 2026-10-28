@@ -53,6 +53,9 @@ async function engineSetupFor(path: string): Promise<string[]> {
  * pull request before it merges, beside the record job.
  * `--preview-comment` (#4620) writes the jobs that answer the product's plan
  * comment with a preview of the pull request's head.
+ * `--pr-runner`, `--pr-variable`, `--pr-secret` and `--parallelism` (#4625)
+ * set each stage's runner, the plan and apply jobs' variables and passed
+ * secrets, and how many members the plan plans at once.
  */
 function prLoopOption(args: CommandContext["args"], reportUrl: string | undefined, requireReview = false, requireRunnerStart = false): PrLoopPipelineOptions {
   // #4550: a product's bin set its words; the generated jobs answer its comment and run its bin.
@@ -72,6 +75,11 @@ function prLoopOption(args: CommandContext["args"], reportUrl: string | undefine
     ...(args.applyBeforeMerge ? { applyBeforeMerge: true } : {}),
     ...(args.previewComment ? { previewComment: true } : {}),
     ...(args.requires ? { applyRequires: args.requires } : {}),
+    // #4625: where the jobs run, and what the jobs that plan or apply get.
+    ...(args.prRunners ? { runners: Object.fromEntries(Object.entries(args.prRunners).map(([stage, labels]) => [stage, labels.length === 1 ? labels[0]! : labels])) } : {}),
+    ...(args.prVariables ? { variables: args.prVariables } : {}),
+    ...(args.prSecrets ? { secrets: args.prSecrets } : {}),
+    ...(args.parallelism !== undefined ? { parallelism: args.parallelism } : {}),
   };
 }
 

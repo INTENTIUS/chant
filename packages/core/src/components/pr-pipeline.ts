@@ -88,8 +88,10 @@
 import type { ForgeKind } from "../pr-forge";
 import { PR_APPLY_GATE } from "../pr-loop";
 import { parseRequiresList } from "../pr-requires";
-import { CI_IMAGE, GITHUB_JOB_TOKEN } from "../ci-jobs";
-import { withoutForgeTokens } from "../ci-handover";
+import { CI_IMAGE, GITHUB_JOB_TOKEN, githubSecret, type CiRunner } from "../ci-jobs";
+import { FORGE_TOKEN_VARS, withoutForgeTokens } from "../ci-handover";
+import { OIDC_REQUEST_VARS } from "../ci-identity";
+import { parallelismProblem } from "../parallelism";
 import { EMPTY_TREE_SHA } from "./changed-files";
 import { layerWaves } from "../gated-waves";
 import type { DriverComponent } from "./driver";
@@ -295,6 +297,91 @@ export interface PrLoopPipelineOptions {
    * Default false.
    */
   previewComment?: boolean;
+  /**
+   * Where the pull request loop's jobs run (#4625), by stage: `plan` for the
+   * plan and the comment preview, `apply` for the apply jobs, the record
+   * job and a pull request environment's up, down and sweep, and `default`
+   * for every other job (the note jobs, the lock jobs, the control
+   * dispatch) and for a stage left out. A plywood `runners` key maps
+   * `preview` onto `plan` and `up` onto `apply`. Absent: the forge's
+   * default runner.
+   */
+  runners?: PrLoopRunners;
+  /**
+   * Variables for the jobs that plan or apply (#4625): the plan, the
+   * comment preview, the apply and the record. Values as the forge reads
+   * them; a name of a forge token or a token request variable is refused.
+   */
+  variables?: Record<string, string>;
+  /**
+   * Secrets passed to the same jobs (#4625), as `{ <variable>: <secret> }`:
+   * the repository secret named `<secret>` as `<variable>`. GitHub and
+   * Forgejo map `secrets.<secret>`; GitLab, where every job has the CI/CD
+   * variables, maps `$<secret>` when the names differ. The plan job still
+   * drops the forge tokens before the change's code runs, and a passed name
+   * of a forge token is refused.
+   */
+  secrets?: Record<string, string>;
+  /**
+   * How many members of a wave the plan job plans at once (#4625): `pr-plan
+   * --parallelism <n>`, on the plan and the comment preview. Absent: all of
+   * a wave's members at once.
+   */
+  parallelism?: number;
+}
+
+/** Where the pull request loop's jobs run, by stage (#4625). */
+export interface PrLoopRunners {
+  plan?: CiRunner;
+  apply?: CiRunner;
+  default?: CiRunner;
+}
+
+/** A pull request loop job's stage for its runner (#4625). */
+export type PrLoopRunnerStage = keyof PrLoopRunners;
+
+/** The runner of `stage` (#4625): the stage's own, else `default`, else undefined for the forge's default. */
+export function prLoopRunner(options: Pick<PrLoopPipelineOptions, "runners">, stage: PrLoopRunnerStage): CiRunner | undefined {
+  return options.runners?.[stage] ?? options.runners?.default;
+}
+
+/**
+ * The runner stage of a pull request loop job by its name (#4625), with a
+ * workspace member's `<member>-` prefix taken off first: the plan and the
+ * comment preview plan; the apply jobs, the record job and a pull request
+ * environment's up, down and sweep apply; every other job runs on the
+ * default.
+ */
+export function prLoopJobStage(name: string, member?: string): PrLoopRunnerStage {
+  const bare = member && name.startsWith(`${member}-`) ? name.slice(member.length + 1) : name;
+  if (bare === "plan" || bare === PR_COMMENT_PREVIEW_JOB) return "plan";
+  if (bare === "apply" || bare === "record" || /^apply-wave-\d+$/.test(bare) || bare === "env-up" || bare === "env-down" || bare === "env-sweep") return "apply";
+  return "default";
+}
+
+/**
+ * The variables and passed secrets of the jobs that plan or apply (#4625),
+ * as the forge spells them. Throws on a name the loop sets itself or a
+ * forge token, which the plan must be able to drop.
+ */
+export function prLoopPassedEnv(forge: ForgeKind, options: Pick<PrLoopPipelineOptions, "variables" | "secrets">): Record<string, string> {
+  const reserved = new Set<string>([...FORGE_TOKEN_VARS, ...OIDC_REQUEST_VARS, "BASE_SHA", "PR_NUMBER", "HEAD_SHA", "GREEN_SHA", "CHANT_RUN_EVENTS_DIR", "CHANT_RUNNER_KEY"]);
+  const out: Record<string, string> = {};
+  const name = /^[A-Za-z_][A-Za-z0-9_]*$/;
+  for (const [key, value] of Object.entries(options.variables ?? {})) {
+    if (!name.test(key)) throw new Error(`the pull request jobs' variable ${JSON.stringify(key)} is not a variable name`);
+    if (reserved.has(key)) throw new Error(`the pull request jobs' variable ${key} is one the jobs set or drop themselves; give it another name`);
+    out[key] = value;
+  }
+  for (const [key, secret] of Object.entries(options.secrets ?? {})) {
+    if (!name.test(key) || !name.test(secret)) throw new Error(`the passed secret ${JSON.stringify(key)}: ${JSON.stringify(secret)} must map a variable name to a secret name`);
+    if (reserved.has(key)) throw new Error(`the passed secret ${key} is a name the jobs set or drop themselves, and the plan job drops the forge tokens before the change's code runs; pass it under another name`);
+    if (key in out) throw new Error(`${key} is both a variable and a passed secret of the pull request jobs; give one`);
+    if (forge === "gitlab") {
+      if (key !== secret) out[key] = `$${secret}`;
+    } else out[key] = githubSecret(secret);
+  }
+  return out;
 }
 
 /** The lock job's step names and commands (#4327), shared by the GitHub-shaped generators. */
@@ -517,6 +604,8 @@ export interface PrLoopJob {
    * pipeline never gets.
    */
   run: { command: string; env: Record<string, string> };
+  /** Where the job runs (#4625), from the loop's `runners`: the plan's or the apply's, else `default`. Absent: the forge's default. */
+  runner?: CiRunner;
 }
 
 /** The lines `build` (#4088) runs before a job's command: the build, then the lint. Empty without the option. */
@@ -550,15 +639,25 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
   const github = forge !== "gitlab";
   const buildLines = prLoopBuildLines(env, options);
   const build = buildLines.length > 0 ? { build: buildLines } : {};
+  // #4625: the caller's variables and passed secrets, in every job that plans or applies.
   const jobEnv: Record<string, string> = {
+    ...prLoopPassedEnv(forge, options),
     ...(github ? { GITHUB_TOKEN: GITHUB_JOB_TOKEN } : {}),
     ...(options.events ? { CHANT_RUN_EVENTS_DIR: PR_LOOP_EVENTS_DIR } : {}),
   };
+  const planRunner = prLoopRunner(options, "plan");
+  if (options.parallelism !== undefined) {
+    const problem = parallelismProblem("parallelism", options.parallelism);
+    if (problem) throw new Error(`the pull request plan's ${problem}`);
+  }
+  const parallelism = options.parallelism !== undefined ? ["--parallelism", String(options.parallelism)] : [];
+  const applyRunner = prLoopRunner(options, "apply");
   // #4156: the flags `chant ci run` rebuilds `command` from. It finds the member from the directory it runs in.
   const ciRun = (job: PrLoopJob["jobName"]): string[] => [
     "chant", "ci", "run", job, "--in-place", ...(job === "plan" ? ["--no-push"] : []),
     ...(job === "apply" && !early ? [] : ["--base", '"$BASE_SHA"']), ...(job === "plan" || (job === "apply" && early) ? ["--pr", '"$PR_NUMBER"'] : []),
     ...(job === "apply" && early ? ["--apply-before-merge", ...requires] : []),
+    ...(job === "plan" ? parallelism : []),
     "--env", env, "--gate", gate, "--forge", forge,
     ...(job !== "record" && options.waveGate ? ["--wave-gate", options.waveGate] : []),
     ...(job !== "plan" && options.branch ? ["--branch", JSON.stringify(options.branch)] : []),
@@ -591,6 +690,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
     env: jobEnv,
     checkout: [greenCheckout(greenBranch)],
     greenBranch,
+    ...(applyRunner !== undefined ? { runner: applyRunner } : {}),
     ...build,
     run: { command: ciRun("apply").join(" "), env: runEnv(jobEnv) },
   };
@@ -604,6 +704,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
     ].join(" "),
     env: earlyEnv,
     checkout: [pullRequestCheckout(forge)],
+    ...(applyRunner !== undefined ? { runner: applyRunner } : {}),
     run: { command: ciRun("apply").join(" "), env: runEnv(earlyEnv) },
   };
   const bin = options.words?.bin;
@@ -611,9 +712,10 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
     {
       jobName: "plan",
       // With `waveGate` the plan's note says the later waves may stop at their own gates (#4003).
-      command: ["chant", "components", "pr-plan", "--base", '"$BASE_SHA"', "--pr", '"$PR_NUMBER"', ...common, ...(options.waveGate ? ["--wave-gate", options.waveGate] : []), "--no-status"].join(" "),
+      command: ["chant", "components", "pr-plan", "--base", '"$BASE_SHA"', "--pr", '"$PR_NUMBER"', ...common, ...(options.waveGate ? ["--wave-gate", options.waveGate] : []), ...parallelism, "--no-status"].join(" "),
       env: planEnv,
       ...build,
+      ...(planRunner !== undefined ? { runner: planRunner } : {}),
       // #4328: no runner key either. The step drops it, but the job's environment is the pull request's code's too.
       run: { command: ciRun("plan").join(" "), env: planEnv },
     },
@@ -624,6 +726,8 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
       env: applyEnv,
       setup: [github ? githubBaseFallback(options.branch) : gitlabBaseFallback(options.branch)],
       ...build,
+      // The record runs on merge, where the apply would.
+      ...(applyRunner !== undefined ? { runner: applyRunner } : {}),
       run: { command: ciRun("record").join(" "), env: runEnv(applyEnv) },
     },
   ].map((job) => jobWithBin(job as PrLoopJob, bin));

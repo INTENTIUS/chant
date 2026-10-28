@@ -104,6 +104,7 @@ import type { LockGrain } from "../lifecycle/lock-rows";
 import type { LockLiveness } from "../lifecycle/resource-lock";
 import type { GatePolicyExec } from "../gate-policy";
 import { gitOpWaveNewerCommit, opWaveStandDownReason, tipAppliesTargets, type OpWaveNewerCommitPort } from "./op-waves-stand-down";
+import { mapLimited } from "../parallelism";
 import {
   applyOpWaveStep,
   opWaveCosts,
@@ -3398,6 +3399,9 @@ async function applyLeased(
       log(`wave ${k} (${wave.name}): apply failed, so none of ${runs.map((r) => r.target).join(", ")} counts as applied`);
       result.failed.push(...runs.map((r) => r.target));
     }
+  } else if (spec.step && (wave.parallelism ?? spec.parallelism ?? 1) > 1) {
+    // #4625: the step's runs apply several at once.
+    await applyStepRunsAtOnce(options, ctx, runs, wave.parallelism ?? spec.parallelism!);
   } else {
     const order = new Map(runs.map((r, i) => [r.target, i]));
     for (const [i, run] of runs.entries()) {
@@ -3494,6 +3498,60 @@ async function applyLeased(
     if (after.failed) failed(ctx, `wave ${k} (${wave.name}) applied, and then a hook after the apply failed`);
   }
   if (recordPath && result.hooks.length > 0) writeRecord(recordPath, decision, result);
+}
+
+/**
+ * A wave's step runs applied at most `limit` at once (#4625). A run waits
+ * for each run the wave lists before it that it depends on, and is blocked,
+ * as one at a time, when that one failed or was blocked. The outcomes land
+ * in the result in the wave's order.
+ */
+async function applyStepRunsAtOnce(options: RunOpWaveOptions, ctx: WaveContext, runs: readonly OpWaveRun[], limit: number): Promise<void> {
+  const { spec, k, wave, log, result } = ctx;
+  type Outcome = { applied: true } | { failed: true } | { moved: true } | { blockedBy: string };
+  const order = new Map(runs.map((r, i) => [r.target, i]));
+  const registry = await opWaveRegistry(options, ctx.cwd, options.capabilities);
+  const settled = new Map<string, Promise<Outcome>>();
+  const outcomes = await mapLimited(runs, limit, (run, i) => {
+    const going = (async (): Promise<Outcome> => {
+      const earlier = (run.dependsOn ?? []).filter((d) => (order.get(d) ?? Infinity) < i).sort();
+      for (const dep of earlier) {
+        const got = await settled.get(dep)!;
+        if ("failed" in got || "blockedBy" in got) {
+          const by = "blockedBy" in got ? got.blockedBy : dep;
+          log(`${run.target}: blocked by ${by}, so not applied`);
+          return { blockedBy: by };
+        }
+      }
+      const plan = ctx.steps?.get(run.target);
+      if (!plan) {
+        log(`${run.target}: this job holds no plan of it to apply`);
+        return { failed: true };
+      }
+      const startedMs = targetStarted(options, k, run.target);
+      const got = await applyOpWaveStep({ spec, wave, registry }, run, plan);
+      targetSettled(options, result, k, run.target, startedMs, got.outcome === "applied" ? "ok" : got.outcome === "moved" ? "skipped" : "failed", {
+        ...(got.outcome !== "applied" ? { error: got.reason } : {}),
+        ...(got.facts ? { facts: got.facts } : {}),
+      });
+      if (got.outcome === "applied") return { applied: true };
+      if (got.outcome === "moved") {
+        log(`${run.target}: its plan moved since wave ${k} was decided, so it was not applied: ${got.reason}`);
+        return { moved: true };
+      }
+      log(`${run.target}: apply failed: ${got.reason}`);
+      return { failed: true };
+    })();
+    settled.set(run.target, going);
+    return going;
+  });
+  for (const [i, got] of outcomes.entries()) {
+    const target = runs[i]!.target;
+    if ("applied" in got) result.applied.push(target);
+    else if ("moved" in got) result.moved.push(target);
+    else if ("failed" in got) result.failed.push(target);
+    else result.blocked = { ...result.blocked, [target]: got.blockedBy };
+  }
 }
 
 /**
