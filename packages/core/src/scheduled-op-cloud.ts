@@ -8,6 +8,12 @@
  * after its own, started only when the run exits with chant's drift code,
  * which trades for the update's identity and runs the update. The drift
  * check never holds the update's identity.
+ *
+ * The update job holds `contents: read`, and `update.permissions` adds
+ * scopes to it. It may raise `contents` to `write` (2026-10-28 ruling), so
+ * an update such as `plywood up` can push its records to `chant/lifecycle`
+ * with the job token. The drift check's job keeps the finding-mode's
+ * scopes whatever the update asks for.
  */
 
 import { OIDC_REQUEST_VARS } from "./ci-identity";
@@ -33,7 +39,8 @@ export function withoutTokenRequestLine(line: string): string {
 /**
  * Refuse a `cloud` or `update` a generator could not render: a malformed
  * trade spec, an update with no command, an update on a push trigger or a
- * review split, or one beside a comment agent.
+ * review split, or one beside a comment agent, and an `update.permissions`
+ * that restates `contents` at anything but `write`.
  */
 export function assertScheduledOpCloud(spec: ScheduledOpSpec): void {
   const where = `Scheduled Op "${spec.name}"`;
@@ -52,7 +59,10 @@ export function assertScheduledOpCloud(spec: ScheduledOpSpec): void {
   if (spec.agent?.on === "comment") throw new Error(`${where}: update follows a drift check's run, and a comment agent's workflow has none.`);
   const trigger = resolveOpTrigger(spec);
   if (trigger.kind === "push") throw new Error(`${where}: update follows a drift check's run; give it a cron or pull_request trigger.`);
-  for (const scope of Object.keys(update.permissions ?? {})) {
-    if (scope === "contents") throw new Error(`${where}: update.permissions names contents, which the update job holds as read already; it adds scopes, never restates one.`);
+  for (const [scope, value] of Object.entries(update.permissions ?? {})) {
+    // 2026-10-28 ruling: contents may be raised to write, so the update can record on chant/lifecycle.
+    if (scope === "contents" && value !== "write") {
+      throw new Error(`${where}: update.permissions names contents: ${String(value)}, which the update job holds already; contents may only be raised to write, for an update that records on chant/lifecycle.`);
+    }
   }
 }

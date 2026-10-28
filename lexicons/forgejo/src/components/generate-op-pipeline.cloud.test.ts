@@ -16,4 +16,10 @@ describe("cloud identities on a Forgejo scheduled Op (#4631)", () => {
     expect(yaml).toContain("needs.drift-dev.outputs.drift == 'true'");
     expect(yaml).toContain("role/update");
   });
+
+  test("an update with contents: write renders, and the refusal of contents: read holds (2026-10-28 ruling)", () => {
+    const spec: ScheduledOpSpec = { name: "drift-dev", trigger: { kind: "cron", schedule: "0 6 * * *" }, findingMode: "issue", cloud: PREVIEW, update: { command: "plywood up", cloud: UPDATE, permissions: { contents: "write" } } };
+    expect(generateForgejoOpPipeline([spec]).files[0]!.yaml).toContain("drift-dev-update:");
+    expect(() => generateForgejoOpPipeline([{ ...spec, update: { command: "plywood up", permissions: { contents: "read" } } }])).toThrow(/contents may only be raised to write/);
+  });
 });

@@ -69,3 +69,28 @@ describe("an update on drift (#4631)", () => {
     expect(() => gen({ ...DRIFT, update: { command: " " } })).toThrow(/command/);
   });
 });
+
+describe("contents: write on the update job (#4631, 2026-10-28 ruling)", () => {
+  const plain = gen(DRIFT);
+  const spec: ScheduledOpSpec = { ...DRIFT, update: { command: "npx --no-install plywood up", cloud: UPDATE, permissions: { contents: "write" } } };
+  const doc = gen(spec);
+
+  test("the update job may raise contents to write, so it records on chant/lifecycle", () => {
+    expect(doc.jobs["plywood-drift-dev-update"]!.permissions).toEqual({ contents: "write", "id-token": "write" });
+  });
+
+  test("the drift check's job and the workflow keep their scopes", () => {
+    expect(doc.permissions).toEqual(plain.permissions);
+    expect(doc.jobs["plywood-drift-dev"]!.permissions).toEqual(plain.jobs["plywood-drift-dev"]!.permissions);
+    expect(doc.jobs["plywood-drift-dev"]!.permissions!.contents).not.toBe("write");
+  });
+
+  test("the identity scoping stays: the check holds the preview identity, the update its own", () => {
+    expect(JSON.stringify(doc.jobs["plywood-drift-dev"])).not.toContain("role/update");
+    expect(JSON.parse(doc.jobs["plywood-drift-dev-update"]!.steps[0]!.env!.CHANT_CLOUD_TRADE!)).toEqual(UPDATE);
+  });
+
+  test("contents restated at read is still refused", () => {
+    expect(() => gen({ ...DRIFT, update: { command: "x", permissions: { contents: "read" } } })).toThrow(/contents may only be raised to write/);
+  });
+});
