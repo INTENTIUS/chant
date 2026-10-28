@@ -34,6 +34,22 @@ export interface DeployUnitRule {
   field: string;
   /** The lexicon whose `describeStackStatus` reads this kind of unit. */
   lexicon: string;
+  /**
+   * The unit from the whole step, when `field` alone does not name it
+   * uniquely. Undefined skips the step, as a missing `field` does.
+   */
+  unitOf?: (step: Record<string, unknown>) => string | undefined;
+}
+
+/**
+ * A Pulumi stack's unit: `<dir>/<stack>`, or `<stack>` for a project at the
+ * project root. `dir` is where `Pulumi.yaml` is, relative to the project root,
+ * so two projects with a `dev` stack are two units. The pulumi lexicon's
+ * `changedUnits` answers with the same names.
+ */
+export function pulumiStackUnit(dir: string, stack: string): string {
+  const d = dir.replace(/\\/g, "/").replace(/^(\.\/)+/, "").replace(/\/+$/, "");
+  return d === "" || d === "." ? stack : `${d}/${stack}`;
 }
 
 /**
@@ -68,6 +84,15 @@ export const DEPLOY_UNIT_RULES: readonly DeployUnitRule[] = [
   // change signal naming the member puts the component in the change. No
   // lexicon observes it: the member's own pipeline reports its status.
   { kind: "member-outputs", field: "member", lexicon: "workspace" },
+  // A Pulumi stack (plywood#22). Its unit is the stack qualified by the
+  // project's directory (`pulumiStackUnit`), which the pulumi lexicon's
+  // `changedUnits` names for a changed stack config or program file.
+  {
+    kind: "pulumi-up",
+    field: "stack",
+    lexicon: "pulumi",
+    unitOf: (s) => (typeof s.stack === "string" && s.stack !== "" ? pulumiStackUnit(typeof s.dir === "string" ? s.dir : ".", s.stack) : undefined),
+  },
 ];
 
 /** One resolved unit a component's deploy composition targets. */
@@ -99,7 +124,7 @@ export function deployUnits(deploy: readonly UnitBearingPhase[]): DeployUnit[] {
       const s = step as { kind?: string } & Record<string, unknown>;
       const rule = s.kind ? byKind.get(s.kind) : undefined;
       if (!rule) continue;
-      const unit = s[rule.field];
+      const unit = rule.unitOf ? rule.unitOf(s) : s[rule.field];
       if (typeof unit !== "string" || unit.length === 0) continue;
       const key = `${rule.lexicon}\0${unit}`;
       if (seen.has(key)) continue;

@@ -37,6 +37,7 @@ import {
 } from "../../observation";
 import { describeIdentities, identityStatusText, type IdentityRow } from "../../identity";
 import { discoverComponents } from "../../components/discover";
+import { changedFilesBetween, lexiconChangedUnits } from "../../components/changed-files";
 import { cfnDeployStacks } from "./components";
 import { affectedStacks } from "../../lifecycle/affected";
 import { rollbackToRevision } from "../../lifecycle/rollback";
@@ -2131,6 +2132,18 @@ export async function runLifecycleAffected(ctx: CommandContext): Promise<number>
       headRef: args.head,
       includeDependents: args.includeDependents,
     });
+    // Units that are not chant source, a Terraform root or a Pulumi stack, never
+    // show in the artifact diff; the lexicon that owns each answers from the
+    // changed paths (#3183), as `components pr-plan` and `fan-out --base` add them.
+    if (plugins.some((p) => p.changedUnits)) {
+      const root = resolve(".");
+      const units = await lexiconChangedUnits(plugins, {
+        projectRoot: root,
+        config: config as Record<string, unknown>,
+        changedFiles: await changedFilesBetween(root, args.base, args.head ?? "HEAD"),
+      });
+      if (units.length > 0) result = { ...result, changed: [...new Set([...result.changed, ...units])].sort() };
+    }
   } catch (err) {
     console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
     return 1;

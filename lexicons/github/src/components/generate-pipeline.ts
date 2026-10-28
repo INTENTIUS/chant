@@ -78,7 +78,7 @@ import {
   PR_PLAN_NOTE_JOB,
   PR_LOCK_JOB,
   PR_UNLOCK_JOB,
-  PR_UNLOCK_COMMAND,
+  prUnlockCommand,
   prLockCommand,
   prCommentLockJobs,
   prCommentPreviewJob,
@@ -453,6 +453,8 @@ function prLoopGithubDoc(
   const prEnv = loop.prEnvironment ? prEnvGithubJobs(loop.forge ?? "github", image, beforeScript, extraScript, loop, member) : undefined;
   // #4327: with ci.locks: plan the pull_request trigger fires on close too, for the unlock job, and the plan skips that event.
   const locks = loop.locks === "plan";
+  // plywood#22: the lock lines run through the product's bin, as its other job lines do.
+  const lockBin = resolveProductWords(loop.words).bin;
   const closes = Boolean(prEnv) || locks;
   const lockJobs: Record<string, unknown> = locks
     ? {
@@ -471,7 +473,7 @@ function prLoopGithubDoc(
             {
               name: "Lock the components the plan selected",
               env: { PR_NUMBER: "${{ github.event.pull_request.number }}", HEAD_SHA: "${{ github.event.pull_request.head.sha }}", GITHUB_TOKEN: GITHUB_JOB_TOKEN },
-              run: prLockCommand(forgeName),
+              run: prLockCommand(forgeName, lockBin),
             },
           ],
         },
@@ -483,7 +485,7 @@ function prLoopGithubDoc(
           steps: [
             { name: "Check out the target branch's commit", uses: CHECKOUT, with: { ref: "${{ github.event.pull_request.base.sha }}", "fetch-depth": 0 } },
             ...runSteps(beforeScript),
-            { name: "Release the pull request's locks", env: { PR_NUMBER: "${{ github.event.pull_request.number }}" }, run: PR_UNLOCK_COMMAND },
+            { name: "Release the pull request's locks", env: { PR_NUMBER: "${{ github.event.pull_request.number }}" }, run: prUnlockCommand(lockBin) },
           ],
         },
       }

@@ -22,6 +22,13 @@ describe("the Forgejo workflow with ci.locks: plan", () => {
     expect(doc.jobs.unlock!.steps.some((s) => s.run === 'chant unlock --pr "$PR_NUMBER"')).toBe(true);
   });
 
+  test("with plywood's words the lines run through its bin (plywood#22)", () => {
+    const words = { product: "plywood", bin: "npx --no-install plywood" };
+    const own = parseYAML(generateForgejoPipeline(ESTATE, { env: "prod", prLoop: { locks: "plan", words } }).yaml) as Doc;
+    expect(own.jobs.lock!.steps.some((s) => s.run?.startsWith("npx --no-install plywood lock --from-report ") && s.run.endsWith("--forge forgejo"))).toBe(true);
+    expect(own.jobs.unlock!.steps.some((s) => s.run === 'npx --no-install plywood unlock --pr "$PR_NUMBER"')).toBe(true);
+  });
+
   test("without ci.locks neither job is written", () => {
     const plain = parseYAML(generateForgejoPipeline(ESTATE, { env: "prod", prLoop: {} }).yaml) as Doc;
     expect(Object.keys(plain.jobs)).not.toContain("lock");

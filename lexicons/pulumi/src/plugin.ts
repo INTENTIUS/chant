@@ -136,6 +136,18 @@ export const pulumiPlugin: LexiconPlugin = {
     return { entities: read.entities, warnings: read.warnings };
   },
 
+  /**
+   * The stacks a change touched (#3183, INTENTIUS/plywood#22): a changed
+   * `Pulumi.<stack>.yaml` is that stack, any other file of a project is every
+   * stack with a config beside its `Pulumi.yaml`. Named as a `pulumi-up`
+   * step's deploy unit, so `chant components pr-plan` and `fan-out --base`
+   * select the components that update them. See ./changed-units.ts.
+   */
+  async changedUnits(ctx) {
+    const { pulumiChangedUnits } = await import("./changed-units");
+    return pulumiChangedUnits(ctx.projectRoot, ctx.changedFiles);
+  },
+
   graphMeta() {
     const report = lastMemberReport();
     return report ? { pulumiMember: report } : undefined;
