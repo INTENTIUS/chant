@@ -48,10 +48,19 @@ JSON Schemas (draft 2020-12) of the e2e harness (chant#4587). `index.ts` exports
 | `reportUrl` | yes | The pipeline's `--report-url`, `s3://<bucket>/<prefix>`. |
 | `env` | no | The chant environment the ledger records runs under. Default `local`. |
 | `limits` | no | Seconds per kind of step, over the defaults in `steps.ts`. |
-| `steps` | yes | In order. `do` is open, open-concurrent, plan, approve, merge, apply, out-of-band or kill-job; each may carry `expect`. |
+| `steps` | yes | In order. `do` is open, open-concurrent, await-pull, plan, approve, merge, comment, apply, out-of-band or kill-job; each may carry `expect`. |
 | `break` | yes | The BREAK arm: `env` with `BREAK: "1"`, and an optional `overlay` copied over every pull request of the break run. |
 
-An outcome in `expect` has one key: `report` (`status`, `components`, `only`) on a plan or apply step, `ledger` (`op`, `status`, `count`), `comment`, `issue` (`title`, `open`), or `exit` on an out-of-band step.
+An outcome in `expect` has one key: `report` (`status`, `components`, `only`) on a plan or apply step, `ledger` (`op`, `status`, `count`), `gated` (`op`, `status`, `count`), `comment`, `pull` (`title`, `files`, `only`) on a step with a pull request, `issue` (`title`, `open`), or `exit` on an out-of-band step.
+
+The steps a product's pull request needs:
+
+| Step | Fields | Does |
+|---|---|---|
+| `await-pull` | `branch`, `title`? | Waits, within its limit (300 s by default), for an open pull request from exactly `branch` whose title holds `title`, and binds it to the step's id. A product's command in an earlier `out-of-band` step opens it. Both runs wait for the same branch, and a pull request already open when the run started is never bound. |
+| `comment` | `pull`, `body`, `as`? | Posts `body` on the pull request of the open or await-pull step `pull`, as `author` (the default), `reviewer` or `admin`. Limit 60 s. |
+
+`plan`, `approve` and `merge` name an await-pull step in `pull` as they name an open step. The `pull` outcome reads the step's pull request: its title holds `title`, it changes every path in `files`, and with `only: true` it changes no other path. The `gated` outcome counts the gated requests of `op` asked since the run started, which write no op-run record and so never reach `ledger`: `gated` until a finished line names one, then `ok` when it applied or `failed`. These steps and outcomes were added within contract 1 by chant 0.124.57.
 
 ## e2e-claim-row/v1 and e2e-claims/v1
 

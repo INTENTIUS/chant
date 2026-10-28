@@ -3,7 +3,8 @@
  * a repo tree, an ordered list of pull request steps, and the outcomes each
  * step must show. The lint refuses one that cannot record a row: no claim
  * id, no BREAK arm, nothing to check, or a step that names a pull request or
- * a merge no earlier step made.
+ * a merge no earlier step made. An await-pull step makes a pull request as
+ * an open step does.
  */
 import { readFileSync } from "node:fs";
 import { validateScenario, type Scenario, type ScenarioStep } from "./schemas/index";
@@ -41,7 +42,7 @@ export function lintScenario(data: unknown): ScenarioFinding[] {
     if (seen.has(step.id)) out.push({ at: `${at}/id`, message: `step id ${step.id} is used twice` });
     const opened = (id: string) => {
       const o = seen.get(id);
-      return o !== undefined && (o.do === "open" || o.do === "open-concurrent");
+      return o !== undefined && (o.do === "open" || o.do === "open-concurrent" || o.do === "await-pull");
     };
     switch (step.do) {
       case "open-concurrent": {
@@ -54,7 +55,8 @@ export function lintScenario(data: unknown): ScenarioFinding[] {
       case "plan":
       case "approve":
       case "merge":
-        if (!opened(step.pull)) out.push({ at: `${at}/pull`, message: `${step.do} names ${step.pull}, which is not an earlier open step` });
+      case "comment":
+        if (!opened(step.pull)) out.push({ at: `${at}/pull`, message: `${step.do} names ${step.pull}, which is not an earlier open or await-pull step` });
         break;
       case "apply": {
         const m = seen.get(step.merge);
@@ -69,9 +71,9 @@ export function lintScenario(data: unknown): ScenarioFinding[] {
       if ("report" in e && step.do !== "plan" && step.do !== "apply") {
         out.push({ at: `${at}/expect/${j}`, message: `a report outcome belongs on a plan or apply step, not ${step.do}` });
       }
-      if ("comment" in e && !("pull" in step) && step.do !== "open" && step.do !== "open-concurrent") {
-        out.push({ at: `${at}/expect/${j}`, message: "a comment outcome belongs on a step with a pull request" });
-      }
+      const hasPull = "pull" in step || step.do === "open" || step.do === "open-concurrent" || step.do === "await-pull";
+      if ("comment" in e && !hasPull) out.push({ at: `${at}/expect/${j}`, message: "a comment outcome belongs on a step with a pull request" });
+      if ("pull" in e && !hasPull) out.push({ at: `${at}/expect/${j}`, message: "a pull outcome belongs on a step with a pull request" });
       if ("exit" in e && step.do !== "out-of-band") out.push({ at: `${at}/expect/${j}`, message: "an exit outcome belongs on an out-of-band step" });
     }
     seen.set(step.id, step);

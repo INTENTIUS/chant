@@ -5,14 +5,19 @@
  * the BREAK run, and checks each step's outcomes against chant's own reports
  * and run ledger, never the runner's status or logs.
  *
+ * A pull request comes from the driver's own open step or from a product:
+ * an await-pull step waits for the one a product opened from its branch
+ * (chant#4650), and later steps name it as they name an open step's.
+ *
  * A run ends one of three ways. Every outcome held: the plain run passes, and
  * a BREAK run that ends so was missed. An outcome did not hold: the run stops
  * there, the plain run fails, and the BREAK run was caught. A step did not
  * finish (past its limit, or an error): the run stalled, which is neither.
  */
 import { reportKey } from "../pr-report-url";
+import type { GatedRequestRead } from "../lifecycle/gated-request";
 import type { OpRunRecord } from "../op/runtime";
-import type { Bucket, Chant, Clock, ForgeReads, Jobs, Ledger, Log, OutOfBand, PullForge } from "./ports";
+import type { Bucket, Chant, Clock, ForgePull, ForgeReads, Jobs, Ledger, Log, OutOfBand, PullForge } from "./ports";
 import { componentStatuses, reportObjectKey, splitReportUrl, waitForReport, type PrReportView, type ReportStage } from "./reports";
 import type { BreakVerdict, PlainVerdict, Scenario, ScenarioOutcome, ScenarioStep, ScenarioStepKind } from "./schemas/index";
 import { limitsFor } from "./steps";
@@ -75,6 +80,12 @@ interface Opened {
 
 const iso = (ms: number) => new Date(ms).toISOString();
 
+/** How a gated request stands: gated until a finished line names it, then ok or failed. */
+function gatedStatus(r: GatedRequestRead): "gated" | "ok" | "failed" {
+  if (!r.finished) return "gated";
+  return r.finished.result === "applied" ? "ok" : "failed";
+}
+
 /** The check of one outcome, or null when it holds. */
 async function checkOutcome(
   o: ScenarioOutcome,
@@ -105,6 +116,36 @@ async function checkOutcome(
       return matching.length === o.ledger.count ? null : `${matching.length} ${o.ledger.op} runs${o.ledger.status ? ` ${o.ledger.status}` : ""} on the ledger, not ${o.ledger.count}`;
     }
     return matching.length > 0 ? null : `no ${o.ledger.op} run${o.ledger.status ? ` ${o.ledger.status}` : ""} on the ledger since the run started`;
+  }
+  if ("gated" in o) {
+    if (!p.ledger?.gatedRequests) throw new Stall("a gated outcome needs the ledger's gated requests");
+    const asked = (await p.ledger.gatedRequests(o.gated.op)).filter((r) => r.pending.timestamp >= ctx.since);
+    const matching = o.gated.status ? asked.filter((r) => gatedStatus(r) === o.gated.status) : asked;
+    const status = o.gated.status ? ` ${o.gated.status}` : "";
+    if (o.gated.count !== undefined) {
+      return matching.length === o.gated.count ? null : `${matching.length} gated ${o.gated.op} requests${status} on the ledger, not ${o.gated.count}`;
+    }
+    return matching.length > 0 ? null : `no gated ${o.gated.op} request${status} on the ledger since the run started`;
+  }
+  if ("pull" in o) {
+    if (ctx.pull === undefined) return "no pull request to read";
+    if (o.pull.title !== undefined) {
+      if (!p.forge.pullInfo) throw new Stall("a pull outcome with a title needs the forge's pull requests");
+      const info = await p.forge.pullInfo(ctx.pull);
+      if (!info) return `the forge does not know pull request ${ctx.pull}`;
+      if (!info.title.includes(o.pull.title)) return `pull request ${ctx.pull} is titled "${info.title}", which does not hold "${o.pull.title}"`;
+    }
+    if (o.pull.files !== undefined) {
+      if (!p.forge.changedFiles) throw new Stall("a pull outcome with files needs the forge's changed files");
+      const changed = await p.forge.changedFiles(ctx.pull);
+      const missing = o.pull.files.filter((f) => !changed.includes(f));
+      if (missing.length > 0) return `pull request ${ctx.pull} does not change ${missing.join(", ")}`;
+      if (o.pull.only) {
+        const extra = changed.filter((f) => !o.pull.files!.includes(f));
+        if (extra.length > 0) return `pull request ${ctx.pull} also changes ${extra.join(", ")} beyond the files named`;
+      }
+    }
+    return null;
   }
   if ("comment" in o) {
     if (!p.forge.comments) throw new Stall("a comment outcome needs the forge's comments");
@@ -175,10 +216,39 @@ export async function runArm(s: Scenario, arm: Arm, p: DriverPorts, opts: Driver
     if (!o) throw new Stall(`no pull request from ${id}`);
     return o;
   };
+  // The pull requests open when the run started. await-pull never binds one
+  // of these, so the BREAK run cannot pick up the plain run's pull request
+  // when the reset left it open.
+  let before = new Set<number>();
+  const awaitPull = async (step: Extract<ScenarioStep, { do: "await-pull" }>): Promise<StepResult> => {
+    const find = p.forge.findPull;
+    if (!find) throw new Stall("an await-pull step needs the forge's findPull");
+    // The product picks the branch, so it is the same on both runs.
+    const deadline = deadlineOf("await-pull");
+    let seen: ForgePull | undefined;
+    for (;;) {
+      const found = await find.call(p.forge, step.branch);
+      if (found && !before.has(found.number) && (step.title === undefined || found.title.includes(step.title))) {
+        opened.set(step.id, { pull: found.number, head: found.head });
+        log(`${s.id} ${arm}: ${step.id} found pull request ${found.number} at ${found.head.slice(0, 8)}`);
+        return { id: step.id, do: step.do, pull: found.number, commit: found.head };
+      }
+      if (found) seen = found;
+      if (p.clock.now() >= deadline) break;
+      await p.clock.sleep(opts.pollMs ?? 2000);
+    }
+    const why = !seen
+      ? `no open pull request from ${step.branch} within ${limits["await-pull"]}s`
+      : before.has(seen.number)
+        ? `pull request ${seen.number} from ${step.branch} was open before the run started, and no new one came within ${limits["await-pull"]}s`
+        : `pull request ${seen.number} from ${step.branch} is titled "${seen.title}", which does not hold "${step.title}", after ${limits["await-pull"]}s`;
+    throw new Stall(why);
+  };
 
   try {
     await p.reset?.();
     await p.arm?.(arm, arm === "break" ? { ...s.break.env } : {});
+    if (s.steps.some((x) => x.do === "await-pull")) before = new Set(await p.forge.openPulls());
     for (let i = 0; i < s.steps.length; i++) {
       const step = s.steps[i]!;
       let result: StepResult;
@@ -204,6 +274,11 @@ export async function runArm(s: Scenario, arm: Arm, p: DriverPorts, opts: Driver
           }
           continue;
         }
+        case "await-pull": {
+          result = await awaitPull(step);
+          ctx.pull = result.pull;
+          break;
+        }
         case "plan": {
           const o = pullOf(step.pull);
           const r = await report("plan", o.pull, o.head, "plan");
@@ -228,6 +303,16 @@ export async function runArm(s: Scenario, arm: Arm, p: DriverPorts, opts: Driver
           merged.set(step.id, { pull: o.pull, commit });
           ctx.pull = o.pull;
           result = { id: step.id, do: step.do, pull: o.pull, commit };
+          break;
+        }
+        case "comment": {
+          const o = pullOf(step.pull);
+          const post = p.forge.postComment;
+          if (!post) throw new Stall("a comment step needs the forge's postComment");
+          await within("comment", post.call(p.forge, o.pull, step.body, step.as ?? "author"));
+          log(`${s.id} ${arm}: ${step.id} commented on pull request ${o.pull} as ${step.as ?? "author"}`);
+          ctx.pull = o.pull;
+          result = { id: step.id, do: step.do, pull: o.pull };
           break;
         }
         case "apply": {
