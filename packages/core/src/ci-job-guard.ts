@@ -32,12 +32,18 @@
  * from the same variable, through {@link checkJob}, for a product that
  * renders its own jobs. The lines name the product from its words.
  *
+ * A refusal exits chant's `misplaced` (9), as does a variable the guard
+ * cannot read. GitLab's op-wave jobs allow exit 1 as a failure the next wave
+ * runs after, and 9 is outside that set, so a refused job fails and the
+ * waves after it stop.
+ *
  * The guard catches a hand edit, a dropped `environment:` or a mistyped
  * label. Someone who can edit the workflow can delete it too: the forge's
  * environment and runner settings and the cloud role's trust are what keep
  * a job out.
  */
 import { isRunnerGroup, type CiRunner } from "./ci-jobs";
+import { CHANT_EXIT } from "./exit-codes";
 
 /** The variable the generated step carries its expectation in. */
 export const JOB_GUARD_ENV = "CHANT_JOB_GUARD";
@@ -259,14 +265,15 @@ export function describeJobGuard(expect: JobGuardSpec, result: JobGuardResult): 
 /**
  * The guard as one `node -e` program: the same checks as {@link checkJob},
  * {@link jobSeen} and {@link describeJobGuard}, reading {@link JOB_GUARD_ENV}.
- * Exits 1 with one line per value that differs. A test runs it against
+ * Exits chant's `misplaced` (9) with one line per value that differs, and
+ * when the variable holds no spec it can read. A test runs it against
  * {@link checkJob} so the two stay the same.
  */
 export const JOB_GUARD_JS = [
   '"use strict";',
   `const E=process.env,A=${JSON.stringify(JOB_GUARD_AUDIENCE)};`,
   "const shown=(v)=>v===undefined||v===null||v===\"\"?\"none\":v;",
-  `const fail=(m)=>{console.error("check-job: "+m);process.exit(1)};`,
+  `const fail=(m)=>{console.error("check-job: "+m);process.exit(${CHANT_EXIT.misplaced})};`,
   "let x;try{x=JSON.parse(E." + JOB_GUARD_ENV + "||\"\")}catch(e){fail(\"" + JOB_GUARD_ENV + " is not JSON\")}",
   "if(!x||![\"github\",\"gitlab\",\"forgejo\"].includes(x.forge)||!Array.isArray(x.branches))fail(\"" + JOB_GUARD_ENV + " is not a guard spec\");",
   'const tags=(r)=>{if(r===undefined)return undefined;const t=r.trim();if(t.startsWith("[")){try{const v=JSON.parse(t);if(Array.isArray(v))return v.map(String)}catch(e){}}return t===""?[]:t.split(",").map((s)=>s.trim()).filter((s)=>s!=="")};',
@@ -292,7 +299,7 @@ export const JOB_GUARD_JS = [
   'if(h===undefined)P.push("runner: expected tags "+w.join(", ")+", and the job has no CI_RUNNER_TAGS");else if(miss.length>0)P.push("runner: expected tags "+w.join(", ")+", found "+(h.length?h.join(", "):"none"));else C.push("runner tags "+w.join(", "))}}',
   'else if(x.selfHosted){if(s.runnerEnvironment===undefined)S.push("runner (the runner says nothing about itself: no RUNNER_ENVIRONMENT)");else if(s.runnerEnvironment!=="self-hosted")P.push("runner: expected self-hosted, found "+s.runnerEnvironment);else C.push("self-hosted runner")}',
   'const at=(x.product||"chant")+" check-job: "+x.job;',
-  'if(P.length>0){for(const p of P)console.error(at+": "+p);console.error(at+": this job does not run where the spec set it to run, so it stops before any credential is taken or code checked out");process.exit(1)}',
+  'if(P.length>0){for(const p of P)console.error(at+": "+p);console.error(at+": this job does not run where the spec set it to run, so it stops before any credential is taken or code checked out");process.exit(' + CHANT_EXIT.misplaced + ")}",
   'console.log(at+": "+(C.length?C.join(", "):"nothing to check")+(S.length?"; not checked: "+S.join(", "):""))',
   "}).catch((e)=>fail(e&&e.message?e.message:String(e)));",
 ].join("");

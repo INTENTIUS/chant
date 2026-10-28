@@ -17,10 +17,11 @@ chant has one exit-code table ([#4553](https://github.com/INTENTIUS/chant/issues
 | 6 | `superseded` | A newer push applies instead. |
 | 7 | `denied` | The policy denied the plan and no override counts. The same at plan and at apply. |
 | 8 | `declined` | A decision point answered with an answer the gate does not pass on. |
+| 9 | `misplaced` | The apply-job guard stopped the job: it runs somewhere its spec did not set it to run, or its `CHANT_JOB_GUARD` spec could not be read ([#4624](https://github.com/INTENTIUS/chant/issues/4624)). `chant ci check-job` exits 9 for the same reasons. |
 
 `--gated-exit <code>` remaps 3 and nothing else. A pipeline that routes 7 to the override flow still sees a red job.
 
-A policy that could not run is 1, as is a failure to record the override an apply runs under. On GitLab the op-wave jobs set `allow_failure: exit_codes: [1]`, so 3 to 8 stop the next wave.
+A policy that could not run is 1, as is a failure to record the override an apply runs under. On GitLab the op-wave jobs set `allow_failure: exit_codes: [1]`, so 3 to 9 stop the next wave. A refused guard fails its job and stops the waves after it.
 
 ## Engine mappings
 
