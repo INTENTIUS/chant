@@ -492,12 +492,44 @@ export async function runAdoptPlunge(run: PulumiRunner, args: string[], cwd: str
  *
  * - `pulumi cancel --yes --stack <stack>`: releases a stuck update's lock;
  * - `pulumi state move --source <stack> --dest <stack> --yes <urn>...`: moves
- *   resources between stock stacks, never `--include-parents`.
+ *   resources between stock stacks, never `--include-parents`;
+ * - `pulumi up --yes --target <urn> --replace <urn> --stack <stack>`: a
+ *   day-2 action (#4654), the replacement of one `command:` resource, the
+ *   same URN in both places. Its preview, `preview --json --target <urn>
+ *   --replace <urn> --stack <stack>`, is a read and passes
+ *   {@link runAllowedPulumi}. `up` takes `--replace` here only:
+ *   {@link PULUMI_APPLY_COMMANDS} still refuses it.
  */
 export const PULUMI_GATED_COMMANDS: readonly string[] = [
   "pulumi cancel --yes --stack <stack>",
   "pulumi state move --source <stack> --dest <stack> --yes <urn>...",
+  "pulumi up --yes --target <urn> --replace <urn> --stack <stack>",
 ];
+
+/** A stack action's preview (#4654): `preview --json --target <urn> --replace <urn> --stack <stack>`, a read. */
+export function pulumiActionPreviewArgs(opts: { stack: string; urn: string }): string[] {
+  return ["preview", "--json", "--target", opts.urn, "--replace", opts.urn, "--stack", opts.stack];
+}
+
+/** A stack action's update (#4654): `up --yes --target <urn> --replace <urn> --stack <stack>`, under `pulumi` or `plunge`. */
+export function pulumiActionUpArgs(opts: { stack: string; urn: string }): string[] {
+  return ["up", "--yes", "--target", opts.urn, "--replace", opts.urn, "--stack", opts.stack];
+}
+
+/** Exactly {@link pulumiActionUpArgs}' form: one URN, targeted and replaced, on one stack. */
+function allowedActionUp(args: readonly string[]): boolean {
+  return (
+    args.length === 8 &&
+    args[0] === "up" &&
+    args[1] === "--yes" &&
+    args[2] === "--target" &&
+    isUrn(args[3]) &&
+    args[4] === "--replace" &&
+    args[5] === args[3] &&
+    args[6] === "--stack" &&
+    isValue(args[7])
+  );
+}
 
 /**
  * plunge's resource move (INTENTIUS/plunge#56) in its two forms. The first
@@ -507,6 +539,7 @@ export const PULUMI_GATED_COMMANDS: readonly string[] = [
 export const PLUNGE_GATED_COMMANDS: readonly string[] = [
   "plunge stack move --stack <stack> --dest <stack> <urn>... --json",
   "plunge stack move --stack <stack> --dest <stack> <urn>... --json --yes",
+  "plunge up --yes --target <urn> --replace <urn> --stack <stack>",
 ];
 
 const isUrn = (v: string | undefined): v is string => typeof v === "string" && v.startsWith("urn:pulumi:");
@@ -539,6 +572,7 @@ function allowedGatedPulumi(args: string[]): boolean {
     const urns = args.slice(7);
     return args[2] === "--source" && isValue(args[3]) && args[4] === "--dest" && isValue(args[5]) && args[6] === "--yes" && urns.length > 0 && urns.every(isUrn);
   }
+  if (args[0] === "up") return allowedActionUp(args);
   return false;
 }
 
@@ -550,9 +584,11 @@ export async function runGatedPulumi(run: PulumiRunner, args: string[], cwd: str
   return run(args, env ? { cwd, env } : { cwd });
 }
 
-/** Run the moving form of {@link PLUNGE_GATED_COMMANDS}, refusing any other argv. Only `./stack-ops.ts` calls it, after the request is spent. */
+/** Run a writing form of {@link PLUNGE_GATED_COMMANDS}, the move or a stack action's update, refusing any other argv. Only `./stack-ops.ts` calls it, after the request is spent. */
 export async function runGatedPlunge(run: PulumiRunner, args: string[], cwd: string, env?: Record<string, string>): Promise<{ stdout: string }> {
-  if (!allowedPlungeMove(args, true)) {
+  if (args[0] === "up") {
+    if (!allowedActionUp(args)) throw new Error(`chant runs a plunge stack action only as ${PLUNGE_GATED_COMMANDS[2]}, not plunge ${args.join(" ")}`);
+  } else if (!allowedPlungeMove(args, true)) {
     throw new Error(`chant moves plunge resources only as ${PLUNGE_GATED_COMMANDS[1]}, not plunge ${args.join(" ")}`);
   }
   return run(args, env ? { cwd, env } : { cwd });

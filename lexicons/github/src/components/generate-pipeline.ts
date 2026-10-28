@@ -82,6 +82,8 @@ import {
   prLockCommand,
   prCommentLockJobs,
   prCommentPreviewJob,
+  prActionJob,
+  prLoopPassedEnv,
   PREVIEW_REF_ENV,
   PREVIEW_HEAD_OUTPUT,
   prLoopWaveJobs,
@@ -336,7 +338,10 @@ function prLoopGithubDoc(
   ];
   // #4168 step 9: under apply on merge the apply runs on a green signal, and a push to the branch records.
   const forgejo = loop.forge === "forgejo";
-  const onGreen = forgejo ? "startsWith(github.ref, 'refs/tags/ci/green/')" : "github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch'";
+  // #4654: the action job answers its comment and a dispatch that names an action; such a dispatch starts no apply.
+  const action = prActionJob(loop.forge ?? "github", loop);
+  const plainDispatch = action ? `(github.event_name == 'workflow_dispatch' && github.event.inputs.${action.inputs.action} == '')` : "github.event_name == 'workflow_dispatch'";
+  const onGreen = forgejo ? "startsWith(github.ref, 'refs/tags/ci/green/')" : `github.event_name == 'workflow_run' || ${plainDispatch}`;
   const onPush = loop.applyOnMerge && forgejo ? "github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')" : "github.event_name == 'push'";
   // #4301: a `/chant apply` comment on a pull request starts the apply before merge. GitHub also asks for a commenter who can write.
   const onComment = [
@@ -564,6 +569,34 @@ function prLoopGithubDoc(
         },
       }
     : {};
+  // #4654: `/<product> <action word> <member> <action>`, or a dispatch naming both, runs the product's action verb at the target branch's commit.
+  const actionJobs: Record<string, unknown> = action
+    ? {
+        [action.jobName]: {
+          if: [
+            `(github.event_name == 'workflow_dispatch' && github.event.inputs.${action.inputs.action} != '')`,
+            `(${[
+              "github.event_name == 'issue_comment'",
+              `startsWith(github.event.comment.body, '${action.comment.replace(/'/g, "''")} ')`,
+              ...(forgejo ? [] : ["contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.comment.author_association)"]),
+            ].join(" && ")})`,
+          ].join(" || "),
+          "runs-on": GITHUB_RUNNER,
+          container: image,
+          // One action of a pipeline at a time, and never two runs of one request.
+          concurrency: concurrency(`chant-action-${env}${member ? `-${member.name}` : ""}`),
+          permissions: withIdToken({ contents: "write", issues: "write", "pull-requests": "write" }),
+          steps: [
+            ...(identity ? [tradeStep(identity.apply, "apply")] : []),
+            // An issue_comment run checks out the target branch's commit, a dispatch the ref it names: never a pull request's head.
+            { name: "Check out the target branch's commit", uses: CHECKOUT, with: { "fetch-depth": 0 } },
+            ...runSteps(prLoopSetup(image, loop.engineSetup)),
+            ...runSteps(beforeScript),
+            { name: "Run the requested action under its gated request", env: { ...prLoopPassedEnv(forgeName, loop), ...action.env }, run: action.script },
+          ],
+        },
+      }
+    : {};
   const jobsDoc: Record<string, unknown> = {
     plan: {
       if: closes ? "github.event_name == 'pull_request' && github.event.action != 'closed'" : "github.event_name == 'pull_request'",
@@ -585,6 +618,7 @@ function prLoopGithubDoc(
     ...lockJobs,
     ...commentLockJobs,
     ...previewJobs,
+    ...actionJobs,
     ...staleJobs,
     ...Object.fromEntries(applyJobs),
     ...Object.fromEntries(controlJobs),
@@ -602,7 +636,17 @@ function prLoopGithubDoc(
     on.schedule = [{ cron: PR_ENV_SWEEP_CRON }];
   }
   // #4301: a /chant apply comment starts the apply before merge. #4588: and a lock or unlock comment its job.
-  if (loop.applyBeforeMerge || commentLocks.length > 0 || preview) on.issue_comment = { types: ["created"] };
+  if (loop.applyBeforeMerge || commentLocks.length > 0 || preview || action) on.issue_comment = { types: ["created"] };
+  // #4654: a dispatch names a member and an action; both empty, it is the dispatch it was before.
+  if (action) {
+    const input = (description: string) => ({ description, required: false, type: "string", default: "" });
+    on.workflow_dispatch = {
+      inputs: {
+        [action.inputs.member]: input(`The ${resolveProductWords(loop.words).noun[0]} the action runs on`),
+        [action.inputs.action]: input("The action to run, by its name"),
+      },
+    };
+  }
   // #4625: each job on its stage's runner, the plan side's, the apply side's, or the default.
   if (loop.runners) {
     for (const [name, job] of Object.entries(jobsDoc) as Array<[string, Record<string, unknown>]>) {
@@ -616,7 +660,7 @@ function prLoopGithubDoc(
     ...(rooted ? {} : { defaults: { run: { "working-directory": member!.dir } } }),
     env: { ...options.variables, CHANT_ENV: env },
     jobsDoc,
-    stages: ["plan", PR_PLAN_NOTE_JOB, ...(locks ? [PR_LOCK_JOB, PR_UNLOCK_JOB] : []), ...commentLocks.map((j) => j.jobName), ...(preview ? [preview.jobName, preview.noteJobName] : []), ...(stale ? [PR_STALE_JOB] : []), ...applyNames, ...controlJobs.map(([name]) => name), ...(prEnv ? ["env-up", PR_ENV_POST_JOB, "env-down", "env-sweep"] : [])],
+    stages: ["plan", PR_PLAN_NOTE_JOB, ...(locks ? [PR_LOCK_JOB, PR_UNLOCK_JOB] : []), ...commentLocks.map((j) => j.jobName), ...(preview ? [preview.jobName, preview.noteJobName] : []), ...(action ? [action.jobName] : []), ...(stale ? [PR_STALE_JOB] : []), ...applyNames, ...controlJobs.map(([name]) => name), ...(prEnv ? ["env-up", PR_ENV_POST_JOB, "env-down", "env-sweep"] : [])],
     jobs: [
       { jobName: "plan", component: "pull request plan", stage: "plan", needs: [] },
       { jobName: PR_PLAN_NOTE_JOB, component: "pull request plan note", stage: PR_PLAN_NOTE_JOB, needs: ["plan"] },
@@ -634,6 +678,7 @@ function prLoopGithubDoc(
             { jobName: preview.noteJobName, component: "pull request preview comment note", stage: preview.noteJobName, needs: [preview.jobName] },
           ]
         : []),
+      ...(action ? [{ jobName: action.jobName, component: "day-2 action", stage: action.jobName, needs: [] }] : []),
       ...applyNames.map((name, i) => ({
         jobName: name,
         component: name === "record" ? "merge record" : loop.applyBeforeMerge ? "apply before merge" : loop.waveGate ? `green apply, wave ${i}` : "green apply",

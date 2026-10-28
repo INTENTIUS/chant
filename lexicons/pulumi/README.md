@@ -39,15 +39,18 @@ A program that reads another stack through `StackReference` orders its stack aft
 
 ## Gated stack operations
 
-`src/stack-ops.ts` ([#4578](https://github.com/INTENTIUS/chant/issues/4578)) runs three stack operations, each only after its gated request (#4551) is approved on the workspace ledger by someone other than the requester, under the op `pulumi-stack-ops`. The first call records the request and returns the `chant approve` command; the same call after the approval spends it, runs once, and records how it ended.
+`src/stack-ops.ts` ([#4578](https://github.com/INTENTIUS/chant/issues/4578)) runs stack operations, each only after its gated request (#4551) is approved on the workspace ledger by someone other than the requester, under the op `pulumi-stack-ops`. The first call records the request and returns the `chant approve` command; the same call after the approval spends it, runs once, and records how it ended.
 
 | Function | Request | What runs after approval |
 |---|---|---|
 | `gatedStackExport` | `stack-export` of `<stack>` | `pulumi stack export --stack <s>` (or plunge's), written mode 600 to a file outside every git working tree; refused in CI |
 | `gatedStackCancel` | `stack-cancel` of `<stack>` with its lock id | `pulumi cancel --yes --stack <s>`, once the lock is still the approved one (read from a `file://` backend's lock directory); refused on plunge, which has no stack lock |
 | `gatedStackMove` | `stack-move` of `move:<source>:<dest>` with the URNs | `pulumi state move --source <s> --dest <d> --yes <urn>...`, or `plunge stack move --stack <s> --dest <d> <urn>... --json --yes` after plunge's plan; both stacks preview first, and the move runs only when the previews change nothing but the moved resources |
+| `gatedStackAction` | `stack-action` of `action:<stack>:<name>` with the URN and the preview's digest | `pulumi up --yes --target <urn> --replace <urn> --stack <s>` (or plunge's), once ([#4654](https://github.com/INTENTIUS/chant/issues/4654)); see below |
 
 `pulumiStackLockIds({ dir, stack })` ([#4615](https://github.com/INTENTIUS/chant/issues/4615)) reads the lock ids a stack holds now, the same read `gatedStackCancel` checks with, so a product can offer the id to approve. It answers `checked: false` on a backend other than `file://`, and no ids for a plunge stack.
+
+A day-2 action on a stack is a `command:local:Command` or `command:remote:Command` resource whose replacement is the operation, such as a key rotation. `gatedStackAction({ dir, stack, urn, name, engine, ... })` refuses any other resource type with `action-type` before anything runs. Each call previews `preview --json --target <urn> --replace <urn> --stack <s>` and refuses with `action-scope`, naming the other URNs, when the preview changes anything besides that one replacement; nothing is asked for then. The request binds the stack, the URN and the preview's digest, so a preview that changed after the approval asks again. Once approved, the update runs, and the finished line keeps `result: applied` (or `failed`) with `detail.result` set to `ok` (or `failed`), the exit code and the last lines of output. The same call after it ran answers `spent`, unless it passes `anew`. A stack on plunge runs both through plunge.
 
 The writes go through `runGatedPulumi` and `runGatedPlunge` in `src/run.ts`, whose fixed forms (`PULUMI_GATED_COMMANDS`, `PLUNGE_GATED_COMMANDS`) are the only ones allowed.
 

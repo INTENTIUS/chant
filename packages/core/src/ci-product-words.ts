@@ -588,3 +588,43 @@ export function parseProductComment(words: CiProductWords, body: unknown, env: R
     }
   }
 }
+
+/**
+ * The variables the generated action job (#4654) hands the product's action
+ * verb: the comment that started it, on a comment, and the dispatch's two
+ * inputs, on a dispatch. The values reach the job as variables and never as
+ * shell text; {@link productActionFromEnv} reads them.
+ */
+export const PRODUCT_ACTION_ENV = { comment: "CHANT_ACTION_COMMENT", member: "CHANT_ACTION_MEMBER", action: "CHANT_ACTION" } as const;
+
+/** The flag the generated action job passes the product's action verb, so it reads {@link PRODUCT_ACTION_ENV} (#4654). */
+export const PRODUCT_ACTION_EVENT_FLAG = "--from-event";
+
+/** What an action job was asked for (#4654): a member and an action, from a comment or a dispatch. */
+export type ProductActionRequest = { kind: "action"; member: string; address: string; from: "comment" | "dispatch" } | { kind: "refused"; reason: string };
+
+/**
+ * The action an action job was started for (#4654), read from
+ * {@link PRODUCT_ACTION_ENV}: a comment, parsed as {@link parseProductComment}
+ * parses it, else the dispatch's member and action, checked by the same
+ * rules. A product's action verb calls this under
+ * {@link PRODUCT_ACTION_EVENT_FLAG}.
+ */
+export function productActionFromEnv(words: CiProductWords, env: Record<string, string | undefined>): ProductActionRequest {
+  const typed = commandWord(words, "action");
+  if (typed === undefined) return { kind: "refused", reason: `${words.product} names no action command, so no job answers one` };
+  const comment = env[PRODUCT_ACTION_ENV.comment]?.trim();
+  if (comment) {
+    const parsed = parseProductComment(words, comment, env);
+    if (parsed?.kind === "action") return { ...parsed, from: "comment" };
+    if (parsed?.kind === "refused") return parsed;
+    return { kind: "refused", reason: `the comment is not \`/${words.product} ${typed} <${words.noun[0]}> <action>\`` };
+  }
+  const member = env[PRODUCT_ACTION_ENV.member]?.trim() ?? "";
+  const action = env[PRODUCT_ACTION_ENV.action]?.trim() ?? "";
+  if (member === "" || action === "") return { kind: "refused", reason: `a dispatched action names a ${words.noun[0]} and an action` };
+  if (/\s/.test(member) || /\s/.test(action)) return { kind: "refused", reason: `a ${words.noun[0]} and an action are one word each` };
+  const parsed = parseProductComment(words, `/${words.product} ${typed} ${member} ${action}`, {});
+  if (parsed?.kind === "action") return { ...parsed, from: "dispatch" };
+  return parsed?.kind === "refused" ? parsed : { kind: "refused", reason: `a dispatched action names a ${words.noun[0]} and an action` };
+}

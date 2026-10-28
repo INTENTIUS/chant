@@ -16,6 +16,7 @@
  * | export | `stack-export` | `<stack>` | `stack`, `engine`, `deliver: requester` |
  * | cancel | `stack-cancel` | `<stack>` | `stack`, `lockId` |
  * | move | `stack-move` | `move:<source>:<dest>` | `source`, `dest`, `engine`, `urns` (sorted, comma-joined) |
+ * | action | `stack-action` | `action:<stack>:<name>` (the URN without a name) | `stack`, `urn`, `engine`, `preview` (the preview's digest), `name` when given |
  *
  * The first call records the pending fact and answers `waiting` with the
  * `chant approve` command. A later call with the same request reuses the
@@ -47,6 +48,19 @@
  *   again afterwards; a change left on either finishes the request `failed`
  *   with the changes named.
  *
+ * - action (#4654): a day-2 action is a `command:` resource
+ *   (`command:local:Command`, `command:remote:Command`) whose replacement is
+ *   the operation. Its type is checked before anything runs (`action-type`).
+ *   Each call previews `preview --json --target <urn> --replace <urn>`, and
+ *   refuses (`action-scope`) unless the preview changes that URN alone, by
+ *   a replacement. The request binds the preview's digest, so a preview
+ *   that moved after the approval asks again. Once approved, `up --yes
+ *   --target <urn> --replace <urn> --stack <s>` under the stack's engine,
+ *   and the finished line keeps chant's `applied | failed` with
+ *   `detail.result` `ok` or `failed`, the exit code and the output's last
+ *   lines. A request that applied answers `spent` to the same call, unless
+ *   the caller asks `anew`.
+ *
  * The writes go through `runGatedPulumi` and `runGatedPlunge`
  * (`./run.ts`), whose fixed forms are the whole of what may run.
  */
@@ -63,15 +77,17 @@ import type {
   GatedRequestRules,
   RequestGateResult,
 } from "@intentius/chant/lifecycle/gated-request";
-import { pulumiNodeKey } from "@intentius/chant/pulumi-urn";
+import { parsePulumiUrn, pulumiNodeKey } from "@intentius/chant/pulumi-urn";
 import { pulumiStackBackend } from "./adopt";
-import { pulumiExportResources } from "./change-set";
+import { pulumiExportResources, pulumiPreviewDigest, pulumiSteps, PULUMI_UNCHANGED_OPS } from "./change-set";
 import { pulumiMemberEngine, type PulumiMemberEngine } from "./member-engine";
 import {
   defaultPlungeRunner,
   defaultPulumiRunner,
   plungeMoveArgs,
   previewPulumiMemberRead,
+  pulumiActionPreviewArgs,
+  pulumiActionUpArgs,
   pulumiCancelArgs,
   pulumiRunFailure,
   pulumiStateMoveArgs,
@@ -86,7 +102,7 @@ import { isObject } from "./values";
 /** The op the requests are recorded under, unless the caller names its own. */
 export const PULUMI_STACK_OPS_OP = "pulumi-stack-ops";
 
-export type PulumiStackOpKind = "stack-export" | "stack-cancel" | "stack-move";
+export type PulumiStackOpKind = "stack-export" | "stack-cancel" | "stack-move" | "stack-action";
 
 /** chant's gated-request API (#4551), injectable for tests. */
 export interface GatedRequestApi {
@@ -152,12 +168,14 @@ async function askThenAct<T>(
   description: string,
   act: () => Promise<{ result: T; detail: Record<string, string | number | boolean>; failed?: string }>,
   precheck?: () => Promise<void>,
+  options: { reuseApplied?: boolean } = {},
 ): Promise<PulumiStackOpOutcome<T>> {
   const api = await gatedApi(common.gated);
   const op = common.op ?? PULUMI_STACK_OPS_OP;
   const cwd = common.ledgerCwd ?? process.cwd();
+  // With reuseApplied (#4654), a request with these fields that applied already is asked again as itself, so it answers `spent`.
   const standing = (await api.readGatedRequests(op, { cwd }).catch(() => []))
-    .filter((r) => !r.applied && r.request.kind === kind && r.request.subject === subject && r.request.by === common.by && sameFields(r.request.fields, fields))
+    .filter((r) => (options.reuseApplied || !r.applied) && r.request.kind === kind && r.request.subject === subject && r.request.by === common.by && sameFields(r.request.fields, fields))
     .at(-1);
   const request: GatedRequest = { kind, subject, by: common.by, at: standing?.request.at ?? common.now ?? new Date().toISOString(), fields };
   const asked: RequestGateResult = await api.requestGate({
@@ -548,5 +566,172 @@ export async function gatedStackMove(opts: PulumiStackMoveOptions): Promise<Pulu
         }
       }
     },
+  );
+}
+
+// ── action ───────────────────────────────────────────────────────────────
+
+/** Why a stack action was refused before anything was asked (#4654). */
+export type PulumiStackActionRefusal = "action-urn" | "action-type" | "action-scope";
+
+/** A stack action refused before its request: `code` says why, `urns` names what the preview changed besides the action, for `action-scope`. */
+export class PulumiStackActionRefused extends Error {
+  readonly code: PulumiStackActionRefusal;
+  readonly urns: string[];
+  constructor(code: PulumiStackActionRefusal, message: string, urns: string[] = []) {
+    super(`${code}: ${message}`);
+    this.name = "PulumiStackActionRefused";
+    this.code = code;
+    this.urns = urns;
+  }
+}
+
+/** The resource types an action may name: the command provider's (`command:local:Command`, `command:remote:Command`). */
+export const PULUMI_ACTION_TYPE_PREFIX = "command:";
+
+/** An action's name as a caller's config gives it, for the request's subject. */
+const ACTION_NAME = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}$/;
+
+/** The subject an action's request is asked and approved under: `action:<stack>:<name>`, or the URN in place of a name. */
+export const stackActionSubject = (stack: string, nameOrUrn: string): string => `action:${stack}:${nameOrUrn}`;
+
+export interface PulumiStackActionOptions extends PulumiStackOpCommon {
+  /** The stack's directory, where `Pulumi.yaml` is. */
+  dir: string;
+  cwd?: string;
+  /** The stack, as `--stack` takes it. */
+  stack: string;
+  engine?: PulumiMemberEngine;
+  /** The `command:` resource whose replacement is the action. */
+  urn: string;
+  /** The action's name in the caller's config, which the subject carries in place of the URN. */
+  name?: string;
+  /** Ask anew even when the same request applied already. Absent, such a call answers `spent`, so a retried job never runs the action twice. */
+  anew?: boolean;
+}
+
+export interface PulumiStackActionResult {
+  urn: string;
+  engine: PulumiMemberEngine;
+  /** The preview's digest the request bound. */
+  preview: string;
+  /** The update's exit code: 0, since a failed update ends `failed`. */
+  exit: number;
+  /** The update's last lines of output. */
+  tail: string;
+}
+
+/** The last `n` lines of `text`, trimmed. */
+const lastLines = (text: string | undefined, n: number): string =>
+  (text ?? "").trim().split("\n").slice(-n).join("\n");
+
+/**
+ * Check an action's URN before anything runs: a Pulumi URN on `stack` whose
+ * type is a command provider's. Throws {@link PulumiStackActionRefused}.
+ */
+export function checkStackActionUrn(stack: string, urn: string): void {
+  const parsed = parsePulumiUrn(urn);
+  if (!parsed) throw new PulumiStackActionRefused("action-urn", `${JSON.stringify(urn)} is not a resource URN (urn:pulumi:<stack>::<project>::<type>::<name>)`);
+  const stackName = stack.split("/").at(-1);
+  if (parsed.stack !== stackName) throw new PulumiStackActionRefused("action-urn", `${urn} names stack ${parsed.stack}, and the action runs on ${stack}`);
+  if (!parsed.type.startsWith(PULUMI_ACTION_TYPE_PREFIX)) {
+    throw new PulumiStackActionRefused(
+      "action-type",
+      `${urn} is a ${parsed.type}, and an action is a command resource (command:local:Command or command:remote:Command), whose replacement runs it; replacing any other resource is an update`,
+    );
+  }
+}
+
+/**
+ * What a preview changes besides the action's replacement (#4654): each URN
+ * with a changing step other than `urn`, and `urn` itself when it changes
+ * other than by replacement or is not replaced at all. Empty when the
+ * preview replaces `urn` and nothing else.
+ */
+export function stackActionScope(urn: string, preview: unknown): { others: string[]; problem?: string } {
+  const steps = pulumiSteps(preview) ?? [];
+  const others = new Set<string>();
+  let replaced = false;
+  let problem: string | undefined;
+  for (const s of steps) {
+    const op = s.op ?? "";
+    if (PULUMI_UNCHANGED_OPS.has(op)) continue;
+    if (s.urn !== urn) {
+      others.add(s.urn!);
+      continue;
+    }
+    if (op === "replace" || op === "create-replacement" || op === "delete-replaced") replaced = true;
+    else problem = `the preview shows ${op} of ${urn}, not its replacement`;
+  }
+  if (!problem && !replaced) problem = `the preview does not replace ${urn}`;
+  return { others: [...others].sort(), ...(problem ? { problem } : {}) };
+}
+
+/**
+ * A day-2 action on a stack (#4654): the replacement of one `command:`
+ * resource, previewed, asked for under a gated request, and run once a
+ * second identity approves. Refused before anything runs for a URN that is
+ * not a command resource's (`action-type`), and before anything is asked for
+ * a preview that changes more than that replacement (`action-scope`).
+ */
+export async function gatedStackAction(opts: PulumiStackActionOptions): Promise<PulumiStackOpOutcome<PulumiStackActionResult>> {
+  checkStackActionUrn(opts.stack, opts.urn);
+  if (opts.name !== undefined && !ACTION_NAME.test(opts.name)) throw new Error(`an action's name is letters, digits, "_", "." and "-", not ${JSON.stringify(opts.name)}`);
+  const env = opts.env ?? process.env;
+  const dir = stackDirOf(opts.dir, opts.cwd);
+  const engine = engineOf(dir, opts.engine, env);
+  const target = { stack: opts.stack, urn: opts.urn };
+
+  const previewArgs = pulumiActionPreviewArgs(target);
+  let stdout: string;
+  try {
+    ({ stdout } = engine === "plunge" ? await runAllowedPlunge(opts.plunge ?? defaultPlungeRunner, previewArgs, dir) : await runAllowedPulumi(opts.run ?? defaultPulumiRunner, previewArgs, dir));
+  } catch (err) {
+    throw new Error(`${engine} ${previewArgs.join(" ")} failed: ${why(err, engine)}`);
+  }
+  let preview: unknown;
+  try {
+    preview = JSON.parse(stdout);
+  } catch {
+    throw new Error(`${engine} ${previewArgs.join(" ")} printed no JSON`);
+  }
+  const scope = stackActionScope(opts.urn, preview);
+  if (scope.others.length > 0) {
+    throw new PulumiStackActionRefused(
+      "action-scope",
+      `the preview of ${opts.stack} replacing ${opts.urn} also changes ${scope.others.join(", ")}, and an action replaces its command resource alone; nothing was asked for`,
+      scope.others,
+    );
+  }
+  if (scope.problem) throw new PulumiStackActionRefused("action-scope", `${scope.problem}; nothing was asked for`);
+
+  const digest = pulumiPreviewDigest(preview, { changedOnly: true });
+  const subject = stackActionSubject(opts.stack, opts.name ?? opts.urn);
+  const fields: Record<string, string> = { stack: opts.stack, urn: opts.urn, engine, preview: digest, ...(opts.name ? { name: opts.name } : {}) };
+  return askThenAct(
+    opts,
+    "stack-action",
+    subject,
+    fields,
+    `action ${opts.name ?? opts.urn} on stack ${opts.stack}: replace ${opts.urn}, requested by ${opts.by}`,
+    async () => {
+      const args = pulumiActionUpArgs(target);
+      try {
+        const done = engine === "plunge" ? await runGatedPlunge(opts.plunge ?? defaultPlungeRunner, args, dir) : await runGatedPulumi(opts.run ?? defaultPulumiRunner, args, dir);
+        const tail = lastLines(done.stdout, 10);
+        return { result: { urn: opts.urn, engine, preview: digest, exit: 0, tail }, detail: { result: "ok", exit: 0, tail: tail.slice(-400), urn: opts.urn } };
+      } catch (err) {
+        const f = pulumiRunFailure(err);
+        const exit = f.exitCode ?? 1;
+        const tail = lastLines(`${f.stdout ?? ""}\n${f.stderr ?? ""}`, 10);
+        return {
+          result: { urn: opts.urn, engine, preview: digest, exit, tail },
+          detail: { result: "failed", exit, tail: tail.slice(-400), urn: opts.urn },
+          failed: `${engine} ${args.join(" ")} failed: ${why(err, engine)}`,
+        };
+      }
+    },
+    undefined,
+    { reuseApplied: !opts.anew },
   );
 }

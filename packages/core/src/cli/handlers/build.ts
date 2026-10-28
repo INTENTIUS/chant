@@ -54,7 +54,9 @@ async function engineSetupFor(path: string): Promise<string[]> {
  * `--apply-before-merge` (#4301) writes the apply job that applies an open
  * pull request before it merges, beside the record job.
  * `--preview-comment` (#4620) writes the jobs that answer the product's plan
- * comment with a preview of the pull request's head.
+ * comment with a preview of the pull request's head. `--action-job` (#4654)
+ * writes the job that answers the product's action comment and a dispatch
+ * with a member and an action.
  * `--pr-runner`, `--pr-variable`, `--pr-secret` and `--parallelism` (#4625)
  * set each stage's runner, the plan and apply jobs' variables and passed
  * secrets, and how many members the plan plans at once.
@@ -82,6 +84,8 @@ function prLoopOption(args: CommandContext["args"], reportUrl: string | undefine
     ...(args.prEnv ? { prEnvironment: true } : {}),
     ...(args.applyBeforeMerge ? { applyBeforeMerge: true } : {}),
     ...(args.previewComment ? { previewComment: true } : {}),
+    // #4654: the job that answers the action comment and the action dispatch.
+    ...(args.actionJob ? { actionJob: true } : {}),
     // #4628: the note carries its target commit, and a push marks the open notes stale.
     ...(args.staleNotes ? { staleNotes: true } : {}),
     ...(args.requires ? { applyRequires: args.requires } : {}),

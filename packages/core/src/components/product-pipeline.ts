@@ -34,7 +34,7 @@ import {
   type CiProductWords,
   type CiProductWordsInput,
 } from "../ci-product-words";
-import { prCommentLockJobs, prCommentPreviewJob, prLoopJobs, prLoopPostJob, prLoopRunner, prStaleJob, withProductBin, type PrCommentLockJob, type PrCommentPreviewJob, type PrLoopJob, type PrLoopPipelineOptions } from "./pr-pipeline";
+import { prActionJob, prCommentLockJobs, prCommentPreviewJob, prLoopJobs, prLoopPostJob, prLoopRunner, prStaleJob, withProductBin, type PrActionJob, type PrCommentLockJob, type PrCommentPreviewJob, type PrLoopJob, type PrLoopPipelineOptions } from "./pr-pipeline";
 import type { DriverComponent } from "./driver";
 import type { ScheduledOpSpec } from "../lexicon";
 import type { CiRunner } from "../ci-jobs";
@@ -70,6 +70,15 @@ export interface ProductPipelineOptions extends Omit<PrLoopPipelineOptions, "wor
    * scheduled Ops.
    */
   agent?: boolean | ProductAgentOptions;
+  /**
+   * The product answers its `action` command (#4654) from a workflow of its
+   * own, such as terragucci's action workflow: `true` counts the command as
+   * answered, so words that map a word onto `action` are not refused, and
+   * `comments.action` names the comment. The pipeline writes no job for it.
+   * A product with no workflow of its own sets `actionJob` instead, and the
+   * pipeline writes the job ({@link ProductPipelineJobs.action}).
+   */
+  actions?: boolean;
   /**
    * The apply on merge from the component graph (#4588), when `waves` is
    * absent: the spec `pr-apply --wave-gate` runs, a wave per layer of
@@ -143,6 +152,12 @@ export interface ProductPipelineJobs {
    * job with the write token.
    */
   agent?: { comment: string; name: string; spec: ScheduledOpSpec };
+  /**
+   * The action job (#4654), with `actionJob`: the comment and the dispatch
+   * inputs it answers, and the product's action verb it runs. The GitHub and
+   * Forgejo lexicons render the same job.
+   */
+  action?: PrActionJob & { runner?: CiRunner };
 }
 
 /** An agent's settings as a product passes them (#4616): {@link OpAgentSpec} without the trigger, which the pipeline names. */
@@ -204,12 +219,14 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   if (options.applyBeforeMerge || options.waves || options.componentWaves) jobs.push("apply");
   if (options.locks === "plan") jobs.push("lock", "unlock");
   if (options.agent) jobs.push("agent");
+  // #4654: the action command, answered by the product's own workflow (`actions`) or by the pipeline's action job.
+  if (options.actions || options.actionJob) jobs.push("action");
   // #4601: the note's merge sentence follows the jobs built here: waves on merge, an apply before merge, else a record for a release.
   // Words that ask for before-merge keep it when the pipeline has that job beside its waves.
   const built: CiProductApplyMode = options.waves || options.componentWaves ? "on-merge" : options.applyBeforeMerge ? "before-merge" : "release";
   const applyMode: CiProductApplyMode = options.words.applyMode === "before-merge" && options.applyBeforeMerge ? "before-merge" : built;
   const words = assertProductWords({ ...options.words, applyMode }, { jobs });
-  const { waves: given, wavesSpecFile, member, agent: _agent, componentWaves, ...loop } = options;
+  const { waves: given, wavesSpecFile, member, agent: _agent, actions: _actions, componentWaves, ...loop } = options;
   const { respond } = options;
   // #4629: the pull request loop puts the responses on the apply and note jobs, as `chant build --pr-loop --respond` does.
   const prLoop: PrLoopPipelineOptions = { ...loop, words, gate: options.gate ?? words.prGate };
@@ -234,6 +251,8 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   };
   const locks = prCommentLockJobs(forge, { locks: options.locks, words });
   if (locks.length > 0) out.locks = locks.map((job) => ({ ...job, ...defaultRunner }));
+  const action = prActionJob(forge, prLoop);
+  if (action) out.action = { ...action, ...(prLoopRunner(options, "apply") !== undefined ? { runner: prLoopRunner(options, "apply")! } : {}) };
   const stale = prStaleJob(forge, env, prLoop, member);
   if (stale) out.stale = { ...stale, ...defaultRunner };
   const preview = prCommentPreviewJob(forge, env, prLoop, member);
