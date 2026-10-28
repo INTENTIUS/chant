@@ -180,15 +180,15 @@ A target that needs a credential and finds none stops the publish before anythin
 A target is an object with this shape, from `packages/core/src/lifecycle/release-publish.ts`:
 
 ```ts
-interface PublishTarget {
-  kind: "npm" | "oci" | "forge";
+interface PublishTarget<C extends PublishContextBase = PublishContext, K extends string = "npm" | "oci" | "forge"> {
+  kind: K;
   name: string;            // for messages, such as "npm (2 packages)"
   destination: string;     // printed before it runs
   credentialEnv: string[]; // variables it reads credentials from, masked from the start
   key: string;             // names the declaration across runs, for the publish record
-  plan(ctx: PublishContext): Promise<PublishItem[]>;
-  stage(ctx: PublishContext): Promise<StagedTarget>;
-  reveal(ctx: PublishContext, staged: StagedTarget): Promise<PublishedTarget>;
+  plan(ctx: C): Promise<PublishItem[]>;
+  stage(ctx: C): Promise<StagedTarget>;
+  reveal(ctx: C, staged: StagedTarget): Promise<PublishedTarget>;
 }
 ```
 
@@ -196,7 +196,7 @@ interface PublishTarget {
 
 `stage` puts every item where the target publishes but where no consumer resolves it yet. It asks the destination first, sends nothing already there, and returns such an item with `present: true`. The `StagedTarget` that comes back holds the items and a `state` of strings the reveal needs. The record keeps that state, so it must never hold a credential. `reveal` is the one last step that makes the staged items visible, given what `stage` returned in this run or in an earlier one. Run again, it must move nothing that already moved. All three throw `PublishTargetError` with a `code`, a message and an optional `fix`. A failure part way names what was already staged or revealed.
 
-All three are given a `PublishContext` with these fields.
+A release target is given a `PublishContext` with these fields. The last five (`cwd`, `tag`, `env`, `redactor` and `log`) and `provenance` make up `PublishContextBase`, and the rest belong to the release.
 
 | Field | Meaning |
 |---|---|
@@ -212,6 +212,8 @@ All three are given a `PublishContext` with these fields.
 
 The targets take their dependencies through `PublishDeps`, which holds the `fetch` the OCI and forge targets use and the `npm` executable. In the tests npm runs as a fake binary that keeps a registry with dist-tags in a file, the OCI target pushes to a registry fake that the test starts on `127.0.0.1`, and the forge targets call a forge fake with draft releases.
 
-Adding a kind of target takes three changes. Its schema joins the declaration union in `lifecycle/publish-declaration.ts`, and a factory in a module of its own returns its `PublishTarget`. Then `createPublishTargets` in `lifecycle/publish-targets.ts` gets a case that calls the factory.
+A target that publishes something other than a cut release takes its own context as `C`, which extends `PublishContextBase`, and its own `kind` names as `K` ([#4602](https://github.com/INTENTIUS/chant/issues/4602)). The terraform lexicon's module targets publish a module version this way. They throw `PublishTargetError` and take their requests and clock through `PublishDeps`. Credentials are read with `readCredential` from `lifecycle/publish-credentials.ts` and masked by the context's redactor. Their own code makes them, so they never appear under `release.publish`.
+
+Adding a kind of release target takes three changes. Its schema joins the declaration union in `lifecycle/publish-declaration.ts`, and a factory in a module of its own returns its `PublishTarget`. Then `createPublishTargets` in `lifecycle/publish-targets.ts` gets a case that calls the factory.
 
 A target attaches its SBOM and provenance with the helpers in `lifecycle/publish-attachments.ts`: `memberSbom` for an SBOM beside what it publishes, `packageSbom` for one inside a package, and `releaseProvenance` for the statement. Each attached file comes back as a `PublishItem` with `attachment` set to `sbom` or `provenance`.
