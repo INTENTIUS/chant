@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/template-request/v1/template.schema.json",
+  "title": "chant template",
+  "description": "template.yml, version 1 of its contract: what a template asks for when someone requests an app or an add-on from it. It sits in the template's signed release beside the code it describes. A form shows one field per input; an agent and a command line read the same list. Each input has an engine-neutral kind, and each engine maps the kinds to its own types. Readers ignore fields they do not know; a field is only ever added within a version.",
+  "type": "object",
+  "required": [
+    "contract",
+    "description",
+    "inputs"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "https://intentius.io/chant/schemas/template-request/v1/template.schema.json"
+    },
+    "contract": {
+      "const": 1
+    },
+    "kind": {
+      "enum": [
+        "app",
+        "addon"
+      ],
+      "default": "app",
+      "description": "What a request makes from this template: a new app, or an add-on to an app that already exists."
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "description": "One or two sentences a person reads before requesting it."
+    },
+    "inputs": {
+      "type": "array",
+      "description": "The inputs, in the order a form shows them. Names are unique.",
+      "items": {
+        "$ref": "#/$defs/input"
+      }
+    }
+  },
+  "$defs": {
+    "scalarKind": {
+      "enum": [
+        "string",
+        "number",
+        "bool"
+      ]
+    },
+    "kind": {
+      "description": "An input's engine-neutral kind. string: a JSON string. number: a finite JSON number. bool: true or false. list: a JSON array, each element of kind `of` when given. map: a JSON object, each value of kind `of` when given. object: a JSON object with any fields. An engine maps each kind to one of its own types (Terraform: string, number, bool, list(<of>), map(<of>), and any for object or for a list or map without `of`).",
+      "enum": [
+        "string",
+        "number",
+        "bool",
+        "list",
+        "map",
+        "object"
+      ]
+    },
+    "input": {
+      "type": "object",
+      "required": [
+        "name",
+        "kind"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
+          "description": "The name a request gives the value under, and the variable the engine sets."
+        },
+        "kind": {
+          "$ref": "#/$defs/kind"
+        },
+        "of": {
+          "$ref": "#/$defs/scalarKind",
+          "description": "For a list or a map only: the kind of each element or value."
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The form field's label. Absent: the name."
+        },
+        "description": {
+          "type": "string",
+          "description": "Help text shown under the field."
+        },
+        "default": {
+          "description": "The value used when a request gives none. It must be of the input's kind. An input with a default is optional."
+        },
+        "required": {
+          "type": "boolean",
+          "description": "Whether a request must give a value. Absent: true when there is no default, false when there is. An input with a default cannot be required."
+        },
+        "sensitive": {
+          "type": "boolean",
+          "default": false,
+          "description": "A secret. A request never carries it, because the request is written into a pull request; the app reads it from its own secret store."
+        }
+      },
+      "dependentSchemas": {
+        "of": {
+          "properties": {
+            "kind": {
+              "enum": [
+                "list",
+                "map"
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}
