@@ -130,6 +130,8 @@ export interface PrPlanSetOptions {
   targets?: Readonly<Record<string, readonly string[]>>;
   /** `ci.lockGrain` as declared at base (#4552); absent, each member takes its lexicon's default. */
   lockGrain?: LockGrain;
+  /** The commit policy is read at (#4613), every step's `DeployContext.policyBase`: the pull request's base. */
+  policyBase?: string;
   /**
    * Where the planning's events go (#4041): a `plan` phase with no
    * component, and in it one `plan` step per component, started as its wave
@@ -525,6 +527,8 @@ export interface PrApplyOptions {
   targets?: Readonly<Record<string, readonly string[]>>;
   /** `ci.lockGrain` as declared at base (#4552), for the plans a later round or a resume makes. */
   lockGrain?: LockGrain;
+  /** The commit policy is read at (#4613), for the plans a later round or a resume makes. */
+  policyBase?: string;
   onProgress?: (event: RunProgressEvent) => void;
   /** Where the apply's events go (#4041): the fan-out's run events. */
   onRunEvent?: RunEventSink;
@@ -759,6 +763,7 @@ export async function applyPrSet(options: PrApplyOptions): Promise<PrApplyResult
       seededOutputs: run.componentOutputs,
       ...(options.targets ? { targets: options.targets } : {}),
       ...(options.lockGrain ? { lockGrain: options.lockGrain } : {}),
+      ...(options.policyBase ? { policyBase: options.policyBase } : {}),
     });
     for (const name of plan.order) roundOf.set(name, { round, set });
     const cover = roundCover(options, set, plan, run.componentOutputs, inChange, byName);
@@ -947,6 +952,8 @@ export interface PrResumeOptions {
   targets?: Readonly<Record<string, readonly string[]>>;
   /** `ci.lockGrain` as declared at base (#4552), for the plans a later round or a resume makes. */
   lockGrain?: LockGrain;
+  /** The commit policy is read at (#4613), for the plans a later round or a resume makes. */
+  policyBase?: string;
   /** The approved set, from the attempt record. */
   record: PrApplyRecord;
   /** Components an earlier attempt applied. */
@@ -1030,6 +1037,7 @@ export async function resumePrSet(options: PrResumeOptions): Promise<PrResume> {
     seededOutputs: { ...(options.seededOutputs ?? {}), ...options.record.planOutputs, ...fromGroup },
     ...(options.targets ? { targets: options.targets } : {}),
     ...(options.lockGrain ? { lockGrain: options.lockGrain } : {}),
+    ...(options.policyBase ? { policyBase: options.policyBase } : {}),
   });
   // #4422: decided as a round decides (`coveredRound`), by the same function a wave uses.
   const reasons = waveNotCovered(options.record.changeSet, fresh.doc, options.record.members);

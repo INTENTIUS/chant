@@ -450,6 +450,8 @@ export interface PrPolicyReport {
   override?: { by: string; at: string; reason: string; digest: string };
   /** While denied: the command that overrides the denial. */
   overrideCommand?: string;
+  /** `ci.policy.source` as fetched (#4613): the shared repository, its ref, the commit read and the Rego directory. */
+  source?: { repo: string; ref: string; commit: string; path: string };
 }
 
 /**

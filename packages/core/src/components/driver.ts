@@ -1262,6 +1262,8 @@ export function deployContext(
     targets?: Readonly<Record<string, readonly string[]>>;
     /** `ci.lockGrain` as declared at base (#4552), for every step's `DeployContext.lockGrain`. */
     lockGrain?: LockGrain;
+    /** The commit policy is read at (#4613), for every step's `DeployContext.policyBase`. */
+    policyBase?: string;
     /** The run's row lease (#4594), for every step's `DeployContext.rowLease`. */
     rowLease?: RowLeasePort;
   },
@@ -1274,6 +1276,7 @@ export function deployContext(
     component,
     ...(options.vars ? { vars: options.vars } : {}),
     ...(options.lockGrain ? { lockGrain: options.lockGrain } : {}),
+    ...(options.policyBase ? { policyBase: options.policyBase } : {}),
     ...(options.rowLease ? { rowLease: options.rowLease } : {}),
     ...(release ? { release: { ...release } } : {}),
     ...(targets && targets.length > 0 ? { targets: [...new Set(targets)].sort() } : {}),

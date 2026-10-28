@@ -68,6 +68,18 @@
  * checked-in `stack-export.json`. A failed export or write leaves the apply
  * standing and says why in `exportSnapshot`.
  *
+ * ## policy packs at base (#4613)
+ *
+ * Under a pull request or an op wave the caller sets
+ * `DeployContext.policyBase`, and the plan copies its CrossGuard packs out
+ * of that commit into the step's scratch directory before the preview
+ * (`@intentius/chant/policy-packs`): every `ci.policy.packs` entry of the
+ * declaration at base (or of `ci.policy.source`), then each step pack that
+ * is in the repository. A step pack the base lacks, or one that differs on
+ * the head, is a note on stderr and in the artifact; the base's copy is the
+ * one that runs. `run` hands `up` the same copies. A base or source that
+ * cannot be read throws, so no gate opens on a plan no policy judged.
+ *
  * ## config
  *
  * `config` (a dependent's `stackOutput()` wiring) is written into a scratch
@@ -195,7 +207,11 @@ export interface PulumiUpStepInput {
   cwd?: string;
   /** The member's lock grain (#4552), over `ci.lockGrain`. Default: `ci.lockGrain`, else `resource` on plunge, `target` on stock Pulumi. */
   lockGrain?: PulumiLockGrain;
-  /** CrossGuard packs for the preview and `up` (ruling 7). */
+  /**
+   * CrossGuard packs for the preview and `up` (ruling 7). Under a pull
+   * request or an op wave (`DeployContext.policyBase`, #4613) each one in
+   * the repository is read at base, and `ci.policy.packs` at base is added.
+   */
   policyPacks?: PulumiPolicyPack[];
   /**
    * The outputs of other stacks this stack's program reads through
@@ -246,10 +262,55 @@ export interface PulumiUpArtifact {
   /** CrossGuard's findings from the plan's preview. */
   policy: GatePolicyFindings;
   /**
+   * The packs the preview ran when they were read at base (#4613): the
+   * commit, each pack's copy under `scratch` and where it came from, the
+   * notes on step packs left out or read from base, and the shared source
+   * `ci.policy.packs` came from. `run` passes the same copies to `up`.
+   */
+  policyPacks?: PulumiUpPolicyPacks;
+  /**
    * The stack's `StackReference`s (#4547): `read`, wired to another step of
    * the project, and `outside`, which add no edge, each with why.
    */
   stackReferences?: { read: string[]; outside: { name: string; why: string }[] };
+}
+
+/** The CrossGuard packs a plan read at base (#4613). */
+export interface PulumiUpPolicyPacks {
+  base: string;
+  packs: Array<{ dir: string; config?: string; from: "declaration" | "step"; name: string }>;
+  notes: string[];
+  source?: { repo: string; ref: string; commit: string; path: string };
+}
+
+/**
+ * The packs a preview runs (#4613). With `ctx.policyBase` each step pack in
+ * the repository and every `ci.policy.packs` entry is copied from base into
+ * `scratch`, and the notes say which step packs did not run as the head has
+ * them. Without it, the step's packs as they stand. Throws when the base or
+ * the policy source cannot be read: the preview then does not run.
+ */
+async function policyPacksFor(ctx: DeployContext, r: Pick<Resolved, "dir" | "member">, input: PulumiUpStepInput, scratch: string): Promise<{ packs: PulumiPolicyPack[]; read?: PulumiUpPolicyPacks }> {
+  const own = input.policyPacks ?? [];
+  if (!ctx.policyBase) return { packs: own };
+  let mod: typeof import("@intentius/chant/policy-packs") | undefined;
+  try {
+    mod = await import("@intentius/chant/policy-packs");
+  } catch {
+    mod = undefined;
+  }
+  if (!mod) throw new Error(`pulumi-up: "${r.member}": the policy packs are read at base ${ctx.policyBase.slice(0, 12)}, and this chant has no reader for them; update @intentius/chant`);
+  const got = await mod.policyPacksAtBase({ cwd: r.dir, base: ctx.policyBase, stepPacks: own, tmp: scratch });
+  if ("error" in got) throw new Error(`pulumi-up: "${r.member}": ${got.error}, so the preview did not run`);
+  for (const note of got.notes) console.error(`pulumi-up: "${r.member}": ${note}`);
+  if (got.source) console.error(`pulumi-up: "${r.member}": ci.policy.packs read from ${got.source.repo}@${got.source.ref} at commit ${got.source.commit}`);
+  const read: PulumiUpPolicyPacks = {
+    base: got.base,
+    packs: got.packs.map((p) => ({ dir: p.dir, ...(p.config ? { config: p.config } : {}), from: p.from, name: p.name })),
+    notes: got.notes,
+    ...(got.source ? { source: { ...got.source } } : {}),
+  };
+  return { packs: got.packs.map((p) => ({ dir: p.dir, ...(p.config ? { config: p.config } : {}) })), read };
 }
 
 /** plunge refused a saved plan whose records moved, or one with no stamp (exit 40). `planMoved` is core's moved mark. */
@@ -495,15 +556,17 @@ async function previewStack(
   r: Resolved,
   input: PulumiUpStepInput,
   opts: PulumiUpOptions,
-  files: { configFile?: string; planFile?: string },
+  files: { configFile?: string; planFile?: string; policyPacks?: readonly PulumiPolicyPack[] },
 ): Promise<StackPreview> {
   const targets = ctx.targets && ctx.targets.length > 0 ? ctx.targets : undefined;
+  // #4613: the packs read at base when the caller gave them, else the step's as they stand.
+  const packs = files.policyPacks ?? input.policyPacks ?? [];
   const args = pulumiUpPreviewArgs({
     stack: input.stack,
     ...(files.planFile ? { savePlan: files.planFile } : {}),
     ...(files.configFile ? { configFile: files.configFile } : {}),
     ...(targets ? { targets } : {}),
-    ...(input.policyPacks?.length ? { policyPacks: input.policyPacks } : {}),
+    ...(packs.length ? { policyPacks: packs } : {}),
   });
   let stdout: string;
   try {
@@ -580,8 +643,10 @@ async function planStack(ctx: DeployContext, input: PulumiUpStepInput, opts: Pul
   await readyCopy(r, opts);
   const files = scratchFor(r, input, opts);
   let read: StackPreview;
+  let packs: Awaited<ReturnType<typeof policyPacksFor>>;
   try {
-    read = await previewStack(ctx, r, input, opts, files);
+    packs = await policyPacksFor(ctx, r, input, files.scratch);
+    read = await previewStack(ctx, r, input, opts, { ...files, policyPacks: packs.packs });
   } catch (err) {
     dropScratch(files.scratch);
     throw err;
@@ -602,6 +667,7 @@ async function planStack(ctx: DeployContext, input: PulumiUpStepInput, opts: Pul
     ...(files.planFile ? { planFile: files.planFile } : {}),
     ...(files.configFile ? { configFile: files.configFile } : {}),
     policy: read.policy,
+    ...(packs.read ? { policyPacks: packs.read } : {}),
     ...(references ? { stackReferences: references } : {}),
   };
   return {
@@ -729,10 +795,26 @@ async function runStack(ctx: DeployContext, input: PulumiUpStepInput, opts: Pulu
   // The config copy: the plan's when it is still there, else written again (its text is the same).
   const own = existsSync(approved.scratch) ? undefined : scratchFor(r, input, opts);
   const configFile = approved.configFile && existsSync(approved.configFile) ? approved.configFile : own?.configFile;
+  // #4613: the packs the plan read at base, the same copies, else read again at that base; a plan that read none runs the step's own.
+  let policyPacks: readonly PulumiPolicyPack[] | undefined = input.policyPacks;
+  if (approved.policyPacks) {
+    const copies = approved.policyPacks.packs;
+    if (copies.every((p) => existsSync(p.dir) && (!p.config || existsSync(p.config)))) {
+      policyPacks = copies.map((p) => ({ dir: p.dir, ...(p.config ? { config: p.config } : {}) }));
+    } else {
+      try {
+        policyPacks = (await policyPacksFor({ ...ctx, policyBase: approved.policyPacks.base }, r, input, own?.scratch ?? approved.scratch)).packs;
+      } catch (err) {
+        dropScratch(approved.scratch);
+        dropScratch(own?.scratch);
+        throw err;
+      }
+    }
+  }
   const tail = {
     ...(configFile ? { configFile } : {}),
     ...(targets ? { targets } : {}),
-    ...(input.policyPacks?.length ? { policyPacks: input.policyPacks } : {}),
+    ...(policyPacks?.length ? { policyPacks } : {}),
   };
 
   try {
@@ -749,7 +831,7 @@ async function runStack(ctx: DeployContext, input: PulumiUpStepInput, opts: Pulu
     } else {
       if (fromWave) {
         // Preview again, and hold it to the approved shape before anything changes.
-        const fresh = await previewStack(ctx, r, input, opts, { ...(configFile ? { configFile } : {}) });
+        const fresh = await previewStack(ctx, r, input, opts, { ...(configFile ? { configFile } : {}), ...(policyPacks ? { policyPacks } : {}) });
         const differences = pulumiShapeDifferences(approved.shape, fresh.shape, fresh.preview.steps);
         if (differences.length > 0) throw new PlanShapeMovedError(r.member, differences);
       }
