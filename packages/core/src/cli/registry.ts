@@ -89,6 +89,8 @@ export interface ParsedArgs {
   kustomize?: string;
   /** `chant import --parser-option key[=value]`, repeatable (#2994): options for the lexicon's template parser */
   parserOption?: string[];
+  /** `chant e2e safe-run --scan <dir>`, repeatable (chant#4587): a directory to scan for a real cloud answering, beside the command's output */
+  scanDirs?: string[];
   /** `chant carve advise --state <path>` — opt-in .tfstate for accurate instance counts */
   statePath?: string;
   /** Every `--state` value in order (#4461): `chant workspace promote --all --state <member>=<path>`, repeatable. */

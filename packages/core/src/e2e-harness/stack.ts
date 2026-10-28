@@ -29,8 +29,12 @@
  */
 import { CLICKHOUSE_IMAGE, FLOCI_IMAGE, FORGEJO_IMAGE, FORGEJO_RUNNER_IMAGE, POSTGRES_IMAGE, POSTGRES_PASSWORD } from "./pins";
 
-/** The service properties the harness sets, a subset of compose's. */
-export interface ComposeServiceSpec {
+/**
+ * The service properties the harness sets, a subset of compose's. A type
+ * alias, not an interface: the docker lexicon's ServiceProps has an `x-` index
+ * signature, which only an alias's implicit index signature satisfies.
+ */
+export type ComposeServiceSpec = {
   image: string;
   container_name: string;
   profiles?: string[];
@@ -44,7 +48,7 @@ export interface ComposeServiceSpec {
   networks: Record<string, { aliases: string[] }>;
   healthcheck?: { test: string[]; interval: string; timeout: string; retries: number };
   restart?: string;
-}
+};
 
 export interface HarnessStackOptions {
   /**

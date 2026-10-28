@@ -258,6 +258,13 @@ Commands:
                         (--json)          its target, stage (planned/emitted/bridged/
                                           applied) and path. Read-only.
 
+E2E harness:
+  e2e safe-run [--scan <dir>]... -- <command...>
+                        Run <command> with no real cloud in reach (cloud credential
+                        variables unset, empty CLOUDSDK_CONFIG, file:// Pulumi
+                        backend), then scan its output and each --scan dir. Prints
+                        CLEAN, or the rejecting lines and exits 3.
+
 CI:
   ci check --base <rev> [<target>...] [--output <dir>] [--json]
                         Run the ci.hooks.check hooks the workspace declaration
@@ -1760,6 +1767,9 @@ export const commandRegistry: CommandDef[] = [
   // renderer replaces its own walk-and-guess discovery with. Read-only.
   { name: "carve status", handler: runCarveStatus },
   // #3573 — which commits passed CI, kept as ci/green and ci/revoked tags (ws-103). Imported on first use.
+  // chant#4587 (C1) — the e2e harness's no-real-cloud wrapper as a command, for bash drivers. Imported on first use.
+  { name: "e2e safe-run", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/e2e-safe-run")).runE2eSafeRun(ctx) },
+  { name: "e2e", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/e2e-safe-run")).runE2eUnknown(ctx) },
   { name: "ci last-green", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiLastGreen(ctx) },
   { name: "ci list", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiList(ctx) },
   { name: "ci tick", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiTick(ctx) },
