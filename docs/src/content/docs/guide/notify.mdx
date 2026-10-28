@@ -40,6 +40,7 @@ Add `notify` to the [Op waves](/chant/guide/op-waves/) spec. Each value is the n
 | `teams` | A Teams incoming webhook's URL (a Workflows webhook that takes an Adaptive Card) |
 | `webhook` | Your own receiver's URL. It needs `key` |
 | `key` | The shared secret the webhook's events are signed with |
+| `relay` | The key `chant notify relay` checks buttons with. Set, a waiting wave's Slack message has Approve and Decline buttons, and its Teams card the reply that approves |
 | `events` | Not a variable: the events to send. Default: all of them |
 
 A value that looks like a URL, a webhook without a key, or an unknown setting fails the spec before any wave runs.
@@ -133,6 +134,27 @@ The `notify` slot of the words changes three of these:
 | `notify.headers` | `x-<product>` | the header prefix the receiver verifies with |
 
 A product that sends its own drift notice builds it with `driftNotifyFields(words, { changed, failed, fingerprint })` from `@intentius/chant/ci-product`, which gives `2 stacks drifted: shop-dev, shop-prod` under plywood's noun. `productSendOptions(words)` gives the header prefix to pass to `sendNotify`.
+
+## Approve from chat
+
+`chant notify relay` turns a click on a waiting wave's Approve button into an approval on the ledger ([#4611](https://github.com/INTENTIUS/chant/issues/4611)). Run it from a checkout of the repository, as a container or a function in your own cloud, with the same key the pipeline maps into the `relay` variable:
+
+```bash
+CHANT_RELAY_KEY=... SLACK_SIGNING_SECRET=... chant notify relay
+```
+
+The Slack app's interactivity requests go to the path `/slack` on the relay. A Teams outgoing webhook posts to `/teams` when a person mentions the relay and replies with the line the card shows. By default the relay listens on port 8787 of the loopback address, so only the proxy or function host in front of it reaches it; `CHANT_RELAY_HOST` and `CHANT_RELAY_PORT` change that.
+
+Each click passes these checks before anything is written:
+
+| Check | Refused when |
+|---|---|
+| The chat signature | Slack's `v0` signature or the Teams HMAC does not verify, or a Slack request is more than five minutes old |
+| The button | The relay key did not sign it, or the event is older than `CHANT_RELAY_MAX_AGE` seconds (default a day) |
+| The clicker | No line of the signers file at base lists `slack:<team>/<user>` or `teams:<aad object id>` beside a principal, the line names the relay, or the clicker made the gated request |
+| The digest | No standing pending fact at the button's gate asks for that digest: the plan moved, or someone approved it already |
+
+Then the relay records the approval as `chant approve <op> <gate> --plan <digest> --actor <principal> --relayed-by <relay>` would, with every rule that command applies. The relay holds no signing key, so a gate that `identity.gates` seals refuses it. A Decline click records nothing and says in the thread who declined. The approval is recorded as relayed by `CHANT_RELAY_PRINCIPAL`, by default `<product>-relay`, and the replies use the product's words. The relay starts no job, and the resume job applies the wave once the approval stands.
 
 ## See also
 

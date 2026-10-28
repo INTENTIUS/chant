@@ -61,6 +61,29 @@ export {
   type ParsedProductComment,
 } from "./ci-product-words";
 export { driftNotifyFields, productNotifySource, productNotifyWords, productSendOptions, type DriftNotifyInput } from "./notify-product";
+
+/** The first chant with `chant notify relay` and the notify relay buttons (#4611). */
+export const NOTIFY_RELAY_FLOOR = NEXT_RELEASE;
+export {
+  decideRelayClick,
+  handleRelayRequest,
+  relayPrincipalFor,
+  RELAY_ENV,
+  slackRelayClick,
+  slackSignature,
+  startRelayServer,
+  teamsRelayClick,
+  teamsSignature,
+  verifySlackRequest,
+  verifyTeamsRequest,
+  type RelayAnswer,
+  type RelayClick,
+  type RelayDeps,
+  type RelayPending,
+  type RelayRequest,
+  type RelayResponse,
+  type RelaySettings,
+} from "./notify-relay";
 export {
   componentWaveOutputsFile,
   componentWaveSteps,
