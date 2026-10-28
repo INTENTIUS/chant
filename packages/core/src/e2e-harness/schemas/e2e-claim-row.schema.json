@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/e2e-harness/e2e-claim-row/v1/e2e-claim-row.schema.json",
+  "title": "e2e harness claim row",
+  "description": "One recorded claim of the e2e harness (chant#4587), terragucci's protocol: one claim, a plain run that must pass, a BREAK=1 run that must be caught, one row. The row is the claim outcome of a run record on the ledger (op e2e-claim, chant#4551), and a product's page reads the rows rendered as e2e-claims/v1. A row is only written for a run whose no-real-cloud scan said CLEAN. An engine counts a row only when engine.version is the version its claim is about. Version 1: a field is only ever added within contract 1, and a new field is optional.",
+  "type": "object",
+  "required": ["$schema", "contract", "product", "productCommit", "scenario", "claim", "engine", "floci", "date", "plain", "break", "safeRun"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "const": "https://intentius.io/chant/schemas/e2e-harness/e2e-claim-row/v1/e2e-claim-row.schema.json" },
+    "contract": { "const": 1 },
+    "product": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "The product that drove the scenario." },
+    "productCommit": { "type": "string", "pattern": "^[0-9a-f]{40}$", "description": "The product's commit, in full." },
+    "scenario": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "The scenario id." },
+    "claim": { "type": "string", "minLength": 1, "description": "The claim id." },
+    "engine": {
+      "type": "object",
+      "required": ["binary", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "binary": { "type": "string", "minLength": 1, "description": "The engine binary the pipeline ran: choudoufu, plunge, tofu, pulumi, yodel, chant." },
+        "version": { "type": "string", "minLength": 1, "description": "Its version as it reported it." }
+      }
+    },
+    "floci": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$", "description": "The floci image digest the run's stack ran." },
+    "chant": { "type": "string", "description": "The chant version the harness ran." },
+    "date": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "The run's date, UTC." },
+    "plain": { "enum": ["pass", "fail"], "description": "The plain run: pass when every outcome held." },
+    "break": { "enum": ["caught", "missed", "stalled"], "description": "The BREAK run: caught when an outcome did not hold, missed when all held, stalled when a step did not finish." },
+    "safeRun": { "const": "CLEAN", "description": "The no-real-cloud scan's verdict. Only CLEAN is ever recorded." },
+    "runUrl": { "type": "string", "description": "Where the run's logs are, when it ran in CI." }
+  }
+}

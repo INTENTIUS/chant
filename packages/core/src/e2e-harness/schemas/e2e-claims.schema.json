@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/e2e-harness/e2e-claims/v1/e2e-claims.schema.json",
+  "title": "e2e harness claims of one product",
+  "description": "A product's recorded claims (chant#4587), rendered from the e2e-claim run records on its ledger: the newest row per scenario and claim, for the product's page to read, as terragucci's docs-site/src/data/smoke.json is read today. Version 1: a field is only ever added within contract 1, and a new field is optional.",
+  "type": "object",
+  "required": ["$schema", "contract", "product", "rows"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "const": "https://intentius.io/chant/schemas/e2e-harness/e2e-claims/v1/e2e-claims.schema.json" },
+    "contract": { "const": 1 },
+    "product": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "rows": {
+      "type": "array",
+      "items": { "$ref": "https://intentius.io/chant/schemas/e2e-harness/e2e-claim-row/v1/e2e-claim-row.schema.json" }
+    }
+  }
+}

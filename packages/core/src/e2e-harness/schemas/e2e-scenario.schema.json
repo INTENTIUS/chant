@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/e2e-harness/e2e-scenario/v1/e2e-scenario.schema.json",
+  "title": "e2e harness scenario",
+  "description": "One scenario of the e2e harness (chant#4587): a repo tree, the pull request steps the driver takes in order, and the outcomes each step must show, read from chant's own reports and run ledger. A scenario proves one claim, with a plain run that must pass and a BREAK arm that must be caught. Version 1: a field is only ever added within contract 1, and a new field is optional.",
+  "type": "object",
+  "required": ["$schema", "contract", "id", "product", "claim", "tree", "reportUrl", "steps", "break"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "const": "https://intentius.io/chant/schemas/e2e-harness/e2e-scenario/v1/e2e-scenario.schema.json" },
+    "contract": { "const": 1 },
+    "id": { "$ref": "#/$defs/name", "description": "The scenario's id, such as tg-estate-overlap. Rows cite it." },
+    "product": { "$ref": "#/$defs/name", "description": "The product that drives it: terragucci, plywood, sql-yodeler, or chant for its own demo." },
+    "claim": { "type": "string", "minLength": 1, "description": "The claim id the scenario records a row for." },
+    "title": { "type": "string" },
+    "tree": {
+      "type": "object",
+      "description": "The repo the forge serves: a base tree, and the overlays the steps copy over it. Paths are relative to the scenario file.",
+      "required": ["base"],
+      "additionalProperties": false,
+      "properties": {
+        "base": { "type": "string", "minLength": 1 },
+        "overlays": { "type": "string", "minLength": 1 }
+      }
+    },
+    "env": { "type": "string", "description": "The chant environment the pipeline runs (--env), which the ledger records runs under. Default local." },
+    "reportUrl": { "type": "string", "pattern": "^s3://[^/]+/.+", "description": "The pipeline's --report-url, where pr-plan.json and pr-apply.json land." },
+    "limits": {
+      "type": "object",
+      "description": "Seconds each kind of step may take, over the harness's defaults.",
+      "propertyNames": { "$ref": "#/$defs/do" },
+      "additionalProperties": { "type": "integer", "minimum": 1 }
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/step" }
+    },
+    "break": {
+      "type": "object",
+      "description": "The BREAK arm: the same steps with the claim's subject broken. The run must be caught, meaning one of the outcomes does not hold. env carries BREAK=1 to the pipeline; an overlay may stand in for or add to it.",
+      "required": ["env"],
+      "additionalProperties": false,
+      "properties": {
+        "env": {
+          "type": "object",
+          "required": ["BREAK"],
+          "properties": { "BREAK": { "const": "1" } },
+          "additionalProperties": { "type": "string" }
+        },
+        "overlay": { "type": "string", "minLength": 1, "description": "An overlay copied over every pull request of the break run, after the step's own." },
+        "note": { "type": "string", "description": "What the break changes, in a sentence." }
+      }
+    }
+  },
+  "$defs": {
+    "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "do": { "enum": ["open", "open-concurrent", "plan", "approve", "merge", "apply", "out-of-band", "kill-job"] },
+    "step": {
+      "type": "object",
+      "required": ["id", "do"],
+      "properties": {
+        "id": { "$ref": "#/$defs/name" },
+        "do": { "$ref": "#/$defs/do" },
+        "label": { "type": "string" },
+        "expect": { "type": "array", "items": { "$ref": "#/$defs/outcome" } }
+      },
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "do": { "enum": ["open", "open-concurrent"] },
+            "branch": { "type": "string", "minLength": 1 },
+            "overlay": { "type": "string", "minLength": 1 },
+            "title": { "type": "string", "minLength": 1 },
+            "body": { "type": "string" }
+          },
+          "required": ["branch", "overlay", "title"]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "do": { "enum": ["plan", "approve", "merge"] },
+            "pull": { "$ref": "#/$defs/name", "description": "The id of the open step whose pull request this is." }
+          },
+          "required": ["pull"]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "do": { "const": "apply" },
+            "merge": { "$ref": "#/$defs/name", "description": "The id of the merge step whose commit the apply runs on." }
+          },
+          "required": ["merge"]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "do": { "const": "out-of-band" },
+            "command": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+          },
+          "required": ["command"]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "do": { "const": "kill-job" },
+            "match": { "type": "string", "minLength": 1, "description": "Part of the job container's name; the newest running job when absent." }
+          }
+        }
+      ]
+    },
+    "outcome": {
+      "type": "object",
+      "description": "One thing a step must show. report reads the step's pr-plan.json or pr-apply.json; ledger reads the run records the scenario added; comment and issue read the forge; exit is an out-of-band command's exit code.",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "report": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "status": { "type": "string" },
+            "components": { "type": "object", "additionalProperties": { "type": "string" } },
+            "only": { "type": "boolean", "description": "components names every component the report has." }
+          }
+        },
+        "ledger": {
+          "type": "object",
+          "required": ["op"],
+          "additionalProperties": false,
+          "properties": {
+            "op": { "type": "string" },
+            "status": { "enum": ["ok", "fail", "gated", "waiting"] },
+            "count": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "comment": { "type": "string", "minLength": 1, "description": "Text one of the step's pull request comments holds." },
+        "issue": {
+          "type": "object",
+          "required": ["title"],
+          "additionalProperties": false,
+          "properties": { "title": { "type": "string", "minLength": 1 }, "open": { "type": "boolean" } }
+        },
+        "exit": { "type": "integer" }
+      }
+    }
+  }
+}

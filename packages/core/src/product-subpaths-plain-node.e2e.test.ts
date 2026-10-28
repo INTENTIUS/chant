@@ -49,6 +49,7 @@ const CORE_SUBPATHS = [
   "components/pr-env-run",
   "components/pr-environment",
   "components/verbs/sign",
+  "e2e-harness",
   "exit-codes",
   "forge-check",
   "gate-decision",

@@ -23,6 +23,8 @@ import {
   type StepRecord,
 } from "./lib/cycle.js";
 import { overlayFiles } from "./lib/overlays.js";
+import { lintScenario } from "../../../packages/core/src/e2e-harness/scenario.js";
+import type { Scenario } from "../../../packages/core/src/e2e-harness/schemas/index.js";
 import type { ApproveInput, Bucket, Chant, Clock, Forge } from "./lib/ports.js";
 import { FIXED, HELD, HIGHLIGHTS, HIGHLIGHT_LIMITS, TITLE, WAVES, WENT, chapterFor, highlightFor, labelFor } from "./steps.js";
 
@@ -449,5 +451,26 @@ describe("cycles/", () => {
       [KEYS.cycle(10), KEYS.cycle(4), KEYS.cycle(5), KEYS.cycle(6), KEYS.cycle(7), KEYS.latest].sort(),
     );
     expect(CYCLES_KEPT).toBe(5);
+  });
+});
+
+describe("the demo's claim on the e2e harness (chant#4587)", () => {
+  const scenario = JSON.parse(readFileSync(join(import.meta.dirname, "scenario.json"), "utf8")) as Scenario;
+
+  test("scenario.json lints clean, with a claim id and a BREAK arm", () => {
+    expect(lintScenario(scenario)).toEqual([]);
+    expect(scenario.claim).toBe("fan-out/failure-blocks-only-dependents");
+    expect(scenario.break.env.BREAK).toBe("1");
+  });
+
+  test("names the overlays the cycle uses, and the components the story names", () => {
+    for (const step of scenario.steps) if ("overlay" in step) expect(Object.keys(overlayFiles(step.overlay as "change" | "fix", 0)).length).toBeGreaterThan(0);
+    expect(Object.keys(overlayFiles(scenario.break.overlay as "fix", 0))).toEqual(["src/cluster-a/resources.ts"]);
+    const changeApply = scenario.steps.find((s) => s.id === "change-apply")!.expect![0] as { report: { components: Record<string, string> } };
+    expect(Object.keys(changeApply.report.components).sort()).toEqual([...WAVES.flat()].sort());
+    for (const m of HELD) expect(changeApply.report.components[m]).toBe("blocked");
+    for (const m of WENT) expect(changeApply.report.components[m]).toBe("applied");
+    const fixApply = scenario.steps.find((s) => s.id === "fix-apply")!.expect![0] as { report: { components: Record<string, string> } };
+    expect(Object.keys(fixApply.report.components).sort()).toEqual([...FIXED].sort());
   });
 });
