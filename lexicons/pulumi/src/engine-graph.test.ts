@@ -118,7 +118,7 @@ describe("readPulumiMember with engine-graph.json (#4529)", () => {
     const bare = copyOf(dir);
     rmSync(join(bare, PULUMI_ENGINE_GRAPH_FILE));
     const { entities, report } = readPulumiMember({ member: { dir: bare, label: "app" } });
-    expect(report).toEqual({ export: "stack-export.json", objects: 3, exported: true });
+    expect(report).toEqual({ export: "stack-export.json", exportSource: "file", objects: 3, exported: true });
     expect(buildGraphIr(entities).edges.map((e) => [e.viaAttr, e.grain])).toEqual([["dependencies", "instance"]]);
   });
 });

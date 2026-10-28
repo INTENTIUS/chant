@@ -55,7 +55,7 @@ describe("pulumi member graph block (#3179)", () => {
       ["infra/my:mod:Web$aws:lambda/function:Function::handler", "aws:lambda/function:Function"],
       ["infra/my:mod:Web::web-app", "my:mod:Web"],
     ]);
-    expect(ir.meta?.pulumiMember).toEqual({ export: "stack-export.json", objects: 5, exported: true });
+    expect(ir.meta?.pulumiMember).toEqual({ export: "stack-export.json", exportSource: "file", objects: 5, exported: true });
   });
 
   const recordedEdges = [
@@ -117,6 +117,7 @@ describe("pulumi member graph block (#3179)", () => {
     );
     expect(readPulumiMember({ member: { dir, label: "infra" } }).report).toEqual({
       export: "stack-export.json",
+      exportSource: "file",
       objects: 1,
       exported: true,
       pendingOperations: 1,

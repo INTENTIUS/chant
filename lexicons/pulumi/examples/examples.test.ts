@@ -28,7 +28,7 @@ describe("pulumi examples", () => {
       references: { to: string }[];
     };
     expect(versioning.references.map((r) => r.to)).toEqual(["infra/aws:s3/bucketV2:BucketV2::assets"]);
-    expect(lastMemberReport()).toEqual({ export: "stack-export.json", objects: 2, exported: true });
+    expect(lastMemberReport()).toEqual({ export: "stack-export.json", exportSource: "file", objects: 2, exported: true });
   });
 
   for (const name of ["workspace-member", "scheduled-watch", "plunge-member"]) {
