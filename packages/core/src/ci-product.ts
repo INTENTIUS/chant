@@ -27,6 +27,7 @@ export {
   approveLine,
   assertProductWords,
   CHANT_APPROVE_TEMPLATE,
+  CHANT_NOTIFY_WAVE_TEMPLATE,
   CHANT_OVERRIDE_TEMPLATE,
   CHANT_WORDS,
   CI_PRODUCT_APPLY_MODES,
@@ -36,6 +37,7 @@ export {
   commandWord,
   commentLine,
   isChantWords,
+  notifyWaveLabel,
   overrideLine,
   parseProductComment,
   productContext,
@@ -50,12 +52,15 @@ export {
   type CiProductApplyMode,
   type CiProductApproval,
   type CiProductCommand,
+  type CiProductNotifyWords,
+  type CiProductNotifyWordsInput,
   type CiProductStage,
   type CiProductWords,
   type CiProductWordsInput,
   type OverrideLineInput,
   type ParsedProductComment,
 } from "./ci-product-words";
+export { driftNotifyFields, productNotifySource, productNotifyWords, productSendOptions, type DriftNotifyInput } from "./notify-product";
 export {
   componentWaveOutputsFile,
   componentWaveSteps,
