@@ -625,6 +625,11 @@ async function finish(ctx: CommandContext, p: Prepared, report: PrReport, upload
   if (p.routedAway && report.status === "nothing" && !report.message) report = { ...report, message: p.routedAway };
   if (p.policyReport) report = { ...report, policy: p.policyReport };
   if (p.beforeMerge) report = { ...report, beforeMerge: p.beforeMerge };
+  // #4617: with a checkout of the control repo named, its entries and apply records mark the cross-stack edges.
+  if (report.crossStackEdges?.length && process.env.CHANT_CONTROL_DIR) {
+    const { controlEdgeFactsFromEnv, remarkCrossStackEdges } = await import("../../control/edges");
+    report = remarkCrossStackEdges(report, await controlEdgeFactsFromEnv());
+  }
   // #4573: each member's section its lexicon renders from its own part of the change set.
   const details = await memberDetails(p, report);
   if (details.length > 0) report = { ...report, details };

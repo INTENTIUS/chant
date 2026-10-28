@@ -100,6 +100,7 @@ import { waveOutcomeFileName } from "../wave-blocked";
 import { NEXT_RELEASE } from "../release-floors";
 import { opWaveHoldsProblems, opWaveStepProblems, type OpWaveHolds, type OpWaveStep } from "./op-waves-capability";
 import { opWaveReleaseProblems, type OpWaveReleaseNames } from "./op-waves-release";
+import { CONTROL_DISPATCH_JOB, CONTROL_NAME, controlSettingsProblems, resolveControlTarget, type ControlSettingsInput, type ControlTarget } from "../control/dispatch";
 
 export type { OpWaveCostFormat, OpWaveCostHold, OpWaveHolds, OpWaveStep } from "./op-waves-capability";
 
@@ -553,6 +554,71 @@ export interface OpWavesSpec {
    * `../notify.ts`.
    */
   notify?: NotifyConfig;
+  /**
+   * The control repo (#4617, `@intentius/chant/ci-control`): once the last
+   * wave ran, a `control-dispatch` job tells the control repo how the waves
+   * ended (`applied`, `partial`, `unchanged`, `waiting` or `failed`, from
+   * the wave jobs' outcome files), and the control repo records it and runs
+   * this member's dependents when something applied. See
+   * {@link OpWavesControl}.
+   */
+  control?: OpWavesControl;
+}
+
+/**
+ * An Op waves spec's `control` (#4617): the control settings a product
+ * reads from its config, in chant's spelling (`ControlSettingsInput`), with
+ * `member` named, since a spec has no repository name to default it to.
+ * The job maps the `tokenSecret` secret into `CHANT_CONTROL_TOKEN` for its
+ * one step, as the pull request loop's `control` does (#4568).
+ */
+export interface OpWavesControl extends ControlSettingsInput {
+  /** The member's name in the control repo's workspace. */
+  member: string;
+  /** A shell line that prints 1 when the commit was told about already (`controlDispatchScript`'s `sentCheck`). */
+  sentCheck?: string;
+  /** A shell line run once the control repo took the dispatch (`controlDispatchScript`'s `markSent`). */
+  markSent?: string;
+}
+
+/** The first chant whose Op waves specs take `control` (#4617). A product feature-detects this name. */
+export const OP_WAVES_CONTROL_FLOOR = NEXT_RELEASE;
+
+/** The control dispatch job's name in an Op waves pipeline (#4617). */
+export const OP_WAVES_CONTROL_JOB = CONTROL_DISPATCH_JOB;
+
+/** The problems with a spec's `control` (#4617), each naming its key. */
+export function opWavesControlProblems(control: unknown): string[] {
+  const problems = controlSettingsProblems(control, "control");
+  if (problems.length > 0) return problems;
+  const c = control as Record<string, unknown>;
+  const out: string[] = [];
+  if (!(typeof c.member === "string" && CONTROL_NAME.test(c.member))) out.push("control.member must name this repo in the control repo's workspace: an Op waves spec has no repository name to default it to");
+  for (const key of ["sentCheck", "markSent"] as const) {
+    if (c[key] !== undefined && !(typeof c[key] === "string" && c[key] !== "" && !(c[key] as string).includes("\n"))) out.push(`control.${key} must be one shell line`);
+  }
+  return out;
+}
+
+/** The control target of a spec's `control` (#4617), its defaults filled in. */
+export function opWavesControlTarget(control: OpWavesControl): ControlTarget {
+  const { sentCheck: _s, markSent: _m, ...settings } = control;
+  return resolveControlTarget(settings, control.member);
+}
+
+/**
+ * The command the control job runs before its dispatch (#4617): reads every
+ * wave job's outcome file and prints the outcome word, through the
+ * product's bin when it has one.
+ */
+export function opWavesOutcomeCommand(specFile: string, bin?: string): string[] {
+  return [...opWaveBinArgv(bin), "run", "wave", "--spec", specFile, "--waves-outcome"];
+}
+
+/** The jobs the control job needs (#4617): the last wave's applying jobs, as a next wave would need them. */
+export function opWavesLastJobs(jobs: readonly OpWaveJob[]): string[] {
+  const last = jobs.reduce((max, j) => Math.max(max, j.wave), 0);
+  return jobs.filter((j) => j.wave === last && j.kind !== "decide").map((j) => j.jobName);
 }
 
 /** Which runs a wave's set digest covers (#3821). */
@@ -743,6 +809,11 @@ const NAME = /^[a-z0-9][a-z0-9_-]*$/;
 export function assertOpWavesSpec(spec: OpWavesSpec): void {
   const where = `Op waves "${spec.name}"`;
   if (!NAME.test(spec.name)) throw new Error(`${where}: the name must be lowercase letters, digits, "-" and "_"`);
+  if (spec.control !== undefined) {
+    // #4617: the control repo's settings, checked as the pull request loop's are.
+    const problems = opWavesControlProblems(spec.control);
+    if (problems.length > 0) throw new Error(`${where}: ${problems.join("; ")}.`);
+  }
   if (!spec.op) throw new Error(`${where} names no \`op\`. Name the Op a run runs when it names none.`);
   if (spec.plan !== undefined && spec.planWave !== undefined) {
     throw new Error(`${where} has both \`plan\` and \`planWave\`. A wave is planned one run at a time or all at once; give one.`);

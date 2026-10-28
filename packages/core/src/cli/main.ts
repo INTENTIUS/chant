@@ -520,6 +520,10 @@ Ops:
                         --record-plans (no --wave), in a pull request's
                         pipeline: plan every wave at its head and record the
                         digests a pr-review approval mode compares.
+                        --waves-outcome (no --wave), after the last wave:
+                        print how the wave jobs' outcome files add up
+                        (applied, partial, unchanged, waiting, failed), the
+                        outcome a control dispatch carries (#4617)
                         --events-json streams the job's run events (#4555);
                         with OTEL_EXPORTER_OTLP_ENDPOINT set, the job sends
                         its trace there

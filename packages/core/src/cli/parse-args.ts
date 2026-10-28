@@ -97,6 +97,7 @@ const BOOLEAN_FLAGS = new Set([
   "--generated",
   "--decide",
   "--record-plans",
+  "--waves-outcome",
   "--loopback",
   "--artifacts",
   "--push",
@@ -451,6 +452,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.decide = true;
     } else if (arg === "--record-plans") {
       result.recordPlans = true;
+    } else if (arg === "--waves-outcome") {
+      result.wavesOutcome = true;
     } else if (arg === "--group") {
       const raw = args[++i];
       if (!raw || raw.startsWith("-")) throw new Error("--group needs a job group's name: --group <name>");

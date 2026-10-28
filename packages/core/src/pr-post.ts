@@ -29,6 +29,7 @@ import { prNoteMarker, prStatusContext, prStatusDescription, prStatusState, rend
 import { forgePrincipalOf, type PrForge } from "./pr-forge";
 import { GITHUB_COMMENT_LIMIT, GITLAB_NOTE_LIMIT } from "./plan-summary";
 import { activeProductWords, type CiProductWords } from "./ci-product-words";
+import { controlEdgeFactsFromEnv, remarkCrossStackEdges, type ControlEdgeFacts } from "./control/edges";
 
 /** The plan report's file under the report directory. */
 export const PR_PLAN_REPORT_FILE = "pr-plan.json";
@@ -51,6 +52,12 @@ export interface PlanPostInput {
    * job held no token to ask with. It replaces any `overdue` in the report.
    */
   overdue?: () => Promise<PrOverdue[]>;
+  /**
+   * The control repo's entries and apply records (#4617), which mark the
+   * report's cross-stack edges stale, current or unknown. Default: read
+   * from the checkout `CHANT_CONTROL_DIR` names, when it names one.
+   */
+  controlFacts?: () => Promise<ControlEdgeFacts | undefined>;
 }
 
 /** What {@link postPlanReport} did. */
@@ -133,6 +140,11 @@ export async function postPlanReport(input: PlanPostInput): Promise<PlanPostResu
       const { overdue: _forged, ...rest } = report;
       const found = await input.overdue().catch(() => [] as PrOverdue[]);
       report = (found.length > 0 ? { ...rest, overdue: found } : rest) as PrReport;
+    }
+    // #4617: the marks come from the control repo, read here; the plan job's never show.
+    if (report.crossStackEdges?.length) {
+      const facts = await (input.controlFacts ?? (() => controlEdgeFactsFromEnv()))().catch(() => undefined);
+      report = remarkCrossStackEdges(report, facts);
     }
     try {
       state = prStatusState(report);

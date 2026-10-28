@@ -54,6 +54,7 @@ import type { PrRequireOutcome } from "./pr-requires";
 import { renderMigrationLines, type PrMigrationFile } from "./pr-migrations";
 import { GITHUB_COMMENT_LIMIT, groupChangeSet, renderPlanSummaryMarkdown } from "./plan-summary";
 import { activeProductWords, approveLine, commentLine, isChantWords, overrideLine, productStatusContext, type CiProductWords } from "./ci-product-words";
+import type { CrossStackEdge } from "./control/edges";
 
 /** The schema a pull-request report names in `$schema`. */
 export const PR_REPORT_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/pr-report/v1/pr-report.schema.json";
@@ -102,6 +103,9 @@ export const PR_REPORT_GROUPS_FLOOR = "0.124.54";
 
 /** The first chant whose report can carry `lockTargets` (#4552). */
 export const PR_REPORT_LOCK_TARGETS_FLOOR = NEXT_RELEASE;
+
+/** The first chant whose report carries {@link PrReport.crossStackEdges} (#4617). */
+export const PR_REPORT_CROSS_STACK_FLOOR = NEXT_RELEASE;
 
 /** The gate a pull request's apply waits on, unless the pipeline names another. */
 export const PR_APPLY_GATE = "pr-apply";
@@ -590,6 +594,16 @@ export interface PrReport {
    */
   lockTargets?: string[];
   /**
+   * The stacks outside the workspace a member reads (#4617, a Pulumi
+   * `StackReference` no step here applies, #4547), each marked stale,
+   * current or unknown from the control repo's entries and apply records
+   * (`./control/edges.ts`). The plan job marks every one unknown, since it
+   * reads no control repo; the job that posts the note marks them again
+   * from a checkout of it. Absent when no member reads one. Added within
+   * contract 1 by chant {@link PR_REPORT_CROSS_STACK_FLOOR}.
+   */
+  crossStackEdges?: CrossStackEdge[];
+  /**
    * The stage hooks the job ran (#4288), in order. Absent when it ran none.
    * Added within contract 1 by chant {@link PR_REPORT_HOOKS_FLOOR}.
    */
@@ -757,6 +771,27 @@ function headline(report: PrReport, words: CiProductWords): string {
  * component that failed, and that the rest went on. Undefined when nothing
  * is blocked.
  */
+/**
+ * The cross-stack edges (#4617): a table of each stack outside the
+ * workspace a member reads, its owner and its mark, and a line naming the
+ * stale ones, whose reader holds outputs that may have changed since.
+ */
+function crossStackLines(report: Pick<PrReport, "crossStackEdges">): string[] {
+  const edges = report.crossStackEdges ?? [];
+  if (edges.length === 0) return [];
+  const day = (iso?: string): string => (iso ? iso.replace(/\.\d+Z$/, "Z") : "never");
+  const out = ["", "| Reader | Reads stack | Owner | Edge | Why |", "|---|---|---|---|---|"];
+  for (const e of edges) {
+    const why = e.ownerApplied ? `${e.why} (owner applied ${day(e.ownerApplied.at)} at ${code(e.ownerApplied.sha.slice(0, 12))}, reader updated ${day(e.lastUpdate)})` : e.why;
+    out.push(`| ${code(e.member)} | ${code(e.stack)} | ${e.owner ? code(e.owner) : "?"} | ${e.status} | ${why} |`);
+  }
+  const stale = edges.filter((e) => e.status === "stale");
+  if (stale.length > 0) {
+    out.push("", `Stale: ${stale.map((e) => `${code(e.member)} reads ${code(e.stack)}`).join("; ")}. The owner applied since the reader last updated, so this plan reads its outputs as they are now and the reader's last update read older ones.`);
+  }
+  return out;
+}
+
 function blockedLine(members: readonly PrMember[]): string | undefined {
   const byRoot = new Map<string, Set<string>>();
   for (const m of members) {
@@ -1088,6 +1123,7 @@ export function renderPrNote(report: PrReport, options: { limit?: number; approv
   out.push(...mayAppearLines(report, options.applyWord ?? words.stages.apply));
   const blocked = blockedLine(report.members);
   if (blocked) out.push("", blocked);
+  out.push(...crossStackLines(report));
   out.push(...groupLines(report));
   out.push(...waveLines(report, options.approver ?? "<you>", words));
   // #4288: the hooks that did not pass, by name; a passed hook is a count.

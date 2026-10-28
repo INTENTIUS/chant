@@ -190,6 +190,7 @@ import {
 import type { PulumiStep } from "./change-set";
 import { writePulumiExportSnapshot, type PulumiExportWrite } from "./stack-export-snapshot";
 import { pointerSegment, pulumiStackReferences, stackReferenceOwner } from "./stack-references";
+import { isObject } from "./values";
 import { prepareReleaseCopy } from "./release-copy";
 import { initReviewStack, reviewConfigSource, reviewStackFor, reviewStackLocation } from "./review-stack";
 
@@ -293,8 +294,12 @@ export interface PulumiUpArtifact {
   /**
    * The stack's `StackReference`s (#4547): `read`, wired to another step of
    * the project, and `outside`, which add no edge, each with why.
+   * `lastUpdate` is when the stack last updated, from its export's
+   * `deployment.manifest.time` (#4617): the pull request note compares it
+   * with the control repo's record of the owner's last apply to mark each
+   * outside reference stale, current or unknown.
    */
-  stackReferences?: { read: string[]; outside: { name: string; why: string }[] };
+  stackReferences?: { read: string[]; outside: { name: string; why: string }[]; lastUpdate?: string };
 }
 
 /** The CrossGuard packs a plan read at base (#4613). */
@@ -761,7 +766,15 @@ function stackReferencesOf(exported: unknown, input: PulumiUpStepInput): PulumiU
             ? "the export recorded no output for it"
             : "no other pulumi-up step in this project applies that stack",
     }));
-  return { read: [...new Set(read)].sort(), outside };
+  const lastUpdate = exportUpdatedAt(exported);
+  return { read: [...new Set(read)].sort(), outside, ...(lastUpdate ? { lastUpdate } : {}) };
+}
+
+/** When the exported stack last updated (#4617): `deployment.manifest.time`, when it is a time. */
+export function exportUpdatedAt(exported: unknown): string | undefined {
+  const deployment = isObject(exported) && isObject(exported.deployment) ? exported.deployment : undefined;
+  const time = deployment && isObject(deployment.manifest) ? deployment.manifest.time : undefined;
+  return typeof time === "string" && !Number.isNaN(Date.parse(time)) ? time : undefined;
 }
 
 /**

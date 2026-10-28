@@ -56,6 +56,26 @@ async function runOpWaveJobCommand(ctx: CommandContext): Promise<number> {
       return 1;
     }
   }
+  if (specFile && args.wavesOutcome) {
+    // #4617: the outcome the control job's dispatch carries, from every wave job's outcome file.
+    try {
+      const spec = parseOpWavesSpec(readFileSync(resolve(specFile), "utf-8"), `--spec ${specFile}`);
+      const { opWaveOutcomeDir } = await import("../../op/op-waves");
+      const { earlierWaveOutcomes } = await import("../../wave-blocked");
+      const { applyOutcomeOf } = await import("../../control/applied");
+      const summary = applyOutcomeOf(earlierWaveOutcomes([resolve(opWaveOutcomeDir(spec))], Number.MAX_SAFE_INTEGER).members);
+      if (args.json) console.log(JSON.stringify(summary, null, 2));
+      else {
+        console.log(summary.outcome);
+        const counts = Object.entries(summary.counts).map(([k, n]) => `${n} ${k}`).join(", ");
+        console.error(`${spec.name}: ${summary.outcome}${counts ? ` (${counts})` : ", no wave wrote an outcome"}`);
+      }
+      return 0;
+    } catch (err) {
+      console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+      return 1;
+    }
+  }
   if (!specFile || args.wave === undefined) {
     console.error(formatError({
       message: "`chant run wave` needs --spec <file> and --wave <k>",

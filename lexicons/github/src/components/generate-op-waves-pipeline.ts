@@ -52,9 +52,31 @@
  * checkout. Every later run step starts with an unset of the variables a
  * token is requested with, so the code the job runs holds no OIDC token
  * and cannot request one for another group's identity.
+ *
+ * With `control` on the spec (#4617), a `control-dispatch` job needs the
+ * last wave's jobs and runs after them unless the run was cancelled, so it
+ * runs after a failure too. It downloads every job's outcome file, adds
+ * them up with `chant run wave --waves-outcome` (through the product's
+ * bin) into `CHANT_CONTROL_OUTCOME`, and sends the control repo one
+ * dispatch carrying that outcome and the pushed commit. Only the dispatch
+ * step holds the control token: the `tokenSecret` secret, mapped into
+ * `CHANT_CONTROL_TOKEN` and handed to curl on its stdin
+ * (`controlDispatchScript`, #4568).
  */
 
-import { notifyVariables, opWaveGroupOf, opWaveJobs, opWaveOutcomeDir, opWavesRecordPlansCommand, opWavesResumeCommand, type OpWavesSpec } from "@intentius/chant/op/op-waves";
+import {
+  notifyVariables,
+  opWaveGroupOf,
+  opWaveJobs,
+  opWaveOutcomeDir,
+  opWavesControlTarget,
+  opWavesLastJobs,
+  opWavesOutcomeCommand,
+  opWavesRecordPlansCommand,
+  opWavesResumeCommand,
+  type OpWavesSpec,
+} from "@intentius/chant/op/op-waves";
+import { CONTROL_OUTCOME_VAR, controlDispatchJob } from "@intentius/chant/control/dispatch";
 import type { OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
 import {
   assertEnvironment,
@@ -146,6 +168,12 @@ export function buildGithubOpWavesDoc(
     };
   }
 
+  // #4617: once the last wave ran, one job tells the control repo how the waves ended.
+  if (spec.control) {
+    const [name, job] = controlJob(spec, options, jobs, image, permissions);
+    jobsDoc[name] = job;
+  }
+
   // #3761: the notify variables come from the secrets of the same name.
   const env = { ...githubSecretEnv(notifyVariables(spec.notify)), ...(options.variables ?? {}) };
   const doc: GithubOpPipelineDoc = {
@@ -162,6 +190,52 @@ export function buildGithubOpWavesDoc(
     ...(spec.resume ? { resumeDoc: buildResumeDoc(spec, options) } : {}),
     ...(byReview ? { plansDoc: buildPlansDoc(spec, options) } : {}),
   };
+}
+
+/**
+ * The control dispatch job (#4617): after the last wave, whatever it did,
+ * the waves' outcome read from every job's outcome file, then one dispatch
+ * carrying it. The pushed commit is the one every wave ran at.
+ */
+function controlJob(
+  spec: OpWavesSpec,
+  options: OpWavesPipelineOptions,
+  jobs: OpWavesPipelineResult["jobs"],
+  image: string,
+  permissions: Record<string, unknown>,
+): [string, Record<string, unknown>] {
+  const control = spec.control!;
+  const dispatch = controlDispatchJob("github", opWavesControlTarget(control), "${{ github.sha }}", {
+    ...(options.words ? { words: options.words } : {}),
+    ...(control.sentCheck ? { sentCheck: control.sentCheck } : {}),
+    ...(control.markSent ? { markSent: control.markSent } : {}),
+    outcome: true,
+  });
+  const marks = control.sentCheck !== undefined || control.markSent !== undefined;
+  const steps: Array<Record<string, unknown>> = [
+    checkoutStep(true),
+    { name: "Download the waves' outcomes", uses: DOWNLOAD_ARTIFACT, with: { path: opWaveOutcomeDir(spec) } },
+    ...(spec.waves[0]?.setup ?? []).map(setupStepDoc),
+    ...runSteps(options.beforeScript ?? []),
+    {
+      name: "Add up the waves' outcomes",
+      run: `outcome="$(${opWavesOutcomeCommand(options.specFile, options.bin).join(" ")})" || exit 1\necho "${CONTROL_OUTCOME_VAR}=$outcome" >> "$GITHUB_ENV"`,
+    },
+    { name: `Tell the control repo ${control.repo} how ${control.member}'s waves ended`, env: { ...dispatch.env, ...(marks ? { GITHUB_TOKEN: GITHUB_JOB_TOKEN } : {}) }, run: dispatch.script },
+  ];
+  return [
+    dispatch.name,
+    {
+      "runs-on": githubRunsOn(spec.runner),
+      needs: opWavesLastJobs(jobs),
+      // The waves ran, whatever they did: a failed run is an outcome the control repo is told about.
+      if: "!cancelled()",
+      container: image,
+      // markSent sets a commit status; the rest reads the repository and the run's artifacts.
+      permissions: marks ? { ...permissions, statuses: "write" } : permissions,
+      steps,
+    },
+  ];
 }
 
 /** The scheduled resume workflow (#3683). */

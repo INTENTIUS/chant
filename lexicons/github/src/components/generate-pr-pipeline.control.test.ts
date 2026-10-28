@@ -60,7 +60,8 @@ describe("the control repo's workflow on GitHub (#4568)", () => {
     expect(file.path).toBe(".github/workflows/terragucci-dependents.yml");
     const doc = parseYAML(file.content) as { on: Record<string, any>; jobs: Record<string, Job> };
     expect(doc.on.repository_dispatch.types).toEqual(["terragucci-applied"]);
-    expect(Object.keys(doc.on.workflow_dispatch.inputs)).toEqual(["member", "op", "sha"]);
+    // #4617: the outcome an op waves dispatch carries is an input too.
+    expect(Object.keys(doc.on.workflow_dispatch.inputs)).toEqual(["member", "op", "sha", "outcome"]);
     expect(doc.jobs.dependents!.steps[1]!.run).toContain("workspace run --dependents-of");
   });
 });

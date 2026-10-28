@@ -160,8 +160,11 @@ export async function generateOpWavesPipeline(
   }
   try {
     // #4607: a product's bin, when it runs the generator in process with its words, is the command in each job.
-    const bin = options.bin ?? activeProductWords().bin;
-    const { files, jobs } = plugin.generateOpWavesPipeline(spec, { ...options, ...(bin ? { bin } : {}) });
+    const active = activeProductWords();
+    const bin = options.bin ?? active.bin;
+    // #4617: the control dispatch speaks in the product's words too.
+    const words = options.words ?? (spec.control ? active : undefined);
+    const { files, jobs } = plugin.generateOpWavesPipeline(spec, { ...options, ...(bin ? { bin } : {}), ...(words ? { words } : {}) });
     return { success: true, files, jobs };
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : String(err) };

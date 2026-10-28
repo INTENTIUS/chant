@@ -18,6 +18,7 @@ chant run wave --spec <file> --wave <k> [--decide | --share <i> | --group <name>
 chant run resume [--op <name>] [--gate <name>] [--dry-run] [--json]
 chant run pending --plan <digest> [--op <name>] [--json]
 chant run wave --spec <file> --record-plans
+chant run wave --spec <file> --waves-outcome [--json]
 chant run --components <name|all|a,b,c> [flags]
 chant run --generate <provider> [--spec <file>] [--output <dir>] [--format json]
 ```
@@ -290,6 +291,8 @@ A gate that asks a decision point counts as answered once its question has an an
 
 `--record-plans`, in a pull request's pipeline, plans every wave at the pull request's head and records each wave's digest on `chant/lifecycle`. A wave whose `approval` is `pr-review` compares its digest with that record after the merge ([Which approvals count](/chant/guide/op-waves/#which-approvals-count)).
 
+After the last wave, `--waves-outcome` reads every wave job's outcome file under `.chant/op-waves/<name>/outcomes` and prints one word on stdout: `applied`, `partial`, `unchanged`, `waiting` or `failed` ([#4617](https://github.com/INTENTIUS/chant/issues/4617)). The counts by status go to stderr. With `--json` it prints `{ outcome, applied, counts }`. A spec's `control-dispatch` job sends that word to the control repo ([Tell the control repo](/chant/guide/op-waves/#tell-the-control-repo)). It exits 0 whatever the outcome, and 1 when the spec does not read.
+
 ### `run pending`
 
 Lists the gates waiting on a plan digest, newest first ([#4607](https://github.com/INTENTIUS/chant/issues/4607)). A gate counts when its newest pending fact has the digest as its plan or its change set, has not expired, and has no approval or rejection recorded since. A `pr-<n>` or `pr-<n>-<member>` op names its pull request, so a product's approve verb can take the digest the note printed and find the op, the gate and the pull request from it.
@@ -452,6 +455,7 @@ A run without `--release` writes records with no `releaseDigest`, even when `HEA
 | `--wave <k>` | The wave to run, from 1 (`run wave`) |
 | `--decide` | Plan the wave and decide its gate without applying it (`run wave`) |
 | `--record-plans` | Plan every wave at a pull request's head and record the digests a `pr-review` wave compares (`run wave`) |
+| `--waves-outcome` | Print how the wave jobs' outcome files add up, the outcome a control dispatch carries (`run wave`) |
 | `--share <i>` | Apply share `i` of a decided wide wave, or with `--group`, of that job group (`run wave`) |
 | `--group <name>` | Apply one job group's runs of a decided wave (`run wave`) |
 | `--base <ref>` | The commit the wave's gate policy is read from (`run wave`) |
