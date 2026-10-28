@@ -15,7 +15,9 @@
  *
  * Under the trace, each target's span carries what its capability knew
  * (`Capability.traceFacts`): engine facts as attributes, and a child span per
- * resource the engine timed.
+ * resource the engine timed. When the capability reports per-resource lines
+ * (`CapabilityTraceFacts.resources`, #4615), the target's `step-settle`
+ * carries them as `resources`.
  */
 
 import type { RunEventBody, RunEventSettleStatus } from "../run-event";
@@ -78,6 +80,8 @@ export class OpWaveRunEvents {
       durationMs,
       ...(opts.error !== undefined ? { error: opts.error } : {}),
       ...(opts.message !== undefined ? { message: opts.message } : {}),
+      // #4615: what the engine reported per resource, when it reported anything.
+      ...(opts.facts?.resources?.length ? { resources: opts.facts.resources.map((r) => ({ ...r })) } : {}),
     });
   }
 

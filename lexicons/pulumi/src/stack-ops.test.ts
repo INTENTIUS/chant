@@ -18,6 +18,7 @@ import {
   gatedStackExport,
   gatedStackMove,
   moveLeftovers,
+  pulumiStackLockIds,
   PULUMI_STACK_OPS_OP,
   type GatedRequestApi,
   type PulumiStackOpCommon,
@@ -248,5 +249,32 @@ describe("move", () => {
 
   test("the requests sit under one op", () => {
     expect(PULUMI_STACK_OPS_OP).toBe("pulumi-stack-ops");
+  });
+});
+
+describe("the stack lock reader (chant#4615)", () => {
+  test("lists a file:// backend's current lock ids for the stack, both layouts", async () => {
+    const root = outside();
+    mkdirSync(join(root, ".pulumi", "locks", "organization", "shop", "dev"), { recursive: true });
+    writeFileSync(join(root, ".pulumi", "locks", "organization", "shop", "dev", "lock-2.json"), "{}");
+    mkdirSync(join(root, ".pulumi", "locks", "dev"), { recursive: true });
+    writeFileSync(join(root, ".pulumi", "locks", "dev", "lock-1.json"), "{}");
+    const dir = stackDir(`file://${root}`);
+    expect(await pulumiStackLockIds({ dir, stack: "dev", env: {} })).toEqual({ checked: true, backend: `file://${root}`, ids: ["lock-1", "lock-2"] });
+    expect(await pulumiStackLockIds({ dir, stack: "prod", env: {} })).toEqual({ checked: true, backend: `file://${root}`, ids: [] });
+  });
+
+  test("takes PULUMI_BACKEND_URL over Pulumi.yaml, and says it did not read a backend it cannot list", async () => {
+    const root = outside();
+    mkdirSync(join(root, ".pulumi", "locks", "organization", "shop", "dev"), { recursive: true });
+    writeFileSync(join(root, ".pulumi", "locks", "organization", "shop", "dev", "lock-9.json"), "{}");
+    const dir = stackDir("s3://bucket");
+    expect(await pulumiStackLockIds({ dir, stack: "dev", env: {} })).toEqual({ checked: false, backend: "s3://bucket", ids: [] });
+    expect((await pulumiStackLockIds({ dir, stack: "dev", env: { PULUMI_BACKEND_URL: `file://${root}` } })).ids).toEqual(["lock-9"]);
+  });
+
+  test("a plunge stack holds no stack lock", async () => {
+    const dir = stackDir(`file://${outside()}`);
+    expect(await pulumiStackLockIds({ dir, stack: "dev", engine: "plunge", env: {} })).toEqual({ checked: true, ids: [] });
   });
 });

@@ -106,7 +106,7 @@ export { readPulumiDrift, type PulumiDriftRunners } from "./drift-read";
 export { pulumiAuditCatalog } from "./lint/audit-catalog";
 // The Preview/Drift watch composite and its step builders (#4494).
 export { PulumiWatchOp, type PulumiWatchOpConfig, type PulumiWatchOpResources } from "./composites/pulumi-watch-op";
-export { gatedStackExport, gatedStackCancel, gatedStackMove, moveLeftovers, PULUMI_STACK_OPS_OP, type PulumiStackOpOutcome, type PulumiStackOpCommon, type PulumiStackOpKind } from "./stack-ops";
+export { gatedStackExport, gatedStackCancel, gatedStackMove, moveLeftovers, diyStackLockIds, pulumiStackLockIds, type PulumiStackLocks, PULUMI_STACK_OPS_OP, type PulumiStackOpOutcome, type PulumiStackOpCommon, type PulumiStackOpKind } from "./stack-ops";
 // Review stacks (INTENTIUS/plywood#15): pr-<n> stacks only.
 export { initReviewStack, removeReviewStack, type ReviewStackOptions, type ReviewStackOutcome } from "./review-stack";
 export { pulumiStackReferences, parsePulumiStackName, stackReferenceOwner, PULUMI_STACK_REFERENCE_TYPE, type PulumiStackReference } from "./stack-references";

@@ -87,6 +87,7 @@ export {
   readOpWavePolicy,
   runOpWave,
   runOpWaveApplyHooks,
+  opWaveResourceLines,
 } from "./op-waves-run";
 export type {
   OpWaveBaseRules,
@@ -129,6 +130,8 @@ export type { OpWaveCostFormat, OpWaveCostHold, OpWaveCostVerdict, OpWaveHolds, 
 export { notifyOpWave, opWaveNotifyFields } from "./op-waves-notify";
 export { OP_WAVE_STAND_DOWN_FLOOR, gitOpWaveNewerCommit, newerCommitOnBranch, opWaveRunBranch, opWaveStandDownReason, tipAppliesTargets } from "./op-waves-stand-down";
 export type { OpWaveNewerCommit, OpWaveNewerCommitPort } from "./op-waves-stand-down";
+export { OP_WAVE_RELEASE_RECORD_FLOOR, gitOpWaveReleasePort, opWaveReleaseNames, opWaveReleaseProblems, releaseOfCommit } from "./op-waves-release";
+export type { OpWaveReleaseNames, OpWaveReleaseOutcome, OpWaveReleasePort, OpWaveReleaseRequest } from "./op-waves-release";
 export { foldPolicyRows, opWaveAfterPlanProblems, opWaveAfterPlanResultProblems, runOpWaveAfterPlanHooks } from "./op-waves-after-plan";
 export type { OpWaveAfterPlanHook, OpWaveAfterPlanOutcome, OpWaveAfterPlanResult, OpWaveAfterPlanRun, OpWaveAfterPlanRunOutcome } from "./op-waves-after-plan";
 export { OP_WAVE_AFTER_PLAN_FLOOR } from "./runtime";

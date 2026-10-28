@@ -292,6 +292,40 @@ export function diyStackLockIds(root: string, project: string | undefined, stack
   return [...ids].sort();
 }
 
+/** A stack's current lock, as {@link pulumiStackLockIds} reads it (#4615). */
+export interface PulumiStackLocks {
+  /** Whether the backend was read: a `file://` backend chant can list. False for Pulumi Cloud, a bucket, or no backend found. */
+  checked: boolean;
+  /** The backend URL the stack resolves to, when one was found. */
+  backend?: string;
+  /** The lock ids the stack holds now, sorted. Empty when it holds none, or when `checked` is false. */
+  ids: string[];
+}
+
+/**
+ * The lock ids a stack holds now (#4615), for a caller that needs the id
+ * `gatedStackCancel` asks for: the stack's backend from its directory (the
+ * environment's `PULUMI_BACKEND_URL`, else `Pulumi.yaml`'s `backend.url`),
+ * and on a `file://` backend the lock files {@link diyStackLockIds} lists.
+ * Any other backend answers `checked: false`. A stack on plunge keeps no
+ * stack lock, so it answers `checked: true` with no ids.
+ */
+export async function pulumiStackLockIds(opts: { dir: string; stack: string; cwd?: string; project?: string; engine?: PulumiMemberEngine; env?: NodeJS.ProcessEnv }): Promise<PulumiStackLocks> {
+  const env = opts.env ?? process.env;
+  const dir = stackDirOf(opts.dir, opts.cwd);
+  if (engineOf(dir, opts.engine, env) === "plunge") return { checked: true, ids: [] };
+  const backend = pulumiStackBackend(dir, { env });
+  const m = backend ? /^file:\/\/(.*)$/.exec(backend.url) : null;
+  if (!m) return { checked: false, ...(backend ? { backend: backend.url } : {}), ids: [] };
+  const root = isAbsolute(m[1]!) ? m[1]! : resolve(dir, m[1]!);
+  let project = opts.project;
+  if (!project) {
+    const { pulumiYamlName } = await import("./lint/post-synth/member-read-helpers");
+    project = pulumiYamlName(dir);
+  }
+  return { checked: true, backend: backend!.url, ids: diyStackLockIds(root, project, opts.stack) };
+}
+
 export interface PulumiStackCancelOptions extends PulumiStackOpCommon {
   dir: string;
   cwd?: string;
@@ -323,16 +357,8 @@ export async function gatedStackCancel(opts: PulumiStackCancelOptions): Promise<
       const id = await opts.readLockId();
       return { checked: true, ids: id ? [id] : [] };
     }
-    const backend = pulumiStackBackend(dir, { env });
-    const m = backend ? /^file:\/\/(.*)$/.exec(backend.url) : null;
-    if (!m) return { checked: false, ids: [] };
-    const root = isAbsolute(m[1]) ? m[1] : resolve(dir, m[1]);
-    let project = opts.project;
-    if (!project) {
-      const { pulumiYamlName } = await import("./lint/post-synth/member-read-helpers");
-      project = pulumiYamlName(dir);
-    }
-    return { checked: true, ids: diyStackLockIds(root, project, opts.stack) };
+    const locks = await pulumiStackLockIds({ dir, stack: opts.stack, engine, env, ...(opts.project ? { project: opts.project } : {}) });
+    return { checked: locks.checked, ids: locks.ids };
   };
 
   let checked = false;

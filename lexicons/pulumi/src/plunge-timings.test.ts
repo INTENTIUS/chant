@@ -21,7 +21,7 @@ import type { OpWavesSpec } from "@intentius/chant/op/op-waves";
 import { runOpWave, type OpWaveShowAtBase } from "@intentius/chant/op/op-waves-run";
 import type { OpRunRecordInput } from "@intentius/chant/op/runtime";
 import { plungeTimingOf, pulumiStreamSummary, pulumiStreamTimings, type PlungeTiming } from "./engine-events";
-import { plungeResourceSpan, plungeTimingSpans, plungeTimingTotals, pulumiUrnParts } from "./plunge-timings";
+import { plungeResourceProgress, plungeResourceSpan, plungeTimingSpans, plungeTimingTotals, pulumiUrnParts } from "./plunge-timings";
 import { createPulumiUpCapability } from "./pulumi-up";
 import type { PulumiRunner } from "./run";
 import { pulumiTraceFacts } from "./trace-facts";
@@ -134,9 +134,12 @@ describe("timings as spans (#4579)", () => {
     const plunge = pulumiTraceFacts({ dir, stack: "floci" }, { output: { ...base, engine: "plunge", ...(summary ? { summary } : {}) } });
     expect(plunge.spans!.map((s) => s.name)).toEqual(timed);
     expect(plunge.attributes!["plunge.resources"]).toBe(timed.length);
+    // chant#4615: a progress line per timed resource, in the same order.
+    expect(plunge.resources!.map((r) => r.resource)).toEqual(timed);
     const stockSummary = pulumiStreamSummary(upStream);
     const stock = pulumiTraceFacts({ dir, stack: "floci" }, { output: { ...base, engine: "pulumi", ...(stockSummary ? { summary: stockSummary } : {}) } });
     expect(stock.spans).toBeUndefined();
+    expect(stock.resources).toBeUndefined();
     expect(Object.keys(stock.attributes!).some((k) => k.startsWith("plunge."))).toBe(false);
   });
 });
@@ -211,5 +214,25 @@ describe("a plunge up's timings in its run record and trace (#4579 acceptance, a
     expect(record.status).toBe("ok");
     const stack = spans.find((s) => s.name === "site")!;
     expect(spans.filter((s) => s.parentSpanId === stack.spanId)).toEqual([]);
+  });
+});
+
+describe("per-resource progress lines (chant#4615)", () => {
+  test("one line per timed resource, with its type, name, time and calls, failed when a call failed", () => {
+    const bucket = urn("aws:s3/bucket:Bucket", "assets");
+    const role = urn("aws:iam/role:Role", "app");
+    const lines = plungeResourceProgress({
+      [bucket]: timingsFor("create", 0),
+      [role]: [{ kind: "provider", call: "create", startedAt: at(2000), durationMs: 40, failed: true }],
+    });
+    expect(lines).toEqual([
+      { resource: bucket, type: "aws:s3/bucket:Bucket", name: "assets", status: "ok", startedAt: plungeResourceSpan(bucket, timingsFor("create", 0))!.startedAt, durationMs: plungeResourceSpan(bucket, timingsFor("create", 0))!.durationMs, calls: 3 },
+      { resource: role, type: "aws:iam/role:Role", name: "app", status: "failed", startedAt: plungeResourceSpan(role, [{ kind: "provider", call: "create", startedAt: at(2000), durationMs: 40, failed: true }])!.startedAt, durationMs: 40, calls: 1 },
+    ]);
+  });
+
+  test("a stock stream gives none, and pulumiTraceFacts leaves resources out", () => {
+    expect(plungeResourceProgress(undefined)).toEqual([]);
+    expect(plungeResourceProgress({})).toEqual([]);
   });
 });

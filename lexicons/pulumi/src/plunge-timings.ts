@@ -15,6 +15,7 @@
  */
 
 import type { CapabilityTraceFacts, CapabilityTraceSpan } from "@intentius/chant/otlp";
+import type { RunEventResource } from "@intentius/chant/run-event";
 import type { PlungeTiming } from "./engine-events";
 
 type Attrs = NonNullable<CapabilityTraceFacts["attributes"]>;
@@ -91,4 +92,24 @@ export function plungeTimingTotals(timings: Readonly<Record<string, readonly Plu
     "plunge.slowest.call": `${slowest.t.kind} ${slowest.t.call}`,
     "plunge.slowest.ms": ms(slowest.t.durationMs),
   };
+}
+
+/**
+ * One progress line per timed resource (#4615), for the stack's
+ * `step-settle` event and the job's log: the URN, its type and name, `failed`
+ * when a call failed, the span's time and the number of calls. In the order
+ * the stream first timed each, as the spans are.
+ */
+export function plungeResourceProgress(timings: Readonly<Record<string, readonly PlungeTiming[]>> | undefined): RunEventResource[] {
+  return plungeTimingSpans(timings).map((span) => {
+    const parts = pulumiUrnParts(span.name);
+    return {
+      resource: span.name,
+      ...(parts ? { type: parts.type, name: parts.name } : {}),
+      status: span.failed ? "failed" : "ok",
+      startedAt: span.startedAt,
+      durationMs: span.durationMs,
+      calls: span.children?.length ?? 0,
+    };
+  });
 }
