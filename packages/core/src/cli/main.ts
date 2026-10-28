@@ -1264,6 +1264,10 @@ Component release ledger + status:
                             approved, mergeable, undiverged and green;
                             --requires <list> asks only the checks it
                             names (approved,mergeable,undiverged,checks);
+                            --merge auto --merge-token-env <VAR> merges the
+                            pull request once every member applied and the
+                            records are pushed, with that token alone and
+                            the applied head checked again (#4636);
                             --respond <list> turns the failed apply's
                             triage and the refused apply's diff on or off
                             (wave-refused=diff|off,apply-failed=triage|off,

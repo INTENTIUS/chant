@@ -1020,6 +1020,9 @@ export function runComponentsPrApply(ctx: CommandContext): Promise<number> {
     // #4301: an apply before merge asks the forge its requires checks before any of the head's code loads, the config included.
     let beforeMerge: PrBeforeMerge | undefined;
     if (ctx.args.requires && !ctx.args.beforeMerge) return fail("--requires names the checks of an apply before merge, so it needs --before-merge --pr <n>");
+    // #4636: the merge after the update, checked before anything applies.
+    const mergeProblem = await mergeArgsProblem(ctx.args);
+    if (mergeProblem) return fail(mergeProblem);
     if (ctx.args.beforeMerge) {
       const checked = await beforeMergeChecks(ctx);
       if (typeof checked === "number") return checked;
@@ -1333,7 +1336,63 @@ async function prApply(ctx: CommandContext, stage: StageEvents, beforeMerge?: Pr
   if (green && applied.status === "applied") await recordGreenApplied(p, green, set.doc.digest, approval, via);
   const code = await stop(report, exit, applied.run.status === "gated" ? "gated" : undefined);
   if (applied.status === "applied" && !afterFailed) console.error(formatSuccess(`applied the plan ${report.digest} approved by ${(approval.approvedBy ?? []).join(", ")}`));
+  // #4636: an update before merge that applied every member merges the pull request, never the other way round.
+  if (code === 0 && beforeMerge && pr !== null && args.merge === "auto" && applied.status === "applied" && !afterFailed) return mergeAfterUpdate(ctx, p, pr);
   return code;
+}
+
+/** `--merge`, `--merge-token-env` and `--merge-method` as one problem, or undefined when they hold together. */
+async function mergeArgsProblem(args: CommandContext["args"]): Promise<string | undefined> {
+  const { PR_APPLY_MERGES, PR_MERGE_METHODS } = await import("../../pr-merge");
+  if (args.merge === undefined) {
+    if (args.mergeTokenEnv || args.mergeMethod) return "--merge-token-env and --merge-method go with --merge auto";
+    return undefined;
+  }
+  if (!(PR_APPLY_MERGES as readonly string[]).includes(args.merge)) return `--merge takes ${PR_APPLY_MERGES.join(" or ")}, not ${args.merge}`;
+  if (args.merge === "manual") return args.mergeTokenEnv || args.mergeMethod ? "--merge manual leaves the merge to a person, so it takes no --merge-token-env or --merge-method" : undefined;
+  if (!args.beforeMerge) return "--merge auto merges a pull request once its update before merge applied, so it needs --before-merge --pr <n>";
+  if (!args.mergeTokenEnv) return "--merge auto merges with a token of its own, never the job's: --merge-token-env <VAR> (on GitLab a protected variable)";
+  if (args.mergeMethod && !(PR_MERGE_METHODS as readonly string[]).includes(args.mergeMethod)) return `--merge-method takes ${PR_MERGE_METHODS.join(", ")}, not ${args.mergeMethod}`;
+  return undefined;
+}
+
+/**
+ * The merge after an update before merge applied (#4636): the apply's
+ * records pushed to the ledger, the head checked again, then the forge's
+ * merge with the token `--merge-token-env` names alone. A refusal is posted
+ * on the pull request and exits as waiting (3); the update stays applied.
+ */
+async function mergeAfterUpdate(ctx: CommandContext, p: Prepared, pr: number): Promise<number> {
+  const { mergeAfterApply, mergeTokenEnv } = await import("../../pr-merge");
+  const { pushLifecycleReport } = await import("../../lifecycle/git");
+  const kind = p.forge?.kind ?? (ctx.args.forge as ForgeKind | undefined);
+  if (!kind) return fail("--merge auto needs --forge <kind> to merge on");
+  const env = mergeTokenEnv(ctx.args.mergeTokenEnv!);
+  if ("error" in env) {
+    console.error(formatWarning({ message: `the pull request was not merged: ${env.error}` }));
+    return CHANT_EXIT.waiting;
+  }
+  let forge: PrForge;
+  try {
+    forge = forgeFromEnv(kind, env);
+  } catch (err) {
+    console.error(formatWarning({ message: `the pull request was not merged: ${err instanceof Error ? err.message : String(err)}` }));
+    return CHANT_EXIT.waiting;
+  }
+  const pushed = await pushLifecycleReport();
+  const merged = await mergeAfterApply({
+    forge,
+    pr,
+    head: p.head,
+    ...(ctx.args.mergeMethod ? { method: ctx.args.mergeMethod as "merge" | "squash" | "rebase" } : {}),
+    recorded: { pushed: pushed.pushed, ...(pushed.pushWarning ? { warning: pushed.pushWarning } : {}) },
+  });
+  if (merged.merged) {
+    console.error(formatSuccess(`merged ${kind === "gitlab" ? `!${pr}` : `#${pr}`} at ${p.head.slice(0, 12)}${merged.sha ? ` as ${merged.sha.slice(0, 12)}` : ""}`));
+    return 0;
+  }
+  console.error(formatWarning({ message: `the pull request was not merged: ${merged.reason}${merged.posted ? "; the reason is posted on it" : ""}` }));
+  return CHANT_EXIT.waiting;
 }
 
 /**
