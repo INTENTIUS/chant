@@ -122,7 +122,7 @@ describe("pulumi about --json", () => {
 
 describe("a member's steps", () => {
   test("install, each stack's config and about pass in order, with the check job's environment", async () => {
-    const m = member({ "Pulumi.yaml": PROJECT, "Pulumi.dev.yaml": "config:\n  shop:replicas: \"2\"\n  shop:dbPassword:\n    secure: AAAB\n" });
+    const m = member({ "Pulumi.yaml": PROJECT, "Pulumi.dev.yaml": "config:\n  shop:replicas: \"2\"\n  shop:dbPassword:\n    secure: AAAB\n  shop:zones: [a, b]\n" });
     const { calls, runner } = fake({ "about --json": { stdout: ABOUT } });
     const out = await pulumiMemberCheck(m, ctx, { runner });
     expect(out.map((o) => [o.step, o.stack ?? "", o.outcome])).toEqual([

@@ -79,7 +79,7 @@ describe("edited from the recording", () => {
   test("a resource a targeted preview does not list is left alone; an untargeted one that leaves it out may register it again", () => {
     const p = settled();
     p.steps = p.steps.filter((s) => !s.urn?.endsWith("aws:ec2/vpc:Vpc::main"));
-    expect(pulumiPlannedOutputChanges({ part: partOf(p, true), exported }).outputs.find((o) => o.output === "vpcId")?.verdict).toBe("unchanged");
+    expect(pulumiPlannedOutputChanges({ part: partOf(p, true), exported, targeted: true }).outputs.find((o) => o.output === "vpcId")?.verdict).toBe("unchanged");
     expect(pulumiPlannedOutputChanges({ part: partOf(p), exported }).outputs.find((o) => o.output === "vpcId")?.verdict).toBe("changing");
   });
 });
