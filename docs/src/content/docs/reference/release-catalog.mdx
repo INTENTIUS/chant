@@ -89,3 +89,9 @@ A `/` in a component name becomes a directory, and any other character outside `
 An engine adds its parts through `sections`. Both `sections.component(component)` and `sections.version(component, version)` return a list of `{ title, body }`. The body's `kind` is one of `text`, `code`, `table` or `html`, and a table carries its own columns and rows. Text and table cells are escaped. An `html` body is written as given, so only pass HTML the engine built itself.
 
 A page of a deprecated or yanked version says so, with its reason, and links the replacement when the catalog lists it.
+
+## Terraform modules
+
+The terraform lexicon fills the `terraform` key ([#4598](https://github.com/INTENTIUS/chant/issues/4598)). `moduleDocs(dir, { parser, terraformDocs })` in `lexicons/terraform/src/registry/docs.ts` reads a module directory with chant's HCL parse, `.tf` and `.tf.json` alike. The result holds the module's README and its `examples/` directories. Each input keeps what its `variable` block declares. A sensitive input never carries its default. The outputs and the `required_providers` entries come from the same parse.
+
+When the module has a `.terraform-docs.yml` and the caller passes a `terraformDocs` runner, the runner is called with that file and its markdown becomes the page's body, with `docsFrom: "terraform-docs"`. Without the file, without a runner, or when the runner finds no binary or fails, the page is built from the parse alone, with `docsFrom: "hcl"` and a `note` naming the reason. `terraformCatalogFields(docs, address)` gives the version's `terraform` fields. `terraformCatalogSections()` turns those fields into the version page's tables for `renderCatalogSite`, with a usage block that pins the version. The markdown is shown as preformatted text, so a module's README never writes HTML into the page.

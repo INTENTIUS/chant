@@ -1,0 +1,14 @@
+{
+  "terraform": {
+    "required_providers": {
+      "google": { "source": "hashicorp/google", "version": "~> 6.0" }
+    }
+  },
+  "variable": {
+    "project": { "type": "string", "description": "The project id." },
+    "region": { "type": "string", "default": "us-central1" }
+  },
+  "output": {
+    "name": { "value": "${var.project}", "description": "The project id, echoed." }
+  }
+}
