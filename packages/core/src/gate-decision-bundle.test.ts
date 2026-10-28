@@ -60,8 +60,6 @@ describe("the gate-decision bundle", () => {
       // The release names a wave writes (#4615), checked with the spec.
       "packages/core/src/op/op-waves-release.ts",
       "packages/core/src/op/op-waves.ts",
-      // The next-release floor constant (#4480): no imports.
-      "packages/core/src/release-floors.ts",
       "packages/core/src/sorted-json.ts",
       "packages/core/src/wave-blocked.ts",
       "packages/core/src/wave-layout.ts",

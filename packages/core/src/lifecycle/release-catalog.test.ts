@@ -11,7 +11,6 @@ import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import schema from "../workspace/release-catalog.schema.json";
-import { NEXT_RELEASE } from "../release-floors";
 import { appendReleaseRecord, InvalidReleaseRecordError, readReleaseLedger, RELEASE_VERSION_FLOOR, type ReleaseRecord } from "./release-ledger";
 import { parseReleaseLedger } from "./release-read";
 import {
@@ -45,9 +44,9 @@ describe("release catalog schema", () => {
     expect(schema.$id).toBe(RELEASE_CATALOG_SCHEMA_ID);
   });
 
-  test("its floors are the next release", () => {
-    expect(RELEASE_CATALOG_FLOOR).toBe(NEXT_RELEASE);
-    expect(RELEASE_VERSION_FLOOR).toBe(NEXT_RELEASE);
+  test("its floors shipped in 0.124.55", () => {
+    expect(RELEASE_CATALOG_FLOOR).toBe("0.124.55");
+    expect(RELEASE_VERSION_FLOOR).toBe("0.124.55");
   });
 });
 

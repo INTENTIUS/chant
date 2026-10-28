@@ -6,7 +6,6 @@
 
 import { describe, expect, test } from "vitest";
 import { controlEntryDigest, type ControlEntryRecord } from "../control/records";
-import { NEXT_RELEASE } from "../release-floors";
 import type { LedgerReadPort } from "./ledger-port";
 import { ledgerFields, LEDGER_TABLES, LEDGER_TIME_COLUMN } from "./ledger-read";
 import { LEDGER_CONTROL_ENTRIES_FLOOR, loadQueryData, QUERY_TABLES, runQuery } from "./query";
@@ -64,7 +63,7 @@ describe("control_entries", () => {
     expect(QUERY_TABLES.control_entries.map(([c]) => c)).toEqual(["member", "id", "entry", "project", "state", "product", "settings", "estates", "by", "timestamp", "digest", "prev_digest", "current"]);
   });
 
-  test("the table's floor is the next release", () => {
-    expect(LEDGER_CONTROL_ENTRIES_FLOOR).toBe(NEXT_RELEASE);
+  test("the table's floor shipped in 0.124.55", () => {
+    expect(LEDGER_CONTROL_ENTRIES_FLOOR).toBe("0.124.55");
   });
 });
