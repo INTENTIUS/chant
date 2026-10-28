@@ -132,3 +132,5 @@ export { parsePlungeAdoptView, pulumiAdoptDigest, adoptBucketTarget, type Plunge
 export { pulumiPreview as pulumiPreviewStep, pulumiDrift as pulumiDriftStep } from "./op/builders";
 // Pulumi and plunge exit statuses on chant's exit-code table (#4553).
 export { pulumiExitOf, pulumiPlanMoved, PULUMI_EXIT, PLUNGE_PLAN_MOVED_EXIT } from "./exit-codes";
+// Which stack outputs a preview changes, traced through the export (#4635).
+export { pulumiPlannedOutputChanges, type PulumiOutputChange, type PulumiPlannedOutputChanges } from "./planned-output-changes";

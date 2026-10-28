@@ -131,11 +131,27 @@ The consumer lists `pulumi` among its lexicons.
 | Outputs | Source |
 |---|---|
 | applied | `pulumi stack output --json --show-secrets=false`, or the checked-in export with `CHANT_PULUMI_APPLIED_OUTPUTS=export` |
-| planned | `pulumi preview --json --show-sames`: the export's outputs when it plans nothing to apply, every output unknown when it plans a change |
+| planned | `pulumi preview --json --show-sames`: the export's outputs when it plans nothing to apply; when it plans a change, the outputs it leaves alone keep the export's value and the rest are unknown |
 
 A real preview prints the stack's step with no outputs (recorded against the
-plunge corpus, #4475), so chant cannot read a planned value off it. A
-planned output that is unknown leaves the consumer
+plunge corpus, #4475), so chant cannot read a planned value off it. Instead
+each output is traced by value to the export's resource properties that hold
+it ([#4635](https://github.com/INTENTIUS/chant/issues/4635)). An output is
+unknown when one of those resources is replaced or deleted, or updated with a
+diff naming the property, or when it is held only by a property the provider
+computes on an update. It keeps the export's value when its resources are
+unchanged, or when it is an `id`, `arn` or `urn`, or an input the diff leaves
+alone. An output no property holds, such as one the program builds from a
+template string, is unknown. In the recorded VPC replace, `vpcId`,
+`securityGroupId`, `vpcParameterName` and `workerQueueUrls` are unknown and
+the other eight outputs keep their values. `pulumi-up`'s plan lists each
+verdict and the property behind it on its artifact under `plannedOutputs`.
+
+A stack that reads another through `StackReference` ([#4547](https://github.com/INTENTIUS/chant/issues/4547))
+plans now when every output it reads keeps its value. When one is unknown,
+the reading stack is a hole naming the read, the note lists it under "Known
+only after apply", and the stack is previewed again after the producer's
+`up`. A planned output that is unknown leaves the consumer
 planned without it, the change set has a hole on `<member>#outputs` naming
 it, and on merge the consumer waits for the member's apply and is planned
 again. The member part's `pulumi-preview` digest is the plan digest, so a
