@@ -71,7 +71,7 @@ function doc(digest: string, members: Record<string, string | null>, entries: Ch
   } as ChangeSetDocument;
 }
 
-const SPEC: OpWavesSpec = { name: "plywood-up", op: "plywood-up", plan: ["true"], waves: [{ name: "prod", runs: [{ target: "app" }, { target: "db" }] }] } as unknown as OpWavesSpec;
+const SPEC: OpWavesSpec = { name: "plywood-up", op: "plywood-up", plan: ["./bin/plan", "{target}", "{plan}"], waves: [{ name: "prod", runs: [{ target: "app" }, { target: "db" }] }] } as unknown as OpWavesSpec;
 
 describe("the responses list (#4629)", () => {
   test("parses, defaults and round-trips", () => {
@@ -257,7 +257,7 @@ describe("the product pipeline carries the responses (#4629)", () => {
     expect(jobs.applyBeforeMerge?.run.env[CI_RESPOND_ENV]).toBe("apply-failed=off,description=check");
     expect(jobs.post.env[CI_RESPOND_ENV]).toBe("apply-failed=off,description=check");
     expect(jobs.post.command).toContain('--decide-backend "laya" --decide-model "noul-1"');
-    expect(() => productPipelineJobs("github", "prod", { words: { product: "plywood" }, respond: { description: "check" } })).toThrow(/decide/);
+    expect(() => productPipelineJobs("github", "prod", { words: { product: "plywood" }, applyBeforeMerge: true, respond: { description: "check" } })).toThrow(/decide/);
     const waves = productPipelineJobs("gitlab", "prod", { words: { product: "plywood", op: "plywood-up" }, waves: SPEC, respond: { "wave-refused": "off" } });
     expect(waves.waves?.spec.respond).toEqual({ "wave-refused": "off" });
   });

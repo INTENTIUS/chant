@@ -460,6 +460,7 @@ export function generateGitlabOpPipeline(
           update.command,
         ],
       };
+      noteJobs.push(name);
     }
     if (driftAgent) {
       const name = `${jobName}-agent`;

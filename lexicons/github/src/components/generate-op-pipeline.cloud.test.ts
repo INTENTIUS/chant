@@ -61,7 +61,7 @@ describe("an update on drift (#4631)", () => {
     expect(update.environment).toEqual({ name: "production" });
     expect(JSON.parse(update.steps[0]!.env!.CHANT_CLOUD_TRADE!)).toEqual(UPDATE);
     expect(update.steps[1]!.uses).toMatch(/^actions\/checkout@/);
-    expect(update.steps.at(-1)!.run).toMatch(/^unset .*\nnpx --no-install plywood up$/);
+    expect(update.steps.at(-1)!.run).toMatch(/^unset .*\nnpx --no-install plywood up\n?$/);
   });
 
   test("an update on a push trigger, or with no command, is refused", () => {
