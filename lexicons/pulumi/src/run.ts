@@ -28,6 +28,12 @@
  * - for a review stack alone (`pr-<n>`, INTENTIUS/plywood#15), `stack
  *   init`, `destroy --yes` and `stack rm --yes`, through
  *   {@link runReviewStackPulumi} and {@link runReviewStackPlunge} only;
+ * - for the check stage (#4633, `./check-step.ts`), `pulumi install` and
+ *   `pulumi about --json [--stack <stack>]`, or the same under `plunge`,
+ *   through {@link runCheckPulumi} alone. The install fetches the program's
+ *   dependencies and plugins; `about` reads the engine, plugins and backend.
+ *   Neither writes a stack, and both run with no forge token or cloud
+ *   credential in their environment;
  * - for a member on plunge, its engine graph (#4529, ruled on #4520), as
  *   exactly one of `plunge graph --json`, `plunge graph --json --stack
  *   <stack>`, `plunge graph --json --versions` and `plunge graph --json
@@ -636,6 +642,29 @@ export const PULUMI_INSTALL_COMMANDS: readonly string[] = ["pulumi install", "pl
 export async function runReleaseInstall(run: PulumiRunner, args: string[], cwd: string, env?: Record<string, string>): Promise<{ stdout: string }> {
   if (args.length !== 1 || args[0] !== "install") {
     throw new Error(`chant installs a release copy's dependencies only as ${PULUMI_INSTALL_COMMANDS.join(" or ")}, not ${args.join(" ")}`);
+  }
+  return run(args, env ? { cwd, env } : { cwd });
+}
+
+/**
+ * The two argv the check stage runs for a member (#4633, `./check-step.ts`):
+ * `install` with no flag, and `about --json`, optionally with `--stack
+ * <stack>`. Under `pulumi` or `plunge`; the runner picks the binary.
+ */
+export const PULUMI_CHECK_COMMANDS: readonly string[] = ["pulumi install", "pulumi about --json [--stack <stack>]", "plunge install", "plunge about --json [--stack <stack>]"];
+
+/** Whether `args` is one of {@link PULUMI_CHECK_COMMANDS}' argv. */
+export function allowedCheck(args: readonly string[]): boolean {
+  if (args.length === 1) return args[0] === "install";
+  if (args[0] !== "about" || args[1] !== "--json") return false;
+  if (args.length === 2) return true;
+  return args.length === 4 && args[2] === "--stack" && isValue(args[3]);
+}
+
+/** Run a check-stage argv, refusing any other. The runner picks the binary. */
+export async function runCheckPulumi(run: PulumiRunner, args: string[], cwd: string, env?: Record<string, string>): Promise<{ stdout: string }> {
+  if (!allowedCheck(args)) {
+    throw new Error(`the check stage runs only ${PULUMI_CHECK_COMMANDS.join(", ")} for a Pulumi member, not ${args.join(" ")}`);
   }
   return run(args, env ? { cwd, env } : { cwd });
 }

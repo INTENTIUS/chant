@@ -30,6 +30,7 @@ import { setProperty, valueAt } from "../workspace/json-edit";
 import { parseJsonText } from "../workspace/jsonc";
 import { memberAtCwd } from "../workspace/security";
 import { locateWorkspace } from "../workspace/which-chant";
+import type { CheckStepOutcome } from "./check-steps";
 
 export { CI_CHECK_HOOK_FLOOR } from "../op/op-waves";
 
@@ -134,7 +135,9 @@ export interface CheckHooksReport {
   /** `none`: no check hook is declared at base. */
   status: "passed" | "failed" | "none";
   hooks: CheckHookOutcome[];
-  /** The first hook that failed, and why; the hooks after it did not run. */
+  /** The lexicons' check steps (#4633, `./check-steps.ts`), when any ran. */
+  steps?: CheckStepOutcome[];
+  /** The first hook that failed, and why; the hooks after it did not run. Or the check steps that failed. */
   failed?: string;
   note?: string;
 }
