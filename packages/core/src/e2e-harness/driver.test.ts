@@ -302,3 +302,166 @@ describe("the e2e harness's driver", () => {
     expect(run.reason).toBe("change-merge: Forgejo answered 500");
   });
 });
+
+/**
+ * A product's pull request (chant#4650): the out-of-band command stands in
+ * for `terragucci request`, which pushes a branch and opens the pull request
+ * itself. The pipeline plans it as it would any other.
+ */
+function productWorld(o: { neverOpens?: boolean; files?: string[]; staleOpen?: boolean } = {}) {
+  const w = world();
+  const pulls: Array<{ number: number; title: string; branch: string; head: string; files: string[]; open: boolean }> = [];
+  const posted: Array<{ pull: number; body: string; as: string }> = [];
+  let next = 100;
+  const make = async (branch: string, title: string) => {
+    const number = next++;
+    const head = `c${String(number).padStart(39, "0")}`;
+    pulls.push({ number, title, branch, head, files: o.files ?? ["apps/orders/main.tf"], open: true });
+    await w.bucket.put(
+      reportObjectKey(PREFIX, number, head, "plan"),
+      JSON.stringify({ stage: "plan", pr: number, head, op: `pr-${number}`, gate: "pr-apply", digest: `jcs1-sha256:${number}`, status: "planned", selection: { waves: [] }, members: [] }),
+      "application/json",
+    );
+  };
+  if (o.staleOpen) void make("request/bucket/orders", "Request bucket orders");
+  const forge: DriverPorts["forge"] = {
+    ...w.ports.forge,
+    openPulls: async () => pulls.filter((p) => p.open).map((p) => p.number),
+    findPull: async (branch) => {
+      const p = pulls.filter((x) => x.open && x.branch === branch).sort((a, b) => a.number - b.number)[0];
+      return p && { number: p.number, title: p.title, branch: p.branch, head: p.head };
+    },
+    pullInfo: async (n) => {
+      const p = pulls.find((x) => x.number === n);
+      return p && { number: p.number, title: p.title, branch: p.branch, head: p.head };
+    },
+    changedFiles: async (n) => pulls.find((x) => x.number === n)?.files ?? [],
+    postComment: async (pull, body, as) => void posted.push({ pull, body, as }),
+  };
+  const outOfBand = {
+    run: async (command: string[]) => {
+      if (!o.neverOpens) await make(command.at(-1)!, "Request bucket orders");
+      return 0;
+    },
+  };
+  return { ...w, pulls, posted, ports: { ...w.ports, forge, outOfBand } as DriverPorts };
+}
+
+function requestScenario(over: Partial<Scenario> = {}): Scenario {
+  return fanOut({
+    id: "tg-template-app",
+    product: "terragucci",
+    claim: "template/app-request",
+    steps: [
+      { id: "request", do: "out-of-band", command: ["terragucci", "request", "bucket", "orders", "request/bucket/orders"], expect: [{ exit: 0 }] },
+      { id: "pr", do: "await-pull", branch: "request/bucket/orders", title: "orders" },
+      { id: "pr-plan", do: "plan", pull: "pr", expect: [{ report: { status: "planned" } }] },
+    ],
+    ...over,
+  });
+}
+
+describe("a pull request a product opened", () => {
+  test("await-pull binds the product's pull request and its head, and plan reads the report there", async () => {
+    const w = productWorld();
+    const s = requestScenario();
+    expect(lintScenario(s)).toEqual([]);
+    const run = await runArm(s, "plain", w.ports, OPTS);
+    expect(run.outcome).toBe("held");
+    expect(verdictsOf(run, run).plain).toBe("pass");
+    expect(run.steps.map((x) => [x.id, x.pull, x.commit])).toEqual([
+      ["request", undefined, undefined],
+      ["pr", 100, `c${"100".padStart(39, "0")}`],
+      ["pr-plan", 100, `c${"100".padStart(39, "0")}`],
+    ]);
+  });
+
+  test("no pull request ever opened stalls at the await-pull limit, and is not a fail of the outcome", async () => {
+    const w = productWorld({ neverOpens: true });
+    const start = w.clock.t;
+    const run = await runArm(requestScenario(), "plain", w.ports, OPTS);
+    expect(run.outcome).toBe("stalled");
+    expect(run.reason).toBe("pr: no open pull request from request/bucket/orders within 300s");
+    expect(run.steps.at(-1)).toMatchObject({ id: "pr", stopped: { outcome: "stalled" } });
+    expect(w.clock.t - start).toBeGreaterThanOrEqual(300_000);
+  });
+
+  test("the BREAK run waits for the same branch, and never binds a pull request open before it started", async () => {
+    const fresh = productWorld();
+    const brk = await runArm(requestScenario(), "break", fresh.ports, OPTS);
+    expect(brk.steps.find((x) => x.id === "pr")?.pull).toBe(100);
+
+    const stale = productWorld({ staleOpen: true, neverOpens: true });
+    const run = await runArm(requestScenario(), "break", stale.ports, OPTS);
+    expect(run.outcome).toBe("stalled");
+    expect(run.reason).toBe("pr: pull request 100 from request/bucket/orders was open before the run started, and no new one came within 300s");
+  });
+
+  test("comment posts the exact body on the bound pull request, as the author unless the step says", async () => {
+    const w = productWorld();
+    const s = requestScenario();
+    s.steps.push(
+      { id: "invoke", do: "comment", pull: "pr", body: "/terragucci action orders rotate" },
+      { id: "again", do: "comment", pull: "pr", body: "/terragucci action orders rotate", as: "reviewer", expect: [{ pull: { title: "orders" } }] },
+    );
+    expect(lintScenario(s)).toEqual([]);
+    const run = await runArm(s, "plain", w.ports, OPTS);
+    expect(run.outcome).toBe("held");
+    expect(w.posted).toEqual([
+      { pull: 100, body: "/terragucci action orders rotate", as: "author" },
+      { pull: 100, body: "/terragucci action orders rotate", as: "reviewer" },
+    ]);
+  });
+
+  test("a pull outcome holds for exactly the files named, and names the extra path when there is one", async () => {
+    const outcome = { pull: { files: ["apps/orders/main.tf"], only: true } };
+    const s = () => {
+      const x = requestScenario();
+      (x.steps[1] as { expect?: unknown[] }).expect = [outcome];
+      return x;
+    };
+    expect(lintScenario(s())).toEqual([]);
+    expect((await runArm(s(), "plain", productWorld().ports, OPTS)).outcome).toBe("held");
+
+    const run = await runArm(s(), "plain", productWorld({ files: ["apps/orders/main.tf", "apps/other/main.tf"] }).ports, OPTS);
+    expect(run.outcome).toBe("broke");
+    expect(run.reason).toBe("pr: pull request 100 also changes apps/other/main.tf beyond the files named");
+
+    const missing = await runArm(s(), "plain", productWorld({ files: ["apps/other/main.tf"] }).ports, OPTS);
+    expect(missing.reason).toBe("pr: pull request 100 does not change apps/orders/main.tf");
+
+    const titled = requestScenario();
+    (titled.steps[1] as { expect?: unknown[] }).expect = [{ pull: { title: "payments" } }];
+    expect((await runArm(titled, "plain", productWorld().ports, OPTS)).reason).toBe('pr: pull request 100 is titled "Request bucket orders", which does not hold "payments"');
+  });
+
+  test("a gated outcome reads the gated requests asked since the run started: gated, then ok or failed", async () => {
+    const w = productWorld();
+    const at = (ms: number) => new Date(Date.parse("2026-10-28T10:00:00Z") + ms).toISOString();
+    const req = (ts: string, result?: "applied" | "failed") =>
+      ({
+        op: "tf-action",
+        gate: "tf-action",
+        digest: `d-${ts}`,
+        request: {},
+        pending: { timestamp: ts },
+        approvals: [],
+        ...(result ? { finished: { result } } : {}),
+      }) as unknown as import("../lifecycle/gated-request").GatedRequestRead;
+    const asked = [req(at(-60_000), "applied"), req(at(1000)), req(at(2000), "applied"), req(at(3000), "failed")];
+    const ports: DriverPorts = { ...w.ports, ledger: { runs: async () => [], gatedRequests: async (op) => (op === "tf-action" ? asked : []) } };
+    const s = (expect: Scenario["steps"][number]["expect"]) => fanOut({ steps: [{ id: "x", do: "out-of-band", command: ["true"], expect }] });
+
+    expect((await runArm(s([{ gated: { op: "tf-action", status: "gated", count: 1 } }, { gated: { op: "tf-action", status: "ok", count: 1 } }, { gated: { op: "tf-action", status: "failed" } }, { gated: { op: "tf-action", count: 3 } }]), "plain", ports, OPTS)).outcome).toBe("held");
+    expect((await runArm(s([{ gated: { op: "pulumi-stack-ops", status: "ok" } }]), "plain", ports, OPTS)).reason).toBe("x: no gated pulumi-stack-ops request ok on the ledger since the run started");
+    expect((await runArm(s([{ gated: { op: "tf-action", status: "ok", count: 2 } }]), "plain", ports, OPTS)).reason).toBe("x: 1 gated tf-action requests ok on the ledger, not 2");
+    expect((await runArm(s([{ gated: { op: "tf-action" } }]), "plain", w.ports, OPTS)).reason).toBe("x: a gated outcome needs the ledger's gated requests");
+  });
+
+  test("await-pull and comment stall without the forge reads they need", async () => {
+    const w = world();
+    const s = requestScenario();
+    const run = await runArm(s, "plain", { ...w.ports, outOfBand: { run: async () => 0 } }, OPTS);
+    expect(run.reason).toBe("pr: an await-pull step needs the forge's findPull");
+  });
+});

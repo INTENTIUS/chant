@@ -111,14 +111,16 @@ export interface DemoCycle {
 
 // ── e2e-scenario/v1 ───────────────────────────────────────────────────
 
-export const SCENARIO_STEP_KINDS = ["open", "open-concurrent", "plan", "approve", "merge", "apply", "out-of-band", "kill-job"] as const;
+export const SCENARIO_STEP_KINDS = ["open", "open-concurrent", "await-pull", "plan", "approve", "merge", "comment", "apply", "out-of-band", "kill-job"] as const;
 export type ScenarioStepKind = (typeof SCENARIO_STEP_KINDS)[number];
 
 /** One thing a step must show. Exactly one key is set. */
 export type ScenarioOutcome =
   | { report: { status?: string; components?: Record<string, string>; only?: boolean } }
   | { ledger: { op: string; status?: "ok" | "fail" | "gated" | "waiting"; count?: number } }
+  | { gated: { op: string; status?: "gated" | "ok" | "failed"; count?: number } }
   | { comment: string }
+  | { pull: { title?: string; files?: string[]; only?: boolean } }
   | { issue: { title: string; open?: boolean } }
   | { exit: number };
 
@@ -130,7 +132,9 @@ interface StepBase {
 
 export type ScenarioStep =
   | (StepBase & { do: "open" | "open-concurrent"; branch: string; overlay: string; title: string; body?: string })
+  | (StepBase & { do: "await-pull"; branch: string; title?: string })
   | (StepBase & { do: "plan" | "approve" | "merge"; pull: string })
+  | (StepBase & { do: "comment"; pull: string; body: string; as?: "author" | "reviewer" | "admin" })
   | (StepBase & { do: "apply"; merge: string })
   | (StepBase & { do: "out-of-band"; command: string[] })
   | (StepBase & { do: "kill-job"; match?: string });
