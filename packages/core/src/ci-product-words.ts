@@ -116,7 +116,36 @@ export interface CiProductWordsInput {
    * second, so an open pull request keeps one note across the switch.
    */
   adoptMarkers?: string[];
+  /** What chant's notify sends under these words (#4610). */
+  notify?: CiProductNotifyWordsInput;
 }
+
+/** The notify slots a product passes (#4610). */
+export interface CiProductNotifyWordsInput {
+  /**
+   * The event's `source`, which receivers route on. Default: `product`.
+   * sql-yodeler keeps `sql-yodeler` here, the name its receivers filter on.
+   */
+  source?: string;
+  /**
+   * How a summary names a wave, over `{k}`, `{name}`, `{spec}` and
+   * `{product}`. A `({name})` part is dropped, with the space before it,
+   * for a wave with no name. Default `wave {k} ({name}) of {spec}`.
+   */
+  wave?: string;
+  /** The signed webhook's header prefix. Default `x-<product>`, so chant's stays `x-chant`. */
+  headers?: string;
+}
+
+/** The notify slots, filled. */
+export interface CiProductNotifyWords {
+  source: string;
+  wave: string;
+  headers: string;
+}
+
+/** chant's own wave label in a notify summary. */
+export const CHANT_NOTIFY_WAVE_TEMPLATE = "wave {k} ({name}) of {spec}";
 
 /** The words with every slot filled. */
 export interface CiProductWords {
@@ -135,6 +164,7 @@ export interface CiProductWords {
   applyMode: CiProductApplyMode;
   bin?: string;
   adoptMarkers: string[];
+  notify: CiProductNotifyWords;
 }
 
 /** chant's own approve line. */
@@ -158,6 +188,7 @@ export const CHANT_WORDS: CiProductWords = Object.freeze<CiProductWords>({
   approval: "pull-request",
   applyMode: "release",
   adoptMarkers: [],
+  notify: { source: "chant", wave: CHANT_NOTIFY_WAVE_TEMPLATE, headers: "x-chant" },
 });
 
 /** Fill every slot `input` leaves out with chant's word. */
@@ -181,6 +212,11 @@ export function resolveProductWords(input: CiProductWordsInput | CiProductWords 
     applyMode: input.applyMode ?? (own && (input.op !== undefined || input.approval === "per-wave") ? "on-merge" : CHANT_WORDS.applyMode),
     ...(input.bin !== undefined ? { bin: input.bin } : {}),
     adoptMarkers: input.adoptMarkers ?? [],
+    notify: {
+      source: input.notify?.source ?? product,
+      wave: input.notify?.wave ?? CHANT_NOTIFY_WAVE_TEMPLATE,
+      headers: input.notify?.headers ?? `x-${product}`,
+    },
   };
 }
 
@@ -190,6 +226,9 @@ const WORD = /^[a-z0-9][a-z0-9-]*$/;
 const NAME = /^[a-z0-9][a-z0-9_-]*$/;
 /** A template's placeholders. */
 const PLACEHOLDERS = new Set(["op", "gate", "digest", "approver", "sign", "target", "rule", "reason"]);
+
+/** The notify wave label's placeholders (#4610). */
+const NOTIFY_WAVE_PLACEHOLDERS = new Set(["k", "name", "spec", "product"]);
 
 /** Thrown for words chant refuses, with every problem named. */
 export class CiProductWordsError extends Error {
@@ -241,6 +280,13 @@ export function productWordsProblems(words: CiProductWords, options: { jobs?: re
   if (words.approval !== "per-wave" && words.approval !== "pull-request") problems.push(`approval is ${JSON.stringify(words.approval)}; use per-wave or pull-request`);
   if (!CI_PRODUCT_APPLY_MODES.includes(words.applyMode)) problems.push(`applyMode is ${JSON.stringify(words.applyMode)}; use ${CI_PRODUCT_APPLY_MODES.join(", ")}`);
   if (words.bin !== undefined && !/^[A-Za-z0-9@/._ -]+$/.test(words.bin)) problems.push(`bin ${JSON.stringify(words.bin)} carries shell syntax`);
+  // #4610: the notify slots. A receiver routes on the source and verifies under the header prefix.
+  const notify = words.notify ?? CHANT_WORDS.notify;
+  word("notify.source", notify.source);
+  if (!/^x-[a-z0-9][a-z0-9-]*$/.test(notify.headers)) problems.push(`notify.headers is ${JSON.stringify(notify.headers)}, and a header prefix is x- then lowercase letters, digits and -`);
+  for (const m of notify.wave.matchAll(/\{([^}]*)\}/g)) if (!NOTIFY_WAVE_PLACEHOLDERS.has(m[1]!)) problems.push(`notify.wave names {${m[1]}}, which chant does not fill`);
+  if (!notify.wave.includes("{k}")) problems.push("notify.wave needs {k}, so a message names its wave");
+  if (/[\r\n]/.test(notify.wave)) problems.push("notify.wave is one line");
   return problems;
 }
 
@@ -286,6 +332,19 @@ export function isChantWords(words: CiProductWords): boolean {
 export function productStatusContext(words: CiProductWords, stage: CiProductStage, member?: string): string {
   const context = `${words.product}/${words.stages[stage]}`;
   return member ? `${context}/${member}` : context;
+}
+
+/**
+ * How a notify summary names wave `k` of `spec` (#4610): the words'
+ * `notify.wave` filled. chant's words give `wave 2 (prod) of tf-apply`, and
+ * `wave 2 of tf-apply` for a wave with no name.
+ */
+export function notifyWaveLabel(words: CiProductWords, input: { k: number; name?: string; spec: string }): string {
+  const template = (words.notify ?? CHANT_WORDS.notify).wave;
+  const named = input.name ? template : template.replace(/ ?\(\{name\}\)/g, "").replace(/ ?\{name\}/g, "");
+  return named.replace(/\{(k|name|spec|product)\}/g, (_, key: string) =>
+    key === "k" ? String(input.k) : key === "name" ? (input.name ?? "") : key === "spec" ? input.spec : words.product,
+  );
 }
 
 /** The context for a name chant uses as is, such as a run record's `pr-plan` or a gate: `<product>/<name>`. */

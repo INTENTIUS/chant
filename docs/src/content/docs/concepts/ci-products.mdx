@@ -38,6 +38,7 @@ A product passes chant one object of words from `@intentius/chant/ci-product` an
 | `prGate` | `pr-apply` | unused | `up` |
 | `approval` | `pull-request` | `per-wave` | `pull-request` |
 | `applyMode` | `release` | `on-merge` | `on-merge` |
+| `notify.source` | `chant` | `terragucci` | `plywood` |
 
 Status contexts come out as `<product>/<stage>`, such as `plywood/preview`, with `/<member>` after it inside a workspace member. A job answers the comment `/<product> <command>`. Job names and note markers stay chant's, and so do ledger paths and artifact names: people never type them, and readers of the ledger key on them. `assertProductWords` refuses a word outside `[a-z0-9-]` or two stages with one word. It also refuses a command the pipeline has no job for.
 
