@@ -40,7 +40,7 @@ describe("prCommentPreviewJob", () => {
   });
 
   test("words with no plan command are refused", () => {
-    expect(() => prCommentPreviewJob("github", "prod", { words: { product: "plywood", commands: {} }, previewComment: true })).toThrow(/names no plan command/);
+    expect(() => prCommentPreviewJob("github", "prod", { words: { product: "plywood", commands: {} }, previewComment: true })).toThrow(/the words name no plan command/);
   });
 });
 

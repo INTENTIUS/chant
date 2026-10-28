@@ -83,7 +83,8 @@ describe("the note job's read of the control repo", () => {
     const missing = resolveControlTarget({ repo: "github.com/acme/none", op: "deploy" }, "network");
     const env2 = { ...env, GITHUB_ENV: join(work, "github-env-2") };
     writeFileSync(env2.GITHUB_ENV, "");
-    const out = execFileSync("bash", ["-c", `${controlNoteCheckout("github", missing).script} 2>&1`], { env: env2, encoding: "utf8" });
+    // exec 2>&1 first, so the warning the script writes to stderr inside its if comes back too.
+    const out = execFileSync("bash", ["-c", `exec 2>&1\n${controlNoteCheckout("github", missing).script}`], { env: env2, encoding: "utf8" });
     expect(out).toContain("its cross-stack edges stay unknown");
     expect(execFileSync("cat", [env2.GITHUB_ENV], { encoding: "utf8" })).toBe("");
   });
