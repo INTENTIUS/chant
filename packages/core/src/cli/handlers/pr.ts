@@ -135,8 +135,8 @@ import type { CommandContext } from "../registry";
 import { parseArgs } from "../parse-args";
 import { withComponentEndpoint } from "../component-endpoint";
 import type { ComponentChangeSignal, FanOutPlan } from "../../components/fan-out";
-import { assertTargetsAccepted, failedRunExitCode, type DriverComponent } from "../../components/driver";
-import { TargetsRefusedError, type CapabilityRegistry } from "../../components/capability";
+import { assertPlanFlagsAccepted, assertTargetsAccepted, failedRunExitCode, type DriverComponent } from "../../components/driver";
+import { PLAN_FLAG_ARGS, PlanFlagRefusedError, TargetsRefusedError, type CapabilityRegistry } from "../../components/capability";
 import { prPlanTargets } from "../../components/pr-targets";
 import { PREVIEW_COMMENT_ENV } from "../../components/pr-pipeline";
 import type { ComponentEnvironmentDeclaration } from "../../components/component";
@@ -184,6 +184,9 @@ export interface Prepared {
   targets?: Record<string, string[]>;
   /** `pr-plan --parallelism <n>` (#4625): how many members of a wave plan at once. */
   parallelism?: number;
+  /** `pr-plan --refresh` and `--target-dependents` (#4627). */
+  refresh?: boolean;
+  targetDependents?: boolean;
   /**
    * Set when `ci.branches` or `ci.labels` (#4292) leave the member out of this
    * stage: why. The plan is then empty, so the stage reports `nothing`.
@@ -226,6 +229,10 @@ export async function prepare(ctx: CommandContext, stage: "plan" | "apply" | "re
   // #4620: a target narrows the preview; an apply or a record covers what the approved plan covers.
   if (stage !== "plan" && args.targets && args.targets.length > 0) {
     return fail(`pr-${stage} applies or records what the pull request's approved plan covers, so it takes no --target`, "Narrow the plan with pr-plan --target, and approve that plan.");
+  }
+  // #4627: refresh and target dependents change what the preview plans, as a target does.
+  if (stage !== "plan" && (args.refresh || args.targetDependents)) {
+    return fail(`pr-${stage} applies or records what the pull request's approved plan covers, so it takes no ${args.refresh ? "--refresh" : "--target-dependents"}`, "Plan with pr-plan --refresh or --target-dependents, and approve that plan.");
   }
   let member: string | undefined;
   if (args.members?.length) {
@@ -506,7 +513,36 @@ export async function planBare(p: Prepared, onRunEvent?: RunEventSink): Promise<
     ...(onRunEvent ? { onRunEvent } : {}),
     ...(p.targets ? { targets: p.targets } : {}),
     ...(p.parallelism !== undefined ? { parallelism: p.parallelism } : {}),
+    ...(p.refresh ? { refresh: true } : {}),
+    ...(p.targetDependents ? { targetDependents: true } : {}),
   });
+}
+
+/**
+ * `pr-plan --refresh` and `--target-dependents` (#4627), from the line or
+ * the preview comment: set on `p`, or the exit code when a planned member's
+ * capability cannot honour one, named before anything plans, as
+ * {@link narrowToTargets} does for targets. `--target-dependents` needs a
+ * target.
+ */
+function planWithFlags(p: Prepared, flags: { refresh?: boolean; targetDependents?: boolean }): number | undefined {
+  if (!flags.refresh && !flags.targetDependents) return undefined;
+  if (flags.targetDependents && !p.targets) return fail("--target-dependents widens a --target to what depends on it, and nothing was narrowed", "Give --target <address> with it.");
+  const byName = new Map(p.components.map((c) => [c.name, c]));
+  for (const name of p.plan.order) {
+    const component = byName.get(name);
+    if (!component) continue;
+    try {
+      assertPlanFlagsAccepted(component, p.registry, { ...(flags.refresh ? { refresh: true } : {}), ...(flags.targetDependents && p.targets?.[name] ? { targetDependents: true } : {}) });
+    } catch (err) {
+      if (err instanceof PlanFlagRefusedError) return fail(`${err.message}, so nothing was planned`, `Drop ${PLAN_FLAG_ARGS[err.flag]}, or plan only members whose steps take it.`);
+      throw err;
+    }
+  }
+  if (flags.refresh) p.refresh = true;
+  if (flags.targetDependents) p.targetDependents = true;
+  console.error(formatInfo(`planning with ${[flags.refresh ? "--refresh" : "", flags.targetDependents ? "--target-dependents" : ""].filter(Boolean).join(" and ")}`));
+  return undefined;
 }
 
 /**
@@ -516,14 +552,16 @@ export async function planBare(p: Prepared, onRunEvent?: RunEventSink): Promise<
  * with no target: none. The checks `--target` makes follow in
  * {@link narrowToTargets}.
  */
-function commentTargets(env: NodeJS.ProcessEnv = process.env): string[] | number {
+function commentTargets(env: NodeJS.ProcessEnv = process.env): { targets: string[]; refresh?: true; targetDependents?: true } | number {
   const body = env[PREVIEW_COMMENT_ENV];
-  if (body === undefined || body.trim() === "") return [];
+  if (body === undefined || body.trim() === "") return { targets: [] };
   const words = activeProductWords();
   const parsed = parseProductComment(words, body, env);
-  if (parsed === undefined) return [];
+  if (parsed === undefined) return { targets: [] };
   if (parsed.kind === "refused") return fail(`the preview comment is refused: ${parsed.reason}, so nothing was planned`, `/${words.product} ${commandWord(words, "plan") ?? "plan"} --target <address> narrows the preview to the address.`);
-  return parsed.kind === "plan" ? (parsed.targets ?? []) : [];
+  if (parsed.kind !== "plan") return { targets: [] };
+  // #4627: the comment's --refresh and --target-dependents too.
+  return { targets: parsed.targets ?? [], ...(parsed.refresh ? { refresh: true as const } : {}), ...(parsed.targetDependents ? { targetDependents: true as const } : {}) };
 }
 
 /**
@@ -835,10 +873,12 @@ async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> 
   const p = await prepare(ctx, "plan");
   if (typeof p === "number") return p;
   // #4626: the preview comment's --target addresses, read from the comment the job carries in a variable.
-  const fromComment = ctx.args.commentTargets ? commentTargets() : [];
+  const fromComment = ctx.args.commentTargets ? commentTargets() : { targets: [] };
   if (typeof fromComment === "number") return fromComment;
-  const narrowed = narrowToTargets(p, [...(ctx.args.targets ?? []), ...fromComment]);
+  const narrowed = narrowToTargets(p, [...(ctx.args.targets ?? []), ...fromComment.targets]);
   if (narrowed !== undefined) return narrowed;
+  const flagged = planWithFlags(p, { refresh: ctx.args.refresh === true || fromComment.refresh === true, targetDependents: ctx.args.targetDependents === true || fromComment.targetDependents === true });
+  if (flagged !== undefined) return flagged;
   if (ctx.args.parallelism !== undefined) p.parallelism = ctx.args.parallelism;
   const op = prOp(ctx.args.pr, p.member);
   placeHooks(ctx, p, "plan", op);

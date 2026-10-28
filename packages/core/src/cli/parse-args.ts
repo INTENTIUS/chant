@@ -473,6 +473,12 @@ export function parseArgs(args: string[]): ParsedArgs {
       const raw = args[++i];
       if (!raw || raw.startsWith("-")) throw new Error("--target needs an address: --target <component>:<address>, or on pr-plan --target <address>");
       (result.targets ??= []).push(raw);
+    } else if (arg === "--refresh") {
+      // `chant components pr-plan --refresh` (#4627).
+      result.refresh = true;
+    } else if (arg === "--target-dependents") {
+      // `chant components pr-plan --target-dependents` (#4627).
+      result.targetDependents = true;
     } else if (arg === "--comment-targets") {
       // `chant components pr-plan --comment-targets` (#4626): the preview comment's --target addresses.
       result.commentTargets = true;

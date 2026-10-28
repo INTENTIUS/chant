@@ -29,7 +29,7 @@
 
 import { resolvePlannedLock, type PlannedLock } from "../lifecycle/lock-rows";
 import type { PlanShape } from "./covered-round";
-import { assertTargetsAccepted, resolveStepInput, unresolvedWiringSources, type DriverComponent, type DriverPhase, type DriverStep } from "./driver";
+import { assertPlanFlagsAccepted, assertTargetsAccepted, resolveStepInput, unresolvedWiringSources, type DriverComponent, type DriverPhase, type DriverStep } from "./driver";
 import { componentPlanDigest } from "./gate-plan";
 import { componentDeployInputs, type ComponentDeployInputs } from "./deploy-inputs";
 import { computePlanDigest } from "../lifecycle/plan-digest";
@@ -156,12 +156,13 @@ export async function planWaveComponent(
     const locks: Record<string, PlannedLock> = {};
     const locations: Record<string, string> = {};
     assertTargetsAccepted(component, registry, ctx);
+    assertPlanFlagsAccepted(component, registry, ctx);
     for (const step of capabilitySteps(component.deploy)) {
       const capability = registry.resolve(step.kind);
       if (!capability.plan) continue;
       const { kind: _kind, ...rest } = step;
       const input = resolveStepInput(rest, {}, componentOutputs);
-      const planned = bindTargets(step.kind, ctx, await capability.plan(planContext(ctx, rest, componentOutputs), input as never));
+      const planned = bindPlanFlags(ctx, bindTargets(step.kind, ctx, await capability.plan(planContext(ctx, rest, componentOutputs), input as never)));
       const member = { member: planned.member, planDigest: planned.planDigest };
       members.push(member);
       parts.push(planned.changeSet ?? emptyPart(member));
@@ -255,6 +256,21 @@ export function bindTargets(kind: string, ctx: DeployContext, planned: Capabilit
     ? { ...planned.changeSet, member: { ...planned.changeSet.member, planDigest } }
     : undefined;
   return { ...planned, planDigest, targets: want, ...(changeSet ? { changeSet } : {}) };
+}
+
+/**
+ * A step's plan made with `ctx.refresh` or `ctx.targetDependents` (#4627),
+ * its digest bound to them: the digest over the plan's own digest and the
+ * flags, so an approval of a refreshed or widened plan covers no plain one,
+ * as {@link bindTargets} binds targets. Without either flag, the plan as it
+ * came.
+ */
+export function bindPlanFlags(ctx: Pick<DeployContext, "refresh" | "targetDependents">, planned: CapabilityPlan): CapabilityPlan {
+  const flags = { ...(ctx.refresh ? { refresh: true } : {}), ...(ctx.targetDependents ? { targetDependents: true } : {}) };
+  if (Object.keys(flags).length === 0) return planned;
+  const planDigest = computePlanDigest("capability-plan-flags", { plan: planned.planDigest, ...flags });
+  const changeSet = planned.changeSet ? { ...planned.changeSet, member: { ...planned.changeSet.member, planDigest } } : undefined;
+  return { ...planned, planDigest, ...(changeSet ? { changeSet } : {}) };
 }
 
 /** `next` over `prior`, as a later step's outputs win over an earlier one's in a run. */

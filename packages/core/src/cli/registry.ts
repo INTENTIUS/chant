@@ -337,6 +337,10 @@ export interface ParsedArgs {
   targets?: string[];
   /** `chant components pr-plan --comment-targets` (#4626): narrow to the `--target` addresses of the preview comment in CHANT_PREVIEW_COMMENT. */
   commentTargets?: boolean;
+  /** `chant components pr-plan --refresh` (#4627): refresh each step's state before it plans. */
+  refresh?: boolean;
+  /** `chant components pr-plan --target-dependents` (#4627): plan what depends on each --target too. */
+  targetDependents?: boolean;
   /** `chant components pr-plan --parallelism <n>` (#4625): how many members of a wave plan at once. */
   parallelism?: number;
   /** `chant components fan-out --canary <component>` (#3049), repeatable — components that form wave 1. */

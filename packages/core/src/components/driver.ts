@@ -59,7 +59,7 @@ import { componentDeployInputs } from "./deploy-inputs";
 import type { PendingGateRecord } from "../lifecycle/gate-ledger";
 import type { CapabilityRegistry, DeployContext, GroupMemberStatus } from "./capability";
 import type { FanOutGroup } from "./fan-out";
-import { isPlanMovedError, PLAN_MOVED_EXIT_CODE, TargetsRefusedError, targetRefusal } from "./capability";
+import { isPlanMovedError, PLAN_MOVED_EXIT_CODE, PlanFlagRefusedError, planFlagRefusal, TargetsRefusedError, targetRefusal } from "./capability";
 import { isPromotedArtifact } from "./auto-release";
 import type { ReleaseIdentity } from "../telemetry-attribution";
 import type { RunProgressEvent } from "./run-progress";
@@ -1260,6 +1260,10 @@ export function deployContext(
     vars?: Record<string, unknown>;
     releaseIdentity?: (component: string) => ReleaseIdentity | undefined;
     targets?: Readonly<Record<string, readonly string[]>>;
+    /** `pr-plan --refresh` (#4627), for every step's `DeployContext.refresh`. */
+    refresh?: boolean;
+    /** `pr-plan --target-dependents` (#4627), for every step of a component with targets. */
+    targetDependents?: boolean;
     /** `ci.lockGrain` as declared at base (#4552), for every step's `DeployContext.lockGrain`. */
     lockGrain?: LockGrain;
     /** The commit policy is read at (#4613), for every step's `DeployContext.policyBase`. */
@@ -1280,7 +1284,37 @@ export function deployContext(
     ...(options.rowLease ? { rowLease: options.rowLease } : {}),
     ...(release ? { release: { ...release } } : {}),
     ...(targets && targets.length > 0 ? { targets: [...new Set(targets)].sort() } : {}),
+    ...(options.refresh ? { refresh: true } : {}),
+    ...(options.targetDependents && targets && targets.length > 0 ? { targetDependents: true } : {}),
   };
+}
+
+/**
+ * Refuse a component asked to plan with `ctx.refresh` or
+ * `ctx.targetDependents` (#4627) when one of its capability steps can't:
+ * throws {@link PlanFlagRefusedError} naming the first such verb and the
+ * flag. A step whose kind is not registered refuses too. Does nothing when
+ * neither is set.
+ */
+export function assertPlanFlagsAccepted(component: DriverComponent, registry: CapabilityRegistry, ctx: Pick<DeployContext, "refresh" | "targetDependents">): void {
+  const asked = (["refresh", "targetDependents"] as const).filter((f) => ctx[f] === true);
+  if (asked.length === 0) return;
+  const walk = (steps: DriverPhase["steps"]): void => {
+    for (const step of steps) {
+      if (typeof (step as DriverPhase).phase === "string" && Array.isArray((step as DriverPhase).steps)) {
+        walk((step as DriverPhase).steps);
+        continue;
+      }
+      const kind = (step as { kind?: unknown }).kind;
+      if (kind === "gate" || typeof kind !== "string") continue;
+      for (const flag of asked) {
+        if (!registry.has(kind)) throw new PlanFlagRefusedError(component.name, kind, flag, `no capability is registered for ${kind}`);
+        const reason = planFlagRefusal(registry.resolve(kind), flag);
+        if (reason !== undefined) throw new PlanFlagRefusedError(component.name, kind, flag, reason);
+      }
+    }
+  };
+  for (const phase of component.deploy) walk(phase.steps);
 }
 
 /**

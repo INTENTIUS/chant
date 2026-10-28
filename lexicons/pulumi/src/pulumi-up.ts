@@ -627,7 +627,10 @@ async function previewStack(
     stack: input.stack,
     ...(files.planFile ? { savePlan: files.planFile } : {}),
     ...(files.configFile ? { configFile: files.configFile } : {}),
+    // #4627: --refresh and --target-dependents pass to the preview as they came.
+    ...(ctx.refresh ? { refresh: true } : {}),
     ...(targets ? { targets } : {}),
+    ...(targets && ctx.targetDependents ? { targetDependents: true } : {}),
     ...(packs.length ? { policyPacks: packs } : {}),
   });
   let stdout: string;
@@ -906,6 +909,7 @@ async function runStack(ctx: DeployContext, original: PulumiUpStepInput, opts: P
   const tail = {
     ...(configFile ? { configFile } : {}),
     ...(targets ? { targets } : {}),
+    ...(targets && ctx.targetDependents ? { targetDependents: true } : {}),
     ...(policyPacks?.length ? { policyPacks } : {}),
   };
 
@@ -928,7 +932,8 @@ async function runStack(ctx: DeployContext, original: PulumiUpStepInput, opts: P
         if (differences.length > 0) throw new PlanShapeMovedError(r.member, differences);
       }
       try {
-        ({ stdout } = await runApplyPulumi(runnersFor(r, opts).pulumi, pulumiUpArgs({ stack: input.stack, ...tail }), r.dir));
+        // #4627: stock up plans again, so it refreshes as its preview did; plunge applies the saved plan, whose preview refreshed.
+        ({ stdout } = await runApplyPulumi(runnersFor(r, opts).pulumi, pulumiUpArgs({ stack: input.stack, ...tail, ...(ctx.refresh ? { refresh: true } : {}) }), r.dir));
       } catch (err) {
         throw upFailure(r, err, approved.policy);
       }
@@ -1003,6 +1008,8 @@ export function createPulumiUpCapability(opts: PulumiUpOptions = {}): Capability
     rollbackPolicy: "needs-opt-out",
     // Each target passes as `--target <urn>` to the preview and to `up`.
     targets: "accept",
+    // #4627: `--refresh` and `--target-dependents` pass to the preview, and to `pulumi up`; the digest binds them.
+    planFlags: { refresh: "accept", targetDependents: "accept" },
     plan: (ctx, input) => planStack(ctx, input, opts),
     run: (ctx, input) => runStack(ctx, input, opts),
     // The outputs standing now, for a dependent planned before this stack applies.
