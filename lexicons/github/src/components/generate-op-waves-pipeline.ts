@@ -62,6 +62,15 @@
  * step holds the control token: the `tokenSecret` secret, mapped into
  * `CHANT_CONTROL_TOKEN` and handed to curl on its stdin
  * (`controlDispatchScript`, #4568).
+ *
+ * Every wave, deciding and share job starts with the apply-job guard
+ * (#4624, `@intentius/chant/ci-job-guard`), before the trade and the
+ * checkout: it stops the job unless `GITHUB_REF` is one of the spec's
+ * branches, the job runs in its forge environment (read from an OIDC
+ * token's claims, so only in a job that may request one), and, for a
+ * runner whose labels include `self-hosted`, on a self-hosted runner. The
+ * forgejo generator passes `forge: "forgejo"`, which checks the ref and
+ * runner only.
  */
 
 import {
@@ -93,6 +102,8 @@ import {
   setupStepDoc,
 } from "@intentius/chant/ci-jobs";
 import { OIDC_REQUEST_VARS, TRADE_SPEC_ENV, tradeLine, type CloudTradeSpec } from "@intentius/chant/ci-identity";
+import { JOB_GUARD_ENV, jobGuardLine, jobGuardSpec, opWaveJobLabel } from "@intentius/chant/ci-job-guard";
+import { resolveProductWords } from "@intentius/chant/ci-product-words";
 import { checkoutStep, concurrency, DOWNLOAD_ARTIFACT, downloadArtifactStep, keepRecordStep, runSteps } from "./ci-jobs";
 import { emitOpPipelineYAML, type GithubOpPipelineDoc } from "./generate-op-pipeline";
 
@@ -113,8 +124,11 @@ export function opWaveOutcomeArtifact(spec: Pick<OpWavesSpec, "name">, jobName: 
 export function buildGithubOpWavesDoc(
   spec: OpWavesSpec,
   options: OpWavesPipelineOptions,
+  dialect: { forge?: "github" | "forgejo" } = {},
 ): { doc: GithubOpPipelineDoc; jobs: OpWavesPipelineResult["jobs"]; resumeDoc?: GithubOpPipelineDoc; plansDoc?: GithubOpPipelineDoc } {
   const jobs = opWaveJobs(spec, options.specFile, { bin: options.bin });
+  const forge = dialect.forge ?? "github";
+  const product = resolveProductWords(options.words ?? {}).product;
   const image = options.image ?? OP_WAVES_IMAGE;
   const byReview = spec.waves.some((w) => w.approval === "pr-review");
   for (const wave of spec.waves) {
@@ -134,7 +148,21 @@ export function buildGithubOpWavesDoc(
     const group = opWaveGroupOf(spec, job);
     // #4332: the job's cloud identities, traded before the checkout.
     const cloud = group?.cloud ?? wave.cloud;
-    const steps: Array<Record<string, unknown>> = [...(cloud ? [tradeStep(cloud)] : []), checkoutStep(true)];
+    const environment = group?.environment ?? wave.environment;
+    const idTokens = group?.idTokens ?? wave.idTokens;
+    const idToken = idTokens !== undefined || cloud !== undefined;
+    const runner = group?.runner ?? wave.runner ?? spec.runner;
+    // #4624: the guard first, before the trade and the checkout.
+    const guard = guardStep({
+      forge,
+      job: opWaveJobLabel(spec.name, job),
+      product,
+      ...(environment && forge === "github" ? { environment: environment.name } : {}),
+      branches: pushBranches(spec.branches),
+      ...(runner !== undefined ? { runner } : {}),
+      idToken,
+    });
+    const steps: Array<Record<string, unknown>> = [guard, ...(cloud ? [tradeStep(cloud)] : []), checkoutStep(true)];
     if (job.kind === "share") {
       steps.push(downloadArtifactStep(`Download wave ${job.wave}'s decision`, opWaveRecordArtifact(spec, job.wave), dirnameOf(job.record!)));
     }
@@ -151,11 +179,8 @@ export function buildGithubOpWavesDoc(
       steps.push(keepRecordStep(`Keep wave ${job.wave}'s decision`, opWaveRecordArtifact(spec, job.wave), job.record!));
     }
     steps.push(keepRecordStep(`Keep the job's outcome`, opWaveOutcomeArtifact(spec, job.jobName), job.outcome));
-    const environment = group?.environment ?? wave.environment;
-    const idTokens = group?.idTokens ?? wave.idTokens;
-    const idToken = idTokens !== undefined || cloud !== undefined;
     jobsDoc[job.jobName] = {
-      "runs-on": githubRunsOn(group?.runner ?? wave.runner ?? spec.runner),
+      "runs-on": githubRunsOn(runner),
       ...(job.needs.length > 0 ? { needs: job.needs } : {}),
       // #4322: a wave's jobs run after a failure in the wave before; a share job runs only on its deciding job's success.
       ...(job.needs.length > 0 && job.kind !== "share" ? { if: "!cancelled()" } : {}),
@@ -269,6 +294,11 @@ function buildPlansDoc(spec: OpWavesSpec, options: OpWavesPipelineOptions): Gith
     permissions: { contents: "write" },
     jobsDoc: { "record-plans": { "runs-on": githubRunsOn(spec.runner), container: options.image ?? OP_WAVES_IMAGE, steps } },
   };
+}
+
+/** The apply-job guard step (#4624): the job's expectation in CHANT_JOB_GUARD, checked by `node -e` from `/`. */
+function guardStep(input: Parameters<typeof jobGuardSpec>[0]): Record<string, unknown> {
+  return { name: "Check the job runs where the spec set it to run", env: { [JOB_GUARD_ENV]: JSON.stringify(jobGuardSpec(input)) }, run: jobGuardLine() };
 }
 
 /** The step that trades the job's OIDC token for `cloud` (#4332), writing the credentials to GITHUB_ENV. */

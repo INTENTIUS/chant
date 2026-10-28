@@ -265,6 +265,11 @@ CI:
                         perRun, with no forge token or cloud credentials in
                         their environment. Writes check-hooks.json under
                         --output (default .chant/check); exits 1 when one failed.
+  ci check-job          The apply-job guard: compare the forge environment,
+                        ref and runner the forge gives this job with the
+                        expectation in CHANT_JOB_GUARD, which a generated
+                        op-wave job carries. Exits 1, one line per value
+                        that differs, before any credential is taken.
   ci forge-check [--env <env>] [--member <name>] [--forge <forge>] [--repo <owner/name>] [--branch <default>] [--require-clouds] [--json]
                         Read the forge, each cloud's trust policy and Pulumi
                         Cloud's OIDC policies against the pipelines
@@ -1730,6 +1735,8 @@ export const commandRegistry: CommandDef[] = [
   // #4556: the ci.hooks.check hooks at base, for a product's check job.
   { name: "ci check", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/ci-check")).runCiCheck(ctx) },
   // #4608: the live forge, cloud trust policies and Pulumi Cloud's OIDC policies against ci.identity.cloud. Read-only.
+  // #4624: the apply-job guard, from the expectation the job carries.
+  { name: "ci check-job", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/ci-check-job")).runCiCheckJob(ctx) },
   { name: "ci forge-check", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/ci-forge-check")).runCiForgeCheck(ctx) },
   // #4094: one pull-request job as a pipeline Op in a fresh checkout, the chant runner's first slice.
   { name: "ci run", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-run")).runCiRun(ctx) },
