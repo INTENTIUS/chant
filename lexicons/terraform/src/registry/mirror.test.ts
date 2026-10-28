@@ -145,7 +145,8 @@ describe("uploadMirror", () => {
     const firstIndex = first.put.findIndex((k) => k.endsWith("/index.json"));
     expect(lastArchive).toBeLessThan(firstIndex);
     expect(first.put.every((k) => k.startsWith("registry/providers/"))).toBe(true);
-    expect(Object.keys(JSON.parse(store.objects.get(indexKey)!.toString()).versions)).toEqual(["4.9.0", "5.0.0"]);
+    // The mirror covers both default hosts (#4564), so live/c's registry.terraform.io 5.1.0 is mirrored here too.
+    expect(Object.keys(JSON.parse(store.objects.get(indexKey)!.toString()).versions)).toEqual(["4.9.0", "5.0.0", "5.1.0"]);
     const again = await uploadMirror(store, out, { prefix: "registry" });
     expect(again.kept.length).toBeGreaterThan(0);
     expect(again.put.some((k) => k.endsWith(".zip"))).toBe(false);
@@ -162,7 +163,7 @@ describe("serving the mirror", () => {
     const base = mirrorUrl("https://modules.test");
     expect(base).toBe("https://modules.test/providers/");
     const index = await (await fetch(`${base}registry.opentofu.org/hashicorp/aws/index.json`)).json();
-    expect(index).toEqual({ versions: { "5.0.0": {} } });
+    expect(index).toEqual({ versions: { "5.0.0": {}, "5.1.0": {} } });
     const version = (await (await fetch(`${base}registry.opentofu.org/hashicorp/aws/5.0.0.json`)).json()) as { archives: Record<string, { url: string }> };
     const zip = await fetch(new URL(version.archives.linux_amd64!.url, `${base}registry.opentofu.org/hashicorp/aws/5.0.0.json`).toString());
     expect(zip.status).toBe(200);
