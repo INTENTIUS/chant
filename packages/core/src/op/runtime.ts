@@ -255,7 +255,36 @@ export interface OpRunWave {
    * chant as `wave` itself.
    */
   targets?: Record<string, OpRunWaveTarget>;
+  /**
+   * Each run the job planned, by target, when its plan carried policy rows
+   * or an after-plan hook in the job's process gave rows or files (#4614).
+   * Written by chant {@link OP_WAVE_AFTER_PLAN_FLOOR} and newer.
+   */
+  plans?: Record<string, OpRunWavePlan>;
 }
+
+/** One policy check's row for a planned run (#4614): chant's `holds.policy`, or a product's own check. */
+export interface OpRunPolicyRow {
+  /** Who checked: `ci.policy` for chant's wave hold, else the product's name for its own check. */
+  source: string;
+  /** `denied` denies the run (an override then counts), `held` holds the wave for a person; `passed` and `warned` change nothing. */
+  result: "passed" | "warned" | "denied" | "held";
+  /** The ids of the rules that denied, held or warned, sorted. */
+  rules: string[];
+  reason?: string;
+}
+
+/** One planned run of an op wave job (#4614). */
+export interface OpRunWavePlan {
+  planDigest: string;
+  /** The policy rows of its plan: chant's `holds.policy` first, then each after-plan hook's. */
+  policy?: OpRunPolicyRow[];
+  /** Files an after-plan hook wrote for the run, relative to the job's directory, such as a product's plan view. */
+  files?: string[];
+}
+
+/** The first chant that runs an after-plan hook in the wave job's process and writes {@link OpRunWave.plans} (#4614). */
+export const OP_WAVE_AFTER_PLAN_FLOOR = NEXT_RELEASE;
 
 /** One run target's apply in an op wave job (#4555). */
 export interface OpRunWaveTarget {

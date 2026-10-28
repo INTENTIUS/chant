@@ -12,6 +12,7 @@
 import { NEXT_RELEASE } from "./release-floors";
 import type { CiProductWords, CiProductWordsInput } from "./ci-product-words";
 import type { ProductMcpHook } from "./cli/mcp/product-tools";
+import type { ProductWaveHook } from "./op/op-waves-after-plan";
 import { OTLP_EXPORTER_FLOOR } from "./otlp";
 
 /**
@@ -82,10 +83,19 @@ export { upsertPlanNote } from "./pr-post";
  * onto, and for the `chant ...` lines the generated jobs run through it. The
  * CLI loads on the first call, so importing this entry stays light.
  */
-export async function runChantInProcess(argv: string[], words: CiProductWordsInput | CiProductWords, options: { mcp?: ProductMcpHook } = {}): Promise<number> {
+export async function runChantInProcess(argv: string[], words: CiProductWordsInput | CiProductWords, options: { mcp?: ProductMcpHook; wave?: ProductWaveHook } = {}): Promise<number> {
   const { runCommandInProcess } = await import("./cli/main");
-  return runCommandInProcess(argv, { words, ...(options.mcp ? { mcp: options.mcp } : {}) });
+  return runCommandInProcess(argv, { words, ...(options.mcp ? { mcp: options.mcp } : {}), ...(options.wave ? { wave: options.wave } : {}) });
 }
+
+/**
+ * After-plan hooks in a wave job's process (#4614): `runChantInProcess(["run",
+ * "wave", ...], words, { wave: { afterPlan, capabilities } })`, or
+ * `runOpWave({ afterPlan })` from `@intentius/chant/op`. Feature-detect on
+ * `OP_WAVE_AFTER_PLAN_FLOOR`.
+ */
+export { OP_WAVE_AFTER_PLAN_FLOOR } from "./op/runtime";
+export type { OpWaveAfterPlanHook, OpWaveAfterPlanResult, OpWaveAfterPlanRun, ProductWaveHook } from "./op/op-waves-after-plan";
 
 /**
  * The standing pending gates waiting on a plan digest, with the pull request

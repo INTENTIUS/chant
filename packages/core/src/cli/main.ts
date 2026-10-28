@@ -1599,8 +1599,14 @@ function commandRunsNoConfig(def: CommandDef, args: ParsedArgs): boolean {
  */
 export async function runCommandInProcess(
   argv: string[],
-  options: { words?: CiProductWordsInput | CiProductWords; mcp?: import("./mcp/product-tools").ProductMcpHook } = {},
+  options: { words?: CiProductWordsInput | CiProductWords; mcp?: import("./mcp/product-tools").ProductMcpHook; wave?: import("../op/op-waves-after-plan").ProductWaveHook } = {},
 ): Promise<number> {
+  // #4614: a product's after-plan hooks and capabilities on `chant run wave`, in its own process.
+  if (options.wave) {
+    const { withProductWaveHook } = await import("../op/op-waves-after-plan");
+    const { wave, ...rest } = options;
+    return withProductWaveHook(wave, () => runCommandInProcess(argv, rest));
+  }
   // #4555: a product's tools on `chant serve mcp`, through its tool hook.
   if (options.mcp) {
     const { withProductMcpHook } = await import("./mcp/product-tools");

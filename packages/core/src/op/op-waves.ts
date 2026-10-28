@@ -187,7 +187,8 @@ export interface OpWaveHook {
   /**
    * Argv template. `{op}`, `{wave}` and `{runs}` (the runs file, see
    * `opWaveRunsPath`) are filled in; a `perRun` hook also gets `{target}`
-   * and, once the run is planned, `{plan}`.
+   * and, once the run is planned, `{plan}`, and `{planJson}` when the run's
+   * plan names the engine's plan document (`artifact.planJson`, #4614).
    */
   command: string[];
   /** Default `"fail"`. `"approve"` holds the wave for an approval of its set digest whatever its policy says. Not allowed after apply. */
@@ -1118,9 +1119,9 @@ export function assertOpWaveHooks(where: string, hooks: OpWaveHooks | undefined)
           throw new Error(`${where}: ${which}.targets must be a non-empty list of targets or patterns, such as ["prod/*"].`);
         }
         if (!hook.perRun) {
-          const named = hook.command.find((part) => part.includes("{target}") || part.includes("{plan}"));
-          if (named) throw new Error(`${where}: ${which} runs once for the wave, so it has no {target} or {plan} ("${named}"). Set "perRun": true, or read the runs from {runs}.`);
-        } else if (side === "before" && (stage === "plan" || stage === "observe") && hook.command.some((part) => part.includes("{plan}"))) {
+          const named = hook.command.find((part) => part.includes("{target}") || part.includes("{plan}") || part.includes("{planJson}"));
+          if (named) throw new Error(`${where}: ${which} runs once for the wave, so it has no {target}, {plan} or {planJson} ("${named}"). Set "perRun": true, or read the runs from {runs}.`);
+        } else if (side === "before" && (stage === "plan" || stage === "observe") && hook.command.some((part) => part.includes("{plan}") || part.includes("{planJson}"))) {
           throw new Error(`${where}: ${which} runs before the plan, so it has no {plan} yet.`);
         }
       });

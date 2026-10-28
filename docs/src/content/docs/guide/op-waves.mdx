@@ -317,13 +317,13 @@ Hooks are commands that run before and after a wave's plan and apply, inside the
 
 | Hook field | Meaning |
 |---|---|
-| `command` | Argv. `{op}`, `{wave}` and `{runs}` are filled in. A `perRun` hook also gets `{target}`, and `{plan}` once the run is planned |
+| `command` | Argv. `{op}`, `{wave}` and `{runs}` are filled in. A `perRun` hook also gets `{target}`, and `{plan}` once the run is planned. `{planJson}` is the engine's plan document when the run's plan names one, such as the `show -json` file `terraform-apply` writes ([#4614](https://github.com/INTENTIUS/chant/issues/4614)) |
 | `name` | The hook's name in the log and in `--json`. Default: its command |
 | `perRun` | Run the hook once per run, rather than once for the wave |
 | `onFailure` | `fail` (default) or `approve` |
 | `targets` | Runs the hook is for: targets, or patterns where `*` matches within one `/` segment and `**` across segments ([#4288](https://github.com/INTENTIUS/chant/issues/4288)). A `perRun` hook runs for the matching runs. A hook that runs once runs when any run matches, or before a `discover` wave's plan, when no run is known yet. Default: every run |
 
-The spec's `hooks` run first, then the wave's own `hooks`. The environment carries `CHANT_OP_WAVES`, `CHANT_WAVE`, `CHANT_WAVE_NUMBER`, `CHANT_HOOK` (such as `after-plan`) and `CHANT_RUNS`, plus `CHANT_TARGET` and, once the run is planned, `CHANT_PLAN` for a `perRun` hook. The runs file at `{runs}` lists each run, with its plan once planned.
+The spec's `hooks` run first, then the wave's own `hooks`. The environment carries `CHANT_OP_WAVES`, `CHANT_WAVE`, `CHANT_WAVE_NUMBER`, `CHANT_HOOK` (such as `after-plan`) and `CHANT_RUNS`, plus `CHANT_TARGET` and, once the run is planned, `CHANT_PLAN` for a `perRun` hook. A planned run's hook also gets `CHANT_PLAN_DIGEST`. When the plan names a plan document, `CHANT_PLAN_JSON` holds its path. The runs file at `{runs}` lists each run, with its plan once planned.
 
 | When | Runs | A failure with `fail` |
 |---|---|---|
@@ -423,6 +423,34 @@ runOpWaveApplyHooks(hooks, "after-apply", { skip: "nothing to apply" });
 A skip runs no hook and records the moment with outcome `skipped` and the reason, in the wave's result and the decision record's `outcomes`. Chant counts the moment as handled, so the wave does not fail. A skip without a reason throws.
 
 With a per-run `apply`, each run's call runs the apply-stage hooks for that run alone, so a hook that runs once for the wave runs once per run, under that run's lock.
+
+### Hooks in the job's process
+
+A product that runs the wave job in its own process can pass after-plan hooks as functions ([#4614](https://github.com/INTENTIUS/chant/issues/4614)). It passes `afterPlan` to `runOpWave`, or `{ wave: { afterPlan, capabilities } }` to `runChantInProcess(["run", "wave", ...], words, ...)` from `@intentius/chant/ci-product`. This is how a product with a `step` builds its wave report, its own policy rows and the plan files its later jobs read from chant's plans, without planning anything itself.
+
+```ts
+import { runOpWave } from "@intentius/chant/op";
+
+await runOpWave({
+  spec, specFile, wave: 1, capabilities,
+  afterPlan: {
+    name: "report",
+    run: (r) => {
+      const view = buildView(r.target, readFileSync(r.planJson!, "utf-8"));
+      writeFileSync(`plans/${r.target}.json`, view);
+      return { policy: myPolicy(r.target, view), files: [`plans/${r.target}.json`] };
+    },
+  },
+});
+```
+
+Each hook is called once per planned run, in the order the wave lists its runs. The call comes after the wave's [holds](#wave-holds) and before the set digest is taken. A share or group job calls it for its own slice. The call names the run and its plan: `target`, `planDigest`, and the paths `plan` (the `{plan}` file) and `planJson`. It also carries the capability's `artifact` and the run's `changeSet` part. In `policy` it has the row chant's `holds.policy` gave the run.
+
+The answer is optional. Its `policy` rows are `{ source, result, rules, reason? }`, with `result` one of `passed`, `warned`, `denied` or `held`. A `denied` row denies the run as a [policy denial](#policy-denials) does, so an override of its rules counts. A `held` row holds the wave for a person. The `files` it names stay in the job's directory. The rows and files go on the job's run record under `wave.plans`.
+
+A hook that throws, or answers in a shape chant cannot read, has failed. With the default `onFailure: "fail"` the wave exits 1 before the gate, and nothing is approved or applied. Under `"approve"` it holds the wave and the hooks after it still run. `targets` limits a hook to the runs it matches, as for a command hook. A product feature-detects this on `OP_WAVE_AFTER_PLAN_FLOOR`.
+
+The spec's command hooks at `after.plan` still run at the same point, after the set digest and before the gate settles.
 
 ### Hooks outside the waves
 
@@ -816,7 +844,7 @@ The check comes after the wave's holds are settled and its lock grain's lease is
 
 ## The run record
 
-Each `chant run wave` job appends one run record to `<env>/runs__<name>.jsonl` on `chant/lifecycle`, however it ends ([#4551](https://github.com/INTENTIUS/chant/issues/4551)). The record goes under the environment the spec's `labels.Env` names, else `local`, as every Op's does. The spec's `labels` are copied onto it. The record has one phase per wave the job walked, `wave-<k>`, and one step per run target: `ok` when it applied, `fail` when it failed, and `skipped` when it moved, was blocked or waited. Its `wave` field names the spec, the wave, the job (`wave`, `decide`, `share` or `group`), the set digest, the exit code and the runs applied, failed, moved and blocked, so a deciding job and its share jobs join on `wave.digest`. `chant ledger runs --where op=<name>` lists them. `--no-record` and `CHANT_NO_RECORD` write none. `wave.targets` holds each run target whose apply the job started ([#4555](https://github.com/INTENTIUS/chant/issues/4555)). An entry keeps the start time and the duration, which is also the step's `durationMs`. It keeps the facts the capability gave too. A job that stood down for a newer commit names it in `wave.supersededBy` (`branch`, `commit`).
+Each `chant run wave` job appends one run record to `<env>/runs__<name>.jsonl` on `chant/lifecycle`, however it ends ([#4551](https://github.com/INTENTIUS/chant/issues/4551)). The record goes under the environment the spec's `labels.Env` names, else `local`, as every Op's does. The spec's `labels` are copied onto it. The record has one phase per wave the job walked, `wave-<k>`, and one step per run target: `ok` when it applied, `fail` when it failed, and `skipped` when it moved, was blocked or waited. Its `wave` field names the spec, the wave, the job (`wave`, `decide`, `share` or `group`), the set digest, the exit code and the runs applied, failed, moved and blocked, so a deciding job and its share jobs join on `wave.digest`. `chant ledger runs --where op=<name>` lists them. `--no-record` and `CHANT_NO_RECORD` write none. `wave.targets` holds each run target whose apply the job started ([#4555](https://github.com/INTENTIUS/chant/issues/4555)). An entry keeps the start time and the duration, which is also the step's `durationMs`. It keeps the facts the capability gave too. A job that stood down for a newer commit names it in `wave.supersededBy` (`branch`, `commit`). `wave.plans` holds each planned run with policy rows, from `holds.policy` or a hook in the job's process, and the files those hooks wrote ([#4614](https://github.com/INTENTIUS/chant/issues/4614)).
 
 ## Traces
 
