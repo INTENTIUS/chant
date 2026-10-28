@@ -259,6 +259,11 @@ export interface GatedStateOpInput {
    * the operation with that reason, and the approval is not spent.
    */
   beforeSpend?: () => Promise<string | undefined>;
+  /**
+   * The flat facts of a failed act's finished line, beside its `error`, such
+   * as the binary's exit code and last lines (#4653). Default none.
+   */
+  failedDetail?: (error: Error) => Record<string, string | number | boolean>;
 }
 
 /** How a gated operation ended. */
@@ -324,7 +329,7 @@ export async function gatedStateOp<T>(
     return { status: "done", digest, request: asked.request, approvedBy, output, recorded: await finish("applied", detail) };
   } catch (e) {
     const error = e instanceof Error ? e : new Error(String(e));
-    return { status: "failed", digest, request: asked.request, approvedBy, error, recorded: await finish("failed", { error: error.message.slice(0, 400) }) };
+    return { status: "failed", digest, request: asked.request, approvedBy, error, recorded: await finish("failed", { ...(input.failedDetail?.(error) ?? {}), error: error.message.slice(0, 400) }) };
   }
 }
 

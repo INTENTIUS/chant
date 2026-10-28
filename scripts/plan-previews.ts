@@ -115,6 +115,12 @@ export const PLANNERS: Record<string, PlannerNote> = {
     shows: "every resource change with its action, and each changed top-level attribute with its value before and after",
     anchor: "terraform-apply",
   },
+  "terraform-action": {
+    source: "lexicons/terraform/src/action-ops.ts",
+    reads: "`plan -invoke=<address>` of the root, read with `show -json`",
+    shows: "the action invocation as a side effect, and no resource changes",
+    anchor: "terraform-action",
+  },
   "terraform-copy": {
     source: "lexicons/terraform/src/state-ops.ts",
     reads: "`plan` (or a destroy plan) of the root initialised under its copy's backend settings, read with `show -json`",

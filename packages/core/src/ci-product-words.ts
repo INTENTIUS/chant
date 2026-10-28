@@ -29,10 +29,14 @@ export type CiProductStage = "plan" | "apply" | "record" | "check" | "drift" | "
 /** Every stage slot, in the order {@link assertProductWords} reports them. */
 export const CI_PRODUCT_STAGES: readonly CiProductStage[] = ["plan", "apply", "record", "check", "drift", "lock", "approval", "control"];
 
-/** The commands a comment may name. Each one needs a job in the pipeline that answers it. */
-export type CiProductCommand = "plan" | "apply" | "lock" | "unlock" | "agent";
+/**
+ * The commands a comment may name. Each one needs a job in the pipeline that
+ * answers it. `action` (#4653) asks for a day-2 action on one member, which
+ * runs under a gated request.
+ */
+export type CiProductCommand = "plan" | "apply" | "lock" | "unlock" | "agent" | "action";
 
-export const CI_PRODUCT_COMMANDS: readonly CiProductCommand[] = ["plan", "apply", "lock", "unlock", "agent"];
+export const CI_PRODUCT_COMMANDS: readonly CiProductCommand[] = ["plan", "apply", "lock", "unlock", "agent", "action"];
 
 /**
  * What an approval of a product's waves binds to (ruling B, 2026-10-27).
@@ -454,6 +458,12 @@ export type ParsedProductComment =
   | { kind: "unlock" }
   /** An ask for the agent: data, never split or run. */
   | { kind: "agent"; ask: string }
+  /**
+   * A day-2 action (#4653): `<member> <action>`, such as `apps/orders
+   * module.app.action.aws_lambda_invoke.rotate` or a stack's action name.
+   * The engine's lexicon checks the action against the member's plan.
+   */
+  | { kind: "action"; member: string; address: string }
   | { kind: "refused"; reason: string };
 
 /** A member as a comment may name it: path segments, no leading dash, no shell or glob syntax. */
@@ -465,6 +475,12 @@ const MEMBER = /^[A-Za-z0-9_][A-Za-z0-9_.\/-]{0,199}$/;
  * It never reaches a shell: the job reads the comment from a variable.
  */
 const TARGET = /^[A-Za-z0-9_][A-Za-z0-9_.:\/\[\]"*@=+$,-]{0,499}$/;
+/**
+ * An action as a comment may name it (#4653): a Terraform action address,
+ * module steps and instance keys included, or a configured action's name.
+ * No leading dash, no spaces, no shell or glob syntax.
+ */
+const ACTION = /^[A-Za-z_][A-Za-z0-9_.\[\]"-]{0,299}$/;
 /** The longest ask an agent comment may carry. */
 export const PRODUCT_COMMENT_ASK_MAX = 2000;
 /** Commands a comment never runs, named in the reply so nobody waits on them. */
@@ -529,6 +545,15 @@ export function parseProductComment(words: CiProductWords, body: unknown, env: R
       if (ask.length > PRODUCT_COMMENT_ASK_MAX) return { kind: "refused", reason: `an ask is at most ${PRODUCT_COMMENT_ASK_MAX} characters` };
       if (/[\u0000-\u0008\u000b-\u001f\u007f]/.test(ask)) return { kind: "refused", reason: "an ask is plain text, with no control characters" };
       return { kind: "agent", ask };
+    }
+    case "action": {
+      const usage = `${line} takes a ${words.noun[0]} and an action: \`${prefix} ${typed} <${words.noun[0]}> <action>\``;
+      if (parts.length !== 4) return { kind: "refused", reason: usage };
+      const member = parts[2]!;
+      const address = parts[3]!;
+      if (!MEMBER.test(member) || member.split("/").some((s) => s === "" || s === "." || s === "..")) return { kind: "refused", reason: `the ${words.noun[0]} is a name or a path from the repository root` };
+      if (!ACTION.test(address)) return { kind: "refused", reason: "an action is an action address or name, with no spaces or shell characters" };
+      return { kind: "action", member, address };
     }
     case "apply": {
       if (parts.length === 2) return { kind: "apply" };
