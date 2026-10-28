@@ -17,10 +17,9 @@
  */
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { NEXT_RELEASE } from "../release-floors";
 
 /** The first chant with the e2e harness. */
-export const E2E_HARNESS_FLOOR = NEXT_RELEASE;
+export const E2E_HARNESS_FLOOR = "0.124.56";
 
 /**
  * The harness's chant docker-lexicon project, to `chant build <dir>/src

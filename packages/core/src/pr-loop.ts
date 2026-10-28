@@ -47,7 +47,6 @@
  * `identity.gates` entry covers every member.
  */
 
-import { NEXT_RELEASE } from "./release-floors";
 import type { ChangeSetAction, ChangeSetDocument, ChangeSetEntry } from "./change-set";
 import { parsePulumiUrn, pulumiMayAppearParent } from "./pulumi-urn";
 import type { PrRequireOutcome } from "./pr-requires";
@@ -105,7 +104,7 @@ export const PR_REPORT_GROUPS_FLOOR = "0.124.54";
 export const PR_REPORT_LOCK_TARGETS_FLOOR = "0.124.55";
 
 /** The first chant whose report carries {@link PrReport.narrowed} (#4626). */
-export const PR_REPORT_NARROWED_FLOOR = NEXT_RELEASE;
+export const PR_REPORT_NARROWED_FLOOR = "0.124.56";
 
 /** The first chant whose report carries {@link PrReport.crossStackEdges} (#4617). */
 export const PR_REPORT_CROSS_STACK_FLOOR = "0.124.55";
