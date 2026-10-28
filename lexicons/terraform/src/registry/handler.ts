@@ -28,7 +28,25 @@ export interface RegistryHandlerOptions {
 
 export type RegistryHandler = (request: Request) => Promise<Response>;
 
-const contentType = (key: string): string => (key.endsWith(".tar.gz") || key.endsWith(".tgz") ? "application/gzip" : key.endsWith(".json") || /(^|\/)(versions|download)$/.test(key) ? "application/json" : "application/octet-stream");
+/**
+ * The pages a release catalog writes beside the registry (chant#4599,
+ * `<prefix>/catalog/`), by extension, so a browser renders them instead of
+ * downloading them.
+ */
+const PAGE_TYPES: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".svg": "image/svg+xml",
+};
+
+/** The `content-type` a registry file is served with. */
+export const registryContentType = (key: string): string => {
+  if (key.endsWith(".tar.gz") || key.endsWith(".tgz")) return "application/gzip";
+  if (key.endsWith(".json") || /(^|\/)(versions|download)$/.test(key)) return "application/json";
+  const dot = key.lastIndexOf(".");
+  return (dot > key.lastIndexOf("/") && PAGE_TYPES[key.slice(dot).toLowerCase()]) || "application/octet-stream";
+};
 
 // TextEncoder and TextDecoder, not Buffer: an edge runtime (a Cloudflare Worker without nodejs_compat) has no Buffer.
 const asText = (body: string | Uint8Array): string => (typeof body === "string" ? body : new TextDecoder().decode(body));
@@ -61,7 +79,7 @@ export function registryHandler(files: RegistryFiles, options: RegistryHandlerOp
       }
     }
     const bytes = typeof body === "string" ? new TextEncoder().encode(body) : body;
-    const headers = { "content-type": contentType(key), "content-length": String(bytes.byteLength) };
+    const headers = { "content-type": registryContentType(key), "content-length": String(bytes.byteLength) };
     return done(new Response(method === "HEAD" ? null : new Uint8Array(bytes), { status: 200, headers }));
   };
 }
