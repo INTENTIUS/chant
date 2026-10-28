@@ -50,6 +50,7 @@
  */
 
 import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, posix } from "node:path";
 import { CHANT_EXIT } from "../exit-codes";
@@ -79,7 +80,7 @@ import { approveCommand, evaluateGate, gitGateLedgerPort, type GateCheck, type G
 import type { GateAnswerRef, PendingGateRecord } from "../lifecycle/gate-ledger";
 import type { GatePointAsker } from "../point-decision";
 import type { WaitingPoint } from "./steward-points";
-import { isApprovalSpent, type AppliedGateRecord } from "../lifecycle/gate-applied";
+import { isApprovalSpent, type AppliedGateRecord, type FinishedGateRecord } from "../lifecycle/gate-applied";
 import { samePlanDigest } from "../lifecycle/plan-digest";
 import { isLifecycleLocalNote } from "../lifecycle/local-note";
 import type { HeadPlans, MergedReview, ReviewSource } from "./gate-review";
@@ -155,6 +156,8 @@ import {
   OP_WAVE_PENDING_RESERVED,
   opWaveArgv,
   pendingFields,
+  holdFinishedPath,
+  readHoldFinished,
   readHoldRequest,
   runHookList,
   runHookListAsync,
@@ -165,6 +168,7 @@ import {
   type HookPlace,
   type OpWaveAsyncExec,
   type OpWaveExec,
+  type OpWaveHoldFinished,
   type OpWaveHoldRequest,
   type OpWaveHookOutcome,
   type OpWaveHookRun,
@@ -175,7 +179,7 @@ import {
 } from "./stage-hooks";
 
 export { OP_WAVE_PENDING_RESERVED, opWaveArgv, runStageHooks, runStageHooksAsync, spawnExecAsync };
-export type { OpWaveAsyncExec, OpWaveExec, OpWaveHoldRequest, OpWaveHookOutcome, OpWaveHookRun, RunStageHooksAsyncOptions, RunStageHooksOptions, StageHooksRun };
+export type { OpWaveAsyncExec, OpWaveExec, OpWaveHoldFinished, OpWaveHoldRequest, OpWaveHookOutcome, OpWaveHookRun, RunStageHooksAsyncOptions, RunStageHooksOptions, StageHooksRun };
 
 /** What a run's plan command writes to `{plan}`. */
 export interface OpWavePlanFile {
@@ -1391,7 +1395,8 @@ async function runHooks(
       }
       const now: OpWaveHeldOnApproval = { op: held.op, gate: held.gate, digest: held.digest, approvedBy: held.approvedBy!, approvedAt: held.approvedAt! };
       approved.push(now);
-      const approvedEnv = {
+      const target = hold.target ? { target: hold.target } : {};
+      const approvedEnv: Record<string, string> = {
         ...hold.env,
         CHANT_HOLD_APPROVED: JSON.stringify(now),
         // Every hold this hook call was approved through so far, oldest first (#3847).
@@ -1399,6 +1404,23 @@ async function runHooks(
       };
       const holdPath = join(ctx.cwd, hold.env.CHANT_HOLD!);
       rmSync(holdPath, { force: true });
+      // #4623: a hold that asks chant to record its gate is spent here, before the re-run acts under the approval.
+      let spent: AppliedGateRecord | undefined;
+      let finishedAt: string | undefined;
+      if (hold.request.record) {
+        const got = await spendHeldGate(ctx, hold, now);
+        if ("failed" in got) {
+          ctx.result.hooks.push({ moment, name: hold.name, ...target, exit: 1, outcome: "failed" });
+          back.failed = got.failed;
+          ctx.log(back.failed);
+          return back;
+        }
+        spent = got.record;
+        const finishedRel = holdFinishedPath(hold.env.CHANT_HOLD!);
+        finishedAt = join(ctx.cwd, finishedRel);
+        rmSync(finishedAt, { force: true });
+        approvedEnv.CHANT_HOLD_FINISHED = finishedRel;
+      }
       let code: number;
       try {
         code = hookExec ? await hookExec(hold.argv, ctx.cwd, approvedEnv) : ctx.exec(hold.argv, ctx.cwd, approvedEnv);
@@ -1406,7 +1428,7 @@ async function runHooks(
         ctx.log(`${hold.label} did not run: ${err instanceof Error ? err.message : String(err)}`);
         code = 127;
       }
-      const target = hold.target ? { target: hold.target } : {};
+      if (spent && finishedAt) await finishHeldGate(ctx, hold, spent, readHoldFinished(finishedAt, ctx.log, hold.label), code);
       if (code === 0) {
         ctx.result.hooks.push({ moment, name: hold.name, ...target, exit: code, outcome: "passed" });
         ctx.log(`${hold.label}: ${held.approvedBy} approved ${held.op} / ${held.gate} at ${held.digest}, and the hook ran again and passed`);
@@ -1480,6 +1502,73 @@ function logRefused(log: (line: string) => void, label: string, check: GateCheck
 }
 
 /**
+ * Spend a held gate's approval before the hook runs again under it (#4623),
+ * when the hold asked chant to `record` the gate: an applied line in
+ * `_gates/<op>/applied.jsonl`, as a gated request's (#4551). A digest that
+ * already applied under this gate does not apply again, and a line that did
+ * not reach the remote stops the re-run, so two jobs never act on one
+ * approval.
+ */
+async function spendHeldGate(ctx: WaveContext, hold: OtherGateHold, approval: OpWaveHeldOnApproval): Promise<{ record: AppliedGateRecord } | { failed: string }> {
+  const { k, wave, cwd, options } = ctx;
+  const port = options.gates ?? gitGateLedgerPort({ cwd });
+  const label = `${approval.op} / ${approval.gate}`;
+  try {
+    if (!port.appendApplied) throw new Error("this gate ledger cannot record an applied approval");
+    const prior = ((await port.readApplied?.(approval.op)) ?? []).filter((a) => a.gate === approval.gate && samePlanDigest(a.planDigest, approval.digest)).at(-1);
+    if (prior) return { failed: `${hold.label}: ${label} at ${approval.digest} applied already under the approval by ${prior.approvedBy} (${prior.timestamp}); a held request applies once, so the hook did not run again` };
+    const commit = typeof hold.request.pending?.commit === "string" ? hold.request.pending.commit : undefined;
+    const runId = ciRunIdFromEnv();
+    const record: AppliedGateRecord = {
+      version: 1,
+      kind: "applied",
+      op: approval.op,
+      gate: approval.gate,
+      planDigest: approval.digest,
+      approvedAt: approval.approvedAt,
+      approvedBy: approval.approvedBy,
+      timestamp: options.now ?? new Date().toISOString(),
+      wave: { number: k, name: wave.name },
+      ...(runId ? { runId } : {}),
+      ...(commit ? { commit } : {}),
+    };
+    requireSpendPushed(await port.appendApplied(record));
+    ctx.log(`${hold.label}: ${label} applies under the approval by ${record.approvedBy} at ${record.approvedAt}, which is now spent`);
+    return { record };
+  } catch (err) {
+    return { failed: `${hold.label}: could not record that ${label} applies under the approval by ${approval.approvedBy}, so the hook did not run again: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
+/**
+ * Write the finished line of a held gate the hook ran again under (#4623):
+ * how it ended, from the hook's `CHANT_HOLD_FINISHED` file, else from its
+ * exit code, with the file's detail. A line that is not written is logged;
+ * the work under the approval is done either way.
+ */
+async function finishHeldGate(ctx: WaveContext, hold: OtherGateHold, spent: AppliedGateRecord, wrote: OpWaveHoldFinished | undefined, code: number): Promise<void> {
+  const port = ctx.options.gates ?? gitGateLedgerPort({ cwd: ctx.cwd });
+  const record: FinishedGateRecord = {
+    version: 1,
+    kind: "finished",
+    op: spent.op,
+    gate: spent.gate,
+    planDigest: spent.planDigest,
+    applied: spent.timestamp,
+    result: wrote?.result ?? (code === 0 ? "applied" : "failed"),
+    timestamp: ctx.options.now ?? new Date().toISOString(),
+    ...(wrote?.detail ? { detail: wrote.detail } : {}),
+  };
+  try {
+    if (!port.appendFinished) throw new Error("this gate ledger keeps no finished lines");
+    const pushed = await port.appendFinished(record);
+    if (!pushed.pushed && pushed.pushWarning && !isLifecycleLocalNote(pushed.pushWarning)) ctx.log(`${hold.label}: the finished line of ${spent.op} / ${spent.gate} was written and not pushed: ${pushed.pushWarning}`);
+  } catch (err) {
+    ctx.log(`${hold.label}: the finished line of ${spent.op} / ${spent.gate} was not written: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/**
  * Settle a hold on another gate (#3821): an approval of that gate and digest
  * under the wave's approval mode (`pr-review` counts the ledger alone, since
  * no review planned that digest), else a pending fact for it.
@@ -1492,6 +1581,17 @@ async function settleOtherGate(ctx: WaveContext, hold: OtherGateHold): Promise<O
   const { port } = await gatePort(ctx.options, ctx.cwd, hold.request.gate, mode, rules.base);
   const neverOverMcp = rules.neverOverMcp;
   const now = ctx.options.now ?? new Date().toISOString();
+  // #4623: the file the request carries, stored once before the pending fact, which names its SHA-256.
+  const attachment = hold.request.attachment;
+  if (attachment !== undefined) {
+    try {
+      if (!port.storeRequestAttachment) throw new Error("this gate ledger keeps no request files");
+      await port.storeRequestAttachment(op, hold.request.digest, attachment);
+    } catch (err) {
+      log(`${op} / ${hold.request.gate}: the file ${hold.label} attached was not stored beside the pending fact: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  const proof = attachment !== undefined ? { proof: `sha256:${createHash("sha256").update(attachment).digest("hex")}` } : {};
   const check = await evaluateGate(port, {
     op,
     gate: hold.request.gate,
@@ -1499,7 +1599,7 @@ async function settleOtherGate(ctx: WaveContext, hold: OtherGateHold): Promise<O
     description: hold.request.description ?? `wave ${k} (${wave.name}) of ${spec.name} is held on it by ${hold.label}`,
     now,
     // #3839: the wave a hold belongs to, as a field, whatever the hook's own description says.
-    fields: { ...hold.request.pending, approvalMode: rules.approval, wave: { number: k, name: wave.name, op: spec.name }, heldBy: { hook: hold.name, moment: hold.moment, ...(hold.target ? { target: hold.target } : {}) } },
+    fields: { ...hold.request.pending, ...proof, approvalMode: rules.approval, wave: { number: k, name: wave.name, op: spec.name }, heldBy: { hook: hold.name, moment: hold.moment, ...(hold.target ? { target: hold.target } : {}) } },
     ...(neverOverMcp ? { neverOverMcp: true } : {}),
   });
   const base = { op, gate: hold.request.gate, digest: hold.request.digest, hook: hold.label };

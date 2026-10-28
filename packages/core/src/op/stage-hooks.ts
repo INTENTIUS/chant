@@ -38,6 +38,31 @@ export interface OpWaveHoldRequest {
   description?: string;
   /** Fields for the pending fact, as a plans file's `pending`. */
   pending?: Record<string, unknown>;
+  /**
+   * chant records the held gate like a gated request (#4623): an applied
+   * line in `_gates/<op>/applied.jsonl` before the approved re-run, which
+   * spends the approval, and a finished line after it with the detail the
+   * re-run writes to `CHANT_HOLD_FINISHED`. A digest already applied under
+   * this gate does not run again.
+   */
+  record?: boolean;
+  /**
+   * A file the request carries, such as a migration's proof, as text. chant
+   * stores it once at `_gates/<op>/requests/<digest>.json` before the
+   * pending fact, and the fact's `proof` is its SHA-256 (#4623).
+   */
+  attachment?: string;
+}
+
+/**
+ * What a hook's approved re-run writes to `CHANT_HOLD_FINISHED` (#4623) when
+ * its hold asked chant to `record` the gate: how the work under the approval
+ * ended and the product's flat facts for the finished line. Without the
+ * file, the re-run's exit code says how it ended and the line has no detail.
+ */
+export interface OpWaveHoldFinished {
+  result: "applied" | "failed";
+  detail?: Record<string, string | number | boolean>;
 }
 
 /** One hook's run (#3762). */
@@ -129,11 +154,53 @@ export function readHoldRequest(path: string, log: (line: string) => void, label
     const r = JSON.parse(readFileSync(path, "utf-8")) as Partial<OpWaveHoldRequest>;
     if (typeof r.gate !== "string" || r.gate === "" || typeof r.digest !== "string" || r.digest === "") throw new Error("it names no gate and digest");
     if (r.op !== undefined && (typeof r.op !== "string" || r.op === "")) throw new Error("its op is not a name");
-    return { gate: r.gate, digest: r.digest, ...(r.op ? { op: r.op } : {}), ...(typeof r.description === "string" ? { description: r.description } : {}), ...(r.pending ? { pending: pendingFields(r.pending, `the hold ${label} wrote`) ?? {} } : {}) };
+    if (r.record !== undefined && typeof r.record !== "boolean") throw new Error("its record is not true or false");
+    if (r.attachment !== undefined && typeof r.attachment !== "string") throw new Error("its attachment is not text");
+    return {
+      gate: r.gate,
+      digest: r.digest,
+      ...(r.op ? { op: r.op } : {}),
+      ...(typeof r.description === "string" ? { description: r.description } : {}),
+      ...(r.pending ? { pending: pendingFields(r.pending, `the hold ${label} wrote`) ?? {} } : {}),
+      ...(r.record ? { record: true } : {}),
+      ...(r.attachment !== undefined ? { attachment: r.attachment } : {}),
+    };
   } catch (err) {
     log(`${label} wrote a hold file that cannot be read (${err instanceof Error ? err.message : String(err)}), so it holds the wave on its set digest`);
     return undefined;
   }
+}
+
+/**
+ * Read what a hook's approved re-run wrote to `CHANT_HOLD_FINISHED` (#4623).
+ * Undefined when it wrote nothing; a file that is not one is logged and read
+ * as nothing. A detail value that is not a string, number or boolean is
+ * left out, so the finished line stays flat.
+ */
+export function readHoldFinished(path: string, log: (line: string) => void, label: string): OpWaveHoldFinished | undefined {
+  if (!existsSync(path)) return undefined;
+  try {
+    const r = JSON.parse(readFileSync(path, "utf-8")) as Partial<OpWaveHoldFinished>;
+    if (r.result !== "applied" && r.result !== "failed") throw new Error('its result is not "applied" or "failed"');
+    if (r.detail === undefined) return { result: r.result };
+    if (r.detail === null || typeof r.detail !== "object" || Array.isArray(r.detail)) throw new Error("its detail is not an object");
+    const detail: Record<string, string | number | boolean> = {};
+    const dropped: string[] = [];
+    for (const [key, value] of Object.entries(r.detail)) {
+      if (typeof value === "string" || typeof value === "boolean" || (typeof value === "number" && Number.isFinite(value))) detail[key] = value;
+      else dropped.push(key);
+    }
+    if (dropped.length > 0) log(`${label}: the finished detail's ${dropped.join(", ")} ${dropped.length === 1 ? "is" : "are"} not a string, number or boolean, so the finished line leaves ${dropped.length === 1 ? "it" : "them"} out`);
+    return { result: r.result, ...(Object.keys(detail).length > 0 ? { detail } : {}) };
+  } catch (err) {
+    log(`${label} wrote a finished file that cannot be read (${err instanceof Error ? err.message : String(err)}), so its exit code says how it ended`);
+    return undefined;
+  }
+}
+
+/** Where a hook's approved re-run writes how it ended (#4623): beside the hold file. */
+export function holdFinishedPath(holdPath: string): string {
+  return /hold\.json$/.test(holdPath) ? holdPath.replace(/hold\.json$/, "hold-finished.json") : `${holdPath}.finished.json`;
 }
 
 /** Where hooks run: the wave they belong to and the job's tools. */

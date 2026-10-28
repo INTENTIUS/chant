@@ -23,6 +23,7 @@
  * `--no-record` through `./git.ts`.
  */
 import { createHash } from "node:crypto";
+import { NEXT_RELEASE } from "../release-floors";
 import { sortedJsonReplacer } from "../utils";
 import { approveCommand, evaluateGate, gitGateLedgerPort, type GateLedgerPort } from "../op/gate";
 import type { GateApprovalSource } from "../op/op-waves";
@@ -31,12 +32,23 @@ import { appliedGatePath, finishedApply, parseAppliedGateFile, type AppliedGateL
 import { readGateLedger, type GateResolutionRecord, type PendingGateRecord } from "./gate-ledger";
 import { pushLifecycleReport, readBlobBySha, readBlobFromPath, readPathSha, RefCASConflictError, requireLifecycleLedger, writeBlobToPath, type LedgerLocation } from "./git";
 import { samePlanDigest } from "./plan-digest";
-import { gatedRequestDigest, type GatedRequest } from "./gated-request-digest";
+import { gatedRequestAttachmentPath, gatedRequestDigest, type GatedRequest } from "./gated-request-digest";
 
-export { gatedRequestDigest, gatedRequestOf, type GatedRequest } from "./gated-request-digest";
+export { gatedRequestAttachmentPath, gatedRequestDigest, gatedRequestOf, type GatedRequest } from "./gated-request-digest";
 
 /** The first chant with this module (#4551). */
 export { GATED_REQUEST_FLOOR } from "./gate-ledger";
+
+/**
+ * The first chant whose op-wave hold records the held gate like a gated
+ * request (#4623): a hold file with `record: true` gets an applied line
+ * before the approved re-run and a finished line after it, with the detail
+ * the hook writes to `CHANT_HOLD_FINISHED`, and its `attachment` stored at
+ * {@link gatedRequestAttachmentPath}. On the approved re-run, chant sets
+ * `CHANT_HOLD_FINISHED` only once it wrote the applied line, so a hook reads
+ * that variable to know chant records the gate.
+ */
+export const OP_WAVE_HOLD_RECORD_FLOOR = NEXT_RELEASE;
 
 /** Which approvals count for a request: the block op waves read at base. */
 export interface GatedRequestRules {
@@ -80,10 +92,6 @@ function withProof(request: GatedRequest, attachment: string | undefined): Gated
   return { ...request, fields: { ...request.fields, proof: `sha256:${createHash("sha256").update(attachment).digest("hex")}` } };
 }
 
-/** Where a request's attachment is stored. */
-export function gatedRequestAttachmentPath(op: string, digest: string): { dir: string; file: string } {
-  return { dir: `_gates/${op}/requests`, file: `${digest.replace(/:/g, "_")}.json` };
-}
 
 /** The applied and finished lines of `op`, as `_gates/<op>/applied.jsonl` holds them. */
 async function readAppliedFile(op: string, location?: LedgerLocation): Promise<{ applied: AppliedGateLine[]; finished: FinishedGateRecord[] }> {
