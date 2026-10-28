@@ -35,5 +35,6 @@ describe("cloud identities on a GitLab scheduled Op (#4631)", () => {
 
   test("update.permissions has no GitLab form", () => {
     expect(() => generateGitlabOpPipeline([{ ...spec, update: { command: "x", permissions: { issues: "write" } } }])).toThrow(/no GitLab form/);
+    expect(() => generateGitlabOpPipeline([{ ...spec, update: { command: "x", permissions: { contents: "write" } } }])).toThrow(/no GitLab form/);
   });
 });

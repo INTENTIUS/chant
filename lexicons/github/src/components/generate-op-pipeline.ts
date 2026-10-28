@@ -724,7 +724,9 @@ function withoutTokenRequest(step: Record<string, unknown>): Record<string, unkn
  * The update job (#4631): after the Op's job, only when its run found
  * drift; its own trade for `update.cloud` before its checkout, then the
  * update's command. Its permissions are `contents: read`, `id-token: write`
- * with a cloud, and the update's own scopes.
+ * with a cloud, and the update's own scopes, which may raise `contents` to
+ * `write` so the update records on `chant/lifecycle` (2026-10-28 ruling).
+ * The Op's own job keeps its scopes.
  */
 function updateJob(
   after: string,

@@ -960,7 +960,13 @@ export interface ScheduledOpUpdate {
   command: string;
   /** The identity only the update job holds. Absent: the update runs with no cloud identity of its own. */
   cloud?: CloudTradeSpec;
-  /** Scopes the update job adds to `contents: read`, as {@link ScheduledOpSpec.permissions}. */
+  /**
+   * Scopes the update job adds to `contents: read`, as
+   * {@link ScheduledOpSpec.permissions}. `contents: "write"` raises the
+   * update job's own contents scope (2026-10-28 ruling), so the update can
+   * record on `chant/lifecycle`; the Op's own job keeps its scopes. GitHub
+   * and Forgejo only: GitLab has no per-job token scopes.
+   */
   permissions?: Record<string, "read" | "write">;
   /** The forge environment the update job runs in. */
   environment?: OpEnvironment;
