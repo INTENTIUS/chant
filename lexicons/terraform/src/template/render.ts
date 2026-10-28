@@ -28,7 +28,7 @@
  * bytes.
  */
 
-import { inputKindProblem, inputRequired, type TemplateInput, type TemplateRequest } from "@intentius/chant/template-request";
+import { appOutputRef, inputKindProblem, inputRequired, type TemplateInput, type TemplateRequest } from "@intentius/chant/template-request";
 import { escapeHcl } from "../pin/scan";
 import { exactVersion } from "../pin/source";
 
@@ -126,7 +126,6 @@ export function terraformInputType(input: Pick<TemplateInput, "kind" | "of">): s
 // ── HCL text ──────────────────────────────────────────────────────────────
 
 const IDENT = /^[A-Za-z_][A-Za-z0-9_-]*$/;
-const APP_REF = /^app\.([A-Za-z_][A-Za-z0-9_-]*)$/;
 
 /** An expression that is already HCL: a reference or a type, written as it is. */
 class RawExpr {
@@ -279,9 +278,8 @@ function renderInputs(request: TemplateRequest, inputs: readonly TemplateInput[]
       if (inputRequired(input)) throw new TemplateRenderError("missing-input", input.name, `the request gives no ${input.name}, and the input is required`);
       continue;
     }
-    const ref = call.appOutputs && typeof value === "string" ? APP_REF.exec(value) : null;
-    if (ref) {
-      const output = ref[1]!;
+    const output = call.appOutputs ? appOutputRef(value) : undefined;
+    if (output !== undefined) {
       if (!call.appOutputs!.has(output)) {
         throw new TemplateRenderError("unknown-output", output, `${input.name} names app.${output}, and the app module has no output ${output}`);
       }

@@ -9,6 +9,10 @@
  * Core checks request values against the kind and never parses an engine's
  * own type syntax; an engine maps the kinds to its types (the terraform
  * lexicon, #4652).
+ *
+ * In an add-on request, a value `app.<output>` names an output of the app's
+ * own module, whatever the input's kind. Core accepts it as is and leaves
+ * the engine's renderer to resolve it and refuse an output the module lacks.
  */
 
 import schema from "./template.schema.json" with { type: "json" };
@@ -85,6 +89,19 @@ function scalarFits(kind: TemplateScalarKind, value: unknown): boolean {
   if (kind === "string") return typeof value === "string";
   if (kind === "number") return typeof value === "number" && Number.isFinite(value);
   return typeof value === "boolean";
+}
+
+/** An app-output reference, `app.<output>`, with the output in group 1. */
+export const APP_OUTPUT_REF: RegExp = /^app\.([A-Za-z_][A-Za-z0-9_-]*)$/;
+
+/** The output an `app.<output>` value names, or undefined when `value` is not one. */
+export function appOutputRef(value: unknown): string | undefined {
+  return typeof value === "string" ? APP_OUTPUT_REF.exec(value)?.[1] : undefined;
+}
+
+/** True when `value` is an app-output reference, `app.<output>`. */
+export function isAppOutputRef(value: unknown): value is string {
+  return appOutputRef(value) !== undefined;
 }
 
 /**

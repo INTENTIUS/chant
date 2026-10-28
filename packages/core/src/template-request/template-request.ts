@@ -14,7 +14,7 @@
 import schema from "./template-request.schema.json" with { type: "json" };
 import { NEXT_RELEASE } from "../release-floors";
 import { catalogVersion, type AttestationState, type CatalogComponent, type ReleaseCatalog } from "../lifecycle/release-catalog";
-import { inputKindProblem, inputRequired, type TemplateSpec } from "./template-spec";
+import { inputKindProblem, inputRequired, isAppOutputRef, type TemplateSpec } from "./template-spec";
 import { schemaProblems } from "./validate";
 
 /** The first chant that writes and reads template-request/v1 and template.yml/v1 (#4651). */
@@ -204,8 +204,12 @@ export function checkTemplateRequest(
       refusals.push({ code: "sensitive-input", field, reason: `${field} is sensitive, and a request is written into a pull request; the app reads it from its secret store` });
       continue;
     }
+    // An add-on's `app.<output>` names the app module's output; the renderer resolves it.
+    if (req.addon !== undefined && isAppOutputRef(value)) continue;
     const p = inputKindProblem(input, value);
-    if (p) refusals.push({ code: "input-type", field, reason: `${field} ${p}` });
+    if (!p) continue;
+    const why = isAppOutputRef(value) ? `; ${JSON.stringify(value)} reads as an app output, and only an add-on request can name one` : "";
+    refusals.push({ code: "input-type", field, reason: `${field} ${p}${why}` });
   }
   for (const input of templateSpec.inputs) {
     if (input.sensitive || !inputRequired(input) || input.name in req.inputs) continue;
