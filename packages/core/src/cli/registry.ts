@@ -354,6 +354,8 @@ export interface ParsedArgs {
    * read from the CI job's environment.
    */
   forge?: string;
+  /** `chant ci forge-check --require-clouds` (#4608): fail a cloud left unchecked for want of credentials too. */
+  requireClouds?: boolean;
   /**
    * `chant components pr-apply --require-review` (#3183) — count an approval
    * only when its approver has a standing approving review on the pull

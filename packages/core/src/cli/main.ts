@@ -265,6 +265,14 @@ CI:
                         perRun, with no forge token or cloud credentials in
                         their environment. Writes check-hooks.json under
                         --output (default .chant/check); exits 1 when one failed.
+  ci forge-check [--env <env>] [--member <name>] [--forge <forge>] [--repo <owner/name>] [--branch <default>] [--require-clouds] [--json]
+                        Read the forge, each cloud's trust policy and Pulumi
+                        Cloud's OIDC policies against the pipelines
+                        ci.identity.cloud gives --env (default production):
+                        apply environments, branch protection, required
+                        statuses, and each identity trusted to its own jobs.
+                        Read-only; exits 1 on a mismatch, and with
+                        --require-clouds on a cloud it had no credentials for.
   ci last-green [--json] [--from <rev>]  The newest first-parent commit of
                         ci.green's branch, or of --from, with a ci/green tag
                         and no ci/revoked tag. Reads local tags only; fetch
@@ -1692,6 +1700,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "ci init", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-init")).runCiInit(ctx) },
   // #4556: the ci.hooks.check hooks at base, for a product's check job.
   { name: "ci check", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/ci-check")).runCiCheck(ctx) },
+  // #4608: the live forge, cloud trust policies and Pulumi Cloud's OIDC policies against ci.identity.cloud. Read-only.
+  { name: "ci forge-check", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/ci-forge-check")).runCiForgeCheck(ctx) },
   // #4094: one pull-request job as a pipeline Op in a fresh checkout, the chant runner's first slice.
   { name: "ci run", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-run")).runCiRun(ctx) },
   // #4098: the run index at the report URL.

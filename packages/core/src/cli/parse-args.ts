@@ -74,6 +74,7 @@ const BOOLEAN_FLAGS = new Set([
   "--unsigned",
   "--in-place",
   "--require-runner-start",
+  "--require-clouds",
   "--no-push",
   "--list",
   "--no-require-review",
@@ -482,6 +483,9 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--forge") {
       result.forge = args[++i];
       if (!result.forge || result.forge.startsWith("-")) throw new Error("--forge needs a forge: --forge github|gitlab|forgejo");
+    } else if (arg === "--require-clouds") {
+      // `chant ci forge-check --require-clouds` (#4608).
+      result.requireClouds = true;
     } else if (arg === "--require-review") {
       result.requireReview = true;
     } else if (arg === "--list") {

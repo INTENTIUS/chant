@@ -158,6 +158,8 @@ The trade only asks. The cloud decides whom to answer, so each identity's trust 
 
 Never trust an apply identity to the pull request's subject.
 
+`chant ci forge-check` reads each identity's live trust and lists every subject it admits beyond its jobs ([chant ci](/chant/cli/ci/#ci-forge-check)). For Pulumi Cloud it reads the organization's OIDC issuers and their policies. The record job plans the merged commit with the plan identity, so the check expects the plan identity's trust to admit the default branch's subject as well as the pull request's.
+
 <Aside type="caution" title="A pull request can edit its own workflow">
 On every forge a pull request from the repository can change the workflow file. A changed plan job could skip the drop, but its token still carries the pull request's subject. The apply identity's trust is what refuses it, so check that trust before you rely on the split.
 </Aside>
