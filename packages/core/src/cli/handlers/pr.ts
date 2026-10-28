@@ -1635,11 +1635,29 @@ function stopper(ctx: CommandContext, p: Prepared, events: RunEventStream | unde
   return async (report: PrReport, code: number, settle?: RunEventSettleStatus): Promise<number> => {
     events?.settle(settle ?? settleOf(report.status), report.status === "plan-failed" || report.status === "failed" ? report.message ?? `pr-${report.stage} ${report.status}` : undefined);
     await finish(ctx, p, report, upload);
+    // #4629: a failed apply's triage and a refused apply's diff, on the pull request.
+    if (report.stage === "apply" && (report.status === "failed" || report.status === "refused") && !ctx.args.noStatus) await respondApply(ctx, p, report);
     console.error((code === 0 ? formatInfo : (m: string) => formatWarning({ message: m }))(`pr-${report.stage}: ${report.status}${report.refusal ? ` (${report.refusal})` : ""}`));
     if (report.message) console.error(report.message);
     printMembers(report);
     return code;
   };
+}
+
+/** The responses an apply's report calls for (#4629), from `--respond` over `CHANT_RESPOND`. Never throws. */
+async function respondApply(ctx: CommandContext, p: Prepared, report: PrReport): Promise<void> {
+  try {
+    const { parseRespondList } = await import("../../ci-respond");
+    const given = ctx.args.respond ? parseRespondList(ctx.args.respond) : {};
+    if ("error" in given) {
+      console.error(formatWarning({ message: `no response was posted: ${given.error}` }));
+      return;
+    }
+    const { respondPrApply } = await import("../../ci-respond-run");
+    await respondPrApply(p.forge, report, given);
+  } catch (err) {
+    console.error(formatWarning({ message: `the apply's responses were not posted: ${err instanceof Error ? err.message : String(err)}` }));
+  }
 }
 
 /** Why `--require-review` does not count an approval, or why the reviews could not be read. */
@@ -2588,6 +2606,8 @@ export async function runComponentsPrPost(ctx: CommandContext): Promise<number> 
   }
   const { postPlanReport } = await import("../../pr-post");
   const member = args.members?.[0];
+  const description = await descriptionCheckOf(ctx, forge);
+  if (typeof description === "number") return description;
   const posted = await postPlanReport({
     forge,
     dir: resolve(args.output ?? PR_REPORT_DIR),
@@ -2598,11 +2618,43 @@ export async function runComponentsPrPost(ctx: CommandContext): Promise<number> 
     ...(args.planResult ? { result: args.planResult } : {}),
     // #4289: the plan job could not ask the forge, so the note job does, from the Ops at the commit it checked out.
     overdue: () => overdueOps(forge, member),
+    ...(description ? { description } : {}),
   });
   for (const message of posted.warnings) console.error(formatWarning({ message }));
   if (posted.refused) console.error(formatWarning({ message: `the plan report was not used: ${posted.refused}` }));
   console.error(formatInfo(`pr-post: ${prStatusContext("plan", member)} ${posted.state}: ${posted.description}${posted.noted ? "; note posted" : ""}`));
   return 0;
+}
+
+/**
+ * The description check pr-post runs after the note (#4629), when the
+ * responses turn it on (`--respond description=check`, or `CHANT_RESPOND`):
+ * the `decide.backends` entry `--decide-backend` names, from chant.config
+ * at the commit this job checked out (the target branch's, never the pull
+ * request's), and the model `--decide-model` pins. On with no backend is
+ * refused, so a pipeline that asks for the check learns it never ran.
+ */
+async function descriptionCheckOf(ctx: CommandContext, forge: PrForge): Promise<((report: PrReport) => Promise<void>) | undefined | number> {
+  const { parseRespondList, resolveResponses } = await import("../../ci-respond");
+  const given = ctx.args.respond ? parseRespondList(ctx.args.respond) : {};
+  if ("error" in given) return fail(given.error);
+  if (resolveResponses(given, process.env, (m) => console.error(formatWarning({ message: m }))).description !== "check") return undefined;
+  const name = ctx.args.decideBackend;
+  if (!name || !ctx.args.decideModel) return fail("the description check asks a decide service, so it needs --decide-backend <name> and --decide-model <id>", "Name a decide.backends entry of chant.config, or turn the check off: --respond description=off");
+  const { loadChantConfig } = await import("../../config");
+  let backend;
+  try {
+    const loaded = await loadChantConfig(process.cwd());
+    backend = loaded.config.decide?.backends?.[name];
+  } catch (err) {
+    return fail(`could not read decide.backends from chant.config: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (!backend) return fail(`the description check names the backend ${name}, and chant.config has no decide.backends.${name}`);
+  const { backendDescriptionAsk, respondDescription } = await import("../../ci-respond-run");
+  const ask = backendDescriptionAsk(backend, { name, model: ctx.args.decideModel, cwd: process.cwd() });
+  return async (report) => {
+    await respondDescription(forge, report, { ask });
+  };
 }
 
 /**
@@ -2632,6 +2684,8 @@ async function runComponentsPrPostOpen(ctx: CommandContext): Promise<number> {
   const top = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" });
   if (top.status !== 0) return fail("pr-post --open reads the plan report's path from the repository root, and this directory is not in a git repository");
   const member = args.members?.[0];
+  const description = await descriptionCheckOf(ctx, forge);
+  if (typeof description === "number") return description;
   const artifactDir = relative(realpathSync(top.stdout.trim()), resolve(args.output ?? PR_REPORT_DIR)).split(sep).join("/");
   const { postOpenPlanReports } = await import("../../pr-post");
   const { gitlabPlanJobName } = await import("../../components/pr-pipeline");
@@ -2646,6 +2700,7 @@ async function runComponentsPrPostOpen(ctx: CommandContext): Promise<number> {
       ...(member ? { member } : {}),
       // #4289: the Ops at the commit this pipeline checked out, the target branch's.
       overdue: () => overdueOps(forge, member),
+      ...(description ? { description } : {}),
     });
   } catch (err) {
     return fail(err instanceof Error ? err.message : String(err));

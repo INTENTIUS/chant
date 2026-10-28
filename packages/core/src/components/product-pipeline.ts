@@ -39,6 +39,7 @@ import type { DriverComponent } from "./driver";
 import type { ScheduledOpSpec } from "../lexicon";
 import type { CiRunner } from "../ci-jobs";
 import { resolveAgentSpec, type OpAgentSpec } from "../ci-agent";
+import { CI_RESPOND_ENV, respondList, type CiResponses } from "../ci-respond";
 
 /** Where the generator writes a product's waves spec, which chant reads at base (#4550). */
 export const PRODUCT_WAVES_SPEC_DIR = ".chant/op-waves";
@@ -79,6 +80,19 @@ export interface ProductPipelineOptions extends Omit<PrLoopPipelineOptions, "wor
    * the merge.
    */
   componentWaves?: { components: readonly Pick<DriverComponent, "name" | "dependsOn">[]; waveGate?: string; base?: string };
+  /**
+   * The responses to pipeline events (#4629, `../ci-respond.ts`): a refused
+   * wave's diff and a failed apply's triage, on by default, and the
+   * description check, off by default. The apply jobs carry them as
+   * `CHANT_RESPOND`, the waves spec as its `respond`.
+   */
+  respond?: CiResponses;
+  /**
+   * The decide service the description check asks (#4629): a
+   * `decide.backends` entry of chant.config at the target branch, and the
+   * pinned model. Needed with `respond.description: "check"`.
+   */
+  decide?: { backend: string; model: string };
 }
 
 /** The jobs of one product pipeline. */
@@ -188,7 +202,8 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   const built: CiProductApplyMode = options.waves || options.componentWaves ? "on-merge" : options.applyBeforeMerge ? "before-merge" : "release";
   const applyMode: CiProductApplyMode = options.words.applyMode === "before-merge" && options.applyBeforeMerge ? "before-merge" : built;
   const words = assertProductWords({ ...options.words, applyMode }, { jobs });
-  const { waves: given, wavesSpecFile, member, agent: _agent, componentWaves, ...loop } = options;
+  const { waves: given, wavesSpecFile, member, agent: _agent, componentWaves, respond, decide, ...loop } = options;
+  if (respond?.description === "check" && !decide) throw new Error("respond.description: check asks a decide service, so the pipeline needs decide: { backend, model }");
   const prLoop: PrLoopPipelineOptions = { ...loop, words, gate: options.gate ?? words.prGate };
   const [plan, apply, record] = prLoopJobs(forge, env, prLoop, member);
   const comments: Partial<Record<CiProductCommand, string>> = {};
@@ -198,12 +213,20 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   }
   // #4619: the loop's control target, else the waves spec's.
   const controlTarget = options.control?.target ?? (given?.control ? opWavesControlTarget(given.control) : undefined);
+  // #4629: the responses ride on the apply and note jobs as CHANT_RESPOND, and the description check's service on the note job's line.
+  const list = respond ? respondList(respond) : "";
+  const respondEnv: Record<string, string> = list ? { [CI_RESPOND_ENV]: list } : {};
+  const withRespond = (job: PrLoopJob): PrLoopJob => (list ? { ...job, env: { ...job.env, ...respondEnv }, run: { ...job.run, env: { ...job.run.env, ...respondEnv } } } : job);
+  const postJob = prLoopPostJob(forge, env, member, words);
+  const post = respond?.description === "check" && decide
+    ? { command: `${postJob.command} --decide-backend ${JSON.stringify(decide.backend)} --decide-model ${JSON.stringify(decide.model)}`, env: { ...postJob.env, ...respondEnv } }
+    : list ? { ...postJob, env: { ...postJob.env, ...respondEnv } } : postJob;
   const out: ProductPipelineJobs = {
     words,
     plan: plan!,
-    post: { ...prLoopPostJob(forge, env, member, words), ...(controlTarget ? { control: controlNoteCheckout(forge, controlTarget, words) } : {}) },
+    post: { ...post, ...(controlTarget ? { control: controlNoteCheckout(forge, controlTarget, words) } : {}) },
     comments,
-    ...(options.applyBeforeMerge ? { applyBeforeMerge: apply! } : {}),
+    ...(options.applyBeforeMerge ? { applyBeforeMerge: withRespond(apply!) } : {}),
   };
   const locks = prCommentLockJobs(forge, { locks: options.locks, words });
   if (locks.length > 0) out.locks = locks;
@@ -221,7 +244,8 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
     ? componentWavesSpec(componentWaves.components, words, componentWaveSteps({ ...(words.bin ? { bin: words.bin } : {}), env, base: componentWaves.base ?? "HEAD^1", ...(member ? { member } : {}), op, gate: prLoop.gate }), { ...(componentWaves.waveGate ? { gate: componentWaves.waveGate } : {}) })
     : undefined);
   if (!spec) return { ...out, record: record! };
-  const named = productWavesSpec(spec, words);
+  const wavesRespond = respond ? Object.fromEntries(Object.entries(respond).filter(([e]) => e !== "description")) : {};
+  const named = { ...productWavesSpec(spec, words), ...(Object.keys(wavesRespond).length > 0 ? { respond: { ...(spec.respond ?? {}), ...wavesRespond } } : {}) };
   const specFile = wavesSpecFile ?? productWavesSpecFile(named.name);
   return { ...out, waves: { spec: named, specFile, jobs: opWaveJobs(named, specFile, { bin: words.bin }) } };
 }

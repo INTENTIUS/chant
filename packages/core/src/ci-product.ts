@@ -117,6 +117,30 @@ export { renderPrNote, prStatusContext, prApproveCommand, prApproveCommands, prA
 export { upsertPlanNote } from "./pr-post";
 
 /**
+ * Responses to pipeline events (#4629): a refused wave's diff, a failed
+ * apply's triage and the pull request description check, in the product's
+ * words. `productPipelineJobs(forge, env, { words, respond, decide })` turns
+ * them on and off; a product feature-detects on `CI_RESPOND_FLOOR`.
+ */
+export const CI_RESPOND_FLOOR = NEXT_RELEASE;
+export {
+  CI_RESPOND_DEFAULTS,
+  CI_RESPOND_ENV,
+  CI_RESPONSES,
+  parseRespondList,
+  renderRefusedDiff,
+  renderTriage,
+  respondList,
+  resolveResponses,
+  type CiRespondEvent,
+  type CiResponses,
+  type DescriptionFinding,
+  type FailedApply,
+  type RefusedDiff,
+} from "./ci-respond";
+export { respondDescription, respondOpWave, respondPrApply, triageOfOpWave, triageOfPrReport, refusedOfOpWave, refusedOfPrReport } from "./ci-respond-run";
+
+/**
  * Run one chant command line in this process with the product's words
  * (ruling C): what a product's bin calls for every command its verbs map
  * onto, and for the `chant ...` lines the generated jobs run through it. The

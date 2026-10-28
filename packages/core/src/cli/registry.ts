@@ -409,6 +409,12 @@ export interface ParsedArgs {
    * and checks. Absent: all four. A check left out passes as "not required".
    */
   requires?: string[];
+  /** `--respond wave-refused=off,description=check` (#4629): the responses pr-apply, pr-post and the wave jobs post. */
+  respond?: string[];
+  /** `pr-post --decide-backend <name>` (#4629): the `decide.backends` entry the description check asks. */
+  decideBackend?: string;
+  /** `pr-post --decide-model <id>` (#4629): the pinned model the description check asks. */
+  decideModel?: string;
   /**
    * `chant build --pr-loop --apply-before-merge` and `chant ci run apply
    * --apply-before-merge` (#4301): the pipeline's apply job applies an open
