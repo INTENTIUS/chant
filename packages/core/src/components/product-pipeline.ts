@@ -39,7 +39,7 @@ import type { DriverComponent } from "./driver";
 import type { ScheduledOpSpec } from "../lexicon";
 import type { CiRunner } from "../ci-jobs";
 import { resolveAgentSpec, type OpAgentSpec } from "../ci-agent";
-import { CI_RESPOND_ENV, respondList, type CiResponses } from "../ci-respond";
+import type { CiResponses } from "../ci-respond";
 
 /** Where the generator writes a product's waves spec, which chant reads at base (#4550). */
 export const PRODUCT_WAVES_SPEC_DIR = ".chant/op-waves";
@@ -209,8 +209,9 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   const built: CiProductApplyMode = options.waves || options.componentWaves ? "on-merge" : options.applyBeforeMerge ? "before-merge" : "release";
   const applyMode: CiProductApplyMode = options.words.applyMode === "before-merge" && options.applyBeforeMerge ? "before-merge" : built;
   const words = assertProductWords({ ...options.words, applyMode }, { jobs });
-  const { waves: given, wavesSpecFile, member, agent: _agent, componentWaves, respond, decide, ...loop } = options;
-  if (respond?.description === "check" && !decide) throw new Error("respond.description: check asks a decide service, so the pipeline needs decide: { backend, model }");
+  const { waves: given, wavesSpecFile, member, agent: _agent, componentWaves, ...loop } = options;
+  const { respond } = options;
+  // #4629: the pull request loop puts the responses on the apply and note jobs, as `chant build --pr-loop --respond` does.
   const prLoop: PrLoopPipelineOptions = { ...loop, words, gate: options.gate ?? words.prGate };
   const [plan, apply, record] = prLoopJobs(forge, env, prLoop, member);
   // #4625: the jobs with no stage of their own run on the default runner.
@@ -223,20 +224,13 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   }
   // #4619: the loop's control target, else the waves spec's.
   const controlTarget = options.control?.target ?? (given?.control ? opWavesControlTarget(given.control) : undefined);
-  // #4629: the responses ride on the apply and note jobs as CHANT_RESPOND, and the description check's service on the note job's line.
-  const list = respond ? respondList(respond) : "";
-  const respondEnv: Record<string, string> = list ? { [CI_RESPOND_ENV]: list } : {};
-  const withRespond = (job: PrLoopJob): PrLoopJob => (list ? { ...job, env: { ...job.env, ...respondEnv }, run: { ...job.run, env: { ...job.run.env, ...respondEnv } } } : job);
-  const postJob = prLoopPostJob(forge, env, member, words, { ...(options.staleNotes ? { staleNotes: true } : {}) });
-  const post = respond?.description === "check" && decide
-    ? { command: `${postJob.command} --decide-backend ${JSON.stringify(decide.backend)} --decide-model ${JSON.stringify(decide.model)}`, env: { ...postJob.env, ...respondEnv } }
-    : list ? { ...postJob, env: { ...postJob.env, ...respondEnv } } : postJob;
+  const post = prLoopPostJob(forge, env, member, words, { ...(options.staleNotes ? { staleNotes: true } : {}), ...(respond ? { respond } : {}), ...(options.decide ? { decide: options.decide } : {}) });
   const out: ProductPipelineJobs = {
     words,
     plan: plan!,
     post: { ...post, ...(controlTarget ? { control: controlNoteCheckout(forge, controlTarget, words) } : {}), ...defaultRunner },
     comments,
-    ...(options.applyBeforeMerge ? { applyBeforeMerge: withRespond(apply!) } : {}),
+    ...(options.applyBeforeMerge ? { applyBeforeMerge: apply! } : {}),
   };
   const locks = prCommentLockJobs(forge, { locks: options.locks, words });
   if (locks.length > 0) out.locks = locks.map((job) => ({ ...job, ...defaultRunner }));

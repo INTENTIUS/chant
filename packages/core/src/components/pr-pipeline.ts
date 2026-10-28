@@ -99,6 +99,7 @@ import type { GatedWavePipelineOptions } from "./gated-wave-pipeline";
 import type { CloudTradeSpec, PipelineCloudIdentity } from "../ci-identity";
 import { commentLine, resolveProductWords, type CiProductWords, type CiProductWordsInput } from "../ci-product-words";
 import type { ControlTarget } from "../control/dispatch";
+import { CI_RESPOND_ENV, respondList, type CiResponses } from "../ci-respond";
 
 /** The variable `chant ci run` reads its runner key from (`RUNNER_KEY_ENV` in ../workspace/ci-green.ts). */
 const RUNNER_KEY_ENV = "CHANT_RUNNER_KEY";
@@ -358,6 +359,26 @@ export interface PrLoopPipelineOptions {
    * from `--stale-notes` beside `--pr-loop`. Default false.
    */
   staleNotes?: boolean;
+  /**
+   * The responses to pipeline events (#4629, ../ci-respond.ts), from
+   * `chant build --pr-loop --respond <list>`: the apply job and the
+   * plan-note job carry the list as `CHANT_RESPOND`. Absent, or every event
+   * at its default: neither job sets it.
+   */
+  respond?: CiResponses;
+  /**
+   * The decide service the description check asks (#4629), from
+   * `--decide-backend` and `--decide-model`: the plan-note job passes both
+   * to `pr-post`. Needed with `respond.description: "check"`.
+   */
+  decide?: { backend: string; model: string };
+}
+
+/** The `CHANT_RESPOND` value of `respond` (#4629), or undefined when every event is at its default. Throws on a description check with no decide service. */
+export function prLoopRespondEnv(options: Pick<PrLoopPipelineOptions, "respond" | "decide">): Record<string, string> {
+  if (options.respond?.description === "check" && !options.decide) throw new Error("respond.description: check asks a decide service, so the pipeline needs decide: { backend, model }");
+  const list = options.respond ? respondList(options.respond) : "";
+  return list ? { [CI_RESPOND_ENV]: list } : {};
 }
 
 /** The variable the comment preview's plan reads the comment from (#4626); never a shell argument. */
@@ -548,7 +569,7 @@ export function prCommentPreviewJob(forge: ForgeKind, env: string, options: PrLo
   const comment = commentLine(words, "plan");
   if (!comment) throw new Error(`--preview-comment answers /${words.product} <plan command>, and the words name no plan command; name one in the words' commands, or drop --preview-comment`);
   // The plan job's own command: the apply side's options never reach it, so they are left out here.
-  const { applyBeforeMerge: _early, applyRequires: _requires, applyMerge: _merge, applyOnMerge: _onMerge, ...planSide } = options;
+  const { applyBeforeMerge: _early, applyRequires: _requires, applyMerge: _merge, applyOnMerge: _onMerge, respond: _respond, decide: _decide, ...planSide } = options;
   // #4626: the comment's --target addresses narrow the preview, read from the comment in a variable.
   const [plan] = prLoopJobs(forge, env, { ...planSide, commentTargets: true }, member);
   const github = forge !== "gitlab";
@@ -754,6 +775,9 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
     run: { command: ciRun("apply").join(" "), env: runEnv(earlyEnv) },
   };
   const bin = options.words?.bin;
+  // #4629: the apply posts a failed apply's triage and a refused one's diff as CHANT_RESPOND says.
+  const respondEnv = prLoopRespondEnv(options);
+  const withRespond = (job: PrLoopJob): PrLoopJob => (Object.keys(respondEnv).length > 0 ? { ...job, env: { ...job.env, ...respondEnv }, run: { ...job.run, env: { ...job.run.env, ...respondEnv } } } : job);
   return [
     {
       jobName: "plan",
@@ -765,7 +789,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
       // #4328: no runner key either. The step drops it, but the job's environment is the pull request's code's too.
       run: { command: ciRun("plan").join(" "), env: planEnv },
     },
-    early ? earlyApply : greenApply,
+    withRespond(early ? earlyApply : greenApply),
     {
       jobName: "record",
       command: ["chant", "components", "pr-record", "--base", '"$BASE_SHA"', ...common].join(" "),
@@ -798,7 +822,15 @@ export const PR_PLAN_NOTE_JOB = "plan-note";
  * asks GitLab for each open merge request's plan job and reads its report
  * from the job's artifacts.
  */
-export function prLoopPostJob(forge: ForgeKind, env: string, member?: string, words?: Pick<CiProductWordsInput, "bin">, opts: { staleNotes?: boolean } = {}): { command: string; env: Record<string, string> } {
+export function prLoopPostJob(forge: ForgeKind, env: string, member?: string, words?: Pick<CiProductWordsInput, "bin">, opts: { staleNotes?: boolean } & Pick<PrLoopPipelineOptions, "respond" | "decide"> = {}): { command: string; env: Record<string, string> } {
+  // #4629: the responses as CHANT_RESPOND, and with the description check its decide service on the line.
+  const respondEnv = prLoopRespondEnv(opts);
+  const decide = opts.respond?.description === "check" && opts.decide ? ` --decide-backend ${JSON.stringify(opts.decide.backend)} --decide-model ${JSON.stringify(opts.decide.model)}` : "";
+  const job = prLoopPostJobBase(forge, env, member, words, opts);
+  return decide || Object.keys(respondEnv).length > 0 ? { command: `${job.command}${decide}`, env: { ...job.env, ...respondEnv } } : job;
+}
+
+function prLoopPostJobBase(forge: ForgeKind, env: string, member: string | undefined, words: Pick<CiProductWordsInput, "bin"> | undefined, opts: { staleNotes?: boolean }): { command: string; env: Record<string, string> } {
   // #4628: with staleNotes the note carries the target branch's commit, so a later push can mark it stale.
   const tip = opts.staleNotes ? ["--tip", '"$TIP_SHA"'] : [];
   if (forge === "gitlab") {

@@ -11,6 +11,8 @@ import { findWorkspaceRoot } from "../../project-root";
 import { resolvePromotionSource } from "../../components/promote-order";
 import type { PrLoopPipelineOptions } from "../../components/pr-pipeline";
 import { activeProductWords, isChantWords } from "../../ci-product-words";
+import { PR_APPLY_MERGES, PR_MERGE_METHODS } from "../../pr-merge";
+import { parseRespondList, type CiResponses } from "../../ci-respond";
 
 /**
  * The engine install lines the project's lexicons give (#4550,
@@ -56,8 +58,14 @@ async function engineSetupFor(path: string): Promise<string[]> {
  * `--pr-runner`, `--pr-variable`, `--pr-secret` and `--parallelism` (#4625)
  * set each stage's runner, the plan and apply jobs' variables and passed
  * secrets, and how many members the plan plans at once.
+ * `--merge auto --merge-token-env <VAR> [--merge-method <m>]` (#4636) merges
+ * the pull request after its update before merge. `--respond <list>`,
+ * `--decide-backend` and `--decide-model` (#4629) set the apply and note
+ * jobs' responses and the description check's service. {@link prLoopFlagsProblem}
+ * has checked all of them first.
  */
 function prLoopOption(args: CommandContext["args"], reportUrl: string | undefined, requireReview = false, requireRunnerStart = false): PrLoopPipelineOptions {
+  const respond = args.respond ? (parseRespondList(args.respond) as CiResponses) : undefined;
   // #4550: a product's bin set its words; the generated jobs answer its comment and run its bin.
   const words = activeProductWords();
   return {
@@ -84,7 +92,49 @@ function prLoopOption(args: CommandContext["args"], reportUrl: string | undefine
     ...(args.parallelism !== undefined ? { parallelism: args.parallelism } : {}),
     // #4627: the plan refreshes each step's state first.
     ...(args.refresh ? { refresh: true } : {}),
+    // #4636: the update before merge merges with its own token.
+    ...(args.merge === "auto" && args.mergeTokenEnv ? { applyMerge: { tokenEnv: args.mergeTokenEnv, ...(args.mergeMethod ? { method: args.mergeMethod as "merge" | "squash" | "rebase" } : {}) } } : {}),
+    // #4629: the responses on the apply and note jobs, and the description check's service.
+    ...(respond && Object.keys(respond).length > 0 ? { respond } : {}),
+    ...(args.decideBackend && args.decideModel ? { decide: { backend: args.decideBackend, model: args.decideModel } } : {}),
   };
+}
+
+/**
+ * Why the pull request loop's merge, respond, decide and plan flags (#4636,
+ * #4629, #4627) do not hold together on `chant build`, or undefined when
+ * they do. Each value is refused by name, as `pr-apply` and `pr-post` refuse
+ * it, so a build never writes a job that fails on its own line.
+ */
+export function prLoopFlagsProblem(args: Pick<CommandContext["args"], "prLoop" | "applyBeforeMerge" | "merge" | "mergeTokenEnv" | "mergeMethod" | "respond" | "decideBackend" | "decideModel" | "targetDependents">): string | undefined {
+  const given = [
+    ...(args.merge !== undefined ? ["--merge"] : []),
+    ...(args.mergeTokenEnv !== undefined ? ["--merge-token-env"] : []),
+    ...(args.mergeMethod !== undefined ? ["--merge-method"] : []),
+    ...(args.respond !== undefined ? ["--respond"] : []),
+    ...(args.decideBackend !== undefined ? ["--decide-backend"] : []),
+    ...(args.decideModel !== undefined ? ["--decide-model"] : []),
+  ];
+  if (!args.prLoop) return given.length > 0 ? `${given.join(", ")} set the pull request loop's jobs, so ${given.length === 1 ? "it needs" : "they need"} --pr-loop` : undefined;
+  if (args.targetDependents) return "--target-dependents widens a --target, and the pull request's plan job plans with no target, so build takes no --target-dependents; give it in the preview comment beside --target";
+  if (args.merge === undefined) {
+    if (args.mergeTokenEnv !== undefined || args.mergeMethod !== undefined) return "--merge-token-env and --merge-method go with --merge auto";
+  } else if (!(PR_APPLY_MERGES as readonly string[]).includes(args.merge)) {
+    return `--merge takes ${PR_APPLY_MERGES.join(" or ")}, not ${args.merge}`;
+  } else if (args.merge === "manual") {
+    if (args.mergeTokenEnv !== undefined || args.mergeMethod !== undefined) return "--merge manual leaves the merge to a person, so it takes no --merge-token-env or --merge-method";
+  } else {
+    if (!args.applyBeforeMerge) return "--merge auto merges a pull request once its update before merge applied, so it needs --apply-before-merge";
+    if (!args.mergeTokenEnv) return "--merge auto merges with a token of its own, never the job's: --merge-token-env <VAR> (on GitLab a protected variable)";
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(args.mergeTokenEnv)) return `--merge-token-env takes a variable name, not ${args.mergeTokenEnv}`;
+    if (args.mergeMethod !== undefined && !(PR_MERGE_METHODS as readonly string[]).includes(args.mergeMethod)) return `--merge-method takes ${PR_MERGE_METHODS.join(", ")}, not ${args.mergeMethod}`;
+  }
+  const respond = args.respond ? parseRespondList(args.respond) : {};
+  if ("error" in respond) return respond.error;
+  const check = respond.description === "check";
+  if (check && (!args.decideBackend || !args.decideModel)) return "--respond description=check asks a decide service, so it needs --decide-backend <name> and --decide-model <id>";
+  if (!check && (args.decideBackend !== undefined || args.decideModel !== undefined)) return "--decide-backend and --decide-model name the description check's service, so they go with --respond description=check";
+  return undefined;
 }
 
 /**
@@ -112,6 +162,13 @@ function prLoopOption(args: CommandContext["args"], reportUrl: string | undefine
 async function runGenerateComponents(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   const lexicon = args.generate as string;
+
+  // #4636, #4629, #4627: the pull request loop's flags are checked before anything loads.
+  const flagsProblem = prLoopFlagsProblem(args);
+  if (flagsProblem) {
+    console.error(formatError({ message: flagsProblem }));
+    return 1;
+  }
 
   const { config } = await loadChantConfigUpward(resolve(args.path)).catch(() => ({ config: {} as ChantConfig }));
   const paramsResolution = resolveCliBuildParams(config.buildParams, {

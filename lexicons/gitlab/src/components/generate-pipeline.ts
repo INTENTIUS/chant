@@ -452,7 +452,7 @@ function prLoopGitlabPipeline(
   const staleName = stale ? named(PR_STALE_JOB) : undefined;
   const stages = ["plan", PR_PLAN_NOTE_JOB, ...(stale ? [PR_STALE_JOB] : []), ...commentLocks.map((c) => c.job.jobName), ...(preview ? [preview.jobName, preview.noteJobName] : []), ...applies.map((a) => a.stage), ...(control ? [control.name] : []), ...(prEnv ? [PR_ENV_STAGE, PR_ENV_POST_STAGE] : [])];
   const noteJob = named(PR_PLAN_NOTE_JOB);
-  const post = prLoopPostJob("gitlab", env, member?.name, loop.words ? { ...(loop.words.bin ? { bin: loop.words.bin } : {}) } : undefined, { ...(loop.staleNotes ? { staleNotes: true } : {}) });
+  const post = prLoopPostJob("gitlab", env, member?.name, loop.words ? { ...(loop.words.bin ? { bin: loop.words.bin } : {}) } : undefined, { ...(loop.staleNotes ? { staleNotes: true } : {}), ...(loop.respond ? { respond: loop.respond } : {}), ...(loop.decide ? { decide: loop.decide } : {}) });
   // #4619: with a control repo named, the note job reads its chant/lifecycle, read-only, so pr-post marks the cross-stack edges.
   const controlRead = loop.control ? controlNoteCheckout("gitlab", loop.control.target, loop.words ?? {}) : undefined;
   const doc: Record<string, unknown> = {
