@@ -50,16 +50,16 @@ A reset deletes `chant/lifecycle` on the demo repo. Between passes, when the rep
 
 | Path | What it is |
 |---|---|
-| `stack/` | A chant project on the docker lexicon. `npm run build` there writes `compose.yaml` (compose project `chant-fan-out-demo`: Forgejo, chant-runner and floci from `ghcr.io/lex00/floci` pinned by digest) and `Dockerfile.jobImage`, the job image `chant-fan-out-demo-job:local` with node, git, chant and its aws lexicon at one release, and a pinned AWS CLI v2. The runner runs in that image. |
+| `stack/` | A chant project on the docker lexicon. `npm run build` there writes `compose.yaml` (compose project `chant-fan-out-demo`: Forgejo and floci from the e2e harness's `harnessStack`, and chant-runner). floci is the harness's `FLOCI_CHANGE_SET_IMAGE`, the 63d8f1ed line, whose change-set descriptions chant's plan counts read; the harness's own pin is 5ec92ae8, and lex00/floci#265 asks for one image with both lines' fixes. It also writes `Dockerfile.jobImage`, the job image `chant-fan-out-demo-job:local` with node, git, chant and its aws lexicon at one release, and a pinned AWS CLI v2. The runner runs in that image. |
 | `overlays/change/`, `overlays/fix/` | The files each pull request copies over the base, with `@CYCLE@` filled in. |
 | `steps.ts` | The title, the four chapters, the step labels, the about cards, the highlights, the holds and the limits. |
 | `driver.ts` | The command line. It wires the real forge, bucket and chant into the cycle. |
-| `lib/cycle.ts` | One cycle, against the forge, the bucket and chant as interfaces (`lib/ports.ts`). |
-| `lib/forgejo.ts`, `lib/bucket.ts`, `lib/chant.ts` | The real ones: Forgejo's REST API and git, floci's S3, and the checkout's chant. |
+| `lib/cycle.ts` | One cycle, against the forge, the bucket and chant as interfaces (`lib/ports.ts`, the e2e harness's ports). |
+| `lib/forgejo.ts`, `lib/bucket.ts`, `lib/chant.ts` | The real ones: the e2e harness's Forgejo client and floci bucket on the demo repo, and the checkout's chant. |
 | `lib/stack.ts` | `up` and `down`, the runner's secrets file, its key and the base. |
 | `driver.test.ts` | One cycle in process, with fakes for all three. |
 | `stack.test.ts` | The built compose file, and up's runner steps with fakes. |
-| `schemas/` | `demo-step/v1` and `demo-cycle/v1`. |
+| `schemas/` | `demo-step/v1` and `demo-cycle/v1`, whose schemas and validators live in the e2e harness (`packages/core/src/e2e-harness/schemas/`). |
 
 ## Who does what
 

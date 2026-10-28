@@ -21,7 +21,8 @@
     "dist",
     "docs",
     "src/cli/commands/__fixtures__/**/*",
-    "src/workspace/conformance/__fixture__/**/*"
+    "src/workspace/conformance/__fixture__/**/*",
+    "src/e2e-harness/project/**/*"
   ],
   "tsc-alias": {
     "resolveFullPaths": true

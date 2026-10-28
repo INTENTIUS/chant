@@ -19,6 +19,7 @@
  * is never published.
  */
 import { reportKey } from "../../../../packages/core/src/pr-report-url.js";
+import { componentStatuses, type PrReportView } from "../../../../packages/core/src/e2e-harness/reports.js";
 import {
   validateDemoCycle,
   validateDemoStep,
@@ -115,40 +116,8 @@ export type CycleOutcome =
 /** A step past its limit, or a fact that is not what the story says. The cycle stalls. */
 export class Stall extends Error {}
 
-/** pr-report/v1, the fields the driver reads. */
-interface PrReportView {
-  stage: "plan" | "apply";
-  pr: number | null;
-  head: string;
-  op: string;
-  gate: string;
-  digest: string;
-  status: string;
-  refusal?: string;
-  message?: string;
-  approval?: { status?: string };
-  selection: { waves: string[][] };
-  members: Array<{ member: string; component: string; status: string; error?: string }>;
-}
-
-/** Each component's status in a report: failed if a member failed, blocked if every member was. */
-export function componentStatuses(report: Pick<PrReportView, "members">): Map<string, string> {
-  const byComponent = new Map<string, string[]>();
-  for (const m of report.members) {
-    const name = m.component || m.member;
-    byComponent.set(name, [...(byComponent.get(name) ?? []), m.status]);
-  }
-  const out = new Map<string, string>();
-  for (const [name, statuses] of byComponent) {
-    const one = statuses.includes("failed")
-      ? "failed"
-      : statuses.every((s) => s === statuses[0])
-        ? statuses[0]!
-        : statuses.join("+");
-    out.set(name, one);
-  }
-  return out;
-}
+// pr-report/v1 and each component's status in it, as the e2e harness reads them.
+export { componentStatuses };
 
 /** The change's apply ended as the story says: cluster-a failed, its six apps blocked, the other eight applied. */
 export function checkChangeApply(report: Pick<PrReportView, "status" | "members">): string | null {

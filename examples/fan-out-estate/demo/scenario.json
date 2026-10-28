@@ -1,0 +1,135 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/e2e-harness/e2e-scenario/v1/e2e-scenario.schema.json",
+  "contract": 1,
+  "id": "fan-out",
+  "product": "chant",
+  "claim": "fan-out/failure-blocks-only-dependents",
+  "title": "A broken stack shouldn't stall the whole rollout",
+  "tree": {
+    "base": "..",
+    "overlays": "overlays"
+  },
+  "env": "demo",
+  "reportUrl": "s3://chant-demo/fan-out-estate/reports",
+  "steps": [
+    {
+      "id": "change",
+      "do": "open",
+      "branch": "demo/claim-change",
+      "overlay": "change",
+      "title": "A broken stack shouldn't stall the whole rollout"
+    },
+    {
+      "id": "change-plan",
+      "do": "plan",
+      "pull": "change",
+      "expect": [
+        {
+          "report": {
+            "status": "planned"
+          }
+        }
+      ]
+    },
+    {
+      "id": "change-approve",
+      "do": "approve",
+      "pull": "change"
+    },
+    {
+      "id": "change-merge",
+      "do": "merge",
+      "pull": "change"
+    },
+    {
+      "id": "change-apply",
+      "do": "apply",
+      "merge": "change-merge",
+      "label": "cluster-a fails, its six apps are blocked, and the other eight apply",
+      "expect": [
+        {
+          "report": {
+            "status": "failed",
+            "components": {
+              "cluster-a": "failed",
+              "app-01": "blocked",
+              "app-02": "blocked",
+              "app-03": "blocked",
+              "app-04": "blocked",
+              "app-05": "blocked",
+              "app-06": "blocked",
+              "network": "applied",
+              "cluster-b": "applied",
+              "app-07": "applied",
+              "app-08": "applied",
+              "app-09": "applied",
+              "app-10": "applied",
+              "app-11": "applied",
+              "app-12": "applied"
+            },
+            "only": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "fix",
+      "do": "open",
+      "branch": "demo/claim-fix",
+      "overlay": "fix",
+      "title": "cluster-a: the events queue's name ends in .fifo"
+    },
+    {
+      "id": "fix-plan",
+      "do": "plan",
+      "pull": "fix",
+      "expect": [
+        {
+          "report": {
+            "status": "planned"
+          }
+        }
+      ]
+    },
+    {
+      "id": "fix-approve",
+      "do": "approve",
+      "pull": "fix"
+    },
+    {
+      "id": "fix-merge",
+      "do": "merge",
+      "pull": "fix"
+    },
+    {
+      "id": "fix-apply",
+      "do": "apply",
+      "merge": "fix-merge",
+      "label": "the fix applies the seven and nothing else",
+      "expect": [
+        {
+          "report": {
+            "status": "applied",
+            "components": {
+              "cluster-a": "applied",
+              "app-01": "applied",
+              "app-02": "applied",
+              "app-03": "applied",
+              "app-04": "applied",
+              "app-05": "applied",
+              "app-06": "applied"
+            },
+            "only": true
+          }
+        }
+      ]
+    }
+  ],
+  "break": {
+    "env": {
+      "BREAK": "1"
+    },
+    "overlay": "fix",
+    "note": "Every pull request also carries the fix's queue name, so cluster-a never fails and the change's apply must not show the failure it claims."
+  }
+}

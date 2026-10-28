@@ -208,7 +208,7 @@ forgejo-runtime-e2e:
     @scripts/human-gate.sh forgejo-runtime-e2e
     bash test/forgejo-runtime-e2e.sh
 
-# The fan-out demo (#4091): one cycle of examples/fan-out-estate/demo on its local Forgejo and floci (on-demand, needs Docker; run `cmd=up` once first). cmd: up, cycle, loop, reset or down
+# The fan-out demo (#4091): one cycle of examples/fan-out-estate/demo on its local Forgejo and floci (on-demand, needs Docker; run `cmd=up` once first). cmd: up, cycle, loop, reset, claim (the e2e harness's plain and BREAK runs, #4587) or down
 fan-out-demo cmd="cycle":
     @scripts/human-gate.sh fan-out-demo
     cd examples/fan-out-estate && npm run demo -- {{cmd}}
