@@ -19,9 +19,16 @@
  * legacy reading), and a provider a module uses with no entry at all is the
  * one `init` installs for it, `hashicorp/<name>`; the binary's own
  * `terraform` provider is never downloaded and has no address.
+ *
+ * With `proxies` (chant#4606, ./proxies.ts), a source written through an
+ * Artifactory remote repository or a Nexus proxy host block stands for its
+ * upstream source: its forms include the upstream's, and its normal form
+ * and provider address are the upstream's, so it compares equal to the
+ * plain source.
  */
 import { classifyModuleSource } from "../lint/post-synth/module-source";
 import { parseRegistrySource } from "./address";
+import { moduleThroughProxy, providerThroughProxy, type RegistryProxy } from "./proxies";
 
 /** The public registry's host, which a source with no host names under Terraform. */
 export const PUBLIC_REGISTRY_HOST = "registry.terraform.io";
@@ -35,6 +42,17 @@ export type SourceBinary = "terraform" | "tofu";
 
 /** The default registry host for a binary. */
 export const defaultRegistryHost = (binary: SourceBinary = "terraform"): string => (binary === "tofu" ? OPENTOFU_REGISTRY_HOST : PUBLIC_REGISTRY_HOST);
+
+/** How a source is read: the binary (for default hosts) and the registry proxies in front of upstreams. */
+export interface SourceFormOptions {
+  binary?: SourceBinary;
+  proxies?: readonly RegistryProxy[];
+}
+
+/** A binary alone, or the options. */
+export type SourceFormArg = SourceBinary | SourceFormOptions;
+
+const optionsOf = (o: SourceFormArg | undefined): SourceFormOptions => (typeof o === "string" ? { binary: o } : (o ?? {}));
 
 /** A source without its `?` query, trimmed. */
 export const withoutQuery = (source: string): string => source.trim().split("?")[0]!;
@@ -57,9 +75,17 @@ function atDefaultRegistry(source: string): string | undefined {
  * registry; one at a default registry adds its hostless form and its form at
  * the other default registry; `tfr:///x` adds `x` at each default registry
  * and `tfr://<host>/x` adds `<host>/x`. Any other source (local, git, OCI,
- * an archive URL) has the one form.
+ * an archive URL) has the one form. A source through one of `proxies` adds
+ * the forms of the upstream source it stands for.
  */
-export function moduleSourceForms(source: string): string[] {
+export function moduleSourceForms(source: string, options?: SourceFormOptions): string[] {
+  const out = plainModuleForms(source);
+  const via = moduleThroughProxy(source, options?.proxies);
+  if (via) for (const f of plainModuleForms(via.upstream)) if (!out.includes(f)) out.push(f);
+  return out;
+}
+
+function plainModuleForms(source: string): string[] {
   const written = withoutQuery(source);
   const out = [written];
   const add = (...forms: string[]) => {
@@ -87,10 +113,14 @@ export function moduleSourceForms(source: string): string[] {
  * lower-cased, and Terragrunt's `tfr:///ns/name/system` and
  * `tfr://host/ns/name/system` become the plain registry form. Other sources
  * (git, OCI, an archive URL) are kept as they are. Moved from
- * ../pin/consumers.ts (chant#4599).
+ * ../pin/consumers.ts (chant#4599). A source through one of `proxies` is
+ * the upstream source it stands for.
  */
-export function normalizeModuleSource(module: string, binary: SourceBinary = "terraform"): string {
-  let s = module.trim();
+export function normalizeModuleSource(module: string, options?: SourceFormArg): string {
+  const o = optionsOf(options);
+  const binary = o.binary ?? "terraform";
+  const via = moduleThroughProxy(module, o.proxies);
+  let s = (via ? via.upstream : module).trim();
   const tfr = /^tfr:\/\/([^/]*)\/(.*)$/.exec(s);
   if (tfr) s = `${tfr[1] || defaultRegistryHost(binary)}/${tfr[2]}`;
   const [base, ...rest] = s.split("//");
@@ -118,10 +148,14 @@ const HOST = /^[a-z0-9.-]+(?::\d+)?$/;
  * A `required_providers` source in its full form, `<host>/<namespace>/<type>`,
  * lower case, with the binary's default host when it names none and the
  * `hashicorp` namespace when it names only a type. Undefined for a string
- * that is not a provider address.
+ * that is not a provider address. A source through one of `proxies`
+ * (`<host>/<repo>__<ns>/<type>` on Artifactory) gives the upstream's address.
  */
-export function parseProviderAddress(source: string, binary: SourceBinary = "terraform"): ProviderAddress | undefined {
-  const parts = source.trim().toLowerCase().split("/");
+export function parseProviderAddress(source: string, options?: SourceFormArg): ProviderAddress | undefined {
+  const o = optionsOf(options);
+  const binary = o.binary ?? "terraform";
+  const via = providerThroughProxy(source, o.proxies);
+  const parts = (via ? via.upstream : source).trim().toLowerCase().split("/");
   let host: string, namespace: string, type: string;
   if (parts.length === 1) [host, namespace, type] = [defaultRegistryHost(binary), "hashicorp", parts[0]!];
   else if (parts.length === 2) [host, namespace, type] = [defaultRegistryHost(binary), parts[0]!, parts[1]!];
@@ -132,7 +166,7 @@ export function parseProviderAddress(source: string, binary: SourceBinary = "ter
 }
 
 /** {@link parseProviderAddress}'s full form, or undefined. */
-export const providerAddress = (source: string, binary: SourceBinary = "terraform"): string | undefined => parseProviderAddress(source, binary)?.address;
+export const providerAddress = (source: string, options?: SourceFormArg): string | undefined => parseProviderAddress(source, options)?.address;
 
 /**
  * The provider `init` installs for a local name that has no
@@ -145,9 +179,17 @@ export const impliedProvider = (local: string): string | undefined => (local ===
 /**
  * Every form a provider address matches as: in lower case as written, and,
  * when written without a host or at a default registry, its hostless form
- * and its form at each default registry.
+ * and its form at each default registry. A source through one of `proxies`
+ * adds the forms of its upstream address.
  */
-export function providerAddressForms(source: string): string[] {
+export function providerAddressForms(source: string, options?: SourceFormOptions): string[] {
+  const out = plainProviderForms(source);
+  const via = providerThroughProxy(source, options?.proxies);
+  if (via) for (const f of plainProviderForms(via.upstream)) if (!out.includes(f)) out.push(f);
+  return out;
+}
+
+function plainProviderForms(source: string): string[] {
   const a = source.trim().toLowerCase();
   const out = [a];
   const add = (...forms: string[]) => {

@@ -25,6 +25,7 @@ import { join, posix, relative, sep } from "node:path";
 import { loadHcl2json, type Hcl2Json } from "@intentius/chant/terraform/hcl2json";
 import { isJsonConfigFile, jsonConfigTree, selectConfigFiles } from "./hcl/files";
 import { impliedProvider, normalizeModuleSource, providerAddress, withoutQuery, type SourceBinary } from "./registry/source-forms";
+import type { RegistryProxy } from "./registry/proxies";
 
 /** One module source or provider address a root uses. */
 export interface UsedSource {
@@ -66,6 +67,8 @@ export interface UsedSourcesOptions {
   binary?: SourceBinary;
   /** The HCL parser. Default: core's lazily loaded hcl2json. */
   parser?: Hcl2Json;
+  /** Registry proxies (chant#4606): a source through one gets its upstream's normal form. */
+  proxies?: readonly RegistryProxy[];
 }
 
 type Tree = Record<string, unknown>;
@@ -112,7 +115,7 @@ async function readDir(abs: string, shown: string, prefix: string, top: boolean,
     file,
     block,
     source,
-    normal: providerAddress(source, o.binary) ?? source.trim().toLowerCase(),
+    normal: providerAddress(source, { binary: o.binary, proxies: o.proxies }) ?? source.trim().toLowerCase(),
     ...(what ? { implied: what } : {}),
   });
   for (const name of moduleFiles(abs, top, o.binary)) {
@@ -176,7 +179,7 @@ export async function usedSources(dir: string, options: UsedSourcesOptions = {})
     const { providers, calls } = await readDir(join(project, rel), rel, prefix, top, o);
     used.push(...providers);
     for (const c of calls) {
-      used.push({ kind: "module", file: c.file, block: c.block, source: c.source, normal: isLocal(c.source) ? withoutQuery(c.source) : normalizeModuleSource(withoutQuery(c.source), o.binary) });
+      used.push({ kind: "module", file: c.file, block: c.block, source: c.source, normal: isLocal(c.source) ? withoutQuery(c.source) : normalizeModuleSource(withoutQuery(c.source), { binary: o.binary, proxies: o.proxies }) });
       if (!follow || !isLocal(c.source)) continue;
       // A Terragrunt source's `//` marks the directory it copies; the module is the path with it read as one `/`.
       const path = withoutQuery(c.source).replace(/\/\/+/g, "/");

@@ -20,10 +20,17 @@
  * a CLI's `host` block gives it, held in memory so no CLI config file is
  * written. Such a host may be a bare name with no dot, as a `host` block's
  * label may be.
+ *
+ * With `proxies` (chant#4606), a module whose host a proxy stands for is
+ * read through the proxy: an Artifactory remote repository at
+ * `<proxy host>/<repo>__<ns>/<name>/<system>`, a Nexus proxy or group
+ * repository through its host block's modules.v1 URL. A source with no host
+ * is read at registry.terraform.io, so through the proxy that stands for it.
  */
 import { gunzipSync } from "node:zlib";
 import { credentialsHost, terraformToken, tokenVariable, type CredentialsOptions } from "@intentius/chant/terraform/credentials";
-import { DISCOVERY, parseRegistrySource } from "./address";
+import { DISCOVERY, parseRegistrySource, type RegistrySource } from "./address";
+import { DEFAULT_PROXY_UPSTREAM, proxyLabels, proxyRoute, type RegistryProxy } from "./proxies";
 import { DOWNLOAD_HEADER, readVersions } from "./writer";
 
 /** The fetch the reader calls: the global fetch's shape. */
@@ -64,6 +71,8 @@ export interface RegistryReadOptions {
    * credentials before its bearer form (3.95). Never printed.
    */
   authorization?: string;
+  /** Registry proxies in front of upstream hosts; a read of a module at an upstream goes through its proxy. */
+  proxies?: readonly RegistryProxy[];
 }
 
 /** The token a read sends to a host, by the options. */
@@ -98,7 +107,27 @@ const serviceFor = (host: string, o: RegistryReadOptions): string | undefined =>
 };
 
 /** A source split by the hosts the options know as well as by the usual host shape. */
-const sourceOf = (source: string, o: RegistryReadOptions) => parseRegistrySource(source, Object.keys(o.services ?? {}));
+const sourceOf = (source: string, o: RegistryReadOptions) => parseRegistrySource(source, [...Object.keys(o.services ?? {}), ...proxyLabels(o.proxies)]);
+
+/**
+ * Where a read of `source` goes: the source as written, or, when a proxy
+ * stands for its host, the proxy's host and namespace, with the options
+ * carrying the proxy's modules.v1 URL when it has one. A source with no host
+ * is taken at registry.terraform.io only when proxies are given, so a read
+ * without them refuses it as before.
+ */
+function readTarget(source: string, o: RegistryReadOptions): { s: RegistrySource; o: RegistryReadOptions } | undefined {
+  let s = sourceOf(source, o);
+  if (!s && o.proxies?.length) {
+    const base = source.split("?")[0]!.split("//")[0]!;
+    const parts = base.split("/");
+    if (parts.length === 3 && parts.every((p) => /^[0-9A-Za-z][0-9A-Za-z_-]*$/.test(p))) s = { host: DEFAULT_PROXY_UPSTREAM, namespace: parts[0]!, name: parts[1]!, system: parts[2]! };
+  }
+  if (!s) return undefined;
+  const r = proxyRoute(s, o.proxies);
+  if (!r) return { s, o };
+  return { s: { ...s, host: r.host, namespace: r.namespace }, o: r.modules ? { ...o, services: { ...o.services, [r.host]: r.modules } } : o };
+}
 
 /** The modules.v1 base a host's service discovery names, ending in `/`. */
 export async function modulesBase(host: string, options?: RegistryFetch | RegistryReadOptions): Promise<string> {
@@ -122,9 +151,9 @@ export async function modulesBase(host: string, options?: RegistryFetch | Regist
 
 /** Every version a registry lists for a module; none when it has no versions file. */
 export async function registryVersions(source: string, options?: RegistryFetch | RegistryReadOptions): Promise<string[]> {
-  const o = optionsOf(options);
-  const s = sourceOf(source, o);
-  if (!s) throw new RegistryError(`${source} is not a registry source`);
+  const t = readTarget(source, optionsOf(options));
+  if (!t) throw new RegistryError(`${source} is not a registry source`);
+  const { s, o } = t;
   const token = readToken(s.host, o);
   const url = `${await modulesBase(s.host, { ...o, token: token ?? false })}${s.namespace}/${s.name}/${s.system}/versions`;
   const res = await httpGet(o.fetch ?? globalFetch, url, token, o.authorization);
@@ -157,9 +186,10 @@ export async function locationFromAnswer(res: Response, reads: DownloadReader = 
 
 /** Where a registry says one version is, resolved against the download URL when it is relative. */
 export async function registryLocation(source: string, version: string, options?: RegistryFetch | RegistryLocationOptions): Promise<string> {
-  const o = optionsOf(options) as RegistryLocationOptions;
-  const s = sourceOf(source, o);
-  if (!s) throw new RegistryError(`${source} is not a registry source`);
+  const t = readTarget(source, optionsOf(options));
+  if (!t) throw new RegistryError(`${source} is not a registry source`);
+  const s = t.s;
+  const o = t.o as RegistryLocationOptions;
   const token = readToken(s.host, o);
   const url = `${await modulesBase(s.host, { ...o, token: token ?? false })}${s.namespace}/${s.name}/${s.system}/${version}/download`;
   const res = await httpGet(o.fetch ?? globalFetch, url, token, o.authorization);

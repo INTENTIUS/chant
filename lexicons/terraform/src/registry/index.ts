@@ -8,7 +8,8 @@
  * (chant#4603). ./docs reads a module's README, inputs, outputs and
  * examples for its release catalog page (chant#4598). ./source-forms puts
  * module sources and provider addresses in one normal form, and
- * ../used-sources lists the ones a root uses (chant#3924).
+ * ../used-sources lists the ones a root uses (chant#3924); ./proxies
+ * reads them through Artifactory and Nexus proxies (chant#4606).
  */
 
 export * from "./address";
@@ -25,5 +26,6 @@ export * from "./docs";
 export * from "./catalog-read";
 export * from "./deprecated";
 export * from "./source-forms";
+export * from "./proxies";
 export { moduleConsumers, isLocalSource, type ModuleConsumer } from "../pin/consumers";
 export { usedSources, type UsedSource, type UnreadSource, type UsedSourcesOptions } from "../used-sources";

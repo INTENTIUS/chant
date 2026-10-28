@@ -49,3 +49,14 @@ host "terraform-hosted" {
 Sources then start with the block's label, as in `terraform-hosted/acme/vpc/aws`. The label defaults to the repository's name. A name with characters a host name cannot have, such as `_`, needs the `host` option. The target reads the version back with the same block held in memory and writes no CLI config file. It sends `TF_TOKEN_<nexus host>` when that is set, else the token Nexus 3.95 issues for the basic credentials, else the basic credentials.
 
 Sonatype's page on creating a Terraform repository says GPG signing is mandatory for hosted repositories, and the same page says signing is optional for modules. Until someone confirms the rule on an instance, create the hosted repository with a signing key. The effect of a module upload to a repository with no key is not documented.
+
+## Proxies
+
+An Artifactory remote or virtual repository, or a Nexus proxy or group repository, can stand in front of an upstream registry such as registry.terraform.io. The lexicon's source forms and registry reader take a `proxies` list, so a source written through a proxy compares equal to the plain upstream source and reads go through the proxy.
+
+| Proxy | Entry | Source through it |
+|---|---|---|
+| Artifactory | `artifactoryProxy("acme.jfrog.io", "tf-remote")` | `acme.jfrog.io/tf-remote__terraform-aws-modules/vpc/aws` |
+| Nexus | `nexusProxy({ url: "https://nexus.example.com", repo: "tf-proxy" })` | `terraform-aws-modules/vpc/aws`, behind a `host "registry.terraform.io"` block |
+
+A provider through Artifactory uses the same joiner, as in `acme.jfrog.io/tf-remote__hashicorp/aws`. A Nexus entry's label defaults to its upstream, and the `host` option names another label. Each entry stands for registry.terraform.io unless its `upstream` names another host.
