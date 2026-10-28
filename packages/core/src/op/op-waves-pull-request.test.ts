@@ -3,7 +3,9 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { assertOpWavesSpec, type OpWavesSpec } from "./op-waves";
-import { runOpWave, type OpWaveExec, type OpWaveShowAtBase } from "./op-waves-run";
+import { recordOpWaveHeadPlans, runOpWave, type OpWaveExec, type OpWaveShowAtBase } from "./op-waves-run";
+import { approvalStatusOf } from "./approval-status";
+import type { HeadPlans } from "../lifecycle/wave-plans";
 import { memoryGateLedgerPort, type GateLedgerPort } from "./gate";
 import { composeChangeSet, type ChangeSetDocument, type ChangeSetMember } from "../change-set";
 import type { GateResolutionRecord } from "../lifecycle/gate-ledger";
@@ -138,5 +140,80 @@ describe("planWave and applyWave run by the caller (#4588)", () => {
     } finally {
       h.done();
     }
+  });
+});
+
+describe("the approval status of a pull-request wave before merge (#4630, 2026-10-28 ruling)", () => {
+  const HEAD = "c".repeat(40);
+  const forge = { kind: "github" as const, async prApproved() { throw new Error("a pull-request wave reads no review"); } };
+
+  async function recorded(waveDoc: ChangeSetDocument): Promise<{ plans: HeadPlans; stored: ChangeSetDocument[] }> {
+    const h = harness(waveDoc);
+    const stored: ChangeSetDocument[] = [];
+    try {
+      const plans = await recordOpWaveHeadPlans({ spec, cwd: h.cwd, exec: h.exec, head: HEAD, now: "t", write: async () => {}, storeChangeSet: async (d) => void stored.push(d) });
+      return { plans, stored };
+    } finally {
+      h.done();
+    }
+  }
+
+  const statusOf = (plans: HeadPlans, stored: ChangeSetDocument[], resolutions: Record<string, GateResolutionRecord[]>) =>
+    approvalStatusOf({
+      spec,
+      specFile: ".chant/op-waves/pulumi-up.spec.json",
+      forge,
+      pr: 7,
+      head: HEAD,
+      base: "b".repeat(40),
+      show: () => ({ sha: "b".repeat(40), text: JSON.stringify(spec) }),
+      readPlans: async () => plans,
+      readResolutions: async (op) => resolutions[op] ?? [],
+      changeSets: async (d) => stored.find((x) => x.digest === d),
+    });
+
+  test("--record-plans keeps the wave's change set and stores it", async () => {
+    const waveDoc = doc(digest("a"));
+    const { plans, stored } = await recorded(waveDoc);
+    expect(plans.waves[0]).toMatchObject({ wave: 1, changeSet: waveDoc.digest });
+    expect(stored.map((d) => d.digest)).toEqual([waveDoc.digest]);
+  });
+
+  test("pending with no approval at the pull request's gate, success once the pull request's approval covers the wave", async () => {
+    const approved = doc(digest("a"));
+    const { plans, stored } = await recorded(approved);
+    expect(await statusOf(plans, stored, {})).toMatchObject({ state: "pending", waits: [1], description: expect.stringContaining("gate up has no approval") });
+    // The product's approve line records on the pull request's op.
+    const onPr = { ...approval(approved), op: "pr-7" } as GateResolutionRecord;
+    expect(await statusOf(plans, stored, { "pr-7": [onPr] })).toMatchObject({ state: "success", waits: [1], approvers: ["github:alice"] });
+    // The spec's op, which the merged wave reads, counts as well.
+    expect(await statusOf(plans, stored, { "pulumi-up": [approval(approved)] })).toMatchObject({ state: "success" });
+  });
+
+  test("an approval of another plan does not cover the head's, and a record with no change set is pending", async () => {
+    const other = doc(digest("d"));
+    const { plans, stored } = await recorded(movedDoc(digest("c")));
+    const status = await statusOf(plans, [...stored, other], { "pr-7": [approval(other)] });
+    expect(status.state).toBe("pending");
+    const bare: HeadPlans = { ...plans, waves: plans.waves.map(({ changeSet: _c, ...w }) => w) };
+    expect(await statusOf(bare, stored, {})).toMatchObject({ state: "pending", description: expect.stringContaining("carry no change set") });
+  });
+
+  test("a wave whose gate does not hold the head's plan is success without an approval", async () => {
+    const never = { ...spec, waves: spec.waves.map((w) => ({ ...w, gate: "never" as const })) };
+    const { plans, stored } = await recorded(doc(digest("a")));
+    const status = await approvalStatusOf({
+      spec: never,
+      specFile: ".chant/op-waves/pulumi-up.spec.json",
+      forge,
+      pr: 7,
+      head: HEAD,
+      base: "b".repeat(40),
+      show: () => ({ sha: "b".repeat(40), text: JSON.stringify(never) }),
+      readPlans: async () => plans,
+      readResolutions: async () => [],
+      changeSets: async (d) => stored.find((x) => x.digest === d),
+    });
+    expect(status).toMatchObject({ state: "success", waits: [] });
   });
 });

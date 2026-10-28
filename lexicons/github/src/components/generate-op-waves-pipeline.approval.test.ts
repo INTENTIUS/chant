@@ -32,4 +32,15 @@ describe("the approval status job (#4630)", () => {
     const { files } = generateGithubOpWavesPipeline({ ...spec, waves: [{ name: "prod", runs: [{ target: "app" }] }] }, { specFile: "waves.json" });
     expect(files.map((f) => f.name)).toEqual(["plywood-up.yml"]);
   });
+
+  test("a pull-request wave gets the plans workflow and the status too (2026-10-28 ruling)", () => {
+    const pullRequest: OpWavesSpec = { ...spec, waves: [{ name: "prod", runs: [{ target: "app" }], approval: "pull-request" }], approvals: { pullRequest: { gate: "up" } } };
+    const { files } = generateGithubOpWavesPipeline(pullRequest, { specFile: "waves.json", bin: "npx --no-install plywood" });
+    expect(files.map((f) => f.name)).toEqual(["plywood-up.yml", "plywood-up-plans.yml"]);
+    const plans = files.find((f) => f.name === "plywood-up-plans.yml")!.yaml;
+    expect(plans).toContain("npx --no-install plywood run wave --spec waves.json --record-plans");
+    expect(plans).toContain("--approval-status --pr \"$PR_NUMBER\"");
+    // The waves read no review, so they ask for no pull-requests scope.
+    expect(files[0]!.yaml).not.toContain("pull-requests: read");
+  });
 });

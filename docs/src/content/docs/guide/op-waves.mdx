@@ -642,6 +642,21 @@ After the merge, a wave with no `chant approve` of its digest reads the review o
 
 A tool that shows or checks these records reads them with `@intentius/chant/lifecycle/wave-plans` ([#3865](https://github.com/INTENTIUS/chant/issues/3865)). `parseHeadPlans(text)` returns the record or null. `readHeadPlans(port, name, head)` reads one head, and `readHeadPlanDigests(port, name)` returns every recorded head with its digests by wave number. `listWavePlanSpecs(port)` names the specs that have records. The `port` is a `LedgerReadPort` from `@intentius/chant/lifecycle/ledger-port`, three methods (`read`, `list`, `trees`) over the branch. The module touches no git and bundles on its own. `gitLedgerReadPort({ cwd, member })` from `@intentius/chant/lifecycle/git` is a port over a checkout, and `member` (or `ledgerPrefix`, the prefix `resolveMemberLedger` returns) reads a workspace member's records under `_members/<member>/_wave-plans/`.
 
+### The approval status before merge
+
+A spec with a `pr-review` or `pull-request` wave gets the record-plans job, and an `approval-status` job that posts `<product>/approval` on the pull request's head (`chant/approval` for chant's own words, `plywood/approval` through plywood's bin) ([#4630](https://github.com/INTENTIUS/chant/issues/4630)). It reads each wave's approval mode and policy at the pull request's base, and the head's recorded plans tell it which waves the gate will hold. The status is `pending` while a held wave has no approval that would pass it, and `success` once every held wave has one or none is held.
+
+| Wave approval | What answers a held wave before merge |
+|---|---|
+| `pr-review` | an approving review of the head by a writer other than its author, as the merged wave reads it |
+| `pull-request` | the pull request's own approval: an approval at `approvals.pullRequest.gate`, on the pull request's op (`pr-<n>`) or the spec's op, whose change set covers the wave's change set at the head |
+
+For a `pull-request` wave, `--record-plans` keeps the digest of the change set the wave's plans file gives, and stores the document under `_change-sets/` on `chant/lifecycle`. A record without one stays `pending`.
+
+On GitHub and Forgejo the job runs after record-plans on each push, and alone on each review. On GitLab an approval starts no pipeline, so a pipeline schedule of the target branch that sets `CHANT_APPROVAL_STATUS=1` posts the status for every open merge request (`--open`). An approval recorded with `chant approve` starts no run on any forge either. The status changes at the next push, review or scheduled run, or when someone runs `chant run wave --spec <file> --approval-status --open --branch <branch> --forge <kind>`.
+
+The status advises. After the merge, the wave's own gate decides.
+
 ### `sealed`
 
 Add `.chant/allowed_signers` in a reviewed change, one `<principal> <key>` line per approver, then approve with `--sign`:

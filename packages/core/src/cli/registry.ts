@@ -320,7 +320,7 @@ export interface ParsedArgs {
   decide?: boolean;
   /** `chant run wave --record-plans` (#3684) — plan every wave at a pull request's head and record the digests for a `pr-review` gate. */
   recordPlans?: boolean;
-  /** `chant run wave --approval-status` (#4630) — post `<product>/approval` on an open pull request's head under `pr-review`. */
+  /** `chant run wave --approval-status` (#4630) — post `<product>/approval` on an open pull request's head under `pr-review` or `pull-request`. */
   approvalStatus?: boolean;
   /** `chant run wave --waves-outcome` (#4617) — print how every wave job's outcome file adds up: the outcome a control dispatch carries. */
   wavesOutcome?: boolean;

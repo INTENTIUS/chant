@@ -123,6 +123,16 @@ export { upsertPlanNote } from "./pr-post";
  * `APPROVAL_STATUS_FLOOR`.
  */
 export const APPROVAL_STATUS_FLOOR = NEXT_RELEASE;
+/**
+ * The approval status for `pull-request` waves too (#4630, 2026-10-28
+ * ruling): the generators add the record-plans and approval-status jobs for
+ * a spec whose waves take the pull request's own approval, and the status
+ * reads that approval's coverage of each wave's change set. A product such
+ * as plywood, whose waves all take `approval: pull-request`, feature-detects
+ * on this floor.
+ */
+export const APPROVAL_STATUS_PULL_REQUEST_FLOOR = NEXT_RELEASE;
+export { opWavesPostsApprovalStatus } from "./op/op-waves";
 export { approvalStatusOf, headWaveHolds, postApprovalStatus, postOpenApprovalStatuses, type ApprovalStatus, type ApprovalStatusInput } from "./op/approval-status";
 
 /**

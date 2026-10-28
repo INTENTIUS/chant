@@ -34,6 +34,8 @@
  * `pull-requests: read`, so a wave can read the merged pull request's
  * reviews, and a second workflow, `<name>-plans.yml`, runs `chant run wave
  * --record-plans` on each pull request to record the digests its head plans.
+ * A `pull-request` wave (#4630) gets the plans workflow too, for the approval
+ * status before merge; it asks for no `pull-requests: read` on the waves.
  *
  * With `notify` on the spec (#3761), the workflow maps each variable it names
  * from the repository secret of the same name, so a wave job can post to
@@ -81,6 +83,7 @@ import {
   opWavesControlTarget,
   opWavesLastJobs,
   opWavesApprovalStatusCommand,
+  opWavesPostsApprovalStatus,
   opWavesOutcomeCommand,
   opWavesRecordPlansCommand,
   opWavesResumeCommand,
@@ -132,6 +135,8 @@ export function buildGithubOpWavesDoc(
   const product = resolveProductWords(options.words ?? {}).product;
   const image = options.image ?? OP_WAVES_IMAGE;
   const byReview = spec.waves.some((w) => w.approval === "pr-review");
+  // #4630: a pr-review or pull-request wave gets the plans workflow and its approval status.
+  const statusBeforeMerge = opWavesPostsApprovalStatus(spec);
   for (const wave of spec.waves) {
     assertSetupSteps(`${spec.name}/${wave.name}`, wave.setup ?? []);
     if (wave.environment) assertEnvironment(`${spec.name}/${wave.name}`, wave.environment);
@@ -214,7 +219,7 @@ export function buildGithubOpWavesDoc(
     doc,
     jobs,
     ...(spec.resume ? { resumeDoc: buildResumeDoc(spec, options) } : {}),
-    ...(byReview ? { plansDoc: buildPlansDoc(spec, options, forge) } : {}),
+    ...(statusBeforeMerge ? { plansDoc: buildPlansDoc(spec, options, forge) } : {}),
   };
 }
 
@@ -287,7 +292,8 @@ function buildResumeDoc(spec: OpWavesSpec, options: OpWavesPipelineOptions): Git
  * digests each head plans. The `approval-status` job after it (#4630) posts
  * `<product>/approval` on the head, and runs alone on each review submitted
  * or dismissed. It holds a read token that may write statuses and nothing
- * else.
+ * else. A `pull-request` wave gets the same workflow: the record keeps its
+ * change set, and the status reads the pull request's own approval of it.
  */
 function buildPlansDoc(spec: OpWavesSpec, options: OpWavesPipelineOptions, forge: "github" | "forgejo"): GithubOpPipelineDoc {
   const steps: Array<Record<string, unknown>> = [checkoutStep(true), ...(spec.waves[0]?.setup ?? []).map(setupStepDoc), ...runSteps(options.beforeScript ?? [])];

@@ -24,8 +24,9 @@
  * arrived, with `CHANT_FORGE_TOKEN` (a project access token with the `api`
  * scope and the Developer role; the job token cannot retry jobs).
  *
- * A `pr-review` wave (#3684) adds `<name>-record-plans`, run in merge request
- * pipelines only, which records the digests the merge request's head plans.
+ * A `pr-review` wave (#3684), or a `pull-request` wave (#4630), adds
+ * `<name>-record-plans`, run in merge request pipelines only, which records
+ * the digests the merge request's head plans.
  *
  * `runner` (on the spec, a wave or a job group, #3914) is the job's `tags:`; a
  * GitHub runner group is a spec error here. A wave's `jobs` renders its
@@ -83,6 +84,7 @@ import {
   opWavesLastJobs,
   OP_WAVES_APPROVAL_STATUS_VAR,
   opWavesApprovalStatusCommand,
+  opWavesPostsApprovalStatus,
   opWavesOutcomeCommand,
   opWavesRecordPlansCommand,
   opWavesResumeCommand,
@@ -125,7 +127,8 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
   const specTags = gitlabTags(spec.runner);
   const product = resolveProductWords(options.words ?? {}).product;
 
-  const byReview = spec.waves.some((w) => w.approval === "pr-review");
+  // #4630: a pr-review or pull-request wave records each head's plans and posts the approval status.
+  const byReview = opWavesPostsApprovalStatus(spec);
   const stages = [...(byReview ? ["plans"] : []), ...spec.waves.map((wave, i) => `wave-${i + 1}-${wave.name}`)];
   // #4617: the control repo's token variables, which every job but the dispatch drops first.
   const control = spec.control ? opWavesControlTarget(spec.control) : undefined;

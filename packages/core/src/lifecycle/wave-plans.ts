@@ -1,6 +1,6 @@
 /**
- * The plans an op-waves `pr-review` wave records for a pull request's head
- * (#3684, #3865): `_wave-plans/<name>/<head>.json` on `chant/lifecycle`,
+ * The plans an op-waves `pr-review` or `pull-request` wave records for a
+ * pull request's head (#3684, #3865, #4630): `_wave-plans/<name>/<head>.json` on `chant/lifecycle`,
  * written by `chant run wave --record-plans` (`../op/op-waves-run.ts`) and read
  * after the merge, where the review of that head approves the digests it
  * planned and only those (`../op/gate-review.ts`).
@@ -37,6 +37,13 @@ export interface HeadPlanWave {
   digest: string;
   changes?: boolean;
   destructive?: boolean;
+  /**
+   * The digest of the wave's change set at the head, when its plans file
+   * gave one (#4630, `pull-request` waves). The document is stored under
+   * `_change-sets/`, and the approval status checks the pull request's own
+   * approval against it.
+   */
+  changeSet?: string;
 }
 
 /** Where {@link HeadPlans} for `head` live on `chant/lifecycle`: `_wave-plans/<name>/<head>.json`. */
@@ -64,9 +71,16 @@ export function parseHeadPlans(text: string | null): HeadPlans | null {
   const waves: HeadPlans["waves"] = [];
   for (const w of r.waves) {
     if (w === null || typeof w !== "object") return null;
-    const { wave, name, digest, changes, destructive } = w as Record<string, unknown>;
+    const { wave, name, digest, changes, destructive, changeSet } = w as Record<string, unknown>;
     if (typeof wave !== "number" || typeof name !== "string" || typeof digest !== "string") return null;
-    waves.push({ wave, name, digest, ...(typeof changes === "boolean" ? { changes } : {}), ...(typeof destructive === "boolean" ? { destructive } : {}) });
+    waves.push({
+      wave,
+      name,
+      digest,
+      ...(typeof changes === "boolean" ? { changes } : {}),
+      ...(typeof destructive === "boolean" ? { destructive } : {}),
+      ...(typeof changeSet === "string" && changeSet !== "" ? { changeSet } : {}),
+    });
   }
   return { version: 1, name: r.name, head: r.head, timestamp: r.timestamp, waves };
 }
