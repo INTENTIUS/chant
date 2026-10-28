@@ -21,6 +21,10 @@
  * none to put in front of it. A job with id tokens keeps `permissions:
  * id-token: write`, the one scope the dialect leaves, and reads each audience
  * from `<NAME>_AUDIENCE` when it requests its token.
+ *
+ * The apply-job guard (#4624) starts each wave job as on GitHub, with the
+ * forge set to Forgejo: it checks the ref and, for a `self-hosted` label,
+ * the runner, and no forge environment, since Forgejo has none.
  */
 
 import { buildGithubOpWavesDoc } from "@intentius/chant-lexicon-github/components/generate-op-waves-pipeline";
@@ -38,7 +42,7 @@ export function generateForgejoOpWavesPipeline(
   dialectOptions: ForgejoDialectOptions = {},
 ): OpWavesPipelineResult {
   assertForgejoWaves(spec);
-  const { doc, jobs, resumeDoc, plansDoc } = buildGithubOpWavesDoc(spec, options);
+  const { doc, jobs, resumeDoc, plansDoc } = buildGithubOpWavesDoc(spec, options, { forge: "forgejo" });
   const dropped = spec.waves.filter((w) => w.environment).map((w) => `${w.name} -> ${w.environment!.name}`);
   const header = dropped.length > 0 ? droppedWaveEnvironmentsHeader(dropped) : undefined;
   const files = [{ name: `${spec.name}.yml`, yaml: emitOpPipelineYAML(forgejoWorkflowDoc(doc, dialectOptions, header)) }];
