@@ -521,6 +521,11 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--before-merge") {
       // `chant components pr-apply --before-merge` (#4301, ws-106): apply an open pull request's plan from its head.
       result.beforeMerge = true;
+    } else if (arg === "--requires") {
+      // `chant components pr-apply --before-merge --requires approved,checks` (#4607): the checks a product's `apply.requires` names.
+      const value = args[++i];
+      if (value === undefined || value.startsWith("-")) throw new Error("--requires needs a list of checks: --requires approved,mergeable,undiverged,checks");
+      result.requires = value.split(",").map((v) => v.trim()).filter(Boolean);
     } else if (arg === "--apply-before-merge") {
       // `chant build --pr-loop --apply-before-merge` and `chant ci run apply --apply-before-merge` (#4301): the job that applies before merge.
       result.applyBeforeMerge = true;

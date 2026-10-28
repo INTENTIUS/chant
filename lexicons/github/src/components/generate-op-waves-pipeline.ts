@@ -22,6 +22,9 @@
  * downloads it. The forgejo generator reuses {@link buildGithubOpWavesDoc}
  * and applies its dialect.
  *
+ * `options.bin` (#4607) is a product's command in place of `chant` in every
+ * job line: the wave jobs, the resume job and the plans job.
+ *
  * With `resume` on the spec (#3683), a second workflow, `<name>-resume.yml`,
  * runs `chant run resume --op <name>` on that schedule: it re-runs the failed
  * jobs of a run whose waiting wave has been approved since, with the job's
@@ -51,7 +54,7 @@
  * and cannot request one for another group's identity.
  */
 
-import { notifyVariables, opWaveGroupOf, opWaveJobs, opWaveOutcomeDir, opWavesResumeCommand, type OpWavesSpec } from "@intentius/chant/op/op-waves";
+import { notifyVariables, opWaveGroupOf, opWaveJobs, opWaveOutcomeDir, opWavesRecordPlansCommand, opWavesResumeCommand, type OpWavesSpec } from "@intentius/chant/op/op-waves";
 import type { OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
 import {
   assertEnvironment,
@@ -89,7 +92,7 @@ export function buildGithubOpWavesDoc(
   spec: OpWavesSpec,
   options: OpWavesPipelineOptions,
 ): { doc: GithubOpPipelineDoc; jobs: OpWavesPipelineResult["jobs"]; resumeDoc?: GithubOpPipelineDoc; plansDoc?: GithubOpPipelineDoc } {
-  const jobs = opWaveJobs(spec, options.specFile);
+  const jobs = opWaveJobs(spec, options.specFile, { bin: options.bin });
   const image = options.image ?? OP_WAVES_IMAGE;
   const byReview = spec.waves.some((w) => w.approval === "pr-review");
   for (const wave of spec.waves) {
@@ -166,7 +169,7 @@ function buildResumeDoc(spec: OpWavesSpec, options: OpWavesPipelineOptions): Git
   const steps: Array<Record<string, unknown>> = [checkoutStep(), ...runSteps(options.beforeScript ?? [])];
   steps.push({
     name: `Resume the waves of ${spec.name} whose approval arrived`,
-    run: opWavesResumeCommand(spec).join(" "),
+    run: opWavesResumeCommand(spec, options.bin).join(" "),
     env: { GITHUB_TOKEN: GITHUB_JOB_TOKEN },
   });
   return {
@@ -182,7 +185,7 @@ function buildResumeDoc(spec: OpWavesSpec, options: OpWavesPipelineOptions): Git
 /** The pull request workflow a `pr-review` wave needs (#3684): record the digests each head plans. */
 function buildPlansDoc(spec: OpWavesSpec, options: OpWavesPipelineOptions): GithubOpPipelineDoc {
   const steps: Array<Record<string, unknown>> = [checkoutStep(true), ...(spec.waves[0]?.setup ?? []).map(setupStepDoc), ...runSteps(options.beforeScript ?? [])];
-  steps.push({ name: "Plan every wave at the head and record its digests", run: ["chant", "run", "wave", "--spec", options.specFile, "--record-plans"].join(" ") });
+  steps.push({ name: "Plan every wave at the head and record its digests", run: opWavesRecordPlansCommand(options.specFile, options.bin).join(" ") });
   return {
     name: `${spec.name}-plans`,
     on: { pull_request: { branches: pushBranches(spec.branches) } },

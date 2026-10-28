@@ -979,6 +979,13 @@ export interface OpWavesPipelineOptions
   extends Pick<ComponentPipelineOptions, "image" | "beforeScript" | "extraScript" | "variables" | "opsStage" | "opsFileName"> {
   /** The spec's path from the repository root. Every job runs `chant run wave --spec <specFile>`. */
   specFile: string;
+  /**
+   * The command every job runs in place of `chant` (#4607): a product's
+   * `words.bin`, such as `npx --no-install plywood`. `chant run --generate`
+   * fills it from the active product words, so a product's bin that runs
+   * the generator in process gets its own bin in the jobs. Absent: `chant`.
+   */
+  bin?: string;
 }
 
 /** An Op waves pipeline: one file, and its jobs in order. */

@@ -523,6 +523,10 @@ Ops:
                         stopped once its run is gone (#3858). --dry-run
                         starts nothing; with --json it says per gate whether
                         it would resume and why
+  run pending --plan <digest> [--op <name>]  List the gates waiting on a
+                        plan digest, newest first, with the pull request a
+                        pr-<n> gate belongs to (#4607). --json prints
+                        { plan, gates }
   run --generate <provider>  Write one CI pipeline file per scheduled Op for
                         github, gitlab or forgejo (#2533), from every Op that
                         declares a schedule or from --spec <file.json>.
@@ -1197,6 +1201,8 @@ Component release ledger + status:
                             declaration at base sets ci.workflow to
                             apply-before-merge and the forge says it is
                             approved, mergeable, undiverged and green;
+                            --requires <list> asks only the checks it
+                            names (approved,mergeable,undiverged,checks);
                             --events-json, both commands: the run-event
                             stream on stdout; --report-url <s3 or file URL>,
                             both commands: copy the report, the change set
@@ -1725,6 +1731,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "run wave", handler: runOpWaveCommand },
   // #3683 — start the CI jobs that wait at gates whose approval arrived. Imported on first use.
   { name: "run resume", handler: async (ctx) => (await import("./handlers/gate-resume")).runResumeCommand(ctx) },
+  // #4607 — the pending gates a plan digest waits at, with their pull request. Imported on first use.
+  { name: "run pending", handler: async (ctx) => (await import("./handlers/gate-pending")).runPendingCommand(ctx) },
   { name: "run", handler: runOp },
 
   { name: "operator status", handler: runOperatorStatus },

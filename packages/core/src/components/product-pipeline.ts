@@ -97,12 +97,6 @@ export function productWavesSpec(spec: OpWavesSpec, wordsIn: CiProductWordsInput
   };
 }
 
-/** An op wave job's argv with the product's bin in place of `chant` (#4550). */
-function waveJobWithBin(job: OpWaveJob, bin: string | undefined): OpWaveJob {
-  if (!bin || job.command[0] !== "chant") return job;
-  return { ...job, command: [...bin.split(/\s+/).filter(Boolean), ...job.command.slice(1)] };
-}
-
 /**
  * The product pipeline's jobs for `forge` (#4550): the plan side from the
  * pull request loop with the words, and the apply on merge on op waves. The
@@ -132,7 +126,7 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   if (!spec) return { ...out, record: record! };
   const named = productWavesSpec(spec, words);
   const specFile = wavesSpecFile ?? productWavesSpecFile(named.name);
-  return { ...out, waves: { spec: named, specFile, jobs: opWaveJobs(named, specFile).map((j) => waveJobWithBin(j, words.bin)) } };
+  return { ...out, waves: { spec: named, specFile, jobs: opWaveJobs(named, specFile, { bin: words.bin }) } };
 }
 
 /** The capability steps a component waves spec runs (#4545, #4541): argv templates over `{runs}` and `{plans}`. */

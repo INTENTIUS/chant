@@ -82,6 +82,16 @@ export async function runChantInProcess(argv: string[], words: CiProductWordsInp
 }
 
 /**
+ * The standing pending gates waiting on a plan digest, with the pull request
+ * a `pr-<n>` gate belongs to (#4607): what a product's approve verb reads so
+ * a person types only the digest. Feature-detect on `pendingGatesByPlan`;
+ * the ledger's git code loads on its first call. `parseRequiresList` checks
+ * a product's `apply.requires` before it becomes `pr-apply --requires`.
+ */
+export { pendingGatesByPlan, pullRequestOfOp, standingPendingByPlan, type PendingGateByPlan, type PendingGatesByPlanOptions } from "./lifecycle/gate-pending-by-plan";
+export { parseRequiresList, PR_APPLY_REQUIRES, type PrApplyRequire } from "./pr-requires";
+
+/**
  * Telemetry and MCP (#4555). A product's bin configures the exporter once
  * with its prefix (`configureOtlp({ prefix })`, or leaves it to its words),
  * and passes its MCP tools as `runChantInProcess(["serve", "mcp"], words, {

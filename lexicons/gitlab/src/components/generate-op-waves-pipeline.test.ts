@@ -129,4 +129,21 @@ describe("an Op wave's jobs by cloud identity (#4332)", () => {
     expect(JSON.stringify(doc["wave-1-prod-decide"])).not.toContain("apply\"");
     expect(JSON.stringify(doc["wave-1-prod-default"])).not.toContain("prod-apply");
   });
+
+  test("words.bin is the command in every job line: the waves, resume and the plans job (#4607)", () => {
+    const bin = "npx --no-install plywood";
+    const withBin = { ...spec, resume: { schedule: "*/10 * * * *" }, waves: spec.waves.map((w, i) => (i === spec.waves.length - 1 ? { ...w, approval: "pr-review" as const } : w)) };
+    const { files, jobs } = generateGitlabOpWavesPipeline(withBin, { specFile: "waves.json", bin });
+    expect(jobs.every((j) => j.command.slice(0, 3).join(" ") === bin)).toBe(true);
+    const yaml = files.map((f) => f.yaml).join("\n");
+    expect(yaml).toContain("- npx --no-install plywood run wave --spec waves.json --wave 1");
+    expect(yaml).toContain("npx --no-install plywood run resume --op migrations");
+    expect(yaml).toContain("npx --no-install plywood run wave --spec waves.json --record-plans");
+    expect(yaml).not.toMatch(/(^|\s)chant run (wave|resume)/m);
+  });
+
+  test("no bin keeps chant (#4607)", () => {
+    const { jobs } = generateGitlabOpWavesPipeline(spec, { specFile: "waves.json" });
+    expect(jobs.every((j) => j.command[0] === "chant")).toBe(true);
+  });
 });

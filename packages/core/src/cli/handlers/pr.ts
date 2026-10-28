@@ -891,12 +891,13 @@ async function overdueOps(forge: PrForge | undefined, member: string | undefined
   return overdueOpsAt({ forge, cwd: resolve("."), ...(member ? { member } : {}), log: (line) => console.error(formatWarning({ message: line })) });
 }
 
-/** chant components pr-apply --base <ref> [--pr <n>] [--env <env>] [--gate <name>] [--forge <kind>] [--require-review] [--output <dir>] [--json] [--events-json] [--report-url <url>] */
+/** chant components pr-apply --base <ref> [--pr <n>] [--env <env>] [--gate <name>] [--forge <kind>] [--require-review] [--before-merge [--requires <list>]] [--output <dir>] [--json] [--events-json] [--report-url <url>] */
 export function runComponentsPrApply(ctx: CommandContext): Promise<number> {
   if (refusesEventsWithJson(ctx.args, "the stage's report")) return Promise.resolve(1);
   return withStageEvents("pr-apply", ctx, async (events) => {
     // #4301: an apply before merge asks the forge its requires checks before any of the head's code loads, the config included.
     let beforeMerge: PrBeforeMerge | undefined;
+    if (ctx.args.requires && !ctx.args.beforeMerge) return fail("--requires names the checks of an apply before merge, so it needs --before-merge --pr <n>");
     if (ctx.args.beforeMerge) {
       const checked = await beforeMergeChecks(ctx);
       if (typeof checked === "number") return checked;
@@ -1236,6 +1237,10 @@ async function beforeMergeChecks(ctx: CommandContext): Promise<PrBeforeMerge | n
   if (args.pr === undefined) return fail("--before-merge applies an open pull request, so it needs --pr <n>");
   if (!args.forge || !(FORGE_KINDS as readonly string[]).includes(args.forge)) return fail("--before-merge asks the forge whether the pull request is ready, so it needs --forge github|gitlab|forgejo");
   if (!args.base) return fail("pr-apply needs the commit the change is measured from: --base <ref>", "Before merge, the target branch's commit.");
+  const { checkPrRequires, unmetRequires, parseRequiresList } = await import("../../pr-requires");
+  // #4607: a product's `apply.requires` names the checks to ask; absent, all four.
+  const only = args.requires ? parseRequiresList(args.requires) : undefined;
+  if (only && "error" in only) return fail(only.error);
   const cwd = resolve(".");
   let forge: PrForge;
   let head: string;
@@ -1251,7 +1256,6 @@ async function beforeMergeChecks(ctx: CommandContext): Promise<PrBeforeMerge | n
   const gate = args.gate ?? PR_APPLY_GATE;
   const { ciWorkflowAt } = await import("../../workspace/ci-workflow-at");
   const { appliesBeforeMerge } = await import("../../workspace/ci-workflow");
-  const { checkPrRequires, unmetRequires } = await import("../../pr-requires");
   const workflow = ciWorkflowAt(cwd, args.base, member);
   const early = earlyStop(ctx, forge, { pr: args.pr, base, head, gate, ...(member ? { member } : {}) });
   if (!appliesBeforeMerge(workflow)) {
@@ -1265,8 +1269,8 @@ async function beforeMergeChecks(ctx: CommandContext): Promise<PrBeforeMerge | n
   // The apply's own statuses never hold it back: chant ci run's, and the report's.
   // #4550: under a product's words its own prefix too.
   const ignore = [...new Set([productContext(activeProductWords(), gate), productContext(activeProductWords(), PR_APPLY_GATE), `chant/${gate}`, `chant/${PR_APPLY_GATE}`, prStatusContext("apply", member)])];
-  // No `only`: ws-106 gives the declaration no way to leave a check out, so all four are asked (#4336).
-  const requires = await checkPrRequires(forge, args.pr, head, { ignore });
+  // ws-106 gives the declaration no way to leave a check out, so with no --requires all four are asked (#4336, #4607).
+  const requires = await checkPrRequires(forge, args.pr, head, { ignore, ...(only ? { only: only.checks } : {}) });
   for (const r of requires) console.error(formatInfo(`${r.name}: ${r.passed ? "passed" : r.pending ? "pending" : "unmet"}, ${r.reason}`));
   const unmet = unmetRequires(requires);
   if (unmet) {
