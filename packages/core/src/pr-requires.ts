@@ -5,8 +5,9 @@
  *
  * The checks are terragucci's `apply.requires` (comment-apply.ts:781-860 at
  * INTENTIUS/terragucci e6cb431). A product may leave one out with `only`
- * (#4336); chant's own `pr-apply --before-merge` passes no `only`, so it asks
- * all four, as ws-106 requires. A check the
+ * (#4336). `pr-apply --before-merge` asks all four, as ws-106 requires,
+ * unless `--requires <list>` names fewer (#4607), which is how a product's
+ * `apply.requires` reaches it. A check the
  * forge has not settled, such as GitHub working out whether a pull request
  * can merge, is asked again a few times before it counts as unmet.
  *
@@ -87,6 +88,19 @@ export async function checkPrRequires(forge: PrForge, pr: number, head: string, 
     out.push({ name, ...result });
   }
   return out;
+}
+
+/**
+ * The checks a `--requires` list names (#4607), in {@link PR_APPLY_REQUIRES}
+ * order: comma lists are split, repeats dropped. An unknown name, or a list
+ * that names none, is an error naming the four.
+ */
+export function parseRequiresList(values: readonly string[]): { checks: PrApplyRequire[] } | { error: string } {
+  const names = values.flatMap((v) => v.split(",")).map((v) => v.trim()).filter(Boolean);
+  const unknown = names.filter((n) => !(PR_APPLY_REQUIRES as readonly string[]).includes(n));
+  if (unknown.length > 0) return { error: `--requires takes ${PR_APPLY_REQUIRES.join(", ")}; ${unknown.map((u) => JSON.stringify(u)).join(", ")} is not one of them` };
+  if (names.length === 0) return { error: `--requires names at least one of ${PR_APPLY_REQUIRES.join(", ")}` };
+  return { checks: PR_APPLY_REQUIRES.filter((n) => names.includes(n)) };
 }
 
 /** The unmet checks as one line, or null when all four passed. */

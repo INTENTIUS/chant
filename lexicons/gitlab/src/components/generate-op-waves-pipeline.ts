@@ -55,14 +55,14 @@ import {
   nonEmpty,
   pushBranches,
 } from "@intentius/chant/ci-jobs";
-import { opWaveGroupOf, opWaveJobs, opWaveOutcomeDir, opWavesResumeCommand, type OpWavesSpec } from "@intentius/chant/op/op-waves";
+import { opWaveGroupOf, opWaveJobs, opWaveOutcomeDir, opWavesRecordPlansCommand, opWavesResumeCommand, type OpWavesSpec } from "@intentius/chant/op/op-waves";
 import type { OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
 import { gitlabTradeIdTokens, gitlabTradeLines, TRADE_SPEC_ENV } from "@intentius/chant/ci-identity";
 import { emitGitlabFile } from "./ci-jobs";
 
 /** Render an Op waves spec as one GitLab CI file, `<name>.gitlab-ci.yml` unless `opsFileName` names another. */
 export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWavesPipelineOptions): OpWavesPipelineResult {
-  const jobs = opWaveJobs(spec, options.specFile);
+  const jobs = opWaveJobs(spec, options.specFile, { bin: options.bin });
   const image = options.image ?? CI_IMAGE;
   const subject = `Op waves "${spec.name}"`;
   const rules = pushBranches(spec.branches).map((branch) => {
@@ -100,7 +100,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
         ...(specTags ? { tags: specTags } : {}),
         variables: { ...GITLAB_FULL_HISTORY },
         rules: [{ if: GITLAB_MERGE_REQUEST_SOURCE }],
-        script: [...(options.beforeScript ?? []), ["chant", "run", "wave", "--spec", options.specFile, "--record-plans"].join(" ")],
+        script: [...(options.beforeScript ?? []), opWavesRecordPlansCommand(options.specFile, options.bin).join(" ")],
       },
     ]);
   }
@@ -141,7 +141,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
         image,
         ...(specTags ? { tags: specTags } : {}),
         rules: [{ if: GITLAB_SCHEDULE_SOURCE }],
-        script: [...(options.beforeScript ?? []), opWavesResumeCommand(spec).join(" ")],
+        script: [...(options.beforeScript ?? []), opWavesResumeCommand(spec, options.bin).join(" ")],
       },
     ]);
   }

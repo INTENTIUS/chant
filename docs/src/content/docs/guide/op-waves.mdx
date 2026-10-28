@@ -79,7 +79,7 @@ chant run --generate gitlab --spec waves.json
 chant run --generate forgejo --spec waves.json
 ```
 
-Run it from the repository root. GitHub and Forgejo get `<name>.yml` in their workflow directory, and GitLab gets `<name>.gitlab-ci.yml` at the root for `.gitlab-ci.yml` to include. The file can also hold `{ "waves": <spec>, "options": { ... } }`, where `options` sets the image, `beforeScript`, `extraScript` and `variables` for every job. The default image is `node:22`, which has git; install chant in it with `beforeScript`. From code, `generateOpWavesPipeline(spec, lexicon, { specFile })` in `@intentius/chant/op` does the same thing.
+Run it from the repository root. GitHub and Forgejo get `<name>.yml` in their workflow directory, and GitLab gets `<name>.gitlab-ci.yml` at the root for `.gitlab-ci.yml` to include. The file can also hold `{ "waves": <spec>, "options": { ... } }`, where `options` sets the image, `beforeScript`, `extraScript` and `variables` for every job. The default image is `node:22`, which has git; install chant in it with `beforeScript`. From code, `generateOpWavesPipeline(spec, lexicon, { specFile })` in `@intentius/chant/op` does the same thing. Its `bin` option puts a CI product's command in place of `chant` in every job line, and a product's bin that runs the generator in process gets its own bin there without passing it ([#4607](https://github.com/INTENTIUS/chant/issues/4607)).
 
 Each wave is one job, `wave-<k>-<name>`, and it needs the job before it. A push to the branch runs wave 1. If a wave waits at its gate, the waves after it do not run. If a run in it fails, the next wave's job still runs and blocks only the runs that depend on the failed one (below).
 
@@ -95,7 +95,7 @@ Each entry is a target of an earlier wave, or of a run listed before it in the s
 
 Each wave job writes an outcome file, `.chant/op-waves/<name>/outcomes/outcome-wave-<k>.json`, and the forge keeps it whatever the job's exit code. The next wave's job downloads them and reads them (`opWaveBefore`, `packages/core/src/op/op-waves-run.ts:1623`). A run that failed, or was blocked, blocks the runs that depend on it. A blocked run is neither planned nor applied, and the log names the failed run it traces back to. A run with no failed dependency applies. Exit 1 means one of the job's own runs failed or was blocked.
 
-A run that waits at its gate (exit 3), or one that was refused or held, still stops the waves after it, because those runs did not apply. On GitHub and Forgejo the later jobs get `if: !cancelled()` (`lexicons/github/src/components/generate-op-waves-pipeline.ts:136`). On GitLab each job is `allow_failure: { exit_codes: [1] }`, so only exit 1 lets the next wave run (`lexicons/gitlab/src/components/generate-op-waves-pipeline.ts`). Regenerate the pipeline to get them ([#4322](https://github.com/INTENTIUS/chant/issues/4322)).
+A run that waits at its gate (exit 3), or one that was refused or held, still stops the waves after it, because those runs did not apply. On GitHub and Forgejo the later jobs get `if: !cancelled()` (`lexicons/github/src/components/generate-op-waves-pipeline.ts:139`). On GitLab each job is `allow_failure: { exit_codes: [1] }`, so only exit 1 lets the next wave run (`lexicons/gitlab/src/components/generate-op-waves-pipeline.ts`). Regenerate the pipeline to get them ([#4322](https://github.com/INTENTIUS/chant/issues/4322)).
 
 ## Run waves in a slim image
 

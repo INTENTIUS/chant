@@ -108,3 +108,18 @@ describe("prLoopJobs", () => {
     expect(GREEN_TICK_WORKFLOW).toBe(CI_GREEN_WORKFLOW_NAME);
   });
 });
+
+describe("applyRequires (#4607)", () => {
+  test("the apply before merge asks only the checks named, on its command and its ci run line", () => {
+    const [, apply] = prLoopJobs("github", "prod", { applyBeforeMerge: true, applyRequires: ["checks", "approved"] });
+    expect(apply!.command).toContain("pr-apply --before-merge --requires approved,checks ");
+    expect(apply!.run.command).toContain("--apply-before-merge --requires approved,checks ");
+  });
+
+  test("no applyRequires asks all four, and the flag needs an apply before merge and known checks", () => {
+    const [, apply] = prLoopJobs("github", "prod", { applyBeforeMerge: true });
+    expect(apply!.command).not.toContain("--requires");
+    expect(() => prLoopJobs("github", "prod", { applyOnMerge: true, applyRequires: ["approved"] })).toThrow(/needs --apply-before-merge/);
+    expect(() => prLoopJobs("github", "prod", { applyBeforeMerge: true, applyRequires: ["green"] })).toThrow(/not one of them/);
+  });
+});

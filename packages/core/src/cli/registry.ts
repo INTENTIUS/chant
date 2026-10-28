@@ -397,6 +397,12 @@ export interface ParsedArgs {
    */
   beforeMerge?: boolean;
   /**
+   * `chant components pr-apply --before-merge --requires <list>` (#4607): the
+   * requires checks to ask, a comma list of approved, mergeable, undiverged
+   * and checks. Absent: all four. A check left out passes as "not required".
+   */
+  requires?: string[];
+  /**
    * `chant build --pr-loop --apply-before-merge` and `chant ci run apply
    * --apply-before-merge` (#4301): the pipeline's apply job applies an open
    * pull request before it merges, and a merge records.

@@ -68,6 +68,7 @@ function prLoopOption(args: CommandContext["args"], reportUrl: string | undefine
     ...(args.applyOnMerge ? { applyOnMerge: true } : {}),
     ...(args.prEnv ? { prEnvironment: true } : {}),
     ...(args.applyBeforeMerge ? { applyBeforeMerge: true } : {}),
+    ...(args.requires ? { applyRequires: args.requires } : {}),
   };
 }
 

@@ -6,7 +6,8 @@
 
 import { describe, expect, test } from "vitest";
 import { forgejoForge, githubForge, gitlabForge, type ForgeFetch, type PrForge } from "./pr-forge";
-import { checkPrRequires, PR_APPLY_REQUIRES, unmetRequires } from "./pr-requires";
+import { checkPrRequires, parseRequiresList, PR_APPLY_REQUIRES, unmetRequires } from "./pr-requires";
+import { parseArgs } from "./cli/parse-args";
 
 /** A fake forge: `routes` maps `METHOD path-without-query` to a body, a status, or a function of the query. */
 function fakeFetch(routes: Record<string, unknown | ((q: URLSearchParams) => unknown)>): ForgeFetch {
@@ -281,5 +282,40 @@ describe("checkPrRequires", () => {
     const out = await checkPrRequires(forge, 3, HEAD, { reads: 1 });
     expect(out.every((o) => !o.passed)).toBe(true);
     expect(unmetRequires(out)).toBe("approved: could not ask gitlab: 401; mergeable: this gitlab client cannot say; undiverged: this gitlab client cannot say; checks: this gitlab client cannot say");
+  });
+});
+
+describe("--requires (#4607)", () => {
+  test("names the checks in the four's order, comma lists and repeats folded", () => {
+    expect(parseRequiresList(["checks,approved"])).toEqual({ checks: ["approved", "checks"] });
+    expect(parseRequiresList(["mergeable", "mergeable, undiverged"])).toEqual({ checks: ["mergeable", "undiverged"] });
+  });
+
+  test("an unknown check, or none, is an error naming the four", () => {
+    const unknown = parseRequiresList(["approved,green"]);
+    expect("error" in unknown && unknown.error).toContain('"green" is not one of them');
+    expect("error" in unknown && unknown.error).toContain("approved, mergeable, undiverged, checks");
+    expect("error" in parseRequiresList([","])).toBe(true);
+  });
+
+  test("pr-apply parses the flag into args.requires", () => {
+    expect(parseArgs(["components", "pr-apply", "--before-merge", "--pr", "7", "--requires", "approved,checks"]).requires).toEqual(["approved", "checks"]);
+    expect(() => parseArgs(["components", "pr-apply", "--requires", "--json"])).toThrow(/--requires needs a list/);
+  });
+
+  test("a product's subset asks only those checks", async () => {
+    const calls: string[] = [];
+    const forge = {
+      kind: "github",
+      prApproved: async () => (calls.push("approved"), { passed: true, reason: "ok" }),
+      prMergeable: async () => (calls.push("mergeable"), { passed: false, reason: "conflict" }),
+      prUndiverged: async () => (calls.push("undiverged"), { passed: false, reason: "behind" }),
+      prChecksPassed: async () => (calls.push("checks"), { passed: true, reason: "green" }),
+    } as unknown as PrForge;
+    const parsed = parseRequiresList(["approved,checks"]);
+    if ("error" in parsed) throw new Error(parsed.error);
+    const out = await checkPrRequires(forge, 7, HEAD, { only: parsed.checks, reads: 1 });
+    expect(calls).toEqual(["approved", "checks"]);
+    expect(unmetRequires(out)).toBeNull();
   });
 });

@@ -655,9 +655,24 @@ export interface OpWavesResume {
   schedule: string;
 }
 
-/** The command a resume job runs. */
-export function opWavesResumeCommand(spec: Pick<OpWavesSpec, "name">): string[] {
-  return ["chant", "run", "resume", "--op", spec.name];
+/**
+ * The words a generated job runs in place of `chant` (#4607): a product's
+ * `words.bin`, such as `npx --no-install plywood`, split on spaces. Absent
+ * or blank: `chant`.
+ */
+export function opWaveBinArgv(bin?: string): string[] {
+  const words = (bin ?? "").split(/\s+/).filter(Boolean);
+  return words.length > 0 ? words : ["chant"];
+}
+
+/** The command a resume job runs, through the product's bin when it has one (#4607). */
+export function opWavesResumeCommand(spec: Pick<OpWavesSpec, "name">, bin?: string): string[] {
+  return [...opWaveBinArgv(bin), "run", "resume", "--op", spec.name];
+}
+
+/** The command a `pr-review` spec's plans job runs on a pull request (#3684), through the product's bin (#4607). */
+export function opWavesRecordPlansCommand(specFile: string, bin?: string): string[] {
+  return [...opWaveBinArgv(bin), "run", "wave", "--spec", specFile, "--record-plans"];
 }
 
 /** The default apply command. */
@@ -1192,15 +1207,16 @@ export function opWaveShare<T extends { target: string }>(runs: readonly T[], sh
 
 /**
  * The jobs of an Op waves pipeline, in order. `specFile` is the spec's path
- * from the job's working directory, which every command names.
+ * from the job's working directory, which every command names. `bin` is the
+ * product's command in place of `chant` (#4607, {@link opWaveBinArgv}).
  */
-export function opWaveJobs(spec: OpWavesSpec, specFile: string): OpWaveJob[] {
+export function opWaveJobs(spec: OpWavesSpec, specFile: string, options: { bin?: string } = {}): OpWaveJob[] {
   assertOpWavesSpec(spec);
   const jobs: OpWaveJob[] = [];
   let previous: string[] = [];
   spec.waves.forEach((wave, index) => {
     const k = index + 1;
-    const command = ["chant", "run", "wave", "--spec", specFile, "--wave", String(k), ...(spec.base ? ["--base", spec.base] : [])];
+    const command = [...opWaveBinArgv(options.bin), "run", "wave", "--spec", specFile, "--wave", String(k), ...(spec.base ? ["--base", spec.base] : [])];
     const prefix = `wave-${k}-${wave.name}`;
     const shares = wave.shares ?? 1;
     if (shares === 1 && wave.jobs === undefined) {

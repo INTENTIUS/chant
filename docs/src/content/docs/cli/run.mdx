@@ -16,6 +16,7 @@ chant run log <name> [flags]
 chant run events <run> [--json] [--follow]
 chant run wave --spec <file> --wave <k> [--decide | --share <i> | --group <name> [--share <i>]] [--base <ref>]
 chant run resume [--op <name>] [--gate <name>] [--dry-run] [--json]
+chant run pending --plan <digest> [--op <name>] [--json]
 chant run wave --spec <file> --record-plans
 chant run --components <name|all|a,b,c> [flags]
 chant run --generate <provider> [--spec <file>] [--output <dir>] [--format json]
@@ -288,6 +289,17 @@ A pending fact whose answering approval a wave already applied under (`approvals
 A gate that asks a decision point counts as answered once its question has an answer the gate passes on. The command reads the workspace's questions for it, including those held on `chant/lifecycle` ([#3835](https://github.com/INTENTIUS/chant/issues/3835)). A pending fact recorded outside CI names no job, and is listed as such. A run still going, already successful, or already resumed is left alone, so the command is safe to run every few minutes. The token comes from `CHANT_FORGE_TOKEN`, else `GITHUB_TOKEN`, `GH_TOKEN` or `GITLAB_TOKEN`; [Resume the waiting job](/chant/guide/op-waves/#resume-the-waiting-job) lists the access each forge needs. It exits 1 when a forge refuses a call or no token is set.
 
 `--record-plans`, in a pull request's pipeline, plans every wave at the pull request's head and records each wave's digest on `chant/lifecycle`. A wave whose `approval` is `pr-review` compares its digest with that record after the merge ([Which approvals count](/chant/guide/op-waves/#which-approvals-count)).
+
+### `run pending`
+
+Lists the gates waiting on a plan digest, newest first ([#4607](https://github.com/INTENTIUS/chant/issues/4607)). A gate counts when its newest pending fact has the digest as its plan or its change set, has not expired, and has no approval or rejection recorded since. A `pr-<n>` or `pr-<n>-<member>` op names its pull request, so a product's approve verb can take the digest the note printed and find the op, the gate and the pull request from it.
+
+```bash
+chant run pending --plan sha256:3f2a...
+chant run pending --plan sha256:3f2a... --op pulumi-up --json
+```
+
+`--op` reads one op's gate ledger; without it every gate ledger on `chant/lifecycle` is read. `--json` prints `{ plan, gates }`, each gate with `op`, `gate`, `pr` and `member` when the op names them, `matched` (`planDigest` or `changeSet`), `environment`, `wave`, `url`, `timestamp` and `expiresAt`. It exits 0 when it read the ledgers, whether or not a gate matched, and 1 when they cannot be read. From code, `pendingGatesByPlan(digest)` in `@intentius/chant/ci-product` returns the same list.
 
 ### `run --components <name|all|a,b,c>`
 

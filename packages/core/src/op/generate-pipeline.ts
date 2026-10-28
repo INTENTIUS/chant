@@ -28,6 +28,7 @@ import {
   type OpWavesPipelineOptions,
 } from "../lexicon";
 import { assertOpWavesSpec, type OpWaveJob, type OpWavesSpec } from "./op-waves";
+import { activeProductWords } from "../ci-product-words";
 
 /**
  * Load a lexicon's plugin (`@intentius/chant-lexicon-<name>`) to reach its
@@ -158,7 +159,9 @@ export async function generateOpWavesPipeline(
     return { success: false, error: `Unknown Op(s): ${unknown.join(", ")}.${known ? ` Known Ops: ${known}` : " No Ops discovered."}` };
   }
   try {
-    const { files, jobs } = plugin.generateOpWavesPipeline(spec, options);
+    // #4607: a product's bin, when it runs the generator in process with its words, is the command in each job.
+    const bin = options.bin ?? activeProductWords().bin;
+    const { files, jobs } = plugin.generateOpWavesPipeline(spec, { ...options, ...(bin ? { bin } : {}) });
     return { success: true, files, jobs };
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : String(err) };

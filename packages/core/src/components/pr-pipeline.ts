@@ -87,6 +87,7 @@
 
 import type { ForgeKind } from "../pr-forge";
 import { PR_APPLY_GATE } from "../pr-loop";
+import { parseRequiresList } from "../pr-requires";
 import { CI_IMAGE, GITHUB_JOB_TOKEN } from "../ci-jobs";
 import { withoutForgeTokens } from "../ci-handover";
 import { EMPTY_TREE_SHA } from "./changed-files";
@@ -180,6 +181,12 @@ export interface PrLoopPipelineOptions {
    * `waveGate` nor `build`.
    */
   applyBeforeMerge?: boolean;
+  /**
+   * The requires checks the apply before merge asks (#4607): a product's
+   * `apply.requires`, passed as `pr-apply --requires <list>`. Absent: all
+   * four. Only with `applyBeforeMerge`.
+   */
+  applyRequires?: readonly string[];
   /**
    * Stream each job's run events (#4007): `--events-json` on both commands,
    * and `CHANT_RUN_EVENTS_DIR` set to {@link PR_LOOP_EVENTS_DIR}. Default false.
@@ -356,6 +363,10 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
   if (early && options.applyOnMerge) throw new Error("--apply-before-merge applies an open pull request and a merge records, so it takes no --apply-on-merge; pass one of them");
   if (early && options.waveGate) throw new Error("--apply-before-merge applies the pull request's plan in one job, so it takes no --wave-gate");
   if (early && (options.build || options.buildCommand)) throw new Error("--apply-before-merge runs no build before its requires checks, so it takes no --pr-build or --pr-build-command yet");
+  if (options.applyRequires && !early) throw new Error("--requires names the checks of an apply before merge, so it needs --apply-before-merge");
+  const asked = options.applyRequires ? parseRequiresList(options.applyRequires) : undefined;
+  if (asked && "error" in asked) throw new Error(asked.error);
+  const requires = early && asked ? ["--requires", asked.checks.join(",")] : [];
   const common = [
     "--env", env, "--gate", gate, "--output", PR_LOOP_REPORT_DIR, "--forge", forge,
     ...(member ? ["--member", member] : []),
@@ -373,7 +384,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
   const ciRun = (job: PrLoopJob["jobName"]): string[] => [
     "chant", "ci", "run", job, "--in-place", ...(job === "plan" ? ["--no-push"] : []),
     ...(job === "apply" && !early ? [] : ["--base", '"$BASE_SHA"']), ...(job === "plan" || (job === "apply" && early) ? ["--pr", '"$PR_NUMBER"'] : []),
-    ...(job === "apply" && early ? ["--apply-before-merge"] : []),
+    ...(job === "apply" && early ? ["--apply-before-merge", ...requires] : []),
     "--env", env, "--gate", gate, "--forge", forge,
     ...(job !== "record" && options.waveGate ? ["--wave-gate", options.waveGate] : []),
     ...(job !== "plan" && options.branch ? ["--branch", JSON.stringify(options.branch)] : []),
@@ -413,7 +424,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
     // #4301: the requires checks run inside pr-apply, before any of the head's code loads.
     jobName: "apply",
     command: [
-      "chant", "components", "pr-apply", "--before-merge", "--base", '"$BASE_SHA"', "--pr", '"$PR_NUMBER"', ...common,
+      "chant", "components", "pr-apply", "--before-merge", ...requires, "--base", '"$BASE_SHA"', "--pr", '"$PR_NUMBER"', ...common,
       ...(options.requireReview === true ? ["--require-review"] : []),
       "--resume", PR_APPLY_RECORD,
     ].join(" "),
