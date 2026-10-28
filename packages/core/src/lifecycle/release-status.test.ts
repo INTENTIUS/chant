@@ -8,7 +8,6 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { NEXT_RELEASE } from "../release-floors";
 import { gitLedgerReadPort } from "./git";
 import { readLedgerTable } from "./ledger-read";
 import { clearMemberLedgerCache } from "./member-ledger";
@@ -77,9 +76,9 @@ const status = (over: Partial<ReleaseStatusInput> = {}): ReleaseStatusInput => (
 });
 
 describe("release status floors", () => {
-  test("are the next release", () => {
-    expect(RELEASE_STATUS_FLOOR).toBe(NEXT_RELEASE);
-    expect(LEDGER_RELEASE_STATUS_FLOOR).toBe(NEXT_RELEASE);
+  test("shipped in 0.124.55", () => {
+    expect(RELEASE_STATUS_FLOOR).toBe("0.124.55");
+    expect(LEDGER_RELEASE_STATUS_FLOOR).toBe("0.124.55");
   });
 });
 

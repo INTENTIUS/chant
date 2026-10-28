@@ -27,7 +27,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { OpWavesSpec } from "./op-waves";
-import { NEXT_RELEASE } from "../release-floors";
 
 const exec = promisify(execFile);
 
@@ -37,7 +36,7 @@ const exec = promisify(execFile);
  * export of {@link newerCommitOnBranch} from `@intentius/chant/op`, before
  * it drops its copy.
  */
-export const OP_WAVE_STAND_DOWN_FLOOR = NEXT_RELEASE;
+export const OP_WAVE_STAND_DOWN_FLOOR = "0.124.55";
 
 /** A newer commit on the run's branch. */
 export interface OpWaveNewerCommit {

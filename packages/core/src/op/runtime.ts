@@ -21,7 +21,6 @@ import type { StepRecord, OpRunResult } from "./local-executor";
 import type { WaitingPoint } from "./steward-points";
 import type { GateResolutionRecord } from "../lifecycle/gate-ledger";
 import type { RunOrigin } from "../lifecycle/release-ledger";
-import { NEXT_RELEASE } from "../release-floors";
 import type { CapabilityTraceSpan } from "../otlp";
 import type { RunComponentsOptions, RunComponentsResult } from "../components/cli-support";
 
@@ -284,7 +283,7 @@ export interface OpRunWavePlan {
 }
 
 /** The first chant that runs an after-plan hook in the wave job's process and writes {@link OpRunWave.plans} (#4614). */
-export const OP_WAVE_AFTER_PLAN_FLOOR = NEXT_RELEASE;
+export const OP_WAVE_AFTER_PLAN_FLOOR = "0.124.55";
 
 /** One run target's apply in an op wave job (#4555). */
 export interface OpRunWaveTarget {
@@ -298,7 +297,7 @@ export interface OpRunWaveTarget {
 }
 
 /** The first chant that writes {@link OpRunRecord.wave}, a run record per op wave job (#4551). */
-export const OP_WAVE_RUN_RECORD_FLOOR = NEXT_RELEASE;
+export const OP_WAVE_RUN_RECORD_FLOOR = "0.124.55";
 
 /** `value` as an {@link OpRunWave}, or undefined when it is not one, so a reader drops a malformed field and keeps the record. */
 export function opRunWaveOf(value: unknown): OpRunWave | undefined {

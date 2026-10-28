@@ -3,13 +3,12 @@
  * `ci.workflow` (./ci-workflow-at.ts) are: the target branch's tip, so a
  * pull request cannot widen what its own apply may run beside.
  */
-import { NEXT_RELEASE } from "../release-floors";
 import type { CiLockGrain, Declaration } from "./declaration";
 import { memberAtCwd } from "./security";
 import { scopeSource } from "./write-scope";
 
 /** The first chant that reads `ci.lockGrain`; a declaration that sets it needs this `minReader`. */
-export const CI_LOCK_GRAIN_FLOOR = NEXT_RELEASE;
+export const CI_LOCK_GRAIN_FLOOR = "0.124.55";
 
 /** The grain a member takes from the declaration: its own `ci.lockGrain`, else the top level's, else null. */
 export function lockGrainOf(declaration: Pick<Declaration, "ci" | "members">, member: string | null | undefined): CiLockGrain | null {

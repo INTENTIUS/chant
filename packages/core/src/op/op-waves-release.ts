@@ -31,10 +31,9 @@
 
 import type { OpWave, OpWaveRun, OpWavesSpec } from "./op-waves";
 import type { Release, ReleaseCut } from "../lifecycle/release-store";
-import { NEXT_RELEASE } from "../release-floors";
 
 /** The first chant whose op-wave applies write release records (#4615). */
-export const OP_WAVE_RELEASE_RECORD_FLOOR = NEXT_RELEASE;
+export const OP_WAVE_RELEASE_RECORD_FLOOR = "0.124.55";
 
 /** Where an op-wave apply's release record goes (#4615), and under which names. */
 export interface OpWaveReleaseNames {

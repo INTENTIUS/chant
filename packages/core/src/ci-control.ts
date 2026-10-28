@@ -28,16 +28,15 @@
  * present means the rest is too.
  */
 
-import { NEXT_RELEASE } from "./release-floors";
 
 /** The first chant with `@intentius/chant/ci-control` (#4568). */
-export const CI_CONTROL_FLOOR = NEXT_RELEASE;
+export const CI_CONTROL_FLOOR = "0.124.55";
 
 /** The first chant that records the applies a dispatch carries and marks cross-stack edges (#4617). `recordControlAppliedFromEnv` present means the rest is too. */
-export const CONTROL_APPLIED_FLOOR = NEXT_RELEASE;
+export const CONTROL_APPLIED_FLOOR = "0.124.55";
 
 /** The first chant whose note jobs read the control repo for the cross-stack edges (#4619). `controlNoteCheckout` present means the rest is too. */
-export const CONTROL_NOTE_CHECKOUT_FLOOR = NEXT_RELEASE;
+export const CONTROL_NOTE_CHECKOUT_FLOOR = "0.124.55";
 
 export {
   CONTROL_APPLY_OUTCOMES,

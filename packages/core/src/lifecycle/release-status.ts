@@ -18,13 +18,12 @@
  * so `chant query` (./query.ts) and a product bundle read the table without
  * it.
  */
-import { NEXT_RELEASE } from "../release-floors";
 import type { LedgerReadPort } from "./ledger-port";
 import type { LedgerLocation } from "./git";
 import type { CatalogStatusInput, ReleaseStatusValue } from "./release-catalog";
 
 /** The first chant that writes and reads `<env>/release-status.jsonl`, and lists the `release_status` table (#4596). */
-export const RELEASE_STATUS_FLOOR = NEXT_RELEASE;
+export const RELEASE_STATUS_FLOOR = "0.124.55";
 
 /** The file a status record is appended to, in its environment's directory. */
 export const RELEASE_STATUS_FILE = "release-status.jsonl";

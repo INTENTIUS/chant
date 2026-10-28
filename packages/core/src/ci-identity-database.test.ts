@@ -15,7 +15,6 @@ import {
   TRADED_VARS,
   type CloudIdentityDeclaration,
 } from "./ci-identity";
-import { NEXT_RELEASE } from "./release-floors";
 
 const azure = (database?: boolean): CloudIdentityDeclaration => ({
   azure: {
@@ -49,7 +48,7 @@ describe("azure database tokens", () => {
     expect(TRADED_VARS.azure).toContain(AZURE_DATABASE_TOKEN_ENV);
   });
 
-  test("the floor is the next release", () => {
-    expect(AZURE_DATABASE_TOKEN_FLOOR).toBe(NEXT_RELEASE);
+  test("the floor shipped in 0.124.55", () => {
+    expect(AZURE_DATABASE_TOKEN_FLOOR).toBe("0.124.55");
   });
 });

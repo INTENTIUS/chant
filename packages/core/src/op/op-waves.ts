@@ -97,7 +97,6 @@ import { quorumProblems, type GateQuorumRule } from "./gate-quorum";
 import { notifyConfigProblem, type NotifyConfig } from "../notify";
 import { WAVE_GATE_NAME_PATTERN, waveGateNameFrom, waveShare } from "../wave-layout";
 import { waveOutcomeFileName } from "../wave-blocked";
-import { NEXT_RELEASE } from "../release-floors";
 import { opWaveHoldsProblems, opWaveStepProblems, type OpWaveHolds, type OpWaveStep } from "./op-waves-capability-spec";
 import { opWaveReleaseProblems, type OpWaveReleaseNames } from "./op-waves-release";
 import { CONTROL_DISPATCH_JOB, CONTROL_NAME, controlSettingsProblems, resolveControlTarget, type ControlSettingsInput, type ControlTarget } from "../control/dispatch";
@@ -234,7 +233,7 @@ export const CHECK_HOOK_MOMENT = "check";
 export type CiHookMoment = OpWaveHookMoment | typeof CHECK_HOOK_MOMENT;
 
 /** The first chant that reads and runs `ci.hooks.check` (#4556). A declaration that uses it sets `minReader` to it. */
-export const CI_CHECK_HOOK_FLOOR = NEXT_RELEASE;
+export const CI_CHECK_HOOK_FLOOR = "0.124.55";
 
 /**
  * Who runs the `before.apply` and `after.apply` hooks (#3804). `chant`: the
@@ -582,7 +581,7 @@ export interface OpWavesControl extends ControlSettingsInput {
 }
 
 /** The first chant whose Op waves specs take `control` (#4617). A product feature-detects this name. */
-export const OP_WAVES_CONTROL_FLOOR = NEXT_RELEASE;
+export const OP_WAVES_CONTROL_FLOOR = "0.124.55";
 
 /** The control dispatch job's name in an Op waves pipeline (#4617). */
 export const OP_WAVES_CONTROL_JOB = CONTROL_DISPATCH_JOB;

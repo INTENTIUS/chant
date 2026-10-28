@@ -17,13 +17,12 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { NEXT_RELEASE } from "../release-floors";
 import type { ChangeSetEntry } from "../change-set";
 import { adoptionFileProblems, adoptionFileProblemsAgainst, type AdoptionFile } from "../lifecycle/adoption-file";
 import type { IndexDocument } from "../lifecycle/index-document";
 
 /** The first chant whose `run --components` takes `--adopt`. */
-export const DEPLOY_ADOPT_FLOOR = NEXT_RELEASE;
+export const DEPLOY_ADOPT_FLOOR = "0.124.55";
 
 /** One change set the adoption asks to execute. */
 export interface AdoptionReviewRequest {

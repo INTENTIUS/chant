@@ -23,7 +23,6 @@
  * `--no-record` through `./git.ts`.
  */
 import { createHash } from "node:crypto";
-import { NEXT_RELEASE } from "../release-floors";
 import { sortedJsonReplacer } from "../utils";
 import { approveCommand, evaluateGate, gitGateLedgerPort, type GateLedgerPort } from "../op/gate";
 import type { GateApprovalSource } from "../op/op-waves";
@@ -48,7 +47,7 @@ export { GATED_REQUEST_FLOOR } from "./gate-ledger";
  * `CHANT_HOLD_FINISHED` only once it wrote the applied line, so a hook reads
  * that variable to know chant records the gate.
  */
-export const OP_WAVE_HOLD_RECORD_FLOOR = NEXT_RELEASE;
+export const OP_WAVE_HOLD_RECORD_FLOOR = "0.124.55";
 
 /** Which approvals count for a request: the block op waves read at base. */
 export interface GatedRequestRules {

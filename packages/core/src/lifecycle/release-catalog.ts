@@ -25,7 +25,7 @@ import { NEXT_RELEASE } from "../release-floors";
 import type { ReleaseRecord } from "./release-ledger";
 
 /** The first chant that writes and reads a release catalog (#4595). */
-export const RELEASE_CATALOG_FLOOR = NEXT_RELEASE;
+export const RELEASE_CATALOG_FLOOR = "0.124.55";
 
 /** The catalog document's `$schema`. */
 export const RELEASE_CATALOG_SCHEMA_ID: string = schema.$id;

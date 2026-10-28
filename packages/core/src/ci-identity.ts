@@ -59,7 +59,6 @@
  */
 
 import { readFileSync } from "node:fs";
-import { NEXT_RELEASE } from "./release-floors";
 
 /** The cloud providers `ci.identity.cloud` names. */
 export const CLOUDS = ["aws", "gcp", "azure"] as const;
@@ -74,14 +73,14 @@ export const IDENTITY_CLOUDS = [...CLOUDS, "pulumi"] as const;
 export type IdentityCloud = (typeof IDENTITY_CLOUDS)[number];
 
 /** The first chant that reads `ci.identity.cloud.pulumi` (#4549): a declaration that sets it needs this `minReader`. */
-export const PULUMI_CLOUD_IDENTITY_FLOOR = NEXT_RELEASE;
+export const PULUMI_CLOUD_IDENTITY_FLOOR = "0.124.55";
 
 /**
  * The first chant that reads `ci.identity.cloud.azure.database` (#4572): the
  * trade also asks Entra for a token Azure Database for PostgreSQL accepts.
  * A declaration that sets it needs this `minReader`.
  */
-export const AZURE_DATABASE_TOKEN_FLOOR = NEXT_RELEASE;
+export const AZURE_DATABASE_TOKEN_FLOOR = "0.124.55";
 
 /** The Entra scope of Azure Database for PostgreSQL's sign-in tokens (#4572). */
 export const AZURE_DATABASE_SCOPE = "https://ossrdbms-aad.database.windows.net/.default";
