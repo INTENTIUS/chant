@@ -34,7 +34,7 @@ import {
   type CiProductWords,
   type CiProductWordsInput,
 } from "../ci-product-words";
-import { prCommentLockJobs, prCommentPreviewJob, prLoopJobs, prLoopPostJob, prLoopRunner, withProductBin, type PrCommentLockJob, type PrCommentPreviewJob, type PrLoopJob, type PrLoopPipelineOptions } from "./pr-pipeline";
+import { prCommentLockJobs, prCommentPreviewJob, prLoopJobs, prLoopPostJob, prLoopRunner, prStaleJob, withProductBin, type PrCommentLockJob, type PrCommentPreviewJob, type PrLoopJob, type PrLoopPipelineOptions } from "./pr-pipeline";
 import type { DriverComponent } from "./driver";
 import type { ScheduledOpSpec } from "../lexicon";
 import type { CiRunner } from "../ci-jobs";
@@ -130,6 +130,13 @@ export interface ProductPipelineJobs {
    */
   preview?: PrCommentPreviewJob & { noteRunner?: CiRunner };
   /**
+   * The stale marking (#4628), with `staleNotes`: the command and values of
+   * the job that runs on a push to the target branch and marks each open
+   * pull request's note posted against another commit stale. The forge
+   * lexicons render the same job, `stale-notes`.
+   */
+  stale?: { command: string; env: Record<string, string>; runner?: CiRunner };
+  /**
    * The agent (#4616), with `agent`: the comment it answers, `/<product>
    * agent <ask>`, and the scheduled Op spec whose generated workflow runs
    * it: the agent job with a read token and the model's key, and the push
@@ -220,7 +227,7 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   const list = respond ? respondList(respond) : "";
   const respondEnv: Record<string, string> = list ? { [CI_RESPOND_ENV]: list } : {};
   const withRespond = (job: PrLoopJob): PrLoopJob => (list ? { ...job, env: { ...job.env, ...respondEnv }, run: { ...job.run, env: { ...job.run.env, ...respondEnv } } } : job);
-  const postJob = prLoopPostJob(forge, env, member, words);
+  const postJob = prLoopPostJob(forge, env, member, words, { ...(options.staleNotes ? { staleNotes: true } : {}) });
   const post = respond?.description === "check" && decide
     ? { command: `${postJob.command} --decide-backend ${JSON.stringify(decide.backend)} --decide-model ${JSON.stringify(decide.model)}`, env: { ...postJob.env, ...respondEnv } }
     : list ? { ...postJob, env: { ...postJob.env, ...respondEnv } } : postJob;
@@ -233,6 +240,8 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   };
   const locks = prCommentLockJobs(forge, { locks: options.locks, words });
   if (locks.length > 0) out.locks = locks.map((job) => ({ ...job, ...defaultRunner }));
+  const stale = prStaleJob(forge, env, prLoop, member);
+  if (stale) out.stale = { ...stale, ...defaultRunner };
   const preview = prCommentPreviewJob(forge, env, prLoop, member);
   if (preview) out.preview = { ...preview, ...(defaultRunner.runner !== undefined ? { noteRunner: defaultRunner.runner } : {}) };
   // #4616: the agent answers its comment from a workflow of its own, generated from this spec.

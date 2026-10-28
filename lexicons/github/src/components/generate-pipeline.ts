@@ -88,6 +88,8 @@ import {
   prLoopWithWaves,
   prEnvJobs,
   prLoopJobStage,
+  prStaleJob,
+  PR_STALE_JOB,
   prLoopRunner,
   PR_ENV_REPORT_DIR,
   PR_ENV_SWEEP_CRON,
@@ -417,7 +419,25 @@ function prLoopGithubDoc(
       },
     ]);
   }
-  const post = prLoopPostJob(forgeName, env, member?.name, loop.words ? resolveProductWords(loop.words) : undefined);
+  const post = prLoopPostJob(forgeName, env, member?.name, loop.words ? resolveProductWords(loop.words) : undefined, { ...(loop.staleNotes ? { staleNotes: true } : {}) });
+  // #4628: on a push to the target branch, the open pull requests' notes posted against another commit are marked stale.
+  const stale = prStaleJob(forgeName, env, loop, member?.name);
+  const staleJobs: Record<string, unknown> = stale
+    ? {
+        [PR_STALE_JOB]: {
+          if: "github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')",
+          "runs-on": GITHUB_RUNNER,
+          container: image,
+          permissions: { contents: "read", "pull-requests": "write", statuses: "write" },
+          steps: [
+            // The pushed commit: the target branch's, so none of a pull request's code is here.
+            { name: "Check out the target branch's commit", uses: CHECKOUT },
+            ...runSteps(beforeScript),
+            { name: "Mark the open pull requests' notes stale", ...(rooted ? {} : { "working-directory": "." }), env: stale.env, run: stale.command },
+          ],
+        },
+      }
+    : {};
   // #4619: with a control repo named, the note job reads its chant/lifecycle, read-only, so pr-post marks the cross-stack edges.
   const controlRead = loop.control ? controlNoteCheckout(forgeName, loop.control.target, loop.words ?? {}) : undefined;
   const noteSteps: Array<Record<string, unknown>> = [
@@ -565,6 +585,7 @@ function prLoopGithubDoc(
     ...lockJobs,
     ...commentLockJobs,
     ...previewJobs,
+    ...staleJobs,
     ...Object.fromEntries(applyJobs),
     ...Object.fromEntries(controlJobs),
     ...(prEnv ? prEnv.jobs : {}),
@@ -595,10 +616,11 @@ function prLoopGithubDoc(
     ...(rooted ? {} : { defaults: { run: { "working-directory": member!.dir } } }),
     env: { ...options.variables, CHANT_ENV: env },
     jobsDoc,
-    stages: ["plan", PR_PLAN_NOTE_JOB, ...(locks ? [PR_LOCK_JOB, PR_UNLOCK_JOB] : []), ...commentLocks.map((j) => j.jobName), ...(preview ? [preview.jobName, preview.noteJobName] : []), ...applyNames, ...controlJobs.map(([name]) => name), ...(prEnv ? ["env-up", PR_ENV_POST_JOB, "env-down", "env-sweep"] : [])],
+    stages: ["plan", PR_PLAN_NOTE_JOB, ...(locks ? [PR_LOCK_JOB, PR_UNLOCK_JOB] : []), ...commentLocks.map((j) => j.jobName), ...(preview ? [preview.jobName, preview.noteJobName] : []), ...(stale ? [PR_STALE_JOB] : []), ...applyNames, ...controlJobs.map(([name]) => name), ...(prEnv ? ["env-up", PR_ENV_POST_JOB, "env-down", "env-sweep"] : [])],
     jobs: [
       { jobName: "plan", component: "pull request plan", stage: "plan", needs: [] },
       { jobName: PR_PLAN_NOTE_JOB, component: "pull request plan note", stage: PR_PLAN_NOTE_JOB, needs: ["plan"] },
+      ...(stale ? [{ jobName: PR_STALE_JOB, component: "pull request stale notes", stage: PR_STALE_JOB, needs: [] }] : []),
       ...(locks
         ? [
             { jobName: PR_LOCK_JOB, component: "pull request lock", stage: PR_LOCK_JOB, needs: ["plan"] },

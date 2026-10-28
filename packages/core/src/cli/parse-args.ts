@@ -825,6 +825,17 @@ export function parseArgs(args: string[]): ParsedArgs {
       if (!result.by || result.by.startsWith("-")) throw new Error("--by needs the reviewer: --by <principal>");
       // Repeatable for `workspace points answer` (#2739): each person who answered.
       (result.bys ??= []).push(result.by);
+    } else if (arg === "--stale-notes") {
+      // `chant build --pr-loop --stale-notes` (#4628).
+      result.staleNotes = true;
+    } else if (arg === "--stale") {
+      // `chant components pr-post --stale` (#4628).
+      result.stale = true;
+    } else if (arg === "--tip") {
+      // `chant components pr-post --tip <sha>` (#4628).
+      const raw = args[++i];
+      if (!raw || !/^[0-9a-f]{40}$/.test(raw)) throw new Error(`--tip needs the target branch's full commit sha: got "${raw ?? ""}"`);
+      result.tip = raw;
     } else if (arg === "--open") {
       // `chant workspace points --open` (#2739): only the questions still open.
       result.open = true;

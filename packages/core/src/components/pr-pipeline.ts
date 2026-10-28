@@ -341,6 +341,15 @@ export interface PrLoopPipelineOptions {
    * capability cannot is refused by name. Default false.
    */
   refresh?: boolean;
+  /**
+   * Stale marking (#4628): the plan note carries the target branch's commit
+   * it was posted against, and a `stale-notes` job on each push to the
+   * target branch marks every open pull request's note posted against
+   * another commit stale, naming the plan comment under `previewComment`,
+   * and sets its plan status back to pending ({@link prStaleJob}). Set
+   * from `--stale-notes` beside `--pr-loop`. Default false.
+   */
+  staleNotes?: boolean;
 }
 
 /** The variable the comment preview's plan reads the comment from (#4626); never a shell argument. */
@@ -551,9 +560,12 @@ export function prCommentPreviewJob(forge: ForgeKind, env: string, options: PrLo
       "--env", env, "--output", PR_LOOP_REPORT_DIR, "--forge", forge,
       ...(member ? ["--member", member] : []),
       ...(github ? ["--result", '"$PLAN_RESULT"'] : []),
+      // #4628: the target branch's commit the preview measured from, for the note's tip line.
+      ...(options.staleNotes ? ["--tip", '"$TIP_SHA"'] : []),
     ].join(" "),
     words.bin,
   );
+  const tipEnv: Record<string, string> = options.staleNotes ? { TIP_SHA: github ? "${{ github.sha }}" : "$CI_COMMIT_SHA" } : {};
   return {
     jobName: PR_COMMENT_PREVIEW_JOB,
     noteJobName: PR_COMMENT_PREVIEW_NOTE_JOB,
@@ -568,12 +580,13 @@ export function prCommentPreviewJob(forge: ForgeKind, env: string, options: PrLo
             PR_NUMBER: prNumber,
             HEAD_SHA: `\${{ needs.${PR_COMMENT_PREVIEW_JOB}.outputs.${PREVIEW_HEAD_OUTPUT} }}`,
             PLAN_RESULT: `\${{ needs.${PR_COMMENT_PREVIEW_JOB}.result }}`,
+            ...tipEnv,
             GITHUB_TOKEN: GITHUB_JOB_TOKEN,
           },
         }
       : {
           command: postCommand,
-          env: { PR_NUMBER: prNumber },
+          env: { PR_NUMBER: prNumber, ...tipEnv },
           setup: ['HEAD_SHA="$(git ls-remote origin "refs/merge-requests/$PR_NUMBER/head" | cut -f1)" && export HEAD_SHA'],
         },
     ...(github ? {} : { gitlabVar: GITLAB_PREVIEW_PR_VAR }),
@@ -772,11 +785,13 @@ export const PR_PLAN_NOTE_JOB = "plan-note";
  * asks GitLab for each open merge request's plan job and reads its report
  * from the job's artifacts.
  */
-export function prLoopPostJob(forge: ForgeKind, env: string, member?: string, words?: Pick<CiProductWordsInput, "bin">): { command: string; env: Record<string, string> } {
+export function prLoopPostJob(forge: ForgeKind, env: string, member?: string, words?: Pick<CiProductWordsInput, "bin">, opts: { staleNotes?: boolean } = {}): { command: string; env: Record<string, string> } {
+  // #4628: with staleNotes the note carries the target branch's commit, so a later push can mark it stale.
+  const tip = opts.staleNotes ? ["--tip", '"$TIP_SHA"'] : [];
   if (forge === "gitlab") {
     return {
-      command: withProductBin(["chant", "components", "pr-post", "--open", "--env", env, "--output", PR_LOOP_REPORT_DIR, "--forge", forge, ...(member ? ["--member", member] : [])].join(" "), words?.bin),
-      env: {},
+      command: withProductBin(["chant", "components", "pr-post", "--open", "--env", env, "--output", PR_LOOP_REPORT_DIR, "--forge", forge, ...(member ? ["--member", member] : []), ...tip].join(" "), words?.bin),
+      env: opts.staleNotes ? { TIP_SHA: "$CI_COMMIT_SHA" } : {},
     };
   }
   const command = [
@@ -784,10 +799,42 @@ export function prLoopPostJob(forge: ForgeKind, env: string, member?: string, wo
     "--env", env, "--output", PR_LOOP_REPORT_DIR, "--forge", forge,
     ...(member ? ["--member", member] : []),
     "--result", '"$PLAN_RESULT"',
+    ...tip,
   ].join(" ");
   return {
     command: withProductBin(command, words?.bin),
-    env: { PR_NUMBER: "${{ github.event.pull_request.number }}", HEAD_SHA: "${{ github.sha }}", PLAN_RESULT: "${{ needs.plan.result }}", GITHUB_TOKEN: GITHUB_JOB_TOKEN },
+    env: {
+      PR_NUMBER: "${{ github.event.pull_request.number }}",
+      HEAD_SHA: "${{ github.sha }}",
+      PLAN_RESULT: "${{ needs.plan.result }}",
+      ...(opts.staleNotes ? { TIP_SHA: "${{ github.event.pull_request.base.sha }}" } : {}),
+      GITHUB_TOKEN: GITHUB_JOB_TOKEN,
+    },
+  };
+}
+
+/** The job that marks the open pull requests' notes stale after a push to the target branch (#4628). */
+export const PR_STALE_JOB = "stale-notes";
+
+/**
+ * The stale job's command and the values it reads (#4628), with
+ * `staleNotes`: on a push to the target branch, at its commit, `pr-post
+ * --stale` marks each open pull request's note posted against another
+ * commit stale and sets its plan status back to pending. It names the plan
+ * comment with `previewComment`. Undefined without `staleNotes`.
+ */
+export function prStaleJob(forge: ForgeKind, env: string, options: Pick<PrLoopPipelineOptions, "staleNotes" | "previewComment" | "branch" | "words"> = {}, member?: string): { command: string; env: Record<string, string> } | undefined {
+  if (!options.staleNotes) return undefined;
+  const words = resolveProductWords(options.words);
+  const command = [
+    "chant", "components", "pr-post", "--stale", "--tip", '"$TIP_SHA"', "--env", env, "--forge", forge,
+    ...(options.branch ? ["--branch", JSON.stringify(options.branch)] : []),
+    ...(member ? ["--member", member] : []),
+    ...(options.previewComment ? ["--preview-comment"] : []),
+  ].join(" ");
+  return {
+    command: withProductBin(command, words.bin),
+    env: forge === "gitlab" ? { TIP_SHA: "$CI_COMMIT_SHA" } : { TIP_SHA: "${{ github.sha }}", GITHUB_TOKEN: GITHUB_JOB_TOKEN },
   };
 }
 

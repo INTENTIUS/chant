@@ -541,6 +541,12 @@ export interface ParsedArgs {
   bys?: string[];
   /** `chant workspace points --open` (#2739): only the questions still open. */
   open?: boolean;
+  /** `chant build --pr-loop --stale-notes` (#4628): the note carries its target commit, and a push to the target branch marks open notes stale. */
+  staleNotes?: boolean;
+  /** `chant components pr-post --stale` (#4628): mark the open pull requests' notes stale after the target branch moved. */
+  stale?: boolean;
+  /** `chant components pr-post --tip <sha>` (#4628): the target branch's commit, which the note carries, or with --stale its commit now. */
+  tip?: string;
   /** `chant workspace points ask <point> --inputs <file|-|json>` (#2739): the inputs, as a JSON object. */
   inputs?: string;
   /** `chant workspace points ask <point> --candidates <file|-|json>` (#3403): an ad-hoc point's question and candidates. */

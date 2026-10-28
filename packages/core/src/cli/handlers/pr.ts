@@ -2657,6 +2657,7 @@ function writeWaveChangeSet(ctx: CommandContext, wave: number, doc: PrPlanSet["d
  */
 export async function runComponentsPrPost(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
+  if (args.stale) return runComponentsPrPostStale(ctx);
   if (args.open) return runComponentsPrPostOpen(ctx);
   if (args.pr === undefined) return fail("pr-post needs the pull or merge request: --pr <n>");
   if (!args.head || !/^[0-9a-f]{40}$/.test(args.head)) return fail("pr-post needs the full commit the plan job checked out: --head <sha>");
@@ -2684,6 +2685,9 @@ export async function runComponentsPrPost(ctx: CommandContext): Promise<number> 
     // #4289: the plan job could not ask the forge, so the note job does, from the Ops at the commit it checked out.
     overdue: () => overdueOps(forge, member),
     ...(description ? { description } : {}),
+    // #4628: the target branch's commit for the note's tip line, and the job summary where the forge keeps one.
+    ...(args.tip ? { baseTip: args.tip } : {}),
+    ...(args.forge !== "gitlab" && process.env.GITHUB_STEP_SUMMARY ? { summaryFile: process.env.GITHUB_STEP_SUMMARY } : {}),
   });
   for (const message of posted.warnings) console.error(formatWarning({ message }));
   if (posted.refused) console.error(formatWarning({ message: `the plan report was not used: ${posted.refused}` }));
@@ -2720,6 +2724,45 @@ async function descriptionCheckOf(ctx: CommandContext, forge: PrForge): Promise<
   return async (report) => {
     await respondDescription(forge, report, { ask });
   };
+}
+
+/**
+ * `pr-post --stale --tip <sha> --env <env> --forge <kind> [--branch <branch>]
+ * [--member <name>] [--preview-comment]` (#4628): after a push to the target
+ * branch, mark each open pull request's note that was posted against
+ * another commit stale, naming the comment that previews again with
+ * `--preview-comment`, and set its plan status back to pending
+ * (`markStaleNotes`, ../../pr-post.ts). The branch is `--branch`, else the
+ * job's (`GITHUB_REF_NAME`, `CI_COMMIT_BRANCH`). It exits 0 once it has
+ * marked, as `pr-post` does.
+ */
+async function runComponentsPrPostStale(ctx: CommandContext): Promise<number> {
+  const { args } = ctx;
+  if (args.pr !== undefined || args.head) return fail("pr-post --stale finds each open pull request and its head itself, so it takes no --pr or --head");
+  if (!args.tip) return fail("pr-post --stale needs the target branch's commit now: --tip <sha>");
+  if (!args.env) return fail("pr-post needs the environment the plan was for: --env <env>");
+  if (!args.forge || !(FORGE_KINDS as readonly string[]).includes(args.forge)) return fail(`pr-post posts to a forge: --forge ${FORGE_KINDS.join("|")}`);
+  if (args.members && args.members.length > 1) return fail(`pr-post takes one --member, not ${args.members.join(", ")}`);
+  const branch = args.branch ?? process.env.CI_COMMIT_BRANCH ?? process.env.GITHUB_REF_NAME;
+  if (!branch) return fail("pr-post --stale marks the notes of the pull requests into a branch: run it in a job of a push, or pass --branch <branch>");
+  let forge: PrForge;
+  try {
+    forge = forgeFromEnv(args.forge as ForgeKind);
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err));
+  }
+  const member = args.members?.[0];
+  const { markStaleNotes } = await import("../../pr-post");
+  let done: Awaited<ReturnType<typeof markStaleNotes>>;
+  try {
+    done = await markStaleNotes({ forge, branch, tip: args.tip, env: args.env, ...(member ? { member } : {}), ...(args.previewComment ? { previewComment: true } : {}) });
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err));
+  }
+  for (const message of done.warnings) console.error(formatWarning({ message }));
+  const marked = done.marks.filter((m) => m.marked).map((m) => `#${m.pr}`);
+  console.error(formatInfo(`pr-post --stale: ${marked.length > 0 ? `marked ${marked.join(", ")} stale` : "no note to mark"} after ${branch} moved to ${args.tip.slice(0, 12)}`));
+  return 0;
 }
 
 /**
@@ -2766,6 +2809,8 @@ async function runComponentsPrPostOpen(ctx: CommandContext): Promise<number> {
       // #4289: the Ops at the commit this pipeline checked out, the target branch's.
       overdue: () => overdueOps(forge, member),
       ...(description ? { description } : {}),
+      // #4628: the target branch's commit this pipeline runs at, which each note's tip line names.
+      ...(args.tip ? { baseTip: args.tip } : {}),
     });
   } catch (err) {
     return fail(err instanceof Error ? err.message : String(err));
