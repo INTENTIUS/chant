@@ -80,6 +80,8 @@ function prLoopOption(args: CommandContext["args"], reportUrl: string | undefine
     ...(args.prVariables ? { variables: args.prVariables } : {}),
     ...(args.prSecrets ? { secrets: args.prSecrets } : {}),
     ...(args.parallelism !== undefined ? { parallelism: args.parallelism } : {}),
+    // #4627: the plan refreshes each step's state first.
+    ...(args.refresh ? { refresh: true } : {}),
   };
 }
 

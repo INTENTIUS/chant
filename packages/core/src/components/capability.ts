@@ -87,6 +87,20 @@ export interface DeployContext {
    */
   targets?: string[];
   /**
+   * `pr-plan --refresh` (#4627): refresh the step's state from the live
+   * system before it plans, as `pulumi preview --refresh` does. A step's
+   * capability must accept it ({@link Capability.planFlags}), or the
+   * component refuses before anything plans. Bound into the member's digest.
+   */
+  refresh?: boolean;
+  /**
+   * `pr-plan --target-dependents` (#4627): with `targets`, plan the
+   * resources that depend on them too, as `pulumi preview
+   * --target-dependents` does. Accepted or refused as `refresh` is. Bound
+   * into the member's digest.
+   */
+  targetDependents?: boolean;
+  /**
    * `--adopt <adoption-file>` (#4537): the resources to adopt into this
    * component's stack, the index version they come from, and the review
    * every change set the adoption makes goes through before it executes. A
@@ -281,6 +295,12 @@ export interface Capability<In = unknown, Out = unknown> {
    * why. Unset refuses too, with a reason that names the verb.
    */
   readonly targets?: TargetSupport;
+  /**
+   * Whether this verb's plan takes `DeployContext.refresh` and
+   * `DeployContext.targetDependents` (#4627), each `"accept"` or `{ refuse
+   * }` with why, as {@link targets} is. Unset refuses, naming the verb.
+   */
+  readonly planFlags?: Partial<Record<PlanFlag, TargetSupport>>;
   /**
    * Optional (#4435, ws-107): why this capability will not plan and apply
    * `members` as one group, or `undefined` when it will. Core asks before
@@ -560,6 +580,36 @@ export type RollbackPolicy = "native" | "none-by-design" | "needs-opt-out";
 
 /** Whether a capability accepts `DeployContext.targets` (#4300). See `Capability.targets`. */
 export type TargetSupport = "accept" | { refuse: string };
+
+/** A plan flag a capability accepts or refuses (#4627): `refresh` and `targetDependents`. */
+export type PlanFlag = "refresh" | "targetDependents";
+
+/** Each plan flag as `pr-plan` spells it (#4627). */
+export const PLAN_FLAG_ARGS: Record<PlanFlag, string> = { refresh: "--refresh", targetDependents: "--target-dependents" };
+
+/**
+ * A component was asked to plan with a flag (#4627) one of its steps'
+ * capabilities refuses. Nothing in the component plans.
+ */
+export class PlanFlagRefusedError extends Error {
+  constructor(
+    readonly component: string,
+    readonly kind: string,
+    readonly flag: PlanFlag,
+    readonly reason: string,
+  ) {
+    super(`component "${component}": ${kind} refuses ${PLAN_FLAG_ARGS[flag]}: ${reason}`);
+    this.name = "PlanFlagRefusedError";
+  }
+}
+
+/** Why `capability` refuses `flag`, or `undefined` when it accepts it (#4627). */
+export function planFlagRefusal(capability: Pick<Capability<never, unknown>, "kind" | "planFlags">, flag: PlanFlag): string | undefined {
+  const t = capability.planFlags?.[flag];
+  if (t === "accept") return undefined;
+  if (t && typeof t === "object" && typeof t.refuse === "string") return t.refuse;
+  return `${capability.kind} does not say it can plan with ${PLAN_FLAG_ARGS[flag]}`;
+}
 
 /**
  * A component was asked to narrow to targets (#4300) and one of its steps'

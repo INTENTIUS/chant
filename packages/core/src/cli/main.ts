@@ -1192,7 +1192,11 @@ Component release ledger + status:
                             to the address, --target <member>:<address>
                             one member's (#4620); --comment-targets adds the
                             --target addresses of the preview comment in
-                            CHANT_PREVIEW_COMMENT (#4626); --parallelism <n> plans at
+                            CHANT_PREVIEW_COMMENT (#4626); --refresh refreshes
+                            each step's state first and --target-dependents
+                            plans what depends on each target too, refused
+                            by name for a step that cannot (#4627);
+                            --parallelism <n> plans at
                             most n members of a wave at once (#4625);
                             applies nothing
   components pr-post       Post the plan note and the chant/plan status

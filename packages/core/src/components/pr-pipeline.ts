@@ -335,6 +335,12 @@ export interface PrLoopPipelineOptions {
    * own plan; a caller never needs to.
    */
   commentTargets?: boolean;
+  /**
+   * The plan and the comment preview refresh each step's state first
+   * (#4627): `pr-plan --refresh`, pulumi/actions' `refresh`. A member whose
+   * capability cannot is refused by name. Default false.
+   */
+  refresh?: boolean;
 }
 
 /** The variable the comment preview's plan reads the comment from (#4626); never a shell argument. */
@@ -671,6 +677,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
     ...(job === "apply" && early ? ["--apply-before-merge", ...requires] : []),
     ...(job === "plan" ? parallelism : []),
     ...(job === "plan" && options.commentTargets ? ["--comment-targets"] : []),
+    ...(job === "plan" && options.refresh ? ["--refresh"] : []),
     "--env", env, "--gate", gate, "--forge", forge,
     ...(job !== "record" && options.waveGate ? ["--wave-gate", options.waveGate] : []),
     ...(job !== "plan" && options.branch ? ["--branch", JSON.stringify(options.branch)] : []),
@@ -725,7 +732,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
     {
       jobName: "plan",
       // With `waveGate` the plan's note says the later waves may stop at their own gates (#4003).
-      command: ["chant", "components", "pr-plan", "--base", '"$BASE_SHA"', "--pr", '"$PR_NUMBER"', ...common, ...(options.waveGate ? ["--wave-gate", options.waveGate] : []), ...parallelism, ...(options.commentTargets ? ["--comment-targets"] : []), "--no-status"].join(" "),
+      command: ["chant", "components", "pr-plan", "--base", '"$BASE_SHA"', "--pr", '"$PR_NUMBER"', ...common, ...(options.waveGate ? ["--wave-gate", options.waveGate] : []), ...parallelism, ...(options.commentTargets ? ["--comment-targets"] : []), ...(options.refresh ? ["--refresh"] : []), "--no-status"].join(" "),
       env: planEnv,
       ...build,
       ...(planRunner !== undefined ? { runner: planRunner } : {}),

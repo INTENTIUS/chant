@@ -31,6 +31,7 @@ import type { ChangeSetPart } from "../change-set";
 import type { PlanShape } from "./covered-round";
 import {
   accumulateComponentOutputs,
+  assertPlanFlagsAccepted,
   assertTargetsAccepted,
   resolveComponentGraph,
   resolveStepInput,
@@ -59,7 +60,7 @@ import {
   type ReportedGroupRead,
 } from "./capability";
 import type { FanOutGroup, FanOutGroupFallback, FanOutPlan } from "./fan-out";
-import { bindTargets, type WaveComponentPlan } from "./wave-plan";
+import { bindPlanFlags, bindTargets, type WaveComponentPlan } from "./wave-plan";
 import { resolvePlannedLock } from "../lifecycle/lock-rows";
 import { groupLockRows, isLockRowsHeldError, type RowLease } from "./row-lease";
 
@@ -264,6 +265,7 @@ function groupMembers(
     const { kind: _kind, ...step } = at.step;
     const base = ctxOf(name);
     assertTargetsAccepted(component, registry, base);
+    assertPlanFlagsAccepted(component, registry, base);
     const reads = groupReadsOf(step, inGroup, name);
     const dependsOn = component.dependsOn?.length ? { dependsOn: [...component.dependsOn] } : {};
     if (!outside) return { component: name, step, reads, ...dependsOn, ctx: base };
@@ -665,7 +667,7 @@ export async function planComponentGroup(options: PlanComponentGroupOptions): Pr
     for (const m of members) {
       const own = planned.members[m.component];
       if (!own) throw new Error(`${group.capability} planned the group ${group.components.join(", ")} without a plan for ${m.component}`);
-      bound.set(m.component, bindTargets(group.capability, m.ctx, own));
+      bound.set(m.component, bindPlanFlags(m.ctx, bindTargets(group.capability, m.ctx, own)));
     }
     const digest = groupDigest(
       group.capability,

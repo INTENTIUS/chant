@@ -300,14 +300,17 @@ export function engineRunnerAt(bin: string): PulumiRunner {
  * that is not empty and does not start with `-`; `[…]` is optional; `…`
  * repeats.
  *
- * `up` is refused with `--skip-preview`, `--refresh`, `--show-secrets`,
- * `--replace`, `--target-replace`, `--target-dependents`, `--exclude`,
- * `--remote`, `--continue-on-error`, `--config` and any flag not here, since
- * none of them is in the list.
+ * `up` is refused with `--skip-preview`, `--show-secrets`, `--replace`,
+ * `--target-replace`, `--exclude`, `--remote`, `--continue-on-error`,
+ * `--config` and any flag not here, since none of them is in the list.
+ * `--refresh` and `--target-dependents` (#4627) come in the tail's order,
+ * `--target-dependents` only after a `--target`. plunge's `up --plan`
+ * applies a saved plan whose preview did the refresh, so it takes no
+ * `--refresh`.
  */
 export const PULUMI_APPLY_COMMANDS: readonly string[] = [
-  "plunge up --plan <file> --yes --json --stack <stack> [--config-file <file>] [--target <urn>]... [--policy-pack <dir> [--policy-pack-config <file>]]...",
-  "pulumi up --yes --json --stack <stack> [--config-file <file>] [--target <urn>]... [--policy-pack <dir> [--policy-pack-config <file>]]...",
+  "plunge up --plan <file> --yes --json --stack <stack> [--config-file <file>] [--target <urn>... [--target-dependents]] [--policy-pack <dir> [--policy-pack-config <file>]]...",
+  "pulumi up --yes --json --stack <stack> [--config-file <file>] [--refresh] [--target <urn>... [--target-dependents]] [--policy-pack <dir> [--policy-pack-config <file>]]...",
 ];
 
 /** A CrossGuard pack the preview and `up` run (ruling 7: in the preview job, feeding chant's gate). */
@@ -323,13 +326,20 @@ export interface PulumiApplyTail {
   /** A scratch copy of the stack's config file, passed as `--config-file` (#4541): never `--config`, which writes the working tree's file. */
   configFile?: string;
   targets?: readonly string[];
+  /** `--refresh` (#4627): refresh the stack's state before the preview or `pulumi up`. */
+  refresh?: boolean;
+  /** `--target-dependents` (#4627): with `targets`, their dependents too. */
+  targetDependents?: boolean;
   policyPacks?: readonly PulumiPolicyPack[];
 }
 
 function tailArgs(t: PulumiApplyTail): string[] {
+  const targets = t.targets ?? [];
   return [
     ...(t.configFile ? ["--config-file", t.configFile] : []),
-    ...(t.targets ?? []).flatMap((u) => ["--target", u]),
+    ...(t.refresh ? ["--refresh"] : []),
+    ...targets.flatMap((u) => ["--target", u]),
+    ...(t.targetDependents && targets.length > 0 ? ["--target-dependents"] : []),
     ...(t.policyPacks ?? []).flatMap((p) => ["--policy-pack", p.dir, ...(p.config ? ["--policy-pack-config", p.config] : [])]),
   ];
 }
@@ -356,17 +366,21 @@ export function pulumiUpArgs(opts: { stack: string } & PulumiApplyTail): string[
 
 const isValue = (v: string | undefined): v is string => typeof v === "string" && v.length > 0 && !v.startsWith("-");
 
-/** Whether `rest` is exactly an apply tail, in its order. */
-function wellFormedTail(rest: string[]): boolean {
+/** Whether `rest` is exactly an apply tail, in its order; `refresh` says whether `--refresh` may stand in it (#4627). */
+function wellFormedTail(rest: string[], refresh = true): boolean {
   let i = 0;
   if (rest[i] === "--config-file") {
     if (!isValue(rest[i + 1])) return false;
     i += 2;
   }
+  if (refresh && rest[i] === "--refresh") i += 1;
+  let targets = 0;
   while (rest[i] === "--target") {
     if (!isValue(rest[i + 1])) return false;
     i += 2;
+    targets++;
   }
+  if (targets > 0 && rest[i] === "--target-dependents") i += 1;
   while (rest[i] === "--policy-pack") {
     if (!isValue(rest[i + 1])) return false;
     i += 2;
@@ -388,7 +402,7 @@ function allowedPlungeUp(args: string[]): boolean {
     args[4] === "--json" &&
     args[5] === "--stack" &&
     isValue(args[6]) &&
-    wellFormedTail(args.slice(7))
+    wellFormedTail(args.slice(7), false)
   );
 }
 

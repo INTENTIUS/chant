@@ -132,6 +132,10 @@ export interface PrPlanSetOptions {
   targets?: Readonly<Record<string, readonly string[]>>;
   /** How many members of a wave plan at once (#4625, `pr-plan --parallelism`); a group counts as one. Default: all of them. */
   parallelism?: number;
+  /** `pr-plan --refresh` (#4627): every step's `DeployContext.refresh`. */
+  refresh?: boolean;
+  /** `pr-plan --target-dependents` (#4627): `DeployContext.targetDependents` for each component with targets. */
+  targetDependents?: boolean;
   /** `ci.lockGrain` as declared at base (#4552); absent, each member takes its lexicon's default. */
   lockGrain?: LockGrain;
   /** The commit policy is read at (#4613), every step's `DeployContext.policyBase`: the pull request's base. */
