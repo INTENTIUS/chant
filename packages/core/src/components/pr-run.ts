@@ -116,6 +116,7 @@ import type { RunEventSink } from "../run-event-stream";
 import { capabilitySteps, planWaveComponent, readDeployedOutputs, type CapabilityPolicyFindings, type WaveComponentPlan } from "./wave-plan";
 import type { PrMigrationFile } from "../pr-migrations";
 import { markCrossStackEdges, type CrossStackRead } from "../control/edges";
+import { mapLimited } from "../parallelism";
 
 export interface PrPlanSetOptions {
   /** Every component in the project, not the selection: a planned member's dependency outside it is read too (#4104). */
@@ -129,6 +130,8 @@ export interface PrPlanSetOptions {
   seededOutputs?: Record<string, Record<string, unknown>>;
   /** The addresses each component narrows to (#4300), by component: its steps' `DeployContext.targets`. */
   targets?: Readonly<Record<string, readonly string[]>>;
+  /** How many members of a wave plan at once (#4625, `pr-plan --parallelism`); a group counts as one. Default: all of them. */
+  parallelism?: number;
   /** `ci.lockGrain` as declared at base (#4552); absent, each member takes its lexicon's default. */
   lockGrain?: LockGrain;
   /** The commit policy is read at (#4613), every step's `DeployContext.policyBase`: the pull request's base. */
@@ -279,18 +282,18 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
       });
     };
     const groupsHere = [...new Set(wave.map((name) => groupOf.get(name)).filter((g): g is FanOutGroup => g !== undefined))];
-    const results = (
-      await Promise.all([
+    // #4625: at most `parallelism` plans at once, members and groups alike.
+    const tasks: Array<() => Promise<WaveComponentPlan[]>> = [
         ...wave
           .filter((name) => !groupOf.has(name))
-          .map(async (name) => {
+          .map((name) => async () => {
             emit?.({ type: "step-start", component: name, phase: PR_PLAN_PHASE, step: "plan" });
             const start = Date.now();
             const p = await planWaveComponent(byName.get(name)!, options.registry, deployContext(options, name), outputs);
             settle(name, start, p);
             return [p];
           }),
-        ...groupsHere.map(async (group) => {
+        ...groupsHere.map((group) => async () => {
           for (const name of group.components) emit?.({ type: "step-start", component: name, phase: PR_PLAN_PHASE, step: "plan" });
           const start = Date.now();
           const g = await planComponentGroup({
@@ -307,8 +310,8 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
           groups.push({ ...group, digest: g.digest ?? null, ...(error !== undefined ? { error } : {}), ...(g.run ? { run: g.run } : {}) });
           return g.plans;
         }),
-      ])
-    ).flat();
+    ];
+    const results = (await mapLimited(tasks, options.parallelism, (task) => task())).flat();
     /** What each member of a group planned to expose, for its group-mates' reads. */
     const plannedHere = new Map(results.map((p) => [p.component, "error" in p ? undefined : p.outputs?.known]));
     for (const p of results) {

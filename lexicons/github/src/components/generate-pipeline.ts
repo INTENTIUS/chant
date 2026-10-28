@@ -59,7 +59,7 @@
 import { resolveComponentGraph, type DriverComponent } from "@intentius/chant/components/driver";
 import { hasPublishStep, promoteArchivePaths } from "@intentius/chant/components/promote";
 import { GATED_WAVE_RECORD, gatedWaveJobs } from "@intentius/chant/components/gated-wave-pipeline";
-import { CI_IMAGE, ciJobName, dirnameOf, fillCommand, GITHUB_JOB_TOKEN, GITHUB_RUNNER } from "@intentius/chant/ci-jobs";
+import { CI_IMAGE, ciJobName, dirnameOf, fillCommand, GITHUB_JOB_TOKEN, GITHUB_RUNNER, githubRunsOn } from "@intentius/chant/ci-jobs";
 import { CHECKOUT_TOKEN_ENV, checkoutScript, dropForgeTokens, handoverOutputs, handoverTrap, takeOverScript } from "@intentius/chant/ci-handover";
 import { OIDC_REQUEST_VARS, TRADE_SPEC_ENV, tradeLine, type CloudTradeSpec } from "@intentius/chant/ci-identity";
 import {
@@ -87,6 +87,8 @@ import {
   prLoopWaveJobs,
   prLoopWithWaves,
   prEnvJobs,
+  prLoopJobStage,
+  prLoopRunner,
   PR_ENV_REPORT_DIR,
   PR_ENV_SWEEP_CRON,
   PR_ENV_POST_JOB,
@@ -580,6 +582,12 @@ function prLoopGithubDoc(
   }
   // #4301: a /chant apply comment starts the apply before merge. #4588: and a lock or unlock comment its job.
   if (loop.applyBeforeMerge || commentLocks.length > 0 || preview) on.issue_comment = { types: ["created"] };
+  // #4625: each job on its stage's runner, the plan side's, the apply side's, or the default.
+  if (loop.runners) {
+    for (const [name, job] of Object.entries(jobsDoc) as Array<[string, Record<string, unknown>]>) {
+      job["runs-on"] = githubRunsOn(prLoopRunner(loop, prLoopJobStage(name)));
+    }
+  }
   return {
     name: member ? `chant-pr.${member.name}.${env}` : `chant-pr-${env}`,
     environment: env,

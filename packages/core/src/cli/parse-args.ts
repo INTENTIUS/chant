@@ -469,6 +469,12 @@ export function parseArgs(args: string[]): ParsedArgs {
       const raw = args[++i];
       if (!raw || raw.startsWith("-")) throw new Error("--target needs an address: --target <component>:<address>, or on pr-plan --target <address>");
       (result.targets ??= []).push(raw);
+    } else if (arg === "--parallelism") {
+      // `chant components pr-plan --parallelism <n>` (#4625): members of a wave planned at once.
+      const raw = args[++i];
+      const n = Number(raw);
+      if (!Number.isInteger(n) || n < 1) throw new Error(`--parallelism needs a whole number of 1 or more: got "${raw ?? ""}"`);
+      result.parallelism = n;
     } else if (arg === "--canary") {
       const raw = args[++i];
       if (!raw || raw.startsWith("-")) throw new Error("--canary needs a component name: --canary <name>[,<name>...]");
@@ -569,6 +575,21 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--pr-env") {
       // `chant build --pr-loop --pr-env` (#4298): add the pull request environment's jobs.
       result.prEnv = true;
+    } else if (arg === "--pr-runner") {
+      // `chant build --pr-loop --pr-runner <stage>=<label>[,<label>...]` (#4625).
+      const raw = args[++i] ?? "";
+      const m = /^(plan|apply|default)=(.+)$/.exec(raw);
+      if (!m) throw new Error(`--pr-runner needs <stage>=<label>[,<label>...], the stage plan, apply or default: got "${raw}"`);
+      const labels = m[2]!.split(",").map((l) => l.trim()).filter(Boolean);
+      if (labels.length === 0) throw new Error(`--pr-runner ${m[1]} names no label`);
+      (result.prRunners ??= {})[m[1] as "plan" | "apply" | "default"] = labels;
+    } else if (arg === "--pr-variable" || arg === "--pr-secret") {
+      // `chant build --pr-loop --pr-variable <NAME>=<value>` and `--pr-secret <NAME>=<secret>` (#4625).
+      const raw = args[++i] ?? "";
+      const at = raw.indexOf("=");
+      if (at < 1) throw new Error(`${arg} needs <NAME>=<${arg === "--pr-secret" ? "secret" : "value"}>: got "${raw}"`);
+      const into = arg === "--pr-secret" ? (result.prSecrets ??= {}) : (result.prVariables ??= {});
+      into[raw.slice(0, at)] = raw.slice(at + 1);
     } else if (arg === "--pr-build") {
       // `chant build --pr-loop --pr-build` (#4088), and `chant ci run --pr-build` (#4094).
       result.prBuild = true;

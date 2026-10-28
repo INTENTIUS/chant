@@ -333,6 +333,8 @@ export interface ParsedArgs {
    * (`prPlanTargets`).
    */
   targets?: string[];
+  /** `chant components pr-plan --parallelism <n>` (#4625): how many members of a wave plan at once. */
+  parallelism?: number;
   /** `chant components fan-out --canary <component>` (#3049), repeatable — components that form wave 1. */
   canary?: string[];
   /**
@@ -425,6 +427,12 @@ export interface ParsedArgs {
   previewComment?: boolean;
   /** `chant build --pr-loop --pr-build` (#4088) — build and lint before pr-plan and pr-apply. */
   prBuild?: boolean;
+  /** `chant build --pr-loop --pr-runner <stage>=<label>[,<label>...]` (#4625), repeatable: a stage's runner, plan, apply or default. */
+  prRunners?: Partial<Record<"plan" | "apply" | "default", string[]>>;
+  /** `chant build --pr-loop --pr-variable <NAME>=<value>` (#4625), repeatable: a variable of the jobs that plan or apply. */
+  prVariables?: Record<string, string>;
+  /** `chant build --pr-loop --pr-secret <NAME>=<secret>` (#4625), repeatable: a secret passed to the jobs that plan or apply. */
+  prSecrets?: Record<string, string>;
   /** `chant ci serve --build-command <line>` (#4169) — the line that builds a commit a `ci/build/<sha>` tag asks for, in a worktree of it. */
   ciBuildCommand?: string;
   /** `chant ci serve --land` (#4168 4.4) — fast-forward the target branch to each pushed `chant/land/<name>` branch whose `ci.green.preMerge` phases pass on it. */

@@ -58,6 +58,7 @@ The spec is a JSON file committed to the repository. Its jobs read it at run tim
 | `waves[].hooks` | This wave's own hooks, run after the spec's |
 | `waves[].environment`, `variables`, `setup` | The wave's forge environment, its jobs' variables, and steps run after the checkout |
 | `runner`, `waves[].runner` | Where the jobs run: a label, a list of labels, or `{ "group", "labels"? }` (GitHub only). `runs-on` on GitHub and Forgejo, `tags` on GitLab. A wave's wins over the spec's. Default: the forge's default runner ([Runners and job groups](#runners-and-job-groups)) |
+| `parallelism`, `waves[].parallelism` | How many runs of a wave apply at once, a wave's winning over the spec's ([#4625](https://github.com/INTENTIUS/chant/issues/4625)). Default 1. Over 1 it needs `step`. A run waits for each run listed before it in the wave that it depends on, and is blocked when that run failed |
 | `waves[].idTokens` | `{ "<VARIABLE>": "<audience>" }`: the OIDC tokens the wave's jobs get ([Runners and job groups](#runners-and-job-groups)) |
 | `waves[].jobs` | Job groups: the wave's apply split into one job per group, each with the runs it applies and its own `runner`, `environment`, `variables`, `setup`, `idTokens` and `shares` ([Runners and job groups](#runners-and-job-groups)) |
 | `resume` | `{ "schedule": "<cron>" }` renders a scheduled job that resumes waiting waves whose approval arrived ([Resume the waiting job](#resume-the-waiting-job)) |

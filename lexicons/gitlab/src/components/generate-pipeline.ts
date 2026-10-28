@@ -34,12 +34,14 @@
 
 import {
   assertGitlabBranch,
+  assertRunnerLabels,
   CI_IMAGE,
   ciJobName,
   fillCommand,
   GITLAB_FULL_HISTORY,
   GITLAB_MERGE_REQUEST_SOURCE,
   gitlabPushRule,
+  gitlabTags,
 } from "@intentius/chant/ci-jobs";
 import { resolveComponentGraph, type DriverComponent } from "@intentius/chant/components/driver";
 import { hasPublishStep, promoteArchivePaths } from "@intentius/chant/components/promote";
@@ -65,6 +67,8 @@ import {
   prCommentPreviewJob,
   PR_ENV_REPORT_DIR,
   PR_ENV_POST_JOB,
+  prLoopJobStage,
+  prLoopRunner,
 } from "@intentius/chant/components/pr-pipeline";
 import { REPO_APPLY_GROUP } from "@intentius/chant/components/repo-lock";
 import { memberGitlabChanges, memberRepoPath, memberShellDir } from "@intentius/chant/lexicon";
@@ -583,6 +587,15 @@ function prLoopGitlabPipeline(
     ...(controlJob ? [{ jobName: controlJob, component: "control repo dispatch", stage: control!.name, needs: [lastGreen!] }] : []),
     ...(prEnv ? prEnv.listed : []),
   ];
+  // #4625: each job on its stage's runner tags, the plan side's, the apply side's, or the default.
+  if (loop.runners) {
+    for (const stage of ["plan", "apply", "default"] as const) assertRunnerLabels("The merge-request pipeline", `runners.${stage}`, loop.runners[stage], "GitLab");
+    for (const job of jobs) {
+      const tags = gitlabTags(prLoopRunner(loop, prLoopJobStage(job.jobName, member?.name)));
+      const entry = doc[job.jobName] as Record<string, unknown> | undefined;
+      if (tags && entry) doc[job.jobName] = { ...entry, tags };
+    }
+  }
   const yaml = emitGitlabFile(["workflow", "stages", "variables", planJob, noteJob, ...commentLocks.map((c) => c.name), ...(previewName && previewNoteName ? [previewName, previewNoteName] : []), ...applies.map((a) => a.name), ...(controlJob ? [controlJob] : []), ...Object.keys(prEnv?.jobs ?? {})].map((key) => [key, doc[key]] as const));
   return { yaml, stages, jobs, env };
 }

@@ -99,6 +99,7 @@ import { parseRespondList, type CiResponses } from "../ci-respond";
 import { WAVE_GATE_NAME_PATTERN, waveGateNameFrom, waveShare } from "../wave-layout";
 import { waveOutcomeFileName } from "../wave-blocked";
 import { NEXT_RELEASE } from "../release-floors";
+import { parallelismProblem } from "../parallelism";
 import { opWaveHoldsProblems, opWaveStepProblems, type OpWaveHolds, type OpWaveStep } from "./op-waves-capability-spec";
 import { opWaveReleaseProblems, type OpWaveReleaseNames } from "./op-waves-release";
 import { CONTROL_DISPATCH_JOB, CONTROL_NAME, controlSettingsProblems, resolveControlTarget, type ControlSettingsInput, type ControlTarget } from "../control/dispatch";
@@ -390,6 +391,8 @@ export interface OpWave {
   hooks?: OpWaveHooks;
   /** Where this wave's jobs run (#3914). Default: the spec's `runner`. */
   runner?: OpWaveRunner;
+  /** How many of the wave's runs apply at once (#4625), over the spec's `parallelism`. */
+  parallelism?: number;
   /**
    * The OIDC tokens this wave's jobs get (#3914), as `{ <variable>: <audience> }`;
    * see {@link OpWaveJobGroup.idTokens}. With `jobs`, these are the deciding
@@ -488,6 +491,13 @@ export interface OpWavesSpec {
    * moved exits 4. See `./op-waves-capability.ts`.
    */
   step?: OpWaveStep;
+  /**
+   * How many runs of a wave apply at once (#4625), a wave's own
+   * `parallelism` winning. Default 1, one at a time. Over 1 it needs `step`:
+   * a run whose wave lists one of its `dependsOn` before it waits for that
+   * one, and is blocked when it failed, as one at a time.
+   */
+  parallelism?: number;
   /**
    * Holds the wave runs over its plans (#4545), read at the base commit
    * with the policy: `policy` runs the workspace's `ci.policy` over each
@@ -944,6 +954,13 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
   }
   if (spec.neverOverMcp !== undefined && typeof spec.neverOverMcp !== "boolean") throw new Error(`${where}: neverOverMcp must be true or false.`);
   if (spec.runner !== undefined) assertOpWaveRunner(where, "runner", spec.runner);
+  // #4625: runs applied at once need the capability step, whose apply is one call per run with no gate in it.
+  for (const [field, value] of [["parallelism", spec.parallelism] as const, ...spec.waves.map((w) => [`wave "${w.name}" parallelism`, w.parallelism] as const)]) {
+    if (value === undefined) continue;
+    const problem = parallelismProblem(field, value);
+    if (problem) throw new Error(`${where}: ${problem}.`);
+    if (value > 1 && spec.step === undefined) throw new Error(`${where}: ${field} is ${value}, and runs apply at once only through \`step\`; drop it or give step.`);
+  }
   if (spec.notify !== undefined) {
     const problem = notifyConfigProblem(spec.notify, "notify");
     if (problem) throw new Error(`${where}: ${problem}`);
