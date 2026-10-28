@@ -11,7 +11,7 @@ import { formatError, formatWarning } from "../format";
 import type { CommandContext } from "../registry";
 import { queryLedgers } from "./query";
 
-const USAGE = "chant ledger <resources|snapshots|runs|gates|deploys|releases|cuts|applies|pr_envs> [dir] [--member <name>] [--where <field><op><value>]... [--since <time>] [--at <rev>] [--json]";
+const USAGE = "chant ledger <resources|snapshots|runs|gates|deploys|releases|cuts|applies|pr_envs|control_entries> [dir] [--member <name>] [--where <field><op><value>]... [--since <time>] [--at <rev>] [--json]";
 
 const cell = (v: unknown): string => (v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v));
 

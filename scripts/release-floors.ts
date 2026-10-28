@@ -87,6 +87,8 @@ const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: str
   { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "`rows[].request` on the `gates` table, and the same columns of `chant query` | {v} |", count: 1, floor: "LEDGER_WAVE_COLUMNS_FLOOR" },
   { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "the `applies` and `pr_envs` tables, in `chant ledger` and `chant query` | {v} |", count: 1, floor: "LEDGER_APPLIES_FLOOR" },
   { file: "packages/core/src/workspace/ledger.schema.json", text: "applies and pr_envs were added within version 1 by #4551, read by chant {v} and newer", count: 1, floor: "LEDGER_APPLIES_FLOOR" },
+  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "the `control_entries` table, in `chant ledger` and `chant query` | {v} |", count: 1, floor: "LEDGER_CONTROL_ENTRIES_FLOOR" },
+  { file: "packages/core/src/workspace/ledger.schema.json", text: "was added within version 1 by #4593, read by chant {v} and newer", count: 1, floor: "LEDGER_CONTROL_ENTRIES_FLOOR" },
   { file: "packages/core/src/workspace/ledger.schema.json", text: "added within version 1 by #4551, read by chant {v} and newer, are the op wave job", count: 1, floor: "LEDGER_WAVE_COLUMNS_FLOOR" },
   { file: "packages/core/src/workspace/declaration.schema.json", text: "organization or organization:admin. Added in schema 1 by chant {v}, so a declaration that uses it sets minReader to {v} or newer.", count: 1, floor: "PULUMI_CLOUD_IDENTITY_FLOOR" },
   { file: "docs/src/content/docs/guide/security-cloud-identities.mdx", text: "needs chant {v} or newer as its `minReader` (`PULUMI_CLOUD_IDENTITY_FLOOR`)", count: 1, floor: "PULUMI_CLOUD_IDENTITY_FLOOR" },

@@ -1142,6 +1142,7 @@ The ledger lines behind these fields follow the same rule. A pending fact and a 
 | `ledger` | `rows[].root_member` on the `runs` table, and the `root_member` column of `chant query`'s `runs` | 0.124.54 | The member whose directory holds the terraform root a TerraformApplyOp run applied, from its Init step's `TerraformRootPath` outcome, or `null` when unknown ([#4482](https://github.com/INTENTIUS/chant/issues/4482), [#4500](https://github.com/INTENTIUS/chant/issues/4500)). See [Op runs per member](#op-runs-per-member) |
 | `ledger` | `rows[].wave` on the `runs` table, `rows[].change_set` and `rows[].request` on the `gates` table, and the same columns of `chant query` | 0.124.55 | The op wave job a run record is for, the stored change set a gate line cites, and the gated request a pending fact asks for ([#4551](https://github.com/INTENTIUS/chant/issues/4551)), or `null` |
 | `ledger` | the `applies` and `pr_envs` tables, in `chant ledger` and `chant query` | 0.124.55 | Each apply under an approval in `_gates/<op>/applied.jsonl` with its `finished` line, and each line of `_pr-envs/records.jsonl` ([#4551](https://github.com/INTENTIUS/chant/issues/4551)) |
+| `ledger` | the `control_entries` table, in `chant ledger` and `chant query` | 0.124.55 | Each version of a control repo entry in `_control/entries.jsonl`, with its digest, the digest it replaced and whether it is the entry's newest ([#4568](https://github.com/INTENTIUS/chant/issues/4568), [#4593](https://github.com/INTENTIUS/chant/issues/4593)) |
 
 ## Reading older records
 

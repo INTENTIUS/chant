@@ -44,6 +44,7 @@ Every table starts with `member`. A column marked JSON holds JSON text for `json
 | `cuts` | line of `_releases/cuts.jsonl` | `release_digest`, `label`, `actor`, `timestamp`, `run_id`, `forge`, `channel`, `signed` (INTEGER), `composed_base` |
 | `applies` | `applied` or `changes` line of `_gates/<op>/applied.jsonl`, with its `finished` line ([#4551](https://github.com/INTENTIUS/chant/issues/4551)) | `op`, `gate`, `kind`, `plan_digest`, `approved_at`, `approved_by`, `timestamp`, `run_id`, `git_sha`, `wave` (JSON), `finished_at`, `result`, `detail` (JSON) |
 | `pr_envs` | line of `_pr-envs/records.jsonl` ([#4551](https://github.com/INTENTIUS/chant/issues/4551)) | `kind` (`up` or `down`), `pr` (INTEGER), `env`, `env_member`, `template`, `git_sha`, `components` (JSON), `plan_digest`, `result`, `by`, `timestamp`, `expires_at`, `approvers` (JSON), `reason`, `run_url` |
+| `control_entries` | line of the control repo's `_control/entries.jsonl`, one version of an entry ([#4593](https://github.com/INTENTIUS/chant/issues/4593)) | `id`, `entry` (`project` or `defaults`), `project`, `state` (`active` or `retired`), `product`, `settings` (JSON), `estates` (JSON), `by`, `timestamp`, `digest`, `prev_digest`, the digest of the version it replaced, and `current` (INTEGER), 1 on each id's newest version |
 | `chant_schema` | column of every table above | `version` (INTEGER), `table_name`, `column_name`, `type`, `position` (INTEGER) |
 
 The columns are listed in `QUERY_TABLES` (`packages/core/src/lifecycle/query.ts:49`).
