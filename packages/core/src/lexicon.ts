@@ -1,6 +1,7 @@
 import type { InstanceObservation } from "./instance-nodes";
 import type { CiRunner } from "./ci-jobs";
 import type { OpAgentSpec } from "./ci-agent";
+import type { CloudTradeSpec } from "./ci-identity";
 import type { EngineFacts } from "./engine-facts";
 import type { CapabilityPack } from "./capabilities/view";
 import type { Serializer } from "./serializer";
@@ -934,6 +935,37 @@ export interface ScheduledOpSpec {
    * branch. The model's job holds no write token; the push job does.
    */
   agent?: OpAgentSpec;
+  /**
+   * The job's cloud identities (#4631), as an op wave's `cloud` (#4332,
+   * #4549): the three generators trade the job's OIDC token for them in a
+   * step before the checkout, and every later step drops the variables a
+   * token is requested with. The job alone gets `id-token: write`; the
+   * finding-mode's permissions stay as they are. Build one with
+   * `cloudIdentityWave` from `@intentius/chant/ci-identity`.
+   */
+  cloud?: CloudTradeSpec;
+  /**
+   * An update the Op's run starts on drift (#4631): a job of its own after
+   * the Op's job, started only when the run exits with chant's drift code,
+   * which trades for `update.cloud` and runs `update.command`. The drift
+   * check never holds the update's identity, and the update never runs the
+   * check. A cron or pull_request trigger only.
+   */
+  update?: ScheduledOpUpdate;
+}
+
+/** A scheduled Op's update on drift (#4631). */
+export interface ScheduledOpUpdate {
+  /** The shell line the update job runs, such as `npx --no-install plywood up`. */
+  command: string;
+  /** The identity only the update job holds. Absent: the update runs with no cloud identity of its own. */
+  cloud?: CloudTradeSpec;
+  /** Scopes the update job adds to `contents: read`, as {@link ScheduledOpSpec.permissions}. */
+  permissions?: Record<string, "read" | "write">;
+  /** The forge environment the update job runs in. */
+  environment?: OpEnvironment;
+  /** Variables for the update job alone. */
+  variables?: Record<string, string>;
 }
 
 /**

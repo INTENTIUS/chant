@@ -1084,8 +1084,8 @@ const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 /** The key each cloud of a `cloud` trade names its identity under (`IDENTITY_KEY` in ../ci-identity.ts, kept here so this module imports none of it). */
 const CLOUD_IDENTITY_KEY: Record<string, string> = { aws: "role", gcp: "serviceAccount", azure: "clientId", pulumi: "token" };
 
-/** Refuse a `cloud` (#4332) the trade could not run: an unknown cloud, one that names no identity, or no audience. */
-function assertOpWaveCloud(where: string, field: string, cloud: unknown): void {
+/** Refuse a `cloud` (#4332) the trade could not run: an unknown cloud, one that names no identity, or no audience. Scheduled Ops check theirs with it too (#4631). */
+export function assertOpWaveCloud(where: string, field: string, cloud: unknown): void {
   if (cloud === null || typeof cloud !== "object" || Array.isArray(cloud) || Object.keys(cloud).length === 0) throw new Error(`${where}: ${field} must name one or more of aws, gcp, azure and pulumi.`);
   for (const [name, c] of Object.entries(cloud as Record<string, unknown>)) {
     const key = CLOUD_IDENTITY_KEY[name];
