@@ -154,6 +154,7 @@ import {
   pendingFields,
   readHoldRequest,
   runHookList,
+  runHookListAsync,
   runStageHooks,
   runStageHooksAsync,
   spawnExec,
@@ -786,6 +787,13 @@ export interface RunOpWaveOptions {
    * files go on the run record. See `./op-waves-after-plan.ts`.
    */
   afterPlan?: OpWaveAfterPlanHook | readonly OpWaveAfterPlanHook[];
+  /**
+   * How the spec's command hooks run (#4614), when they call back into the
+   * caller's own process: a product that runs the wave in process and serves
+   * its hooks from that process passes an exec that lets the event loop run
+   * while a hook does. Default: `exec`, which waits with `spawnSync`.
+   */
+  hookExec?: OpWaveAsyncExec;
 }
 
 /** Where an op wave job's run record goes (#4551). */
@@ -1339,7 +1347,10 @@ async function runHooks(
 ): Promise<HooksOutcome> {
   if (!hooks || hooks.length === 0) return { holds: [] };
   const runsPath = writeRunsFile(ctx, runs, members, digest);
-  const out = runHookList(placeOf(ctx), moment, hooks, hookRuns(ctx, runs, members), runsPath, extraEnv);
+  const hookExec = ctx.options.hookExec;
+  const out = hookExec
+    ? await runHookListAsync({ ...placeOf(ctx), exec: hookExec }, moment, hooks, hookRuns(ctx, runs, members), runsPath, extraEnv)
+    : runHookList(placeOf(ctx), moment, hooks, hookRuns(ctx, runs, members), runsPath, extraEnv);
   ctx.result.hooks.push(...out.outcomes);
   const back: HooksOutcome = { holds: out.holds, ...(out.failed ? { failed: out.failed } : {}) };
   if (out.failed) return back;
@@ -1366,7 +1377,7 @@ async function runHooks(
       rmSync(holdPath, { force: true });
       let code: number;
       try {
-        code = ctx.exec(hold.argv, ctx.cwd, approvedEnv);
+        code = hookExec ? await hookExec(hold.argv, ctx.cwd, approvedEnv) : ctx.exec(hold.argv, ctx.cwd, approvedEnv);
       } catch (err) {
         ctx.log(`${hold.label} did not run: ${err instanceof Error ? err.message : String(err)}`);
         code = 127;

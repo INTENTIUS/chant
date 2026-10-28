@@ -214,6 +214,8 @@ export function foldPolicyRows(
 export interface ProductWaveHook {
   afterPlan?: OpWaveAfterPlanHook | readonly OpWaveAfterPlanHook[];
   capabilities?: import("../components/capability").CapabilityRegistry;
+  /** How the spec's command hooks run, when they call back into the product's process (`RunOpWaveOptions.hookExec`). */
+  hookExec?: import("./stage-hooks").OpWaveAsyncExec;
 }
 
 let activeWave: ProductWaveHook | undefined;

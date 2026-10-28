@@ -211,6 +211,33 @@ describe("after-plan hooks in the job's process (#4614)", () => {
     h.done();
   });
 
+  test("hookExec runs the command hooks with the event loop free", async () => {
+    const withHook: OpWavesSpec = { ...spec, hooks: { after: { plan: [{ name: "view", command: ["view", "{target}"], perRun: true }] } } };
+    const h = harness(withHook);
+    const { registry } = capability(h.cwd, digests);
+    const sync: string[][] = [];
+    const async: string[][] = [];
+    const result = await runOpWave({
+      spec: withHook,
+      specFile: "waves.json",
+      wave: 1,
+      cwd: h.cwd,
+      show: h.show,
+      gates: memoryGateLedgerPort(),
+      capabilities: registry,
+      exec: (argv) => (sync.push(argv), 0),
+      hookExec: async (argv) => {
+        await new Promise((r) => setImmediate(r));
+        async.push(argv);
+        return 0;
+      },
+    });
+    expect(result.exitCode).toBe(0);
+    expect(sync).toEqual([]);
+    expect(async.map((a) => a[1])).toEqual(["network", "app", "db"]);
+    h.done();
+  });
+
   test("a hook that runs once for the wave cannot name {planJson}", () => {
     expect(() => assertOpWavesSpec({ ...spec, hooks: { after: { plan: [{ command: ["view", "{planJson}"] }] } } })).toThrow(/runs once for the wave/);
     expect(() => assertOpWavesSpec({ ...spec, hooks: { before: { plan: [{ command: ["view", "{planJson}"], perRun: true }] } } })).toThrow(/before the plan/);
