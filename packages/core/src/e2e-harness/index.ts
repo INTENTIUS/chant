@@ -28,7 +28,7 @@ export const E2E_HARNESS_FLOOR = NEXT_RELEASE;
  */
 export function harnessProjectDir(): string {
   const here = import.meta.dirname;
-  const candidates = [join(here, "project"), join(here, "..", "..", "src", "e2e-harness", "project")];
+  const candidates = [join(here, "__project__"), join(here, "..", "..", "src", "e2e-harness", "__project__")];
   const found = candidates.find((d) => existsSync(join(d, "src", "compose.ts")));
   if (!found) throw new Error(`the e2e harness's compose project is not next to ${here}`);
   return found;
