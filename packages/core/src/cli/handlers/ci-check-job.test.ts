@@ -47,7 +47,7 @@ describe("chant ci check-job on GitHub", () => {
   test("refuses a job that cannot read its environment", async () => {
     const code = await runCiCheckJob(ctx, withSpec(gh, { GITHUB_REF: "refs/heads/main" }), noFetch);
     expect(code).toBe(1);
-    expect(errors[0]).toContain("it needs permissions: id-token: write");
+    expect(errors[0]).toContain("it needs the id-token: write permission");
   });
 
   test("refuses another ref", async () => {

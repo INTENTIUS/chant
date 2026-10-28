@@ -97,7 +97,7 @@ describe("a runner per wave and job groups per wave (#3914)", () => {
     expect(yaml).toMatch(/wave-1-dev:\n\s+stage: wave-1-dev\n\s+image: node:22\n\s+tags:\n\s+- docker\n\s+- dev\n/);
     expect(yaml).toMatch(/wave-2-prod-decide:\n\s+stage: wave-2-prod\n\s+image: node:22\n\s+tags:\n\s+- plan\n\s+resource_group: migrations-prod\n\s+id_tokens:\n\s+PLAN_TOKEN:\n\s+aud: plan.example\n/);
     expect(yaml).toMatch(
-      /wave-2-prod-us:\n\s+stage: wave-2-prod\n\s+image: node:22\n\s+tags:\n\s+- us-apply\n\s+resource_group: migrations-prod\n\s+environment:\n\s+name: prod-us\n\s+id_tokens:\n\s+CLOUD_TOKEN:\n\s+aud: us.example\n\s+variables:\n\s+GIT_DEPTH: '0'\n\s+REGION: us\n[\s\S]*?needs:\n\s+- wave-2-prod-decide\n\s+script:\n\s+- echo us\n\s+- chant run wave --spec waves.json --wave 2 --group us\n/,
+      /wave-2-prod-us:\n\s+stage: wave-2-prod\n\s+image: node:22\n\s+tags:\n\s+- us-apply\n\s+resource_group: migrations-prod\n\s+environment:\n\s+name: prod-us\n\s+id_tokens:\n\s+CLOUD_TOKEN:\n\s+aud: us.example\n\s+variables:\n\s+GIT_DEPTH: '0'\n\s+REGION: us\n\s+CHANT_JOB_GUARD: [^\n]*\n[\s\S]*?needs:\n\s+- wave-2-prod-decide\n\s+script:\n\s+- [^\n]*node -e[^\n]*\n\s+- echo us\n\s+- chant run wave --spec waves.json --wave 2 --group us\n/,
     );
     expect(yaml).toMatch(/wave-2-prod-eu:[\s\S]*?id_tokens:\n\s+CLOUD_TOKEN:\n\s+aud: eu.example\n/);
     expect(yaml).not.toContain("_AUDIENCE");
@@ -122,8 +122,10 @@ describe("an Op wave's jobs by cloud identity (#4332)", () => {
     for (const [name, ids] of Object.entries(want)) {
       const job = doc[name]!;
       expect(job.id_tokens).toEqual({ OTHER_TOKEN: { aud: "other.example" }, CHANT_ID_TOKEN_AWS: { aud: "sts.amazonaws.com" } });
-      expect(job.script.slice(0, 3)).toEqual(gitlabTradeLines());
-      expect(job.script[3]).toBe("npm ci");
+      // #4624: the apply-job guard first, then the trade.
+      expect(job.script[0]).toMatch(/^\(cd \/ && node -e '/);
+      expect(job.script.slice(1, 4)).toEqual(gitlabTradeLines());
+      expect(job.script[4]).toBe("npm ci");
       expect(tradeIdentities(JSON.parse(job.variables[TRADE_SPEC_ENV]!))).toEqual(ids);
     }
     expect(JSON.stringify(doc["wave-1-prod-decide"])).not.toContain("apply\"");
