@@ -1188,10 +1188,10 @@ Component release ledger + status:
                             member's loop, gate op pr-<n>-<member>;
                             --resume <file> finishes an apply that failed
                             partway under the same approval;
-                            --wave-gate <name>: apply a wave at a time, each
-                            planned after the one before applied, a moved
-                            wave waiting at <name>-wave-<k>, with --wave <k>
-                            for one wave per CI job;
+                            --wave-gate <name>: apply a wave at a time on op
+                            waves, each planned after the one before applied,
+                            a moved wave waiting at <name>-wave-<k>, with
+                            --wave <k> for one wave per CI job;
                             --green: apply the green commit at HEAD, measured
                             from the one last applied to --env, under the
                             approved plans of the merges since, else at gate
@@ -1207,6 +1207,16 @@ Component release ledger + status:
                             stream on stdout; --report-url <s3 or file URL>,
                             both commands: copy the report, the change set
                             and the events to <url>/<pr>/<commit>/)
+  components plan-wave --runs <file> --plans <file> --base <ref> --env <env>
+                           Plan one op wave's components through their
+                           capabilities and write the wave's plans file
+                           with its change set (#4588); --wave-outputs
+                           <file> seeds the outputs earlier waves left
+  components apply-wave --runs <file> --plans <file> --base <ref> --env <env>
+                           Plan the approved runs again, exit 4 when a plan
+                           moved, else apply them and add their outputs to
+                           --wave-outputs (#4588). Both are the steps of the
+                           waves pr-apply --wave-gate runs on op waves
   components release <env> Append one immutable release record
                             (--component <name> --digest <sha256:...>
                              [--git-sha <sha>] [--run-id <id>] [--actor <name>]);
@@ -1842,6 +1852,9 @@ export const commandRegistry: CommandDef[] = [
   // #3183 — the pull-request loop the generated CI runs. Imported on first use.
   { name: "components pr-plan", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/pr")).runComponentsPrPlan(ctx) },
   { name: "components pr-apply", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/pr")).runComponentsPrApply(ctx) },
+  // #4588: the component plan-wave and apply-wave steps a component waves spec runs (pr-apply --wave-gate on op waves).
+  { name: "components plan-wave", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/pr")).runComponentsPlanWave(ctx) },
+  { name: "components apply-wave", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/pr")).runComponentsApplyWave(ctx) },
   // #4295: posts from the plan report in a job that runs none of the change's code, so it loads no plugins.
   { name: "components pr-post", handler: async (ctx) => (await import("./handlers/pr")).runComponentsPrPost(ctx) },
   { name: "components pr-record", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/pr")).runComponentsPrRecord(ctx) },

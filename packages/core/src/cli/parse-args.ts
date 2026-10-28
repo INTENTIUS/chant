@@ -387,6 +387,14 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.digestFile = args[++i];
     } else if (arg === "--seed-outputs") {
       (result.seedOutputs ??= []).push(args[++i]);
+    } else if (arg === "--keep") {
+      // `chant lock --keep --pr <n>` (#4588): keep the locks the pull request's plan took, as `/<product> lock` asks.
+      result.keepLocks = true;
+    } else if (arg === "--runs" || arg === "--plans" || arg === "--wave-outputs") {
+      // `chant components plan-wave|apply-wave` (#4588): the op-waves runs and plans files, and the outputs the waves hand on.
+      const value = args[++i];
+      if (value === undefined || value.startsWith("-")) throw new Error(`${arg} needs a file`);
+      result[({ "--runs": "runsFile", "--plans": "plansFile", "--wave-outputs": "waveOutputs" } as const)[arg]] = value;
     } else if (arg === "--detail") {
       result.detail = Number(args[++i]);
     } else if (arg === "--lens") {

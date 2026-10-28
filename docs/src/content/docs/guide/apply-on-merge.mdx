@@ -113,7 +113,7 @@ chant build --components --generate github --pr-loop --apply-on-merge --wave-gat
   --output .github/workflows/chant-pr.yml
 ```
 
-The apply job becomes one job per wave of the component graph, `apply-wave-1` to `apply-wave-<n>`, each after the one before it. Job `apply-wave-<k>` runs `pr-apply --wave-gate release --wave <k>`, through `chant ci run apply --wave-gate release --wave <k>`:
+The apply job becomes one job per wave of the component graph, `apply-wave-1` to `apply-wave-<n>`, each after the one before it. Job `apply-wave-<k>` runs `pr-apply --wave-gate release --wave <k>`, through `chant ci run apply --wave-gate release --wave <k>`. Each wave runs on [Op waves](/chant/guide/op-waves/#waves-of-components), through the component plan-wave and apply-wave steps ([#4588](https://github.com/INTENTIUS/chant/issues/4588)):
 
 - Wave 1 plans every member, as the single apply does, and checks the plan against the merges' approvals, or the green commit's gate. Approved, it applies wave 1. A moved plan refuses with both digests named, as before.
 - Each later wave is planned again against the outputs the waves before it left. If the approved change set still covers that new plan, the wave needs no approval of its own. Coverage is the test a [resumed apply](/chant/cli/components/#finishing-an-apply-that-failed-partway) uses: each change the wave makes is one the approved plan made, and a value the approved plan knew only after apply may be any value now.

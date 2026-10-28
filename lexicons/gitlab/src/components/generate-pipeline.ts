@@ -61,6 +61,7 @@ import {
   prLoopWaveJobs,
   prLoopWithWaves,
   prEnvJobs,
+  prCommentLockJobs,
   PR_ENV_REPORT_DIR,
   PR_ENV_POST_JOB,
 } from "@intentius/chant/components/pr-pipeline";
@@ -423,13 +424,21 @@ function prLoopGitlabPipeline(
   const dropControl = loop.control
     ? [`unset ${[...new Set([...CONTROL_TOKEN_VARS, loop.control.target.tokenSecret, loop.control.target.readTokenSecret])].join(" ")}`]
     : [];
-  const stages = ["plan", PR_PLAN_NOTE_JOB, ...applies.map((a) => a.stage), ...(control ? [control.name] : []), ...(prEnv ? [PR_ENV_STAGE, PR_ENV_POST_STAGE] : [])];
+  // #4588: `/<product> lock` and `/<product> unlock`: GitLab starts no pipeline on a note, so each runs in a
+  // pipeline of the target branch started with CHANT_LOCK_PR or CHANT_UNLOCK_PR set, as the apply before merge does.
+  const targetBranch = loop.branch ? JSON.stringify(loop.branch) : "$CI_DEFAULT_BRANCH";
+  const commentLocks = prCommentLockJobs("gitlab", loop).map((job) => ({
+    job,
+    name: named(job.jobName),
+    rule: `$CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/ && $${job.gitlabVar} =~ /^[0-9]+$/ && $CI_COMMIT_BRANCH == ${targetBranch}`,
+  }));
+  const stages = ["plan", PR_PLAN_NOTE_JOB, ...commentLocks.map((c) => c.job.jobName), ...applies.map((a) => a.stage), ...(control ? [control.name] : []), ...(prEnv ? [PR_ENV_STAGE, PR_ENV_POST_STAGE] : [])];
   const noteJob = named(PR_PLAN_NOTE_JOB);
   const post = prLoopPostJob("gitlab", env, member?.name, loop.words ? { ...(loop.words.bin ? { bin: loop.words.bin } : {}) } : undefined);
   const doc: Record<string, unknown> = {
     // Included files merge their top-level keys, so a member's file carries
     // the rules every member shares and no name: two names would collide.
-    workflow: { ...(member ? {} : { name: `chant-pr-${env}` }), rules: [{ if: onMergeRequest }, { if: onMerge }, { if: onPlanNotes }, ...(greens.length > 0 ? [{ if: onGreen }] : []), ...(prEnv ? [{ if: GITLAB_SCHEDULE_RULE }] : [])] },
+    workflow: { ...(member ? {} : { name: `chant-pr-${env}` }), rules: [{ if: onMergeRequest }, { if: onMerge }, { if: onPlanNotes }, ...(greens.length > 0 ? [{ if: onGreen }] : []), ...commentLocks.map((c) => ({ if: c.rule })), ...(prEnv ? [{ if: GITLAB_SCHEDULE_RULE }] : [])] },
     stages,
     variables: { ...options.variables, CHANT_ENV: env, ...GITLAB_FULL_HISTORY },
     [planJob]: {
@@ -450,6 +459,13 @@ function prLoopGitlabPipeline(
       rules: [{ if: onPlanNotes }],
       script: [...enter, ...beforeScript, post.command],
     },
+    ...Object.fromEntries(
+      commentLocks.map(({ job, name, rule }) => [
+        name,
+        // The target branch's commit, so none of the merge request's code runs here.
+        { stage: job.jobName, image, rules: [{ if: rule }], variables: job.env, script: [...enter, ...beforeScript, job.line] },
+      ]),
+    ),
     ...Object.fromEntries(
       applies.map(({ job, name, stage }, i) => [
         name,
@@ -500,6 +516,7 @@ function prLoopGitlabPipeline(
   const jobs: GeneratedJob[] = [
     { jobName: planJob, component: "merge request plan", stage: "plan", needs: [] },
     { jobName: noteJob, component: "merge request plan note", stage: PR_PLAN_NOTE_JOB, needs: [] },
+    ...commentLocks.map(({ job, name }) => ({ jobName: name, component: `merge request ${job.command} comment`, stage: job.jobName, needs: [] })),
     ...applies.map(({ job, name, stage }, i) => ({
       jobName: name,
       component: job.wave ? `green apply, wave ${job.wave}` : job.jobName === "record" ? "merge record" : loop.applyBeforeMerge ? "apply before merge" : "green apply",
@@ -509,7 +526,7 @@ function prLoopGitlabPipeline(
     ...(controlJob ? [{ jobName: controlJob, component: "control repo dispatch", stage: control!.name, needs: [lastGreen!] }] : []),
     ...(prEnv ? prEnv.listed : []),
   ];
-  const yaml = emitGitlabFile(["workflow", "stages", "variables", planJob, noteJob, ...applies.map((a) => a.name), ...(controlJob ? [controlJob] : []), ...Object.keys(prEnv?.jobs ?? {})].map((key) => [key, doc[key]] as const));
+  const yaml = emitGitlabFile(["workflow", "stages", "variables", planJob, noteJob, ...commentLocks.map((c) => c.name), ...applies.map((a) => a.name), ...(controlJob ? [controlJob] : []), ...Object.keys(prEnv?.jobs ?? {})].map((key) => [key, doc[key]] as const));
   return { yaml, stages, jobs, env };
 }
 

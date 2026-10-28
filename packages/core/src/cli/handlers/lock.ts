@@ -5,6 +5,7 @@
  * ```
  * chant lock <target>... --pr <n> [--stage plan|apply|lock] [--head <sha>] [--by <who>] [--gate <name>] [--forge <kind>] [--json]
  * chant lock --from-report <pr-plan.json> --pr <n> [--stage plan] [--forge <kind>] [--json]
+ * chant lock --keep --pr <n> [--head <sha>] [--gate <name>] [--forge <kind>] [--json]
  * chant lock --list [--gate <name>] [--json]
  * chant lock --alive <run>
  * chant unlock --pr <n> [<target>...] [--gate <name>] [--json]
@@ -17,6 +18,14 @@
  * lock what the plan job, which ran the pull request's code, selected. When
  * a member is on the resource lock grain (#4552) the report carries
  * `lockTargets`, its row keys, and those are locked instead.
+ *
+ * `--keep` (#4588) takes again, at stage `lock`, every lock the pull request
+ * holds now: the components (or row keys) its plan locked under `ci.locks:
+ * plan`. A plan lock is let go when a later plan no longer reaches the
+ * target; a kept one stays until the pull request closes or `chant unlock`.
+ * It is what a `/<product> lock` comment runs, on the target branch's
+ * commit, so no code of the change runs. A pull request that holds no lock
+ * yet fails with a line saying its plan has to run first.
  *
  * `--alive <run>` prints `alive` or `dead` for a run that holds rows or the
  * Forgejo repo lock tag (#4552): `dead` when the forge says the run
@@ -150,7 +159,18 @@ export async function runLock(ctx: CommandContext): Promise<number> {
 
   let targets = targetsOf(ctx);
   let head = args.head;
-  if (args.fromReport) {
+  if (args.keepLocks) {
+    if (targets.length > 0 || args.fromReport) return fail("--keep keeps the locks the pull request holds; drop the names and --from-report");
+    let file;
+    try {
+      file = await readTargetLocks(gate);
+    } catch (err) {
+      return fail(err instanceof Error ? err.message : String(err));
+    }
+    targets = Object.entries(file.locks).filter(([, l]) => l.pr === args.pr).map(([target]) => target).sort();
+    head ??= Object.values(file.locks).find((l) => l.pr === args.pr)?.head;
+    if (targets.length === 0) return fail(`pull request ${args.pr} holds no lock on ${gate} yet, so there is nothing to keep`, "Its plan takes the locks under ci.locks: plan; comment again once the plan job ran.");
+  } else if (args.fromReport) {
     if (targets.length > 0) return fail("--from-report reads the targets from the report; drop the names");
     const read = fromReport(args.fromReport, args.pr);
     if ("error" in read) return fail(read.error);

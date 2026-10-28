@@ -23,7 +23,7 @@
 
 import type { ForgeKind } from "../pr-forge";
 import { layerWaves } from "../gated-waves";
-import { opWaveJobs, type OpWave, type OpWaveJob, type OpWavesSpec } from "../op/op-waves";
+import { opWaveBinArgv, opWaveJobs, type OpWave, type OpWaveJob, type OpWavesSpec } from "../op/op-waves";
 import {
   assertProductWords,
   CHANT_WORDS,
@@ -33,7 +33,7 @@ import {
   type CiProductWords,
   type CiProductWordsInput,
 } from "../ci-product-words";
-import { prLoopJobs, prLoopPostJob, withProductBin, type PrLoopJob, type PrLoopPipelineOptions } from "./pr-pipeline";
+import { prCommentLockJobs, prLoopJobs, prLoopPostJob, withProductBin, type PrCommentLockJob, type PrLoopJob, type PrLoopPipelineOptions } from "./pr-pipeline";
 import type { DriverComponent } from "./driver";
 
 /** Where the generator writes a product's waves spec, which chant reads at base (#4550). */
@@ -59,6 +59,16 @@ export interface ProductPipelineOptions extends Omit<PrLoopPipelineOptions, "wor
   wavesSpecFile?: string;
   /** The product runs an agent job that answers its agent command. */
   agent?: boolean;
+  /**
+   * The apply on merge from the component graph (#4588), when `waves` is
+   * absent: the spec `pr-apply --wave-gate` runs, a wave per layer of
+   * `components`, each run a component planned and applied through the
+   * component plan-wave and apply-wave steps, a wave whose plan the approval
+   * does not cover waiting at `<waveGate>-wave-<k>`. `base` is what the
+   * steps measure the change from, by default `HEAD^1`, the commit before
+   * the merge.
+   */
+  componentWaves?: { components: readonly Pick<DriverComponent, "name" | "dependsOn">[]; waveGate?: string; base?: string };
 }
 
 /** The jobs of one product pipeline. */
@@ -77,6 +87,12 @@ export interface ProductPipelineJobs {
   comments: Partial<Record<CiProductCommand, string>>;
   /** The apply on merge: the spec with the words' names, its file, and a job per wave (per share or group). */
   waves?: { spec: OpWavesSpec; specFile: string; jobs: OpWaveJob[] };
+  /**
+   * The comment lock and unlock jobs (#4588), under `locks: "plan"`:
+   * `/<product> lock` keeps the locks the plan took, `/<product> unlock`
+   * releases them. The forge lexicons render the same jobs.
+   */
+  locks?: PrCommentLockJob[];
 }
 
 /**
@@ -105,15 +121,15 @@ export function productWavesSpec(spec: OpWavesSpec, wordsIn: CiProductWordsInput
  */
 export function productPipelineJobs(forge: ForgeKind, env: string, options: ProductPipelineOptions): ProductPipelineJobs {
   const jobs: CiProductCommand[] = ["plan"];
-  if (options.applyBeforeMerge || options.waves) jobs.push("apply");
+  if (options.applyBeforeMerge || options.waves || options.componentWaves) jobs.push("apply");
   if (options.locks === "plan") jobs.push("lock", "unlock");
   if (options.agent) jobs.push("agent");
   // #4601: the note's merge sentence follows the jobs built here: waves on merge, an apply before merge, else a record for a release.
   // Words that ask for before-merge keep it when the pipeline has that job beside its waves.
-  const built: CiProductApplyMode = options.waves ? "on-merge" : options.applyBeforeMerge ? "before-merge" : "release";
+  const built: CiProductApplyMode = options.waves || options.componentWaves ? "on-merge" : options.applyBeforeMerge ? "before-merge" : "release";
   const applyMode: CiProductApplyMode = options.words.applyMode === "before-merge" && options.applyBeforeMerge ? "before-merge" : built;
   const words = assertProductWords({ ...options.words, applyMode }, { jobs });
-  const { waves: spec, wavesSpecFile, member, agent: _agent, ...loop } = options;
+  const { waves: given, wavesSpecFile, member, agent: _agent, componentWaves, ...loop } = options;
   const prLoop: PrLoopPipelineOptions = { ...loop, words, gate: options.gate ?? words.prGate };
   const [plan, apply, record] = prLoopJobs(forge, env, prLoop, member);
   const comments: Partial<Record<CiProductCommand, string>> = {};
@@ -128,6 +144,13 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
     comments,
     ...(options.applyBeforeMerge ? { applyBeforeMerge: apply! } : {}),
   };
+  const locks = prCommentLockJobs(forge, { locks: options.locks, words });
+  if (locks.length > 0) out.locks = locks;
+  // #4588: without a spec of the product's own, the component graph's waves on op waves.
+  const op = words.op ?? componentWaves?.waveGate ?? words.prGate;
+  const spec = given ?? (componentWaves
+    ? componentWavesSpec(componentWaves.components, words, componentWaveSteps({ ...(words.bin ? { bin: words.bin } : {}), env, base: componentWaves.base ?? "HEAD^1", ...(member ? { member } : {}), op, gate: prLoop.gate }), { ...(componentWaves.waveGate ? { gate: componentWaves.waveGate } : {}) })
+    : undefined);
   if (!spec) return { ...out, record: record! };
   const named = productWavesSpec(spec, words);
   const specFile = wavesSpecFile ?? productWavesSpecFile(named.name);
@@ -142,22 +165,86 @@ export interface ComponentWaveSteps {
   applyWave: string[];
 }
 
+/** Where a component waves spec keeps the outputs each wave's components left, for the next wave's plans (#4588). */
+export function componentWaveOutputsFile(op: string): string {
+  return `${PRODUCT_WAVES_SPEC_DIR}/${op}/outputs.json`;
+}
+
+/** What {@link componentWaveSteps} names on each step's line (#4588). */
+export interface ComponentWaveStepOptions {
+  /** The command in place of `chant`, a product's `words.bin`. */
+  bin?: string;
+  env: string;
+  /** The commit the change is measured from: what `pr-apply` was given. */
+  base: string;
+  /** The commit applied. Absent: the job's checkout. */
+  head?: string;
+  /** The workspace member. */
+  member?: string;
+  /** The file the waves hand outputs on in. Default {@link componentWaveOutputsFile} of `op`. */
+  outputs?: string;
+  /** The op the outputs file is named by. */
+  op: string;
+  /** The pull request's gate, whose rows file the apply leases on the resource grain. */
+  gate?: string;
+}
+
 /**
- * A waves spec from the component graph (#4550, ruling A: `pr-apply
- * --wave-gate` rebuilt on op waves): a wave per layer of the graph, each
- * run a component, under the words' op and gate names. The steps are the
- * capability seam #4545 and #4541 fill; until they land, `pr-apply
- * --wave-gate` keeps its own wave runner.
+ * The component plan-wave and apply-wave steps (#4588): `chant components
+ * plan-wave` plans a wave's components through the project's capabilities
+ * and writes the op-waves plans file with the wave's change set, and
+ * `chant components apply-wave` plans the approved runs again, refuses any
+ * whose plan moved (exit 4), and applies the rest. Both read the outputs
+ * the waves before them left from the outputs file, and apply-wave adds its
+ * own.
+ */
+export function componentWaveSteps(options: ComponentWaveStepOptions): ComponentWaveSteps {
+  const bin = opWaveBinArgv(options.bin);
+  const common = [
+    "--env", options.env, "--base", options.base,
+    ...(options.head ? ["--head", options.head] : []),
+    ...(options.member ? ["--member", options.member] : []),
+    ...(options.gate ? ["--gate", options.gate] : []),
+    "--wave-outputs", options.outputs ?? componentWaveOutputsFile(options.op),
+  ];
+  return {
+    planWave: [...bin, "components", "plan-wave", "--runs", "{runs}", "--plans", "{plans}", ...common],
+    applyWave: [...bin, "components", "apply-wave", "--runs", "{runs}", "--plans", "{plans}", ...common],
+  };
+}
+
+/** What {@link componentWavesSpec} takes beside the graph, the words and the steps. */
+export interface ComponentWavesSpecOptions {
+  /** The wave gate's base name: wave k waits at `<gate>-wave-<k>` (or the words' `gateName`). Default the words' `prGate`. */
+  gate?: string;
+  branches?: string[];
+  /**
+   * The op the gates are recorded under. `pr-apply --wave-gate` passes the
+   * pull request's (`pr-<n>`), and then every wave takes the pull request's
+   * approval whatever the words' preset. Default the words' `op`.
+   */
+  op?: string;
+  /** The pull request's gate, whose approval a wave applies under when it covers the wave. Default the words' `prGate`. */
+  prGate?: string;
+  /** The layers, when the caller already has them (a derivation's `waves`). Default: layered from `dependsOn`. */
+  waves?: readonly (readonly string[])[];
+}
+
+/**
+ * A waves spec from the component graph (#4550, ruling A; #4588): a wave per
+ * layer of the graph, each run a component, planned and applied through the
+ * component plan-wave and apply-wave steps under the words' op and gate
+ * names. `pr-apply --wave-gate` runs its waves on it.
  */
 export function componentWavesSpec(
   components: readonly Pick<DriverComponent, "name" | "dependsOn">[],
   wordsIn: CiProductWordsInput | CiProductWords,
   steps: ComponentWaveSteps,
-  options: { gate?: string; branches?: string[] } = {},
+  options: ComponentWavesSpecOptions = {},
 ): OpWavesSpec {
   const words = assertProductWords(wordsIn);
-  const layers = layerWaves(components.map((c) => ({ name: c.name, dependsOn: c.dependsOn ?? [] })));
-  const name = words.op ?? options.gate ?? words.prGate;
+  const layers = options.waves ?? layerWaves(components.map((c) => ({ name: c.name, dependsOn: c.dependsOn ?? [] })));
+  const name = options.op ?? words.op ?? options.gate ?? words.prGate;
   const spec: OpWavesSpec = {
     name,
     op: name,
@@ -167,7 +254,16 @@ export function componentWavesSpec(
     ...(options.branches ? { branches: options.branches } : {}),
     waves: layers.map((layer, i) => ({ name: `wave-${i + 1}`, runs: layer.map((target) => ({ target })) })),
   };
-  return productWavesSpec(spec, words);
+  const named = productWavesSpec(spec, words);
+  if (options.op === undefined) return named;
+  // The pull request's own op: every wave applies under its approval when that covers the wave's plan, else at its own gate.
+  return {
+    ...named,
+    name: options.op,
+    op: options.op,
+    waves: named.waves.map((w) => ({ ...w, approval: "pull-request" as const })),
+    approvals: { ...(named.approvals ?? {}), pullRequest: { gate: options.prGate ?? words.prGate } },
+  };
 }
 
 /** A shell line with the product's bin in place of `chant`, for a product's own jobs beside these. */

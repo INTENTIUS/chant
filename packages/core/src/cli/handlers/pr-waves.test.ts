@@ -5,7 +5,8 @@
  * applies under that approval when the approved plan covers it, or waits at
  * `<gate>-wave-2` when it moved. Git, the change signal, the derivation and
  * the gate ledger are fakes; the planning, the coverage check and the apply
- * are the real ones.
+ * are the real ones. Since #4588 each wave runs on op waves through the
+ * component plan-wave and apply-wave steps, in pr-apply's own process.
  */
 
 import { mkdtemp, readFile, rm } from "node:fs/promises";

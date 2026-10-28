@@ -57,17 +57,21 @@ export {
   type ParsedProductComment,
 } from "./ci-product-words";
 export {
+  componentWaveOutputsFile,
+  componentWaveSteps,
   componentWavesSpec,
   productCommand,
   productPipelineJobs,
   productWavesSpec,
   productWavesSpecFile,
   PRODUCT_WAVES_SPEC_DIR,
+  type ComponentWaveStepOptions,
   type ComponentWaveSteps,
+  type ComponentWavesSpecOptions,
   type ProductPipelineJobs,
   type ProductPipelineOptions,
 } from "./components/product-pipeline";
-export { prApplyComment, prLoopSetup, engineSetupLines, withProductBin } from "./components/pr-pipeline";
+export { prApplyComment, prCommentLockJobs, prLoopSetup, engineSetupLines, withProductBin, type PrCommentLockJob } from "./components/pr-pipeline";
 export { CI_SERVICES_FLOOR, engineServices, githubServices, gitlabServices, serviceWaitLine, servicesJobEnv, type CiService } from "./components/ci-services";
 export { renderPrNote, prStatusContext, prApproveCommand, prApproveCommands, prApproveTargets, prMergeSentence, type PrMemberDetail } from "./pr-loop";
 export { upsertPlanNote } from "./pr-post";

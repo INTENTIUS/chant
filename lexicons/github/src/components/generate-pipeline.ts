@@ -80,6 +80,7 @@ import {
   PR_UNLOCK_JOB,
   PR_UNLOCK_COMMAND,
   prLockCommand,
+  prCommentLockJobs,
   prLoopWaveJobs,
   prLoopWithWaves,
   prEnvJobs,
@@ -457,6 +458,29 @@ function prLoopGithubDoc(
         },
       }
     : {};
+  // #4588: `/<product> lock` and `/<product> unlock` comments, at the target branch's commit, so none of the change's code runs.
+  const commentLocks = prCommentLockJobs(forgeName, loop);
+  const commentLockJobs: Record<string, unknown> = Object.fromEntries(
+    commentLocks.map((job) => [
+      job.jobName,
+      {
+        if: [
+          "github.event_name == 'issue_comment'",
+          forgejo ? "(github.event.issue.pull_request || github.event.is_pull)" : "github.event.issue.pull_request",
+          `startsWith(github.event.comment.body, '${job.comment}')`,
+          ...(forgejo ? [] : ["contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.comment.author_association)"]),
+        ].join(" && "),
+        "runs-on": GITHUB_RUNNER,
+        container: image,
+        permissions: { contents: "write", "pull-requests": "read", statuses: "write" },
+        steps: [
+          { name: "Check out the target branch's commit", uses: CHECKOUT, with: { "fetch-depth": 0 } },
+          ...runSteps(beforeScript),
+          { name: job.command === "lock" ? "Keep the locks the pull request's plan took" : "Release the pull request's locks", env: job.env, run: job.line },
+        ],
+      },
+    ]),
+  );
   const jobsDoc: Record<string, unknown> = {
     plan: {
       if: closes ? "github.event_name == 'pull_request' && github.event.action != 'closed'" : "github.event_name == 'pull_request'",
@@ -476,6 +500,7 @@ function prLoopGithubDoc(
       steps: noteSteps,
     },
     ...lockJobs,
+    ...commentLockJobs,
     ...Object.fromEntries(applyJobs),
     ...Object.fromEntries(controlJobs),
     ...(prEnv ? prEnv.jobs : {}),
@@ -491,8 +516,8 @@ function prLoopGithubDoc(
     on.pull_request = { branches: [branch], types: ["opened", "synchronize", "reopened", "closed"] };
     on.schedule = [{ cron: PR_ENV_SWEEP_CRON }];
   }
-  // #4301: a /chant apply comment starts the apply before merge.
-  if (loop.applyBeforeMerge) on.issue_comment = { types: ["created"] };
+  // #4301: a /chant apply comment starts the apply before merge. #4588: and a lock or unlock comment its job.
+  if (loop.applyBeforeMerge || commentLocks.length > 0) on.issue_comment = { types: ["created"] };
   return {
     name: member ? `chant-pr.${member.name}.${env}` : `chant-pr-${env}`,
     environment: env,
@@ -500,7 +525,7 @@ function prLoopGithubDoc(
     ...(rooted ? {} : { defaults: { run: { "working-directory": member!.dir } } }),
     env: { ...options.variables, CHANT_ENV: env },
     jobsDoc,
-    stages: ["plan", PR_PLAN_NOTE_JOB, ...(locks ? [PR_LOCK_JOB, PR_UNLOCK_JOB] : []), ...applyNames, ...controlJobs.map(([name]) => name), ...(prEnv ? ["env-up", PR_ENV_POST_JOB, "env-down", "env-sweep"] : [])],
+    stages: ["plan", PR_PLAN_NOTE_JOB, ...(locks ? [PR_LOCK_JOB, PR_UNLOCK_JOB] : []), ...commentLocks.map((j) => j.jobName), ...applyNames, ...controlJobs.map(([name]) => name), ...(prEnv ? ["env-up", PR_ENV_POST_JOB, "env-down", "env-sweep"] : [])],
     jobs: [
       { jobName: "plan", component: "pull request plan", stage: "plan", needs: [] },
       { jobName: PR_PLAN_NOTE_JOB, component: "pull request plan note", stage: PR_PLAN_NOTE_JOB, needs: ["plan"] },
@@ -510,6 +535,7 @@ function prLoopGithubDoc(
             { jobName: PR_UNLOCK_JOB, component: "pull request unlock", stage: PR_UNLOCK_JOB, needs: [] },
           ]
         : []),
+      ...commentLocks.map((j) => ({ jobName: j.jobName, component: `pull request ${j.command} comment`, stage: j.jobName, needs: [] })),
       ...applyNames.map((name, i) => ({
         jobName: name,
         component: name === "record" ? "merge record" : loop.applyBeforeMerge ? "apply before merge" : loop.waveGate ? `green apply, wave ${i}` : "green apply",

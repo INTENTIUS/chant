@@ -10,6 +10,7 @@ diataxis: reference
 chant lock <target>... --pr <n> [--stage plan|apply|lock] [--head <sha>] [--by <who>]
                        [--gate <name>] [--forge github|gitlab|forgejo] [--json]
 chant lock --from-report <pr-plan.json> --pr <n> [--stage plan] [--head <sha>] [--forge <kind>] [--json]
+chant lock --keep --pr <n> [--head <sha>] [--gate <name>] [--forge <kind>] [--json]
 chant lock --list [--gate <name>] [--json]
 chant lock --alive <run>
 chant unlock --pr <n> [<target>...] [--gate <name>] [--json]
@@ -45,6 +46,8 @@ A target the same pull request already holds stays its own and gets the new head
 `--forge <kind>` asks the forge whether each holder is still open, with the client read from the job's environment as `pr-plan` reads it. A lock whose pull request merged or closed then reads as released, and the write that takes it over drops it from the file ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/lifecycle/target-lock.ts#L300)). Without `--forge` every lock counts as held and only `chant unlock` releases one ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/lifecycle/target-lock.ts#L166)). Given a head commit as well, the command posts the `chant/lock` status on it: a success names what the pull request holds, and a failure names who holds what.
 
 `--by` names who took the lock and defaults to `GITHUB_ACTOR`, then `GITLAB_USER_LOGIN`, then `USER`. The `--json` form prints `{ gate, pr, ok, stage, taken, released, expired, pushed }`, or `{ gate, pr, ok: false, held }` when a target is held.
+
+`chant lock --keep --pr <n>` takes again, at stage `lock`, every lock the pull request holds now ([#4588](https://github.com/INTENTIUS/chant/issues/4588)). Those are the components or row keys its plan locked under `ci.locks: plan`. A plan lock is let go once a later plan no longer reaches the target, and a kept lock stays until the pull request closes or `chant unlock` releases it. A `/<product> lock` comment runs it at the target branch's commit, so none of the change's code runs. A pull request that holds no lock yet fails with exit 1 and a line saying its plan has to run first.
 
 `chant lock --list` prints one line per lock of the gate, in the order of the file's targets. Each line holds the target and the fields of its lock. The `--json` form prints `{ gate, path, locks }`.
 
