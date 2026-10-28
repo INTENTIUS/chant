@@ -209,7 +209,7 @@ export function checkJob(expect: JobGuardSpec, seen: JobSeen): JobGuardResult {
 async function githubClaims(env: NodeJS.ProcessEnv, fetchFn: typeof fetch): Promise<Record<string, unknown>> {
   const url = env.ACTIONS_ID_TOKEN_REQUEST_URL;
   const bearer = env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
-  if (!url || !bearer) throw new Error("the job may request no OIDC token (no ACTIONS_ID_TOKEN_REQUEST_URL); it needs permissions: id-token: write");
+  if (!url || !bearer) throw new Error("the job may request no OIDC token (no ACTIONS_ID_TOKEN_REQUEST_URL); it needs the id-token: write permission");
   const r = await fetchFn(`${url}&audience=${encodeURIComponent(JOB_GUARD_AUDIENCE)}`, { headers: { authorization: `bearer ${bearer}` } });
   if (!r.ok) throw new Error(`the OIDC token request answered ${r.status}`);
   const value = ((await r.json()) as { value?: unknown }).value;
@@ -275,7 +275,7 @@ export const JOB_GUARD_JS = [
   'if(x.forge==="gitlab")return{forgeEnvironment:E.CI_ENVIRONMENT_NAME||null,ref:E.CI_COMMIT_REF_NAME,refProtected:E.CI_COMMIT_REF_PROTECTED,runnerTags:tags(E.CI_RUNNER_TAGS)};',
   "const s={ref:E.GITHUB_REF};let c;",
   'if(x.forge==="github"&&x.forgeEnvironment!==undefined){try{',
-  'if(!E.ACTIONS_ID_TOKEN_REQUEST_URL||!E.ACTIONS_ID_TOKEN_REQUEST_TOKEN)throw new Error("the job may request no OIDC token (no ACTIONS_ID_TOKEN_REQUEST_URL); it needs permissions: id-token: write");',
+  'if(!E.ACTIONS_ID_TOKEN_REQUEST_URL||!E.ACTIONS_ID_TOKEN_REQUEST_TOKEN)throw new Error("the job may request no OIDC token (no ACTIONS_ID_TOKEN_REQUEST_URL); it needs the id-token: write permission");',
   'const r=await fetch(E.ACTIONS_ID_TOKEN_REQUEST_URL+"&audience="+encodeURIComponent(A),{headers:{authorization:"bearer "+E.ACTIONS_ID_TOKEN_REQUEST_TOKEN}});',
   'if(!r.ok)throw new Error("the OIDC token request answered "+r.status);const v=(await r.json()).value;if(typeof v!=="string")throw new Error("the OIDC token request answered no token");',
   'c=claimsOf(v);s.forgeEnvironment=typeof c.environment==="string"&&c.environment!==""?c.environment:null}catch(e){s.forgeEnvironmentError=e&&e.message?e.message:String(e)}}',

@@ -57,7 +57,7 @@ interface Job {
 }
 
 const jobsOf = (spec: OpWavesSpec): Record<string, Job> => (parseYAML(generateGithubOpWavesPipeline(spec, { specFile: ".chant/op-waves/tf-apply.spec.json", beforeScript: ["npm ci"] }).files[0]!.yaml) as { jobs: Record<string, Job> }).jobs;
-const tradeOf = (job: Job): unknown => JSON.parse(job.steps[0]!.env![TRADE_SPEC_ENV]!);
+const tradeOf = (job: Job): unknown => JSON.parse(job.steps[1]!.env![TRADE_SPEC_ENV]!);
 const UNSET = `unset ${OIDC_REQUEST_VARS.join(" ")}`;
 
 describe("an Op wave's jobs by cloud identity (#4332)", () => {
@@ -70,9 +70,9 @@ describe("an Op wave's jobs by cloud identity (#4332)", () => {
 
   test("the deciding job trades for every plan identity, before the checkout, and names no apply identity", () => {
     const decide = jobs["wave-1-wave-1-decide"]!;
-    expect(decide.steps[0]!.name).toBe("Trade the job's OIDC token for its cloud identities");
-    expect(decide.steps[0]!.run).toMatch(/^\(cd \/ && node -e '/);
-    expect(decide.steps[1]!.uses).toMatch(/^actions\/checkout@/);
+    expect(decide.steps[1]!.name).toBe("Trade the job's OIDC token for its cloud identities");
+    expect(decide.steps[1]!.run).toMatch(/^\(cd \/ && node -e '/);
+    expect(decide.steps[2]!.uses).toMatch(/^actions\/checkout@/);
     expect(tradeOf(decide)).toEqual(plan);
     expect(decide.permissions).toEqual({ contents: "write", "id-token": "write" });
     for (const id of [role("prod-apply"), role("staging-apply"), role("own-apply")]) expect(JSON.stringify(decide)).not.toContain(id);
@@ -83,14 +83,14 @@ describe("an Op wave's jobs by cloud identity (#4332)", () => {
     for (const [name, id] of Object.entries(want)) {
       const job = jobs[name]!;
       expect(tradeIdentities(tradeOf(job) as never)).toEqual([id]);
-      expect(job.steps[1]!.uses).toMatch(/^actions\/checkout@/);
+      expect(job.steps[2]!.uses).toMatch(/^actions\/checkout@/);
       for (const other of Object.values(want).filter((o) => o !== id)) expect(JSON.stringify(job)).not.toContain(other);
     }
   });
 
   test("every run step after the trade starts by unsetting the token request variables", () => {
     for (const job of Object.values(jobs)) {
-      const runs = job.steps.slice(1).filter((s) => s.run !== undefined);
+      const runs = job.steps.slice(2).filter((s) => s.run !== undefined);
       expect(runs.length).toBeGreaterThan(0);
       for (const s of runs) expect(s.run!.split("\n")[0]).toBe(UNSET);
     }
@@ -124,8 +124,8 @@ describe("the deciding job, run step by step against the emulator (#4332)", () =
     const githubEnv = join(temp, "github-env");
     writeFileSync(githubEnv, "");
     const base = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: process.env.HOME ?? "/tmp", RUNNER_TEMP: temp, ...emu.requestEnv };
-    const spec = emu.pointAt(JSON.parse(decide.steps[0]!.env![TRADE_SPEC_ENV]!));
-    await run("sh", ["-c", decide.steps[0]!.run!.replace("$GITHUB_ENV", githubEnv)], { env: { ...base, [TRADE_SPEC_ENV]: JSON.stringify(spec) } });
+    const spec = emu.pointAt(JSON.parse(decide.steps[1]!.env![TRADE_SPEC_ENV]!));
+    await run("sh", ["-c", decide.steps[1]!.run!.replace("$GITHUB_ENV", githubEnv)], { env: { ...base, [TRADE_SPEC_ENV]: JSON.stringify(spec) } });
     const traded = Object.fromEntries(readFileSync(githubEnv, "utf-8").split("\n").filter(Boolean).map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]));
     expect(traded.AWS_ACCESS_KEY_ID).toBe(emulatedCredentials(role("own-plan")).accessKeyId);
     const before = emu.log.minted.length;

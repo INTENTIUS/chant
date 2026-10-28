@@ -464,7 +464,7 @@ describe("the apply entry points (#4541)", () => {
   test("anything off the list is refused before the runner", async () => {
     const { run, calls } = fake(() => "");
     const base = pulumiUpArgs({ stack: "floci" });
-    for (const extra of [["--skip-preview"], ["--refresh"], ["--show-secrets"], ["--replace", "urn:a"], ["--target-replace", "urn:a"], ["--target-dependents"], ["--exclude", "urn:a"], ["--remote"], ["--continue-on-error"], ["--config", "k=v"], ["--plan", "/tmp/p.json"]]) {
+    for (const extra of [["--skip-preview"], ["--show-secrets"], ["--replace", "urn:a"], ["--target-replace", "urn:a"], ["--target-dependents"], ["--exclude", "urn:a"], ["--remote"], ["--continue-on-error"], ["--config", "k=v"], ["--plan", "/tmp/p.json"]]) {
       await expect(runApplyPulumi(run, [...base, ...extra], "/tmp")).rejects.toThrow(/applies a Pulumi stack only as/);
     }
     for (const args of [

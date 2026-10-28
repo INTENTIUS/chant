@@ -42,7 +42,7 @@ describe("the control dispatch after the last wave on GitLab (#4617)", () => {
 
   test("every wave job and the resume job drop the control repo's token variables first", () => {
     const yaml = generateGitlabOpWavesPipeline(spec, options).files[0]!.yaml;
-    expect(yaml).toMatch(/wave-1-canary:[\s\S]*script:\n\s+- unset CHANT_CONTROL_TOKEN CHANT_CONTROL_READ_TOKEN PLYWOOD_CONTROL_TOKEN\n\s+- npx --no-install plywood run wave --spec waves.json --wave 1/);
+    expect(yaml).toMatch(/wave-1-canary:[\s\S]*script:\n\s+- [^\n]*node -e[^\n]*\n\s+- unset CHANT_CONTROL_TOKEN CHANT_CONTROL_READ_TOKEN PLYWOOD_CONTROL_TOKEN\n\s+- npx --no-install plywood run wave --spec waves.json --wave 1/);
     expect(yaml).toMatch(/stacks-resume:[\s\S]*script:\n\s+- unset CHANT_CONTROL_TOKEN CHANT_CONTROL_READ_TOKEN PLYWOOD_CONTROL_TOKEN/);
   });
 
