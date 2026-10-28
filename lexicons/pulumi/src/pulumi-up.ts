@@ -167,6 +167,7 @@ import { pulumiExitOf } from "./exit-codes";
 import { pulumiMemberEngine, type PulumiMemberEngine, type PulumiMemberEngineSource } from "./member-engine";
 import { ciEngineDir, ciRelease, CI_ENGINE_ROOT } from "./ci-setup";
 import { pulumiMemberPlannedOutputs } from "./member-outputs";
+import type { PulumiOutputChange } from "./planned-output-changes";
 import { pulumiPlanShape, pulumiShapeDifferences } from "./plan-shape";
 import { pulumiLockRows } from "./lock-rows";
 import { pulumiTraceFacts } from "./trace-facts";
@@ -300,6 +301,13 @@ export interface PulumiUpArtifact {
    * outside reference stale, current or unknown.
    */
   stackReferences?: { read: string[]; outside: { name: string; why: string }[]; lastUpdate?: string };
+  /**
+   * Each stack output's verdict from the preview (#4635,
+   * `./planned-output-changes.ts`): `changing` and `untraced` ones are
+   * unknown to the stacks that read them, `unchanged` ones keep the
+   * export's value. Absent when the preview planned nothing to apply.
+   */
+  plannedOutputs?: PulumiOutputChange[];
 }
 
 /** The CrossGuard packs a plan read at base (#4613). */
@@ -720,7 +728,12 @@ async function planStack(ctx: DeployContext, original: PulumiUpStepInput, opts: 
   }
   const planDigest = read.part.member.planDigest!;
   const references = stackReferencesOf(read.prior, input);
-  const planned = pulumiMemberPlannedOutputs(r.member, { part: read.part, preview: read.preview, ...(read.prior !== undefined ? { exported: read.prior } : {}) });
+  const planned = pulumiMemberPlannedOutputs(r.member, {
+    part: read.part,
+    preview: read.preview,
+    ...(read.prior !== undefined ? { exported: read.prior } : {}),
+    ...(ctx.targets?.length ? { targeted: true } : {}),
+  });
   const artifact: PulumiUpArtifact = {
     kind: "pulumi-up",
     member: r.member,
@@ -736,6 +749,7 @@ async function planStack(ctx: DeployContext, original: PulumiUpStepInput, opts: 
     policy: read.policy,
     ...(packs.read ? { policyPacks: packs.read } : {}),
     ...(references ? { stackReferences: references } : {}),
+    ...(planned.outputChanges ? { plannedOutputs: planned.outputChanges } : {}),
   };
   return {
     member: r.member,

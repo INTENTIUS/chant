@@ -19,6 +19,13 @@
  *   The plan digest is the member part's (`computePlanDigest("pulumi-preview",
  *   ...)`), so a preview that moves after review moves the consumer's digest.
  *
+ * A preview with changes that plans no stack outputs (every real one,
+ * #4475) traces each output to the export's resources
+ * (`./planned-output-changes.ts`, #4635): an output whose resources the
+ * preview leaves alone keeps the export's value, and the others are
+ * unknown. A stack that reads only unchanged outputs plans now; one that
+ * reads a changing one waits for the producer's `up`.
+ *
  * A member on plunge (`pulumiMemberEngine`: the member config, then a
  * `plunge` backend URL in `Pulumi.yaml`) runs the same two commands under
  * `plunge`.
@@ -39,6 +46,7 @@
 import type { DeployContext } from "@intentius/chant/components/capability";
 import type { EngineMemberRef, EngineOutputSource, EnginePlannedOutputs } from "@intentius/chant/components/verbs/member-outputs";
 import type { ChangeSetPart } from "@intentius/chant/change-set";
+import { pulumiPlannedOutputChanges, type PulumiOutputChange } from "./planned-output-changes";
 import { pulumiPlannedStackOutputs, pulumiExportedStackOutputs, type PulumiStackOutput } from "./stack-outputs";
 import { memberExportOf, previewPulumiMemberRead, pulumiMemberStackOutputs, type PulumiMemberEngine, type PulumiRunner } from "./run";
 import { isSecret } from "./values";
@@ -88,10 +96,16 @@ export function pulumiPartHasChanges(part: ChangeSetPart): boolean {
  * the preview's error. A preview that plans no stack outputs (no stack step,
  * or one without outputs, which is what a real `pulumi preview --json`
  * prints, #4475) gives the export's outputs when it plans nothing to apply,
- * since no apply will move them, and names every output the export holds
- * unknown otherwise, so nothing reads a value the preview did not plan.
+ * since no apply will move them. With changes, each output is traced to the
+ * export's resources (#4635, {@link pulumiPlannedOutputChanges}): the ones
+ * the preview leaves alone keep their value, and the rest are unknown, so
+ * nothing reads a value the preview may move. `outputChanges` lists each
+ * output's verdict and why.
  */
-export function pulumiMemberPlannedOutputs(member: string, read: { part: ChangeSetPart; preview: unknown; exported?: unknown }): EnginePlannedOutputs {
+export function pulumiMemberPlannedOutputs(
+  member: string,
+  read: { part: ChangeSetPart; preview: unknown; exported?: unknown; targeted?: boolean },
+): EnginePlannedOutputs & { outputChanges?: PulumiOutputChange[] } {
   const { part } = read;
   if (part.member.status === "failed" || part.member.planDigest === null) {
     throw new Error(`member-outputs: the preview of Pulumi member "${member}" failed: ${part.member.error ?? "no plan"}`);
@@ -101,7 +115,11 @@ export function pulumiMemberPlannedOutputs(member: string, read: { part: ChangeS
   if (planned === undefined) {
     const exported = read.exported === undefined ? [] : pulumiExportedStackOutputs(read.exported);
     if (!changes) return { known: knownValues(exported), unknown: [], planDigest: part.member.planDigest, changes };
-    return { known: {}, unknown: exported.filter((o) => !o.secret).map((o) => o.name), planDigest: part.member.planDigest, changes };
+    if (part.member.holes.length > 0 || read.exported === undefined) {
+      return { known: {}, unknown: exported.filter((o) => !o.secret).map((o) => o.name), planDigest: part.member.planDigest, changes };
+    }
+    const traced = pulumiPlannedOutputChanges({ part, exported: read.exported, ...(read.targeted ? { targeted: true } : {}) });
+    return { known: traced.known, unknown: traced.unknown, planDigest: part.member.planDigest, changes, outputChanges: traced.outputs };
   }
   const unknown = planned.filter((o) => o.unknown).map((o) => o.name);
   return { known: knownValues(planned), unknown, planDigest: part.member.planDigest, changes: changes || unknown.length > 0 };
