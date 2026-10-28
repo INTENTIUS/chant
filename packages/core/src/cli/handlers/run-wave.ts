@@ -56,6 +56,7 @@ async function runOpWaveJobCommand(ctx: CommandContext): Promise<number> {
       return 1;
     }
   }
+  if (specFile && args.approvalStatus) return runApprovalStatus(ctx, specFile);
   if (specFile && args.wavesOutcome) {
     // #4617: the outcome the control job's dispatch carries, from every wave job's outcome file.
     try {
@@ -156,5 +157,49 @@ async function respondWave(spec: OpWavesSpec, k: number, outcome: import("../../
     await respondOpWave(spec, k, outcome, { forge, ...(head ? { head } : {}) });
   } catch (err) {
     console.error(formatWarning({ message: `the wave's responses were not posted: ${err instanceof Error ? err.message : String(err)}` }));
+  }
+}
+
+/**
+ * `chant run wave --spec <file> --approval-status` (#4630): post
+ * `<product>/approval` on an open pull request's head, from its recorded
+ * plans and its reviews. `--pr`, `--head` and `--base` name one pull
+ * request (GitHub and Forgejo); `--open` posts on every open one into
+ * `--branch` (GitLab's scheduled pipeline). It exits 0 once it posted, and
+ * 1 when it could not.
+ */
+async function runApprovalStatus(ctx: CommandContext, specFile: string): Promise<number> {
+  const { args } = ctx;
+  const fail = (message: string): number => {
+    console.error(formatError({ message }));
+    return 1;
+  };
+  const { FORGE_KINDS, forgeFromEnv } = await import("../../pr-forge");
+  if (!args.forge || !(FORGE_KINDS as readonly string[]).includes(args.forge)) return fail(`--approval-status posts on a forge: --forge ${FORGE_KINDS.join("|")}`);
+  let spec: OpWavesSpec;
+  let forge;
+  try {
+    spec = parseOpWavesSpec(readFileSync(resolve(specFile), "utf-8"), `--spec ${specFile}`);
+    forge = forgeFromEnv(args.forge as (typeof FORGE_KINDS)[number]);
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err));
+  }
+  const { postApprovalStatus, postOpenApprovalStatuses } = await import("../../op/approval-status");
+  const file = relative(process.cwd(), resolve(specFile));
+  try {
+    if (args.open) {
+      const branch = args.branch ?? process.env.CI_COMMIT_BRANCH;
+      if (!branch) return fail("--approval-status --open posts for the pull requests into a branch: run it in a branch pipeline, or pass --branch <branch>");
+      const done = await postOpenApprovalStatuses({ spec, specFile: file, forge, branch });
+      for (const w of done.warnings) console.error(formatWarning({ message: w }));
+      for (const p of done.posted) console.error(`!${p.pr}: ${p.status.state}: ${p.status.description}`);
+      return done.warnings.length > 0 && done.posted.length === 0 ? 1 : 0;
+    }
+    if (args.pr === undefined || !args.head || !args.base) return fail("--approval-status needs the pull request, its head and its base: --pr <n> --head <sha> --base <sha>, or --open");
+    const status = await postApprovalStatus({ spec, specFile: file, forge, pr: args.pr, head: args.head, base: args.base });
+    console.error(`#${args.pr}: ${status.state}: ${status.description}`);
+    return 0;
+  } catch (err) {
+    return fail(`the approval status was not posted: ${err instanceof Error ? err.message : String(err)}`);
   }
 }

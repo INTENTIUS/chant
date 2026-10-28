@@ -3746,7 +3746,14 @@ export async function recordOpWaveHeadPlans(options: RecordHeadPlansOptions): Pr
     // #4545: a cost hold's member is in the digest the merged wave decides, so the head's digest carries it too.
     const cost = spec.holds?.cost ? costVerdictOf(spec.holds.cost, spec, k, members, steps, cwd, options.holdExec).member : undefined;
     const extras = cost ? [...(planExtras ?? []), cost] : planExtras;
-    plans.waves.push({ wave: k, name: wave.name, digest: opWaveSetDigest(spec, members, extras) });
+    // #4630: the facts a gate policy reads, so the approval status before merge says which waves will wait.
+    plans.waves.push({
+      wave: k,
+      name: wave.name,
+      digest: opWaveSetDigest(spec, members, extras),
+      changes: !members.every((m) => m.empty === true),
+      destructive: members.some((m) => m.destructive === true),
+    });
     if (k >= spec.waves.length && !(last.rest && found !== undefined && k < found)) break;
   }
   await (options.write ?? ((p) => writeHeadPlans(p, cwd)))(plans);

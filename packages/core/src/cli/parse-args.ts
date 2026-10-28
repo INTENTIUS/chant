@@ -97,6 +97,7 @@ const BOOLEAN_FLAGS = new Set([
   "--generated",
   "--decide",
   "--record-plans",
+  "--approval-status",
   "--waves-outcome",
   "--loopback",
   "--artifacts",
@@ -452,6 +453,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.decide = true;
     } else if (arg === "--record-plans") {
       result.recordPlans = true;
+    } else if (arg === "--approval-status") {
+      // `chant run wave --spec <file> --approval-status` (#4630): post <product>/approval on an open pull request's head.
+      result.approvalStatus = true;
     } else if (arg === "--waves-outcome") {
       result.wavesOutcome = true;
     } else if (arg === "--group") {
