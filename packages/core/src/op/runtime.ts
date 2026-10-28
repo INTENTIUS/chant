@@ -295,6 +295,10 @@ export interface OpRunWaveTarget {
   attributes?: Record<string, string | number | boolean>;
   /** The pieces the engine timed. */
   spans?: CapabilityTraceSpan[];
+  /** The engine's error, when the apply failed (#4629): what the failed-apply triage posts. */
+  error?: string;
+  /** The resources the engine reported failed (#4629), by name or id. */
+  failedResources?: string[];
 }
 
 /** The first chant that writes {@link OpRunRecord.wave}, a run record per op wave job (#4551). */

@@ -95,6 +95,7 @@ import type { CloudTradeSpec } from "../ci-identity";
 import { gatePointProblems, type GatePoint } from "./gate-point";
 import { quorumProblems, type GateQuorumRule } from "./gate-quorum";
 import { notifyConfigProblem, type NotifyConfig } from "../notify";
+import { parseRespondList, type CiResponses } from "../ci-respond";
 import { WAVE_GATE_NAME_PATTERN, waveGateNameFrom, waveShare } from "../wave-layout";
 import { waveOutcomeFileName } from "../wave-blocked";
 import { NEXT_RELEASE } from "../release-floors";
@@ -555,6 +556,14 @@ export interface OpWavesSpec {
    */
   notify?: NotifyConfig;
   /**
+   * The responses a wave job posts (#4629, `../ci-respond.ts`): a refused
+   * wave's diff (`wave-refused: diff`, on by default) and a failed apply's
+   * triage (`apply-failed: triage`, on by default), on the pull request the
+   * wave applies or a tracking issue. `off` turns one off. A job's
+   * `CHANT_RESPOND` sits under these.
+   */
+  respond?: CiResponses;
+  /**
    * The control repo (#4617, `@intentius/chant/ci-control`): once the last
    * wave ran, a `control-dispatch` job tells the control repo how the waves
    * ended (`applied`, `partial`, `unchanged`, `waiting` or `failed`, from
@@ -938,6 +947,13 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
   if (spec.notify !== undefined) {
     const problem = notifyConfigProblem(spec.notify, "notify");
     if (problem) throw new Error(`${where}: ${problem}`);
+  }
+  if (spec.respond !== undefined) {
+    const respond = spec.respond as unknown;
+    if (respond === null || typeof respond !== "object" || Array.isArray(respond)) throw new Error(`${where}: respond must be an object of event to mode, such as { "wave-refused": "off" }.`);
+    const parsed = parseRespondList(Object.entries(respond as Record<string, unknown>).map(([e, m]) => `${e}=${String(m)}`));
+    if ("error" in parsed) throw new Error(`${where}: respond: ${parsed.error.replace(/^--respond /, "")}.`);
+    if (parsed.description !== undefined) throw new Error(`${where}: respond: the description check runs in the plan-note job, so an op waves spec takes only wave-refused and apply-failed.`);
   }
   const names = new Set<string>();
   for (const wave of spec.waves) {

@@ -1832,6 +1832,11 @@ function targetSettled(options: RunOpWaveOptions, result: RunOpWaveResult, k: nu
       durationMs,
       ...(opts.facts?.attributes ? { attributes: opts.facts.attributes } : {}),
       ...(opts.facts?.spans?.length ? { spans: opts.facts.spans } : {}),
+      // #4629: what the failed-apply triage reads back from the run record.
+      ...(status === "failed" && opts.error ? { error: opts.error } : {}),
+      ...(status === "failed" && opts.facts?.resources?.some((r) => r.status === "failed")
+        ? { failedResources: opts.facts.resources.filter((r) => r.status === "failed").map((r) => r.name ?? r.resource) }
+        : {}),
     },
   };
   jobEvents.get(options)?.stepSettle(k, target, status, durationMs, opts);

@@ -542,6 +542,21 @@ export function parseArgs(args: string[]): ParsedArgs {
       const value = args[++i];
       if (value === undefined || value.startsWith("-")) throw new Error("--requires needs a list of checks: --requires approved,mergeable,undiverged,checks");
       result.requires = value.split(",").map((v) => v.trim()).filter(Boolean);
+    } else if (arg === "--respond") {
+      // `chant components pr-apply|pr-post --respond wave-refused=off,description=check` (#4629).
+      const value = args[++i];
+      if (value === undefined || value.startsWith("-")) throw new Error("--respond needs a list of responses: --respond wave-refused=diff,apply-failed=off,description=check");
+      result.respond = [...(result.respond ?? []), value];
+    } else if (arg === "--decide-backend") {
+      // `chant components pr-post --decide-backend <name>` (#4629): the description check's backend.
+      const value = args[++i];
+      if (value === undefined || value.startsWith("-")) throw new Error("--decide-backend needs the name of a decide.backends entry");
+      result.decideBackend = value;
+    } else if (arg === "--decide-model") {
+      // `chant components pr-post --decide-model <id>` (#4629): the description check's pinned model.
+      const value = args[++i];
+      if (value === undefined || value.startsWith("-")) throw new Error("--decide-model needs a model id");
+      result.decideModel = value;
     } else if (arg === "--apply-before-merge") {
       // `chant build --pr-loop --apply-before-merge` and `chant ci run apply --apply-before-merge` (#4301): the job that applies before merge.
       result.applyBeforeMerge = true;

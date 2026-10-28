@@ -1192,7 +1192,11 @@ Component release ledger + status:
                             <kind>), in a job that runs none of the
                             change's code (#4295); --open posts every
                             open merge request's from a GitLab pipeline
-                            of the target branch (#4328)
+                            of the target branch (#4328); --respond
+                            description=check --decide-backend <name>
+                            --decide-model <id> asks whether the
+                            description leaves out a destroy or a
+                            replacement and posts the finding (#4629)
   components pr-record     On merge (#4168): plan the same members again,
                             store the change set and write the merge record
                             _merges/<commit>.json; applies and refuses
@@ -1239,6 +1243,10 @@ Component release ledger + status:
                             approved, mergeable, undiverged and green;
                             --requires <list> asks only the checks it
                             names (approved,mergeable,undiverged,checks);
+                            --respond <list> turns the failed apply's
+                            triage and the refused apply's diff on or off
+                            (wave-refused=diff|off,apply-failed=triage|off,
+                            #4629);
                             --events-json, both commands: the run-event
                             stream on stdout; --report-url <s3 or file URL>,
                             both commands: copy the report, the change set

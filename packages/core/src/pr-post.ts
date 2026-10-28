@@ -58,6 +58,12 @@ export interface PlanPostInput {
    * from the checkout `CHANT_CONTROL_DIR` names, when it names one.
    */
   controlFacts?: () => Promise<ControlEdgeFacts | undefined>;
+  /**
+   * The description check (#4629, `../ci-respond-run.ts`), run once the
+   * note is posted, on the report's change set. Its finding is a comment of
+   * its own; it never changes the status.
+   */
+  description?: (report: PrReport) => Promise<void>;
 }
 
 /** What {@link postPlanReport} did. */
@@ -175,6 +181,13 @@ export async function postPlanReport(input: PlanPostInput): Promise<PlanPostResu
       note = undefined;
     }
   }
+  if (input.description && "report" in read && !failedJob) {
+    try {
+      await input.description(read.report);
+    } catch (err) {
+      warnings.push(`the description check did not run: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
   return { state, description: cut(description), noted: note !== undefined, ...(refused ? { refused } : {}), warnings };
 }
 
@@ -209,6 +222,8 @@ export interface OpenPlanPostInput {
   env: string;
   member?: string;
   overdue?: () => Promise<PrOverdue[]>;
+  /** The description check, as {@link PlanPostInput.description}. */
+  description?: (report: PrReport) => Promise<void>;
 }
 
 /** What {@link postOpenPlanReports} did for one merge request. */
@@ -265,6 +280,7 @@ export async function postOpenPlanReports(input: OpenPlanPostInput): Promise<{ p
           ...(input.member ? { member: input.member } : {}),
           result: settled,
           ...(overdueOnce ? { overdue: overdueOnce } : {}),
+          ...(input.description ? { description: input.description } : {}),
         });
         posts.push({ pr: job.pr, head: job.head, posted });
       } finally {
