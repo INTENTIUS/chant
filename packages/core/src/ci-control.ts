@@ -11,6 +11,11 @@
  * - The control repo's projects and defaults as `control-entry` records on
  *   its workspace ledger (./control/records.ts).
  * - Reconcile over the product's generator (./control/reconcile.ts).
+ * - The apply outcome an op waves pipeline's dispatch carries, and the
+ *   control repo's record of each one in `_control/applied.jsonl`
+ *   (./control/applied.ts, #4617).
+ * - Cross-stack edges marked stale, current or unknown from the entries
+ *   and those records, for the pull request note (./control/edges.ts).
  *
  * A product holds the words, the settings it writes into an entry and their
  * check, its generator and its docs. It feature-detects this entry until the
@@ -24,7 +29,14 @@ import { NEXT_RELEASE } from "./release-floors";
 /** The first chant with `@intentius/chant/ci-control` (#4568). */
 export const CI_CONTROL_FLOOR = NEXT_RELEASE;
 
+/** The first chant that records the applies a dispatch carries and marks cross-stack edges (#4617). `recordControlAppliedFromEnv` present means the rest is too. */
+export const CONTROL_APPLIED_FLOOR = NEXT_RELEASE;
+
 export {
+  CONTROL_APPLY_OUTCOMES,
+  CONTROL_OUTCOME_VAR,
+  CONTROL_RUNS_DEPENDENTS,
+  type ControlApplyOutcome,
   CONTROL_CHANT_COMMAND,
   CONTROL_DEPENDENTS_FLOOR,
   CONTROL_DISPATCH_JOB,
@@ -114,3 +126,27 @@ export {
   type ReconcileProject,
   type ReconcileTarget,
 } from "./control/reconcile";
+export {
+  CONTROL_APPLIED_FILE,
+  CONTROL_APPLIED_KIND,
+  applyOutcomeOf,
+  controlAppliedProblems,
+  gitControlAppliedLedger,
+  latestControlApplies,
+  parseControlApplied,
+  recordControlApplied,
+  recordControlAppliedFromEnv,
+  type ApplyOutcomeSummary,
+  type ControlAppliedRecord,
+} from "./control/applied";
+export {
+  CONTROL_DIR_ENV,
+  controlEdgeFactsFromEnv,
+  controlMemberOf,
+  markCrossStackEdges,
+  readControlEdgeFacts,
+  remarkCrossStackEdges,
+  type ControlEdgeFacts,
+  type CrossStackEdge,
+  type CrossStackRead,
+} from "./control/edges";

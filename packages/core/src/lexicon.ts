@@ -986,6 +986,12 @@ export interface OpWavesPipelineOptions
    * the generator in process gets its own bin in the jobs. Absent: `chant`.
    */
   bin?: string;
+  /**
+   * The product's words (#4617), for the control dispatch a spec's
+   * `control` adds: its event type and messages. `chant run --generate`
+   * fills it from the active product words. Absent: chant's.
+   */
+  words?: import("./ci-product-words").CiProductWordsInput | import("./ci-product-words").CiProductWords;
 }
 
 /** An Op waves pipeline: one file, and its jobs in order. */

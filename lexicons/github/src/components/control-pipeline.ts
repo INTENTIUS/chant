@@ -39,7 +39,8 @@ export function controlGithubDoc(forge: "github" | "forgejo", options: ControlPi
       ...(forge === "github" ? { repository_dispatch: { types: [spec.event] } } : {}),
       workflow_dispatch: { inputs: spec.inputs },
     },
-    permissions: { contents: "read" },
+    // #4617: contents: write pushes the record of each dispatch that carries an outcome to chant/lifecycle.
+    permissions: { contents: "write" },
     // One run per member at a time, and none cancelled: a later apply of the same member waits for the one running.
     concurrency: concurrency(spec.group),
     jobsDoc: {
@@ -47,7 +48,8 @@ export function controlGithubDoc(forge: "github" | "forgejo", options: ControlPi
         "runs-on": GITHUB_RUNNER,
         container: options.image ?? CI_IMAGE,
         steps: [
-          { uses: CHECKOUT },
+          // The full history, so the job reads and appends to chant/lifecycle (#4617).
+          { uses: CHECKOUT, with: { "fetch-depth": 0 } },
           { name: "Run the dependents of the member that applied", shell: "bash", env: spec.env, run: spec.script },
         ],
       },

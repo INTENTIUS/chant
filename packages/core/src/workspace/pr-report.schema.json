@@ -332,6 +332,30 @@
       "items": { "type": "string", "minLength": 1 },
       "description": "Added within contract version 1 by #4552, written by chant 0.124.55 and newer. The names the pull request's target locks take under ci.locks when any member is on the resource lock grain, sorted: each such member's row keys (estate <e> <address>, root <r> <address>, urn <urn>, stack <project>/<stack>, object <id>), and the component name of every component with a member on another grain. chant lock --from-report locks these in place of selection.waves. Absent when no member is on the resource grain."
     },
+    "crossStackEdges": {
+      "type": "array",
+      "description": "Added within contract version 1 by #4617, written by chant 0.124.55 and newer. Each stack outside the workspace a member reads (a Pulumi StackReference no step applies), marked stale, current or unknown from the control repo's entries and apply records. The plan job marks each one unknown; the job that posts the note marks them again from a checkout of the control repo. Absent when no member reads one.",
+      "items": {
+        "type": "object",
+        "required": ["member", "stack", "status", "why"],
+        "additionalProperties": false,
+        "properties": {
+          "member": { "type": "string", "description": "The member that reads the stack." },
+          "stack": { "type": "string", "description": "The stack's name as the program wrote it." },
+          "lastUpdate": { "type": "string", "description": "When the reader last updated, from its stack export. Absent when it has not." },
+          "status": { "enum": ["stale", "current", "unknown"], "description": "stale: the owner applied after the reader last updated. current: the reader updated after the owner's last apply. unknown: anything else, said in why." },
+          "owner": { "type": "string", "description": "The project the control repo's entries give the stack to." },
+          "ownerApplied": {
+            "type": "object",
+            "required": ["at", "sha", "outcome"],
+            "additionalProperties": false,
+            "properties": { "at": { "type": "string" }, "sha": { "type": "string" }, "outcome": { "type": "string" } },
+            "description": "The owner's newest apply on the control repo's record."
+          },
+          "why": { "type": "string", "description": "The reason for the mark, as printed." }
+        }
+      }
+    },
     "hooks": {
       "type": "array",
       "description": "Added within contract version 1 by #4288, written by chant 0.124.41 and newer. The stage hooks the job ran, in order, from ci.hooks in the workspace declaration at base. Absent when it ran none.",

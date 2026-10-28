@@ -62,6 +62,22 @@ export const CONTROL_MEMBER_VAR = "CHANT_CONTROL_MEMBER";
 export const CONTROL_OP_VAR = "CHANT_CONTROL_OP";
 export const CONTROL_SHA_VAR = "CHANT_CONTROL_SHA";
 
+/** The variable the apply outcome travels in (#4617): the member's dispatch step reads it, a GitLab trigger sets it, the control repo's step reads it. */
+export const CONTROL_OUTCOME_VAR = "CHANT_CONTROL_OUTCOME";
+
+/**
+ * What a member's op waves did, as its dispatch says it (#4617, `applyOutcomeOf` in ./applied.ts):
+ * - `applied`: at least one run applied, and every other run applied or had nothing to apply.
+ * - `partial`: some runs applied, and others failed, were blocked, refused or wait.
+ * - `unchanged`: every run had nothing to apply.
+ * - `waiting`: nothing applied, and a wave waits for an approval.
+ * - `failed`: nothing applied, and a run failed, was refused or blocked, or no wave wrote an outcome.
+ */
+export type ControlApplyOutcome = "applied" | "partial" | "unchanged" | "waiting" | "failed";
+export const CONTROL_APPLY_OUTCOMES: readonly ControlApplyOutcome[] = ["applied", "partial", "unchanged", "waiting", "failed"];
+/** The outcomes after which the control repo runs the member's dependents: something applied. A dispatch with no outcome (the pull request loop's, sent on green only) runs them too. */
+export const CONTROL_RUNS_DEPENDENTS: readonly ControlApplyOutcome[] = ["applied", "partial"];
+
 /** The branch a GitLab or Forgejo dispatch runs on when the settings name none. */
 export const CONTROL_REF_DEFAULT = "main";
 
@@ -229,6 +245,8 @@ export interface ControlDispatch {
   op: string;
   /** The commit that applied, 7 to 64 lower-case hex digits. */
   sha: string;
+  /** What the member's op waves did (#4617). Absent from the pull request loop's dispatch, which is sent on green only. */
+  outcome?: ControlApplyOutcome;
 }
 
 /** Where the token goes in a {@link ControlDispatchRequest}. */
@@ -251,6 +269,7 @@ function checkDispatch(d: ControlDispatch): void {
   if (!CONTROL_NAME.test(d.member)) throw new ControlConfigError(`the dispatch's member "${d.member}" is not a name the control repo's workspace can hold`);
   if (!CONTROL_NAME.test(d.op)) throw new ControlConfigError(`the dispatch's op "${d.op}" is not an Op name`);
   if (!SHA.test(d.sha)) throw new ControlConfigError(`the dispatch names no commit sha ("${d.sha}")`);
+  if (d.outcome !== undefined && !CONTROL_APPLY_OUTCOMES.includes(d.outcome)) throw new ControlConfigError(`the dispatch's outcome "${d.outcome}" is not one of ${CONTROL_APPLY_OUTCOMES.join(", ")}`);
 }
 
 /**
@@ -267,7 +286,7 @@ export function controlDispatchRequest(target: ControlTarget, d: ControlDispatch
       url: `${target.apiBase}/repos/${target.path}/dispatches`,
       method: "POST",
       headers: { Accept: "application/vnd.github+json", "Content-Type": "application/json" },
-      body: { json: { event_type: controlDispatchEvent(wordsIn), client_payload: { member: d.member, op: d.op, sha: d.sha } } },
+      body: { json: { event_type: controlDispatchEvent(wordsIn), client_payload: { member: d.member, op: d.op, sha: d.sha, ...(d.outcome ? { outcome: d.outcome } : {}) } } },
       token: { in: "header", name: "Authorization", scheme: "Bearer" },
     };
   }
@@ -282,6 +301,7 @@ export function controlDispatchRequest(target: ControlTarget, d: ControlDispatch
           [`variables[${CONTROL_MEMBER_VAR}]`, d.member],
           [`variables[${CONTROL_OP_VAR}]`, d.op],
           [`variables[${CONTROL_SHA_VAR}]`, d.sha],
+          ...(d.outcome ? ([[`variables[${CONTROL_OUTCOME_VAR}]`, d.outcome]] as Array<[string, string]>) : []),
         ],
       },
       token: { in: "form", field: "token" },
@@ -291,7 +311,7 @@ export function controlDispatchRequest(target: ControlTarget, d: ControlDispatch
     url: `${target.apiBase}/repos/${target.path}/actions/workflows/${controlPipelineFileName(wordsIn)}/dispatches`,
     method: "POST",
     headers: { Accept: "application/json", "Content-Type": "application/json" },
-    body: { json: { ref: target.ref, inputs: { member: d.member, op: d.op, sha: d.sha } } },
+    body: { json: { ref: target.ref, inputs: { member: d.member, op: d.op, sha: d.sha, ...(d.outcome ? { outcome: d.outcome } : {}) } } },
     token: { in: "header", name: "Authorization", scheme: "token" },
   };
 }
@@ -375,6 +395,15 @@ export interface ControlDispatchScriptOptions {
   sentCheck?: string;
   /** A shell line run once the control repo took the dispatch, such as setting {@link controlStatusContext}. */
   markSent?: string;
+  /**
+   * Carry the apply outcome (#4617): the step reads it from
+   * {@link CONTROL_OUTCOME_VAR}, which an op waves pipeline's control job
+   * sets from the wave jobs' outcome files, refuses one that is not in
+   * {@link CONTROL_APPLY_OUTCOMES}, and sends it with the member, the Op
+   * and the commit. The dispatch goes whatever the outcome: the control
+   * repo records it and runs the dependents only when something applied.
+   */
+  outcome?: boolean;
 }
 
 /**
@@ -396,16 +425,23 @@ export function controlDispatchScript(target: ControlTarget, opts: ControlDispat
     // The sha may come from another job's output: it is data, and only a commit sha goes into the request.
     `sha="\${${CONTROL_SHA_VAR}:-}"`,
     `case "$sha" in ""|*[!0-9a-f]*) echo "${label}: the dispatch names no commit sha, so ${target.repo} was not told" >&2; exit 1 ;; esac`,
+    ...(opts.outcome
+      ? [
+          `outcome="\${${CONTROL_OUTCOME_VAR}:-}"`,
+          `case "$outcome" in ${CONTROL_APPLY_OUTCOMES.join("|")}) ;; *) echo "${label}: the waves' outcome (\\"$outcome\\") is not one of ${CONTROL_APPLY_OUTCOMES.join(", ")}, so ${target.repo} was not told" >&2; exit 1 ;; esac`,
+        ]
+      : []),
     `[ -n "\${${tok}:-}" ] || { echo "${label}: ${tok} is empty; map the ${target.tokenSecret} secret into it, so ${target.repo} can be told" >&2; exit 1; }`,
     ...(opts.sentCheck ? [`if [ "$(${opts.sentCheck} 2>/dev/null)" = 1 ]; then echo "${label}: ${target.repo} was told about \${sha:0:8} already"; exit 0; fi`] : []),
     'answer="$(mktemp)"',
   ];
   let send: string;
   if ("json" in req.body) {
+    const carried = opts.outcome ? `,"outcome":"'"$outcome"'"` : "";
     const json =
       target.forge === "github"
-        ? `{"event_type":"${controlDispatchEvent(words)}","client_payload":{"member":"'"$member"'","op":"'"$op"'","sha":"'"$sha"'"}}`
-        : `{"ref":"${target.ref}","inputs":{"member":"'"$member"'","op":"'"$op"'","sha":"'"$sha"'"}}`;
+        ? `{"event_type":"${controlDispatchEvent(words)}","client_payload":{"member":"'"$member"'","op":"'"$op"'","sha":"'"$sha"'"${carried}}}`
+        : `{"ref":"${target.ref}","inputs":{"member":"'"$member"'","op":"'"$op"'","sha":"'"$sha"'"${carried}}}`;
     const auth = req.token.in === "header" ? `${req.token.name}: ${req.token.scheme} %s\\n` : "";
     const headers = Object.entries(req.headers).map(([k, v]) => `-H '${k}: ${v}'`);
     send = `code="$(printf '${auth}' "$${tok}" | curl -sS -o "$answer" -w '%{http_code}' -X POST -H @- ${headers.join(" ")} -d '${json}' ${sqUrl(req.url)})"`;
@@ -416,6 +452,7 @@ export function controlDispatchScript(target: ControlTarget, opts: ControlDispat
       `--form "variables[${CONTROL_MEMBER_VAR}]=$member"`,
       `--form "variables[${CONTROL_OP_VAR}]=$op"`,
       `--form "variables[${CONTROL_SHA_VAR}]=$sha"`,
+      ...(opts.outcome ? [`--form "variables[${CONTROL_OUTCOME_VAR}]=$outcome"`] : []),
     ];
     send = `code="$(printf '%s' "$${tok}" | curl -sS -o "$answer" -w '%{http_code}' -X POST --form 'token=<-' ${fields.join(" ")} ${sqUrl(req.url)})"`;
   }
@@ -423,15 +460,35 @@ export function controlDispatchScript(target: ControlTarget, opts: ControlDispat
   return [
     ...lines,
     `${send} || { echo "${label}: the dispatch to ${target.repo} could not be sent" >&2; exit 1; }`,
-    `case "$code" in 2??) echo "${label}: told ${target.repo} that $member applied (HTTP $code)"${mark} ;; *) echo "${label}: ${target.repo} refused the dispatch (HTTP $code): $(head -c 400 "$answer")" >&2; exit 1 ;; esac`,
+    `case "$code" in 2??) echo "${label}: told ${target.repo} that $member ${opts.outcome ? "ran its waves ($outcome)" : "applied"} (HTTP $code)"${mark} ;; *) echo "${label}: ${target.repo} refused the dispatch (HTTP $code): $(head -c 400 "$answer")" >&2; exit 1 ;; esac`,
   ].join("\n");
 }
 
 /**
- * The control repo's step: runs the member's dependents. The member and the
- * Op arrive in the environment (a dispatch's payload is data, never part of
- * the script) and are checked against {@link CONTROL_NAME} before they reach
- * a command line.
+ * The script line that records a dispatch carrying an outcome (#4617):
+ * `recordControlAppliedFromEnv` from the control repo's own install of
+ * `@intentius/chant/ci-control`, which appends to `_control/applied.jsonl`
+ * and pushes `chant/lifecycle`. An install without it says so and records
+ * nothing; a failed record or push is a warning, never the job's failure.
+ */
+function recordAppliedLine(label: string): string {
+  const js = [
+    'const m = await import("@intentius/chant/ci-control");',
+    `if (typeof m.recordControlAppliedFromEnv !== "function") { console.error("${label}: this chant does not record applies; pin a newer @intentius/chant to keep them"); process.exit(0); }`,
+    "const r = await m.recordControlAppliedFromEnv();",
+    `if (r.skipped) console.error("${label}: no apply recorded: " + r.skipped); else console.error("${label}: recorded " + r.recorded.member + " " + r.recorded.outcome + " at " + r.recorded.sha.slice(0, 12));`,
+    `if (r.pushWarning) console.error("${label}: " + r.pushWarning);`,
+  ].join(" ");
+  return `[ -z "$outcome" ] || node --input-type=module -e '${js}' || echo "${label}: the apply of $member was not recorded" >&2`;
+}
+
+/**
+ * The control repo's step: runs the member's dependents. The member, the Op
+ * and the outcome arrive in the environment (a dispatch's payload is data,
+ * never part of the script) and are checked against {@link CONTROL_NAME}
+ * and {@link CONTROL_APPLY_OUTCOMES} before they reach a command line. A
+ * dispatch that carries an outcome is recorded first (#4617), and its
+ * dependents run only when something applied ({@link CONTROL_RUNS_DEPENDENTS}).
  */
 export function controlDependentsScript(opts: { command?: string; label?: string } = {}): string {
   const label = opts.label ?? "chant";
@@ -440,9 +497,13 @@ export function controlDependentsScript(opts: { command?: string; label?: string
     "set -eu",
     `member="\${${CONTROL_MEMBER_VAR}:-}"`,
     `op="\${${CONTROL_OP_VAR}:-}"`,
+    `outcome="\${${CONTROL_OUTCOME_VAR}:-}"`,
     `re='${CONTROL_NAME.source}'`,
     `[[ $member =~ $re && $op =~ $re ]] || { echo "${label}: the dispatch names no usable member and Op (member=\\"$member\\", op=\\"$op\\")" >&2; exit 2; }`,
+    `case "$outcome" in ""|${CONTROL_APPLY_OUTCOMES.join("|")}) ;; *) echo "${label}: the dispatch's outcome (\\"$outcome\\") is not one of ${CONTROL_APPLY_OUTCOMES.join(", ")}" >&2; exit 2 ;; esac`,
     "npm ci",
+    recordAppliedLine(label),
+    `case "$outcome" in ""|${CONTROL_RUNS_DEPENDENTS.join("|")}) ;; *) echo "${label}: $member's waves ended $outcome and applied nothing, so its dependents do not run"; exit 0 ;; esac`,
     `${chant} workspace run --dependents-of "$member" --op "$op" --json`,
   ].join("\n");
 }
@@ -481,6 +542,7 @@ export function controlPipelineSpec(forge: ForgeKind, wordsIn: CiProductWordsInp
   const member = gitlab ? `$${CONTROL_MEMBER_VAR}` : "${{ github.event.client_payload.member || inputs.member }}";
   const op = gitlab ? `$${CONTROL_OP_VAR}` : "${{ github.event.client_payload.op || inputs.op }}";
   const sha = gitlab ? `$${CONTROL_SHA_VAR}` : "${{ github.event.client_payload.sha || inputs.sha }}";
+  const outcome = "${{ github.event.client_payload.outcome || inputs.outcome }}";
   const bin = words.bin ?? product;
   const notes = [
     `the repo's package.json must pin @intentius/chant at ${CONTROL_DEPENDENTS_FLOOR} or later, which has \`chant workspace run --dependents-of\``,
@@ -489,6 +551,9 @@ export function controlPipelineSpec(forge: ForgeKind, wordsIn: CiProductWordsInp
       : forge === "github"
         ? [`give each member a ${CONTROL_TOKEN_SECRET} secret: a token that may send a repository_dispatch to this repo and do nothing else`]
         : [`give each member a ${CONTROL_TOKEN_SECRET} secret: a token that may dispatch workflows in this repo and do nothing else`]),
+    gitlab
+      ? "a dispatch that carries an outcome is recorded on chant/lifecycle; the job pushes it with its own token, so let the CI job token push to this repo or the record stays in the job"
+      : "a dispatch that carries an outcome is recorded on chant/lifecycle, which the job pushes with its own token (contents: write)",
   ];
   return {
     forge,
@@ -503,8 +568,9 @@ export function controlPipelineSpec(forge: ForgeKind, wordsIn: CiProductWordsInp
       member: { description: "The member whose dependents run", required: true, type: "string" },
       op: { description: "The Op to run on them", required: true, type: "string" },
       sha: { description: "The member's commit that applied", required: false, type: "string" },
+      outcome: { description: `What the member's waves did: ${CONTROL_APPLY_OUTCOMES.join(", ")}`, required: false, type: "string" },
     },
-    env: gitlab ? {} : { [CONTROL_MEMBER_VAR]: member, [CONTROL_OP_VAR]: op, [CONTROL_SHA_VAR]: sha },
+    env: gitlab ? {} : { [CONTROL_MEMBER_VAR]: member, [CONTROL_OP_VAR]: op, [CONTROL_SHA_VAR]: sha, [CONTROL_OUTCOME_VAR]: outcome },
     script: controlDependentsScript({ label: product, ...(opts.command ? { command: opts.command } : {}) }),
     group: `${product}-dependents-${member}`,
     rule: `$CI_PIPELINE_SOURCE == "trigger" && $${CONTROL_MEMBER_VAR} && $${CONTROL_OP_VAR}`,

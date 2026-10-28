@@ -115,6 +115,7 @@ import type { RunProgressEvent } from "./run-progress";
 import type { RunEventSink } from "../run-event-stream";
 import { capabilitySteps, planWaveComponent, readDeployedOutputs, type CapabilityPolicyFindings, type WaveComponentPlan } from "./wave-plan";
 import type { PrMigrationFile } from "../pr-migrations";
+import { markCrossStackEdges, type CrossStackRead } from "../control/edges";
 
 export interface PrPlanSetOptions {
   /** Every component in the project, not the selection: a planned member's dependency outside it is read too (#4104). */
@@ -1192,9 +1193,32 @@ function reportGroups(set: PrPlanSet, waves: readonly string[][]): PrGroup[] {
   });
 }
 
+/**
+ * The stacks outside the workspace each member's plan reads (#4617): a
+ * capability's artifact that lists them under `stackReferences.outside`
+ * (pulumi-up's, #4547), with the reader's last update from
+ * `stackReferences.lastUpdate`.
+ */
+export function crossStackReadsOf(plans: Record<string, Record<string, unknown>> | undefined): CrossStackRead[] {
+  const out: CrossStackRead[] = [];
+  for (const byMember of Object.values(plans ?? {})) {
+    for (const [member, artifact] of Object.entries(byMember ?? {})) {
+      const refs = (artifact as { stackReferences?: { outside?: unknown; lastUpdate?: unknown } } | undefined)?.stackReferences;
+      if (!refs || !Array.isArray(refs.outside)) continue;
+      const lastUpdate = typeof refs.lastUpdate === "string" ? refs.lastUpdate : undefined;
+      for (const o of refs.outside) {
+        const name = (o as { name?: unknown } | null)?.name;
+        if (typeof name === "string" && name !== "" && !out.some((r) => r.member === member && r.stack === name)) out.push({ member, stack: name, ...(lastUpdate ? { lastUpdate } : {}) });
+      }
+    }
+  }
+  return out;
+}
+
 /** The report a stage writes. */
 export function prReport(input: PrReportInput): PrReport {
   const changed = new Set(input.signal.changed);
+  const crossStack = crossStackReadsOf(input.set.plans);
   const groups = reportGroups(input.set, input.plan.waves);
   const groupOf = new Map(groups.flatMap((g, i) => g.components.map((c) => [c, i] as const)));
   const members = (input.members ?? input.set.members).map((m) => (groupOf.has(m.component) ? { ...m, group: groupOf.get(m.component)! } : m));
@@ -1231,6 +1255,8 @@ export function prReport(input: PrReportInput): PrReport {
     ...(groups.length > 0 ? { groups } : {}),
     ...(input.set.capabilityPolicy?.length ? { capabilityPolicy: input.set.capabilityPolicy.map((c) => ({ ...c })) } : {}),
     ...(input.set.fallbacks?.length ? { fallbacks: input.set.fallbacks.map((f) => ({ ...f })) } : {}),
+    // #4617: the stacks outside the workspace a member reads, unknown until the note's job reads the control repo.
+    ...(crossStack.length > 0 ? { crossStackEdges: markCrossStackEdges(crossStack, undefined) } : {}),
     members,
     changeSet: input.set.doc,
     // #4552: under the resource grain a pull request locks row keys, so `chant lock --from-report` reads them here.

@@ -842,6 +842,30 @@ The branch is `GITHUB_REF_NAME` on GitHub and Forgejo, `CI_COMMIT_BRANCH` on Git
 
 The check comes after the wave's holds are settled and its lock grain's lease is taken, and before its approval is spent. A wave on the resource grain lets go of its rows before it exits. The job's run record has `wave.outcome` `stood-down`, with the newer commit and its branch in `wave.supersededBy`, and its status is `ok`. No notification goes out. An apply command can still write `stood-down` to `CHANT_APPLY_OUTCOME` itself. SQL Yodeler's `YODEL_STAND_DOWN` and terragucci's `newerPush` do this today, and either can leave it to chant once its chant has `OP_WAVE_STAND_DOWN_FLOOR`.
 
+## Tell the control repo
+
+With `control` on the spec, the pipeline tells a control repo how the waves ended once the last wave ran ([#4617](https://github.com/INTENTIUS/chant/issues/4617)). The control repo then runs this member's dependents, as it does after the pull request loop's apply ([The control repo](/chant/concepts/ci-products/#the-control-repo)).
+
+```json
+{ "name": "stacks", "op": "pulumi-up", "control": { "repo": "github.com/acme/control", "op": "deploy", "member": "network", "tokenSecret": "CONTROL_TOKEN" }, "waves": [...] }
+```
+
+`control` takes the pull request loop's settings: `repo`, `op`, `forge`, `tokenSecret`, `readTokenSecret`, `ref` and `apiBase`. `member` is required here, since a spec has no repository name to default it to. `sentCheck` and `markSent` are the product's shell lines that find and set the commit's control status.
+
+The `control-dispatch` job needs the last wave's jobs. On GitHub and Forgejo it runs after them unless the run was cancelled, so a failed run does not stop it. On GitLab a last wave whose runs failed lets it run, and a wave that waits at its gate stops it with the waves after it. The job reads every wave job's outcome file and adds them up with `chant run wave --spec <file> --waves-outcome`, through the product's bin:
+
+| Outcome | When |
+|---|---|
+| `applied` | A run applied, and every other run applied or had nothing to apply |
+| `partial` | Some runs applied, and others failed, were blocked, refused or wait |
+| `unchanged` | No run had anything to apply |
+| `waiting` | Nothing applied, and a wave waits for an approval |
+| `failed` | Nothing applied, and a run failed, was refused or blocked, or no wave wrote an outcome |
+
+The dispatch carries that outcome with the member, the Op and the pushed commit. Only its step holds the token: the `tokenSecret` secret, mapped into `CHANT_CONTROL_TOKEN` and handed to curl on its stdin. On GitLab a CI/CD variable reaches every job, so each wave job, the resume job and the record-plans job unset the control repo's token variables first, and the job adds up the outcome in a subshell without them.
+
+The control repo records each dispatch that carries an outcome as a `control-applied` line of `_control/applied.jsonl` on its `chant/lifecycle`, and runs the dependents only after `applied` or `partial`. A pull request note reads those records to mark a stack another repository applies as stale, current or unknown ([Cross-stack edges](/chant/concepts/ci-products/#cross-stack-edges)).
+
 ## The run record
 
 Each `chant run wave` job appends one run record to `<env>/runs__<name>.jsonl` on `chant/lifecycle`, however it ends ([#4551](https://github.com/INTENTIUS/chant/issues/4551)). The record goes under the environment the spec's `labels.Env` names, else `local`, as every Op's does. The spec's `labels` are copied onto it. The record has one phase per wave the job walked, `wave-<k>`, and one step per run target: `ok` when it applied, `fail` when it failed, and `skipped` when it moved, was blocked or waited. Its `wave` field names the spec, the wave, the job (`wave`, `decide`, `share` or `group`), the set digest, the exit code and the runs applied, failed, moved and blocked, so a deciding job and its share jobs join on `wave.digest`. `chant ledger runs --where op=<name>` lists them. `--no-record` and `CHANT_NO_RECORD` write none. `wave.targets` holds each run target whose apply the job started ([#4555](https://github.com/INTENTIUS/chant/issues/4555)). An entry keeps the start time and the duration, which is also the step's `durationMs`. It keeps the facts the capability gave too. A job that stood down for a newer commit names it in `wave.supersededBy` (`branch`, `commit`). `wave.plans` holds each planned run with policy rows, from `holds.policy` or a hook in the job's process, and the files those hooks wrote ([#4614](https://github.com/INTENTIUS/chant/issues/4614)).

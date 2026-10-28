@@ -2,7 +2,7 @@
  * The slim wave-job runtime (#3896): the four commands a generated Op waves
  * pipeline runs, and nothing else.
  *
- *   chant run wave --spec <file> --wave <k> [--decide | --share <i> | --record-plans]
+ *   chant run wave --spec <file> --wave <k> [--decide | --share <i> | --record-plans | --waves-outcome]
  *   chant run resume [--gate <op>/<gate>] [--dry-run]
  *   chant approve <op> <gate> [...]
  *   chant workspace points ask|answer|list|... [...]
@@ -50,7 +50,7 @@ Usage: node wave-runtime.mjs <command> [options]
 
 Commands:
   run wave --spec <file> --wave <k>   Plan, gate and apply wave k of an Op waves spec
-                                      (--decide, --share <i>, --record-plans, --base <ref>, --json)
+                                      (--decide, --share <i>, --record-plans, --waves-outcome, --base <ref>, --json)
   run resume                          Start the CI jobs that wait at gates whose approval arrived
                                       (--gate <op>/<gate>, --dry-run, --json)
   approve <op> <gate>                 Record a gate's resolution on the lifecycle ledger

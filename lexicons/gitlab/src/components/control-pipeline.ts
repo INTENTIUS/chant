@@ -9,7 +9,7 @@
  * (./generate-pipeline.ts).
  */
 
-import { CI_IMAGE } from "@intentius/chant/ci-jobs";
+import { CI_IMAGE, GITLAB_FULL_HISTORY } from "@intentius/chant/ci-jobs";
 import { controlPipelineSpec } from "@intentius/chant/control/dispatch";
 import type { CiProductWords, CiProductWordsInput } from "@intentius/chant/ci-product-words";
 import { emitGitlabFile } from "./ci-jobs";
@@ -27,6 +27,8 @@ export function generateControlPipeline(options: { words?: CiProductWordsInput |
   const job = {
     stage: "deploy",
     image: options.image ?? CI_IMAGE,
+    // The full history, so the job reads and appends to chant/lifecycle (#4617).
+    variables: { ...GITLAB_FULL_HISTORY },
     rules: [{ if: spec.rule }],
     // One member at a time: two applies upstream should not run the same dependents side by side.
     resource_group: spec.group,

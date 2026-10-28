@@ -60,11 +60,25 @@ A control repo runs the work that crosses repositories, for terragucci and plywo
 
 Set `control` on the pull request loop and each member's pipeline gets a `control-dispatch` job after its last apply on merge. The job tells the control repo the member applied: a `repository_dispatch` of `<product>-applied` on GitHub, a pipeline trigger on GitLab, and a workflow dispatch on Forgejo. The job maps the product's secret into `CHANT_CONTROL_TOKEN` for its one step, and curl reads the token on stdin, so it stays off every command line. On GitLab the plan job unsets that variable along with the forge tokens. A product's bin can send the same request in process with `dispatchControl`.
 
-The control repo's own pipeline is `<product>-dependents.yml`, written by each forge lexicon's `generateControlPipeline`. It checks the member and Op names it was given, then runs `chant workspace run --dependents-of <member> --op <op>`, one member at a time.
+A product that applies on merge through op waves sets `control` on the spec instead. After the last wave, whatever it did, a `control-dispatch` job sends the dispatch with the outcome the wave jobs add up to: `applied`, `partial`, `unchanged`, `waiting` or `failed` ([#4617](https://github.com/INTENTIUS/chant/issues/4617), [Tell the control repo](/chant/guide/op-waves/#tell-the-control-repo)).
+
+The control repo's own pipeline is `<product>-dependents.yml`, written by each forge lexicon's `generateControlPipeline`. It checks the member and Op names it was given, then runs `chant workspace run --dependents-of <member> --op <op>`, one member at a time. A dispatch that carries an outcome is recorded first, as a `control-applied` line of `_control/applied.jsonl` on the control repo's `chant/lifecycle`, and its dependents run only when something applied. The job pushes the record with its own token. A control repo whose chant predates `CONTROL_APPLIED_FLOOR` says so and records nothing.
 
 The control repo's projects and its shared defaults are `control-entry` records on the control repo's ledger, in `_control/entries.jsonl`. Each line is one version of one entry and names the digest of the version it replaces, so a write that raced another is refused. A retired entry is no longer read. chant checks each record's shape, and the product passes a check for the settings it writes.
 
 `reconcileProjects` brings each project's pipeline in line with the entries. It clones the project and runs the product's generator in the clone. A dry run reports what would change. An apply pushes `<product>/pipeline` and opens a pull request there, or updates the one already open. It never writes a default branch. Each project names the variable its token is in, and the default is `CHANT_<FORGE>_TOKEN` for its forge. git reads the token from its environment.
+
+### Cross-stack edges
+
+A member can read a stack that no member of its workspace applies, such as a Pulumi `StackReference` to a stack in another repository. The pull request note lists each such read in a table with the stack's owner and a mark ([#4617](https://github.com/INTENTIUS/chant/issues/4617)). The owner is the project whose control entry lists the stack among its `estates`. The mark compares the owner's newest apply on the control repo's record with the reader's last update, taken from its stack export:
+
+| Mark | When |
+|---|---|
+| `stale` | The owner applied after the reader last updated, so the reader holds outputs that may have changed since |
+| `current` | The reader updated after the owner's last apply |
+| `unknown` | No entry claims the stack, two do, the owner has no apply on record, the reader has not updated, or the control repo was not read |
+
+The plan job reads no control repo, so the report it writes marks every edge `unknown`. The job that posts the note marks them again from a checkout of the control repo named by `CHANT_CONTROL_DIR`, with its `chant/lifecycle` fetched. It takes only each edge's reader, stack and last update from the report. Only names and times are compared, never an output's value. An entry's `settings.member` names the owner's member in the control repo's workspace, and the default is the repository's name.
 
 ## Traces and agent tools
 
