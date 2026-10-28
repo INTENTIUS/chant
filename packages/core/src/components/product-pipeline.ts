@@ -35,6 +35,9 @@ import {
 } from "../ci-product-words";
 import { prCommentLockJobs, prLoopJobs, prLoopPostJob, withProductBin, type PrCommentLockJob, type PrLoopJob, type PrLoopPipelineOptions } from "./pr-pipeline";
 import type { DriverComponent } from "./driver";
+import type { ScheduledOpSpec } from "../lexicon";
+import type { CiRunner } from "../ci-jobs";
+import { resolveAgentSpec, type OpAgentSpec } from "../ci-agent";
 
 /** Where the generator writes a product's waves spec, which chant reads at base (#4550). */
 export const PRODUCT_WAVES_SPEC_DIR = ".chant/op-waves";
@@ -57,8 +60,14 @@ export interface ProductPipelineOptions extends Omit<PrLoopPipelineOptions, "wor
   waves?: OpWavesSpec;
   /** Where the spec is written, from the job's directory. Default {@link productWavesSpecFile}. */
   wavesSpecFile?: string;
-  /** The product runs an agent job that answers its agent command. */
-  agent?: boolean;
+  /**
+   * The product runs an agent job that answers its agent command (#4616):
+   * `true` for the defaults, or the agent's settings. The pipeline then
+   * returns the agent's Op spec, which the product writes and generates with
+   * `chant run --generate <forge> --spec <file>` as it does its other
+   * scheduled Ops.
+   */
+  agent?: boolean | ProductAgentOptions;
   /**
    * The apply on merge from the component graph (#4588), when `waves` is
    * absent: the spec `pr-apply --wave-gate` runs, a wave per layer of
@@ -93,6 +102,43 @@ export interface ProductPipelineJobs {
    * releases them. The forge lexicons render the same jobs.
    */
   locks?: PrCommentLockJob[];
+  /**
+   * The agent (#4616), with `agent`: the comment it answers, `/<product>
+   * agent <ask>`, and the scheduled Op spec whose generated workflow runs
+   * it: the agent job with a read token and the model's key, and the push
+   * job with the write token.
+   */
+  agent?: { comment: string; name: string; spec: ScheduledOpSpec };
+}
+
+/** An agent's settings as a product passes them (#4616): {@link OpAgentSpec} without the trigger, which the pipeline names. */
+export interface ProductAgentOptions extends Omit<OpAgentSpec, "on" | "comment" | "branch"> {
+  /** The agent's name: its workflow, its jobs and its runs on the ledger. Default `<product>-agent`. */
+  name?: string;
+  /** Where its jobs run. */
+  runner?: CiRunner;
+}
+
+/** The agent's Op spec for `/<product> agent <ask>` (#4616). The settings are checked here, so a product finds a bad one when it generates. */
+export function productAgentSpec(wordsIn: CiProductWordsInput | CiProductWords, comment: string, options: ProductAgentOptions = {}): ScheduledOpSpec {
+  const words = assertProductWords(wordsIn);
+  const { name: given, runner, ...settings } = options;
+  const name = given ?? `${words.product}-agent`;
+  const agent: OpAgentSpec = { on: "comment", comment, ...settings };
+  resolveAgentSpec(name, agent, words.product);
+  return { name, trigger: { kind: "pull_request" }, agent, ...(runner !== undefined ? { runner } : {}) };
+}
+
+/**
+ * The `agent` of a scheduled drift Op (#4616): after the Op's run exits with
+ * chant's `drift` code, the agent changes the code to say what is live and
+ * opens or updates a pull request from `<product>/agent/<op>`.
+ */
+export function productDriftAgent(wordsIn: CiProductWordsInput | CiProductWords, op: string, options: Omit<OpAgentSpec, "on" | "comment"> = {}): OpAgentSpec {
+  const words = assertProductWords(wordsIn);
+  const agent: OpAgentSpec = { on: "drift", ...options };
+  resolveAgentSpec(op, agent, words.product);
+  return agent;
 }
 
 /**
@@ -146,6 +192,12 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   };
   const locks = prCommentLockJobs(forge, { locks: options.locks, words });
   if (locks.length > 0) out.locks = locks;
+  // #4616: the agent answers its comment from a workflow of its own, generated from this spec.
+  const agentComment = options.agent ? comments.agent : undefined;
+  if (options.agent && agentComment) {
+    const spec = productAgentSpec(words, agentComment, options.agent === true ? {} : options.agent);
+    out.agent = { comment: agentComment, name: spec.name, spec };
+  }
   // #4588: without a spec of the product's own, the component graph's waves on op waves.
   const op = words.op ?? componentWaves?.waveGate ?? words.prGate;
   const spec = given ?? (componentWaves

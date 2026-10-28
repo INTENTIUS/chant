@@ -237,6 +237,15 @@ export interface PullRequest {
   base?: string;
 }
 
+/** A pull request's head, as {@link PrForge.pullRequestHead} reads it (#4616). */
+export interface PullRequestHead {
+  sha: string;
+  branch: string;
+  open: boolean;
+  /** The branch lives in this repository, not a fork. */
+  sameRepo: boolean;
+}
+
 /** An open pull request as `chant ci serve` polls it (#4095). */
 /** A merge request's job in its newest pipeline at its head (#4328), as {@link PrForge.mergeRequestJobs} finds it. */
 export interface MergeRequestJob {
@@ -431,6 +440,14 @@ export interface PrForge {
   openPullRequests?(base: string): Promise<OpenPullRequest[]>;
   /** GitHub and Forgejo (#4095): the commit `branch` points at, or undefined when there is no such branch. */
   branchHead?(branch: string): Promise<string | undefined>;
+  /**
+   * The head of pull request `pr` (#4616): its commit and branch, whether it
+   * is open, and whether the branch lives in this repository rather than a
+   * fork. Undefined when the forge does not know the pull request.
+   */
+  pullRequestHead?(pr: number): Promise<PullRequestHead | undefined>;
+  /** GitHub and Forgejo (#4616): whether `login` may push to this repository (write, maintain or admin). */
+  userCanWrite?(login: string): Promise<boolean>;
   /**
    * When a scheduled Op's generated job last ran from its schedule or by hand
    * (#4289). GitHub reads the workflow `workflow` names and its `schedule` and
@@ -1146,6 +1163,33 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
       return out.sort((a, b) => a.number - b.number);
     },
     branchHead: branchTip,
+    async pullRequestHead(pr) {
+      let got: unknown;
+      try {
+        got = await api.call("GET", `${repo}/pulls/${pr}`);
+      } catch (err) {
+        if (err instanceof ForgeApiError && err.status === 404) return undefined;
+        throw err;
+      }
+      if (!isObject(got) || !isObject(got.head)) return undefined;
+      const sha = str(got.head.sha);
+      const branch = str(got.head.ref);
+      if (!sha || !branch) return undefined;
+      const open = got.state === "open" && got.merged !== true;
+      return { sha, branch, open, sameRepo: fromHere(got, branch) };
+    },
+    async userCanWrite(login) {
+      let got: unknown;
+      try {
+        got = await api.call("GET", `${repo}/collaborators/${encodeURIComponent(login)}/permission`);
+      } catch (err) {
+        if (err instanceof ForgeApiError && (err.status === 404 || err.status === 403)) return false;
+        throw err;
+      }
+      // GitHub says admin, maintain, write, triage, read or none; Forgejo owner, admin, write, read or none.
+      const level = isObject(got) ? str(got.permission) : undefined;
+      return level === "admin" || level === "maintain" || level === "write" || level === "owner";
+    },
     async defaultBranch() {
       const got = await api.call("GET", repo);
       return (isObject(got) ? str(got.default_branch) : undefined) ?? "main";
@@ -1529,6 +1573,21 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
         out.push({ pr: iid, head, id, status: str(found.status) ?? "unknown", ...(url ? { url } : {}) });
       }
       return out.sort((a, b) => a.pr - b.pr);
+    },
+    async pullRequestHead(mr) {
+      let got: unknown;
+      try {
+        got = await api.call("GET", `${notes}/${mr}`);
+      } catch (err) {
+        if (err instanceof ForgeApiError && err.status === 404) return undefined;
+        throw err;
+      }
+      if (!isObject(got)) return undefined;
+      const sha = str(got.sha);
+      const branch = str(got.source_branch);
+      if (!sha || !branch) return undefined;
+      const own = num(got.source_project_id) === undefined || num(got.source_project_id) === num(got.target_project_id);
+      return { sha, branch, open: got.state === "opened", sameRepo: own };
     },
     async jobArtifact(id, path) {
       return api.text(`${project}/jobs/${id}/artifacts/${path.split("/").map(encodeURIComponent).join("/")}`);

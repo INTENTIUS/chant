@@ -123,6 +123,8 @@ import {
   gitlabIdTokens,
   gitlabRules,
   gitlabSetupScript,
+  gitlabTags,
+  assertRunnerLabels,
   nonEmpty,
   pushBranches,
 } from "@intentius/chant/ci-jobs";
@@ -139,6 +141,9 @@ import type {
 
 import { emitGitlabFile } from "./ci-jobs";
 import { assertReviewSplit, GITLAB_REVIEW_NOTES_VAR, gitlabReviewJobs, REVIEW_DIR, reviewNoteJobName } from "./review-jobs";
+import { AGENT_DIR, resolveAgentSpec } from "@intentius/chant/ci-agent";
+import { activeProductWords } from "@intentius/chant/ci-product-words";
+import { gitlabAgentHeader, gitlabAgentJobs, gitlabAgentPushJobName, gitlabDriftArtifacts, gitlabDriftRunLines } from "./agent-jobs";
 
 export type { GenerateGitlabOpOptions, GenerateGitlabOpResult };
 
@@ -298,10 +303,36 @@ export function generateGitlabOpPipeline(
   let anyReview = false;
   // The note job of each split review (#4544), emitted after the Op jobs.
   const noteJobs: string[] = [];
+  const words = activeProductWords();
 
   for (const spec of ops) {
     const subject = `Scheduled Op "${spec.name}"`;
+    // #4616: GitLab picks a runner by tags.
+    assertRunnerLabels(subject, "runner", spec.runner, "GitLab");
+    const tags = gitlabTags(spec.runner);
     const setupScript = gitlabSetupScript(subject, spec.setup);
+    // #4616: the comment agent is its own pair of jobs, in a pipeline of the default branch; the spec's trigger is not read.
+    if (spec.agent?.on === "comment") {
+      const settings = resolveAgentSpec(spec.name, spec.agent, words.product);
+      const jobName = jobPrefix + ciJobName(spec.name);
+      jobs.push({ jobName, op: spec.name, trigger: { kind: "pull_request" }, findingMode: "report" });
+      opLines.push(...gitlabAgentHeader(jobName, settings, spec.agent.tokenEnv));
+      const { agent, push } = gitlabAgentJobs({
+        jobName,
+        stage,
+        image,
+        settings,
+        ...(spec.runner !== undefined ? { runner: spec.runner } : {}),
+        script: [...setupScript, ...beforeScript],
+        ...(spec.agent.tokenEnv ? { tokenEnv: spec.agent.tokenEnv } : {}),
+        ...(words.bin ? { bin: words.bin } : {}),
+      });
+      doc[jobName] = agent;
+      const pushName = gitlabAgentPushJobName(jobName);
+      doc[pushName] = push;
+      noteJobs.push(pushName);
+      continue;
+    }
     const idTokens = gitlabIdTokens(spec.name, spec.permissions);
     const findingMode = spec.findingMode ?? "report";
     const trigger = resolveOpTrigger(spec);
@@ -310,6 +341,10 @@ export function generateGitlabOpPipeline(
     const split = spec.reviewAgent === true;
     if (split) assertReviewSplit(spec.name, trigger, findingMode, spec.permissions);
     if (trigger.kind === "cron") anyCron = true;
+    const driftAgent = spec.agent?.on === "drift" ? resolveAgentSpec(spec.name, spec.agent, words.product) : undefined;
+    if (driftAgent && (split || trigger.kind === "push")) {
+      throw new Error(`${subject} sets a drift agent, which follows a drift check's run; give it a cron or pull_request trigger and no reviewAgent.`);
+    }
 
     const jobName = jobPrefix + ciJobName(spec.name);
     jobs.push({ jobName, op: spec.name, trigger, findingMode });
@@ -358,16 +393,18 @@ export function generateGitlabOpPipeline(
         artifactDir: member ? memberRepoPath(member, REVIEW_DIR) : REVIEW_DIR,
         ...(trigger.kind === "pull_request" && trigger.branches?.length ? { branches: trigger.branches } : {}),
       });
-      doc[jobName] = { ...review, ...(spec.environment ? { environment: environmentDoc(spec.environment) } : {}) };
+      doc[jobName] = { ...review, ...(tags ? { tags } : {}), ...(spec.environment ? { environment: environmentDoc(spec.environment) } : {}) };
       const noteName = reviewNoteJobName(jobName);
-      doc[noteName] = note;
+      doc[noteName] = { ...note, ...(tags ? { tags } : {}) };
       noteJobs.push(noteName);
       continue;
     }
 
+    const runLines = driftAgent ? gitlabDriftRunLines(invocation.join(" ")) : [invocation.join(" ")];
     doc[jobName] = {
       stage,
       image,
+      ...(tags ? { tags } : {}),
       // GitLab's stand-in for github's per-Op concurrency group: queue the
       // next run rather than cancel the current one.
       resource_group: jobName,
@@ -375,15 +412,35 @@ export function generateGitlabOpPipeline(
       ...(spec.environment ? { environment: environmentDoc(spec.environment) } : {}),
       ...nonEmpty("variables", jobVariables),
       rules: rulesFor,
-      script: [...cdLine, ...setupScript, ...beforeScript, invocation.join(" "), ...extraScript],
+      script: [...cdLine, ...setupScript, ...beforeScript, ...runLines, ...extraScript],
       // `when: always` because the run this publishes for is the green one: a
       // gated apply succeeds, and the block is the only thing that says a
       // human still has to act. A run that walked through its gate writes no
       // block, and GitLab reports the empty upload as a warning, not a failure.
       ...(gated
         ? { artifacts: { when: "always", paths: [member ? memberRepoPath(member, gateSummary) : gateSummary], expire_in: GATE_ARTIFACT_EXPIRY } }
-        : {}),
+        : driftAgent
+          ? { artifacts: gitlabDriftArtifacts(member ? memberRepoPath(member, AGENT_DIR) : AGENT_DIR) }
+          : {}),
     };
+    if (driftAgent) {
+      const name = `${jobName}-agent`;
+      opLines.push(...gitlabAgentHeader(name, driftAgent, spec.agent?.tokenEnv));
+      const { agent, push } = gitlabAgentJobs({
+        jobName: name,
+        stage,
+        image,
+        settings: driftAgent,
+        ...(spec.runner !== undefined ? { runner: spec.runner } : {}),
+        script: [...setupScript, ...beforeScript],
+        ...(spec.agent?.tokenEnv ? { tokenEnv: spec.agent.tokenEnv } : {}),
+        ...(words.bin ? { bin: words.bin } : {}),
+        after: { job: jobName, rules: rulesFor },
+      });
+      doc[name] = agent;
+      doc[gitlabAgentPushJobName(name)] = push;
+      noteJobs.push(name, gitlabAgentPushJobName(name));
+    }
   }
 
   const headerLines = [

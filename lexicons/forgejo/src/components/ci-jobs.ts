@@ -77,5 +77,6 @@ export function forgejoWorkflowDoc(doc: GithubOpPipelineDoc, dialect: ForgejoDia
     jobsDoc: forgejoize(withoutEnvironment(doc.jobsDoc), dialect),
     ...(doc.gatedNoticeDoc ? { gatedNoticeDoc: forgejoize(doc.gatedNoticeDoc, dialect) } : {}),
     ...(doc.reviewNoteDoc ? { reviewNoteDoc: forgejoize(doc.reviewNoteDoc, dialect) } : {}),
+    ...(doc.agentDoc ? { agentDoc: forgejoize(doc.agentDoc, dialect) } : {}),
   };
 }

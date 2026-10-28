@@ -1168,6 +1168,12 @@ Component release ledger + status:
                             _merges/<commit>.json; applies and refuses
                             nothing, and a plan that differs from the
                             approved one sets a failing chant/record status
+  agent prepare|run|land   The agent jobs (#4616) the Op generator writes for
+                            a spec's agent: prepare decides from the comment or
+                            the drift check and the ledger's run count, run
+                            runs the model command with no forge token, land
+                            pushes the change, opens or updates the pull
+                            request and records the run (--forge <kind>)
   components pr-env        An environment per open pull request (#4298): up
                             --base <ref> --pr <n> applies the change to pr-<n>,
                             derived from ci.prEnvironment.template, once an
@@ -1864,6 +1870,10 @@ export const commandRegistry: CommandDef[] = [
   // #4295: posts from the plan report in a job that runs none of the change's code, so it loads no plugins.
   { name: "components pr-post", handler: async (ctx) => (await import("./handlers/pr")).runComponentsPrPost(ctx) },
   { name: "components pr-record", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/pr")).runComponentsPrRecord(ctx) },
+  // #4616: the agent jobs' three steps. Imported on first use; none loads plugins.
+  { name: "agent prepare", handler: async (ctx) => (await import("./handlers/agent")).runAgentCommandLine(ctx) },
+  { name: "agent run", handler: async (ctx) => (await import("./handlers/agent")).runAgentCommandLine(ctx) },
+  { name: "agent land", handler: async (ctx) => (await import("./handlers/agent")).runAgentCommandLine(ctx) },
   { name: "components pr-env", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/pr-env")).runComponentsPrEnv(ctx) },
   { name: "components status", requiresPlugins: true, handler: runComponentsStatus },
   { name: "components release", handler: runComponentsReleaseRecord },

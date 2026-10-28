@@ -95,6 +95,7 @@ import type {
   OpPipelineResult,
   ScheduledOpSpec,
 } from "@intentius/chant/lexicon";
+import { assertRunnerLabels } from "@intentius/chant/ci-jobs";
 import type { ForgejoDialectOptions } from "../dialect";
 import { droppedEnvironmentHeader, forgejoWorkflowDoc } from "./ci-jobs";
 
@@ -116,7 +117,9 @@ export function generateForgejoOpPipeline(
   // `findingMode: "issue"` from #2332 to #2351. Neither is now: both post
   // through the Forgejo client — see the module doc above.
 
-  const { files, jobs } = buildGithubOpPipelineDocs(ops, options);
+  // #4616: a spec's runner is a label or a list of labels here.
+  for (const spec of ops) assertRunnerLabels(`Scheduled Op "${spec.name}"`, "runner", spec.runner, "Forgejo");
+  const { files, jobs } = buildGithubOpPipelineDocs(ops, options, "forgejo");
 
   return {
     // One file per spec, in spec order, which is what lets the header below
