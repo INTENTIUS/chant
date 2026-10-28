@@ -10,11 +10,10 @@
  * `pushLifecycleReport` after, the two-step shape every ledger here uses.
  */
 import { appendLedgerLine, readBlobFromPath, type LedgerLocation } from "../lifecycle/git";
-import { NEXT_RELEASE } from "../release-floors";
 import { PR_ENV_LEDGER_DIR, PR_ENV_LEDGER_FILE, parsePrEnvRecords, type PrEnvRecord } from "./pr-environment";
 
 /** The first chant that exports {@link appendPrEnvRecord} and {@link readPrEnvRecords} (#4551). */
-export const PR_ENV_APPEND_FLOOR = NEXT_RELEASE;
+export const PR_ENV_APPEND_FLOOR = "0.124.55";
 
 /** A record {@link parsePrEnvRecords} would skip, so it is never appended. */
 export class PrEnvRecordError extends Error {

@@ -33,7 +33,6 @@ import { warnOnLegacyDigests, withoutReadFlags, type LegacyDigestFlag } from "./
 import { appendReleaseRecordLine, readReleaseLedgerLines, listLedgerEnvironments as gitListLedgerEnvironments, type LedgerLocation } from "./git";
 import { parseReleaseLedger, validateReleaseRecord } from "./release-read";
 import type { GateResolutionRecord } from "./gate-ledger";
-import { NEXT_RELEASE } from "../release-floors";
 
 // The pure readers live apart, so a bundle can import them without git (#3865).
 export { validateReleaseRecord, parseReleaseLedger, releaseLedgerLines, readReleaseRecords, listReleaseEnvironmentsOn } from "./release-read";
@@ -81,7 +80,7 @@ export const RUN_ORIGIN_JOB_FLOOR = "0.124.32";
  * (#4595). A record from an older chant has none, and a reader lists it by
  * digest.
  */
-export const RELEASE_VERSION_FLOOR = NEXT_RELEASE;
+export const RELEASE_VERSION_FLOOR = "0.124.55";
 
 /**
  * The gate resolution that admitted a deploy (#4020): the gate's address in the

@@ -47,7 +47,6 @@ import type { LifecycleSnapshot } from "./types";
 import { appliedGatePath, finishedApply, parseAppliedGateFile } from "./gate-applied";
 import { PR_ENV_LEDGER_DIR, PR_ENV_LEDGER_FILE, parsePrEnvRecords } from "../components/pr-environment";
 import { CONTROL_LEDGER_DIR, CONTROL_LEDGER_FILE, parseControlEntries } from "../control/records";
-import { NEXT_RELEASE } from "../release-floors";
 import { parseReleaseStatus, RELEASE_STATUS_FILE } from "./release-status";
 
 /** The version of the table schema below. */
@@ -150,16 +149,16 @@ export const QUERY_OWNERSHIP_COLUMNS_FLOOR = "0.124.54";
  * `request` on a `gates` row (#4551). Columns added within version 1: a row
  * from an older chant lacks them.
  */
-export const LEDGER_WAVE_COLUMNS_FLOOR = NEXT_RELEASE;
+export const LEDGER_WAVE_COLUMNS_FLOOR = "0.124.55";
 
 /** The first chant with the `applies` and `pr_envs` tables (#4551), added within version 1. */
-export const LEDGER_APPLIES_FLOOR = NEXT_RELEASE;
+export const LEDGER_APPLIES_FLOOR = "0.124.55";
 
 /** The first chant with the `control_entries` table (#4593), added within version 1. */
-export const LEDGER_CONTROL_ENTRIES_FLOOR = NEXT_RELEASE;
+export const LEDGER_CONTROL_ENTRIES_FLOOR = "0.124.55";
 
 /** The first chant with the `release_status` table (#4596), added within version 1 (chant#4551's ruling C). */
-export const LEDGER_RELEASE_STATUS_FLOOR = NEXT_RELEASE;
+export const LEDGER_RELEASE_STATUS_FLOOR = "0.124.55";
 
 export type QueryTable = keyof typeof QUERY_TABLES;
 

@@ -36,11 +36,10 @@
 import { randomBytes } from "node:crypto";
 import { activeProductWords } from "./ci-product-words";
 import { CHANT_VERSION } from "./chant-version";
-import { NEXT_RELEASE } from "./release-floors";
 import type { RunEventBody, RunEventRun } from "./run-event";
 
 /** The first chant with the OTLP exporter, op-wave run events and the product tool hook (#4555). */
-export const OTLP_EXPORTER_FLOOR = NEXT_RELEASE;
+export const OTLP_EXPORTER_FLOOR = "0.124.55";
 
 export type OtlpAttrValue = string | number | boolean;
 export type OtlpAttrs = Record<string, OtlpAttrValue | undefined>;

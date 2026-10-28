@@ -47,11 +47,10 @@ import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { NEXT_RELEASE } from "./release-floors";
 import type { ObjectStore } from "./object-store/common";
 
 /** The first chant that reads a `gs://` or `az://` report URL (#4554). */
-export const REPORT_URL_CLOUDS_FLOOR = NEXT_RELEASE;
+export const REPORT_URL_CLOUDS_FLOOR = "0.124.55";
 
 /** Where `--report-url` points. */
 export type ReportTarget =

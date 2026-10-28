@@ -12,10 +12,9 @@
  * never answer for one host.
  */
 
-import { NEXT_RELEASE } from "../release-floors";
 
 /** The first chant with `LexiconPlugin.ciServices` and this module (#4572). */
-export const CI_SERVICES_FLOOR = NEXT_RELEASE;
+export const CI_SERVICES_FLOOR = "0.124.55";
 
 /** One service a job starts. */
 export interface CiService {

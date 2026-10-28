@@ -9,7 +9,6 @@
  * and `assertProductWords` present means the rest is too.
  */
 
-import { NEXT_RELEASE } from "./release-floors";
 import type { CiProductWords, CiProductWordsInput } from "./ci-product-words";
 import type { ProductMcpHook } from "./cli/mcp/product-tools";
 import type { ProductWaveHook } from "./op/op-waves-after-plan";
@@ -21,7 +20,7 @@ import { OTLP_EXPORTER_FLOOR } from "./otlp";
  * words })`, the lexicons' `ciSetup`, and the member detail sections of the
  * note (#4573).
  */
-export const CI_PRODUCT_FLOOR = NEXT_RELEASE;
+export const CI_PRODUCT_FLOOR = "0.124.55";
 
 export {
   activeProductWords,
@@ -64,7 +63,7 @@ export {
 export { driftNotifyFields, productNotifySource, productNotifyWords, productSendOptions, type DriftNotifyInput } from "./notify-product";
 
 /** The first chant with `chant notify relay` and the notify relay buttons (#4611). */
-export const NOTIFY_RELAY_FLOOR = NEXT_RELEASE;
+export const NOTIFY_RELAY_FLOOR = "0.124.55";
 
 /**
  * The first chant whose product pipeline has the comment preview
@@ -72,7 +71,7 @@ export const NOTIFY_RELAY_FLOOR = NEXT_RELEASE;
  * `components pr-plan` takes `--target` (#4620). A product feature-detects
  * `prCommentPreviewJob` and this constant together.
  */
-export const PR_PREVIEW_FLOOR = NEXT_RELEASE;
+export const PR_PREVIEW_FLOOR = "0.124.55";
 export {
   decideRelayClick,
   handleRelayRequest,

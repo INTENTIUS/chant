@@ -79,37 +79,6 @@ const FLOOR_RE = /export const ([A-Z0-9_]+_FLOOR) = (?:"(\d+\.\d+\.\d+)"|(NEXT_R
  */
 const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: string }[] = [
   // --freeze empties this list after a release ships (#4501); each entry is one line.
-  { file: "packages/core/src/workspace/declaration.schema.json", text: "added in schema 1 by chant {v}, so a declaration that uses check sets minReader to {v} or newer.", count: 1, floor: "CI_CHECK_HOOK_FLOOR" },
-  { file: "docs/src/content/docs/guide/pull-request-hooks.mdx", text: "A declaration that uses `check` sets `minReader` to chant `{v}` or newer.", count: 1, floor: "CI_CHECK_HOOK_FLOOR" },
-  { file: "docs/src/content/docs/reference/workspace-declaration.mdx", text: "and a declaration that uses it sets `minReader` to `{v}` or newer.", count: 1, floor: "CI_CHECK_HOOK_FLOOR" },
-  { file: "docs/src/content/docs/reference/workspace-declaration.mdx", text: "and set it to {v} or newer when the value is a `gs://` or `az://` one", count: 1, floor: "REPORT_URL_CLOUDS_FLOOR" },
-  { file: "packages/core/src/workspace/declaration.schema.json", text: "gs:// and az:// URLs (#4554) need minReader {v} or newer.", count: 1, floor: "REPORT_URL_CLOUDS_FLOOR" },
-  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "`rows[].request` on the `gates` table, and the same columns of `chant query` | {v} |", count: 1, floor: "LEDGER_WAVE_COLUMNS_FLOOR" },
-  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "the `applies` and `pr_envs` tables, in `chant ledger` and `chant query` | {v} |", count: 1, floor: "LEDGER_APPLIES_FLOOR" },
-  { file: "packages/core/src/workspace/ledger.schema.json", text: "applies and pr_envs were added within version 1 by #4551, read by chant {v} and newer", count: 1, floor: "LEDGER_APPLIES_FLOOR" },
-  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "the `control_entries` table, in `chant ledger` and `chant query` | {v} |", count: 1, floor: "LEDGER_CONTROL_ENTRIES_FLOOR" },
-  { file: "packages/core/src/workspace/ledger.schema.json", text: "was added within version 1 by #4593, read by chant {v} and newer", count: 1, floor: "LEDGER_CONTROL_ENTRIES_FLOOR" },
-  { file: "packages/core/src/workspace/ledger.schema.json", text: "release_status, from <env>/release-status.jsonl, was added within version 1 by #4596, read by chant {v} and newer.", count: 1, floor: "LEDGER_RELEASE_STATUS_FLOOR" },
-  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "the `release_status` table, in `chant ledger` and `chant query` | {v} |", count: 1, floor: "LEDGER_RELEASE_STATUS_FLOOR" },
-  { file: "packages/core/src/workspace/ledger.schema.json", text: "added within version 1 by #4551, read by chant {v} and newer, are the op wave job", count: 1, floor: "LEDGER_WAVE_COLUMNS_FLOOR" },
-  { file: "packages/core/src/workspace/declaration.schema.json", text: "organization or organization:admin. Added in schema 1 by chant {v}, so a declaration that uses it sets minReader to {v} or newer.", count: 1, floor: "PULUMI_CLOUD_IDENTITY_FLOOR" },
-  { file: "docs/src/content/docs/guide/security-cloud-identities.mdx", text: "needs chant {v} or newer as its `minReader` (`PULUMI_CLOUD_IDENTITY_FLOOR`)", count: 1, floor: "PULUMI_CLOUD_IDENTITY_FLOOR" },
-  { file: "docs/src/content/docs/reference/workspace-declaration.mdx", text: "`apiUrl` (default `https://api.pulumi.com`). Needs a `minReader` of {v} or newer.", count: 1, floor: "PULUMI_CLOUD_IDENTITY_FLOOR" },
-  { file: "packages/core/src/workspace/declaration.schema.json", text: "Read from the declaration at base. Added in schema 1 by chant {v}, so a declaration that uses it sets minReader to {v} or newer.", count: 1, floor: "CI_LOCK_GRAIN_FLOOR" },
-  { file: "docs/src/content/docs/reference/workspace-declaration.mdx", text: "`ci.lockGrain` needs a `minReader` of `{v}` or newer.", count: 1, floor: "CI_LOCK_GRAIN_FLOOR" },
-  { file: "packages/core/src/workspace/pr-report.schema.json", text: "Added within contract version 1 by #4552, written by chant {v} and newer.", count: 1, floor: "PR_REPORT_LOCK_TARGETS_FLOOR" },
-  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "| `pr-report` | `lockTargets` | {v} |", count: 1, floor: "PR_REPORT_LOCK_TARGETS_FLOOR" },
-  { file: "packages/core/src/workspace/pr-report.schema.json", text: "Added within contract version 1 by #4617, written by chant {v} and newer.", count: 1, floor: "PR_REPORT_CROSS_STACK_FLOOR" },
-  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "| `pr-report` | `crossStackEdges` | {v} |", count: 1, floor: "PR_REPORT_CROSS_STACK_FLOOR" },
-  { file: "packages/core/src/workspace/declaration.schema.json", text: "Added in schema 1 by chant {v}, so a declaration that sets database sets minReader to {v} or newer.", count: 1, floor: "AZURE_DATABASE_TOKEN_FLOOR" },
-  { file: "docs/src/content/docs/guide/security-cloud-identities.mdx", text: "sets `minReader` to chant `{v}` or newer (`AZURE_DATABASE_TOKEN_FLOOR`)", count: 1, floor: "AZURE_DATABASE_TOKEN_FLOOR" },
-  { file: "packages/core/src/workspace/release-catalog.schema.json", text: "Written by chant {v} and newer (RELEASE_CATALOG_FLOOR).", count: 1, floor: "RELEASE_CATALOG_FLOOR" },
-  { file: "docs/src/content/docs/reference/release-catalog.mdx", text: "Both need chant {v} or newer (`RELEASE_CATALOG_FLOOR`)", count: 1, floor: "RELEASE_CATALOG_FLOOR" },
-  { file: "docs/src/content/docs/reference/release-catalog.mdx", text: "chant {v} and newer write and read it (`RELEASE_VERSION_FLOOR`).", count: 1, floor: "RELEASE_VERSION_FLOOR" },
-  { file: "packages/core/src/workspace/declaration.schema.json", text: "source and packs were added in schema 1 by chant {v}, so a declaration that sets either sets minReader to {v} or newer.", count: 1, floor: "CI_POLICY_SOURCE_FLOOR" },
-  { file: "packages/core/src/workspace/pr-report.schema.json", text: "Added within contract version 1 by #4613, written by chant {v} and newer.", count: 1, floor: "CI_POLICY_SOURCE_FLOOR" },
-  { file: "docs/src/content/docs/guide/gate-policy.mdx", text: "`source` and `packs` need a `minReader` of `{v}` or newer (`CI_POLICY_SOURCE_FLOOR`).", count: 1, floor: "CI_POLICY_SOURCE_FLOOR" },
-  { file: "docs/src/content/docs/reference/workspace-declaration.mdx", text: "need a `minReader` of `{v}` or newer (`CI_POLICY_SOURCE_FLOOR`).", count: 1, floor: "CI_POLICY_SOURCE_FLOOR" },
 ];
 
 interface Args {

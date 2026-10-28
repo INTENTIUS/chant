@@ -21,7 +21,6 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { NEXT_RELEASE } from "./release-floors";
 import { gitTree, type WorkspaceTree } from "./workspace/tree";
 import type { GatePolicySource, ResolvedGatePolicySource } from "./gate-policy";
 
@@ -30,7 +29,7 @@ import type { GatePolicySource, ResolvedGatePolicySource } from "./gate-policy";
 export { assertGatePolicySource, type GatePolicySource, type ResolvedGatePolicySource } from "./gate-policy";
 
 /** The first chant that reads `ci.policy.source` and `ci.policy.packs`; a declaration that sets either needs this `minReader`. */
-export const CI_POLICY_SOURCE_FLOOR = NEXT_RELEASE;
+export const CI_POLICY_SOURCE_FLOOR = "0.124.55";
 
 /** A fetched source: its record, and its tree at the commit, rooted at the repository's top. */
 export interface FetchedGatePolicySource {

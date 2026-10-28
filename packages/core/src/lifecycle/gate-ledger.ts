@@ -48,14 +48,13 @@ import type { GateApprover, GatePolicyDecision, ResolvedGateApproval } from "../
 import type { GateApprovalSource } from "../op/op-waves";
 import type { GateRunLocator } from "../op/gate-run-locator";
 import { readBlobFromPath, readPathSha, readBlobBySha, writeBlobToPath, RefCASConflictError, type LedgerLocation } from "./git";
-import { NEXT_RELEASE } from "../release-floors";
 import { gatedRequestOf, type GatedRequest } from "./gated-request-digest";
 
 /** The first chant that writes `changeSet` on a pending fact and an approval (#4551). */
-export const GATE_CHANGE_SET_FLOOR = NEXT_RELEASE;
+export const GATE_CHANGE_SET_FLOOR = "0.124.55";
 
 /** The first chant that writes `request` on a pending fact and reads gated requests (#4551). */
-export const GATED_REQUEST_FLOOR = NEXT_RELEASE;
+export const GATED_REQUEST_FLOOR = "0.124.55";
 
 // The facts a pending record is written with live apart, so a bundle can import them without git (#3816).
 export { DEFAULT_GATE_EXPIRY, isApprovalUrl, resolveApprovalUrl } from "./gate-pending";

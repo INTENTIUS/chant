@@ -22,7 +22,6 @@
  * {@link CI_ESTATE_FLOOR} is its floor: `buildLedgerEstate` present means the
  * rest is too. Before it, the product keeps its own estate code.
  */
-import { NEXT_RELEASE } from "./release-floors";
 import { CHANT_WORDS, type CiProductWords } from "./ci-product-words";
 import type { QueryLoad } from "./lifecycle/query";
 import type { ReportPut } from "./pr-report-url";
@@ -34,7 +33,7 @@ import { buildEstate, ESTATE_FILES, renderEstateHtml, type Estate, type EstateSe
 import { estateRows, type EstateRowOptions, type EstateRows, type EstateTables } from "./ci-estate/rows";
 
 /** The first chant with `@intentius/chant/ci-estate` (#4612). */
-export const CI_ESTATE_FLOOR = NEXT_RELEASE;
+export const CI_ESTATE_FLOOR = "0.124.55";
 
 export { estateRows, type ApprovedApply, type DriftRun, type EstateRowOptions, type EstateRows, type EstateTables, type GateLine, type PrEnvLine, type WaveJob } from "./ci-estate/rows";
 export {

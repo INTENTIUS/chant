@@ -43,10 +43,9 @@ import { quoted } from "./op/activities/review-agent";
 import type { OpRunRecord, OpRunRecordInput } from "./op/runtime";
 import type { RunOrigin } from "./lifecycle/release-ledger";
 import type { PrForge } from "./pr-forge";
-import { NEXT_RELEASE } from "./release-floors";
 
 /** The first chant with the agent job and the scheduled Op spec's `agent` and `runner` (#4616). Products feature-detect on it. */
-export const CI_AGENT_FLOOR = NEXT_RELEASE;
+export const CI_AGENT_FLOOR = "0.124.55";
 
 /** What starts an agent run. */
 export type AgentTrigger = "comment" | "drift";

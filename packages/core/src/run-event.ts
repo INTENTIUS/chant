@@ -29,7 +29,6 @@ import type { RunProgressEvent } from "./components/run-progress";
 import type { RunOrigin } from "./lifecycle/release-ledger";
 import type { StepRecord } from "./op/local-executor";
 import { CHANT_VERSION } from "./chant-version";
-import { NEXT_RELEASE } from "./release-floors";
 
 /** The schema's `$id`, which every event carries as `$schema`. */
 export const RUN_EVENT_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/run-event/v1/run-event.schema.json";
@@ -243,7 +242,7 @@ export interface RunEventResource {
 }
 
 /** The first chant that writes `resources` on `step-settle` (#4615). */
-export const RUN_EVENT_RESOURCES_FLOOR = NEXT_RELEASE;
+export const RUN_EVENT_RESOURCES_FLOOR = "0.124.55";
 
 /** The run stopped at a gate nobody has approved, or a decision point nobody has answered. */
 export interface RunEventGateWaiting {

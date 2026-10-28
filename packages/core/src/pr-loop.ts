@@ -47,7 +47,6 @@
  * `identity.gates` entry covers every member.
  */
 
-import { NEXT_RELEASE } from "./release-floors";
 import type { ChangeSetAction, ChangeSetDocument, ChangeSetEntry } from "./change-set";
 import { parsePulumiUrn, pulumiMayAppearParent } from "./pulumi-urn";
 import type { PrRequireOutcome } from "./pr-requires";
@@ -102,10 +101,10 @@ export const PR_REPORT_NOT_STARTED_FLOOR = "0.124.54";
 export const PR_REPORT_GROUPS_FLOOR = "0.124.54";
 
 /** The first chant whose report can carry `lockTargets` (#4552). */
-export const PR_REPORT_LOCK_TARGETS_FLOOR = NEXT_RELEASE;
+export const PR_REPORT_LOCK_TARGETS_FLOOR = "0.124.55";
 
 /** The first chant whose report carries {@link PrReport.crossStackEdges} (#4617). */
-export const PR_REPORT_CROSS_STACK_FLOOR = NEXT_RELEASE;
+export const PR_REPORT_CROSS_STACK_FLOOR = "0.124.55";
 
 /** The gate a pull request's apply waits on, unless the pipeline names another. */
 export const PR_APPLY_GATE = "pr-apply";
