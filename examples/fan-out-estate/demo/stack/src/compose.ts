@@ -16,60 +16,48 @@
  * Forgejo Actions is off: the demo repo has no workflow file.
  */
 import { Network, Service, Volume } from "@intentius/chant-lexicon-docker";
+import { FLOCI_CHANGE_SET_IMAGE, harnessStack } from "../../../../../packages/core/src/e2e-harness/index.js";
 
 /** The compose project and the network every service and job is on. */
 export const PROJECT = "chant-fan-out-demo";
 /** The image the runner runs in (job-image.ts), with chant, the aws lexicon, git and the AWS CLI. */
 export const JOB_IMAGE = "chant-fan-out-demo-job:local";
 
+/**
+ * floci and Forgejo are the e2e harness's (chant#4587), under the demo's
+ * project, port variables and network key. The demo keeps its own design
+ * (#4100): chant's runner in place of forgejo-runner, so it takes no
+ * forgejo-runner and Forgejo Actions is off. Its ports stay published on
+ * every interface, as before, for the demo host's readers.
+ *
+ * floci is the harness's other line, FLOCI_CHANGE_SET_IMAGE (63d8f1ed),
+ * which describes a change set's changes for chant's plan counts and keeps
+ * SNS tags. The harness's own pin (FLOCI_IMAGE, 5ec92ae8) lacks those
+ * fixes; lex00/floci#265 asks for one image with both.
+ */
+const h = harnessStack({
+  project: PROJECT,
+  envPrefix: "CHANT_FAN_OUT_DEMO",
+  networkKey: "demo",
+  ports: { floci: 4590, forgejo: 3390 },
+  bind: null,
+  forgejoActions: false,
+  flociImage: FLOCI_CHANGE_SET_IMAGE,
+});
+
 /** One network with a fixed name, which the driver's base apply joins too. */
-export const demo = new Network({ name: PROJECT });
+export const demo = new Network(h.network);
 
 /** A service on the network, by its key in the compose file, with the names others reach it by. */
 const onDemo = (...aliases: string[]) => ({ demo: { aliases } });
 
-// floci from the lex00/floci fork, pinned by the index digest of
-// ghcr.io/lex00/floci:b491869 (branch fix/cfn-change-set-changes), which
-// describes a change set's changes for chant's plan counts and keeps SNS
-// tags. The index carries linux/amd64 and linux/arm64.
-export const floci = new Service({
-  image: "ghcr.io/lex00/floci@sha256:63d8f1ed5ef595d7356c6f76318f3d76bc31ce3250cdf2dd8d14bd4d59604b8d",
-  container_name: `${PROJECT}-floci`,
-  ports: ["${CHANT_FAN_OUT_DEMO_FLOCI_PORT:-4590}:4566"],
-  networks: onDemo("floci", "000000000000.floci"),
-  restart: "unless-stopped",
-});
+export const floci = new Service(h.services.floci);
 
-export const forgejoData = new Volume({ name: `${PROJECT}-forgejo-data` });
+export const forgejoData = new Volume(h.volumes.forgejoData);
 
 // sqlite and INSTALL_LOCK skip the web installer; the driver creates the
 // admin, the author and the reviewer with Forgejo's own CLI.
-export const forgejo = new Service({
-  image: "codeberg.org/forgejo/forgejo:16.0.5",
-  container_name: `${PROJECT}-forgejo`,
-  environment: {
-    FORGEJO__database__DB_TYPE: "sqlite3",
-    FORGEJO__security__INSTALL_LOCK: "true",
-    FORGEJO__server__DOMAIN: "forgejo",
-    FORGEJO__server__ROOT_URL: "http://forgejo:3000/",
-    FORGEJO__server__HTTP_PORT: "3000",
-    FORGEJO__server__DISABLE_SSH: "true",
-    FORGEJO__service__DISABLE_REGISTRATION: "true",
-    FORGEJO__actions__ENABLED: "false",
-    FORGEJO__repository__DEFAULT_BRANCH: "main",
-    FORGEJO__log__LEVEL: "warn",
-  },
-  ports: ["${CHANT_FAN_OUT_DEMO_FORGEJO_PORT:-3390}:3000"],
-  volumes: ["forgejoData:/data"],
-  networks: onDemo("forgejo"),
-  healthcheck: {
-    test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/v1/version"],
-    interval: "3s",
-    timeout: "3s",
-    retries: 40,
-  },
-  restart: "unless-stopped",
-});
+export const forgejo = new Service(h.services.forgejo);
 
 
 /** The demo repo, as the runner serves it. */

@@ -89,6 +89,8 @@ export interface ParsedArgs {
   kustomize?: string;
   /** `chant import --parser-option key[=value]`, repeatable (#2994): options for the lexicon's template parser */
   parserOption?: string[];
+  /** `chant e2e safe-run --scan <dir>`, repeatable (chant#4587): a directory to scan for a real cloud answering, beside the command's output */
+  scanDirs?: string[];
   /** `chant carve advise --state <path>` — opt-in .tfstate for accurate instance counts */
   statePath?: string;
   /** Every `--state` value in order (#4461): `chant workspace promote --all --state <member>=<path>`, repeatable. */
@@ -419,15 +421,15 @@ export interface ParsedArgs {
    * and checks. Absent: all four. A check left out passes as "not required".
    */
   requires?: string[];
-  /** `pr-apply --before-merge --merge manual|auto` (#4636): who merges once the update applied. */
+  /** `pr-apply --before-merge --merge manual|auto` (#4636): who merges once the update applied. `chant build --pr-loop --apply-before-merge --merge auto` puts it on the generated apply job. */
   merge?: string;
   /** `pr-apply --merge auto --merge-token-env <VAR>` (#4636): the variable holding the only token the merge uses. */
   mergeTokenEnv?: string;
   /** `pr-apply --merge auto --merge-method merge|squash|rebase` (#4636). */
   mergeMethod?: string;
-  /** `--respond wave-refused=off,description=check` (#4629): the responses pr-apply, pr-post and the wave jobs post. */
+  /** `--respond wave-refused=off,description=check` (#4629): the responses pr-apply, pr-post and the wave jobs post. `chant build --pr-loop --respond` sets them on the generated apply and note jobs as CHANT_RESPOND. */
   respond?: string[];
-  /** `pr-post --decide-backend <name>` (#4629): the `decide.backends` entry the description check asks. */
+  /** `pr-post --decide-backend <name>` (#4629): the `decide.backends` entry the description check asks. `chant build --pr-loop` passes it to the note job. */
   decideBackend?: string;
   /** `pr-post --decide-model <id>` (#4629): the pinned model the description check asks. */
   decideModel?: string;

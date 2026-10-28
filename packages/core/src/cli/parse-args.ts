@@ -240,6 +240,11 @@ export function parseArgs(args: string[]): ParsedArgs {
       const v = args[++i];
       if (v !== "source" && v !== "live") throw new Error(`--overlay-anchor must be 'source' or 'live', got '${v}'`);
       result.overlayAnchor = v;
+    } else if (arg === "--scan") {
+      // `chant e2e safe-run --scan <dir> -- <command...>` (chant#4587), repeatable.
+      const v = args[++i];
+      if (v === undefined || v === "--" || v.startsWith("--")) throw new Error("--scan needs a directory: --scan <dir>");
+      (result.scanDirs ??= []).push(v);
     } else if (arg === "--from") {
       // Shared by `migrate --from <lexicon>`, `import --from <env>`,
       // `components promote --from <env>`, `init --from <repo>@<ref>` and

@@ -11,6 +11,7 @@ import type { OpWavesSpec } from "./op-waves";
 import { assertOpWavesSpec } from "./op-waves";
 import { runOpWave, opWavePlanPath, type OpWaveShowAtBase } from "./op-waves-run";
 import { memoryGateLedgerPort } from "./gate";
+import { NEXT_RELEASE } from "../release-floors";
 import { CapabilityRegistry, type Capability } from "../components/capability";
 import type { ChangeSetPart } from "../change-set";
 import type { OpRunRecordInput } from "./runtime";
@@ -272,5 +273,16 @@ describe("after-plan hooks in the job's process (#4614)", () => {
     expect(activeProductWaveHook()).toBeUndefined();
     await withProductWaveHook(hook, async () => expect(activeProductWaveHook()).toBe(hook));
     expect(activeProductWaveHook()).toBeUndefined();
+  });
+});
+
+describe("opWavePlanPath", () => {
+  test("is exported from the op entry beside opWavePlansPath, and names one target's plan file", async () => {
+    const entry = await import("./index");
+    expect(entry.opWavePlanPath).toBe(opWavePlanPath);
+    expect(entry.OP_WAVE_PLAN_PATH_FLOOR).toBe(NEXT_RELEASE);
+    const spec = { name: "demo" };
+    expect(entry.opWavePlanPath(spec, 2, "stacks/a b")).toBe(".chant/op-waves/demo/wave-2/stacks_a_b.plan.json");
+    expect(entry.opWavePlanPath(spec, 2, "x")).not.toBe(entry.opWavePlansPath(spec, 2));
   });
 });

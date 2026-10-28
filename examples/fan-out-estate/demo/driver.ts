@@ -12,6 +12,10 @@
  *   npm run demo -- reset   put the forge repo and the stacks back to the base.
  *   npm run demo -- down    stop the stack and remove its volumes
  *                           (`down --purge` also removes the state directory).
+ *   npm run demo -- claim   run scenario.json on the e2e harness (chant#4587):
+ *                           the plain run and the BREAK run, the runner's logs
+ *                           scanned for a real cloud, and the row recorded on
+ *                           a ledger in the state directory only when CLEAN.
  *
  * The cycle itself is lib/cycle.ts, against the forge, the bucket and chant
  * as interfaces (lib/ports.ts). This file wires the real ones: Forgejo
@@ -20,18 +24,37 @@
  * outside the checkout, in CHANT_FAN_OUT_DEMO_STATE or
  * ~/.local/state/chant-fan-out-demo.
  */
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { BUCKET } from "./steps.js";
+import { appendRunRecord, readRunLedger } from "../../../packages/core/src/lifecycle/run-ledger.js";
+import {
+  CLAIM_OP,
+  FLOCI_CHANGE_SET_DIGEST,
+  SafeRun,
+  claimRow,
+  claimRowsOf,
+  loadScenario,
+  recordClaimRow,
+  renderClaims,
+  runClaim,
+} from "../../../packages/core/src/e2e-harness/index.js";
+import { CHANT_VERSION } from "./stack/src/job-image.js";
+import { BUCKET, FORGE_HOST, REVIEWER, type Round } from "./steps.js";
 import { FlociBucket } from "./lib/bucket.js";
 import { RealChant } from "./lib/chant.js";
 import { DemoCycleRun, lastCycle, resetToBase, writeBase, type CycleOutcome } from "./lib/cycle.js";
+import { CHECKOUT, run } from "./lib/git.js";
 import { ForgejoForge } from "./lib/forgejo.js";
 import { overlayFiles } from "./lib/overlays.js";
 import { realClock, type Log } from "./lib/ports.js";
 import {
+  DEMO_DIR,
   JOB_IMAGE,
   PROJECT,
+  RUNNER_SERVICE,
   baseTreeOf,
+  compose,
   down,
   flociUrl,
   forgeUrl,
@@ -70,6 +93,57 @@ async function oneCycle(c: StackConfig): Promise<CycleOutcome> {
   return outcome;
 }
 
+/**
+ * The demo's claim on the e2e harness: scenario.json's plain run and BREAK
+ * run, with chant's runner as the pipeline. Every process the jobs start is
+ * in the runner's container, so its logs are what the no-real-cloud scan
+ * reads. The row goes on a ledger of its own in the state directory, and
+ * claims.json beside it is the render a page would read. The demo runs the
+ * other floci line (FLOCI_CHANGE_SET_IMAGE), so the row names that digest.
+ */
+async function claim(c: StackConfig): Promise<number> {
+  const w = wire(c);
+  const scenario = loadScenario(join(DEMO_DIR, "scenario.json"));
+  const safe = new SafeRun({ scratch: join(c.stateDir, "claim") });
+  const result = await runClaim(
+    scenario,
+    {
+      forge: w.forge,
+      bucket: w.bucket,
+      chant: w.chant,
+      clock: w.clock,
+      overlay: (name) => overlayFiles(name as Round, 0),
+      reset: () => resetToBase(w.forge, w.chant, w.baseSha),
+      log: (line) => {
+        log(line);
+        safe.log(line);
+      },
+    },
+    { approver: `forgejo@${FORGE_HOST}:${REVIEWER}` },
+  );
+  safe.log((await compose(c, ["logs", "--no-color", RUNNER_SERVICE])).stdout);
+  const verdict = safe.scan();
+  log(`claim: plain ${result.verdicts.plain}, break ${result.verdicts.break}, scan ${verdict.verdict}`);
+  if (verdict.verdict !== "CLEAN") return 3;
+
+  const ledger = join(c.stateDir, "claims-ledger");
+  mkdirSync(ledger, { recursive: true });
+  await run("git", ["init", "-q", "-b", "main", ledger]);
+  const row = claimRow({
+    scenario,
+    productCommit: (await run("git", ["-C", CHECKOUT, "rev-parse", "HEAD"])).stdout.trim(),
+    engine: { binary: "chant", version: CHANT_VERSION },
+    verdicts: result.verdicts,
+    at: new Date(),
+    floci: FLOCI_CHANGE_SET_DIGEST,
+    chant: CHANT_VERSION,
+  });
+  await recordClaimRow({ row, run: result, verdict, append: async (input) => void (await appendRunRecord(input, { cwd: ledger })) });
+  const { records } = await readRunLedger("local", CLAIM_OP, { cwd: ledger });
+  writeFileSync(join(c.stateDir, "claims.json"), `${JSON.stringify(renderClaims("chant", claimRowsOf(records)), null, 2)}\n`);
+  return result.verdicts.plain === "pass" && result.verdicts.break === "caught" ? 0 : 1;
+}
+
 export async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
   const c = stackConfig();
@@ -104,8 +178,10 @@ export async function main(argv: string[]): Promise<number> {
     case "down":
       await down(c, rest.includes("--purge"));
       return 0;
+    case "claim":
+      return claim(c);
     default:
-      console.error("usage: npm run demo -- up | loop | cycle | reset | down [--purge]");
+      console.error("usage: npm run demo -- up | loop | cycle | reset | claim | down [--purge]");
       return 2;
   }
 }

@@ -132,6 +132,15 @@ export { approvalStatusOf, headWaveHolds, postApprovalStatus, postOpenApprovalSt
  * them on and off; a product feature-detects on `CI_RESPOND_FLOOR`.
  */
 export const CI_RESPOND_FLOOR = NEXT_RELEASE;
+
+/**
+ * `chant build --pr-loop` carries `--merge auto --merge-token-env <VAR>
+ * [--merge-method <m>]` (#4636), `--respond <list>`, `--decide-backend` and
+ * `--decide-model` (#4629) into the generated pull request jobs. Before it
+ * the build parsed them and wrote jobs without them; a product that writes
+ * its pull request jobs with the build feature-detects on this floor.
+ */
+export const PR_LOOP_BUILD_FLAGS_FLOOR = NEXT_RELEASE;
 export {
   CI_RESPOND_DEFAULTS,
   CI_RESPOND_ENV,

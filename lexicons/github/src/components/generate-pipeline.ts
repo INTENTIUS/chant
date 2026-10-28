@@ -419,7 +419,7 @@ function prLoopGithubDoc(
       },
     ]);
   }
-  const post = prLoopPostJob(forgeName, env, member?.name, loop.words ? resolveProductWords(loop.words) : undefined, { ...(loop.staleNotes ? { staleNotes: true } : {}) });
+  const post = prLoopPostJob(forgeName, env, member?.name, loop.words ? resolveProductWords(loop.words) : undefined, { ...(loop.staleNotes ? { staleNotes: true } : {}), ...(loop.respond ? { respond: loop.respond } : {}), ...(loop.decide ? { decide: loop.decide } : {}) });
   // #4628: on a push to the target branch, the open pull requests' notes posted against another commit are marked stale.
   const stale = prStaleJob(forgeName, env, loop, member?.name);
   const staleJobs: Record<string, unknown> = stale
