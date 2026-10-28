@@ -38,7 +38,7 @@ In the JSON document a column that `chant query` keeps as JSON text (`attributes
 
 The value `null` matches a null field, with `=` and `!=` only. A time field (`observed_at`, `last_updated`, `started`, `ended`, `timestamp`, `expires_at`) takes an ISO 8601 date or time, or a span back from now: `30m`, `24h`, `7d` or `2w`. A JSON column takes a key under it with dots, such as `labels.team=core` or `attributes.instanceType~large`, and compares the value as the type it holds there.
 
-`--since <time>` keeps the rows whose time column is at or after the time: `observed_at` for `resources` and `snapshots`, `started` for `runs`, and `timestamp` for `gates`, `deploys`, `cuts`, `applies` and `pr_envs`. `releases` has no time column, so filter it with `--where`.
+`--since <time>` keeps the rows whose time column is at or after the time: `observed_at` for `resources` and `snapshots`, `started` for `runs`, and `timestamp` for `gates`, `deploys`, `cuts`, `applies`, `pr_envs` and `release_status`. `releases` has no time column, so filter it with `--where`.
 
 `--at <rev>` reads the ledger as a commit of `chant/lifecycle` held it, such as `chant/lifecycle~3` or a commit id. A revision git can't resolve is the error `revision-unknown`.
 
@@ -64,7 +64,7 @@ A failure prints `error` with a code: `filter-invalid`, `table-unknown`, `revisi
 
 | Option | Description |
 |---|---|
-| `<table>` | `resources`, `snapshots`, `runs`, `gates`, `deploys`, `releases`, `cuts`, `applies` or `pr_envs` |
+| `<table>` | `resources`, `snapshots`, `runs`, `gates`, `deploys`, `releases`, `cuts`, `applies`, `pr_envs` or `release_status` |
 | `[dir]` | where to read from; the current directory by default |
 | `--member <name>` | read only these members' ledgers; repeatable, or a comma list |
 | `--where <field><op><value>` | keep the rows the clause holds for; repeatable |

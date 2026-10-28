@@ -87,6 +87,8 @@ const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: str
   { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "`rows[].request` on the `gates` table, and the same columns of `chant query` | {v} |", count: 1, floor: "LEDGER_WAVE_COLUMNS_FLOOR" },
   { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "the `applies` and `pr_envs` tables, in `chant ledger` and `chant query` | {v} |", count: 1, floor: "LEDGER_APPLIES_FLOOR" },
   { file: "packages/core/src/workspace/ledger.schema.json", text: "applies and pr_envs were added within version 1 by #4551, read by chant {v} and newer", count: 1, floor: "LEDGER_APPLIES_FLOOR" },
+  { file: "packages/core/src/workspace/ledger.schema.json", text: "release_status, from <env>/release-status.jsonl, was added within version 1 by #4596, read by chant {v} and newer.", count: 1, floor: "LEDGER_RELEASE_STATUS_FLOOR" },
+  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "the `release_status` table, in `chant ledger` and `chant query` | {v} |", count: 1, floor: "LEDGER_RELEASE_STATUS_FLOOR" },
   { file: "packages/core/src/workspace/ledger.schema.json", text: "added within version 1 by #4551, read by chant {v} and newer, are the op wave job", count: 1, floor: "LEDGER_WAVE_COLUMNS_FLOOR" },
   { file: "packages/core/src/workspace/declaration.schema.json", text: "organization or organization:admin. Added in schema 1 by chant {v}, so a declaration that uses it sets minReader to {v} or newer.", count: 1, floor: "PULUMI_CLOUD_IDENTITY_FLOOR" },
   { file: "docs/src/content/docs/guide/security-cloud-identities.mdx", text: "needs chant {v} or newer as its `minReader` (`PULUMI_CLOUD_IDENTITY_FLOOR`)", count: 1, floor: "PULUMI_CLOUD_IDENTITY_FLOOR" },
@@ -98,7 +100,7 @@ const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: str
   { file: "packages/core/src/workspace/declaration.schema.json", text: "Added in schema 1 by chant {v}, so a declaration that sets database sets minReader to {v} or newer.", count: 1, floor: "AZURE_DATABASE_TOKEN_FLOOR" },
   { file: "docs/src/content/docs/guide/security-cloud-identities.mdx", text: "sets `minReader` to chant `{v}` or newer (`AZURE_DATABASE_TOKEN_FLOOR`)", count: 1, floor: "AZURE_DATABASE_TOKEN_FLOOR" },
   { file: "packages/core/src/workspace/release-catalog.schema.json", text: "Written by chant {v} and newer (RELEASE_CATALOG_FLOOR).", count: 1, floor: "RELEASE_CATALOG_FLOOR" },
-  { file: "docs/src/content/docs/reference/release-catalog.mdx", text: "Both need chant {v} or newer (`RELEASE_CATALOG_FLOOR`).", count: 1, floor: "RELEASE_CATALOG_FLOOR" },
+  { file: "docs/src/content/docs/reference/release-catalog.mdx", text: "Both need chant {v} or newer (`RELEASE_CATALOG_FLOOR`)", count: 1, floor: "RELEASE_CATALOG_FLOOR" },
   { file: "docs/src/content/docs/reference/release-catalog.mdx", text: "chant {v} and newer write and read it (`RELEASE_VERSION_FLOOR`).", count: 1, floor: "RELEASE_VERSION_FLOOR" },
 ];
 

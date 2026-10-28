@@ -43,6 +43,7 @@ Every table starts with `member`. A column marked JSON holds JSON text for `json
 | `releases` | release file, `_releases/<digest>.json` | `release_digest`, `release_member`, `git_sha`, `envs` (comma list), `artifacts` (JSON) |
 | `cuts` | line of `_releases/cuts.jsonl` | `release_digest`, `label`, `actor`, `timestamp`, `run_id`, `forge`, `channel`, `signed` (INTEGER), `composed_base` |
 | `applies` | `applied` or `changes` line of `_gates/<op>/applied.jsonl`, with its `finished` line ([#4551](https://github.com/INTENTIUS/chant/issues/4551)) | `op`, `gate`, `kind`, `plan_digest`, `approved_at`, `approved_by`, `timestamp`, `run_id`, `git_sha`, `wave` (JSON), `finished_at`, `result`, `detail` (JSON) |
+| `release_status` | line of `<env>/release-status.jsonl` ([#4596](https://github.com/INTENTIUS/chant/issues/4596)) | `env`, `component`, `digest`, `release_version`, `status` (`active`, `deprecated` or `yanked`), `reason`, `replacement`, `actor`, `timestamp` |
 | `pr_envs` | line of `_pr-envs/records.jsonl` ([#4551](https://github.com/INTENTIUS/chant/issues/4551)) | `kind` (`up` or `down`), `pr` (INTEGER), `env`, `env_member`, `template`, `git_sha`, `components` (JSON), `plan_digest`, `result`, `by`, `timestamp`, `expires_at`, `approvers` (JSON), `reason`, `run_url` |
 | `chant_schema` | column of every table above | `version` (INTEGER), `table_name`, `column_name`, `type`, `position` (INTEGER) |
 
