@@ -12,6 +12,10 @@ The model lives in `packages/core/src/lifecycle/release-catalog.ts` and the site
 
 A release record already uses `version` for its schema version (always `1`). The version a publish gives a release, such as `1.4.0` for a module or `2.0.0-rc.1` for a package, is recorded as `releaseVersion`. chant 0.124.55 and newer write and read it (`RELEASE_VERSION_FLOOR`). A record without it still parses, and the catalog lists that release by its digest. A value that is not a non-empty string is refused by `appendReleaseRecord` and dropped on read, so the rest of the record still reads.
 
+## Release status
+
+A release is deprecated, yanked or restored by appending a line to `<env>/release-status.jsonl`, beside the environment's `releases.jsonl` ([#4596](https://github.com/INTENTIUS/chant/issues/4596)). `appendReleaseStatus` in `packages/core/src/lifecycle/release-status.ts` writes it under the member's ledger path and honours `--no-record`, and the caller pushes. A line is keyed by `component`, `env` and `digest`, and carries the new `status` with the `actor` and `timestamp` that set it. It may also carry the `releaseVersion`, a `reason` and a `replacement`. The newest line for a component and digest is the release's status, so a restore is one more line with `status: "active"`. Anyone who may publish may append one. No approval gate applies, since the line records who did it and why. `statusOf(records, component, digest)` answers for one release, and `catalogStatusInputs(records)` passes the lines to the catalog builder. `chant ledger release_status` and `chant query` list every line (`RELEASE_STATUS_FLOOR`).
+
 ## Catalog input
 
 `buildReleaseCatalog(input, { generatedAt, chant })` takes:

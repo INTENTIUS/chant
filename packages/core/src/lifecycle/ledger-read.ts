@@ -43,6 +43,7 @@ export const LEDGER_TIME_COLUMN: Record<QueryTable, string | null> = {
   applies: "timestamp",
   pr_envs: "timestamp",
   control_entries: "timestamp",
+  release_status: "timestamp",
 };
 
 /** The columns that hold JSON, which this read prints parsed. */

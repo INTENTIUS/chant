@@ -19,7 +19,9 @@
  * - the pull request environments, `_pr-envs/records.jsonl`
  *   (`../components/pr-environment.ts`, #4551);
  * - the control repo's entries, `_control/entries.jsonl`
- *   (`../control/records.ts`, #4568, #4593).
+ *   (`../control/records.ts`, #4568, #4593);
+ * - the release status records, `<env>/release-status.jsonl`
+ *   (`./release-status.ts`, #4596).
  *
  * The tables are a contract. {@link QUERY_SCHEMA_VERSION} names it, and the
  * `chant_schema` table lists every table and column with the version, so a
@@ -46,6 +48,7 @@ import { appliedGatePath, finishedApply, parseAppliedGateFile } from "./gate-app
 import { PR_ENV_LEDGER_DIR, PR_ENV_LEDGER_FILE, parsePrEnvRecords } from "../components/pr-environment";
 import { CONTROL_LEDGER_DIR, CONTROL_LEDGER_FILE, parseControlEntries } from "../control/records";
 import { NEXT_RELEASE } from "../release-floors";
+import { parseReleaseStatus, RELEASE_STATUS_FILE } from "./release-status";
 
 /** The version of the table schema below. */
 export const QUERY_SCHEMA_VERSION = 1;
@@ -117,6 +120,13 @@ export const QUERY_TABLES = {
    * not match it is counted malformed and left out.
    */
   control_entries: [["member", "TEXT"], ["id", "TEXT"], ["entry", "TEXT"], ["project", "TEXT"], ["state", "TEXT"], ["product", "TEXT"], ["settings", "TEXT"], ["estates", "TEXT"], ["by", "TEXT"], ["timestamp", "TEXT"], ["digest", "TEXT"], ["prev_digest", "TEXT"], ["current", "INTEGER"]],
+  /**
+   * One row per line of `<env>/release-status.jsonl` (#4596): a release
+   * deprecated, yanked, or restored to `active`. Every line is a row; the
+   * release's status is the row with the newest `timestamp` for its
+   * component and digest. `release_version` is NULL when the line names none.
+   */
+  release_status: [["member", "TEXT"], ["env", "TEXT"], ["component", "TEXT"], ["digest", "TEXT"], ["release_version", "TEXT"], ["status", "TEXT"], ["reason", "TEXT"], ["replacement", "TEXT"], ["actor", "TEXT"], ["timestamp", "TEXT"]],
 } as const satisfies Record<string, ReadonlyArray<readonly [string, ColumnType]>>;
 
 /**
@@ -147,6 +157,9 @@ export const LEDGER_APPLIES_FLOOR = NEXT_RELEASE;
 
 /** The first chant with the `control_entries` table (#4593), added within version 1. */
 export const LEDGER_CONTROL_ENTRIES_FLOOR = NEXT_RELEASE;
+
+/** The first chant with the `release_status` table (#4596), added within version 1 (chant#4551's ruling C). */
+export const LEDGER_RELEASE_STATUS_FLOOR = NEXT_RELEASE;
 
 export type QueryTable = keyof typeof QUERY_TABLES;
 
@@ -325,6 +338,14 @@ export async function loadQueryData(ledgers: readonly QueryLedger[]): Promise<Qu
           malformed.deploys += bad;
           for (const d of records) {
             data.deploys.push({ member, env: d.env, component: d.component, digest: d.digest, git_sha: d.gitSha, run_id: d.runId, forge: str(d.runOrigin?.forge), run_url: str(d.runOrigin?.url), timestamp: d.timestamp, actor: d.actor, approver: str(d.approver), release_digest: str(d.releaseDigest), digest_kind: str(d.digestKind), promoted_from: json(d.promotedFrom), restores: json(d.restores), redeploys: json(d.redeploys) });
+          }
+          continue;
+        }
+        if (file === RELEASE_STATUS_FILE) {
+          const { records, malformed: bad } = parseReleaseStatus(await port.read(env, file));
+          malformed.release_status += bad;
+          for (const r of records) {
+            data.release_status.push({ member, env: r.env, component: r.component, digest: r.digest, release_version: str(r.releaseVersion), status: r.status, reason: str(r.reason), replacement: str(r.replacement), actor: r.actor, timestamp: r.timestamp });
           }
           continue;
         }
