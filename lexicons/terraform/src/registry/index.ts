@@ -20,3 +20,6 @@ export * from "./mirror";
 export * from "./edge";
 export * from "./targets";
 export * from "./docs";
+export * from "./catalog-read";
+export * from "./deprecated";
+export { moduleConsumers, normalizeModuleSource, isLocalSource, PUBLIC_REGISTRY_HOST, type ModuleConsumer } from "../pin/consumers";
