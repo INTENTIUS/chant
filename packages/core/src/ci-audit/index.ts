@@ -5,10 +5,9 @@
  * on `CI_AUDIT_FLOOR`.
  */
 
-import { NEXT_RELEASE } from "../release-floors";
 
 /** The first chant with drift attribution and the unrecorded writer audit in core. */
-export const CI_AUDIT_FLOOR = NEXT_RELEASE;
+export const CI_AUDIT_FLOOR = "0.124.56";
 
 export * from "./audit-log";
 export * from "./attribution";

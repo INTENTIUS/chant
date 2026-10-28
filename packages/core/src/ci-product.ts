@@ -9,7 +9,6 @@
  * and `assertProductWords` present means the rest is too.
  */
 
-import { NEXT_RELEASE } from "./release-floors";
 import type { CiProductWords, CiProductWordsInput } from "./ci-product-words";
 import type { ProductMcpHook } from "./cli/mcp/product-tools";
 import type { ProductWaveHook } from "./op/op-waves-after-plan";
@@ -122,7 +121,7 @@ export { upsertPlanNote } from "./pr-post";
  * open pull request's head. A product feature-detects on
  * `APPROVAL_STATUS_FLOOR`.
  */
-export const APPROVAL_STATUS_FLOOR = NEXT_RELEASE;
+export const APPROVAL_STATUS_FLOOR = "0.124.56";
 /**
  * The approval status for `pull-request` waves too (#4630, 2026-10-28
  * ruling): the generators add the record-plans and approval-status jobs for
@@ -131,7 +130,7 @@ export const APPROVAL_STATUS_FLOOR = NEXT_RELEASE;
  * as plywood, whose waves all take `approval: pull-request`, feature-detects
  * on this floor.
  */
-export const APPROVAL_STATUS_PULL_REQUEST_FLOOR = NEXT_RELEASE;
+export const APPROVAL_STATUS_PULL_REQUEST_FLOOR = "0.124.56";
 export { opWavesPostsApprovalStatus } from "./op/op-waves";
 export { approvalStatusOf, headWaveHolds, postApprovalStatus, postOpenApprovalStatuses, type ApprovalStatus, type ApprovalStatusInput } from "./op/approval-status";
 
@@ -141,7 +140,7 @@ export { approvalStatusOf, headWaveHolds, postApprovalStatus, postOpenApprovalSt
  * words. `productPipelineJobs(forge, env, { words, respond, decide })` turns
  * them on and off; a product feature-detects on `CI_RESPOND_FLOOR`.
  */
-export const CI_RESPOND_FLOOR = NEXT_RELEASE;
+export const CI_RESPOND_FLOOR = "0.124.56";
 
 /**
  * `chant build --pr-loop` carries `--merge auto --merge-token-env <VAR>
@@ -150,7 +149,7 @@ export const CI_RESPOND_FLOOR = NEXT_RELEASE;
  * the build parsed them and wrote jobs without them; a product that writes
  * its pull request jobs with the build feature-detects on this floor.
  */
-export const PR_LOOP_BUILD_FLAGS_FLOOR = NEXT_RELEASE;
+export const PR_LOOP_BUILD_FLAGS_FLOOR = "0.124.56";
 export {
   CI_RESPOND_DEFAULTS,
   CI_RESPOND_ENV,

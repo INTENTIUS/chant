@@ -119,7 +119,6 @@ import {
   type OpWaveHolds,
   type OpWaveStepPlan,
 } from "./op-waves-capability";
-import { NEXT_RELEASE } from "../release-floors";
 import {
   changeInvolvement, quorumProblems, quorumRuleLine, quorumRulesFor, quorumWaiting, recordedReviewApprovals, ruleNeedsProof, samePrincipal, trustQuorumJudge,
   type GateQuorumJudge, type GateQuorumRule, type GateQuorumRuleProgress, type QuorumJudgement,
@@ -682,7 +681,7 @@ function pointAtBase(spec: OpWavesSpec, name: string, where: string): Pick<OpWav
 }
 
 /** The first chant whose op entry exports {@link opWavePlanPath} (terragucci#1304). */
-export const OP_WAVE_PLAN_PATH_FLOOR = NEXT_RELEASE;
+export const OP_WAVE_PLAN_PATH_FLOOR = "0.124.56";
 
 /** Where a run's plan file goes: one target's plan, as opposed to {@link opWavePlansPath}, the wave's `plans.json`. */
 export function opWavePlanPath(spec: Pick<OpWavesSpec, "name">, wave: number, target: string): string {
