@@ -20,7 +20,7 @@ describe("the exit-code table (#4553)", () => {
 
   test("the commands that kept their own constant take them from the table", () => {
     expect(DRIFT_EXIT_CODE).toBe(CHANT_EXIT.drift);
-    expect(PR_ENV_EXIT).toEqual({ done: 0, failed: 1, waiting: 3 });
+    expect(PR_ENV_EXIT).toEqual({ done: 0, failed: 1, waiting: 3, held: 5 });
   });
 
   test("an error marked with the old moved code still reads as moved, and 4 on its own does not", () => {

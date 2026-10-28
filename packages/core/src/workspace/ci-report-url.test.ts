@@ -104,7 +104,7 @@ describe("reportUrlOf", () => {
 
   test("a declared URL no job can upload to fails with its place and reason code, unless the flag is given", async () => {
     const w = workspace({ reportUrl: "https://reports.example/acme" });
-    await expect(declaredReportUrl(w.app)).rejects.toThrow(/chant\.workspace\.json:\d+:\d+: ci\.reportUrl https:\/\/reports\.example\/acme: takes an s3:\/\/<bucket>\/<prefix> or file:\/\/<directory> URL \[declaration-invalid\]/);
+    await expect(declaredReportUrl(w.app)).rejects.toThrow(/chant\.workspace\.json:\d+:\d+: ci\.reportUrl https:\/\/reports\.example\/acme: takes an s3:\/\/<bucket>\/<prefix>, gs:\/\/<bucket>\/<prefix>, az:\/\/<account>\/<container>\/<prefix> or file:\/\/<directory> URL \[declaration-invalid\]/);
     expect(await reportUrlOf("file:///elsewhere", w.app)).toBe("file:///elsewhere");
   });
 });

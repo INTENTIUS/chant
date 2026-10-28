@@ -101,21 +101,21 @@ describe("a bucket URL picks the store (#4554)", () => {
   });
 
   test("storeFromEnv without hints words its errors as chant does (#4584)", () => {
-    expect(() => storeFromEnv({ bucket: "gs://b" }, {})).toThrow("set GOOGLE_APPLICATION_CREDENTIALS to a credentials file (a job's OIDC setup writes one)");
-    expect(() => storeFromEnv({ bucket: "az://a/c" }, {})).toThrow("(a job's OIDC setup sets them), or AZURE_STORAGE_KEY");
+    expect(() => storeFromEnv({ bucket: "gs://bkt" }, {})).toThrow("set GOOGLE_APPLICATION_CREDENTIALS to a credentials file (a job's OIDC setup writes one)");
+    expect(() => storeFromEnv({ bucket: "az://acct1/reports" }, {})).toThrow("(a job's OIDC setup sets them), or AZURE_STORAGE_KEY");
     expect(() => storeFromEnv({ bucket: "b" }, {})).toThrow("AWS_WEB_IDENTITY_TOKEN_FILE, or the role");
     expect(() => storeFromEnv({ bucket: "b", role: "arn:aws:iam::1:role/r" }, {})).toThrow("to assume arn:aws:iam::1:role/r");
-    expect(() => storeFromEnv({ bucket: "gs://b", role: "arn:aws:iam::1:role/r" }, {})).toThrow("its own OIDC identity");
+    expect(() => storeFromEnv({ bucket: "gs://bkt", role: "arn:aws:iam::1:role/r" }, {})).toThrow("its own OIDC identity");
   });
 
   test("storeFromEnv names the product key in each setup error when given hints (#4584)", () => {
     const hints = { oidc: "oidc", gcp: "oidc.gcp", azure: "oidc.azure" };
     const base = { setting: "reports.bucket", roleSetting: "reports.role", hints };
-    expect(() => storeFromEnv({ ...base, bucket: "gs://b" }, {})).toThrow(
-      "reports.bucket is gs://b, but the job has no credentials for it: give the job oidc.gcp (it sets GOOGLE_APPLICATION_CREDENTIALS), or set GOOGLE_APPLICATION_CREDENTIALS to a credentials file",
+    expect(() => storeFromEnv({ ...base, bucket: "gs://bkt" }, {})).toThrow(
+      "reports.bucket is gs://bkt, but the job has no credentials for it: give the job oidc.gcp (it sets GOOGLE_APPLICATION_CREDENTIALS), or set GOOGLE_APPLICATION_CREDENTIALS to a credentials file",
     );
-    expect(() => storeFromEnv({ ...base, bucket: "az://a/c" }, {})).toThrow(
-      "reports.bucket is az://a/c, but the job has no credentials for it: give the job oidc.azure (it sets ARM_TENANT_ID, ARM_CLIENT_ID and ARM_OIDC_TOKEN_FILE_PATH), or set AZURE_STORAGE_KEY",
+    expect(() => storeFromEnv({ ...base, bucket: "az://acct1/reports" }, {})).toThrow(
+      "reports.bucket is az://acct1/reports, but the job has no credentials for it: give the job oidc.azure (it sets ARM_TENANT_ID, ARM_CLIENT_ID and ARM_OIDC_TOKEN_FILE_PATH), or set AZURE_STORAGE_KEY",
     );
     expect(() => storeFromEnv({ ...base, bucket: "b" }, {})).toThrow(
       "reports.bucket is set, but the job has no credentials for it: set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, or AWS_ROLE_ARN and AWS_WEB_IDENTITY_TOKEN_FILE (a job with oidc sets both), or reports.role",
@@ -123,8 +123,8 @@ describe("a bucket URL picks the store (#4554)", () => {
     expect(() => storeFromEnv({ ...base, bucket: "b", role: "arn:aws:iam::1:role/r" }, {})).toThrow(
       "reports.role is set, but AWS_WEB_IDENTITY_TOKEN_FILE is not: the job needs an OIDC token to assume arn:aws:iam::1:role/r, which a job with oidc gets",
     );
-    expect(() => storeFromEnv({ ...base, bucket: "gs://b", role: "arn:aws:iam::1:role/r" }, {})).toThrow(
-      "reports.role is an AWS role, and gs://b is not an S3 bucket: the job writes it with its own oidc identity",
+    expect(() => storeFromEnv({ ...base, bucket: "gs://bkt", role: "arn:aws:iam::1:role/r" }, {})).toThrow(
+      "reports.role is an AWS role, and gs://bkt is not an S3 bucket: the job writes it with its own oidc identity",
     );
   });
 });

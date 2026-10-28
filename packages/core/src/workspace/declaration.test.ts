@@ -460,7 +460,7 @@ describe("ci.reportUrl (#4160)", () => {
     for (const reportUrl of ["https://reports.example/acme", "ftp://example/x", "reports/"]) {
       const err = failure(base([], { ci: { reportUrl } }));
       expect(err.code).toBe("declaration-invalid");
-      expect(err.message).toBe(`ci.reportUrl ${reportUrl}: takes an s3://<bucket>/<prefix> or file://<directory> URL`);
+      expect(err.message).toBe(`ci.reportUrl ${reportUrl}: takes an s3://<bucket>/<prefix>, gs://<bucket>/<prefix>, az://<account>/<container>/<prefix> or file://<directory> URL`);
       expect(err.location?.line).toBeGreaterThan(1);
     }
     expect(failure(base([], { ci: { reportUrl: "" } })).code).toBe("declaration-invalid");

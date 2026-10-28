@@ -387,10 +387,10 @@ describe("chant components promote", () => {
   });
 
   test.each([
-    ["marked planMoved", 3, { planMoved: true }],
-    ["with exitCode 3", 3, { exitCode: 3 }],
+    ["marked planMoved", 4, { planMoved: true }],
+    ["with exitCode 3", 4, { exitCode: 3 }],
     ["with exitCode 7", 1, { exitCode: 7 }],
-  ])("an apply that refuses its plan %s exits %i, and what deployed is still recorded (#3997)", async (_label, code, mark) => {
+  ])("an apply that refuses its plan %s exits %i, and what deployed is still recorded (#3997, #4553)", async (_label, code, mark) => {
     const web: DriverComponent = { ...api, name: "web" };
     resolveTargetsMock.mockResolvedValue({ success: true, targets: [api, web] });
     readReleaseLedgerMock.mockResolvedValue({ records: [staging, { ...staging, component: "web" }], malformed: 0 });
@@ -929,10 +929,10 @@ describe("chant components redeploy", () => {
     expect(errors.join("\n")).toMatch(/redeploy failed at "api"/);
   });
 
-  test("a redeploy whose apply refuses a moved plan exits 3 (#3997)", async () => {
+  test("a redeploy whose apply refuses a moved plan exits 4 (#3997, #4553)", async () => {
     failApplyFor = "api";
     applyError = Object.assign(new Error("api: refusing to apply, the plan moved"), { planMoved: true });
-    expect(await runComponentsRedeploy(rd({}))).toBe(3);
+    expect(await runComponentsRedeploy(rd({}))).toBe(4);
     expect(appendReleaseRecordMock).not.toHaveBeenCalled();
   });
 });
