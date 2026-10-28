@@ -328,6 +328,9 @@ export interface ParsedArgs {
    * `chant components fan-out --target <component>:<address>` and `chant run
    * --components --target ...` (#4300), repeatable: the addresses a
    * component's steps narrow to. Raw values; `parseComponentTargets` groups them.
+   * `chant components pr-plan --target <address>` (#4620) takes a bare
+   * address too, for every member the pull request plans
+   * (`prPlanTargets`).
    */
   targets?: string[];
   /** `chant components fan-out --canary <component>` (#3049), repeatable — components that form wave 1. */
@@ -412,6 +415,8 @@ export interface ParsedArgs {
    * pull request before it merges, and a merge records.
    */
   applyBeforeMerge?: boolean;
+  /** `chant build --pr-loop --preview-comment` (#4620): a job answers `/<product> <plan word>` by previewing the pull request's head again. */
+  previewComment?: boolean;
   /** `chant build --pr-loop --pr-build` (#4088) — build and lint before pr-plan and pr-apply. */
   prBuild?: boolean;
   /** `chant ci serve --build-command <line>` (#4169) — the line that builds a commit a `ci/build/<sha>` tag asks for, in a worktree of it. */

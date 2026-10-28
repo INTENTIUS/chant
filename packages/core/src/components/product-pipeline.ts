@@ -34,7 +34,7 @@ import {
   type CiProductWords,
   type CiProductWordsInput,
 } from "../ci-product-words";
-import { prCommentLockJobs, prLoopJobs, prLoopPostJob, withProductBin, type PrCommentLockJob, type PrLoopJob, type PrLoopPipelineOptions } from "./pr-pipeline";
+import { prCommentLockJobs, prCommentPreviewJob, prLoopJobs, prLoopPostJob, withProductBin, type PrCommentLockJob, type PrCommentPreviewJob, type PrLoopJob, type PrLoopPipelineOptions } from "./pr-pipeline";
 import type { DriverComponent } from "./driver";
 import type { ScheduledOpSpec } from "../lexicon";
 import type { CiRunner } from "../ci-jobs";
@@ -109,6 +109,12 @@ export interface ProductPipelineJobs {
    * releases them. The forge lexicons render the same jobs.
    */
   locks?: PrCommentLockJob[];
+  /**
+   * The comment preview (#4620), with `previewComment`: `/<product> <plan
+   * word>` plans the pull request's head again with a read token, and the
+   * job after it posts the note. The forge lexicons render the same jobs.
+   */
+  preview?: PrCommentPreviewJob;
   /**
    * The agent (#4616), with `agent`: the comment it answers, `/<product>
    * agent <ask>`, and the scheduled Op spec whose generated workflow runs
@@ -201,6 +207,8 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   };
   const locks = prCommentLockJobs(forge, { locks: options.locks, words });
   if (locks.length > 0) out.locks = locks;
+  const preview = prCommentPreviewJob(forge, env, prLoop, member);
+  if (preview) out.preview = preview;
   // #4616: the agent answers its comment from a workflow of its own, generated from this spec.
   const agentComment = options.agent ? comments.agent : undefined;
   if (options.agent && agentComment) {

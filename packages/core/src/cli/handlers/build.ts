@@ -51,6 +51,8 @@ async function engineSetupFor(path: string): Promise<string[]> {
  * `--pr-env` (#4298) adds the jobs of a pull request's environment.
  * `--apply-before-merge` (#4301) writes the apply job that applies an open
  * pull request before it merges, beside the record job.
+ * `--preview-comment` (#4620) writes the jobs that answer the product's plan
+ * comment with a preview of the pull request's head.
  */
 function prLoopOption(args: CommandContext["args"], reportUrl: string | undefined, requireReview = false, requireRunnerStart = false): PrLoopPipelineOptions {
   // #4550: a product's bin set its words; the generated jobs answer its comment and run its bin.
@@ -68,6 +70,7 @@ function prLoopOption(args: CommandContext["args"], reportUrl: string | undefine
     ...(args.applyOnMerge ? { applyOnMerge: true } : {}),
     ...(args.prEnv ? { prEnvironment: true } : {}),
     ...(args.applyBeforeMerge ? { applyBeforeMerge: true } : {}),
+    ...(args.previewComment ? { previewComment: true } : {}),
     ...(args.requires ? { applyRequires: args.requires } : {}),
   };
 }

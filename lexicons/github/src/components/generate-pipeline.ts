@@ -81,6 +81,9 @@ import {
   PR_UNLOCK_COMMAND,
   prLockCommand,
   prCommentLockJobs,
+  prCommentPreviewJob,
+  PREVIEW_REF_ENV,
+  PREVIEW_HEAD_OUTPUT,
   prLoopWaveJobs,
   prLoopWithWaves,
   prEnvJobs,
@@ -141,6 +144,8 @@ export interface GithubPipelineDoc {
 
 /** The plan job's last step, whose outputs carry its report to the plan-note job (#4295). */
 const PLAN_STEP_ID = "plan";
+/** The comment preview's checkout step (#4620), whose output names the head it checked out. */
+const PREVIEW_HEAD_STEP_ID = "head";
 
 /** The output a gated apply wave hands the green commit it applies through, and the step that sets it (#4221). */
 const WAVE_GREEN_OUTPUT = "green-sha";
@@ -484,6 +489,59 @@ function prLoopGithubDoc(
       },
     ]),
   );
+  // #4620: `/<product> <plan word>` plans the pull request's head again with a read token; the job after it posts the note.
+  const preview = prCommentPreviewJob(forgeName, env, loop, member?.name);
+  const previewJobs: Record<string, unknown> = preview
+    ? {
+        [preview.jobName]: {
+          if: [
+            "github.event_name == 'issue_comment'",
+            forgejo ? "(github.event.issue.pull_request || github.event.is_pull)" : "github.event.issue.pull_request",
+            `startsWith(github.event.comment.body, '${preview.comment}')`,
+            ...(forgejo ? [] : ["contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.comment.author_association)"]),
+          ].join(" && "),
+          "runs-on": GITHUB_RUNNER,
+          container: image,
+          permissions: withIdToken({ contents: "read" }),
+          outputs: { ...handoverOutputs(PLAN_STEP_ID, forgeName), [PREVIEW_HEAD_OUTPUT]: `\${{ steps.${PREVIEW_HEAD_STEP_ID}.outputs.${PREVIEW_HEAD_OUTPUT} }}` },
+          steps: [
+            ...(identity ? [tradeStep(identity.plan, "plan")] : []),
+            // The head is read here, before any of the change's code runs, so the post job names the commit this job planned.
+            {
+              name: "Check out the pull request's head",
+              id: PREVIEW_HEAD_STEP_ID,
+              ...(rooted ? {} : { "working-directory": "." }),
+              env: { [CHECKOUT_TOKEN_ENV]: GITHUB_JOB_TOKEN, [PREVIEW_REF_ENV]: "ref" in preview.head ? preview.head.ref : "" },
+              run: [checkoutScript(true, true, { refEnv: PREVIEW_REF_ENV }), `echo "${PREVIEW_HEAD_OUTPUT}=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"`].join("\n"),
+            },
+            ...[...prLoopSetup(image, loop.engineSetup), ...beforeScript].map((line) => headStep(line)),
+            ...(preview.plan.build ? [headStep(preview.plan.build[0]!, "Build the templates"), headStep(preview.plan.build[1]!, "Lint the project")] : []),
+            {
+              name: "Preview the members this pull request reaches",
+              id: PLAN_STEP_ID,
+              env: preview.plan.run.env,
+              run: [drop, ...handoverTrap(PR_LOOP_REPORT_DIR, forgeName), preview.base, ...(preview.plan.setup ?? []), preview.plan.run.command, ...extraScript].join("\n"),
+            },
+          ],
+        },
+        [preview.noteJobName]: {
+          needs: [preview.jobName],
+          if: `always() && github.event_name == 'issue_comment' && (needs.${preview.jobName}.result == 'success' || needs.${preview.jobName}.result == 'failure')`,
+          "runs-on": GITHUB_RUNNER,
+          container: image,
+          permissions: { actions: "read", contents: "read", "pull-requests": "write", statuses: "write" },
+          steps: [
+            // The target branch's commit, which an issue_comment run checks out: none of the change's code is here.
+            { name: "Check out the target branch's commit", uses: CHECKOUT },
+            ...runSteps(beforeScript),
+            { name: "Take the preview report from the preview job", run: takeOverScript(preview.jobName, PR_LOOP_REPORT_DIR, forgeName) },
+            { name: "Keep the preview report", if: "always()", uses: UPLOAD_ARTIFACT, with: { name: `chant-pr-${preview.jobName}`, path: reportPath, "if-no-files-found": "ignore", "include-hidden-files": true } },
+            ...(controlRead ? [{ name: controlRead.stepName, if: "always()", env: controlRead.env, run: controlRead.script }] : []),
+            { name: `Post the preview note and ${productStatusContext(resolveProductWords(loop.words), "plan")}`, if: "always()", env: preview.post.env, run: preview.post.command },
+          ],
+        },
+      }
+    : {};
   const jobsDoc: Record<string, unknown> = {
     plan: {
       if: closes ? "github.event_name == 'pull_request' && github.event.action != 'closed'" : "github.event_name == 'pull_request'",
@@ -504,6 +562,7 @@ function prLoopGithubDoc(
     },
     ...lockJobs,
     ...commentLockJobs,
+    ...previewJobs,
     ...Object.fromEntries(applyJobs),
     ...Object.fromEntries(controlJobs),
     ...(prEnv ? prEnv.jobs : {}),
@@ -520,7 +579,7 @@ function prLoopGithubDoc(
     on.schedule = [{ cron: PR_ENV_SWEEP_CRON }];
   }
   // #4301: a /chant apply comment starts the apply before merge. #4588: and a lock or unlock comment its job.
-  if (loop.applyBeforeMerge || commentLocks.length > 0) on.issue_comment = { types: ["created"] };
+  if (loop.applyBeforeMerge || commentLocks.length > 0 || preview) on.issue_comment = { types: ["created"] };
   return {
     name: member ? `chant-pr.${member.name}.${env}` : `chant-pr-${env}`,
     environment: env,
@@ -528,7 +587,7 @@ function prLoopGithubDoc(
     ...(rooted ? {} : { defaults: { run: { "working-directory": member!.dir } } }),
     env: { ...options.variables, CHANT_ENV: env },
     jobsDoc,
-    stages: ["plan", PR_PLAN_NOTE_JOB, ...(locks ? [PR_LOCK_JOB, PR_UNLOCK_JOB] : []), ...commentLocks.map((j) => j.jobName), ...applyNames, ...controlJobs.map(([name]) => name), ...(prEnv ? ["env-up", PR_ENV_POST_JOB, "env-down", "env-sweep"] : [])],
+    stages: ["plan", PR_PLAN_NOTE_JOB, ...(locks ? [PR_LOCK_JOB, PR_UNLOCK_JOB] : []), ...commentLocks.map((j) => j.jobName), ...(preview ? [preview.jobName, preview.noteJobName] : []), ...applyNames, ...controlJobs.map(([name]) => name), ...(prEnv ? ["env-up", PR_ENV_POST_JOB, "env-down", "env-sweep"] : [])],
     jobs: [
       { jobName: "plan", component: "pull request plan", stage: "plan", needs: [] },
       { jobName: PR_PLAN_NOTE_JOB, component: "pull request plan note", stage: PR_PLAN_NOTE_JOB, needs: ["plan"] },
@@ -539,6 +598,12 @@ function prLoopGithubDoc(
           ]
         : []),
       ...commentLocks.map((j) => ({ jobName: j.jobName, component: `pull request ${j.command} comment`, stage: j.jobName, needs: [] })),
+      ...(preview
+        ? [
+            { jobName: preview.jobName, component: "pull request preview comment", stage: preview.jobName, needs: [] },
+            { jobName: preview.noteJobName, component: "pull request preview comment note", stage: preview.noteJobName, needs: [preview.jobName] },
+          ]
+        : []),
       ...applyNames.map((name, i) => ({
         jobName: name,
         component: name === "record" ? "merge record" : loop.applyBeforeMerge ? "apply before merge" : loop.waveGate ? `green apply, wave ${i}` : "green apply",
