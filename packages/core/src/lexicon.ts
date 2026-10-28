@@ -1529,6 +1529,16 @@ export interface LexiconPlugin {
   prEnvTeardown?(ctx: { cwd: string }): import("./components/pr-environment").PrEnvTeardownAdapter | undefined;
 
   /**
+   * This lexicon's steps in the check stage (#4633,
+   * `./components/check-steps.ts`): `chant ci check` runs them after the
+   * `ci.hooks.check` hooks for each workspace member of the adapter's kinds,
+   * with the check job's environment (no forge token, no cloud credentials).
+   * The pulumi lexicon runs `pulumi install`, a stack config check and
+   * `pulumi about --json` per pulumi member. Return undefined for none.
+   */
+  checkSteps?(): import("./components/check-steps").CheckStepsAdapter | undefined;
+
+  /**
    * Host Op runs — the seam `chant run <op> --on <this lexicon>` dispatches to
    * (#2121, epic #2114). Core ships one provider of its own, `local`, and
    * selects it when no `--on` is passed; a lexicon that can start, watch,

@@ -37,6 +37,7 @@
  *   takes a `<project>/<stack>` template, and `prEnvTeardown` removes the
  *   environment's `pr-<n>` stacks (`./review-stack.ts`).
  */
+import { pulumiCheckSteps } from "./check-step";
 import { pulumiCiSetup } from "./ci-setup";
 import { basename, isAbsolute, resolve } from "node:path";
 import type { InitTemplateSet, LexiconPlugin } from "@intentius/chant/lexicon";
@@ -93,6 +94,11 @@ export const pulumiPlugin: LexiconPlugin = {
   // #4609: pr-env down and the sweep destroy and remove each review stack the environment's record names (./review-stack.ts).
   prEnvTeardown(ctx: { cwd: string }) {
     return reviewStackTeardown({ cwd: ctx.cwd });
+  },
+
+  // #4633: pulumi install, each stack's config against the project's schema, and pulumi about --json, per pulumi member in chant's check stage.
+  checkSteps() {
+    return pulumiCheckSteps();
   },
 
   // A pulumi workspace member's reader project (#3179): its stack export from
