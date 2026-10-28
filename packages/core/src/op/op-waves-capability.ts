@@ -403,7 +403,7 @@ const defaultHoldExec: GatePolicyExec = (argv, cwd): GatePolicyRun => {
 };
 
 /** The engine's plan document a capability's artifact names (`artifact.planJson`), when it names one that exists. */
-function planJsonOf(artifact: unknown, cwd: string): string | undefined {
+export function planJsonOf(artifact: unknown, cwd: string): string | undefined {
   const p = (artifact as { planJson?: unknown } | undefined)?.planJson;
   if (typeof p !== "string" || p === "") return undefined;
   const path = p.startsWith("/") ? p : join(cwd, p);

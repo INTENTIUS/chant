@@ -88,7 +88,8 @@ import { ciRunIdFromEnv } from "./gate-run-locator";
 import { appendRunRecord, DEFAULT_RUN_ENV } from "../lifecycle/run-ledger";
 import { pushLifecycleReport } from "../lifecycle/git";
 import { resolveCiJob } from "../lifecycle/release-ledger";
-import type { OpRunRecordInput, OpRunStepRecord, OpRunWave, OpRunWaveTarget } from "./runtime";
+import type { OpRunPolicyRow, OpRunRecordInput, OpRunStepRecord, OpRunWave, OpRunWavePlan, OpRunWaveTarget } from "./runtime";
+import { foldPolicyRows, opWaveAfterPlanProblems, runOpWaveAfterPlanHooks, type OpWaveAfterPlanHook, type OpWaveAfterPlanRun } from "./op-waves-after-plan";
 import { activeOtlp, RunEventTrace, type CapabilityTraceFacts, type OtlpExporter } from "../otlp";
 import { joinRunEventSinks, resolveRunEventRun, type RunEventSink } from "../run-event-stream";
 import { OpWaveRunEvents } from "./op-waves-events";
@@ -107,6 +108,7 @@ import {
   opWavePolicyVerdicts,
   opWaveRegistry,
   opWaveStepChangeSet,
+  planJsonOf,
   planOpWaveStep,
   type OpWaveHolds,
   type OpWaveStepPlan,
@@ -776,6 +778,14 @@ export interface RunOpWaveOptions {
    * names an endpoint. `false` sends none.
    */
   otlp?: OtlpExporter | false;
+  /**
+   * After-plan hooks in the job's own process (#4614): each is called once
+   * per planned run, in order, after the wave's holds and before the set
+   * digest and the gate, with the run's plan digest, `{plan}` and
+   * `{planJson}`. Its policy rows deny or hold the run, and its rows and
+   * files go on the run record. See `./op-waves-after-plan.ts`.
+   */
+  afterPlan?: OpWaveAfterPlanHook | readonly OpWaveAfterPlanHook[];
 }
 
 /** Where an op wave job's run record goes (#4551). */
@@ -827,6 +837,8 @@ export interface RunOpWaveResult {
   hooks: OpWaveHookOutcome[];
   /** Each target the job applied or tried to (#4555): when, how long, and what its capability knew. */
   targets?: Record<string, OpRunWaveTarget>;
+  /** Each planned run with policy rows or an after-plan hook's files (#4614), as the run record's `wave.plans`. */
+  plans?: Record<string, OpRunWavePlan>;
 }
 
 /** What one wave job works with. */
@@ -1108,9 +1120,10 @@ async function runWaveHolds(
   members: OpWaveMember[],
   parts: ReadonlyMap<string, ChangeSetPart> | undefined,
   base: string,
-): Promise<{ holds: string[]; extras: WaveMember[] } | { failed: string }> {
+): Promise<{ holds: string[]; extras: WaveMember[]; rows: Map<string, OpRunPolicyRow> } | { failed: string }> {
   const { spec, k, wave, cwd, log, options } = ctx;
-  const out = { holds: [] as string[], extras: [] as WaveMember[] };
+  // #4614: each run's ci.policy row, which the after-plan hooks and the run record read.
+  const out = { holds: [] as string[], extras: [] as WaveMember[], rows: new Map<string, OpRunPolicyRow>() };
   if (!holds) return out;
   if (holds.policy) {
     const missing = members.filter((m) => !parts?.has(m.member)).map((m) => m.member);
@@ -1133,6 +1146,10 @@ async function runWaveHolds(
     else {
       for (const m of members) {
         const v = got.verdicts.get(m.member);
+        if (v && v.result !== "error") {
+          const rules = v.result === "held" ? v.holds : v.result === "denied" ? v.rules : [];
+          out.rows.set(m.member, { source: "ci.policy", result: v.result, rules, ...(v.reason ? { reason: v.reason } : {}) });
+        }
         if (!v || v.result === "passed") continue;
         if (v.result === "error") return { failed: `wave ${k} (${wave.name}): the policy did not run on ${m.member} (${v.reason ?? "no answer"}), so nothing in it was applied` };
         if (v.result === "denied") m.denied = { rules: v.rules, ...(v.reason ? { reason: v.reason } : {}) };
@@ -1147,6 +1164,72 @@ async function runWaveHolds(
     if (verdict.hold) out.holds.push(verdict.hold);
   }
   return out;
+}
+
+/** The job's after-plan hooks (#4614), as a list. */
+function afterPlanHooks(options: RunOpWaveOptions): readonly OpWaveAfterPlanHook[] {
+  const given = options.afterPlan;
+  if (given === undefined) return [];
+  return Array.isArray(given) ? (given as readonly OpWaveAfterPlanHook[]) : [given as OpWaveAfterPlanHook];
+}
+
+/**
+ * Run the after-plan hooks in the job's process over a wave's plans (#4614),
+ * fold their policy rows into each run's denial and hold, and put each run's
+ * rows and files on the result for the run record. With no hook, the rows
+ * chant's `holds.policy` gave still go on the result.
+ */
+async function runAfterPlan(
+  ctx: WaveContext,
+  members: OpWaveMember[],
+  parts: ReadonlyMap<string, ChangeSetPart> | undefined,
+  policyRows: ReadonlyMap<string, OpRunPolicyRow>,
+): Promise<{ failed?: string; holds: string[] }> {
+  const { spec, k, wave, cwd, options, result } = ctx;
+  const hooks = afterPlanHooks(options);
+  const job: OpWaveAfterPlanRun["job"] = options.decide ? "decide" : options.group !== undefined ? "group" : options.share !== undefined ? "share" : "wave";
+  const runs: OpWaveAfterPlanRun[] = members.map((m) => {
+    const plan = opWavePlanPath(spec, k, m.member);
+    const step = ctx.steps?.get(m.member);
+    const planJson = runPlanJson(ctx, m.member, plan);
+    const part = parts?.get(m.member) ?? step?.part;
+    const row = policyRows.get(m.member);
+    return {
+      spec: spec.name,
+      op: spec.op,
+      wave: k,
+      waveName: wave.name,
+      job,
+      target: m.member,
+      runOp: m.op,
+      planDigest: m.planDigest,
+      plan,
+      ...(planJson ? { planJson } : {}),
+      ...(step?.artifact !== undefined ? { artifact: step.artifact } : {}),
+      ...(part ? { changeSet: part } : {}),
+      empty: m.empty === true,
+      destructive: m.destructive === true,
+      policy: row ? [row] : [],
+      cwd,
+    };
+  });
+  const out = hooks.length > 0 && runs.length > 0 ? await runOpWaveAfterPlanHooks(hooks, runs, ctx.log) : undefined;
+  if (out) result.hooks.push(...out.outcomes);
+  const plans: Record<string, OpRunWavePlan> = { ...(result.plans ?? {}) };
+  for (const m of members) {
+    const mine = out?.runs.get(m.member);
+    const chant = policyRows.get(m.member);
+    const rows = [...(chant ? [chant] : []), ...(mine?.policy ?? [])];
+    if (mine?.policy.length) {
+      const folded = foldPolicyRows(mine.policy, { ...(m.denied ? { denied: m.denied } : {}), ...(m.held ? { held: m.held } : {}) });
+      if (folded.denied) m.denied = folded.denied;
+      if (folded.held) m.held = folded.held;
+    }
+    if (rows.length === 0 && !mine?.files.length) continue;
+    plans[m.member] = { planDigest: m.planDigest, ...(rows.length ? { policy: rows } : {}), ...(mine?.files.length ? { files: [...mine.files] } : {}) };
+  }
+  if (Object.keys(plans).length > 0) result.plans = plans;
+  return { ...(out?.failed ? { failed: out.failed } : {}), holds: out?.holds ?? [] };
 }
 
 /** One field of a plan file, or undefined when the file or the field is missing. */
@@ -1220,8 +1303,22 @@ interface HooksOutcome {
 
 const placeOf = (ctx: WaveContext): HookPlace => ({ name: ctx.spec.name, op: ctx.spec.op, waveName: ctx.wave.name, k: ctx.k, cwd: ctx.cwd, exec: ctx.exec, log: ctx.log });
 
-const hookRuns = (spec: OpWavesSpec, k: number, runs: readonly OpWaveRun[], members?: ReadonlyMap<string, OpWaveMember>): OpWaveHookRun[] =>
-  runs.map((run) => ({ target: run.target, op: run.op ?? spec.op, ...(members?.has(run.target) ? { plan: opWavePlanPath(spec, k, run.target) } : {}) }));
+const hookRuns = (ctx: WaveContext, runs: readonly OpWaveRun[], members?: ReadonlyMap<string, OpWaveMember>): OpWaveHookRun[] =>
+  runs.map((run) => {
+    const { spec, k } = ctx;
+    const m = members?.get(run.target);
+    if (!m) return { target: run.target, op: run.op ?? spec.op };
+    const plan = opWavePlanPath(spec, k, run.target);
+    // #4614: the engine's plan document, from the step's artifact or the plan file's.
+    const planJson = runPlanJson(ctx, run.target, plan);
+    return { target: run.target, op: run.op ?? spec.op, plan, planDigest: m.planDigest, ...(planJson ? { planJson } : {}) };
+  });
+
+/** The engine's plan document a run's plan names (#4614): the step's artifact, else the plan file's `artifact`. */
+function runPlanJson(ctx: Pick<WaveContext, "cwd" | "steps">, target: string, plan: string): string | undefined {
+  const artifact = ctx.steps?.get(target)?.artifact ?? readPlanFileField(join(ctx.cwd, plan), "artifact");
+  return planJsonOf(artifact, ctx.cwd);
+}
 
 /**
  * Run one moment's hooks in the wave job (#3762), recording each outcome on
@@ -1242,7 +1339,7 @@ async function runHooks(
 ): Promise<HooksOutcome> {
   if (!hooks || hooks.length === 0) return { holds: [] };
   const runsPath = writeRunsFile(ctx, runs, members, digest);
-  const out = runHookList(placeOf(ctx), moment, hooks, hookRuns(ctx.spec, ctx.k, runs, members), runsPath, extraEnv);
+  const out = runHookList(placeOf(ctx), moment, hooks, hookRuns(ctx, runs, members), runsPath, extraEnv);
   ctx.result.hooks.push(...out.outcomes);
   const back: HooksOutcome = { holds: out.holds, ...(out.failed ? { failed: out.failed } : {}) };
   if (out.failed) return back;
@@ -1532,6 +1629,8 @@ function noteHooksAtBase(ctx: WaveContext, rules: OpWaveBaseRules): void {
  */
 export async function runOpWave(options: RunOpWaveOptions): Promise<RunOpWaveResult> {
   assertOpWavesSpec(options.spec);
+  const afterPlanWrong = opWaveAfterPlanProblems(options.afterPlan);
+  if (afterPlanWrong.length > 0) throw new Error(`Op waves "${options.spec.name}": ${afterPlanWrong.join("; ")}`);
   // #4551: one run record per job, on every way the job ends.
   const started = new Date().toISOString();
   // #4555: the job's run events and its trace, when a reader or an exporter wants them.
@@ -1669,6 +1768,7 @@ export function opWaveRunRecord(
     moved: [...result.moved],
     ...(result.blocked && Object.keys(result.blocked).length > 0 ? { blocked: { ...result.blocked } } : {}),
     ...(result.targets && Object.keys(result.targets).length > 0 ? { targets: { ...result.targets } } : {}),
+    ...(result.plans && Object.keys(result.plans).length > 0 ? { plans: { ...result.plans } } : {}),
   };
   const labels = { ...(spec.labels ?? {}) };
   return {
@@ -2042,12 +2142,15 @@ async function planOpWave(options: RunOpWaveOptions, { k, pass }: WaveAttempt<Ru
     if (before.failed) return { end: failed(ctx, `a hook before the plan failed, so nothing in ${part} of wave ${k} was planned or applied`) };
     if (before.waitingOn) return { end: await waitOnOther(ctx, decision, before.waitingOn) };
     if (spec.step) ctx.steps = new Map();
-    const { members } = await planWaveRuns(ctx, slice);
+    const { members, parts: sliceParts } = await planWaveRuns(ctx, slice);
+    // #4614: the after-plan hooks in the job's process, over the share's own plans.
+    const inProcess = await runAfterPlan(ctx, members, sliceParts, new Map());
+    if (inProcess.failed) return { end: failed(ctx, `${inProcess.failed}, so nothing in ${part} of wave ${k} was applied`) };
     const planned = new Map(members.map((m) => [m.member, m]));
     const after = await runHooks(ctx, "after-plan", decision.hooks?.["after-plan"], slice, planned);
     if (after.failed) return { end: failed(ctx, `a hook after the plan failed, so nothing in ${part} of wave ${k} was applied`) };
     if (after.waitingOn) return { end: await waitOnOther(ctx, decision, after.waitingOn) };
-    return { go: { kind: "share", ctx, decision, slice, planned, holds: [...before.holds, ...after.holds] } };
+    return { go: { kind: "share", ctx, decision, slice, planned, holds: [...before.holds, ...inProcess.holds, ...after.holds] } };
   }
 
   // The policy, the approval mode and the hooks, read at base before anything runs.
@@ -2106,6 +2209,7 @@ async function planOpWave(options: RunOpWaveOptions, { k, pass }: WaveAttempt<Ru
   const { members, pending, overriders, overridersSource, extras: planExtras, waves: found, changeSet, parts } = await planWaveRuns(ctx, wave.runs, wave.discover === true);
   // #4545: the holds at base (else the change's), run over the plans before the gate decides.
   let extras = planExtras;
+  let policyRows = new Map<string, OpRunPolicyRow>();
   if (rules.holdsRefused) {
     holds.push(rules.holdsRefused);
     log(`wave ${k} (${wave.name}): ${rules.holdsRefused}, so none runs and the wave waits for an approval`);
@@ -2114,7 +2218,12 @@ async function planOpWave(options: RunOpWaveOptions, { k, pass }: WaveAttempt<Ru
     if ("failed" in held) return { end: failed(ctx, held.failed) };
     holds.push(...held.holds);
     if (held.extras.length > 0) extras = [...(extras ?? []), ...held.extras];
+    policyRows = held.rows;
   }
+  // #4614: the after-plan hooks in the job's process, before the set digest and the gate.
+  const inProcess = await runAfterPlan(ctx, members, parts, policyRows);
+  if (inProcess.failed) return { end: failed(ctx, `${inProcess.failed}, so nothing in wave ${k} was approved or applied`) };
+  holds.push(...inProcess.holds);
   if (wave.discover) {
     wave = { ...wave, runs: members.map((m) => ({ target: m.member, ...(m.op !== spec.op ? { op: m.op } : {}) })) };
     ctx.wave = wave;
@@ -2889,7 +2998,7 @@ async function callApply(
       approved,
       ...(decision.heldBy?.length ? { heldBy: decision.heldBy } : {}),
       runBy: byApply ? "apply" : "chant",
-      runs: hookRuns(spec, k, runs, planned),
+      runs: hookRuns(ctx, runs, planned),
       runsFile: call.runsPath,
       hooks: handed,
       outcomes: [...result.hooks],

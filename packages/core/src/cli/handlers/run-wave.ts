@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { notifyOpWave } from "../../op/op-waves-notify";
 import { parseOpWavesSpec, recordOpWaveHeadPlans, runOpWave } from "../../op/op-waves-run";
+import { activeProductWaveHook } from "../../op/op-waves-after-plan";
 import type { OpWavesSpec } from "../../op/op-waves";
 import { formatError, formatWarning } from "../format";
 import { ledgerRecordingOff, NO_RECORD_ENV, noRecordEndNote, noRecordStartNote, resetNoRecordLedger } from "../../lifecycle/no-record";
@@ -79,8 +80,12 @@ async function runOpWaveJobCommand(ctx: CommandContext): Promise<number> {
     const stream = args.eventsJson
       ? await (await import("../run-events")).openCliRunEvents(args, { kind: "op", name: spec.name, cwd: process.cwd() })
       : undefined;
+    // #4614: a product running chant in process hands its after-plan hooks and capabilities.
+    const product = activeProductWaveHook();
     const result = await runOpWave({
       ...(stream ? { events: stream.emit } : {}),
+      ...(product?.afterPlan ? { afterPlan: product.afterPlan } : {}),
+      ...(product?.capabilities ? { capabilities: product.capabilities } : {}),
       spec,
       specFile: relative(process.cwd(), path),
       wave: args.wave,

@@ -58,6 +58,10 @@ export interface OpWaveHookRun {
   op: string;
   /** The run's plan file, once planned. */
   plan?: string;
+  /** The run's plan digest, once planned (#4614). */
+  planDigest?: string;
+  /** The engine's plan document, once planned, when the run's plan names one (`artifact.planJson`, #4614). */
+  planJson?: string;
 }
 
 /** Runs one argv; returns its exit code. `env` is added to the job's environment. Injected so tests run no processes. */
@@ -83,10 +87,11 @@ export const spawnExecAsync: OpWaveAsyncExec = (argv, cwd, env) =>
 /** Fill one argv template. A placeholder whose value is not given is left as it is. */
 export function opWaveArgv(
   template: readonly string[],
-  values: { op: string; wave: string; target?: string; plan?: string; runs?: string; plans?: string },
+  values: { op: string; wave: string; target?: string; plan?: string; planJson?: string; runs?: string; plans?: string },
 ): string[] {
   const pairs: Array<[string, string | undefined]> = [
     ["{op}", values.op],
+    ["{planJson}", values.planJson],
     ["{target}", values.target],
     ["{wave}", values.wave],
     ["{plans}", values.plans],
@@ -183,8 +188,15 @@ function* hookListSteps(
     const calls = hook.perRun
       ? mine.map((run) => ({
           target: run.target as string | undefined,
-          argv: opWaveArgv(hook.command, { op: run.op, wave: waveName, target: run.target, runs: runsPath, ...(run.plan ? { plan: run.plan } : {}) }),
-          env: { ...env, CHANT_TARGET: run.target, ...(run.plan ? { CHANT_PLAN: run.plan } : {}) } as Record<string, string>,
+          argv: opWaveArgv(hook.command, { op: run.op, wave: waveName, target: run.target, runs: runsPath, ...(run.plan ? { plan: run.plan } : {}), ...(run.planJson ? { planJson: run.planJson } : {}) }),
+          env: {
+            ...env,
+            CHANT_TARGET: run.target,
+            ...(run.plan ? { CHANT_PLAN: run.plan } : {}),
+            // #4614: the plan's digest and the engine's plan document, for a product that builds its report from chant's plans.
+            ...(run.planDigest ? { CHANT_PLAN_DIGEST: run.planDigest } : {}),
+            ...(run.planJson ? { CHANT_PLAN_JSON: run.planJson } : {}),
+          } as Record<string, string>,
         }))
       : [{ target: undefined, argv: opWaveArgv(hook.command, { op, wave: waveName, runs: runsPath }), env: env as Record<string, string> }];
     for (const call of calls) {
