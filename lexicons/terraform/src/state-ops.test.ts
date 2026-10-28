@@ -8,6 +8,7 @@ import type { GatedRequest } from "@intentius/chant/lifecycle/gated-request";
 import type { BinaryExec } from "./state/exec";
 import {
   applyPlanFile,
+  attachmentDigest,
   forceUnlockState,
   gatedStateOp,
   planCopy,
@@ -161,6 +162,15 @@ describe("gatedStateOp", () => {
     });
     expect(failed.status).toBe("failed");
     expect(ledger.writes.at(-1)).toBe('finished:failed:{"error":"force-unlock failed"}');
+  });
+
+  test("a request with an attachment keeps its time while the proof is the same, and asks anew when it changes", async () => {
+    const ledger = fakeLedger();
+    const ask = (now: string, proof: string) => gatedStateOp({ ...input(ledger, now), attachment: proof }, async () => ({ output: 0 }));
+    const first = await ask("2026-10-27T09:00:00Z", '{"roots":["net"]}');
+    expect(first.request.fields.proof).toBe(attachmentDigest('{"roots":["net"]}'));
+    expect((await ask("2026-10-27T10:00:00Z", '{"roots":["net"]}')).request.at).toBe("2026-10-27T09:00:00Z");
+    expect((await ask("2026-10-27T11:00:00Z", '{"roots":["net","app"]}')).request.at).toBe("2026-10-27T11:00:00Z");
   });
 
   test("requestedAt asks anew when the fields differ", async () => {

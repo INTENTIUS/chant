@@ -34,6 +34,7 @@
  * The exec is injectable (`./state/exec.ts`), and so is the gated-request
  * ledger, so a test runs no binary and writes no ledger.
  */
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { Capability, CapabilityPlan } from "@intentius/chant/components/capability";
 import type { ChangeSetPart } from "@intentius/chant/change-set";
@@ -57,7 +58,7 @@ import { lastLines, runBinary, type BinaryExec } from "./state/exec";
 export const STATE_OPS = {
   unlock: "tf-unlock",
   migrate: "tf-migrate",
-  export: "tf-export",
+  export: "tf-state-export",
 } as const;
 
 /** The request kinds of #4551's design. */
@@ -233,6 +234,9 @@ export async function requestedAt(
   return standing?.request.at ?? now;
 }
 
+/** The digest `requestGate` puts in `fields.proof` for an attachment. */
+export const attachmentDigest = (attachment: string): string => `sha256:${createHash("sha256").update(attachment).digest("hex")}`;
+
 export interface GatedStateOpInput {
   op: string;
   /** The request, less `at`, which {@link requestedAt} fills. */
@@ -276,8 +280,10 @@ export async function gatedStateOp<T>(
   act: (approved: { digest: string; request: GatedRequest; approvedBy: string }) => Promise<{ output: T; detail?: Record<string, string | number | boolean> }>,
 ): Promise<GatedStateOpResult<T>> {
   const ledger = input.ledger ?? chantLedger;
-  const at = input.request.at ?? (await requestedAt(input.op, input.request, { ...(input.now ? { now: input.now } : {}), ...(input.cwd ? { cwd: input.cwd } : {}), ledger }));
-  const request: GatedRequest = { kind: input.request.kind, subject: input.request.subject, by: input.request.by, at, fields: input.request.fields };
+  // The proof's digest is a field of the stored request, so the standing request is matched with it.
+  const fields = input.attachment !== undefined ? { ...input.request.fields, proof: attachmentDigest(input.attachment) } : input.request.fields;
+  const at = input.request.at ?? (await requestedAt(input.op, { ...input.request, fields }, { ...(input.now ? { now: input.now } : {}), ...(input.cwd ? { cwd: input.cwd } : {}), ledger }));
+  const request: GatedRequest = { kind: input.request.kind, subject: input.request.subject, by: input.request.by, at, fields };
   const asked = await ledger.requestGate({
     op: input.op,
     request,
