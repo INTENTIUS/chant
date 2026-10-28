@@ -15,6 +15,7 @@ import { resolveProductWords } from "../ci-product-words";
 import {
   checkTemplateRequest,
   inputKindProblem,
+  isAppOutputRef,
   makeTemplateRequest,
   parseRequestBody,
   parseTemplateSpec,
@@ -214,6 +215,26 @@ describe("checkTemplateRequest", () => {
     const out = checkTemplateRequest(base(), catalog, spec, { require: "verified" });
     expect(out.ok ? [] : out.refusals.map((r) => r.code)).toEqual(["unsigned"]);
     expect(checkTemplateRequest(base({ version: "2.0.0" }), catalog, spec, { require: "verified" }).ok).toBe(true);
+  });
+
+  test("an add-on's app.<output> is accepted for any kind; an app request checks it as a string", () => {
+    const refs = { bucket_name: "app.bucket_id", retention_days: "app.retention", readers: "app.reader_arns", tags: "app.tags" };
+    const addon = base({ kind: "addon", addon: "cache", inputs: refs });
+    expect(checkTemplateRequest(addon, catalog, spec)).toEqual({ ok: true, request: addon });
+    const app = checkTemplateRequest(base({ inputs: refs }), catalog, spec);
+    expect(app.ok ? [] : app.refusals.map((r) => [r.code, r.field])).toEqual([
+      ["input-type", "inputs.retention_days"],
+      ["input-type", "inputs.readers"],
+      ["input-type", "inputs.tags"],
+    ]);
+    for (const r of app.ok ? [] : app.refusals) expect(r.reason).toMatch(/reads as an app output, and only an add-on request can name one/);
+    const notRef = checkTemplateRequest(base({ kind: "addon", addon: "cache", inputs: { bucket_name: "b", retention_days: "app.9x" } }), catalog, spec);
+    expect(notRef.ok ? [] : notRef.refusals.map((r) => [r.code, r.reason.includes("app output")])).toEqual([["input-type", false]]);
+  });
+
+  test("isAppOutputRef", () => {
+    expect(["app.private_subnets", "app.x", "app._a-b"].every(isAppOutputRef)).toBe(true);
+    expect(["app.", "app.9x", "app.a.b", "module.app.x", " app.x", 3, null, ["app.x"]].some(isAppOutputRef)).toBe(false);
   });
 
   test("a document the schema refuses is invalid", () => {

@@ -51,7 +51,7 @@
     },
     "inputs": {
       "type": "object",
-      "description": "The values given, by input name. An input left out takes its default. A sensitive input is never here.",
+      "description": "The values given, by input name. An input left out takes its default. A sensitive input is never here. In an add-on request, a string `app.<output>` names an output of the app's module, for an input of any kind; the engine's renderer resolves it. In an app request it is a plain string and is checked against the input's kind.",
       "additionalProperties": true
     },
     "requestedBy": {
