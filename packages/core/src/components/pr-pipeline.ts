@@ -442,13 +442,22 @@ export function prLoopPassedEnv(forge: ForgeKind, options: Pick<PrLoopPipelineOp
 export const PR_LOCK_JOB = "lock";
 export const PR_UNLOCK_JOB = "unlock";
 
-/** `chant lock --from-report` for the plan's report in {@link PR_LOOP_REPORT_DIR}; reads `PR_NUMBER` and `HEAD_SHA`. */
-export function prLockCommand(forge: ForgeKind): string {
-  return ["chant", "lock", "--from-report", `${PR_LOOP_REPORT_DIR}/pr-plan.json`, "--pr", '"$PR_NUMBER"', "--head", '"$HEAD_SHA"', "--stage", "plan", "--forge", forge].join(" ");
+/**
+ * `chant lock --from-report` for the plan's report in {@link PR_LOOP_REPORT_DIR}; reads `PR_NUMBER` and `HEAD_SHA`.
+ * With a product's `bin` (its words), the line runs through it, as the comment lock jobs do
+ * (INTENTIUS/plywood#22): a product's job image need not carry `chant` on PATH.
+ */
+export function prLockCommand(forge: ForgeKind, bin?: string): string {
+  return withProductBin(["chant", "lock", "--from-report", `${PR_LOOP_REPORT_DIR}/pr-plan.json`, "--pr", '"$PR_NUMBER"', "--head", '"$HEAD_SHA"', "--stage", "plan", "--forge", forge].join(" "), bin);
 }
 
 /** `chant unlock` for the pull request that closed; reads `PR_NUMBER`. */
 export const PR_UNLOCK_COMMAND = 'chant unlock --pr "$PR_NUMBER"';
+
+/** {@link PR_UNLOCK_COMMAND} through a product's `bin`, as {@link prLockCommand} takes it. */
+export function prUnlockCommand(bin?: string): string {
+  return withProductBin(PR_UNLOCK_COMMAND, bin);
+}
 
 /** The job answering `/<product> lock` (#4588). */
 export const PR_COMMENT_LOCK_JOB = "comment-lock";

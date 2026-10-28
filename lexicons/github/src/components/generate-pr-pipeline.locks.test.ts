@@ -56,6 +56,16 @@ describe("the GitHub workflow with ci.locks: plan", () => {
   });
 });
 
+describe("a product's words (plywood#22)", () => {
+  test("the lock and unlock lines run through the product's bin, so its job image needs no chant on PATH", () => {
+    const doc = gen({ locks: "plan", words: { product: "plywood", bin: "npx --no-install plywood" } });
+    const lock = doc.jobs.lock!.steps.find((s) => s.run?.includes(" lock --from-report"))!;
+    expect(lock.run).toBe('npx --no-install plywood lock --from-report .chant/pr/pr-plan.json --pr "$PR_NUMBER" --head "$HEAD_SHA" --stage plan --forge github');
+    const unlock = doc.jobs.unlock!.steps.find((s) => s.run?.includes(" unlock --pr"))!;
+    expect(unlock.run).toBe('npx --no-install plywood unlock --pr "$PR_NUMBER"');
+  });
+});
+
 describe("with a pull request environment too", () => {
   test("the pull_request types and the plan condition are the same as with the environment alone", () => {
     const both = gen({ locks: "plan", prEnvironment: true });
