@@ -1153,6 +1153,11 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.resource = value;
     } else if (arg === "--since") {
       result.since = args[++i];
+    } else if (arg === "--audit-log") {
+      // `chant audit-log attribute|unrecorded --audit-log aws[:<region>]` (#4632).
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error("--audit-log needs the log: --audit-log aws[:<region>]");
+      result.auditLog = value;
     } else if (arg === "--limit") {
       // Parsed here, validated by the handler — `parseArgs` reports shape, not
       // policy, the same split every other value flag here uses.
