@@ -96,6 +96,8 @@ import { joinRunEventSinks, resolveRunEventRun, type RunEventSink } from "../run
 import { OpWaveRunEvents } from "./op-waves-events";
 import type { ChangeSetDocument, ChangeSetPart } from "../change-set";
 import type { CapabilityRegistry } from "../components/capability";
+import type { RunEventResource } from "../run-event";
+import { gitOpWaveReleasePort, opWaveReleaseNames, type OpWaveReleaseOutcome, type OpWaveReleasePort, type OpWaveReleaseRequest } from "./op-waves-release";
 import type { LockGrain } from "../lifecycle/lock-rows";
 import type { LockLiveness } from "../lifecycle/resource-lock";
 import type { GatePolicyExec } from "../gate-policy";
@@ -742,6 +744,13 @@ export interface RunOpWaveOptions {
    * the job records no run.
    */
   runs?: OpWaveRunPort;
+  /**
+   * Where the release records of the runs a `step` applied go (#4615), so
+   * `chant components rollback` reads them. Default
+   * {@link gitOpWaveReleasePort} over `cwd` when `gates` is not given, as
+   * `runs` defaults; `false` writes none. See `./op-waves-release.ts`.
+   */
+  releases?: OpWaveReleasePort | false;
   /**
    * The capabilities a spec's `step` plans and applies through (#4545).
    * Default: the project's at `cwd`, as `chant run --components` builds it.
@@ -1725,6 +1734,21 @@ function targetSettled(options: RunOpWaveOptions, result: RunOpWaveResult, k: nu
     },
   };
   jobEvents.get(options)?.stepSettle(k, target, status, durationMs, opts);
+  // #4615: one log line per resource the engine reported.
+  if (opts.facts?.resources?.length) {
+    const log = options.log ?? ((line: string) => console.error(line));
+    for (const line of opWaveResourceLines(target, opts.facts.resources)) log(line);
+  }
+}
+
+/** The log lines for what a target's engine reported per resource (#4615): `<target>: <resource> (<type>) ok in 412 ms, 3 calls`. */
+export function opWaveResourceLines(target: string, resources: readonly RunEventResource[]): string[] {
+  return resources.map((r) => {
+    const what = r.name ? `${r.name}${r.type ? ` (${r.type})` : ""}` : `${r.resource}${r.type ? ` (${r.type})` : ""}`;
+    const took = r.durationMs === null ? "" : ` in ${Math.round(r.durationMs)} ms`;
+    const calls = r.calls !== undefined ? `, ${r.calls} call${r.calls === 1 ? "" : "s"}` : "";
+    return `${target}: ${what} ${r.status === "ok" ? "ok" : "failed"}${took}${calls}`;
+  });
 }
 
 /** The run ledger's status and failure for a job's exit code (#4551), by chant's exit-code table. */
@@ -3282,6 +3306,7 @@ async function applyLeased(
       }
     }
   }
+  if (spec.step) await recordStepReleases(options, ctx, decision, runs);
   if (recordPath && byApply) writeRecord(recordPath, decision, result);
   if (nothing) {
     // #3821: no run counts as failed; the wave stops here, or plans again.
@@ -3317,6 +3342,48 @@ async function applyLeased(
     if (after.failed) failed(ctx, `wave ${k} (${wave.name}) applied, and then a hook after the apply failed`);
   }
   if (recordPath && result.hooks.length > 0) writeRecord(recordPath, decision, result);
+}
+
+/**
+ * The release records of the runs this wave applied through its step
+ * (#4615), one per run, on the environment ledger each names. A record that
+ * is not written is a line in the log; the job's exit code stays.
+ */
+async function recordStepReleases(options: RunOpWaveOptions, ctx: WaveContext, decision: OpWaveDecision, runs: readonly OpWaveRun[]): Promise<void> {
+  const { spec, k, wave, log, result } = ctx;
+  if (options.releases === false) return;
+  const port = options.releases ?? (options.gates ? undefined : gitOpWaveReleasePort({ cwd: ctx.cwd }));
+  if (!port) return;
+  const applied = new Set(result.applied);
+  let gitSha = options.head;
+  const requests: OpWaveReleaseRequest[] = [];
+  for (const run of runs) {
+    if (!applied.has(run.target)) continue;
+    const names = opWaveReleaseNames(spec, wave, run);
+    const plan = ctx.steps?.get(run.target);
+    if (!names || !plan) continue;
+    if (gitSha === undefined) {
+      try {
+        gitSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: ctx.cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+      } catch {
+        gitSha = "";
+      }
+    }
+    requests.push({ ...names, target: run.target, planDigest: plan.planDigest, ...(gitSha ? { gitSha } : {}), ...(decision.approvedBy ? { approver: decision.approvedBy } : {}) });
+  }
+  if (requests.length === 0) return;
+  let outcomes: OpWaveReleaseOutcome[];
+  try {
+    outcomes = await port.record(requests);
+  } catch (err) {
+    log(`wave ${k} (${wave.name}): applied, and no release record was written: ${err instanceof Error ? err.message : String(err)}`);
+    return;
+  }
+  for (const [i, req] of requests.entries()) {
+    const got = outcomes[i];
+    if (got?.recorded) log(`${req.target}: recorded on the "${got.env}" release ledger as ${got.component} ${got.digest}${got.releaseDigest ? ` under release ${got.releaseDigest}` : ""}`);
+    else log(`${req.target}: applied, and no release record was written for ${req.component} in "${req.env}": ${got?.reason ?? "the port gave no answer"}`);
+  }
 }
 
 /**

@@ -14,12 +14,14 @@
  *   plunge.*                  on plunge, the totals of its per-resource timings (./plunge-timings.ts)
  *
  * On plunge the facts also carry a span per resource it timed, with a child
- * per provider call and record write (INTENTIUS/plunge#55, chant#4579).
+ * per provider call and record write (INTENTIUS/plunge#55, chant#4579), and
+ * a progress line per resource, which core puts on the stack's `step-settle`
+ * event and prints in the job's log (chant#4615).
  */
 
 import type { CapabilityTraceFacts } from "@intentius/chant/otlp";
 import type { PulumiApplySummary } from "./engine-events";
-import { plungeTimingSpans, plungeTimingTotals } from "./plunge-timings";
+import { plungeResourceProgress, plungeTimingSpans, plungeTimingTotals } from "./plunge-timings";
 import type { PulumiUpStepInput, PulumiUpStepOutput } from "./pulumi-up";
 
 type Attrs = NonNullable<CapabilityTraceFacts["attributes"]>;
@@ -50,6 +52,7 @@ export function pulumiTraceFacts(input: PulumiUpStepInput, outcome: { output: Pu
   if ("output" in outcome && outcome.output) {
     const o = outcome.output;
     const spans = plungeTimingSpans(o.summary?.timings);
+    const resources = plungeResourceProgress(o.summary?.timings);
     return {
       attributes: {
         stack: o.stack,
@@ -60,10 +63,12 @@ export function pulumiTraceFacts(input: PulumiUpStepInput, outcome: { output: Pu
         ...plungeTimingTotals(o.summary?.timings),
       },
       ...(spans.length > 0 ? { spans } : {}),
+    ...(resources.length > 0 ? { resources } : {}),
     };
   }
   const e = fromError("error" in outcome ? outcome.error : undefined);
   const spans = plungeTimingSpans(e.summary?.timings);
+  const resources = plungeResourceProgress(e.summary?.timings);
   return {
     attributes: {
       ...(typeof input?.stack === "string" ? { stack: input.stack } : {}),
@@ -73,5 +78,6 @@ export function pulumiTraceFacts(input: PulumiUpStepInput, outcome: { output: Pu
       ...plungeTimingTotals(e.summary?.timings),
     },
     ...(spans.length > 0 ? { spans } : {}),
+    ...(resources.length > 0 ? { resources } : {}),
   };
 }

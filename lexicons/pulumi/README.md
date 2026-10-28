@@ -47,6 +47,8 @@ A program that reads another stack through `StackReference` orders its stack aft
 | `gatedStackCancel` | `stack-cancel` of `<stack>` with its lock id | `pulumi cancel --yes --stack <s>`, once the lock is still the approved one (read from a `file://` backend's lock directory); refused on plunge, which has no stack lock |
 | `gatedStackMove` | `stack-move` of `move:<source>:<dest>` with the URNs | `pulumi state move --source <s> --dest <d> --yes <urn>...`, or `plunge stack move --stack <s> --dest <d> <urn>... --json --yes` after plunge's plan; both stacks preview first, and the move runs only when the previews change nothing but the moved resources |
 
+`pulumiStackLockIds({ dir, stack })` ([#4615](https://github.com/INTENTIUS/chant/issues/4615)) reads the lock ids a stack holds now, the same read `gatedStackCancel` checks with, so a product can offer the id to approve. It answers `checked: false` on a backend other than `file://`, and no ids for a plunge stack.
+
 The writes go through `runGatedPulumi` and `runGatedPlunge` in `src/run.ts`, whose fixed forms (`PULUMI_GATED_COMMANDS`, `PLUNGE_GATED_COMMANDS`) are the only ones allowed.
 
 ## Drift: `chant workspace drift`

@@ -305,7 +305,16 @@ export interface CapabilityTraceSpan {
 export interface CapabilityTraceFacts {
   attributes?: Record<string, OtlpAttrValue>;
   spans?: CapabilityTraceSpan[];
+  /**
+   * One line per resource the engine reported (#4615), in the order it
+   * reported them: the step's `step-settle` event carries them as
+   * `resources`, and the job's log prints one line each. Optional; an engine
+   * that reports nothing per resource leaves it out.
+   */
+  resources?: RunEventResource[];
 }
+
+import type { RunEventResource } from "./run-event";
 
 // ── the exporter, configured once ────────────────────────────────────────────
 

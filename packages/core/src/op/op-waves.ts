@@ -99,6 +99,7 @@ import { WAVE_GATE_NAME_PATTERN, waveGateNameFrom, waveShare } from "../wave-lay
 import { waveOutcomeFileName } from "../wave-blocked";
 import { NEXT_RELEASE } from "../release-floors";
 import { opWaveHoldsProblems, opWaveStepProblems, type OpWaveHolds, type OpWaveStep } from "./op-waves-capability";
+import { opWaveReleaseProblems, type OpWaveReleaseNames } from "./op-waves-release";
 
 export type { OpWaveCostFormat, OpWaveCostHold, OpWaveHolds, OpWaveStep } from "./op-waves-capability";
 
@@ -275,6 +276,12 @@ export interface OpWaveRun {
    * and `{wave}` filled, as the step's do.
    */
   input?: Record<string, unknown>;
+  /**
+   * With the spec's `step` (#4615): the environment and component this run's
+   * release record goes under, over the spec's `release`. Strings have
+   * `{target}`, `{op}` and `{wave}` filled. See `./op-waves-release.ts`.
+   */
+  release?: OpWaveReleaseNames;
 }
 
 /**
@@ -486,6 +493,14 @@ export interface OpWavesSpec {
    * monthly change. See `./op-waves-capability.ts`.
    */
   holds?: OpWaveHolds;
+  /**
+   * With a `step` (#4615): each run it applied gets a release record on its
+   * environment's ledger, so `chant components rollback` reads it. `env`
+   * and `component` name the ledger and the component (default `labels.Env`,
+   * else the wave's name, and the run's target); a run's own `release` wins.
+   * `false` writes none. See `./op-waves-release.ts`.
+   */
+  release?: OpWaveReleaseNames | false;
   /**
    * Plan every run of a wave in one call (#3762), in place of `plan`. `{runs}`
    * is a file chant writes, `{ "wave", "number", "runs": [{ "target", "op" }] }`;
@@ -762,6 +777,10 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
   }
   assertOpWaveHooks(where, spec.hooks);
   if (spec.standDown !== undefined && typeof spec.standDown !== "boolean") throw new Error(`${where}: \`standDown\` must be true or false.`);
+  {
+    const problems = opWaveReleaseProblems(spec);
+    if (problems.length > 0) throw new Error(`${where}: ${problems.join("; ")}.`);
+  }
   if (spec.waves.length === 0) throw new Error(`${where} has no waves.`);
   {
     const problems = opWaveHoldsProblems(spec.holds);
