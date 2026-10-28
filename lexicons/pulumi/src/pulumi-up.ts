@@ -89,8 +89,16 @@
  *
  * `releaseInputs` answers the stack's directory, so a release cut records it
  * and a promote or rollback under the release previews and applies the
- * recorded copy. A stack whose backend is a file path relative to its
- * directory is unbound: a copy elsewhere would read no state.
+ * recorded copy, under the release gate with that copy's plan. A stack whose
+ * backend is a file path relative to its directory is unbound: a copy
+ * elsewhere would read no state.
+ *
+ * The cut records tracked files, so a Node program's copy has no
+ * `node_modules`. Before the copy's first preview, `plan` and `run` call
+ * `prepareReleaseCopy` (`./release-copy.ts`), which runs `pulumi install`
+ * (`plunge install`) in the copy when its runtime needs one, and refuses a
+ * Node copy with no lockfile by name, since an install would take today's
+ * versions rather than the release's.
  */
 
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -124,6 +132,7 @@ import {
   pulumiStreamError,
   pulumiStreamPreview,
   pulumiStreamSummary,
+  pulumiStreamTimings,
   type PulumiApplySummary,
 } from "./engine-events";
 import { CHANT_EXIT } from "@intentius/chant/exit-codes";
@@ -154,6 +163,7 @@ import {
 import type { PulumiStep } from "./change-set";
 import { writePulumiExportSnapshot, type PulumiExportWrite } from "./stack-export-snapshot";
 import { pointerSegment, pulumiStackReferences, stackReferenceOwner } from "./stack-references";
+import { prepareReleaseCopy } from "./release-copy";
 
 /** The lock grain values of `ci.lockGrain` (#4552's ruling A). */
 export type PulumiLockGrain = "target" | "resource" | "repo";
@@ -283,6 +293,23 @@ export class PulumiAppliedShapeError extends Error {
   ) {
     super(`"${member}": pulumi up ran steps the approved plan did not hold: ${differences.join("; ")}. The update ran; check the stack and plan it again.`);
     this.name = "PulumiAppliedShapeError";
+  }
+}
+
+/**
+ * An `up` that failed (#4553's failed outcome). It carries the stream's
+ * summary, plunge's per-resource timings included (#4579), so the run record
+ * and the trace (`./trace-facts.ts` reads `member` and `summary` off the
+ * error) keep what ran before it stopped.
+ */
+export class PulumiUpFailedError extends Error {
+  constructor(
+    public readonly member: string,
+    message: string,
+    public readonly summary?: PulumiApplySummary,
+  ) {
+    super(message);
+    this.name = "PulumiUpFailedError";
   }
 }
 
@@ -540,10 +567,17 @@ function isArtifact(value: unknown): value is PulumiUpArtifact {
   return v?.kind === "pulumi-up" && typeof v.planDigest === "string" && typeof v.shape === "object" && v.shape !== null;
 }
 
+/** A release's copy of the program, made runnable before its first engine run (#4542). */
+async function readyCopy(r: Resolved, opts: PulumiUpOptions): Promise<void> {
+  const runners = runnersFor(r, opts);
+  await prepareReleaseCopy({ dir: r.dir, member: r.member, engine: r.engine, run: r.engine === "plunge" ? runners.plunge : runners.pulumi });
+}
+
 async function planStack(ctx: DeployContext, input: PulumiUpStepInput, opts: PulumiUpOptions): Promise<CapabilityPlan> {
   const r = resolveStep(input, opts, ctx.lockGrain);
   const unresolved = [...(ctx.unresolvedInputs ?? [])].sort();
   if (unresolved.length > 0) return waitingStack(ctx, r, input, unresolved);
+  await readyCopy(r, opts);
   const files = scratchFor(r, input, opts);
   let read: StackPreview;
   try {
@@ -657,7 +691,20 @@ function upFailure(r: Resolved, err: unknown, policy: GatePolicyFindings): Error
     ...(failed.length > 0 ? [`failed: ${failed.join(", ")}`] : []),
     ...(landed.length > 0 ? [`landed before it stopped: ${landed.join(", ")}`] : ["nothing landed"]),
   ].join("; ");
-  return new Error(`pulumi-up: "${r.member}": ${r.engine} up failed (exit ${f.exitCode ?? "unknown"}): ${why}. ${detail}`);
+  return new PulumiUpFailedError(r.member, `pulumi-up: "${r.member}": ${r.engine} up failed (exit ${f.exitCode ?? "unknown"}): ${why}. ${detail}`, failedUpSummary(stream));
+}
+
+/**
+ * What a failed `up`'s stream still says (#4579): its `summaryEvent`, or,
+ * when the engine stopped before printing one, the per-resource timings
+ * plunge put on the steps that ran (`resOutputsEvent`, `resOpFailedEvent`),
+ * under `result: "failed"`. Undefined when the stream holds neither.
+ */
+export function failedUpSummary(stream: string): PulumiApplySummary | undefined {
+  const summary = pulumiStreamSummary(stream);
+  if (summary) return summary;
+  const timings = pulumiStreamTimings(stream);
+  return Object.keys(timings).length > 0 ? { resourceChanges: {}, result: "failed", timings } : undefined;
 }
 
 async function runStack(ctx: DeployContext, input: PulumiUpStepInput, opts: PulumiUpOptions): Promise<PulumiUpStepOutput> {
@@ -665,6 +712,7 @@ async function runStack(ctx: DeployContext, input: PulumiUpStepInput, opts: Pulu
   const handed = ctx.plans?.[r.member];
   const fromWave = isArtifact(handed);
   const targets = ctx.targets && ctx.targets.length > 0 ? ctx.targets : undefined;
+  await readyCopy(r, opts);
 
   // Ruling D: no approved plan handed in, so plan here and apply that.
   let approved: PulumiUpArtifact;
