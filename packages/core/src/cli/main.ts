@@ -533,10 +533,12 @@ Ops:
                         pipeline: plan every wave at its head and record the
                         digests a pr-review approval mode compares.
                         --approval-status (no --wave) --forge <kind>
-                        --pr <n> --head <sha> --base <sha>, or --open on
-                        GitLab: post <product>/approval on an open pull
-                        request's head, pending while a pr-review wave its
-                        gate will hold has no approving review (#4630).
+                        --pr <n> --head <sha> --base <sha>, or --open
+                        [--branch <b>]: post <product>/approval on an open
+                        pull request's head, pending while a wave its gate
+                        will hold has no approval: an approving review for
+                        pr-review, the pull request's own approval covering
+                        its change set for pull-request (#4630).
                         --waves-outcome (no --wave), after the last wave:
                         print how the wave jobs' outcome files add up
                         (applied, partial, unchanged, waiting, failed), the
