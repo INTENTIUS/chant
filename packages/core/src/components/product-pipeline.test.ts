@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { componentWavesSpec, productPipelineJobs, productWavesSpec } from "./product-pipeline";
+import { componentWaveOutputsFile, componentWaveSteps, componentWavesSpec, productPipelineJobs, productWavesSpec } from "./product-pipeline";
 import { prApplyComment, prLoopSetup, PR_LOOP_IMAGE, PR_LOOP_SETUP, withProductBin } from "./pr-pipeline";
 import { PLYWOOD, TERRAGUCCI } from "../__fixtures__/product-words";
 import type { OpWavesSpec } from "../op/op-waves";
@@ -84,5 +84,58 @@ describe("the product pipeline (#4550)", () => {
     expect(prLoopSetup(PR_LOOP_IMAGE)).toEqual(PR_LOOP_SETUP);
     expect(prLoopSetup(PR_LOOP_IMAGE, ["install pulumi"])).toEqual(["install pulumi"]);
     expect(prLoopSetup("my/image", ["install pulumi"])).toEqual([]);
+  });
+});
+
+describe("pr-apply --wave-gate on op waves (#4588)", () => {
+  const graph = [{ name: "net", dependsOn: [] }, { name: "app", dependsOn: ["net"] }];
+
+  test("the component plan-wave and apply-wave steps name the runs, the plans, the base and the outputs file", () => {
+    const steps = componentWaveSteps({ bin: "npx --no-install plywood", env: "prod", base: "abc123", member: "infra", op: "pr-7", gate: "up" });
+    expect(steps.planWave).toEqual(["npx", "--no-install", "plywood", "components", "plan-wave", "--runs", "{runs}", "--plans", "{plans}", "--env", "prod", "--base", "abc123", "--member", "infra", "--gate", "up", "--wave-outputs", componentWaveOutputsFile("pr-7")]);
+    expect(steps.applyWave.slice(0, 5)).toEqual(["npx", "--no-install", "plywood", "components", "apply-wave"]);
+    expect(componentWaveSteps({ env: "prod", base: "HEAD^1", op: "x" }).planWave[0]).toBe("chant");
+  });
+
+  test("under the pull request's op every wave takes its approval, whatever the words' preset", () => {
+    const steps = componentWaveSteps({ env: "prod", base: "abc", op: "pr-7" });
+    const spec = componentWavesSpec(graph, TERRAGUCCI, steps, { op: "pr-7", gate: "apply", prGate: "pr-apply" });
+    expect(spec.name).toBe("pr-7");
+    expect(spec.op).toBe("pr-7");
+    expect(spec.waves.every((w) => w.approval === "pull-request")).toBe(true);
+    expect(spec.approvals?.pullRequest).toEqual({ gate: "pr-apply" });
+    expect(spec.planWave).toEqual(steps.planWave);
+  });
+
+  test("the layers a derivation already has are kept", () => {
+    const spec = componentWavesSpec(graph, PLYWOOD, componentWaveSteps({ env: "prod", base: "abc", op: "pr-7" }), { op: "pr-7", waves: [["net", "app"]] });
+    expect(spec.waves.map((w) => w.runs.map((r) => r.target))).toEqual([["net", "app"]]);
+  });
+
+  test("productPipelineJobs takes the component graph's waves when the product has no spec of its own", () => {
+    const jobs = productPipelineJobs("github", "production", { words: PLYWOOD, componentWaves: { components: graph } });
+    expect(jobs.waves!.spec.name).toBe("pulumi-up");
+    expect(jobs.waves!.spec.planWave!.slice(3, 5)).toEqual(["components", "plan-wave"]);
+    expect(jobs.waves!.spec.planWave).toContain("HEAD^1");
+    expect(jobs.waves!.jobs.map((j) => j.jobName)).toEqual(["wave-1-wave-1", "wave-2-wave-2"]);
+    expect(jobs.waves!.jobs[0]!.command.slice(0, 3)).toEqual(["npx", "--no-install", "plywood"]);
+  });
+});
+
+describe("the lock and unlock comments (#4588)", () => {
+  test("productPipelineJobs gives a job per comment under locks: plan, on each forge", () => {
+    for (const forge of ["github", "forgejo", "gitlab"] as const) {
+      const jobs = productPipelineJobs(forge, "production", { words: PLYWOOD, waves, locks: "plan" });
+      expect(jobs.locks!.map((j) => [j.jobName, j.comment])).toEqual([["comment-lock", "/plywood lock"], ["comment-unlock", "/plywood unlock"]]);
+      expect(jobs.locks![0]!.line).toBe(`npx --no-install plywood lock --keep --pr "$PR_NUMBER" --forge ${forge}`);
+      expect(jobs.locks![1]!.line).toBe('npx --no-install plywood unlock --pr "$PR_NUMBER"');
+    }
+    const gitlab = productPipelineJobs("gitlab", "production", { words: PLYWOOD, waves, locks: "plan" });
+    expect(gitlab.locks![0]!.env).toEqual({ PR_NUMBER: "$CHANT_LOCK_PR" });
+    expect(gitlab.locks![0]!.gitlabVar).toBe("CHANT_LOCK_PR");
+  });
+
+  test("no comment jobs without locks: plan", () => {
+    expect(productPipelineJobs("github", "production", { words: PLYWOOD, waves }).locks).toBeUndefined();
   });
 });

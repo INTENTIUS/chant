@@ -740,6 +740,12 @@ export interface RunOpWaveOptions {
   /** How a hold's policy engine and cost estimator run (#4545). Default: spawned in `cwd`. */
   holdExec?: GatePolicyExec;
   /**
+   * How the `planWave` and `applyWave` commands run (#4588), when the caller
+   * runs them itself, such as `pr-apply --wave-gate` running the component
+   * plan-wave and apply-wave steps in its own process. Default: `exec`.
+   */
+  waveExec?: OpWaveAsyncExec;
+  /**
    * The lock grain a `step`'s runs take (#4552). Default: `ci.lockGrain` of
    * the member holding `cwd`, read from the declaration at the wave's base,
    * else each run's lexicon default.
@@ -912,7 +918,7 @@ function writeRunsFile(
  * for all of them (#3762). A wave plan is written out as each run's plan file
  * too, so a per-run `apply` or hook reads `{plan}` either way.
  */
-function planRuns(at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: string; exec: OpWaveExec }, runs: readonly OpWaveRun[], discover = false): PlannedRuns {
+async function planRuns(at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: string; exec: OpWaveExec; waveExec?: OpWaveAsyncExec }, runs: readonly OpWaveRun[], discover = false): Promise<PlannedRuns> {
   const { spec, k, wave, cwd, exec } = at;
   if (!spec.planWave) {
     const members = runs.map((run) => planRun({ spec, wave: k, cwd, exec }, wave.name, run));
@@ -926,7 +932,8 @@ function planRuns(at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: string;
   const runsPath = writeRunsFile(at, runs, undefined, undefined, undefined, discover);
   const plans = opWavePlansPath(spec, k);
   rmSync(join(cwd, plans), { force: true });
-  const code = exec(opWaveArgv(spec.planWave, { op: spec.op, wave: wave.name, runs: runsPath, plans }), cwd);
+  const planArgv = opWaveArgv(spec.planWave, { op: spec.op, wave: wave.name, runs: runsPath, plans });
+  const code = at.waveExec ? await at.waveExec(planArgv, cwd) : exec(planArgv, cwd);
   if (code !== 0) throw new Error(`planning wave ${k} (${wave.name}) exited ${code}`);
   let parsed: unknown;
   try {
@@ -1001,12 +1008,12 @@ function planRuns(at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: string;
  * commands ({@link planRuns}).
  */
 async function planWaveRuns(
-  at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: string; exec: OpWaveExec; options: Pick<RunOpWaveOptions, "capabilities" | "lockGrain" | "base">; steps?: Map<string, OpWaveStepPlan> },
+  at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: string; exec: OpWaveExec; options: Pick<RunOpWaveOptions, "capabilities" | "lockGrain" | "base" | "waveExec">; steps?: Map<string, OpWaveStepPlan> },
   runs: readonly OpWaveRun[],
   discover = false,
 ): Promise<PlannedRuns> {
   const { spec, k, wave, cwd } = at;
-  if (!spec.step) return planRuns(at, runs, discover);
+  if (!spec.step) return planRuns({ ...at, ...(at.options.waveExec ? { waveExec: at.options.waveExec } : {}) }, runs, discover);
   const registry = await opWaveRegistry(at.options, cwd, at.options.capabilities);
   const lockGrain = at.options.lockGrain ?? (await declaredLockGrain(cwd, (at as { gateRule?: { base: string } }).gateRule?.base ?? at.options.base));
   const plans: OpWaveStepPlan[] = [];
@@ -2856,7 +2863,7 @@ async function callApply(
   runs: readonly OpWaveRun[],
   planned: ReadonlyMap<string, OpWaveMember>,
   argv: string[],
-  call: { label: string; key: string; runsPath: string },
+  call: { label: string; key: string; runsPath: string; wave?: boolean },
   recordPath?: string,
 ): Promise<ApplyCall> {
   const { spec, k, wave, cwd, exec, log, result } = ctx;
@@ -2894,7 +2901,9 @@ async function callApply(
     rmSync(join(cwd, outcomePath), { force: true });
     let code: number;
     try {
-      code = exec(argv, cwd, { CHANT_HOOKS: filePath, CHANT_APPLY_OUTCOME: outcomePath, ...(byApply ? { CHANT_HOOKS_RESULT: resultPath } : {}) });
+      const env = { CHANT_HOOKS: filePath, CHANT_APPLY_OUTCOME: outcomePath, ...(byApply ? { CHANT_HOOKS_RESULT: resultPath } : {}) };
+      // #4588: an applyWave its caller runs in process.
+      code = call.wave && options.waveExec ? await options.waveExec(argv, cwd, env) : exec(argv, cwd, env);
     } catch (err) {
       log(`${call.label}: the apply did not run: ${err instanceof Error ? err.message : String(err)}`);
       code = 127;
@@ -3064,7 +3073,7 @@ async function applyLeased(
     const argv = opWaveArgv(spec.applyWave, { op: spec.op, wave: wave.name, runs: runsPath, plans: opWavePlansPath(spec, k) });
     // #4555: one call applies every run, so each run's step spans that call.
     const startedMs = runs.map((r) => targetStarted(options, k, r.target))[0] ?? Date.now();
-    const got = await callApply(options, ctx, decision, runs, planned, argv, { label: `wave ${k} (${wave.name})`, key: "hooks", runsPath }, recordPath);
+    const got = await callApply(options, ctx, decision, runs, planned, argv, { label: `wave ${k} (${wave.name})`, key: "hooks", runsPath, wave: true }, recordPath);
     const settle: "ok" | "failed" | "skipped" = got.outcome === "applied" ? "ok" : got.outcome === "failed" ? "failed" : "skipped";
     for (const r of runs) targetSettled(options, result, k, r.target, startedMs, settle);
     if (got.outcome === "applied-nothing") nothing = got.said;

@@ -219,6 +219,21 @@ Every apply call, `apply` or `applyWave`, also gets `CHANT_APPLY_OUTCOME`, a pat
 
 `shares` keeps working. The deciding job plans the whole wave in one call. Each share job calls `planWave` with a runs file of its own slice, and calls `applyWave` with only the runs whose plan digest still matches the decision.
 
+## Waves of components
+
+A spec can take its waves from a project's component graph, with each run a component ([#4588](https://github.com/INTENTIUS/chant/issues/4588)). `componentWavesSpec` in `@intentius/chant/ci-product` builds one wave per layer of `dependsOn`. Its `planWave` and `applyWave` come from `componentWaveSteps`:
+
+```json
+{
+  "planWave": ["chant", "components", "plan-wave", "--runs", "{runs}", "--plans", "{plans}", "--env", "prod", "--base", "HEAD^1", "--wave-outputs", ".chant/op-waves/release/outputs.json"],
+  "applyWave": ["chant", "components", "apply-wave", "--runs", "{runs}", "--plans", "{plans}", "--env", "prod", "--base", "HEAD^1", "--wave-outputs", ".chant/op-waves/release/outputs.json"]
+}
+```
+
+`chant components plan-wave` plans the wave's components through their capabilities, against the outputs the waves before it left in the `--wave-outputs` file. It writes one digest per component over its members' plans, and the wave's change set. `chant components apply-wave` plans the approved runs again and exits 4 when a component's plan is not the one approved. Otherwise it leases the rows on the resource [lock grain](/chant/reference/workspace-declaration/#lock-grain) and applies the wave. Each applied component's release is recorded, and its outputs go into the file for the next wave.
+
+[`pr-apply --wave-gate`](/chant/guide/apply-on-merge/#a-gate-per-wave-on-merge) runs its waves on this spec, with both steps in its own process against the change it already derived. The spec is chant's own, so the job reads it from memory rather than from the base commit. Its op is the apply's own, `pr-<n>` or `green-<sha>`. Every wave takes `approval: pull-request` with the pull request's gate. A wave whose plan the approved change set covers applies under that approval, and a wave whose plan moved waits at `<gate>-wave-<k>`. A product's `productPipelineJobs` takes the same waves with `componentWaves: { components }` when it has no spec of its own.
+
 ## Plan and apply through a capability
 
 A spec can name a `step` in place of `plan` and `apply` ([#4545](https://github.com/INTENTIUS/chant/issues/4545)). Each run is then planned and applied in the wave's own process, through the capability a component's deploy step would name: `terraform-apply` from the terraform lexicon, `pulumi-up` from the pulumi lexicon, or any kind a capability plugin adds.

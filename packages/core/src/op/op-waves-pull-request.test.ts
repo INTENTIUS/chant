@@ -104,3 +104,36 @@ describe("the pull request's approval as an op-waves approval source (#4550)", (
     }
   });
 });
+
+describe("planWave and applyWave run by the caller (#4588)", () => {
+  test("waveExec runs both steps in process, and exec runs neither", async () => {
+    const approved = doc(digest("a"));
+    const h = harness(approved);
+    const calls: string[] = [];
+    try {
+      const result = await runOpWave({
+        spec,
+        specFile: ".chant/op-waves/pulumi-up.spec.json",
+        wave: 1,
+        cwd: h.cwd,
+        exec: () => {
+          throw new Error("the steps must not spawn");
+        },
+        waveExec: async (argv, dir) => {
+          calls.push(argv[1]!);
+          return h.exec(argv, dir);
+        },
+        show: h.show,
+        gates: memoryGateLedgerPort({ resolutions: [approval(approved)] }),
+        now: "2026-10-27T02:00:00Z",
+        changeSets: async (d) => (d === approved.digest ? approved : undefined),
+        log: () => undefined,
+      });
+      expect(result.exitCode).toBe(0);
+      expect(calls).toEqual(["plan-wave", "apply-wave"]);
+      expect(result.applied).toEqual(["shop-dev"]);
+    } finally {
+      h.done();
+    }
+  });
+});

@@ -31,6 +31,8 @@ chant components pr-apply (--base <ref> [--pr <n>] | --green [--base <ref>] | --
                                 [--member <name>] [--resume <file>] [--output <dir>] [--json]
                                 [--events-json] [--report-url <url>]
                                 [--wave-gate <name> [--wave <k>]]
+chant components plan-wave|apply-wave --runs <file> --plans <file> --base <ref> --env <env>
+                                [--head <ref>] [--member <name>] [--gate <name>] [--wave-outputs <file>]
 chant components pr-env up --base <ref> --pr <n> [--forge github|gitlab|forgejo]
                                 [--member <name>] [--output <dir>] [--no-push] [--json]
 chant components pr-env post --pr <n> --head <sha> [--result <result>] [--forge <kind>]

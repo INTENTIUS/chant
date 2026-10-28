@@ -301,6 +301,63 @@ export function prLockCommand(forge: ForgeKind): string {
 /** `chant unlock` for the pull request that closed; reads `PR_NUMBER`. */
 export const PR_UNLOCK_COMMAND = 'chant unlock --pr "$PR_NUMBER"';
 
+/** The job answering `/<product> lock` (#4588). */
+export const PR_COMMENT_LOCK_JOB = "comment-lock";
+/** The job answering `/<product> unlock` (#4588). */
+export const PR_COMMENT_UNLOCK_JOB = "comment-unlock";
+
+/** The GitLab variables a pipeline of the target branch is started with to lock or unlock a merge request (#4588), as `CHANT_APPLY_PR` applies one. */
+export const GITLAB_LOCK_PR_VAR = "CHANT_LOCK_PR";
+export const GITLAB_UNLOCK_PR_VAR = "CHANT_UNLOCK_PR";
+
+/** A comment lock or unlock job (#4588): the comment it answers, its command, and the values the command reads. */
+export interface PrCommentLockJob {
+  jobName: typeof PR_COMMENT_LOCK_JOB | typeof PR_COMMENT_UNLOCK_JOB;
+  /** Which comment command it answers. */
+  command: "lock" | "unlock";
+  /** The comment, `/<product> <word>`. */
+  comment: string;
+  /** The command line. Reads `$PR_NUMBER`. */
+  line: string;
+  /** The values it reads, as the forge spells them. On GitLab `PR_NUMBER` comes from {@link GITLAB_LOCK_PR_VAR} or {@link GITLAB_UNLOCK_PR_VAR}. */
+  env: Record<string, string>;
+  /** On GitLab, the variable a pipeline of the target branch is started with. */
+  gitlabVar?: string;
+}
+
+/**
+ * The comment lock and unlock jobs (#4588), under `ci.locks: plan` when the
+ * words name the `lock` and `unlock` commands. `/<product> lock` runs `chant
+ * lock --keep`, which keeps the locks the pull request's plan took until it
+ * closes; `/<product> unlock` runs `chant unlock`, which releases them. Both
+ * run at the target branch's commit, so no code of the change runs, and
+ * GitHub asks for a commenter who can write as it does for the apply
+ * comment. GitLab starts no pipeline on a note, so there each job runs in a
+ * pipeline of the target branch started with {@link GITLAB_LOCK_PR_VAR} or
+ * {@link GITLAB_UNLOCK_PR_VAR} set to the merge request's iid.
+ */
+export function prCommentLockJobs(forge: ForgeKind, options: Pick<PrLoopPipelineOptions, "locks" | "words"> = {}): PrCommentLockJob[] {
+  if (options.locks !== "plan") return [];
+  const words = resolveProductWords(options.words);
+  const github = forge !== "gitlab";
+  const out: PrCommentLockJob[] = [];
+  for (const command of ["lock", "unlock"] as const) {
+    const comment = commentLine(words, command);
+    if (!comment) continue;
+    const gitlabVar = command === "lock" ? GITLAB_LOCK_PR_VAR : GITLAB_UNLOCK_PR_VAR;
+    const line = command === "lock" ? ["chant", "lock", "--keep", "--pr", '"$PR_NUMBER"', "--forge", forge].join(" ") : PR_UNLOCK_COMMAND;
+    out.push({
+      jobName: command === "lock" ? PR_COMMENT_LOCK_JOB : PR_COMMENT_UNLOCK_JOB,
+      command,
+      comment,
+      line: withProductBin(line, words.bin),
+      env: github ? { PR_NUMBER: "${{ github.event.issue.number }}", GITHUB_TOKEN: GITHUB_JOB_TOKEN } : { PR_NUMBER: `$${gitlabVar}` },
+      ...(github ? {} : { gitlabVar }),
+    });
+  }
+  return out;
+}
+
 /** One job's command and the forge values it reads, as environment variables for its step. */
 export interface PrLoopJob {
   /** `plan`, `apply` or `record` (#4168). */

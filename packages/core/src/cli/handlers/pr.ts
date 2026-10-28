@@ -67,8 +67,8 @@
 import { spawnSync } from "node:child_process";
 import { CHANT_EXIT } from "../../exit-codes";
 import { anyResourceGrain, leaseRowsOf as leaseRowsOfLocks, lockTargetsOf, type LockGrain } from "../../lifecycle/lock-rows";
-import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { loadChantConfig, resolveAutoReleaseDisabled, type ChantConfig } from "../../config";
 import { resolveCommit, resolveMergeBase } from "../../components/changed-files";
 import { deriveFanOut, fanOutRegistry } from "../../components/fan-out-support";
@@ -84,15 +84,14 @@ import {
   readOnlyLedger,
   prWavePlan,
   resumePrSet,
-  waveNotCovered,
   type PrPlanSet,
 } from "../../components/pr-run";
 import { composeChangeSet, verifyChangeSetDigest } from "../../change-set";
-import { waveGateName } from "../../gated-waves";
 import { blockedMembers, blockedWords, settleEarlierWaves, type WaveMemberOutcome } from "../../wave-blocked";
 import { readFanOutAttempt, writeFanOutAttempt, type FanOutAttempt, type PrApplyRecord } from "../../components/fan-out-record";
 import { componentInputDigests, progressThatCarries } from "../../components/fan-out-inputs";
-import { samePlanDigest } from "../../lifecycle/plan-digest";
+import { computePlanDigest, samePlanDigest } from "../../lifecycle/plan-digest";
+import type { GateResolutionRecord } from "../../lifecycle/gate-ledger";
 import { evaluateGate, gateIsSealed, gitGateLedgerPort, type GateCheck, type GateLedgerPort } from "../../op/gate";
 import type { OtherGateHold } from "../../op/stage-hooks";
 import { emitGateStep, gateEventsOf, GATE_PHASE, type RunEventSink, type RunEventStream } from "../../run-event-stream";
@@ -133,6 +132,7 @@ import { coverByMerges, greenOp, type GreenTarget } from "../../components/green
 import { GATED_EXIT_CODE, autoReleaseRun, recordAutoReleasesForRun } from "./run";
 import { appliedDigestOf } from "../../components/auto-release";
 import type { CommandContext } from "../registry";
+import { parseArgs } from "../parse-args";
 import { withComponentEndpoint } from "../component-endpoint";
 import type { ComponentChangeSignal, FanOutPlan } from "../../components/fan-out";
 import { failedRunExitCode, type DriverComponent } from "../../components/driver";
@@ -1846,22 +1846,20 @@ async function carryWaves(p: Prepared, attempt: FanOutAttempt, file: string, op:
   return { record, check, approval: approvalOf(check), completed, outputs };
 }
 
-/** A run event with its wave renumbered to `wave`: the fan-out that applies one wave numbers it 1. */
-function inWave(body: RunEventBody, wave: number): RunEventBody {
-  return "wave" in body && typeof (body as { wave?: unknown }).wave === "number" ? ({ ...body, wave } as RunEventBody) : body;
-}
-
 /**
  * `pr-apply --wave-gate <gate>` (#4003): apply the pull request's approved
  * set a wave at a time, each wave planned after the one before it applied.
  *
  * The first job plans every member, as pr-apply does, and decides the pull
- * request's gate against that digest. Approved, wave 1 applies with those
- * plans. Each later wave is planned again against the outputs the waves
- * before it left. When the approved change set covers its plan
- * (`planCoveredBy`, as on a resume) it applies under the pull request's
- * approval; when it does not, it waits at `<gate>-wave-<k>` under the pull
- * request's op for an approval of its new plan, and exits 3.
+ * request's gate against that digest. The waves then run on op waves
+ * (#4588): the component waves spec (`componentWavesSpec`), each run a
+ * component, planned and applied through the component plan-wave and
+ * apply-wave steps (`chant components plan-wave|apply-wave`). Each wave is
+ * planned against the outputs the waves before it left. When the approved
+ * change set covers its plan (`planCoveredBy`, the op waves' `pull-request`
+ * approval) it applies under the pull request's approval; when it does not,
+ * it waits at `<gate>-wave-<k>` under the pull request's op for an approval
+ * of its new plan, and exits 3.
  *
  * With `--wave <k>` the job runs wave k and no other, reading the approved
  * set and the progress from the `--resume` record the job before it left.
@@ -1982,7 +1980,6 @@ async function prApplyWaves(
     );
   }
 
-  let planned: PrPlanSet | undefined;
   let judged: PolicyJudged = { held: false };
   if (carry) {
     // What the earlier waves applied settles first (#4007), each in its own wave, as a resumed apply's does.
@@ -2012,7 +2009,6 @@ async function prApplyWaves(
     if (afterGate && decided.satisfied) return stop(report({ status: "failed", message: afterGate }), 1);
     if (!decided.satisfied) return stop(report({ status: "refused", refusal: decided.refusal, message: decided.message }), decided.refusal === "plan-changed" ? CHANT_EXIT.moved : CHANT_EXIT.waiting);
     via = decided.via;
-    planned = set;
   }
   const approvedSet = approved!;
 
@@ -2056,8 +2052,11 @@ async function prApplyWaves(
   const from = only ?? (left || total + 1);
   const to = only ?? total;
   /** The last apply in this job that failed (#4291): its results give the exit code once every wave ran. */
-  let lastFailure: { results: Parameters<typeof failedRunExitCode>[0]; gated: boolean } | undefined;
+  let lastFailure: { exitCode: number } | undefined;
   let planFailedIn: number | undefined;
+  // #4588: the outputs file the waves' plan-wave and apply-wave steps hand outputs on in.
+  const { componentWaveOutputsFile } = await import("../../components/product-pipeline");
+  const outputsFile = componentWaveOutputsFile(op);
   for (let k = from; k <= to; k++) {
     // #4291: a component of this wave whose upstream failed, or was blocked by a failure, is blocked; the rest of the wave runs.
     const before = new Set(p.plan.waves.slice(0, k - 1).flat());
@@ -2076,155 +2075,53 @@ async function prApplyWaves(
       if (blockedNow.size > 0) recordAttempt();
       continue;
     }
-    const inThisWave = new Set(wavePlan.order);
-
-    // Wave 1 of the apply that just planned every member applies those plans:
-    // they are the approved set's. Every other wave is planned again, against
-    // the outputs the waves before it left.
-    let set: PrPlanSet;
-    let entry: PrWave;
-    if (planned && k === 1) {
-      set = {
-        ...planned,
-        members: planned.members.filter((m) => inThisWave.has(m.component)),
-        plans: Object.fromEntries(Object.entries(planned.plans).filter(([name]) => inThisWave.has(name))),
-        ...(planned.locks ? { locks: Object.fromEntries(Object.entries(planned.locks).filter(([, l]) => inThisWave.has(l.component))) } : {}),
-      };
-      entry = { wave: k, components: wavePlan.order, status: "applied", approval: "pull-request", gate: p.gate, digest: approvedSet.doc.digest, ...(approval.approvedBy ? { approvedBy: approval.approvedBy } : {}) };
-    } else {
-      const notApplied = Object.fromEntries(Object.entries(approvedSet.outputs).filter(([name]) => !completed.has(name)));
-      const waveGrain = await declaredLockGrainOf(p);
-      const fresh = await hookedPlan(p, wavePlan.order, () =>
-        planPrSet({
-          components: p.components,
-          plan: wavePlan,
-          registry: p.registry,
-          env: p.env,
-          seededOutputs: { ...p.seededOutputs, ...notApplied, ...outputsSoFar },
-          ...(waveGrain ? { lockGrain: waveGrain } : {}),
-          ...(events ? { onRunEvent: (body: RunEventBody) => events.emit(body) } : {}),
-        }),
-      );
-      if (fresh.failed) {
-        for (const m of fresh.members) {
-          after.set(m.member, m);
-          if (m.status === "plan-failed") failedSoFar.add(m.component);
-        }
-        setWave({ wave: k, components: wavePlan.order, status: "plan-failed", approval: "pull-request", gate: p.gate, digest: approvedSet.doc.digest });
-        // #4291: the later waves still run what does not depend on this wave.
-        console.error(formatWarning({ message: `A member of wave ${k} failed to plan, so nothing in wave ${k} was applied.`, hint: "The waves after it apply what does not depend on wave " + k + "." }));
-        planFailedIn ??= k;
-        continue;
-      }
-      const moved = waveNotCovered(approvedSet.doc, fresh.doc, approvedSet.members, { approved: approvedSet.shapes, fresh: fresh.shapes });
-      set = fresh;
-      if (moved.length === 0) {
-        console.error(formatInfo(`wave ${k}: the approved plan covers what it plans now, so it applies under the pull request's approval`));
-        entry = { wave: k, components: wavePlan.order, status: "applied", approval: "pull-request", gate: p.gate, digest: approvedSet.doc.digest, ...(approval.approvedBy ? { approvedBy: approval.approvedBy } : {}) };
-      } else {
-        const gate = waveGateName(waveGate, k);
-        const digest = fresh.doc.digest;
-        console.error(formatInfo(`wave ${k}: its plan moved since the pull request's (${moved.join("; ")}), so it needs an approval of ${gate}`));
-        await storeChangeSetForGate(ctx, p, fresh.doc);
-        writeWaveChangeSet(ctx, k, fresh.doc, upload);
-        const approveLine = prApproveCommand({ op, gate, digest });
-        const check = await emitGateStep(
-          events?.emit,
-          { op, gate },
-          () => decidePrGate(gitGateLedgerPort(), { op, gate, digest, description: `${changeLabel(pr, green)}, wave ${k} of ${total}: ${wavePlan.order.join(", ")}` }),
-          (unapproved) =>
-            unapproved.mismatch
-              ? `wave ${k}'s plan changed after its approval. Approve the plan now: ${approveLine}`
-              : `wave ${k}'s plan is not the one the pull request approved. Approve it: ${approveLine}`,
-        );
-        const waveApproval = approvalOf(check);
-        const waiting: PrWave = {
-          wave: k,
-          components: wavePlan.order,
-          status: "waiting",
-          approval: "wave",
-          gate,
-          digest,
-          moved,
-          ...(waveApproval.approved ? { approved: waveApproval.approved } : {}),
-        };
-        if (!check.satisfied) {
-          setWave(waiting);
-          const message =
-            waveApproval.status === "changed"
-              ? `Wave ${k}'s plan changed after its approval, so nothing in it was applied. approved: ${waveApproval.approved ?? "(none)"}; planned now: ${digest}. ` +
-                `Read the new plan, and if it is right, approve it: ${approveLine}; then run the wave's apply again.`
-              : `Wave ${k} was planned after the waves before it applied, and the pull request's approved plan does not cover it: ${moved.join("; ")}. ` +
-                `Nothing in wave ${k} was applied. Read its plan, and if it is right, approve it: ${approveLine}; then run the wave's apply again.`;
-          return stop(report({ status: "refused", refusal: waveApproval.status === "changed" ? "wave-plan-changed" : "wave-not-approved", message }), waveApproval.status === "changed" ? CHANT_EXIT.moved : CHANT_EXIT.waiting);
-        }
-        const waveReview = await review(waveApproval.approvedBy ?? [], `Wave ${k}'s plan`);
-        if (waveReview && "error" in waveReview) return fail(waveReview.error);
-        if (waveReview) {
-          setWave(waiting);
-          emitReviewStop(events, waveReview.message);
-          return stop(report({ status: "refused", refusal: waveReview.refusal, message: waveReview.message }), GATED_EXIT_CODE);
-        }
-        entry = { wave: k, components: wavePlan.order, status: "applied", approval: "wave", gate, digest, moved, ...(waveApproval.approvedBy ? { approvedBy: waveApproval.approvedBy } : {}) };
-      }
-    }
-
+    // #4588: the wave plans, waits or passes its gate, and applies on op waves: the component waves spec,
+    // each run a component, through the component plan-wave and apply-wave steps.
+    const pending: PrWave = { wave: k, components: wavePlan.order, status: "applied", approval: "pull-request", gate: p.gate, digest: approvedSet.doc.digest };
     // #4288: the wave's apply-side hooks, around its apply.
     const waveBefore = await runStageHook(p, "before-apply", wavePlan.order, undefined, `nothing in wave ${k} was applied`);
     if (waveBefore) {
-      setWave({ ...entry, status: "failed" });
+      setWave({ ...pending, status: "failed" });
       return stop(report({ status: "failed", message: waveBefore }), 1);
     }
-    // #4552: on the resource grain the wave leases the rows it changes while it applies.
-    const waveLease = await leaseSetRows(p, set);
-    if (typeof waveLease === "number") return waveLease;
-    if ("held" in waveLease) {
-      setWave({ ...entry, status: "waiting" });
-      return stop(report({ status: "refused", refusal: "locked", message: `Wave ${k}: ${waveLease.held}` }), CHANT_EXIT.held);
-    }
-    const lockGrain = await declaredLockGrainOf(p);
-    let applied: Awaited<ReturnType<typeof applyPrSet>>;
-    try {
-      applied = await applyPrSet({
-        components: p.components,
-        plan: wavePlan,
-        registry: p.registry,
-        env: p.env,
-        set,
-        ...(lockGrain ? { lockGrain } : {}),
-        // One wave's fan-out numbers its wave 1; the events and the log carry the derivation's number.
-        onRunEvent: (body: RunEventBody) => {
-          const numbered = inWave(body, k);
-          events?.nested(numbered);
-          if (numbered.type !== "run-start") log(numbered);
-        },
-        onComponentSettled: (settled, outputs) => {
-          if (settled.status === "ok") {
-            completed.add(settled.component);
-            failedSoFar.delete(settled.component);
-            if (inputsNow[settled.component] !== undefined) inputsSoFar[settled.component] = inputsNow[settled.component]!;
-            if (outputs) outputsSoFar[settled.component] = outputs;
-          } else if (settled.status === "fail") {
-            failedSoFar.add(settled.component);
-          }
-          recordAttempt();
-        },
-      });
-    } finally {
-      await waveLease.release();
-    }
-    for (const m of applied.members) after.set(m.member, m);
-    for (const name of applied.run.completed) {
+    // The outputs the waves before this one left, and the approved set's for what has not applied yet, seed its plans.
+    const notApplied = Object.fromEntries(Object.entries(approvedSet.outputs).filter(([name]) => !completed.has(name)));
+    mkdirSync(dirname(resolve(outputsFile)), { recursive: true });
+    writeFileSync(resolve(outputsFile), JSON.stringify({ ...p.seededOutputs, ...notApplied, ...outputsSoFar }, null, 2) + "\n");
+    const ran = await runComponentWave(p, { op, waveGate, k, runs: wavePlan.order, approved: approvedSet.doc, approvedBy: approval.approvedBy ?? [], outputsFile, ...(args.noReleaseRecord ? { noReleaseRecord: true } : {}) });
+    const entry = ran.entry;
+    for (const name of ran.applied) {
       completed.add(name);
-      const outputs = applied.run.componentOutputs[name];
-      if (outputs) outputsSoFar[name] = outputs;
+      failedSoFar.delete(name);
+      if (inputsNow[name] !== undefined) inputsSoFar[name] = inputsNow[name]!;
+      if (ran.outputs[name]) outputsSoFar[name] = ran.outputs[name]!;
     }
-    const waveAfter = await runStageHook(p, "after-apply", wavePlan.order.filter((name) => applied.run.completed.includes(name)), undefined, `wave ${k} counts as failed though its components applied`);
-    setWave({ ...entry, status: applied.status === "applied" && !waveAfter ? "applied" : "failed" });
-    await recordAutoReleasesForRun(applied.run.results, p.env, at.release.runId, resolveAutoReleaseDisabled(p.config, args.noReleaseRecord), at.release.runOrigin, undefined, undefined, prAppliedDigests(p, applied.members));
-    if (applied.status !== "applied") {
+    for (const name of ran.failed) failedSoFar.add(name);
+    if (ran.exitCode === CHANT_EXIT.waiting || ran.exitCode === CHANT_EXIT.moved) {
+      setWave(entry);
+      // #4003: the wave's new plan beside the report, for whoever approves its gate.
+      if (ran.changeSet) writeWaveChangeSet(ctx, k, ran.changeSet, upload);
+      const approveLine = prApproveCommand({ op, gate: entry.gate, digest: entry.digest });
+      const message =
+        ran.exitCode === CHANT_EXIT.moved
+          ? `Wave ${k}'s plan moved after its approval, so nothing in it was applied. Read the new plan, and if it is right, approve it: ${approveLine}; then run the wave's apply again.`
+          : `Wave ${k} was planned after the waves before it applied, and the pull request's approved plan does not cover it${entry.moved?.length ? `: ${entry.moved.join("; ")}` : ""}. ` +
+            `Nothing in wave ${k} was applied. Read its plan, and if it is right, approve it: ${approveLine}; then run the wave's apply again.`;
+      return stop(report({ status: "refused", refusal: ran.exitCode === CHANT_EXIT.moved ? "wave-plan-changed" : "wave-not-approved", message }), ran.exitCode);
+    }
+    if (ran.exitCode === CHANT_EXIT.held) {
+      setWave({ ...entry, status: "waiting" });
+      return stop(report({ status: "refused", refusal: "locked", message: `Wave ${k}: another run holds what it changes, so nothing in it was applied.` }), CHANT_EXIT.held);
+    }
+    if (ran.exitCode === CHANT_EXIT.denied || ran.exitCode === CHANT_EXIT.declined || ran.exitCode === CHANT_EXIT.superseded) {
+      setWave({ ...entry, status: "failed" });
+      return stop(report({ status: "failed", message: `Wave ${k} stopped on op waves with exit ${ran.exitCode}; nothing more was applied.` }), ran.exitCode);
+    }
+    const waveAfter = await runStageHook(p, "after-apply", wavePlan.order.filter((name) => ran.applied.includes(name)), undefined, `wave ${k} counts as failed though its components applied`);
+    setWave({ ...entry, status: ran.exitCode === CHANT_EXIT.done && !waveAfter ? "applied" : "failed" });
+    if (ran.exitCode !== CHANT_EXIT.done) {
       // #4291: a failed member blocks only its dependents, so the later waves still run.
-      lastFailure = { results: applied.run.results, gated: applied.run.status === "gated" };
+      lastFailure = { exitCode: ran.exitCode };
       recordAttempt();
       continue;
     }
@@ -2241,14 +2138,298 @@ async function prApplyWaves(
       : blockedLine ? blockedLine.trim() : undefined;
     return stop(
       report({ status: "failed", ...(message ? { message } : {}) }),
-      lastFailure ? failedRunExitCode(lastFailure.results) : 1,
-      lastFailure?.gated ? "gated" : undefined,
+      lastFailure ? lastFailure.exitCode : 1,
     );
   }
 
   const done = p.plan.order.every((name) => completed.has(name));
   if (green && done) await recordGreenApplied(p, green, approvedSet.doc.digest, approval, via);
   return stop(report({ status: done ? "applied" : "wave-applied" }), 0);
+}
+
+// ── The component plan-wave and apply-wave steps (#4588) ─────────────────────
+
+/** The outputs earlier waves' components left, from `--wave-outputs`; empty when the file is not there yet. */
+function readWaveOutputs(file: string | undefined): { outputs: Record<string, Record<string, unknown>> } | { error: string } {
+  if (!file || !existsSync(resolve(file))) return { outputs: {} };
+  try {
+    const parsed = JSON.parse(readFileSync(resolve(file), "utf8")) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { error: `--wave-outputs ${file} must hold { "<component>": { ...outputs } }` };
+    return { outputs: parsed as Record<string, Record<string, unknown>> };
+  } catch (err) {
+    return { error: `--wave-outputs: could not read "${file}": ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
+/** The runs `chant run wave` wrote to `{runs}`: their targets, each a component, and on apply-wave the digest each was approved at. */
+function readWaveRuns(file: string | undefined): Array<{ target: string; planDigest?: string }> | { error: string } {
+  if (!file) return { error: "the step needs --runs <file>, which chant run wave fills in as {runs}" };
+  try {
+    const parsed = JSON.parse(readFileSync(resolve(file), "utf8")) as { runs?: unknown };
+    if (!Array.isArray(parsed?.runs)) return { error: `--runs ${file} has no runs` };
+    return (parsed.runs as Array<{ target?: unknown; planDigest?: unknown }>).flatMap((r) =>
+      typeof r?.target === "string" ? [{ target: r.target, ...(typeof r.planDigest === "string" ? { planDigest: r.planDigest } : {}) }] : [],
+    );
+  } catch (err) {
+    return { error: `--runs: could not read "${file}": ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
+/** The fan-out plan of `names`, one wave of the derivation, with the rest of that wave counted as done. */
+function namedWavePlan(p: Prepared, names: readonly string[]): FanOutPlan | { error: string } {
+  const unknown = names.filter((n) => !p.plan.order.includes(n));
+  if (unknown.length > 0) return { error: `${unknown.join(", ")} ${unknown.length === 1 ? "is" : "are"} not in the change between ${p.base.slice(0, 12)} and ${p.head.slice(0, 12)}, so the wave cannot plan ${unknown.length === 1 ? "it" : "them"}` };
+  const k = p.plan.waves.findIndex((w) => w.includes(names[0]!)) + 1;
+  const wave = p.plan.waves[k - 1] ?? [];
+  const across = names.filter((n) => !wave.includes(n));
+  if (across.length > 0) return { error: `${names[0]} and ${across.join(", ")} are in different waves of the derivation, so one wave step cannot plan them together` };
+  return prWavePlan(p.plan, p.components, k, wave.filter((n) => !names.includes(n)));
+}
+
+/** One component's entry in the op-waves plans file: the digest over its members' plans, and whether it changes or destroys anything. */
+function componentPlanEntry(set: PrPlanSet, component: string): { target: string; planDigest: string; empty?: true; destructive?: true } {
+  const members = set.members.filter((m) => m.component === component).sort((a, b) => a.member.localeCompare(b.member));
+  const names = new Set(members.map((m) => m.member));
+  const entries = set.doc.entries.filter((e) => names.has(e.member));
+  const changes = entries.filter((e) => e.action !== "no-op" && e.action !== "read");
+  const destructive = changes.some((e) => e.action === "delete" || e.action === "replace");
+  return {
+    target: component,
+    planDigest: computePlanDigest("component-wave", members.map((m) => ({ member: m.member, planDigest: m.planDigest }))),
+    ...(changes.length === 0 ? { empty: true as const } : {}),
+    ...(destructive ? { destructive: true as const } : {}),
+  };
+}
+
+/** The files a component wave step names: `{runs}`, `{plans}` and the outputs file. */
+interface WaveStepFiles {
+  runs: Array<{ target: string; planDigest?: string }>;
+  plansFile: string;
+  outputsFile?: string;
+  outputs: Record<string, Record<string, unknown>>;
+}
+
+/** Read the step's runs and outputs files from its flags. */
+function waveStepFiles(args: Pick<CommandContext["args"], "runsFile" | "plansFile" | "waveOutputs">): WaveStepFiles | { error: string } {
+  const runs = readWaveRuns(args.runsFile);
+  if ("error" in runs) return runs;
+  if (!args.plansFile) return { error: "the step needs --plans <file>, which chant run wave fills in as {plans}" };
+  const read = readWaveOutputs(args.waveOutputs);
+  if ("error" in read) return read;
+  return { runs, plansFile: args.plansFile, ...(args.waveOutputs ? { outputsFile: args.waveOutputs } : {}), outputs: read.outputs };
+}
+
+/** Plan the step's runs, each a component, against the outputs the earlier waves left. */
+async function planComponentRuns(p: Prepared, files: WaveStepFiles): Promise<{ set: PrPlanSet; plan: FanOutPlan } | { error: string }> {
+  const names = files.runs.map((r) => r.target);
+  const plan = names.length > 0 ? namedWavePlan(p, names) : { ...p.plan, order: [], waves: [] };
+  if ("error" in plan) return plan;
+  const lockGrain = await declaredLockGrainOf(p);
+  const set = await planPrSet({ components: p.components, plan, registry: p.registry, env: p.env, seededOutputs: { ...p.seededOutputs, ...files.outputs }, ...(lockGrain ? { lockGrain } : {}) });
+  return { set, plan };
+}
+
+/** The plan step over `p`: write `{plans}`, one digest per component and the wave's change set. */
+async function planComponentWave(p: Prepared, files: WaveStepFiles): Promise<number> {
+  const planned = await planComponentRuns(p, files);
+  if ("error" in planned) return fail(planned.error);
+  const { set } = planned;
+  if (set.failed) {
+    for (const m of set.members.filter((x) => x.status === "plan-failed")) console.error(formatError({ message: `${m.member} (${m.component}) failed to plan${m.error ? `: ${m.error}` : ""}` }));
+    return set.policyDenied ? CHANT_EXIT.denied : 1;
+  }
+  const file = { runs: files.runs.map((r) => componentPlanEntry(set, r.target)), changeSet: set.doc };
+  mkdirSync(dirname(resolve(files.plansFile)), { recursive: true });
+  writeFileSync(resolve(files.plansFile), JSON.stringify(file, null, 2) + "\n");
+  console.error(formatInfo(`planned ${files.runs.length} component${files.runs.length === 1 ? "" : "s"}: ${files.runs.map((r) => r.target).join(", ") || "(none)"}; change set ${set.doc.digest}`));
+  return 0;
+}
+
+/** The apply step over `p`: plan the approved runs again, refuse a moved one with 4, else lease, apply, record, and hand the outputs on. */
+async function applyComponentWave(p: Prepared, files: WaveStepFiles, opts: { noReleaseRecord?: boolean } = {}): Promise<number> {
+  if (files.runs.length === 0) return 0;
+  const planned = await planComponentRuns(p, files);
+  if ("error" in planned) return fail(planned.error);
+  const { set, plan } = planned;
+  if (set.failed) return fail("A component of the wave failed to plan again, so nothing in it was applied.");
+  const moved = files.runs.filter((r) => r.planDigest !== undefined && !samePlanDigest(componentPlanEntry(set, r.target).planDigest, r.planDigest));
+  if (moved.length > 0) {
+    console.error(formatError({ message: `${moved.map((r) => r.target).join(", ")} now plan${moved.length === 1 ? "s" : ""} something other than the approved plan, so nothing in the wave was applied.`, hint: "Run the wave's job again to plan it afresh and decide its gate." }));
+    return CHANT_EXIT.moved;
+  }
+  const lease = await leaseSetRows(p, set);
+  if (typeof lease === "number") return lease;
+  if ("held" in lease) {
+    console.error(formatError({ message: lease.held }));
+    return CHANT_EXIT.held;
+  }
+  const lockGrain = await declaredLockGrainOf(p);
+  const release = autoReleaseRun(`wave-${Date.now()}`);
+  let applied: Awaited<ReturnType<typeof applyPrSet>>;
+  try {
+    applied = await applyPrSet({ components: p.components, plan, registry: p.registry, env: p.env, set, gate: p.gate, ...(lockGrain ? { lockGrain } : {}) });
+  } finally {
+    await lease.release();
+  }
+  await recordAutoReleasesForRun(applied.run.results, p.env, release.runId, resolveAutoReleaseDisabled(p.config, opts.noReleaseRecord), release.runOrigin, undefined, undefined, prAppliedDigests(p, applied.members));
+  if (files.outputsFile) {
+    const next = { ...files.outputs };
+    for (const name of applied.run.completed) next[name] = applied.run.componentOutputs[name] ?? {};
+    mkdirSync(dirname(resolve(files.outputsFile)), { recursive: true });
+    writeFileSync(resolve(files.outputsFile), JSON.stringify(next, null, 2) + "\n");
+  }
+  for (const m of applied.members) console.error(m.status === "applied" ? formatSuccess(`applied ${m.member} (${m.component})`) : formatWarning({ message: `${m.member} (${m.component}): ${m.status}${m.error ? `, ${m.error}` : ""}` }));
+  return applied.status === "applied" ? 0 : applied.status === "waiting" ? CHANT_EXIT.waiting : 1;
+}
+
+/**
+ * `chant components plan-wave --runs <file> --plans <file> --base <ref>
+ * --env <env> [--member <m>] [--wave-outputs <file>]` (#4588): the
+ * component plan step of a component waves spec. Plans each run, a
+ * component, through the project's capabilities against the outputs the
+ * waves before it left, and writes `{plans}`: one digest per component over
+ * its members' plans, and the wave's change set, which a `pull-request`
+ * wave checks the pull request's approval against.
+ */
+export async function runComponentsPlanWave(ctx: CommandContext): Promise<number> {
+  const files = waveStepFiles(ctx.args);
+  if ("error" in files) return fail(files.error);
+  const p = await prepare(ctx, "apply");
+  if (typeof p === "number") return p;
+  return planComponentWave(p, files);
+}
+
+/**
+ * `chant components apply-wave --runs <file> --plans <file> --base <ref>
+ * --env <env> [--member <m>] [--wave-outputs <file>]` (#4588): the
+ * component apply step. Plans the approved runs again and exits 4 when a
+ * component's plan is not the one approved; else leases its rows on the
+ * resource grain, applies, records the releases, and adds each applied
+ * component's outputs to `--wave-outputs` for the next wave.
+ */
+export async function runComponentsApplyWave(ctx: CommandContext): Promise<number> {
+  const files = waveStepFiles(ctx.args);
+  if ("error" in files) return fail(files.error);
+  const p = await prepare(ctx, "apply");
+  if (typeof p === "number") return p;
+  return applyComponentWave(p, files, { noReleaseRecord: ctx.args.noReleaseRecord });
+}
+
+/**
+ * The component steps in this process (#4588): `pr-apply --wave-gate`
+ * already holds the prepared project, so the plan-wave and apply-wave lines
+ * of its spec run here against it, rather than in a process that would
+ * derive the change again.
+ */
+function componentWaveExec(p: Prepared, noReleaseRecord?: boolean): (argv: string[], cwd: string) => Promise<number> {
+  return async (argv) => {
+    const at = argv.findIndex((a, i) => a === "components" && (argv[i + 1] === "plan-wave" || argv[i + 1] === "apply-wave"));
+    if (at < 0) return fail(`not a component wave step: ${argv.join(" ")}`);
+    let args: CommandContext["args"];
+    try {
+      args = parseArgs(argv.slice(at));
+    } catch (err) {
+      return fail(err instanceof Error ? err.message : String(err));
+    }
+    const files = waveStepFiles(args);
+    if ("error" in files) return fail(files.error);
+    return argv[at + 1] === "plan-wave" ? planComponentWave(p, files) : applyComponentWave(p, files, { noReleaseRecord });
+  };
+}
+
+/**
+ * A gate ledger that holds the approval `pr-apply` already decided (#4588):
+ * an approval of the pull request's gate under its op, for the approved
+ * change set, so an op wave of the component waves spec finds the approval
+ * a pull request (or a green commit's merges) gave and checks its own plan
+ * against it. Everything else is the real ledger's.
+ */
+function withDecidedApproval(port: GateLedgerPort, at: { op: string; gate: string; digest: string; approvedBy: string[]; timestamp: string }): GateLedgerPort {
+  return {
+    ...port,
+    appendPending: (input) => port.appendPending(input),
+    async read(op) {
+      const got = await port.read(op);
+      if (op !== at.op) return got;
+      const decided: GateResolutionRecord = { version: 1, kind: "resolution", op: at.op, gate: at.gate, resolvedBy: at.approvedBy.join(", ") || "pr-apply", timestamp: at.timestamp, planDigest: at.digest, changeSet: at.digest };
+      return { ...got, resolutions: [...got.resolutions, decided] };
+    },
+  };
+}
+
+/** What one wave of `pr-apply --wave-gate` on op waves came to (#4588). */
+interface ComponentWaveOutcome {
+  exitCode: number;
+  applied: string[];
+  failed: string[];
+  entry: PrWave;
+  /** The wave's outputs file after it ran. */
+  outputs: Record<string, Record<string, unknown>>;
+  /** The wave's new plan, when it planned: what an approval of its own gate is asked for. */
+  changeSet?: PrPlanSet["doc"];
+}
+
+/**
+ * Run wave `k` of `pr-apply --wave-gate` on op waves (#4588): the component
+ * waves spec with the wave's runs left to apply, read at base as chant
+ * wrote it (the spec is chant's, never the change's), decided under the
+ * approval pr-apply holds, planned and applied through the component
+ * plan-wave and apply-wave steps.
+ */
+async function runComponentWave(
+  p: Prepared,
+  at: { op: string; waveGate: string; k: number; runs: string[]; approved: PrPlanSet["doc"]; approvedBy: string[]; outputsFile: string; noReleaseRecord?: boolean },
+): Promise<ComponentWaveOutcome> {
+  const { componentWavesSpec, componentWaveSteps, PRODUCT_WAVES_SPEC_DIR: PRODUCT_WAVES_DIR } = await import("../../components/product-pipeline");
+  const { runOpWave, opWavePlansPath } = await import("../../op/op-waves-run");
+  const words = activeProductWords();
+  const cwd = resolve(".");
+  const steps = componentWaveSteps({ ...(words.bin ? { bin: words.bin } : {}), env: p.env, base: p.base, head: p.head, ...(p.member ? { member: p.member } : {}), op: at.op, gate: p.gate, outputs: at.outputsFile });
+  const waves = p.plan.waves.map((w, i) => (i === at.k - 1 ? at.runs : w));
+  const spec = componentWavesSpec(p.components, words, steps, { op: at.op, gate: at.waveGate, prGate: p.gate, waves });
+  const specFile = `${PRODUCT_WAVES_DIR}/${at.op}.spec.json`;
+  const result = await runOpWave({
+    spec,
+    specFile,
+    wave: at.k,
+    base: p.base,
+    head: p.head,
+    cwd,
+    show: () => ({ sha: p.base, text: JSON.stringify(spec) }),
+    gates: withDecidedApproval(gitGateLedgerPort(), { op: at.op, gate: p.gate, digest: at.approved.digest, approvedBy: at.approvedBy, timestamp: new Date().toISOString() }),
+    // pr-apply's report and the `chant ci run` record stand for the job, so the wave writes no op-wave run record beside them.
+    runs: { append: async () => {} },
+    changeSets: async (digest) => {
+      if (samePlanDigest(digest, at.approved.digest)) return at.approved;
+      const { readStoredChangeSet } = await import("../../lifecycle/change-set-store");
+      const got = await readStoredChangeSet(digest, { cwd });
+      return got.status === "found" ? got.document : undefined;
+    },
+    lockGate: p.gate,
+    waveExec: componentWaveExec(p, at.noReleaseRecord),
+    // The outcome files of this commit's waves alone, so a run of another commit on the same checkout blocks nothing here.
+    outcomeDir: `${PRODUCT_WAVES_DIR}/${at.op}/outcomes-${p.head.slice(0, 12)}`,
+  });
+  const d = result.decision;
+  const byPullRequest = d?.via === "pull-request";
+  const entry: PrWave = {
+    wave: at.k,
+    components: at.runs,
+    status: result.exitCode === CHANT_EXIT.done ? "applied" : result.exitCode === CHANT_EXIT.waiting || result.exitCode === CHANT_EXIT.moved ? "waiting" : "failed",
+    approval: byPullRequest || !d ? "pull-request" : "wave",
+    gate: byPullRequest || !d ? p.gate : d.gate,
+    digest: byPullRequest || !d ? at.approved.digest : d.digest,
+    ...(byPullRequest ? (at.approvedBy.length > 0 ? { approvedBy: at.approvedBy } : {}) : d?.approvedBy ? { approvedBy: [d.approvedBy] } : {}),
+    ...(!byPullRequest && d?.coveredBy?.reason ? { moved: [d.coveredBy.reason] } : {}),
+  };
+  const read = readWaveOutputs(at.outputsFile);
+  let changeSet: PrPlanSet["doc"] | undefined;
+  try {
+    changeSet = (JSON.parse(readFileSync(join(cwd, opWavePlansPath(spec, at.k)), "utf8")) as { changeSet?: PrPlanSet["doc"] }).changeSet;
+  } catch {
+    // The wave stopped before it planned.
+  }
+  return { exitCode: result.exitCode, applied: result.applied, failed: result.failed, entry, outputs: "error" in read ? {} : read.outputs, ...(changeSet ? { changeSet } : {}) };
 }
 
 /** A wave's new plan (#4003), beside the report as `change-set-wave-<k>.json`, for whoever approves its gate. */

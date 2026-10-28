@@ -773,6 +773,18 @@ export interface ParsedArgs {
   digestFile?: string;
   /** `chant run --components <name> --seed-outputs <file>` (repeatable) — before the run, load each JSON outputs file (as written by `--dump-outputs`) and seed cross-component/cross-stack resolution with it, so a `stackOutput()`/`@<dep>.publish.*` reference to a component that ran in an earlier job resolves. */
   seedOutputs?: string[];
+  /**
+   * `chant lock --keep --pr <n>` (#4588): take again, at stage `lock`, every
+   * target lock the pull request holds now, so the locks its plan took stay
+   * until it closes or `chant unlock`. What `/<product> lock` runs.
+   */
+  keepLocks?: boolean;
+  /** `chant components plan-wave|apply-wave --runs <file>` (#4588): the runs file `chant run wave` writes, `{runs}`. */
+  runsFile?: string;
+  /** `chant components plan-wave|apply-wave --plans <file>` (#4588): the wave's plans file, `{plans}`. */
+  plansFile?: string;
+  /** `chant components plan-wave|apply-wave --wave-outputs <file>` (#4588): the outputs earlier waves' components left; apply-wave adds its own. */
+  waveOutputs?: string;
   /** `chant build --fold` (#1022/#1023, epic #1019) — opt-in: fold source modules statically instead of importing/running them; folds resource constructors and composite factory calls, falling back to run per-file for anything the folder can't represent (a cross-file-only reference, a re-export, `export default`, …). Also settable project-wide via `chant.config.ts`'s `build.fold: true`; the flag always wins when set. Default (flag omitted): the existing run path, unchanged. */
   fold?: boolean;
   /** `chant build --sandbox` (#1045 Phase 2) — opt-in: run-fallback source files (or every file, without `--fold`) execute together, isolated, in one sandboxed child process instead of in-process. Also settable project-wide via `chant.config.ts`'s `build.sandbox: true`; the flag always wins when set. Default (flag omitted): in-process execution, unchanged. */
