@@ -117,6 +117,11 @@
  * it has no `internal/live/lint` rule for the local store, and no surveyed
  * tool knows about record stores. TF044 is the nearest neighbour, for a
  * Terragrunt state backend.
+ *
+ * TF047 (chant#4560, a live root pins a module version the known-module
+ * catalog has no row for, or one with refusals) has no entry. Its data is
+ * choudoufu's own module table (choudoufu#2292), vendored; no surveyed tool
+ * checks a module pin against a measured compatibility table.
  */
 import type { Lineage } from "@intentius/chant/audit/catalog";
 

@@ -2445,3 +2445,61 @@ resource "null_resource" "first" {}
 From `fixtures/TF046/implied-local/main.tf`. `explicit-local`,
 `backend-config-only`, `azurerm-no-resource-group` and `sidecar-implied` fire
 too; `derived-s3` and `explicit-s3-beside-local-backend` do not.
+
+## TF047: a live root pins a module version the catalog has no row for, or one with refusals
+
+A registry `module` block with an exact `version`, on a root whose binary is
+choudoufu, looked up in the known-module catalog. Severity `warning` when the
+pinned version has refused examples, `info` when the catalog has no row for
+the module or the version, and the rule is off by default.
+
+**The catalog.** chant vendors the static tier of choudoufu's module
+compatibility table (INTENTIUS/choudoufu#2292, `live/module-compat.json`) in
+`src/module-catalog/static-tier.ts`, whose header names the choudoufu commit
+it came from. Each row is one terraform-aws-modules example at one tag,
+measured offline by choudoufu's refusal probe in the onboarded form. A clear
+one plans under `choudoufu live-check`, and a refused one lists choudoufu
+refusal IDs with their site counts. Eligible data-source reads are counted apart and
+never refuse. choudoufu's gauntlet tier, from end-to-end runs, is a separate
+table and is not vendored, so every figure in a TF047 message is a static
+figure. `npm run module-catalog:refresh -- <choudoufu checkout> [ref]` in
+`lexicons/terraform` rewrites the snapshot from a choudoufu ref. Other code
+reads the catalog from `@intentius/chant-lexicon-terraform/module-catalog`.
+
+**Why it matters.** A refused example at the pinned version shows a module
+feature choudoufu refuses today. A call that uses the same feature is refused
+the same way, which `choudoufu live-check` confirms on the root itself.
+
+**The message.** For a refused version it counts the refused examples and
+lists each refusal ID with its sites and examples, linked to its
+`live/LIMITATIONS.md` entry. For a version with no row it names the versions
+the static tier measured.
+
+**Skipped.** A stock root, since the table measures choudoufu. A range
+(TF039's finding) and a missing `version` (TF004's). A `//subdir` source is
+looked up by its module repository.
+
+**Off by default.** TF047 is a `report-only` rule. terragucci turns it on for
+its users. Enable it in chant with `lint.presets: { terraform: "all" }` or a
+`lint.rules` entry.
+
+**Prior art.** No tool in the survey checks a pin against a measured table;
+see the lineage file.
+
+```hcl
+terraform {
+  required_version = ">= 1.5.0"
+
+  live {
+    estate = "fixture-estate"
+  }
+}
+
+module "eks" {
+  source  = "terraform-aws-modules/eks/aws"
+  version = "21.29.0"
+}
+```
+
+From `fixtures/TF047/refused/main.tf`. `unknown-version` and `unknown-module`
+report at `info`; `clear` is quiet.

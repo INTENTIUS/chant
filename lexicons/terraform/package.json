@@ -34,6 +34,11 @@
       "types": "./dist/pin/index.d.ts",
       "default": "./dist/pin/index.js"
     },
+    "./module-catalog": {
+      "development": "./src/module-catalog/index.ts",
+      "types": "./dist/module-catalog/index.d.ts",
+      "default": "./dist/module-catalog/index.js"
+    },
     "./terragrunt": {
       "development": "./src/terragrunt/index.ts",
       "types": "./dist/terragrunt/index.d.ts",
@@ -69,7 +74,8 @@
     "docs": "npx tsx src/codegen/docs-cli.ts",
     "build": "../../scripts/tsc7.sh -p tsconfig.build.json --sourceMap false && tsc-alias -p tsconfig.build.json",
     "prepack": "npm run generate && npm run bundle && npm run validate && npm run build",
-    "bundle": "tsx src/package-cli.ts"
+    "bundle": "tsx src/package-cli.ts",
+    "module-catalog:refresh": "npx tsx src/module-catalog/refresh-cli.ts"
   },
   "devDependencies": {
     "@cdktn/hcl2json": "^0.24.0",

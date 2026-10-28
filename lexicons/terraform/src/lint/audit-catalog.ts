@@ -565,6 +565,18 @@ export const terraformAuditCatalog: Record<string, RuleMeta> = {
       "that keeps the local store on purpose sets `CHANT_ALLOW_LOCAL_RECORD_STORE=1`.",
     yamlBased: false,
   },
+  TF047: {
+    id: "TF047",
+    tier: "report-only",
+    fixKind: "guidance",
+    category: "correctness",
+    title: "Live root pins a module version the known-module catalog has no row for, or one with refusals",
+    remediation:
+      "Run `choudoufu live-check` on the root to see each refused site, or pin a version whose examples are clear in " +
+      "the static tier of choudoufu's module table (https://intentius.io/choudoufu/aws/compatibility/#modules). " +
+      "Off by default; terragucci turns it on for its users.",
+    yamlBased: false,
+  },
 };
 
 // Prior art credits, if any, live beside the rules in ./audit-lineage.ts (see
