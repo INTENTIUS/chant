@@ -576,6 +576,13 @@ export function parseArgs(args: string[]): ParsedArgs {
       const value = args[++i];
       if (value === undefined || value.startsWith("-")) throw new Error("--decide-model needs a model id");
       result.decideModel = value;
+    } else if (arg === "--merge" || arg === "--merge-token-env" || arg === "--merge-method") {
+      // `chant components pr-apply --before-merge --merge auto --merge-token-env <VAR>` (#4636).
+      const value = args[++i];
+      if (value === undefined || value.startsWith("-")) throw new Error(`${arg} needs a value: --merge manual|auto, --merge-token-env <VAR>, --merge-method merge|squash|rebase`);
+      if (arg === "--merge") result.merge = value;
+      else if (arg === "--merge-token-env") result.mergeTokenEnv = value;
+      else result.mergeMethod = value;
     } else if (arg === "--apply-before-merge") {
       // `chant build --pr-loop --apply-before-merge` and `chant ci run apply --apply-before-merge` (#4301): the job that applies before merge.
       result.applyBeforeMerge = true;

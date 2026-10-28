@@ -419,6 +419,12 @@ export interface ParsedArgs {
    * and checks. Absent: all four. A check left out passes as "not required".
    */
   requires?: string[];
+  /** `pr-apply --before-merge --merge manual|auto` (#4636): who merges once the update applied. */
+  merge?: string;
+  /** `pr-apply --merge auto --merge-token-env <VAR>` (#4636): the variable holding the only token the merge uses. */
+  mergeTokenEnv?: string;
+  /** `pr-apply --merge auto --merge-method merge|squash|rebase` (#4636). */
+  mergeMethod?: string;
   /** `--respond wave-refused=off,description=check` (#4629): the responses pr-apply, pr-post and the wave jobs post. */
   respond?: string[];
   /** `pr-post --decide-backend <name>` (#4629): the `decide.backends` entry the description check asks. */

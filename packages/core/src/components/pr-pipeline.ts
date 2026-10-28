@@ -190,6 +190,14 @@ export interface PrLoopPipelineOptions {
    */
   applyRequires?: readonly string[];
   /**
+   * Merge the pull request once its update before merge applied (#4636):
+   * `pr-apply --merge auto --merge-token-env <tokenEnv>`. The token is the
+   * merge's alone: on GitHub and Forgejo the job maps it from the secret of
+   * that name, on GitLab it is a protected variable the project sets. Only
+   * with `applyBeforeMerge`.
+   */
+  applyMerge?: { tokenEnv: string; method?: "merge" | "squash" | "rebase" };
+  /**
    * Stream each job's run events (#4007): `--events-json` on both commands,
    * and `CHANT_RUN_EVENTS_DIR` set to {@link PR_LOOP_EVENTS_DIR}. Default false.
    */
@@ -540,7 +548,7 @@ export function prCommentPreviewJob(forge: ForgeKind, env: string, options: PrLo
   const comment = commentLine(words, "plan");
   if (!comment) throw new Error(`--preview-comment answers /${words.product} <plan command>, and the words name no plan command; name one in the words' commands, or drop --preview-comment`);
   // The plan job's own command: the apply side's options never reach it, so they are left out here.
-  const { applyBeforeMerge: _early, applyRequires: _requires, applyOnMerge: _onMerge, ...planSide } = options;
+  const { applyBeforeMerge: _early, applyRequires: _requires, applyMerge: _merge, applyOnMerge: _onMerge, ...planSide } = options;
   // #4626: the comment's --target addresses narrow the preview, read from the comment in a variable.
   const [plan] = prLoopJobs(forge, env, { ...planSide, commentTargets: true }, member);
   const github = forge !== "gitlab";
@@ -661,6 +669,10 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
   const asked = options.applyRequires ? parseRequiresList(options.applyRequires) : undefined;
   if (asked && "error" in asked) throw new Error(asked.error);
   const requires = early && asked ? ["--requires", asked.checks.join(",")] : [];
+  if (options.applyMerge && !early) throw new Error("--merge auto merges a pull request after its update before merge, so it needs --apply-before-merge");
+  if (options.applyMerge && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(options.applyMerge.tokenEnv)) throw new Error(`the merge token variable ${JSON.stringify(options.applyMerge.tokenEnv)} is not a variable name`);
+  // #4636: the merge after the update, with its own token.
+  const merge = early && options.applyMerge ? ["--merge", "auto", "--merge-token-env", options.applyMerge.tokenEnv, ...(options.applyMerge.method ? ["--merge-method", options.applyMerge.method] : [])] : [];
   const common = [
     "--env", env, "--gate", gate, "--output", PR_LOOP_REPORT_DIR, "--forge", forge,
     ...(member ? ["--member", member] : []),
@@ -687,7 +699,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
   const ciRun = (job: PrLoopJob["jobName"]): string[] => [
     "chant", "ci", "run", job, "--in-place", ...(job === "plan" ? ["--no-push"] : []),
     ...(job === "apply" && !early ? [] : ["--base", '"$BASE_SHA"']), ...(job === "plan" || (job === "apply" && early) ? ["--pr", '"$PR_NUMBER"'] : []),
-    ...(job === "apply" && early ? ["--apply-before-merge", ...requires] : []),
+    ...(job === "apply" && early ? ["--apply-before-merge", ...requires, ...merge] : []),
     ...(job === "plan" ? parallelism : []),
     ...(job === "plan" && options.commentTargets ? ["--comment-targets"] : []),
     ...(job === "plan" && options.refresh ? ["--refresh"] : []),
@@ -708,8 +720,9 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
   const greenBranch = github ? JSON.stringify(options.branch ?? "main") : options.branch ? JSON.stringify(options.branch) : "$CI_DEFAULT_BRANCH";
   const applyEnv = github ? { BASE_SHA: "${{ github.event.before }}", ...jobEnv } : { BASE_SHA: "$CI_COMMIT_BEFORE_SHA", ...jobEnv };
   // #4301: the apply before merge runs in a job of the target branch, whose commit is the base, at the pull request's head.
+  const mergeSecret = github && options.applyMerge ? { [options.applyMerge.tokenEnv]: `\${{ secrets.${options.applyMerge.tokenEnv} }}` } : {};
   const earlyEnv = github
-    ? { BASE_SHA: "${{ github.sha }}", PR_NUMBER: "${{ github.event.issue.number }}", ...jobEnv }
+    ? { BASE_SHA: "${{ github.sha }}", PR_NUMBER: "${{ github.event.issue.number }}", ...jobEnv, ...mergeSecret }
     : { BASE_SHA: "$CI_COMMIT_SHA", PR_NUMBER: `$${GITLAB_APPLY_PR_VAR}`, ...jobEnv };
   const greenApply: PrLoopJob = {
     // #4168 step 9: the apply applies the newest green commit, measured from the one applied before it.
@@ -731,7 +744,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
     // #4301: the requires checks run inside pr-apply, before any of the head's code loads.
     jobName: "apply",
     command: [
-      "chant", "components", "pr-apply", "--before-merge", ...requires, "--base", '"$BASE_SHA"', "--pr", '"$PR_NUMBER"', ...common,
+      "chant", "components", "pr-apply", "--before-merge", ...requires, ...merge, "--base", '"$BASE_SHA"', "--pr", '"$PR_NUMBER"', ...common,
       ...(options.requireReview === true ? ["--require-review"] : []),
       "--resume", PR_APPLY_RECORD,
     ].join(" "),
