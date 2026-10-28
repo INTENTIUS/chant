@@ -1,6 +1,6 @@
 // Lambda@Edge tokens from SSM Parameter Store or Secrets Manager (chant#4590), tested as a handler in
 // process with a fake fetch standing in for both AWS APIs: no AWS call, real or emulated, and no deploy.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { signV4 } from "@intentius/chant/cloud-lister/sigv4";
 import { downloadDoc } from "../index";
 import {
@@ -28,6 +28,12 @@ const event = (uri: string, token?: string): CloudFrontRequestEvent => ({
 
 const status = (answer: unknown): string | undefined => (answer && typeof answer === "object" && "status" in answer ? String((answer as { status: string }).status) : undefined);
 const passedOn = (answer: unknown): boolean => !!answer && typeof answer === "object" && "uri" in answer;
+
+/**
+ * Waits for the read the handler starts when it is made. It signs with WebCrypto before it calls
+ * fetch, and that digest settles off the microtask queue, so the call lands a moment after.
+ */
+const firstRead = (calls: Call[]): Promise<void> => vi.waitFor(() => expect(calls.length).toBeGreaterThan(0), { timeout: 2_000, interval: 5 });
 
 interface Call {
   url: string;
@@ -76,6 +82,7 @@ describe("tokens from SSM Parameter Store", () => {
     const aws = fakeAws({ ssm: { "/registry/tokens": "old-token,new-token" } });
     const handler = lambdaEdgeHandler({ files, auth: { source: { kind: "ssm", name: "/registry/tokens", region: "us-east-1", credentials, fetch: aws.fetch } }, now: () => T0 });
     // The read starts when the handler is made, before any request.
+    await firstRead(aws.calls);
     expect(aws.calls).toHaveLength(1);
     const call = aws.calls[0]!;
     expect(call.url).toBe("https://ssm.us-east-1.amazonaws.com/");
@@ -129,6 +136,7 @@ describe("tokens from SSM Parameter Store", () => {
   it("reads the region it is given, never the replica's", async () => {
     const aws = fakeAws({ ssm: { p: "t" } });
     lambdaEdgeHandler({ files, auth: { source: { kind: "ssm", name: "p", region: "eu-west-1", credentials, fetch: aws.fetch } } });
+    await firstRead(aws.calls);
     expect(aws.calls[0]!.url).toBe("https://ssm.eu-west-1.amazonaws.com/");
     expect(aws.calls[0]!.headers.authorization).toContain("/eu-west-1/ssm/aws4_request");
   });
@@ -138,6 +146,7 @@ describe("tokens from Secrets Manager", () => {
   it("reads SecretString with a signed GetSecretValue call, JSON form with a signing key", async () => {
     const aws = fakeAws({ secrets: { "registry/tokens": JSON.stringify({ tokens: ["s3cret"], signingKey: "sign-key" }) } });
     const handler = lambdaEdgeHandler({ files, auth: { source: { kind: "secrets-manager", secretId: "registry/tokens", credentials, fetch: aws.fetch } }, now: () => T0 });
+    await firstRead(aws.calls);
     const call = aws.calls[0]!;
     expect(call.url).toBe("https://secretsmanager.us-east-1.amazonaws.com/");
     expect(call.headers["x-amz-target"]).toBe("secretsmanager.GetSecretValue");

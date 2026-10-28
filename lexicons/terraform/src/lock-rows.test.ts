@@ -30,7 +30,14 @@ describe("terraformLockRows", () => {
   });
 
   test("a root with no estate is keyed by its path", () => {
-    expect(terraformLockRows("live/net", undefined, plan)[0]!.key).toBe("root live/net aws_iam_role.legacy");
+    expect(terraformLockRows("live/net", undefined, plan).map((r) => r.key)).toEqual([
+      "object logs-1",
+      "object svc",
+      "root live/net aws_iam_role.legacy",
+      "root live/net aws_iam_role.svc",
+      "root live/net aws_s3_bucket.logs",
+      "root live/net aws_sqs_queue.jobs",
+    ]);
   });
 
   test("from a change-set part: the same keys less the previous address", () => {

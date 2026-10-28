@@ -43,11 +43,9 @@ export const discoveryDoc = (): string => `${JSON.stringify({ "modules.v1": MODU
 
 /** The protocol's versions answer, oldest first, duplicates and non-versions dropped. */
 export function versionsDoc(versions: string[]): string {
-  const sorted = [...new Set(versions)]
-    .map((v) => parseSemver(v))
-    .filter((v): v is Semver => !!v)
-    .sort(compareSemver)
-    .map(formatSemver);
+  // Dedupe after formatting, so "v1.0.0" and "1.0.0" are one version.
+  const parsed = versions.map((v) => parseSemver(v)).filter((v): v is Semver => !!v);
+  const sorted = [...new Set(parsed.sort(compareSemver).map(formatSemver))];
   return `${JSON.stringify({ modules: [{ versions: sorted.map((version) => ({ version })) }] }, null, 2)}\n`;
 }
 
