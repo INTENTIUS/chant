@@ -34,7 +34,11 @@ describe("the gate-decision bundle", () => {
       expect(inputs.filter((i) => pattern.test(i)), String(pattern)).toEqual([]);
     }
     expect(inputs.map((i) => i.replace(/^.*?packages\//, "packages/")).sort()).toEqual([
+      // The product's words (#4550): gate and status names, no imports.
+      "packages/core/src/ci-product-words.ts",
       "packages/core/src/content-digest.ts",
+      // The control repo's settings check (#4568, #4617), which the spec checks.
+      "packages/core/src/control/dispatch.ts",
       "packages/core/src/declarable.ts",
       "packages/core/src/effect-receipt.ts",
       "packages/core/src/gate-decision.ts",
@@ -42,6 +46,8 @@ describe("the gate-decision bundle", () => {
       "packages/core/src/lifecycle/gate-applied.ts",
       "packages/core/src/lifecycle/gate-ledger-select.ts",
       "packages/core/src/lifecycle/gate-seal.ts",
+      // The gated-request digest (#4551) and its sorted-key replacer.
+      "packages/core/src/lifecycle/gated-request-digest.ts",
       "packages/core/src/lifecycle/plan-digest.ts",
       "packages/core/src/notify-verify.ts",
       "packages/core/src/notify.ts",
@@ -49,7 +55,14 @@ describe("the gate-decision bundle", () => {
       "packages/core/src/op/gate-plan-context.ts",
       "packages/core/src/op/gate-point.ts",
       "packages/core/src/op/gate-quorum.ts",
+      // The step and holds settings checks (#4545), with no run-time imports.
+      "packages/core/src/op/op-waves-capability-spec.ts",
+      // The release names a wave writes (#4615), checked with the spec.
+      "packages/core/src/op/op-waves-release.ts",
       "packages/core/src/op/op-waves.ts",
+      // The next-release floor constant (#4480): no imports.
+      "packages/core/src/release-floors.ts",
+      "packages/core/src/sorted-json.ts",
       "packages/core/src/wave-blocked.ts",
       "packages/core/src/wave-layout.ts",
       "packages/core/src/workspace/class-data.ts",

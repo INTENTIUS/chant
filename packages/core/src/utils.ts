@@ -24,17 +24,8 @@ export function isAttrRefLike(value: unknown): value is AttrRef {
   );
 }
 
-/**
- * JSON.stringify replacer that sorts object keys for deterministic output.
- */
-export function sortedJsonReplacer(_key: string, value: unknown): unknown {
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b))
-    );
-  }
-  return value;
-}
+export { sortedJsonReplacer } from "./sorted-json";
+
 
 /**
  * Get all property names that have AttrRef values

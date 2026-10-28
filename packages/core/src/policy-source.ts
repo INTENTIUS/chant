@@ -23,30 +23,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NEXT_RELEASE } from "./release-floors";
 import { gitTree, type WorkspaceTree } from "./workspace/tree";
+import type { GatePolicySource, ResolvedGatePolicySource } from "./gate-policy";
+
+// The source's shape and its check live in `./gate-policy.ts`, so the gate
+// policy bundles alone (#4294) without this module's git fetch.
+export { assertGatePolicySource, type GatePolicySource, type ResolvedGatePolicySource } from "./gate-policy";
 
 /** The first chant that reads `ci.policy.source` and `ci.policy.packs`; a declaration that sets either needs this `minReader`. */
 export const CI_POLICY_SOURCE_FLOOR = NEXT_RELEASE;
-
-/** `ci.policy.source`: where the shared rules live. */
-export interface GatePolicySource {
-  /** The repository: an `https://`, `http://`, `ssh://` or `file://` URL, or `git@<host>:<path>`. */
-  repo: string;
-  /** A tag, a branch or a full commit. */
-  ref: string;
-  /** The Rego directory inside the repository. Default `policy`. */
-  path?: string;
-}
-
-/** The source as fetched: what a report and a decision record. */
-export interface ResolvedGatePolicySource {
-  /** The repository, with any user and password left out. */
-  repo: string;
-  ref: string;
-  /** The commit the ref named when the job fetched it. */
-  commit: string;
-  /** The Rego directory inside the repository. */
-  path: string;
-}
 
 /** A fetched source: its record, and its tree at the commit, rooted at the repository's top. */
 export interface FetchedGatePolicySource {
@@ -56,31 +40,9 @@ export interface FetchedGatePolicySource {
   cleanup: () => void;
 }
 
-const REPO = /^(https?:\/\/[^\s/]+\/\S+|ssh:\/\/[^\s/]+\/\S+|file:\/\/\/?\S+|[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:\S+)$/;
-const REF = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
-
 /** The repository URL with its user and password left out. */
 export function shownPolicyRepo(url: string): string {
   return url.replace(/^([a-z+]+:\/\/)[^/@]*@/, "$1");
-}
-
-/** `source`, checked. Throws with what is wrong. `where` names it, such as `ci.policy.source`. */
-export function assertGatePolicySource(where: string, raw: unknown): asserts raw is GatePolicySource {
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) throw new Error(`${where} must be { repo, ref, path? }`);
-  const o = raw as Record<string, unknown>;
-  for (const key of Object.keys(o)) {
-    if (key !== "repo" && key !== "ref" && key !== "path") throw new Error(`${where}.${key} is not a setting; the settings are repo, ref and path`);
-  }
-  if (typeof o.repo !== "string" || !REPO.test(o.repo) || o.repo.startsWith("-")) {
-    throw new Error(`${where}.repo must be a git URL (https://, ssh://, file:// or git@<host>:<path>)`);
-  }
-  if (typeof o.ref !== "string" || !REF.test(o.ref) || o.ref.includes("..") || o.ref.endsWith("/")) {
-    throw new Error(`${where}.ref must be a tag, a branch or a commit`);
-  }
-  if (o.path !== undefined) {
-    if (typeof o.path !== "string" || o.path.trim() === "") throw new Error(`${where}.path must be a non-empty string`);
-    if (o.path.startsWith("/") || o.path.split("/").includes("..")) throw new Error(`${where}.path must be a directory inside the source repository`);
-  }
 }
 
 function gitIn(dir: string, args: string[]): { status: number | null; stdout: string; stderr: string } {
