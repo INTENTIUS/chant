@@ -209,6 +209,20 @@
               "outcome": "passed"
             }
           ]
+        },
+        "targets": {
+          "vpc": {
+            "startedAt": 0,
+            "durationMs": 0
+          },
+          "dns": {
+            "startedAt": 0,
+            "durationMs": 0
+          },
+          "nat": {
+            "startedAt": 0,
+            "durationMs": 0
+          }
         }
       },
       "ledger": {
@@ -511,6 +525,16 @@
               "outcome": "passed"
             }
           ]
+        },
+        "targets": {
+          "a1": {
+            "startedAt": 0,
+            "durationMs": 0
+          },
+          "a2": {
+            "startedAt": 0,
+            "durationMs": 0
+          }
         }
       },
       "ledger": {
@@ -595,6 +619,12 @@
               "outcome": "passed"
             }
           ]
+        },
+        "targets": {
+          "a3": {
+            "startedAt": 0,
+            "durationMs": 0
+          }
         }
       },
       "ledger": {
@@ -948,7 +978,8 @@
       ],
       "env": {
         "CHANT_HOOKS": ".chant/op-waves/tf-apply/wave-1/hooks.json",
-        "CHANT_APPLY_OUTCOME": ".chant/op-waves/tf-apply/wave-1/hooks-outcome.json"
+        "CHANT_APPLY_OUTCOME": ".chant/op-waves/tf-apply/wave-1/hooks-outcome.json",
+        "CHANT_APPLY_RUNS_RESULT": ".chant/op-waves/tf-apply/wave-1/hooks-runs-result.json"
       },
       "read": {
         "CHANT_HOOKS": {
@@ -965,17 +996,20 @@
             {
               "target": "vpc",
               "op": "tf-apply",
-              "plan": ".chant/op-waves/tf-apply/wave-1/vpc.plan.json"
+              "plan": ".chant/op-waves/tf-apply/wave-1/vpc.plan.json",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
             },
             {
               "target": "dns",
               "op": "tf-apply",
-              "plan": ".chant/op-waves/tf-apply/wave-1/dns.plan.json"
+              "plan": ".chant/op-waves/tf-apply/wave-1/dns.plan.json",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
             },
             {
               "target": "nat",
               "op": "tf-apply",
-              "plan": ".chant/op-waves/tf-apply/wave-1/nat.plan.json"
+              "plan": ".chant/op-waves/tf-apply/wave-1/nat.plan.json",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
             }
           ],
           "runsFile": ".chant/op-waves/tf-apply/wave-1/runs.json",
@@ -1378,7 +1412,8 @@
       ],
       "env": {
         "CHANT_HOOKS": ".chant/op-waves/tf-apply/wave-2/hooks.json",
-        "CHANT_APPLY_OUTCOME": ".chant/op-waves/tf-apply/wave-2/hooks-outcome.json"
+        "CHANT_APPLY_OUTCOME": ".chant/op-waves/tf-apply/wave-2/hooks-outcome.json",
+        "CHANT_APPLY_RUNS_RESULT": ".chant/op-waves/tf-apply/wave-2/hooks-runs-result.json"
       },
       "read": {
         "CHANT_HOOKS": {
@@ -1395,12 +1430,14 @@
             {
               "target": "a1",
               "op": "tf-apply",
-              "plan": ".chant/op-waves/tf-apply/wave-2/a1.plan.json"
+              "plan": ".chant/op-waves/tf-apply/wave-2/a1.plan.json",
+              "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             },
             {
               "target": "a2",
               "op": "tf-apply",
-              "plan": ".chant/op-waves/tf-apply/wave-2/a2.plan.json"
+              "plan": ".chant/op-waves/tf-apply/wave-2/a2.plan.json",
+              "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             }
           ],
           "runsFile": ".chant/op-waves/tf-apply/wave-2/runs.json",
@@ -1457,7 +1494,8 @@
       ],
       "env": {
         "CHANT_HOOKS": ".chant/op-waves/tf-apply/wave-2/hooks.json",
-        "CHANT_APPLY_OUTCOME": ".chant/op-waves/tf-apply/wave-2/hooks-outcome.json"
+        "CHANT_APPLY_OUTCOME": ".chant/op-waves/tf-apply/wave-2/hooks-outcome.json",
+        "CHANT_APPLY_RUNS_RESULT": ".chant/op-waves/tf-apply/wave-2/hooks-runs-result.json"
       },
       "read": {
         "CHANT_HOOKS": {
@@ -1474,7 +1512,8 @@
             {
               "target": "a3",
               "op": "tf-apply",
-              "plan": ".chant/op-waves/tf-apply/wave-2/a3.plan.json"
+              "plan": ".chant/op-waves/tf-apply/wave-2/a3.plan.json",
+              "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             }
           ],
           "runsFile": ".chant/op-waves/tf-apply/wave-2/runs.json",
@@ -1537,17 +1576,20 @@
         {
           "target": "vpc",
           "op": "tf-apply",
-          "plan": ".chant/op-waves/tf-apply/wave-1/vpc.plan.json"
+          "plan": ".chant/op-waves/tf-apply/wave-1/vpc.plan.json",
+          "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
         },
         {
           "target": "dns",
           "op": "tf-apply",
-          "plan": ".chant/op-waves/tf-apply/wave-1/dns.plan.json"
+          "plan": ".chant/op-waves/tf-apply/wave-1/dns.plan.json",
+          "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
         },
         {
           "target": "nat",
           "op": "tf-apply",
-          "plan": ".chant/op-waves/tf-apply/wave-1/nat.plan.json"
+          "plan": ".chant/op-waves/tf-apply/wave-1/nat.plan.json",
+          "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
         }
       ],
       "runsFile": ".chant/op-waves/tf-apply/wave-1/runs.json",
@@ -1729,7 +1771,8 @@
         {
           "target": "a3",
           "op": "tf-apply",
-          "plan": ".chant/op-waves/tf-apply/wave-2/a3.plan.json"
+          "plan": ".chant/op-waves/tf-apply/wave-2/a3.plan.json",
+          "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
       ],
       "runsFile": ".chant/op-waves/tf-apply/wave-2/runs.json",

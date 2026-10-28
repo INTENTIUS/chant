@@ -37,6 +37,12 @@
           "approvedBy": "alice",
           "approvedAt": "2026-10-10T00:00:00Z",
           "spentAt": "2026-10-11T00:00:00.000Z"
+        },
+        "targets": {
+          "staging": {
+            "startedAt": 0,
+            "durationMs": 0
+          }
         }
       },
       "ledger": {
@@ -241,7 +247,8 @@
             {
               "target": "staging",
               "op": "migrate",
-              "plan": ".chant/op-waves/migrations/wave-2/staging.plan.json"
+              "plan": ".chant/op-waves/migrations/wave-2/staging.plan.json",
+              "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             }
           ],
           "runsFile": ".chant/op-waves/migrations/wave-2/runs.json",
@@ -302,7 +309,8 @@
         {
           "target": "staging",
           "op": "migrate",
-          "plan": ".chant/op-waves/migrations/wave-2/staging.plan.json"
+          "plan": ".chant/op-waves/migrations/wave-2/staging.plan.json",
+          "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
       ],
       "runsFile": ".chant/op-waves/migrations/wave-2/runs.json",

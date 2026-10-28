@@ -16,7 +16,10 @@ import { productWavesSpec } from "../components/product-pipeline";
 const digest = (n: string) => `sha256:${n.repeat(64)}`;
 const member = (name: string, planDigest: string): ChangeSetMember =>
   ({ member: name, lexicon: "pulumi", planner: "pulumi", status: "planned", planDigest, holes: [] }) as ChangeSetMember;
-const doc = (planDigest: string): ChangeSetDocument => composeChangeSet([{ member: member("shop-dev", planDigest), entries: [] }]);
+const doc = (planDigest: string, entries: ChangeSetDocument["entries"] = []): ChangeSetDocument => composeChangeSet([{ member: member("shop-dev", planDigest), entries }]);
+/** A plan that does more than the approved one: a new digest planning the same entries is still covered (planCoveredBy). */
+const movedDoc = (planDigest: string): ChangeSetDocument =>
+  doc(planDigest, [{ member: "shop-dev", lexicon: "pulumi", planner: "pulumi", address: "urn:shop-dev::bucket", type: "aws:s3/bucket:Bucket", action: "create", attributes: [] }] as unknown as ChangeSetDocument["entries"]);
 
 const plywood = { product: "plywood", op: "pulumi-up", prGate: "up", gateName: "wave-{k}", approval: "pull-request" as const };
 const spec: OpWavesSpec = productWavesSpec(
@@ -80,7 +83,7 @@ describe("the pull request's approval as an op-waves approval source (#4550)", (
 
   test("a wave whose plan moved waits at its own gate", async () => {
     const approved = doc(digest("a"));
-    const moved = doc(digest("c"));
+    const moved = movedDoc(digest("c"));
     const h = harness(moved);
     try {
       const result = await run(h, memoryGateLedgerPort({ resolutions: [approval(approved)] }), [approved]);

@@ -217,7 +217,8 @@ export async function opWaveStepFacts(
     own = undefined;
   }
   const attributes = { member: plan.member, kind: capability.kind, ...counts, ...(own?.attributes ?? {}) };
-  return { attributes, ...(own?.spans?.length ? { spans: own.spans } : {}) };
+  // #4615: what the engine reported per resource goes on with the rest.
+  return { attributes, ...(own?.spans?.length ? { spans: own.spans } : {}), ...(own?.resources?.length ? { resources: own.resources } : {}) };
 }
 
 /** Apply one run through the spec's step (#4545), with the plan the gate decided. */

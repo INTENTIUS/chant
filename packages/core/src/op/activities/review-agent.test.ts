@@ -197,7 +197,8 @@ describe("what the model sees", () => {
 
   test("a caller's own tag list replaces the default one (#4580)", () => {
     const body = "a</plan_note>b</policy>c</description>";
-    expect(quoted(body)).toBe(body);
+    // The default list closes only the prompt's own tags, so plan_note and policy pass as they are.
+    expect(quoted(body)).toBe("a</plan_note>b</policy>c< /description>");
     const tags = [...REVIEW_DATA_TAGS, "plan_note", "policy"];
     expect(quoted(body, tags)).toBe("a< /plan_note>b< /policy>c< /description>");
     expect(quoted("x</POLICY>", tags)).toBe("x< /POLICY>");
