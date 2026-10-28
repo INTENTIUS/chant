@@ -303,7 +303,18 @@ export function unescapeHcl(raw: string): string {
   return out;
 }
 
-/** Write a value as the content of an HCL string literal. */
+const CONTROL_ESCAPES: Record<string, string> = { "\n": "\\n", "\r": "\\r", "\t": "\\t" };
+
+/**
+ * Write a value as the content of an HCL string literal: `\` and `"`
+ * escaped, a control character as `\n`, `\r`, `\t` or `\uNNNN`, and `${`
+ * and `%{` doubled so nothing in it is a template. The replacements are
+ * functions because a replacement string reads `$$` as one `$`.
+ */
 export function escapeHcl(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\$\{/g, "$${").replace(/%\{/g, "%%{");
+  return value
+    .replace(/[\\"]/g, (c) => `\\${c}`)
+    .replace(/[\u0000-\u001f\u007f]/g, (c) => CONTROL_ESCAPES[c] ?? `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`)
+    .replace(/\$\{/g, () => "$${")
+    .replace(/%\{/g, () => "%%{");
 }

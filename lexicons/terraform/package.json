@@ -34,6 +34,11 @@
       "types": "./dist/pin/index.d.ts",
       "default": "./dist/pin/index.js"
     },
+    "./template": {
+      "development": "./src/template/index.ts",
+      "types": "./dist/template/index.d.ts",
+      "default": "./dist/template/index.js"
+    },
     "./module-catalog": {
       "development": "./src/module-catalog/index.ts",
       "types": "./dist/module-catalog/index.d.ts",
