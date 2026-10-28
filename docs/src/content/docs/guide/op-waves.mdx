@@ -450,7 +450,7 @@ The answer is optional. Its `policy` rows are `{ source, result, rules, reason? 
 
 A hook that throws, or answers in a shape chant cannot read, has failed. With the default `onFailure: "fail"` the wave exits 1 before the gate, and nothing is approved or applied. Under `"approve"` it holds the wave and the hooks after it still run. `targets` limits a hook to the runs it matches, as for a command hook. A product feature-detects this on `OP_WAVE_AFTER_PLAN_FLOOR`.
 
-The spec's command hooks at `after.plan` still run at the same point, after the set digest and before the gate settles.
+The spec's command hooks at `after.plan` still run at the same point, after the set digest and before the gate settles. When those hooks call back into the product's own process, pass `hookExec`, an exec that returns a promise, such as `spawnExecAsync`. The job then waits for each hook without blocking the event loop, so the product's process can answer the call.
 
 ### Hooks outside the waves
 
