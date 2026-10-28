@@ -107,10 +107,16 @@
  *
  * The cut records tracked files, so a Node program's copy has no
  * `node_modules`. Before the copy's first preview, `plan` and `run` call
- * `prepareReleaseCopy` (`./release-copy.ts`), which runs `pulumi install`
+ * `prepareProgram` (`./release-copy.ts`), which runs `pulumi install`
  * (`plunge install`) in the copy when its runtime needs one, and refuses a
  * Node copy with no lockfile by name, since an install would take today's
  * versions rather than the release's.
+ *
+ * A CI job's checkout has the same gap, so the same call prepares the
+ * step's own directory by the same rule (plywood#22): a Node program with
+ * no `node_modules` in its directory or above it, and a lockfile beside its
+ * package.json, gets one `<engine> install` before the job's first engine
+ * run; with no lockfile the step refuses by name.
  *
  * ## review stacks (#4609)
  *
@@ -192,7 +198,7 @@ import type { PulumiStep } from "./change-set";
 import { writePulumiExportSnapshot, type PulumiExportWrite } from "./stack-export-snapshot";
 import { pointerSegment, pulumiStackReferences, stackReferenceOwner } from "./stack-references";
 import { isObject } from "./values";
-import { prepareReleaseCopy } from "./release-copy";
+import { prepareProgram } from "./release-copy";
 import { initReviewStack, reviewConfigSource, reviewStackFor, reviewStackLocation } from "./review-stack";
 
 /** The lock grain values of `ci.lockGrain` (#4552's ruling A). */
@@ -724,10 +730,10 @@ function isArtifact(value: unknown): value is PulumiUpArtifact {
   return v?.kind === "pulumi-up" && typeof v.planDigest === "string" && typeof v.shape === "object" && v.shape !== null;
 }
 
-/** A release's copy of the program, made runnable before its first engine run (#4542). */
-async function readyCopy(r: Resolved, opts: PulumiUpOptions): Promise<void> {
+/** The program's directory, a release's copy (#4542) or the checkout in place (plywood#22), made runnable before its first engine run. */
+async function readyProgram(r: Resolved, opts: PulumiUpOptions): Promise<void> {
   const runners = runnersFor(r, opts);
-  await prepareReleaseCopy({ dir: r.dir, member: r.member, engine: r.engine, run: r.engine === "plunge" ? runners.plunge : runners.pulumi });
+  await prepareProgram({ dir: r.dir, member: r.member, engine: r.engine, run: r.engine === "plunge" ? runners.plunge : runners.pulumi });
 }
 
 async function planStack(ctx: DeployContext, original: PulumiUpStepInput, opts: PulumiUpOptions): Promise<CapabilityPlan> {
@@ -737,7 +743,7 @@ async function planStack(ctx: DeployContext, original: PulumiUpStepInput, opts: 
   const location = review ? { location: locationOf(r, review.stack) } : {};
   const unresolved = [...(ctx.unresolvedInputs ?? [])].sort();
   if (unresolved.length > 0) return { ...waitingStack(ctx, r, input, unresolved), ...location };
-  await readyCopy(r, opts);
+  await readyProgram(r, opts);
   if (review) {
     const runners = runnersFor(r, opts);
     await initReviewStack({
@@ -902,7 +908,7 @@ async function runStack(ctx: DeployContext, original: PulumiUpStepInput, opts: P
   const handed = ctx.plans?.[r.member];
   const fromWave = isArtifact(handed);
   const targets = ctx.targets && ctx.targets.length > 0 ? ctx.targets : undefined;
-  await readyCopy(r, opts);
+  await readyProgram(r, opts);
 
   // Ruling D: no approved plan handed in, so plan here and apply that.
   let approved: PulumiUpArtifact;
