@@ -332,6 +332,11 @@
       "items": { "type": "string", "minLength": 1 },
       "description": "Added within contract version 1 by #4552, written by chant 0.124.55 and newer. The names the pull request's target locks take under ci.locks when any member is on the resource lock grain, sorted: each such member's row keys (estate <e> <address>, root <r> <address>, urn <urn>, stack <project>/<stack>, object <id>), and the component name of every component with a member on another grain. chant lock --from-report locks these in place of selection.waves. Absent when no member is on the resource grain."
     },
+    "narrowed": {
+      "type": "object",
+      "additionalProperties": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+      "description": "Added within contract version 1 by #4626, written by chant 0.124.55 and newer. Plan stage: the addresses each component's plan was narrowed to with pr-plan --target, from the command line or the preview comment, by component. Absent when nothing was narrowed."
+    },
     "crossStackEdges": {
       "type": "array",
       "description": "Added within contract version 1 by #4617, written by chant 0.124.55 and newer. Each stack outside the workspace a member reads (a Pulumi StackReference no step applies), marked stale, current or unknown from the control repo's entries and apply records. The plan job marks each one unknown; the job that posts the note marks them again from a checkout of the control repo. Absent when no member reads one.",

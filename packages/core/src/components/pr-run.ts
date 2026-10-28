@@ -187,6 +187,8 @@ export interface PrPlanSet {
   groups?: PrPlanGroup[];
   /** The components that could have grouped and did not, with why (ws-107, ruling 1): the fan-out's `fallbacks`. */
   fallbacks?: FanOutGroupFallback[];
+  /** The addresses each component's plan was narrowed to (#4626, `pr-plan --target`), by component. Absent when nothing was narrowed. */
+  targets?: Record<string, string[]>;
   /** Whether any component failed to plan. */
   failed: boolean;
   /** A capability's plan threw `policyDenied` (#4550): the stage exits 7, not 1. */
@@ -384,6 +386,7 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
     ...(Object.keys(locations).length > 0 ? { locations } : {}),
     ...(Object.keys(deployedOutputs).length > 0 ? { deployedOutputs } : {}),
     ...(Object.keys(plannedOutputs).length > 0 ? { plannedOutputs } : {}),
+    ...(options.targets && Object.keys(options.targets).length > 0 ? { targets: Object.fromEntries(Object.entries(options.targets).map(([c, a]) => [c, [...a]])) } : {}),
   };
 }
 
@@ -1251,6 +1254,7 @@ export function prReport(input: PrReportInput): PrReport {
     ...(input.resumed ? { resumed: { applied: [...input.resumed].sort() } } : {}),
     ...(input.set.deployedOutputs ? { deployedOutputs: input.set.deployedOutputs } : {}),
     ...(input.set.plannedOutputs ? { plannedOutputs: input.set.plannedOutputs } : {}),
+    ...(input.set.targets ? { narrowed: input.set.targets } : {}),
     ...(input.rounds && input.rounds.length > 0 ? { rounds: input.rounds } : {}),
     ...(input.migrations && input.migrations.length > 0 ? { migrations: input.migrations } : {}),
     approval: input.approval,

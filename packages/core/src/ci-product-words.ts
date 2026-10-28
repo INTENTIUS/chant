@@ -443,8 +443,11 @@ export function productWaveGate(words: CiProductWords, gate: string, k: number):
 
 /** A comment read against the product's grammar. */
 export type ParsedProductComment =
-  /** A re-plan, of one member when the comment names it. */
-  | { kind: "plan"; member?: string }
+  /**
+   * A re-plan, of one member when the comment names it, narrowed to each
+   * `--target <address>` (or `<member>:<address>`) after the plan word (#4626).
+   */
+  | { kind: "plan"; member?: string; targets?: string[] }
   /** An apply, through wave n when the comment names `wave-<n>`. */
   | { kind: "apply"; wave?: number }
   | { kind: "lock" }
@@ -455,6 +458,13 @@ export type ParsedProductComment =
 
 /** A member as a comment may name it: path segments, no leading dash, no shell or glob syntax. */
 const MEMBER = /^[A-Za-z0-9_][A-Za-z0-9_.\/-]{0,199}$/;
+/**
+ * A target address as a comment may give it (#4626): a Terraform address,
+ * a Pulumi URN, or `<member>:<address>`, at most 500 characters, with no
+ * leading dash and none of the characters a shell or a quote would read.
+ * It never reaches a shell: the job reads the comment from a variable.
+ */
+const TARGET = /^[A-Za-z0-9_][A-Za-z0-9_.:\/\[\]"*@=+$,-]{0,499}$/;
 /** The longest ask an agent comment may carry. */
 export const PRODUCT_COMMENT_ASK_MAX = 2000;
 /** Commands a comment never runs, named in the reply so nobody waits on them. */
@@ -526,11 +536,25 @@ export function parseProductComment(words: CiProductWords, body: unknown, env: R
       return m ? { kind: "apply", wave: Number(m[1]) } : { kind: "refused", reason: `${line} takes nothing, or a wave like \`wave-2\`` };
     }
     case "plan": {
-      if (parts.length > 3) return { kind: "refused", reason: `${line} takes one ${words.noun[0]} at most` };
-      const member = parts[2];
-      if (member === undefined) return { kind: "plan" };
+      // #4626: repeatable --target <address> after the plan word, and at most one member.
+      const targets: string[] = [];
+      const rest: string[] = [];
+      for (let i = 2; i < parts.length; i++) {
+        const w = parts[i]!;
+        if (w === "--target") {
+          const address = parts[++i];
+          if (address === undefined) return { kind: "refused", reason: `\`--target\` needs an address after it: \`${prefix} ${typed} --target <address>\`` };
+          if (!TARGET.test(address)) return { kind: "refused", reason: "a target is a resource address or URN, or <member>:<address>, with no spaces or shell characters" };
+          targets.push(address);
+        } else if (w.startsWith("-")) return { kind: "refused", reason: `${line} takes \`--target <address>\` and no other flag` };
+        else rest.push(w);
+      }
+      if (rest.length > 1) return { kind: "refused", reason: `${line} takes one ${words.noun[0]} at most` };
+      const member = rest[0];
+      const narrowed = targets.length > 0 ? { targets } : {};
+      if (member === undefined) return { kind: "plan", ...narrowed };
       if (!MEMBER.test(member) || member.split("/").some((s) => s === "" || s === "." || s === "..")) return { kind: "refused", reason: `the ${words.noun[0]} is a name or a path from the repository root` };
-      return { kind: "plan", member };
+      return { kind: "plan", member, ...narrowed };
     }
   }
 }

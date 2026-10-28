@@ -122,7 +122,7 @@ import {
 import { FORGE_KINDS, forgeFromEnv, forgePrincipalOf, type ForgeKind, type PrForge } from "../../pr-forge";
 import { GITHUB_COMMENT_LIMIT, GITLAB_NOTE_LIMIT } from "../../plan-summary";
 import { upsertPlanNote } from "../../pr-post";
-import { activeProductWords, productContext } from "../../ci-product-words";
+import { activeProductWords, commandWord, parseProductComment, productContext } from "../../ci-product-words";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import { formatError, formatInfo, formatSuccess, formatWarning } from "../format";
 import { reportUninstalledDependencies } from "../dependencies";
@@ -138,6 +138,7 @@ import type { ComponentChangeSignal, FanOutPlan } from "../../components/fan-out
 import { assertTargetsAccepted, failedRunExitCode, type DriverComponent } from "../../components/driver";
 import { TargetsRefusedError, type CapabilityRegistry } from "../../components/capability";
 import { prPlanTargets } from "../../components/pr-targets";
+import { PREVIEW_COMMENT_ENV } from "../../components/pr-pipeline";
 import type { ComponentEnvironmentDeclaration } from "../../components/component";
 import { prLoopHooksAt, runPrHooks, type PrHoldSettled, type PrHookPlace, type PrLoopHooks } from "../../components/pr-hooks";
 import { decidePrPolicyOverride, policyReviewOf, prLoopPolicyAt, prPolicyReport, runPrPolicy, spendPrPolicyOverride, type PrLoopPolicy } from "../../components/pr-policy";
@@ -509,6 +510,23 @@ export async function planBare(p: Prepared, onRunEvent?: RunEventSink): Promise<
 }
 
 /**
+ * `pr-plan --comment-targets` (#4626): the `--target` addresses of the
+ * preview comment in {@link PREVIEW_COMMENT_ENV}, read with the product's
+ * grammar, or the exit code when the comment is refused. No comment, or one
+ * with no target: none. The checks `--target` makes follow in
+ * {@link narrowToTargets}.
+ */
+function commentTargets(env: NodeJS.ProcessEnv = process.env): string[] | number {
+  const body = env[PREVIEW_COMMENT_ENV];
+  if (body === undefined || body.trim() === "") return [];
+  const words = activeProductWords();
+  const parsed = parseProductComment(words, body, env);
+  if (parsed === undefined) return [];
+  if (parsed.kind === "refused") return fail(`the preview comment is refused: ${parsed.reason}, so nothing was planned`, `/${words.product} ${commandWord(words, "plan") ?? "plan"} --target <address> narrows the preview to the address.`);
+  return parsed.kind === "plan" ? (parsed.targets ?? []) : [];
+}
+
+/**
  * `pr-plan --target` (#4620): the addresses by member, set on `p`, or the
  * exit code when a value is refused or a targeted member has a capability
  * that cannot narrow, which is named before anything plans.
@@ -816,7 +834,10 @@ async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> 
   }
   const p = await prepare(ctx, "plan");
   if (typeof p === "number") return p;
-  const narrowed = narrowToTargets(p, ctx.args.targets);
+  // #4626: the preview comment's --target addresses, read from the comment the job carries in a variable.
+  const fromComment = ctx.args.commentTargets ? commentTargets() : [];
+  if (typeof fromComment === "number") return fromComment;
+  const narrowed = narrowToTargets(p, [...(ctx.args.targets ?? []), ...fromComment]);
   if (narrowed !== undefined) return narrowed;
   if (ctx.args.parallelism !== undefined) p.parallelism = ctx.args.parallelism;
   const op = prOp(ctx.args.pr, p.member);
