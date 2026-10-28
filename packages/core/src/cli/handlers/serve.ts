@@ -10,6 +10,14 @@ export async function runServeLsp(ctx: CommandContext): Promise<number> {
 }
 
 export async function runServeMcp(ctx: CommandContext): Promise<number> {
+  // chant#4655 — --propose is a tier of the read-only server, never of the ordinary one.
+  if (ctx.args.propose === true && ctx.args.readOnly !== true) {
+    console.error(formatError({
+      message: "chant serve mcp --propose needs --read-only",
+      hint: "Usage: chant serve mcp --read-only --propose (serves the read tools and a product's tools that open pull requests)",
+    }));
+    return 1;
+  }
   const { McpServer } = await import("../mcp/server");
   // #2700 — main() hands over no plugins only at a workspace root with no
   // lexicon of its own (anywhere else it refuses first). There the lexicons
@@ -29,6 +37,7 @@ export async function runServeMcp(ctx: CommandContext): Promise<number> {
     instructions,
     workspace: { cwd: process.cwd() },
     ...(ctx.args.readOnly === true ? { readOnly: true } : {}),
+    ...(ctx.args.propose === true ? { propose: true } : {}),
     ...(product ? { product } : {}),
   });
   await server.start();

@@ -214,6 +214,20 @@ export { parseRequiresList, PR_APPLY_REQUIRES, type PrApplyRequire } from "./pr-
  */
 export const PRODUCT_MCP_HOOK_FLOOR = OTLP_EXPORTER_FLOOR;
 export type { ProductMcpContext, ProductMcpHook } from "./cli/mcp/product-tools";
+
+/**
+ * The `--propose` tier (chant#4655): `runChantInProcess(["serve", "mcp",
+ * "--read-only", "--propose"], words, { mcp: hook })`, or `propose: true` on
+ * the hook, serves the read-only server's tools plus the product tools that
+ * declare `forgeWrite: true` on their `McpToolContribution`, tools that open
+ * a pull request or a comment and do nothing else. A product's own tool and
+ * hook types widen from `readOnly: true` to `readOnly: true` or `forgeWrite:
+ * true` for these, and its hook gains `propose?: boolean`. Feature-detect on
+ * `PRODUCT_MCP_PROPOSE_FLOOR`: on an older chant the read-only server drops a
+ * `forgeWrite` tool, and `--propose` is not a flag it parses.
+ */
+export { PRODUCT_MCP_PROPOSE_FLOOR, PRODUCT_TOOL_PROPOSE_WORDS } from "./cli/mcp/product-tools";
+export type { McpToolContribution } from "./mcp/types";
 export {
   activeOtlp,
   configureOtlp,

@@ -53,14 +53,17 @@ export function detectPackageManager(dir?: string): "bun" | "npm" {
  * The MCP registration chant writes: one stdio server named `chant`. With
  * `readOnly` (`chant init --mcp-read-only`, chant#4543) it registers
  * `chant serve mcp --read-only`, which serves only the tools that change
- * nothing.
+ * nothing. With `readOnly` and `propose` (`chant init --mcp-read-only
+ * --propose`, chant#4655) it registers `chant serve mcp --read-only
+ * --propose`; `propose` without `readOnly` is refused.
  */
-export function generateMcpConfig(pm: "bun" | "npm", options: { readOnly?: boolean } = {}): string {
+export function generateMcpConfig(pm: "bun" | "npm", options: { readOnly?: boolean; propose?: boolean } = {}): string {
+  if (options.propose && !options.readOnly) throw new Error("--propose is a tier of the read-only server: use --mcp-read-only --propose");
   const config = {
     mcpServers: {
       chant: {
         command: pm === "bun" ? "bunx" : "npx",
-        args: ["chant", "serve", "mcp", ...(options.readOnly ? ["--read-only"] : [])],
+        args: ["chant", "serve", "mcp", ...(options.readOnly ? ["--read-only"] : []), ...(options.readOnly && options.propose ? ["--propose"] : [])],
       },
     },
   };

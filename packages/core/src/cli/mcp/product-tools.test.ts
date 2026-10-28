@@ -10,7 +10,11 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { McpServer } from "./server";
-import { productToolWriteWord, ProductToolRefusedError, type ProductMcpHook } from "./product-tools";
+import { PRODUCT_MCP_PROPOSE_FLOOR, productToolWriteWord, ProductToolRefusedError, type ProductMcpHook } from "./product-tools";
+import { PROPOSE_INSTRUCTIONS } from "./server";
+import { READ_ONLY_CORE_TOOLS } from "./read-only";
+import { NEXT_RELEASE } from "../../release-floors";
+import * as ciProduct from "../../ci-product";
 import { reportReader, reportToolKey, safeReportKey } from "./report-tools";
 import type { ToolDefinition } from "./types";
 import type { McpToolContribution } from "../../mcp/types";
@@ -102,6 +106,58 @@ describe("the product tool hook (#4555)", () => {
     expect(JSON.parse(got.text)).toMatchObject({ key: `7/${"c".repeat(40)}/pr-plan.json`, document: { status: "planned" } });
     expect((await call(server, "report", { pr: "7", commit: "c".repeat(40), file: "pr-apply.json" })).isError).toBe(true);
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe("the --propose tier (#4655)", () => {
+  const forge = (name: string, handler: McpToolContribution["handler"] = async () => ({ opened: name })): McpToolContribution => ({ ...tool(name, undefined, handler), forgeWrite: true });
+  const hook = (tools: McpToolContribution[], extra: Partial<ProductMcpHook> = {}): ProductMcpHook => ({ product: "terragucci", tools: () => tools, ...extra });
+
+  test("serves the read tools, the readOnly product tools and the forgeWrite ones, and no op, signal, apply or approve tool", async () => {
+    const server = new McpServer([], { readOnly: true, propose: true, product: hook([forge("request_from_template"), tool("templates", true), tool("drift_scan")]) });
+    expect(server.readOnly).toBe(true);
+    expect(server.propose).toBe(true);
+    const names = await listed(server);
+    expect(names.filter((n) => n.startsWith("terragucci:")).sort()).toEqual(["terragucci:request_from_template", "terragucci:templates"]);
+    expect(names.filter((n) => !n.startsWith("terragucci:")).every((n) => READ_ONLY_CORE_TOOLS.has(n))).toBe(true);
+    for (const name of ["op-run", "op-signal", "op-approve", "apply", "lifecycle-snapshot"]) expect(names, name).not.toContain(name);
+    expect(JSON.parse((await call(server, "terragucci:request_from_template")).text)).toEqual({ opened: "request_from_template" });
+    const res = await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} });
+    const instructions = (res.result as { instructions: string }).instructions;
+    expect(instructions).toContain(PROPOSE_INSTRUCTIONS);
+    expect(instructions).toMatch(/open pull requests and comments only/);
+    expect(instructions).toMatch(/belong to a person/);
+  });
+
+  test("the read-only server without propose refuses to start, naming the forgeWrite tool", () => {
+    const tools = [forge("request_from_template"), tool("templates", true)];
+    expect(() => new McpServer([], { readOnly: true, product: hook(tools) })).toThrow(ProductToolRefusedError);
+    expect(() => new McpServer([], { readOnly: true, product: hook(tools) })).toThrow(/terragucci:request_from_template|request_from_template/);
+    expect(() => new McpServer([], { product: hook(tools) })).toThrow(/request_from_template.*--propose/);
+  });
+
+  test("a forgeWrite tool named with a strong word refuses the start, naming the word", () => {
+    for (const [name, word] of [["approve_request", "approve"], ["merge_request", "merge"], ["request_override", "override"], ["apply_template", "apply"], ["create_request", "create"]] as const) {
+      const start = () => new McpServer([], { readOnly: true, propose: true, product: hook([forge(name)]) });
+      expect(start, name).toThrow(ProductToolRefusedError);
+      expect(start, name).toThrow(new RegExp(`${name} would ${word}`));
+    }
+    expect(productToolWriteWord("propose_change", ["request", "propose"])).toBeUndefined();
+    expect(productToolWriteWord("request_from_template", ["request", "propose"])).toBeUndefined();
+  });
+
+  test("propose on the hook turns the tier on, and an ordinary server refuses it", async () => {
+    const tools = [forge("request_from_template"), tool("templates", true)];
+    expect(await listed(new McpServer([], { product: hook(tools, { propose: true }) }))).toContain("terragucci:request_from_template");
+    expect(() => new McpServer([], { product: hook(tools, { readOnly: false, propose: true }) })).toThrow(/--read-only --propose/);
+    // The ordinary server serves a forgeWrite tool as any other.
+    expect(await listed(new McpServer([], { product: hook(tools, { readOnly: false }) }))).toContain("terragucci:request_from_template");
+  });
+
+  test("the tier's floor is on @intentius/chant/ci-product for a product to feature-detect", () => {
+    expect(PRODUCT_MCP_PROPOSE_FLOOR).toBe(NEXT_RELEASE);
+    expect(ciProduct.PRODUCT_MCP_PROPOSE_FLOOR).toBe(PRODUCT_MCP_PROPOSE_FLOOR);
+    expect(ciProduct.PRODUCT_TOOL_PROPOSE_WORDS).toEqual(["request", "propose"]);
   });
 });
 

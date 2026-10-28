@@ -18,6 +18,15 @@ export interface McpToolContribution {
    * that leaves it out is served only by the ordinary server.
    */
   readOnly?: boolean;
+  /**
+   * A CI product's tool that writes to the forge and nowhere else (chant#4655):
+   * it opens a pull request or posts a comment, and runs no Op, resolves no
+   * gate, approves, merges and applies nothing. `chant serve mcp --read-only
+   * --propose` serves a product tool that declares this; the read-only server
+   * without `--propose` refuses to start with one, and the ordinary server
+   * serves it as any other tool. Lexicon tools do not use it.
+   */
+  forgeWrite?: true;
 }
 
 export interface McpResourceContribution {
