@@ -19,6 +19,10 @@
  *   (`CHANT_FORGE_TOKEN` by default). Scope that variable to the
  *   `<agent>-push` environment, protected and masked, so the agent job never
  *   holds it.
+ *
+ * A workspace member's drift Op runs in the member's directory, so its
+ * artifact holds `<member>/.chant/agent` (#4619). Both agent jobs run at
+ * the repository root and take `dir`, that path, as their agent directory.
  */
 
 import { GITLAB_DROP_FORGE_TOKENS } from "@intentius/chant/ci-handover";
@@ -92,12 +96,15 @@ export interface GitlabAgentJobsInput {
   bin?: string;
   /** For a drift agent: the Op's job and its rules. */
   after?: { job: string; rules: unknown[] };
+  /** The agent directory from the repository root: where the drift Op's artifact put the drift. Default {@link AGENT_DIR}. */
+  dir?: string;
 }
 
 /** The agent job and the push job. */
 export function gitlabAgentJobs(i: GitlabAgentJobsInput): { agent: Record<string, unknown>; push: Record<string, unknown> } {
   const s = i.settings;
-  const lines = agentCommandLines("gitlab", i.bin);
+  const dir = i.dir ?? AGENT_DIR;
+  const lines = agentCommandLines("gitlab", i.bin, dir);
   const comment = s.on === "comment";
   const tags = gitlabTags(i.runner);
   const variables = { ...agentSettingsEnv(s), GIT_DEPTH: "0" };
@@ -125,7 +132,7 @@ export function gitlabAgentJobs(i: GitlabAgentJobsInput): { agent: Record<string
       lines.prepare,
       lines.run,
     ],
-    artifacts: { when: "always", paths: [AGENT_DIR], expire_in: AGENT_ARTIFACT_EXPIRY },
+    artifacts: { when: "always", paths: [dir], expire_in: AGENT_ARTIFACT_EXPIRY },
   };
   const tokenVar = i.tokenEnv ?? AGENT_GITLAB_TOKEN_ENV;
   const push: Record<string, unknown> = {
@@ -139,7 +146,7 @@ export function gitlabAgentJobs(i: GitlabAgentJobsInput): { agent: Record<string
     needs: [{ job: i.jobName, artifacts: true }],
     script: [
       // The agent job leaves a decision whenever it ran; with none, the drift check found nothing.
-      ...(comment ? [] : [`if [ ! -f ${AGENT_DIR}/${AGENT_DECISION_FILE} ]; then echo "the agent did not run"; exit 0; fi`]),
+      ...(comment ? [] : [`if [ ! -f ${dir}/${AGENT_DECISION_FILE} ]; then echo "the agent did not run"; exit 0; fi`]),
       ...head,
       LEDGER_FETCH,
       PLAIN_REMOTE,
@@ -159,7 +166,8 @@ export function gitlabAgentHeader(jobName: string, s: AgentSettings, tokenVar = 
       ? `#   ${jobName}: answers ${s.comment} from a pipeline of the default branch started with ${GITLAB_AGENT_PR_VAR}=<iid> and ${GITLAB_AGENT_ASK_VAR}=<ask>`
       : `#   ${jobName}: after the drift check exits ${CHANT_EXIT.drift}, opens or updates a merge request from ${s.branch}`,
     `#     ${gitlabAgentPushJobName(jobName)} pushes with ${tokenVar}: scope it to environment ${gitlabAgentEnvironment(jobName)}, protected and masked; the model's key is ${s.keyEnv}`,
-    `#     the fetched head is ${AGENT_HEAD_REF}; runs are limited to ${s.maxRuns ?? "no fixed number of"} a day on the ledger`,
+    `#     the fetched head is ${AGENT_HEAD_REF}; runs are limited to ${s.maxRuns ?? "no fixed number of"} a day on the ledger` +
+      (s.maxCostUsd !== undefined ? `, and to $${s.maxCostUsd} a day of recorded cost` : ""),
   ];
 }
 

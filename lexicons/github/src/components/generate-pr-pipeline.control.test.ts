@@ -65,3 +65,30 @@ describe("the control repo's workflow on GitHub (#4568)", () => {
     expect(doc.jobs.dependents!.steps[1]!.run).toContain("workspace run --dependents-of");
   });
 });
+
+// #4619: the note job reads the control repo, read-only, so the note marks the cross-stack edges.
+for (const forge of ["github", "forgejo"] as const) {
+  describe(`the ${forge} plan-note job's read of the control repo (#4619)`, () => {
+    const withRead = { target: resolveControlTarget({ repo: "github.com/acme/control", op: "deploy", tokenSecret: "PLYWOOD_CONTROL_TOKEN", readTokenSecret: "PLYWOOD_CONTROL_READ" }, "network") };
+
+    test("fetches the control repo's chant/lifecycle with the read secret before it posts", () => {
+      const { yaml } = generateGithubPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true, forge, control: withRead, words: { product: "plywood" } } });
+      const doc = parseYAML(yaml) as { jobs: Record<string, Job> };
+      const steps = doc.jobs["plan-note"]!.steps;
+      const read = steps.findIndex((s) => s.run?.includes("refs/heads/chant/lifecycle"));
+      const post = steps.findIndex((s) => s.run?.includes("components pr-post"));
+      expect(read).toBeGreaterThan(-1);
+      expect(read).toBe(post - 1);
+      expect(steps[read]!.env).toEqual({ CHANT_CONTROL_READ_TOKEN: "${{ secrets.PLYWOOD_CONTROL_READ || github.token }}" });
+      expect(steps[read]!.run).toContain('echo "CHANT_CONTROL_DIR=$chant_control_dir" >>"$GITHUB_ENV"');
+      // The plan job runs the change's code and never holds the read secret; no job but the dispatch holds the dispatch token.
+      expect(JSON.stringify(doc.jobs.plan)).not.toContain("PLYWOOD_CONTROL_READ");
+      expect(JSON.stringify(doc.jobs["plan-note"])).not.toContain("PLYWOOD_CONTROL_TOKEN");
+    });
+
+    test("without a control repo the note job reads none", () => {
+      const { yaml } = generateGithubPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true, forge } });
+      expect(yaml).not.toContain("CHANT_CONTROL_DIR");
+    });
+  });
+}

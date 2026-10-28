@@ -24,6 +24,7 @@ import {
   agentRunRecordInput,
   agentSettingsEnv,
   agentSettingsFromEnv,
+  costInWindow,
   landAgentChange,
   overLimit,
   prepareAgentRun,
@@ -56,7 +57,18 @@ function driftSettings(): AgentSettings {
 }
 
 const event = (body: string, user = "ana") => ({ comment: { body, user: { login: user } }, issue: { number: 7, pull_request: {} } });
-const run = (started: string): OpRunRecord => ({ version: 1, id: started, op: "plywood-agent", env: "local", started, ended: started, status: "ok", labels: {}, outcomes: {}, phases: [] });
+const run = (started: string, usd?: number): OpRunRecord => ({
+  version: 1,
+  id: started,
+  op: "plywood-agent",
+  env: "local",
+  started,
+  ended: started,
+  status: "ok",
+  labels: {},
+  outcomes: usd === undefined ? {} : { agent: { trigger: "comment", result: "pushed", reason: "pushed", usage: { usd } } },
+  phases: [],
+});
 
 /** A git that answers the calls the agent makes, and records them. */
 function fakeGit(o: { head?: string; fetched?: string; paths?: string[]; patch?: string; remoteTip?: string; tipAuthor?: string; applyFails?: boolean } = {}): AgentGit & { calls: string[][] } {
@@ -121,6 +133,28 @@ describe("guarded paths and prompts", () => {
     expect(overLimit(s, [run("2026-10-25T01:00:00Z"), run("2026-10-27T11:00:00Z")], NOW)).toBeUndefined();
     expect(overLimit({}, [run("2026-10-27T11:00:00Z")], NOW)).toBeUndefined();
   });
+
+  // #4619: a money limit summed from the costs the run records carry, over the same day.
+  test("adds up the recorded costs of the last day against the money limit", () => {
+    const s = resolveAgentSpec("plywood-agent", { on: "comment", comment: "/plywood agent", maxCostUsd: 5 }, "plywood");
+    expect(s.maxCostUsd).toBe(5);
+    expect(costInWindow([run("2026-10-27T01:00:00Z", 1.5), run("2026-10-27T11:00:00Z", 2), run("2026-10-25T11:00:00Z", 40), run("2026-10-27T11:30:00Z")], NOW)).toBe(3.5);
+    expect(overLimit(s, [run("2026-10-27T01:00:00Z", 1.5), run("2026-10-27T11:00:00Z", 3)], NOW)).toBeUndefined();
+    expect(overLimit(s, [run("2026-10-27T01:00:00Z", 2), run("2026-10-27T11:00:00Z", 3)], NOW)).toBe("the agent's runs cost $5.00 in the last day, and its limit is $5.00");
+    // A run older than the window, and one that reported no cost, add nothing.
+    expect(overLimit(s, [run("2026-10-25T01:00:00Z", 9), run("2026-10-27T11:00:00Z")], NOW)).toBeUndefined();
+    // The run count is said first when both limits are passed.
+    expect(overLimit({ maxRuns: 1, maxCostUsd: 1 }, [run("2026-10-27T11:00:00Z", 2)], NOW)).toMatch(/ran 1 time/);
+  });
+
+  test("checks the money limit and round-trips it through the job's variables", () => {
+    expect(() => resolveAgentSpec("x", { on: "drift", maxCostUsd: 0 })).toThrow(/maxCostUsd/);
+    expect(() => resolveAgentSpec("x", { on: "drift", maxCostUsd: Number.NaN })).toThrow(/maxCostUsd/);
+    const s = commentSettings({ maxCostUsd: 2.5 });
+    expect(agentSettingsEnv(s).CHANT_AGENT_MAX_COST_USD).toBe("2.5");
+    expect(agentSettingsFromEnv(agentSettingsEnv(s), "plywood")).toEqual(s);
+    expect(() => agentSettingsFromEnv({ ...agentSettingsEnv(s), CHANT_AGENT_MAX_COST_USD: "2,5" }, "plywood")).toThrow(/CHANT_AGENT_MAX_COST_USD/);
+  });
 });
 
 describe("agent prepare", () => {
@@ -154,6 +188,19 @@ describe("agent prepare", () => {
     const over = await prepare({ runs: [run("2026-10-27T10:00:00Z"), run("2026-10-27T11:00:00Z")] });
     expect(over.decision).toMatchObject({ go: false, stop: "stopped" });
     expect((await prepare({ body: "/plywood agent" })).decision.reason).toMatch(/needs an ask/);
+  });
+
+  test("stops a run once the recorded costs reach the money limit, and refuses when the ledger cannot be read", async () => {
+    const base = { words, env: {}, event: event("/plywood agent add a tag"), forge: { pullRequestHead: async () => head(), userCanWrite: async () => true }, git: fakeGit(), now: NOW };
+    const settings = commentSettings({ maxRuns: undefined, maxCostUsd: 3 });
+    const spent = await prepareAgentRun({ ...base, settings, dir: dir(), readRuns: async () => [run("2026-10-27T10:00:00Z", 1), run("2026-10-27T11:00:00Z", 2.25)] });
+    expect(spent).toMatchObject({ go: false, stop: "stopped", pr: 7, user: "ana" });
+    expect(spent.reason).toMatch(/cost \$3\.25 .* limit is \$3\.00/);
+    const under = await prepareAgentRun({ ...base, settings, dir: dir(), readRuns: async () => [run("2026-10-27T10:00:00Z", 1)] });
+    expect(under.go).toBe(true);
+    const unread = await prepareAgentRun({ ...base, settings, dir: dir(), readRuns: async () => { throw new Error("no ledger"); } });
+    expect(unread).toMatchObject({ go: false, stop: "refused" });
+    expect(unread.reason).toMatch(/limit cannot be checked/);
   });
 
   test("a drift run works on the checkout and reads the drift check's output", async () => {

@@ -619,3 +619,81 @@ export function controlDispatchJob(memberForge: ForgeKind, target: ControlTarget
     context: controlStatusContext(words),
   };
 }
+
+/** The variable naming a checkout of the control repo a note job reads the facts from (#4617). */
+export const CONTROL_DIR_ENV = "CHANT_CONTROL_DIR";
+
+/** The control repo's ledger branch, which holds its entries and apply records. */
+const CONTROL_LIFECYCLE_REF = "refs/heads/chant/lifecycle";
+
+/** The note job's read of the control repo (#4619), forge-neutral. */
+export interface ControlNoteCheckout {
+  /** The step's name. */
+  stepName: string;
+  /**
+   * The step's environment on GitHub and Forgejo: {@link CONTROL_READ_TOKEN_ENV}
+   * from the read secret, else the job token. Empty on GitLab, where the
+   * script's first line reads the read variable itself.
+   */
+  env: Record<string, string>;
+  /**
+   * The step's script. It fetches the control repo's `chant/lifecycle`
+   * alone, at depth 1, into a new repository outside the checkout, and sets
+   * {@link CONTROL_DIR_ENV} to it: through `$GITHUB_ENV` on GitHub and
+   * Forgejo, so the later steps see it, and with `export` on GitLab, whose
+   * script lines share one shell. A control repo that cannot be read is a
+   * warning: the variable stays unset and every edge stays `unknown`.
+   */
+  script: string;
+}
+
+/**
+ * The step a pull request note job runs before it posts, when the pipeline
+ * names a control repo (#4619): a read-only fetch of the control repo's
+ * `chant/lifecycle`, so `pr-post` marks the cross-stack edges from its
+ * entries and apply records ({@link CONTROL_DIR_ENV}, ./edges.ts). The token
+ * is the read secret, never the dispatch token's, and reaches git as a
+ * header through git's environment for that one fetch, never the command
+ * line or a config file. Nothing of the control repo is checked out, so
+ * none of its files run.
+ */
+export function controlNoteCheckout(memberForge: ForgeKind, target: ControlTarget, wordsIn: CiProductWordsInput | CiProductWords = {}): ControlNoteCheckout {
+  const words = resolveProductWords(wordsIn);
+  const label = words.product;
+  if (!CONTROL_SECRET_NAME.test(target.readTokenSecret)) throw new ControlConfigError(`control.readTokenSecret "${target.readTokenSecret}" is not a secret's name`);
+  // A loopback forge in a test answers on http; every other control repo on https.
+  const scheme = /^http:\/\//.test(target.apiBase) ? "http" : "https";
+  const url = sqUrl(`${scheme}://${target.host}/${target.path}.git`);
+  const repo = target.repo.replace(/[^A-Za-z0-9._:\/-]/g, "");
+  const gitlab = memberForge === "gitlab";
+  // GitLab's job token authenticates as gitlab-ci-token; a token from a secret as oauth2 on GitLab and as the token alone elsewhere.
+  const user = target.forge === "gitlab" ? "oauth2" : "x-access-token";
+  const tok = CONTROL_READ_TOKEN_ENV;
+  const read = gitlab
+    ? [
+        `${tok}="\${${target.readTokenSecret}:-}"`,
+        `chant_control_user=${user}`,
+        `if [ -z "$${tok}" ] && [ -n "\${CI_JOB_TOKEN:-}" ]; then ${tok}="$CI_JOB_TOKEN"; chant_control_user=gitlab-ci-token; fi`,
+      ]
+    : [`chant_control_user=${user}`];
+  const set = gitlab ? `export ${CONTROL_DIR_ENV}="$chant_control_dir"` : `echo "${CONTROL_DIR_ENV}=$chant_control_dir" >>"$GITHUB_ENV"`;
+  const script = [
+    ...read,
+    'chant_control_dir="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/chant-control.XXXXXX")"',
+    // No token (a public control repo): git sends no header.
+    'chant_control_count=0; chant_control_header=""',
+    `if [ -n "\${${tok}:-}" ]; then chant_control_count=1; chant_control_header="AUTHORIZATION: basic $(printf '%s:%s' "$chant_control_user" "$${tok}" | base64 | tr -d '\\n')"; fi`,
+    `if git init -q "$chant_control_dir" && GIT_TERMINAL_PROMPT=0 GIT_CONFIG_COUNT="$chant_control_count" GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="$chant_control_header" git -C "$chant_control_dir" fetch --quiet --no-tags --depth 1 ${url} '+${CONTROL_LIFECYCLE_REF}:${CONTROL_LIFECYCLE_REF}'; then`,
+    `  ${set}`,
+    `  echo "${label}: read the control repo ${repo}'s chant/lifecycle, so the note marks its cross-stack edges"`,
+    "else",
+    `  echo "${label}: could not read the control repo ${repo}'s chant/lifecycle, so its cross-stack edges stay unknown" >&2`,
+    "fi",
+    `unset chant_control_header chant_control_count chant_control_user ${tok}`,
+  ].join("\n");
+  return {
+    stepName: `Read the control repo ${repo}'s records, read-only, for the cross-stack edges`,
+    env: gitlab ? {} : { [tok]: `\${{ secrets.${target.readTokenSecret} || github.token }}` },
+    script,
+  };
+}

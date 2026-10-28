@@ -436,6 +436,8 @@ export function generateGitlabOpPipeline(
         ...(spec.agent?.tokenEnv ? { tokenEnv: spec.agent.tokenEnv } : {}),
         ...(words.bin ? { bin: words.bin } : {}),
         after: { job: jobName, rules: rulesFor },
+        // #4619: a member's drift Op left the drift under the member's directory.
+        ...(member ? { dir: memberRepoPath(member, AGENT_DIR) } : {}),
       });
       doc[name] = agent;
       doc[gitlabAgentPushJobName(name)] = push;

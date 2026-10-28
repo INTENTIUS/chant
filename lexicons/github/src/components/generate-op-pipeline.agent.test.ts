@@ -123,3 +123,25 @@ describe("the runner field", () => {
     expect(gen({ name: "drift-app", trigger: { kind: "cron", schedule: "0 6 * * *" } }).doc.jobs["drift-app"]!["runs-on"]).toBe("ubuntu-latest");
   });
 });
+
+// #4619: a member's drift Op runs in the member's directory and hands its output on; the agent job takes it at the root.
+describe("the drift agent of a workspace member", () => {
+  const out = generateGithubOpPipeline([{ name: "drift-app", trigger: { kind: "cron", schedule: "0 6 * * *" }, findingMode: "issue", agent: { on: "drift", maxCostUsd: 2.5 } }], { member: { name: "app", dir: "stacks/app" } });
+  const doc = parseYAML(out.files[0]!.yaml) as unknown as Doc & { jobs: Record<string, Job & { defaults?: { run?: { "working-directory"?: string } } }> };
+  const op = doc.jobs["drift-app"]!;
+  const agent = doc.jobs["drift-app-agent"]!;
+
+  test("the drift check runs in the member's directory and hands on the member's own output", () => {
+    expect(op.defaults?.run?.["working-directory"]).toBe("stacks/app");
+    expect(op.steps.find((s) => s.id === "chant-run")!.run).toContain("tee .chant/agent/drift.txt");
+  });
+
+  test("the agent job runs at the root and takes that output into its agent directory", () => {
+    expect(agent.defaults).toBeUndefined();
+    const take = agent.steps.find((s) => s.name === "Take the drift from the drift check")!;
+    expect(take.run).toContain("needs.drift-app.outputs.report_0");
+    expect(take.run).toContain(" .chant/agent <<");
+    expect(agent.steps.some((s) => s.run?.includes("chant agent prepare --forge github --output .chant/agent"))).toBe(true);
+    expect(agent.env?.CHANT_AGENT_MAX_COST_USD).toBe("2.5");
+  });
+});

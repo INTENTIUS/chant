@@ -68,7 +68,7 @@ import {
 import { REPO_APPLY_GROUP } from "@intentius/chant/components/repo-lock";
 import { memberGitlabChanges, memberRepoPath, memberShellDir } from "@intentius/chant/lexicon";
 import { FORGE_TOKEN_VARS, GITLAB_DROP_FORGE_TOKENS } from "@intentius/chant/ci-handover";
-import { CONTROL_TOKEN_VARS, controlDispatchJob } from "@intentius/chant/control/dispatch";
+import { CONTROL_TOKEN_VARS, controlDispatchJob, controlNoteCheckout } from "@intentius/chant/control/dispatch";
 import { gitlabTradeIdTokens, gitlabTradeLines, TRADE_SPEC_ENV, type CloudTradeSpec } from "@intentius/chant/ci-identity";
 import type {
   ComponentPipelineJob as GeneratedJob,
@@ -435,6 +435,8 @@ function prLoopGitlabPipeline(
   const stages = ["plan", PR_PLAN_NOTE_JOB, ...commentLocks.map((c) => c.job.jobName), ...applies.map((a) => a.stage), ...(control ? [control.name] : []), ...(prEnv ? [PR_ENV_STAGE, PR_ENV_POST_STAGE] : [])];
   const noteJob = named(PR_PLAN_NOTE_JOB);
   const post = prLoopPostJob("gitlab", env, member?.name, loop.words ? { ...(loop.words.bin ? { bin: loop.words.bin } : {}) } : undefined);
+  // #4619: with a control repo named, the note job reads its chant/lifecycle, read-only, so pr-post marks the cross-stack edges.
+  const controlRead = loop.control ? controlNoteCheckout("gitlab", loop.control.target, loop.words ?? {}) : undefined;
   const doc: Record<string, unknown> = {
     // Included files merge their top-level keys, so a member's file carries
     // the rules every member shares and no name: two names would collide.
@@ -457,7 +459,7 @@ function prLoopGitlabPipeline(
       stage: PR_PLAN_NOTE_JOB,
       image,
       rules: [{ if: onPlanNotes }],
-      script: [...enter, ...beforeScript, post.command],
+      script: [...enter, ...beforeScript, ...(controlRead ? [controlRead.script] : []), post.command],
     },
     ...Object.fromEntries(
       commentLocks.map(({ job, name, rule }) => [

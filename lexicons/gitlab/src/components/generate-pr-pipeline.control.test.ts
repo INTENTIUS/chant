@@ -57,3 +57,25 @@ describe("the control repo's pipeline on GitLab (#4568)", () => {
     expect(doc.dependents!.script[0]).toContain("workspace run --dependents-of");
   });
 });
+
+// #4619: the note job reads the control repo, read-only, so the note marks the cross-stack edges.
+describe("the GitLab plan-note job's read of the control repo (#4619)", () => {
+  test("fetches the control repo's chant/lifecycle before it posts, and exports CHANT_CONTROL_DIR", () => {
+    const { yaml } = generateGitlabPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true, control, words: { product: "terragucci" } } });
+    const doc = parseYAML(yaml) as Record<string, Job>;
+    const script = doc["plan-note"]!.script;
+    const read = script.findIndex((l) => l.includes("refs/heads/chant/lifecycle"));
+    expect(read).toBeGreaterThan(-1);
+    expect(script[read + 1]).toContain("components pr-post");
+    expect(script[read]).toContain('CHANT_CONTROL_READ_TOKEN="${CHANT_CONTROL_READ_TOKEN:-}"');
+    expect(script[read]).toContain('export CHANT_CONTROL_DIR="$chant_control_dir"');
+    expect(script[read]).toContain("'https://gitlab.com/acme/control.git'");
+    // The dispatch token is not the note job's.
+    expect(script[read]).not.toContain("TERRAGUCCI_CONTROL_TOKEN");
+  });
+
+  test("without a control repo the note job reads none", () => {
+    const { yaml } = generateGitlabPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true } });
+    expect(yaml).not.toContain("CHANT_CONTROL_DIR");
+  });
+});

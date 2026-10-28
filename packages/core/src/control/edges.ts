@@ -19,7 +19,7 @@
  */
 
 import type { ControlEntry } from "./records";
-import { parseProjectKey } from "./dispatch";
+import { CONTROL_DIR_ENV, parseProjectKey } from "./dispatch";
 import type { ControlAppliedRecord } from "./applied";
 
 /** One read of a stack outside the workspace, as the plan found it. */
@@ -137,8 +137,8 @@ export async function readControlEdgeFacts(dir: string): Promise<ControlEdgeFact
   }
 }
 
-/** The variable naming a checkout of the control repo a note job reads the facts from. */
-export const CONTROL_DIR_ENV = "CHANT_CONTROL_DIR";
+/** The variable naming a checkout of the control repo a note job reads the facts from ({@link controlNoteCheckout} sets it). */
+export { CONTROL_DIR_ENV };
 
 /**
  * A report with its cross-stack edges marked again from `facts` (#4617).

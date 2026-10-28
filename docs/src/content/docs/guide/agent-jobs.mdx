@@ -45,9 +45,13 @@ Set `agent` with `on: "drift"` on the drift check's own spec:
 
 The drift check's job keeps its output, and when its run exits with chant's `drift` code (2) the agent job runs with that output in the prompt. The change goes to a branch of the agent's own, `<product>/agent/<name>` unless `branch` names another, and opens a pull request into the default branch. The next drift replaces the branch with a lease and updates the same pull request, as long as every tip on the branch is the agent's. A person's commit on it stops the agent there.
 
+For a workspace member the drift check runs in the member's directory and the agent jobs run at the repository root. Each reads the member's own drift output. On GitHub and Forgejo the drift check hands its output to the agent job as job outputs. On GitLab the drift check keeps it in its artifact under `<member>/.chant/agent`, and both agent jobs use that directory.
+
 ## The spend limit
 
 `maxRuns` is the most runs a day. Each run leaves one run record on the workspace ledger, under op `<name>` in environment `env` (`local` by default). Its outcome names who asked and how the run ended. It also keeps the commit or pull request the run made, and the prompt's digest beside what the command said it cost. `chant agent prepare` counts the records of the last 24 hours before the model starts, and `chant agent land` counts them again before it pushes. A run over the limit is said on the pull request and recorded as `stopped`.
+
+`maxCostUsd` is the most US dollars the agent's runs may cost a day. The cost of each run is the one its run record keeps, as the command reported it, and the sum covers the same 24 hours as `maxRuns`. A run whose command reported no cost adds nothing. The sum is checked before a run starts, so the run that passes the limit still finishes, and the next one is stopped. The two limits can be set together, and either one stops a run.
 
 `timeout` is the minutes the model command may run, 30 by default. At the limit the command is stopped and the push job lands nothing. Each job's own timeout is 15 minutes longer, which leaves room for the checkout and the setup.
 

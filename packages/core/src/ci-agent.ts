@@ -16,7 +16,8 @@
  * - the agent job holds a read token. `chant agent prepare` reads the
  *   comment from the event, checks the commenter can write and the pull
  *   request is not a fork's, counts the agent's runs on the ledger against
- *   `maxRuns`, and writes the decision. `chant agent run` then runs the model
+ *   `maxRuns` and adds up what they cost against `maxCostUsd` (#4619), and
+ *   writes the decision. `chant agent run` then runs the model
  *   command in a worktree of the commit, in a step with no forge token and
  *   the model's key alone, stopped at `timeout` minutes, and leaves the
  *   change as a patch.
@@ -70,6 +71,14 @@ export interface OpAgentSpec {
   timeout?: number;
   /** The most runs per day, counted on the ledger. Absent: no count is kept as a limit. */
   maxRuns?: number;
+  /**
+   * The most US dollars the agent's runs may cost per day (#4619): the sum
+   * of the costs its run records on the ledger carry, over the window
+   * `maxRuns` counts. A run whose command reported no cost adds nothing.
+   * The sum is checked before a run starts, so the run that passes the
+   * limit finishes and the next one is stopped. Absent: no money limit.
+   */
+  maxCostUsd?: number;
   /** The default command's turn limit. Default 30. */
   maxTurns?: number;
   /** The secret (GitHub, Forgejo) or protected variable (GitLab) holding the push token. Default: the job token on GitHub and Forgejo, `CHANT_FORGE_TOKEN` on GitLab. */
@@ -91,6 +100,7 @@ export interface AgentSettings {
   keyEnv: string;
   timeout: number;
   maxRuns?: number;
+  maxCostUsd?: number;
   maxTurns: number;
   guarded: string[];
   branch?: string;
@@ -134,6 +144,7 @@ export const AGENT_ENV = {
   keyEnv: "CHANT_AGENT_KEY_ENV",
   timeout: "CHANT_AGENT_TIMEOUT",
   maxRuns: "CHANT_AGENT_MAX_RUNS",
+  maxCostUsd: "CHANT_AGENT_MAX_COST_USD",
   maxTurns: "CHANT_AGENT_MAX_TURNS",
   guarded: "CHANT_AGENT_GUARDED",
   branch: "CHANT_AGENT_BRANCH",
@@ -162,6 +173,9 @@ export const AGENT_USAGE_FILE = "usage.json";
 export const AGENT_GIT_NAME = "chant agent";
 export const AGENT_GIT_EMAIL = "chant-agent@localhost";
 
+/** The highest money limit a spec may set, in US dollars a day. */
+export const AGENT_MAX_COST_USD_CEILING = 100_000;
+
 /** How long the runs the limit counts go back. */
 export const AGENT_LIMIT_WINDOW_MS = 24 * 60 * 60 * 1000;
 /** The longest drift text the prompt carries. */
@@ -180,6 +194,11 @@ const LOGIN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 
 function intIn(where: string, v: unknown, lo: number, hi: number): number {
   if (typeof v !== "number" || !Number.isInteger(v) || v < lo || v > hi) throw new AgentError(`${where} is a whole number from ${lo} to ${hi}`);
+  return v;
+}
+
+function usdIn(where: string, v: unknown): number {
+  if (typeof v !== "number" || !Number.isFinite(v) || v <= 0 || v > AGENT_MAX_COST_USD_CEILING) throw new AgentError(`${where} is a number of US dollars above 0 and at most ${AGENT_MAX_COST_USD_CEILING}`);
   return v;
 }
 
@@ -218,6 +237,7 @@ export function resolveAgentSpec(name: string, spec: OpAgentSpec, product = "cha
     keyEnv: spec.keyEnv ?? AGENT_KEY_ENV,
     timeout: spec.timeout === undefined ? AGENT_TIMEOUT_MINUTES : intIn(`${where}: timeout`, spec.timeout, 1, 360),
     ...(spec.maxRuns !== undefined ? { maxRuns: intIn(`${where}: maxRuns`, spec.maxRuns, 1, 1000) } : {}),
+    ...(spec.maxCostUsd !== undefined ? { maxCostUsd: usdIn(`${where}: maxCostUsd`, spec.maxCostUsd) } : {}),
     maxTurns: spec.maxTurns === undefined ? AGENT_MAX_TURNS : intIn(`${where}: maxTurns`, spec.maxTurns, 1, 500),
     guarded: [...guarded],
     ...(branch !== undefined ? { branch } : {}),
@@ -235,6 +255,7 @@ export function agentSettingsEnv(s: AgentSettings): Record<string, string> {
     [AGENT_ENV.keyEnv]: s.keyEnv,
     [AGENT_ENV.timeout]: String(s.timeout),
     ...(s.maxRuns !== undefined ? { [AGENT_ENV.maxRuns]: String(s.maxRuns) } : {}),
+    ...(s.maxCostUsd !== undefined ? { [AGENT_ENV.maxCostUsd]: String(s.maxCostUsd) } : {}),
     [AGENT_ENV.maxTurns]: String(s.maxTurns),
     ...(s.guarded.length > 0 ? { [AGENT_ENV.guarded]: JSON.stringify(s.guarded) } : {}),
     ...(s.branch ? { [AGENT_ENV.branch]: s.branch } : {}),
@@ -265,6 +286,9 @@ export function agentSettingsFromEnv(env: Record<string, string | undefined>, pr
   }
   const timeout = num(AGENT_ENV.timeout);
   const maxRuns = num(AGENT_ENV.maxRuns);
+  const usd = env[AGENT_ENV.maxCostUsd];
+  if (usd !== undefined && usd !== "" && !/^[0-9]+(\.[0-9]+)?$/.test(usd)) throw new AgentError(`${AGENT_ENV.maxCostUsd} is a number of US dollars: got ${JSON.stringify(usd)}`);
+  const maxCostUsd = usd === undefined || usd === "" ? undefined : Number(usd);
   const maxTurns = num(AGENT_ENV.maxTurns);
   const spec: OpAgentSpec = {
     on: env[AGENT_ENV.on] as AgentTrigger,
@@ -273,6 +297,7 @@ export function agentSettingsFromEnv(env: Record<string, string | undefined>, pr
     ...(env[AGENT_ENV.keyEnv] ? { keyEnv: env[AGENT_ENV.keyEnv] } : {}),
     ...(timeout !== undefined ? { timeout } : {}),
     ...(maxRuns !== undefined ? { maxRuns } : {}),
+    ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
     ...(maxTurns !== undefined ? { maxTurns } : {}),
     ...(guarded ? { guarded } : {}),
     ...(env[AGENT_ENV.branch] ? { branch: env[AGENT_ENV.branch] } : {}),
@@ -359,11 +384,45 @@ export function runsInWindow(records: readonly Pick<OpRunRecord, "started">[], n
   }).length;
 }
 
-/** Undefined when another run is allowed, else why not. */
-export function overLimit(settings: Pick<AgentSettings, "maxRuns">, records: readonly Pick<OpRunRecord, "started">[], now: Date): string | undefined {
-  if (settings.maxRuns === undefined) return undefined;
-  const ran = runsInWindow(records, now);
-  return ran >= settings.maxRuns ? `the agent ran ${ran} time${ran === 1 ? "" : "s"} in the last day, and its limit is ${settings.maxRuns}` : undefined;
+/** A run record as the limits read it: when it started, and the outcome that carries its cost. */
+export type AgentLimitRecord = Pick<OpRunRecord, "started"> & { outcomes?: OpRunRecord["outcomes"] };
+
+/** The cost one run record carries: `outcomes.agent.usage.usd`, as the agent command reported it, else 0. */
+export function recordedRunCost(record: AgentLimitRecord): number {
+  const agent = record.outcomes?.agent as { usage?: { usd?: unknown } } | undefined;
+  const usd = agent?.usage?.usd;
+  return typeof usd === "number" && Number.isFinite(usd) && usd > 0 ? usd : 0;
+}
+
+/** What the agent's runs that started within the window before `now` cost, summed from their records (#4619). */
+export function costInWindow(records: readonly AgentLimitRecord[], now: Date, windowMs = AGENT_LIMIT_WINDOW_MS): number {
+  const from = now.getTime() - windowMs;
+  let sum = 0;
+  for (const r of records) {
+    const t = Date.parse(r.started);
+    if (Number.isFinite(t) && t >= from && t <= now.getTime()) sum += recordedRunCost(r);
+  }
+  return sum;
+}
+
+const dollars = (usd: number): string => `$${usd.toFixed(2)}`;
+
+/** Undefined when another run is allowed, else why not: the run count, then the money spent. */
+export function overLimit(settings: Pick<AgentSettings, "maxRuns" | "maxCostUsd">, records: readonly AgentLimitRecord[], now: Date): string | undefined {
+  if (settings.maxRuns !== undefined) {
+    const ran = runsInWindow(records, now);
+    if (ran >= settings.maxRuns) return `the agent ran ${ran} time${ran === 1 ? "" : "s"} in the last day, and its limit is ${settings.maxRuns}`;
+  }
+  if (settings.maxCostUsd !== undefined) {
+    const spent = costInWindow(records, now);
+    if (spent >= settings.maxCostUsd) return `the agent's runs cost ${dollars(spent)} in the last day, and its limit is ${dollars(settings.maxCostUsd)}`;
+  }
+  return undefined;
+}
+
+/** True when a limit needs the ledger read: a run count or a money limit is set. */
+export function agentHasLimit(settings: Pick<AgentSettings, "maxRuns" | "maxCostUsd">): boolean {
+  return settings.maxRuns !== undefined || settings.maxCostUsd !== undefined;
 }
 
 // ── the files between the jobs ─────────────────────────────────────────────
@@ -579,7 +638,7 @@ export async function prepareAgentRun(i: PrepareInput): Promise<AgentDecision> {
   try {
     records = await i.readRuns();
   } catch (e) {
-    if (i.settings.maxRuns !== undefined) return no(`the agent's runs could not be read from the ledger (${errText(e)}), so its limit cannot be checked`, ask ? { pr: ask.pr, user: ask.user } : {});
+    if (agentHasLimit(i.settings)) return no(`the agent's runs could not be read from the ledger (${errText(e)}), so its limit cannot be checked`, ask ? { pr: ask.pr, user: ask.user } : {});
   }
   const over = overLimit(i.settings, records, i.now);
   if (over) return no(over, { stop: "stopped", ...(ask ? { pr: ask.pr, user: ask.user } : {}) });
@@ -929,10 +988,16 @@ export async function landAgentChange(i: LandInput): Promise<LandOutcome> {
 
 // ── what the generated jobs run ────────────────────────────────────────────
 
-/** The three commands of the agent jobs, through the product's bin. */
-export function agentCommandLines(forge: "github" | "gitlab" | "forgejo", bin?: string): { prepare: string; run: string; land: string } {
+/**
+ * The three commands of the agent jobs, through the product's bin. `dir` is
+ * the agent directory from the job's directory, {@link AGENT_DIR} unless a
+ * workspace member's drift Op left its output under the member's directory
+ * (#4619): GitLab keeps the artifact at its path from the repository root.
+ */
+export function agentCommandLines(forge: "github" | "gitlab" | "forgejo", bin?: string, dir: string = AGENT_DIR): { prepare: string; run: string; land: string } {
+  if (!/^[A-Za-z0-9._\/-]+$/.test(dir) || dir.split("/").includes("..")) throw new AgentError(`the agent directory ${JSON.stringify(dir)} is a plain path from the repository root`);
   const line = (action: string): string => {
-    const chant = ["chant", "agent", action, "--forge", forge, "--output", AGENT_DIR].join(" ");
+    const chant = ["chant", "agent", action, "--forge", forge, "--output", dir].join(" ");
     return bin ? chant.replace(/^chant /, `${bin} `) : chant;
   };
   return { prepare: line("prepare"), run: line("run"), land: line("land") };
