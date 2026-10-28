@@ -1549,6 +1549,23 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
       const last = newestTime(pipelines.map((p) => (isObject(p) ? str(p.created_at) : undefined)));
       return { ...(last ? { last } : {}), ...(ours.length === 0 ? { noSchedule: true } : {}) };
     },
+    // #4628: the open merge requests into `base`, for the stale marking a push to it runs.
+    async openPullRequests(base) {
+      const out: OpenPullRequest[] = [];
+      for (const m of await api.list(`${notes}?state=opened&target_branch=${encodeURIComponent(base)}`, pageParams, 100)) {
+        if (!isObject(m)) continue;
+        const number = num(m.iid);
+        const head = str(m.source_branch);
+        const headSha = str(m.sha);
+        if (number === undefined || !head || !headSha || str(m.target_branch) !== base) continue;
+        const refs = isObject(m.diff_refs) ? m.diff_refs : undefined;
+        const baseSha = refs ? str(refs.base_sha) : undefined;
+        const author = isObject(m.author) ? str(m.author.username) : undefined;
+        const fork = num(m.source_project_id) !== undefined && num(m.source_project_id) !== num(m.target_project_id);
+        out.push({ number, head, headSha, base, ...(baseSha ? { baseSha } : {}), ...(author ? { author } : {}), fork });
+      }
+      return out.sort((a, b) => a.number - b.number);
+    },
     async mergeRequestJobs(branch, job) {
       const out: MergeRequestJob[] = [];
       const open = await api.list(`${notes}?state=opened&target_branch=${encodeURIComponent(branch)}`, pageParams, 100);

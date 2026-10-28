@@ -74,6 +74,8 @@ function prLoopOption(args: CommandContext["args"], reportUrl: string | undefine
     ...(args.prEnv ? { prEnvironment: true } : {}),
     ...(args.applyBeforeMerge ? { applyBeforeMerge: true } : {}),
     ...(args.previewComment ? { previewComment: true } : {}),
+    // #4628: the note carries its target commit, and a push marks the open notes stale.
+    ...(args.staleNotes ? { staleNotes: true } : {}),
     ...(args.requires ? { applyRequires: args.requires } : {}),
     // #4625: where the jobs run, and what the jobs that plan or apply get.
     ...(args.prRunners ? { runners: Object.fromEntries(Object.entries(args.prRunners).map(([stage, labels]) => [stage, labels.length === 1 ? labels[0]! : labels])) } : {}),
