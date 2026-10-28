@@ -141,17 +141,25 @@ export type PublishFetch = (
   init: { method: string; headers: Record<string, string>; body?: Uint8Array | string; redirect?: "follow" | "manual" },
 ) => Promise<{ ok: boolean; status: number; headers: { get(name: string): string | null }; text(): Promise<string> }>;
 
-/** What a target is given to plan and to publish. */
-export interface PublishContext {
-  release: Release;
-  label: string | null;
-  /** The tag the cut made for the release, `release/<label>` or `release/<member>/<label>`, or null for a release with no label. */
-  releaseTag: string | null;
-  provenance: ProvenanceCheck;
-  /** The cut whose signature the provenance statement carries (#4049), or null when none is known. */
-  cut?: PublishCut | null;
-  /** The member's directory, which the declaration's paths are relative to. */
+/**
+ * The part of a target's context every kind of target is given, whatever it
+ * publishes (#4602). A release target gets {@link PublishContext}, which adds
+ * the release; a target outside `release.publish`, such as the terraform
+ * lexicon's module targets, extends this with its own fields (a module
+ * version, its archive) and implements `PublishTarget<ItsContext, string>`,
+ * reusing {@link PublishTargetError}, {@link PublishFetch}, {@link PublishDeps}
+ * and the credential helpers in ./publish-credentials.ts.
+ */
+export interface PublishContextBase {
+  /** The directory the declaration's paths are relative to. */
   cwd: string;
+  /** The environment credentials are read from. */
+  env: NodeJS.ProcessEnv;
+  /** Masks credentials; every line a target logs and every error it throws goes through it. */
+  redactor: Redactor;
+  /** Print one line of progress. The line is redacted. */
+  log(line: string): void;
+  provenance: ProvenanceCheck;
   /**
    * The tag a reveal points at what was staged, in place of the target's
    * own: npm's dist-tag (default `latest`) and the OCI tags. Null for the
@@ -159,12 +167,18 @@ export interface PublishContext {
    * ({@link NPM_STAGE_TAG}) and OCI by digest.
    */
   tag: string | null;
-  /** The environment credentials are read from. */
-  env: NodeJS.ProcessEnv;
-  /** Masks credentials; every line a target logs and every error it throws goes through it. */
-  redactor: Redactor;
-  /** Print one line of progress. The line is redacted. */
-  log(line: string): void;
+}
+
+/** What a release target is given to plan and to publish. */
+export interface PublishContext extends PublishContextBase {
+  release: Release;
+  label: string | null;
+  /** The tag the cut made for the release, `release/<label>` or `release/<member>/<label>`, or null for a release with no label. */
+  releaseTag: string | null;
+  /** The cut whose signature the provenance statement carries (#4049), or null when none is known. */
+  cut?: PublishCut | null;
+  /** The member's directory, which the declaration's paths are relative to. */
+  cwd: string;
   /**
    * Whether a target with no SBOM source refuses (`publish-sbom-missing`),
    * as under the `supply-chain` group (#4168). False or absent: it publishes
@@ -185,6 +199,9 @@ export class PublishTargetError extends Error {
   }
 }
 
+/** The kinds `release.publish` declares and `createPublishTargets` makes. */
+export type ReleasePublishKind = "npm" | "oci" | "forge";
+
 /** The npm dist-tag a set of packages is staged under before `latest` moves (#4048), as chant's own releases do (#3903). */
 export const NPM_STAGE_TAG = "next";
 
@@ -196,10 +213,16 @@ export const NPM_STAGE_TAG = "next";
  * (./publish-declaration.ts) and made by `createPublishTargets`
  * (./publish-targets.ts). A new kind of target is a new member of the
  * declaration's union and a factory that returns this interface.
+ *
+ * The context is a type parameter (#4602): a target that publishes something
+ * other than a cut release, such as a module version, implements
+ * `PublishTarget<C, K>` over its own context `C`, which extends
+ * {@link PublishContextBase}, with its own `kind` names `K`. Such targets are
+ * made by their own code, never by `createPublishTargets`.
  */
-export interface PublishTarget {
-  /** The declaration's `type`. */
-  kind: "npm" | "oci" | "forge";
+export interface PublishTarget<C extends PublishContextBase = PublishContext, K extends string = ReleasePublishKind> {
+  /** The declaration's `type`: one of {@link ReleasePublishKind} under `release.publish`, any name for a target outside it. */
+  kind: K;
   /** A name for messages, such as `npm (2 packages)`. */
   name: string;
   /** Where it publishes, for the line printed before it runs. */
@@ -219,7 +242,7 @@ export interface PublishTarget {
    * {@link PublishTargetError}. The dry run prints what it returns, and a
    * publish plans every target before any of them publishes.
    */
-  plan(ctx: PublishContext): Promise<PublishItem[]>;
+  plan(ctx: C): Promise<PublishItem[]>;
   /**
    * Put every item where the target publishes, where no consumer resolves it
    * yet (#4048): npm under the `next` dist-tag, OCI by digest with no tag
@@ -228,7 +251,7 @@ export interface PublishTarget {
    * again and comes back `present`, so a stage run again after a failure
    * sends only what is missing. Throws {@link PublishTargetError}.
    */
-  stage(ctx: PublishContext): Promise<StagedTarget>;
+  stage(ctx: C): Promise<StagedTarget>;
   /**
    * The one last step that makes what {@link stage} put out visible: npm
    * moves `latest` (or `ctx.tag`) package by package in the declared order,
@@ -236,7 +259,7 @@ export interface PublishTarget {
    * publishes the draft (GitLab: creates the release with its links). Run
    * again, it moves nothing that already moved. Throws {@link PublishTargetError}.
    */
-  reveal(ctx: PublishContext, staged: StagedTarget): Promise<PublishedTarget>;
+  reveal(ctx: C, staged: StagedTarget): Promise<PublishedTarget>;
 }
 
 /** The targets the member at `cwd` declares under `release.publish` in its `chant.config.ts`. */
