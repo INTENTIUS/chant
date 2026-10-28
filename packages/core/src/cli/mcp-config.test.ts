@@ -1,4 +1,4 @@
-import { describe, test, expect } from "vitest";
+import { describe, test, expect, vi } from "vitest";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
@@ -7,7 +7,10 @@ import { initCommand } from "./commands/init";
 import { doctorCommand } from "./commands/doctor";
 import { updateCommand } from "./commands/update";
 import { parseArgs, commandRegistry } from "./main";
-import { MCP_CONFIG_FILENAME, MCP_SETUP_COMMAND, mcpConfigPath } from "./mcp-config";
+import { generateMcpConfig, MCP_CONFIG_FILENAME, MCP_SETUP_COMMAND, mcpConfigPath } from "./mcp-config";
+import { runServeMcp } from "./handlers/serve";
+import { runInit } from "./handlers/init";
+import type { CommandContext } from "./registry";
 
 /**
  * chant #2383. `chant init` used to write `mcp.json` into the user's home
@@ -164,5 +167,52 @@ describe("MCP config: one location, three agreeing sites (#2383)", () => {
       });
       expect(match, `doctor advises "${advice}", which no registered command matches`).toBeDefined();
     }
+  });
+});
+
+describe("the --propose tier on the command line (#4655)", () => {
+  const ctx = (argv: string[]): CommandContext => ({ args: parseArgs(argv), plugins: [], serializers: [] });
+
+  async function captured(run: () => Promise<number>): Promise<{ code: number; out: string; err: string }> {
+    const out: string[] = [];
+    const err: string[] = [];
+    const log = vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => void out.push(a.join(" ")));
+    const error = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => void err.push(a.join(" ")));
+    try {
+      return { code: await run(), out: out.join("\n"), err: err.join("\n") };
+    } finally {
+      log.mockRestore();
+      error.mockRestore();
+    }
+  }
+
+  test("chant serve mcp --propose without --read-only exits 1 with a usage message", async () => {
+    const args = parseArgs(["serve", "mcp", "--propose"]);
+    expect(args.propose).toBe(true);
+    const got = await captured(() => runServeMcp(ctx(["serve", "mcp", "--propose"])));
+    expect(got.code).toBe(1);
+    expect(got.err).toMatch(/--propose needs --read-only/);
+    expect(got.err).toMatch(/Usage: chant serve mcp --read-only --propose/);
+  });
+
+  test("chant init --mcp-read-only --propose --dry-run prints the .mcp.json it would write, and writes nothing", async () => {
+    await withTestDir(async (dir) => {
+      const got = await captured(() => runInit(ctx(["init", dir, "--mcp-read-only", "--propose", "--dry-run"])));
+      expect(got.code).toBe(0);
+      expect(JSON.parse(got.out).mcpServers.chant.args).toEqual(["chant", "serve", "mcp", "--read-only", "--propose"]);
+      expect(existsSync(mcpConfigPath(dir))).toBe(false);
+    });
+    const refused = await captured(() => runInit(ctx(["init", "--propose", "--dry-run"])));
+    expect(refused.code).toBe(1);
+    expect(refused.err).toMatch(/--propose needs --mcp-read-only/);
+  });
+
+  test("init --mcp-read-only --propose registers the tier, and propose alone is refused", async () => {
+    await withTestDir(async (testDir) => {
+      await initCommand({ path: testDir, lexicon: "aws", skipInstall: true, mcpReadOnly: true, mcpPropose: true });
+      const config = JSON.parse(readFileSync(mcpConfigPath(testDir), "utf-8"));
+      expect(config.mcpServers.chant.args).toEqual(["chant", "serve", "mcp", "--read-only", "--propose"]);
+    });
+    expect(() => generateMcpConfig("npm", { propose: true })).toThrow(/--mcp-read-only --propose/);
   });
 });

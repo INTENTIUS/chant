@@ -87,6 +87,7 @@ const BOOLEAN_FLAGS = new Set([
   "--skip-mcp",
   "--read-only",
   "--mcp-read-only",
+  "--propose",
   "--current",
   "--uncommitted",
   "--allow-code",
@@ -146,6 +147,7 @@ export function parseArgs(args: string[]): ParsedArgs {
     skipMcp: undefined,
     readOnly: undefined,
     mcpReadOnly: undefined,
+    propose: undefined,
     src: undefined,
     env: undefined,
   };
@@ -341,6 +343,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.readOnly = true;
     } else if (arg === "--mcp-read-only") {
       result.mcpReadOnly = true;
+    } else if (arg === "--propose") {
+      result.propose = true;
     } else if (arg === "--src") {
       result.src = args[++i];
     } else if (arg === "--env") {

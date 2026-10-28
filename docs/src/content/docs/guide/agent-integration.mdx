@@ -75,7 +75,7 @@ To configure manually, add the chant MCP server to your IDE's MCP config:
 | `query` | One read-only SQL statement over the ledgers, as `chant query --json` answers it |
 | `report` | One file a pull request stage kept in the report store (`ci.reportUrl`), such as its report or its change set |
 
-For an agent that should read and never act, start the server with `chant serve mcp --read-only` (or `chant init --mcp-read-only`). It drops every tool that runs an Op, resolves a gate or writes, and keeps the reads; the reference lists [what it serves](/chant/cli/mcp/#read-only-mode).
+For an agent that should read and never act, start the server with `chant serve mcp --read-only` (or `chant init --mcp-read-only`). It drops every tool that runs an Op, resolves a gate or writes, and keeps the reads; the reference lists [what it serves](/chant/cli/mcp/#read-only-mode). For an agent that may also open pull requests through a CI product's tools, add `--propose` (`chant serve mcp --read-only --propose`, or `chant init --mcp-read-only --propose`). It serves the same reads plus the product tools that open pull requests and comments, and nothing that approves, merges or applies; see the [propose tier](/chant/cli/mcp/#propose-tier).
 
 The parameters each one takes, and what it returns, are in the [`chant serve mcp` reference](/chant/cli/mcp/). Read the `op-approve` entry there before wiring up an approval flow: a gate an agent's own `op-run` reached cannot be resolved over MCP, which keeps the two halves of an approval in different hands.
 

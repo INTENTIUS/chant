@@ -10,7 +10,8 @@
  *
  * Contributed tools (a lexicon's `mcpTools()`, and a product's tools through
  * the hook chant#4555 adds, ./product-tools.ts) are served only when they
- * declare `readOnly: true`.
+ * declare `readOnly: true`. The `--propose` tier (chant#4655) keeps these
+ * lists and adds only a product's `forgeWrite` tools (./product-tools.ts).
  */
 
 import { workspaceReadTools, workspaceWriteTools } from "./workspace-tools";

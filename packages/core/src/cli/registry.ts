@@ -137,6 +137,12 @@ export interface ParsedArgs {
   readOnly?: boolean;
   /** `chant init --mcp-read-only` (chant#4543): write `.mcp.json` registering `chant serve mcp --read-only`. */
   mcpReadOnly?: boolean;
+  /**
+   * `chant serve mcp --read-only --propose` and `chant init --mcp-read-only
+   * --propose` (chant#4655): the read-only server plus a product's tools that
+   * open pull requests (`forgeWrite`).
+   */
+  propose?: boolean;
   /** `chant import --type <ResourceType>` selector */
   selectType?: string;
   /** `chant import --name <name>` selector */
