@@ -165,7 +165,7 @@ The composed runs shipped with a first answer to twelve questions, and the maint
 - [ws-108](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-108-how-each-lexicon-composes.md) stays `decided` (ruling 8).
 - The composed estate root keeps re-exporting each estate's outputs as `<module>__<name>` (ruling 10), which the post-apply reads and `report.ts`'s unknown-output check read.
 - When the post-apply plan's state carries no root outputs for an estate, its outputs fall back to that plan's planned outputs (ruling 11), so a state choudoufu builds from records does not leave a downstream read unknown after a successful apply.
-- The `pr-loop` bundle ceiling stays 110 KB (ruling 12, `pr-loop-bundle.test.ts`).
+- The `pr-loop` bundle ceiling is 120 KB (122,880 bytes; maintainer ruling of 2026-10-27 on #4481, `pr-loop-bundle.test.ts`).
 
 Ruling 7, one backend reader in place of the two in `compose/hcl.ts` and `state/backend.ts`, is [#4478](https://github.com/INTENTIUS/chant/issues/4478).
 
