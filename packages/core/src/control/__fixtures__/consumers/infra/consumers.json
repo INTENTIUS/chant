@@ -1,0 +1,23 @@
+{
+  "contract": 1,
+  "consumers": [
+    {
+      "component": "vpc",
+      "version": "1.2.0",
+      "consumers": [
+        { "root": "live/prod", "file": "live/prod/main.tf", "address": "module.vpc" },
+        { "root": "live/dev", "file": "live/dev/main.tf", "address": "module.vpc" }
+      ]
+    },
+    {
+      "component": "vpc",
+      "version": "1.1.0",
+      "consumers": [{ "root": "live/legacy", "file": "live/legacy/main.tf", "address": "module.vpc" }]
+    },
+    {
+      "component": "eks",
+      "version": "3.0.0",
+      "consumers": [{ "root": "live/prod", "file": "live/prod/eks.tf", "address": "module.eks" }]
+    }
+  ]
+}
