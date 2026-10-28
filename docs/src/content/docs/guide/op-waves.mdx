@@ -96,7 +96,7 @@ Each entry is a target of an earlier wave, or of a run listed before it in the s
 
 Each wave job writes an outcome file, `.chant/op-waves/<name>/outcomes/outcome-wave-<k>.json`, and the forge keeps it whatever the job's exit code. The next wave's job downloads them and reads them (`opWaveBefore`, `packages/core/src/op/op-waves-run.ts:1623`). A run that failed, or was blocked, blocks the runs that depend on it. A blocked run is neither planned nor applied, and the log names the failed run it traces back to. A run with no failed dependency applies. Exit 1 means one of the job's own runs failed or was blocked.
 
-A run that waits at its gate (exit 3), or one that was refused or held, still stops the waves after it, because those runs did not apply. On GitHub and Forgejo the later jobs get `if: !cancelled()` (`lexicons/github/src/components/generate-op-waves-pipeline.ts:139`). On GitLab each job is `allow_failure: { exit_codes: [1] }`, so only exit 1 lets the next wave run (`lexicons/gitlab/src/components/generate-op-waves-pipeline.ts`). Regenerate the pipeline to get them ([#4322](https://github.com/INTENTIUS/chant/issues/4322)).
+A run that waits at its gate (exit 3), or one that was refused or held, still stops the waves after it, because those runs did not apply. On GitHub and Forgejo the later jobs get `if: !cancelled()` (`lexicons/github/src/components/generate-op-waves-pipeline.ts:139`). On GitLab each job is `allow_failure: { exit_codes: [1] }`, so only exit 1 lets the next wave run (`lexicons/gitlab/src/components/generate-op-waves-pipeline.ts`). Each job starts with the apply-job guard, which checks that the job runs where the spec set it to run before any credential is traded. A refused guard exits 9, so on GitLab the job fails and the waves after it stop ([#4624](https://github.com/INTENTIUS/chant/issues/4624)). Regenerate the pipeline to get them ([#4322](https://github.com/INTENTIUS/chant/issues/4322)).
 
 ## Run waves in a slim image
 
@@ -641,6 +641,21 @@ After the merge, a wave with no `chant approve` of its digest reads the review o
 | GitLab | an approval of the merge request, counted only when the project removes approvals on a new push (Settings > Merge requests > Remove all approvals when commits are added), since a GitLab approval names no commit | Developer or higher | `CHANT_FORGE_TOKEN` with `read_api` |
 
 A tool that shows or checks these records reads them with `@intentius/chant/lifecycle/wave-plans` ([#3865](https://github.com/INTENTIUS/chant/issues/3865)). `parseHeadPlans(text)` returns the record or null. `readHeadPlans(port, name, head)` reads one head, and `readHeadPlanDigests(port, name)` returns every recorded head with its digests by wave number. `listWavePlanSpecs(port)` names the specs that have records. The `port` is a `LedgerReadPort` from `@intentius/chant/lifecycle/ledger-port`, three methods (`read`, `list`, `trees`) over the branch. The module touches no git and bundles on its own. `gitLedgerReadPort({ cwd, member })` from `@intentius/chant/lifecycle/git` is a port over a checkout, and `member` (or `ledgerPrefix`, the prefix `resolveMemberLedger` returns) reads a workspace member's records under `_members/<member>/_wave-plans/`.
+
+### The approval status before merge
+
+A spec with a `pr-review` or `pull-request` wave gets the record-plans job, and an `approval-status` job that posts `<product>/approval` on the pull request's head (`chant/approval` for chant's own words, `plywood/approval` through plywood's bin) ([#4630](https://github.com/INTENTIUS/chant/issues/4630)). It reads each wave's approval mode and policy at the pull request's base, and the head's recorded plans tell it which waves the gate will hold. The status is `pending` while a held wave has no approval that would pass it, and `success` once every held wave has one or none is held.
+
+| Wave approval | What answers a held wave before merge |
+|---|---|
+| `pr-review` | an approving review of the head by a writer other than its author, as the merged wave reads it |
+| `pull-request` | the pull request's own approval: an approval at `approvals.pullRequest.gate`, on the pull request's op (`pr-<n>`) or the spec's op, whose change set covers the wave's change set at the head |
+
+For a `pull-request` wave, `--record-plans` keeps the digest of the change set the wave's plans file gives, and stores the document under `_change-sets/` on `chant/lifecycle`. A record without one stays `pending`.
+
+On GitHub and Forgejo the job runs after record-plans on each push, and alone on each review. On GitLab an approval starts no pipeline, so a pipeline schedule of the target branch that sets `CHANT_APPROVAL_STATUS=1` posts the status for every open merge request (`--open`). An approval recorded with `chant approve` starts no run on any forge either. The status changes at the next push, review or scheduled run, or when someone runs `chant run wave --spec <file> --approval-status --open --branch <branch> --forge <kind>`.
+
+The status advises. After the merge, the wave's own gate decides.
 
 ### `sealed`
 

@@ -312,7 +312,7 @@ export function generateGitlabOpPipeline(
     // #4631: the job's cloud identities and the update on drift, checked before anything renders.
     assertScheduledOpCloud(spec);
     if (spec.update?.permissions && Object.keys(spec.update.permissions).length > 0) {
-      throw new Error(`${subject}: update.permissions has no GitLab form; a GitLab job's token scopes are the project's, and its cloud identity is update.cloud.`);
+      throw new Error(`${subject}: update.permissions has no GitLab form; a GitLab job's token scopes are the project's (contents: write included: whether a job token may push is a project setting), and its cloud identity is update.cloud.`);
     }
     // #4616: GitLab picks a runner by tags.
     assertRunnerLabels(subject, "runner", spec.runner, "GitLab");

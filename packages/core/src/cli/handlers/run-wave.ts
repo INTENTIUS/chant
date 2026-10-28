@@ -163,9 +163,10 @@ async function respondWave(spec: OpWavesSpec, k: number, outcome: import("../../
 /**
  * `chant run wave --spec <file> --approval-status` (#4630): post
  * `<product>/approval` on an open pull request's head, from its recorded
- * plans and its reviews. `--pr`, `--head` and `--base` name one pull
+ * plans and its reviews, or for a `pull-request` wave the pull request's
+ * own approval on the ledger. `--pr`, `--head` and `--base` name one pull
  * request (GitHub and Forgejo); `--open` posts on every open one into
- * `--branch` (GitLab's scheduled pipeline). It exits 0 once it posted, and
+ * `--branch` (GitLab's scheduled pipeline, or any forge by hand). It exits 0 once it posted, and
  * 1 when it could not.
  */
 async function runApprovalStatus(ctx: CommandContext, specFile: string): Promise<number> {

@@ -12,8 +12,8 @@
  * so it dispatches the waves workflow again on its branch, with the
  * `CHANT_FORGE_TOKEN` secret (a token with the `write:repository` scope).
  *
- * A `pr-review` wave (#3684) gets `<name>-plans.yml` on pull requests, as on
- * GitHub. Forgejo's job token reads reviews with no permission to ask for.
+ * A `pr-review` wave (#3684), or a `pull-request` wave (#4630), gets
+ * `<name>-plans.yml` on pull requests, as on GitHub. Forgejo's job token reads reviews with no permission to ask for.
  *
  * `runner` and a wave's `jobs` (#3914) render as on GitHub, with two limits:
  * a runner is a label or a list of labels (a GitHub runner group is a spec

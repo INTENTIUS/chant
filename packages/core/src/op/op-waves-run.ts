@@ -3714,6 +3714,8 @@ export interface RecordHeadPlansOptions {
   now?: string;
   /** Write the record. Default: append to `chant/lifecycle` and push. */
   write?: (plans: HeadPlans) => Promise<void>;
+  /** Store a wave's change set at the head (#4630). Default: `_change-sets/` on `chant/lifecycle`, pushed with the record. */
+  storeChangeSet?: (doc: ChangeSetDocument) => Promise<void>;
   /** The capabilities a spec's `step` plans through (#4545). Default: the project's at `cwd`. */
   capabilities?: CapabilityRegistry;
   /** How a cost hold's estimator runs (#4545). */
@@ -3725,7 +3727,8 @@ export interface RecordHeadPlansOptions {
  * pull request's head and record each wave's digest on `chant/lifecycle`,
  * `_wave-plans/<name>/<head>.json`. A `pr-review` wave reads it after the
  * merge: the review of that head approves the digests it planned, and only
- * those.
+ * those. A wave whose plans file gives a change set records its digest and
+ * stores it (#4630), for the approval status of a `pull-request` wave.
  */
 export async function recordOpWaveHeadPlans(options: RecordHeadPlansOptions): Promise<HeadPlans> {
   const { spec } = options;
@@ -3741,12 +3744,13 @@ export async function recordOpWaveHeadPlans(options: RecordHeadPlansOptions): Pr
     timestamp: options.now ?? new Date().toISOString(),
     waves: [],
   };
+  const changeSets: ChangeSetDocument[] = [];
   // A `rest` wave (#3821) goes on through the waves the plan command found.
   const last = spec.waves[spec.waves.length - 1]!;
   for (let k = 1; ; k++) {
     const wave = spec.waves[k - 1] ?? last;
     const steps = new Map<string, OpWaveStepPlan>();
-    const { members, extras: planExtras, waves: found } = await planWaveRuns({ spec, k, wave, cwd, exec, options, steps }, wave.runs, wave.discover === true);
+    const { members, extras: planExtras, waves: found, changeSet } = await planWaveRuns({ spec, k, wave, cwd, exec, options, steps }, wave.runs, wave.discover === true);
     // #4545: a cost hold's member is in the digest the merged wave decides, so the head's digest carries it too.
     const cost = spec.holds?.cost ? costVerdictOf(spec.holds.cost, spec, k, members, steps, cwd, options.holdExec).member : undefined;
     const extras = cost ? [...(planExtras ?? []), cost] : planExtras;
@@ -3757,11 +3761,23 @@ export async function recordOpWaveHeadPlans(options: RecordHeadPlansOptions): Pr
       digest: opWaveSetDigest(spec, members, extras),
       changes: !members.every((m) => m.empty === true),
       destructive: members.some((m) => m.destructive === true),
+      // #4630: a pull-request wave's change set, which the pull request's own approval must cover.
+      ...(changeSet ? { changeSet: changeSet.digest } : {}),
     });
+    if (changeSet) changeSets.push(changeSet);
     if (k >= spec.waves.length && !(last.rest && found !== undefined && k < found)) break;
   }
+  // The change sets go on the ledger first, so the record's push carries them.
+  for (const doc of changeSets) await (options.storeChangeSet ?? ((d) => storeHeadChangeSet(d, cwd)))(doc);
   await (options.write ?? ((p) => writeHeadPlans(p, cwd)))(plans);
   return plans;
+}
+
+async function storeHeadChangeSet(doc: ChangeSetDocument, cwd: string): Promise<void> {
+  const { requireLifecycleLedger } = await import("../lifecycle/git");
+  const { persistChangeSet } = await import("../lifecycle/change-set-store");
+  await requireLifecycleLedger({ cwd });
+  await persistChangeSet(doc, { cwd });
 }
 
 async function writeHeadPlans(plans: HeadPlans, cwd: string): Promise<void> {

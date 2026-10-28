@@ -24,8 +24,9 @@
  * arrived, with `CHANT_FORGE_TOKEN` (a project access token with the `api`
  * scope and the Developer role; the job token cannot retry jobs).
  *
- * A `pr-review` wave (#3684) adds `<name>-record-plans`, run in merge request
- * pipelines only, which records the digests the merge request's head plans.
+ * A `pr-review` wave (#3684), or a `pull-request` wave (#4630), adds
+ * `<name>-record-plans`, run in merge request pipelines only, which records
+ * the digests the merge request's head plans.
  *
  * `runner` (on the spec, a wave or a job group, #3914) is the job's `tags:`; a
  * GitHub runner group is a spec error here. A wave's `jobs` renders its
@@ -54,8 +55,9 @@
  * `@intentius/chant/ci-job-guard`), before the trade: it stops the job
  * unless `CI_COMMIT_REF_NAME` is one of the spec's branches and protected,
  * `CI_ENVIRONMENT_NAME` is the job's environment, and `CI_RUNNER_TAGS`
- * holds each of the job's tags. The guard exits 1, which the job allows
- * as it allows a failed run; the next wave's jobs carry the guard too.
+ * holds each of the job's tags. A refused guard exits chant's `misplaced`
+ * (9), outside the job's allowed failure, so the job fails and the waves
+ * after it stop.
  */
 
 import {
@@ -82,6 +84,7 @@ import {
   opWavesLastJobs,
   OP_WAVES_APPROVAL_STATUS_VAR,
   opWavesApprovalStatusCommand,
+  opWavesPostsApprovalStatus,
   opWavesOutcomeCommand,
   opWavesRecordPlansCommand,
   opWavesResumeCommand,
@@ -91,8 +94,12 @@ import { CONTROL_OUTCOME_VAR, CONTROL_TOKEN_VARS, controlDispatchJob } from "@in
 import type { OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
 import { gitlabTradeIdTokens, gitlabTradeLines, TRADE_SPEC_ENV } from "@intentius/chant/ci-identity";
 import { JOB_GUARD_ENV, jobGuardLine, jobGuardSpec, opWaveJobLabel } from "@intentius/chant/ci-job-guard";
+import { CHANT_EXIT } from "@intentius/chant/exit-codes";
 import { resolveProductWords } from "@intentius/chant/ci-product-words";
 import { emitGitlabFile } from "./ci-jobs";
+
+/** The one exit an op-wave job allows as a failure (#4322): a run that failed. The guard's refusal (9) is outside it. */
+export const OP_WAVE_ALLOWED_EXIT = CHANT_EXIT.failed;
 
 /** Render an Op waves spec as one GitLab CI file, `<name>.gitlab-ci.yml` unless `opsFileName` names another. */
 export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWavesPipelineOptions): OpWavesPipelineResult {
@@ -120,7 +127,8 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
   const specTags = gitlabTags(spec.runner);
   const product = resolveProductWords(options.words ?? {}).product;
 
-  const byReview = spec.waves.some((w) => w.approval === "pr-review");
+  // #4630: a pr-review or pull-request wave records each head's plans and posts the approval status.
+  const byReview = opWavesPostsApprovalStatus(spec);
   const stages = [...(byReview ? ["plans"] : []), ...spec.waves.map((wave, i) => `wave-${i + 1}-${wave.name}`)];
   // #4617: the control repo's token variables, which every job but the dispatch drops first.
   const control = spec.control ? opWavesControlTarget(spec.control) : undefined;
@@ -188,8 +196,9 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
         rules,
         ...(job.needs.length > 0 ? { needs: job.needs } : {}),
         script: [jobGuardLine(), ...(cloud ? gitlabTradeLines() : []), ...dropControl, ...setup, ...(options.beforeScript ?? []), job.command.join(" "), ...(options.extraScript ?? [])],
-        // #4322: a run that failed, or was blocked, lets the next wave run; any other failure stops it.
-        allow_failure: { exit_codes: [1] },
+        // #4322: a run that failed, or was blocked, lets the next wave run; any other failure stops it,
+        // a refused guard (9, #4624) included.
+        allow_failure: { exit_codes: [OP_WAVE_ALLOWED_EXIT] },
         artifacts: { when: "always", paths: [...(job.kind === "decide" ? [job.record!] : []), `${opWaveOutcomeDir(spec)}/`], expire_in: "30 days" },
       },
     ]);
@@ -245,7 +254,9 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
     `# chant Op waves "${spec.name}": one stage per wave, each needing the one before.`,
     "# A wave that waits at its gate exits 3 and stops the waves after it; approve the",
     "# digest it prints, then retry the job. A job whose runs failed exits 1, an allowed",
-    "# failure, and the waves after it run what does not depend on those runs.",
+    "# failure, and the waves after it run what does not depend on those runs. A job",
+    "# whose guard finds it running where the spec did not set it to run exits 9 and",
+    "# stops the waves after it.",
     ...(spec.resume
       ? [`# The ${spec.name}-resume job retries it for you in a pipeline schedule; give the schedule the cron "${spec.resume.schedule}".`]
       : []),
