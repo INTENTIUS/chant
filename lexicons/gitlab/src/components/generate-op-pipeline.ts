@@ -144,6 +144,8 @@ import { assertReviewSplit, GITLAB_REVIEW_NOTES_VAR, gitlabReviewJobs, REVIEW_DI
 import { AGENT_DIR, resolveAgentSpec } from "@intentius/chant/ci-agent";
 import { activeProductWords } from "@intentius/chant/ci-product-words";
 import { gitlabAgentHeader, gitlabAgentJobs, gitlabAgentPushJobName, gitlabDriftArtifacts, gitlabDriftRunLines } from "./agent-jobs";
+import { assertScheduledOpCloud, scheduledOpUpdateJobName } from "@intentius/chant/scheduled-op-cloud";
+import { gitlabTradeIdTokens, gitlabTradeLines, TRADE_SPEC_ENV } from "@intentius/chant/ci-identity";
 
 export type { GenerateGitlabOpOptions, GenerateGitlabOpResult };
 
@@ -307,6 +309,11 @@ export function generateGitlabOpPipeline(
 
   for (const spec of ops) {
     const subject = `Scheduled Op "${spec.name}"`;
+    // #4631: the job's cloud identities and the update on drift, checked before anything renders.
+    assertScheduledOpCloud(spec);
+    if (spec.update?.permissions && Object.keys(spec.update.permissions).length > 0) {
+      throw new Error(`${subject}: update.permissions has no GitLab form; a GitLab job's token scopes are the project's, and its cloud identity is update.cloud.`);
+    }
     // #4616: GitLab picks a runner by tags.
     assertRunnerLabels(subject, "runner", spec.runner, "GitLab");
     const tags = gitlabTags(spec.runner);
@@ -333,7 +340,10 @@ export function generateGitlabOpPipeline(
       noteJobs.push(pushName);
       continue;
     }
-    const idTokens = gitlabIdTokens(spec.name, spec.permissions);
+    const declaredIdTokens = gitlabIdTokens(spec.name, spec.permissions);
+    // #4631: a cloud trade takes an id token per cloud, beside the ones the spec declares.
+    const idTokens = spec.cloud ? { ...(declaredIdTokens ?? {}), ...gitlabTradeIdTokens(spec.cloud) } : declaredIdTokens;
+    const update = spec.update;
     const findingMode = spec.findingMode ?? "report";
     const trigger = resolveOpTrigger(spec);
     assertTriggerSupportsMode(spec.name, findingMode, trigger);
@@ -376,6 +386,7 @@ export function generateGitlabOpPipeline(
     // than a caller being able to repoint the gate block's own artifact path.
     const jobVariables: Record<string, string> = {
       ...(spec.variables ?? {}),
+      ...(spec.cloud ? { [TRADE_SPEC_ENV]: JSON.stringify(spec.cloud) } : {}),
       ...(gated ? { [GATE_SUMMARY_VAR]: gateSummary } : {}),
     };
 
@@ -400,7 +411,10 @@ export function generateGitlabOpPipeline(
       continue;
     }
 
-    const runLines = driftAgent ? gitlabDriftRunLines(invocation.join(" ")) : [invocation.join(" ")];
+    // #4631: an update follows a drift check the same way the drift agent does, on the dotenv the run leaves.
+    const flagsDrift = driftAgent !== undefined || update !== undefined;
+    const runLines = flagsDrift ? gitlabDriftRunLines(invocation.join(" ")) : [invocation.join(" ")];
+    const driftDir = member ? memberRepoPath(member, AGENT_DIR) : AGENT_DIR;
     doc[jobName] = {
       stage,
       image,
@@ -412,17 +426,41 @@ export function generateGitlabOpPipeline(
       ...(spec.environment ? { environment: environmentDoc(spec.environment) } : {}),
       ...nonEmpty("variables", jobVariables),
       rules: rulesFor,
-      script: [...cdLine, ...setupScript, ...beforeScript, ...runLines, ...extraScript],
+      // #4631: the trade first, before any line of the checkout's code runs, and the token variables unset by it.
+      script: [...(spec.cloud ? gitlabTradeLines() : []), ...cdLine, ...setupScript, ...beforeScript, ...runLines, ...extraScript],
       // `when: always` because the run this publishes for is the green one: a
       // gated apply succeeds, and the block is the only thing that says a
       // human still has to act. A run that walked through its gate writes no
       // block, and GitLab reports the empty upload as a warning, not a failure.
       ...(gated
         ? { artifacts: { when: "always", paths: [member ? memberRepoPath(member, gateSummary) : gateSummary], expire_in: GATE_ARTIFACT_EXPIRY } }
-        : driftAgent
-          ? { artifacts: gitlabDriftArtifacts(member ? memberRepoPath(member, AGENT_DIR) : AGENT_DIR) }
+        : flagsDrift
+          ? { artifacts: gitlabDriftArtifacts(driftDir) }
           : {}),
     };
+    if (update) {
+      // #4631: the update's own job, which alone holds the update's identity, after a run that found drift.
+      const name = scheduledOpUpdateJobName(jobName);
+      opLines.push(`#     update: ${name} runs \`${update.command}\` when ${jobName} exits with chant's drift code${update.cloud ? ", holding its own cloud identity" : ""}`);
+      doc[name] = {
+        stage,
+        image,
+        ...(tags ? { tags } : {}),
+        needs: [{ job: jobName, artifacts: true }],
+        ...(update.cloud ? { id_tokens: gitlabTradeIdTokens(update.cloud) } : {}),
+        ...(update.environment ? { environment: environmentDoc(update.environment) } : {}),
+        ...nonEmpty("variables", { ...(update.variables ?? {}), ...(update.cloud ? { [TRADE_SPEC_ENV]: JSON.stringify(update.cloud) } : {}) }),
+        rules: rulesFor.map((r) => ({ ...(r as Record<string, unknown>), when: "always" })),
+        script: [
+          `if [ "\${CHANT_AGENT_DRIFT:-0}" != "1" ]; then echo "no drift, so the update does not run"; exit 0; fi`,
+          ...(update.cloud ? gitlabTradeLines() : []),
+          ...cdLine,
+          ...setupScript,
+          ...beforeScript,
+          update.command,
+        ],
+      };
+    }
     if (driftAgent) {
       const name = `${jobName}-agent`;
       opLines.push(...gitlabAgentHeader(name, driftAgent, spec.agent?.tokenEnv));

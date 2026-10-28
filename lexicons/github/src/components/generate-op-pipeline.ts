@@ -100,6 +100,9 @@ import { assertReviewSplit, reviewJobs, reviewNoteJobName } from "./review-jobs"
 import { resolveAgentSpec } from "@intentius/chant/ci-agent";
 import { activeProductWords } from "@intentius/chant/ci-product-words";
 import { agentJobName, agentPushJobName, driftRunOutputs, driftRunStep, githubAgentJobs } from "./agent-jobs";
+import { assertScheduledOpCloud, scheduledOpUpdateJobName, withoutTokenRequestLine } from "@intentius/chant/scheduled-op-cloud";
+import { TRADE_SPEC_ENV, tradeLine, type CloudTradeSpec } from "@intentius/chant/ci-identity";
+import { CHANT_EXIT } from "@intentius/chant/exit-codes";
 
 export type { GenerateGithubOpOptions, GenerateGithubOpResult };
 
@@ -437,6 +440,8 @@ export function buildGithubOpPipelineDocs(
 
   const words = activeProductWords();
   for (const spec of ops) {
+    // #4631: the job's cloud identities and the update on drift, checked before anything renders.
+    assertScheduledOpCloud(spec);
     // #4616: the comment agent is a workflow of its own, on pull request comments; the spec's trigger is not read.
     if (spec.agent?.on === "comment") {
       const settings = resolveAgentSpec(spec.name, spec.agent, words.product);
@@ -489,6 +494,8 @@ export function buildGithubOpPipelineDocs(
       throw new Error(`Scheduled Op "${spec.name}" sets a drift agent, which follows a drift check's run; give it a cron or pull_request trigger and no reviewAgent.`);
     }
     const stepEnv = split ? {} : jobTokenEnv(findingMode !== "report");
+    const cloud = spec.cloud;
+    const update = spec.update;
 
     const setup = spec.setup ?? [];
     assertSetupSteps(spec.name, setup);
@@ -503,15 +510,19 @@ export function buildGithubOpPipelineDocs(
       ? [...runParts, ...GATED_EXIT_FLAG, "--json"].join(" ")
       : runParts.join(" ");
 
-    const steps: Array<Record<string, unknown>> = [checkoutStep(), ...setup.map(setupStepDoc), ...runSteps(beforeScript)];
-    steps.push(
+    const later: Array<Record<string, unknown>> = [...setup.map(setupStepDoc), ...runSteps(beforeScript)];
+    later.push(
       gated
         ? gatedRunStep(RUN_STEP_ID, spec.name, invocation, stepEnv)
         : driftAgent
           ? driftRunStep(invocation, stepEnv, forge)
-          : { run: invocation, env: stepEnv },
+          : update
+            ? driftFlagStep(invocation, stepEnv)
+            : { run: invocation, env: stepEnv },
     );
-    steps.push(...runSteps(extraScript));
+    later.push(...runSteps(extraScript));
+    // #4631: the trade before the checkout, and every step after it without the token request variables.
+    const steps: Array<Record<string, unknown>> = cloud ? [tradeStep(cloud), checkoutStep(), ...later.map(withoutTokenRequest)] : [checkoutStep(), ...later];
 
     const review = split
       ? reviewJobs({
@@ -527,6 +538,12 @@ export function buildGithubOpPipelineDocs(
         })
       : undefined;
 
+    const workflowPermissions = mergePermissions(
+      spec.name,
+      permissionsFor(findingMode, trigger),
+      spec.permissions ?? {},
+      trigger,
+    );
     const doc: GithubOpPipelineDoc = {
       name: spec.name,
       on: onTrigger(trigger),
@@ -534,12 +551,7 @@ export function buildGithubOpPipelineDocs(
       // One run at a time per Op — a slow audit must not overlap its own next
       // scheduled trigger. A push Op's `build` (#4169) widens the group.
       concurrency: concurrency(opConcurrencyGroup(jobName, trigger)),
-      permissions: mergePermissions(
-        spec.name,
-        permissionsFor(findingMode, trigger),
-        spec.permissions ?? {},
-        trigger,
-      ),
+      permissions: workflowPermissions,
       jobsDoc: {
         [jobName]: {
           "runs-on": githubRunsOn(spec.runner),
@@ -554,6 +566,8 @@ export function buildGithubOpPipelineDocs(
           // behind the same reviewer would hold the message back until
           // somebody had already acted.
           ...(spec.environment ? { environment: environmentDoc(spec.environment) } : {}),
+          // #4631: the trade needs id-token: write, on this job alone; the finding-mode's scopes stay as they are.
+          ...(cloud ? { permissions: { ...workflowPermissions, "id-token": "write" } } : {}),
           ...(gated
             ? {
                 outputs: Object.fromEntries(
@@ -565,9 +579,21 @@ export function buildGithubOpPipelineDocs(
               }
             : driftAgent
               ? { outputs: driftRunOutputs(forge) }
-              : {}),
+              : update
+                ? { outputs: { drift: `\${{ steps.${DRIFT_FLAG_STEP_ID}.outputs.drift }}` } }
+                : {}),
           steps,
         },
+        ...(update
+          ? {
+              [scheduledOpUpdateJobName(jobName)]: updateJob(jobName, update, {
+                image,
+                ...(spec.runner !== undefined ? { runner: spec.runner } : {}),
+                setup: setup.map(setupStepDoc),
+                beforeScript,
+              }),
+            }
+          : {}),
       },
       ...(gated ? { gatedNoticeDoc: { [`${jobName}-gate-notice`]: gateNoticeJob(jobName, image, spec.runner) } } : {}),
     };
@@ -669,5 +695,51 @@ export function generateGithubOpPipeline(
   return {
     files: files.map((f) => ({ name: f.name, yaml: emitOpPipelineYAML(f.doc) })),
     jobs,
+  };
+}
+
+/** The id of the run step that says whether an update's drift check found drift (#4631). */
+const DRIFT_FLAG_STEP_ID = "drift-check";
+
+/** The Op's run step when an update follows it (#4631): `drift=true` as an output on chant's drift code, and the run's own exit code. */
+function driftFlagStep(invocation: string, env: Record<string, string>): Record<string, unknown> {
+  return {
+    id: DRIFT_FLAG_STEP_ID,
+    env,
+    run: ["set +e", invocation, "code=$?", `if [ "$code" -eq ${CHANT_EXIT.drift} ]; then echo "drift=true" >>"$GITHUB_OUTPUT"; fi`, 'exit "$code"'].join("\n"),
+  };
+}
+
+/** The trade step (#4631), as an op wave job's (#4332): the job's OIDC token for `cloud`, written to GITHUB_ENV. */
+function tradeStep(cloud: CloudTradeSpec): Record<string, unknown> {
+  return { name: "Trade the job's OIDC token for its cloud identities", env: { [TRADE_SPEC_ENV]: JSON.stringify(cloud) }, run: tradeLine("$GITHUB_ENV", "github-env") };
+}
+
+/** A run step after the trade, with the token request variables unset first. A `uses:` step is left as it is. */
+function withoutTokenRequest(step: Record<string, unknown>): Record<string, unknown> {
+  return typeof step.run === "string" ? { ...step, run: withoutTokenRequestLine(step.run) } : step;
+}
+
+/**
+ * The update job (#4631): after the Op's job, only when its run found
+ * drift; its own trade for `update.cloud` before its checkout, then the
+ * update's command. Its permissions are `contents: read`, `id-token: write`
+ * with a cloud, and the update's own scopes.
+ */
+function updateJob(
+  after: string,
+  update: NonNullable<ScheduledOpSpec["update"]>,
+  i: { image: string; runner?: ScheduledOpSpec["runner"]; setup: Array<Record<string, unknown>>; beforeScript: readonly string[] },
+): Record<string, unknown> {
+  const later: Array<Record<string, unknown>> = [...i.setup, ...runSteps(i.beforeScript), { name: "Update what drifted", run: update.command }];
+  return {
+    needs: after,
+    if: `always() && needs.${after}.outputs.drift == 'true'`,
+    "runs-on": githubRunsOn(i.runner),
+    container: i.image,
+    permissions: { contents: "read", ...(update.cloud ? { "id-token": "write" } : {}), ...(update.permissions ?? {}) },
+    ...nonEmpty("env", update.variables),
+    ...(update.environment ? { environment: environmentDoc(update.environment) } : {}),
+    steps: update.cloud ? [tradeStep(update.cloud), checkoutStep(), ...later.map(withoutTokenRequest)] : [checkoutStep(), ...later],
   };
 }
