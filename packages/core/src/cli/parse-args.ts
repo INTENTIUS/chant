@@ -87,6 +87,7 @@ const BOOLEAN_FLAGS = new Set([
   "--skip-mcp",
   "--read-only",
   "--mcp-read-only",
+  "--propose",
   "--current",
   "--uncommitted",
   "--allow-code",
@@ -146,6 +147,7 @@ export function parseArgs(args: string[]): ParsedArgs {
     skipMcp: undefined,
     readOnly: undefined,
     mcpReadOnly: undefined,
+    propose: undefined,
     src: undefined,
     env: undefined,
   };
@@ -341,6 +343,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.readOnly = true;
     } else if (arg === "--mcp-read-only") {
       result.mcpReadOnly = true;
+    } else if (arg === "--propose") {
+      result.propose = true;
     } else if (arg === "--src") {
       result.src = args[++i];
     } else if (arg === "--env") {
@@ -594,6 +598,9 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--apply-on-merge") {
       // `chant build --pr-loop --apply-on-merge` and `chant ci serve --apply-on-merge` (#4168): opt into applying on merge.
       result.applyOnMerge = true;
+    } else if (arg === "--action-job") {
+      // `chant build --pr-loop --action-job` (#4654): the job that answers the action comment and the action dispatch.
+      result.actionJob = true;
     } else if (arg === "--preview-comment") {
       // `chant build --pr-loop --preview-comment` (#4620): the job that answers `/<product> <plan word>` with a preview.
       result.previewComment = true;

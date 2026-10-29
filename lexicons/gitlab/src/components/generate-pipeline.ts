@@ -65,6 +65,7 @@ import {
   prEnvJobs,
   prCommentLockJobs,
   prCommentPreviewJob,
+  prActionJob,
   PR_ENV_REPORT_DIR,
   PR_ENV_POST_JOB,
   PR_STALE_JOB,
@@ -442,6 +443,8 @@ function prLoopGitlabPipeline(
     name: named(job.jobName),
     rule: `$CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/ && $${job.gitlabVar} =~ /^[0-9]+$/ && $CI_COMMIT_BRANCH == ${targetBranch}`,
   }));
+  // #4654: the action job is GitHub's and Forgejo's; asked for here, it is refused by name.
+  prActionJob("gitlab", loop);
   // #4620: `/<product> <plan word>`: a pipeline of the target branch started with CHANT_PREVIEW_PR set previews the merge request's head again.
   const preview = prCommentPreviewJob("gitlab", env, loop, member?.name);
   const previewRule = preview ? `$CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/ && $${preview.gitlabVar} =~ /^[0-9]+$/ && $CI_COMMIT_BRANCH == ${targetBranch}` : undefined;

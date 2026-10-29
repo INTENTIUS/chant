@@ -16,8 +16,11 @@ import {
   diyStackLockIds,
   gatedStackCancel,
   gatedStackExport,
+  gatedStackAction,
   gatedStackMove,
   moveLeftovers,
+  PulumiStackActionRefused,
+  stackActionScope,
   pulumiStackLockIds,
   PULUMI_STACK_OPS_OP,
   type GatedRequestApi,
@@ -282,5 +285,114 @@ describe("the stack lock reader (chant#4615)", () => {
   test("a plunge stack holds no stack lock", async () => {
     const dir = stackDir(`file://${outside()}`);
     expect(await pulumiStackLockIds({ dir, stack: "dev", engine: "plunge", env: {} })).toEqual({ checked: true, ids: [] });
+  });
+});
+
+describe("action (chant#4654)", () => {
+  const rotate = "urn:pulumi:prod-us::shop::command:local:Command::rotate";
+  const bucket = "urn:pulumi:prod-us::shop::aws:s3/bucket:Bucket::b";
+  const stackUrn = "urn:pulumi:prod-us::shop::pulumi:pulumi:Stack::shop-prod-us";
+  const replaceSteps = (urn: string) => [
+    { op: "create-replacement", urn, newState: { type: "command:local:Command", inputs: { create: "./rotate.sh" } } },
+    { op: "replace", urn, newState: { type: "command:local:Command", inputs: { create: "./rotate.sh" } } },
+    { op: "delete-replaced", urn, oldState: { type: "command:local:Command", inputs: { create: "./rotate.sh" } } },
+  ];
+  const doc = (steps: unknown[]) => JSON.stringify({ steps: [{ op: "same", urn: stackUrn }, ...steps] });
+  const previewArgs = ["preview", "--json", "--target", rotate, "--replace", rotate, "--stack", "prod-us"];
+  const upArgs = ["up", "--yes", "--target", rotate, "--replace", rotate, "--stack", "prod-us"];
+
+  test("the first call previews the replacement and answers waiting, with no update", async () => {
+    const l = ledger();
+    const pulumi = runner(() => doc(replaceSteps(rotate)));
+    const first = await gatedStackAction({ by: "alice", rules: { mode: "ledger" }, gated: l.api, env: {}, run: pulumi.run, dir: stackDir(), stack: "prod-us", engine: "pulumi", urn: rotate, name: "rotate" });
+    expect(first.status).toBe("waiting");
+    expect(first.digest).toMatch(/^sha256:/);
+    expect(pulumi.calls).toEqual([previewArgs]);
+    expect(pulumi.calls.some((c) => c[0] === "up")).toBe(false);
+    expect(first.request).toMatchObject({
+      kind: "stack-action",
+      subject: "action:prod-us:rotate",
+      fields: { stack: "prod-us", urn: rotate, engine: "pulumi", name: "rotate", preview: expect.stringMatching(/sha256:/) },
+    });
+    expect(l.spent.size).toBe(0);
+  });
+
+  test("a preview that replaces a second resource is refused action-scope, naming it, and asks for nothing", async () => {
+    const l = ledger();
+    const pulumi = runner(() => doc([...replaceSteps(rotate), ...replaceSteps(bucket)]));
+    const call = gatedStackAction({ by: "alice", rules: { mode: "ledger" }, gated: l.api, env: {}, run: pulumi.run, dir: stackDir(), stack: "prod-us", engine: "pulumi", urn: rotate });
+    await expect(call).rejects.toThrow(PulumiStackActionRefused);
+    await expect(call).rejects.toMatchObject({ code: "action-scope", urns: [bucket] });
+    await expect(call).rejects.toThrow(new RegExp(`^action-scope: .*${bucket.replace(/[$.]/g, "\\$&")}`));
+    expect(l.pending).toEqual([]);
+    expect(pulumi.calls.every((c) => c[0] === "preview")).toBe(true);
+  });
+
+  test("a preview that does not replace the URN, or updates it in place, is refused action-scope", () => {
+    expect(stackActionScope(rotate, JSON.parse(doc([])))).toEqual({ others: [], problem: `the preview does not replace ${rotate}` });
+    expect(stackActionScope(rotate, JSON.parse(doc([{ op: "update", urn: rotate }])))).toMatchObject({ problem: `the preview shows update of ${rotate}, not its replacement` });
+    expect(stackActionScope(rotate, JSON.parse(doc(replaceSteps(rotate))))).toEqual({ others: [] });
+  });
+
+  test("a URN of another type is refused action-type before any engine call", async () => {
+    const l = ledger();
+    const pulumi = runner(() => doc([]));
+    const common = { by: "alice", rules: { mode: "ledger" as const }, gated: l.api, env: {}, run: pulumi.run, dir: stackDir(), stack: "prod-us", engine: "pulumi" as const };
+    await expect(gatedStackAction({ ...common, urn: bucket })).rejects.toMatchObject({ code: "action-type" });
+    await expect(gatedStackAction({ ...common, urn: bucket })).rejects.toThrow(/aws:s3\/bucket:Bucket/);
+    await expect(gatedStackAction({ ...common, urn: "rotate" })).rejects.toMatchObject({ code: "action-urn" });
+    await expect(gatedStackAction({ ...common, urn: "urn:pulumi:dev::shop::command:local:Command::rotate" })).rejects.toMatchObject({ code: "action-urn" });
+    expect(pulumi.calls).toEqual([]);
+    expect(l.pending).toEqual([]);
+  });
+
+  test("after a second identity approves, the update runs once, applied and finished are written, and a repeat is spent", async () => {
+    const l = ledger();
+    const pulumi = runner((args) => (args[0] === "up" ? "Updating (prod-us)\n    ++ command:local:Command rotate created replacement\nResources: 1 replaced" : doc(replaceSteps(rotate))));
+    const opts = { by: "alice", rules: { mode: "ledger" as const }, gated: l.api, env: {}, run: pulumi.run, dir: stackDir(), stack: "prod-us", engine: "pulumi" as const, urn: rotate, name: "rotate" };
+    const first = await gatedStackAction(opts);
+    l.approve(first.digest, "alice");
+    expect((await gatedStackAction(opts)).status).toBe("refused");
+    expect(pulumi.calls.filter((c) => c[0] === "up")).toEqual([]);
+
+    l.approve(first.digest, "bob");
+    const done = await gatedStackAction(opts);
+    expect(done.status).toBe("done");
+    expect(done.digest).toBe(first.digest);
+    if (done.status !== "done") throw new Error("not done");
+    expect(done.result).toMatchObject({ urn: rotate, engine: "pulumi", exit: 0, tail: expect.stringContaining("1 replaced") });
+    expect(pulumi.calls.filter((c) => c[0] === "up")).toEqual([upArgs]);
+    expect(l.spent.has(first.digest)).toBe(true);
+    expect(l.finished).toEqual([{ digest: first.digest, result: "applied", detail: expect.objectContaining({ result: "ok", exit: 0, urn: rotate }) }]);
+
+    const again = await gatedStackAction(opts);
+    expect(again.status).toBe("spent");
+    expect(again.digest).toBe(first.digest);
+    expect(pulumi.calls.filter((c) => c[0] === "up")).toHaveLength(1);
+    // Asked anew, the same action is a new request that waits for its own approval.
+    const anew = await gatedStackAction({ ...opts, anew: true, now: "2000-01-01T00:00:00.000Z" });
+    expect(anew.status).toBe("waiting");
+    expect(pulumi.calls.filter((c) => c[0] === "up")).toHaveLength(1);
+  });
+
+  test("a failed update finishes failed with the exit code and the output's tail", async () => {
+    const l = ledger();
+    const pulumi = runner((args) => (args[0] === "up" ? Object.assign(new Error("exit 255"), { code: 255, stdout: "error: rotate.sh exited 3" }) : doc(replaceSteps(rotate))));
+    const opts = { by: "alice", rules: { mode: "ledger" as const }, gated: l.api, env: {}, run: pulumi.run, dir: stackDir(), stack: "prod-us", engine: "pulumi" as const, urn: rotate };
+    l.approve((await gatedStackAction(opts)).digest, "bob");
+    const failed = await gatedStackAction(opts);
+    expect(failed.status).toBe("failed");
+    expect(l.finished[0]).toMatchObject({ result: "failed", detail: { result: "failed", exit: 255, tail: "error: rotate.sh exited 3", urn: rotate } });
+  });
+
+  test("a stack on plunge previews and updates under plunge", async () => {
+    const l = ledger();
+    const plunge = runner((args) => (args[0] === "up" ? "done" : doc(replaceSteps(rotate))));
+    const opts = { by: "alice", rules: { mode: "ledger" as const }, gated: l.api, env: {}, plunge: plunge.run, dir: stackDir(), stack: "prod-us", engine: "plunge" as const, urn: rotate };
+    const first = await gatedStackAction(opts);
+    expect(first.request.fields.engine).toBe("plunge");
+    l.approve(first.digest, "bob");
+    expect((await gatedStackAction(opts)).status).toBe("done");
+    expect(plunge.calls).toEqual([previewArgs, previewArgs, upArgs]);
   });
 });

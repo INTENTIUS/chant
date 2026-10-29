@@ -13,13 +13,24 @@
  * - the no-real-cloud wrapper: ./safe-run.ts
  *
  * A product on a published chant without this subpath feature-detects:
- * import it lazily, and use it when `E2E_HARNESS_FLOOR` is there.
+ * import it lazily, and use it when `E2E_HARNESS_FLOOR` is there. A scenario
+ * with await-pull or comment steps, or a pull or gated outcome, needs
+ * `E2E_HARNESS_PULL_STEPS_FLOOR` as well.
  */
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { NEXT_RELEASE } from "../release-floors";
 
 /** The first chant with the e2e harness. */
 export const E2E_HARNESS_FLOOR = "0.124.56";
+
+/**
+ * The first chant whose harness follows a pull request a product opened
+ * (chant#4650): the await-pull and comment steps, the pull and gated
+ * outcomes, and the forge reads under them. A scenario that uses one needs
+ * this chant or newer.
+ */
+export const E2E_HARNESS_PULL_STEPS_FLOOR = NEXT_RELEASE;
 
 /**
  * The harness's chant docker-lexicon project, to `chant build <dir>/src

@@ -97,7 +97,8 @@ import { layerWaves } from "../gated-waves";
 import type { DriverComponent } from "./driver";
 import type { GatedWavePipelineOptions } from "./gated-wave-pipeline";
 import type { CloudTradeSpec, PipelineCloudIdentity } from "../ci-identity";
-import { commentLine, resolveProductWords, type CiProductWords, type CiProductWordsInput } from "../ci-product-words";
+import { commandWord, commentLine, PRODUCT_ACTION_ENV, PRODUCT_ACTION_EVENT_FLAG, resolveProductWords, type CiProductWords, type CiProductWordsInput } from "../ci-product-words";
+import { CHANT_EXIT } from "../exit-codes";
 import type { ControlTarget } from "../control/dispatch";
 import { CI_RESPOND_ENV, respondList, type CiResponses } from "../ci-respond";
 
@@ -307,6 +308,15 @@ export interface PrLoopPipelineOptions {
    */
   previewComment?: boolean;
   /**
+   * The action job (#4654): `/<product> <action word> <member> <action>` on
+   * an issue or pull request, or a dispatch of the workflow with the two
+   * inputs ({@link prActionJob}), runs the product's action verb at the
+   * target branch's commit under its gated request. GitHub and Forgejo only.
+   * The words must name an `action` command and a `bin`. Set from
+   * `--action-job` beside `--pr-loop`. Default off.
+   */
+  actionJob?: boolean | PrActionJobOptions;
+  /**
    * Where the pull request loop's jobs run (#4625), by stage: `plan` for the
    * plan and the comment preview, `apply` for the apply jobs, the record
    * job and a pull request environment's up, down and sweep, and `default`
@@ -409,7 +419,7 @@ export function prLoopRunner(options: Pick<PrLoopPipelineOptions, "runners">, st
 export function prLoopJobStage(name: string, member?: string): PrLoopRunnerStage {
   const bare = member && name.startsWith(`${member}-`) ? name.slice(member.length + 1) : name;
   if (bare === "plan" || bare === PR_COMMENT_PREVIEW_JOB) return "plan";
-  if (bare === "apply" || bare === "record" || /^apply-wave-\d+$/.test(bare) || bare === "env-up" || bare === "env-down" || bare === "env-sweep") return "apply";
+  if (bare === "apply" || bare === "record" || bare === PR_ACTION_JOB || /^apply-wave-\d+$/.test(bare) || bare === "env-up" || bare === "env-down" || bare === "env-sweep") return "apply";
   return "default";
 }
 
@@ -514,6 +524,81 @@ export function prCommentLockJobs(forge: ForgeKind, options: Pick<PrLoopPipeline
     });
   }
   return out;
+}
+
+/** The job answering the action comment and the action dispatch (#4654). */
+export const PR_ACTION_JOB = "action";
+
+/** The action job's settings (#4654). */
+export interface PrActionJobOptions {
+  /** The dispatch inputs' names. Default the words' member noun (`stack`, `root`) and `action`. */
+  inputs?: { member?: string; action?: string };
+}
+
+/** The action job (#4654): what starts it, what it runs, and the values it reads. */
+export interface PrActionJob {
+  jobName: typeof PR_ACTION_JOB;
+  /** The comment it answers, `/<product> <action word>`, followed by a member and an action. */
+  comment: string;
+  /** The dispatch inputs, by role: the member's input name and the action's. */
+  inputs: { member: string; action: string };
+  /**
+   * The command line: the product's action verb with
+   * {@link PRODUCT_ACTION_EVENT_FLAG}, which reads the comment or the inputs
+   * from {@link PRODUCT_ACTION_ENV}. A run that waits for an approval exits
+   * with chant's `waiting` code; {@link script} turns that into a green job.
+   */
+  command: string;
+  /** The step's script: the command, with chant's `waiting` exit taken as success, since a pending approval is the expected first answer. */
+  script: string;
+  /** The values it reads, as the forge spells them. */
+  env: Record<string, string>;
+}
+
+const INPUT_NAME = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
+
+/**
+ * The action job (#4654), with `actionJob`: one job that answers the
+ * product's action comment and a dispatch of the workflow with a member and
+ * an action. It runs at the target branch's commit (an `issue_comment` run's
+ * checkout) or the dispatched ref, never a pull request's head, and runs the
+ * product's own action verb, which asks for the gated request and runs the
+ * action once an approval counts. The comment and the inputs reach the verb
+ * as variables ({@link PRODUCT_ACTION_ENV}), never as shell text.
+ *
+ * Undefined without `actionJob`. Throws on GitLab, which starts no pipeline
+ * on a note; for words that name no `action` command or no `bin`, since
+ * chant has no action verb of its own; and for input names that are not
+ * plain names or are the same.
+ */
+export function prActionJob(forge: ForgeKind, options: Pick<PrLoopPipelineOptions, "actionJob" | "words"> = {}): PrActionJob | undefined {
+  if (!options.actionJob) return undefined;
+  if (forge === "gitlab") throw new Error("the action job runs on GitHub and Forgejo, whose workflows start on a comment and on a dispatch with inputs; on GitLab, run the product's action verb from a pipeline of its own");
+  const words = resolveProductWords(options.words);
+  const typed = commandWord(words, "action");
+  if (typed === undefined) throw new Error(`--action-job answers /${words.product} <action command>, and the words name no action command; name one in the words' commands, or drop --action-job`);
+  if (!words.bin) throw new Error("--action-job runs the product's action verb, and the words name no bin; chant has no action verb of its own");
+  const given = options.actionJob === true ? {} : options.actionJob.inputs ?? {};
+  const inputs = { member: given.member ?? words.noun[0], action: given.action ?? "action" };
+  for (const [role, name] of Object.entries(inputs)) {
+    if (!INPUT_NAME.test(name)) throw new Error(`the action job's ${role} input is a plain name, not ${JSON.stringify(name)}`);
+  }
+  if (inputs.member === inputs.action) throw new Error(`the action job's two inputs need two names, and both are ${inputs.action}`);
+  const command = withProductBin(["chant", typed, PRODUCT_ACTION_EVENT_FLAG].join(" "), words.bin);
+  return {
+    jobName: PR_ACTION_JOB,
+    comment: `/${words.product} ${typed}`,
+    inputs,
+    command,
+    script: ["set +e", command, 'code="$?"', `if [ "$code" -eq ${CHANT_EXIT.waiting} ]; then echo "The action waits for an approval."; exit 0; fi`, 'exit "$code"'].join("\n"),
+    env: {
+      [PRODUCT_ACTION_ENV.comment]: "${{ github.event.comment.body }}",
+      [PRODUCT_ACTION_ENV.member]: `\${{ github.event.inputs.${inputs.member} }}`,
+      [PRODUCT_ACTION_ENV.action]: `\${{ github.event.inputs.${inputs.action} }}`,
+      PR_NUMBER: "${{ github.event.issue.number }}",
+      GITHUB_TOKEN: GITHUB_JOB_TOKEN,
+    },
+  };
 }
 
 /** The job answering `/<product> <plan word>` (#4620). */

@@ -34,6 +34,8 @@ export interface InitOptions {
   skipMcp?: boolean;
   /** Register `chant serve mcp --read-only` in `.mcp.json` (`--mcp-read-only`, chant#4543) */
   mcpReadOnly?: boolean;
+  /** With `mcpReadOnly`, register `chant serve mcp --read-only --propose` (`--propose`, chant#4655) */
+  mcpPropose?: boolean;
   /** Skip interactive install prompt */
   skipInstall?: boolean;
   /**
@@ -439,7 +441,7 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
   if (!options.skipMcp) {
     writeIfNotExists(
       mcpConfigPath(targetDir),
-      generateMcpConfig(detectPackageManager(targetDir), { readOnly: options.mcpReadOnly }),
+      generateMcpConfig(detectPackageManager(targetDir), { readOnly: options.mcpReadOnly, propose: options.mcpPropose }),
       MCP_CONFIG_FILENAME,
       createdFiles,
       warnings,

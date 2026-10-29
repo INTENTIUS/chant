@@ -14,6 +14,8 @@ import {
   plungeAdoptArgs,
   plungeGraphArgs,
   plungeMoveArgs,
+  pulumiActionPreviewArgs,
+  pulumiActionUpArgs,
   pulumiCancelArgs,
   pulumiStateMoveArgs,
   runGatedPlunge,
@@ -89,6 +91,44 @@ describe("gated stack operations (#4578)", () => {
     await expect(runGatedPlunge(run, ["stack", "move", "--dest", "app", u, "--json", "--yes"], "/tmp")).rejects.toThrow(/moves plunge resources only as/);
     await expect(runAllowedPlunge(run, plungeMoveArgs({ source: "net", dest: "app", urns: [u], yes: true }), "/tmp")).rejects.toThrow(/not plunge stack move/);
     await expect(runAllowedPulumi(run, pulumiCancelArgs({ stack: "dev" }), "/tmp")).rejects.toThrow(/not pulumi cancel/);
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("a stack action's forms (#4654)", () => {
+  const u = "urn:pulumi:prod-us::shop::command:local:Command::rotate";
+  const other = "urn:pulumi:prod-us::shop::command:local:Command::flush";
+  test("the preview is a read; the update passes the gated entry points only", async () => {
+    const { run, calls } = fake(() => "{}");
+    await runAllowedPulumi(run, pulumiActionPreviewArgs({ stack: "prod-us", urn: u }), "/tmp");
+    await runAllowedPlunge(run, pulumiActionPreviewArgs({ stack: "prod-us", urn: u }), "/tmp");
+    await runGatedPulumi(run, pulumiActionUpArgs({ stack: "prod-us", urn: u }), "/tmp");
+    await runGatedPlunge(run, pulumiActionUpArgs({ stack: "prod-us", urn: u }), "/tmp");
+    const up = ["up", "--yes", "--target", u, "--replace", u, "--stack", "prod-us"];
+    expect(calls.map((c) => c.args)).toEqual([
+      ["preview", "--json", "--target", u, "--replace", u, "--stack", "prod-us"],
+      ["preview", "--json", "--target", u, "--replace", u, "--stack", "prod-us"],
+      up,
+      up,
+    ]);
+  });
+
+  test("no other update form gets through", async () => {
+    const { run, calls } = fake(() => "{}");
+    const up = pulumiActionUpArgs({ stack: "prod-us", urn: u });
+    await expect(runAllowedPulumi(run, up, "/tmp")).rejects.toThrow(/not pulumi up/);
+    await expect(runApplyPulumi(run, up, "/tmp")).rejects.toThrow();
+    for (const args of [
+      ["up", "--yes", "--target", u, "--replace", other, "--stack", "prod-us"],
+      ["up", "--yes", "--replace", u, "--stack", "prod-us"],
+      ["up", "--yes", "--target", u, "--replace", u, "--stack", "prod-us", "--skip-preview"],
+      ["up", "--target", u, "--replace", u, "--stack", "prod-us"],
+      ["up", "--yes", "--target", "rotate", "--replace", "rotate", "--stack", "prod-us"],
+      ["up", "--yes", "--target", u, "--replace", u, "--stack", "--json"],
+    ]) {
+      await expect(runGatedPulumi(run, args, "/tmp")).rejects.toThrow(/gated Pulumi stack operation only as/);
+      await expect(runGatedPlunge(run, args, "/tmp")).rejects.toThrow(/plunge stack action only as/);
+    }
     expect(calls).toEqual([]);
   });
 });

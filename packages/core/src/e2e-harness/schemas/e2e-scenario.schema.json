@@ -55,7 +55,7 @@
   },
   "$defs": {
     "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
-    "do": { "enum": ["open", "open-concurrent", "plan", "approve", "merge", "apply", "out-of-band", "kill-job"] },
+    "do": { "enum": ["open", "open-concurrent", "await-pull", "plan", "approve", "merge", "comment", "apply", "out-of-band", "kill-job"] },
     "step": {
       "type": "object",
       "required": ["id", "do"],
@@ -81,9 +81,28 @@
           "type": "object",
           "properties": {
             "do": { "enum": ["plan", "approve", "merge"] },
-            "pull": { "$ref": "#/$defs/name", "description": "The id of the open step whose pull request this is." }
+            "pull": { "$ref": "#/$defs/name", "description": "The id of the open or await-pull step whose pull request this is." }
           },
           "required": ["pull"]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "do": { "const": "await-pull" },
+            "branch": { "type": "string", "minLength": 1, "description": "The exact head branch of the pull request a product opens. Both runs wait for this same branch: the BREAK run does not add -break to it." },
+            "title": { "type": "string", "minLength": 1, "description": "Text the pull request's title must hold, when given." }
+          },
+          "required": ["branch"]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "do": { "const": "comment" },
+            "pull": { "$ref": "#/$defs/name", "description": "The id of the open or await-pull step whose pull request the comment goes on." },
+            "body": { "type": "string", "minLength": 1 },
+            "as": { "enum": ["author", "reviewer", "admin"], "description": "Who posts it. Default author." }
+          },
+          "required": ["pull", "body"]
         },
         {
           "type": "object",
@@ -112,7 +131,7 @@
     },
     "outcome": {
       "type": "object",
-      "description": "One thing a step must show. report reads the step's pr-plan.json or pr-apply.json; ledger reads the run records the scenario added; comment and issue read the forge; exit is an out-of-band command's exit code.",
+      "description": "One thing a step must show. report reads the step's pr-plan.json or pr-apply.json; ledger reads the run records the scenario added; gated reads the gated requests the scenario added; comment, issue and pull read the forge; exit is an out-of-band command's exit code.",
       "minProperties": 1,
       "maxProperties": 1,
       "additionalProperties": false,
@@ -136,7 +155,28 @@
             "count": { "type": "integer", "minimum": 0 }
           }
         },
+        "gated": {
+          "type": "object",
+          "required": ["op"],
+          "additionalProperties": false,
+          "description": "Gated requests of op on the ledger, asked since the run started. A request is gated until a finished line names it, then ok when it applied and failed when it did not.",
+          "properties": {
+            "op": { "type": "string" },
+            "status": { "enum": ["gated", "ok", "failed"] },
+            "count": { "type": "integer", "minimum": 0 }
+          }
+        },
         "comment": { "type": "string", "minLength": 1, "description": "Text one of the step's pull request comments holds." },
+        "pull": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The step's pull request: its title holds title, it changes every path in files, and with only it changes no other path.",
+          "properties": {
+            "title": { "type": "string", "minLength": 1 },
+            "files": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+            "only": { "type": "boolean", "description": "files names every path the pull request changes." }
+          }
+        },
         "issue": {
           "type": "object",
           "required": ["title"],

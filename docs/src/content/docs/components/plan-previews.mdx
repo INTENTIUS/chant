@@ -70,6 +70,7 @@ The table is generated from the capability plugins that core and the lexicons re
 | `pulumi-up` | pulumi | yes | yes | `pulumi preview --json --show-sames` (or `plunge preview` with `--save-plan`) in the stack's directory, streamed as engine events, with CrossGuard's policy events | a create, update, replace or delete per URN, and each top-level input the change writes with its value before and after. See [pulumi-up](#pulumi-up) |
 | `sql-apply` | sql | yes | no | the declarative build diffed against the environment's server, per dialect (Postgres or ClickHouse) | an entry per database object the build changes; a change the applier does not make in place fails the plan, naming the Op to run instead. See [sql-apply](#sql-apply) |
 | `sql-migrate` | sql | yes | no | `yodel plan <env> --part` for the pending migrations, and in an op wave `yodel apply <env> --wave-plan` | an entry per object the pending migrations touch, and in an op wave the wave plan's destructive steps. See [sql-migrate](#sql-migrate) |
+| `terraform-action` | terraform | yes | no | `plan -invoke=<address>` of the root, read with `show -json` | the action invocation as a side effect, and no resource changes. See [terraform-action](#terraform-action) |
 | `terraform-apply` | terraform | yes | yes | `terraform plan` (or tofu or choudoufu) in the root, against its state, with a typed placeholder for each variable that reads an output not known yet | every resource change with its action, and each changed top-level attribute with its value before and after. See [terraform-apply](#terraform-apply) |
 | `terraform-copy` | terraform | yes | no | `plan` (or a destroy plan) of the root initialised under its copy's backend settings, read with `show -json` | every resource change the copy would make, as for terraform-apply. See [terraform-copy](#terraform-copy) |
 | `terraform-state-push` | terraform | yes | no | nothing from the backend: the step's own facts, the roots whose state files it would push | no entries: a digest over the roots, which the gated request binds. See [terraform-state-push](#terraform-state-push) |
@@ -243,6 +244,12 @@ The plan runs `yodel plan <env> --part <file>`, one entry per object the pending
 An ephemeral copy of a root plans through this capability, in `lexicons/terraform/src/state-ops.ts` ([#4618](https://github.com/INTENTIUS/chant/issues/4618)). It initialises the root under the copy's backend settings with `init -reconfigure -backend-config=<k>=<v>`.
 
 With `destroy` set, the step asks for a destroy plan instead. Entries come from the saved plan file through the same change-set reader `terraform-apply` uses, and the apply hands that same file to `apply`. A copy waits at chant's `pr-env` gate and takes no request of its own.
+
+### `terraform-action`
+
+A day-2 action runs through this capability, in `lexicons/terraform/src/action-ops.ts`. Its plan is `plan -invoke=<address> -out`, read with `show -json`. The invocation shows as a side effect, and the plan has no resource changes, since `-invoke` plans in refresh-only mode.
+
+`run` plans again and asks for a gated request whose digest binds the address, the commit and the plan's `action_invocations`. It applies the saved plan once an approval counts.
 
 ### `terraform-state-push`
 

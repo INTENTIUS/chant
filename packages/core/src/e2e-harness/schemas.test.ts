@@ -65,7 +65,7 @@ describe("e2e-scenario/v1 and its lint", () => {
     steps[2] = { id: "one-plan", do: "plan", pull: "nobody", expect: [{ report: { status: "planned" } }] };
     steps[4] = { id: "one-apply", do: "apply", merge: "one", expect: [{ exit: 0 }] };
     const findings = lintScenario(s);
-    expect(findings).toContainEqual({ at: "/steps/2/pull", message: "plan names nobody, which is not an earlier open step" });
+    expect(findings).toContainEqual({ at: "/steps/2/pull", message: "plan names nobody, which is not an earlier open or await-pull step" });
     expect(findings).toContainEqual({ at: "/steps/4/merge", message: "apply names one, which is not an earlier merge step" });
     expect(findings).toContainEqual({ at: "/steps/4/expect/0", message: "an exit outcome belongs on an out-of-band step" });
   });
@@ -93,6 +93,49 @@ describe("e2e-scenario/v1 and its lint", () => {
       (s.steps as unknown[]).push(bad);
       expect(validateScenario(s).ok, JSON.stringify(bad)).toBe(false);
       expect(lintScenario(s).length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("e2e-scenario/v1 steps for a pull request a product opens (chant#4650)", () => {
+  const product = (steps: unknown[]): Record<string, unknown> => ({ ...scenario(), steps });
+  const request = { id: "request", do: "out-of-band", command: ["terragucci", "request"], expect: [{ exit: 0 }] };
+
+  test("await-pull, comment and the pull and gated outcomes are in the schema", () => {
+    const s = product([
+      request,
+      { id: "pr", do: "await-pull", branch: "request/bucket/orders", title: "orders", expect: [{ pull: { title: "orders", files: ["apps/orders/main.tf"], only: true } }] },
+      { id: "pr-plan", do: "plan", pull: "pr", expect: [{ report: { status: "planned" } }] },
+      { id: "invoke", do: "comment", pull: "pr", body: "/terragucci action orders rotate", as: "reviewer", expect: [{ gated: { op: "tf-action", status: "gated", count: 1 } }] },
+    ]);
+    expect(validateScenario(s)).toMatchObject({ ok: true });
+    expect(lintScenario({ ...s, limits: { "await-pull": 600, comment: 30 } })).toEqual([]);
+  });
+
+  test("a plan naming an await-pull step lints clean, and one naming an unknown id has one finding naming it", () => {
+    const steps = (pull: string) => [request, { id: "pr", do: "await-pull", branch: "request/bucket/orders" }, { id: "pr-plan", do: "plan", pull, expect: [{ report: { status: "planned" } }] }];
+    expect(lintScenario(product(steps("pr")))).toEqual([]);
+    expect(lintScenario(product(steps("nobody")))).toEqual([{ at: "/steps/2/pull", message: "plan names nobody, which is not an earlier open or await-pull step" }]);
+  });
+
+  test("a comment step names an earlier pull request, and a pull outcome belongs on a step with one", () => {
+    expect(lintScenario(product([request, { id: "c", do: "comment", pull: "later", body: "hi" }]))).toEqual([{ at: "/steps/1/pull", message: "comment names later, which is not an earlier open or await-pull step" }]);
+    expect(lintScenario(product([{ ...request, expect: [{ pull: { only: true } }] }]))).toEqual([{ at: "/steps/0/expect/0", message: "a pull outcome belongs on a step with a pull request" }]);
+  });
+
+  test("the schema refuses an await-pull with no branch, a comment with no pull or body, and unknown fields in the outcomes", () => {
+    for (const bad of [
+      { id: "s", do: "await-pull", title: "T" },
+      { id: "s", do: "comment", pull: "one" },
+      { id: "s", do: "comment", body: "hi" },
+      { id: "s", do: "comment", pull: "one", body: "hi", as: "stranger" },
+      { id: "s", do: "plan", pull: "one", expect: [{ pull: { branch: "x" } }] },
+      { id: "s", do: "plan", pull: "one", expect: [{ gated: { status: "ok" } }] },
+      { id: "s", do: "plan", pull: "one", expect: [{ gated: { op: "tf-action", status: "applied" } }] },
+    ]) {
+      const s = scenario();
+      (s.steps as unknown[]).push(bad);
+      expect(validateScenario(s).ok, JSON.stringify(bad)).toBe(false);
     }
   });
 });

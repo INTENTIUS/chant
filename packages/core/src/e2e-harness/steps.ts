@@ -10,12 +10,16 @@ export const HARNESS_LIMITS: Record<ScenarioStepKind, number> = {
   /** The branch push and the pull request open. */
   open: 60,
   "open-concurrent": 60,
+  /** An open pull request from the branch, which a product opens. */
+  "await-pull": 300,
   /** pr-plan.json at the head, from the push. */
   plan: 600,
   /** The forge review and chant approve. */
   approve: 120,
   /** The merge and its merge commit. */
   merge: 60,
+  /** Posting a comment on the pull request. */
+  comment: 60,
   /** pr-apply.json at the merge commit, from the merge. */
   apply: 900,
   /** A command run out of band. */

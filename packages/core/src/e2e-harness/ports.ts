@@ -4,6 +4,7 @@
  * chant's reports land, chant run outside the pipeline, the ledger, and time.
  * The real ones are ./forgejo.ts and ./bucket.ts; tests pass fakes.
  */
+import type { GatedRequestRead } from "../lifecycle/gated-request";
 import type { OpRunRecord } from "../op/runtime";
 
 /** A forge repository as the author, the reviewer and the admin: the pull request loop. */
@@ -48,6 +49,19 @@ export interface ForgeIssue {
   open: boolean;
 }
 
+/** An open pull request as the forge reads it. */
+export interface ForgePull {
+  number: number;
+  title: string;
+  /** Its head branch. */
+  branch: string;
+  /** Its head commit's sha. */
+  head: string;
+}
+
+/** Who on the forge a comment comes from. */
+export type ForgePerson = "author" | "reviewer" | "admin";
+
 /**
  * sql-yodeler's Forge verbs (scenarios/forges/forge.ts:26-61) that the pull
  * request loop lacks. `openPr` and `merge` there are `openPull` and
@@ -59,6 +73,18 @@ export interface ForgeReads {
   comments(pull: number): Promise<string[]>;
   /** The repository's issues, open and closed, without pull requests. */
   issues(): Promise<ForgeIssue[]>;
+  /**
+   * The OPEN pull request from `branch` in this repository (a fork's branch
+   * of the same name is not it), or undefined. The oldest when there are
+   * several. A product opens it, and the await-pull step finds it.
+   */
+  findPull(branch: string): Promise<ForgePull | undefined>;
+  /** Pull request `pull`, open or not, or undefined when the forge does not know it. */
+  pullInfo(pull: number): Promise<ForgePull | undefined>;
+  /** The repo-relative paths pull request `pull` changes, a renamed file under its new path. */
+  changedFiles(pull: number): Promise<string[]>;
+  /** Post `body` as a comment on pull request `pull`, as `as`. */
+  postComment(pull: number, body: string, as: ForgePerson): Promise<void>;
 }
 
 export interface ForgeRuns {
@@ -107,6 +133,13 @@ export interface Chant {
 /** The run ledger of the scenario's repo (`chant/lifecycle`), read. */
 export interface Ledger {
   runs(env: string, op: string): Promise<OpRunRecord[]>;
+  /**
+   * The gated requests of `op`, oldest first, for the gated outcome. A gated
+   * request writes no op-run record, so `runs` never sees it. The real one
+   * is `readGatedRequests(op, location)` from the lifecycle module, on the
+   * scenario repo's ledger.
+   */
+  gatedRequests?(op: string): Promise<GatedRequestRead[]>;
 }
 
 /** Work outside the forge and chant: a change made out of band. */

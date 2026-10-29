@@ -7,7 +7,7 @@ diataxis: reference
 ## Synopsis
 
 ```
-chant serve mcp [path] [--read-only]
+chant serve mcp [path] [--read-only [--propose]]
 ```
 
 ## Description
@@ -258,7 +258,7 @@ Reads one file a pull request stage kept in the report store: the URL a CI produ
 
 Lexicon plugins can add tools. Plugin tools are namespaced as `{pluginName}:{toolName}` to avoid conflicts with core tools. A plugin tool that changes nothing declares `readOnly: true`, which is what lets the [read-only server](#read-only-mode) serve it.
 
-A CI product adds its tools the same way through its tool hook ([#4555](https://github.com/INTENTIUS/chant/issues/4555)). The product's bin runs `runChantInProcess(["serve", "mcp"], words, { mcp: hook })` from `@intentius/chant/ci-product`, and each tool is registered as `{product}:{toolName}`. Started through the hook, the server is read-only unless the hook sets `readOnly: false`, and `--read-only` keeps it read-only either way. In that mode a product tool is served only when it declares `readOnly: true`, and chant refuses to start when a served tool's name begins with a write word such as `apply` or `lock`, or holds a strong one such as `approve` or `merge` anywhere. terragucci's own server made the same check. The hook's `tools(ctx)` gets `ctx.reports()`, a reader of the report store that cannot write.
+A CI product adds its tools the same way through its tool hook ([#4555](https://github.com/INTENTIUS/chant/issues/4555)). The product's bin runs `runChantInProcess(["serve", "mcp"], words, { mcp: hook })` from `@intentius/chant/ci-product`, and each tool is registered as `{product}:{toolName}`. Started through the hook, the server is read-only unless the hook sets `readOnly: false`, and `--read-only` keeps it read-only either way. In that mode a product tool is served only when it declares `readOnly: true`, and chant refuses to start when a served tool's name begins with a write word such as `apply` or `lock`, or holds a strong one such as `approve` or `merge` anywhere. terragucci's own server made the same check. The hook's `tools(ctx)` gets `ctx.reports()`, a reader of the report store that cannot write. Tools that open a pull request declare `forgeWrite: true` instead, and only the [propose tier](#propose-tier) serves those.
 
 ## Read-only mode
 
@@ -286,6 +286,22 @@ Running `chant init --mcp-read-only` writes the read-only form into `.mcp.json`,
 ```
 
 A product built on chant switches it on for its own server by constructing `McpServer` with `readOnly: true`, or gets it by default by passing its tools as a [tool hook](#plugin-tools).
+
+## Propose tier
+
+`chant serve mcp --read-only --propose` serves everything the read-only server serves, plus a CI product's tools that write to the forge and nowhere else ([#4655](https://github.com/INTENTIUS/chant/issues/4655)). Such a tool, a product's `request_from_template` for one, declares `forgeWrite: true` on its contribution. It opens a pull request or posts a comment. It never runs an Op or resolves a gate, and it approves and applies nothing. Approvals stay with a person. The tier adds no core tool, so `op-run`, `op-approve` and `lifecycle-snapshot` stay out whatever the hook declares, and a lexicon's tools are served only when they declare `readOnly: true`, as on the read-only server.
+
+| Server | A product tool with `readOnly: true` | A product tool with `forgeWrite: true` |
+|---|---|---|
+| ordinary | served | served |
+| read-only | served | refused: the server does not start, and the error names the tool |
+| read-only with `--propose` | served | served |
+
+On the tier a `forgeWrite` tool's name is checked against the same write words as a read tool's, except for `request` and `propose`. A name such as `approve_request` or `merge_request` still stops the server from starting with `ProductToolRefusedError`, which names the word. The `initialize` result's `instructions` say that the forge tools open pull requests and comments only, and that approving, merging and applying belong to a person.
+
+Without `--read-only`, `chant serve mcp --propose` exits 1 with a usage message. A product's bin starts the tier with `runChantInProcess(["serve", "mcp", "--read-only", "--propose"], words, { mcp: hook })`, or sets `propose: true` on the hook. It checks `PRODUCT_MCP_PROPOSE_FLOOR` from `@intentius/chant/ci-product` first, since an older chant drops a `forgeWrite` tool from the read-only server. A product whose own tool and hook types allow only `readOnly: true` widens them to allow `forgeWrite: true` for these tools.
+
+Running `chant init --mcp-read-only --propose` writes this form into `.mcp.json`, with `args` set to `["chant", "serve", "mcp", "--read-only", "--propose"]`. `chant init --mcp-read-only --propose --dry-run` prints the `.mcp.json` it would write and writes nothing.
 
 ## Workspace tools
 
@@ -382,7 +398,7 @@ If your agent doesn't auto-detect the MCP config, configure the server manually.
 chant serve mcp
 ```
 
-Add `--read-only` for an agent that should only read; see [Read-only mode](#read-only-mode).
+Add `--read-only` for an agent that should only read; see [Read-only mode](#read-only-mode). An agent that may also open pull requests through a product's tools gets `--read-only --propose`, described under [Propose tier](#propose-tier).
 
 The server communicates over stdin/stdout using JSON-RPC 2.0 with line-based framing (one JSON object per line).
 

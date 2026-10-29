@@ -137,6 +137,12 @@ export interface ParsedArgs {
   readOnly?: boolean;
   /** `chant init --mcp-read-only` (chant#4543): write `.mcp.json` registering `chant serve mcp --read-only`. */
   mcpReadOnly?: boolean;
+  /**
+   * `chant serve mcp --read-only --propose` and `chant init --mcp-read-only
+   * --propose` (chant#4655): the read-only server plus a product's tools that
+   * open pull requests (`forgeWrite`).
+   */
+  propose?: boolean;
   /** `chant import --type <ResourceType>` selector */
   selectType?: string;
   /** `chant import --name <name>` selector */
@@ -441,6 +447,8 @@ export interface ParsedArgs {
   applyBeforeMerge?: boolean;
   /** `chant build --pr-loop --preview-comment` (#4620): a job answers `/<product> <plan word>` by previewing the pull request's head again. */
   previewComment?: boolean;
+  /** `chant build --pr-loop --action-job` (#4654): a job answers `/<product> <action word> <member> <action>` and a dispatch with the two inputs by running the product's action verb. */
+  actionJob?: boolean;
   /** `chant build --pr-loop --pr-build` (#4088) — build and lint before pr-plan and pr-apply. */
   prBuild?: boolean;
   /** `chant build --pr-loop --pr-runner <stage>=<label>[,<label>...]` (#4625), repeatable: a stage's runner, plan, apply or default. */

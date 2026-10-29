@@ -11,7 +11,7 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { guardedGit, remoteWith, type GuardedGit } from "./git";
-import type { Clock, ForgeIssue, ForgeRun, HarnessForge } from "./ports";
+import type { Clock, ForgeIssue, ForgePerson, ForgePull, ForgeRun, HarnessForge } from "./ports";
 import { forgejoRunnerConfig, type RunnerConfigOptions } from "./stack";
 
 export interface Person {
@@ -72,6 +72,16 @@ interface ActionRun {
   commit_sha?: string;
   workflow_id?: string;
 }
+
+/** A pull request as Forgejo's API answers, the fields read here. */
+interface ForgejoPull {
+  number: number;
+  title: string;
+  head?: { ref?: string; sha?: string; repo?: { full_name?: string } | null };
+}
+
+const pullOf = (p: ForgejoPull): ForgePull => ({ number: p.number, title: p.title, branch: p.head?.ref ?? "", head: p.head?.sha ?? "" });
+const sameRepo = (a: string | undefined, b: string) => a !== undefined && a.toLowerCase() === b.toLowerCase();
 
 const DONE = new Set(["success", "failure", "cancelled", "skipped"]);
 
@@ -199,6 +209,37 @@ export class ForgejoForge implements HarnessForge {
       if (list.length < 50) break;
     }
     return out;
+  }
+
+  async findPull(branch: string): Promise<ForgePull | undefined> {
+    const found: ForgePull[] = [];
+    for (let page = 1; page < 50; page++) {
+      const list = await this.api<ForgejoPull[]>(this.o.admin, "GET", `${this.r}/pulls?state=open&sort=oldest&page=${page}&limit=50`);
+      if (!list || list.length === 0) break;
+      for (const p of list) if (p.head?.ref === branch && sameRepo(p.head.repo?.full_name, this.o.repo)) found.push(pullOf(p));
+      if (list.length < 50) break;
+    }
+    return found.sort((a, b) => a.number - b.number)[0];
+  }
+
+  async pullInfo(pull: number): Promise<ForgePull | undefined> {
+    const p = await this.api<ForgejoPull>(this.o.admin, "GET", `${this.r}/pulls/${pull}`, undefined, true);
+    return p ? pullOf(p) : undefined;
+  }
+
+  async changedFiles(pull: number): Promise<string[]> {
+    const out: string[] = [];
+    for (let page = 1; page < 50; page++) {
+      const list = await this.api<Array<{ filename: string }>>(this.o.admin, "GET", `${this.r}/pulls/${pull}/files?page=${page}&limit=50`);
+      if (!list || list.length === 0) break;
+      out.push(...list.map((f) => f.filename));
+      if (list.length < 50) break;
+    }
+    return out;
+  }
+
+  async postComment(pull: number, body: string, as: ForgePerson): Promise<void> {
+    await this.api(this.o[as], "POST", `${this.r}/issues/${pull}/comments`, { body });
   }
 
   applyAgain(sha: string, workflow: string): Promise<ForgeRun> {

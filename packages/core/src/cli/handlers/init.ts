@@ -6,6 +6,23 @@ export async function runInit(ctx: CommandContext): Promise<number> {
 
   if (args.migrateFrom !== undefined) return runInitFrom(ctx);
 
+  // chant#4655 — --propose registers the read-only server's propose tier, so it needs --mcp-read-only.
+  if (args.propose === true && args.mcpReadOnly !== true) {
+    console.error(formatError({
+      message: "chant init --propose needs --mcp-read-only",
+      hint: "Usage: chant init --mcp-read-only --propose (registers chant serve mcp --read-only --propose in .mcp.json)",
+    }));
+    return 1;
+  }
+
+  // chant#4655 — --dry-run prints the .mcp.json init would register and writes nothing.
+  if (args.dryRun === true) {
+    const { detectPackageManager, generateMcpConfig } = await import("../mcp-config");
+    const target = args.path === "." || args.path === undefined ? process.cwd() : args.path;
+    console.log(generateMcpConfig(detectPackageManager(target), { readOnly: args.mcpReadOnly, propose: args.propose }));
+    return 0;
+  }
+
   if (!args.lexicon) {
     console.error(formatError({
       message: "Missing --lexicon flag",
@@ -23,6 +40,7 @@ export async function runInit(ctx: CommandContext): Promise<number> {
     force: args.force,
     skipMcp: args.skipMcp,
     mcpReadOnly: args.mcpReadOnly,
+    mcpPropose: args.propose,
     skipInstall: true,
   });
   await printInitResult(result, { skipInstall: false, cwd: args.path });

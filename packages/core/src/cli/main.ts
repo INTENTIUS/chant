@@ -1362,7 +1362,9 @@ Local:
 Servers:
   serve lsp             Start the LSP server (stdio)
   serve mcp             Start the MCP server (stdio); --read-only serves only
-                        the tools that read (ledger, graph, runs) and run nothing
+                        the tools that read (ledger, graph, runs) and run nothing;
+                        --read-only --propose also serves a product's tools that
+                        open pull requests and comments, and nothing that approves
 
 Project:
   update (alias: sync)  Sync lexicon types into .chant/types/ (does not install
@@ -1389,7 +1391,9 @@ Options:
                         records its lineage in .chant/workspace.lock.json
   --skill <name>        Init: install only this skill from the lexicon
   --skip-mcp            Init: scaffold without writing the project's .mcp.json
-  --mcp-read-only       Init: register \`chant serve mcp --read-only\` in .mcp.json
+  --mcp-read-only       Init: register \`chant serve mcp --read-only\` in .mcp.json;
+                        with --propose, \`chant serve mcp --read-only --propose\`.
+                        Init --dry-run prints that .mcp.json and writes nothing
   --fix                 Auto-fix fixable issues (lint command)
   --force               Force overwrite existing files (import command)
   -w, --watch           Watch for changes and rebuild/re-lint (build, lint)

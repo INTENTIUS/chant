@@ -13,6 +13,7 @@ import type { CiProductWords, CiProductWordsInput } from "./ci-product-words";
 import type { ProductMcpHook } from "./cli/mcp/product-tools";
 import type { ProductWaveHook } from "./op/op-waves-after-plan";
 import { OTLP_EXPORTER_FLOOR } from "./otlp";
+import { NEXT_RELEASE } from "./release-floors";
 
 /**
  * The first chant with the product pipeline (#4550): the words, the
@@ -40,6 +41,9 @@ export {
   notifyWaveLabel,
   overrideLine,
   parseProductComment,
+  productActionFromEnv,
+  PRODUCT_ACTION_ENV,
+  PRODUCT_ACTION_EVENT_FLAG,
   productContext,
   productStatusContext,
   productWaveGate,
@@ -59,6 +63,7 @@ export {
   type CiProductWordsInput,
   type OverrideLineInput,
   type ParsedProductComment,
+  type ProductActionRequest,
 } from "./ci-product-words";
 export { driftNotifyFields, productNotifySource, productNotifyWords, productSendOptions, type DriftNotifyInput } from "./notify-product";
 
@@ -110,7 +115,19 @@ export {
   type ProductPipelineJobs,
   type ProductPipelineOptions,
 } from "./components/product-pipeline";
-export { prApplyComment, prCommentLockJobs, prCommentPreviewJob, prLoopSetup, engineSetupLines, withProductBin, type PrCommentLockJob, type PrCommentPreviewJob } from "./components/pr-pipeline";
+export { prActionJob, PR_ACTION_JOB, prApplyComment, prCommentLockJobs, prCommentPreviewJob, prLoopSetup, engineSetupLines, withProductBin, type PrActionJob, type PrActionJobOptions, type PrCommentLockJob, type PrCommentPreviewJob } from "./components/pr-pipeline";
+
+/**
+ * Day-2 actions in the product pipeline (#4654): the `action` comment
+ * command counted as answered by the product's own workflow
+ * (`productPipelineJobs(forge, env, { words, actions: true })`), or the
+ * pipeline's own action job (`actionJob`, `build --pr-loop --action-job`),
+ * which answers the comment and a dispatch with a member and an action
+ * input, and runs the product's action verb with `--from-event`. The verb
+ * reads what was asked with `productActionFromEnv`. A product
+ * feature-detects on this floor.
+ */
+export const PRODUCT_ACTIONS_FLOOR = NEXT_RELEASE;
 export { CI_SERVICES_FLOOR, engineServices, githubServices, gitlabServices, serviceWaitLine, servicesJobEnv, type CiService } from "./components/ci-services";
 export { renderPrNote, prStatusContext, prApproveCommand, prApproveCommands, prApproveTargets, prMergeSentence, type PrMemberDetail } from "./pr-loop";
 export { upsertPlanNote } from "./pr-post";
@@ -214,6 +231,20 @@ export { parseRequiresList, PR_APPLY_REQUIRES, type PrApplyRequire } from "./pr-
  */
 export const PRODUCT_MCP_HOOK_FLOOR = OTLP_EXPORTER_FLOOR;
 export type { ProductMcpContext, ProductMcpHook } from "./cli/mcp/product-tools";
+
+/**
+ * The `--propose` tier (chant#4655): `runChantInProcess(["serve", "mcp",
+ * "--read-only", "--propose"], words, { mcp: hook })`, or `propose: true` on
+ * the hook, serves the read-only server's tools plus the product tools that
+ * declare `forgeWrite: true` on their `McpToolContribution`, tools that open
+ * a pull request or a comment and do nothing else. A product's own tool and
+ * hook types widen from `readOnly: true` to `readOnly: true` or `forgeWrite:
+ * true` for these, and its hook gains `propose?: boolean`. Feature-detect on
+ * `PRODUCT_MCP_PROPOSE_FLOOR`: on an older chant the read-only server drops a
+ * `forgeWrite` tool, and `--propose` is not a flag it parses.
+ */
+export { PRODUCT_MCP_PROPOSE_FLOOR, PRODUCT_TOOL_PROPOSE_WORDS } from "./cli/mcp/product-tools";
+export type { McpToolContribution } from "./mcp/types";
 export {
   activeOtlp,
   configureOtlp,

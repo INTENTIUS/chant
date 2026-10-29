@@ -208,7 +208,7 @@ describe("terraform-apply on a choudoufu root in a gated wave (#3459)", () => {
 
 describe("terraform-apply", () => {
   test("the plugin contributes it", () => {
-    expect(terraformCapabilityPlugin.capabilities().map((c) => c.kind)).toEqual(["terraform-apply", "terraform-state-unlock", "terraform-state-push", "terraform-copy"]);
+    expect(terraformCapabilityPlugin.capabilities().map((c) => c.kind)).toEqual(["terraform-apply", "terraform-state-unlock", "terraform-state-push", "terraform-copy", "terraform-action"]);
   });
 
   test("plan inits and plans the root, with its vars, and names the root as the member", async () => {

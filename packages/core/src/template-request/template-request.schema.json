@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/template-request/v1/template-request.schema.json",
+  "title": "chant template request",
+  "description": "A request for an app, or an add-on to an app, made from one version of a template in a release catalog, version 1 of its contract. A product turns it into a pull request on the branch requestBranch names, with requestBody as the body; the body carries this document in a fenced block whose info string is `json` and this schema's id, so a reader recovers it from the pull request alone. checkTemplateRequest refuses a request against the catalog and the version's template.yml (template.schema.json). Readers ignore fields they do not know; a field is only ever added within a version.",
+  "type": "object",
+  "required": [
+    "$schema",
+    "contract",
+    "kind",
+    "template",
+    "version",
+    "app",
+    "inputs",
+    "requestedBy",
+    "via"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "https://intentius.io/chant/schemas/template-request/v1/template-request.schema.json"
+    },
+    "contract": {
+      "const": 1
+    },
+    "kind": {
+      "enum": [
+        "app",
+        "addon"
+      ],
+      "description": "app: a new app. addon: an add-on to the app named in `app`, which must exist."
+    },
+    "template": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)*$",
+      "description": "The template's address, such as `acme/bucket/aws` (namespace, name, system). The branch uses its name: the second-to-last segment of an address with three or more, else the last."
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The version in the catalog, or its digest for a release that names no version."
+    },
+    "app": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,39}$",
+      "description": "The app's name: a lowercase letter, then up to 39 lowercase letters, digits and -."
+    },
+    "addon": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,39}$",
+      "description": "For kind addon: the add-on's name, with the same rule as `app`."
+    },
+    "inputs": {
+      "type": "object",
+      "description": "The values given, by input name. An input left out takes its default. A sensitive input is never here. In an add-on request, a string `app.<output>` names an output of the app's module, for an input of any kind; the engine's renderer resolves it. In an app request it is a plain string and is checked against the input's kind.",
+      "additionalProperties": true
+    },
+    "requestedBy": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Who asked, as the forge vouches for it: the login of the run's actor, a person or the identity an agent runs as."
+    },
+    "claimedBy": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The person the client says filled the form or asked the agent, when it names one. The forge does not vouch for it, so a reader shows it as claimed, next to requestedBy."
+    },
+    "via": {
+      "enum": [
+        "form",
+        "mcp",
+        "cli"
+      ],
+      "description": "Where the request came from: a form, an agent over MCP, or the command line."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "addon"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "addon": true
+        },
+        "required": [
+          "addon"
+        ]
+      },
+      "else": {
+        "properties": {
+          "addon": false
+        }
+      }
+    }
+  ]
+}

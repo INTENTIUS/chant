@@ -102,6 +102,10 @@ export function namespacedResourceUri(lexicon: string, uri: string): string {
 export const READ_ONLY_INSTRUCTIONS =
   "This chant server is read-only: it serves the ledger, the workspace graph, runs, gates and snapshots, and no tool here runs an Op, resolves a gate or writes anything.";
 
+/** The `initialize` instructions of the `--propose` tier (chant#4655), in place of {@link READ_ONLY_INSTRUCTIONS}. */
+export const PROPOSE_INSTRUCTIONS =
+  "This chant server is read-only apart from its forge tools: it serves the ledger, the workspace graph, runs, gates and snapshots, and no tool here runs an Op, resolves a gate or applies anything. The product's forge tools open pull requests and comments only. Approving, merging and applying a change belong to a person.";
+
 /** The `lint` a read-only server serves: the same tool with no `fix` (chant#4543). */
 const readOnlyLintTool: ToolDefinition = {
   ...lintTool,
@@ -127,6 +131,8 @@ export class McpServer {
   private clientInfo: McpClientInfo | undefined;
   /** `chant serve mcp --read-only` (chant#4543): only tools that change nothing are registered. */
   readonly readOnly: boolean;
+  /** `chant serve mcp --read-only --propose` (chant#4655): the read-only server plus the product's `forgeWrite` tools. */
+  readonly propose: boolean;
 
   /**
    * `options.instructions` is sent as the `initialize` result's
@@ -149,14 +155,21 @@ export class McpServer {
    * under the same read-only rule as a plugin's, and a read-only server
    * refuses to start with one named as a write. With a hook and no
    * `readOnly`, the server is read-only unless the hook says otherwise.
+   *
+   * `options.propose` (`--propose`, chant#4655), or `propose: true` on the
+   * hook, is a tier of the read-only server: the same core and plugin tools,
+   * plus the product tools that declare `forgeWrite: true`. It needs
+   * `readOnly`; an ordinary server with it refuses to start.
    */
-  constructor(plugins?: LexiconPlugin[], options: { instructions?: string; workspace?: WorkspaceToolsOptions; readOnly?: boolean; product?: ProductMcpHook } = {}) {
+  constructor(plugins?: LexiconPlugin[], options: { instructions?: string; workspace?: WorkspaceToolsOptions; readOnly?: boolean; propose?: boolean; product?: ProductMcpHook } = {}) {
     this.plugins = plugins ?? [];
     const product = options.product;
     this.readOnly = options.readOnly ?? (product ? product.readOnly !== false : false);
+    this.propose = options.propose === true || product?.propose === true;
+    if (this.propose && !this.readOnly) throw new Error("chant serve mcp --propose is a tier of the read-only server: start it with --read-only --propose");
     const said = [options.instructions, product?.instructions].filter((s): s is string => s !== undefined);
     this.instructions = this.readOnly
-      ? [...said, READ_ONLY_INSTRUCTIONS].join("\n\n")
+      ? [...said, this.propose ? PROPOSE_INSTRUCTIONS : READ_ONLY_INSTRUCTIONS].join("\n\n")
       : said.length > 0 ? said.join("\n\n") : undefined;
     const cwd = options.workspace?.cwd ?? process.cwd();
     // Register core tools
@@ -203,9 +216,10 @@ export class McpServer {
       }
     }
 
-    // A CI product's tools (chant#4555), read-only by default as chant#4543 rules for contributed tools.
+    // A CI product's tools (chant#4555), read-only by default as chant#4543 rules for contributed tools,
+    // and its forgeWrite tools on the --propose tier (chant#4655).
     if (product) {
-      for (const tool of productToolsServed(product, productMcpContext(product, cwd, this.readOnly))) {
+      for (const tool of productToolsServed(product, productMcpContext(product, cwd, this.readOnly, this.propose))) {
         this.registerTool({ name: namespacedToolName(product.product, tool.name), description: tool.description, inputSchema: tool.inputSchema }, tool.handler);
       }
     }
@@ -459,7 +473,7 @@ export class McpServer {
 /**
  * Start MCP server, loading plugins from the project
  */
-export async function startMcpServer(options: { readOnly?: boolean } = {}): Promise<void> {
+export async function startMcpServer(options: { readOnly?: boolean; propose?: boolean } = {}): Promise<void> {
   let plugins: LexiconPlugin[] = [];
   try {
     const { resolveProjectLexicons, loadPlugins } = await import("../plugins");
@@ -473,6 +487,7 @@ export async function startMcpServer(options: { readOnly?: boolean } = {}): Prom
   const server = new McpServer(plugins, {
     workspace: { cwd: process.cwd() },
     ...(options.readOnly ? { readOnly: true } : {}),
+    ...(options.propose ? { propose: true } : {}),
     ...(product ? { product } : {}),
   });
   server.start();
