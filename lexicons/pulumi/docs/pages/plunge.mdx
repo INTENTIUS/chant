@@ -14,17 +14,19 @@ kind, the graph and the node ids are the same. The `plunge-member` example in
 | Source | Says plunge when | Read |
 |---|---|---|
 | `pulumi.member.engine` | it is `"plunge"` | first; when set, it decides |
-| `Pulumi.yaml` `backend.url` | it starts with `plunge` (`plunge+file://...`, `plunge://...`) | when the config sets no engine |
+| `plywood.yml` | `engine: plunge`, or a `backend` starting with `plunge` | when the config sets no engine |
+| `PULUMI_BACKEND_URL` | it starts with `plunge` | after `plywood.yml` |
+| `Pulumi.yaml` `backend.url` | it starts with `plunge` (`plunge+file://...`, `plunge://...`) | last |
 
-Nothing else is read: not `PULUMI_BACKEND_URL`, not the CLI's login state.
-Two checkouts of one repository therefore agree on the engine whatever their
-environments hold. `PulumiWatchOp`'s `engine` field and the activities follow
-the same rule.
+With none of these naming plunge, the member runs stock `pulumi`. The CLI's
+login state is not read. The plan output prints which source decided.
 
-A config that says `engine: "pulumi"` for a program whose backend URL is a
-plunge URL runs stock `pulumi` against a backend it cannot open. PUL015
-reports that at build time. The other way round, `engine: "plunge"` with a
-stock backend, is not reported.
+PUL015 checks one direction only. A config that says `engine: "pulumi"` while
+the resolved engine would be plunge, from `plywood.yml`, `PULUMI_BACKEND_URL`
+or `Pulumi.yaml`, runs stock `pulumi` against a backend it cannot open, and
+PUL015 reports that at build time with the source in the message. The reverse,
+`engine: "plunge"` with a stock backend, is never reported, because plunge
+opens stock backends and that is a valid setup.
 
 ## What chant runs
 

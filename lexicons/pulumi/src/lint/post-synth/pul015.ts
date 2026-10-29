@@ -9,8 +9,9 @@
  * `plunge+file://...` or `plunge://...` runs stock `pulumi` against a
  * backend scheme only plunge opens, and every read fails.
  *
- * The other direction, `engine: "plunge"` with a stock backend, is not
- * reported: plunge is a Pulumi fork and the config may mean it.
+ * One direction only, by maintainer ruling (#4559): `engine: "plunge"` with a
+ * stock backend is not reported, because plunge opens stock backends and the
+ * config may mean it.
  */
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import { pulumiMemberEngine } from "../../run";
@@ -19,7 +20,7 @@ import { finding } from "./member-read-helpers";
 
 export const pul015: PostSynthCheck = {
   id: "PUL015",
-  description: "pulumi.member.engine says pulumi, but Pulumi.yaml names a plunge backend",
+  description: "pulumi.member.engine says pulumi, but the resolved engine is plunge",
 
   check(_ctx: PostSynthContext): PostSynthDiagnostic[] {
     const read = lastMemberRead();

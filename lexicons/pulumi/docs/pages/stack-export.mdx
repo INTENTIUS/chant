@@ -71,7 +71,7 @@ catalog.
 | PUL012 | info | `external: true`, resources the program reads and does not manage | none; their drift is another owner's |
 | PUL013 | warning | a `version` other than 3, or none | export with the Pulumi CLI |
 | PUL014 | info | no resources besides the stack and its providers | export again once the stack is deployed |
-| PUL015 | warning | `engine: "pulumi"` on a program with a plunge backend URL | drop `engine`, or set it to `"plunge"` |
+| PUL015 | warning | `engine: "pulumi"` while `plywood.yml`, `PULUMI_BACKEND_URL` or `Pulumi.yaml` names a plunge backend (the reverse is not reported) | drop `engine`, or set it to `"plunge"` |
 
 PUL003 is the only error, so it is the only one that fails `chant build`. It
 is also the only one `chant audit` lists as merge-worthy and security; the

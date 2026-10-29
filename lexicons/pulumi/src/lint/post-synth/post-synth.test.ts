@@ -1,5 +1,7 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
 import { PULUMI_SECRET_SIG, PULUMI_SIG_KEY } from "../../values";
 import { setLastMemberRead, setLastMemberReport } from "../../workspace-member";
@@ -23,6 +25,7 @@ import { pul015 } from "./pul015";
 const ctx = { outputs: new Map(), entities: new Map() } as unknown as PostSynthContext;
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   setLastMemberReport(undefined);
   setLastMemberRead(undefined);
 });
@@ -193,6 +196,49 @@ describe("pulumi post-synth checks", () => {
     expect(pul015.check(ctx)).toEqual([]);
     readWith([], { dir: plungeDir });
     expect(pul015.check(ctx)).toEqual([]);
+    readWith([], { dir: stockDir, engine: "plunge" });
+    expect(pul015.check(ctx)).toEqual([]);
+  });
+
+  test("PUL015 names the source of the resolved plunge engine", () => {
+    // Pulumi.yaml
+    readWith([], { dir: plungeDir, engine: "pulumi" });
+    expect(pul015.check(ctx)[0].message).toContain("Pulumi.yaml names the plunge backend");
+
+    // PULUMI_BACKEND_URL, on a program whose Pulumi.yaml names no backend
+    vi.stubEnv("PULUMI_BACKEND_URL", "plunge+s3://bucket/state");
+    readWith([], { dir: stockDir, engine: "pulumi" });
+    const fromEnv = pul015.check(ctx);
+    expect(fromEnv).toHaveLength(1);
+    expect(fromEnv[0].message).toContain("PULUMI_BACKEND_URL names the plunge backend plunge+s3://bucket/state");
+    readWith([], { dir: stockDir, engine: "plunge" });
+    expect(pul015.check(ctx)).toEqual([]);
+    vi.stubEnv("PULUMI_BACKEND_URL", "s3://bucket/state");
+    readWith([], { dir: stockDir, engine: "pulumi" });
+    expect(pul015.check(ctx)).toEqual([]);
+    vi.unstubAllEnvs();
+
+    // plywood.yml, engine and backend
+    const root = mkdtempSync(join(tmpdir(), "pul015-"));
+    mkdirSync(join(root, ".git"));
+    const member = join(root, "infra");
+    mkdirSync(member);
+    writeFileSync(join(member, "Pulumi.yaml"), "name: app\nruntime: nodejs\n");
+    writeFileSync(join(root, "plywood.yml"), "engine: plunge\n");
+    readWith([], { dir: member, engine: "pulumi" });
+    const fromEngine = pul015.check(ctx);
+    expect(fromEngine).toHaveLength(1);
+    expect(fromEngine[0].message).toContain("plywood.yml says engine: plunge");
+    writeFileSync(join(root, "plywood.yml"), "backend: plunge+file:///state\n");
+    const fromBackend = pul015.check(ctx);
+    expect(fromBackend).toHaveLength(1);
+    expect(fromBackend[0].message).toContain("plywood.yml names the plunge backend plunge+file:///state");
+    writeFileSync(join(root, "plywood.yml"), "engine: pulumi\n");
+    expect(pul015.check(ctx)).toEqual([]);
+  });
+
+  test("PUL015 does not report the other direction: engine plunge on a stock backend", () => {
+    vi.stubEnv("PULUMI_BACKEND_URL", "s3://bucket/state");
     readWith([], { dir: stockDir, engine: "plunge" });
     expect(pul015.check(ctx)).toEqual([]);
   });
