@@ -27,7 +27,7 @@ export default defineConfig({
 	integrations: [
 		starlight({
 			title: 'chant',
-			description: 'Infrastructure in TypeScript, out as CloudFormation, Kubernetes YAML, GitHub Actions and more.',
+			description: 'Spec-native typed ops with per-resource locking.',
 			// The pixel face and the sound waves (scripts/brand/), Geist, and the
 			// palette as tokens for both themes.
 			customCss: ['./src/styles/chant.css'],
@@ -77,7 +77,7 @@ export default defineConfig({
 				// its own Astro routes and renders every Starlight doc to Markdown.
 				starlightLlmsTxt({
 					description:
-						'chant is a TypeScript-first infrastructure tool: typed resources in, spec-native output (CloudFormation, GitLab CI, Kubernetes YAML, and more) out, validated by semantic lint rules, with an optional deployment lifecycle on top: Ops that run in-process or on a fountain steward.',
+						'Spec-native typed ops with per-resource locking.',
 					details:
 						'- Agents: start at /agents/ for a copy-paste setup prompt, then /guide/agent-integration/ for the skills, MCP tools, and Ops surfaces available after `chant init`.\n- TypeScript in, native files out: infrastructure is exported TypeScript, type-checked against a provider lexicon.\n- Ownership lives in markers on the cloud resources. `chant build` is deterministic, and drift and apply are computed against the live system.\n- Terraform, OpenTofu and Pulumi users: the terraform and pulumi lexicons read your roots and programs as they are. choudoufu (an OpenTofu fork) and plunge (a Pulumi fork) run them with chant\'s ownership markers. See /concepts/comparison/.',
 					// The agent prompt page is the entry point machine readers want
