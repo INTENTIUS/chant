@@ -66,7 +66,7 @@
 
 import { spawnSync } from "node:child_process";
 import { CHANT_EXIT } from "../../exit-codes";
-import { anyResourceGrain, leaseRowsOf as leaseRowsOfLocks, lockTargetsOf, type LockGrain } from "../../lifecycle/lock-rows";
+import { anyResourceGrain, leaseRowsOf as leaseRowsOfLocks, lockTargetsOf, queueRowsOfLocks, type LockGrain } from "../../lifecycle/lock-rows";
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { loadChantConfig, resolveAutoReleaseDisabled, type ChantConfig } from "../../config";
@@ -617,18 +617,42 @@ async function leaseSetRows(p: Prepared, set: Pick<PrPlanSet, "locks">): Promise
  */
 export async function leaseRowsOf(p: Pick<Prepared, "gate">, set: Pick<PrPlanSet, "locks">, label = "this apply"): Promise<{ release(): Promise<boolean> } | { held: string } | { failed: string }> {
   const rows = leaseRowsOfLocks(set.locks);
-  if (rows.length === 0) return { release: () => Promise.resolve(true) };
-  const { leaseLockRows } = await import("../../lifecycle/resource-lock");
-  let leased;
-  try {
-    leased = await leaseLockRows(p.gate, rows);
-  } catch (err) {
-    return { failed: `could not hold the rows ${label} changes in ${p.gate}, so nothing of it was applied: ${err instanceof Error ? err.message : String(err)}` };
+  // The ruling for ci-products (2026-10-28): the target and repo grains wait for their rows first, oldest commit first.
+  const queue = queueRowsOfLocks(set.locks);
+  if (rows.length === 0 && queue.length === 0) return { release: () => Promise.resolve(true) };
+  const { commitTimeOf, leaseLockRows, lockPollMs, lockWaitSeconds } = await import("../../lifecycle/resource-lock");
+  const held: Array<{ release(): Promise<boolean> }> = [];
+  const releaseAll = async () => {
+    let ok = true;
+    for (const l of held.reverse()) ok = (await l.release()) && ok;
+    return ok;
+  };
+  for (const [wanted, wait] of [[queue, true], [rows, false]] as const) {
+    if (wanted.length === 0) continue;
+    let leased;
+    try {
+      const commitAt = wait ? await commitTimeOf(process.env.GITHUB_SHA || process.env.CI_COMMIT_SHA || "HEAD") : undefined;
+      leased = await leaseLockRows(
+        p.gate,
+        wanted,
+        wait
+          ? { wait: { deadline: Date.now() + lockWaitSeconds(process.env) * 1000, pollMs: lockPollMs(process.env), log: (line) => console.error(formatInfo(`${label} ${line}`)), ...(commitAt ? { commitAt } : {}) } }
+          : {},
+      );
+    } catch (err) {
+      await releaseAll();
+      return { failed: `could not hold the rows ${label} changes in ${p.gate}, so nothing of it was applied: ${err instanceof Error ? err.message : String(err)}` };
+    }
+    if (!leased.ok) {
+      await releaseAll();
+      if (leased.timedOut) return { held: `LockWaitTimeoutError: ${leased.message}, so nothing of ${label} was applied.` };
+      return { held: `${leased.message}, so nothing of ${label} was applied. Apply again once that run ends; a run that is gone, or whose lease is older than CHANT_LOCK_STALE seconds, is taken over.` };
+    }
+    for (const h of leased.tookOver) console.error(formatInfo(`took over the rows of run ${h.run}, which is gone`));
+    console.error(formatInfo(`${label} holds ${leased.lease.keys.length} row${leased.lease.keys.length === 1 ? "" : "s"} of ${p.gate}${leased.waitedSeconds ? ` after waiting ${leased.waitedSeconds}s` : ""} while it applies`));
+    held.push(leased.lease);
   }
-  if (!leased.ok) return { held: `${leased.message}, so nothing of ${label} was applied. Apply again once that run ends; a run that is gone, or whose lease is older than CHANT_LOCK_STALE seconds, is taken over.` };
-  for (const h of leased.tookOver) console.error(formatInfo(`took over the rows of run ${h.run}, which is gone`));
-  console.error(formatInfo(`${label} holds ${leased.lease.keys.length} row${leased.lease.keys.length === 1 ? "" : "s"} of ${p.gate} while it applies`));
-  return leased.lease;
+  return { release: releaseAll };
 }
 
 /** `applyPrSet`'s `leaseRound` (#4594): a round after the first leases the rows its own plan locks. */

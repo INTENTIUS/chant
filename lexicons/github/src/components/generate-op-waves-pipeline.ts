@@ -1,8 +1,8 @@
 /**
  * Op waves → GitHub Actions workflow (#3679).
  *
- * One workflow for the whole spec, on a push to its branches (and by hand),
- * one run at a time. Each job is one of core's `opWaveJobs`: a wave, or a wide
+ * One workflow for the whole spec, on a push to its branches (and by hand).
+ * Each job is one of core's `opWaveJobs`: a wave, or a wide
  * wave's deciding job and share jobs, chained by `needs:`. Re-running the
  * failed jobs after `chant approve` carries on from that wave.
  *
@@ -79,6 +79,7 @@ import {
   notifyVariables,
   opWaveGroupOf,
   opWaveJobs,
+  opWaveJobTimeout,
   opWaveOutcomeDir,
   opWavesControlTarget,
   opWavesLastJobs,
@@ -146,6 +147,8 @@ export function buildGithubOpWavesDoc(
     }
   }
   const permissions = { contents: "write", ...(byReview ? { "pull-requests": "read" } : {}) };
+  // The ruling for ci-products (2026-10-28): every wave job carries its timeout and the lock wait under it.
+  const timeout = opWaveJobTimeout(options.jobTimeoutMinutes);
 
   const jobsDoc: Record<string, unknown> = {};
   for (const job of jobs) {
@@ -194,7 +197,8 @@ export function buildGithubOpWavesDoc(
       ...(environment ? { environment: environmentDoc(environment) } : {}),
       // #3914: a job's own permissions replace the workflow's, so they repeat them.
       ...(idToken ? { permissions: { ...permissions, "id-token": "write" } } : {}),
-      ...nonEmpty("env", group || idTokens ? { ...wave.variables, ...group?.variables, ...idTokenAudienceEnv(idTokens) } : wave.variables),
+      "timeout-minutes": timeout.minutes,
+      env: { ...timeout.env, ...(group || idTokens ? { ...wave.variables, ...group?.variables, ...idTokenAudienceEnv(idTokens) } : wave.variables) },
       steps,
     };
   }
@@ -211,7 +215,8 @@ export function buildGithubOpWavesDoc(
     name: spec.name,
     on: { push: { branches: pushBranches(spec.branches) }, workflow_dispatch: {} },
     ...nonEmpty("env", env),
-    concurrency: concurrency(spec.name),
+    // The ruling for ci-products (2026-10-28): no workflow-level concurrency group. Runs on the target and repo grains wait for
+    // their rows on chant's ledger, oldest commit first; plunge stacks on the resource grain lease their resource rows and run.
     permissions,
     jobsDoc,
   };

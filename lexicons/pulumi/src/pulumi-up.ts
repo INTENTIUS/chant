@@ -176,6 +176,7 @@ import { pulumiMemberPlannedOutputs } from "./member-outputs";
 import type { PulumiOutputChange } from "./planned-output-changes";
 import { pulumiPlanShape, pulumiShapeDifferences } from "./plan-shape";
 import { pulumiLockRows } from "./lock-rows";
+import { stackRowKey } from "@intentius/chant/lifecycle/lock-rows";
 import { pulumiTraceFacts } from "./trace-facts";
 import {
   defaultPlungeRunner,
@@ -1070,6 +1071,15 @@ export function createPulumiUpCapability(opts: PulumiUpOptions = {}): Capability
       requireInput(input);
       const engine = pulumiMemberEngine(stackDir(input), input.engine, engineEnv(input, opts)).engine;
       return engine === "pulumi" ? new PulumiResourceGrainRefusedError(pulumiUpMember(input)).message : undefined;
+    },
+    // The ruling for ci-products (2026-10-28): a stock stack waits for its stack row on the ledger in place of the backend's lock.
+    // plunge keeps the resource grain, and a plunge stack declared on the target grain waits on the same row.
+    targetLockRow(input, plan) {
+      requireInput(input);
+      const project = readProject(stackDir(input))?.name;
+      const stack = plan && isArtifact(plan.artifact) ? plan.artifact.stack : input.stack;
+      if (typeof project !== "string" || !stack) return undefined;
+      return { key: stackRowKey(project, stack), target: pulumiUpMember(input), address: `${project}/${stack}` };
     },
     // URN rows, object rows, and the stack row when something may appear only at apply (./lock-rows.ts).
     lockRows(input, plan) {

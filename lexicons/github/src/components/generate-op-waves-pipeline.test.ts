@@ -105,14 +105,14 @@ describe("a runner per wave and job groups per wave (#3914)", () => {
     const yaml = files[0]!.yaml;
     expect(yaml).toMatch(/wave-1-dev:\n\s+runs-on:\n\s+- self-hosted\n\s+- dev\n/);
     expect(yaml).toMatch(
-      /wave-2-prod-decide:\n\s+runs-on: plan\n[\s\S]*?permissions:\n\s+contents: write\n\s+id-token: write\n\s+env:\n\s+STAGE: apply\n\s+PLAN_TOKEN_AUDIENCE: plan.example\n/,
+      /wave-2-prod-decide:\n\s+runs-on: plan\n[\s\S]*?permissions:\n\s+contents: write\n\s+id-token: write\n\s+timeout-minutes: 180\n\s+env:\n\s+CHANT_LOCK_WAIT: '10500'\n\s+STAGE: apply\n\s+PLAN_TOKEN_AUDIENCE: plan.example\n/,
     );
     expect(yaml).toMatch(
-      /wave-2-prod-us-share-1:\n\s+runs-on:\n\s+group: prod-apply\n\s+labels:\n\s+- linux\n\s+needs:\n\s+- wave-2-prod-decide\n\s+container: node:22\n\s+environment:\n\s+name: prod-us\n\s+permissions:\n\s+contents: write\n\s+id-token: write\n\s+env:\n\s+STAGE: apply\n\s+REGION: us\n\s+CLOUD_TOKEN_AUDIENCE: us.example\n/,
+      /wave-2-prod-us-share-1:\n\s+runs-on:\n\s+group: prod-apply\n\s+labels:\n\s+- linux\n\s+needs:\n\s+- wave-2-prod-decide\n\s+container: node:22\n\s+environment:\n\s+name: prod-us\n\s+permissions:\n\s+contents: write\n\s+id-token: write\n\s+timeout-minutes: 180\n\s+env:\n\s+CHANT_LOCK_WAIT: '10500'\n\s+STAGE: apply\n\s+REGION: us\n\s+CLOUD_TOKEN_AUDIENCE: us.example\n/,
     );
     expect(yaml).toContain("- run: echo us\n      - name: Apply share 1 of job group us of wave 2 (prod)\n        run: chant run wave --spec waves.json --wave 2 --group us --share 1\n");
     // A group with no id tokens of its own gets the wave's.
-    expect(yaml).toMatch(/wave-2-prod-eu:\n\s+runs-on: eu-apply\n[\s\S]*?name: prod-eu\n\s+permissions:\n\s+contents: write\n\s+id-token: write\n\s+env:\n\s+STAGE: apply\n\s+PLAN_TOKEN_AUDIENCE: plan.example\n/);
+    expect(yaml).toMatch(/wave-2-prod-eu:\n\s+runs-on: eu-apply\n[\s\S]*?name: prod-eu\n\s+permissions:\n\s+contents: write\n\s+id-token: write\n\s+timeout-minutes: 180\n\s+env:\n\s+CHANT_LOCK_WAIT: '10500'\n\s+STAGE: apply\n\s+PLAN_TOKEN_AUDIENCE: plan.example\n/);
     expect(yaml).toContain("run: chant run wave --spec waves.json --wave 2 --group eu\n");
   });
 
@@ -137,5 +137,21 @@ describe("a runner per wave and job groups per wave (#3914)", () => {
   test("no bin keeps chant (#4607)", () => {
     const { jobs } = generateGithubOpWavesPipeline(spec, { specFile: "waves.json" });
     expect(jobs.every((j) => j.command[0] === "chant")).toBe(true);
+  });
+});
+
+describe("the ledger lock (ruling for ci-products 2026-10-28)", () => {
+  test("the waves workflow carries no concurrency group; each wave job carries its timeout and the lock wait under it", () => {
+    const yaml = generateGithubOpWavesPipeline(spec, { specFile: "waves.json" }).files[0]!.yaml;
+    expect(yaml).not.toMatch(/^concurrency:/m);
+    expect(yaml).not.toContain("group: migrations");
+    expect(yaml.match(/timeout-minutes: 180\n/g)).toHaveLength(4);
+    expect(yaml.match(/CHANT_LOCK_WAIT: '10500'\n/g)).toHaveLength(4);
+  });
+
+  test("jobTimeoutMinutes sets both", () => {
+    const yaml = generateGithubOpWavesPipeline(spec, { specFile: "waves.json", jobTimeoutMinutes: 60 }).files[0]!.yaml;
+    expect(yaml).toContain("timeout-minutes: 60\n");
+    expect(yaml).toContain("CHANT_LOCK_WAIT: '3300'\n");
   });
 });

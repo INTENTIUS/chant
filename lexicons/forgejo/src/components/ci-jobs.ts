@@ -72,7 +72,7 @@ export function forgejoWorkflowDoc(doc: GithubOpPipelineDoc, dialect: ForgejoDia
     ...(doc.name ? { name: doc.name } : {}),
     on: forgejoize(doc.on, dialect),
     ...(doc.env ? { env: forgejoize(doc.env, dialect) } : {}),
-    concurrency: forgejoize(doc.concurrency, dialect),
+    ...(doc.concurrency ? { concurrency: forgejoize(doc.concurrency, dialect) } : {}),
     permissions: {},
     jobsDoc: forgejoize(withoutEnvironment(doc.jobsDoc), dialect),
     ...(doc.gatedNoticeDoc ? { gatedNoticeDoc: forgejoize(doc.gatedNoticeDoc, dialect) } : {}),

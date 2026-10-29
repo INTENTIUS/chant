@@ -651,6 +651,24 @@ export interface OpWavesDigest {
   over?: "all" | "changing";
 }
 
+/**
+ * A wave job's default timeout in minutes (ruling for ci-products
+ * 2026-10-28, "Ledger lock"): three hours, a Forgejo runner's default, under
+ * GitHub's six. The generators write it on every wave job.
+ */
+export const OP_WAVE_JOB_TIMEOUT_MINUTES = 180;
+
+/**
+ * The job's timeout, and the `CHANT_LOCK_WAIT` a wave job carries: the
+ * seconds a run on the `target` or `repo` grain waits for its row on the
+ * ledger, five minutes under the job's timeout (at least one minute), so the
+ * wait gives up by name before the forge stops the job.
+ */
+export function opWaveJobTimeout(minutes: number | undefined): { minutes: number; env: { CHANT_LOCK_WAIT: string } } {
+  const m = minutes !== undefined && Number.isFinite(minutes) && minutes > 0 ? Math.ceil(minutes) : OP_WAVE_JOB_TIMEOUT_MINUTES;
+  return { minutes: m, env: { CHANT_LOCK_WAIT: String(Math.max(60, (m - 5) * 60)) } };
+}
+
 export const OP_WAVES_DIGEST_OVER = ["all", "changing"] as const;
 
 /** The default gate name pattern. */

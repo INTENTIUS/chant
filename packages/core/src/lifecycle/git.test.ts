@@ -33,6 +33,8 @@ import {
   fetchRefInto,
   RefCASConflictError,
   StaleLockError,
+  fetchLifecycleStatus,
+  requireLifecycleLedger,
 } from "./git";
 import { LIFECYCLE_LOCAL_NOTE } from "./local-note";
 
@@ -612,6 +614,59 @@ describe("lifecycle/git", () => {
         expect(err).toBeInstanceOf(LifecyclePushLostError);
         expect((err as LifecyclePushLostError).tries).toBe(LIFECYCLE_PUSH_TRIES);
         expect((err as Error).message).toContain(`chant/lifecycle was not pushed to "origin" after ${LIFECYCLE_PUSH_TRIES} tries`);
+      } finally {
+        await done();
+      }
+    });
+
+    test("plywood#22 finding 9: two writers that append lines to one ledger file both land, in push order", async () => {
+      const { a, b, remotePath, done } = await twoWriters();
+      try {
+        // A, a wave job, appends its release record and pushes; B, the record job, appends to the same file from its older copy.
+        git(["fetch", "-q", "origin", "+refs/heads/chant/lifecycle:refs/remotes/origin/chant/lifecycle"], a);
+        await appendReleaseRecordLine("prod", '{"from":"wave"}', { cwd: a });
+        expect(await pushLifecycle({ cwd: a })).toBe(true);
+        await appendReleaseRecordLine("prod", '{"from":"record"}', { cwd: b });
+        expect(await pushLifecycleRebasing({ cwd: b })).toEqual({ pushed: true });
+        const tip = git(["rev-parse", "refs/heads/chant/lifecycle"], remotePath).stdout.trim();
+        expect(git(["show", `${tip}:prod/releases.jsonl`], remotePath).stdout).toBe('{"from":"wave"}\n{"from":"record"}\n');
+        expect(git(["log", "-1", "--format=%s", tip], remotePath).stdout.trim()).toBe("Release record");
+      } finally {
+        await done();
+      }
+    });
+
+    test("plywood#22 finding 9: a read that finds its unpushed commits diverged from the remote replays them on the remote's tip", async () => {
+      const { a, b, remotePath, done } = await twoWriters();
+      try {
+        await appendReleaseRecordLine("prod", '{"from":"unpushed"}', { cwd: b });
+        git(["fetch", "-q", "origin", "+refs/heads/chant/lifecycle:refs/remotes/origin/chant/lifecycle"], a);
+        await appendReleaseRecordLine("prod", '{"from":"other"}', { cwd: a });
+        expect(await pushLifecycle({ cwd: a })).toBe(true);
+        const remoteTip = git(["rev-parse", "refs/heads/chant/lifecycle"], remotePath).stdout.trim();
+
+        expect(await fetchLifecycleStatus({ cwd: b })).toEqual({ status: "ahead", remote: "origin" });
+        await expect(requireLifecycleLedger({ cwd: b })).resolves.toBeUndefined();
+        const local = git(["rev-parse", "refs/heads/chant/lifecycle"], b).stdout.trim();
+        expect(git(["merge-base", "--is-ancestor", remoteTip, local], b).exitCode).toBe(0);
+        expect(git(["show", `${local}:prod/releases.jsonl`], b).stdout).toBe('{"from":"other"}\n{"from":"unpushed"}\n');
+        // Nothing was pushed by the read; the next push carries the replayed commit.
+        expect(git(["rev-parse", "refs/heads/chant/lifecycle"], remotePath).stdout.trim()).toBe(remoteTip);
+        expect(await pushLifecycleRebasing({ cwd: b })).toEqual({ pushed: true });
+      } finally {
+        await done();
+      }
+    });
+
+    test("a read whose unpushed commit rewrote the file the other writer changed still finds the ledger diverged", async () => {
+      const { a, b, done } = await twoWriters();
+      try {
+        await writeBlobToPath("prod", "merge.json", '{"merge":"record"}', "Merge record: abc", { cwd: b });
+        await advance(a, "merge.json", '{"merge":"wave"}');
+        const got = await fetchLifecycleStatus({ cwd: b });
+        expect(got.status).toBe("diverged");
+        expect(got.status === "diverged" ? got.stderr : "").toContain("could not be replayed");
+        await expect(requireLifecycleLedger({ cwd: b })).rejects.toThrow(/has diverged/);
       } finally {
         await done();
       }

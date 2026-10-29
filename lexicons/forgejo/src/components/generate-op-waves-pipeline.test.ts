@@ -90,8 +90,8 @@ describe("a runner per wave and job groups per wave (#3914)", () => {
     expect(jobs.map((j) => j.jobName)).toEqual(["wave-1-dev", "wave-2-prod-decide", "wave-2-prod-us", "wave-2-prod-eu"]);
     const yaml = files[0]!.yaml;
     expect(yaml).toMatch(/wave-1-dev:\n\s+runs-on: plan\n/);
-    expect(yaml).toMatch(/wave-2-prod-us:\n\s+runs-on:\n\s+- self-hosted\n\s+- us\n[\s\S]*?permissions:\n\s+id-token: write\n\s+env:\n\s+REGION: us\n\s+CLOUD_TOKEN_AUDIENCE: us.example\n/);
-    expect(yaml).toMatch(/wave-2-prod-eu:\n\s+runs-on: eu-apply\n\s+needs:\n\s+- wave-2-prod-decide\n\s+container: node:22\n\s+steps:/);
+    expect(yaml).toMatch(/wave-2-prod-us:\n\s+runs-on:\n\s+- self-hosted\n\s+- us\n[\s\S]*?permissions:\n\s+id-token: write\n\s+timeout-minutes: 180\n\s+env:\n\s+CHANT_LOCK_WAIT: '10500'\n\s+REGION: us\n\s+CLOUD_TOKEN_AUDIENCE: us.example\n/);
+    expect(yaml).toMatch(/wave-2-prod-eu:\n\s+runs-on: eu-apply\n\s+needs:\n\s+- wave-2-prod-decide\n\s+container: node:22\n\s+timeout-minutes: 180\n\s+env:\n\s+CHANT_LOCK_WAIT: '10500'\n\s+steps:/);
     expect(yaml).not.toContain("contents: write");
   });
 
@@ -136,5 +136,14 @@ describe("an Op wave's jobs by cloud identity (#4332)", () => {
   test("no bin keeps chant (#4607)", () => {
     const { jobs } = generateForgejoOpWavesPipeline(spec, { specFile: "waves.json" });
     expect(jobs.every((j) => j.command[0] === "chant")).toBe(true);
+  });
+});
+
+describe("the ledger lock (ruling for ci-products 2026-10-28)", () => {
+  test("the waves workflow carries no concurrency group, workflow or job; each wave job carries its timeout and the lock wait", () => {
+    const yaml = generateForgejoOpWavesPipeline(spec, { specFile: "waves.json" }).files[0]!.yaml;
+    expect(yaml).not.toContain("concurrency:");
+    expect(yaml.match(/timeout-minutes: 180\n/g)).toHaveLength(3);
+    expect(yaml.match(/CHANT_LOCK_WAIT: '10500'\n/g)).toHaveLength(3);
   });
 });

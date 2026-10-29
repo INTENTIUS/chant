@@ -59,7 +59,7 @@ import {
   quorumNeed, quorumRuleProgress, quorumRules, ruleNeedsProof, samePrincipal, trustQuorumJudge, UNPROVEN_JUDGE,
   type GateQuorumJudge, type GateQuorumRuleProgress, type GateQuorumSpec,
 } from "./gate-quorum";
-import { pushLifecycleReport, readBlobBySha, readBlobFromPath, readPathSha, requireLifecycleLedger, writeBlobToPath, RefCASConflictError } from "../lifecycle/git";
+import { LifecyclePushLostError, pushLifecycleRebasing, readBlobBySha, readBlobFromPath, readPathSha, requireLifecycleLedger, writeBlobToPath, RefCASConflictError } from "../lifecycle/git";
 import { parseDuration } from "./duration";
 import { ciRunIdFromEnv, resolveGateRunLocator } from "./gate-run-locator";
 import { resolveCommitSha } from "../lifecycle/commit-sha";
@@ -202,11 +202,11 @@ export function gitGateLedgerPort(opts?: { cwd?: string }): GateLedgerPort {
     },
     async appendResolution(input) {
       const { record } = await appendGateResolution(input, opts);
-      return { record, ...(await pushLifecycleReport(opts)) };
+      return { record, ...(await pushGateLine(opts)) };
     },
     async appendPending(input) {
       const { record } = await appendPendingGate(input, opts);
-      return { record, ...(await pushLifecycleReport(opts)) };
+      return { record, ...(await pushGateLine(opts)) };
     },
     async writeCheckpoint(checkpoint) {
       await writeGateCheckpoint(checkpoint, opts);
@@ -255,7 +255,7 @@ export function gitGateLedgerPort(opts?: { cwd?: string }): GateLedgerPort {
           ...opts,
           expectPriorPathSha: prior,
         });
-        return pushLifecycleReport(opts);
+        return pushGateLine(opts);
       } catch (err) {
         if (!(err instanceof RefCASConflictError)) throw err;
         lastErr = err;
@@ -1118,5 +1118,21 @@ export async function gateIsSealed(gate: string, cwd: string = process.cwd()): P
     return gateAdmission(cwd, gate) !== null;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Push the gate line just written (plywood#22 finding 9): a push another
+ * writer beat replays this checkout's commits on the remote's tip and pushes
+ * again (`pushLifecycleRebasing`). One that never lands is reported as not
+ * pushed, with `LifecyclePushLostError`'s message, so the spend line's
+ * caller fails the wave as it does for any push that did not land.
+ */
+async function pushGateLine(opts?: { cwd?: string }): Promise<{ pushed: boolean; pushWarning?: string }> {
+  try {
+    return await pushLifecycleRebasing(opts);
+  } catch (err) {
+    if (err instanceof LifecyclePushLostError) return { pushed: false, pushWarning: `LifecyclePushLostError: ${err.message}` };
+    throw err;
   }
 }
