@@ -649,7 +649,7 @@ export async function leaseRowsOf(p: Pick<Prepared, "gate">, set: Pick<PrPlanSet
       return { held: `${leased.message}, so nothing of ${label} was applied. Apply again once that run ends; a run that is gone, or whose lease is older than CHANT_LOCK_STALE seconds, is taken over.` };
     }
     for (const h of leased.tookOver) console.error(formatInfo(`took over the rows of run ${h.run}, which is gone`));
-    console.error(formatInfo(`${label} holds ${leased.lease.keys.length} row${leased.lease.keys.length === 1 ? "" : "s"} of ${p.gate}${leased.waitedSeconds ? ` after waiting ${leased.waitedSeconds}s` : ""} while it applies`));
+    console.error(formatInfo(`${label} holds ${leased.lease.keys.length} row${leased.lease.keys.length === 1 ? "" : "s"} of ${p.gate}${leased.waited ? ` after waiting ${leased.waitedSeconds ?? 0}s` : ""} while it applies`));
     held.push(leased.lease);
   }
   return { release: releaseAll };

@@ -463,10 +463,10 @@ function describeWait(held: readonly HeldLockRow[], ahead: readonly LockRowWaite
  * row that meets one of them. Throws {@link LockWaitTimeoutError} at the
  * deadline, after leaving the queue.
  */
-export async function waitLockRows(gate: string, rows: readonly LockRow[], me: LockRowHolder, wait: LockRowsWait, opts: LockRowsOptions = {}): Promise<{ ok: true; tookOver: LockRowHolder[]; pushed: boolean; waitedSeconds: number }> {
+export async function waitLockRows(gate: string, rows: readonly LockRow[], me: LockRowHolder, wait: LockRowsWait, opts: LockRowsOptions = {}): Promise<{ ok: true; tookOver: LockRowHolder[]; pushed: boolean; waitedSeconds: number; waited: boolean }> {
   checkGate(gate);
   const keys = sortedLockRows(rows).map((r) => r.key);
-  if (keys.length === 0) return { ok: true, tookOver: [], pushed: false, waitedSeconds: 0 };
+  if (keys.length === 0) return { ok: true, tookOver: [], pushed: false, waitedSeconds: 0, waited: false };
   const alive = opts.alive ?? forgeLockLiveness(process.env);
   const now = wait.now ?? Date.now;
   const sleep = wait.sleep ?? pause;
@@ -487,7 +487,7 @@ export async function waitLockRows(gate: string, rows: readonly LockRow[], me: L
       for (const id of goneWaiters) delete next.waiting?.[id];
       const took = gone.length ? `, taken over from run ${gone.join(", ")}` : "";
       const wrote = await writeAndPush(gate, sha, tidyWaiting(next), `Hold ${keys.length} row${keys.length === 1 ? "" : "s"} of ${gate} for run ${me.run}${took}`, opts.cwd);
-      if (wrote) return { ok: true, tookOver: gone.map((id) => file.holders[id]!), pushed: wrote.pushed, waitedSeconds: Math.round((now() - started) / 1000) };
+      if (wrote) return { ok: true, tookOver: gone.map((id) => file.holders[id]!), pushed: wrote.pushed, waitedSeconds: Math.round((now() - started) / 1000), waited: queued !== undefined };
       if (++raced >= ATTEMPTS) throw new Error(`could not hold the rows of ${gate}: ${STATE_BRANCH} kept moving; check that the job may push to it`);
       await sleep(200 + Math.floor(Math.random() * 800));
       continue;
@@ -588,7 +588,7 @@ export async function leaseLockRows(
   gate: string,
   rows: readonly LockRow[],
   opts: LockRowsOptions & { holder?: LockRowHolder; wait?: LockRowsWait } = {},
-): Promise<{ ok: true; lease: LockRowsLease; tookOver: LockRowHolder[]; waitedSeconds?: number } | { ok: false; held: HeldLockRow[]; message: string; timedOut?: true }> {
+): Promise<{ ok: true; lease: LockRowsLease; tookOver: LockRowHolder[]; waitedSeconds?: number; waited?: boolean } | { ok: false; held: HeldLockRow[]; message: string; timedOut?: true }> {
   const holder = opts.holder ?? lockRowHolder(process.env);
   const keys = sortedLockRows(rows).map((r) => r.key);
   const lease: LockRowsLease = { gate, holder, keys, release: () => (keys.length === 0 ? Promise.resolve(true) : releaseLockRows(gate, keys, holder.run, { ...(opts.cwd ? { cwd: opts.cwd } : {}) })) };
@@ -596,7 +596,7 @@ export async function leaseLockRows(
   if (opts.wait) {
     try {
       const waited = await waitLockRows(gate, rows, holder, opts.wait, opts);
-      return { ok: true, lease, tookOver: waited.tookOver, waitedSeconds: waited.waitedSeconds };
+      return { ok: true, lease, tookOver: waited.tookOver, ...(waited.waited ? { waited: true, waitedSeconds: waited.waitedSeconds } : {}) };
     } catch (err) {
       if (err instanceof LockWaitTimeoutError) return { ok: false, held: err.held, message: err.message, timedOut: true };
       throw err;

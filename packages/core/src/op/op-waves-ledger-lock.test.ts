@@ -107,7 +107,16 @@ describe("op waves and the ledger lock", () => {
     if (!held.ok) return;
     const { registry, ran } = rootCapability("target");
     const lines: string[] = [];
-    const letGo = setTimeout(() => void held.lease.release(), 400);
+    // The other run lets go once the job shows in the queue, so the job waits whatever the machine's speed.
+    let stop = false;
+    const letGo = (async () => {
+      while (!stop) {
+        const now = await readLockRows("pr-apply", { cwd: other });
+        if (Object.keys(now.waiting ?? {}).length > 0) return held.lease.release();
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      return false;
+    })();
     try {
       const result = await runOpWave({
         spec,
@@ -124,8 +133,9 @@ describe("op waves and the ledger lock", () => {
       });
       expect(result).toMatchObject({ exitCode: 0, applied: ["network"] });
     } finally {
-      clearTimeout(letGo);
+      stop = true;
     }
+    expect(await letGo).toBe(true);
     expect(ran).toEqual(["network"]);
     const text = lines.join("\n");
     expect(text).toContain("wave 1 (dev): waits for root network of pr-apply: run 71 is applying network: network");
