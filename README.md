@@ -1,6 +1,8 @@
 # chant
 
-Infrastructure in TypeScript, out as CloudFormation, Kubernetes YAML, GitHub Actions and more.
+Spec-native typed ops with per-resource locking.
+
+terragucci and plywood are built on it.
 
 **Working with an agent?** Paste this setup prompt into it. It stops at a pull request; [intentius.io/chant/agents](https://intentius.io/chant/agents/) has the steps it follows:
 
