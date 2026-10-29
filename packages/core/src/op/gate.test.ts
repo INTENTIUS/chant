@@ -571,12 +571,14 @@ describe("op/gate — a rejected ledger push is reported, not swallowed (#2310)"
       timestamp: "2026-09-09T05:10:00.000Z",
       expiresAt: "2026-09-10T05:10:00.000Z",
     });
-    expect(third.pushed).toBe(false);
-    expect(third.pushWarning).toBeTruthy();
-    expect(third.pushWarning).toMatch(/chant\/lifecycle remote branch has moved|stale|rejected|non-fast-forward/i);
-    // The append itself still landed locally — a correct local answer, per
-    // the #2309 author's reasoning; only the report was missing.
+    // plywood#22 finding 9: the refused push replays the third fact on the
+    // remote's tip and pushes again, so it lands beside the other writer's.
+    expect(third.pushed).toBe(true);
+    expect(third.pushWarning).toBeUndefined();
     expect(third.record.gate).toBe("approve-third-gate");
+    const onRemote = git(["log", "-p", "chant/lifecycle"], remote).stdout;
+    expect(onRemote).toContain("approve-other-gate");
+    expect(onRemote).toContain("approve-third-gate");
   });
 
   test("evaluateGate carries the rejection onto the gate check it returns, recorded but not pushed", async () => {

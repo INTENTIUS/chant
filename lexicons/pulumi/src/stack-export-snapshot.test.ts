@@ -9,7 +9,7 @@
  * `local` store in a temp directory, so no git ref is written, no engine
  * runs and nothing reaches a backend.
  */
-import { cpSync, mkdtempSync, readFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
@@ -42,6 +42,8 @@ const localStore = (): SnapshotStore => createSnapshotStore({ store: "local", di
 function unexportedStack(): string {
   const dir = tmp();
   cpSync(join(testdata, "pulumi-preview", "Pulumi.yaml"), join(dir, "Pulumi.yaml"));
+  // Installed, so the step runs no install before the preview (plywood#22).
+  mkdirSync(join(dir, "node_modules"));
   return dir;
 }
 

@@ -153,7 +153,7 @@ import { terraformPlanMoved } from "../exit-codes";
 import { terraformPlanShape } from "../plan-shape";
 import { plannerForBinary, terraformChangeSetPart } from "../change-set";
 import { terraformDefaultLockGrain, terraformLockGrainRefusal, terraformLockRows, terraformLockRowsFromPart } from "../lock-rows";
-import type { LockRow } from "@intentius/chant/lifecycle/lock-rows";
+import { rootRowKey, type LockRow } from "@intentius/chant/lifecycle/lock-rows";
 import type { TerraformConfig } from "../config";
 import { rootTexts } from "../compose/hcl";
 import { declaredVariables } from "../compose/root";
@@ -610,6 +610,11 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
     if (grain !== "resource") return undefined;
     const binary = (await rootDir(input).catch(() => undefined))?.binary;
     return terraformLockGrainRefusal(grain, await plannerOf(input, plan), binary);
+  },
+  // The ruling for ci-products (2026-10-28): a Terraform, tofu or Terragrunt root waits for its root row on the ledger in place of
+  // the backend's lock. A choudoufu root stays on the resource grain and never asks for this row.
+  targetLockRow(input) {
+    return typeof input?.root === "string" && input.root !== "" ? { key: rootRowKey(input.root), target: input.root, address: input.root } : undefined;
   },
   lockRows(input, plan) {
     const kept = (plan.artifact as { lockRows?: LockRow[] } | undefined)?.lockRows;

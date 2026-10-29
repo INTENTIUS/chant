@@ -118,6 +118,11 @@ export interface PulumiAdoptExportResult {
 export interface PulumiAdoptPreviewArgs extends PulumiAdoptStackArgs {
   /** `--file`: the export to adopt, from the Export step when `adoptFromFile`. */
   file?: string;
+  /**
+   * The plunge backend URL plunge adopts onto, passed as `PULUMI_BACKEND_URL`. Default, as the Check
+   * step resolves it: `plywood.yml`'s, `PULUMI_BACKEND_URL`, `Pulumi.yaml`'s.
+   */
+  backend?: string;
 }
 
 export interface PulumiAdoptPreviewResult {
@@ -292,12 +297,18 @@ function summary(a: PulumiAdoptStackArgs, view: PlungeAdoptView): PulumiAdoptPre
   };
 }
 
+/** The backend plunge adopts onto, resolved as the Check step resolves it, as plunge's environment. */
+function adoptEnv(a: PulumiAdoptPreviewArgs, dir: string, deps: PulumiAdoptDeps): Record<string, string> | undefined {
+  const backend = pulumiStackBackend(dir, { ...(a.backend ? { configured: a.backend } : {}), env: deps.env ?? process.env });
+  return backend ? { PULUMI_BACKEND_URL: backend.url } : undefined;
+}
+
 /** `plunge stack adopt --json`: the classification, written nowhere. A refusal fails the step. */
 export async function adoptPreview(a: PulumiAdoptPreviewArgs, deps: PulumiAdoptDeps = {}): Promise<PulumiAdoptPreviewResult> {
   requireStack(a, "pulumiAdoptPreview");
   const dir = stackDir(a);
   const args = plungeAdoptArgs({ stack: a.stack, ...(a.file ? { file: a.file } : {}) });
-  const view = await adoptView(() => runAllowedPlunge(deps.plunge ?? defaultPlungeRunner, args, dir), "pulumiAdoptPreview", `plunge ${args.join(" ")}`);
+  const view = await adoptView(() => runAllowedPlunge(deps.plunge ?? defaultPlungeRunner, args, dir, adoptEnv(a, dir, deps)), "pulumiAdoptPreview", `plunge ${args.join(" ")}`);
   if (view.status === "refused") {
     throw new Error(`pulumiAdoptPreview: plunge refuses to adopt "${a.member}/${a.stack}": ${refusalText(view.refusals)}. Nothing was written.`);
   }
@@ -309,7 +320,7 @@ export async function adoptStack(a: PulumiAdoptArgs, deps: PulumiAdoptDeps = {})
   requireStack(a, "pulumiAdopt");
   const dir = stackDir(a);
   const args = plungeAdoptArgs({ stack: a.stack, yes: true, ...(a.file ? { file: a.file } : {}) });
-  const view = await adoptView(() => runAdoptPlunge(deps.plunge ?? defaultPlungeRunner, args, dir), "pulumiAdopt", `plunge ${args.join(" ")}`);
+  const view = await adoptView(() => runAdoptPlunge(deps.plunge ?? defaultPlungeRunner, args, dir, adoptEnv(a, dir, deps)), "pulumiAdopt", `plunge ${args.join(" ")}`);
   if (view.status === "refused") {
     throw new Error(`pulumiAdopt: plunge refused to adopt "${a.member}/${a.stack}": ${refusalText(view.refusals)}. Nothing was written.`);
   }

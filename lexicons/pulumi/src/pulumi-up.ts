@@ -107,10 +107,16 @@
  *
  * The cut records tracked files, so a Node program's copy has no
  * `node_modules`. Before the copy's first preview, `plan` and `run` call
- * `prepareReleaseCopy` (`./release-copy.ts`), which runs `pulumi install`
+ * `prepareProgram` (`./release-copy.ts`), which runs `pulumi install`
  * (`plunge install`) in the copy when its runtime needs one, and refuses a
  * Node copy with no lockfile by name, since an install would take today's
  * versions rather than the release's.
+ *
+ * A CI job's checkout has the same gap, so the same call prepares the
+ * step's own directory by the same rule (plywood#22): a Node program with
+ * no `node_modules` in its directory or above it, and a lockfile beside its
+ * package.json, gets one `<engine> install` before the job's first engine
+ * run; with no lockfile the step refuses by name.
  *
  * ## review stacks (#4609)
  *
@@ -170,6 +176,7 @@ import { pulumiMemberPlannedOutputs } from "./member-outputs";
 import type { PulumiOutputChange } from "./planned-output-changes";
 import { pulumiPlanShape, pulumiShapeDifferences } from "./plan-shape";
 import { pulumiLockRows } from "./lock-rows";
+import { stackRowKey } from "@intentius/chant/lifecycle/lock-rows";
 import { pulumiTraceFacts } from "./trace-facts";
 import {
   defaultPlungeRunner,
@@ -192,7 +199,7 @@ import type { PulumiStep } from "./change-set";
 import { writePulumiExportSnapshot, type PulumiExportWrite } from "./stack-export-snapshot";
 import { pointerSegment, pulumiStackReferences, stackReferenceOwner } from "./stack-references";
 import { isObject } from "./values";
-import { prepareReleaseCopy } from "./release-copy";
+import { prepareProgram } from "./release-copy";
 import { initReviewStack, reviewConfigSource, reviewStackFor, reviewStackLocation } from "./review-stack";
 
 /** The lock grain values of `ci.lockGrain` (#4552's ruling A). */
@@ -210,6 +217,15 @@ export interface PulumiUpStepInput {
   config?: Record<string, unknown>;
   /** `pulumi` or `plunge`; see `pulumiMemberEngine`. */
   engine?: PulumiMemberEngine;
+  /**
+   * The stack's backend URL (INTENTIUS/plywood#22), such as
+   * `plunge+s3://...` or `s3://...`: every engine command the step runs
+   * (preview, up, the stack output and export reads, a review stack's init)
+   * gets it as `PULUMI_BACKEND_URL`, over the job's own. It also answers the
+   * engine where `pulumiMemberEngine` would read `PULUMI_BACKEND_URL`.
+   * Absent: the job's `PULUMI_BACKEND_URL` or `Pulumi.yaml`'s, as before.
+   */
+  backend?: string;
   /**
    * The engine release this stack is pinned to (#4592): the step runs
    * `<engineRoot>/<engine>-<engineVersion>/<engine>`, the path the pulumi
@@ -540,18 +556,34 @@ interface Resolved {
   engineSource: PulumiMemberEngineSource;
   engineBecause: string;
   grain: PulumiLockGrain;
+  /** The step's `backend`, every engine command's `PULUMI_BACKEND_URL`. */
+  backend?: string;
+}
+
+/** The environment the engine is picked from: the job's, with the step's backend as `PULUMI_BACKEND_URL`. */
+function engineEnv(input: Pick<PulumiUpStepInput, "backend">, opts: PulumiUpOptions): { env?: Record<string, string | undefined> } {
+  if (input.backend === undefined) return opts.env ? { env: opts.env } : {};
+  return { env: { ...(opts.env ?? process.env), PULUMI_BACKEND_URL: input.backend } };
+}
+
+/** `run` with `PULUMI_BACKEND_URL` set to the step's backend over whatever env the call passes. */
+function withBackend(run: PulumiRunner, backend: string): PulumiRunner {
+  return (args, o) => run(args, { ...o, env: { ...(o.env ?? {}), PULUMI_BACKEND_URL: backend } });
 }
 
 function resolveStep(input: PulumiUpStepInput, opts: PulumiUpOptions, declared?: PulumiLockGrain): Resolved {
   requireInput(input);
+  if (input.backend !== undefined && (typeof input.backend !== "string" || input.backend.trim() === "")) {
+    throw new Error('pulumi-up: "backend" is the stack\'s backend URL, such as plunge+s3://<bucket> or s3://<bucket>');
+  }
   const dir = stackDir(input);
   const member = pulumiUpMember(input);
-  const picked = pulumiMemberEngine(dir, input.engine, opts.env ? { env: opts.env } : {});
+  const picked = pulumiMemberEngine(dir, input.engine, engineEnv(input, opts));
   // #4552: the step's own grain, else ci.lockGrain as the caller read it at base, else the engine's default.
   const grain = input.lockGrain ?? declared ?? pulumiDefaultLockGrain(picked.engine);
   if (grain === "resource" && picked.engine === "pulumi") throw new PulumiResourceGrainRefusedError(member);
   const engineBin = pulumiUpEngineBin(input, picked.engine);
-  return { dir, member, engine: picked.engine, ...(engineBin ? { engineBin } : {}), engineSource: picked.source, engineBecause: picked.because, grain };
+  return { dir, member, engine: picked.engine, ...(engineBin ? { engineBin } : {}), engineSource: picked.source, engineBecause: picked.because, grain, ...(input.backend ? { backend: input.backend } : {}) };
 }
 
 /**
@@ -574,8 +606,8 @@ export function pulumiUpEngineBin(input: Pick<PulumiUpStepInput, "engineVersion"
 }
 
 /** The `run` and `plunge` options for the stack output and export reads: the pinned binary's for both when the step names one (#4592), else the caller's. */
-function runnerOptions(r: Pick<Resolved, "engineBin">, opts: PulumiUpOptions): { run?: PulumiRunner; plunge?: PulumiRunner } {
-  if (r.engineBin) {
+function runnerOptions(r: Pick<Resolved, "engineBin" | "backend">, opts: PulumiUpOptions): { run?: PulumiRunner; plunge?: PulumiRunner } {
+  if (r.engineBin || r.backend) {
     const { pulumi, plunge } = runnersFor(r, opts);
     return { run: pulumi, plunge };
   }
@@ -583,12 +615,16 @@ function runnerOptions(r: Pick<Resolved, "engineBin">, opts: PulumiUpOptions): {
 }
 
 /** The runners a resolved step uses: the pinned binary's when it names one, else the options' or the PATH default. */
-function runnersFor(r: Pick<Resolved, "engineBin">, opts: PulumiUpOptions): { pulumi: PulumiRunner; plunge: PulumiRunner } {
+function runnersFor(r: Pick<Resolved, "engineBin" | "backend">, opts: PulumiUpOptions): { pulumi: PulumiRunner; plunge: PulumiRunner } {
+  let out: { pulumi: PulumiRunner; plunge: PulumiRunner };
   if (r.engineBin) {
     const pinned = opts.runAt ? opts.runAt(r.engineBin) : engineRunnerAt(r.engineBin);
-    return { pulumi: pinned, plunge: pinned };
+    out = { pulumi: pinned, plunge: pinned };
+  } else {
+    out = { pulumi: opts.run ?? defaultPulumiRunner, plunge: opts.plunge ?? defaultPlungeRunner };
   }
-  return { pulumi: opts.run ?? defaultPulumiRunner, plunge: opts.plunge ?? defaultPlungeRunner };
+  // plywood#22: the step's backend reaches every command, whichever call site runs it.
+  return r.backend ? { pulumi: withBackend(out.pulumi, r.backend), plunge: withBackend(out.plunge, r.backend) } : out;
 }
 
 /** The scratch directory, the config copy in it and plunge's plan file path. */
@@ -695,10 +731,10 @@ function isArtifact(value: unknown): value is PulumiUpArtifact {
   return v?.kind === "pulumi-up" && typeof v.planDigest === "string" && typeof v.shape === "object" && v.shape !== null;
 }
 
-/** A release's copy of the program, made runnable before its first engine run (#4542). */
-async function readyCopy(r: Resolved, opts: PulumiUpOptions): Promise<void> {
+/** The program's directory, a release's copy (#4542) or the checkout in place (plywood#22), made runnable before its first engine run. */
+async function readyProgram(r: Resolved, opts: PulumiUpOptions): Promise<void> {
   const runners = runnersFor(r, opts);
-  await prepareReleaseCopy({ dir: r.dir, member: r.member, engine: r.engine, run: r.engine === "plunge" ? runners.plunge : runners.pulumi });
+  await prepareProgram({ dir: r.dir, member: r.member, engine: r.engine, run: r.engine === "plunge" ? runners.plunge : runners.pulumi });
 }
 
 async function planStack(ctx: DeployContext, original: PulumiUpStepInput, opts: PulumiUpOptions): Promise<CapabilityPlan> {
@@ -708,7 +744,7 @@ async function planStack(ctx: DeployContext, original: PulumiUpStepInput, opts: 
   const location = review ? { location: locationOf(r, review.stack) } : {};
   const unresolved = [...(ctx.unresolvedInputs ?? [])].sort();
   if (unresolved.length > 0) return { ...waitingStack(ctx, r, input, unresolved), ...location };
-  await readyCopy(r, opts);
+  await readyProgram(r, opts);
   if (review) {
     const runners = runnersFor(r, opts);
     await initReviewStack({
@@ -873,7 +909,7 @@ async function runStack(ctx: DeployContext, original: PulumiUpStepInput, opts: P
   const handed = ctx.plans?.[r.member];
   const fromWave = isArtifact(handed);
   const targets = ctx.targets && ctx.targets.length > 0 ? ctx.targets : undefined;
-  await readyCopy(r, opts);
+  await readyProgram(r, opts);
 
   // Ruling D: no approved plan handed in, so plan here and apply that.
   let approved: PulumiUpArtifact;
@@ -1027,14 +1063,23 @@ export function createPulumiUpCapability(opts: PulumiUpOptions = {}): Capability
     // #4552: resource on plunge, the stack (target) on stock Pulumi.
     defaultLockGrain(input) {
       requireInput(input);
-      return pulumiDefaultLockGrain(pulumiMemberEngine(stackDir(input), input.engine, opts.env ? { env: opts.env } : {}).engine);
+      return pulumiDefaultLockGrain(pulumiMemberEngine(stackDir(input), input.engine, engineEnv(input, opts)).engine);
     },
     // Stock Pulumi keeps the stack grain: its backend's stack lock already orders updates, and nothing in it is per resource.
     lockGrainRefusal(input, grain) {
       if (grain !== "resource") return undefined;
       requireInput(input);
-      const engine = pulumiMemberEngine(stackDir(input), input.engine, opts.env ? { env: opts.env } : {}).engine;
+      const engine = pulumiMemberEngine(stackDir(input), input.engine, engineEnv(input, opts)).engine;
       return engine === "pulumi" ? new PulumiResourceGrainRefusedError(pulumiUpMember(input)).message : undefined;
+    },
+    // The ruling for ci-products (2026-10-28): a stock stack waits for its stack row on the ledger in place of the backend's lock.
+    // plunge keeps the resource grain, and a plunge stack declared on the target grain waits on the same row.
+    targetLockRow(input, plan) {
+      requireInput(input);
+      const project = readProject(stackDir(input))?.name;
+      const stack = plan && isArtifact(plan.artifact) ? plan.artifact.stack : input.stack;
+      if (typeof project !== "string" || !stack) return undefined;
+      return { key: stackRowKey(project, stack), target: pulumiUpMember(input), address: `${project}/${stack}` };
     },
     // URN rows, object rows, and the stack row when something may appear only at apply (./lock-rows.ts).
     lockRows(input, plan) {

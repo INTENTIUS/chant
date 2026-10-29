@@ -299,6 +299,63 @@ describe("releaseInputs (#4542)", () => {
   });
 });
 
+describe("the step's backend (plywood#22)", () => {
+  const store = "plunge+s3://plywood-tutorial-plunge?region=us-east-1&endpoint=http://floci:4566&s3ForcePathStyle=true";
+
+  test("plunge's preview, up and output read each get it as PULUMI_BACKEND_URL, over the job's", async () => {
+    const plunge = engine();
+    const cap = createPulumiUpCapability({ plunge: plunge.run, env: { PULUMI_BACKEND_URL: "file:///tmp/plywood-tutorial-backend" }, tmp: tmp(), snapshots: null });
+    const planned = await cap.plan!(ctx, step({ engine: "plunge", backend: store }));
+    await cap.run({ ...ctx, plans: { [member]: planned.artifact as PulumiUpArtifact } }, step({ engine: "plunge", backend: store }));
+    expect(plunge.calls.map((c) => c.args[0])).toEqual(["preview", "up", "stack"]);
+    for (const c of plunge.calls) expect(c.env?.PULUMI_BACKEND_URL).toBe(store);
+    // The preview keeps its streaming flag beside the backend.
+    expect(plunge.calls[0].env).toEqual({ [PULUMI_STREAMING_PREVIEW_ENV]: "true", PULUMI_BACKEND_URL: store });
+  });
+
+  test("stock Pulumi's preview, up and output read get it too, and outputs() reads through it", async () => {
+    const pulumi = engine();
+    const s3 = "s3://plywood-tutorial-state?region=us-east-1&endpoint=http://floci:4566&use_path_style=true";
+    const cap = createPulumiUpCapability({ run: pulumi.run, env: {}, tmp: tmp(), snapshots: null });
+    const planned = await cap.plan!(ctx, step({ engine: "pulumi", backend: s3 }));
+    await cap.run({ ...ctx, plans: { [member]: planned.artifact as PulumiUpArtifact } }, step({ engine: "pulumi", backend: s3 }));
+    await cap.outputs!(ctx, step({ engine: "pulumi", backend: s3 }));
+    expect(pulumi.calls.length).toBeGreaterThanOrEqual(4);
+    for (const c of pulumi.calls) expect(c.env?.PULUMI_BACKEND_URL).toBe(s3);
+  });
+
+  test("a plunge+ backend picks plunge where the job's PULUMI_BACKEND_URL would have picked stock Pulumi", async () => {
+    const plunge = engine();
+    const pulumi = engine();
+    const cap = createPulumiUpCapability({ run: pulumi.run, plunge: plunge.run, env: { PULUMI_BACKEND_URL: "file:///tmp/b" }, tmp: tmp(), snapshots: null });
+    const planned = await cap.plan!(ctx, step({ backend: store }));
+    expect((planned.artifact as PulumiUpArtifact).engine).toBe("plunge");
+    expect(pulumi.calls).toHaveLength(0);
+    expect(cap.defaultLockGrain!(step({ backend: store }))).toBe("resource");
+  });
+
+  test("the ledger lock (ruling for ci-products 2026-10-28): a stack's target row is its stack row, from Pulumi.yaml's name", () => {
+    const cap = createPulumiUpCapability({ env: {}, tmp: tmp(), snapshots: null });
+    expect(cap.targetLockRow!(step())).toEqual({ key: "stack corpus-aws-ts/floci", target: member, address: "corpus-aws-ts/floci" });
+    // A plunge stack on the resource grain still leases URN rows; the stack row it may also take meets this one.
+    expect(cap.targetLockRow!(step({ stack: "prod-us" }))).toMatchObject({ key: "stack corpus-aws-ts/prod-us" });
+  });
+
+  test("without it nothing changes: no PULUMI_BACKEND_URL is added", async () => {
+    const plunge = engine();
+    const cap = createPulumiUpCapability({ plunge: plunge.run, env: {}, tmp: tmp(), snapshots: null });
+    await cap.plan!(ctx, step({ engine: "plunge" }));
+    expect(plunge.calls[0].env).toEqual({ [PULUMI_STREAMING_PREVIEW_ENV]: "true" });
+  });
+
+  test("an empty backend is refused before anything runs", async () => {
+    const plunge = engine();
+    const cap = createPulumiUpCapability({ plunge: plunge.run, env: {}, tmp: tmp(), snapshots: null });
+    await expect(cap.plan!(ctx, step({ engine: "plunge", backend: " " }))).rejects.toThrow(/"backend" is the stack's backend URL/);
+    expect(plunge.calls).toHaveLength(0);
+  });
+});
+
 describe("a step pinned to its engine release (#4592)", () => {
   test("engineVersion runs the versioned binary, through the same argv checks", async () => {
     const pinned = engine();
@@ -423,6 +480,8 @@ describe("CrossGuard packs read at base (#4613)", () => {
     const stack = join(top, "stack");
     mkdirSync(join(stack, "guard"), { recursive: true });
     for (const f of ["Pulumi.yaml", "stack-export.json"]) copyFileSync(join(dir, f), join(stack, f));
+    // An installed checkout, so the step runs no install before the preview (plywood#22).
+    mkdirSync(join(stack, "node_modules"));
     writeFileSync(join(stack, "guard", "index.ts"), "// no-public-bucket: mandatory\n");
     git(top, "add", ".");
     git(top, "commit", "-q", "-m", "base");
@@ -466,5 +525,46 @@ describe("CrossGuard packs read at base (#4613)", () => {
     const cap = createPulumiUpCapability({ run: pulumi.run, env: {}, tmp: tmp(), snapshots: null });
     await expect(cap.plan!({ ...ctx, policyBase: "f".repeat(40) }, step({ dir: stack, engine: "pulumi", policyPacks: [{ dir: "guard" }] }))).rejects.toThrow(/names no commit/);
     expect(pulumi.calls).toHaveLength(0);
+  });
+});
+
+describe("an in-place checkout (plywood#22)", () => {
+  /** A checkout of the corpus program: Pulumi.yaml, package.json and, unless left out, a lockfile; no node_modules. */
+  function checkout(lockfile = true): string {
+    const stack = tmp();
+    for (const f of ["Pulumi.yaml", "stack-export.json"]) copyFileSync(join(dir, f), join(stack, f));
+    writeFileSync(join(stack, "package.json"), "{}\n");
+    if (lockfile) writeFileSync(join(stack, "package-lock.json"), "{}\n");
+    return stack;
+  }
+
+  test("a Node checkout with a lockfile and no node_modules gets one install, with the step's backend, before the first preview", async () => {
+    const stack = checkout();
+    const pulumi = engine();
+    const cap = createPulumiUpCapability({ run: pulumi.run, env: {}, tmp: tmp(), snapshots: null });
+    const planned = await cap.plan!(ctx, step({ dir: stack, engine: "pulumi", backend: "s3://shop-state" }));
+    expect(pulumi.calls[0]).toMatchObject({ args: ["install"], cwd: stack, env: { PULUMI_BACKEND_URL: "s3://shop-state" } });
+    expect(pulumi.calls[1]!.args[0]).toBe("preview");
+
+    await cap.run({ ...ctx, plans: { [planned.member]: planned.artifact as PulumiUpArtifact } }, step({ dir: stack, engine: "pulumi", backend: "s3://shop-state" }));
+    expect(pulumi.calls.filter((c) => c.args[0] === "install")).toHaveLength(1);
+    expect(pulumi.calls.some((c) => c.args[0] === "up")).toBe(true);
+  });
+
+  test("a Node checkout with no lockfile is refused by name before the engine runs", async () => {
+    const stack = checkout(false);
+    const pulumi = engine();
+    const cap = createPulumiUpCapability({ run: pulumi.run, env: {}, tmp: tmp(), snapshots: null });
+    await expect(cap.plan!(ctx, step({ dir: stack, engine: "pulumi" }))).rejects.toThrow(/no lockfile .* beside its package.json/);
+    expect(pulumi.calls).toHaveLength(0);
+  });
+
+  test("an installed checkout runs no install", async () => {
+    const stack = checkout();
+    mkdirSync(join(stack, "node_modules"));
+    const pulumi = engine();
+    const cap = createPulumiUpCapability({ run: pulumi.run, env: {}, tmp: tmp(), snapshots: null });
+    await cap.plan!(ctx, step({ dir: stack, engine: "pulumi" }));
+    expect(pulumi.calls.map((c) => c.args[0])).not.toContain("install");
   });
 });

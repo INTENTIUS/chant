@@ -25,7 +25,7 @@
  * (`--git-sha` defaults to HEAD, `--run-id`/`--actor` fall back to common CI
  * env vars, timestamp is a real `new Date()` taken at record time).
  */
-import { getHeadCommit, pushLifecycle, StaleLifecycleBranchError } from "../lifecycle/git";
+import { getHeadCommit, LifecyclePushLostError, pushLifecycleRebasing, StaleLifecycleBranchError } from "../lifecycle/git";
 import { appendReleaseRecord, InvalidReleaseRecordError, type ReleaseAdmission, type ReleaseDigestKind, type ReleaseRecord, type RunOrigin } from "../lifecycle/release-ledger";
 import { changeSetDigest } from "../change-set";
 import type { DriverComponent, DriverStepRecord } from "./driver";
@@ -106,7 +106,7 @@ export type AutoReleaseSkipReason =
 export type AutoReleaseResult =
   | { recorded: true; commit: string; record: ReleaseRecord }
   | { recorded: false; reason: AutoReleaseSkipReason; detail?: string }
-  | { recorded: false; reason: "error"; error: string };
+  | { recorded: false; reason: "error"; error: string; lost?: true };
 
 /** Input describing one component's completed run. */
 export interface AutoReleaseRunInfo {
@@ -189,8 +189,10 @@ function resolveActor(override?: string): string | undefined {
  *    requirement; an unattributed record defeats the ledger's purpose.
  *
  * Git-sha resolution failure and ledger-write failures
- * (`InvalidReleaseRecordError`, `StaleLifecycleBranchError`, or any other
- * error `appendReleaseRecord`/`pushLifecycle` throw) are reported as `{
+ * (`InvalidReleaseRecordError`, `StaleLifecycleBranchError`,
+ * `LifecyclePushLostError` when the push never landed after its replays, or
+ * any other error `appendReleaseRecord`/`pushLifecycleRebasing` throw) are
+ * reported as `{
  * recorded: false, reason: "error", error }` rather than propagated — an
  * auto-recorded ledger write is a best-effort observability side effect of a
  * successful deploy; it must never turn a successful `chant run --components`
@@ -250,9 +252,11 @@ export async function maybeRecordAutoRelease(
       },
       { cwd: options.cwd },
     );
-    await pushLifecycle({ cwd: options.cwd });
+    // plywood#22 finding 9: another writer's push replays this record on its tip and pushes again, in place of a stale refusal.
+    await pushLifecycleRebasing({ cwd: options.cwd });
     return { recorded: true, commit, record };
   } catch (err) {
+    if (err instanceof LifecyclePushLostError) return { recorded: false, reason: "error", error: err.message, lost: true };
     if (err instanceof InvalidReleaseRecordError || err instanceof StaleLifecycleBranchError) {
       return { recorded: false, reason: "error", error: err.message };
     }

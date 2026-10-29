@@ -74,7 +74,12 @@ describe("resolvePlannedLock", () => {
 
   test("the declared grain wins over the default, and the step's own over both", async () => {
     expect(await resolvePlannedLock(choudoufu, {}, { member: "net" }, "target")).toEqual({ grain: "target", source: "declared", rows: [] });
-    expect(await resolvePlannedLock(choudoufu, { lockGrain: "repo" }, { member: "net" }, "resource")).toEqual({ grain: "repo", source: "step", rows: [] });
+    expect(await resolvePlannedLock(choudoufu, { lockGrain: "repo" }, { member: "net" }, "resource")).toEqual({
+      grain: "repo",
+      source: "step",
+      rows: [],
+      queue: [{ key: "repo", target: "net", address: "the repository" }],
+    });
   });
 
   test("resource is refused by name where the lexicon refuses it, and where no hook names rows", async () => {

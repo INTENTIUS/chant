@@ -88,7 +88,7 @@ import type { TrustPolicy } from "../workspace/trust/policy";
 import type { GateSigners } from "../lifecycle/gate-seal";
 import { ciRunIdFromEnv } from "./gate-run-locator";
 import { appendRunRecord, DEFAULT_RUN_ENV } from "../lifecycle/run-ledger";
-import { pushLifecycleReport } from "../lifecycle/git";
+import { LifecyclePushLostError, pushLifecycleRebasing } from "../lifecycle/git";
 import { resolveCiJob } from "../lifecycle/release-ledger";
 import type { OpRunPolicyRow, OpRunRecordInput, OpRunStepRecord, OpRunWave, OpRunWavePlan, OpRunWaveTarget } from "./runtime";
 import { foldPolicyRows, opWaveAfterPlanProblems, runOpWaveAfterPlanHooks, type OpWaveAfterPlanHook, type OpWaveAfterPlanRun } from "./op-waves-after-plan";
@@ -789,6 +789,14 @@ export interface RunOpWaveOptions {
   lockGate?: string;
   /** Whether a run holding rows still runs (#4552). Default: the forge's answer, with the lease's age. */
   lockLiveness?: LockLiveness;
+  /**
+   * How long a wave on the `target` or `repo` grain waits for its rows, in
+   * seconds (ruling for ci-products 2026-10-28). Default `CHANT_LOCK_WAIT`,
+   * which the waves pipelines set from the job's timeout.
+   */
+  lockWaitSeconds?: number;
+  /** How often a waiting wave reads the rows file again, in ms. Default `CHANT_LOCK_POLL` seconds, else 10 s. */
+  lockPollMs?: number;
   /** Overrides the spec's `standDown` (#4581). */
   standDown?: boolean;
   /** How the job finds a newer commit on its branch (#4581). Default: fetch the branch from `origin` ({@link gitOpWaveNewerCommit}). */
@@ -832,7 +840,8 @@ export function gitOpWaveRunPort(opts?: { cwd?: string }): OpWaveRunPort {
   return {
     async append(record) {
       await appendRunRecord(record, opts);
-      const { pushWarning } = await pushLifecycleReport(opts);
+      // plywood#22 finding 9: a push another writer beat replays on its tip and pushes again; one that never lands throws LifecyclePushLostError.
+      const { pushWarning } = await pushLifecycleRebasing(opts);
       return pushWarning ? { pushWarning } : {};
     },
   };
@@ -1099,36 +1108,88 @@ async function declaredLockGrain(cwd: string, base: string | undefined): Promise
 }
 
 /**
- * Lease the rows of a wave's runs on the resource grain (#4552), before
- * anything of the wave applies, all in one take. A held row makes the wave
- * apply nothing with the `held` outcome, exit 5, naming the run that holds it.
+ * Lease the rows of a wave's runs (#4552), before anything of the wave
+ * applies. First the rows its runs on the `target` and `repo` grains wait
+ * for (ruling for ci-products 2026-10-28, "Ledger lock"): a stock Pulumi
+ * stack's `stack` row, a Terraform root's `root` row, the `repo` row. The
+ * wave waits for them in the ledger's queue, oldest commit first, up to
+ * `lockWaitSeconds` (`CHANT_LOCK_WAIT`, set from the job's timeout), and at
+ * the deadline applies nothing with the `held` outcome, exit 5. Then the rows
+ * of its runs on the resource grain, all in one take with no wait: a held row
+ * makes the wave apply nothing with the `held` outcome, exit 5, naming the
+ * run that holds it. A run whose plan changes nothing takes no row, and
+ * outside a git work tree the waiting grains take none.
  */
 async function leaseWaveRows(
   options: RunOpWaveOptions,
   ctx: WaveContext,
   runs: readonly OpWaveRun[],
 ): Promise<{ release(): Promise<boolean> } | OpWaveApplyOutcome | { failed: string } | undefined> {
-  const rows = runs.flatMap((r) => {
-    const lock = ctx.steps?.get(r.target)?.lock;
-    return lock?.grain === "resource" ? lock.rows : [];
+  const locks = runs.flatMap((r) => {
+    const plan = ctx.steps?.get(r.target);
+    return plan?.lock && !plan.empty ? [plan.lock] : [];
   });
-  if (rows.length === 0) return undefined;
-  const { leaseLockRows } = await import("../lifecycle/resource-lock");
+  const rows = locks.flatMap((l) => (l.grain === "resource" ? l.rows : []));
+  // Outside a git work tree no ledger holds a queue, so a waiting grain takes no row there, as `chant run --components` takes none.
+  const queued = locks.flatMap((l) => (l.grain !== "resource" ? (l.queue ?? []) : []));
+  const queue = queued.length > 0 && inGitWorkTree(ctx.cwd) ? queued : [];
+  if (rows.length === 0 && queue.length === 0) return undefined;
+  const { commitTimeOf, leaseLockRows, lockPollMs, lockWaitSeconds } = await import("../lifecycle/resource-lock");
   const { PR_APPLY_GATE } = await import("../pr-loop");
   const gate = options.lockGate ?? PR_APPLY_GATE;
-  let leased: Awaited<ReturnType<typeof leaseLockRows>>;
+  const label = `wave ${ctx.k} (${ctx.wave.name})`;
+  const alive = options.lockLiveness ? { alive: options.lockLiveness } : {};
+  const held: Array<{ release(): Promise<boolean> }> = [];
+  const releaseAll = async () => {
+    let ok = true;
+    for (const l of held.reverse()) ok = (await l.release()) && ok;
+    return ok;
+  };
+  const take = async (wanted: typeof rows, wait: boolean): Promise<OpWaveApplyOutcome | { failed: string } | undefined> => {
+    if (wanted.length === 0) return undefined;
+    let leased: Awaited<ReturnType<typeof leaseLockRows>>;
+    try {
+      const waitFor = wait
+        ? {
+            wait: {
+              deadline: Date.now() + (options.lockWaitSeconds ?? lockWaitSeconds(process.env)) * 1000,
+              pollMs: options.lockPollMs ?? lockPollMs(process.env),
+              log: (line: string) => ctx.log(`${label}: ${line}`),
+              ...(await commitTimeOf(options.head ?? "HEAD", ctx.cwd).then((t) => (t ? { commitAt: t } : {}))),
+            },
+          }
+        : {};
+      leased = await leaseLockRows(gate, wanted, { cwd: ctx.cwd, ...alive, ...waitFor });
+    } catch (err) {
+      return { failed: `${label}: could not hold the rows its runs change in ${gate}, so nothing was applied: ${err instanceof Error ? err.message : String(err)}` };
+    }
+    if (!leased.ok) {
+      const first = leased.held[0]?.holder;
+      const reason = leased.timedOut ? `LockWaitTimeoutError: ${leased.message}` : leased.message;
+      return { outcome: "held", reason, ...(first ? { holder: { run: first.run, ...(first.url ? { url: first.url } : {}) } } : {}) };
+    }
+    for (const h of leased.tookOver) ctx.log(`${label}: took over the rows of run ${h.run}, which is gone`);
+    const waited = leased.waited ? ` after waiting ${leased.waitedSeconds ?? 0}s` : "";
+    ctx.log(`${label}: holds ${leased.lease.keys.length} row${leased.lease.keys.length === 1 ? "" : "s"} of ${gate}${waited} while it applies`);
+    held.push(leased.lease);
+    return undefined;
+  };
+  for (const [wanted, wait] of [[queue, true], [rows, false]] as const) {
+    const stop = await take(wanted, wait);
+    if (stop) {
+      if (!(await releaseAll())) ctx.log(`${label}: could not let go of the rows it held; the next apply takes them over once this run is gone`);
+      return stop;
+    }
+  }
+  return { release: releaseAll };
+}
+
+function inGitWorkTree(cwd: string): boolean {
   try {
-    leased = await leaseLockRows(gate, rows, { cwd: ctx.cwd, ...(options.lockLiveness ? { alive: options.lockLiveness } : {}) });
-  } catch (err) {
-    return { failed: `wave ${ctx.k} (${ctx.wave.name}): could not hold the rows its runs change in ${gate}, so nothing was applied: ${err instanceof Error ? err.message : String(err)}` };
+    return execFileSync("git", ["rev-parse", "--is-inside-work-tree"], { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim() === "true";
+  } catch {
+    return false;
   }
-  if (!leased.ok) {
-    const first = leased.held[0]!.holder;
-    return { outcome: "held", reason: leased.message, holder: { run: first.run, ...(first.url ? { url: first.url } : {}) } };
-  }
-  for (const h of leased.tookOver) ctx.log(`wave ${ctx.k} (${ctx.wave.name}): took over the rows of run ${h.run}, which is gone`);
-  ctx.log(`wave ${ctx.k} (${ctx.wave.name}): holds ${leased.lease.keys.length} row${leased.lease.keys.length === 1 ? "" : "s"} of ${gate} while it applies`);
-  return leased.lease;
 }
 
 /** A wave's cost hold over its plans (#4545): each changing run priced, the sum against `approveAbove`. */
@@ -1781,12 +1842,14 @@ export async function runOpWave(options: RunOpWaveOptions): Promise<RunOpWaveRes
   try {
     result = await runOpWaveJob(options);
   } catch (err) {
-    const record = await recordOpWaveRun(options, started, { error: err });
+    const { lost: _lost, ...record } = await recordOpWaveRun(options, started, { error: err });
     await closeOpWaveEvents(options, events, record);
     throw err;
   }
-  const record = await recordOpWaveRun(options, started, { result });
+  const { lost, ...record } = await recordOpWaveRun(options, started, { result });
   await closeOpWaveEvents(options, events, record, result);
+  // plywood#22 finding 9: a run record that never reached the remote fails a job that would have passed.
+  if (lost !== undefined && result.exitCode === CHANT_EXIT.done) result.exitCode = CHANT_EXIT.failed;
   return result;
 }
 
@@ -1949,8 +2012,13 @@ export function opWaveRunRecord(
   };
 }
 
-/** Append the job's run record (#4551). A failed write warns and never changes the job's exit code. */
-async function recordOpWaveRun(options: RunOpWaveOptions, started: string, outcome: { result: RunOpWaveResult } | { error: unknown }): Promise<OpRunRecordInput> {
+/**
+ * Append the job's run record (#4551). A failed write warns and never
+ * changes the job's exit code, except a record whose push never landed
+ * after its replays (`LifecyclePushLostError`, plywood#22 finding 9): that
+ * fails the job by name, through `lost`.
+ */
+async function recordOpWaveRun(options: RunOpWaveOptions, started: string, outcome: { result: RunOpWaveResult } | { error: unknown }): Promise<OpRunRecordInput & { lost?: string }> {
   const cwd = options.cwd ?? process.cwd();
   const port = options.runs ?? (options.gates ? undefined : gitOpWaveRunPort({ cwd }));
   const log = options.log ?? ((line: string) => console.error(line));
@@ -1970,7 +2038,12 @@ async function recordOpWaveRun(options: RunOpWaveOptions, started: string, outco
     const wrote = await port.append(record);
     if (wrote && wrote.pushWarning) log(`wave ${options.wave}: the run record was written and not pushed: ${wrote.pushWarning}`);
   } catch (err) {
-    log(`wave ${options.wave}: could not record the run on the run ledger: ${err instanceof Error ? err.message : String(err)}`);
+    const message = err instanceof Error ? err.message : String(err);
+    if (err instanceof LifecyclePushLostError) {
+      log(`wave ${options.wave}: LifecyclePushLostError: the run record was written and never reached the remote, so the job fails: ${message}`);
+      return Object.assign(record, { lost: message });
+    }
+    log(`wave ${options.wave}: could not record the run on the run ledger: ${message}`);
   }
   return record;
 }
@@ -3565,7 +3638,9 @@ async function applyStepRunsAtOnce(options: RunOpWaveOptions, ctx: WaveContext, 
 /**
  * The release records of the runs this wave applied through its step
  * (#4615), one per run, on the environment ledger each names. A record that
- * is not written is a line in the log; the job's exit code stays.
+ * is not written is a line in the log and the job's exit code stays, except
+ * one written whose push never landed after its replays (plywood#22 finding
+ * 9), which fails the wave by name.
  */
 async function recordStepReleases(options: RunOpWaveOptions, ctx: WaveContext, decision: OpWaveDecision, runs: readonly OpWaveRun[]): Promise<void> {
   const { spec, k, wave, log, result } = ctx;
@@ -3600,6 +3675,7 @@ async function recordStepReleases(options: RunOpWaveOptions, ctx: WaveContext, d
   for (const [i, req] of requests.entries()) {
     const got = outcomes[i];
     if (got?.recorded) log(`${req.target}: recorded on the "${got.env}" release ledger as ${got.component} ${got.digest}${got.releaseDigest ? ` under release ${got.releaseDigest}` : ""}`);
+    else if (got && !got.recorded && got.lost) failed(ctx, `${req.target}: applied, and LifecyclePushLostError: the release record for ${req.component} in "${req.env}" was written and never reached the remote, so the wave fails: ${got.reason}`);
     else log(`${req.target}: applied, and no release record was written for ${req.component} in "${req.env}": ${got?.reason ?? "the port gave no answer"}`);
   }
 }

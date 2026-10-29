@@ -24,6 +24,19 @@
  *   for one release), or, for a run on this host outside CI, when its
  *   process is. Anything nobody can answer counts as alive.
  * - A release never throws: a row left held is taken over once its run is gone.
+ * - A take may wait (ruling for ci-products 2026-10-28, "Ledger lock"): the
+ *   `target` and `repo` grains, a stock Pulumi stack's `stack` row, a
+ *   Terraform root's `root` row or the `repo` row. A waiting run adds itself
+ *   to `waiting` in the file, and takes its rows only once no live run holds
+ *   any of them and no live waiter for a row that meets one of them comes
+ *   first. First is the older commit (`commitAt`, the commit time of the
+ *   commit the run applies), then the lower run id (both numbers, else by
+ *   text), then the commit sha: the run that started first among runs of one
+ *   commit. A waiter that is gone is dropped by the next writer, as a holder
+ *   is. A wait that reaches its deadline (`CHANT_LOCK_WAIT` seconds, which
+ *   the waves pipelines set from the job's timeout) leaves the queue and
+ *   fails with {@link LockWaitTimeoutError}, the table's `held`, exit 5. A
+ *   take on the resource grain never waits: a held row refuses it at once.
  *
  * The writes go through chant's ledger code (./git.ts) with the same
  * read-then-CAS and push the target locks use, in place of terragucci's raw
@@ -35,6 +48,7 @@
  * exit 5, and names the run that holds it.
  */
 import { hostname } from "node:os";
+import { getRuntime } from "../runtime-adapter";
 import { pushLifecycleStatus, readBlobBySha, readPathSha, RefCASConflictError, writeBlobToPath } from "./git";
 import { lockRowsConflict, sortedLockRows, type LockRow } from "./lock-rows";
 import { dropRefusedWrite, fetchForLocks, localTip, LOCKS_DIR, targetLockGateProblem } from "./target-lock";
@@ -57,12 +71,21 @@ export interface LockRowHolder {
   sha?: string;
 }
 
+/** A run waiting for rows: who it is, the rows it waits for, and the commit time that orders it. */
+export interface LockRowWaiter extends LockRowHolder {
+  keys: string[];
+  /** The commit time (ISO 8601) of the commit the run applies. Absent sorts after every waiter that has one. */
+  commitAt?: string;
+}
+
 /** `_locks/rows/<gate>.json`. */
 export interface LockRowsFile {
   version: 1;
   holders: Record<string, LockRowHolder>;
   /** Row key to the run that holds it. */
   rows: Record<string, string>;
+  /** The runs waiting for rows (ruling for ci-products 2026-10-28), by run. Left out of the file when empty. */
+  waiting?: Record<string, LockRowWaiter>;
 }
 
 /** A row another run holds, conflicting with `wanted`. */
@@ -161,7 +184,24 @@ export function parseLockRows(text: string | null): LockRowsFile {
       }
       const rows: Record<string, string> = {};
       for (const [k, id] of Object.entries(doc.rows as Record<string, unknown>)) if (typeof id === "string" && holders[id]) rows[k] = id;
-      return { version: 1, holders, rows };
+      const waiting: Record<string, LockRowWaiter> = {};
+      const rawWaiting = (doc as { waiting?: unknown }).waiting;
+      if (rawWaiting && typeof rawWaiting === "object") {
+        for (const [id, raw] of Object.entries(rawWaiting as Record<string, Record<string, unknown>>)) {
+          if (typeof raw?.run !== "string" || typeof raw.at !== "string" || !Array.isArray(raw.keys)) continue;
+          const keys = (raw.keys as unknown[]).filter((k): k is string => typeof k === "string");
+          if (keys.length === 0) continue;
+          waiting[id] = {
+            run: raw.run,
+            at: raw.at,
+            keys,
+            ...(typeof raw.url === "string" ? { url: raw.url } : {}),
+            ...(typeof raw.sha === "string" ? { sha: raw.sha } : {}),
+            ...(typeof raw.commitAt === "string" ? { commitAt: raw.commitAt } : {}),
+          };
+        }
+      }
+      return { version: 1, holders, rows, ...(Object.keys(waiting).length > 0 ? { waiting } : {}) };
     }
   } catch {
     // An unreadable file holds no rows.
@@ -172,7 +212,8 @@ export function parseLockRows(text: string | null): LockRowsFile {
 /** The file's text, keys sorted, so two writes of the same rows are the same blob. */
 export function renderLockRows(file: LockRowsFile): string {
   const sort = <T>(r: Record<string, T>) => Object.fromEntries(Object.keys(r).sort().map((k) => [k, r[k]]));
-  return `${JSON.stringify({ version: 1, holders: sort(file.holders), rows: sort(file.rows) }, null, 2)}\n`;
+  const waiting = file.waiting && Object.keys(file.waiting).length > 0 ? { waiting: sort(file.waiting) } : {};
+  return `${JSON.stringify({ version: 1, holders: sort(file.holders), rows: sort(file.rows), ...waiting }, null, 2)}\n`;
 }
 
 /** Who else holds a row that meets any of `keys`, split into runs still going and runs that are gone. */
@@ -197,19 +238,68 @@ export async function heldLockRowsIn(file: LockRowsFile, keys: readonly string[]
  * `gone`. Pure, so the decision can be checked without git.
  */
 export function withRowsTaken(file: LockRowsFile, keys: readonly string[], me: LockRowHolder, gone: readonly string[]): LockRowsFile {
-  const next: LockRowsFile = { version: 1, holders: { ...file.holders }, rows: { ...file.rows } };
+  const next = copyRows(file);
   for (const id of gone) {
     delete next.holders[id];
     for (const [k, h] of Object.entries(next.rows)) if (h === id) delete next.rows[k];
+    delete next.waiting?.[id];
   }
-  next.holders[me.run] = me;
+  delete next.waiting?.[me.run];
+  next.holders[me.run] = { run: me.run, at: me.at, ...(me.url ? { url: me.url } : {}), ...(me.sha ? { sha: me.sha } : {}) };
   for (const k of keys) next.rows[k] = me.run;
+  return tidyWaiting(next);
+}
+
+function copyRows(file: LockRowsFile): LockRowsFile {
+  return { version: 1, holders: { ...file.holders }, rows: { ...file.rows }, ...(file.waiting ? { waiting: { ...file.waiting } } : {}) };
+}
+
+function tidyWaiting(file: LockRowsFile): LockRowsFile {
+  if (file.waiting && Object.keys(file.waiting).length === 0) delete file.waiting;
+  return file;
+}
+
+/** The rows file with `me` in the queue for `keys`, less the waiters in `gone`. Pure. */
+export function withWaiter(file: LockRowsFile, me: LockRowWaiter, gone: readonly string[] = []): LockRowsFile {
+  const next = copyRows(file);
+  next.waiting = { ...(next.waiting ?? {}) };
+  for (const id of gone) delete next.waiting[id];
+  next.waiting[me.run] = { ...me, keys: [...new Set(me.keys)].sort() };
   return next;
+}
+
+/** The rows file with `me` out of the queue. Pure. */
+export function withoutWaiter(file: LockRowsFile, me: string): LockRowsFile {
+  const next = copyRows(file);
+  delete next.waiting?.[me];
+  return tidyWaiting(next);
+}
+
+/**
+ * Whether waiter `a` goes before waiter `b`: the older commit first, then the
+ * lower run id (as numbers when both are, else as text), then the commit
+ * sha. A waiter with no commit time goes after every one that has one.
+ */
+export function waiterBefore(a: Pick<LockRowWaiter, "run" | "commitAt" | "sha">, b: Pick<LockRowWaiter, "run" | "commitAt" | "sha">): boolean {
+  const time = (w: { commitAt?: string }) => {
+    const t = w.commitAt ? new Date(w.commitAt).getTime() : NaN;
+    return Number.isFinite(t) ? t : Number.POSITIVE_INFINITY;
+  };
+  const ta = time(a);
+  const tb = time(b);
+  if (ta !== tb) return ta < tb;
+  if (a.run !== b.run) {
+    const na = Number(a.run);
+    const nb = Number(b.run);
+    if (/^\d+$/.test(a.run) && /^\d+$/.test(b.run) && na !== nb) return na < nb;
+    return a.run < b.run;
+  }
+  return (a.sha ?? "") < (b.sha ?? "");
 }
 
 /** The rows file after `me` lets go of `keys`; its holder entry goes once it holds no row. */
 export function withRowsReleased(file: LockRowsFile, keys: readonly string[], me: string): LockRowsFile {
-  const next: LockRowsFile = { version: 1, holders: { ...file.holders }, rows: { ...file.rows } };
+  const next = copyRows(file);
   for (const k of keys) if (next.rows[k] === me) delete next.rows[k];
   if (!Object.values(next.rows).includes(me)) delete next.holders[me];
   return next;
@@ -292,6 +382,161 @@ export async function takeLockRows(gate: string, rows: readonly LockRow[], me: L
   throw new Error(`could not hold the rows of ${gate}: ${STATE_BRANCH} kept moving; check that the job may push to it`);
 }
 
+/** A wait for rows reached its deadline (ruling for ci-products 2026-10-28): nothing applied. Exit 5, as a held row is. */
+export class LockWaitTimeoutError extends Error {
+  readonly lockRowsHeld = true;
+  constructor(
+    message: string,
+    public readonly held: HeldLockRow[],
+    public readonly ahead: LockRowWaiter[],
+    public readonly waitedSeconds: number,
+  ) {
+    super(message);
+    this.name = "LockWaitTimeoutError";
+  }
+}
+
+/** How a take waits for its rows. */
+export interface LockRowsWait {
+  /** When the wait gives up, in ms since the epoch. */
+  deadline: number;
+  /** The commit time (ISO 8601) of the commit the run applies, which orders the queue. */
+  commitAt?: string;
+  /** How long between reads of the rows file, in ms. Default `CHANT_LOCK_POLL` seconds, else 10 s. */
+  pollMs?: number;
+  /** Where the wait's lines go. Default: none. */
+  log?: (line: string) => void;
+  /** The clock and the pause, for tests. */
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/** The default wait when a job names no timeout: just under three hours, a Forgejo runner's default job timeout. */
+export const DEFAULT_LOCK_WAIT_SECONDS = 3 * 3600 - 300;
+
+/** How long a take waits, in seconds: `CHANT_LOCK_WAIT`, else {@link DEFAULT_LOCK_WAIT_SECONDS}. */
+export function lockWaitSeconds(env: Record<string, string | undefined>): number {
+  const n = Number(env.CHANT_LOCK_WAIT);
+  return env.CHANT_LOCK_WAIT !== undefined && Number.isFinite(n) && n >= 0 ? n : DEFAULT_LOCK_WAIT_SECONDS;
+}
+
+/** The poll interval in ms: `CHANT_LOCK_POLL` seconds, else 10 s. */
+export function lockPollMs(env: Record<string, string | undefined>): number {
+  const n = Number(env.CHANT_LOCK_POLL);
+  return env.CHANT_LOCK_POLL !== undefined && Number.isFinite(n) && n > 0 ? n * 1000 : 10_000;
+}
+
+/** The commit time of `rev` in `cwd` (ISO 8601), or undefined when git cannot say. */
+export async function commitTimeOf(rev: string, cwd?: string): Promise<string | undefined> {
+  const out = await getRuntime().spawn(["git", "show", "-s", "--format=%cI", rev], { cwd });
+  const t = out.exitCode === 0 ? out.stdout.trim() : "";
+  return t && Number.isFinite(new Date(t).getTime()) ? t : undefined;
+}
+
+/** The live waiters for a row that meets one of `keys` who go before `me`, and the waiters that are gone. */
+export async function waitersAhead(file: LockRowsFile, keys: readonly string[], me: LockRowWaiter, alive: LockLiveness): Promise<{ ahead: LockRowWaiter[]; gone: string[] }> {
+  const ahead: LockRowWaiter[] = [];
+  const gone: string[] = [];
+  for (const [id, w] of Object.entries(file.waiting ?? {})) {
+    if (id === me.run || w.run === me.run) continue;
+    if (!w.keys.some((k) => keys.some((mine) => lockRowsConflict(k, mine)))) continue;
+    const verdict = await alive(w);
+    if (verdict === "dead") {
+      gone.push(id);
+      continue;
+    }
+    if (waiterBefore(w, me)) ahead.push(w);
+  }
+  return { ahead: ahead.sort((a, b) => (waiterBefore(a, b) ? -1 : 1)), gone: gone.sort() };
+}
+
+function describeWait(held: readonly HeldLockRow[], ahead: readonly LockRowWaiter[], rows: readonly LockRow[]): string {
+  const parts: string[] = [];
+  if (held.length > 0) parts.push(describeHeldLockRows(held, rows));
+  if (ahead.length > 0) parts.push(`${ahead.map((w) => `run ${w.run}${w.url ? ` (${w.url})` : ""}`).join(", ")} ${ahead.length === 1 ? "waits" : "wait"} ahead of it with an older commit`);
+  return parts.join("; ");
+}
+
+/**
+ * Take `rows` for `me`, waiting in the queue until no live run holds any of
+ * them and no live waiter that goes first ({@link waiterBefore}) waits for a
+ * row that meets one of them. Throws {@link LockWaitTimeoutError} at the
+ * deadline, after leaving the queue.
+ */
+export async function waitLockRows(gate: string, rows: readonly LockRow[], me: LockRowHolder, wait: LockRowsWait, opts: LockRowsOptions = {}): Promise<{ ok: true; tookOver: LockRowHolder[]; pushed: boolean; waitedSeconds: number; waited: boolean }> {
+  checkGate(gate);
+  const keys = sortedLockRows(rows).map((r) => r.key);
+  if (keys.length === 0) return { ok: true, tookOver: [], pushed: false, waitedSeconds: 0, waited: false };
+  const alive = opts.alive ?? forgeLockLiveness(process.env);
+  const now = wait.now ?? Date.now;
+  const sleep = wait.sleep ?? pause;
+  const poll = wait.pollMs ?? lockPollMs(process.env);
+  const stale = lockStaleSeconds(process.env) * 1000;
+  const started = now();
+  const waiter = (): LockRowWaiter => ({ ...me, keys, ...(wait.commitAt ? { commitAt: wait.commitAt } : {}) });
+  let queued: LockRowWaiter | undefined;
+  let said = "";
+  await fetchForLocks(opts.cwd);
+  for (let raced = 0; ; ) {
+    const { sha, file } = await readCurrent(gate, opts.cwd);
+    const mine = queued ?? waiter();
+    const { live, gone } = await heldLockRowsIn(file, keys, me.run, alive);
+    const { ahead, gone: goneWaiters } = await waitersAhead(file, keys, mine, alive);
+    if (live.length === 0 && ahead.length === 0) {
+      const next = withRowsTaken(file, keys, me, gone);
+      for (const id of goneWaiters) delete next.waiting?.[id];
+      const took = gone.length ? `, taken over from run ${gone.join(", ")}` : "";
+      const wrote = await writeAndPush(gate, sha, tidyWaiting(next), `Hold ${keys.length} row${keys.length === 1 ? "" : "s"} of ${gate} for run ${me.run}${took}`, opts.cwd);
+      if (wrote) return { ok: true, tookOver: gone.map((id) => file.holders[id]!), pushed: wrote.pushed, waitedSeconds: Math.round((now() - started) / 1000), waited: queued !== undefined };
+      if (++raced >= ATTEMPTS) throw new Error(`could not hold the rows of ${gate}: ${STATE_BRANCH} kept moving; check that the job may push to it`);
+      await sleep(200 + Math.floor(Math.random() * 800));
+      continue;
+    }
+    const why = describeWait(live, ahead, rows);
+    if (now() >= wait.deadline) {
+      await leaveQueue(gate, me.run, opts.cwd);
+      const waited = Math.round((now() - started) / 1000);
+      throw new LockWaitTimeoutError(`waited ${waited}s for ${keys.join(", ")} of ${gate} and gave up at the job's deadline: ${why}`, live, ahead, waited);
+    }
+    const inFile = file.waiting?.[me.run];
+    const refresh = inFile ? now() - new Date(inFile.at).getTime() > stale / 2 : true;
+    if (!inFile || refresh || goneWaiters.length > 0) {
+      const entry: LockRowWaiter = { ...waiter(), at: new Date(now()).toISOString() };
+      const wrote = await writeAndPush(gate, sha, withWaiter(file, entry, goneWaiters), `Run ${me.run} waits for ${keys.length} row${keys.length === 1 ? "" : "s"} of ${gate}`, opts.cwd);
+      if (!wrote) {
+        if (++raced >= ATTEMPTS) throw new Error(`could not join the queue for the rows of ${gate}: ${STATE_BRANCH} kept moving; check that the job may push to it`);
+        await sleep(200 + Math.floor(Math.random() * 800));
+        continue;
+      }
+      queued = entry;
+    } else {
+      queued ??= inFile;
+    }
+    raced = 0;
+    if (why !== said) {
+      wait.log?.(`waits for ${keys.join(", ")} of ${gate}: ${why}`);
+      said = why;
+    }
+    await sleep(Math.max(0, Math.min(poll, wait.deadline - now())));
+    await fetchForLocks(opts.cwd);
+  }
+}
+
+/** Take run `me` out of `gate`'s queue. Never throws. */
+async function leaveQueue(gate: string, me: string, cwd?: string): Promise<void> {
+  try {
+    await fetchForLocks(cwd);
+    for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+      const { sha, file } = await readCurrent(gate, cwd);
+      if (!file.waiting?.[me]) return;
+      if (await writeAndPush(gate, sha, withoutWaiter(file, me), `Run ${me} stops waiting for rows of ${gate}`, cwd)) return;
+      await pause(200 + Math.floor(Math.random() * 800));
+    }
+  } catch {
+    // A waiter left behind is dropped once its run is gone.
+  }
+}
+
 /** Let go of `keys` where run `me` still holds them. Never throws: a row left held is taken over once the run is gone. */
 export async function releaseLockRows(gate: string, keys: readonly string[], me: string, opts: { cwd?: string } = {}): Promise<boolean> {
   try {
@@ -342,12 +587,21 @@ export interface LockRowsLease {
 export async function leaseLockRows(
   gate: string,
   rows: readonly LockRow[],
-  opts: LockRowsOptions & { holder?: LockRowHolder } = {},
-): Promise<{ ok: true; lease: LockRowsLease; tookOver: LockRowHolder[] } | { ok: false; held: HeldLockRow[]; message: string }> {
+  opts: LockRowsOptions & { holder?: LockRowHolder; wait?: LockRowsWait } = {},
+): Promise<{ ok: true; lease: LockRowsLease; tookOver: LockRowHolder[]; waitedSeconds?: number; waited?: boolean } | { ok: false; held: HeldLockRow[]; message: string; timedOut?: true }> {
   const holder = opts.holder ?? lockRowHolder(process.env);
   const keys = sortedLockRows(rows).map((r) => r.key);
   const lease: LockRowsLease = { gate, holder, keys, release: () => (keys.length === 0 ? Promise.resolve(true) : releaseLockRows(gate, keys, holder.run, { ...(opts.cwd ? { cwd: opts.cwd } : {}) })) };
   if (keys.length === 0) return { ok: true, lease, tookOver: [] };
+  if (opts.wait) {
+    try {
+      const waited = await waitLockRows(gate, rows, holder, opts.wait, opts);
+      return { ok: true, lease, tookOver: waited.tookOver, ...(waited.waited ? { waited: true, waitedSeconds: waited.waitedSeconds } : {}) };
+    } catch (err) {
+      if (err instanceof LockWaitTimeoutError) return { ok: false, held: err.held, message: err.message, timedOut: true };
+      throw err;
+    }
+  }
   const taken = await takeLockRows(gate, rows, holder, opts);
   if (!taken.ok) return { ok: false, held: taken.held, message: describeHeldLockRows(taken.held, rows) };
   return { ok: true, lease, tookOver: taken.tookOver };

@@ -141,8 +141,8 @@ export interface GithubOpPipelineDoc {
   on: Record<string, unknown>;
   /** The `env:` mapping, when `options.variables` is set. */
   env?: Record<string, unknown>;
-  /** The `concurrency:` mapping — one run at a time per Op. */
-  concurrency: Record<string, unknown>;
+  /** The `concurrency:` mapping — one run at a time per Op. Absent on a waves file (ruling for ci-products 2026-10-28). */
+  concurrency?: Record<string, unknown>;
   /**
    * The `permissions:` mapping for this Op's finding-mode. GitHub-only:
    * Forgejo Actions ignores `permissions:` entirely, so the forgejo dialect
@@ -655,14 +655,14 @@ function scopeOpFileToMember(file: GithubOpPipelineFile, member: PipelineMember)
           return [job, { ...rest, defaults: { run: { "working-directory": member.dir } }, steps }];
         }),
       );
-  const group = (file.doc.concurrency as { group?: unknown }).group;
+  const group = (file.doc.concurrency as { group?: unknown } | undefined)?.group;
   return {
     name,
     doc: {
       ...file.doc,
       ...(file.doc.name ? { name: `${member.name}/${file.doc.name}` } : {}),
       on,
-      concurrency: { ...file.doc.concurrency, ...(typeof group === "string" ? { group: `${member.name}-${group}` } : {}) },
+      ...(file.doc.concurrency ? { concurrency: { ...file.doc.concurrency, ...(typeof group === "string" ? { group: `${member.name}-${group}` } : {}) } } : {}),
       jobsDoc,
     },
   };

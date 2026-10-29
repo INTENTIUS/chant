@@ -15,6 +15,13 @@
  * - A held row fails the step, or every member of the group, with a record
  *   marked `held`, so the command exits 5 (`CHANT_EXIT.held`) and nothing of
  *   that step applied.
+ * - A step on the `target` grain whose lexicon names its target's row
+ *   (`targetLockRow`: a stock Pulumi stack, a Terraform root), or on the
+ *   `repo` grain, waits for that row in the ledger's queue, oldest commit
+ *   first, up to `CHANT_LOCK_WAIT` seconds (ruling for ci-products
+ *   2026-10-28, "Ledger lock"), and at the deadline fails with
+ *   {@link LockWaitTimeoutError}, held, exit 5. A step on the resource grain
+ *   never waits.
  *
  * The port ({@link ledgerRowLease}) writes `_locks/rows/<gate>.json` through
  * ../lifecycle/resource-lock.ts with one holder for the whole run, and
@@ -22,7 +29,7 @@
  * change one object let go of its row only once both have ended.
  */
 import type { LockGrain, LockRow } from "../lifecycle/lock-rows";
-import { lockGrainBeforePlan, resolvePlannedLock, sortedLockRows } from "../lifecycle/lock-rows";
+import { lockGrainBeforePlan, queueRowsOf, resolvePlannedLock, sortedLockRows } from "../lifecycle/lock-rows";
 import type { LockLiveness, LockRowHolder } from "../lifecycle/resource-lock";
 import type { Capability, CapabilityPlan, DeployContext } from "./capability";
 
@@ -38,8 +45,10 @@ export interface RowLeasePort {
    * Lease `rows` for `label` (a component, or a group's components), all or
    * nothing. Throws {@link LockRowsHeldError} when another live run holds
    * one, and any other error when the rows file cannot be read or written.
+   * With `wait`, waits in the queue for them instead, and throws
+   * {@link LockWaitTimeoutError} at the deadline.
    */
-  take(rows: readonly LockRow[], label: string): Promise<RowLease>;
+  take(rows: readonly LockRow[], label: string, opts?: { wait?: boolean }): Promise<RowLease>;
 }
 
 /** Another live run holds a row this apply changes (#4594), so nothing of it applied. Exit 5. */
@@ -48,6 +57,14 @@ export class LockRowsHeldError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "LockRowsHeldError";
+  }
+}
+
+/** A wait for a target's row reached its deadline (ruling for ci-products 2026-10-28): nothing of the step applied. Exit 5, as a held row is. */
+export class LockWaitTimeoutError extends LockRowsHeldError {
+  constructor(message: string) {
+    super(message);
+    this.name = "LockWaitTimeoutError";
   }
 }
 
@@ -66,6 +83,12 @@ export interface LedgerRowLeaseOptions {
   holder?: LockRowHolder;
   /** Where the lease's info lines go. Default stderr. */
   log?: (line: string) => void;
+  /** How long a waiting take waits, in seconds. Default `CHANT_LOCK_WAIT`. */
+  waitSeconds?: number;
+  /** How often a waiting take reads the rows file again, in ms. Default `CHANT_LOCK_POLL` seconds, else 10 s. */
+  pollMs?: number;
+  /** The commit time that orders this run in the queue. Default: HEAD's in `cwd`. */
+  commitAt?: string;
 }
 
 /**
@@ -80,14 +103,26 @@ export function ledgerRowLease(gate: string, opts: LedgerRowLeaseOptions = {}): 
   let holder: LockRowHolder | undefined = opts.holder;
   const lock = () => import("../lifecycle/resource-lock");
   return {
-    async take(rows, label) {
+    async take(rows, label, takeOpts) {
       const wanted = sortedLockRows(rows);
       if (wanted.length === 0) return NO_LEASE;
-      const { leaseLockRows, lockRowHolder, releaseLockRows } = await lock();
+      const { commitTimeOf, leaseLockRows, lockPollMs, lockRowHolder, lockWaitSeconds, releaseLockRows } = await lock();
       holder ??= lockRowHolder(process.env);
       const fresh = wanted.filter((r) => (counts.get(r.key) ?? 0) === 0);
       if (fresh.length > 0) {
-        const leased = await leaseLockRows(gate, fresh, { holder, ...(opts.cwd ? { cwd: opts.cwd } : {}), ...(opts.alive ? { alive: opts.alive } : {}) });
+        const commitAt = takeOpts?.wait ? (opts.commitAt ?? (await commitTimeOf(holder.sha ?? "HEAD", opts.cwd))) : undefined;
+        const wait = takeOpts?.wait
+          ? {
+              wait: {
+                deadline: Date.now() + (opts.waitSeconds ?? lockWaitSeconds(process.env)) * 1000,
+                pollMs: opts.pollMs ?? lockPollMs(process.env),
+                log: (line: string) => log(`${label}: ${line}`),
+                ...(commitAt ? { commitAt } : {}),
+              },
+            }
+          : {};
+        const leased = await leaseLockRows(gate, fresh, { holder, ...(opts.cwd ? { cwd: opts.cwd } : {}), ...(opts.alive ? { alive: opts.alive } : {}), ...wait });
+        if (!leased.ok && leased.timedOut) throw new LockWaitTimeoutError(`${label}: LockWaitTimeoutError: ${leased.message}, so nothing of it was applied.`);
         if (!leased.ok) {
           throw new LockRowsHeldError(
             `${label}: ${leased.message}, so nothing of it was applied. Apply again once that run ends; a run that is gone, or whose lease is older than CHANT_LOCK_STALE seconds, is taken over.`,
@@ -136,8 +171,14 @@ export async function leaseCapabilityStep(
   input: unknown,
 ): Promise<{ ctx: DeployContext; lease: RowLease }> {
   const port = ctx.rowLease;
-  if (!port || ctx.plans !== undefined || !capability.plan) return { ctx, lease: NO_LEASE };
-  if ((await lockGrainBeforePlan(capability, input, ctx.lockGrain)) !== "resource") return { ctx, lease: NO_LEASE };
+  if (!port) return { ctx, lease: NO_LEASE };
+  const grain = await lockGrainBeforePlan(capability, input, ctx.lockGrain);
+  if (grain !== "resource") {
+    // The ruling for ci-products (2026-10-28): the target's row (or the repo row), waited for, whether or not a plan was handed in.
+    const queue = await queueRowsOf(capability, input, ctx.component, grain);
+    return { ctx, lease: queue.length > 0 ? await port.take(queue, ctx.component, { wait: true }) : NO_LEASE };
+  }
+  if (ctx.plans !== undefined || !capability.plan) return { ctx, lease: NO_LEASE };
   const planned: CapabilityPlan = await capability.plan(ctx, input as never);
   const lock = await resolvePlannedLock(capability, input, planned, ctx.lockGrain);
   const plans = planned.artifact !== undefined ? { [planned.member]: planned.artifact } : undefined;

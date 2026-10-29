@@ -13,7 +13,7 @@ chant has one exit-code table ([#4553](https://github.com/INTENTIUS/chant/issues
 | 2 | `drift` | A run asked to fail on drift (`--fail-on-drift`, `failOn: "drift"`) found some. |
 | 3 | `waiting` | Stopped for a person: a gate, an open decision point, a review that does not count yet, unmet requires, an earlier wave waiting, or no pull request found. |
 | 4 | `moved` | An approved plan no longer matches the plan that would apply now, so nothing applied. |
-| 5 | `held` | Another run or open pull request holds a lock on a target or resource this changes, so nothing applied. |
+| 5 | `held` | Another run or open pull request holds a lock on a target or resource this changes, so nothing applied. A run that waited for its row until the job's deadline (`LockWaitTimeoutError`) exits 5 too. |
 | 6 | `superseded` | A newer push applies instead. |
 | 7 | `denied` | The policy denied the plan and no override counts. The same at plan and at apply. |
 | 8 | `declined` | A decision point answered with an answer the gate does not pass on. |

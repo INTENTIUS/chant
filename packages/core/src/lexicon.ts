@@ -1049,6 +1049,15 @@ export interface OpWavesPipelineOptions
    * fills it from the active product words. Absent: chant's.
    */
   words?: import("./ci-product-words").CiProductWordsInput | import("./ci-product-words").CiProductWords;
+  /**
+   * Each wave job's timeout in minutes (ruling for ci-products 2026-10-28,
+   * "Ledger lock"). The jobs carry it (`timeout-minutes`, GitLab's
+   * `timeout`), and `CHANT_LOCK_WAIT` five minutes under it, so a run on
+   * the `target` or `repo` grain waiting for its row on the ledger gives up
+   * by name before the forge stops the job. Default
+   * `OP_WAVE_JOB_TIMEOUT_MINUTES` (180).
+   */
+  jobTimeoutMinutes?: number;
 }
 
 /** An Op waves pipeline: one file, and its jobs in order. */

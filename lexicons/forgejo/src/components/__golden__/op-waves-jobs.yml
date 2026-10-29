@@ -6,14 +6,13 @@ on:
       - main
   workflow_dispatch: {}
 
-concurrency:
-  group: migrations
-  cancel-in-progress: false
-
 jobs:
   wave-1-dev:
     runs-on: plan
     container: node:22
+    timeout-minutes: 180
+    env:
+      CHANT_LOCK_WAIT: '10500'
     steps:
       - name: Check the job runs where the spec set it to run
         env:
@@ -37,6 +36,9 @@ jobs:
       - wave-1-dev
     if: '!cancelled()'
     container: node:22
+    timeout-minutes: 180
+    env:
+      CHANT_LOCK_WAIT: '10500'
     steps:
       - name: Check the job runs where the spec set it to run
         env:
@@ -74,7 +76,9 @@ jobs:
     container: node:22
     permissions:
       id-token: write
+    timeout-minutes: 180
     env:
+      CHANT_LOCK_WAIT: '10500'
       REGION: us
       CLOUD_TOKEN_AUDIENCE: us.example
     steps:
@@ -108,6 +112,9 @@ jobs:
     needs:
       - wave-2-prod-decide
     container: node:22
+    timeout-minutes: 180
+    env:
+      CHANT_LOCK_WAIT: '10500'
     steps:
       - name: Check the job runs where the spec set it to run
         env:

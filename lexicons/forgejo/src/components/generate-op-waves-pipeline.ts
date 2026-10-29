@@ -25,6 +25,14 @@
  * The apply-job guard (#4624) starts each wave job as on GitHub, with the
  * forge set to Forgejo: it checks the ref and, for a `self-hosted` label,
  * the runner, and no forge environment, since Forgejo has none.
+ *
+ * Like GitHub's, the workflow carries no concurrency group (ruling for
+ * ci-products 2026-10-28, "Ledger lock"; Forgejo 16.0.5 has no job-level
+ * concurrency either). Two pushes run their waves side by side: a stock
+ * Pulumi stack or a Terraform root waits for its row on chant's ledger,
+ * oldest commit first, up to the job's `timeout-minutes`, and a plunge stack
+ * on the resource grain leases its resource rows and never waits on another
+ * stack.
  */
 
 import { buildGithubOpWavesDoc } from "@intentius/chant-lexicon-github/components/generate-op-waves-pipeline";

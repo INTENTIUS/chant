@@ -153,9 +153,11 @@ export function PulumiAdoptOp(config: PulumiAdoptOpConfig): PulumiAdoptOpResourc
 
   const waves = config.stacks.flatMap((s, i) => {
     const file = s.from ? { file: exports[i]!.out.file } : {};
-    const preview = pulumiAdoptPreview(s.member, { dir: s.dir, stack: s.stack, ...where, ...file, id: `preview-${i}` });
+    // Every step gets the stack's backend, so Preview and Adopt read the store Check and Export read.
+    const backend = s.backend ? { backend: s.backend } : {};
+    const preview = pulumiAdoptPreview(s.member, { dir: s.dir, stack: s.stack, ...where, ...file, ...backend, id: `preview-${i}` });
     preview.outcomeAttribute = { name: single ? "Adoptable" : `Adoptable-${slug(s.member)}-${slug(s.stack)}`, from: "resources" };
-    const adopt = pulumiAdopt(s.member, { dir: s.dir, stack: s.stack, ...where, ...file, planDigest: preview.out.planDigest, id: `adopt-${i}` });
+    const adopt = pulumiAdopt(s.member, { dir: s.dir, stack: s.stack, ...where, ...file, ...backend, planDigest: preview.out.planDigest, id: `adopt-${i}` });
     adopt.outcomeAttribute = { name: single ? "Adopted" : `Adopted-${slug(s.member)}-${slug(s.stack)}`, from: "resources" };
     const label = single ? "" : ` ${s.member}/${s.stack}`;
     return [

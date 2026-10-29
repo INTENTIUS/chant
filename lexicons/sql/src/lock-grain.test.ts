@@ -46,7 +46,13 @@ describe("the SQL lock grain (#4571)", () => {
   test("target and repo, declared, are taken as declared", async () => {
     expect(sqlLockGrainRefusal("sql-migrate", "target")).toBeUndefined();
     expect(sqlLockGrainRefusal("sql-apply", "repo")).toBeUndefined();
-    expect(await resolvePlannedLock(migrate, migrateInput, plan, "repo")).toEqual({ grain: "repo", source: "declared", rows: [] });
+    // The ruling for ci-products (2026-10-28): repo waits for the repo row on chant's ledger; target names no row for SQL.
+    expect(await resolvePlannedLock(migrate, migrateInput, plan, "repo")).toEqual({
+      grain: "repo",
+      source: "declared",
+      rows: [],
+      queue: [{ key: "repo", target: plan.member, address: "the repository" }],
+    });
     expect(await resolvePlannedLock(apply, applyInput, plan, "target")).toEqual({ grain: "target", source: "declared", rows: [] });
   });
 

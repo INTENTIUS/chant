@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { deployUnits } from "./deploy-units";
+import { deployUnits, pulumiStackUnit } from "./deploy-units";
 import type { Phase } from "./component";
 
 const phase = (name: string, steps: Phase["steps"]): Phase => ({ phase: name, steps });
@@ -46,6 +46,23 @@ describe("deployUnits (#1495 piece 1)", () => {
       ]),
     ];
     expect(deployUnits(deploy)).toEqual([{ unit: "web", lexicon: "aws" }]);
+  });
+
+  test("a pulumi-up step's unit is its stack qualified by the project's directory (plywood#22)", () => {
+    const deploy = [
+      phase("up", [
+        { kind: "pulumi-up", dir: ".", stack: "dev", member: "shop" },
+        { kind: "pulumi-up", dir: "./infra/", stack: "dev", member: "infra" },
+        { kind: "pulumi-up", dir: "infra", stack: "dev", member: "infra" },
+        { kind: "pulumi-up", dir: "infra" },
+      ]),
+    ];
+    expect(deployUnits(deploy)).toEqual([
+      { unit: "dev", lexicon: "pulumi" },
+      { unit: "infra/dev", lexicon: "pulumi" },
+    ]);
+    // The pulumi lexicon's changedUnits names stacks with the same strings.
+    expect([pulumiStackUnit(".", "prod-us"), pulumiStackUnit("", "prod-us"), pulumiStackUnit("apps/web", "qa")]).toEqual(["prod-us", "prod-us", "apps/web/qa"]);
   });
 
   test("an unlisted kind contributes no unit — the registry is the rule", () => {

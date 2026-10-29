@@ -66,7 +66,7 @@
 
 import { spawnSync } from "node:child_process";
 import { CHANT_EXIT } from "../../exit-codes";
-import { anyResourceGrain, leaseRowsOf as leaseRowsOfLocks, lockTargetsOf, type LockGrain } from "../../lifecycle/lock-rows";
+import { anyResourceGrain, leaseRowsOf as leaseRowsOfLocks, lockTargetsOf, queueRowsOfLocks, type LockGrain } from "../../lifecycle/lock-rows";
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { loadChantConfig, resolveAutoReleaseDisabled, type ChantConfig } from "../../config";
@@ -617,18 +617,42 @@ async function leaseSetRows(p: Prepared, set: Pick<PrPlanSet, "locks">): Promise
  */
 export async function leaseRowsOf(p: Pick<Prepared, "gate">, set: Pick<PrPlanSet, "locks">, label = "this apply"): Promise<{ release(): Promise<boolean> } | { held: string } | { failed: string }> {
   const rows = leaseRowsOfLocks(set.locks);
-  if (rows.length === 0) return { release: () => Promise.resolve(true) };
-  const { leaseLockRows } = await import("../../lifecycle/resource-lock");
-  let leased;
-  try {
-    leased = await leaseLockRows(p.gate, rows);
-  } catch (err) {
-    return { failed: `could not hold the rows ${label} changes in ${p.gate}, so nothing of it was applied: ${err instanceof Error ? err.message : String(err)}` };
+  // The ruling for ci-products (2026-10-28): the target and repo grains wait for their rows first, oldest commit first.
+  const queue = queueRowsOfLocks(set.locks);
+  if (rows.length === 0 && queue.length === 0) return { release: () => Promise.resolve(true) };
+  const { commitTimeOf, leaseLockRows, lockPollMs, lockWaitSeconds } = await import("../../lifecycle/resource-lock");
+  const held: Array<{ release(): Promise<boolean> }> = [];
+  const releaseAll = async () => {
+    let ok = true;
+    for (const l of held.reverse()) ok = (await l.release()) && ok;
+    return ok;
+  };
+  for (const [wanted, wait] of [[queue, true], [rows, false]] as const) {
+    if (wanted.length === 0) continue;
+    let leased;
+    try {
+      const commitAt = wait ? await commitTimeOf(process.env.GITHUB_SHA || process.env.CI_COMMIT_SHA || "HEAD") : undefined;
+      leased = await leaseLockRows(
+        p.gate,
+        wanted,
+        wait
+          ? { wait: { deadline: Date.now() + lockWaitSeconds(process.env) * 1000, pollMs: lockPollMs(process.env), log: (line) => console.error(formatInfo(`${label} ${line}`)), ...(commitAt ? { commitAt } : {}) } }
+          : {},
+      );
+    } catch (err) {
+      await releaseAll();
+      return { failed: `could not hold the rows ${label} changes in ${p.gate}, so nothing of it was applied: ${err instanceof Error ? err.message : String(err)}` };
+    }
+    if (!leased.ok) {
+      await releaseAll();
+      if (leased.timedOut) return { held: `LockWaitTimeoutError: ${leased.message}, so nothing of ${label} was applied.` };
+      return { held: `${leased.message}, so nothing of ${label} was applied. Apply again once that run ends; a run that is gone, or whose lease is older than CHANT_LOCK_STALE seconds, is taken over.` };
+    }
+    for (const h of leased.tookOver) console.error(formatInfo(`took over the rows of run ${h.run}, which is gone`));
+    console.error(formatInfo(`${label} holds ${leased.lease.keys.length} row${leased.lease.keys.length === 1 ? "" : "s"} of ${p.gate}${leased.waited ? ` after waiting ${leased.waitedSeconds ?? 0}s` : ""} while it applies`));
+    held.push(leased.lease);
   }
-  if (!leased.ok) return { held: `${leased.message}, so nothing of ${label} was applied. Apply again once that run ends; a run that is gone, or whose lease is older than CHANT_LOCK_STALE seconds, is taken over.` };
-  for (const h of leased.tookOver) console.error(formatInfo(`took over the rows of run ${h.run}, which is gone`));
-  console.error(formatInfo(`${label} holds ${leased.lease.keys.length} row${leased.lease.keys.length === 1 ? "" : "s"} of ${p.gate} while it applies`));
-  return leased.lease;
+  return { release: releaseAll };
 }
 
 /** `applyPrSet`'s `leaseRound` (#4594): a round after the first leases the rows its own plan locks. */
@@ -1333,8 +1357,8 @@ async function prApply(ctx: CommandContext, stage: StageEvents, beforeMerge?: Pr
           : applied.leaseFailed
             ? 1
             : failedRunExitCode(applied.run.results);
-  if (green && applied.status === "applied") await recordGreenApplied(p, green, set.doc.digest, approval, via);
-  const code = await stop(report, exit, applied.run.status === "gated" ? "gated" : undefined);
+  const lost = green && applied.status === "applied" ? await recordGreenApplied(p, green, set.doc.digest, approval, via) : false;
+  const code = await stop(report, lost && exit === 0 ? 1 : exit, applied.run.status === "gated" ? "gated" : undefined);
   if (applied.status === "applied" && !afterFailed) console.error(formatSuccess(`applied the plan ${report.digest} approved by ${(approval.approvedBy ?? []).join(", ")}`));
   // #4636: an update before merge that applied every member merges the pull request, never the other way round.
   if (code === 0 && beforeMerge && pr !== null && args.merge === "auto" && applied.status === "applied" && !afterFailed) return mergeAfterUpdate(ctx, p, pr);
@@ -1364,7 +1388,7 @@ async function mergeArgsProblem(args: CommandContext["args"]): Promise<string | 
  */
 async function mergeAfterUpdate(ctx: CommandContext, p: Prepared, pr: number): Promise<number> {
   const { mergeAfterApply, mergeTokenEnv } = await import("../../pr-merge");
-  const { pushLifecycleReport } = await import("../../lifecycle/git");
+  const { pushLifecycleRebasing, LifecyclePushLostError } = await import("../../lifecycle/git");
   const kind = p.forge?.kind ?? (ctx.args.forge as ForgeKind | undefined);
   if (!kind) return fail("--merge auto needs --forge <kind> to merge on");
   const env = mergeTokenEnv(ctx.args.mergeTokenEnv!);
@@ -1379,7 +1403,17 @@ async function mergeAfterUpdate(ctx: CommandContext, p: Prepared, pr: number): P
     console.error(formatWarning({ message: `the pull request was not merged: ${err instanceof Error ? err.message : String(err)}` }));
     return CHANT_EXIT.waiting;
   }
-  const pushed = await pushLifecycleReport();
+  // A refused push fetches, replays the apply's records on the remote's tip and pushes again (#4551).
+  let pushed: { pushed: boolean; pushWarning?: string };
+  let lost = false;
+  try {
+    pushed = await pushLifecycleRebasing();
+  } catch (err) {
+    if (!(err instanceof LifecyclePushLostError)) throw err;
+    console.error(formatError({ message: err.message }));
+    pushed = { pushed: false, pushWarning: err.message };
+    lost = true;
+  }
   const merged = await mergeAfterApply({
     forge,
     pr,
@@ -1392,7 +1426,7 @@ async function mergeAfterUpdate(ctx: CommandContext, p: Prepared, pr: number): P
     return 0;
   }
   console.error(formatWarning({ message: `the pull request was not merged: ${merged.reason}${merged.posted ? "; the reason is posted on it" : ""}` }));
-  return CHANT_EXIT.waiting;
+  return lost ? 1 : CHANT_EXIT.waiting;
 }
 
 /**
@@ -1601,7 +1635,10 @@ async function prRecord(ctx: CommandContext, stage: StageEvents): Promise<number
   });
 
   const { mergeSourceOf, writeMergeRecord, MERGE_RECORD_SCHEMA_ID, MERGE_RECORD_CONTRACT } = await import("../../lifecycle/merge-record");
-  const { pushLifecycleReport } = await import("../../lifecycle/git");
+  const { pushLifecycleRebasing, LifecyclePushLostError } = await import("../../lifecycle/git");
+  // Set when the merge record never reached the remote: the job fails rather than warns, since a record kept only
+  // in this job's checkout is lost with it (#4551).
+  let lost = false;
   // #4292: a member another branch applies has no merge on this one, so no record says it planned nothing here.
   if (!p.routedAway) {
     try {
@@ -1624,16 +1661,21 @@ async function prRecord(ctx: CommandContext, stage: StageEvents): Promise<number
         recordedAt: new Date().toISOString(),
       });
       if (written.written) {
-        const pushed = await pushLifecycleReport();
+        const pushed = await pushLifecycleRebasing();
         if (pushed.pushWarning) console.error(formatWarning({ message: pushed.pushWarning }));
       }
     } catch (err) {
-      console.error(formatWarning({ message: `could not write the merge record for ${p.head}: ${err instanceof Error ? err.message : String(err)}` }));
+      if (err instanceof LifecyclePushLostError) {
+        console.error(formatError({ message: `the merge record for ${p.head} was written but not pushed: ${err.message}` }));
+        lost = true;
+      } else {
+        console.error(formatWarning({ message: `could not write the merge record for ${p.head}: ${err instanceof Error ? err.message : String(err)}` }));
+      }
     }
   }
 
   const stop = stopper(ctx, p, events, upload);
-  return stop(report, status === "plan-failed" ? 1 : 0);
+  return stop(report, status === "plan-failed" || lost ? 1 : 0);
 }
 
 /** What a gate's description and messages call the change: the pull request, or the green commit (#4168 step 9). */
@@ -1730,10 +1772,15 @@ function reviewFor(args: CommandContext["args"], p: Prepared, pr: number | null,
   };
 }
 
-/** Record the green commit as applied to the environment (#4168 step 9), and push `chant/lifecycle`. A failure warns. */
-async function recordGreenApplied(p: Prepared, green: GreenTarget, digest: string, approval: PrApproval, via: "merges" | "gate"): Promise<void> {
+/**
+ * Record the green commit as applied to the environment (#4168 step 9), and
+ * push `chant/lifecycle`, fetching and replaying on a refused push. A record
+ * that never reaches the remote is an error and returns true, so the stage
+ * fails; any other failure warns.
+ */
+async function recordGreenApplied(p: Prepared, green: GreenTarget, digest: string, approval: PrApproval, via: "merges" | "gate"): Promise<boolean> {
   const { writeGreenApply, GREEN_APPLY_CONTRACT } = await import("../../lifecycle/green-apply");
-  const { pushLifecycleReport } = await import("../../lifecycle/git");
+  const { pushLifecycleRebasing, LifecyclePushLostError } = await import("../../lifecycle/git");
   try {
     await writeGreenApply({
       contract: GREEN_APPLY_CONTRACT,
@@ -1747,11 +1794,16 @@ async function recordGreenApplied(p: Prepared, green: GreenTarget, digest: strin
       merges: green.merges,
       appliedAt: new Date().toISOString(),
     });
-    const pushed = await pushLifecycleReport();
+    const pushed = await pushLifecycleRebasing();
     if (pushed.pushWarning) console.error(formatWarning({ message: pushed.pushWarning }));
   } catch (err) {
+    if (err instanceof LifecyclePushLostError) {
+      console.error(formatError({ message: `the record of ${green.commit.slice(0, 12)} as applied to ${p.env} was written but not pushed: ${err.message}` }));
+      return true;
+    }
     console.error(formatWarning({ message: `could not record ${green.commit.slice(0, 12)} as applied to ${p.env}: ${err instanceof Error ? err.message : String(err)}` }));
   }
+  return false;
 }
 
 /** How a stage stops: settle its events, write and publish the report, say how it ended, and return `code`. */
@@ -1903,12 +1955,14 @@ function emitReviewStop(events: RunEventStream | undefined, message: string): vo
 
 /**
  * Store `doc` under its digest with its entries mapped onto the member's
- * graph (`storeGateChangeSet`), and push. A failure is a warning: the gate
- * decides the same either way.
+ * graph (`storeGateChangeSet`), and push, fetching and replaying on a refused
+ * push. A failure to store is a warning: the gate decides the same either
+ * way. A change set that never reaches the remote throws
+ * `LifecyclePushLostError`, which stops the stage.
  */
 async function storeChangeSetForGate(ctx: CommandContext, p: Prepared, doc: PrPlanSet["doc"]): Promise<void> {
   const { storeGateChangeSet, gateGraphReader } = await import("../../lifecycle/gate-change-set");
-  const { pushLifecycleReport } = await import("../../lifecycle/git");
+  const { pushLifecycleRebasing, LifecyclePushLostError } = await import("../../lifecycle/git");
   const graphArgs = [
     ...(ctx.args.param ?? []).flatMap((kv) => ["--param", kv]),
     ...(ctx.args.paramsFile ? ["--params-file", ctx.args.paramsFile] : []),
@@ -1918,8 +1972,9 @@ async function storeChangeSetForGate(ctx: CommandContext, p: Prepared, doc: PrPl
     if (stored.warning) console.error(formatWarning({ message: stored.warning }));
     // The push's own outcome is said by the gate's pending fact, or by the
     // release records the apply writes, which push the same branch.
-    if (stored.written) await pushLifecycleReport();
+    if (stored.written) await pushLifecycleRebasing();
   } catch (err) {
+    if (err instanceof LifecyclePushLostError) throw err;
     console.error(formatWarning({ message: `could not store the change set ${doc.digest}: ${err instanceof Error ? err.message : String(err)}` }));
   }
 }
@@ -2339,8 +2394,8 @@ async function prApplyWaves(
   }
 
   const done = p.plan.order.every((name) => completed.has(name));
-  if (green && done) await recordGreenApplied(p, green, approvedSet.doc.digest, approval, via);
-  return stop(report({ status: done ? "applied" : "wave-applied" }), 0);
+  const lost = green && done ? await recordGreenApplied(p, green, approvedSet.doc.digest, approval, via) : false;
+  return stop(report({ status: done ? "applied" : "wave-applied" }), lost ? 1 : 0);
 }
 
 // ── The component plan-wave and apply-wave steps (#4588) ─────────────────────

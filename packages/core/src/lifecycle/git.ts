@@ -4,6 +4,8 @@
  * All operations use git plumbing commands — no checkout, no branch switching,
  * no working tree changes.
  */
+import { unlinkSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import { getRuntime } from "../runtime-adapter";
 import { memberLedgerPrefix, resolveMemberLedger } from "./member-ledger";
 import { LIFECYCLE_LOCAL_NOTE } from "./local-note";
@@ -896,21 +898,205 @@ export function describeLifecyclePush(result: LifecyclePushStatus): string | nul
  */
 export async function pushLifecycleReport(opts?: { cwd?: string }): Promise<{ pushed: boolean; pushWarning?: string }> {
   try {
-    const result = await pushLifecycleStatus(opts);
-    switch (result.status) {
-      case "pushed":
-        return { pushed: true };
-      case "no-remote":
-        return { pushed: false, pushWarning: LIFECYCLE_LOCAL_NOTE };
-      case "not-recorded":
-        return { pushed: false, pushWarning: NO_RECORD_PUSH_NOTE };
-      case "stale":
-        return { pushed: false, pushWarning: new StaleLifecycleBranchError(result.expected, result.stderr).message };
-      case "failed":
-        return { pushed: false, pushWarning: describeLifecyclePush(result) ?? "the push did not land" };
-    }
+    return pushReportOf(await pushLifecycleStatus(opts));
   } catch (err) {
     return { pushed: false, pushWarning: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+function pushReportOf(result: LifecyclePushStatus): { pushed: boolean; pushWarning?: string } {
+  switch (result.status) {
+    case "pushed":
+      return { pushed: true };
+    case "no-remote":
+      return { pushed: false, pushWarning: LIFECYCLE_LOCAL_NOTE };
+    case "not-recorded":
+      return { pushed: false, pushWarning: NO_RECORD_PUSH_NOTE };
+    case "stale":
+      return { pushed: false, pushWarning: new StaleLifecycleBranchError(result.expected, result.stderr).message };
+    case "failed":
+      return { pushed: false, pushWarning: describeLifecyclePush(result) ?? "the push did not land" };
+  }
+}
+
+/** How many pushes {@link pushLifecycleRebasing} makes, as the snapshot store's `publishRef` does. */
+export const LIFECYCLE_PUSH_TRIES = 3;
+
+/**
+ * Thrown by {@link pushLifecycleRebasing} when the ledger branch did not reach
+ * the remote: another writer pushed before each of its tries, or this
+ * checkout's commits do not replay on the remote's tip. What this run wrote
+ * stays in this checkout's `chant/lifecycle` only.
+ */
+export class LifecyclePushLostError extends Error {
+  readonly remote: string;
+  readonly tries: number;
+  constructor(remote: string, tries: number, detail: string) {
+    super(
+      `${STATE_BRANCH} was not pushed to "${remote}" after ${tries} ${tries === 1 ? "try" : "tries"}: ${detail}. ` +
+        `The records this run wrote are only in this checkout; run the command again.`,
+    );
+    this.name = "LifecyclePushLostError";
+    this.remote = remote;
+    this.tries = tries;
+  }
+}
+
+/** Scratch ref for the remote tip while {@link rebaseLifecycleOnRemote} replays onto it. */
+const REBASE_REF = "refs/chant/lifecycle-rebase";
+
+/**
+ * Put this checkout's `chant/lifecycle` commits that the remote lacks on top
+ * of the remote's tip (fetched again), and point the push's lease at that
+ * tip. Each commit is replayed with `git merge-tree --write-tree` against its
+ * own parent and keeps its author and message; nothing touches a work tree.
+ * Returns why it could not, such as a commit whose files the other writer
+ * changed too.
+ */
+async function rebaseLifecycleOnRemote(remote: string, cwd?: string): Promise<{ error: string } | { rebased: number }> {
+  const rt = getRuntime();
+  const run = (args: string[], env: Record<string, string> = {}) => rt.spawn(["git", ...args], { cwd, env: { ...C_LOCALE_ENV, ...env } });
+  const firstLine = (s: string | undefined) => (s ?? "").trim().split("\n")[0] ?? "";
+  try {
+    const fetched = await run(["fetch", "--no-tags", "--force", remote, `refs/heads/${STATE_BRANCH}:${REBASE_REF}`]);
+    if (fetched.exitCode !== 0) return { error: `the fetch of the remote's tip failed (git said: ${firstLine(fetched.stderr)})` };
+    const remoteTip = (await run(["rev-parse", "--verify", REBASE_REF])).stdout.trim();
+    const local = await getStateBranchTip(cwd);
+    if (!remoteTip || !local) return { error: "the remote's tip or the local branch could not be read" };
+    if ((await run(["merge-base", "--is-ancestor", remoteTip, local])).exitCode === 0) {
+      // Already on the remote's history: only the lease was behind.
+      await trackRemoteLifecycle(remote, remoteTip, cwd);
+      return { rebased: 0 };
+    }
+    const ours = (await run(["rev-list", "--reverse", "--first-parent", local, `^${remoteTip}`])).stdout.trim().split("\n").filter(Boolean);
+    const identityArgs = await ledgerCommitIdentityArgs(cwd);
+    let onto = remoteTip;
+    for (const commit of ours) {
+      const parent = await run(["rev-parse", "--verify", "--quiet", `${commit}^1`]);
+      if (parent.exitCode !== 0) return { error: `${commit.slice(0, 12)} shares no history with the remote's ${STATE_BRANCH}` };
+      const merged = await run(["merge-tree", "--write-tree", `--merge-base=${parent.stdout.trim()}`, onto, commit]);
+      const subject = firstLine((await run(["log", "-1", "--format=%s", commit])).stdout);
+      let tree: string;
+      if (merged.exitCode === 1) {
+        // plywood#22 finding 9: two writers that each appended lines to one ledger file (a run record, a release record, a gate line) meet here.
+        const appended = await replayAppends(parent.stdout.trim(), commit, onto, cwd);
+        if ("error" in appended) return { error: `"${subject}" (${commit.slice(0, 12)}) changes files the other writer changed too: ${appended.error}` };
+        tree = appended.tree;
+      } else if (merged.exitCode !== 0) {
+        return { error: `git merge-tree failed on ${commit.slice(0, 12)} (git said: ${firstLine(merged.stderr)})` };
+      } else {
+        tree = firstLine(merged.stdout);
+      }
+      const [name, email, date] = (await run(["log", "-1", "--format=%an%x00%ae%x00%aI", commit])).stdout.replace(/\n$/, "").split("\0");
+      const message = (await run(["log", "-1", "--format=%B", commit])).stdout;
+      const made = await rt.spawn(["git", ...identityArgs, "commit-tree", tree, "-p", onto, "-F", "-"], {
+        cwd,
+        stdin: message,
+        env: { ...C_LOCALE_ENV, GIT_AUTHOR_NAME: name ?? "", GIT_AUTHOR_EMAIL: email ?? "", GIT_AUTHOR_DATE: date ?? "" },
+      });
+      if (made.exitCode !== 0) return { error: `git commit-tree failed on ${commit.slice(0, 12)} (git said: ${firstLine(made.stderr)})` };
+      onto = made.stdout.trim();
+    }
+    try {
+      await updateRefCAS(`refs/heads/${STATE_BRANCH}`, onto, local, { cwd });
+    } catch (err) {
+      if (err instanceof RefCASConflictError) return { error: `${STATE_BRANCH} moved in this checkout while it was replayed` };
+      throw err;
+    }
+    await trackRemoteLifecycle(remote, remoteTip, cwd);
+    return { rebased: ours.length };
+  } finally {
+    await run(["update-ref", "-d", REBASE_REF]);
+  }
+}
+
+/**
+ * Replay a commit whose only changes are lines appended to `.jsonl` ledger
+ * files, or new `.jsonl` files, onto `onto` (plywood#22 finding 9): each
+ * file becomes `onto`'s copy with the commit's new lines after it, less any
+ * line `onto` already holds. A run record, a release record and a gate line
+ * are such appends, so two writers to one environment's file no longer lose
+ * one of them on a replay. Any other change, or a file the commit rewrote
+ * rather than appended to, returns why, and the replay stops as before.
+ */
+async function replayAppends(parent: string, commit: string, onto: string, cwd?: string): Promise<{ tree: string } | { error: string }> {
+  const rt = getRuntime();
+  const run = (args: string[], opts: { env?: Record<string, string>; stdin?: string } = {}) =>
+    rt.spawn(["git", ...args], { cwd, env: { ...C_LOCALE_ENV, ...(opts.env ?? {}) }, ...(opts.stdin !== undefined ? { stdin: opts.stdin } : {}) });
+  const diff = await run(["diff-tree", "-r", "--no-renames", "--name-status", "-z", parent, commit]);
+  if (diff.exitCode !== 0) return { error: "git diff-tree failed" };
+  const fields = diff.stdout.split("\0").filter((f) => f !== "");
+  const changes: Array<{ status: string; path: string }> = [];
+  for (let i = 0; i + 1 < fields.length; i += 2) changes.push({ status: fields[i]!, path: fields[i + 1]! });
+  if (changes.length === 0) return { error: "nothing to replay" };
+  const blob = async (rev: string, path: string): Promise<string | null> => {
+    const out = await run(["cat-file", "blob", `${rev}:${path}`]);
+    return out.exitCode === 0 ? out.stdout : null;
+  };
+  const files: Array<{ path: string; content: string }> = [];
+  for (const { status, path } of changes) {
+    if (!path.endsWith(".jsonl") || (status !== "M" && status !== "A")) return { error: `${path} is not a ledger line file this replay appends to` };
+    const ours = (await blob(commit, path)) ?? "";
+    const base = status === "M" ? ((await blob(parent, path)) ?? "") : "";
+    if (!ours.startsWith(base)) return { error: `${path} was rewritten, not appended to` };
+    const theirs = (await blob(onto, path)) ?? "";
+    const have = new Set(theirs.split("\n").filter((l) => l !== ""));
+    const added = ours.slice(base.length).split("\n").filter((l) => l !== "" && !have.has(l));
+    const head = theirs === "" || theirs.endsWith("\n") ? theirs : `${theirs}\n`;
+    files.push({ path, content: added.length > 0 ? `${head}${added.join("\n")}\n` : theirs });
+  }
+  const indexPath = (await run(["rev-parse", "--git-path", `chant-lifecycle-replay-${process.pid}.index`])).stdout.trim();
+  if (!indexPath) return { error: "no scratch index path" };
+  const index = isAbsolute(indexPath) || !cwd ? indexPath : join(cwd, indexPath);
+  const env = { GIT_INDEX_FILE: index };
+  try {
+    if ((await run(["read-tree", onto], { env })).exitCode !== 0) return { error: "git read-tree failed" };
+    for (const f of files) {
+      const hashed = await run(["hash-object", "-w", "--stdin"], { stdin: f.content });
+      if (hashed.exitCode !== 0) return { error: `git hash-object failed on ${f.path}` };
+      const added = await run(["update-index", "--add", "--cacheinfo", `100644,${hashed.stdout.trim()},${f.path}`], { env });
+      if (added.exitCode !== 0) return { error: `git update-index failed on ${f.path}` };
+    }
+    const written = await run(["write-tree"], { env });
+    if (written.exitCode !== 0) return { error: "git write-tree failed" };
+    return { tree: written.stdout.trim() };
+  } finally {
+    try {
+      unlinkSync(index);
+    } catch {
+      // No index was written.
+    }
+  }
+}
+
+/**
+ * {@link pushLifecycleReport} for a writer whose records must reach the
+ * remote, such as the merge record `pr-record` writes. A push refused because
+ * another writer pushed first fetches the remote's tip, replays this
+ * checkout's commits on it ({@link rebaseLifecycleOnRemote}) and pushes again,
+ * up to {@link LIFECYCLE_PUSH_TRIES} pushes in all. After the last refusal, or
+ * a replay that cannot be made, it throws {@link LifecyclePushLostError}. No
+ * remote, recording off and a push git refused for another reason (no
+ * network, no credentials) are returned as {@link pushLifecycleReport}
+ * returns them.
+ */
+export async function pushLifecycleRebasing(opts?: { cwd?: string; tries?: number }): Promise<{ pushed: boolean; pushWarning?: string }> {
+  const tries = Math.max(1, opts?.tries ?? LIFECYCLE_PUSH_TRIES);
+  const cwd = opts?.cwd;
+  for (let attempt = 1; ; attempt++) {
+    let result: LifecyclePushStatus;
+    try {
+      result = await pushLifecycleStatus({ cwd });
+    } catch (err) {
+      return { pushed: false, pushWarning: err instanceof Error ? err.message : String(err) };
+    }
+    if (result.status !== "stale") return pushReportOf(result);
+    if (attempt >= tries) {
+      const said = result.stderr.trim().split("\n")[0];
+      throw new LifecyclePushLostError(result.remote, attempt, `another writer pushed before each try${said ? ` (git said: ${said})` : ""}`);
+    }
+    const rebased = await rebaseLifecycleOnRemote(result.remote, cwd);
+    if ("error" in rebased) throw new LifecyclePushLostError(result.remote, attempt, rebased.error);
   }
 }
 
@@ -941,8 +1127,10 @@ export async function fetchLifecycle(opts?: { cwd?: string }): Promise<boolean> 
  *   lease already documents.
  * - `absent` — the remote answered and has no `chant/lifecycle`. The ledger
  *   is genuinely empty; this is a project's first gate.
- * - `diverged` — both sides have the branch and neither contains the other.
- *   Appending here would drop one side's facts.
+ * - `diverged` — both sides have the branch, neither contains the other, and
+ *   this checkout's unpushed commits could not be replayed on the remote's
+ *   tip. Appending here would drop one side's facts. (Commits that do
+ *   replay are put on the tip, and the fetch reports `ahead`.)
  * - `unreachable` — a remote is configured and did not answer (no network,
  *   no credentials, a shallow-clone refspec that cannot resolve). Whether
  *   anything is on the branch is unknown, which is exactly the state that
@@ -1060,7 +1248,12 @@ export async function fetchLifecycleStatus(opts?: { cwd?: string }): Promise<Lif
     if (remoteTip) await trackRemoteLifecycle(remote, remoteTip, cwd);
     return { status: "ahead", remote };
   }
-  return { status: "diverged", remote, stderr };
+  // plywood#22 finding 9: the commits this checkout wrote and never pushed go on top of the remote's tip, as a push that
+  // lost its race replays them, and the read goes on from there. A local branch that shares no history with the remote's,
+  // or whose commits change what the other writer changed, still reads as diverged.
+  const replayed = await rebaseLifecycleOnRemote(remote, cwd);
+  if (!("error" in replayed)) return { status: "ahead", remote };
+  return { status: "diverged", remote, stderr: `${stderr}${stderr ? "\n" : ""}the unpushed commits could not be replayed on the remote's tip: ${replayed.error}` };
 }
 
 /**
@@ -1117,7 +1310,10 @@ export class LifecycleLedgerUnreadableError extends Error {
  * So there is one rule now, for readers and writers alike:
  *
  * - `diverged` always refuses. A fork is not the ledger, and nothing good
- *   comes of reading one as if it were.
+ *   comes of reading one as if it were. Before a fetch calls it diverged,
+ *   it replays this checkout's unpushed commits on the remote's tip
+ *   (plywood#22 finding 9), as a push that lost its race does; only a
+ *   branch whose commits cannot be replayed there stays diverged.
  * - `unreachable` refuses only when the checkout has no local history at all,
  *   which is the case that would otherwise read as an empty ledger. With
  *   local history and no answer from the remote, the read proceeds and the

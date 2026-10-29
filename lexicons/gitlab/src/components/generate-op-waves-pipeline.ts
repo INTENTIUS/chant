@@ -18,6 +18,14 @@
  * A wave's `environment` is the job's own `environment:`; protect it in the
  * project settings to put a reviewer in front of the job as well.
  *
+ * The wave jobs carry no `resource_group` (ruling for ci-products
+ * 2026-10-28, "Ledger lock"), the same as the GitHub and Forgejo waves files
+ * carry no concurrency group: a per-wave resource group would keep two
+ * pipelines' plunge stacks apart where their resource rows do not meet. A
+ * stock Pulumi stack or a Terraform root waits for its row on chant's ledger,
+ * oldest commit first, up to the job's `timeout`, which `CHANT_LOCK_WAIT`
+ * sits five minutes under; the project's own maximum timeout still caps it.
+ *
  * With `resume` on the spec (#3683), a `<name>-resume` job runs `chant run
  * resume --op <name>` in scheduled pipelines only: create a pipeline schedule
  * with the spec's cron. It retries a waiting wave's job once its approval
@@ -79,6 +87,7 @@ import {
 import {
   opWaveGroupOf,
   opWaveJobs,
+  opWaveJobTimeout,
   opWaveOutcomeDir,
   opWavesControlTarget,
   opWavesLastJobs,
@@ -136,6 +145,8 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
   if (control) stages.push("control");
   if (spec.resume) stages.push("resume");
   const entries: Array<readonly [string, unknown]> = [["stages", stages]];
+  // The ruling for ci-products (2026-10-28): each wave job's timeout, and the lock wait five minutes under it.
+  const timeout = opWaveJobTimeout(options.jobTimeoutMinutes);
   const variables = nonEmpty("variables", options.variables).variables;
   if (variables) entries.push(["variables", variables]);
   if (byReview) {
@@ -189,10 +200,10 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
         stage: stages[job.wave - 1 + (byReview ? 1 : 0)],
         image,
         ...(tags ? { tags } : {}),
-        resource_group: `${spec.name}-${wave.name}`,
+        timeout: `${timeout.minutes} minutes`,
         ...(environment ? { environment: environmentDoc(environment) } : {}),
         ...(idTokens ? { id_tokens: idTokens } : {}),
-        variables: { ...GITLAB_FULL_HISTORY, ...(wave.variables ?? {}), ...(group?.variables ?? {}), ...(cloud ? { [TRADE_SPEC_ENV]: JSON.stringify(cloud) } : {}), [JOB_GUARD_ENV]: JSON.stringify(guard) },
+        variables: { ...GITLAB_FULL_HISTORY, ...timeout.env, ...(wave.variables ?? {}), ...(group?.variables ?? {}), ...(cloud ? { [TRADE_SPEC_ENV]: JSON.stringify(cloud) } : {}), [JOB_GUARD_ENV]: JSON.stringify(guard) },
         rules,
         ...(job.needs.length > 0 ? { needs: job.needs } : {}),
         script: [jobGuardLine(), ...(cloud ? gitlabTradeLines() : []), ...dropControl, ...setup, ...(options.beforeScript ?? []), job.command.join(" "), ...(options.extraScript ?? [])],
