@@ -60,7 +60,7 @@ The steps a product's pull request needs:
 | `await-pull` | `branch`, `title`? | Waits, within its limit (300 s by default), for an open pull request from exactly `branch` whose title holds `title`, and binds it to the step's id. A product's command in an earlier `out-of-band` step opens it. Both runs wait for the same branch, and a pull request already open when the run started is never bound. |
 | `comment` | `pull`, `body`, `as`? | Posts `body` on the pull request of the open or await-pull step `pull`, as `author` (the default), `reviewer` or `admin`. Limit 60 s. |
 
-`plan`, `approve` and `merge` name an await-pull step in `pull` as they name an open step. The `pull` outcome reads the step's pull request: its title holds `title`, it changes every path in `files`, and with `only: true` it changes no other path. The `gated` outcome counts the gated requests of `op` asked since the run started, which write no op-run record and so never reach `ledger`: `gated` until a finished line names one, then `ok` when it applied or `failed`. These steps and outcomes were added within contract 1 by chant 0.124.57.
+`plan`, `approve` and `merge` name an await-pull step in `pull` as they name an open step. The `pull` outcome reads the step's pull request: its title holds `title`, it changes every path in `files`, and with `only: true` it changes no other path. The `gated` outcome counts the gated requests of `op` asked since the run started, which write no op-run record and so never reach `ledger`: `gated` until a finished line names one, then `ok` when it applied or `failed`. These steps and outcomes were added within contract 1 by chant 0.124.58.
 
 ## e2e-claim-row/v1 and e2e-claims/v1
 
