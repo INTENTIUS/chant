@@ -1169,7 +1169,7 @@ async function leaseWaveRows(
       return { outcome: "held", reason, ...(first ? { holder: { run: first.run, ...(first.url ? { url: first.url } : {}) } } : {}) };
     }
     for (const h of leased.tookOver) ctx.log(`${label}: took over the rows of run ${h.run}, which is gone`);
-    const waited = leased.waitedSeconds ? ` after waiting ${leased.waitedSeconds}s` : "";
+    const waited = leased.waited ? ` after waiting ${leased.waitedSeconds ?? 0}s` : "";
     ctx.log(`${label}: holds ${leased.lease.keys.length} row${leased.lease.keys.length === 1 ? "" : "s"} of ${gate}${waited} while it applies`);
     held.push(leased.lease);
     return undefined;
