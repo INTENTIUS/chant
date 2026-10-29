@@ -261,6 +261,29 @@ The capabilities are the project's, built the way `chant run --components` build
 
 The wave-job runtime (`wave-runtime.mjs`) does not carry the config loader, so a spec with a `step` needs the full `@intentius/chant` install, or a product's own bin that passes `capabilities`.
 
+### Two pushes at once
+
+A waves file has no concurrency group of its own: GitHub and Forgejo get no `concurrency:` and GitLab's wave jobs get no `resource_group` (ruling for ci-products, 2026-10-28). Two pushes to the branch run their waves side by side, and chant's ledger keeps them apart where they meet. Forgejo has no job-level concurrency, so a group per job could not do it there.
+
+A run through a `step` leases rows in `_locks/rows/pr-apply.json` on `chant/lifecycle` before it applies, by its [lock grain](/chant/reference/workspace-declaration/#lock-grain):
+
+| Grain | Row | When another run holds it |
+|---|---|---|
+| `resource` (plunge, choudoufu) | one row per resource the plan changes, from the lexicon's `lockRows` | the wave applies nothing and exits 5 at once. Two plunge pushes that change different resources of one stack both apply |
+| `target`, stock Pulumi | `stack <project>/<stack>`, from `pulumi-up`'s `targetLockRow` | the run waits in the queue |
+| `target`, Terraform, tofu, Terragrunt | `root <root>`, from `terraform-apply`'s `targetLockRow` | the run waits in the queue |
+| `repo` | `repo`, which meets every row | the run waits in the queue |
+
+A run whose plan changes nothing takes no row. On the `target` grain a lexicon with no `targetLockRow` (SQL is one) takes no row and keeps its engine's own lock.
+
+A waiting run adds itself to the file's `waiting` list and reads the file again every `CHANT_LOCK_POLL` seconds (10 by default). It takes its rows once no live run holds one of them and no live waiter for a row that meets one of them goes before it. The older commit goes first (`commitAt`, the committer time of the commit the job checked out). On a tie the lower run id goes first, and after that the lower commit sha. Nothing preempts a holder, so a newer push that found the row free keeps it until it ends.
+
+Each wave job carries `timeout-minutes` (GitLab: `timeout`), 180 by default or `jobTimeoutMinutes` in the pipeline options, and `CHANT_LOCK_WAIT`, five minutes under it in seconds. A run still waiting at that point leaves the queue and applies nothing. Its outcome is `held` (exit 5), and the reason starts with `LockWaitTimeoutError` and names the run it waited for. On GitLab the project's own maximum timeout still caps the job.
+
+A lease ends when the wave's apply ends, whatever its outcome. A job that crashed leaves its rows and its place in the queue until its run is gone: the forge says the run finished (with `CHANT_FORGE_TOKEN`), or its entry is older than `CHANT_LOCK_STALE` seconds (7200 by default). The next writer drops it. A waiting job writes its entry again at half that age, so a long wait keeps its place.
+
+After a wait the stock engines check their own plan. `pulumi-up` previews again under the lease and fails when the fresh shape goes beyond the approved one, and a stale Terraform saved plan fails the run.
+
 ### SQL members
 
 The sql lexicon adds two kinds ([#4569](https://github.com/INTENTIUS/chant/issues/4569)). `sql-migrate` runs SQL Yodeler's versioned migration engine, and `sql-apply` applies a declarative build with the lexicon's own appliers.

@@ -95,9 +95,9 @@ describe("a runner per wave and job groups per wave (#3914)", () => {
   test("tags, environment, id_tokens, variables and the group's command on each job", () => {
     const yaml = generateGitlabOpWavesPipeline(grouped, { specFile: "waves.json" }).files[0]!.yaml;
     expect(yaml).toMatch(/wave-1-dev:\n\s+stage: wave-1-dev\n\s+image: node:22\n\s+tags:\n\s+- docker\n\s+- dev\n/);
-    expect(yaml).toMatch(/wave-2-prod-decide:\n\s+stage: wave-2-prod\n\s+image: node:22\n\s+tags:\n\s+- plan\n\s+resource_group: migrations-prod\n\s+id_tokens:\n\s+PLAN_TOKEN:\n\s+aud: plan.example\n/);
+    expect(yaml).toMatch(/wave-2-prod-decide:\n\s+stage: wave-2-prod\n\s+image: node:22\n\s+tags:\n\s+- plan\n\s+timeout: '180 minutes'\n\s+id_tokens:\n\s+PLAN_TOKEN:\n\s+aud: plan.example\n/);
     expect(yaml).toMatch(
-      /wave-2-prod-us:\n\s+stage: wave-2-prod\n\s+image: node:22\n\s+tags:\n\s+- us-apply\n\s+resource_group: migrations-prod\n\s+environment:\n\s+name: prod-us\n\s+id_tokens:\n\s+CLOUD_TOKEN:\n\s+aud: us.example\n\s+variables:\n\s+GIT_DEPTH: '0'\n\s+REGION: us\n\s+CHANT_JOB_GUARD: [^\n]*\n[\s\S]*?needs:\n\s+- wave-2-prod-decide\n\s+script:\n\s+- [^\n]*node -e[^\n]*\n\s+- echo us\n\s+- chant run wave --spec waves.json --wave 2 --group us\n/,
+      /wave-2-prod-us:\n\s+stage: wave-2-prod\n\s+image: node:22\n\s+tags:\n\s+- us-apply\n\s+timeout: '180 minutes'\n\s+environment:\n\s+name: prod-us\n\s+id_tokens:\n\s+CLOUD_TOKEN:\n\s+aud: us.example\n\s+variables:\n\s+GIT_DEPTH: '0'\n\s+CHANT_LOCK_WAIT: '10500'\n\s+REGION: us\n\s+CHANT_JOB_GUARD: [^\n]*\n[\s\S]*?needs:\n\s+- wave-2-prod-decide\n\s+script:\n\s+- [^\n]*node -e[^\n]*\n\s+- echo us\n\s+- chant run wave --spec waves.json --wave 2 --group us\n/,
     );
     expect(yaml).toMatch(/wave-2-prod-eu:[\s\S]*?id_tokens:\n\s+CLOUD_TOKEN:\n\s+aud: eu.example\n/);
     expect(yaml).not.toContain("_AUDIENCE");
@@ -147,5 +147,14 @@ describe("an Op wave's jobs by cloud identity (#4332)", () => {
   test("no bin keeps chant (#4607)", () => {
     const { jobs } = generateGitlabOpWavesPipeline(spec, { specFile: "waves.json" });
     expect(jobs.every((j) => j.command[0] === "chant")).toBe(true);
+  });
+});
+
+describe("the ledger lock (ruling for ci-products 2026-10-28)", () => {
+  test("the wave jobs carry no resource_group; each carries its timeout and the lock wait under it", () => {
+    const yaml = generateGitlabOpWavesPipeline(spec, { specFile: "waves.json" }).files[0]!.yaml;
+    expect(yaml).not.toContain("resource_group");
+    expect(yaml).toContain("timeout: '180 minutes'\n");
+    expect(yaml).toContain("CHANT_LOCK_WAIT: '10500'\n");
   });
 });

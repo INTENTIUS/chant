@@ -6,14 +6,20 @@
  * `ci.lockGrain` (ruling A) says what one apply holds while it applies, and,
  * under `ci.locks`, what a pull request's target locks name (ruling D):
  *
- * - `target`: the component, member, root or stack. The apply takes no row
- *   lease; the engine's own lock keeps one target's applies apart.
+ * - `target`: the component, member, root or stack. A lexicon that names
+ *   the target's row (`targetLockRow`: `stack <project>/<stack>` for stock
+ *   Pulumi, `root <root>` for Terraform, tofu and Terragrunt) has the apply
+ *   wait for that row on the ledger, oldest commit first, up to the job's
+ *   timeout (ruling for ci-products 2026-10-28, "Ledger lock"). Any other
+ *   lexicon takes no row lease, and the engine's own lock keeps one
+ *   target's applies apart.
  * - `resource`: one row per resource the plan changes, from the lexicon's
  *   `lockRows` hook. The apply leases those rows before it applies and lets
  *   go after, and a pull request under `ci.locks` locks the same keys in
  *   place of its component names.
- * - `repo`: one apply at a time in the repository, which the pipeline keeps
- *   (a concurrency group, a resource group, the lock tag on Forgejo).
+ * - `repo`: one apply at a time in the repository: the apply waits for the
+ *   `repo` row, which meets every other row, in the same queue. The waves
+ *   pipelines carry no concurrency group of their own.
  *
  * Absent, each member takes its lexicon's `defaultLockGrain`, else `target`.
  *
@@ -21,7 +27,10 @@
  * of cover (ruling C): a `stack <project>/<stack>` row conflicts with every
  * `urn urn:pulumi:<stack>::<project>::...` row of that stack, which is how a
  * plunge apply whose components may register children only at apply locks
- * the whole stack and still meets a run holding one of its resources.
+ * the whole stack and still meets a run holding one of its resources. A
+ * waiting grain's rows ({@link PlannedLock.queue}) use the same keys: a stock
+ * stack waits on `stack <project>/<stack>`, so a plunge run on that stack's
+ * URNs meets it too, and the `repo` row meets every row.
  */
 import { parsePulumiUrn } from "../pulumi-urn";
 
@@ -48,6 +57,13 @@ export interface PlannedLock {
   source: "step" | "declared" | "lexicon" | "default";
   /** The rows, sorted by key. Empty on any grain but `resource`. */
   rows: LockRow[];
+  /**
+   * The rows the apply waits for on the `target` and `repo` grains (ruling
+   * for ci-products 2026-10-28): the target's own row, from the lexicon's
+   * `targetLockRow`, or the `repo` row. Absent when the grain is `resource`
+   * or the lexicon names no target row.
+   */
+  queue?: LockRow[];
 }
 
 /** A lexicon refused the grain asked of a member, by name (#4552: `resource` on Terraform, tofu, Terragrunt and stock Pulumi). */
@@ -65,6 +81,19 @@ export class LockGrainRefusedError extends Error {
 /** The key of the row that stands for a whole Pulumi stack (ruling C). */
 export function stackRowKey(project: string, stack: string): string {
   return `stack ${project}/${stack}`;
+}
+
+/** The key of the row that stands for a whole Terraform, tofu or Terragrunt root. A choudoufu root keys its resources `root <root> <address>` on the resource grain and never takes this row. */
+export function rootRowKey(root: string): string {
+  return `root ${root}`;
+}
+
+/** The key of the row a `repo`-grain apply waits for: it meets every other row. */
+export const REPO_ROW_KEY = "repo";
+
+/** The row a `repo`-grain apply waits for. */
+export function repoLockRow(target: string): LockRow {
+  return { key: REPO_ROW_KEY, target, address: "the repository" };
 }
 
 /** The key of a URN's row. */
@@ -86,7 +115,7 @@ export function lockRowCover(key: string): string | undefined {
 
 /** Whether a holder of row `a` keeps row `b` from being taken: the same key, or one covers the other. */
 export function lockRowsConflict(a: string, b: string): boolean {
-  return a === b || lockRowCover(a) === b || lockRowCover(b) === a;
+  return a === b || a === REPO_ROW_KEY || b === REPO_ROW_KEY || lockRowCover(a) === b || lockRowCover(b) === a;
 }
 
 /** Rows deduplicated by key and sorted, so two takes of the same rows write the same file. */
@@ -102,6 +131,7 @@ export interface LockGrainHooks {
   defaultLockGrain?(input: never, plan?: never): LockGrain | Promise<LockGrain>;
   lockGrainRefusal?(input: never, grain: LockGrain, plan?: never): string | undefined | Promise<string | undefined>;
   lockRows?(input: never, plan: never): LockRow[] | Promise<LockRow[]>;
+  targetLockRow?(input: never, plan?: never): LockRow | undefined | Promise<LockRow | undefined>;
 }
 
 /**
@@ -118,9 +148,30 @@ export async function resolvePlannedLock(capability: LockGrainHooks, input: unkn
   const grain: LockGrain = step ?? declared ?? (capability.defaultLockGrain ? await capability.defaultLockGrain(input as never, plan as never) : "target");
   const refused = capability.lockGrainRefusal ? await capability.lockGrainRefusal(input as never, grain, plan as never) : undefined;
   if (refused) throw new LockGrainRefusedError(plan.member, grain, refused);
-  if (grain !== "resource") return { grain, source, rows: [] };
+  if (grain !== "resource") {
+    const queue = await queueRowsOf(capability, input, plan.member, grain, plan);
+    return { grain, source, rows: [], ...(queue.length > 0 ? { queue } : {}) };
+  }
   if (!capability.lockRows) throw new LockGrainRefusedError(plan.member, grain, `${capability.kind} names no rows for its resources; set ci.lockGrain to target`);
   return { grain, source, rows: sortedLockRows(await capability.lockRows(input as never, plan as never)) };
+}
+
+/**
+ * The rows an apply on the `target` or `repo` grain waits for (ruling for
+ * ci-products 2026-10-28): the `repo` row, or the target's row from the
+ * lexicon's `targetLockRow`. Empty for `resource`, and for a lexicon that
+ * names no target row.
+ */
+export async function queueRowsOf(capability: LockGrainHooks, input: unknown, member: string, grain: LockGrain, plan?: unknown): Promise<LockRow[]> {
+  if (grain === "repo") return [repoLockRow(member)];
+  if (grain !== "target" || !capability.targetLockRow) return [];
+  const row = await capability.targetLockRow(input as never, plan as never);
+  return row ? [row] : [];
+}
+
+/** Every row the waiting members of `locks` wait for, deduplicated and sorted. */
+export function queueRowsOfLocks(locks: Readonly<Record<string, PlannedLock>> | undefined): LockRow[] {
+  return sortedLockRows(Object.values(locks ?? {}).flatMap((l) => l.queue ?? []));
 }
 
 /**

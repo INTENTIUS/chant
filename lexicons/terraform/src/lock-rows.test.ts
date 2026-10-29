@@ -6,6 +6,7 @@
 import { describe, expect, test } from "vitest";
 import type { ChangeSetPart } from "@intentius/chant/change-set";
 import { terraformDefaultLockGrain, terraformLockGrainRefusal, terraformLockRows, terraformLockRowsFromPart } from "./lock-rows";
+import { terraformApplyCapability } from "./components/capability-plugin";
 
 const plan = {
   resource_changes: [
@@ -66,5 +67,12 @@ describe("the grain", () => {
     expect(terraformLockGrainRefusal("resource", "terraform", "/usr/local/bin/terragrunt")).toMatch(/^Terragrunt keeps/);
     expect(terraformLockGrainRefusal("target", "terraform")).toBeUndefined();
     expect(terraformLockGrainRefusal("repo", "tofu")).toBeUndefined();
+  });
+});
+
+describe("the ledger lock (ruling for ci-products 2026-10-28)", () => {
+  test("a root's target row is `root <root>`, which a Terraform, tofu or Terragrunt apply waits for", async () => {
+    expect(await terraformApplyCapability.targetLockRow!({ root: "stacks/net" } as never)).toEqual({ key: "root stacks/net", target: "stacks/net", address: "stacks/net" });
+    expect(await terraformApplyCapability.targetLockRow!({ root: "" } as never)).toBeUndefined();
   });
 });

@@ -59,7 +59,7 @@ export interface OpWaveReleaseRequest {
 /** How one record came out. */
 export type OpWaveReleaseOutcome =
   | { recorded: true; env: string; component: string; digest: string; releaseDigest?: string }
-  | { recorded: false; reason: string };
+  | { recorded: false; reason: string; /** The record was written and its push never landed (plywood#22 finding 9). */ lost?: true };
 
 /** Where an op wave job's release records go (#4615). */
 export interface OpWaveReleasePort {

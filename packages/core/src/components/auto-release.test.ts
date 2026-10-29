@@ -7,8 +7,10 @@ const appendReleaseRecordMock = vi.fn();
 
 vi.mock("../lifecycle/git", () => ({
   getHeadCommit: (...args: unknown[]) => getHeadCommitMock(...args),
-  pushLifecycle: (...args: unknown[]) => pushLifecycleMock(...args),
+  // plywood#22 finding 9: the release record pushes with fetch, replay and retry.
+  pushLifecycleRebasing: (...args: unknown[]) => pushLifecycleMock(...args),
   StaleLifecycleBranchError: class StaleLifecycleBranchError extends Error {},
+  LifecyclePushLostError: class LifecyclePushLostError extends Error {},
 }));
 
 vi.mock("../lifecycle/release-ledger", async () => {
@@ -66,7 +68,7 @@ describe("extractRunDigest", () => {
 describe("maybeRecordAutoRelease", () => {
   beforeEach(() => {
     getHeadCommitMock.mockReset().mockResolvedValue("abc123headsha");
-    pushLifecycleMock.mockReset().mockResolvedValue(true);
+    pushLifecycleMock.mockReset().mockResolvedValue({ pushed: true });
     appendReleaseRecordMock.mockReset();
     delete process.env.GITHUB_ACTOR;
     delete process.env.GITLAB_USER_LOGIN;

@@ -6,10 +6,6 @@ on:
       - main
   workflow_dispatch: {}
 
-concurrency:
-  group: migrations
-  cancel-in-progress: false
-
 permissions:
   contents: write
 
@@ -19,6 +15,9 @@ jobs:
       - self-hosted
       - dev
     container: node:22
+    timeout-minutes: 180
+    env:
+      CHANT_LOCK_WAIT: '10500'
     steps:
       - name: Check the job runs where the spec set it to run
         env:
@@ -47,7 +46,9 @@ jobs:
     permissions:
       contents: write
       id-token: write
+    timeout-minutes: 180
     env:
+      CHANT_LOCK_WAIT: '10500'
       STAGE: apply
       PLAN_TOKEN_AUDIENCE: plan.example
     steps:
@@ -95,7 +96,9 @@ jobs:
     permissions:
       contents: write
       id-token: write
+    timeout-minutes: 180
     env:
+      CHANT_LOCK_WAIT: '10500'
       STAGE: apply
       REGION: us
       CLOUD_TOKEN_AUDIENCE: us.example
@@ -141,7 +144,9 @@ jobs:
     permissions:
       contents: write
       id-token: write
+    timeout-minutes: 180
     env:
+      CHANT_LOCK_WAIT: '10500'
       STAGE: apply
       REGION: us
       CLOUD_TOKEN_AUDIENCE: us.example
@@ -184,7 +189,9 @@ jobs:
     permissions:
       contents: write
       id-token: write
+    timeout-minutes: 180
     env:
+      CHANT_LOCK_WAIT: '10500'
       STAGE: apply
       PLAN_TOKEN_AUDIENCE: plan.example
     steps:

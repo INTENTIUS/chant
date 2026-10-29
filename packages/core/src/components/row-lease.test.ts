@@ -20,7 +20,7 @@ import { planFanOut } from "./fan-out";
 import { runFanOut } from "./fan-out-run";
 import { componentSetFanOut, groupFanOut, planAndRunComponentGroup, planComponentGroup, runComponentGroup } from "./groups";
 import { applyPrSet, approvalOf, decidePrGate, planPrSet, readOnlyLedger, type PrPlanSet } from "./pr-run";
-import { ledgerRowLease, leaseCapabilityStep, LockRowsHeldError, isLockRowsHeldError, type RowLeasePort } from "./row-lease";
+import { ledgerRowLease, leaseCapabilityStep, LockRowsHeldError, LockWaitTimeoutError, isLockRowsHeldError, type RowLeasePort } from "./row-lease";
 import { memoryGateLedgerPort } from "../op/gate";
 import { computePlanDigest } from "../lifecycle/plan-digest";
 import { lockGrainBeforePlan, type LockGrain, type LockRow } from "../lifecycle/lock-rows";
@@ -486,5 +486,65 @@ describe("the ledger port", () => {
     const err = await mine.take([row("estate e01 a")], "net").catch((e: unknown) => e);
     expect(isLockRowsHeldError(err)).toBe(true);
     expect((err as Error).message).toContain("run 200 (https://forge.example/runs/200)");
+  });
+
+  test("a waiting take that reaches its deadline throws LockWaitTimeoutError, still a held error, and leaves the queue", async () => {
+    const cwd = repo();
+    const other = ledgerRowLease("pr-apply", { cwd, holder: { run: "400", at: NOW }, alive: async () => "alive", log: quiet });
+    await other.take([row("stack shop/staging")], "staging");
+    const mine = ledgerRowLease("pr-apply", { cwd, holder: { run: "500", at: NOW }, alive: async () => "alive", log: quiet, waitSeconds: 0, pollMs: 1 });
+    const err = await mine.take([row("stack shop/staging")], "staging", { wait: true }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LockWaitTimeoutError);
+    expect(isLockRowsHeldError(err)).toBe(true);
+    expect((err as Error).message).toMatch(/^staging: LockWaitTimeoutError: waited \d+s for stack shop\/staging of pr-apply/);
+    expect((await readLockRows("pr-apply", { cwd })).waiting).toBeUndefined();
+  });
+});
+
+describe("the ruling for ci-products (2026-10-28): a step on the target or repo grain waits for its row", () => {
+  /** A capability on `grain` whose lexicon names the target's row. */
+  function targetCap(grain: LockGrain) {
+    const registry = new CapabilityRegistry().register({
+      kind: "fake-target",
+      defaultLockGrain: () => grain,
+      targetLockRow: (input: RootInput) => ({ key: `root ${input.root}`, target: input.root, address: input.root }),
+      async plan(_ctx: DeployContext, input: RootInput) {
+        return { member: input.root, planDigest: "sha256:" + "1".repeat(64) };
+      },
+      async run() {
+        return {};
+      },
+    } as never);
+    return registry.resolve("fake-target");
+  }
+  function waitingPort() {
+    const takes: Array<{ label: string; keys: string[]; wait: boolean }> = [];
+    const port: RowLeasePort = {
+      async take(rows, label, opts) {
+        takes.push({ label, keys: rows.map((r) => r.key), wait: opts?.wait === true });
+        return { release: async () => true };
+      },
+    };
+    return { port, takes };
+  }
+
+  test("the target grain takes the root row with a wait, before anything plans", async () => {
+    const { port, takes } = waitingPort();
+    const leased = await leaseCapabilityStep(targetCap("target"), { env: "prod", component: "net", rowLease: port }, { root: "net" });
+    expect(takes).toEqual([{ label: "net", keys: ["root net"], wait: true }]);
+    expect(leased.ctx.plans).toBeUndefined();
+  });
+
+  test("the repo grain waits for the repo row", async () => {
+    const { port, takes } = waitingPort();
+    await leaseCapabilityStep(targetCap("repo"), { env: "prod", component: "net", rowLease: port }, { root: "net" });
+    expect(takes).toEqual([{ label: "net", keys: ["repo"], wait: true }]);
+  });
+
+  test("the resource grain takes its rows with no wait, as before", async () => {
+    const w = world();
+    const { port, takes } = waitingPort();
+    await leaseCapabilityStep(w.registry.resolve("fake-res"), { env: "prod", component: "net", rowLease: port, lockGrain: "resource" }, { root: "net" });
+    expect(takes).toEqual([{ label: "net", keys: ["row net"], wait: false }]);
   });
 });

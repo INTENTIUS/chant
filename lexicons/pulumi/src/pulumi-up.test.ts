@@ -334,6 +334,13 @@ describe("the step's backend (plywood#22)", () => {
     expect(cap.defaultLockGrain!(step({ backend: store }))).toBe("resource");
   });
 
+  test("the ledger lock (ruling for ci-products 2026-10-28): a stack's target row is its stack row, from Pulumi.yaml's name", () => {
+    const cap = createPulumiUpCapability({ env: {}, tmp: tmp(), snapshots: null });
+    expect(cap.targetLockRow!(step())).toEqual({ key: "stack corpus-aws-ts/floci", target: member, address: "corpus-aws-ts/floci" });
+    // A plunge stack on the resource grain still leases URN rows; the stack row it may also take meets this one.
+    expect(cap.targetLockRow!(step({ stack: "prod-us" }))).toMatchObject({ key: "stack corpus-aws-ts/prod-us" });
+  });
+
   test("without it nothing changes: no PULUMI_BACKEND_URL is added", async () => {
     const plunge = engine();
     const cap = createPulumiUpCapability({ plunge: plunge.run, env: {}, tmp: tmp(), snapshots: null });

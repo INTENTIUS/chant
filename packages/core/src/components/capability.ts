@@ -269,6 +269,16 @@ export interface Capability<In = unknown, Out = unknown> {
    */
   lockRows?(input: In, plan: CapabilityPlan): LockRow[] | Promise<LockRow[]>;
   /**
+   * Optional (ruling for ci-products 2026-10-28, "Ledger lock"): the row of
+   * the whole target an apply on the `target` grain waits for on the
+   * ledger, oldest commit first, up to the job's timeout, in place of
+   * failing on the engine's own lock. The pulumi lexicon answers
+   * `stack <project>/<stack>` for stock Pulumi, the terraform lexicon
+   * `root <root>` for Terraform, tofu and Terragrunt. `plan`, when given, is
+   * the member's plan. Absent or undefined: the apply takes no row.
+   */
+  targetLockRow?(input: In, plan?: CapabilityPlan): LockRow | undefined | Promise<LockRow | undefined>;
+  /**
    * Optional: the outputs `run` exposed when it last ran, read without
    * changing anything (#3183). A pull request's plan reads them for each
    * component a planned one depends on that the change does not plan

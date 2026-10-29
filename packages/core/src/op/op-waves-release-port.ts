@@ -55,7 +55,7 @@ export function gitOpWaveReleasePort(opts: { cwd?: string; actor?: string } = {}
         if (got.recorded) {
           out.push({ recorded: true, env: req.env, component: req.component, digest: got.record.digest, ...(got.record.releaseDigest ? { releaseDigest: got.record.releaseDigest } : {}) });
         } else {
-          out.push({ recorded: false, reason: got.reason === "error" ? got.error : got.detail ?? got.reason });
+          out.push({ recorded: false, reason: got.reason === "error" ? got.error : got.detail ?? got.reason, ...(got.reason === "error" && got.lost ? { lost: true as const } : {}) });
         }
       }
       return out;
