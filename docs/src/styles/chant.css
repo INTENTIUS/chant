@@ -362,7 +362,7 @@ html .chant-prompt.chant-prompt .link.link:hover {
 
 /* The home page carries its own heading in the landing block, so Starlight's
    title panel is hidden there. */
-:root:has(.ch-landing) main > .content-panel:first-child:has(h1#_top) {
+:root:has(.ph) main > .content-panel:first-child:has(h1#_top) {
 	display: none;
 }
 

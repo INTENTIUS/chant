@@ -1,7 +1,7 @@
 ---
 // The home page's parts. `part="top"` (the default) is the pixel face, which
-// opens the docs, the wordmark, the mark between two gold hairlines, the
-// tagline and one plain sentence; then the platform picker (Picker.astro) and
+// opens the docs, then ProductHome (the name, one-liner, starting points and
+// first command); then the platform picker (Picker.astro) and
 // the eight highlights, each one link. The other parts go under the section
 // headings in index.mdx: the lexicon link table, the lifecycle row, the
 // read-next table and, last on the page, the setup prompt to hand a coding
@@ -12,6 +12,7 @@ import { join, resolve } from 'node:path';
 import Lifecycle from './Lifecycle.astro';
 import LinkRows from './LinkRows.astro';
 import Picker from './Picker.astro';
+import ProductHome from './ProductHome.astro';
 import AgentPrompt from '../../../packages/core/src/codegen/docs-site/AgentPrompt.astro';
 import { setupPrompt } from '../prompts.mjs';
 import { base, docsHref } from '../site';
@@ -46,13 +47,9 @@ const pillars = [
 )}
 {part === 'top' && (
 	<>
-		<section class="ch-landing not-content">
-			<a class="hero-link" href={docsHref} aria-label="The docs"><span class="ch-logo hero-logo" aria-hidden="true"></span></a>
-			<h1 class="wordmark">CHANT</h1>
-			<span class="rule" aria-hidden="true"><span class="ch-mark"></span></span>
-			<p class="claim">Typed infrastructure</p>
-			<p class="lede">Spec-native typed ops with per-resource locking.</p>
-		</section>
+		<ProductHome id="chant">
+			<a slot="art" class="hero-link" href={docsHref} aria-label="The docs"><span class="ch-logo hero-logo" aria-hidden="true"></span></a>
+		</ProductHome>
 		<Picker />
 		<ul class="ch-pillars not-content">
 			{pillars.map((p) => (
