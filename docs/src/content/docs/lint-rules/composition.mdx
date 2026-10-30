@@ -273,7 +273,7 @@ export const inventoryTable: Component = {
 };
 ```
 
-**Fix:** extract a named preset (e.g. `DynamoTableComponent({ name, template })`) that both components call, the same way [`ApplyOp`](/chant/guide/ops/#apply-code--cloud) composites the common shape today. Structurally distinct components (a different archetype, a different apply family, fan-out vs. no fan-out) are never flagged. The four pilots were chosen to be structurally distinct and pass this rule: [ALB/ECS](/chant/components/composition-and-wiring/), DynamoDB, Neo4j fan-out and an image-processor Lambda.
+**Fix:** extract a named preset (e.g. `DynamoTableComponent({ name, template })`) that both components call, the same way [`ApplyOp`](/chant/guide/ops/#apply-code---cloud) composites the common shape today. Structurally distinct components (a different archetype, a different apply family, fan-out vs. no fan-out) are never flagged. The four pilots were chosen to be structurally distinct and pass this rule: [ALB/ECS](/chant/components/composition-and-wiring/), DynamoDB, Neo4j fan-out and an image-processor Lambda.
 
 ---
 

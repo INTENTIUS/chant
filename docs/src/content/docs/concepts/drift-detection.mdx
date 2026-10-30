@@ -59,7 +59,7 @@ Drifted entries include attribute-level deltas so you can see *what* changed, no
 
 An unobserved entity is not drift and not absence: it is a hole in the report. It carries a reason (`read-failed`, `no-credentials`, `no-binding`, `unsupported-kind`, `filtered`) and it never becomes a `create` in the plan — chant proposes creating a resource only when a provider actually said it isn't there. When any entity is unobserved, the "no drift detected" line says so: no drift over an incomplete read is not a clean estate.
 
-These categories collapse into the `create/update/delete/adopt/noop/unobserved` actions `chant lifecycle plan` emits — see the [observation-to-action crosswalk](/chant/cli/lifecycle/#crosswalk-observation-categories--plan-actions).
+These categories collapse into the `create/update/delete/adopt/noop/unobserved` actions `chant lifecycle plan` emits — see the [observation-to-action crosswalk](/chant/cli/lifecycle/#crosswalk-observation-categories---plan-actions).
 
 #### Depth: entity-level and property-level
 

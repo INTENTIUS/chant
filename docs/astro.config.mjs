@@ -79,7 +79,7 @@ export default defineConfig({
 					description:
 						'Spec-native typed ops with per-resource locking.',
 					details:
-						'- Agents: start at /agents/ for a copy-paste setup prompt, then /guide/agent-integration/ for the skills, MCP tools, and Ops surfaces available after `chant init`.\n- TypeScript in, native files out: infrastructure is exported TypeScript, type-checked against a provider lexicon.\n- Ownership lives in markers on the cloud resources. `chant build` is deterministic, and drift and apply are computed against the live system.\n- Terraform, OpenTofu and Pulumi users: the terraform and pulumi lexicons read your roots and programs as they are. choudoufu (an OpenTofu fork) and plunge (a Pulumi fork) run them with chant\'s ownership markers. See /concepts/comparison/.',
+						'- Agents: start at https://intentius.io/chant/agents/ for a copy-paste setup prompt, then https://intentius.io/chant/guide/agent-integration/ for the skills, MCP tools, and Ops surfaces available after `chant init`.\n- TypeScript in, native files out: infrastructure is exported TypeScript, type-checked against a provider lexicon.\n- Ownership lives in markers on the cloud resources. `chant build` is deterministic, and drift and apply are computed against the live system.\n- Terraform, OpenTofu and Pulumi users: the terraform and pulumi lexicons read your roots and programs as they are. choudoufu (an OpenTofu fork) and plunge (a Pulumi fork) run them with chant\'s ownership markers. See https://intentius.io/chant/concepts/comparison/.',
 					// The agent prompt page is the entry point machine readers want
 					// first — surface it ahead of the human getting-started page.
 					promote: ['agents', 'index*'],

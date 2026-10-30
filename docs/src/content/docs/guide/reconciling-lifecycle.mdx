@@ -20,7 +20,7 @@ observe  →  reconcile  →  authoritative
 
 ## Reconcile — `cloud → code`
 
-When someone has created or changed a resource by hand, pull the live state *back into source*. [`ReconcileOp`](/chant/guide/ops/#reconcile-cloud--code) does this by opening a PR:
+When someone has created or changed a resource by hand, pull the live state *back into source*. [`ReconcileOp`](/chant/guide/ops/#reconcile-cloud---code) does this by opening a PR:
 
 ```typescript
 import { ReconcileOp } from "@intentius/chant/op";
@@ -44,7 +44,7 @@ Reconcile never mutates the cloud; it changes only source. That makes it the saf
 
 ## Apply — `code → cloud`
 
-When the cloud should match source, [`ApplyOp`](/chant/guide/ops/#apply-code--cloud) pushes source to the live system (a Kubernetes server-side apply, a CloudFormation `deploy`, an ARM deployment, or a Grafana API apply, selected by `target`):
+When the cloud should match source, [`ApplyOp`](/chant/guide/ops/#apply-code---cloud) pushes source to the live system (a Kubernetes server-side apply, a CloudFormation `deploy`, an ARM deployment, or a Grafana API apply, selected by `target`):
 
 ```typescript
 import { ApplyOp } from "@intentius/chant/op";
