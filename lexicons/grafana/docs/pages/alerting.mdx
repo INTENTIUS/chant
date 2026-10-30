@@ -86,9 +86,7 @@ The expression classes are typed from Grafana's server-side expression schema at
 
 ## Contact points, policies and timings
 
-```ts
 {{file:alerting/src/notifications.ts}}
-```
 
 A receiver's `settings` are typed per integration from Grafana's `/api/alert-notifiers` (`SlackSettings`, `PagerdutySettings`, ...), so an editor completes the keys. An integration the lexicon has no type for is accepted with free-form settings. GRAF114 checks the settings after the build: a setting the integration does not take is a warning that names the nearest one (`recepient` for `recipient`), and a missing required one is an error. `just fetch-notifiers` rewrites the types from a running Grafana.
 
@@ -100,9 +98,7 @@ A policy's `receiver`, a rule's `notification_settings.receiver`, and each entry
 
 `SloAlertRules` turns a prometheus `Slo` into Grafana rules, one per burn-rate window pair, with the windows, thresholds, labels and annotations of the `Slo`'s own Prometheus alerts:
 
-```ts
 {{file:alerting/src/slo.ts}}
-```
 
 Each rule reads the two error ratios the `Slo` records, as instant Prometheus queries, and holds while both are above the pair's threshold:
 

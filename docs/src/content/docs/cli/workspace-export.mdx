@@ -119,7 +119,7 @@ $ chant workspace admit ret-91b0c4e2a7d3 --note "returned from the studio"
 ✓ added 1 signer(s) for ret-91b0c4e2a7d3 to .chant/trust.json. Check each principal, then commit it signed: ...
 ```
 
-The admission is an entry under `admitted` in `.chant/trust.json` at the repository root, naming the return and its keys. That file is policy, read at base, and changing it is a [protected write](/chant/cli/workspace-verify/#what-it-checks). The admin's signed commit is therefore the signed admission, and it counts once merged to the base branch. Edit a principal before committing when the committer's email is not the name the policy should use. An admitted key verifies only the commits and seals of its return, never a commit made in the repository itself.
+The admission is an entry under `admitted` in `.chant/trust.json` at the repository root, naming the return and its keys. That file is policy, read at base, and changing it is a [protected write](/chant/cli/workspace-verify/#the-policy). The admin's signed commit is therefore the signed admission, and it counts once merged to the base branch. Edit a principal before committing when the committer's email is not the name the policy should use. An admitted key verifies only the commits and seals of its return, never a commit made in the repository itself.
 
 ## Options
 

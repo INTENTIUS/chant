@@ -380,7 +380,7 @@ A phase's `build` says which commits it runs on ([#4169](https://github.com/INTE
 
 - A commit with no run of the phase, below a newer commit that has one, is unbuilt, covered by the newer commit.
 - When the newest commit the phase ran on is red, the tick bisects the unbuilt commits back to the last one the phase passed on. It asks for one build per tick with a `ci/build/<sha>` tag: the commit halfway when more than four are left, otherwise the one just below the red. The first red commit found is the culprit, and it and every commit after it name it.
-- Only a commit the phase ran on can go green, so a release is cut from a built commit. [`chant ci run --at <sha>`](/chant/cli/ci/#ci-run---at) asks for a build of a commit you choose.
+- Only a commit the phase ran on can go green, so a release is cut from a built commit. [`chant ci run --at <sha>`](/chant/cli/ci/#ci-run-at) asks for a build of a commit you choose.
 
 Under either value, a failed run is run again once before the commit counts red, and [`chant ci workflow`](/chant/cli/ci/#ci-workflow) writes the triggers and concurrency of the workflows holding a phase that sets `build`. A phase without `build` leaves its workflows as they are.
 
