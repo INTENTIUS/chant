@@ -64,7 +64,7 @@ import { readRunLedger } from "../lifecycle/run-ledger";
 import { fetchLifecycleStatus, listFilesInDir, listLedgerTrees, pushLifecycleStatus, writeLedgerFiles } from "../lifecycle/git";
 import { ledgerRecordingOff } from "../lifecycle/no-record";
 import { agedOut, buildRequestAnnotation, CI_BUILD_TAG_PREFIX, CI_LEDGER_REF, planBuilds, readBuildRequests, readCiRecords, recordOf, recordPath, requestedBuild, sameRecord, type BuildRequest, type CiRecord } from "./ci-builds";
-import { dispatchableWorkflows, readWorkflowSources } from "./ci-green-workflow";
+import { dispatchableWorkflows, MERGE_QUEUE_VERDICT_JOB, readWorkflowSources } from "./ci-green-workflow";
 import { signOpRunRecord, verifyOpRunStatement } from "./trust/op-run-statement";
 import type { ReasonCode } from "./reason-codes";
 import { gitTop } from "./tree";
@@ -84,6 +84,8 @@ export const CI_REVOKED_TAG_PREFIX = "ci/revoked/";
 export const CI_GREEN_LANES_FLOOR = NEXT_RELEASE;
 /** The first chant whose tick sends `ci.red`, `ci.culprit` and `ci.green` through `ci.green.notify` (#4645). */
 export const CI_TICK_NOTIFY_FLOOR = NEXT_RELEASE;
+/** The first chant that writes a merge queue's trigger and verdict job, and reads `chant ci verdict` (#4644). */
+export const CI_MERGE_QUEUE_FLOOR = NEXT_RELEASE;
 
 export const CI_LAST_GREEN_CONTRACT_VERSION = 1;
 export const CI_LAST_GREEN_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/ci-last-green/v1/ci-last-green.schema.json";
@@ -120,12 +122,21 @@ export function matchesCheckRun(pattern: string, name: string): boolean {
   return re.test(name);
 }
 
-/** Each check run's latest attempt, by name: the run with the largest id. */
+/**
+ * Each check run's latest attempt, by name: the run with the largest id,
+ * except that a skipped or cancelled attempt never replaces a decided one
+ * (#4644). Under a merge queue the commit a group tested lands as it is, and
+ * the branch's push run on it reports the same jobs again, skipped by their
+ * path filters or cancelled by a newer push; the group's run still decides.
+ */
 export function latestAttempts(runs: readonly CheckRun[]): CheckRun[] {
   const byName = new Map<string, CheckRun>();
+  const undecided = (r: CheckRun) => r.status === "completed" && (r.conclusion === "skipped" || (r.conclusion !== null && UNBUILT_CONCLUSIONS.has(r.conclusion)));
+  const decided = (r: CheckRun) => r.status === "completed" && !undecided(r);
   for (const r of runs) {
     const seen = byName.get(r.name);
-    if (!seen || r.id > seen.id) byName.set(r.name, r);
+    if (!seen) byName.set(r.name, r);
+    else if (r.id > seen.id ? !(undecided(r) && decided(seen)) : undecided(seen) && decided(r)) byName.set(r.name, r);
   }
   return [...byName.values()].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
@@ -1403,6 +1414,30 @@ export function lastGreen(req: { cwd: string; remote?: string; from?: string; br
   } catch (err) {
     if (err instanceof CiGreenError || err instanceof WorkspaceReadError) return { ...head, error: { code: err.code, message: err instanceof WorkspaceReadError ? err.describe() : err.message } };
     throw err;
+  }
+}
+
+// ── verdict ──────────────────────────────────────────────────────────────────
+
+/** How long `ci verdict --wait` waits between reads of the check runs. */
+export const CI_VERDICT_INTERVAL_MS = 30_000;
+
+/**
+ * `chant ci verdict` (#4644): judge one commit by ci.green's required phases
+ * from its check runs, as the tick judges a commit, leaving out the
+ * verdict's own check run (`chant-verdict`). With `wait`, read again until no
+ * phase is pending. A merge queue's verdict job runs it on the group's commit.
+ */
+export async function ciVerdict(req: { cwd: string; sha: string; forge: CiForge; wait?: boolean; branch?: string; sleep?: (ms: number) => Promise<void>; onPending?: (v: CommitVerdict) => void }): Promise<{ sha: string; verdict: CommitVerdict }> {
+  const read = readGreen(req.cwd);
+  const green = greenOn(read.green, req.branch);
+  const sleep = req.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  for (;;) {
+    const runs = (await req.forge.checkRuns(req.sha)).filter((r) => r.name !== MERGE_QUEUE_VERDICT_JOB);
+    const verdict = evaluateCommit(green, runs);
+    if (!req.wait || verdict.verdict !== "pending") return { sha: req.sha, verdict };
+    req.onPending?.(verdict);
+    await sleep(CI_VERDICT_INTERVAL_MS);
   }
 }
 

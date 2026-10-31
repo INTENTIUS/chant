@@ -58,6 +58,10 @@ import { COMPOSE_BRANCH_PREFIX } from "../lifecycle/compose-refs";
 /** Where the workflow goes, relative to the repository root. */
 export const CI_GREEN_WORKFLOW_FILE = ".github/workflows/chant-ci-green.yml";
 export const CI_GREEN_WORKFLOW_NAME = "chant-ci-green";
+/** The merge queue's verdict workflow (#4644), and the job its ruleset requires. */
+export const MERGE_QUEUE_WORKFLOW_FILE = ".github/workflows/chant-merge-queue.yml";
+export const MERGE_QUEUE_WORKFLOW_NAME = "chant-merge-queue";
+export const MERGE_QUEUE_VERDICT_JOB = "chant-verdict";
 
 /** One workflow file as the scan reads it. */
 export interface WorkflowSource {
@@ -296,6 +300,51 @@ export function renderCiGreenWorkflow(input: WorkflowInput): string {
   return tagComments(lines.join("\n") + "\n");
 }
 
+/**
+ * The merge queue's verdict workflow (#4644): on each group, `chant ci
+ * verdict --wait` judges the group's commit by `ci.green`'s required phases
+ * as the tick would, and its job, `chant-verdict`, is the one check the
+ * queue's ruleset requires. It reads check runs and writes nothing.
+ */
+export function renderMergeQueueWorkflow(input: Omit<WorkflowInput, "workflows" | "push" | "runnerKeySecret" | "compose">): string {
+  const where = input.workspaceRoot === "." ? [] : [`        working-directory: ${q(input.workspaceRoot)}`];
+  const cache = input.install && input.npmLock ? ["          cache: npm", ...(input.npmLock === "package-lock.json" ? [] : [`          cache-dependency-path: ${q(input.npmLock)}`])] : [];
+  const verdict = input.chant ? q(`${input.chant} ci verdict --wait`) : `npx --yes @intentius/chant@${input.chantVersion} ci verdict --wait`;
+  const lines = [
+    `name: ${MERGE_QUEUE_WORKFLOW_NAME}`,
+    "",
+    "# The merge queue's verdict: passes when every phase ci.green requires passed",
+    "# on the group's commit, judged as chant ci tick judges. Require its job,",
+    `# ${MERGE_QUEUE_VERDICT_JOB}, in the branch's ruleset.`,
+    "on:",
+    "  merge_group:",
+    "    types:",
+    "      - checks_requested",
+    "",
+    "permissions:",
+    "  contents: read",
+    "  checks: read",
+    "",
+    "jobs:",
+    `  ${MERGE_QUEUE_VERDICT_JOB}:`,
+    "    runs-on: ubuntu-latest",
+    "    timeout-minutes: 120",
+    "    steps:",
+    `      - uses: ${usesRef(ACTION_PINS.checkout6)}`,
+    `      - uses: ${usesRef(ACTION_PINS.setupNode6)}`,
+    "        with:",
+    "          node-version: \"24\"",
+    ...cache,
+    ...(input.install ? ["      - name: Install what the verdict runs", ...where, `        run: ${q(input.install)}`] : []),
+    "      - name: Wait for the required phases on the group's commit",
+    ...where,
+    "        env:",
+    "          GITHUB_TOKEN: ${{ github.token }}",
+    `        run: ${verdict}`,
+  ];
+  return tagComments(lines.join("\n") + "\n");
+}
+
 /** Whether any phase sets `build` (#4169): then the tick may re-run jobs and start workflows. */
 export const declaresBuild = (green: CiGreen) => green.phases.some((p) => p.build !== undefined);
 /** Whether a required phase builds only the newest commit (#4169). */
@@ -374,6 +423,8 @@ export function buildTriggerEdits(green: CiGreen, sources: readonly WorkflowSour
       const withBranch = [...branches, ...greenBranches(green).filter((b) => !branches.includes(b))];
       push.branches = compose && !withBranch.includes(COMPOSE_BRANCHES) ? [...withBranch, COMPOSE_BRANCHES] : withBranch;
       const { push: _push, workflow_dispatch: dispatch, ...rest } = on;
+      // #4644: a merge queue's groups run the phases too.
+      if (green.mergeQueue && !("merge_group" in rest)) rest.merge_group = { types: ["checks_requested"] };
       text = writeTopLevel(text, "on", { push, workflow_dispatch: dispatch ?? {}, ...rest });
       // #4643: a phase whose skipped jobs pass is one a path filter skips, and under newest the push's
       // previous commit may never have been built, so the block says where such a filter gets its base.
@@ -395,6 +446,8 @@ export function buildTriggerEdits(green: CiGreen, sources: readonly WorkflowSour
       }
       // #4216: the tick starts the workflow by hand at a ci/build/<sha> tag when the forge ran nothing on a commit.
       if (!("workflow_dispatch" in next)) next = { ...next, workflow_dispatch: {} };
+      // #4644: a merge queue's groups run the phases too.
+      if (green.mergeQueue && !("merge_group" in next)) next = { ...next, merge_group: { types: ["checks_requested"] } };
       if (next !== on) text = writeTopLevel(text, "on", next);
       // #4220: a compose branch's commits each get a verdict, so its runs are keyed by commit, as the trunk branch's are.
       // #4325: each branch ci.green judges is keyed by commit.

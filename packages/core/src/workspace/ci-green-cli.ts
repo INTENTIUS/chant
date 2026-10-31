@@ -24,20 +24,22 @@
  * workflow print text.
  */
 
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { CHANT_EXIT } from "../exit-codes";
 import { join, relative, resolve, sep } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
 import { findWorkspaceRoot } from "../project-root";
-import { ciBase, ciList, ciTick, CiGreenError, formatList, formatTick, lastGreen, RUNNER_KEY_ENV } from "./ci-green";
+import { ciBase, ciList, ciTick, ciVerdict, CiGreenError, formatList, formatTick, lastGreen, RUNNER_KEY_ENV } from "./ci-green";
 import { ciForgeFromEnv } from "./ci-green-forge";
-import { ACTIONS_NAME, buildTriggerEdits, CI_GREEN_WORKFLOW_FILE, ciGreenHeader, type PushToken, readWorkflowSources, renderCiGreenWorkflow, workflowsHolding, writeWorkflowFile } from "./ci-green-workflow";
+import { ACTIONS_NAME, buildTriggerEdits, CI_GREEN_WORKFLOW_FILE, ciGreenHeader, MERGE_QUEUE_VERDICT_JOB, MERGE_QUEUE_WORKFLOW_FILE, type PushToken, readWorkflowSources, renderCiGreenWorkflow, renderMergeQueueWorkflow, workflowsHolding, writeWorkflowFile } from "./ci-green-workflow";
 import { greenBranches, readDeclaration, readerVersion, WorkspaceReadError, type CiSource } from "./declaration";
 import { recordGeneratedFiles, resolveMemberContext, shellArg } from "./member-pipeline";
 import { gitTop, workingTree } from "./tree";
 
 const USAGE =
-  "chant ci last-green [--json] [--lane <name>] [--from <rev>] [--branch <branch>] | ci base [--json] [--phase <name> | --lane <name>] [--from <rev>] [--branch <branch>] | ci list [--json] [--branch <branch>] [--limit <n>] [--since <rev>] [--forge github] [--source checks|runs] | ci tick [--dry-run] [--forge github] [--source checks|runs] [--key <runner key.pem>] | " +
+  "chant ci last-green [--json] [--lane <name>] [--from <rev>] [--branch <branch>] | ci base [--json] [--phase <name> | --lane <name>] [--from <rev>] [--branch <branch>] | ci verdict [--commit <sha>] [--wait] | ci list [--json] [--branch <branch>] [--limit <n>] [--since <rev>] [--forge github] [--source checks|runs] | ci tick [--dry-run] [--forge github] [--source checks|runs] [--key <runner key.pem>] | " +
   "ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>] [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>] [--runner-key-secret <NAME>]";
 
 export { RUNNER_KEY_ENV };
@@ -100,6 +102,41 @@ export async function runCiBase(ctx: CommandContext): Promise<number> {
     return 0;
   } catch (err) {
     console.error(formatError({ message: `chant ci base: ${describe(err)}`, hint: USAGE }));
+    return 1;
+  }
+}
+
+/**
+ * `chant ci verdict [--commit <sha>] [--wait]` (#4644): exits 0 when every
+ * required phase passed on the commit (GITHUB_SHA, else HEAD), 1 when one
+ * failed or wasn't built, and 3 when one is still pending without --wait.
+ */
+export async function runCiVerdict(ctx: CommandContext): Promise<number> {
+  try {
+    const sha = ctx.args.commit ?? process.env.GITHUB_SHA ?? execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf-8" }).trim();
+    const forge = ciForgeFromEnv("github");
+    const { verdict } = await ciVerdict({
+      cwd: process.cwd(),
+      sha,
+      forge,
+      ...(ctx.args.ciWait ? { wait: true } : {}),
+      ...(ctx.args.branch !== undefined ? { branch: ctx.args.branch } : {}),
+      onPending: (v) => console.error(`waiting on ${v.phases.filter((p) => p.verdict === "pending").map((p) => p.phase).join(", ")}`),
+    });
+    const short = sha.slice(0, 12);
+    if (verdict.verdict === "pass") {
+      console.log(`${short}: every required phase passed (${verdict.phases.map((p) => p.phase).join(", ")})`);
+      return 0;
+    }
+    if (verdict.verdict === "fail") {
+      console.error(`${short}: phase ${verdict.failure!.phase} failed in ${verdict.failure!.run.name} (${verdict.failure!.run.conclusion})`);
+      return 1;
+    }
+    const open = verdict.phases.filter((p) => p.verdict === verdict.verdict).map((p) => p.phase);
+    console.error(`${short}: ${verdict.verdict === "pending" ? "still waiting on" : "never built"} ${open.join(", ")}`);
+    return verdict.verdict === "pending" ? CHANT_EXIT.waiting : 1;
+  } catch (err) {
+    console.error(formatError({ message: `chant ci verdict: ${describe(err)}`, hint: USAGE }));
     return 1;
   }
 }
@@ -181,7 +218,8 @@ export async function runCiWorkflow(ctx: CommandContext): Promise<number> {
     const target = ctx.args.output ? resolve(realpathSync(cwd), ctx.args.output) : join(repoRoot, CI_GREEN_WORKFLOW_FILE);
     const fromRepo = relative(repoRoot, target).split(sep).join("/");
 
-    const sources = readWorkflowSources(repoRoot, fromRepo);
+    // The merge queue's verdict (#4644) is ours too, and holds no phase.
+    const sources = readWorkflowSources(repoRoot, fromRepo).filter((s) => s.path !== MERGE_QUEUE_WORKFLOW_FILE);
     const scan = workflowsHolding(green, sources);
     // #4169: the triggers and concurrency of the workflows holding a phase that sets build. Refused before anything is written.
     // #4220: under a ci.workflow, composed releases' branches run the phases and tick too.
@@ -216,6 +254,12 @@ export async function runCiWorkflow(ctx: CommandContext): Promise<number> {
     const written = writeWorkflowFile(target, ciGreenHeader(command, member ? "member" : "root") + yaml);
     if (member) recordGeneratedFiles(member.memberRoot, [{ path: fromRepo, command }]);
     console.log(`Wrote ${written}: ticks when ${workflows.join(", ")} complete${workflows.length === 1 ? "s" : ""} on ${greenBranches(green).join(", ")}${compose ? " or a chant/compose/ branch" : ""}, and every 15 minutes.`);
+    // #4644: the merge queue's verdict, beside the tick and from the same command.
+    if (green.mergeQueue && !member) {
+      const queue = renderMergeQueueWorkflow({ green, chantVersion: readerVersion(), workspaceRoot, chant: ctx.args.ciChant, install: ctx.args.ciInstall, npmLock });
+      const at = writeWorkflowFile(join(repoRoot, MERGE_QUEUE_WORKFLOW_FILE), ciGreenHeader(command, "root") + queue);
+      console.log(`Wrote ${at}: on each merge group, ${MERGE_QUEUE_VERDICT_JOB} passes when every required phase passed on the group's commit. Require ${MERGE_QUEUE_VERDICT_JOB} in the branch's ruleset.`);
+    }
     for (const e of edits) {
       if (!e.changed) continue;
       const path = writeWorkflowFile(join(repoRoot, e.path), e.text);
