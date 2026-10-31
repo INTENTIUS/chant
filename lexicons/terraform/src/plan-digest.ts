@@ -115,3 +115,26 @@ export function terraformPlanChangeSet(planJson: unknown): {
 export function terraformPlanDigest(planJson: unknown): string {
   return computePlanDigest("terraform-plan", terraformPlanChangeSet(planJson));
 }
+
+/**
+ * The digest of each resource the plan changes, by address (plywood#55): its
+ * change as {@link terraformPlanChangeSet} projects it, a deposed object apart
+ * from the live one, and each action invocation by its address. A no-op or
+ * read entry is not in it, and neither is an output, so what a pull request
+ * left alone never makes its plan differ from one made after another change
+ * landed on it.
+ */
+export function terraformResourceDigests(planJson: unknown): Record<string, string> {
+  const { resourceChanges, actionInvocations } = terraformPlanChangeSet(planJson);
+  const out: Record<string, string> = {};
+  for (const c of resourceChanges) {
+    const actions = Array.isArray(c.actions) ? c.actions : [];
+    if (actions.length === 0 || actions.every((a) => a === "no-op" || a === "read")) continue;
+    out[`${String(c.address)}${c.deposed ? `#deposed:${String(c.deposed)}` : ""}`] = computePlanDigest("terraform-resource", c);
+  }
+  for (const a of actionInvocations ?? []) {
+    const address = (a as { address?: unknown } | null)?.address;
+    out[`action:${typeof address === "string" ? address : JSON.stringify(a)}`] = computePlanDigest("terraform-action", a);
+  }
+  return Object.fromEntries(Object.entries(out).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0)));
+}

@@ -5,6 +5,9 @@ export { readPulumiMember, PULUMI_EXPORT_FILE, type PulumiMemberConfig, type Pul
 export {
   pulumiPreviewPart,
   pulumiPreviewDigest,
+  pulumiResourceDigests,
+  pulumiPlannedInputs,
+  PULUMI_GENERATED,
   pulumiSteps,
   pulumiExportResources,
   type PulumiPreviewPartInput,

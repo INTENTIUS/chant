@@ -140,7 +140,7 @@ describe("runOpWave with wave-level commands (#3762)", () => {
       { name: "apps", runs: [{ target: "a1" }, { target: "a2" }, { target: "a3" }], gate: "never", shares: 2 },
     ],
   };
-  function harness(plans: Record<string, { planDigest: string; destructive?: boolean; empty?: boolean }>, atBase: OpWavesSpec | null = waveSpec) {
+  function harness(plans: Record<string, { planDigest: string; destructive?: boolean; empty?: boolean; resources?: Record<string, string> }>, atBase: OpWavesSpec | null = waveSpec) {
     const cwd = mkdtempSync(join(tmpdir(), "op-waves-wave-"));
     const calls: string[] = [];
     const applied: OpWaveRunsFile[] = [];
@@ -209,6 +209,16 @@ describe("runOpWave with wave-level commands (#3762)", () => {
     const plans = await recordOpWaveHeadPlans({ spec: waveSpec, cwd: h.cwd, exec: h.exec, head: "c".repeat(40), now: "t", write: async () => {} });
     expect(plans.waves[0]!.digest).toBe(waveSetDigest([{ member: "vpc", planDigest: digest("1") }, { member: "dns", planDigest: digest("2") }]));
     expect(h.calls.filter((c) => c.startsWith("tg plan"))).toHaveLength(2);
+    h.done();
+  });
+
+  test("--record-plans keeps each run's plan and resources for the merged wave to compare (plywood#55)", async () => {
+    const h = harness({ vpc: { planDigest: digest("1"), resources: { "aws_vpc.main": digest("a") } }, dns: { planDigest: digest("2"), empty: true }, a1: { planDigest: digest("1") }, a2: { planDigest: digest("2") }, a3: { planDigest: digest("3") } });
+    const plans = await recordOpWaveHeadPlans({ spec: waveSpec, cwd: h.cwd, exec: h.exec, head: "c".repeat(40), now: "t", write: async () => {} });
+    expect(plans.waves[0]!.members).toEqual([
+      { member: "vpc", planDigest: digest("1"), resources: { "aws_vpc.main": digest("a") } },
+      { member: "dns", planDigest: digest("2"), empty: true },
+    ]);
     h.done();
   });
 });

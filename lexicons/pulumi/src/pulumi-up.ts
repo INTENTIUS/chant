@@ -26,6 +26,8 @@
  *   through `DeployContext.lockGrain`, else `resource` on plunge and
  *   `target` on stock Pulumi, #4552) the digest leaves `same` and `read`
  *   steps out (ruling B);
+ * - `resourceDigests`: one digest per resource the preview changes, by URN,
+ *   whatever the grain (plywood#55);
  * - `outputs` from the stack step's planned outputs;
  * - `shape` from `pulumiPlanShape` (`./plan-shape.ts`);
  * - `artifact`: the engine, the shape, the digest, CrossGuard's findings,
@@ -154,7 +156,7 @@ import type { GatePolicyFindings } from "@intentius/chant/gate-policy";
 import { computePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import type { SnapshotStore } from "@intentius/chant/lifecycle/snapshot-store";
 import { parseYAML } from "@intentius/chant/yaml";
-import { pulumiPreviewPart } from "./change-set";
+import { pulumiPreviewPart, pulumiResourceDigests } from "./change-set";
 import {
   PULUMI_STREAMING_PREVIEW_ENV,
   pulumiAppliedSteps,
@@ -795,6 +797,8 @@ async function planStack(ctx: DeployContext, original: PulumiUpStepInput, opts: 
     planDigest,
     artifact,
     changeSet: read.part,
+    // plywood#55: each changed resource's own digest, which a merged wave compares with the pull request's per resource.
+    resourceDigests: pulumiResourceDigests(read.preview),
     outputs: { known: planned.known, unknown: planned.unknown },
     shape: read.shape,
     ...(ctx.targets?.length ? { targets: ctx.targets } : {}),

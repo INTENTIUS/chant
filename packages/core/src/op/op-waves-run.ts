@@ -82,6 +82,7 @@ import type { GatePointAsker } from "../point-decision";
 import type { WaitingPoint } from "./steward-points";
 import { isApprovalSpent, type AppliedGateRecord, type FinishedGateRecord } from "../lifecycle/gate-applied";
 import { samePlanDigest } from "../lifecycle/plan-digest";
+import { movedSincePreview } from "./op-waves-preview";
 import { NEXT_RELEASE } from "../release-floors";
 import { isLifecycleLocalNote } from "../lifecycle/local-note";
 import type { HeadPlans, MergedReview, ReviewSource } from "./gate-review";
@@ -187,6 +188,14 @@ export type { OpWaveAsyncExec, OpWaveExec, OpWaveHoldFinished, OpWaveHoldRequest
 /** What a run's plan command writes to `{plan}`. */
 export interface OpWavePlanFile {
   planDigest: string;
+  /**
+   * The digest of each resource this plan changes, by the resource's address
+   * (plywood#55). A merged wave under `approvals.preview` compares the ones
+   * its pull request recorded with the ones it plans now, resource by
+   * resource, and leaves a resource the pull request's plan did not change
+   * out. Absent: the run is compared as a whole, by `planDigest`.
+   */
+  resources?: Record<string, string>;
   /** The plan destroys, rewrites or otherwise needs a person under `on-destructive`. */
   destructive?: boolean;
   /** The plan changes nothing. */
@@ -260,6 +269,8 @@ export interface OpWaveRunsFile {
 /** One run's plan, as the decision records it. */
 export interface OpWaveMember extends WaveMember {
   op: string;
+  /** The digest of each resource the plan changes (plywood#55), when the plan gave them. */
+  resources?: Record<string, string>;
   destructive?: boolean;
   empty?: boolean;
   /** The product's policy denied the plan (#3821). */
@@ -412,6 +423,14 @@ export interface OpWavePreview {
   recorded?: string;
   /** Why the plans do not match, for `moved` and `unrecorded`. */
   reason?: string;
+  /**
+   * What was compared: `resources`, the resources the pull request's plan
+   * changed (plywood#55), or `wave`, the wave's whole set digest, which is
+   * all a record from chant 0.124.59 holds.
+   */
+  compared?: "resources" | "wave";
+  /** For `moved` under `resources`: each run or resource of the pull request's plan that is not as it was previewed. */
+  moved?: string[];
   /** Set when an approval of the digest planned now let a wave that did not match apply. */
   approvedAnyway?: true;
 }
@@ -950,6 +969,15 @@ function planRun(opts: { spec: OpWavesSpec; wave: number; cwd: string; exec: OpW
   return member(run.target, op, file);
 }
 
+/** A plan file's `resources`: a map of address to digest, or nothing. Anything else is a mistake the wave names. */
+function resourcesOf(value: unknown, target: string): Record<string, string> | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || typeof value !== "object" || Array.isArray(value) || !Object.values(value).every((d) => typeof d === "string" && d !== "")) {
+    throw new Error(`the plan of ${target} has resources ${JSON.stringify(value)}; it is a map of a resource's address to its digest`);
+  }
+  return Object.fromEntries(Object.entries(value as Record<string, string>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+}
+
 function member(target: string, op: string, file: OpWavePlanFile): OpWaveMember {
   for (const key of ["denied", "held"] as const) {
     const value = file[key] as unknown;
@@ -963,6 +991,7 @@ function member(target: string, op: string, file: OpWavePlanFile): OpWaveMember 
     member: target,
     planDigest: file.planDigest,
     op,
+    ...(resourcesOf(file.resources, target) ? { resources: resourcesOf(file.resources, target)! } : {}),
     ...(file.destructive === true ? { destructive: true } : {}),
     ...(file.empty === true ? { empty: true } : {}),
     ...(file.denied ? { denied: { rules: file.denied.rules, ...(file.denied.reason ? { reason: file.denied.reason } : {}) } } : {}),
@@ -1113,6 +1142,7 @@ async function planWaveRuns(
   const members = plans.map((p) => ({
     member: p.target,
     planDigest: p.planDigest,
+    ...(p.resources ? { resources: p.resources } : {}),
     op: runs.find((r) => r.target === p.target)?.op ?? spec.op,
     ...(p.destructive ? { destructive: true } : {}),
     ...(p.empty ? { empty: true } : {}),
@@ -2593,11 +2623,11 @@ async function decideOpWave(
   // `approvals.preview` at base: the merged wave applies what the pull request previewed. Planned again to a digest this job already let through, it has been judged.
   let unseen = false;
   if (planned.rules.preview && !kept && decision.status !== "refused") {
-    const seen = await previewOf(options, ctx, digest);
+    const seen = await previewOf(options, ctx, digest, members);
     if ("error" in seen) return { end: failed(ctx, `wave ${k} (${wave.name}): ${seen.error}, so it cannot be compared with what the pull request previewed and nothing in it was applied`) };
     decision.preview = seen.preview;
     unseen = seen.preview.status !== "matched";
-    if (!unseen) log(`wave ${k} (${wave.name}): the plans are the ones pull request #${seen.preview.pr} previewed at ${seen.preview.head?.slice(0, 12)} (${digest})`);
+    if (!unseen) log(`wave ${k} (${wave.name}): the plans are the ones pull request #${seen.preview.pr} previewed at ${seen.preview.head?.slice(0, 12)} (${seen.preview.compared === "resources" ? `${seen.preview.recorded}, compared resource by resource; the wave now plans ${digest}` : digest})`);
     else log(`wave ${k} (${wave.name}): ${seen.preview.reason}`);
   }
   if (kept && was.status === "approved" && decision.status !== "refused") {
@@ -2634,7 +2664,7 @@ async function decideOpWave(
  * `error` only when the forge or the ledger cannot be read, which fails the
  * wave: a missing answer never stands in for a match.
  */
-async function previewOf(options: RunOpWaveOptions, ctx: WaveContext, digest: string): Promise<{ preview: OpWavePreview } | { error: string }> {
+async function previewOf(options: RunOpWaveOptions, ctx: WaveContext, digest: string, members: readonly OpWaveMember[]): Promise<{ preview: OpWavePreview } | { error: string }> {
   const { spec, k, cwd } = ctx;
   const review = await import("./gate-review");
   const head = options.head ?? execFileSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf-8" }).trim();
@@ -2652,9 +2682,27 @@ async function previewOf(options: RunOpWaveOptions, ctx: WaveContext, digest: st
     return { error: `the plans recorded for #${merged.pr} could not be read (${err instanceof Error ? err.message : String(err)})` };
   }
   const seen = { pr: merged.pr, head: merged.head };
-  const recorded = plans?.waves.find((w) => w.wave === k)?.digest;
+  const recordedWave = plans?.waves.find((w) => w.wave === k);
+  const recorded = recordedWave?.digest;
   if (recorded === undefined) {
     return { preview: { status: "unrecorded", ...seen, reason: `no plans are recorded for wave ${k} at the head ${merged.head.slice(0, 12)} of #${merged.pr} (its pipeline runs \`chant run wave --record-plans\`), so nothing was previewed` } };
+  }
+  // plywood#55: a record that holds each run's resources is compared resource by resource, over the ones the pull request's plan changed.
+  if (recordedWave!.members) {
+    const moved = movedSincePreview(recordedWave!.members, members);
+    if (moved.length > 0) {
+      return {
+        preview: {
+          status: "moved",
+          ...seen,
+          recorded,
+          compared: "resources",
+          moved,
+          reason: `the plans moved since #${merged.pr} previewed them: ${moved.join("; ")} (the head ${merged.head.slice(0, 12)} planned ${recorded}, and the merge plans ${digest})`,
+        },
+      };
+    }
+    return { preview: { status: "matched", ...seen, recorded, compared: "resources" } };
   }
   if (!samePlanDigest(recorded, digest)) {
     return {
@@ -2662,11 +2710,12 @@ async function previewOf(options: RunOpWaveOptions, ctx: WaveContext, digest: st
         status: "moved",
         ...seen,
         recorded,
-        reason: `the plans moved since #${merged.pr} previewed them: the head ${merged.head.slice(0, 12)} planned ${recorded}, and the merge plans ${digest}`,
+        compared: "wave",
+        reason: `the plans moved since #${merged.pr} previewed them: the head ${merged.head.slice(0, 12)} planned ${recorded}, and the merge plans ${digest}. The record was written by chant 0.124.59, which keeps the wave's digest only, so the whole wave was compared; a later chant records each resource and compares those`,
       },
     };
   }
-  return { preview: { status: "matched", ...seen, recorded } };
+  return { preview: { status: "matched", ...seen, recorded, compared: "wave" } };
 }
 
 /**
@@ -3944,6 +3993,8 @@ export async function recordOpWaveHeadPlans(options: RecordHeadPlansOptions): Pr
       digest: opWaveSetDigest(spec, members, extras),
       changes: !members.every((m) => m.empty === true),
       destructive: members.some((m) => m.destructive === true),
+      // plywood#55: each run's resources, which a merged wave under `approvals.preview` compares with its own.
+      members: members.map((m) => ({ member: m.member, planDigest: m.planDigest, ...(m.resources ? { resources: m.resources } : {}), ...(m.empty ? { empty: true as const } : {}) })),
       // #4630: a pull-request wave's change set, which the pull request's own approval must cover.
       ...(changeSet ? { changeSet: changeSet.digest } : {}),
     });

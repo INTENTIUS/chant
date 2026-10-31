@@ -248,6 +248,24 @@ export function pulumiPreviewDigest(preview: unknown, opts: PulumiPreviewDigestO
   return computePlanDigest(opts.changedOnly ? "pulumi-preview-changed" : "pulumi-preview", steps);
 }
 
+/**
+ * The digest of each resource the preview changes, by URN (plywood#55): the
+ * steps of that URN (a replace is several), as {@link pulumiPreviewDigest}
+ * reads them, with the values the engine made up left out. A `same` or `read` step is not in it whatever the lock grain,
+ * so what a pull request left alone never makes its plan differ from a plan
+ * made after another change landed on it.
+ */
+export function pulumiResourceDigests(preview: unknown): Record<string, string> {
+  const byUrn = new Map<string, ReturnType<typeof digestStep>[]>();
+  for (const s of pulumiSteps(preview) ?? []) {
+    if (PULUMI_UNCHANGED_OPS.has(s.op ?? "")) continue;
+    const list = byUrn.get(s.urn!) ?? [];
+    list.push(digestStep(s));
+    byUrn.set(s.urn!, list);
+  }
+  return Object.fromEntries([...byUrn].sort(([a], [b]) => byString(a, b)).map(([urn, steps]) => [urn, computePlanDigest("pulumi-resource", steps.sort(byStep))]));
+}
+
 const REPLACE_OPS = new Set(["replace", "create-replacement", "delete-replaced"]);
 
 /** The action and disruption one URN's steps mean, or undefined for an op the change set has no action for. */

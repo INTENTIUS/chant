@@ -649,7 +649,7 @@ A wave's `approval` decides which approvals of its digest let it apply. Every mo
 
 ### `pr-review`
 
-The pull request's pipeline records what its head plans. `chant run wave --spec waves.json --record-plans` plans every wave at the head and writes each wave's digest to `_wave-plans/<name>/<head>.json` on `chant/lifecycle`. The rendered pipeline runs it on each pull request (`<name>-plans.yml` on GitHub and Forgejo, `<name>-record-plans` in GitLab merge request pipelines), and the job needs to push to `chant/lifecycle`.
+The pull request's pipeline records what its head plans. `chant run wave --spec waves.json --record-plans` plans every wave at the head and writes each wave's digest to `_wave-plans/<name>/<head>.json` on `chant/lifecycle`. Each wave's entry also holds `members`, one per run. A member has the run's plan digest and a digest for each resource the run changes. The rendered pipeline runs it on each pull request (`<name>-plans.yml` on GitHub and Forgejo, `<name>-record-plans` in GitLab merge request pipelines), and the job needs to push to `chant/lifecycle`.
 
 After the merge, a wave with no `chant approve` of its digest reads the review of the pull request that merged the commit:
 
@@ -700,17 +700,32 @@ The signers file is read at the base commit, like the policy. A pull request tha
 
 A merged wave plans again in its own job, a while after the pull request's plan was posted and reviewed. With the default gate, `on-destructive`, a change that destroys nothing needs no approval, so nothing compared the new plan with the one the reviewers saw: a record that moved in between was applied as the new plan found it.
 
-`approvals.preview: true` closes that. It is read at the base commit, so a change cannot turn it off for its own merge. Each wave then compares the set digest it plans now with the digest the merged pull request's head recorded for that wave, whatever the wave's gate policy and approval mode. The pull request is the one the forge says produced the applied commit, and the record is the `_wave-plans/<name>/<head>.json` that `--record-plans` wrote on the pull request. The digest covers each run's plan, including the inputs it was made from, so a moved record changes it. It leaves out what the engine makes up while planning, which would differ between any two plans of one change:
+`approvals.preview: true` closes that. It is read at the base commit, so a change cannot turn it off for its own merge. Each wave then compares the plans it makes now with the ones the merged pull request's head recorded for that wave, whatever the wave's gate policy and approval mode. The pull request is the one the forge says produced the applied commit, and the record is the `_wave-plans/<name>/<head>.json` that `--record-plans` wrote on the pull request.
+
+The comparison is per resource. For each run, the record holds the digest of every resource the pull request's plan changes, made from the inputs it was planned with, before and after (`members[].resources`, keyed by URN on Pulumi and plunge and by address on tofu and terraform). The merged wave checks each of those against the same resource in the plan it makes now.
+
+| The resource | The wave |
+|---|---|
+| changed by the pull request, and planned now with other inputs or no longer changed | is refused, since a record moved |
+| changed by the pull request, and planned now as it was previewed | goes on |
+| changed now but not by the pull request | is not compared. It belongs to another change, which was previewed and gated on its own |
+| left alone by the pull request (`same` or `read`) | is never compared, so another merge that changed its inputs does not move this plan |
+
+Two pull requests that change different resources of one stack therefore both apply when they merge one after the other, whether the first merge's change is still in the second wave's plan or already applied. The set digest still names the plans the wave made, and a gate or an approval binds that digest, so a destructive step another merge added waits for its approval.
+
+The digests leave out what the engine makes up while planning, which would differ between any two plans of one change:
 
 - stock Pulumi and plunge: an autoname the provider drew for a create or a replacement (`events-3f45941`). The engine lists such an input in the step's `__defaults`. Its value reads as the resource's logical name and seven hex characters. The digest holds one fixed marker for it. A name the program wrote and an update's name stay in, as does every other input and default.
 - tofu and terraform: a value the plan lists in `after_unknown`. The mark stays in, so a value that turns from known to unknown still changes the digest.
 
 Two creates that differ in an input a reviewer saw still have two digests.
 
+A plan command that is not a `step` can give the same detail: its plan file takes `resources`, a map of a resource's address to its digest. A run recorded without it, such as a SQL migration, is compared whole by its plan digest, unless its plan changed nothing. A record written by chant 0.124.59 holds the wave's set digest only and no `members`. The wave compares that whole digest, as 0.124.59 did, and a refusal says the record is from that release; plan the pull request again with a newer chant (push to it, or run its plans job) to record the resources.
+
 | The wave's plans | The wave |
 |---|---|
-| the same digest the head recorded | goes on as before: the gate policy and approval mode decide whether it needs an approval, and a destructive change still waits for one |
-| another digest (a record moved after the preview) | applies nothing and exits 4. The decision is `refused` with `refused.reason: "moved"`, `preview.status: "moved"`, and the recorded and current digests in the message |
+| every resource the head recorded is as it was previewed (`preview.compared: "resources"`), or the same set digest from a record that holds no resources (`"wave"`) | goes on as before: the gate policy and approval mode decide whether it needs an approval, and a destructive change still waits for one |
+| a resource the pull request changed is planned with other inputs, or is no longer changed (a record moved after the preview) | applies nothing and exits 4. The decision is `refused` with `refused.reason: "moved"`, `preview.status: "moved"`, `preview.moved` naming each resource, and the recorded and current digests in the message |
 | nothing to compare with: no merged pull request produced the commit, no record exists for its head, or none for this wave | applies nothing and exits 4, with `preview.status: "unrecorded"` |
 | either of the two above, and an approval of the digest planned now stands | applies under that approval, and the decision says `preview.approvedAnyway` |
 

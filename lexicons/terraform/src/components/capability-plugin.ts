@@ -136,6 +136,7 @@ import {
 } from "@intentius/chant/components/covered-round";
 import type { ChangeSetPart } from "@intentius/chant/change-set";
 import { computePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
+import { terraformResourceDigests } from "../plan-digest";
 import { ownPackageVersion, type CapabilityPlugin } from "@intentius/chant/components/capability-plugin";
 import type { EngineMemberRef, EngineOutputSource, EnginePlannedOutputs } from "@intentius/chant/components/verbs/member-outputs";
 import {
@@ -580,6 +581,8 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
       planDigest: planned.planDigest,
       artifact: { ...planned, ...(lockRows ? { lockRows } : {}) },
       ...(changeSet ? { changeSet } : {}),
+      // plywood#55: each changed resource's own digest, which a merged wave compares with the pull request's per resource.
+      resourceDigests: terraformResourceDigests(json),
       outputs: terraformPlannedOutputs(json),
       shape: terraformPlanShape(json, input.root),
       ...(targets ? { targets } : {}),
