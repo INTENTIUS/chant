@@ -1195,6 +1195,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.resource = value;
     } else if (arg === "--since") {
       result.since = args[++i];
+    } else if (arg === "--phase") {
+      // `chant ci base --phase <name>` (#4643): the ci.green phase whose base to find.
+      result.phase = args[++i];
     } else if (arg === "--audit-log") {
       // `chant audit-log attribute|unrecorded --audit-log aws[:<region>]` (#4632).
       const value = args[++i];

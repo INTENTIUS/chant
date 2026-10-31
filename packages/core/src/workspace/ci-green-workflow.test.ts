@@ -360,6 +360,18 @@ describe("the triggers of a phase that sets build (#4169)", () => {
     expect(again.map((e) => e.changed)).toEqual([false, false]);
   });
 
+  test("newest with skipped: pass says where a path filter gets its base, once (#4643)", () => {
+    const filtered = parseDeclaration(JSON.stringify({ name: "w", schema: 1, members: [], ci: { green: { ...BUILD_GREEN, phases: { ...BUILD_GREEN.phases, suites: { runs: ["suites"], build: "newest", skipped: "pass" } } } } }), "chant.workspace.json").ci!.green!;
+    const [edit] = buildTriggerEdits(filtered, [{ path: ".github/workflows/suites.yml", text: SUITES_WF }]);
+    expect(edit.text).toContain(`${BUILD_BLOCK_MARKER}\nconcurrency:\n  # A job skipped by changed paths diffs against \`chant ci base --phase suites\``);
+    expect((parseYAMLDocument(edit.text) as Yaml).concurrency).toEqual({ group: "chant-build-suites-${{ github.ref }}", "cancel-in-progress": false });
+    const [again] = buildTriggerEdits(filtered, [{ path: edit.path, text: edit.text }]);
+    expect(again.changed).toBe(false);
+    // Without skipped: pass there is no filter to point at.
+    const [plain] = buildTriggerEdits(green(), [{ path: ".github/workflows/suites.yml", text: SUITES_WF }]);
+    expect(plain.text).not.toContain("chant ci base");
+  });
+
   test("a phase without build leaves its workflow alone, and one workflow holding both builds is refused", () => {
     const plain = parseDeclaration(JSON.stringify({ name: "w", schema: 1, members: [], ci: { green: { branch: "main", phases: { lint: ["lint"] }, require: ["lint"] } } }), "chant.workspace.json").ci!.green!;
     expect(buildTriggerEdits(plain, [{ path: ".github/workflows/ci.yml", text: LINT_WF }])).toEqual([]);

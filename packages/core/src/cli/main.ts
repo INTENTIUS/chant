@@ -291,6 +291,12 @@ CI:
                         and no ci/revoked tag. Reads local tags only; fetch
                         them first. With ci.green.signedSince, a tag without a
                         valid runner statement is ignored and reported.
+  ci base [--json] [--phase <name>] [--from <rev>]  The commit a path filter
+                        diffs against under build: newest: the newest
+                        first-parent ancestor of --from (HEAD) whose record
+                        shows the phase (or every required phase) built and
+                        passed on it, else a green tag. Fetch the tags and
+                        chant/lifecycle first.
   ci list [--json] [--limit <n>] [--since <rev>] [--forge github] [--source checks|runs]
                         The first-parent commits of ci.green's branch within
                         its window, newest first, each green, revoked or
@@ -1779,6 +1785,7 @@ export const commandRegistry: CommandDef[] = [
   { name: "e2e safe-run", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/e2e-safe-run")).runE2eSafeRun(ctx) },
   { name: "e2e", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/e2e-safe-run")).runE2eUnknown(ctx) },
   { name: "ci last-green", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiLastGreen(ctx) },
+  { name: "ci base", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiBase(ctx) },
   { name: "ci list", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiList(ctx) },
   { name: "ci tick", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiTick(ctx) },
   { name: "ci workflow", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiWorkflow(ctx) },
