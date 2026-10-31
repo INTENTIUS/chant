@@ -13,7 +13,6 @@ import type { CiProductWords, CiProductWordsInput } from "./ci-product-words";
 import type { ProductMcpHook } from "./cli/mcp/product-tools";
 import type { ProductWaveHook } from "./op/op-waves-after-plan";
 import { OTLP_EXPORTER_FLOOR } from "./otlp";
-import { NEXT_RELEASE } from "./release-floors";
 
 /**
  * The first chant with the product pipeline (#4550): the words, the
@@ -127,7 +126,7 @@ export { prActionJob, PR_ACTION_JOB, prApplyComment, prCommentLockJobs, prCommen
  * reads what was asked with `productActionFromEnv`. A product
  * feature-detects on this floor.
  */
-export const PRODUCT_ACTIONS_FLOOR = NEXT_RELEASE;
+export const PRODUCT_ACTIONS_FLOOR = "0.124.58";
 export { CI_SERVICES_FLOOR, engineServices, githubServices, gitlabServices, serviceWaitLine, servicesJobEnv, type CiService } from "./components/ci-services";
 export { renderPrNote, prStatusContext, prApproveCommand, prApproveCommands, prApproveTargets, prMergeSentence, type PrMemberDetail } from "./pr-loop";
 export { upsertPlanNote } from "./pr-post";

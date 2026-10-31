@@ -12,13 +12,12 @@
  */
 
 import schema from "./template-request.schema.json" with { type: "json" };
-import { NEXT_RELEASE } from "../release-floors";
 import { catalogVersion, type AttestationState, type CatalogComponent, type ReleaseCatalog } from "../lifecycle/release-catalog";
 import { inputKindProblem, inputRequired, isAppOutputRef, type TemplateSpec } from "./template-spec";
 import { schemaProblems } from "./validate";
 
 /** The first chant that writes and reads template-request/v1 and template.yml/v1 (#4651). */
-export const TEMPLATE_REQUEST_FLOOR = NEXT_RELEASE;
+export const TEMPLATE_REQUEST_FLOOR = "0.124.58";
 
 /** The request document's `$schema`. */
 export const TEMPLATE_REQUEST_SCHEMA_ID: string = schema.$id;

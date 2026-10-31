@@ -33,7 +33,6 @@
  */
 
 import type { McpToolContribution } from "../../mcp/types";
-import { NEXT_RELEASE } from "../../release-floors";
 import { reportReader, reportUrlFor, type ReportReader } from "./report-tools";
 
 /** What a product's tools are handed. */
@@ -77,7 +76,7 @@ export interface ProductMcpHook {
  * it passes `--propose` or `propose: true`, and refuses naming this release
  * when its chant is older.
  */
-export const PRODUCT_MCP_PROPOSE_FLOOR = NEXT_RELEASE;
+export const PRODUCT_MCP_PROPOSE_FLOOR = "0.124.58";
 
 /** The words a `forgeWrite` tool's name may hold on the `--propose` tier, which the write-word check passes over (chant#4655). */
 export const PRODUCT_TOOL_PROPOSE_WORDS = ["request", "propose"] as const;

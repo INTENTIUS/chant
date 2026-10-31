@@ -10,7 +10,6 @@ import templateSchema from "./template.schema.json";
 import pkg from "../../package.json";
 import { buildReleaseCatalog } from "../lifecycle/release-catalog";
 import type { ReleaseRecord } from "../lifecycle/release-ledger";
-import { NEXT_RELEASE } from "../release-floors";
 import { resolveProductWords } from "../ci-product-words";
 import {
   checkTemplateRequest,
@@ -121,7 +120,7 @@ describe("schemas", () => {
   });
 
   test("the floor is the next release", () => {
-    expect(TEMPLATE_REQUEST_FLOOR).toBe(NEXT_RELEASE);
+    expect(TEMPLATE_REQUEST_FLOOR).toBe("0.124.58");
   });
 
   test("the package exports ./template-request and its schemas", () => {
