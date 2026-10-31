@@ -1190,6 +1190,11 @@ export interface ReadDriftOptions {
   read?: DriftRead;
   /** One address to read, on an engine that can read one resource on its own. */
   resource?: string;
+  /**
+   * The stack to read (`chant workspace drift --stack`), for an engine whose store holds one export per stack.
+   * A lexicon with no such store refuses it with `read-unsupported`; one whose store lacks that stack's export refuses with `no-drift-read`.
+   */
+  stack?: string;
   /** RFC 3339, the `observedAt` of every record the lexicon builds itself. */
   observedAt: string;
 }
