@@ -917,6 +917,8 @@ export interface ParsedArgs {
   op?: string;
   /** `chant operator log --since <iso>` (#2029) — only entries at or after this ISO-8601 instant. `chant workspace records --since <rev>` (#2673) — the revision to compare the records with. `chant workspace metrics --since <date>` (#4039) — the start of the window the metrics count. */
   since?: string;
+  /** `chant ci last-green --lane <name>` and `chant ci base --lane <name>` (#4662) — a ci.green lane. */
+  lane?: string;
   /** `chant ci base --phase <name>` (#4643) — the ci.green phase whose base to find. */
   phase?: string;
   /** `chant audit-log attribute|unrecorded --audit-log aws[:<region>]` (#4632): the cloud audit log to read. */

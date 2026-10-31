@@ -37,7 +37,7 @@ import { recordGeneratedFiles, resolveMemberContext, shellArg } from "./member-p
 import { gitTop, workingTree } from "./tree";
 
 const USAGE =
-  "chant ci last-green [--json] [--from <rev>] [--branch <branch>] | ci base [--json] [--phase <name>] [--from <rev>] [--branch <branch>] | ci list [--json] [--branch <branch>] [--limit <n>] [--since <rev>] [--forge github] [--source checks|runs] | ci tick [--dry-run] [--forge github] [--source checks|runs] [--key <runner key.pem>] | " +
+  "chant ci last-green [--json] [--lane <name>] [--from <rev>] [--branch <branch>] | ci base [--json] [--phase <name> | --lane <name>] [--from <rev>] [--branch <branch>] | ci list [--json] [--branch <branch>] [--limit <n>] [--since <rev>] [--forge github] [--source checks|runs] | ci tick [--dry-run] [--forge github] [--source checks|runs] [--key <runner key.pem>] | " +
   "ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>] [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>] [--runner-key-secret <NAME>]";
 
 export { RUNNER_KEY_ENV };
@@ -56,7 +56,7 @@ function warnIgnored(ignored: readonly { tag: string; status: string; reason: st
 }
 
 export async function runCiLastGreen(ctx: CommandContext): Promise<number> {
-  const doc = lastGreen({ cwd: process.cwd(), ...(ctx.args.branch !== undefined ? { branch: ctx.args.branch } : {}), ...(ctx.args.migrateFrom !== undefined ? { from: ctx.args.migrateFrom } : {}) });
+  const doc = lastGreen({ cwd: process.cwd(), ...(ctx.args.lane !== undefined ? { lane: ctx.args.lane } : {}), ...(ctx.args.branch !== undefined ? { branch: ctx.args.branch } : {}), ...(ctx.args.migrateFrom !== undefined ? { from: ctx.args.migrateFrom } : {}) });
   if (ctx.args.json) {
     console.log(JSON.stringify(doc, null, 2));
     return "error" in doc ? 1 : 0;
@@ -67,7 +67,8 @@ export async function runCiLastGreen(ctx: CommandContext): Promise<number> {
   }
   warnIgnored(doc.ignored);
   if (!doc.commit) {
-    console.error(`No first-parent commit of ${doc.ref} has a ci/green tag without a ci/revoked one. Fetch the tags first: git fetch origin --tags`);
+    const lane = ctx.args.lane !== undefined ? `-${ctx.args.lane}` : "";
+    console.error(`No first-parent commit of ${doc.ref} has a ci/green${lane} tag without a ci/revoked${lane} one. Fetch the tags first: git fetch origin --tags`);
     return 1;
   }
   console.log(doc.commit.sha);
@@ -81,7 +82,7 @@ export async function runCiLastGreen(ctx: CommandContext): Promise<number> {
  */
 export async function runCiBase(ctx: CommandContext): Promise<number> {
   try {
-    const doc = ciBase({ cwd: process.cwd(), ...(ctx.args.phase !== undefined ? { phase: ctx.args.phase } : {}), ...(ctx.args.branch !== undefined ? { branch: ctx.args.branch } : {}), ...(ctx.args.migrateFrom !== undefined ? { from: ctx.args.migrateFrom } : {}) });
+    const doc = ciBase({ cwd: process.cwd(), ...(ctx.args.phase !== undefined ? { phase: ctx.args.phase } : {}), ...(ctx.args.lane !== undefined ? { lane: ctx.args.lane } : {}), ...(ctx.args.branch !== undefined ? { branch: ctx.args.branch } : {}), ...(ctx.args.migrateFrom !== undefined ? { from: ctx.args.migrateFrom } : {}) });
     if (ctx.args.json) {
       console.log(JSON.stringify(doc, null, 2));
       return "error" in doc ? 1 : 0;

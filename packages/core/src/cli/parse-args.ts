@@ -1195,6 +1195,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.resource = value;
     } else if (arg === "--since") {
       result.since = args[++i];
+    } else if (arg === "--lane") {
+      // `chant ci last-green --lane <name>` and `chant ci base --lane <name>` (#4662): a green lane's tags and phases.
+      result.lane = args[++i];
     } else if (arg === "--phase") {
       // `chant ci base --phase <name>` (#4643): the ci.green phase whose base to find.
       result.phase = args[++i];
