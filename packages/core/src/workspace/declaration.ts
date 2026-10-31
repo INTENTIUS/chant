@@ -18,6 +18,7 @@
 
 import { RETENTION_KINDS, type RetentionOverride } from "../lifecycle/retention-policy";
 import { parseReportUrl } from "../pr-report-url";
+import { notifyConfigProblem, type NotifyConfig } from "../notify";
 import schema from "./declaration.schema.json" with { type: "json" };
 import { routeConflicts } from "./ci-branches";
 import { cloudIdentityProblems, IDENTITY_CLOUDS, type CloudIdentityDeclaration } from "../ci-identity";
@@ -280,6 +281,11 @@ export interface CiGreen {
    * rest. Absent when the declaration names none.
    */
   lanes?: CiLane[];
+  /**
+   * Who the tick tells (#4645): `ci.red`, `ci.culprit` and `ci.green`, sent
+   * through notify as Op waves send theirs. Absent when the declaration sets none.
+   */
+  notify?: NotifyConfig;
   pointer: string;
 }
 
@@ -1399,7 +1405,7 @@ function cloudIdentityOf(raw: CloudIdentityDeclaration, at: (pointer: string, ke
 
 function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocation): CiDeclaration | null {
   if (raw === undefined) return null;
-  const block = raw as { reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; identity?: { cloud?: CloudIdentityDeclaration }; branches?: Record<string, string[]>; labels?: Record<string, string[]>; locks?: CiLocks; lockGrain?: CiLockGrain; policy?: unknown; prEnvironment?: { template: string; ttl?: string; teardown?: { name?: string; command: string[]; lexicons?: string[] } }; green?: { branch: string | string[]; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource; lanes?: Record<string, { require: string[] }> } };
+  const block = raw as { reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; identity?: { cloud?: CloudIdentityDeclaration }; branches?: Record<string, string[]>; labels?: Record<string, string[]>; locks?: CiLocks; lockGrain?: CiLockGrain; policy?: unknown; prEnvironment?: { template: string; ttl?: string; teardown?: { name?: string; command: string[]; lexicons?: string[] } }; green?: { branch: string | string[]; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource; lanes?: Record<string, { require: string[] }>; notify?: NotifyConfig } };
   const hooks = ciHooksOf(block.hooks, "/ci/hooks", at);
   const policy = ciPolicyOf(block.policy, at);
   const workflow = {
@@ -1473,8 +1479,12 @@ function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocatio
     }
     return { name, require: [...l.require], pointer };
   });
+  if (g.notify !== undefined) {
+    const problem = notifyConfigProblem(g.notify, "ci.green.notify");
+    if (problem) throw new WorkspaceReadError("declaration-invalid", problem, at("/ci/green/notify"));
+  }
   const judged = Array.isArray(g.branch) ? g.branch : [g.branch];
-  return { green: { branch: judged[0]!, ...(judged.length > 1 ? { branches: [...judged] } : {}), window: g.window ?? DEFAULT_CI_WINDOW, phases, require: [...g.require], ...(g.preMerge !== undefined ? { preMerge: [...g.preMerge] } : {}), signedSince: g.signedSince ?? null, source: g.source ?? "checks", ...(lanes.length > 0 ? { lanes } : {}), pointer: "/ci/green" }, ...workflow, reportUrl };
+  return { green: { branch: judged[0]!, ...(judged.length > 1 ? { branches: [...judged] } : {}), window: g.window ?? DEFAULT_CI_WINDOW, phases, require: [...g.require], ...(g.preMerge !== undefined ? { preMerge: [...g.preMerge] } : {}), signedSince: g.signedSince ?? null, source: g.source ?? "checks", ...(lanes.length > 0 ? { lanes } : {}), ...(g.notify !== undefined ? { notify: { ...g.notify, ...(g.notify.events ? { events: [...g.notify.events] } : {}) } } : {}), pointer: "/ci/green" }, ...workflow, reportUrl };
 }
 
 function agentsOf(raw: unknown, members: Member[], at: (pointer: string, key?: boolean) => ErrorLocation): AgentDeclaration[] {

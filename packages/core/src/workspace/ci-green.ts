@@ -57,6 +57,7 @@ import { judgeCommits, mergeCommits, readWorkIndex, type CommitLink } from "./co
 import { execFileSync } from "node:child_process";
 import { greenBranches, laneOf, laneTagPrefixes, readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError, type CiGreen, type CiPhase, type CiSource } from "./declaration";
 import { NEXT_RELEASE } from "../release-floors";
+import { makeNotifyEvent, sendNotify, type NotifyFields } from "../notify";
 import type { CheckRun, CiForge, OpRunRef } from "./ci-green-forge";
 import type { OpRunRecord } from "../op/runtime";
 import { readRunLedger } from "../lifecycle/run-ledger";
@@ -81,6 +82,8 @@ export const CI_GREEN_TAG_PREFIX = "ci/green/";
 export const CI_REVOKED_TAG_PREFIX = "ci/revoked/";
 /** The first chant that reads and writes green lanes, `ci.green.lanes` (#4662). */
 export const CI_GREEN_LANES_FLOOR = NEXT_RELEASE;
+/** The first chant whose tick sends `ci.red`, `ci.culprit` and `ci.green` through `ci.green.notify` (#4645). */
+export const CI_TICK_NOTIFY_FLOOR = NEXT_RELEASE;
 
 export const CI_LAST_GREEN_CONTRACT_VERSION = 1;
 export const CI_LAST_GREEN_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/ci-last-green/v1/ci-last-green.schema.json";
@@ -565,6 +568,10 @@ export interface TickRequest {
    * `ci.green.signedSince` is set the tick needs one.
    */
   runnerKey?: string;
+  /** The environment `ci.green.notify`'s variables are read from (#4645). Default `process.env`. */
+  env?: NodeJS.ProcessEnv;
+  /** Delivers a `ci.` event (#4645). Default notify's own `sendNotify`; tests give a fake. */
+  sendNotify?: typeof sendNotify;
 }
 
 /** One compose branch a tick walked (#4168 4.3): its composed commits within the window. */
@@ -588,6 +595,11 @@ export interface TickResult {
   made: string[];
   /** Each lane's commits, judged from the same runs (#4662). Absent when `ci.green` declares no lanes. */
   lanes?: { lane: string; commits: TickCommit[] }[];
+  /**
+   * The `ci.` events told (#4645), or that would be under `dryRun` (`sent` false). `sent` is false too when
+   * `ci.green.notify` names no variable that is set, or filters the event out. Absent without `ci.green.notify`.
+   */
+  notified?: { event: string; commit: string; sent: boolean }[];
   /** The builds asked for (#4169), as `ci/build/<sha>` tags made and pushed, or that would be under `dryRun`. */
   requested: BuildRequest[];
   /** The failed runs asked to run again through the forge (#4169). */
@@ -781,10 +793,32 @@ export async function ciTick(req: TickRequest): Promise<TickResult> {
     }
   }
   const retried = builds.retries.map((r) => ({ sha: r.sha, run: r.run.name }));
+  // #4645: what to tell people, decided from the records this tick writes. Without records a tick can't
+  // remember what it sent, so it sends nothing rather than the same event every time.
+  const canRecord = ledgerOk && !ledgerRecordingOff();
+  const events = green.notify && canRecord ? tickEvents({ green, planned, records, builds, requests, now }) : [];
+  const notified: TickResult["notified"] = [];
+  const marks = new Map<string, NonNullable<CiRecord["notified"]>>();
+  for (const e of events) {
+    if (req.dryRun) {
+      notified.push({ event: e.fields.event, commit: e.fields.ci!.commit, sent: false });
+      continue;
+    }
+    const event = makeNotifyEvent(e.fields, { env: tickEventEnv(req.env ?? process.env), now });
+    const deliveries = await (req.sendNotify ?? sendNotify)(green.notify, event, { env: req.env ?? process.env, log: () => {} });
+    const failed = deliveries.filter((d) => !d.ok);
+    // Nothing configured or filtered out counts as told; every delivery failing is tried again next tick.
+    if (deliveries.length > 0 && failed.length === deliveries.length) {
+      warnings.push(`could not send ${e.fields.event} for ${e.fields.ci!.commit.slice(0, 12)}: ${failed.map((d) => `${d.target} ${d.detail}`).join(", ")}; the next tick tries again`);
+      continue;
+    }
+    notified.push({ event: e.fields.event, commit: e.fields.ci!.commit, sent: deliveries.length > 0 });
+    marks.set(e.mark.sha, { ...(marks.get(e.mark.sha) ?? {}), ...e.mark.notified });
+  }
   let recorded: string[] = [];
   if (!req.dryRun) {
     const asked = await askForBuilds({ top, remote, green, forge, builds, requests, records, planned, warnings });
-    recorded = ledgerOk && !ledgerRecordingOff() ? await writeRecords({ top, green, planned, records, builds, requests: asked.live, dispatched: asked.dispatched, now, warnings }) : [];
+    recorded = canRecord ? await writeRecords({ top, green, planned, records, builds, requests: asked.live, dispatched: asked.dispatched, now, warnings, notified: marks }) : [];
   }
   return {
     branch: green.branch,
@@ -794,6 +828,7 @@ export async function ciTick(req: TickRequest): Promise<TickResult> {
     made: due.map((c) => c.made!.tag),
     composed,
     ...(lanes.length > 0 ? { lanes } : {}),
+    ...(green.notify ? { notified } : {}),
     requested: builds.requests,
     retried,
     recorded,
@@ -801,6 +836,73 @@ export async function ciTick(req: TickRequest): Promise<TickResult> {
     signer: signer?.principal ?? null,
     source: green.source,
   };
+}
+
+/**
+ * The `ci.` events a tick tells (#4645), from the records it is about to
+ * write: `ci.red` once for the branch's newest decided commit when it is
+ * red (a phase that is being retried is pending, not red, so this is red
+ * after the retry), `ci.culprit` once per culprit a bisect names below that
+ * commit, and `ci.green` when the newest decided commit is green and an
+ * older one in the window was told red and not yet answered. Each carries
+ * the record mark that keeps the next tick from telling it again.
+ */
+export function tickEvents(input: {
+  green: CiGreen;
+  planned: readonly TickCommit[];
+  records: ReadonlyMap<string, CiRecord>;
+  builds: ReturnType<typeof planBuilds>;
+  requests: ReadonlyMap<string, BuildRequest>;
+  now: Date;
+}): { fields: NotifyFields; mark: { sha: string; notified: NonNullable<CiRecord["notified"]> } }[] {
+  const { green, records, now } = input;
+  const next = input.planned.map((c) => ({ sha: c.sha, record: recordOf({ green, commit: c, previous: records.get(c.sha), retries: input.builds.retries, requests: input.requests, now }) }));
+  const at = next.findIndex((x) => x.record.state === "green" || x.record.state === "red");
+  if (at < 0) return [];
+  const { sha, record } = next[at]!;
+  const told = records.get(sha)?.notified ?? {};
+  const short = sha.slice(0, 12);
+  const out: ReturnType<typeof tickEvents> = [];
+  if (record.state === "red") {
+    const failure = record.failure;
+    if (!told.red) {
+      out.push({
+        fields: {
+          source: "chant",
+          event: "ci.red",
+          summary: `${green.branch} is red at ${short}${failure ? `: phase ${failure.phase}, ${failure.run.name} ${failure.run.conclusion ?? "failed"}` : record.revoked ? ": its green tag was revoked" : ""}`,
+          targets: failure ? [failure.phase] : [],
+          ci: { branch: green.branch, commit: sha, ...(failure ? { phase: failure.phase, failedRun: failure.run } : {}) },
+          run: { commit: sha },
+        },
+        mark: { sha, notified: { red: iso(now) } },
+      });
+    }
+    const culprit = Object.values(record.phases).find((p) => p.culprit)?.culprit;
+    // A tip that is its own culprit says nothing ci.red didn't.
+    if (culprit && culprit !== sha && told.culprit !== culprit) {
+      out.push({
+        fields: { source: "chant", event: "ci.culprit", summary: `${green.branch} went red at ${culprit.slice(0, 12)}, found by bisecting below ${short}`, targets: [], ci: { branch: green.branch, commit: sha, culprit }, run: { commit: culprit } },
+        mark: { sha, notified: { culprit } },
+      });
+    }
+    return out;
+  }
+  // Green: answer the newest commit below it that was told red and not yet answered.
+  const answered = next.slice(at + 1).find((x) => records.get(x.sha)?.notified?.red && !records.get(x.sha)?.notified?.green);
+  if (answered) {
+    out.push({
+      fields: { source: "chant", event: "ci.green", summary: `${green.branch} is green again at ${short}, after ${answered.sha.slice(0, 12)} was red`, targets: [], ci: { branch: green.branch, commit: sha, red: answered.sha }, run: { commit: sha } },
+      mark: { sha: answered.sha, notified: { green: sha } },
+    });
+  }
+  return out;
+}
+
+/** The tick's environment for an event's run fields: its repository and forge, without the tick's own run link, which says nothing about the commit. */
+function tickEventEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const { GITHUB_RUN_ID: _r, CI_JOB_URL: _j, CI_PIPELINE_URL: _p, GITHUB_SHA: _s, CI_COMMIT_SHA: _c, ...rest } = env;
+  return rest;
 }
 
 /**
@@ -901,13 +1003,18 @@ async function writeRecords(input: {
   dispatched: Set<string>;
   now: Date;
   warnings: string[];
+  /** What the tick told people this time (#4645), merged into each commit's `notified`. */
+  notified?: ReadonlyMap<string, NonNullable<CiRecord["notified"]>>;
 }): Promise<string[]> {
   const { top, green, planned, records, builds, requests, now, warnings } = input;
   const writes: { path: string; content: string }[] = [];
   const inWindow = new Set(planned.map((c) => c.sha));
   for (const c of planned) {
     const previous = records.get(c.sha);
-    let record = recordOf({ green, commit: c, previous, retries: builds.retries, requests, now });
+    const mark = input.notified?.get(c.sha);
+    // The marks go in through `previous`, so recordOf keeps its key order and the next tick finds the same record.
+    const carried = mark ? ({ ...(previous ?? {}), notified: { ...(previous?.notified ?? {}), ...mark } } as CiRecord) : previous;
+    let record = recordOf({ green, commit: c, previous: carried, retries: builds.retries, requests, now });
     if (record.request) {
       const started = input.dispatched.has(c.sha) || (previous?.request?.tag === record.request.tag && previous.request.dispatched === true);
       if (started) record = { ...record, request: { ...record.request, dispatched: true } };
@@ -1194,6 +1301,8 @@ export function formatTick(r: TickResult, dryRun = false): string {
     for (const r of c.ignoredRuns ?? []) lines.push(`      ignored run ${r.run} of ${r.op} in ${r.env} (${r.status}): ${r.reason}`);
     if (c.blocked) lines.push(`      did not make ${c.blocked}: an ignored tag holds the name. Delete it to let the tick tag the commit: git push origin :refs/tags/${c.blocked}`);
   }
+  // #4645: each ci. event told, or that would be.
+  for (const n of r.notified ?? []) lines.push(`  ${n.commit.slice(0, 12)}  ${dryRun ? "would tell" : n.sent ? "told" : "noted (no notify variable set)"} ${n.event}`);
   // Lanes (#4662): only the commits a lane tags, so a quiet tick stays short.
   for (const l of r.lanes ?? []) {
     for (const c of l.commits.filter((x) => x.made)) {

@@ -61,6 +61,27 @@ A share job of a waiting wave sends nothing, because its deciding job already di
 
 A delivery that fails is logged on stderr, without its URL, and the job exits with the code the wave decided. A 5xx answer or a network error is tried three times; a 4xx is not retried. The webhook is never posted to unsigned: with `key` unset, the job logs that and skips it.
 
+## What the tick sends
+
+[`chant ci tick`](/chant/cli/ci/#ci-tick) sends three events of its own when `ci.green` in the workspace declaration has `notify` ([#4645](https://github.com/INTENTIUS/chant/issues/4645)). It takes the same settings, with `events` chosen from these three:
+
+```json
+"green": {
+  "branch": "main",
+  "phases": { "lint": ["lint"], "test": ["test"] },
+  "require": ["lint", "test"],
+  "notify": { "webhook": "CHANT_WEBHOOK", "key": "CHANT_WEBHOOK_KEY", "slack": "CHANT_SLACK_WEBHOOK" }
+}
+```
+
+| The tick finds | Event |
+|---|---|
+| The branch's newest decided commit is red, after the one retry of a failed run (a phase being retried is pending, not red), or its green tag was revoked | `ci.red`, with the phase and the run that failed |
+| A bisect names the first red commit below that one | `ci.culprit`, with `ci.culprit` the commit found |
+| The newest decided commit is green, and an older one in the window was told red | `ci.green`, with `ci.red` the commit it answers |
+
+Each is sent once. The tick marks it in the commit's `_ci/<sha>.json` record (`notified`), so it needs `chant/lifecycle`, and a tick that can't read or write the records sends nothing rather than the same event again. A delivery that fails everywhere is a warning, and the next tick tries again. `--dry-run` reports what it would send. The events carry `ci`: the `branch` and `commit`, and `phase`, `failedRun`, `culprit` or `red`. `run.commit` is the commit, and `run.url` is left out, since the tick's own run says nothing about it. The tick's environment must hold the variables, so pass the secrets to the tick's job in `chant-ci-green.yml`.
+
 ## Check a delivery
 
 The webhook gets the event as JSON. The body is signed with HMAC-SHA256 over `<timestamp>.<body>`, where the timestamp is in seconds since the epoch:
@@ -69,7 +90,7 @@ The webhook gets the event as JSON. The body is signed with HMAC-SHA256 over `<t
 |---|---|
 | `x-chant-signature` | `sha256=<hex>` |
 | `x-chant-timestamp` | The seconds the signature covers |
-| `x-chant-event` | `waiting`, `refused`, `failed` or `drift` |
+| `x-chant-event` | `waiting`, `refused`, `failed`, `drift`, `ci.red`, `ci.culprit` or `ci.green` |
 | `x-chant-delivery` | The event's `id` |
 
 `@intentius/chant/notify-verify` checks a delivery and needs nothing but `node:crypto`. The package ships it, and `@intentius/chant/notify`, as compiled JavaScript, so a receiver can import it under plain Node with no TypeScript loader, or bundle it alone:
@@ -99,6 +120,7 @@ The JSON Schema ships in the package as `@intentius/chant/notify.schema.json`, w
 | `digest`, `approve` | The plan digest an approval binds, and on `waiting` the command that approves it (`approve.command`, and `approve.review` under `pr-review`) |
 | `status`, `reason`, `exitCode` | The product's word for the outcome, why it was refused or failed, and the exit code |
 | `drift` | On `drift`: `changed`, `missing`, `failed` and a `fingerprint` |
+| `ci` | On the tick's events: `branch`, `commit`, and `phase` and `failedRun` on `ci.red`, `culprit` on `ci.culprit`, `red` on `ci.green` |
 | `run` | The CI run's `url`, `forge`, `repository`, `commit` and `pr` |
 | `reportUrl`, `detail` | A report page, and the product's own outcome record carried whole |
 
