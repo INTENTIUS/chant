@@ -375,7 +375,15 @@ export function buildTriggerEdits(green: CiGreen, sources: readonly WorkflowSour
       push.branches = compose && !withBranch.includes(COMPOSE_BRANCHES) ? [...withBranch, COMPOSE_BRANCHES] : withBranch;
       const { push: _push, workflow_dispatch: dispatch, ...rest } = on;
       text = writeTopLevel(text, "on", { push, workflow_dispatch: dispatch ?? {}, ...rest });
-      text = writeTopLevel(text, "concurrency", { group: `chant-build-${tag}-\${{ github.ref }}`, "cancel-in-progress": false });
+      // #4643: a phase whose skipped jobs pass is one a path filter skips, and under newest the push's
+      // previous commit may never have been built, so the block says where such a filter gets its base.
+      const filtered = held.filter((p) => p.skipped === "pass").map((p) => p.name);
+      text = writeTopLevel(text, "concurrency", [
+        "concurrency:",
+        ...(filtered.length > 0 ? [`  # A job skipped by changed paths diffs against \`chant ci base --phase ${filtered[0]}\`, not github.event.before, which a newer push may have kept from being built (#4643).`] : []),
+        `  group: chant-build-${tag}-\${{ github.ref }}`,
+        "  cancel-in-progress: false",
+      ]);
     } else {
       const main = `refs/heads/${green.branch}`;
       const on = triggersOf(isObject(doc) ? doc.on : undefined);

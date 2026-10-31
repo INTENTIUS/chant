@@ -48,6 +48,8 @@ export const CI_BUILD_TAG_PREFIX = "ci/build/";
 /** The directory on `chant/lifecycle` holding one record per commit. */
 export const CI_RECORDS_DIR = "_ci";
 const LEDGER_REF = "refs/heads/chant/lifecycle";
+/** The local branch the records are read from, for readers that fall back to its remote-tracking branch. */
+export const CI_LEDGER_REF = LEDGER_REF;
 
 /** How long a build request may wait for a runner before its phases count as unbuilt. */
 export const BUILD_REQUEST_TTL_MS = 6 * 3_600_000;
@@ -358,20 +360,20 @@ function parseRecord(text: string | null): CiRecord | undefined {
   }
 }
 
-/** One commit's record, from the local `chant/lifecycle`. */
-export function readCiRecord(top: string, sha: string): CiRecord | undefined {
-  return parseRecord(tryGit(top, ["show", `${LEDGER_REF}:${recordPath(sha)}`]));
+/** One commit's record, from the local `chant/lifecycle` (or `ref`, such as its remote-tracking branch). */
+export function readCiRecord(top: string, sha: string, ref: string = LEDGER_REF): CiRecord | undefined {
+  return parseRecord(tryGit(top, ["show", `${ref}:${recordPath(sha)}`]));
 }
 
-/** Every record on the local `chant/lifecycle`, by commit. Empty when the branch or the directory is missing. */
-export function readCiRecords(top: string): Map<string, CiRecord> {
+/** Every record on the local `chant/lifecycle` (or `ref`), by commit. Empty when the branch or the directory is missing. */
+export function readCiRecords(top: string, ref: string = LEDGER_REF): Map<string, CiRecord> {
   const out = new Map<string, CiRecord>();
-  const names = tryGit(top, ["ls-tree", "--name-only", `${LEDGER_REF}:${CI_RECORDS_DIR}`]);
+  const names = tryGit(top, ["ls-tree", "--name-only", `${ref}:${CI_RECORDS_DIR}`]);
   if (!names) return out;
   for (const name of names.split("\n")) {
     const m = /^([0-9a-f]{40,64})\.json$/.exec(name);
     if (!m) continue;
-    const r = readCiRecord(top, m[1]);
+    const r = readCiRecord(top, m[1], ref);
     if (r) out.set(m[1], r);
   }
   return out;

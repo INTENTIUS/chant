@@ -8,6 +8,7 @@ diataxis: reference
 
 ```
 chant ci last-green [--json] [--from <rev>] [--branch <branch>]
+chant ci base [--json] [--phase <name>] [--from <rev>] [--branch <branch>]
 chant ci list [--json] [--branch <branch>] [--limit <n>] [--since <rev>] [--forge github] [--source checks|runs]
 chant ci tick [--dry-run] [--forge github] [--source checks|runs] [--key <runner key.pem>]
 chant ci run plan|record|apply|env-up|env-post|env-down|env-sweep --env <env> --base <sha> [--pr <n>] [--commit <sha>] [--head <sha>] [--result <r>] [--forge github|gitlab|forgejo]
@@ -48,6 +49,19 @@ git checkout "$(chant ci last-green)"
 When no commit qualifies, a message goes to stderr and the exit code is 1. With a [list in `ci.green.branch`](/chant/guide/branch-routing/#give-a-routed-target-a-green-verdict), `--branch <branch>` reads one of the listed branches instead of the first, and a branch not in the list is `ci-branch-unknown`. `--from <rev>` walks the first-parent commits of `rev` instead of the branch, so `chant ci last-green --from <sha>` prints `<sha>` exactly when that commit counts as green. With [signed tags](#signed-tags), each tag the walk ignores is printed on stderr as a warning.
 
 `--json` prints a [read contract](/chant/reference/workspace-read-contract/) document, `ci-last-green.schema.json`, whose `commit` is `{ sha, tag, tagged, committed }` or `null`, and exits 0 in both cases. `ignored` lists the tags the walk passed over for want of a valid statement, newest first, each with `tag`, `status` and `reason`. `newer` ([#4169](https://github.com/INTENTIUS/chant/issues/4169)) lists up to 50 commits above the one found. Each has the commit's [record](#records), or `null` when it has none. A failure has an `error` and exits 1. Its code is `ci-green-undeclared` for a declaration with no `ci.green`, `ci-branch-unknown` when the branch has no ref in this checkout, or the code of a declaration that can't be read.
+
+## ci base
+
+Prints the commit a path filter should diff against when its phase declares `build: "newest"` ([#4643](https://github.com/INTENTIUS/chant/issues/4643)). It walks the first-parent ancestors of `--from` (`HEAD` by default), leaving that commit out, and stops at the newest one whose [record](#records) shows the phase built and passed on that very commit. A commit a newer build covered was never built, and a commit where the phase failed would let a change on top of the failure skip the job, so both are passed over. Without `--phase`, every required phase must have passed there. A commit with no record, from before the tick's window, counts when it has a green tag and no revoked tag, as `ci last-green` reads them.
+
+```bash
+git fetch origin --tags +refs/heads/chant/lifecycle:refs/remotes/origin/chant/lifecycle
+base=$(chant ci base --phase test) || base=""   # no base: run everything
+```
+
+The records are read from the local `chant/lifecycle`, or from `origin/chant/lifecycle` when the checkout has no local branch, which is the usual case in a CI job. When no commit qualifies, a message goes to stderr and the exit code is 1, and the caller should run the job. `--phase` must name a phase in `ci.green`. `--branch` picks the green branch as for `ci last-green`.
+
+`--json` prints `ci last-green`'s document with two additions: `phase`, the phase asked about or `null`, and `commit.via`, `record` or `tag`. `commit.tag` is `null` for a commit whose record passed the phase but which has no green tag. The document exits 0 whether or not it found a commit.
 
 ## ci list
 
@@ -96,6 +110,8 @@ A run that was cancelled leaves its commit unbuilt, not red ([#4169](https://git
 A phase declared `build: "every"` that has no run on a commit half an hour after the commit landed, because the forge never started its push run, gets one build request, `missing`, for those phases ([#4216](https://github.com/INTENTIUS/chant/issues/4216)). The tick starts the workflows holding them at the `ci/build/<sha>` tag as it does for a bisect step, and the commit's record keeps `missing`, so it is asked for once. A phase that sets no `build` is never asked for.
 
 A phase declared `build: "newest"` runs only on the newest commit when a runner frees. A commit below a newer one that ran the phase is unbuilt, covered by it. When the newest commit the phase ran on is red, the tick bisects the unbuilt commits back to the last one the phase passed on, asking for one build per tick: the commit halfway when more than four are left, else the one just below the red. It asks with an annotated tag, `ci/build/<sha>`, whose record names the phases and the reason, and on GitHub it starts each workflow holding the phases at that tag with `workflow_dispatch`. Under chant runs, [`ci serve --build-command`](#ci-serve) serves the tag. A phase a request waits on is pending, a request no runner served within six hours leaves it unbuilt, and once its phases are decided the tick deletes the tag. The first red commit is the culprit, named on it and every commit after it. `--dry-run` reports the requests and retries it would make, and makes none.
+
+A job that skips itself by the paths a push changed needs care under `newest`. The push's previous commit (`github.event.before`) may have been superseded and never built, so a tip that changes only docs would skip a job whose code a commit below it changed, and with `skipped: "pass"` the tip would go green with that change untested. Diff against [`chant ci base --phase <name>`](#ci-base) instead, and run the job whenever it finds no base.
 
 #### Records
 
@@ -551,7 +567,7 @@ For each phase that sets `build` ([#4169](https://github.com/INTENTIUS/chant/iss
 
 | `build` | `on:` | `concurrency:` |
 |---|---|---|
-| `newest` | pushes to the branch and `workflow_dispatch`, with any `schedule` removed and other triggers kept | `chant-build-<phases>-${{ github.ref }}`, never cancelling a run in progress, so GitHub keeps the newest push waiting and drops the ones between, and each `ci/build/<sha>` tag runs on its own |
+| `newest` | pushes to the branch and `workflow_dispatch`, with any `schedule` removed and other triggers kept | `chant-build-<phases>-${{ github.ref }}`, never cancelling a run in progress, so GitHub keeps the newest push waiting and drops the ones between, and each `ci/build/<sha>` tag runs on its own. When a phase it holds sets `skipped: "pass"`, a comment in the block names [`ci base`](#ci-base) for its path filters ([#4643](https://github.com/INTENTIUS/chant/issues/4643)) |
 | `every` | kept, with `workflow_dispatch` added so the tick can start a run the forge never started ([#4216](https://github.com/INTENTIUS/chant/issues/4216)) | the commit itself on the branch, so no push cancels or replaces another's run, and the ref elsewhere, where a new push cancels the run it supersedes |
 
 A workflow holding a phase of each value is refused, since no one group serves both. The tick's workflow then also has `actions: write`, to re-run a failed job and start a workflow at a tag, and its `workflow_run` trigger listens on `ci/build/**` as well as the branch. With no phase setting `build`, every file comes out as before.

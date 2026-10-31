@@ -8,7 +8,7 @@
 import { execFileSync } from "node:child_process";
 import { afterAll, describe, expect, test } from "vitest";
 import { cleanScratch, declaration, git, scratchDir, writeFiles } from "./__fixtures__/contract-repo";
-import { ciList, ciTick, lastGreen, requestBuild } from "./ci-green";
+import { ciBase, ciList, ciTick, lastGreen, requestBuild } from "./ci-green";
 import type { CheckRun, CiForge } from "./ci-green-forge";
 import { readBuildRequests, readCiRecord } from "./ci-builds";
 
@@ -202,5 +202,87 @@ describe("chant ci run --at (#4169)", () => {
     // The tick takes the run already going at the commit as started, and records the request.
     await ciTick({ cwd: root, forge: fakeForge(new Map([[a, [run("check", "success"), run("suites", null, "in_progress")]]])), now: NOW });
     expect(readCiRecord(root, a)).toMatchObject({ state: "pending", request: { reason: "requested", dispatched: true } });
+  });
+});
+
+describe("chant ci base (#4643)", () => {
+  const baseOf = (cwd: string, from: string, phase?: string) => {
+    const doc = ciBase({ cwd, from, ...(phase ? { phase } : {}) });
+    if ("error" in doc) throw new Error(doc.error.message);
+    return doc.commit && { sha: doc.commit.sha, via: doc.commit.via };
+  };
+
+  test("a docs-only tip over a superseded commit diffs against the last commit the phase built, not its parent", async () => {
+    const { root } = workspace();
+    const base = commitAt(root, 4, "app/a.txt");
+    git(root, "push", "-q", "origin", "main");
+    // a changes the code and is superseded before its suites run; c changes only docs.
+    const a = commitAt(root, 3, "app/a.txt");
+    const c = commitAt(root, 2, "docs/readme.md");
+    git(root, "push", "-q", "origin", "main");
+    const runs = new Map([
+      [base, [run("check", "success"), run("suites", "success")]],
+      [a, [run("check", "success"), run("suites", "cancelled")]],
+      [c, [run("check", "success"), run("suites", null, "in_progress")]],
+    ]);
+    await ciTick({ cwd: root, forge: fakeForge(runs), now: NOW });
+
+    // c's filter, run while c builds: its base is base, so a's change to app/ is in the diff.
+    expect(baseOf(root, c, "suites")).toEqual({ sha: base, via: "record" });
+    expect(baseOf(root, c)).toEqual({ sha: base, via: "record" });
+
+    // Once c's suites pass, a commit above c diffs against c, and a stays passed over.
+    runs.set(c, [run("check", "success"), run("suites", "success")]);
+    await ciTick({ cwd: root, forge: fakeForge(runs), now: NOW });
+    const d = commitAt(root, 1, "docs/more.md");
+    expect(baseOf(root, d, "suites")).toEqual({ sha: c, via: "record" });
+  });
+
+  test("passes over a commit whose phase failed, so a change on top of the failure still runs it", async () => {
+    const { root } = workspace();
+    const base = commitAt(root, 4, "app/a.txt");
+    const red = commitAt(root, 3, "app/a.txt");
+    git(root, "push", "-q", "origin", "main");
+    const runs = new Map([
+      [base, [run("check", "success"), run("suites", "success")]],
+      [red, [run("check", "success"), run("suites", "failure"), run("suites", "failure")]],
+    ]);
+    await ciTick({ cwd: root, forge: fakeForge(runs), now: NOW });
+    const docs = commitAt(root, 2, "docs/readme.md");
+    expect(baseOf(root, docs, "suites")).toEqual({ sha: base, via: "record" });
+    // A phase that passed on the red commit has it as its base.
+    expect(baseOf(root, docs, "check")).toEqual({ sha: red, via: "record" });
+  });
+
+  test("a commit with no record counts by its green tag, and none at all is a null commit", () => {
+    const { root } = workspace();
+    const tagged = commitAt(root, 3, "app/a.txt");
+    const above = commitAt(root, 2, "app/a.txt");
+    expect(baseOf(root, above, "suites")).toBeNull();
+    git(root, "tag", `ci/green/${tagged}`, tagged);
+    expect(baseOf(root, above, "suites")).toEqual({ sha: tagged, via: "tag" });
+    // The commit asked about is never its own base.
+    expect(baseOf(root, tagged)).toBeNull();
+  });
+
+  test("reads origin/chant/lifecycle when there is no local branch, as in a CI checkout", async () => {
+    const { root, origin } = workspace();
+    const base = commitAt(root, 3, "app/a.txt");
+    git(root, "push", "-q", "origin", "main");
+    await ciTick({ cwd: root, forge: fakeForge(new Map([[base, [run("check", "success"), run("suites", "success")]]])), now: NOW });
+    const clone = scratchDir("chant-base-clone-");
+    git(clone, "clone", "-q", origin, ".");
+    git(clone, "fetch", "-q", "origin", "--tags", "+refs/heads/chant/lifecycle:refs/remotes/origin/chant/lifecycle");
+    expect(git(clone, "branch", "--list", "chant/lifecycle")).toBe("");
+    writeFiles(clone, { "docs/readme.md": "docs\n" });
+    git(clone, "add", "-A");
+    git(clone, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "docs");
+    expect(baseOf(clone, "HEAD", "suites")).toEqual({ sha: base, via: "record" });
+  });
+
+  test("refuses a phase the declaration doesn't name", () => {
+    const { root } = workspace();
+    commitAt(root, 2, "app/a.txt");
+    expect(() => ciBase({ cwd: root, phase: "lint" })).toThrow(/declares no phase "lint"; it declares check, suites/);
   });
 });

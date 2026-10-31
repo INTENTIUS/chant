@@ -61,7 +61,7 @@ import type { OpRunRecord } from "../op/runtime";
 import { readRunLedger } from "../lifecycle/run-ledger";
 import { fetchLifecycleStatus, listFilesInDir, listLedgerTrees, pushLifecycleStatus, writeLedgerFiles } from "../lifecycle/git";
 import { ledgerRecordingOff } from "../lifecycle/no-record";
-import { agedOut, buildRequestAnnotation, CI_BUILD_TAG_PREFIX, planBuilds, readBuildRequests, readCiRecords, recordOf, recordPath, requestedBuild, sameRecord, type BuildRequest, type CiRecord } from "./ci-builds";
+import { agedOut, buildRequestAnnotation, CI_BUILD_TAG_PREFIX, CI_LEDGER_REF, planBuilds, readBuildRequests, readCiRecords, recordOf, recordPath, requestedBuild, sameRecord, type BuildRequest, type CiRecord } from "./ci-builds";
 import { dispatchableWorkflows, readWorkflowSources } from "./ci-green-workflow";
 import { signOpRunRecord, verifyOpRunStatement } from "./trust/op-run-statement";
 import type { ReasonCode } from "./reason-codes";
@@ -1250,6 +1250,82 @@ export function lastGreen(req: { cwd: string; remote?: string; from?: string; br
       }
     }
     return { ...head, workspace, branch: green.branch, ref, commit, ignored, newer: commit ? newer : [] };
+  } catch (err) {
+    if (err instanceof CiGreenError || err instanceof WorkspaceReadError) return { ...head, error: { code: err.code, message: err instanceof WorkspaceReadError ? err.describe() : err.message } };
+    throw err;
+  }
+}
+
+// ── base ─────────────────────────────────────────────────────────────────────
+
+/**
+ * `ci base`'s document (#4643): `ci last-green`'s, with the phase asked about
+ * and how the commit was found. `via` is `record` when the commit's record
+ * shows the phase built and passed on it, `tag` when the commit has no record
+ * and counts by its green tag alone.
+ */
+export type CiBaseDocument =
+  | (Omit<Extract<LastGreenDocument, { branch: string }>, "commit"> & {
+      phase: string | null;
+      /** `tag` is null for a commit whose record passed the phase asked about but which has no green tag. */
+      commit: { sha: string; tag: string | null; tagged: string | null; committed: string; via: "record" | "tag" } | null;
+    })
+  | Extract<LastGreenDocument, { error: unknown }>;
+
+/**
+ * `chant ci base` (#4643): the commit a path filter should diff against
+ * under `build: newest`. Walks the first-parent ancestors of `from` (HEAD by
+ * default), leaving `from` itself out, and returns the newest one where
+ * `phase` (or, without one, every required phase) ran on that very commit
+ * and passed. A superseded commit is passed over: it was never built, and
+ * a newer build that covers it is not the base of a commit above it. A red
+ * one is passed over too, so a change on top of a failure doesn't skip the
+ * job that failed. A commit with no record (outside the tick's window)
+ * counts when it has a green tag and no revoked one, as `ci last-green`
+ * reads them. Reads local refs only: the records on `chant/lifecycle`, or
+ * on `origin/chant/lifecycle` when there is no local branch, and the tags.
+ */
+export function ciBase(req: { cwd: string; from?: string; branch?: string; phase?: string; remote?: string }): CiBaseDocument {
+  const head = { $schema: CI_LAST_GREEN_SCHEMA_ID, contract: CI_LAST_GREEN_CONTRACT_VERSION, chant: readerVersion() };
+  try {
+    const read = readGreen(req.cwd);
+    const { top, workspace } = read;
+    const green = greenOn(read.green, req.branch);
+    if (req.phase !== undefined && !green.phases.some((p) => p.name === req.phase)) {
+      throw new Error(`ci.green declares no phase ${JSON.stringify(req.phase)}; it declares ${green.phases.map((p) => p.name).join(", ")}`);
+    }
+    const from = req.from ?? "HEAD";
+    if (from.startsWith("-") || tryGit(top, ["rev-parse", "--verify", "--quiet", `${from}^{commit}`]) === null) {
+      throw new WorkspaceReadError("revision-unknown", `--from ${from} names no commit in this repository`);
+    }
+    const branchRef = tryGit(top, ["rev-parse", "--verify", "--quiet", `refs/remotes/${req.remote ?? "origin"}/${green.branch}^{commit}`]) ?? tryGit(top, ["rev-parse", "--verify", "--quiet", `refs/heads/${green.branch}^{commit}`]);
+    const tags = readCiTags(top, green, branchRef);
+    const ledger = tryGit(top, ["rev-parse", "--verify", "--quiet", CI_LEDGER_REF]) !== null ? CI_LEDGER_REF : `refs/remotes/${req.remote ?? "origin"}/chant/lifecycle`;
+    const records = readCiRecords(top, ledger);
+    const phases = req.phase !== undefined ? [req.phase] : green.require;
+    const builtHere = (r: CiRecord) =>
+      phases.every((name) => {
+        const p = r.phases[name];
+        return p !== undefined && p.verdict === "pass" && p.coveredBy === undefined && p.runs.some((run) => run.conclusion !== null);
+      });
+    let commit: Extract<CiBaseDocument, { branch: string }>["commit"] = null;
+    const ignored: IgnoredCiTag[] = [];
+    const newer: { sha: string; record: CiRecordSummary | null }[] = [];
+    const parent = tryGit(top, ["rev-parse", "--verify", "--quiet", `${from}^1^{commit}`]);
+    for (const sha of parent ? git(top, ["rev-list", "--first-parent", parent]).split("\n") : []) {
+      ignored.push(...(tags.ignored.get(sha) ?? []));
+      const record = records.get(sha);
+      const revoked = tags.revoked.has(sha) || record?.revoked === true;
+      const via = revoked ? null : record ? (builtHere(record) ? "record" : null) : tags.green.has(sha) ? "tag" : null;
+      if (!via) {
+        if (newer.length < LAST_GREEN_NEWER) newer.push({ sha, record: recordSummary(green, record) });
+        continue;
+      }
+      const tag = tags.green.get(sha);
+      commit = { sha, tag: tag ? `${CI_GREEN_TAG_PREFIX}${sha}` : null, tagged: tag?.tagged ?? null, committed: git(top, ["show", "-s", "--format=%cI", sha]), via };
+      break;
+    }
+    return { ...head, workspace, branch: green.branch, ref: from, phase: req.phase ?? null, commit, ignored, newer: commit ? newer : [] };
   } catch (err) {
     if (err instanceof CiGreenError || err instanceof WorkspaceReadError) return { ...head, error: { code: err.code, message: err instanceof WorkspaceReadError ? err.describe() : err.message } };
     throw err;
