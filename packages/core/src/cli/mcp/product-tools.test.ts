@@ -13,7 +13,6 @@ import { McpServer } from "./server";
 import { PRODUCT_MCP_PROPOSE_FLOOR, productToolWriteWord, ProductToolRefusedError, type ProductMcpHook } from "./product-tools";
 import { PROPOSE_INSTRUCTIONS } from "./server";
 import { READ_ONLY_CORE_TOOLS } from "./read-only";
-import { NEXT_RELEASE } from "../../release-floors";
 import * as ciProduct from "../../ci-product";
 import { reportReader, reportToolKey, safeReportKey } from "./report-tools";
 import type { ToolDefinition } from "./types";
@@ -155,7 +154,7 @@ describe("the --propose tier (#4655)", () => {
   });
 
   test("the tier's floor is on @intentius/chant/ci-product for a product to feature-detect", () => {
-    expect(PRODUCT_MCP_PROPOSE_FLOOR).toBe(NEXT_RELEASE);
+    expect(PRODUCT_MCP_PROPOSE_FLOOR).toBe("0.124.58");
     expect(ciProduct.PRODUCT_MCP_PROPOSE_FLOOR).toBe(PRODUCT_MCP_PROPOSE_FLOOR);
     expect(ciProduct.PRODUCT_TOOL_PROPOSE_WORDS).toEqual(["request", "propose"]);
   });
