@@ -81,6 +81,7 @@ export {
   opWavePlanPath,
   opWavePlansPath,
   OP_WAVE_PLAN_PATH_FLOOR,
+  OP_WAVES_PREVIEW_FLOOR,
   opWaveRunsPath,
   opWaveSetDigest,
   parseOpWavesSpec,

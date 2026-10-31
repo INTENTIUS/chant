@@ -60,6 +60,13 @@ describe("generateGithubOpWavesPipeline", () => {
     expect(files[0]!.yaml).toMatch(/permissions:\n\s+contents: write\n\s+pull-requests: read/);
   });
 
+  test("approvals.preview records the head's plans and lets the wave read the merged pull request", () => {
+    const { files } = generateGithubOpWavesPipeline({ ...spec, approvals: { preview: true } }, { specFile: "waves.json" });
+    expect(files.map((f) => f.name)).toEqual([`${spec.name}.yml`, `${spec.name}-plans.yml`]);
+    expect(files[1]!.yaml).toContain("run: chant run wave --spec waves.json --record-plans");
+    expect(files[0]!.yaml).toMatch(/permissions:\n\s+contents: write\n\s+pull-requests: read/);
+  });
+
   test("a wave-level plan and apply, and stage hooks, render the same jobs: chant run wave runs them (#3762)", () => {
     const { plan: _plan, ...rest } = spec;
     const waveLevel: OpWavesSpec = {
