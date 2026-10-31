@@ -86,13 +86,13 @@ Each member carries the value a gate on that member alone binds ([#2300](https:/
 
 | Planner | Member `planDigest` |
 |---|---|
-| `terraform`, `tofu`, `choudoufu` | `terraformPlanDigest` over the `show -json` plan, as `TerraformApplyOp` binds |
+| `terraform`, `tofu`, `choudoufu` | `terraformPlanDigest` over the `show -json` plan, as `TerraformApplyOp` binds. A value the plan marks in `after_unknown` is left out of `after`, and the mark stays in |
 | `chant` | `computePlanDigest("lifecycle-plan", plan)` over the `lifecycle plan --json` document |
 | `warden` | `computePlanDigest("reconcile-plan", …)` over each change set's org and entries, sorted |
 | `sql`, versioned plan | the product's own gate digest when the plan carries `digest` (SQL Yodeler's), else `computePlanDigest("sql-versioned-plan", …)` over the dialect, environment and pending steps |
 | `sql`, migration Op | the Op's plan step `planDigest`, taken before the verification (not the swap or switch gate's value); a swapped or finished Op gets `computePlanDigest("sql-op-plan", …)` over its state |
 | `chant`, a component with no step that has `plan` | `componentPlanDigest` over the environment, the composition and its vars, plus `inputs`, the content digest of each local file its steps deploy from ([#4155](https://github.com/INTENTIUS/chant/issues/4155)), when any exists |
-| `pulumi` | `computePlanDigest("pulumi-preview", …)` over each step's op, URN, provider, id, inputs before and after, `diffReasons`, `replaceReasons` and `detailedDiff`, sorted by URN and op |
+| `pulumi` | `computePlanDigest("pulumi-preview", …)` over each step's op, URN, provider, id, inputs before and after, `diffReasons`, `replaceReasons` and `detailedDiff`, sorted by URN and op. An input the engine made up while planning a create or a replacement, such as an autoname (`events-3f45941`), reads as a fixed marker, so two previews of one create agree. Every other input is kept ([plywood#56](https://github.com/INTENTIUS/plywood/issues/56)) |
 | `chant`, `<component>#inputs` | `computePlanDigest("component-inputs", …)` over the environment, the component and the content digests of the files its steps without `plan` deploy from |
 | any, a member of a group | `computePlanDigest("capability-group-member", { plan, group })` over the member's own digest and the group digest, which is `computePlanDigest("capability-group", { kind, members, composition })` over the capability's kind, each member's component, member and own digest, and the capability's digest of the composition |
 

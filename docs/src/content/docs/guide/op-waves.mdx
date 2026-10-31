@@ -700,7 +700,12 @@ The signers file is read at the base commit, like the policy. A pull request tha
 
 A merged wave plans again in its own job, a while after the pull request's plan was posted and reviewed. With the default gate, `on-destructive`, a change that destroys nothing needs no approval, so nothing compared the new plan with the one the reviewers saw: a record that moved in between was applied as the new plan found it.
 
-`approvals.preview: true` closes that. It is read at the base commit, so a change cannot turn it off for its own merge. Each wave then compares the set digest it plans now with the digest the merged pull request's head recorded for that wave, whatever the wave's gate policy and approval mode. The pull request is the one the forge says produced the applied commit, and the record is the `_wave-plans/<name>/<head>.json` that `--record-plans` wrote on the pull request. The digest covers each run's plan, including the inputs it was made from, so a moved record changes it.
+`approvals.preview: true` closes that. It is read at the base commit, so a change cannot turn it off for its own merge. Each wave then compares the set digest it plans now with the digest the merged pull request's head recorded for that wave, whatever the wave's gate policy and approval mode. The pull request is the one the forge says produced the applied commit, and the record is the `_wave-plans/<name>/<head>.json` that `--record-plans` wrote on the pull request. The digest covers each run's plan, including the inputs it was made from, so a moved record changes it. It leaves out what the engine makes up while planning, which would differ between any two plans of one change:
+
+- stock Pulumi and plunge: an autoname the provider drew for a create or a replacement (`events-3f45941`). The engine lists such an input in the step's `__defaults`. Its value reads as the resource's logical name and seven hex characters. The digest holds one fixed marker for it. A name the program wrote and an update's name stay in, as does every other input and default.
+- tofu and terraform: a value the plan lists in `after_unknown`. The mark stays in, so a value that turns from known to unknown still changes the digest.
+
+Two creates that differ in an input a reviewer saw still have two digests.
 
 | The wave's plans | The wave |
 |---|---|
