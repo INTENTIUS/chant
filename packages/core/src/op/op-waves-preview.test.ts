@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { assertOpWavesSpec, opWavesPostsApprovalStatus, type OpWavesSpec } from "./op-waves";
 import { OP_WAVES_PREVIEW_FLOOR, readOpWavePolicy, runOpWave, type OpWaveExec, type OpWaveShowAtBase } from "./op-waves-run";
 import { memoryGateLedgerPort } from "./gate";
-import { NEXT_RELEASE } from "../release-floors";
 import { waveSetDigest } from "../gated-waves";
 import type { HeadPlanMember, HeadPlans, MergedReview, ReviewSource } from "./gate-review";
 import { movedSincePreview, shortAddress } from "./op-waves-preview";
@@ -162,8 +161,8 @@ describe("a wave applies the plans its pull request previewed (approvals.preview
 });
 
 describe("the setting", () => {
-  test("its floor is the next release", () => {
-    expect(OP_WAVES_PREVIEW_FLOOR).toBe(NEXT_RELEASE);
+  test("its floor is the release that shipped it", () => {
+    expect(OP_WAVES_PREVIEW_FLOOR).toBe("0.124.59");
   });
 
   test("is a boolean, is read at base, and makes the head record its plans", () => {
