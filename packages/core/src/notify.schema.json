@@ -8,7 +8,7 @@
   "properties": {
     "schema": { "const": "chant.notify/v1" },
     "id": { "type": "string", "minLength": 1, "description": "The same for every send of one event about one digest (else drift fingerprint, else commit), so a receiver can drop a repeat; random when there is none. The delivery header carries it too." },
-    "event": { "enum": ["waiting", "refused", "failed", "drift"] },
+    "event": { "enum": ["waiting", "refused", "failed", "drift", "ci.red", "ci.culprit", "ci.green"], "description": "The ci. events come from chant ci tick (#4645) and carry ci." },
     "at": { "type": "string", "description": "When it was sent, ISO 8601 UTC." },
     "source": { "type": "string", "minLength": 1, "description": "The product that sent it: chant, terragucci, sql-yodeler." },
     "project": { "type": "string", "description": "What the run belongs to: the repository, or a name the product gives." },
@@ -61,6 +61,22 @@
         "repository": { "type": "string" },
         "commit": { "type": "string" },
         "pr": { "type": "integer" }
+      }
+    },
+    "ci": {
+      "type": "object",
+      "description": "On ci.red, ci.culprit and ci.green (#4645): the branch and commit. ci.red: the newest decided commit, red after its one retry, with phase and failedRun. ci.culprit: culprit, the first red commit a bisect found for the red commit. ci.green: red, the commit whose ci.red this answers.",
+      "required": ["branch", "commit"],
+      "properties": {
+        "branch": { "type": "string" },
+        "commit": { "type": "string" },
+        "phase": { "type": "string" },
+        "failedRun": {
+          "type": "object",
+          "properties": { "name": { "type": "string" }, "id": { "type": ["integer", "null"] }, "conclusion": { "type": ["string", "null"] }, "url": { "type": ["string", "null"] } }
+        },
+        "culprit": { "type": "string" },
+        "red": { "type": "string" }
       }
     },
     "reportUrl": { "type": "string" },

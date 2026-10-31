@@ -39,8 +39,8 @@ export const NOTIFY_SCHEMA = "chant.notify/v1";
 /** The JSON Schema's `$id`. */
 export const NOTIFY_SCHEMA_ID = "https://intentius.io/chant/schemas/notify/v1/notify.schema.json";
 
-/** What happened. */
-export const NOTIFY_EVENTS = ["waiting", "refused", "failed", "drift"] as const;
+/** What happened. The `ci.` events come from `chant ci tick` (#4645): a branch red after its retry, a bisect's culprit, the branch green again. */
+export const NOTIFY_EVENTS = ["waiting", "refused", "failed", "drift", "ci.red", "ci.culprit", "ci.green"] as const;
 export type NotifyEventKind = (typeof NOTIFY_EVENTS)[number];
 
 /** Where the run is: the CI run's page, the forge, the repository and commit. */
@@ -93,11 +93,29 @@ export interface NotifyEvent {
   exitCode?: number;
   /** On `drift`: what moved. */
   drift?: { changed: string[]; missing?: string[]; failed?: string[]; fingerprint?: string };
+  /** On the `ci.` events (#4645): the branch and commit, and what failed or what was red. */
+  ci?: NotifyCi;
   run?: NotifyRun;
   /** A report page for the run. */
   reportUrl?: string;
   /** The product's own record of the outcome, carried whole for programs that know it. */
   detail?: Record<string, unknown>;
+}
+
+/**
+ * The tick's part of a `ci.` event (#4645). `ci.red`: `commit` is the
+ * branch's newest decided commit, red after its one retry, with the phase and
+ * run that failed. `ci.culprit`: `culprit` is the first red commit a bisect
+ * found, for the red `commit`. `ci.green`: `commit` is green, and `red` the
+ * commit whose `ci.red` this answers.
+ */
+export interface NotifyCi {
+  branch: string;
+  commit: string;
+  phase?: string;
+  failedRun?: { name: string; id: number | null; conclusion: string | null; url: string | null };
+  culprit?: string;
+  red?: string;
 }
 
 /** What a product fills in; {@link makeNotifyEvent} adds the rest. */
@@ -158,6 +176,9 @@ const HEADLINE: Record<NotifyEventKind, string> = {
   refused: "was refused",
   failed: "failed",
   drift: "drifted",
+  "ci.red": "is red",
+  "ci.culprit": "has a culprit",
+  "ci.green": "is green again",
 };
 
 /** The first line of every chat message: `<source>: <summary>`, or what happened to what when there is no summary. */
@@ -176,6 +197,13 @@ function facts(e: NotifyEvent): { title: string; value: string; link?: string }[
     if (e.drift.missing?.length) out.push({ title: "Missing", value: e.drift.missing.join(", ") });
     if (e.drift.failed?.length) out.push({ title: "Not refreshed", value: e.drift.failed.join(", ") });
   } else if (e.targets.length > 0) out.push({ title: "Targets", value: e.targets.join(", ") });
+  if (e.ci) {
+    out.push({ title: "Commit", value: `${e.ci.commit.slice(0, 12)} on ${e.ci.branch}` });
+    if (e.ci.phase) out.push({ title: "Phase", value: e.ci.failedRun ? `${e.ci.phase}: ${e.ci.failedRun.name} ${e.ci.failedRun.conclusion ?? ""}`.trimEnd() : e.ci.phase });
+    if (e.ci.failedRun?.url) out.push({ title: "Failed run", value: e.ci.failedRun.url, link: e.ci.failedRun.url });
+    if (e.ci.culprit) out.push({ title: "Culprit", value: e.ci.culprit.slice(0, 12) });
+    if (e.ci.red) out.push({ title: "Was red", value: e.ci.red.slice(0, 12) });
+  }
   if (e.digest) out.push({ title: "Digest", value: e.digest });
   if (e.approve) out.push({ title: e.approve.review ? "Or approve" : "Approve", value: e.approve.command });
   if (e.reason) out.push({ title: "Reason", value: e.reason });

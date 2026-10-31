@@ -94,6 +94,12 @@ export interface CiRecord {
   request?: { tag: string; reason: BuildRequestReason; phases: string[]; at: string; dispatched?: true };
   /** The `every` phases a `missing` request asked for, and when (#4216). A commit is asked for once. */
   missing?: { phases: string[]; at: string };
+  /**
+   * What the tick told people about this commit through `ci.green.notify`
+   * (#4645), so it tells them once: when it sent `ci.red`, the culprit it
+   * sent `ci.culprit` for, and the green commit whose `ci.green` answered it.
+   */
+  notified?: { red?: string; culprit?: string; green?: string };
 }
 
 export interface CiRecordRun {
@@ -292,6 +298,7 @@ export function recordOf(input: { green: CiGreen; commit: TickCommit; previous?:
   const missing = req?.reason === "missing" ? { phases: req.phases, at: req.at } : previous?.missing;
   const extras = {
     ...(Object.keys(retried).length > 0 ? { retried } : {}),
+    ...(previous?.notified ? { notified: previous.notified } : {}),
     ...(req ? { request: { tag: req.tag, reason: req.reason, phases: req.phases, at: req.at } } : {}),
     ...(missing ? { missing } : {}),
   };
