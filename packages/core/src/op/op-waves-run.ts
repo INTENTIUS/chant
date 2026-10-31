@@ -82,6 +82,7 @@ import type { GatePointAsker } from "../point-decision";
 import type { WaitingPoint } from "./steward-points";
 import { isApprovalSpent, type AppliedGateRecord, type FinishedGateRecord } from "../lifecycle/gate-applied";
 import { samePlanDigest } from "../lifecycle/plan-digest";
+import { NEXT_RELEASE } from "../release-floors";
 import { isLifecycleLocalNote } from "../lifecycle/local-note";
 import type { HeadPlans, MergedReview, ReviewSource } from "./gate-review";
 import type { TrustPolicy } from "../workspace/trust/policy";
@@ -357,6 +358,8 @@ export interface OpWaveDecision {
   waitingSince?: string;
   /** While waiting: the newest approval of this gate for another digest, which the plans moved away from. */
   mismatch?: GateDigestMismatch;
+  /** Under `approvals.preview` at base: what the merged pull request's head recorded for this wave, and how the plans now compare with it. */
+  preview?: OpWavePreview;
   /**
    * Why a `refused` wave applies nothing: the runs the policy denied, and
    * whether an override stands for an earlier plan or other rules (#3821,
@@ -364,7 +367,7 @@ export interface OpWaveDecision {
    * it does not pass on (#3836, exit 8), with every run and the `message`.
    */
   refused?: {
-    reason: "policy" | "override-moved" | "point";
+    reason: "policy" | "override-moved" | "point" | "moved";
     runs: string[];
     message?: string;
     /** Where the plans file said its overriders come from (#3848), when it did. */
@@ -389,6 +392,28 @@ export interface OpWaveDecision {
    * workspace at base, or no policy ran.
    */
   ciPolicySource?: ResolvedGatePolicySource;
+}
+
+/**
+ * The plans the merged pull request previewed for a wave, against the plans
+ * the wave made now. `matched`: the same set digest, so the wave applies
+ * what the pull request showed. `moved`: the head recorded another digest,
+ * so a record moved since. `unrecorded`: nothing was recorded to compare
+ * with (no merged pull request, no record for its head, or none for this
+ * wave).
+ */
+export interface OpWavePreview {
+  status: "matched" | "moved" | "unrecorded";
+  /** The pull request that merged the applied commit. */
+  pr?: number;
+  /** Its head commit, which `--record-plans` recorded the plans at. */
+  head?: string;
+  /** The digest the head recorded for this wave. */
+  recorded?: string;
+  /** Why the plans do not match, for `moved` and `unrecorded`. */
+  reason?: string;
+  /** Set when an approval of the digest planned now let a wave that did not match apply. */
+  approvedAnyway?: true;
 }
 
 /**
@@ -584,6 +609,8 @@ export interface OpWaveBaseRules {
   holdsRefused?: string;
   /** `approvals.pullRequest.gate` at base (#4550): the pull request's gate a `pull-request` wave takes its approval from. */
   pullRequestGate?: string;
+  /** `approvals.preview` at base: the wave applies what the merged pull request's head recorded, or refuses (exit 4). */
+  preview?: boolean;
 }
 
 const noHooks = (): Record<OpWaveHookMoment, OpWaveHook[]> =>
@@ -616,7 +643,7 @@ export function readOpWavePolicy(
   const spend = (spec as { approvals?: { spend?: unknown } }).approvals?.spend === true;
   const neverOverMcp = (spec as { neverOverMcp?: unknown }).neverOverMcp === true;
   // #3836: the gate's decision point, the spec's for a wave the base does not have yet.
-  const asks = { ...pointAtBase(spec, name, `${specFile} at ${sha.slice(0, 12)}`), ...quorumAtBase(spec, `${specFile} at ${sha.slice(0, 12)}`), ...holdsAtBase(spec, `${specFile} at ${sha.slice(0, 12)}`), ...pullRequestGateAtBase(spec) };
+  const asks = { ...pointAtBase(spec, name, `${specFile} at ${sha.slice(0, 12)}`), ...quorumAtBase(spec, `${specFile} at ${sha.slice(0, 12)}`), ...holdsAtBase(spec, `${specFile} at ${sha.slice(0, 12)}`), ...pullRequestGateAtBase(spec), ...(spec.approvals?.preview === true ? { preview: true } : {}) };
   const wave = spec.waves.find((w) => w.name === name);
   if (!wave) return { ...absent, spend, neverOverMcp, ...asks };
   const policy = wave.gate ?? "always";
@@ -679,6 +706,9 @@ function pointAtBase(spec: OpWavesSpec, name: string, where: string): Pick<OpWav
   if (problems.length > 0) return { pointRefused: `the decision point at base cannot be asked (${where}: ${problems.join("; ")})` };
   return { point: opWavePointAt(spec, name)! };
 }
+
+/** The first chant whose Op waves spec takes `approvals.preview`: a merged wave applies the plans its pull request previewed, or exits 4. */
+export const OP_WAVES_PREVIEW_FLOOR = NEXT_RELEASE;
 
 /** The first chant whose op entry exports {@link opWavePlanPath} (terragucci#1304). */
 export const OP_WAVE_PLAN_PATH_FLOOR = "0.124.56";
@@ -1935,7 +1965,7 @@ function opWaveRunStatus(result: RunOpWaveResult): { status: OpRunRecordInput["s
     case CHANT_EXIT.waiting:
       return { status: d?.point?.question ? "waiting" : "gated" };
     case CHANT_EXIT.moved:
-      return { status: "fail", failure: { code: "moved", reason: `plans moved since the decision: ${result.moved.join(", ") || "(none named)"}` } };
+      return { status: "fail", failure: { code: "moved", reason: d?.refused?.reason === "moved" ? d.refused.message ?? "the plans are not the ones the pull request previewed" : `plans moved since the decision: ${result.moved.join(", ") || "(none named)"}` } };
     case CHANT_EXIT.denied:
       return { status: "fail", failure: { code: "denied", reason: d?.refused?.message ?? `the policy denied ${d?.refused?.runs.join(", ") ?? "a run"}, and no override counts` } };
     case CHANT_EXIT.declined:
@@ -2241,12 +2271,12 @@ function writeOpWaveOutcome(options: RunOpWaveOptions, dir: string, result: RunO
     const otherwise: WaveMemberOutcome["status"] =
       result.exitCode === 0 ? (options.decide ? "decided" : "unchanged")
       : result.exitCode === CHANT_EXIT.waiting ? "waiting"
-      : result.exitCode === CHANT_EXIT.denied || result.exitCode === CHANT_EXIT.declined ? "refused"
+      : result.exitCode === CHANT_EXIT.denied || result.exitCode === CHANT_EXIT.declined || result.decision?.refused?.reason === "moved" ? "refused"
       : result.exitCode >= CHANT_EXIT.moved && result.exitCode <= CHANT_EXIT.superseded ? "not-applied"
       : "failed";
     for (const t of targets) {
       const by = result.blocked?.[t];
-      out[t] = by !== undefined ? { status: "blocked", by } : applied.has(t) ? { status: "applied" } : failed.has(t) ? { status: "failed" } : moved.has(t) ? { status: "not-applied" } : { status: otherwise };
+      out[t] = by !== undefined ? { status: "blocked", by } : applied.has(t) ? { status: "applied" } : failed.has(t) ? { status: "failed" } : moved.has(t) && result.decision?.refused?.reason !== "moved" ? { status: "not-applied" } : { status: otherwise };
     }
   }
   const part = { ...(options.group !== undefined ? { group: options.group } : {}), ...(options.share !== undefined ? { share: options.share } : {}) };
@@ -2354,7 +2384,7 @@ async function planOpWave(options: RunOpWaveOptions, { k, pass }: WaveAttempt<Ru
     result.decision = decision;
     ctx.gateRule = { approval: decision.approval, base: decision.base, neverOverMcp: decision.neverOverMcp === true };
     if (decision.status === "waiting" || decision.status === "refused") {
-      log(`wave ${k} (${wave.name}) is ${decision.status === "refused" ? "refused by its policy" : `waiting on ${decision.heldOn?.gate ?? decision.gate}`}; nothing applied. ${decision.approve ?? ""}`.trim());
+      log(`wave ${k} (${wave.name}) is ${decision.status === "refused" ? (decision.refused?.reason === "moved" ? "refused, its plans moved since the pull request previewed them" : "refused by its policy") : `waiting on ${decision.heldOn?.gate ?? decision.gate}`}; nothing applied. ${decision.approve ?? ""}`.trim());
       return { end: { ...result, exitCode: decision.status === "refused" ? refusedExit(decision) : CHANT_EXIT.waiting } };
     }
     // The share runs the hooks its deciding job read at base, around its own slice.
@@ -2560,12 +2590,26 @@ async function decideOpWave(
     if (was.overridesSpentAt) decision.overridesSpentAt = was.overridesSpentAt;
   }
   if (members.some((m) => m.denied && !m.override)) await settleDenials(ctx, decision, overriders, overridersSource);
+  // `approvals.preview` at base: the merged wave applies what the pull request previewed. Planned again to a digest this job already let through, it has been judged.
+  let unseen = false;
+  if (planned.rules.preview && !kept && decision.status !== "refused") {
+    const seen = await previewOf(options, ctx, digest);
+    if ("error" in seen) return { end: failed(ctx, `wave ${k} (${wave.name}): ${seen.error}, so it cannot be compared with what the pull request previewed and nothing in it was applied`) };
+    decision.preview = seen.preview;
+    unseen = seen.preview.status !== "matched";
+    if (!unseen) log(`wave ${k} (${wave.name}): the plans are the ones pull request #${seen.preview.pr} previewed at ${seen.preview.head?.slice(0, 12)} (${digest})`);
+    else log(`wave ${k} (${wave.name}): ${seen.preview.reason}`);
+  }
   if (kept && was.status === "approved" && decision.status !== "refused") {
     // #3821: planned again after the apply asked to, to the same digest: the approval this job found still holds, and is not spent twice.
     for (const key of ["via", "approvedBy", "approvedAt", "review", "spentAt"] as const) if (was[key] !== undefined) (decision as unknown as Record<string, unknown>)[key] = was[key];
     decision.status = "approved";
     log(`wave ${k} (${wave.name}): planned again to the same digest, so the approval by ${was.approvedBy} still holds`);
-  } else if (decision.status !== "refused" && (opWaveNeedsApproval(policy, members) || holds.length > 0)) await settleGate(options, ctx, decision);
+  } else if (decision.status !== "refused" && (unseen || opWaveNeedsApproval(policy, members) || holds.length > 0)) {
+    await settleGate(options, ctx, decision);
+    // Plans nobody previewed apply only under an approval of these very plans, whatever the gate policy says.
+    if (unseen) refuseUnseen(ctx, decision);
+  }
   const code = await decided(ctx, decision, recordPath);
   if (code.exitCode !== 0) return { end: code };
   log(
@@ -2581,6 +2625,66 @@ async function decideOpWave(
     return { end: result };
   }
   return { go: { runs: wave.runs, earlierHolds: [], recordPath } };
+}
+
+/**
+ * Compare the wave's set digest with the one the merged pull request's head
+ * recorded for it (`--record-plans`): the plans its reviewers saw. The pull
+ * request is the one the forge says produced the applied commit. Resolves to
+ * `error` only when the forge or the ledger cannot be read, which fails the
+ * wave: a missing answer never stands in for a match.
+ */
+async function previewOf(options: RunOpWaveOptions, ctx: WaveContext, digest: string): Promise<{ preview: OpWavePreview } | { error: string }> {
+  const { spec, k, cwd } = ctx;
+  const review = await import("./gate-review");
+  const head = options.head ?? execFileSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf-8" }).trim();
+  let merged: MergedReview | null;
+  try {
+    merged = await (options.reviews ?? review.reviewSourceFromEnv()).mergedReview(head);
+  } catch (err) {
+    return { error: `the merged pull request could not be read from the forge (${err instanceof Error ? err.message : String(err)})` };
+  }
+  if (!merged) return { preview: { status: "unrecorded", reason: `no merged pull request produced ${head.slice(0, 12)}, so no plans were previewed for it` } };
+  let plans: HeadPlans | null;
+  try {
+    plans = await (options.headPlans ?? ((name, h) => readHeadPlans(name, h, cwd)))(spec.name, merged.head);
+  } catch (err) {
+    return { error: `the plans recorded for #${merged.pr} could not be read (${err instanceof Error ? err.message : String(err)})` };
+  }
+  const seen = { pr: merged.pr, head: merged.head };
+  const recorded = plans?.waves.find((w) => w.wave === k)?.digest;
+  if (recorded === undefined) {
+    return { preview: { status: "unrecorded", ...seen, reason: `no plans are recorded for wave ${k} at the head ${merged.head.slice(0, 12)} of #${merged.pr} (its pipeline runs \`chant run wave --record-plans\`), so nothing was previewed` } };
+  }
+  if (!samePlanDigest(recorded, digest)) {
+    return {
+      preview: {
+        status: "moved",
+        ...seen,
+        recorded,
+        reason: `the plans moved since #${merged.pr} previewed them: the head ${merged.head.slice(0, 12)} planned ${recorded}, and the merge plans ${digest}`,
+      },
+    };
+  }
+  return { preview: { status: "matched", ...seen, recorded } };
+}
+
+/**
+ * The gate was asked about plans the pull request did not preview. An
+ * approval of exactly these plans lets the wave apply, since a person saw
+ * them; with none, the wave is refused as moved (exit 4) and the approval
+ * that would let it through is named.
+ */
+function refuseUnseen(ctx: WaveContext, decision: OpWaveDecision): void {
+  const preview = decision.preview!;
+  if (decision.status === "approved") {
+    preview.approvedAnyway = true;
+    ctx.log(`wave ${ctx.k} (${ctx.wave.name}): ${preview.reason}; it applies under the approval of ${decision.digest} by ${decision.approvedBy}`);
+    return;
+  }
+  const how = decision.approve ? ` Approve these plans to apply them: ${decision.approve}` : "";
+  decision.status = "refused";
+  decision.refused = { reason: "moved", runs: decision.members.map((m) => m.member).sort(), message: `${preview.reason}.${how}` };
 }
 
 /** Apply a decided wave, or a share's unmoved runs (exit 4 when any moved). */
@@ -2616,6 +2720,10 @@ async function decided(ctx: WaveContext, decision: OpWaveDecision, recordPath: s
   if (decision.status === "refused" && decision.refused?.reason === "point") {
     log(`Nothing in wave ${k} (${wave.name}) or after it ran: ${decision.refused.message}`);
     return { ...result, exitCode: CHANT_EXIT.declined };
+  }
+  if (decision.status === "refused" && decision.refused?.reason === "moved") {
+    log(`Nothing in wave ${k} (${wave.name}) or after it ran: ${decision.refused.message}`);
+    return { ...result, moved: [...decision.refused.runs], exitCode: CHANT_EXIT.moved };
   }
   if (decision.status === "refused") {
     log(`Nothing in wave ${k} (${wave.name}) or after it ran: the policy denied ${decision.refused?.runs.join(", ")}, and no override counts for ${decision.refused?.runs.length === 1 ? "it" : "them"}.`);
@@ -2787,7 +2895,7 @@ async function spendOverrides(ctx: WaveContext, decision: OpWaveDecision): Promi
 
 /** The exit code of a refused wave: 8 when its decision point refused it (#3836), 7 when the product's policy did (#3821). */
 function refusedExit(decision: OpWaveDecision): number {
-  return decision.refused?.reason === "point" ? CHANT_EXIT.declined : CHANT_EXIT.denied;
+  return decision.refused?.reason === "point" ? CHANT_EXIT.declined : decision.refused?.reason === "moved" ? CHANT_EXIT.moved : CHANT_EXIT.denied;
 }
 
 function failed(ctx: WaveContext, line: string): RunOpWaveResult {

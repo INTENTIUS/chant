@@ -135,7 +135,8 @@ export function buildGithubOpWavesDoc(
   const forge = dialect.forge ?? "github";
   const product = resolveProductWords(options.words ?? {}).product;
   const image = options.image ?? OP_WAVES_IMAGE;
-  const byReview = spec.waves.some((w) => w.approval === "pr-review");
+  // `approvals.preview` reads the merged pull request from the forge, as a pr-review wave does.
+  const byReview = spec.approvals?.preview === true || spec.waves.some((w) => w.approval === "pr-review");
   // #4630: a pr-review or pull-request wave gets the plans workflow and its approval status.
   const statusBeforeMerge = opWavesPostsApprovalStatus(spec);
   for (const wave of spec.waves) {

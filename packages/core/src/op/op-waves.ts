@@ -692,6 +692,17 @@ export interface OpWavesOverride {
 /** What happens to an approval once a wave applies under it (#3784). */
 export interface OpWavesApprovals {
   /**
+   * Apply what the pull request previewed, or refuse. With `preview: true`
+   * (read at the base commit, like the policy) a merged wave compares the
+   * set digest it plans now with the digest the merged pull request's head
+   * recorded for it (`chant run wave --record-plans`), whatever its gate
+   * policy and approval mode, and applies only on a match. A different
+   * digest, or no record to compare with, refuses the wave with the moved
+   * code (4) unless an approval of the digest it plans now stands. Default
+   * false: a wave that needs no approval applies what it plans.
+   */
+  preview?: boolean;
+  /**
    * Spend it. Before a wave applies under an approval it records that in
    * `_gates/<name>/applied.jsonl` on `chant/lifecycle`, and from then on the
    * approval counts for nothing: applying the same digest again, by a re-run
@@ -802,8 +813,9 @@ export const OP_WAVES_APPROVAL_STATUS_VAR = "CHANT_APPROVAL_STATUS";
  * from the pull request, by its review (`pr-review`) or by its own approval
  * (`pull-request`, under the 2026-10-28 ruling).
  */
-export function opWavesPostsApprovalStatus(spec: Pick<OpWavesSpec, "waves">): boolean {
-  return spec.waves.some((w) => w.approval === "pr-review" || w.approval === "pull-request");
+export function opWavesPostsApprovalStatus(spec: Pick<OpWavesSpec, "waves" | "approvals">): boolean {
+  // `approvals.preview` compares the merged wave with the head's recorded plans, so the head must record them.
+  return spec.approvals?.preview === true || spec.waves.some((w) => w.approval === "pr-review" || w.approval === "pull-request");
 }
 
 /**
@@ -954,7 +966,12 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
         }
         continue;
       }
-      if (key !== "spend") throw new Error(`${where}: approvals.${key} is not a setting; the ones there are approvals.spend, approvals.quorum, approvals.reviewLedger, approvals.involved and approvals.pullRequest.`);
+      if (key === "preview") {
+        // The pull request's recorded plans are what the merged wave applies, read at base.
+        if (typeof value !== "boolean") throw new Error(`${where}: approvals.preview must be true or false.`);
+        continue;
+      }
+      if (key !== "spend") throw new Error(`${where}: approvals.${key} is not a setting; the ones there are approvals.spend, approvals.preview, approvals.quorum, approvals.reviewLedger, approvals.involved and approvals.pullRequest.`);
       if (typeof value !== "boolean") throw new Error(`${where}: approvals.spend must be true or false.`);
     }
     if ((a as OpWavesApprovals).quorum?.length && (spec.point !== undefined || spec.waves.some((w) => w.point !== undefined))) {

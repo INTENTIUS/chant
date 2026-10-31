@@ -114,6 +114,17 @@ export function opWaveNotifyFields(
       reason: result.outcome.reason ?? `another run${holder ? `, ${holder.run},` : ""} holds what the apply changes; apply again once it is done`,
     };
   }
+  if (result.exitCode === CHANT_EXIT.moved && decision?.refused?.reason === "moved") {
+    // The plans moved since the pull request previewed them (`approvals.preview`), or were never previewed.
+    return {
+      ...base,
+      event: "refused",
+      status: "moved",
+      summary: `${label} refused: ${decision.preview?.status === "unrecorded" ? "its plans were not previewed" : "its plans moved since the pull request previewed them"}`,
+      targets: decision.refused.runs,
+      reason: decision.refused.message ?? "the plans are not the ones the pull request previewed, so nothing was applied",
+    };
+  }
   if (result.exitCode === CHANT_EXIT.moved) {
     return {
       ...base,

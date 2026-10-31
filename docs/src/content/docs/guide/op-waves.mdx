@@ -39,7 +39,7 @@ The spec is a JSON file committed to the repository. Its jobs read it at run tim
 | `planWave` | Plans every run of a wave in one call ([Plan a wave in one call](#plan-a-wave-in-one-call)) |
 | `applyWave` | Applies a wave's approved set in one call, in place of `apply` |
 | `hooks` | Commands run before and after each wave's plan and apply, read at the base commit ([Stage hooks](#stage-hooks)). `hooks.apply.runBy: "apply"` has the apply command run the apply-stage hooks under its own lock ([Hooks under the apply's lock](#hooks-under-the-applys-lock)) |
-| `approvals` | `{ "spend": true }` makes an approval good for one apply ([Spend an approval](#spend-an-approval)). Read at the base commit |
+| `approvals` | `{ "spend": true }` makes an approval good for one apply ([Spend an approval](#spend-an-approval)). `{ "preview": true }` makes a merged wave apply the plans its pull request previewed, or refuse ([Apply what the pull request previewed](#apply-what-the-pull-request-previewed)). Read at the base commit |
 | `gate` | The base gate name. Default: `name` |
 | `gateName` | The pattern of wave k's gate name: `{gate}` and `{k}` are filled in. Default `{gate}-wave-{k}` ([Keep a product's gate names](#keep-a-products-gate-names)) |
 | `digest` | `{ "over": "changing" }` makes the set digest cover only the runs whose plan is not empty. Default `{ "over": "all" }` |
@@ -696,6 +696,25 @@ The signers file is read at the base commit, like the policy. A pull request tha
 
 `approvals.quorum` asks for more approvers, or approvers with a role, on the waves whose targets a glob names. It is read at base. See [Approval Rules](/chant/guide/approval-rules/).
 
+## Apply what the pull request previewed
+
+A merged wave plans again in its own job, a while after the pull request's plan was posted and reviewed. With the default gate, `on-destructive`, a change that destroys nothing needs no approval, so nothing compared the new plan with the one the reviewers saw: a record that moved in between was applied as the new plan found it.
+
+`approvals.preview: true` closes that. It is read at the base commit, so a change cannot turn it off for its own merge. Each wave then compares the set digest it plans now with the digest the merged pull request's head recorded for that wave, whatever the wave's gate policy and approval mode. The pull request is the one the forge says produced the applied commit, and the record is the `_wave-plans/<name>/<head>.json` that `--record-plans` wrote on the pull request. The digest covers each run's plan, including the inputs it was made from, so a moved record changes it.
+
+| The wave's plans | The wave |
+|---|---|
+| the same digest the head recorded | goes on as before: the gate policy and approval mode decide whether it needs an approval, and a destructive change still waits for one |
+| another digest (a record moved after the preview) | applies nothing and exits 4. The decision is `refused` with `refused.reason: "moved"`, `preview.status: "moved"`, and the recorded and current digests in the message |
+| nothing to compare with: no merged pull request produced the commit, no record exists for its head, or none for this wave | applies nothing and exits 4, with `preview.status: "unrecorded"` |
+| either of the two above, and an approval of the digest planned now stands | applies under that approval, and the decision says `preview.approvedAnyway` |
+
+A refused wave names the command that approves the plans it made. Someone who has read those plans approves them (`chant approve`, counted under the wave's approval mode and quorum) and starts the job again. A `pr-review` review never covers plans that moved: the review approves the digest the head planned. A forge or a ledger that cannot be read fails the wave (exit 1); no unreadable answer stands in for a match. A wide wave's deciding job makes the comparison, and its share jobs end with 4 on a refused decision.
+
+The wave applies the plans it made in its own job and compared. chant does not store a product's plan file, which can hold secrets, so the match is by digest. The engine's own check at apply still fires on the plan the job made: a `step` run whose saved plan the target moved under exits 4, and an `apply` command that refuses a stale plan (tofu's stale saved plan, plunge's exit 40) fails the run, as it did before.
+
+The pull request's pipeline has to record plans. A spec with `approvals.preview` gets the record-plans job and the approval status job, and its wave jobs ask for `pull-requests: read` on GitHub. A product that renders its own workflows runs `chant run wave --spec <file> --record-plans` on each pull request. The `pull-request` approval mode checks a change set instead, and a wave under it that sets `preview` is checked by both.
+
 ## Ask a decision point
 
 A wave whose gate should be decided by a workspace [decision point](/chant/guide/ops/#a-gate-that-asks-a-decision-point), the way an Op gate with a `point` is, names the point on the spec, or on one wave:
@@ -950,7 +969,7 @@ With `notify` in the spec, a job that exits 1, 3, 4 or 7 also posts an event say
 | 0 | The wave applied, or the deciding job decided it may apply |
 | 1 | A plan, an apply or a hook failed |
 | 3 | The wave is waiting for an approval of its set digest, because its policy or a hook holds it; nothing in it was applied |
-| 4 | A share job, or a job group's job, refused a run whose plan moved since the decision |
+| 4 | A share job, or a job group's job, refused a run whose plan moved since the decision. Under `approvals.preview`, a wave refused plans that are not the ones its pull request previewed |
 | 5 | The apply applied nothing: another run holds what it changes |
 | 6 | The apply stood down for a newer run |
 | 7 | The product's policy denied a run and no override counts for it; nothing in the wave was applied |
