@@ -300,3 +300,23 @@ describe("signed ci tags (#4031)", () => {
     expect(lastGreen({ cwd: root, from: "nope" })).toMatchObject({ error: { code: "revision-unknown" } });
   });
 });
+
+describe("a lane's signed tag (#4662)", () => {
+  test("counts only as its own lane's tag, never as ci/green or another lane's", () => {
+    const sha = "a".repeat(40);
+    const signed = greenAnnotation(GREEN_DECL, sha, evaluateCommit(GREEN_DECL, PASSING), NOW, { principal: "ci-bot", key: createPrivateKey(BOT.pem), publicKey: BOT.ssh }, "server");
+    const record = JSON.parse(signed.slice(signed.indexOf("{"))) as Record<string, unknown>;
+    expect(signed.split("\n")[0]).toBe("ci: every phase of lane server passed (lint, test)");
+    expect(record.lane).toBe("server");
+    const runners = [{ principal: "ci-bot", class: "runner" as const, key: BOT.ssh }];
+    const roles = { runner: ["ci-bot"] };
+    expect(verifyCiTagStatement(record, { sha, kind: "green", branch: "main", lane: "server" }, runners, roles)).toMatchObject({ status: "signed", signer: "ci-bot" });
+    // Copied onto ci/green/<sha>, or onto another lane's tag, the statement doesn't match.
+    expect(verifyCiTagStatement(record, { sha, kind: "green", branch: "main" }, runners, roles)).toMatchObject({ status: "mismatch", reason: expect.stringContaining("it signs lane server's tag, not ci/green") });
+    expect(verifyCiTagStatement(record, { sha, kind: "green", branch: "main", lane: "app" }, runners, roles)).toMatchObject({ status: "mismatch", reason: expect.stringContaining("not lane app's") });
+    // And a ci/green statement doesn't count as a lane's.
+    const plain = greenAnnotation(GREEN_DECL, sha, evaluateCommit(GREEN_DECL, PASSING), NOW, { principal: "ci-bot", key: createPrivateKey(BOT.pem), publicKey: BOT.ssh });
+    const plainRecord = JSON.parse(plain.slice(plain.indexOf("{"))) as Record<string, unknown>;
+    expect(verifyCiTagStatement(plainRecord, { sha, kind: "green", branch: "main", lane: "server" }, runners, roles)).toMatchObject({ status: "mismatch", reason: expect.stringContaining("not lane server's") });
+  });
+});

@@ -286,12 +286,13 @@ CI:
                         statuses, and each identity trusted to its own jobs.
                         Read-only; exits 1 on a mismatch, and with
                         --require-clouds on a cloud it had no credentials for.
-  ci last-green [--json] [--from <rev>]  The newest first-parent commit of
+  ci last-green [--json] [--lane <name>] [--from <rev>]  The newest first-parent commit of
                         ci.green's branch, or of --from, with a ci/green tag
-                        and no ci/revoked tag. Reads local tags only; fetch
+                        and no ci/revoked tag (with --lane, the lane's
+                        ci/green-<lane> tags). Reads local tags only; fetch
                         them first. With ci.green.signedSince, a tag without a
                         valid runner statement is ignored and reported.
-  ci base [--json] [--phase <name>] [--from <rev>]  The commit a path filter
+  ci base [--json] [--phase <name> | --lane <name>] [--from <rev>]  The commit a path filter
                         diffs against under build: newest: the newest
                         first-parent ancestor of --from (HEAD) whose record
                         shows the phase (or every required phase) built and

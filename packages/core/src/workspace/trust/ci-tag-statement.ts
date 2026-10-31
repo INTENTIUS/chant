@@ -113,11 +113,11 @@ const normalise = (name: string): string => name.normalize("NFKC").trim().toLowe
  */
 export function verifyCiTagStatement(
   record: Record<string, unknown> | null,
-  expect: { sha: string; kind: "green" | "revoked"; branch: string },
+  expect: { sha: string; kind: "green" | "revoked"; branch: string; lane?: string },
   runners: readonly RunnerKey[],
   roles: Readonly<Record<string, readonly string[]>>,
 ): CiTagVerdict {
-  const tag = `ci/${expect.kind}/${expect.sha}`;
+  const tag = `ci/${expect.kind}${expect.lane !== undefined ? `-${expect.lane}` : ""}/${expect.sha}`;
   if (record === null) return { status: "unsigned", reason: `${tag} has no JSON record in its annotation, so it carries no statement (a lightweight tag, or one made by hand)` };
   const { statement: envelope, ...fields } = record;
   if (envelope === undefined) return { status: "unsigned", reason: `${tag} carries no statement signed by a runner key` };
@@ -145,6 +145,9 @@ export function verifyCiTagStatement(
   if (p.record.commit !== expect.sha) differs.push(`its record names commit ${p.record.commit.slice(0, 12)}`);
   if (p.record.tag !== expect.kind) differs.push(`it signs a ${p.record.tag} tag`);
   if (p.record.branch !== expect.branch) differs.push(`it is for branch ${p.record.branch}, and ci.green names ${expect.branch}`);
+  // #4662: a lane's statement says its lane, so it never counts as ci/green or as another lane's tag.
+  const signedLane = typeof (p.record as { lane?: unknown }).lane === "string" ? ((p.record as { lane?: string }).lane as string) : undefined;
+  if (signedLane !== expect.lane) differs.push(signedLane === undefined ? `it signs a ci/${p.record.tag} tag, not lane ${expect.lane}'s` : `it signs lane ${signedLane}'s tag${expect.lane !== undefined ? `, not lane ${expect.lane}'s` : ", not ci/" + p.record.tag}`);
   if (canonicalJson(p.record) !== canonicalJson(fields)) differs.push("the annotation's record is not the one signed");
   if (differs.length > 0) return { status: "mismatch", reason: `${tag} is signed by ${v.principal}, but the statement does not match the tag: ${differs.join("; ")}` };
   return { status: "signed", signer: v.principal, keyid: v.keyid, reason: `signed by ${v.principal} (${CI_TAG_SIGNER_ROLE})` };

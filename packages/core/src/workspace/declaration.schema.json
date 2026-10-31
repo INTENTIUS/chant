@@ -1901,6 +1901,34 @@
           "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$",
           "description": "Added by #4031, read by chant 0.124.28 and newer. The full sha of the first commit on branch whose ci/green and ci/revoked tags must carry a DSSE statement in their annotation, signed by a key .chant/trust.json at base lists under runners for a principal holding the runner role. A tag on a strict first-parent ancestor of this commit counts unsigned, so existing tags keep working; a tag on any other commit, this one included, needs a statement. Position in history decides, never a date, which whoever makes a commit or a tag sets. A reader refuses a sha that names no commit in its clone with declaration-invalid. Absent, no tag needs a statement. Since chant 0.124.32 (#4156) it covers Op run records the same way, when ci.green.source is runs: an unsigned run counts on a strict first-parent ancestor of this commit and needs a statement on any other, ci serve refuses to start without a runner key trusted at the target's head, and ci run and chant run warn about a run they leave unsigned. Absent, an unsigned run counts and nothing asks for a key."
         },
+        "lanes": {
+          "type": "object",
+          "minProperties": 1,
+          "description": "Green lanes (#4662): named subsets of the phases, each with tags of its own, for a deployable that needs only some of them. A commit that passes a lane's phases gets ci/green-<lane>/<sha>, and a lane-green commit that later fails one gets ci/revoked-<lane>/<sha>, judged by the same tick from the same runs as require, with no runs of their own; the bisect and the retry stay per phase. ci/green/<sha> still follows require. chant ci last-green --lane <name> and chant ci base --lane <name> read a lane. A signed lane tag's statement names its lane, so it never counts as another lane's tag or as ci/green. Added in schema 1 by chant 0.124.61, so a declaration that uses it sets minReader to 0.124.61 or newer.",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "required": ["require"],
+            "properties": {
+              "require": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "description": "The phases a commit must pass to be green in this lane, by name. Each must be a declared phase.",
+                "items": {
+                  "$ref": "#/$defs/ciPhaseName"
+                }
+              }
+            },
+            "patternProperties": {
+              "^x-": true
+            },
+            "additionalProperties": false
+          }
+        },
         "source": {
           "enum": [
             "checks",
