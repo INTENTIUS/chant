@@ -154,6 +154,17 @@ export interface CapabilityPlan {
    */
   changeSet?: ChangeSetPart;
   /**
+   * The digest of each resource the plan changes, by the resource's address
+   * in the engine (a URN, a terraform address), with the values the engine
+   * made up while planning left out (plywood#55, plywood#56). A resource the
+   * plan leaves alone is not in it. A merged wave under `approvals.preview`
+   * compares these with the ones its pull request recorded, resource by
+   * resource, so a change another merge made to a resource the pull request
+   * never touched does not read as a moved plan. Absent: the member is
+   * compared as a whole by its `planDigest`.
+   */
+  resourceDigests?: Record<string, string>;
+  /**
    * The outputs `run` will expose once it applies this plan (#3999), as far
    * as the plan can tell. A pull request's plan reads a dependent's
    * `stackOutput()` references into this member from here when both are in

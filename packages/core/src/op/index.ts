@@ -92,6 +92,7 @@ export {
   runOpWaveApplyHooks,
   opWaveResourceLines,
 } from "./op-waves-run";
+export { movedSincePreview, shortAddress, type PlannedRunDigests } from "./op-waves-preview";
 export type {
   OpWaveBaseRules,
   OpWaveDecision,

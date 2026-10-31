@@ -5,7 +5,7 @@
  * the same digest in every plan of the same change.
  */
 import { describe, expect, test } from "vitest";
-import { terraformPlanDigest, withoutUnknown } from "./plan-digest";
+import { terraformPlanDigest, terraformResourceDigests, withoutUnknown } from "./plan-digest";
 
 function plan(after: Record<string, unknown>, unknown: Record<string, unknown> = { id: true, name: true }) {
   return {
@@ -45,5 +45,45 @@ describe("a create's digest leaves out values known only after apply", () => {
     expect(withoutUnknown({ a: { b: "x", c: "gen" }, l: ["p", "gen", "q"] }, { a: { c: true }, l: [false, true, false] })).toEqual({ a: { b: "x" }, l: ["p", null, "q"] });
     expect(withoutUnknown({ a: 1 }, {})).toEqual({ a: 1 });
     expect(withoutUnknown(null, { id: true })).toBeNull();
+  });
+});
+
+describe("the digest of each changed resource (plywood#55)", () => {
+  const two = (queueAfter: Record<string, unknown>, bucketActions: string[]) => ({
+    resource_changes: [
+      { address: "aws_sqs_queue.worker", type: "aws_sqs_queue", name: "worker", change: { actions: ["create"], before: null, after: queueAfter, after_unknown: { id: true, name: true } } },
+      { address: "aws_s3_bucket.logs", type: "aws_s3_bucket", name: "logs", change: { actions: bucketActions, before: { acl: "private" }, after: { acl: bucketActions[0] === "update" ? "public-read" : "private" }, after_unknown: {} } },
+    ],
+    action_invocations: [{ address: "action.aws_lambda_invoke.warm", type: "aws_lambda_invoke" }],
+  });
+
+  test("a no-op is not in it, and an create of unknown values has one digest across plans", () => {
+    const a = terraformResourceDigests(two({ delay_seconds: 0 }, ["no-op"]));
+    const b = terraformResourceDigests(two({ delay_seconds: 0, name: "placeholder", id: "x" }, ["no-op"]));
+    expect(Object.keys(a)).toEqual(["action:action.aws_lambda_invoke.warm", "aws_sqs_queue.worker"]);
+    expect(b).toEqual(a);
+  });
+
+  test("a change to another resource leaves this one's digest as it was", () => {
+    const quiet = terraformResourceDigests(two({ delay_seconds: 0 }, ["no-op"]));
+    const busy = terraformResourceDigests(two({ delay_seconds: 0 }, ["update"]));
+    expect(busy["aws_sqs_queue.worker"]).toBe(quiet["aws_sqs_queue.worker"]);
+    expect(Object.keys(busy)).toContain("aws_s3_bucket.logs");
+  });
+
+  test("a reviewed input changes it", () => {
+    const a = terraformResourceDigests(two({ delay_seconds: 0 }, ["no-op"]));
+    const b = terraformResourceDigests(two({ delay_seconds: 9 }, ["no-op"]));
+    expect(b["aws_sqs_queue.worker"]).not.toBe(a["aws_sqs_queue.worker"]);
+  });
+
+  test("a deposed object is kept apart from the live one", () => {
+    const doc = {
+      resource_changes: [
+        { address: "aws_x.a", change: { actions: ["create"], before: null, after: {}, after_unknown: {} } },
+        { address: "aws_x.a", deposed: "abc", change: { actions: ["delete"], before: {}, after: null, after_unknown: {} } },
+      ],
+    };
+    expect(Object.keys(terraformResourceDigests(doc))).toEqual(["aws_x.a", "aws_x.a#deposed:abc"]);
   });
 });

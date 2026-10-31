@@ -7,7 +7,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { PULUMI_GENERATED, pulumiPlannedInputs, pulumiPreviewDigest, type PulumiStep } from "./change-set";
+import { PULUMI_GENERATED, pulumiPlannedInputs, pulumiPreviewDigest, pulumiResourceDigests, type PulumiStep } from "./change-set";
 
 const created = JSON.parse(readFileSync(join(import.meta.dirname, "testdata", "pulumi-preview", "preview-create.json"), "utf-8")) as { steps: PulumiStep[] };
 const copy = () => JSON.parse(JSON.stringify(created)) as typeof created;

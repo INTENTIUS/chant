@@ -116,6 +116,8 @@ export interface OpWaveStepPlan {
   /** The capability's member, the key `run` finds its artifact under. */
   member: string;
   planDigest: string;
+  /** The digest of each resource the plan changes, when the capability gave them (plywood#55). */
+  resources?: Record<string, string>;
   artifact?: unknown;
   part?: ChangeSetPart;
   empty: boolean;
@@ -166,6 +168,7 @@ export async function planOpWaveStep(
     target: run.target,
     member: planned.member,
     planDigest: planned.planDigest,
+    ...(planned.resourceDigests ? { resources: planned.resourceDigests } : {}),
     ...(planned.artifact !== undefined ? { artifact: planned.artifact } : {}),
     ...(planned.changeSet ? { part: planned.changeSet } : {}),
     ...effects,

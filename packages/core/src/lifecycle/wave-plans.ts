@@ -26,6 +26,20 @@ export interface HeadPlans {
 }
 
 /**
+ * One run's plan at the head (plywood#55), kept so a merged wave can compare
+ * the resources the pull request changed, and only those, with the ones it
+ * plans now. `resources` is the digest of each resource the plan changes, by
+ * address; a run whose plan gave none is compared as a whole by `planDigest`.
+ * `empty` is a plan that changes nothing.
+ */
+export interface HeadPlanMember {
+  member: string;
+  planDigest: string;
+  resources?: Record<string, string>;
+  empty?: true;
+}
+
+/**
  * One wave's plan at the head. `changes` and `destructive` (#4630) are the
  * plan's facts a gate policy reads: some run changes something, some run's
  * plan is destructive. A record from an older chant has neither, and a
@@ -44,6 +58,12 @@ export interface HeadPlanWave {
    * approval against it.
    */
   changeSet?: string;
+  /**
+   * Each run's plan at the head (plywood#55). A record from chant 0.124.59
+   * has none: it holds the wave's set digest only, and a merged wave
+   * compares that whole digest, as it did.
+   */
+  members?: HeadPlanMember[];
 }
 
 /** Where {@link HeadPlans} for `head` live on `chant/lifecycle`: `_wave-plans/<name>/<head>.json`. */
@@ -71,8 +91,10 @@ export function parseHeadPlans(text: string | null): HeadPlans | null {
   const waves: HeadPlans["waves"] = [];
   for (const w of r.waves) {
     if (w === null || typeof w !== "object") return null;
-    const { wave, name, digest, changes, destructive, changeSet } = w as Record<string, unknown>;
+    const { wave, name, digest, changes, destructive, changeSet, members } = w as Record<string, unknown>;
     if (typeof wave !== "number" || typeof name !== "string" || typeof digest !== "string") return null;
+    const runs = members === undefined ? undefined : parseHeadPlanMembers(members);
+    if (runs === null) return null;
     waves.push({
       wave,
       name,
@@ -80,9 +102,27 @@ export function parseHeadPlans(text: string | null): HeadPlans | null {
       ...(typeof changes === "boolean" ? { changes } : {}),
       ...(typeof destructive === "boolean" ? { destructive } : {}),
       ...(typeof changeSet === "string" && changeSet !== "" ? { changeSet } : {}),
+      ...(runs ? { members: runs } : {}),
     });
   }
   return { version: 1, name: r.name, head: r.head, timestamp: r.timestamp, waves };
+}
+
+function parseHeadPlanMembers(value: unknown): HeadPlanMember[] | null {
+  if (!Array.isArray(value)) return null;
+  const out: HeadPlanMember[] = [];
+  for (const m of value) {
+    if (m === null || typeof m !== "object") return null;
+    const { member, planDigest, resources, empty } = m as Record<string, unknown>;
+    if (typeof member !== "string" || typeof planDigest !== "string") return null;
+    let digests: Record<string, string> | undefined;
+    if (resources !== undefined) {
+      if (resources === null || typeof resources !== "object" || Array.isArray(resources) || !Object.values(resources).every((d) => typeof d === "string")) return null;
+      digests = resources as Record<string, string>;
+    }
+    out.push({ member, planDigest, ...(digests ? { resources: digests } : {}), ...(empty === true ? { empty: true as const } : {}) });
+  }
+  return out;
 }
 
 /** The record for `head` of the spec `name`, or null when none was recorded or it cannot be read. */

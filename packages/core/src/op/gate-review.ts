@@ -71,7 +71,7 @@ export function bothRules(a: GateApprovalRule | null, b: GateApprovalRule | null
 // ── pr-review ─────────────────────────────────────────────────────────────
 
 // The record and its reader live apart, so a bundle can import them without git (#3865).
-export { HEAD_PLANS_DIR, headPlansPath, type HeadPlans } from "../lifecycle/wave-plans";
+export { HEAD_PLANS_DIR, headPlansPath, type HeadPlans, type HeadPlanMember } from "../lifecycle/wave-plans";
 
 
 /** The merged pull request's review, as a `pr-review` gate reads it. */

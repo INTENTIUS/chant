@@ -18,7 +18,7 @@ import { join, relative } from "node:path";
 import { describe, expect, test } from "vitest";
 import { isPlanMovedError, type DeployContext } from "@intentius/chant/components/capability";
 import { PlanShapeMovedError } from "@intentius/chant/components/covered-round";
-import { pulumiPreviewDigest } from "./change-set";
+import { pulumiPreviewDigest, pulumiResourceDigests } from "./change-set";
 import { pulumiStreamPreview, PULUMI_STREAMING_PREVIEW_ENV } from "./engine-events";
 import {
   createPulumiUpCapability,
@@ -109,6 +109,17 @@ describe("plan on plunge", () => {
     expect(planned.shape?.entries.map((e) => e.action).sort()).toEqual(["delete", "delete", "replace", "replace", "update", "update"]);
     expect(planned.outputs).toBeDefined();
     expect(artifact.policy.warnings).toHaveLength(1);
+  });
+
+  test("answers a digest for each resource the preview changes, on either grain (plywood#55)", async () => {
+    const cap = createPulumiUpCapability({ plunge: engine().run, env: {}, tmp: tmp(), snapshots: null });
+    const resource = await cap.plan!(ctx, step({ engine: "plunge" }));
+    const stack = await cap.plan!(ctx, step({ engine: "plunge", lockGrain: "target" }));
+    expect(resource.resourceDigests).toEqual(pulumiResourceDigests(pulumiStreamPreview(stream)));
+    expect(stack.resourceDigests).toEqual(resource.resourceDigests);
+    const changed = (pulumiStreamPreview(stream) as { steps: { op: string }[] }).steps.filter((x) => x.op !== "same" && x.op !== "read");
+    expect(Object.keys(resource.resourceDigests!).length).toBeGreaterThan(0);
+    expect(Object.keys(resource.resourceDigests!).length).toBeLessThanOrEqual(changed.length);
   });
 
   test("the target grain keeps every step in the digest", async () => {

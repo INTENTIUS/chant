@@ -73,6 +73,16 @@ describe("wave plans readers", () => {
     expect(await listWavePlanSpecs(port)).toEqual(["other", "ship"]);
   });
 
+  test("the parser reads each run's resources, and a record from 0.124.59 without them (plywood#55)", () => {
+    const record = (members?: unknown) => JSON.stringify({ version: 1, name: "a", head: "b", timestamp: "t", waves: [{ wave: 1, name: "x", digest: "d", ...(members === undefined ? {} : { members }) }] });
+    expect(parseHeadPlans(record())!.waves[0]!.members).toBeUndefined();
+    const runs = [{ member: "shop/dev", planDigest: "p", resources: { "urn:a": "d1" } }, { member: "shop/qa", planDigest: "q", empty: true }];
+    expect(parseHeadPlans(record(runs))!.waves[0]!.members).toEqual(runs);
+    expect(parseHeadPlans(record("nope"))).toBeNull();
+    expect(parseHeadPlans(record([{ member: "m" }]))).toBeNull();
+    expect(parseHeadPlans(record([{ member: "m", planDigest: "p", resources: { a: 1 } }]))).toBeNull();
+  });
+
   test("the parser refuses a record of another shape", () => {
     expect(parseHeadPlans(null)).toBeNull();
     expect(parseHeadPlans("[]")).toBeNull();

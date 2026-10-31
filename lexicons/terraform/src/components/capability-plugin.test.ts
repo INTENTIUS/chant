@@ -217,6 +217,7 @@ describe("terraform-apply", () => {
       member: "app",
       planDigest: "jcs1-sha256:app",
       artifact: { planFile: "chant.tfplan", planDigest: "jcs1-sha256:app" },
+      resourceDigests: {},
       outputs: { known: {}, unknown: [] },
       shape: { member: "app", entries: [], unknownInputs: [] },
     });

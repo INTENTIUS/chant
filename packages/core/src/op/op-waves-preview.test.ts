@@ -7,7 +7,8 @@ import { OP_WAVES_PREVIEW_FLOOR, readOpWavePolicy, runOpWave, type OpWaveExec, t
 import { memoryGateLedgerPort } from "./gate";
 import { NEXT_RELEASE } from "../release-floors";
 import { waveSetDigest } from "../gated-waves";
-import type { HeadPlans, MergedReview, ReviewSource } from "./gate-review";
+import type { HeadPlanMember, HeadPlans, MergedReview, ReviewSource } from "./gate-review";
+import { movedSincePreview, shortAddress } from "./op-waves-preview";
 
 const spec: OpWavesSpec = {
   name: "records",
@@ -25,12 +26,21 @@ const reviews = (m: MergedReview | null): ReviewSource => ({ kind: "github", mer
 const recorded = (wave: number, set: string | undefined): ((name: string, head: string) => Promise<HeadPlans | null>) => async (name, head) =>
   set === undefined ? null : { version: 1, name, head, timestamp: "2026-10-30T00:00:00Z", waves: [{ wave, name: "dev", digest: set }] };
 
+/** A record as chant after 0.124.59 writes it: the set digest, and each run's resources. */
+const recordedRuns = (wave: number, members: HeadPlanMember[]): ((name: string, head: string) => Promise<HeadPlans | null>) => async (name, head) => ({
+  version: 1,
+  name,
+  head,
+  timestamp: "2026-10-30T00:00:00Z",
+  waves: [{ wave, name: "dev", digest: waveSetDigest(members.map((m) => ({ member: m.member, planDigest: m.planDigest }))), members }],
+});
+
 const dirs: string[] = [];
 afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
-function harness(plan: { planDigest: string; destructive?: boolean }, atBase: OpWavesSpec = spec) {
+function harness(plan: { planDigest: string; destructive?: boolean; resources?: Record<string, string> }, atBase: OpWavesSpec = spec) {
   const cwd = mkdtempSync(join(tmpdir(), "op-waves-preview-"));
   dirs.push(cwd);
   const calls: string[] = [];
@@ -163,5 +173,113 @@ describe("the setting", () => {
     expect(readOpWavePolicy("waves.json", "dev", "HEAD", "/", () => ({ sha: "b".repeat(40), text: JSON.stringify({ ...spec, approvals: {} }) })).preview).toBeUndefined();
     expect(opWavesPostsApprovalStatus(spec)).toBe(true);
     expect(opWavesPostsApprovalStatus({ ...spec, approvals: {} })).toBe(false);
+  });
+});
+
+describe("a wave compares the resources its pull request's plan changed (plywood#55)", () => {
+  // shop/dev holds an events queue and a set of worker queues. One pull request changes the events queue (EV), another adds a worker (WK).
+  const stack = "zone";
+  const EV = "urn:pulumi:dev::shop::aws:sqs/queue:Queue::events";
+  const WK = "urn:pulumi:dev::shop::aws:sqs/queue:Queue::worker-3";
+  const eventsPr: MergedReview = { pr: 3, head: "e".repeat(40), author: "github:dev", approvers: ["github:rev"], refused: [] };
+  const workersPr: MergedReview = { pr: 4, head: "w".repeat(40), author: "github:dev", approvers: ["github:rev"], refused: [] };
+  // What each pull request previewed against main before either merged.
+  const previewedEvents: HeadPlanMember[] = [{ member: stack, planDigest: digest("1"), resources: { [EV]: digest("e") } }];
+  const previewedWorkers: HeadPlanMember[] = [{ member: stack, planDigest: digest("2"), resources: { [WK]: digest("w") } }];
+
+  test("two pull requests that touch different resources both apply when merged in sequence", async () => {
+    // The first merge plans the events change alone.
+    const first = harness({ planDigest: digest("3"), resources: { [EV]: digest("e") } });
+    const one = await run(first, { reviews: reviews(eventsPr), headPlans: recordedRuns(1, previewedEvents) });
+    expect(one).toMatchObject({ exitCode: 0, applied: [stack], decision: { status: "not-required", preview: { status: "matched", pr: 3, compared: "resources" } } });
+    expect(first.applied()).toBe(true);
+    // The second merge plans while the first one's step is still in its plan: its set digest is neither pull request's.
+    const second = harness({ planDigest: digest("4"), resources: { [EV]: digest("e"), [WK]: digest("w") } });
+    const two = await run(second, { reviews: reviews(workersPr), headPlans: recordedRuns(1, previewedWorkers) });
+    expect(two).toMatchObject({ exitCode: 0, applied: [stack], decision: { status: "not-required", preview: { status: "matched", pr: 4, compared: "resources" } } });
+    expect(two.decision?.digest).not.toBe(two.decision?.preview?.recorded);
+    expect(second.applied()).toBe(true);
+  });
+
+  test("the second merge applies too when the first one has applied before it plans", async () => {
+    // The events queue is unchanged now but its recorded inputs are the new ones, so the stack's plan digest moved.
+    const second = harness({ planDigest: digest("5"), resources: { [WK]: digest("w") } });
+    const result = await run(second, { reviews: reviews(workersPr), headPlans: recordedRuns(1, previewedWorkers) });
+    expect(result).toMatchObject({ exitCode: 0, applied: [stack], decision: { preview: { status: "matched", compared: "resources" } } });
+    expect(second.applied()).toBe(true);
+  });
+
+  test("a pull request whose touched resource moved after another merge still returns 4", async () => {
+    // The other merge changed the worker queue the second pull request planned a change to.
+    const h = harness({ planDigest: digest("6"), resources: { [EV]: digest("e"), [WK]: digest("x") } });
+    const logs: string[] = [];
+    const result = await run(h, { reviews: reviews(workersPr), headPlans: recordedRuns(1, previewedWorkers), log: (l) => logs.push(l) });
+    expect(result.exitCode).toBe(4);
+    expect(result.moved).toEqual([stack]);
+    expect(result.decision).toMatchObject({ status: "refused", refused: { reason: "moved" }, preview: { status: "moved", compared: "resources", moved: [`${stack}: aws:sqs/queue:Queue::worker-3 is planned differently`] } });
+    expect(result.decision?.refused?.message).toMatch(/worker-3 is planned differently/);
+    expect(h.applied()).toBe(false);
+  });
+
+  test("a resource the pull request changed that the merge no longer changes returns 4", async () => {
+    const h = harness({ planDigest: digest("7"), resources: { [EV]: digest("e") } });
+    const result = await run(h, { reviews: reviews(workersPr), headPlans: recordedRuns(1, previewedWorkers) });
+    expect(result).toMatchObject({ exitCode: 4, decision: { preview: { status: "moved", moved: [`${stack}: aws:sqs/queue:Queue::worker-3 is no longer changed by the plans`] } } });
+    expect(h.applied()).toBe(false);
+  });
+
+  test("a run the pull request changed that the wave no longer plans returns 4", () => {
+    expect(movedSincePreview(previewedWorkers, [])).toEqual([`${stack} is no longer in the wave`]);
+  });
+
+  test("a destructive change another merge added still waits for its approval", async () => {
+    const h = harness({ planDigest: digest("8"), destructive: true, resources: { [EV]: digest("d"), [WK]: digest("w") } });
+    const result = await run(h, { reviews: reviews(workersPr), headPlans: recordedRuns(1, previewedWorkers) });
+    expect(result).toMatchObject({ exitCode: 3, decision: { status: "waiting", preview: { status: "matched" } } });
+    expect(h.applied()).toBe(false);
+    const approved = memoryGateLedgerPort({
+      resolutions: [{ version: 1, op: "records", gate: "records-wave-1", resolvedBy: "alice", timestamp: "2026-10-30T00:30:00Z", planDigest: result.decision!.digest }],
+    });
+    expect(await run(h, { gates: approved, reviews: reviews(workersPr), headPlans: recordedRuns(1, previewedWorkers) })).toMatchObject({ exitCode: 0, applied: [stack], decision: { status: "approved" } });
+  });
+
+  test("an approval of the digest planned now lets a moved resource through", async () => {
+    const h = harness({ planDigest: digest("6"), resources: { [WK]: digest("x") } });
+    const refused = await run(h, { reviews: reviews(workersPr), headPlans: recordedRuns(1, previewedWorkers) });
+    expect(refused.exitCode).toBe(4);
+    const approved = memoryGateLedgerPort({
+      resolutions: [{ version: 1, op: "records", gate: "records-wave-1", resolvedBy: "alice", timestamp: "2026-10-30T00:30:00Z", planDigest: refused.decision!.digest }],
+    });
+    const result = await run(h, { gates: approved, reviews: reviews(workersPr), headPlans: recordedRuns(1, previewedWorkers) });
+    expect(result).toMatchObject({ exitCode: 0, applied: [stack], decision: { status: "approved", preview: { status: "moved", approvedAnyway: true } } });
+  });
+
+  test("a run recorded with no resources is compared whole, and one that changed nothing is not compared", async () => {
+    const whole: HeadPlanMember[] = [{ member: stack, planDigest: digest("a") }];
+    const moved = harness({ planDigest: digest("b") });
+    expect(await run(moved, { reviews: reviews(merged), headPlans: recordedRuns(1, whole) })).toMatchObject({ exitCode: 4, decision: { preview: { compared: "resources", moved: [`${stack}: its plan is another digest`] } } });
+    const same = harness({ planDigest: digest("a") });
+    expect(await run(same, { reviews: reviews(merged), headPlans: recordedRuns(1, whole) })).toMatchObject({ exitCode: 0, applied: [stack] });
+    const nothing = harness({ planDigest: digest("c"), resources: { [EV]: digest("e") } });
+    expect(await run(nothing, { reviews: reviews(merged), headPlans: recordedRuns(1, [{ member: stack, planDigest: digest("a"), empty: true }]) })).toMatchObject({ exitCode: 0, applied: [stack] });
+  });
+
+  test("a record written by 0.124.59 holds the set digest only, and is compared whole with a message saying so", async () => {
+    const h = harness({ planDigest: digest("b"), resources: { [WK]: digest("w") } });
+    const result = await run(h, { reviews: reviews(merged), headPlans: recorded(1, setOf("a")) });
+    expect(result).toMatchObject({ exitCode: 4, decision: { preview: { status: "moved", compared: "wave", recorded: setOf("a") } } });
+    expect(result.decision?.refused?.message).toMatch(/written by chant 0\.124\.59, which keeps the wave's digest only/);
+    const same = harness({ planDigest: digest("a"), resources: { [WK]: digest("w") } });
+    expect(await run(same, { reviews: reviews(merged), headPlans: recorded(1, setOf("a")) })).toMatchObject({ exitCode: 0, applied: [stack], decision: { preview: { status: "matched", compared: "wave" } } });
+  });
+
+  test("the plan file's resources are checked", async () => {
+    const h = harness({ planDigest: digest("a"), resources: { [WK]: 5 as unknown as string } });
+    await expect(run(h, { reviews: reviews(merged), headPlans: recorded(1, setOf("a")) })).rejects.toThrow(/map of a resource's address to its digest/);
+  });
+
+  test("an address reads short", () => {
+    expect(shortAddress(EV)).toBe("aws:sqs/queue:Queue::events");
+    expect(shortAddress("aws_s3_bucket.logs")).toBe("aws_s3_bucket.logs");
   });
 });
