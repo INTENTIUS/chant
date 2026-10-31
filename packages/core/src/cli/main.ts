@@ -298,6 +298,11 @@ CI:
                         shows the phase (or every required phase) built and
                         passed on it, else a green tag. Fetch the tags and
                         chant/lifecycle first.
+  ci verdict [--commit <sha>] [--wait]  A merge queue's verdict: exits 0
+                        when every required phase passed on the commit
+                        (GITHUB_SHA, else HEAD), judged from its check runs
+                        as the tick judges; 1 when one failed; 3 while one is
+                        pending, unless --wait reads again until none is.
   ci list [--json] [--limit <n>] [--since <rev>] [--forge github] [--source checks|runs]
                         The first-parent commits of ci.green's branch within
                         its window, newest first, each green, revoked or
@@ -1786,6 +1791,7 @@ export const commandRegistry: CommandDef[] = [
   { name: "e2e safe-run", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/e2e-safe-run")).runE2eSafeRun(ctx) },
   { name: "e2e", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/e2e-safe-run")).runE2eUnknown(ctx) },
   { name: "ci last-green", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiLastGreen(ctx) },
+  { name: "ci verdict", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiVerdict(ctx) },
   { name: "ci base", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiBase(ctx) },
   { name: "ci list", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiList(ctx) },
   { name: "ci tick", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiTick(ctx) },

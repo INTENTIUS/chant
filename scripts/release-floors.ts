@@ -81,6 +81,7 @@ const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: str
   // --freeze empties this list after a release ships (#4501); each entry is one line.
   { file: "packages/core/src/workspace/declaration.schema.json", text: "Added in schema 1 by chant {v}, so a declaration that uses it sets minReader to {v} or newer.", count: 1, floor: "CI_GREEN_LANES_FLOOR" },
   { file: "packages/core/src/workspace/declaration.schema.json", text: "Read by chant {v} and newer, so a declaration that sets it sets minReader to {v} or newer.", count: 1, floor: "CI_TICK_NOTIFY_FLOOR" },
+  { file: "packages/core/src/workspace/declaration.schema.json", text: "Written by chant {v} and newer, so a declaration that sets it sets minReader to {v} or newer.", count: 1, floor: "CI_MERGE_QUEUE_FLOOR" },
 ];
 
 interface Args {

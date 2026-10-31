@@ -1195,6 +1195,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.resource = value;
     } else if (arg === "--since") {
       result.since = args[++i];
+    } else if (arg === "--wait") {
+      // `chant ci verdict --wait` (#4644): read the check runs again until no required phase is pending.
+      result.ciWait = true;
     } else if (arg === "--lane") {
       // `chant ci last-green --lane <name>` and `chant ci base --lane <name>` (#4662): a green lane's tags and phases.
       result.lane = args[++i];

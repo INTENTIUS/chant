@@ -11,7 +11,7 @@ import { GENERATED_MARKER } from "../discovery/files";
 import type { CommandContext } from "../cli/registry";
 import { parseYAMLDocument } from "../yaml";
 import { runCiWorkflow } from "./ci-green-cli";
-import { BUILD_BLOCK_MARKER, buildTriggerEdits, CI_GREEN_WORKFLOW_FILE, dispatchableWorkflows, jobCheckRuns, renderCiGreenWorkflow, workflowsHolding, writeTopLevel } from "./ci-green-workflow";
+import { BUILD_BLOCK_MARKER, buildTriggerEdits, CI_GREEN_WORKFLOW_FILE, dispatchableWorkflows, jobCheckRuns, MERGE_QUEUE_VERDICT_JOB, MERGE_QUEUE_WORKFLOW_FILE, MERGE_QUEUE_WORKFLOW_NAME, renderCiGreenWorkflow, workflowsHolding, writeTopLevel } from "./ci-green-workflow";
 import { parseDeclaration } from "./declaration";
 import { cleanScratch, declaration, git, scratchDir, writeFiles } from "./__fixtures__/contract-repo";
 import { ACTION_PINS, usesRef } from "../action-pins";
@@ -213,6 +213,40 @@ describe("chant ci workflow (#3573)", () => {
       expect(steps[3].run).toBe("npx tsx packages/core/src/cli/main.ts ci tick");
       expect(await runCiWorkflow(ctx)).toBe(0);
       expect(readFileSync(file, "utf-8")).toBe(first);
+    } finally {
+      cwd.mockRestore();
+      log.mockRestore();
+      error.mockRestore();
+    }
+  });
+
+  test("mergeQueue writes the verdict workflow and adds merge_group to the phases' workflows, byte-identically again (#4644)", async () => {
+    const root = scratchDir("chant-ci-workflow-");
+    git(root, "init", "-q");
+    const queued = { ...GREEN, phases: { ...GREEN.phases, lint: { runs: ["lint"], build: "every" }, test: { runs: ["test", "e2e (*)"], build: "newest" } }, mergeQueue: true };
+    const SPLIT = `name: lint\non: push\njobs:\n  lint:\n    runs-on: ubuntu-latest\n`;
+    const TESTS = `name: tests\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n`;
+    writeFiles(root, { "chant.workspace.json": declaration([], { ci: { green: queued } }), ".github/workflows/lint.yml": SPLIT, ".github/workflows/tests.yml": TESTS, ".github/workflows/macos.yml": MACOS });
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(root);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await runCiWorkflow({ args: {} } as unknown as CommandContext)).toBe(0);
+      const queue = readFileSync(join(root, MERGE_QUEUE_WORKFLOW_FILE), "utf-8");
+      expect(queue.split("\n")[0]).toBe(`# ${GENERATED_MARKER}. Regenerate with: chant ci workflow (in the workspace root)`);
+      const q = parseYAMLDocument(queue) as Yaml;
+      expect(q.on).toEqual({ merge_group: { types: ["checks_requested"] } });
+      expect(q.permissions).toEqual({ contents: "read", checks: "read" });
+      expect(q.jobs[MERGE_QUEUE_VERDICT_JOB].steps.at(-1).run).toMatch(/^npx --yes @intentius\/chant@\S+ ci verdict --wait$/);
+      for (const f of ["lint.yml", "tests.yml"]) {
+        expect((parseYAMLDocument(readFileSync(join(root, ".github/workflows", f), "utf-8")) as Yaml).on.merge_group).toEqual({ types: ["checks_requested"] });
+      }
+      // The verdict's workflow holds no phase, so the tick doesn't listen to it.
+      expect((parseYAMLDocument(readFileSync(join(root, CI_GREEN_WORKFLOW_FILE), "utf-8")) as Yaml).on.workflow_run.workflows).not.toContain(MERGE_QUEUE_WORKFLOW_NAME);
+      const before = ["lint.yml", "tests.yml"].map((f) => readFileSync(join(root, ".github/workflows", f), "utf-8"));
+      expect(await runCiWorkflow({ args: {} } as unknown as CommandContext)).toBe(0);
+      expect(readFileSync(join(root, MERGE_QUEUE_WORKFLOW_FILE), "utf-8")).toBe(queue);
+      expect(["lint.yml", "tests.yml"].map((f) => readFileSync(join(root, ".github/workflows", f), "utf-8"))).toEqual(before);
     } finally {
       cwd.mockRestore();
       log.mockRestore();

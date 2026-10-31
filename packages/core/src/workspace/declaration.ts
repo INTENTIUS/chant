@@ -286,6 +286,13 @@ export interface CiGreen {
    * through notify as Op waves send theirs. Absent when the declaration sets none.
    */
   notify?: NotifyConfig;
+  /**
+   * The branch takes changes through GitHub's merge queue (#4644): `ci
+   * workflow` adds the `merge_group` trigger to the workflows holding a
+   * phase that sets `build`, and writes `chant-merge-queue.yml`, whose
+   * `chant-verdict` job the queue's ruleset requires. Absent when unset.
+   */
+  mergeQueue?: true;
   pointer: string;
 }
 
@@ -1405,7 +1412,7 @@ function cloudIdentityOf(raw: CloudIdentityDeclaration, at: (pointer: string, ke
 
 function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocation): CiDeclaration | null {
   if (raw === undefined) return null;
-  const block = raw as { reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; identity?: { cloud?: CloudIdentityDeclaration }; branches?: Record<string, string[]>; labels?: Record<string, string[]>; locks?: CiLocks; lockGrain?: CiLockGrain; policy?: unknown; prEnvironment?: { template: string; ttl?: string; teardown?: { name?: string; command: string[]; lexicons?: string[] } }; green?: { branch: string | string[]; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource; lanes?: Record<string, { require: string[] }>; notify?: NotifyConfig } };
+  const block = raw as { reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; identity?: { cloud?: CloudIdentityDeclaration }; branches?: Record<string, string[]>; labels?: Record<string, string[]>; locks?: CiLocks; lockGrain?: CiLockGrain; policy?: unknown; prEnvironment?: { template: string; ttl?: string; teardown?: { name?: string; command: string[]; lexicons?: string[] } }; green?: { branch: string | string[]; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource; lanes?: Record<string, { require: string[] }>; notify?: NotifyConfig; mergeQueue?: boolean } };
   const hooks = ciHooksOf(block.hooks, "/ci/hooks", at);
   const policy = ciPolicyOf(block.policy, at);
   const workflow = {
@@ -1484,7 +1491,7 @@ function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocatio
     if (problem) throw new WorkspaceReadError("declaration-invalid", problem, at("/ci/green/notify"));
   }
   const judged = Array.isArray(g.branch) ? g.branch : [g.branch];
-  return { green: { branch: judged[0]!, ...(judged.length > 1 ? { branches: [...judged] } : {}), window: g.window ?? DEFAULT_CI_WINDOW, phases, require: [...g.require], ...(g.preMerge !== undefined ? { preMerge: [...g.preMerge] } : {}), signedSince: g.signedSince ?? null, source: g.source ?? "checks", ...(lanes.length > 0 ? { lanes } : {}), ...(g.notify !== undefined ? { notify: { ...g.notify, ...(g.notify.events ? { events: [...g.notify.events] } : {}) } } : {}), pointer: "/ci/green" }, ...workflow, reportUrl };
+  return { green: { branch: judged[0]!, ...(judged.length > 1 ? { branches: [...judged] } : {}), window: g.window ?? DEFAULT_CI_WINDOW, phases, require: [...g.require], ...(g.preMerge !== undefined ? { preMerge: [...g.preMerge] } : {}), signedSince: g.signedSince ?? null, source: g.source ?? "checks", ...(lanes.length > 0 ? { lanes } : {}), ...(g.notify !== undefined ? { notify: { ...g.notify, ...(g.notify.events ? { events: [...g.notify.events] } : {}) } } : {}), ...(g.mergeQueue === true ? { mergeQueue: true as const } : {}), pointer: "/ci/green" }, ...workflow, reportUrl };
 }
 
 function agentsOf(raw: unknown, members: Member[], at: (pointer: string, key?: boolean) => ErrorLocation): AgentDeclaration[] {
