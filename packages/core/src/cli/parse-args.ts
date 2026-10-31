@@ -531,6 +531,18 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant lock --alive <run>` (#4552): print whether a run holding rows or the repo lock tag still runs.
       result.aliveRun = args[++i];
       if (!result.aliveRun || result.aliveRun.startsWith("-")) throw new Error("--alive needs a run id: --alive <run>");
+    } else if (arg === "--beat") {
+      // `chant lock --beat <run> --parent <pid>` (#4660): the heartbeat side process of a row hold.
+      result.beatRun = args[++i];
+      if (!result.beatRun || result.beatRun.startsWith("-")) throw new Error("--beat needs a run id: --beat <run> --parent <pid>");
+    } else if (arg === "--parent") {
+      const pid = Number(args[++i]);
+      if (!Number.isInteger(pid) || pid < 1) throw new Error("--parent needs a process id: --parent <pid>");
+      result.parentPid = pid;
+    } else if (arg === "--run") {
+      // `chant unlock --run <id>` (#4660): free the rows a run holds or waits for.
+      result.unlockRun = args[++i];
+      if (!result.unlockRun || result.unlockRun.startsWith("-")) throw new Error("--run needs a run id: --run <id>");
     } else if (arg === "--from-report") {
       // `chant lock --from-report <pr-plan.json>` (#4293): lock the components a pull-request report lists.
       result.fromReport = args[++i];

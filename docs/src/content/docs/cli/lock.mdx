@@ -14,6 +14,7 @@ chant lock --keep --pr <n> [--head <sha>] [--gate <name>] [--forge <kind>] [--js
 chant lock --list [--gate <name>] [--json]
 chant lock --alive <run>
 chant unlock --pr <n> [<target>...] [--gate <name>] [--json]
+chant unlock --run <id> [--gate <name>] [--json]
 ```
 
 A pull request that holds a target lock keeps every other pull request from applying or locking that target until it merges or closes ([#4293](https://github.com/INTENTIUS/chant/issues/4293)). A target is any name; the pull-request loop uses the component names that `chant components pr-plan` selects, and under [`ci.locks`](/chant/reference/workspace-declaration/#locks) `pr-apply` checks them. [Lock the Targets a Pull Request Reaches](/chant/guide/target-locks/) sets the jobs up.
@@ -51,11 +52,15 @@ A target the same pull request already holds stays its own and gets the new head
 
 `chant lock --list` prints one line per lock of the gate, in the order of the file's targets. Each line holds the target and the fields of its lock. After the locks come the apply rows of the gate's rows file, `_locks/rows/<gate>.json` ([lock grain](/chant/reference/workspace-declaration/#lock-grain)), one line per row sorted by key ([#4594](https://github.com/INTENTIUS/chant/issues/4594)). A row's line gives its key and `run <id>` for the run holding it, then the time that run took it and the run's page when the forge gave one. The `--json` form prints `{ gate, path, locks, rowsPath, rows }`, where `rows` maps each key to its holder `{ run, at, url?, sha? }`.
 
+An apply that holds rows keeps a side process running, `chant lock --beat <run> --parent <pid> [--gate <name>]`. It writes `beat` on the run's hold every `CHANT_LOCK_BEAT` seconds (60 by default) and ends when the hold is gone or when the process named by `--parent` is ([#4660](https://github.com/INTENTIUS/chant/issues/4660)). It is not for people to run. A hold whose beat is older than `CHANT_LOCK_BEAT_STALE` seconds (600 by default) is read as gone, so a job that was cancelled or killed frees its rows without anyone's help. `--list` shows `beat <time>` after a row that has one, and `holders` in the `--json` form carry `beat`.
+
 `chant lock --alive <run>` prints `alive` or `dead` for a CI run that holds apply rows or the Forgejo repo lock tag. It prints `dead` once the forge says the run finished. The forge is asked with `CHANT_FORGE_TOKEN`, else terragucci's `TG_TOKEN`. It prints `alive` while the run goes on or when nothing can say. The lock tag's shell in a generated Forgejo pipeline asks it before it takes a lease over.
 
 ## unlock
 
 `chant unlock` releases the locks `--pr` holds on the gate, or only those on the targets named, and exits 0 when the pull request held none. Anyone who can push `chant/lifecycle` can run it, so a stuck lock never needs a hand edit of the file.
+
+`chant unlock --run <id>` frees every apply row run `<id>` holds on the gate and drops the run's place in the queue, with no question put to the forge. Use it for a hold whose run is gone and that no beat has freed yet, such as one that was taken seconds ago. The run id is the one `chant lock --list` prints and a held-row refusal names. It exits 0 when the run held nothing, and `--json` prints `{ gate, run, released, waited, pushed }`. Take care with a run that still applies: its rows are free to the next job as soon as the command pushes.
 
 ## Exit codes
 

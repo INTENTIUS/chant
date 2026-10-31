@@ -64,7 +64,7 @@ net	pull request 12	plan	alice	2026-10-22T10:00:00.000Z
 estate e01 aws_s3_bucket.logs	run 4711	2026-10-22T10:05:00.000Z	https://github.com/acme/infra/actions/runs/4711
 ```
 
-The last line is an apply row on the resource grain, with the run that holds it. A row stays until that run ends, or until its lease is older than `CHANT_LOCK_STALE` seconds and another apply takes it over.
+The last line is an apply row on the resource grain, with the run that holds it. A row stays until that run ends. A run that was cancelled or killed without letting go stops beating, and another apply takes its rows over once the last beat is older than `CHANT_LOCK_BEAT_STALE` seconds (600 by default). A row with no beat is taken over once its lease is older than `CHANT_LOCK_STALE` seconds. `chant unlock --run <id>` frees the rows of a run by hand ([#4660](https://github.com/INTENTIUS/chant/issues/4660)).
 
 ## Release a stuck lock
 

@@ -9,6 +9,7 @@
  * chant lock --list [--gate <name>] [--json]
  * chant lock --alive <run>
  * chant unlock --pr <n> [<target>...] [--gate <name>] [--json]
+ * chant unlock --run <id> [--gate <name>] [--json]
  * ```
  *
  * The targets are names: the components `chant components pr-plan` selects,
@@ -34,6 +35,11 @@
  * Forgejo repo lock tag (#4552): `dead` when the forge says the run
  * finished, `alive` while it runs or when nobody can say. The lock tag's
  * shell asks it before taking a lease over.
+ *
+ * `chant unlock --run <id>` (#4660) frees every row run `<id>` holds on the
+ * gate and drops its place in the queue, for a hold whose run is gone and
+ * that no beat or forge answer has freed. `--beat <run> --parent <pid>` is
+ * the heartbeat side process of a hold (../../lifecycle/lock-beat.ts).
  *
  * `--forge` reads which holders are still open, so a lock whose pull
  * request merged or closed is taken over, and, with `--head`, posts the
@@ -138,6 +144,22 @@ export async function runLock(ctx: CommandContext): Promise<number> {
     return 0;
   }
 
+  if (args.beatRun !== undefined) {
+    if (args.parentPid === undefined) return fail("--beat needs the process it beats for: --beat <run> --parent <pid>");
+    const { beatLockRows, lockBeatSeconds } = await import("../../lifecycle/resource-lock");
+    const { runBeatLoop } = await import("../../lifecycle/lock-beat");
+    const run = args.beatRun;
+    await runBeatLoop({
+      gate,
+      run,
+      parent: args.parentPid,
+      intervalMs: lockBeatSeconds(process.env) * 1000,
+      beat: (at) => beatLockRows(gate, run, at),
+      log: (line) => console.error(line),
+    });
+    return 0;
+  }
+
   if (args.list) {
     if (targetsOf(ctx).length > 0 || args.pr !== undefined) return fail("--list prints every lock; drop the targets and --pr");
     let file;
@@ -168,7 +190,7 @@ export async function runLock(ctx: CommandContext): Promise<number> {
     if (rows.length === 0) console.error(formatInfo(`no target locks on ${gate}`));
     for (const [target, l] of rows) console.log(`${target}\tpull request ${l.pr}\t${l.stage}\t${l.by}\t${l.at}`);
     if (leased.length === 0) console.error(formatInfo(`no apply rows held on ${gate}`));
-    for (const { key, holder } of leased) console.log(`${key}\trun ${holder.run}\t${holder.at}${holder.url ? `\t${holder.url}` : ""}`);
+    for (const { key, holder } of leased) console.log(`${key}\trun ${holder.run}\t${holder.at}${holder.url ? `\t${holder.url}` : ""}${holder.beat ? `\tbeat ${holder.beat}` : ""}`);
     return 0;
   }
 
@@ -244,7 +266,24 @@ export async function runUnlock(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   const gate = gateOf(ctx);
   if (typeof gate !== "string") return fail(gate.error);
-  if (args.pr === undefined) return fail("chant unlock needs the pull or merge request whose locks it releases: --pr <n>");
+  if (args.unlockRun !== undefined) {
+    if (args.pr !== undefined || targetsOf(ctx).length > 0) return fail("--run frees the rows of one run; drop --pr and the targets");
+    const { clearRunLockRows } = await import("../../lifecycle/resource-lock");
+    let cleared;
+    try {
+      cleared = await clearRunLockRows(gate, args.unlockRun);
+    } catch (err) {
+      return fail(`could not clear run ${args.unlockRun} from ${gate}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (args.json) {
+      console.log(JSON.stringify({ gate, run: args.unlockRun, released: cleared.released, waited: cleared.waited, pushed: cleared.pushed }, null, 2));
+      return 0;
+    }
+    if (cleared.released.length === 0 && !cleared.waited) console.error(formatInfo(`run ${args.unlockRun} holds no row and waits for none on ${gate}`));
+    else console.error(formatSuccess(`freed ${cleared.released.length > 0 ? cleared.released.join(", ") : "no row"}${cleared.waited ? " and took run " + args.unlockRun + " out of the queue" : ""} on ${gate}`));
+    return 0;
+  }
+  if (args.pr === undefined) return fail("chant unlock needs the pull or merge request whose locks it releases: --pr <n>, or the run whose rows it frees: --run <id>");
   const targets = targetsOf(ctx);
   let result;
   try {

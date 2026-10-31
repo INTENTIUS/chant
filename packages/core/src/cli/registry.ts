@@ -367,6 +367,12 @@ export interface ParsedArgs {
   fromReport?: string;
   /** `chant lock --alive <run>` (#4552): print `alive` or `dead` for a run that holds rows or the repo lock tag. */
   aliveRun?: string;
+  /** `chant lock --beat <run>` (#4660): the heartbeat side process of the rows a run holds. Not for people. */
+  beatRun?: string;
+  /** `chant lock --beat <run> --parent <pid>`: the process whose end ends the beat. */
+  parentPid?: number;
+  /** `chant unlock --run <id>` (#4660): free the rows a run holds or waits for, whatever the forge says of it. */
+  unlockRun?: string;
   /** Every `--pr <n>`, in order: `chant release compose` (#4168 4.3) takes several. */
   prs?: number[];
   /** `chant release cut --channel <tag>` (#4168 4.3): the tag a publish of the release moves in place of `latest`. */

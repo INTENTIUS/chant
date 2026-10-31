@@ -19,6 +19,7 @@ import { dispatchCommandGroup, collectCommandGroups, formatCommandGroupsHelp, ty
 import type { LexiconPlugin } from "../lexicon";
 import { parseArgs } from "./parse-args";
 import { flushAndExit, waitForStreamDrain } from "./flush";
+import { setOwnChantCommand } from "../lifecycle/lock-beat";
 
 export { parseArgs, waitForStreamDrain };
 
@@ -675,7 +676,8 @@ Ops:
                         posts chant/lock on --head. Exits 3 when another open
                         pull request holds a target. --list prints the locks
   unlock [<target>...]  Release the locks a pull request holds (--pr <n>,
-                        --gate <name>, --json)
+                        --gate <name>, --json). --run <id> frees the rows a
+                        run holds or waits for on the gate instead
   graph                 Show Op dependency graph (--stacks for cross-stack order,
                         --format ir|mermaid|dot|layout for the lint-gated graph IR,
                         a Mermaid flowchart, Graphviz DOT, or node positions;
@@ -2202,6 +2204,8 @@ async function main(): Promise<void> {
 // whole CLI through the npm .bin shim / a symlinked checkout).
 const isMain = isEntryPoint(process.argv[1], import.meta.url);
 if (isMain) {
+  // #4660: a row hold starts its heartbeat as this chant, run again.
+  setOwnChantCommand([process.execPath, ...process.execArgv, process.argv[1]!]);
   main().catch(async (err) => {
     const verbose = process.argv.includes("--verbose") || process.argv.includes("-v");
     // #4116: a failure to import a package the project has not installed is named as such first.

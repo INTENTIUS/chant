@@ -50,6 +50,7 @@
 import { hostname } from "node:os";
 import { getRuntime } from "../runtime-adapter";
 import { pushLifecycleStatus, readBlobBySha, readPathSha, RefCASConflictError, writeBlobToPath } from "./git";
+import { ownBeatStarter } from "./lock-beat";
 import { lockRowsConflict, sortedLockRows, type LockRow } from "./lock-rows";
 import { dropRefusedWrite, fetchForLocks, localTip, LOCKS_DIR, targetLockGateProblem } from "./target-lock";
 
@@ -58,6 +59,15 @@ export const LOCK_ROWS_DIR = `${LOCKS_DIR}/rows`;
 
 /** A lease older than this many seconds is taken over (`CHANT_LOCK_STALE`). */
 export const DEFAULT_LOCK_STALE_SECONDS = 7200;
+
+/** A hold whose beat is older than this many seconds is gone (`CHANT_LOCK_BEAT_STALE`, #4660). */
+export const DEFAULT_LOCK_BEAT_STALE_SECONDS = 600;
+
+/** How often a live apply touches its hold, in seconds (`CHANT_LOCK_BEAT`, #4660). */
+export const DEFAULT_LOCK_BEAT_SECONDS = 60;
+
+/** A queued run that has not refreshed its entry for this many seconds is gone (`CHANT_LOCK_WAITER_STALE`, #4660). */
+export const DEFAULT_LOCK_WAITER_STALE_SECONDS = 300;
 
 const STATE_BRANCH = "chant/lifecycle";
 const ATTEMPTS = 30;
@@ -69,6 +79,15 @@ export interface LockRowHolder {
   /** The run's page, for a refusal that names it. */
   url?: string;
   sha?: string;
+  /**
+   * The liveness token (#4660): the last time a heartbeat of the run's own
+   * process touched its hold. A holder with a beat is judged by the beat
+   * alone, so a job that is cancelled or killed without running its cleanup
+   * frees its rows once the beat is {@link lockBeatStaleSeconds} old, while a
+   * job that still beats keeps them however long its apply runs. A holder
+   * without one (an older chant, terragucci) keeps the rules below.
+   */
+  beat?: string;
 }
 
 /** A run waiting for rows: who it is, the rows it waits for, and the commit time that orders it. */
@@ -114,6 +133,26 @@ export function lockStaleSeconds(env: Record<string, string | undefined>): numbe
   return DEFAULT_LOCK_STALE_SECONDS;
 }
 
+function positiveSeconds(env: Record<string, string | undefined>, name: string, fallback: number): number {
+  const n = Number(env[name]);
+  return env[name] !== undefined && Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+/** How old a hold's beat may be before the hold is gone, in seconds: `CHANT_LOCK_BEAT_STALE`, else {@link DEFAULT_LOCK_BEAT_STALE_SECONDS}. */
+export function lockBeatStaleSeconds(env: Record<string, string | undefined>): number {
+  return positiveSeconds(env, "CHANT_LOCK_BEAT_STALE", DEFAULT_LOCK_BEAT_STALE_SECONDS);
+}
+
+/** Seconds between beats: `CHANT_LOCK_BEAT`, else {@link DEFAULT_LOCK_BEAT_SECONDS}. */
+export function lockBeatSeconds(env: Record<string, string | undefined>): number {
+  return positiveSeconds(env, "CHANT_LOCK_BEAT", DEFAULT_LOCK_BEAT_SECONDS);
+}
+
+/** How old a queued run's entry may be before it is gone, in seconds: `CHANT_LOCK_WAITER_STALE`, else {@link DEFAULT_LOCK_WAITER_STALE_SECONDS}. */
+export function lockWaiterStaleSeconds(env: Record<string, string | undefined>): number {
+  return positiveSeconds(env, "CHANT_LOCK_WAITER_STALE", DEFAULT_LOCK_WAITER_STALE_SECONDS);
+}
+
 /** Who this apply is, as the rows name it: the forge's run, or this host and process outside CI. */
 export function lockRowHolder(env: Record<string, string | undefined>, now: Date = new Date()): LockRowHolder {
   const gitlab = Boolean(env.CI_PIPELINE_ID);
@@ -137,7 +176,13 @@ type Fetch = (url: string, init?: { headers?: Record<string, string> }) => Promi
  */
 export function forgeLockLiveness(env: Record<string, string | undefined>, fetch: Fetch = globalThis.fetch as unknown as Fetch, now: () => number = Date.now): LockLiveness {
   const stale = lockStaleSeconds(env);
+  const beatStale = lockBeatStaleSeconds(env);
   return async (h) => {
+    // #4660: a hold that carries a beat is judged by it alone. The forge may call a cancelled run finished while its process still applies, and an apply may outlast the lease; the beat says whether the process is there.
+    if (h.beat !== undefined) {
+      const beat = new Date(h.beat).getTime();
+      if (Number.isFinite(beat)) return now() - beat >= beatStale * 1000 ? "dead" : "alive";
+    }
     const since = new Date(h.at).getTime();
     if (Number.isFinite(since) && now() - since >= stale * 1000) return "dead";
     const local = /^local:(.*):(\d+)$/.exec(h.run);
@@ -180,7 +225,7 @@ export function parseLockRows(text: string | null): LockRowsFile {
       const holders: Record<string, LockRowHolder> = {};
       for (const [id, raw] of Object.entries(doc.holders as Record<string, Record<string, unknown>>)) {
         if (typeof raw?.run !== "string" || typeof raw.at !== "string") continue;
-        holders[id] = { run: raw.run, at: raw.at, ...(typeof raw.url === "string" ? { url: raw.url } : {}), ...(typeof raw.sha === "string" ? { sha: raw.sha } : {}) };
+        holders[id] = { run: raw.run, at: raw.at, ...(typeof raw.url === "string" ? { url: raw.url } : {}), ...(typeof raw.sha === "string" ? { sha: raw.sha } : {}), ...(typeof raw.beat === "string" ? { beat: raw.beat } : {}) };
       }
       const rows: Record<string, string> = {};
       for (const [k, id] of Object.entries(doc.rows as Record<string, unknown>)) if (typeof id === "string" && holders[id]) rows[k] = id;
@@ -434,13 +479,16 @@ export async function commitTimeOf(rev: string, cwd?: string): Promise<string | 
 }
 
 /** The live waiters for a row that meets one of `keys` who go before `me`, and the waiters that are gone. */
-export async function waitersAhead(file: LockRowsFile, keys: readonly string[], me: LockRowWaiter, alive: LockLiveness): Promise<{ ahead: LockRowWaiter[]; gone: string[] }> {
+export async function waitersAhead(file: LockRowsFile, keys: readonly string[], me: LockRowWaiter, alive: LockLiveness, now: () => number = Date.now): Promise<{ ahead: LockRowWaiter[]; gone: string[] }> {
   const ahead: LockRowWaiter[] = [];
   const gone: string[] = [];
+  const waiterStale = lockWaiterStaleSeconds(process.env) * 1000;
   for (const [id, w] of Object.entries(file.waiting ?? {})) {
     if (id === me.run || w.run === me.run) continue;
     if (!w.keys.some((k) => keys.some((mine) => lockRowsConflict(k, mine)))) continue;
-    const verdict = await alive(w);
+    // #4660: a waiter refreshes its entry every few poll rounds, so one that has not is gone (cancelled or killed), whatever the forge says.
+    const entered = new Date(w.at).getTime();
+    const verdict = Number.isFinite(entered) && now() - entered >= waiterStale ? "dead" : await alive(w);
     if (verdict === "dead") {
       gone.push(id);
       continue;
@@ -448,6 +496,13 @@ export async function waitersAhead(file: LockRowsFile, keys: readonly string[], 
     if (waiterBefore(w, me)) ahead.push(w);
   }
   return { ahead: ahead.sort((a, b) => (waiterBefore(a, b) ? -1 : 1)), gone: gone.sort() };
+}
+
+/** When each live holder took its rows and last beat, for a wait that gave up (#4660). */
+function holdAges(held: readonly HeldLockRow[]): string {
+  const runs = [...new Map(held.map((h) => [h.holder.run, h.holder])).values()];
+  if (runs.length === 0) return "";
+  return ` (${runs.map((h) => `run ${h.run} took its rows at ${h.at}${h.beat ? `, last beat ${h.beat}` : ", no beat"}`).join("; ")})`;
 }
 
 function describeWait(held: readonly HeldLockRow[], ahead: readonly LockRowWaiter[], rows: readonly LockRow[]): string {
@@ -481,7 +536,7 @@ export async function waitLockRows(gate: string, rows: readonly LockRow[], me: L
     const { sha, file } = await readCurrent(gate, opts.cwd);
     const mine = queued ?? waiter();
     const { live, gone } = await heldLockRowsIn(file, keys, me.run, alive);
-    const { ahead, gone: goneWaiters } = await waitersAhead(file, keys, mine, alive);
+    const { ahead, gone: goneWaiters } = await waitersAhead(file, keys, mine, alive, now);
     if (live.length === 0 && ahead.length === 0) {
       const next = withRowsTaken(file, keys, me, gone);
       for (const id of goneWaiters) delete next.waiting?.[id];
@@ -496,10 +551,10 @@ export async function waitLockRows(gate: string, rows: readonly LockRow[], me: L
     if (now() >= wait.deadline) {
       await leaveQueue(gate, me.run, opts.cwd);
       const waited = Math.round((now() - started) / 1000);
-      throw new LockWaitTimeoutError(`waited ${waited}s for ${keys.join(", ")} of ${gate} and gave up at the job's deadline: ${why}`, live, ahead, waited);
+      throw new LockWaitTimeoutError(`waited ${waited}s for ${keys.join(", ")} of ${gate} and gave up at the job's deadline: ${why}${holdAges(live)}. If a run named here is gone, chant unlock --run <id> --gate ${gate} frees its rows`, live, ahead, waited);
     }
     const inFile = file.waiting?.[me.run];
-    const refresh = inFile ? now() - new Date(inFile.at).getTime() > stale / 2 : true;
+    const refresh = inFile ? now() - new Date(inFile.at).getTime() > Math.min(stale / 2, (lockWaiterStaleSeconds(process.env) * 1000) / 3) : true;
     if (!inFile || refresh || goneWaiters.length > 0) {
       const entry: LockRowWaiter = { ...waiter(), at: new Date(now()).toISOString() };
       const wrote = await writeAndPush(gate, sha, withWaiter(file, entry, goneWaiters), `Run ${me.run} waits for ${keys.length} row${keys.length === 1 ? "" : "s"} of ${gate}`, opts.cwd);
@@ -556,6 +611,63 @@ export async function releaseLockRows(gate: string, keys: readonly string[], me:
   return false;
 }
 
+/** The rows file after run `run`'s beat is set to `at`. Unchanged when the run holds no row. */
+export function withRowsBeat(file: LockRowsFile, run: string, at: string): LockRowsFile {
+  const holder = file.holders[run];
+  if (!holder || !Object.values(file.rows).includes(run)) return file;
+  const next = copyRows(file);
+  next.holders[run] = { ...holder, beat: at };
+  return next;
+}
+
+/**
+ * Touch run `run`'s hold (#4660): the heartbeat of a live apply. `held` while
+ * the run still holds a row, `gone` once it holds none (released, or taken
+ * over after its beat went stale), so the heartbeat stops.
+ */
+export async function beatLockRows(gate: string, run: string, at: string, opts: { cwd?: string } = {}): Promise<"held" | "gone"> {
+  checkGate(gate);
+  await fetchForLocks(opts.cwd);
+  for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+    const { sha, file } = await readCurrent(gate, opts.cwd);
+    if (!Object.values(file.rows).includes(run)) return "gone";
+    const wrote = await writeAndPush(gate, sha, withRowsBeat(file, run, at), `Run ${run} still holds its rows of ${gate}`, opts.cwd);
+    if (wrote) return "held";
+    await pause(200 + Math.floor(Math.random() * 800));
+  }
+  throw new Error(`could not touch the hold of run ${run} on ${gate}: ${STATE_BRANCH} kept moving`);
+}
+
+/** The rows file after every hold and queue entry of `run` is dropped, whether or not the run is gone. */
+export function withRunCleared(file: LockRowsFile, run: string): LockRowsFile {
+  const next = copyRows(file);
+  delete next.holders[run];
+  for (const [k, id] of Object.entries(next.rows)) if (id === run) delete next.rows[k];
+  delete next.waiting?.[run];
+  return tidyWaiting(next);
+}
+
+/**
+ * Let go of everything run `run` holds or waits for on `gate`, by hand
+ * (#4660, `chant unlock --run`). It does not ask whether the run is alive:
+ * the person who runs it says so. Throws when the branch cannot be read or
+ * pushed, so a hold that is still there is never reported as cleared.
+ */
+export async function clearRunLockRows(gate: string, run: string, opts: { cwd?: string } = {}): Promise<{ released: string[]; waited: boolean; pushed: boolean }> {
+  checkGate(gate);
+  await fetchForLocks(opts.cwd);
+  for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+    const { sha, file } = await readCurrent(gate, opts.cwd);
+    const released = Object.entries(file.rows).filter(([, id]) => id === run).map(([k]) => k).sort();
+    const waited = file.waiting?.[run] !== undefined;
+    if (released.length === 0 && !file.holders[run] && !waited) return { released, waited, pushed: false };
+    const wrote = await writeAndPush(gate, sha, withRunCleared(file, run), `Clear the hold of run ${run} on ${gate}`, opts.cwd);
+    if (wrote) return { released, waited, pushed: wrote.pushed };
+    await pause(200 + Math.floor(Math.random() * 800));
+  }
+  throw new Error(`could not clear run ${run} from ${gate}: ${STATE_BRANCH} kept moving; check that the job may push to it`);
+}
+
 /** One line naming the runs that hold rows, and what of this apply they hold, for a log line and a refusal. */
 export function describeHeldLockRows(held: readonly HeldLockRow[], rows: readonly LockRow[]): string {
   const address = new Map(rows.map((r) => [r.key, `${r.target}: ${r.address}`]));
@@ -578,6 +690,9 @@ export interface LockRowsLease {
   release(): Promise<boolean>;
 }
 
+/** Starts the heartbeat of a hold (#4660) and returns how to stop it. */
+export type LockBeatStarter = (hold: { gate: string; holder: LockRowHolder; cwd?: string }) => () => void;
+
 /**
  * Lease `rows` for the apply about to run (#4552): take them, or say who
  * holds them. With no rows, a lease that holds nothing. Throws when the
@@ -587,15 +702,34 @@ export interface LockRowsLease {
 export async function leaseLockRows(
   gate: string,
   rows: readonly LockRow[],
-  opts: LockRowsOptions & { holder?: LockRowHolder; wait?: LockRowsWait } = {},
+  opts: LockRowsOptions & { holder?: LockRowHolder; wait?: LockRowsWait; beat?: LockBeatStarter } = {},
 ): Promise<{ ok: true; lease: LockRowsLease; tookOver: LockRowHolder[]; waitedSeconds?: number; waited?: boolean } | { ok: false; held: HeldLockRow[]; message: string; timedOut?: true }> {
   const holder = opts.holder ?? lockRowHolder(process.env);
   const keys = sortedLockRows(rows).map((r) => r.key);
-  const lease: LockRowsLease = { gate, holder, keys, release: () => (keys.length === 0 ? Promise.resolve(true) : releaseLockRows(gate, keys, holder.run, { ...(opts.cwd ? { cwd: opts.cwd } : {}) })) };
+  let stopBeat: (() => void) | undefined;
+  const lease: LockRowsLease = {
+    gate,
+    holder,
+    keys,
+    release: () => {
+      // The beat stops first, so it cannot touch a hold that is being let go.
+      stopBeat?.();
+      stopBeat = undefined;
+      return keys.length === 0 ? Promise.resolve(true) : releaseLockRows(gate, keys, holder.run, { ...(opts.cwd ? { cwd: opts.cwd } : {}) });
+    },
+  };
   if (keys.length === 0) return { ok: true, lease, tookOver: [] };
+  const startBeat = () => {
+    try {
+      stopBeat = (opts.beat ?? ownBeatStarter())?.({ gate, holder, ...(opts.cwd ? { cwd: opts.cwd } : {}) });
+    } catch {
+      // No beat: the hold keeps the forge and lease rules.
+    }
+  };
   if (opts.wait) {
     try {
       const waited = await waitLockRows(gate, rows, holder, opts.wait, opts);
+      startBeat();
       return { ok: true, lease, tookOver: waited.tookOver, ...(waited.waited ? { waited: true, waitedSeconds: waited.waitedSeconds } : {}) };
     } catch (err) {
       if (err instanceof LockWaitTimeoutError) return { ok: false, held: err.held, message: err.message, timedOut: true };
@@ -604,5 +738,6 @@ export async function leaseLockRows(
   }
   const taken = await takeLockRows(gate, rows, holder, opts);
   if (!taken.ok) return { ok: false, held: taken.held, message: describeHeldLockRows(taken.held, rows) };
+  startBeat();
   return { ok: true, lease, tookOver: taken.tookOver };
 }
