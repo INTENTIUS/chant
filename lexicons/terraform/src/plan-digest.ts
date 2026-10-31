@@ -30,6 +30,24 @@ export interface TerraformPlannedChange {
 }
 
 /**
+ * `after` without the values the plan says are known only after apply
+ * (plywood#56). terraform and tofu leave such a value out of `after` and mark
+ * it in `after_unknown`; a renderer that prints a stand-in instead (a null, a
+ * placeholder string, a value drawn while planning) would otherwise make two
+ * plans of one create differ. The mark itself stays in the digest, so a
+ * value turning from known to unknown still changes it.
+ */
+export function withoutUnknown(after: unknown, unknown: unknown): unknown {
+  if (unknown === true) return undefined;
+  if (Array.isArray(after) && Array.isArray(unknown)) return after.map((v, i) => (unknown[i] === true ? null : withoutUnknown(v, unknown[i])));
+  if (after !== null && typeof after === "object" && !Array.isArray(after) && unknown !== null && typeof unknown === "object" && !Array.isArray(unknown)) {
+    const marks = unknown as Record<string, unknown>;
+    return Object.fromEntries(Object.entries(after as Record<string, unknown>).filter(([k]) => marks[k] !== true).map(([k, v]) => [k, withoutUnknown(v, marks[k])]));
+  }
+  return after;
+}
+
+/**
  * The change set a `terraform show -json` plan describes, canonicalised
  * (#2300): every proposed change, at its address, with the values that would
  * be written, sorted so two renderings of the same plan project identically.
@@ -64,7 +82,7 @@ export function terraformPlanChangeSet(planJson: unknown): {
       deposed: e.deposed,
       actions: change.actions,
       before: change.before,
-      after: change.after,
+      after: withoutUnknown(change.after, change.after_unknown),
       after_unknown: change.after_unknown,
       replace_paths: change.replace_paths,
       importing: change.importing,

@@ -68,7 +68,11 @@
  * each step's op, URN, provider, id, inputs before and after, `diffReasons`,
  * `replaceReasons` and `detailedDiff`, sorted by URN and op. It leaves out
  * `config`, `duration`, `diagnostics` and `changeSummary`, and the states'
- * outputs, which at preview are the last deployment's or unknown. For a
+ * outputs, which at preview are the last deployment's or unknown. It also
+ * leaves out what the engine makes up while planning a create or a
+ * replacement (plywood#56): an autoname such as `events-3f45941` is drawn
+ * again by every preview, so it reads as {@link PULUMI_GENERATED}. See
+ * {@link pulumiPlannedInputs}. Unknowns already print as one fixed string. For a
  * member on the resource lock grain the `pulumi-up` capability passes
  * `changedOnly` (#4541, ruling B), which leaves `same` and `read` steps out.
  *
@@ -164,28 +168,83 @@ export interface PulumiPreviewDigestOptions {
   changedOnly?: boolean;
 }
 
+/** What stands in a digest for an input the engine made up while planning (plywood#56). */
+export const PULUMI_GENERATED = "<generated at plan time>";
+
+/** Pulumi's autonaming: the logical name, a dash and seven random hex characters. */
+const AUTONAME = /^(.+)-[0-9a-f]{7}$/;
+
+/** The step's resource name: the last part of its URN. */
+function logicalName(urn: string | undefined): string {
+  const at = urn?.lastIndexOf("::") ?? -1;
+  return urn && at >= 0 ? urn.slice(at + 2) : (urn ?? "");
+}
+
+/**
+ * The inputs a step would write, with the values the engine made up while
+ * planning replaced by {@link PULUMI_GENERATED} (plywood#56). Two previews of
+ * one create draw different autonames (`events-3f45941`, then
+ * `events-9c01d2e`), and a digest over them could never match a later plan of
+ * the same change.
+ *
+ * Only a create or a replacement draws a name: an update's inputs keep the one
+ * the resource was created with, and that stays in `before` and `after`. A
+ * value counts as generated when the engine lists its key in `__defaults`
+ * (the inputs the provider filled in, not the program) and it reads as an
+ * autoname of this resource: its logical name, or the start of it when the
+ * provider shortened it, then a dash and seven hex characters. An engine that
+ * prints no `__defaults` is held to the exact logical name. Every other input
+ * stays in, the defaults that are plain values included, so a changed input
+ * still changes the digest. `before` is the recorded state and is never masked.
+ */
+export function pulumiPlannedInputs(step: PulumiStep): Json | null {
+  const inputs = step.newState?.inputs;
+  if (!isObject(inputs)) return inputs ?? null;
+  const draws = step.oldState === undefined || step.op === "create" || step.op === "create-replacement" || step.op === "replace";
+  if (!draws) return inputs;
+  const name = logicalName(step.urn).toLowerCase();
+  const filled = Array.isArray(inputs.__defaults) ? new Set(inputs.__defaults.filter((k): k is string => typeof k === "string")) : undefined;
+  const out: Json = {};
+  for (const [key, value] of Object.entries(inputs)) {
+    const stem = typeof value === "string" ? AUTONAME.exec(value)?.[1]?.toLowerCase() : undefined;
+    const generated = stem !== undefined && name !== "" && (filled ? filled.has(key) && (name.startsWith(stem) || stem.startsWith(name)) : stem === name);
+    out[key] = generated ? PULUMI_GENERATED : value;
+  }
+  return out;
+}
+
+/** One step as a digest sees it: what it proposes, without the values the engine made up. */
+function digestStep(s: PulumiStep) {
+  return {
+    op: s.op ?? null,
+    urn: s.urn ?? null,
+    provider: s.provider ?? null,
+    id: s.newState?.id ?? s.oldState?.id ?? null,
+    before: s.oldState?.inputs ?? null,
+    after: pulumiPlannedInputs(s),
+    diffReasons: [...(s.diffReasons ?? [])].sort(),
+    replaceReasons: [...(s.replaceReasons ?? [])].sort(),
+    detailedDiff: s.detailedDiff ?? null,
+  };
+}
+
+const byStep = (a: { urn: string | null; op: string | null }, b: { urn: string | null; op: string | null }): number =>
+  byString(`${a.urn}\u0000${a.op}`, `${b.urn}\u0000${b.op}`);
+
 /**
  * The member's plan digest: `computePlanDigest("pulumi-preview", …)` over
  * what each step proposes, sorted by URN and op, so two renderings of one
- * preview agree. See the module comment for what it leaves out. With
- * `changedOnly`, `same` and `read` steps are left out too, under the label
- * `pulumi-preview-changed`, so the two digests never collide.
+ * preview agree. See the module comment for what it leaves out, and
+ * {@link pulumiPlannedInputs} for the values the engine made up that it leaves
+ * out of a create. With `changedOnly`, `same` and `read` steps are left out
+ * too, under the label `pulumi-preview-changed`, so the two digests never
+ * collide.
  */
 export function pulumiPreviewDigest(preview: unknown, opts: PulumiPreviewDigestOptions = {}): string {
   const steps = (pulumiSteps(preview) ?? [])
     .filter((s) => !opts.changedOnly || !PULUMI_UNCHANGED_OPS.has(s.op ?? ""))
-    .map((s) => ({
-      op: s.op ?? null,
-      urn: s.urn ?? null,
-      provider: s.provider ?? null,
-      id: s.newState?.id ?? s.oldState?.id ?? null,
-      before: s.oldState?.inputs ?? null,
-      after: s.newState?.inputs ?? null,
-      diffReasons: [...(s.diffReasons ?? [])].sort(),
-      replaceReasons: [...(s.replaceReasons ?? [])].sort(),
-      detailedDiff: s.detailedDiff ?? null,
-    }))
-    .sort((a, b) => byString(`${a.urn}\u0000${a.op}`, `${b.urn}\u0000${b.op}`));
+    .map(digestStep)
+    .sort(byStep);
   return computePlanDigest(opts.changedOnly ? "pulumi-preview-changed" : "pulumi-preview", steps);
 }
 
