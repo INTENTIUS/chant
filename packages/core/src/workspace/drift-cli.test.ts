@@ -4,10 +4,14 @@
  * and each member kind answers the reads the table says.
  */
 
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { driftRecord, driftRecordLine, driftSettle, driftStart, type DriftRecord } from "../drift-record";
 import { readContractSchema } from "./conformance";
-import { DRIFT_CONTRACT_VERSION, DRIFT_ERROR_CODES, DRIFT_READS_BY_KIND, DRIFT_RESOURCE_KINDS, driftReadDocument } from "./drift-cli";
+import { DRIFT_CONTRACT_VERSION, DRIFT_ERROR_CODES, DRIFT_READS_BY_KIND, DRIFT_RESOURCE_KINDS, DRIFT_STACK_KINDS, driftReadDocument, readWorkspaceDrift } from "./drift-cli";
+import { parseArgs } from "../cli/parse-args";
 import driftSchema from "./drift.schema.json";
 
 const at = "2026-10-25T09:00:00Z";
@@ -61,5 +65,35 @@ describe("chant workspace drift's document", () => {
     expect(DRIFT_READS_BY_KIND.pulumi).toEqual(["refresh"]);
     expect(DRIFT_RESOURCE_KINDS).toEqual(["choudoufu", "pulumi"]);
     expect(DRIFT_ERROR_CODES).toContain("no-drift-read");
+  });
+});
+
+describe("chant workspace drift --stack", () => {
+  test("is parsed beside --member and --resource", () => {
+    const args = parseArgs(["workspace", "drift", "--member", "shop", "--stack", "prod-eu", "--resource", "urn:x"]);
+    expect(args.carveStack).toBe("prod-eu");
+    expect(args.members).toEqual(["shop"]);
+    expect(parseArgs(["workspace", "drift", "--member", "shop"]).carveStack).toBeUndefined();
+  });
+
+  test("only a pulumi member keeps one export per stack", () => {
+    expect(DRIFT_STACK_KINDS).toEqual(["pulumi"]);
+    for (const kind of DRIFT_STACK_KINDS) expect(DRIFT_READS_BY_KIND[kind]).toBeDefined();
+  });
+
+  test("a member of another kind refuses it with read-unsupported before anything runs", async () => {
+    const root = mkdtempSync(join(tmpdir(), "drift-stack-"));
+    try {
+      mkdirSync(join(root, "infra"));
+      writeFileSync(join(root, "chant.workspace.json"), JSON.stringify({ name: "acme", schema: 1, members: [{ name: "infra", dir: "infra", kind: "terraform" }] }));
+      const answer = await readWorkspaceDrift({ cwd: root, member: "infra", stack: "prod-eu" });
+      expect("error" in answer && answer.error.code).toBe("read-unsupported");
+      expect("error" in answer && answer.error.message).toMatch(/--stack reads a stack's export from the index store.*infra is kind terraform/);
+      const doc = driftReadDocument("infra", answer);
+      const { validate } = readContractSchema("drift");
+      expect(validate(doc), JSON.stringify(validate.errors)).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

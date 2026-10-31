@@ -12,7 +12,8 @@
  * never imports a lexicon to read drift.
  *
  * `--member` names the workspace member the records are for; it defaults to
- * the project directory's name. A lexicon that refuses the read (a read its
+ * the project directory's name. `--stack` names the stack to read, for a
+ * lexicon whose store holds one export per stack (pulumi). A lexicon that refuses the read (a read its
  * engine has not got, or one resource on an engine that cannot read one on
  * its own) makes the command print `{"refused": {code, message}}` as its
  * only stdout line and exit 3, so the workspace command can name the
@@ -33,7 +34,7 @@ import type { CommandContext } from "../registry";
  */
 export const DRIFT_REFUSED_EXIT = CHANT_EXIT.failed;
 
-const USAGE = "chant lifecycle drift [--member <name>] [--read <state|plan|refresh|live-read|ownership>] [--resource <addr>]";
+const USAGE = "chant lifecycle drift [--member <name>] [--read <state|plan|refresh|live-read|ownership>] [--resource <addr>] [--stack <name>]";
 
 function refuse(code: ReadDriftRefusalCode, message: string): number {
   console.log(JSON.stringify({ refused: { code, message } }));
@@ -63,6 +64,7 @@ export async function runLifecycleDrift(ctx: CommandContext): Promise<number> {
       config: config as Record<string, unknown>,
       ...(read !== undefined ? { read: read as DriftRead } : {}),
       ...(args.resource !== undefined ? { resource: args.resource } : {}),
+      ...(args.carveStack !== undefined ? { stack: args.carveStack } : {}),
       observedAt,
     });
     if ("refused" in answer) return refuse(answer.refused.code, `${plugin.name}: ${answer.refused.message}`);

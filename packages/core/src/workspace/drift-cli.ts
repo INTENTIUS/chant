@@ -1,6 +1,6 @@
 /**
  * `chant workspace drift [dir] --member <name> [--read <read>] [--resource
- * <addr>] [--env <env>] [--stream] [-o <file>]` (behold#995): one member's
+ * <addr>] [--stack <name>] [--env <env>] [--stream] [-o <file>]` (behold#995): one member's
  * drift, read by the engine that owns it, as chant's drift record
  * (`../drift-record.ts`, #4451).
  *
@@ -12,6 +12,14 @@
  * | `terraform` | `state` | `chant lifecycle drift` in the member's reader project: the terraform lexicon's `readDrift`, `terraform show -json` over state, or `--read plan` for a saved plan's `show -json` |
  * | `choudoufu` | `ownership` | the same, through `choudoufu live-plan -json` (and `live-ls`), or `--read plan` for live-plan with a plan beside it; `--resource <addr>` passes `choudoufu live-plan -resource=<addr>`'s stream through |
  * | `pulumi` | `refresh` | `chant lifecycle drift` in the member's reader project: the pulumi lexicon's `readDrift`, `pulumi refresh --preview-only --json --target <urn>` per resource in the checked-in export, or `plunge drift --resource <urn> --stream` for a member on plunge; `--resource <urn>` reads that URN alone (#4455) |
+ *
+ * `--stack <name>` reads that stack's export for a `pulumi` member, from the
+ * index store (`refs/chant/snapshots`), where a member of several stacks
+ * holds one export each. Without it the member reads the export its store
+ * holds, which is the right one only for a member of one stack. A store with
+ * no export for the stack answers `no-drift-read`, naming the stack; it never
+ * falls back to another stack's export or the checked-in file. Any other kind
+ * answers `read-unsupported`.
  *
  * Any other kind has no drift read and answers `no-drift-read`. A member of
  * a package's kind runs in the reader project `workspace graph` writes for it
@@ -111,7 +119,10 @@ export const DRIFT_RESOURCE_KINDS: readonly string[] = ["choudoufu", "pulumi"];
 const MEMBER_REFUSED_EXITS: readonly number[] = [1, 3];
 
 const USAGE =
-  "chant workspace drift [dir] --member <name> [--read <state|plan|refresh|live-read|ownership>] [--resource <addr>] [--env <env>] [--components] [--stream] [-o <file>]";
+  "chant workspace drift [dir] --member <name> [--read <state|plan|refresh|live-read|ownership>] [--resource <addr>] [--stack <name>] [--env <env>] [--components] [--stream] [-o <file>]";
+
+/** The kinds whose engine keeps one export per stack, for `--stack`. */
+export const DRIFT_STACK_KINDS: readonly string[] = ["pulumi"];
 
 /** The document `workspace drift` prints: a drift document with the read contract's head. */
 export type WorkspaceDriftDocument = DriftDocument & {
@@ -127,6 +138,8 @@ export interface DriftQuery {
   member: string;
   read?: string;
   resource?: string;
+  /** The stack whose stored export is read (`--stack`), for a pulumi member. */
+  stack?: string;
   env?: string;
   components?: boolean;
 }
@@ -229,7 +242,7 @@ interface LexiconDiff {
 /** The command line the member runs. */
 function memberArgv(kind: string, query: DriftQuery, read: DriftRead): string[] {
   if (kind === "chant") return ["lifecycle", "diff", query.env!, "--live", "--json"];
-  return ["lifecycle", "drift", ".", "--member", query.member, "--read", read, ...(query.resource !== undefined ? ["--resource", query.resource] : [])];
+  return ["lifecycle", "drift", ".", "--member", query.member, "--read", read, ...(query.resource !== undefined ? ["--resource", query.resource] : []), ...(query.stack !== undefined ? ["--stack", query.stack] : [])];
 }
 
 /**
@@ -255,6 +268,10 @@ export async function readWorkspaceDrift(query: DriftQuery): Promise<DriftReadRe
     if (query.resource !== undefined && !DRIFT_RESOURCE_KINDS.includes(entry.kind)) {
       throw new DriftReadFailure("resource-unsupported", `--resource reads one resource through choudoufu live-plan -resource, pulumi refresh --target or plunge drift --resource; ${query.member} is kind ${entry.kind}`);
     }
+    if (query.stack !== undefined && !DRIFT_STACK_KINDS.includes(entry.kind)) {
+      throw new DriftReadFailure("read-unsupported", `--stack reads a stack's export from the index store, which a ${DRIFT_STACK_KINDS.join(" or ")} member has; ${query.member} is kind ${entry.kind}`);
+    }
+    if (query.stack !== undefined && query.stack.trim() === "") throw new DriftReadFailure("read-unsupported", "--stack needs a stack name");
     if (entry.kind === "chant" && !query.env) throw new DriftReadFailure("env-required", `${query.member} is a chant member, read live through chant lifecycle diff <env> --live: add --env <env>`);
 
     const { registry: kinds, problems } = loadKindRegistry(declaration.pins, located.rootOnDisk);
@@ -349,6 +366,7 @@ export async function runWorkspaceDrift(ctx: CommandContext): Promise<number> {
           member: members[0],
           ...(args.driftRead !== undefined ? { read: args.driftRead } : {}),
           ...(args.resource !== undefined ? { resource: args.resource } : {}),
+          ...(args.carveStack !== undefined ? { stack: args.carveStack } : {}),
           ...(args.env !== undefined ? { env: args.env } : {}),
           ...(args.components ? { components: true } : {}),
         });

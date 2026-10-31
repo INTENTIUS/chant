@@ -100,7 +100,7 @@ At settle, every expected address no record answered, under any read, becomes `n
 ## Reading a member: `chant workspace drift`
 
 ```
-chant workspace drift --member <name> [--read <state|plan|refresh|live-read|ownership>] [--resource <addr>] [--env <env>] [--components] [--stream] [-o <file>]
+chant workspace drift --member <name> [--read <state|plan|refresh|live-read|ownership>] [--resource <addr>] [--stack <name>] [--env <env>] [--components] [--stream] [-o <file>]
 ```
 
 One member's drift, read by the engine that owns it ([behold#995](https://github.com/INTENTIUS/behold/issues/995)). It is a read-contract command: it changes nothing in the workspace and starts no apply.
@@ -112,6 +112,8 @@ One member's drift, read by the engine that owns it ([behold#995](https://github
 | `choudoufu` | `ownership` (default) or `plan` | the same, through `choudoufu live-plan -json` and `live-ls -json`, or for `plan` live-plan with a plan beside it (`choudoufuLivePlusPlanDriftRecords`). A plan that fails falls back to ownership, with `fellBackFrom: "live+plan"`. `--resource <addr>` runs `choudoufu live-plan -resource=<addr>` and passes its stream through, decoded and re-encoded with this codec |
 | `pulumi` | `refresh`, the only one | `chant lifecycle drift` in the member's reader project: the pulumi lexicon's `readDrift` (#4455) runs `pulumi refresh --preview-only --json --target <urn>` once per resource in the checked-in `stack-export.json` (`pulumiRefreshDriftRecords`), or one untargeted refresh with no export. A member on plunge runs `plunge drift --resource <urn> --stream` per resource instead (`plungeDriftStreamRecords`). `--resource <urn>` reads that URN alone, on either engine |
 
+`--stack <name>` reads that stack's export for a `pulumi` member, on either engine. A member of several stacks holds one export per stack in the index store (`refs/chant/snapshots`, written after each apply through chant), and without `--stack` the read takes the export the store holds, which is the right one only when the member has a single stack. With `--stack` the read uses that stack's export and passes `--stack <name>` to every refresh or `plunge drift`, over the member's declared `pulumi.member.stack`. When the store holds no export for that stack the document carries `error: { code: "no-drift-read" }` and a message naming the stack, and nothing runs: the read never falls back to another stack's export or to the checked-in `stack-export.json`. On a member of any other kind `--stack` answers `read-unsupported`. Without the flag nothing changes.
+
 Any other kind answers the error `no-drift-read`. Nothing is written in a member: `init` is never run, so a root that was never initialised reads `not-observed` with the init line in its detail.
 
 Every record's `node` is placed on the member's source graph by `graphNodeFor`, the change set's rule, from the graph `chant workspace graph --member <name>` reads (served from the per-member cache when the source has not moved). For a terraform or choudoufu member that is `<member>/<root>/<block key>`, the root being named after the member in its reader project, and an instance of a `count` or `for_each` block is on its instance node. A Pulumi or plunge record is placed by the URN rule (`driftPlanner`), the node `chant workspace graph` gives the resource in the member's export. choudoufu names its own estate in `member`; the command puts the workspace member's name there.
@@ -120,7 +122,7 @@ Without `--stream` it prints one drift document with the read contract's head be
 
 With `--stream` it prints the NDJSON stream: a `drift-start`, the records and a `drift-settle` for each read. For a chant member chant writes the start and settle itself around the diff's records. A read that could not run prints nothing on stdout and says why on stderr, with exit 1.
 
-The member half is `chant lifecycle drift [--member <name>] [--read <read>] [--resource <addr>]`, which asks each lexicon's `readDrift` (`LexiconPlugin.readDrift`) and prints its stream. A refusal is one stdout line, `{"refused": {code, message}}`, and exit 3.
+The member half is `chant lifecycle drift [--member <name>] [--read <read>] [--resource <addr>] [--stack <name>]`, which asks each lexicon's `readDrift` (`LexiconPlugin.readDrift`) and prints its stream. A refusal is one stdout line, `{"refused": {code, message}}`, and exit 3.
 
 ## Bundling
 

@@ -9,13 +9,16 @@
  * `plunge-member`'s export is a cut of the recorded plunge stack's. No binary
  * runs here.
  */
-import { readFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
+import { createSnapshotStore } from "@intentius/chant/lifecycle/snapshot-store";
 import { foldDriftLines, type ReadDriftOptions } from "@intentius/chant/drift-record";
 import { readPulumiDrift } from "./drift-read";
 import { pulumiPlugin } from "./plugin";
 import type { PulumiRunner } from "./run";
+import { writePulumiExportSnapshot } from "./stack-export-snapshot";
 
 const testdata = join(import.meta.dirname, "testdata");
 const text = (...path: string[]) => readFileSync(join(testdata, ...path), "utf-8");
@@ -102,5 +105,74 @@ describe("readPulumiDrift", () => {
     const none = await readPulumiDrift({ member: "site", projectRoot: dir, config: {}, observedAt: AT });
     expect("refused" in none && none.refused.code).toBe("no-drift-read");
     expect(never.calls).toEqual([]);
+  });
+});
+
+describe("readPulumiDrift with --stack", () => {
+  const exportText = text("pulumi-preview", "stack-export.json");
+
+  /** A member directory with Pulumi.yaml and no checked-in export, and a store holding the stacks named. */
+  async function memberWithStore(stacks: string[]) {
+    const dir = mkdtempSync(join(tmpdir(), "pulumi-drift-stack-"));
+    cpSync(join(testdata, "pulumi-preview", "Pulumi.yaml"), join(dir, "Pulumi.yaml"));
+    mkdirSync(join(dir, "node_modules"));
+    const store = createSnapshotStore({ store: "local", dir: mkdtempSync(join(tmpdir(), "pulumi-drift-store-")) });
+    for (const stack of stacks) {
+      const wrote = await writePulumiExportSnapshot({
+        dir,
+        stack,
+        environment: "prod",
+        engine: "pulumi",
+        run: async () => ({ stdout: exportText }),
+        store,
+      });
+      expect(wrote.written, JSON.stringify(wrote)).toBe(true);
+    }
+    return { dir, store };
+  }
+
+  test("reads the named stack's stored export and passes that stack to every refresh", async () => {
+    const { dir, store } = await memberWithStore(["staging", "prod-eu"]);
+    const pulumi = fake(() => text("pulumi-refresh", "bucket-edited.json"));
+    const answer = await readPulumiDrift(options(dir, { stack: "prod-eu" }), { run: pulumi.run, plunge: never.run, exportStore: store });
+    if (!("lines" in answer)) throw new Error(JSON.stringify(answer));
+    expect(pulumi.calls.length).toBeGreaterThan(0);
+    for (const call of pulumi.calls) expect(call.slice(call.indexOf("--stack"), call.indexOf("--stack") + 2)).toEqual(["--stack", "prod-eu"]);
+  });
+
+  test("beats the member's declared stack", async () => {
+    const { dir, store } = await memberWithStore(["staging", "prod-eu"]);
+    const pulumi = fake(() => text("pulumi-refresh", "bucket-edited.json"));
+    const config = { pulumi: { member: { dir, label: "site", stack: "staging" } } };
+    const answer = await readPulumiDrift({ ...options(dir, { stack: "prod-eu", resource: bucket }), config }, { run: pulumi.run, plunge: never.run, exportStore: store });
+    expect("lines" in answer).toBe(true);
+    expect(pulumi.calls).toEqual([["refresh", "--preview-only", "--json", "--stack", "prod-eu", "--target", bucket]]);
+  });
+
+  test("a store with no export for that stack is an error naming the stack, and nothing runs", async () => {
+    const { dir, store } = await memberWithStore(["staging"]);
+    const spy = fake(() => text("pulumi-refresh", "bucket-edited.json"));
+    const answer = await readPulumiDrift(options(dir, { stack: "prod-eu" }), { run: spy.run, plunge: never.run, exportStore: store });
+    expect(answer).toMatchObject({ refused: { code: "no-drift-read" } });
+    expect("refused" in answer && answer.refused.message).toMatch(/holds no export for stack prod-eu of site/);
+    expect(spy.calls).toEqual([]);
+  });
+
+  test("an empty store is refused too, though a checked-in export sits beside the member", async () => {
+    const dir = join(testdata, "pulumi-preview");
+    const store = createSnapshotStore({ store: "local", dir: mkdtempSync(join(tmpdir(), "pulumi-drift-store-")) });
+    const spy = fake(() => text("pulumi-refresh", "bucket-edited.json"));
+    const answer = await readPulumiDrift(options(dir, { stack: "floci" }), { run: spy.run, plunge: never.run, exportStore: store });
+    expect(answer).toMatchObject({ refused: { code: "no-drift-read" } });
+    expect(spy.calls).toEqual([]);
+  });
+
+  test("without --stack the read is as before: the checked-in export when the store has none", async () => {
+    const dir = join(testdata, "pulumi-preview");
+    const store = createSnapshotStore({ store: "local", dir: mkdtempSync(join(tmpdir(), "pulumi-drift-store-")) });
+    const pulumi = fake(() => text("pulumi-refresh", "bucket-edited.json"));
+    const answer = await readPulumiDrift(options(dir, { resource: bucket }), { run: pulumi.run, plunge: never.run, exportStore: store });
+    expect("lines" in answer).toBe(true);
+    expect(pulumi.calls).toEqual([["refresh", "--preview-only", "--json", "--stack", "floci", "--target", bucket]]);
   });
 });
