@@ -83,7 +83,6 @@ import type { WaitingPoint } from "./steward-points";
 import { isApprovalSpent, type AppliedGateRecord, type FinishedGateRecord } from "../lifecycle/gate-applied";
 import { samePlanDigest } from "../lifecycle/plan-digest";
 import { movedSincePreview } from "./op-waves-preview";
-import { NEXT_RELEASE } from "../release-floors";
 import { isLifecycleLocalNote } from "../lifecycle/local-note";
 import type { HeadPlans, MergedReview, ReviewSource } from "./gate-review";
 import type { TrustPolicy } from "../workspace/trust/policy";
@@ -727,7 +726,7 @@ function pointAtBase(spec: OpWavesSpec, name: string, where: string): Pick<OpWav
 }
 
 /** The first chant whose Op waves spec takes `approvals.preview`: a merged wave applies the plans its pull request previewed, or exits 4. */
-export const OP_WAVES_PREVIEW_FLOOR = NEXT_RELEASE;
+export const OP_WAVES_PREVIEW_FLOOR = "0.124.59";
 
 /** The first chant whose op entry exports {@link opWavePlanPath} (terragucci#1304). */
 export const OP_WAVE_PLAN_PATH_FLOOR = "0.124.56";
