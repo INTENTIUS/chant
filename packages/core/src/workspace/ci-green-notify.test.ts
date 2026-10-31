@@ -62,7 +62,7 @@ const tick = (root: string, runs: Map<string, CheckRun[]>, s: ReturnType<typeof 
   ciTick({ cwd: root, forge: forgeOf(runs), now: NOW, env: { GITHUB_REPOSITORY: "acme/app", GITHUB_RUN_ID: "9" }, sendNotify: s.send, ...more });
 
 describe("the tick's notify events (#4645)", () => {
-  test("ci.red once for a red tip, then ci.green once when the branch is green again", async () => {
+  test("ci.red once for a red tip", async () => {
     const { root } = workspace();
     const a = commitAt(root, 3, "app/a.txt");
     const b = commitAt(root, 2, "app/b.txt");
@@ -86,8 +86,16 @@ describe("the tick's notify events (#4645)", () => {
     // The next tick tells nothing again.
     await tick(root, runs, s);
     expect(s.sent).toHaveLength(1);
+  });
 
-    // A fix lands and passes: ci.green, naming the red commit, once.
+  test("ci.green once when the branch is green again, naming the red commit", async () => {
+    const { root } = workspace();
+    const b = commitAt(root, 2, "app/b.txt");
+    git(root, "push", "-q", "origin", "main");
+    const runs = new Map([[b, fail()]]);
+    const s = sink();
+    await tick(root, runs, s);
+    // A fix lands and passes.
     const c = commitAt(root, 1, "app/c.txt");
     git(root, "push", "-q", "origin", "main");
     runs.set(c, pass());
