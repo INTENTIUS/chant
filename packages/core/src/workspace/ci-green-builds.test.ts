@@ -271,7 +271,7 @@ describe("chant ci base (#4643)", () => {
     git(root, "push", "-q", "origin", "main");
     await ciTick({ cwd: root, forge: fakeForge(new Map([[base, [run("check", "success"), run("suites", "success")]]])), now: NOW });
     const clone = scratchDir("chant-base-clone-");
-    git(clone, "clone", "-q", origin, ".");
+    git(clone, "clone", "-q", "-b", "main", origin, ".");
     git(clone, "fetch", "-q", "origin", "--tags", "+refs/heads/chant/lifecycle:refs/remotes/origin/chant/lifecycle");
     expect(git(clone, "branch", "--list", "chant/lifecycle")).toBe("");
     writeFiles(clone, { "docs/readme.md": "docs\n" });
