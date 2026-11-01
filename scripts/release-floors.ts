@@ -96,6 +96,7 @@ const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: str
   { file: "docs/src/content/docs/reference/publish-targets.mdx", text: "Another forge refuses it with `publish-forge-latest-unsupported`. Read by chant {v} and newer", count: 1, floor: "PUBLISH_FORGE_LATEST_FLOOR" },
   { file: "docs/src/content/docs/reference/publish-targets.mdx", text: "([#4676](https://github.com/INTENTIUS/chant/issues/4676)). Read by chant {v} and newer.", count: 1, floor: "PUBLISH_HOMEBREW_FLOOR" },
   { file: "docs/src/content/docs/reference/publish-targets.mdx", text: "Declare one target per marketplace. Read by chant {v} and newer.", count: 1, floor: "PUBLISH_MARKETPLACE_FLOOR" },
+  { file: "docs/src/content/docs/reference/publish-targets.mdx", text: "The release-per-version, if there is one, is a `forge` target's. Read by chant {v} and newer.", count: 1, floor: "PUBLISH_TAURI_UPDATER_FLOOR" },
 ];
 
 interface Args {

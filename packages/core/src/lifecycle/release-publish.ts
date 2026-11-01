@@ -125,7 +125,7 @@ export interface PublishedTarget {
 
 /** Injected into the targets, so tests drive them with fakes. */
 export interface PublishDeps {
-  /** The HTTP client the OCI, forge, homebrew and marketplace targets use. Default: the global `fetch`. */
+  /** The HTTP client the OCI, forge, homebrew, marketplace and tauri-updater targets use. Default: the global `fetch`. */
   fetch?: PublishFetch;
   /** The npm executable. Default: `npm` on `PATH`. */
   npm?: string;
@@ -202,7 +202,7 @@ export class PublishTargetError extends Error {
 }
 
 /** The kinds `release.publish` declares and `createPublishTargets` makes. */
-export type ReleasePublishKind = "npm" | "oci" | "forge" | "homebrew" | "marketplace";
+export type ReleasePublishKind = "npm" | "oci" | "forge" | "homebrew" | "marketplace" | "tauri-updater";
 
 /** The npm dist-tag a set of packages is staged under before `latest` moves (#4048), as chant's own releases do (#3903). */
 export const NPM_STAGE_TAG = "next";

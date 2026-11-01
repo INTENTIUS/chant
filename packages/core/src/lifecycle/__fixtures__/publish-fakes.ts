@@ -251,6 +251,9 @@ export interface FakeForgeRelease {
   draft: boolean;
   target: string;
   assets: Array<{ name: string; digest: string | null; bytes: string }>;
+  name?: string;
+  /** GitHub: the `make_latest` the release was published with. */
+  make_latest?: string;
 }
 
 /** A forge fake answering through `fetch`: GitHub or Forgejo with draft releases, or GitLab with releases, links and a generic package registry. */
@@ -264,11 +267,14 @@ export interface FakeForge {
   visible(): Array<{ tag: string; assets: string[] }>;
   /** Make the next request whose `METHOD url` starts with `prefix` answer 500. */
   failOnce(prefix: string): void;
+  /** GitHub and Forgejo: the repository's tags, each the commit it names. Publishing a release makes its tag at its target when there is none. */
+  tags: Map<string, string>;
 }
 
 /** A forge fake at `api` for `repo`, which holds `releases` to begin with. */
 export function startFakeForge(forge: "github" | "forgejo" | "gitlab", api: string, repo: string, releases: FakeForgeRelease[] = []): FakeForge {
   const calls: FakeForge["calls"] = [];
+  const tags = new Map<string, string>(releases.filter((r) => !r.draft).map((r) => [r.tag_name, r.target]));
   const packages = new Map<string, string>();
   const failures: string[] = [];
   let nextId = 100 + releases.length;
@@ -278,7 +284,7 @@ export function startFakeForge(forge: "github" | "forgejo" | "gitlab", api: stri
   const view = (r: FakeForgeRelease) =>
     forge === "gitlab"
       ? { tag_name: r.tag_name, assets: { links: r.assets.map((a) => ({ name: a.name })) } }
-      : { id: r.id, tag_name: r.tag_name, draft: r.draft, upload_url: `${uploads}/repos/${repo}/releases/${r.id}/assets{?name,label}`, assets: r.assets.map((a) => ({ name: a.name, ...(forge === "github" ? { digest: a.digest } : {}) })) };
+      : { id: r.id, tag_name: r.tag_name, name: r.name ?? r.tag_name, draft: r.draft, upload_url: `${uploads}/repos/${repo}/releases/${r.id}/assets{?name,label}`, assets: r.assets.map((a) => ({ name: a.name, ...(forge === "github" ? { digest: a.digest } : {}) })) };
   const text = (b: Uint8Array | string | undefined) => (b === undefined ? "" : typeof b === "string" ? b : Buffer.from(b).toString("utf-8"));
   const fetch: FakeForge["fetch"] = async (url, init) => {
     calls.push({ method: init.method, url, headers: init.headers, ...(init.body !== undefined ? { body: init.body } : {}) });
@@ -316,8 +322,8 @@ export function startFakeForge(forge: "github" | "forgejo" | "gitlab", api: stri
     }
     if (init.method === "GET" && path === `${root}/releases`) return json(200, releases.map(view));
     if (init.method === "POST" && path === `${root}/releases`) {
-      const b = JSON.parse(text(init.body)) as { tag_name: string; target_commitish: string; draft?: boolean };
-      const r: FakeForgeRelease = { id: nextId++, tag_name: b.tag_name, draft: b.draft === true, target: b.target_commitish, assets: [] };
+      const b = JSON.parse(text(init.body)) as { tag_name: string; target_commitish: string; draft?: boolean; name?: string };
+      const r: FakeForgeRelease = { id: nextId++, tag_name: b.tag_name, draft: b.draft === true, target: b.target_commitish, assets: [], ...(b.name ? { name: b.name } : {}) };
       releases.push(r);
       return json(201, view(r));
     }
@@ -336,9 +342,26 @@ export function startFakeForge(forge: "github" | "forgejo" | "gitlab", api: stri
     if (init.method === "PATCH" && edit) {
       const r = releases.find((x) => x.id === Number(edit[1]));
       if (!r) return json(404, { message: "Not Found" });
-      const b = JSON.parse(text(init.body)) as { draft?: boolean };
-      if (b.draft === false) r.draft = false;
+      const b = JSON.parse(text(init.body)) as { draft?: boolean; make_latest?: string };
+      if (b.draft === false && r.draft) {
+        if (releases.some((x) => x !== r && !x.draft && x.tag_name === r.tag_name)) return json(422, { message: "Validation Failed", errors: [{ code: "already_exists", field: "tag_name" }] });
+        r.draft = false;
+        if (!tags.has(r.tag_name)) tags.set(r.tag_name, r.target);
+        if (b.make_latest !== undefined) r.make_latest = b.make_latest;
+      }
       return json(200, view(r));
+    }
+    if (init.method === "DELETE" && edit) {
+      const i = releases.findIndex((x) => x.id === Number(edit[1]));
+      if (i < 0) return json(404, { message: "Not Found" });
+      releases.splice(i, 1);
+      return json(204, undefined);
+    }
+    const tagRef = path.startsWith(`${root}/git/refs/tags/`) ? decodeURIComponent(path.slice(`${root}/git/refs/tags/`.length)) : null;
+    if (init.method === "DELETE" && tagRef !== null) {
+      if (!tags.has(tagRef)) return json(422, { message: "Reference does not exist" });
+      tags.delete(tagRef);
+      return json(204, undefined);
     }
     return json(404, { message: "Not Found" });
   };
@@ -349,6 +372,7 @@ export function startFakeForge(forge: "github" | "forgejo" | "gitlab", api: stri
     packages,
     visible: () => releases.filter((r) => !r.draft).map((r) => ({ tag: r.tag_name, assets: r.assets.map((a) => a.name) })),
     failOnce: (prefix) => void failures.push(prefix),
+    tags,
   };
 }
 
