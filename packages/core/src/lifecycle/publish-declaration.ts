@@ -11,6 +11,7 @@
  *       { type: "oci", image: "dist/api.oci.tar", repository: "ghcr.io/acme/api", tags: ["{label}"], usernameEnv: "GITHUB_ACTOR", passwordEnv: "GITHUB_TOKEN" },
  *       { type: "forge", forge: "github", repo: "acme/api", assets: ["dist/api-linux-amd64.tar.gz"] },
  *       { type: "marketplace", marketplace: "openvsx", vsix: "dist/acme.vsix" },
+ *       { type: "tauri-updater", repo: "acme/app", tag: "app-latest", platforms: { "darwin-aarch64": "dist/Acme_aarch64.app.tar.gz" } },
  *       { type: "homebrew", tap: "acme/homebrew-tap", formula: "Formula/api.rb", template: "packaging/api.rb", assets: ["dist/api-linux-amd64.tar.gz"], url: "https://github.com/acme/api/releases/download/{tag}/{name}" },
  *     ],
  *   },
@@ -162,11 +163,47 @@ export const MarketplacePublishSchema = z
   })
   .strict();
 
-export const PublishDeclarationSchema = z.discriminatedUnion("type", [NpmPublishSchema, OciPublishSchema, ForgePublishSchema, HomebrewPublishSchema, MarketplacePublishSchema]);
+/**
+ * A Tauri v2 updater manifest and the rolling GitHub release that holds it
+ * with the app's bundles (#4676), replaced on each publish
+ * (./publish-tauri.ts).
+ */
+export const TauriUpdaterPublishSchema = z
+  .object({
+    type: z.literal("tauri-updater"),
+    /** The GitHub repository, `owner/name`. */
+    repo: z.string().regex(/^[^/\s]+\/[^/\s]+$/, "owner/name"),
+    /** The rolling release's tag, such as `app-latest`. */
+    tag: z.string().min(1),
+    /**
+     * Each updater platform, such as `darwin-aarch64`, `linux-x86_64` or
+     * `windows-x86_64-nsis`, and its updater bundle, relative to the member.
+     * Its signature is the `.sig` file beside it that the Tauri build wrote.
+     */
+    platforms: z.record(z.string().regex(/^(darwin|linux|windows)-[a-z0-9_]+(-[a-z0-9]+)?$/, "<os>-<arch> or <os>-<arch>-<installer>"), z.string().min(1)).refine((p) => Object.keys(p).length > 0, "at least one platform"),
+    /** More files the rolling release holds, such as installers for the site's download links, relative to the member. */
+    assets: z.array(z.string().min(1)).optional(),
+    /** A file whose text is the manifest's `notes`, relative to the member. */
+    notes: z.string().min(1).optional(),
+    /** Each platform's URL in the manifest: `{tag}` (the rolling tag), `{label}`, `{version}` and `{name}` are filled in. Default: the bundle's download URL on the rolling release on github.com. */
+    url: z.string().min(1).optional(),
+    /** The manifest's asset name. Default `latest.json`. */
+    manifest: z.string().regex(/^[^/\\]+$/, "a file name").optional(),
+    /** GitHub's `make_latest` for the rolling release. Default `false`. */
+    latest: z.union([z.boolean(), z.literal("legacy")]).optional(),
+    /** The GitHub API root. Default `$GITHUB_API_URL`, else `https://api.github.com`. */
+    api: z.string().url().optional(),
+    /** The variable holding the token. Default `GITHUB_TOKEN`. */
+    tokenEnv: envName.optional(),
+  })
+  .strict();
+
+export const PublishDeclarationSchema = z.discriminatedUnion("type", [NpmPublishSchema, OciPublishSchema, ForgePublishSchema, HomebrewPublishSchema, MarketplacePublishSchema, TauriUpdaterPublishSchema]);
 
 export type NpmPublishDeclaration = z.infer<typeof NpmPublishSchema>;
 export type OciPublishDeclaration = z.infer<typeof OciPublishSchema>;
 export type ForgePublishDeclaration = z.infer<typeof ForgePublishSchema>;
 export type HomebrewPublishDeclaration = z.infer<typeof HomebrewPublishSchema>;
 export type MarketplacePublishDeclaration = z.infer<typeof MarketplacePublishSchema>;
+export type TauriUpdaterPublishDeclaration = z.infer<typeof TauriUpdaterPublishSchema>;
 export type PublishDeclaration = z.infer<typeof PublishDeclarationSchema>;

@@ -180,6 +180,56 @@ A marketplace has no draft. A version is visible as soon as it is uploaded, and 
 
 The VS Code Marketplace target needs `vsce` on `PATH`, such as from `npm install -g @vscode/vsce`. vsce's output goes through the redactor. Open VSX takes its token as a query parameter, which the redactor masks in any error that quotes the request.
 
+## Tauri updater
+
+The updater manifest a Tauri v2 app reads, `latest.json`, and a rolling GitHub release under a fixed tag that holds it with the app's bundles, replaced on each publish ([#4676](https://github.com/INTENTIUS/chant/issues/4676)). The app's updater endpoint is the manifest's download URL on that release, such as `https://github.com/acme/app/releases/download/app-latest/latest.json`. The release-per-version, if there is one, is a `forge` target's. Read by chant 0.124.63 and newer.
+
+```ts
+{
+  type: "tauri-updater",
+  repo: "acme/app",
+  tag: "app-latest",
+  platforms: {
+    "darwin-aarch64": "dist/Acme_aarch64.app.tar.gz",
+    "darwin-x86_64": "dist/Acme_x64.app.tar.gz",
+    "linux-x86_64": "dist/Acme_1.4.0_amd64.AppImage",
+    "windows-x86_64": "dist/Acme_1.4.0_x64-setup.exe",
+  },
+  assets: ["dist/Acme_1.4.0_aarch64.dmg", "dist/Acme_1.4.0_x64_en-US.msi"],
+  notes: "dist/NOTES.md",
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `repo` | The GitHub repository, `owner/name` |
+| `tag` | The rolling release's tag, such as `app-latest` |
+| `platforms` | Each updater platform (`<os>-<arch>` such as `darwin-aarch64`, or `<os>-<arch>-<installer>` such as `windows-x86_64-nsis`) and its updater bundle, relative to the member. The bundle's signature is the `.sig` file beside it that the Tauri build wrote |
+| `assets` | More files the rolling release holds, such as the installers the site links to |
+| `notes` | A file whose text is the manifest's `notes`. Without it the manifest has none |
+| `url` | Each platform's `url` in the manifest, with `{tag}` (the rolling tag), `{label}`, `{version}` and `{name}` (the bundle's file name) filled in. Default: the bundle's download URL on the rolling release on github.com |
+| `manifest` | The manifest's asset name. Default `latest.json` |
+| `latest` | GitHub's `make_latest` for the rolling release: `true`, `false` or `"legacy"`. Default `false`, so the rolling release never becomes the repository's latest |
+| `api` | The GitHub API root. Default: `$GITHUB_API_URL`, else `https://api.github.com` |
+| `tokenEnv` | The variable holding the token. Default `GITHUB_TOKEN` |
+
+The manifest is Tauri's static JSON. `version` is the release's label from its first digit on, so `app-v1.4.0` is `1.4.0`, and a release whose label has no digit is refused (`publish-tauri-no-version`). `pub_date` is the time of the cut whose signature the publish carries, so the manifest is the same bytes on every run, and is left out when no cut is known. Each platform's `signature` is the text of its `.sig` file. Every bundle, `.sig` file and asset that the release records must match its digest.
+
+```json
+{
+  "version": "1.4.0",
+  "notes": "Faster sync.",
+  "pub_date": "2026-10-17T10:00:00.000Z",
+  "platforms": {
+    "darwin-aarch64": { "signature": "dW50cnVzdGVkIGNvbW1lbnQ6...", "url": "https://github.com/acme/app/releases/download/app-latest/Acme_aarch64.app.tar.gz" }
+  }
+}
+```
+
+GitHub can't replace what a release holds in one request, so the stage builds a new release as a draft and the reveal swaps it in. The stage makes a draft for the rolling tag named `<tag> <version>` at the release's commit, or finds the one an earlier stage made, and uploads each bundle, each asset and the manifest to it. A file already on the draft with the same digest is not sent again, and one that differs is refused (`publish-tauri-asset-exists`). The published rolling release is untouched, so the updater sees nothing new. A rolling release that already holds every file with the same digests is what an earlier reveal left, and the stage then does nothing.
+
+The reveal deletes the published rolling release and its tag, then publishes the draft with `make_latest`. GitHub makes the tag again at the release's commit when it publishes. Between the delete and the publish, a few requests apart, the rolling release's URLs answer 404. The updater treats that as no update, and the site's download links fail for that moment. A reveal run again after the draft was published finds it published and does nothing.
+
 ## SBOMs and provenance
 
 Each target attaches the release's provenance statement to what it publishes, and an SBOM when it has a source for one ([#4049](https://github.com/INTENTIUS/chant/issues/4049)). Both are attached in the stage, so nothing is visible before they are. A missing SBOM source is refused only when the workspace opts into the `supply-chain` security group, `"security": ["supply-chain"]` in `chant.workspace.json` ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). Without that group nothing is attached and nothing is printed.
@@ -271,7 +321,7 @@ A target that needs a credential and finds none stops the publish before anythin
 A target is an object with this shape, from `packages/core/src/lifecycle/release-publish.ts`:
 
 ```ts
-interface PublishTarget<C extends PublishContextBase = PublishContext, K extends string = "npm" | "oci" | "forge" | "homebrew" | "marketplace"> {
+interface PublishTarget<C extends PublishContextBase = PublishContext, K extends string = "npm" | "oci" | "forge" | "homebrew" | "marketplace" | "tauri-updater"> {
   kind: K;
   name: string;            // for messages, such as "npm (2 packages)"
   destination: string;     // printed before it runs
