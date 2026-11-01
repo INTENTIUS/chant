@@ -295,6 +295,8 @@ export function renderCiGreenWorkflow(input: WorkflowInput): string {
     "          GIT_COMMITTER_NAME: github-actions[bot]",
     "          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com",
     ...(input.runnerKeySecret ? [`          CHANT_RUNNER_KEY: \${{ secrets.${input.runnerKeySecret} }}`] : []),
+    // #4645: each variable ci.green.notify names, from the repository secret of the same name, as chant run --generate maps an Op waves spec's.
+    ...notifyVariables(green).map((v) => `          ${v}: \${{ secrets.${v} }}`),
     `        run: ${tick}`,
   ];
   return tagComments(lines.join("\n") + "\n");
@@ -343,6 +345,13 @@ export function renderMergeQueueWorkflow(input: Omit<WorkflowInput, "workflows" 
     `        run: ${verdict}`,
   ];
   return tagComments(lines.join("\n") + "\n");
+}
+
+/** The variables `ci.green.notify` names (#4645), sorted and once each: the tick's step reads them from secrets. */
+export function notifyVariables(green: CiGreen): string[] {
+  const n = green.notify;
+  if (!n) return [];
+  return [...new Set([n.webhook, n.key, n.slack, n.teams].filter((v): v is string => typeof v === "string"))].sort();
 }
 
 /** Whether any phase sets `build` (#4169): then the tick may re-run jobs and start workflows. */

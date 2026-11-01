@@ -80,7 +80,7 @@ A delivery that fails is logged on stderr, without its URL, and the job exits wi
 | A bisect names the first red commit below that one | `ci.culprit`, with `ci.culprit` the commit found |
 | The newest decided commit is green, and an older one in the window was told red | `ci.green`, with `ci.red` the commit it answers |
 
-Each is sent once. The tick marks it in the commit's `_ci/<sha>.json` record (`notified`), so it needs `chant/lifecycle`, and a tick that can't read or write the records sends nothing rather than the same event again. A delivery that fails everywhere is a warning, and the next tick tries again. `--dry-run` reports what it would send. The events carry `ci`: the `branch` and `commit`, and `phase`, `failedRun`, `culprit` or `red`. `run.commit` is the commit, and `run.url` is left out, since the tick's own run says nothing about it. The tick's environment must hold the variables, so pass the secrets to the tick's job in `chant-ci-green.yml`.
+Each is sent once. The tick marks it in the commit's `_ci/<sha>.json` record (`notified`), so it needs `chant/lifecycle`, and a tick that can't read or write the records sends nothing rather than the same event again. A delivery that fails everywhere is a warning, and the next tick tries again. `--dry-run` reports what it would send. The events carry `ci`: the `branch` and `commit`, and `phase`, `failedRun`, `culprit` or `red`. `run.commit` is the commit, and `run.url` is left out, since the tick's own run says nothing about it. [`ci workflow`](/chant/cli/ci/#ci-workflow) gives the tick's step each variable `notify` names from the repository secret of the same name, so create one secret per variable and run it again.
 
 ## Check a delivery
 
