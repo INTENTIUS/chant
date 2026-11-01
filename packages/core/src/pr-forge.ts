@@ -303,6 +303,13 @@ export interface MergeResult {
 /** Statuses a forge answers a refused merge with: not allowed, head moved, conflict, invalid. */
 const MERGE_REFUSED = new Set([405, 406, 409, 422]);
 
+/** A status to leave out of `prChecksPassed`: an exact name, or every name under an entry that ends in `/`. */
+function ignoredStatus(ignore: readonly string[]): (name: string) => boolean {
+  const exact = new Set(ignore);
+  const under = ignore.filter((i) => i.endsWith("/"));
+  return (name) => exact.has(name) || under.some((i) => name.startsWith(i));
+}
+
 /** A refused merge as a result, any other failure rethrown. */
 function refusedMerge(err: unknown): MergeResult {
   if (err instanceof ForgeApiError && MERGE_REFUSED.has(err.status)) {
@@ -1098,7 +1105,7 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
       return base === tip ? pass(`${short(head)} contains ${into} at ${short(tip)}`) : refuse(`${short(head)} does not contain ${into} at ${short(tip)}`);
     },
     async prChecksPassed(_pr, head, ignore = []) {
-      const skip = new Set(ignore);
+      const skip = ignoredStatus(ignore);
       const failing: string[] = [];
       const waiting: string[] = [];
       let count = 0;
@@ -1106,8 +1113,13 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
       const combined = await api.call("GET", `${repo}/commits/${head}/status`);
       for (const st of isObject(combined) && Array.isArray(combined.statuses) ? combined.statuses : []) {
         const context = isObject(st) ? str(st.context) : undefined;
-        if (!context || skip.has(context)) continue;
+        if (!context) continue;
         const state = str(st.state) ?? str(st.status) ?? "";
+        // A status left out still shows the checks reported, unless it is what held them back.
+        if (skip(context)) {
+          if (state === "success") count++;
+          continue;
+        }
         count++;
         if (state === "failure" || state === "error" || state === "failed") failing.push(context);
         else if (state === "pending" || state === "running" || state === "") waiting.push(context);
@@ -1116,7 +1128,7 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
         const runs = await api.call("GET", `${repo}/commits/${head}/check-runs?per_page=100`);
         for (const run of isObject(runs) && Array.isArray(runs.check_runs) ? runs.check_runs : []) {
           const name = (isObject(run) ? str(run.name) : undefined) ?? "a check";
-          if (skip.has(name) || !isObject(run)) continue;
+          if (skip(name) || !isObject(run)) continue;
           count++;
           if (run.status !== "completed") waiting.push(name);
           else if (!["success", "neutral", "skipped"].includes(String(run.conclusion))) failing.push(name);
@@ -1541,23 +1553,30 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
       return behind === 0 ? pass(`${short(head)} contains ${into}`) : refuse(`${short(head)} is ${behind} commit${behind === 1 ? "" : "s"} behind ${into}`);
     },
     async prChecksPassed(mr, head, ignore = []) {
-      const skip = new Set(ignore);
+      const skip = ignoredStatus(ignore);
       // Each name's newest status; a job allowed to fail holds nothing back.
       const newest = new Map<string, Record<string, unknown>>();
       for (const st of await api.list(`${project}/repository/commits/${head}/statuses?all=true`, pageParams, 100)) {
         const name = isObject(st) ? str(st.name) : undefined;
-        if (!name || skip.has(name) || !isObject(st)) continue;
+        if (!name || !isObject(st)) continue;
         const had = newest.get(name);
         if (!had || (num(st.id) ?? 0) > (num(had.id) ?? 0)) newest.set(name, st);
       }
       const failing: string[] = [];
       const waiting: string[] = [];
+      let count = 0;
       for (const [name, st] of newest) {
         const state = str(st.status) ?? "";
+        // A status left out still shows the checks reported, unless it is what held them back.
+        if (skip(name)) {
+          if (state === "success") count++;
+          continue;
+        }
+        count++;
         if ((state === "failed" || state === "canceled") && st.allow_failure !== true) failing.push(name);
         else if (GITLAB_RUNNING.has(state)) waiting.push(name);
       }
-      return checksVerdict(`merge request !${mr}`, head, failing, waiting, newest.size);
+      return checksVerdict(`merge request !${mr}`, head, failing, waiting, count);
     },
     async pullRequestOpen(mr) {
       try {

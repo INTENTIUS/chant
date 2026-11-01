@@ -1496,8 +1496,9 @@ async function beforeMergeChecks(ctx: CommandContext): Promise<PrBeforeMerge | n
     );
   }
   // The apply's own statuses never hold it back: chant ci run's, and the report's.
+  // Nor does the plan's: a policy denial fails it, and the denial is only recorded when the apply judges it (plywood#66).
   // #4550: under a product's words its own prefix too.
-  const ignore = [...new Set([productContext(activeProductWords(), gate), productContext(activeProductWords(), PR_APPLY_GATE), `chant/${gate}`, `chant/${PR_APPLY_GATE}`, prStatusContext("apply", member)])];
+  const ignore = [...new Set([productContext(activeProductWords(), gate), productContext(activeProductWords(), PR_APPLY_GATE), `chant/${gate}`, `chant/${PR_APPLY_GATE}`, prStatusContext("apply", member), prStatusContext("plan"), `${prStatusContext("plan")}/`])];
   // ws-106 gives the declaration no way to leave a check out, so with no --requires all four are asked (#4336, #4607).
   const requires = await checkPrRequires(forge, args.pr, head, { ignore, ...(only ? { only: only.checks } : {}) });
   for (const r of requires) console.error(formatInfo(`${r.name}: ${r.passed ? "passed" : r.pending ? "pending" : "unmet"}, ${r.reason}`));
