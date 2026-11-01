@@ -23,7 +23,7 @@ import schema from "./workspace-kinds.schema.json" with { type: "json" };
 import type { WorkspaceTree } from "./tree";
 import { joinPath, skippedDir } from "./tree";
 import { checkPinIntegrity } from "./pin-integrity";
-import { dataExportTarget, findInstalledPackage } from "./class-data";
+import { CHANT_INSTALL, dataExportTarget, findInstalledPackage } from "./class-data";
 import { loadAjv2020 } from "./ajv2020";
 import yaml from "js-yaml";
 
@@ -747,10 +747,19 @@ export interface LoadedKinds {
  * directory, checked against its integrity digest when it has one. Null for
  * a pin that names neither. Shared by the kinds and the principal classes
  * (#3080), so both read a pin the same way.
+ *
+ * A package the checkout does not hold is looked up from `beside`, this chant's
+ * own install (plywood#54): a product's image carries chant and the pinned
+ * package together, and a checkout needs no copy of its own. The version check
+ * below still applies.
  */
-export function pinnedPackageDir(pin: PinLike, workspaceRoot: string): { dir: string; source: string } | { problem: string } | null {
+export function pinnedPackageDir(
+  pin: PinLike,
+  workspaceRoot: string,
+  beside: string = CHANT_INSTALL,
+): { dir: string; source: string } | { problem: string } | null {
   if (pin.package) {
-    const dir = findInstalledPackage(pin.package, workspaceRoot);
+    const dir = findInstalledPackage(pin.package, workspaceRoot) ?? findInstalledPackage(pin.package, beside);
     if (!dir) return { problem: `pinned package ${pin.package} is not installed; install it to read the kinds it supplies` };
     let installed: unknown;
     try {
