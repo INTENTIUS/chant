@@ -1,0 +1,37 @@
+---
+title: Changes and approvals
+description: 'The plan note on a change, and how an approval covers one exact plan.'
+diataxis: explanation
+---
+
+Each change gets one note. It looks like this:
+
+```text
+chant plan for `prod`
+
+Planned 2 members. Head `a1b2c3d4e5f6`, measured from `0f9e8d7c6b5a`.
+
+| Member | Component | Status  | Create | Update | Replace | Delete |
+| `a`    | a         | planned | 1      | 1      | 0       | 0      |
+| `app`  | app       | planned | 0      | 1      | 0       | 0      |
+
+Plan digest: `jcs1-sha256:3e43...`
+
+Not approved yet.
+
+chant approve pr-12 pr-apply --plan jcs1-sha256:3e43... --approver <you> --sign
+```
+
+The note covers the components the change touches and the ones that depend on them. Each push updates the same note.
+
+## What an approval covers
+
+The digest covers the change set: the addresses, the actions and the values that would be written. An approval names one digest and answers this change and no other.
+
+A push that changes the plan changes the digest, and the note shows the new one. An unchanged plan keeps its digest, so an approval does not expire on the clock.
+
+An approval deploys nothing by itself. [The release gate](/chant/ci/merges-and-releases/) decides what deploys.
+
+## Values known only after apply
+
+A component can read an output known only after its upstream applies. The note marks that input unknown. When the later plan does only what the note showed, the approval covers it, and anything else waits for a new approval. [The details](/chant/guide/pull-request-ci/#a-dependent-of-a-member-the-change-plans).

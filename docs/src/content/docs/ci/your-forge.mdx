@@ -1,0 +1,31 @@
+---
+title: Your forge
+description: 'The forges chant generates pipelines for, and the chant runner on your own host with its limits.'
+diataxis: reference
+---
+
+| Forge | Generated with | Needs |
+|---|---|---|
+| GitHub | `--generate github` | The job's own token. On a change from a fork that token is read-only, so the note and status are not posted. |
+| GitLab | `--generate gitlab` | `CHANT_FORGE_TOKEN`, a project access token with the `api` scope, because a job token cannot write notes. |
+| Forgejo | `--generate forgejo` | The GitHub workflow in Forgejo's dialect. It uses the job's own token. |
+
+[`chant ci forge-check`](/chant/cli/ci/#ci-forge-check) compares the forge's branch protection and each cloud's trust with what the pipeline needs. On GitLab and Forgejo, set `ci.green.source` to `runs`, because they have no check-run reader. [Green commits](/chant/guide/green-commits/).
+
+## The chant runner on your own host
+
+With no forge runner, `chant ci serve` polls the forge and runs the jobs on a host you provide:
+
+```sh
+chant ci serve --forge github --repo acme/app --env prod
+```
+
+The forge token comes from the environment. The limits:
+
+- `--forge` takes `github`, `forgejo` or `git`. GitLab is refused.
+- Polling runs every 30 seconds by default. `--interval` changes that.
+- Each job runs on the host as the user running `chant ci serve`, with no container, and the plan runs the change's code. Serve only repositories whose authors you trust with the host's credentials.
+- A change from a fork is never planned.
+- `--forge git` has no changes to plan and sets no commit status. The branch moves only through land branches and direct pushes.
+
+[ci serve](/chant/cli/ci/#ci-serve) has every flag.

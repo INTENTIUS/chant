@@ -1,0 +1,57 @@
+---
+title: Your first change
+description: 'Add the pipeline to a repository with a chant project, and watch one change get a plan note.'
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/ci/first-change/
+  Generate this repository's pipeline with `npx chant build --components --generate <forge> --pr-loop --env <env> --output <file>` and the flags the page shows, and open a change with the pipeline.
+  List the credentials and tokens a person must set up; do not create them yourself.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+You need a [chant project](/chant/getting-started/quick-start/) on GitHub, GitLab or Forgejo.
+
+## Declare a component
+
+```typescript
+// network.component.ts
+import { phase, type Component } from "@intentius/chant/components";
+
+export const network: Component = {
+  name: "network",
+  dependsOn: [],
+  deploy: [
+    phase("Apply", [
+      { kind: "cfn-deploy", stack: "network", template: "dist/network.template.json" },
+    ]),
+  ],
+};
+```
+
+List the environment in `chant.config.ts` as `environments: ["prod"]`. [Plan previews](/chant/components/plan-previews/) lists the step kinds that can plan.
+
+## Generate the pipeline
+
+```sh
+npx chant build --components --generate github --pr-loop --env prod \
+  --pr-build-command 'chant build src --lexicon aws -o dist/network.template.json' \
+  --before-script 'npm ci --no-audit --no-fund' \
+  --before-script 'echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"' \
+  --output .github/workflows/chant-pr.yml
+```
+
+| Forge | `--generate` | `--output` |
+|---|---|---|
+| GitHub | `github` | `.github/workflows/chant-pr.yml` |
+| Forgejo | `forgejo` | `.forgejo/workflows/chant-pr.yml` |
+| GitLab | `gitlab` | `.gitlab-ci.yml` |
+
+`--pr-build-command` builds the template before each plan. The two `--before-script` lines install chant in each job. On GitLab, the second line is `export PATH="$PWD/node_modules/.bin:$PATH"`, and you also set `CHANT_FORGE_TOKEN`, a project access token with the `api` scope, as a masked variable.
+
+The plan and record jobs need AWS credentials and the region. The credentials must be allowed to create, describe and delete change sets.
+
+## Push one change
+
+Commit the component and the pipeline on a branch, and open it for review. One note appears with the plan and its approve line. [Read it](/chant/ci/changes-and-approvals/), then [approve it](/chant/ci/approve-a-change/). The merge records the plan and deploys nothing.
+
+[Generate the pipeline](/chant/guide/pull-request-ci/#generate-the-pipeline) has every flag.

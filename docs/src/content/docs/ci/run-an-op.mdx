@@ -1,0 +1,40 @@
+---
+title: Run an Op
+description: 'An Op is a change in named phases, with gates that stop for a person and a phase that runs on failure.'
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/ci/run-an-op/
+  Write the Op I describe as a `*.op.ts` file, with a `gate()` before any phase that changes a shared environment and an `onFailure` phase.
+  Run `npx chant build` and `npx chant lint` until both pass, and open a change with the Op. Print the approve and run commands for me to run.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+```typescript
+// ship.op.ts
+import { Op, phase, gate, shell } from "@intentius/chant/op";
+
+export default Op({
+  name: "ship",
+  overview: "Migrate, wait for a person, then switch traffic",
+  phases: [
+    phase("Migrate", [shell("./bin/migrate")]),
+    phase("Approve", [gate("approve-switch", { timeout: "72h" })]),
+    phase("Switch", [shell("./bin/switch")]),
+  ],
+  onFailure: [phase("Undo", [shell("./bin/undo")])],
+});
+```
+
+```sh
+chant run ship                                # stops at the gate, exits 3
+chant approve ship approve-switch --actor alex
+chant run ship                                # walks through the gate
+```
+
+The first run records that it is waiting and ends. The second run starts again at the first phase, so `Migrate` runs twice unless it is safe to repeat. A gate with `resume: true` picks up where the run stopped. [Resuming at the approved gate](/chant/guide/ops/#resuming-at-the-approved-gate).
+
+`onFailure` phases run when a step fails. A run that stops at a gate has not failed, so they do not run. [Compensation on failure](/chant/guide/ops/#compensation-on-failure).
+
+To tie a gate to one plan, give it `plan:`. A fresh plan with another digest then stops the run again. [A gate approves a plan](/chant/guide/ops/#a-gate-approves-a-plan-not-the-next-run).
+
+[Ops](/chant/guide/ops/) has the step builders.

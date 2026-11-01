@@ -1,0 +1,33 @@
+---
+title: Agents and approvals
+description: 'An agent can propose a change. A person approves, merges and deploys.'
+diataxis: explanation
+---
+
+| Agent jobs do | Stays with people |
+|---|---|
+| Push a commit to a change when asked | Approve a plan |
+| Open a change that follows a drift check | Merge |
+| Post a review note | Cut or publish a release |
+| Start an Op and report that it waits at a gate | Override a policy denial, and deploy to a shared environment |
+
+A change an agent pushes plans like any other and needs the same approval. The generated agent jobs never apply, approve or merge. An approval recorded as an agent's counts toward no quorum, and passes a gate only through a policy permit in `enforce` mode.
+
+## Ask for a change
+
+Add this to a scheduled Op spec and render it with `chant run --generate <forge> --spec <file>`:
+
+```json
+{ "ops": [{ "name": "chant-agent", "agent": { "on": "comment", "comment": "/chant agent", "maxRuns": 10, "timeout": 30 }, "runner": "ubuntu-latest" }] }
+```
+
+A comment such as `/chant agent add a cost-center tag to the bucket` starts it. For drift, set `"agent": { "on": "drift", "maxRuns": 2 }` on the drift check's spec.
+
+## The limits
+
+- The model's job holds a read token. A separate job holds the write token and lands the change.
+- That job [refuses changes](/chant/guide/agent-jobs/#paths-an-agent-may-not-change) to CI files, `.chant/` and agent instructions.
+- [`maxRuns` and `maxCostUsd`](/chant/guide/agent-jobs/#the-spend-limit) cap a day's runs.
+- A gate an agent's own `op-run` reached [cannot be resolved over MCP](/chant/guide/agent-integration/#mcp-tools).
+
+[Agent jobs](/chant/guide/agent-jobs/) has the setup.

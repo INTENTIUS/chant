@@ -10,7 +10,7 @@ import Landing from '../../components/Landing.astro';
 
 ## Changes and approvals
 
-A change gets one plan note. It covers the components the change touches and the components that depend on them, and nothing else. An approval covers the exact plan it was shown. [Changes and approvals](/chant/guide/pull-request-ci/).
+A change gets one plan note. It covers the components the change touches and the components that depend on them, and nothing else. An approval covers the exact plan it was shown. [Changes and approvals](/chant/ci/changes-and-approvals/).
 
 ## Your forge, your pipelines
 
@@ -22,20 +22,20 @@ npx chant build --components --generate <forge> --pr-loop --env <env> --output <
 
 | Where it runs | Page |
 |---|---|
-| GitHub, GitLab or Forgejo | [Changes and approvals](/chant/guide/pull-request-ci/) |
-| A runner on your own host, with GitHub, Forgejo or plain git | [chant ci](/chant/cli/ci/) |
+| GitHub, GitLab or Forgejo | [Changes and approvals](/chant/ci/changes-and-approvals/) |
+| A runner on your own host, with GitHub, Forgejo or plain git | [Your forge](/chant/ci/your-forge/) |
 
 ## Merges and releases
 
-A merge records the plan and deploys nothing. A release that carries the commit deploys the change. [Apply on merge](/chant/guide/apply-on-merge/) is the opt-in for teams that want a merge to apply. [Trunk and releases](/chant/concepts/trunk-and-releases/).
+A merge records the plan and deploys nothing. A release that carries the commit deploys the change. [Apply on merge](/chant/guide/apply-on-merge/) is the opt-in for teams that want a merge to apply. [Merges and releases](/chant/ci/merges-and-releases/).
 
 ## Ops with gates
 
-A change that needs more than one step runs as an Op, with approval gates and rollback. A person or an agent can start one, and neither can hurry an approval. [Ops](/chant/guide/ops/).
+A change that needs more than one step runs as an Op, with approval gates and rollback. A person or an agent can start one, and neither can hurry an approval. [Run an Op](/chant/ci/run-an-op/).
 
 ## Drift
 
-`chant lifecycle diff <env> --live` compares what you declared with what is running. [chant lifecycle](/chant/cli/lifecycle/).
+`chant lifecycle diff <env> --live` compares what you declared with what is running. [See drift and act on it](/chant/ci/drift/).
 
 ## Native specs
 

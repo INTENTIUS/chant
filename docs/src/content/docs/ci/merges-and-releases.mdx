@@ -1,0 +1,31 @@
+---
+title: Merges and releases
+description: 'A merge records the plan, a release deploys it, and apply on merge is the opt-in.'
+diataxis: explanation
+---
+
+| Workflow | On merge | What deploys |
+|---|---|---|
+| `trunk-curated`, what a generated pipeline does by default | Records the plan, deploys nothing | A release cut from a green commit |
+| `trunk-curated+apply-on-merge` | Records the plan, then applies once a commit goes green | The newest green commit, and releases |
+| `apply-before-merge` | Records the plan, deploys nothing | An open change's head on request, once it is approved, mergeable, up to date and green, and releases |
+
+## Cut and promote a release
+
+```sh
+git fetch origin --tags
+git checkout "$(chant ci last-green)"
+chant release cut v1.4.0 --build "npm run build" --yes
+chant run --components all --env dev --release v1.4.0
+chant components promote --to staging --release v1.4.0
+```
+
+Without `--yes` the cut is a dry run. It refuses a commit with no `ci/green` tag. CI publishes the release through the pipeline [`chant release workflow`](/chant/cli/release/#release-workflow) writes.
+
+A promote moves the release to the next environment in `environments`. At a gate it exits 3. Approve it and run the same promote again. [Promote a release](/chant/guide/promote-a-release/).
+
+`chant ci init --workflow trunk-curated` [sets a workspace up](/chant/guide/trunk-curated-setup/) for this.
+
+## Apply on merge
+
+Add `--apply-on-merge` to the `chant build` line that generated the pipeline. The workspace must declare `ci.green`. Every green commit then deploys, and the release gate does not see it. [Apply on merge](/chant/guide/apply-on-merge/), and [move off it](/chant/guide/move-off-apply-on-merge/).
