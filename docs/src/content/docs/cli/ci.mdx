@@ -12,6 +12,8 @@ chant ci base [--json] [--phase <name> | --lane <name>] [--from <rev>] [--branch
 chant ci verdict [--commit <sha>] [--wait] [--branch <branch>]
 chant ci list [--json] [--branch <branch>] [--limit <n>] [--since <rev>] [--forge github] [--source checks|runs]
 chant ci tick [--dry-run] [--forge github] [--source checks|runs] [--key <runner key.pem>]
+chant ci quarantine check
+chant ci quarantine filter --phase <name> --runner nextest|playwright|list [--only] [--json]
 chant ci run plan|record|apply|env-up|env-post|env-down|env-sweep --env <env> --base <sha> [--pr <n>] [--commit <sha>] [--head <sha>] [--result <r>] [--forge github|gitlab|forgejo]
                   [--gate <name>] [--wave-gate <name>] [--wave <k>] [--branch <name>] [--events-json] [--report-url <url>] [--run-index-limit <n>]
                   [--image <image>]
@@ -88,6 +90,45 @@ A lane is a named subset of the phases with tags of its own ([#4662](https://git
 ```
 
 The tick judges each lane after the branch, from the check runs it already read, so a lane runs nothing and asks for no build or retry of its own; the bisect and the retry stay per phase. A commit that passes a lane's phases gets `ci/green-<lane>/<sha>`, and a lane-green commit that later fails one gets `ci/revoked-<lane>/<sha>`. Each annotation's record carries `lane`. Under `signedSince` the statement signs it, so a lane's tag never counts as `ci/green` or as another lane's, and a `ci/green` statement never counts for a lane. `ci last-green --lane` and `ci base --lane` read a lane, and the tick's report has a line for each lane tag it makes. The `_ci/<sha>.json` records keep each phase's verdict, from which any lane's state follows.
+
+## Quarantine
+
+A test that fails on both tries on unrelated commits turns the branch red for everyone, and the tick can't tell that red from a real one. Until someone fixes it, the test can go in `ci.green.quarantine` ([#4677](https://github.com/INTENTIUS/chant/issues/4677)): the phase's runner leaves it out, so the phase's check runs and the verdict don't depend on it, and a scheduled run of the quarantined tests alone says whether it still fails.
+
+```json
+"green": {
+  "branch": "main",
+  "phases": { "test": ["test (*)"], "e2e": ["e2e"] },
+  "require": ["test", "e2e"],
+  "quarantine": {
+    "maxDays": 14,
+    "phases": {
+      "test": [
+        { "test": "arugulad::integration ssh::ssh_installs_runs", "issue": "1234", "until": "2026-11-10", "why": "Fails on both tries on unrelated commits (2ac1e89ba, c2b452072)." }
+      ],
+      "e2e": [
+        { "file": "chat-control.spec.ts", "test": "polish: edits the last message and Esc cancels", "issue": "https://github.com/acme/app/issues/1235", "until": "2026-11-10", "why": "Races the composer's focus." }
+      ]
+    }
+  }
+}
+```
+
+Each entry names the test as its runner does, the issue that tracks the fix (a number or a URL), the last day it stays out (`until`, UTC) and why. For nextest, `test` is the binary id, a space and the test's name, as nextest prints them in its log, or the name alone to match it in any binary. For Playwright, `test` is the test's title and `file` the spec's path from the project's `testDir`, as Playwright prints it. Any other runner can take the entries as a list.
+
+`chant ci quarantine filter --phase <name> --runner <runner>` prints what the phase's runner takes:
+
+| `--runner` | Prints | Pass it as |
+|---|---|---|
+| `nextest` | A filterset over the phase's entries without a `file`: `not ((binary_id(=arugulad::integration) & test(=ssh::ssh_installs_runs)))`, or `all()` when there are none. | `cargo nextest run -E "$(chant ci quarantine filter --phase test --runner nextest)"` |
+| `playwright` | A pattern over the phase's entries with a `file`, matching each test's title path: `(?:^\| )chat-control\.spec\.ts (?:.* )?polish: edits the last message and Esc cancels(?: @\S+)*$`, joined with `\|`, or `(?!)`, which matches nothing, when there are none. Regex characters in the file and title are escaped. | `npx playwright test --grep-invert "$(chant ci quarantine filter --phase e2e --runner playwright)"`, or `grepInvert: new RegExp(...)` in the config |
+| `list` | Every entry of the phase, a line each: the test, or the file, a tab and the test. Nothing when there are none. | Whatever the runner takes |
+
+Playwright's CLI compiles `--grep-invert` case-insensitively, so a title that differs from a quarantined one only in case is left out too. `--json` prints the filter with the entries it covers.
+
+The filter fails with `declaration-invalid`, at the entry's line in the declaration, when an entry of the phase is past its `until` or the `until` is more than `maxDays` (14 by default) from today. The phase's job then fails, as the test did, until someone fixes the test and deletes the entry, or deletes the test. `chant ci quarantine check` makes the same check over every phase without printing a filter; run it where the declaration is linted. The declaration's reader checks only what holds on any day: each phase is declared, each `until` is a real day and no test is listed twice, so an expired entry never stops the tick or any other command. `quarantine` needs `minReader` 0.124.63 or newer.
+
+`--only` prints the opposite selection for a run of the quarantined tests alone: nextest's filterset without the `not` (`none()` when there are none), the same Playwright pattern for `--grep`, and the same list. It doesn't fail on an expired entry, so the scheduled run still says whether that test passes. Run it under a job whose check run no phase's patterns match, so the verdict never reads it.
 
 ## ci list
 
