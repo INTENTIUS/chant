@@ -35,6 +35,17 @@
  * A lane (#4692): a cut given a lane `ci.green.lanes` declares checks that
  * lane's tags, `ci/green-<lane>/<sha>` and `ci/revoked-<lane>/<sha>`, in place
  * of `ci/green/<sha>` and `ci/revoked/<sha>`, and the cut line names the lane.
+ *
+ * An override (#4693): a commit with no green tag that counts is cut when the
+ * cut asks for it (`overrideGreen`) and a person's override of it stands on
+ * the override ledger, `_gates/policy-override.jsonl` (`../override-gate.ts`).
+ * The subject is `release-<sha12>`, the plan the commit, and the rule
+ * `ci-green` (or `ci-green-<lane>`). It counts when a person the overriders
+ * file at base lists wrote it with a reason, sealed under a `release` gate in
+ * `identity.gates`. The cut spends it and records it on the cut line. With no
+ * override that counts, a cut (not a dry run) records the request for one,
+ * which `chant approve policy-override` answers. A revoked commit is never
+ * cut, override or not.
  */
 
 import { execFileSync } from "node:child_process";
@@ -57,6 +68,7 @@ import {
   type Release,
   type ReleaseArtifact,
   type ReleaseCut,
+  type ReleaseCutOverride,
   type ReleaseTarget,
   templateBytesDigest,
   type TemplateContent,
@@ -66,6 +78,21 @@ import { NEXT_RELEASE } from "../release-floors";
 
 /** The first chant that cuts from a lane's green tag and writes `lane` on the cut line (#4692). */
 export const RELEASE_CUT_LANE_FLOOR = NEXT_RELEASE;
+/** The first chant that cuts a commit that is not green under an override and writes `override` on the cut line (#4693). */
+export const RELEASE_CUT_OVERRIDE_FLOOR = NEXT_RELEASE;
+
+/** The override gate's subject for a cut of `commit` (#4693): `release-<sha12>`. */
+export function greenOverrideSubject(commit: string): string {
+  return `release-${commit.slice(0, 12)}`;
+}
+
+/** The rule an override of a cut names (#4693): `ci-green`, or `ci-green-<lane>` for a lane's tag. */
+export function greenOverrideRule(lane: string | null): string {
+  return lane !== null ? `ci-green-${lane}` : "ci-green";
+}
+
+/** How long a recorded request for an override stands before a cut records a fresh one. */
+const OVERRIDE_REQUEST_HOURS = 48;
 
 /** The stable codes a cut refuses with. */
 export type ReleaseCutCode =
@@ -85,6 +112,8 @@ export class ReleaseCutError extends Error {
     readonly code: ReleaseCutCode,
     message: string,
     readonly fix?: string,
+    /** The cut recorded a request for an override on `chant/lifecycle` (#4693), which the caller pushes. */
+    readonly recorded = false,
   ) {
     super(message);
     this.name = "ReleaseCutError";
@@ -121,6 +150,12 @@ export interface CutRequest {
    * `ci/green/<sha>` tag is checked.
    */
   lane?: string;
+  /**
+   * Cut the commit when it has no green tag that counts, under a person's
+   * override of it (#4693). Without an override that counts the cut is
+   * refused, and a cut that is not a dry run records the request for one.
+   */
+  overrideGreen?: boolean;
 }
 
 export interface CutResult {
@@ -220,6 +255,84 @@ interface Prepared {
   member: string | null;
   /** The lane the commit was checked in, or null for the full green tag. */
   lane: string | null;
+  /** The override the commit is cut under when it is not green (#4693), or null. */
+  override: ReleaseCutOverride | null;
+}
+
+/**
+ * Decide the override of a cut of `commit`, which has no green tag that
+ * counts (#4693), as `decideOverride` decides any: against the overriders
+ * file and, when `sealed`, the signers at base. With none that counts and
+ * `record`, the request for one is appended unless one stands.
+ */
+async function greenOverride(req: {
+  top: string;
+  cwd: string;
+  commit: string;
+  lane: string | null;
+  sealed: boolean;
+  record: boolean;
+  now: string;
+}): Promise<{ override: Omit<ReleaseCutOverride, "green" | "tag"> } | { override: null; why: string; fix: string; recorded: boolean }> {
+  const og = await import("../override-gate");
+  const { readOverrideLedger, recordOverrideDenial } = await import("./override-ledger");
+  const { resolveBase } = await import("../workspace/trust/provenance");
+  const subject = greenOverrideSubject(req.commit);
+  const rules = [greenOverrideRule(req.lane)];
+  const base = resolveBase(req.top).commit;
+  const overriders = base ? og.overridersAt(req.top, base) : null;
+  const signers = req.sealed && base ? (await import("../gate-decision")).gateSignersAt(req.top, base) : undefined;
+  const ledger = await readOverrideLedger({ cwd: req.cwd });
+  const verdict = og.decideOverride({
+    ledger,
+    applied: ledger.applied,
+    subject,
+    planDigest: req.commit,
+    rules,
+    overriders: overriders?.principals ?? [],
+    mode: req.sealed ? "sealed" : "ledger",
+    ...(signers ? { signers } : {}),
+    now: req.now,
+  });
+  if (verdict.status === "overridden") {
+    const o = verdict.override;
+    return { override: { by: o.by, at: o.at, reason: o.reason, digest: o.digest, sealed: o.sealed } };
+  }
+  let recorded = false;
+  if (req.record && !verdict.standing) {
+    await recordOverrideDenial(
+      {
+        subject,
+        planDigest: req.commit,
+        rules,
+        timestamp: req.now,
+        expiresAt: new Date(Date.parse(req.now) + OVERRIDE_REQUEST_HOURS * 3_600_000).toISOString(),
+        description: `release cut of commit ${req.commit.slice(0, 12)}, which has no ${req.lane !== null ? `ci/green-${req.lane}` : "ci/green"} tag that counts`,
+      },
+      { cwd: req.cwd },
+    );
+    recorded = true;
+  }
+  const notes = [
+    ...verdict.refusals.map((r) => `an override does not count: ${r}`),
+    ...(verdict.status === "moved" ? [`${verdict.by} overrode another commit or rule (${verdict.was ?? "no digest"}), which counts for nothing here`] : []),
+    recorded
+      ? `the request for an override of ${subject} is recorded on chant/lifecycle`
+      : verdict.standing
+        ? `the request for an override of ${subject} has stood since ${verdict.standing.timestamp}`
+        : `a cut with --yes records the request for an override of ${subject}`,
+  ];
+  const who = !overriders?.active
+    ? `${og.OVERRIDERS_PATH} at base does not exist, so nobody may override it yet. Once it lists a person, they may`
+    : overriders.principals.length > 0
+      ? `${overriders.principals.join(", ")} may`
+      : `${og.OVERRIDERS_PATH} at base lists nobody, so nobody may`;
+  return {
+    override: null,
+    why: notes.join("; "),
+    fix: `${who} override it with: ${og.overrideCommand(subject, rules, req.sealed)}, and then cut again with --override-green.`,
+    recorded,
+  };
 }
 
 /**
@@ -246,7 +359,7 @@ async function declaredLane(green: import("../workspace/declaration").CiGreen | 
  * asks, the tree is clean, every environment compiles with the same build
  * steps, and which artifacts are carried from an earlier release.
  */
-async function prepare(req: CutRequest): Promise<Prepared> {
+async function prepare(req: CutRequest, record = false): Promise<Prepared> {
   const cwd = resolve(req.cwd);
   const top = tryGit(cwd, ["rev-parse", "--show-toplevel"]);
   if (!top) throw new ReleaseCutError("not-a-git-repository", "a release is cut from a commit, and this directory is not in a git repository");
@@ -259,23 +372,31 @@ async function prepare(req: CutRequest): Promise<Prepared> {
   const green = source.declaration?.ci?.green ?? null;
   const lane = req.lane !== undefined ? await declaredLane(green, req.lane) : null;
   const { state, ignored } = await greenState(top, commit, green, lane ?? undefined);
+  // Who may cut is the declaration's identity.gates.release, read at base.
+  const releaseRule = releaseRuleFrom(source);
+  let override: ReleaseCutOverride | null = null;
   if (state !== "green") {
     const why = ignored.length > 0 ? `; ignored: ${ignored.map((t) => `${t.tag} (${t.status}): ${t.reason}`).join("; ")}` : "";
     // #4692: a lane's tags are ci/green-<lane>/ and ci/revoked-<lane>/.
     const greenTag = lane !== null ? `ci/green-${lane}` : "ci/green";
     const revokedTag = lane !== null ? `ci/revoked-${lane}` : "ci/revoked";
-    throw new ReleaseCutError(
-      state === "revoked" ? "release-commit-revoked" : "release-commit-not-green",
+    const message =
       state === "revoked"
         ? `commit ${commit.slice(0, 12)} has a ${revokedTag} tag: it went red after it was green, so no release is cut from it`
         : ignored.some((t) => t.tag.startsWith(`${greenTag}/`))
           ? `commit ${commit.slice(0, 12)} has no ${greenTag} tag that counts, so no release is cut from it${why}`
-          : `commit ${commit.slice(0, 12)} has no ${greenTag} tag, so no release is cut from it`,
-      `Check out a green commit (\`chant ci last-green${lane !== null ? ` --lane ${lane}` : ""}\` names the newest) after fetching the tags: git fetch origin --tags`,
-    );
+          : `commit ${commit.slice(0, 12)} has no ${greenTag} tag, so no release is cut from it`;
+    const fix = `Check out a green commit (\`chant ci last-green${lane !== null ? ` --lane ${lane}` : ""}\` names the newest) after fetching the tags: git fetch origin --tags`;
+    if (state === "revoked") {
+      throw new ReleaseCutError("release-commit-revoked", req.overrideGreen ? `${message}, and an override does not cut a revoked commit` : message, fix);
+    }
+    if (!req.overrideGreen) throw new ReleaseCutError("release-commit-not-green", message, fix);
+    // #4693: a person's override of this commit lets it through.
+    const now = (req.now ?? (() => new Date()))().toISOString();
+    const decided = await greenOverride({ top, cwd, commit, lane, sealed: releaseRule.requirement !== null, record, now });
+    if (decided.override === null) throw new ReleaseCutError("release-commit-not-green", `${message}; ${decided.why}`, decided.fix, decided.recorded);
+    override = { green: false, tag: `${greenTag}/${commit}`, ...decided.override };
   }
-  // Who may cut is the declaration's identity.gates.release, read at base.
-  const releaseRule = releaseRuleFrom(source);
   if (releaseRule.requirement && req.sign === undefined) {
     throw new ReleaseCutError(
       "release-unsigned",
@@ -365,6 +486,7 @@ async function prepare(req: CutRequest): Promise<Prepared> {
     reused,
     member: ledger.members.length > 0 ? ledger.members.join("/") : null,
     lane,
+    override,
   };
 }
 
@@ -415,6 +537,8 @@ export interface CutPlan {
   signatureRequired: boolean;
   /** The green lane the commit was checked in (#4692), or null for the full green tag. */
   lane: string | null;
+  /** The override the cut would run under and spend (#4693), when the commit is not green; null when it is. */
+  override: ReleaseCutOverride | null;
 }
 
 /**
@@ -484,6 +608,7 @@ export async function planRelease(req: CutRequest): Promise<CutPlan> {
     publishSteps: [...steps.values()],
     signatureRequired: p.releaseRule.requirement !== null,
     lane: p.lane,
+    override: p.override,
   };
 }
 
@@ -493,14 +618,16 @@ export async function planRelease(req: CutRequest): Promise<CutPlan> {
  * push. Throws {@link ReleaseCutError} before anything is written when the
  * commit isn't green, the tree is dirty, or an environment can't be compiled
  * to the same artifacts, and `ReleaseLabelError` (./release-store.ts) when the
- * label is taken or the release already carries another one.
+ * label is taken or the release already carries another one. The one write
+ * before a refusal is the request for an override (#4693), when the cut asks
+ * for one and none stands; the error's `recorded` says so.
  *
  * The cut line names its run (#4027): the CI run's id and origin in CI, and
  * outside CI an id minted from the cut's time, `local-<epoch ms>`, with the
  * origin `{ forge: "local" }`.
  */
 export async function cutRelease(req: CutRequest): Promise<CutResult> {
-  const p = await prepare(req);
+  const p = await prepare(req, true);
   const { cwd, commit, compiled, releaseRule, reused } = p;
   const artifacts = [...p.carried];
   for (const env of p.envs) {
@@ -541,18 +668,26 @@ export async function cutRelease(req: CutRequest): Promise<CutResult> {
   }
   const stored = await persistRelease(release, templates, { cwd });
   const ci = resolveCiRun(req.env ?? process.env);
+  const runId = ci?.runId ?? `local-${Date.parse(timestamp)}`;
+  // #4693: the override is spent before the cut line names it, so it lets one cut through.
+  if (p.override) {
+    const { appliedOverride } = await import("../override-gate");
+    const { recordOverridesApplied } = await import("./override-ledger");
+    await recordOverridesApplied([appliedOverride({ subject: greenOverrideSubject(commit), digest: p.override.digest, at: p.override.at, by: p.override.by }, { timestamp, runId, commit })], { cwd });
+  }
   const outcome = await appendCut(
     {
       releaseDigest: release.releaseDigest,
       label: req.label,
       actor: req.actor,
       timestamp,
-      runId: ci?.runId ?? `local-${Date.parse(timestamp)}`,
+      runId,
       runOrigin: ci?.runOrigin ?? { forge: "local" },
       signature,
       ...(req.composed ? { composed: req.composed } : {}),
       ...(req.channel ? { channel: req.channel } : {}),
       ...(p.lane !== null ? { lane: p.lane } : {}),
+      ...(p.override ? { override: p.override } : {}),
     },
     { cwd },
   );

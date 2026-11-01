@@ -8,7 +8,7 @@ diataxis: reference
 
 ```
 chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <name=value>]... [--params-file <file>]
-                  [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--json]
+                  [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--override-green] [--json]
 chant release candidates [--env <env>] [--branch <branch>] [--lane <name>] [--forge-issues] [--json]
 chant release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json]
 chant release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json]
@@ -42,7 +42,7 @@ The cut refuses before it writes anything when:
 | `release-worktree-dirty` | A tracked file has uncommitted changes, or a file git does not ignore is untracked, so the compile would not be the commit's. A new `*.component.ts` left untracked would otherwise be compiled into the release. |
 | `release-commit-not-on-trunk` | `HEAD` is not reachable from `origin/<trunk>` or from any further branch listed in `ci.green.branch` ([#4325](https://github.com/INTENTIUS/chant/issues/4325)), and is not a first-parent commit of a pushed `chant/compose/<name>` branch (see [Cutting a composed commit](#cutting-a-composed-commit)). Trunk is the branch `ci.green.branch` names in the declaration at base, else the branch `origin/HEAD` names, else `main`. |
 | `release-commit-not-pushed` | `HEAD` is on the local trunk branch but not on `origin/<trunk>`, or this clone has no `origin/<trunk>`. The check reads the remote-tracking branch as this clone last fetched it and fetches nothing, so a commit pushed from elsewhere needs a `git fetch origin <trunk>` first. |
-| `release-commit-not-green` | `HEAD` has no `ci/green/<sha>` tag, or with a lane no `ci/green-<lane>/<sha>` tag (see [Cutting from a lane](#cutting-from-a-lane)). [`chant ci`](/chant/cli/ci/) makes the tags; only local tags are read, so fetch them first. With [signed tags](/chant/cli/ci/#signed-tags), a tag without a valid statement doesn't count, and the message names it. |
+| `release-commit-not-green` | `HEAD` has no `ci/green/<sha>` tag, or with a lane no `ci/green-<lane>/<sha>` tag (see [Cutting from a lane](#cutting-from-a-lane)). [`chant ci`](/chant/cli/ci/) makes the tags; only local tags are read, so fetch them first. With [signed tags](/chant/cli/ci/#signed-tags), a tag without a valid statement doesn't count, and the message names it. With `--override-green`, an override can let it through (see [Cutting a commit that is not green](#cutting-a-commit-that-is-not-green)). |
 | `release-commit-revoked` | `HEAD` has a `ci/revoked/<sha>` tag, or with a lane a `ci/revoked-<lane>/<sha>` tag. |
 | `release-tag-taken` | The tag the release would get, `release/<label>`, already names another commit. |
 | `release-tag-invalid` | The label makes a tag name git refuses. |
@@ -98,6 +98,38 @@ chant release cut v2.3.0 --at "$(chant ci last-green --lane server)" --lane serv
 The lane must be one the declaration at base declares under `ci.green.lanes`, and with [signed tags](/chant/cli/ci/#signed-tags) the tag's statement must name that lane. The cut line records `lane`, and the dry run and `--json` print it, as does `release list`. Without a lane, nothing changes.
 
 A release cut from a lane is revoked as any other is, by a `ci/revoked/<sha>` tag on its commit. A `ci/revoked-<lane>/<sha>` tag made after the cut does not revoke it yet: it refuses the next cut of that commit in that lane.
+
+### Cutting a commit that is not green
+
+Sometimes a release has to go out from a commit that is not green: a red phase that is known to be unrelated, or CI that is down. `--override-green` cuts such a commit under a person's override ([#4693](https://github.com/INTENTIUS/chant/issues/4693)). The override is the one [the override gate](/chant/guide/ops/#overriding-a-denied-plan) records for a denied plan, on `_gates/policy-override.jsonl` on `chant/lifecycle`, so the same people may write it, it needs a reason, and it is spent once used. It takes three steps:
+
+```bash
+# 1. The cut is refused, and records the request for an override of release-3f2a9c1e0b7d.
+chant release cut v1.4.1 --at 3f2a9c1e0b7d --override-green --yes
+# 2. A person the overriders file lists overrides it, with the reason.
+git fetch origin chant/lifecycle:chant/lifecycle
+chant approve policy-override release-3f2a9c1e0b7d --rule ci-green --reason "windows runners are down; server phases passed" --actor github:alice
+# 3. The same cut, now under the override.
+chant release cut v1.4.1 --at 3f2a9c1e0b7d --override-green --yes
+```
+
+The subject is `release-<sha12>`, the plan the commit's full sha, and the rule `ci-green`, or `ci-green-<lane>` for a cut [from a lane](#cutting-from-a-lane). The refusal prints the exact `chant approve` line. An override counts when:
+
+- a person wrote it: a line an agent, an MCP or ACP session, a job (`via`) or a forge review wrote does not count;
+- `.chant/overriders` at base lists that person, one principal per line, and without the file nobody may override;
+- it gives a reason;
+- under a `release` gate in `identity.gates`, it is sealed (`chant approve ... --sign`) by a key the signers file at base lists for that person;
+- no earlier cut spent it.
+
+The cut that counts it writes the applied record to `_gates/policy-override/applied.jsonl` before its cut line, so one override lets one cut through. Another label, or the same commit cut again, needs its own. The cut line records the override, and says the commit was not green:
+
+```json
+"override": { "green": false, "tag": "ci/green/3f2a9c1e0b7d...", "by": "github:alice", "at": "2026-11-01T09:12:00.000Z", "reason": "windows runners are down; server phases passed", "digest": "sha256:...", "sealed": false }
+```
+
+Only a cut with `--yes` records the request, and it pushes `chant/lifecycle` so the person who answers it can fetch it. A dry run with `--override-green` decides the same way and writes nothing: it prints the override it would spend, or refuses with the command to run. The request stands for 48 hours. An override written after it lapses still counts for the same commit. `--reason` on the cut is refused, since the reason is the overrider's. A commit with a revoked tag is never cut, with or without an override. Without `--override-green` a standing override is not used.
+
+The dry run prints `not green: no ci/green tag` where it would print `green`, and the override it would spend. `release list` marks such a release `not green`, and prints who overrode it and why on stderr. The [`releases`](/chant/reference/workspace-read-contract/) document carries `override` on the cut. The request, the override and its applied record are ordinary override gate lines, so `chant approve` and the gate audit reader (`lifecycle/gate-audit.ts`) read them as they read any override.
 
 ### The label in the build
 

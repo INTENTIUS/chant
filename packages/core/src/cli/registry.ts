@@ -377,6 +377,8 @@ export interface ParsedArgs {
   prs?: number[];
   /** `chant release cut --channel <tag>` (#4168 4.3): the tag a publish of the release moves in place of `latest`. */
   channel?: string;
+  /** `chant release cut --override-green` (#4693): cut a commit that is not green under a person's override on the override ledger. */
+  overrideGreen?: boolean;
   /**
    * `chant components pr-plan|pr-apply --forge github|gitlab|forgejo` (#3183)
    * — post the note and the commit status on this forge, with the client

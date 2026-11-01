@@ -397,6 +397,49 @@
         "lane": {
           "type": "string",
           "description": "Added by #4692, written by chant 0.124.63 and newer. The green lane the cut checked, from release cut --lane or release.lane in chant.config.ts: the commit carried ci/green-<lane>/<sha> and no ci/revoked-<lane>/<sha>. Absent on a cut that checked ci/green/<sha>."
+        },
+        "override": {
+          "type": "object",
+          "required": [
+            "green",
+            "tag",
+            "by",
+            "at",
+            "reason",
+            "digest",
+            "sealed"
+          ],
+          "properties": {
+            "green": {
+              "const": false,
+              "description": "The commit was not green."
+            },
+            "tag": {
+              "type": "string",
+              "description": "The green tag it had none of that counts: ci/green/<sha>, or ci/green-<lane>/<sha>."
+            },
+            "by": {
+              "type": "string",
+              "description": "Who wrote the override, a person the overriders file at base lists."
+            },
+            "at": {
+              "type": "string",
+              "description": "When the override was written."
+            },
+            "reason": {
+              "type": "string",
+              "description": "Why, in the overrider's words."
+            },
+            "digest": {
+              "type": "string",
+              "description": "The override digest on _gates/policy-override.jsonl, binding the subject release-<sha12>, the commit and the rule."
+            },
+            "sealed": {
+              "type": "boolean",
+              "description": "Whether the override was sealed, as a release gate in identity.gates requires."
+            }
+          },
+          "description": "Added by #4693, written by chant 0.124.63 and newer. The commit was not green, and release cut --override-green cut it under a person's override, which it spent. Absent on a cut of a green commit."
         }
       }
     },

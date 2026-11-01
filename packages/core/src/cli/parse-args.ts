@@ -93,6 +93,7 @@ const BOOLEAN_FLAGS = new Set([
   "--allow-code",
   "--allow-skip",
   "--allow-unsigned",
+  "--override-green",
   "--require-provenance",
   "--root-only",
   "--generated",
@@ -564,6 +565,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant ci run|serve --status-url <template>` (#4097): the link a job's status carries, in place of an https --report-url.
       result.statusUrl = args[++i];
       if (!result.statusUrl || result.statusUrl.startsWith("-")) throw new Error("--status-url needs a URL template: --status-url https://host/reports/{key}");
+    } else if (arg === "--override-green") {
+      // `chant release cut --override-green` (#4693): cut a commit that is not green under a person's override.
+      result.overrideGreen = true;
     } else if (arg === "--allow-unsigned") {
       // `chant release publish --allow-unsigned` (#4049).
       result.allowUnsigned = true;
