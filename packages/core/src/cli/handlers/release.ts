@@ -1,9 +1,10 @@
 /**
  * `chant release` (#4026, ws-104): the release is what graduates.
  *
- *   release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param k=v]... [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--json]
+ *   release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param k=v]... [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--lane <name>] [--json]
  *       a dry run of a cut of this member from the checkout's HEAD, which must be
- *       clean, on trunk and pushed, and green (#4027); `--yes` cuts, records,
+ *       clean, on trunk and pushed, and green (#4027), or green in a lane with
+ *       `--lane` or `release.lane` (#4692); `--yes` cuts, records,
  *       and tags the commit `release/<label>` locally;
  *       --sign signs the cut with the actor's ssh key (#4031); `--src`, `-o` and
  *       `--lexicon` shape the build of a project with no components (#4046)
@@ -17,7 +18,7 @@
  *   release verify <label|digest> [--json]
  *       check the release's signature offline against .chant/allowed_signers
  *       at the release's commit (#4049)
- *   release candidates [--env <env>] [--forge-issues] [--json]
+ *   release candidates [--env <env>] [--lane <name>] [--forge-issues] [--json]
  *       the green commits of trunk a release can be cut from, each with what it
  *       would ship, and what each environment runs (#4168 4.2)
  *   release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json]
@@ -47,7 +48,7 @@ import { parseParamFlags } from "../build-params-cli";
 import type { CommandContext } from "../registry";
 
 const USAGE =
-  "chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--json] | release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json] | release verify <label|digest> [--json] | release candidates [--env <env>] [--forge-issues] [--json] | release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json] | release list [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
+  "chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--json] | release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json] | release verify <label|digest> [--json] | release candidates [--env <env>] [--lane <name>] [--forge-issues] [--json] | release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json] | release list [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
 
 /** The build inputs `release cut` and `release compile` share. */
 function compileInputs(
@@ -92,6 +93,23 @@ export function nextCommands(req: {
 export function sameWithYes(argv: readonly string[]): string {
   const quote = (a: string) => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replace(/'/g, `'\\''`)}'`);
   return ["chant", ...argv.filter((a) => a !== "--json" && a !== "--yes"), "--yes"].map(quote).join(" ");
+}
+
+/**
+ * The green lane a cut or a candidates read checks (#4692): `--lane`, else
+ * `release.lane` in the member's chant.config.ts at `cwd`, else none. A
+ * config that can't be loaded is warned about and read as naming none, so the
+ * full green tag is checked.
+ */
+async function laneOf(ctx: CommandContext, cwd: string): Promise<string | undefined> {
+  if (ctx.args.lane !== undefined) return ctx.args.lane;
+  try {
+    const { loadChantConfig } = await import("../../config");
+    return (await loadChantConfig(cwd)).config.release?.lane;
+  } catch (err) {
+    if (!ctx.args.json) console.error(formatWarning({ message: `release.lane was not read, so the full green tag is checked: ${err instanceof Error ? err.message : String(err)}` }));
+    return undefined;
+  }
 }
 
 function describeActorSource(source: import("../../lifecycle/release-workstation").ActorSource): string {
@@ -226,6 +244,8 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     if (args.at !== undefined && top && commit) checkout = at.checkoutCommit(top, cwd, commit);
     const cutCwd = checkout?.memberDir ?? cwd;
     const compiler = spawnTargetCompiler(compileInputs(ctx, params, cutCwd, label));
+    // #4692: the lane is the commit's own config's under --at.
+    const lane = await laneOf(ctx, cutCwd);
     const request = {
       cwd: cutCwd,
       compiler,
@@ -234,6 +254,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       ...(args.sign !== undefined ? { sign: args.sign } : {}),
       ...(composed ? { composed } : {}),
       ...(args.channel ? { channel: args.channel } : {}),
+      ...(lane !== undefined ? { lane } : {}),
     };
 
     if (dryRun) {
@@ -274,10 +295,11 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
         return 0;
       }
       const name = plan.label ? formatBold(plan.label) : "an unlabelled release";
+      const greenIn = plan.lane !== null ? `green in lane ${plan.lane}` : "green";
       const where = composed
-        ? ` (on ${trunk!.remote}/${composed.branch}, composed on ${composed.base.slice(0, 12)} from ${composed.sources.length} trunk commit(s), green)`
+        ? ` (on ${trunk!.remote}/${composed.branch}, composed on ${composed.base.slice(0, 12)} from ${composed.sources.length} trunk commit(s), ${greenIn})`
         : trunk
-          ? ` (on ${trunk.remote}/${trunk.branch}, green)`
+          ? ` (on ${trunk.remote}/${trunk.branch}, ${greenIn})`
           : "";
       console.log(`Dry run: cut ${name} from commit ${plan.commit.slice(0, 12)}${where}`);
       if (args.channel) console.log(`  channel ${args.channel}: a publish moves ${args.channel}, not latest`);
@@ -337,7 +359,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     if (args.json) {
       console.log(
         JSON.stringify(
-          { dryRun: false, release: result.release, label: result.label, cut: result.cut, stored: result.stored, reused: result.reused, actor, actorSource: who.source, tag: tagged, composed: composed ?? null, channel: args.channel ?? null, next },
+          { dryRun: false, release: result.release, label: result.label, cut: result.cut, stored: result.stored, reused: result.reused, actor, actorSource: who.source, tag: tagged, composed: composed ?? null, channel: args.channel ?? null, lane: lane ?? null, next },
           null,
           2,
         ),
@@ -346,7 +368,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       const name = result.label ? formatBold(result.label) : "unlabelled release";
       if (result.cut) console.error(formatSuccess(`Cut ${name}: ${result.release.releaseDigest}`));
       else console.error(formatSuccess(`Already cut${result.label ? ` as ${formatBold(result.label)}` : ""}: ${result.release.releaseDigest}`));
-      console.error(`  commit ${result.release.commit}${composed ? `, composed on ${composed.base.slice(0, 12)} on ${composed.branch}` : ""}`);
+      console.error(`  commit ${result.release.commit}${composed ? `, composed on ${composed.base.slice(0, 12)} on ${composed.branch}` : ""}${lane !== undefined ? `, green in lane ${lane}` : ""}`);
       if (args.channel) console.error(`  channel ${args.channel}`);
       if (result.cut) console.error(`  ${result.cut.signature ? `signed by ${result.cut.actor}` : `not signed; actor ${result.cut.actor}`}, run ${result.cut.runId}`);
       console.error(`  artifacts ${result.release.artifactDigests.length}, targets ${result.release.targets.map((t) => `${t.env} (${t.templates.length} template${t.templates.length === 1 ? "" : "s"})`).join(", ")}`);
@@ -559,7 +581,14 @@ export async function runReleaseVerify(ctx: CommandContext): Promise<number> {
  */
 export async function runReleaseCandidates(ctx: CommandContext): Promise<number> {
   const { releaseCandidatesDocument } = await import("../../workspace/release-candidates");
-  const doc = await releaseCandidatesDocument({ cwd: resolve("."), ...(ctx.args.env ? { env: ctx.args.env } : {}), ...(ctx.args.branch ? { branch: ctx.args.branch } : {}), ...(ctx.args.forgeIssues ? { forgeIssues: {} } : {}) });
+  const lane = await laneOf(ctx, resolve("."));
+  const doc = await releaseCandidatesDocument({
+    cwd: resolve("."),
+    ...(ctx.args.env ? { env: ctx.args.env } : {}),
+    ...(ctx.args.branch ? { branch: ctx.args.branch } : {}),
+    ...(lane !== undefined ? { lane } : {}),
+    ...(ctx.args.forgeIssues ? { forgeIssues: {} } : {}),
+  });
   if (ctx.args.json) {
     console.log(JSON.stringify(doc, null, 2));
     return "error" in doc ? 1 : 0;
@@ -576,8 +605,10 @@ export async function runReleaseCandidates(ctx: CommandContext): Promise<number>
     console.error(`No candidates: this clone knows no ${doc.branch}. Fetch it: git fetch origin ${doc.branch} --tags`);
     return 0;
   }
-  if (doc.pending.length > 0) console.log(`${doc.pending.length} commit(s) on ${doc.branch} after the newest candidate are not green yet`);
-  if (doc.candidates.length === 0) console.log(`No green commit on ${doc.branch}${doc.since ? ` since ${doc.since.slice(0, 12)}` : ""} to cut from.`);
+  const greenIn = doc.lane !== null ? `green in lane ${doc.lane}` : "green";
+  if (doc.lane !== null) console.log(`Lane ${doc.lane}: candidates carry ci/green-${doc.lane}/<sha>`);
+  if (doc.pending.length > 0) console.log(`${doc.pending.length} commit(s) on ${doc.branch} after the newest candidate are not ${greenIn} yet`);
+  if (doc.candidates.length === 0) console.log(`No ${greenIn} commit on ${doc.branch}${doc.since ? ` since ${doc.since.slice(0, 12)}` : ""} to cut from.`);
   for (const c of doc.candidates) {
     const tags = [...(c.newFor.length > 0 ? [`new for ${c.newFor.join(", ")}`] : []), ...(c.cut.length > 0 ? [`cut as ${c.cut.join(", ")}`] : [])];
     console.log(`${c.commit.slice(0, 12)}  ${c.subject}${tags.length > 0 ? `  (${tags.join("; ")})` : ""}`);
@@ -596,7 +627,7 @@ export async function runReleaseCandidates(ctx: CommandContext): Promise<number>
   // --forge-issues: why a pull request's issues were not read, once per reason.
   const unread = new Set([...doc.candidates.flatMap((c) => c.changes), ...doc.pending].map((ch) => ch.closes?.reason).filter((r): r is string => typeof r === "string"));
   for (const r of unread) console.error(`Issues not read from the forge: ${r}`);
-  if (doc.candidates.length > 0) console.error(`Cut one: chant release cut <label> --at <sha>`);
+  if (doc.candidates.length > 0) console.error(`Cut one: chant release cut <label> --at <sha>${doc.lane !== null && ctx.args.lane !== undefined ? ` --lane ${doc.lane}` : ""}`);
   return 0;
 }
 
@@ -622,7 +653,9 @@ export async function runReleaseList(ctx: CommandContext): Promise<number> {
     const newest = r.cuts.at(-1);
     const signature = newest ? (newest.signatureCheck.status === "verified" ? `signed by ${newest.actor}` : newest.signatureCheck.status) : "-";
     // #4033: a release cut from a revoked commit says so at the end of its line, and why on stderr.
-    console.log(`${(r.label ?? "-").padEnd(16)}  ${r.releaseDigest}  ${r.commit.slice(0, 12)}  ${signature}  ${where}${r.revoked ? "  revoked" : ""}`);
+    // #4692: a release cut from a lane's green tag names the lane.
+    const lane = r.cuts.find((c) => c.lane !== undefined)?.lane;
+    console.log(`${(r.label ?? "-").padEnd(16)}  ${r.releaseDigest}  ${r.commit.slice(0, 12)}  ${signature}  ${where}${lane !== undefined ? `  lane ${lane}` : ""}${r.revoked ? "  revoked" : ""}`);
     if (newest?.signatureCheck.status === "unverified") console.error(`  ${r.label ?? r.releaseDigest}: ${newest.signatureCheck.reason}`);
     if (r.revoked) {
       const { describeRevocation } = await import("../../lifecycle/release-revocation");

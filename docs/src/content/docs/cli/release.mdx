@@ -8,8 +8,8 @@ diataxis: reference
 
 ```
 chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <name=value>]... [--params-file <file>]
-                  [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--json]
-chant release candidates [--env <env>] [--branch <branch>] [--forge-issues] [--json]
+                  [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--json]
+chant release candidates [--env <env>] [--branch <branch>] [--lane <name>] [--forge-issues] [--json]
 chant release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json]
 chant release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json]
 chant release verify <label|digest> [--json]
@@ -42,14 +42,15 @@ The cut refuses before it writes anything when:
 | `release-worktree-dirty` | A tracked file has uncommitted changes, or a file git does not ignore is untracked, so the compile would not be the commit's. A new `*.component.ts` left untracked would otherwise be compiled into the release. |
 | `release-commit-not-on-trunk` | `HEAD` is not reachable from `origin/<trunk>` or from any further branch listed in `ci.green.branch` ([#4325](https://github.com/INTENTIUS/chant/issues/4325)), and is not a first-parent commit of a pushed `chant/compose/<name>` branch (see [Cutting a composed commit](#cutting-a-composed-commit)). Trunk is the branch `ci.green.branch` names in the declaration at base, else the branch `origin/HEAD` names, else `main`. |
 | `release-commit-not-pushed` | `HEAD` is on the local trunk branch but not on `origin/<trunk>`, or this clone has no `origin/<trunk>`. The check reads the remote-tracking branch as this clone last fetched it and fetches nothing, so a commit pushed from elsewhere needs a `git fetch origin <trunk>` first. |
-| `release-commit-not-green` | `HEAD` has no `ci/green/<sha>` tag. [`chant ci`](/chant/cli/ci/) makes the tags; only local tags are read, so fetch them first. With [signed tags](/chant/cli/ci/#signed-tags), a tag without a valid statement doesn't count, and the message names it. |
-| `release-commit-revoked` | `HEAD` has a `ci/revoked/<sha>` tag. |
+| `release-commit-not-green` | `HEAD` has no `ci/green/<sha>` tag, or with a lane no `ci/green-<lane>/<sha>` tag (see [Cutting from a lane](#cutting-from-a-lane)). [`chant ci`](/chant/cli/ci/) makes the tags; only local tags are read, so fetch them first. With [signed tags](/chant/cli/ci/#signed-tags), a tag without a valid statement doesn't count, and the message names it. |
+| `release-commit-revoked` | `HEAD` has a `ci/revoked/<sha>` tag, or with a lane a `ci/revoked-<lane>/<sha>` tag. |
 | `release-tag-taken` | The tag the release would get, `release/<label>`, already names another commit. |
 | `release-tag-invalid` | The label makes a tag name git refuses. |
 | `release-no-environments` | The member's `chant.config.ts` declares no `environments`. |
 | `release-no-components` | The member declares components, none is enabled in any environment, and nothing was compiled. A project that declares no component is released from its build output instead, see [a project with no components](#a-project-with-no-components). |
 | `release-unsigned` | The declaration at base names a `release` gate in `identity.gates`, and the cut is not signed. See [Who may cut](#who-may-cut). |
 | `release-signer-refused` | The cut's signature does not verify for the actor against the signers file at base, or the actor is not in the `release` gate's class. Nothing is written. |
+| `declaration-invalid` | The cut names a lane, and the declaration at base has no `ci.green` or declares no such lane. The message lists the lanes it declares. |
 | `release-build-inputs-differ` | A component's build steps differ between environments, for example a `docker-build` whose `buildArgs` read a parameter that is set per environment. Its artifact can't be built once for every environment. |
 
 The code is printed in square brackets at the end of the message. The dry run refuses with the same codes, and also with `release-label-taken` when the label already names a release of another commit.
@@ -76,6 +77,27 @@ The cut line's `composed` field names the branch and the base it was composed on
 git fetch origin --tags
 chant release cut v1.4.1 --at "$(git rev-parse origin/chant/compose/hotfix-1-4)" --channel hotfix --yes
 ```
+
+### Cutting from a lane
+
+A workspace whose `ci.green` declares [lanes](/chant/cli/ci/#green-lanes) tags a commit `ci/green-<lane>/<sha>` once that lane's phases pass, without waiting for the rest. `--lane <name>` cuts from that tag ([#4692](https://github.com/INTENTIUS/chant/issues/4692)): the commit must carry `ci/green-<lane>/<sha>` that counts and no `ci/revoked-<lane>/<sha>`, and `ci/green/<sha>` is not needed. A member that is always released from one lane sets it in its config, and `--lane` on the command line wins over it:
+
+```ts
+// chant.config.ts
+export default {
+  environments: ["staging", "prod"],
+  release: { lane: "server" },
+};
+```
+
+```bash
+git fetch origin --tags
+chant release cut v2.3.0 --at "$(chant ci last-green --lane server)" --lane server --yes
+```
+
+The lane must be one the declaration at base declares under `ci.green.lanes`, and with [signed tags](/chant/cli/ci/#signed-tags) the tag's statement must name that lane. The cut line records `lane`, and the dry run and `--json` print it, as does `release list`. Without a lane, nothing changes.
+
+A release cut from a lane is revoked as any other is, by a `ci/revoked/<sha>` tag on its commit. A `ci/revoked-<lane>/<sha>` tag made after the cut does not revoke it yet: it refuses the next cut of that commit in that lane.
 
 ### The label in the build
 
@@ -385,6 +407,8 @@ This is how a project with no components deploys what it cut. [`chant components
 Lists the green commits of trunk a release can be cut from, newest first ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). Trunk is the branch `release cut` checks, and the walk follows its first-parent line from the tip back to the oldest commit an environment of the member runs. When some environment runs no release yet, it reads the newest 50 commits. `--env <env>` gives one environment's view, so the walk stops at what that environment runs.
 
 With several branches in [`ci.green.branch`](/chant/guide/branch-routing/#give-a-routed-target-a-green-verdict), `--branch <branch>` walks that one instead of the first ([#4325](https://github.com/INTENTIUS/chant/issues/4325)).
+
+`--lane <name>`, or `release.lane` in the member's `chant.config.ts`, reads a lane's tags as [`release cut --lane`](#cutting-from-a-lane) checks them ([#4692](https://github.com/INTENTIUS/chant/issues/4692)). A candidate is then a commit with `ci/green-<lane>/<sha>` and no `ci/revoked-<lane>/<sha>`, and a commit with `ci/revoked-<lane>/<sha>` is skipped. The document's `lane` names the lane, or is `null` for `ci/green/<sha>`.
 
 ```bash
 git fetch origin --tags

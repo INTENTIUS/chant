@@ -1213,6 +1213,7 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.ciWait = true;
     } else if (arg === "--lane") {
       // `chant ci last-green --lane <name>` and `chant ci base --lane <name>` (#4662): a green lane's tags and phases.
+      // `chant release cut|candidates --lane <name>` (#4692): a cut from that lane's green tag.
       result.lane = args[++i];
     } else if (arg === "--runner") {
       // `chant ci quarantine filter --runner nextest|playwright|list` (#4677): the runner the filter is for.
