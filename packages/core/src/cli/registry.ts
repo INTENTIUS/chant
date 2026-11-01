@@ -933,6 +933,8 @@ export interface ParsedArgs {
   quarantineRunner?: string;
   /** `chant ci quarantine filter --only` (#4677) — select the quarantined tests in place of leaving them out. */
   quarantineOnly?: boolean;
+  /** `chant ci quarantine report --junit <file>`, repeatable (#4677) — the scheduled run's JUnit XML. */
+  quarantineJunit?: string[];
   /** `chant audit-log attribute|unrecorded --audit-log aws[:<region>]` (#4632): the cloud audit log to read. */
   auditLog?: string;
   /** `chant ledger`, `chant workspace records` and `chant workspace runs --where <field><op><value>` (#4363): typed filters, repeatable, all of which have to hold. */

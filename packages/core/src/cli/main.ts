@@ -334,6 +334,11 @@ CI:
                         or one test a line. Fails as check does for the
                         phase. --only selects the quarantined tests instead,
                         for the scheduled run, and doesn't fail on expiry.
+  ci quarantine report --phase <name> --junit <file>... [--commit <sha>] [--dry-run] [--json]
+                        After the scheduled run of the quarantined tests:
+                        each one's outcome from the run's JUnit XML, and
+                        ci.quarantine-passed through ci.green.notify for each
+                        that passed. Exits 0 whatever the tests did.
   ci run plan|apply --env <env> --base <sha> [--pr <n>] [--commit <sha>]
               [--forge github|gitlab|forgejo] [--gate <name>] [--wave-gate <name>]
               [--branch <name>] [--events-json] [--report-url <url>] [--image <image>]

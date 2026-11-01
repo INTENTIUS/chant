@@ -283,7 +283,8 @@ export interface CiGreen {
   lanes?: CiLane[];
   /**
    * Who the tick tells (#4645): `ci.red`, `ci.culprit` and `ci.green`, sent
-   * through notify as Op waves send theirs. Absent when the declaration sets none.
+   * through notify as Op waves send theirs; and who `ci quarantine report`
+   * tells `ci.quarantine-passed` (#4677). Absent when the declaration sets none.
    */
   notify?: NotifyConfig;
   /**

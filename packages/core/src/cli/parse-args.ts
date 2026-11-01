@@ -1217,6 +1217,11 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--runner") {
       // `chant ci quarantine filter --runner nextest|playwright|list` (#4677): the runner the filter is for.
       result.quarantineRunner = args[++i];
+    } else if (arg === "--junit") {
+      // `chant ci quarantine report --junit <file>`, repeatable (#4677): the scheduled run's JUnit XML.
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error("--junit needs the JUnit XML file the run wrote: --junit <file>");
+      (result.quarantineJunit ??= []).push(value);
     } else if (arg === "--only") {
       // `chant ci quarantine filter --only` (#4677): select the quarantined tests, for the scheduled run.
       result.quarantineOnly = true;

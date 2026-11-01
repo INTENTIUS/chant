@@ -14,6 +14,7 @@ chant ci list [--json] [--branch <branch>] [--limit <n>] [--since <rev>] [--forg
 chant ci tick [--dry-run] [--forge github] [--source checks|runs] [--key <runner key.pem>]
 chant ci quarantine check
 chant ci quarantine filter --phase <name> --runner nextest|playwright|list [--only] [--json]
+chant ci quarantine report --phase <name> --junit <file>... [--commit <sha>] [--dry-run] [--json]
 chant ci run plan|record|apply|env-up|env-post|env-down|env-sweep --env <env> --base <sha> [--pr <n>] [--commit <sha>] [--head <sha>] [--result <r>] [--forge github|gitlab|forgejo]
                   [--gate <name>] [--wave-gate <name>] [--wave <k>] [--branch <name>] [--events-json] [--report-url <url>] [--run-index-limit <n>]
                   [--image <image>]
@@ -129,6 +130,47 @@ Playwright's CLI compiles `--grep-invert` case-insensitively, so a title that di
 The filter fails with `declaration-invalid`, at the entry's line in the declaration, when an entry of the phase is past its `until` or the `until` is more than `maxDays` (14 by default) from today. The phase's job then fails, as the test did, until someone fixes the test and deletes the entry, or deletes the test. `chant ci quarantine check` makes the same check over every phase without printing a filter; run it where the declaration is linted. The declaration's reader checks only what holds on any day: each phase is declared, each `until` is a real day and no test is listed twice, so an expired entry never stops the tick or any other command. `quarantine` needs `minReader` 0.124.63 or newer.
 
 `--only` prints the opposite selection for a run of the quarantined tests alone: nextest's filterset without the `not` (`none()` when there are none), the same Playwright pattern for `--grep`, and the same list. It doesn't fail on an expired entry, so the scheduled run still says whether that test passes. Run it under a job whose check run no phase's patterns match, so the verdict never reads it.
+
+### The scheduled run
+
+The quarantined tests still run, alone, on a schedule. `chant ci workflow` doesn't write this job, because chant doesn't know what a phase's job sets up before its tests (a toolchain, a database, browsers); copy the phase's own setup into a workflow like this one:
+
+```yaml
+name: quarantine
+on:
+  schedule:
+    - cron: "47 7 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  quarantined:
+    # No pattern in ci.green.phases matches this check run, so the verdict never reads it.
+    name: quarantined tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The setup the test phase's own job does.
+      - name: Anything quarantined?
+        id: any
+        run: |
+          if [ -n "$(npx chant ci quarantine filter --phase test --runner list)" ]; then echo "run=true" >> "$GITHUB_OUTPUT"; fi
+      - name: The quarantined tests
+        if: steps.any.outputs.run == 'true'
+        run: cargo nextest run --profile ci --ignore-default-filter -E "$(npx chant ci quarantine filter --phase test --runner nextest --only)"
+      - name: What became of each, and who is told
+        if: always() && steps.any.outputs.run == 'true'
+        env:
+          CHANT_WEBHOOK: ${{ secrets.CHANT_WEBHOOK }}
+          CHANT_WEBHOOK_KEY: ${{ secrets.CHANT_WEBHOOK_KEY }}
+        run: npx chant ci quarantine report --phase test --junit target/nextest/ci/junit.xml
+```
+
+The job is red while a quarantined test still fails, and nothing requires it. Give its check run a name no phase's patterns match: a broad pattern such as `*` would make the verdict wait on it.
+
+`chant ci quarantine report` reads the run's JUnit XML: nextest writes it with `[profile.ci.junit]` in its config (`target/nextest/ci/junit.xml` for `path = "junit.xml"`), and Playwright with `--reporter=junit` and `PLAYWRIGHT_JUNIT_OUTPUT_NAME`. For Playwright, run `npx playwright test --grep "$(npx chant ci quarantine filter --phase e2e --runner playwright --only)"`. The report prints each quarantined test of the phase as passed, flaky, failed, skipped or not run. A nextest test that passed only on a retry is flaky, not passed, and a Playwright test passes when its case passed in every project. For each test that passed, it sends `ci.quarantine-passed` through [`ci.green.notify`](/chant/guide/notify/#what-the-tick-sends), naming the test, its issue and `until`, so someone can check the issue and take the entry out. It sends again on each scheduled run the test passes in, until the entry goes, with an id made from the test and the commit. It exits 0 whatever the tests did, and 1 only when it can't read the declaration or a JUnit file. `--dry-run` sends nothing and says what it would send; `--json` prints the outcomes. The commit is `--commit`, else `GITHUB_SHA`, else `HEAD`.
 
 ## ci list
 

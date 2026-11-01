@@ -1907,13 +1907,13 @@
         },
         "notify": {
           "type": "object",
-          "description": "Who chant ci tick tells (#4645), as an Op waves spec's notify: each value names an environment variable, never a URL or a key. webhook and key: a signed chant.notify/v1 webhook; slack and teams: incoming webhooks; events: which to send, of ci.red, ci.culprit and ci.green (all three by default). ci.red: the branch's newest decided commit is red after its one retry. ci.culprit: a bisect named the first red commit. ci.green: the branch is green again after a ci.red. Each is sent once: the tick marks it in the commit's _ci record, so it needs chant/lifecycle, and it sends nothing when it can't write the records. Read by chant 0.124.61 and newer, so a declaration that sets it sets minReader to 0.124.61 or newer.",
+          "description": "Who chant ci tick tells (#4645), as an Op waves spec's notify: each value names an environment variable, never a URL or a key. webhook and key: a signed chant.notify/v1 webhook; slack and teams: incoming webhooks; events: which to send, of ci.red, ci.culprit, ci.green and ci.quarantine-passed (all of them by default). ci.red: the branch's newest decided commit is red after its one retry. ci.culprit: a bisect named the first red commit. ci.green: the branch is green again after a ci.red. ci.quarantine-passed (#4677), from chant ci quarantine report rather than the tick: a quarantined test passed in the scheduled run, sent on every such run until its entry goes. The tick's events are each sent once: the tick marks it in the commit's _ci record, so it needs chant/lifecycle, and it sends nothing when it can't write the records. Read by chant 0.124.61 and newer, so a declaration that sets it sets minReader to 0.124.61 or newer.",
           "properties": {
             "webhook": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
             "key": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
             "slack": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
             "teams": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
-            "events": { "type": "array", "uniqueItems": true, "items": { "enum": ["ci.red", "ci.culprit", "ci.green"] } }
+            "events": { "type": "array", "uniqueItems": true, "items": { "enum": ["ci.red", "ci.culprit", "ci.green", "ci.quarantine-passed"] } }
           },
           "additionalProperties": false
         },
