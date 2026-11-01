@@ -56,7 +56,6 @@
 import { judgeCommits, mergeCommits, readWorkIndex, type CommitLink } from "./commit-links";
 import { execFileSync } from "node:child_process";
 import { greenBranches, laneOf, laneTagPrefixes, readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError, type CiGreen, type CiPhase, type CiSource } from "./declaration";
-import { NEXT_RELEASE } from "../release-floors";
 import { makeNotifyEvent, sendNotify, type NotifyFields } from "../notify";
 import type { CheckRun, CiForge, OpRunRef } from "./ci-green-forge";
 import type { OpRunRecord } from "../op/runtime";
@@ -81,11 +80,11 @@ export const RUNNER_KEY_ENV = "CHANT_RUNNER_KEY";
 export const CI_GREEN_TAG_PREFIX = "ci/green/";
 export const CI_REVOKED_TAG_PREFIX = "ci/revoked/";
 /** The first chant that reads and writes green lanes, `ci.green.lanes` (#4662). */
-export const CI_GREEN_LANES_FLOOR = NEXT_RELEASE;
+export const CI_GREEN_LANES_FLOOR = "0.124.61";
 /** The first chant whose tick sends `ci.red`, `ci.culprit` and `ci.green` through `ci.green.notify` (#4645). */
-export const CI_TICK_NOTIFY_FLOOR = NEXT_RELEASE;
+export const CI_TICK_NOTIFY_FLOOR = "0.124.61";
 /** The first chant that writes a merge queue's trigger and verdict job, and reads `chant ci verdict` (#4644). */
-export const CI_MERGE_QUEUE_FLOOR = NEXT_RELEASE;
+export const CI_MERGE_QUEUE_FLOOR = "0.124.61";
 
 export const CI_LAST_GREEN_CONTRACT_VERSION = 1;
 export const CI_LAST_GREEN_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/ci-last-green/v1/ci-last-green.schema.json";
