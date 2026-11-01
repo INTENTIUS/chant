@@ -717,6 +717,9 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--follow-squash") {
       // `chant workspace graph --intent ... --follow-squash` and `chant workspace runs --follow-squash` (#3035)
       result.followSquash = true;
+    } else if (arg === "--forge-issues") {
+      // `chant release candidates --forge-issues` and `chant workspace graph --intent ... --forge-issues` (#4649)
+      result.forgeIssues = true;
     } else if (arg === "--record") {
       // `chant workspace graph --intent --record <id>`
       result.record = args[++i];

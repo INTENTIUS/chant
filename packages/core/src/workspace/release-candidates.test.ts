@@ -15,6 +15,7 @@ import { groupChanges, mergeRecordPr, prFromSubject, recordTrailers, releaseCand
 import { appendCut, makeRelease, persistRelease } from "../lifecycle/release-store";
 import { appendReleaseRecord } from "../lifecycle/release-ledger";
 import { writeLedgerFiles } from "../lifecycle/git";
+import type { ForgeFetch } from "../pr-forge";
 
 const { expectValid } = contract(candidatesSchema);
 
@@ -47,7 +48,16 @@ describe("recordTrailers and prFromSubject", () => {
 });
 
 describe("groupChanges (#4168 4.4)", () => {
-  const change = (commit: string, work: string[], pr: number | null): CandidateChange => ({ commit, subject: commit, date: "", work, records: work.map((w) => `work:${w}`), pr, merge: null });
+  const change = (commit: string, work: string[], pr: number | null, issues?: number[]): CandidateChange => ({
+    commit,
+    subject: commit,
+    date: "",
+    work,
+    records: work.map((w) => `work:${w}`),
+    pr,
+    merge: null,
+    closes: issues ? { resolved: true, issues, reason: null } : null,
+  });
 
   test("groups by work item, then pull request, then commit, with the ungrouped last", () => {
     // Newest first, as a candidate's changes are.
@@ -60,9 +70,25 @@ describe("groupChanges (#4168 4.4)", () => {
       change("a", ["w-1"], 2),
     ]);
     expect(groups).toEqual([
-      { work: "w-1", pullRequests: [{ pr: 2, commits: ["b", "a"] }, { pr: 4, commits: ["d"] }] },
-      { work: "w-2", pullRequests: [{ pr: 2, commits: ["b"] }, { pr: null, commits: ["e"] }] },
-      { work: null, pullRequests: [{ pr: 3, commits: ["c"] }, { pr: null, commits: ["f"] }] },
+      { work: "w-1", issue: null, pullRequests: [{ pr: 2, commits: ["b", "a"] }, { pr: 4, commits: ["d"] }] },
+      { work: "w-2", issue: null, pullRequests: [{ pr: 2, commits: ["b"] }, { pr: null, commits: ["e"] }] },
+      { work: null, issue: null, pullRequests: [{ pr: 3, commits: ["c"] }, { pr: null, commits: ["f"] }] },
+    ]);
+  });
+
+  test("a change with no work id lands under each issue its pull request closes (#4649)", () => {
+    const groups = groupChanges([
+      change("d", [], 9, []),
+      change("c", ["w-1"], 8, [70]),
+      change("b", [], 7, [71, 70]),
+      change("a", [], 6, [70]),
+    ]);
+    expect(groups).toEqual([
+      // A work id wins over the issues its pull request closes.
+      { work: "w-1", issue: null, pullRequests: [{ pr: 8, commits: ["c"] }] },
+      { work: null, issue: 70, pullRequests: [{ pr: 6, commits: ["a"] }, { pr: 7, commits: ["b"] }] },
+      { work: null, issue: 71, pullRequests: [{ pr: 7, commits: ["b"] }] },
+      { work: null, issue: null, pullRequests: [{ pr: 9, commits: ["d"] }] },
     ]);
   });
 
@@ -120,6 +146,53 @@ describe("releaseCandidatesDocument", () => {
       expect(staging.since).toBe(init);
       expect(staging.candidates.map((x) => x.commit)).toEqual([d, b]);
       expect(staging.candidates.every((x) => x.newFor.join() === "staging")).toBe(true);
+    });
+  });
+
+  test("with forgeIssues, each change carries what its pull request closes, and groups by those issues (#4649)", async () => {
+    await withTestDir(async (dir) => {
+      const [init, a, b, c, d] = repo(dir, ["a (#11)", "b (#12)\n\nChant-Record: work:w-1", "c (#11)", "d"]);
+      for (const sha of [init, d]) git(dir, "tag", `ci/green/${sha}`);
+      const asked: number[] = [];
+      const fetch: ForgeFetch = async (_url, init) => {
+        const pr = (JSON.parse(init.body!) as { variables: { pr: number } }).variables.pr;
+        asked.push(pr);
+        const nodes = (pr === 11 ? [70, 71] : [72]).map((number) => ({ number, repository: { nameWithOwner: "acme/app" } }));
+        return { ok: true, status: 200, text: async () => JSON.stringify({ data: { repository: { pullRequest: { closingIssuesReferences: { nodes } } } } }) };
+      };
+      const forgeIssues = { env: { GH_TOKEN: "t" }, remoteUrl: "https://github.com/acme/app.git", fetch };
+      const doc = await releaseCandidatesDocument({ cwd: dir, forgeIssues });
+      expectValid(doc);
+      if ("error" in doc) throw new Error(doc.error.message);
+      // One call per pull request, though #11 squashed two commits.
+      expect(asked.sort()).toEqual([11, 12]);
+      const changes = doc.candidates[0].changes;
+      expect(changes.map((x) => [x.commit, x.pr, x.closes])).toEqual([
+        [d, null, null],
+        [c, 11, { resolved: true, issues: [70, 71], reason: null }],
+        [b, 12, { resolved: true, issues: [72], reason: null }],
+        [a, 11, { resolved: true, issues: [70, 71], reason: null }],
+      ]);
+      expect(doc.candidates[0].groups).toEqual([
+        { work: "w-1", issue: null, pullRequests: [{ pr: 12, commits: [b] }] },
+        { work: null, issue: 70, pullRequests: [{ pr: 11, commits: [c, a] }] },
+        { work: null, issue: 71, pullRequests: [{ pr: 11, commits: [c, a] }] },
+        { work: null, issue: null, pullRequests: [{ pr: null, commits: [d] }] },
+      ]);
+
+      // Without a token the pull request stands alone, unresolved, and nothing is asked.
+      asked.length = 0;
+      const offline = await releaseCandidatesDocument({ cwd: dir, forgeIssues: { ...forgeIssues, env: {}, ghToken: () => undefined } });
+      expectValid(offline);
+      if ("error" in offline) throw new Error(offline.error.message);
+      expect(asked).toEqual([]);
+      expect(offline.candidates[0].changes[1]).toMatchObject({ pr: 11, closes: { resolved: false, issues: [] } });
+      expect(offline.candidates[0].groups.map((g) => [g.work, g.issue])).toEqual([["w-1", null], [null, null]]);
+
+      // Not asked, closes is null.
+      const plain = await releaseCandidatesDocument({ cwd: dir });
+      if ("error" in plain) throw new Error(plain.error.message);
+      expect(plain.candidates[0].changes.every((x) => x.closes === null)).toBe(true);
     });
   });
 

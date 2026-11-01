@@ -17,6 +17,7 @@ import {
   FORGE_STATUS_STATES,
   githubForge,
   gitlabForge,
+  closingIssueRefs,
   statusStateFor,
   type ForgeFetch,
   type ForgeStatusState,
@@ -1061,5 +1062,42 @@ describe("setCommitStatus, a runner job's status (#4097)", () => {
     const { fetch } = fakeFetch({ [`POST /repos/acme/infra/statuses/${SHA}`]: 403 });
     await expect(githubForge({ apiBase: "https://api.github.com", repo: "acme/infra", token: "t", fetch }).setCommitStatus!(SHA, { context: "c", state: "success", description: "d" })).rejects.toBeInstanceOf(ForgeApiError);
     expect(gitlabForge({ apiBase: "https://gl/api/v4", project: "42", token: "t", fetch }).setCommitStatus).toBeUndefined();
+  });
+});
+
+describe("closingIssues, what a pull request closes (#4649)", () => {
+  test("GitHub asks GraphQL once, keeping this repository's issues", async () => {
+    const { fetch, calls } = fakeFetch({
+      "POST /graphql": {
+        data: { repository: { pullRequest: { closingIssuesReferences: { nodes: [{ number: 9, repository: { nameWithOwner: "acme/infra" } }, { number: 3, repository: { nameWithOwner: "Acme/Infra" } }, { number: 4, repository: { nameWithOwner: "acme/other" } }] } } } },
+      },
+    });
+    expect(await githubForge({ apiBase: "https://api.github.com", repo: "acme/infra", token: "t0k", fetch }).closingIssues!(12)).toEqual([3, 9]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ method: "POST", url: "https://api.github.com/graphql", body: { variables: { owner: "acme", name: "infra", pr: 12 } } });
+    expect(calls[0].headers.Authorization).toBe("Bearer t0k");
+  });
+
+  test("GitHub Enterprise Server's GraphQL is at /api/graphql, and a GraphQL error throws", async () => {
+    const { fetch, calls } = fakeFetch({ "POST /api/graphql": { data: { repository: { pullRequest: null } }, errors: [{ message: "Could not resolve to a PullRequest with the number of 5." }] } });
+    await expect(githubForge({ apiBase: "https://ghe.acme.io/api/v3", repo: "acme/infra", token: "t", fetch }).closingIssues!(5)).rejects.toThrow(/Could not resolve to a PullRequest/);
+    expect(calls[0].url).toBe("https://ghe.acme.io/api/graphql");
+  });
+
+  test("Forgejo reads the closing keywords in the pull request's body", async () => {
+    const { fetch, calls } = fakeFetch({ "GET /api/v1/repos/acme/infra/pulls/7": { number: 7, body: "Closes #12.\nfixes: #3, Resolved #12, see #40, other/repo#5" } });
+    expect(await forgejoForge({ apiBase: "https://code.acme.io/api/v1", repo: "acme/infra", host: "code.acme.io", token: "t", fetch }).closingIssues!(7)).toEqual([3, 12]);
+    expect(calls).toHaveLength(1);
+  });
+
+  test("GitLab asks closes_issues, leaving out another project's issue when the project is an id", async () => {
+    const { fetch, calls } = fakeFetch({ "GET /api/v4/projects/42/merge_requests/5/closes_issues": [{ iid: 8, project_id: 42 }, { iid: 2, project_id: 42 }, { iid: 1, project_id: 7 }] });
+    expect(await gitlabForge({ apiBase: "https://gitlab.com/api/v4", project: "42", token: "t", fetch }).closingIssues!(5)).toEqual([2, 8]);
+    expect(calls).toHaveLength(1);
+  });
+
+  test("closingIssueRefs reads the keywords GitHub and Forgejo honour", () => {
+    expect(closingIssueRefs("close #1 closes #2 closed #3 fix #4 fixes #5 fixed #6 resolve #7 resolves #8 resolved #9")).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(closingIssueRefs("prefix #1, addresses #2, a/b#3 fixes a/b#4, unclosed #5")).toEqual([]);
   });
 });

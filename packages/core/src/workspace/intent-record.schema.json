@@ -359,6 +359,38 @@
           ],
           "description": "The number in a (#n) that ends the subject, as a squash merge writes it, or null."
         },
+        "closes": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "required": [
+            "resolved",
+            "issues",
+            "reason"
+          ],
+          "properties": {
+            "resolved": {
+              "type": "boolean",
+              "description": "Whether the forge answered. False without a forge chant reads, without a token, offline, or when the forge answered an error."
+            },
+            "issues": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              },
+              "description": "The issues of the repository the pull request closes, ascending. Empty when not resolved."
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Why the forge was not read, or null when it was."
+            }
+          },
+          "description": "Only with --forge-issues (#4649): what the forge says pullRequest closes, or null for a commit with no pull request. Added within version 1 by chant 0.124.63."
+        },
         "unit": {
           "type": [
             "string",

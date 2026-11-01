@@ -1,5 +1,5 @@
 /**
- * `chant workspace graph --intent <path[:start-end]|path#symbol|member/node|sha> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--json]`
+ * `chant workspace graph --intent <path[:start-end]|path#symbol|member/node|sha> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--forge-issues] [--json]`
  * (#2651, #3034): the intent graph over one region (`intent.ts`), printed as JSON
  * with `--json` or as a walk, one line per node, in the order of #2650
  * section B: the region, its decisions, their artifacts, the commits, and the
@@ -9,18 +9,33 @@
  * to the person about it (#2656). Without `--kind`, the walk reads every
  * record kind the declaration names (#2680). Last comes the why chain (#4023):
  * each commit's work item, ci tag and release, and each release's gates and
- * deploys.
+ * deploys. With `--forge-issues` (#4649), each commit with a pull request
+ * also carries the issues the forge says it closes (`./forge-work.ts`).
  */
 
 import { resolve } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
+import type { PullRequestCloses } from "./forge-work";
 import { intentRecord, type IntentRecordDocument } from "./intent-record";
 import type { IntentTrace, TraceGate } from "./intent-trace";
 import { intentGraph, type ArtifactNode, type CommitNode, type DecisionNode, type IntentDocument, type IntentEdge, type IntentNode, type RunNode, type WhyAnswer, type WorkNode } from "./intent";
 
-const USAGE = "chant workspace graph --intent <path[:start-end]|path#symbol|member/node|sha> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--json]";
-const RECORD_USAGE = "chant workspace graph --intent --record <id> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--json]";
+const USAGE = "chant workspace graph --intent <path[:start-end]|path#symbol|member/node|sha> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--forge-issues] [--json]";
+const RECORD_USAGE = "chant workspace graph --intent --record <id> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--forge-issues] [--json]";
+
+/** With `--forge-issues` (#4649): set each commit's `closes` from the forge. */
+async function withCloses(cwd: string, commits: { pullRequest: number | null; closes?: PullRequestCloses | null }[]): Promise<void> {
+  const { forgeWorkReader, setCommitCloses } = await import("./forge-work");
+  await setCommitCloses(commits, forgeWorkReader(cwd));
+}
+
+/** ` closes #1, #2`, ` (issues not read: why)`, or nothing, after a pull request in the text. */
+function closesText(closes: PullRequestCloses | null | undefined): string {
+  if (!closes) return "";
+  if (!closes.resolved) return ` (issues not read: ${closes.reason})`;
+  return closes.issues.length > 0 ? ` closes ${closes.issues.map((n) => `#${n}`).join(", ")}` : "";
+}
 
 type Result = Exclude<IntentDocument, { error: unknown }>;
 type RecordResult = Exclude<IntentRecordDocument, { error: unknown }>;
@@ -113,6 +128,7 @@ function commitLine(doc: Result, c: CommitNode): string[] {
     for (const s of edgesFrom(doc, e.to, "cites-evidence")) out.push(`  evidence  ${s.to.slice("evidence:".length)}`);
   }
   out.push(...joinLines(c.joins));
+  if (c.closes && c.pullRequest !== null) out.push(`  pr        #${c.pullRequest}${closesText(c.closes)}`);
   if (c.squash) {
     const s = c.squash;
     out.push(`  squash    #${s.pullRequest}${s.followed ? `: ${s.commits.length} original ${s.commits.length === 1 ? "commit" : "commits"} from ${s.ref}${s.fetched ? ", fetched" : ""}` : ", not followed"}`);
@@ -254,7 +270,8 @@ export function formatIntentRecord(doc: RecordResult): string {
             : "nothing else accounts for it";
     const runs = (c.runs ?? []).map((r) => `run ${r.id}${r.model ? ` (${r.model})` : ""}${r.joinedBy?.includes("squash") && !r.joinedBy.some((j) => j !== "squash") ? " through the squash" : ""}`).join(", ");
     const squash = c.squash ? `; squash of #${c.squash.pullRequest}${c.squash.followed ? `, ${c.squash.commits.length} original ${c.squash.commits.length === 1 ? "commit" : "commits"}` : ", not followed"}` : "";
-    out.push(`${c.bucket.padEnd(12)} ${short(c.sha)} ${c.date.slice(0, 10)} ${c.subject}; ${why}${runs ? `; ${runs}` : ""}${squash}; ${c.files.join(", ") || c.entries.join(", ")}`);
+    const pr = c.closes && c.pullRequest !== null ? `; #${c.pullRequest}${closesText(c.closes)}` : "";
+    out.push(`${c.bucket.padEnd(12)} ${short(c.sha)} ${c.date.slice(0, 10)} ${c.subject}; ${why}${runs ? `; ${runs}` : ""}${squash}${pr}; ${c.files.join(", ") || c.entries.join(", ")}`);
   }
   for (const x of doc.reasons) out.push(`reason    ${x.code}: ${x.message}`);
   const n = doc.counts;
@@ -265,6 +282,7 @@ export function formatIntentRecord(doc: RecordResult): string {
 async function runRecord(ctx: CommandContext, cwd: string, kinds: string[] | undefined): Promise<number> {
   const { args } = ctx;
   const { doc, failed } = await intentRecord({ cwd, record: args.record!, at: args.at, kinds: kinds?.map((k) => resolve(k)), followSquash: args.followSquash });
+  if (args.forgeIssues && !("error" in doc)) await withCloses(cwd, doc.commits);
   if (args.json) console.log(JSON.stringify(doc, null, 2));
   if ("error" in doc) {
     console.error(formatError({ message: `${doc.error.code}: ${doc.error.message}`, hint: RECORD_USAGE }));
@@ -290,6 +308,7 @@ export async function runWorkspaceIntent(ctx: CommandContext, cwd: string): Prom
   // No --kind: undefined, so the walk reads the kinds the declaration names (#2680).
   const kinds = args.kinds ?? (args.kind !== undefined ? [args.kind] : undefined);
   const { doc, failed } = await intentGraph({ cwd, region: args.intent, at: args.at, kinds: kinds?.map((k) => resolve(k)), followSquash: args.followSquash });
+  if (args.forgeIssues && !("error" in doc)) await withCloses(cwd, ofKind(doc, "commit"));
   if (args.json) console.log(JSON.stringify(doc, null, 2));
   if ("error" in doc) {
     console.error(formatError({ message: `${doc.error.code}: ${doc.error.message}`, hint: USAGE }));
