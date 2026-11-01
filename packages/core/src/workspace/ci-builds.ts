@@ -102,6 +102,20 @@ export interface CiRecord {
   notified?: { red?: string; culprit?: string; green?: string };
 }
 
+/**
+ * What the tick remembers about a branch rather than a commit (#4678),
+ * `_ci/branch/<branch>.json` on `chant/lifecycle`, the branch name
+ * URI-encoded. `stale` is the `ci.stale` it sent last: the stretch's oldest
+ * commit above the newest green one (`since`), that green commit, when, and
+ * once a newer commit is green, the green commit that ended the stretch.
+ * A stretch without `ended` has been told, however long it lasts.
+ */
+export interface CiBranchRecord {
+  schema: 1;
+  branch: string;
+  stale?: { since: string; lastGreen: string | null; at: string; ended?: string };
+}
+
 export interface CiRecordRun {
   name: string;
   id: number | null;
@@ -348,6 +362,19 @@ export function sameRecord(a: CiRecord | undefined, b: CiRecord): boolean {
 }
 
 export const recordPath = (sha: string) => `${CI_RECORDS_DIR}/${sha}.json`;
+export const branchRecordPath = (branch: string) => `${CI_RECORDS_DIR}/branch/${encodeURIComponent(branch)}.json`;
+
+/** A branch's record (#4678), from the local `chant/lifecycle` (or `ref`). Undefined when there is none or it doesn't parse. */
+export function readCiBranchRecord(top: string, branch: string, ref: string = LEDGER_REF): CiBranchRecord | undefined {
+  const text = tryGit(top, ["show", `${ref}:${branchRecordPath(branch)}`]);
+  if (!text) return undefined;
+  try {
+    const r = JSON.parse(text) as CiBranchRecord;
+    return r && r.schema === 1 && r.branch === branch ? r : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 function tryGit(top: string, args: string[]): string | null {
   try {

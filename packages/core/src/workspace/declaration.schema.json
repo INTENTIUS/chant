@@ -1907,13 +1907,18 @@
         },
         "notify": {
           "type": "object",
-          "description": "Who chant ci tick tells (#4645), as an Op waves spec's notify: each value names an environment variable, never a URL or a key. webhook and key: a signed chant.notify/v1 webhook; slack and teams: incoming webhooks; events: which to send, of ci.red, ci.culprit, ci.green and ci.quarantine-passed (all of them by default). ci.red: the branch's newest decided commit is red after its one retry. ci.culprit: a bisect named the first red commit. ci.green: the branch is green again after a ci.red. ci.quarantine-passed (#4677), from chant ci quarantine report rather than the tick: a quarantined test passed in the scheduled run, sent on every such run until its entry goes. The tick's events are each sent once: the tick marks it in the commit's _ci record, so it needs chant/lifecycle, and it sends nothing when it can't write the records. Read by chant 0.124.61 and newer, so a declaration that sets it sets minReader to 0.124.61 or newer.",
+          "description": "Who chant ci tick tells (#4645), as an Op waves spec's notify: each value names an environment variable, never a URL or a key. webhook and key: a signed chant.notify/v1 webhook; slack and teams: incoming webhooks; events: which to send, of ci.red, ci.culprit, ci.green and ci.quarantine-passed (all of them by default). ci.red: the branch's newest decided commit is red after its one retry. ci.culprit: a bisect named the first red commit. ci.green: the branch is green again after a ci.red. ci.quarantine-passed (#4677), from chant ci quarantine report rather than the tick: a quarantined test passed in the scheduled run, sent on every such run until its entry goes. The tick's events are each sent once: the tick marks it in the commit's _ci record, so it needs chant/lifecycle, and it sends nothing when it can't write the records. Read by chant 0.124.61 and newer, so a declaration that sets it sets minReader to 0.124.61 or newer. staleAfter adds ci.stale (#4678).",
           "properties": {
             "webhook": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
             "key": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
             "slack": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
             "teams": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
-            "events": { "type": "array", "uniqueItems": true, "items": { "enum": ["ci.red", "ci.culprit", "ci.green", "ci.quarantine-passed"] } }
+            "events": { "type": "array", "uniqueItems": true, "items": { "enum": ["ci.red", "ci.culprit", "ci.green", "ci.quarantine-passed", "ci.stale"] } },
+            "staleAfter": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "Added by #4678. Hours the branch may go without a green commit before the tick sends ci.stale: when the oldest first-parent commit above the newest green one (ci/green, not revoked; lanes don't count) was committed this long ago. It names the tip, that commit (since), the green commit (lastGreen) and the whole hours. It is sent once per red stretch, marked in _ci/branch/<branch>.json on chant/lifecycle, and the stretch ends when a newer commit is green: the tick then sends ci.green naming since, or adds since to the ci.green it sends anyway. The generated chant-ci-green.yml ticks every 15 minutes on a schedule, so this fires when nothing else runs the tick. Unset, no ci.stale. Read by chant 0.124.63 and newer, so a declaration that sets staleAfter sets minReader to 0.124.63 or newer."
+            }
           },
           "additionalProperties": false
         },

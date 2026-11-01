@@ -64,7 +64,8 @@ describe("the wave-job runtime bundle (#3896)", () => {
   test("carries its version and stays small", () => {
     expect(built.text).toContain('"workspace points"');
     expect(built.text.startsWith("#!/usr/bin/env node\n")).toBe(true);
-    // About 1.45 MB minified today (440 KB gzipped), zod's inlined schemas about 300 KB of it.
-    expect(built.bytes).toBeLessThan(2 * 1024 * 1024);
+    // About 2.0 MB minified at #4678, which took it past 2 MiB; the declaration schema and zod's inlined
+    // schemas are a large part of it. The cap catches the 33 MB of the left-out packages, so 2.5 MiB keeps that.
+    expect(built.bytes).toBeLessThan(2.5 * 1024 * 1024);
   });
 });
