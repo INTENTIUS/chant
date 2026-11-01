@@ -10,6 +10,12 @@
 // Styles use Starlight's tokens only, so the block takes each site's palette.
 import { PRODUCTS, STARTS } from '../data/products.mjs';
 
+// A mention of another Intentius project is a link.
+const PROJECT = /\b(behold|chant|choudoufu|plunge|plywood|terragucci)\b/;
+const PROJECTS = new Set(['behold', 'chant', 'choudoufu', 'plunge', 'plywood', 'terragucci']);
+const linked = (text: string, self: string) => text.split(PROJECT).map((part) =>
+	PROJECTS.has(part) && part !== self ? { name: part, href: `https://intentius.io/${part}/` } : part);
+
 interface Props {
 	id: string;
 	version?: string;
@@ -37,8 +43,8 @@ const hid = `ph-${product.id}`;
 	<h1 id={`${hid}-name`} class="name">{product.name}</h1>
 	<p class="one">{product.oneLiner}</p>
 	<div class="text">
-		<p>{product.changes}</p>
-		<p>{product.fits}</p>
+		<p>{linked(product.changes, id).map((b) => typeof b === 'string' ? b : <a href={b.href}>{b.name}</a>)}</p>
+		<p>{linked(product.fits, id).map((b) => typeof b === 'string' ? b : <a href={b.href}>{b.name}</a>)}</p>
 	</div>
 	{starts.length > 0 && (
 		<nav class="starts" aria-labelledby={`${hid}-starts`}>
