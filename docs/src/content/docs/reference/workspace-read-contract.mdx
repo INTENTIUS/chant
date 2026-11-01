@@ -10,7 +10,7 @@ Tools that show a workspace read it through one contract ([#2536](https://github
 
 | Contract | chant floor | Declaration | Output schemas |
 |---|---|---|---|
-| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `records-since`, `intent`, `intent-record`, `composites`, `points`, `changes`, `patch`, `work-history`, `agent`, `runs`, `wip`, `change-set`, `plan-summary`, `pr-report`, `run-statement`, `ci-last-green`, `ci-list`, `ci-run-index`, `releases`, `change-set-show`, `run-event`, `delivery-metrics`, `merge-record`, `search` and `capabilities`, each at `v1` |
+| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `records-since`, `intent`, `intent-record`, `composites`, `points`, `changes`, `patch`, `work-history`, `agent`, `runs`, `wip`, `change-set`, `plan-summary`, `pr-report`, `run-statement`, `ci-last-green`, `ci-list`, `ci-run-index`, `releases`, `change-set-show`, `plan-stale`, `run-event`, `delivery-metrics`, `merge-record`, `search` and `capabilities`, each at `v1` |
 
 Every document carries `contract`, the version it follows, and `$schema`, its schema's `$id`. Most also carry `chant`, the version of the chant that wrote it. A reader that knows contract 1 refuses a document with any other `contract` value. Given a chant older than the floor, the reader can say so and name the version to install, since that chant doesn't write the contract at all.
 
@@ -54,6 +54,7 @@ Each schema ships in `@intentius/chant` at `src/workspace/<command>.schema.json`
 | [`chant release list`](/chant/cli/release/#release-list) | `--json` | `https://intentius.io/chant/schemas/workspace/releases/v1/releases.schema.json` |
 | [`chant release candidates`](/chant/cli/release/#release-candidates) | `--json`, floor chant 0.124.33 | `https://intentius.io/chant/schemas/workspace/release-candidates/v1/release-candidates.schema.json` |
 | [`chant change-set show`](/chant/cli/change-set/#change-set-show) | `--json` | `https://intentius.io/chant/schemas/workspace/change-set-show/v1/change-set-show.schema.json` |
+| [`chant plan stale`](/chant/cli/plan/#plan-stale) | `--json`, floor chant 0.124.63 | `https://intentius.io/chant/schemas/workspace/plan-stale/v1/plan-stale.schema.json` |
 | [a run's event stream](#run-events), one event per line | as each event happens | `https://intentius.io/chant/schemas/workspace/run-event/v1/run-event.schema.json` |
 | [`chant workspace metrics`](/chant/cli/workspace-metrics/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/delivery-metrics/v1/delivery-metrics.schema.json` |
 | [`chant workspace search`](/chant/cli/workspace-search/#output), and [`chant search`](/chant/cli/search/#--json) for one project | `--json`, floor chant 0.124.46 | `https://intentius.io/chant/schemas/workspace/search/v1/search.schema.json` |
@@ -1036,6 +1037,50 @@ A gate over a change-set document binds the document's `digest` in `planDigest` 
 `chant change-set show <digest> --json` prints the `change-set-show` document. Its `changeSet` is the stored document, or `null` when none is stored under the digest, and `member` names the member whose ledger was read. A stored file that isn't the document its digest names reads as `changeSet: null` with the reason `ledger-malformed`. The read never fetches.
 
 Each entry of a stored document has `node`, the graph node it changes, named as `chant workspace graph` names it: `<member>/<id>`, where `<id>` is the node's id in the member's `chant graph --format ir`. chant maps the address against that graph when it stores the document, so a reader never derives an id. For a chant entry the id is its address. A terraform, tofu or choudoufu entry's id is `<root>/<block key>`, the terraform lexicon's key for the block: each module call as `module.<name>/`, then the block's address with no index, so `module.app.terraform_data.instance` in root `estate` is `estate/module.app/terraform_data.instance`. An instance of a `count` or `for_each` block gets its instance node instead ([#4454](https://github.com/INTENTIUS/chant/issues/4454)): the block node's id followed by the instance key exactly as Terraform prints it, so `module.app.terraform_data.instance[0]` is `estate/module.app/terraform_data.instance[0]` and `aws_eip.pool["a"]` is `estate/aws_eip.pool["a"]`, and the entry's `instanceOf` names the block node, `estate/module.app/terraform_data.instance`. The block node stays in the graph and is the rollup of its instances. The entry names the instance node whether or not the member's graph lists it: the graph lists the instances a literal `count` or `for_each` gives, or one it can count from the root's variable files, and only a plan can count the rest, so a reader hangs an unlisted instance under its `instanceOf`. Under an expanded module call the module key goes on the call's segment ([#4486](https://github.com/INTENTIUS/chant/issues/4486)): `module.app[0].aws_eip.pool[1]` is `estate/module.app[0]/aws_eip.pool[1]`, with `instanceOf` `estate/module.app/aws_eip.pool`. A drift row for an instance carries the same `node` and `instanceOf`, by the same rule (`graphNodeFor` in `@intentius/chant/change-set-graph`). A pulumi entry's address is a URN and its id is the URN without its stack and project, `<qualified type>::<name>` under the member, the rule of `@intentius/chant/pulumi-urn`; a provider or the root stack has none, and a `mayAppear` entry for a component's unlisted children is on the component's node ([#4453](https://github.com/INTENTIUS/chant/issues/4453)). `node` is `null` when the graph holds no node for the address, such as a delete of a block the source no longer declares. Since chant 0.124.29 an entry whose node has a source location also has `source`, that file from the repository root, which the [overlap report](#overlap-between-work-items) reads ([#4025](https://github.com/INTENTIUS/chant/issues/4025)). The document's `graph` names the member and the commit the graph was read at, or is `null` when `chant graph` could not run, for instance on source that fails `chant lint`, and every `node` is then `null`. None of these fields is part of the digest, so a stored document still verifies against the value its gate bound.
+
+## Stale plans
+
+`chant plan stale <digest> --json` prints the `plan-stale` document ([#4648](https://github.com/INTENTIUS/chant/issues/4648)): whether anything applied to a plan's targets after the plan was recorded, and which applies. A platform calls it before it asks a person to approve the plan. It reads the local `chant/lifecycle` branch, never fetches and writes nothing. The rule for what counts is on the [`chant plan` page](/chant/cli/plan/#plan-stale).
+
+```json
+{
+  "$schema": "https://intentius.io/chant/schemas/workspace/plan-stale/v1/plan-stale.schema.json",
+  "contract": 1,
+  "chant": "0.124.63",
+  "digest": "jcs1-sha256:1f0c…",
+  "plan": {
+    "recordedAt": "2026-11-01T10:00:00Z",
+    "runId": "run-plan",
+    "gitSha": "a1b2…",
+    "targets": [{ "member": "app", "op": "deploy", "gate": "prod", "environment": "prod" }]
+  },
+  "stale": true,
+  "applies": [
+    {
+      "source": "deploys",
+      "member": "app",
+      "op": null,
+      "gate": null,
+      "environment": "prod",
+      "component": "api",
+      "planDigest": null,
+      "at": "2026-11-01T12:00:00Z",
+      "actor": "laptop-alex",
+      "approvedBy": "dave",
+      "runId": "ci-77",
+      "runUrl": "https://github.com/acme/app/actions/runs/77",
+      "gitSha": "c3d4…",
+      "result": null
+    }
+  ]
+}
+```
+
+`plan` is null, and `stale` with it, when no pending gate fact on the local ledger records the digest. `plan.recordedAt` is the earliest such fact's timestamp, and `runId` and `gitSha` are that fact's. `targets` has each gate the plan waits at once, with its `member` (null outside a workspace), `op`, `gate` and `environment`. The environment is the fact's own, else the `env` of the run that reached the gate, else null, and a null environment matches no deploy record.
+
+`stale` is true when `applies` isn't empty. Each apply has `source`: `applies` for an apply under an approval (a row of `chant ledger applies`) or `deploys` for a deploy record (a row of `chant ledger deploys`). `at` is when it was recorded. `actor` is who ran it, which only a deploy record names. `approvedBy` is the approval it ran under. `runId`, `runUrl` and `gitSha` name the run and the commit. An apply under an approval has `op`, `gate`, `planDigest` and `result` (`applied`, `failed`, or null while it has no finished line). A deploy record has `environment` and `component`. Each field the other kind lacks is null. They're listed oldest first.
+
+The exit code is 0 for a current plan, 2 for a stale one, and 1 when `plan` is null or the read failed. A failure has `error.code` `not-a-git-repository` or `ledger-unreadable`.
 
 ## Instance rollups
 

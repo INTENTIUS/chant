@@ -517,6 +517,10 @@ Change sets:
                         [--member <name>] [--json]  bound, stored on
                                           chant/lifecycle under its digest, each
                                           entry with its graph node. Read-only.
+  plan stale <digest>   Whether anything applied to the plan's op or
+                        [--member <name>] [--json]  environment after the
+                                          plan was recorded, and which applies.
+                                          Exit 2 when stale. Read-only.
 
 Ops:
   run <name>            Run an Op on the resolved runtime (--on; local by default)
@@ -1830,6 +1834,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "change-set summary", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/change-set")).runChangeSetSummary(ctx) },
   // #4022: the change set a gate bound, read from chant/lifecycle by its digest.
   { name: "change-set show", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/change-set")).runChangeSetShow(ctx) },
+  // #4648: whether anything applied to a plan's targets after it was recorded. Read-only, imported on first use.
+  { name: "plan stale", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/plan")).runPlanStale(ctx) },
   { name: "init", handler: runInit, runsNoConfig: true },
   { name: "init lexicon", handler: runInitLexicon },
 { name: "update", handler: runUpdate },

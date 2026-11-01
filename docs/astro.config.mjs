@@ -353,6 +353,7 @@ export default defineConfig({
 								{ label: 'describe', slug: 'cli/describe' },
 								{ label: 'search', slug: 'cli/search' },
 								{ label: 'ledger', slug: 'cli/ledger' },
+								{ label: 'plan', slug: 'cli/plan' },
 								{ label: 'e2e safe-run', slug: 'cli/e2e-safe-run' },
 								{ label: 'query', slug: 'cli/query' },
 								{ label: 'vendor', slug: 'cli/vendor' },
