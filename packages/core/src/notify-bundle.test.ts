@@ -39,7 +39,9 @@ describe("the notify bundle", () => {
     const { inputs, bytes, imports } = await bundle("notify.ts");
     expect(inputs).toEqual(["packages/core/src/notify-verify.ts", "packages/core/src/notify.ts"]);
     expect(imports).toEqual(["node:crypto"]);
-    expect(bytes).toBeLessThan(16 * 1024);
+    // 17 KiB since ci.stale (#4678): the ci. events' names and headlines took it to 16.0 KiB, and the cap
+    // is there to catch a dependency pulled in, which would add far more than an event name.
+    expect(bytes).toBeLessThan(17 * 1024);
   });
 
   test("the verifier holds itself alone, and imports only node:crypto", async () => {

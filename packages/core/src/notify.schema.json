@@ -8,7 +8,7 @@
   "properties": {
     "schema": { "const": "chant.notify/v1" },
     "id": { "type": "string", "minLength": 1, "description": "The same for every send of one event about one digest (else drift fingerprint, else commit), so a receiver can drop a repeat; random when there is none. The delivery header carries it too." },
-    "event": { "enum": ["waiting", "refused", "failed", "drift", "ci.red", "ci.culprit", "ci.green", "ci.quarantine-passed"], "description": "The ci. events come from chant ci tick (#4645), and ci.quarantine-passed from chant ci quarantine report (#4677), and carry ci." },
+    "event": { "enum": ["waiting", "refused", "failed", "drift", "ci.red", "ci.culprit", "ci.green", "ci.quarantine-passed", "ci.stale"], "description": "The ci. events come from chant ci tick (#4645, ci.stale #4678), and ci.quarantine-passed from chant ci quarantine report (#4677), and carry ci." },
     "at": { "type": "string", "description": "When it was sent, ISO 8601 UTC." },
     "source": { "type": "string", "minLength": 1, "description": "The product that sent it: chant, terragucci, sql-yodeler." },
     "project": { "type": "string", "description": "What the run belongs to: the repository, or a name the product gives." },
@@ -65,7 +65,7 @@
     },
     "ci": {
       "type": "object",
-      "description": "On ci.red, ci.culprit and ci.green (#4645): the branch and commit. ci.red: the newest decided commit, red after its one retry, with phase and failedRun. ci.culprit: culprit, the first red commit a bisect found for the red commit. ci.green: red, the commit whose ci.red this answers.",
+      "description": "On ci.red, ci.culprit and ci.green (#4645): the branch and commit. ci.red: the newest decided commit, red after its one retry, with phase and failedRun. ci.culprit: culprit, the first red commit a bisect found for the red commit. ci.green: red, the commit whose ci.red this answers, and since when it ends a stretch told ci.stale. ci.stale (#4678): commit is the branch's tip, since the oldest commit above the newest green one, lastGreen that green commit (absent when the tick found none), and hours the whole hours since since was committed.",
       "required": ["branch", "commit"],
       "properties": {
         "branch": { "type": "string" },
@@ -77,6 +77,9 @@
         },
         "culprit": { "type": "string" },
         "red": { "type": "string" },
+        "since": { "type": "string" },
+        "lastGreen": { "type": "string" },
+        "hours": { "type": "integer", "minimum": 0 },
         "quarantine": {
           "type": "object",
           "description": "On ci.quarantine-passed (#4677): the quarantined test that passed in the scheduled run at commit, as ci.green.quarantine lists it, with phase. Sent by chant 0.124.63 and newer.",

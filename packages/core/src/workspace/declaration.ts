@@ -233,6 +233,9 @@ export function greenBranches(green: Pick<CiGreen, "branch" | "branches">): stri
   return green.branches ?? [green.branch];
 }
 
+/** `ci.green.notify`: notify's settings, and the hours the branch may go without a green commit before `ci.stale` (#4678). */
+export type CiNotify = NotifyConfig & { staleAfter?: number };
+
 /** The default `ci.green.window`. */
 export const DEFAULT_CI_WINDOW = "24h";
 
@@ -284,9 +287,10 @@ export interface CiGreen {
   /**
    * Who the tick tells (#4645): `ci.red`, `ci.culprit` and `ci.green`, sent
    * through notify as Op waves send theirs; and who `ci quarantine report`
-   * tells `ci.quarantine-passed` (#4677). Absent when the declaration sets none.
+   * tells `ci.quarantine-passed` (#4677). The tick also sends `ci.stale` after
+   * `staleAfter` hours without a green commit (#4678). Absent when the declaration sets none.
    */
-  notify?: NotifyConfig;
+  notify?: CiNotify;
   /**
    * The branch takes changes through GitHub's merge queue (#4644): `ci
    * workflow` adds the `merge_group` trigger to the workflows holding a
@@ -1451,7 +1455,7 @@ function cloudIdentityOf(raw: CloudIdentityDeclaration, at: (pointer: string, ke
 
 function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocation): CiDeclaration | null {
   if (raw === undefined) return null;
-  const block = raw as { reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; identity?: { cloud?: CloudIdentityDeclaration }; branches?: Record<string, string[]>; labels?: Record<string, string[]>; locks?: CiLocks; lockGrain?: CiLockGrain; policy?: unknown; prEnvironment?: { template: string; ttl?: string; teardown?: { name?: string; command: string[]; lexicons?: string[] } }; green?: { branch: string | string[]; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource; lanes?: Record<string, { require: string[] }>; notify?: NotifyConfig; mergeQueue?: boolean; quarantine?: { maxDays?: number; phases: Record<string, { test: string; file?: string; issue: string; until: string; why: string }[]> } } };
+  const block = raw as { reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; identity?: { cloud?: CloudIdentityDeclaration }; branches?: Record<string, string[]>; labels?: Record<string, string[]>; locks?: CiLocks; lockGrain?: CiLockGrain; policy?: unknown; prEnvironment?: { template: string; ttl?: string; teardown?: { name?: string; command: string[]; lexicons?: string[] } }; green?: { branch: string | string[]; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource; lanes?: Record<string, { require: string[] }>; notify?: CiNotify; mergeQueue?: boolean; quarantine?: { maxDays?: number; phases: Record<string, { test: string; file?: string; issue: string; until: string; why: string }[]> } } };
   const hooks = ciHooksOf(block.hooks, "/ci/hooks", at);
   const policy = ciPolicyOf(block.policy, at);
   const workflow = {
@@ -1526,8 +1530,14 @@ function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocatio
     return { name, require: [...l.require], pointer };
   });
   if (g.notify !== undefined) {
-    const problem = notifyConfigProblem(g.notify, "ci.green.notify");
+    // staleAfter is the tick's own (#4678); the rest is notify's.
+    const object = typeof g.notify === "object" && g.notify !== null && !Array.isArray(g.notify);
+    const { staleAfter, ...config }: CiNotify = object ? g.notify : {};
+    const problem = notifyConfigProblem(object ? config : g.notify, "ci.green.notify");
     if (problem) throw new WorkspaceReadError("declaration-invalid", problem, at("/ci/green/notify"));
+    if (staleAfter !== undefined && !(typeof staleAfter === "number" && Number.isFinite(staleAfter) && staleAfter > 0)) {
+      throw new WorkspaceReadError("declaration-invalid", "ci.green.notify.staleAfter: a number of hours greater than 0", at("/ci/green/notify/staleAfter"));
+    }
   }
   const quarantine = g.quarantine !== undefined ? quarantineOf(g.quarantine, phases, at) : undefined;
   const judged = Array.isArray(g.branch) ? g.branch : [g.branch];
