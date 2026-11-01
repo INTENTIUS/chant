@@ -31,7 +31,7 @@ export const PRODUCTS = [
 		fits: '',
 		starts: {},
 		first: null,
-		links: { docs: `${IO}/chant/`, source: `${GH}/chant`, evidence: null },
+		links: { docs: `${IO}/chant/getting-started/introduction/`, source: `${GH}/chant`, evidence: null },
 	},
 	{
 		id: 'terragucci',
