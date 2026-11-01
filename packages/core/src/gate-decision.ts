@@ -54,7 +54,7 @@ import {
 } from "./lifecycle/gate-ledger-select";
 import { samePlanDigest } from "./lifecycle/plan-digest";
 import { isApprovalSpent, type AppliedGateRecord } from "./lifecycle/gate-applied";
-import { gateSealRefusal, type GateSigners, type SealedGateApproval } from "./lifecycle/gate-seal";
+import { gateSealRefusal, type GateSigners, type PasskeySigner, type SealedGateApproval } from "./lifecycle/gate-seal";
 import {
   DEFAULT_SIGNERS_PATH,
   TRUST_CONFIG_PATH,
@@ -87,9 +87,16 @@ export {
   sealedFieldsOf,
   sshKeyFingerprint,
   verifySshSignatureWith,
+  checkGateSignature,
+  verifyWebAuthnAssertion,
+  webAuthnChallenge,
+  WEBAUTHN_SEAL_KIND,
+  type GateSignatureCheck,
   type GateSigners,
+  type PasskeySigner,
   type SealedGateApproval,
   type SshSignatureCheck,
+  type WebAuthnAssertion,
 } from "./lifecycle/gate-seal";
 export {
   DEFAULT_SIGNERS_PATH,
@@ -186,6 +193,7 @@ function trustAt(repo: string, base: string): { signers: GateSigners; roles: Rec
   const configText = showAt(repo, base, TRUST_CONFIG_PATH);
   let signersPath = DEFAULT_SIGNERS_PATH;
   let roles: Record<string, string[]> = {};
+  let passkeys: PasskeySigner[] = [];
   if (configText !== undefined) {
     let raw: unknown;
     try {
@@ -197,9 +205,10 @@ function trustAt(repo: string, base: string): { signers: GateSigners; roles: Rec
     if (problems.length > 0) return off([`${TRUST_CONFIG_PATH} is invalid: ${problems.join("; ")}`]);
     signersPath = (raw as { signers?: string }).signers ?? DEFAULT_SIGNERS_PATH;
     roles = (raw as { roles?: Record<string, string[]> }).roles ?? {};
+    passkeys = (raw as { passkeys?: PasskeySigner[] }).passkeys ?? [];
   }
   const text = showAt(repo, base, signersPath);
-  return { signers: { base, signersPath, active: text !== undefined, signers: text === undefined ? [] : parseAllowedSigners(text).signers, problems: [] }, roles };
+  return { signers: { base, signersPath, active: text !== undefined, signers: text === undefined ? [] : parseAllowedSigners(text).signers, passkeys, problems: [] }, roles };
 }
 
 /**

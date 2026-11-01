@@ -965,6 +965,15 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.actor = args[++i];
     } else if (arg === "--approver") {
       result.approver = args[++i];
+    } else if (arg === "--statement") {
+      // `chant approve <op> <gate> --statement` (#4646): print the bytes an approval signs, for a signature made elsewhere.
+      result.statement = true;
+    } else if (arg === "--signature") {
+      // `chant approve <op> <gate> --signature <file|-> --at <timestamp>` (#4646): an approval signed elsewhere.
+      result.signature = args[++i];
+      if (!result.signature || (result.signature.startsWith("-") && result.signature !== "-")) {
+        throw new Error("--signature needs a file holding the signature, or - for stdin: --signature <file|->");
+      }
     } else if (arg === "--relayed-by") {
       // `chant approve <op> <gate> --relayed-by <principal>` and `workspace points answer <id> --relayed-by <principal>` (#3402):
       // who carried the approval or answer to chant for the person it names.

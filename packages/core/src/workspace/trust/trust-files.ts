@@ -202,7 +202,7 @@ export function trustConfigProblems(raw: unknown): string[] {
   const check = (field: string, ok: boolean, message: string) => {
     if (!ok) problems.push(`${field}: ${message}`);
   };
-  check("/", only(raw, ["schema", "signers", "roles", "adopted", "runners", "admitted"]), "unknown key");
+  check("/", only(raw, ["schema", "signers", "roles", "adopted", "runners", "passkeys", "admitted"]), "unknown key");
   check("schema", raw.schema === 1, "expected 1");
   check("signers", optional(raw.signers, isRepoPath), "a path inside the repository, with / separators and no ..");
   check(
@@ -225,6 +225,20 @@ export function trustConfigProblems(raw: unknown): string[] {
       a.every((e) => isObject(e) && only(e, ["principal", "class", "key"]) && nonEmpty(e.principal) && (e.class === "runner" || e.class === "service") && typeof e.key === "string" && SSH_ED25519.test(e.key)),
     ),
     "runner keys: a principal, a class and an ssh-ed25519 key",
+  );
+  const b64url = (v: unknown): boolean => typeof v === "string" && /^[A-Za-z0-9_-]+$/.test(v);
+  check(
+    "passkeys",
+    optional(raw.passkeys, (a) =>
+      Array.isArray(a) &&
+      a.every(
+        (e) =>
+          isObject(e) && only(e, ["principal", "id", "publicKey", "rpId", "origins"]) &&
+          nonEmpty(e.principal) && b64url(e.id) && b64url(e.publicKey) && nonEmpty(e.rpId) &&
+          Array.isArray(e.origins) && e.origins.length > 0 && e.origins.every(nonEmpty),
+      ),
+    ),
+    "passkeys: a principal, a credential id, a public key, an rpId and origins",
   );
   check(
     "admitted",

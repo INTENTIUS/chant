@@ -14,7 +14,7 @@
  * else: no zod, no ajv, no package loading, so it bundles small.
  */
 
-import { GATE_SEAL_NAMESPACE, gateSealPayload, namespaceAllowed, sshKeyFingerprint, sshSignatureKey, verifySshSignatureWith, type SealedGateApproval } from "../lifecycle/gate-seal";
+import { checkGateSignature, gateSealPayload, namespaceAllowed, sshKeyFingerprint, sshSignatureKey, unlistedWhat, unlistedWhere, verifySshSignatureWith, type PasskeySigner, type SealedGateApproval } from "../lifecycle/gate-seal";
 import type { Signer } from "./trust/trust-files";
 
 /** The core classes, in the order a principal's roles are tried; `human` holds no role and is the rest. */
@@ -46,8 +46,8 @@ export interface GateAdmissionRule {
   gate: string;
   /** The class the approver must be in, or null for any signer. */
   class: string | null;
-  /** The signers file at base: its path, whether it exists, and its signers. */
-  signers: { signersPath: string; active: boolean; signers: readonly Signer[] };
+  /** The signers file at base: its path, whether it exists, and its signers, with the passkeys `.chant/trust.json` lists (#4646). */
+  signers: { signersPath: string; active: boolean; signers: readonly Signer[]; passkeys?: readonly PasskeySigner[] };
   /** The role grants at base (`.chant/trust.json` `roles`). */
   roles: Readonly<Record<string, readonly string[]>>;
   /** Every class the rule knows, core first, then domain classes in pin order. */
@@ -185,9 +185,7 @@ function sealRefusal(gate: string, signers: GateAdmissionRule["signers"], a: Sea
   }
   if (normalise(seal.signer) !== normalise(a.resolvedBy)) return `the seal on ${what} is by ${seal.signer}, and its approver is ${a.resolvedBy || "empty"}`;
   const where = `${signers.signersPath} at base`;
-  const listed = signers.signers.filter((s) => normalise(s.principal) === normalise(a.resolvedBy));
-  if (listed.length === 0) return `${a.resolvedBy} has no key in ${where}, so the seal can't count`;
-  const keys = listed.filter((s) => namespaceAllowed(s.namespaces, GATE_SEAL_NAMESPACE)).map((s) => Buffer.from(s.key.split(" ")[1] ?? "", "base64"));
-  const r = verifySshSignatureWith(seal.signature, gateSealPayload(a), GATE_SEAL_NAMESPACE, keys);
-  return r.ok ? null : `the seal does not verify for ${a.resolvedBy} against ${where}: ${r.reason}`;
+  const r = checkGateSignature(signers, a.resolvedBy, seal as { signature: string }, gateSealPayload(a));
+  if (r.ok) return null;
+  return r.unlisted ? `${a.resolvedBy} has no ${unlistedWhat(seal)} in ${unlistedWhere(seal, where)}, so the seal can't count` : `the seal does not verify for ${a.resolvedBy} against ${where}: ${r.reason}`;
 }

@@ -30,7 +30,7 @@ import type { SealCode } from "../records";
 import { type TrustPolicy } from "./policy";
 import type { Signer } from "./trust-files";
 import { sshKeygen, verifySshSignature } from "./ssh-commit";
-import { GATE_SEAL_NAMESPACE, gateSealPayload, namespaceAllowed, sshSignatureKey, verifySshSignatureWith, type SealedGateApproval } from "../../lifecycle/gate-seal";
+import { checkGateSignature, GATE_SEAL_NAMESPACE, gateSealPayload, sshSignatureKey, verifySshSignatureWith, WEBAUTHN_SEAL_KIND, type SealedGateApproval } from "../../lifecycle/gate-seal";
 import { RELEASE_SEAL_NAMESPACE, releaseSealPayload } from "../identity-gate-rule";
 
 export { GATE_SEAL_NAMESPACE, gateSealPayload, gateSealVersion, sealedFieldsOf, type SealedGateApproval } from "../../lifecycle/gate-seal";
@@ -166,6 +166,8 @@ export function checkRecordSeal(policy: TrustPolicy, r: SealedRecord): SealCheck
  * when the signers file at base lists a key for the approver.
  */
 export function checkGateSeal(policy: TrustPolicy, a: SealedGateApproval): SealCheck {
+  // #4646: a seal of kind webauthn is a passkey's assertion, listed in .chant/trust.json, not the signers file.
+  if (isWebAuthnSeal(a.seal)) return checkWebAuthnGateSeal(policy, a);
   return checkSeal(policy, {
     principal: a.resolvedBy,
     what: `the approval of gate ${a.gate} by ${a.resolvedBy}`,
@@ -219,9 +221,39 @@ function checkSeal(policy: TrustPolicy, s: SealSubject): SealCheck {
 
 /** A gate seal checked with node:crypto (#3785) against the keys `listed` for the approver in the gate namespace. */
 function verifyGate(listed: Signer[], payload: Buffer, signature: string): { ok: true; principal: string; key: string; missing?: undefined } | { ok: false; missing?: false; reason: string } {
-  const keys = listed.filter((x) => namespaceAllowed(x.namespaces, GATE_SEAL_NAMESPACE)).map((x) => Buffer.from(x.key.split(" ")[1] ?? "", "base64"));
-  const r = verifySshSignatureWith(signature, payload, GATE_SEAL_NAMESPACE, keys);
+  const r = checkGateSignature({ signers: listed }, listed[0]!.principal, { signature }, payload);
   return r.ok ? { ok: true, principal: listed[0]!.principal, key: r.key } : { ok: false, reason: r.reason };
+}
+
+const isWebAuthnSeal = (seal: unknown): boolean =>
+  typeof seal === "object" && seal !== null && !Array.isArray(seal) && (seal as { kind?: unknown }).kind === WEBAUTHN_SEAL_KIND;
+
+/**
+ * A passkey's seal on a gate approval (#4646), checked against the passkeys
+ * `.chant/trust.json` lists at base for the approver. As with an ssh seal,
+ * attestation is on only when the signers file exists at base; with none, a
+ * seal that verifies against a listed passkey is intact and unattested.
+ */
+function checkWebAuthnGateSeal(policy: TrustPolicy, a: SealedGateApproval): SealCheck {
+  const what = `the approval of gate ${a.gate} by ${a.resolvedBy}`;
+  const seal = a.seal as Partial<Record<string, unknown>>;
+  if (typeof seal.signer !== "string" || typeof seal.signature !== "string") {
+    return { attested: false, code: "seal-signature-invalid", message: `the seal on ${what} is malformed: it needs signer and signature` };
+  }
+  if (normalise(seal.signer) !== normalise(a.resolvedBy)) {
+    return { attested: false, code: "seal-signature-invalid", message: `the seal on ${what} is by ${seal.signer}, and its approver is ${a.resolvedBy || "empty"}` };
+  }
+  const r = checkGateSignature(policy, a.resolvedBy, seal as { signature: string }, gateSealPayload(a));
+  if (r.ok && !policy.active) {
+    return { attested: null, code: "seal-unverifiable", message: `the passkey signature is intact (${r.key}), and there is no signers file at base to turn attestation on`, key: r.key };
+  }
+  if (r.ok) return { attested: true, message: `sealed by ${a.resolvedBy} with passkey ${r.key}, which .chant/trust.json at base lists`, key: r.key };
+  if (r.unlisted) {
+    return policy.active
+      ? { attested: false, code: "seal-signer-unlisted", message: `${a.resolvedBy} has no passkey in .chant/trust.json at base, so the seal can't count` }
+      : { attested: null, code: "seal-unverifiable", message: `the seal by ${a.resolvedBy} is a passkey's, and .chant/trust.json at base lists none for them` };
+  }
+  return { attested: false, code: "seal-signature-invalid", message: `the seal does not verify for ${a.resolvedBy} against .chant/trust.json at base: ${r.reason}` };
 }
 
 /** A seal checked with no signers file: is the signature over these bytes intact? */

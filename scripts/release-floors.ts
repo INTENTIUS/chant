@@ -87,6 +87,8 @@ const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: str
   { file: "packages/core/src/workspace/plan-stale.schema.json", text: "Contract version 1 of this document is written by chant {v} and newer.", count: 1, floor: "PLAN_STALE_FLOOR" },
   { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "| `--json`, floor chant {v} | `https://intentius.io/chant/schemas/workspace/plan-stale/v1/plan-stale.schema.json` |", count: 1, floor: "PLAN_STALE_FLOOR" },
   { file: "docs/src/content/docs/cli/plan.mdx", text: "a [read contract](/chant/reference/workspace-read-contract/#stale-plans) at version 1, written by chant {v} and newer.", count: 1, floor: "PLAN_STALE_FLOOR" },
+  { file: "packages/core/src/gate-statement.schema.json", text: "Written by chant {v} and newer.", count: 1, floor: "GATE_EXTERNAL_SIGNATURE_FLOOR" },
+  { file: "docs/src/content/docs/reference/workspace-declaration.mdx", text: "Chant {v} and newer write and read `passkeys` and passkey seals.", count: 1, floor: "GATE_EXTERNAL_SIGNATURE_FLOOR" },
 ];
 
 interface Args {

@@ -650,6 +650,12 @@ Ops:
                         file at base lists for --actor. --relayed-by
                         <principal> records who carried the approval to chant
                         for --actor (a follower, a bot); --sign covers it.
+                        --statement prints the bytes an approval signs, at a
+                        time it fixes, and records nothing; --signature
+                        <file|-> --at <time> then records a signature made
+                        elsewhere over them (an ssh signature, or a passkey's
+                        WebAuthn assertion checked against .chant/trust.json's
+                        passkeys), which counts as --sign does (#4646)
                         --resume then starts the CI job that waits at the
                         gate again (GitHub re-run, GitLab retry, Forgejo
                         dispatch) with CHANT_FORGE_TOKEN
