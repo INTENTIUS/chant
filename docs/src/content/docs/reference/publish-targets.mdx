@@ -107,6 +107,7 @@ A formula in a tap repository on GitHub, rendered from a template in the member 
 | `branch` | The tap's branch that brew installs from. Default: the repository's default branch |
 | `api` | The GitHub API root. Default: `$GITHUB_API_URL`, else `https://api.github.com` |
 | `tokenEnv` | The variable holding a token that may push to the tap. Default `HOMEBREW_TAP_TOKEN` |
+| `sshKeyEnv` | The variable holding an SSH private key that may push to the tap, such as a deploy key. Set, the target pushes with git over SSH and reads no token. See [Pushing over SSH](#pushing-over-ssh) |
 
 The template is the formula as the tap should hold it, with these placeholders where a release changes it:
 
@@ -152,6 +153,20 @@ To move a tap you already have, copy its formula into the member and put the pla
 A tap is a branch that brew installs from and has no draft, so the stage commits to a branch next to it and the reveal moves the tap branch. The stage makes `chant-publish/<formula>-<version>` at the tap branch's head, or moves it there when an earlier stage left it elsewhere, and commits the rendered formula to it through the contents API with the message `<formula> <version>`. brew reads only the tap branch, so nothing is visible. A tap branch that already holds the formula as rendered stages nothing, and a staging branch that already holds it is not committed to again. The reveal fast-forwards the tap branch to the staged commit and deletes the staging branch. If the tap branch moved since the stage, the fast-forward is refused, and the reveal commits the formula onto the branch instead, unless the branch already holds it. Either way the formula arrives in one commit.
 
 The formula points at the `url` of each asset, so those must download by the time it is revealed. Declare the `forge` target that attaches them before this one: targets reveal in the order declared.
+
+### Pushing over SSH
+
+With `sshKeyEnv`, the target writes the tap with git over SSH and the private key in that variable, in place of the API and a token ([#4699](https://github.com/INTENTIUS/chant/issues/4699)). A deploy key reaches the one repository it was added to, where a classic token reaches every repository its user can. Read by chant 0.124.63 and newer. `tokenEnv` beside it is refused (`publish-homebrew-auth-invalid`).
+
+```ts
+{ type: "homebrew", tap: "acme/homebrew-tap", formula: "Formula/api.rb", template: "packaging/api.rb", assets: ["dist/api-linux-amd64.tar.gz"], url: "https://github.com/acme/api/releases/download/{tag}/{name}", sshKeyEnv: "HOMEBREW_TAP_KEY" },
+```
+
+The remote is `git@github.com:<tap>.git`, or `git@<host>:<tap>.git` when `api` is a GitHub Enterprise Server's root on `<host>`. The host's keys are pinned: before each step chant reads `ssh_keys` from `GET {api}/meta` over HTTPS, writes them to a known-hosts file, and runs ssh with `StrictHostKeyChecking=yes`, `IdentitiesOnly=yes`, `BatchMode=yes` and no config file. The key is written to a file only the user can read, in a temporary directory that is removed after the step. `git` and `ssh` must be on `PATH`.
+
+The steps are the ones above, in git. The stage lists the tap's branches (`git ls-remote`), fetches the tap branch at depth 1, commits the formula on its head without a checkout, and force-pushes that commit to `chant-publish/<formula>-<version>`. The reveal fetches the staging branch and pushes its commit to the tap branch without force, which the remote takes only as a fast-forward. When the tap branch moved since the stage, or the staging branch no longer holds the staged commit, the reveal commits the formula onto the tap branch's head and pushes that instead, unless the branch already holds the formula. Then it deletes the staging branch. Commits are made as the git identity the run has, else `chant <chant@localhost>`.
+
+What the stage can't check: whether the tap branch takes the push. The stage proves the key can push to the tap, since it pushes the staging branch, but a branch rule that refuses a deploy key, or a branch that moves again while the reveal commits onto it, shows only at the reveal (`publish-homebrew-failed`), after the targets before it revealed. A run of the same publish then reveals it again.
 
 ## Editor marketplaces
 
@@ -377,7 +392,7 @@ A release target is given a `PublishContext` with these fields. The last five (`
 | `redactor` | Masks credentials. A target adds each credential and token it reads |
 | `log(line)` | Prints a line of progress, redacted |
 
-The targets take their dependencies through `PublishDeps`, which holds the `fetch` the OCI, forge, homebrew and marketplace targets use, and the `npm` and `vsce` executables. In the tests npm runs as a fake binary that keeps a registry with dist-tags in a file, the OCI target pushes to a registry fake that the test starts on `127.0.0.1`, and the forge targets call a forge fake with draft releases.
+The targets take their dependencies through `PublishDeps`, which holds the `fetch` the OCI, forge, homebrew and marketplace targets use, and the `npm` and `vsce` executables, and the `git` and `ssh` that the homebrew target runs over SSH. In the tests npm runs as a fake binary that keeps a registry with dist-tags in a file, the OCI target pushes to a registry fake that the test starts on `127.0.0.1`, and the forge targets call a forge fake with draft releases.
 
 A target that publishes something other than a cut release takes its own context as `C`, which extends `PublishContextBase`, and its own `kind` names as `K` ([#4602](https://github.com/INTENTIUS/chant/issues/4602)). The terraform lexicon's module targets publish a module version this way. They throw `PublishTargetError` and take their requests and clock through `PublishDeps`. Credentials are read with `readCredential` from `lifecycle/publish-credentials.ts` and masked by the context's redactor. Their own code makes them, so they never appear under `release.publish`.
 
