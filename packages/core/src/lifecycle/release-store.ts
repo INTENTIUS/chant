@@ -166,6 +166,40 @@ export interface ReleaseCut {
    * `ci/green/<sha>`. Absent on a cut that checked the full green tag.
    */
   lane?: string;
+  /**
+   * The commit was not green, and a person's override let the cut through
+   * (#4693). Absent on a cut of a green commit.
+   */
+  override?: ReleaseCutOverride;
+}
+
+/**
+ * The override a cut of a commit that was not green ran under (#4693): an
+ * override on `_gates/policy-override.jsonl`, written by a person the
+ * overriders file at base lists, which the cut spent.
+ */
+export interface ReleaseCutOverride {
+  /** Always false: the commit had no green tag that counts. */
+  green: false;
+  /** The tag it lacked, `ci/green/<sha>` or `ci/green-<lane>/<sha>`. */
+  tag: string;
+  /** Who wrote the override. */
+  by: string;
+  /** When they wrote it. */
+  at: string;
+  /** Why, in their words. */
+  reason: string;
+  /** The override digest, binding the subject, the commit and the rule. */
+  digest: string;
+  /** Whether the override was sealed, as a release gate in identity.gates requires. */
+  sealed: boolean;
+}
+
+/** Whether `v` reads as a {@link ReleaseCutOverride}. */
+function isCutOverride(v: unknown): v is ReleaseCutOverride {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  return o.green === false && typeof o.tag === "string" && typeof o.by === "string" && typeof o.at === "string" && typeof o.reason === "string" && typeof o.digest === "string" && typeof o.sealed === "boolean";
 }
 
 /** The parts of a release a digest is computed from. */
@@ -384,6 +418,7 @@ export function parseCuts(text: string | null): { cuts: ReleaseCut[]; malformed:
         (c.runId === null || c.runId === undefined || typeof c.runId === "string") &&
         (c.channel === undefined || typeof c.channel === "string") &&
         (c.lane === undefined || typeof c.lane === "string") &&
+        (c.override === undefined || isCutOverride(c.override)) &&
         (c.composed === undefined || (typeof c.composed === "object" && c.composed !== null && typeof c.composed.base === "string" && Array.isArray(c.composed.sources)));
       if (!ok) {
         malformed++;
@@ -467,6 +502,7 @@ export async function appendCut(
       ...(input.composed ? { composed: input.composed } : {}),
       ...(input.channel ? { channel: input.channel } : {}),
       ...(input.lane ? { lane: input.lane } : {}),
+      ...(input.override ? { override: input.override } : {}),
     };
     const content = `${existing ? `${existing.replace(/\n$/, "")}\n` : ""}${JSON.stringify(cut, sortedJsonReplacer)}\n`;
     try {

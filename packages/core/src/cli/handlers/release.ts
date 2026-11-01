@@ -6,7 +6,8 @@
  *       clean, on trunk and pushed, and green (#4027), or green in a lane with
  *       `--lane` or `release.lane` (#4692); `--yes` cuts, records,
  *       and tags the commit `release/<label>` locally;
- *       --sign signs the cut with the actor's ssh key (#4031); `--src`, `-o` and
+ *       --sign signs the cut with the actor's ssh key (#4031); `--override-green`
+ *       cuts a commit that is not green under a person's override (#4693); `--src`, `-o` and
  *       `--lexicon` shape the build of a project with no components (#4046)
  *   release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json]
  *       publish a cut release (#4027) to the targets release.publish declares
@@ -48,7 +49,7 @@ import { parseParamFlags } from "../build-params-cli";
 import type { CommandContext } from "../registry";
 
 const USAGE =
-  "chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--json] | release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json] | release verify <label|digest> [--json] | release candidates [--env <env>] [--lane <name>] [--forge-issues] [--json] | release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json] | release list [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
+  "chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--override-green] [--json] | release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json] | release verify <label|digest> [--json] | release candidates [--env <env>] [--lane <name>] [--forge-issues] [--json] | release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json] | release list [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
 
 /** The build inputs `release cut` and `release compile` share. */
 function compileInputs(
@@ -148,6 +149,14 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     return 1;
   }
   const label = positional ?? args.label ?? null;
+  // #4693: the reason is the override's, written by the person who overrides.
+  if (args.reason !== undefined) {
+    console.error(formatError({
+      message: "release cut takes no --reason: an override's reason is on the override itself",
+      hint: "Cut with --override-green: it names the chant approve policy-override command that records the override and its reason.",
+    }));
+    return 1;
+  }
   const dryRun = args.yes !== true;
   const cwd = resolve(".");
   const { spawnTargetCompiler, ReleaseCompileError } = await import("../../components/release-compile");
@@ -255,6 +264,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       ...(composed ? { composed } : {}),
       ...(args.channel ? { channel: args.channel } : {}),
       ...(lane !== undefined ? { lane } : {}),
+      ...(args.overrideGreen ? { overrideGreen: true } : {}),
     };
 
     if (dryRun) {
@@ -295,7 +305,11 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
         return 0;
       }
       const name = plan.label ? formatBold(plan.label) : "an unlabelled release";
-      const greenIn = plan.lane !== null ? `green in lane ${plan.lane}` : "green";
+      const greenIn = plan.override
+        ? `not green: no ${plan.override.tag.slice(0, plan.override.tag.lastIndexOf("/"))} tag`
+        : plan.lane !== null
+          ? `green in lane ${plan.lane}`
+          : "green";
       const where = composed
         ? ` (on ${trunk!.remote}/${composed.branch}, composed on ${composed.base.slice(0, 12)} from ${composed.sources.length} trunk commit(s), ${greenIn})`
         : trunk
@@ -303,6 +317,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
           : "";
       console.log(`Dry run: cut ${name} from commit ${plan.commit.slice(0, 12)}${where}`);
       if (args.channel) console.log(`  channel ${args.channel}: a publish moves ${args.channel}, not latest`);
+      if (plan.override) console.log(`  under the override by ${plan.override.by} at ${plan.override.at}${plan.override.sealed ? ", sealed" : ""}: ${plan.override.reason}; the cut spends it`);
       if (plan.alreadyCut) console.log(`  already cut as ${plan.alreadyCut}: the cut would record nothing new`);
       console.log(`  actor ${actor} (from ${describeActorSource(who.source)})`);
       console.log(`  run ${ci ? `${ci.runId} (${ci.runOrigin.forge})` : "minted on this machine at the cut (local)"}`);
@@ -370,6 +385,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       else console.error(formatSuccess(`Already cut${result.label ? ` as ${formatBold(result.label)}` : ""}: ${result.release.releaseDigest}`));
       console.error(`  commit ${result.release.commit}${composed ? `, composed on ${composed.base.slice(0, 12)} on ${composed.branch}` : ""}${lane !== undefined ? `, green in lane ${lane}` : ""}`);
       if (args.channel) console.error(`  channel ${args.channel}`);
+      if (result.cut?.override) console.error(`  not green: cut under the override by ${result.cut.override.by}: ${result.cut.override.reason}`);
       if (result.cut) console.error(`  ${result.cut.signature ? `signed by ${result.cut.actor}` : `not signed; actor ${result.cut.actor}`}, run ${result.cut.runId}`);
       console.error(`  artifacts ${result.release.artifactDigests.length}, targets ${result.release.targets.map((t) => `${t.env} (${t.templates.length} template${t.templates.length === 1 ? "" : "s"})`).join(", ")}`);
       for (const r of result.reused) console.error(`  ${r.component}: artifacts unchanged, carried from ${r.from}`);
@@ -383,6 +399,12 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     return 0;
   } catch (err) {
     if (err instanceof ws.WorkstationCheckError || err instanceof ReleaseCutError || err instanceof at.CutAtError) {
+      // #4693: a request for an override goes where the person who answers it reads.
+      if (err instanceof ReleaseCutError && err.recorded) {
+        const { pushLifecycleReport } = await import("../../lifecycle/git");
+        const push = await pushLifecycleReport({ cwd }).catch(() => ({ pushed: false, pushWarning: undefined }));
+        if (push.pushWarning) console.error(formatWarning({ message: push.pushWarning }));
+      }
       return fail(err.code, err.message, err.fix);
     }
     if (err instanceof ReleaseLabelError) return fail(err.code, err.message);
@@ -656,8 +678,11 @@ export async function runReleaseList(ctx: CommandContext): Promise<number> {
     // #4033: a release cut from a revoked commit says so at the end of its line, and why on stderr.
     // #4692: a release cut from a lane's green tag names the lane.
     const lane = r.cuts.find((c) => c.lane !== undefined)?.lane;
-    console.log(`${(r.label ?? "-").padEnd(16)}  ${r.releaseDigest}  ${r.commit.slice(0, 12)}  ${signature}  ${where}${lane !== undefined ? `  lane ${lane}` : ""}${r.revoked ? "  revoked" : ""}`);
+    const overridden = r.cuts.some((c) => c.override !== undefined);
+    console.log(`${(r.label ?? "-").padEnd(16)}  ${r.releaseDigest}  ${r.commit.slice(0, 12)}  ${signature}  ${where}${lane !== undefined ? `  lane ${lane}` : ""}${overridden ? "  not green" : ""}${r.revoked ? "  revoked" : ""}`);
     if (newest?.signatureCheck.status === "unverified") console.error(`  ${r.label ?? r.releaseDigest}: ${newest.signatureCheck.reason}`);
+    // #4693: a release cut under an override says the commit was not green.
+    for (const c of r.cuts) if (c.override) console.error(`  ${r.label ?? r.releaseDigest}: not green (no ${c.override.tag}), cut under the override by ${c.override.by}: ${c.override.reason}`);
     if (r.revoked) {
       const { describeRevocation } = await import("../../lifecycle/release-revocation");
       console.error(`  ${r.label ?? r.releaseDigest}: revoked by ${r.revoked.tag}, ${describeRevocation(r.revoked)}`);

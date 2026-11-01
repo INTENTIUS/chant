@@ -452,7 +452,7 @@ Releases:
   release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>]
               [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>]
               [--actor <name>] [--sign [<key file>]] [--channel <tag>]
-              [--lane <name>] [--json]
+              [--lane <name>] [--override-green] [--json]
                         A dry run of a cut of this member from HEAD, which
                         must be clean, on trunk and pushed, and carry a
                         ci/green tag: compile every environment in the
@@ -479,6 +479,10 @@ Releases:
                         place of latest. --lane <name> (or release.lane in
                         chant.config.ts) checks a ci.green lane's tag,
                         ci/green-<lane>/<sha>, in place of ci/green.
+                        --override-green cuts a commit that is not green
+                        under a person's override, recorded with chant
+                        approve policy-override release-<sha12>; the cut
+                        spends it and records who and why.
   release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)...
                   [--yes] [--json]
                         Cherry-pick the chosen trunk changes, in trunk order,
