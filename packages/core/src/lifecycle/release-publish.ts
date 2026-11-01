@@ -125,10 +125,12 @@ export interface PublishedTarget {
 
 /** Injected into the targets, so tests drive them with fakes. */
 export interface PublishDeps {
-  /** The HTTP client the OCI, forge and homebrew targets use. Default: the global `fetch`. */
+  /** The HTTP client the OCI, forge, homebrew and marketplace targets use. Default: the global `fetch`. */
   fetch?: PublishFetch;
   /** The npm executable. Default: `npm` on `PATH`. */
   npm?: string;
+  /** The vsce executable the VS Code Marketplace target runs (#4676). Default: `vsce` on `PATH`. */
+  vsce?: string;
   /** How a target waits between polls of a registry (#4244). Default: a timer. */
   sleep?: (ms: number) => Promise<void>;
   /** The clock a target's wait reads (#4244). Default: `Date.now`. */
@@ -139,7 +141,7 @@ export interface PublishDeps {
 export type PublishFetch = (
   url: string,
   init: { method: string; headers: Record<string, string>; body?: Uint8Array | string; redirect?: "follow" | "manual" },
-) => Promise<{ ok: boolean; status: number; headers: { get(name: string): string | null }; text(): Promise<string> }>;
+) => Promise<{ ok: boolean; status: number; headers: { get(name: string): string | null }; text(): Promise<string>; arrayBuffer?(): Promise<ArrayBuffer> }>;
 
 /**
  * The part of a target's context every kind of target is given, whatever it
@@ -200,7 +202,7 @@ export class PublishTargetError extends Error {
 }
 
 /** The kinds `release.publish` declares and `createPublishTargets` makes. */
-export type ReleasePublishKind = "npm" | "oci" | "forge" | "homebrew";
+export type ReleasePublishKind = "npm" | "oci" | "forge" | "homebrew" | "marketplace";
 
 /** The npm dist-tag a set of packages is staged under before `latest` moves (#4048), as chant's own releases do (#3903). */
 export const NPM_STAGE_TAG = "next";
