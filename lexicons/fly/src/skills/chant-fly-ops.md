@@ -31,6 +31,8 @@ If a machine never reaches `started`:
 | Wait fails with a non-408 status | flaps rejected the machine (bad config the build check did not catch, or an org-side limit) | Read the error body; fix the config and re-apply |
 | Wait times out at the deadline | The machine cannot reach `started` in time | Inspect the machine directly on the org, then re-apply once the cause is fixed |
 
+A scheduled machine is the exception: it isn't started, so the applier polls the machine until it rests `created` or `stopped` at its new config instead (see "A scheduled Machine" below).
+
 ## Lease conflicts
 
 Mutating an existing machine (update or destroy) is gated behind a Machines API lease. `flyApply` acquires a lease, echoes the nonce in the `fly-machine-lease-nonce` header on the mutation, and releases the lease afterward. A leaked lease expires on its own TTL, so release is best-effort.
@@ -161,3 +163,48 @@ export default Op({
 ```
 
 A rollback's own ledger record is not counted as a release, so running the Op again plans the same rollback, leaves the Machine as it is and records nothing. `to: "sha256:..."` on `releaseRollbackPlan` picks another release. Migrations are not undone.
+
+### A scheduled Machine
+
+A Machine with a `schedule` in its config runs once an hour, day, week or month (`hourly`, `daily`, `weekly`, `monthly`; FLY012 refuses anything else, a cron expression included) and is stopped between runs. A backup or a dump is the usual case. Declare it beside the Machine that serves, with no process group of its own:
+
+```ts
+import { App, Machine, MachineConfig } from "@intentius/chant-lexicon-fly";
+
+export const platform = new App({ name: "platform", org_slug: "acme" });
+
+export const web = new Machine({
+  name: "web",
+  region: "iad",
+  config: new MachineConfig({ image: "registry.fly.io/platform:declared" }),
+});
+
+export const dump = new Machine({
+  name: "platform-dump",
+  region: "iad",
+  config: new MachineConfig({
+    image: "registry.fly.io/platform:dump-declared",
+    schedule: "hourly",
+    metadata: { role: "platform-dump" },
+  }),
+});
+```
+
+`flyApply` creates and updates a scheduled Machine with `skip_launch: true`, so an apply or a release moves it to its new config and image and never starts it. The next run is Fly's. Set `skip_launch: false` on the Machine to have each apply start it as well. Fly counts the interval from the Machine's last update, so each apply that changes it pushes the next run back by up to one interval: under `daily`, releases less than a day apart can keep it from ever running. `hourly`, with the job skipping a run when its last output is recent enough, keeps a daily job daily.
+
+`fly-release` releases the Machine named by `machine` and applies the rest of the plan with it. `images` gives the plan's other Machines images of their own, by entity or Machine name; a name that is no other Machine in the plan is refused before anything changes:
+
+```ts
+{
+  kind: "fly-release",
+  plan: "dist/fly.json",
+  machine: "web",
+  digest: "@Publish.digest",
+  image: "@Publish.uri",
+  images: { dump: "@PublishDump.uri" },
+}
+```
+
+The serving Machine is started and verified as usual. The scheduled one is updated and left stopped. If the release fails after the Machines changed, the serving Machine goes back to what it served and the scheduled Machine goes back to its old config, still stopped. Only the serving Machine's configs are recorded, so `fly-rollback` and the step's saga rollback put back the serving Machine alone.
+
+A scheduled Machine can be the one released, too (`machine: "platform-dump"`, or the plan's only Machine). It's updated and left stopped, its metadata names the release, and verify accepts it stopped, or started in the middle of a run, as long as it names this release. Such a release takes no `migrations` and no `verify.url`, since nothing runs in the Machine between runs to exec into or answer a health check; either is refused before the Machine changes. A restore or rollback puts its old config back without starting it.

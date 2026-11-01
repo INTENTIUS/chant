@@ -32,6 +32,14 @@
  *    goes back (or, on a first release, the Machine is stopped), and the step
  *    fails.
  *
+ * A scheduled Machine (`config.schedule`, #4696) is released without being
+ * started, whether it is the one that serves or another Machine in the plan:
+ * its config and image change, and Fly starts it on its schedule. Verify
+ * accepts it stopped between runs. A scheduled Machine that serves takes no
+ * migrations and no health URL, since nothing runs in it between runs. The
+ * plan's other Machines take their images from `images`; one the release
+ * updated goes back to its old config when the release fails.
+ *
  * Its output carries `uri` and `digest`, so `chant run --components` records
  * the release in the ledger, and the Machine's metadata carries the same
  * digest, which `chant components status --live` compares with it.
@@ -57,10 +65,11 @@ import {
   flyMachineVerify,
   readMachineRelease,
   releaseTarget,
+  type FlyMachineReleaseResult,
   type MachineFile,
   type MachineRelease,
 } from "../op/activities/machine-release";
-import { defaultFlyHttp, parsePlan, resolveEndpoint, type FlyHttp, type WaitOpts } from "../op/activities/fly-apply";
+import { defaultFlyHttp, machineSchedule, parsePlan, resolveEndpoint, skipsLaunch, type FlyHttp, type WaitOpts } from "../op/activities/fly-apply";
 import type { MachineConfigStore } from "../release-store";
 import { readFileSync } from "node:fs";
 import { releaseAttributesSuffix, type ReleaseIdentity } from "@intentius/chant/telemetry-attribution";
@@ -147,6 +156,12 @@ export interface FlyReleaseInput {
   release?: string;
   /** An image to run in place of the declared one. */
   image?: string;
+  /**
+   * Images for the plan's other Machines, by entity or Machine name (#4696),
+   * such as a scheduled Machine built from the same commit. Each is applied
+   * with the release; a scheduled one is left stopped.
+   */
+  images?: Record<string, string>;
   /** Env added to the declared Machine's env, over `APP_REVISION` (the commit, #2834) unless this names its own. */
   env?: Record<string, string>;
   /**
@@ -282,6 +297,19 @@ export function createFlyReleaseCapability(deps: FlyReleaseDeps = {}): Capabilit
   const log = deps.log ?? ((line: string) => console.error(line));
   const httpFor = () => deps.http ?? defaultFlyHttp();
 
+  /** On a failed release, put the plan's other Machines it updated back on their old configs. */
+  async function restoreOthers(released: FlyMachineReleaseResult, input: FlyReleaseInput, http: FlyHttp): Promise<void> {
+    for (const other of released.others) {
+      if (other.action !== "updated" || !other.previous) continue;
+      try {
+        await flyMachineRestore({ app: other.app, machine: other.name, config: other.previous, endpoint: input.endpoint, wait: input.wait }, undefined, http);
+        log(`fly-release: restored ${other.app}/${other.name} to its previous config`);
+      } catch (restoreErr) {
+        log(`fly-release: restore of ${other.app}/${other.name} failed: ${restoreErr instanceof Error ? restoreErr.message : String(restoreErr)}`);
+      }
+    }
+  }
+
   async function rollBack(ctx: DeployContext, input: FlyReleaseInput, output?: FlyReleaseOutput): Promise<void> {
     if (!output) return;
     const http = httpFor();
@@ -307,6 +335,12 @@ export function createFlyReleaseCapability(deps: FlyReleaseDeps = {}): Capabilit
       if (!input.digest) throw new Error("fly-release: a release needs its digest");
       const http = httpFor();
       const { plan, target } = loadTarget(input.plan, input.machine);
+      // A scheduled Machine is stopped between runs: nothing can exec in it or answer a health check.
+      if (skipsLaunch(target.request.body)) {
+        const why = `${target.app}/${target.name} is scheduled (${machineSchedule(target.request.body.config) ?? "skip_launch"}) and stays stopped between runs`;
+        if (input.migrations?.length) throw new Error(`fly-release: ${why}, so no migration can run in it`);
+        if (input.verify?.url) throw new Error(`fly-release: ${why}, so it has no health endpoint to verify at ${input.verify.url}`);
+      }
       const gitSha = input.gitSha ?? (await (deps.headCommit ?? defaultHeadCommit)());
       const configs = await (deps.configStore ?? defaultConfigStore)(ctx);
       // The tree is checked against its digest before the Machine changes.
@@ -331,6 +365,7 @@ export function createFlyReleaseCapability(deps: FlyReleaseDeps = {}): Capabilit
           machine: input.machine,
           release: { digest: input.digest, gitSha, ...(input.release ? { release: input.release } : {}) },
           image: input.image,
+          ...(input.images ? { images: input.images } : {}),
           env,
           ...(source ? { files: source.files, cmd: source.cmd } : {}),
           endpoint: input.endpoint,
@@ -340,7 +375,10 @@ export function createFlyReleaseCapability(deps: FlyReleaseDeps = {}): Capabilit
         http,
       );
       const where = { app: released.app, machine: released.machine.name, endpoint: input.endpoint };
-      log(`fly-release: ${released.app}/${released.machine.name} ${released.action}, serving ${input.digest}`);
+      log(`fly-release: ${released.app}/${released.machine.name} ${released.action}, serving ${input.digest}${released.unlaunched ? ", stopped until its schedule starts it" : ""}`);
+      for (const other of released.others) {
+        if (other.action !== "noop") log(`fly-release: ${other.app}/${other.name} ${other.action}${other.unlaunched ? ", stopped until its schedule starts it" : ""}`);
+      }
 
       // The config the Machine served before is kept too, so a Machine
       // released before chant recorded configs can still be rolled back to.
@@ -388,6 +426,7 @@ export function createFlyReleaseCapability(deps: FlyReleaseDeps = {}): Capabilit
         } catch (restoreErr) {
           log(`fly-release: restore failed: ${restoreErr instanceof Error ? restoreErr.message : String(restoreErr)}`);
         }
+        await restoreOthers(released, input, http);
         throw err;
       }
 

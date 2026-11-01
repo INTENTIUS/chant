@@ -125,7 +125,8 @@ export function createMachinesFake(options: MachinesFakeOptions = {}): MachinesF
             instance_id: nextId("I"),
             config: structuredClone((b.config ?? {}) as FakeMachine["config"]),
           };
-          m.state = settle(m);
+          // skip_launch: the Machine is created and not booted (#4696).
+          m.state = b.skip_launch === true ? "created" : settle(m);
           machines.set(app, [...list(app), m]);
           return json(200, m);
         }
@@ -137,7 +138,9 @@ export function createMachinesFake(options: MachinesFakeOptions = {}): MachinesF
         if (method === "POST") {
           m.config = structuredClone((b.config ?? {}) as FakeMachine["config"]);
           m.instance_id = nextId("I");
-          m.state = settle(m);
+          // skip_launch: the new config isn't started (#4696). A Machine that
+          // never ran stays created; one that ran is stopped.
+          m.state = b.skip_launch === true ? (m.state === "created" ? "created" : "stopped") : settle(m);
           return json(200, m);
         }
         if (method === "DELETE") {

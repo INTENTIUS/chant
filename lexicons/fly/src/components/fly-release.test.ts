@@ -412,3 +412,82 @@ describe("fly-rollback with a source tree (#2800)", () => {
     await expect(s.rollback.run(CTX, rollbackInput("sha256:aaaaaaaaaaaa", src(a)))).rejects.toThrow("fly-rollback: no recorded Machine config for sha256:aaaaaaaaaaaa on shop/web");
   });
 });
+
+/**
+ * #4696: a scheduled Machine, stopped between runs, is moved to the release
+ * without being started, whether it sits beside the Machine that serves or is
+ * the one released.
+ */
+describe("fly-release with a scheduled Machine (#4696)", () => {
+  const DUMP = {
+    endpoint: "/v1/apps/shop/machines",
+    method: "POST",
+    body: { name: "shop-dump", config: { image: "shop:dump-declared", schedule: "hourly", metadata: { "managed-by": "chant", role: "dump" } } },
+  };
+  const writePlan = (plan: Record<string, unknown>) => writeFileSync(planPath, JSON.stringify(plan));
+
+  test("beside the serving Machine: it takes its image from images and stays stopped", async () => {
+    writePlan({ ...PLAN, dump: DUMP });
+    const s = setup();
+    await s.release.run(CTX, input("sha256:aaaaaaaaaaaa", { machine: "web", image: "shop:1", images: { dump: "shop:dump-1" } }));
+    expect(s.fake.machine("shop", "web")).toMatchObject({ state: "started", config: { image: "shop:1" } });
+    expect(s.fake.machine("shop", "shop-dump")).toMatchObject({ state: "created", config: { image: "shop:dump-1", schedule: "hourly" } });
+    expect(s.lines).toContain("fly-release: shop/shop-dump created, stopped until its schedule starts it");
+
+    s.fake.machine("shop", "shop-dump")!.state = "stopped"; // it ran once, on its schedule
+    // By Machine name as well as by entity name.
+    await s.release.run(CTX, input("sha256:bbbbbbbbbbbb", { machine: "web", image: "shop:2", images: { "shop-dump": "shop:dump-2" } }));
+    expect(s.fake.machine("shop", "shop-dump")).toMatchObject({ state: "stopped", config: { image: "shop:dump-2" } });
+    expect(s.fake.calls.filter((c) => c.includes("/machines/") && /\/(start|restart)$/.test(c))).toEqual([]);
+  });
+
+  test("an images entry that names no other Machine is refused before anything changes", async () => {
+    writePlan({ ...PLAN, dump: DUMP });
+    const s = setup();
+    await expect(s.release.run(CTX, input("sha256:aaaaaaaaaaaa", { machine: "web", images: { dmp: "x" } }))).rejects.toThrow(/images names "dmp"/);
+    await expect(s.release.run(CTX, input("sha256:aaaaaaaaaaaa", { machine: "web", images: { web: "x" } }))).rejects.toThrow(/serving Machine's image is `image`/);
+    expect(s.fake.calls.some((c) => c.startsWith("POST /v1/apps/shop/machines"))).toBe(false);
+  });
+
+  test("a failed release puts the scheduled Machine back on its old config, still stopped", async () => {
+    writePlan({ ...PLAN, dump: DUMP });
+    const fake = createMachinesFake({ exec: (_a, _m, cmd) => (cmd.join(" ").includes("boom") ? { exit_code: 1, stderr: "boom" } : { exit_code: 0 }) });
+    const s = setup(fake);
+    await s.release.run(CTX, input("sha256:aaaaaaaaaaaa", { machine: "web", image: "shop:1", images: { dump: "shop:dump-1" } }));
+    fake.machine("shop", "shop-dump")!.state = "stopped";
+    const before = structuredClone(fake.machine("shop", "shop-dump")!.config);
+    await expect(
+      s.release.run(CTX, input("sha256:bbbbbbbbbbbb", { machine: "web", image: "shop:2", images: { dump: "shop:dump-2" }, migrations: [{ name: "5.sql", command: "boom" }] })),
+    ).rejects.toThrow(/exited 1/);
+    expect(fake.machine("shop", "shop-dump")).toMatchObject({ state: "stopped", config: before });
+    expect(s.lines).toContain("fly-release: restored shop/shop-dump to its previous config");
+  });
+
+  test("released itself: updated, verified and recorded while stopped", async () => {
+    writePlan({ shop: PLAN.shop, dump: DUMP });
+    const s = setup();
+    const out = await s.release.run(CTX, input("sha256:aaaaaaaaaaaa", { image: "shop:dump-1" }));
+    expect(out.uri).toBe("fly://shop/shop-dump");
+    const m = s.fake.machine("shop", "shop-dump")!;
+    expect(m).toMatchObject({ state: "created", config: { image: "shop:dump-1", schedule: "hourly" } });
+    expect(readMachineRelease(m.config.metadata)?.digest).toBe("sha256:aaaaaaaaaaaa");
+    expect(s.lines[0]).toBe("fly-release: shop/shop-dump created, serving sha256:aaaaaaaaaaaa, stopped until its schedule starts it");
+
+    m.state = "stopped";
+    const second = await s.release.run(CTX, input("sha256:bbbbbbbbbbbb", { image: "shop:dump-2" }));
+    expect(s.fake.machine("shop", "shop-dump")).toMatchObject({ state: "stopped", config: { image: "shop:dump-2" } });
+    // Its saga rollback puts the earlier config back, still stopped.
+    await s.release.rollback!(CTX, input("sha256:bbbbbbbbbbbb", { image: "shop:dump-2" }), second);
+    expect(s.fake.machine("shop", "shop-dump")).toMatchObject({ state: "stopped", config: { image: "shop:dump-1" } });
+  });
+
+  test("released itself, it takes no migrations and no health URL: nothing runs in it between runs", async () => {
+    writePlan({ shop: PLAN.shop, dump: DUMP });
+    const s = setup();
+    await expect(s.release.run(CTX, input("sha256:aaaaaaaaaaaa", { migrations: [{ name: "1", command: "x" }] }))).rejects.toThrow(
+      /shop\/shop-dump is scheduled \(hourly\) and stays stopped between runs, so no migration can run in it/,
+    );
+    await expect(s.release.run(CTX, input("sha256:aaaaaaaaaaaa", { verify: { url: "https://shop.example.com" } }))).rejects.toThrow(/no health endpoint/);
+    expect(s.fake.calls.some((c) => c.startsWith("POST"))).toBe(false);
+  });
+});
