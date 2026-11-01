@@ -363,9 +363,19 @@ chant approve web ship --env prod --actor github:alice --at <timestamp> --signat
 <timestamp>
 relayed-by <principal>        (only when --relayed-by is given)
 checkpoint <digest>           (only when the gate resumes; seal version 2)
+binding <text>                (only when --binding is given; seal version 3)
 ```
 
-The statement fixes the time, `timestamp`, which `--at` must repeat with the same `--actor`, `--relayed-by`, `--plan` and `--env`. A time before the gate's pending fact or more than five minutes ahead is refused. `digest` is `sha256:` and the bytes' SHA-256 in hex, and `challenge` is the same hash in base64url with no padding.
+The statement fixes the time, `timestamp`, which `--at` must repeat with the same `--actor`, `--relayed-by`, `--plan`, `--env` and `--binding`. A time before the gate's pending fact or more than five minutes ahead is refused. `digest` is `sha256:` and the bytes' SHA-256 in hex, and `challenge` is the same hash in base64url with no padding.
+
+The platform can have the same signature cover something of its own with `--binding <text>` ([#4697](https://github.com/INTENTIUS/chant/issues/4697)), such as the id of the deploy the approval is for and when the approval stops being good for it:
+
+```bash
+chant approve web ship --env prod --actor github:alice --binding "deploy dep_42 until 2026-11-01T12:00:00Z" --statement > statement.json
+chant approve web ship --env prod --actor github:alice --binding "deploy dep_42 until 2026-11-01T12:00:00Z" --at <timestamp> --signature signature.json
+```
+
+The statement then ends with `binding <text>`, after any checkpoint line, and the document's `binding` holds the text. The seal is version 3 and records `version: 3`, and the resolution line keeps the text as `binding`. Changing or removing it stops the seal verifying, in a run, in `chant workspace status`, in `@intentius/chant/gate-decision` and in the seal check, as with every other line. Chant reads nothing in it: the binding is one line of printable text, at most 512 UTF-8 bytes, with no control, format or separator characters and no leading or trailing space, and anything else is refused before the statement is printed. Checking what it says, such as whether the deploy id matches or the time has passed, is the platform's job. `--sign` takes `--binding` too and signs it the same way. An approval without a binding signs what it signed before and its seal stays version 1 or 2. Chant 0.124.63 and newer write and check a binding. An older chant leaves the line out of what it checks, so it finds a version 3 seal doesn't verify and counts nothing for it.
 
 `--signature <file>`, or `-` for stdin, takes either of these:
 
@@ -391,7 +401,7 @@ A passkey is listed under `passkeys` in `.chant/trust.json`:
 
 `publicKey` is what `AuthenticatorAttestationResponse.getPublicKey()` returns at registration. Ed25519 (EdDSA), P-256 (ES256) and RSA (RS256) keys verify. The check follows WebAuthn level 2 for what a ledger line can be checked for. The client data's type is `webauthn.get`, its challenge is the statement's, its origin is one of `origins`, and it isn't cross-origin. The authenticator data's rpIdHash is SHA-256 of `rpId`, and its user-present and user-verified flags are both set. The signature over the authenticator data followed by SHA-256 of the client data verifies with `publicKey`. The signature counter isn't checked. Listing a passkey is a change to the trust config, a [protected write](/chant/cli/workspace-verify/#the-policy). As with ssh seals, nothing counts unless the signers file exists at base, so a workspace whose people sign only with passkeys keeps an empty one.
 
-A signature that doesn't verify for `--actor` is refused before anything is written, whether or not the gate is under `gates`. A passkey's seal on the resolution line is `{ "kind": "webauthn", "signer", "key", "signature", "clientDataJSON", "authenticatorData" }`, with the credential id as `key` and `version: 2` when it signs a checkpoint. An ssh seal has no `kind`. A run, `chant workspace status`, `@intentius/chant/gate-decision` and the seal check read either kind against the policy at base, so anyone can check the approval again offline. Chant 0.124.63 and newer write and read `passkeys` and passkey seals. An older chant reads a trust config with `passkeys` as invalid, which turns attestation off, and counts no passkey seal toward a gate.
+A signature that doesn't verify for `--actor` is refused before anything is written, whether or not the gate is under `gates`. A passkey's seal on the resolution line is `{ "kind": "webauthn", "signer", "key", "signature", "clientDataJSON", "authenticatorData" }`, with the credential id as `key`, `version: 2` when it signs a checkpoint and `version: 3` when it signs a binding. An ssh seal has no `kind`. A run, `chant workspace status`, `@intentius/chant/gate-decision` and the seal check read either kind against the policy at base, so anyone can check the approval again offline. Chant 0.124.63 and newer write and read `passkeys` and passkey seals. An older chant reads a trust config with `passkeys` as invalid, which turns attestation off, and counts no passkey seal toward a gate.
 
 A gate that lists an old name as an alias ([Renaming a gate](/chant/guide/ops/#renaming-a-gate), [#3949](https://github.com/INTENTIUS/chant/issues/3949)) counts an approval recorded under that name only when it passes the new gate's `identity.gates` rule. The seal is checked against the op, gate, time and checkpoint digest it was signed under, which the carried line keeps in `carriedFrom`. A rename therefore doesn't break a seal. `chant build` refuses a gate whose alias `identity.gates` names when the gate has no entry of its own, or lacks the alias's class (OPS017).
 

@@ -10,6 +10,12 @@
  * the approval that records it cover the same line. The platform has the
  * person sign them and hands the signature to `chant approve --signature`,
  * with the same `--actor`, `--relayed-by` and `--at`.
+ *
+ * The relay can add a line of its own for the signature to bind, `--binding
+ * <text>` on both calls (#4697): a platform's deploy id and an expiry, say.
+ * It is signed last as `binding <text>` (seal version 3) and kept on the
+ * approval, and chant checks only that it is one line of printable text no
+ * longer than {@link GATE_BINDING_MAX_BYTES}.
  */
 
 import { createHash } from "node:crypto";
@@ -24,6 +30,34 @@ import { GATE_SEAL_NAMESPACE, gateSealPayload, gateSealVersion, isWebAuthnAssert
  * attestation off, and counts no passkey seal toward a gate.
  */
 export const GATE_EXTERNAL_SIGNATURE_FLOOR = NEXT_RELEASE;
+
+/**
+ * The first chant that takes `--binding` and signs and checks a binding line
+ * (seal version 3, #4697). An older chant leaves the line out of what it
+ * checks, so it finds a version 3 seal doesn't verify and counts nothing for
+ * it, whatever the gate.
+ */
+export const GATE_BINDING_FLOOR = NEXT_RELEASE;
+
+/** The longest binding `--binding` takes, in UTF-8 bytes (#4697). */
+export const GATE_BINDING_MAX_BYTES = 512;
+
+/**
+ * Why `text` can't be a gate statement's binding line (#4697), or null when
+ * it can: it must be non-empty, at most {@link GATE_BINDING_MAX_BYTES} UTF-8
+ * bytes, with no leading or trailing space, and printable on one line, so no
+ * control or format character (bidi overrides among them), line or paragraph
+ * separator, unassigned code point or lone surrogate.
+ */
+export function gateBindingProblem(text: string): string | null {
+  if (text === "") return "it is empty";
+  const bytes = Buffer.byteLength(text, "utf-8");
+  if (bytes > GATE_BINDING_MAX_BYTES) return `it is ${bytes} bytes, and the most is ${GATE_BINDING_MAX_BYTES}`;
+  if (text.trim() !== text) return "it starts or ends with white space";
+  const bad = /[\p{C}\p{Zl}\p{Zp}]/u.exec(text);
+  if (bad) return `it holds U+${bad[0].codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}, and it must be printable text on one line`;
+  return null;
+}
 
 export const GATE_STATEMENT_SCHEMA = "chant-gate-statement/v1";
 
@@ -42,8 +76,10 @@ export interface GateStatement {
   relayedBy: string | null;
   timestamp: string;
   checkpointDigest: string | null;
-  /** 1, or 2 when the statement signs a checkpoint digest. */
-  sealVersion: 1 | 2;
+  /** The relay's binding line (#4697, `--binding`), or null. When set the statement ends with `binding <text>`. */
+  binding: string | null;
+  /** 3 when the statement signs a binding, else 2 when it signs a checkpoint digest, else 1. */
+  sealVersion: 1 | 2 | 3;
   /** The ssh signature namespace an ssh key signs the statement in. */
   namespace: typeof GATE_SEAL_NAMESPACE;
   /** The statement's UTF-8 text, LF-joined with no final newline. */
@@ -70,6 +106,7 @@ export function gateStatement(a: SealedGateApproval, chantVersion: string): Gate
     relayedBy: a.relayedBy ?? null,
     timestamp: a.timestamp,
     checkpointDigest: a.checkpointDigest ?? null,
+    binding: a.binding ?? null,
     sealVersion: gateSealVersion(a),
     namespace: GATE_SEAL_NAMESPACE,
     text: bytes.toString("utf-8"),

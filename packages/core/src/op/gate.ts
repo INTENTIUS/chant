@@ -736,7 +736,7 @@ export function approvalsAnswering(
 /**
  * The line a run writes for an approval it carries from an alias (#3949):
  * the approval under `op`/`gate` at `now`, citing the line it came from.
- * The approver, plan, environment, relay and seal are the original's. A
+ * The approver, plan, environment, relay, binding (#4697) and seal are the original's. A
  * policy decision is left behind, since it was evaluated against another
  * gate, and so is a checkpoint digest, which moves onto `carriedFrom`: the
  * approver saw that checkpoint, not one this gate stores, so a carried
@@ -757,6 +757,7 @@ export function carriedApproval(r: GateResolutionRecord, op: string, gate: strin
     ...(r.origin ? { origin: r.origin } : {}),
     ...(r.sameOriginOverride ? { sameOriginOverride: true } : {}),
     approver: approverOf(r),
+    ...(r.binding !== undefined ? { binding: r.binding } : {}),
     ...(r.seal ? { seal: r.seal } : {}),
     carriedFrom: {
       op: r.op,

@@ -707,6 +707,8 @@ export interface ParsedArgs {
   statement?: boolean;
   /** `chant approve <op> <gate> --signature <file|->` (#4646): a signature made elsewhere over the statement. */
   signature?: string;
+  /** `chant approve <op> <gate> --binding <text>` (#4697): a line the relay sets, signed last with the statement. */
+  binding?: string;
   /**
    * `chant approve <op> <gate> --relayed-by <principal>` and `chant workspace
    * points answer <id> --relayed-by <principal>` (#3402): the principal that

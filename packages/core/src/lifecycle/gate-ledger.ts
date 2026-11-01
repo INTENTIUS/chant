@@ -162,6 +162,14 @@ export interface GateResolutionRecord {
    */
   checkpointDigest?: string;
   /**
+   * The line the relay set for the approver's signature to bind as well
+   * (#4697, `chant approve --binding`), such as a platform's deploy id and
+   * an expiry. Printable text on one line; chant reads nothing in it. Set
+   * only on an approval signed with --sign or --signature, whose seal (version
+   * 3) signs it.
+   */
+  binding?: string;
+  /**
    * The environment this approval is for (#2574), copied off the pending fact
    * it answers. Set for a component gate, whose ledger is keyed by component
    * rather than by environment. A component gate counts only a resolution
@@ -313,9 +321,10 @@ export interface GateApprovalSeal {
   /**
    * The seal's version (#3947). `2` on a seal over an approval that carries a
    * `checkpointDigest`, whose payload signs the digest as one more line.
-   * Absent on every other seal, which is version 1.
+   * `3` on a seal over an approval with a `binding` (#4697), which signs one
+   * more line after that. Absent on every other seal, which is version 1.
    */
-  version?: 2;
+  version?: 2 | 3;
 }
 
 export type GateResolutionInput = Omit<GateResolutionRecord, "version" | "kind">;
@@ -635,6 +644,12 @@ export function parseGateLedger(
       // #3947: and for the checkpoint an approval lets a run resume from.
       const rawCheckpoint: unknown = (parsed as { checkpointDigest?: unknown }).checkpointDigest;
       if (rawCheckpoint !== undefined && typeof rawCheckpoint !== "string") {
+        malformed++;
+        continue;
+      }
+      // #4697: and for the binding a seal signs. A line break would make the statement's lines ambiguous.
+      const rawBinding: unknown = (parsed as { binding?: unknown }).binding;
+      if (rawBinding !== undefined && (typeof rawBinding !== "string" || /[\r\n\u2028\u2029]/.test(rawBinding))) {
         malformed++;
         continue;
       }

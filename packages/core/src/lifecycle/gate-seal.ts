@@ -42,6 +42,12 @@ export interface SealedGateApproval {
   timestamp: string;
   /** The checkpoint the approval lets a run resume from (#3947), when it carries one. */
   checkpointDigest?: string;
+  /**
+   * A line the relay set for the signature to bind as well (#4697), such as
+   * a platform's deploy id and an expiry. chant doesn't read it; the seal
+   * signs it. A carried approval keeps the original's.
+   */
+  binding?: string;
   /** The line a carried approval came from (#3949): the names and time its seal was made under. */
   carriedFrom?: { op: string; gate: string; timestamp: string; checkpointDigest?: string };
   seal?: unknown;
@@ -67,11 +73,14 @@ export function sealedFieldsOf(a: SealedGateApproval): SealedGateApproval {
 }
 
 /**
- * The version of a seal over `a` (#3947): 2 when the approval carries a
- * checkpoint digest, which the payload signs, and 1 otherwise. `chant approve
- * --sign` records 2 on the seal; a seal records no version for 1.
+ * The version of a seal over `a` (#3947): 3 when the approval carries a
+ * relay's binding (#4697), 2 when it carries a checkpoint digest and no
+ * binding, and 1 otherwise. Each signs the lines of the one before plus its
+ * own. `chant approve --sign` and `--signature` record 2 and 3 on the seal; a
+ * seal records no version for 1.
  */
-export function gateSealVersion(a: Pick<SealedGateApproval, "checkpointDigest" | "carriedFrom">): 1 | 2 {
+export function gateSealVersion(a: Pick<SealedGateApproval, "checkpointDigest" | "carriedFrom" | "binding">): 1 | 2 | 3 {
+  if (a.binding !== undefined) return 3;
   const checkpoint = a.carriedFrom !== undefined ? a.carriedFrom.checkpointDigest : a.checkpointDigest;
   return checkpoint !== undefined ? 2 : 1;
 }
@@ -91,14 +100,23 @@ export function gateSealVersion(a: Pick<SealedGateApproval, "checkpointDigest" |
  * then covered by the seal too, and removing or swapping the digest stops it
  * verifying. An approval with none signs what a version 1 seal signed.
  *
+ * Seal version 3 (#4697) adds a binding line the relay set, `binding
+ * <text>`, after everything else, checkpoint included. A platform puts what
+ * it needs the person's signature to cover there too (a deploy id and an
+ * expiry); chant records and checks it and reads nothing in it. An approval
+ * with no binding signs what a version 1 or 2 seal signed, so those still
+ * verify, and an older chant, which leaves the line out, finds a version 3
+ * seal doesn't verify and counts nothing for it.
+ *
  * A carried approval (#3949) signs what the line it came from signed: see
  * {@link sealedFieldsOf}.
  */
 export function gateSealPayload(approval: SealedGateApproval): Buffer {
   const a = sealedFieldsOf(approval);
   const relay = a.relayedBy !== undefined ? `\nrelayed-by ${a.relayedBy}` : "";
-  const checkpoint = gateSealVersion(a) === 2 ? `\ncheckpoint ${a.checkpointDigest}` : "";
-  return Buffer.from(`${a.op}\n${a.gate}\n${a.environment ?? ""}\n${a.planDigest ?? ""}\n${a.resolvedBy}\n${a.timestamp}${relay}${checkpoint}`, "utf-8");
+  const checkpoint = a.checkpointDigest !== undefined ? `\ncheckpoint ${a.checkpointDigest}` : "";
+  const binding = a.binding !== undefined ? `\nbinding ${a.binding}` : "";
+  return Buffer.from(`${a.op}\n${a.gate}\n${a.environment ?? ""}\n${a.planDigest ?? ""}\n${a.resolvedBy}\n${a.timestamp}${relay}${checkpoint}${binding}`, "utf-8");
 }
 
 // ── SSHSIG ───────────────────────────────────────────────────────────────

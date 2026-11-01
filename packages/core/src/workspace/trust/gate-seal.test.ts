@@ -164,6 +164,50 @@ describe("seal version 2 covers the checkpoint", () => {
   });
 });
 
+// #4697: seal version 3 signs a relay's binding as the last line, after any
+// checkpoint, and versions 1 and 2 sign what they did.
+describe("seal version 3 covers the relay's binding", () => {
+  test("the payload adds a binding line last, only when the approval carries one", () => {
+    const a = approval({ relayedBy: "bot" });
+    const b = approval({ relayedBy: "bot", binding: "deploy dep_42 until 2026-11-01T12:00:00Z" });
+    expect(gateSealVersion(b)).toBe(3);
+    expect(gateSealPayload(b).toString()).toBe(`${gateSealPayload(a).toString()}\nbinding deploy dep_42 until 2026-11-01T12:00:00Z`);
+    const c = approval({ checkpointDigest: "jcs1-sha256:cp", binding: "x" });
+    expect(gateSealVersion(c)).toBe(3);
+    expect(gateSealPayload(c).toString()).toBe("migrations\nmigrations-wave-1\n\njcs1-sha256:abc\nalice\n2026-10-11T00:00:00.000Z\ncheckpoint jcs1-sha256:cp\nbinding x");
+    expect(gateSealPayload({ ...c, binding: undefined }).toString()).toBe(gateSealPayload(approval({ checkpointDigest: "jcs1-sha256:cp" })).toString());
+  });
+
+  test("a carried approval signs the original's binding", () => {
+    const carried = approval({
+      gate: "new-name",
+      timestamp: "2026-10-12T00:00:00.000Z",
+      binding: "deploy dep_42",
+      carriedFrom: { op: "migrations", gate: "migrations-wave-1", timestamp: "2026-10-11T00:00:00.000Z", checkpointDigest: "jcs1-sha256:cp" },
+    });
+    expect(gateSealVersion(carried)).toBe(3);
+    expect(gateSealPayload(carried)).toEqual(gateSealPayload(approval({ checkpointDigest: "jcs1-sha256:cp", binding: "deploy dep_42" })));
+  });
+
+  test.skipIf(!hasSshKeygen)("a version 3 seal verifies, and changing, removing or adding a binding stops it", () => {
+    const k = key("alice-binding", ["-t", "ed25519"]);
+    const a = approval({ binding: "deploy dep_42 until 2026-11-01T12:00:00Z" });
+    const seal = { signer: "alice", key: "SHA256:x", signature: sign(k, gateSealPayload(a)), version: 3 };
+    const policy = policyOf(`alice ${k.pub}\n`);
+    expect(both(policy, { ...a, seal })).toEqual({ ours: null, keygen: true });
+    for (const edited of [{ binding: "deploy dep_43 until 2026-11-01T12:00:00Z" }, { binding: undefined }]) {
+      const res = both(policy, { ...a, ...edited, seal });
+      expect(res.keygen).toBe(false);
+      expect(res.ours).toMatch(/does not verify for alice/);
+    }
+    // A seal made before #4697, with no binding, can't take one on afterwards.
+    const plain = approval();
+    const old = { signer: "alice", key: "SHA256:x", signature: sign(k, gateSealPayload(plain)) };
+    expect(both(policy, { ...plain, seal: old })).toEqual({ ours: null, keygen: true });
+    expect(both(policy, { ...plain, binding: "deploy dep_42", seal: old }).ours).toMatch(/does not verify for alice/);
+  });
+});
+
 describe("the refusals that need no signature", () => {
   const signers = (over: Partial<GateSigners> = {}): GateSigners => ({ base: "a".repeat(40), signersPath: ".chant/allowed_signers", active: true, signers: [], problems: [], ...over });
 

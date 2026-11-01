@@ -89,6 +89,7 @@ const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: str
   { file: "docs/src/content/docs/cli/plan.mdx", text: "a [read contract](/chant/reference/workspace-read-contract/#stale-plans) at version 1, written by chant {v} and newer.", count: 1, floor: "PLAN_STALE_FLOOR" },
   { file: "packages/core/src/gate-statement.schema.json", text: "Written by chant {v} and newer.", count: 1, floor: "GATE_EXTERNAL_SIGNATURE_FLOOR" },
   { file: "docs/src/content/docs/reference/workspace-declaration.mdx", text: "Chant {v} and newer write and read `passkeys` and passkey seals.", count: 1, floor: "GATE_EXTERNAL_SIGNATURE_FLOOR" },
+  { file: "docs/src/content/docs/reference/workspace-declaration.mdx", text: "Chant {v} and newer write and check a binding.", count: 1, floor: "GATE_BINDING_FLOOR" },
   { file: "packages/core/src/workspace/declaration.schema.json", text: "Read by chant {v} and newer, so a declaration that sets it sets minReader to {v} or newer.", count: 1, floor: "CI_QUARANTINE_FLOOR" },
   { file: "docs/src/content/docs/reference/workspace-declaration.mdx", text: "Read by chant {v} and newer, so set `minReader` with it.", count: 1, floor: "CI_QUARANTINE_FLOOR" },
   { file: "docs/src/content/docs/cli/ci.mdx", text: "`quarantine` needs `minReader` {v} or newer.", count: 1, floor: "CI_QUARANTINE_FLOOR" },

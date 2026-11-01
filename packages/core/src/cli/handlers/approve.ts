@@ -28,7 +28,7 @@ import { pushLifecycleReport, requireLifecycleLedger } from "../../lifecycle/git
 import { LIFECYCLE_LOCAL_NOTE, isLifecycleLocalNote } from "../../lifecycle/local-note";
 import { ledgerRecordingOff, NO_RECORD_ENV } from "../../lifecycle/no-record";
 import { checkGateSignature, gateSealPayload, gateSealVersion, WEBAUTHN_SEAL_KIND, type SealedGateApproval } from "../../lifecycle/gate-seal";
-import { gateStatement, readExternalSignature, type GateStatement } from "../../lifecycle/gate-statement";
+import { gateBindingProblem, gateStatement, readExternalSignature, type GateStatement } from "../../lifecycle/gate-statement";
 import type { GateApprovalSeal } from "../../lifecycle/gate-ledger";
 import type { TrustPolicy } from "../../workspace/trust/policy";
 import { readFileSync } from "node:fs";
@@ -176,6 +176,7 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
       ...(ctx.args.env !== undefined ? { environment: ctx.args.env } : {}),
       ...(ctx.args.relayedBy !== undefined ? { relayedBy: ctx.args.relayedBy } : {}),
       ...(ctx.args.at !== undefined ? { at: ctx.args.at } : {}),
+      ...(ctx.args.binding !== undefined ? { binding: ctx.args.binding } : {}),
       allowSameOrigin: ctx.args.allowSameOrigin,
     };
     const statement = await gateApprovalStatement(opName, gate, shared);
@@ -187,6 +188,7 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
         (statement.relayedBy !== null ? ` --relayed-by ${statement.relayedBy}` : "") +
         (statement.planDigest !== null ? ` --plan ${statement.planDigest}` : "") +
         (statement.environment !== null ? ` --env ${statement.environment}` : "") +
+        (statement.binding !== null ? ` --binding ${shellQuote(statement.binding)}` : "") +
         ` --at ${statement.timestamp} --signature <file>`,
     ));
     return 0;
@@ -218,6 +220,7 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
     ...(ctx.args.sign !== undefined ? { sign: ctx.args.sign } : {}),
     ...(ctx.args.signature !== undefined ? { signature: ctx.args.signature } : {}),
     ...(ctx.args.at !== undefined ? { at: ctx.args.at } : {}),
+    ...(ctx.args.binding !== undefined ? { binding: ctx.args.binding } : {}),
     ...(ctx.args.relayedBy !== undefined ? { relayedBy: ctx.args.relayedBy } : {}),
   });
   if (!outcome.ok) return 1;
@@ -313,6 +316,14 @@ export interface GateApprovalOptions {
   signature?: string;
   /** `--at <timestamp>` (#4646): the statement's time, which `--statement` fixes and `--signature` records. */
   at?: string;
+  /**
+   * `--binding <text>` (#4697): a line the relay sets for the approver's
+   * signature to cover as well, such as a platform's deploy id and an
+   * expiry. Signed last (seal version 3) and recorded as `binding`. It goes
+   * with `--statement`, `--signature` or `--sign`, and must be the same on
+   * `--statement` and `--signature`.
+   */
+  binding?: string;
   /** Where the workspace and the key file are looked up from. Defaults to the process's directory. */
   cwd?: string;
   /** Replaces the lexicon evaluator a gate policy is loaded from. For tests. */
@@ -643,6 +654,13 @@ async function approveGate(
       `Pass the timestamp \`chant approve ${opName} ${gate} --statement\` printed.`,
     );
   }
+  if (opts.binding !== undefined) {
+    if (!statementOnly && opts.signature === undefined && opts.sign === undefined) {
+      return refuse("--binding is a line the approver's signature covers, so it goes with --statement, --signature or --sign");
+    }
+    const problem = gateBindingProblem(opts.binding);
+    if (problem !== null) return refuse(`--binding takes one line of printable text, and ${problem}`);
+  }
   let timestamp = new Date().toISOString();
   if (opts.at !== undefined) {
     const at = Date.parse(opts.at);
@@ -667,6 +685,7 @@ async function approveGate(
     ...(relayedBy ? { relayedBy } : {}),
     timestamp,
     ...(checkpointDigest !== undefined ? { checkpointDigest } : {}),
+    ...(opts.binding !== undefined ? { binding: opts.binding } : {}),
   };
   if (statementOnly) {
     const { CHANT_VERSION } = await import("../../chant-version");
@@ -697,8 +716,9 @@ async function approveGate(
     try {
       const key = resolveSigningKey(opts.sign, cwd);
       try {
-        // #3947: a seal over a checkpoint digest is seal version 2.
-        seal = { ...sealGateApproval(key.file, sealed), ...(gateSealVersion(sealed) === 2 ? { version: 2 as const } : {}) };
+        // #3947, #4697: a seal over a checkpoint digest is seal version 2, and one over a binding 3.
+        const version = gateSealVersion(sealed);
+        seal = { ...sealGateApproval(key.file, sealed), ...(version !== 1 ? { version } : {}) };
       } finally {
         key.cleanup();
       }
@@ -718,6 +738,7 @@ async function approveGate(
       ...(relayedBy ? { relayedBy } : {}),
       timestamp,
       ...(checkpointDigest !== undefined ? { checkpointDigest } : {}),
+      ...(opts.binding !== undefined ? { binding: opts.binding } : {}),
       seal,
     });
     if (why !== null) {
@@ -748,6 +769,7 @@ async function approveGate(
     ...(relayedBy ? { relayedBy } : {}),
     timestamp,
     ...(checkpointDigest !== undefined ? { checkpointDigest } : {}),
+    ...(opts.binding !== undefined ? { binding: opts.binding } : {}),
     ...(seal ? { seal } : {}),
   }).roles;
   let policyDecision: GatePolicyDecision | undefined;
@@ -797,6 +819,7 @@ async function approveGate(
     ...(url ? { url } : {}),
     ...(planDigest !== undefined ? { planDigest } : {}),
     ...(checkpointDigest !== undefined ? { checkpointDigest } : {}),
+    ...(opts.binding !== undefined ? { binding: opts.binding } : {}),
     ...(environment !== undefined ? { environment } : {}),
     ...(releaseDigest !== undefined ? { releaseDigest } : {}),
     ...(changeSet !== undefined ? { changeSet } : {}),
@@ -819,6 +842,7 @@ async function approveGate(
       (record.seal ? `, signed with ${record.seal.kind === WEBAUTHN_SEAL_KIND ? "passkey " : ""}${record.seal.key}` : "") +
       push.suffix,
   ));
+  if (record.binding !== undefined) console.error(formatInfo(`The signature also binds ${JSON.stringify(record.binding)} (--binding).`));
   if (record.planDigest) {
     console.error(formatInfo(
       `This approves the plan ${record.planDigest}` +
@@ -891,7 +915,13 @@ function externalSeal(
         : `the ${sig.kind === "ssh" ? "ssh signature" : "passkey's assertion"} does not verify for ${sealed.resolvedBy} over this approval's statement: ${r.reason}`,
     };
   }
-  return { seal: { ...candidate, key: r.key, ...(gateSealVersion(sealed) === 2 ? { version: 2 as const } : {}) } };
+  const version = gateSealVersion(sealed);
+  return { seal: { ...candidate, key: r.key, ...(version !== 1 ? { version } : {}) } };
+}
+
+/** `text` quoted for a POSIX shell, for a command line a hint prints. */
+function shellQuote(text: string): string {
+  return /^[\w@%+=:,./-]+$/.test(text) ? text : `'${text.replace(/'/g, `'\\''`)}'`;
 }
 
 /**

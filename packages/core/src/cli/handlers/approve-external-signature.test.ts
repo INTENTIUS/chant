@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { appendPendingGate, readGateLedger } from "../../lifecycle/gate-ledger";
 import { resetGateOrigin } from "../../lifecycle/gate-origin";
 import { gateSealPayload } from "../../lifecycle/gate-seal";
-import { GATE_STATEMENT_SCHEMA_ID, type GateStatement } from "../../lifecycle/gate-statement";
+import { GATE_BINDING_MAX_BYTES, GATE_STATEMENT_SCHEMA_ID, gateBindingProblem, type GateStatement } from "../../lifecycle/gate-statement";
 import { assert, passkey, type Passkey } from "../../lifecycle/test-passkey";
 import { gateAdmission } from "../../workspace/identity";
 import { checkGateSeal } from "../../workspace/trust/seal";
@@ -74,7 +74,7 @@ async function waiting(): Promise<TestRepo> {
   return r;
 }
 
-async function statementFor(r: TestRepo, actor: string, extra: { plan?: string } = {}): Promise<GateStatement> {
+async function statementFor(r: TestRepo, actor: string, extra: { plan?: string; binding?: string } = {}): Promise<GateStatement> {
   const s = await gateApprovalStatement("deploy", "ship", { origin: "cli", actor, cwd: r.dir, ...extra });
   expect(s).not.toBeNull();
   return s!;
@@ -98,7 +98,7 @@ describe.skipIf(!hasSshKeygen)("an approval signed outside chant (#4646)", () =>
     const bytes = gateSealPayload({ op: "deploy", gate: "ship", environment: "prod", planDigest: PLAN, resolvedBy: "github:erin", timestamp: s.timestamp });
     expect(Buffer.from(s.statement, "base64")).toEqual(bytes);
     expect(s.text).toBe(`deploy\nship\nprod\n${PLAN}\ngithub:erin\n${s.timestamp}`);
-    expect(s).toMatchObject({ planDigest: PLAN, environment: "prod", relayedBy: null, sealVersion: 1, namespace: "chant-gate" });
+    expect(s).toMatchObject({ planDigest: PLAN, environment: "prod", relayedBy: null, binding: null, sealVersion: 1, namespace: "chant-gate" });
     expect((await readGateLedger("deploy", { cwd: r.dir })).resolutions).toEqual([]);
   });
 
@@ -222,5 +222,107 @@ describe.skipIf(!hasSshKeygen)("an approval signed outside chant (#4646)", () =>
   test("an unsigned approval of the gate is still refused", async () => {
     const r = await waiting();
     expect((await recordGateApproval("deploy", "ship", { origin: "cli", actor: "github:erin", cwd: r.dir })).ok).toBe(false);
+  });
+});
+
+// #4697: the relay adds a line of its own that the person's signature covers.
+const BINDING = "deploy dep_42 until 2026-11-01T12:00:00Z";
+
+describe.skipIf(!hasSshKeygen)("a relay's binding line in the statement (#4697)", () => {
+  test("--binding ends the statement with a binding line, seal version 3", async () => {
+    const r = await waiting();
+    const s = await statementFor(r, "github:erin", { binding: BINDING });
+    expectValid(s);
+    expect(s.text).toBe(`deploy\nship\nprod\n${PLAN}\ngithub:erin\n${s.timestamp}\nbinding ${BINDING}`);
+    expect(s).toMatchObject({ binding: BINDING, sealVersion: 3 });
+    expect(Buffer.from(s.statement, "base64")).toEqual(
+      gateSealPayload({ op: "deploy", gate: "ship", environment: "prod", planDigest: PLAN, resolvedBy: "github:erin", timestamp: s.timestamp, binding: BINDING }),
+    );
+    expect((await readGateLedger("deploy", { cwd: r.dir })).resolutions).toEqual([]);
+  });
+
+  test("a passkey's assertion over it records the binding, and the record re-checks offline", async () => {
+    const r = await waiting();
+    const s = await statementFor(r, "github:erin", { binding: BINDING });
+    const a = file(r, "a", JSON.stringify(assert(erin, Buffer.from(s.statement, "base64"))));
+    const out = await recordGateApproval("deploy", "ship", { origin: "cli", actor: "github:erin", at: s.timestamp, binding: BINDING, signature: a, cwd: r.dir });
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.record.binding).toBe(BINDING);
+    expect(out.record.seal).toMatchObject({ kind: "webauthn", version: 3 });
+    const [line] = (await readGateLedger("deploy", { cwd: r.dir })).resolutions;
+    expect(line!.binding).toBe(BINDING);
+    expect(gateAdmission(r.dir, "ship")!.refuses(line!)).toBeNull();
+    const policy = readTrustPolicy(gitRevisionSource(r.dir, "HEAD"), null);
+    expect(checkGateSeal(policy, line!).attested).toBe(true);
+    // Another binding, or none, and the line no longer verifies.
+    for (const edited of [{ binding: "deploy dep_43 until 2026-11-01T12:00:00Z" }, { binding: undefined }]) {
+      expect(checkGateSeal(policy, { ...line!, ...edited }).attested).toBe(false);
+      expect(gateAdmission(r.dir, "ship")!.refuses({ ...line!, ...edited })).not.toBeNull();
+    }
+  });
+
+  test("an ssh signature over it records the binding, and --sign signs one the same way", async () => {
+    const r = await waiting();
+    const s = await statementFor(r, "github:alice", { binding: BINDING });
+    const signed = keys.sshSign(alice, Buffer.from(s.statement, "base64"), s.namespace);
+    const out = await recordGateApproval("deploy", "ship", { origin: "cli", actor: "github:alice", at: s.timestamp, binding: BINDING, signature: file(r, "sig", signed), cwd: r.dir });
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.record).toMatchObject({ binding: BINDING, seal: { signer: "github:alice", signature: signed, version: 3 } });
+    expect(gateAdmission(r.dir, "ship")!.refuses(out.record)).toBeNull();
+
+    const here = await recordGateApproval("deploy", "ship", { origin: "cli", actor: "github:alice", binding: BINDING, sign: alice.file, cwd: r.dir });
+    expect(here.ok).toBe(true);
+    if (!here.ok) return;
+    expect(here.record.seal?.version).toBe(3);
+    expect(gateAdmission(r.dir, "ship")!.refuses(here.record)).toBeNull();
+    expect(checkGateSeal(readTrustPolicy(gitRevisionSource(r.dir, "HEAD"), null), here.record).attested).toBe(true);
+  });
+
+  test("a signature recorded with another binding, or none, than it was made over is refused", async () => {
+    const r = await waiting();
+    const s = await statementFor(r, "github:erin", { binding: BINDING });
+    const a = file(r, "a", JSON.stringify(assert(erin, Buffer.from(s.statement, "base64"))));
+    const record = (binding?: string) =>
+      recordGateApproval("deploy", "ship", { origin: "cli", actor: "github:erin", at: s.timestamp, ...(binding !== undefined ? { binding } : {}), signature: a, cwd: r.dir });
+    expect((await record()).ok).toBe(false);
+    expect((await record("deploy dep_43 until 2026-11-01T12:00:00Z")).ok).toBe(false);
+    // A signature over a statement with no binding can't be recorded with one.
+    const plain = await statementFor(r, "github:erin");
+    const b = file(r, "b", JSON.stringify(assert(erin, Buffer.from(plain.statement, "base64"))));
+    expect((await recordGateApproval("deploy", "ship", { origin: "cli", actor: "github:erin", at: plain.timestamp, binding: BINDING, signature: b, cwd: r.dir })).ok).toBe(false);
+    expect((await readGateLedger("deploy", { cwd: r.dir })).resolutions).toEqual([]);
+    // An approval without a binding records as before: no binding, seal version 1.
+    const out = await recordGateApproval("deploy", "ship", { origin: "cli", actor: "github:erin", at: plain.timestamp, signature: b, cwd: r.dir });
+    expect(out.ok && out.record.binding === undefined && out.record.seal?.version === undefined).toBe(true);
+  });
+
+  test("a binding must be one printable line within the limit, and goes with a signature", async () => {
+    for (const bad of ["", "two\nlines", "cr\r", "tab\there", "nul\u0000", "bidi \u202e", "sep\u2028", " leading", "trailing ", "x".repeat(GATE_BINDING_MAX_BYTES + 1), "é".repeat(GATE_BINDING_MAX_BYTES / 2 + 1)]) {
+      expect(gateBindingProblem(bad), JSON.stringify(bad)).not.toBeNull();
+    }
+    for (const good of [BINDING, "x".repeat(GATE_BINDING_MAX_BYTES), "déploiement 42 jusqu'à midi", "{\"deploy\":\"dep_42\",\"exp\":1793534400}"]) {
+      expect(gateBindingProblem(good), good).toBeNull();
+    }
+    const r = await waiting();
+    expect(await gateApprovalStatement("deploy", "ship", { origin: "cli", actor: "github:erin", binding: "two\nlines", cwd: r.dir })).toBeNull();
+    // An unsigned approval has nothing to bind it.
+    expect((await recordGateApproval("deploy", "ship", { origin: "cli", actor: "github:erin", binding: BINDING, cwd: r.dir })).ok).toBe(false);
+    expect(parseArgs(["approve", "deploy", "ship", "--statement", "--binding", BINDING])).toMatchObject({ statement: true, binding: BINDING });
+    expect(() => parseArgs(["approve", "deploy", "ship", "--statement", "--binding", "--at", "x"])).toThrow(/--binding needs/);
+  });
+
+  test("a ledger line whose binding isn't one line of text is malformed", async () => {
+    const r = await waiting();
+    const s = await statementFor(r, "github:erin", { binding: BINDING });
+    const a = file(r, "a", JSON.stringify(assert(erin, Buffer.from(s.statement, "base64"))));
+    expect((await recordGateApproval("deploy", "ship", { origin: "cli", actor: "github:erin", at: s.timestamp, binding: BINDING, signature: a, cwd: r.dir })).ok).toBe(true);
+    const { appendGateResolution } = await import("../../lifecycle/gate-ledger");
+    await appendGateResolution({ op: "deploy", gate: "ship", resolvedBy: "github:erin", timestamp: new Date().toISOString(), binding: "a\nb" }, { cwd: r.dir });
+    await appendGateResolution({ op: "deploy", gate: "ship", resolvedBy: "github:erin", timestamp: new Date().toISOString(), binding: 7 as unknown as string }, { cwd: r.dir });
+    const ledger = await readGateLedger("deploy", { cwd: r.dir });
+    expect(ledger.resolutions.map((l) => l.binding)).toEqual([BINDING]);
+    expect(ledger.malformed).toBe(2);
   });
 });
