@@ -10,6 +10,7 @@
  *       { type: "npm", packages: ["packages/core", "packages/cli"] },
  *       { type: "oci", image: "dist/api.oci.tar", repository: "ghcr.io/acme/api", tags: ["{label}"], usernameEnv: "GITHUB_ACTOR", passwordEnv: "GITHUB_TOKEN" },
  *       { type: "forge", forge: "github", repo: "acme/api", assets: ["dist/api-linux-amd64.tar.gz"] },
+ *       { type: "homebrew", tap: "acme/homebrew-tap", formula: "Formula/api.rb", template: "packaging/api.rb", assets: ["dist/api-linux-amd64.tar.gz"], url: "https://github.com/acme/api/releases/download/{tag}/{name}" },
  *     ],
  *   },
  * };
@@ -116,9 +117,37 @@ export const ForgePublishSchema = z
   })
   .strict();
 
-export const PublishDeclarationSchema = z.discriminatedUnion("type", [NpmPublishSchema, OciPublishSchema, ForgePublishSchema]);
+/**
+ * A Homebrew formula in a tap repository on GitHub (#4676), rendered from a
+ * template in the member with the release's version and each asset's URL and
+ * SHA-256 (./publish-homebrew.ts).
+ */
+export const HomebrewPublishSchema = z
+  .object({
+    type: z.literal("homebrew"),
+    /** The tap's repository, `owner/name`, such as `acme/homebrew-tap`. */
+    tap: z.string().regex(/^[^/\s]+\/[^/\s]+$/, "owner/name"),
+    /** The formula's path in the tap, such as `Formula/api.rb`. */
+    formula: z.string().min(1),
+    /** The formula with placeholders, relative to the member: `{{version}}`, `{{label}}`, `{{tag}}`, `{{url:<asset name>}}`, `{{sha256:<asset name>}}`. */
+    template: z.string().min(1),
+    /** The files the formula downloads, relative to the member. Each is named in the template by its file name. */
+    assets: z.array(z.string().min(1)).min(1),
+    /** Where each asset is downloaded from: `{tag}`, `{label}`, `{version}` and `{name}` (its file name) are filled in. */
+    url: z.string().min(1),
+    /** The tap's branch that brew installs from. Default: the repository's default branch. */
+    branch: z.string().min(1).optional(),
+    /** The GitHub API root. Default `$GITHUB_API_URL`, else `https://api.github.com`. */
+    api: z.string().url().optional(),
+    /** The variable holding a token that may push to the tap. Default `HOMEBREW_TAP_TOKEN`. */
+    tokenEnv: envName.optional(),
+  })
+  .strict();
+
+export const PublishDeclarationSchema = z.discriminatedUnion("type", [NpmPublishSchema, OciPublishSchema, ForgePublishSchema, HomebrewPublishSchema]);
 
 export type NpmPublishDeclaration = z.infer<typeof NpmPublishSchema>;
 export type OciPublishDeclaration = z.infer<typeof OciPublishSchema>;
 export type ForgePublishDeclaration = z.infer<typeof ForgePublishSchema>;
+export type HomebrewPublishDeclaration = z.infer<typeof HomebrewPublishSchema>;
 export type PublishDeclaration = z.infer<typeof PublishDeclarationSchema>;

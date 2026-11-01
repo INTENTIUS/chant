@@ -18,6 +18,7 @@ export default {
       { type: "npm", packages: ["packages/core", "packages/cli"], access: "public" },
       { type: "oci", image: "dist/api.oci.tar", repository: "ghcr.io/acme/api", usernameEnv: "GITHUB_ACTOR", passwordEnv: "GITHUB_TOKEN" },
       { type: "forge", forge: "github", repo: "acme/api", assets: ["dist/api-linux-amd64.tar.gz"] },
+      { type: "homebrew", tap: "acme/homebrew-tap", formula: "Formula/api.rb", template: "packaging/api.rb", assets: ["dist/api-linux-amd64.tar.gz"], url: "https://github.com/acme/api/releases/download/{tag}/{name}" },
     ],
   },
 };
@@ -91,6 +92,66 @@ A release with no label and no declared `tag` is refused (`publish-forge-no-tag`
 An asset already on the draft with the same name and a matching `digest` is left as it is, so a stage run again uploads only what is missing. One whose digest differs is refused (`publish-forge-asset-exists`), and so is one on Forgejo, which reports no digest. A release already published for the tag is refused (`publish-forge-release-published`), since assets uploaded to it would show one at a time. The exception is a published release that already holds every asset, which is what an earlier publish leaves; the stage then does nothing.
 
 `latest` goes in the reveal's request that publishes the draft, so a release never shows as latest, or stops another being latest, while it is incomplete. A release that was already published when the stage ran is left as it is, `latest` included.
+
+## Homebrew tap
+
+A formula in a tap repository on GitHub, rendered from a template in the member with the release's version and each asset's URL and SHA-256 ([#4676](https://github.com/INTENTIUS/chant/issues/4676)). Read by chant 0.124.63 and newer.
+
+| Field | Meaning |
+|---|---|
+| `tap` | The tap's repository, `owner/name`, such as `acme/homebrew-tap` |
+| `formula` | The formula's path in the tap, such as `Formula/api.rb` |
+| `template` | The formula with placeholders, relative to the member |
+| `assets` | The files the formula downloads, relative to the member. The template names each by its file name, which must be unique |
+| `url` | Where each asset is downloaded from, with `{tag}` (the tag the cut made), `{label}`, `{version}` and `{name}` (the asset's file name) filled in |
+| `branch` | The tap's branch that brew installs from. Default: the repository's default branch |
+| `api` | The GitHub API root. Default: `$GITHUB_API_URL`, else `https://api.github.com` |
+| `tokenEnv` | The variable holding a token that may push to the tap. Default `HOMEBREW_TAP_TOKEN` |
+
+The template is the formula as the tap should hold it, with these placeholders where a release changes it:
+
+| Placeholder | Filled with |
+|---|---|
+| `{{version}}` | The release's label from its first digit on, so `v1.4.0` and `app-v1.4.0` are both `1.4.0`. A release with no label, or a label with no digit, is refused (`publish-homebrew-no-version`) |
+| `{{url:<name>}}` | The `url` pattern for the asset whose file name is `<name>` |
+| `{{sha256:<name>}}` | The SHA-256 in hex of that asset's file in the checkout, which must match the digest the release records for it |
+| `{{label}}`, `{{tag}}` | The release's label, and the tag the cut made |
+
+Any other placeholder, or an asset name that no declared asset has, is refused in the plan (`publish-homebrew-template`). The rest of the template is copied as it is, so a formula with `on_macos` and `on_linux` blocks, and `on_arm` and `on_intel` inside them, puts a `url` and `sha256` pair in each:
+
+```ruby
+class Api < Formula
+  desc "The acme API"
+  homepage "https://acme.example"
+  version "{{version}}"
+
+  on_macos do
+    on_arm do
+      url "{{url:api-darwin-arm64.tar.gz}}"
+      sha256 "{{sha256:api-darwin-arm64.tar.gz}}"
+    end
+    on_intel do
+      url "{{url:api-darwin-amd64.tar.gz}}"
+      sha256 "{{sha256:api-darwin-amd64.tar.gz}}"
+    end
+  end
+
+  on_linux do
+    url "{{url:api-linux-amd64.tar.gz}}"
+    sha256 "{{sha256:api-linux-amd64.tar.gz}}"
+  end
+
+  def install
+    bin.install "api"
+  end
+end
+```
+
+To move a tap you already have, copy its formula into the member and put the placeholders in place of the version, the URLs and the hashes.
+
+A tap is a branch that brew installs from and has no draft, so the stage commits to a branch next to it and the reveal moves the tap branch. The stage makes `chant-publish/<formula>-<version>` at the tap branch's head, or moves it there when an earlier stage left it elsewhere, and commits the rendered formula to it through the contents API with the message `<formula> <version>`. brew reads only the tap branch, so nothing is visible. A tap branch that already holds the formula as rendered stages nothing, and a staging branch that already holds it is not committed to again. The reveal fast-forwards the tap branch to the staged commit and deletes the staging branch. If the tap branch moved since the stage, the fast-forward is refused, and the reveal commits the formula onto the branch instead, unless the branch already holds it. Either way the formula arrives in one commit.
+
+The formula points at the `url` of each asset, so those must download by the time it is revealed. Declare the `forge` target that attaches them before this one: targets reveal in the order declared.
 
 ## SBOMs and provenance
 
@@ -183,7 +244,7 @@ A target that needs a credential and finds none stops the publish before anythin
 A target is an object with this shape, from `packages/core/src/lifecycle/release-publish.ts`:
 
 ```ts
-interface PublishTarget<C extends PublishContextBase = PublishContext, K extends string = "npm" | "oci" | "forge"> {
+interface PublishTarget<C extends PublishContextBase = PublishContext, K extends string = "npm" | "oci" | "forge" | "homebrew"> {
   kind: K;
   name: string;            // for messages, such as "npm (2 packages)"
   destination: string;     // printed before it runs

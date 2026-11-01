@@ -94,6 +94,7 @@ const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: str
   { file: "docs/src/content/docs/cli/ci.mdx", text: "`quarantine` needs `minReader` {v} or newer.", count: 1, floor: "CI_QUARANTINE_FLOOR" },
   { file: "packages/core/src/notify.schema.json", text: "Sent by chant {v} and newer.", count: 1, floor: "CI_QUARANTINE_NOTIFY_FLOOR" },
   { file: "docs/src/content/docs/reference/publish-targets.mdx", text: "Another forge refuses it with `publish-forge-latest-unsupported`. Read by chant {v} and newer", count: 1, floor: "PUBLISH_FORGE_LATEST_FLOOR" },
+  { file: "docs/src/content/docs/reference/publish-targets.mdx", text: "([#4676](https://github.com/INTENTIUS/chant/issues/4676)). Read by chant {v} and newer.", count: 1, floor: "PUBLISH_HOMEBREW_FLOOR" },
 ];
 
 interface Args {
