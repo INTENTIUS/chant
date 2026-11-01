@@ -46,6 +46,8 @@ describe("the gate-decision bundle", () => {
       "packages/core/src/lifecycle/gate-applied.ts",
       "packages/core/src/lifecycle/gate-ledger-select.ts",
       "packages/core/src/lifecycle/gate-seal.ts",
+      // A passkey's seal (#4646), checked with node:crypto.
+      "packages/core/src/lifecycle/gate-webauthn.ts",
       // The gated-request digest (#4551) and its sorted-key replacer.
       "packages/core/src/lifecycle/gated-request-digest.ts",
       "packages/core/src/lifecycle/plan-digest.ts",
@@ -68,8 +70,8 @@ describe("the gate-decision bundle", () => {
       "packages/core/src/workspace/jsonc.ts",
       "packages/core/src/workspace/trust/trust-files.ts",
     ]);
-    // About 49 KB unminified today: 7 KB of it the pinned classes read as data (#3888), 6 KB the approval rules (#4290), and the base approval checks (#4404) bring it to about 55 KB.
+    // About 49 KB unminified today: 7 KB of it the pinned classes read as data (#3888), 6 KB the approval rules (#4290), and the base approval checks (#4404) bring it to about 55 KB, and the passkey seal check (#4646) to about 63 KB.
     const bytes = result.outputFiles.reduce((n, f) => n + f.contents.byteLength, 0);
-    expect(bytes).toBeLessThan(58 * 1024);
+    expect(bytes).toBeLessThan(66 * 1024);
   });
 });

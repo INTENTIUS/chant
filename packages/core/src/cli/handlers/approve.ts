@@ -27,6 +27,12 @@ import { PR_GATE_OP } from "../../pr-loop";
 import { pushLifecycleReport, requireLifecycleLedger } from "../../lifecycle/git";
 import { LIFECYCLE_LOCAL_NOTE, isLifecycleLocalNote } from "../../lifecycle/local-note";
 import { ledgerRecordingOff, NO_RECORD_ENV } from "../../lifecycle/no-record";
+import { checkGateSignature, gateSealPayload, gateSealVersion, WEBAUTHN_SEAL_KIND, type SealedGateApproval } from "../../lifecycle/gate-seal";
+import { gateStatement, readExternalSignature, type GateStatement } from "../../lifecycle/gate-statement";
+import type { GateApprovalSeal } from "../../lifecycle/gate-ledger";
+import type { TrustPolicy } from "../../workspace/trust/policy";
+import { readFileSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
 import { formatError, formatWarning, formatSuccess, formatInfo } from "../format";
 import type { CommandContext } from "../registry";
 
@@ -158,12 +164,41 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
   // has applied since #2126 (`../handlers/run.ts`'s `runOpApprove`). Reading
   // only `--actor` here meant every README that teaches `--approver you`
   // recorded the shell user instead (#2192).
+  // #4646: the statement for a signature made elsewhere, on stdout, with nothing recorded.
+  if (ctx.args.statement) {
+    if (ctx.args.sign !== undefined || ctx.args.signature !== undefined) {
+      console.error(formatError({ message: "--statement prints what to sign and records nothing, so it takes neither --sign nor --signature" }));
+      return 1;
+    }
+    const shared: GateApprovalOptions = {
+      actor: ctx.args.approver ?? ctx.args.actor,
+      ...(ctx.args.plan !== undefined ? { plan: ctx.args.plan } : {}),
+      ...(ctx.args.env !== undefined ? { environment: ctx.args.env } : {}),
+      ...(ctx.args.relayedBy !== undefined ? { relayedBy: ctx.args.relayedBy } : {}),
+      ...(ctx.args.at !== undefined ? { at: ctx.args.at } : {}),
+      allowSameOrigin: ctx.args.allowSameOrigin,
+    };
+    const statement = await gateApprovalStatement(opName, gate, shared);
+    if (!statement) return 1;
+    console.log(JSON.stringify(statement, null, 2));
+    console.error(formatInfo(
+      `Have ${statement.resolvedBy} sign these bytes (an ssh key in the ${statement.namespace} namespace, or a passkey with challenge ${statement.challenge}), ` +
+        `then record it: chant approve ${opName} ${gate} --actor ${statement.resolvedBy}` +
+        (statement.relayedBy !== null ? ` --relayed-by ${statement.relayedBy}` : "") +
+        (statement.planDigest !== null ? ` --plan ${statement.planDigest}` : "") +
+        (statement.environment !== null ? ` --env ${statement.environment}` : "") +
+        ` --at ${statement.timestamp} --signature <file>`,
+    ));
+    return 0;
+  }
+
   // #4575: a person at a terminal sees the plan and types the target's name
   // first, and the approval binds the digest they were shown. --yes, --json,
   // CI and no terminal record as before.
   let plan = ctx.args.plan;
   const confirm = await import("./approve-confirm");
-  if (await confirm.interactiveApproval(ctx.args)) {
+  // #4646: an approval signed elsewhere was confirmed where it was signed.
+  if (ctx.args.signature === undefined && (await confirm.interactiveApproval(ctx.args))) {
     const answered = await confirm.confirmApproval(opName, gate, {
       ...(plan !== undefined ? { plan } : {}),
       ...(ctx.args.env !== undefined ? { environment: ctx.args.env } : {}),
@@ -181,6 +216,8 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
     ...(ctx.args.roles ? { roles: ctx.args.roles } : {}),
     ...(ctx.args.agent ? { agent: true } : {}),
     ...(ctx.args.sign !== undefined ? { sign: ctx.args.sign } : {}),
+    ...(ctx.args.signature !== undefined ? { signature: ctx.args.signature } : {}),
+    ...(ctx.args.at !== undefined ? { at: ctx.args.at } : {}),
     ...(ctx.args.relayedBy !== undefined ? { relayedBy: ctx.args.relayedBy } : {}),
   });
   if (!outcome.ok) return 1;
@@ -267,6 +304,15 @@ export interface GateApprovalOptions {
    * the declaration's `identity.gates` names counts only sealed approvals.
    */
   sign?: string | true;
+  /**
+   * `--signature <file>` (#4646): a signature made outside chant over the
+   * approval's statement (`--statement`), an armored ssh signature or a
+   * WebAuthn assertion in JSON; `-` reads it from stdin. Checked against the
+   * keys and passkeys listed at base for the approver, and kept as the seal.
+   */
+  signature?: string;
+  /** `--at <timestamp>` (#4646): the statement's time, which `--statement` fixes and `--signature` records. */
+  at?: string;
   /** Where the workspace and the key file are looked up from. Defaults to the process's directory. */
   cwd?: string;
   /** Replaces the lexicon evaluator a gate policy is loaded from. For tests. */
@@ -337,8 +383,30 @@ export async function recordGateApproval(
   gate: string,
   opts: GateApprovalOptions,
 ): Promise<GateApprovalOutcome> {
+  const r = await approveGate(opName, gate, opts, false);
+  return "statement" in r ? { ok: false } : r;
+}
+
+/**
+ * The statement an approval of this gate would sign (#4646), for a signature
+ * made outside chant: what `chant approve <op> <gate> --statement` prints.
+ * It runs every check {@link recordGateApproval} runs before signing, with
+ * the same options, and writes nothing. Null when a check refuses, which it
+ * prints.
+ */
+export async function gateApprovalStatement(opName: string, gate: string, opts: GateApprovalOptions): Promise<GateStatement | null> {
+  const r = await approveGate(opName, gate, opts, true);
+  return "statement" in r ? r.statement : null;
+}
+
+async function approveGate(
+  opName: string,
+  gate: string,
+  opts: GateApprovalOptions,
+  statementOnly: boolean,
+): Promise<GateApprovalOutcome | { statement: GateStatement }> {
   // #3955: with recording off the approval would be dropped with the process.
-  if (ledgerRecordingOff()) {
+  if (!statementOnly && ledgerRecordingOff()) {
     console.error(formatError({
       message: `Cannot record the approval of "${gate}": ${NO_RECORD_ENV} is set, so nothing is written to chant/lifecycle`,
       hint: `Unset ${NO_RECORD_ENV} to approve the gate.`,
@@ -557,34 +625,78 @@ export async function recordGateApproval(
     }));
     return { ok: false };
   }
+  // #4646: --statement prints the bytes a signature made elsewhere signs, at
+  // a time it fixes; --signature records that signature with the same time.
+  const refuse = (message: string, hint?: string) => {
+    console.error(formatError({ message: `Gate "${gate}" on "${opName}" was not approved: ${message}`, ...(hint ? { hint } : {}) }));
+    return { ok: false } as const;
+  };
+  if (opts.signature !== undefined && opts.sign !== undefined) {
+    return refuse("--sign signs here and --signature brings a signature made elsewhere; pass one of them");
+  }
+  if (opts.at !== undefined && !statementOnly && opts.signature === undefined) {
+    return refuse("--at sets the time of a statement signed elsewhere, so it goes with --statement or --signature");
+  }
+  if (opts.signature !== undefined && opts.at === undefined) {
+    return refuse(
+      "--signature needs --at <timestamp>, the statement's time, since the signature covers it",
+      `Pass the timestamp \`chant approve ${opName} ${gate} --statement\` printed.`,
+    );
+  }
+  let timestamp = new Date().toISOString();
+  if (opts.at !== undefined) {
+    const at = Date.parse(opts.at);
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(opts.at) || Number.isNaN(at) || new Date(at).toISOString() !== opts.at) {
+      return refuse(`--at takes a UTC time as chant writes one, such as ${timestamp}, not ${JSON.stringify(opts.at)}`);
+    }
+    if (at > Date.now() + AT_SKEW_MS) return refuse(`--at ${opts.at} is in the future`);
+    if (standing && opts.at < standing.timestamp) {
+      return refuse(
+        `--at ${opts.at} is before the pending fact it answers (${standing.timestamp}), and a run counts only approvals newer than that`,
+        `Take a fresh statement: chant approve ${opName} ${gate} --statement.`,
+      );
+    }
+    timestamp = opts.at;
+  }
+  const sealed: SealedGateApproval = {
+    op: opName,
+    gate,
+    ...(environment !== undefined ? { environment } : {}),
+    ...(planDigest !== undefined ? { planDigest } : {}),
+    resolvedBy,
+    ...(relayedBy ? { relayedBy } : {}),
+    timestamp,
+    ...(checkpointDigest !== undefined ? { checkpointDigest } : {}),
+  };
+  if (statementOnly) {
+    const { CHANT_VERSION } = await import("../../chant-version");
+    return { statement: gateStatement(sealed, CHANT_VERSION) };
+  }
+
   const rule = identity.gateAdmissionFrom(scope, gate);
-  if (rule && opts.sign === undefined) {
+  if (rule && opts.sign === undefined && opts.signature === undefined) {
     console.error(formatError({
       message:
         `Gate "${gate}" needs a signed approval: chant.workspace.json at base names it in identity.gates` +
         (rule.requirement.class !== null ? `, from the class ${rule.requirement.class}` : "") +
         `, and this approval is not signed`,
-      hint: `chant approve ${opName} ${gate} --actor <principal> --sign [<key file>], with a key ${scope.policy.signersPath} at base lists for that principal.`,
+      hint:
+        `chant approve ${opName} ${gate} --actor <principal> --sign [<key file>], with a key ${scope.policy.signersPath} at base lists for that principal, ` +
+        `or --signature <file> --at <timestamp> with a signature made elsewhere over the statement --statement prints.`,
     }));
     return { ok: false };
   }
-  const timestamp = new Date().toISOString();
   let seal: GateResolutionRecord["seal"];
+  if (opts.signature !== undefined) {
+    const made = externalSeal(opts.signature, sealed, scope.policy, cwd);
+    if ("refused" in made) return refuse(made.refused);
+    seal = made.seal;
+  }
   if (opts.sign !== undefined) {
     const { resolveSigningKey, sealGateApproval, gateSealVersion, SealError } = await import("../../workspace/trust/seal");
     try {
       const key = resolveSigningKey(opts.sign, cwd);
       try {
-        const sealed = {
-          op: opName,
-          gate,
-          ...(environment !== undefined ? { environment } : {}),
-          ...(planDigest !== undefined ? { planDigest } : {}),
-          resolvedBy,
-          ...(relayedBy ? { relayedBy } : {}),
-          timestamp,
-          ...(checkpointDigest !== undefined ? { checkpointDigest } : {}),
-        };
         // #3947: a seal over a checkpoint digest is seal version 2.
         seal = { ...sealGateApproval(key.file, sealed), ...(gateSealVersion(sealed) === 2 ? { version: 2 as const } : {}) };
       } finally {
@@ -704,7 +816,7 @@ export async function recordGateApproval(
       (record.relayedBy ? `, relayed by ${record.relayedBy},` : "") +
       ` at ${record.timestamp}` +
       (record.url ? ` (${record.url})` : "") +
-      (record.seal ? `, signed with ${record.seal.key}` : "") +
+      (record.seal ? `, signed with ${record.seal.kind === WEBAUTHN_SEAL_KIND ? "passkey " : ""}${record.seal.key}` : "") +
       push.suffix,
   ));
   if (record.planDigest) {
@@ -734,6 +846,52 @@ export async function recordGateApproval(
     }
   }
   return { ok: true, record, pushed: push.pushed };
+}
+
+/** How far in the future `--at` may be (#4646), for a clock that runs a little ahead of this one. */
+const AT_SKEW_MS = 5 * 60 * 1000;
+
+/**
+ * The seal for a signature made outside chant (#4646): the file `--signature`
+ * names (`-` for stdin), read as an armored ssh signature or a WebAuthn
+ * assertion, and checked over `sealed`'s statement against the keys and
+ * passkeys listed at base for the approver. A signature nothing at base
+ * vouches for is refused rather than recorded.
+ */
+function externalSeal(
+  from: string,
+  sealed: SealedGateApproval,
+  policy: TrustPolicy,
+  cwd: string,
+): { seal: GateApprovalSeal } | { refused: string } {
+  let text: string;
+  try {
+    text = from === "-" ? readFileSync(0, "utf-8") : readFileSync(resolvePath(cwd, from), "utf-8");
+  } catch (err) {
+    return { refused: `--signature ${from} can't be read: ${err instanceof Error ? err.message : String(err)}` };
+  }
+  const sig = readExternalSignature(text);
+  if ("problem" in sig) return { refused: `--signature ${from}: ${sig.problem}` };
+  const candidate: GateApprovalSeal =
+    sig.kind === "ssh"
+      ? { signer: sealed.resolvedBy, key: "", signature: sig.signature }
+      : {
+          kind: WEBAUTHN_SEAL_KIND,
+          signer: sealed.resolvedBy,
+          key: sig.assertion.id,
+          signature: sig.assertion.signature,
+          clientDataJSON: sig.assertion.clientDataJSON,
+          authenticatorData: sig.assertion.authenticatorData,
+        };
+  const r = checkGateSignature(policy, sealed.resolvedBy, candidate as unknown as { signature: string } & Record<string, unknown>, gateSealPayload(sealed));
+  if (!r.ok) {
+    return {
+      refused: r.unlisted
+        ? `${sealed.resolvedBy} has no ${sig.kind === "ssh" ? `key in ${policy.signersPath}` : "passkey in .chant/trust.json"} at base, so a signature made elsewhere can't be checked`
+        : `the ${sig.kind === "ssh" ? "ssh signature" : "passkey's assertion"} does not verify for ${sealed.resolvedBy} over this approval's statement: ${r.reason}`,
+    };
+  }
+  return { seal: { ...candidate, key: r.key, ...(gateSealVersion(sealed) === 2 ? { version: 2 as const } : {}) } };
 }
 
 /**

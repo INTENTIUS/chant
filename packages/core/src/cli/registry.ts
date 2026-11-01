@@ -703,6 +703,10 @@ export interface ParsedArgs {
    * On `chant approve` and `chant run approve`, the key that seals the gate approval (#3163).
    */
   sign?: string | true;
+  /** `chant approve <op> <gate> --statement` (#4646): print the statement an approval signs, and record nothing. */
+  statement?: boolean;
+  /** `chant approve <op> <gate> --signature <file|->` (#4646): a signature made elsewhere over the statement. */
+  signature?: string;
   /**
    * `chant approve <op> <gate> --relayed-by <principal>` and `chant workspace
    * points answer <id> --relayed-by <principal>` (#3402): the principal that
