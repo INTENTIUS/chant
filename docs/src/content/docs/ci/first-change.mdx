@@ -21,12 +21,17 @@ export const network: Component = {
   name: "network",
   dependsOn: [],
   deploy: [
-    phase("Apply", [
-      { kind: "cfn-deploy", stack: "network", template: "dist/network.template.json" },
-    ]),
+    phase("Apply", [step]), // the step for your platform, from the table below
   ],
 };
 ```
+
+| Platform | Step |
+|---|---|
+| Kubernetes | `{ kind: "kubectl-apply", stack: "network", manifest: "dist/network.yaml" }` |
+| AWS | `{ kind: "cfn-deploy", stack: "network", template: "dist/network.json" }` |
+| Azure | `{ kind: "arm-deploy", resourceGroup: "network", template: "dist/network.json" }` |
+| GCP | `{ kind: "gcp-apply", stack: "network", manifest: "dist/network.yaml" }` |
 
 List the environment in `chant.config.ts` as `environments: ["prod"]`. [Plan previews](/chant/components/plan-previews/) lists the step kinds that can plan.
 
@@ -34,7 +39,7 @@ List the environment in `chant.config.ts` as `environments: ["prod"]`. [Plan pre
 
 ```sh
 npx chant build --components --generate github --pr-loop --env prod \
-  --pr-build-command 'chant build src --lexicon aws -o dist/network.template.json' \
+  --pr-build-command 'chant build src --lexicon <yours> -o dist/<your file>' \
   --before-script 'npm ci --no-audit --no-fund' \
   --before-script 'echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"' \
   --output .github/workflows/chant-pr.yml
@@ -46,9 +51,9 @@ npx chant build --components --generate github --pr-loop --env prod \
 | Forgejo | `forgejo` | `.forgejo/workflows/chant-pr.yml` |
 | GitLab | `gitlab` | `.gitlab-ci.yml` |
 
-`--pr-build-command` builds the template before each plan. The two `--before-script` lines install chant in each job. On GitLab, the second line is `export PATH="$PWD/node_modules/.bin:$PATH"`, and you also set `CHANT_FORGE_TOKEN`, a project access token with the `api` scope, as a masked variable.
+`--pr-build-command` builds your file before each plan. The two `--before-script` lines install chant in each job. On GitLab, the second line is `export PATH="$PWD/node_modules/.bin:$PATH"`, and you also set `CHANT_FORGE_TOKEN`, a project access token with the `api` scope, as a masked variable.
 
-The plan and record jobs need AWS credentials and the region. The credentials must be allowed to create, describe and delete change sets.
+The plan and record jobs need credentials for your platform, allowed to read what the plan compares against.
 
 ## Push one change
 
