@@ -99,7 +99,7 @@ describe("createCapabilityRegistry", () => {
   // for them to live in instead.
   test("family table lists exactly the agnostic starter families plus the Cloudflare apply leaves (#1293)", () => {
     expect(Object.keys(STARTER_VERB_FAMILIES).sort()).toEqual(
-      ["build", "cloudflare", "engineOutputs", "escapeHatch", "publish", "sbom", "secrets", "supplyChainPolicy", "supplyChainSecurity", "waitVerify"].sort(),
+      ["build", "cloudflare", "engineOutputs", "escapeHatch", "publish", "release", "sbom", "secrets", "supplyChainPolicy", "supplyChainSecurity", "waitVerify"].sort(),
     );
   });
 

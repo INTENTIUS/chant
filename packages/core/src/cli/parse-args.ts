@@ -358,6 +358,8 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--image") {
       result.image = args[++i];
       if (!result.image || result.image.startsWith("-")) throw new Error("--image needs an image reference: --image <name>:<tag>");
+      // `chant release cut --image <component>=<ref>` (#4694) is repeatable.
+      (result.images ??= []).push(result.image);
     } else if (arg === "--network") {
       result.network = args[++i];
       if (!result.network || result.network.startsWith("-")) throw new Error("--network needs a Docker network name: --network <name>");

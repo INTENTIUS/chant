@@ -439,7 +439,14 @@ The `--no-release-record` flag always wins over config for that one invocation. 
 
 #### Running a release: `--release`
 
-`--release <label|digest>`, from chant 0.124.29, says that this run deploys a [release](/chant/cli/release/) ([#4043](https://github.com/INTENTIUS/chant/issues/4043)). The run builds from the checked-out commit, so chant checks the claim before anything deploys. The release must have been cut from the commit `HEAD` is at, and must have a target for `--env`. Otherwise the run stops with exit 1 and a message that says which check failed. When it passes, each release record the run writes carries the release's `releaseDigest`, and [`release list`](/chant/cli/release/#release-list) shows the environment as running the release.
+`--release <label|digest>`, from chant 0.124.29, says that this run deploys a [release](/chant/cli/release/) ([#4043](https://github.com/INTENTIUS/chant/issues/4043)). The run's components are the checked-out commit's, so chant checks the claim before anything deploys. The release must have been cut from the commit `HEAD` is at, and must have a target for `--env`. Otherwise the run stops with exit 1 and a message that says which check failed. When it passes, each release record the run writes carries the release's `releaseDigest`, and [`release list`](/chant/cli/release/#release-list) shows the environment as running the release.
+
+Since [#4694](https://github.com/INTENTIUS/chant/issues/4694) the run deploys the release's own artifacts and builds none of them again. Before anything runs, each component the release recorded an artifact for has its build steps (`docker-build`, `zip-package`, `jvm-build` and the SBOM steps) taken out:
+
+- An image [handed to the cut](/chant/cli/release/#an-image-built-elsewhere) is in its registry already. Each `release-image` step of the component gets its reference and digest, and a publish step is replaced by a `release-image` step that hands on the same image, so `@Publish.uri` and `@Publish.digest` read it.
+- An archive the cut built is published by the component's publish step from the path the cut wrote it to. The run is refused when the file is not there, as on a machine other than the one that cut.
+
+A component with build steps whose artifact the release did not record, a component with a `release-image` step when the release recorded no image for it, and a step that reads the output of a build step the run takes out are refused, each by name, and nothing deploys. A component with neither build steps nor a `release-image` step runs as declared. The run prints what it took out and the image each component runs on stderr. Without `--release`, a `release-image` step fails, so a deploy never runs an image no release named. `--release` runs on the local runtime only.
 
 A run without `--release` writes records with no `releaseDigest`, even when `HEAD` is a commit that a release was cut from. chant does not infer a release, because a rebuilt image is not guaranteed to be the release's own. The templates the run reads come from the checkout and not from the release's recorded target, so use `components promote --release` to deploy the recorded templates. If a recorded deploy's build manifest holds other bytes than the release's `artifactDigests`, the run warns about it as a promote does.
 
@@ -460,7 +467,7 @@ A run without `--release` writes records with no `releaseDigest`, even when `HEA
 | `--group <name>` | Apply one job group's runs of a decided wave (`run wave`) |
 | `--base <ref>` | The commit the wave's gate policy is read from (`run wave`) |
 | `--output <dir>` | Where generated pipeline files go, instead of the forge's own directory (`run --generate`) |
-| `--release <label\|digest>` | The run deploys this release, which must be cut from the checked-out commit; the records name it in `releaseDigest` (`run --components`). See [Running a release](#running-a-release---release) |
+| `--release <label\|digest>` | The run deploys this release, which must be cut from the checked-out commit, from the artifacts it recorded; the records name it in `releaseDigest` (`run --components`). See [Running a release](#running-a-release---release) |
 | `--no-release-record` | Skip auto-emitting a release-ledger record after a successful `run --components` deploy — default is ON (`run --components`) |
 | `--no-record` | Run every step but record nothing on `chant/lifecycle` and push nothing; a gate step fails. `CHANT_NO_RECORD=1` does the same for every chant process that inherits it (`run <name>`, `run --components`, local runtime) |
 | `--env <name>` | Target [environment](/chant/configuration/config-file/#environments), threaded into every capability's context (`run --components`); defaults to `local` |

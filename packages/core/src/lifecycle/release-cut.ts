@@ -17,6 +17,14 @@
  * component's own file, the member's `chant.config.ts` and the paths its
  * build steps read.
  *
+ * An image built elsewhere, as by a CI job that builds what the cut's machine
+ * can't, is handed to the cut by digest (#4694, `--image
+ * <component>=<repository>@sha256:<hex>`). The release records it with its
+ * reference in `ref`, and the cut builds nothing for that component: its
+ * archive steps, if it has any, don't run, and no earlier release's entry is
+ * carried. A deploy under the release runs that image
+ * (../components/release-run.ts).
+ *
  * A project with no components (#4046) needs no special case here: its
  * targets hold the files `chant build --env <env>` writes, each with
  * `component: null`, and `artifactDigests` is empty.
@@ -103,6 +111,8 @@ export type ReleaseCutCode =
   | "release-no-environments"
   | "release-no-components"
   | "release-build-inputs-differ"
+  | "release-image-invalid"
+  | "release-image-unknown-component"
   | "release-unsigned"
   | "release-signer-refused"
   | "declaration-invalid";
@@ -156,6 +166,12 @@ export interface CutRequest {
    * refused, and a cut that is not a dry run records the request for one.
    */
   overrideGreen?: boolean;
+  /**
+   * Images built elsewhere and handed to the cut (#4694), by component: each
+   * `<repository>@sha256:<hex>`. The release records each as the component's
+   * image, and the cut builds nothing for it.
+   */
+  images?: Readonly<Record<string, string>>;
 }
 
 export interface CutResult {
@@ -168,6 +184,26 @@ export interface CutResult {
   stored: boolean;
   /** The components whose artifacts were taken from an earlier release, and that release's digest. */
   reused: Array<{ component: string; from: string }>;
+  /** The images handed to the cut (#4694), by component, as recorded. */
+  handed: Array<{ component: string; ref: string; digest: string }>;
+}
+
+/** An image reference by digest: `<repository>@sha256:<64 hex>`, the repository without a tag. */
+const IMAGE_BY_DIGEST = /^([a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?(?:\/[a-z0-9]+(?:[._-]+[a-z0-9]+)*)*)@(sha256:[0-9a-f]{64})$/;
+
+/**
+ * The release artifact for an image handed to the cut (#4694), or why the
+ * reference can't be one: it must name its repository and its digest, and no
+ * tag, since a tag can move after the cut.
+ */
+export function handedImage(component: string, ref: string): ReleaseArtifact | { error: string } {
+  const m = IMAGE_BY_DIGEST.exec(ref);
+  if (!m) {
+    return {
+      error: `--image ${component}=${ref}: an image is handed to the cut by digest, as <repository>@sha256:<64 hex digits> with no tag, such as registry.fly.io/app@sha256:${"0".repeat(64)}`,
+    };
+  }
+  return { component, kind: "image", path: "", digest: m[2]!, ref };
 }
 
 function git(top: string, args: string[]): string {
@@ -249,9 +285,10 @@ interface Prepared {
   releaseRule: ReturnType<typeof import("../workspace/identity").releaseRuleFrom>;
   /** The components to build, by the environment they are built in. */
   toBuild: Map<string, string[]>;
-  /** The artifacts carried from an earlier release. */
+  /** The artifacts carried from an earlier release, and the images handed to the cut. */
   carried: ReleaseArtifact[];
   reused: CutResult["reused"];
+  handed: CutResult["handed"];
   member: string | null;
   /** The lane the commit was checked in, or null for the full green tag. */
   lane: string | null;
@@ -447,15 +484,34 @@ async function prepare(req: CutRequest, record = false): Promise<Prepared> {
     );
   }
 
+  // #4694: an image handed to the cut is the component's, in place of a build.
+  const enabled = new Set(compiled.flatMap((t) => t.components));
+  const handedArtifacts: ReleaseArtifact[] = [];
+  for (const [component, ref] of Object.entries(req.images ?? {})) {
+    if (!enabled.has(component)) {
+      throw new ReleaseCutError(
+        "release-image-unknown-component",
+        `--image names "${component}", which is not a component enabled in any environment of this member`,
+        enabled.size > 0 ? `The components are: ${[...enabled].sort().join(", ")}` : undefined,
+      );
+    }
+    const artifact = handedImage(component, ref);
+    if ("error" in artifact) throw new ReleaseCutError("release-image-invalid", artifact.error);
+    handedArtifacts.push(artifact);
+  }
+  const handedTo = new Set(handedArtifacts.map((a) => a.component));
+
   // Which environment each component's artifacts are built in: the first one it is enabled in.
   const firstEnv = new Map<string, CompiledTarget>();
-  for (const t of compiled) for (const c of t.components) if (!firstEnv.has(c) && (t.buildSteps[c]?.length ?? 0) > 0) firstEnv.set(c, t);
+  for (const t of compiled) {
+    for (const c of t.components) if (!firstEnv.has(c) && !handedTo.has(c) && (t.buildSteps[c]?.length ?? 0) > 0) firstEnv.set(c, t);
+  }
 
   // git names paths from its top with symlinks resolved (/private/var on macOS).
   const realCwd = realpathSync(cwd);
   const previous = firstEnv.size > 0 ? await previousRelease(top, commit, cwd) : undefined;
   const reused: CutResult["reused"] = [];
-  const artifacts: ReleaseArtifact[] = [];
+  const artifacts: ReleaseArtifact[] = [...handedArtifacts];
   const toBuild = new Map<string, string[]>();
   for (const [component, target] of firstEnv) {
     const prior = previous?.artifactDigests.filter((a) => a.component === component) ?? [];
@@ -484,6 +540,7 @@ async function prepare(req: CutRequest, record = false): Promise<Prepared> {
     toBuild,
     carried: artifacts,
     reused,
+    handed: handedArtifacts.map((a) => ({ component: a.component, ref: a.ref!, digest: a.digest })),
     member: ledger.members.length > 0 ? ledger.members.join("/") : null,
     lane,
     override,
@@ -531,6 +588,8 @@ export interface CutPlan {
   build: Array<{ component: string; env: string }>;
   /** The components whose artifacts would be carried from an earlier release. */
   reused: CutResult["reused"];
+  /** The images handed to the cut (#4694), by component. */
+  handed: CutResult["handed"];
   /** Each component's publish steps, with the environments whose deploy runs them. */
   publishSteps: Array<{ component: string; kind: string; to: string | null; envs: string[] }>;
   /** Whether the release gate in identity.gates requires a signed cut. */
@@ -605,6 +664,7 @@ export async function planRelease(req: CutRequest): Promise<CutPlan> {
     targets: targets.map((t) => ({ env: t.env, params: t.params, templates: t.templates.map(({ component, path }) => ({ component, path })), ...(t.trees ? { trees: t.trees } : {}) })),
     build,
     reused: p.reused,
+    handed: p.handed,
     publishSteps: [...steps.values()],
     signatureRequired: p.releaseRule.requirement !== null,
     lane: p.lane,
@@ -628,7 +688,7 @@ export async function planRelease(req: CutRequest): Promise<CutPlan> {
  */
 export async function cutRelease(req: CutRequest): Promise<CutResult> {
   const p = await prepare(req, true);
-  const { cwd, commit, compiled, releaseRule, reused } = p;
+  const { cwd, commit, compiled, releaseRule, reused, handed } = p;
   const artifacts = [...p.carried];
   for (const env of p.envs) {
     const names = p.toBuild.get(env);
@@ -697,5 +757,6 @@ export async function cutRelease(req: CutRequest): Promise<CutResult> {
     label: outcome.appended ? outcome.cut.label : outcome.label,
     stored: stored.written,
     reused,
+    handed,
   };
 }
