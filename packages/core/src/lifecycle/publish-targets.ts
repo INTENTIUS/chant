@@ -11,6 +11,8 @@
  *   Forgejo release named by the release's tag.
  * - `homebrew` (./publish-homebrew.ts): a formula in a tap repository on
  *   GitHub, rendered from a template with each asset's URL and SHA-256.
+ * - `marketplace` (./publish-marketplace.ts): a `.vsix` on the VS Code
+ *   Marketplace (through `vsce`) or Open VSX (through its REST API).
  *
  * A file a target reads that the release records as an artifact at the same
  * path is checked against the release's digest, and a file that differs is
@@ -42,6 +44,9 @@ export async function createPublishTargets(decls: readonly PublishDeclaration[],
         break;
       case "homebrew":
         out.push((await import("./publish-homebrew")).homebrewTarget(d, deps));
+        break;
+      case "marketplace":
+        out.push((await import("./publish-marketplace")).marketplaceTarget(d, deps));
         break;
     }
   }

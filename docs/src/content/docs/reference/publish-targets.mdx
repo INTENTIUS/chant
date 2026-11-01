@@ -153,6 +153,33 @@ A tap is a branch that brew installs from and has no draft, so the stage commits
 
 The formula points at the `url` of each asset, so those must download by the time it is revealed. Declare the `forge` target that attaches them before this one: targets reveal in the order declared.
 
+## Editor marketplaces
+
+A packaged `.vsix` on the VS Code Marketplace or on Open VSX ([#4676](https://github.com/INTENTIUS/chant/issues/4676)). Declare one target per marketplace. Read by chant 0.124.63 and newer.
+
+```ts
+{ type: "marketplace", marketplace: "vscode", vsix: "dist/acme.vsix" },
+{ type: "marketplace", marketplace: "openvsx", vsix: "dist/acme.vsix" },
+```
+
+| Field | Meaning |
+|---|---|
+| `marketplace` | `vscode` or `openvsx` |
+| `vsix` | The `.vsix` that `vsce package` wrote, relative to the member. The extension's publisher, name and version are read from `extension/package.json` inside it |
+| `registry` | Open VSX's root, default `https://open-vsx.org`, or the VS Code Marketplace's gallery, default `https://marketplace.visualstudio.com` |
+| `tokenEnv` | The variable holding the token. Default `VSCE_PAT` for the VS Code Marketplace and `OVSX_PAT` for Open VSX, the variables `vsce` and `ovsx` read |
+
+A `.vsix` that the release records as an asset must match its digest, as with any target. A file that is not a zip with an `extension/package.json` naming `publisher`, `name` and `version` is refused in the plan (`publish-marketplace-vsix-invalid`).
+
+A marketplace has no draft. A version is visible as soon as it is uploaded, and a version can't be uploaded twice. So the stage uploads nothing: it checks what it can without changing anything, and the reveal uploads. If another target fails to stage, nothing has reached a marketplace. A marketplace that refuses the upload fails at the reveal, after the targets declared before it have revealed, so declare the marketplaces last.
+
+| Marketplace | Stage | Reveal |
+|---|---|---|
+| Open VSX | Reads the namespace (`GET /api/{namespace}`), and refuses a missing one with `publish-marketplace-no-namespace`. Reads the version (`GET /api/{namespace}/{name}/{version}`). A version already there is `present` when the SHA-256 of what Open VSX serves for it is the file's, and is refused with `publish-marketplace-version-exists` otherwise | Sends the file with `POST /api/-/publish`, then downloads what Open VSX serves for the version and refuses a digest that differs (`publish-marketplace-digest-mismatch`). A version already there, as after a run whose record was lost, is checked the same way and not sent again |
+| VS Code Marketplace | Asks the gallery's public `extensionquery` API for the extension's versions. A version already listed is `present`, by version only, since the gallery reports no digest | Runs `vsce publish --packagePath <vsix>` with the token in `VSCE_PAT`, unless the gallery lists the version by then |
+
+The VS Code Marketplace target needs `vsce` on `PATH`, such as from `npm install -g @vscode/vsce`. vsce's output goes through the redactor. Open VSX takes its token as a query parameter, which the redactor masks in any error that quotes the request.
+
 ## SBOMs and provenance
 
 Each target attaches the release's provenance statement to what it publishes, and an SBOM when it has a source for one ([#4049](https://github.com/INTENTIUS/chant/issues/4049)). Both are attached in the stage, so nothing is visible before they are. A missing SBOM source is refused only when the workspace opts into the `supply-chain` security group, `"security": ["supply-chain"]` in `chant.workspace.json` ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). Without that group nothing is attached and nothing is printed.
@@ -233,7 +260,7 @@ Every credential comes from the environment of the run, which is the shell on a 
 | The redactor masks | Such as |
 |---|---|
 | Each credential a target read, and each token a registry handed back for it | the value of `OCI_PASSWORD`, a GHCR bearer token |
-| The value of each variable CI and registries use for tokens | `NODE_AUTH_TOKEN`, `NPM_TOKEN`, `NPM_ID_TOKEN`, `SIGSTORE_ID_TOKEN`, `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, `ACTIONS_RUNTIME_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `GITLAB_TOKEN`, `CI_JOB_TOKEN`, `FORGEJO_TOKEN`, `GITEA_TOKEN`, `OCI_PASSWORD`, `DOCKER_PASSWORD` |
+| The value of each variable CI and registries use for tokens | `NODE_AUTH_TOKEN`, `NPM_TOKEN`, `NPM_ID_TOKEN`, `SIGSTORE_ID_TOKEN`, `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, `ACTIONS_RUNTIME_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `GITLAB_TOKEN`, `CI_JOB_TOKEN`, `FORGEJO_TOKEN`, `GITEA_TOKEN`, `OCI_PASSWORD`, `DOCKER_PASSWORD`, `VSCE_PAT`, `OVSX_PAT` |
 | The value of each variable a declaration names | `passwordEnv: "GHCR_PAT"` |
 | A token written in the forms npm and HTTP headers use | `_authToken=...`, `Authorization: Bearer ...`, `PRIVATE-TOKEN: ...` |
 
@@ -244,7 +271,7 @@ A target that needs a credential and finds none stops the publish before anythin
 A target is an object with this shape, from `packages/core/src/lifecycle/release-publish.ts`:
 
 ```ts
-interface PublishTarget<C extends PublishContextBase = PublishContext, K extends string = "npm" | "oci" | "forge" | "homebrew"> {
+interface PublishTarget<C extends PublishContextBase = PublishContext, K extends string = "npm" | "oci" | "forge" | "homebrew" | "marketplace"> {
   kind: K;
   name: string;            // for messages, such as "npm (2 packages)"
   destination: string;     // printed before it runs
@@ -274,7 +301,7 @@ A release target is given a `PublishContext` with these fields. The last five (`
 | `redactor` | Masks credentials. A target adds each credential and token it reads |
 | `log(line)` | Prints a line of progress, redacted |
 
-The targets take their dependencies through `PublishDeps`, which holds the `fetch` the OCI and forge targets use and the `npm` executable. In the tests npm runs as a fake binary that keeps a registry with dist-tags in a file, the OCI target pushes to a registry fake that the test starts on `127.0.0.1`, and the forge targets call a forge fake with draft releases.
+The targets take their dependencies through `PublishDeps`, which holds the `fetch` the OCI, forge, homebrew and marketplace targets use, and the `npm` and `vsce` executables. In the tests npm runs as a fake binary that keeps a registry with dist-tags in a file, the OCI target pushes to a registry fake that the test starts on `127.0.0.1`, and the forge targets call a forge fake with draft releases.
 
 A target that publishes something other than a cut release takes its own context as `C`, which extends `PublishContextBase`, and its own `kind` names as `K` ([#4602](https://github.com/INTENTIUS/chant/issues/4602)). The terraform lexicon's module targets publish a module version this way. They throw `PublishTargetError` and take their requests and clock through `PublishDeps`. Credentials are read with `readCredential` from `lifecycle/publish-credentials.ts` and masked by the context's redactor. Their own code makes them, so they never appear under `release.publish`.
 

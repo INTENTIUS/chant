@@ -31,6 +31,8 @@ export const TOKEN_ENV_VARS = [
   "GITEA_TOKEN",
   "OCI_PASSWORD",
   "DOCKER_PASSWORD",
+  "VSCE_PAT",
+  "OVSX_PAT",
 ] as const;
 
 /** What a masked value is replaced with. */

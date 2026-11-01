@@ -10,6 +10,7 @@
  *       { type: "npm", packages: ["packages/core", "packages/cli"] },
  *       { type: "oci", image: "dist/api.oci.tar", repository: "ghcr.io/acme/api", tags: ["{label}"], usernameEnv: "GITHUB_ACTOR", passwordEnv: "GITHUB_TOKEN" },
  *       { type: "forge", forge: "github", repo: "acme/api", assets: ["dist/api-linux-amd64.tar.gz"] },
+ *       { type: "marketplace", marketplace: "openvsx", vsix: "dist/acme.vsix" },
  *       { type: "homebrew", tap: "acme/homebrew-tap", formula: "Formula/api.rb", template: "packaging/api.rb", assets: ["dist/api-linux-amd64.tar.gz"], url: "https://github.com/acme/api/releases/download/{tag}/{name}" },
  *     ],
  *   },
@@ -144,10 +145,28 @@ export const HomebrewPublishSchema = z
   })
   .strict();
 
-export const PublishDeclarationSchema = z.discriminatedUnion("type", [NpmPublishSchema, OciPublishSchema, ForgePublishSchema, HomebrewPublishSchema]);
+/**
+ * A packaged `.vsix` on the VS Code Marketplace or Open VSX (#4676), uploaded
+ * at the reveal, since a marketplace has no draft (./publish-marketplace.ts).
+ */
+export const MarketplacePublishSchema = z
+  .object({
+    type: z.literal("marketplace"),
+    marketplace: z.enum(["vscode", "openvsx"]),
+    /** The `.vsix` that `vsce package` wrote, relative to the member. Its publisher, name and version are read from it. */
+    vsix: z.string().min(1),
+    /** Open VSX's root, default `https://open-vsx.org`; the VS Code Marketplace's gallery, default `https://marketplace.visualstudio.com`. */
+    registry: z.string().url().optional(),
+    /** The variable holding the token. Default `VSCE_PAT` for the VS Code Marketplace, `OVSX_PAT` for Open VSX. */
+    tokenEnv: envName.optional(),
+  })
+  .strict();
+
+export const PublishDeclarationSchema = z.discriminatedUnion("type", [NpmPublishSchema, OciPublishSchema, ForgePublishSchema, HomebrewPublishSchema, MarketplacePublishSchema]);
 
 export type NpmPublishDeclaration = z.infer<typeof NpmPublishSchema>;
 export type OciPublishDeclaration = z.infer<typeof OciPublishSchema>;
 export type ForgePublishDeclaration = z.infer<typeof ForgePublishSchema>;
 export type HomebrewPublishDeclaration = z.infer<typeof HomebrewPublishSchema>;
+export type MarketplacePublishDeclaration = z.infer<typeof MarketplacePublishSchema>;
 export type PublishDeclaration = z.infer<typeof PublishDeclarationSchema>;
