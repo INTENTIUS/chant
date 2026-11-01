@@ -9,7 +9,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, describe, expect, test, vi } from "vitest";
 import { parseArgs } from "../cli/parse-args";
-import { NEXT_RELEASE } from "../release-floors";
 import { CI_QUARANTINE_FLOOR, PLAYWRIGHT_NOTHING, quarantineFilter, quarantineProblems, runCiQuarantine, utcToday } from "./ci-quarantine";
 import { parseDeclaration, WorkspaceReadError, type CiGreen } from "./declaration";
 
@@ -143,8 +142,8 @@ describe("chant ci quarantine (#4677)", () => {
     expect(expired.err).toMatch(/^chant\.workspace\.json:\d+:\d+: ci\.green\.quarantine: test: .* expired on /);
   });
 
-  test("its floor is the next release", () => {
-    expect(CI_QUARANTINE_FLOOR).toBe(NEXT_RELEASE);
+  test("its floor is the release it shipped in", () => {
+    expect(CI_QUARANTINE_FLOOR).toBe("0.124.63");
   });
 
   test("parses --phase, --runner and --only", () => {
