@@ -70,6 +70,7 @@ The set is a plugin registry, not a closed enum. Verbs group into families. The 
 | **copy** | `terraform-copy` | terraform | a root planned and applied under backend settings of its own, such as a pull request's copy at a suffixed state key |
 | **engine outputs** | `member-outputs` | core | another workspace member's outputs, applied and planned, read through its engine; each engine's lexicon contributes a source through `CapabilityPlugin.engineOutputSources()` (terraform: `choudoufu`; pulumi: `pulumi`). It reads and never applies ([#4455](https://github.com/INTENTIUS/chant/issues/4455), [wiring](/chant/components/wiring-howto/#another-members-outputs)) |
 | **apply** | `fly-release`, `fly-rollback` | fly | a release served by a Fly Machine, and going back to an earlier one |
+| **release** | `release-image` | core | the image a release recorded for the component, handed to the cut by digest; stands where a publish step would and gives `uri` and `digest`. A run under the release fills it in, and it fails in a run that names no release ([#4694](https://github.com/INTENTIUS/chant/issues/4694), [an image built elsewhere](/chant/cli/release/#an-image-built-elsewhere)) |
 
 A genuinely new apply *family* (job submission was one) is written once and then reused across every component of that shape. A new *component* is a declaration only. This is why the family count grows sub-linearly against components — see [the cloud boundary](/chant/components/cloud-boundary/) for how each family's leaf maps per cloud.
 
