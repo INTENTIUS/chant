@@ -194,6 +194,26 @@ export interface Component {
    * environments are its member's, as before.
    */
   environments?: ComponentEnvironmentDeclaration[];
+  /**
+   * Optional: what a deploy of this component is made from (#4695). A run
+   * under a release (`chant run --components --release`) skips the component
+   * when these are the same as in the release the environment runs it from,
+   * and records the skip; `--deploy-unchanged` deploys it anyway. Omitted, the
+   * component deploys with every release. See ./unchanged-inputs.ts.
+   */
+  inputs?: ComponentInputs;
+}
+
+/** What a component's deploy is made from (#4695), compared between two releases. */
+export interface ComponentInputs {
+  /**
+   * Git pathspecs, relative to the member's directory, such as
+   * `../crates/control` or `:(exclude)../web/e2e`. A change between the two
+   * releases' commits to a file they match deploys the component.
+   */
+  paths?: string[];
+  /** Build parameters, by name. A value that differs between the two releases' targets for the environment deploys the component. */
+  params?: string[];
 }
 
 /** One environment a component declares it deploys to (#3153). */

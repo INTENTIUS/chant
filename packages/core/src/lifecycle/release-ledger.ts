@@ -243,6 +243,17 @@ export interface ReleaseRecord {
    */
   redeploys?: ReleaseRef;
   /**
+   * Optional: set when a release skipped this component (#4695) because the
+   * inputs it declares were the same as in the release the environment ran
+   * it from. Names that environment's record, whose `digest`, `gitSha`,
+   * `manifestDigest`, `digestKind` and `inputDigest` this record repeats:
+   * nothing was deployed, and the environment still runs that deploy, now
+   * under this record's `releaseDigest`. Written from chant
+   * `UNCHANGED_INPUTS_FLOOR` (../components/unchanged-inputs.ts); absent on
+   * every deploy.
+   */
+  unchangedSince?: ReleaseRef;
+  /**
    * Optional: the release this deploy came from (#4026, ws-104), the
    * `releaseDigest` of `_releases/<releaseDigest>.json`. Written by
    * `chant components promote --release` since 0.124.28. Absent on every

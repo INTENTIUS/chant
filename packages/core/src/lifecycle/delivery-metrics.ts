@@ -169,8 +169,10 @@ export function environmentMetrics(
   window: MetricsWindow,
   failureWindowDays: number = DEFAULT_FAILURE_WINDOW_DAYS,
 ): EnvironmentMetrics {
-  // Ledger order breaks timestamp ties, as `latestPerComponent` does.
-  const sorted = records.map((r, i) => ({ r, i })).sort((a, b) => at(a.r.timestamp) - at(b.r.timestamp) || a.i - b.i).map((x) => x.r);
+  // Ledger order breaks timestamp ties, as `latestPerComponent` does. A
+  // release that skipped a component (#4695) deployed nothing: its record is
+  // in no metric.
+  const sorted = records.filter((r) => r.unchangedSince === undefined).map((r, i) => ({ r, i })).sort((a, b) => at(a.r.timestamp) - at(b.r.timestamp) || a.i - b.i).map((x) => x.r);
   const since = at(window.since);
   const until = at(window.until);
   const failureMs = failureWindowDays * DAY_MS;

@@ -60,6 +60,7 @@ const BOOLEAN_FLAGS = new Set([
   "--check",
   "--bump",
   "--no-release-record",
+  "--deploy-unchanged",
   "--no-record",
   "--fold",
   "--no-fold",
@@ -961,6 +962,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant release cut --build <command>` (#4026)
       result.buildCommand = args[++i];
       if (!result.buildCommand) throw new Error("--build needs a shell command: --build '<command>'");
+    } else if (arg === "--deploy-unchanged") {
+      // `chant run --components --release --deploy-unchanged` (#4695): deploy a component whose inputs did not change.
+      result.deployUnchanged = true;
     } else if (arg === "--artifacts") {
       // `chant release compile --artifacts` (#4026, internal)
       result.artifacts = true;
