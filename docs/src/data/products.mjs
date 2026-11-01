@@ -30,11 +30,7 @@ export const PRODUCTS = [
 		changes: 'chant generates the pipeline for your repository and runs it as jobs in your own CI, on GitHub, GitLab or Forgejo. A change gets one plan note, an approval covers the plan it was shown, and changes reach AWS, Azure, GCP and Kubernetes through each platform\'s own spec.',
 		fits: '',
 		starts: {},
-		first: {
-			needs: 'Node.js 24 or later',
-			cmd: ['npm install --save-dev @intentius/chant-lexicon-aws', 'npx chant init my-infra --lexicon aws'],
-			href: `${IO}/chant/getting-started/quick-start/`,
-		},
+		first: null,
 		links: { docs: `${IO}/chant/`, source: `${GH}/chant`, evidence: null },
 	},
 	{

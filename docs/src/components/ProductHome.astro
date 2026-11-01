@@ -30,7 +30,7 @@ const starts = Object.entries(product.starts).map(([key, href]) => {
 	return { key, label: STARTS[key], href };
 });
 
-const lines = product.first.cmd.map((line) => {
+const lines = (product.first?.cmd ?? []).map((line) => {
 	if (!line.includes('{version}')) return line;
 	if (!version) throw new Error(`ProductHome: ${id} has {version} in its first command, so the site must pass version`);
 	return line.replaceAll('{version}', version);
@@ -54,12 +54,14 @@ const hid = `ph-${product.id}`;
 			</ul>
 		</nav>
 	)}
+	{product.first && (
 	<div class="first">
 		<h2 id={`${hid}-first`}>First command</h2>
 		<p class="needs">Needs: {product.first.needs}.</p>
 		<pre aria-labelledby={`${hid}-first`}><code>{lines.join('\n')}</code></pre>
 		<p><a href={product.first.href}>The full steps</a></p>
 	</div>
+	)}
 	<p class="links">
 		<a href={docs}>Docs</a>
 		<a href={source}>Source</a>
