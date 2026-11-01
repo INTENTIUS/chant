@@ -79,6 +79,11 @@ const FLOOR_RE = /export const ([A-Z0-9_]+_FLOOR) = (?:"(\d+\.\d+\.\d+)"|(NEXT_R
  */
 const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: string }[] = [
   // --freeze empties this list after a release ships (#4501); each entry is one line.
+  { file: "packages/core/src/workspace/release-candidates.schema.json", text: "Written by chant {v} and newer.", count: 2, floor: "RELEASE_CANDIDATES_CLOSES_FLOOR" },
+  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "`candidates[].groups[].issue` | {v} |", count: 1, floor: "RELEASE_CANDIDATES_CLOSES_FLOOR" },
+  { file: "packages/core/src/workspace/intent.schema.json", text: "Added within version 1 by chant {v}.", count: 1, floor: "INTENT_CLOSES_FLOOR" },
+  { file: "packages/core/src/workspace/intent-record.schema.json", text: "Added within version 1 by chant {v}.", count: 1, floor: "INTENT_CLOSES_FLOOR" },
+  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "`commits[].closes` | {v} |", count: 1, floor: "INTENT_CLOSES_FLOOR" },
 ];
 
 interface Args {

@@ -60,6 +60,7 @@ import type { RecordView } from "./records-cli";
 import { addSquashRuns, runsForCommits, type RunRef } from "./runs";
 import { followSquashes, type Forge, type SquashFollow } from "./squash";
 import { readTrailerJoins, type CommitTrailerJoins } from "./trailer-joins";
+import type { PullRequestCloses } from "./forge-work";
 import { joinPath } from "./tree";
 import { locateWorkspace } from "./which-chant";
 import { idList } from "./work";
@@ -97,6 +98,8 @@ export interface RecordCommit {
   date: string;
   trailers: Record<string, string[]>;
   pullRequest: number | null;
+  /** What the forge says `pullRequest` closes (#4649), only with `--forge-issues`: null for a commit with no pull request. */
+  closes?: PullRequestCloses | null;
   /** The unit a plugin joined the commit to, or null. */
   unit: string | null;
   /** What chant's own trailers join the commit to (#3149), as a commit node in `graph --intent` reports it. */

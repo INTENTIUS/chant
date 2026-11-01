@@ -471,11 +471,12 @@ Releases:
                         that exists; stops on a conflict, naming the change
                         and files, and writes nothing. A dry run unless --yes,
                         which moves the branch and pushes it.
-  release candidates [--env <env>] [--json]
+  release candidates [--env <env>] [--forge-issues] [--json]
                         The green commits of trunk a release can be cut from,
                         newest first, each with the commits, work items, pull
                         requests and flags it would ship, and what each
-                        environment runs.
+                        environment runs. --forge-issues asks the forge which
+                        issues each pull request closes, once per pull request
   release publish <label|digest> [--yes] [--allow-unsigned]
                   [--require-provenance] [--json]
                         Publish a cut release to the targets release.publish
@@ -1112,14 +1113,16 @@ Workspace (level 1, #2524):
                         Each composite instance the members declare, with the
                         components whose contract can deploy it; an instance
                         with none lists an empty set
-  workspace graph --intent <path[:start-end]|path#symbol|member/node|sha> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--json]
+  workspace graph --intent <path[:start-end]|path#symbol|member/node|sha> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--forge-issues] [--json]
                         The intent graph over one region: the commits that
                         touched it, the decisions whose constrains cover it,
                         the artifacts they pin, and findings with closed codes.
                         Without --kind, every record kind the declaration names.
                         --follow-squash follows a squash merge to its pull
-                        request's commits, fetching a missing ref from origin
-  workspace graph --intent --record <id> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--json]
+                        request's commits, fetching a missing ref from origin.
+                        --forge-issues asks the forge which issues each
+                        commit's pull request closes
+  workspace graph --intent --record <id> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--forge-issues] [--json]
                         One decision's intent walk over every path: and member:
                         entry it constrains: the commits in its window, each
                         own, worked, within-other or unexplained, with counts

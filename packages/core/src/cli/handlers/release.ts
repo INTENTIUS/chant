@@ -17,7 +17,7 @@
  *   release verify <label|digest> [--json]
  *       check the release's signature offline against .chant/allowed_signers
  *       at the release's commit (#4049)
- *   release candidates [--env <env>] [--json]
+ *   release candidates [--env <env>] [--forge-issues] [--json]
  *       the green commits of trunk a release can be cut from, each with what it
  *       would ship, and what each environment runs (#4168 4.2)
  *   release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json]
@@ -47,7 +47,7 @@ import { parseParamFlags } from "../build-params-cli";
 import type { CommandContext } from "../registry";
 
 const USAGE =
-  "chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--json] | release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json] | release verify <label|digest> [--json] | release candidates [--env <env>] [--json] | release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json] | release list [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
+  "chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--json] | release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json] | release verify <label|digest> [--json] | release candidates [--env <env>] [--forge-issues] [--json] | release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json] | release list [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
 
 /** The build inputs `release cut` and `release compile` share. */
 function compileInputs(
@@ -550,14 +550,16 @@ export async function runReleaseVerify(ctx: CommandContext): Promise<number> {
 }
 
 /**
- * `release candidates [--env <env>] [--json]` (#4168 4.2): the green commits
- * of trunk a release can be cut from, newest first, each with what it would
- * ship since the previous one, and what each environment runs. `--json`
+ * `release candidates [--env <env>] [--forge-issues] [--json]` (#4168 4.2):
+ * the green commits of trunk a release can be cut from, newest first, each
+ * with what it would ship since the previous one, and what each environment
+ * runs. `--forge-issues` (#4649) asks the forge which issues each pull
+ * request closes and groups the changes no work id names by them. `--json`
  * prints the read contract's `release-candidates` document.
  */
 export async function runReleaseCandidates(ctx: CommandContext): Promise<number> {
   const { releaseCandidatesDocument } = await import("../../workspace/release-candidates");
-  const doc = await releaseCandidatesDocument({ cwd: resolve("."), ...(ctx.args.env ? { env: ctx.args.env } : {}), ...(ctx.args.branch ? { branch: ctx.args.branch } : {}) });
+  const doc = await releaseCandidatesDocument({ cwd: resolve("."), ...(ctx.args.env ? { env: ctx.args.env } : {}), ...(ctx.args.branch ? { branch: ctx.args.branch } : {}), ...(ctx.args.forgeIssues ? { forgeIssues: {} } : {}) });
   if (ctx.args.json) {
     console.log(JSON.stringify(doc, null, 2));
     return "error" in doc ? 1 : 0;
@@ -582,7 +584,7 @@ export async function runReleaseCandidates(ctx: CommandContext): Promise<number>
     // #4168 4.4: by work item, then pull request, then commit.
     const subjectOf = new Map(c.changes.map((ch) => [ch.commit, ch.subject]));
     for (const g of c.groups) {
-      console.log(`    ${g.work !== null ? `work:${g.work}` : "no work item"}`);
+      console.log(`    ${g.work !== null ? `work:${g.work}` : g.issue !== null ? `issue #${g.issue}` : "no work item"}`);
       for (const p of g.pullRequests) {
         console.log(`      ${p.pr !== null ? `#${p.pr}` : "no pull request"}`);
         for (const sha of p.commits) console.log(`        ${sha.slice(0, 12)}  ${subjectOf.get(sha) ?? ""}`);
@@ -591,6 +593,9 @@ export async function runReleaseCandidates(ctx: CommandContext): Promise<number>
     for (const f of c.flags) console.log(`    flag ${f.id} (${f.member} ${f.param}) changed`);
   }
   for (const sk of doc.skipped) console.log(`skipped ${sk.commit.slice(0, 12)}  ${sk.subject}  (revoked)`);
+  // --forge-issues: why a pull request's issues were not read, once per reason.
+  const unread = new Set([...doc.candidates.flatMap((c) => c.changes), ...doc.pending].map((ch) => ch.closes?.reason).filter((r): r is string => typeof r === "string"));
+  for (const r of unread) console.error(`Issues not read from the forge: ${r}`);
   if (doc.candidates.length > 0) console.error(`Cut one: chant release cut <label> --at <sha>`);
   return 0;
 }

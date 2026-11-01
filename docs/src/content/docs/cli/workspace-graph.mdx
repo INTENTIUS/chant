@@ -10,8 +10,8 @@ title: "chant workspace graph"
 chant workspace graph [dir] [--at <rev>] [--detail 0..3] [-o <file>] [--member <name>] [--kind <kind file>] [--env <name>] [--capability-view] [--no-cache] [--dry-run]
 chant workspace graph [dir] --live --env <name> [--overlay] [--traffic <level>] [--detail 0..3] [-o <file>] [--member <name>] [--kind <kind file>]
 chant workspace graph [dir] --composites [--at <rev>] [-o <file>] [--member <name>] [--env <name>]
-chant workspace graph [dir] --intent <path[:start-end]|path#symbol|member/node|sha> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--json]
-chant workspace graph [dir] --intent --record <id> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--json]
+chant workspace graph [dir] --intent <path[:start-end]|path#symbol|member/node|sha> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--forge-issues] [--json]
+chant workspace graph [dir] --intent --record <id> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--forge-issues] [--json]
 ```
 
 ## Description
@@ -301,7 +301,7 @@ The reference workspace's `delivery` member declares the app with the docker lex
 
 ## The intent graph
 
-With `--intent <region>`, the command prints a different document: the intent graph over one region of the workspace ([#2651](https://github.com/INTENTIUS/chant/issues/2651)). A person looking at a piece of code asks how it got this way and who decided it should be this way. The document lays out what the workspace records about both and leaves the judgment to the person. No member runs, and git is read through a local `git` process, so the command needs no network unless `--follow-squash` has to fetch a pull request ref.
+With `--intent <region>`, the command prints a different document: the intent graph over one region of the workspace ([#2651](https://github.com/INTENTIUS/chant/issues/2651)). A person looking at a piece of code asks how it got this way and who decided it should be this way. The document lays out what the workspace records about both and leaves the judgment to the person. No member runs, and git is read through a local `git` process, so the command needs no network unless `--follow-squash` has to fetch a pull request ref or `--forge-issues` asks the forge what a pull request closes.
 
 The region is a path from `dir` (or the current directory): a file, a directory, `path:line` or `path:start-end`. A graph node id such as `delivery/appService` works too, when no path by that name exists. The region is then the file and line in the node's `sourceLoc`. A commit sha, 7 to 64 hex digits, works when neither a path nor a node has the name ([#4023](https://github.com/INTENTIUS/chant/issues/4023)). The walk then covers that one commit and the files it changed against its first parent. A decision or work item covers it when a `path:` entry covers one of those files, or a `member:` entry names a member holding one. Its region node has `type: "commit"` and the sha in `commit`, and the walk reads no blame.
 
@@ -401,6 +401,14 @@ A squash merge folds a pull request's commits into one, and with them the traile
 The head is read from `refs/chant/pull/<n>/head`, `refs/pull/<n>/head` or `refs/remotes/origin/pr/<n>`, whichever the clone has. The walk fetches the missing ones from `origin` in one fetch and keeps them under `refs/chant/pull/<n>/head`, so the next read needs no network. The commit node's `squash` names the forge `origin` points at (`github`, `forgejo` or `null`) and the ref read, and says whether this read fetched it. Its `commits` list the original commits, each with its trailers, `joins` and `signature`. The squash commit carries the records and lease items the originals' trailers name and the units their plugin joins give, so it can be a decision's own work. It also joins every run an original joins, with `joinedBy: ["squash"]` and `via` naming the originals on the `made-by` edge. In `why`, a squash line's span has `via`: the original commit that last wrote the line, by `git blame` at the head. The span then keeps only that commit's runs. When the file at the head differs from the squash's, `via` is empty and every run is listed. A ref that can't be read or fetched gives the reason `squash-unfollowed` and a `squash` with `followed: false`, and the walk keeps its answer without the originals.
 
 Without the flag nothing is fetched and no squash is followed. That is the default, since a read stays fast and needs no forge (studio-032 b); a reader offers to follow on a commit whose `pullRequest` is set.
+
+### Issues a pull request closes
+
+A project that squash-merges pull requests and keeps its work in forge issues writes no `Chant-Record` trailer, so its commits link to no work item. With `--forge-issues`, chant asks the forge which issues each commit's pull request closes ([#4649](https://github.com/INTENTIUS/chant/issues/4649)). The pull request is the `(#<n>)` the subject ends with. GitHub answers from the pull request's closing issues, the closing keywords in its body plus the issues linked to it by hand. GitLab answers from the merge request's `closes_issues`. Forgejo has no such call, so the pull request's body is read for the closing keywords (`closes #12`, `fixes #12`, `resolves #12` and their other forms). Only issues of the same repository count.
+
+The forge is the CI job's when the command runs in one, and otherwise the one `origin` points at: github.com and hosts named for GitHub (`https://<host>/api/v3`), hosts named for GitLab, and codeberg.org and hosts named for Forgejo or Gitea. The token is `CHANT_FORGE_TOKEN`, then the forge's own variables (`CHANT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN` on GitHub; `CHANT_GITLAB_TOKEN`, `GITLAB_TOKEN`; `CHANT_FORGEJO_TOKEN`, `FORGEJO_TOKEN`), and on GitHub the token `gh auth login` stored for the host. The forge is called once per pull request, and the answer is kept for the rest of the read.
+
+Each commit with a pull request gets `closes`: `{ resolved, issues, reason }`. With no forge chant reads, no token, no network, or an error from the forge, `resolved` is `false`, `issues` is empty and `reason` says why. The pull request number still stands, and the read does not fail. After a network failure, a 401 or a 403, the remaining pull requests get the same reason without another call. Without the flag the forge is never asked. On a commit node of the intent graph, and on a commit of a record's walk, `closes` is there only with the flag, and the text walk prints it on a `pr` line under the commit. [`chant release candidates --forge-issues`](/chant/cli/release/#release-candidates) reads the same, and groups its changes by the issues.
 
 ### One record's walk
 
@@ -527,6 +535,7 @@ A trace over one region may take at most twice as long as [`chant workspace stat
 | `--intent <region>` | Print the [intent graph](#the-intent-graph) over `path`, `path:line`, `path:start-end`, `path#symbol`, a graph node id or a commit sha instead of the composed graph. |
 | `--record <id>` | With `--intent` and no region, print [one record's walk](#one-records-walk) over every entry its `constrains` lists. |
 | `--follow-squash` | With `--intent`, [follow each squash merge](#following-a-squash-merge) to its pull request's original commits, fetching a pull request ref the clone lacks from `origin`. |
+| `--forge-issues` | With `--intent`, ask the forge which [issues each commit's pull request closes](#issues-a-pull-request-closes), once per pull request, and set the commit's `closes`. |
 | `--json` | With `--intent`, print the document as JSON instead of the text walk. |
 | `--env <name>` | Passed to each member's `chant graph`. |
 | `--capability-view` | Ask each member's chant for its [capability view](#the-capability-view) and carry it on the member. |
