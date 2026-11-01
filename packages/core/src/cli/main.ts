@@ -326,6 +326,14 @@ CI:
                         one starts a bisect: a ci/build/<sha> tag the tick
                         starts the phase's workflow at. Each commit judged
                         gets a _ci/<sha>.json record on chant/lifecycle.
+  ci quarantine check   Fail when an entry of ci.green.quarantine is past its
+                        until, or its until is more than maxDays (14) out.
+  ci quarantine filter --phase <name> --runner nextest|playwright|list [--only] [--json]
+                        What the phase's runner leaves out: a nextest
+                        filterset for -E, a Playwright --grep-invert pattern,
+                        or one test a line. Fails as check does for the
+                        phase. --only selects the quarantined tests instead,
+                        for the scheduled run, and doesn't fail on expiry.
   ci run plan|apply --env <env> --base <sha> [--pr <n>] [--commit <sha>]
               [--forge github|gitlab|forgejo] [--gate <name>] [--wave-gate <name>]
               [--branch <name>] [--events-json] [--report-url <url>] [--image <image>]
@@ -1821,6 +1829,7 @@ export const commandRegistry: CommandDef[] = [
   // #4098: the run index at the report URL.
   // #4147: a provisioner's signed word that it started a runner for one job, signed and checked.
   { name: "ci runner-start", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-runner-start")).runCiRunnerStart(ctx) },
+  { name: "ci quarantine", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-quarantine")).runCiQuarantine(ctx) },
   { name: "ci runs", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-run-index")).runCiRuns(ctx) },
   { name: "ci serve", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-serve")).runCiServe(ctx) },
   // #4026: the release cut from a green commit (ws-104). Imported on first use.

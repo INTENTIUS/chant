@@ -1917,6 +1917,49 @@
           },
           "additionalProperties": false
         },
+        "quarantine": {
+          "type": "object",
+          "required": ["phases"],
+          "description": "Known-flaky tests the phases' runners leave out until they are fixed (#4677). Each entry names the test, the issue that tracks the fix, the last day it stays out (until) and why. Each phase's runner gets its filter from chant ci quarantine filter --phase <name> --runner nextest|playwright|list, and chant ci quarantine check fails, as filter does, when an entry is past its until or the until is more than maxDays from today. A scheduled run of the quarantined tests alone, which no phase's patterns match, tells whether one is fixed. Read by chant 0.124.63 and newer, so a declaration that sets it sets minReader to 0.124.63 or newer.",
+          "properties": {
+            "maxDays": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "How many days from today an entry's until may be, at most. 14 when absent."
+            },
+            "phases": {
+              "type": "object",
+              "minProperties": 1,
+              "description": "The quarantined tests by phase. Each phase must be a declared phase.",
+              "propertyNames": {
+                "$ref": "#/$defs/ciPhaseName"
+              },
+              "additionalProperties": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "required": ["test", "issue", "until", "why"],
+                  "properties": {
+                    "test": { "type": "string", "minLength": 1, "description": "The test, as its runner names it. nextest: the binary id, a space and the test's name, as nextest prints them, or the test's name alone for any binary. Playwright: the test's title, with file set." },
+                    "file": { "type": "string", "minLength": 1, "description": "The file the test is in, from the runner's test directory: for Playwright the spec's path from testDir, as Playwright prints it." },
+                    "issue": { "type": "string", "pattern": "^(#?[0-9]+|https?://\\S+)$", "description": "The issue that tracks the fix: a number or a URL." },
+                    "until": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "The last day the test stays out, YYYY-MM-DD, UTC." },
+                    "why": { "type": "string", "minLength": 1, "description": "One line: how it fails." }
+                  },
+                  "patternProperties": {
+                    "^x-": true
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "patternProperties": {
+            "^x-": true
+          },
+          "additionalProperties": false
+        },
         "lanes": {
           "type": "object",
           "minProperties": 1,

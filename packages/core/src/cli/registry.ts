@@ -927,8 +927,12 @@ export interface ParsedArgs {
   ciWait?: boolean;
   /** `chant ci last-green --lane <name>` and `chant ci base --lane <name>` (#4662) — a ci.green lane. */
   lane?: string;
-  /** `chant ci base --phase <name>` (#4643) — the ci.green phase whose base to find. */
+  /** `chant ci base --phase <name>` (#4643) — the ci.green phase whose base to find. `chant ci quarantine filter --phase <name>` (#4677) — the phase whose runner takes the filter. */
   phase?: string;
+  /** `chant ci quarantine filter --runner nextest|playwright|list` (#4677). */
+  quarantineRunner?: string;
+  /** `chant ci quarantine filter --only` (#4677) — select the quarantined tests in place of leaving them out. */
+  quarantineOnly?: boolean;
   /** `chant audit-log attribute|unrecorded --audit-log aws[:<region>]` (#4632): the cloud audit log to read. */
   auditLog?: string;
   /** `chant ledger`, `chant workspace records` and `chant workspace runs --where <field><op><value>` (#4363): typed filters, repeatable, all of which have to hold. */
