@@ -7,6 +7,10 @@
  *   ci quarantine filter --phase <name> --runner nextest|playwright|list [--only] [--json]
  *                                       what the phase's runner leaves out, or with
  *                                       --only what the scheduled run runs
+ *   ci quarantine report --phase <name> --junit <file>... [--commit <sha>] [--dry-run] [--json]
+ *                                       what became of each quarantined test in the
+ *                                       scheduled run, and ci.quarantine-passed for
+ *                                       each that passed (./ci-quarantine-report.ts)
  *
  * The tick judges a phase by its check runs, whole, so a quarantined test is
  * kept out of the verdict by its runner never running it there: nextest gets
@@ -35,7 +39,7 @@ export const CI_QUARANTINE_FLOOR = NEXT_RELEASE;
 export const QUARANTINE_RUNNERS = ["nextest", "playwright", "list"] as const;
 export type QuarantineRunner = (typeof QUARANTINE_RUNNERS)[number];
 
-const USAGE = "chant ci quarantine check | ci quarantine filter --phase <name> --runner nextest|playwright|list [--only] [--json]";
+const USAGE = "chant ci quarantine check | ci quarantine filter --phase <name> --runner nextest|playwright|list [--only] [--json] | ci quarantine report --phase <name> --junit <file>... [--commit <sha>] [--dry-run] [--json]";
 
 /** Today, YYYY-MM-DD in UTC. */
 export const utcToday = (now: Date = new Date()): string => now.toISOString().slice(0, 10);
@@ -175,7 +179,8 @@ export async function runCiQuarantine(ctx: CommandContext): Promise<number> {
       } else if (out.filter !== "") console.log(out.filter);
       return 0;
     }
-    console.error(formatError({ message: action ? `chant ci quarantine: no ${action}` : "chant ci quarantine needs check or filter", hint: USAGE }));
+    if (action === "report") return (await import("./ci-quarantine-report")).runCiQuarantineReport(ctx);
+    console.error(formatError({ message: action ? `chant ci quarantine: no ${action}` : "chant ci quarantine needs check, filter or report", hint: USAGE }));
     return 1;
   } catch (err) {
     console.error(formatError({ message: `chant ci quarantine: ${describe(err)}`, hint: USAGE }));

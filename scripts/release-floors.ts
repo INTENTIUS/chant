@@ -92,6 +92,7 @@ const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: str
   { file: "packages/core/src/workspace/declaration.schema.json", text: "Read by chant {v} and newer, so a declaration that sets it sets minReader to {v} or newer.", count: 1, floor: "CI_QUARANTINE_FLOOR" },
   { file: "docs/src/content/docs/reference/workspace-declaration.mdx", text: "Read by chant {v} and newer, so set `minReader` with it.", count: 1, floor: "CI_QUARANTINE_FLOOR" },
   { file: "docs/src/content/docs/cli/ci.mdx", text: "`quarantine` needs `minReader` {v} or newer.", count: 1, floor: "CI_QUARANTINE_FLOOR" },
+  { file: "packages/core/src/notify.schema.json", text: "Sent by chant {v} and newer.", count: 1, floor: "CI_QUARANTINE_NOTIFY_FLOOR" },
 ];
 
 interface Args {
