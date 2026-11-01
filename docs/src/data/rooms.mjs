@@ -141,7 +141,7 @@ export const ROOMS = [
 		differs: {},
 		first: {
 			command: { any: install('k8s') },
-			link: { label: 'Drift Back to Source', href: 'guide/drift-to-source' },
+			link: { label: 'Kubernetes getting started', href: 'lexicons/k8s/getting-started' },
 			prompt: roomPrompt(
 				'kubernetes',
 				'Set up chant with the k8s lexicon in this repository, and the helm lexicon as well if it holds Helm charts.',
@@ -219,7 +219,7 @@ export const ROOMS = [
 		differs: {},
 		first: {
 			command: { github: install('github', 'my-pipelines'), gitlab: install('gitlab', 'my-pipelines'), forgejo: install('forgejo', 'my-pipelines') },
-			link: { label: 'Generated CI for Pull Requests', href: 'guide/pull-request-ci' },
+			link: { label: 'Changes and approvals', href: 'guide/pull-request-ci' },
 			prompt: roomPrompt(
 				'ci',
 				"Set up chant for this repository's pipelines with the lexicon of its forge: github, gitlab or forgejo. Use that name in place of `github` below.",
