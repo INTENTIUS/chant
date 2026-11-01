@@ -106,6 +106,13 @@ export const ForgePublishSchema = z
     tokenEnv: envName.optional(),
     /** The SBOM attached to the release (#4049), relative to the member. Default: one written from the member's lockfile. `false` publishes without one. */
     sbom: sbomField.optional(),
+    /**
+     * GitHub only (#4676): whether the release becomes the repository's
+     * latest when the reveal publishes it, sent as GitHub's `make_latest`.
+     * `"legacy"` lets GitHub pick by creation date and semantic version.
+     * Unset, nothing is sent and GitHub makes it latest.
+     */
+    latest: z.union([z.boolean(), z.literal("legacy")]).optional(),
   })
   .strict();
 

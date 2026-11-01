@@ -395,6 +395,29 @@ describe("forge release assets", () => {
     expect((await refused(t2!.stage(ctx))).code).toBe("publish-forge-asset-exists");
   });
 
+  test("GitHub: latest is sent as make_latest when the reveal publishes the draft, and is refused on a forge that has no such setting (#4676)", async () => {
+    const dir = assetDir();
+    const api = "https://api.github.test";
+    const ctx = context(dir, { env: { GITHUB_TOKEN: "ghs_tokentoken" } });
+    for (const [latest, sent] of [[false, "false"], [true, "true"], ["legacy", "legacy"]] as const) {
+      const forge = startFakeForge("github", api, "acme/api");
+      const [target] = await createPublishTargets([decl({ type: "forge", forge: "github", repo: "acme/api", api, assets: ASSETS, latest })], { fetch: forge.fetch });
+      const staged = await target!.stage(ctx);
+      // Staging creates the draft without it: a draft is never latest.
+      expect(forge.calls.filter((c) => c.method === "POST" && c.url === `${api}/repos/acme/api/releases`).map((c) => JSON.parse(c.body as string))).toEqual([
+        { tag_name: "release/v1.4.0", target_commitish: ctx.release.commit, name: "v1.4.0", draft: true },
+      ]);
+      await target!.reveal(ctx, staged);
+      expect(forge.calls.at(-1)).toMatchObject({ method: "PATCH", url: `${api}/repos/acme/api/releases/100`, body: JSON.stringify({ draft: false, make_latest: sent }) });
+    }
+    expect(() => decl({ type: "forge", forge: "github", repo: "acme/api", assets: ASSETS, latest: "true" })).toThrow();
+
+    const gitlab = startFakeForge("gitlab", "https://gitlab.test/api/v4", "acme/api");
+    const [t] = await createPublishTargets([decl({ type: "forge", forge: "gitlab", repo: "acme/api", assets: ASSETS, latest: false })], { fetch: gitlab.fetch });
+    expect((await refused(t!.plan(context(dir, { env: { GITLAB_TOKEN: "glpat-token" } })))).code).toBe("publish-forge-latest-unsupported");
+    expect(gitlab.calls).toEqual([]);
+  });
+
   test("GitLab: assets go to the generic package registry with a CI job token, and the release is made with its links only at the reveal", async () => {
     const dir = assetDir();
     const api = "https://gitlab.test/api/v4";
