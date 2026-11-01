@@ -1,0 +1,45 @@
+---
+title: "chant plan"
+description: Ask whether a plan is stale before anyone approves it
+diataxis: reference
+---
+
+## plan stale
+
+```
+chant plan stale <digest> [--member <name>] [--json]
+```
+
+`chant plan stale` says whether anything applied to a plan's targets after the plan was recorded, and lists those applies ([#4648](https://github.com/INTENTIUS/chant/issues/4648)). chant checks the plan again when the approved run applies. This read asks the same question earlier, so a platform can find out before it puts the plan in front of a person.
+
+The digest is the `planDigest` of a pending gate fact, as `chant ledger gates --where kind=pending` and `chant workspace status --json` show it. The plan's targets are each pending fact that records the digest: its member, its op, and its environment. The environment is the fact's own `environment` (a component gate's), else the `env` of the run that reached the gate. The plan was recorded at the earliest of those facts.
+
+An apply touches the plan when it was recorded after the plan and is one of these:
+
+| Ledger | Counts when |
+|---|---|
+| An apply under an approval, `_gates/<op>/applied.jsonl` ([`chant ledger applies`](/chant/cli/ledger/)) | It is in the same member and op, for another plan. A failed apply counts too, since it may have changed something. |
+| A deploy record, `<env>/releases.jsonl` ([`chant ledger deploys`](/chant/cli/ledger/)) | It is in the same member and environment, of any component. |
+
+An apply of the same plan, an apply before the plan, and anything in another member or environment leave the plan current. It counts applies from any run: a laptop's, another CI's, or the platform's own.
+
+The read uses the local `chant/lifecycle` branch. It never fetches and writes nothing, so it's safe to call before asking for an approval. Fetch the branch first to see applies made elsewhere: `git fetch origin chant/lifecycle:chant/lifecycle`, or the remote the ledger lives on.
+
+In a workspace every member's ledger is read; `--member` reads only the ones it names.
+
+```
+$ chant plan stale jcs1-sha256:1f0c…
+Plan jcs1-sha256:1f0c…, recorded 2026-11-01T10:00:00Z for deploy at prod in prod.
+Stale: 1 apply since.
+  2026-11-01T12:00:00Z  deploy of api to prod (by laptop-alex, approved by dave, run ci-77)
+```
+
+| Exit code | Meaning |
+|---|---|
+| 0 | The plan is current. |
+| 2 | The plan is stale. |
+| 1 | No pending gate fact records the digest, or the ledger couldn't be read. |
+
+### Output
+
+With `--json` it prints a document that follows `plan-stale.schema.json`, a [read contract](/chant/reference/workspace-read-contract/#stale-plans) at version 1, written by chant 0.124.63 and newer. The fields are in the read contract.

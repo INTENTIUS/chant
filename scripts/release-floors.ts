@@ -84,6 +84,9 @@ const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: str
   { file: "packages/core/src/workspace/intent.schema.json", text: "Added within version 1 by chant {v}.", count: 1, floor: "INTENT_CLOSES_FLOOR" },
   { file: "packages/core/src/workspace/intent-record.schema.json", text: "Added within version 1 by chant {v}.", count: 1, floor: "INTENT_CLOSES_FLOOR" },
   { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "`commits[].closes` | {v} |", count: 1, floor: "INTENT_CLOSES_FLOOR" },
+  { file: "packages/core/src/workspace/plan-stale.schema.json", text: "Contract version 1 of this document is written by chant {v} and newer.", count: 1, floor: "PLAN_STALE_FLOOR" },
+  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "| `--json`, floor chant {v} | `https://intentius.io/chant/schemas/workspace/plan-stale/v1/plan-stale.schema.json` |", count: 1, floor: "PLAN_STALE_FLOOR" },
+  { file: "docs/src/content/docs/cli/plan.mdx", text: "a [read contract](/chant/reference/workspace-read-contract/#stale-plans) at version 1, written by chant {v} and newer.", count: 1, floor: "PLAN_STALE_FLOOR" },
 ];
 
 interface Args {
