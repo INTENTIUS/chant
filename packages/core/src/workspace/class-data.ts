@@ -11,11 +11,12 @@
  * several pins merge. {@link classDataShapeProblems} is the schema written
  * out by hand for the bundle; `class-data.test.ts` holds it to ajv's answer.
  *
- * The module imports node:fs and node:path and nothing else.
+ * The module imports node:fs, node:path and node:url and nothing else.
  */
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, posix, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { CORE_CLASSES, CORE_PRINCIPAL_CLASSES, type PrincipalClass } from "./identity-gate-rule";
 
 /** The subpath a package publishes its principal classes at. */
@@ -40,6 +41,9 @@ export function diskFiles(dir: string): PackageFiles {
     }
   };
 }
+
+/** This chant's own install: a pinned package a checkout does not hold is looked up from here too (plywood#54). */
+export const CHANT_INSTALL = dirname(fileURLToPath(import.meta.url));
 
 /**
  * The directory of an installed package `name`, found the way Node finds a
