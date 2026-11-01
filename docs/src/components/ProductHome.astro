@@ -44,7 +44,7 @@ const hid = `ph-${product.id}`;
 	<p class="one">{product.oneLiner}</p>
 	<div class="text">
 		<p>{linked(product.changes, id).map((b) => typeof b === 'string' ? b : <a href={b.href}>{b.name}</a>)}</p>
-		<p>{linked(product.fits, id).map((b) => typeof b === 'string' ? b : <a href={b.href}>{b.name}</a>)}</p>
+		{product.fits && <p>{linked(product.fits, id).map((b) => typeof b === 'string' ? b : <a href={b.href}>{b.name}</a>)}</p>}
 	</div>
 	{starts.length > 0 && (
 		<nav class="starts" aria-labelledby={`${hid}-starts`}>
