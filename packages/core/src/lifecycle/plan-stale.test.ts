@@ -95,8 +95,8 @@ describe("chant plan stale (#4648)", () => {
     expect(await stale(component, P3)).toMatchObject({ plan: null, stale: null, applies: [] });
   });
 
-  test("its floor is the next release", () => {
-    expect(PLAN_STALE_FLOOR).toBe(NEXT_RELEASE);
+  test("its floor is the release it shipped in", () => {
+    expect(PLAN_STALE_FLOOR).toBe("0.124.63");
     expect(planStaleSchema.description).toContain(`written by chant ${NEXT_RELEASE} and newer`);
   });
 });
