@@ -123,6 +123,14 @@ describe("the release digest", () => {
     expect(computeReleaseDigest({ ...subject, targets: [{ ...t, templates: [{ ...t.templates[0], encoding: "base64" as const }] }] })).not.toBe(digest);
   });
 
+  test("an artifact without a ref hashes as before #4694; a handed image's ref is in the digest", () => {
+    const digest = computeReleaseDigest(subject);
+    expect(computeReleaseDigest({ ...subject, artifactDigests: subject.artifactDigests.map((a) => ({ ...a, ref: undefined })) })).toBe(digest);
+    const handed = { ...subject, artifactDigests: [{ component: "api", kind: "image" as const, path: "", digest: "sha256:1", ref: "r.io/api@sha256:1" }] };
+    expect(computeReleaseDigest(handed)).not.toBe(computeReleaseDigest({ ...handed, artifactDigests: [{ ...handed.artifactDigests[0], ref: "r.io/other@sha256:1" }] }));
+    expect(makeRelease(handed).artifactDigests[0].ref).toBe("r.io/api@sha256:1");
+  });
+
   test("verifyReleaseDigest catches a release whose content no longer matches its digest", () => {
     const release = makeRelease(subject);
     expect(verifyReleaseDigest(release)).toBe(true);
@@ -304,6 +312,43 @@ describe("cutRelease", () => {
       const r3 = await cut(dir, rebuilt, "v3");
       expect(rebuilt.built).toEqual([["dev", "api"]]);
       expect(r3.release.artifactDigests[0].digest).toBe(`sha256:${"f".repeat(64)}`);
+    });
+  });
+
+  test("an image handed to the cut is recorded by its reference, and the component is not built (#4694)", async () => {
+    await withTestDir(async (dir) => {
+      const sha = initRepo(dir);
+      green(dir, sha);
+      const ref = `registry.fly.io/api@sha256:${"b".repeat(64)}`;
+      const compiler = fixtureCompiler();
+      const plan = await planRelease({ cwd: dir, compiler: fixtureCompiler(), label: "v1", actor: "a", env: {}, images: { api: ref } });
+      expect(plan.build).toEqual([]);
+      expect(plan.handed).toEqual([{ component: "api", ref, digest: `sha256:${"b".repeat(64)}` }]);
+
+      const result = await cutRelease({ cwd: dir, compiler, label: "v1", actor: "a", env: {}, images: { api: ref } });
+      expect(compiler.built).toEqual([]);
+      expect(result.release.artifactDigests).toEqual([{ component: "api", kind: "image", path: "", digest: `sha256:${"b".repeat(64)}`, ref }]);
+      expect(plan.releaseDigest).toBe(result.release.releaseDigest);
+      expect(await readRelease(result.release.releaseDigest, { cwd: dir })).toEqual(result.release);
+
+      // The next cut hands another image; nothing is carried from the first.
+      const next = commitFile(dir, "flags.json", "{}\n");
+      green(dir, next);
+      const r2 = await cutRelease({ cwd: dir, compiler, label: "v2", actor: "a", env: {}, images: { api: `registry.fly.io/api@sha256:${"c".repeat(64)}` } });
+      expect(r2.reused).toEqual([]);
+      expect(r2.release.artifactDigests.map((a) => a.digest)).toEqual([`sha256:${"c".repeat(64)}`]);
+    });
+  });
+
+  test("refuses an image handed by tag, or for a component that isn't enabled (#4694)", async () => {
+    await withTestDir(async (dir) => {
+      const sha = initRepo(dir);
+      green(dir, sha);
+      const byTag = await planRelease({ cwd: dir, compiler: fixtureCompiler(), label: null, actor: "a", env: {}, images: { api: "registry.fly.io/api:latest" } }).catch((e: unknown) => e);
+      expect((byTag as ReleaseCutError).code).toBe("release-image-invalid");
+      const unknown = await planRelease({ cwd: dir, compiler: fixtureCompiler(), label: null, actor: "a", env: {}, images: { web: `r.io/web@sha256:${"b".repeat(64)}` } }).catch((e: unknown) => e);
+      expect((unknown as ReleaseCutError).code).toBe("release-image-unknown-component");
+      expect((unknown as ReleaseCutError).fix).toMatch(/api/);
     });
   });
 

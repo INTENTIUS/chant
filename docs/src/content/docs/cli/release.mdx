@@ -8,7 +8,8 @@ diataxis: reference
 
 ```
 chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <name=value>]... [--params-file <file>]
-                  [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--override-green] [--json]
+                  [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--override-green]
+                  [--image <component>=<repository>@sha256:<hex>]... [--json]
 chant release candidates [--env <env>] [--branch <branch>] [--lane <name>] [--forge-issues] [--json]
 chant release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json]
 chant release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json]
@@ -163,7 +164,7 @@ What will be published where:
   a publish from here would carry no OIDC provenance: this run is not in CI, and a workstation has no OIDC token
 ```
 
-The digest is printed when no artifact needs building, since it is then known without a build. `--json` prints the same as a document with `dryRun: true`: the commit, `label`, `releaseDigest` (or null), `alreadyCut`, `targets`, `build`, `reused`, `publishSteps`, `signatureRequired`, `actor` and `actorSource`, `run`, `trunk`, `sign`, `tag`, `publish` and `next`.
+The digest is printed when no artifact needs building, since it is then known without a build. `--json` prints the same as a document with `dryRun: true`: the commit, `label`, `releaseDigest` (or null), `alreadyCut`, `targets`, `build`, `reused`, `handed`, `publishSteps`, `signatureRequired`, `actor` and `actorSource`, `run`, `trunk`, `sign`, `tag`, `publish` and `next`.
 
 ### What --yes records
 
@@ -203,6 +204,35 @@ Under the release, a promote or rollback writes every file the target records fo
 A `pulumi-up` step records the stack's directory. When `main` points outside it, the program's entry file is recorded too. A stack whose backend is a `file://` path relative to its directory is left out. The cut records tracked files only, so a Node program's copy has no `node_modules`. Before the copy's first preview, `pulumi-up` runs `pulumi install` in the copy (`plunge install` on plunge). That installs the dependencies the recorded lockfile pins and the plugins the program uses. It does the same for a Python program whose virtualenv or `poetry` or `uv` toolchain needs building. A Node copy with no lockfile is refused by name, since an install there would take today's versions rather than the release's. Programs in the other runtimes fetch what they need on the run.
 
 The artifacts are built once. Each component's `docker-build`, `zip-package` and `jvm-build` steps run, and nothing else, in the first environment the component is enabled in. `docker-build` gives an `image` entry and the other two an `asset` entry, each with the archive path and the digest. When a component's source did not change since the release cut from the nearest earlier commit, its entries are carried from that release and nothing is built. Unchanged means git sees no change between the two commits in the component's file, the member's `chant.config.ts`, and the paths the build steps read (`context` and the Dockerfile, `source`, `path`). A commit that only changes a flag or a parameter then gets a release of its own with the same artifact digests.
+
+### An image built elsewhere
+
+Some images can't be built where the cut runs, such as static binaries a CI job builds with a toolchain the cut's machine lacks. The job that built and pushed the image hands it to the cut by digest with `--image <component>=<repository>@sha256:<hex>`, once per component ([#4694](https://github.com/INTENTIUS/chant/issues/4694)):
+
+```bash
+digest=$(crane digest registry.fly.io/illogical-control:ci-$GITHUB_SHA)
+chant release cut v1.4.0 --image control=registry.fly.io/illogical-control@$digest --yes
+```
+
+The release records the image as the component's `image` entry, with its reference in `ref` and an empty `path`, since no build step wrote an archive. The cut builds nothing for that component, and carries nothing for it from an earlier release. The reference must name the repository and the digest, and no tag, since a tag can move after the cut. A reference that does not is refused with `release-image-invalid`, and a component that is not enabled in any environment with `release-image-unknown-component`. The dry run lists each handed image, and `--json` lists them in `handed`.
+
+A deploy under the release runs that image. The component's composition says where it goes with a `release-image` step, which stands where a publish step would ([Running a release](/chant/cli/run/#running-a-release---release)):
+
+```ts
+export const control: Component = {
+  name: "control",
+  dependsOn: [],
+  deploy: [
+    phase("Approve", [gate("prod-release")]),
+    phase("Image", [{ kind: "release-image" }]),
+    phase("Release", [{ kind: "fly-release", plan: "dist/fly.json", machine: "controlMachine", image: "@Image.uri", digest: "@Image.digest" }]),
+  ],
+};
+```
+
+`fly-release`'s `image` is the serving Machine's, and its `images` names the plan's other Machines, such as a scheduled one. A Machine built from the same image takes it the same way, `images: { controlCron: "@Image.uri" }`. A release records one image per component, so a Machine that runs another image belongs to the component that image is handed for, or takes it by a literal reference.
+
+The `ref` is in the release digest, so a release that records one is read by chant 0.124.63 and newer. An older chant reads it as a release that does not match its digest.
 
 ### A project with no components
 
@@ -276,9 +306,10 @@ The signature is `ssh-keygen -Y sign` in the `chant-release` namespace over four
 | `--build <command>` | A shell command run in the member's directory before each environment's templates are read, with `CHANT_ENV` set to the environment. |
 | `--param <name=value>` | A build parameter for every environment. Repeatable. |
 | `--params-file <file>` | A JSON file of build parameters. `{env}` in the path is replaced by each environment's name, as in `params.{env}.json`. |
+| `--image <component>=<repository>@sha256:<hex>` | An image built elsewhere, handed to the cut by digest: the release records it for the component, and the cut builds nothing for it. Repeatable, one per component. See [An image built elsewhere](#an-image-built-elsewhere). |
 | `--actor <name>` | Who made the cut. Defaults to the signer of `--sign`'s key, then `GITHUB_ACTOR` or `GITLAB_USER_LOGIN`, then git's `user.email`, then `USER`. |
 | `--sign [<key file>]` | Sign the cut with an ssh key, or with git's `user.signingkey` when no file is given. See [Who may cut](#who-may-cut). |
-| `--json` | With `--yes`, print the release, its label, the cut line written (`null` when the release was already cut), whether the release file was written now, and the components whose artifacts were carried from an earlier release, with `dryRun: false`, `actor`, `actorSource`, `tag` (`{ name, created }`, or `null`) and `next`. Without `--yes`, print the dry run's document. |
+| `--json` | With `--yes`, print the release, its label, the cut line written (`null` when the release was already cut), whether the release file was written now, the components whose artifacts were carried from an earlier release, and the images handed to the cut (`handed`), with `dryRun: false`, `actor`, `actorSource`, `tag` (`{ name, created }`, or `null`) and `next`. Without `--yes`, print the dry run's document. |
 
 ### Cutting on green
 

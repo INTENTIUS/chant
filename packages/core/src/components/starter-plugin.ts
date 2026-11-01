@@ -48,6 +48,7 @@ import {
   wranglerVersionsPromoteCapability,
   r2SyncCapability,
   memberOutputsStarterCapability,
+  releaseImageCapability,
 } from "./verbs/index";
 import { ownPackageVersion, type CapabilityPlugin } from "./capability-plugin";
 
@@ -87,6 +88,9 @@ export const STARTER_VERB_FAMILIES = {
   // (#4455). One agnostic verb; each engine's lexicon contributes a source
   // (`CapabilityPlugin.engineOutputSources`).
   engineOutputs: ["member-outputs"],
+  // The image a release recorded for the component, handed to the cut by
+  // digest (#4694); a run under the release fills it in.
+  release: ["release-image"],
 } as const;
 
 /**
@@ -118,6 +122,7 @@ function starterCapabilities(): Array<Capability<never, unknown>> {
     wranglerVersionsPromoteCapability,
     r2SyncCapability,
     memberOutputsStarterCapability,
+    releaseImageCapability,
   ] as unknown as Array<Capability<never, unknown>>;
 }
 

@@ -452,7 +452,8 @@ Releases:
   release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>]
               [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>]
               [--actor <name>] [--sign [<key file>]] [--channel <tag>]
-              [--lane <name>] [--override-green] [--json]
+              [--lane <name>] [--override-green]
+              [--image <component>=<repository>@sha256:<hex>] [--json]
                         A dry run of a cut of this member from HEAD, which
                         must be clean, on trunk and pushed, and carry a
                         ci/green tag: compile every environment in the
@@ -473,6 +474,9 @@ Releases:
                         trunk from a temporary worktree instead of HEAD, so
                         the checkout need not be clean. The label reaches
                         every compile and build as CHANT_RELEASE_LABEL.
+                        --image, repeatable, hands the cut a component's image
+                        built elsewhere, by digest: the release records it and
+                        the cut builds nothing for that component (#4694).
                         A green commit of a pushed chant/compose/<name>
                         branch is cut too, recording its base and sources.
                         --channel <tag> records the tag a publish moves in
@@ -612,7 +616,12 @@ Ops:
                         component that published a digest (default: on;
                         --no-release-record to opt out; #597).
                         --release <label|digest>: the run is of that release,
-                        cut from this checkout's commit; the records name it (#4043)
+                        cut from this checkout's commit; the records name it (#4043).
+                        A component the release recorded an artifact for runs
+                        without its build steps, from that artifact; a
+                        release-image step gets the image handed to the cut,
+                        and a component whose artifact is missing is refused
+                        before anything runs (#4694)
                         --progress-json: stream one NDJSON RunProgressEvent
                         per line to stdout while the run executes, for a
                         consumer to render live wave/component/phase/step

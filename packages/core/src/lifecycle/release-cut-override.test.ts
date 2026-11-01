@@ -155,6 +155,18 @@ describe("a cut of a commit that is not green, under an override (#4693)", () =>
     });
   });
 
+  test("an image handed to the cut is recorded under an override, and nothing is built (#4694)", async () => {
+    await withTestDir(async (dir) => {
+      const sha = project(dir);
+      await refusal(cutRelease(request(dir, T0)));
+      await override(dir, sha, "github:alice");
+      const result = await cutRelease({ ...request(dir, T2), images: { api: `registry.fly.io/api@sha256:${"c".repeat(64)}` } });
+      expect(result.cut?.override?.by).toBe("github:alice");
+      expect(result.handed).toEqual([{ component: "api", ref: `registry.fly.io/api@sha256:${"c".repeat(64)}`, digest: `sha256:${"c".repeat(64)}` }]);
+      expect(result.release.artifactDigests).toEqual([{ component: "api", kind: "image", path: "", digest: `sha256:${"c".repeat(64)}`, ref: `registry.fly.io/api@sha256:${"c".repeat(64)}` }]);
+    });
+  });
+
   test("an override counts only from a listed person, with a reason, and not from an agent", async () => {
     await withTestDir(async (dir) => {
       const sha = project(dir);

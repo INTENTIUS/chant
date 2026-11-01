@@ -495,6 +495,14 @@ export interface RunComponentsOptions {
    * a checkout. `null` passes none.
    */
   revision?: string | null;
+  /**
+   * Rewrites the selected compositions before anything runs, or refuses the
+   * run (#4694): `chant run --components --release` takes out the build steps
+   * of a component the release recorded an artifact for and hands its
+   * `release-image` steps the image (./release-run.ts). Called once, with the
+   * components in run order, after their config defaults are applied.
+   */
+  prepare?: (components: DriverComponent[]) => Promise<{ components: DriverComponent[] } | { error: string }>;
 }
 
 /** The resolved order of a list run (#3950), reported through `RunComponentsOptions.onPlan`. */
@@ -740,6 +748,11 @@ export async function runComponents(
   } else {
     const defaulted = resolved.targets.map((component) => applyConfigDefaults(component, config));
     resolvedTargets = selector === "all" ? await withDeclaredReads(defaulted, registry, path) : defaulted;
+  }
+  if (options.prepare) {
+    const prepared = await options.prepare(resolvedTargets);
+    if ("error" in prepared) return { success: false, selected: [], error: prepared.error };
+    resolvedTargets = prepared.components;
   }
   const selected = resolvedTargets.map((c) => c.name);
   const narrowed = options.targets ?? {};
