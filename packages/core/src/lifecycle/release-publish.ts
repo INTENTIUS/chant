@@ -131,6 +131,10 @@ export interface PublishDeps {
   npm?: string;
   /** The vsce executable the VS Code Marketplace target runs (#4676). Default: `vsce` on `PATH`. */
   vsce?: string;
+  /** The git executable the homebrew target runs to push over SSH (#4699). Default: `git` on `PATH`. */
+  git?: string;
+  /** The ssh executable git runs for it (#4699). Default: `ssh` on `PATH`. */
+  ssh?: string;
   /** How a target waits between polls of a registry (#4244). Default: a timer. */
   sleep?: (ms: number) => Promise<void>;
   /** The clock a target's wait reads (#4244). Default: `Date.now`. */

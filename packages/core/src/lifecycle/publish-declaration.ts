@@ -143,6 +143,12 @@ export const HomebrewPublishSchema = z
     api: z.string().url().optional(),
     /** The variable holding a token that may push to the tap. Default `HOMEBREW_TAP_TOKEN`. */
     tokenEnv: envName.optional(),
+    /**
+     * The variable holding an SSH private key that may push to the tap, such
+     * as a deploy key with write access (#4699). Set, the target pushes with
+     * git over SSH and reads no token; `tokenEnv` beside it is refused.
+     */
+    sshKeyEnv: envName.optional(),
   })
   .strict();
 
