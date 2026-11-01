@@ -167,7 +167,9 @@ A packaged `.vsix` on the VS Code Marketplace or on Open VSX ([#4676](https://gi
 | `marketplace` | `vscode` or `openvsx` |
 | `vsix` | The `.vsix` that `vsce package` wrote, relative to the member. The extension's publisher, name and version are read from `extension/package.json` inside it |
 | `registry` | Open VSX's root, default `https://open-vsx.org`, or the VS Code Marketplace's gallery, default `https://marketplace.visualstudio.com` |
-| `tokenEnv` | The variable holding the token. Default `VSCE_PAT` for the VS Code Marketplace and `OVSX_PAT` for Open VSX, the variables `vsce` and `ovsx` read |
+| `tokenEnv` | The variable holding the token, under `auth: "token"`. Default `VSCE_PAT` for the VS Code Marketplace and `OVSX_PAT` for Open VSX, the variables `vsce` and `ovsx` read |
+| `auth` | `token` (the default), `azure-credential` (VS Code Marketplace) or `trusted-publishing` (Open VSX). See [The run's identity](#the-runs-identity) |
+| `onRefusal` | `fail` (the default) or `warn`. See [A refusal as a warning](#a-refusal-as-a-warning) |
 
 A `.vsix` that the release records as an asset must match its digest, as with any target. A file that is not a zip with an `extension/package.json` naming `publisher`, `name` and `version` is refused in the plan (`publish-marketplace-vsix-invalid`).
 
@@ -179,6 +181,30 @@ A marketplace has no draft. A version is visible as soon as it is uploaded, and 
 | VS Code Marketplace | Asks the gallery's public `extensionquery` API for the extension's versions. A version already listed is `present`, by version only, since the gallery reports no digest | Runs `vsce publish --packagePath <vsix>` with the token in `VSCE_PAT`, unless the gallery lists the version by then |
 
 The VS Code Marketplace target needs `vsce` on `PATH`, such as from `npm install -g @vscode/vsce`. vsce's output goes through the redactor. Open VSX takes its token as a query parameter, which the redactor masks in any error that quotes the request.
+
+### The run's identity
+
+A target can publish with the CI run's identity in place of a stored token ([#4698](https://github.com/INTENTIUS/chant/issues/4698)), as `vsce publish --azure-credential` and `ovsx publish --trusted-publishing` do. Read by chant 0.124.63 and newer. `tokenEnv` beside either is refused, and so is an `auth` the marketplace doesn't take (`publish-marketplace-auth-invalid`).
+
+```ts
+{ type: "marketplace", marketplace: "vscode", vsix: "dist/acme.vsix", auth: "azure-credential" },
+{ type: "marketplace", marketplace: "openvsx", vsix: "dist/acme.vsix", auth: "trusted-publishing", onRefusal: "warn" },
+```
+
+| `auth` | Where the identity comes from | Stage | Reveal |
+|---|---|---|---|
+| `azure-credential` | The job's Microsoft Entra sign-in, which vsce finds through the Azure CLI, a managed identity or `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_CLIENT_SECRET`. In GitHub Actions, `azure/login` with the run's OIDC token, in the same job and before the publish | Runs `vsce verify-pat --azure-credential <publisher>`, which signs in and asks the marketplace for the identity's role on the publisher, and changes nothing. A failure is `publish-marketplace-azure-credential` | Runs `vsce publish --packagePath <vsix> --azure-credential` |
+| `trusted-publishing` | The run's OIDC ID token: in GitHub Actions, one requested with the registry's root as its audience from a job with `permissions: id-token: write`; elsewhere, the token in `OVSX_ID_TOKEN`. With neither, the plan refuses with `publish-credentials-missing` | Exchanges the ID token at `POST /api/-/trusted-publishing/token` for a publishing token, to check that Open VSX takes this workflow as a trusted publisher of the extension, and drops the token. A refusal is `publish-marketplace-trusted-publishing` | Exchanges the ID token again, since a publishing token lasts minutes, and uploads with it |
+
+Neither reads `VSCE_PAT` or `OVSX_PAT`. vsce runs with `VSCE_PAT` taken out of its environment, since vsce uses a PAT it finds there before `--azure-credential`. The trusted publisher is registered once on Open VSX, under the extension's trusted publishers at `{registry}/user-settings/trusted-publishers`; the Entra identity is added once to the publisher as a member.
+
+What the stage can't check: whether the upload itself will be taken. The stage proves the identity can sign in and is known to the publisher or the extension, and the reveal signs in again. An Entra sign-in that has lapsed between the two, or a store that refuses the file, still fails at the reveal, after the targets before it revealed.
+
+### A refusal as a warning
+
+With `onRefusal: "warn"`, a marketplace that refuses the reveal's upload, or a request the reveal makes around it (`publish-marketplace-failed`, `publish-marketplace-trusted-publishing`), doesn't fail the publish ([#4698](https://github.com/INTENTIUS/chant/issues/4698)). Read by chant 0.124.63 and newer. The publish prints a warning, the target's items come back with `refused: true` and the target with a `warning` in the `--json` document, and the next target reveals. The target is not recorded as revealed, so the same `chant release publish` run again tries the upload again.
+
+The stage's checks still refuse under `warn`: a missing namespace, a version already there with other bytes, a missing credential, an identity that can't sign in. So do a `vsce` that is not on `PATH` (`publish-marketplace-vsce-missing`) and a digest that differs after an upload. `warn` is for a store that refuses a release it should take, as Open VSX has with a 406 for some extensions.
 
 ## Tauri updater
 
@@ -335,7 +361,7 @@ interface PublishTarget<C extends PublishContextBase = PublishContext, K extends
 
 `plan` reads what the target would publish and checks that it can: the files are there, they match the release's digests, the credentials are set. It uploads nothing and sends no request that changes anything. The publish plans every target before any of them stages, and the dry run prints what `plan` returns.
 
-`stage` puts every item where the target publishes but where no consumer resolves it yet. It asks the destination first, sends nothing already there, and returns such an item with `present: true`. The `StagedTarget` that comes back holds the items and a `state` of strings the reveal needs. The record keeps that state, so it must never hold a credential. `reveal` is the one last step that makes the staged items visible, given what `stage` returned in this run or in an earlier one. Run again, it must move nothing that already moved. All three throw `PublishTargetError` with a `code`, a message and an optional `fix`. A failure part way names what was already staged or revealed.
+`stage` puts every item where the target publishes but where no consumer resolves it yet. It asks the destination first, sends nothing already there, and returns such an item with `present: true`. The `StagedTarget` that comes back holds the items and a `state` of strings the reveal needs. The record keeps that state, so it must never hold a credential. `reveal` is the one last step that makes the staged items visible, given what `stage` returned in this run or in an earlier one. Run again, it must move nothing that already moved. A target whose destination may refuse a release without failing the publish, as a marketplace with `onRefusal: "warn"` does, returns from `reveal` with its items `refused: true` and a `warning`, and is not recorded as revealed. All three throw `PublishTargetError` with a `code`, a message and an optional `fix`. A failure part way names what was already staged or revealed.
 
 A release target is given a `PublishContext` with these fields. The last five (`cwd`, `tag`, `env`, `redactor` and `log`) and `provenance` make up `PublishContextBase`, and the rest belong to the release.
 

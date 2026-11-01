@@ -30,6 +30,31 @@
  *
  * The token is read from `tokenEnv`, else `VSCE_PAT` or `OVSX_PAT`, the
  * variables `vsce` and `ovsx` read, and is masked in all output.
+ *
+ * Or the target authenticates with the run's identity, with no stored
+ * token (#4698):
+ *
+ * - `auth: "azure-credential"` (VS Code Marketplace): `vsce` runs with
+ *   `--azure-credential`, which gets a Microsoft Entra token from the job's
+ *   Azure sign-in, such as the one `azure/login` makes from the run's OIDC
+ *   token. `VSCE_PAT` is taken out of vsce's environment, since vsce prefers
+ *   a PAT it finds there. The stage runs
+ *   `vsce verify-pat --azure-credential <publisher>`, which signs in and asks
+ *   the marketplace for the identity's role on the publisher, and changes
+ *   nothing.
+ * - `auth: "trusted-publishing"` (Open VSX): the run's OIDC ID token, from
+ *   GitHub Actions (a job with `id-token: write`) or from `OVSX_ID_TOKEN`, is
+ *   exchanged at `POST {registry}/api/-/trusted-publishing/token` for a
+ *   publishing token that lasts minutes, as `ovsx publish --trusted-publishing`
+ *   does. The stage makes the exchange to check that Open VSX takes this
+ *   workflow as a trusted publisher of the extension, and drops the token;
+ *   the reveal exchanges again for the upload.
+ *
+ * With `onRefusal: "warn"`, a marketplace that refuses the reveal's upload,
+ * or a request around it, is a warning: the reveal returns the target with
+ * its items `refused` and a `warning`, and the publish goes on. Every check
+ * the stage makes still refuses, and so does a digest that differs after an
+ * upload.
  */
 
 import { spawn } from "node:child_process";
@@ -38,19 +63,61 @@ import { inflateRawSync } from "node:zlib";
 import { readCredential, type Credential } from "./publish-credentials";
 import type { MarketplacePublishDeclaration } from "./publish-declaration";
 import { bytesDigest, checkReleaseDigest, memberFile, publishTargetKey } from "./publish-targets";
-import { PublishTargetError, type PublishContext, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget, type StagedTarget } from "./release-publish";
+import {
+  PublishTargetError,
+  type PublishContext,
+  type PublishDeps,
+  type PublishedTarget,
+  type PublishFetch,
+  type PublishItem,
+  type PublishTarget,
+  type StagedTarget,
+} from "./release-publish";
 import { NEXT_RELEASE } from "../release-floors";
 
 /** The first chant that publishes a `marketplace` target (#4676). */
 export const PUBLISH_MARKETPLACE_FLOOR = NEXT_RELEASE;
 
+/** The first chant that reads a marketplace target's `auth` (#4698). */
+export const PUBLISH_MARKETPLACE_AUTH_FLOOR = NEXT_RELEASE;
+
+/** The first chant that reads a marketplace target's `onRefusal` (#4698). */
+export const PUBLISH_MARKETPLACE_ON_REFUSAL_FLOOR = NEXT_RELEASE;
+
 export const OPEN_VSX_REGISTRY = "https://open-vsx.org";
 export const VSCODE_GALLERY = "https://marketplace.visualstudio.com";
 
-/** The variables a marketplace's token is read from. */
-export function marketplaceTokenEnv(decl: Pick<MarketplacePublishDeclaration, "marketplace" | "tokenEnv">): string[] {
+/** The variable an OIDC ID token for Open VSX is read from outside GitHub Actions, as `ovsx` reads it. */
+export const OVSX_ID_TOKEN_ENV = "OVSX_ID_TOKEN";
+
+export type MarketplaceAuth = NonNullable<MarketplacePublishDeclaration["auth"]>;
+
+/** The declaration's `auth`, refused when the marketplace does not take it or when `tokenEnv` is set with another. */
+export function marketplaceAuth(decl: Pick<MarketplacePublishDeclaration, "marketplace" | "auth" | "tokenEnv">): MarketplaceAuth {
+  const auth = decl.auth ?? "token";
+  const wrong =
+    auth === "azure-credential" && decl.marketplace !== "vscode"
+      ? "auth: azure-credential is the VS Code Marketplace's; Open VSX takes token or trusted-publishing"
+      : auth === "trusted-publishing" && decl.marketplace !== "openvsx"
+        ? "auth: trusted-publishing is Open VSX's; the VS Code Marketplace takes token or azure-credential"
+        : auth !== "token" && decl.tokenEnv !== undefined
+          ? `tokenEnv names a token, and auth: ${auth} reads none`
+          : null;
+  if (wrong) throw new PublishTargetError("publish-marketplace-auth-invalid", `a marketplace target for ${decl.marketplace}: ${wrong}`, "Fix the target in release.publish in chant.config.ts.");
+  return auth;
+}
+
+/** The variables a marketplace's credential is read from, whose values are masked. */
+export function marketplaceTokenEnv(decl: Pick<MarketplacePublishDeclaration, "marketplace" | "tokenEnv" | "auth">): string[] {
+  const auth = decl.auth ?? "token";
+  // vsce's Entra sign-in reads a client secret from AZURE_CLIENT_SECRET when one is set; chant reads none.
+  if (auth === "azure-credential") return ["AZURE_CLIENT_SECRET"];
+  if (auth === "trusted-publishing") return [OVSX_ID_TOKEN_ENV];
   return [decl.tokenEnv ?? (decl.marketplace === "vscode" ? "VSCE_PAT" : "OVSX_PAT")];
 }
+
+/** The codes a reveal turns into a warning under `onRefusal: "warn"`: the marketplace refused or failed a request. */
+const REFUSALS = new Set(["publish-marketplace-failed", "publish-marketplace-trusted-publishing"]);
 
 /** One file of a zip archive, or null when it holds none by that name. Reads stored and deflated entries; refuses a zip64 archive. */
 export function readZipEntry(zip: Buffer, name: string): Buffer | null {
@@ -119,6 +186,7 @@ function run(bin: string, args: string[], ctx: PublishContext, env: NodeJS.Proce
 
 export function marketplaceTarget(decl: MarketplacePublishDeclaration, deps: PublishDeps): PublishTarget {
   const fetchImpl: PublishFetch = deps.fetch ?? ((url, init) => fetch(url, init as RequestInit));
+  const auth = marketplaceAuth(decl);
   const tokenNames = marketplaceTokenEnv(decl);
   const label = decl.marketplace === "vscode" ? "VS Code Marketplace" : "Open VSX";
   const registry = (decl.registry ?? (decl.marketplace === "vscode" ? VSCODE_GALLERY : OPEN_VSX_REGISTRY)).replace(/\/+$/, "");
@@ -129,9 +197,19 @@ export function marketplaceTarget(decl: MarketplacePublishDeclaration, deps: Pub
     const digest = bytesDigest(new Uint8Array(bytes));
     checkReleaseDigest(ctx.release, "asset", ctx.cwd, decl.vsix, [digest]);
     const id = vsixIdentity(bytes, decl.vsix);
-    const token = readCredential(ctx.env, tokenNames, ctx.redactor);
-    if (!token) {
-      throw new PublishTargetError("publish-credentials-missing", `the ${label} target reads its token from ${tokenNames[0]}, and it is not set`, `Set ${tokenNames[0]} in the job's or the shell's environment.`);
+    let token: Credential | null = null;
+    if (auth === "token") {
+      token = readCredential(ctx.env, tokenNames, ctx.redactor);
+      if (!token) {
+        throw new PublishTargetError("publish-credentials-missing", `the ${label} target reads its token from ${tokenNames[0]}, and it is not set`, `Set ${tokenNames[0]} in the job's or the shell's environment.`);
+      }
+    }
+    if (auth === "trusted-publishing" && !ctx.env[OVSX_ID_TOKEN_ENV] && !(ctx.env.ACTIONS_ID_TOKEN_REQUEST_URL && ctx.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN)) {
+      throw new PublishTargetError(
+        "publish-credentials-missing",
+        `the Open VSX target publishes with trusted publishing, and this run has no OIDC ID token: not a GitHub Actions job with id-token: write, and ${OVSX_ID_TOKEN_ENV} is not set`,
+        `In GitHub Actions, give the job permissions: id-token: write. Elsewhere, put an ID token whose audience is ${registry} in ${OVSX_ID_TOKEN_ENV}.`,
+      );
     }
     const destination =
       decl.marketplace === "vscode" ? `${registry}/items?itemName=${id.publisher}.${id.name}` : `${registry}/extension/${id.publisher}/${id.name}/${id.version}`;
@@ -160,6 +238,64 @@ export function marketplaceTarget(decl: MarketplacePublishDeclaration, deps: Pub
     return bytesDigest(new Uint8Array(await res.arrayBuffer()));
   };
 
+  /** The run's OIDC ID token for Open VSX: `OVSX_ID_TOKEN`, else one GitHub Actions issues with the registry as its audience. */
+  const idToken = async (ctx: PublishContext): Promise<string> => {
+    const direct = readCredential(ctx.env, [OVSX_ID_TOKEN_ENV], ctx.redactor);
+    if (direct) return direct.value;
+    const url = new URL(ctx.env.ACTIONS_ID_TOKEN_REQUEST_URL ?? "");
+    url.searchParams.set("audience", registry);
+    const res = await fetchImpl(url.toString(), { method: "GET", headers: { authorization: `Bearer ${ctx.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN ?? ""}`, accept: "application/json" } });
+    const text = await res.text().catch(() => "");
+    const value = res.status === 200 ? (JSON.parse(text) as { value?: unknown }).value : undefined;
+    if (typeof value !== "string" || !value) {
+      throw new PublishTargetError("publish-marketplace-trusted-publishing", ctx.redactor.redact(`GitHub Actions gave no OIDC ID token for ${registry}: it answered ${res.status}`), "Give the job permissions: id-token: write.");
+    }
+    ctx.redactor.add(value);
+    return value;
+  };
+
+  /** Open VSX trusted publishing: a publishing token for the extension, exchanged for the run's ID token. It lasts minutes. */
+  const trustedToken = async (ctx: PublishContext, id: { publisher: string; name: string }): Promise<string> => {
+    const token = await idToken(ctx);
+    const res = await get(`${registry}/api/-/trusted-publishing/token`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ namespace: id.publisher, extension: id.name, token }),
+    });
+    let body: { value?: unknown; error?: unknown } = {};
+    try {
+      body = JSON.parse(res.text) as typeof body;
+    } catch {
+      // An answer that is not JSON is reported by its status.
+    }
+    if (res.status < 200 || res.status > 299 || typeof body.value !== "string" || !body.value) {
+      const why = typeof body.error === "string" ? body.error : `it answered ${res.status}${res.text ? `: ${res.text.slice(0, 300)}` : ""}`;
+      throw new PublishTargetError(
+        "publish-marketplace-trusted-publishing",
+        ctx.redactor.redact(`Open VSX at ${registry} gave no trusted-publishing token for ${id.publisher}.${id.name}: ${why}`),
+        `Register this workflow as a trusted publisher of ${id.publisher}.${id.name} at ${registry}/user-settings/trusted-publishers.`,
+      );
+    }
+    ctx.redactor.add(body.value);
+    return body.value;
+  };
+
+  /** Runs vsce with the target's credential: `VSCE_PAT` for a token, `--azure-credential` and no `VSCE_PAT` for an Entra identity. */
+  const vsce = async (ctx: PublishContext, args: string[], token: Credential | null) => {
+    const env = { ...ctx.env };
+    if (token) env.VSCE_PAT = token.value;
+    else delete env.VSCE_PAT;
+    return run(deps.vsce ?? "vsce", token ? args : [...args, "--azure-credential"], ctx, env).catch((err: unknown) => {
+      throw new PublishTargetError("publish-marketplace-vsce-missing", `vsce could not be run: ${err instanceof Error ? err.message : String(err)}`, "Install it on the job's PATH: npm install -g @vscode/vsce");
+    });
+  };
+
+  /** The reveal of a target the marketplace refused, under `onRefusal: "warn"`. */
+  const refusedResult = (ctx: PublishContext, items: PublishItem[], err: PublishTargetError): PublishedTarget => {
+    const warning = ctx.redactor.redact(`${label} refused ${items[0]?.name ?? decl.vsix}: ${err.message}. onRefusal is warn, so the publish goes on without it, and the same publish run again tries it again`);
+    return { target: target.name, destination: target.destination, items: items.map((i) => ({ ...i, refused: true })), warning };
+  };
+
   /** VS Code Marketplace: whether the gallery lists the version. */
   const galleryHas = async (ctx: PublishContext, id: { publisher: string; name: string; version: string }): Promise<boolean> => {
     const res = await get(`${registry}/_apis/public/gallery/extensionquery`, {
@@ -183,9 +319,13 @@ export function marketplaceTarget(decl: MarketplacePublishDeclaration, deps: Pub
     },
     async stage(ctx) {
       const { id, digest, token, item } = setup(ctx);
-      ctx.log(`using the token from ${token.from}`);
+      if (token) ctx.log(`using the token from ${token.from}`);
       const done = (present: boolean): StagedTarget => ({ target: target.name, destination: target.destination, items: [{ ...item, ...(present ? { present: true } : {}) }], state: present ? { present: "true" } : {} });
       if (decl.marketplace === "openvsx") {
+        if (auth === "trusted-publishing") {
+          await trustedToken(ctx, id);
+          ctx.log(`Open VSX takes this run as a trusted publisher of ${id.publisher}.${id.name}; the reveal asks for a new token, since one lasts minutes`);
+        }
         const ns = await get(`${registry}/api/${encodeURIComponent(id.publisher)}`);
         if (ns.status === 404) {
           throw new PublishTargetError("publish-marketplace-no-namespace", `Open VSX at ${registry} has no namespace ${id.publisher}`, `Create it once with: npx ovsx create-namespace ${id.publisher}`);
@@ -206,6 +346,18 @@ export function marketplaceTarget(decl: MarketplacePublishDeclaration, deps: Pub
         ctx.log(`${item.name} is already on Open VSX with the same bytes`);
         return done(true);
       }
+      if (auth === "azure-credential") {
+        ctx.log(`checking the job's Microsoft Entra identity may publish as ${id.publisher}: vsce verify-pat --azure-credential ${id.publisher}`);
+        const check = await vsce(ctx, ["verify-pat", id.publisher], null);
+        for (const l of check.output) ctx.log(`vsce: ${l}`);
+        if (check.code !== 0) {
+          throw new PublishTargetError(
+            "publish-marketplace-azure-credential",
+            `vsce could not sign in with a Microsoft Entra identity that has a role on publisher ${id.publisher}: vsce verify-pat exited ${check.code}${check.output.length ? `: ${check.output.slice(-3).join(" ")}` : ""}`,
+            `Sign in to Azure in the publish's job before it runs, such as with azure/login and the run's OIDC token, as an identity added to the publisher ${id.publisher}.`,
+          );
+        }
+      }
       if (await galleryHas(ctx, id)) {
         ctx.log(`${item.name} is already on the VS Code Marketplace; it reports no digest to compare`);
         return done(true);
@@ -217,43 +369,53 @@ export function marketplaceTarget(decl: MarketplacePublishDeclaration, deps: Pub
       const items = staged.items.map((i) => ({ name: i.name, destination: i.destination, ...(i.digest ? { digest: i.digest } : {}) }));
       if (staged.state.present === "true") return { target: target.name, destination: target.destination, items: items.map((i) => ({ ...i, present: true })) };
       const { abs, bytes, id, digest, token, item } = setup(ctx);
+      const refusable = async <T>(step: () => Promise<T>): Promise<T | PublishedTarget> => {
+        try {
+          return await step();
+        } catch (err) {
+          if (decl.onRefusal === "warn" && err instanceof PublishTargetError && REFUSALS.has(err.code)) return refusedResult(ctx, items, err);
+          throw err;
+        }
+      };
       if (decl.marketplace === "openvsx") {
         // Run again after an upload whose record was lost, the version is there: check it rather than send it twice.
-        const before = await openVsxServed(ctx, id);
-        if (before === null) {
-          ctx.log(`uploading ${item.name} (${bytes.byteLength} bytes) to Open VSX`);
-          const res = await fetchImpl(`${registry}/api/-/publish?token=${encodeURIComponent(token.value)}`, {
+        const uploaded = await refusable(async () => {
+          const before = await openVsxServed(ctx, id);
+          if (before !== null) return before;
+          const publishToken = token ? token.value : await trustedToken(ctx, id);
+          ctx.log(`uploading ${item.name} (${bytes.byteLength} bytes) to Open VSX${token ? "" : " with a trusted-publishing token"}`);
+          const res = await fetchImpl(`${registry}/api/-/publish?token=${encodeURIComponent(publishToken)}`, {
             method: "POST",
             headers: { "user-agent": "chant", "content-type": "application/octet-stream" },
             body: new Uint8Array(bytes),
           });
           if (res.status !== 201 && res.status !== 200) fail(ctx, `publishing ${item.name}`, res.status, await res.text().catch(() => ""));
-        }
+          return null;
+        });
+        if (uploaded !== null && typeof uploaded === "object") return uploaded;
+        const before = uploaded;
         const served = before ?? (await openVsxServed(ctx, id));
         if (served !== digest) {
           throw new PublishTargetError("publish-marketplace-digest-mismatch", `Open VSX serves ${item.name} with digest ${served ?? "none"}, and the file published is ${digest}`);
         }
         return { target: target.name, destination: target.destination, items: before === null ? items : items.map((i) => ({ ...i, present: true })) };
       }
-      if (await galleryHas(ctx, id)) {
-        ctx.log(`${item.name} is already on the VS Code Marketplace`);
-        return { target: target.name, destination: target.destination, items: items.map((i) => ({ ...i, present: true })) };
-      }
-      ctx.log(`running vsce publish --packagePath ${decl.vsix}`);
-      const result = await run(deps.vsce ?? "vsce", ["publish", "--packagePath", abs], ctx, vsceEnv(ctx.env, token)).catch((err: unknown) => {
-        throw new PublishTargetError("publish-marketplace-failed", `vsce could not be run: ${err instanceof Error ? err.message : String(err)}`, "Install it on the job's PATH: npm install -g @vscode/vsce");
+      const outcome = await refusable(async () => {
+        if (await galleryHas(ctx, id)) {
+          ctx.log(`${item.name} is already on the VS Code Marketplace`);
+          return true;
+        }
+        ctx.log(`running vsce publish --packagePath ${decl.vsix}${token ? "" : " --azure-credential"}`);
+        const result = await vsce(ctx, ["publish", "--packagePath", abs], token);
+        for (const l of result.output) ctx.log(`vsce: ${l}`);
+        if (result.code !== 0) {
+          throw new PublishTargetError("publish-marketplace-failed", `vsce publish of ${item.name} exited ${result.code}${result.output.length ? `: ${result.output.slice(-3).join(" ")}` : ""}`);
+        }
+        return false;
       });
-      for (const l of result.output) ctx.log(`vsce: ${l}`);
-      if (result.code !== 0) {
-        throw new PublishTargetError("publish-marketplace-failed", `vsce publish of ${item.name} exited ${result.code}${result.output.length ? `: ${result.output.slice(-3).join(" ")}` : ""}`);
-      }
-      return { target: target.name, destination: target.destination, items };
+      if (typeof outcome === "object") return outcome;
+      return { target: target.name, destination: target.destination, items: outcome ? items.map((i) => ({ ...i, present: true })) : items };
     },
   };
   return target;
-}
-
-/** The environment vsce runs with: the run's, with the token in `VSCE_PAT`. */
-function vsceEnv(env: NodeJS.ProcessEnv, token: Credential): NodeJS.ProcessEnv {
-  return { ...env, VSCE_PAT: token.value };
 }

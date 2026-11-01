@@ -495,8 +495,9 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
     const hint = promoteHint();
     if (hint) say(hint);
   } else {
-    for (const p of published) for (const i of p.items) say(`  ${i.present ? "already there" : "published"}: ${describeItem(i)}`);
-    console.error(formatSuccess(`Published ${name} to ${published.length} target(s)`));
+    for (const p of published) for (const i of p.items) say(`  ${i.refused ? "refused" : i.present ? "already there" : "published"}: ${describeItem(i)}`);
+    const refused = published.filter((p) => p.warning);
+    console.error(formatSuccess(`Published ${name} to ${published.length - refused.length} target(s)${refused.length > 0 ? `; ${refused.length} refused it, with a warning` : ""}`));
   }
   return 0;
 }
