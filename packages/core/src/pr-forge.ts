@@ -1113,8 +1113,13 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
       const combined = await api.call("GET", `${repo}/commits/${head}/status`);
       for (const st of isObject(combined) && Array.isArray(combined.statuses) ? combined.statuses : []) {
         const context = isObject(st) ? str(st.context) : undefined;
-        if (!context || skip(context)) continue;
+        if (!context) continue;
         const state = str(st.state) ?? str(st.status) ?? "";
+        // A status left out still shows the checks reported, unless it is what held them back.
+        if (skip(context)) {
+          if (state === "success") count++;
+          continue;
+        }
         count++;
         if (state === "failure" || state === "error" || state === "failed") failing.push(context);
         else if (state === "pending" || state === "running" || state === "") waiting.push(context);
@@ -1553,18 +1558,25 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
       const newest = new Map<string, Record<string, unknown>>();
       for (const st of await api.list(`${project}/repository/commits/${head}/statuses?all=true`, pageParams, 100)) {
         const name = isObject(st) ? str(st.name) : undefined;
-        if (!name || skip(name) || !isObject(st)) continue;
+        if (!name || !isObject(st)) continue;
         const had = newest.get(name);
         if (!had || (num(st.id) ?? 0) > (num(had.id) ?? 0)) newest.set(name, st);
       }
       const failing: string[] = [];
       const waiting: string[] = [];
+      let count = 0;
       for (const [name, st] of newest) {
         const state = str(st.status) ?? "";
+        // A status left out still shows the checks reported, unless it is what held them back.
+        if (skip(name)) {
+          if (state === "success") count++;
+          continue;
+        }
+        count++;
         if ((state === "failed" || state === "canceled") && st.allow_failure !== true) failing.push(name);
         else if (GITLAB_RUNNING.has(state)) waiting.push(name);
       }
-      return checksVerdict(`merge request !${mr}`, head, failing, waiting, newest.size);
+      return checksVerdict(`merge request !${mr}`, head, failing, waiting, count);
     },
     async pullRequestOpen(mr) {
       try {
