@@ -1,6 +1,6 @@
 ---
 title: chant
-description: Spec-native typed ops with per-resource locking.
+description: Cloud native ops and governance.
 template: splash
 ---
 
@@ -8,25 +8,47 @@ import Landing from '../../components/Landing.astro';
 
 <Landing />
 
-## The lexicons
+## Changes and approvals
 
-Each lexicon is a plugin for one platform: its types, its lint rules and its output format. Install one and `chant init` scaffolds a project for it. [Lexicons](/chant/lexicons/overview/) covers how they work, and [Extend chant](/chant/lexicon-authoring/overview/) covers writing your own.
+A change gets one plan note. It covers the components the change touches and the components that depend on them, and nothing else. An approval covers the exact plan it was shown. [Changes and approvals](/chant/ci/changes-and-approvals/).
 
-<Landing part="lexicons" />
+## Your forge, your pipelines
 
-## Already on Terraform, OpenTofu or Pulumi
+chant writes the pipeline into your repository, in your forge's own format.
 
-Keep your roots and programs. The [terraform](/chant/lexicons/terraform/) and [pulumi](/chant/lexicons/pulumi/) lexicons read them as they are. [choudoufu](/chant/lexicons/terraform/ops/#choudoufu) is an OpenTofu fork that runs your roots with ownership markers on the resources. [plunge](/chant/lexicons/pulumi/plunge/) is a Pulumi fork that does the same for Pulumi programs. [Works with](/chant/concepts/comparison/) has the details.
+```bash
+npx chant build --components --generate <forge> --pr-loop --env <env> --output <file>
+```
 
-## The lifecycle you choose
+| Where it runs | Page |
+|---|---|
+| GitHub, GitLab or Forgejo | [Changes and approvals](/chant/ci/changes-and-approvals/) |
+| A runner on your own host, with GitHub, Forgejo or plain git | [Your forge](/chant/ci/your-forge/) |
 
-The build is deterministic. After it, you choose per environment: observe drift, reconcile the source from the live system, or apply the source to it. [Lifecycle Models](/chant/concepts/lifecycle-models/) compares the three.
+## Merges and releases
 
-<Landing part="lifecycle" />
+A merge records the plan and deploys nothing. A release that carries the commit deploys the change. [Apply on merge](/chant/guide/apply-on-merge/) is the opt-in for teams that want a merge to apply. [Merges and releases](/chant/ci/merges-and-releases/).
 
-## Where to read next
+## Ops with gates
 
-<Landing part="next" />
+A change that needs more than one step runs as an Op, with approval gates and rollback. A person or an agent can start one, and neither can hurry an approval. [Run an Op](/chant/ci/run-an-op/).
+
+## Drift
+
+`chant lifecycle diff <env> --live` compares what you declared with what is running. [See drift and act on it](/chant/ci/drift/).
+
+## Native specs
+
+chant writes each platform's own spec. Nothing sits between your code and the format the platform reads.
+
+| Spec | Platform |
+|---|---|
+| CloudFormation | AWS |
+| ARM | Azure |
+| Config Connector | GCP |
+| Kubernetes YAML | Kubernetes, EKS, GKE and AKS |
+
+[Every platform](/chant/lexicons/overview/), and [the full docs](/chant/getting-started/introduction/) on defining infrastructure.
 
 ## Hand the setup to your coding agent
 

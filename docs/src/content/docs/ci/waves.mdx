@@ -1,0 +1,48 @@
+---
+title: Roll out in waves
+description: 'An Op waves spec applies a change to one set of targets at a time, each behind its own gate.'
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/ci/waves/
+  Write the waves spec I describe as `waves.json`, with a `gate` on every wave past the first, and run `npx chant run --generate <forge> --spec waves.json`.
+  Open a change with the spec and the pipeline, and list each wave's gate name. Do not run `chant run wave` or `chant run resume` yourself.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+```json
+{
+  "name": "migrations",
+  "op": "migrate",
+  "plan": ["./bin/plan", "{target}", "{plan}"],
+  "apply": ["./bin/apply", "{target}", "{plan}"],
+  "waves": [
+    { "name": "dev", "runs": [{ "target": "dev" }], "gate": "never" },
+    { "name": "staging", "runs": [{ "target": "staging" }], "gate": "on-destructive" },
+    { "name": "prod", "runs": [{ "target": "prod" }], "gate": "always" }
+  ]
+}
+```
+
+`op` names an Op in the repository. Render the jobs for your forge:
+
+```sh
+chant run --generate github --spec waves.json
+```
+
+A push to `main` runs wave 1. Each job plans its wave and decides:
+
+| `gate` | The wave waits when |
+|---|---|
+| `always` | a plan changes something |
+| `on-destructive` | a plan is destructive |
+| `never` | never |
+
+A waiting wave applies nothing, exits 3 and prints its approve line. The approval covers one digest over all the wave's plans, and the waves after it do not run until it passes.
+
+```sh
+chant approve migrations migrations-wave-3 --plan jcs1-sha256:... --resume
+```
+
+`--resume` starts the waiting job again and needs a forge token. [Resume the waiting job](/chant/guide/op-waves/#resume-the-waiting-job) lists the scope on each forge.
+
+A failed run blocks only [the runs that depend on it](/chant/guide/op-waves/#keep-going-past-a-failed-run). Under apply on merge, [`--wave-gate <name>`](/chant/guide/apply-on-merge/#a-gate-per-wave-on-merge) gives each wave of the component graph its own gate. Every field is in [Op waves](/chant/guide/op-waves/#write-the-spec).

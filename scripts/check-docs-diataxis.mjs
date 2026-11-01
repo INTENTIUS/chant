@@ -49,6 +49,9 @@ const GROUP_TO_QUADRANT = {
   Reference: "reference",
   Explanation: "explanation",
 };
+// Sidebar groups that hold pages of several quadrants on purpose: the "CI"
+// pages are one short set for people, read in order.
+const MIXED_GROUPS = new Set(["CI"]);
 // Pages that live outside the four quadrants by design.
 const EXEMPT = new Set(["index", "whats-new"]);
 
@@ -194,7 +197,7 @@ for (const file of walk(CONTENT)) {
     violations.push(`${slug}: in no sidebar group (unreachable, #1417)`);
   } else if (q && GROUP_TO_QUADRANT[group] && GROUP_TO_QUADRANT[group] !== q) {
     violations.push(`${slug}: diataxis "${q}" but sidebar group "${group}"`);
-  } else if (q && !GROUP_TO_QUADRANT[group]) {
+  } else if (q && !GROUP_TO_QUADRANT[group] && !MIXED_GROUPS.has(group)) {
     violations.push(`${slug}: sidebar group "${group}" is not a Diátaxis group`);
   }
 }

@@ -26,20 +26,12 @@ export const PRODUCTS = [
 	{
 		id: 'chant',
 		name: 'chant',
-		oneLiner: 'Spec-native typed ops with per-resource locking.',
-		changes: 'You describe infrastructure in TypeScript, and chant builds the files each platform reads, such as CloudFormation templates, Kubernetes YAML and CI pipelines. Changes run as typed Ops that are checked before they apply. Each resource carries its own ownership marker, so two changes to different resources do not wait for each other.',
-		fits: 'terragucci and plywood are built on it. Use chant directly when you want to write the infrastructure itself in TypeScript.',
-		starts: {
-			tofu: `${IO}/chant/for/terraform-pulumi/`,
-			pulumiDiy: `${IO}/chant/for/terraform-pulumi/`,
-			fresh: `${IO}/chant/getting-started/quick-start/`,
-		},
-		first: {
-			needs: 'Node.js 24 or later',
-			cmd: ['npm install --save-dev @intentius/chant-lexicon-aws', 'npx chant init my-infra --lexicon aws'],
-			href: `${IO}/chant/getting-started/quick-start/`,
-		},
-		links: { docs: `${IO}/chant/`, source: `${GH}/chant`, evidence: null },
+		oneLiner: 'Cloud native ops and governance.',
+		changes: '',
+		fits: '',
+		starts: {},
+		first: null,
+		links: { docs: `${IO}/chant/getting-started/introduction/`, source: `${GH}/chant`, evidence: null },
 	},
 	{
 		id: 'terragucci',

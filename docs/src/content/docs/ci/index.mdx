@@ -1,0 +1,18 @@
+---
+title: What chant's pipelines do
+description: The path of a change through its plan note, its approval and its release.
+diataxis: explanation
+---
+
+| Step | What happens | Page |
+|---|---|---|
+| Change | You push a branch. chant plans the components it touches and the components that depend on them. | [Your first change](/chant/ci/first-change/) |
+| Plan note | One note on the change lists the plan for each component. | [Changes and approvals](/chant/ci/changes-and-approvals/) |
+| Approval | A person approves the digest of that exact plan. | [Approve a change](/chant/ci/approve-a-change/) |
+| Merge | The merge records the plan and deploys nothing. | [Merges and releases](/chant/ci/merges-and-releases/) |
+| Release | A person cuts a release from a green commit and promotes it through each environment, behind a gate. | [Merges and releases](/chant/ci/merges-and-releases/) |
+| Drift | chant compares what you declared with what is running. | [Drift](/chant/ci/drift/) |
+
+chant writes the pipeline into your repository in [your forge's own format](/chant/ci/your-forge/). A change that needs more than one step runs as [waves](/chant/ci/waves/) or as an [Op](/chant/ci/run-an-op/).
+
+Every step here has a full reference in the sidebar, starting with [the generated pipeline](/chant/guide/pull-request-ci/).

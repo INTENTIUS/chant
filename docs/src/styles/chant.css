@@ -367,7 +367,7 @@ html .chant-prompt.chant-prompt .link.link:hover {
 }
 
 /* Splash sections: more air between them. */
-:root:not([data-has-sidebar]) .sl-markdown-content h2 {
+:root:not([data-has-sidebar]) .sl-markdown-content h2:not(.not-content, .not-content *) {
 	margin-top: 4rem;
 	border: none;
 }

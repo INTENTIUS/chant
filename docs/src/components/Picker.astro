@@ -17,7 +17,9 @@ import { lexiconExamples } from '../data/proof.mjs';
 import { codeHtml, siteHref } from '../data/href.mjs';
 import { base } from '../site';
 
-const tiles = TILES.map((t) => {
+// CI leads, and Terraform and Pulumi stay off the front page.
+const shown = TILES.filter((t) => t.id !== 'terraform-pulumi').sort((a, b) => Number(b.id === 'ci') - Number(a.id === 'ci'));
+const tiles = shown.map((t) => {
 	const r = room(t.room);
 	const ex = lexiconExamples(t.lexicons).filter((l) => l.count > 0);
 	const total = ex.reduce((n, l) => n + l.count, 0);

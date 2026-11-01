@@ -1,0 +1,43 @@
+---
+title: See drift and act on it
+description: 'chant lifecycle diff compares what you declared with what is running, and each finding has its own next step.'
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/ci/drift/
+  Run `npx chant lifecycle diff <env> --live` for the environment I name, and list each finding with the action the page's table gives.
+  Do not edit source or accept a baseline; those are mine to decide.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+```sh
+chant lifecycle diff prod --live
+```
+
+| Finding | Means | Act |
+|---|---|---|
+| `MISSING` | Declared, gone from the cloud | Re-apply, or update source if the deletion was meant |
+| `ORPHAN` | In the cloud, not declared | Adopt it with `chant import --from prod --name <orphan>`, or delete it |
+| `DRIFTED` | Changed since the last snapshot | Re-apply, or update source |
+| `PROPERTY DRIFT` | A declared field differs from live | Edit the value the report names, or re-apply |
+| `UNCLAIMED` | A live value on a field chant never set | Nothing. It never counts as drift |
+| `UNOBSERVED` | chant could not read it | Fix the reason shown. Status is unknown |
+
+## Accept a deviation
+
+```sh
+chant lifecycle diff prod --live --update-baseline
+```
+
+This records the property deviations in `.chant/observation-baseline/prod.json`. Commit the file. A later change away from the accepted value is drift again.
+
+## Check on a schedule
+
+```typescript
+// prod-watch.op.ts
+import { WatchOp } from "@intentius/chant/op";
+
+const { op } = WatchOp({ name: "prod-watch", env: "prod", schedule: "*/15 * * * *", failOn: "drift" });
+export default op;
+```
+
+With `failOn: "drift"` the run exits 2 when it finds drift. chant reports and leaves the fix to you. To have it propose one, `ReconcileOp` opens a change that regenerates the source, and an [agent can follow a drift check](/chant/ci/agents/). [Reconcile](/chant/guide/reconciling-lifecycle/), [what to do when drift fires](/chant/guide/watching-lifecycle/#what-to-do-when-drift-fires), [`lifecycle diff`](/chant/cli/lifecycle/#lifecycle-diff-env).

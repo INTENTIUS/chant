@@ -1,0 +1,40 @@
+---
+title: Roll back
+description: 'Put an earlier release back in an environment through the same gate, or restore source for review.'
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/ci/roll-back/
+  Fetch the tags and run `npx chant components rollback <env> --release <label> --dry-run` for the label and environment I name, and show me the plan.
+  Print the commands a person runs; do not run the rollback without `--dry-run` and do not approve it.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+```sh
+chant components rollback prod --release v1.3.2 --dry-run
+chant components rollback prod --release v1.3.2
+```
+
+This restores every component of that release at the digest the environment ran. When a component declares a gate, the run exits 3 there. One approval passes it: `chant approve release <gate> --env prod`, then the same command again.
+
+Roll back one component to the release before the current one, or to a given digest:
+
+```sh
+chant components rollback prod --component search-service
+chant components rollback prod --component search-service --digest sha256:4c1e0b...
+```
+
+A release cut from a revoked commit is refused with `release-revoked`.
+
+## After a deploy that applied partly
+
+A rollback cannot finish a deploy that failed partway. `chant workspace status` shows the environment as mixed and prints the line that settles it:
+
+```sh
+chant components redeploy prod --component web
+```
+
+## Roll back in source
+
+`chant lifecycle rollback prod --to v1.4.2` opens a change that restores `sourceDir` to that revision. It touches no cloud, and the change deploys the usual way.
+
+[`components rollback`](/chant/cli/components/#components-rollback-env) has every flag.

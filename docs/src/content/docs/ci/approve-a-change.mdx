@@ -1,0 +1,35 @@
+---
+title: Approve a change
+description: 'chant approve records an approval of one digest. What runs next depends on what was waiting.'
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/ci/approve-a-change/
+  Print the `chant approve` line for the gate I name, and show me the plan it covers. A person runs it; do not run it yourself.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+The note or the job prints the exact line. Read the plan, then run it:
+
+```sh
+chant approve pr-12 pr-apply --plan jcs1-sha256:3e43... --approver github:alice --sign
+```
+
+At a terminal chant shows the plan and asks for the target's name first. `--yes` skips the question. The approval is a record on the `chant/lifecycle` branch.
+
+| Waiting | Approve | Then |
+|---|---|---|
+| A change | `chant approve pr-<n> pr-apply --plan <digest> --approver <you> --sign` | Merge it. |
+| A wave | `chant approve <spec> <spec>-wave-<k> --plan <digest> --resume` | `--resume` starts the waiting job. |
+| A release | `chant approve release <gate> --env <env>` | Run the same promote again. |
+| A green commit, under apply on merge | `chant approve green-<sha> pr-apply --plan <digest> --approver <you>` | Run the apply job again. |
+| An Op | `chant approve <op> <gate> --actor <you>` | Run the Op again. |
+
+## Who counts
+
+By default any recorded approval of the digest counts, and that includes the author's. Three settings tighten it:
+
+- `identity.gates` counts only approvals sealed with `--sign` by a key in `.chant/allowed_signers` at base. [Approve a plan](/chant/guide/pull-request-ci/#approve-a-plan).
+- `--require-review`, with apply on merge, needs an approving review on the forge and refuses the people who wrote the change.
+- `approvals.quorum` asks for more people or given roles. [Approval rules](/chant/guide/approval-rules/).
+
+[Every flag of `chant approve`](/chant/cli/operator/#approve-op-gate).

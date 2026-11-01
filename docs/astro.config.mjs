@@ -96,6 +96,25 @@ export default defineConfig({
 				// src/data/rooms.mjs, written out because the Diátaxis check reads
 				// this list as plain data; scripts/check-rooms.mjs fails the build
 				// when the two disagree.
+				// "CI" comes first: the short pages for people, which mix quadrants, so
+				// scripts/check-docs-diataxis.mjs lists it in MIXED_GROUPS.
+				{
+					label: 'CI',
+					items: [
+						{ label: 'What the pipelines do', slug: 'ci' },
+						{ label: 'Your first change', slug: 'ci/first-change' },
+						{ label: 'Changes and approvals', slug: 'ci/changes-and-approvals' },
+						{ label: 'Approve a change', slug: 'ci/approve-a-change' },
+						{ label: 'Fix a refused change', slug: 'ci/fix-a-refused-change' },
+						{ label: 'Merges and releases', slug: 'ci/merges-and-releases' },
+						{ label: 'Roll out in waves', slug: 'ci/waves' },
+						{ label: 'Run an Op', slug: 'ci/run-an-op' },
+						{ label: 'Roll back', slug: 'ci/roll-back' },
+						{ label: 'Drift', slug: 'ci/drift' },
+						{ label: 'Your forge', slug: 'ci/your-forge' },
+						{ label: 'Agents and approvals', slug: 'ci/agents' },
+					],
+				},
 				{
 					label: 'Start here',
 					collapsed: true,

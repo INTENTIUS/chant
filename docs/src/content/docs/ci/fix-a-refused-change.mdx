@@ -1,0 +1,26 @@
+---
+title: Fix a refused change
+description: 'Each refusal has an exit code, a cause and a way to clear it.'
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/ci/fix-a-refused-change/
+  Read the job log I give you, name the refusal and its exit code from the page's table, and print the command that clears it for me to run. Do not run it yourself.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+A refused job applies nothing and prints the cause and the command to run.
+
+| Refusal | Exit | Cause | Clear it |
+|---|---|---|---|
+| failed | 1 | Something broke, and no approval changes it. | Read the job log, fix it, run the job again. |
+| waiting | 3 | A gate waits for a person. | [Approve the digest](/chant/ci/approve-a-change/), then run the job again. |
+| moved | 4 | The plan now differs from the approved one. | Read the new plan in the job's report, approve the new digest, run the job again. |
+| held | 5 | Another change or run holds a lock on a target. | Wait for it, or release a stuck lock with `chant unlock --pr <n>`. |
+| superseded | 6 | A newer push applies instead. | Nothing. |
+| denied | 7 | The policy denied the plan. | Change the plan, or have a listed overrider run the `chant approve policy-override` line the job prints. |
+| declined | 8 | A decision point gave an answer the gate does not pass. | `chant workspace points retract <id>` takes the answer back so the point is asked again. |
+| misplaced | 9 | The apply-job guard stopped a job running where its spec did not set it to run. | Fix where the job runs. `chant ci check-job` exits 9 for the same reasons. |
+
+A merge is never refused. When the merged plan differs from the approved one, the record job names both digests and fails the `chant/record` status. The release gate decides on it before anything ships. [When the plan changed after review](/chant/guide/pull-request-ci/#when-the-plan-changed-after-review).
+
+Run `chant lock --list` to see who holds a lock. [Target locks](/chant/guide/target-locks/), [gate policy](/chant/guide/gate-policy/) and [exit codes](/chant/reference/exit-codes/) have the rest.

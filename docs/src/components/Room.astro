@@ -22,6 +22,10 @@ type Link = { label: string; href: string };
 const r = room(Astro.props.id);
 const href = (h: string) => siteHref(base, h);
 const differs = r.differs as Record<string, string[]>;
+// A mention of another Intentius project is a link. Text inside <code> stays as it is.
+const projectLinks = (html: string) =>
+	html.split(/(<code>.*?<\/code>)/).map((part) =>
+		part.startsWith('<code>') ? part : part.replace(/\b(behold|choudoufu|plunge|plywood|terragucci)\b/g, '<a href="https://intentius.io/$1/">$1</a>')).join('');
 const forgeLines = FORGES.map((f) => ({ label: f.label, lines: [...f.differs, ...(differs[f.id] ?? [])] }));
 
 const first = r.first as { note?: string; command: Record<string, string>; link: Link; prompt: string };
@@ -38,11 +42,11 @@ const read = [
 ] as [string, Link[]][];
 ---
 <div class="ch-room not-content">
-	<p class="lede">{r.lede}</p>
+	<p class="lede" set:html={projectLinks(r.lede)} />
 	<div class="cols">
 		<section>
 			<h2 id="works">Works</h2>
-			<ul>{(r.works as string[]).map((w) => <li set:html={codeHtml(w)} />)}</ul>
+			<ul>{(r.works as string[]).map((w) => <li set:html={projectLinks(codeHtml(w))} />)}</ul>
 		</section>
 		<section>
 			<h2 id="differs">Differs</h2>
@@ -50,7 +54,7 @@ const read = [
 			<Tabs syncKey="forge">
 				{forgeLines.map((f) => (
 					<TabItem label={f.label}>
-						<ul>{f.lines.map((l) => <li set:html={codeHtml(l)} />)}</ul>
+						<ul>{f.lines.map((l) => <li set:html={projectLinks(codeHtml(l))} />)}</ul>
 					</TabItem>
 				))}
 			</Tabs>
