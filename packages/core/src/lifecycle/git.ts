@@ -10,6 +10,7 @@ import { getRuntime } from "../runtime-adapter";
 import { memberLedgerPrefix, resolveMemberLedger } from "./member-ledger";
 import { LIFECYCLE_LOCAL_NOTE } from "./local-note";
 import { ledgerRecordingOff, NO_RECORD_PUSH_NOTE, overlayTip, setOverlayTip } from "./no-record";
+import { chooseLedgerRemote, lifecycleRemoteOverride, type LedgerRemoteChoice } from "./ledger-remote";
 import type { LedgerReadPort } from "./ledger-port";
 
 const STATE_BRANCH = "chant/lifecycle";
@@ -819,7 +820,7 @@ export async function pushLifecycleStatus(opts?: { cwd?: string }): Promise<Life
   const cwd = opts?.cwd;
   const found = await ledgerRemote(cwd);
   if (found === null) return { status: "no-remote" };
-  if ("failed" in found) return { status: "failed", remote: "(unknown)", stderr: found.stderr };
+  if ("failed" in found) return { status: "failed", remote: found.named ?? "(unknown)", stderr: found.stderr };
   const { remote } = found;
 
   // Capture the lease SHA — if null, the remote ref doesn't exist yet
@@ -859,7 +860,7 @@ export async function pushLifecycleStatus(opts?: { cwd?: string }): Promise<Life
  * Returns false (without throwing) when no remote is configured, or when git
  * refused the push for a reason other than a stale lease.
  *
- * The remote is the ledger's ({@link ledgerRemote}: `origin` when there is one),
+ * The remote is the ledger's ({@link ledgerRemote}: the one `CHANT_LIFECYCLE_REMOTE` names, else `origin`),
  * the same one {@link fetchLifecycleStatus} reads, and a push that lands
  * records the tip it pushed as the remote-tracking ref, so the next push's
  * lease is right in a single-branch clone too (#3391).
@@ -1165,21 +1166,21 @@ const NON_FAST_FORWARD_RE = /non-fast-forward|rejected/i;
 const C_LOCALE_ENV = { LC_ALL: "C", LANGUAGE: "" };
 
 /**
- * The remote the ledger lives on.
+ * The remote the ledger lives on ({@link chooseLedgerRemote}).
  *
- * `origin` when it exists, rather than whichever name sorts first — a repo
- * with a `backup` remote alongside `origin` would otherwise fetch the ledger
- * from `backup`. A non-zero exit is *not* read as "no remote": a git that
- * failed to answer is not evidence that a project is single-machine, and
- * treating it as one is what lets an unreadable ledger look empty.
+ * The one `CHANT_LIFECYCLE_REMOTE` names (#4647), else `origin` when it
+ * exists, rather than whichever name sorts first — a repo with a `backup`
+ * remote alongside `origin` would otherwise fetch the ledger from `backup`.
+ * A non-zero exit is *not* read as "no remote": a git that failed to answer
+ * is not evidence that a project is single-machine, and treating it as one is
+ * what lets an unreadable ledger look empty. Nor is a named remote the
+ * repository lacks.
  */
-async function ledgerRemote(cwd?: string): Promise<{ remote: string } | { failed: true; stderr: string } | null> {
+async function ledgerRemote(cwd?: string): Promise<LedgerRemoteChoice> {
   const rt = getRuntime();
   const result = await rt.spawn(["git", "remote"], { cwd, env: C_LOCALE_ENV });
   if (result.exitCode !== 0) return { failed: true, stderr: (result.stderr ?? "").trim() };
-  const names = result.stdout.trim().split("\n").map((n) => n.trim()).filter(Boolean);
-  if (names.length === 0) return null;
-  return { remote: names.includes("origin") ? "origin" : names[0] };
+  return chooseLedgerRemote(result.stdout.trim().split("\n").map((n) => n.trim()).filter(Boolean));
 }
 
 /** A scratch ref this module owns, used to resolve the remote tip without touching the ledger branch. */
@@ -1208,7 +1209,7 @@ export async function fetchLifecycleStatus(opts?: { cwd?: string }): Promise<Lif
   const found = await ledgerRemote(cwd);
   if (found === null) return { status: "no-remote" };
   if ("failed" in found) {
-    return { status: "unreachable", remote: "(unknown)", stderr: found.stderr };
+    return { status: "unreachable", remote: found.named ?? "(unknown)", stderr: found.stderr };
   }
   const { remote } = found;
 
@@ -1560,9 +1561,11 @@ export async function pushRefStatus(ref: string, opts?: { cwd?: string; expect?:
   // The lease still holds in this checkout, the way it does in one with no remote.
   if (ledgerRecordingOff()) return "no-remote";
   const rt = getRuntime();
-  const remoteResult = await rt.spawn(["git", "remote"], { cwd: opts?.cwd });
-  if (remoteResult.exitCode !== 0 || !remoteResult.stdout.trim()) return "no-remote";
-  const remote = remoteResult.stdout.trim().split("\n")[0];
+  // #4647: the ledger's remote, so a lease ref goes where the branch does.
+  const found = await ledgerRemote(opts?.cwd);
+  if (found === null) return "no-remote";
+  if ("failed" in found) return lifecycleRemoteOverride() === undefined ? "no-remote" : "rejected";
+  const { remote } = found;
 
   let expected: string | null;
   if (opts?.expect !== undefined) {
@@ -1618,9 +1621,10 @@ export async function fetchRefIntoStatus(
   opts?: { cwd?: string },
 ): Promise<FetchRefStatus> {
   const rt = getRuntime();
-  const remoteResult = await rt.spawn(["git", "remote"], { cwd: opts?.cwd });
-  if (remoteResult.exitCode !== 0 || !remoteResult.stdout.trim()) return "no-remote";
-  const remote = remoteResult.stdout.trim().split("\n")[0];
+  const found = await ledgerRemote(opts?.cwd);
+  if (found === null) return "no-remote";
+  if ("failed" in found) return lifecycleRemoteOverride() === undefined ? "no-remote" : "failed";
+  const { remote } = found;
   const fetchResult = await rt.spawn(["git", "fetch", remote, `+${remoteRef}:${localRef}`], { cwd: opts?.cwd, env: C_LOCALE_ENV });
   if (fetchResult.exitCode === 0) return "fetched";
   return NO_SUCH_REMOTE_REF_RE.test(fetchResult.stderr ?? "") ? "missing" : "failed";

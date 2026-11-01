@@ -57,6 +57,7 @@ import { judgeCommits, mergeCommits, readWorkIndex, type CommitLink } from "./co
 import { execFileSync } from "node:child_process";
 import { greenBranches, laneOf, laneTagPrefixes, readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError, type CiGreen, type CiPhase, type CiSource } from "./declaration";
 import { makeNotifyEvent, sendNotify, type NotifyFields } from "../notify";
+import { lifecycleRemoteOverride } from "../lifecycle/ledger-remote";
 import type { CheckRun, CiForge, OpRunRef } from "./ci-green-forge";
 import type { OpRunRecord } from "../op/runtime";
 import { readRunLedger } from "../lifecycle/run-ledger";
@@ -1467,7 +1468,8 @@ export type CiBaseDocument =
  * job that failed. A commit with no record (outside the tick's window)
  * counts when it has a green tag and no revoked one, as `ci last-green`
  * reads them. Reads local refs only: the records on `chant/lifecycle`, or
- * on `origin/chant/lifecycle` when there is no local branch, and the tags.
+ * on `origin/chant/lifecycle` (or the remote `CHANT_LIFECYCLE_REMOTE`
+ * names) when there is no local branch, and the tags.
  */
 export function ciBase(req: { cwd: string; from?: string; branch?: string; phase?: string; lane?: string; remote?: string }): CiBaseDocument {
   const head = { $schema: CI_LAST_GREEN_SCHEMA_ID, contract: CI_LAST_GREEN_CONTRACT_VERSION, chant: readerVersion() };
@@ -1487,7 +1489,7 @@ export function ciBase(req: { cwd: string; from?: string; branch?: string; phase
     }
     const branchRef = tryGit(top, ["rev-parse", "--verify", "--quiet", `refs/remotes/${req.remote ?? "origin"}/${green.branch}^{commit}`]) ?? tryGit(top, ["rev-parse", "--verify", "--quiet", `refs/heads/${green.branch}^{commit}`]);
     const tags = readCiTags(top, green, branchRef, lane?.name);
-    const ledger = tryGit(top, ["rev-parse", "--verify", "--quiet", CI_LEDGER_REF]) !== null ? CI_LEDGER_REF : `refs/remotes/${req.remote ?? "origin"}/chant/lifecycle`;
+    const ledger = tryGit(top, ["rev-parse", "--verify", "--quiet", CI_LEDGER_REF]) !== null ? CI_LEDGER_REF : `refs/remotes/${lifecycleRemoteOverride() ?? req.remote ?? "origin"}/chant/lifecycle`;
     const records = readCiRecords(top, ledger);
     const phases = req.phase !== undefined ? [req.phase] : (lane?.require ?? green.require);
     const builtHere = (r: CiRecord) =>
