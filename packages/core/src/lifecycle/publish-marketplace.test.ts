@@ -107,14 +107,33 @@ const reply = (status: number, body: string | Uint8Array = "") => ({
   },
 });
 
-/** An Open VSX fake: namespaces, and the versions published to it by `POST /api/-/publish`. */
-function fakeOpenVsx(root: string, namespaces: string[], versions = new Map<string, Uint8Array>()) {
-  const calls: Array<{ method: string; url: string }> = [];
+/**
+ * An Open VSX fake: namespaces, and the versions published to it by
+ * `POST /api/-/publish`. `trusted` lists the extensions whose trusted
+ * publisher is a GitHub Actions ID token with the registry as its audience
+ * (`gha-id-token`) or `ovsx-id-token`; `refuse` is a status every upload gets.
+ */
+function fakeOpenVsx(root: string, namespaces: string[], versions = new Map<string, Uint8Array>(), opts: { trusted?: string[]; refuse?: number } = {}) {
+  const calls: Array<{ method: string; url: string; headers?: Record<string, string>; body?: string }> = [];
+  let issued = 0;
   const fetch = async (url: string, init: { method: string; headers: Record<string, string>; body?: Uint8Array | string }) => {
-    calls.push({ method: init.method, url });
+    calls.push({ method: init.method, url, headers: init.headers, ...(typeof init.body === "string" ? { body: init.body } : {}) });
     const u = new URL(url);
+    if (u.host === "token.actions.test") {
+      if (init.headers.authorization !== "Bearer gha-request-token") return reply(401);
+      return reply(200, JSON.stringify({ value: u.searchParams.get("audience") === root ? "gha-id-token" : "gha-id-token-for-another-audience" }));
+    }
+    if (init.method === "POST" && u.pathname === "/api/-/trusted-publishing/token") {
+      const req = JSON.parse(init.body as string) as { namespace: string; extension: string; token: string };
+      if (!["gha-id-token", "ovsx-id-token"].includes(req.token) || !(opts.trusted ?? []).includes(`${req.namespace}.${req.extension}`)) {
+        return reply(400, JSON.stringify({ error: `No trusted publisher matches this token for ${req.namespace}.${req.extension}.` }));
+      }
+      return reply(201, JSON.stringify({ value: `tp-token-${++issued}`, expiresTimestamp: "2026-11-01T00:10:00Z" }));
+    }
     if (init.method === "POST" && u.pathname === "/api/-/publish") {
-      if (u.searchParams.get("token") !== "ovsx-token-1") return reply(403, '{"error":"Invalid access token."}');
+      if (opts.refuse) return reply(opts.refuse);
+      const token = u.searchParams.get("token") ?? "";
+      if (token !== "ovsx-token-1" && token !== `tp-token-${issued}`) return reply(403, '{"error":"Invalid access token."}');
       const id = vsixIdentity(Buffer.from(init.body as Uint8Array), "upload");
       const key = `${id.publisher}/${id.name}/${id.version}`;
       if (versions.has(key)) return reply(400, '{"error":"already published"}');
@@ -130,7 +149,7 @@ function fakeOpenVsx(root: string, namespaces: string[], versions = new Map<stri
     }
     return reply(404);
   };
-  return { fetch, calls, versions };
+  return { fetch, calls, versions, issued: () => issued };
 }
 
 /** A fake `vsce` that logs each run and its VSCE_PAT, and a gallery fake that lists the versions it published. */
@@ -142,6 +161,11 @@ function fakeVsce(dir: string) {
     `#!${process.execPath}
 const fs = require("fs");
 fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ args: process.argv.slice(2), pat: process.env.VSCE_PAT || "" }) + "\\n");
+if (process.argv[2] === "verify-pat") {
+  if (process.env.FAKE_VSCE_VERIFY_FAIL) { console.error("ERROR  Can not acquire a Microsoft Entra ID access token."); process.exit(1); }
+  console.log("DONE  The Personal Access Token verification succeeded for the publisher '" + process.argv[3] + "'.");
+  process.exit(0);
+}
 console.log("Publishing with " + process.env.VSCE_PAT);
 if (process.env.FAKE_VSCE_FAIL) { console.error("ERROR  Access Denied"); process.exit(1); }
 console.log("DONE  Published arugula.arugula-vscode v1.2.0.");
@@ -250,5 +274,133 @@ describe("editor marketplaces (#4676)", () => {
     expect(readZipEntry(z, "b/c.json")!.toString()).toBe('{"x":1}');
     expect(readZipEntry(z, "missing")).toBeNull();
     expect(() => readZipEntry(Buffer.from("not a zip at all, long enough to scan"), "a")).toThrow(/not a zip/);
+  });
+});
+
+describe("marketplaces with the run's identity, and a refusal as a warning (#4698)", () => {
+  const GHA = { GITHUB_ACTIONS: "true", ACTIONS_ID_TOKEN_REQUEST_URL: "https://token.actions.test/idtoken?api-version=2.0", ACTIONS_ID_TOKEN_REQUEST_TOKEN: "gha-request-token" };
+
+  test("VS Code Marketplace, azure-credential: the stage runs vsce verify-pat and the reveal vsce publish, both with --azure-credential and no VSCE_PAT", async () => {
+    const { dir } = member();
+    const vsce = fakeVsce(temp());
+    const [target] = await createPublishTargets([PublishDeclarationSchema.parse({ type: "marketplace", marketplace: "vscode", vsix: "dist/arugula.vsix", registry: "https://marketplace.test", auth: "azure-credential" })], {
+      fetch: vsce.fetch,
+      vsce: vsce.bin,
+    });
+    // A PAT left in the environment is not passed on: vsce prefers it to --azure-credential.
+    const ctx = context(dir, { VSCE_PAT: "stray-pat", PATH: process.env.PATH });
+    expect(target!.credentialEnv).toEqual(["AZURE_CLIENT_SECRET"]);
+    await target!.plan(ctx);
+    expect(vsce.runs()).toEqual([]);
+
+    const staged = await target!.stage(ctx);
+    expect(vsce.runs()).toEqual([{ args: ["verify-pat", "arugula", "--azure-credential"], pat: "" }]);
+    expect(staged.state).toEqual({});
+
+    await target!.reveal(ctx, staged);
+    expect(vsce.runs()[1]).toEqual({ args: ["publish", "--packagePath", join(dir, "dist/arugula.vsix"), "--azure-credential"], pat: "" });
+    expect(ctx.lines.join("\n")).not.toContain("using the token");
+  });
+
+  test("VS Code Marketplace, azure-credential: an identity vsce can't sign in with is refused at the stage, before anything reveals", async () => {
+    const { dir } = member();
+    const vsce = fakeVsce(temp());
+    const [target] = await createPublishTargets([PublishDeclarationSchema.parse({ type: "marketplace", marketplace: "vscode", vsix: "dist/arugula.vsix", registry: "https://marketplace.test", auth: "azure-credential" })], {
+      fetch: vsce.fetch,
+      vsce: vsce.bin,
+    });
+    const err = await refused(target!.stage(context(dir, { FAKE_VSCE_VERIFY_FAIL: "1", PATH: process.env.PATH })));
+    expect(err.code).toBe("publish-marketplace-azure-credential");
+    expect(err.message).toContain("Microsoft Entra");
+    expect(vsce.runs().map((r) => r.args[0])).toEqual(["verify-pat"]);
+  });
+
+  test("Open VSX, trusted-publishing: the stage exchanges the GitHub Actions ID token to check the registration, and the reveal exchanges again to upload", async () => {
+    const { dir, bytes } = member();
+    const ovsx = fakeOpenVsx("https://open-vsx.test", ["arugula"], new Map(), { trusted: ["arugula.arugula-vscode"] });
+    const [target] = await createPublishTargets([PublishDeclarationSchema.parse({ type: "marketplace", marketplace: "openvsx", vsix: "dist/arugula.vsix", registry: "https://open-vsx.test", auth: "trusted-publishing" })], { fetch: ovsx.fetch });
+    const ctx = context(dir, GHA);
+    expect(target!.credentialEnv).toEqual(["OVSX_ID_TOKEN"]);
+    await target!.plan(ctx);
+    expect(ovsx.calls).toEqual([]);
+
+    const staged = await target!.stage(ctx);
+    expect(ovsx.issued()).toBe(1);
+    const idRequest = ovsx.calls.find((c) => c.url.startsWith("https://token.actions.test/"))!;
+    expect(new URL(idRequest.url).searchParams.get("audience")).toBe("https://open-vsx.test");
+    expect(new URL(idRequest.url).searchParams.get("api-version")).toBe("2.0");
+    expect(JSON.parse(ovsx.calls.find((c) => c.url.endsWith("/trusted-publishing/token"))!.body!)).toEqual({ namespace: "arugula", extension: "arugula-vscode", token: "gha-id-token" });
+    expect(ovsx.versions.size).toBe(0);
+
+    await target!.reveal(ctx, staged);
+    expect(ovsx.issued()).toBe(2);
+    expect(Buffer.from(ovsx.versions.get("arugula/arugula-vscode/1.2.0")!).equals(bytes)).toBe(true);
+    expect(ovsx.calls.find((c) => c.url.includes("/api/-/publish"))!.url).toContain("token=tp-token-2");
+    const out = ctx.lines.join("\n");
+    for (const secret of ["gha-id-token", "tp-token-1", "tp-token-2", "gha-request-token"]) expect(out).not.toContain(secret);
+  });
+
+  test("Open VSX, trusted-publishing: reads an ID token from OVSX_ID_TOKEN outside GitHub Actions; refuses a run with none, and an extension with no trusted publisher", async () => {
+    const { dir } = member();
+    const make = async (ovsx: ReturnType<typeof fakeOpenVsx>) =>
+      (await createPublishTargets([PublishDeclarationSchema.parse({ type: "marketplace", marketplace: "openvsx", vsix: "dist/arugula.vsix", registry: "https://open-vsx.test", auth: "trusted-publishing" })], { fetch: ovsx.fetch }))[0]!;
+    const trusted = fakeOpenVsx("https://open-vsx.test", ["arugula"], new Map(), { trusted: ["arugula.arugula-vscode"] });
+    await (await make(trusted)).stage(context(dir, { OVSX_ID_TOKEN: "ovsx-id-token" }));
+    expect(trusted.issued()).toBe(1);
+    expect(trusted.calls.some((c) => c.url.startsWith("https://token.actions.test/"))).toBe(false);
+
+    const none = await refused((await make(trusted)).plan(context(dir, { OVSX_PAT: "a-pat-is-not-read" })));
+    expect(none.code).toBe("publish-credentials-missing");
+    expect(none.fix).toContain("id-token: write");
+
+    const unregistered = fakeOpenVsx("https://open-vsx.test", ["arugula"]);
+    const err = await refused((await make(unregistered)).stage(context(dir, GHA)));
+    expect(err.code).toBe("publish-marketplace-trusted-publishing");
+    expect(err.message).toContain("No trusted publisher matches");
+    expect(err.fix).toContain("https://open-vsx.test/user-settings/trusted-publishers");
+    expect(unregistered.calls.some((c) => c.url.includes("/api/-/publish"))).toBe(false);
+  });
+
+  test("an auth the marketplace does not take, or tokenEnv beside an identity, is refused when the targets are made", async () => {
+    const make = (d: Record<string, unknown>) => createPublishTargets([PublishDeclarationSchema.parse({ type: "marketplace", vsix: "x.vsix", ...d })]);
+    expect((await refused(make({ marketplace: "openvsx", auth: "azure-credential" }))).code).toBe("publish-marketplace-auth-invalid");
+    expect((await refused(make({ marketplace: "vscode", auth: "trusted-publishing" }))).code).toBe("publish-marketplace-auth-invalid");
+    expect((await refused(make({ marketplace: "vscode", auth: "azure-credential", tokenEnv: "VSCE_PAT" }))).code).toBe("publish-marketplace-auth-invalid");
+    expect(() => PublishDeclarationSchema.parse({ type: "marketplace", marketplace: "openvsx", vsix: "x.vsix", onRefusal: "ignore" })).toThrow();
+  });
+
+  test("onRefusal warn: an upload Open VSX refuses comes back refused with a warning; without it the reveal fails", async () => {
+    const { dir } = member();
+    const make = async (ovsx: ReturnType<typeof fakeOpenVsx>, onRefusal?: "warn") =>
+      (await createPublishTargets([PublishDeclarationSchema.parse({ type: "marketplace", marketplace: "openvsx", vsix: "dist/arugula.vsix", registry: "https://open-vsx.test", ...(onRefusal ? { onRefusal } : {}) })], { fetch: ovsx.fetch }))[0]!;
+    const ctx = context(dir, { OVSX_PAT: "ovsx-token-1" });
+
+    const strict = await make(fakeOpenVsx("https://open-vsx.test", ["arugula"], new Map(), { refuse: 406 }));
+    expect((await refused(strict.reveal(ctx, await strict.stage(ctx)))).code).toBe("publish-marketplace-failed");
+
+    const lenient = await make(fakeOpenVsx("https://open-vsx.test", ["arugula"], new Map(), { refuse: 406 }), "warn");
+    const out = await lenient.reveal(ctx, await lenient.stage(ctx));
+    expect(out.items).toEqual([expect.objectContaining({ name: "arugula.arugula-vscode@1.2.0", refused: true })]);
+    expect(out.warning).toContain("Open VSX refused arugula.arugula-vscode@1.2.0");
+    expect(out.warning).toContain("answered 406");
+    expect(out.warning).not.toContain("ovsx-token-1");
+
+    // The stage's checks still refuse under warn.
+    expect((await refused((await make(fakeOpenVsx("https://open-vsx.test", []), "warn")).stage(ctx))).code).toBe("publish-marketplace-no-namespace");
+  });
+
+  test("onRefusal warn: a vsce publish that fails comes back refused; vsce missing from PATH still fails", async () => {
+    const { dir } = member();
+    const vsce = fakeVsce(temp());
+    const decl = PublishDeclarationSchema.parse({ type: "marketplace", marketplace: "vscode", vsix: "dist/arugula.vsix", registry: "https://marketplace.test", onRefusal: "warn" });
+    const [target] = await createPublishTargets([decl], { fetch: vsce.fetch, vsce: vsce.bin });
+    const ctx = context(dir, { VSCE_PAT: "vsce-pat-secret", FAKE_VSCE_FAIL: "1", PATH: process.env.PATH });
+    const out = await target!.reveal(ctx, await target!.stage(ctx));
+    expect(out.items[0]!.refused).toBe(true);
+    expect(out.warning).toContain("Access Denied");
+    expect(out.warning).not.toContain("vsce-pat-secret");
+
+    const [missing] = await createPublishTargets([decl], { fetch: fakeVsce(temp()).fetch, vsce: join(temp(), "no-vsce") });
+    expect((await refused(missing!.reveal(ctx, await missing!.stage(ctx)))).code).toBe("publish-marketplace-vsce-missing");
   });
 });

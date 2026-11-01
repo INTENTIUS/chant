@@ -84,6 +84,8 @@ export interface PublishItem {
   digest?: string;
   /** True when the destination already held it, so nothing was uploaded. */
   present?: boolean;
+  /** True when the destination refused it and the target turns a refusal into a warning (a marketplace's `onRefusal: "warn"`, #4698), so it was not published. */
+  refused?: boolean;
   /** Set on a file attached to what the target publishes (#4049): an SBOM or the release's provenance statement. */
   attachment?: "sbom" | "provenance";
   /** The SBOM file an npm package carries at its root (#4049). */
@@ -121,6 +123,13 @@ export interface PublishedTarget {
   destination: string;
   /** Each thing published, in order. */
   items: PublishItem[];
+  /**
+   * Set when the destination refused the reveal and the target declares that
+   * a warning (#4698): why, with the items `refused`. The publish goes on, and
+   * the target is not recorded as revealed, so the same publish run again
+   * reveals it again.
+   */
+  warning?: string;
 }
 
 /** Injected into the targets, so tests drive them with fakes. */
@@ -613,6 +622,11 @@ export async function runPublish(req: {
       return fail(err, target, "reveal", stagedNames, revealedNames);
     }
     published.push(p);
+    if (p.warning) {
+      // Refused, and the target makes that a warning (#4698): not recorded, so a run of the same publish tries it again.
+      say(`  warning: ${target.name}: ${p.warning}`);
+      continue;
+    }
     revealedNames.push(target.name);
     await write(target, "revealed", p.items, {});
   }

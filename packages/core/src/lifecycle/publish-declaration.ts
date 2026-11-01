@@ -158,8 +158,25 @@ export const MarketplacePublishSchema = z
     vsix: z.string().min(1),
     /** Open VSX's root, default `https://open-vsx.org`; the VS Code Marketplace's gallery, default `https://marketplace.visualstudio.com`. */
     registry: z.string().url().optional(),
-    /** The variable holding the token. Default `VSCE_PAT` for the VS Code Marketplace, `OVSX_PAT` for Open VSX. */
+    /** The variable holding the token, under `auth: "token"`. Default `VSCE_PAT` for the VS Code Marketplace, `OVSX_PAT` for Open VSX. */
     tokenEnv: envName.optional(),
+    /**
+     * How the target authenticates (#4698). `"token"` (the default) reads a
+     * token from `tokenEnv`. `"azure-credential"`, VS Code Marketplace only,
+     * runs `vsce` with `--azure-credential`, which signs in with the Microsoft
+     * Entra identity the job has, such as one `azure/login` set up from the
+     * run's OIDC token. `"trusted-publishing"`, Open VSX only, exchanges the
+     * run's OIDC ID token for a short-lived publishing token, as
+     * `ovsx publish --trusted-publishing` does.
+     */
+    auth: z.enum(["token", "azure-credential", "trusted-publishing"]).optional(),
+    /**
+     * What the reveal does when the marketplace refuses the upload (#4698).
+     * `"fail"` (the default) fails the publish. `"warn"` prints a warning
+     * and goes on to the next target, and the target is not recorded as
+     * published, so the same publish run again tries the upload again.
+     */
+    onRefusal: z.enum(["fail", "warn"]).optional(),
   })
   .strict();
 

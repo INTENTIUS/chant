@@ -152,6 +152,46 @@ describe("a publish that fails resumes", () => {
     }
   });
 
+  test("a target whose reveal comes back refused with a warning is not recorded as revealed, so the same publish tries it again (#4698)", async () => {
+    const r = new TestRepo("publish-refused");
+    repos.push(r);
+    const rel = await release(r);
+    const reveals: string[] = [];
+    let refuse = true;
+    const fake = (kind: "forge" | "marketplace", name: string): PublishTarget => ({
+      kind,
+      name,
+      destination: name,
+      credentialEnv: [],
+      key: `${kind}:${name}`,
+      plan: async () => [],
+      stage: async () => ({ target: name, destination: name, items: [{ name, destination: name }], state: {} }),
+      reveal: async () => {
+        reveals.push(name);
+        return kind === "marketplace" && refuse
+          ? { target: name, destination: name, items: [{ name, destination: name, refused: true }], warning: "Open VSX refused it: it answered 406" }
+          : { target: name, destination: name, items: [{ name, destination: name }] };
+      },
+    });
+    const targets = [fake("forge", "assets"), fake("marketplace", "openvsx")];
+    const lines: string[] = [];
+    const redactor = createRedactor({});
+    const ctx: PublishContext = { release: rel, label: "v2", releaseTag: "release/v2", provenance: NO_OIDC, cwd: r.dir, tag: null, env: {}, redactor, log: () => undefined };
+    const run = () => runPublish({ cwd: r.dir, release: rel, label: "v2", targets, ctx, say: (l) => lines.push(l) });
+    const records = () => parsePublishRecords(r.git(["show", `chant/lifecycle:_releases/${PUBLISHES_FILE}`])).records;
+
+    const first = await run();
+    expect(first.published.map((p) => p.warning ?? null)).toEqual([null, "Open VSX refused it: it answered 406"]);
+    expect(lines).toContain("  warning: openvsx: Open VSX refused it: it answered 406");
+    expect(records().filter((x) => x.step === "revealed").map((x) => x.target)).toEqual(["forge:assets"]);
+
+    refuse = false;
+    reveals.length = 0;
+    await run();
+    expect(reveals).toEqual(["openvsx"]);
+    expect(records().filter((x) => x.step === "revealed").map((x) => x.target)).toEqual(["forge:assets", "marketplace:openvsx"]);
+  });
+
   test("a target's key names its declaration, so a resume finds it, and holds no credential", async () => {
     const [a, b, c] = await createPublishTargets(
       [
