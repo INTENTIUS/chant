@@ -113,7 +113,7 @@
         },
         "artifactDigests": {
           "type": "array",
-          "description": "Each image and asset built once from the commit, sorted by component, then path. A config-only release carries the previous release's entries.",
+          "description": "Each image and asset built once from the commit, or handed to the cut by digest, sorted by component, then path. A config-only release carries the previous release's entries.",
           "items": {
             "type": "object",
             "required": [
@@ -133,11 +133,16 @@
                 ]
               },
               "path": {
-                "type": "string"
+                "type": "string",
+                "description": "The archive path the build step wrote. Empty for an image handed to the cut."
               },
               "digest": {
                 "type": "string",
                 "minLength": 1
+              },
+              "ref": {
+                "type": "string",
+                "description": "An image handed to the cut by digest (chant release cut --image, #4694), as <repository>@<digest>: the image a deploy under the release runs. Absent on an artifact the cut built. Written by chant 0.124.63 and newer."
               }
             }
           }

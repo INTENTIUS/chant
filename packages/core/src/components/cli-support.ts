@@ -26,7 +26,7 @@ import { UnknownCanaryError } from "../gated-waves";
 import { lexiconModulePath, lexiconNames, importLexiconPackage } from "../lexicon-module";
 import { discoverComponents } from "./discover";
 import type { BuildParamProvenance } from "../provenance";
-import { inferArchetype, projectToJson, type Archetype, type ComponentEnvironmentDeclaration } from "./component";
+import { inferArchetype, projectToJson, type Archetype, type ComponentEnvironmentDeclaration, type ComponentInputs } from "./component";
 import {
   deployContext,
   resolveComponentGraph,
@@ -495,6 +495,19 @@ export interface RunComponentsOptions {
    * a checkout. `null` passes none.
    */
   revision?: string | null;
+  /**
+   * Rewrites the selected compositions before anything runs, or refuses the
+   * run (#4694): `chant run --components --release` takes out the build steps
+   * of a component the release recorded an artifact for and hands its
+   * `release-image` steps the image (./release-run.ts). Called once, with the
+   * components in run order, after their config defaults are applied, and
+   * the inputs each declares (#4695), by which a run under a release skips
+   * a component whose inputs did not change.
+   */
+  prepare?: (
+    components: DriverComponent[],
+    declared: { inputs: Readonly<Record<string, ComponentInputs>> },
+  ) => Promise<{ components: DriverComponent[] } | { error: string }>;
 }
 
 /** The resolved order of a list run (#3950), reported through `RunComponentsOptions.onPlan`. */
@@ -573,6 +586,8 @@ export interface ResolvedComponentTargets {
   list?: { named: string[]; enabled: DriverComponent[] };
   /** Component name to the environments it declares (#3153), for the components that declare any (#4330). */
   sites?: Record<string, ComponentEnvironmentDeclaration[]>;
+  /** Component name to the inputs it declares (#4695), for the components that declare them. */
+  inputs?: Record<string, ComponentInputs>;
   error?: string;
 }
 
@@ -602,12 +617,14 @@ export async function resolveComponentTargets(
 
   const discovered = [...result.components.values()].map(({ component }) => component);
   const all = discovered.map((component) => toDriverComponent(component));
+  const inputs = Object.fromEntries(discovered.filter((c) => c.inputs !== undefined).map((c) => [c.name, c.inputs!]));
+  const declared = Object.keys(inputs).length > 0 ? { inputs } : {};
 
-  if (isComponentList(selector)) return resolveComponentList(selector, discovered, all);
+  if (isComponentList(selector)) return { ...resolveComponentList(selector, discovered, all), ...declared };
 
   if (selector === "all") {
     const sites = Object.fromEntries(discovered.filter((c) => c.environments && c.environments.length > 0).map((c) => [c.name, c.environments!.map((e) => ({ ...e }))]));
-    return { success: true, targets: withoutDisabled(discovered, all), ...(Object.keys(sites).length > 0 ? { sites } : {}) };
+    return { success: true, targets: withoutDisabled(discovered, all), ...(Object.keys(sites).length > 0 ? { sites } : {}), ...declared };
   }
 
   const found = all.find((c) => c.name === selector);
@@ -629,7 +646,7 @@ export async function resolveComponentTargets(
       error: `Component "${selector}" not found.${known ? ` Known components: ${known}` : " No components discovered."}`,
     };
   }
-  return { success: true, targets: [found] };
+  return { success: true, targets: [found], ...declared };
 }
 
 /**
@@ -740,6 +757,11 @@ export async function runComponents(
   } else {
     const defaulted = resolved.targets.map((component) => applyConfigDefaults(component, config));
     resolvedTargets = selector === "all" ? await withDeclaredReads(defaulted, registry, path) : defaulted;
+  }
+  if (options.prepare) {
+    const prepared = await options.prepare(resolvedTargets, { inputs: resolved.inputs ?? {} });
+    if ("error" in prepared) return { success: false, selected: [], error: prepared.error };
+    resolvedTargets = prepared.components;
   }
   const selected = resolvedTargets.map((c) => c.name);
   const narrowed = options.targets ?? {};

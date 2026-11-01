@@ -60,6 +60,7 @@ const BOOLEAN_FLAGS = new Set([
   "--check",
   "--bump",
   "--no-release-record",
+  "--deploy-unchanged",
   "--no-record",
   "--fold",
   "--no-fold",
@@ -358,6 +359,8 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--image") {
       result.image = args[++i];
       if (!result.image || result.image.startsWith("-")) throw new Error("--image needs an image reference: --image <name>:<tag>");
+      // `chant release cut --image <component>=<ref>` (#4694) is repeatable.
+      (result.images ??= []).push(result.image);
     } else if (arg === "--network") {
       result.network = args[++i];
       if (!result.network || result.network.startsWith("-")) throw new Error("--network needs a Docker network name: --network <name>");
@@ -959,6 +962,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant release cut --build <command>` (#4026)
       result.buildCommand = args[++i];
       if (!result.buildCommand) throw new Error("--build needs a shell command: --build '<command>'");
+    } else if (arg === "--deploy-unchanged") {
+      // `chant run --components --release --deploy-unchanged` (#4695): deploy a component whose inputs did not change.
+      result.deployUnchanged = true;
     } else if (arg === "--artifacts") {
       // `chant release compile --artifacts` (#4026, internal)
       result.artifacts = true;

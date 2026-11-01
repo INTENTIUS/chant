@@ -1075,8 +1075,9 @@ function refusesNoRecordOn(runtime: Pick<OpRuntimeProvider, "name">): boolean {
 
 /**
  * Resolve the release `chant run --components --release` names (#4043), or the
- * reason it can't be used. The run builds from the checked-out commit, so the
+ * reason it can't be used. The run's compositions are the checkout's, so the
  * release's commit must be HEAD, and the release needs a target for `env`.
+ * The artifacts it deploys are the release's own (#4694, ../../components/release-run.ts).
  */
 export async function resolveRunRelease(ref: string, env: string, cwd: string) {
   const { fetchLifecycle, getHeadCommit } = await import("../../lifecycle/git");
@@ -1088,14 +1089,13 @@ export async function resolveRunRelease(ref: string, env: string, cwd: string) {
   const name = found.label ?? found.release.releaseDigest;
   const head = await getHeadCommit({ cwd });
   if (found.release.commit !== head) {
-    return `release ${name} was cut from ${found.release.commit.slice(0, 12)} and this checkout is at ${head.slice(0, 12)}; run builds from the checkout, so check out the release's commit, or deploy it with \`chant components promote --release\``;
+    return `release ${name} was cut from ${found.release.commit.slice(0, 12)} and this checkout is at ${head.slice(0, 12)}; run deploys the checkout's components, so check out the release's commit, or deploy it with \`chant components promote --release\``;
   }
   const target = targetFor(found.release, env);
   if ("error" in target) return target.error;
   return { releaseDigest: found.release.releaseDigest, label: found.label, release: found.release };
 }
 
-/** A rebuilt image need not digest as the release's own did; say so, as promote does. Never fails the run. */
 /** #4222: a component's templates digest in the release's target for `env`, or null when the release has no such target. */
 async function releaseTemplatesDigestOf(release: import("../../lifecycle/release-store").Release, env: string): Promise<(component: string) => string | null> {
   const { targetFor, releaseTemplatesDigest } = await import("../../components/release-promote");
@@ -1103,6 +1103,7 @@ async function releaseTemplatesDigestOf(release: import("../../lifecycle/release
   return (component) => ("target" in found ? releaseTemplatesDigest(found.target, component) : null);
 }
 
+/** A rebuilt image need not digest as the release's own did; say so, as promote does. Never fails the run. */
 async function warnOnArtifactMismatch(release: import("../../lifecycle/release-store").Release, recorded: readonly ReleaseRecord[]): Promise<void> {
   try {
     const { releaseArtifactMismatches } = await import("../../components/release-promote");
@@ -1116,6 +1117,103 @@ async function warnOnArtifactMismatch(release: import("../../lifecycle/release-s
   } catch {
     // The record is written; a manifest that can't be read is not worth failing the run for.
   }
+}
+
+/**
+ * Record each component the run left alone (#4695): a record of the release
+ * repeating the deploy that stays, named in `unchangedSince`. One whose
+ * latest record already names the release gets none. Never fails the run.
+ */
+export async function recordSkips(
+  skipped: Skipped,
+  releaseDigest: string,
+  run: { runId: string; runOrigin?: RunOrigin },
+  cwd: string,
+): Promise<ReleaseRecord[]> {
+  const fresh = [...skipped.values()].filter((v) => !v.recorded);
+  if (fresh.length === 0) return [];
+  const actor = process.env.GITHUB_ACTOR ?? process.env.GITLAB_USER_LOGIN ?? process.env.USER;
+  if (!actor) {
+    console.error(formatWarning({ message: `the skips of ${fresh.map((v) => v.since.component).join(", ")} were not recorded: no actor (GITHUB_ACTOR, GITLAB_USER_LOGIN or USER)` }));
+    return [];
+  }
+  const { unchangedRecord } = await import("../../components/unchanged-inputs");
+  const { appendReleaseRecord } = await import("../../lifecycle/release-ledger");
+  const { pushLifecycleRebasing } = await import("../../lifecycle/git");
+  const timestamp = new Date().toISOString();
+  const written: ReleaseRecord[] = [];
+  try {
+    for (const v of fresh) {
+      const { record } = await appendReleaseRecord(unchangedRecord(v.since, { releaseDigest, runId: run.runId, ...(run.runOrigin ? { runOrigin: run.runOrigin } : {}), timestamp, actor }), { cwd });
+      written.push(record);
+      console.error(`Recorded skip: ${formatBold(record.component)}@${record.env} keeps ${record.digest} under release ${releaseDigest}`);
+    }
+    await pushLifecycleRebasing({ cwd });
+  } catch (err) {
+    console.error(formatWarning({ message: `a skip was not recorded: ${err instanceof Error ? err.message : String(err)}` }));
+  }
+  return written;
+}
+
+/** A component a run under a release left alone (#4695), and the deploy that stays. */
+export type Skipped = Map<string, import("../../components/unchanged-inputs").InputsVerdict & { unchanged: true }>;
+
+/**
+ * The compositions of a run under a release (#4694): each component the release
+ * recorded an artifact for runs from it, with what was taken out printed to
+ * stderr, or the run is refused with every reason. Unless `deployUnchanged`,
+ * a component whose declared inputs are the same as in the release `env` runs
+ * it from runs nothing and is added to `skipped` (#4695).
+ */
+export function releaseRunPrepare(
+  under: { releaseDigest: string; label: string | null; release: import("../../lifecycle/release-store").Release },
+  projectPath: string,
+  env: string,
+  skip: { deployUnchanged: boolean; skipped: Skipped },
+): NonNullable<import("../../components/cli-support").RunComponentsOptions["prepare"]> {
+  return async (all, declared) => {
+    let components = all;
+    const declaring = components.filter((c) => declared.inputs[c.name] !== undefined);
+    if (declaring.length > 0 && skip.deployUnchanged) {
+      console.error(formatInfo(`--deploy-unchanged: deploying ${declaring.map((c) => c.name).join(", ")} whatever their inputs`));
+    } else if (declaring.length > 0) {
+      const { compareInputs, gitChangedPaths } = await import("../../components/unchanged-inputs");
+      const { readReleaseLedger, latestPerComponent } = await import("../../lifecycle/release-ledger");
+      const { readRelease } = await import("../../lifecycle/release-store");
+      const current = latestPerComponent((await readReleaseLedger(env, { cwd: projectPath }).catch(() => ({ records: [] }))).records);
+      for (const c of declaring) {
+        const verdict = await compareInputs({
+          component: c.name,
+          inputs: declared.inputs[c.name]!,
+          env,
+          release: under.release,
+          current: current.get(c.name),
+          readRelease: (digest) => readRelease(digest, { cwd: projectPath }),
+          changedPaths: gitChangedPaths(projectPath),
+        });
+        if (verdict.unchanged) {
+          skip.skipped.set(c.name, verdict);
+          console.error(formatInfo(`${c.name}: inputs unchanged since the deploy "${env}" runs (run ${verdict.since.runId}); not deploying it (--deploy-unchanged deploys it)`));
+        } else {
+          console.error(formatInfo(`${c.name}: deploying, since ${verdict.reason}`));
+        }
+      }
+      // A skipped component stays in the run, so its dependents keep their order, and runs nothing.
+      components = components.map((c) => (skip.skipped.has(c.name) ? { ...c, deploy: [] } : c));
+    }
+    const { releaseRunComponents } = await import("../../components/release-run");
+    const result = releaseRunComponents(components, under.release, projectPath, under.label);
+    if ("errors" in result) return { error: `${result.errors.join("\n")}\nnothing was deployed` };
+    const name = under.label ?? under.releaseDigest;
+    for (const note of result.notes) {
+      const parts = [
+        ...(note.removed.length > 0 ? [`not building (${note.removed.join(", ")})`] : []),
+        ...(note.image ? [`image ${note.image}`] : []),
+      ];
+      console.error(formatInfo(`${note.component}: release ${name}'s own artifact${parts.length > 0 ? `; ${parts.join("; ")}` : ""}`));
+    }
+    return { components: result.components };
+  };
 }
 
 async function runComponentSelection(ctx: CommandContext): Promise<number> {
@@ -1159,11 +1257,18 @@ async function runComponentSelection(ctx: CommandContext): Promise<number> {
   const env = ctx.args.env ?? "local";
 
   // #4043: `--release <label|digest>` says this run deploys that release. The
-  // run builds from the checked-out commit, so the release must have been cut
-  // from it, and must have a target for the environment. Both are checked
-  // before anything deploys; nothing is inferred when the flag is absent.
+  // run's compositions are the checked-out commit's, so the release must have
+  // been cut from it, and must have a target for the environment. Both are
+  // checked before anything deploys; nothing is inferred when the flag is
+  // absent. #4694: a component the release recorded an artifact for runs from
+  // it, without its build steps.
   let underRelease: { releaseDigest: string; label: string | null; release: import("../../lifecycle/release-store").Release } | undefined;
   if (ctx.args.release) {
+    // #4694: the compositions are rewritten in this process, so a runtime that runs them elsewhere would build again.
+    if (runtime.name !== "local") {
+      console.error(formatError({ message: `--release runs the release's own artifacts on the local runtime, not on "${runtime.name}"`, hint: "Omit --on to run it here." }));
+      return 1;
+    }
     const refused = await resolveRunRelease(ctx.args.release, env, projectPath);
     if (typeof refused === "string") {
       console.error(formatError({ message: refused, hint: "List the releases with: chant release list" }));
@@ -1235,6 +1340,8 @@ async function runComponentSelection(ctx: CommandContext): Promise<number> {
       return 1;
     }
   }
+  // #4695: the components a run under a release left alone, recorded after a successful run.
+  const skipped: Skipped = new Map();
   let result: RunComponentsResult;
   try {
     // #4594: ci.lockGrain, and on the resource grain each step's row lease in the pull-request loop's rows file.
@@ -1251,6 +1358,7 @@ async function runComponentSelection(ctx: CommandContext): Promise<number> {
       sandbox: ctx.args.sandbox,
       buildParams: paramsResolution.provenance,
       ...(onPlan ? { onPlan } : {}),
+      ...(underRelease ? { prepare: releaseRunPrepare(underRelease, projectPath, env, { deployUnchanged: ctx.args.deployUnchanged === true, skipped }) } : {}),
     });
   } catch (err) {
     events?.settle("failed", err instanceof Error ? err.message : String(err));
@@ -1335,7 +1443,9 @@ async function runComponentSelection(ctx: CommandContext): Promise<number> {
     const templatesDigestOf = underRelease ? await releaseTemplatesDigestOf(underRelease.release, env) : undefined;
     // #4274: a component that publishes nothing is recorded by its deploy-input digest.
     const appliedOf = result.components ? appliedDigestOf({ components: result.components, env, projectRoot: projectPath }) : undefined;
-    const recorded = await recordAutoReleasesForRun(result.run.results, env, release.runId, disabled, release.runOrigin, underRelease?.releaseDigest, templatesDigestOf, appliedOf);
+    const deployed = result.run.results.filter((r) => !skipped.has(r.component));
+    const recorded = await recordAutoReleasesForRun(deployed, env, release.runId, disabled, release.runOrigin, underRelease?.releaseDigest, templatesDigestOf, appliedOf);
+    if (underRelease && !disabled) recorded.push(...(await recordSkips(skipped, underRelease.releaseDigest, release, projectPath)));
     // A generated promote job promotes artifacts; an apply has none to name.
     const promotable = recorded.filter((r) => !isApplyRecord(r));
     if (underRelease) await warnOnArtifactMismatch(underRelease.release, recorded);

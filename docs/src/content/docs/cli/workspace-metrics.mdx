@@ -26,7 +26,7 @@ The window covers the last 56 days (eight weeks) up to now. `--since <date>` sta
 
 ## The metrics
 
-Each record in an environment's `releases.jsonl` counts once: one component put in one environment, by `components promote`, `run --components`, `components release` or `components rollback`. A [`components redeploy`](/chant/cli/components/) puts the running release back. It is counted as `redeploys` and left out of every metric.
+Each record in an environment's `releases.jsonl` counts once: one component put in one environment, by `components promote`, `run --components`, `components release` or `components rollback`. A [`components redeploy`](/chant/cli/components/) puts the running release back. It is counted as `redeploys` and left out of every metric. A record with `unchangedSince`, written when a release [skipped a component](/chant/cli/run/#unchanged-inputs) whose inputs did not change, deployed nothing and is in no metric ([#4695](https://github.com/INTENTIUS/chant/issues/4695)).
 
 | Metric | How chant counts it |
 |---|---|
