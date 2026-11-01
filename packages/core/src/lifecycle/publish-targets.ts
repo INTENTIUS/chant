@@ -9,6 +9,8 @@
  *   as GHCR or Docker Hub over the registry HTTP API, by digest, then tagged.
  * - `forge` (./publish-forge.ts): files attached to the GitHub, GitLab or
  *   Forgejo release named by the release's tag.
+ * - `homebrew` (./publish-homebrew.ts): a formula in a tap repository on
+ *   GitHub, rendered from a template with each asset's URL and SHA-256.
  *
  * A file a target reads that the release records as an artifact at the same
  * path is checked against the release's digest, and a file that differs is
@@ -37,6 +39,9 @@ export async function createPublishTargets(decls: readonly PublishDeclaration[],
         break;
       case "forge":
         out.push((await import("./publish-forge")).forgeTarget(d, deps));
+        break;
+      case "homebrew":
+        out.push((await import("./publish-homebrew")).homebrewTarget(d, deps));
         break;
     }
   }

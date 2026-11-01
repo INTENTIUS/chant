@@ -372,3 +372,99 @@ export function writeLockfile(dir: string): void {
     JSON.stringify({ name: "acme", lockfileVersion: 3, packages: { "": { name: "acme" }, "node_modules/left-pad": { version: "1.3.0" } } }, null, 2),
   );
 }
+
+/** A GitHub repository fake answering through `fetch` (#4676): branches, commits of whole files, and the contents and refs APIs. */
+export interface FakeGitHubRepo {
+  fetch: FakeForge["fetch"];
+  calls: FakeForge["calls"];
+  /** The branches, each the sha of its commit. */
+  branches: Map<string, string>;
+  /** The file `path` on `branch`, or undefined. */
+  read(branch: string, path: string): string | undefined;
+  /** Commit `files` onto `branch` as someone else would, moving it. */
+  push(branch: string, files: Record<string, string>): void;
+  /** Each commit's message, oldest first, on `branch`'s history. */
+  log(branch: string): string[];
+}
+
+/** A repository fake at `api` for `repo` whose `branch` holds `files`. */
+export function startFakeGitHubRepo(api: string, repo: string, branch: string, files: Record<string, string>): FakeGitHubRepo {
+  const calls: FakeGitHubRepo["calls"] = [];
+  const commits = new Map<string, { parent: string | null; message: string; files: Map<string, string> }>();
+  const branches = new Map<string, string>();
+  let n = 0;
+  const commit = (parent: string | null, message: string, change: Record<string, string>) => {
+    const base = parent ? commits.get(parent)!.files : new Map<string, string>();
+    const sha = createHash("sha1").update(`commit ${n++}`).digest("hex");
+    commits.set(sha, { parent, message, files: new Map([...base, ...Object.entries(change)]) });
+    return sha;
+  };
+  branches.set(branch, commit(null, "init", files));
+  const blob = (text: string) => createHash("sha1").update(`blob ${text}`).digest("hex");
+  const ancestor = (a: string, b: string) => {
+    for (let c: string | null = b; c; c = commits.get(c)?.parent ?? null) if (c === a) return true;
+    return false;
+  };
+  const json = (status: number, body?: unknown) => ({ ok: status < 300, status, headers: { get: () => null }, text: async () => (body === undefined ? "" : JSON.stringify(body)) });
+  const root = `${api}/repos/${repo}`;
+  const fetch: FakeGitHubRepo["fetch"] = async (url, init) => {
+    calls.push({ method: init.method, url, headers: init.headers, ...(init.body !== undefined ? { body: init.body } : {}) });
+    const u = new URL(url);
+    const path = url.split("?")[0]!;
+    const body = typeof init.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : {};
+    if (init.method === "GET" && path === root) return json(200, { default_branch: branch });
+    const ref = path.match(/\/git\/refs?\/heads\/(.+)$/);
+    if (ref && path.startsWith(root)) {
+      const name = decodeURIComponent(ref[1]!);
+      const at = branches.get(name);
+      if (init.method === "GET") return at ? json(200, { ref: `refs/heads/${name}`, object: { sha: at } }) : json(404, { message: "Not Found" });
+      if (!at) return json(422, { message: "Reference does not exist" });
+      if (init.method === "DELETE") return void branches.delete(name), json(204);
+      if (init.method === "PATCH") {
+        const to = String(body.sha);
+        if (!commits.has(to)) return json(422, { message: "Object does not exist" });
+        if (body.force !== true && !ancestor(at, to)) return json(422, { message: "Update is not a fast forward" });
+        branches.set(name, to);
+        return json(200, { object: { sha: to } });
+      }
+    }
+    if (init.method === "POST" && path === `${root}/git/refs`) {
+      const name = String(body.ref).replace(/^refs\/heads\//, "");
+      if (branches.has(name)) return json(422, { message: "Reference already exists" });
+      branches.set(name, String(body.sha));
+      return json(201, { ref: body.ref, object: { sha: body.sha } });
+    }
+    const contents = path.startsWith(`${root}/contents/`) ? path.slice(`${root}/contents/`.length).split("/").map(decodeURIComponent).join("/") : null;
+    if (contents !== null && init.method === "GET") {
+      const at = branches.get(u.searchParams.get("ref") ?? branch);
+      const text = at ? commits.get(at)!.files.get(contents) : undefined;
+      return text === undefined ? json(404, { message: "Not Found" }) : json(200, { sha: blob(text), encoding: "base64", content: Buffer.from(text).toString("base64") });
+    }
+    if (contents !== null && init.method === "PUT") {
+      const on = String(body.branch);
+      const at = branches.get(on);
+      if (!at) return json(404, { message: "Branch not found" });
+      const current = commits.get(at)!.files.get(contents);
+      if ((current === undefined ? undefined : blob(current)) !== body.sha) return json(409, { message: "sha does not match" });
+      const sha = commit(at, String(body.message), { [contents]: Buffer.from(String(body.content), "base64").toString("utf-8") });
+      branches.set(on, sha);
+      return json(current === undefined ? 201 : 200, { content: { sha: blob(contents) }, commit: { sha } });
+    }
+    return json(404, { message: "Not Found" });
+  };
+  return {
+    fetch,
+    calls,
+    branches,
+    read: (b, p) => {
+      const at = branches.get(b);
+      return at ? commits.get(at)!.files.get(p) : undefined;
+    },
+    push: (b, change) => void branches.set(b, commit(branches.get(b)!, "someone else", change)),
+    log: (b) => {
+      const out: string[] = [];
+      for (let c: string | null = branches.get(b) ?? null; c; c = commits.get(c)!.parent) out.unshift(commits.get(c)!.message);
+      return out;
+    },
+  };
+}
