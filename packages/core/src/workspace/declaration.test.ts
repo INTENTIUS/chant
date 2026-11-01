@@ -556,6 +556,7 @@ describe("ci.prEnvironment (#4298)", () => {
   const members = [{ name: "api", dir: "api", kind: "chant" }];
 
   test("is read with its template and a 72h TTL by default", () => {
+    expect(parse(base(members, { ci: { prEnvironment: { template: "shop/dev" } } })).ci?.prEnvironment?.template).toBe("shop/dev"); // a lexicon's own stack (plywood#64)
     expect(parse(base(members, { ci: { prEnvironment: { template: "staging" } } })).ci?.prEnvironment).toEqual({ template: "staging", ttl: "72h" });
     expect(parse(base(members, { ci: { prEnvironment: { template: "staging", ttl: "7d" } } })).ci?.prEnvironment).toEqual({ template: "staging", ttl: "7d" });
   });

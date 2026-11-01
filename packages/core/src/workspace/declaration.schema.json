@@ -333,7 +333,7 @@
           "properties": {
             "template": {
               "type": "string",
-              "pattern": "^[a-z0-9][a-z0-9-]*$",
+              "pattern": "^[a-z0-9][a-z0-9-]*(/[a-z0-9][a-z0-9-]*)?$",
               "description": "The declared environment a pull request's environment is derived from: pr-<number> takes its endpoint unless a pr-* entry declares one."
             },
             "ttl": {

@@ -16,6 +16,8 @@ This guide is for a project that applies the same Op to several places in order,
 
 The spec is a JSON file committed to the repository. Its jobs read it at run time, so the pipeline and the runs never disagree.
 
+`op` names an Op that must already exist in the project, or the run stops with `Unknown Op(s)`.
+
 ```json
 {
   "name": "migrations",
