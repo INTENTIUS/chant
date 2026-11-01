@@ -137,6 +137,7 @@ chant approve fountain-apply rollout-gate --note "paged on-call first; see the i
 chant approve fountain-apply rollout-gate --actor github:alice --relayed-by github:hud-follower --sign
 chant approve fountain-apply rollout-gate --actor github:alice --statement
 chant approve fountain-apply rollout-gate --actor github:alice --at 2026-11-01T10:00:00.000Z --signature assertion.json
+chant approve fountain-apply rollout-gate --actor github:alice --binding "deploy dep_42 until 2026-11-01T12:00:00Z" --statement
 ```
 
 | Flag | Default | Meaning |
@@ -146,6 +147,7 @@ chant approve fountain-apply rollout-gate --actor github:alice --at 2026-11-01T1
 | `--statement` | — | Print the statement an approval would sign, as a `chant-gate-statement/v1` document on stdout, and record nothing. It runs the same checks and takes the same `--actor`, `--relayed-by`, `--plan` and `--env`. For a signature made outside chant ([Approvals signed outside chant](/chant/reference/workspace-declaration/#approvals-signed-outside-chant), [#4646](https://github.com/INTENTIUS/chant/issues/4646)) |
 | `--signature <file>` | — | Record an approval signed elsewhere over the statement: an armored ssh signature in the `chant-gate` namespace, or a passkey's WebAuthn assertion in JSON. `-` reads stdin. It needs `--at`, is checked against the signers file and the `passkeys` of `.chant/trust.json` at base for `--actor`, and counts toward an `identity.gates` gate as `--sign` does. Not with `--sign` |
 | `--at <timestamp>` | — | The statement's time, as `--statement` printed it. With `--statement` it fixes the time, and with `--signature` it is required |
+| `--binding <text>` | — | A line the relay sets for the approver's signature to cover as well, such as its deploy id and an expiry. Signed last as `binding <text>` (seal version 3) and recorded as `binding` on the resolution line. One line of printable text, at most 512 UTF-8 bytes, not starting with `-`; chant doesn't interpret it. Goes with `--statement`, `--signature` or `--sign`, and `--signature` needs the one `--statement` was given ([#4697](https://github.com/INTENTIUS/chant/issues/4697)) |
 | `--relayed-by <principal>` | — | Who carried the approval to chant for `--actor`, such as a follower program relaying a person's approval through hud. Recorded as `relayedBy` on the resolution line, covered by `--sign` (the seal signs it as a seventh line, `relayed-by <principal>`), and listed with the approval in `chant workspace status --json`. The approver is still `--actor`, and the seal is still theirs. Under `identity.attribution: "identified"` the relay must be a checkable principal too ([#3402](https://github.com/INTENTIUS/chant/issues/3402)) |
 | `--url <url>` | the surrounding CI job's PR/MR, when there is one | The address this resolution happened at, typically the PR or MR that carried the change. Recorded typed on the resolution fact so a reader is not sniffing free text for a link. Must be an absolute http or https URL |
 | `--note <text>` | — | Free-text context recorded alongside the resolution. The link belongs in `--url`; this is for everything else |

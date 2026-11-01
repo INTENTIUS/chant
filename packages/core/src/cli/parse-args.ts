@@ -975,6 +975,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       if (!result.signature || (result.signature.startsWith("-") && result.signature !== "-")) {
         throw new Error("--signature needs a file holding the signature, or - for stdin: --signature <file|->");
       }
+    } else if (arg === "--binding") {
+      // `chant approve <op> <gate> --statement|--signature|--sign --binding <text>` (#4697): a line the relay sets for the signature to cover.
+      result.binding = args[++i];
+      if (!result.binding || result.binding.startsWith("-")) throw new Error("--binding needs the line the signature binds, which does not start with -: --binding <text>");
     } else if (arg === "--relayed-by") {
       // `chant approve <op> <gate> --relayed-by <principal>` and `workspace points answer <id> --relayed-by <principal>` (#3402):
       // who carried the approval or answer to chant for the person it names.

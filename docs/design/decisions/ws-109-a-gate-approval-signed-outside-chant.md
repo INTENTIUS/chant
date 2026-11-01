@@ -12,8 +12,8 @@ question: "A gate under identity.gates counts only an approval sealed with chant
 options:
   - id: "a"
     label: "print the existing statement, take an ssh signature or a WebAuthn assertion over it, and list passkeys in .chant/trust.json"
-    how: "chant approve --statement runs the approval's checks, records nothing, and prints gateSealPayload's bytes for the gate as a chant-gate-statement/v1 document with the time fixed, the SHA-256 digest and the WebAuthn challenge (base64url of that digest). chant approve --signature <file> --at <time> takes either an armored ssh signature in the chant-gate namespace, checked against the signers file as --sign's seal is, or a WebAuthn assertion, checked against a passkey listed under passkeys in .chant/trust.json at base (principal, credential id, SPKI public key, rpId, origins) per WebAuthn level 2: type webauthn.get, the statement's challenge, an allowed origin, the rpIdHash, the UP and UV flags and the signature over authenticatorData and the client data's hash. A passkey's seal is kind webauthn and keeps the assertion, so the one check (checkGateSignature) that chant approve, the identity.gates rule, a sealed gate, gate-decision and checkGateSeal share reads it again from the ledger."
-    tradeoff: "The statement is the one --sign already signs, so an ssh seal made elsewhere is the same seal and old ledgers don't change. The passkey list is policy at base like the signers file, and changing it is a protected write. The signature counter is not checked, since a ledger line can't know the authenticator's last count, so a cloned authenticator isn't caught here. An older chant reads a trust.json with passkeys as invalid and turns attestation off, which fails closed."
+    how: "chant approve --statement runs the approval's checks, records nothing, and prints gateSealPayload's bytes for the gate as a chant-gate-statement/v1 document with the time fixed, the SHA-256 digest and the WebAuthn challenge (base64url of that digest). chant approve --signature <file> --at <time> takes either an armored ssh signature in the chant-gate namespace, checked against the signers file as --sign's seal is, or a WebAuthn assertion, checked against a passkey listed under passkeys in .chant/trust.json at base (principal, credential id, SPKI public key, rpId, origins) per WebAuthn level 2: type webauthn.get, the statement's challenge, an allowed origin, the rpIdHash, the UP and UV flags and the signature over authenticatorData and the client data's hash. A passkey's seal is kind webauthn and keeps the assertion, so the one check (checkGateSignature) that chant approve, the identity.gates rule, a sealed gate, gate-decision and checkGateSeal share reads it again from the ledger. The relay may add one line of its own with --binding <text> on both calls (#4697), such as its deploy id and an expiry: the statement signs it last as binding <text>, the seal is version 3, the resolution line keeps it as binding, and chant checks only that it is one printable line of at most 512 UTF-8 bytes."
+    tradeoff: "The statement is the one --sign already signs, so an ssh seal made elsewhere is the same seal and old ledgers don't change. The passkey list is policy at base like the signers file, and changing it is a protected write. The signature counter is not checked, since a ledger line can't know the authenticator's last count, so a cloned authenticator isn't caught here. An older chant reads a trust.json with passkeys as invalid and turns attestation off, which fails closed. A binding is checked as part of the signature and never read, so whether the deploy id matches or the expiry has passed is the platform's to check; an older chant leaves the binding line out and counts no version 3 seal, which also fails closed."
   - id: "b"
     label: "a new statement format for signatures made elsewhere"
     how: "Define a JSON statement (op, gate, plan digest, actor, time) canonicalised with JCS, signed by whatever key, beside the ssh seal's LF-joined lines."
@@ -41,6 +41,9 @@ evidence:
   - title: "INTENTIUS/chant#4646, approve: accept a signature made outside chant"
     url: "https://github.com/INTENTIUS/chant/issues/4646"
     as_of: "2026-11-01T00:00:00Z"
+  - title: "INTENTIUS/chant#4697, gate statement: an optional binding line from the relay"
+    url: "https://github.com/INTENTIUS/chant/issues/4697"
+    as_of: "2026-11-01T00:00:00Z"
   - title: "arugula-salad/arugula#1988, Arugula on chant"
     url: "https://github.com/arugula-salad/arugula/issues/1988"
     as_of: "2026-11-01T00:00:00Z"
@@ -55,6 +58,7 @@ decided_on: "2026-11-01"
 reviews: []
 constrains:
   - "INTENTIUS/chant#4646"
+  - "INTENTIUS/chant#4697"
   - "ws-080"
   - "path:packages/core/src/lifecycle/gate-seal.ts"
   - "path:packages/core/src/lifecycle/gate-webauthn.ts"

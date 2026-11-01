@@ -668,7 +668,10 @@ Ops:
                         <file|-> --at <time> then records a signature made
                         elsewhere over them (an ssh signature, or a passkey's
                         WebAuthn assertion checked against .chant/trust.json's
-                        passkeys), which counts as --sign does (#4646)
+                        passkeys), which counts as --sign does (#4646).
+                        --binding <text> adds a line the relay sets (a deploy
+                        id and an expiry, say) that the signature covers too;
+                        pass the same on --statement and --signature (#4697)
                         --resume then starts the CI job that waits at the
                         gate again (GitHub re-run, GitLab retry, Forgejo
                         dispatch) with CHANT_FORGE_TOKEN
