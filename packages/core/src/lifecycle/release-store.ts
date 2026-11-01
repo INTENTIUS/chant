@@ -160,6 +160,12 @@ export interface ReleaseCut {
    * image tag a publish moves in place of `latest`. Absent for `latest`.
    */
   channel?: string;
+  /**
+   * The green lane the cut checked (#4692): the commit carried
+   * `ci/green-<lane>/<sha>` and no `ci/revoked-<lane>/<sha>`, in place of
+   * `ci/green/<sha>`. Absent on a cut that checked the full green tag.
+   */
+  lane?: string;
 }
 
 /** The parts of a release a digest is computed from. */
@@ -377,6 +383,7 @@ export function parseCuts(text: string | null): { cuts: ReleaseCut[]; malformed:
         (c.signature === null || c.signature === undefined || typeof c.signature === "string") &&
         (c.runId === null || c.runId === undefined || typeof c.runId === "string") &&
         (c.channel === undefined || typeof c.channel === "string") &&
+        (c.lane === undefined || typeof c.lane === "string") &&
         (c.composed === undefined || (typeof c.composed === "object" && c.composed !== null && typeof c.composed.base === "string" && Array.isArray(c.composed.sources)));
       if (!ok) {
         malformed++;
@@ -459,6 +466,7 @@ export async function appendCut(
       signature: input.signature ?? null,
       ...(input.composed ? { composed: input.composed } : {}),
       ...(input.channel ? { channel: input.channel } : {}),
+      ...(input.lane ? { lane: input.lane } : {}),
     };
     const content = `${existing ? `${existing.replace(/\n$/, "")}\n` : ""}${JSON.stringify(cut, sortedJsonReplacer)}\n`;
     try {

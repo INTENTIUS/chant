@@ -10,7 +10,9 @@
  * latest deploy records name in `releaseDigest`, as the `releases` read
  * (./releases.ts) says.
  *
- * Every green commit that is not revoked is a candidate. Its `changes` are
+ * Every green commit that is not revoked is a candidate. With a lane (#4692),
+ * green and revoked are that lane's tags, `ci/green-<lane>/<sha>` and
+ * `ci/revoked-<lane>/<sha>`, as `release cut --lane` checks them. Its `changes` are
  * the first-parent commits after the previous candidate up to and including
  * it, so the candidates partition the walk. A revoked commit is listed under
  * `skipped`, and its changes carry on into the next candidate. Commits after
@@ -53,6 +55,8 @@ import type { ForgeWorkOptions, PullRequestCloses } from "./forge-work";
 export const RELEASE_CANDIDATES_CONTRACT_VERSION = 1;
 /** The first chant whose candidates carry `changes[].closes` and `groups[].issue` (#4649). */
 export const RELEASE_CANDIDATES_CLOSES_FLOOR = NEXT_RELEASE;
+/** The first chant whose candidates document carries `lane` and reads a lane's tags (#4692). */
+export const RELEASE_CANDIDATES_LANE_FLOOR = NEXT_RELEASE;
 export const RELEASE_CANDIDATES_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/release-candidates/v1/release-candidates.schema.json";
 
 /** Why the read stopped. Closed; each code is in `reason-codes.ts`. */
@@ -150,6 +154,8 @@ export type ReleaseCandidatesDocument =
       chant: string;
       member: string | null;
       branch: string;
+      /** The green lane whose tags were read (#4692), or null for `ci/green/<sha>`. Added within contract 1 by chant {@link RELEASE_CANDIDATES_LANE_FLOOR}. */
+      lane: string | null;
       /** The tip of the branch as this clone knows it. */
       tip: string | null;
       environments: CandidateEnvironment[];
@@ -171,6 +177,8 @@ export interface ReleaseCandidatesQuery {
   limit?: number;
   /** Walk this branch of `ci.green.branch` (#4325) instead of the first. */
   branch?: string;
+  /** Read this lane's tags (#4692), one `ci.green.lanes` declares, in place of `ci/green/` and `ci/revoked/`. */
+  lane?: string;
   /** Ask the forge which issues each pull request closes (#4649), with these options. Left out, the forge is not read. */
   forgeIssues?: ForgeWorkOptions;
 }
@@ -259,6 +267,13 @@ export async function releaseCandidatesDocument(query: ReleaseCandidatesQuery): 
     if (query.branch !== undefined && !(green && greenBranches(green).includes(query.branch))) {
       throw new Error(`--branch ${query.branch} is not a branch ci.green judges${green ? ` (${greenBranches(green).join(", ")})` : ", and the declaration has no ci.green"}`);
     }
+    // #4692: an unknown lane, or one with no ci.green, stops the read with the lanes declared.
+    let lane: string | null = null;
+    if (query.lane !== undefined) {
+      if (!green) throw new Error(`--lane ${query.lane} names a ci.green lane, and the declaration has no ci.green`);
+      const { laneOf } = await import("./declaration");
+      lane = laneOf(green, query.lane).name;
+    }
     const trunk = resolveTrunk(top, query.branch ?? green?.branch ?? null);
     const tip =
       tryGit(top, ["rev-parse", "--verify", "--quiet", `refs/remotes/${trunk.remote}/${trunk.branch}^{commit}`]) ??
@@ -294,7 +309,7 @@ export async function releaseCandidatesDocument(query: ReleaseCandidatesQuery): 
       environments.push({ env, running });
     }
 
-    const empty = { ...head, member: ledger.members.length > 0 ? ledger.members.join("/") : null, branch: trunk.branch, tip, environments, since: null, candidates: [], skipped: [], pending: [] };
+    const empty = { ...head, member: ledger.members.length > 0 ? ledger.members.join("/") : null, branch: trunk.branch, lane, tip, environments, since: null, candidates: [], skipped: [], pending: [] };
     if (!tip) return empty;
 
     // The oldest commit any environment runs bounds the walk, when every environment runs one.
@@ -313,7 +328,7 @@ export async function releaseCandidatesDocument(query: ReleaseCandidatesQuery): 
     // An environment's newest running commit on the line, by position (smaller is newer).
     const newestRun = new Map(environments.map((e) => [e.env, Math.min(...runningCommits(e).map((c) => position.get(c)!), Number.POSITIVE_INFINITY)]));
 
-    const tags = await judgedCiTags(top, green);
+    const tags = await judgedCiTags(top, green, lane ?? undefined);
     const details = commitDetails(top, walk);
     const merges = new Map<string, Record<string, unknown>>();
     for (const sha of walk) {

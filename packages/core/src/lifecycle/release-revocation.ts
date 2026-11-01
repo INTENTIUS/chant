@@ -49,17 +49,18 @@ function tryGit(top: string, args: string[]): string | null {
 /**
  * The ci tags at `top`, judged against `green` at base: the green branch's
  * tip on `origin`, else the local branch, else `HEAD`. With no `ci.green`
- * every tag counts. Throws `WorkspaceReadError` (`declaration-invalid`) when
- * `ci.green.signedSince` names no commit here.
+ * every tag counts. With `lane` (#4692), that lane's tags, `ci/green-<lane>/`
+ * and `ci/revoked-<lane>/`. Throws `WorkspaceReadError` (`declaration-invalid`)
+ * when `ci.green.signedSince` names no commit here.
  */
-export async function judgedCiTags(top: string, green: CiGreen | null): Promise<CiTags> {
+export async function judgedCiTags(top: string, green: CiGreen | null, lane?: string): Promise<CiTags> {
   const { readCiTags } = await import("../workspace/ci-green");
   const base = green
     ? (tryGit(top, ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${green.branch}^{commit}`]) ??
       tryGit(top, ["rev-parse", "--verify", "--quiet", `refs/heads/${green.branch}^{commit}`]) ??
       tryGit(top, ["rev-parse", "HEAD"]))
     : null;
-  return readCiTags(top, green, base);
+  return readCiTags(top, green, base, lane);
 }
 
 /**

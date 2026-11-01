@@ -451,7 +451,8 @@ CI:
 Releases:
   release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>]
               [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>]
-              [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--json]
+              [--actor <name>] [--sign [<key file>]] [--channel <tag>]
+              [--lane <name>] [--json]
                         A dry run of a cut of this member from HEAD, which
                         must be clean, on trunk and pushed, and carry a
                         ci/green tag: compile every environment in the
@@ -475,7 +476,9 @@ Releases:
                         A green commit of a pushed chant/compose/<name>
                         branch is cut too, recording its base and sources.
                         --channel <tag> records the tag a publish moves in
-                        place of latest.
+                        place of latest. --lane <name> (or release.lane in
+                        chant.config.ts) checks a ci.green lane's tag,
+                        ci/green-<lane>/<sha>, in place of ci/green.
   release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)...
                   [--yes] [--json]
                         Cherry-pick the chosen trunk changes, in trunk order,
@@ -484,12 +487,14 @@ Releases:
                         that exists; stops on a conflict, naming the change
                         and files, and writes nothing. A dry run unless --yes,
                         which moves the branch and pushes it.
-  release candidates [--env <env>] [--forge-issues] [--json]
+  release candidates [--env <env>] [--lane <name>] [--forge-issues] [--json]
                         The green commits of trunk a release can be cut from,
                         newest first, each with the commits, work items, pull
                         requests and flags it would ship, and what each
-                        environment runs. --forge-issues asks the forge which
-                        issues each pull request closes, once per pull request
+                        environment runs. --lane reads a lane's green tags,
+                        as release cut --lane checks them. --forge-issues asks
+                        the forge which issues each pull request closes, once
+                        per pull request
   release publish <label|digest> [--yes] [--allow-unsigned]
                   [--require-provenance] [--json]
                         Publish a cut release to the targets release.publish

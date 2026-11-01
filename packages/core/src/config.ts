@@ -109,6 +109,7 @@ export const ChantConfigSchema = z.object({
   release: z.object({
     autoRecord: z.boolean().optional(),
     publish: z.array(PublishDeclarationSchema).optional(),
+    lane: z.string().regex(/^[a-z0-9][a-z0-9-]*$/, "a ci.green lane name: lowercase letters, digits and dashes").optional(),
   }).optional(),
   // Strict: a misspelt key here would leave Ops on the local runtime with
   // nothing said (#2523).
@@ -371,6 +372,13 @@ export interface ChantConfig {
      * the order given. See ./lifecycle/publish-declaration.ts.
      */
     publish?: PublishDeclaration[];
+    /**
+     * The green lane `chant release cut` and `chant release candidates` check
+     * when `--lane` is not given (#4692): one `ci.green.lanes` declares in
+     * chant.workspace.json. The commit must then carry `ci/green-<lane>/<sha>`
+     * rather than `ci/green/<sha>`.
+     */
+    lane?: string;
   };
 
   /** Defaults for `chant run` and its subcommands (#2523). */

@@ -31,6 +31,10 @@
  * all the same, and readers report whether the signature verifies. With
  * `ci.green.signedSince` declared, a green tag counts only with a valid
  * statement (`../workspace/ci-green.ts`), so a hand-pushed tag cuts nothing.
+ *
+ * A lane (#4692): a cut given a lane `ci.green.lanes` declares checks that
+ * lane's tags, `ci/green-<lane>/<sha>` and `ci/revoked-<lane>/<sha>`, in place
+ * of `ci/green/<sha>` and `ci/revoked/<sha>`, and the cut line names the lane.
  */
 
 import { execFileSync } from "node:child_process";
@@ -58,6 +62,10 @@ import {
   type TemplateContent,
 } from "./release-store";
 import type { CompiledTarget, TargetCompiler } from "../components/release-compile";
+import { NEXT_RELEASE } from "../release-floors";
+
+/** The first chant that cuts from a lane's green tag and writes `lane` on the cut line (#4692). */
+export const RELEASE_CUT_LANE_FLOOR = NEXT_RELEASE;
 
 /** The stable codes a cut refuses with. */
 export type ReleaseCutCode =
@@ -106,6 +114,13 @@ export interface CutRequest {
   composed?: { branch: string; base: string; sources: string[] };
   /** The publish channel recorded on the cut (#4168 4.3), in place of `latest`. */
   channel?: string;
+  /**
+   * The green lane to check (#4692), one `ci.green.lanes` declares at base:
+   * the commit must carry `ci/green-<lane>/<sha>` and no
+   * `ci/revoked-<lane>/<sha>`. Recorded on the cut. Absent, the full
+   * `ci/green/<sha>` tag is checked.
+   */
+  lane?: string;
 }
 
 export interface CutResult {
@@ -137,17 +152,18 @@ function tryGit(top: string, args: string[]): string | null {
  * and the tags on it that were ignored for want of a valid statement
  * (#4031). The tags are judged by `green`, the declaration's `ci.green` at
  * base, with the runner keys read at its branch's tip; with no `ci.green`,
- * every tag counts.
+ * every tag counts. With `lane` (#4692), that lane's tags are read.
  */
 export async function greenState(
   top: string,
   sha: string,
   green: import("../workspace/declaration").CiGreen | null = null,
+  lane?: string,
 ): Promise<{ state: "green" | "revoked" | "none"; ignored: Array<{ tag: string; status: string; reason: string }> }> {
   const { judgedCiTags } = await import("./release-revocation");
   let tags: Awaited<ReturnType<typeof judgedCiTags>>;
   try {
-    tags = await judgedCiTags(top, green);
+    tags = await judgedCiTags(top, green, lane);
   } catch (err) {
     const { WorkspaceReadError } = await import("../workspace/declaration");
     if (err instanceof WorkspaceReadError) throw new ReleaseCutError("declaration-invalid", err.message);
@@ -202,6 +218,26 @@ interface Prepared {
   carried: ReleaseArtifact[];
   reused: CutResult["reused"];
   member: string | null;
+  /** The lane the commit was checked in, or null for the full green tag. */
+  lane: string | null;
+}
+
+/**
+ * The lane `name` as the declaration at base declares it (#4692), or a
+ * `declaration-invalid` refusal when there is no `ci.green` or it declares
+ * no such lane.
+ */
+async function declaredLane(green: import("../workspace/declaration").CiGreen | null, name: string): Promise<string> {
+  if (!green) {
+    throw new ReleaseCutError("declaration-invalid", `the cut asks for lane ${JSON.stringify(name)}, and chant.workspace.json at base declares no ci.green, so it has no lanes`);
+  }
+  const { laneOf, WorkspaceReadError } = await import("../workspace/declaration");
+  try {
+    return laneOf(green, name).name;
+  } catch (err) {
+    if (err instanceof WorkspaceReadError) throw new ReleaseCutError("declaration-invalid", err.message);
+    throw err;
+  }
 }
 
 /**
@@ -220,17 +256,22 @@ async function prepare(req: CutRequest): Promise<Prepared> {
   const { scopeSource } = await import("../workspace/write-scope");
   const { releaseRuleFrom } = await import("../workspace/identity");
   const source = scopeSource(cwd);
-  const { state, ignored } = await greenState(top, commit, source.declaration?.ci?.green ?? null);
+  const green = source.declaration?.ci?.green ?? null;
+  const lane = req.lane !== undefined ? await declaredLane(green, req.lane) : null;
+  const { state, ignored } = await greenState(top, commit, green, lane ?? undefined);
   if (state !== "green") {
     const why = ignored.length > 0 ? `; ignored: ${ignored.map((t) => `${t.tag} (${t.status}): ${t.reason}`).join("; ")}` : "";
+    // #4692: a lane's tags are ci/green-<lane>/ and ci/revoked-<lane>/.
+    const greenTag = lane !== null ? `ci/green-${lane}` : "ci/green";
+    const revokedTag = lane !== null ? `ci/revoked-${lane}` : "ci/revoked";
     throw new ReleaseCutError(
       state === "revoked" ? "release-commit-revoked" : "release-commit-not-green",
       state === "revoked"
-        ? `commit ${commit.slice(0, 12)} has a ci/revoked tag: it went red after it was green, so no release is cut from it`
-        : ignored.some((t) => t.tag.startsWith("ci/green/"))
-          ? `commit ${commit.slice(0, 12)} has no ci/green tag that counts, so no release is cut from it${why}`
-          : `commit ${commit.slice(0, 12)} has no ci/green tag, so no release is cut from it`,
-      "Check out a green commit (`chant ci last-green` names the newest) after fetching the tags: git fetch origin --tags",
+        ? `commit ${commit.slice(0, 12)} has a ${revokedTag} tag: it went red after it was green, so no release is cut from it`
+        : ignored.some((t) => t.tag.startsWith(`${greenTag}/`))
+          ? `commit ${commit.slice(0, 12)} has no ${greenTag} tag that counts, so no release is cut from it${why}`
+          : `commit ${commit.slice(0, 12)} has no ${greenTag} tag, so no release is cut from it`,
+      `Check out a green commit (\`chant ci last-green${lane !== null ? ` --lane ${lane}` : ""}\` names the newest) after fetching the tags: git fetch origin --tags`,
     );
   }
   // Who may cut is the declaration's identity.gates.release, read at base.
@@ -323,6 +364,7 @@ async function prepare(req: CutRequest): Promise<Prepared> {
     carried: artifacts,
     reused,
     member: ledger.members.length > 0 ? ledger.members.join("/") : null,
+    lane,
   };
 }
 
@@ -371,6 +413,8 @@ export interface CutPlan {
   publishSteps: Array<{ component: string; kind: string; to: string | null; envs: string[] }>;
   /** Whether the release gate in identity.gates requires a signed cut. */
   signatureRequired: boolean;
+  /** The green lane the commit was checked in (#4692), or null for the full green tag. */
+  lane: string | null;
 }
 
 /**
@@ -439,6 +483,7 @@ export async function planRelease(req: CutRequest): Promise<CutPlan> {
     reused: p.reused,
     publishSteps: [...steps.values()],
     signatureRequired: p.releaseRule.requirement !== null,
+    lane: p.lane,
   };
 }
 
@@ -507,6 +552,7 @@ export async function cutRelease(req: CutRequest): Promise<CutResult> {
       signature,
       ...(req.composed ? { composed: req.composed } : {}),
       ...(req.channel ? { channel: req.channel } : {}),
+      ...(p.lane !== null ? { lane: p.lane } : {}),
     },
     { cwd },
   );
