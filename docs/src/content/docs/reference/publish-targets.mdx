@@ -78,6 +78,7 @@ With neither variable set, the target reads the registry's `auths` entry from th
 | `tag` | The forge release's tag. Default: the tag the cut made, `release/<label>` or `release/<member>/<label>` |
 | `tokenEnv` | The variable holding the token. Default: `GITHUB_TOKEN` on GitHub, `GITLAB_TOKEN` then `CI_JOB_TOKEN` on GitLab, `FORGEJO_TOKEN` on Forgejo |
 | `sbom` | An SPDX or CycloneDX JSON file to attach, relative to the member. Default: `sbom.spdx.json` written from the member's lockfile. `false` attaches none |
+| `latest` | GitHub only: `true`, `false` or `"legacy"`, sent as GitHub's `make_latest` when the reveal publishes the draft. `false` keeps the repository's latest release where it is, and `"legacy"` lets GitHub pick by creation date and semantic version. Unset, nothing is sent and GitHub makes the release latest. Another forge refuses it with `publish-forge-latest-unsupported`. Read by chant 0.124.63 and newer |
 
 A release with no label and no declared `tag` is refused (`publish-forge-no-tag`). The SBOM and `release.intoto.json`, the provenance statement, go with the declared assets as two more, so their names must not be taken by an asset. The stage puts the assets where no consumer sees them, and the reveal makes the release visible with all of them at once.
 
@@ -88,6 +89,8 @@ A release with no label and no declared `tag` is refused (`publish-forge-no-tag`
 | GitLab | Puts each asset in the project's generic package registry as package `release` at the label's version. GitLab has no draft release, so it makes none | Creates the release at the commit with a link to each asset, in one request |
 
 An asset already on the draft with the same name and a matching `digest` is left as it is, so a stage run again uploads only what is missing. One whose digest differs is refused (`publish-forge-asset-exists`), and so is one on Forgejo, which reports no digest. A release already published for the tag is refused (`publish-forge-release-published`), since assets uploaded to it would show one at a time. The exception is a published release that already holds every asset, which is what an earlier publish leaves; the stage then does nothing.
+
+`latest` goes in the reveal's request that publishes the draft, so a release never shows as latest, or stops another being latest, while it is incomplete. A release that was already published when the stage ran is left as it is, `latest` included.
 
 ## SBOMs and provenance
 
