@@ -16,7 +16,9 @@
  *   GitHub uploads each asset to the draft's `upload_url`, Forgejo with a
  *   multipart `POST /repos/{repo}/releases/{id}/assets`. The reveal publishes
  *   the draft, `PATCH /repos/{repo}/releases/{id}` with `draft: false`, and
- *   the forge creates the tag then if it was not pushed.
+ *   the forge creates the tag then if it was not pushed. On GitHub, a
+ *   declared `latest` goes in the same request as `make_latest` (#4676), so
+ *   the release becomes the repository's latest, or doesn't, as it appears.
  * - GitLab has no draft release, so its stage puts each asset in the
  *   project's generic package registry (package `release`, version the
  *   label) and makes no release. The reveal creates the release at the
@@ -49,6 +51,10 @@ import { readCredential, type Credential } from "./publish-credentials";
 import type { ForgePublishDeclaration } from "./publish-declaration";
 import { bytesDigest, checkReleaseDigest, memberFile, publishTargetKey } from "./publish-targets";
 import { PublishTargetError, type PublishContext, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget, type StagedTarget } from "./release-publish";
+import { NEXT_RELEASE } from "../release-floors";
+
+/** The first chant that reads `latest` on a forge target and sends it as GitHub's `make_latest` (#4676). */
+export const PUBLISH_FORGE_LATEST_FLOOR = NEXT_RELEASE;
 
 /** The variables a forge's token is read from, in order. */
 export function forgeTokenEnv(decl: Pick<ForgePublishDeclaration, "forge" | "tokenEnv">): string[] {
@@ -155,9 +161,11 @@ class ForgeClient {
     return this.toRelease(create.json as Record<string, unknown>, tag);
   }
 
-  /** GitHub and Forgejo: publish the draft `id`. */
+  /** GitHub and Forgejo: publish the draft `id`, with GitHub's `make_latest` when `latest` is declared. */
   async publishDraft(id: string, tag: string): Promise<void> {
-    const res = await this.call("PATCH", `${this.repoPath}/releases/${id}`, JSON.stringify({ draft: false }));
+    const latest = this.decl.latest;
+    const body = latest === undefined ? { draft: false } : { draft: false, make_latest: String(latest) };
+    const res = await this.call("PATCH", `${this.repoPath}/releases/${id}`, JSON.stringify(body));
     if (res.status !== 200) this.fail(`publishing the draft release ${tag}`, res.status, res.text);
   }
 
@@ -207,6 +215,9 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
     const tag = decl.tag ?? ctx.releaseTag;
     if (!tag) {
       throw new PublishTargetError("publish-forge-no-tag", `a ${decl.forge} release is named by a tag, and release ${ctx.release.releaseDigest} has no label`, "Cut the release with a label, or set tag in the declaration.");
+    }
+    if (decl.latest !== undefined && decl.forge !== "github") {
+      throw new PublishTargetError("publish-forge-latest-unsupported", `latest is GitHub's make_latest, and ${decl.forge} has no setting for which release is latest`, "Remove latest from the declaration.");
     }
     const api = forgeApi(decl, ctx.env);
     if (!api) throw new PublishTargetError("publish-forge-no-api", "a Forgejo target needs its API root, and neither api nor GITHUB_API_URL is set", "Set api, such as https://forgejo.example/api/v1.");
@@ -316,7 +327,7 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
       } else {
         const id = staged.state.releaseId;
         if (!id) throw new PublishTargetError("publish-forge-failed", `the staged ${decl.forge} release for ${tag} has no draft id to publish`);
-        ctx.log(`publishing the draft ${decl.forge} release ${tag}`);
+        ctx.log(`publishing the draft ${decl.forge} release ${tag}${decl.latest === undefined ? "" : ` with make_latest ${String(decl.latest)}`}`);
         await client.publishDraft(id, tag);
       }
       return { target: this.name, destination: this.destination, items };

@@ -63,7 +63,7 @@ A delivery that fails is logged on stderr, without its URL, and the job exits wi
 
 ## What the tick sends
 
-[`chant ci tick`](/chant/cli/ci/#ci-tick) sends three events of its own when `ci.green` in the workspace declaration has `notify` ([#4645](https://github.com/INTENTIUS/chant/issues/4645)). It takes the same settings, with `events` chosen from these three:
+[`chant ci tick`](/chant/cli/ci/#ci-tick) sends events of its own when `ci.green` in the workspace declaration has `notify` ([#4645](https://github.com/INTENTIUS/chant/issues/4645)). It takes the same settings, with `events` chosen from these three, `ci.quarantine-passed` and [`ci.stale`](#a-branch-that-stays-red):
 
 ```json
 "green": {
@@ -80,7 +80,32 @@ A delivery that fails is logged on stderr, without its URL, and the job exits wi
 | A bisect names the first red commit below that one | `ci.culprit`, with `ci.culprit` the commit found |
 | The newest decided commit is green, and an older one in the window was told red | `ci.green`, with `ci.red` the commit it answers |
 
-Each is sent once. The tick marks it in the commit's `_ci/<sha>.json` record (`notified`), so it needs `chant/lifecycle`, and a tick that can't read or write the records sends nothing rather than the same event again. A delivery that fails everywhere is a warning, and the next tick tries again. `--dry-run` reports what it would send. The events carry `ci`: the `branch` and `commit`, and `phase`, `failedRun`, `culprit` or `red`. `run.commit` is the commit, and `run.url` is left out, since the tick's own run says nothing about it. [`ci workflow`](/chant/cli/ci/#ci-workflow) gives the tick's step each variable `notify` names from the repository secret of the same name, so create one secret per variable and run it again.
+The quarantine's scheduled run sends a fourth through the same `notify` ([#4677](https://github.com/INTENTIUS/chant/issues/4677)): [`chant ci quarantine report`](/chant/cli/ci/#the-scheduled-run) sends `ci.quarantine-passed` for each quarantined test that passed there, with `ci.quarantine` naming the test, its issue and `until`, and `run.url` the scheduled run. It is sent on every scheduled run the test passes in, until its entry goes, and needs no records.
+
+Each of the tick's events is sent once. The tick marks it in the commit's `_ci/<sha>.json` record (`notified`), or for `ci.stale` in the branch's record, so it needs `chant/lifecycle`, and a tick that can't read or write the records sends nothing rather than the same event again. A delivery that fails everywhere is a warning, and the next tick tries again. `--dry-run` reports what it would send. The events carry `ci`: the `branch` and `commit`, and `phase`, `failedRun`, `culprit`, `red`, or `since`, `lastGreen` and `hours`. `run.commit` is the commit, and `run.url` is left out, since the tick's own run says nothing about it. [`ci workflow`](/chant/cli/ci/#ci-workflow) gives the tick's step each variable `notify` names from the repository secret of the same name, so create one secret per variable and run it again.
+
+### A branch that stays red
+
+A red stretch that nothing decides sends none of those: runs that never finish, a phase waiting on a runner, or ticks that stopped. `staleAfter` in `notify` is a number of hours ([#4678](https://github.com/INTENTIUS/chant/issues/4678)). When the oldest first-parent commit above the branch's newest green one (a `ci/green` tag, not revoked) was committed that many hours ago, the tick sends `ci.stale`:
+
+```json
+"notify": { "slack": "CHANT_SLACK_WEBHOOK", "staleAfter": 6 }
+```
+
+```json
+{
+  "event": "ci.stale",
+  "summary": "main has had no green commit for 7 hours: 3 commits since 9f2c41d07a3e, above the green 41b7e0c2d915",
+  "ci": { "branch": "main", "commit": "<the tip>", "since": "9f2c41d07a3e...", "lastGreen": "41b7e0c2d915...", "hours": 7 },
+  "run": { "commit": "<the tip>" }
+}
+```
+
+It is sent once per stretch, however long the stretch lasts. The tick keeps that in `_ci/branch/<branch>.json` on `chant/lifecycle` (`stale`), a record of the branch rather than of a commit, so a tick with no new commit to judge can send it and remember it. A newer green commit ends the stretch, and the tick then sends `ci.green` with `ci.since` naming the stretch's first commit, even when no `ci.red` was sent. When the tick sends a `ci.green` for a `ci.red` in the same tick, that one event carries `since` too, rather than a second `ci.green`. The tick looks back 200 first-parent commits for a green one. With none there, the stretch starts at the oldest commit the tick has judged (one in the window or with a record), so turning this on in a repository whose old commits were never tagged doesn't count their age. A revoked green commit reopens its stretch, and `ci.stale` can be sent for it again.
+
+Only `ci/green` counts. A lane's tags ([`lanes`](/chant/reference/workspace-declaration/#ci)) don't end a stretch or start one, and no lane gets a `ci.stale` of its own.
+
+The tick has to run for any of this, including when no workflow completes. The `chant-ci-green.yml` that [`ci workflow`](/chant/cli/ci/#ci-workflow) writes already ticks every 15 minutes on a `schedule`, in the same concurrency group as the ticks that follow a run, so a scheduled tick waits for one in progress and reads the marks it wrote. A stretch is told within 15 minutes of reaching `staleAfter`. On another forge, run `chant ci tick` from a scheduled job.
 
 ## Check a delivery
 
@@ -90,7 +115,7 @@ The webhook gets the event as JSON. The body is signed with HMAC-SHA256 over `<t
 |---|---|
 | `x-chant-signature` | `sha256=<hex>` |
 | `x-chant-timestamp` | The seconds the signature covers |
-| `x-chant-event` | `waiting`, `refused`, `failed`, `drift`, `ci.red`, `ci.culprit` or `ci.green` |
+| `x-chant-event` | `waiting`, `refused`, `failed`, `drift`, `ci.red`, `ci.culprit`, `ci.green`, `ci.quarantine-passed` or `ci.stale` |
 | `x-chant-delivery` | The event's `id` |
 
 `@intentius/chant/notify-verify` checks a delivery and needs nothing but `node:crypto`. The package ships it, and `@intentius/chant/notify`, as compiled JavaScript, so a receiver can import it under plain Node with no TypeScript loader, or bundle it alone:
@@ -120,7 +145,7 @@ The JSON Schema ships in the package as `@intentius/chant/notify.schema.json`, w
 | `digest`, `approve` | The plan digest an approval binds, and on `waiting` the command that approves it (`approve.command`, and `approve.review` under `pr-review`) |
 | `status`, `reason`, `exitCode` | The product's word for the outcome, why it was refused or failed, and the exit code |
 | `drift` | On `drift`: `changed`, `missing`, `failed` and a `fingerprint` |
-| `ci` | On the tick's events: `branch`, `commit`, and `phase` and `failedRun` on `ci.red`, `culprit` on `ci.culprit`, `red` on `ci.green` |
+| `ci` | On the tick's events: `branch`, `commit`, and `phase` and `failedRun` on `ci.red`, `culprit` on `ci.culprit`, `red` and `since` on `ci.green`, and `since`, `lastGreen` and `hours` on `ci.stale`; on `ci.quarantine-passed`, `phase` and `quarantine` (`test`, `file`, `issue`, `until`) |
 | `run` | The CI run's `url`, `forge`, `repository`, `commit` and `pr` |
 | `reportUrl`, `detail` | A report page, and the product's own outcome record carried whole |
 

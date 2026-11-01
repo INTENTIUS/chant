@@ -6,8 +6,9 @@
  * it to chant's write commands (`--by`, `--actor`). chant records what it is
  * given and says which form it is:
  *
- * - `signer`: a principal `.chant/allowed_signers` lists at base. A seal made
- *   with that principal's key (`--sign`) attests it.
+ * - `signer`: a principal `.chant/allowed_signers` lists at base, or one with
+ *   a passkey in `.chant/trust.json` (#4646). A seal made with that
+ *   principal's key (`--sign`) or passkey (`--signature`) attests it.
  * - `forge`: a forge identity, `github:<login>`, `gitlab:<login>`, or
  *   `<forge>@<host>:<login>` (forgejo, gitea, or a self-hosted github or
  *   gitlab). The surface that signed the person in vouches for it; nothing
@@ -90,7 +91,9 @@ const NON_PERSON_CLASSES = new Set(["agent", "runner", "service"]);
 export function identify(principal: string, policy: TrustPolicy, declaration: Declaration | null = null): Identified {
   const name = normalisePrincipal(principal);
   const forge = parseForgeIdentity(principal);
-  if (policy.active && policy.signers.some((s) => normalisePrincipal(s.principal) === name)) return { principal, form: "signer", forge };
+  // #4646: a principal with a passkey at base signs like one with a key.
+  const listed = (s: { principal: string }) => normalisePrincipal(s.principal) === name;
+  if (policy.active && (policy.signers.some(listed) || (policy.passkeys ?? []).some(listed))) return { principal, form: "signer", forge };
   if (forge) return { principal, form: "forge", forge };
   const session = (declaration?.agents ?? []).some((a) => a.principals.some((p) => normalisePrincipal(p) === name));
   if (session || classesOf(coreClassRegistry(), policy, principal).some((c) => NON_PERSON_CLASSES.has(c))) return { principal, form: "role", forge: null };

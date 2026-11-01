@@ -251,6 +251,9 @@ export interface FakeForgeRelease {
   draft: boolean;
   target: string;
   assets: Array<{ name: string; digest: string | null; bytes: string }>;
+  name?: string;
+  /** GitHub: the `make_latest` the release was published with. */
+  make_latest?: string;
 }
 
 /** A forge fake answering through `fetch`: GitHub or Forgejo with draft releases, or GitLab with releases, links and a generic package registry. */
@@ -264,11 +267,14 @@ export interface FakeForge {
   visible(): Array<{ tag: string; assets: string[] }>;
   /** Make the next request whose `METHOD url` starts with `prefix` answer 500. */
   failOnce(prefix: string): void;
+  /** GitHub and Forgejo: the repository's tags, each the commit it names. Publishing a release makes its tag at its target when there is none. */
+  tags: Map<string, string>;
 }
 
 /** A forge fake at `api` for `repo`, which holds `releases` to begin with. */
 export function startFakeForge(forge: "github" | "forgejo" | "gitlab", api: string, repo: string, releases: FakeForgeRelease[] = []): FakeForge {
   const calls: FakeForge["calls"] = [];
+  const tags = new Map<string, string>(releases.filter((r) => !r.draft).map((r) => [r.tag_name, r.target]));
   const packages = new Map<string, string>();
   const failures: string[] = [];
   let nextId = 100 + releases.length;
@@ -278,7 +284,7 @@ export function startFakeForge(forge: "github" | "forgejo" | "gitlab", api: stri
   const view = (r: FakeForgeRelease) =>
     forge === "gitlab"
       ? { tag_name: r.tag_name, assets: { links: r.assets.map((a) => ({ name: a.name })) } }
-      : { id: r.id, tag_name: r.tag_name, draft: r.draft, upload_url: `${uploads}/repos/${repo}/releases/${r.id}/assets{?name,label}`, assets: r.assets.map((a) => ({ name: a.name, ...(forge === "github" ? { digest: a.digest } : {}) })) };
+      : { id: r.id, tag_name: r.tag_name, name: r.name ?? r.tag_name, draft: r.draft, upload_url: `${uploads}/repos/${repo}/releases/${r.id}/assets{?name,label}`, assets: r.assets.map((a) => ({ name: a.name, ...(forge === "github" ? { digest: a.digest } : {}) })) };
   const text = (b: Uint8Array | string | undefined) => (b === undefined ? "" : typeof b === "string" ? b : Buffer.from(b).toString("utf-8"));
   const fetch: FakeForge["fetch"] = async (url, init) => {
     calls.push({ method: init.method, url, headers: init.headers, ...(init.body !== undefined ? { body: init.body } : {}) });
@@ -316,8 +322,8 @@ export function startFakeForge(forge: "github" | "forgejo" | "gitlab", api: stri
     }
     if (init.method === "GET" && path === `${root}/releases`) return json(200, releases.map(view));
     if (init.method === "POST" && path === `${root}/releases`) {
-      const b = JSON.parse(text(init.body)) as { tag_name: string; target_commitish: string; draft?: boolean };
-      const r: FakeForgeRelease = { id: nextId++, tag_name: b.tag_name, draft: b.draft === true, target: b.target_commitish, assets: [] };
+      const b = JSON.parse(text(init.body)) as { tag_name: string; target_commitish: string; draft?: boolean; name?: string };
+      const r: FakeForgeRelease = { id: nextId++, tag_name: b.tag_name, draft: b.draft === true, target: b.target_commitish, assets: [], ...(b.name ? { name: b.name } : {}) };
       releases.push(r);
       return json(201, view(r));
     }
@@ -336,9 +342,26 @@ export function startFakeForge(forge: "github" | "forgejo" | "gitlab", api: stri
     if (init.method === "PATCH" && edit) {
       const r = releases.find((x) => x.id === Number(edit[1]));
       if (!r) return json(404, { message: "Not Found" });
-      const b = JSON.parse(text(init.body)) as { draft?: boolean };
-      if (b.draft === false) r.draft = false;
+      const b = JSON.parse(text(init.body)) as { draft?: boolean; make_latest?: string };
+      if (b.draft === false && r.draft) {
+        if (releases.some((x) => x !== r && !x.draft && x.tag_name === r.tag_name)) return json(422, { message: "Validation Failed", errors: [{ code: "already_exists", field: "tag_name" }] });
+        r.draft = false;
+        if (!tags.has(r.tag_name)) tags.set(r.tag_name, r.target);
+        if (b.make_latest !== undefined) r.make_latest = b.make_latest;
+      }
       return json(200, view(r));
+    }
+    if (init.method === "DELETE" && edit) {
+      const i = releases.findIndex((x) => x.id === Number(edit[1]));
+      if (i < 0) return json(404, { message: "Not Found" });
+      releases.splice(i, 1);
+      return json(204, undefined);
+    }
+    const tagRef = path.startsWith(`${root}/git/refs/tags/`) ? decodeURIComponent(path.slice(`${root}/git/refs/tags/`.length)) : null;
+    if (init.method === "DELETE" && tagRef !== null) {
+      if (!tags.has(tagRef)) return json(422, { message: "Reference does not exist" });
+      tags.delete(tagRef);
+      return json(204, undefined);
     }
     return json(404, { message: "Not Found" });
   };
@@ -349,6 +372,7 @@ export function startFakeForge(forge: "github" | "forgejo" | "gitlab", api: stri
     packages,
     visible: () => releases.filter((r) => !r.draft).map((r) => ({ tag: r.tag_name, assets: r.assets.map((a) => a.name) })),
     failOnce: (prefix) => void failures.push(prefix),
+    tags,
   };
 }
 
@@ -371,4 +395,100 @@ export function writeLockfile(dir: string): void {
     join(dir, "package-lock.json"),
     JSON.stringify({ name: "acme", lockfileVersion: 3, packages: { "": { name: "acme" }, "node_modules/left-pad": { version: "1.3.0" } } }, null, 2),
   );
+}
+
+/** A GitHub repository fake answering through `fetch` (#4676): branches, commits of whole files, and the contents and refs APIs. */
+export interface FakeGitHubRepo {
+  fetch: FakeForge["fetch"];
+  calls: FakeForge["calls"];
+  /** The branches, each the sha of its commit. */
+  branches: Map<string, string>;
+  /** The file `path` on `branch`, or undefined. */
+  read(branch: string, path: string): string | undefined;
+  /** Commit `files` onto `branch` as someone else would, moving it. */
+  push(branch: string, files: Record<string, string>): void;
+  /** Each commit's message, oldest first, on `branch`'s history. */
+  log(branch: string): string[];
+}
+
+/** A repository fake at `api` for `repo` whose `branch` holds `files`. */
+export function startFakeGitHubRepo(api: string, repo: string, branch: string, files: Record<string, string>): FakeGitHubRepo {
+  const calls: FakeGitHubRepo["calls"] = [];
+  const commits = new Map<string, { parent: string | null; message: string; files: Map<string, string> }>();
+  const branches = new Map<string, string>();
+  let n = 0;
+  const commit = (parent: string | null, message: string, change: Record<string, string>) => {
+    const base = parent ? commits.get(parent)!.files : new Map<string, string>();
+    const sha = createHash("sha1").update(`commit ${n++}`).digest("hex");
+    commits.set(sha, { parent, message, files: new Map([...base, ...Object.entries(change)]) });
+    return sha;
+  };
+  branches.set(branch, commit(null, "init", files));
+  const blob = (text: string) => createHash("sha1").update(`blob ${text}`).digest("hex");
+  const ancestor = (a: string, b: string) => {
+    for (let c: string | null = b; c; c = commits.get(c)?.parent ?? null) if (c === a) return true;
+    return false;
+  };
+  const json = (status: number, body?: unknown) => ({ ok: status < 300, status, headers: { get: () => null }, text: async () => (body === undefined ? "" : JSON.stringify(body)) });
+  const root = `${api}/repos/${repo}`;
+  const fetch: FakeGitHubRepo["fetch"] = async (url, init) => {
+    calls.push({ method: init.method, url, headers: init.headers, ...(init.body !== undefined ? { body: init.body } : {}) });
+    const u = new URL(url);
+    const path = url.split("?")[0]!;
+    const body = typeof init.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : {};
+    if (init.method === "GET" && path === root) return json(200, { default_branch: branch });
+    const ref = path.match(/\/git\/refs?\/heads\/(.+)$/);
+    if (ref && path.startsWith(root)) {
+      const name = decodeURIComponent(ref[1]!);
+      const at = branches.get(name);
+      if (init.method === "GET") return at ? json(200, { ref: `refs/heads/${name}`, object: { sha: at } }) : json(404, { message: "Not Found" });
+      if (!at) return json(422, { message: "Reference does not exist" });
+      if (init.method === "DELETE") return void branches.delete(name), json(204);
+      if (init.method === "PATCH") {
+        const to = String(body.sha);
+        if (!commits.has(to)) return json(422, { message: "Object does not exist" });
+        if (body.force !== true && !ancestor(at, to)) return json(422, { message: "Update is not a fast forward" });
+        branches.set(name, to);
+        return json(200, { object: { sha: to } });
+      }
+    }
+    if (init.method === "POST" && path === `${root}/git/refs`) {
+      const name = String(body.ref).replace(/^refs\/heads\//, "");
+      if (branches.has(name)) return json(422, { message: "Reference already exists" });
+      branches.set(name, String(body.sha));
+      return json(201, { ref: body.ref, object: { sha: body.sha } });
+    }
+    const contents = path.startsWith(`${root}/contents/`) ? path.slice(`${root}/contents/`.length).split("/").map(decodeURIComponent).join("/") : null;
+    if (contents !== null && init.method === "GET") {
+      const at = branches.get(u.searchParams.get("ref") ?? branch);
+      const text = at ? commits.get(at)!.files.get(contents) : undefined;
+      return text === undefined ? json(404, { message: "Not Found" }) : json(200, { sha: blob(text), encoding: "base64", content: Buffer.from(text).toString("base64") });
+    }
+    if (contents !== null && init.method === "PUT") {
+      const on = String(body.branch);
+      const at = branches.get(on);
+      if (!at) return json(404, { message: "Branch not found" });
+      const current = commits.get(at)!.files.get(contents);
+      if ((current === undefined ? undefined : blob(current)) !== body.sha) return json(409, { message: "sha does not match" });
+      const sha = commit(at, String(body.message), { [contents]: Buffer.from(String(body.content), "base64").toString("utf-8") });
+      branches.set(on, sha);
+      return json(current === undefined ? 201 : 200, { content: { sha: blob(contents) }, commit: { sha } });
+    }
+    return json(404, { message: "Not Found" });
+  };
+  return {
+    fetch,
+    calls,
+    branches,
+    read: (b, p) => {
+      const at = branches.get(b);
+      return at ? commits.get(at)!.files.get(p) : undefined;
+    },
+    push: (b, change) => void branches.set(b, commit(branches.get(b)!, "someone else", change)),
+    log: (b) => {
+      const out: string[] = [];
+      for (let c: string | null = branches.get(b) ?? null; c; c = commits.get(c)!.parent) out.unshift(commits.get(c)!.message);
+      return out;
+    },
+  };
 }

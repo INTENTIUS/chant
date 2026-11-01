@@ -595,6 +595,8 @@ export interface ParsedArgs {
   intent?: string;
   /** `chant workspace graph --intent` and `chant workspace runs` (#3035): follow squash merges to their pull requests' original commits, fetching missing pull request refs. */
   followSquash?: boolean;
+  /** `chant release candidates --forge-issues` and `chant workspace graph --intent --forge-issues` (#4649): ask the forge which issues each squash-merged pull request closes, once per pull request. */
+  forgeIssues?: boolean;
   /** `chant workspace graph --intent --record <id>`: walk one decision record over every entry its constrains lists. */
   record?: string;
   /** `chant workspace patch <range> --path <p>`: only these paths, from the workspace root. Repeatable. */
@@ -701,6 +703,10 @@ export interface ParsedArgs {
    * On `chant approve` and `chant run approve`, the key that seals the gate approval (#3163).
    */
   sign?: string | true;
+  /** `chant approve <op> <gate> --statement` (#4646): print the statement an approval signs, and record nothing. */
+  statement?: boolean;
+  /** `chant approve <op> <gate> --signature <file|->` (#4646): a signature made elsewhere over the statement. */
+  signature?: string;
   /**
    * `chant approve <op> <gate> --relayed-by <principal>` and `chant workspace
    * points answer <id> --relayed-by <principal>` (#3402): the principal that
@@ -921,8 +927,14 @@ export interface ParsedArgs {
   ciWait?: boolean;
   /** `chant ci last-green --lane <name>` and `chant ci base --lane <name>` (#4662) — a ci.green lane. */
   lane?: string;
-  /** `chant ci base --phase <name>` (#4643) — the ci.green phase whose base to find. */
+  /** `chant ci base --phase <name>` (#4643) — the ci.green phase whose base to find. `chant ci quarantine filter --phase <name>` (#4677) — the phase whose runner takes the filter. */
   phase?: string;
+  /** `chant ci quarantine filter --runner nextest|playwright|list` (#4677). */
+  quarantineRunner?: string;
+  /** `chant ci quarantine filter --only` (#4677) — select the quarantined tests in place of leaving them out. */
+  quarantineOnly?: boolean;
+  /** `chant ci quarantine report --junit <file>`, repeatable (#4677) — the scheduled run's JUnit XML. */
+  quarantineJunit?: string[];
   /** `chant audit-log attribute|unrecorded --audit-log aws[:<region>]` (#4632): the cloud audit log to read. */
   auditLog?: string;
   /** `chant ledger`, `chant workspace records` and `chant workspace runs --where <field><op><value>` (#4363): typed filters, repeatable, all of which have to hold. */

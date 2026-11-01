@@ -103,6 +103,7 @@ const BOOLEAN_FLAGS = new Set([
   "--loopback",
   "--artifacts",
   "--push",
+  "--only",
 ]);
 
 /**
@@ -717,6 +718,9 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--follow-squash") {
       // `chant workspace graph --intent ... --follow-squash` and `chant workspace runs --follow-squash` (#3035)
       result.followSquash = true;
+    } else if (arg === "--forge-issues") {
+      // `chant release candidates --forge-issues` and `chant workspace graph --intent ... --forge-issues` (#4649)
+      result.forgeIssues = true;
     } else if (arg === "--record") {
       // `chant workspace graph --intent --record <id>`
       result.record = args[++i];
@@ -962,6 +966,15 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.actor = args[++i];
     } else if (arg === "--approver") {
       result.approver = args[++i];
+    } else if (arg === "--statement") {
+      // `chant approve <op> <gate> --statement` (#4646): print the bytes an approval signs, for a signature made elsewhere.
+      result.statement = true;
+    } else if (arg === "--signature") {
+      // `chant approve <op> <gate> --signature <file|-> --at <timestamp>` (#4646): an approval signed elsewhere.
+      result.signature = args[++i];
+      if (!result.signature || (result.signature.startsWith("-") && result.signature !== "-")) {
+        throw new Error("--signature needs a file holding the signature, or - for stdin: --signature <file|->");
+      }
     } else if (arg === "--relayed-by") {
       // `chant approve <op> <gate> --relayed-by <principal>` and `workspace points answer <id> --relayed-by <principal>` (#3402):
       // who carried the approval or answer to chant for the person it names.
@@ -1201,6 +1214,17 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--lane") {
       // `chant ci last-green --lane <name>` and `chant ci base --lane <name>` (#4662): a green lane's tags and phases.
       result.lane = args[++i];
+    } else if (arg === "--runner") {
+      // `chant ci quarantine filter --runner nextest|playwright|list` (#4677): the runner the filter is for.
+      result.quarantineRunner = args[++i];
+    } else if (arg === "--junit") {
+      // `chant ci quarantine report --junit <file>`, repeatable (#4677): the scheduled run's JUnit XML.
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error("--junit needs the JUnit XML file the run wrote: --junit <file>");
+      (result.quarantineJunit ??= []).push(value);
+    } else if (arg === "--only") {
+      // `chant ci quarantine filter --only` (#4677): select the quarantined tests, for the scheduled run.
+      result.quarantineOnly = true;
     } else if (arg === "--phase") {
       // `chant ci base --phase <name>` (#4643): the ci.green phase whose base to find.
       result.phase = args[++i];

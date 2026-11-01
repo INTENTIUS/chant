@@ -233,3 +233,13 @@ describe("stack outputs, the seam for engine outputs into chant parameters (#445
     expect(outputs).toHaveLength(13);
   });
 });
+
+describe("the digest of a replacement", () => {
+  const replacement = (id: string) => ({
+    steps: [{ op: "replace", urn: "urn:pulumi:prod::shop::command:local:Command::rotate", oldState: { id: "rotate-recorded", inputs: {} }, newState: { id, inputs: {} } }],
+  });
+
+  test("leaves out the id a preview makes up, so two previews of one change agree (plywood#44)", () => {
+    expect(pulumiPreviewDigest(replacement("rotate2d1f5adb"))).toBe(pulumiPreviewDigest(replacement("rotated545265a")));
+  });
+});

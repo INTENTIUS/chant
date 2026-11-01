@@ -65,9 +65,9 @@ describe("publish target context (#4602)", () => {
     expectTypeOf<ToyModuleContext>().toMatchTypeOf<PublishContextBase>();
   });
 
-  test("the release targets keep the default context and their three kinds", () => {
+  test("the release targets keep the default context and their kinds", () => {
     expectTypeOf<PublishTarget["kind"]>().toEqualTypeOf<ReleasePublishKind>();
-    expectTypeOf<ReleasePublishKind>().toEqualTypeOf<"npm" | "oci" | "forge">();
+    expectTypeOf<ReleasePublishKind>().toEqualTypeOf<"npm" | "oci" | "forge" | "homebrew" | "marketplace" | "tauri-updater">();
     expectTypeOf<Parameters<PublishTarget["plan"]>[0]>().toEqualTypeOf<PublishContext>();
     expectTypeOf<PublishContext>().toMatchTypeOf<PublishContextBase>();
     expectTypeOf<Awaited<ReturnType<typeof createPublishTargets>>>().toEqualTypeOf<PublishTarget[]>();

@@ -10,6 +10,9 @@
  *       { type: "npm", packages: ["packages/core", "packages/cli"] },
  *       { type: "oci", image: "dist/api.oci.tar", repository: "ghcr.io/acme/api", tags: ["{label}"], usernameEnv: "GITHUB_ACTOR", passwordEnv: "GITHUB_TOKEN" },
  *       { type: "forge", forge: "github", repo: "acme/api", assets: ["dist/api-linux-amd64.tar.gz"] },
+ *       { type: "marketplace", marketplace: "openvsx", vsix: "dist/acme.vsix" },
+ *       { type: "tauri-updater", repo: "acme/app", tag: "app-latest", platforms: { "darwin-aarch64": "dist/Acme_aarch64.app.tar.gz" } },
+ *       { type: "homebrew", tap: "acme/homebrew-tap", formula: "Formula/api.rb", template: "packaging/api.rb", assets: ["dist/api-linux-amd64.tar.gz"], url: "https://github.com/acme/api/releases/download/{tag}/{name}" },
  *     ],
  *   },
  * };
@@ -106,12 +109,101 @@ export const ForgePublishSchema = z
     tokenEnv: envName.optional(),
     /** The SBOM attached to the release (#4049), relative to the member. Default: one written from the member's lockfile. `false` publishes without one. */
     sbom: sbomField.optional(),
+    /**
+     * GitHub only (#4676): whether the release becomes the repository's
+     * latest when the reveal publishes it, sent as GitHub's `make_latest`.
+     * `"legacy"` lets GitHub pick by creation date and semantic version.
+     * Unset, nothing is sent and GitHub makes it latest.
+     */
+    latest: z.union([z.boolean(), z.literal("legacy")]).optional(),
   })
   .strict();
 
-export const PublishDeclarationSchema = z.discriminatedUnion("type", [NpmPublishSchema, OciPublishSchema, ForgePublishSchema]);
+/**
+ * A Homebrew formula in a tap repository on GitHub (#4676), rendered from a
+ * template in the member with the release's version and each asset's URL and
+ * SHA-256 (./publish-homebrew.ts).
+ */
+export const HomebrewPublishSchema = z
+  .object({
+    type: z.literal("homebrew"),
+    /** The tap's repository, `owner/name`, such as `acme/homebrew-tap`. */
+    tap: z.string().regex(/^[^/\s]+\/[^/\s]+$/, "owner/name"),
+    /** The formula's path in the tap, such as `Formula/api.rb`. */
+    formula: z.string().min(1),
+    /** The formula with placeholders, relative to the member: `{{version}}`, `{{label}}`, `{{tag}}`, `{{url:<asset name>}}`, `{{sha256:<asset name>}}`. */
+    template: z.string().min(1),
+    /** The files the formula downloads, relative to the member. Each is named in the template by its file name. */
+    assets: z.array(z.string().min(1)).min(1),
+    /** Where each asset is downloaded from: `{tag}`, `{label}`, `{version}` and `{name}` (its file name) are filled in. */
+    url: z.string().min(1),
+    /** The tap's branch that brew installs from. Default: the repository's default branch. */
+    branch: z.string().min(1).optional(),
+    /** The GitHub API root. Default `$GITHUB_API_URL`, else `https://api.github.com`. */
+    api: z.string().url().optional(),
+    /** The variable holding a token that may push to the tap. Default `HOMEBREW_TAP_TOKEN`. */
+    tokenEnv: envName.optional(),
+  })
+  .strict();
+
+/**
+ * A packaged `.vsix` on the VS Code Marketplace or Open VSX (#4676), uploaded
+ * at the reveal, since a marketplace has no draft (./publish-marketplace.ts).
+ */
+export const MarketplacePublishSchema = z
+  .object({
+    type: z.literal("marketplace"),
+    marketplace: z.enum(["vscode", "openvsx"]),
+    /** The `.vsix` that `vsce package` wrote, relative to the member. Its publisher, name and version are read from it. */
+    vsix: z.string().min(1),
+    /** Open VSX's root, default `https://open-vsx.org`; the VS Code Marketplace's gallery, default `https://marketplace.visualstudio.com`. */
+    registry: z.string().url().optional(),
+    /** The variable holding the token. Default `VSCE_PAT` for the VS Code Marketplace, `OVSX_PAT` for Open VSX. */
+    tokenEnv: envName.optional(),
+  })
+  .strict();
+
+/**
+ * A Tauri v2 updater manifest and the rolling GitHub release that holds it
+ * with the app's bundles (#4676), replaced on each publish
+ * (./publish-tauri.ts).
+ */
+export const TauriUpdaterPublishSchema = z
+  .object({
+    type: z.literal("tauri-updater"),
+    /** The GitHub repository, `owner/name`. */
+    repo: z.string().regex(/^[^/\s]+\/[^/\s]+$/, "owner/name"),
+    /** The rolling release's tag, such as `app-latest`. */
+    tag: z.string().min(1),
+    /**
+     * Each updater platform, such as `darwin-aarch64`, `linux-x86_64` or
+     * `windows-x86_64-nsis`, and its updater bundle, relative to the member.
+     * Its signature is the `.sig` file beside it that the Tauri build wrote.
+     */
+    platforms: z.record(z.string().regex(/^(darwin|linux|windows)-[a-z0-9_]+(-[a-z0-9]+)?$/, "<os>-<arch> or <os>-<arch>-<installer>"), z.string().min(1)).refine((p) => Object.keys(p).length > 0, "at least one platform"),
+    /** More files the rolling release holds, such as installers for the site's download links, relative to the member. */
+    assets: z.array(z.string().min(1)).optional(),
+    /** A file whose text is the manifest's `notes`, relative to the member. */
+    notes: z.string().min(1).optional(),
+    /** Each platform's URL in the manifest: `{tag}` (the rolling tag), `{label}`, `{version}` and `{name}` are filled in. Default: the bundle's download URL on the rolling release on github.com. */
+    url: z.string().min(1).optional(),
+    /** The manifest's asset name. Default `latest.json`. */
+    manifest: z.string().regex(/^[^/\\]+$/, "a file name").optional(),
+    /** GitHub's `make_latest` for the rolling release. Default `false`. */
+    latest: z.union([z.boolean(), z.literal("legacy")]).optional(),
+    /** The GitHub API root. Default `$GITHUB_API_URL`, else `https://api.github.com`. */
+    api: z.string().url().optional(),
+    /** The variable holding the token. Default `GITHUB_TOKEN`. */
+    tokenEnv: envName.optional(),
+  })
+  .strict();
+
+export const PublishDeclarationSchema = z.discriminatedUnion("type", [NpmPublishSchema, OciPublishSchema, ForgePublishSchema, HomebrewPublishSchema, MarketplacePublishSchema, TauriUpdaterPublishSchema]);
 
 export type NpmPublishDeclaration = z.infer<typeof NpmPublishSchema>;
 export type OciPublishDeclaration = z.infer<typeof OciPublishSchema>;
 export type ForgePublishDeclaration = z.infer<typeof ForgePublishSchema>;
+export type HomebrewPublishDeclaration = z.infer<typeof HomebrewPublishSchema>;
+export type MarketplacePublishDeclaration = z.infer<typeof MarketplacePublishSchema>;
+export type TauriUpdaterPublishDeclaration = z.infer<typeof TauriUpdaterPublishSchema>;
 export type PublishDeclaration = z.infer<typeof PublishDeclarationSchema>;

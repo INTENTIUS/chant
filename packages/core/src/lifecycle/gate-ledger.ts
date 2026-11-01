@@ -242,8 +242,10 @@ export interface GateResolutionRecord {
   /**
    * An ssh signature over this approval by `resolvedBy` (#3163, ws-080):
    * `chant approve --sign`, in the `chant-gate` namespace over the op, gate,
-   * environment, plan digest, approver and timestamp. It attests the approver
-   * only when the signers file at base lists a key for them. A gate the
+   * environment, plan digest, approver and timestamp. Or the same made
+   * elsewhere, by an ssh key or a passkey, and brought with `chant approve
+   * --signature` (#4646). It attests the approver only when the signers file
+   * at base lists a key for them, or `.chant/trust.json` a passkey. A gate the
    * declaration's `identity.gates` names counts only approvals whose seal
    * verifies. Absent on an unsigned approval.
    */
@@ -291,11 +293,23 @@ export function isGateCarriedFrom(raw: unknown): raw is GateCarriedFrom {
   );
 }
 
-/** A gate approval's seal (#3163): who signed, the key's fingerprint (reported, never trusted), and the armored signature. */
+/**
+ * A gate approval's seal (#3163): who signed, the key's fingerprint (reported,
+ * never trusted), and the armored signature. A passkey's seal (#4646) has
+ * `kind: "webauthn"`, the credential id as `key`, the assertion's signature
+ * (base64url) as `signature`, and its client data and authenticator data, so
+ * it can be checked again against the passkey `.chant/trust.json` lists.
+ */
 export interface GateApprovalSeal {
+  /** `webauthn` for a passkey's assertion (#4646). Absent on an ssh signature. */
+  kind?: "webauthn";
   signer: string;
   key: string;
   signature: string;
+  /** A passkey's clientDataJSON, base64url (#4646). */
+  clientDataJSON?: string;
+  /** A passkey's authenticatorData, base64url (#4646). */
+  authenticatorData?: string;
   /**
    * The seal's version (#3947). `2` on a seal over an approval that carries a
    * `checkpointDigest`, whose payload signs the digest as one more line.

@@ -14,6 +14,7 @@ import {
   kindsFileShips,
   loadKindRegistry,
   parseKindData,
+  pinnedPackageDir,
   probeKind,
   readPackageKinds,
   resolveKind,
@@ -257,6 +258,18 @@ describe("loadKindRegistry: kinds from the pins", () => {
       { pin: 2, message: "tf-kinds is pinned at 1.0.0, and 2.0.0 is installed" },
     ]);
     expect(existsSync(join(root, "node_modules/plain/IMPORTED"))).toBe(false);
+  });
+
+  test("a pin the checkout does not hold is found beside chant's own install, at the pinned version", () => {
+    const checkout = dir({});
+    const install = dir(pkg("tf-kinds", "1.0.0", [tf]));
+    expect(pinnedPackageDir({ package: "tf-kinds", version: "1.0.0", path: null }, checkout, install)).toEqual({
+      dir: join(install, "node_modules/tf-kinds"),
+      source: "tf-kinds",
+    });
+    expect(pinnedPackageDir({ package: "tf-kinds", version: "2.0.0", path: null }, checkout, install)).toEqual({
+      problem: expect.stringContaining("tf-kinds is pinned at 2.0.0"),
+    });
   });
 
   test("reads a local plugin by path, and leaves out a kind two sources both supply", () => {

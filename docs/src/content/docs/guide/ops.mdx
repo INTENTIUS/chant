@@ -911,6 +911,8 @@ chant refuses two states instead of guessing. A checkout whose `chant/lifecycle`
 
 A job that cannot reach the remote at all still gates correctly the first time. What it will not do is treat an unreadable ledger as an empty one, or write a fresh ledger branch over one it never looked at.
 
+The remote is `origin` unless `CHANT_LIFECYCLE_REMOTE` names another, as on a deploy box that clones from a mirror but keeps the ledger on the forge ([Ledgers](/chant/reference/workspace-declaration/#ledgers)).
+
 ## Replay (policy drift)
 
 `PolicyReplayOp` is the same shape applied to authorization policy. A [dogwood](/chant/lexicons/cedar/) `.dw` policy set carries time-window clauses (`formerly within 1h …`), so what a policy decides depends on a history the build cannot see. The Op checks it by replaying the declared set against a recorded event trace, and the answer changes as the history does.

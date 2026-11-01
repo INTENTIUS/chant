@@ -18,6 +18,7 @@ export default {
       { type: "npm", packages: ["packages/core", "packages/cli"], access: "public" },
       { type: "oci", image: "dist/api.oci.tar", repository: "ghcr.io/acme/api", usernameEnv: "GITHUB_ACTOR", passwordEnv: "GITHUB_TOKEN" },
       { type: "forge", forge: "github", repo: "acme/api", assets: ["dist/api-linux-amd64.tar.gz"] },
+      { type: "homebrew", tap: "acme/homebrew-tap", formula: "Formula/api.rb", template: "packaging/api.rb", assets: ["dist/api-linux-amd64.tar.gz"], url: "https://github.com/acme/api/releases/download/{tag}/{name}" },
     ],
   },
 };
@@ -78,6 +79,7 @@ With neither variable set, the target reads the registry's `auths` entry from th
 | `tag` | The forge release's tag. Default: the tag the cut made, `release/<label>` or `release/<member>/<label>` |
 | `tokenEnv` | The variable holding the token. Default: `GITHUB_TOKEN` on GitHub, `GITLAB_TOKEN` then `CI_JOB_TOKEN` on GitLab, `FORGEJO_TOKEN` on Forgejo |
 | `sbom` | An SPDX or CycloneDX JSON file to attach, relative to the member. Default: `sbom.spdx.json` written from the member's lockfile. `false` attaches none |
+| `latest` | GitHub only: `true`, `false` or `"legacy"`, sent as GitHub's `make_latest` when the reveal publishes the draft. `false` keeps the repository's latest release where it is, and `"legacy"` lets GitHub pick by creation date and semantic version. Unset, nothing is sent and GitHub makes the release latest. Another forge refuses it with `publish-forge-latest-unsupported`. Read by chant 0.124.63 and newer |
 
 A release with no label and no declared `tag` is refused (`publish-forge-no-tag`). The SBOM and `release.intoto.json`, the provenance statement, go with the declared assets as two more, so their names must not be taken by an asset. The stage puts the assets where no consumer sees them, and the reveal makes the release visible with all of them at once.
 
@@ -88,6 +90,145 @@ A release with no label and no declared `tag` is refused (`publish-forge-no-tag`
 | GitLab | Puts each asset in the project's generic package registry as package `release` at the label's version. GitLab has no draft release, so it makes none | Creates the release at the commit with a link to each asset, in one request |
 
 An asset already on the draft with the same name and a matching `digest` is left as it is, so a stage run again uploads only what is missing. One whose digest differs is refused (`publish-forge-asset-exists`), and so is one on Forgejo, which reports no digest. A release already published for the tag is refused (`publish-forge-release-published`), since assets uploaded to it would show one at a time. The exception is a published release that already holds every asset, which is what an earlier publish leaves; the stage then does nothing.
+
+`latest` goes in the reveal's request that publishes the draft, so a release never shows as latest, or stops another being latest, while it is incomplete. A release that was already published when the stage ran is left as it is, `latest` included.
+
+## Homebrew tap
+
+A formula in a tap repository on GitHub, rendered from a template in the member with the release's version and each asset's URL and SHA-256 ([#4676](https://github.com/INTENTIUS/chant/issues/4676)). Read by chant 0.124.63 and newer.
+
+| Field | Meaning |
+|---|---|
+| `tap` | The tap's repository, `owner/name`, such as `acme/homebrew-tap` |
+| `formula` | The formula's path in the tap, such as `Formula/api.rb` |
+| `template` | The formula with placeholders, relative to the member |
+| `assets` | The files the formula downloads, relative to the member. The template names each by its file name, which must be unique |
+| `url` | Where each asset is downloaded from, with `{tag}` (the tag the cut made), `{label}`, `{version}` and `{name}` (the asset's file name) filled in |
+| `branch` | The tap's branch that brew installs from. Default: the repository's default branch |
+| `api` | The GitHub API root. Default: `$GITHUB_API_URL`, else `https://api.github.com` |
+| `tokenEnv` | The variable holding a token that may push to the tap. Default `HOMEBREW_TAP_TOKEN` |
+
+The template is the formula as the tap should hold it, with these placeholders where a release changes it:
+
+| Placeholder | Filled with |
+|---|---|
+| `{{version}}` | The release's label from its first digit on, so `v1.4.0` and `app-v1.4.0` are both `1.4.0`. A release with no label, or a label with no digit, is refused (`publish-homebrew-no-version`) |
+| `{{url:<name>}}` | The `url` pattern for the asset whose file name is `<name>` |
+| `{{sha256:<name>}}` | The SHA-256 in hex of that asset's file in the checkout, which must match the digest the release records for it |
+| `{{label}}`, `{{tag}}` | The release's label, and the tag the cut made |
+
+Any other placeholder, or an asset name that no declared asset has, is refused in the plan (`publish-homebrew-template`). The rest of the template is copied as it is, so a formula with `on_macos` and `on_linux` blocks, and `on_arm` and `on_intel` inside them, puts a `url` and `sha256` pair in each:
+
+```ruby
+class Api < Formula
+  desc "The acme API"
+  homepage "https://acme.example"
+  version "{{version}}"
+
+  on_macos do
+    on_arm do
+      url "{{url:api-darwin-arm64.tar.gz}}"
+      sha256 "{{sha256:api-darwin-arm64.tar.gz}}"
+    end
+    on_intel do
+      url "{{url:api-darwin-amd64.tar.gz}}"
+      sha256 "{{sha256:api-darwin-amd64.tar.gz}}"
+    end
+  end
+
+  on_linux do
+    url "{{url:api-linux-amd64.tar.gz}}"
+    sha256 "{{sha256:api-linux-amd64.tar.gz}}"
+  end
+
+  def install
+    bin.install "api"
+  end
+end
+```
+
+To move a tap you already have, copy its formula into the member and put the placeholders in place of the version, the URLs and the hashes.
+
+A tap is a branch that brew installs from and has no draft, so the stage commits to a branch next to it and the reveal moves the tap branch. The stage makes `chant-publish/<formula>-<version>` at the tap branch's head, or moves it there when an earlier stage left it elsewhere, and commits the rendered formula to it through the contents API with the message `<formula> <version>`. brew reads only the tap branch, so nothing is visible. A tap branch that already holds the formula as rendered stages nothing, and a staging branch that already holds it is not committed to again. The reveal fast-forwards the tap branch to the staged commit and deletes the staging branch. If the tap branch moved since the stage, the fast-forward is refused, and the reveal commits the formula onto the branch instead, unless the branch already holds it. Either way the formula arrives in one commit.
+
+The formula points at the `url` of each asset, so those must download by the time it is revealed. Declare the `forge` target that attaches them before this one: targets reveal in the order declared.
+
+## Editor marketplaces
+
+A packaged `.vsix` on the VS Code Marketplace or on Open VSX ([#4676](https://github.com/INTENTIUS/chant/issues/4676)). Declare one target per marketplace. Read by chant 0.124.63 and newer.
+
+```ts
+{ type: "marketplace", marketplace: "vscode", vsix: "dist/acme.vsix" },
+{ type: "marketplace", marketplace: "openvsx", vsix: "dist/acme.vsix" },
+```
+
+| Field | Meaning |
+|---|---|
+| `marketplace` | `vscode` or `openvsx` |
+| `vsix` | The `.vsix` that `vsce package` wrote, relative to the member. The extension's publisher, name and version are read from `extension/package.json` inside it |
+| `registry` | Open VSX's root, default `https://open-vsx.org`, or the VS Code Marketplace's gallery, default `https://marketplace.visualstudio.com` |
+| `tokenEnv` | The variable holding the token. Default `VSCE_PAT` for the VS Code Marketplace and `OVSX_PAT` for Open VSX, the variables `vsce` and `ovsx` read |
+
+A `.vsix` that the release records as an asset must match its digest, as with any target. A file that is not a zip with an `extension/package.json` naming `publisher`, `name` and `version` is refused in the plan (`publish-marketplace-vsix-invalid`).
+
+A marketplace has no draft. A version is visible as soon as it is uploaded, and a version can't be uploaded twice. So the stage uploads nothing: it checks what it can without changing anything, and the reveal uploads. If another target fails to stage, nothing has reached a marketplace. A marketplace that refuses the upload fails at the reveal, after the targets declared before it have revealed, so declare the marketplaces last.
+
+| Marketplace | Stage | Reveal |
+|---|---|---|
+| Open VSX | Reads the namespace (`GET /api/{namespace}`), and refuses a missing one with `publish-marketplace-no-namespace`. Reads the version (`GET /api/{namespace}/{name}/{version}`). A version already there is `present` when the SHA-256 of what Open VSX serves for it is the file's, and is refused with `publish-marketplace-version-exists` otherwise | Sends the file with `POST /api/-/publish`, then downloads what Open VSX serves for the version and refuses a digest that differs (`publish-marketplace-digest-mismatch`). A version already there, as after a run whose record was lost, is checked the same way and not sent again |
+| VS Code Marketplace | Asks the gallery's public `extensionquery` API for the extension's versions. A version already listed is `present`, by version only, since the gallery reports no digest | Runs `vsce publish --packagePath <vsix>` with the token in `VSCE_PAT`, unless the gallery lists the version by then |
+
+The VS Code Marketplace target needs `vsce` on `PATH`, such as from `npm install -g @vscode/vsce`. vsce's output goes through the redactor. Open VSX takes its token as a query parameter, which the redactor masks in any error that quotes the request.
+
+## Tauri updater
+
+The updater manifest a Tauri v2 app reads, `latest.json`, and a rolling GitHub release under a fixed tag that holds it with the app's bundles, replaced on each publish ([#4676](https://github.com/INTENTIUS/chant/issues/4676)). The app's updater endpoint is the manifest's download URL on that release, such as `https://github.com/acme/app/releases/download/app-latest/latest.json`. The release-per-version, if there is one, is a `forge` target's. Read by chant 0.124.63 and newer.
+
+```ts
+{
+  type: "tauri-updater",
+  repo: "acme/app",
+  tag: "app-latest",
+  platforms: {
+    "darwin-aarch64": "dist/Acme_aarch64.app.tar.gz",
+    "darwin-x86_64": "dist/Acme_x64.app.tar.gz",
+    "linux-x86_64": "dist/Acme_1.4.0_amd64.AppImage",
+    "windows-x86_64": "dist/Acme_1.4.0_x64-setup.exe",
+  },
+  assets: ["dist/Acme_1.4.0_aarch64.dmg", "dist/Acme_1.4.0_x64_en-US.msi"],
+  notes: "dist/NOTES.md",
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `repo` | The GitHub repository, `owner/name` |
+| `tag` | The rolling release's tag, such as `app-latest` |
+| `platforms` | Each updater platform (`<os>-<arch>` such as `darwin-aarch64`, or `<os>-<arch>-<installer>` such as `windows-x86_64-nsis`) and its updater bundle, relative to the member. The bundle's signature is the `.sig` file beside it that the Tauri build wrote |
+| `assets` | More files the rolling release holds, such as the installers the site links to |
+| `notes` | A file whose text is the manifest's `notes`. Without it the manifest has none |
+| `url` | Each platform's `url` in the manifest, with `{tag}` (the rolling tag), `{label}`, `{version}` and `{name}` (the bundle's file name) filled in. Default: the bundle's download URL on the rolling release on github.com |
+| `manifest` | The manifest's asset name. Default `latest.json` |
+| `latest` | GitHub's `make_latest` for the rolling release: `true`, `false` or `"legacy"`. Default `false`, so the rolling release never becomes the repository's latest |
+| `api` | The GitHub API root. Default: `$GITHUB_API_URL`, else `https://api.github.com` |
+| `tokenEnv` | The variable holding the token. Default `GITHUB_TOKEN` |
+
+The manifest is Tauri's static JSON. `version` is the release's label from its first digit on, so `app-v1.4.0` is `1.4.0`, and a release whose label has no digit is refused (`publish-tauri-no-version`). `pub_date` is the time of the cut whose signature the publish carries, so the manifest is the same bytes on every run, and is left out when no cut is known. Each platform's `signature` is the text of its `.sig` file. Every bundle, `.sig` file and asset that the release records must match its digest.
+
+```json
+{
+  "version": "1.4.0",
+  "notes": "Faster sync.",
+  "pub_date": "2026-10-17T10:00:00.000Z",
+  "platforms": {
+    "darwin-aarch64": { "signature": "dW50cnVzdGVkIGNvbW1lbnQ6...", "url": "https://github.com/acme/app/releases/download/app-latest/Acme_aarch64.app.tar.gz" }
+  }
+}
+```
+
+GitHub can't replace what a release holds in one request, so the stage builds a new release as a draft and the reveal swaps it in. The stage makes a draft for the rolling tag named `<tag> <version>` at the release's commit, or finds the one an earlier stage made, and uploads each bundle, each asset and the manifest to it. A file already on the draft with the same digest is not sent again, and one that differs is refused (`publish-tauri-asset-exists`). The published rolling release is untouched, so the updater sees nothing new. A rolling release that already holds every file with the same digests is what an earlier reveal left, and the stage then does nothing.
+
+The reveal deletes the published rolling release and its tag, then publishes the draft with `make_latest`. GitHub makes the tag again at the release's commit when it publishes. Between the delete and the publish, a few requests apart, the rolling release's URLs answer 404. The updater treats that as no update, and the site's download links fail for that moment. A reveal run again after the draft was published finds it published and does nothing.
 
 ## SBOMs and provenance
 
@@ -169,7 +310,7 @@ Every credential comes from the environment of the run, which is the shell on a 
 | The redactor masks | Such as |
 |---|---|
 | Each credential a target read, and each token a registry handed back for it | the value of `OCI_PASSWORD`, a GHCR bearer token |
-| The value of each variable CI and registries use for tokens | `NODE_AUTH_TOKEN`, `NPM_TOKEN`, `NPM_ID_TOKEN`, `SIGSTORE_ID_TOKEN`, `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, `ACTIONS_RUNTIME_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `GITLAB_TOKEN`, `CI_JOB_TOKEN`, `FORGEJO_TOKEN`, `GITEA_TOKEN`, `OCI_PASSWORD`, `DOCKER_PASSWORD` |
+| The value of each variable CI and registries use for tokens | `NODE_AUTH_TOKEN`, `NPM_TOKEN`, `NPM_ID_TOKEN`, `SIGSTORE_ID_TOKEN`, `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, `ACTIONS_RUNTIME_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `GITLAB_TOKEN`, `CI_JOB_TOKEN`, `FORGEJO_TOKEN`, `GITEA_TOKEN`, `OCI_PASSWORD`, `DOCKER_PASSWORD`, `VSCE_PAT`, `OVSX_PAT` |
 | The value of each variable a declaration names | `passwordEnv: "GHCR_PAT"` |
 | A token written in the forms npm and HTTP headers use | `_authToken=...`, `Authorization: Bearer ...`, `PRIVATE-TOKEN: ...` |
 
@@ -180,7 +321,7 @@ A target that needs a credential and finds none stops the publish before anythin
 A target is an object with this shape, from `packages/core/src/lifecycle/release-publish.ts`:
 
 ```ts
-interface PublishTarget<C extends PublishContextBase = PublishContext, K extends string = "npm" | "oci" | "forge"> {
+interface PublishTarget<C extends PublishContextBase = PublishContext, K extends string = "npm" | "oci" | "forge" | "homebrew" | "marketplace" | "tauri-updater"> {
   kind: K;
   name: string;            // for messages, such as "npm (2 packages)"
   destination: string;     // printed before it runs
@@ -210,7 +351,7 @@ A release target is given a `PublishContext` with these fields. The last five (`
 | `redactor` | Masks credentials. A target adds each credential and token it reads |
 | `log(line)` | Prints a line of progress, redacted |
 
-The targets take their dependencies through `PublishDeps`, which holds the `fetch` the OCI and forge targets use and the `npm` executable. In the tests npm runs as a fake binary that keeps a registry with dist-tags in a file, the OCI target pushes to a registry fake that the test starts on `127.0.0.1`, and the forge targets call a forge fake with draft releases.
+The targets take their dependencies through `PublishDeps`, which holds the `fetch` the OCI, forge, homebrew and marketplace targets use, and the `npm` and `vsce` executables. In the tests npm runs as a fake binary that keeps a registry with dist-tags in a file, the OCI target pushes to a registry fake that the test starts on `127.0.0.1`, and the forge targets call a forge fake with draft releases.
 
 A target that publishes something other than a cut release takes its own context as `C`, which extends `PublishContextBase`, and its own `kind` names as `K` ([#4602](https://github.com/INTENTIUS/chant/issues/4602)). The terraform lexicon's module targets publish a module version this way. They throw `PublishTargetError` and take their requests and clock through `PublishDeps`. Credentials are read with `readCredential` from `lifecycle/publish-credentials.ts` and masked by the context's redactor. Their own code makes them, so they never appear under `release.publish`.
 

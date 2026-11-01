@@ -9,7 +9,7 @@ diataxis: reference
 ```
 chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <name=value>]... [--params-file <file>]
                   [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--json]
-chant release candidates [--env <env>] [--branch <branch>] [--json]
+chant release candidates [--env <env>] [--branch <branch>] [--forge-issues] [--json]
 chant release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json]
 chant release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json]
 chant release verify <label|digest> [--json]
@@ -394,7 +394,13 @@ chant release candidates --env prod
 
 Each candidate is a commit with a `ci/green` tag that counts and no `ci/revoked` tag. Under it are the first-parent commits since the previous candidate, so each commit appears under exactly one candidate. Its pull request is the one its merge record names. Without a merge record it is the one the subject names, `(#123)` at the end as a forge's squash merge writes it. Its work items are the ones its `Chant-Record: work:<id>` trailers name. The list is grouped by work item and then by pull request ([#4168](https://github.com/INTENTIUS/chant/issues/4168) 4.4). Changes with two work items show under both, and those with none come last, under "no work item". Within a group, the ones that landed without a pull request show under "no pull request". A candidate also lists the flags whose record files those commits change. It says which environments run neither it nor a later commit, and which labels were already cut from it. A revoked commit is listed as skipped, and its changes stay with the next candidate. Commits after the newest candidate are counted as not green yet.
 
-With `--json` the output is the [read contract](/chant/reference/workspace-read-contract/)'s `release-candidates.schema.json` document. Its `environments` field lists what each one runs, `since` is the commit the walk stopped at (or `null`), `candidates` and `skipped` are newest first, and `pending` holds the commits after the newest candidate. Each change has `commit`, `subject`, `date`, `work`, `records` (every `Chant-Record` trailer as `<kind>:<id>`), `pr` and `merge`, the merge record `_merges/<sha>.json` on `chant/lifecycle` when one exists. Each candidate's `groups` holds the same changes as `{ work, pullRequests: [{ pr, commits }] }`, with `null` for no work item and no pull request, in the order the text output prints them. Outside git the command exits 1 with `not-a-git-repository`. When the ledger or the tags can't be read it exits 1 with `ledger-unreadable`. Nothing is fetched, so fetch the tags and `chant/lifecycle` first.
+With `--forge-issues`, each pull request's closing issues are read from the forge and become work items ([#4649](https://github.com/INTENTIUS/chant/issues/4649)). A change that no `Chant-Record` trailer gives a work item shows under each issue its pull request closes, as "issue #70", after the work ids and before "no work item". A change with a work id stays under it. When the forge can't be read, the changes stay where they were, and the reason is printed once on stderr. [Issues a pull request closes](/chant/cli/workspace-graph/#issues-a-pull-request-closes) says which forge and token are used, and what each forge answers from. Without the flag nothing reaches the network.
+
+```bash
+GH_TOKEN=$(gh auth token) chant release candidates --forge-issues --json
+```
+
+With `--json` the output is the [read contract](/chant/reference/workspace-read-contract/)'s `release-candidates.schema.json` document. Its `environments` field lists what each one runs, `since` is the commit the walk stopped at (or `null`), `candidates` and `skipped` are newest first, and `pending` holds the commits after the newest candidate. Each change has `commit`, `subject`, `date`, `work`, `records` (every `Chant-Record` trailer as `<kind>:<id>`), `pr` and `merge`, the merge record `_merges/<sha>.json` on `chant/lifecycle` when one exists. Each change also has `closes`: `null` without `--forge-issues` or a pull request, else what the forge says the pull request closes, `{ resolved, issues, reason }`. Each candidate's `groups` holds the same changes as `{ work, issue, pullRequests: [{ pr, commits }] }`, with `null` for no work item, no issue and no pull request, in the order the text output prints them. Outside git the command exits 1 with `not-a-git-repository`. When the ledger or the tags can't be read it exits 1 with `ledger-unreadable`. Nothing is fetched, so fetch the tags and `chant/lifecycle` first. `--forge-issues` reads the forge's API and fetches no git ref.
 
 ## release compose
 

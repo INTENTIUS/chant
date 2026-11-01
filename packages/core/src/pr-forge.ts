@@ -427,6 +427,18 @@ export interface PrForge {
   /** Whether pull request `pr` is open, closed unmerged, or merged (#4298), for `pr-env sweep`. */
   pullRequestState?(pr: number): Promise<"open" | "closed" | "merged">;
   /**
+   * The issues of this repository that pull request `pr` (merge request `pr`
+   * on GitLab) closes when it merges (#4649), ascending, without repeats. One
+   * call per pull request. GitHub answers from GraphQL's
+   * `closingIssuesReferences`, which holds both the closing keywords in the
+   * body and the issues linked by hand, so it needs a token. GitLab answers
+   * from `closes_issues`. Forgejo has no such call, so its pull request's body
+   * is read for the closing keywords it honours ({@link closingIssueRefs}).
+   * An issue in another repository is left out (on GitLab, when the client
+   * names its project by id).
+   */
+  closingIssues?(pr: number): Promise<number[]>;
+  /**
    * Merge pull request `pr` only if its head is still `opts.sha`. A moved
    * head, a conflict or a branch rule the forge enforces comes back as
    * `{ merged: false, reason }`; auth, missing-pull-request and server errors
@@ -675,6 +687,19 @@ export class ForgeApiError extends Error {
   }
 }
 
+/**
+ * The issues a pull request body closes by keyword, as Forgejo and GitHub
+ * read them: `close`, `closes`, `closed`, `fix`, `fixes`, `fixed`,
+ * `resolve`, `resolves` or `resolved`, any case, an optional colon, then
+ * `#<n>`. A reference to another repository (`owner/name#<n>`) is left out.
+ * Ascending, without repeats.
+ */
+export function closingIssueRefs(body: string): number[] {
+  const out = new Set<number>();
+  for (const m of body.matchAll(/(?:^|[^\w/])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+#(\d+)\b/gi)) out.add(Number(m[1]));
+  return [...out].sort((a, b) => a - b);
+}
+
 /** The forge answered 404. */
 const notFound = (err: unknown): boolean => err instanceof ForgeApiError && err.status === 404;
 
@@ -875,13 +900,12 @@ const GITLAB_DESCRIPTION = 255;
 /** Which of the two GitHub-shaped forges a client is talking to. */
 function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): GithubShapedForge {
   const host = (opts.host ?? "github.com").toLowerCase();
-  const api = transport(
-    opts.apiBase,
+  const headers =
     kind === "github"
       ? { ...(opts.token ? { Authorization: `Bearer ${opts.token}` } : {}), Accept: "application/vnd.github+json" }
-      : { ...(opts.token ? { Authorization: `token ${opts.token}` } : {}), Accept: "application/json" },
-    opts.fetch ?? (globalThis.fetch as unknown as ForgeFetch),
-  );
+      : { ...(opts.token ? { Authorization: `token ${opts.token}` } : {}), Accept: "application/json" };
+  const fetchImpl = opts.fetch ?? (globalThis.fetch as unknown as ForgeFetch);
+  const api = transport(opts.apiBase, headers, fetchImpl);
   const repo = `/repos/${opts.repo}`;
   // GitHub pages with per_page (up to 100); Forgejo with limit (capped at 50 by default).
   const pageSize = kind === "github" ? 100 : 50;
@@ -1229,6 +1253,34 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
     async labels(pr) {
       const listed = await api.list(`${repo}/issues/${pr}/labels`, pageParams, pageSize);
       return listed.map((l) => (isObject(l) ? str(l.name) : undefined)).filter((n): n is string => n !== undefined);
+    },
+    async closingIssues(pr) {
+      if (kind === "forgejo") {
+        const p = await api.call("GET", `${repo}/pulls/${pr}`);
+        return closingIssueRefs(isObject(p) ? (str(p.body) ?? "") : "");
+      }
+      // GitHub's REST API has no closing issues; GraphQL does, at /graphql on
+      // github.com and /api/graphql on GitHub Enterprise Server.
+      const root = opts.apiBase.replace(/\/+$/, "");
+      const url = /\/api\/v3$/.test(root) ? `${root.slice(0, -"/v3".length)}/graphql` : `${root}/graphql`;
+      const [owner, name] = opts.repo.split("/");
+      const query =
+        "query($owner:String!,$name:String!,$pr:Int!){repository(owner:$owner,name:$name){pullRequest(number:$pr){closingIssuesReferences(first:100){nodes{number repository{nameWithOwner}}}}}}";
+      const res = await fetchImpl(url, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ query, variables: { owner, name, pr } }) });
+      const text = await res.text();
+      if (!res.ok) throw new ForgeApiError("POST", url, res.status, text);
+      const body: unknown = text ? JSON.parse(text) : null;
+      const errors = isObject(body) && Array.isArray(body.errors) ? body.errors : [];
+      if (errors.length > 0) throw new ForgeApiError("POST", url, res.status, errors.map((e) => (isObject(e) ? (str(e.message) ?? "") : "")).join("; "));
+      const data = isObject(body) && isObject(body.data) && isObject(body.data.repository) ? body.data.repository : undefined;
+      const refs = data && isObject(data.pullRequest) && isObject(data.pullRequest.closingIssuesReferences) ? data.pullRequest.closingIssuesReferences.nodes : undefined;
+      const out = new Set<number>();
+      for (const n of Array.isArray(refs) ? refs : []) {
+        if (!isObject(n) || typeof n.number !== "number") continue;
+        const there = isObject(n.repository) ? str(n.repository.nameWithOwner) : undefined;
+        if (there === undefined || there.toLowerCase() === opts.repo.toLowerCase()) out.add(n.number);
+      }
+      return [...out].sort((a, b) => a - b);
     },
     async pullRequestState(pr) {
       const p = await api.call("GET", `${repo}/pulls/${pr}`);
@@ -1634,6 +1686,17 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
     async labels(mr) {
       const m = await api.call("GET", `${notes}/${mr}`);
       return isObject(m) && Array.isArray(m.labels) ? m.labels.filter((l): l is string => typeof l === "string") : [];
+    },
+    async closingIssues(mr) {
+      const listed = await api.list(`${notes}/${mr}/closes_issues`, pageParams, 100);
+      // An issue of another project is left out when the project is named by id; by path, every one is kept, to spend no second call.
+      const own = /^\d+$/.test(opts.project) ? Number(opts.project) : undefined;
+      const out = new Set<number>();
+      for (const i of listed) {
+        if (!isObject(i) || typeof i.iid !== "number") continue;
+        if (own === undefined || i.project_id === undefined || i.project_id === own) out.add(i.iid);
+      }
+      return [...out].sort((a, b) => a - b);
     },
     async pullRequestState(mr) {
       const m = await api.call("GET", `${notes}/${mr}`);

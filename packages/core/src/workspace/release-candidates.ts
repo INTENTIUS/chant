@@ -29,19 +29,30 @@
  * trailers name, or under no work item, and within that under its pull
  * request, or under none for a commit that landed without one.
  *
- * It reads local refs and tags only and never fetches. Git is read through a
- * local `git` subprocess.
+ * Asked to (`forgeIssues`, `--forge-issues`, #4649), it also asks the forge
+ * which issues each change's pull request closes (./forge-work.ts), once per
+ * pull request, and puts the answer in the change's `closes`. A change no
+ * `Chant-Record` trailer gives a work item then lands under each issue its
+ * pull request closes. Without a forge or a token the pull request number
+ * stands alone, `resolved: false`.
+ *
+ * Otherwise it reads local refs and tags only and never fetches. Git is read
+ * through a local `git` subprocess.
  */
 
 import { execFileSync } from "node:child_process";
 import { relative, resolve, sep } from "node:path";
+import { NEXT_RELEASE } from "../release-floors";
 import { latestPerComponent, readReleaseLedger } from "../lifecycle/release-ledger";
 import { readAllReleases, readCuts } from "../lifecycle/release-store";
 import { resolveMemberLedger } from "../lifecycle/member-ledger";
 import { readBlobFromPath } from "../lifecycle/git";
 import { greenBranches, readerVersion } from "./declaration";
+import type { ForgeWorkOptions, PullRequestCloses } from "./forge-work";
 
 export const RELEASE_CANDIDATES_CONTRACT_VERSION = 1;
+/** The first chant whose candidates carry `changes[].closes` and `groups[].issue` (#4649). */
+export const RELEASE_CANDIDATES_CLOSES_FLOOR = NEXT_RELEASE;
 export const RELEASE_CANDIDATES_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/release-candidates/v1/release-candidates.schema.json";
 
 /** Why the read stopped. Closed; each code is in `reason-codes.ts`. */
@@ -79,6 +90,12 @@ export interface CandidateChange {
   pr: number | null;
   /** The merge record `_merges/<sha>.json` (#4168 4.1), as stored, or null when there is none. */
   merge: Record<string, unknown> | null;
+  /**
+   * The issues the forge says `pr` closes (#4649), or null when the read was
+   * not asked to (`--forge-issues`) or the change has no pull request. Added
+   * within contract 1 by chant {@link RELEASE_CANDIDATES_CLOSES_FLOOR}.
+   */
+  closes: PullRequestCloses | null;
 }
 
 /** A candidate's changes under one pull request, or under none (`pr: null`) for commits that landed without one. */
@@ -88,9 +105,16 @@ export interface CandidatePullRequestGroup {
   commits: string[];
 }
 
-/** A candidate's changes under one work item, or under none (`work: null`). Work items come first, in the order the oldest change names them. */
+/**
+ * A candidate's changes under one work item: a `Chant-Record` work id
+ * (`work`), or an issue the change's pull request closes (`issue`, #4649), or
+ * under none (both null). Work ids come first, then issues, each in the order
+ * the oldest change names them.
+ */
 export interface CandidateGroup {
   work: string | null;
+  /** The issue the forge says the changes' pull request closes, for changes with no work id; null otherwise. */
+  issue: number | null;
   /** Pull requests in the order their oldest commit landed, then `pr: null`. */
   pullRequests: CandidatePullRequestGroup[];
 }
@@ -147,6 +171,8 @@ export interface ReleaseCandidatesQuery {
   limit?: number;
   /** Walk this branch of `ci.green.branch` (#4325) instead of the first. */
   branch?: string;
+  /** Ask the forge which issues each pull request closes (#4649), with these options. Left out, the forge is not read. */
+  forgeIssues?: ForgeWorkOptions;
 }
 
 function git(top: string, args: string[]): string {
@@ -187,24 +213,34 @@ export function mergeRecordPr(merge: Record<string, unknown> | null): number | n
 
 /**
  * Group changes, given newest first, by work item, then pull request, then
- * commit. A change with work items lands in each one's group; the rest land
- * in the `work: null` group, last. Within a group, pull requests come in the
- * order their oldest commit landed, and commits without one last.
+ * commit. A change with work ids lands in each one's group; one without
+ * lands in the group of each issue its pull request closes (#4649); the rest
+ * land in the group of neither, last. Work ids come before issues. Within a
+ * group, pull requests come in the order their oldest commit landed, and
+ * commits without one last.
  */
 export function groupChanges(changes: readonly CandidateChange[]): CandidateGroup[] {
   const oldestFirst = [...changes].reverse();
-  const groups = new Map<string | null, Map<number | null, string[]>>();
-  const add = (work: string | null, pr: number | null, commit: string): void => {
-    const byPr = groups.get(work) ?? new Map<number | null, string[]>();
-    groups.set(work, byPr);
-    byPr.set(pr, [commit, ...(byPr.get(pr) ?? [])]);
+  const groups = new Map<string, { work: string | null; issue: number | null; byPr: Map<number | null, string[]> }>();
+  const add = (work: string | null, issue: number | null, pr: number | null, commit: string): void => {
+    const key = work !== null ? `work:${work}` : issue !== null ? `issue:${issue}` : "";
+    const g = groups.get(key) ?? { work, issue, byPr: new Map<number | null, string[]>() };
+    groups.set(key, g);
+    g.byPr.set(pr, [commit, ...(g.byPr.get(pr) ?? [])]);
   };
-  for (const c of oldestFirst) for (const work of c.work.length > 0 ? c.work : [null]) add(work, c.pr, c.commit);
+  for (const c of oldestFirst) {
+    const issues = c.closes?.issues ?? [];
+    if (c.work.length > 0) for (const work of c.work) add(work, null, c.pr, c.commit);
+    else if (issues.length > 0) for (const issue of issues) add(null, issue, c.pr, c.commit);
+    else add(null, null, c.pr, c.commit);
+  }
   const nullLast = <K>(keys: K[]): K[] => [...keys.filter((k) => k !== null), ...keys.filter((k) => k === null)];
-  return nullLast([...groups.keys()]).map((work) => {
-    const byPr = groups.get(work)!;
-    return { work, pullRequests: nullLast([...byPr.keys()]).map((pr) => ({ pr, commits: byPr.get(pr)! })) };
-  });
+  const all = [...groups.values()];
+  return [...all.filter((g) => g.work !== null), ...all.filter((g) => g.issue !== null), ...all.filter((g) => g.work === null && g.issue === null)].map((g) => ({
+    work: g.work,
+    issue: g.issue,
+    pullRequests: nullLast([...g.byPr.keys()]).map((pr) => ({ pr, commits: g.byPr.get(pr)! })),
+  }));
 }
 
 /** Read the release candidates of the member at `query.cwd`. */
@@ -290,14 +326,20 @@ export async function releaseCandidatesDocument(query: ReleaseCandidatesQuery): 
         // A merge record that is not JSON is left out.
       }
     }
+    // The merge record names its pull request in `source` (../lifecycle/merge-record.ts).
+    const prOf = (sha: string): number | null => mergeRecordPr(merges.get(sha) ?? null) ?? prFromSubject(details.get(sha)?.subject ?? "");
+    // What each pull request closes, asked of the forge once each, when asked to (#4649).
+    let closed = new Map<number, PullRequestCloses>();
+    if (query.forgeIssues) {
+      const { forgeWorkReader } = await import("./forge-work");
+      closed = await forgeWorkReader(top, query.forgeIssues).closesAll(walk.map(prOf).filter((n): n is number => n !== null));
+    }
     const change = (sha: string): CandidateChange => {
       const d = details.get(sha);
       const { work, records } = recordTrailers(d?.trailers ?? {});
       const merge = merges.get(sha) ?? null;
-      // The merge record names its pull request in `source` (../lifecycle/merge-record.ts).
-      const mergePr = mergeRecordPr(merge);
-      const subject = d?.subject ?? "";
-      return { commit: sha, subject, date: d?.date ?? "", work, records, pr: mergePr ?? prFromSubject(subject), merge };
+      const pr = prOf(sha);
+      return { commit: sha, subject: d?.subject ?? "", date: d?.date ?? "", work, records, pr, merge, closes: pr !== null ? (closed.get(pr) ?? null) : null };
     };
 
     const flagReader = await flagsReader(top, source.rootOnDisk);

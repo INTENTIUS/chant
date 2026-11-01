@@ -233,6 +233,9 @@ export function greenBranches(green: Pick<CiGreen, "branch" | "branches">): stri
   return green.branches ?? [green.branch];
 }
 
+/** `ci.green.notify`: notify's settings, and the hours the branch may go without a green commit before `ci.stale` (#4678). */
+export type CiNotify = NotifyConfig & { staleAfter?: number };
+
 /** The default `ci.green.window`. */
 export const DEFAULT_CI_WINDOW = "24h";
 
@@ -283,9 +286,11 @@ export interface CiGreen {
   lanes?: CiLane[];
   /**
    * Who the tick tells (#4645): `ci.red`, `ci.culprit` and `ci.green`, sent
-   * through notify as Op waves send theirs. Absent when the declaration sets none.
+   * through notify as Op waves send theirs; and who `ci quarantine report`
+   * tells `ci.quarantine-passed` (#4677). The tick also sends `ci.stale` after
+   * `staleAfter` hours without a green commit (#4678). Absent when the declaration sets none.
    */
-  notify?: NotifyConfig;
+  notify?: CiNotify;
   /**
    * The branch takes changes through GitHub's merge queue (#4644): `ci
    * workflow` adds the `merge_group` trigger to the workflows holding a
@@ -293,7 +298,45 @@ export interface CiGreen {
    * `chant-verdict` job the queue's ruleset requires. Absent when unset.
    */
   mergeQueue?: true;
+  /**
+   * Known-flaky tests the phases' runners leave out (#4677), each with the
+   * issue tracking its fix and the day it comes back. Absent when the
+   * declaration names none.
+   */
+  quarantine?: CiQuarantine;
   pointer: string;
+}
+
+/** The default `ci.green.quarantine.maxDays` (#4677): how far out an entry's `until` may be. */
+export const DEFAULT_QUARANTINE_MAX_DAYS = 14;
+
+/** `ci.green.quarantine` (#4677). */
+export interface CiQuarantine {
+  /** How many days from today an entry's `until` may be, at most. */
+  maxDays: number;
+  /** Every entry, phase by phase, in file order. */
+  entries: CiQuarantineEntry[];
+  pointer: string;
+}
+
+/**
+ * One quarantined test (#4677). `test` is the name the phase's runner gives
+ * it: for nextest the binary id, a space and the test's name, as nextest
+ * prints them; for Playwright the test's title, with `file` its spec's path
+ * from the project's testDir.
+ */
+export interface CiQuarantineEntry {
+  phase: string;
+  test: string;
+  file?: string;
+  /** The issue that tracks the fix: a number or a URL. */
+  issue: string;
+  /** The last day the test stays out, YYYY-MM-DD (UTC). */
+  until: string;
+  why: string;
+  pointer: string;
+  /** Where the entry is in the declaration's file, for messages about it. */
+  location: ErrorLocation;
 }
 
 /**
@@ -1412,7 +1455,7 @@ function cloudIdentityOf(raw: CloudIdentityDeclaration, at: (pointer: string, ke
 
 function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocation): CiDeclaration | null {
   if (raw === undefined) return null;
-  const block = raw as { reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; identity?: { cloud?: CloudIdentityDeclaration }; branches?: Record<string, string[]>; labels?: Record<string, string[]>; locks?: CiLocks; lockGrain?: CiLockGrain; policy?: unknown; prEnvironment?: { template: string; ttl?: string; teardown?: { name?: string; command: string[]; lexicons?: string[] } }; green?: { branch: string | string[]; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource; lanes?: Record<string, { require: string[] }>; notify?: NotifyConfig; mergeQueue?: boolean } };
+  const block = raw as { reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; identity?: { cloud?: CloudIdentityDeclaration }; branches?: Record<string, string[]>; labels?: Record<string, string[]>; locks?: CiLocks; lockGrain?: CiLockGrain; policy?: unknown; prEnvironment?: { template: string; ttl?: string; teardown?: { name?: string; command: string[]; lexicons?: string[] } }; green?: { branch: string | string[]; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource; lanes?: Record<string, { require: string[] }>; notify?: CiNotify; mergeQueue?: boolean; quarantine?: { maxDays?: number; phases: Record<string, { test: string; file?: string; issue: string; until: string; why: string }[]> } } };
   const hooks = ciHooksOf(block.hooks, "/ci/hooks", at);
   const policy = ciPolicyOf(block.policy, at);
   const workflow = {
@@ -1487,11 +1530,51 @@ function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocatio
     return { name, require: [...l.require], pointer };
   });
   if (g.notify !== undefined) {
-    const problem = notifyConfigProblem(g.notify, "ci.green.notify");
+    // staleAfter is the tick's own (#4678); the rest is notify's.
+    const object = typeof g.notify === "object" && g.notify !== null && !Array.isArray(g.notify);
+    const { staleAfter, ...config }: CiNotify = object ? g.notify : {};
+    const problem = notifyConfigProblem(object ? config : g.notify, "ci.green.notify");
     if (problem) throw new WorkspaceReadError("declaration-invalid", problem, at("/ci/green/notify"));
+    if (staleAfter !== undefined && !(typeof staleAfter === "number" && Number.isFinite(staleAfter) && staleAfter > 0)) {
+      throw new WorkspaceReadError("declaration-invalid", "ci.green.notify.staleAfter: a number of hours greater than 0", at("/ci/green/notify/staleAfter"));
+    }
   }
+  const quarantine = g.quarantine !== undefined ? quarantineOf(g.quarantine, phases, at) : undefined;
   const judged = Array.isArray(g.branch) ? g.branch : [g.branch];
-  return { green: { branch: judged[0]!, ...(judged.length > 1 ? { branches: [...judged] } : {}), window: g.window ?? DEFAULT_CI_WINDOW, phases, require: [...g.require], ...(g.preMerge !== undefined ? { preMerge: [...g.preMerge] } : {}), signedSince: g.signedSince ?? null, source: g.source ?? "checks", ...(lanes.length > 0 ? { lanes } : {}), ...(g.notify !== undefined ? { notify: { ...g.notify, ...(g.notify.events ? { events: [...g.notify.events] } : {}) } } : {}), ...(g.mergeQueue === true ? { mergeQueue: true as const } : {}), pointer: "/ci/green" }, ...workflow, reportUrl };
+  return { green: { branch: judged[0]!, ...(judged.length > 1 ? { branches: [...judged] } : {}), window: g.window ?? DEFAULT_CI_WINDOW, phases, require: [...g.require], ...(g.preMerge !== undefined ? { preMerge: [...g.preMerge] } : {}), signedSince: g.signedSince ?? null, source: g.source ?? "checks", ...(lanes.length > 0 ? { lanes } : {}), ...(g.notify !== undefined ? { notify: { ...g.notify, ...(g.notify.events ? { events: [...g.notify.events] } : {}) } } : {}), ...(g.mergeQueue === true ? { mergeQueue: true as const } : {}), ...(quarantine ? { quarantine } : {}), pointer: "/ci/green" }, ...workflow, reportUrl };
+}
+
+/** A YYYY-MM-DD that names a real day, as days since 1970-01-01 UTC, or null. */
+export function quarantineDay(s: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const t = Date.parse(`${s}T00:00:00Z`);
+  return Number.isNaN(t) || new Date(t).toISOString().slice(0, 10) !== s ? null : t / 86_400_000;
+}
+
+/**
+ * `ci.green.quarantine` (#4677), checked for what holds on any day: each
+ * phase is declared, each `until` is a real day, and no test is listed twice
+ * in a phase. Whether an entry has expired depends on the day it is read,
+ * so `chant ci quarantine check` and `filter` judge that, not the reader.
+ */
+function quarantineOf(raw: { maxDays?: number; phases: Record<string, { test: string; file?: string; issue: string; until: string; why: string }[]> }, phases: CiPhase[], at: (pointer: string, key?: boolean) => ErrorLocation): CiQuarantine {
+  const entries: CiQuarantineEntry[] = [];
+  for (const [phase, list] of Object.entries(raw.phases)) {
+    const base = `/ci/green/quarantine/phases/${pointerToken(phase)}`;
+    if (!phases.some((p) => p.name === phase)) {
+      throw new WorkspaceReadError("declaration-invalid", `ci.green.quarantine.phases names the phase ${JSON.stringify(phase)}, which ci.green.phases does not declare; declared phases: ${phases.map((p) => p.name).join(", ")}`, at(base, true));
+    }
+    const seen = new Set<string>();
+    for (const [i, e] of list.entries()) {
+      const pointer = `${base}/${i}`;
+      if (quarantineDay(e.until) === null) throw new WorkspaceReadError("declaration-invalid", `ci.green.quarantine.phases.${phase}[${i}].until is not a day: ${JSON.stringify(e.until)} (YYYY-MM-DD)`, at(`${pointer}/until`));
+      const key = JSON.stringify([e.file ?? null, e.test]);
+      if (seen.has(key)) throw new WorkspaceReadError("declaration-invalid", `ci.green.quarantine.phases.${phase} lists ${e.file !== undefined ? `${e.file} ` : ""}${JSON.stringify(e.test)} twice`, at(pointer));
+      seen.add(key);
+      entries.push({ phase, test: e.test, ...(e.file !== undefined ? { file: e.file } : {}), issue: e.issue, until: e.until, why: e.why, pointer, location: at(pointer) });
+    }
+  }
+  return { maxDays: raw.maxDays ?? DEFAULT_QUARANTINE_MAX_DAYS, entries, pointer: "/ci/green/quarantine" };
 }
 
 function agentsOf(raw: unknown, members: Member[], at: (pointer: string, key?: boolean) => ErrorLocation): AgentDeclaration[] {

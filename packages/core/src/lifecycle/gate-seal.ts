@@ -20,6 +20,9 @@
 
 import { createHash, createPublicKey, verify, type KeyObject } from "node:crypto";
 import type { Signer } from "../workspace/trust/trust-files";
+import { verifyWebAuthnAssertion, type PasskeySigner } from "./gate-webauthn";
+
+export { isWebAuthnAssertion, passkeyPublicKey, verifyWebAuthnAssertion, webAuthnChallenge, type PasskeySigner, type WebAuthnAssertion, type WebAuthnCheck } from "./gate-webauthn";
 
 /**
  * The ssh signature namespace of a gate approval's seal (#3163, ws-080), so a
@@ -248,6 +251,8 @@ export interface GateSigners {
   /** Whether a signers file exists at base. False: no seal verifies, so a sealed gate passes nothing. */
   active: boolean;
   signers: Signer[];
+  /** The passkeys `.chant/trust.json` lists at base (#4646). Absent: none. */
+  passkeys?: PasskeySigner[];
   /** Why the trust config could not be read, when it could not. `active` is false then. */
   problems: string[];
 }
@@ -269,12 +274,53 @@ export function namespaceAllowed(list: string | undefined, namespace: string): b
   return allowed;
 }
 
+/** The seal kind of an approval signed with a passkey (#4646). A seal with no `kind` is an ssh signature. */
+export const WEBAUTHN_SEAL_KIND = "webauthn";
+
+/** What {@link checkGateSignature} reads: the ssh signers and the passkeys at base. */
+export interface GateSignerKeys {
+  signers: readonly Signer[];
+  passkeys?: readonly PasskeySigner[];
+}
+
+/** What {@link checkGateSignature} found. `unlisted`: nothing at base is listed for the principal. */
+export type GateSignatureCheck = { ok: true; key: string } | { ok: false; unlisted: boolean; reason: string };
+
+/**
+ * Whether `seal`'s signature over `payload` verifies for `principal` with a
+ * key listed for them at base (#4646): an ssh signature in the `chant-gate`
+ * namespace against the signers file's keys, or, for a seal of kind
+ * `webauthn`, an assertion against the passkeys `.chant/trust.json` lists.
+ * The one check `chant approve`, the `identity.gates` rule, a sealed gate and
+ * `checkGateSeal` all make. Never throws.
+ */
+export function checkGateSignature(keys: GateSignerKeys, principal: string, seal: { signature: string } & Record<string, unknown>, payload: Buffer): GateSignatureCheck {
+  const name = normalise(principal);
+  if (seal.kind === WEBAUTHN_SEAL_KIND) {
+    const passkeys = (keys.passkeys ?? []).filter((p) => normalise(p.principal) === name);
+    if (passkeys.length === 0) return { ok: false, unlisted: true, reason: `${principal} has no passkey in .chant/trust.json at base` };
+    const assertion = { id: seal.key, clientDataJSON: seal.clientDataJSON, authenticatorData: seal.authenticatorData, signature: seal.signature };
+    if (typeof assertion.id !== "string" || typeof assertion.clientDataJSON !== "string" || typeof assertion.authenticatorData !== "string") {
+      return { ok: false, unlisted: false, reason: "a webauthn seal needs key (the credential id), clientDataJSON and authenticatorData" };
+    }
+    const r = verifyWebAuthnAssertion(assertion as { id: string; clientDataJSON: string; authenticatorData: string; signature: string }, payload, passkeys);
+    return r.ok ? r : { ok: false, unlisted: false, reason: r.reason };
+  }
+  if (seal.kind !== undefined) return { ok: false, unlisted: false, reason: `a seal of kind ${JSON.stringify(seal.kind)} is not one this chant reads` };
+  const listed = keys.signers.filter((s) => normalise(s.principal) === name);
+  if (listed.length === 0) return { ok: false, unlisted: true, reason: `${principal} has no key in the signers file at base` };
+  const blobs = listed.filter((s) => namespaceAllowed(s.namespaces, GATE_SEAL_NAMESPACE)).map((s) => Buffer.from(s.key.split(" ")[1] ?? "", "base64"));
+  const r = verifySshSignatureWith(seal.signature, payload, GATE_SEAL_NAMESPACE, blobs);
+  return r.ok ? r : { ok: false, unlisted: false, reason: r.reason };
+}
+
 /**
  * Why this approval does not count toward a sealed gate, or null when it
  * does: its seal verifies, for the approver it names, against a key `signers`
- * lists for that approver in the `chant-gate` namespace. With no signers file
- * at base, nothing counts. The same rule as `sealedApprovalRule` in
- * `../../op/gate-review.ts`, which checks with ssh-keygen.
+ * lists for that approver in the `chant-gate` namespace, or a passkey
+ * `.chant/trust.json` lists for them (#4646). With no signers file at base,
+ * nothing counts. The same rule as `sealedApprovalRule` in
+ * `../../op/gate-review.ts`.
  */
 export function gateSealRefusal(signers: GateSigners, a: SealedGateApproval): string | null {
   const where = `${signers.signersPath} at base`;
@@ -289,10 +335,17 @@ export function gateSealRefusal(signers: GateSigners, a: SealedGateApproval): st
     return `the seal on ${what} is malformed: it needs signer and signature`;
   }
   if (normalise(seal.signer) !== normalise(a.resolvedBy)) return `the seal on ${what} is by ${seal.signer}, and its approver is ${a.resolvedBy || "empty"}`;
-  const keys = signers.signers
-    .filter((s) => normalise(s.principal) === normalise(a.resolvedBy) && namespaceAllowed(s.namespaces, GATE_SEAL_NAMESPACE))
-    .map((s) => Buffer.from(s.key.split(" ")[1] ?? "", "base64"));
-  if (keys.length === 0) return `${a.resolvedBy} has no key in ${where}, so the seal can't count`;
-  const r = verifySshSignatureWith(seal.signature, gateSealPayload(a), GATE_SEAL_NAMESPACE, keys);
-  return r.ok ? null : `the seal does not verify for ${a.resolvedBy} against ${where}: ${r.reason}`;
+  const r = checkGateSignature(signers, a.resolvedBy, seal as { signature: string }, gateSealPayload(a));
+  if (r.ok) return null;
+  return r.unlisted ? `${a.resolvedBy} has no ${unlistedWhat(seal)} in ${unlistedWhere(seal, where)}, so the seal can't count` : `the seal does not verify for ${a.resolvedBy} against ${where}: ${r.reason}`;
+}
+
+/** "key" or "passkey", for a refusal that names what is missing for a seal's kind. */
+export function unlistedWhat(seal: object): string {
+  return (seal as { kind?: unknown }).kind === WEBAUTHN_SEAL_KIND ? "passkey" : "key";
+}
+
+/** Where the missing key would be listed: the signers file, or `.chant/trust.json` for a passkey. */
+export function unlistedWhere(seal: object, signersWhere: string): string {
+  return (seal as { kind?: unknown }).kind === WEBAUTHN_SEAL_KIND ? ".chant/trust.json at base" : signersWhere;
 }

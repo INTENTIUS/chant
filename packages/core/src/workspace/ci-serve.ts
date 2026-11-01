@@ -103,6 +103,7 @@ import { forgeFromEnv, type OpenPullRequest } from "../pr-forge";
 import type { CommandContext } from "../cli/registry";
 import { formatError, formatWarning } from "../cli/format";
 import { acquireLease, currentHolderId, releaseLease, DEFAULT_LEASE_TTL_MS, type LeaseRecord } from "../lifecycle/lease";
+import { lifecycleRemoteOverride } from "../lifecycle/ledger-remote";
 import { parseDuration } from "../op/duration";
 import { reportUrlOf } from "./ci-report-url";
 import { CI_JOB_OPS, ciJobPlace, ciLoopOptions, ciSecretsOf, ciRun, ciStatusFromEnv, CiRunError, type CiJobName, type CiRunRequest, type CiRunResult } from "./ci-run";
@@ -332,11 +333,13 @@ function gitStatus(cwd: string, args: string[]): { code: number; out: string } {
  * fetch says why.
  */
 export function reconcileCiServeLedger(top: string): CiServeEvent | undefined {
+  // #4647: the remote the apply jobs push the ledger to.
+  const remote = lifecycleRemoteOverride() ?? "origin";
   const local = tryGit(top, ["rev-parse", "--verify", "--quiet", `refs/heads/${LEDGER}^{commit}`]);
-  const listed = gitStatus(top, ["ls-remote", "--exit-code", "origin", `refs/heads/${LEDGER}`]);
+  const listed = gitStatus(top, ["ls-remote", "--exit-code", remote, `refs/heads/${LEDGER}`]);
   if (listed.code === 2) {
     // A remote-tracking ref left from a deleted branch would be the next push's lease, and refuse it.
-    tryGit(top, ["update-ref", "-d", `refs/remotes/origin/${LEDGER}`]);
+    tryGit(top, ["update-ref", "-d", `refs/remotes/${remote}/${LEDGER}`]);
     if (!local) return undefined;
     tryGit(top, ["update-ref", "-d", `refs/heads/${LEDGER}`, local]);
     return { type: "ledger", action: "deleted", local };
@@ -344,13 +347,13 @@ export function reconcileCiServeLedger(top: string): CiServeEvent | undefined {
   if (listed.code !== 0 || !local) return undefined;
   const forge = listed.out.split(/\s+/)[0];
   if (!forge || forge === local) return undefined;
-  if (gitStatus(top, ["fetch", "--quiet", "--no-tags", "origin", `+refs/heads/${LEDGER}:${FORGE_LEDGER}`]).code !== 0) return undefined;
+  if (gitStatus(top, ["fetch", "--quiet", "--no-tags", remote, `+refs/heads/${LEDGER}:${FORGE_LEDGER}`]).code !== 0) return undefined;
   try {
     const ahead = gitStatus(top, ["merge-base", "--is-ancestor", forge, local]).code === 0;
     const behind = gitStatus(top, ["merge-base", "--is-ancestor", local, forge]).code === 0;
     if (ahead || behind) return undefined;
     tryGit(top, ["update-ref", `refs/heads/${LEDGER}`, forge, local]);
-    tryGit(top, ["update-ref", `refs/remotes/origin/${LEDGER}`, forge]);
+    tryGit(top, ["update-ref", `refs/remotes/${remote}/${LEDGER}`, forge]);
     return { type: "ledger", action: "reset", local, forge };
   } finally {
     tryGit(top, ["update-ref", "-d", FORGE_LEDGER]);

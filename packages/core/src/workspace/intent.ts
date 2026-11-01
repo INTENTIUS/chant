@@ -60,6 +60,8 @@
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { basename, dirname, relative, resolve, sep } from "node:path";
+import { NEXT_RELEASE } from "../release-floors";
+import type { PullRequestCloses } from "./forge-work";
 import { declaredRecordKinds, readDeclaration, readerVersion, resolveGroups, WORKSPACE_ERROR_CODES, WorkspaceReadError, type Declaration } from "./declaration";
 import { declaredKindFile } from "./declared-kinds";
 import { isGeneratedPath } from "./generated-files";
@@ -88,6 +90,8 @@ import { idList, isDecided, WORK_WARNING_CODES, type WorkLink, type WorkWarningC
 
 /** The version of the `intent` document this chant writes. */
 export const INTENT_CONTRACT_VERSION = 1;
+/** The first chant whose intent graph and record walk carry a commit's `closes`, with `--forge-issues` (#4649). */
+export const INTENT_CLOSES_FLOOR = NEXT_RELEASE;
 
 /** `$id` of the JSON Schema for the document, shipped beside this file. */
 export const INTENT_OUTPUT_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/intent/v1/intent.schema.json";
@@ -245,6 +249,12 @@ export interface CommitNode {
   trailers: Record<string, string[]>;
   /** The pull request number the subject ends with, as a squash merge writes it, or null. */
   pullRequest: number | null;
+  /**
+   * What the forge says `pullRequest` closes (#4649), only with
+   * `--forge-issues`: null for a commit with no pull request. Added within
+   * contract 1 by chant {@link INTENT_CLOSES_FLOOR}.
+   */
+  closes?: PullRequestCloses | null;
   signature: { level: ProvenanceLevel; reason: string; principal?: string };
   /** The line ranges the commit changed in the region, in the commit's own version of the file; null for a file or directory region. */
   lines: LineRange[] | null;

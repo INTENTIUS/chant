@@ -39,8 +39,12 @@ export const NOTIFY_SCHEMA = "chant.notify/v1";
 /** The JSON Schema's `$id`. */
 export const NOTIFY_SCHEMA_ID = "https://intentius.io/chant/schemas/notify/v1/notify.schema.json";
 
-/** What happened. The `ci.` events come from `chant ci tick` (#4645): a branch red after its retry, a bisect's culprit, the branch green again. */
-export const NOTIFY_EVENTS = ["waiting", "refused", "failed", "drift", "ci.red", "ci.culprit", "ci.green"] as const;
+/**
+ * What happened. The `ci.` events come from `chant ci tick` (#4645): a branch red after its retry, a bisect's culprit, the branch green again,
+ * and a branch with no green commit for `staleAfter` hours (#4678);
+ * and from `chant ci quarantine report` (#4677): a quarantined test passed in the scheduled run.
+ */
+export const NOTIFY_EVENTS = ["waiting", "refused", "failed", "drift", "ci.red", "ci.culprit", "ci.green", "ci.quarantine-passed", "ci.stale"] as const;
 export type NotifyEventKind = (typeof NOTIFY_EVENTS)[number];
 
 /** Where the run is: the CI run's page, the forge, the repository and commit. */
@@ -107,7 +111,13 @@ export interface NotifyEvent {
  * branch's newest decided commit, red after its one retry, with the phase and
  * run that failed. `ci.culprit`: `culprit` is the first red commit a bisect
  * found, for the red `commit`. `ci.green`: `commit` is green, and `red` the
- * commit whose `ci.red` this answers.
+ * commit whose `ci.red` this answers. `ci.quarantine-passed` (#4677):
+ * `commit` is the one the scheduled run tested, with the phase and the
+ * quarantined test that passed there. `ci.stale` (#4678): `commit` is the
+ * branch's tip, `since` the oldest commit above the newest green one,
+ * `lastGreen` that green commit, and `hours` how long since `since` was
+ * committed. A `ci.green` that ends a stretch told `ci.stale` names its
+ * `since` too.
  */
 export interface NotifyCi {
   branch: string;
@@ -116,6 +126,11 @@ export interface NotifyCi {
   failedRun?: { name: string; id: number | null; conclusion: string | null; url: string | null };
   culprit?: string;
   red?: string;
+  /** On `ci.quarantine-passed` (#4677): the quarantined test that passed, as `ci.green.quarantine` lists it. */
+  quarantine?: { test: string; file?: string; issue: string; until: string };
+  since?: string;
+  lastGreen?: string;
+  hours?: number;
 }
 
 /** What a product fills in; {@link makeNotifyEvent} adds the rest. */
@@ -179,6 +194,8 @@ const HEADLINE: Record<NotifyEventKind, string> = {
   "ci.red": "is red",
   "ci.culprit": "has a culprit",
   "ci.green": "is green again",
+  "ci.quarantine-passed": "passed a quarantined test",
+  "ci.stale": "has no green commit",
 };
 
 /** The first line of every chat message: `<source>: <summary>`, or what happened to what when there is no summary. */

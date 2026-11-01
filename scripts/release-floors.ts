@@ -79,6 +79,26 @@ const FLOOR_RE = /export const ([A-Z0-9_]+_FLOOR) = (?:"(\d+\.\d+\.\d+)"|(NEXT_R
  */
 const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: string }[] = [
   // --freeze empties this list after a release ships (#4501); each entry is one line.
+  { file: "packages/core/src/workspace/release-candidates.schema.json", text: "Written by chant {v} and newer.", count: 2, floor: "RELEASE_CANDIDATES_CLOSES_FLOOR" },
+  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "`candidates[].groups[].issue` | {v} |", count: 1, floor: "RELEASE_CANDIDATES_CLOSES_FLOOR" },
+  { file: "packages/core/src/workspace/intent.schema.json", text: "Added within version 1 by chant {v}.", count: 1, floor: "INTENT_CLOSES_FLOOR" },
+  { file: "packages/core/src/workspace/intent-record.schema.json", text: "Added within version 1 by chant {v}.", count: 1, floor: "INTENT_CLOSES_FLOOR" },
+  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "`commits[].closes` | {v} |", count: 1, floor: "INTENT_CLOSES_FLOOR" },
+  { file: "packages/core/src/workspace/plan-stale.schema.json", text: "Contract version 1 of this document is written by chant {v} and newer.", count: 1, floor: "PLAN_STALE_FLOOR" },
+  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "| `--json`, floor chant {v} | `https://intentius.io/chant/schemas/workspace/plan-stale/v1/plan-stale.schema.json` |", count: 1, floor: "PLAN_STALE_FLOOR" },
+  { file: "docs/src/content/docs/cli/plan.mdx", text: "a [read contract](/chant/reference/workspace-read-contract/#stale-plans) at version 1, written by chant {v} and newer.", count: 1, floor: "PLAN_STALE_FLOOR" },
+  { file: "packages/core/src/gate-statement.schema.json", text: "Written by chant {v} and newer.", count: 1, floor: "GATE_EXTERNAL_SIGNATURE_FLOOR" },
+  { file: "docs/src/content/docs/reference/workspace-declaration.mdx", text: "Chant {v} and newer write and read `passkeys` and passkey seals.", count: 1, floor: "GATE_EXTERNAL_SIGNATURE_FLOOR" },
+  { file: "packages/core/src/workspace/declaration.schema.json", text: "Read by chant {v} and newer, so a declaration that sets it sets minReader to {v} or newer.", count: 1, floor: "CI_QUARANTINE_FLOOR" },
+  { file: "docs/src/content/docs/reference/workspace-declaration.mdx", text: "Read by chant {v} and newer, so set `minReader` with it.", count: 1, floor: "CI_QUARANTINE_FLOOR" },
+  { file: "docs/src/content/docs/cli/ci.mdx", text: "`quarantine` needs `minReader` {v} or newer.", count: 1, floor: "CI_QUARANTINE_FLOOR" },
+  { file: "packages/core/src/notify.schema.json", text: "Sent by chant {v} and newer.", count: 1, floor: "CI_QUARANTINE_NOTIFY_FLOOR" },
+  { file: "docs/src/content/docs/reference/publish-targets.mdx", text: "Another forge refuses it with `publish-forge-latest-unsupported`. Read by chant {v} and newer", count: 1, floor: "PUBLISH_FORGE_LATEST_FLOOR" },
+  { file: "docs/src/content/docs/reference/publish-targets.mdx", text: "([#4676](https://github.com/INTENTIUS/chant/issues/4676)). Read by chant {v} and newer.", count: 1, floor: "PUBLISH_HOMEBREW_FLOOR" },
+  { file: "docs/src/content/docs/reference/publish-targets.mdx", text: "Declare one target per marketplace. Read by chant {v} and newer.", count: 1, floor: "PUBLISH_MARKETPLACE_FLOOR" },
+  { file: "docs/src/content/docs/reference/publish-targets.mdx", text: "The release-per-version, if there is one, is a `forge` target's. Read by chant {v} and newer.", count: 1, floor: "PUBLISH_TAURI_UPDATER_FLOOR" },
+  { file: "packages/core/src/workspace/declaration.schema.json", text: "Read by chant {v} and newer, so a declaration that sets staleAfter sets minReader to {v} or newer.", count: 1, floor: "CI_STALE_NOTIFY_FLOOR" },
+  { file: "docs/src/content/docs/reference/workspace-declaration.mdx", text: "it needs `minReader` {v} or newer.", count: 1, floor: "CI_STALE_NOTIFY_FLOOR" },
 ];
 
 interface Args {

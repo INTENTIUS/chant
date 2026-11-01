@@ -1,0 +1,286 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/plan-stale/v1/plan-stale.schema.json",
+  "title": "chant plan stale output",
+  "description": "What `chant plan stale <digest> --json` prints (#4648): whether anything applied to a plan's targets after the plan was recorded, and those applies. The plan is the pending gate facts that record the digest; it was recorded at the earliest. Its targets are each fact's member, op and environment (the fact's own, else the environment of the run that reached the gate). An apply under an approval of the same member and op for another plan, and a deploy record of the same member and environment, recorded after the plan, make it stale. It reads the local chant/lifecycle branch, never fetches and writes nothing. Version 1 of the read contract. Readers ignore fields they do not know; a field is only ever added within a version. The codes are a closed list, each in the one closed list of `reason-codes.ts`. Contract version 1 of this document is written by chant 0.124.63 and newer.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "result": {
+      "type": "object",
+      "description": "The ledger was read. Exit code 0 when the plan is current, 2 when it is stale, 1 when plan is null.",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "digest",
+        "plan",
+        "stale",
+        "applies"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/plan-stale/v1/plan-stale.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": false,
+        "digest": {
+          "type": "string",
+          "description": "The digest asked for: a pending gate fact's planDigest."
+        },
+        "plan": {
+          "description": "The plan, or null when no pending gate fact on the local ledger records the digest.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "recordedAt",
+                "runId",
+                "gitSha",
+                "targets"
+              ],
+              "properties": {
+                "recordedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "The timestamp of the earliest pending fact that records the digest."
+                },
+                "runId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "The run that recorded that fact."
+                },
+                "gitSha": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "The commit that run reached the gate at."
+                },
+                "targets": {
+                  "type": "array",
+                  "minItems": 1,
+                  "description": "Each gate the plan waits at, once.",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "member",
+                      "op",
+                      "gate",
+                      "environment"
+                    ],
+                    "properties": {
+                      "member": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "The workspace member whose gate ledger holds the fact, or null outside a workspace."
+                      },
+                      "op": {
+                        "type": "string"
+                      },
+                      "gate": {
+                        "type": "string"
+                      },
+                      "environment": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "The fact's environment, else the env of the run that reached the gate, else null. A null environment matches no deploy record."
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "stale": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "True when applies is not empty. Null when plan is null."
+        },
+        "applies": {
+          "type": "array",
+          "description": "The applies that touched a target after the plan was recorded, oldest first. Empty when stale is false or null.",
+          "items": {
+            "type": "object",
+            "required": [
+              "source",
+              "member",
+              "op",
+              "gate",
+              "environment",
+              "component",
+              "planDigest",
+              "at",
+              "actor",
+              "approvedBy",
+              "runId",
+              "runUrl",
+              "gitSha",
+              "result"
+            ],
+            "properties": {
+              "source": {
+                "enum": [
+                  "applies",
+                  "deploys"
+                ],
+                "description": "applies: an apply under an approval, a line of _gates/<op>/applied.jsonl (chant ledger applies). deploys: a deploy record, a line of <env>/releases.jsonl (chant ledger deploys)."
+              },
+              "member": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The workspace member whose ledger holds it, or null outside a workspace."
+              },
+              "op": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The op it applied under. Null for a deploy record."
+              },
+              "gate": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The gate whose approval it spent. Null for a deploy record."
+              },
+              "environment": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The environment it deployed to. Null for an apply under an approval, whose line names none."
+              },
+              "component": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The component a deploy record deployed. Null for an apply under an approval."
+              },
+              "planDigest": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The plan it applied, always another plan than digest. Null for a deploy record."
+              },
+              "at": {
+                "type": "string",
+                "format": "date-time",
+                "description": "When it was recorded, after plan.recordedAt."
+              },
+              "actor": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Who ran it: a deploy record's actor. Null for an apply under an approval, which names only its approver."
+              },
+              "approvedBy": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Who approved it: an apply's approvedBy, a deploy record's approver."
+              },
+              "runId": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The run that applied it."
+              },
+              "runUrl": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "A deploy record's link to its run. Null for an apply under an approval."
+              },
+              "gitSha": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The commit it applied."
+              },
+              "result": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "How an apply under an approval ended: applied or failed, or null while it has no finished line. Null for a deploy record."
+              }
+            }
+          }
+        }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "description": "Nothing was read. Exit code 1.",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "error"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/plan-stale/v1/plan-stale.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "not-a-git-repository",
+                "ledger-unreadable"
+              ]
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

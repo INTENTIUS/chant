@@ -326,6 +326,19 @@ CI:
                         one starts a bisect: a ci/build/<sha> tag the tick
                         starts the phase's workflow at. Each commit judged
                         gets a _ci/<sha>.json record on chant/lifecycle.
+  ci quarantine check   Fail when an entry of ci.green.quarantine is past its
+                        until, or its until is more than maxDays (14) out.
+  ci quarantine filter --phase <name> --runner nextest|playwright|list [--only] [--json]
+                        What the phase's runner leaves out: a nextest
+                        filterset for -E, a Playwright --grep-invert pattern,
+                        or one test a line. Fails as check does for the
+                        phase. --only selects the quarantined tests instead,
+                        for the scheduled run, and doesn't fail on expiry.
+  ci quarantine report --phase <name> --junit <file>... [--commit <sha>] [--dry-run] [--json]
+                        After the scheduled run of the quarantined tests:
+                        each one's outcome from the run's JUnit XML, and
+                        ci.quarantine-passed through ci.green.notify for each
+                        that passed. Exits 0 whatever the tests did.
   ci run plan|apply --env <env> --base <sha> [--pr <n>] [--commit <sha>]
               [--forge github|gitlab|forgejo] [--gate <name>] [--wave-gate <name>]
               [--branch <name>] [--events-json] [--report-url <url>] [--image <image>]
@@ -471,11 +484,12 @@ Releases:
                         that exists; stops on a conflict, naming the change
                         and files, and writes nothing. A dry run unless --yes,
                         which moves the branch and pushes it.
-  release candidates [--env <env>] [--json]
+  release candidates [--env <env>] [--forge-issues] [--json]
                         The green commits of trunk a release can be cut from,
                         newest first, each with the commits, work items, pull
                         requests and flags it would ship, and what each
-                        environment runs.
+                        environment runs. --forge-issues asks the forge which
+                        issues each pull request closes, once per pull request
   release publish <label|digest> [--yes] [--allow-unsigned]
                   [--require-provenance] [--json]
                         Publish a cut release to the targets release.publish
@@ -516,6 +530,10 @@ Change sets:
                         [--member <name>] [--json]  bound, stored on
                                           chant/lifecycle under its digest, each
                                           entry with its graph node. Read-only.
+  plan stale <digest>   Whether anything applied to the plan's op or
+                        [--member <name>] [--json]  environment after the
+                                          plan was recorded, and which applies.
+                                          Exit 2 when stale. Read-only.
 
 Ops:
   run <name>            Run an Op on the resolved runtime (--on; local by default)
@@ -645,6 +663,12 @@ Ops:
                         file at base lists for --actor. --relayed-by
                         <principal> records who carried the approval to chant
                         for --actor (a follower, a bot); --sign covers it.
+                        --statement prints the bytes an approval signs, at a
+                        time it fixes, and records nothing; --signature
+                        <file|-> --at <time> then records a signature made
+                        elsewhere over them (an ssh signature, or a passkey's
+                        WebAuthn assertion checked against .chant/trust.json's
+                        passkeys), which counts as --sign does (#4646)
                         --resume then starts the CI job that waits at the
                         gate again (GitHub re-run, GitLab retry, Forgejo
                         dispatch) with CHANT_FORGE_TOKEN
@@ -1112,14 +1136,16 @@ Workspace (level 1, #2524):
                         Each composite instance the members declare, with the
                         components whose contract can deploy it; an instance
                         with none lists an empty set
-  workspace graph --intent <path[:start-end]|path#symbol|member/node|sha> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--json]
+  workspace graph --intent <path[:start-end]|path#symbol|member/node|sha> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--forge-issues] [--json]
                         The intent graph over one region: the commits that
                         touched it, the decisions whose constrains cover it,
                         the artifacts they pin, and findings with closed codes.
                         Without --kind, every record kind the declaration names.
                         --follow-squash follows a squash merge to its pull
-                        request's commits, fetching a missing ref from origin
-  workspace graph --intent --record <id> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--json]
+                        request's commits, fetching a missing ref from origin.
+                        --forge-issues asks the forge which issues each
+                        commit's pull request closes
+  workspace graph --intent --record <id> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--forge-issues] [--json]
                         One decision's intent walk over every path: and member:
                         entry it constrains: the commits in its window, each
                         own, worked, within-other or unexplained, with counts
@@ -1808,6 +1834,7 @@ export const commandRegistry: CommandDef[] = [
   // #4098: the run index at the report URL.
   // #4147: a provisioner's signed word that it started a runner for one job, signed and checked.
   { name: "ci runner-start", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-runner-start")).runCiRunnerStart(ctx) },
+  { name: "ci quarantine", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-quarantine")).runCiQuarantine(ctx) },
   { name: "ci runs", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-run-index")).runCiRuns(ctx) },
   { name: "ci serve", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-serve")).runCiServe(ctx) },
   // #4026: the release cut from a green commit (ws-104). Imported on first use.
@@ -1827,6 +1854,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "change-set summary", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/change-set")).runChangeSetSummary(ctx) },
   // #4022: the change set a gate bound, read from chant/lifecycle by its digest.
   { name: "change-set show", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/change-set")).runChangeSetShow(ctx) },
+  // #4648: whether anything applied to a plan's targets after it was recorded. Read-only, imported on first use.
+  { name: "plan stale", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/plan")).runPlanStale(ctx) },
   { name: "init", handler: runInit, runsNoConfig: true },
   { name: "init lexicon", handler: runInitLexicon },
 { name: "update", handler: runUpdate },

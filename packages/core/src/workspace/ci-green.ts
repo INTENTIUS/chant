@@ -57,12 +57,14 @@ import { judgeCommits, mergeCommits, readWorkIndex, type CommitLink } from "./co
 import { execFileSync } from "node:child_process";
 import { greenBranches, laneOf, laneTagPrefixes, readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError, type CiGreen, type CiPhase, type CiSource } from "./declaration";
 import { makeNotifyEvent, sendNotify, type NotifyFields } from "../notify";
+import { lifecycleRemoteOverride } from "../lifecycle/ledger-remote";
 import type { CheckRun, CiForge, OpRunRef } from "./ci-green-forge";
 import type { OpRunRecord } from "../op/runtime";
 import { readRunLedger } from "../lifecycle/run-ledger";
 import { fetchLifecycleStatus, listFilesInDir, listLedgerTrees, pushLifecycleStatus, writeLedgerFiles } from "../lifecycle/git";
 import { ledgerRecordingOff } from "../lifecycle/no-record";
-import { agedOut, buildRequestAnnotation, CI_BUILD_TAG_PREFIX, CI_LEDGER_REF, planBuilds, readBuildRequests, readCiRecords, recordOf, recordPath, requestedBuild, sameRecord, type BuildRequest, type CiRecord } from "./ci-builds";
+import { NEXT_RELEASE } from "../release-floors";
+import { agedOut, branchRecordPath, buildRequestAnnotation, CI_BUILD_TAG_PREFIX, CI_LEDGER_REF, planBuilds, readBuildRequests, readCiBranchRecord, readCiRecords, recordOf, recordPath, requestedBuild, sameRecord, type BuildRequest, type CiBranchRecord, type CiRecord } from "./ci-builds";
 import { dispatchableWorkflows, MERGE_QUEUE_VERDICT_JOB, readWorkflowSources } from "./ci-green-workflow";
 import { signOpRunRecord, verifyOpRunStatement } from "./trust/op-run-statement";
 import type { ReasonCode } from "./reason-codes";
@@ -83,6 +85,10 @@ export const CI_REVOKED_TAG_PREFIX = "ci/revoked/";
 export const CI_GREEN_LANES_FLOOR = "0.124.61";
 /** The first chant whose tick sends `ci.red`, `ci.culprit` and `ci.green` through `ci.green.notify` (#4645). */
 export const CI_TICK_NOTIFY_FLOOR = "0.124.61";
+/** The first chant whose tick sends `ci.stale` after `ci.green.notify.staleAfter` hours without a green commit (#4678). */
+export const CI_STALE_NOTIFY_FLOOR = NEXT_RELEASE;
+/** How many first-parent commits the tick reads back looking for the newest green one, for `ci.stale` (#4678). */
+export const CI_STALE_WALK = 200;
 /** The first chant that writes a merge queue's trigger and verdict job, and reads `chant ci verdict` (#4644). */
 export const CI_MERGE_QUEUE_FLOOR = "0.124.61";
 
@@ -806,7 +812,35 @@ export async function ciTick(req: TickRequest): Promise<TickResult> {
   // #4645: what to tell people, decided from the records this tick writes. Without records a tick can't
   // remember what it sent, so it sends nothing rather than the same event every time.
   const canRecord = ledgerOk && !ledgerRecordingOff();
-  const events = green.notify && canRecord ? tickEvents({ green, planned, records, builds, requests, now }) : [];
+  const events: { fields: NotifyFields; mark?: ReturnType<typeof tickEvents>[number]["mark"]; stale?: CiBranchRecord["stale"] }[] =
+    green.notify && canRecord ? tickEvents({ green, planned, records, builds, requests, now }) : [];
+  // #4678: ci.stale, from the tags as this tick leaves them, and the ci.green that ends its stretch.
+  const branchBefore = green.notify && canRecord ? readCiBranchRecord(top, green.branch) : undefined;
+  let branchAfter = branchBefore;
+  if (green.notify && canRecord && (green.notify.staleAfter !== undefined || (branchBefore?.stale && !branchBefore.stale.ended))) {
+    const greenNow = new Set(tags.green.keys());
+    const revokedNow = new Set(tags.revoked.keys());
+    for (const c of planned) {
+      if (c.made?.tag === `${CI_GREEN_TAG_PREFIX}${c.sha}`) greenNow.add(c.sha);
+      if (c.made?.tag === `${CI_REVOKED_TAG_PREFIX}${c.sha}`) revokedNow.add(c.sha);
+    }
+    const inWindow = new Set(planned.map((c) => c.sha));
+    const answering = events.find((e) => e.fields.event === "ci.green");
+    const stale = staleEvents({
+      green,
+      walk: firstParents(top, tracking, CI_STALE_WALK),
+      isGreen: (sha) => greenNow.has(sha) && !revokedNow.has(sha),
+      judged: (sha) => inWindow.has(sha) || records.has(sha),
+      stale: branchBefore?.stale,
+      answering: answering?.fields.ci!.commit,
+      now,
+    });
+    if (stale.endedBy && answering) {
+      answering.fields = { ...answering.fields, ci: { ...answering.fields.ci!, since: stale.endedBy.since } };
+      answering.stale = stale.endedBy;
+    }
+    events.push(...stale.events);
+  }
   const notified: TickResult["notified"] = [];
   const marks = new Map<string, NonNullable<CiRecord["notified"]>>();
   for (const e of events) {
@@ -823,12 +857,15 @@ export async function ciTick(req: TickRequest): Promise<TickResult> {
       continue;
     }
     notified.push({ event: e.fields.event, commit: e.fields.ci!.commit, sent: deliveries.length > 0 });
-    marks.set(e.mark.sha, { ...(marks.get(e.mark.sha) ?? {}), ...e.mark.notified });
+    if (e.mark) marks.set(e.mark.sha, { ...(marks.get(e.mark.sha) ?? {}), ...e.mark.notified });
+    if (e.stale) branchAfter = { schema: 1, branch: green.branch, stale: e.stale };
   }
   let recorded: string[] = [];
   if (!req.dryRun) {
     const asked = await askForBuilds({ top, remote, green, forge, builds, requests, records, planned, warnings });
-    recorded = canRecord ? await writeRecords({ top, green, planned, records, builds, requests: asked.live, dispatched: asked.dispatched, now, warnings, notified: marks }) : [];
+    recorded = canRecord
+      ? await writeRecords({ top, green, planned, records, builds, requests: asked.live, dispatched: asked.dispatched, now, warnings, notified: marks, branchRecord: branchAfter !== branchBefore ? branchAfter : undefined })
+      : [];
   }
   return {
     branch: green.branch,
@@ -906,6 +943,97 @@ export function tickEvents(input: {
       mark: { sha: answered.sha, notified: { green: sha } },
     });
   }
+  return out;
+}
+
+/** A first-parent commit and when it was committed, ISO 8601. */
+export interface StaleWalkCommit {
+  sha: string;
+  committed: string;
+}
+
+/** `ref`'s first-parent commits, newest first, `max` at most, with their commit times. */
+function firstParents(top: string, ref: string, max: number): StaleWalkCommit[] {
+  return git(top, ["log", "--first-parent", `--max-count=${max}`, "--format=%H %ct", ref])
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => line.split(" "))
+    .map(([sha, ct]) => ({ sha: sha!, committed: iso(new Date(Number(ct) * 1000)) }));
+}
+
+/**
+ * `ci.stale` and the `ci.green` that ends its stretch (#4678). The red
+ * stretch is the first-parent commits above the newest green one in `walk`;
+ * with no green one there, the commits down to the oldest the tick judged,
+ * so commits from before the tick ran don't count. When the stretch's
+ * oldest commit (`since`) was committed `staleAfter` hours ago or more and
+ * the branch's record has no open stretch, it sends `ci.stale` and opens
+ * one. An open stretch whose `since` is no longer above the newest green
+ * commit has ended: the `ci.green` the tick sends anyway (`answering`)
+ * names `since` and closes it (`endedBy`), or else this sends a `ci.green`
+ * for the newest green commit. Each event carries the branch record's
+ * `stale` as it is once the event is told. Pure.
+ */
+export function staleEvents(input: {
+  green: CiGreen;
+  /** The branch's first-parent commits, newest first. */
+  walk: readonly StaleWalkCommit[];
+  /** A green tag, this tick's included, and no revoked one. */
+  isGreen: (sha: string) => boolean;
+  /** The tick judged it: it is in the window or has a record. */
+  judged: (sha: string) => boolean;
+  /** The branch record's `stale`. */
+  stale: CiBranchRecord["stale"];
+  /** The commit of the `ci.green` the tick sends anyway, if it does. */
+  answering?: string;
+  now: Date;
+}): { events: { fields: NotifyFields; stale: NonNullable<CiBranchRecord["stale"]> }[]; endedBy?: NonNullable<CiBranchRecord["stale"]> } {
+  const { green, walk, now } = input;
+  const branch = green.branch;
+  const at = walk.findIndex((c) => input.isGreen(c.sha));
+  const lastGreen = at >= 0 ? walk[at]!.sha : null;
+  let end = at;
+  if (at < 0) for (let i = 0; i < walk.length; i++) if (input.judged(walk[i]!.sha)) end = i + 1;
+  const stretch = walk.slice(0, Math.max(end, 0));
+  const out: ReturnType<typeof staleEvents> = { events: [] };
+  const short = (sha: string) => sha.slice(0, 12);
+  let open = input.stale && !input.stale.ended ? input.stale : undefined;
+  if (open && lastGreen && !stretch.some((c) => c.sha === open!.since)) {
+    const ended = { ...open, ended: input.answering ?? lastGreen };
+    if (input.answering) out.endedBy = ended;
+    else {
+      out.events.push({
+        fields: {
+          source: "chant",
+          event: "ci.green",
+          summary: `${branch} is green again at ${short(lastGreen)}, after no green commit since ${short(open.since)}`,
+          targets: [],
+          ci: { branch, commit: lastGreen, since: open.since },
+          run: { commit: lastGreen },
+        },
+        stale: ended,
+      });
+    }
+    open = undefined;
+  }
+  const staleAfter = green.notify?.staleAfter;
+  const since = stretch.at(-1);
+  if (open || staleAfter === undefined || !since) return out;
+  const age = now.getTime() - Date.parse(since.committed);
+  if (age < staleAfter * 3_600_000) return out;
+  const hours = Math.floor(age / 3_600_000);
+  const tip = walk[0]!.sha;
+  out.events.push({
+    fields: {
+      source: "chant",
+      event: "ci.stale",
+      summary: `${branch} has had no green commit for ${hours} hours: ${stretch.length} commit${stretch.length === 1 ? "" : "s"} since ${short(since.sha)}${lastGreen ? `, above the green ${short(lastGreen)}` : ""}`,
+      targets: [],
+      ci: { branch, commit: tip, since: since.sha, ...(lastGreen ? { lastGreen } : {}), hours },
+      run: { commit: tip },
+    },
+    stale: { since: since.sha, lastGreen, at: iso(now) },
+  });
   return out;
 }
 
@@ -1015,6 +1143,8 @@ async function writeRecords(input: {
   warnings: string[];
   /** What the tick told people this time (#4645), merged into each commit's `notified`. */
   notified?: ReadonlyMap<string, NonNullable<CiRecord["notified"]>>;
+  /** The branch's record, when what it told about a stretch changed (#4678). */
+  branchRecord?: CiBranchRecord;
 }): Promise<string[]> {
   const { top, green, planned, records, builds, requests, now, warnings } = input;
   const writes: { path: string; content: string }[] = [];
@@ -1035,6 +1165,7 @@ async function writeRecords(input: {
     if (inWindow.has(sha) || r.state !== "pending") continue;
     writes.push({ path: recordPath(sha), content: `${JSON.stringify(agedOut(r, now), null, 2)}\n` });
   }
+  if (input.branchRecord) writes.push({ path: branchRecordPath(input.branchRecord.branch), content: `${JSON.stringify(input.branchRecord, null, 2)}\n` });
   if (writes.length === 0) return [];
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
@@ -1467,7 +1598,8 @@ export type CiBaseDocument =
  * job that failed. A commit with no record (outside the tick's window)
  * counts when it has a green tag and no revoked one, as `ci last-green`
  * reads them. Reads local refs only: the records on `chant/lifecycle`, or
- * on `origin/chant/lifecycle` when there is no local branch, and the tags.
+ * on `origin/chant/lifecycle` (or the remote `CHANT_LIFECYCLE_REMOTE`
+ * names) when there is no local branch, and the tags.
  */
 export function ciBase(req: { cwd: string; from?: string; branch?: string; phase?: string; lane?: string; remote?: string }): CiBaseDocument {
   const head = { $schema: CI_LAST_GREEN_SCHEMA_ID, contract: CI_LAST_GREEN_CONTRACT_VERSION, chant: readerVersion() };
@@ -1487,7 +1619,7 @@ export function ciBase(req: { cwd: string; from?: string; branch?: string; phase
     }
     const branchRef = tryGit(top, ["rev-parse", "--verify", "--quiet", `refs/remotes/${req.remote ?? "origin"}/${green.branch}^{commit}`]) ?? tryGit(top, ["rev-parse", "--verify", "--quiet", `refs/heads/${green.branch}^{commit}`]);
     const tags = readCiTags(top, green, branchRef, lane?.name);
-    const ledger = tryGit(top, ["rev-parse", "--verify", "--quiet", CI_LEDGER_REF]) !== null ? CI_LEDGER_REF : `refs/remotes/${req.remote ?? "origin"}/chant/lifecycle`;
+    const ledger = tryGit(top, ["rev-parse", "--verify", "--quiet", CI_LEDGER_REF]) !== null ? CI_LEDGER_REF : `refs/remotes/${lifecycleRemoteOverride() ?? req.remote ?? "origin"}/chant/lifecycle`;
     const records = readCiRecords(top, ledger);
     const phases = req.phase !== undefined ? [req.phase] : (lane?.require ?? green.require);
     const builtHere = (r: CiRecord) =>

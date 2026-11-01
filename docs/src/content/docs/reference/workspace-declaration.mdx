@@ -307,7 +307,7 @@ A record's `by`, `decided_by`, reviewer or answerer, and a gate approval's `--ac
 | Form | Written as | What vouches for it |
 |---|---|---|
 | forge identity | `github:<login>`, `gitlab:<login>`, or `<forge>@<host>:<login>` for `forgejo`, `gitea` or a self-hosted `github` or `gitlab`, such as `forgejo@codeberg.org:alice` | The surface that signed the person in through the forge. chant records it as given, folding case. |
-| signer | a principal `.chant/allowed_signers` lists at base, often the person's forge identity | A seal made with `--sign` by a key listed for that principal, verified against the signers at base. |
+| signer | a principal `.chant/allowed_signers` lists at base, often the person's forge identity, or one with a passkey under `passkeys` in `.chant/trust.json` | A seal made with `--sign` by a key listed for that principal, or a signature made elsewhere and brought with `--signature` ([below](#approvals-signed-outside-chant)), verified against the signers and passkeys at base. |
 | role holder | a principal holding the `agent`, `runner` or `service` role at base, or listed by a declared agent session | The role grant at base. Not a person. |
 | name | anything else, such as a hud roster name or `$USER` | Nothing. |
 
@@ -326,7 +326,7 @@ The role grants in `.chant/trust.json` and the signers file name people by the s
 | Field | Value |
 |---|---|
 | `attribution` | `any`, the default, takes any name. `identified` refuses a name: [`records new`, `amend` and `review`](/chant/cli/workspace-records/#writing-records), [`points answer`](/chant/cli/workspace-points/) and `chant approve` refuse a `--by`, author field, answerer or `--actor` that is not a forge identity, a signer or a role holder, with `principal-unidentified`. |
-| `gates` | Gates by name. A gate of that name, in any member, Op or component, counts only an approval sealed with `chant approve --sign` by a key the signers file at base lists for its approver. With `class`, the approver must also be in that class, read from the role grants at base. A class no pinned package supplies lets nothing through. Without a signers file at base, nothing passes. The gate named `release` also says who may cut a release: [`chant release cut`](/chant/cli/release/#who-may-cut) then needs `--sign`, by an actor in its class. |
+| `gates` | Gates by name. A gate of that name, in any member, Op or component, counts only an approval sealed with `chant approve --sign` by a key the signers file at base lists for its approver, or signed elsewhere with such a key or a passkey `.chant/trust.json` lists and brought with `chant approve --signature`. With `class`, the approver must also be in that class, read from the role grants at base. A class no pinned package supplies lets nothing through. Without a signers file at base, nothing passes. The gate named `release` also says who may cut a release: [`chant release cut`](/chant/cli/release/#who-may-cut) then needs `--sign`, by an actor in its class. |
 | `gates.<gate>.quorum` | The approval rules an Op gate of that name takes, in place of the Op's own `approval.quorum` ([#4324](https://github.com/INTENTIUS/chant/issues/4324)). One rule or a list, each `{ targets?, count, roles? }` as in [Approval Rules](/chant/guide/approval-rules/): `count` distinct people, `roles` read from `.chant/trust.json` at base, `targets` globs over the run's environment. `notAuthor` is refused with `declaration-invalid`, since an Op gate has no author to judge by. Absent, the Op's own quorum applies. A chant older than 0.124.47 refuses the field, so set `minReader` to at least that version when you use it. |
 | `gates.<gate>.policy`, `.mode`, `.context` | The rest of an Op gate's `approval` block, read at base the way `quorum` is ([#4404](https://github.com/INTENTIUS/chant/issues/4404)). `policy` is the policy set object the owning lexicon's helper renders (the cedar lexicon's `gatePolicy()`): `kind`, `lexicon`, `name`, `version` (the digest of `text`) and `text`. `mode` is `log-only` or `enforce`. `context` is an object of strings, numbers, booleans and lists of strings. Each replaces the Op's field. A `context` key here wins over the Op's, and a key only the Op sets, such as a step output the run computes, still reaches the policy. A field this entry leaves out is read from the Op, which the change being run can edit, and [`WSP153`](/chant/cli/workspace-check/) names the gates that still rely on that. A chant older than 0.124.49 refuses the fields, so set `minReader` to at least that version when you use them. |
 
@@ -341,6 +341,57 @@ chant approve web ship --env prod --plan <digest> --actor github:alice --sign ~/
 The seal is an ssh signature in the `chant-gate` namespace over the op or component, the gate, the environment, the plan digest, the approver and the time, so it can't be moved to another plan or gate.
 
 An approval of a gate that resumes ([Resuming at the approved gate](/chant/guide/ops/#resuming-at-the-approved-gate), [#3947](https://github.com/INTENTIUS/chant/issues/3947)) also carries the digest of the checkpoint its run stored. Its seal is version 2: the signature covers one more line, `checkpoint <digest>`, after the others, and the seal records `version: 2`. Changing or removing the digest then stops the seal verifying, so the step outputs a resumed run carries on with are the ones the approver signed for. An approval with no checkpoint digest is sealed as before.
+
+### Approvals signed outside chant
+
+`--sign` needs the key on the machine running chant. A platform that collects the approval somewhere else, such as a phone with a passkey or a device key on another machine, has the person sign the same statement and hands chant the signature ([#4646](https://github.com/INTENTIUS/chant/issues/4646)):
+
+```bash
+chant approve web ship --env prod --actor github:alice --statement > statement.json
+# the platform has github:alice sign the statement's bytes, then:
+chant approve web ship --env prod --actor github:alice --at <timestamp> --signature signature.json
+```
+
+`--statement` runs the checks an approval runs, records nothing, and prints a `chant-gate-statement/v1` document whose JSON Schema ships in the package as `@intentius/chant/gate-statement.schema.json`. Its `text` is the statement and `statement` is the same bytes in base64: the lines the seal above signs, joined by LF with no final newline.
+
+```
+<op or component>
+<gate>
+<environment, or empty>
+<plan digest, or empty>
+<approver>
+<timestamp>
+relayed-by <principal>        (only when --relayed-by is given)
+checkpoint <digest>           (only when the gate resumes; seal version 2)
+```
+
+The statement fixes the time, `timestamp`, which `--at` must repeat with the same `--actor`, `--relayed-by`, `--plan` and `--env`. A time before the gate's pending fact or more than five minutes ahead is refused. `digest` is `sha256:` and the bytes' SHA-256 in hex, and `challenge` is the same hash in base64url with no padding.
+
+`--signature <file>`, or `-` for stdin, takes either of these:
+
+- An ssh signature over the bytes in the `chant-gate` namespace (`ssh-keygen -Y sign -n chant-gate -f <key>`), checked against the keys the signers file at base lists for `--actor`. A device key that is an ssh key, or a security key (`sk-ssh-ed25519`, `sk-ecdsa-sha2-nistp256`), signs this way. The seal recorded is the one `--sign` would have made.
+- A WebAuthn assertion from `navigator.credentials.get` with `challenge` as its challenge, as JSON: `{ "id", "clientDataJSON", "authenticatorData", "signature" }`, each base64url, or a `PublicKeyCredential`'s `toJSON()` with the last three under `response`. It is checked against a passkey `.chant/trust.json` at base lists for `--actor`.
+
+A passkey is listed under `passkeys` in `.chant/trust.json`:
+
+```json
+{
+  "schema": 1,
+  "passkeys": [
+    {
+      "principal": "github:alice",
+      "id": "<credential id, base64url>",
+      "publicKey": "<DER SubjectPublicKeyInfo, base64url>",
+      "rpId": "control.example.com",
+      "origins": ["https://control.example.com"]
+    }
+  ]
+}
+```
+
+`publicKey` is what `AuthenticatorAttestationResponse.getPublicKey()` returns at registration. Ed25519 (EdDSA), P-256 (ES256) and RSA (RS256) keys verify. The check follows WebAuthn level 2 for what a ledger line can be checked for. The client data's type is `webauthn.get`, its challenge is the statement's, its origin is one of `origins`, and it isn't cross-origin. The authenticator data's rpIdHash is SHA-256 of `rpId`, and its user-present and user-verified flags are both set. The signature over the authenticator data followed by SHA-256 of the client data verifies with `publicKey`. The signature counter isn't checked. Listing a passkey is a change to the trust config, a [protected write](/chant/cli/workspace-verify/#the-policy). As with ssh seals, nothing counts unless the signers file exists at base, so a workspace whose people sign only with passkeys keeps an empty one.
+
+A signature that doesn't verify for `--actor` is refused before anything is written, whether or not the gate is under `gates`. A passkey's seal on the resolution line is `{ "kind": "webauthn", "signer", "key", "signature", "clientDataJSON", "authenticatorData" }`, with the credential id as `key` and `version: 2` when it signs a checkpoint. An ssh seal has no `kind`. A run, `chant workspace status`, `@intentius/chant/gate-decision` and the seal check read either kind against the policy at base, so anyone can check the approval again offline. Chant 0.124.63 and newer write and read `passkeys` and passkey seals. An older chant reads a trust config with `passkeys` as invalid, which turns attestation off, and counts no passkey seal toward a gate.
 
 A gate that lists an old name as an alias ([Renaming a gate](/chant/guide/ops/#renaming-a-gate), [#3949](https://github.com/INTENTIUS/chant/issues/3949)) counts an approval recorded under that name only when it passes the new gate's `identity.gates` rule. The seal is checked against the op, gate, time and checkpoint digest it was signed under, which the carried line keeps in `carriedFrom`. A rename therefore doesn't break a seal. `chant build` refuses a gate whose alias `identity.gates` names when the gate has no entry of its own, or lacks the alias's class (OPS017).
 
@@ -372,8 +423,9 @@ A gate that lists an old name as an alias ([Renaming a gate](/chant/guide/ops/#r
 | `require` | yes | The phases a commit must pass to be tagged green. Each must be declared under `phases`. |
 | `preMerge` | no | The phases that must pass before the branch moves, such as the quick checks a pull request runs ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). Each must be declared under `phases`. The `trunk-curated` workflow needs at least one. |
 | `mergeQueue` | no | `true` when the branch takes changes through GitHub's merge queue ([#4644](https://github.com/INTENTIUS/chant/issues/4644)): `ci workflow` adds `merge_group` to the phases' workflows and writes `chant-merge-queue.yml`, whose `chant-verdict` job the ruleset requires. See [a merge queue](/chant/cli/ci/#a-merge-queue). Needs `minReader` 0.124.61 or newer. |
-| `notify` | no | Who `chant ci tick` tells, as an Op waves spec's [`notify`](/chant/guide/notify/#what-the-tick-sends) ([#4645](https://github.com/INTENTIUS/chant/issues/4645)): `ci.red`, `ci.culprit` and `ci.green`, each once. Needs `minReader` 0.124.61 or newer. |
+| `notify` | no | Who `chant ci tick` tells, as an Op waves spec's [`notify`](/chant/guide/notify/#what-the-tick-sends) ([#4645](https://github.com/INTENTIUS/chant/issues/4645)): `ci.red`, `ci.culprit` and `ci.green`, each once; and `ci.quarantine-passed` from the quarantine's [scheduled run](/chant/cli/ci/#the-scheduled-run). Needs `minReader` 0.124.61 or newer. `staleAfter`, a number of hours, adds [`ci.stale`](/chant/guide/notify/#a-branch-that-stays-red) when the branch has had no green commit that long, once per red stretch ([#4678](https://github.com/INTENTIUS/chant/issues/4678)); it needs `minReader` 0.124.63 or newer. |
 | `lanes` | no | Green lanes by name ([#4662](https://github.com/INTENTIUS/chant/issues/4662)), each `{ "require": [...] }` naming declared phases. A commit that passes a lane's phases gets `ci/green-<lane>/<sha>`, and a lane-green commit that later fails one gets `ci/revoked-<lane>/<sha>`, from the same tick and the same runs as `require`. A lane's name is lowercase letters, digits and dashes. Needs `minReader` 0.124.61 or newer. |
+| `quarantine` | no | Known-flaky tests the phases' runners leave out ([#4677](https://github.com/INTENTIUS/chant/issues/4677)): `{ "maxDays": 14, "phases": { "<phase>": [{ "test", "file", "issue", "until", "why" }] } }`. Each phase must be declared, `until` is the last day the test stays out (`YYYY-MM-DD`, UTC), and `file` is for a runner that names a test by its file and title, such as Playwright. `chant ci quarantine filter` prints each runner's filter, `chant ci quarantine report` reads the scheduled run, and `filter` and `chant ci quarantine check` fail when an entry is past its `until` or more than `maxDays` (14 by default) out. See [quarantine](/chant/cli/ci/#quarantine). Read by chant 0.124.63 and newer, so set `minReader` with it. |
 | `signedSince` | no | The full sha of the first commit on `branch` whose tags must be signed. A tag on it or on any commit that is not a strict first-parent ancestor of it counts only with a statement signed by a runner key; a tag on an ancestor counts unsigned. A sha that names no commit in the clone is refused with `declaration-invalid`. Absent, every tag counts. See [signed tags](/chant/cli/ci/#signed-tags). Read by chant 0.124.28 and newer, so set `minReader` with it. |
 | `source` | no | Where the tick reads each phase's results: `checks`, the default, reads the forge's check runs, and `runs` reads chant's own Op runs on `chant/lifecycle` ([#4044](https://github.com/INTENTIUS/chant/issues/4044)). With `runs`, a phase's patterns match Op names, a run counts for the commit its record names as `gitSha`, and only a run signed by a runner key counts. See [chant runs as the status source](/chant/cli/ci/#chant-runs-as-the-status-source). Read by chant 0.124.28 and newer, so set `minReader` with it. |
 
@@ -1124,6 +1176,8 @@ chant looks up from a project's directory to the git root for a declaration. The
 A project with no declaration loads no workspace code for this lookup. When a declaration exists but can't be read, a ledger write fails with the read error instead of guessing the member. There is still one branch, so pushing it and refusing a stale push work as before. One commit can write the ledgers of several members.
 
 A run started with `chant run --no-record`, or with `CHANT_NO_RECORD=1` in its environment, writes none of these ([#3955](https://github.com/INTENTIUS/chant/issues/3955)). Its writes build commits in memory that the process drops when it ends. The branch ref doesn't move and nothing is pushed to the remote, so a lease ref stays in the checkout. Reads in the same process see the run's own writes, and a gate step fails because no approval can be recorded or spent. The [`chant run` reference](/chant/cli/run/#a-test-run---no-record) has the details.
+
+The branch is fetched from and pushed to `origin`, or the first remote when there is no `origin`. Set `CHANT_LIFECYCLE_REMOTE=<name>` to use another remote, for a checkout whose `origin` is not where the ledger lives ([#4647](https://github.com/INTENTIUS/chant/issues/4647)). Every read and write of the ledger uses it: the fetch, the push and the retry after a refused push, the remote-tracking ref `refs/remotes/<name>/chant/lifecycle` that the push's lease reads, and the lease, lock and snapshot refs pushed beside the branch. A name the repository has no remote by fails the fetch and the push with a message naming it; chant never falls back to `origin` for it. An empty value counts as unset. `--no-record` is unchanged and pushes nothing anywhere.
 
 Receipts written by an `effect()` step are not on the branch. They live wherever the lexicon stores them, named by `ownership.stack` and environment, so distinct stacks keep members' receipts apart.
 

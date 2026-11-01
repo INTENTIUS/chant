@@ -35,6 +35,7 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { CHANT_INSTALL } from "./class-data";
 import { findInstalledPackage, lexiconPackageName, substituteGraphConfig } from "./kinds";
 import type { MemberPlan, RunUnit, SkippedEntry } from "./member-commands";
 
@@ -65,7 +66,7 @@ function lexiconModules(unit: RunUnit, root: string): { modules: string } | { me
   const reader = unit.reader!;
   if (!reader.lexicon) return { message: `kind ${unit.kind} names no lexicon` };
   const name = lexiconPackageName(reader.lexicon);
-  const installed = findInstalledPackage(name, root);
+  const installed = findInstalledPackage(name, root) ?? findInstalledPackage(name, CHANT_INSTALL);
   if (!installed) {
     return {
       message: `kind ${unit.kind} is read by the ${reader.lexicon} lexicon, and ${name} is not installed in a node_modules at or above ${root}; install it there to read this member`,

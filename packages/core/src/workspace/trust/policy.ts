@@ -25,6 +25,7 @@ import { posix } from "node:path";
 import { z } from "zod";
 import type { RecordSource } from "../record-source";
 import { DEFAULT_SIGNERS_PATH, TRUST_CONFIG_PATH, parseAllowedSigners, type ExcludedSigner, type Signer } from "./trust-files";
+import type { PasskeySigner } from "../../lifecycle/gate-webauthn";
 
 export {
   DEFAULT_SIGNERS_PATH,
@@ -76,6 +77,25 @@ export const trustConfigSchema = z
             principal: z.string().min(1),
             class: z.enum(["runner", "service"]),
             key: z.string().regex(/^ssh-ed25519 [A-Za-z0-9+/]+={0,2}$/, "an ssh-ed25519 public key, with no comment"),
+          })
+          .strict(),
+      )
+      .optional(),
+    /**
+     * Passkeys that sign gate approvals for people (#4646): a WebAuthn
+     * credential's id, its public key as base64url DER SubjectPublicKeyInfo,
+     * the relying party id and the origins an assertion may come from. A
+     * passkey signs only a gate approval (`chant approve --signature`).
+     */
+    passkeys: z
+      .array(
+        z
+          .object({
+            principal: z.string().min(1),
+            id: z.string().regex(/^[A-Za-z0-9_-]+$/, "a credential id, base64url with no padding"),
+            publicKey: z.string().regex(/^[A-Za-z0-9_-]+$/, "a DER SubjectPublicKeyInfo, base64url with no padding"),
+            rpId: z.string().min(1),
+            origins: z.array(z.string().min(1)).min(1),
           })
           .strict(),
       )
@@ -139,6 +159,8 @@ export interface TrustPolicy {
   runners: RunnerKey[];
   /** Runner entries that are not used, and why. */
   excludedRunners: Array<{ principal: string; reason: string }>;
+  /** Passkeys that sign people's gate approvals (#4646). Absent on a policy built by hand: none. */
+  passkeys?: PasskeySigner[];
   /** Signers admitted per return (#2552), keyed by return id. They verify that return's commits and seals only. */
   admitted: Record<string, Signer[]>;
   /**
@@ -172,7 +194,7 @@ export function policyWriters(policy: TrustPolicy): Set<string> {
 
 /** A policy with nothing in it: attestation off. */
 export function emptyPolicy(base: string | null, problems: string[] = []): TrustPolicy {
-  return { base, signersPath: DEFAULT_SIGNERS_PATH, active: false, signers: [], excluded: [], roles: {}, adopted: [], runners: [], excludedRunners: [], admitted: {}, problems };
+  return { base, signersPath: DEFAULT_SIGNERS_PATH, active: false, signers: [], excluded: [], roles: {}, adopted: [], runners: [], excludedRunners: [], passkeys: [], admitted: {}, problems };
 }
 
 /**
@@ -226,6 +248,7 @@ export function readTrustPolicy(source: RecordSource, base: string | null): Trus
     adopted: config.adopted ?? [],
     runners,
     excludedRunners,
+    passkeys: config.passkeys ?? [],
     admitted: admittedOf(config),
     problems: [],
   };

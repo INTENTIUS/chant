@@ -37,6 +37,8 @@ describe("the override-gate bundle", () => {
       "packages/core/src/intrinsic.ts",
       "packages/core/src/lifecycle/gate-ledger-select.ts",
       "packages/core/src/lifecycle/gate-seal.ts",
+      // A passkey's seal (#4646), checked with node:crypto.
+      "packages/core/src/lifecycle/gate-webauthn.ts",
       "packages/core/src/lifecycle/plan-digest.ts",
       "packages/core/src/op/gate-name.ts",
       "packages/core/src/override-gate.ts",

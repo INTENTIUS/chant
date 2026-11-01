@@ -29,6 +29,8 @@ describe("the stage-hooks bundle", () => {
       // The control repo's settings check (#4568, #4617), which the spec checks.
       "packages/core/src/control/dispatch.ts",
       "packages/core/src/lifecycle/gate-seal.ts",
+      // A passkey's seal (#4646), checked with node:crypto.
+      "packages/core/src/lifecycle/gate-webauthn.ts",
       "packages/core/src/notify-verify.ts",
       "packages/core/src/notify.ts",
       "packages/core/src/op/gate-point.ts",
