@@ -27,13 +27,13 @@ const lexiconsDir = resolve(process.cwd(), '..', 'lexicons');
 const lexiconCount = readdirSync(lexiconsDir).filter((n) => statSync(join(lexiconsDir, n)).isDirectory()).length;
 
 const pillars = [
-	{ title: 'Plain TypeScript, checked in your editor', href: '/concepts/typescript-as-data/' },
-	{ title: 'Lint rules that check meaning', href: '/guide/linting/' },
-	{ title: 'Works with Terraform, OpenTofu and Pulumi', href: '/concepts/comparison/' },
-	{ title: `${lexiconCount} lexicons, and a contract for your own`, href: '/lexicons/overview/' },
-	{ title: 'Observe, reconcile or apply, per environment', href: '/concepts/lifecycle-models/' },
+	{ title: 'One plan note on each pull request', href: '/guide/pull-request-ci/' },
+	{ title: 'Approvals bound to the plan', href: '/guide/pull-request-ci/' },
+	{ title: 'Merges and releases, your choice', href: '/concepts/trunk-and-releases/' },
 	{ title: 'Ops with gates and rollback', href: '/guide/ops/' },
+	{ title: 'Generated for GitHub, GitLab and Forgejo', href: '/cli/ci/' },
 	{ title: 'Component releases, signed and verified', href: '/components/overview/' },
+	{ title: 'Native specs, checked in your editor', href: '/concepts/typescript-as-data/' },
 	{ title: 'Local emulators, no cloud account', href: '/local-testing/overview/' },
 ];
 ---

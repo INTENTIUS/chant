@@ -26,9 +26,9 @@ export const PRODUCTS = [
 	{
 		id: 'chant',
 		name: 'chant',
-		oneLiner: 'Spec-native typed ops with per-resource locking.',
-		changes: 'You describe infrastructure in TypeScript, and chant builds the files each platform reads, such as CloudFormation templates, Kubernetes YAML and CI pipelines. Changes run as typed Ops that are checked before they apply. Each resource carries its own ownership marker, so two changes to different resources do not wait for each other.',
-		fits: 'terragucci and plywood are built on it. Use chant directly when you want to write the infrastructure itself in TypeScript.',
+		oneLiner: 'Cloud native ops and governance.',
+		changes: 'chant generates the pull-request pipeline for your repository and runs it as jobs in your own CI, on GitHub, GitLab or Forgejo. A pull request gets one plan note, an approval covers the plan it was shown, and changes reach AWS, Azure, GCP and Kubernetes through each platform\'s own spec.',
+		fits: 'terragucci and plywood are built on its pipelines.',
 		starts: {
 			tofu: `${IO}/chant/for/terraform-pulumi/`,
 			pulumiDiy: `${IO}/chant/for/terraform-pulumi/`,
