@@ -77,6 +77,23 @@
           "lifecycle": { "type": "string", "minLength": 1, "description": "The git remote this environment's approvals, effect receipts and ledger records are pushed to." }
         }
       }
+    },
+    "inputs": {
+      "type": "object",
+      "description": "Optional: what a deploy of this component is made from (#4695). A run under a release (chant run --components --release) skips the component when these are the same as in the release the environment runs it from, and records the skip; --deploy-unchanged deploys it anyway. Omitted, the component deploys with every release. Read by chant 0.124.63 and newer.",
+      "additionalProperties": false,
+      "properties": {
+        "paths": {
+          "type": "array",
+          "description": "Git pathspecs, relative to the member's directory, that the component is built and deployed from. A change to any file they match between the two releases' commits deploys it. Magic such as :(exclude) and :(top) is git's.",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "params": {
+          "type": "array",
+          "description": "Build parameters, by name, whose values in the environment's target the component deploys from. A value that differs between the two releases deploys it.",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
     }
   },
   "$defs": {

@@ -24,6 +24,7 @@ interface Component {
   liveNames?: string[];       // optional: live entity/resource name(s), when they differ from `name`
   composites?: string[];      // optional: composite kind(s) this component deploys, when a consumer can't infer it from `name`
   environments?: ComponentEnvironmentDeclaration[]; // optional: where a release goes, by environment
+  inputs?: { paths?: string[]; params?: string[] }; // optional: what a deploy is made from, so an unchanged one is skipped
 }
 ```
 
@@ -131,6 +132,31 @@ export const app: Component = {
 ```
 
 A release Op that imports the component reads its environments directly. [`chant workspace graph --composites`](/chant/cli/workspace-graph/#composites-and-components) lists each one with its `site`, so a reader such as a deploy button needs no config key of its own. The member's `chant.config.ts` `environments` still decide which names `chant run --env` accepts.
+
+## Inputs
+
+A component may say what a deploy of it is made from ([#4695](https://github.com/INTENTIUS/chant/issues/4695)), so a release leaves it alone when none of that changed. This matters for a component whose deploy costs something even when nothing changed: a hub that drops every connection it relays when it restarts, say.
+
+```ts
+export const control: Component = {
+  name: "control",
+  dependsOn: ["platform"],
+  inputs: {
+    paths: [
+      "src/control.component.ts",
+      "src/control.fly.ts",
+      "../crates/control",
+      "../web",
+      ":(exclude)../web/e2e",
+      "../Cargo.lock",
+    ],
+    params: ["region"],
+  },
+  deploy: [/* ... */],
+};
+```
+
+`paths` are git pathspecs read from the member's directory, so `:(exclude)` and `:(top)` work as they do for `git diff`. `params` are build parameters by name. A [run under a release](/chant/cli/run/#unchanged-inputs) compares them with the release the environment runs the component from. List the component's own files among the paths when a change to its steps should deploy it. The files its deploy reads, as the cut records them (a `fly-release` plan, a template), are compared whether or not they are listed. A component that declares no `inputs` deploys with every release. Read by chant 0.124.63 and newer.
 
 ## Read next
 

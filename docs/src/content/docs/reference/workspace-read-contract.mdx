@@ -1018,6 +1018,7 @@ The release model adds these fields to contract 1. Every one is optional or null
 | `featureFlags` | `status` member | each flag, its value per environment, the work item it hides and whether it is due for removal ([#4024](https://github.com/INTENTIUS/chant/issues/4024)) | 0.124.29 |
 | `featureFlags` | `status` member | each flag and its value per environment | the release with #4024 |
 | the `delivery-metrics` output schema, `v1` | the read contract | the four DORA metrics per member and environment ([#4039](https://github.com/INTENTIUS/chant/issues/4039)) | 0.124.29 |
+| `unchangedSince` | `ReleaseRecord` | on a record of a component a run under a release skipped, its inputs unchanged: the record of the deploy that stays, `{ env, runId, timestamp }`, whose digest it repeats. Nothing was deployed ([#4695](https://github.com/INTENTIUS/chant/issues/4695)) | 0.124.63 |
 | `artifactDigests[].ref` | `_releases/<releaseDigest>.json` | on an image handed to the cut, `<repository>@<digest>`. It is in the release digest, so a chant older than its floor reads such a release as one that does not match its digest. Handed to the cut by digest ([#4694](https://github.com/INTENTIUS/chant/issues/4694)) | 0.124.63 |
 
 ## Delivery metrics

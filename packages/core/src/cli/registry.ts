@@ -816,6 +816,8 @@ export interface ParsedArgs {
   releasePlanFile?: string;
   /** `chant components promote --release <label|digest>` (#4026): deploy under that release, reading the templates its target for `--to` recorded. `chant run --components --release <label|digest>` (#4043): the run is of that release, which must have been cut from the checked-out commit and have a target for `--env`; the release records the run writes name it, and a component the release recorded an artifact for is deployed from it without a build (#4694). */
   release?: string;
+  /** `chant run --components --release --deploy-unchanged` (#4695): deploy every component, also one whose declared inputs are the same as in the release the environment runs it from. */
+  deployUnchanged?: boolean;
   /** `chant release cut --build <command>` (#4026): the shell command run in the member's directory before each environment's templates are read, with `CHANT_ENV` set to the environment. */
   buildCommand?: string;
   /** `chant release compile --artifacts` (#4026, internal): build the artifacts of `--component` instead of compiling the environment. */

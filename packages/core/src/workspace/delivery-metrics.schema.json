@@ -191,7 +191,7 @@
             "count": {
               "type": "integer",
               "minimum": 0,
-              "description": "Deploy records whose timestamp is in the window, leaving out redeploys. Rollbacks count."
+              "description": "Deploy records whose timestamp is in the window, leaving out redeploys. Rollbacks count. A record with unchangedSince (#4695) deployed nothing and is in no metric."
             },
             "redeploys": {
               "type": "integer",

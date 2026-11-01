@@ -111,6 +111,9 @@ const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: str
   { file: "docs/src/content/docs/reference/workspace-declaration.mdx", text: "it needs `minReader` {v} or newer.", count: 1, floor: "CI_STALE_NOTIFY_FLOOR" },
   { file: "packages/core/src/workspace/releases.schema.json", text: "Written by chant {v} and newer.", count: 1, floor: "RELEASE_IMAGE_REF_FLOOR" },
   { file: "docs/src/content/docs/cli/release.mdx", text: "so a release that records one is read by chant {v} and newer.", count: 1, floor: "RELEASE_IMAGE_REF_FLOOR" },
+  { file: "packages/core/src/components/component.schema.json", text: "Read by chant {v} and newer.", count: 1, floor: "UNCHANGED_INPUTS_FLOOR" },
+  { file: "docs/src/content/docs/components/component-contract.mdx", text: "A component that declares no `inputs` deploys with every release. Read by chant {v} and newer.", count: 1, floor: "UNCHANGED_INPUTS_FLOOR" },
+  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "Nothing was deployed ([#4695](https://github.com/INTENTIUS/chant/issues/4695)) | {v} |", count: 1, floor: "UNCHANGED_INPUTS_FLOOR" },
   { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "Handed to the cut by digest ([#4694](https://github.com/INTENTIUS/chant/issues/4694)) | {v} |", count: 1, floor: "RELEASE_IMAGE_REF_FLOOR" },
 ];
 

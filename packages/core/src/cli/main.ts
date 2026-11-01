@@ -621,7 +621,10 @@ Ops:
                         without its build steps, from that artifact; a
                         release-image step gets the image handed to the cut,
                         and a component whose artifact is missing is refused
-                        before anything runs (#4694)
+                        before anything runs (#4694). A component whose
+                        declared inputs are the same as in the release the
+                        environment runs it from is skipped and the skip
+                        recorded; --deploy-unchanged deploys it (#4695)
                         --progress-json: stream one NDJSON RunProgressEvent
                         per line to stdout while the run executes, for a
                         consumer to render live wave/component/phase/step
@@ -1502,6 +1505,9 @@ Options:
                         successful \`run --components\` deploy (default: on;
                         also settable via chant.config.ts's
                         release.autoRecord: false; #597)
+  --deploy-unchanged    (run --components --release) Deploy a component that
+                        declares inputs even when they are the same as in
+                        the release the environment runs it from (#4695)
   --no-record           (run <op>, run --components) Run every step but record
                         nothing on chant/lifecycle and push nothing: no
                         release, run record, receipt or gate fact. A gate

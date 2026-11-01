@@ -582,6 +582,30 @@ describe("runComponents", () => {
     expect(deploy.calls).toHaveLength(1);
   });
 
+  test("prepare sees the inputs a component declares, and a component left with no phases runs nothing while its dependents run (#4695)", async () => {
+    await writeFile(
+      join(testDir, "svc.component.ts"),
+      `export const hub = { name: "hub", dependsOn: [], inputs: { paths: ["src"] }, deploy: [{ phase: "Apply", steps: [{ kind: "deploy-thing" }] }] };
+export const web = { name: "web", dependsOn: ["hub"], deploy: [{ phase: "Apply", steps: [{ kind: "deploy-thing" }] }] };`,
+    );
+    const deploy = fakeCapability("deploy-thing");
+    const registry = new CapabilityRegistry();
+    registry.register(deploy);
+    let inputs: unknown;
+    const skip = async (components: DriverComponent[], declared: { inputs: Readonly<Record<string, unknown>> }) => {
+      inputs = declared.inputs;
+      return { components: components.map((c) => (c.name === "hub" ? { ...c, deploy: [] } : c)) };
+    };
+    for (const selector of ["hub", "hub,web", "all"]) {
+      deploy.calls.length = 0;
+      const result = await runComponents(testDir, selector, { registry, prepare: skip });
+      expect(result.success).toBe(true);
+      expect(inputs).toEqual({ hub: { paths: ["src"] } });
+      expect(deploy.calls.map((c) => c.ctx.component)).toEqual(selector === "hub" ? [] : ["web"]);
+    }
+  });
+
+
   test("runs a component whose dependsOn names infra outside the discovered set (no UnknownDependencyError)", async () => {
     await writeFile(
       join(testDir, "svc.component.ts"),
