@@ -8,9 +8,9 @@ import Landing from '../../components/Landing.astro';
 
 <Landing />
 
-## One note for every change
+## Changes and approvals
 
-A pull request gets one plan note. It covers the components the change touches and the components that depend on them, and nothing else. A reviewer approves the digest of that plan. [Generated CI for pull requests](/chant/guide/pull-request-ci/).
+A change gets one plan note. It covers the components the change touches and the components that depend on them, and nothing else. An approval covers the exact plan it was shown. [Changes and approvals](/chant/guide/pull-request-ci/).
 
 ## Your forge, your pipelines
 
@@ -22,7 +22,7 @@ npx chant build --components --generate <forge> --pr-loop --env <env> --output <
 
 | Where it runs | Page |
 |---|---|
-| GitHub, GitLab or Forgejo | [Generated CI for pull requests](/chant/guide/pull-request-ci/) |
+| GitHub, GitLab or Forgejo | [Changes and approvals](/chant/guide/pull-request-ci/) |
 | A runner on your own host, with GitHub, Forgejo or plain git | [chant ci](/chant/cli/ci/) |
 
 ## Merges and releases

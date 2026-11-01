@@ -27,7 +27,7 @@ export const PRODUCTS = [
 		id: 'chant',
 		name: 'chant',
 		oneLiner: 'Cloud native ops and governance.',
-		changes: 'chant generates the pull-request pipeline for your repository and runs it as jobs in your own CI, on GitHub, GitLab or Forgejo. A pull request gets one plan note, an approval covers the plan it was shown, and changes reach AWS, Azure, GCP and Kubernetes through each platform\'s own spec.',
+		changes: 'chant generates the pipeline for your repository and runs it as jobs in your own CI, on GitHub, GitLab or Forgejo. A change gets one plan note, an approval covers the plan it was shown, and changes reach AWS, Azure, GCP and Kubernetes through each platform\'s own spec.',
 		fits: 'terragucci and plywood are built on its pipelines.',
 		starts: {
 			tofu: `${IO}/chant/for/terraform-pulumi/`,

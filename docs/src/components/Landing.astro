@@ -27,7 +27,7 @@ const lexiconsDir = resolve(process.cwd(), '..', 'lexicons');
 const lexiconCount = readdirSync(lexiconsDir).filter((n) => statSync(join(lexiconsDir, n)).isDirectory()).length;
 
 const pillars = [
-	{ title: 'One plan note on each pull request', href: '/guide/pull-request-ci/' },
+	{ title: 'One plan note for each change', href: '/guide/pull-request-ci/' },
 	{ title: 'Approvals bound to the plan', href: '/guide/pull-request-ci/' },
 	{ title: 'Merges and releases, your choice', href: '/concepts/trunk-and-releases/' },
 	{ title: 'Ops with gates and rollback', href: '/guide/ops/' },
