@@ -219,7 +219,8 @@ function digestStep(s: PulumiStep) {
     op: s.op ?? null,
     urn: s.urn ?? null,
     provider: s.provider ?? null,
-    id: s.newState?.id ?? s.oldState?.id ?? null,
+    // A replacement's new id is one the engine made up for this preview, so the recorded id comes first.
+    id: s.oldState?.id ?? s.newState?.id ?? null,
     before: s.oldState?.inputs ?? null,
     after: pulumiPlannedInputs(s),
     diffReasons: [...(s.diffReasons ?? [])].sort(),
