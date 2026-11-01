@@ -63,7 +63,6 @@ import type { OpRunRecord } from "../op/runtime";
 import { readRunLedger } from "../lifecycle/run-ledger";
 import { fetchLifecycleStatus, listFilesInDir, listLedgerTrees, pushLifecycleStatus, writeLedgerFiles } from "../lifecycle/git";
 import { ledgerRecordingOff } from "../lifecycle/no-record";
-import { NEXT_RELEASE } from "../release-floors";
 import { agedOut, branchRecordPath, buildRequestAnnotation, CI_BUILD_TAG_PREFIX, CI_LEDGER_REF, planBuilds, readBuildRequests, readCiBranchRecord, readCiRecords, recordOf, recordPath, requestedBuild, sameRecord, type BuildRequest, type CiBranchRecord, type CiRecord } from "./ci-builds";
 import { dispatchableWorkflows, MERGE_QUEUE_VERDICT_JOB, readWorkflowSources } from "./ci-green-workflow";
 import { signOpRunRecord, verifyOpRunStatement } from "./trust/op-run-statement";
@@ -86,7 +85,7 @@ export const CI_GREEN_LANES_FLOOR = "0.124.61";
 /** The first chant whose tick sends `ci.red`, `ci.culprit` and `ci.green` through `ci.green.notify` (#4645). */
 export const CI_TICK_NOTIFY_FLOOR = "0.124.61";
 /** The first chant whose tick sends `ci.stale` after `ci.green.notify.staleAfter` hours without a green commit (#4678). */
-export const CI_STALE_NOTIFY_FLOOR = NEXT_RELEASE;
+export const CI_STALE_NOTIFY_FLOOR = "0.124.63";
 /** How many first-parent commits the tick reads back looking for the newest green one, for `ci.stale` (#4678). */
 export const CI_STALE_WALK = 200;
 /** The first chant that writes a merge queue's trigger and verdict job, and reads `chant ci verdict` (#4644). */

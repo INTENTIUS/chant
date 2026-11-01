@@ -156,7 +156,7 @@ The formula points at the `url` of each asset, so those must download by the tim
 
 ### Pushing over SSH
 
-With `sshKeyEnv`, the target writes the tap with git over SSH and the private key in that variable, in place of the API and a token ([#4699](https://github.com/INTENTIUS/chant/issues/4699)). A deploy key reaches the one repository it was added to, where a classic token reaches every repository its user can. Read by chant 0.124.63 and newer. `tokenEnv` beside it is refused (`publish-homebrew-auth-invalid`).
+With `sshKeyEnv`, the target writes the tap with git over SSH and the private key in that variable, in place of the API and a token ([#4699](https://github.com/INTENTIUS/chant/issues/4699)). A deploy key reaches the one repository it was added to, where a classic token reaches every repository its user can. Read by chant 0.124.64 and newer. `tokenEnv` beside it is refused (`publish-homebrew-auth-invalid`).
 
 ```ts
 { type: "homebrew", tap: "acme/homebrew-tap", formula: "Formula/api.rb", template: "packaging/api.rb", assets: ["dist/api-linux-amd64.tar.gz"], url: "https://github.com/acme/api/releases/download/{tag}/{name}", sshKeyEnv: "HOMEBREW_TAP_KEY" },
@@ -199,7 +199,7 @@ The VS Code Marketplace target needs `vsce` on `PATH`, such as from `npm install
 
 ### The run's identity
 
-A target can publish with the CI run's identity in place of a stored token ([#4698](https://github.com/INTENTIUS/chant/issues/4698)), as `vsce publish --azure-credential` and `ovsx publish --trusted-publishing` do. Read by chant 0.124.63 and newer. `tokenEnv` beside either is refused, and so is an `auth` the marketplace doesn't take (`publish-marketplace-auth-invalid`).
+A target can publish with the CI run's identity in place of a stored token ([#4698](https://github.com/INTENTIUS/chant/issues/4698)), as `vsce publish --azure-credential` and `ovsx publish --trusted-publishing` do. Read by chant 0.124.64 and newer. `tokenEnv` beside either is refused, and so is an `auth` the marketplace doesn't take (`publish-marketplace-auth-invalid`).
 
 ```ts
 { type: "marketplace", marketplace: "vscode", vsix: "dist/acme.vsix", auth: "azure-credential" },
@@ -217,7 +217,7 @@ What the stage can't check: whether the upload itself will be taken. The stage p
 
 ### A refusal as a warning
 
-With `onRefusal: "warn"`, a marketplace that refuses the reveal's upload, or a request the reveal makes around it (`publish-marketplace-failed`, `publish-marketplace-trusted-publishing`), doesn't fail the publish ([#4698](https://github.com/INTENTIUS/chant/issues/4698)). Read by chant 0.124.63 and newer. The publish prints a warning, the target's items come back with `refused: true` and the target with a `warning` in the `--json` document, and the next target reveals. The target is not recorded as revealed, so the same `chant release publish` run again tries the upload again.
+With `onRefusal: "warn"`, a marketplace that refuses the reveal's upload, or a request the reveal makes around it (`publish-marketplace-failed`, `publish-marketplace-trusted-publishing`), doesn't fail the publish ([#4698](https://github.com/INTENTIUS/chant/issues/4698)). Read by chant 0.124.64 and newer. The publish prints a warning, the target's items come back with `refused: true` and the target with a `warning` in the `--json` document, and the next target reveals. The target is not recorded as revealed, so the same `chant release publish` run again tries the upload again.
 
 The stage's checks still refuse under `warn`: a missing namespace, a version already there with other bytes, a missing credential, an identity that can't sign in. So do a `vsce` that is not on `PATH` (`publish-marketplace-vsce-missing`) and a digest that differs after an upload. `warn` is for a store that refuses a release it should take, as Open VSX has with a 406 for some extensions.
 

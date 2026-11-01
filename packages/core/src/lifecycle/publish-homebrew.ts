@@ -59,7 +59,7 @@ import { PublishTargetError, type PublishContext, type PublishDeps, type Publish
 import { NEXT_RELEASE } from "../release-floors";
 
 /** The first chant that publishes a `homebrew` target (#4676). */
-export const PUBLISH_HOMEBREW_FLOOR = NEXT_RELEASE;
+export const PUBLISH_HOMEBREW_FLOOR = "0.124.63";
 
 /** The first chant that reads a homebrew target's `sshKeyEnv` (#4699). */
 export const PUBLISH_HOMEBREW_SSH_KEY_FLOOR = NEXT_RELEASE;

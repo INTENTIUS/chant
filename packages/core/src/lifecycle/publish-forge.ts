@@ -51,10 +51,9 @@ import { readCredential, type Credential } from "./publish-credentials";
 import type { ForgePublishDeclaration } from "./publish-declaration";
 import { bytesDigest, checkReleaseDigest, memberFile, publishTargetKey } from "./publish-targets";
 import { PublishTargetError, type PublishContext, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget, type StagedTarget } from "./release-publish";
-import { NEXT_RELEASE } from "../release-floors";
 
 /** The first chant that reads `latest` on a forge target and sends it as GitHub's `make_latest` (#4676). */
-export const PUBLISH_FORGE_LATEST_FLOOR = NEXT_RELEASE;
+export const PUBLISH_FORGE_LATEST_FLOOR = "0.124.63";
 
 /** The variables a forge's token is read from, in order. */
 export function forgeTokenEnv(decl: Pick<ForgePublishDeclaration, "forge" | "tokenEnv">): string[] {

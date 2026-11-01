@@ -23,13 +23,12 @@ import { resolve } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
 import { makeNotifyEvent, sendNotify as realSendNotify, type NotifyDelivery, type NotifyEvent } from "../notify";
-import { NEXT_RELEASE } from "../release-floors";
 import { quarantineName } from "./ci-quarantine";
 import { locateWorkspace } from "./which-chant";
 import { readDeclaration, WorkspaceReadError, type CiGreen, type CiQuarantineEntry } from "./declaration";
 
 /** The first chant that sends `ci.quarantine-passed` (#4677). */
-export const CI_QUARANTINE_NOTIFY_FLOOR = NEXT_RELEASE;
+export const CI_QUARANTINE_NOTIFY_FLOOR = "0.124.63";
 
 /** One `<testcase>`: its suite's name, its classname and name, and how it ended. */
 export interface JUnitCase {

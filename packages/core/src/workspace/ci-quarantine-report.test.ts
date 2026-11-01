@@ -7,7 +7,6 @@ import { describe, expect, test, vi } from "vitest";
 import Ajv2020 from "ajv/dist/2020";
 import notifySchema from "../notify.schema.json" with { type: "json" };
 import { notifyHeadline, type NotifyEvent } from "../notify";
-import { NEXT_RELEASE } from "../release-floors";
 import { CI_QUARANTINE_NOTIFY_FLOOR, formatQuarantineReport, parseJUnit, quarantineReport } from "./ci-quarantine-report";
 import { parseDeclaration, type CiGreen } from "./declaration";
 
@@ -74,8 +73,8 @@ function greenOf(notify?: unknown): CiGreen {
 const NOTIFY = { webhook: "HOOK", key: "HOOK_KEY" };
 
 describe("ci quarantine report (#4677)", () => {
-  test("its floor is the next release", () => {
-    expect(CI_QUARANTINE_NOTIFY_FLOOR).toBe(NEXT_RELEASE);
+  test("its floor is the release it shipped in", () => {
+    expect(CI_QUARANTINE_NOTIFY_FLOOR).toBe("0.124.63");
   });
 
   test("reads nextest's and Playwright's JUnit, CDATA and entities included", () => {

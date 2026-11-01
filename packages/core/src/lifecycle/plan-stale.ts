@@ -25,7 +25,6 @@
  */
 import { samePlanDigest } from "./plan-digest";
 import type { QueryData, QueryRow } from "./query";
-import { NEXT_RELEASE } from "../release-floors";
 
 /** The version of the `plan-stale` document this chant writes. */
 export const PLAN_STALE_CONTRACT_VERSION = 1;
@@ -34,7 +33,7 @@ export const PLAN_STALE_CONTRACT_VERSION = 1;
 export const PLAN_STALE_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/plan-stale/v1/plan-stale.schema.json";
 
 /** The first chant that answers `chant plan stale` (#4648). */
-export const PLAN_STALE_FLOOR = NEXT_RELEASE;
+export const PLAN_STALE_FLOOR = "0.124.63";
 
 /** Why the read stopped. Closed; each code is in `../workspace/reason-codes.ts`. */
 export const PLAN_STALE_ERROR_CODES = ["not-a-git-repository", "ledger-unreadable"] as const;

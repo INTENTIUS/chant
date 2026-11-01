@@ -54,7 +54,7 @@
             "string",
             "null"
           ],
-          "description": "The green lane whose tags were read (#4692), from --lane or release.lane in the member's chant.config.ts: candidates carry ci/green-<lane>/<sha> and skipped commits ci/revoked-<lane>/<sha>. Null when ci/green/<sha> was read. Added by #4692, written by chant 0.124.63 and newer."
+          "description": "The green lane whose tags were read (#4692), from --lane or release.lane in the member's chant.config.ts: candidates carry ci/green-<lane>/<sha> and skipped commits ci/revoked-<lane>/<sha>. Null when ci/green/<sha> was read. Added by #4692, written by chant 0.124.64 and newer."
         },
         "tip": {
           "type": [

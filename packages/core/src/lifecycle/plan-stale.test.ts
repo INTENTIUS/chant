@@ -8,7 +8,6 @@ import { writeBlobToPath } from "./git";
 import { clearMemberLedgerCache } from "./member-ledger";
 import { PLAN_STALE_FLOOR, PLAN_STALE_SCHEMA_ID, planStaleness } from "./plan-stale";
 import { loadQueryData } from "./query";
-import { NEXT_RELEASE } from "../release-floors";
 import { planStaleDocument } from "../cli/handlers/plan";
 import { loadAjv2020 } from "../workspace/ajv2020";
 import planStaleSchema from "../workspace/plan-stale.schema.json";
@@ -95,9 +94,9 @@ describe("chant plan stale (#4648)", () => {
     expect(await stale(component, P3)).toMatchObject({ plan: null, stale: null, applies: [] });
   });
 
-  test("its floor is the next release", () => {
-    expect(PLAN_STALE_FLOOR).toBe(NEXT_RELEASE);
-    expect(planStaleSchema.description).toContain(`written by chant ${NEXT_RELEASE} and newer`);
+  test("its floor is the release it shipped in", () => {
+    expect(PLAN_STALE_FLOOR).toBe("0.124.63");
+    expect(planStaleSchema.description).toContain("written by chant 0.124.63 and newer");
   });
 });
 

@@ -76,7 +76,7 @@ import {
 import { NEXT_RELEASE } from "../release-floors";
 
 /** The first chant that publishes a `marketplace` target (#4676). */
-export const PUBLISH_MARKETPLACE_FLOOR = NEXT_RELEASE;
+export const PUBLISH_MARKETPLACE_FLOOR = "0.124.63";
 
 /** The first chant that reads a marketplace target's `auth` (#4698). */
 export const PUBLISH_MARKETPLACE_AUTH_FLOOR = NEXT_RELEASE;
