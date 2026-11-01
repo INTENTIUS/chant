@@ -2,7 +2,7 @@
  * The fly lexicon's chant audit catalog — metadata for the FLY post-synth
  * checks, contributed via `flyPlugin.auditCatalog()` (#687).
  *
- * Both entries carry `yamlBased: false`: each check reads the chant model
+ * Every entry carries `yamlBased: false`: each check reads the chant model
  * (`ctx.entities`) rather than the emitted manifest, because what they need —
  * whether a mount's volume is declared in the same stack — lives in the typed
  * graph and is gone by the time `fly.toml` exists. So they fire on
@@ -44,6 +44,13 @@ export const flyAuditCatalog: Record<string, RuleMeta> = {
     "correctness",
     "Machine mount references an undeclared volume",
     "Declare the Volume in the same stack, or point the mount at one that is.",
+  ),
+  FLY012: rule(
+    "FLY012",
+    "merge-worthy",
+    "correctness",
+    "Machine schedule is not one Fly runs",
+    "Set `config.schedule` to `hourly`, `daily`, `weekly` or `monthly`; the Machines API takes no cron expression.",
   ),
 };
 

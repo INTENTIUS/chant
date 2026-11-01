@@ -426,6 +426,65 @@ export async function waitForMachine(
   throw new Error(`machine ${app}/${id} did not reach ${state} within the deadline`);
 }
 
+// ── Scheduled Machines (#4696) ──────────────────────────────────────────────────
+
+/**
+ * The Machines API's `schedule` values: Fly runs the Machine once per
+ * interval, counted from when the Machine was created or last updated.
+ */
+export const MACHINE_SCHEDULES = ["hourly", "daily", "weekly", "monthly"] as const;
+
+/** A Machine config's `schedule`, or undefined when it runs no schedule. Pure. */
+export function machineSchedule(config: unknown): string | undefined {
+  const schedule = (config as { schedule?: unknown } | undefined)?.schedule;
+  return typeof schedule === "string" && schedule ? schedule : undefined;
+}
+
+/**
+ * True when creating or updating the Machine leaves it unstarted: its
+ * request sets `skip_launch: true`, or its config has a `schedule` and the
+ * request doesn't set `skip_launch: false`. A scheduled Machine is stopped
+ * between runs, so an apply moves it to its new config and leaves the next
+ * run to Fly. Pure.
+ */
+export function skipsLaunch(body: Record<string, unknown>): boolean {
+  if (typeof body.skip_launch === "boolean") return body.skip_launch;
+  return machineSchedule(body.config) !== undefined;
+}
+
+/** The states a Machine rests in when nothing started it. */
+const UNLAUNCHED_STATES = new Set(["created", "stopped", "suspended"]);
+
+/**
+ * Poll the Machine until it rests unstarted (`created`, `stopped` or
+ * `suspended`) at `version` (its new `instance_id`, when known): what a
+ * create or update with `skip_launch` settles in. flaps' `/wait` can't wait
+ * for this, since a Machine created without launching stays `created`.
+ */
+export async function waitForUnlaunched(
+  ctx: ApplyCtx,
+  app: string,
+  id: string,
+  version: string,
+  http: FlyHttp,
+  signal?: AbortSignal,
+  opts: WaitOpts = {},
+): Promise<string> {
+  const interval = opts.intervalMs ?? 1_000;
+  const deadline = Date.now() + (opts.deadlineMs ?? 300_000);
+  let seen = "";
+  while (Date.now() < deadline) {
+    if (signal?.aborted) throw new Error("waitForUnlaunched aborted");
+    const res = await http("GET", machineUrl(ctx.base, app, id), undefined, undefined, signal);
+    if (res.status >= 300) throw new Error(`machine ${app}/${id} lookup failed (${res.status}): ${res.text}`);
+    const m = parseMachine(res.text);
+    seen = m.state;
+    if (UNLAUNCHED_STATES.has(m.state) && (!version || m.instance_id === version)) return m.state;
+    await sleep(interval, signal);
+  }
+  throw new Error(`machine ${app}/${id} did not settle unstarted within the deadline (last ${seen || "unknown"})`);
+}
+
 // ── Resource operations ────────────────────────────────────────────────────────
 
 /** Create the app if absent (idempotent). A create-time conflict means it exists. */
@@ -466,6 +525,9 @@ export async function listMachines(
  * machine's new `instance_id`. Updates go through a lease. The declared machine
  * is identified by name (falling back to the plan entity name), so re-applying
  * an unchanged machine is a no-op.
+ *
+ * A Machine that {@link skipsLaunch} (a scheduled one, #4696) is created and
+ * updated with `skip_launch: true`, and the wait is for it to rest unstarted.
  */
 export async function applyMachine(
   ctx: ApplyCtx,
@@ -477,8 +539,13 @@ export async function applyMachine(
   opts: WaitOpts = {},
 ): Promise<{ action: "created" | "updated" | "noop"; id: string; name: string }> {
   const name = typeof req.body.name === "string" && req.body.name ? req.body.name : entityName;
-  const body = { ...req.body, name };
+  const unlaunched = skipsLaunch(req.body);
+  const body = { ...req.body, name, ...(unlaunched ? { skip_launch: true } : {}) };
   const desiredConfig = req.body.config;
+  const settle = (m: FlapsMachine) =>
+    unlaunched
+      ? waitForUnlaunched(ctx, app, m.id, m.instance_id, http, signal, opts)
+      : waitForMachine(ctx, app, m.id, m.instance_id, http, signal, opts);
 
   const live = (await listMachines(ctx, app, http, signal)).find((m) => m.name === name);
 
@@ -486,7 +553,7 @@ export async function applyMachine(
     const res = await http("POST", machinesUrl(ctx.base, app), body, undefined, signal);
     if (res.status >= 300) throw new Error(`machine ${app}/${name} create failed (${res.status}): ${res.text}`);
     const m = parseMachine(res.text);
-    await waitForMachine(ctx, app, m.id, m.instance_id, http, signal, opts);
+    await settle(m);
     return { action: "created", id: m.id, name };
   }
 
@@ -499,7 +566,7 @@ export async function applyMachine(
   );
   if (res.status >= 300) throw new Error(`machine ${app}/${name} update failed (${res.status}): ${res.text}`);
   const m = parseMachine(res.text);
-  await waitForMachine(ctx, app, m.id, m.instance_id, http, signal, opts);
+  await settle(m);
   return { action: "updated", id: m.id, name };
 }
 

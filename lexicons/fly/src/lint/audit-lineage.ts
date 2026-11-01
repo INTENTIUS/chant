@@ -11,4 +11,7 @@ export const flyAuditLineage: Record<string, Lineage[]> = {
   FLY010: [
     { tool: "fly-docs", rule: "Create a Machine: config.image required", url: "https://fly.io/docs/machines/api/machines-resource/#create-a-machine", relation: "overlaps" },
   ],
+  FLY012: [
+    { tool: "fly-docs", rule: "Machine config: schedule is hourly, daily, weekly or monthly", url: "https://fly.io/docs/machines/api/machines-resource/#machine-config-object-properties", relation: "overlaps" },
+  ],
 };

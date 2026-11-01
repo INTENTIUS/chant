@@ -73,6 +73,7 @@ Build synthesizes the flaps plan and runs the lint rules before anything reaches
 | FLY004 | A secret value written inline in machine config |
 | FLY010 | A machine config with no `image` |
 | FLY011 | A machine mount that references a `Volume` not declared in the stack (checked across files) |
+| FLY012 | A machine `schedule` other than `hourly`, `daily`, `weekly` or `monthly` |
 
 Fix every reported violation before applying. Secret values belong in a `Secret` or a reference, never inline (FLY004).
 
@@ -81,6 +82,7 @@ Fix every reported violation before applying. Secret values belong in a `Secret`
 `flyApply` reads the serialized plan and applies it to flaps in dependency order: app, then volumes, then machines, then IPs, certificates, and secrets. Per machine it does a GET-then-create or update, then waits.
 
 - Create or update: POST the machine, then poll `GET .../wait` until it reaches `started` at its new `instance_id`. flaps caps its own long-poll at 60 seconds and answers 408 on expiry, so the client re-polls until its deadline (default 300 seconds).
+- A scheduled machine (`config.schedule`) is created and updated with `skip_launch: true`, and the wait is for it to rest unstarted (`created` or `stopped`) at its new `instance_id`. Fly starts it on its schedule. `skip_launch: false` on the Machine starts it like any other.
 - No-op on no drift: a re-apply of an unchanged machine (config structurally equal to live) does nothing.
 - Leases: mutating an existing machine goes through the Machines API lease protocol. `flyApply` acquires a lease, echoes the nonce in the `fly-machine-lease-nonce` header on the mutation, and re-acquires and retries once if the lease was lost. Concurrent operators stay out of each other's way.
 
@@ -112,7 +114,7 @@ export default flyDeploy({ app: "local-fly-demo" });
 
 | Command | Description |
 |---------|-------------|
-| `chant build src/` | Synthesize the flaps plan and run lint (FLY001/FLY002/FLY004/FLY010/FLY011) |
+| `chant build src/` | Synthesize the flaps plan and run lint (FLY001/FLY002/FLY004/FLY010/FLY011/FLY012) |
 | `chant run fly` | Run the deploy Op (boot, build, apply, verify, teardown) |
 | `FLY_FLAPS_BASE_URL=...` | Point the same code at mudflaps or a real Fly org |
 | `FLY_API_TOKEN=...` | Bearer token for a real Fly org (mudflaps ignores it) |

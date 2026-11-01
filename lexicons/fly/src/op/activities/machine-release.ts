@@ -16,7 +16,10 @@
  *
  * - {@link flyMachineRelease}: upload and start. Apply the declared plan with
  *   the Machine serving the release (its image or env overridden when the
- *   release says so), and report the release and config it replaced.
+ *   release says so), and report the release and config it replaced. A
+ *   scheduled Machine (`config.schedule`, #4696) is updated without starting:
+ *   it runs on its schedule. The plan's other Machines can take images of
+ *   their own (`images`).
  * - {@link flyMachineExec}: run a command inside the Machine (a migration).
  * - {@link flyMachineRestart}, {@link flyMachineStop}: under a lease, then
  *   wait for the Machine to settle.
@@ -40,7 +43,9 @@ import {
   machineAppSegment,
   resolveApp,
   resolveEndpoint,
+  skipsLaunch,
   waitForMachine,
+  waitForUnlaunched,
   withLease,
   LEASE_NONCE_HEADER,
   type ApplyCtx,
@@ -67,20 +72,26 @@ export interface ReleaseTarget {
   request: FlapsRequest;
 }
 
+/** Every Machine the plan declares, with its App resolved. Pure. */
+export function planMachines(plan: FlyPlan): ReleaseTarget[] {
+  const appNames = Object.values(plan).filter(isAppRequest).map(appNameFromRequest);
+  const soleApp = appNames.length === 1 ? appNames[0] : undefined;
+  return Object.entries(plan)
+    .filter(([, req]) => isMachineRequest(req))
+    .map(([entity, request]) => ({
+      app: resolveApp(machineAppSegment(request.endpoint), soleApp),
+      entity,
+      request,
+      name: typeof request.body.name === "string" && request.body.name ? request.body.name : entity,
+    }));
+}
+
 /**
  * The Machine a release targets: the plan's one Machine, or the one `machine`
  * names (an entity name or a Machine name). Pure.
  */
 export function releaseTarget(plan: FlyPlan, machine?: string): ReleaseTarget {
-  const appNames = Object.values(plan).filter(isAppRequest).map(appNameFromRequest);
-  const soleApp = appNames.length === 1 ? appNames[0] : undefined;
-  const machines = Object.entries(plan)
-    .filter(([, req]) => isMachineRequest(req))
-    .map(([entity, request]) => ({
-      entity,
-      request,
-      name: typeof request.body.name === "string" && request.body.name ? request.body.name : entity,
-    }));
+  const machines = planMachines(plan);
   const picked = machine ? machines.filter((m) => m.entity === machine || m.name === machine) : machines;
   if (picked.length !== 1) {
     throw new Error(
@@ -89,8 +100,7 @@ export function releaseTarget(plan: FlyPlan, machine?: string): ReleaseTarget {
         : `the fly plan declares ${machines.length} Machines (${machines.map((m) => m.entity).join(", ")}): name the one that serves the release`,
     );
   }
-  const [m] = picked;
-  return { app: resolveApp(machineAppSegment(m.request.endpoint), soleApp), entity: m.entity, name: m.name, request: m.request };
+  return picked[0];
 }
 
 const TERMINAL = new Set(["destroyed", "destroying"]);
@@ -147,6 +157,12 @@ export interface FlyMachineReleaseArgs extends FlapsTarget {
   files?: MachineFile[];
   /** The command the Machine starts, in place of the image's: an argv, or a string run with `sh -c`. */
   cmd?: string[] | string;
+  /**
+   * Images for the plan's other Machines, by entity or Machine name (#4696):
+   * a scheduled Machine beside the one that serves, say, built from the same
+   * commit. A name that is no other Machine in the plan is refused.
+   */
+  images?: Record<string, string>;
   wait?: WaitOpts;
 }
 
@@ -170,6 +186,13 @@ export interface FlyMachineReleaseResult {
   config: MachineConfig;
   /** What the Machine served before, when it existed: its release (if it named one) and its config. */
   previous: { release?: MachineRelease; config: MachineConfig } | null;
+  /** True when the Machine was left unstarted: a scheduled Machine, which runs on its schedule (#4696). */
+  unlaunched: boolean;
+  /**
+   * The plan's other Machines: what the apply did to each, whether it was
+   * left unstarted, and the config it had before (null when it was created).
+   */
+  others: Array<{ name: string; app: string; action: "created" | "updated" | "noop"; unlaunched: boolean; previous: MachineConfig | null }>;
 }
 
 /**
@@ -178,6 +201,11 @@ export interface FlyMachineReleaseResult {
  * under a lease, so the release serves from here on. A Machine that already
  * serves this release keeps the `previousDigest` it shipped with, so running a
  * release twice never makes it its own predecessor.
+ *
+ * A scheduled Machine (its config has a `schedule`, #4696), the target or
+ * another in the plan, is created or updated with `skip_launch` and left
+ * unstarted: Fly starts it on its schedule. Fly counts the interval from the
+ * update, so each release pushes the next run back by up to one interval.
  */
 export async function flyMachineRelease(
   args: FlyMachineReleaseArgs,
@@ -211,20 +239,53 @@ export async function flyMachineRelease(
     release,
   );
   const request: FlapsRequest = { ...target.request, body: { ...target.request.body, config } };
+
+  // The plan's other Machines, each with its own image when `images` names it.
+  const others = planMachines(plan).filter((m) => m.entity !== target.entity);
+  const images = { ...(args.images ?? {}) };
+  const overrides: FlyPlan = {};
+  for (const m of others) {
+    const image = images[m.entity] ?? images[m.name];
+    delete images[m.entity];
+    delete images[m.name];
+    if (image === undefined) continue;
+    const declaredOther = (m.request.body.config ?? {}) as MachineConfig;
+    overrides[m.entity] = { ...m.request, body: { ...m.request.body, config: { ...declaredOther, image } } };
+  }
+  const unknown = Object.keys(images);
+  if (unknown.length > 0) {
+    throw new Error(
+      `images names ${unknown.map((n) => `"${n}"`).join(", ")}, which the fly plan declares as no Machine other than the one that serves (others: ${others.map((m) => m.entity).join(", ") || "none"}); the serving Machine's image is \`image\``,
+    );
+  }
+  const before = new Map<string, MachineConfig | null>();
+  for (const m of others) {
+    const found = await findMachine(ctx, m.app, m.name, http, signal).catch(() => undefined);
+    before.set(m.entity, found ? ((found.config as MachineConfig | undefined) ?? {}) : null);
+  }
+
   const applied = await flyApply(
-    { plan: { ...plan, [target.entity]: request }, endpoint: args.endpoint, token: args.token, wait: args.wait },
+    { plan: { ...plan, ...overrides, [target.entity]: request }, endpoint: args.endpoint, token: args.token, wait: args.wait },
     signal,
     http,
   );
-  const action = applied.machines.find((m) => m.app === target.app && m.name === target.name)?.action ?? "noop";
+  const actionOf = (app: string, name: string) => applied.machines.find((m) => m.app === app && m.name === name)?.action ?? "noop";
   const now = await mustFindMachine(ctx, target.app, target.name, http, signal);
   return {
     app: target.app,
     machine: { id: now.id, name: target.name },
-    action,
+    action: actionOf(target.app, target.name),
     release,
     config,
     previous: live ? { ...(liveRelease ? { release: liveRelease } : {}), config: liveConfig ?? {} } : null,
+    unlaunched: skipsLaunch(request.body),
+    others: others.map((m) => ({
+      name: m.name,
+      app: m.app,
+      action: actionOf(m.app, m.name),
+      unlaunched: skipsLaunch((overrides[m.entity] ?? m.request).body),
+      previous: before.get(m.entity) ?? null,
+    })),
   };
 }
 
@@ -343,8 +404,9 @@ export interface FlyMachineVerifyArgs extends FlapsTarget {
 }
 
 /**
- * The Machine is started and its metadata names release `digest`. Given a
- * `url`, its health endpoint answers 2xx too, and when that answer is JSON
+ * The Machine is started and its metadata names release `digest`. A scheduled
+ * Machine (#4696) may also be resting unstarted (`created`, `stopped` or
+ * `suspended`) between runs. Given a `url`, its health endpoint answers 2xx too, and when that answer is JSON
  * naming a `revision` or `digest`, it is this release's (the commit or the
  * digest). Retries until `timeoutMs`, then throws the last reason.
  */
@@ -362,7 +424,9 @@ export async function flyMachineVerify(
     if (signal?.aborted) throw new Error("flyMachineVerify aborted");
     try {
       const m = await mustFindMachine(ctx, args.app, args.machine, http, signal);
-      if (m.state !== "started") throw new Error(`machine ${args.app}/${m.id} is ${m.state}`);
+      const scheduled = skipsLaunch({ config: m.config });
+      const resting = scheduled && ["created", "stopped", "suspended"].includes(m.state);
+      if (m.state !== "started" && !resting) throw new Error(`machine ${args.app}/${m.id} is ${m.state}`);
       const release = readMachineRelease(m.config?.metadata);
       if (release?.digest !== args.digest) {
         throw new Error(`machine ${args.app}/${m.id} serves ${release?.digest ?? "no release"}, expected ${args.digest}`);
@@ -405,6 +469,8 @@ export interface FlyMachineRestoreArgs extends FlapsTarget {
  * Put a recorded Machine config back: update the Machine to exactly `config`
  * under a lease and wait for it to be started. Used on a failed release (the
  * config it replaced) and by a rollback (the config an earlier release applied).
+ * A scheduled config (#4696) goes back with `skip_launch`, and the wait is for
+ * the Machine to rest unstarted.
  */
 export async function flyMachineRestore(
   args: FlyMachineRestoreArgs,
@@ -413,8 +479,10 @@ export async function flyMachineRestore(
 ): Promise<{ id: string; release?: MachineRelease }> {
   const ctx: ApplyCtx = { base: resolveEndpoint(args) };
   const m = await mustFindMachine(ctx, args.app, args.machine, http, signal);
+  const unlaunched = skipsLaunch({ config: args.config });
+  const body = { name: m.name, config: args.config, ...(unlaunched ? { skip_launch: true } : {}) };
   const res = await withLease(ctx, args.app, m.id, http, signal, (nonce) =>
-    http("POST", machinePath(ctx, args.app, m.id), { name: m.name, config: args.config }, { [LEASE_NONCE_HEADER]: nonce }, signal),
+    http("POST", machinePath(ctx, args.app, m.id), body, { [LEASE_NONCE_HEADER]: nonce }, signal),
   );
   if (res.status >= 300) throw new Error(`restore of machine ${args.app}/${m.id} failed (${res.status}): ${res.text}`);
   let instance = "";
@@ -423,7 +491,8 @@ export async function flyMachineRestore(
   } catch {
     instance = "";
   }
-  await waitForMachine(ctx, args.app, m.id, instance, http, signal, args.wait ?? {});
+  if (unlaunched) await waitForUnlaunched(ctx, args.app, m.id, instance, http, signal, args.wait ?? {});
+  else await waitForMachine(ctx, args.app, m.id, instance, http, signal, args.wait ?? {});
   const release = readMachineRelease(args.config.metadata);
   return { id: m.id, ...(release ? { release } : {}) };
 }

@@ -37,6 +37,8 @@ import {
   acquireLease,
   withLease,
   waitForMachine,
+  skipsLaunch,
+  machineSchedule,
   flyApply,
   flyDelete,
   toApplyResult,
@@ -652,6 +654,88 @@ describe("flyApply creates certificates at /certificates/acme (#3114)", () => {
     const out = await run(fake, { app, keep: cert("keep.com") }, true);
     expect(out.prunedCerts).toEqual([{ app: "demo", hostname: "drop.com" }]);
     expect(fake.certs.get("demo")).toEqual(["keep.com"]);
+  });
+});
+
+/**
+ * #4696: a scheduled Machine is stopped between runs. The applier creates and
+ * updates it with `skip_launch`, so Fly doesn't start it, and waits for it to
+ * rest unstarted instead of waiting for `started`.
+ */
+describe("a scheduled Machine is applied without starting it (#4696)", () => {
+  const app = { endpoint: "/v1/apps", method: "POST", body: { app_name: "demo" } };
+  const dump = (image: string, extra: Record<string, unknown> = {}) => ({
+    endpoint: "/v1/apps/demo/machines",
+    method: "POST",
+    body: { name: "dump", config: { image, schedule: "hourly", metadata: { ...OWNED_META } }, ...extra },
+  });
+  const run = (fake: ReturnType<typeof createMachinesFake>, entries: Record<string, unknown>, prune = false) =>
+    flyApply({ plan: entries as never, endpoint: CTX.base, wait: NO_WAIT, prune }, undefined, fake.http);
+  /** The bodies of the machine creates and updates the fake saw. */
+  function recording() {
+    const fake = createMachinesFake();
+    const bodies: Array<Record<string, unknown>> = [];
+    const http: FlyHttp = (method, url, body, headers, signal) => {
+      if (method === "POST" && /\/machines(\/[^/]+)?$/.test(new URL(url).pathname)) bodies.push(body as Record<string, unknown>);
+      return fake.http(method, url, body, headers, signal);
+    };
+    return { fake: { ...fake, http }, raw: fake, bodies };
+  }
+
+  test("which Machines skip launch: a schedule, unless skip_launch says otherwise", () => {
+    expect(skipsLaunch({ config: { image: "x" } })).toBe(false);
+    expect(skipsLaunch({ config: { image: "x", schedule: "daily" } })).toBe(true);
+    expect(skipsLaunch({ config: { image: "x", schedule: "daily" }, skip_launch: false })).toBe(false);
+    expect(skipsLaunch({ config: { image: "x" }, skip_launch: true })).toBe(true);
+    expect(machineSchedule({ schedule: "hourly" })).toBe("hourly");
+    expect(machineSchedule({ schedule: "" })).toBeUndefined();
+  });
+
+  test("created with skip_launch and left created; updated with skip_launch and left stopped; a re-apply is a no-op", async () => {
+    const { fake, raw, bodies } = recording();
+    const first = await run(fake, { app, dump: dump("dump:1") });
+    expect(first.machines).toEqual([{ app: "demo", name: "dump", action: "created" }]);
+    expect(bodies[0]).toMatchObject({ name: "dump", skip_launch: true });
+    expect(raw.machine("demo", "dump")!.state).toBe("created");
+    expect(raw.calls.some((c) => c.endsWith("/wait"))).toBe(false);
+
+    raw.machine("demo", "dump")!.state = "stopped"; // it ran once, on its schedule
+    const second = await run(fake, { app, dump: dump("dump:2") });
+    expect(second.machines).toEqual([{ app: "demo", name: "dump", action: "updated" }]);
+    expect(bodies[1]).toMatchObject({ skip_launch: true });
+    expect(raw.machine("demo", "dump")).toMatchObject({ state: "stopped", config: { image: "dump:2", schedule: "hourly" } });
+
+    const third = await run(fake, { app, dump: dump("dump:2") });
+    expect(third.machines[0].action).toBe("noop");
+    expect(bodies).toHaveLength(2);
+  });
+
+  test("skip_launch: false starts a scheduled Machine, as a plain create does", async () => {
+    const { fake, raw, bodies } = recording();
+    await run(fake, { app, dump: dump("dump:1", { skip_launch: false }) });
+    expect(bodies[0].skip_launch).toBe(false);
+    expect(raw.machine("demo", "dump")!.state).toBe("started");
+  });
+
+  test("a Machine that never rests unstarted fails the apply at the deadline, naming its state", async () => {
+    // A flaps that starts every Machine, skip_launch or not.
+    const fake = createMachinesFake();
+    const http: FlyHttp = async (method, url, body, headers, signal) => {
+      const out = await fake.http(method, url, body, headers, signal);
+      for (const m of fake.machines.get("demo") ?? []) m.state = "started";
+      return out;
+    };
+    await expect(
+      flyApply({ plan: { app, dump: dump("dump:1") } as never, endpoint: CTX.base, wait: { intervalMs: 0, deadlineMs: 50 } }, undefined, http),
+    ).rejects.toThrow(/did not settle unstarted .*last started/);
+  });
+
+  test("prune keeps a declared scheduled Machine", async () => {
+    const fake = createMachinesFake();
+    await run(fake, { app, dump: dump("dump:1") });
+    const out = await run(fake, { app, dump: dump("dump:1") }, true);
+    expect(out.pruned).toEqual([]);
+    expect(fake.machine("demo", "dump")).toBeDefined();
   });
 });
 

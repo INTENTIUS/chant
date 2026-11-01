@@ -2,8 +2,10 @@
 import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
 import { fly010 } from "./fly010-machine-requires-image";
 import { fly011 } from "./fly011-mount-references-declared-volume";
+import { fly012 } from "./fly012-machine-schedule";
 
 export const postSynthChecks: PostSynthCheck[] = [
   fly010,
   fly011,
+  fly012,
 ];

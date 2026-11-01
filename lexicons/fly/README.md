@@ -73,6 +73,7 @@ export const web = new Machine({
 `flyApply` speaks the Machines API directly. There is no `flyctl` shell-out and no state file to store, lock, or keep in sync. It reconciles what you declared against what is actually running:
 
 - Creates and updates machines, then waits each one to `started` over the Machines API `/wait` endpoint.
+- Leaves a scheduled machine (`config.schedule`: hourly, daily, weekly or monthly) stopped: it is created and updated with `skip_launch`, and Fly starts it on its schedule. `fly-release` moves one to a new image the same way.
 - Prunes only what chant owns. Every machine chant creates carries a `managed-by: chant` marker, and a machine without it is never modified or deleted, so the applier is safe to point at an app that also holds resources you manage elsewhere.
 - Speaks the Machines API lease protocol: acquire a lease, send the nonce on each mutation, re-acquire and retry if the lease is lost, so concurrent operators stay out of each other's way.
 
