@@ -60,7 +60,6 @@
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { basename, dirname, relative, resolve, sep } from "node:path";
-import { NEXT_RELEASE } from "../release-floors";
 import type { PullRequestCloses } from "./forge-work";
 import { declaredRecordKinds, readDeclaration, readerVersion, resolveGroups, WORKSPACE_ERROR_CODES, WorkspaceReadError, type Declaration } from "./declaration";
 import { declaredKindFile } from "./declared-kinds";
@@ -91,7 +90,7 @@ import { idList, isDecided, WORK_WARNING_CODES, type WorkLink, type WorkWarningC
 /** The version of the `intent` document this chant writes. */
 export const INTENT_CONTRACT_VERSION = 1;
 /** The first chant whose intent graph and record walk carry a commit's `closes`, with `--forge-issues` (#4649). */
-export const INTENT_CLOSES_FLOOR = NEXT_RELEASE;
+export const INTENT_CLOSES_FLOOR = "0.124.63";
 
 /** `$id` of the JSON Schema for the document, shipped beside this file. */
 export const INTENT_OUTPUT_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/intent/v1/intent.schema.json";

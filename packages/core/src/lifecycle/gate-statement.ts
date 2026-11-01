@@ -29,7 +29,7 @@ import { GATE_SEAL_NAMESPACE, gateSealPayload, gateSealVersion, isWebAuthnAssert
  * older chant reads a trust.json with `passkeys` as invalid, which turns
  * attestation off, and counts no passkey seal toward a gate.
  */
-export const GATE_EXTERNAL_SIGNATURE_FLOOR = NEXT_RELEASE;
+export const GATE_EXTERNAL_SIGNATURE_FLOOR = "0.124.63";
 
 /**
  * The first chant that takes `--binding` and signs and checks a binding line

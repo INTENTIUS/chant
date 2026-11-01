@@ -52,10 +52,9 @@ import { GitHubRepo, githubApi, type GitHubRelease } from "./publish-github";
 import { fillUrl, releaseVersion } from "./publish-homebrew";
 import { bytesDigest, checkReleaseDigest, memberFile, publishTargetKey } from "./publish-targets";
 import { PublishTargetError, type PublishContext, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget, type StagedTarget } from "./release-publish";
-import { NEXT_RELEASE } from "../release-floors";
 
 /** The first chant that publishes a `tauri-updater` target (#4676). */
-export const PUBLISH_TAURI_UPDATER_FLOOR = NEXT_RELEASE;
+export const PUBLISH_TAURI_UPDATER_FLOOR = "0.124.63";
 
 interface File {
   path: string;

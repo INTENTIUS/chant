@@ -29,12 +29,11 @@
 
 import { formatError } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
-import { NEXT_RELEASE } from "../release-floors";
 import { locateWorkspace } from "./which-chant";
 import { quarantineDay, readDeclaration, WorkspaceReadError, type CiGreen, type CiQuarantineEntry } from "./declaration";
 
 /** The first chant that reads `ci.green.quarantine` and runs `chant ci quarantine` (#4677). */
-export const CI_QUARANTINE_FLOOR = NEXT_RELEASE;
+export const CI_QUARANTINE_FLOOR = "0.124.63";
 
 export const QUARANTINE_RUNNERS = ["nextest", "playwright", "list"] as const;
 export type QuarantineRunner = (typeof QUARANTINE_RUNNERS)[number];

@@ -396,7 +396,7 @@
         },
         "lane": {
           "type": "string",
-          "description": "Added by #4692, written by chant 0.124.63 and newer. The green lane the cut checked, from release cut --lane or release.lane in chant.config.ts: the commit carried ci/green-<lane>/<sha> and no ci/revoked-<lane>/<sha>. Absent on a cut that checked ci/green/<sha>."
+          "description": "Added by #4692, written by chant 0.124.64 and newer. The green lane the cut checked, from release cut --lane or release.lane in chant.config.ts: the commit carried ci/green-<lane>/<sha> and no ci/revoked-<lane>/<sha>. Absent on a cut that checked ci/green/<sha>."
         },
         "override": {
           "type": "object",
@@ -439,7 +439,7 @@
               "description": "Whether the override was sealed, as a release gate in identity.gates requires."
             }
           },
-          "description": "Added by #4693, written by chant 0.124.63 and newer. The commit was not green, and release cut --override-green cut it under a person's override, which it spent. Absent on a cut of a green commit."
+          "description": "Added by #4693, written by chant 0.124.64 and newer. The commit was not green, and release cut --override-green cut it under a person's override, which it spent. Absent on a cut of a green commit."
         }
       }
     },
