@@ -71,6 +71,7 @@ import {
   type LedgerLocation,
 } from "./git";
 import { ledgerRecordingOff } from "./no-record";
+import { chooseLedgerRemote, type LedgerRemoteChoice } from "./ledger-remote";
 import {
   INDEX_SCOPE_FILE,
   indexVersionName,
@@ -199,13 +200,15 @@ async function git(args: string[], opts: { cwd?: string; stdin?: string; env?: R
   return getRuntime().spawn(["git", ...args], { ...(opts.cwd ? { cwd: opts.cwd } : {}), ...(opts.stdin !== undefined ? { stdin: opts.stdin } : {}), env: { ...C_LOCALE, ...(opts.env ?? {}) } });
 }
 
-/** The remote a ref is pushed to: `origin` when it exists, else the first. */
-async function remoteOf(cwd?: string): Promise<string | null> {
+/**
+ * The remote a ref is pushed to: the ledger's ({@link chooseLedgerRemote}),
+ * or null when there is none. A `CHANT_LIFECYCLE_REMOTE` that names no remote
+ * comes back as `failed`.
+ */
+async function remoteOf(cwd?: string): Promise<LedgerRemoteChoice> {
   const result = await git(["remote"], { cwd });
   if (result.exitCode !== 0) return null;
-  const names = result.stdout.trim().split("\n").map((n) => n.trim()).filter(Boolean);
-  if (names.length === 0) return null;
-  return names.includes("origin") ? "origin" : names[0];
+  return chooseLedgerRemote(result.stdout.trim().split("\n").map((n) => n.trim()).filter(Boolean));
 }
 
 /** `user.name`/`user.email` for a checkout that has none, as the ledger's own writes do (#2301). */
@@ -319,8 +322,10 @@ function trackingRefOf(ref: string): string {
  */
 export async function fetchRefFastForward(ref: string, opts?: { cwd?: string }): Promise<"fetched" | "no-remote" | "missing" | "kept" | "failed"> {
   const cwd = opts?.cwd;
-  const remote = await remoteOf(cwd);
-  if (!remote) return "no-remote";
+  const found = await remoteOf(cwd);
+  if (found === null) return "no-remote";
+  if ("failed" in found) return "failed";
+  const { remote } = found;
   const tracking = trackingRefOf(ref);
   const f = await git(["fetch", "--no-tags", remote, `+${ref}:${tracking}`], { cwd });
   if (f.exitCode !== 0) return /couldn't find remote ref|no such ref was fetched/i.test(f.stderr ?? "") ? "missing" : "failed";
@@ -355,8 +360,10 @@ export async function publishRef(
   if (ledgerRecordingOff()) return { status: "nothing", detail: "recording is off for this run" };
   const local = await readRefSha(ref, { cwd });
   if (!local) return { status: "nothing" };
-  const remote = await remoteOf(cwd);
-  if (!remote) return { status: "local", detail: "no remote configured" };
+  const found = await remoteOf(cwd);
+  if (found === null) return { status: "local", detail: "no remote configured" };
+  if ("failed" in found) return { status: "failed", detail: found.stderr };
+  const { remote } = found;
   const tracking = trackingRefOf(ref);
   for (let attempt = 1; attempt <= 3; attempt++) {
     const expected = await readRefSha(tracking, { cwd });

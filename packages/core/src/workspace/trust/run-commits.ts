@@ -13,6 +13,7 @@
 import { execFileSync } from "node:child_process";
 import { AGENT_RUNS_DIR, LEDGER_BRANCH, foldRun, parseRunFile, readRunFiles, type RunView } from "../runs";
 import { RUN_TRAILER } from "../trailers";
+import { lifecycleRemoteOverride } from "../../lifecycle/ledger-remote";
 import type { RunnerKey } from "./policy";
 import { attestRun } from "./run-statement";
 
@@ -26,7 +27,7 @@ function git(repo: string, args: string[]): string | undefined {
 
 /** Every run on the ledger, in every member's `_agent-runs`, and the ref and tip read. */
 export function readLedgerRuns(repo: string): { ref: string | null; tip: string | null; runs: RunView[] } {
-  for (const ref of [`refs/heads/${LEDGER_BRANCH}`, `refs/remotes/origin/${LEDGER_BRANCH}`]) {
+  for (const ref of [`refs/heads/${LEDGER_BRANCH}`, `refs/remotes/${lifecycleRemoteOverride() ?? "origin"}/${LEDGER_BRANCH}`]) {
     const tip = git(repo, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`])?.trim();
     if (!tip) continue;
     const dirs = new Set<string>();
