@@ -220,6 +220,15 @@ describe("chant ci workflow (#3573)", () => {
     }
   });
 
+  test("ci.green.notify's variables reach the tick from secrets of the same names (#4645)", () => {
+    const told = parseDeclaration(JSON.stringify({ name: "w", schema: 1, members: [], ci: { green: { ...GREEN, notify: { webhook: "CI_HOOK", key: "CI_HOOK_KEY", slack: "CI_SLACK" } } } }), "chant.workspace.json").ci!.green!;
+    const env = (parseYAMLDocument(renderCiGreenWorkflow({ green: told, workflows: ["ci"], chantVersion: "0.124.61", workspaceRoot: "." })) as Yaml).jobs.tick.steps.at(-1).env;
+    expect(env).toMatchObject({ CI_HOOK: "${{ secrets.CI_HOOK }}", CI_HOOK_KEY: "${{ secrets.CI_HOOK_KEY }}", CI_SLACK: "${{ secrets.CI_SLACK }}" });
+    // Without notify the step is as it was.
+    const plain = (parseYAMLDocument(renderCiGreenWorkflow({ green, workflows: ["ci"], chantVersion: "0.124.61", workspaceRoot: "." })) as Yaml).jobs.tick.steps.at(-1).env;
+    expect(Object.keys(plain).sort()).toEqual(["GITHUB_TOKEN", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_NAME"]);
+  });
+
   test("mergeQueue writes the verdict workflow and adds merge_group to the phases' workflows, byte-identically again (#4644)", async () => {
     const root = scratchDir("chant-ci-workflow-");
     git(root, "init", "-q");
