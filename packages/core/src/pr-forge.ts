@@ -308,7 +308,7 @@ function ignoredStatus(ignore: readonly string[]): (name: string) => boolean {
   const exact = new Set(ignore);
   const under = ignore.filter((i) => i.endsWith("/"));
   // An entry with `*` in it is a pattern, `*` standing for any run of characters, such as a pipeline job's status with the event after it (plywood#66).
-  const globs = ignore.filter((i) => i.includes("*")).map((i) => new RegExp(`^${i.split("*").map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`));
+  const globs = ignore.filter((i) => i.includes("*")).map((i) => new RegExp(`^${i.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replaceAll("*", ".*")}$`));
   return (name) => exact.has(name) || under.some((i) => name.startsWith(i)) || globs.some((g) => g.test(name));
 }
 
