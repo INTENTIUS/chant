@@ -74,12 +74,11 @@ import {
   type TemplateContent,
 } from "./release-store";
 import type { CompiledTarget, TargetCompiler } from "../components/release-compile";
-import { NEXT_RELEASE } from "../release-floors";
 
 /** The first chant that cuts from a lane's green tag and writes `lane` on the cut line (#4692). */
-export const RELEASE_CUT_LANE_FLOOR = NEXT_RELEASE;
+export const RELEASE_CUT_LANE_FLOOR = "0.124.64";
 /** The first chant that cuts a commit that is not green under an override and writes `override` on the cut line (#4693). */
-export const RELEASE_CUT_OVERRIDE_FLOOR = NEXT_RELEASE;
+export const RELEASE_CUT_OVERRIDE_FLOOR = "0.124.64";
 
 /** The override gate's subject for a cut of `commit` (#4693): `release-<sha12>`. */
 export function greenOverrideSubject(commit: string): string {

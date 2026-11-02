@@ -56,13 +56,12 @@ import { SshGitRepo } from "./publish-git-ssh";
 import { GitHubRepo, githubApi } from "./publish-github";
 import { bytesDigest, checkReleaseDigest, memberFile, publishTargetKey } from "./publish-targets";
 import { PublishTargetError, type PublishContext, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget } from "./release-publish";
-import { NEXT_RELEASE } from "../release-floors";
 
 /** The first chant that publishes a `homebrew` target (#4676). */
 export const PUBLISH_HOMEBREW_FLOOR = "0.124.63";
 
 /** The first chant that reads a homebrew target's `sshKeyEnv` (#4699). */
-export const PUBLISH_HOMEBREW_SSH_KEY_FLOOR = NEXT_RELEASE;
+export const PUBLISH_HOMEBREW_SSH_KEY_FLOOR = "0.124.64";
 
 /** The variable the tap token is read from when the declaration names none. */
 export const HOMEBREW_TOKEN_ENV = "HOMEBREW_TAP_TOKEN";

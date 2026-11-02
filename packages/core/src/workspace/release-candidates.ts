@@ -44,7 +44,6 @@
 
 import { execFileSync } from "node:child_process";
 import { relative, resolve, sep } from "node:path";
-import { NEXT_RELEASE } from "../release-floors";
 import { latestPerComponent, readReleaseLedger } from "../lifecycle/release-ledger";
 import { readAllReleases, readCuts } from "../lifecycle/release-store";
 import { resolveMemberLedger } from "../lifecycle/member-ledger";
@@ -56,7 +55,7 @@ export const RELEASE_CANDIDATES_CONTRACT_VERSION = 1;
 /** The first chant whose candidates carry `changes[].closes` and `groups[].issue` (#4649). */
 export const RELEASE_CANDIDATES_CLOSES_FLOOR = "0.124.63";
 /** The first chant whose candidates document carries `lane` and reads a lane's tags (#4692). */
-export const RELEASE_CANDIDATES_LANE_FLOOR = NEXT_RELEASE;
+export const RELEASE_CANDIDATES_LANE_FLOOR = "0.124.64";
 export const RELEASE_CANDIDATES_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/release-candidates/v1/release-candidates.schema.json";
 
 /** Why the read stopped. Closed; each code is in `reason-codes.ts`. */
