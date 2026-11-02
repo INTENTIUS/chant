@@ -49,7 +49,7 @@ import { parseParamFlags } from "../build-params-cli";
 import type { CommandContext } from "../registry";
 
 const USAGE =
-  "chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--override-green] [--json] | release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json] | release verify <label|digest> [--json] | release candidates [--env <env>] [--lane <name>] [--forge-issues] [--json] | release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json] | release list [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
+  "chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>] [--image <component>=<repository>@sha256:<hex>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--override-green] [--json] | release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json] | release verify <label|digest> [--json] | release candidates [--env <env>] [--lane <name>] [--forge-issues] [--json] | release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json] | release list [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
 
 /** The build inputs `release cut` and `release compile` share. */
 function compileInputs(
@@ -249,6 +249,19 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     const tag = label !== null && commit !== null && top ? { name: ws.releaseTagName(member, label), state: ws.checkReleaseTag(top, ws.releaseTagName(member, label), commit) } : null;
     const ci = resolveCiRun(process.env);
     const params = parseParamFlags(args.param);
+    // #4694: images built elsewhere, handed to the cut by digest, one per component.
+    const images: Record<string, string> = {};
+    for (const value of args.images ?? []) {
+      const eq = value.indexOf("=");
+      const component = eq > 0 ? value.slice(0, eq) : "";
+      if (!component || eq === value.length - 1) {
+        return fail("release-image-invalid", `--image ${value}: name the component and the image, as --image <component>=<repository>@sha256:<hex>`);
+      }
+      if (images[component] !== undefined && images[component] !== value.slice(eq + 1)) {
+        return fail("release-image-invalid", `--image names two images for "${component}"; a release records one image per component`);
+      }
+      images[component] = value.slice(eq + 1);
+    }
     // --at: the cut reads, compiles and builds the commit's tree, not the checkout's.
     if (args.at !== undefined && top && commit) checkout = at.checkoutCommit(top, cwd, commit);
     const cutCwd = checkout?.memberDir ?? cwd;
@@ -265,6 +278,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       ...(args.channel ? { channel: args.channel } : {}),
       ...(lane !== undefined ? { lane } : {}),
       ...(args.overrideGreen ? { overrideGreen: true } : {}),
+      ...(Object.keys(images).length > 0 ? { images } : {}),
     };
 
     if (dryRun) {
@@ -333,6 +347,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       }
       for (const b of plan.build) console.log(`  ${b.component}: artifacts built in ${b.env}`);
       for (const r of plan.reused) console.log(`  ${r.component}: artifacts unchanged, carried from ${r.from}`);
+      for (const h of plan.handed) console.log(`  ${h.component}: image ${h.ref}, handed to the cut, not built`);
       console.log(`  digest ${plan.releaseDigest ?? "decided when the artifacts are built"}`);
       console.log("What will be published where:");
       if (plan.publishSteps.length === 0) console.log("  no component declares a publish step");
@@ -374,7 +389,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     if (args.json) {
       console.log(
         JSON.stringify(
-          { dryRun: false, release: result.release, label: result.label, cut: result.cut, stored: result.stored, reused: result.reused, actor, actorSource: who.source, tag: tagged, composed: composed ?? null, channel: args.channel ?? null, lane: lane ?? null, next },
+          { dryRun: false, release: result.release, label: result.label, cut: result.cut, stored: result.stored, reused: result.reused, handed: result.handed, actor, actorSource: who.source, tag: tagged, composed: composed ?? null, channel: args.channel ?? null, lane: lane ?? null, next },
           null,
           2,
         ),
@@ -389,6 +404,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       if (result.cut) console.error(`  ${result.cut.signature ? `signed by ${result.cut.actor}` : `not signed; actor ${result.cut.actor}`}, run ${result.cut.runId}`);
       console.error(`  artifacts ${result.release.artifactDigests.length}, targets ${result.release.targets.map((t) => `${t.env} (${t.templates.length} template${t.templates.length === 1 ? "" : "s"})`).join(", ")}`);
       for (const r of result.reused) console.error(`  ${r.component}: artifacts unchanged, carried from ${r.from}`);
+      for (const h of result.handed) console.error(`  ${h.component}: image ${h.ref}, handed to the cut`);
       if (tagged) console.error(`  tag ${tagged.name}${tagged.created ? "" : " (already there)"}, not pushed`);
       console.error(`Next: ${next[0]}`);
       for (const n of next.slice(1)) console.error(`  or: ${n}`);

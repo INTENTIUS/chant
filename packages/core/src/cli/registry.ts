@@ -219,6 +219,8 @@ export interface ParsedArgs {
    * (#4002): the image every generated job runs in.
    */
   image?: string;
+  /** Every `--image` value, in order. `chant release cut --image <component>=<repository>@sha256:<hex>` (#4694) is repeatable, one per component: an image built elsewhere, handed to the cut by digest. */
+  images?: string[];
   /** `chant build --components --generate --before-script <line>`, repeatable (#4002): shell lines every generated job runs before its command. */
   beforeScript?: string[];
   /** `chant emulator up --network <name>` (#3952): the Docker network each started container joins. */
@@ -812,7 +814,7 @@ export interface ParsedArgs {
   digest?: string;
   /** `chant components release record --release-plan <file>` (ws-055, #2733) — path to a release plan JSON file, persisted content-addressed to `_plans/<digest>.json` on chant/lifecycle and read back through the read contract (`chant workspace status --json`). The plan's own `digest` field supplies `--digest` when it is omitted, and must match it when both are given. Distinct from `--plan` (#2300, below), the Op gate-approval plan digest. */
   releasePlanFile?: string;
-  /** `chant components promote --release <label|digest>` (#4026): deploy under that release, reading the templates its target for `--to` recorded. `chant run --components --release <label|digest>` (#4043): the run is of that release, which must have been cut from the checked-out commit and have a target for `--env`; the release records the run writes name it. */
+  /** `chant components promote --release <label|digest>` (#4026): deploy under that release, reading the templates its target for `--to` recorded. `chant run --components --release <label|digest>` (#4043): the run is of that release, which must have been cut from the checked-out commit and have a target for `--env`; the release records the run writes name it, and a component the release recorded an artifact for is deployed from it without a build (#4694). */
   release?: string;
   /** `chant release cut --build <command>` (#4026): the shell command run in the member's directory before each environment's templates are read, with `CHANT_ENV` set to the environment. */
   buildCommand?: string;

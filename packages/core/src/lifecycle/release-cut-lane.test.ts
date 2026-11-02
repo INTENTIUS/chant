@@ -100,6 +100,24 @@ describe("a cut from a lane (#4692)", () => {
     });
   });
 
+  test("an image handed to a cut from a lane is recorded, and nothing is built (#4694)", async () => {
+    await withTestDir(async (dir) => {
+      const sha = workspace(dir);
+      git(dir, "tag", `ci/green-server/${sha}`, sha);
+      const images = { api: `registry.fly.io/api@sha256:${"c".repeat(64)}` };
+      const plan = await planRelease({ cwd: dir, compiler: compiler(), label: "v1.0.0", actor: "alice", env: {}, lane: "server", images });
+      expect(plan.build).toEqual([]);
+      expect(plan.handed.map((h) => h.ref)).toEqual([images.api]);
+      const result = await cutRelease({ cwd: dir, compiler: compiler(), label: "v1.0.0", actor: "alice", env: {}, now: NOW, lane: "server", images });
+      expect(result.cut?.lane).toBe("server");
+      expect(result.release.artifactDigests.map((a) => a.ref)).toEqual([images.api]);
+      expect(result.release.releaseDigest).toBe(plan.releaseDigest);
+      const doc = await releasesDocument({ cwd: dir });
+      if ("error" in doc) throw new Error(doc.error.message);
+      contract(releasesSchema).expectValid(doc);
+    });
+  });
+
   test("a cut without a lane writes no lane, and a full green commit is cut as before", async () => {
     await withTestDir(async (dir) => {
       const sha = workspace(dir);

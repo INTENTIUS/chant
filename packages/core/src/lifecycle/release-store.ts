@@ -55,6 +55,7 @@ import {
   type LedgerLocation,
 } from "./git";
 import type { RunOrigin } from "./release-ledger";
+import { NEXT_RELEASE } from "../release-floors";
 
 /** The directory on `chant/lifecycle` that holds releases, cuts and template bytes. */
 export const RELEASES_DIR = "_releases";
@@ -66,14 +67,29 @@ export const TEMPLATES_SUBDIR = "templates";
 /** The `kind` a release digest is computed under, so it can never equal a plan digest of another kind. */
 export const RELEASE_DIGEST_KIND = "release";
 
-/** An artifact built once from the release's commit: an `image` or `asset` archive entry. */
+/**
+ * An artifact built once from the release's commit: an `image` or `asset`
+ * archive entry the cut built, or an image built elsewhere and handed to the
+ * cut by digest (#4694, `chant release cut --image`).
+ */
 export interface ReleaseArtifact {
   component: string;
   kind: "image" | "asset";
-  /** The archive path the build step wrote. */
+  /** The archive path the build step wrote. Empty for an image handed to the cut, which no build step wrote. */
   path: string;
   digest: string;
+  /**
+   * For an image handed to the cut (#4694): where it is, as
+   * `<repository>@<digest>`, the reference a deploy under the release runs.
+   * Absent on an artifact the cut built. In the release digest when present,
+   * so a release that records one is read by chant {@link RELEASE_IMAGE_REF_FLOOR}
+   * and newer.
+   */
+  ref?: string;
 }
+
+/** The first chant that writes and reads an artifact's `ref` (#4694). */
+export const RELEASE_IMAGE_REF_FLOOR = NEXT_RELEASE;
 
 /** One template of a target: a file a component's deploy reads, compiled for the target's environment. */
 export interface ReleaseTemplate {
@@ -207,12 +223,12 @@ export type ReleaseSubject = Pick<Release, "member" | "commit" | "artifactDigest
 
 const byString = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
-/** The same release with every list in the order ws-104 sets: artifacts by component then path, targets by env, templates by component then path, params by name. */
+/** The same release with every list in the order ws-104 sets: artifacts by component then path (a handed image's `ref` kept), targets by env, templates by component then path, params by name. */
 export function normalizeRelease<T extends ReleaseSubject>(release: T): T {
   return {
     ...release,
     artifactDigests: [...release.artifactDigests]
-      .map(({ component, kind, path, digest }) => ({ component, kind, path, digest }))
+      .map(({ component, kind, path, digest, ref }) => ({ component, kind, path, digest, ...(ref !== undefined ? { ref } : {}) }))
       .sort((a, b) => byString(a.component, b.component) || byString(a.path, b.path)),
     targets: [...release.targets]
       .map((t) => ({
@@ -354,7 +370,15 @@ export function parseRelease(text: string): Release | null {
     (r.member === null || typeof r.member === "string") &&
     typeof r.commit === "string" &&
     Array.isArray(r.artifactDigests) &&
-    r.artifactDigests.every((a) => a && typeof a.component === "string" && (a.kind === "image" || a.kind === "asset") && typeof a.path === "string" && typeof a.digest === "string") &&
+    r.artifactDigests.every(
+      (a) =>
+        a &&
+        typeof a.component === "string" &&
+        (a.kind === "image" || a.kind === "asset") &&
+        typeof a.path === "string" &&
+        typeof a.digest === "string" &&
+        (a.ref === undefined || typeof a.ref === "string"),
+    ) &&
     Array.isArray(r.targets) &&
     r.targets.every(
       (t) =>

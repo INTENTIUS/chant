@@ -1075,8 +1075,9 @@ function refusesNoRecordOn(runtime: Pick<OpRuntimeProvider, "name">): boolean {
 
 /**
  * Resolve the release `chant run --components --release` names (#4043), or the
- * reason it can't be used. The run builds from the checked-out commit, so the
+ * reason it can't be used. The run's compositions are the checkout's, so the
  * release's commit must be HEAD, and the release needs a target for `env`.
+ * The artifacts it deploys are the release's own (#4694, ../../components/release-run.ts).
  */
 export async function resolveRunRelease(ref: string, env: string, cwd: string) {
   const { fetchLifecycle, getHeadCommit } = await import("../../lifecycle/git");
@@ -1088,14 +1089,13 @@ export async function resolveRunRelease(ref: string, env: string, cwd: string) {
   const name = found.label ?? found.release.releaseDigest;
   const head = await getHeadCommit({ cwd });
   if (found.release.commit !== head) {
-    return `release ${name} was cut from ${found.release.commit.slice(0, 12)} and this checkout is at ${head.slice(0, 12)}; run builds from the checkout, so check out the release's commit, or deploy it with \`chant components promote --release\``;
+    return `release ${name} was cut from ${found.release.commit.slice(0, 12)} and this checkout is at ${head.slice(0, 12)}; run deploys the checkout's components, so check out the release's commit, or deploy it with \`chant components promote --release\``;
   }
   const target = targetFor(found.release, env);
   if ("error" in target) return target.error;
   return { releaseDigest: found.release.releaseDigest, label: found.label, release: found.release };
 }
 
-/** A rebuilt image need not digest as the release's own did; say so, as promote does. Never fails the run. */
 /** #4222: a component's templates digest in the release's target for `env`, or null when the release has no such target. */
 async function releaseTemplatesDigestOf(release: import("../../lifecycle/release-store").Release, env: string): Promise<(component: string) => string | null> {
   const { targetFor, releaseTemplatesDigest } = await import("../../components/release-promote");
@@ -1103,6 +1103,7 @@ async function releaseTemplatesDigestOf(release: import("../../lifecycle/release
   return (component) => ("target" in found ? releaseTemplatesDigest(found.target, component) : null);
 }
 
+/** A rebuilt image need not digest as the release's own did; say so, as promote does. Never fails the run. */
 async function warnOnArtifactMismatch(release: import("../../lifecycle/release-store").Release, recorded: readonly ReleaseRecord[]): Promise<void> {
   try {
     const { releaseArtifactMismatches } = await import("../../components/release-promote");
@@ -1116,6 +1117,31 @@ async function warnOnArtifactMismatch(release: import("../../lifecycle/release-s
   } catch {
     // The record is written; a manifest that can't be read is not worth failing the run for.
   }
+}
+
+/**
+ * The compositions of a run under a release (#4694): each component the release
+ * recorded an artifact for runs from it, with what was taken out printed to
+ * stderr, or the run is refused with every reason.
+ */
+function releaseRunPrepare(
+  under: { releaseDigest: string; label: string | null; release: import("../../lifecycle/release-store").Release },
+  projectPath: string,
+): NonNullable<import("../../components/cli-support").RunComponentsOptions["prepare"]> {
+  return async (components) => {
+    const { releaseRunComponents } = await import("../../components/release-run");
+    const result = releaseRunComponents(components, under.release, projectPath, under.label);
+    if ("errors" in result) return { error: `${result.errors.join("\n")}\nnothing was deployed` };
+    const name = under.label ?? under.releaseDigest;
+    for (const note of result.notes) {
+      const parts = [
+        ...(note.removed.length > 0 ? [`not building (${note.removed.join(", ")})`] : []),
+        ...(note.image ? [`image ${note.image}`] : []),
+      ];
+      console.error(formatInfo(`${note.component}: release ${name}'s own artifact${parts.length > 0 ? `; ${parts.join("; ")}` : ""}`));
+    }
+    return { components: result.components };
+  };
 }
 
 async function runComponentSelection(ctx: CommandContext): Promise<number> {
@@ -1159,11 +1185,18 @@ async function runComponentSelection(ctx: CommandContext): Promise<number> {
   const env = ctx.args.env ?? "local";
 
   // #4043: `--release <label|digest>` says this run deploys that release. The
-  // run builds from the checked-out commit, so the release must have been cut
-  // from it, and must have a target for the environment. Both are checked
-  // before anything deploys; nothing is inferred when the flag is absent.
+  // run's compositions are the checked-out commit's, so the release must have
+  // been cut from it, and must have a target for the environment. Both are
+  // checked before anything deploys; nothing is inferred when the flag is
+  // absent. #4694: a component the release recorded an artifact for runs from
+  // it, without its build steps.
   let underRelease: { releaseDigest: string; label: string | null; release: import("../../lifecycle/release-store").Release } | undefined;
   if (ctx.args.release) {
+    // #4694: the compositions are rewritten in this process, so a runtime that runs them elsewhere would build again.
+    if (runtime.name !== "local") {
+      console.error(formatError({ message: `--release runs the release's own artifacts on the local runtime, not on "${runtime.name}"`, hint: "Omit --on to run it here." }));
+      return 1;
+    }
     const refused = await resolveRunRelease(ctx.args.release, env, projectPath);
     if (typeof refused === "string") {
       console.error(formatError({ message: refused, hint: "List the releases with: chant release list" }));
@@ -1251,6 +1284,7 @@ async function runComponentSelection(ctx: CommandContext): Promise<number> {
       sandbox: ctx.args.sandbox,
       buildParams: paramsResolution.provenance,
       ...(onPlan ? { onPlan } : {}),
+      ...(underRelease ? { prepare: releaseRunPrepare(underRelease, projectPath) } : {}),
     });
   } catch (err) {
     events?.settle("failed", err instanceof Error ? err.message : String(err));

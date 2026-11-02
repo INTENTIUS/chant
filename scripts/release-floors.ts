@@ -79,6 +79,9 @@ const FLOOR_RE = /export const ([A-Z0-9_]+_FLOOR) = (?:"(\d+\.\d+\.\d+)"|(NEXT_R
  */
 const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: string }[] = [
   // --freeze empties this list after a release ships (#4501); each entry is one line.
+  { file: "packages/core/src/workspace/releases.schema.json", text: "Written by chant {v} and newer.", count: 1, floor: "RELEASE_IMAGE_REF_FLOOR" },
+  { file: "docs/src/content/docs/cli/release.mdx", text: "so a release that records one is read by chant {v} and newer.", count: 1, floor: "RELEASE_IMAGE_REF_FLOOR" },
+  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "Handed to the cut by digest ([#4694](https://github.com/INTENTIUS/chant/issues/4694)) | {v} |", count: 1, floor: "RELEASE_IMAGE_REF_FLOOR" },
 ];
 
 interface Args {

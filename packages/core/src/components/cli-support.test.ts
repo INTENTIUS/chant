@@ -553,6 +553,35 @@ describe("runComponents", () => {
     expect(capability.calls[0].ctx.env).toBe("local");
   });
 
+  test("prepare rewrites the compositions before they run, or refuses the run (#4694)", async () => {
+    await writeFile(
+      join(testDir, "svc.component.ts"),
+      `export const svc = { name: "svc", dependsOn: [], deploy: [{ phase: "Build", steps: [{ kind: "build-thing" }] }, { phase: "Apply", steps: [{ kind: "deploy-thing" }] }] };`,
+    );
+    const build = fakeCapability("build-thing");
+    const deploy = fakeCapability("deploy-thing");
+    const registry = new CapabilityRegistry();
+    registry.register(build);
+    registry.register(deploy);
+
+    const seen: string[][] = [];
+    const result = await runComponents(testDir, "svc", {
+      registry,
+      prepare: async (components) => {
+        seen.push(components.map((c) => c.name));
+        return { components: components.map((c) => ({ ...c, deploy: c.deploy.filter((p) => p.phase !== "Build") })) };
+      },
+    });
+    expect(result.success).toBe(true);
+    expect(seen).toEqual([["svc"]]);
+    expect(build.calls).toHaveLength(0);
+    expect(deploy.calls).toHaveLength(1);
+
+    const refused = await runComponents(testDir, "svc", { registry, prepare: async () => ({ error: "no artifact" }) });
+    expect(refused).toMatchObject({ success: false, error: "no artifact" });
+    expect(deploy.calls).toHaveLength(1);
+  });
+
   test("runs a component whose dependsOn names infra outside the discovered set (no UnknownDependencyError)", async () => {
     await writeFile(
       join(testDir, "svc.component.ts"),
