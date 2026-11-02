@@ -90,8 +90,8 @@ export const QUERY_TABLES = {
    * request a pending fact asks for, as JSON.
    */
   gates: [["member", "TEXT"], ["op", "TEXT"], ["gate", "TEXT"], ["kind", "TEXT"], ["timestamp", "TEXT"], ["resolved_by", "TEXT"], ["relayed_by", "TEXT"], ["approver_kind", "TEXT"], ["plan_digest", "TEXT"], ["environment", "TEXT"], ["release_digest", "TEXT"], ["git_sha", "TEXT"], ["run_id", "TEXT"], ["url", "TEXT"], ["note", "TEXT"], ["expires_at", "TEXT"], ["origin", "TEXT"], ["empty", "INTEGER"], ["signed", "INTEGER"], ["change_set", "TEXT"], ["request", "TEXT"]],
-  /** One row per deploy record in `<env>/releases.jsonl`. `promoted_from`, `restores` and `redeploys` are JSON. */
-  deploys: [["member", "TEXT"], ["env", "TEXT"], ["component", "TEXT"], ["digest", "TEXT"], ["git_sha", "TEXT"], ["run_id", "TEXT"], ["forge", "TEXT"], ["run_url", "TEXT"], ["timestamp", "TEXT"], ["actor", "TEXT"], ["approver", "TEXT"], ["release_digest", "TEXT"], ["digest_kind", "TEXT"], ["promoted_from", "TEXT"], ["restores", "TEXT"], ["redeploys", "TEXT"]],
+  /** One row per deploy record in `<env>/releases.jsonl`. `promoted_from`, `restores`, `redeploys` and `unchanged_since` (#4695) are JSON. */
+  deploys: [["member", "TEXT"], ["env", "TEXT"], ["component", "TEXT"], ["digest", "TEXT"], ["git_sha", "TEXT"], ["run_id", "TEXT"], ["forge", "TEXT"], ["run_url", "TEXT"], ["timestamp", "TEXT"], ["actor", "TEXT"], ["approver", "TEXT"], ["release_digest", "TEXT"], ["digest_kind", "TEXT"], ["promoted_from", "TEXT"], ["restores", "TEXT"], ["redeploys", "TEXT"], ["unchanged_since", "TEXT"]],
   /** One row per release file whose content hashes to its digest. `envs` joins its targets' environments with commas; `artifacts` is JSON. */
   releases: [["member", "TEXT"], ["release_digest", "TEXT"], ["release_member", "TEXT"], ["git_sha", "TEXT"], ["envs", "TEXT"], ["artifacts", "TEXT"]],
   /** One row per line of `_releases/cuts.jsonl`. `signed` is 1 for a signed cut. */
@@ -336,7 +336,7 @@ export async function loadQueryData(ledgers: readonly QueryLedger[]): Promise<Qu
           const { records, malformed: bad } = parseReleaseLedger(releaseLedgerLines(await port.read(env, file)));
           malformed.deploys += bad;
           for (const d of records) {
-            data.deploys.push({ member, env: d.env, component: d.component, digest: d.digest, git_sha: d.gitSha, run_id: d.runId, forge: str(d.runOrigin?.forge), run_url: str(d.runOrigin?.url), timestamp: d.timestamp, actor: d.actor, approver: str(d.approver), release_digest: str(d.releaseDigest), digest_kind: str(d.digestKind), promoted_from: json(d.promotedFrom), restores: json(d.restores), redeploys: json(d.redeploys) });
+            data.deploys.push({ member, env: d.env, component: d.component, digest: d.digest, git_sha: d.gitSha, run_id: d.runId, forge: str(d.runOrigin?.forge), run_url: str(d.runOrigin?.url), timestamp: d.timestamp, actor: d.actor, approver: str(d.approver), release_digest: str(d.releaseDigest), digest_kind: str(d.digestKind), promoted_from: json(d.promotedFrom), restores: json(d.restores), redeploys: json(d.redeploys), unchanged_since: json(d.unchangedSince) });
           }
           continue;
         }

@@ -24,7 +24,7 @@ member  op        gate    kind        timestamp                 resolved_by   ..
 
 It reads the local branch and never fetches. Inside a workspace it reads every member's ledger and each row names its member; `--member` keeps the members it names. Outside a workspace `member` is null.
 
-In the JSON document a column that `chant query` keeps as JSON text (`attributes`, `labels`, `outcomes`, `promoted_from`, `restores`, `redeploys`, `artifacts`) is an object or array, and `signed` and `empty` are booleans.
+In the JSON document a column that `chant query` keeps as JSON text (`attributes`, `labels`, `outcomes`, `promoted_from`, `restores`, `redeploys`, `unchanged_since`, `artifacts`) is an object or array, and `signed` and `empty` are booleans.
 
 ## Filters
 

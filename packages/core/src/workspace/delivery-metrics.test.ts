@@ -229,6 +229,14 @@ describe("environmentMetrics", () => {
     expect(m.leadTime.changes).toBe(0);
   });
 
+  test("a record of a skipped component deployed nothing and is in no metric (#4695)", () => {
+    const deploy = record("hub", "06");
+    const skip = record("hub", "08", { releaseDigest: "jcs1-sha256:r2", unchangedSince: { env: "prod", runId: deploy.runId, timestamp: deploy.timestamp } });
+    const m = environmentMetrics("prod", [deploy, skip], lookups, { since: t("05"), until: NOW });
+    expect(m.deployments.count).toBe(1);
+    expect(m.deployments.runs).toBe(1);
+  });
+
   test("a rollback is a record with restores; nothing else is", () => {
     expect(rollbackOf(record("api", "01"))).toBeNull();
     expect(rollbackOf(record("api", "02", { restores: { env: "prod", runId: "x", timestamp: t("01") } }))).toEqual({ env: "prod", runId: "x", timestamp: t("01") });
