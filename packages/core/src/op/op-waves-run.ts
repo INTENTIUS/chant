@@ -4014,10 +4014,12 @@ async function storeHeadChangeSet(doc: ChangeSetDocument, cwd: string): Promise<
 }
 
 async function writeHeadPlans(plans: HeadPlans, cwd: string): Promise<void> {
-  const { pushLifecycle, requireLifecycleLedger, writeBlobToPath } = await import("../lifecycle/git");
+  const { pushLifecycleRebasing, requireLifecycleLedger, writeBlobToPath } = await import("../lifecycle/git");
   const { headPlansPath } = await import("./gate-review");
   await requireLifecycleLedger({ cwd });
   const { dir, file } = headPlansPath(plans.name, plans.head);
   await writeBlobToPath(dir, file, JSON.stringify(plans, null, 2) + "\n", `Op waves plans of ${plans.name} at ${plans.head.slice(0, 12)}`, { cwd });
-  if (!(await pushLifecycle({ cwd }))) throw new Error("the plans were recorded locally only: chant/lifecycle has no remote to push to");
+  // The preview, its note and the approval status write the ledger at the same head, so a lost race replays rather than fails the job a pull request's checks wait on.
+  const pushed = await pushLifecycleRebasing({ cwd });
+  if (!pushed.pushed) throw new Error(`the plans were recorded locally only: ${pushed.pushWarning ?? "chant/lifecycle has no remote to push to"}`);
 }

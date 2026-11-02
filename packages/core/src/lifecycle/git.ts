@@ -1018,7 +1018,9 @@ async function rebaseLifecycleOnRemote(remote: string, cwd?: string): Promise<{ 
  * line `onto` already holds. A run record, a release record and a gate line
  * are such appends, so two writers to one environment's file no longer lose
  * one of them on a replay. Any other change, or a file the commit rewrote
- * rather than appended to, returns why, and the replay stops as before.
+ * rather than appended to, returns why, and the replay stops as before. A
+ * change set the other writer already stored under the same digest stays as
+ * it is there.
  */
 async function replayAppends(parent: string, commit: string, onto: string, cwd?: string): Promise<{ tree: string } | { error: string }> {
   const rt = getRuntime();
@@ -1036,6 +1038,8 @@ async function replayAppends(parent: string, commit: string, onto: string, cwd?:
   };
   const files: Array<{ path: string; content: string }> = [];
   for (const { status, path } of changes) {
+    // #4022: a stored change set is written once under its digest, so a copy already there is the same document, whatever graph it carries.
+    if (status === "A" && /(^|\/)_change-sets\/[^/]+\.json$/.test(path) && (await blob(onto, path)) !== null) continue;
     if (!path.endsWith(".jsonl") || (status !== "M" && status !== "A")) return { error: `${path} is not a ledger line file this replay appends to` };
     const ours = (await blob(commit, path)) ?? "";
     const base = status === "M" ? ((await blob(parent, path)) ?? "") : "";

@@ -587,6 +587,21 @@ describe("lifecycle/git", () => {
       }
     });
 
+    test("a change set the other writer stored under the same digest stays as it is there, and the rest of the commit lands", async () => {
+      const { a, b, remotePath, done } = await twoWriters();
+      try {
+        await advance(a, "_change-sets/jcs1-sha256_abc.json", '{"digest":"abc","graph":"theirs"}');
+        await writeBlobToPath("_change-sets", "jcs1-sha256_abc.json", '{"digest":"abc","graph":"ours"}', "Change set abc", { cwd: b });
+        await writeBlobToPath("prod", "release.jsonl", '{"released":1}\n', "Release record", { cwd: b });
+
+        expect(await pushLifecycleRebasing({ cwd: b })).toEqual({ pushed: true });
+        const tip = git(["rev-parse", "refs/heads/chant/lifecycle"], remotePath).stdout.trim();
+        expect(git(["show", `${tip}:prod/_change-sets/jcs1-sha256_abc.json`], remotePath).stdout).toBe('{"digest":"abc","graph":"theirs"}');
+      } finally {
+        await done();
+      }
+    });
+
     test("a commit that changes the file the other writer changed is refused by name, and the local write is kept", async () => {
       const { a, b, done } = await twoWriters();
       try {
