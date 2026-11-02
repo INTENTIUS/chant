@@ -19,7 +19,6 @@
  */
 
 import { createHash } from "node:crypto";
-import { NEXT_RELEASE } from "../release-floors";
 import { GATE_SEAL_NAMESPACE, gateSealPayload, gateSealVersion, isWebAuthnAssertion, webAuthnChallenge, type SealedGateApproval, type WebAuthnAssertion } from "./gate-seal";
 
 /**
@@ -37,7 +36,7 @@ export const GATE_EXTERNAL_SIGNATURE_FLOOR = "0.124.63";
  * checks, so it finds a version 3 seal doesn't verify and counts nothing for
  * it, whatever the gate.
  */
-export const GATE_BINDING_FLOOR = NEXT_RELEASE;
+export const GATE_BINDING_FLOOR = "0.124.64";
 
 /** The longest binding `--binding` takes, in UTF-8 bytes (#4697). */
 export const GATE_BINDING_MAX_BYTES = 512;

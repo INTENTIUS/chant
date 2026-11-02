@@ -79,16 +79,6 @@ const FLOOR_RE = /export const ([A-Z0-9_]+_FLOOR) = (?:"(\d+\.\d+\.\d+)"|(NEXT_R
  */
 const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: string }[] = [
   // --freeze empties this list after a release ships (#4501); each entry is one line.
-  { file: "packages/core/src/workspace/release-candidates.schema.json", text: "Added by #4692, written by chant {v} and newer.", count: 1, floor: "RELEASE_CANDIDATES_LANE_FLOOR" },
-  { file: "packages/core/src/workspace/releases.schema.json", text: "Added by #4692, written by chant {v} and newer.", count: 1, floor: "RELEASE_CUT_LANE_FLOOR" },
-  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "| `release-candidates` | `lane` | {v} |", count: 1, floor: "RELEASE_CANDIDATES_LANE_FLOOR" },
-  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "| `releases` | `releases[].cuts[].lane` | {v} |", count: 1, floor: "RELEASE_CUT_LANE_FLOOR" },
-  { file: "packages/core/src/workspace/releases.schema.json", text: "Added by #4693, written by chant {v} and newer.", count: 1, floor: "RELEASE_CUT_OVERRIDE_FLOOR" },
-  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "| `releases` | `releases[].cuts[].override` | {v} |", count: 1, floor: "RELEASE_CUT_OVERRIDE_FLOOR" },
-  { file: "docs/src/content/docs/reference/workspace-declaration.mdx", text: "Chant {v} and newer write and check a binding.", count: 1, floor: "GATE_BINDING_FLOOR" },
-  { file: "docs/src/content/docs/reference/publish-targets.mdx", text: "A deploy key reaches the one repository it was added to, where a classic token reaches every repository its user can. Read by chant {v} and newer.", count: 1, floor: "PUBLISH_HOMEBREW_SSH_KEY_FLOOR" },
-  { file: "docs/src/content/docs/reference/publish-targets.mdx", text: "`ovsx publish --trusted-publishing` do. Read by chant {v} and newer.", count: 1, floor: "PUBLISH_MARKETPLACE_AUTH_FLOOR" },
-  { file: "docs/src/content/docs/reference/publish-targets.mdx", text: "doesn't fail the publish ([#4698](https://github.com/INTENTIUS/chant/issues/4698)). Read by chant {v} and newer.", count: 1, floor: "PUBLISH_MARKETPLACE_ON_REFUSAL_FLOOR" },
 ];
 
 interface Args {
