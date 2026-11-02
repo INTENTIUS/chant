@@ -1,6 +1,6 @@
 # chant
 
-Spec-native typed ops with per-resource locking.
+Cloud native ops and governance.
 
 terragucci and plywood are built on it.
 
