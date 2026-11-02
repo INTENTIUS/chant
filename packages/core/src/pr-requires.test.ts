@@ -115,6 +115,16 @@ describe("github", () => {
     expect((await f.prChecksPassed!(7, HEAD, ["plywood/preview"])).passed).toBe(false);
   });
 
+  test("checks: an entry with * leaves out every status it matches, and only those", async () => {
+    const f = forge({
+      [`GET ${repo}/commits/${HEAD}/status`]: { statuses: [{ context: "chant-pr.shop.production / plan (pull_request)", state: "failure" }, { context: "ci/test", state: "success" }] },
+      [`GET ${repo}/commits/${HEAD}/check-runs`]: { check_runs: [] },
+    });
+    expect((await f.prChecksPassed!(7, HEAD, ["chant-pr.*.production / plan*"])).passed).toBe(true);
+    expect((await f.prChecksPassed!(7, HEAD, ["chant-pr.*.staging / plan*"])).passed).toBe(false);
+    expect((await f.prChecksPassed!(7, HEAD, ["chant-pr.shop.production / plan"])).passed).toBe(false);
+  });
+
   test("checks: nothing reported is pending", async () => {
     const f = forge({ [`GET ${repo}/commits/${HEAD}/status`]: { statuses: [] }, [`GET ${repo}/commits/${HEAD}/check-runs`]: { check_runs: [] } });
     expect(await f.prChecksPassed!(7, HEAD)).toMatchObject({ passed: false, pending: true });
