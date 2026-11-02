@@ -252,14 +252,15 @@ export function pulumiPreviewDigest(preview: unknown, opts: PulumiPreviewDigestO
 /**
  * The digest of each resource the preview changes, by URN (plywood#55): the
  * steps of that URN (a replace is several), as {@link pulumiPreviewDigest}
- * reads them, with the values the engine made up left out. A `same` or `read` step is not in it whatever the lock grain,
+ * reads them, with the values the engine made up left out. A `same`, `read` or `refresh` step is not in it whatever the lock grain,
  * so what a pull request left alone never makes its plan differ from a plan
  * made after another change landed on it.
  */
 export function pulumiResourceDigests(preview: unknown): Record<string, string> {
   const byUrn = new Map<string, ReturnType<typeof digestStep>[]>();
   for (const s of pulumiSteps(preview) ?? []) {
-    if (PULUMI_UNCHANGED_OPS.has(s.op ?? "")) continue;
+    // plywood#55: plunge prints a `refresh` step for each resource it reads and leaves alone, which a pull request did not change either.
+    if (PULUMI_UNCHANGED_OPS.has(s.op ?? "") || s.op === "refresh") continue;
     const list = byUrn.get(s.urn!) ?? [];
     list.push(digestStep(s));
     byUrn.set(s.urn!, list);
