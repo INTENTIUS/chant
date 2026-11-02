@@ -192,7 +192,8 @@ export interface SubscriptionHit {
  */
 export async function subscriptionsOf(client: Pick<PostgresClient, "query">, schema: string, table: string, major: number): Promise<SubscriptionHit[]> {
   const rel = "pg_catalog.to_regclass(pg_catalog.quote_ident($1) || '.' || pg_catalog.quote_ident($2))";
-  const tables = major >= 12 ? `SELECT relid FROM pg_catalog.pg_partition_tree(${rel})` : `SELECT ${rel}::oid AS relid`;
+  // pg_partition_tree lists nothing for a table that is not partitioned, so the table itself is always one of them.
+  const tables = major >= 12 ? `SELECT ${rel}::oid AS relid UNION SELECT relid FROM pg_catalog.pg_partition_tree(${rel})` : `SELECT ${rel}::oid AS relid`;
   const rows = await client.query<{ subname: string; subenabled: boolean }>(
     `SELECT DISTINCT s.subname, s.subenabled
      FROM pg_catalog.pg_subscription_rel sr

@@ -33,6 +33,8 @@ describe("subscriptionsOf", () => {
     const now = fake([]);
     await subscriptionsOf(now.client, "app", "events", 18);
     expect(now.calls[0]!.sql).toContain("pg_partition_tree");
+    // pg_partition_tree lists nothing for a plain table, so the table itself is matched too.
+    expect(now.calls[0]!.sql).toMatch(/::oid AS relid UNION SELECT relid FROM pg_catalog\.pg_partition_tree/);
     const old = fake([]);
     await subscriptionsOf(old.client, "app", "events", 11);
     expect(old.calls[0]!.sql).not.toContain("pg_partition_tree");
