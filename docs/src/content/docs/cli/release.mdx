@@ -232,7 +232,7 @@ export const control: Component = {
 
 `fly-release`'s `image` is the serving Machine's, and its `images` names the plan's other Machines, such as a scheduled one. A Machine built from the same image takes it the same way, `images: { controlCron: "@Image.uri" }`. A release records one image per component, so a Machine that runs another image belongs to the component that image is handed for, or takes it by a literal reference.
 
-The `ref` is in the release digest, so a release that records one is read by chant 0.124.63 and newer. An older chant reads it as a release that does not match its digest.
+The `ref` is in the release digest, so a release that records one is read by chant 0.124.65 and newer. An older chant reads it as a release that does not match its digest.
 
 ### A project with no components
 

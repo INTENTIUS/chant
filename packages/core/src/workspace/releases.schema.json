@@ -142,7 +142,7 @@
               },
               "ref": {
                 "type": "string",
-                "description": "An image handed to the cut by digest (chant release cut --image, #4694), as <repository>@<digest>: the image a deploy under the release runs. Absent on an artifact the cut built. Written by chant 0.124.63 and newer."
+                "description": "An image handed to the cut by digest (chant release cut --image, #4694), as <repository>@<digest>: the image a deploy under the release runs. Absent on an artifact the cut built. Written by chant 0.124.65 and newer."
               }
             }
           }
