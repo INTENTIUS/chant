@@ -55,7 +55,6 @@ import {
   type LedgerLocation,
 } from "./git";
 import type { RunOrigin } from "./release-ledger";
-import { NEXT_RELEASE } from "../release-floors";
 
 /** The directory on `chant/lifecycle` that holds releases, cuts and template bytes. */
 export const RELEASES_DIR = "_releases";
@@ -89,7 +88,7 @@ export interface ReleaseArtifact {
 }
 
 /** The first chant that writes and reads an artifact's `ref` (#4694). */
-export const RELEASE_IMAGE_REF_FLOOR = NEXT_RELEASE;
+export const RELEASE_IMAGE_REF_FLOOR = "0.124.65";
 
 /** One template of a target: a file a component's deploy reads, compiled for the target's environment. */
 export interface ReleaseTemplate {

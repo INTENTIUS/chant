@@ -40,10 +40,9 @@ import type { ComponentInputs } from "./component";
 import type { Release } from "../lifecycle/release-store";
 import type { ReleaseRecord, ReleaseRecordInput, RunOrigin } from "../lifecycle/release-ledger";
 import { releaseTemplatesDigest } from "./release-promote";
-import { NEXT_RELEASE } from "../release-floors";
 
 /** The first chant that reads a component's `inputs` and writes `unchangedSince` on a release record (#4695). */
-export const UNCHANGED_INPUTS_FLOOR = NEXT_RELEASE;
+export const UNCHANGED_INPUTS_FLOOR = "0.124.65";
 
 /** Whether a component's inputs are the same as in the release the environment runs it from. */
 export type InputsVerdict =
