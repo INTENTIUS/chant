@@ -111,3 +111,14 @@ describe("a create's digest leaves out what the engine drew while planning", () 
     expect(pulumiPreviewDigest({ steps: [flipped] })).not.toBe(pulumiPreviewDigest({ steps: [replace("2222222")] }));
   });
 });
+
+describe("pulumiResourceDigests and plunge's refresh steps (plywood#55)", () => {
+  test("a resource plunge only refreshed is not one the preview changes", () => {
+    const doc = copy();
+    const urn = doc.steps[0]!.urn!;
+    const refreshed = { ...doc, steps: [...doc.steps, { op: "refresh", urn: "urn:pulumi:dev::shop::aws:sqs/queue:Queue::events" } as PulumiStep] };
+    const digests = pulumiResourceDigests(refreshed);
+    expect(Object.keys(digests)).not.toContain("urn:pulumi:dev::shop::aws:sqs/queue:Queue::events");
+    expect(digests[urn]).toBe(pulumiResourceDigests(doc)[urn]);
+  });
+});
