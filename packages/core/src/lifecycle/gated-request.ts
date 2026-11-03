@@ -32,6 +32,7 @@ import { readGateLedger, type GateResolutionRecord, type PendingGateRecord } fro
 import { pushLifecycleReport, readBlobBySha, readBlobFromPath, readPathSha, RefCASConflictError, requireLifecycleLedger, writeBlobToPath, type LedgerLocation } from "./git";
 import { samePlanDigest } from "./plan-digest";
 import { gatedRequestAttachmentPath, gatedRequestDigest, type GatedRequest } from "./gated-request-digest";
+import { isLifecycleLocalNote } from "./local-note";
 
 export { gatedRequestAttachmentPath, gatedRequestDigest, gatedRequestOf, type GatedRequest } from "./gated-request-digest";
 
@@ -183,7 +184,9 @@ export async function requestGate(input: RequestGateInput): Promise<RequestGateR
 /**
  * Record that the request applies under `approval`, which spends it. Throws
  * unless the line was pushed, so two jobs never act on one approval; the
- * caller acts only after this returns.
+ * caller acts only after this returns. With no remote for `chant/lifecycle`
+ * the local branch is the whole ledger, so the line written to it spends the
+ * approval (#4720); a push that failed or that another writer beat still throws.
  */
 export async function spendGatedRequest(input: {
   op: string;
@@ -208,7 +211,7 @@ export async function spendGatedRequest(input: {
     ...(input.commit ? { commit: input.commit } : {}),
   };
   const pushed = await appendAppliedLine(input.op, record as unknown as Record<string, unknown>, `Applied under ${input.gate}`, input.cwd ? { cwd: input.cwd } : undefined);
-  if (!pushed.pushed) throw new Error(`the approval of ${input.gate} was recorded as spent and not pushed (${pushed.pushWarning ?? "no remote"}), so nothing may apply under it`);
+  if (!pushed.pushed && !isLifecycleLocalNote(pushed.pushWarning)) throw new Error(`the approval of ${input.gate} was recorded as spent and not pushed (${pushed.pushWarning ?? "no remote"}), so nothing may apply under it`);
   return record;
 }
 

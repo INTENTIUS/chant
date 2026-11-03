@@ -4,6 +4,8 @@ This file records changes to what chant prints or writes for a plain project, th
 
 ## Unreleased
 
+- [#4720](https://github.com/INTENTIUS/chant/issues/4720) spending a gated request's approval in a checkout with no remote for `chant/lifecycle` counts the applied line on the local branch, where it used to throw "recorded as spent and not pushed (recorded locally (no remote for chant/lifecycle))" and nothing could apply. A push that failed or that another writer beat still throws.
+
 - [plywood#55](https://github.com/INTENTIUS/plywood/issues/55) a pull request's per-resource digests leave out the `refresh` steps plunge prints for resources it reads and leaves alone, so a merged wave no longer counts another merge's change to such a resource as its own preview moving.
 
 - [plywood#66](https://github.com/INTENTIUS/plywood/issues/66) `pr-apply --before-merge` leaves the pull-request pipeline's own plan job (`chant-pr.<member>.<env> / plan`) out of the checks it asks for, as it already left out the plan's status, so a policy denial is refused and recorded as `policy-denied`, not `requires-unmet`. An `ignore` entry with `*` in it is a pattern.
