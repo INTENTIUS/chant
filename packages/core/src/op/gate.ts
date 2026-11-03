@@ -1095,11 +1095,16 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
  * plan (#2300) gets `--plan <digest>` too (#2832), so the line approves the
  * plan the reader was shown and not whatever is pending by the time they run
  * it.
+ *
+ * `target` fills a product's `{target}` (#4574) where no environment does,
+ * such as a wave's run target ({@link waveApproveTarget}). chant's own line
+ * leaves it out: `chant approve` names the op and the gate.
  */
-export function approveCommand(op: string, gate: string, environment?: string, planDigest?: string, sealed = false): string {
+export function approveCommand(op: string, gate: string, environment?: string, planDigest?: string, sealed = false, target?: string): string {
   // #4550: under a product's words (its bin set them), the product's approve line.
   const words = activeProductWords();
-  if (!isChantWords(words)) return approveLine(words, { op, gate, digest: planDigest ?? "", sign: sealed, ...(environment !== undefined ? { target: environment } : {}) });
+  const named = environment ?? target;
+  if (!isChantWords(words)) return approveLine(words, { op, gate, digest: planDigest ?? "", sign: sealed, ...(named !== undefined ? { target: named } : {}) });
   return `chant approve ${op} ${gate}` +
     (environment === undefined ? "" : ` --env ${environment}`) +
     (planDigest === undefined ? "" : ` --plan ${planDigest}`) +
