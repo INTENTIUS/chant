@@ -154,6 +154,7 @@ import {
   type OpWavesSpec,
   OP_LEDGER_NAME,
   opWavesInvolvedProblems,
+  waveApproveTarget,
 } from "./op-waves";
 import {
   OP_WAVE_PENDING_RESERVED,
@@ -1512,7 +1513,7 @@ async function runHooks(
     let hold = first;
     const approved: OpWaveHeldOnApproval[] = [];
     for (;;) {
-      const held = await settleOtherGate(ctx, hold);
+      const held = await settleOtherGate(ctx, hold, runs);
       if (held.status === "waiting") {
         if (approved.length > 0) held.after = approved;
         back.waitingOn ??= held;
@@ -1698,7 +1699,7 @@ async function finishHeldGate(ctx: WaveContext, hold: OtherGateHold, spent: Appl
  * under the wave's approval mode (`pr-review` counts the ledger alone, since
  * no review planned that digest), else a pending fact for it.
  */
-async function settleOtherGate(ctx: WaveContext, hold: OtherGateHold): Promise<OpWaveHeldOn> {
+async function settleOtherGate(ctx: WaveContext, hold: OtherGateHold, runs: readonly OpWaveRun[]): Promise<OpWaveHeldOn> {
   const { spec, k, wave, log } = ctx;
   const rules = ctx.gateRule;
   const op = hold.request.op ?? spec.name;
@@ -1730,7 +1731,9 @@ async function settleOtherGate(ctx: WaveContext, hold: OtherGateHold): Promise<O
   const base = { op, gate: hold.request.gate, digest: hold.request.digest, hook: hold.label };
   logRefused(log, `${op} / ${hold.request.gate}`, check);
   if (check.satisfied) return { ...base, status: "approved", approvedBy: check.resolution.resolvedBy, approvedAt: check.resolution.timestamp };
-  const approve = approveCommand(op, hold.request.gate, undefined, hold.request.digest, mode === "sealed");
+  // #4574: a per-run hook's hold names its run; else the wave's target, as the wave's own gate does.
+  const target = hold.target ?? waveApproveTarget(wave.name, runs.map((r) => r.target));
+  const approve = approveCommand(op, hold.request.gate, undefined, hold.request.digest, mode === "sealed", target);
   log(`wave ${k} (${wave.name}) waits on ${op} / ${hold.request.gate}, which ${hold.label} holds it on: nobody approved ${hold.request.digest}. Approve: ${approve}`);
   return {
     ...base,
@@ -2962,6 +2965,8 @@ async function settleGate(options: RunOpWaveOptions, ctx: WaveContext, decision:
   if (decision.quorum?.length) return settleQuorumGate(options, ctx, decision, decision.quorum);
   const { spec, k, wave, cwd } = ctx;
   const { gate, digest, approval, base, policy, members } = decision;
+  // #4574: the run target a product's approve line names.
+  const target = waveApproveTarget(wave.name, members.map((m) => m.member));
   const { ledger, port } = await gatePort(options, cwd, gate, approval, base);
   const now = options.now ?? new Date().toISOString();
   // #3784: under the spend rule at base, an approval a wave already applied under counts for nothing.
@@ -3024,7 +3029,7 @@ async function settleGate(options: RunOpWaveOptions, ctx: WaveContext, decision:
     }
     ctx.log(`wave ${k} (${wave.name}): the pull request's approval does not cover it (${covered.reason}), so it waits at its own gate ${gate}`);
     decision.status = "waiting";
-    decision.approve = approveCommand(spec.name, gate, undefined, digest);
+    decision.approve = approveCommand(spec.name, gate, undefined, digest, false, target);
     return;
   }
   if (approval === "pr-review") {
@@ -3039,11 +3044,11 @@ async function settleGate(options: RunOpWaveOptions, ctx: WaveContext, decision:
       return;
     }
     decision.status = "waiting";
-    decision.approve = approveCommand(spec.name, gate, undefined, digest);
+    decision.approve = approveCommand(spec.name, gate, undefined, digest, false, target);
     return;
   }
   decision.status = "waiting";
-  decision.approve = approveCommand(spec.name, gate, undefined, digest, approval === "sealed");
+  decision.approve = approveCommand(spec.name, gate, undefined, digest, approval === "sealed", target);
 }
 
 /**
@@ -3252,7 +3257,7 @@ async function settleQuorumGate(options: RunOpWaveOptions, ctx: WaveContext, dec
     log(`${label}: the approval rules at ${base.slice(0, 12)} are not met (${quorumWaiting(check.quorum.rules)}), so it waits for more approvals of ${digest}`);
   }
   decision.status = "waiting";
-  decision.approve = approveCommand(spec.name, gate, undefined, digest, approval === "sealed" || rules.some(ruleNeedsProof));
+  decision.approve = approveCommand(spec.name, gate, undefined, digest, approval === "sealed" || rules.some(ruleNeedsProof), waveApproveTarget(wave.name, members.map((m) => m.member)));
 }
 
 /**

@@ -181,6 +181,18 @@ export function opWavePointAt(spec: Pick<OpWavesSpec, "point" | "waves">, name: 
   return opWavePointOf(wave?.point ?? spec.point);
 }
 
+/**
+ * What a waiting wave's approve line names as `{target}` under a product's
+ * words (#4574): the run's target when the wave has one run, else the
+ * wave's name. A wave of several runs is approved once, for its set digest
+ * over all of them, and a product names such a wave by what they share:
+ * sql-yodeler names a tenant set's wave by its environment, which `yodel
+ * approve <env>` takes.
+ */
+export function waveApproveTarget(name: string, targets: readonly string[]): string {
+  return targets.length === 1 ? targets[0]! : name;
+}
+
 export const OP_WAVE_HOOK_FAILURES: readonly OpWaveHookFailure[] = ["fail", "approve"];
 
 /** One stage hook (#3762): a command run before or after a wave's plan or apply. */

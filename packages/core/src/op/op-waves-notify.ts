@@ -24,7 +24,7 @@ import { activeProductWords, isChantWords, notifyWaveLabel, type CiProductWords 
 import { productNotifySource, productSendOptions } from "../notify-product";
 import { CHANT_EXIT } from "../exit-codes";
 import { approveCommand } from "./gate";
-import type { OpWavesSpec } from "./op-waves";
+import { waveApproveTarget, type OpWavesSpec } from "./op-waves";
 import type { RunOpWaveResult } from "./op-waves-run";
 
 /** How the job ended: the wave's result, or the error that stopped it. */
@@ -66,7 +66,7 @@ export function opWaveNotifyFields(
       status: "waiting",
       summary: `${label} waits for an approval`,
       targets: decision.members.map((m) => m.member),
-      approve: { command: decision.approve ?? approveCommand(decision.op, decision.gate, undefined, decision.digest), ...chantApprove(words, decision), ...review },
+      approve: { command: decision.approve ?? approveCommand(decision.op, decision.gate, undefined, decision.digest, false, waveApproveTarget(decision.name, decision.members.map((m) => m.member))), ...chantApprove(words, decision), ...review },
       ...(decision.heldOn
         ? { reason: `held on ${decision.heldOn.op} / ${decision.heldOn.gate} by ${decision.heldOn.hook}` }
         : decision.heldBy?.length
