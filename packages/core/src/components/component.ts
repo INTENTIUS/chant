@@ -214,6 +214,27 @@ export interface ComponentInputs {
   paths?: string[];
   /** Build parameters, by name. A value that differs between the two releases' targets for the environment deploys the component. */
   params?: string[];
+  /**
+   * Commands that a changed file is compared through (#4718), for files
+   * whose changes the component doesn't care about, such as its own version
+   * bumped in a Cargo.toml or a lock file. See {@link ComponentInputNormalize}.
+   */
+  normalize?: ComponentInputNormalize[];
+}
+
+/**
+ * One normalization of a component's inputs (#4718). A file `paths` matches
+ * that changed between the two releases' commits is read at each commit and
+ * piped through `command`; the file is unchanged when the two outputs are the
+ * same. The command runs with `sh -c` from the repository's top level, with
+ * the file on stdin and `{path}` replaced by its path from the top level. It
+ * must be deterministic. A command that fails counts the file as changed.
+ */
+export interface ComponentInputNormalize {
+  /** Git pathspecs, relative to the member's directory, as in `paths`. A file the first entry matches is compared through that entry. */
+  paths: string[];
+  /** The normalizer, such as `scripts/release blank {path}`. */
+  command: string;
 }
 
 /** One environment a component declares it deploys to (#3153). */

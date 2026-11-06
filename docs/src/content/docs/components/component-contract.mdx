@@ -24,7 +24,11 @@ interface Component {
   liveNames?: string[];       // optional: live entity/resource name(s), when they differ from `name`
   composites?: string[];      // optional: composite kind(s) this component deploys, when a consumer can't infer it from `name`
   environments?: ComponentEnvironmentDeclaration[]; // optional: where a release goes, by environment
-  inputs?: { paths?: string[]; params?: string[] }; // optional: what a deploy is made from, so an unchanged one is skipped
+  inputs?: {                  // optional: what a deploy is made from, so an unchanged one is skipped
+    paths?: string[];
+    params?: string[];
+    normalize?: { paths: string[]; command: string }[];
+  };
 }
 ```
 
@@ -157,6 +161,27 @@ export const control: Component = {
 ```
 
 `paths` are git pathspecs read from the member's directory, so `:(exclude)` and `:(top)` work as they do for `git diff`. `params` are build parameters by name. A [run under a release](/chant/cli/run/#unchanged-inputs) compares them with the release the environment runs the component from. List the component's own files among the paths when a change to its steps should deploy it. The files its deploy reads, as the cut records them (a `fly-release` plan, a template), are compared whether or not they are listed. A component that declares no `inputs` deploys with every release. Read by chant 0.124.65 and newer.
+
+### Normalized inputs
+
+Some input files change in ways the component doesn't care about. A release of another part of the repository may bump the repository's own crate versions in every `Cargo.toml` and in `Cargo.lock`, and the hub that lists those files would then deploy with every such release. `normalize` names a command that each changed copy of a file is piped through before the two are compared ([#4718](https://github.com/INTENTIUS/chant/issues/4718)):
+
+```ts
+inputs: {
+  paths: ["../crates/control", "../Cargo.toml", "../Cargo.lock", "src/control.component.ts"],
+  normalize: [
+    { paths: ["../Cargo.toml", "../Cargo.lock", "../crates/*/Cargo.toml"], command: "scripts/release blank {path}" },
+  ],
+},
+```
+
+A file that changed between the two releases' commits and that an entry's `paths` match (git pathspecs from the member's directory, as in `paths`) is read at each commit with `git show` and piped through the entry's `command`. It counts as unchanged when the two outputs are the same bytes. When several entries match a file, the first one is used. An entry only covers files that `paths` lists. The command:
+
+- runs with `sh -c` from the repository's top level in the checkout, the commit being released, so the same normalizer reads both copies (list the normalizer among `paths` when a change to it should deploy the component);
+- gets the file on stdin, and `{path}` in it is replaced by the file's path from the top level, shell-quoted;
+- must print the same output for the same input.
+
+A command that exits non-zero, is killed or runs past a minute counts the file as changed, and the run says which command failed on which file at which commit. A changed file that is missing at either commit, or that no entry matches, counts as changed the way it did before, and when there is one no command runs at all. A skip that needed a normalization lists each such file with its command in `normalizedInputs` on the skip record. Read by chant 0.124.68 and newer; an older chant ignores `normalize` and deploys the component when a listed file changed.
 
 ## Read next
 

@@ -30,19 +30,53 @@
  * environment, a record made from no release, a release that isn't stored, a
  * commit git doesn't have. `--deploy-unchanged` deploys it anyway.
  *
+ * A changed file that one of `normalize`'s entries covers (#4718) is compared
+ * after that entry's command. A daemon release bumps Arugula's own crate
+ * versions in every Cargo.toml and in Cargo.lock, which the hub lists among
+ * its inputs; with
+ *
+ * ```ts
+ * normalize: [{ paths: ["../Cargo.lock", "../crates/control/Cargo.toml"], command: "scripts/release blank {path}" }]
+ * ```
+ *
+ * each such file is read at the two commits (`git show <commit>:<path>`),
+ * each copy is piped through the command, and the file counts as unchanged
+ * when the two outputs are the same bytes. The command runs with `sh -c` from
+ * the repository's top level in the checkout, the commit being released, so
+ * the same normalizer reads both copies; `{path}` is the file's path from the
+ * top level, shell-quoted. It must print the same bytes for the same input.
+ * A command that exits non-zero, times out or can't start counts the file as
+ * changed and the reason says so. A file that is missing at either commit is
+ * changed. A changed file no entry covers is changed as before, and then no
+ * command runs. The first entry whose `paths` match a file is the one used.
+ *
  * A skip is recorded ({@link unchangedRecord}): a release record of this
  * release for the component that repeats the digest of the deploy it keeps
- * and names that deploy in `unchangedSince`.
+ * and names that deploy in `unchangedSince`. When a file was the same only
+ * after a normalization, the record lists it with the command in
+ * `normalizedInputs`.
  */
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import type { ComponentInputs } from "./component";
+import { NEXT_RELEASE } from "../release-floors";
 import type { Release } from "../lifecycle/release-store";
 import type { ReleaseRecord, ReleaseRecordInput, RunOrigin } from "../lifecycle/release-ledger";
 import { releaseTemplatesDigest } from "./release-promote";
 
 /** The first chant that reads a component's `inputs` and writes `unchangedSince` on a release record (#4695). */
 export const UNCHANGED_INPUTS_FLOOR = "0.124.65";
+
+/** The first chant that reads `inputs.normalize` and writes `normalizedInputs` on a skip record (#4718). */
+export const NORMALIZED_INPUTS_FLOOR = NEXT_RELEASE;
+
+/** A file that differed between the two commits and was the same after a normalization (#4718). */
+export interface NormalizedInput {
+  /** From the repository's top level, as git prints it. */
+  path: string;
+  /** The `command` of the `normalize` entry that covered it, as declared. */
+  command: string;
+}
 
 /** Whether a component's inputs are the same as in the release the environment runs it from. */
 export type InputsVerdict =
@@ -52,6 +86,8 @@ export type InputsVerdict =
       since: ReleaseRecord;
       /** The environment's record already names this release: there is nothing new to record. */
       recorded: boolean;
+      /** The files that differed and were the same after a normalization (#4718), when there were any. */
+      normalized?: NormalizedInput[];
     }
   | { unchanged: false; reason: string };
 
@@ -74,6 +110,52 @@ export function gitChangedPaths(memberDir: string): ChangedPaths {
   };
 }
 
+/**
+ * Whether the file at `path` (from the top level) is the same at two commits
+ * after `command` reads each copy on stdin (#4718), or why it can't tell.
+ */
+export type NormalizedCompare = (command: string, path: string, from: string, to: string) => { same: boolean } | { error: string };
+
+/** How long one run of a normalizer may take. */
+const NORMALIZE_TIMEOUT_MS = 60_000;
+
+const shellQuote = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
+
+/**
+ * {@link NormalizedCompare} through git and `sh -c`, from the top level of
+ * the repository `memberDir` is in. A file missing at either commit is not
+ * the same.
+ */
+export function gitNormalizedCompare(memberDir: string): NormalizedCompare {
+  let top: string | undefined;
+  return (command, path, from, to) => {
+    try {
+      top ??= execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: memberDir, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+    } catch {
+      return { error: `${memberDir} is not in a git work tree` };
+    }
+    const outputs: Buffer[] = [];
+    for (const commit of [from, to]) {
+      const show = spawnSync("git", ["show", `${commit}:${path}`], { cwd: top, maxBuffer: 256 * 1024 * 1024 });
+      if (show.status !== 0) return { same: false };
+      const run = spawnSync("sh", ["-c", command.replaceAll("{path}", shellQuote(path))], {
+        cwd: top,
+        input: show.stdout,
+        timeout: NORMALIZE_TIMEOUT_MS,
+        maxBuffer: 256 * 1024 * 1024,
+      });
+      const at = `${path} at ${commit.slice(0, 12)}`;
+      if (run.error) return { error: `\`${command}\` could not run on ${at}: ${run.error.message}` };
+      if (run.status !== 0) {
+        const said = run.stderr.toString("utf-8").trim().split("\n")[0];
+        return { error: `\`${command}\` ${run.signal ? `was killed (${run.signal})` : `exited ${run.status}`} on ${at}${said ? `: ${said}` : ""}` };
+      }
+      outputs.push(run.stdout);
+    }
+    return { same: outputs[0]!.equals(outputs[1]!) };
+  };
+}
+
 const shortDigest = (d: string): string => d.replace(/^jcs1-sha256:/, "").slice(0, 12);
 
 /** Compare `component`'s declared inputs in `release` with the release the environment's `current` record names. */
@@ -86,8 +168,11 @@ export async function compareInputs(input: {
   current: ReleaseRecord | undefined;
   readRelease: (digest: string) => Promise<Release | null>;
   changedPaths: ChangedPaths;
+  /** Compares a file `inputs.normalize` covers (#4718); without it such a file counts as changed. */
+  normalizedCompare?: NormalizedCompare;
 }): Promise<InputsVerdict> {
   const { component, inputs, env, release, current } = input;
+  const normalized: NormalizedInput[] = [];
   const paths = inputs.paths ?? [];
   const params = inputs.params ?? [];
   if (paths.length === 0 && params.length === 0) return { unchanged: false, reason: "it declares no paths or params in inputs" };
@@ -114,11 +199,48 @@ export async function compareInputs(input: {
     if (changed === null) {
       return { unchanged: false, reason: `git can't compare ${prior.commit.slice(0, 12)} and ${release.commit.slice(0, 12)} here; fetch the history between them` };
     }
-    if (changed.length > 0) {
-      return { unchanged: false, reason: `${changed.length} input file(s) changed since ${prior.commit.slice(0, 12)}, such as ${changed[0]}` };
+    const since = prior.commit.slice(0, 12);
+    const covering = normalizeCoverage(inputs, changed, (p) => input.changedPaths(prior.commit, release.commit, p));
+    if ("error" in covering) return { unchanged: false, reason: covering.error };
+    const plain = changed.filter((f) => !covering.byFile.has(f));
+    if (plain.length > 0) {
+      return { unchanged: false, reason: `${plain.length} input file(s) changed since ${since}, such as ${plain[0]}` };
+    }
+    for (const [file, command] of covering.byFile) {
+      const result = input.normalizedCompare
+        ? input.normalizedCompare(command, file, prior.commit, release.commit)
+        : { error: "no normalizer runs here" };
+      if ("error" in result) {
+        return { unchanged: false, reason: `the normalization of ${file} failed, so it counts as changed: ${result.error}` };
+      }
+      if (!result.same) {
+        return { unchanged: false, reason: `input file ${file} changed since ${since}, also after \`${command}\`` };
+      }
+      normalized.push({ path: file, command });
     }
   }
-  return { unchanged: true, since: current, recorded: false };
+  return { unchanged: true, since: current, recorded: false, ...(normalized.length > 0 ? { normalized } : {}) };
+}
+
+/**
+ * The `normalize` entry, by its command, that covers each of the `changed`
+ * files (#4718): the first entry whose `paths` git matches the file with.
+ */
+function normalizeCoverage(
+  inputs: ComponentInputs,
+  changed: readonly string[],
+  matching: (paths: readonly string[]) => string[] | null,
+): { byFile: Map<string, string> } | { error: string } {
+  const byFile = new Map<string, string>();
+  if (changed.length === 0) return { byFile };
+  const pending = new Set(changed);
+  for (const entry of inputs.normalize ?? []) {
+    if (entry.paths.length === 0) continue;
+    const matched = matching(entry.paths);
+    if (matched === null) return { error: `git can't match the paths of the normalization \`${entry.command}\`, so its files count as changed` };
+    for (const f of matched) if (pending.delete(f)) byFile.set(f, entry.command);
+  }
+  return { byFile };
 }
 
 /**
@@ -130,6 +252,7 @@ export async function compareInputs(input: {
 export function unchangedRecord(
   since: ReleaseRecord,
   run: { releaseDigest: string; runId: string; runOrigin?: RunOrigin; timestamp: string; actor: string },
+  normalized?: readonly NormalizedInput[],
 ): ReleaseRecordInput {
   return {
     component: since.component,
@@ -146,5 +269,6 @@ export function unchangedRecord(
     actor: run.actor,
     releaseDigest: run.releaseDigest,
     unchangedSince: { env: since.env, runId: since.runId, timestamp: since.timestamp },
+    ...(normalized && normalized.length > 0 ? { normalizedInputs: normalized.map((n) => ({ path: n.path, command: n.command })) } : {}),
   };
 }
