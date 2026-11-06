@@ -26,18 +26,22 @@
  *    witnessed by a receipt in chant's lifecycle receipt store
  *    (`@intentius/chant/op/lifecycle-receipt-store`), then the Machine restarts
  *    on the migrated data;
- * 3. verify: the Machine is started with this release, its Fly checks pass,
- *    and its health endpoint answers when a URL is given. Each other Machine
- *    the release started is started with its checks passing;
- * 4. on a failure after a Machine changed, restore: each Machine the release
- *    changed gets the config it replaced back, last changed first (on a
- *    first release, the serving Machine is stopped), and the step fails.
+ * 3. verify: the Machine is started with this release, and its health
+ *    endpoint answers when a URL is given;
+ * 4. on a failure after the Machine changed, restore: the config it replaced
+ *    goes back (or, on a first release, the Machine is stopped), and so does
+ *    the old config of each other Machine the release updated, and the step
+ *    fails. A failure partway through the apply restores the Machines it had
+ *    already updated the same way.
  *
- * The apply rolls the plan's Machines one at a time (#4719): each Machine it
- * starts must pass its Fly checks (`checks[].status` on the Machine) before
- * the next is updated, within `checks.timeoutMs` (default five minutes). A
- * Machine with no checks is done once started, as before. One whose checks
- * never pass fails the release, and every Machine updated so far is restored.
+ * Given `checks` (#4719), the apply rolls the plan's Machines one at a time on
+ * their Fly checks: each Machine it starts must pass its checks
+ * (`checks[].status` on the Machine, reported since its update) before the
+ * next is updated, within `checks.timeoutMs` (default five minutes). A Machine
+ * with no checks is done once started. Verify then also needs every Machine
+ * the release started to pass its checks, and a failure restores the Machines
+ * the release changed last changed first, each restore waiting for its
+ * Machine's checks. Without `checks`, only `started` is waited for.
  *
  * A scheduled Machine (`config.schedule`, #4696) is released without being
  * started, whether it is the one that serves or another Machine in the plan:
@@ -186,11 +190,13 @@ export interface FlyReleaseInput {
   migrations?: FlyMigration[];
   verify?: FlyVerify;
   /**
-   * How long each Machine the release starts has to pass its Fly checks
-   * before the next is updated (#4719). Default: five minutes, polled every
-   * second. A Machine with no checks configured is done once started.
+   * Roll the Machines one at a time on their Fly checks (#4719): each Machine
+   * the release starts must pass its checks before the next is updated, and
+   * verify reads every one's checks. `true` takes the defaults: five minutes
+   * per Machine, polled every second. A Machine with no checks configured is
+   * done once started. Without it, only `started` is waited for.
    */
-  checks?: MachineChecksOpts;
+  checks?: MachineChecksOpts | true;
   /** flaps endpoint override. Default: `FLY_FLAPS_BASE_URL`, else real Fly. */
   endpoint?: string;
   wait?: WaitOpts;
@@ -315,26 +321,32 @@ export function createFlyReleaseCapability(deps: FlyReleaseDeps = {}): Capabilit
   const httpFor = () => deps.http ?? defaultFlyHttp();
 
   /**
-   * On a failed release, put each Machine it changed back, last changed
-   * first, waiting for each to come back (and pass its checks) before the
-   * next. The serving Machine gets its old config, or is stopped when it
-   * served nothing before; another Machine it updated gets its old config.
+   * On a failed release, put each Machine it changed back. The serving
+   * Machine gets its old config, or is stopped when it served nothing before;
+   * another Machine it updated gets its old config.
+   *
+   * Without `checks` this is the order and the calls fly-release made before
+   * #4719: the serving Machine first, then the others in plan order. With
+   * `checks`, the last Machine changed goes back first, and each restore
+   * waits for its Machine's checks before the next.
    */
-  async function restoreApplied(applied: ReleasedMachine[], input: FlyReleaseInput, http: FlyHttp): Promise<void> {
-    for (const m of [...applied].reverse()) {
-      if (m.action === "noop" || (!m.serving && (m.action !== "updated" || !m.previous))) continue;
+  async function restoreApplied(applied: ReleasedMachine[], input: FlyReleaseInput, http: FlyHttp, rolling: MachineChecksOpts | undefined, servingWas?: string | null): Promise<void> {
+    const order = rolling ? [...applied].reverse() : [...applied.filter((m) => m.serving), ...applied.filter((m) => !m.serving)];
+    for (const m of order) {
+      if (m.serving ? rolling && m.action === "noop" : m.action !== "updated" || !m.previous) continue;
       const where = { app: m.app, machine: m.name, endpoint: input.endpoint, wait: input.wait };
       try {
         if (m.previous) {
-          await flyMachineRestore({ ...where, config: m.previous, checks: input.checks ?? {} }, undefined, http);
-          const was = m.serving ? readMachineRelease(m.previous.metadata)?.digest : undefined;
+          await flyMachineRestore({ ...where, config: m.previous, ...(rolling ? { checks: rolling } : {}) }, undefined, http);
+          const was = m.serving ? (servingWas === undefined ? readMachineRelease(m.previous.metadata)?.digest : (servingWas ?? undefined)) : undefined;
           log(`fly-release: restored ${m.app}/${m.name} to ${was ?? "its previous config"}`);
         } else {
           await flyMachineStop(where, undefined, http);
           log(`fly-release: nothing had been released on ${m.app}/${m.name}; stopped it`);
         }
       } catch (restoreErr) {
-        log(`fly-release: restore of ${m.app}/${m.name} failed: ${restoreErr instanceof Error ? restoreErr.message : String(restoreErr)}`);
+        const why = restoreErr instanceof Error ? restoreErr.message : String(restoreErr);
+        log(m.serving && !rolling ? `fly-release: restore failed: ${why}` : `fly-release: restore of ${m.app}/${m.name} failed: ${why}`);
       }
     }
   }
@@ -388,6 +400,7 @@ export function createFlyReleaseCapability(deps: FlyReleaseDeps = {}): Capabilit
         ...(input.env ?? {}),
       };
 
+      const rolling: MachineChecksOpts | undefined = input.checks === true ? {} : input.checks;
       let released: FlyMachineReleaseResult;
       try {
         released = await flyMachineRelease(
@@ -401,7 +414,7 @@ export function createFlyReleaseCapability(deps: FlyReleaseDeps = {}): Capabilit
             ...(source ? { files: source.files, cmd: source.cmd } : {}),
             endpoint: input.endpoint,
             wait: input.wait,
-            checks: input.checks ?? {},
+            ...(rolling ? { checks: rolling } : {}),
           },
           undefined,
           http,
@@ -409,7 +422,7 @@ export function createFlyReleaseCapability(deps: FlyReleaseDeps = {}): Capabilit
       } catch (err) {
         // A Machine failed to settle or to pass its checks partway through the
         // roll: put back every Machine changed so far, then fail.
-        if (err instanceof MachineReleaseError) await restoreApplied(err.applied, input, http);
+        if (err instanceof MachineReleaseError) await restoreApplied(err.applied, input, http, rolling);
         throw err;
       }
       const where = { app: released.app, machine: released.machine.name, endpoint: input.endpoint };
@@ -449,12 +462,30 @@ export function createFlyReleaseCapability(deps: FlyReleaseDeps = {}): Capabilit
           }
           if (migrations.some((m) => m.fired)) await flyMachineRestart({ ...where, wait: input.wait }, undefined, http);
         }
-        await flyMachineVerify({ ...where, digest: input.digest, ...(input.verify ?? {}), checks: true }, undefined, http, deps.fetch);
-        // Every other Machine the release started serves too: started, with its checks passing.
-        for (const m of released.applied) {
+        const serving = released.applied.find((m) => m.serving);
+        await flyMachineVerify(
+          {
+            ...where,
+            digest: input.digest,
+            ...(input.verify ?? {}),
+            ...(rolling ? { checks: true, ...(serving?.updatedAt ? { checksSince: serving.updatedAt } : {}) } : {}),
+          },
+          undefined,
+          http,
+          deps.fetch,
+        );
+        // With checks, every other Machine the release started serves too: started, with its checks passing.
+        for (const m of rolling ? released.applied : []) {
           if (m.serving || m.action === "noop" || m.unlaunched) continue;
           await flyMachineChecks(
-            { app: m.app, machine: m.name, endpoint: input.endpoint, timeoutMs: input.verify?.timeoutMs ?? 120_000, intervalMs: input.verify?.intervalMs },
+            {
+              app: m.app,
+              machine: m.name,
+              endpoint: input.endpoint,
+              timeoutMs: input.verify?.timeoutMs ?? 120_000,
+              intervalMs: input.verify?.intervalMs,
+              ...(m.updatedAt ? { since: m.updatedAt } : {}),
+            },
             undefined,
             http,
           );
@@ -462,7 +493,7 @@ export function createFlyReleaseCapability(deps: FlyReleaseDeps = {}): Capabilit
       } catch (err) {
         // Restore: the Machines changed, so put back what each served (or stop
         // the serving one when it served nothing), then fail the step.
-        await restoreApplied(released.applied, input, http);
+        await restoreApplied(released.applied, input, http, rolling, previousRelease?.digest ?? null);
         throw err;
       }
 

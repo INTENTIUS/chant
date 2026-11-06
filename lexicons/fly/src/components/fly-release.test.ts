@@ -511,8 +511,8 @@ describe("fly-release over serving Machines with Fly checks (#4719)", () => {
   /**
    * A fake whose Machines report one check: critical for the first few reads
    * of each new instance, then passing, unless `healthy` says the Machine
-   * cannot pass at all. `events` holds each Machine update and the first
-   * passing read of each instance, in order.
+   * cannot pass at all. `events` holds each Machine create and update and
+   * the first passing read of each instance, in order.
    */
   function checkedFake(healthy: (m: { name: string; config: Record<string, unknown> }) => boolean = () => true, opts: { exec?: () => void } = {}) {
     const events: string[] = [];
@@ -540,6 +540,8 @@ describe("fly-release over serving Machines with Fly checks (#4719)", () => {
         const m = [...fake.machines.values()].flat().find((x) => x.id === path[5]);
         events.push(`update ${m?.name}`);
       }
+      // POST /v1/apps/<app>/machines: a new Machine.
+      if (method === "POST" && path.length === 5 && path[4] === "machines") events.push(`create ${(body as { name?: string }).name}`);
       return http(method, url, body, headers, signal);
     };
     return { fake, events };
@@ -598,6 +600,80 @@ describe("fly-release over serving Machines with Fly checks (#4719)", () => {
     expect(fake.machine("shop", "web2")!.config.image).toBe("shop:1");
   });
 
+  test("a check still passing from before the update does not count: the roll waits for one reported since", async () => {
+    writePlan({ shop: PLAN.shop, web: machine("web"), web2: machine("web2") });
+    const events: string[] = [];
+    const reads = new Map<string, number>();
+    // The first reads of each new instance carry the old instance's passing
+    // status, stamped before the update; then a fresh one arrives.
+    const fake = createMachinesFake({
+      checks: (_app, m) => {
+        const n = (reads.get(m.instance_id) ?? 0) + 1;
+        reads.set(m.instance_id, n);
+        if (n <= 3) return [{ name: CHECK, status: "passing", updated_at: "2000-01-01T00:00:00.000Z" }];
+        if (n === 4) events.push(`fresh ${m.name}`);
+        return [{ name: CHECK, status: "passing", updated_at: m.updated_at }];
+      },
+    });
+    const http = fake.http;
+    fake.http = async (method, url, body, headers, signal) => {
+      const path = new URL(url).pathname.split("/");
+      if (method === "POST" && path.length === 6 && path[4] === "machines") {
+        events.push(`update ${[...fake.machines.values()].flat().find((x) => x.id === path[5])?.name}`);
+      }
+      return http(method, url, body, headers, signal);
+    };
+    const s = setup(fake);
+    await s.release.run(CTX, input("sha256:aaaaaaaaaaaa", { machine: "web", image: "shop:1", images: { web2: "shop:1" }, checks: FAST }));
+    events.length = 0;
+    await s.release.run(CTX, input("sha256:bbbbbbbbbbbb", { machine: "web", image: "shop:2", images: { web2: "shop:2" }, checks: FAST }));
+    expect(events).toEqual(["update web", "fresh web", "update web2", "fresh web2"]);
+
+    // A check that never reports again times out, saying so.
+    const stuck = createMachinesFake({ checks: () => [{ name: CHECK, status: "passing", updated_at: "2000-01-01T00:00:00.000Z" }] });
+    const t = setup(stuck);
+    await expect(t.release.run(CTX, input("sha256:aaaaaaaaaaaa", { machine: "web", image: "shop:1", images: { web2: "shop:1" }, checks: FAST }))).rejects.toThrow(
+      /machine shop\/web .* did not pass its Fly checks within 50ms: check servicecheck-00-http-8080 has not reported since the update at .* \(last at 2000-01-01T00:00:00.000Z\)/,
+    );
+  });
+
+  test("without checks, the release waits for started only, as before #4719, even with checks failing", async () => {
+    writePlan({ shop: PLAN.shop, web: machine("web"), web2: machine("web2") });
+    const { fake, events } = checkedFake(() => false);
+    const s = setup(fake);
+    await s.release.run(CTX, input("sha256:aaaaaaaaaaaa", { machine: "web", image: "shop:1", images: { web2: "shop:1" } }));
+    events.length = 0;
+    const out = await s.release.run(CTX, input("sha256:bbbbbbbbbbbb", { machine: "web", image: "shop:2", images: { web2: "shop:2" } }));
+    expect(out.digest).toBe("sha256:bbbbbbbbbbbb");
+    expect(events).toEqual(["update web", "update web2"]);
+  });
+
+  test("without checks, an apply that fails partway restores the Machines it had already updated", async () => {
+    writePlan({ shop: PLAN.shop, web: machine("web", {}), web2: machine("web2", {}) });
+    // web2 never starts on the new image.
+    const fake = createMachinesFake({ settle: (m) => (m.name === "web2" && m.config.image === "shop:2" ? "failed" : "started") });
+    const s = setup(fake);
+    await s.release.run(CTX, input("sha256:aaaaaaaaaaaa", { machine: "web", image: "shop:1", images: { web2: "shop:1" } }));
+    s.lines.length = 0;
+    await expect(
+      s.release.run(CTX, input("sha256:bbbbbbbbbbbb", { machine: "web", image: "shop:2", images: { web2: "shop:2" }, wait: { intervalMs: 0, deadlineMs: 50 } })),
+    ).rejects.toThrow(/machine shop\/m[0-9a-f]+ did not reach started within the deadline/);
+    expect(fake.machine("shop", "web")!.config.image).toBe("shop:1");
+    expect(fake.machine("shop", "web2")!.config.image).toBe("shop:1");
+    expect(s.lines.filter((l) => l.includes("restore"))).toEqual([
+      "fly-release: restored shop/web to sha256:aaaaaaaaaaaa",
+      "fly-release: restored shop/web2 to its previous config",
+    ]);
+  });
+
+  test("checks: true rolls with the defaults", { timeout: 20_000 }, async () => {
+    writePlan({ shop: PLAN.shop, web: machine("web"), web2: machine("web2") });
+    const { fake, events } = checkedFake();
+    const s = setup(fake);
+    await s.release.run(CTX, input("sha256:aaaaaaaaaaaa", { machine: "web", image: "shop:1", images: { web2: "shop:1" }, checks: true }));
+    expect(events).toEqual(["create web", "passing web", "create web2", "passing web2"]);
+  });
+
   test("a Machine with no checks configured is done once started, as before", async () => {
     writePlan({ shop: PLAN.shop, web: machine("web", {}), web2: machine("web2", {}) });
     const { fake, events } = checkedFake();
@@ -607,7 +683,7 @@ describe("fly-release over serving Machines with Fly checks (#4719)", () => {
     await s.release.run(CTX, input("sha256:aaaaaaaaaaaa", { machine: "web", image: "shop:1", images: { web2: "shop:1" }, checks: zero }));
     const out = await s.release.run(CTX, input("sha256:bbbbbbbbbbbb", { machine: "web", image: "shop:2", images: { web2: "shop:2" }, checks: zero }));
     expect(out.digest).toBe("sha256:bbbbbbbbbbbb");
-    expect(events).toEqual(["update web", "update web2"]);
+    expect(events).toEqual(["create web", "create web2", "update web", "update web2"]);
     expect(s.fake.machine("shop", "web2")!.config.image).toBe("shop:2");
   });
 

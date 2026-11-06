@@ -39,6 +39,7 @@
 
 import {
   appNameFromRequest,
+  configEqual,
   defaultFlyHttp,
   flyApply,
   isAppRequest,
@@ -54,6 +55,7 @@ import {
   LEASE_NONCE_HEADER,
   type AppliedMachine,
   type ApplyCtx,
+  type FlapsCheckStatus,
   type FlapsMachine,
   type FlapsRequest,
   type FlyHttp,
@@ -158,15 +160,28 @@ export function declaresChecks(config: unknown): boolean {
 /**
  * Why a Machine's Fly checks are not all passing, or undefined when they are
  * or it has none. A Machine whose config declares checks that have not
- * reported yet is not passing. Pure.
+ * reported yet is not passing.
+ *
+ * Given `since`, the Machine's own `updated_at` as the call that changed it
+ * answered it, a check counts as passing only when its `updated_at` is at or
+ * after that time: a `passing` left over from before the change is stale.
+ * Both times come from flaps, so the local clock plays no part. A check
+ * that reports no `updated_at` cannot be told stale and counts on its status.
+ * Pure.
  */
-export function checksPending(m: Pick<FlapsMachine, "config" | "checks">): string | undefined {
+export function checksPending(m: Pick<FlapsMachine, "config" | "checks">, since?: string): string | undefined {
   const checks = m.checks ?? [];
   if (checks.length === 0) return declaresChecks(m.config) ? "no check has reported yet" : undefined;
-  const failing = checks.filter((c) => c.status !== "passing");
+  const from = since ? Date.parse(since) : NaN;
+  const stale = (c: FlapsCheckStatus) => {
+    const at = c.updated_at ? Date.parse(c.updated_at) : NaN;
+    return !Number.isNaN(from) && !Number.isNaN(at) && at < from;
+  };
+  const failing = checks.filter((c) => c.status !== "passing" || stale(c));
   if (failing.length === 0) return undefined;
   return failing
     .map((c) => {
+      if (c.status === "passing") return `check ${c.name} has not reported since the update at ${since} (last at ${c.updated_at})`;
       const output = (c.output ?? "").trim().slice(0, 200);
       return `check ${c.name} is ${c.status || "unknown"}${output ? ` (${output})` : ""}`;
     })
@@ -232,6 +247,8 @@ export interface ReleasedMachine {
   previous: MachineConfig | null;
   /** True for the Machine that serves the release (`machine`). */
   serving: boolean;
+  /** Its `updated_at` as the create or update call answered it: checks older than this are stale. */
+  updatedAt?: string;
 }
 
 /**
@@ -296,8 +313,9 @@ export interface FlyMachineReleaseResult {
  * update, so each release pushes the next run back by up to one interval.
  *
  * Given `checks` (#4719), each Machine the apply starts must pass its Fly
- * checks before the next one is updated. A failure partway through throws a
- * {@link MachineReleaseError} naming the Machines applied so far.
+ * checks, reported since its update, before the next one is updated. With or
+ * without them, a failure partway through the apply throws a
+ * {@link MachineReleaseError} naming the Machines it changed so far.
  */
 export async function flyMachineRelease(
   args: FlyMachineReleaseArgs,
@@ -360,9 +378,9 @@ export async function flyMachineRelease(
   const afterMachine = async (m: AppliedMachine) => {
     const serving = m.entity === target.entity;
     const previous = serving ? (live ? (liveConfig ?? {}) : null) : (before.get(m.entity) ?? null);
-    rolled.push({ app: m.app, name: m.name, id: m.id, action: m.action, unlaunched: m.unlaunched, previous, serving });
+    rolled.push({ app: m.app, name: m.name, id: m.id, action: m.action, unlaunched: m.unlaunched, previous, serving, ...(m.updatedAt ? { updatedAt: m.updatedAt } : {}) });
     if (args.checks && m.action !== "noop" && !m.unlaunched) {
-      await waitForChecks(ctx, m.app, m.name, http, signal, args.checks);
+      await waitForChecks(ctx, m.app, m.name, http, signal, args.checks, m.updatedAt);
     }
   };
   let applied: Awaited<ReturnType<typeof flyApply>>;
@@ -373,6 +391,18 @@ export async function flyMachineRelease(
       http,
     );
   } catch (err) {
+    // A Machine whose update went through but which never settled is not in
+    // `rolled` yet: find it by its config, so it is put back too.
+    const reached = new Set(rolled.map((m) => `${m.app}/${m.name}`));
+    for (const m of planMachines(plan)) {
+      if (reached.has(`${m.app}/${m.name}`)) continue;
+      const serving = m.entity === target.entity;
+      const was = serving ? (live ? (liveConfig ?? {}) : null) : (before.get(m.entity) ?? null);
+      const now = await findMachine(ctx, m.app, m.name, http, signal).catch(() => undefined);
+      if (!now || (was && configEqual(now.config, was))) continue;
+      const unlaunched = skipsLaunch((serving ? request : (overrides[m.entity] ?? m.request)).body);
+      rolled.push({ app: m.app, name: m.name, id: now.id, action: was ? "updated" : "created", unlaunched, previous: was, serving });
+    }
     throw new MachineReleaseError(err, rolled);
   }
   const actionOf = (app: string, name: string) => applied.machines.find((m) => m.app === app && m.name === name)?.action ?? "noop";
@@ -510,6 +540,8 @@ export interface FlyMachineVerifyArgs extends FlapsTarget {
   intervalMs?: number;
   /** The Machine's Fly checks must all pass too (#4719). A Machine with none passes on its state alone. */
   checks?: boolean;
+  /** With `checks`, a check counts only when it reported at or after this time (the Machine's `updated_at` from the release's update). */
+  checksSince?: string;
 }
 
 /**
@@ -541,7 +573,7 @@ export async function flyMachineVerify(
         throw new Error(`machine ${args.app}/${m.id} serves ${release?.digest ?? "no release"}, expected ${args.digest}`);
       }
       if (args.checks && m.state === "started") {
-        const pending = checksPending(m);
+        const pending = checksPending(m, args.checksSince);
         if (pending) throw new Error(`machine ${args.app}/${args.machine} (${m.id}): ${pending}`);
       }
       if (args.url) {
@@ -601,15 +633,18 @@ export async function flyMachineRestore(
   );
   if (res.status >= 300) throw new Error(`restore of machine ${args.app}/${m.id} failed (${res.status}): ${res.text}`);
   let instance = "";
+  let updatedAt: string | undefined;
   try {
-    instance = (JSON.parse(res.text) as { instance_id?: string }).instance_id ?? "";
+    const answered = JSON.parse(res.text) as { instance_id?: string; updated_at?: string };
+    instance = answered.instance_id ?? "";
+    updatedAt = answered.updated_at;
   } catch {
     instance = "";
   }
   if (unlaunched) await waitForUnlaunched(ctx, args.app, m.id, instance, http, signal, args.wait ?? {});
   else {
     await waitForMachine(ctx, args.app, m.id, instance, http, signal, args.wait ?? {});
-    if (args.checks) await waitForChecks(ctx, args.app, args.machine, http, signal, args.checks);
+    if (args.checks) await waitForChecks(ctx, args.app, args.machine, http, signal, args.checks, updatedAt);
   }
   const release = readMachineRelease(args.config.metadata);
   return { id: m.id, ...(release ? { release } : {}) };
@@ -621,12 +656,14 @@ export interface FlyMachineChecksArgs extends FlapsTarget, MachineChecksOpts {
   app: string;
   /** The Machine's name or id. */
   machine: string;
+  /** A check counts only when it reported at or after this time: the Machine's `updated_at` from the call that changed it. */
+  since?: string;
 }
 
 /**
  * Wait until the Machine is started and every one of its Fly checks
- * (`checks[].status` on the Machine) is `passing`. A Machine with no checks
- * is done once started. Throws after `timeoutMs`, naming the Machine and each
+ * (`checks[].status` on the Machine) is `passing`, and, given `since`, has
+ * reported since then. A Machine with no checks is done once started. Throws after `timeoutMs`, naming the Machine and each
  * check that is not passing.
  */
 export async function flyMachineChecks(
@@ -634,7 +671,7 @@ export async function flyMachineChecks(
   signal?: AbortSignal,
   http: FlyHttp = defaultFlyHttp(args.token),
 ): Promise<{ id: string }> {
-  return waitForChecks({ base: resolveEndpoint(args) }, args.app, args.machine, http, signal, args);
+  return waitForChecks({ base: resolveEndpoint(args) }, args.app, args.machine, http, signal, args, args.since);
 }
 
 async function waitForChecks(
@@ -644,6 +681,7 @@ async function waitForChecks(
   http: FlyHttp,
   signal: AbortSignal | undefined,
   opts: MachineChecksOpts,
+  since?: string,
 ): Promise<{ id: string }> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_CHECKS_TIMEOUT_MS;
   const interval = opts.intervalMs ?? 1_000;
@@ -651,7 +689,7 @@ async function waitForChecks(
   for (;;) {
     if (signal?.aborted) throw new Error(`waiting for the checks of ${app}/${name} aborted`);
     const m = await mustFindMachine(ctx, app, name, http, signal);
-    const why = m.state === "started" ? checksPending(m) : `it is ${m.state}`;
+    const why = m.state === "started" ? checksPending(m, since) : `it is ${m.state}`;
     if (!why) return { id: m.id };
     if (Date.now() + interval > deadline) {
       throw new Error(`machine ${app}/${name} (${m.id}) did not pass its Fly checks within ${timeoutMs >= 1000 ? `${Math.round(timeoutMs / 1000)}s` : `${timeoutMs}ms`}: ${why}`);

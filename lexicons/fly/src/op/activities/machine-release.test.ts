@@ -167,6 +167,19 @@ describe("Fly checks", () => {
     ).toBe("check b is critical (503 Service Unavailable)");
   });
 
+  test("checksPending counts a passing check only when it reported at or after `since`", () => {
+    const since = "2026-11-06T12:00:00Z";
+    const at = (updated_at?: string) => ({ config: CHECKED, checks: [{ name: "a", status: "passing", ...(updated_at ? { updated_at } : {}) }] });
+    expect(checksPending(at("2026-11-06T11:59:59Z"), since)).toBe(
+      "check a has not reported since the update at 2026-11-06T12:00:00Z (last at 2026-11-06T11:59:59Z)",
+    );
+    expect(checksPending(at("2026-11-06T12:00:00Z"), since)).toBeUndefined();
+    expect(checksPending(at("2026-11-06T12:00:05Z"), since)).toBeUndefined();
+    // No time on either side: the status alone decides.
+    expect(checksPending(at(), since)).toBeUndefined();
+    expect(checksPending(at("2026-11-06T11:59:59Z"))).toBeUndefined();
+  });
+
   test("flyApply's afterMachine runs after each Machine settles, and a throw stops the apply there", async () => {
     const fake = createMachinesFake();
     const seen: string[] = [];

@@ -22,6 +22,8 @@ export interface FakeMachine {
   state: string;
   instance_id: string;
   config: Record<string, unknown> & { metadata?: Record<string, string> };
+  /** When the machine was last created or updated (RFC 3339), as flaps reports it. */
+  updated_at?: string;
 }
 
 /** What an `exec` answers: the Machines API's exec envelope. */
@@ -50,6 +52,8 @@ export interface MachinesFakeOptions {
   exec?: (app: string, machine: FakeMachine, command: string[]) => FakeExecResult | Promise<FakeExecResult>;
   /** The state a created or updated machine settles in. Default `started`. */
   settle?: (machine: FakeMachine) => string;
+  /** The clock a create or update stamps `updated_at` with. Default: the wall clock. */
+  now?: () => Date;
   /**
    * The Fly checks a machine reports each time it is read (#4719), as the
    * Machines API's `checks`: asked on every GET of the machine or its list.
@@ -63,6 +67,8 @@ export interface FakeCheck {
   name: string;
   status: "passing" | "warning" | "critical";
   output?: string;
+  /** When the check last reported (RFC 3339). */
+  updated_at?: string;
 }
 
 const json = (status: number, body: unknown) => ({ status, text: body === undefined ? "" : JSON.stringify(body) });
@@ -92,6 +98,7 @@ export function createMachinesFake(options: MachinesFakeOptions = {}): MachinesF
   const execs: MachinesFake["execs"] = [];
   const calls: string[] = [];
   const settle = options.settle ?? (() => "started");
+  const stamp = () => (options.now?.() ?? new Date()).toISOString();
   const list = (app: string) => machines.get(app) ?? [];
   const find = (app: string, id: string) => list(app).find((m) => m.id === id);
   const withChecks = (app: string, m: FakeMachine) => {
@@ -141,6 +148,7 @@ export function createMachinesFake(options: MachinesFakeOptions = {}): MachinesF
             state: "created",
             instance_id: nextId("I"),
             config: structuredClone((b.config ?? {}) as FakeMachine["config"]),
+            updated_at: stamp(),
           };
           // skip_launch: the Machine is created and not booted (#4696).
           m.state = b.skip_launch === true ? "created" : settle(m);
@@ -155,6 +163,7 @@ export function createMachinesFake(options: MachinesFakeOptions = {}): MachinesF
         if (method === "POST") {
           m.config = structuredClone((b.config ?? {}) as FakeMachine["config"]);
           m.instance_id = nextId("I");
+          m.updated_at = stamp();
           // skip_launch: the new config isn't started (#4696). A Machine that
           // never ran stays created; one that ran is stopped.
           m.state = b.skip_launch === true ? (m.state === "created" ? "created" : "stopped") : settle(m);
