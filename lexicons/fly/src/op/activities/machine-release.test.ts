@@ -1,6 +1,10 @@
 import { describe, test, expect } from "vitest";
 import {
   RELEASE_METADATA_KEYS,
+  MachineReleaseError,
+  checksPending,
+  declaresChecks,
+  flyMachineChecks,
   flyMachineExec,
   flyMachineRelease,
   flyMachineRestart,
@@ -12,7 +16,7 @@ import {
   withReleaseMetadata,
 } from "./machine-release";
 import { createMachinesFake } from "./machines-fake";
-import type { FlyPlan } from "./fly-apply";
+import { flyApply, type FlyPlan } from "./fly-apply";
 
 const ENDPOINT = "http://flaps.test";
 const NO_WAIT = { intervalMs: 0, deadlineMs: 2_000 };
@@ -134,5 +138,106 @@ describe("Machines activities against the fake", () => {
     const restored = await flyMachineRestore({ app: "shop", machine: "web", config: one.config, endpoint: ENDPOINT, wait: NO_WAIT }, undefined, fake.http);
     expect(restored.release?.digest).toBe("sha256:one");
     expect(fake.machine("shop", "web")!.config).toEqual(one.config);
+  });
+});
+
+/** #4719: Fly checks on the Machines a release rolls. */
+describe("Fly checks", () => {
+  const CHECKED = { services: [{ internal_port: 8080, checks: [{ type: "http", port: 8080, path: "/platform.json" }] }] };
+  const TWO: FlyPlan = {
+    shop: PLAN.shop,
+    web: { endpoint: "/v1/apps/shop/machines", method: "POST", body: { name: "web", config: { image: "shop:1", ...CHECKED } } },
+    web2: { endpoint: "/v1/apps/shop/machines", method: "POST", body: { name: "web2", config: { image: "shop:1", ...CHECKED } } },
+  };
+
+  test("declaresChecks reads top-level and service checks", () => {
+    expect(declaresChecks({ image: "x" })).toBe(false);
+    expect(declaresChecks({ checks: {} })).toBe(false);
+    expect(declaresChecks({ checks: { alive: { type: "tcp", port: 8080 } } })).toBe(true);
+    expect(declaresChecks(CHECKED)).toBe(true);
+    expect(declaresChecks({ services: [{ internal_port: 8080 }] })).toBe(false);
+  });
+
+  test("checksPending names each check that is not passing", () => {
+    expect(checksPending({ config: {} })).toBeUndefined();
+    expect(checksPending({ config: CHECKED })).toBe("no check has reported yet");
+    expect(checksPending({ config: CHECKED, checks: [{ name: "a", status: "passing" }] })).toBeUndefined();
+    expect(
+      checksPending({ config: CHECKED, checks: [{ name: "a", status: "passing" }, { name: "b", status: "critical", output: " 503 Service Unavailable\n" }] }),
+    ).toBe("check b is critical (503 Service Unavailable)");
+  });
+
+  test("flyApply's afterMachine runs after each Machine settles, and a throw stops the apply there", async () => {
+    const fake = createMachinesFake();
+    const seen: string[] = [];
+    await expect(
+      flyApply(
+        {
+          plan: TWO,
+          endpoint: ENDPOINT,
+          wait: NO_WAIT,
+          afterMachine: async (m) => {
+            seen.push(`${m.name}:${m.action}`);
+            if (m.name === "web") throw new Error("stop here");
+          },
+        },
+        undefined,
+        fake.http,
+      ),
+    ).rejects.toThrow("stop here");
+    expect(seen).toEqual(["web:created"]);
+    expect(fake.machine("shop", "web2")).toBeUndefined();
+  });
+
+  test("flyMachineChecks waits for every check to pass, and names the Machine and the check when one does not", async () => {
+    let reads = 0;
+    const fake = createMachinesFake({
+      checks: (_app, m) => (m.name === "web" ? [{ name: "servicecheck-00-http-8080", status: ++reads > 3 ? "passing" : "critical", output: "503" }] : undefined),
+    });
+    await flyApply({ plan: TWO, endpoint: ENDPOINT, wait: NO_WAIT }, undefined, fake.http);
+    await expect(flyMachineChecks({ app: "shop", machine: "web", endpoint: ENDPOINT, intervalMs: 1, timeoutMs: 1_000 }, undefined, fake.http)).resolves.toBeDefined();
+    expect(reads).toBeGreaterThan(3);
+    // web2 declares checks that never report.
+    await expect(flyMachineChecks({ app: "shop", machine: "web2", endpoint: ENDPOINT, intervalMs: 1, timeoutMs: 20 }, undefined, fake.http)).rejects.toThrow(
+      /machine shop\/web2 \(m[0-9a-f]+\) did not pass its Fly checks within 20ms: no check has reported yet/,
+    );
+  });
+
+  test("flyMachineVerify with checks needs them passing; without, it reads only state and release", async () => {
+    let status: "passing" | "critical" = "critical";
+    const fake = createMachinesFake({ checks: () => [{ name: "alive", status }] });
+    await flyMachineRelease({ plan: TWO, machine: "web", endpoint: ENDPOINT, release: { digest: "sha256:one" }, wait: NO_WAIT }, undefined, fake.http);
+    const base = { app: "shop", machine: "web", endpoint: ENDPOINT, digest: "sha256:one", intervalMs: 1, timeoutMs: 20 };
+    await expect(flyMachineVerify(base, undefined, fake.http)).resolves.toBeDefined();
+    await expect(flyMachineVerify({ ...base, checks: true }, undefined, fake.http)).rejects.toThrow(/verify shop\/web: machine shop\/web \(m[0-9a-f]+\): check alive is critical/);
+    status = "passing";
+    await expect(flyMachineVerify({ ...base, checks: true }, undefined, fake.http)).resolves.toBeDefined();
+  });
+
+  test("flyMachineRelease with checks: a Machine that does not pass stops the roll and names what it applied", async () => {
+    const fake = createMachinesFake({ checks: (_app, m) => [{ name: "alive", status: m.config.image === "shop:bad" ? "critical" : "passing" }] });
+    const args = { plan: TWO, machine: "web", endpoint: ENDPOINT, wait: NO_WAIT, checks: { intervalMs: 1, timeoutMs: 20 } };
+    const first = await flyMachineRelease({ ...args, release: { digest: "sha256:one" } }, undefined, fake.http);
+    expect(first.applied.map((m) => [m.name, m.action, m.serving])).toEqual([
+      ["web", "created", true],
+      ["web2", "created", false],
+    ]);
+    const err = await flyMachineRelease({ ...args, release: { digest: "sha256:two" }, image: "shop:bad", images: { web2: "shop:bad" } }, undefined, fake.http).catch((e) => e);
+    expect(err).toBeInstanceOf(MachineReleaseError);
+    expect(err.message).toMatch(/machine shop\/web .* did not pass its Fly checks within 20ms: check alive is critical/);
+    // The roll stopped at web: web2 was never updated.
+    expect((err as MachineReleaseError).applied.map((m) => [m.name, m.action])).toEqual([["web", "updated"]]);
+    expect((err as MachineReleaseError).applied[0].previous?.image).toBe("shop:1");
+    expect(fake.machine("shop", "web2")!.config.image).toBe("shop:1");
+  });
+
+  test("restore with checks waits for the restored Machine's checks", async () => {
+    const fake = createMachinesFake({ checks: (_app, m) => [{ name: "alive", status: m.config.image === "shop:1" ? "passing" : "critical" }] });
+    const args = { plan: TWO, machine: "web", endpoint: ENDPOINT, wait: NO_WAIT };
+    const one = await flyMachineRelease({ ...args, release: { digest: "sha256:one" } }, undefined, fake.http);
+    await flyMachineRelease({ ...args, release: { digest: "sha256:two" }, image: "shop:2" }, undefined, fake.http);
+    const restore = { app: "shop", machine: "web", endpoint: ENDPOINT, wait: NO_WAIT, checks: { intervalMs: 1, timeoutMs: 20 } };
+    await expect(flyMachineRestore({ ...restore, config: one.config }, undefined, fake.http)).resolves.toMatchObject({ release: { digest: "sha256:one" } });
+    await expect(flyMachineRestore({ ...restore, config: { ...one.config, image: "shop:2" } }, undefined, fake.http)).rejects.toThrow(/check alive is critical/);
   });
 });

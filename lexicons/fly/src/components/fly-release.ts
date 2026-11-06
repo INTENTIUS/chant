@@ -26,11 +26,18 @@
  *    witnessed by a receipt in chant's lifecycle receipt store
  *    (`@intentius/chant/op/lifecycle-receipt-store`), then the Machine restarts
  *    on the migrated data;
- * 3. verify: the Machine is started with this release, and its health
- *    endpoint answers when a URL is given;
- * 4. on a failure after the Machine changed, restore: the config it replaced
- *    goes back (or, on a first release, the Machine is stopped), and the step
- *    fails.
+ * 3. verify: the Machine is started with this release, its Fly checks pass,
+ *    and its health endpoint answers when a URL is given. Each other Machine
+ *    the release started is started with its checks passing;
+ * 4. on a failure after a Machine changed, restore: each Machine the release
+ *    changed gets the config it replaced back, last changed first (on a
+ *    first release, the serving Machine is stopped), and the step fails.
+ *
+ * The apply rolls the plan's Machines one at a time (#4719): each Machine it
+ * starts must pass its Fly checks (`checks[].status` on the Machine) before
+ * the next is updated, within `checks.timeoutMs` (default five minutes). A
+ * Machine with no checks is done once started, as before. One whose checks
+ * never pass fails the release, and every Machine updated so far is restored.
  *
  * A scheduled Machine (`config.schedule`, #4696) is released without being
  * started, whether it is the one that serves or another Machine in the plan:
@@ -57,6 +64,7 @@ import type { Capability, DeployContext } from "@intentius/chant/components/capa
 import type { ReceiptStore, EffectReceiptRef } from "@intentius/chant/op/receipt-store";
 import {
   findMachine,
+  flyMachineChecks,
   flyMachineExec,
   flyMachineRelease,
   flyMachineRestart,
@@ -65,9 +73,12 @@ import {
   flyMachineVerify,
   readMachineRelease,
   releaseTarget,
+  MachineReleaseError,
   type FlyMachineReleaseResult,
+  type MachineChecksOpts,
   type MachineFile,
   type MachineRelease,
+  type ReleasedMachine,
 } from "../op/activities/machine-release";
 import { defaultFlyHttp, machineSchedule, parsePlan, resolveEndpoint, skipsLaunch, type FlyHttp, type WaitOpts } from "../op/activities/fly-apply";
 import type { MachineConfigStore } from "../release-store";
@@ -174,6 +185,12 @@ export interface FlyReleaseInput {
   /** Migrations, in order. */
   migrations?: FlyMigration[];
   verify?: FlyVerify;
+  /**
+   * How long each Machine the release starts has to pass its Fly checks
+   * before the next is updated (#4719). Default: five minutes, polled every
+   * second. A Machine with no checks configured is done once started.
+   */
+  checks?: MachineChecksOpts;
   /** flaps endpoint override. Default: `FLY_FLAPS_BASE_URL`, else real Fly. */
   endpoint?: string;
   wait?: WaitOpts;
@@ -297,15 +314,27 @@ export function createFlyReleaseCapability(deps: FlyReleaseDeps = {}): Capabilit
   const log = deps.log ?? ((line: string) => console.error(line));
   const httpFor = () => deps.http ?? defaultFlyHttp();
 
-  /** On a failed release, put the plan's other Machines it updated back on their old configs. */
-  async function restoreOthers(released: FlyMachineReleaseResult, input: FlyReleaseInput, http: FlyHttp): Promise<void> {
-    for (const other of released.others) {
-      if (other.action !== "updated" || !other.previous) continue;
+  /**
+   * On a failed release, put each Machine it changed back, last changed
+   * first, waiting for each to come back (and pass its checks) before the
+   * next. The serving Machine gets its old config, or is stopped when it
+   * served nothing before; another Machine it updated gets its old config.
+   */
+  async function restoreApplied(applied: ReleasedMachine[], input: FlyReleaseInput, http: FlyHttp): Promise<void> {
+    for (const m of [...applied].reverse()) {
+      if (m.action === "noop" || (!m.serving && (m.action !== "updated" || !m.previous))) continue;
+      const where = { app: m.app, machine: m.name, endpoint: input.endpoint, wait: input.wait };
       try {
-        await flyMachineRestore({ app: other.app, machine: other.name, config: other.previous, endpoint: input.endpoint, wait: input.wait }, undefined, http);
-        log(`fly-release: restored ${other.app}/${other.name} to its previous config`);
+        if (m.previous) {
+          await flyMachineRestore({ ...where, config: m.previous, checks: input.checks ?? {} }, undefined, http);
+          const was = m.serving ? readMachineRelease(m.previous.metadata)?.digest : undefined;
+          log(`fly-release: restored ${m.app}/${m.name} to ${was ?? "its previous config"}`);
+        } else {
+          await flyMachineStop(where, undefined, http);
+          log(`fly-release: nothing had been released on ${m.app}/${m.name}; stopped it`);
+        }
       } catch (restoreErr) {
-        log(`fly-release: restore of ${other.app}/${other.name} failed: ${restoreErr instanceof Error ? restoreErr.message : String(restoreErr)}`);
+        log(`fly-release: restore of ${m.app}/${m.name} failed: ${restoreErr instanceof Error ? restoreErr.message : String(restoreErr)}`);
       }
     }
   }
@@ -359,21 +388,30 @@ export function createFlyReleaseCapability(deps: FlyReleaseDeps = {}): Capabilit
         ...(input.env ?? {}),
       };
 
-      const released = await flyMachineRelease(
-        {
-          plan,
-          machine: input.machine,
-          release: { digest: input.digest, gitSha, ...(input.release ? { release: input.release } : {}) },
-          image: input.image,
-          ...(input.images ? { images: input.images } : {}),
-          env,
-          ...(source ? { files: source.files, cmd: source.cmd } : {}),
-          endpoint: input.endpoint,
-          wait: input.wait,
-        },
-        undefined,
-        http,
-      );
+      let released: FlyMachineReleaseResult;
+      try {
+        released = await flyMachineRelease(
+          {
+            plan,
+            machine: input.machine,
+            release: { digest: input.digest, gitSha, ...(input.release ? { release: input.release } : {}) },
+            image: input.image,
+            ...(input.images ? { images: input.images } : {}),
+            env,
+            ...(source ? { files: source.files, cmd: source.cmd } : {}),
+            endpoint: input.endpoint,
+            wait: input.wait,
+            checks: input.checks ?? {},
+          },
+          undefined,
+          http,
+        );
+      } catch (err) {
+        // A Machine failed to settle or to pass its checks partway through the
+        // roll: put back every Machine changed so far, then fail.
+        if (err instanceof MachineReleaseError) await restoreApplied(err.applied, input, http);
+        throw err;
+      }
       const where = { app: released.app, machine: released.machine.name, endpoint: input.endpoint };
       log(`fly-release: ${released.app}/${released.machine.name} ${released.action}, serving ${input.digest}${released.unlaunched ? ", stopped until its schedule starts it" : ""}`);
       for (const other of released.others) {
@@ -411,22 +449,20 @@ export function createFlyReleaseCapability(deps: FlyReleaseDeps = {}): Capabilit
           }
           if (migrations.some((m) => m.fired)) await flyMachineRestart({ ...where, wait: input.wait }, undefined, http);
         }
-        await flyMachineVerify({ ...where, digest: input.digest, ...(input.verify ?? {}) }, undefined, http, deps.fetch);
-      } catch (err) {
-        // Restore: the Machine changed, so put back what it served (or stop it
-        // when it served nothing), then fail the step.
-        try {
-          if (released.previous) {
-            await flyMachineRestore({ ...where, config: released.previous.config, wait: input.wait }, undefined, http);
-            log(`fly-release: restored ${released.app}/${released.machine.name} to ${previousRelease?.digest ?? "its previous config"}`);
-          } else {
-            await flyMachineStop({ ...where, wait: input.wait }, undefined, http);
-            log(`fly-release: nothing had been released on ${released.app}/${released.machine.name}; stopped it`);
-          }
-        } catch (restoreErr) {
-          log(`fly-release: restore failed: ${restoreErr instanceof Error ? restoreErr.message : String(restoreErr)}`);
+        await flyMachineVerify({ ...where, digest: input.digest, ...(input.verify ?? {}), checks: true }, undefined, http, deps.fetch);
+        // Every other Machine the release started serves too: started, with its checks passing.
+        for (const m of released.applied) {
+          if (m.serving || m.action === "noop" || m.unlaunched) continue;
+          await flyMachineChecks(
+            { app: m.app, machine: m.name, endpoint: input.endpoint, timeoutMs: input.verify?.timeoutMs ?? 120_000, intervalMs: input.verify?.intervalMs },
+            undefined,
+            http,
+          );
         }
-        await restoreOthers(released, input, http);
+      } catch (err) {
+        // Restore: the Machines changed, so put back what each served (or stop
+        // the serving one when it served nothing), then fail the step.
+        await restoreApplied(released.applied, input, http);
         throw err;
       }
 

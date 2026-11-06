@@ -71,6 +71,28 @@ export interface FlapsMachine {
   state: string;
   instance_id: string;
   config?: { metadata?: Record<string, string> } & Record<string, unknown>;
+  /** The status of each of the Machine's Fly checks, as the Machines API reports them (#4719). */
+  checks?: FlapsCheckStatus[];
+}
+
+/** One of a Machine's Fly checks as the Machines API reports it: `passing`, `warning` or `critical`. */
+export interface FlapsCheckStatus {
+  name: string;
+  status: string;
+  output?: string;
+  updated_at?: string;
+}
+
+/** One Machine {@link flyApply} has just created, updated or left alone. */
+export interface AppliedMachine {
+  app: string;
+  /** The plan entity that declares it. */
+  entity: string;
+  name: string;
+  id: string;
+  action: "created" | "updated" | "noop";
+  /** True when it was left unstarted (a scheduled Machine, #4696). */
+  unlaunched: boolean;
 }
 
 // ── Pure helpers (unit-testable without http) ─────────────────────────────────
@@ -1061,6 +1083,13 @@ export interface FlyApplyArgs {
   force?: boolean;
   /** Wait-loop tuning (mainly for tests). */
   wait?: WaitOpts;
+  /**
+   * Called after each Machine is applied and settled, before the next one
+   * (#4719). `fly-release` waits here for the Machine's Fly checks, so a
+   * group of serving Machines rolls one at a time. A throw stops the apply
+   * there and fails it. For callers in code only; without it nothing changes.
+   */
+  afterMachine?: (machine: AppliedMachine) => Promise<void>;
 }
 
 /**
@@ -1237,6 +1266,7 @@ export async function flyApply(
     const result = await applyMachine(ctx, app, entityName, req, http, signal, opts);
     logProgress(`${result.action}: machine/${app}/${result.name} (${ctx.base})`);
     machines.push({ app, name: result.name, action: result.action });
+    await args.afterMachine?.({ app, entity: entityName, name: result.name, id: result.id, action: result.action, unlaunched: skipsLaunch(req.body) });
   }
 
   // IPs, certificates, secrets after machines (independent of them).

@@ -491,3 +491,158 @@ describe("fly-release with a scheduled Machine (#4696)", () => {
     expect(s.fake.calls.some((c) => c.startsWith("POST"))).toBe(false);
   });
 });
+
+/**
+ * #4719: two serving Machines behind Flycast with Fly checks, as Arugula's
+ * platform runs. The release rolls them one at a time on their checks,
+ * verifies both, and on a failure puts back each one it changed.
+ */
+describe("fly-release over serving Machines with Fly checks (#4719)", () => {
+  const CHECKED = { services: [{ internal_port: 8080, protocol: "tcp", checks: [{ type: "http", port: 8080, path: "/platform.json", method: "GET" }] }] };
+  const machine = (name: string, extra: Record<string, unknown> = CHECKED) => ({
+    endpoint: "/v1/apps/shop/machines",
+    method: "POST",
+    body: { name, config: { image: "shop:declared", metadata: { "managed-by": "chant" }, ...extra } },
+  });
+  const writePlan = (plan: Record<string, unknown>) => writeFileSync(planPath, JSON.stringify(plan));
+  const CHECK = "servicecheck-00-http-8080";
+  const FAST = { intervalMs: 1, timeoutMs: 50 };
+
+  /**
+   * A fake whose Machines report one check: critical for the first few reads
+   * of each new instance, then passing, unless `healthy` says the Machine
+   * cannot pass at all. `events` holds each Machine update and the first
+   * passing read of each instance, in order.
+   */
+  function checkedFake(healthy: (m: { name: string; config: Record<string, unknown> }) => boolean = () => true, opts: { exec?: () => void } = {}) {
+    const events: string[] = [];
+    const reads = new Map<string, number>();
+    const fake = createMachinesFake({
+      exec: () => {
+        opts.exec?.();
+        return { exit_code: 0 };
+      },
+      checks: (_app, m) => {
+        if (!declares(m.config)) return undefined;
+        if (!healthy(m)) return [{ name: CHECK, status: "critical", output: "503 Service Unavailable" }];
+        const n = (reads.get(m.instance_id) ?? 0) + 1;
+        reads.set(m.instance_id, n);
+        if (n < 3) return [{ name: CHECK, status: "critical", output: "503 Service Unavailable" }];
+        if (n === 3) events.push(`passing ${m.name}`);
+        return [{ name: CHECK, status: "passing" }];
+      },
+    });
+    const http = fake.http;
+    fake.http = async (method, url, body, headers, signal) => {
+      const path = new URL(url).pathname.split("/");
+      // POST /v1/apps/<app>/machines/<id>: an update of that Machine.
+      if (method === "POST" && path.length === 6 && path[4] === "machines") {
+        const m = [...fake.machines.values()].flat().find((x) => x.id === path[5]);
+        events.push(`update ${m?.name}`);
+      }
+      return http(method, url, body, headers, signal);
+    };
+    return { fake, events };
+  }
+  const declares = (config: Record<string, unknown>) => Array.isArray(config.services) && config.services.length > 0;
+
+  test("rolls the Machines one at a time: the second is updated only once the first passes its checks", async () => {
+    writePlan({ shop: PLAN.shop, web: machine("web"), web2: machine("web2") });
+    const { fake, events } = checkedFake();
+    const s = setup(fake);
+    await s.release.run(CTX, input("sha256:aaaaaaaaaaaa", { machine: "web", image: "shop:1", images: { web2: "shop:1" }, checks: FAST }));
+    events.length = 0;
+
+    await s.release.run(CTX, input("sha256:bbbbbbbbbbbb", { machine: "web", image: "shop:2", images: { web2: "shop:2" }, checks: FAST }));
+    expect(events).toEqual(["update web", "passing web", "update web2", "passing web2"]);
+    expect(s.fake.machine("shop", "web")!.config.image).toBe("shop:2");
+    expect(s.fake.machine("shop", "web2")!.config.image).toBe("shop:2");
+  });
+
+  test("a Machine whose checks never pass times out, restores every Machine it updated in reverse order, and names the Machine and check", async () => {
+    writePlan({ shop: PLAN.shop, web: machine("web"), web2: machine("web2") });
+    // web2 cannot pass on the new image.
+    const { fake, events } = checkedFake((m) => !(m.name === "web2" && m.config.image === "shop:2"));
+    const s = setup(fake);
+    await s.release.run(CTX, input("sha256:aaaaaaaaaaaa", { machine: "web", image: "shop:1", images: { web2: "shop:1" }, checks: FAST }));
+    const web = structuredClone(fake.machine("shop", "web")!.config);
+    const web2 = structuredClone(fake.machine("shop", "web2")!.config);
+    events.length = 0;
+    s.lines.length = 0;
+
+    await expect(
+      s.release.run(CTX, input("sha256:bbbbbbbbbbbb", { machine: "web", image: "shop:2", images: { web2: "shop:2" }, checks: FAST })),
+    ).rejects.toThrow(/^machine shop\/web2 \(m[0-9a-f]+\) did not pass its Fly checks within 50ms: check servicecheck-00-http-8080 is critical \(503 Service Unavailable\)$/);
+    expect(fake.machine("shop", "web")!.config).toEqual(web);
+    expect(fake.machine("shop", "web2")!.config).toEqual(web2);
+    // Last updated, first restored; each restore waits for its Machine's checks.
+    expect(events).toEqual(["update web", "passing web", "update web2", "update web2", "passing web2", "update web", "passing web"]);
+    expect(s.lines.filter((l) => l.includes("restore"))).toEqual([
+      "fly-release: restored shop/web2 to its previous config",
+      "fly-release: restored shop/web to sha256:aaaaaaaaaaaa",
+    ]);
+    expect(await s.configs.read({ app: "shop", machine: "web", digest: "sha256:bbbbbbbbbbbb" })).toBeUndefined();
+  });
+
+  test("a serving Machine whose checks never pass is restored before the next Machine is touched", async () => {
+    writePlan({ shop: PLAN.shop, web: machine("web"), web2: machine("web2") });
+    const { fake, events } = checkedFake((m) => !(m.name === "web" && m.config.image === "shop:2"));
+    const s = setup(fake);
+    await s.release.run(CTX, input("sha256:aaaaaaaaaaaa", { machine: "web", image: "shop:1", images: { web2: "shop:1" }, checks: FAST }));
+    events.length = 0;
+    await expect(
+      s.release.run(CTX, input("sha256:bbbbbbbbbbbb", { machine: "web", image: "shop:2", images: { web2: "shop:2" }, checks: FAST })),
+    ).rejects.toThrow(/machine shop\/web .* check servicecheck-00-http-8080 is critical/);
+    expect(events).toEqual(["update web", "update web", "passing web"]);
+    expect(fake.machine("shop", "web")!.config.image).toBe("shop:1");
+    expect(fake.machine("shop", "web2")!.config.image).toBe("shop:1");
+  });
+
+  test("a Machine with no checks configured is done once started, as before", async () => {
+    writePlan({ shop: PLAN.shop, web: machine("web", {}), web2: machine("web2", {}) });
+    const { fake, events } = checkedFake();
+    const s = setup(fake);
+    // A zero timeout: a Machine that had to wait for a check would fail at once.
+    const zero = { intervalMs: 1, timeoutMs: 0 };
+    await s.release.run(CTX, input("sha256:aaaaaaaaaaaa", { machine: "web", image: "shop:1", images: { web2: "shop:1" }, checks: zero }));
+    const out = await s.release.run(CTX, input("sha256:bbbbbbbbbbbb", { machine: "web", image: "shop:2", images: { web2: "shop:2" }, checks: zero }));
+    expect(out.digest).toBe("sha256:bbbbbbbbbbbb");
+    expect(events).toEqual(["update web", "update web2"]);
+    expect(s.fake.machine("shop", "web2")!.config.image).toBe("shop:2");
+  });
+
+  test("verify covers every Machine the release updated: one whose checks fail after the roll fails the release, and both are restored", async () => {
+    writePlan({ shop: PLAN.shop, web: machine("web"), web2: machine("web2") });
+    // The migration takes web2's database away: its checks fail from then on.
+    let broken = false;
+    const { fake } = checkedFake((m) => !(broken && m.name === "web2" && m.config.image === "shop:2"), { exec: () => void (broken = true) });
+    const s = setup(fake);
+    await s.release.run(CTX, input("sha256:aaaaaaaaaaaa", { machine: "web", image: "shop:1", images: { web2: "shop:1" }, checks: FAST }));
+    s.lines.length = 0;
+
+    await expect(
+      s.release.run(
+        CTX,
+        input("sha256:bbbbbbbbbbbb", { machine: "web", image: "shop:2", images: { web2: "shop:2" }, checks: FAST, migrations: [{ name: "1.sql", command: "migrate" }] }),
+      ),
+    ).rejects.toThrow(/machine shop\/web2 .* check servicecheck-00-http-8080 is critical/);
+    expect(fake.machine("shop", "web")!.config.image).toBe("shop:1");
+    expect(fake.machine("shop", "web2")!.config.image).toBe("shop:1");
+    expect(s.lines.filter((l) => l.includes("restore"))).toEqual([
+      "fly-release: restored shop/web2 to its previous config",
+      "fly-release: restored shop/web to sha256:aaaaaaaaaaaa",
+    ]);
+  });
+
+  test("verify reads the serving Machine's checks too", async () => {
+    writePlan({ shop: PLAN.shop, web: machine("web") });
+    let broken = false;
+    const { fake } = checkedFake((m) => !(broken && m.config.image === "shop:2"), { exec: () => void (broken = true) });
+    const s = setup(fake);
+    await s.release.run(CTX, input("sha256:aaaaaaaaaaaa", { image: "shop:1", checks: FAST }));
+    await expect(
+      s.release.run(CTX, input("sha256:bbbbbbbbbbbb", { image: "shop:2", checks: FAST, migrations: [{ name: "1.sql", command: "migrate" }] })),
+    ).rejects.toThrow(/verify shop\/web: machine shop\/web \(m[0-9a-f]+\): check servicecheck-00-http-8080 is critical/);
+    expect(fake.machine("shop", "web")!.config.image).toBe("shop:1");
+  });
+});
