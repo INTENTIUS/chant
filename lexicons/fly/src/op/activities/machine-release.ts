@@ -43,6 +43,7 @@ import {
   machineAppSegment,
   resolveApp,
   resolveEndpoint,
+  resolveMounts,
   skipsLaunch,
   waitForMachine,
   waitForUnlaunched,
@@ -182,7 +183,12 @@ export interface FlyMachineReleaseResult {
   action: "created" | "updated" | "noop";
   /** The release the Machine serves now. */
   release: MachineRelease;
-  /** The Machine config applied: what a later rollback to this release puts back. */
+  /**
+   * The Machine config applied: what a later rollback to this release puts
+   * back. Its mounts name their volumes as declared, not by the ids the apply
+   * sent, so the record doesn't change with which volume a name resolved to;
+   * {@link flyMachineRestore} looks the ids up again (#4717).
+   */
   config: MachineConfig;
   /** What the Machine served before, when it existed: its release (if it named one) and its config. */
   previous: { release?: MachineRelease; config: MachineConfig } | null;
@@ -470,7 +476,9 @@ export interface FlyMachineRestoreArgs extends FlapsTarget {
  * under a lease and wait for it to be started. Used on a failed release (the
  * config it replaced) and by a rollback (the config an earlier release applied).
  * A scheduled config (#4696) goes back with `skip_launch`, and the wait is for
- * the Machine to rest unstarted.
+ * the Machine to rest unstarted. A mount that names a volume goes back with
+ * the volume's id, looked up as `flyApply` looks it up (#4717); a mount with an
+ * id (a config read from the live Machine) goes back as it is.
  */
 export async function flyMachineRestore(
   args: FlyMachineRestoreArgs,
@@ -480,7 +488,8 @@ export async function flyMachineRestore(
   const ctx: ApplyCtx = { base: resolveEndpoint(args) };
   const m = await mustFindMachine(ctx, args.app, args.machine, http, signal);
   const unlaunched = skipsLaunch({ config: args.config });
-  const body = { name: m.name, config: args.config, ...(unlaunched ? { skip_launch: true } : {}) };
+  const config = await resolveMounts(ctx, args.app, args.config, { machineId: m.id, region: m.region }, http, signal);
+  const body = { name: m.name, config, ...(unlaunched ? { skip_launch: true } : {}) };
   const res = await withLease(ctx, args.app, m.id, http, signal, (nonce) =>
     http("POST", machinePath(ctx, args.app, m.id), body, { [LEASE_NONCE_HEADER]: nonce }, signal),
   );

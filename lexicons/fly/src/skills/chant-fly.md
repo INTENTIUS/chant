@@ -72,7 +72,7 @@ Build synthesizes the flaps plan and runs the lint rules before anything reaches
 | FLY002 | Guest sizing (`cpu_kind` / `cpus` / `memory_mb`) is not a valid combination |
 | FLY004 | A secret value written inline in machine config |
 | FLY010 | A machine config with no `image` |
-| FLY011 | A machine mount that references a `Volume` not declared in the stack (checked across files) |
+| FLY011 | A machine mount that references a `Volume` not declared in the stack (checked across files); a volume id (`vol_...`) passes |
 | FLY012 | A machine `schedule` other than `hourly`, `daily`, `weekly` or `monthly` |
 
 Fix every reported violation before applying. Secret values belong in a `Secret` or a reference, never inline (FLY004).

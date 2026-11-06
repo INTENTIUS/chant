@@ -52,6 +52,8 @@ import {
   resolveApp,
   isChantOwned,
   configEqual,
+  alignMountsWithLive,
+  volumeAliases,
   listMachines,
   listVolumes,
   listIps,
@@ -501,8 +503,11 @@ export async function flyPlan(
 
   // Declared config per entity, for the machine update/noop refinement.
   const declaredConfig = new Map<string, unknown>();
+  let aliases = new Map<string, string>();
   try {
-    for (const [entityName, req] of Object.entries(parsePlan(options.buildOutput))) {
+    const plan = parsePlan(options.buildOutput);
+    aliases = volumeAliases(plan);
+    for (const [entityName, req] of Object.entries(plan)) {
       if (isMachineRequest(req)) declaredConfig.set(entityName, req.body.config);
     }
   } catch {
@@ -514,7 +519,9 @@ export async function flyPlan(
     const declaredCfg = declaredConfig.get(entry.name);
     if (declaredCfg === undefined) continue; // not a declared machine
     const liveCfg = (observedNow[entry.name]?.attributes as { config?: unknown } | undefined)?.config;
-    if (!configEqual(declaredCfg, liveCfg)) {
+    // A declared mount names its volume; the live one has the id flyApply
+    // looked up, and the name beside it (#4717).
+    if (!configEqual(alignMountsWithLive(declaredCfg, liveCfg, aliases), liveCfg)) {
       entry.action = "update";
     }
   }

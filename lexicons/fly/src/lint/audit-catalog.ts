@@ -43,7 +43,7 @@ export const flyAuditCatalog: Record<string, RuleMeta> = {
     "merge-worthy",
     "correctness",
     "Machine mount references an undeclared volume",
-    "Declare the Volume in the same stack, or point the mount at one that is.",
+    "Declare the Volume in the same stack, point the mount at one that is, or mount an existing volume by its id (vol_...).",
   ),
   FLY012: rule(
     "FLY012",
