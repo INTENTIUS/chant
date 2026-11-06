@@ -240,6 +240,33 @@ describe("flyPlan: declared-vs-live change set (create/noop/delete/adopt)", () =
     expect(changeSet.entries.find((e) => e.name === "web")?.action).toBe("update");
   });
 
+  test("a mount named in the plan and mounted by id on the live Machine is a noop; another volume is an update (#4717)", async () => {
+    const planWith = (volume: string) =>
+      JSON.stringify({
+        app: { endpoint: "/v1/apps", method: "POST", body: { app_name: APP } },
+        web: {
+          endpoint: `/v1/apps/${APP}/machines`,
+          method: "POST",
+          body: { name: "web", config: { image: "nginx:1", mounts: [{ volume, path: "/data" }], metadata: { ...OWNED_META } } },
+        },
+      });
+    const ents = entities([
+      ["app", "Fly::Machines::App"],
+      ["web", "Fly::Machines::Machine"],
+    ]);
+    const live = liveMachine("web", "nginx:1");
+    (live.config as Record<string, unknown>).mounts = [{ volume: "vol_r68lmz2doox9myd4", name: "data", path: "/data" }];
+    const actionFor = async (volume: string) =>
+      (
+        await flyPlan(
+          { environment: "prod", buildOutput: planWith(volume), entityNames: [...ents.keys()], entities: ents, endpoint: ENDPOINT },
+          fakeHttp([live]),
+        )
+      ).changeSet.entries.find((e) => e.name === "web")?.action;
+    expect(await actionFor("data")).toBe("noop");
+    expect(await actionFor("logs")).toBe("update");
+  });
+
   test("an unreadable plan makes every declared entity unobserved, not a create (#1089)", async () => {
     const { changeSet } = await flyPlan(
       { environment: "prod", buildOutput: "not json", entityNames: [...ENTS.keys()], entities: ENTS, endpoint: ENDPOINT },

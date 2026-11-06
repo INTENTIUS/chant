@@ -6,17 +6,22 @@
  * apply time, so catch it at synth. This is a whole-stack check: it reads all
  * entities in the build (`ctx.entities`), so the mount and the Volume can be
  * declared in different files.
+ *
+ * A mount given a volume id (`vol_...`) names a volume that already exists on
+ * Fly, which the stack need not declare, so it passes (#4717). `flyApply`
+ * sends it as it is, and looks a name up to send its id.
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import { readProps, entityTypeOf } from "./fly-helpers";
+import { isVolumeId } from "../../volume-id";
 
 const MACHINE_ENTITY_TYPE = "Fly::Machines::Machine";
 const VOLUME_ENTITY_TYPE = "Fly::Machines::Volume";
 
 export const fly011: PostSynthCheck = {
   id: "FLY011",
-  description: "A machine mount's volume must resolve to a Volume declared in the stack",
+  description: "A machine mount's volume must resolve to a Volume declared in the stack, or be a volume id (vol_...)",
 
   check(ctx: PostSynthContext): PostSynthDiagnostic[] {
     const diagnostics: PostSynthDiagnostic[] = [];
@@ -44,11 +49,13 @@ export const fly011: PostSynthCheck = {
         // reference to a Volume that exists in the stack by construction, so it
         // never dangles — skip it to avoid false positives.
         if (typeof volume !== "string" || volume.length === 0) continue;
+        // A volume id names a volume that exists outside the stack.
+        if (isVolumeId(volume)) continue;
         if (!declaredVolumes.has(volume)) {
           diagnostics.push({
             checkId: "FLY011",
             severity: "error",
-            message: `Machine "${machineName}" mounts volume "${volume}", which is not declared as a Volume in the stack.`,
+            message: `Machine "${machineName}" mounts volume "${volume}", which is not declared as a Volume in the stack. Declare the Volume, or mount an existing volume by its id (vol_...).`,
             entity: machineName,
             lexicon: "fly",
           });

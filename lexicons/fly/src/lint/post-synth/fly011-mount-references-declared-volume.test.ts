@@ -79,6 +79,37 @@ describe("FLY011: mount references a declared volume", () => {
     expect(diags).toHaveLength(0);
   });
 
+  test("passes a mount given a volume id, with no Volume declared (#4717)", () => {
+    const diags = fly011.check(
+      ctx(
+        ["app", new App({ name: "my-app" })],
+        [
+          "web",
+          new Machine({
+            config: new MachineConfig({
+              image: "nginx",
+              mounts: [new MachineMount({ volume: "vol_r68lmz2doox9myd4", name: "control_data", path: "/data" })],
+            }),
+          }),
+        ],
+      ),
+    );
+    expect(diags).toHaveLength(0);
+  });
+
+  test("a name that only starts like an id is still a name", () => {
+    const diags = fly011.check(
+      ctx([
+        "web",
+        new Machine({
+          config: new MachineConfig({ image: "nginx", mounts: [new MachineMount({ volume: "vol_", path: "/data" })] }),
+        }),
+      ]),
+    );
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toContain("vol_...");
+  });
+
   test("does not flag a machine without mounts", () => {
     const diags = fly011.check(
       ctx(["web", new Machine({ config: new MachineConfig({ image: "nginx" }) })]),

@@ -12,7 +12,7 @@ import {
   withReleaseMetadata,
 } from "./machine-release";
 import { createMachinesFake } from "./machines-fake";
-import type { FlyPlan } from "./fly-apply";
+import type { FlyHttp, FlyPlan } from "./fly-apply";
 
 const ENDPOINT = "http://flaps.test";
 const NO_WAIT = { intervalMs: 0, deadlineMs: 2_000 };
@@ -134,5 +134,61 @@ describe("Machines activities against the fake", () => {
     const restored = await flyMachineRestore({ app: "shop", machine: "web", config: one.config, endpoint: ENDPOINT, wait: NO_WAIT }, undefined, fake.http);
     expect(restored.release?.digest).toBe("sha256:one");
     expect(fake.machine("shop", "web")!.config).toEqual(one.config);
+  });
+});
+
+describe("a release's mounts name their volume, and Fly is sent its id (#4717)", () => {
+  const MOUNTED: FlyPlan = {
+    shop: PLAN.shop,
+    data: { endpoint: "/v1/apps/shop/volumes", method: "POST", body: { name: "data", region: "iad", size_gb: 1 } },
+    web: {
+      endpoint: "/v1/apps/shop/machines",
+      method: "POST",
+      body: { name: "web", region: "iad", config: { image: "shop:1", mounts: [{ volume: "data", path: "/data" }], metadata: { "managed-by": "chant" } } },
+    },
+  };
+  const recording = (fake: ReturnType<typeof createMachinesFake>) => {
+    const posts: Array<Record<string, unknown>> = [];
+    const http: FlyHttp = async (method, url, body, headers, signal) => {
+      if (method === "POST" && /\/machines(\/[^/]+)?$/.test(new URL(url).pathname)) posts.push(body as Record<string, unknown>);
+      return fake.http(method, url, body, headers, signal);
+    };
+    return { http, posts };
+  };
+  const mountsOf = (body: Record<string, unknown> | undefined) => (body?.config as { mounts?: unknown[] } | undefined)?.mounts;
+
+  test("release sends the id; the recorded config keeps the name; restore sends the id again", async () => {
+    const fake = createMachinesFake();
+    const { http, posts } = recording(fake);
+    const args = { plan: MOUNTED, endpoint: ENDPOINT, wait: NO_WAIT };
+    const one = await flyMachineRelease({ ...args, release: { digest: "sha256:one" } }, undefined, http);
+    const id = fake.volumes.get("shop")![0].id;
+    expect(mountsOf(posts[0])).toEqual([{ volume: id, name: "data", path: "/data" }]);
+    expect(one.config.mounts).toEqual([{ volume: "data", path: "/data" }]);
+
+    const two = await flyMachineRelease({ ...args, release: { digest: "sha256:two" }, image: "shop:2" }, undefined, http);
+    expect(two.action).toBe("updated");
+    expect(mountsOf(posts[1])).toEqual([{ volume: id, name: "data", path: "/data" }]);
+    // What the Machine had before, read back from it, has the id.
+    expect(two.previous?.config.mounts).toEqual([{ volume: id, name: "data", path: "/data" }]);
+
+    await flyMachineRestore({ app: "shop", machine: "web", config: one.config, endpoint: ENDPOINT, wait: NO_WAIT }, undefined, http);
+    expect(mountsOf(posts[2])).toEqual([{ volume: id, name: "data", path: "/data" }]);
+    expect(fake.machine("shop", "web")!.config.image).toBe("shop:1");
+
+    // A config that already has the id goes back as it is.
+    await flyMachineRestore({ app: "shop", machine: "web", config: two.previous!.config, endpoint: ENDPOINT, wait: NO_WAIT }, undefined, http);
+    expect(mountsOf(posts[3])).toEqual([{ volume: id, name: "data", path: "/data" }]);
+  });
+
+  test("restore refuses a config naming a volume the app no longer has, and changes nothing", async () => {
+    const fake = createMachinesFake();
+    const { http, posts } = recording(fake);
+    const one = await flyMachineRelease({ plan: MOUNTED, endpoint: ENDPOINT, release: { digest: "sha256:one" }, wait: NO_WAIT }, undefined, http);
+    const config = { ...one.config, mounts: [{ volume: "olddata", path: "/data" }] };
+    await expect(flyMachineRestore({ app: "shop", machine: "web", config, endpoint: ENDPOINT, wait: NO_WAIT }, undefined, http)).rejects.toThrow(
+      /no volume named "olddata" in app shop/,
+    );
+    expect(posts).toHaveLength(1);
   });
 });

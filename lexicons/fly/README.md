@@ -85,7 +85,7 @@ Lint rules run during `chant build`, before anything reaches the API:
 
 - `region` must be a real Fly region.
 - Guest sizing (`cpu_kind` / `cpus` / `memory_mb`) must be a valid combination.
-- Every machine mount must reference a `Volume` declared in the stack, checked across files.
+- Every machine mount must reference a `Volume` declared in the stack, checked across files, or give an existing volume's id (`vol_...`).
 - Secret values may not be written inline; they belong in a `Secret` or a reference.
 
 ## The deploy Op
