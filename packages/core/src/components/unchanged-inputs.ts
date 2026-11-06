@@ -98,7 +98,7 @@ export type ChangedPaths = (from: string, to: string, paths: readonly string[]) 
 export function gitChangedPaths(memberDir: string): ChangedPaths {
   return (from, to, paths) => {
     try {
-      const out = execFileSync("git", ["diff", "--name-only", "--no-renames", from, to, "--", ...paths], {
+      const out = execFileSync("git", ["diff", "--name-only", "--no-renames", "--no-relative", from, to, "--", ...paths], {
         cwd: memberDir,
         encoding: "utf-8",
         stdio: ["ignore", "pipe", "pipe"],
