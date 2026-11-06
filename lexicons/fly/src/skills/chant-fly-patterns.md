@@ -10,9 +10,11 @@ Beyond the App and Machine covered in `chant-fly`, the lexicon models `Volume`, 
 
 ## Volumes and mounts
 
-`flyApply` applies volumes before machines, because a machine's `config.mounts[]` references a volume by name, so the volume must exist first. A volume is created if absent (idempotent by name); a re-apply of an existing volume is a no-op.
+`flyApply` applies volumes before machines. A volume is created if absent (idempotent by name); a re-apply of an existing volume is a no-op.
 
-The FLY011 build check enforces the link statically: every machine mount must reference a `Volume` declared in the stack, checked across files. A mount that points at an undeclared volume fails `chant build` before anything reaches the API.
+A mount can name its volume. The Machines API takes the volume's id in `config.mounts[].volume`, so before it creates or updates a Machine, `flyApply` looks the name up among the app's live volumes and sends `{ volume: "vol_...", name: "data", path }`, as flyctl does. A volume declared in the same apply is created first, so its id is there to look up. Fly lets several volumes share a name (one per Machine), so the lookup takes the one already attached to the Machine, else the one in the Machine's region that no Machine has. No volume of that name, or more than one that fits, fails the apply naming the candidates; give the mount the id to settle it. A mount given an id (`vol_...`) is sent as it is. `flyMachineRestore` and the `fly-release` capability do the same lookup. The build output and a release's recorded config keep the name.
+
+The FLY011 build check enforces the link statically: every machine mount must reference a `Volume` declared in the stack, checked across files, or give a volume id. A mount that points at an undeclared volume fails `chant build` before anything reaches the API.
 
 ```ts
 import { App, Machine, MachineConfig, MachineGuest, Volume, Fly } from "@intentius/chant-lexicon-fly";

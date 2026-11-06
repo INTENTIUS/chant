@@ -26,6 +26,17 @@ export interface FakeMachine {
   updated_at?: string;
 }
 
+/** One volume the fake holds, as flaps lists it. */
+export interface FakeVolume {
+  id: string;
+  name: string;
+  region?: string;
+  size_gb?: number;
+  state: string;
+  /** The Machine whose config mounts it by id; null when none does. */
+  attached_machine_id: string | null;
+}
+
 /** What an `exec` answers: the Machines API's exec envelope. */
 export interface FakeExecResult {
   exit_code: number;
@@ -37,6 +48,8 @@ export interface MachinesFake {
   http: FlyHttp;
   apps: Set<string>;
   machines: Map<string, FakeMachine[]>;
+  /** Each app's volumes, in creation order, with ids `vol_...` (#4717). */
+  volumes: Map<string, FakeVolume[]>;
   /** Each app's certificate hostnames, in creation order. */
   certs: Map<string, string[]>;
   /** Every exec, in order: the app, the machine id and the command. */
@@ -94,6 +107,7 @@ const nextId = (prefix: string) => `${prefix}${(++seq).toString(16).padStart(10,
 export function createMachinesFake(options: MachinesFakeOptions = {}): MachinesFake {
   const apps = new Set<string>();
   const machines = new Map<string, FakeMachine[]>();
+  const volumes = new Map<string, FakeVolume[]>();
   const certs = new Map<string, string[]>();
   const execs: MachinesFake["execs"] = [];
   const calls: string[] = [];
@@ -104,6 +118,18 @@ export function createMachinesFake(options: MachinesFakeOptions = {}): MachinesF
   const withChecks = (app: string, m: FakeMachine) => {
     const checks = options.checks?.(app, m);
     return checks ? { ...m, checks } : m;
+  };
+  const vols = (app: string) => volumes.get(app) ?? [];
+  // A volume is attached to the Machine whose config mounts its id, as Fly
+  // attaches it. A mount naming no volume id attaches nothing.
+  const attach = (app: string, m: FakeMachine | undefined, id: string) => {
+    const mounted = new Set(
+      ((m?.config.mounts as Array<{ volume?: unknown }> | undefined) ?? []).map((x) => x.volume).filter((v) => typeof v === "string"),
+    );
+    for (const v of vols(app)) {
+      if (v.attached_machine_id === id && !mounted.has(v.id)) v.attached_machine_id = null;
+      if (m && mounted.has(v.id)) v.attached_machine_id = id;
+    }
   };
 
   const http: FlyHttp = async (method, url, body) => {
@@ -129,6 +155,7 @@ export function createMachinesFake(options: MachinesFakeOptions = {}): MachinesF
       if (method === "DELETE") {
         apps.delete(app);
         machines.delete(app);
+        volumes.delete(app);
         certs.delete(app);
         return json(202, undefined);
       }
@@ -153,6 +180,7 @@ export function createMachinesFake(options: MachinesFakeOptions = {}): MachinesF
           // skip_launch: the Machine is created and not booted (#4696).
           m.state = b.skip_launch === true ? "created" : settle(m);
           machines.set(app, [...list(app), m]);
+          attach(app, m, m.id);
           return json(200, m);
         }
       }
@@ -164,6 +192,7 @@ export function createMachinesFake(options: MachinesFakeOptions = {}): MachinesF
           m.config = structuredClone((b.config ?? {}) as FakeMachine["config"]);
           m.instance_id = nextId("I");
           m.updated_at = stamp();
+          attach(app, m, m.id);
           // skip_launch: the new config isn't started (#4696). A Machine that
           // never ran stays created; one that ran is stopped.
           m.state = b.skip_launch === true ? (m.state === "created" ? "created" : "stopped") : settle(m);
@@ -178,6 +207,7 @@ export function createMachinesFake(options: MachinesFakeOptions = {}): MachinesF
             });
           }
           machines.set(app, list(app).filter((x) => x !== m));
+          attach(app, undefined, m.id);
           return json(200, { ok: true });
         }
       }
@@ -206,9 +236,38 @@ export function createMachinesFake(options: MachinesFakeOptions = {}): MachinesF
     }
     if (kind === "ip_assignments") return method === "GET" ? json(200, { ips: [] }) : json(200, {});
     if (kind === "certificates") return certificates(app, method, seg.slice(4), b, searchParams);
-    if (kind === "volumes" || kind === "secrets") return method === "GET" ? json(200, []) : json(200, {});
+    if (kind === "volumes") return volumeCall(app, method, seg[4], b);
+    if (kind === "secrets") return method === "GET" ? json(200, []) : json(200, {});
     return json(404, { error: "not found" });
   };
+
+  // Volumes (#4717): created with a `vol_` id, listed with their region and
+  // the Machine they are attached to, read and deleted by id.
+  function volumeCall(app: string, method: string, id: string | undefined, b: Record<string, unknown>) {
+    if (!id) {
+      if (method === "GET") return json(200, vols(app));
+      if (method === "POST") {
+        const v: FakeVolume = {
+          id: nextId("vol_"),
+          name: String(b.name ?? ""),
+          ...(typeof b.region === "string" ? { region: b.region } : {}),
+          ...(typeof b.size_gb === "number" ? { size_gb: b.size_gb } : {}),
+          state: "created",
+          attached_machine_id: null,
+        };
+        volumes.set(app, [...vols(app), v]);
+        return json(200, v);
+      }
+    }
+    const v = vols(app).find((x) => x.id === id);
+    if (!v) return json(404, { error: "volume not found" });
+    if (method === "GET") return json(200, v);
+    if (method === "DELETE") {
+      volumes.set(app, vols(app).filter((x) => x !== v));
+      return json(200, { ...v, state: "destroyed" });
+    }
+    return json(404, { error: `no ${method} on a volume` });
+  }
 
   // Certificates, as the real API routes them (#3114): listed at
   // `.../certificates`, created only at `.../certificates/acme`, read and
@@ -255,6 +314,7 @@ export function createMachinesFake(options: MachinesFakeOptions = {}): MachinesF
     http,
     apps,
     machines,
+    volumes,
     certs,
     execs,
     calls,

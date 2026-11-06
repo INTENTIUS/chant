@@ -26,7 +26,10 @@ import { readFileSync } from "node:fs";
 import { sleep } from "@intentius/chant/op";
 import { hasOwnershipMarker } from "@intentius/chant/ownership";
 import { FLY_METADATA_OWNERSHIP_KEYS } from "../../ownership";
+import { isVolumeId } from "../../volume-id";
 import { logProgress } from "./progress";
+
+export { isVolumeId } from "../../volume-id";
 import {
   applyResult,
   type ApplyResult,
@@ -70,6 +73,7 @@ export interface FlapsMachine {
   name: string;
   state: string;
   instance_id: string;
+  region?: string;
   config?: { metadata?: Record<string, string> } & Record<string, unknown>;
   /** When flaps last changed the Machine, by its own clock (RFC 3339). */
   updated_at?: string;
@@ -554,6 +558,10 @@ export async function listMachines(
  *
  * A Machine that {@link skipsLaunch} (a scheduled one, #4696) is created and
  * updated with `skip_launch: true`, and the wait is for it to rest unstarted.
+ *
+ * A mount that names a volume is sent with the volume's id (#4717), looked up
+ * among the app's live volumes ({@link pickVolume}); the comparison with the
+ * live config is made after the lookup, so an unchanged Machine stays a no-op.
  */
 export async function applyMachine(
   ctx: ApplyCtx,
@@ -562,18 +570,25 @@ export async function applyMachine(
   req: FlapsRequest,
   http: FlyHttp,
   signal?: AbortSignal,
-  opts: WaitOpts = {},
+  opts: WaitOpts & { volumeAliases?: ReadonlyMap<string, string> } = {},
 ): Promise<{ action: "created" | "updated" | "noop"; id: string; name: string; updatedAt?: string }> {
   const name = typeof req.body.name === "string" && req.body.name ? req.body.name : entityName;
   const unlaunched = skipsLaunch(req.body);
-  const body = { ...req.body, name, ...(unlaunched ? { skip_launch: true } : {}) };
-  const desiredConfig = req.body.config;
   const settle = (m: FlapsMachine) =>
     unlaunched
       ? waitForUnlaunched(ctx, app, m.id, m.instance_id, http, signal, opts)
       : waitForMachine(ctx, app, m.id, m.instance_id, http, signal, opts);
 
   const live = (await listMachines(ctx, app, http, signal)).find((m) => m.name === name);
+
+  const region = typeof req.body.region === "string" && req.body.region ? req.body.region : live?.region;
+  const desiredConfig = await resolveMounts(ctx, app, req.body.config, { machineId: live?.id, region }, http, signal, opts.volumeAliases);
+  const body = {
+    ...req.body,
+    name,
+    ...(desiredConfig !== undefined ? { config: desiredConfig } : {}),
+    ...(unlaunched ? { skip_launch: true } : {}),
+  };
 
   if (!live) {
     const res = await http("POST", machinesUrl(ctx.base, app), body, undefined, signal);
@@ -764,6 +779,9 @@ export interface FlapsVolume {
   id: string;
   name: string;
   state?: string;
+  region?: string;
+  /** The Machine the volume is attached to; empty or absent when it is free. */
+  attached_machine_id?: string | null;
 }
 
 /** A live IP assignment as flaps lists it. */
@@ -807,6 +825,165 @@ export async function listVolumes(ctx: ApplyCtx, app: string, http: FlyHttp, sig
   if (res.status >= 300) throw new Error(`volume list failed for ${app} (${res.status}): ${res.text}`);
   const list = parseJson(res.text);
   return Array.isArray(list) ? (list as FlapsVolume[]) : [];
+}
+
+// ── Mounts: a volume's name to its id (#4717) ────────────────────────────────
+//
+// The Machines API takes a volume's id in `config.mounts[].volume`; flyctl
+// looks a name up and sends the id, with the name in the mount's `name`. A
+// chant mount may name the volume (FLY011 checks the name is declared), so the
+// applier does the same lookup right before it creates or updates a Machine.
+// The plan keeps the name: the serialized build, its digest and a release's
+// recorded config don't depend on which volume a name happens to resolve to.
+
+/** Volume states that mean the volume is going away; never a mount's target. */
+const GONE_VOLUME_STATES = new Set(["destroyed", "destroying", "pending_destroy", "scheduling_destroy"]);
+
+/** The Machine a mount is resolved for: its id once it exists, and its region. */
+export interface MountTarget {
+  machineId?: string;
+  region?: string;
+}
+
+/**
+ * Plan entity names that name a volume by its declaration, mapped to the
+ * volume's Fly name. A mount written as a `Volume` reference serializes to the
+ * declaration's name, which can differ from the volume's `name`. An entity
+ * name that is also some declared volume's `name` is left out, so a mount
+ * naming it means that volume. Pure.
+ */
+export function volumeAliases(plan: FlyPlan): Map<string, string> {
+  const named = new Map<string, string>();
+  for (const [entity, req] of Object.entries(plan)) {
+    if (!isVolumeRequest(req)) continue;
+    named.set(entity, typeof req.body.name === "string" && req.body.name ? req.body.name : entity);
+  }
+  const names = new Set(named.values());
+  const aliases = new Map<string, string>();
+  for (const [entity, name] of named) if (entity !== name && !names.has(entity)) aliases.set(entity, name);
+  return aliases;
+}
+
+/** True when a config has a mount that names its volume rather than giving its id. Pure. */
+export function mountsNeedResolving(config: unknown): boolean {
+  const mounts = (config as { mounts?: unknown } | undefined)?.mounts;
+  if (!Array.isArray(mounts)) return false;
+  return mounts.some((m) => {
+    const volume = (m as { volume?: unknown } | null)?.volume;
+    return typeof volume === "string" && volume !== "" && !isVolumeId(volume);
+  });
+}
+
+function describeVolume(v: FlapsVolume): string {
+  const where = v.region ? ` in ${v.region}` : "";
+  const attached = v.attached_machine_id ? `attached to ${v.attached_machine_id}` : "unattached";
+  return `${v.id}${where}, ${attached}`;
+}
+
+/**
+ * The volume a mount naming `name` means, for the Machine `target`. Fly lets
+ * several volumes share a name (one per Machine, often across regions), so
+ * the pick is: the volume of that name already attached to this Machine, else
+ * the one in the Machine's region that is attached to no Machine. A volume
+ * whose region or attachment flaps doesn't report counts as matching. No
+ * volume of that name, none that fits, or more than one that fits, is refused
+ * naming the candidates. Pure.
+ */
+export function pickVolume(app: string, name: string, volumes: FlapsVolume[], target: MountTarget): FlapsVolume {
+  const named = volumes.filter((v) => v.name === name && !GONE_VOLUME_STATES.has(v.state ?? ""));
+  if (named.length === 0) {
+    const others = [...new Set(volumes.filter((v) => !GONE_VOLUME_STATES.has(v.state ?? "")).map((v) => v.name))];
+    throw new Error(
+      `no volume named "${name}" in app ${app} for a Machine to mount ` +
+        `(the app's volumes: ${others.length ? others.join(", ") : "none"}). ` +
+        `Declare a Volume named "${name}", or give the mount a volume id (vol_...).`,
+    );
+  }
+  const inRegion = named.filter((v) => !target.region || !v.region || v.region === target.region);
+  const mine = target.machineId ? inRegion.filter((v) => v.attached_machine_id === target.machineId) : [];
+  const fits = mine.length > 0 ? mine : inRegion.filter((v) => !v.attached_machine_id);
+  if (fits.length === 1) return fits[0];
+  const machine = target.machineId ? `Machine ${target.machineId}` : "a new Machine";
+  const region = target.region ? ` in ${target.region}` : "";
+  const why =
+    fits.length === 0
+      ? `none is attached to ${machine} or free${region}`
+      : `${fits.length} are ${mine.length > 0 ? `attached to ${machine}` : `free${region}`}`;
+  throw new Error(
+    `volume name "${name}" is ambiguous in app ${app} for ${machine}${region}: ${why} ` +
+      `(${named.map(describeVolume).join("; ")}). Give the mount the volume's id (vol_...).`,
+  );
+}
+
+/**
+ * A Machine config with each mount that names a volume given that volume's id
+ * in `volume` and its name in `name` (a `name` the mount already has is
+ * kept). A mount with an id goes through as it is. `aliases` maps a plan's
+ * volume declaration names to volume names ({@link volumeAliases}). Returns
+ * `config` itself when no mount names a volume. Pure.
+ */
+export function resolveMountsWith<T>(
+  app: string,
+  config: T,
+  volumes: FlapsVolume[],
+  target: MountTarget,
+  aliases: ReadonlyMap<string, string> = new Map(),
+): T {
+  if (!mountsNeedResolving(config)) return config;
+  const c = config as Record<string, unknown> & { mounts: unknown[] };
+  const mounts = c.mounts.map((m) => {
+    const mount = m as Record<string, unknown>;
+    const volume = mount.volume;
+    if (typeof volume !== "string" || volume === "" || isVolumeId(volume)) return m;
+    const picked = pickVolume(app, aliases.get(volume) ?? volume, volumes, target);
+    const name = typeof mount.name === "string" && mount.name ? mount.name : picked.name;
+    return { ...mount, volume: picked.id, name };
+  });
+  return { ...c, mounts } as T;
+}
+
+/**
+ * {@link resolveMountsWith} over the app's live volumes, listed only when a
+ * mount names a volume. Volumes are listed per call, so a volume an earlier
+ * Machine in the same apply took is seen as attached.
+ */
+export async function resolveMounts<T>(
+  ctx: ApplyCtx,
+  app: string,
+  config: T,
+  target: MountTarget,
+  http: FlyHttp,
+  signal?: AbortSignal,
+  aliases?: ReadonlyMap<string, string>,
+): Promise<T> {
+  if (!mountsNeedResolving(config)) return config;
+  return resolveMountsWith(app, config, await listVolumes(ctx, app, http, signal), target, aliases);
+}
+
+/**
+ * A declared config with each mount that names a volume given the id the live
+ * config mounts at the same path, when the live mount carries that name. A
+ * read-only plan uses it to compare a declared config with a live one the way
+ * {@link applyMachine} will after it resolves the names, without listing
+ * volumes. Pure.
+ */
+export function alignMountsWithLive<T>(declared: T, live: unknown, aliases: ReadonlyMap<string, string> = new Map()): T {
+  if (!mountsNeedResolving(declared)) return declared;
+  const liveMounts = (live as { mounts?: unknown } | undefined)?.mounts;
+  if (!Array.isArray(liveMounts)) return declared;
+  const d = declared as Record<string, unknown> & { mounts: unknown[] };
+  const mounts = d.mounts.map((m) => {
+    const mount = m as Record<string, unknown>;
+    const volume = mount.volume;
+    if (typeof volume !== "string" || volume === "" || isVolumeId(volume)) return m;
+    const name = typeof mount.name === "string" && mount.name ? mount.name : aliases.get(volume) ?? volume;
+    const match = liveMounts.find((l) => {
+      const lm = l as Record<string, unknown> | null;
+      return lm?.path === mount.path && lm?.name === name && typeof lm?.volume === "string";
+    }) as Record<string, unknown> | undefined;
+    return match ? { ...mount, volume: match.volume, name } : m;
+  });
+  return mounts.every((m, i) => m === d.mounts[i]) ? declared : ({ ...d, mounts } as T);
 }
 
 /** List an app's live IP assignments (`{ ips: [...] }`). */
@@ -1251,8 +1428,8 @@ export async function flyApply(
     m.set(app, set);
   };
 
-  // Volumes before machines: a machine's `config.mounts[]` references a volume
-  // by name, so the volume must exist first.
+  // Volumes before machines: a machine's `config.mounts[]` names a volume,
+  // which must exist so applyMachine can send its id (#4717).
   const volumes: Array<{ app: string; name: string; action: "created" | "noop" }> = [];
   for (const [entityName, req] of volumeReqs) {
     const app = resolveApp(resourceAppSegment(req.endpoint), soleApp);
@@ -1263,11 +1440,12 @@ export async function flyApply(
   }
 
   const machines: Array<{ app: string; name: string; action: "created" | "updated" | "noop" }> = [];
+  const aliases = volumeAliases(plan);
   for (const [entityName, req] of machineReqs) {
     const app = resolveApp(machineAppSegment(req.endpoint), soleApp);
     const name = typeof req.body.name === "string" && req.body.name ? req.body.name : entityName;
     track(keepMachines, app, name);
-    const result = await applyMachine(ctx, app, entityName, req, http, signal, opts);
+    const result = await applyMachine(ctx, app, entityName, req, http, signal, { ...opts, volumeAliases: aliases });
     logProgress(`${result.action}: machine/${app}/${result.name} (${ctx.base})`);
     machines.push({ app, name: result.name, action: result.action });
     await args.afterMachine?.({

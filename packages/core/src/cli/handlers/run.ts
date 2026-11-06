@@ -1144,7 +1144,7 @@ export async function recordSkips(
   const written: ReleaseRecord[] = [];
   try {
     for (const v of fresh) {
-      const { record } = await appendReleaseRecord(unchangedRecord(v.since, { releaseDigest, runId: run.runId, ...(run.runOrigin ? { runOrigin: run.runOrigin } : {}), timestamp, actor }), { cwd });
+      const { record } = await appendReleaseRecord(unchangedRecord(v.since, { releaseDigest, runId: run.runId, ...(run.runOrigin ? { runOrigin: run.runOrigin } : {}), timestamp, actor }, v.normalized), { cwd });
       written.push(record);
       console.error(`Recorded skip: ${formatBold(record.component)}@${record.env} keeps ${record.digest} under release ${releaseDigest}`);
     }
@@ -1177,7 +1177,7 @@ export function releaseRunPrepare(
     if (declaring.length > 0 && skip.deployUnchanged) {
       console.error(formatInfo(`--deploy-unchanged: deploying ${declaring.map((c) => c.name).join(", ")} whatever their inputs`));
     } else if (declaring.length > 0) {
-      const { compareInputs, gitChangedPaths } = await import("../../components/unchanged-inputs");
+      const { compareInputs, gitChangedPaths, gitNormalizedCompare } = await import("../../components/unchanged-inputs");
       const { readReleaseLedger, latestPerComponent } = await import("../../lifecycle/release-ledger");
       const { readRelease } = await import("../../lifecycle/release-store");
       const current = latestPerComponent((await readReleaseLedger(env, { cwd: projectPath }).catch(() => ({ records: [] }))).records);
@@ -1190,10 +1190,12 @@ export function releaseRunPrepare(
           current: current.get(c.name),
           readRelease: (digest) => readRelease(digest, { cwd: projectPath }),
           changedPaths: gitChangedPaths(projectPath),
+          normalizedCompare: gitNormalizedCompare(projectPath),
         });
         if (verdict.unchanged) {
           skip.skipped.set(c.name, verdict);
           console.error(formatInfo(`${c.name}: inputs unchanged since the deploy "${env}" runs (run ${verdict.since.runId}); not deploying it (--deploy-unchanged deploys it)`));
+          for (const n of verdict.normalized ?? []) console.error(formatInfo(`${c.name}: ${n.path} is the same after \`${n.command}\``));
         } else {
           console.error(formatInfo(`${c.name}: deploying, since ${verdict.reason}`));
         }

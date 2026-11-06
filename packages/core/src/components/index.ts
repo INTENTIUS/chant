@@ -16,6 +16,7 @@ export {
   type Component,
   type ComponentEnvironmentDeclaration,
   type ComponentInputs,
+  type ComponentInputNormalize,
   phase,
   gate,
   stackOutput,

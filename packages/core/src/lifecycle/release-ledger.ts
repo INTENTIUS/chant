@@ -254,6 +254,15 @@ export interface ReleaseRecord {
    */
   unchangedSince?: ReleaseRef;
   /**
+   * Optional: on a skip record (`unchangedSince`), the input files that
+   * differed between the two releases' commits and were the same after a
+   * normalization the component declares in `inputs.normalize` (#4718), each
+   * with that normalization's command. Written from chant
+   * `NORMALIZED_INPUTS_FLOOR` (../components/unchanged-inputs.ts); absent
+   * when no file needed one.
+   */
+  normalizedInputs?: { path: string; command: string }[];
+  /**
    * Optional: the release this deploy came from (#4026, ws-104), the
    * `releaseDigest` of `_releases/<releaseDigest>.json`. Written by
    * `chant components promote --release` since 0.124.28. Absent on every

@@ -43,6 +43,13 @@ import {
   flyDelete,
   toApplyResult,
   listCerts,
+  isVolumeId,
+  pickVolume,
+  resolveMountsWith,
+  volumeAliases,
+  alignMountsWithLive,
+  type FlapsVolume,
+  type FlyPlan,
   CERT_PAGE_LIMIT,
   MAX_CERT_PAGES,
   DEFAULT_FLAPS_BASE_URL,
@@ -908,11 +915,12 @@ describe("flyApply orders volumes before the machines that mount them", () => {
       writeFileSync(planPath, JSON.stringify(plan));
 
       const order: string[] = [];
+      const vols: Array<{ id: string; name: string }> = [];
       const http: FlyHttp = async (method, url) => {
         if (method === "GET" && /\/apps\/demo$/.test(url)) return { status: 404, text: "" };
         if (method === "POST" && /\/apps$/.test(url)) { order.push("app"); return { status: 200, text: "{}" }; }
-        if (method === "GET" && url.endsWith("/volumes")) return { status: 200, text: "[]" };
-        if (method === "POST" && url.endsWith("/volumes")) { order.push("volume"); return { status: 200, text: JSON.stringify({ id: "v1", name: "data" }) }; }
+        if (method === "GET" && url.endsWith("/volumes")) return { status: 200, text: JSON.stringify(vols) };
+        if (method === "POST" && url.endsWith("/volumes")) { order.push("volume"); vols.push({ id: "vol_1", name: "data" }); return { status: 200, text: JSON.stringify(vols[0]) }; }
         if (method === "GET" && url.endsWith("/machines")) return { status: 200, text: "[]" };
         if (method === "POST" && url.endsWith("/machines")) { order.push("machine"); return { status: 200, text: JSON.stringify({ id: "m1", name: "web", state: "created", instance_id: "I1", config: { image: "img:1" } }) }; }
         if (method === "GET" && url.includes("/wait")) return { status: 200, text: JSON.stringify({ ok: true }) };
@@ -927,6 +935,166 @@ describe("flyApply orders volumes before the machines that mount them", () => {
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
+  });
+});
+
+/**
+ * #4717 — the Machines API takes a volume's id in `config.mounts[].volume`.
+ * A mount that names a volume is sent with the id of the app's live volume of
+ * that name, and the name in the mount's `name`.
+ */
+describe("a mount's volume name is sent as the volume's id (#4717)", () => {
+  const WAIT = { intervalMs: 0, deadlineMs: 5_000 };
+  const app = { endpoint: "/v1/apps", method: "POST", body: { app_name: "demo" } };
+  const volume = (name: string, region = "iad") => ({ endpoint: "/v1/apps/demo/volumes", method: "POST", body: { name, region, size_gb: 1 } });
+  const machine = (image: string, mount: Record<string, unknown>, region = "iad") => ({
+    endpoint: "/v1/apps/demo/machines",
+    method: "POST",
+    body: { name: "web", region, config: { image, mounts: [mount], metadata: { ...OWNED_META } } },
+  });
+  /** The bodies the applier POSTs to create or update a Machine. */
+  const machinePosts = (fake: ReturnType<typeof createMachinesFake>) => {
+    const posts: Array<Record<string, unknown>> = [];
+    const http: FlyHttp = async (method, url, body, headers, signal) => {
+      if (method === "POST" && /\/machines(\/[^/]+)?$/.test(new URL(url).pathname)) posts.push(body as Record<string, unknown>);
+      return fake.http(method, url, body, headers, signal);
+    };
+    return { http, posts };
+  };
+  const mountsOf = (body: Record<string, unknown> | undefined) => (body?.config as { mounts?: unknown[] } | undefined)?.mounts;
+  const vol = (id: string, name: string, extra: Partial<FlapsVolume> = {}): FlapsVolume => ({ id, name, state: "created", ...extra });
+
+  test("isVolumeId tells an id from a name", () => {
+    expect(isVolumeId("vol_r68lmz2doox9myd4")).toBe(true);
+    expect(isVolumeId("control_data")).toBe(false);
+    expect(isVolumeId("vol_")).toBe(false);
+  });
+
+  test("a volume declared in the same apply is created first and its id is mounted; a re-apply is a no-op", async () => {
+    const fake = createMachinesFake();
+    const { http, posts } = machinePosts(fake);
+    const plan: FlyPlan = { app, web: machine("img:1", { volume: "data", path: "/data" }), data: volume("data") };
+    const out = await flyApply({ plan, endpoint: CTX.base, wait: WAIT }, undefined, http);
+    expect(out.volumes).toEqual([{ app: "demo", name: "data", action: "created" }]);
+    expect(out.machines).toEqual([{ app: "demo", name: "web", action: "created" }]);
+    const [created] = fake.volumes.get("demo")!;
+    expect(created.id).toMatch(/^vol_/);
+    expect(mountsOf(posts[0])).toEqual([{ volume: created.id, name: "data", path: "/data" }]);
+    expect(fake.machine("demo", "web")!.config.mounts).toEqual([{ volume: created.id, name: "data", path: "/data" }]);
+    expect(created.attached_machine_id).toBe(fake.machine("demo", "web")!.id);
+
+    const again = await flyApply({ plan, endpoint: CTX.base, wait: WAIT }, undefined, http);
+    expect(again.machines).toEqual([{ app: "demo", name: "web", action: "noop" }]);
+    expect(posts).toHaveLength(1);
+  });
+
+  test("an update sends the id of the volume the Machine already has", async () => {
+    const fake = createMachinesFake();
+    const { http, posts } = machinePosts(fake);
+    await flyApply({ plan: { app, data: volume("data"), web: machine("img:1", { volume: "data", path: "/data" }) }, endpoint: CTX.base, wait: WAIT }, undefined, http);
+    const id = fake.volumes.get("demo")![0].id;
+    // A second volume of the same name, free in the same region: the Machine keeps its own.
+    fake.volumes.get("demo")!.push({ id: "vol_spare", name: "data", region: "iad", state: "created", attached_machine_id: null });
+
+    const out = await flyApply({ plan: { app, data: volume("data"), web: machine("img:2", { volume: "data", path: "/data" }) }, endpoint: CTX.base, wait: WAIT }, undefined, http);
+    expect(out.machines).toEqual([{ app: "demo", name: "web", action: "updated" }]);
+    expect(mountsOf(posts[1])).toEqual([{ volume: id, name: "data", path: "/data" }]);
+    expect(fake.machine("demo", "web")!.config.image).toBe("img:2");
+  });
+
+  test("a mount given an id goes through as it is, and no volume list is read for it", async () => {
+    const fake = createMachinesFake();
+    const { http, posts } = machinePosts(fake);
+    const mount = { volume: "vol_r68lmz2doox9myd4", name: "control_data", path: "/data" };
+    await flyApply({ plan: { app, web: machine("img:1", mount) }, endpoint: CTX.base, wait: WAIT }, undefined, http);
+    expect(mountsOf(posts[0])).toEqual([mount]);
+    expect(fake.calls.filter((c) => c.endsWith("/volumes"))).toEqual([]);
+  });
+
+  test("a mount naming no volume in the app fails clearly, and no Machine is posted", async () => {
+    const fake = createMachinesFake();
+    const { http, posts } = machinePosts(fake);
+    await expect(
+      flyApply({ plan: { app, logs: volume("logs"), web: machine("img:1", { volume: "data", path: "/data" }) }, endpoint: CTX.base, wait: WAIT }, undefined, http),
+    ).rejects.toThrow(/no volume named "data" in app demo .*the app's volumes: logs.*vol_\.\.\./);
+    expect(posts).toEqual([]);
+  });
+
+  test("two free volumes of the name in the Machine's region are refused, naming both", async () => {
+    const fake = createMachinesFake();
+    const { http, posts } = machinePosts(fake);
+    await flyApply({ plan: { app }, endpoint: CTX.base, wait: WAIT }, undefined, http);
+    fake.volumes.set("demo", [
+      { id: "vol_a", name: "data", region: "iad", state: "created", attached_machine_id: null },
+      { id: "vol_b", name: "data", region: "iad", state: "created", attached_machine_id: null },
+    ]);
+    await expect(
+      flyApply({ plan: { app, web: machine("img:1", { volume: "data", path: "/data" }) }, endpoint: CTX.base, wait: WAIT }, undefined, http),
+    ).rejects.toThrow(/volume name "data" is ambiguous in app demo for a new Machine in iad: 2 are free in iad \(vol_a in iad, unattached; vol_b in iad, unattached\)/);
+    expect(posts).toEqual([]);
+  });
+
+  test("of several volumes of the name, the one in the Machine's region that is free is picked", async () => {
+    const fake = createMachinesFake();
+    const { http, posts } = machinePosts(fake);
+    await flyApply({ plan: { app }, endpoint: CTX.base, wait: WAIT }, undefined, http);
+    fake.volumes.set("demo", [
+      { id: "vol_iad", name: "data", region: "iad", state: "created", attached_machine_id: null },
+      { id: "vol_ordtaken", name: "data", region: "ord", state: "created", attached_machine_id: "m-other" },
+      { id: "vol_ord", name: "data", region: "ord", state: "created", attached_machine_id: null },
+    ]);
+    await flyApply({ plan: { app, web: machine("img:1", { volume: "data", path: "/data" }, "ord") }, endpoint: CTX.base, wait: WAIT }, undefined, http);
+    expect(mountsOf(posts[0])).toEqual([{ volume: "vol_ord", name: "data", path: "/data" }]);
+  });
+
+  test("a mount naming a Volume's declaration resolves to that Volume's name, which goes in `name`", async () => {
+    const fake = createMachinesFake();
+    const { http, posts } = machinePosts(fake);
+    // A `Volume` reference serializes to the declaration's name, here `store`.
+    const plan: FlyPlan = { app, store: volume("files"), web: machine("img:1", { volume: "store", path: "/data" }) };
+    expect(volumeAliases(plan)).toEqual(new Map([["store", "files"]]));
+    await flyApply({ plan, endpoint: CTX.base, wait: WAIT }, undefined, http);
+    expect(mountsOf(posts[0])).toEqual([{ volume: fake.volumes.get("demo")![0].id, name: "files", path: "/data" }]);
+  });
+
+  test("pickVolume: the Machine's own volume first, then a free one in its region; destroyed volumes never count", () => {
+    const vols = [
+      vol("vol_mine", "data", { region: "iad", attached_machine_id: "m1" }),
+      vol("vol_free", "data", { region: "iad", attached_machine_id: null }),
+      vol("vol_gone", "data", { region: "iad", state: "pending_destroy" }),
+    ];
+    expect(pickVolume("demo", "data", vols, { machineId: "m1", region: "iad" }).id).toBe("vol_mine");
+    expect(pickVolume("demo", "data", vols, { machineId: "m2", region: "iad" }).id).toBe("vol_free");
+    expect(pickVolume("demo", "data", vols, {}).id).toBe("vol_free");
+    expect(() => pickVolume("demo", "data", [vols[2]], {})).toThrow(/no volume named "data"/);
+  });
+
+  test("pickVolume: a volume attached to another Machine, or only in another region, is refused naming it", () => {
+    expect(() => pickVolume("demo", "data", [vol("vol_x", "data", { region: "iad", attached_machine_id: "m9" })], { machineId: "m1", region: "iad" })).toThrow(
+      /ambiguous.*none is attached to Machine m1 or free in iad \(vol_x in iad, attached to m9\)/,
+    );
+    expect(() => pickVolume("demo", "data", [vol("vol_y", "data", { region: "ord" })], { region: "iad" })).toThrow(/vol_y in ord, unattached/);
+  });
+
+  test("resolveMountsWith keeps a mount's own name, passes ids and other config through, and returns config itself when nothing names a volume", () => {
+    const vols = [vol("vol_1", "data")];
+    const config = { image: "x", mounts: [{ volume: "data", name: "custom", path: "/d" }, { volume: "vol_2", path: "/e" }] };
+    expect(resolveMountsWith("demo", config, vols, {})).toEqual({
+      image: "x",
+      mounts: [{ volume: "vol_1", name: "custom", path: "/d" }, { volume: "vol_2", path: "/e" }],
+    });
+    const byId = { image: "x", mounts: [{ volume: "vol_2", path: "/e" }] };
+    expect(resolveMountsWith("demo", byId, [], {})).toBe(byId);
+    expect(resolveMountsWith("demo", undefined, [], {})).toBeUndefined();
+  });
+
+  test("alignMountsWithLive takes the live id where the live mount carries the declared name at the same path", () => {
+    const declared = { image: "x", mounts: [{ volume: "data", path: "/data" }] };
+    const live = { image: "x", mounts: [{ volume: "vol_1", name: "data", path: "/data" }] };
+    expect(configEqual(alignMountsWithLive(declared, live), live)).toBe(true);
+    const elsewhere = { image: "x", mounts: [{ volume: "vol_1", name: "data", path: "/other" }] };
+    expect(alignMountsWithLive(declared, elsewhere)).toBe(declared);
+    expect(configEqual(alignMountsWithLive({ mounts: [{ volume: "store", path: "/d" }] }, { mounts: [{ volume: "vol_1", name: "files", path: "/d" }] }, new Map([["store", "files"]])), { mounts: [{ volume: "vol_1", name: "files", path: "/d" }] })).toBe(true);
   });
 });
 

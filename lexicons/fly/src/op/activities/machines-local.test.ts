@@ -127,6 +127,7 @@ describe("the running mode of the local Machines API (#2831)", () => {
     const wait = { intervalMs: 20, deadlineMs: 10_000 };
     const plan: FlyPlan = {
       shop: { endpoint: "/v1/apps", method: "POST", body: { app_name: "shop", org_slug: "personal" } },
+      data: { endpoint: "/v1/apps/shop/volumes", method: "POST", body: { name: "data", region: "iad", size_gb: 1 } },
       web: {
         endpoint: "/v1/apps/shop/machines",
         method: "POST",

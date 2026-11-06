@@ -92,6 +92,24 @@
           "type": "array",
           "description": "Build parameters, by name, whose values in the environment's target the component deploys from. A value that differs between the two releases deploys it.",
           "items": { "type": "string", "minLength": 1 }
+        },
+        "normalize": {
+          "type": "array",
+          "description": "Optional (#4718): commands a changed input file is compared through. A file that changed between the two releases' commits and that an entry's paths match is read at each commit and piped through the first such entry's command; it is unchanged when the two outputs are the same bytes. The command runs with sh -c from the repository's top level, the file on stdin, {path} replaced by its path from the top level; it must be deterministic. A command that fails counts the file as changed. A skip that used one lists the files in normalizedInputs on its record. Read by chant 0.124.68 and newer.",
+          "items": {
+            "type": "object",
+            "required": ["paths", "command"],
+            "additionalProperties": false,
+            "properties": {
+              "paths": {
+                "type": "array",
+                "minItems": 1,
+                "description": "Git pathspecs, relative to the member's directory, as in inputs.paths.",
+                "items": { "type": "string", "minLength": 1 }
+              },
+              "command": { "type": "string", "minLength": 1, "description": "The normalizer, such as scripts/release blank {path}." }
+            }
+          }
         }
       }
     }
