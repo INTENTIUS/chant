@@ -12,6 +12,7 @@ import { cutRelease } from "../../lifecycle/release-cut";
 import { appendReleaseRecord, latestPerComponent, readReleaseLedger } from "../../lifecycle/release-ledger";
 import type { CompiledTarget, TargetCompiler } from "../../components/release-compile";
 import type { DriverComponent } from "../../components/driver";
+import type { ComponentInputs } from "../../components/component";
 import { recordSkips, releaseRunPrepare, type Skipped } from "./run";
 
 function git(dir: string, ...args: string[]): string {
@@ -107,6 +108,65 @@ describe("run --components --release with declared inputs (#4695)", () => {
       const changed = await releaseRunPrepare({ releaseDigest: r3.release.releaseDigest, label: "v3", release: r3.release }, dir, "prod", { deployUnchanged: false, skipped: again })([control], declared);
       expect(again.size).toBe(0);
       expect(changed).toMatchObject({ components: [{ deploy: [{ phase: "Image", steps: [{ kind: "release-image", uri: image("c") }] }, control.deploy[1]] }] });
+    });
+  });
+
+  test("a version bump that is the same after inputs.normalize is skipped, and the skip record names the normalization (#4718)", async () => {
+    await withTestDir(async (dir) => {
+      git(dir, "init", "-q", "-b", "main");
+      git(dir, "config", "user.email", "test@chant.dev");
+      git(dir, "config", "user.name", "Test");
+      writeFileSync(join(dir, "chant.config.ts"), `export default { environments: ["prod"] };\n`);
+      // A stand-in for Arugula's `scripts/release blank`: the file on stdin, its own crates' versions blanked.
+      mkdirSync(join(dir, "scripts"), { recursive: true });
+      writeFileSync(join(dir, "scripts", "blank"), `#!/bin/sh\ncase "$1" in *Cargo.toml|*Cargo.lock) exec sed -e 's/^version = ".*"/version = "@V@"/' ;; *) echo "blank: no kind for $1" >&2; exit 2 ;; esac\n`, { mode: 0o755 });
+      commit(dir, "crates/control/main.rs", "fn main() {}\n");
+      commit(dir, "crates/control/Cargo.toml", `[package]\nname = "control"\nversion = "1.0.0"\n`);
+      const r1 = await cut(dir, "v1", "a");
+      await appendReleaseRecord(
+        { component: "control", env: "prod", digest: `sha256:${"a".repeat(64)}`, gitSha: r1.release.commit, runId: "run-1", timestamp: "2026-11-01T10:00:00.000Z", actor: "ci", releaseDigest: r1.release.releaseDigest },
+        { cwd: dir },
+      );
+      const command = "scripts/blank {path}";
+      const normalizing = { inputs: { control: { paths: ["crates/control"], normalize: [{ paths: ["crates/control/Cargo.toml"], command }] } } };
+      const prepareFor = async (label: string, digest: string, decl: { inputs: Record<string, ComponentInputs> } = normalizing) => {
+        const r = await cut(dir, label, digest);
+        const skipped: Skipped = new Map();
+        const prepared = await releaseRunPrepare({ releaseDigest: r.release.releaseDigest, label, release: r.release }, dir, "prod", { deployUnchanged: false, skipped })([control], decl);
+        return { r, skipped, prepared };
+      };
+
+      // Another crate's release bumps the version: the same after the normalizer, so skipped.
+      commit(dir, "crates/control/Cargo.toml", `[package]\nname = "control"\nversion = "1.0.1"\n`);
+      const bump = await prepareFor("v2", "b");
+      expect(bump.prepared).toEqual({ components: [{ ...control, deploy: [] }] });
+      expect(bump.skipped.get("control")?.normalized).toEqual([{ path: "crates/control/Cargo.toml", command }]);
+      await recordSkips(bump.skipped, bump.r.release.releaseDigest, { runId: "run-2" }, dir);
+      const latest = latestPerComponent((await readReleaseLedger("prod", { cwd: dir })).records).get("control")!;
+      expect(latest).toMatchObject({ runId: "run-2", unchangedSince: { runId: "run-1" }, normalizedInputs: [{ path: "crates/control/Cargo.toml", command }] });
+
+      // The same bump without normalize deploys, as before.
+      commit(dir, "crates/control/Cargo.toml", `[package]\nname = "control"\nversion = "1.0.2"\n`);
+      const plain = await prepareFor("v3", "c", declared);
+      expect(plain.skipped.size).toBe(0);
+
+      // A dependency added to the manifest differs after the normalizer: deploys.
+      commit(dir, "crates/control/Cargo.toml", `[package]\nname = "control"\nversion = "1.0.2"\n\n[dependencies]\nserde = "1"\n`);
+      const dep = await prepareFor("v4", "d");
+      expect(dep.skipped.size).toBe(0);
+      expect(dep.prepared).toMatchObject({ components: [{ deploy: [{ phase: "Image", steps: [{ kind: "release-image", uri: image("d") }] }, control.deploy[1]] }] });
+
+      // A normalizer that fails deploys the component, even for a bump a working one would skip.
+      await appendReleaseRecord(
+        { component: "control", env: "prod", digest: `sha256:${"d".repeat(64)}`, gitSha: dep.r.release.commit, runId: "run-4", timestamp: new Date().toISOString(), actor: "ci", releaseDigest: dep.r.release.releaseDigest },
+        { cwd: dir },
+      );
+      const failing = { inputs: { control: { paths: ["crates/control"], normalize: [{ paths: ["crates/control/Cargo.toml"], command: "exit 3" }] } } };
+      commit(dir, "crates/control/Cargo.toml", `[package]\nname = "control"\nversion = "1.0.3"\n\n[dependencies]\nserde = "1"\n`);
+      const failed = await prepareFor("v5", "e", failing);
+      expect(failed.skipped.size).toBe(0);
+      const skippedAgain = await releaseRunPrepare({ releaseDigest: failed.r.release.releaseDigest, label: "v5", release: failed.r.release }, dir, "prod", { deployUnchanged: false, skipped: new Map() })([control], normalizing);
+      expect(skippedAgain).toEqual({ components: [{ ...control, deploy: [] }] });
     });
   });
 });
