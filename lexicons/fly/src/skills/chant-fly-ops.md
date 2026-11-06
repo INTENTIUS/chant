@@ -89,13 +89,37 @@ export const web: Component = {
 };
 ```
 
-The step updates the Machine in place with the release in its `config.metadata`: `chant-release-digest`, `chant-release-git-sha` (the commit, `git rev-parse HEAD` unless given), and `chant-release-previous-digest` (the release it replaced). Each migration then runs inside the Machine through the Machines API's exec, once per environment: its receipt is kept on `chant/lifecycle` at `<env>/receipts/`, and a migration fires again only when its `sha` (or command) changes. After a migration fires, the Machine restarts, and the step checks that it is started with this release and, given a `url`, that its health endpoint answers with this commit or digest. If anything fails after the Machine changed, the step puts back the config the Machine served before (on a first release, it stops the Machine) and fails.
+The step updates the Machine in place with the release in its `config.metadata`: `chant-release-digest`, `chant-release-git-sha` (the commit, `git rev-parse HEAD` unless given), and `chant-release-previous-digest` (the release it replaced). Each migration then runs inside the Machine through the Machines API's exec, once per environment: its receipt is kept on `chant/lifecycle` at `<env>/receipts/`, and a migration fires again only when its `sha` (or command) changes. After a migration fires, the Machine restarts, and the step checks that it is started with this release and, given a `url`, that its health endpoint answers with this commit or digest. If anything fails after the Machine changed, the step puts back the config the Machine served before (on a first release, it stops the Machine) and fails. That includes an apply that fails partway: the Machines it had already updated go back too.
 
 The step's output carries `uri` and `digest`, so `chant run --components web --env prod` records the release in the ledger. `chant components status prod --live` reads the Machine's metadata back and compares its digest with the ledger's: the row is `reconciled` when they agree and `drifted` when the Machine serves something the ledger does not name. The component joins the Machine by name: name the component after the Machine entity, or list it in `liveNames`.
 
 Each release's Machine config is kept on `chant/lifecycle` at `<env>/fly/<app>/<machine>/<digest>.json`. `fly-rollback` puts back the config of the release the serving one replaced (or the digest given as `to`), checks it, and outputs that digest so the ledger records it again. `fly-release`'s own saga compensation does the same.
 
-The steps are also Op activities, for an Op that composes them itself: `flyMachineRelease`, `flyMachineExec`, `flyMachineRestart`, `flyMachineStop`, `flyMachineVerify` and `flyMachineRestore`. Wrap a migration's `flyMachineExec` in `effect()` so it fires once.
+### Several serving Machines with Fly checks
+
+An app served by more than one Machine, such as two Machines behind Flycast with no public address, declares them all in the plan. `fly-release` releases the one named by `machine` and gives the others their image through `images`:
+
+```ts
+{
+  kind: "fly-release",
+  plan: "dist/fly.json",
+  machine: "platform-1",
+  digest: "@Publish.digest",
+  image: "@Publish.uri",
+  images: { "platform-2": "@Publish.uri" },
+  checks: { timeoutMs: 300_000 },
+}
+```
+
+Without `checks`, the apply updates the Machines in plan order and waits for each to be `started` only, and verify reads the serving Machine alone.
+
+With `checks`, the apply updates the Machines one at a time, as `fly deploy` does. Once a Machine is started, the step reads its Fly checks from the Machines API (`checks[].status` on the Machine) until every one is `passing`, and only then updates the next Machine. A check counts only when its `updated_at` is at or after the Machine's own `updated_at` as the update call answered it, so a `passing` left over from before the update does not count. Both times are flaps' own, so the local clock plays no part; a check with no `updated_at` counts on its status. A Machine whose config declares checks that have not reported yet is still waiting. `checks.timeoutMs` (default 300000, five minutes) bounds the wait for each Machine, and `checks.intervalMs` (default 1000) is how often it looks; `checks: true` takes both defaults. A Machine with no checks configured is done once it is started, and a scheduled Machine is not waited for. The wait comes right after each Machine's update, before migrations run, so a release whose new code can't pass its checks until a migration has run should leave `checks` off.
+
+Under `checks`, a Machine whose checks do not pass in time fails the release with an error naming the Machine and each check that is not passing, for example `machine platform/platform-2 (e784...) did not pass its Fly checks within 300s: check servicecheck-00-http-8080 is critical (503 Service Unavailable)`. The Machines after it are left alone. Every Machine the release changed goes back to its old config, the last one changed first, and each restore waits for its Machine to be started with its checks passing before the next one. On a first release the serving Machine is stopped instead.
+
+Under `checks`, verify then covers every Machine the release started: the serving one is started with this release and its checks passing (and its health URL answering, when given), and each other one is started with its checks passing, within `verify.timeoutMs`. A failure there restores them all in the same way.
+
+The steps are also Op activities, for an Op that composes them itself: `flyMachineRelease`, `flyMachineExec`, `flyMachineRestart`, `flyMachineStop`, `flyMachineVerify` and `flyMachineRestore`. Wrap a migration's `flyMachineExec` in `effect()` so it fires once. `flyMachineRelease` and `flyMachineRestore` wait for Fly checks when given `checks`, and `flyMachineVerify` reads them with `checks: true`; without them they wait for `started` only.
 
 ### A source tree instead of an image
 

@@ -75,6 +75,32 @@ export interface FlapsMachine {
   instance_id: string;
   region?: string;
   config?: { metadata?: Record<string, string> } & Record<string, unknown>;
+  /** When flaps last changed the Machine, by its own clock (RFC 3339). */
+  updated_at?: string;
+  /** The status of each of the Machine's Fly checks, as the Machines API reports them (#4719). */
+  checks?: FlapsCheckStatus[];
+}
+
+/** One of a Machine's Fly checks as the Machines API reports it: `passing`, `warning` or `critical`. */
+export interface FlapsCheckStatus {
+  name: string;
+  status: string;
+  output?: string;
+  updated_at?: string;
+}
+
+/** One Machine {@link flyApply} has just created, updated or left alone. */
+export interface AppliedMachine {
+  app: string;
+  /** The plan entity that declares it. */
+  entity: string;
+  name: string;
+  id: string;
+  action: "created" | "updated" | "noop";
+  /** True when it was left unstarted (a scheduled Machine, #4696). */
+  unlaunched: boolean;
+  /** The Machine's `updated_at` as the create or update call answered it, when it changed and flaps gave one. */
+  updatedAt?: string;
 }
 
 // ── Pure helpers (unit-testable without http) ─────────────────────────────────
@@ -545,7 +571,7 @@ export async function applyMachine(
   http: FlyHttp,
   signal?: AbortSignal,
   opts: WaitOpts & { volumeAliases?: ReadonlyMap<string, string> } = {},
-): Promise<{ action: "created" | "updated" | "noop"; id: string; name: string }> {
+): Promise<{ action: "created" | "updated" | "noop"; id: string; name: string; updatedAt?: string }> {
   const name = typeof req.body.name === "string" && req.body.name ? req.body.name : entityName;
   const unlaunched = skipsLaunch(req.body);
   const settle = (m: FlapsMachine) =>
@@ -569,7 +595,7 @@ export async function applyMachine(
     if (res.status >= 300) throw new Error(`machine ${app}/${name} create failed (${res.status}): ${res.text}`);
     const m = parseMachine(res.text);
     await settle(m);
-    return { action: "created", id: m.id, name };
+    return { action: "created", id: m.id, name, ...(m.updated_at ? { updatedAt: m.updated_at } : {}) };
   }
 
   if (configEqual(desiredConfig, live.config)) {
@@ -582,7 +608,7 @@ export async function applyMachine(
   if (res.status >= 300) throw new Error(`machine ${app}/${name} update failed (${res.status}): ${res.text}`);
   const m = parseMachine(res.text);
   await settle(m);
-  return { action: "updated", id: m.id, name };
+  return { action: "updated", id: m.id, name, ...(m.updated_at ? { updatedAt: m.updated_at } : {}) };
 }
 
 /** How {@link destroyMachine} treats a machine that is still running. */
@@ -1238,6 +1264,13 @@ export interface FlyApplyArgs {
   force?: boolean;
   /** Wait-loop tuning (mainly for tests). */
   wait?: WaitOpts;
+  /**
+   * Called after each Machine is applied and settled, before the next one
+   * (#4719). `fly-release` waits here for the Machine's Fly checks, so a
+   * group of serving Machines rolls one at a time. A throw stops the apply
+   * there and fails it. For callers in code only; without it nothing changes.
+   */
+  afterMachine?: (machine: AppliedMachine) => Promise<void>;
 }
 
 /**
@@ -1415,6 +1448,15 @@ export async function flyApply(
     const result = await applyMachine(ctx, app, entityName, req, http, signal, { ...opts, volumeAliases: aliases });
     logProgress(`${result.action}: machine/${app}/${result.name} (${ctx.base})`);
     machines.push({ app, name: result.name, action: result.action });
+    await args.afterMachine?.({
+      app,
+      entity: entityName,
+      name: result.name,
+      id: result.id,
+      action: result.action,
+      unlaunched: skipsLaunch(req.body),
+      ...(result.updatedAt ? { updatedAt: result.updatedAt } : {}),
+    });
   }
 
   // IPs, certificates, secrets after machines (independent of them).

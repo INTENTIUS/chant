@@ -22,6 +22,8 @@ export interface FakeMachine {
   state: string;
   instance_id: string;
   config: Record<string, unknown> & { metadata?: Record<string, string> };
+  /** When the machine was last created or updated (RFC 3339), as flaps reports it. */
+  updated_at?: string;
 }
 
 /** One volume the fake holds, as flaps lists it. */
@@ -63,6 +65,23 @@ export interface MachinesFakeOptions {
   exec?: (app: string, machine: FakeMachine, command: string[]) => FakeExecResult | Promise<FakeExecResult>;
   /** The state a created or updated machine settles in. Default `started`. */
   settle?: (machine: FakeMachine) => string;
+  /** The clock a create or update stamps `updated_at` with. Default: the wall clock. */
+  now?: () => Date;
+  /**
+   * The Fly checks a machine reports each time it is read (#4719), as the
+   * Machines API's `checks`: asked on every GET of the machine or its list.
+   * Default: none.
+   */
+  checks?: (app: string, machine: FakeMachine) => FakeCheck[] | undefined;
+}
+
+/** One Fly check's status on a machine, as the Machines API reports it. */
+export interface FakeCheck {
+  name: string;
+  status: "passing" | "warning" | "critical";
+  output?: string;
+  /** When the check last reported (RFC 3339). */
+  updated_at?: string;
 }
 
 const json = (status: number, body: unknown) => ({ status, text: body === undefined ? "" : JSON.stringify(body) });
@@ -93,8 +112,13 @@ export function createMachinesFake(options: MachinesFakeOptions = {}): MachinesF
   const execs: MachinesFake["execs"] = [];
   const calls: string[] = [];
   const settle = options.settle ?? (() => "started");
+  const stamp = () => (options.now?.() ?? new Date()).toISOString();
   const list = (app: string) => machines.get(app) ?? [];
   const find = (app: string, id: string) => list(app).find((m) => m.id === id);
+  const withChecks = (app: string, m: FakeMachine) => {
+    const checks = options.checks?.(app, m);
+    return checks ? { ...m, checks } : m;
+  };
   const vols = (app: string) => volumes.get(app) ?? [];
   // A volume is attached to the Machine whose config mounts its id, as Fly
   // attaches it. A mount naming no volume id attaches nothing.
@@ -143,7 +167,7 @@ export function createMachinesFake(options: MachinesFakeOptions = {}): MachinesF
       const id = seg[4];
       const action = seg[5];
       if (!id) {
-        if (method === "GET") return json(200, list(app));
+        if (method === "GET") return json(200, list(app).map((m) => withChecks(app, m)));
         if (method === "POST") {
           const m: FakeMachine = {
             id: nextId("m"),
@@ -151,6 +175,7 @@ export function createMachinesFake(options: MachinesFakeOptions = {}): MachinesF
             state: "created",
             instance_id: nextId("I"),
             config: structuredClone((b.config ?? {}) as FakeMachine["config"]),
+            updated_at: stamp(),
           };
           // skip_launch: the Machine is created and not booted (#4696).
           m.state = b.skip_launch === true ? "created" : settle(m);
@@ -162,10 +187,11 @@ export function createMachinesFake(options: MachinesFakeOptions = {}): MachinesF
       const m = id ? find(app, id) : undefined;
       if (!m) return action === "wait" ? json(200, { ok: true }) : json(404, { error: "machine not found" });
       if (!action) {
-        if (method === "GET") return json(200, m);
+        if (method === "GET") return json(200, withChecks(app, m));
         if (method === "POST") {
           m.config = structuredClone((b.config ?? {}) as FakeMachine["config"]);
           m.instance_id = nextId("I");
+          m.updated_at = stamp();
           attach(app, m, m.id);
           // skip_launch: the new config isn't started (#4696). A Machine that
           // never ran stays created; one that ran is stopped.
