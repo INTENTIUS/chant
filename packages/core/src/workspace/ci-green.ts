@@ -59,7 +59,6 @@ import { greenBranches, laneOf, laneTagPrefixes, readDeclaration, readerVersion,
 import { makeNotifyEvent, sendNotify, type NotifyFields } from "../notify";
 import { lifecycleRemoteOverride } from "../lifecycle/ledger-remote";
 import { isTransientForgeError, type CheckRun, type CiForge, type OpRunRef, type WorkflowRun } from "./ci-green-forge";
-import { NEXT_RELEASE } from "../release-floors";
 import type { OpRunRecord } from "../op/runtime";
 import { readRunLedger } from "../lifecycle/run-ledger";
 import { fetchLifecycleStatus, listFilesInDir, listLedgerTrees, pushLifecycleStatus, writeLedgerFiles } from "../lifecycle/git";
@@ -92,7 +91,7 @@ export const CI_STALE_WALK = 200;
 /** The first chant that writes a merge queue's trigger and verdict job, and reads `chant ci verdict` (#4644). */
 export const CI_MERGE_QUEUE_FLOOR = "0.124.61";
 /** The first chant that reads `ci.green.mergeQueue: { retries }` and whose `ci verdict` re-runs a failed job and looks again after a forge 5xx (#4729). */
-export const CI_VERDICT_RETRIES_FLOOR = NEXT_RELEASE;
+export const CI_VERDICT_RETRIES_FLOOR = "0.124.70";
 
 export const CI_LAST_GREEN_CONTRACT_VERSION = 1;
 export const CI_LAST_GREEN_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/ci-last-green/v1/ci-last-green.schema.json";

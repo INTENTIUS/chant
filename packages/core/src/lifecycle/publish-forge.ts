@@ -48,6 +48,7 @@ import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { memberSbom, releaseProvenance } from "./publish-attachments";
 import { releaseVersion } from "./publish-homebrew";
+import { NEXT_RELEASE } from "../release-floors";
 import { readCredential, type Credential } from "./publish-credentials";
 import type { ForgePublishDeclaration } from "./publish-declaration";
 import { bytesDigest, checkReleaseDigest, memberFile, publishTargetKey } from "./publish-targets";
@@ -57,7 +58,7 @@ import { PublishTargetError, type PublishContext, type PublishDeps, type Publish
 export const PUBLISH_FORGE_LATEST_FLOOR = "0.124.63";
 
 /** The first chant whose forge target reads `notes` and may have no assets (#4658). Products feature-detect on it. */
-export const PUBLISH_FORGE_NOTES_FLOOR = "0.124.71";
+export const PUBLISH_FORGE_NOTES_FLOOR = NEXT_RELEASE;
 
 /** `text` with `{label}`, `{version}` and `{tag}` filled in. */
 function fillNotesText(text: string, values: { label: string; version: string; tag: string }): string {
