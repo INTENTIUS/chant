@@ -1,0 +1,1305 @@
+{
+  "now": "2026-10-07T12:00:00.000Z",
+  "sources": [
+    {
+      "project": "github.com/acme/infra",
+      "rows": [
+        {
+          "project": "github.com/acme/infra",
+          "path": "2026/10/c0/tf-plan",
+          "roots": 1,
+          "groups": 1,
+          "totals": {
+            "create": 0,
+            "update": 1,
+            "replace": 0,
+            "delete": 0
+          },
+          "refused": 0,
+          "failed": 0,
+          "changed": 0,
+          "destroys": [],
+          "stage": "tf-plan",
+          "commit": "c0",
+          "finished": "2026-10-05T08:00:00.000Z",
+          "pull_request": "1"
+        },
+        {
+          "project": "github.com/acme/infra",
+          "path": "2026/10/c1/tf-plan",
+          "roots": 1,
+          "groups": 1,
+          "totals": {
+            "create": 0,
+            "update": 1,
+            "replace": 0,
+            "delete": 0
+          },
+          "refused": 0,
+          "failed": 0,
+          "changed": 0,
+          "destroys": [],
+          "stage": "tf-plan",
+          "commit": "c1",
+          "finished": "2026-10-05T09:00:00.000Z",
+          "pull_request": "1"
+        },
+        {
+          "project": "github.com/acme/infra",
+          "path": "2026/10/c2/tf-plan",
+          "roots": 1,
+          "groups": 1,
+          "totals": {
+            "create": 0,
+            "update": 1,
+            "replace": 0,
+            "delete": 0
+          },
+          "refused": 0,
+          "failed": 0,
+          "changed": 0,
+          "destroys": [],
+          "stage": "tf-plan",
+          "commit": "c2",
+          "finished": "2026-10-06T09:00:00.000Z"
+        },
+        {
+          "project": "github.com/acme/infra",
+          "path": "2026/10/c4/tf-drift",
+          "roots": 1,
+          "groups": 1,
+          "totals": {
+            "create": 0,
+            "update": 1,
+            "replace": 0,
+            "delete": 0
+          },
+          "refused": 0,
+          "failed": 0,
+          "changed": 1,
+          "destroys": [],
+          "stage": "tf-drift",
+          "commit": "c4",
+          "finished": "2026-10-06T15:00:00.000Z",
+          "drifted_roots": [
+            "app"
+          ]
+        },
+        {
+          "project": "github.com/acme/infra",
+          "path": "2026/10/c4/tf-drift",
+          "roots": 1,
+          "groups": 1,
+          "totals": {
+            "create": 0,
+            "update": 1,
+            "replace": 0,
+            "delete": 0
+          },
+          "refused": 0,
+          "failed": 0,
+          "changed": 0,
+          "destroys": [],
+          "stage": "tf-drift",
+          "commit": "c4",
+          "finished": "2026-10-06T17:00:00.000Z"
+        },
+        {
+          "project": "github.com/acme/net",
+          "path": "2026/10/x/tf-plan",
+          "roots": 1,
+          "groups": 1,
+          "totals": {
+            "create": 0,
+            "update": 1,
+            "replace": 0,
+            "delete": 0
+          },
+          "refused": 0,
+          "failed": 0,
+          "changed": 0,
+          "destroys": [],
+          "stage": "tf-plan",
+          "commit": "x",
+          "finished": "2026-10-06T09:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "project": "github.com/acme/net",
+      "rows": [
+        {
+          "project": "github.com/acme/net",
+          "path": "2026/10/h0/tf-plan",
+          "roots": 1,
+          "groups": 1,
+          "totals": {
+            "create": 0,
+            "update": 1,
+            "replace": 0,
+            "delete": 0
+          },
+          "refused": 0,
+          "failed": 0,
+          "changed": 0,
+          "destroys": [],
+          "stage": "tf-plan",
+          "commit": "h0",
+          "finished": "2026-10-06T08:00:00.000Z",
+          "pull_request": "5"
+        },
+        {
+          "project": "github.com/acme/net",
+          "path": "2026/10/h1/tf-plan",
+          "roots": 1,
+          "groups": 1,
+          "totals": {
+            "create": 0,
+            "update": 1,
+            "replace": 0,
+            "delete": 0
+          },
+          "refused": 0,
+          "failed": 0,
+          "changed": 0,
+          "destroys": [],
+          "stage": "tf-plan",
+          "commit": "h1",
+          "finished": "2026-10-06T09:00:00.000Z",
+          "pull_request": "5",
+          "wave_digests": [
+            "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+          ]
+        },
+        {
+          "project": "github.com/acme/net",
+          "path": "2026/10/q2p/tf-plan",
+          "roots": 1,
+          "groups": 1,
+          "totals": {
+            "create": 0,
+            "update": 1,
+            "replace": 0,
+            "delete": 0
+          },
+          "refused": 0,
+          "failed": 0,
+          "changed": 0,
+          "destroys": [],
+          "stage": "tf-plan",
+          "commit": "q2p",
+          "finished": "2026-10-04T09:00:00.000Z",
+          "wave_digests": [
+            "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+          ]
+        },
+        {
+          "project": "github.com/acme/net",
+          "path": "2026/10/h1/tf-drift",
+          "roots": 1,
+          "groups": 1,
+          "totals": {
+            "create": 0,
+            "update": 1,
+            "replace": 0,
+            "delete": 0
+          },
+          "refused": 0,
+          "failed": 0,
+          "changed": 2,
+          "destroys": [],
+          "stage": "tf-drift",
+          "commit": "h1",
+          "finished": "2026-10-06T14:00:00.000Z",
+          "drifted_roots": [
+            "vpc"
+          ],
+          "drift_since": "2026-10-06T12:00:00.000Z"
+        },
+        {
+          "project": "github.com/acme/net",
+          "path": "2026/10/h1/tf-drift",
+          "roots": 1,
+          "groups": 1,
+          "totals": {
+            "create": 0,
+            "update": 1,
+            "replace": 0,
+            "delete": 0
+          },
+          "refused": 0,
+          "failed": 0,
+          "changed": 0,
+          "destroys": [],
+          "stage": "tf-drift",
+          "commit": "h1",
+          "finished": "2026-10-06T18:00:00.000Z",
+          "drift_cleared": {
+            "since": "2026-10-06T12:00:00.000Z",
+            "roots": [
+              "vpc"
+            ]
+          }
+        },
+        {
+          "project": "github.com/acme/net",
+          "path": "2026/10/h2/tf-drift",
+          "roots": 1,
+          "groups": 1,
+          "totals": {
+            "create": 0,
+            "update": 1,
+            "replace": 0,
+            "delete": 0
+          },
+          "refused": 0,
+          "failed": 0,
+          "changed": 1,
+          "destroys": [],
+          "stage": "tf-drift",
+          "commit": "h2",
+          "finished": "2026-10-07T09:00:00.000Z",
+          "drifted_roots": [
+            "dns"
+          ]
+        }
+      ]
+    }
+  ],
+  "entries": [
+    {
+      "schema": "terragucci.audit/v1",
+      "id": "sha256:e3",
+      "project": "github.com/acme/infra",
+      "who": null,
+      "what": "wave-1",
+      "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "evidence": {
+        "source": "ledger"
+      },
+      "kind": "approval-requested",
+      "at": "2026-10-05T09:30:00.000Z",
+      "result": "waiting"
+    },
+    {
+      "schema": "terragucci.audit/v1",
+      "id": "sha256:e0",
+      "project": "github.com/acme/infra",
+      "who": "alice",
+      "what": "wave-1",
+      "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "evidence": {
+        "source": "ledger"
+      },
+      "kind": "approval",
+      "at": "2026-10-05T10:00:00.000Z",
+      "result": "unsigned"
+    },
+    {
+      "schema": "terragucci.audit/v1",
+      "id": "sha256:e4",
+      "project": "github.com/acme/infra",
+      "who": "alice",
+      "what": "wave-1",
+      "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "evidence": {
+        "source": "report"
+      },
+      "kind": "apply",
+      "at": "2026-10-05T10:10:00.000Z",
+      "result": "applied",
+      "detail": {
+        "commit": "c1",
+        "roots": [
+          "app"
+        ],
+        "approval": "sha256:e0"
+      }
+    },
+    {
+      "schema": "terragucci.audit/v1",
+      "id": "sha256:e5",
+      "project": "github.com/acme/infra",
+      "who": null,
+      "what": "wave-1",
+      "digest": null,
+      "evidence": {
+        "source": "report"
+      },
+      "kind": "apply",
+      "at": "2026-10-06T09:20:00.000Z",
+      "result": "applied",
+      "detail": {
+        "commit": "c2",
+        "roots": [
+          "app"
+        ]
+      }
+    },
+    {
+      "schema": "terragucci.audit/v1",
+      "id": "sha256:e6",
+      "project": "github.com/acme/infra",
+      "who": null,
+      "what": "wave-1",
+      "digest": null,
+      "evidence": {
+        "source": "report"
+      },
+      "kind": "apply",
+      "at": "2026-10-06T12:00:00.000Z",
+      "result": "failed",
+      "detail": {
+        "commit": "c3",
+        "roots": [
+          "app"
+        ],
+        "failed": [
+          "app"
+        ]
+      }
+    },
+    {
+      "schema": "terragucci.audit/v1",
+      "id": "sha256:e7",
+      "project": "github.com/acme/infra",
+      "who": null,
+      "what": "wave-1",
+      "digest": null,
+      "evidence": {
+        "source": "report"
+      },
+      "kind": "apply",
+      "at": "2026-10-06T13:00:00.000Z",
+      "result": "applied",
+      "detail": {
+        "commit": "c4",
+        "roots": [
+          "app"
+        ]
+      }
+    },
+    {
+      "schema": "terragucci.audit/v1",
+      "id": "sha256:e8",
+      "project": "github.com/acme/infra",
+      "who": null,
+      "what": "wave-1",
+      "digest": null,
+      "evidence": {
+        "source": "report"
+      },
+      "kind": "refused",
+      "at": "2026-10-06T14:00:00.000Z",
+      "result": "changed-after-approval",
+      "detail": {
+        "commit": "c5",
+        "roots": [
+          "app"
+        ]
+      }
+    },
+    {
+      "schema": "terragucci.audit/v1",
+      "id": "sha256:e9",
+      "project": "github.com/acme/infra",
+      "who": null,
+      "what": "wave-1",
+      "digest": null,
+      "evidence": {
+        "source": "report"
+      },
+      "kind": "apply",
+      "at": "2026-10-06T14:30:00.000Z",
+      "result": "waiting",
+      "detail": {
+        "commit": "c6",
+        "roots": [
+          "app"
+        ]
+      }
+    },
+    {
+      "schema": "terragucci.audit/v1",
+      "id": "sha256:e10",
+      "project": "github.com/acme/infra",
+      "who": null,
+      "what": "wave-1",
+      "digest": null,
+      "evidence": {
+        "source": "report"
+      },
+      "kind": "apply",
+      "at": "2026-07-28T10:00:00.000Z",
+      "result": "applied",
+      "detail": {
+        "commit": "old",
+        "roots": [
+          "app"
+        ]
+      }
+    },
+    {
+      "schema": "terragucci.audit/v1",
+      "id": "sha256:e11",
+      "project": "github.com/acme/net",
+      "who": null,
+      "what": "wave-2",
+      "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "evidence": {
+        "source": "report"
+      },
+      "kind": "approval-requested",
+      "at": "2026-10-06T10:00:00.000Z",
+      "result": "waiting"
+    },
+    {
+      "schema": "terragucci.audit/v1",
+      "id": "sha256:e1",
+      "project": "github.com/acme/net",
+      "who": "bo",
+      "what": "wave-2",
+      "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "evidence": {
+        "source": "report"
+      },
+      "kind": "approval",
+      "at": "2026-10-06T11:00:00.000Z",
+      "result": "unsigned"
+    },
+    {
+      "schema": "terragucci.audit/v1",
+      "id": "sha256:e12",
+      "project": "github.com/acme/net",
+      "who": null,
+      "what": "wave-2",
+      "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "evidence": {
+        "source": "report"
+      },
+      "kind": "apply",
+      "at": "2026-10-06T11:30:00.000Z",
+      "result": "applied",
+      "detail": {
+        "commit": "merge-5",
+        "roots": [
+          "vpc"
+        ],
+        "approval": "sha256:e1"
+      }
+    },
+    {
+      "schema": "terragucci.audit/v1",
+      "id": "sha256:e2",
+      "project": "github.com/acme/net",
+      "who": null,
+      "what": "wave-2",
+      "digest": null,
+      "evidence": {
+        "source": "report"
+      },
+      "kind": "apply",
+      "at": "2026-10-03T09:00:00.000Z",
+      "result": "failed",
+      "detail": {
+        "commit": "q0",
+        "roots": [
+          "dns",
+          "vpc"
+        ],
+        "failed": [
+          "dns",
+          "vpc"
+        ]
+      }
+    },
+    {
+      "schema": "terragucci.audit/v1",
+      "id": "sha256:e13",
+      "project": "github.com/acme/net",
+      "who": null,
+      "what": "wave-2",
+      "digest": null,
+      "evidence": {
+        "source": "report"
+      },
+      "kind": "apply",
+      "at": "2026-10-03T10:00:00.000Z",
+      "result": "applied",
+      "detail": {
+        "commit": "q1",
+        "roots": [
+          "dns"
+        ]
+      }
+    },
+    {
+      "schema": "terragucci.audit/v1",
+      "id": "sha256:e14",
+      "project": "github.com/acme/net",
+      "who": null,
+      "what": "wave-2",
+      "digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "evidence": {
+        "source": "report"
+      },
+      "kind": "apply",
+      "at": "2026-10-04T10:00:00.000Z",
+      "result": "applied",
+      "detail": {
+        "commit": "q2",
+        "roots": [
+          "vpc"
+        ]
+      }
+    },
+    {
+      "schema": "terragucci.audit/v1",
+      "id": "sha256:e15",
+      "project": "github.com/acme/net",
+      "who": null,
+      "what": "wave-3",
+      "digest": null,
+      "evidence": {
+        "source": "report"
+      },
+      "kind": "apply",
+      "at": "2026-10-06T16:00:00.000Z",
+      "result": "failed",
+      "detail": {
+        "commit": "q3",
+        "roots": [
+          "edge"
+        ],
+        "failed": [
+          "edge"
+        ]
+      }
+    },
+    {
+      "schema": "terragucci.audit/v1",
+      "id": "sha256:e16",
+      "project": "github.com/acme/net",
+      "who": null,
+      "what": "wave-3",
+      "digest": null,
+      "evidence": {
+        "source": "report"
+      },
+      "kind": "apply",
+      "at": "2026-10-06T16:00:00.000Z",
+      "result": "failed",
+      "detail": {
+        "commit": "q3",
+        "roots": [
+          "edge"
+        ],
+        "failed": [
+          "edge"
+        ]
+      }
+    },
+    {
+      "schema": "terragucci.audit/v1",
+      "id": "sha256:e16",
+      "project": "github.com/acme/net",
+      "who": null,
+      "what": "wave-3",
+      "digest": null,
+      "evidence": {
+        "source": "report"
+      },
+      "kind": "apply",
+      "at": "2026-10-06T16:00:00.000Z",
+      "result": "failed",
+      "detail": {
+        "commit": "q3",
+        "roots": [
+          "edge"
+        ],
+        "failed": [
+          "edge"
+        ]
+      }
+    }
+  ],
+  "dora": {
+    "schema": "terragucci.dora/v1",
+    "generated": "2026-10-07T12:00:00.000Z",
+    "weeks": 8,
+    "window": {
+      "from": "2026-08-17T00:00:00.000Z",
+      "to": "2026-10-07T12:00:00.000Z"
+    },
+    "drift_window_seconds": 604800,
+    "audit": true,
+    "estate": {
+      "deployments": 6,
+      "per_week": 0.82,
+      "span_seconds": 4449600,
+      "lead_time": {
+        "changes": 4,
+        "median_seconds": 5700,
+        "before_gate_seconds": 4500,
+        "at_gate_seconds": 900,
+        "after_gate_seconds": 300
+      },
+      "change_failure": {
+        "applies": 10,
+        "failed": 4,
+        "drifted": 3,
+        "rate": 0.7
+      },
+      "restore": {
+        "restored": 4,
+        "open": 2,
+        "median_seconds": 14400,
+        "apply_restored": 2,
+        "drift_restored": 2
+      },
+      "trend": [
+        {
+          "week": "2026-08-17",
+          "deployments": 0,
+          "applies": 0,
+          "failures": 0,
+          "lead_time_seconds": null,
+          "restore_seconds": null
+        },
+        {
+          "week": "2026-08-24",
+          "deployments": 0,
+          "applies": 0,
+          "failures": 0,
+          "lead_time_seconds": null,
+          "restore_seconds": null
+        },
+        {
+          "week": "2026-08-31",
+          "deployments": 0,
+          "applies": 0,
+          "failures": 0,
+          "lead_time_seconds": null,
+          "restore_seconds": null
+        },
+        {
+          "week": "2026-09-07",
+          "deployments": 0,
+          "applies": 0,
+          "failures": 0,
+          "lead_time_seconds": null,
+          "restore_seconds": null
+        },
+        {
+          "week": "2026-09-14",
+          "deployments": 0,
+          "applies": 0,
+          "failures": 0,
+          "lead_time_seconds": null,
+          "restore_seconds": null
+        },
+        {
+          "week": "2026-09-21",
+          "deployments": 0,
+          "applies": 0,
+          "failures": 0,
+          "lead_time_seconds": null,
+          "restore_seconds": null
+        },
+        {
+          "week": "2026-09-28",
+          "deployments": 2,
+          "applies": 3,
+          "failures": 2,
+          "lead_time_seconds": 3600,
+          "restore_seconds": 90000
+        },
+        {
+          "week": "2026-10-05",
+          "deployments": 4,
+          "applies": 7,
+          "failures": 5,
+          "lead_time_seconds": 7800,
+          "restore_seconds": 7200
+        }
+      ]
+    },
+    "projects": [
+      {
+        "project": "github.com/acme/infra",
+        "deployments": 3,
+        "per_week": 0.41,
+        "span_seconds": 4449600,
+        "lead_time": {
+          "changes": 2,
+          "median_seconds": 4500,
+          "before_gate_seconds": 3300,
+          "at_gate_seconds": 900,
+          "after_gate_seconds": 300
+        },
+        "change_failure": {
+          "applies": 4,
+          "failed": 1,
+          "drifted": 1,
+          "rate": 0.5
+        },
+        "restore": {
+          "restored": 2,
+          "open": 0,
+          "median_seconds": 5400,
+          "apply_restored": 1,
+          "drift_restored": 1
+        },
+        "trend": [
+          {
+            "week": "2026-08-17",
+            "deployments": 0,
+            "applies": 0,
+            "failures": 0,
+            "lead_time_seconds": null,
+            "restore_seconds": null
+          },
+          {
+            "week": "2026-08-24",
+            "deployments": 0,
+            "applies": 0,
+            "failures": 0,
+            "lead_time_seconds": null,
+            "restore_seconds": null
+          },
+          {
+            "week": "2026-08-31",
+            "deployments": 0,
+            "applies": 0,
+            "failures": 0,
+            "lead_time_seconds": null,
+            "restore_seconds": null
+          },
+          {
+            "week": "2026-09-07",
+            "deployments": 0,
+            "applies": 0,
+            "failures": 0,
+            "lead_time_seconds": null,
+            "restore_seconds": null
+          },
+          {
+            "week": "2026-09-14",
+            "deployments": 0,
+            "applies": 0,
+            "failures": 0,
+            "lead_time_seconds": null,
+            "restore_seconds": null
+          },
+          {
+            "week": "2026-09-21",
+            "deployments": 0,
+            "applies": 0,
+            "failures": 0,
+            "lead_time_seconds": null,
+            "restore_seconds": null
+          },
+          {
+            "week": "2026-09-28",
+            "deployments": 0,
+            "applies": 0,
+            "failures": 0,
+            "lead_time_seconds": null,
+            "restore_seconds": null
+          },
+          {
+            "week": "2026-10-05",
+            "deployments": 3,
+            "applies": 4,
+            "failures": 2,
+            "lead_time_seconds": 4500,
+            "restore_seconds": 5400
+          }
+        ]
+      },
+      {
+        "project": "github.com/acme/net",
+        "deployments": 3,
+        "per_week": 5.09,
+        "span_seconds": 356400,
+        "lead_time": {
+          "changes": 2,
+          "median_seconds": 8100,
+          "before_gate_seconds": 5400,
+          "at_gate_seconds": 1800,
+          "after_gate_seconds": 900
+        },
+        "change_failure": {
+          "applies": 6,
+          "failed": 3,
+          "drifted": 2,
+          "rate": 0.833333
+        },
+        "restore": {
+          "restored": 2,
+          "open": 2,
+          "median_seconds": 55800,
+          "apply_restored": 1,
+          "drift_restored": 1
+        },
+        "trend": [
+          {
+            "week": "2026-08-17",
+            "deployments": 0,
+            "applies": 0,
+            "failures": 0,
+            "lead_time_seconds": null,
+            "restore_seconds": null
+          },
+          {
+            "week": "2026-08-24",
+            "deployments": 0,
+            "applies": 0,
+            "failures": 0,
+            "lead_time_seconds": null,
+            "restore_seconds": null
+          },
+          {
+            "week": "2026-08-31",
+            "deployments": 0,
+            "applies": 0,
+            "failures": 0,
+            "lead_time_seconds": null,
+            "restore_seconds": null
+          },
+          {
+            "week": "2026-09-07",
+            "deployments": 0,
+            "applies": 0,
+            "failures": 0,
+            "lead_time_seconds": null,
+            "restore_seconds": null
+          },
+          {
+            "week": "2026-09-14",
+            "deployments": 0,
+            "applies": 0,
+            "failures": 0,
+            "lead_time_seconds": null,
+            "restore_seconds": null
+          },
+          {
+            "week": "2026-09-21",
+            "deployments": 0,
+            "applies": 0,
+            "failures": 0,
+            "lead_time_seconds": null,
+            "restore_seconds": null
+          },
+          {
+            "week": "2026-09-28",
+            "deployments": 2,
+            "applies": 3,
+            "failures": 2,
+            "lead_time_seconds": 3600,
+            "restore_seconds": 90000
+          },
+          {
+            "week": "2026-10-05",
+            "deployments": 1,
+            "applies": 3,
+            "failures": 3,
+            "lead_time_seconds": 12600,
+            "restore_seconds": 21600
+          }
+        ]
+      }
+    ]
+  },
+  "noAudit": {
+    "schema": "terragucci.dora/v1",
+    "generated": "2026-10-07T12:00:00.000Z",
+    "weeks": 8,
+    "window": {
+      "from": "2026-08-17T00:00:00.000Z",
+      "to": "2026-10-07T12:00:00.000Z"
+    },
+    "drift_window_seconds": 604800,
+    "audit": false,
+    "estate": {
+      "deployments": 0,
+      "per_week": 0,
+      "span_seconds": 4449600,
+      "lead_time": {
+        "changes": 0,
+        "median_seconds": null,
+        "before_gate_seconds": null,
+        "at_gate_seconds": null,
+        "after_gate_seconds": null
+      },
+      "change_failure": {
+        "applies": 0,
+        "failed": 0,
+        "drifted": 0,
+        "rate": null
+      },
+      "restore": {
+        "restored": 2,
+        "open": 1,
+        "median_seconds": 14400,
+        "apply_restored": 0,
+        "drift_restored": 2
+      },
+      "trend": [
+        {
+          "week": "2026-08-17",
+          "deployments": 0,
+          "applies": 0,
+          "failures": 0,
+          "lead_time_seconds": null,
+          "restore_seconds": null
+        },
+        {
+          "week": "2026-08-24",
+          "deployments": 0,
+          "applies": 0,
+          "failures": 0,
+          "lead_time_seconds": null,
+          "restore_seconds": null
+        },
+        {
+          "week": "2026-08-31",
+          "deployments": 0,
+          "applies": 0,
+          "failures": 0,
+          "lead_time_seconds": null,
+          "restore_seconds": null
+        },
+        {
+          "week": "2026-09-07",
+          "deployments": 0,
+          "applies": 0,
+          "failures": 0,
+          "lead_time_seconds": null,
+          "restore_seconds": null
+        },
+        {
+          "week": "2026-09-14",
+          "deployments": 0,
+          "applies": 0,
+          "failures": 0,
+          "lead_time_seconds": null,
+          "restore_seconds": null
+        },
+        {
+          "week": "2026-09-21",
+          "deployments": 0,
+          "applies": 0,
+          "failures": 0,
+          "lead_time_seconds": null,
+          "restore_seconds": null
+        },
+        {
+          "week": "2026-09-28",
+          "deployments": 0,
+          "applies": 0,
+          "failures": 0,
+          "lead_time_seconds": null,
+          "restore_seconds": null
+        },
+        {
+          "week": "2026-10-05",
+          "deployments": 0,
+          "applies": 0,
+          "failures": 0,
+          "lead_time_seconds": null,
+          "restore_seconds": 14400
+        }
+      ]
+    },
+    "projects": [
+      {
+        "project": "github.com/acme/infra",
+        "deployments": 0,
+        "per_week": 0,
+        "span_seconds": 4449600,
+        "lead_time": {
+          "changes": 0,
+          "median_seconds": null,
+          "before_gate_seconds": null,
+          "at_gate_seconds": null,
+          "after_gate_seconds": null
+        },
+        "change_failure": {
+          "applies": 0,
+          "failed": 0,
+          "drifted": 0,
+          "rate": null
+        },
+        "restore": {
+          "restored": 1,
+          "open": 0,
+          "median_seconds": 7200,
+          "apply_restored": 0,
+          "drift_restored": 1
+        },
+        "trend": [
+          {
+            "week": "2026-08-17",
+            "deployments": 0,
+            "applies": 0,
+            "failures": 0,
+            "lead_time_seconds": null,
+            "restore_seconds": null
+          },
+          {
+            "week": "2026-08-24",
+            "deployments": 0,
+            "applies": 0,
+            "failures": 0,
+            "lead_time_seconds": null,
+            "restore_seconds": null
+          },
+          {
+            "week": "2026-08-31",
+            "deployments": 0,
+            "applies": 0,
+            "failures": 0,
+            "lead_time_seconds": null,
+            "restore_seconds": null
+          },
+          {
+            "week": "2026-09-07",
+            "deployments": 0,
+            "applies": 0,
+            "failures": 0,
+            "lead_time_seconds": null,
+            "restore_seconds": null
+          },
+          {
+            "week": "2026-09-14",
+            "deployments": 0,
+            "applies": 0,
+            "failures": 0,
+            "lead_time_seconds": null,
+            "restore_seconds": null
+          },
+          {
+            "week": "2026-09-21",
+            "deployments": 0,
+            "applies": 0,
+            "failures": 0,
+            "lead_time_seconds": null,
+            "restore_seconds": null
+          },
+          {
+            "week": "2026-09-28",
+            "deployments": 0,
+            "applies": 0,
+            "failures": 0,
+            "lead_time_seconds": null,
+            "restore_seconds": null
+          },
+          {
+            "week": "2026-10-05",
+            "deployments": 0,
+            "applies": 0,
+            "failures": 0,
+            "lead_time_seconds": null,
+            "restore_seconds": 7200
+          }
+        ]
+      },
+      {
+        "project": "github.com/acme/net",
+        "deployments": 0,
+        "per_week": 0,
+        "span_seconds": 4449600,
+        "lead_time": {
+          "changes": 0,
+          "median_seconds": null,
+          "before_gate_seconds": null,
+          "at_gate_seconds": null,
+          "after_gate_seconds": null
+        },
+        "change_failure": {
+          "applies": 0,
+          "failed": 0,
+          "drifted": 0,
+          "rate": null
+        },
+        "restore": {
+          "restored": 1,
+          "open": 1,
+          "median_seconds": 21600,
+          "apply_restored": 0,
+          "drift_restored": 1
+        },
+        "trend": [
+          {
+            "week": "2026-08-17",
+            "deployments": 0,
+            "applies": 0,
+            "failures": 0,
+            "lead_time_seconds": null,
+            "restore_seconds": null
+          },
+          {
+            "week": "2026-08-24",
+            "deployments": 0,
+            "applies": 0,
+            "failures": 0,
+            "lead_time_seconds": null,
+            "restore_seconds": null
+          },
+          {
+            "week": "2026-08-31",
+            "deployments": 0,
+            "applies": 0,
+            "failures": 0,
+            "lead_time_seconds": null,
+            "restore_seconds": null
+          },
+          {
+            "week": "2026-09-07",
+            "deployments": 0,
+            "applies": 0,
+            "failures": 0,
+            "lead_time_seconds": null,
+            "restore_seconds": null
+          },
+          {
+            "week": "2026-09-14",
+            "deployments": 0,
+            "applies": 0,
+            "failures": 0,
+            "lead_time_seconds": null,
+            "restore_seconds": null
+          },
+          {
+            "week": "2026-09-21",
+            "deployments": 0,
+            "applies": 0,
+            "failures": 0,
+            "lead_time_seconds": null,
+            "restore_seconds": null
+          },
+          {
+            "week": "2026-09-28",
+            "deployments": 0,
+            "applies": 0,
+            "failures": 0,
+            "lead_time_seconds": null,
+            "restore_seconds": null
+          },
+          {
+            "week": "2026-10-05",
+            "deployments": 0,
+            "applies": 0,
+            "failures": 0,
+            "lead_time_seconds": null,
+            "restore_seconds": 21600
+          }
+        ]
+      }
+    ]
+  },
+  "empty": {
+    "schema": "terragucci.dora/v1",
+    "generated": "2026-10-07T12:00:00.000Z",
+    "weeks": 8,
+    "window": {
+      "from": "2026-08-17T00:00:00.000Z",
+      "to": "2026-10-07T12:00:00.000Z"
+    },
+    "drift_window_seconds": 604800,
+    "audit": true,
+    "estate": {
+      "deployments": 0,
+      "per_week": 0,
+      "span_seconds": 4449600,
+      "lead_time": {
+        "changes": 0,
+        "median_seconds": null,
+        "before_gate_seconds": null,
+        "at_gate_seconds": null,
+        "after_gate_seconds": null
+      },
+      "change_failure": {
+        "applies": 0,
+        "failed": 0,
+        "drifted": 0,
+        "rate": null
+      },
+      "restore": {
+        "restored": 0,
+        "open": 0,
+        "median_seconds": null,
+        "apply_restored": 0,
+        "drift_restored": 0
+      },
+      "trend": [
+        {
+          "week": "2026-08-17",
+          "deployments": 0,
+          "applies": 0,
+          "failures": 0,
+          "lead_time_seconds": null,
+          "restore_seconds": null
+        },
+        {
+          "week": "2026-08-24",
+          "deployments": 0,
+          "applies": 0,
+          "failures": 0,
+          "lead_time_seconds": null,
+          "restore_seconds": null
+        },
+        {
+          "week": "2026-08-31",
+          "deployments": 0,
+          "applies": 0,
+          "failures": 0,
+          "lead_time_seconds": null,
+          "restore_seconds": null
+        },
+        {
+          "week": "2026-09-07",
+          "deployments": 0,
+          "applies": 0,
+          "failures": 0,
+          "lead_time_seconds": null,
+          "restore_seconds": null
+        },
+        {
+          "week": "2026-09-14",
+          "deployments": 0,
+          "applies": 0,
+          "failures": 0,
+          "lead_time_seconds": null,
+          "restore_seconds": null
+        },
+        {
+          "week": "2026-09-21",
+          "deployments": 0,
+          "applies": 0,
+          "failures": 0,
+          "lead_time_seconds": null,
+          "restore_seconds": null
+        },
+        {
+          "week": "2026-09-28",
+          "deployments": 0,
+          "applies": 0,
+          "failures": 0,
+          "lead_time_seconds": null,
+          "restore_seconds": null
+        },
+        {
+          "week": "2026-10-05",
+          "deployments": 0,
+          "applies": 0,
+          "failures": 0,
+          "lead_time_seconds": null,
+          "restore_seconds": null
+        }
+      ]
+    },
+    "projects": []
+  }
+}

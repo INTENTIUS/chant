@@ -107,8 +107,8 @@ export interface Dora {
   drift_window_seconds: number;
   /** Whether any apply record was on the ledger. Without one only drift counts. */
   audit: boolean;
-  /** Where the numbers came from: always `ledger` here. terragucci's own file has no such field. */
-  source: "ledger";
+  /** `ledger` from {@link buildDelivery}. Absent from {@link buildRecordDelivery}, whose file is terragucci's shape, which has no such field. */
+  source?: "ledger";
   estate: DoraMetrics;
   projects: DoraProject[];
 }
@@ -430,4 +430,188 @@ export function deliveryGauges(dora: Dora, words: Pick<CiProductWords, "product"
   of("*", dora.estate);
   for (const p of dora.projects) of(p.project, p);
   return out;
+}
+
+// ── from a product's own records (#4612) ────────────────────────────────
+
+/**
+ * One line of a product's audit trail, as terragucci's reports bucket keeps
+ * it (`audit.jsonl`). Three kinds are read: `apply` (an applied or failed
+ * wave: `detail.commit`, `detail.roots`, `detail.failed`, and the
+ * `detail.approval` entry it applied under), `approval-requested` (a wave
+ * reaching its gate) and `approval`. `what` is the gate. Other kinds and
+ * results are left alone: a waiting wave is not an apply yet, and a refused
+ * one is the gate working.
+ */
+export interface DeliveryAuditEntry {
+  id: string;
+  kind: string;
+  project: string;
+  at: string;
+  what: string;
+  digest: string | null;
+  result: string;
+  detail?: Record<string, unknown>;
+}
+
+/**
+ * One row of a product's report index. A plan row (`stages.plan`) says when
+ * a change was planned, on which pull request, and the set digests its waves
+ * bind. A drift row (`stages.drift`) says whether the check found drift and
+ * on which roots, when the open drift was first found (`drift_since`), and
+ * which drift a clean check cleared (`drift_cleared`).
+ */
+export interface DeliveryIndexRow {
+  project: string;
+  stage: string;
+  finished: string;
+  commit?: string;
+  pull_request?: string;
+  wave_digests?: string[];
+  changed?: number;
+  drifted_roots?: string[];
+  drift_since?: string;
+  drift_cleared?: { since: string; roots: string[] };
+}
+
+/** One project's index rows. A control repo passes one per project it reads. */
+export interface DeliveryRecordSource {
+  project: string;
+  rows: readonly DeliveryIndexRow[];
+}
+
+export interface RecordDeliveryOptions {
+  words?: Pick<CiProductWords, "product">;
+  now?: Date;
+  /** The index's stage names: `tf-plan` and `tf-drift` for terragucci. */
+  stages: { plan: string; drift: string };
+}
+
+const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+
+/** A records apply: the shared {@link Apply} with the gate it passed and the approval it applied under. */
+type RecordApply = Apply & { gate: string; approval?: string };
+
+function recordApplies(entries: readonly DeliveryAuditEntry[]): RecordApply[] {
+  const seen = new Set<string>();
+  const out: RecordApply[] = [];
+  for (const e of entries) {
+    if (e.kind !== "apply" || (e.result !== "applied" && e.result !== "failed") || seen.has(e.id)) continue;
+    seen.add(e.id);
+    const d = e.detail ?? {};
+    out.push({
+      project: e.project,
+      at: at(e.at),
+      applied: e.result === "applied",
+      spec: e.what,
+      gate: e.what,
+      ...(e.digest !== null ? { digest: e.digest } : {}),
+      ...(typeof d.commit === "string" ? { commit: d.commit } : {}),
+      roots: strings(d.roots),
+      failed: strings(d.failed),
+      ...(typeof d.approval === "string" ? { approval: d.approval } : {}),
+    });
+  }
+  return out.sort((a, b) => a.at - b.at);
+}
+
+/**
+ * The lead time of an applied wave. Its plan is the plan row of the same
+ * commit, or the one whose wave digests hold the wave's digest (a pull
+ * request's head, planned before the merge commit applied); the change
+ * starts at the first plan of that row's pull request.
+ */
+function recordLead(a: RecordApply, plans: readonly DeliveryIndexRow[], requests: readonly DeliveryAuditEntry[], approvals: Map<string, DeliveryAuditEntry>): Lead | undefined {
+  const before = plans.filter((r) => at(r.finished) <= a.at);
+  const matched = before
+    .filter((r) => (a.commit !== undefined && r.commit === a.commit) || (a.digest !== undefined && (r.wave_digests ?? []).some((d) => samePlanDigest(d, a.digest!))))
+    .sort((x, y) => at(y.finished) - at(x.finished))[0];
+  if (!matched) return undefined;
+  const pr = matched.pull_request;
+  const first = pr ? Math.min(...before.filter((r) => r.pull_request === pr).map((r) => at(r.finished))) : at(matched.finished);
+  const asked = requests
+    .filter((q) => q.project === a.project && q.what === a.gate && a.digest !== undefined && q.digest !== null && samePlanDigest(q.digest, a.digest) && at(q.at) <= a.at)
+    .map((q) => at(q.at))
+    .sort((x, y) => x - y)[0];
+  const approved = a.approval ? approvals.get(a.approval) : undefined;
+  const ok = approved ? Math.min(Math.max(at(approved.at), asked ?? first), a.at) : undefined;
+  if (asked === undefined) return { project: a.project, at: a.at, total: secs(first, a.at), before: secs(first, a.at), gate: 0, after: 0 };
+  const gateEnd = ok ?? asked;
+  return { project: a.project, at: a.at, total: secs(first, a.at), before: secs(first, Math.max(first, asked)), gate: secs(asked, gateEnd), after: secs(gateEnd, a.at) };
+}
+
+/**
+ * A project's drift incidents from its drift rows, oldest first. A row that
+ * found drift opens one at its `drift_since` (or, for a row written before
+ * that field, at the open incident or its own time); a clean row names the
+ * drift it cleared, since a later check of the same commit replaces the row
+ * that found it; a clean row of the old kind closes the open incident.
+ */
+export function recordDriftIncidents(drifts: readonly DeliveryIndexRow[]): DriftIncident[] {
+  const incidents = new Map<number, DriftIncident>();
+  const get = (since: number): DriftIncident => {
+    let i = incidents.get(since);
+    if (!i) incidents.set(since, (i = { since, roots: new Set() }));
+    return i;
+  };
+  let open: number | undefined;
+  for (const r of [...drifts].sort((x, y) => at(x.finished) - at(y.finished))) {
+    if ((r.changed ?? 0) > 0) {
+      const since = r.drift_since ? at(r.drift_since) : (open ?? at(r.finished));
+      for (const x of r.drifted_roots ?? []) get(since).roots.add(x);
+      open = since;
+    } else if (r.drift_cleared) {
+      const i = get(at(r.drift_cleared.since));
+      for (const x of r.drift_cleared.roots) i.roots.add(x);
+      i.closed = Math.min(i.closed ?? Infinity, at(r.finished));
+      if (open === i.since) open = undefined;
+    } else if (open !== undefined) {
+      const i = get(open);
+      i.closed ??= at(r.finished);
+      open = undefined;
+    }
+  }
+  return [...incidents.values()].sort((a, b) => a.since - b.since);
+}
+
+function recordEventsOf(source: DeliveryRecordSource, entries: readonly DeliveryAuditEntry[], stages: RecordDeliveryOptions["stages"]): Events {
+  const mine = entries.filter((e) => e.project === source.project);
+  const applies = recordApplies(mine);
+  const rows = source.rows.filter((r) => r.project === source.project);
+  const plans = rows.filter((r) => r.stage === stages.plan);
+  const incidents = recordDriftIncidents(rows.filter((r) => r.stage === stages.drift));
+  const requests = mine.filter((e) => e.kind === "approval-requested");
+  const approvals = new Map(mine.filter((e) => e.kind === "approval").map((e) => [e.id, e]));
+  const leads = applies.filter((a) => a.applied).flatMap((a) => recordLead(a, plans, requests, approvals) ?? []);
+  const drifted = driftedApplies(applies, incidents);
+  const failures = applies.filter((a) => !a.applied || drifted.has(a)).map((a) => ({ project: a.project, at: a.at }));
+  const ar = applyRestores(applies);
+  const dr = incidents.filter((i) => i.closed !== undefined).map((i) => ({ project: source.project, at: i.closed!, seconds: secs(i.since, i.closed!), kind: "drift" as const }));
+  return { applies, leads, failures, drifted, restores: [...ar.restored, ...dr], open: ar.open + incidents.filter((i) => i.closed === undefined).length };
+}
+
+/**
+ * The metrics of every project and of the estate from a product's own
+ * records (#4612): its report index and its audit trail, for a member whose
+ * ledger holds no wave records and for a control repo that reads each
+ * project's bucket. The same numbers {@link buildDelivery} computes from the
+ * ledger, and the same file, `dora.json` in terragucci's shape. `entries`
+ * is undefined when there is no audit trail; then no apply counts and only
+ * drift does.
+ */
+export function buildRecordDelivery(sources: readonly DeliveryRecordSource[], entries: readonly DeliveryAuditEntry[] | undefined, options: RecordDeliveryOptions): Dora {
+  const now = options.now ?? new Date();
+  const end = now.getTime();
+  const from = weekStart(end) - (DORA_WEEKS - 1) * WEEK_MS;
+  const events = sources.map((s) => recordEventsOf(s, entries ?? [], options.stages));
+  return {
+    schema: doraSchema(options.words),
+    generated: now.toISOString(),
+    weeks: DORA_WEEKS,
+    window: { from: new Date(from).toISOString(), to: now.toISOString() },
+    drift_window_seconds: DRIFT_WINDOW_SECONDS,
+    audit: entries !== undefined,
+    estate: metricsOf(merge(events), from, end),
+    projects: sources.map((s, i) => ({ project: s.project, ...metricsOf(events[i]!, from, end) })),
+  };
 }
