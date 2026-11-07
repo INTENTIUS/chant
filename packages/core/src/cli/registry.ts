@@ -593,6 +593,8 @@ export interface ParsedArgs {
   resource?: string;
   /** `chant workspace graph --no-cache` (#2876): read every member, bypassing the per-member cache. */
   noCache?: boolean;
+  /** `chant release images --no-build` (#4657): check the archives already on disk instead of building them. */
+  noBuild?: boolean;
   /** `chant workspace graph --composites` (#2662): print each composite instance with the components that can deploy it. */
   composites?: boolean;
   /** `chant workspace graph --intent <path[:start-end]|path#symbol|member/node|sha>` (#2651): the region the intent graph is over. Empty with `--record`. */

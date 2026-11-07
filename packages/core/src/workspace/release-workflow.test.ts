@@ -5,6 +5,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseYAML } from "../yaml";
+import { ACTION_PINS } from "../action-pins";
 import { renderReleaseWorkflow, RELEASE_DIGESTS_FILE, type ReleaseWorkflowInput } from "./release-workflow";
 import type { SecurityGroup } from "./security";
 
@@ -226,5 +227,48 @@ describe("a repository's first dispatched release (terragucci 0.4.50's cut)", ()
 
     sh(`git remote set-url origin ${join(root, "gone.git")}`, clone);
     expect(sh(line, clone).status).not.toBe(0);
+  });
+});
+
+describe("the cut hands its image archives to the publish job (#4657)", () => {
+  const archives = ["dist/images/tofu.tar", "dist/images/terraform.tar"];
+  type Step = { uses?: string; run?: string; with?: Record<string, unknown> };
+  const steps = (forge: "github" | "forgejo", root?: string) => {
+    const doc = parseYAML(renderReleaseWorkflow({ forge, groups: new Set(), images: true, imageArchives: archives, ...(root ? { workspaceRoot: root } : {}), pipeline: { trigger: "dispatch", build: "npm run build" } })) as { jobs: Record<string, { steps: Step[] }> };
+    return { cut: doc.jobs.cut!.steps, publish: doc.jobs.publish!.steps };
+  };
+
+  test("GitHub: the cut uploads the archives, the publish job downloads them and checks them without building", () => {
+    const { cut, publish } = steps("github");
+    const up = cut.at(-1)!;
+    expect(up.uses).toMatch(/^actions\/upload-artifact@/);
+    expect(up.with).toMatchObject({ name: "chant-release-images", "if-no-files-found": "error", "retention-days": 1 });
+    expect(String(up.with!.path).trim().split("\n")).toEqual(archives);
+    const down = publish.findIndex((s) => s.uses?.startsWith("actions/download-artifact@"));
+    const check = publish.findIndex((s) => s.run?.includes("release images"));
+    expect(down).toBeGreaterThan(-1);
+    expect(publish[down]!.with).toEqual({ name: "chant-release-images", path: "dist/images" });
+    expect(check).toBeGreaterThan(down);
+    expect(publish[check]!.run).toBe('npx chant release images "$CHANT_RELEASE_LABEL" --no-build -o .chant/release-digests.json');
+  });
+
+  test("Forgejo takes v3 of the artifact actions, and a workspace root prefixes the paths", () => {
+    const { cut, publish } = steps("forgejo", "packages/app");
+    expect(cut.at(-1)!.uses).toContain(ACTION_PINS.uploadArtifact3.sha);
+    expect(String(cut.at(-1)!.with!.path)).toContain("packages/app/dist/images/tofu.tar");
+    expect(publish.find((s) => s.uses?.includes("download-artifact"))!.uses).toContain(ACTION_PINS.downloadArtifact3.sha);
+    expect(publish.find((s) => s.uses?.includes("download-artifact"))!.with!.path).toBe("packages/app/dist/images");
+  });
+
+  test("GitLab: the cut keeps the archives as artifacts the publish job needs, and checks them without building", () => {
+    const doc = parseYAML(renderReleaseWorkflow({ forge: "gitlab", groups: new Set(), images: true, imageArchives: archives, pipeline: { trigger: "dispatch" } })) as Record<string, { artifacts?: unknown; script: string[] }>;
+    expect(doc["chant-release-cut"]!.artifacts).toEqual({ paths: archives, expire_in: "1 day" });
+    expect(doc["chant-release-publish"]!.script).toContain('npx chant release images "$CHANT_RELEASE_LABEL" --no-build -o .chant/release-digests.json');
+  });
+
+  test("without the archive paths the publish job builds the images again, as before", () => {
+    const doc = parseYAML(renderReleaseWorkflow({ forge: "github", groups: new Set(), images: true, pipeline: { trigger: "dispatch" } })) as { jobs: Record<string, { steps: Step[] }> };
+    expect(doc.jobs.publish!.steps.some((s) => s.uses?.includes("download-artifact"))).toBe(false);
+    expect(doc.jobs.publish!.steps.find((s) => s.run?.includes("release images"))!.run).not.toContain("--no-build");
   });
 });
