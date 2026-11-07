@@ -4,6 +4,8 @@ This file records changes to what chant prints or writes for a plain project, th
 
 ## Unreleased
 
+- [#4758](https://github.com/INTENTIUS/chant/issues/4758) a commit job spec takes `allowedFiles`: file names the change may touch in any directory, `*.tf` or an exact name, matched on the basename beside `allowed`. A guarded path is still refused. `allowed` may be empty when `allowedFiles` is set. `CI_COMMIT_FILES_FLOOR` marks it.
+
 - [#4751](https://github.com/INTENTIUS/chant/issues/4751) `release.workflow` takes `permissions` (added to the workflow's), `env` and `setup` (for the cut and publish jobs, after the install) and `file` (where `chant release workflow` writes it). A release that pushes images to GHCR can grant `packages: write`, hand the `oci` target its credentials, and install QEMU; a config without them renders the same file as before.
 
 - [#4753](https://github.com/INTENTIUS/chant/issues/4753) a Forgejo job that asks for `id-token: write` (a scheduled Op's permissions, a `cloud` trade, an op wave's) gets `enable-openid-connect: true`, without which Forgejo 15 serves it no OIDC token. A scheduled Op spec takes `gitlab: { idTokens, cache, scheduleRule }` for its GitLab job: named `id_tokens` beside chant's, a `cache:` entry, and a `rules: if:` for its pipeline schedule in place of `CHANT_SCHEDULED_OP`.

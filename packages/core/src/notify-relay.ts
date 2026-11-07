@@ -47,7 +47,6 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { CiProductWords } from "./ci-product-words";
 import type { GatedRequest } from "./lifecycle/gated-request-digest";
 import { readRelayToken, RELAY_APPROVE_ACTION, RELAY_DECLINE_ACTION, type RelayRef } from "./notify";
-import { NEXT_RELEASE } from "./release-floors";
 
 /**
  * The first chant whose relay answers a gate's decision point and whose
@@ -55,7 +54,7 @@ import { NEXT_RELEASE } from "./release-floors";
  * (`slackRelayActions`, `teamsRelayReply`), so a product can drop a relay of
  * its own (#4611). Products feature-detect on it.
  */
-export const NOTIFY_RELAY_POINTS_FLOOR = NEXT_RELEASE;
+export const NOTIFY_RELAY_POINTS_FLOOR = "0.124.72";
 
 /** The relay's settings, by environment variable. */
 export const RELAY_ENV = {
