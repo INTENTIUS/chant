@@ -254,6 +254,10 @@ export interface FakeForgeRelease {
   name?: string;
   /** GitHub: the `make_latest` the release was published with. */
   make_latest?: string;
+  /** The release's notes: GitHub's and Forgejo's `body`, GitLab's `description` (#4658). */
+  body?: string;
+  /** Forgejo: published as a prerelease. */
+  prerelease?: boolean;
 }
 
 /** A forge fake answering through `fetch`: GitHub or Forgejo with draft releases, or GitLab with releases, links and a generic package registry. */
@@ -307,9 +311,9 @@ export function startFakeForge(forge: "github" | "forgejo" | "gitlab", api: stri
         return r ? json(200, view(r)) : json(404, { message: "404 Not Found" });
       }
       if (init.method === "POST" && path === `${root}/releases`) {
-        const b = JSON.parse(text(init.body)) as { tag_name: string; ref: string; assets?: { links?: Array<{ name: string; url: string }> } };
+        const b = JSON.parse(text(init.body)) as { tag_name: string; ref: string; description?: string; assets?: { links?: Array<{ name: string; url: string }> } };
         if (releases.some((x) => x.tag_name === b.tag_name)) return json(409, { message: "Release already exists" });
-        const r: FakeForgeRelease = { id: nextId++, tag_name: b.tag_name, draft: false, target: b.ref, assets: (b.assets?.links ?? []).map((l) => ({ name: l.name, digest: null, bytes: packages.get(l.url) ?? "" })) };
+        const r: FakeForgeRelease = { id: nextId++, tag_name: b.tag_name, draft: false, target: b.ref, assets: (b.assets?.links ?? []).map((l) => ({ name: l.name, digest: null, bytes: packages.get(l.url) ?? "" })), ...(b.description !== undefined ? { body: b.description } : {}) };
         releases.push(r);
         return json(201, view(r));
       }
@@ -322,8 +326,8 @@ export function startFakeForge(forge: "github" | "forgejo" | "gitlab", api: stri
     }
     if (init.method === "GET" && path === `${root}/releases`) return json(200, releases.map(view));
     if (init.method === "POST" && path === `${root}/releases`) {
-      const b = JSON.parse(text(init.body)) as { tag_name: string; target_commitish: string; draft?: boolean; name?: string };
-      const r: FakeForgeRelease = { id: nextId++, tag_name: b.tag_name, draft: b.draft === true, target: b.target_commitish, assets: [], ...(b.name ? { name: b.name } : {}) };
+      const b = JSON.parse(text(init.body)) as { tag_name: string; target_commitish: string; draft?: boolean; name?: string; body?: string };
+      const r: FakeForgeRelease = { id: nextId++, tag_name: b.tag_name, draft: b.draft === true, target: b.target_commitish, assets: [], ...(b.name ? { name: b.name } : {}), ...(b.body !== undefined ? { body: b.body } : {}) };
       releases.push(r);
       return json(201, view(r));
     }
@@ -342,7 +346,9 @@ export function startFakeForge(forge: "github" | "forgejo" | "gitlab", api: stri
     if (init.method === "PATCH" && edit) {
       const r = releases.find((x) => x.id === Number(edit[1]));
       if (!r) return json(404, { message: "Not Found" });
-      const b = JSON.parse(text(init.body)) as { draft?: boolean; make_latest?: string };
+      const b = JSON.parse(text(init.body)) as { draft?: boolean; make_latest?: string; body?: string; prerelease?: boolean };
+      if (b.body !== undefined) r.body = b.body;
+      if (b.prerelease !== undefined) r.prerelease = b.prerelease;
       if (b.draft === false && r.draft) {
         if (releases.some((x) => x !== r && !x.draft && x.tag_name === r.tag_name)) return json(422, { message: "Validation Failed", errors: [{ code: "already_exists", field: "tag_name" }] });
         r.draft = false;

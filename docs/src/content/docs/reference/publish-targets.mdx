@@ -74,12 +74,13 @@ With neither variable set, the target reads the registry's `auths` entry from th
 |---|---|
 | `forge` | `github`, `gitlab` or `forgejo` |
 | `repo` | `owner/name` on GitHub and Forgejo; the project path or numeric id on GitLab |
-| `assets` | Files to attach. Each is named by its file name, which must be unique |
+| `assets` | Files to attach. Each is named by its file name, which must be unique. May be empty when `notes` is set |
+| `notes` | The release's notes: `{ file, heading, linkBase?, before?, after? }`, a section of a file in the member. See below. Read by chant 0.124.71 and newer |
 | `api` | The API root. Default: `$GITHUB_API_URL`, else `https://api.github.com` on GitHub; `$CI_API_V4_URL`, else `https://gitlab.com/api/v4` on GitLab; `$GITHUB_API_URL` on Forgejo, which has no other default |
 | `tag` | The forge release's tag. Default: the tag the cut made, `release/<label>` or `release/<member>/<label>` |
 | `tokenEnv` | The variable holding the token. Default: `GITHUB_TOKEN` on GitHub, `GITLAB_TOKEN` then `CI_JOB_TOKEN` on GitLab, `FORGEJO_TOKEN` on Forgejo |
 | `sbom` | An SPDX or CycloneDX JSON file to attach, relative to the member. Default: `sbom.spdx.json` written from the member's lockfile. `false` attaches none |
-| `latest` | GitHub only: `true`, `false` or `"legacy"`, sent as GitHub's `make_latest` when the reveal publishes the draft. `false` keeps the repository's latest release where it is, and `"legacy"` lets GitHub pick by creation date and semantic version. Unset, nothing is sent and GitHub makes the release latest. Another forge refuses it with `publish-forge-latest-unsupported`. Read by chant 0.124.63 and newer |
+| `latest` | GitHub only: `true`, `false` or `"legacy"`, sent as GitHub's `make_latest` when the reveal publishes the draft. `false` keeps the repository's latest release where it is, and `"legacy"` lets GitHub pick by creation date and semantic version. Unset, the reveal sends `true`, or `false` for a release cut with `--channel`. Another forge refuses it with `publish-forge-latest-unsupported`. Read by chant 0.124.63 and newer |
 
 A release with no label and no declared `tag` is refused (`publish-forge-no-tag`). The SBOM and `release.intoto.json`, the provenance statement, go with the declared assets as two more, so their names must not be taken by an asset. The stage puts the assets where no consumer sees them, and the reveal makes the release visible with all of them at once.
 
@@ -92,6 +93,16 @@ A release with no label and no declared `tag` is refused (`publish-forge-no-tag`
 An asset already on the draft with the same name and a matching `digest` is left as it is, so a stage run again uploads only what is missing. One whose digest differs is refused (`publish-forge-asset-exists`), and so is one on Forgejo, which reports no digest. A release already published for the tag is refused (`publish-forge-release-published`), since assets uploaded to it would show one at a time. The exception is a published release that already holds every asset, which is what an earlier publish leaves; the stage then does nothing.
 
 `latest` goes in the reveal's request that publishes the draft, so a release never shows as latest, or stops another being latest, while it is incomplete. A release that was already published when the stage ran is left as it is, `latest` included.
+
+`notes` gives the release its body on GitHub and Forgejo and its description on GitLab ([#4658](https://github.com/INTENTIUS/chant/issues/4658)). `heading` names the line the section starts after, such as `## In {version}` for a changes page or `## [{version}]` for a changelog, with `{label}`, `{version}` (the label from its first digit) and `{tag}` filled in. A heading matches when the line is the pattern, or the pattern and then a space, so `## [1.4.0] - 2026-11-07` matches `## [{version}]` and `## 1.4.0-rc.1` does not match `## {version}`. The section runs to the next heading of the same level or higher, and a `#` line inside a fenced code block is not a heading. Links that start with `/` are made absolute against `linkBase`. `before` and `after` are paragraphs put around the section, with the same placeholders.
+
+```ts
+{ type: "forge", forge: "github", repo: "acme/api", assets: ["dist/api-linux.tar.gz"],
+  notes: { file: "docs/changes.md", heading: "## In {version}", linkBase: "https://docs.acme.dev",
+           after: "Every release is on the [changes page](https://docs.acme.dev/changes/)." } }
+```
+
+The notes are read when the publish plans its targets, so a missing file or section, or an empty one, stops the publish with `publish-forge-notes-missing` before any target stages. The dry run prints them. GitHub and Forgejo get them on the draft and again when the reveal publishes it. A release already published when the stage ran keeps the notes it has. On Forgejo, which has no setting for the latest release and takes the newest one that is not a prerelease, a release cut with `--channel` is published as a prerelease. A release of notes alone attaches the SBOM unless `sbom` is `false`, and no provenance statement, since it has no assets.
 
 ## Homebrew tap
 

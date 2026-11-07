@@ -565,6 +565,7 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
 /** One item a target publishes, for a line: what, where, and the SBOM or attachment it is (#4049). */
 function describeItem(i: import("../../lifecycle/release-publish").PublishItem): string {
   const what = i.attachment === "sbom" ? `${i.name} (SBOM)` : i.attachment === "provenance" ? `${i.name} (provenance)` : i.name;
+  if (i.notes !== undefined) return `${i.name} to ${i.destination}:\n${i.notes.trimEnd().split("\n").map((l) => `      ${l}`.trimEnd()).join("\n")}`;
   return `${what} to ${i.destination}${i.sbom ? `, carrying ${i.sbom}` : ""}`;
 }
 

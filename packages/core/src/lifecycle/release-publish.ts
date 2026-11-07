@@ -90,6 +90,8 @@ export interface PublishItem {
   attachment?: "sbom" | "provenance";
   /** The SBOM file an npm package carries at its root (#4049). */
   sbom?: string;
+  /** The notes a forge release is given (#4658), which a dry run prints. */
+  notes?: string;
 }
 
 /** The cut a publish carries the signature of (#4049): the cut whose signature verified, else the newest. */
