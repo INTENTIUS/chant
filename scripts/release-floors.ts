@@ -79,8 +79,6 @@ const FLOOR_RE = /export const ([A-Z0-9_]+_FLOOR) = (?:"(\d+\.\d+\.\d+)"|(NEXT_R
  */
 const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: string }[] = [
   // --freeze empties this list after a release ships (#4501); each entry is one line.
-  { file: "docs/src/content/docs/reference/publish-targets.mdx", text: "a section of a file in the member. See below. Read by chant {v} and newer", count: 1, floor: "PUBLISH_FORGE_NOTES_FLOOR" },
-  { file: "docs/src/content/docs/reference/publish-targets.mdx", text: "or the plan refuses the package. Read by chant {v} and newer", count: 1, floor: "RELEASE_IMAGES_FLOOR" },
 ];
 
 interface Args {

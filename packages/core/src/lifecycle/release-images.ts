@@ -26,7 +26,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
-import { NEXT_RELEASE } from "../release-floors";
 import type { PublishDeclaration } from "./publish-declaration";
 import type { Release, ReleaseArtifact } from "./release-store";
 
@@ -34,7 +33,7 @@ import type { Release, ReleaseArtifact } from "./release-store";
 export const RELEASE_DIGESTS_ENV = "CHANT_RELEASE_DIGESTS";
 
 /** The first chant with `release.images`, `CHANT_RELEASE_DIGESTS`, `chant release images` and an npm target's `pins` (#4657). Products feature-detect on it. */
-export const RELEASE_IMAGES_FLOOR = NEXT_RELEASE;
+export const RELEASE_IMAGES_FLOOR = "0.124.71";
 
 /** One image a release builds in its cut. */
 export interface ReleaseImageDeclaration {
