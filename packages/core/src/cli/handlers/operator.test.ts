@@ -64,6 +64,8 @@ vi.mock("../../lifecycle/git", async () => {
   return {
     ...actual,
     pushLifecycleReport: (...args: unknown[]) => pushLifecycleMock(...args),
+    // #4637: chant approve pushes through the rebasing push.
+    pushLifecycleRebasing: (...args: unknown[]) => pushLifecycleMock(...args),
     // Mocked, not merely defaulted: the real one shells to `git fetch`, and
     // these tests run in the chant checkout itself (#2303).
     requireLifecycleLedger: (...args: unknown[]) => requireLifecycleLedgerMock(...args),
