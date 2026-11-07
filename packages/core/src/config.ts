@@ -118,6 +118,13 @@ export const ChantConfigSchema = z.object({
       build: z.union([z.string().min(1), z.literal(false)]).optional(),
       chant: z.string().min(1).optional(),
       after: z.array(z.string().min(1)).optional(),
+      permissions: z.record(z.string(), z.enum(["read", "write"])).optional(),
+      env: z.record(z.string(), z.string()).optional(),
+      setup: z.array(z.union([
+        z.object({ uses: z.string().min(1), with: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(), env: z.record(z.string(), z.string()).optional() }).strict(),
+        z.object({ run: z.string().min(1), env: z.record(z.string(), z.string()).optional() }).strict(),
+      ])).optional(),
+      file: z.string().regex(/^[^/][^\0]*$/, "a path from the repository root").refine((f) => !f.split("/").includes(".."), "a path inside the repository").optional(),
     }).strict().optional(),
   }).optional(),
   // Strict: a misspelt key here would leave Ops on the local runtime with

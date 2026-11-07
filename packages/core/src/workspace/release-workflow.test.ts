@@ -26,7 +26,7 @@ describe("a config with only publish (#4656)", () => {
 });
 
 type GhJob = { needs?: string | string[]; outputs?: Record<string, string>; env?: Record<string, string>; steps: Array<{ id?: string; uses?: string; run?: string; with?: Record<string, unknown> }> };
-type GhDoc = { on: Record<string, unknown>; env?: Record<string, string>; permissions: Record<string, string>; jobs: Record<string, GhJob> };
+type GhDoc = { on: Record<string, unknown>; env?: Record<string, string>; permissions?: Record<string, string>; jobs: Record<string, GhJob> };
 const runs = (job: GhJob): string[] => job.steps.filter((s) => s.run).map((s) => s.run!.trim());
 
 const dispatch = (forge: (typeof FORGES)[number], over: Partial<ReleaseWorkflowInput> = {}): string =>
@@ -147,5 +147,53 @@ describe("the tag trigger with images or after (#4656)", () => {
     const doc = parseYAML(renderReleaseWorkflow({ forge: "gitlab", groups: new Set(), pipeline: { after: ["./notify.sh"] } })) as Record<string, { needs?: string[]; script: string[] }>;
     expect(doc["chant-release-after"]!.needs).toEqual(["chant-release-publish"]);
     expect(doc["chant-release-after"]!.script.at(-1)).toBe("./notify.sh");
+  });
+});
+
+describe("the release workflow's permissions, env and setup (#4751)", () => {
+  const pipeline = {
+    trigger: "dispatch" as const,
+    permissions: { packages: "write" as const },
+    env: { OCI_USERNAME: "${{ github.actor }}", OCI_PASSWORD: "${{ github.token }}" },
+    setup: [{ uses: "docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392", with: { platforms: "arm64" } }, { run: "npm install -g npm@11.19.0" }],
+  };
+
+  test("github: the scope joins the workflow's, and the cut and publish jobs get the variables and the steps after the install", () => {
+    const doc = parseYAML(renderReleaseWorkflow({ forge: "github", groups: new Set(), images: true, pipeline })) as GhDoc;
+    expect(doc.permissions).toEqual({ contents: "write", "id-token": "write", packages: "write" });
+    expect(doc.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}", OCI_USERNAME: "${{ github.actor }}", OCI_PASSWORD: "${{ github.token }}" });
+    expect(doc.jobs.publish!.env).toEqual({ OCI_USERNAME: "${{ github.actor }}", OCI_PASSWORD: "${{ github.token }}" });
+    expect(doc.jobs.gate!.env).toBeUndefined();
+    for (const job of [doc.jobs.cut!, doc.jobs.publish!]) {
+      const i = job.steps.findIndex((s) => s.run === "npm ci");
+      expect(job.steps[i + 1]).toEqual({ uses: "docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392", with: { platforms: "arm64" } });
+      expect(job.steps[i + 2]).toEqual({ run: "npm install -g npm@11.19.0" });
+    }
+    // An expression stays in env:, off every run: line.
+    expect(runs(doc.jobs.publish!).join("\n")).not.toContain("github.token");
+  });
+
+  test("the tag trigger's publish job takes them too", () => {
+    const doc = parseYAML(renderReleaseWorkflow({ forge: "github", groups: new Set(), pipeline: { ...pipeline, trigger: "tag" } })) as GhDoc;
+    expect(doc.permissions!.packages).toBe("write");
+    expect(doc.jobs.publish!.env).toEqual(pipeline.env);
+    expect(doc.jobs.publish!.steps.some((s) => s.uses?.startsWith("docker/setup-qemu-action@"))).toBe(true);
+  });
+
+  test("gitlab: variables and run steps; permissions and an action are refused by name", () => {
+    const gl = { trigger: "dispatch" as const, env: { OCI_USERNAME: "$CI_REGISTRY_USER" }, setup: [{ run: "docker run --privileged --rm tonistiigi/binfmt --install arm64" }] };
+    const doc = parseYAML(renderReleaseWorkflow({ forge: "gitlab", groups: new Set(), pipeline: gl })) as Record<string, { variables: Record<string, string>; script: string[] }>;
+    for (const name of ["chant-release-cut", "chant-release-publish"]) {
+      expect(doc[name]!.variables).toEqual({ GIT_DEPTH: "0", OCI_USERNAME: "$CI_REGISTRY_USER" });
+      expect(doc[name]!.script).toContain("docker run --privileged --rm tonistiigi/binfmt --install arm64");
+    }
+    expect(doc["chant-release-gate"]!.variables).toEqual({ GIT_DEPTH: "0" });
+    expect(() => renderReleaseWorkflow({ forge: "gitlab", groups: new Set(), pipeline: { ...gl, permissions: { packages: "write" } } })).toThrow(/GitLab has no permissions/);
+    expect(() => renderReleaseWorkflow({ forge: "gitlab", groups: new Set(), pipeline: { ...pipeline, permissions: undefined } })).toThrow(/give it as \{ run \}/);
+  });
+
+  test("a scope already granted and a bad variable name are refused", () => {
+    expect(() => renderReleaseWorkflow({ forge: "github", groups: new Set(), pipeline: { permissions: { contents: "read" } } })).toThrow(/already granted/);
+    expect(() => renderReleaseWorkflow({ forge: "github", groups: new Set(), pipeline: { env: { "BAD-NAME": "x" } } })).toThrow(/not a variable name/);
   });
 });

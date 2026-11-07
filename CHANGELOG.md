@@ -4,6 +4,8 @@ This file records changes to what chant prints or writes for a plain project, th
 
 ## Unreleased
 
+- [#4751](https://github.com/INTENTIUS/chant/issues/4751) `release.workflow` takes `permissions` (added to the workflow's), `env` and `setup` (for the cut and publish jobs, after the install) and `file` (where `chant release workflow` writes it). A release that pushes images to GHCR can grant `packages: write`, hand the `oci` target its credentials, and install QEMU; a config without them renders the same file as before.
+
 - [#4611](https://github.com/INTENTIUS/chant/issues/4611) `chant notify relay` answers a gate that asks a decision point: the click answers the question the gate waits on (a yes, or the one answer the gate's `pass` names) as the clicker, relayed by the relay, where it used to refuse. `sendNotify`'s `render.slack` and `render.teams` get the relay's signed button value, and `slackRelayActions` and `teamsRelayReply` build the buttons and the Teams reply, so a product that renders its own messages reaches chant's relay. `NOTIFY_RELAY_POINTS_FLOOR` marks both.
 
 - [#4612](https://github.com/INTENTIUS/chant/issues/4612) `@intentius/chant/ci-estate` adds `buildRecordDelivery`: the DORA metrics from a product's report index and audit trail, for a member whose applies are not wave records on the ledger and for a control repo reading each project's bucket. It gives terragucci's `dora.json` for the same records, byte for byte, which a fixture from terragucci's own `buildDora` checks. `Dora.source` is now optional, set to `ledger` by `buildDelivery` as before.
