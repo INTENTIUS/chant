@@ -79,9 +79,6 @@ const FLOOR_RE = /export const ([A-Z0-9_]+_FLOOR) = (?:"(\d+\.\d+\.\d+)"|(NEXT_R
  */
 const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: string }[] = [
   // --freeze empties this list after a release ships (#4501); each entry is one line.
-  { file: "packages/core/src/components/component.schema.json", text: "lists the files in normalizedInputs on its record. Read by chant {v} and newer.", count: 1, floor: "NORMALIZED_INPUTS_FLOOR" },
-  { file: "docs/src/content/docs/components/component-contract.mdx", text: "with its command in `normalizedInputs` on the skip record. Read by chant {v} and newer;", count: 1, floor: "NORMALIZED_INPUTS_FLOOR" },
-  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "each `{ path, command }` ([#4718](https://github.com/INTENTIUS/chant/issues/4718)) | {v} |", count: 1, floor: "NORMALIZED_INPUTS_FLOOR" },
 ];
 
 interface Args {
