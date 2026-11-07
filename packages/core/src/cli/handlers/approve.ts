@@ -24,7 +24,7 @@ import { approverOf, humanQuorumSince, tallyGateApprovals } from "../../op/gate"
 import { quorumRuleLine, quorumRules, trustQuorumJudge, UNPROVEN_JUDGE, type GateQuorumJudge } from "../../op/gate-quorum";
 import { FAN_OUT_GATE_OP, OVERRIDE_GATE_OP, RELEASE_GATE_OP, WORKSPACE_EXIT_GATE_OP, WORKSPACE_PROMOTE_GATE_OP, WORKSPACE_UPGRADE_GATE_OP } from "../../op/gate-name";
 import { PR_GATE_OP } from "../../pr-loop";
-import { pushLifecycleReport, requireLifecycleLedger } from "../../lifecycle/git";
+import { LifecyclePushLostError, pushLifecycleRebasing, requireLifecycleLedger } from "../../lifecycle/git";
 import { LIFECYCLE_LOCAL_NOTE, isLifecycleLocalNote } from "../../lifecycle/local-note";
 import { ledgerRecordingOff, NO_RECORD_ENV } from "../../lifecycle/no-record";
 import { checkGateSignature, gateSealPayload, gateSealVersion, WEBAUTHN_SEAL_KIND, type SealedGateApproval } from "../../lifecycle/gate-seal";
@@ -74,7 +74,11 @@ const LIFECYCLE_BRANCH = "chant/lifecycle";
  * elsewhere to tell, so that case is a quiet suffix and no warning (#3677).
  */
 async function reportedPush(consequence: string): Promise<{ pushed: boolean; suffix: string }> {
-  const { pushed, pushWarning } = await pushLifecycleReport();
+  // #4637: a push another writer beat is replayed onto the remote's tip and tried again; an approval line appends.
+  const { pushed, pushWarning } = await pushLifecycleRebasing().catch((err: unknown) => {
+    if (err instanceof LifecyclePushLostError) return { pushed: false, pushWarning: err.message };
+    throw err;
+  });
   if (pushed) return { pushed, suffix: "" };
   if (isLifecycleLocalNote(pushWarning)) return { pushed, suffix: ` (${LIFECYCLE_LOCAL_NOTE})` };
   console.error(formatWarning({

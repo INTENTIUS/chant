@@ -276,6 +276,11 @@ export async function writeLedgerFiles(
     await requireLifecycleLedger({ ...(cwd ? { cwd } : {}) });
   }
 
+  // #4637: start from the remote's records this checkout already fetched. A
+  // caller that read a tip (`expectTip`) keeps it, and a run that records
+  // nothing leaves the branch alone.
+  if (opts?.expectTip === undefined && !ledgerRecordingOff()) await catchUpLifecycle(cwd);
+
   // 2-5. Read the trees, build the commit, and CAS-update the branch ref —
   // retried on a conflict (#1959 finding 1). Before that retry existed a
   // conflict from step 5's `updateRefCAS` simply threw, breaking every caller
@@ -787,6 +792,40 @@ export type LifecyclePushStatus =
   | { status: "stale"; remote: string; expected: string | null; stderr: string }
   | { status: "failed"; remote: string; stderr: string };
 
+/** Whether `ancestor` is in `descendant`'s history. */
+async function isAncestor(ancestor: string, descendant: string, cwd?: string): Promise<boolean> {
+  const rt = getRuntime();
+  return (await rt.spawn(["git", "merge-base", "--is-ancestor", ancestor, descendant], { cwd, env: C_LOCALE_ENV })).exitCode === 0;
+}
+
+/**
+ * Fast-forward the local `chant/lifecycle` to the ledger remote's tip this
+ * checkout has already fetched, when it is behind it (#4637). A plain
+ * `git fetch` in a full clone moves `refs/remotes/<remote>/chant/lifecycle`
+ * and leaves the branch, so a write built on the branch would sit beside the
+ * records made elsewhere instead of after them. Nothing is fetched here, and a
+ * branch with commits the remote lacks is left for the push to replay. The
+ * move is a compare-and-swap, so a writer that moved the branch meanwhile is
+ * never undone, and a checked-out `chant/lifecycle` is left alone.
+ */
+async function catchUpLifecycle(cwd?: string): Promise<void> {
+  const rt = getRuntime();
+  const found = await ledgerRemote(cwd);
+  if (found === null || "failed" in found) return;
+  const fetched = await getRemoteLifecycleBranchSha(found.remote, { cwd });
+  if (!fetched) return;
+  const local = await getStateBranchTip(cwd);
+  if (!local || local === fetched) return;
+  if (!(await isAncestor(local, fetched, cwd))) return;
+  const head = await rt.spawn(["git", "symbolic-ref", "-q", "HEAD"], { cwd, env: C_LOCALE_ENV });
+  if (head.exitCode === 0 && head.stdout.trim() === `refs/heads/${STATE_BRANCH}`) return;
+  try {
+    await updateRefCAS(`refs/heads/${STATE_BRANCH}`, fetched, local, { cwd });
+  } catch (err) {
+    if (!(err instanceof RefCASConflictError)) throw err;
+  }
+}
+
 /**
  * Point `refs/remotes/<remote>/chant/lifecycle` at `sha`, the remote tip this
  * checkout has just seen (#3391).
@@ -829,6 +868,20 @@ export async function pushLifecycleStatus(opts?: { cwd?: string }): Promise<Life
   const expected = await getRemoteLifecycleBranchSha(remote, opts);
   const lease = `refs/heads/${STATE_BRANCH}:${expected ?? ""}`;
   const tip = await getStateBranchTip(cwd);
+
+  // #4637: the lease only says the remote still holds `expected`. A plain
+  // `git fetch` moves that ref without moving the local branch, so a branch
+  // that does not contain it would pass the lease and push over every record
+  // made since (an approval from another clone). Refused as stale, so a
+  // rebasing caller replays its commits onto the remote's tip.
+  if (expected && tip && expected !== tip && !(await isAncestor(expected, tip, cwd))) {
+    return {
+      status: "stale",
+      remote,
+      expected,
+      stderr: `this checkout's ${STATE_BRANCH} does not contain ${expected.slice(0, 12)}, the tip it last fetched from "${remote}"; pushing it would drop the records made since`,
+    };
+  }
 
   const pushResult = await rt.spawn(
     ["git", "push", `--force-with-lease=${lease}`, remote, `${STATE_BRANCH}:${STATE_BRANCH}`],
