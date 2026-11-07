@@ -4,7 +4,7 @@ description: Where a CI feature for Terraform, OpenTofu, Pulumi or SQL goes, so 
 diataxis: explanation
 ---
 
-[terragucci](https://intentius.io/terragucci/) is pull-request automation for Terraform and OpenTofu, and [plywood](https://intentius.io/plywood/) is pull-request automation for Pulumi. [SQL Yodeler](https://intentius.io/sql-yodeler/) does the same for SQL schema changes on ClickHouse and Postgres. All three run on chant's CI runtime and share its features as far as they can ([#4530](https://github.com/INTENTIUS/chant/issues/4530)). A team on any of these engines gets the same gates, approvals and records, in its own engine's words.
+[terragucci](https://intentius.io/terragucci/) is pull-request automation for Terraform and OpenTofu, and [plywood](https://intentius.io/plywood/) is pull-request automation for Pulumi. [SQL Yodeler](https://intentius.io/sql-yodeler/) does the same for SQL schema changes on ClickHouse and Postgres. All three run on chant's CI runtime and share the same pipeline core ([#4530](https://github.com/INTENTIUS/chant/issues/4530)): the gates, approvals and records are chant's, in each engine's own words. A product can still do more than chant does, such as terragucci's tips and its module registry.
 
 | Changes to | chant entry point | CI product |
 |---|---|---|
