@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, test, vi } from "vitest";
-import type { ChangeSetDocument } from "../../change-set";
+import { composeChangeSet, type ChangeSetDocument } from "../../change-set";
 import { behaviourFindingMarker } from "./predict-behaviour";
 import { commentMarker, type ReconcilePrArgs, type ReconcileResult } from "./reconcile";
 import {
@@ -386,6 +386,25 @@ describe("the note job posts a handed-on review (#4326)", () => {
     const { post, posted } = poster({ "/r/review.json": record({ digest: "sha256:0123`](https://evil.example)" }) });
     await post({ op: "pr-review", dir: "/r" });
     expect(posted[0]!.body).not.toContain("evil.example");
+  });
+
+  test("a composed change set's digest survives the handoff, and the note names its first 12 hex characters (#4726)", async () => {
+    const composed = composeChangeSet([]);
+    expect(composed.digest).toMatch(/^jcs1-sha256:[0-9a-f]{64}$/);
+    const { run, written } = harness({ review: "risk: low" });
+    const result = await run({ op: "pr-review", changeSet: composed, mode: "handoff", dir: "/r" });
+    const text = written[result.recordFile!]!;
+    expect(readReviewRecord(text)!.digest).toBe(composed.digest);
+    const { post, posted } = poster({ "/r/review.json": text });
+    await post({ op: "pr-review", dir: "/r" });
+    const hex = composed.digest.slice("jcs1-sha256:".length, "jcs1-sha256:".length + 12);
+    expect(posted[0]!.body).toContain(`### Review of change set \`${hex}\``);
+  });
+
+  test("a sha256: digest is kept and shortened after its prefix", () => {
+    expect(readReviewRecord(record())!.digest).toBe("sha256:0123456789abcdef0123");
+    const body = reviewNoteBody({ review: "risk: low", exitCode: 0, digest: "sha256:0123456789abcdef0123", instructions: "base" });
+    expect(body).toContain("### Review of change set `0123456789ab`");
   });
 
   test("no record, an unreadable record and an oversized record post nothing", async () => {
