@@ -485,7 +485,7 @@ With `trigger: "dispatch"` the file has four jobs, and the label is an input of 
 
 No tag exists until the gate has passed and the cut has run. On GitLab the jobs follow each other by `needs` in the default stage, so `.gitlab-ci.yml` keeps its own `stages`, and the cut and publish jobs push with `CHANT_RELEASE_TOKEN`, a project access token with `write_repository`, since a job token cannot push.
 
-With `release.images` (see [Images the package pins](#images-the-package-pins)), the publish job runs `chant release images <label>` after fetching `chant/lifecycle` and before the build, and exports `CHANT_RELEASE_DIGESTS`. This holds for either trigger. `after` with the tag trigger adds an after-release job that follows the publish. A config with only `publish` renders the file it always did.
+With `release.images` (see [Images the package pins](#images-the-package-pins)), the publish job runs `chant release images <label>` after fetching `chant/lifecycle` and before the build, and exports `CHANT_RELEASE_DIGESTS`. In a dispatched release the cut job hands the archives it built to the publish job as a workflow artifact (`chant-release-images`; on GitLab, the cut job's `artifacts:`), and the publish job checks them with `chant release images <label> --no-build`, which reads the archives on disk and refuses one whose digest is not the recorded one. The images published are then the ones the cut built, even when the package mirror an image installs from moved between the two jobs. This holds for either trigger. `after` with the tag trigger adds an after-release job that follows the publish. A config with only `publish` renders the file it always did.
 
 ## release verify
 

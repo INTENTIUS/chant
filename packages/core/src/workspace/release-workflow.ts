@@ -98,6 +98,14 @@ export interface ReleaseWorkflowInput {
   pipeline?: ReleasePipelineConfig;
   /** The config declares `release.images` (#4657): the publish job builds them again first. */
   images?: boolean;
+  /**
+   * The archives `release.images` names, from the workspace root. In a
+   * dispatched release the cut job hands them to the publish job, which
+   * checks them against the recorded digests (`release images --no-build`)
+   * rather than building them again, so a moved package mirror between the
+   * two jobs cannot change what is published.
+   */
+  imageArchives?: string[];
   /** `release.lane` (#4692): the gate's green lane. */
   lane?: string;
 }
@@ -128,7 +136,8 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
   const images = input.images === true;
   const extra = jobExtras(p, input.forge);
   if (p.trigger === "dispatch") {
-    const o = { chant, install, build, root, verify, flags, after, images, extra, gate: p.gate ?? "last-green", ...(input.lane ? { lane: input.lane } : {}) };
+    const archives = images ? (input.imageArchives ?? []).map((a) => (root ? `${root}/${a.replace(/^\.\//, "")}` : a.replace(/^\.\//, ""))) : [];
+    const o = { chant, install, build, root, verify, flags, after, images, archives, forge: input.forge, extra, gate: p.gate ?? "last-green", ...(input.lane ? { lane: input.lane } : {}) };
     return input.forge === "gitlab" ? renderGitlabDispatch(o) : renderGithubDispatch(o);
   }
   // #4657: the images are built from the release, so chant/lifecycle is fetched before them and the build after.
@@ -282,9 +291,29 @@ interface DispatchInput {
   flags: string;
   after: string[];
   images: boolean;
+  /** The image archives the cut hands to the publish job, from the repository root. Empty: the publish job builds them again. */
+  archives: string[];
+  forge: ReleaseWorkflowForge;
   gate: "last-green" | "head";
   lane?: string;
   extra: JobExtras;
+}
+
+/** The workflow artifact the cut job hands its image archives on in. */
+export const RELEASE_IMAGES_ARTIFACT = "chant-release-images";
+
+/** The directory every path is under, which the artifact actions store the files relative to. */
+function commonDir(paths: readonly string[]): string {
+  const dirs = paths.map((p) => p.split("/").slice(0, -1));
+  const first = dirs[0] ?? [];
+  let n = 0;
+  while (n < first.length && dirs.every((d) => d[n] === first[n])) n++;
+  return first.slice(0, n).join("/") || ".";
+}
+
+/** The `release images` line of a publish job: checking the archives handed on, or building them again. */
+function imagesLine(o: DispatchInput): string {
+  return `${o.chant} release images "$CHANT_RELEASE_LABEL"${o.archives.length > 0 ? " --no-build" : ""} -o ${RELEASE_DIGESTS_FILE}`;
 }
 
 /** The node one-liner that prints a JSON document's field from stdin, or from the file its argument names. */
@@ -369,6 +398,17 @@ function renderGithubDispatch(o: DispatchInput): string {
     fetches[0]!,
     `      - run: ${LEDGER_FETCH_FIRST}`,
     ...block(cutScript(o, '"$RUNNER_TEMP/chant-cut.json"')),
+    ...(o.archives.length > 0
+      ? [
+          `      - uses: ${usesRef(o.forge === "forgejo" ? ACTION_PINS.uploadArtifact3 : ACTION_PINS.uploadArtifact4)}`,
+          "        with:",
+          `          name: ${RELEASE_IMAGES_ARTIFACT}`,
+          "          path: |",
+          ...o.archives.map((a) => `            ${a}`),
+          "          if-no-files-found: error",
+          "          retention-days: 1",
+        ]
+      : []),
     "  publish:",
     "    needs: [gate, cut]",
     "    runs-on: ubuntu-latest",
@@ -379,7 +419,10 @@ function renderGithubDispatch(o: DispatchInput): string {
     `      - run: ${o.install}`,
     ...o.extra.githubSteps,
     ...fetches,
-    ...(o.images ? [`      - run: ${o.chant} release images "$CHANT_RELEASE_LABEL" -o ${RELEASE_DIGESTS_FILE}`, `      - run: echo "CHANT_RELEASE_DIGESTS=$PWD/${RELEASE_DIGESTS_FILE}" >> "$GITHUB_ENV"`] : []),
+    ...(o.archives.length > 0
+      ? [`      - uses: ${usesRef(o.forge === "forgejo" ? ACTION_PINS.downloadArtifact3 : ACTION_PINS.downloadArtifact4)}`, "        with:", `          name: ${RELEASE_IMAGES_ARTIFACT}`, `          path: ${commonDir(o.archives)}`]
+      : []),
+    ...(o.images ? [`      - run: ${imagesLine(o)}`, `      - run: echo "CHANT_RELEASE_DIGESTS=$PWD/${RELEASE_DIGESTS_FILE}" >> "$GITHUB_ENV"`] : []),
     ...(o.build ? [`      - run: ${o.build}`] : []),
     ...(o.verify ? [`      - run: ${o.chant} release verify "$CHANT_RELEASE_LABEL"`] : []),
     `      - run: ${o.chant} release publish "$CHANT_RELEASE_LABEL" ${o.flags}`,
@@ -421,7 +464,7 @@ function renderGitlabDispatch(o: DispatchInput): string {
   const lines = [
     ...job("chant-release-gate", [], [...cd, o.install, fetches[0]!, ...gateScript(o, "$CI_COMMIT_SHA"), 'echo "CHANT_RELEASE_COMMIT=$commit" > "$CI_PROJECT_DIR/chant-release-gate.env"'], ["  artifacts:", "    reports:", "      dotenv: chant-release-gate.env"]),
     "",
-    ...job("chant-release-cut", ["chant-release-gate"], [...checkout, ...cd, o.install, ...o.extra.gitlabScript, fetches[0]!, ...auth, LEDGER_FETCH_FIRST, ...cutScript(o, "/tmp/chant-cut.json")], [], o.extra.gitlabVariables),
+    ...job("chant-release-cut", ["chant-release-gate"], [...checkout, ...cd, o.install, ...o.extra.gitlabScript, fetches[0]!, ...auth, LEDGER_FETCH_FIRST, ...cutScript(o, "/tmp/chant-cut.json")], o.archives.length > 0 ? ["  artifacts:", "    paths:", ...o.archives.map((a) => `      - ${JSON.stringify(a)}`), "    expire_in: 1 day"] : [], o.extra.gitlabVariables),
     "",
     ...job(
       "chant-release-publish",
@@ -433,7 +476,7 @@ function renderGitlabDispatch(o: DispatchInput): string {
         ...o.extra.gitlabScript,
         ...fetches,
         ...auth,
-        ...(o.images ? [`${o.chant} release images "$CHANT_RELEASE_LABEL" -o ${RELEASE_DIGESTS_FILE}`, `export CHANT_RELEASE_DIGESTS="$PWD/${RELEASE_DIGESTS_FILE}"`] : []),
+        ...(o.images ? [imagesLine(o), `export CHANT_RELEASE_DIGESTS="$PWD/${RELEASE_DIGESTS_FILE}"`] : []),
         ...(o.build ? [o.build] : []),
         ...(o.verify ? [`${o.chant} release verify "$CHANT_RELEASE_LABEL"`] : []),
         `${o.chant} release publish "$CHANT_RELEASE_LABEL" ${o.flags}`,
@@ -495,8 +538,7 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     groups,
     workspaceRoot,
     ...(release?.workflow ? { pipeline: release.workflow } : {}),
-    // release.images (#4657) is read loosely, so this file renders with a config of either shape.
-    ...(((release as { images?: unknown[] } | undefined)?.images?.length ?? 0) > 0 ? { images: true } : {}),
+    ...((release?.images?.length ?? 0) > 0 ? { images: true, imageArchives: release!.images!.map((i) => i.archive) } : {}),
     ...(release?.lane ? { lane: release.lane } : {}),
     ...(args.ciInstall ? { install: args.ciInstall } : {}),
     ...(args.buildCommand ? { build: args.buildCommand } : {}),

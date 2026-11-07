@@ -50,7 +50,7 @@ import { parseParamFlags } from "../build-params-cli";
 import type { CommandContext } from "../registry";
 
 const USAGE =
-  "chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>] [--image <component>=<repository>@sha256:<hex>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--override-green] [--json] | release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json] | release verify <label|digest> [--json] | release images <label|digest> [-o <file>] [--json] | release candidates [--env <env>] [--lane <name>] [--forge-issues] [--json] | release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json] | release list [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
+  "chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>] [--image <component>=<repository>@sha256:<hex>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--override-green] [--json] | release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json] | release verify <label|digest> [--json] | release images <label|digest> [--no-build] [-o <file>] [--json] | release candidates [--env <env>] [--lane <name>] [--forge-issues] [--json] | release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json] | release list [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
 
 /** The build inputs `release cut` and `release compile` share. */
 function compileInputs(
@@ -126,7 +126,7 @@ function commitTime(cwd: string, commit: string): number {
 }
 
 /**
- * `release images <label|digest> [-o <file>] [--json]` (#4657): build the
+ * `release images <label|digest> [--no-build] [-o <file>] [--json]` (#4657): build the
  * images the release recorded again, from the release's commit checked out
  * here, refuse an archive whose digest is not the recorded one, and write the
  * recorded digests to the file the package build reads through
@@ -158,7 +158,14 @@ export async function runReleaseImages(ctx: CommandContext): Promise<number> {
   if (missing.length > 0) return fail("release-image-not-recorded", `release.images names ${missing.join(", ")}, which release ${release.releaseDigest} does not record`, "Cut a new release, so its cut builds every image the config declares.");
   let built: import("../../lifecycle/release-store").ReleaseArtifact[];
   try {
-    built = buildReleaseImages({ images: declared, cwd, sourceDateEpoch: commitTime(cwd, release.commit), label, archiveDigest: ociArchiveDigest });
+    // --no-build: the archives the cut built were handed to this job, so they are read as they are.
+    built = args.noBuild
+      ? declared.map((d) => {
+          const abs = resolve(cwd, d.archive);
+          if (!existsSync(abs)) throw new ReleaseImageError("release-image-no-archive", `image "${d.name}" has no archive at ${d.archive}`, "Hand this job the archives the cut built, or run without --no-build to build them again.");
+          return { component: d.name, kind: "image" as const, path: d.archive, digest: ociArchiveDigest(abs) };
+        })
+      : buildReleaseImages({ images: declared, cwd, sourceDateEpoch: commitTime(cwd, release.commit), label, archiveDigest: ociArchiveDigest });
   } catch (err) {
     if (err instanceof ReleaseImageError) return fail(err.code, err.message, err.fix);
     throw err;
@@ -167,7 +174,7 @@ export async function runReleaseImages(ctx: CommandContext): Promise<number> {
   if (differ.length > 0) {
     return fail(
       "release-image-digest-mismatch",
-      differ.map((a) => `image "${a.component}" built to ${a.digest}, and the release records ${recorded[a.component]}`).join("; "),
+      differ.map((a) => `image "${a.component}" ${args.noBuild ? "is" : "built to"} ${a.digest}, and the release records ${recorded[a.component]}`).join("; "),
       "An image build must write the same archive from the same commit: set SOURCE_DATE_EPOCH-aware timestamps (rewrite-timestamp=true), and remove logs and caches from its layers.",
     );
   }
@@ -176,7 +183,7 @@ export async function runReleaseImages(ctx: CommandContext): Promise<number> {
   if (args.json) console.log(JSON.stringify({ releaseDigest: release.releaseDigest, label, digests: recorded, file }, null, 2));
   else {
     for (const [name, digest] of Object.entries(recorded)) console.error(`  ${name} ${digest}`);
-    console.error(formatSuccess(`Built ${built.length} image(s) to the digests release ${label ?? release.releaseDigest} records, and wrote them to ${relative(cwd, file) || file}`));
+    console.error(formatSuccess(`${args.noBuild ? "Checked" : "Built"} ${built.length} image(s) to the digests release ${label ?? release.releaseDigest} records, and wrote them to ${relative(cwd, file) || file}`));
     console.log(`${RELEASE_DIGESTS_ENV}=${file}`);
   }
   return 0;

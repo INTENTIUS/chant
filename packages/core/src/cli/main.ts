@@ -526,7 +526,7 @@ Releases:
   release verify <label|digest> [--json]
                         Check, offline, that the release was signed by a key
                         .chant/allowed_signers lists at the release's commit.
-  release images <label|digest> [-o <file>] [--json]
+  release images <label|digest> [--no-build] [-o <file>] [--json]
                         Build the images release.images declares again from
                         the release's commit, refuse one whose digest is not
                         the recorded one, and write the recorded digests to

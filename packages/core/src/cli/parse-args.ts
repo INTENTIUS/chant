@@ -65,6 +65,7 @@ const BOOLEAN_FLAGS = new Set([
   "--fold",
   "--no-fold",
   "--no-cache",
+  "--no-build",
   "--sandbox",
   "--yes",
   "--confirm-prod",
@@ -1007,6 +1008,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.noRecord = true;
     } else if (arg === "--fold") {
       result.fold = true;
+    } else if (arg === "--no-build") {
+      result.noBuild = true;
     } else if (arg === "--no-cache") {
       // `chant workspace graph --no-cache` (#2876): read every member.
       result.noCache = true;
