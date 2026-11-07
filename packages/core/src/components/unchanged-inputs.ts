@@ -144,7 +144,10 @@ export function gitNormalizedCompare(memberDir: string): NormalizedCompare {
         maxBuffer: 256 * 1024 * 1024,
       });
       const at = `${path} at ${commit.slice(0, 12)}`;
-      if (run.error) return { error: `\`${command}\` could not run on ${at}: ${run.error.message}` };
+      // A command that exits without reading all of its stdin makes the write
+      // fail with EPIPE while the command itself ran: its exit status decides.
+      const epipe = (run.error as NodeJS.ErrnoException | undefined)?.code === "EPIPE" && run.status !== null;
+      if (run.error && !epipe) return { error: `\`${command}\` could not run on ${at}: ${run.error.message}` };
       if (run.status !== 0) {
         const said = run.stderr.toString("utf-8").trim().split("\n")[0];
         return { error: `\`${command}\` ${run.signal ? `was killed (${run.signal})` : `exited ${run.status}`} on ${at}${said ? `: ${said}` : ""}` };
