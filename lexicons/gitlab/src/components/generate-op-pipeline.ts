@@ -253,7 +253,9 @@ function headerLineFor(
     mode === "report" ? "" : " — needs a GITLAB_TOKEN CI/CD variable (masked, scope: api)";
   switch (trigger.kind) {
     case "cron":
-      return `#   ${jobName}: cron "${trigger.schedule}", ${SELECTOR_VAR}="${spec.name}", finding-mode ${mode}${tokenNote}`;
+      return spec.gitlab?.scheduleRule !== undefined
+        ? `#   ${jobName}: cron "${trigger.schedule}", a schedule that matches ${spec.gitlab.scheduleRule}, finding-mode ${mode}${tokenNote}`
+        : `#   ${jobName}: cron "${trigger.schedule}", ${SELECTOR_VAR}="${spec.name}", finding-mode ${mode}${tokenNote}`;
     case "pull_request": {
       const onto = trigger.branches?.length ? trigger.branches.join(", ") : "any branch";
       return `#   ${jobName}: merge_request_event onto ${onto}, finding-mode ${mode}${tokenNote}`;
@@ -375,7 +377,14 @@ export function generateGitlabOpPipeline(
     }
     const declaredIdTokens = gitlabIdTokens(spec.name, spec.permissions);
     // #4631: a cloud trade takes an id token per cloud, beside the ones the spec declares.
-    const idTokens = spec.cloud ? { ...(declaredIdTokens ?? {}), ...gitlabTradeIdTokens(spec.cloud) } : declaredIdTokens;
+    const chantIdTokens = spec.cloud ? { ...(declaredIdTokens ?? {}), ...gitlabTradeIdTokens(spec.cloud) } : declaredIdTokens;
+    // #4753: the spec's own named tokens, beside chant's.
+    const ownIdTokens = spec.gitlab?.idTokens;
+    for (const name of Object.keys(ownIdTokens ?? {})) {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) throw new Error(`${subject}: gitlab.idTokens names "${name}", which is not a variable name`);
+      if (chantIdTokens && name in chantIdTokens) throw new Error(`${subject}: gitlab.idTokens names ${name}, which chant declares for this job already`);
+    }
+    const idTokens = ownIdTokens && Object.keys(ownIdTokens).length > 0 ? { ...(chantIdTokens ?? {}), ...ownIdTokens } : chantIdTokens;
     const update = spec.update;
     const findingMode = spec.findingMode ?? "report";
     const trigger = resolveOpTrigger(spec);
@@ -415,7 +424,10 @@ export function generateGitlabOpPipeline(
 
     // A push job is the one a gate would otherwise paint red on every merge
     // (#2243). Every other trigger keeps the plain one-line invocation.
-    const rules = gitlabRules(subject, trigger, { variable: SELECTOR_VAR, value: spec.name });
+    if (spec.gitlab?.scheduleRule !== undefined && (trigger.kind !== "cron" || spec.gitlab.scheduleRule.trim() === "")) {
+      throw new Error(`${subject}: gitlab.scheduleRule picks the pipeline schedule of a cron trigger, and is a non-empty rules: if: expression`);
+    }
+    const rules = spec.gitlab?.scheduleRule !== undefined ? [{ if: spec.gitlab.scheduleRule }] : gitlabRules(subject, trigger, { variable: SELECTOR_VAR, value: spec.name });
     const gated = trigger.kind === "push";
     const runParts = fillCommand(runCommand, spec.name);
     const invocation = gated ? [...runParts, ...GATED_EXIT_FLAG] : runParts;
@@ -467,6 +479,7 @@ export function generateGitlabOpPipeline(
       ...(idTokens ? { id_tokens: idTokens } : {}),
       ...(spec.environment ? { environment: environmentDoc(spec.environment) } : {}),
       ...nonEmpty("variables", jobVariables),
+      ...(spec.gitlab?.cache !== undefined ? { cache: spec.gitlab.cache } : {}),
       rules: rulesFor,
       // #4631: the trade first, before any line of the checkout's code runs, and the token variables unset by it.
       script: [...(spec.cloud ? gitlabTradeLines() : []), ...cdLine, ...setupScript, ...beforeScript, ...runLines, ...extraScript],

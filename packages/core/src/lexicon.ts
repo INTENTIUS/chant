@@ -973,6 +973,22 @@ export interface ScheduledOpSpec {
    * Not on a `reviewAgent` split or a comment agent's workflow.
    */
   artifacts?: ScheduledOpArtifact[];
+  /** GitLab only (#4753): what a GitLab Op job declares beyond chant's own. Ignored by the other generators. */
+  gitlab?: ScheduledOpGitlab;
+}
+
+/** A scheduled Op job's GitLab-only settings (#4753). */
+export interface ScheduledOpGitlab {
+  /** Named `id_tokens:` with their audiences, beside chant's own (`CHANT_ID_TOKEN`, a cloud trade's); a name chant uses is refused. */
+  idTokens?: Record<string, { aud: string | string[] }>;
+  /** The job's `cache:` entry, or entries, as GitLab takes them. */
+  cache?: Record<string, unknown> | Array<Record<string, unknown>>;
+  /**
+   * For a cron trigger: the `rules: if:` that picks the pipeline schedule,
+   * in place of `$CI_PIPELINE_SOURCE == "schedule" && $CHANT_SCHEDULED_OP == "<name>"`,
+   * such as a product's rule that runs on every schedule but its own named ones.
+   */
+  scheduleRule?: string;
 }
 
 /** A named set of files a scheduled Op's job keeps after its run (#4622). */

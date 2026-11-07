@@ -107,6 +107,7 @@ jobs:
           name: migrations-wave-2-prod-us-outcome
           path: .chant/op-waves/migrations/outcomes/outcome-wave-2-group-us.json
           if-no-files-found: ignore
+    enable-openid-connect: true
   wave-2-prod-eu:
     runs-on: eu-apply
     needs:
