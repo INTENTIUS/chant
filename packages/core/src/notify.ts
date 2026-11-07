@@ -301,19 +301,27 @@ export function slackMessage(e: NotifyEvent, relay?: RelayButtons): { text: stri
   }
   const text = lines.join("\n");
   if (!relay) return { text };
+  return { text, blocks: [{ type: "section", text: { type: "mrkdwn", text } }, slackRelayActions(relay)] };
+}
+
+/**
+ * The Slack actions block with the relay's Approve and Decline buttons
+ * (#4611), for a product that renders its own Slack message: its clicks reach
+ * `chant notify relay` like those on chant's own message.
+ */
+export function slackRelayActions(relay: RelayButtons): Record<string, unknown> {
   const button = (label: string, action: string, style?: string) => ({ type: "button", text: { type: "plain_text", text: label }, action_id: action, value: relay.token, ...(style ? { style } : {}) });
-  return {
-    text,
-    blocks: [
-      { type: "section", text: { type: "mrkdwn", text } },
-      { type: "actions", elements: [button("Approve", RELAY_APPROVE_ACTION, "primary"), button("Decline", RELAY_DECLINE_ACTION)] },
-    ],
-  };
+  return { type: "actions", elements: [button("Approve", RELAY_APPROVE_ACTION, "primary"), button("Decline", RELAY_DECLINE_ACTION)] };
+}
+
+/** The Teams reply that approves through the relay's outgoing webhook (#4611): `approve <token>`, after a mention of the relay. */
+export function teamsRelayReply(relay: RelayButtons, action: "approve" | "decline" = "approve"): string {
+  return `${action} ${relay.token}`;
 }
 
 /** A Teams incoming webhook's body (a Workflows webhook): one Adaptive Card, with buttons that open the review page and the run. With `relay`, the reply that approves through the relay (#4611). */
 export function teamsMessage(e: NotifyEvent, relay?: RelayButtons): Record<string, unknown> {
-  const all = [...facts(e), ...(relay ? [{ title: "Approve in chat", value: `mention the relay and reply: approve ${relay.token}` }] : [])];
+  const all = [...facts(e), ...(relay ? [{ title: "Approve in chat", value: `mention the relay and reply: ${teamsRelayReply(relay)}` }] : [])];
   const actions = [
     ...(e.approve?.review ? [{ type: "Action.OpenUrl", title: "Review and approve", url: e.approve.review.url }] : []),
     ...(e.run?.url ? [{ type: "Action.OpenUrl", title: "Open the run", url: e.run.url }] : []),
@@ -434,8 +442,13 @@ export interface SendNotifyOptions {
   /** The webhook headers' prefix. Default `x-chant`. */
   prefix?: string;
   userAgent?: string;
-  /** A product's own Slack or Teams body (terragucci's relay buttons), in place of {@link slackMessage} and {@link teamsMessage}. */
-  render?: { slack?: (e: NotifyEvent) => unknown; teams?: (e: NotifyEvent) => unknown };
+  /**
+   * A product's own Slack or Teams body, in place of {@link slackMessage} and
+   * {@link teamsMessage}. `relay` is the relay's signed button value for a
+   * waiting event when `notify.relay` names a key that is set (#4611), for
+   * {@link slackRelayActions} and {@link teamsRelayReply}.
+   */
+  render?: { slack?: (e: NotifyEvent, relay?: RelayButtons) => unknown; teams?: (e: NotifyEvent, relay?: RelayButtons) => unknown };
   /** Seconds since the epoch, for the signature's timestamp. Default: the clock. */
   now?: number;
 }
@@ -518,7 +531,7 @@ export async function sendNotify(config: NotifyConfig | undefined, event: Notify
   const relayKey = config.relay ? env[config.relay] : undefined;
   if (config.relay && ref && !relayKey) log(`notify: ${config.relay} is not set, so the message carries no relay buttons`);
   const buttons = ref && relayKey ? { token: relayToken(relayKey, ref) } : undefined;
-  if (config.slack) await deliver("slack", config.slack, () => json(options.render?.slack ? options.render.slack(event) : slackMessage(event, buttons)));
-  if (config.teams) await deliver("teams", config.teams, () => json(options.render?.teams ? options.render.teams(event) : teamsMessage(event, buttons)));
+  if (config.slack) await deliver("slack", config.slack, () => json(options.render?.slack ? options.render.slack(event, buttons) : slackMessage(event, buttons)));
+  if (config.teams) await deliver("teams", config.teams, () => json(options.render?.teams ? options.render.teams(event, buttons) : teamsMessage(event, buttons)));
   return out;
 }

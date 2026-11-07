@@ -5,7 +5,7 @@
  */
 import { afterEach, describe, expect, test } from "vitest";
 import { assertProductWords, CHANT_WORDS } from "./ci-product-words";
-import { makeNotifyEvent, notifyConfigProblem, relayRefOf, relayToken, sendNotify, slackMessage, teamsMessage, RELAY_APPROVE_ACTION, RELAY_DECLINE_ACTION, type NotifyFetch } from "./notify";
+import { makeNotifyEvent, notifyConfigProblem, relayRefOf, relayToken, sendNotify, slackMessage, slackRelayActions, teamsMessage, teamsRelayReply, RELAY_APPROVE_ACTION, RELAY_DECLINE_ACTION, type NotifyFetch, type RelayButtons } from "./notify";
 import { relayPrincipalFor, slackSignature, startRelayServer, teamsSignature, type RelayDeps, type RelayPending, type RelaySettings } from "./notify-relay";
 import { relaySettingsFromEnv } from "./cli/handlers/notify-relay";
 
@@ -172,7 +172,61 @@ describe("chant notify relay (#4611)", () => {
   });
 });
 
+describe("a gate that asks a decision point (#4611)", () => {
+  const point = (pass?: Array<string | boolean>): RelayPending => ({ op: "tf-apply", gate: "tf-apply-wave-2", digest, question: { point: "prod-apply", id: "q-17", ...(pass ? { pass } : {}) } });
+  function withAnswers(pending: RelayPending, refuse?: string) {
+    const m = memoryDeps({ pending: [pending] });
+    const answers: Array<{ id: string; answer: string | boolean; by: string; relayedBy: string }> = [];
+    const deps: RelayDeps = { ...m.deps, answer: async (input) => (refuse ? { ok: false, error: refuse } : (answers.push(input), { ok: true })) };
+    return { deps, answers, approvals: m.approvals };
+  }
+
+  test("the click answers the question the gate waits on, as the clicker, relayed by the relay, and records no approval", async () => {
+    const { deps, answers, approvals } = withAnswers(point());
+    const r = await relay(deps);
+    const out = await r.teams(`approve ${tokenFor()}`);
+    expect(out.json.text).toMatch(/^tf-apply-wave-2 on tf-apply: decision point prod-apply, question q-17, answered true by github:ana, relayed by chant-relay, for sha256:a{64}/);
+    expect(answers).toEqual([{ id: "q-17", answer: true, by: "github:ana", relayedBy: "chant-relay" }]);
+    expect(approvals).toEqual([]);
+  });
+
+  test("a gate that passes on one named answer gets that answer; one that passes on several is refused", async () => {
+    const one = withAnswers(point(["go"]));
+    await (await relay(one.deps)).teams(`approve ${tokenFor()}`);
+    expect(one.answers.map((a) => a.answer)).toEqual(["go"]);
+    const several = withAnswers(point(["go", "canary"]));
+    expect((await (await relay(several.deps)).teams(`approve ${tokenFor()}`)).json.text).toMatch(/passes on go or canary, so a button names no one answer/);
+    expect(several.answers).toEqual([]);
+  });
+
+  test("the point's refusal reaches the thread, and a relay with no way to answer refuses as before", async () => {
+    const refused = withAnswers(point(), "points-quorum: github:ana holds the agent role");
+    expect((await (await relay(refused.deps)).teams(`approve ${tokenFor()}`)).json.text).toMatch(/question q-17 was not answered for github:ana: points-quorum: github:ana holds the agent role/);
+    const { deps, approvals } = memoryDeps({ pending: [point()] });
+    expect((await (await relay(deps)).teams(`approve ${tokenFor()}`)).json.text).toMatch(/asks decision point prod-apply, so its answer passes the gate, not an approval/);
+    expect(approvals).toEqual([]);
+  });
+});
+
 describe("the buttons notify posts (#4611)", () => {
+  test("a product's own render gets the signed buttons, and its clicks reach the relay", async () => {
+    const bodies: string[] = [];
+    const fetch: NotifyFetch = async (_u, init) => (bodies.push(init.body), { ok: true, status: 200 });
+    const seen: Array<RelayButtons | undefined> = [];
+    const render = {
+      slack: (_e: unknown, relay?: RelayButtons) => (seen.push(relay), { text: "terragucci wave 2", ...(relay ? { blocks: [slackRelayActions(relay)] } : {}) }),
+      teams: (_e: unknown, relay?: RelayButtons) => ({ text: relay ? teamsRelayReply(relay) : "" }),
+    };
+    await sendNotify({ slack: "SLACK", teams: "TEAMS", relay: "CHANT_RELAY_KEY" }, waitingEvent(), { env: { SLACK: "http://127.0.0.1:9/s", TEAMS: "http://127.0.0.1:9/t", CHANT_RELAY_KEY: KEY }, fetch, log: () => {}, render });
+    expect(seen).toEqual([{ token: tokenFor() }]);
+    const slack = JSON.parse(bodies[0]!) as { blocks: Array<{ elements: Array<{ action_id: string; value: string }> }> };
+    expect(slack.blocks[0]!.elements.map((b) => b.action_id)).toEqual([RELAY_APPROVE_ACTION, RELAY_DECLINE_ACTION]);
+    expect(JSON.parse(bodies[1]!).text).toBe(`approve ${tokenFor()}`);
+    const { deps, approvals } = memoryDeps();
+    await (await relay(deps)).slack(slackBody("UANA", RELAY_APPROVE_ACTION, slack.blocks[0]!.elements[0]!.value));
+    expect(approvals).toHaveLength(1);
+  });
+
   test("a waiting event's Slack message carries Approve and Decline with the signed reference, and Teams the reply", async () => {
     const event = waitingEvent();
     const token = tokenFor(event);

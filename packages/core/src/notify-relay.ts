@@ -25,6 +25,17 @@
  *    command applies: the decision point, `identity.gates` (the relay holds
  *    no key, so a sealed gate is refused), the gate policy and the push.
  *
+ * A gate that asks a decision point (#3170) passes on the point's answer,
+ * not an approval. There the relay answers the question the gate waits on
+ * instead, as `chant workspace points answer <id> --answer <yes> --by
+ * <principal> --relayed-by <relay>` does, when the gate passes on one answer
+ * (a yes, or the one value its `pass` names). The point's quorum decides
+ * whether that principal counts. A gate that passes on several answers names
+ * no one answer for a button, and is refused.
+ *
+ * A product that renders its own chat messages gets the signed buttons from
+ * `sendNotify`'s `render` (`./notify.ts`), so its clicks reach this relay too.
+ *
  * Decline records nothing and says who declined. The type-the-name prompt
  * of `chant approve` (#4575) is for a terminal; a signed click is the
  * person's confirmation here. The relay starts no job: the resume job
@@ -36,6 +47,15 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { CiProductWords } from "./ci-product-words";
 import type { GatedRequest } from "./lifecycle/gated-request-digest";
 import { readRelayToken, RELAY_APPROVE_ACTION, RELAY_DECLINE_ACTION, type RelayRef } from "./notify";
+import { NEXT_RELEASE } from "./release-floors";
+
+/**
+ * The first chant whose relay answers a gate's decision point and whose
+ * `sendNotify` hands a product's own render the signed buttons
+ * (`slackRelayActions`, `teamsRelayReply`), so a product can drop a relay of
+ * its own (#4611). Products feature-detect on it.
+ */
+export const NOTIFY_RELAY_POINTS_FLOOR = NEXT_RELEASE;
 
 /** The relay's settings, by environment variable. */
 export const RELAY_ENV = {
@@ -198,6 +218,8 @@ export interface RelayPending {
   environment?: string;
   /** On a gated request (#4551): the request, whose requester may not approve it. */
   request?: GatedRequest;
+  /** When the gate asks a decision point: the open question it waits on, and the answers that pass it (absent: a yes). */
+  question?: { point: string; id: string; pass?: Array<string | boolean> };
 }
 
 /** What the relay reads and writes, so a test stands in for the repo. */
@@ -208,6 +230,12 @@ export interface RelayDeps {
   pending(digest: string): Promise<RelayPending[]>;
   /** Record the approval as `chant approve` does. `error` is why it refused. */
   approve(input: { op: string; gate: string; digest: string; environment?: string; actor: string; relayedBy: string }): Promise<{ ok: true } | { ok: false; error: string }>;
+  /**
+   * Answer a decision point's question as `chant workspace points answer`
+   * does, relayed by the relay (#4611). Absent: a gate that asks a decision
+   * point is refused.
+   */
+  answer?(input: { id: string; answer: string | boolean; by: string; relayedBy: string }): Promise<{ ok: true } | { ok: false; error: string }>;
   /** Who the relay records as `relayedBy`. */
   principal: string;
   words: CiProductWords;
@@ -227,7 +255,7 @@ export interface RelaySettings {
 export interface RelayAnswer {
   ok: boolean;
   /** What the relay did: `approved`, `declined`, or the refusal's kind. */
-  outcome: "approved" | "declined" | "bad-reference" | "stale" | "ineligible" | "moved" | "refused";
+  outcome: "approved" | "answered" | "declined" | "bad-reference" | "stale" | "ineligible" | "moved" | "refused";
   text: string;
   /** The gate's op, when the click reached one. */
   op?: string;
@@ -263,6 +291,26 @@ export async function decideRelayClick(click: RelayClick, settings: RelaySetting
     const pending = standing[0]!;
     if (pending.request && norm(pending.request.by) === norm(principal)) {
       return { ok: false, outcome: "ineligible", op: pending.op, gate: pending.gate, principal, text: `Refused: ${principal} made the request, and a requester's own approval does not count. Someone else approves it.` };
+    }
+    if (pending.question) {
+      const q = pending.question;
+      if (!deps.answer) {
+        return { ok: false, outcome: "refused", op: pending.op, gate: pending.gate, principal, text: `Not approved: ${pending.gate} asks decision point ${q.point}, so its answer passes the gate, not an approval. Answer question ${q.id} at a shell.` };
+      }
+      if (q.pass && q.pass.length !== 1) {
+        return { ok: false, outcome: "refused", op: pending.op, gate: pending.gate, principal, text: `Not approved: ${pending.gate} asks decision point ${q.point}, which ${q.pass.length === 0 ? "names no answer that passes it" : `passes on ${q.pass.map(String).join(" or ")}`}, so a button names no one answer. Answer question ${q.id} at a shell.` };
+      }
+      const value = q.pass ? q.pass[0]! : true;
+      const answered = await deps.answer({ id: q.id, answer: value, by: principal, relayedBy: deps.principal });
+      if (!answered.ok) return { ok: false, outcome: "refused", op: pending.op, gate: pending.gate, principal, text: `Not approved: ${pending.gate} asks decision point ${q.point}, and question ${q.id} was not answered for ${principal}: ${answered.error}` };
+      return {
+        ok: true,
+        outcome: "answered",
+        op: pending.op,
+        gate: pending.gate,
+        principal,
+        text: `${pending.gate} on ${pending.op}: decision point ${q.point}, question ${q.id}, answered ${String(value)} by ${principal}, relayed by ${deps.principal}, for ${pending.digest} and no other plan. The resume job starts the ${words.stages.apply} once the answer passes the gate.`,
+      };
     }
     const recorded = await deps.approve({ op: pending.op, gate: pending.gate, digest: pending.digest, ...(pending.environment !== undefined ? { environment: pending.environment } : {}), actor: principal, relayedBy: deps.principal });
     if (!recorded.ok) return { ok: false, outcome: "refused", op: pending.op, gate: pending.gate, principal, text: `Not approved: ${recorded.error}` };

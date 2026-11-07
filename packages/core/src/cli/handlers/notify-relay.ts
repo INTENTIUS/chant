@@ -15,7 +15,8 @@
  *
  * Each click fetches `chant/lifecycle`, reads the signers file at base, and
  * records through `recordGateApproval`, one click at a time, so two clicks
- * never race on the ledger.
+ * never race on the ledger. A gate that asks a decision point gets its
+ * question answered through `answerPoint` instead (#4611).
  */
 import { activeProductWords } from "../../ci-product-words";
 import { CHANT_EXIT } from "../../exit-codes";
@@ -79,9 +80,27 @@ export function checkoutRelayDeps(cwd: string, principal: string): RelayDeps {
           const digestAsked = p.planDigest ?? p.changeSet;
           if (!digestAsked) continue;
           const fact = latestPendingGate((await readGateLedger(p.op, { cwd })).pending.filter((f) => f.environment === p.environment), p.gate);
-          out.push({ op: p.op, gate: p.gate, digest: digestAsked, ...(p.environment !== undefined ? { environment: p.environment } : {}), ...(fact?.request ? { request: fact.request } : {}) });
+          const q = fact?.answer;
+          out.push({
+            op: p.op,
+            gate: p.gate,
+            digest: digestAsked,
+            ...(p.environment !== undefined ? { environment: p.environment } : {}),
+            ...(fact?.request ? { request: fact.request } : {}),
+            ...(q ? { question: { point: q.point, id: q.id, ...(q.pass ? { pass: q.pass } : {}) } } : {}),
+          });
         }
         return out;
+      }),
+    answer: (input) =>
+      one(async () => {
+        const { answerPoint } = await import("../../workspace/decide");
+        const doc = await answerPoint({ cwd, id: input.id, answer: input.answer, by: [input.by], relayedBy: input.relayedBy });
+        if ("error" in doc) return { ok: false as const, error: `${doc.error.code}: ${doc.error.message}` };
+        if (doc.question.state !== "answered") return { ok: false as const, error: `the question is ${doc.question.state}: ${input.by}'s answer does not settle it on its own` };
+        const { pushLifecycleRebasing } = await import("../../lifecycle/git");
+        await pushLifecycleRebasing({ cwd }).catch(() => undefined);
+        return { ok: true as const };
       }),
     approve: (input) =>
       one(async () => {

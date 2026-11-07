@@ -79,6 +79,7 @@ export const PR_PREVIEW_FLOOR = "0.124.55";
 export {
   decideRelayClick,
   handleRelayRequest,
+  NOTIFY_RELAY_POINTS_FLOOR,
   relayPrincipalFor,
   RELAY_ENV,
   slackRelayClick,
