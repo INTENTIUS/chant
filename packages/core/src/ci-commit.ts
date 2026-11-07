@@ -34,9 +34,13 @@ import { parseProductComment, type CiProductWords } from "./ci-product-words";
 import type { OpRunRecord, OpRunRecordInput } from "./op/runtime";
 import type { RunOrigin } from "./lifecycle/release-ledger";
 import type { PrForge } from "./pr-forge";
+import { NEXT_RELEASE } from "./release-floors";
 
 /** The first chant with the commit job and the scheduled Op spec's `commit` (#4722). Products feature-detect on it. */
 export const CI_COMMIT_FLOOR = "0.124.71";
+
+/** The first chant with a commit job after a check that runs on push, `jobToken` and `after` (#4749). Products feature-detect on it. */
+export const CI_COMMIT_PUSH_FLOOR = NEXT_RELEASE;
 
 /** What starts a commit run: a person's comment, or a check job's finding. */
 export type CommitTrigger = "comment" | "check";
@@ -78,6 +82,19 @@ export interface OpCommitSpec {
    * its parents are the head and the base tip.
    */
   mergeBase?: boolean;
+  /**
+   * GitHub and Forgejo (#4749): push with the job's own token, so `tokenEnv`
+   * may be left out. Such a push starts no workflow run, so the new head gets
+   * no plan from it; `after` is where a product does what that run would
+   * have done. Refused on GitLab, where a job token cannot push.
+   */
+  jobToken?: boolean;
+  /**
+   * Shell lines the push job runs once it has pushed a commit (#4749), with
+   * `CHANT_COMMIT_SHA` set to it, such as a product taking the plan locks of
+   * the new head. Not run when nothing was pushed.
+   */
+  after?: string[];
 }
 
 /** A commit job's settings, every default filled and checked. */
@@ -93,6 +110,10 @@ export interface CommitSettings {
   timeout: number;
   env: string;
   mergeBase: boolean;
+  /** Push with the job token (#4749). */
+  jobToken: boolean;
+  /** Lines the push job runs after a push (#4749). */
+  after: string[];
 }
 
 export const COMMIT_MAX_RUNS = 3;
@@ -130,6 +151,24 @@ export const COMMIT_BASE_REF = "refs/chant/commit-base";
 export const COMMIT_DECISION_FILE = "decision.json";
 export const COMMIT_PATCH_FILE = "change.patch";
 export const COMMIT_RC_FILE = "rc";
+/** What `chant commit land` leaves when it pushed (#4749): the pushed commit, which the push job's `after` lines read. */
+export const COMMIT_PUSHED_FILE = "pushed";
+
+/**
+ * After a check that runs on push (#4749): fetch the pushed commit, by its
+ * sha in `shaVar`, into `into` as the head. The pull request is found from
+ * the pushed branch (`resolveCommitRequest`).
+ */
+export function commitPushedHeadFetchLine(shaVar: string, into: string = COMMIT_HEAD_REF): string {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(shaVar)) throw new AgentError(`${shaVar} is not a variable name`);
+  return `case "$${shaVar}" in *[!0-9a-f]*|'') echo "no pushed commit" >&2; exit 1 ;; esac\ngit -c protocol.version=2 fetch -q --no-tags origin "+$${shaVar}:${into}"`;
+}
+
+/** The push job's lines after land (#4749): `after`, run only when a commit was pushed, with \`CHANT_COMMIT_SHA\` set. */
+export function commitAfterLines(s: Pick<CommitSettings, "after">, dir: string = COMMIT_DIR): string[] {
+  if (s.after.length === 0) return [];
+  return [`if [ -s ${dir}/${COMMIT_PUSHED_FILE} ]; then`, `  export CHANT_COMMIT_SHA="$(cat ${dir}/${COMMIT_PUSHED_FILE})"`, ...s.after.map((l) => `  ${l}`), "fi"];
+}
 
 /** The commit identity the job's commits carry. */
 export const COMMIT_GIT_NAME = "chant commit";
@@ -172,6 +211,10 @@ export function resolveCommitSpec(name: string, spec: OpCommitSpec, product = "c
   for (const f of findings) intIn(`${where}: findings`, f, 1, 255);
   const env = spec.env ?? "local";
   if (!NAME.test(env)) throw new AgentError(`${where}: env is a ledger environment name`);
+  if (spec.jobToken !== undefined && typeof spec.jobToken !== "boolean") throw new AgentError(`${where}: jobToken is true or false`);
+  if (spec.jobToken && spec.tokenEnv !== undefined) throw new AgentError(`${where}: jobToken pushes with the job's own token, so leave tokenEnv out`);
+  const after = spec.after ?? [];
+  if (!Array.isArray(after) || !after.every((l) => typeof l === "string" && l.trim() !== "" && !l.includes("\n"))) throw new AgentError(`${where}: after is a list of shell lines, one command each`);
   return {
     name,
     on: spec.on,
@@ -184,6 +227,8 @@ export function resolveCommitSpec(name: string, spec: OpCommitSpec, product = "c
     timeout: spec.timeout === undefined ? COMMIT_TIMEOUT_MINUTES : intIn(`${where}: timeout`, spec.timeout, 1, 120),
     env,
     mergeBase: spec.mergeBase === true,
+    jobToken: spec.jobToken === true,
+    after: [...after],
   };
 }
 
