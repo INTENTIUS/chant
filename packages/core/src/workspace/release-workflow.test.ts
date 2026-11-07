@@ -1,6 +1,8 @@
 /** #4656: `chant release workflow` renders the release pipeline from the `release` block. */
 import { describe, expect, test } from "vitest";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseYAML } from "../yaml";
 import { renderReleaseWorkflow, RELEASE_DIGESTS_FILE, type ReleaseWorkflowInput } from "./release-workflow";
@@ -195,5 +197,34 @@ describe("the release workflow's permissions, env and setup (#4751)", () => {
   test("a scope already granted and a bad variable name are refused", () => {
     expect(() => renderReleaseWorkflow({ forge: "github", groups: new Set(), pipeline: { permissions: { contents: "read" } } })).toThrow(/already granted/);
     expect(() => renderReleaseWorkflow({ forge: "github", groups: new Set(), pipeline: { env: { "BAD-NAME": "x" } } })).toThrow(/not a variable name/);
+  });
+});
+
+describe("a repository's first dispatched release (terragucci 0.4.50's cut)", () => {
+  const cutLedgerLine = (): string => {
+    const doc = parseYAML(renderReleaseWorkflow({ forge: "github", groups: new Set(), pipeline: { trigger: "dispatch" } })) as GhDoc;
+    const line = runs(doc.jobs.cut!).find((r) => r.includes("chant/lifecycle"));
+    expect(line).toBeDefined();
+    return line!;
+  };
+  const sh = (cmd: string, cwd: string) => spawnSync("bash", ["-c", cmd], { cwd, encoding: "utf8" });
+
+  test("the cut goes on when the remote has no chant/lifecycle yet, fetches it when it has one, and stops when the remote can't be read", () => {
+    const root = mkdtempSync(join(tmpdir(), "chant-first-ledger-"));
+    const origin = join(root, "origin.git");
+    const clone = join(root, "clone");
+    sh(`git init -q --bare -b main ${origin} && git clone -q ${origin} ${clone} && cd ${clone} && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m init && git push -q origin main`, root);
+    const line = cutLedgerLine();
+
+    const first = sh(line, clone);
+    expect(first.status, first.stderr).toBe(0);
+    expect(sh("git rev-parse --verify -q refs/heads/chant/lifecycle", clone).status).not.toBe(0);
+
+    sh(`git push -q origin main:refs/heads/chant/lifecycle`, clone);
+    expect(sh(line, clone).status).toBe(0);
+    expect(sh("git rev-parse --verify -q refs/heads/chant/lifecycle", clone).status).toBe(0);
+
+    sh(`git remote set-url origin ${join(root, "gone.git")}`, clone);
+    expect(sh(line, clone).status).not.toBe(0);
   });
 });
