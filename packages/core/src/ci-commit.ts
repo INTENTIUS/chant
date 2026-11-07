@@ -40,7 +40,9 @@ import { NEXT_RELEASE } from "./release-floors";
 export const CI_COMMIT_FLOOR = "0.124.71";
 
 /** The first chant with a commit job after a check that runs on push, `jobToken` and `after` (#4749). Products feature-detect on it. */
-export const CI_COMMIT_PUSH_FLOOR = NEXT_RELEASE;
+export const CI_COMMIT_PUSH_FLOOR = "0.124.72";
+/** The first chant whose commit job takes `allowedFiles` (#4758). */
+export const CI_COMMIT_FILES_FLOOR = NEXT_RELEASE;
 
 /** What starts a commit run: a person's comment, or a check job's finding. */
 export type CommitTrigger = "comment" | "check";
@@ -61,6 +63,13 @@ export interface OpCommitSpec {
   command: string[];
   /** The only paths the change may touch, from the repository root; a trailing `/` names a directory. */
   allowed: string[];
+  /**
+   * File names the change may touch in any directory (#4758), matched on the
+   * basename: `*.tf` or an exact name such as `terragrunt.hcl`. A path passes
+   * when it is in `allowed` or matches one of these; a guarded path is still
+   * refused. With these, `allowed` may be empty.
+   */
+  allowedFiles?: string[];
   /** For `on: "check"`: the exit codes of the Op's run that name a finding. Default `[2]`, chant's `drift` code. */
   findings?: number[];
   /** The secret (GitHub, Forgejo) or protected variable (GitLab) holding the push token. Required on GitHub and Forgejo; `CHANT_FORGE_TOKEN` by default on GitLab. */
@@ -104,6 +113,7 @@ export interface CommitSettings {
   comment?: string;
   command: string[];
   allowed: string[];
+  allowedFiles: string[];
   findings: number[];
   maxRuns: number;
   guarded: string[];
@@ -130,6 +140,7 @@ export const COMMIT_ENV = {
   comment: "CHANT_COMMIT_COMMENT",
   command: "CHANT_COMMIT_COMMAND",
   allowed: "CHANT_COMMIT_ALLOWED",
+  allowedFiles: "CHANT_COMMIT_ALLOWED_FILES",
   findings: "CHANT_COMMIT_FINDINGS",
   maxRuns: "CHANT_COMMIT_MAX_RUNS",
   guarded: "CHANT_COMMIT_GUARDED",
@@ -203,7 +214,11 @@ export function resolveCommitSpec(name: string, spec: OpCommitSpec, product = "c
     throw new AgentError(`${where}: command is an argv, a program and its arguments, with no control characters`);
   }
   const allowed = pathsIn(`${where}: allowed`, spec.allowed);
-  if (allowed.length === 0) throw new AgentError(`${where}: allowed names at least one path the change may touch`);
+  const allowedFiles = spec.allowedFiles ?? [];
+  if (!Array.isArray(allowedFiles) || !allowedFiles.every((f) => typeof f === "string" && FILE_PATTERN.test(f))) {
+    throw new AgentError(`${where}: allowedFiles are file names, such as "*.tf" or "terragrunt.hcl", with no "/"`);
+  }
+  if (allowed.length === 0 && allowedFiles.length === 0) throw new AgentError(`${where}: allowed or allowedFiles names at least one path the change may touch`);
   const guarded = spec.guarded === undefined ? [] : pathsIn(`${where}: guarded`, spec.guarded);
   if (spec.tokenEnv !== undefined && !VAR.test(spec.tokenEnv)) throw new AgentError(`${where}: tokenEnv is a variable name`);
   const findings = spec.findings ?? [CHANT_EXIT.drift];
@@ -221,6 +236,7 @@ export function resolveCommitSpec(name: string, spec: OpCommitSpec, product = "c
     ...(spec.on === "comment" ? { comment: spec.comment! } : {}),
     command: [...spec.command],
     allowed,
+    allowedFiles: [...allowedFiles],
     findings: [...findings],
     maxRuns: spec.maxRuns === undefined ? COMMIT_MAX_RUNS : intIn(`${where}: maxRuns`, spec.maxRuns, 1, 100),
     guarded,
@@ -240,6 +256,7 @@ export function commitSettingsEnv(s: CommitSettings): Record<string, string> {
     ...(s.comment ? { [COMMIT_ENV.comment]: s.comment } : {}),
     [COMMIT_ENV.command]: JSON.stringify(s.command),
     [COMMIT_ENV.allowed]: JSON.stringify(s.allowed),
+    ...(s.allowedFiles.length > 0 ? { [COMMIT_ENV.allowedFiles]: JSON.stringify(s.allowedFiles) } : {}),
     [COMMIT_ENV.findings]: s.findings.join(","),
     [COMMIT_ENV.maxRuns]: String(s.maxRuns),
     ...(s.guarded.length > 0 ? { [COMMIT_ENV.guarded]: JSON.stringify(s.guarded) } : {}),
@@ -280,6 +297,7 @@ export function commitSettingsFromEnv(env: Record<string, string | undefined>, p
     ...(env[COMMIT_ENV.comment] ? { comment: env[COMMIT_ENV.comment] } : {}),
     command: list(COMMIT_ENV.command) ?? [],
     allowed: list(COMMIT_ENV.allowed) ?? [],
+    ...(list(COMMIT_ENV.allowedFiles) ? { allowedFiles: list(COMMIT_ENV.allowedFiles)! } : {}),
     ...(f ? { findings: f.split(",").map(Number) } : {}),
     ...(maxRuns !== undefined ? { maxRuns } : {}),
     ...(timeout !== undefined ? { timeout } : {}),
@@ -292,14 +310,23 @@ export function commitSettingsFromEnv(env: Record<string, string | undefined>, p
 
 // ── what the change may touch ──────────────────────────────────────────────
 
-/** Whether `path` is inside one of `allowed` (a trailing `/` names a directory), matched as git spells it. */
-function inAllowed(path: string, allowed: readonly string[]): boolean {
-  return allowed.some((a) => (a.endsWith("/") ? path.startsWith(a) || `${path}/` === a : path === a));
+/** An `allowedFiles` entry: `*.<ext>` or an exact file name, never a path. */
+const FILE_PATTERN = /^(\*\.[A-Za-z0-9._-]+|[A-Za-z0-9._-]+)$/;
+
+/** Whether `path`'s basename matches one of `files` (#4758). */
+function fileAllowed(path: string, files: readonly string[]): boolean {
+  const base = path.slice(path.lastIndexOf("/") + 1);
+  return files.some((f) => (f.startsWith("*.") ? base.endsWith(f.slice(1)) && base.length > f.length - 1 : base === f));
+}
+
+/** Whether `path` is inside one of `allowed` (a trailing `/` names a directory), matched as git spells it, or its file name is in `files`. */
+function inAllowed(path: string, allowed: readonly string[], files: readonly string[] = []): boolean {
+  return allowed.some((a) => (a.endsWith("/") ? path.startsWith(a) || `${path}/` === a : path === a)) || fileAllowed(path, files);
 }
 
 /** The paths of a change the job may not push: outside `allowed`, or on a path no job changes ({@link agentForbiddenPaths}). */
-export function commitRefusedPaths(paths: readonly string[], s: Pick<CommitSettings, "allowed" | "guarded">): { forbidden: string[]; outside: string[] } {
-  return { forbidden: agentForbiddenPaths(paths, s.guarded), outside: paths.filter((p) => !inAllowed(p, s.allowed)) };
+export function commitRefusedPaths(paths: readonly string[], s: Pick<CommitSettings, "allowed" | "guarded"> & Partial<Pick<CommitSettings, "allowedFiles">>): { forbidden: string[]; outside: string[] } {
+  return { forbidden: agentForbiddenPaths(paths, s.guarded), outside: paths.filter((p) => !inAllowed(p, s.allowed, s.allowedFiles ?? [])) };
 }
 
 // ── the request ────────────────────────────────────────────────────────────
@@ -861,7 +888,7 @@ export async function landCommitChange(i: CommitLandInput): Promise<CommitLandOu
     const bad = [...new Set([...forbidden, ...outside])];
     return finish(
       { result: "refused", reason: `the change touches ${bad.join(", ")}`, paths },
-      `${code(s.command.join(" "))} changed ${bad.map(code).join(", ")}, which ${s.name} may not change (it may change ${s.allowed.map(code).join(", ")}, and never CI, chant's settings and state, code owners, agent instructions or git settings), so nothing was pushed.`,
+      `${code(s.command.join(" "))} changed ${bad.map(code).join(", ")}, which ${s.name} may not change (it may change ${[...s.allowed, ...s.allowedFiles].map(code).join(", ")}, and never CI, chant's settings and state, code owners, agent instructions or git settings), so nothing was pushed.`,
     );
   }
 

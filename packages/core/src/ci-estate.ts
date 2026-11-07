@@ -28,7 +28,6 @@ import type { ReportPut } from "./pr-report-url";
 import { sendOtlpGauges, type OtlpGaugesSent } from "./otlp-metrics";
 import type { OtlpFetch } from "./otlp";
 import { buildDelivery, deliveryGauges, type Dora } from "./ci-estate/delivery";
-import { NEXT_RELEASE } from "./release-floors";
 import { ledgerOverdue, type DriftSchedule, type LedgerOverdue } from "./ci-estate/overdue";
 import { buildEstate, ESTATE_FILES, renderEstateHtml, type Estate, type EstateSections } from "./ci-estate/page";
 import { estateRows, type EstateRowOptions, type EstateRows, type EstateTables } from "./ci-estate/rows";
@@ -37,7 +36,7 @@ import { estateRows, type EstateRowOptions, type EstateRows, type EstateTables }
 export const CI_ESTATE_FLOOR = "0.124.55";
 
 /** The first chant with `buildRecordDelivery`: delivery metrics from a product's report index and audit trail (#4612). Products feature-detect on it. */
-export const CI_ESTATE_RECORDS_FLOOR = NEXT_RELEASE;
+export const CI_ESTATE_RECORDS_FLOOR = "0.124.72";
 
 export { estateRows, type ApprovedApply, type DriftRun, type EstateRowOptions, type EstateRows, type EstateTables, type GateLine, type PrEnvLine, type WaveJob } from "./ci-estate/rows";
 export {

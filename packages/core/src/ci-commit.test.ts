@@ -166,7 +166,7 @@ describe("settings", () => {
     expect(commitSettingsFromEnv(commitSettingsEnv(s), "plywood")).toEqual(s);
     expect(commitSettingsFromEnv(commitSettingsEnv(settings({ mergeBase: true })), "plywood").mergeBase).toBe(true);
     const bad = (spec: Partial<OpCommitSpec>) => () => settings(spec);
-    expect(bad({ allowed: [] })).toThrow(/allowed names at least one path/);
+    expect(bad({ allowed: [] })).toThrow(/allowed or allowedFiles names at least one path/);
     expect(bad({ allowed: ["../x"] })).toThrow(/paths from the repository root/);
     expect(bad({ command: [] })).toThrow(/command is an argv/);
     expect(bad({ command: ["-rf"] })).toThrow(/command is an argv/);
@@ -260,6 +260,27 @@ describe("the comment trigger", () => {
       expect(sh(["rev-parse", "refs/heads/feature"], w.r.origin).trim()).toBe(w.r.head);
       expect(w.replies[0]).toContain("which plywood-fmt may not change");
     }
+  });
+
+  test("allowedFiles lets a matching file in any directory through, and still refuses another file and a guarded path (#4758)", async () => {
+    const byName = () => settings({ allowed: [], allowedFiles: ["*.tf", "terragrunt.hcl"] });
+    const ok = world();
+    const { out } = await cycle(ok, byName(), { command: formatter({ "envs/prod/vpc/main.tf": "a=1\n", "live/terragrunt.hcl": "x=1\n" }) });
+    expect(out.result).toBe("pushed");
+    for (const extra of [{ "notes.md": "x\n" }, { ".github/workflows/x.tf": "x\n" }, { "main.tfstate": "{}\n" }] as Record<string, string>[]) {
+      const w = world();
+      const { out: refused } = await cycle(w, byName(), { command: formatter(extra) });
+      expect(refused.result).toBe("refused");
+      expect(refused.reason).toContain(Object.keys(extra)[0]!);
+      expect(sh(["rev-parse", "refs/heads/feature"], w.r.origin).trim()).toBe(w.r.head);
+    }
+  });
+
+  test("allowedFiles round-trips through the job's variables and refuses a path or nothing at all", () => {
+    const s = settings({ allowed: [], allowedFiles: ["*.tf"] });
+    expect(commitSettingsFromEnv(commitSettingsEnv(s), "plywood").allowedFiles).toEqual(["*.tf"]);
+    expect(() => settings({ allowedFiles: ["modules/*.tf"] })).toThrow(/allowedFiles are file names/);
+    expect(() => settings({ allowed: [], allowedFiles: [] })).toThrow(/allowed or allowedFiles/);
   });
 
   test("a command that fails pushes nothing", async () => {
