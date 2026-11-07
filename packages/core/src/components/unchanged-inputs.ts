@@ -59,7 +59,6 @@
 
 import { execFileSync, spawnSync } from "node:child_process";
 import type { ComponentInputs } from "./component";
-import { NEXT_RELEASE } from "../release-floors";
 import type { Release } from "../lifecycle/release-store";
 import type { ReleaseRecord, ReleaseRecordInput, RunOrigin } from "../lifecycle/release-ledger";
 import { releaseTemplatesDigest } from "./release-promote";
@@ -68,7 +67,7 @@ import { releaseTemplatesDigest } from "./release-promote";
 export const UNCHANGED_INPUTS_FLOOR = "0.124.65";
 
 /** The first chant that reads `inputs.normalize` and writes `normalizedInputs` on a skip record (#4718). */
-export const NORMALIZED_INPUTS_FLOOR = NEXT_RELEASE;
+export const NORMALIZED_INPUTS_FLOOR = "0.124.68";
 
 /** A file that differed between the two commits and was the same after a normalization (#4718). */
 export interface NormalizedInput {
