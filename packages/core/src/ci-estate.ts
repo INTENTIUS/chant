@@ -28,6 +28,7 @@ import type { ReportPut } from "./pr-report-url";
 import { sendOtlpGauges, type OtlpGaugesSent } from "./otlp-metrics";
 import type { OtlpFetch } from "./otlp";
 import { buildDelivery, deliveryGauges, type Dora } from "./ci-estate/delivery";
+import { NEXT_RELEASE } from "./release-floors";
 import { ledgerOverdue, type DriftSchedule, type LedgerOverdue } from "./ci-estate/overdue";
 import { buildEstate, ESTATE_FILES, renderEstateHtml, type Estate, type EstateSections } from "./ci-estate/page";
 import { estateRows, type EstateRowOptions, type EstateRows, type EstateTables } from "./ci-estate/rows";
@@ -35,10 +36,15 @@ import { estateRows, type EstateRowOptions, type EstateRows, type EstateTables }
 /** The first chant with `@intentius/chant/ci-estate` (#4612). */
 export const CI_ESTATE_FLOOR = "0.124.55";
 
+/** The first chant with `buildRecordDelivery`: delivery metrics from a product's report index and audit trail (#4612). Products feature-detect on it. */
+export const CI_ESTATE_RECORDS_FLOOR = NEXT_RELEASE;
+
 export { estateRows, type ApprovedApply, type DriftRun, type EstateRowOptions, type EstateRows, type EstateTables, type GateLine, type PrEnvLine, type WaveJob } from "./ci-estate/rows";
 export {
   appliesOf,
   buildDelivery,
+  buildRecordDelivery,
+  recordDriftIncidents,
   deliveryGauges,
   doraMetricNames,
   doraSchema,
@@ -51,8 +57,12 @@ export {
   DORA_MIN_SPAN_SECONDS,
   DORA_WEEKS,
   DRIFT_WINDOW_SECONDS,
+  type DeliveryAuditEntry,
   type DeliveryGauge,
+  type DeliveryIndexRow,
   type DeliveryOptions,
+  type DeliveryRecordSource,
+  type RecordDeliveryOptions,
   type Dora,
   type DoraLeadTime,
   type DoraMetrics,
