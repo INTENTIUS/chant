@@ -111,6 +111,14 @@ export const ChantConfigSchema = z.object({
     publish: z.array(PublishDeclarationSchema).optional(),
     images: z.array(z.object({ name: z.string().min(1), build: z.string().min(1), archive: z.string().min(1) }).strict()).optional(),
     lane: z.string().regex(/^[a-z0-9][a-z0-9-]*$/, "a ci.green lane name: lowercase letters, digits and dashes").optional(),
+    workflow: z.object({
+      trigger: z.enum(["tag", "dispatch"]).optional(),
+      gate: z.enum(["last-green", "head"]).optional(),
+      install: z.string().min(1).optional(),
+      build: z.union([z.string().min(1), z.literal(false)]).optional(),
+      chant: z.string().min(1).optional(),
+      after: z.array(z.string().min(1)).optional(),
+    }).strict().optional(),
   }).optional(),
   // Strict: a misspelt key here would leave Ops on the local runtime with
   // nothing said (#2523).
@@ -388,6 +396,13 @@ export interface ChantConfig {
      * rather than `ci/green/<sha>`.
      */
     lane?: string;
+    /**
+     * The release pipeline `chant release workflow` writes (#4656): a
+     * dispatched release with gate, cut, publish and post-release jobs, the
+     * install and build commands, and the steps after the publish. See
+     * {@link import("./workspace/release-workflow").ReleasePipelineConfig}.
+     */
+    workflow?: import("./workspace/release-workflow").ReleasePipelineConfig;
   };
 
   /** Defaults for `chant run` and its subcommands (#2523). */

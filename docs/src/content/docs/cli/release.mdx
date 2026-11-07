@@ -445,6 +445,44 @@ The job checks out the tag and builds what the targets upload. Then it fetches t
 | `--chant <command>` | What runs chant. Default `npx chant`. |
 | `--output <file>` | Write somewhere else. |
 
+A flag wins over the `release.workflow` field it names.
+
+### The whole release from the config
+
+`release.workflow` in the workspace root's `chant.config.ts` renders the rest of the release into the same file ([#4656](https://github.com/INTENTIUS/chant/issues/4656)):
+
+```ts
+release: {
+  workflow: {
+    trigger: "dispatch",
+    gate: "last-green",
+    build: "npm run build",
+    after: ["npm run announce"],
+  },
+  publish: [/* the targets, as before */],
+},
+```
+
+| Field | Meaning |
+|---|---|
+| `trigger` | `tag` (default) publishes on a `release/**` tag, as above. `dispatch` starts the release by hand with its label |
+| `gate` | For `dispatch`: `last-green` (default) cuts the newest green commit at or below the dispatched one; `head` cuts the dispatched commit and refuses it when it is not green |
+| `install`, `build`, `chant` | As the flags. `build: false` builds nothing. The cut runs `build` as its `--build`, and so does the publish job |
+| `after` | Shell lines run once the release is published, with `CHANT_RELEASE_LABEL` set |
+
+With `trigger: "dispatch"` the file has four jobs, and the label is an input of the run (a pipeline variable, `CHANT_RELEASE_LABEL`, on GitLab):
+
+| Job | What it does |
+|---|---|
+| gate | `chant ci last-green --from <dispatched commit>`, honouring `release.lane`, and hands the commit on |
+| cut | Checks the commit out, runs `chant release cut <label> --at <commit> --yes`, which pushes `chant/lifecycle`, and pushes the tag the cut made |
+| publish | Checks the commit out, builds, and publishes, with the security groups' `--require-provenance` and `release verify` as above |
+| after-release | Runs `after`, when there is any |
+
+No tag exists until the gate has passed and the cut has run. On GitLab the jobs follow each other by `needs` in the default stage, so `.gitlab-ci.yml` keeps its own `stages`, and the cut and publish jobs push with `CHANT_RELEASE_TOKEN`, a project access token with `write_repository`, since a job token cannot push.
+
+With `release.images` (see [Images the package pins](#images-the-package-pins)), the publish job runs `chant release images <label>` after fetching `chant/lifecycle` and before the build, and exports `CHANT_RELEASE_DIGESTS`. This holds for either trigger. `after` with the tag trigger adds an after-release job that follows the publish. A config with only `publish` renders the file it always did.
+
 ## release verify
 
 Checks that a release was signed by a key `.chant/allowed_signers` lists ([#4049](https://github.com/INTENTIUS/chant/issues/4049)). It reads the release and its cuts from the local `chant/lifecycle` branch, and the signers file at the release's own commit, with its signed history, as [`chant workspace evidence verify`](/chant/cli/workspace-evidence/) reads the policy at a revision. It fetches nothing and needs no key, so fetch `chant/lifecycle` and the release's commit first.

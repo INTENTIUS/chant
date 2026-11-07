@@ -15,6 +15,17 @@
  * The OIDC permission (`id-token: write`, or GitLab's `id_tokens`) is always
  * there: it costs nothing, and with it what the job uploads carries
  * provenance whether or not the group requires it.
+ *
+ * `release.workflow` in the root's `chant.config.ts` (#4656) renders the
+ * rest of the release from the same file. `trigger: "dispatch"` starts it by
+ * hand with a label, and four jobs follow: the gate names the commit to cut
+ * (`chant ci last-green`, or the dispatched commit itself under `gate:
+ * "head"`), the cut runs `chant release cut <label> --at <commit>` and pushes
+ * the release's tag, the publish job publishes it, and the post-release job
+ * runs `after`. No tag exists until the gate has passed. With
+ * `release.images` (#4657) the publish job builds the images again with
+ * `chant release images` before the build. A config with only `publish`
+ * renders the tag-triggered file it always did.
  */
 import { ACTION_PINS, tagComments, usesRef } from "../action-pins";
 import { GENERATED_MARKER } from "../discovery/files";
@@ -31,6 +42,22 @@ export const RELEASE_WORKFLOW_FILES: Record<ReleaseWorkflowForge, string> = {
   gitlab: ".gitlab/chant-release.yml",
 };
 
+/** `release.workflow` in `chant.config.ts` (#4656): how the release pipeline starts and what it runs. */
+export interface ReleasePipelineConfig {
+  /** `tag` (default): the publish job runs on a `release/**` tag. `dispatch`: the whole release starts by hand with a label. */
+  trigger?: "tag" | "dispatch";
+  /** For `dispatch`: the commit to cut. `last-green` (default) is the newest green commit at or below the dispatched one; `head` is the dispatched commit, which must be green. */
+  gate?: "last-green" | "head";
+  /** The command that installs what the build needs. Default `npm ci`. */
+  install?: string;
+  /** The command that builds what the targets upload, run by the cut (as its `--build`) and the publish job. `false` for none. Default `npm run build`. */
+  build?: string | false;
+  /** What runs chant. Default `npx chant`. */
+  chant?: string;
+  /** Shell lines run after the publish, with `CHANT_RELEASE_LABEL` set: steps that need a published release. */
+  after?: string[];
+}
+
 export interface ReleaseWorkflowInput {
   forge: ReleaseWorkflowForge;
   /** The security groups the workspace opts into at its root. */
@@ -43,6 +70,12 @@ export interface ReleaseWorkflowInput {
   chant?: string;
   /** The workspace root relative to the repository root, `.` at the top. */
   workspaceRoot?: string;
+  /** `release.workflow` (#4656). A flag above wins over the field it names. */
+  pipeline?: ReleasePipelineConfig;
+  /** The config declares `release.images` (#4657): the publish job builds them again first. */
+  images?: boolean;
+  /** `release.lane` (#4692): the gate's green lane. */
+  lane?: string;
 }
 
 /** The flags `chant release publish` gets under the groups. */
@@ -50,16 +83,34 @@ export function publishFlags(groups: ReadonlySet<SecurityGroup>): string[] {
   return [...(groups.has("supply-chain") ? ["--require-provenance"] : []), "--yes"];
 }
 
+/** Where `chant release images` writes the digests the publish job's build reads (#4657). */
+export const RELEASE_DIGESTS_FILE = ".chant/release-digests.json";
+
+/** A string as a single-quoted shell word. */
+function sq(s: string): string {
+  return `'${s.replaceAll("'", "'\\''")}'`;
+}
+
 /** The workflow file's text, without the generated-by header. */
 export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
-  const chant = input.chant ?? "npx chant";
-  const install = input.install ?? "npm ci";
-  const build = input.build === undefined ? "npm run build" : input.build;
+  const p = input.pipeline ?? {};
+  const chant = input.chant ?? p.chant ?? "npx chant";
+  const install = input.install ?? p.install ?? "npm ci";
+  const build = input.build !== undefined ? input.build : p.build === false ? null : (p.build ?? "npm run build");
   const root = input.workspaceRoot && input.workspaceRoot !== "." ? input.workspaceRoot : null;
   const verify = input.groups.has("verified-releases");
   const flags = publishFlags(input.groups).join(" ");
+  const after = p.after ?? [];
+  const images = input.images === true;
+  if (p.trigger === "dispatch") {
+    const o = { chant, install, build, root, verify, flags, after, images, gate: p.gate ?? "last-green", ...(input.lane ? { lane: input.lane } : {}) };
+    return input.forge === "gitlab" ? renderGitlabDispatch(o) : renderGithubDispatch(o);
+  }
+  // #4657: the images are built from the release, so chant/lifecycle is fetched before them and the build after.
+  const imageLines = (label: string, env: string): string[] => [`${chant} release images ${label} -o ${RELEASE_DIGESTS_FILE}`, env];
   if (input.forge === "gitlab") {
     const label = '"${CI_COMMIT_TAG#release/}"';
+    const fetches = ["    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'", "    - git fetch origin chant/lifecycle:chant/lifecycle"];
     const lines = [
       "chant-release-publish:",
       "  rules:",
@@ -70,15 +121,30 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
       "  script:",
       ...(root ? [`    - cd ${root}`] : []),
       `    - ${install}`,
+      ...(images ? [...fetches, ...imageLines(label, `export CHANT_RELEASE_DIGESTS="$PWD/${RELEASE_DIGESTS_FILE}"`).map((l) => `    - ${l}`)] : []),
       ...(build ? [`    - ${build}`] : []),
-      "    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'",
-      "    - git fetch origin chant/lifecycle:chant/lifecycle",
+      ...(images ? [] : fetches),
       ...(verify ? [`    - ${chant} release verify ${label}`] : []),
       `    - ${chant} release publish ${label} ${flags}`,
     ];
+    if (after.length > 0) {
+      lines.push(
+        "",
+        "chant-release-after:",
+        "  rules:",
+        "    - if: $CI_COMMIT_TAG =~ /^release\\//",
+        "  needs: [chant-release-publish]",
+        "  script:",
+        '    - export CHANT_RELEASE_LABEL="${CI_COMMIT_TAG#release/}"',
+        ...(root ? [`    - cd ${root}`] : []),
+        `    - ${install}`,
+        ...after.map((l) => `    - ${l}`),
+      );
+    }
     return `${lines.join("\n")}\n`;
   }
   const label = '"${GITHUB_REF_NAME#release/}"';
+  const fetches = ["      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'", "      - run: git fetch origin chant/lifecycle:chant/lifecycle"];
   const lines = [
     "name: chant release publish",
     "on:",
@@ -92,21 +158,198 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
     "    runs-on: ubuntu-latest",
     ...(root ? ["    defaults:", "      run:", `        working-directory: ${root}`] : []),
     "    steps:",
+    ...githubSetup(),
+    `      - run: ${install}`,
+    ...(images ? [...fetches, ...imageLines(label, `echo "CHANT_RELEASE_DIGESTS=$PWD/${RELEASE_DIGESTS_FILE}" >> "$GITHUB_ENV"`).map((l) => `      - run: ${l}`)] : []),
+    ...(build ? [`      - run: ${build}`] : []),
+    ...(images ? [] : fetches),
+    ...(verify ? [`      - run: ${chant} release verify ${label}`] : []),
+    `      - run: ${chant} release publish ${label} ${flags}`,
+  ];
+  if (after.length > 0) {
+    lines.push(
+      "  after-release:",
+      "    needs: publish",
+      "    runs-on: ubuntu-latest",
+      ...(root ? ["    defaults:", "      run:", `        working-directory: ${root}`] : []),
+      "    steps:",
+      ...githubSetup(),
+      '      - run: echo "CHANT_RELEASE_LABEL=${GITHUB_REF_NAME#release/}" >> "$GITHUB_ENV"',
+      `      - run: ${install}`,
+      ...after.map((l) => `      - run: ${l}`),
+    );
+  }
+  return tagComments(`${lines.join("\n")}\n`);
+}
+
+/** The checkout and node setup a GitHub or Forgejo job starts with; `ref` checks out that commit. */
+function githubSetup(ref?: string): string[] {
+  return [
     `      - uses: ${usesRef(ACTION_PINS.checkout4)}`,
     "        with:",
+    ...(ref ? [`          ref: ${ref}`] : []),
     "          fetch-depth: 0",
     `      - uses: ${usesRef(ACTION_PINS.setupNode4)}`,
     "        with:",
     "          node-version: 24",
     "          registry-url: https://registry.npmjs.org",
-    `      - run: ${install}`,
-    ...(build ? [`      - run: ${build}`] : []),
-    "      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'",
-    "      - run: git fetch origin chant/lifecycle:chant/lifecycle",
-    ...(verify ? [`      - run: ${chant} release verify ${label}`] : []),
-    `      - run: ${chant} release publish ${label} ${flags}`,
   ];
+}
+
+interface DispatchInput {
+  chant: string;
+  install: string;
+  build: string | null;
+  root: string | null;
+  verify: boolean;
+  flags: string;
+  after: string[];
+  images: boolean;
+  gate: "last-green" | "head";
+  lane?: string;
+}
+
+/** The node one-liner that prints a JSON document's field from stdin, or from the file its argument names. */
+const field = (path: string): string =>
+  `node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(${path}??""))'`;
+
+/** The gate's shell: the commit to cut, from `ci last-green`, refused when there is none or, under `head`, when it is not the dispatched one. */
+function gateScript(o: DispatchInput, dispatched: string): string[] {
+  return [
+    `commit="$(${o.chant} ci last-green --from "${dispatched}"${o.lane ? ` --lane ${o.lane}` : ""} --json | ${field("d.commit?.sha")})"`,
+    `if [ -z "$commit" ]; then echo "no green commit at or below ${dispatched}, so no release is cut" >&2; exit 1; fi`,
+    ...(o.gate === "head" ? [`if [ "$commit" != "${dispatched}" ]; then echo "${dispatched} is not green (the newest green commit below it is $commit), so no release is cut" >&2; exit 1; fi`] : []),
+  ];
+}
+
+/** The cut's shell: cut the label at the gate's commit, then push the tag the cut made. */
+function cutScript(o: DispatchInput, out: string): string[] {
+  return [
+    'git config user.name "chant release"',
+    'git config user.email "chant-release@localhost"',
+    `${o.chant} release cut "$CHANT_RELEASE_LABEL" --at "$CHANT_RELEASE_COMMIT" --yes${o.build ? ` --build ${sq(o.build)}` : ""}${o.lane ? ` --lane ${o.lane}` : ""} --json > ${out}`,
+    `tag="$(${field("d.tag?.name")} ${out})"`,
+    'if [ -n "$tag" ]; then git push origin "refs/tags/$tag"; fi',
+  ];
+}
+
+/** GitHub and Forgejo: the release started by hand with a label (#4656). */
+function renderGithubDispatch(o: DispatchInput): string {
+  const defaults = o.root ? ["    defaults:", "      run:", `        working-directory: ${o.root}`] : [];
+  const commit = "${{ needs.gate.outputs.commit }}";
+  const fetches = ["      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'", "      - run: git fetch origin chant/lifecycle:chant/lifecycle"];
+  const block = (lines: string[]): string[] => ["      - run: |", ...lines.map((l) => `          ${l}`)];
+  const lines = [
+    "name: chant release",
+    "on:",
+    "  workflow_dispatch:",
+    "    inputs:",
+    "      label:",
+    "        description: The release's label, such as v1.4.0",
+    "        required: true",
+    "        type: string",
+    "permissions:",
+    "  contents: write",
+    "  id-token: write",
+    "concurrency:",
+    "  group: chant-release",
+    "  cancel-in-progress: false",
+    "env:",
+    "  CHANT_RELEASE_LABEL: ${{ inputs.label }}",
+    "jobs:",
+    "  gate:",
+    "    runs-on: ubuntu-latest",
+    ...defaults,
+    "    outputs:",
+    "      commit: ${{ steps.green.outputs.commit }}",
+    "    steps:",
+    ...githubSetup(),
+    `      - run: ${o.install}`,
+    fetches[0]!,
+    "      - id: green",
+    "        run: |",
+    ...[...gateScript(o, "$GITHUB_SHA"), 'echo "commit=$commit" >> "$GITHUB_OUTPUT"'].map((l) => `          ${l}`),
+    "  cut:",
+    "    needs: gate",
+    "    runs-on: ubuntu-latest",
+    ...defaults,
+    "    env:",
+    `      CHANT_RELEASE_COMMIT: ${commit}`,
+    "    steps:",
+    ...githubSetup(commit),
+    `      - run: ${o.install}`,
+    ...fetches,
+    ...block(cutScript(o, '"$RUNNER_TEMP/chant-cut.json"')),
+    "  publish:",
+    "    needs: [gate, cut]",
+    "    runs-on: ubuntu-latest",
+    ...defaults,
+    "    steps:",
+    ...githubSetup(commit),
+    `      - run: ${o.install}`,
+    ...fetches,
+    ...(o.images ? [`      - run: ${o.chant} release images "$CHANT_RELEASE_LABEL" -o ${RELEASE_DIGESTS_FILE}`, `      - run: echo "CHANT_RELEASE_DIGESTS=$PWD/${RELEASE_DIGESTS_FILE}" >> "$GITHUB_ENV"`] : []),
+    ...(o.build ? [`      - run: ${o.build}`] : []),
+    ...(o.verify ? [`      - run: ${o.chant} release verify "$CHANT_RELEASE_LABEL"`] : []),
+    `      - run: ${o.chant} release publish "$CHANT_RELEASE_LABEL" ${o.flags}`,
+  ];
+  if (o.after.length > 0) {
+    lines.push("  after-release:", "    needs: [gate, publish]", "    runs-on: ubuntu-latest", ...defaults, "    steps:", ...githubSetup(commit), `      - run: ${o.install}`, ...o.after.map((l) => `      - run: ${l}`));
+  }
   return tagComments(`${lines.join("\n")}\n`);
+}
+
+/**
+ * GitLab: the release started from "Run pipeline" with `CHANT_RELEASE_LABEL`
+ * set (#4656). The jobs follow each other by `needs`, in the file's default
+ * stage, so the including `.gitlab-ci.yml` keeps its own `stages`. A job
+ * token cannot push, so the cut and publish jobs push with
+ * `CHANT_RELEASE_TOKEN`, a project access token with `write_repository`.
+ */
+function renderGitlabDispatch(o: DispatchInput): string {
+  const cd = o.root ? [`cd ${o.root}`] : [];
+  const fetches = ["git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'", "git fetch origin chant/lifecycle:chant/lifecycle"];
+  const auth = [
+    `chant_auth="$(printf 'oauth2:%s' "$CHANT_RELEASE_TOKEN" | base64 | tr -d '\\n')"`,
+    'export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $chant_auth"',
+    "unset chant_auth",
+  ];
+  const job = (name: string, needs: string[], script: string[], extra: string[] = []): string[] => [
+    `${name}:`,
+    "  rules:",
+    '    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/',
+    "  variables:",
+    '    GIT_DEPTH: "0"',
+    ...(needs.length > 0 ? [`  needs: [${needs.join(", ")}]`] : []),
+    ...extra,
+    "  script:",
+    ...script.map((l) => `    - ${JSON.stringify(l)}`),
+  ];
+  const checkout = ['git checkout --detach "$CHANT_RELEASE_COMMIT"'];
+  const lines = [
+    ...job("chant-release-gate", [], [...cd, o.install, fetches[0]!, ...gateScript(o, "$CI_COMMIT_SHA"), 'echo "CHANT_RELEASE_COMMIT=$commit" > "$CI_PROJECT_DIR/chant-release-gate.env"'], ["  artifacts:", "    reports:", "      dotenv: chant-release-gate.env"]),
+    "",
+    ...job("chant-release-cut", ["chant-release-gate"], [...checkout, ...cd, o.install, ...fetches, ...auth, ...cutScript(o, "/tmp/chant-cut.json")]),
+    "",
+    ...job(
+      "chant-release-publish",
+      ["chant-release-gate", "chant-release-cut"],
+      [
+        ...checkout,
+        ...cd,
+        o.install,
+        ...fetches,
+        ...auth,
+        ...(o.images ? [`${o.chant} release images "$CHANT_RELEASE_LABEL" -o ${RELEASE_DIGESTS_FILE}`, `export CHANT_RELEASE_DIGESTS="$PWD/${RELEASE_DIGESTS_FILE}"`] : []),
+        ...(o.build ? [o.build] : []),
+        ...(o.verify ? [`${o.chant} release verify "$CHANT_RELEASE_LABEL"`] : []),
+        `${o.chant} release publish "$CHANT_RELEASE_LABEL" ${o.flags}`,
+      ],
+      ["  id_tokens:", "    SIGSTORE_ID_TOKEN:", "      aud: sigstore"],
+    ),
+  ];
+  if (o.after.length > 0) lines.push("", ...job("chant-release-after", ["chant-release-gate", "chant-release-publish"], [...checkout, ...cd, o.install, ...o.after]));
+  return `${lines.join("\n")}\n`;
 }
 
 /** The header that marks the file generated, naming the command that regenerates it. */
@@ -144,10 +387,23 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
   }
   const groups = securityGroupsAt(root);
   const workspaceRoot = relative(repoRoot, root).split(sep).join("/") || ".";
+  // #4656: release.workflow, release.images and release.lane in the root's chant.config.ts.
+  let release: import("../config").ChantConfig["release"];
+  try {
+    const { loadChantConfig } = await import("../config");
+    release = (await loadChantConfig(root)).config.release;
+  } catch (err) {
+    console.error(formatError({ message: `chant.config.ts at the workspace root could not be read: ${err instanceof Error ? err.message : String(err)}`, hint: usage }));
+    return 1;
+  }
   const text = renderReleaseWorkflow({
     forge,
     groups,
     workspaceRoot,
+    ...(release?.workflow ? { pipeline: release.workflow } : {}),
+    // release.images (#4657) is read loosely, so this file renders with a config of either shape.
+    ...(((release as { images?: unknown[] } | undefined)?.images?.length ?? 0) > 0 ? { images: true } : {}),
+    ...(release?.lane ? { lane: release.lane } : {}),
     ...(args.ciInstall ? { install: args.ciInstall } : {}),
     ...(args.buildCommand ? { build: args.buildCommand } : {}),
     ...(args.ciChant ? { chant: args.ciChant } : {}),
@@ -162,7 +418,9 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
   writeFileSync(target, releaseWorkflowHeader(parts.map(shellArg).join(" ")) + text);
   const shown = relative(process.cwd(), target).split(sep).join("/") || target;
   const extras = [groups.has("supply-chain") ? "requires OIDC provenance (supply-chain)" : null, groups.has("verified-releases") ? "verifies the release first (verified-releases)" : null].filter(Boolean);
-  console.log(formatSuccess(`Wrote ${shown}: publishes the release a release/** tag names${extras.length > 0 ? `, and ${extras.join(" and ")}` : ""}.`));
+  const what = release?.workflow?.trigger === "dispatch" ? "cuts and publishes a release started by hand with its label, from a green commit" : "publishes the release a release/** tag names";
+  console.log(formatSuccess(`Wrote ${shown}: ${what}${extras.length > 0 ? `, and ${extras.join(" and ")}` : ""}.`));
   if (forge === "gitlab") console.log(`Include it from .gitlab-ci.yml: include: [{ local: ${RELEASE_WORKFLOW_FILES.gitlab} }]`);
+  if (forge === "gitlab" && release?.workflow?.trigger === "dispatch") console.log("The cut and publish jobs push with CHANT_RELEASE_TOKEN: a project access token with write_repository, as a masked CI/CD variable.");
   return 0;
 }
