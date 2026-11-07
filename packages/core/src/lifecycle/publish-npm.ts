@@ -59,12 +59,13 @@ import { join } from "node:path";
 import { packageSbom } from "./publish-attachments";
 import type { NpmPublishDeclaration } from "./publish-declaration";
 import { checkReleaseDigest, fileDigest, isDir, memberFile, publishTargetKey } from "./publish-targets";
+import { readPins, unknownPins } from "./release-images";
 import { NPM_STAGE_TAG, PublishTargetError, type PublishContext, type PublishDeps, type PublishItem, type PublishTarget } from "./release-publish";
 
 /** npm's output when a publish could not authenticate, as publish-packages.sh matches it. */
 const NPM_AUTH_FAILED = /ENEEDAUTH|E401|need auth/;
 
-interface NpmPackage {
+export interface NpmPackage {
   path: string;
   abs: string;
   name: string;
@@ -169,6 +170,30 @@ const NPM_VIEW_NOT_YET = /\bE404\b|\b404 Not Found\b|is not in (this|the npm) re
 /** npm's errors for a version the registry does not serve yet. */
 const NPM_NOT_SERVED = /\b(ETARGET|ERESOLVE|notarget)\b|No matching version found/;
 
+/**
+ * #4657: refuse a package whose `pins` file holds an image digest the release
+ * does not record, and a target none of whose packages has the file. Read
+ * by the plan, so nothing is published, and by `chant release verify`.
+ */
+export function checkPackagePins(decl: Pick<NpmPublishDeclaration, "pins">, release: PublishContext["release"], pkgs: ReadonlyArray<Pick<NpmPackage, "path" | "abs" | "name">>): void {
+  if (!decl.pins) return;
+  let found = 0;
+  for (const pkg of pkgs) {
+    const text = readPins(pkg.abs, decl.pins, isDir(pkg.abs));
+    if (text === null) continue;
+    found++;
+    const unknown = unknownPins(text, release);
+    if (unknown.length > 0) {
+      throw new PublishTargetError(
+        "publish-npm-pin-unknown",
+        `${pkg.name} (${pkg.path}) pins ${unknown.join(", ")} in ${decl.pins}, which release ${release.releaseDigest} does not record as an image`,
+        "Build the package from the digests the cut wrote (CHANT_RELEASE_DIGESTS, or chant release images <label>), or cut a new release.",
+      );
+    }
+  }
+  if (found === 0) throw new PublishTargetError("publish-npm-pins-missing", `no package of the npm target holds ${decl.pins}, which pins names`, "Build the package so it carries the file, or remove pins.");
+}
+
 export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): PublishTarget {
   const bin = deps.npm ?? "npm";
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
@@ -218,7 +243,11 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
       rmSync(dir, { recursive: true, force: true });
     }
   };
-  const read = (ctx: PublishContext) => decl.packages.map((p) => readPackage(ctx, p, decl.sbom));
+  const read = (ctx: PublishContext) => {
+    const pkgs = decl.packages.map((p) => readPackage(ctx, p, decl.sbom));
+    checkPackagePins(decl, ctx.release, pkgs);
+    return pkgs;
+  };
   const extra = (pkg: NpmPackage) => ({ ...(pkg.digest ? { digest: pkg.digest } : {}), ...(pkg.sbom ? { sbom: pkg.sbom } : {}) });
   const plan = async (ctx: PublishContext): Promise<PublishItem[]> =>
     read(ctx).map((pkg) => ({ name: `${pkg.name}@${pkg.version}`, destination: staging ? `${shown(NPM_STAGE_TAG)}, then ${revealTag(ctx)}` : shown(revealTag(ctx)), ...extra(pkg) }));

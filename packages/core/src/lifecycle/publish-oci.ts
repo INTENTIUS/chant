@@ -288,6 +288,16 @@ export function ociTags(decl: OciPublishDeclaration, ctx: Pick<PublishContext, "
   return declared.filter((t) => ctx.label !== null || !t.includes("{label}")).map((t) => t.split("{label}").join(ctx.label ?? ""));
 }
 
+/** The digest an OCI archive (a layout directory or a tar file of one) is pushed under: its top manifest's (#4657). */
+export function ociArchiveDigest(abs: string): string {
+  const layout = readLayout(abs);
+  try {
+    return layout.top.digest;
+  } finally {
+    layout.cleanup();
+  }
+}
+
 export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): PublishTarget {
   const repo = parseRepository(decl.repository);
   const fetchImpl: PublishFetch = deps.fetch ?? ((url, init) => fetch(url, init as RequestInit));

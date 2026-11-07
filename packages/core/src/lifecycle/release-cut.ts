@@ -112,6 +112,8 @@ export type ReleaseCutCode =
   | "release-build-inputs-differ"
   | "release-image-invalid"
   | "release-image-unknown-component"
+  | "release-image-name-taken"
+  | "release-image-build-failed"
   | "release-unsigned"
   | "release-signer-refused"
   | "declaration-invalid";
@@ -171,6 +173,12 @@ export interface CutRequest {
    * image, and the cut builds nothing for it.
    */
   images?: Readonly<Record<string, string>>;
+  /**
+   * Build the images `release.images` declares (#4657), before any
+   * environment is compiled, so the build command can read their digests.
+   * Given the commit being cut; returns each as an image artifact.
+   */
+  buildImages?: (commit: string) => Promise<ReleaseArtifact[]> | ReleaseArtifact[];
 }
 
 export interface CutResult {
@@ -462,6 +470,9 @@ async function prepare(req: CutRequest, record = false): Promise<Prepared> {
     );
   }
 
+  // #4657: the images first, so the build command that packs a package can pin their digests.
+  const builtImages = req.buildImages ? await req.buildImages(commit) : [];
+
   const compiled: CompiledTarget[] = [];
   for (const env of envs) compiled.push(await req.compiler.compile(env));
 
@@ -499,6 +510,11 @@ async function prepare(req: CutRequest, record = false): Promise<Prepared> {
     handedArtifacts.push(artifact);
   }
   const handedTo = new Set(handedArtifacts.map((a) => a.component));
+  for (const image of builtImages) {
+    if (enabled.has(image.component) || handedTo.has(image.component)) {
+      throw new ReleaseCutError("release-image-name-taken", `release.images names "${image.component}", which is also a component of this member, and a release records one image per name`, "Rename the image in release.images.");
+    }
+  }
 
   // Which environment each component's artifacts are built in: the first one it is enabled in.
   const firstEnv = new Map<string, CompiledTarget>();
@@ -510,7 +526,7 @@ async function prepare(req: CutRequest, record = false): Promise<Prepared> {
   const realCwd = realpathSync(cwd);
   const previous = firstEnv.size > 0 ? await previousRelease(top, commit, cwd) : undefined;
   const reused: CutResult["reused"] = [];
-  const artifacts: ReleaseArtifact[] = [...handedArtifacts];
+  const artifacts: ReleaseArtifact[] = [...handedArtifacts, ...builtImages];
   const toBuild = new Map<string, string[]>();
   for (const [component, target] of firstEnv) {
     const prior = previous?.artifactDigests.filter((a) => a.component === component) ?? [];

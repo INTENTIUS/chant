@@ -526,6 +526,11 @@ Releases:
   release verify <label|digest> [--json]
                         Check, offline, that the release was signed by a key
                         .chant/allowed_signers lists at the release's commit.
+  release images <label|digest> [-o <file>] [--json]
+                        Build the images release.images declares again from
+                        the release's commit, refuse one whose digest is not
+                        the recorded one, and write the recorded digests to
+                        the file CHANT_RELEASE_DIGESTS names for the build.
   release workflow [--forge github|gitlab|forgejo] [--install <command>]
               [--build <command>] [--chant <command>] [--output <file>]
                         Write the publish workflow, run on a release/** tag.
@@ -1876,6 +1881,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "release publish", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleasePublish(ctx) },
   // #4049: check a release's signature offline.
   { name: "release verify", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseVerify(ctx) },
+  // #4657: build a release's images again in its publish job, checked against the digests it records.
+  { name: "release images", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseImages(ctx) },
   { name: "release workflow", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/release-workflow")).runReleaseWorkflow(ctx) },
   // #4168 4.3: mode (b), chosen changes composed onto a base on chant/compose/<name>.
   { name: "release compose", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseCompose(ctx) },
