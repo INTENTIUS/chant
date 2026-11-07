@@ -1,43 +1,100 @@
-#!/bin/sh
-set -e
+#!/usr/bin/env node
+// The `chant` command. A node script rather than a shell script so that npm's
+// Windows shim, which runs a bin through the interpreter its shebang names,
+// can start it: Windows has no /bin/sh (#4734). ESM, as the package is
+// "type": "module".
+import { spawn } from "node:child_process";
+import { existsSync, realpathSync } from "node:fs";
+import { constants } from "node:os";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-# Resolve symlinks to find the real script location
-SELF="$0"
-while [ -L "$SELF" ]; do
-  DIR="$(cd "$(dirname "$SELF")" && pwd)"
-  SELF="$(readlink "$SELF")"
-  case "$SELF" in /*) ;; *) SELF="$DIR/$SELF" ;; esac
-done
-SCRIPT_DIR="$(cd "$(dirname "$SELF")" && pwd)"
-MAIN_TS="$SCRIPT_DIR/../src/cli/main.ts"
-MAIN_JS="$SCRIPT_DIR/../dist/cli/main.js"
+// The real location of this script, with any symlink (npm's .bin link, a
+// global install, a symlinked checkout) resolved.
+const binDir = dirname(realpathSync(fileURLToPath(import.meta.url)));
+const pkgDir = resolve(binDir, "..");
+const mainJs = resolve(pkgDir, "dist", "cli", "main.js");
+const mainTs = resolve(pkgDir, "src", "cli", "main.ts");
+const args = process.argv.slice(2);
 
-# An installed package runs the compiled CLI with plain node (#3878): no
-# loader, so nothing of chant's own is transpiled on the way in. tsx loads
-# later, only when the command imports TypeScript (a chant.config.ts, project
-# source, a lexicon). A source checkout (tsconfig.build.json is not published)
-# always runs src/, so a dist/ left over from an earlier build never goes
-# stale under it.
-if [ -f "$MAIN_JS" ] && [ ! -f "$SCRIPT_DIR/../tsconfig.build.json" ]; then
-  exec node "$MAIN_JS" "$@"
-fi
+// An installed package runs the compiled CLI with plain node (#3878): no
+// loader, so nothing of chant's own is transpiled on the way in. tsx loads
+// later, only when the command imports TypeScript (a chant.config.ts, project
+// source, a lexicon). A source checkout (tsconfig.build.json is not published)
+// always runs src/, so a dist/ left over from an earlier build never goes
+// stale under it.
+//
+// The CLI runs in this process, as `exec node main.js` ran it in the one the
+// shell script became. main.js runs only when it is the entry point
+// (process.argv[1], see isEntryPoint), and anything that starts chant again
+// reads process.argv[1] and process.execArgv, so argv[1] names main.js.
+if (existsSync(mainJs) && !existsSync(resolve(pkgDir, "tsconfig.build.json"))) {
+  process.argv[1] = mainJs;
+  await import(pathToFileURL(mainJs).href);
+} else {
+  runFromSource();
+}
 
-# From source, every chant package resolves through its `development` export
-# condition to src/*.ts (#3981). A lexicon's `default` is the dist/*.js it
-# publishes, which a checkout may not have built or may have built from older
-# source. Child processes that reuse process.execArgv inherit the flag.
-#
-# tsx is our own dependency, so register its hooks in this node process rather
-# than shelling `npx tsx`, which resolves a bin and then spawns a second node.
-# Worth ~30% of startup (#2481). Nested install first, then hoisted; npx stays
-# as the fallback for any layout neither guess covers.
-for CANDIDATE in \
-  "$SCRIPT_DIR/../node_modules/tsx/dist/loader.mjs" \
-  "$SCRIPT_DIR/../../../tsx/dist/loader.mjs"
-do
-  if [ -f "$CANDIDATE" ]; then
-    exec node --conditions=development --import "file://$CANDIDATE" "$MAIN_TS" "$@"
-  fi
-done
+/**
+ * From source, every chant package resolves through its `development` export
+ * condition to src/*.ts (#3981). A lexicon's `default` is the dist/*.js it
+ * publishes, which a checkout may not have built or may have built from older
+ * source. Child processes that reuse process.execArgv inherit the flag.
+ *
+ * Node takes the condition and tsx's loader only on its command line, so this
+ * starts a second node. tsx is our own dependency, so its loader is passed
+ * straight to node rather than going through `npx tsx`, which resolves a bin
+ * and then spawns another node (#2481). Nested install first, then hoisted;
+ * npx stays as the fallback for any layout neither guess covers.
+ */
+function runFromSource() {
+  const loader = [
+    resolve(binDir, "..", "node_modules", "tsx", "dist", "loader.mjs"),
+    resolve(binDir, "..", "..", "..", "tsx", "dist", "loader.mjs"),
+  ].find((candidate) => existsSync(candidate));
 
-exec npx tsx --conditions=development "$MAIN_TS" "$@"
+  if (loader) {
+    relay(process.execPath, ["--conditions=development", "--import", pathToFileURL(loader).href, mainTs, ...args]);
+  } else if (process.platform === "win32") {
+    // npx is npx.cmd on Windows, which node starts only through a shell.
+    const quote = (arg) => (/^[\w./:=@\\-]+$/.test(arg) ? arg : `"${arg.replace(/"/g, '""')}"`);
+    relay("npx", ["tsx", "--conditions=development", mainTs, ...args].map(quote), { shell: true });
+  } else {
+    relay("npx", ["tsx", "--conditions=development", mainTs, ...args]);
+  }
+}
+
+/**
+ * Run a command with this process's stdio, pass it the signals this process
+ * gets, and end this process the way the command ended: its exit code, or
+ * the signal that killed it.
+ */
+function relay(command, commandArgs, options = {}) {
+  const child = spawn(command, commandArgs, { stdio: "inherit", ...options });
+  // A signal sent to this process by pid reaches the CLI too. A terminal's
+  // Ctrl-C goes to both processes, so the CLI can get its SIGINT twice;
+  // chant's SIGINT handlers stop on the first and ignore a repeat. SIGUSR1
+  // starts node's inspector and is left alone, and a resize (SIGWINCH)
+  // reaches the CLI from the terminal itself.
+  const signals = process.platform === "win32" ? ["SIGINT", "SIGTERM"] : ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"];
+  const forward = (signal) => {
+    if (child.exitCode === null && child.signalCode === null) child.kill(signal);
+  };
+  for (const signal of signals) process.on(signal, forward);
+
+  child.on("error", (err) => {
+    console.error(`chant: could not start ${command}: ${err.message}`);
+    process.exit(127);
+  });
+  child.on("exit", (code, signal) => {
+    for (const s of signals) process.off(s, forward);
+    if (signal) {
+      process.kill(process.pid, signal);
+      // If the signal does not end this process (Windows has no signals to
+      // raise), exit with the code a shell gives a process it ended.
+      process.exit(128 + (constants.signals[signal] ?? 1));
+      return;
+    }
+    process.exit(code ?? 1);
+  });
+}
