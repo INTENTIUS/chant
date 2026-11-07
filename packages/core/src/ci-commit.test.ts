@@ -102,11 +102,13 @@ interface World {
   heads: () => PullRequestHead & { base?: string };
   approvals: Map<string, string>;
   canWrite: boolean;
+  /** The open pull request whose head is `feature`, for a check that runs on push. */
+  pushPr?: number;
 }
 
 function world(): World {
   const r = repo();
-  const w: World = { r, records: [], replies: [], approvals: new Map(), canWrite: true, heads: () => ({ sha: sh(["rev-parse", "refs/heads/feature"], r.origin).trim(), branch: "feature", open: true, sameRepo: true, base: "main" }) };
+  const w: World = { r, records: [], replies: [], approvals: new Map(), canWrite: true, pushPr: 7, heads: () => ({ sha: sh(["rev-parse", "refs/heads/feature"], r.origin).trim(), branch: "feature", open: true, sameRepo: true, base: "main" }) };
   return w;
 }
 
@@ -115,6 +117,7 @@ async function cycle(w: World, s: CommitSettings, o: { event?: unknown; command?
   const forge = {
     pullRequestHead: async () => w.heads(),
     userCanWrite: async () => w.canWrite,
+    findPullRequest: async (head: string) => (head === "feature" && w.pushPr ? ({ number: w.pushPr, title: "", body: "", head, base: "main" } as never) : undefined),
     addComment: async (_pr: number, body: string) => {
       w.replies.push(body);
       return { url: "" } as never;
@@ -319,6 +322,32 @@ describe("the check trigger", () => {
     expect(out.result).toBe("refused");
     expect(out.reason).toContain("approved by bo");
     expect(sh(["rev-parse", "refs/heads/feature"], w.r.origin).trim()).toBe(w.r.head);
+  });
+
+  test("a check that runs on push finds the branch's open pull request, and a branch with none is skipped silently", async () => {
+    const w = world();
+    const push = { GITHUB_EVENT_NAME: "push", GITHUB_REF: "refs/heads/feature" };
+    const { out } = await cycle(w, check(), { event: { ref: "refs/heads/feature" }, env: push });
+    expect(out.result).toBe("pushed");
+    expect(w.replies).toHaveLength(1);
+
+    const none = world();
+    none.pushPr = undefined;
+    const { decision, out: skipped } = await cycle(none, check(), { event: { ref: "refs/heads/feature" }, env: push });
+    expect(decision).toMatchObject({ go: false, stop: "skipped", reason: "feature has no open pull request" });
+    expect(skipped.result).toBe("skipped");
+    expect(none.replies).toHaveLength(0);
+    expect(sh(["rev-parse", "refs/heads/feature"], none.r.origin).trim()).toBe(none.r.head);
+  });
+
+  test("a GitLab branch pipeline reads its merge request from CI_OPEN_MERGE_REQUESTS, this project's only", async () => {
+    const w = world();
+    const env = { GITLAB_CI: "true", CI_PROJECT_PATH: "acme/infra", CI_OPEN_MERGE_REQUESTS: "fork/infra!3,acme/infra!7" };
+    const { out } = await cycle(w, check(), { event: {}, env });
+    expect(out.result).toBe("pushed");
+    const other = world();
+    const { out: skipped } = await cycle(other, check(), { event: {}, env: { ...env, CI_OPEN_MERGE_REQUESTS: "fork/infra!7" } });
+    expect(skipped.result).toBe("skipped");
   });
 
   test("reads the merge request on GitLab", async () => {

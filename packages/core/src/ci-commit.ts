@@ -278,7 +278,7 @@ export function commitRequestFromRun(words: CiProductWords, s: Pick<CommitSettin
   const gitlab = env.GITLAB_CI === "true";
   let pr: unknown;
   if (s.on === "check") {
-    pr = gitlab ? Number(env.CI_MERGE_REQUEST_IID) : (event as { pull_request?: { number?: unknown } } | undefined)?.pull_request?.number;
+    pr = gitlab ? (env.CI_MERGE_REQUEST_IID ? Number(env.CI_MERGE_REQUEST_IID) : openMergeRequestOf(env)) : (event as { pull_request?: { number?: unknown } } | undefined)?.pull_request?.number;
     if (typeof pr !== "number" || !Number.isInteger(pr) || pr < 1) return { refused: "the run names no pull request" };
     return { pr };
   }
@@ -301,6 +301,53 @@ export function commitRequestFromRun(words: CiProductWords, s: Pick<CommitSettin
   if (parsed?.kind === "refused") return { refused: parsed.reason };
   if (parsed?.kind !== "commit" || parsed.word !== word) return { refused: `the comment is not ${s.comment}` };
   return { pr, user };
+}
+
+/**
+ * GitLab, a branch pipeline (a check that runs on push): the merge request
+ * of this project whose source is the branch, from `CI_OPEN_MERGE_REQUESTS`
+ * (`group/project!12,other/fork!3`), which GitLab sets with no token. The
+ * first of this project's when there are several; undefined when none.
+ */
+function openMergeRequestOf(env: Record<string, string | undefined>): number | undefined {
+  const project = env.CI_PROJECT_PATH;
+  if (!project) return undefined;
+  for (const ref of (env.CI_OPEN_MERGE_REQUESTS ?? "").split(",")) {
+    const at = ref.trim().lastIndexOf("!");
+    if (at > 0 && ref.trim().slice(0, at) === project) {
+      const n = Number(ref.trim().slice(at + 1));
+      if (Number.isInteger(n) && n > 0) return n;
+    }
+  }
+  return undefined;
+}
+
+/** The branch a push run is for, on GitHub and Forgejo: `refs/heads/<branch>` from `GITHUB_REF` on a `push` event. */
+function pushedBranch(env: Record<string, string | undefined>): string | undefined {
+  if (env.GITHUB_EVENT_NAME !== "push") return undefined;
+  const ref = env.GITHUB_REF ?? "";
+  return ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : undefined;
+}
+
+/**
+ * {@link commitRequestFromRun}, and for the `check` trigger of a check that
+ * runs on push (as terragucci's does), the open pull request whose head is
+ * the pushed branch, asked of the forge on GitHub and Forgejo. A branch with
+ * no open pull request is refused as before, which the check trigger skips.
+ */
+export async function resolveCommitRequest(
+  words: CiProductWords,
+  s: Pick<CommitSettings, "on" | "comment">,
+  env: Record<string, string | undefined>,
+  event: unknown,
+  forge?: Partial<Pick<PrForge, "findPullRequest">>,
+): Promise<CommitRequest | { refused: string }> {
+  const req = commitRequestFromRun(words, s, env, event);
+  if (!("refused" in req) || s.on !== "check" || env.GITLAB_CI === "true" || !forge?.findPullRequest) return req;
+  const branch = pushedBranch(env);
+  if (!branch) return req;
+  const found = await forge.findPullRequest(branch);
+  return found && found.number > 0 ? { pr: found.number } : { refused: `${branch} has no open pull request` };
 }
 
 // ── the files between the jobs ─────────────────────────────────────────────
@@ -441,7 +488,7 @@ export interface CommitPrepareInput {
   env: Record<string, string | undefined>;
   event?: unknown;
   /** A read client: who may write, and the pull request's head. Absent on GitLab, where this job holds no token. */
-  forge?: Pick<PrForge, "pullRequestHead" | "userCanWrite">;
+  forge?: Pick<PrForge, "pullRequestHead" | "userCanWrite"> & Partial<Pick<PrForge, "findPullRequest">>;
   /** The branch pull request `pr` merges into, asked of the forge (./pr-forge-base.ts), for `mergeBase` (#4723). */
   pullRequestBase?: (pr: number) => Promise<string | undefined>;
   readRuns: () => Promise<OpRunRecord[]>;
@@ -465,7 +512,7 @@ export async function prepareCommitRun(i: CommitPrepareInput): Promise<CommitDec
   };
   const no = (reason: string, stop: CommitDecision["stop"], extra: Partial<CommitDecision> = {}): CommitDecision => write({ ...base, go: false, reason, stop, ...extra });
 
-  const req = commitRequestFromRun(i.words, s, i.env, i.event);
+  const req = await resolveCommitRequest(i.words, s, i.env, i.event, i.forge);
   if ("refused" in req) return no(req.refused, s.on === "check" ? "skipped" : "refused");
   const who = { pr: req.pr, ...(req.user ? { user: req.user } : {}) };
   if (req.user && i.forge?.userCanWrite && !(await i.forge.userCanWrite(req.user))) return no(`${req.user} cannot write to the repository, so ${s.name} does not run for them`, "refused", who);
@@ -623,7 +670,7 @@ export interface CommitLandInput {
   env: Record<string, string | undefined>;
   event?: unknown;
   /** A write client. */
-  forge: Pick<PrForge, "pullRequestHead" | "addComment">;
+  forge: Pick<PrForge, "pullRequestHead" | "addComment"> & Partial<Pick<PrForge, "findPullRequest">>;
   /** As {@link CommitPrepareInput.pullRequestBase}: the land checks the base is still the one the command ran on. */
   pullRequestBase?: (pr: number) => Promise<string | undefined>;
   git: AgentGit;
@@ -692,7 +739,7 @@ export async function landCommitChange(i: CommitLandInput): Promise<CommitLandOu
   };
 
   // Who asked and for which pull request: from the event, never from the commit job's files.
-  const req = commitRequestFromRun(i.words, s, i.env, i.event);
+  const req = await resolveCommitRequest(i.words, s, i.env, i.event, i.forge);
   if ("refused" in req) return finish({ result: s.on === "check" ? "skipped" : "refused", reason: req.refused });
   ({ pr, user } = req);
   const decision = readCommitDecision(i.dir);
