@@ -16,6 +16,10 @@
  *   runs and keeps the commit directory as an artifact. The push job runs
  *   under environment `<job>-push` and pushes with `tokenEnv`
  *   (`CHANT_FORGE_TOKEN` by default), which is scoped to that environment.
+ *   A job token cannot push on GitLab, so a spec's `jobToken` is refused.
+ * - after a check in a branch pipeline (`onPush`, #4749), both jobs fetch the
+ *   pushed commit as the head, and chant finds the branch's merge request
+ *   from `CI_OPEN_MERGE_REQUESTS`.
  */
 
 import { GITLAB_DROP_FORGE_TOKENS } from "@intentius/chant/ci-handover";
@@ -26,7 +30,9 @@ import {
   COMMIT_DIR,
   COMMIT_GITLAB_TOKEN_ENV,
   COMMIT_HEAD_REF,
+  commitAfterLines,
   commitCommandLines,
+  commitPushedHeadFetchLine,
   commitSettingsEnv,
   GITLAB_COMMIT_PR_VAR,
   GITLAB_COMMIT_WORD_VAR,
@@ -86,6 +92,8 @@ export interface GitlabCommitJobsInput {
   bin?: string;
   /** For `check`: the Op's job and its rules. */
   after?: { job: string; rules: unknown[] };
+  /** For `check`: the check runs in a branch pipeline, not a merge request pipeline (#4749). */
+  onPush?: boolean;
 }
 
 /** The commit job and the push job. */
@@ -96,7 +104,9 @@ export function gitlabCommitJobs(i: GitlabCommitJobsInput): { commit: Record<str
   const tags = gitlabTags(i.runner);
   const variables = { ...commitSettingsEnv(s), GIT_DEPTH: "0" };
   const rules = comment ? [{ if: gitlabCommitRule(s) }] : i.after!.rules.map((r) => ({ ...(r as Record<string, unknown>), when: "always" }));
-  const head = [agentHeadFetchLine("gitlab", comment ? GITLAB_COMMIT_PR_VAR : "CI_MERGE_REQUEST_IID", COMMIT_HEAD_REF)];
+  if (s.jobToken) throw new Error(`commit job ${s.name}: jobToken pushes with the job's own token, which GitLab's job token cannot do; name tokenEnv`);
+  if (i.onPush && comment) throw new Error(`commit job ${s.name}: onPush is for a check's commit job, not a comment's`);
+  const head = [i.onPush ? commitPushedHeadFetchLine("CI_COMMIT_SHA", COMMIT_HEAD_REF) : agentHeadFetchLine("gitlab", comment ? GITLAB_COMMIT_PR_VAR : "CI_MERGE_REQUEST_IID", COMMIT_HEAD_REF)];
   const findingGate = comment ? [] : [`if [ "\${CHANT_COMMIT_FINDING:-0}" != "1" ]; then echo "the check found nothing, so ${s.name} does not run"; exit 0; fi`];
   const commit: Record<string, unknown> = {
     stage: i.stage,
@@ -139,6 +149,7 @@ export function gitlabCommitJobs(i: GitlabCommitJobsInput): { commit: Record<str
       `export CHANT_GITLAB_TOKEN="$${tokenVar}"`,
       ...agentGitAuthLines(tokenVar, "oauth2"),
       lines.land,
+      ...(s.after.length > 0 ? [commitAfterLines(s).join("\n")] : []),
     ],
   };
   return { commit, push };

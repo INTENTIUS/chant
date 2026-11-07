@@ -9,9 +9,13 @@
  *   `chant commit prepare` reads with the job token; `chant commit run` is
  *   the last step, starts without any forge token, and hands the commit
  *   directory on as the job's outputs.
- * - the push job runs `chant commit land` with `tokenEnv`'s secret, which is
- *   required: a push made with the job token starts no workflow, so the new
- *   head would get no plan.
+ * - the push job runs `chant commit land` with `tokenEnv`'s secret. A push
+ *   made with the job token starts no workflow, so the new head would get no
+ *   plan; a spec takes that only with `jobToken` (#4749), and its `after`
+ *   lines then do what the missing run would have done.
+ *
+ * After a check that runs on push (`onPush`, #4749), both jobs fetch the
+ * pushed commit as the head, and chant finds the branch's pull request.
  *
  * On `comment` the jobs are a workflow of their own on pull request
  * comments. On `check` they follow the Op's own job on the pull request and
@@ -21,7 +25,7 @@
 import { CHECKOUT_TOKEN_ENV, checkoutScript, dropForgeTokens, handoverOutputs, handoverTrap, takeOverScript } from "@intentius/chant/ci-handover";
 import { githubRunsOn, GITHUB_JOB_TOKEN, githubSecret, type CiRunner } from "@intentius/chant/ci-jobs";
 import { agentGitAuthLines, agentHeadFetchLine } from "@intentius/chant/ci-agent";
-import { COMMIT_DECISION_FILE, COMMIT_DIR, COMMIT_HEAD_REF, COMMIT_PATCH_FILE, COMMIT_RC_FILE, commitCommandLines, commitSettingsEnv, type CommitSettings } from "@intentius/chant/ci-commit";
+import { COMMIT_DECISION_FILE, COMMIT_DIR, COMMIT_HEAD_REF, COMMIT_PATCH_FILE, COMMIT_RC_FILE, commitAfterLines, commitCommandLines, commitPushedHeadFetchLine, commitSettingsEnv, type CommitSettings } from "@intentius/chant/ci-commit";
 import { agentCommentIf } from "./agent-jobs";
 
 /** The commit step's id, which the commit job's outputs come from. */
@@ -71,8 +75,10 @@ export interface GithubCommitJobsInput {
   runner?: CiRunner;
   setup: Array<Record<string, unknown>>;
   beforeScript: readonly string[];
-  /** The secret holding the push token. */
-  tokenEnv: string;
+  /** The secret holding the push token. Absent only with the spec's `jobToken` (#4749): the job's own token pushes. */
+  tokenEnv?: string;
+  /** For `check`: the check runs on push, not on the pull request (#4749). */
+  onPush?: boolean;
   bin?: string;
   /** For `check`: the Op's job, which ran the check. */
   after?: string;
@@ -84,13 +90,21 @@ export function githubCommitJobs(i: GithubCommitJobsInput): { commit: Record<str
   const lines = commitCommandLines(i.forge, i.bin);
   const drop = dropForgeTokens("sh");
   const comment = s.on === "comment";
+  if (i.tokenEnv === undefined && !s.jobToken) throw new Error(`commit job ${s.name}: name tokenEnv, or set jobToken to push with the job's own token`);
+  if (i.onPush && comment) throw new Error(`commit job ${s.name}: onPush is for a check's commit job, not a comment's`);
   const prNumber = comment ? "${{ github.event.issue.number }}" : "${{ github.event.pull_request.number }}";
   const settingsEnv = commitSettingsEnv(s);
-  const checkout: Record<string, unknown> = {
-    name: "Check out the target branch's commit and the pull request's head",
-    env: { [CHECKOUT_TOKEN_ENV]: GITHUB_JOB_TOKEN, PR_NUMBER: prNumber },
-    run: [checkoutScript(true, true), agentHeadFetchLine(i.forge, "PR_NUMBER", COMMIT_HEAD_REF)].join("\n"),
-  };
+  const checkout: Record<string, unknown> = i.onPush
+    ? {
+        name: "Check out the target branch's commit and the pushed commit",
+        env: { [CHECKOUT_TOKEN_ENV]: GITHUB_JOB_TOKEN, PUSHED_SHA: "${{ github.sha }}" },
+        run: [checkoutScript(true, true), commitPushedHeadFetchLine("PUSHED_SHA", COMMIT_HEAD_REF)].join("\n"),
+      }
+    : {
+        name: "Check out the target branch's commit and the pull request's head",
+        env: { [CHECKOUT_TOKEN_ENV]: GITHUB_JOB_TOKEN, PR_NUMBER: prNumber },
+        run: [checkoutScript(true, true), agentHeadFetchLine(i.forge, "PR_NUMBER", COMMIT_HEAD_REF)].join("\n"),
+      };
   const before = i.beforeScript.map((line) => ({ run: `${drop}\n${line}` }));
   const commit: Record<string, unknown> = {
     ...(comment ? { if: agentCommentIf(i.forge, s.comment!, true) } : { needs: i.after, if: `always() && needs.${i.after}.outputs.finding == 'true'` }),
@@ -109,7 +123,7 @@ export function githubCommitJobs(i: GithubCommitJobsInput): { commit: Record<str
       { id: COMMIT_STEP_ID, name: "Run the command", run: [drop, ...handoverTrap(COMMIT_DIR, i.forge, HANDED), lines.run].join("\n") },
     ],
   };
-  const token = githubSecret(i.tokenEnv);
+  const token = i.tokenEnv !== undefined ? githubSecret(i.tokenEnv) : GITHUB_JOB_TOKEN;
   const push: Record<string, unknown> = {
     needs: i.jobName,
     if: `always() && needs.${i.jobName}.result == 'success'`,
@@ -127,6 +141,8 @@ export function githubCommitJobs(i: GithubCommitJobsInput): { commit: Record<str
         env: { [PUSH_TOKEN_ENV]: token, GITHUB_TOKEN: token, ...(i.forge === "forgejo" ? { CHANT_FORGEJO_TOKEN: token } : {}) },
         run: [...agentGitAuthLines(PUSH_TOKEN_ENV, "x-access-token"), lines.land].join("\n"),
       },
+      // #4749: what the run a job-token push starts no more would have done.
+      ...(s.after.length > 0 ? [{ name: "After the push", run: commitAfterLines(s).join("\n") }] : []),
     ],
   };
   return { commit, push };

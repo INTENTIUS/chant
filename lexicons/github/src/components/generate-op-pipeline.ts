@@ -468,7 +468,7 @@ export function buildGithubOpPipelineDocs(
         ...(spec.runner !== undefined ? { runner: spec.runner } : {}),
         setup: setup.map(setupStepDoc),
         beforeScript,
-        tokenEnv: commitTokenEnv(spec.name, spec.commit.tokenEnv, forge),
+        ...commitTokenEnv(spec.name, spec.commit, forge),
         ...(words.bin ? { bin: words.bin } : {}),
       });
       files.push({
@@ -677,7 +677,7 @@ export function buildGithubOpPipelineDocs(
         ...(spec.runner !== undefined ? { runner: spec.runner } : {}),
         setup: setup.map(setupStepDoc),
         beforeScript,
-        tokenEnv: commitTokenEnv(spec.name, spec.commit!.tokenEnv, forge),
+        ...commitTokenEnv(spec.name, spec.commit!, forge),
         ...(words.bin ? { bin: words.bin } : {}),
         after: jobName,
       });
@@ -841,9 +841,9 @@ function uploadArtifactStep(a: ScheduledOpArtifact, member: PipelineMember | und
  * made with the job token starts no workflow, so the new head would get no
  * plan and the pull request would sit on an unplanned commit.
  */
-function commitTokenEnv(name: string, tokenEnv: string | undefined, forge: "github" | "forgejo"): string {
-  if (!tokenEnv) {
-    throw new Error(`Scheduled Op "${name}" sets a commit job with no tokenEnv; on ${forge === "github" ? "GitHub" : "Forgejo"} a push made with the job token starts no run, so the new head would get no plan. Name the secret holding a user's or an app's token.`);
-  }
-  return tokenEnv;
+function commitTokenEnv(name: string, commit: { tokenEnv?: string; jobToken?: boolean }, forge: "github" | "forgejo"): { tokenEnv?: string } {
+  if (commit.tokenEnv) return { tokenEnv: commit.tokenEnv };
+  // #4749: the job's own token, which the spec chose knowing its push starts no run.
+  if (commit.jobToken) return {};
+  throw new Error(`Scheduled Op "${name}" sets a commit job with no tokenEnv; on ${forge === "github" ? "GitHub" : "Forgejo"} a push made with the job token starts no run, so the new head would get no plan. Name the secret holding a user's or an app's token, or set jobToken and say in after what the missing run would do.`);
 }

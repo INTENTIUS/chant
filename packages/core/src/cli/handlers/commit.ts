@@ -14,7 +14,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { AgentError, type AgentGit } from "../../ci-agent";
@@ -26,6 +26,7 @@ import {
   runCommit,
   runCommitArgv,
   type HeadApproval,
+  COMMIT_PUSHED_FILE,
 } from "../../ci-commit";
 import { activeProductWords, type CiProductWords } from "../../ci-product-words";
 import { CHANT_EXIT } from "../../exit-codes";
@@ -143,6 +144,8 @@ export async function runCommitCommandLine(ctx: CommandContext): Promise<number>
       now: () => new Date(),
       ...(ci ? { runOrigin: ci.runOrigin } : {}),
     });
+    // #4749: what was pushed, for the push job's `after` lines.
+    if (out.result === "pushed" && out.commit) writeFileSync(join(dir, COMMIT_PUSHED_FILE), `${out.commit}\n`);
     console.error(formatInfo(`${settings.name}: ${out.result}: ${out.reason}`));
     return out.code;
   } catch (e) {
