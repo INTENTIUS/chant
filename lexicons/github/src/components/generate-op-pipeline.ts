@@ -101,6 +101,8 @@ import { assertReviewSplit, reviewJobs, reviewNoteJobName } from "./review-jobs"
 import { resolveAgentSpec } from "@intentius/chant/ci-agent";
 import { activeProductWords } from "@intentius/chant/ci-product-words";
 import { agentJobName, agentPushJobName, driftRunOutputs, driftRunStep, githubAgentJobs } from "./agent-jobs";
+import { commitJobName, commitPushJobName, findingRunOutputs, findingRunStep, githubCommitJobs } from "./commit-jobs";
+import { resolveCommitSpec, type CommitSettings } from "@intentius/chant/ci-commit";
 import { assertScheduledOpCloud, scheduledOpUpdateJobName, withoutTokenRequestLine } from "@intentius/chant/scheduled-op-cloud";
 import { TRADE_SPEC_ENV, tradeLine, type CloudTradeSpec } from "@intentius/chant/ci-identity";
 import { CHANT_EXIT } from "@intentius/chant/exit-codes";
@@ -176,6 +178,8 @@ export interface GithubOpPipelineDoc {
    * at the repository root.
    */
   agentDoc?: Record<string, unknown>;
+  /** The commit jobs (#4722): after the Op's job on a check, or the whole workflow on a comment. */
+  commitDoc?: Record<string, unknown>;
 }
 
 /** One generated file: a suggested name plus its pipeline document, pre-emission. */
@@ -448,6 +452,40 @@ export function buildGithubOpPipelineDocs(
     }
     // #4631: the job's cloud identities and the update on drift, checked before anything renders.
     assertScheduledOpCloud(spec);
+    // #4722: a comment commit job is a workflow of its own, on pull request comments; the spec's trigger is not read.
+    if (spec.commit?.on === "comment") {
+      if (spec.agent) throw new Error(`Scheduled Op "${spec.name}" sets a comment commit job and an agent; a comment commit job is a workflow of its own, so give the agent its own spec.`);
+      const settings = resolveCommitSpec(spec.name, spec.commit, words.product);
+      const jobName = ciJobName(spec.name);
+      const setup = spec.setup ?? [];
+      assertSetupSteps(spec.name, setup);
+      jobs.push({ jobName, op: spec.name, trigger: { kind: "pull_request" }, findingMode: "report" });
+      const { commit, push } = githubCommitJobs({
+        forge,
+        jobName,
+        image,
+        settings,
+        ...(spec.runner !== undefined ? { runner: spec.runner } : {}),
+        setup: setup.map(setupStepDoc),
+        beforeScript,
+        tokenEnv: commitTokenEnv(spec.name, spec.commit.tokenEnv, forge),
+        ...(words.bin ? { bin: words.bin } : {}),
+      });
+      files.push({
+        name: `${spec.name}.yml`,
+        doc: {
+          name: spec.name,
+          on: { issue_comment: { types: ["created"] } },
+          ...nonEmpty("env", options.variables),
+          // One run per pull request at a time, so two asks never push over each other.
+          concurrency: concurrency(`${jobName}-\${{ github.event.issue.number }}`),
+          permissions: { contents: "read" },
+          jobsDoc: {},
+          commitDoc: { [jobName]: commit, [commitPushJobName(jobName)]: push },
+        },
+      });
+      continue;
+    }
     // #4616: the comment agent is a workflow of its own, on pull request comments; the spec's trigger is not read.
     if (spec.agent?.on === "comment") {
       const settings = resolveAgentSpec(spec.name, spec.agent, words.product);
@@ -499,6 +537,11 @@ export function buildGithubOpPipelineDocs(
     if (driftAgent && (split || trigger.kind === "push")) {
       throw new Error(`Scheduled Op "${spec.name}" sets a drift agent, which follows a drift check's run; give it a cron or pull_request trigger and no reviewAgent.`);
     }
+    // #4722: a check commit job follows the Op's job on a pull request, when its run exits with a finding code.
+    const checkCommit: CommitSettings | undefined = spec.commit?.on === "check" ? resolveCommitSpec(spec.name, spec.commit, words.product) : undefined;
+    if (checkCommit && (trigger.kind !== "pull_request" || split || driftAgent || spec.update)) {
+      throw new Error(`Scheduled Op "${spec.name}" sets a check commit job, which follows the check's run on a pull request; give it a pull_request trigger and no reviewAgent, drift agent or update.`);
+    }
     const stepEnv = split ? {} : jobTokenEnv(findingMode !== "report");
     const cloud = spec.cloud;
     const update = spec.update;
@@ -522,7 +565,9 @@ export function buildGithubOpPipelineDocs(
         ? gatedRunStep(RUN_STEP_ID, spec.name, invocation, stepEnv)
         : driftAgent
           ? driftRunStep(invocation, stepEnv, forge)
-          : update
+          : checkCommit
+            ? findingRunStep(invocation, stepEnv, checkCommit.findings)
+            : update
             ? driftFlagStep(invocation, stepEnv)
             : { run: invocation, env: stepEnv },
     );
@@ -586,7 +631,9 @@ export function buildGithubOpPipelineDocs(
               }
             : driftAgent
               ? { outputs: driftRunOutputs(forge) }
-              : update
+              : checkCommit
+                ? { outputs: findingRunOutputs() }
+                : update
                 ? { outputs: { drift: `\${{ steps.${DRIFT_FLAG_STEP_ID}.outputs.drift }}` } }
                 : {}),
           steps,
@@ -619,6 +666,22 @@ export function buildGithubOpPipelineDocs(
         after: jobName,
       });
       doc.agentDoc = { [name]: agent, [agentPushJobName(name)]: push };
+    }
+    if (checkCommit) {
+      const name = commitJobName(jobName, "check");
+      const { commit, push } = githubCommitJobs({
+        forge,
+        jobName: name,
+        image,
+        settings: checkCommit,
+        ...(spec.runner !== undefined ? { runner: spec.runner } : {}),
+        setup: setup.map(setupStepDoc),
+        beforeScript,
+        tokenEnv: commitTokenEnv(spec.name, spec.commit!.tokenEnv, forge),
+        ...(words.bin ? { bin: words.bin } : {}),
+        after: jobName,
+      });
+      doc.commitDoc = { [name]: commit, [commitPushJobName(name)]: push };
     }
     // A split review (#4326): the Op's job is the review job, and the note job rides beside it.
     if (review) {
@@ -684,8 +747,8 @@ export function emitOpPipelineYAML(doc: GithubOpPipelineDoc): string {
   // The gated-apply notice job rides in `jobs:` beside the Op's own job; it
   // is carried separately on the doc so a dialect transforms it on its own.
   // A dialect's `header` note (#2257) is absent on github.
-  const { gatedNoticeDoc, reviewNoteDoc, agentDoc, ...workflow } = doc;
-  return emitWorkflowYAML({ ...workflow, jobsDoc: { ...doc.jobsDoc, ...(gatedNoticeDoc ?? {}), ...(reviewNoteDoc ?? {}), ...(agentDoc ?? {}) } });
+  const { gatedNoticeDoc, reviewNoteDoc, agentDoc, commitDoc, ...workflow } = doc;
+  return emitWorkflowYAML({ ...workflow, jobsDoc: { ...doc.jobsDoc, ...(gatedNoticeDoc ?? {}), ...(reviewNoteDoc ?? {}), ...(agentDoc ?? {}), ...(commitDoc ?? {}) } });
 }
 
 /**
@@ -771,4 +834,16 @@ function uploadArtifactStep(a: ScheduledOpArtifact, member: PipelineMember | und
       ...(a.retentionDays !== undefined ? { "retention-days": a.retentionDays } : {}),
     },
   };
+}
+
+/**
+ * The push token's secret for a commit job (#4722). Required here: a push
+ * made with the job token starts no workflow, so the new head would get no
+ * plan and the pull request would sit on an unplanned commit.
+ */
+function commitTokenEnv(name: string, tokenEnv: string | undefined, forge: "github" | "forgejo"): string {
+  if (!tokenEnv) {
+    throw new Error(`Scheduled Op "${name}" sets a commit job with no tokenEnv; on ${forge === "github" ? "GitHub" : "Forgejo"} a push made with the job token starts no run, so the new head would get no plan. Name the secret holding a user's or an app's token.`);
+  }
+  return tokenEnv;
 }

@@ -1,6 +1,7 @@
 import type { InstanceObservation } from "./instance-nodes";
 import type { CiRunner } from "./ci-jobs";
 import type { OpAgentSpec } from "./ci-agent";
+import type { OpCommitSpec } from "./ci-commit";
 import type { CloudTradeSpec } from "./ci-identity";
 import type { EngineFacts } from "./engine-facts";
 import type { CapabilityPack } from "./capabilities/view";
@@ -78,6 +79,7 @@ export type { ReferenceCatalog, IdentityRule, RefRule } from "./graph-refs";
 // edge type from the same entry it imports the plugin contract from.
 export type { IREdge } from "./graph-ir";
 export type { OpAgentSpec } from "./ci-agent";
+export type { OpCommitSpec } from "./ci-commit";
 
 // The observation contract (#1089), re-exported from the same entry so a
 // lexicon's `describeResources` can report NOT-OBSERVED without a second
@@ -935,6 +937,16 @@ export interface ScheduledOpSpec {
    * branch. The model's job holds no write token; the push job does.
    */
   agent?: OpAgentSpec;
+  /**
+   * The commit jobs (#4722, ../ci-commit.ts): the product's fixed command run
+   * on a pull request's head, its change pushed to the pull request's branch.
+   * `on: "comment"`: this spec is the commit job's own workflow, answering
+   * `/<product> <word>`, and `trigger` is not read. `on: "check"`: the jobs
+   * follow this Op's job on a pull request and run when its run exits with
+   * one of `findings`. The command's job holds no forge token; the push job
+   * holds `tokenEnv`.
+   */
+  commit?: OpCommitSpec;
   /**
    * The job's cloud identities (#4631), as an op wave's `cloud` (#4332,
    * #4549): the three generators trade the job's OIDC token for them in a

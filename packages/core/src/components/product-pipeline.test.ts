@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { componentWaveOutputsFile, componentWaveSteps, componentWavesSpec, productDriftAgent, productPipelineJobs, productWavesSpec } from "./product-pipeline";
+import { componentWaveOutputsFile, componentWaveSteps, componentWavesSpec, productCheckCommit, productDriftAgent, productPipelineJobs, productWavesSpec } from "./product-pipeline";
 import { prApplyComment, prLoopSetup, PR_LOOP_IMAGE, PR_LOOP_SETUP, withProductBin } from "./pr-pipeline";
 import { PLYWOOD, TERRAGUCCI } from "../__fixtures__/product-words";
 import type { OpWavesSpec } from "../op/op-waves";
@@ -198,3 +198,30 @@ describe("the note job's read of the control repo (#4619)", () => {
   });
 });
 
+
+describe("the commit jobs (#4722)", () => {
+  const words = { ...PLYWOOD, commands: { ...PLYWOOD.commands, fmt: "commit" as const } };
+
+  test("return each comment commit job's Op spec, with the settings checked", () => {
+    const pw = productPipelineJobs("github", "production", { words: only(words, "plan", "commit"), commits: [{ word: "fmt", command: ["tofu", "fmt"], allowed: ["infra/"], tokenEnv: "PUSH_TOKEN", runner: "small" }] });
+    expect(pw.comments.commit).toBe("/plywood fmt");
+    expect(pw.commits).toEqual([
+      {
+        comment: "/plywood fmt",
+        name: "plywood-fmt",
+        spec: { name: "plywood-fmt", trigger: { kind: "pull_request" }, commit: { on: "comment", comment: "/plywood fmt", command: ["tofu", "fmt"], allowed: ["infra/"], tokenEnv: "PUSH_TOKEN" }, runner: "small" },
+      },
+    ]);
+    expect(() => productPipelineJobs("github", "production", { words: only(words, "plan", "commit"), commits: [{ word: "fmt", command: ["tofu", "fmt"], allowed: [] }] })).toThrow(/allowed/);
+    expect(() => productPipelineJobs("github", "production", { words: only(words, "plan", "commit"), commits: [{ word: "lint", command: ["tofu", "fmt"], allowed: ["infra/"] }] })).toThrow(/not a command the words map onto commit/);
+  });
+
+  test("words that name a commit command with no commit job are refused", () => {
+    expect(() => productPipelineJobs("github", "production", { words: only(words, "plan", "commit") })).toThrow(/needs a commit job/);
+  });
+
+  test("a check's commit rides on the check's own spec", () => {
+    expect(productCheckCommit(words, "fmt-check", { command: ["tofu", "fmt"], allowed: ["infra/"], findings: [3] })).toEqual({ on: "check", command: ["tofu", "fmt"], allowed: ["infra/"], findings: [3] });
+    expect(() => productCheckCommit(words, "fmt-check", { command: [], allowed: ["infra/"] })).toThrow(/argv/);
+  });
+});

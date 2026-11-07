@@ -1313,6 +1313,13 @@ Component release ledger + status:
                             runs the model command with no forge token, land
                             pushes the change, opens or updates the pull
                             request and records the run (--forge <kind>)
+  commit prepare|run|land  The commit jobs (#4722) the Op generator writes for
+                            a spec's commit: prepare decides from the comment or
+                            the failed check, the ledger's run count and the
+                            head's approvals, run runs the product's command
+                            with no forge token, land pushes the change to the
+                            pull request's branch and records the run
+                            (--forge <kind>)
   components pr-env        An environment per open pull request (#4298): up
                             --base <ref> --pr <n> applies the change to pr-<n>,
                             derived from ci.prEnvironment.template, once an
@@ -2046,6 +2053,9 @@ export const commandRegistry: CommandDef[] = [
   { name: "agent prepare", handler: async (ctx) => (await import("./handlers/agent")).runAgentCommandLine(ctx) },
   { name: "agent run", handler: async (ctx) => (await import("./handlers/agent")).runAgentCommandLine(ctx) },
   { name: "agent land", handler: async (ctx) => (await import("./handlers/agent")).runAgentCommandLine(ctx) },
+  { name: "commit prepare", handler: async (ctx) => (await import("./handlers/commit")).runCommitCommandLine(ctx) },
+  { name: "commit run", handler: async (ctx) => (await import("./handlers/commit")).runCommitCommandLine(ctx) },
+  { name: "commit land", handler: async (ctx) => (await import("./handlers/commit")).runCommitCommandLine(ctx) },
   { name: "components pr-env", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/pr-env")).runComponentsPrEnv(ctx) },
   { name: "components status", requiresPlugins: true, handler: runComponentsStatus },
   { name: "components release", handler: runComponentsReleaseRecord },
