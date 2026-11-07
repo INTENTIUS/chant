@@ -32,6 +32,24 @@ export function withoutEnvironment(jobsDoc: Record<string, unknown>): Record<str
   );
 }
 
+/**
+ * Forgejo 15 and later serves a job an OIDC token only when the job sets
+ * `enable-openid-connect: true` (#4753); it does not read `id-token: write`.
+ * Each job that asks for the token, by its own `permissions` or, with none of
+ * its own, by the workflow's, gets the key.
+ */
+export function withOpenIdConnect(jobsDoc: Record<string, unknown>, workflowPermissions: unknown): Record<string, unknown> {
+  const wants = (p: unknown): boolean => typeof p === "object" && p !== null && (p as Record<string, unknown>)["id-token"] === "write";
+  const workflow = wants(workflowPermissions);
+  return Object.fromEntries(
+    Object.entries(jobsDoc).map(([jobName, job]) => {
+      if (typeof job !== "object" || job === null) return [jobName, job];
+      const own = (job as Record<string, unknown>).permissions;
+      return wants(own) || (own === undefined && workflow) ? [jobName, { ...(job as Record<string, unknown>), "enable-openid-connect": true }] : [jobName, job];
+    }),
+  );
+}
+
 /** The header of an Op's workflow whose environment gate did not survive the crossing. */
 export function droppedEnvironmentHeader(environmentName: string): string[] {
   return [
@@ -74,7 +92,7 @@ export function forgejoWorkflowDoc(doc: GithubOpPipelineDoc, dialect: ForgejoDia
     ...(doc.env ? { env: forgejoize(doc.env, dialect) } : {}),
     ...(doc.concurrency ? { concurrency: forgejoize(doc.concurrency, dialect) } : {}),
     permissions: {},
-    jobsDoc: forgejoize(withoutEnvironment(doc.jobsDoc), dialect),
+    jobsDoc: withOpenIdConnect(forgejoize(withoutEnvironment(doc.jobsDoc), dialect), doc.permissions),
     ...(doc.gatedNoticeDoc ? { gatedNoticeDoc: forgejoize(doc.gatedNoticeDoc, dialect) } : {}),
     ...(doc.reviewNoteDoc ? { reviewNoteDoc: forgejoize(doc.reviewNoteDoc, dialect) } : {}),
     ...(doc.agentDoc ? { agentDoc: forgejoize(doc.agentDoc, dialect) } : {}),
