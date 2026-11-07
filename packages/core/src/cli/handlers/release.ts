@@ -42,9 +42,9 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { formatBold, formatError, formatSuccess, formatWarning } from "../format";
 import { parseParamFlags } from "../build-params-cli";
 import type { CommandContext } from "../registry";
@@ -118,6 +118,17 @@ async function laneOf(ctx: CommandContext, cwd: string): Promise<string | undefi
 async function releaseImagesOf(cwd: string): Promise<Array<{ name: string; build: string; archive: string }>> {
   const { loadChantConfig } = await import("../../config");
   return (await loadChantConfig(cwd)).config.release?.images ?? [];
+}
+
+/** Copy each `release.images` archive from the directory the cut built it in to the same path under `to`. */
+export function copyImageArchives(images: ReadonlyArray<{ archive: string }>, from: string, to: string): void {
+  for (const i of images) {
+    const src = resolve(from, i.archive);
+    if (!existsSync(src)) continue;
+    const dest = resolve(to, i.archive);
+    mkdirSync(dirname(dest), { recursive: true });
+    cpSync(src, dest, { recursive: true, force: true });
+  }
 }
 
 /** A commit's time in seconds, the `SOURCE_DATE_EPOCH` a release's image builds run with (#4657). */
@@ -459,6 +470,10 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     }
 
     const result = await cutRelease(request);
+    // #4657: under --at the images were built in the commit's own checkout, which is removed below; the archives the
+    // release records are put where release.images names them here, so the job's next step (the hand-off to the
+    // publish job) finds them.
+    if (checkout && declaredImages.length > 0) copyImageArchives(declaredImages, cutCwd, cwd);
     const push = await pushLifecycleReport({ cwd }).catch(() => ({ pushed: false, pushWarning: undefined }));
     // The tag names the release's label, which a re-cut with no label reads from the earlier cut.
     let tagged: { name: string; created: boolean } | null = null;
