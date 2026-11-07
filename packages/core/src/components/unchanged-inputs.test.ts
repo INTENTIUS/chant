@@ -216,6 +216,21 @@ describe("gitNormalizedCompare (#4718)", () => {
       expect(compare("echo no such kind >&2; exit 2", path, a, b)).toEqual({ error: `\`echo no such kind >&2; exit 2\` exited 2 on ${path} at ${a.slice(0, 12)}: no such kind` });
     });
   });
+
+  test("a command that exits without reading the file is judged by its exit status, not the write's EPIPE", async () => {
+    await withTestDir(async (dir) => {
+      git(dir, "init", "-q", "-b", "main");
+      git(dir, "config", "user.email", "test@chant.dev");
+      git(dir, "config", "user.name", "Test");
+      // Larger than a pipe's buffer, so writing it to a command that never reads fails with EPIPE every time.
+      const big = "x".repeat(4 * 1024 * 1024) + "\n";
+      const a = commitFile(dir, "big.txt", big);
+      const b = commitFile(dir, "big.txt", big + "y\n");
+      const compare = gitNormalizedCompare(dir);
+      expect(compare("exit 3", "big.txt", a, b)).toEqual({ error: `\`exit 3\` exited 3 on big.txt at ${a.slice(0, 12)}` });
+      expect(compare("echo same", "big.txt", a, b)).toEqual({ same: true });
+    });
+  });
 });
 
 describe("unchangedRecord with normalized inputs (#4718)", () => {
