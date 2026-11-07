@@ -1340,7 +1340,7 @@ async function prApply(ctx: CommandContext, stage: StageEvents, beforeMerge?: Pr
     members: applied.members,
     ...(resumed ? { resumed: resumed.completed } : {}),
     ...(applied.rounds ? { rounds: applied.rounds } : {}),
-    ...(applied.held ? { message: applied.held } : applied.leaseFailed ? { message: applied.leaseFailed } : applied.status === "waiting" ? { message: waitingMessage(op, applied.rounds) } : {}),
+    ...(applied.held ? { message: applied.held } : applied.leaseFailed ? { message: applied.leaseFailed } : applied.status === "waiting" ? { message: waitingMessage(op, p.env, applied.rounds) } : {}),
   });
   // A component that stopped at a gate of its own leaves the apply waiting on
   // a person. A step that refused its plan because the target moved since
@@ -1734,6 +1734,8 @@ async function decideApplyGate(
     console.error(formatInfo(`the merged changes' approvals do not cover the plan at ${green.commit.slice(0, 12)}: ${uncovered.join("; ")}`));
   }
   const digest = set.doc.digest;
+  // #4574: the members fill a product's {target}, one line each, as the note names them (#4601).
+  const approve = prApproveCommands({ op, gate: p.gate, digest, env: p.env, ...(p.member ? { member: p.member } : {}), members: set.members }).join("; ");
   const check = await emitGateStep(
     events?.emit,
     { op, gate: p.gate },
@@ -1742,7 +1744,7 @@ async function decideApplyGate(
       const a = approvalOf(unapproved);
       return a.status === "changed"
         ? describePlanChanged({ op, gate: p.gate, digest, approval: a })
-        : `No approval stands for this plan. Approve it: ${prApproveCommand({ op, gate: p.gate, digest })}`;
+        : `No approval stands for this plan. Approve it: ${approve}`;
     },
   );
   const approval = approvalOf(check);
@@ -1753,7 +1755,7 @@ async function decideApplyGate(
     approval,
     satisfied: false,
     refusal: "not-approved",
-    message: `No approval stands for this plan, so nothing was applied.${why} Approve it: ${prApproveCommand({ op, gate: p.gate, digest })}; then run the apply again.`,
+    message: `No approval stands for this plan, so nothing was applied.${why} Approve it: ${approve}; then run the apply again.`,
   };
 }
 
@@ -1890,14 +1892,20 @@ function reviewCheck(args: CommandContext["args"], p: Prepared, pr: number, auth
   };
 }
 
+/** A waiting wave's or round's approve lines (#4574): one per component when the product's template names `{target}`, as the note names them (#4601). */
+export function waveApproveLines(op: string, env: string, w: { gate: string; digest: string; components: readonly string[] }): string {
+  const targets = activeProductWords().approve.includes("{target}") ? (w.components.length > 0 ? w.components : [env]) : [undefined];
+  return targets.map((target) => prApproveCommand({ op, gate: w.gate, digest: w.digest, ...(target !== undefined ? { target } : {}) })).join("; ");
+}
+
 /** What a `waiting` apply prints (#3999): the round's gate and digest to approve, and how to carry on. */
-function waitingMessage(op: string, rounds: PrRound[] | undefined): string {
+function waitingMessage(op: string, env: string, rounds: PrRound[] | undefined): string {
   const last = rounds?.at(-1);
   if (!last) return "Some members were held back after an upstream applied.";
   return (
     `${last.components.join(", ")} ${last.components.length === 1 ? "was" : "were"} planned again after an upstream applied, ` +
     `and no approval stands for that plan (${last.digest}), so ${last.components.length === 1 ? "it" : "they"} did not apply. ` +
-    `Approve it: ${prApproveCommand({ op, gate: last.gate, digest: last.digest })}; then run the apply again with the same --resume record.`
+    `Approve it: ${waveApproveLines(op, env, last)}; then run the apply again with the same --resume record.`
   );
 }
 
@@ -2355,7 +2363,8 @@ async function prApplyWaves(
       setWave(entry);
       // #4003: the wave's new plan beside the report, for whoever approves its gate.
       if (ran.changeSet) writeWaveChangeSet(ctx, k, ran.changeSet, upload);
-      const approveLine = prApproveCommand({ op, gate: entry.gate, digest: entry.digest });
+      // #4574: the wave's components fill a product's {target}, as the note names them (#4601).
+      const approveLine = waveApproveLines(op, p.env, entry);
       const message =
         ran.exitCode === CHANT_EXIT.moved
           ? `Wave ${k}'s plan changed after its approval, so nothing in it was applied.${entry.approved ? ` approved: ${entry.approved}; planned now: ${entry.digest}.` : ""} Read the new plan, and if it is right, approve it: ${approveLine}; then run the wave's apply again.`
@@ -2737,8 +2746,9 @@ async function runComponentWave(
   // A wave that waits at its own gate is the stream's gate step there, as before op waves (#4003).
   if (d && !byPullRequest && (exitCode === CHANT_EXIT.waiting || exitCode === CHANT_EXIT.moved)) {
     const waiting = { satisfied: false, pending: { op: at.op }, ...(d.mismatch ? { mismatch: d.mismatch } : {}) } as unknown as GateCheck;
+    const approve = waveApproveLines(at.op, p.env, { gate: d.gate, digest: d.digest, components: at.runs });
     await emitGateStep(at.events?.emit, { op: at.op, gate: d.gate }, async () => waiting, () =>
-      d.mismatch ? `wave ${at.k}'s plan changed after its approval. Approve the plan now: ${prApproveCommand({ op: at.op, gate: d.gate, digest: d.digest })}` : `wave ${at.k}'s plan is not the one the pull request approved. Approve it: ${prApproveCommand({ op: at.op, gate: d.gate, digest: d.digest })}`,
+      d.mismatch ? `wave ${at.k}'s plan changed after its approval. Approve the plan now: ${approve}` : `wave ${at.k}'s plan is not the one the pull request approved. Approve it: ${approve}`,
     );
   }
   const read = readWaveOutputs(at.outputsFile);
