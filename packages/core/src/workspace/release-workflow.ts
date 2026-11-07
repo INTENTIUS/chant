@@ -311,6 +311,15 @@ function cutScript(o: DispatchInput, out: string): string[] {
   ];
 }
 
+/**
+ * The cut job's fetch of `chant/lifecycle`. A repository's first release has
+ * no ledger branch yet, and the cut is what creates it, so a remote without
+ * the branch is not an error here; any other failure of git still stops the
+ * job. The publish job runs after the cut has pushed it and fetches it plainly.
+ */
+const LEDGER_FETCH_FIRST =
+  'rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi';
+
 /** GitHub and Forgejo: the release started by hand with a label (#4656). */
 function renderGithubDispatch(o: DispatchInput): string {
   const defaults = o.root ? ["    defaults:", "      run:", `        working-directory: ${o.root}`] : [];
@@ -357,7 +366,8 @@ function renderGithubDispatch(o: DispatchInput): string {
     ...githubSetup(commit),
     `      - run: ${o.install}`,
     ...o.extra.githubSteps,
-    ...fetches,
+    fetches[0]!,
+    `      - run: ${LEDGER_FETCH_FIRST}`,
     ...block(cutScript(o, '"$RUNNER_TEMP/chant-cut.json"')),
     "  publish:",
     "    needs: [gate, cut]",
@@ -411,7 +421,7 @@ function renderGitlabDispatch(o: DispatchInput): string {
   const lines = [
     ...job("chant-release-gate", [], [...cd, o.install, fetches[0]!, ...gateScript(o, "$CI_COMMIT_SHA"), 'echo "CHANT_RELEASE_COMMIT=$commit" > "$CI_PROJECT_DIR/chant-release-gate.env"'], ["  artifacts:", "    reports:", "      dotenv: chant-release-gate.env"]),
     "",
-    ...job("chant-release-cut", ["chant-release-gate"], [...checkout, ...cd, o.install, ...o.extra.gitlabScript, ...fetches, ...auth, ...cutScript(o, "/tmp/chant-cut.json")], [], o.extra.gitlabVariables),
+    ...job("chant-release-cut", ["chant-release-gate"], [...checkout, ...cd, o.install, ...o.extra.gitlabScript, fetches[0]!, ...auth, LEDGER_FETCH_FIRST, ...cutScript(o, "/tmp/chant-cut.json")], [], o.extra.gitlabVariables),
     "",
     ...job(
       "chant-release-publish",

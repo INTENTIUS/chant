@@ -4,6 +4,8 @@ This file records changes to what chant prints or writes for a plain project, th
 
 ## Unreleased
 
+- `chant release workflow` with `trigger: "dispatch"`: the cut job no longer fails a repository's first release, when the remote has no `chant/lifecycle` yet. It fetches the branch when the remote has it and goes on without it when it doesn't, since the cut creates it; any other git failure still stops the job. Regenerate the file. terragucci's first one-run release stopped there.
+
 - [#4758](https://github.com/INTENTIUS/chant/issues/4758) a commit job spec takes `allowedFiles`: file names the change may touch in any directory, `*.tf` or an exact name, matched on the basename beside `allowed`. A guarded path is still refused. `allowed` may be empty when `allowedFiles` is set. `CI_COMMIT_FILES_FLOOR` marks it.
 
 - [#4751](https://github.com/INTENTIUS/chant/issues/4751) `release.workflow` takes `permissions` (added to the workflow's), `env` and `setup` (for the cut and publish jobs, after the install) and `file` (where `chant release workflow` writes it). A release that pushes images to GHCR can grant `packages: write`, hand the `oci` target its credentials, and install QEMU; a config without them renders the same file as before.
