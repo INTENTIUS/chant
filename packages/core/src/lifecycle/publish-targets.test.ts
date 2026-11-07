@@ -371,7 +371,8 @@ describe("forge release assets", () => {
 
     await target!.reveal(ctx, staged);
     expect(forge.visible()).toEqual([{ tag: "release/v1.4.0", assets: ATTACHED }]);
-    expect(forge.calls.at(-1)).toMatchObject({ method: "PATCH", url: `${api}/repos/acme/api/releases/100`, body: JSON.stringify({ draft: false }) });
+    // #4658: GitHub is told the release is latest, since it was not cut to a channel.
+    expect(forge.calls.at(-1)).toMatchObject({ method: "PATCH", url: `${api}/repos/acme/api/releases/100`, body: JSON.stringify({ draft: false, make_latest: "true" }) });
     expect(ctx.lines.join("\n")).not.toContain("ghs_tokentoken");
 
     // Published with every asset: a stage finds it done and uploads nothing.

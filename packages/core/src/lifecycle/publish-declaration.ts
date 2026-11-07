@@ -101,8 +101,31 @@ export const ForgePublishSchema = z
     repo: z.string().min(1),
     /** The API root: default `$GITHUB_API_URL` or `https://api.github.com` on GitHub, `$CI_API_V4_URL` or `https://gitlab.com/api/v4` on GitLab, `$GITHUB_API_URL` on Forgejo, which has no default. */
     api: z.string().url().optional(),
-    /** Files to attach, relative to the member. */
-    assets: z.array(z.string().min(1)).min(1),
+    /** Files to attach, relative to the member. May be empty when `notes` gives the release its body. */
+    assets: z.array(z.string().min(1)),
+    /**
+     * The release's notes (#4658): a section of a file in the member, sent as
+     * the release's body on GitHub and Forgejo and its description on GitLab.
+     */
+    notes: z
+      .object({
+        /** The file, relative to the member, such as `CHANGELOG.md` or a docs site's changes page. */
+        file: z.string().min(1),
+        /**
+         * The heading that starts the section, such as `## In {version}` or `## [{version}]`. `{label}`, `{version}`
+         * (the label from its first digit) and `{tag}` are filled in. The section runs to the next heading of the same
+         * level or higher.
+         */
+        heading: z.string().regex(/^#{1,6} \S/, "a markdown heading, such as ## {version}"),
+        /** Links that start with `/` are made absolute against this, such as `https://docs.example.com`. */
+        linkBase: z.string().url().optional(),
+        /** A paragraph before the section, with the same placeholders. */
+        before: z.string().min(1).optional(),
+        /** A paragraph after the section, with the same placeholders. */
+        after: z.string().min(1).optional(),
+      })
+      .strict()
+      .optional(),
     /** The forge release's tag. Default: the tag the cut made, `release/<label>` or `release/<member>/<label>`. */
     tag: z.string().min(1).optional(),
     /** The variable holding the token. Default `GITHUB_TOKEN`, `GITLAB_TOKEN` (then `CI_JOB_TOKEN`), or `FORGEJO_TOKEN`. */
@@ -117,7 +140,8 @@ export const ForgePublishSchema = z
      */
     latest: z.union([z.boolean(), z.literal("legacy")]).optional(),
   })
-  .strict();
+  .strict()
+  .refine((d) => d.assets.length > 0 || d.notes !== undefined, { message: "a forge release needs assets, notes or both", path: ["assets"] });
 
 /**
  * A Homebrew formula in a tap repository on GitHub (#4676), rendered from a

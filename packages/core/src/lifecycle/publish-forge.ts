@@ -47,6 +47,7 @@
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { memberSbom, releaseProvenance } from "./publish-attachments";
+import { releaseVersion } from "./publish-homebrew";
 import { readCredential, type Credential } from "./publish-credentials";
 import type { ForgePublishDeclaration } from "./publish-declaration";
 import { bytesDigest, checkReleaseDigest, memberFile, publishTargetKey } from "./publish-targets";
@@ -54,6 +55,52 @@ import { PublishTargetError, type PublishContext, type PublishDeps, type Publish
 
 /** The first chant that reads `latest` on a forge target and sends it as GitHub's `make_latest` (#4676). */
 export const PUBLISH_FORGE_LATEST_FLOOR = "0.124.63";
+
+/** The first chant whose forge target reads `notes` and may have no assets (#4658). Products feature-detect on it. */
+export const PUBLISH_FORGE_NOTES_FLOOR = "0.124.71";
+
+/** `text` with `{label}`, `{version}` and `{tag}` filled in. */
+function fillNotesText(text: string, values: { label: string; version: string; tag: string }): string {
+  return text.replaceAll("{label}", values.label).replaceAll("{version}", values.version).replaceAll("{tag}", values.tag);
+}
+
+/**
+ * The section of `page` that starts at the heading `heading` names (#4658),
+ * up to the next heading of the same level or higher, trimmed. A heading
+ * matches when it is the pattern, or the pattern and then whitespace, so
+ * `## [1.2.3] - 2026-11-07` matches `## [1.2.3]`, and neither `## 1.2.30`
+ * nor `## 1.2.3-rc.1` matches `## 1.2.3`. Links that start with `/` are
+ * made absolute against `linkBase`. Throws when there is no such heading or
+ * the section is empty.
+ */
+export function releaseNotesSection(page: string, heading: string, linkBase?: string): string {
+  const level = /^(#+)/.exec(heading)![1]!.length;
+  const lines = page.split("\n");
+  const matches = (l: string): boolean => {
+    const t = l.trimEnd();
+    return t === heading || (t.startsWith(heading) && /^\s/.test(t.slice(heading.length)));
+  };
+  const start = lines.findIndex(matches);
+  if (start < 0) throw new Error(`it has no heading "${heading}"`);
+  // A `#` line inside a fenced code block is code, not a heading.
+  let end = lines.length;
+  let fence: string | null = null;
+  for (let i = start + 1; i < lines.length; i++) {
+    const f = /^\s*(```|~~~)/.exec(lines[i]!);
+    if (f) fence = fence === null ? f[1]! : fence === f[1] ? null : fence;
+    if (fence !== null || f) continue;
+    const m = /^(#{1,6}) /.exec(lines[i]!);
+    if (m && m[1]!.length <= level) {
+      end = i;
+      break;
+    }
+  }
+  const body = lines.slice(start + 1, end).join("\n").trim();
+  if (!body) throw new Error(`its "${heading}" section is empty`);
+  if (!linkBase) return body;
+  const base = linkBase.replace(/\/+$/, "");
+  return body.replace(/\]\((\/(?!\/)[^)\s]*)/g, (_, path: string) => `](${base}${path}`);
+}
 
 /** The variables a forge's token is read from, in order. */
 export function forgeTokenEnv(decl: Pick<ForgePublishDeclaration, "forge" | "tokenEnv">): string[] {
@@ -145,7 +192,7 @@ class ForgeClient {
   }
 
   /** GitHub and Forgejo: the draft release for `tag`, made at `commit` when there is none. */
-  async draft(tag: string, commit: string, name: string): Promise<ForgeRelease> {
+  async draft(tag: string, commit: string, name: string, body?: string): Promise<ForgeRelease> {
     const list = await this.call("GET", `${this.repoPath}/releases?per_page=100`);
     if (list.status !== 200) this.fail("listing releases", list.status, list.text);
     const drafts = Array.isArray(list.json) ? (list.json as Array<Record<string, unknown>>) : [];
@@ -155,25 +202,32 @@ class ForgeClient {
       return this.toRelease(mine, tag);
     }
     this.ctx.log(`creating a draft ${this.decl.forge} release for ${tag} at ${commit.slice(0, 12)}`);
-    const create = await this.call("POST", `${this.repoPath}/releases`, JSON.stringify({ tag_name: tag, target_commitish: commit, name, draft: true }));
+    const create = await this.call("POST", `${this.repoPath}/releases`, JSON.stringify({ tag_name: tag, target_commitish: commit, name, draft: true, ...(body !== undefined ? { body } : {}) }));
     if (create.status !== 201 || !create.json) this.fail(`creating a draft release ${tag}`, create.status, create.text);
     return this.toRelease(create.json as Record<string, unknown>, tag);
   }
 
-  /** GitHub and Forgejo: publish the draft `id`, with GitHub's `make_latest` when `latest` is declared. */
-  async publishDraft(id: string, tag: string): Promise<void> {
-    const latest = this.decl.latest;
-    const body = latest === undefined ? { draft: false } : { draft: false, make_latest: String(latest) };
+  /**
+   * GitHub and Forgejo: publish the draft `id` with its notes. GitHub gets
+   * `make_latest`: the declared `latest`, else `false` for a release cut to a
+   * channel and `true` for any other (#4658). Forgejo has no such setting and
+   * takes the newest release that is not a prerelease, so a channel's release
+   * is marked a prerelease there.
+   */
+  async publishDraft(id: string, tag: string, o: { notes?: string; channel: boolean }): Promise<void> {
+    const body: Record<string, unknown> = { draft: false, ...(o.notes !== undefined ? { body: o.notes } : {}) };
+    if (this.decl.forge === "github") body.make_latest = String(this.decl.latest ?? !o.channel);
+    else if (o.channel) body.prerelease = true;
     const res = await this.call("PATCH", `${this.repoPath}/releases/${id}`, JSON.stringify(body));
     if (res.status !== 200) this.fail(`publishing the draft release ${tag}`, res.status, res.text);
   }
 
   /** GitLab: create the release for `tag` at `commit` with a link to each asset. */
-  async createWithLinks(tag: string, commit: string, name: string, links: Array<{ name: string; url: string }>): Promise<void> {
+  async createWithLinks(tag: string, commit: string, name: string, links: Array<{ name: string; url: string }>, notes?: string): Promise<void> {
     const res = await this.call(
       "POST",
       `${this.repoPath}/releases`,
-      JSON.stringify({ tag_name: tag, ref: commit, name, assets: { links: links.map((l) => ({ ...l, link_type: "package" })) } }),
+      JSON.stringify({ tag_name: tag, ref: commit, name, ...(notes !== undefined ? { description: notes } : {}), assets: { links: links.map((l) => ({ ...l, link_type: "package" })) } }),
     );
     if (res.status !== 201) this.fail(`creating release ${tag}`, res.status, res.text);
   }
@@ -231,19 +285,38 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
       checkReleaseDigest(ctx.release, "asset", ctx.cwd, p, [digest]);
       return { path: p, name: basename(p), bytes, digest };
     });
-    // #4049: the SBOM and the provenance statement over the assets go on the release with them.
+    // #4049: the SBOM and the provenance statement over the assets go on the release with them. A release of notes alone has no asset to state.
     const sbom = memberSbom(ctx, decl.sbom, `${decl.repo}@${tag}`, `the ${decl.forge} target`);
-    const provenance = releaseProvenance(
-      ctx,
-      assets.map((a) => ({ name: a.name, digest: a.digest })),
-    );
+    const provenance =
+      assets.length > 0
+        ? releaseProvenance(
+            ctx,
+            assets.map((a) => ({ name: a.name, digest: a.digest })),
+          )
+        : null;
     for (const a of [sbom, provenance]) if (a) assets.push({ path: a.name, name: a.name, bytes: a.bytes, digest: a.digest, attachment: a.kind });
     const names = new Set<string>();
     for (const a of assets) {
       if (names.has(a.name)) throw new PublishTargetError("publish-forge-asset-name-taken", `two assets are named ${a.name}, and a release holds one asset per name`);
       names.add(a.name);
     }
-    return { tag, api, token, assets };
+    return { tag, api, token, assets, notes: releaseNotes(ctx, tag) };
+  };
+  // #4658: the notes are read when the target is planned, so a missing or empty section refuses before any target publishes.
+  const releaseNotes = (ctx: PublishContext, tag: string): string | undefined => {
+    const n = decl.notes;
+    if (!n) return undefined;
+    const label = ctx.label ?? tag;
+    const values = { label, version: releaseVersion(ctx.label) ?? label, tag };
+    const heading = fillNotesText(n.heading, values);
+    let section: string;
+    try {
+      section = releaseNotesSection(readFileSync(memberFile(ctx.cwd, n.file), "utf8"), heading, n.linkBase);
+    } catch (err) {
+      const why = (err as NodeJS.ErrnoException).code === "ENOENT" ? "it does not exist" : (err as Error).message;
+      throw new PublishTargetError("publish-forge-notes-missing", `the ${decl.forge} release's notes come from ${n.file}, and ${why}`, `Write the "${heading}" section in ${n.file}, or change notes.heading.`);
+    }
+    return [...(n.before ? [fillNotesText(n.before, values), ""] : []), section, ...(n.after ? ["", fillNotesText(n.after, values)] : [])].join("\n") + "\n";
   };
   const att = (a: Asset): Pick<PublishItem, "attachment"> => (a.attachment ? { attachment: a.attachment } : {});
   const where = (tag: string, name: string) => `${decl.forge} ${decl.repo} release ${tag}, asset ${name}`;
@@ -260,11 +333,14 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
     credentialEnv: tokenNames,
     key: publishTargetKey(decl),
     async plan(ctx) {
-      const { tag, assets } = setup(ctx);
-      return assets.map((a) => ({ name: a.path, destination: where(tag, a.name), digest: a.digest, ...att(a) }));
+      const { tag, assets, notes } = setup(ctx);
+      return [
+        ...assets.map((a) => ({ name: a.path, destination: where(tag, a.name), digest: a.digest, ...att(a) })),
+        ...(notes !== undefined ? [{ name: decl.notes!.file, destination: `${decl.forge} ${decl.repo} release ${tag}, notes`, notes }] : []),
+      ];
     },
     async stage(ctx): Promise<StagedTarget> {
-      const { tag, api, token, assets } = setup(ctx);
+      const { tag, api, token, assets, notes } = setup(ctx);
       ctx.log(`using the token from ${token.from}`);
       const client = new ForgeClient(decl, api, token, fetchImpl, ctx);
       const done = (items: PublishItem[], state: Record<string, string>): StagedTarget => ({ target: this.name, destination: this.destination, items, state });
@@ -300,7 +376,7 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
         return done(items, {});
       }
 
-      const rel = await client.draft(tag, ctx.release.commit, ctx.label ?? tag);
+      const rel = await client.draft(tag, ctx.release.commit, ctx.label ?? tag, notes);
       const items: PublishItem[] = [];
       for (const a of assets) {
         if (rel.assets.has(a.name)) {
@@ -316,18 +392,20 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
       return done(items, { releaseId: rel.id });
     },
     async reveal(ctx, staged) {
-      const { tag, api, token } = setup(ctx);
+      const { tag, api, token, notes } = setup(ctx);
       const client = new ForgeClient(decl, api, token, fetchImpl, ctx);
       const items = staged.items.map((i) => ({ name: i.name, destination: i.destination, ...(i.digest ? { digest: i.digest } : {}), ...(i.attachment ? { attachment: i.attachment } : {}) }));
       if (staged.state.published === "true") return { target: this.name, destination: this.destination, items: items.map((i) => ({ ...i, present: true })) };
       if (decl.forge === "gitlab") {
         ctx.log(`creating the gitlab release ${tag} at ${ctx.release.commit.slice(0, 12)} with ${items.length} asset link(s)`);
-        await client.createWithLinks(tag, ctx.release.commit, ctx.label ?? tag, items.map((i) => ({ name: basename(i.name), url: i.destination })));
+        await client.createWithLinks(tag, ctx.release.commit, ctx.label ?? tag, items.map((i) => ({ name: basename(i.name), url: i.destination })), notes);
       } else {
         const id = staged.state.releaseId;
         if (!id) throw new PublishTargetError("publish-forge-failed", `the staged ${decl.forge} release for ${tag} has no draft id to publish`);
-        ctx.log(`publishing the draft ${decl.forge} release ${tag}${decl.latest === undefined ? "" : ` with make_latest ${String(decl.latest)}`}`);
-        await client.publishDraft(id, tag);
+        const channel = ctx.tag !== null;
+        const latest = decl.forge === "github" ? ` with make_latest ${String(decl.latest ?? !channel)}` : channel ? " as a prerelease, since it was cut to a channel" : "";
+        ctx.log(`publishing the draft ${decl.forge} release ${tag}${notes !== undefined ? " with its notes" : ""}${latest}`);
+        await client.publishDraft(id, tag, { ...(notes !== undefined ? { notes } : {}), channel });
       }
       return { target: this.name, destination: this.destination, items };
     },
