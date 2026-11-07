@@ -1,0 +1,14 @@
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - cd packages/app
+    - npm ci
+    - npm run build
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - git fetch origin chant/lifecycle:chant/lifecycle
+    - npx chant release verify "${CI_COMMIT_TAG#release/}"
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --require-provenance --yes
