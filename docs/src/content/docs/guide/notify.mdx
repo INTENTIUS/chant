@@ -166,7 +166,7 @@ const event = makeNotifyEvent({
 await sendNotify({ slack: "SLACK_WEBHOOK_URL", webhook: "YODEL_WEBHOOK_URL", key: "YODEL_WEBHOOK_KEY" }, event, { prefix: "x-yodel" });
 ```
 
-`prefix` keeps a product's existing header names (`x-yodel-signature`), and `verifyWebhook` takes the same `prefix`. `render.slack` and `render.teams` replace the default Slack text and Teams card, for a product that adds its own buttons. `@intentius/chant/notify` reaches only `node:crypto` and the verifier, so a product's bundled CLI stays small.
+`prefix` keeps a product's existing header names (`x-yodel-signature`), and `verifyWebhook` takes the same `prefix`. `render.slack` and `render.teams` replace the default Slack text and Teams card. Each gets the relay's signed button value as its second argument when `relay` names a key that is set, and `slackRelayActions(relay)` and `teamsRelayReply(relay)` give the Approve and Decline buttons and the Teams reply, so a click on a product's own message reaches `chant notify relay`. `NOTIFY_RELAY_POINTS_FLOOR` is the first chant with them. `@intentius/chant/notify` reaches only `node:crypto` and the verifier, so a product's bundled CLI stays small.
 
 ## Under a product's words
 
@@ -202,6 +202,8 @@ Each click passes these checks before anything is written:
 | The digest | No standing pending fact at the button's gate asks for that digest: the plan moved, or someone approved it already |
 
 Then the relay records the approval as `chant approve <op> <gate> --plan <digest> --actor <principal> --relayed-by <relay>` would, with every rule that command applies. The relay holds no signing key, so a gate that `identity.gates` seals refuses it. A Decline click records nothing and says in the thread who declined. The approval is recorded as relayed by `CHANT_RELAY_PRINCIPAL`, by default `<product>-relay`, and the replies use the product's words. The relay starts no job, and the resume job applies the wave once the approval stands.
+
+A gate that asks a decision point passes on the point's answer, not an approval. There the relay answers the question the gate waits on instead, as `chant workspace points answer <id> --answer <value> --by <principal> --relayed-by <relay>` would. The value is a yes, or the one answer the gate's `pass` names. The point's quorum decides whether the clicker counts, and a gate that passes on several answers is refused, since a button names no one of them ([#4611](https://github.com/INTENTIUS/chant/issues/4611)).
 
 ## See also
 

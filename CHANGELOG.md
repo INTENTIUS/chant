@@ -4,6 +4,8 @@ This file records changes to what chant prints or writes for a plain project, th
 
 ## Unreleased
 
+- [#4611](https://github.com/INTENTIUS/chant/issues/4611) `chant notify relay` answers a gate that asks a decision point: the click answers the question the gate waits on (a yes, or the one answer the gate's `pass` names) as the clicker, relayed by the relay, where it used to refuse. `sendNotify`'s `render.slack` and `render.teams` get the relay's signed button value, and `slackRelayActions` and `teamsRelayReply` build the buttons and the Teams reply, so a product that renders its own messages reaches chant's relay. `NOTIFY_RELAY_POINTS_FLOOR` marks both.
+
 - [#4656](https://github.com/INTENTIUS/chant/issues/4656) `chant release workflow` reads `release.workflow` in the root's `chant.config.ts`: `trigger: "dispatch"` renders a release started by hand with its label, with a gate job (`ci last-green`, or the dispatched commit under `gate: "head"`), a cut job that runs `release cut --at` and pushes the tag, the publish job, and an after-release job for `after`. `install`, `build` and `chant` move from flags to the config, and a flag still wins. With `release.images` the publish job runs `release images` before the build. A config with only `publish` renders the file it did before, byte for byte.
 
 - the commit job's `check` trigger (#4722) also runs after a check that runs on push: `chant commit prepare` and `land` find the pushed branch's open pull request through the forge on GitHub and Forgejo and from `CI_OPEN_MERGE_REQUESTS` on GitLab, and skip a branch with none. terragucci's check runs on push.
