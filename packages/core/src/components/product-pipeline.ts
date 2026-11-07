@@ -39,6 +39,7 @@ import type { DriverComponent } from "./driver";
 import type { ScheduledOpSpec } from "../lexicon";
 import type { CiRunner } from "../ci-jobs";
 import { resolveAgentSpec, type OpAgentSpec } from "../ci-agent";
+import { resolveCommitSpec, type OpCommitSpec } from "../ci-commit";
 import type { CiResponses } from "../ci-respond";
 
 /** Where the generator writes a product's waves spec, which chant reads at base (#4550). */
@@ -70,6 +71,15 @@ export interface ProductPipelineOptions extends Omit<PrLoopPipelineOptions, "wor
    * scheduled Ops.
    */
   agent?: boolean | ProductAgentOptions;
+  /**
+   * The product's commit jobs (#4722) that answer a comment: each one's
+   * `word` maps onto `commit` in the words, and `/<product> <word>` runs its
+   * command on the pull request's head and pushes the change. The pipeline
+   * returns each one's Op spec, which the product writes and generates as
+   * it does the agent's. A commit job after a check rides on the check's own
+   * Op spec instead ({@link productCheckCommit}).
+   */
+  commits?: ProductCommitOptions[];
   /**
    * The product answers its `action` command (#4654) from a workflow of its
    * own, such as terragucci's action workflow: `true` counts the command as
@@ -152,6 +162,8 @@ export interface ProductPipelineJobs {
    * job with the write token.
    */
   agent?: { comment: string; name: string; spec: ScheduledOpSpec };
+  /** The comment commit jobs (#4722), with `commits`: each one's comment, `/<product> <word>`, and the Op spec whose generated workflow runs it. */
+  commits?: Array<{ comment: string; name: string; spec: ScheduledOpSpec }>;
   /**
    * The action job (#4654), with `actionJob`: the comment and the dispatch
    * inputs it answers, and the product's action verb it runs. The GitHub and
@@ -166,6 +178,39 @@ export interface ProductAgentOptions extends Omit<OpAgentSpec, "on" | "comment" 
   name?: string;
   /** Where its jobs run. */
   runner?: CiRunner;
+}
+
+/** A comment commit job as a product passes it (#4722): {@link OpCommitSpec} without the trigger, with the word it answers. */
+export interface ProductCommitOptions extends Omit<OpCommitSpec, "on" | "comment" | "findings" | "gitlabCheck"> {
+  /** The word after `/<product>`, which the words map onto `commit`: `fmt` for `/terragucci fmt`. */
+  word: string;
+  /** The job's name: its workflow, its jobs and its runs on the ledger. Default `<product>-<word>`. */
+  name?: string;
+  runner?: CiRunner;
+}
+
+/** A comment commit job's Op spec (#4722). The settings are checked here, so a product finds a bad one when it generates. */
+export function productCommitSpec(wordsIn: CiProductWordsInput | CiProductWords, options: ProductCommitOptions): ScheduledOpSpec {
+  const words = assertProductWords(wordsIn);
+  const { word, name: given, runner, ...settings } = options;
+  if (words.commands[word] !== "commit") throw new Error(`the commit job's word ${JSON.stringify(word)} is not a command the words map onto commit`);
+  const name = given ?? `${words.product}-${word}`;
+  const commit: OpCommitSpec = { on: "comment", comment: `/${words.product} ${word}`, ...settings };
+  resolveCommitSpec(name, commit, words.product);
+  return { name, trigger: { kind: "pull_request" }, commit, ...(runner !== undefined ? { runner } : {}) };
+}
+
+/**
+ * The `commit` of a check's Op spec (#4722): after the check's run exits
+ * with one of `findings` on a pull request, the command runs on the head
+ * and its change is pushed to the pull request's branch. The check's spec
+ * needs a `pull_request` trigger.
+ */
+export function productCheckCommit(wordsIn: CiProductWordsInput | CiProductWords, op: string, options: Omit<OpCommitSpec, "on" | "comment">): OpCommitSpec {
+  const words = assertProductWords(wordsIn);
+  const commit: OpCommitSpec = { on: "check", ...options };
+  resolveCommitSpec(op, commit, words.product);
+  return commit;
 }
 
 /** The agent's Op spec for `/<product> agent <ask>` (#4616). The settings are checked here, so a product finds a bad one when it generates. */
@@ -219,6 +264,7 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   if (options.applyBeforeMerge || options.waves || options.componentWaves) jobs.push("apply");
   if (options.locks === "plan") jobs.push("lock", "unlock");
   if (options.agent) jobs.push("agent");
+  if (options.commits?.length) jobs.push("commit");
   // #4654: the action command, answered by the product's own workflow (`actions`) or by the pipeline's action job.
   if (options.actions || options.actionJob) jobs.push("action");
   // #4601: the note's merge sentence follows the jobs built here: waves on merge, an apply before merge, else a record for a release.
@@ -226,7 +272,7 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   const built: CiProductApplyMode = options.waves || options.componentWaves ? "on-merge" : options.applyBeforeMerge ? "before-merge" : "release";
   const applyMode: CiProductApplyMode = options.words.applyMode === "before-merge" && options.applyBeforeMerge ? "before-merge" : built;
   const words = assertProductWords({ ...options.words, applyMode }, { jobs });
-  const { waves: given, wavesSpecFile, member, agent: _agent, actions: _actions, componentWaves, ...loop } = options;
+  const { waves: given, wavesSpecFile, member, agent: _agent, commits: _commits, actions: _actions, componentWaves, ...loop } = options;
   const { respond } = options;
   // #4629: the pull request loop puts the responses on the apply and note jobs, as `chant build --pr-loop --respond` does.
   const prLoop: PrLoopPipelineOptions = { ...loop, words, gate: options.gate ?? words.prGate };
@@ -262,6 +308,13 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   if (options.agent && agentComment) {
     const spec = productAgentSpec(words, agentComment, options.agent === true ? {} : options.agent);
     out.agent = { comment: agentComment, name: spec.name, spec };
+  }
+  // #4722: each comment commit job answers its own word from a workflow of its own.
+  if (options.commits?.length) {
+    out.commits = options.commits.map((c) => {
+      const spec = productCommitSpec(words, c);
+      return { comment: spec.commit!.comment!, name: spec.name, spec };
+    });
   }
   // #4588: without a spec of the product's own, the component graph's waves on op waves.
   const op = words.op ?? componentWaves?.waveGate ?? words.prGate;

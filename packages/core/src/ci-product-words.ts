@@ -34,9 +34,9 @@ export const CI_PRODUCT_STAGES: readonly CiProductStage[] = ["plan", "apply", "r
  * answers it. `action` (#4653) asks for a day-2 action on one member, which
  * runs under a gated request.
  */
-export type CiProductCommand = "plan" | "apply" | "lock" | "unlock" | "agent" | "action";
+export type CiProductCommand = "plan" | "apply" | "lock" | "unlock" | "agent" | "action" | "commit";
 
-export const CI_PRODUCT_COMMANDS: readonly CiProductCommand[] = ["plan", "apply", "lock", "unlock", "agent", "action"];
+export const CI_PRODUCT_COMMANDS: readonly CiProductCommand[] = ["plan", "apply", "lock", "unlock", "agent", "action", "commit"];
 
 /**
  * What an approval of a product's waves binds to (ruling B, 2026-10-27).
@@ -464,6 +464,8 @@ export type ParsedProductComment =
    * The engine's lexicon checks the action against the member's plan.
    */
   | { kind: "action"; member: string; address: string }
+  /** A commit job's command (#4722), by the word typed: `/terragucci fmt`. Several words may each map onto `commit`. */
+  | { kind: "commit"; word: string }
   | { kind: "refused"; reason: string };
 
 /** A member as a comment may name it: path segments, no leading dash, no shell or glob syntax. */
@@ -539,6 +541,8 @@ export function parseProductComment(words: CiProductWords, body: unknown, env: R
     case "lock":
     case "unlock":
       return parts.length === 2 ? { kind: command } : { kind: "refused", reason: `${line} takes nothing after it` };
+    case "commit":
+      return parts.length === 2 ? { kind: "commit", word: typed } : { kind: "refused", reason: `${line} takes nothing after it` };
     case "agent": {
       const ask = text.slice(`${prefix} ${typed}`.length).trim();
       if (ask === "") return { kind: "refused", reason: `${line} needs an ask after it, on the same line` };

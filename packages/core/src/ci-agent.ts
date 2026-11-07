@@ -187,9 +187,11 @@ export class AgentError extends Error {
 
 const NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/;
 const VAR = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+/** A full commit sha, SHA-1 or SHA-256. */
+export const SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 const BRANCH = /^[A-Za-z0-9_][A-Za-z0-9_.\/-]{0,199}$/;
-const LOGIN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+/** A forge login as the agent and commit jobs accept it. */
+export const LOGIN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 
 function intIn(where: string, v: unknown, lo: number, hi: number): number {
   if (typeof v !== "number" || !Number.isInteger(v) || v < lo || v > hi) throw new AgentError(`${where} is a whole number from ${lo} to ${hi}`);
@@ -201,7 +203,8 @@ function usdIn(where: string, v: unknown): number {
   return v;
 }
 
-function branchOk(b: string): boolean {
+/** Whether `b` is a branch name the agent and commit jobs push to. */
+export function branchOk(b: string): boolean {
   return BRANCH.test(b) && !b.split("/").some((s) => s === "" || s === "." || s === "..") && !b.endsWith(".lock");
 }
 
@@ -459,7 +462,8 @@ export function readDecision(dir: string): AgentDecision | undefined {
   }
 }
 
-function readSmall(file: string, max = 8 << 20): string | undefined {
+/** A file of at most `max` bytes, or undefined. */
+export function readSmall(file: string, max = 8 << 20): string | undefined {
   try {
     if (!existsSync(file) || statSync(file).size > max) return undefined;
     return readFileSync(file, "utf8");
@@ -583,11 +587,12 @@ export function askFromRun(words: CiProductWords, settings: Pick<AgentSettings, 
   return { pr, user, ask: parsed.ask };
 }
 
-function firstLine(s: string): string {
+export function firstLine(s: string): string {
   return s.trim().split("\n")[0]!.slice(0, 300);
 }
 
-function errText(e: unknown): string {
+/** An error's first line: git's stderr when it has one. */
+export function errText(e: unknown): string {
   const err = e as Error & { stderr?: unknown };
   return firstLine(typeof err.stderr === "string" && err.stderr ? err.stderr : err?.message ?? String(e));
 }
@@ -1018,8 +1023,8 @@ export function agentGitAuthLines(tokenVar: string, user: "x-access-token" | "oa
 }
 
 /** The line that fetches the pull request's head into {@link AGENT_HEAD_REF}, after the checkout. `prVar` holds the number. */
-export function agentHeadFetchLine(forge: "github" | "gitlab" | "forgejo", prVar: string): string {
+export function agentHeadFetchLine(forge: "github" | "gitlab" | "forgejo", prVar: string, into: string = AGENT_HEAD_REF): string {
   if (!VAR.test(prVar)) throw new AgentError(`${prVar} is not a variable name`);
   const ref = forge === "gitlab" ? `refs/merge-requests/$${prVar}/head` : `refs/pull/$${prVar}/head`;
-  return `case "$${prVar}" in ''|*[!0-9]*) echo "no pull request number" >&2; exit 1 ;; esac\ngit -c protocol.version=2 fetch -q --no-tags origin "+${ref}:${AGENT_HEAD_REF}"`;
+  return `case "$${prVar}" in ''|*[!0-9]*) echo "no pull request number" >&2; exit 1 ;; esac\ngit -c protocol.version=2 fetch -q --no-tags origin "+${ref}:${into}"`;
 }

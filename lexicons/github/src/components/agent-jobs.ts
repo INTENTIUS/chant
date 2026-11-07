@@ -77,12 +77,15 @@ export interface GithubAgentJobsInput {
   after?: string;
 }
 
-/** The comment condition of the agent job: a pull request comment that starts with the agent's line, from a writer on GitHub. */
-export function agentCommentIf(forge: "github" | "forgejo", comment: string): string {
+/**
+ * The comment condition of the agent job: a pull request comment that starts with the agent's line, from a writer on GitHub.
+ * `bare` (#4722): the line alone, with nothing after it, for a commit job's command.
+ */
+export function agentCommentIf(forge: "github" | "forgejo", comment: string, bare = false): string {
   return [
     "github.event_name == 'issue_comment'",
     forge === "forgejo" ? "(github.event.issue.pull_request || github.event.is_pull)" : "github.event.issue.pull_request",
-    `startsWith(github.event.comment.body, '${comment.replace(/'/g, "''")} ')`,
+    `startsWith(github.event.comment.body, '${comment.replace(/'/g, "''")}${bare ? "" : " "}')`,
     ...(forge === "forgejo" ? [] : ["contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.comment.author_association)"]),
   ].join(" && ");
 }

@@ -146,6 +146,8 @@ import { assertReviewSplit, GITLAB_REVIEW_NOTES_VAR, gitlabReviewJobs, REVIEW_DI
 import { AGENT_DIR, resolveAgentSpec } from "@intentius/chant/ci-agent";
 import { activeProductWords } from "@intentius/chant/ci-product-words";
 import { gitlabAgentHeader, gitlabAgentJobs, gitlabAgentPushJobName, gitlabDriftArtifacts, gitlabDriftRunLines } from "./agent-jobs";
+import { gitlabCommitHeader, gitlabCommitJobs, gitlabCommitPushJobName, gitlabFindingArtifacts, gitlabFindingRunLines } from "./commit-jobs";
+import { COMMIT_DIR, resolveCommitSpec } from "@intentius/chant/ci-commit";
 import { assertScheduledOpCloud, scheduledOpUpdateJobName } from "@intentius/chant/scheduled-op-cloud";
 import { gitlabTradeIdTokens, gitlabTradeLines, TRADE_SPEC_ENV } from "@intentius/chant/ci-identity";
 
@@ -325,6 +327,29 @@ export function generateGitlabOpPipeline(
     assertRunnerLabels(subject, "runner", spec.runner, "GitLab");
     const tags = gitlabTags(spec.runner);
     const setupScript = gitlabSetupScript(subject, spec.setup);
+    // #4722: a comment commit job is its own pair of jobs, in a pipeline of the default branch; the spec's trigger is not read.
+    if (spec.commit?.on === "comment") {
+      if (spec.agent) throw new Error(`${subject} sets a comment commit job and an agent; a comment commit job is a pair of jobs of its own, so give the agent its own spec.`);
+      const settings = resolveCommitSpec(spec.name, spec.commit, words.product);
+      const jobName = jobPrefix + ciJobName(spec.name);
+      jobs.push({ jobName, op: spec.name, trigger: { kind: "pull_request" }, findingMode: "report" });
+      opLines.push(...gitlabCommitHeader(jobName, settings, spec.commit.tokenEnv));
+      const { commit, push } = gitlabCommitJobs({
+        jobName,
+        stage,
+        image,
+        settings,
+        ...(spec.runner !== undefined ? { runner: spec.runner } : {}),
+        script: [...setupScript, ...beforeScript],
+        ...(spec.commit.tokenEnv ? { tokenEnv: spec.commit.tokenEnv } : {}),
+        ...(words.bin ? { bin: words.bin } : {}),
+      });
+      doc[jobName] = commit;
+      const pushName = gitlabCommitPushJobName(jobName);
+      doc[pushName] = push;
+      noteJobs.push(pushName);
+      continue;
+    }
     // #4616: the comment agent is its own pair of jobs, in a pipeline of the default branch; the spec's trigger is not read.
     if (spec.agent?.on === "comment") {
       const settings = resolveAgentSpec(spec.name, spec.agent, words.product);
@@ -361,6 +386,15 @@ export function generateGitlabOpPipeline(
     const driftAgent = spec.agent?.on === "drift" ? resolveAgentSpec(spec.name, spec.agent, words.product) : undefined;
     if (driftAgent && (split || trigger.kind === "push")) {
       throw new Error(`${subject} sets a drift agent, which follows a drift check's run; give it a cron or pull_request trigger and no reviewAgent.`);
+    }
+
+    // #4722: a check commit job follows the Op's job in the merge request pipeline. Off by default on GitLab: the push token is a protected variable.
+    const checkCommit = spec.commit?.on === "check" ? resolveCommitSpec(spec.name, spec.commit, words.product) : undefined;
+    if (checkCommit && spec.commit?.gitlabCheck !== true) {
+      throw new Error(`${subject} sets a check commit job, which is off on GitLab: its push token is a protected variable, which a merge request pipeline of an unprotected branch does not get. Set commit.gitlabCheck to true once the token reaches those pipelines, or use on: "comment".`);
+    }
+    if (checkCommit && (trigger.kind !== "pull_request" || split || driftAgent || update)) {
+      throw new Error(`${subject} sets a check commit job, which follows the check's run on a merge request; give it a pull_request trigger and no reviewAgent, drift agent or update.`);
     }
 
     const jobName = jobPrefix + ciJobName(spec.name);
@@ -420,7 +454,7 @@ export function generateGitlabOpPipeline(
 
     // #4631: an update follows a drift check the same way the drift agent does, on the dotenv the run leaves.
     const flagsDrift = driftAgent !== undefined || update !== undefined;
-    const runLines = flagsDrift ? gitlabDriftRunLines(invocation.join(" ")) : [invocation.join(" ")];
+    const runLines = flagsDrift ? gitlabDriftRunLines(invocation.join(" ")) : checkCommit ? gitlabFindingRunLines(invocation.join(" "), checkCommit.findings) : [invocation.join(" ")];
     const driftDir = member ? memberRepoPath(member, AGENT_DIR) : AGENT_DIR;
     doc[jobName] = {
       stage,
@@ -444,11 +478,31 @@ export function generateGitlabOpPipeline(
           ? { when: "always", paths: [member ? memberRepoPath(member, gateSummary) : gateSummary], expire_in: GATE_ARTIFACT_EXPIRY }
           : flagsDrift
             ? gitlabDriftArtifacts(driftDir)
-            : undefined,
+            : checkCommit
+              ? gitlabFindingArtifacts(member ? memberRepoPath(member, COMMIT_DIR) : COMMIT_DIR)
+              : undefined,
         artifacts,
         member,
       ),
     };
+    if (checkCommit) {
+      const name = `${jobName}-commit`;
+      opLines.push(...gitlabCommitHeader(name, checkCommit, spec.commit?.tokenEnv));
+      const { commit, push } = gitlabCommitJobs({
+        jobName: name,
+        stage,
+        image,
+        settings: checkCommit,
+        ...(spec.runner !== undefined ? { runner: spec.runner } : {}),
+        script: [...setupScript, ...beforeScript],
+        ...(spec.commit?.tokenEnv ? { tokenEnv: spec.commit.tokenEnv } : {}),
+        ...(words.bin ? { bin: words.bin } : {}),
+        after: { job: jobName, rules: rulesFor },
+      });
+      doc[name] = commit;
+      doc[gitlabCommitPushJobName(name)] = push;
+      noteJobs.push(name, gitlabCommitPushJobName(name));
+    }
     if (update) {
       // #4631: the update's own job, which alone holds the update's identity, after a run that found drift.
       const name = scheduledOpUpdateJobName(jobName);
