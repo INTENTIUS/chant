@@ -1225,6 +1225,17 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--wait") {
       // `chant ci verdict --wait` (#4644): read the check runs again until no required phase is pending.
       result.ciWait = true;
+    } else if (arg === "--retries") {
+      // `chant ci verdict --wait --retries <n>` (#4729): re-run a failed workflow run's failed jobs up to n times; overrides ci.green.mergeQueue.retries.
+      const raw = args[++i];
+      if (raw === undefined || !/^\d+$/.test(raw)) throw new Error(`--retries needs a whole number of re-runs: --retries <n>, got ${JSON.stringify(raw ?? "")}`);
+      result.ciRetries = Number(raw);
+    } else if (arg === "--timeout-minutes") {
+      // `chant ci verdict --wait --timeout-minutes <n>` (#4729): give up with a message after n minutes, before the job's own timeout.
+      const raw = args[++i];
+      const n = raw === undefined ? NaN : Number(raw);
+      if (raw === undefined || raw.trim() === "" || !Number.isFinite(n) || n <= 0) throw new Error(`--timeout-minutes needs a number of minutes above 0: --timeout-minutes <n>, got ${JSON.stringify(raw ?? "")}`);
+      result.ciTimeoutMinutes = n;
     } else if (arg === "--lane") {
       // `chant ci last-green --lane <name>` and `chant ci base --lane <name>` (#4662): a green lane's tags and phases.
       // `chant release cut|candidates --lane <name>` (#4692): a cut from that lane's green tag.

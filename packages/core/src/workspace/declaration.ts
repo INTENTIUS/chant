@@ -295,9 +295,10 @@ export interface CiGreen {
    * The branch takes changes through GitHub's merge queue (#4644): `ci
    * workflow` adds the `merge_group` trigger to the workflows holding a
    * phase that sets `build`, and writes `chant-merge-queue.yml`, whose
-   * `chant-verdict` job the queue's ruleset requires. Absent when unset.
+   * `chant-verdict` job the queue's ruleset requires. Absent when unset;
+   * `true` reads as `{ retries: 0 }`.
    */
-  mergeQueue?: true;
+  mergeQueue?: CiMergeQueue;
   /**
    * Known-flaky tests the phases' runners leave out (#4677), each with the
    * issue tracking its fix and the day it comes back. Absent when the
@@ -306,6 +307,19 @@ export interface CiGreen {
   quarantine?: CiQuarantine;
   pointer: string;
 }
+
+/** `ci.green.mergeQueue` (#4644), read from `true` or `{ "retries": <n> }` (#4729). */
+export interface CiMergeQueue {
+  /**
+   * How many times `ci verdict --wait` re-runs a failed workflow run's
+   * failed jobs before the group fails (#4729). 0, the default, fails at the
+   * first failed job.
+   */
+  retries: number;
+}
+
+/** The most re-runs `ci.green.mergeQueue.retries` may ask for (#4729). */
+export const MERGE_QUEUE_MAX_RETRIES = 5;
 
 /** The default `ci.green.quarantine.maxDays` (#4677): how far out an entry's `until` may be. */
 export const DEFAULT_QUARANTINE_MAX_DAYS = 14;
@@ -1455,7 +1469,7 @@ function cloudIdentityOf(raw: CloudIdentityDeclaration, at: (pointer: string, ke
 
 function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocation): CiDeclaration | null {
   if (raw === undefined) return null;
-  const block = raw as { reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; identity?: { cloud?: CloudIdentityDeclaration }; branches?: Record<string, string[]>; labels?: Record<string, string[]>; locks?: CiLocks; lockGrain?: CiLockGrain; policy?: unknown; prEnvironment?: { template: string; ttl?: string; teardown?: { name?: string; command: string[]; lexicons?: string[] } }; green?: { branch: string | string[]; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource; lanes?: Record<string, { require: string[] }>; notify?: CiNotify; mergeQueue?: boolean; quarantine?: { maxDays?: number; phases: Record<string, { test: string; file?: string; issue: string; until: string; why: string }[]> } } };
+  const block = raw as { reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; identity?: { cloud?: CloudIdentityDeclaration }; branches?: Record<string, string[]>; labels?: Record<string, string[]>; locks?: CiLocks; lockGrain?: CiLockGrain; policy?: unknown; prEnvironment?: { template: string; ttl?: string; teardown?: { name?: string; command: string[]; lexicons?: string[] } }; green?: { branch: string | string[]; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource; lanes?: Record<string, { require: string[] }>; notify?: CiNotify; mergeQueue?: boolean | { retries?: unknown }; quarantine?: { maxDays?: number; phases: Record<string, { test: string; file?: string; issue: string; until: string; why: string }[]> } } };
   const hooks = ciHooksOf(block.hooks, "/ci/hooks", at);
   const policy = ciPolicyOf(block.policy, at);
   const workflow = {
@@ -1540,8 +1554,18 @@ function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocatio
     }
   }
   const quarantine = g.quarantine !== undefined ? quarantineOf(g.quarantine, phases, at) : undefined;
+  // #4729: true, or { retries }, which the schema has checked; false is no merge queue.
+  let mergeQueue: CiMergeQueue | undefined;
+  if (g.mergeQueue === true) mergeQueue = { retries: 0 };
+  else if (typeof g.mergeQueue === "object" && g.mergeQueue !== null) {
+    const retries = g.mergeQueue.retries ?? 0;
+    if (!(typeof retries === "number" && Number.isInteger(retries) && retries >= 0 && retries <= MERGE_QUEUE_MAX_RETRIES)) {
+      throw new WorkspaceReadError("declaration-invalid", `ci.green.mergeQueue.retries: a whole number from 0 to ${MERGE_QUEUE_MAX_RETRIES}`, at("/ci/green/mergeQueue/retries"));
+    }
+    mergeQueue = { retries };
+  }
   const judged = Array.isArray(g.branch) ? g.branch : [g.branch];
-  return { green: { branch: judged[0]!, ...(judged.length > 1 ? { branches: [...judged] } : {}), window: g.window ?? DEFAULT_CI_WINDOW, phases, require: [...g.require], ...(g.preMerge !== undefined ? { preMerge: [...g.preMerge] } : {}), signedSince: g.signedSince ?? null, source: g.source ?? "checks", ...(lanes.length > 0 ? { lanes } : {}), ...(g.notify !== undefined ? { notify: { ...g.notify, ...(g.notify.events ? { events: [...g.notify.events] } : {}) } } : {}), ...(g.mergeQueue === true ? { mergeQueue: true as const } : {}), ...(quarantine ? { quarantine } : {}), pointer: "/ci/green" }, ...workflow, reportUrl };
+  return { green: { branch: judged[0]!, ...(judged.length > 1 ? { branches: [...judged] } : {}), window: g.window ?? DEFAULT_CI_WINDOW, phases, require: [...g.require], ...(g.preMerge !== undefined ? { preMerge: [...g.preMerge] } : {}), signedSince: g.signedSince ?? null, source: g.source ?? "checks", ...(lanes.length > 0 ? { lanes } : {}), ...(g.notify !== undefined ? { notify: { ...g.notify, ...(g.notify.events ? { events: [...g.notify.events] } : {}) } } : {}), ...(mergeQueue ? { mergeQueue } : {}), ...(quarantine ? { quarantine } : {}), pointer: "/ci/green" }, ...workflow, reportUrl };
 }
 
 /** A YYYY-MM-DD that names a real day, as days since 1970-01-01 UTC, or null. */

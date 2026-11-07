@@ -31,7 +31,7 @@ import { join, relative, resolve, sep } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
 import { findWorkspaceRoot } from "../project-root";
-import { ciBase, ciList, ciTick, ciVerdict, CiGreenError, formatList, formatTick, lastGreen, RUNNER_KEY_ENV } from "./ci-green";
+import { ciBase, ciList, ciTick, ciVerdict, CiGreenError, CiVerdictGaveUpError, formatList, formatTick, lastGreen, RUNNER_KEY_ENV } from "./ci-green";
 import { ciForgeFromEnv } from "./ci-green-forge";
 import { ACTIONS_NAME, buildTriggerEdits, CI_GREEN_WORKFLOW_FILE, ciGreenHeader, MERGE_QUEUE_VERDICT_JOB, MERGE_QUEUE_WORKFLOW_FILE, type PushToken, readWorkflowSources, renderCiGreenWorkflow, renderMergeQueueWorkflow, workflowsHolding, writeWorkflowFile } from "./ci-green-workflow";
 import { greenBranches, readDeclaration, readerVersion, WorkspaceReadError, type CiSource } from "./declaration";
@@ -39,7 +39,7 @@ import { recordGeneratedFiles, resolveMemberContext, shellArg } from "./member-p
 import { gitTop, workingTree } from "./tree";
 
 const USAGE =
-  "chant ci last-green [--json] [--lane <name>] [--from <rev>] [--branch <branch>] | ci base [--json] [--phase <name> | --lane <name>] [--from <rev>] [--branch <branch>] | ci verdict [--commit <sha>] [--wait] | ci list [--json] [--branch <branch>] [--limit <n>] [--since <rev>] [--forge github] [--source checks|runs] | ci tick [--dry-run] [--forge github] [--source checks|runs] [--key <runner key.pem>] | " +
+  "chant ci last-green [--json] [--lane <name>] [--from <rev>] [--branch <branch>] | ci base [--json] [--phase <name> | --lane <name>] [--from <rev>] [--branch <branch>] | ci verdict [--commit <sha>] [--wait [--retries <n>] [--timeout-minutes <n>]] | ci list [--json] [--branch <branch>] [--limit <n>] [--since <rev>] [--forge github] [--source checks|runs] | ci tick [--dry-run] [--forge github] [--source checks|runs] [--key <runner key.pem>] | " +
   "ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>] [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>] [--runner-key-secret <NAME>]";
 
 export { RUNNER_KEY_ENV };
@@ -107,26 +107,41 @@ export async function runCiBase(ctx: CommandContext): Promise<number> {
 }
 
 /**
- * `chant ci verdict [--commit <sha>] [--wait]` (#4644): exits 0 when every
- * required phase passed on the commit (GITHUB_SHA, else HEAD), 1 when one
- * failed or wasn't built, and 3 when one is still pending without --wait.
+ * `chant ci verdict [--commit <sha>] [--wait] [--retries <n>] [--timeout-minutes <n>]`
+ * (#4644): exits 0 when every required phase passed on the commit
+ * (GITHUB_SHA, else HEAD), 1 when one failed or wasn't built, and 3 when one
+ * is still pending without --wait. With --wait (#4729) it looks past forge
+ * errors that say to look again, re-runs a failed job's workflow run up to
+ * --retries times (else ci.green.mergeQueue.retries), and with
+ * --timeout-minutes exits 1 with a message once that time is up.
  */
 export async function runCiVerdict(ctx: CommandContext): Promise<number> {
   try {
+    if (!ctx.args.ciWait && (ctx.args.ciRetries !== undefined || ctx.args.ciTimeoutMinutes !== undefined)) {
+      throw new Error("--retries and --timeout-minutes go with --wait: without it the verdict reads the check runs once");
+    }
     const sha = ctx.args.commit ?? process.env.GITHUB_SHA ?? execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf-8" }).trim();
     const forge = ciForgeFromEnv("github");
-    const { verdict } = await ciVerdict({
+    const { verdict, repeated } = await ciVerdict({
       cwd: process.cwd(),
       sha,
       forge,
       ...(ctx.args.ciWait ? { wait: true } : {}),
       ...(ctx.args.branch !== undefined ? { branch: ctx.args.branch } : {}),
+      ...(ctx.args.ciRetries !== undefined ? { retries: ctx.args.ciRetries } : {}),
+      ...(ctx.args.ciTimeoutMinutes !== undefined ? { timeoutMs: ctx.args.ciTimeoutMinutes * 60_000 } : {}),
       onPending: (v) => console.error(`waiting on ${v.phases.filter((p) => p.verdict === "pending").map((p) => p.phase).join(", ")}`),
+      onNote: (line) => console.error(line),
     });
     const short = sha.slice(0, 12);
     if (verdict.verdict === "pass") {
       console.log(`${short}: every required phase passed (${verdict.phases.map((p) => p.phase).join(", ")})`);
       return 0;
+    }
+    if (repeated) {
+      const wr = repeated.workflowRun;
+      console.error(`${short}: phase ${repeated.phase} failed in ${repeated.run.name} (${repeated.run.conclusion}) again on attempt ${wr.attempt} of workflow run ${wr.name}${wr.url ? ` (${wr.url})` : ""}`);
+      return 1;
     }
     if (verdict.verdict === "fail") {
       console.error(`${short}: phase ${verdict.failure!.phase} failed in ${verdict.failure!.run.name} (${verdict.failure!.run.conclusion})`);
@@ -136,7 +151,9 @@ export async function runCiVerdict(ctx: CommandContext): Promise<number> {
     console.error(`${short}: ${verdict.verdict === "pending" ? "still waiting on" : "never built"} ${open.join(", ")}`);
     return verdict.verdict === "pending" ? CHANT_EXIT.waiting : 1;
   } catch (err) {
-    console.error(formatError({ message: `chant ci verdict: ${describe(err)}`, hint: USAGE }));
+    // #4729: out of time or out of forge errors to look past says so, without the usage.
+    if (err instanceof CiVerdictGaveUpError) console.error(`chant ci verdict: ${err.message}`);
+    else console.error(formatError({ message: `chant ci verdict: ${describe(err)}`, hint: USAGE }));
     return 1;
   }
 }
@@ -258,7 +275,9 @@ export async function runCiWorkflow(ctx: CommandContext): Promise<number> {
     if (green.mergeQueue && !member) {
       const queue = renderMergeQueueWorkflow({ green, chantVersion: readerVersion(), workspaceRoot, chant: ctx.args.ciChant, install: ctx.args.ciInstall, npmLock });
       const at = writeWorkflowFile(join(repoRoot, MERGE_QUEUE_WORKFLOW_FILE), ciGreenHeader(command, "root") + queue);
-      console.log(`Wrote ${at}: on each merge group, ${MERGE_QUEUE_VERDICT_JOB} passes when every required phase passed on the group's commit. Require ${MERGE_QUEUE_VERDICT_JOB} in the branch's ruleset.`);
+      const retries = green.mergeQueue.retries;
+      const again = retries > 0 ? `, re-running a failed job's workflow run up to ${retries} time${retries === 1 ? "" : "s"} first` : "";
+      console.log(`Wrote ${at}: on each merge group, ${MERGE_QUEUE_VERDICT_JOB} passes when every required phase passed on the group's commit${again}. Require ${MERGE_QUEUE_VERDICT_JOB} in the branch's ruleset.`);
     }
     for (const e of edits) {
       if (!e.changed) continue;
