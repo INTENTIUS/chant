@@ -52,6 +52,7 @@ import { DriverRunFailure, runInterpretDriver, type DriverComponent, type Driver
 import type { CapabilityRegistry, ReleaseInputs, ReleaseInputsUnbound } from "./capability";
 import { memoryGateLedgerPort } from "../op/gate";
 import type { ReleaseArtifact, ReleaseParam } from "../lifecycle/release-store";
+import { RELEASE_DIGESTS_ENV } from "../lifecycle/release-images";
 
 /** The deploy step fields whose literal file paths are a component's templates. */
 export { TEMPLATE_FIELDS } from "./deploy-inputs";
@@ -297,6 +298,8 @@ export interface CompileInputs {
    * reads the variable. Unset for a cut with no label.
    */
   releaseLabel?: string;
+  /** The digests file of the images the cut built (#4657), passed to the build command as `CHANT_RELEASE_DIGESTS`. */
+  releaseDigests?: string;
 }
 
 /** The variable a cut's label reaches the build through (#4168). */
@@ -359,7 +362,7 @@ export async function compileEnvironment(inputs: CompileInputs, env: string): Pr
       cwd: inputs.projectDir,
       shell: true,
       stdio: ["ignore", 2, 2],
-      env: { ...process.env, CHANT_ENV: env },
+      env: { ...process.env, CHANT_ENV: env, ...(inputs.releaseDigests ? { [RELEASE_DIGESTS_ENV]: inputs.releaseDigests } : {}) },
     });
     if (run.status !== 0) throw new ReleaseCompileError(`the build command for "${env}" exited ${run.status ?? "with a signal"}: ${inputs.buildCommand}`);
   }
@@ -571,13 +574,16 @@ function runChild(
   cwd: string,
   env: string,
   releaseLabel?: string,
+  releaseDigests?: string,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolvePromise, reject) => {
     const [bin, ...lead] = command;
     const childEnv: NodeJS.ProcessEnv = { ...process.env, CHANT_ENV: env };
-    // A label never leaks in from the caller's shell: only the cut sets it.
+    // A label never leaks in from the caller's shell: only the cut sets it. Nor do the digests (#4657).
     delete childEnv[RELEASE_LABEL_ENV];
+    delete childEnv[RELEASE_DIGESTS_ENV];
     if (releaseLabel !== undefined) childEnv[RELEASE_LABEL_ENV] = releaseLabel;
+    if (releaseDigests !== undefined) childEnv[RELEASE_DIGESTS_ENV] = releaseDigests;
     const child = spawn(bin, [...lead, ...args], { cwd, stdio: ["ignore", "pipe", "pipe"], env: childEnv });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
@@ -607,7 +613,7 @@ export function spawnTargetCompiler(inputs: CompileInputs, command: readonly str
     return args;
   };
   const call = async (env: string, extra: string[]): Promise<unknown> => {
-    const run = await runChild(command, ["release", "compile", "--env", env, ...common(), ...extra, "--json"], inputs.projectDir, env, inputs.releaseLabel);
+    const run = await runChild(command, ["release", "compile", "--env", env, ...common(), ...extra, "--json"], inputs.projectDir, env, inputs.releaseLabel, inputs.releaseDigests);
     if (run.code !== 0) throw new ReleaseCompileError(`compiling "${env}" failed (exit ${run.code})`);
     try {
       return JSON.parse(run.stdout);

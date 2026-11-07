@@ -234,6 +234,28 @@ export const control: Component = {
 
 The `ref` is in the release digest, so a release that records one is read by chant 0.124.65 and newer. An older chant reads it as a release that does not match its digest.
 
+### Images the package pins
+
+A package that pins container images by digest needs the digests when it is packed. `release.images` in `chant.config.ts` names images the cut builds before anything else ([#4657](https://github.com/INTENTIUS/chant/issues/4657)):
+
+```ts
+release: {
+  images: [
+    { name: "tofu", build: "docker buildx build --provenance=false --sbom=false --output type=oci,dest=dist/tofu.tar,rewrite-timestamp=true -f images/Dockerfile.tofu .", archive: "dist/tofu.tar" },
+  ],
+  publish: [
+    { type: "oci", image: "dist/tofu.tar", repository: "ghcr.io/acme/tofu" },
+    { type: "npm", packages: ["packages/cli"], pins: "dist/image-digests.json" },
+  ],
+},
+```
+
+Each `build` runs in the member's directory with `SOURCE_DATE_EPOCH` set to the commit's time and `CHANT_RELEASE_LABEL` to the label, and writes the OCI archive at `archive`, a layout directory or a tar file of one. The cut records the archive's top manifest digest, which is the digest a registry serves once the `oci` target pushes it, as an image artifact named after the image. It writes `{ "<name>": "sha256:..." }` to a file and runs `--build` with `CHANT_RELEASE_DIGESTS` naming that file, so the build that packs the package can copy the digests into it. A name that is also a component's is refused (`release-image-name-taken`). The dry run builds the images too, since its compile runs the build command.
+
+The publish job checks out the release's commit and runs `chant release images <label>` before the build that packs the package. It builds each image again, refuses one whose digest is not the recorded one (`release-image-digest-mismatch`), and writes the recorded digests to `.chant/release-digests.json` (or `-o <file>`), printing `CHANT_RELEASE_DIGESTS=<file>` for the job to export. The `oci` target then refuses an archive that is not the recorded one, so the image pushed is the one the package pins. This needs a build that writes the same archive from the same commit: timestamps rewritten from `SOURCE_DATE_EPOCH`, no logs or caches in the layers, and no attestations built into the archive. #4657's thread has the check against terragucci's Dockerfiles.
+
+An npm target's `pins` names the file in the package that carries the digests. The publish plan refuses a package whose file holds a `sha256:` digest the release does not record as an image (`publish-npm-pin-unknown`), and a target none of whose packages has the file (`publish-npm-pins-missing`). `chant release verify` makes the same check on a package built in the checkout (`release-pin-unknown`).
+
 ### A project with no components
 
 A project with no `*.component.ts` file is cut from what `chant build` writes ([#4046](https://github.com/INTENTIUS/chant/issues/4046)). For each environment the child process builds the project as `chant build <src> --env <env> -o <output>` would, with the environment's build parameters, and every file that build writes becomes a template with `component: null`. The target's `params` are the build's resolved parameters, and `artifactDigests` is empty.

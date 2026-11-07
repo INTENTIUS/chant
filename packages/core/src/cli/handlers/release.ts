@@ -43,13 +43,14 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { join, relative, resolve } from "node:path";
 import { formatBold, formatError, formatSuccess, formatWarning } from "../format";
 import { parseParamFlags } from "../build-params-cli";
 import type { CommandContext } from "../registry";
 
 const USAGE =
-  "chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>] [--image <component>=<repository>@sha256:<hex>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--override-green] [--json] | release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json] | release verify <label|digest> [--json] | release candidates [--env <env>] [--lane <name>] [--forge-issues] [--json] | release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json] | release list [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
+  "chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>] [--image <component>=<repository>@sha256:<hex>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--override-green] [--json] | release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json] | release verify <label|digest> [--json] | release images <label|digest> [-o <file>] [--json] | release candidates [--env <env>] [--lane <name>] [--forge-issues] [--json] | release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json] | release list [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
 
 /** The build inputs `release cut` and `release compile` share. */
 function compileInputs(
@@ -111,6 +112,74 @@ async function laneOf(ctx: CommandContext, cwd: string): Promise<string | undefi
     if (!ctx.args.json) console.error(formatWarning({ message: `release.lane was not read, so the full green tag is checked: ${err instanceof Error ? err.message : String(err)}` }));
     return undefined;
   }
+}
+
+/** The member's `release.images` (#4657), or none when the config declares none. */
+async function releaseImagesOf(cwd: string): Promise<Array<{ name: string; build: string; archive: string }>> {
+  const { loadChantConfig } = await import("../../config");
+  return (await loadChantConfig(cwd)).config.release?.images ?? [];
+}
+
+/** A commit's time in seconds, the `SOURCE_DATE_EPOCH` a release's image builds run with (#4657). */
+function commitTime(cwd: string, commit: string): number {
+  return Number(execFileSync("git", ["show", "-s", "--format=%ct", commit], { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim());
+}
+
+/**
+ * `release images <label|digest> [-o <file>] [--json]` (#4657): build the
+ * images the release recorded again, from the release's commit checked out
+ * here, refuse an archive whose digest is not the recorded one, and write the
+ * recorded digests to the file the package build reads through
+ * `CHANT_RELEASE_DIGESTS` (default `.chant/release-digests.json`). The
+ * publish job runs it before the build that packs the package.
+ */
+export async function runReleaseImages(ctx: CommandContext): Promise<number> {
+  const { args } = ctx;
+  const ref = args.extraPositional;
+  const fail = (code: string, message: string, fix?: string): number => {
+    if (args.json) console.log(JSON.stringify({ ref: ref ?? null, error: { code, message, ...(fix ? { fix } : {}) } }, null, 2));
+    else console.error(formatError({ message: `${message} [${code}]`, ...(fix ? { hint: fix } : {}) }));
+    return 1;
+  };
+  if (!ref) return fail("release-not-named", "release images needs a release, by label or digest", USAGE);
+  const cwd = resolve(".");
+  const { resolveRelease } = await import("../../lifecycle/release-store");
+  const { buildReleaseImages, releaseImageDigests, writeReleaseDigests, ReleaseImageError, RELEASE_DIGESTS_ENV } = await import("../../lifecycle/release-images");
+  const { ociArchiveDigest } = await import("../../lifecycle/publish-oci");
+  const { getHeadCommit } = await import("../../lifecycle/git");
+  const found = await resolveRelease(ref, { cwd });
+  if (!found) return fail("release-not-found", `no release is labelled or digested "${ref}" in this member`, "Fetch chant/lifecycle (git fetch origin chant/lifecycle:chant/lifecycle), then list them with: chant release list");
+  const { release, label } = found;
+  const head = await getHeadCommit({ cwd });
+  if (head !== release.commit) return fail("release-images-wrong-commit", `the release was cut from ${release.commit.slice(0, 12)}, and this checkout is at ${head.slice(0, 12)}, so its images would not be the release's`, `Check out the release's commit: git checkout ${release.commit}`);
+  const declared = await releaseImagesOf(cwd);
+  const recorded = releaseImageDigests(release, declared.map((d) => d.name));
+  const missing = declared.filter((d) => recorded[d.name] === undefined).map((d) => d.name);
+  if (missing.length > 0) return fail("release-image-not-recorded", `release.images names ${missing.join(", ")}, which release ${release.releaseDigest} does not record`, "Cut a new release, so its cut builds every image the config declares.");
+  let built: import("../../lifecycle/release-store").ReleaseArtifact[];
+  try {
+    built = buildReleaseImages({ images: declared, cwd, sourceDateEpoch: commitTime(cwd, release.commit), label, archiveDigest: ociArchiveDigest });
+  } catch (err) {
+    if (err instanceof ReleaseImageError) return fail(err.code, err.message, err.fix);
+    throw err;
+  }
+  const differ = built.filter((a) => recorded[a.component] !== a.digest);
+  if (differ.length > 0) {
+    return fail(
+      "release-image-digest-mismatch",
+      differ.map((a) => `image "${a.component}" built to ${a.digest}, and the release records ${recorded[a.component]}`).join("; "),
+      "An image build must write the same archive from the same commit: set SOURCE_DATE_EPOCH-aware timestamps (rewrite-timestamp=true), and remove logs and caches from its layers.",
+    );
+  }
+  const file = resolve(cwd, args.output ?? ".chant/release-digests.json");
+  writeReleaseDigests(file, recorded);
+  if (args.json) console.log(JSON.stringify({ releaseDigest: release.releaseDigest, label, digests: recorded, file }, null, 2));
+  else {
+    for (const [name, digest] of Object.entries(recorded)) console.error(`  ${name} ${digest}`);
+    console.error(formatSuccess(`Built ${built.length} image(s) to the digests release ${label ?? release.releaseDigest} records, and wrote them to ${relative(cwd, file) || file}`));
+    console.log(`${RELEASE_DIGESTS_ENV}=${file}`);
+  }
+  return 0;
 }
 
 function describeActorSource(source: import("../../lifecycle/release-workstation").ActorSource): string {
@@ -265,7 +334,25 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     // --at: the cut reads, compiles and builds the commit's tree, not the checkout's.
     if (args.at !== undefined && top && commit) checkout = at.checkoutCommit(top, cwd, commit);
     const cutCwd = checkout?.memberDir ?? cwd;
-    const compiler = spawnTargetCompiler(compileInputs(ctx, params, cutCwd, label));
+    // #4657: the images release.images declares are built first, and their digests handed to the build command.
+    const declaredImages = await releaseImagesOf(cutCwd);
+    const digestsFile = declaredImages.length > 0 ? join(tmpdir(), `chant-release-digests-${process.pid}.json`) : undefined;
+    const compiler = spawnTargetCompiler({ ...compileInputs(ctx, params, cutCwd, label), ...(digestsFile ? { releaseDigests: digestsFile } : {}) });
+    const buildImages = digestsFile
+      ? async (at: string) => {
+          const { buildReleaseImages, writeReleaseDigests, ReleaseImageError } = await import("../../lifecycle/release-images");
+          const { ociArchiveDigest } = await import("../../lifecycle/publish-oci");
+          try {
+            const built = buildReleaseImages({ images: declaredImages, cwd: cutCwd, sourceDateEpoch: commitTime(cutCwd, at), label, archiveDigest: ociArchiveDigest });
+            writeReleaseDigests(digestsFile, Object.fromEntries(built.map((a) => [a.component, a.digest])));
+            return built;
+          } catch (err) {
+            const code = err instanceof ReleaseImageError ? err.code : (err as { code?: unknown }).code;
+            const fix = err instanceof ReleaseImageError ? err.fix : undefined;
+            throw new ReleaseCutError(code === "release-image-name-taken" ? "release-image-name-taken" : "release-image-build-failed", `no release was cut: ${(err as Error).message}`, fix);
+          }
+        }
+      : undefined;
     // #4692: the lane is the commit's own config's under --at.
     const lane = await laneOf(ctx, cutCwd);
     const request = {
@@ -279,6 +366,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       ...(lane !== undefined ? { lane } : {}),
       ...(args.overrideGreen ? { overrideGreen: true } : {}),
       ...(Object.keys(images).length > 0 ? { images } : {}),
+      ...(buildImages ? { buildImages } : {}),
     };
 
     if (dryRun) {
@@ -589,7 +677,13 @@ export async function runReleaseVerify(ctx: CommandContext): Promise<number> {
     else console.error(formatError({ message: `${result.error.message} [${result.error.code}]`, ...(result.error.fix ? { hint: result.error.fix } : {}) }));
     return 1;
   }
-  const code = verificationCode(result);
+  let code: string | null = verificationCode(result);
+  // #4657: a package built here that pins an image digest the release does not record fails the check.
+  const pins = code ? null : await unknownPackagePins(resolve("."), result.releaseDigest);
+  if (pins) {
+    code = "release-pin-unknown";
+    result.reason = pins;
+  }
   if (args.json) {
     console.log(JSON.stringify({ ...result, ...(code ? { error: { code, message: result.reason } } : {}) }, null, 2));
     return code ? 1 : 0;
@@ -602,13 +696,23 @@ export async function runReleaseVerify(ctx: CommandContext): Promise<number> {
     console.error(
       formatError({
         message: `${name} does not verify: ${result.reason} [${code}]`,
-        hint: code === "release-digest-mismatch" ? "Do not publish or deploy it; cut the release again." : `Cut it again signed with a key ${result.signers.path} lists: chant release cut ${result.label ?? "<label>"} --sign --yes`,
+        hint: code === "release-digest-mismatch" ? "Do not publish or deploy it; cut the release again." : code === "release-pin-unknown" ? "Build the package from the digests the release records: chant release images <label>, then the build with CHANT_RELEASE_DIGESTS set." : `Cut it again signed with a key ${result.signers.path} lists: chant release cut ${result.label ?? "<label>"} --sign --yes`,
       }),
     );
     return 1;
   }
   console.error(formatSuccess(`Verified ${name}: ${result.reason}`));
   return 0;
+}
+
+/** The first package built here that pins an image digest release `digest` does not record (#4657), said in a sentence, or null. */
+async function unknownPackagePins(cwd: string, digest: string): Promise<string | null> {
+  const { loadChantConfig } = await import("../../config");
+  const { readRelease } = await import("../../lifecycle/release-store");
+  const { packagePinProblem } = await import("../../lifecycle/release-images");
+  const targets = (await loadChantConfig(cwd).catch(() => null))?.config.release?.publish ?? [];
+  const release = await readRelease(digest, { cwd });
+  return release ? packagePinProblem(cwd, release, targets) : null;
 }
 
 /**

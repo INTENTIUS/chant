@@ -69,6 +69,14 @@ export const NpmPublishSchema = z
      * registry accepts a publish before it serves it. Unset, the wait ends
      * only when every version is served or the registry fails (#4271).
      */
+    /**
+     * A file in the package, from its root, holding the image digests it pins
+     * (#4657), such as `dist/image-digests.json`. Every `sha256:` digest in it
+     * must be an image the release records, or the plan and `chant release
+     * verify` refuse the package. A package without the file is not checked,
+     * and a target none of whose packages has it is refused.
+     */
+    pins: z.string().min(1).optional(),
     registryWait: z.number().int().min(0).optional(),
   })
   .strict();

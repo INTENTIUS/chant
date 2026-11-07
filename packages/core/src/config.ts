@@ -109,6 +109,7 @@ export const ChantConfigSchema = z.object({
   release: z.object({
     autoRecord: z.boolean().optional(),
     publish: z.array(PublishDeclarationSchema).optional(),
+    images: z.array(z.object({ name: z.string().min(1), build: z.string().min(1), archive: z.string().min(1) }).strict()).optional(),
     lane: z.string().regex(/^[a-z0-9][a-z0-9-]*$/, "a ci.green lane name: lowercase letters, digits and dashes").optional(),
   }).optional(),
   // Strict: a misspelt key here would leave Ops on the local runtime with
@@ -372,6 +373,14 @@ export interface ChantConfig {
      * the order given. See ./lifecycle/publish-declaration.ts.
      */
     publish?: PublishDeclaration[];
+    /**
+     * Images the cut builds before the release's build command (#4657): each
+     * `build` writes the OCI archive at `archive`, and the cut records its
+     * digest and hands every digest to the build through `CHANT_RELEASE_DIGESTS`,
+     * so a package can pin the images it ships with. An `oci` target pushes
+     * the archive. See ./lifecycle/release-images.ts.
+     */
+    images?: Array<{ name: string; build: string; archive: string }>;
     /**
      * The green lane `chant release cut` and `chant release candidates` check
      * when `--lane` is not given (#4692): one `ci.green.lanes` declares in
