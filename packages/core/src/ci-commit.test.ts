@@ -99,18 +99,18 @@ interface World {
   r: ReturnType<typeof repo>;
   records: OpRunRecord[];
   replies: string[];
-  heads: () => PullRequestHead;
+  heads: () => PullRequestHead & { base?: string };
   approvals: Map<string, string>;
   canWrite: boolean;
 }
 
 function world(): World {
   const r = repo();
-  const w: World = { r, records: [], replies: [], approvals: new Map(), canWrite: true, heads: () => ({ sha: sh(["rev-parse", "refs/heads/feature"], r.origin).trim(), branch: "feature", open: true, sameRepo: true }) };
+  const w: World = { r, records: [], replies: [], approvals: new Map(), canWrite: true, heads: () => ({ sha: sh(["rev-parse", "refs/heads/feature"], r.origin).trim(), branch: "feature", open: true, sameRepo: true, base: "main" }) };
   return w;
 }
 
-async function cycle(w: World, s: CommitSettings, o: { event?: unknown; command?: CommitRunCommand; env?: Record<string, string> } = {}) {
+async function cycle(w: World, s: CommitSettings, o: { event?: unknown; command?: CommitRunCommand; env?: Record<string, string>; between?: () => void } = {}) {
   const d = tmp("dir");
   const forge = {
     pullRequestHead: async () => w.heads(),
@@ -124,10 +124,13 @@ async function cycle(w: World, s: CommitSettings, o: { event?: unknown; command?
   const env = o.env ?? {};
   const approval = async (_pr: number, sha: string) => w.approvals.get(sha);
   const readRuns = async () => w.records;
-  const decision = await prepareCommitRun({ settings: s, words, dir: d, env, event, forge, readRuns, approval, git: w.r.git, now: NOW });
+  const pullRequestBase = async () => w.heads().base;
+  const decision = await prepareCommitRun({ settings: s, words, dir: d, env, event, forge, pullRequestBase, readRuns, approval, git: w.r.git, now: NOW });
   const ran = await runCommit({ settings: s, dir: d, checkout: w.r.checkout, workDir: join(tmp("work"), "w"), env: { PATH: process.env.PATH }, git: w.r.git, runCommand: o.command ?? formatter() });
+  o.between?.();
   let t = NOW.getTime();
   const out = await landCommitChange({
+    pullRequestBase,
     settings: s,
     words,
     dir: d,
@@ -158,6 +161,7 @@ describe("settings", () => {
     const s = settings();
     expect(s).toMatchObject({ maxRuns: 3, timeout: 10, findings: [2], env: "local", guarded: [] });
     expect(commitSettingsFromEnv(commitSettingsEnv(s), "plywood")).toEqual(s);
+    expect(commitSettingsFromEnv(commitSettingsEnv(settings({ mergeBase: true })), "plywood").mergeBase).toBe(true);
     const bad = (spec: Partial<OpCommitSpec>) => () => settings(spec);
     expect(bad({ allowed: [] })).toThrow(/allowed names at least one path/);
     expect(bad({ allowed: ["../x"] })).toThrow(/paths from the repository root/);
@@ -321,5 +325,62 @@ describe("the check trigger", () => {
     const w = world();
     const { out } = await cycle(w, check(), { event: {}, env: { GITLAB_CI: "true", CI_MERGE_REQUEST_IID: "7" } });
     expect(out.result).toBe("pushed");
+  });
+});
+
+/** A commit on origin's main, from a fresh clone. */
+function onMain(w: World, files: Record<string, string>, message = "on main"): string {
+  const c = tmp("main");
+  sh(["clone", "-q", "-b", "main", w.r.origin, c], tmpdir());
+  write(c, files);
+  sh(["add", "-A"], c);
+  sh(["commit", "-q", "-m", message], c);
+  sh(["push", "-q", "origin", "main"], c);
+  return sh(["rev-parse", "HEAD"], c).trim();
+}
+
+describe("mergeBase (#4723)", () => {
+  const merging = () => settings({ mergeBase: true });
+
+  test("merges the base tip into the head, runs the command on the merge and pushes one commit with both parents", async () => {
+    const w = world();
+    const tip = onMain(w, { "migrations/002.sql": "create table b;\n" });
+    const { decision, out } = await cycle(w, merging());
+    expect(decision).toMatchObject({ go: true, base: "main", baseSha: tip });
+    expect(out.result).toBe("pushed");
+    expect(out.paths).toEqual(["main.tf"]);
+    const parents = sh(["log", "-1", "--format=%P", "refs/heads/feature"], w.r.origin).trim().split(" ");
+    expect(parents).toEqual([w.r.head, tip]);
+    expect(sh(["show", "refs/heads/feature:migrations/002.sql"], w.r.origin)).toBe("create table b;\n");
+    expect(sh(["show", "refs/heads/feature:main.tf"], w.r.origin)).toBe("a=1\n");
+    expect(w.replies[0]).toContain("from a merge of `main` and `terraform fmt -recursive`");
+  });
+
+  test("refuses a merge that conflicts, running nothing", async () => {
+    const w = world();
+    onMain(w, { "main.tf": "b=2\n" });
+    let ran = false;
+    const { out } = await cycle(w, merging(), { command: async () => ((ran = true), { exitCode: 0, timedOut: false }) });
+    expect(ran).toBe(false);
+    expect(out).toMatchObject({ result: "refused", reason: "merging main into the head conflicts" });
+    expect(sh(["rev-parse", "refs/heads/feature"], w.r.origin).trim()).toBe(w.r.head);
+    expect(w.replies[0]).toContain("conflicts, so plywood-fmt did not run");
+  });
+
+  test("refuses when the base moved while the command ran", async () => {
+    const w = world();
+    onMain(w, { "migrations/002.sql": "x\n" });
+    const { out } = await cycle(w, merging(), { between: () => void onMain(w, { "migrations/003.sql": "y\n" }, "moved") });
+    expect(out).toMatchObject({ result: "refused", reason: "the base moved" });
+    expect(sh(["rev-parse", "refs/heads/feature"], w.r.origin).trim()).toBe(w.r.head);
+  });
+
+  test("refuses a change outside allowed, though the merge itself brings other paths", async () => {
+    const w = world();
+    onMain(w, { "migrations/002.sql": "x\n" });
+    const { out } = await cycle(w, merging(), { command: formatter({ "other.tf": "z\n" }) });
+    expect(out.result).toBe("refused");
+    expect(out.reason).toBe("the change touches other.tf");
+    expect(sh(["rev-parse", "refs/heads/feature"], w.r.origin).trim()).toBe(w.r.head);
   });
 });

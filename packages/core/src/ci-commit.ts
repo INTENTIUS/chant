@@ -71,6 +71,13 @@ export interface OpCommitSpec {
   env?: string;
   /** GitLab only: run the `check` trigger, which is off there by default. */
   gitlabCheck?: boolean;
+  /**
+   * Merge the base branch's tip into the head (`--no-ff`) before the command
+   * runs (#4723), as a migrations fork shows only on that merge. A conflict
+   * is refused. The pushed commit is that merge, with the command's change:
+   * its parents are the head and the base tip.
+   */
+  mergeBase?: boolean;
 }
 
 /** A commit job's settings, every default filled and checked. */
@@ -85,6 +92,7 @@ export interface CommitSettings {
   guarded: string[];
   timeout: number;
   env: string;
+  mergeBase: boolean;
 }
 
 export const COMMIT_MAX_RUNS = 3;
@@ -106,6 +114,7 @@ export const COMMIT_ENV = {
   guarded: "CHANT_COMMIT_GUARDED",
   timeout: "CHANT_COMMIT_TIMEOUT",
   env: "CHANT_COMMIT_ENV",
+  mergeBase: "CHANT_COMMIT_MERGE_BASE",
 } as const;
 
 /** GitLab starts no pipeline on a note: a pipeline of the default branch started with these runs a comment commit job. */
@@ -116,6 +125,8 @@ export const GITLAB_COMMIT_WORD_VAR = "CHANT_COMMIT";
 export const COMMIT_DIR = ".chant/commit";
 /** The local ref the checkout fetches a pull request's head into. */
 export const COMMIT_HEAD_REF = "refs/chant/commit-head";
+/** The local ref the jobs fetch the base branch's tip into, with `mergeBase`. */
+export const COMMIT_BASE_REF = "refs/chant/commit-base";
 export const COMMIT_DECISION_FILE = "decision.json";
 export const COMMIT_PATCH_FILE = "change.patch";
 export const COMMIT_RC_FILE = "rc";
@@ -172,6 +183,7 @@ export function resolveCommitSpec(name: string, spec: OpCommitSpec, product = "c
     guarded,
     timeout: spec.timeout === undefined ? COMMIT_TIMEOUT_MINUTES : intIn(`${where}: timeout`, spec.timeout, 1, 120),
     env,
+    mergeBase: spec.mergeBase === true,
   };
 }
 
@@ -188,6 +200,7 @@ export function commitSettingsEnv(s: CommitSettings): Record<string, string> {
     ...(s.guarded.length > 0 ? { [COMMIT_ENV.guarded]: JSON.stringify(s.guarded) } : {}),
     [COMMIT_ENV.timeout]: String(s.timeout),
     [COMMIT_ENV.env]: s.env,
+    ...(s.mergeBase ? { [COMMIT_ENV.mergeBase]: "1" } : {}),
   };
 }
 
@@ -227,6 +240,7 @@ export function commitSettingsFromEnv(env: Record<string, string | undefined>, p
     ...(timeout !== undefined ? { timeout } : {}),
     ...(guarded ? { guarded } : {}),
     ...(env[COMMIT_ENV.env] ? { env: env[COMMIT_ENV.env] } : {}),
+    ...(env[COMMIT_ENV.mergeBase] === "1" ? { mergeBase: true } : {}),
   };
   return resolveCommitSpec(name, spec, product);
 }
@@ -307,6 +321,9 @@ export interface CommitDecision {
   pr?: number;
   branch?: string;
   user?: string;
+  /** With `mergeBase`: the base branch and the tip the command ran on. */
+  base?: string;
+  baseSha?: string;
   started: string;
 }
 
@@ -317,6 +334,8 @@ export function readCommitDecision(dir: string): CommitDecision | undefined {
     if (d.sha !== undefined && !SHA.test(d.sha)) return undefined;
     if (d.pr !== undefined && !(Number.isInteger(d.pr) && d.pr > 0)) return undefined;
     if (d.branch !== undefined && !branchOk(d.branch)) return undefined;
+    if (d.base !== undefined && !branchOk(d.base)) return undefined;
+    if (d.baseSha !== undefined && !SHA.test(d.baseSha)) return undefined;
     return d as CommitDecision;
   } catch {
     return undefined;
@@ -389,6 +408,27 @@ export function commitRunRecordInput(o: {
   };
 }
 
+// ── the base merge (#4723) ─────────────────────────────────────────────────
+
+/**
+ * The branch the pull request merges into: the forge's answer, else the
+ * run's own (the `pull_request` event's base, GitLab's target branch).
+ */
+function baseBranchOf(asked: string | undefined, env: Record<string, string | undefined>, event: unknown): string | undefined {
+  const fromEvent = (event as { pull_request?: { base?: { ref?: unknown } } } | undefined)?.pull_request?.base?.ref;
+  const b = asked ?? (typeof fromEvent === "string" ? fromEvent : undefined) ?? (env.GITLAB_CI === "true" ? env.CI_MERGE_REQUEST_TARGET_BRANCH_NAME : undefined);
+  return b && branchOk(b) ? b : undefined;
+}
+
+/** Fetch the base branch's tip into {@link COMMIT_BASE_REF} and return it. */
+function fetchBase(git: AgentGit, base: string): string {
+  git(["fetch", "-q", "--no-tags", "origin", `+refs/heads/${base}:${COMMIT_BASE_REF}`]);
+  return git(["rev-parse", COMMIT_BASE_REF]).trim();
+}
+
+/** The identity the base merge is made under; the job's commit carries it too. */
+const MERGE_ID = ["-c", `user.name=${COMMIT_GIT_NAME}`, "-c", `user.email=${COMMIT_GIT_EMAIL}`, "-c", "commit.gpgsign=false"];
+
 // ── commit prepare ─────────────────────────────────────────────────────────
 
 /** Who approved the plan of a pull request's head on the ledger, or undefined. The job's own records never answer it. */
@@ -402,6 +442,8 @@ export interface CommitPrepareInput {
   event?: unknown;
   /** A read client: who may write, and the pull request's head. Absent on GitLab, where this job holds no token. */
   forge?: Pick<PrForge, "pullRequestHead" | "userCanWrite">;
+  /** The branch pull request `pr` merges into, asked of the forge (./pr-forge-base.ts), for `mergeBase` (#4723). */
+  pullRequestBase?: (pr: number) => Promise<string | undefined>;
   readRuns: () => Promise<OpRunRecord[]>;
   approval: HeadApproval;
   git: AgentGit;
@@ -466,7 +508,17 @@ export async function prepareCommitRun(i: CommitPrepareInput): Promise<CommitDec
     }
     if (approved) return no(`the plan of ${sha.slice(0, 8)} is approved by ${approved}, and a commit would void that approval`, "refused", { ...who, sha });
   }
-  return write({ ...base, go: true, sha, ...who, ...(branch ? { branch } : {}) });
+  let merge: { base: string; baseSha: string } | undefined;
+  if (s.mergeBase) {
+    const target = baseBranchOf(await i.pullRequestBase?.(req.pr), i.env, i.event);
+    if (!target) return no(`the branch #${req.pr} merges into is not known, so ${s.name} cannot merge it first`, "refused", who);
+    try {
+      merge = { base: target, baseSha: fetchBase(i.git, target) };
+    } catch (e) {
+      return no(`${target} could not be fetched (${errText(e)})`, "refused", who);
+    }
+  }
+  return write({ ...base, go: true, sha, ...who, ...(branch ? { branch } : {}), ...(merge ?? {}) });
 }
 
 // ── commit run ─────────────────────────────────────────────────────────────
@@ -530,6 +582,19 @@ export async function runCommit(i: CommitRunInput): Promise<{ rc: string; change
     return { rc: "refused", changed: false };
   }
   i.git(["worktree", "add", "--detach", "--force", i.workDir, decision.sha]);
+  if (i.settings.mergeBase) {
+    if (!decision.baseSha) {
+      writeFileSync(rcFile, "refused\n");
+      return { rc: "refused", changed: false };
+    }
+    try {
+      i.git([...MERGE_ID, "merge", "-q", "--no-ff", "--no-edit", decision.baseSha], { cwd: i.workDir });
+    } catch {
+      writeFileSync(rcFile, "conflict\n");
+      writeFileSync(join(i.dir, COMMIT_PATCH_FILE), "");
+      return { rc: "conflict", changed: false };
+    }
+  }
   const out = await i.runCommand(i.settings.command, { cwd: i.workDir, env: commitCommandEnv(i.env, i.checkout), timeoutMs: i.settings.timeout * 60_000 });
   const rc = out.timedOut ? "timeout" : out.exitCode === null ? "no-exit" : String(out.exitCode);
   writeFileSync(rcFile, `${rc}\n`);
@@ -559,6 +624,8 @@ export interface CommitLandInput {
   event?: unknown;
   /** A write client. */
   forge: Pick<PrForge, "pullRequestHead" | "addComment">;
+  /** As {@link CommitPrepareInput.pullRequestBase}: the land checks the base is still the one the command ran on. */
+  pullRequestBase?: (pr: number) => Promise<string | undefined>;
   git: AgentGit;
   /** Push `HEAD` of `cwd` to `ref`, never with force. */
   push: (o: { cwd: string; ref: string }) => void;
@@ -634,6 +701,9 @@ export async function landCommitChange(i: CommitLandInput): Promise<CommitLandOu
   }
   if (!decision.go) return finish({ result: decision.stop ?? "refused", reason: decision.reason ?? "refused" }, `${decision.reason ?? `${s.name} did not run`}, so nothing was pushed.`);
   const rc = readSmall(join(i.dir, COMMIT_RC_FILE))?.trim() ?? "";
+  if (rc === "conflict") {
+    return finish({ result: "refused", reason: `merging ${decision.base ?? "the base"} into the head conflicts` }, `merging ${code(decision.base ?? "the base")} into the ${what} conflicts, so ${s.name} did not run and nothing was pushed. Resolve the conflict on the branch.`);
+  }
   if (rc === "timeout") return finish({ result: "stopped", reason: `the command passed its ${s.timeout} minute limit` }, `${code(s.command.join(" "))} was stopped at its ${s.timeout} minute limit, so nothing was pushed.`);
   if (rc !== "0") return finish({ result: "failed", reason: `the command exited ${rc || "with no code"}` }, `${code(s.command.join(" "))} stopped with ${rc ? `exit code ${rc}` : "no exit code"}, so nothing was pushed. The commit job's log has its output.`);
 
@@ -647,6 +717,17 @@ export async function landCommitChange(i: CommitLandInput): Promise<CommitLandOu
   }
   headSha = sha;
   if (sha !== head.sha || sha !== decision.sha) return finish({ result: s.on === "check" ? "skipped" : "refused", reason: "the head moved" }, `the ${what} moved while ${s.name} ran, so nothing was pushed. Ask again.`);
+  let baseSha: string | undefined;
+  if (s.mergeBase) {
+    const target = baseBranchOf(await i.pullRequestBase?.(pr!), i.env, i.event);
+    if (!target || target !== decision.base || !decision.baseSha) return finish({ result: "refused", reason: "the base branch is not the one the command ran on" }, `the branch #${pr} merges into is not the one ${s.name} merged, so nothing was pushed. Ask again.`);
+    try {
+      baseSha = fetchBase(i.git, target);
+    } catch (e) {
+      return finish({ result: "failed", reason: `could not fetch ${target} (${errText(e)})` });
+    }
+    if (baseSha !== decision.baseSha) return finish({ result: s.on === "check" ? "skipped" : "refused", reason: "the base moved" }, `${code(target)} moved while ${s.name} ran, so nothing was pushed. Ask again.`);
+  }
 
   // The limit and the approval again, on this job's own read.
   const earlier = (await i.readRuns().catch(() => [] as OpRunRecord[])).filter((r) => Date.parse(r.started) < Date.parse(started));
@@ -667,8 +748,18 @@ export async function landCommitChange(i: CommitLandInput): Promise<CommitLandOu
   let paths: string[];
   try {
     i.git(["worktree", "add", "--detach", "--force", i.workDir, sha]);
+    // The same merge the commit job made, with no code run: the patch was taken against it.
+    let against = "HEAD";
+    if (baseSha) {
+      try {
+        i.git([...MERGE_ID, "merge", "-q", "--no-ff", "--no-commit", baseSha], { cwd: i.workDir });
+      } catch {
+        return finish({ result: "refused", reason: `merging ${decision.base} into the head conflicts` }, `merging ${code(decision.base!)} into the ${what} conflicts, so nothing was pushed.`);
+      }
+      against = i.git(["write-tree"], { cwd: i.workDir }).trim();
+    }
     i.git(["apply", "--index", "--binary", "--whitespace=nowarn", patch], { cwd: i.workDir });
-    paths = i.git(["diff", "--cached", "--name-only", "--no-renames", "-z", "HEAD"], { cwd: i.workDir }).split("\0").filter(Boolean);
+    paths = i.git(["diff", "--cached", "--name-only", "--no-renames", "-z", against], { cwd: i.workDir }).split("\0").filter(Boolean);
   } catch (e) {
     return finish({ result: "refused", reason: `the patch does not apply to ${sha.slice(0, 8)}` }, `the change does not apply to ${sha.slice(0, 8)} (${errText(e)}), so nothing was pushed.`);
   }
@@ -683,10 +774,11 @@ export async function landCommitChange(i: CommitLandInput): Promise<CommitLandOu
   }
 
   const title = s.on === "comment" ? `${s.comment} asked for by ${user} on ${what} #${pr}` : `${s.name} after the check found something at ${sha.slice(0, 8)}`;
-  const message = [title, "", `Ran ${s.command.join(" ")} on ${sha.slice(0, 12)}.`, "", ...(user ? [`Requested-by: ${user}`] : []), `${COMMIT_TRAILER}: ${s.name}`, ""].join("\n");
+  const ran = baseSha ? `Merged ${decision.base} at ${baseSha.slice(0, 12)} into ${sha.slice(0, 12)}, then ran ${s.command.join(" ")}.` : `Ran ${s.command.join(" ")} on ${sha.slice(0, 12)}.`;
+  const message = [title, "", ran, "", ...(user ? [`Requested-by: ${user}`] : []), `${COMMIT_TRAILER}: ${s.name}`, ""].join("\n");
   let commitSha: string;
   try {
-    i.git(["-c", `user.name=${COMMIT_GIT_NAME}`, "-c", `user.email=${COMMIT_GIT_EMAIL}`, "-c", "commit.gpgsign=false", "commit", "-q", "-F", "-"], { cwd: i.workDir, input: message });
+    i.git([...MERGE_ID, "commit", "-q", "-F", "-"], { cwd: i.workDir, input: message });
     commitSha = i.git(["rev-parse", "HEAD"], { cwd: i.workDir }).trim();
   } catch (e) {
     return finish({ result: "failed", reason: `could not commit (${errText(e)})` });
@@ -700,7 +792,7 @@ export async function landCommitChange(i: CommitLandInput): Promise<CommitLandOu
   const voided = approved ? ` The plan of ${code(sha.slice(0, 8))} was approved by ${approved}; the new commit is planned again and needs approval again.` : "";
   return finish(
     { result: "pushed", reason: `pushed ${commitSha} to ${head.branch}`, commit: commitSha, paths, ...(approved ? { approvalVoided: approved } : {}) },
-    `pushed ${code(commitSha.slice(0, 8))} to ${code(head.branch)}${user ? ` for ${user}` : ""}, from ${code(s.command.join(" "))}, changing ${paths.map(code).join(", ")}.${voided} Nothing was applied, approved or merged.`,
+    `pushed ${code(commitSha.slice(0, 8))} to ${code(head.branch)}${user ? ` for ${user}` : ""}, from ${baseSha ? `a merge of ${code(decision.base!)} and ` : ""}${code(s.command.join(" "))}, changing ${paths.map(code).join(", ")}.${voided} Nothing was applied, approved or merged.`,
   );
 }
 

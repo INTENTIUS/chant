@@ -27,6 +27,11 @@ describe("commit jobs on GitLab (#4722)", () => {
     expect(yaml).toContain("scope it to environment chant-fmt-push");
   });
 
+  test("mergeBase is refused on a comment job, which cannot read the target branch (#4723)", () => {
+    expect(() => gen({ ...COMMENT, commit: { ...COMMENT.commit!, mergeBase: true } })).toThrow(/cannot read the merge request's target branch/);
+    expect(gen({ ...CHECK, commit: { ...CHECK.commit!, mergeBase: true } }).doc["fmt-check-commit"]!.script.join("\n")).toContain("chant commit prepare");
+  });
+
   test("a check job is refused unless gitlabCheck is set", () => {
     expect(() => gen({ ...CHECK, commit: { ...CHECK.commit!, gitlabCheck: undefined } })).toThrow(/off on GitLab/);
   });
