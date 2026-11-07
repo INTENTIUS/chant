@@ -244,8 +244,6 @@ export interface PullRequestHead {
   open: boolean;
   /** The branch lives in this repository, not a fork. */
   sameRepo: boolean;
-  /** The branch it merges into (#4723), when the forge said. */
-  base?: string;
 }
 
 /** An open pull request as `chant ci serve` polls it (#4095). */
@@ -1216,8 +1214,7 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
       const branch = str(got.head.ref);
       if (!sha || !branch) return undefined;
       const open = got.state === "open" && got.merged !== true;
-      const base = isObject(got.base) ? str(got.base.ref) : undefined;
-      return { sha, branch, open, sameRepo: fromHere(got, branch), ...(base ? { base } : {}) };
+      return { sha, branch, open, sameRepo: fromHere(got, branch) };
     },
     async userCanWrite(login) {
       let got: unknown;
@@ -1682,8 +1679,7 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
       const branch = str(got.source_branch);
       if (!sha || !branch) return undefined;
       const own = num(got.source_project_id) === undefined || num(got.source_project_id) === num(got.target_project_id);
-      const base = str(got.target_branch);
-      return { sha, branch, open: got.state === "opened", sameRepo: own, ...(base ? { base } : {}) };
+      return { sha, branch, open: got.state === "opened", sameRepo: own };
     },
     async jobArtifact(id, path) {
       return api.text(`${project}/jobs/${id}/artifacts/${path.split("/").map(encodeURIComponent).join("/")}`);

@@ -99,7 +99,7 @@ interface World {
   r: ReturnType<typeof repo>;
   records: OpRunRecord[];
   replies: string[];
-  heads: () => PullRequestHead;
+  heads: () => PullRequestHead & { base?: string };
   approvals: Map<string, string>;
   canWrite: boolean;
 }
@@ -124,11 +124,13 @@ async function cycle(w: World, s: CommitSettings, o: { event?: unknown; command?
   const env = o.env ?? {};
   const approval = async (_pr: number, sha: string) => w.approvals.get(sha);
   const readRuns = async () => w.records;
-  const decision = await prepareCommitRun({ settings: s, words, dir: d, env, event, forge, readRuns, approval, git: w.r.git, now: NOW });
+  const pullRequestBase = async () => w.heads().base;
+  const decision = await prepareCommitRun({ settings: s, words, dir: d, env, event, forge, pullRequestBase, readRuns, approval, git: w.r.git, now: NOW });
   const ran = await runCommit({ settings: s, dir: d, checkout: w.r.checkout, workDir: join(tmp("work"), "w"), env: { PATH: process.env.PATH }, git: w.r.git, runCommand: o.command ?? formatter() });
   o.between?.();
   let t = NOW.getTime();
   const out = await landCommitChange({
+    pullRequestBase,
     settings: s,
     words,
     dir: d,

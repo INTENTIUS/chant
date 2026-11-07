@@ -414,9 +414,9 @@ export function commitRunRecordInput(o: {
  * The branch the pull request merges into: the forge's answer, else the
  * run's own (the `pull_request` event's base, GitLab's target branch).
  */
-function baseBranchOf(head: { base?: string } | undefined, env: Record<string, string | undefined>, event: unknown): string | undefined {
+function baseBranchOf(asked: string | undefined, env: Record<string, string | undefined>, event: unknown): string | undefined {
   const fromEvent = (event as { pull_request?: { base?: { ref?: unknown } } } | undefined)?.pull_request?.base?.ref;
-  const b = head?.base ?? (typeof fromEvent === "string" ? fromEvent : undefined) ?? (env.GITLAB_CI === "true" ? env.CI_MERGE_REQUEST_TARGET_BRANCH_NAME : undefined);
+  const b = asked ?? (typeof fromEvent === "string" ? fromEvent : undefined) ?? (env.GITLAB_CI === "true" ? env.CI_MERGE_REQUEST_TARGET_BRANCH_NAME : undefined);
   return b && branchOk(b) ? b : undefined;
 }
 
@@ -442,6 +442,8 @@ export interface CommitPrepareInput {
   event?: unknown;
   /** A read client: who may write, and the pull request's head. Absent on GitLab, where this job holds no token. */
   forge?: Pick<PrForge, "pullRequestHead" | "userCanWrite">;
+  /** The branch pull request `pr` merges into, asked of the forge (./pr-forge-base.ts), for `mergeBase` (#4723). */
+  pullRequestBase?: (pr: number) => Promise<string | undefined>;
   readRuns: () => Promise<OpRunRecord[]>;
   approval: HeadApproval;
   git: AgentGit;
@@ -476,10 +478,8 @@ export async function prepareCommitRun(i: CommitPrepareInput): Promise<CommitDec
   }
   if (!SHA.test(sha)) return no("the pull request's head was not fetched", "refused", who);
   let branch: string | undefined;
-  let prHead: { base?: string } | undefined;
   if (i.forge?.pullRequestHead) {
     const head = await i.forge.pullRequestHead(req.pr);
-    prHead = head;
     if (!head) return no(`pull request #${req.pr} could not be read`, "refused", who);
     if (!head.open) return no(`pull request #${req.pr} is not open`, "refused", who);
     if (!head.sameRepo) return no(`pull request #${req.pr} comes from a fork, and ${s.name} pushes only to this repository's branches`, "refused", who);
@@ -510,7 +510,7 @@ export async function prepareCommitRun(i: CommitPrepareInput): Promise<CommitDec
   }
   let merge: { base: string; baseSha: string } | undefined;
   if (s.mergeBase) {
-    const target = baseBranchOf(prHead, i.env, i.event);
+    const target = baseBranchOf(await i.pullRequestBase?.(req.pr), i.env, i.event);
     if (!target) return no(`the branch #${req.pr} merges into is not known, so ${s.name} cannot merge it first`, "refused", who);
     try {
       merge = { base: target, baseSha: fetchBase(i.git, target) };
@@ -624,6 +624,8 @@ export interface CommitLandInput {
   event?: unknown;
   /** A write client. */
   forge: Pick<PrForge, "pullRequestHead" | "addComment">;
+  /** As {@link CommitPrepareInput.pullRequestBase}: the land checks the base is still the one the command ran on. */
+  pullRequestBase?: (pr: number) => Promise<string | undefined>;
   git: AgentGit;
   /** Push `HEAD` of `cwd` to `ref`, never with force. */
   push: (o: { cwd: string; ref: string }) => void;
@@ -717,7 +719,7 @@ export async function landCommitChange(i: CommitLandInput): Promise<CommitLandOu
   if (sha !== head.sha || sha !== decision.sha) return finish({ result: s.on === "check" ? "skipped" : "refused", reason: "the head moved" }, `the ${what} moved while ${s.name} ran, so nothing was pushed. Ask again.`);
   let baseSha: string | undefined;
   if (s.mergeBase) {
-    const target = baseBranchOf(head, i.env, i.event);
+    const target = baseBranchOf(await i.pullRequestBase?.(pr!), i.env, i.event);
     if (!target || target !== decision.base || !decision.baseSha) return finish({ result: "refused", reason: "the base branch is not the one the command ran on" }, `the branch #${pr} merges into is not the one ${s.name} merged, so nothing was pushed. Ask again.`);
     try {
       baseSha = fetchBase(i.git, target);

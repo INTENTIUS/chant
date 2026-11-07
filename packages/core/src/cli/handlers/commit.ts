@@ -34,6 +34,7 @@ import { listFilesInDir, pushLifecycleRebasing, readBlobFromPath, type LedgerLoc
 import { parseGateLedger } from "../../lifecycle/gate-ledger";
 import { resolveCiRun } from "../../lifecycle/release-ledger";
 import { FORGE_KINDS, forgeFromEnv, type ForgeKind, type PrForge } from "../../pr-forge";
+import { pullRequestBaseFromEnv } from "../../pr-forge-base";
 import { formatError, formatInfo } from "../format";
 import type { CommandContext } from "../registry";
 
@@ -107,7 +108,8 @@ export async function runCommitCommandLine(ctx: CommandContext): Promise<number>
 
   try {
     if (action === "prepare") {
-      const d = await prepareCommitRun({ settings, words, dir, env: process.env, event: eventOf(), ...(kind !== "gitlab" ? { forge: forge() } : {}), readRuns, approval, git, now: new Date() });
+      const base = kind !== "gitlab" ? pullRequestBaseFromEnv(kind as ForgeKind) : undefined;
+      const d = await prepareCommitRun({ settings, words, dir, env: process.env, event: eventOf(), ...(kind !== "gitlab" ? { forge: forge() } : {}), ...(base ? { pullRequestBase: base } : {}), readRuns, approval, git, now: new Date() });
       console.error(formatInfo(d.go ? `${settings.name}: runs on ${d.sha?.slice(0, 12)} for #${d.pr}` : `${settings.name}: does not run: ${d.reason}`));
       return CHANT_EXIT.done;
     }
@@ -118,7 +120,9 @@ export async function runCommitCommandLine(ctx: CommandContext): Promise<number>
       return CHANT_EXIT.done;
     }
     const ci = resolveCiRun(process.env);
+    const landBase = pullRequestBaseFromEnv(kind as ForgeKind);
     const out = await landCommitChange({
+      ...(landBase ? { pullRequestBase: landBase } : {}),
       settings,
       words,
       dir,
