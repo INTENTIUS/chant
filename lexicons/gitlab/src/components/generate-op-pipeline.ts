@@ -330,6 +330,7 @@ export function generateGitlabOpPipeline(
     // #4722: a comment commit job is its own pair of jobs, in a pipeline of the default branch; the spec's trigger is not read.
     if (spec.commit?.on === "comment") {
       if (spec.agent) throw new Error(`${subject} sets a comment commit job and an agent; a comment commit job is a pair of jobs of its own, so give the agent its own spec.`);
+      if (spec.commit.mergeBase) throw new Error(`${subject} sets mergeBase on a comment commit job, which GitLab runs in a pipeline of the default branch that cannot read the merge request's target branch; use on: "check" with gitlabCheck, or merge the base by hand.`);
       const settings = resolveCommitSpec(spec.name, spec.commit, words.product);
       const jobName = jobPrefix + ciJobName(spec.name);
       jobs.push({ jobName, op: spec.name, trigger: { kind: "pull_request" }, findingMode: "report" });
