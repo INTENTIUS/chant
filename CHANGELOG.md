@@ -4,6 +4,8 @@ This file records changes to what chant prints or writes for a plain project, th
 
 ## Unreleased
 
+- `chant release cut --at` with `release.images`: the archives the cut built in the commit's own checkout are copied to where `release.images` names them before that checkout is removed, so the dispatched release's hand-off to the publish job finds them. terragucci's 0.4.51 cut job stopped at the upload with no files.
+
 - `chant release workflow` with `trigger: "dispatch"` and `release.images`: the cut job hands its image archives to the publish job (a workflow artifact, or GitLab `artifacts:`), and the publish job checks them with the new `chant release images <label> --no-build` instead of building them again. terragucci's 0.4.50 publish refused every image because its rebuild, about 35 minutes after the cut, gave other digests. Regenerate the file.
 
 - `chant release workflow` with `trigger: "dispatch"`: the cut job no longer fails a repository's first release, when the remote has no `chant/lifecycle` yet. It fetches the branch when the remote has it and goes on without it when it doesn't, since the cut creates it; any other git failure still stops the job. Regenerate the file. terragucci's first one-run release stopped there.
