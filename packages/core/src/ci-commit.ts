@@ -34,10 +34,9 @@ import { parseProductComment, type CiProductWords } from "./ci-product-words";
 import type { OpRunRecord, OpRunRecordInput } from "./op/runtime";
 import type { RunOrigin } from "./lifecycle/release-ledger";
 import type { PrForge } from "./pr-forge";
-import { NEXT_RELEASE } from "./release-floors";
 
 /** The first chant with the commit job and the scheduled Op spec's `commit` (#4722). Products feature-detect on it. */
-export const CI_COMMIT_FLOOR = NEXT_RELEASE;
+export const CI_COMMIT_FLOOR = "0.124.71";
 
 /** What starts a commit run: a person's comment, or a check job's finding. */
 export type CommitTrigger = "comment" | "check";
