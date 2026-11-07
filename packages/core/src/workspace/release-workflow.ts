@@ -30,6 +30,7 @@
 import { ACTION_PINS, tagComments, usesRef } from "../action-pins";
 import { GENERATED_MARKER } from "../discovery/files";
 import type { SecurityGroup } from "./security";
+import type { OpSetupStep } from "../lexicon";
 
 export const RELEASE_WORKFLOW_FORGES = ["github", "forgejo", "gitlab"] as const;
 export type ReleaseWorkflowForge = (typeof RELEASE_WORKFLOW_FORGES)[number];
@@ -56,6 +57,29 @@ export interface ReleasePipelineConfig {
   chant?: string;
   /** Shell lines run after the publish, with `CHANT_RELEASE_LABEL` set: steps that need a published release. */
   after?: string[];
+  /**
+   * Scopes added to the workflow's `contents: write` and `id-token: write`
+   * (#4751), such as `{ packages: "write" }` for an `oci` target that pushes to
+   * GHCR with the run's token. A scope already granted is refused. GitHub and
+   * Forgejo only; GitLab has no `permissions:` and refuses it by name.
+   */
+  permissions?: Record<string, "read" | "write">;
+  /**
+   * Variables for the cut and publish jobs (#4751), such as an `oci` target's
+   * `OCI_USERNAME: "${{ github.actor }}"` and `OCI_PASSWORD: "${{ github.token }}"`.
+   * A value may be a forge expression: it goes in the job's `env:` (GitLab:
+   * `variables:`), never on a `run:` line.
+   */
+  env?: Record<string, string>;
+  /**
+   * Steps the cut and publish jobs run after the install (#4751): `{ run }`,
+   * or `{ uses, with }` on GitHub and Forgejo, such as QEMU's binfmt handlers
+   * for a two-platform image build, or a newer npm. GitLab takes `run` steps
+   * as script lines and refuses `uses` by name.
+   */
+  setup?: OpSetupStep[];
+  /** Where the workflow is written, from the repository root, such as `.github/workflows/publish.yml` for an npm trusted publisher that names that file. Default {@link RELEASE_WORKFLOW_FILES}. */
+  file?: string;
 }
 
 export interface ReleaseWorkflowInput {
@@ -102,8 +126,9 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
   const flags = publishFlags(input.groups).join(" ");
   const after = p.after ?? [];
   const images = input.images === true;
+  const extra = jobExtras(p, input.forge);
   if (p.trigger === "dispatch") {
-    const o = { chant, install, build, root, verify, flags, after, images, gate: p.gate ?? "last-green", ...(input.lane ? { lane: input.lane } : {}) };
+    const o = { chant, install, build, root, verify, flags, after, images, extra, gate: p.gate ?? "last-green", ...(input.lane ? { lane: input.lane } : {}) };
     return input.forge === "gitlab" ? renderGitlabDispatch(o) : renderGithubDispatch(o);
   }
   // #4657: the images are built from the release, so chant/lifecycle is fetched before them and the build after.
@@ -118,9 +143,11 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
       "  id_tokens:",
       "    SIGSTORE_ID_TOKEN:",
       "      aud: sigstore",
+      ...(extra.gitlabVariables.length > 0 ? ["  variables:", ...extra.gitlabVariables] : []),
       "  script:",
       ...(root ? [`    - cd ${root}`] : []),
       `    - ${install}`,
+      ...extra.gitlabScript.map((l) => `    - ${l}`),
       ...(images ? [...fetches, ...imageLines(label, `export CHANT_RELEASE_DIGESTS="$PWD/${RELEASE_DIGESTS_FILE}"`).map((l) => `    - ${l}`)] : []),
       ...(build ? [`    - ${build}`] : []),
       ...(images ? [] : fetches),
@@ -153,13 +180,16 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
     "permissions:",
     "  contents: write",
     "  id-token: write",
+    ...extra.permissions,
     "jobs:",
     "  publish:",
     "    runs-on: ubuntu-latest",
     ...(root ? ["    defaults:", "      run:", `        working-directory: ${root}`] : []),
+    ...extra.githubEnv([]),
     "    steps:",
     ...githubSetup(),
     `      - run: ${install}`,
+    ...extra.githubSteps,
     ...(images ? [...fetches, ...imageLines(label, `echo "CHANT_RELEASE_DIGESTS=$PWD/${RELEASE_DIGESTS_FILE}" >> "$GITHUB_ENV"`).map((l) => `      - run: ${l}`)] : []),
     ...(build ? [`      - run: ${build}`] : []),
     ...(images ? [] : fetches),
@@ -180,6 +210,53 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
     );
   }
   return tagComments(`${lines.join("\n")}\n`);
+}
+
+interface JobExtras {
+  /** Lines added under the workflow's `permissions:`. */
+  permissions: string[];
+  /** The job's `env:` block with `base` entries first, or nothing when there is neither. */
+  githubEnv: (base: string[]) => string[];
+  /** Steps after the install. */
+  githubSteps: string[];
+  /** GitLab: the job's `variables:` entries, under a `variables:` key of their own. */
+  gitlabVariables: string[];
+  /** GitLab: script lines after the install. */
+  gitlabScript: string[];
+}
+
+/** `release.workflow`'s `permissions`, `env` and `setup` (#4751) as lines of the forge's file. Empty for a config without them, so its file is what it was. */
+function jobExtras(p: ReleasePipelineConfig, forge: ReleaseWorkflowForge): JobExtras {
+  const permissions = Object.entries(p.permissions ?? {});
+  const env = Object.entries(p.env ?? {});
+  const setup = p.setup ?? [];
+  const where = "release.workflow";
+  for (const [k, v] of env) if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) || typeof v !== "string") throw new Error(`${where}.env: ${JSON.stringify(k)} is not a variable name with a string value`);
+  if (forge === "gitlab") {
+    if (permissions.length > 0) throw new Error(`${where}.permissions: GitLab has no permissions: block; a GitLab job's token scopes are the project's`);
+    const uses = setup.find((s) => "uses" in s);
+    if (uses) throw new Error(`${where}.setup: "${(uses as { uses: string }).uses}" is an action, and a GitLab job runs script lines; give it as { run }`);
+  } else {
+    for (const [k, v] of permissions) {
+      if (k === "contents" || k === "id-token") throw new Error(`${where}.permissions: ${k} is already granted (contents: write, id-token: write)`);
+      if (!/^[a-z][a-z-]*$/.test(k) || (v !== "read" && v !== "write")) throw new Error(`${where}.permissions: ${k}: ${String(v)} is not a scope and read or write`);
+    }
+    for (const s of setup) if (!("uses" in s) && s.run.trim() === "") throw new Error(`${where}.setup: a run step is empty`);
+  }
+  const q = (v: string | number | boolean): string => JSON.stringify(v);
+  const map = (indent: string, entries: Array<[string, string | number | boolean]>): string[] => entries.map(([k, v]) => `${indent}${k}: ${q(v)}`);
+  const githubSteps = setup.flatMap((s) => [
+    "uses" in s ? `      - uses: ${s.uses}` : `      - run: ${q(s.run)}`,
+    ...("uses" in s && s.with && Object.keys(s.with).length > 0 ? ["        with:", ...map("          ", Object.entries(s.with))] : []),
+    ...(s.env && Object.keys(s.env).length > 0 ? ["        env:", ...map("          ", Object.entries(s.env))] : []),
+  ]);
+  return {
+    permissions: permissions.map(([k, v]) => `  ${k}: ${v}`),
+    githubEnv: (base) => (base.length + env.length > 0 ? ["    env:", ...base, ...map("      ", env)] : []),
+    githubSteps,
+    gitlabVariables: map("    ", env),
+    gitlabScript: setup.flatMap((s) => ("uses" in s ? [] : [...Object.entries(s.env ?? {}).map(([k, v]) => `export ${k}=${q(v)}`), s.run])),
+  };
 }
 
 /** The checkout and node setup a GitHub or Forgejo job starts with; `ref` checks out that commit. */
@@ -207,6 +284,7 @@ interface DispatchInput {
   images: boolean;
   gate: "last-green" | "head";
   lane?: string;
+  extra: JobExtras;
 }
 
 /** The node one-liner that prints a JSON document's field from stdin, or from the file its argument names. */
@@ -251,6 +329,7 @@ function renderGithubDispatch(o: DispatchInput): string {
     "permissions:",
     "  contents: write",
     "  id-token: write",
+    ...o.extra.permissions,
     "concurrency:",
     "  group: chant-release",
     "  cancel-in-progress: false",
@@ -273,20 +352,22 @@ function renderGithubDispatch(o: DispatchInput): string {
     "    needs: gate",
     "    runs-on: ubuntu-latest",
     ...defaults,
-    "    env:",
-    `      CHANT_RELEASE_COMMIT: ${commit}`,
+    ...o.extra.githubEnv([`      CHANT_RELEASE_COMMIT: ${commit}`]),
     "    steps:",
     ...githubSetup(commit),
     `      - run: ${o.install}`,
+    ...o.extra.githubSteps,
     ...fetches,
     ...block(cutScript(o, '"$RUNNER_TEMP/chant-cut.json"')),
     "  publish:",
     "    needs: [gate, cut]",
     "    runs-on: ubuntu-latest",
     ...defaults,
+    ...o.extra.githubEnv([]),
     "    steps:",
     ...githubSetup(commit),
     `      - run: ${o.install}`,
+    ...o.extra.githubSteps,
     ...fetches,
     ...(o.images ? [`      - run: ${o.chant} release images "$CHANT_RELEASE_LABEL" -o ${RELEASE_DIGESTS_FILE}`, `      - run: echo "CHANT_RELEASE_DIGESTS=$PWD/${RELEASE_DIGESTS_FILE}" >> "$GITHUB_ENV"`] : []),
     ...(o.build ? [`      - run: ${o.build}`] : []),
@@ -314,12 +395,13 @@ function renderGitlabDispatch(o: DispatchInput): string {
     'export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $chant_auth"',
     "unset chant_auth",
   ];
-  const job = (name: string, needs: string[], script: string[], extra: string[] = []): string[] => [
+  const job = (name: string, needs: string[], script: string[], extra: string[] = [], vars: string[] = []): string[] => [
     `${name}:`,
     "  rules:",
     '    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/',
     "  variables:",
     '    GIT_DEPTH: "0"',
+    ...vars,
     ...(needs.length > 0 ? [`  needs: [${needs.join(", ")}]`] : []),
     ...extra,
     "  script:",
@@ -329,7 +411,7 @@ function renderGitlabDispatch(o: DispatchInput): string {
   const lines = [
     ...job("chant-release-gate", [], [...cd, o.install, fetches[0]!, ...gateScript(o, "$CI_COMMIT_SHA"), 'echo "CHANT_RELEASE_COMMIT=$commit" > "$CI_PROJECT_DIR/chant-release-gate.env"'], ["  artifacts:", "    reports:", "      dotenv: chant-release-gate.env"]),
     "",
-    ...job("chant-release-cut", ["chant-release-gate"], [...checkout, ...cd, o.install, ...fetches, ...auth, ...cutScript(o, "/tmp/chant-cut.json")]),
+    ...job("chant-release-cut", ["chant-release-gate"], [...checkout, ...cd, o.install, ...o.extra.gitlabScript, ...fetches, ...auth, ...cutScript(o, "/tmp/chant-cut.json")], [], o.extra.gitlabVariables),
     "",
     ...job(
       "chant-release-publish",
@@ -338,6 +420,7 @@ function renderGitlabDispatch(o: DispatchInput): string {
         ...checkout,
         ...cd,
         o.install,
+        ...o.extra.gitlabScript,
         ...fetches,
         ...auth,
         ...(o.images ? [`${o.chant} release images "$CHANT_RELEASE_LABEL" -o ${RELEASE_DIGESTS_FILE}`, `export CHANT_RELEASE_DIGESTS="$PWD/${RELEASE_DIGESTS_FILE}"`] : []),
@@ -346,6 +429,7 @@ function renderGitlabDispatch(o: DispatchInput): string {
         `${o.chant} release publish "$CHANT_RELEASE_LABEL" ${o.flags}`,
       ],
       ["  id_tokens:", "    SIGSTORE_ID_TOKEN:", "      aud: sigstore"],
+      o.extra.gitlabVariables,
     ),
   ];
   if (o.after.length > 0) lines.push("", ...job("chant-release-after", ["chant-release-gate", "chant-release-publish"], [...checkout, ...cd, o.install, ...o.after]));
@@ -408,7 +492,7 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     ...(args.buildCommand ? { build: args.buildCommand } : {}),
     ...(args.ciChant ? { chant: args.ciChant } : {}),
   });
-  const target = args.output ? resolve(process.cwd(), args.output) : join(repoRoot, RELEASE_WORKFLOW_FILES[forge]);
+  const target = args.output ? resolve(process.cwd(), args.output) : join(repoRoot, release?.workflow?.file ?? RELEASE_WORKFLOW_FILES[forge]);
   const parts = ["chant", "release", "workflow", "--forge", forge];
   if (args.ciInstall) parts.push("--install", args.ciInstall);
   if (args.buildCommand) parts.push("--build", args.buildCommand);
@@ -420,7 +504,7 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
   const extras = [groups.has("supply-chain") ? "requires OIDC provenance (supply-chain)" : null, groups.has("verified-releases") ? "verifies the release first (verified-releases)" : null].filter(Boolean);
   const what = release?.workflow?.trigger === "dispatch" ? "cuts and publishes a release started by hand with its label, from a green commit" : "publishes the release a release/** tag names";
   console.log(formatSuccess(`Wrote ${shown}: ${what}${extras.length > 0 ? `, and ${extras.join(" and ")}` : ""}.`));
-  if (forge === "gitlab") console.log(`Include it from .gitlab-ci.yml: include: [{ local: ${RELEASE_WORKFLOW_FILES.gitlab} }]`);
+  if (forge === "gitlab") console.log(`Include it from .gitlab-ci.yml: include: [{ local: ${release?.workflow?.file ?? RELEASE_WORKFLOW_FILES.gitlab} }]`);
   if (forge === "gitlab" && release?.workflow?.trigger === "dispatch") console.log("The cut and publish jobs push with CHANT_RELEASE_TOKEN: a project access token with write_repository, as a masked CI/CD variable.");
   return 0;
 }
