@@ -269,6 +269,9 @@ export function riskOf(review: string): ReviewRisk | "unknown" {
   return found;
 }
 
+/** The first 12 hex characters of a change set's digest, after its `jcs1-sha256:` or `sha256:` prefix. */
+const shortDigest = (d: string): string => d.replace(/^(jcs1-)?sha256:/, "").slice(0, 12);
+
 /** The note's body. The review is the model's text: shown, never trusted, and no HTML comment of it survives. */
 export function reviewNoteBody(o: { review: string; exitCode: number | null; digest: string; instructions: "base" | "none"; head?: string }): string {
   const ok = o.exitCode === 0;
@@ -277,7 +280,7 @@ export function reviewNoteBody(o: { review: string; exitCode: number | null; dig
   const lines = [
     // Ours, and first: the review's own `<!--` is escaped below, so no later marker of this kind is the model's.
     ...(o.head !== undefined ? [reviewResultMarker(o.head, risk), ""] : []),
-    `### Review of change set \`${o.digest.slice(0, 12)}\``,
+    `### Review of change set \`${shortDigest(o.digest)}\``,
     "",
     `Risk: **${risk}**. A model compared the title and description with the change set. This note approves nothing and gates nothing.`,
   ];
@@ -528,7 +531,7 @@ export function readReviewRecord(text: string): ReviewRecord | undefined {
   const r = v as Record<string, unknown>;
   if (typeof r.review !== "string") return undefined;
   const exitCode = Number.isInteger(r.exitCode) ? (r.exitCode as number) : null;
-  const digest = typeof r.digest === "string" && /^sha256:[0-9a-f]{1,128}$/.test(r.digest) ? r.digest : "";
+  const digest = typeof r.digest === "string" && /^(jcs1-)?sha256:[0-9a-f]{1,128}$/.test(r.digest) ? r.digest : "";
   return {
     review: r.review,
     exitCode,
