@@ -62,6 +62,10 @@ export const CI_GREEN_WORKFLOW_NAME = "chant-ci-green";
 export const MERGE_QUEUE_WORKFLOW_FILE = ".github/workflows/chant-merge-queue.yml";
 export const MERGE_QUEUE_WORKFLOW_NAME = "chant-merge-queue";
 export const MERGE_QUEUE_VERDICT_JOB = "chant-verdict";
+/** The verdict job's `timeout-minutes` (#4644). */
+export const MERGE_QUEUE_JOB_TIMEOUT_MINUTES = 120;
+/** The `--timeout-minutes` the verdict job passes with retries (#4729): it gives up with a message before Actions kills the job. */
+export const MERGE_QUEUE_VERDICT_TIMEOUT_MINUTES = MERGE_QUEUE_JOB_TIMEOUT_MINUTES - 5;
 
 /** One workflow file as the scan reads it. */
 export interface WorkflowSource {
@@ -306,18 +310,25 @@ export function renderCiGreenWorkflow(input: WorkflowInput): string {
  * The merge queue's verdict workflow (#4644): on each group, `chant ci
  * verdict --wait` judges the group's commit by `ci.green`'s required phases
  * as the tick would, and its job, `chant-verdict`, is the one check the
- * queue's ruleset requires. It reads check runs and writes nothing.
+ * queue's ruleset requires. It reads check runs and writes nothing, unless
+ * `ci.green.mergeQueue.retries` is above 0 (#4729): then it re-runs a failed
+ * job's workflow run, so the job gets `actions: write`, and passes
+ * `--timeout-minutes` to give up before the job's timeout. With retries 0 the
+ * file is as #4644 wrote it.
  */
 export function renderMergeQueueWorkflow(input: Omit<WorkflowInput, "workflows" | "push" | "runnerKeySecret" | "compose">): string {
   const where = input.workspaceRoot === "." ? [] : [`        working-directory: ${q(input.workspaceRoot)}`];
   const cache = input.install && input.npmLock ? ["          cache: npm", ...(input.npmLock === "package-lock.json" ? [] : [`          cache-dependency-path: ${q(input.npmLock)}`])] : [];
-  const verdict = input.chant ? q(`${input.chant} ci verdict --wait`) : `npx --yes @intentius/chant@${input.chantVersion} ci verdict --wait`;
+  const retries = (input.green.mergeQueue?.retries ?? 0) > 0;
+  const args = retries ? ` --timeout-minutes ${MERGE_QUEUE_VERDICT_TIMEOUT_MINUTES}` : "";
+  const verdict = input.chant ? q(`${input.chant} ci verdict --wait${args}`) : `npx --yes @intentius/chant@${input.chantVersion} ci verdict --wait${args}`;
   const lines = [
     `name: ${MERGE_QUEUE_WORKFLOW_NAME}`,
     "",
     "# The merge queue's verdict: passes when every phase ci.green requires passed",
     "# on the group's commit, judged as chant ci tick judges. Require its job,",
     `# ${MERGE_QUEUE_VERDICT_JOB}, in the branch's ruleset.`,
+    ...(retries ? [`# A failed job's workflow run is re-run up to ${input.green.mergeQueue!.retries} time${input.green.mergeQueue!.retries === 1 ? "" : "s"} first (ci.green.mergeQueue.retries).`] : []),
     "on:",
     "  merge_group:",
     "    types:",
@@ -326,11 +337,12 @@ export function renderMergeQueueWorkflow(input: Omit<WorkflowInput, "workflows" 
     "permissions:",
     "  contents: read",
     "  checks: read",
+    ...(retries ? ["  actions: write"] : []),
     "",
     "jobs:",
     `  ${MERGE_QUEUE_VERDICT_JOB}:`,
     "    runs-on: ubuntu-latest",
-    "    timeout-minutes: 120",
+    `    timeout-minutes: ${MERGE_QUEUE_JOB_TIMEOUT_MINUTES}`,
     "    steps:",
     `      - uses: ${usesRef(ACTION_PINS.checkout6)}`,
     `      - uses: ${usesRef(ACTION_PINS.setupNode6)}`,

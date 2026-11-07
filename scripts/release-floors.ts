@@ -79,6 +79,8 @@ const FLOOR_RE = /export const ([A-Z0-9_]+_FLOOR) = (?:"(\d+\.\d+\.\d+)"|(NEXT_R
  */
 const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: string }[] = [
   // --freeze empties this list after a release ships (#4501); each entry is one line.
+  { file: "packages/core/src/workspace/declaration.schema.json", text: "Read by chant {v} and newer, so a declaration that sets the object form sets minReader to {v} or newer.", count: 1, floor: "CI_VERDICT_RETRIES_FLOOR" },
+  { file: "docs/src/content/docs/reference/workspace-declaration.mdx", text: "before the group fails ([#4729](https://github.com/INTENTIUS/chant/issues/4729)); it needs `minReader` {v} or newer.", count: 1, floor: "CI_VERDICT_RETRIES_FLOOR" },
 ];
 
 interface Args {

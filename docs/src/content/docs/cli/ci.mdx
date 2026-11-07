@@ -9,7 +9,7 @@ diataxis: reference
 ```
 chant ci last-green [--json] [--lane <name>] [--from <rev>] [--branch <branch>]
 chant ci base [--json] [--phase <name> | --lane <name>] [--from <rev>] [--branch <branch>]
-chant ci verdict [--commit <sha>] [--wait] [--branch <branch>]
+chant ci verdict [--commit <sha>] [--wait [--retries <n>] [--timeout-minutes <n>]] [--branch <branch>]
 chant ci list [--json] [--branch <branch>] [--limit <n>] [--since <rev>] [--forge github] [--source checks|runs]
 chant ci tick [--dry-run] [--forge github] [--source checks|runs] [--key <runner key.pem>]
 chant ci quarantine check
@@ -71,9 +71,13 @@ The records are read from the local `chant/lifecycle`, or from `origin/chant/lif
 
 Judges one commit by the phases `ci.green` requires, from its check runs, as `ci tick` judges a commit ([#4644](https://github.com/INTENTIUS/chant/issues/4644)), and prints the result. The commit is `--commit <sha>`, else `GITHUB_SHA`, else `HEAD`, and the check runs come from GitHub as the tick reads them (`GITHUB_REPOSITORY` and a token). Its own check run, `chant-verdict`, doesn't count. It exits 0 when every required phase passed, 1 when one failed or wasn't built, and 3 while one is pending. With `--wait` it reads again every 30 seconds until none is pending.
 
+While it waits, GitHub answering 5xx or 429 is not a failure, and neither is a request that gets no answer ([#4729](https://github.com/INTENTIUS/chant/issues/4729)). It looks again after 15 seconds and doubles the wait each time up to two minutes. After 8 such errors in a row it fails and names the last one. Any other error, such as a 404 or a missing token, fails at once. `--timeout-minutes <n>` bounds the wait: once that time is up it exits 1 with a message saying what it was still waiting for, so a job can end before Actions kills it at its own `timeout-minutes`.
+
+`--retries <n>` gives a failed job more attempts before the commit fails, as the tick gives a commit on the branch one retry. It overrides `ci.green.mergeQueue.retries`, and both default to 0, which fails at the first failed job. Above 0, on a failed job of a required phase, the verdict waits for the job's workflow run to finish (GitHub re-runs a run only then), and while the run's attempt is no more than `<n>` it re-runs the run's failed jobs (`POST /repos/{repo}/actions/runs/{run}/rerun-failed-jobs`) and keeps waiting. A run that fails on attempt `<n> + 1` fails the commit with a message naming the phase and the job in its workflow run. A failed check run that is no Actions job has nothing to re-run and fails at once. The token needs `actions: write`.
+
 ### A merge queue
 
-With `"mergeQueue": true` in `ci.green`, [`ci workflow`](#ci-workflow) adds `merge_group` (`checks_requested`) to the triggers of each workflow holding a phase that sets `build`, and writes `.github/workflows/chant-merge-queue.yml` beside the tick. Its one job, `chant-verdict`, runs `chant ci verdict --wait` on the group's commit. Require `chant-verdict` in the branch's ruleset, and the queue merges a group only when every required phase passed on it. A workflow holding a phase without `build` gets no trigger, so add `merge_group` to it by hand, or its phase stays pending and the verdict waits out its job's two hours.
+With `"mergeQueue": true` in `ci.green`, [`ci workflow`](#ci-workflow) adds `merge_group` (`checks_requested`) to the triggers of each workflow holding a phase that sets `build`, and writes `.github/workflows/chant-merge-queue.yml` beside the tick. Its one job, `chant-verdict`, runs `chant ci verdict --wait` on the group's commit. Require `chant-verdict` in the branch's ruleset, and the queue merges a group only when every required phase passed on it. With `"mergeQueue": { "retries": 1 }` the verdict re-runs a failed job's workflow run once before it fails the group, and the job gets `actions: write` and runs `chant ci verdict --wait --timeout-minutes 115`, five minutes inside its two hours ([#4729](https://github.com/INTENTIUS/chant/issues/4729)). `true` is `{ "retries": 0 }`, and writes the file as before. A workflow holding a phase without `build` gets no trigger, so add `merge_group` to it by hand, or its phase stays pending and the verdict waits out its job's two hours.
 
 The queue lands the commit its group tested, so the group's check runs are already on the branch's commit, and the tick counts them. The push run on that commit reports the same jobs again. A skipped or cancelled attempt never replaces a decided one, so a job a path filter skips on the push, or a push run a newer one cancels, leaves the group's result standing, and the commit's record lists the group's run.
 

@@ -58,7 +58,8 @@ import { execFileSync } from "node:child_process";
 import { greenBranches, laneOf, laneTagPrefixes, readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError, type CiGreen, type CiPhase, type CiSource } from "./declaration";
 import { makeNotifyEvent, sendNotify, type NotifyFields } from "../notify";
 import { lifecycleRemoteOverride } from "../lifecycle/ledger-remote";
-import type { CheckRun, CiForge, OpRunRef } from "./ci-green-forge";
+import { isTransientForgeError, type CheckRun, type CiForge, type OpRunRef, type WorkflowRun } from "./ci-green-forge";
+import { NEXT_RELEASE } from "../release-floors";
 import type { OpRunRecord } from "../op/runtime";
 import { readRunLedger } from "../lifecycle/run-ledger";
 import { fetchLifecycleStatus, listFilesInDir, listLedgerTrees, pushLifecycleStatus, writeLedgerFiles } from "../lifecycle/git";
@@ -90,6 +91,8 @@ export const CI_STALE_NOTIFY_FLOOR = "0.124.63";
 export const CI_STALE_WALK = 200;
 /** The first chant that writes a merge queue's trigger and verdict job, and reads `chant ci verdict` (#4644). */
 export const CI_MERGE_QUEUE_FLOOR = "0.124.61";
+/** The first chant that reads `ci.green.mergeQueue: { retries }` and whose `ci verdict` re-runs a failed job and looks again after a forge 5xx (#4729). */
+export const CI_VERDICT_RETRIES_FLOOR = NEXT_RELEASE;
 
 export const CI_LAST_GREEN_CONTRACT_VERSION = 1;
 export const CI_LAST_GREEN_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/ci-last-green/v1/ci-last-green.schema.json";
@@ -1550,24 +1553,147 @@ export function lastGreen(req: { cwd: string; remote?: string; from?: string; br
 
 /** How long `ci verdict --wait` waits between reads of the check runs. */
 export const CI_VERDICT_INTERVAL_MS = 30_000;
+/** How many forge errors in a row (5xx, 429, no answer) `ci verdict --wait` looks past before it fails (#4729). */
+export const CI_VERDICT_FORGE_ERRORS = 8;
+/** The wait after the first forge error in a row (#4729); it doubles with each one after, up to {@link CI_VERDICT_BACKOFF_MAX_MS}. */
+export const CI_VERDICT_BACKOFF_MS = 15_000;
+export const CI_VERDICT_BACKOFF_MAX_MS = 120_000;
+
+/** `ci verdict --wait` stopped without a verdict (#4729): out of time, or the forge kept failing. */
+export class CiVerdictGaveUpError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CiVerdictGaveUpError";
+  }
+}
+
+/** A failed job whose workflow run failed again on its last allowed attempt (#4729). */
+export interface VerdictRepeat {
+  phase: string;
+  run: RunVerdict;
+  workflowRun: WorkflowRun;
+}
 
 /**
  * `chant ci verdict` (#4644): judge one commit by ci.green's required phases
  * from its check runs, as the tick judges a commit, leaving out the
  * verdict's own check run (`chant-verdict`). With `wait`, read again until no
  * phase is pending. A merge queue's verdict job runs it on the group's commit.
+ *
+ * With `wait`, two more things (#4729). A forge error that says to look again
+ * (5xx, 429, no answer) is looked past, with a backoff, up to
+ * {@link CI_VERDICT_FORGE_ERRORS} in a row. And with `retries` above 0 (from
+ * the call, else `ci.green.mergeQueue.retries`), a failed job doesn't fail
+ * the commit at once: once the job's workflow run has finished (a run can be
+ * re-run only then), its failed jobs are re-run while its attempt is no more
+ * than `retries`, and the commit fails when the run fails on attempt
+ * `retries + 1`, returned as `repeated`. With retries 0 the first failed job
+ * fails it, as before. `timeoutMs` bounds the wait: past it, the verdict
+ * throws {@link CiVerdictGaveUpError} saying what it was waiting for.
  */
-export async function ciVerdict(req: { cwd: string; sha: string; forge: CiForge; wait?: boolean; branch?: string; sleep?: (ms: number) => Promise<void>; onPending?: (v: CommitVerdict) => void }): Promise<{ sha: string; verdict: CommitVerdict }> {
+export async function ciVerdict(req: {
+  cwd: string;
+  sha: string;
+  forge: CiForge;
+  wait?: boolean;
+  branch?: string;
+  retries?: number;
+  timeoutMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+  onPending?: (v: CommitVerdict) => void;
+  /** A line about a re-run, a run it waits on, or a forge error it looks past. */
+  onNote?: (line: string) => void;
+}): Promise<{ sha: string; verdict: CommitVerdict; repeated?: VerdictRepeat }> {
   const read = readGreen(req.cwd);
   const green = greenOn(read.green, req.branch);
   const sleep = req.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const now = req.now ?? Date.now;
+  const retries = req.wait ? (req.retries ?? green.mergeQueue?.retries ?? 0) : 0;
+  const deadline = req.wait && req.timeoutMs !== undefined ? now() + req.timeoutMs : Infinity;
+  const note = req.onNote ?? (() => {});
+  let errors = 0;
+  let waitingOn = "the first read of the check runs";
+  // Each workflow run re-run, at the attempt it was on when asked: until GitHub starts the new attempt, it isn't asked again.
+  const asked = new Map<number, number>();
+  const told = new Set<string>();
+  const once = (line: string) => {
+    if (told.has(line)) return;
+    told.add(line);
+    note(line);
+  };
+  const pause = async (ms: number) => {
+    const left = deadline - now();
+    if (left <= 0) throw new CiVerdictGaveUpError(`no verdict after ${minutes(req.timeoutMs!)}: ${waitingOn}`);
+    await sleep(Math.min(ms, left));
+  };
   for (;;) {
+    let step: { done: { verdict: CommitVerdict; repeated?: VerdictRepeat } } | { verdict: CommitVerdict; waiting: boolean };
+    try {
+      step = await look();
+    } catch (err) {
+      if (!req.wait || !isTransientForgeError(err)) throw err;
+      errors++;
+      const message = err instanceof Error ? err.message : String(err);
+      if (errors >= CI_VERDICT_FORGE_ERRORS) throw new CiVerdictGaveUpError(`the forge failed ${errors} times in a row, the last: ${message}`);
+      const backoff = Math.min(CI_VERDICT_BACKOFF_MS * 2 ** (errors - 1), CI_VERDICT_BACKOFF_MAX_MS);
+      note(`the forge failed (${message}); looking again in ${Math.round(backoff / 1000)}s (${errors} of ${CI_VERDICT_FORGE_ERRORS - 1} looked past)`);
+      waitingOn = `the forge failing: ${message}`;
+      await pause(backoff);
+      continue;
+    }
+    errors = 0;
+    if ("done" in step) return { sha: req.sha, ...step.done };
+    if (!step.waiting) req.onPending?.(step.verdict);
+    await pause(CI_VERDICT_INTERVAL_MS);
+  }
+
+  async function look(): Promise<{ done: { verdict: CommitVerdict; repeated?: VerdictRepeat } } | { verdict: CommitVerdict; waiting: boolean }> {
     const runs = (await req.forge.checkRuns(req.sha)).filter((r) => r.name !== MERGE_QUEUE_VERDICT_JOB);
     const verdict = evaluateCommit(green, runs);
-    if (!req.wait || verdict.verdict !== "pending") return { sha: req.sha, verdict };
-    req.onPending?.(verdict);
-    await sleep(CI_VERDICT_INTERVAL_MS);
+    if (!req.wait) return { done: { verdict } };
+    if (verdict.verdict === "pending") {
+      waitingOn = `still waiting on ${verdict.phases.filter((p) => p.verdict === "pending").map((p) => p.phase).join(", ")}`;
+      return { verdict, waiting: false };
+    }
+    if (verdict.verdict !== "fail" || retries === 0 || !req.forge.workflowRun || !req.forge.rerunFailedJobs) return { done: { verdict } };
+    // #4729: every failed run of a required phase, each job once.
+    const failed: { phase: string; run: RunVerdict }[] = [];
+    for (const p of verdict.phases) for (const r of p.runs) if (r.verdict === "fail" && !failed.some((f) => f.run.id === r.id)) failed.push({ phase: p.phase, run: r });
+    const waits: string[] = [];
+    for (const f of failed) {
+      const wr = await req.forge.workflowRun(f.run.id);
+      // Another app's check run: nothing chant can re-run.
+      if (wr === null) return { done: { verdict } };
+      const what = `${f.run.name} (phase ${f.phase}) in workflow run ${wr.name}${wr.url ? ` ${wr.url}` : ""}`;
+      if (wr.status !== "completed") {
+        once(`${f.run.name} failed (phase ${f.phase}); waiting for workflow run ${wr.name} to finish before re-running it`);
+        waits.push(`workflow run ${wr.name} to finish`);
+        continue;
+      }
+      if (wr.attempt > retries) return { done: { verdict, repeated: { phase: f.phase, run: f.run, workflowRun: wr } } };
+      if (asked.get(wr.id) === wr.attempt) {
+        waits.push(`the re-run of workflow run ${wr.name} to start`);
+        continue;
+      }
+      note(`${what} failed on attempt ${wr.attempt} of ${retries + 1}; re-running its failed jobs`);
+      try {
+        await req.forge.rerunFailedJobs(wr.id);
+      } catch (err) {
+        if (isTransientForgeError(err)) throw err;
+        throw new Error(`could not re-run the failed jobs of workflow run ${wr.name} (${wr.id}): ${err instanceof Error ? err.message : String(err)}. The verdict's job needs actions: write, which chant ci workflow gives it when ci.green.mergeQueue.retries is above 0`);
+      }
+      asked.set(wr.id, wr.attempt);
+      waits.push(`the re-run of workflow run ${wr.name}`);
+    }
+    waitingOn = `waiting for ${[...new Set(waits)].join(", ")}`;
+    return { verdict, waiting: true };
   }
+}
+
+function minutes(ms: number): string {
+  const m = ms / 60_000;
+  return `${Number.isInteger(m) ? m : m.toFixed(1)} minute${m === 1 ? "" : "s"}`;
 }
 
 // ── base ─────────────────────────────────────────────────────────────────────

@@ -303,6 +303,12 @@ CI:
                         (GITHUB_SHA, else HEAD), judged from its check runs
                         as the tick judges; 1 when one failed; 3 while one is
                         pending, unless --wait reads again until none is.
+  ci verdict --wait [--retries <n>] [--timeout-minutes <n>]
+                        Waiting, it looks past forge errors (5xx, no answer)
+                        a few times, re-runs a failed job's workflow run up
+                        to --retries times (else ci.green.mergeQueue.retries,
+                        0) and fails when it fails again, and gives up after
+                        --timeout-minutes.
   ci list [--json] [--limit <n>] [--since <rev>] [--forge github] [--source checks|runs]
                         The first-parent commits of ci.green's branch within
                         its window, newest first, each green, revoked or

@@ -69,6 +69,40 @@ export interface CiForge {
    * can't ask.
    */
   dispatch?(workflow: string, ref: string): Promise<void>;
+  /**
+   * The workflow run a check run's job belongs to, as it is now, at its
+   * latest attempt (#4729), for `ci verdict --retries`. Null when the check
+   * run is no Actions job. Absent on a forge chant can't ask.
+   */
+  workflowRun?(checkRunId: number): Promise<WorkflowRun | null>;
+  /**
+   * Re-run a workflow run's failed jobs (#4729), each time it is asked,
+   * where {@link rerun} asks once per workflow run per client. Needs
+   * `actions: write`. Absent on a forge chant can't ask.
+   */
+  rerunFailedJobs?(workflowRunId: number): Promise<void>;
+}
+
+/** A GitHub Actions workflow run at its latest attempt (#4729). */
+export interface WorkflowRun {
+  id: number;
+  name: string;
+  /** 1 for the first attempt; a re-run raises it. */
+  attempt: number;
+  /** `completed` once every job of the attempt has finished. */
+  status: string;
+  conclusion: string | null;
+  url: string | null;
+}
+
+/**
+ * Whether a forge call's error says to look again rather than that the
+ * answer is no (#4729): an answer of 5xx or 429, or a request that never got
+ * an answer (fetch throws a TypeError when the network fails).
+ */
+export function isTransientForgeError(err: unknown): boolean {
+  if (err instanceof ForgeApiError) return err.status >= 500 || err.status === 429;
+  return err instanceof TypeError;
 }
 
 export interface GithubCiForgeOptions {
@@ -89,6 +123,7 @@ export function githubCiForge(opts: GithubCiForgeOptions): CiForge {
   const fetchImpl = opts.fetch ?? (globalThis.fetch as unknown as ForgeFetch);
   const headers = { Authorization: `Bearer ${opts.token}`, Accept: "application/vnd.github+json" };
   const rerunRuns = new Set<number>();
+  const runOfJob = new Map<number, number>();
   return {
     kind: "github",
     async checkRuns(sha) {
@@ -140,7 +175,42 @@ export function githubCiForge(opts: GithubCiForgeOptions): CiForge {
     async dispatch(workflow, ref) {
       await post(`${root}/repos/${opts.repo}/actions/workflows/${encodeURIComponent(workflow)}/dispatches`, { ref });
     },
+    // A job's workflow run never changes, so it is asked once; the run itself
+    // is read each time, for its status and attempt. A check run that is no
+    // Actions job (another app's) answers 404 here.
+    async workflowRun(checkRunId) {
+      let runId = runOfJob.get(checkRunId);
+      if (runId === undefined) {
+        const job = await get(`${root}/repos/${opts.repo}/actions/jobs/${checkRunId}`);
+        if (job === null) return null;
+        if (!isObject(job) || typeof job.run_id !== "number") return null;
+        runId = job.run_id;
+        runOfJob.set(checkRunId, runId);
+      }
+      const run = await get(`${root}/repos/${opts.repo}/actions/runs/${runId}`);
+      if (!isObject(run)) return null;
+      return {
+        id: runId,
+        name: str(run.name) ?? String(runId),
+        attempt: typeof run.run_attempt === "number" ? run.run_attempt : 1,
+        status: str(run.status) ?? "queued",
+        conclusion: str(run.conclusion),
+        url: str(run.html_url),
+      };
+    },
+    async rerunFailedJobs(workflowRunId) {
+      await post(`${root}/repos/${opts.repo}/actions/runs/${workflowRunId}/rerun-failed-jobs`, {});
+    },
   };
+
+  /** The parsed body, or null on a 404. */
+  async function get(url: string): Promise<unknown> {
+    const res = await fetchImpl(url, { method: "GET", headers });
+    const text = await res.text();
+    if (res.status === 404) return null;
+    if (!res.ok) throw new ForgeApiError("GET", url, res.status, text);
+    return text ? JSON.parse(text) : null;
+  }
 
   async function post(url: string, body: unknown): Promise<void> {
     const res = await fetchImpl(url, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(body) });
