@@ -128,7 +128,7 @@ import {
   nonEmpty,
   pushBranches,
 } from "@intentius/chant/ci-jobs";
-import { memberGitlabChanges, memberRepoPath, memberShellDir, resolveOpTrigger } from "@intentius/chant/lexicon";
+import { memberGitlabChanges, memberRepoPath, memberShellDir, resolveOpTrigger, scheduledOpArtifacts } from "@intentius/chant/lexicon";
 import type {
   ComponentPipelineOptions as GenerateGitlabOpOptions,
   OpEnvironment,
@@ -136,6 +136,8 @@ import type {
   OpPipelineJob,
   OpPipelineResult as GenerateGitlabOpResult,
   OpTrigger,
+  PipelineMember,
+  ScheduledOpArtifact,
   ScheduledOpSpec,
 } from "@intentius/chant/lexicon";
 
@@ -309,6 +311,11 @@ export function generateGitlabOpPipeline(
 
   for (const spec of ops) {
     const subject = `Scheduled Op "${spec.name}"`;
+    // #4622: what the Op's job keeps after its run. A split review and a comment agent have no single job to keep it from.
+    const artifacts = scheduledOpArtifacts(spec);
+    if (artifacts.length > 0 && (spec.reviewAgent === true || spec.agent?.on === "comment")) {
+      throw new Error(`${subject} sets artifacts, which a reviewAgent split or a comment agent does not keep; put them on a cron, push or pull_request Op.`);
+    }
     // #4631: the job's cloud identities and the update on drift, checked before anything renders.
     assertScheduledOpCloud(spec);
     if (spec.update?.permissions && Object.keys(spec.update.permissions).length > 0) {
@@ -432,11 +439,15 @@ export function generateGitlabOpPipeline(
       // gated apply succeeds, and the block is the only thing that says a
       // human still has to act. A run that walked through its gate writes no
       // block, and GitLab reports the empty upload as a warning, not a failure.
-      ...(gated
-        ? { artifacts: { when: "always", paths: [member ? memberRepoPath(member, gateSummary) : gateSummary], expire_in: GATE_ARTIFACT_EXPIRY } }
-        : flagsDrift
-          ? { artifacts: gitlabDriftArtifacts(driftDir) }
-          : {}),
+      ...withKeptArtifacts(
+        gated
+          ? { when: "always", paths: [member ? memberRepoPath(member, gateSummary) : gateSummary], expire_in: GATE_ARTIFACT_EXPIRY }
+          : flagsDrift
+            ? gitlabDriftArtifacts(driftDir)
+            : undefined,
+        artifacts,
+        member,
+      ),
     };
     if (update) {
       // #4631: the update's own job, which alone holds the update's identity, after a run that found drift.
@@ -516,4 +527,36 @@ export function generateGitlabOpPipeline(
   );
 
   return { files: [{ name: fileName, yaml }], jobs };
+}
+
+/**
+ * The job's `artifacts:` with a scheduled Op's own artifacts joined in
+ * (#4622). A GitLab job keeps one archive, so the entries' paths go beside
+ * what chant keeps there already (the gate summary, the drift flag), under
+ * the entry's name when there is one entry. The archive is kept as long as
+ * the longest retention asked for, or for GitLab's default when an entry asks
+ * for none. `{}` when there is nothing to keep.
+ */
+function withKeptArtifacts(
+  own: Record<string, unknown> | undefined,
+  kept: readonly ScheduledOpArtifact[],
+  member: PipelineMember | undefined,
+): { artifacts?: Record<string, unknown> } {
+  if (kept.length === 0) return own ? { artifacts: own } : {};
+  const paths = [...((own?.paths as string[] | undefined) ?? [])];
+  for (const a of kept) for (const p of a.paths) {
+    const at = member ? memberRepoPath(member, p) : p;
+    if (!paths.includes(at)) paths.push(at);
+  }
+  const { expire_in: _ownExpiry, paths: _ownPaths, when: _ownWhen, ...rest } = own ?? {};
+  const days = kept.every((a) => a.retentionDays !== undefined) ? Math.max(...kept.map((a) => a.retentionDays!)) : undefined;
+  return {
+    artifacts: {
+      ...(kept.length === 1 ? { name: kept[0]!.name } : {}),
+      when: "always",
+      paths,
+      ...rest,
+      ...(days !== undefined ? { expire_in: `${days} days` } : {}),
+    },
+  };
 }

@@ -85,7 +85,7 @@ import {
   permissionsFor,
   setupStepDoc,
 } from "@intentius/chant/ci-jobs";
-import { memberPathFilter, resolveOpTrigger } from "@intentius/chant/lexicon";
+import { memberPathFilter, memberRepoPath, resolveOpTrigger, scheduledOpArtifacts } from "@intentius/chant/lexicon";
 import type {
   ComponentPipelineOptions as GenerateGithubOpOptions,
   OpFindingMode,
@@ -93,9 +93,10 @@ import type {
   OpPipelineResult as GenerateGithubOpResult,
   OpTrigger,
   PipelineMember,
+  ScheduledOpArtifact,
   ScheduledOpSpec,
 } from "@intentius/chant/lexicon";
-import { checkoutStep, concurrency, emitWorkflowYAML, jobTokenEnv, onTrigger, opConcurrencyGroup, runSteps } from "./ci-jobs";
+import { checkoutStep, concurrency, emitWorkflowYAML, jobTokenEnv, onTrigger, opConcurrencyGroup, runSteps, UPLOAD_ARTIFACT } from "./ci-jobs";
 import { assertReviewSplit, reviewJobs, reviewNoteJobName } from "./review-jobs";
 import { resolveAgentSpec } from "@intentius/chant/ci-agent";
 import { activeProductWords } from "@intentius/chant/ci-product-words";
@@ -440,6 +441,11 @@ export function buildGithubOpPipelineDocs(
 
   const words = activeProductWords();
   for (const spec of ops) {
+    // #4622: what the Op's job keeps after its run. A split review and a comment agent have no single job to keep it from.
+    const artifacts = scheduledOpArtifacts(spec);
+    if (artifacts.length > 0 && (spec.reviewAgent === true || spec.agent?.on === "comment")) {
+      throw new Error(`Scheduled Op "${spec.name}" sets artifacts, which a reviewAgent split or a comment agent does not keep; put them on a cron, push or pull_request Op.`);
+    }
     // #4631: the job's cloud identities and the update on drift, checked before anything renders.
     assertScheduledOpCloud(spec);
     // #4616: the comment agent is a workflow of its own, on pull request comments; the spec's trigger is not read.
@@ -521,6 +527,7 @@ export function buildGithubOpPipelineDocs(
             : { run: invocation, env: stepEnv },
     );
     later.push(...runSteps(extraScript));
+    later.push(...artifacts.map((a) => uploadArtifactStep(a, options.member)));
     // #4631: the trade before the checkout, and every step after it without the token request variables.
     const steps: Array<Record<string, unknown>> = cloud ? [tradeStep(cloud), checkoutStep(), ...later.map(withoutTokenRequest)] : [checkoutStep(), ...later];
 
@@ -743,5 +750,25 @@ function updateJob(
     ...nonEmpty("env", update.variables),
     ...(update.environment ? { environment: environmentDoc(update.environment) } : {}),
     steps: update.cloud ? [tradeStep(update.cloud), checkoutStep(), ...later.map(withoutTokenRequest)] : [checkoutStep(), ...later],
+  };
+}
+
+/**
+ * The step that keeps one of a scheduled Op's artifacts (#4622): run whatever
+ * the Op's run ended with, so a failed or drifting run keeps its report, and
+ * quiet when a run wrote none of the files. Paths are made relative to the
+ * repository, where the upload reads them, for a workspace member's job.
+ */
+function uploadArtifactStep(a: ScheduledOpArtifact, member: PipelineMember | undefined): Record<string, unknown> {
+  const paths = member ? a.paths.map((p) => memberRepoPath(member, p)) : a.paths;
+  return {
+    if: "always()",
+    uses: UPLOAD_ARTIFACT,
+    with: {
+      name: a.name,
+      path: paths.join("\n"),
+      "if-no-files-found": "ignore",
+      ...(a.retentionDays !== undefined ? { "retention-days": a.retentionDays } : {}),
+    },
   };
 }

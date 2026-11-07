@@ -952,6 +952,50 @@ export interface ScheduledOpSpec {
    * check. A cron or pull_request trigger only.
    */
   update?: ScheduledOpUpdate;
+  /**
+   * Files the Op's job keeps after its run (#4622), such as a drift report
+   * for a repository with no bucket to put it in. Kept whether the run
+   * passed, failed or found drift. GitHub and Forgejo upload each entry as
+   * its own artifact; GitLab keeps one archive per job, so the entries' paths
+   * join the job's `artifacts:` under the entry's name when there is one.
+   * Not on a `reviewAgent` split or a comment agent's workflow.
+   */
+  artifacts?: ScheduledOpArtifact[];
+}
+
+/** A named set of files a scheduled Op's job keeps after its run (#4622). */
+export interface ScheduledOpArtifact {
+  /** The artifact's name, unique among the Op's artifacts. */
+  name: string;
+  /** Files or directories, relative to the job's directory (the member's, in a workspace). */
+  paths: string[];
+  /** How many days the forge keeps it. Default: the forge's own. */
+  retentionDays?: number;
+}
+
+/**
+ * Check a scheduled Op's `artifacts` (#4622) and return them, or `[]` when it
+ * has none. Throws naming the Op on an empty or repeated name, an empty
+ * `paths`, an absolute path or one that leaves the job's directory, or a
+ * retention that is not a positive whole number of days.
+ */
+export function scheduledOpArtifacts(spec: Pick<ScheduledOpSpec, "name" | "artifacts">): ScheduledOpArtifact[] {
+  const list = spec.artifacts ?? [];
+  const seen = new Set<string>();
+  for (const a of list) {
+    const where = `Scheduled Op "${spec.name}" artifact "${a.name}"`;
+    if (!a.name || !/^[A-Za-z0-9._-]+$/.test(a.name)) throw new Error(`Scheduled Op "${spec.name}": an artifact's name is letters, digits, ".", "_" and "-", and "${a.name}" is not.`);
+    if (seen.has(a.name)) throw new Error(`Scheduled Op "${spec.name}" names the artifact "${a.name}" twice.`);
+    seen.add(a.name);
+    if (a.paths.length === 0) throw new Error(`${where} lists no paths.`);
+    for (const p of a.paths) {
+      if (p === "" || p.startsWith("/") || p.split("/").includes("..")) throw new Error(`${where}: "${p}" is not a path inside the job's directory.`);
+    }
+    if (a.retentionDays !== undefined && (!Number.isInteger(a.retentionDays) || a.retentionDays < 1)) {
+      throw new Error(`${where}: retentionDays is a whole number of days, 1 or more.`);
+    }
+  }
+  return list;
 }
 
 /** A scheduled Op's update on drift (#4631). */
