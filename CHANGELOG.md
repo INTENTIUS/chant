@@ -5,6 +5,7 @@ This file records changes to what chant prints or writes for a plain project, th
 ## Unreleased
 
 - [#4768](https://github.com/INTENTIUS/chant/issues/4768) a ledger push that lost a race replays on git older than 2.40. `git merge-tree --merge-base` needs 2.40, and the CI products' images (`node:22-bookworm-slim` with apt's git 2.39) refused it, so the writer that lost the race failed with `LifecyclePushLostError` instead of replaying. On such a git the replay merges in a scratch index (`read-tree`, then `merge-file` for a file both writers changed), with the same results.
+- [#4640](https://github.com/INTENTIUS/chant/issues/4640) the pulumi change set read from an engine event stream (`PULUMI_ENABLE_STREAMING_JSON_PREVIEW`) marks a component whose subtree waits on an unknown value as `mayAppear`, as it does from a printed `pulumi preview --json`, and the `unknown-in-apply` preview tip shows for it. The stream leaves `custom` out of a component's state, and the reader now reads that as `custom: false`, so before this neither appeared on stream input. Printed `pulumi preview --json` input reads as before.
 
 - `chant release cut --at` with `release.images`: the archives the cut built in the commit's own checkout are copied to where `release.images` names them before that checkout is removed, so the dispatched release's hand-off to the publish job finds them. terragucci's 0.4.51 cut job stopped at the upload with no files.
 

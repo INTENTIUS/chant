@@ -11,7 +11,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { pulumiPreviewDigest, pulumiPreviewPart } from "./change-set";
+import { pulumiMayAppearAddress } from "@intentius/chant/pulumi-urn";
+import { pulumiPreviewDigest, pulumiPreviewPart, type PulumiStep } from "./change-set";
 import {
   crossGuardRule,
   pulumiAppliedSteps,
@@ -54,6 +55,31 @@ describe("a streamed preview reads as the printed document", () => {
     const fromStream = pulumiPreviewPart({ member: "site/floci", preview: pulumiStreamPreview(stream), stack: "floci" });
     const fromPrinted = pulumiPreviewPart({ member: "site/floci", preview: printed, stack: "floci" });
     expect(fromStream).toEqual(fromPrinted);
+  });
+
+  test("a component's state, whose custom: false the stream omits, reads as custom: false", () => {
+    expect(stream).not.toContain('"custom":false');
+    const steps = pulumiStreamPreview(stream).steps;
+    const docs = steps.find((s) => s.urn === urn("corpus:index:Site", "docs"))!;
+    expect(docs.oldState?.custom).toBe(false);
+    expect(docs.newState?.custom).toBe(false);
+  });
+
+  test("change-set signal 1 marks the same components from the stream as from the printed document (#4640)", () => {
+    // docs-assets, a child of the docs component, given an input preview does not know.
+    const waiting = (steps: PulumiStep[]): PulumiStep[] =>
+      structuredClone(steps).map((s) =>
+        s.urn?.endsWith("Site$aws:s3/bucket:Bucket::docs-assets")
+          ? { ...s, op: "update", diffReasons: ["tags"], newState: { ...s.newState!, inputs: { ...(s.newState!.inputs as object), tags: "04da6b54-80e4-46f7-96ec-b56ff0331ba9" } } }
+          : s,
+      );
+    const mayAppear = (steps: PulumiStep[]) =>
+      pulumiPreviewPart({ member: "site/floci", preview: { steps: waiting(steps) }, stack: "floci" })
+        .entries.filter((e) => e.mayAppear === true)
+        .map((e) => e.address);
+    const fromPrinted = mayAppear(printed.steps as PulumiStep[]);
+    expect(fromPrinted).toEqual([pulumiMayAppearAddress(urn("corpus:index:Site", "docs"))]);
+    expect(mayAppear(pulumiStreamPreview(stream).steps)).toEqual(fromPrinted);
   });
 
   test("an ephemeral diagnostic is left out, and the summary gives changeSummary", () => {

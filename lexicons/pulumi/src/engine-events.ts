@@ -186,7 +186,12 @@ function blinded(v: unknown): unknown {
   return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, blinded(x)]));
 }
 
-/** A step state in the printed document's form (`apitype.ResourceV3`, empty fields omitted). */
+/**
+ * A step state in the printed document's form (`apitype.ResourceV3`, empty
+ * fields omitted). The stream's `custom` is `omitempty`, so a state without
+ * it is a component: it reads as `custom: false`, as the printed document
+ * keeps it (#4640).
+ */
 function stateOf(s: PulumiEventState | null | undefined): PulumiStepState | undefined {
   if (!s || typeof s !== "object" || Array.isArray(s)) return undefined;
   const map = (m: Json | null | undefined): Json | undefined => (isObject(m) && Object.keys(m).length > 0 ? (blinded(m) as Json) : undefined);
@@ -194,7 +199,7 @@ function stateOf(s: PulumiEventState | null | undefined): PulumiStepState | unde
   const outputs = map(s.outputs);
   return {
     ...(s.urn ? { urn: s.urn } : {}),
-    ...(typeof s.custom === "boolean" ? { custom: s.custom } : {}),
+    custom: s.custom === true,
     ...(s.delete ? { delete: true } : {}),
     ...(s.id ? { id: s.id } : {}),
     ...(s.type ? { type: s.type } : {}),
