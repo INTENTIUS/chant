@@ -201,6 +201,40 @@ describe("the release workflow's permissions, env and setup (#4751)", () => {
   });
 });
 
+describe("the publish job hands GITHUB_TOKEN to a GitHub forge target (#4767)", () => {
+  const ghForge = { type: "forge" as const, forge: "github" as const, repo: "acme/api", assets: ["dist/api.tar.gz"] };
+
+  test("both triggers: the publish job gets the job's token, and no other job does", () => {
+    for (const trigger of ["tag", "dispatch"] as const) {
+      const doc = parseYAML(renderReleaseWorkflow({ forge: "github", groups: new Set(), publish: [ghForge], pipeline: { trigger } })) as GhDoc;
+      expect(doc.jobs.publish!.env, trigger).toEqual({ GITHUB_TOKEN: "${{ github.token }}" });
+      if (trigger === "dispatch") {
+        expect(doc.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}" });
+        expect(doc.jobs.gate!.env).toBeUndefined();
+      }
+    }
+  });
+
+  test("it comes before release.workflow.env, which can set GITHUB_TOKEN itself", () => {
+    const doc = parseYAML(renderReleaseWorkflow({ forge: "github", groups: new Set(), publish: [ghForge], pipeline: { env: { OCI_USERNAME: "${{ github.actor }}" } } })) as GhDoc;
+    expect(Object.entries(doc.jobs.publish!.env!)).toEqual([["GITHUB_TOKEN", "${{ github.token }}"], ["OCI_USERNAME", "${{ github.actor }}"]]);
+    const own = parseYAML(renderReleaseWorkflow({ forge: "github", groups: new Set(), publish: [ghForge], pipeline: { env: { GITHUB_TOKEN: "${{ secrets.RELEASE_TOKEN }}" } } })) as GhDoc;
+    expect(own.jobs.publish!.env).toEqual({ GITHUB_TOKEN: "${{ secrets.RELEASE_TOKEN }}" });
+  });
+
+  test("a tokenEnv, another forge's target, or no forge target renders the file it did", () => {
+    const plain = renderReleaseWorkflow({ forge: "github", groups: new Set() });
+    expect(plain).toBe(readFileSync(join(FIXTURES, "github-plain.yml"), "utf-8"));
+    for (const publish of [[{ ...ghForge, tokenEnv: "RELEASE_TOKEN" }], [{ ...ghForge, forge: "gitlab" as const }], [{ type: "npm" as const, packages: ["."] }], []]) {
+      expect(renderReleaseWorkflow({ forge: "github", groups: new Set(), publish }), JSON.stringify(publish)).toBe(plain);
+    }
+    // Forgejo's and GitLab's job tokens are not a GitHub token.
+    for (const forge of ["forgejo", "gitlab"] as const) {
+      expect(renderReleaseWorkflow({ forge, groups: new Set(), publish: [ghForge] })).toBe(readFileSync(join(FIXTURES, `${forge}-plain.yml`), "utf-8"));
+    }
+  });
+});
+
 describe("a repository's first dispatched release (terragucci 0.4.50's cut)", () => {
   const cutLedgerLine = (): string => {
     const doc = parseYAML(renderReleaseWorkflow({ forge: "github", groups: new Set(), pipeline: { trigger: "dispatch" } })) as GhDoc;
