@@ -62,7 +62,7 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { CI_COMMIT_REPLY_FLOOR, resolveCommitSpec, type CommitRefusalReply, type OpCommitSpec } from "@intentius/chant/ci-commit";
+import { CI_COMMIT_ARG_FLOOR, CI_COMMIT_REPLY_FLOOR, resolveCommitSpec, type CommitRefusalReply, type OpCommitSpec } from "@intentius/chant/ci-commit";
 import { CHANT_EXIT } from "@intentius/chant/exit-codes";
 import { YODEL_CONFLICT_REPLY_FLOOR, YODEL_NEW_ENVS_FLOOR } from "@intentius/chant/release-floors";
 import type { OpSetupRunStep } from "@intentius/chant/lexicon";
@@ -228,6 +228,9 @@ export const YODEL_REBASE_CONFLICT_FLOOR: string = YODEL_CONFLICT_REPLY_FLOOR;
  */
 export const YODEL_NEW_HISTORY_FLOOR: string = YODEL_NEW_ENVS_FLOOR;
 
+/** The first chant whose `/yodel new` commit job takes a name after the word, `/yodel new <name>` (#4820): core's commit-job argument. */
+export const YODEL_NEW_NAME_FLOOR: string = CI_COMMIT_ARG_FLOOR;
+
 /** The words of yodel's commit jobs: `/yodel new` and `/yodel rebase`. */
 export type YodelCommitWord = "new" | "rebase";
 export const YODEL_COMMIT_WORDS: readonly YodelCommitWord[] = ["new", "rebase"];
@@ -324,7 +327,7 @@ export interface YodelCommitOptions {
   product?: string;
   /** The yodel binary. Default `yodel`, the checkout's `node_modules/.bin/yodel` once the setup lines put it on PATH. */
   bin?: string;
-  /** new: the migration's name. Default: yodel's `ci.new.name`. */
+  /** new: the migration's name. Default: the comment's (`/yodel new <name>`, #4820), else yodel's `ci.new.name`. A name set here takes none from the comment. */
   name?: string;
   /** The environments whose histories must not record a migration the job rewrites (`--env`): rebase's rewritten migrations, or the one new's `--replace-own` replaces (#4815). Needs `dialect`. */
   envs?: readonly string[];
@@ -343,7 +346,8 @@ export interface YodelCommitOptions {
 
 /**
  * The commit job's spec for `/yodel new` or `/yodel rebase` (#4724). It may
- * change the project's migrations directory only. rebase merges the base
+ * change the project's migrations directory only. `/yodel new <name>` on a
+ * comment names the migration (#4820), checked as yodel checks a name. rebase merges the base
  * branch into the head first (`mergeBase`, #4723), as a fork shows only on
  * that merge. With `envs`, either command reads those environments'
  * histories and sees their reader variables and nothing of the writer. Checked by chant's
@@ -371,6 +375,8 @@ export function yodelCommitSpec(word: YodelCommitWord, o: YodelCommitOptions): O
     allowed: [`${dir ? `${dir}/` : ""}${YODEL_MIGRATIONS_DIR}/`],
     ...(word === "rebase" ? { mergeBase: true } : {}),
     ...(commandEnv.length > 0 ? { commandEnv } : {}),
+    // `/yodel new <name>` (#4820): the name goes right after `new`, where yodelNewArgs puts one.
+    ...(word === "new" && o.on === "comment" && o.name === undefined ? { commentArg: { pattern: MIGRATION_NAME.source, position: 2 } } : {}),
     ...(o.tokenEnv !== undefined ? { tokenEnv: o.tokenEnv } : {}),
     ...(o.jobToken !== undefined ? { jobToken: o.jobToken } : {}),
     ...(o.maxRuns !== undefined ? { maxRuns: o.maxRuns } : {}),
@@ -488,7 +494,7 @@ export function yodelRefusalReply(o: { command: readonly string[]; rc: string; o
     // migration starts the chain, `the chain ending at <b>` (#4821).
     const both = /^(\S+) and (?:the migrations after (\S+) up to (\S+)|the chain ending at (\S+)) both change (.+?), differently;/.exec(text);
     if (both) {
-      const [, mine, after, upTo, chainEnd, objects] = both as unknown as [string, string | undefined, string | undefined, string | undefined, string];
+      const [, mine, after, upTo, chainEnd, objects] = both as unknown as [string, string, string | undefined, string | undefined, string | undefined, string];
       const ids = [mine, ...(after !== undefined ? [after, upTo!] : [chainEnd!])];
       const names = objects.split(", ");
       if (!ids.every((id) => MIGRATION_ID.test(id)) || !quotable(names)) return undefined;

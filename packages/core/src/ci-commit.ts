@@ -31,7 +31,8 @@ import { join } from "node:path";
 import { CHANT_EXIT } from "./exit-codes";
 import { FORGE_TOKEN_VARS } from "./ci-handover";
 import { agentForbiddenPaths, AgentError, branchOk, errText, LOGIN, readSmall, SHA, type AgentGit } from "./ci-agent";
-import { parseProductComment, type CiProductWords } from "./ci-product-words";
+import { COMMIT_COMMENT_ARG, parseProductComment, type CiProductWords } from "./ci-product-words";
+import { NEXT_RELEASE } from "./release-floors";
 import type { OpRunRecord, OpRunRecordInput } from "./op/runtime";
 import type { RunOrigin } from "./lifecycle/release-ledger";
 import type { PrForge } from "./pr-forge";
@@ -49,6 +50,8 @@ export const CI_COMMIT_FILES_FLOOR = "0.124.73";
  * product's refusal text ({@link setCommitRefusalReply}) (#4724).
  */
 export const CI_COMMIT_REPLY_FLOOR = "0.124.77";
+/** The first chant whose commit job takes `commentArg`, one argument after the comment's word passed into the argv (#4820). */
+export const CI_COMMIT_ARG_FLOOR = NEXT_RELEASE;
 
 /** What starts a commit run: a person's comment, or a check job's finding. */
 export type CommitTrigger = "comment" | "check";
@@ -118,6 +121,22 @@ export interface OpCommitSpec {
    * on GitLab they are the project's CI/CD variables.
    */
   commandEnv?: string[];
+  /**
+   * For `on: "comment"` (#4820): the comment may carry one argument after
+   * the word, `/<product> <word> <arg>`, which must match `pattern` (a
+   * regular expression's source, anchored with `^` and `$`) and chant's
+   * own plain-name check ({@link COMMIT_COMMENT_ARG}). It goes into the
+   * command's argv at index `position`, from 1 (after the program) to the
+   * argv's length (at the end). With no argument the argv is `command`. On
+   * GitLab the pipeline's {@link GITLAB_COMMIT_ARG_VAR} carries it.
+   */
+  commentArg?: CommitCommentArg;
+}
+
+/** Where a commit job's command takes the comment's argument (#4820). */
+export interface CommitCommentArg {
+  pattern: string;
+  position: number;
 }
 
 /** A commit job's settings, every default filled and checked. */
@@ -140,6 +159,8 @@ export interface CommitSettings {
   after: string[];
   /** The job variables the command sees (#4724). */
   commandEnv: string[];
+  /** The comment's argument and where it goes in the argv (#4820). */
+  commentArg?: CommitCommentArg;
 }
 
 export const COMMIT_MAX_RUNS = 3;
@@ -164,6 +185,7 @@ export const COMMIT_ENV = {
   env: "CHANT_COMMIT_ENV",
   mergeBase: "CHANT_COMMIT_MERGE_BASE",
   commandEnv: "CHANT_COMMIT_COMMAND_ENV",
+  commentArg: "CHANT_COMMIT_COMMENT_ARG",
 } as const;
 
 /** The variable the command reads the pull request's number from (#4724), such as for a default name. */
@@ -172,6 +194,8 @@ export const COMMIT_PR_ENV = "CHANT_COMMIT_PR";
 /** GitLab starts no pipeline on a note: a pipeline of the default branch started with these runs a comment commit job. */
 export const GITLAB_COMMIT_PR_VAR = "CHANT_COMMIT_PR";
 export const GITLAB_COMMIT_WORD_VAR = "CHANT_COMMIT";
+/** With `commentArg` (#4820): the argument, as the comment would give it after the word. */
+export const GITLAB_COMMIT_ARG_VAR = "CHANT_COMMIT_ARG";
 
 /** Where the jobs keep the decision, the exit code and the patch, from the job's directory. */
 export const COMMIT_DIR = ".chant/commit";
@@ -258,6 +282,20 @@ export function resolveCommitSpec(name: string, spec: OpCommitSpec, product = "c
   if (!Array.isArray(commandEnv) || !commandEnv.every((v) => typeof v === "string" && VAR.test(v))) throw new AgentError(`${where}: commandEnv is a list of variable names`);
   const tokens = commandEnv.filter((v) => (FORGE_TOKEN_VARS as readonly string[]).includes(v) || v === spec.tokenEnv || v.startsWith("CHANT_COMMIT_"));
   if (tokens.length > 0) throw new AgentError(`${where}: commandEnv may not pass ${tokens.join(", ")}: the command never sees a forge token or the job's own settings`);
+  let commentArg: CommitCommentArg | undefined;
+  if (spec.commentArg !== undefined) {
+    const a = spec.commentArg as Partial<CommitCommentArg>;
+    if (spec.on !== "comment") throw new AgentError(`${where}: commentArg is for the comment trigger, which has a comment to read it from`);
+    if (typeof a.pattern !== "string" || !a.pattern.startsWith("^") || !a.pattern.endsWith("$") || a.pattern.length > 200) {
+      throw new AgentError(`${where}: commentArg's pattern is a regular expression's source anchored with ^ and $, such as "^[a-z0-9]+(?:[-_][a-z0-9]+)*$"`);
+    }
+    try {
+      new RegExp(a.pattern);
+    } catch (e) {
+      throw new AgentError(`${where}: commentArg's pattern is not a regular expression (${(e as Error).message})`);
+    }
+    commentArg = { pattern: a.pattern, position: intIn(`${where}: commentArg's position`, a.position, 1, spec.command.length) };
+  }
   return {
     name,
     on: spec.on,
@@ -274,7 +312,26 @@ export function resolveCommitSpec(name: string, spec: OpCommitSpec, product = "c
     jobToken: spec.jobToken === true,
     after: [...after],
     commandEnv: [...new Set(commandEnv)],
+    ...(commentArg ? { commentArg } : {}),
   };
+}
+
+/** The words that take an argument, for {@link parseProductComment}: this job's word, when it has `commentArg`. */
+function commentArgPatterns(s: Partial<Pick<CommitSettings, "comment" | "commentArg">>): Record<string, RegExp> {
+  const word = s.comment?.split(" ")[1];
+  return word && s.commentArg ? { [word]: new RegExp(s.commentArg.pattern) } : {};
+}
+
+/**
+ * The argv the command runs (#4820): `command`, with the comment's argument
+ * at `commentArg.position` when there is one. An argument the settings do
+ * not take, or one off its pattern, throws.
+ */
+export function commitArgv(s: Pick<CommitSettings, "command"> & Partial<Pick<CommitSettings, "commentArg">>, arg: string | undefined): string[] {
+  if (arg === undefined) return [...s.command];
+  if (!s.commentArg) throw new AgentError("this commit job takes no argument after its word");
+  if (!COMMIT_COMMENT_ARG.test(arg) || !new RegExp(s.commentArg.pattern).test(arg)) throw new AgentError(`${JSON.stringify(arg)} is not a name this commit job takes`);
+  return [...s.command.slice(0, s.commentArg.position), arg, ...s.command.slice(s.commentArg.position)];
 }
 
 /** The settings as the generated jobs' variables. */
@@ -293,6 +350,7 @@ export function commitSettingsEnv(s: CommitSettings): Record<string, string> {
     [COMMIT_ENV.env]: s.env,
     ...(s.mergeBase ? { [COMMIT_ENV.mergeBase]: "1" } : {}),
     ...(s.commandEnv.length > 0 ? { [COMMIT_ENV.commandEnv]: JSON.stringify(s.commandEnv) } : {}),
+    ...(s.commentArg ? { [COMMIT_ENV.commentArg]: JSON.stringify(s.commentArg) } : {}),
   };
 }
 
@@ -322,6 +380,17 @@ export function commitSettingsFromEnv(env: Record<string, string | undefined>, p
   const maxRuns = num(COMMIT_ENV.maxRuns);
   const timeout = num(COMMIT_ENV.timeout);
   const guarded = list(COMMIT_ENV.guarded);
+  let commentArg: CommitCommentArg | undefined;
+  const argText = env[COMMIT_ENV.commentArg];
+  if (argText) {
+    try {
+      const parsed = JSON.parse(argText) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("not an object");
+      commentArg = parsed as CommitCommentArg;
+    } catch (e) {
+      throw new AgentError(`${COMMIT_ENV.commentArg} is a JSON object with pattern and position (${(e as Error).message})`);
+    }
+  }
   const spec: OpCommitSpec = {
     on: env[COMMIT_ENV.on] as CommitTrigger,
     ...(env[COMMIT_ENV.comment] ? { comment: env[COMMIT_ENV.comment] } : {}),
@@ -335,6 +404,7 @@ export function commitSettingsFromEnv(env: Record<string, string | undefined>, p
     ...(env[COMMIT_ENV.env] ? { env: env[COMMIT_ENV.env] } : {}),
     ...(env[COMMIT_ENV.mergeBase] === "1" ? { mergeBase: true } : {}),
     ...(list(COMMIT_ENV.commandEnv) ? { commandEnv: list(COMMIT_ENV.commandEnv)! } : {}),
+    ...(commentArg ? { commentArg } : {}),
   };
   return resolveCommitSpec(name, spec, product);
 }
@@ -367,6 +437,8 @@ export interface CommitRequest {
   pr: number;
   /** The commenter, or the person who started the GitLab pipeline. Absent on the `check` trigger. */
   user?: string;
+  /** The comment's argument (#4820), checked against `commentArg`. */
+  arg?: string;
 }
 
 /**
@@ -377,7 +449,7 @@ export interface CommitRequest {
  * pull request the check ran for, from the `pull_request` event or the
  * merge request pipeline.
  */
-export function commitRequestFromRun(words: CiProductWords, s: Pick<CommitSettings, "on" | "comment">, env: Record<string, string | undefined>, event: unknown): CommitRequest | { refused: string } {
+export function commitRequestFromRun(words: CiProductWords, s: Pick<CommitSettings, "on" | "comment"> & Partial<Pick<CommitSettings, "commentArg">>, env: Record<string, string | undefined>, event: unknown): CommitRequest | { refused: string } {
   const gitlab = env.GITLAB_CI === "true";
   let pr: unknown;
   if (s.on === "check") {
@@ -390,7 +462,8 @@ export function commitRequestFromRun(words: CiProductWords, s: Pick<CommitSettin
   const word = s.comment?.split(" ")[1];
   if (gitlab) {
     pr = Number(env[GITLAB_COMMIT_PR_VAR]);
-    body = env[GITLAB_COMMIT_WORD_VAR] === word ? s.comment : `/${words.product} ${env[GITLAB_COMMIT_WORD_VAR] ?? ""}`;
+    const arg = env[GITLAB_COMMIT_ARG_VAR];
+    body = env[GITLAB_COMMIT_WORD_VAR] === word ? `${s.comment}${arg ? ` ${arg}` : ""}` : `/${words.product} ${env[GITLAB_COMMIT_WORD_VAR] ?? ""}`;
     user = env.GITLAB_USER_LOGIN;
   } else {
     const e = event as { comment?: { body?: unknown; user?: { login?: unknown } }; issue?: { number?: unknown } } | undefined;
@@ -400,10 +473,10 @@ export function commitRequestFromRun(words: CiProductWords, s: Pick<CommitSettin
   }
   if (typeof pr !== "number" || !Number.isInteger(pr) || pr < 1) return { refused: "the run names no pull request" };
   if (typeof user !== "string" || !LOGIN.test(user)) return { refused: "the run names nobody who asked" };
-  const parsed = parseProductComment(words, body, env);
+  const parsed = parseProductComment(words, body, env, commentArgPatterns(s));
   if (parsed?.kind === "refused") return { refused: parsed.reason };
   if (parsed?.kind !== "commit" || parsed.word !== word) return { refused: `the comment is not ${s.comment}` };
-  return { pr, user };
+  return { pr, user, ...(parsed.arg !== undefined ? { arg: parsed.arg } : {}) };
 }
 
 /**
@@ -440,7 +513,7 @@ function pushedBranch(env: Record<string, string | undefined>): string | undefin
  */
 export async function resolveCommitRequest(
   words: CiProductWords,
-  s: Pick<CommitSettings, "on" | "comment">,
+  s: Pick<CommitSettings, "on" | "comment"> & Partial<Pick<CommitSettings, "commentArg">>,
   env: Record<string, string | undefined>,
   event: unknown,
   forge?: Partial<Pick<PrForge, "findPullRequest">>,
@@ -471,6 +544,8 @@ export interface CommitDecision {
   pr?: number;
   branch?: string;
   user?: string;
+  /** The comment's argument (#4820), which `commit run` puts in the argv. */
+  arg?: string;
   /** With `mergeBase`: the base branch and the tip the command ran on. */
   base?: string;
   baseSha?: string;
@@ -486,6 +561,7 @@ export function readCommitDecision(dir: string): CommitDecision | undefined {
     if (d.branch !== undefined && !branchOk(d.branch)) return undefined;
     if (d.base !== undefined && !branchOk(d.base)) return undefined;
     if (d.baseSha !== undefined && !SHA.test(d.baseSha)) return undefined;
+    if (d.arg !== undefined && !(typeof d.arg === "string" && COMMIT_COMMENT_ARG.test(d.arg))) return undefined;
     return d as CommitDecision;
   } catch {
     return undefined;
@@ -617,7 +693,7 @@ export async function prepareCommitRun(i: CommitPrepareInput): Promise<CommitDec
 
   const req = await resolveCommitRequest(i.words, s, i.env, i.event, i.forge);
   if ("refused" in req) return no(req.refused, s.on === "check" ? "skipped" : "refused");
-  const who = { pr: req.pr, ...(req.user ? { user: req.user } : {}) };
+  const who = { pr: req.pr, ...(req.user ? { user: req.user } : {}), ...(req.arg !== undefined ? { arg: req.arg } : {}) };
   if (req.user && i.forge?.userCanWrite && !(await i.forge.userCanWrite(req.user))) return no(`${req.user} cannot write to the repository, so ${s.name} does not run for them`, "refused", who);
 
   let sha: string;
@@ -746,6 +822,13 @@ export async function runCommit(i: CommitRunInput): Promise<{ rc: string; change
     writeFileSync(rcFile, "refused\n");
     return { rc: "refused", changed: false };
   }
+  let argv: string[];
+  try {
+    argv = commitArgv(i.settings, decision.arg);
+  } catch {
+    writeFileSync(rcFile, "refused\n");
+    return { rc: "refused", changed: false };
+  }
   i.git(["worktree", "add", "--detach", "--force", i.workDir, decision.sha]);
   if (i.settings.mergeBase) {
     if (!decision.baseSha) {
@@ -761,7 +844,7 @@ export async function runCommit(i: CommitRunInput): Promise<{ rc: string; change
     }
   }
   const env = commitCommandEnv(i.env, i.checkout, { names: i.settings.commandEnv, ...(decision.pr !== undefined ? { pr: decision.pr } : {}) });
-  const out = await i.runCommand(i.settings.command, { cwd: i.workDir, env, timeoutMs: i.settings.timeout * 60_000 });
+  const out = await i.runCommand(argv, { cwd: i.workDir, env, timeoutMs: i.settings.timeout * 60_000 });
   const rc = out.timedOut ? "timeout" : out.exitCode === null ? "no-exit" : String(out.exitCode);
   writeFileSync(rcFile, `${rc}\n`);
   if (out.output) writeFileSync(join(i.dir, COMMIT_OUTPUT_FILE), out.output.slice(-COMMIT_OUTPUT_LIMIT));
@@ -888,15 +971,22 @@ export async function landCommitChange(i: CommitLandInput): Promise<CommitLandOu
   if ("refused" in req) return finish({ result: s.on === "check" ? "skipped" : "refused", reason: req.refused });
   ({ pr, user } = req);
   const decision = readCommitDecision(i.dir);
-  if (!decision || decision.name !== s.name || decision.on !== s.on || (decision.pr !== undefined && decision.pr !== pr)) {
+  if (!decision || decision.name !== s.name || decision.on !== s.on || (decision.pr !== undefined && decision.pr !== pr) || (decision.go && decision.arg !== req.arg)) {
     return finish({ result: "failed", reason: "the commit job left no decision this job can read" }, "the commit job left nothing to land, so nothing was pushed.");
   }
   if (!decision.go) return finish({ result: decision.stop ?? "refused", reason: decision.reason ?? "refused" }, `${decision.reason ?? `${s.name} did not run`}, so nothing was pushed.`);
+  // What ran, as the replies and the commit name it: the command with the comment's argument (#4820).
+  let ranArgv: string;
+  try {
+    ranArgv = commitArgv(s, req.arg).join(" ");
+  } catch (e) {
+    return finish({ result: "refused", reason: errText(e) }, `${errText(e)}, so nothing was pushed.`);
+  }
   const rc = readSmall(join(i.dir, COMMIT_RC_FILE))?.trim() ?? "";
   if (rc === "conflict") {
     return finish({ result: "refused", reason: `merging ${decision.base ?? "the base"} into the head conflicts` }, `merging ${code(decision.base ?? "the base")} into the ${what} conflicts, so ${s.name} did not run and nothing was pushed. Resolve the conflict on the branch.`);
   }
-  if (rc === "timeout") return finish({ result: "stopped", reason: `the command passed its ${s.timeout} minute limit` }, `${code(s.command.join(" "))} was stopped at its ${s.timeout} minute limit, so nothing was pushed.`);
+  if (rc === "timeout") return finish({ result: "stopped", reason: `the command passed its ${s.timeout} minute limit` }, `${code(ranArgv)} was stopped at its ${s.timeout} minute limit, so nothing was pushed.`);
   if (rc !== "0" && /^[0-9]+$/.test(rc) && i.refusalReply) {
     let said: string | undefined;
     try {
@@ -906,7 +996,7 @@ export async function landCommitChange(i: CommitLandInput): Promise<CommitLandOu
     }
     if (said) return finish({ result: "refused", reason: `the command refused, exiting ${rc}` }, `${said.trim()} Nothing was pushed.`);
   }
-  if (rc !== "0") return finish({ result: "failed", reason: `the command exited ${rc || "with no code"}` }, `${code(s.command.join(" "))} stopped with ${rc ? `exit code ${rc}` : "no exit code"}, so nothing was pushed. The commit job's log has its output.`);
+  if (rc !== "0") return finish({ result: "failed", reason: `the command exited ${rc || "with no code"}` }, `${code(ranArgv)} stopped with ${rc ? `exit code ${rc}` : "no exit code"}, so nothing was pushed. The commit job's log has its output.`);
 
   const head = await i.forge.pullRequestHead?.(pr!).catch(() => undefined);
   if (!head || !head.open || !head.sameRepo || !branchOk(head.branch)) return finish({ result: "refused", reason: `#${pr} is not an open ${what} from this repository` }, `#${pr} is not an open ${what} from this repository, so nothing was pushed.`);
@@ -944,7 +1034,7 @@ export async function landCommitChange(i: CommitLandInput): Promise<CommitLandOu
 
   const patch = join(i.dir, COMMIT_PATCH_FILE);
   const nothing = (): Promise<CommitLandOutcome> =>
-    finish({ result: s.on === "check" ? "skipped" : "refused", reason: "the command changed nothing" }, `${code(s.command.join(" "))} changed nothing, so nothing was pushed.`);
+    finish({ result: s.on === "check" ? "skipped" : "refused", reason: "the command changed nothing" }, `${code(ranArgv)} changed nothing, so nothing was pushed.`);
   if (!existsSync(patch) || statSync(patch).size === 0) return nothing();
   let paths: string[];
   try {
@@ -970,12 +1060,12 @@ export async function landCommitChange(i: CommitLandInput): Promise<CommitLandOu
     const bad = [...new Set([...forbidden, ...outside])];
     return finish(
       { result: "refused", reason: `the change touches ${bad.join(", ")}`, paths },
-      `${code(s.command.join(" "))} changed ${bad.map(code).join(", ")}, which ${s.name} may not change (it may change ${[...s.allowed, ...s.allowedFiles].map(code).join(", ")}, and never CI, chant's settings and state, code owners, agent instructions or git settings), so nothing was pushed.`,
+      `${code(ranArgv)} changed ${bad.map(code).join(", ")}, which ${s.name} may not change (it may change ${[...s.allowed, ...s.allowedFiles].map(code).join(", ")}, and never CI, chant's settings and state, code owners, agent instructions or git settings), so nothing was pushed.`,
     );
   }
 
-  const title = s.on === "comment" ? `${s.comment} asked for by ${user} on ${what} #${pr}` : `${s.name} after the check found something at ${sha.slice(0, 8)}`;
-  const ran = baseSha ? `Merged ${decision.base} at ${baseSha.slice(0, 12)} into ${sha.slice(0, 12)}, then ran ${s.command.join(" ")}.` : `Ran ${s.command.join(" ")} on ${sha.slice(0, 12)}.`;
+  const title = s.on === "comment" ? `${s.comment}${req.arg !== undefined ? ` ${req.arg}` : ""} asked for by ${user} on ${what} #${pr}` : `${s.name} after the check found something at ${sha.slice(0, 8)}`;
+  const ran = baseSha ? `Merged ${decision.base} at ${baseSha.slice(0, 12)} into ${sha.slice(0, 12)}, then ran ${ranArgv}.` : `Ran ${ranArgv} on ${sha.slice(0, 12)}.`;
   const message = [title, "", ran, "", ...(user ? [`Requested-by: ${user}`] : []), `${COMMIT_TRAILER}: ${s.name}`, ""].join("\n");
   let commitSha: string;
   try {
@@ -993,7 +1083,7 @@ export async function landCommitChange(i: CommitLandInput): Promise<CommitLandOu
   const voided = approved ? ` The plan of ${code(sha.slice(0, 8))} was approved by ${approved}; the new commit is planned again and needs approval again.` : "";
   return finish(
     { result: "pushed", reason: `pushed ${commitSha} to ${head.branch}`, commit: commitSha, paths, ...(approved ? { approvalVoided: approved } : {}) },
-    `pushed ${code(commitSha.slice(0, 8))} to ${code(head.branch)}${user ? ` for ${user}` : ""}, from ${baseSha ? `a merge of ${code(decision.base!)} and ` : ""}${code(s.command.join(" "))}, changing ${paths.map(code).join(", ")}.${voided} Nothing was applied, approved or merged.`,
+    `pushed ${code(commitSha.slice(0, 8))} to ${code(head.branch)}${user ? ` for ${user}` : ""}, from ${baseSha ? `a merge of ${code(decision.base!)} and ` : ""}${code(ranArgv)}, changing ${paths.map(code).join(", ")}.${voided} Nothing was applied, approved or merged.`,
   );
 }
 
