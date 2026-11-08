@@ -16,7 +16,6 @@ import { CapabilityRegistry, type Capability, type CapabilityGroupOutcome, type 
 import type { ChangeSetPart } from "../change-set";
 import { groupDigest } from "../components/groups";
 import { waveSetDigest } from "../wave-engine";
-import { NEXT_RELEASE } from "../release-floors";
 import type { OpWaveRunHooks } from "./op-waves-run-hooks";
 
 const digest = (n: string) => `sha256:${n.repeat(64)}`;
@@ -272,6 +271,6 @@ describe("a wave planned as one through a step (#4842)", () => {
 
   test("the floor is the next release", async () => {
     const entry = await import("./index");
-    expect(entry.OP_WAVE_STEP_WAVE_FLOOR).toBe(NEXT_RELEASE);
+    expect(entry.OP_WAVE_STEP_WAVE_FLOOR).toBe("0.124.79");
   });
 });

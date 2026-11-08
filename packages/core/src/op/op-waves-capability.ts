@@ -79,7 +79,6 @@ import type { CapabilityTraceFacts } from "../otlp";
 import { composeChangeSet, type ChangeSetDocument, type ChangeSetPart } from "../change-set";
 import { computePlanDigest } from "../lifecycle/plan-digest";
 import { groupDigest } from "../components/group-digest";
-import { NEXT_RELEASE } from "../release-floors";
 import type { GatePolicyExec, GatePolicyRun } from "../gate-policy";
 import type { ResolvedGatePolicySource } from "../policy-source";
 import type { WaveMember } from "../wave-engine";
@@ -168,7 +167,7 @@ export interface OpWaveStepGroup {
 export const OP_WAVE_TOGETHER_MEMBER = "(wave plan)";
 
 /** The release that has `discover` with a `step`, and `together` waves (#4842). */
-export const OP_WAVE_STEP_WAVE_FLOOR = NEXT_RELEASE;
+export const OP_WAVE_STEP_WAVE_FLOOR = "0.124.79";
 
 /** Whether a part changes nothing, and whether it destroys or replaces something. A plan that changes only outputs changes something (#4849). */
 export function partEffects(part: ChangeSetPart | undefined): { empty: boolean; destructive: boolean } {

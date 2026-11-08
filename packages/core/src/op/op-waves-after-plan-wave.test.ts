@@ -217,10 +217,9 @@ describe("the after-plan hook's wave answer (#4842)", () => {
     expect(opWaveAfterPlanResultProblems({ overriders: "carol" })).toEqual(["`overriders` must be a list of principals"]);
   });
 
-  test("the floor is the next release", async () => {
+  test("the floor is 0.124.79", async () => {
     const entry = await import("./index");
-    const { NEXT_RELEASE } = await import("../release-floors");
-    expect(entry.OP_WAVE_AFTER_PLAN_WAVE_FLOOR).toBe(NEXT_RELEASE);
+    expect(entry.OP_WAVE_AFTER_PLAN_WAVE_FLOOR).toBe("0.124.79");
   });
 });
 

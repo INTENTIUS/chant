@@ -119,6 +119,11 @@
  *   yet makes the member a hole naming it, so the root is never planned on a
  *   stand-in.
  *
+ * - `workspace`: the workspace the root runs in (chant#4854). `init` runs in
+ *   `default`, then `workspace select -or-create=true` selects it, creating
+ *   it when the backend does not list it yet, and the plan, apply and
+ *   output run in it. Such a root plans with `plan`, never as a one-root set.
+ *
  * A wave's run hooks in the product's process (chant#4842) reach the step
  * through its context. `processEnv` goes to every command for the root (a
  * role's credentials, values from a secret store), and `afterInit` is
@@ -193,6 +198,14 @@ export interface TerraformApplyStepInput {
   cone?: string;
   /** Vars read from other roots' outputs (#4545), Atmos's `!terraform.state`. The step's `vars` win over them. */
   reads?: TerraformStateRead[];
+  /**
+   * The workspace the root plans and applies in (chant#4854), such as an
+   * Atmos instance's. `init` runs in `default`, then `workspace select
+   * -or-create=true` selects it, creating it when the backend does not list
+   * it yet, and plan, apply and output run with `TF_WORKSPACE` set to it.
+   * Absent: the entry's `workspace`, or the run's environment, as before.
+   */
+  workspace?: string;
 }
 
 /** What `terraform-apply` returns. `outputs` is what a dependent's `stackOutput()` reads. */
@@ -258,11 +271,20 @@ function waitingOnReads(ctx: DeployContext, input: TerraformApplyStepInput, wait
 /** A run hook's environment (chant#4842, `DeployContext.processEnv`), which every command for the root runs with. */
 type RunEnv = Record<string, string> | undefined;
 
-const rootArgs = (input: TerraformApplyStepInput, env?: RunEnv) => ({ root: input.root, ...(input.cwd ? { cwd: input.cwd } : {}), ...(input.dir ? { dir: input.dir } : {}), ...(env ? { env } : {}) });
+const rootArgs = (input: TerraformApplyStepInput, env?: RunEnv) => ({
+  root: input.root,
+  ...(input.cwd ? { cwd: input.cwd } : {}),
+  ...(input.dir ? { dir: input.dir } : {}),
+  ...(env ? { env } : {}),
+  ...(input.workspace ? { workspace: input.workspace } : {}),
+});
 
 function requireRoot(input: TerraformApplyStepInput): void {
   if (typeof input.root !== "string" || input.root === "") {
     throw new Error('terraform-apply: "root" is required and names an entry in terraform.roots');
+  }
+  if (input.workspace !== undefined && (typeof input.workspace !== "string" || input.workspace.trim() === "")) {
+    throw new Error(`terraform-apply: root "${input.root}": workspace must name a workspace`);
   }
 }
 

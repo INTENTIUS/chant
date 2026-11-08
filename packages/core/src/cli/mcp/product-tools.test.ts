@@ -17,7 +17,6 @@ import * as ciProduct from "../../ci-product";
 import { reportReader, reportToolKey, safeReportKey } from "./report-tools";
 import type { ToolDefinition } from "./types";
 import type { McpToolContribution } from "../../mcp/types";
-import { NEXT_RELEASE } from "../../release-floors";
 
 const tool = (name: string, readOnly?: boolean, handler: McpToolContribution["handler"] = async () => ({ name })): McpToolContribution => ({
   name,
@@ -223,6 +222,6 @@ describe("tool annotations in tools/list (#4823)", () => {
   });
 
   test("the floor names the next release", () => {
-    expect(ciProduct.MCP_TOOL_ANNOTATIONS_FLOOR).toBe(NEXT_RELEASE);
+    expect(ciProduct.MCP_TOOL_ANNOTATIONS_FLOOR).toBe("0.124.79");
   });
 });

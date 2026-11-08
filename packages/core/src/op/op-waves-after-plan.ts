@@ -48,7 +48,6 @@
  */
 
 import { isAbsolute } from "node:path";
-import { NEXT_RELEASE } from "../release-floors";
 import type { ChangeSetPart } from "../change-set";
 import type { OpRunPolicyRow } from "./runtime";
 import type { WaveMember } from "../wave-engine";
@@ -56,7 +55,7 @@ import { OP_WAVE_HOOK_FAILURES, opWaveHookRuns, type OpWaveHookFailure } from ".
 import { OP_WAVE_PENDING_RESERVED, type OpWaveHookOutcome } from "./stage-hooks";
 
 /** The first chant whose after-plan hooks answer for the wave as a whole (`wave`), take a run's own `overriders`, and whose wave keeps the hook's report beside its pending fact (#4842). */
-export const OP_WAVE_AFTER_PLAN_WAVE_FLOOR = NEXT_RELEASE;
+export const OP_WAVE_AFTER_PLAN_WAVE_FLOOR = "0.124.79";
 
 /** One planned run, as an after-plan hook in the job's process sees it (#4614). */
 export interface OpWaveAfterPlanRun {
