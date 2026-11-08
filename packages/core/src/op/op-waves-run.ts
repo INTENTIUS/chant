@@ -1161,11 +1161,11 @@ async function applyStepRun(ctx: WaveContext, registry: CapabilityRegistry, run:
   const { spec, wave, k, options } = ctx;
   const hooks = opWaveRunHookList(options.runHooks);
   const env = ctx.runEnv?.get(run.target);
-  if (hooks.length === 0) return applyOpWaveStep({ spec, wave, registry, ...(env ? { processEnv: env } : {}) }, run, plan);
+  if (hooks.length === 0) return applyOpWaveStep({ spec, wave, registry, cwd: ctx.cwd, ...(env ? { processEnv: env } : {}) }, run, plan);
   const planned = { ...runHookRun(ctx, run), planDigest: plan.planDigest, plan: opWavePlanPath(spec, k, run.target), ...(plan.artifact !== undefined ? { artifact: plan.artifact } : {}) };
   const stop = await runOpWaveBeforeApply(hooks, planned);
   if (stop !== undefined) return { outcome: "failed", reason: stop };
-  const got = await applyOpWaveStep({ spec, wave, registry, ...(env ? { processEnv: env } : {}) }, run, plan);
+  const got = await applyOpWaveStep({ spec, wave, registry, cwd: ctx.cwd, ...(env ? { processEnv: env } : {}) }, run, plan);
   const after = await runOpWaveAfterApply(hooks, { ...planned, outcome: got.outcome, ...(got.outcome === "applied" ? { output: got.output } : { reason: got.reason }) });
   const files = after.files.length > 0 ? { files: after.files } : {};
   if (after.failed && got.outcome === "applied") return { outcome: "failed", reason: `applied, and then ${after.failed}`, ...(got.facts ? { facts: got.facts } : {}), ...files };
@@ -1191,7 +1191,7 @@ async function planWaveRuns(
   // #4613: a step's own policy engine (CrossGuard) reads its packs at the base the wave's rules were read at.
   const policyBase = base && base !== "HEAD" ? base : undefined;
   // #4842: a discovering wave's runs are the ones its step's capability finds for wave k.
-  const found = discover ? await discoverOpWaveStepRuns({ spec, wave, k, registry }) : undefined;
+  const found = discover ? await discoverOpWaveStepRuns({ spec, wave, k, registry, cwd }) : undefined;
   if (found) runs = found.runs;
   const plans: OpWaveStepPlan[] = [];
   const hooks = opWaveRunHookList(at.options.runHooks);
@@ -3938,7 +3938,7 @@ async function applyStepRunsTogether(options: RunOpWaveOptions, ctx: WaveContext
     result.failed.push(...runs.map((r) => r.target));
     return;
   }
-  const got = await applyOpWaveStepGroup({ spec, wave, registry, runEnv: (target) => ctx.runEnv?.get(target) }, planned);
+  const got = await applyOpWaveStepGroup({ spec, wave, registry, cwd: ctx.cwd, runEnv: (target) => ctx.runEnv?.get(target) }, planned);
   for (const [i, p] of planned.entries()) {
     let outcome = got[i]!;
     let files: string[] | undefined;

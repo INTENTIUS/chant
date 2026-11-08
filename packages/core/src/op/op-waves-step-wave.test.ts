@@ -126,7 +126,7 @@ describe("a wave planned as one through a step (#4842)", () => {
     expect(result.exitCode).toBe(0);
     // The input has {op} and {wave} filled and {target} as written; the wave number is the one planned.
     expect(seen.discovered.map((d) => d.ctx)).toEqual([
-      { env: "rest", wave: { name: "rest", number: 2 } },
+      { env: "rest", cwd: h.cwd, wave: { name: "rest", number: 2 } },
     ]);
     expect(seen.discovered[0]!.input).toEqual({ unit: "{target}", dir: ".", wave: "rest" });
     expect(seen.planned).toEqual(["live/c"]);
@@ -174,7 +174,7 @@ describe("a wave planned as one through a step (#4842)", () => {
     expect(result.exitCode).toBe(0);
     expect(seen.planned).toEqual([]);
     expect(seen.groups).toHaveLength(1);
-    expect(seen.groups[0]!.ctx).toEqual({ env: "layer", components: ["live/a", "live/b"] });
+    expect(seen.groups[0]!.ctx).toEqual({ env: "layer", cwd: h.cwd, components: ["live/a", "live/b"] });
     expect(seen.groups[0]!.members.map((m) => m.input)).toEqual([
       { unit: "live/a", dir: ".", wave: "layer" },
       { unit: "live/b", dir: ".", wave: "layer" },

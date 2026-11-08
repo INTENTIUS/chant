@@ -164,3 +164,27 @@ describe("a root that names its workspace (chant#4854)", () => {
     expect(lines(p).every((l) => l.includes(" ws=- "))).toBe(true);
   });
 });
+
+describe("where the step looks for chant.config (chant#4854)", () => {
+  test("with no cwd in the step, a wave run in process for another directory reads that directory's config", async () => {
+    const p = project(["app"], { binary: "tofu" });
+    // The process runs elsewhere: this checkout's own chant.config is not the project's.
+    expect(process.cwd()).not.toBe(p.dir);
+    const result = await wave(p.dir, spec([{ target: "roots/app" }]));
+    expect(result.exitCode).toBe(0);
+    expect(result.applied).toEqual(["roots/app"]);
+    // The project's binary, in the project's directory.
+    expect(lines(p).map((l) => l.split(" ").slice(0, 3).join(" "))).toEqual(["tofu ./roots/app ws=-", "tofu ./roots/app ws=-", "tofu ./roots/app ws=-", "tofu ./roots/app ws=-", "tofu ./roots/app ws=-"]);
+  });
+
+  test("a cwd the step names still wins", async () => {
+    const p = project(["app"], { binary: "tofu" });
+    const other = project(["app"], { binary: "terraform" });
+    const result = await wave(p.dir, spec([{ target: "roots/app" }], { cwd: other.dir }));
+    expect(result.exitCode).toBe(0);
+    // Both fakes log to the last project's file; each line names the directory and binary it ran.
+    const ran = lines(other);
+    expect(ran.length).toBeGreaterThan(0);
+    expect(ran.every((l) => l.startsWith("terraform ./roots/app "))).toBe(true);
+  });
+});

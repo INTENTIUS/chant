@@ -103,7 +103,8 @@ interface ComposedArtifact {
 /** What the group methods use, each replaceable in a test. */
 export interface ComposeGroupDeps {
   /** The project's config. Default: `loadChantConfigUpward` from the current directory. */
-  project?: () => Promise<ComposeProject>;
+  /** The project at the group's directory (`GroupContext.cwd`, chant#4854), else at `process.cwd()`. */
+  project?: (cwd?: string) => Promise<ComposeProject>;
   /** The run for a composition. Default: `EstateRun` when `estate` is set, else `ComposedRun`. */
   runner?: (o: GroupRunnerOptions) => ComposedRunner;
   /**
@@ -128,8 +129,8 @@ export interface ComposeGroupMethods {
   runGroup(ctx: GroupContext, run: GroupRun, members: readonly GroupMember<StepInput>[]): Promise<CapabilityGroupOutcome>;
 }
 
-async function loadProject(): Promise<ComposeProject> {
-  const start = resolve(process.cwd());
+async function loadProject(cwd?: string): Promise<ComposeProject> {
+  const start = resolve(cwd ?? process.cwd());
   const { config, configPath } = await loadChantConfigUpward(start);
   const projectRoot = configPath ? dirname(configPath) : start;
   const terraform = (config as { terraform?: TerraformConfig }).terraform;
@@ -369,7 +370,7 @@ export function composeGroup(deps: ComposeGroupDeps = {}): ComposeGroupMethods {
 
   /** The composition the group plans as, or throws when it does not compose. */
   async function composed(ctx: GroupContext, members: readonly GroupMember<StepInput>[]): Promise<{ p: ComposeProject; c: Composition }> {
-    const p = await project();
+    const p = await project(ctx.cwd);
     const off = composeOff(p.terraform);
     if (off) throw new Error(off.reason);
     const c = await compositionOf(ctx, p, members);
@@ -403,14 +404,14 @@ export function composeGroup(deps: ComposeGroupDeps = {}): ComposeGroupMethods {
   }
 
   return {
-    async groupReads(_ctx, members) {
-      const p = await project();
+    async groupReads(ctx, members) {
+      const p = await project(ctx.cwd);
       if (composeOff(p.terraform)) return [];
       return hclGroupReads(p, members);
     },
 
     async groupFallback(ctx, members) {
-      const p = await project();
+      const p = await project(ctx.cwd);
       const off = composeOff(p.terraform);
       if (off) return { kind: off.kind, reason: off.reason };
       const c = await compositionOf(ctx, p, members);
