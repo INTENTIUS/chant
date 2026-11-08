@@ -34,25 +34,24 @@
  * The exec is injectable (`./state/exec.ts`), and so is the gated-request
  * ledger, so a test runs no binary and writes no ledger.
  */
-import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Capability, CapabilityPlan } from "@intentius/chant/components/capability";
 import type { ChangeSetPart } from "@intentius/chant/change-set";
 import { CHANT_EXIT } from "@intentius/chant/exit-codes";
-import {
-  finishGatedRequest,
-  gatedRequestDigest,
-  readGatedRequests,
-  requestGate,
-  spendGatedRequest,
-  type GatedRequest,
-  type GatedRequestRules,
-  type RequestGateInput,
-  type RequestGateResult,
-} from "@intentius/chant/lifecycle/gated-request";
+import { gatedRequestDigest, type GatedRequest, type GatedRequestRules } from "@intentius/chant/lifecycle/gated-request";
+import { gatedOp } from "@intentius/chant/lifecycle/gated-op";
+import { exportStateVersion, StateExportError, type StateExportInput, type StateExportOutcome } from "@intentius/chant/state-export";
+import { parseLockInfo, releaseStateLock, StateUnlockError, type LockInfo, type StateLockSource, type StateUnlockInput, type StateUnlockOutcome } from "@intentius/chant/state-unlock";
 import { plannerForBinary, terraformChangeSetPart } from "./change-set";
 import { DEFAULT_LOCK_TIMEOUT, lockTimeoutArgs } from "./lock-timeout";
+import { initialisedBackend, isRefused, stateObject, type StateObject } from "./state/backend";
 import { lastLines, runBinary, type BinaryExec } from "./state/exec";
+import { gitlabState, gitlabStore, shownUrl, type GitLabFetch, type GitLabState } from "./state/gitlab";
+import type { StoreFetch } from "./state/object-store";
+import { stateStore } from "./state/store";
+import { gitlabVersionSource, stateVersionSource } from "./state/versions";
 
 /** The ops the gated requests of this module wait at, one per kind, as terragucci named them. */
 export const STATE_OPS = {
@@ -201,140 +200,143 @@ export async function applyPlanFile(r: RootRun & { planFile: string; lockTimeout
 
 // ── the gate around them ────────────────────────────────────────────────────
 
-/** The gated-request ledger, injectable for tests. Default chant's on `chant/lifecycle`. */
-export interface GatedRequestLedger {
-  requestGate: typeof requestGate;
-  spendGatedRequest: typeof spendGatedRequest;
-  finishGatedRequest: typeof finishGatedRequest;
-  readGatedRequests: typeof readGatedRequests;
-}
-
-const chantLedger: GatedRequestLedger = { requestGate, spendGatedRequest, finishGatedRequest, readGatedRequests };
-
-/**
- * The time a request was first asked, so asking again binds the same
- * digest: chant's digest covers `at`, and a run that asked anew each time
- * would never meet the approval of the last one. The newest standing,
- * unspent request with the same kind, subject, requester and fields gives
- * its `at`; with none, `now`.
- */
-export async function requestedAt(
-  op: string,
-  request: Omit<GatedRequest, "at">,
-  options: { now?: string; cwd?: string; ledger?: Pick<GatedRequestLedger, "readGatedRequests"> } = {},
-): Promise<string> {
-  const now = options.now ?? new Date().toISOString();
-  const read = await (options.ledger ?? chantLedger).readGatedRequests(op, options.cwd ? { cwd: options.cwd } : undefined).catch(() => []);
-  const same = JSON.stringify(Object.entries(request.fields).sort());
-  const standing = read
-    .filter((g) => !g.applied && g.request.kind === request.kind && g.request.subject === request.subject && g.request.by === request.by)
-    .filter((g) => JSON.stringify(Object.entries(g.request.fields).sort()) === same)
-    .filter((g) => !g.pending.expiresAt || g.pending.expiresAt > now)
-    .at(-1);
-  return standing?.request.at ?? now;
-}
-
-/** The digest `requestGate` puts in `fields.proof` for an attachment. */
-export const attachmentDigest = (attachment: string): string => `sha256:${createHash("sha256").update(attachment).digest("hex")}`;
-
-export interface GatedStateOpInput {
-  op: string;
-  /** The request, less `at`, which {@link requestedAt} fills. */
-  request: Omit<GatedRequest, "at"> & { at?: string };
-  rules: GatedRequestRules;
-  description?: string;
-  expiry?: string;
-  base?: string;
-  /** A document the request carries, such as a migration's proof; its digest joins the request. */
-  attachment?: string;
-  cwd?: string;
-  now?: string;
-  runId?: string;
-  commit?: string;
-  ledger?: GatedRequestLedger;
-  gates?: RequestGateInput["gates"];
-  /**
-   * A last check just before the spend, for a fact that can change while the
-   * request waited (a run that may hold the lock came back). A string refuses
-   * the operation with that reason, and the approval is not spent.
-   */
-  beforeSpend?: () => Promise<string | undefined>;
-  /**
-   * The flat facts of a failed act's finished line, beside its `error`, such
-   * as the binary's exit code and last lines (#4653). Default none.
-   */
-  failedDetail?: (error: Error) => Record<string, string | number | boolean>;
-}
-
-/** How a gated operation ended. */
-export type GatedStateOpResult<T> =
-  | Exclude<RequestGateResult, { status: "approved" }>
-  | { status: "held"; digest: string; request: GatedRequest; reason: string }
-  | { status: "done"; digest: string; request: GatedRequest; approvedBy: string; output: T; recorded: boolean }
-  | { status: "failed"; digest: string; request: GatedRequest; approvedBy: string; error: Error; recorded: boolean };
-
-/**
- * Run `act` once its request is approved: ask (or read) the request, spend
- * the approval, act, and record how it ended. `act` returns its output and
- * the flat facts that go on the finished line. A spend that cannot be pushed
- * throws before `act` runs, so no approval acts twice. A finished line that
- * cannot be written is reported as `recorded: false`; the act already ran.
- */
-export async function gatedStateOp<T>(
-  input: GatedStateOpInput,
-  act: (approved: { digest: string; request: GatedRequest; approvedBy: string }) => Promise<{ output: T; detail?: Record<string, string | number | boolean> }>,
-): Promise<GatedStateOpResult<T>> {
-  const ledger = input.ledger ?? chantLedger;
-  // The proof's digest is a field of the stored request, so the standing request is matched with it.
-  const fields = input.attachment !== undefined ? { ...input.request.fields, proof: attachmentDigest(input.attachment) } : input.request.fields;
-  const at = input.request.at ?? (await requestedAt(input.op, { ...input.request, fields }, { ...(input.now ? { now: input.now } : {}), ...(input.cwd ? { cwd: input.cwd } : {}), ledger }));
-  const request: GatedRequest = { kind: input.request.kind, subject: input.request.subject, by: input.request.by, at, fields };
-  const asked = await ledger.requestGate({
-    op: input.op,
-    request,
-    rules: input.rules,
-    ...(input.description ? { description: input.description } : {}),
-    ...(input.expiry ? { expiry: input.expiry } : {}),
-    ...(input.base ? { base: input.base } : {}),
-    ...(input.attachment !== undefined ? { attachment: input.attachment } : {}),
-    ...(input.cwd ? { cwd: input.cwd } : {}),
-    ...(input.now ? { now: input.now } : {}),
-    ...(input.gates ? { gates: input.gates } : {}),
-  });
-  if (asked.status !== "approved") return asked;
-  const { digest } = asked;
-  const approvedBy = asked.approval.resolvedBy;
-  const held = await input.beforeSpend?.();
-  if (held) return { status: "held", digest, request: asked.request, reason: held };
-  const spent = await ledger.spendGatedRequest({
-    op: input.op,
-    gate: request.subject,
-    digest,
-    approval: asked.approval,
-    ...(input.runId ? { runId: input.runId } : {}),
-    ...(input.commit ? { commit: input.commit } : {}),
-    ...(input.cwd ? { cwd: input.cwd } : {}),
-    ...(input.now ? { now: input.now } : {}),
-  });
-  const finish = async (result: "applied" | "failed", detail?: Record<string, string | number | boolean>): Promise<boolean> => {
-    try {
-      const f = await ledger.finishGatedRequest({ op: input.op, gate: request.subject, digest, applied: spent.timestamp, result, ...(detail ? { detail } : {}), ...(input.cwd ? { cwd: input.cwd } : {}) });
-      return f.pushed;
-    } catch {
-      return false;
-    }
-  };
-  try {
-    const { output, detail } = await act({ digest, request: asked.request, approvedBy });
-    return { status: "done", digest, request: asked.request, approvedBy, output, recorded: await finish("applied", detail) };
-  } catch (e) {
-    const error = e instanceof Error ? e : new Error(String(e));
-    return { status: "failed", digest, request: asked.request, approvedBy, error, recorded: await finish("failed", { ...(input.failedDetail?.(error) ?? {}), error: error.message.slice(0, 400) }) };
-  }
-}
+// The walk itself is chant core's since #4762 (`@intentius/chant/lifecycle/gated-op`), engine-neutral; these names stay for the products written against them.
+export { attachmentDigest, requestedAt, type GatedRequestLedger } from "@intentius/chant/lifecycle/gated-op";
+export type { GatedOpInput as GatedStateOpInput, GatedOpResult as GatedStateOpResult } from "@intentius/chant/lifecycle/gated-op";
+/** Run `act` once its request is approved: chant core's {@link gatedOp}. */
+export const gatedStateOp = gatedOp;
 
 /** The digest a request binds, for a caller that prints it before it asks. */
 export const stateOpDigest = (op: string, request: GatedRequest): string => gatedRequestDigest(op, request);
+
+// ── export and release (#4762) ───────────────────────────────────────────────
+
+/** A root's backend, read the way export and release read it. */
+export interface RootBackendRun extends RootRun {
+  /**
+   * Run `init` in a data dir of its own (a new temp dir as `TF_DATA_DIR`,
+   * removed after), so the checkout's `.terraform` is left alone. Default
+   * true. Pass false for a root another tool initialised in `dir` with `env`,
+   * such as a Terragrunt unit.
+   */
+  init?: boolean;
+  /** The backend's HTTP calls, for tests. */
+  fetch?: StoreFetch;
+}
+
+/**
+ * Where a root's state is: init (in a data dir of its own unless `init` is
+ * false), then the backend init recorded. `act` runs while the data dir is
+ * there, with the env that names it, so a binary run inside it finds the
+ * root initialised; the data dir is removed after.
+ */
+async function withBackend<T>(r: RootBackendRun, act: (object: RootStateAt, env: NodeJS.ProcessEnv) => Promise<T>, readOnly = false): Promise<T> {
+  const env = r.env ?? process.env;
+  if (r.init === false) return act(objectOf(r.dir, env, r.binary, readOnly), env);
+  const data = mkdtempSync(join(tmpdir(), "chant-state-data-"));
+  try {
+    const benv = { ...env, TF_DATA_DIR: data };
+    await initRoot({ ...r, env: benv });
+    return await act(objectOf(r.dir, benv, r.binary, readOnly), benv);
+  } finally {
+    rmSync(data, { recursive: true, force: true });
+  }
+}
+
+/** Where a root's state is: a state object, or a GitLab-managed state (./state/gitlab.ts), which the lock verdict refuses and export and release read. */
+type RootStateAt = StateObject | GitLabState;
+
+const isGitLab = (o: RootStateAt): o is GitLabState => "address" in o;
+
+/**
+ * The root's state. A read needs no lock file, so an s3 backend that locks
+ * with DynamoDB is read as one that takes the lock file: the refusal is
+ * about holding its lock, which a read never does. An http backend whose
+ * address is GitLab's state API is that state.
+ */
+function objectOf(dir: string, env: NodeJS.ProcessEnv, binary: string, readOnly: boolean): RootStateAt {
+  const o = stateObject(dir, env, undefined, binary);
+  if (!isRefused(o)) return o;
+  const recorded = initialisedBackend(dir, env);
+  if (o.backend === "http" && recorded?.type === "http") return gitlabState(recorded.config, env) ?? o;
+  if (!readOnly || o.refused !== "no-lockfile") return o;
+  return stateObject(dir, env, recorded ? { ...recorded, config: { ...recorded.config, use_lockfile: true } } : undefined, binary, { backendConfig: { use_lockfile: "true" } });
+}
+
+export interface TerraformStateExportInput extends Omit<StateExportInput, "source" | "subject">, RootBackendRun {}
+
+/**
+ * chant core's state export (`exportStateVersion`) of one root: its backend
+ * read by an init of its own, its versions read from the bucket or container
+ * (`./state/versions.ts`). Throws `StateExportError` for a backend that keeps
+ * no versions chant reads.
+ */
+export async function terraformStateExport(input: TerraformStateExportInput): Promise<StateExportOutcome> {
+  const source = await withBackend(input, async (object) => (isGitLab(object) ? gitlabVersionSource(gitlabStore(object, input.fetch as GitLabFetch | undefined)) : stateVersionSource(object, input.fetch)), true);
+  if ("refused" in source) throw new StateExportError(`${input.root}: ${source.refused}`);
+  return exportStateVersion({ ...input, subject: input.root, source });
+}
+
+/** What a state lock release reads and releases. */
+const RELEASES = "a lock release reads the lock of an s3 backend's lock file, a gcs backend, an azurerm backend and a GitLab-managed state";
+
+/**
+ * A root's lock as chant core's lock release reads it: the lock its store
+ * holds (`StateStore.heldLock`: the s3 lock file, the gcs lock object, whose
+ * generation is the ID the binary takes, the azurerm lease), released with
+ * the binary's fixed `force-unlock` of that ID. A GitLab-managed state's lock
+ * is read by asking for it and released by its ID on the unlock address,
+ * which GitLab refuses for any other lock. A local state's lock goes with
+ * the process that took it, so it is refused.
+ */
+export function terraformLockSource(r: RootRun & { object: RootStateAt; fetch?: StoreFetch }): StateLockSource | { refused: string } {
+  const o = r.object;
+  const parsed = (text: string, where: string, id?: string): LockInfo => {
+    const info = parseLockInfo(text);
+    if (!info) throw new StateOpError(r.root, "a lock read", 0, `${where} holds no lock ID the binary wrote; read it, and remove it by hand if it is not a lock`);
+    return id ? { ...info, ID: id } : info;
+  };
+  if (isGitLab(o)) {
+    if (!o.lockAddress || !o.unlockAddress) return { refused: `its http backend names no ${o.lockAddress ? "unlock_address (TF_HTTP_UNLOCK_ADDRESS)" : "lock_address (TF_HTTP_LOCK_ADDRESS)"}, so no lock it takes can be read and released` };
+    const store = gitlabStore(o, r.fetch as GitLabFetch | undefined);
+    const location = shownUrl(o.lockAddress);
+    return {
+      location,
+      read: async () => {
+        const text = await store.probeLock();
+        return text === undefined ? undefined : parsed(text, location);
+      },
+      release: (id) => store.releaseLock(id),
+    };
+  }
+  if (isRefused(o)) return { refused: `${o.reason}; ${RELEASES}` };
+  if (o.backend === "local") return { refused: `the state is a local file, whose lock goes with the process that took it; ${RELEASES}` };
+  const store = stateStore(o, r.dir, r.fetch);
+  return {
+    location: store.lockLocation,
+    async read() {
+      const held = await store.heldLock();
+      return held ? parsed(held.info, store.lockLocation, held.id || undefined) : undefined;
+    },
+    release: (id) => forceUnlockState({ ...r, id }),
+  };
+}
+
+export interface TerraformStateUnlockInput extends Omit<StateUnlockInput, "lock" | "subject">, RootBackendRun {}
+
+/**
+ * chant core's lock release (`releaseStateLock`) of one root's state: its
+ * backend read by an init of its own, the lock read from the store, released
+ * by `force-unlock` in the same data dir. Throws `StateUnlockError` for a
+ * backend whose lock chant does not read.
+ */
+export async function terraformStateUnlock(input: TerraformStateUnlockInput): Promise<StateUnlockOutcome> {
+  return withBackend(input, async (object, env) => {
+    const lock = terraformLockSource({ ...input, env, object, ...(input.fetch ? { fetch: input.fetch } : {}) });
+    if ("refused" in lock) throw new StateUnlockError(`${input.root}: ${lock.refused}`);
+    return releaseStateLock({ ...input, subject: input.root, lock });
+  });
+}
 
 // ── capabilities ────────────────────────────────────────────────────────────
 
