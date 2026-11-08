@@ -567,6 +567,10 @@ export interface ParsedArgs {
   bys?: string[];
   /** `chant workspace points --open` (#2739): only the questions still open. */
   open?: boolean;
+  /** `chant build --components --generate <forge> --own-jobs <file>` (#4769): a YAML map of jobs, in the forge's syntax, merged after chant's jobs; a name chant's file has is refused. */
+  ownJobs?: string;
+  /** `chant build --components --generate <forge> --keep-own-jobs` (#4769): the jobs of the old output file that run neither chant nor the product's bin are kept after chant's. */
+  keepOwnJobs?: boolean;
   /** `chant build --pr-loop --stale-notes` (#4628): the note carries its target commit, and a push to the target branch marks open notes stale. */
   staleNotes?: boolean;
   /** `chant components pr-post --stale` (#4628): mark the open pull requests' notes stale after the target branch moved. */

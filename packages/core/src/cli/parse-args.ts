@@ -868,6 +868,14 @@ export function parseArgs(args: string[]): ParsedArgs {
       if (!result.by || result.by.startsWith("-")) throw new Error("--by needs the reviewer: --by <principal>");
       // Repeatable for `workspace points answer` (#2739): each person who answered.
       (result.bys ??= []).push(result.by);
+    } else if (arg === "--own-jobs") {
+      // `chant build --components --generate <forge> --own-jobs <file>` (#4769).
+      const value = args[++i];
+      if (value === undefined || value.startsWith("-")) throw new Error("--own-jobs needs the YAML file of your own jobs: --own-jobs <file>");
+      result.ownJobs = value;
+    } else if (arg === "--keep-own-jobs") {
+      // `chant build --components --generate <forge> --keep-own-jobs` (#4769).
+      result.keepOwnJobs = true;
     } else if (arg === "--stale-notes") {
       // `chant build --pr-loop --stale-notes` (#4628).
       result.staleNotes = true;
@@ -1307,6 +1315,10 @@ export function parseArgs(args: string[]): ParsedArgs {
     throw new Error(
       "--promote-to needs build --components --generate <lexicon>: it adds a promote job to the generated CI pipeline, and only generate mode emits one.",
     );
+  }
+  // #4769: own jobs go into the pipeline generate mode writes, and nowhere else.
+  if ((result.ownJobs !== undefined || result.keepOwnJobs) && !(result.command === "build" && result.components && result.generate)) {
+    throw new Error(`${result.ownJobs !== undefined ? "--own-jobs" : "--keep-own-jobs"} needs build --components --generate <forge>: it adds your own jobs to the pipeline file generate mode writes.`);
   }
 
   return result;

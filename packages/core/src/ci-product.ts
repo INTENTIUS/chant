@@ -167,6 +167,37 @@ export const CI_RESPOND_FLOOR = "0.124.56";
  * its pull request jobs with the build feature-detects on this floor.
  */
 export const PR_LOOP_BUILD_FLAGS_FLOOR = "0.124.56";
+
+/**
+ * A repository's own jobs in the generated pipeline file (#4769):
+ * `mergeOwnJobs` adds a map of jobs (or `readOwnJobsFile`'s) after chant's
+ * and refuses a name chant's file has or a GitLab keyword; `keepOwnJobs`
+ * carries over the old file's jobs that run neither `chant` nor the
+ * product's bin. `chant build --components --generate <forge> --own-jobs
+ * <file>` and `--keep-own-jobs` do the same on the build line. A product
+ * feature-detects on `OWN_JOBS_FLOOR`.
+ */
+export {
+  GITLAB_RESERVED_JOB_NAMES,
+  GITLAB_TOP_KEYWORDS,
+  isGeneratedJob,
+  jobBlocks,
+  jobNames,
+  keepOwnJobs,
+  mergeOwnJobs,
+  OWN_JOB_NAME,
+  OWN_JOBS_FLOOR,
+  OWN_JOBS_FORGES,
+  OWN_JOBS_LINE,
+  OwnJobsError,
+  ownJobsOf,
+  ownJobsProblems,
+  ownJobsYAML,
+  readOwnJobsFile,
+  type KeepOwnJobsOptions,
+  type MergeOwnJobsOptions,
+  type OwnJobsForge,
+} from "./ci-own-jobs";
 export {
   CI_RESPOND_DEFAULTS,
   CI_RESPOND_ENV,
