@@ -93,8 +93,13 @@ export type GatedOpResult<T> =
   | { status: "done"; digest: string; request: GatedRequest; approvedBy: string; output: T; recorded: boolean }
   | { status: "failed"; digest: string; request: GatedRequest; approvedBy: string; error: Error; recorded: boolean };
 
-/** What an approved operation's act returns: its output, and the flat facts its finished line records. */
-export type GatedOpAct<T> = (approved: { digest: string; request: GatedRequest; approvedBy: string }) => Promise<{ output: T; detail?: Record<string, string | number | boolean> }>;
+/**
+ * What an approved operation's act returns: its output, and the flat facts
+ * its finished line records. `failed` records the finished line as failed
+ * while the output still comes back, for an act that ran and did not succeed
+ * (a migration whose write left a change).
+ */
+export type GatedOpAct<T> = (approved: { digest: string; request: GatedRequest; approvedBy: string }) => Promise<{ output: T; detail?: Record<string, string | number | boolean>; failed?: boolean }>;
 
 /**
  * Run `act` once its request is approved: ask (or read) the request, spend
@@ -144,8 +149,8 @@ export async function gatedOp<T>(input: GatedOpInput, act: GatedOpAct<T>): Promi
     }
   };
   try {
-    const { output, detail } = await act({ digest, request: asked.request, approvedBy });
-    return { status: "done", digest, request: asked.request, approvedBy, output, recorded: await finish("applied", detail) };
+    const { output, detail, failed } = await act({ digest, request: asked.request, approvedBy });
+    return { status: "done", digest, request: asked.request, approvedBy, output, recorded: await finish(failed ? "failed" : "applied", detail) };
   } catch (e) {
     const error = e instanceof Error ? e : new Error(String(e));
     return { status: "failed", digest, request: asked.request, approvedBy, error, recorded: await finish("failed", { ...(input.failedDetail?.(error) ?? {}), error: error.message.slice(0, 400) }) };
