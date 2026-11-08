@@ -35,6 +35,8 @@ export interface McpRequestMeta {
   "io.modelcontextprotocol/clientInfo"?: McpClientInfo;
 }
 
+import type { ToolAnnotations } from "../../mcp/types";
+
 /**
  * Tool definition for MCP
  */
@@ -57,6 +59,8 @@ export interface ToolDefinition {
     properties: Record<string, unknown>;
     required?: string[];
   };
+  /** The tool's annotations in `tools/list` (chant#4823): the read-only core and contributed tools say so. */
+  annotations?: ToolAnnotations;
 }
 
 /**

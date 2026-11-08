@@ -2,6 +2,24 @@
  * MCP contribution types for lexicon plugins.
  */
 
+/**
+ * MCP's tool annotations (schema 2025-06-18 on), hints a client reads off
+ * `tools/list`. A client that gets none treats a tool as one that may change
+ * things and may destroy them.
+ */
+export interface ToolAnnotations {
+  /** A human-readable title. */
+  title?: string;
+  /** The tool changes nothing. */
+  readOnlyHint?: boolean;
+  /** The tool may destroy what it changes, when not read-only. MCP's default is true. */
+  destructiveHint?: boolean;
+  /** Calling the tool again with the same arguments changes nothing more. */
+  idempotentHint?: boolean;
+  /** The tool reaches entities outside a closed domain, such as the web. */
+  openWorldHint?: boolean;
+}
+
 export interface McpToolContribution {
   name: string;
   description: string;
@@ -27,6 +45,15 @@ export interface McpToolContribution {
    * serves it as any other tool. Lexicon tools do not use it.
    */
   forgeWrite?: true;
+  /**
+   * The tool's MCP annotations, listed in `tools/list` (chant#4823). chant
+   * sets `readOnlyHint` and `destructiveHint` from the declaration above,
+   * over what this says: `readOnly: true` lists `readOnlyHint: true,
+   * destructiveHint: false`, and `forgeWrite: true` lists `readOnlyHint:
+   * false, destructiveHint: false`. The other hints, and both on a tool that
+   * declares neither, are listed as given.
+   */
+  annotations?: ToolAnnotations;
 }
 
 export interface McpResourceContribution {

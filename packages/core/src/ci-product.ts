@@ -322,9 +322,13 @@ export type { ProductMcpContext, ProductMcpHook } from "./cli/mcp/product-tools"
  * true` for these, and its hook gains `propose?: boolean`. Feature-detect on
  * `PRODUCT_MCP_PROPOSE_FLOOR`: on an older chant the read-only server drops a
  * `forgeWrite` tool, and `--propose` is not a flag it parses.
+ *
+ * `tools/list` gives each tool's MCP annotations from `MCP_TOOL_ANNOTATIONS_FLOOR`
+ * on (chant#4823): `readOnly: true` and `forgeWrite: true` set `readOnlyHint`
+ * and `destructiveHint`, and a contribution's `annotations` add the rest.
  */
-export { PRODUCT_MCP_PROPOSE_FLOOR, PRODUCT_TOOL_PROPOSE_WORDS } from "./cli/mcp/product-tools";
-export type { McpToolContribution } from "./mcp/types";
+export { MCP_TOOL_ANNOTATIONS_FLOOR, PRODUCT_MCP_PROPOSE_FLOOR, PRODUCT_TOOL_PROPOSE_WORDS } from "./cli/mcp/product-tools";
+export type { McpToolContribution, ToolAnnotations } from "./mcp/types";
 export {
   activeOtlp,
   configureOtlp,
