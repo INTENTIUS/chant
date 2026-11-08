@@ -661,6 +661,16 @@ function checksVerdict(what: string, head: string, failing: string[], waiting: s
 export interface ScheduledRunsQuery {
   /** The Op's name, the value of GitLab's `CHANT_SCHEDULED_OP` selector. */
   op: string;
+  /**
+   * GitLab: pick the schedules the way the Op's `gitlab.scheduleRule` does,
+   * in place of `CHANT_SCHEDULED_OP` set to `op` (#4813). A schedule is
+   * picked when its `variable` is `value` (any value, or none, when `value`
+   * is left out) and is none of `not`. A schedule without the variable
+   * compares as unset, as a `rules: if:` reads it, so terragucci's drift
+   * rule, every schedule whose `TERRAGUCCI_SCHEDULE` is not one of its
+   * other schedules', is `{ variable: "TERRAGUCCI_SCHEDULE", not: ["comments", "resume", "rollouts", "ephemeral"] }`.
+   */
+  schedule?: { variable: string; value?: string; not?: readonly string[] };
   /** GitHub and Forgejo: the Op's workflow file name, such as `drift-watch.yml`. */
   workflow: string;
 }
@@ -964,12 +974,13 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
     comments: async (pr) => threads(await api.list(`${repo}/issues/${pr}/comments`, pageParams, pageSize)),
     addComment: async (pr, body) => thread(await api.call("POST", `${repo}/issues/${pr}/comments`, { body })),
     editComment: async (_pr, id, body) => thread(await api.call("PATCH", `${repo}/issues/comments/${id}`, { body })),
-    // Paged in full rather than searched: GitHub's search index lags a
-    // write, so a run straight after another would miss the issue it just
-    // opened, and Forgejo has no `/search/issues` at all. Both list pull
-    // requests among issues; one of those is never ours.
-    openIssues: async () =>
-      threads((await api.list(`${repo}/issues?state=open`, pageParams, pageSize)).filter((i) => isObject(i) && !isObject(i.pull_request))),
+    async openIssues() {
+      // Paged in full rather than searched: GitHub's search index lags a
+      // write, so a run straight after another would miss the issue it just
+      // opened, and Forgejo has no `/search/issues` at all. Both list pull
+      // requests among issues; one of those is never ours.
+      return threads((await api.list(`${repo}/issues?state=open`, pageParams, pageSize)).filter((i) => isObject(i) && !isObject(i.pull_request)));
+    },
     openIssue: async (title, body) => thread(await api.call("POST", `${repo}/issues`, { title, body })),
     editIssue: async (n, title, body) => thread(await api.call("PATCH", `${repo}/issues/${n}`, { title, body })),
     async closeIssue(n, comment) {
@@ -1421,13 +1432,12 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
         .filter((n): n is Thread => n !== undefined),
     addComment: async (mr, body) => note(await api.call("POST", `${notes}/${mr}/notes`, { body })),
     editComment: async (mr, id, body) => note(await api.call("PUT", `${notes}/${mr}/notes/${id}`, { body })),
-    // `search` narrows the list server-side to issues whose description
-    // carries the marker, as `reconcilePr`'s GitLab issue does (#2292); the
-    // match itself is still decided here.
-    openIssues: async (marker) =>
-      (await api.list(`${project}/issues?state=opened&search=${encodeURIComponent(marker)}&in=description`, pageParams, 100))
-        .map(issue)
-        .filter((i): i is Thread => i !== undefined),
+    async openIssues(marker) {
+      // `search` narrows the list server-side to issues whose description
+      // carries the marker, as `reconcilePr`'s GitLab issue does (#2292); the
+      // match itself is still decided here.
+      return (await api.list(`${project}/issues?state=opened&search=${encodeURIComponent(marker)}&in=description`, pageParams, 100)).map(issue).filter((i): i is Thread => i !== undefined);
+    },
     openIssue: async (title, body) => issue(await api.call("POST", `${project}/issues`, { title, description: body })),
     editIssue: async (n, title, body) => issue(await api.call("PUT", `${project}/issues/${n}`, { title, description: body })),
     async closeIssue(n, comment) {
@@ -1612,9 +1622,13 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
         .sort(byNumber)[0];
     },
     async scheduledRuns(q) {
-      // The variable the gitlab lexicon's generated Op file selects a scheduled job by.
-      const selects = (d: unknown): boolean =>
-        isObject(d) && Array.isArray(d.variables) && d.variables.some((v) => isObject(v) && v.key === "CHANT_SCHEDULED_OP" && v.value === q.op);
+      // The variable the gitlab lexicon's generated Op file selects a scheduled job by, or the Op's scheduleRule's.
+      const { variable, value, not } = q.schedule ?? { variable: "CHANT_SCHEDULED_OP", value: q.op };
+      const selects = (d: unknown): boolean => {
+        if (!isObject(d)) return false;
+        const got = (Array.isArray(d.variables) ? d.variables : []).find((v) => isObject(v) && v.key === variable)?.value;
+        return (value === undefined || got === value) && !not?.includes(got);
+      };
       const schedules = await api.list(`${project}/pipeline_schedules?scope=active`, pageParams, 100);
       // A schedule's variables are on each schedule, not the list.
       const details = await Promise.all(schedules.map((s) => api.call("GET", `${project}/pipeline_schedules/${isObject(s) ? num(s.id) : ""}`)));
