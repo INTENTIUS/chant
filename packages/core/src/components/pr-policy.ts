@@ -29,6 +29,11 @@
  * per job (`../policy-source.ts`), and the commit its ref named goes on the
  * verdict and the report, so a decision names the rules it used. A source
  * that cannot be fetched is an error, and nothing applies.
+ *
+ * `ci.policy.install` (#4774) fetches conftest or OPA at chant's pinned
+ * release when the engine is not on PATH ({@link preparePrPolicyEngine},
+ * `../policy-engine.ts`). An engine that cannot be installed is an error,
+ * and nothing applies.
  */
 
 import { readDeclaration, WorkspaceReadError } from "../workspace/declaration";
@@ -43,6 +48,7 @@ import {
   type GatePolicySettings,
   type GatePolicyVerdict,
 } from "../gate-policy";
+import { policyEngineBinary, type PolicyEngineBinaryOptions } from "../policy-engine";
 import type { ChangeSetDocument } from "../change-set";
 import type { GateLedgerPort } from "../op/gate";
 import type { PrPolicyReport } from "../pr-loop";
@@ -67,6 +73,24 @@ export interface PrLoopPolicy {
   error?: string;
   /** A line for the log when no policy runs because the base has no declaration, or could not be read. */
   note?: string;
+  /** The engine's executable with `ci.policy.install`, set by {@link preparePrPolicyEngine}. */
+  binary?: string;
+}
+
+/**
+ * With `ci.policy.install` (#4774): the read with the engine's executable,
+ * the one on PATH or chant's pinned release, installed. An engine that
+ * cannot be installed makes every run an error. Any other read is returned
+ * as it is.
+ */
+export async function preparePrPolicyEngine(read: PrLoopPolicy, options: PolicyEngineBinaryOptions = {}): Promise<PrLoopPolicy> {
+  if (!read.settings?.install || read.settings.command || read.error !== undefined || read.binary) return read;
+  const engine = read.settings.engine ?? "conftest";
+  try {
+    return { ...read, binary: await policyEngineBinary(engine, options) };
+  } catch (err) {
+    return { ...read, error: `ci.policy.install: ${engine} could not be installed: ${err instanceof Error ? err.message : String(err)}` };
+  }
 }
 
 /** Whether the working tree's declaration names a `ci.policy`. */
@@ -192,7 +216,7 @@ export function runPrPolicy(read: PrLoopPolicy, input: PrPolicyInput, exec?: Gat
     return { result: "error", engine, denials: [], rules: [], holds: [], warnings: [], error: read.source ? `the policy directory ${path} does not exist in ${where}` : exported.error, ...source };
   }
   try {
-    return { ...checkGatePolicy({ settings: read.settings, input, policyDir: exported.dir, cwd: process.cwd(), ...(exec ? { exec } : {}) }), ...source };
+    return { ...checkGatePolicy({ settings: read.settings, input, policyDir: exported.dir, cwd: process.cwd(), ...(exec ? { exec } : {}), ...(read.binary ? { binary: read.binary } : {}) }), ...source };
   } finally {
     exported.cleanup();
   }

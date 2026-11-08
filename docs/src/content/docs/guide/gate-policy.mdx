@@ -32,8 +32,15 @@ Put `ci.policy` in `chant.workspace.json`, and put the Rego in the directory tha
 | `packs` | CrossGuard packs every `pulumi-up` preview runs, each `{ dir, config? }` ([below](#crossguard-packs-at-base)) | none |
 | `namespace` | The package to read | conftest: every namespace. opa: `main` |
 | `command` | argv to run in place of the engine's own. `{policy}` is the policy directory, `{input}` the input file | the engine's own (`packages/core/src/gate-policy.ts:181`) |
+| `install` | `true` fetches conftest or OPA at chant's pinned release when the engine is not on `PATH` ([below](#install-the-engine)). Refused beside `command` | `false` |
 
-The job finds the engine on its `PATH` when it runs. Any other command works when it prints one of the two shapes. The settings are checked (`packages/core/src/workspace/declaration.ts:1167`) when the declaration is read.
+The job finds the engine on its `PATH` when it runs, unless `install` is set. Any other command works when it prints one of the two shapes. The settings are checked (`packages/core/src/workspace/declaration.ts:1167`) when the declaration is read.
+
+### Install the engine
+
+With `install: true` ([#4774](https://github.com/INTENTIUS/chant/issues/4774)) a job whose image has no engine fetches one. When `conftest --version` (or `opa version`) answers, the job uses that binary. Otherwise it downloads the release chant pins, conftest 0.71.1 or OPA 1.21.4, for linux or darwin on x64 or arm64, and refuses it unless its sha256 matches the one chant records from the release's checksums (`POLICY_ENGINE_SHA256` in `packages/core/src/policy-engine.ts`). The binary is kept in `$CHANT_TOOL_CACHE`, or `chant-tools` in the temp directory, so a job downloads it once. A download that fails or does not match is a policy error, and nothing applies. `install` needs a `minReader` of `0.124.77` or newer (`POLICY_ENGINE_INSTALL_FLOOR`).
+
+A product that runs the engine itself calls `policyEngineBinary` from `@intentius/chant/policy-engine` with its own `download`, `cache` and `probe`, and gets the path to run.
 
 ### What the engine reads
 

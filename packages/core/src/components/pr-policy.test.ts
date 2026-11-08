@@ -6,6 +6,7 @@
  */
 import { afterAll, describe, expect, test } from "vitest";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -16,7 +17,7 @@ import { overrideDigest } from "../override-gate";
 import type { GatePolicyExec } from "../gate-policy";
 import type { FoundComment, MarkerMatch, PrForge } from "../pr-forge";
 import { reviewMarker, reviewNoteBody } from "../op/activities/review-agent";
-import { decidePrPolicyOverride, policyReviewOf, prLoopPolicyAt, prPolicyReport, REVIEW_NOTE_AUTHORS, runPrPolicy, spendPrPolicyOverride, type PrPolicyInput } from "./pr-policy";
+import { decidePrPolicyOverride, policyReviewOf, prLoopPolicyAt, preparePrPolicyEngine, prPolicyReport, REVIEW_NOTE_AUTHORS, runPrPolicy, spendPrPolicyOverride, type PrPolicyInput } from "./pr-policy";
 
 const scratch: string[] = [];
 afterAll(() => {
@@ -204,5 +205,44 @@ describe("input.review: a policy reads the review's risk (#4326)", () => {
     expect(runPrPolicy(read, { ...input(base), review: low }, denyHighRisk)!.result).toBe("passed");
     // A plan nobody reviewed is not high risk; a policy that wants a review denies on `found` itself.
     expect(runPrPolicy(read, { ...input(base), review: await policyReviewOf(forgeWith([]), 7) }, denyHighRisk)!.result).toBe("passed");
+  });
+});
+
+describe("ci.policy.install: the engine at chant's pinned release (#4774)", () => {
+  const pin = (body: Uint8Array) => ({
+    cache: tmp(),
+    platform: "linux-x64" as const,
+    version: "1.0.0",
+    sha256: { "linux-x64": createHash("sha256").update(body).digest("hex") },
+    probe: () => false,
+  });
+
+  test("the engine is installed, and the policy runs it from the cache", async () => {
+    const { repo, base } = repoWithPolicy();
+    const read = { ...prLoopPolicyAt(repo, base), settings: { engine: "opa" as const, path: "policy", install: true } };
+    const urls: string[] = [];
+    const body = new Uint8Array(Buffer.from("opa"));
+    const prepared = await preparePrPolicyEngine(read, { ...pin(body), download: async (url) => (urls.push(url), body) });
+    expect(urls).toEqual(["https://github.com/open-policy-agent/opa/releases/download/v1.0.0/opa_linux_amd64_static"]);
+    expect(prepared.binary).toMatch(/opa-1\.0\.0-linux-x64\/opa$/);
+    let ran = "";
+    const verdict = runPrPolicy(prepared, input(base), (argv) => ((ran = argv[0]!), { status: 0, stdout: opaOut({}), stderr: "" }))!;
+    expect(ran).toBe(prepared.binary);
+    expect(verdict.result).toBe("passed");
+    expect(await preparePrPolicyEngine(prepared, { download: async () => { throw new Error("fetched twice"); } })).toBe(prepared);
+  });
+
+  test("an engine that cannot be installed is an error, which stops the apply", async () => {
+    const { repo, base } = repoWithPolicy();
+    const read = { ...prLoopPolicyAt(repo, base), settings: { engine: "opa" as const, path: "policy", install: true } };
+    const prepared = await preparePrPolicyEngine(read, { ...pin(new Uint8Array([1])), download: async () => new Uint8Array([2]) });
+    expect(prepared.error).toMatch(/^ci.policy.install: opa could not be installed: opa 1.0.0 from .* does not match its pinned sha256/);
+    expect(runPrPolicy(prepared, input(base), () => ({ status: 0, stdout: opaOut({}), stderr: "" }))).toMatchObject({ result: "error" });
+  });
+
+  test("without install nothing is fetched", async () => {
+    const { repo, base } = repoWithPolicy();
+    const read = prLoopPolicyAt(repo, base);
+    expect(await preparePrPolicyEngine(read, { download: async () => { throw new Error("fetched"); } })).toBe(read);
   });
 });

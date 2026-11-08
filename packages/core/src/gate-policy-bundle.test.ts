@@ -25,4 +25,18 @@ describe("the gate-policy bundle", () => {
     expect(Object.keys(result.metafile.inputs).map((i) => i.replace(/^.*?packages\//, "packages/"))).toEqual(["packages/core/src/gate-policy.ts"]);
     expect(result.outputFiles.reduce((n, f) => n + f.contents.byteLength, 0)).toBeLessThan(16 * 1024);
   });
+
+  test("the policy engine install (#4774) bundles with only the release floor beside it", async () => {
+    const result = await build({
+      entryPoints: [join(REPO, "packages", "core", "src", "policy-engine.ts")],
+      bundle: true,
+      platform: "node",
+      format: "esm",
+      write: false,
+      metafile: true,
+      outdir: "out",
+      logLevel: "silent",
+    });
+    expect(Object.keys(result.metafile.inputs).map((i) => i.replace(/^.*?packages\//, "packages/")).sort()).toEqual(["packages/core/src/policy-engine.ts", "packages/core/src/release-floors.ts"]);
+  });
 });
