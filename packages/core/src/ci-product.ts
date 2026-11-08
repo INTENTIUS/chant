@@ -211,6 +211,16 @@ export {
  */
 export const FORGEJO_RUN_GROUP_FLOOR = NEXT_RELEASE;
 export { RUN_GROUP_KEYS, type RunGroupKey } from "./lexicon";
+
+/**
+ * `chant build --pr-loop` takes the control repo (#4772): `--control <repo>`
+ * and `--control-setting <key>=<value>` (op, member, readTokenSecret, and
+ * the rest of the control settings) are the pull request loop's `control`,
+ * so the note job the build writes reads the control repo's records itself,
+ * the step `productPipelineJobs(...).post.control` returns. A product that
+ * writes its pipeline with the build feature-detects on this floor.
+ */
+export const PR_LOOP_CONTROL_FLOOR = NEXT_RELEASE;
 export {
   CI_RESPOND_DEFAULTS,
   CI_RESPOND_ENV,
