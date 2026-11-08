@@ -26,7 +26,10 @@
  * forge set to Forgejo: it checks the ref and, for a `self-hosted` label,
  * the runner, and no forge environment, since Forgejo has none.
  *
- * Like GitHub's, the workflow carries no concurrency group (ruling for
+ * With `runGroup` (#4771) each workflow gets a workflow-level run group,
+ * since Forgejo otherwise cancels the run in progress when a push starts
+ * another ({@link withRunGroup}). Without it, like GitHub's, the workflow
+ * carries no concurrency group (ruling for
  * ci-products 2026-10-28, "Ledger lock"; Forgejo 16.0.5 has no job-level
  * concurrency either). Two pushes run their waves side by side: a stock
  * Pulumi stack or a Terraform root waits for its row on chant's ledger,
@@ -41,7 +44,7 @@ import type { OpWavesSpec } from "@intentius/chant/op/op-waves";
 import { assertRunnerLabels } from "@intentius/chant/ci-jobs";
 import type { OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
 import type { ForgejoDialectOptions } from "../dialect";
-import { droppedWaveEnvironmentsHeader, FORGE_TOKEN_ENV, forgejoWorkflowDoc } from "./ci-jobs";
+import { droppedWaveEnvironmentsHeader, FORGE_TOKEN_ENV, forgejoWorkflowDoc, withRunGroup } from "./ci-jobs";
 
 /** Render an Op waves spec as one Forgejo Actions workflow, `<name>.yml`. */
 export function generateForgejoOpWavesPipeline(
@@ -53,7 +56,9 @@ export function generateForgejoOpWavesPipeline(
   const { doc, jobs, resumeDoc, plansDoc } = buildGithubOpWavesDoc(spec, options, { forge: "forgejo" });
   const dropped = spec.waves.filter((w) => w.environment).map((w) => `${w.name} -> ${w.environment!.name}`);
   const header = dropped.length > 0 ? droppedWaveEnvironmentsHeader(dropped) : undefined;
-  const files = [{ name: `${spec.name}.yml`, yaml: emitOpPipelineYAML(forgejoWorkflowDoc(doc, dialectOptions, header)) }];
+  // #4771: the run group a product asks for, on each of the spec's workflows.
+  const grouped = (d: ReturnType<typeof forgejoWorkflowDoc>) => withRunGroup(d, options.runGroup, spec.name);
+  const files = [{ name: `${spec.name}.yml`, yaml: emitOpPipelineYAML(grouped(forgejoWorkflowDoc(doc, dialectOptions, header))) }];
   if (resumeDoc) {
     // Forgejo has no API to re-run a run, so resume dispatches the workflow
     // again, with a token that may.
@@ -61,9 +66,9 @@ export function generateForgejoOpWavesPipeline(
     for (const job of Object.values(resume.jobsDoc) as Array<{ steps: Array<Record<string, unknown>> }>) {
       for (const step of job.steps) if (step.env) step.env = { ...FORGE_TOKEN_ENV };
     }
-    files.push({ name: `${spec.name}-resume.yml`, yaml: emitOpPipelineYAML(resume) });
+    files.push({ name: `${spec.name}-resume.yml`, yaml: emitOpPipelineYAML(grouped(resume)) });
   }
-  if (plansDoc) files.push({ name: `${spec.name}-plans.yml`, yaml: emitOpPipelineYAML(forgejoWorkflowDoc(plansDoc, dialectOptions)) });
+  if (plansDoc) files.push({ name: `${spec.name}-plans.yml`, yaml: emitOpPipelineYAML(grouped(forgejoWorkflowDoc(plansDoc, dialectOptions))) });
   return { files, jobs };
 }
 

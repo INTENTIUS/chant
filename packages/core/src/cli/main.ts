@@ -1525,6 +1525,10 @@ Options:
   --keep-own-jobs       (build --components --generate) Keep the jobs of the
                         old --output file that run neither chant nor the
                         product's bin
+  --run-group <key>     (build --components --generate, run --generate with
+                        an op waves spec) Give a Forgejo workflow a run
+                        group: commit or pull-request. GitHub and GitLab
+                        files are unchanged
   --no-release-record   Skip auto-emitting a release-ledger record after a
                         successful \`run --components\` deploy (default: on;
                         also settable via chant.config.ts's

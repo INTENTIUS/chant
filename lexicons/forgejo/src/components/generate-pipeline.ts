@@ -35,7 +35,7 @@ import type {
   ComponentPipelineResult,
 } from "@intentius/chant/lexicon";
 import type { ForgejoDialectOptions } from "../dialect";
-import { forgejoize } from "./ci-jobs";
+import { forgejoize, withRunGroup } from "./ci-jobs";
 
 /**
  * Synthesize a `.forgejo/workflows/*.yml` pipeline from a set of components.
@@ -54,7 +54,7 @@ export function generateForgejoPipeline(
     options.prLoop ? { ...options, prLoop: { ...options.prLoop, forge: "forgejo" } } : options,
   );
 
-  const forgejoDoc: GithubPipelineDoc = {
+  const forgejoDoc: GithubPipelineDoc = withRunGroup<GithubPipelineDoc>({
     // The environment identity (#2046) is dialect-neutral: name, environment,
     // and the env-map's CHANT_ENV entry pass through untransformed.
     name: doc.name,
@@ -66,7 +66,8 @@ export function generateForgejoPipeline(
     jobsDoc: forgejoize(doc.jobsDoc, dialectOptions),
     stages: doc.stages,
     jobs: doc.jobs,
-  };
+    // #4771: the run group a product asks for, so Forgejo does not cancel a run when the next push starts one.
+  }, options.runGroup, "chant");
 
   return { yaml: emitPipelineYAML(forgejoDoc), stages: doc.stages, jobs: doc.jobs, env: doc.environment };
 }

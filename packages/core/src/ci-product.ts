@@ -13,6 +13,7 @@ import type { CiProductWords, CiProductWordsInput } from "./ci-product-words";
 import type { ProductMcpHook } from "./cli/mcp/product-tools";
 import type { ProductWaveHook } from "./op/op-waves-after-plan";
 import { OTLP_EXPORTER_FLOOR } from "./otlp";
+import { NEXT_RELEASE } from "./release-floors";
 
 /**
  * The first chant with the product pipeline (#4550): the words, the
@@ -198,6 +199,18 @@ export {
   type MergeOwnJobsOptions,
   type OwnJobsForge,
 } from "./ci-own-jobs";
+
+/**
+ * The Forgejo generators write a workflow-level run group a product asks for
+ * (#4771): `runGroup: "pull-request"` on the components pipeline (`chant
+ * build --components --generate forgejo --run-group pull-request`) and
+ * `runGroup: "commit"` on an op waves spec (its `options`, or `chant run
+ * --generate forgejo --spec <file> --run-group commit`). A workflow with a
+ * group of its own keeps it, and GitHub and GitLab files are unchanged. A
+ * product feature-detects on this floor.
+ */
+export const FORGEJO_RUN_GROUP_FLOOR = NEXT_RELEASE;
+export { RUN_GROUP_KEYS, type RunGroupKey } from "./lexicon";
 export {
   CI_RESPOND_DEFAULTS,
   CI_RESPOND_ENV,

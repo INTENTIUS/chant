@@ -876,6 +876,11 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--keep-own-jobs") {
       // `chant build --components --generate <forge> --keep-own-jobs` (#4769).
       result.keepOwnJobs = true;
+    } else if (arg === "--run-group") {
+      // `chant build --components --generate forgejo --run-group <key>`, and `chant run --generate` for op waves (#4771).
+      const value = args[++i];
+      if (value !== "commit" && value !== "pull-request") throw new Error(`--run-group takes commit or pull-request: got "${value ?? ""}"`);
+      result.runGroup = value;
     } else if (arg === "--stale-notes") {
       // `chant build --pr-loop --stale-notes` (#4628).
       result.staleNotes = true;

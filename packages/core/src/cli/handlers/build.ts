@@ -346,6 +346,8 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
       // #4002: the job image and the lines that install what it lacks, chant itself included.
       ...(args.image ? { image: args.image } : {}),
       ...(args.beforeScript?.length ? { beforeScript: args.beforeScript } : {}),
+      // #4771: a workflow-level run group, which Forgejo's generator writes.
+      ...(args.runGroup ? { runGroup: args.runGroup } : {}),
     },
     args.sandbox,
     paramsResolution.provenance,
