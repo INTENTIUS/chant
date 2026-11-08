@@ -219,6 +219,13 @@ export interface TerraformApplyStepInput {
 export interface TerraformRootTools {
   /** The binary, a name on `PATH` or a path. See {@link TerraformApplyStepInput.binary}. */
   binary?: string;
+  /**
+   * The environment a read of this root's state runs with over the job's,
+   * when another root's `reads` name it as their upstream (terragucci issue
+   * 1303): its role's credentials, never the reader's. The root's own plan
+   * and apply take theirs from the run hooks (`DeployContext.processEnv`).
+   */
+  readEnv?: Record<string, string>;
 }
 
 /**
@@ -271,13 +278,22 @@ function lockTimeoutOf(input: TerraformApplyStepInput): { lockTimeout?: string }
  * read once, the values under the step's own `vars`. `waiting` when an
  * upstream has no such output yet. Throws when a state cannot be read.
  */
-async function withReads(input: TerraformApplyStepInput): Promise<{ input: TerraformApplyStepInput } | { waiting: string; upstreams: string[] }> {
+async function withReads(input: TerraformApplyStepInput, resolveRoot?: TerraformRootResolver): Promise<{ input: TerraformApplyStepInput } | { waiting: string; upstreams: string[] }> {
   const reads = input.reads ?? [];
   if (reads.length === 0) return { input };
   const problems = stateReadsProblems(reads);
   if (problems.length > 0) throw new Error(`terraform-apply: root "${input.root}": ${problems.join("; ")}`);
-  const filled = await fillStateReads(reads, async (root) => {
-    const at = { root, ...(input.cwd ? { cwd: input.cwd } : {}) };
+  const filled = await fillStateReads(reads, async (root, read) => {
+    // terragucci issue 1303: the upstream's own directory, workspace, binary and environment, as terragucci's upstreamOutputs reads it.
+    const tools = resolveRoot ? await resolveRoot(root, { root, ...(input.cwd ? { cwd: input.cwd } : {}), ...(read.dir ? { dir: read.dir } : {}), ...(read.workspace ? { workspace: read.workspace } : {}) }) : undefined;
+    const at = {
+      root,
+      ...(input.cwd ? { cwd: input.cwd } : {}),
+      ...(read.dir ? { dir: read.dir } : {}),
+      ...(read.workspace ? { workspace: read.workspace } : {}),
+      ...(tools?.binary ? { binary: tools.binary } : {}),
+      ...(tools?.readEnv ? { env: tools.readEnv } : {}),
+    };
     await terraformInit(at);
     return terraformOutputs(at);
   });
@@ -629,8 +645,8 @@ async function runChoudoufuWave(
 }
 
 /** The input a `run` that plans for itself plans with (#4545): its reads filled, or an error naming the upstream to apply first. */
-async function readsForRun(input: TerraformApplyStepInput): Promise<TerraformApplyStepInput> {
-  const read = await withReads(input);
+async function readsForRun(input: TerraformApplyStepInput, resolveRoot?: TerraformRootResolver): Promise<TerraformApplyStepInput> {
+  const read = await withReads(input, resolveRoot);
   if ("waiting" in read) throw new Error(`terraform-apply: root "${input.root}": ${read.waiting}`);
   return read.input;
 }
@@ -669,7 +685,7 @@ export function terraformApplyCapabilityWith(deps: TerraformApplyDeps = {}): Cap
       const given = await filledInput(deps.resolveRoot, ctx, step);
       requireRoot(given);
       // #4545: a root reading an upstream's output that is not there yet is a hole naming the upstream.
-      const read = await withReads(given);
+      const read = await withReads(given, deps.resolveRoot);
       if ("waiting" in read) return waitingOnReads(ctx, given, read);
       const { input } = read;
       const unresolved = [...(ctx.unresolvedInputs ?? [])].sort();
@@ -759,7 +775,7 @@ export function terraformApplyCapabilityWith(deps: TerraformApplyDeps = {}): Cap
       if (isShapeArtifact(fromWave)) {
         // A root previewed with stand-ins (#4463): plan it now with the real
         // values, and apply that plan only when it is within the preview's shape.
-        const fresh = await planRoot(await readsForRun(input), ctx.targets, { env: ctx.processEnv });
+        const fresh = await planRoot(await readsForRun(input, deps.resolveRoot), ctx.targets, { env: ctx.processEnv });
         const differences = planShapeDifferences(fromWave.shape, terraformPlanShape(fresh.json, input.root));
         if (differences.length > 0) throw new PlanShapeMovedError(input.root, differences);
         const applied = await terraformApply({ ...rootArgs(input, ctx.processEnv), planFile: fresh.planFile, ...lockTimeoutOf(input) });
@@ -771,7 +787,7 @@ export function terraformApplyCapabilityWith(deps: TerraformApplyDeps = {}): Cap
       }
       const planned: PlannedRoot = isPlannedRoot(fromWave)
         ? fromWave
-        : await planRoot(await readsForRun(input), ctx.targets, { env: ctx.processEnv }).then(({ planFile, planDigest }) => ({ planFile, planDigest }));
+        : await planRoot(await readsForRun(input, deps.resolveRoot), ctx.targets, { env: ctx.processEnv }).then(({ planFile, planDigest }) => ({ planFile, planDigest }));
       const applied = await terraformApply({ ...rootArgs(input, ctx.processEnv), planFile: planned.planFile, ...lockTimeoutOf(input) });
       if (!applied.applied) {
         const message =
