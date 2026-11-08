@@ -134,6 +134,13 @@ export interface DeployContext {
    */
   processEnv?: Record<string, string>;
   /**
+   * The directory the caller runs the step in (#4854): an op wave's `cwd`,
+   * absolute. A capability that looks for a project file, such as the
+   * nearest `chant.config.*`, starts there when its input names no directory
+   * of its own. Absent: `process.cwd()`, as before.
+   */
+  cwd?: string;
+  /**
    * A check to call once the engine has initialised the run and before its
    * plan runs any of the run's code (#4842), such as a check of the module
    * and provider sources the init fetched. It throws to stop the plan. A
@@ -426,6 +433,8 @@ export interface Capability<In = unknown, Out = unknown> {
 export interface RunDiscoveryContext {
   /** The environment the wave's runs plan in, as `DeployContext.env`. */
   env: string;
+  /** The directory the wave runs in, as `DeployContext.cwd` (#4854). */
+  cwd?: string;
   /** The wave: its name in the spec and its number from 1. A `rest` wave past the spec's asks with each number in turn. */
   wave: { name: string; number: number };
 }
@@ -445,6 +454,8 @@ export interface DiscoveredRuns {
  */
 export interface GroupContext {
   env: string;
+  /** The directory the group runs in, as `DeployContext.cwd` (#4854). Absent outside an op wave. */
+  cwd?: string;
   vars?: Record<string, unknown>;
   /** The group's components, upstreams first. */
   components: string[];

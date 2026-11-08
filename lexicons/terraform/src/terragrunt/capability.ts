@@ -217,6 +217,9 @@ const DEFAULT_WORK_DIR = ".chant/terragrunt-apply";
 
 const dirOf = (input: TerragruntApplyStepInput): string => input.dir ?? process.cwd();
 
+/** The step's input with the wave's directory as its `dir` when it names none (chant#4854). */
+const atDir = <T extends TerragruntApplyStepInput | undefined>(input: T, cwd: string | undefined): T => (input && input.dir === undefined && cwd !== undefined ? { ...input, dir: cwd } : input);
+
 /** The work directory of a `run --all` over `units`: one per set of units, so a wave and a unit of it never share one. */
 function workDirOf(input: TerragruntApplyStepInput, units: readonly string[]): string {
   const key = createHash("sha256").update(JSON.stringify([...units].sort())).digest("hex").slice(0, 16);
@@ -232,7 +235,7 @@ function withEnv(exec: TerragruntExec, env: Record<string, string> | undefined):
 /** The settings every unit of one `run --all` shares; throws when members disagree. */
 function shared(members: readonly GroupMember<TerragruntApplyStepInput>[]): { input: TerragruntApplyStepInput; units: string[]; env?: Record<string, string> } {
   if (members.length === 0) throw new Error("terragrunt-apply: a wave needs at least one unit");
-  const inputs = members.map((m) => m.input ?? (m.step as unknown as TerragruntApplyStepInput));
+  const inputs = members.map((m) => atDir(m.input ?? (m.step as unknown as TerragruntApplyStepInput), m.ctx.cwd));
   for (const i of inputs) if (typeof i.unit !== "string" || i.unit === "") throw new Error("terragrunt-apply: each run names its unit");
   const first = inputs[0]!;
   const key = (i: TerragruntApplyStepInput) => JSON.stringify([i.dir, i.terragrunt, i.binary, i.parallelism, i.workDir, i.destroy === true]);
@@ -350,7 +353,8 @@ export function terragruntApplyCapability(deps: TerragruntApplyDeps = {}): Capab
     // A unit plans and applies as a whole, and Terragrunt takes each unit's own backend lock.
     defaultLockGrain: () => "target",
 
-    async discoverRuns(ctx: RunDiscoveryContext, input: TerragruntApplyStepInput): Promise<DiscoveredRuns> {
+    async discoverRuns(ctx: RunDiscoveryContext, given: TerragruntApplyStepInput): Promise<DiscoveredRuns> {
+      const input = atDir(given, ctx.cwd);
       const found = await discoverTerragruntUnits({
         dir: dirOf(input),
         exec,
@@ -362,14 +366,16 @@ export function terragruntApplyCapability(deps: TerragruntApplyDeps = {}): Capab
       return { targets: waves[ctx.wave.number - 1] ?? [], waves: waves.length };
     },
 
-    async plan(ctx: DeployContext, input: TerragruntApplyStepInput): Promise<CapabilityPlan> {
+    async plan(ctx: DeployContext, given: TerragruntApplyStepInput): Promise<CapabilityPlan> {
+      const input = atDir(given, ctx.cwd);
       if (typeof input.unit !== "string" || input.unit === "") throw new Error("terragrunt-apply: the step names no unit");
       await ctx.afterInit?.();
       const { plans } = await planUnits(exec, await unitInput(resolveUnit, input, input.unit), [input.unit], ctx.processEnv);
       return plans.get(input.unit)!;
     },
 
-    async run(ctx: DeployContext, input: TerragruntApplyStepInput): Promise<TerragruntApplyStepOutput> {
+    async run(ctx: DeployContext, step: TerragruntApplyStepInput): Promise<TerragruntApplyStepOutput> {
+      const input = atDir(step, ctx.cwd);
       const given = ctx.plans?.[input.unit];
       const own = await unitInput(resolveUnit, input, input.unit);
       // A unit with no plan from the wave plans now and applies that plan.

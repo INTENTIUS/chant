@@ -81,7 +81,9 @@ describe("op waves through a capability step (#4545)", () => {
       { root: "app", lockTimeout: "5m", vars: { size: "s" } },
     ]);
     // #4613: the plan reads its policy packs at the wave's base.
-    expect(calls.planned[0]!.ctx).toEqual({ env: "dev", component: "network", policyBase: "b".repeat(40) });
+    // #4854: and runs in the wave's directory.
+    expect(calls.planned[0]!.ctx).toEqual({ env: "dev", component: "network", cwd: h.cwd, policyBase: "b".repeat(40) });
+    expect(calls.ran[0]!.ctx.cwd).toBe(h.cwd);
     // The apply gets the plan's artifact under the capability's member.
     expect(calls.ran[0]!.ctx.plans).toEqual({ network: { planFile: "network.tfplan", planJson: "network.tfplan.json" } });
     // The plan file hooks read carries the digest, the artifact and the part.

@@ -188,7 +188,7 @@ export interface TerraformApplyStepInput {
   root: string;
   /** Input variables, after the root's var files. See `TerraformPlanArgs.vars`. */
   vars?: Record<string, unknown>;
-  /** Where the `chant.config.*` search starts. Default: the current directory. */
+  /** Where the `chant.config.*` search starts. Default: the directory the caller runs the step in (`DeployContext.cwd`, an op wave's `cwd`, chant#4854), else the current directory. */
   cwd?: string;
   /** The root's files from here instead of its entry's `dir` (#4542): a promote under a release sets it to the recorded copy. */
   dir?: string;
@@ -421,9 +421,26 @@ function isShapeArtifact(value: unknown): value is TerraformShapeArtifact {
   return v?.kind === "terraform-apply-shape" && typeof v.digest === "string" && typeof v.shape === "object" && v.shape !== null;
 }
 
+/** The wave's directory each step input was planned or applied in (chant#4854), for the methods core calls with the input alone. */
+const inputCwd = new WeakMap<object, string>();
+
+/**
+ * The step's input with `cwd` set to the caller's directory when it names
+ * none (chant#4854, `DeployContext.cwd`): an op wave run in process for
+ * another directory finds that directory's `chant.config.*`, not the
+ * process's. The input core passed is remembered, so `defaultLockGrain`,
+ * `lockGrainRefusal` and `traceFacts`, which get the input alone, read the
+ * same config.
+ */
+export function withContextCwd(ctx: { cwd?: string } | undefined, input: TerraformApplyStepInput): TerraformApplyStepInput {
+  if (!input || typeof input !== "object" || input.cwd !== undefined || ctx?.cwd === undefined) return input;
+  inputCwd.set(input, ctx.cwd);
+  return { ...input, cwd: ctx.cwd };
+}
+
 /** The root's directory, as `terraform.roots` names it from the nearest `chant.config.*`, and the configured binary. */
 async function rootDir(input: TerraformApplyStepInput): Promise<{ dir: string; binary?: string } | undefined> {
-  const start = resolve(input.cwd ?? process.cwd());
+  const start = resolve(input.cwd ?? inputCwd.get(input) ?? process.cwd());
   const { config, configPath } = await loadChantConfigUpward(start);
   const terraform = (config as { terraform?: TerraformConfig }).terraform;
   // chant#4842: a root with no entry and a dir of its own is that directory.
@@ -591,7 +608,8 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
     refresh: "accept",
     targetDependents: { refuse: "terraform and tofu plan a -target with what it depends on, never what depends on it, so there is no flag to widen it to its dependents; name each dependent with --target" },
   },
-  async plan(ctx: DeployContext, given: TerraformApplyStepInput): Promise<CapabilityPlan> {
+  async plan(ctx: DeployContext, step: TerraformApplyStepInput): Promise<CapabilityPlan> {
+    const given = withContextCwd(ctx, step);
     requireRoot(given);
     // #4545: a root reading an upstream's output that is not there yet is a hole naming the upstream.
     const read = await withReads(given);
@@ -631,7 +649,8 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
   },
   // The root's outputs as its state holds them now (#3183): what a dependent
   // planned before this root applies reads through `stackOutput()`.
-  async outputs(ctx: DeployContext, input: TerraformApplyStepInput): Promise<Record<string, unknown>> {
+  async outputs(ctx: DeployContext, step: TerraformApplyStepInput): Promise<Record<string, unknown>> {
+    const input = withContextCwd(ctx, step);
     requireRoot(input);
     await terraformInit(rootArgs(input, ctx.processEnv));
     return terraformOutputs(rootArgs(input, ctx.processEnv));
@@ -667,9 +686,17 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
   },
   // #4555: the root and the binary, for the step's span and run record.
   traceFacts: async (input, outcome) => terraformTraceFacts(input, outcome, (await rootDir(input).catch(() => undefined))?.binary),
-  planGroup: (ctx, members) => terraformComposeGroup.planGroup(ctx, members),
-  runGroup: (ctx, run, members) => terraformComposeGroup.runGroup(ctx, run, members),
-  async run(ctx: DeployContext, input: TerraformApplyStepInput): Promise<TerraformApplyStepOutput> {
+  planGroup: (ctx, members) => {
+    // chant#4854: each member's lock grain reads the config at the wave's directory too.
+    for (const m of members) if (m.input) withContextCwd(m.ctx ?? ctx, m.input);
+    return terraformComposeGroup.planGroup(ctx, members);
+  },
+  runGroup: (ctx, run, members) => {
+    for (const m of members) if (m.input) withContextCwd(m.ctx ?? ctx, m.input);
+    return terraformComposeGroup.runGroup(ctx, run, members);
+  },
+  async run(ctx: DeployContext, step: TerraformApplyStepInput): Promise<TerraformApplyStepOutput> {
+    const input = withContextCwd(ctx, step);
     const fromWave = ctx.plans?.[input.root];
     if (isChoudoufuWavePlan(fromWave)) return runChoudoufuWave(ctx, input, fromWave);
     if (isShapeArtifact(fromWave)) {

@@ -72,7 +72,7 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { Capability, CapabilityPlan, CapabilityRegistry, DeployContext, GroupContext, GroupMember } from "../components/capability";
 import { isPlanMovedError } from "../components/capability";
 import type { CapabilityTraceFacts } from "../otlp";
@@ -114,8 +114,9 @@ export function opWaveDiscoverInput(spec: Pick<OpWavesSpec, "op" | "step">, wave
 }
 
 /** The context a run's step plans and applies with: the spec's `labels.Env`, else the wave's name, and the run's target as the component. */
-export function opWaveStepContext(spec: Pick<OpWavesSpec, "labels">, wave: Pick<OpWave, "name">, run: OpWaveRun): DeployContext {
-  return { env: spec.labels?.Env ?? wave.name, component: run.target };
+export function opWaveStepContext(spec: Pick<OpWavesSpec, "labels">, wave: Pick<OpWave, "name">, run: OpWaveRun, cwd?: string): DeployContext {
+  // #4854: the wave's directory, where a capability looks for its project's config.
+  return { env: spec.labels?.Env ?? wave.name, component: run.target, ...(cwd !== undefined ? { cwd: resolve(cwd) } : {}) };
 }
 
 const registries = new WeakMap<object, Promise<CapabilityRegistry>>();
@@ -194,7 +195,7 @@ export async function planOpWaveStep(
   let lock: PlannedLock;
   try {
     // #4842: the run hooks' environment and check after init.
-    planned = await capability.plan({ ...opWaveStepContext(spec, wave, run), ...(at.lockGrain ? { lockGrain: at.lockGrain } : {}), ...(at.policyBase ? { policyBase: at.policyBase } : {}), ...(at.processEnv ? { processEnv: at.processEnv } : {}), ...(at.afterInit ? { afterInit: at.afterInit } : {}) }, input as never);
+    planned = await capability.plan({ ...opWaveStepContext(spec, wave, run, cwd), ...(at.lockGrain ? { lockGrain: at.lockGrain } : {}), ...(at.policyBase ? { policyBase: at.policyBase } : {}), ...(at.processEnv ? { processEnv: at.processEnv } : {}), ...(at.afterInit ? { afterInit: at.afterInit } : {}) }, input as never);
     // #4552: the run's grain (declared at base, else its lexicon's) and, on the resource grain, the rows its apply leases.
     lock = await resolvePlannedLock(capability, input, planned, at.lockGrain);
   } catch (err) {
@@ -249,14 +250,14 @@ function writeStepPlanFile(file: string, plan: OpWaveStepPlan): void {
  * capability's `discoverRuns` finds for wave `k`, each a run of the spec's
  * op, and how many waves it found.
  */
-export async function discoverOpWaveStepRuns(at: { spec: OpWavesSpec; wave: OpWave; k: number; registry: CapabilityRegistry }): Promise<{ runs: OpWaveRun[]; waves?: number }> {
+export async function discoverOpWaveStepRuns(at: { spec: OpWavesSpec; wave: OpWave; k: number; registry: CapabilityRegistry; cwd?: string }): Promise<{ runs: OpWaveRun[]; waves?: number }> {
   const { spec, wave, k } = at;
   const kind = spec.step!.kind;
   const capability = resolveCapability(at.registry, kind);
   if (!capability.discoverRuns) throw new Error(`wave ${k} (${wave.name}) discovers its runs, and the capability "${kind}" cannot find them (it has no discoverRuns)`);
   let found: { targets?: unknown; waves?: unknown };
   try {
-    found = await capability.discoverRuns({ env: spec.labels?.Env ?? wave.name, wave: { name: wave.name, number: k } }, opWaveDiscoverInput(spec, wave) as never);
+    found = await capability.discoverRuns({ env: spec.labels?.Env ?? wave.name, wave: { name: wave.name, number: k }, ...(at.cwd !== undefined ? { cwd: resolve(at.cwd) } : {}) }, opWaveDiscoverInput(spec, wave) as never);
   } catch (err) {
     throw new Error(`finding the runs of wave ${k} (${wave.name}) through ${kind} failed: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -279,8 +280,8 @@ function waveGroupMembers(spec: OpWavesSpec, wave: OpWave, runs: readonly OpWave
   });
 }
 
-function waveGroupContext(spec: OpWavesSpec, wave: OpWave, runs: readonly OpWaveRun[]): GroupContext {
-  return { env: spec.labels?.Env ?? wave.name, components: runs.map((r) => r.target) };
+function waveGroupContext(spec: OpWavesSpec, wave: OpWave, runs: readonly OpWaveRun[], cwd?: string): GroupContext {
+  return { env: spec.labels?.Env ?? wave.name, ...(cwd !== undefined ? { cwd: resolve(cwd) } : {}), components: runs.map((r) => r.target) };
 }
 
 function requireGroup(capability: Capability<never, unknown>, kind: string, wave: OpWave): void {
@@ -314,7 +315,7 @@ export async function planOpWaveStepGroup(
   const members = waveGroupMembers(spec, wave, runs, (run) => {
     const own = at.runCtx?.(run.target) ?? {};
     return {
-      ...opWaveStepContext(spec, wave, run),
+      ...opWaveStepContext(spec, wave, run, at.cwd),
       ...(at.lockGrain ? { lockGrain: at.lockGrain } : {}),
       ...(at.policyBase ? { policyBase: at.policyBase } : {}),
       ...(own.processEnv ? { processEnv: own.processEnv } : {}),
@@ -323,7 +324,7 @@ export async function planOpWaveStepGroup(
   });
   let planned: { members?: Record<string, CapabilityPlan>; digest?: unknown; artifact?: unknown };
   try {
-    planned = await capability.planGroup!(waveGroupContext(spec, wave, runs), members as never);
+    planned = await capability.planGroup!(waveGroupContext(spec, wave, runs, at.cwd), members as never);
   } catch (err) {
     throw new Error(`planning wave "${wave.name}" together through ${kind} failed: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -375,7 +376,7 @@ export async function planOpWaveStepGroup(
  * when it is a moved plan (`isPlanMovedError`).
  */
 export async function applyOpWaveStepGroup(
-  at: { spec: OpWavesSpec; wave: OpWave; registry: CapabilityRegistry; runEnv?: (target: string) => Record<string, string> | undefined },
+  at: { spec: OpWavesSpec; wave: OpWave; registry: CapabilityRegistry; runEnv?: (target: string) => Record<string, string> | undefined; cwd?: string },
   runs: ReadonlyArray<{ run: OpWaveRun; plan: OpWaveStepPlan }>,
 ): Promise<OpWaveStepApply[]> {
   const { spec, wave } = at;
@@ -394,12 +395,12 @@ export async function applyOpWaveStepGroup(
   const members = waveGroupMembers(spec, wave, runs.map((r) => r.run), (run) => {
     const plan = byTarget.get(run.target)!;
     const env = at.runEnv?.(run.target);
-    return { ...opWaveStepContext(spec, wave, run), ...(plan.artifact !== undefined ? { plans: { [plan.member]: plan.artifact } } : {}), ...(env ? { processEnv: env } : {}) };
+    return { ...opWaveStepContext(spec, wave, run, at.cwd), ...(plan.artifact !== undefined ? { plans: { [plan.member]: plan.artifact } } : {}), ...(env ? { processEnv: env } : {}) };
   });
   const plans = Object.fromEntries(runs.flatMap((r) => (group.plans[r.run.target] ? [[r.run.target, group.plans[r.run.target]!] as const] : [])));
   let got: { members?: Record<string, { status: string; outputs?: Record<string, unknown>; error?: string }>; error?: string };
   try {
-    got = await capability.runGroup!(waveGroupContext(spec, wave, runs.map((r) => r.run)), { ...(group.artifact !== undefined ? { artifact: group.artifact } : {}), digest: group.digest, plans }, members as never);
+    got = await capability.runGroup!(waveGroupContext(spec, wave, runs.map((r) => r.run), at.cwd), { ...(group.artifact !== undefined ? { artifact: group.artifact } : {}), digest: group.digest, plans }, members as never);
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     const moved = isPlanMovedError(err);
@@ -457,7 +458,7 @@ export async function opWaveStepFacts(
 }
 
 /** Apply one run through the spec's step (#4545), with the plan the gate decided. */
-export async function applyOpWaveStep(at: { spec: OpWavesSpec; wave: OpWave; registry: CapabilityRegistry; processEnv?: Record<string, string> }, run: OpWaveRun, plan: OpWaveStepPlan): Promise<OpWaveStepApply> {
+export async function applyOpWaveStep(at: { spec: OpWavesSpec; wave: OpWave; registry: CapabilityRegistry; processEnv?: Record<string, string>; cwd?: string }, run: OpWaveRun, plan: OpWaveStepPlan): Promise<OpWaveStepApply> {
   const { spec, wave, registry } = at;
   let capability: Capability<never, unknown>;
   try {
@@ -465,7 +466,7 @@ export async function applyOpWaveStep(at: { spec: OpWavesSpec; wave: OpWave; reg
   } catch (err) {
     return { outcome: "failed", reason: err instanceof Error ? err.message : String(err) };
   }
-  const ctx: DeployContext = { ...opWaveStepContext(spec, wave, run), ...(plan.artifact !== undefined ? { plans: { [plan.member]: plan.artifact } } : {}), ...(at.processEnv ? { processEnv: at.processEnv } : {}) };
+  const ctx: DeployContext = { ...opWaveStepContext(spec, wave, run, at.cwd), ...(plan.artifact !== undefined ? { plans: { [plan.member]: plan.artifact } } : {}), ...(at.processEnv ? { processEnv: at.processEnv } : {}) };
   const input = opWaveStepInput(spec, wave, run);
   try {
     const output = await capability.run(ctx, input as never);

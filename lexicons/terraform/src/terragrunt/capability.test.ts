@@ -325,3 +325,24 @@ describe("a unit whose plan changes only outputs (#4849)", () => {
     expect(changing.digest).toBe((await decisionOf("all")).digest);
   });
 });
+
+describe("terragrunt-apply runs where the wave runs (chant#4854)", () => {
+  it("with no dir in the step, a wave run in process for another directory finds, plans and applies there", async () => {
+    const dir = tmp();
+    const calls: Array<Call & { cwd: string }> = [];
+    const inner = stub(calls);
+    const exec: TerragruntExec = (f, args, o) => {
+      const at = calls.length;
+      return inner(f, args, o).then((r) => {
+        calls[at]!.cwd = o.cwd;
+        return r;
+      });
+    };
+    const s = spec(dir);
+    const { dir: _dir, ...step } = s.step as Record<string, unknown>;
+    const result = await wave({ ...s, step: step as OpWavesSpec["step"] }, dir, exec);
+    expect(result.exitCode).toBe(0);
+    expect(calls.length).toBeGreaterThan(0);
+    expect(new Set(calls.map((c) => c.cwd))).toEqual(new Set([dir]));
+  });
+});
