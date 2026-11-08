@@ -141,8 +141,8 @@ export type { OpWaveNewerCommit, OpWaveNewerCommitPort } from "./op-waves-stand-
 export { OP_WAVE_RELEASE_RECORD_FLOOR, opWaveReleaseNames, opWaveReleaseProblems, releaseOfCommit } from "./op-waves-release";
 export { gitOpWaveReleasePort } from "./op-waves-release-port";
 export type { OpWaveReleaseNames, OpWaveReleaseOutcome, OpWaveReleasePort, OpWaveReleaseRequest } from "./op-waves-release";
-export { OP_WAVE_AFTER_PLAN_WAVE_FLOOR, foldPolicyRows, opWaveAfterPlanProblems, opWaveAfterPlanResultProblems, opWaveAfterPlanWaveResultProblems, runOpWaveAfterPlanHooks } from "./op-waves-after-plan";
-export type { OpWaveAfterPlanHook, OpWaveAfterPlanOutcome, OpWaveAfterPlanResult, OpWaveAfterPlanRun, OpWaveAfterPlanRunOutcome, OpWaveAfterPlanWave, OpWaveAfterPlanWaveOutcome, OpWaveAfterPlanWaveResult } from "./op-waves-after-plan";
+export { OP_WAVE_AFTER_PLAN_WAVE_FLOOR, OP_WAVE_ANSWER_APPROVALS_FLOOR, foldPolicyRows, opWaveAfterPlanProblems, opWaveAfterPlanResultProblems, opWaveAfterPlanWaveResultProblems, runOpWaveAfterPlanHooks } from "./op-waves-after-plan";
+export type { OpWaveAfterPlanHook, OpWaveAnswerApproval, OpWaveAfterPlanOutcome, OpWaveAfterPlanResult, OpWaveAfterPlanRun, OpWaveAfterPlanRunOutcome, OpWaveAfterPlanWave, OpWaveAfterPlanWaveOutcome, OpWaveAfterPlanWaveResult } from "./op-waves-after-plan";
 export { OP_WAVE_AFTER_PLAN_FLOOR } from "./runtime";
 export { OP_WAVE_RUN_HOOKS_FLOOR, opWaveRunHooksProblems } from "./op-waves-run-hooks";
 export type { OpWaveAfterApplyResult, OpWaveBeforePlanResult, OpWaveRunHookApplied, OpWaveRunHookPlanned, OpWaveRunHookRun, OpWaveRunHooks } from "./op-waves-run-hooks";

@@ -48,6 +48,7 @@
  */
 
 import { isAbsolute } from "node:path";
+import { NEXT_RELEASE } from "../release-floors";
 import type { ChangeSetPart } from "../change-set";
 import type { OpRunPolicyRow } from "./runtime";
 import type { WaveMember } from "../wave-engine";
@@ -56,6 +57,33 @@ import { OP_WAVE_PENDING_RESERVED, type OpWaveHookOutcome } from "./stage-hooks"
 
 /** The first chant whose after-plan hooks answer for the wave as a whole (`wave`), take a run's own `overriders`, and whose wave keeps the hook's report beside its pending fact (#4842). */
 export const OP_WAVE_AFTER_PLAN_WAVE_FLOOR = "0.124.79";
+
+/** The first chant whose wave answer takes `approvals`, recorded at the wave's gate before chant decides it (terragucci issue 1303). */
+export const OP_WAVE_ANSWER_APPROVALS_FLOOR = NEXT_RELEASE;
+
+/**
+ * An approval a product settled before the gate (terragucci issue 1303),
+ * which chant records at the wave's gate for the digest it decides: a
+ * covered round's (the approval of the plans these are covered by), the
+ * rest of a stopped apply's (the approval the stopped apply ran under), or
+ * a review the product read itself. It counts as any approval does, under
+ * the wave's approval mode, `approvals.involved` and `approvals.quorum`.
+ */
+export interface OpWaveAnswerApproval {
+  /** Who approved, as the ledger names an approver. */
+  resolvedBy: string;
+  /** Why this approval stands for these plans, for the ledger and the log. */
+  note: string;
+  /** Where it was approved, an http or https URL. */
+  url?: string;
+  /**
+   * A review the product read (`approvals.reviewLedger` names the spec's op):
+   * written as the product's own review line, `via: "pr-review"` with the
+   * pull request, its head and its reviewers, which proves each reviewer
+   * under `pr-review`.
+   */
+  review?: { pr: number; head: string; reviewers: string[] };
+}
 
 /** One planned run, as an after-plan hook in the job's process sees it (#4614). */
 export interface OpWaveAfterPlanRun {
@@ -123,6 +151,8 @@ export interface OpWaveAfterPlanWaveResult {
   overridersSource?: string;
   /** The product's report of these plans: stored beside the pending fact, and written for the respond job after the plans moved. */
   report?: string;
+  /** Approvals the product settled before the gate (terragucci issue 1303), recorded at the gate for the wave's digest before it is decided. */
+  approvals?: OpWaveAnswerApproval[];
 }
 
 /** An after-plan hook in the wave job's process (#4614). */
@@ -188,7 +218,7 @@ const principals = (v: unknown): v is string[] => Array.isArray(v) && v.every((p
 /** What is wrong with one wave answer (#4842), empty when nothing is. `targets` are the wave's runs, which no digest member may be named. */
 export function opWaveAfterPlanWaveResultProblems(value: unknown, targets: readonly string[]): string[] {
   if (value === undefined || value === null) return [];
-  if (typeof value !== "object" || Array.isArray(value)) return ["the wave answer must be { pending?, members?, holds?, overriders?, overridersSource?, report? }"];
+  if (typeof value !== "object" || Array.isArray(value)) return ["the wave answer must be { pending?, members?, holds?, overriders?, overridersSource?, report?, approvals? }"];
   const r = value as Record<string, unknown>;
   const problems: string[] = [];
   if (r.pending !== undefined) {
@@ -219,6 +249,30 @@ export function opWaveAfterPlanWaveResultProblems(value: unknown, targets: reado
   }
   if (r.holds !== undefined && !(Array.isArray(r.holds) && r.holds.every((h) => typeof h === "string" && h.trim() !== ""))) problems.push("`holds` must be a list of reasons, each a line saying why the wave waits for a person");
   if (r.report !== undefined && typeof r.report !== "string") problems.push("`report` must be the report's text");
+  if (r.approvals !== undefined) {
+    if (!Array.isArray(r.approvals)) problems.push("`approvals` must be a list of { resolvedBy, note, url?, review? }");
+    else (r.approvals as unknown[]).forEach((x, i) => problems.push(...answerApprovalProblems(x, `approvals[${i}]`)));
+  }
+  return problems;
+}
+
+/** What is wrong with one of a wave answer's `approvals` (terragucci issue 1303). */
+function answerApprovalProblems(value: unknown, at: string): string[] {
+  const a = value as Partial<Record<keyof OpWaveAnswerApproval, unknown>> | null;
+  if (!a || typeof a !== "object" || Array.isArray(a)) return [`${at} must be { resolvedBy, note, url?, review? }`];
+  const problems: string[] = [];
+  if (typeof a.resolvedBy !== "string" || a.resolvedBy.trim() === "") problems.push(`${at}.resolvedBy must name the approver`);
+  if (typeof a.note !== "string" || a.note.trim() === "") problems.push(`${at}.note must say why the approval stands for these plans`);
+  if (a.url !== undefined && (typeof a.url !== "string" || !/^https?:\/\/\S+$/.test(a.url))) problems.push(`${at}.url must be an http or https URL`);
+  if (a.review !== undefined) {
+    const r = a.review as { pr?: unknown; head?: unknown; reviewers?: unknown } | null;
+    if (!r || typeof r !== "object") problems.push(`${at}.review must be { pr, head, reviewers }`);
+    else {
+      if (typeof r.pr !== "number" || !Number.isInteger(r.pr) || r.pr < 1) problems.push(`${at}.review.pr must be the pull request's number`);
+      if (typeof r.head !== "string" || r.head.trim() === "") problems.push(`${at}.review.head must be the commit the review approved`);
+      if (!principals(r.reviewers) || r.reviewers.length === 0) problems.push(`${at}.review.reviewers must list the reviewers`);
+    }
+  }
   return problems;
 }
 
@@ -239,6 +293,8 @@ export interface OpWaveAfterPlanWaveOutcome {
   overriders?: string[];
   overridersSource?: string;
   report?: string;
+  /** Each hook's `approvals`, in order (terragucci issue 1303). */
+  approvals: OpWaveAnswerApproval[];
 }
 
 /** What the after-plan hooks in the job's process came to (#4614). */
@@ -265,7 +321,7 @@ export async function runOpWaveAfterPlanHooks(
   runs: readonly OpWaveAfterPlanRun[],
   log: (line: string) => void,
 ): Promise<OpWaveAfterPlanOutcome> {
-  const out: OpWaveAfterPlanOutcome = { holds: [], outcomes: [], runs: new Map(), wave: { members: [], holds: [] } };
+  const out: OpWaveAfterPlanOutcome = { holds: [], outcomes: [], runs: new Map(), wave: { members: [], holds: [], approvals: [] } };
   const targets = runs.map((r) => r.target);
   for (const hook of hooks) {
     const mine = opWaveHookRuns(hook, runs);
@@ -348,6 +404,9 @@ function foldWaveAnswer(into: OpWaveAfterPlanWaveOutcome, answer: OpWaveAfterPla
   if (answer.overriders) into.overriders = [...new Set(answer.overriders)].sort();
   if (answer.overridersSource) into.overridersSource = answer.overridersSource;
   if (answer.report !== undefined) into.report = answer.report;
+  for (const a of answer.approvals ?? []) {
+    into.approvals.push({ resolvedBy: a.resolvedBy, note: a.note, ...(a.url ? { url: a.url } : {}), ...(a.review ? { review: { pr: a.review.pr, head: a.review.head, reviewers: [...a.review.reviewers] } } : {}) });
+  }
 }
 
 /** Fold policy rows into a run's denial and hold: the rules of every `denied` row, and of every `held` row. */

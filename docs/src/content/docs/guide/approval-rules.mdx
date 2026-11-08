@@ -103,6 +103,8 @@ A line on that ledger with `via: "pr-review"`, the reviewed `head`, a `planDiges
 
 `notAuthor` is judged against everyone involved in the change: the pull request's author, each login a `Requested-by:` trailer names on the commits after base, and the accounts in `involved.agents`. With `involved.exclude`, an approval by any of them counts toward no rule, which is how terragucci's `Involved` treats them. Without it, they fail only `notAuthor`.
 
+Neither needs a `quorum` (terragucci issue 1303). A wave that no rule covers, with `involved.exclude` at base, or under `pr-review` with a `reviewLedger`, is decided as by one rule of one approver. An approval by anyone involved is left out and logged, a recorded review proves its reviewers, and the first approval that counts passes the wave. The decision then names `involved` and `reviewLedger` and has no `quorum` or `quorumProgress`. A spec at base with neither decides the wave as before. When `reviewLedger` is the spec's own op, a product's review line counts through its reviewers alone, never as one more approver named by all of them.
+
 ## On an Op gate
 
 An Op's `gate` step takes the same list in `approval.quorum`. A rule's `targets` match the run's environment (`packages/core/src/op/local-executor.ts:768`), so a rule with targets never covers a run without one. `notAuthor` is refused there, since an Op run has no pull request to read the author from (`packages/core/src/op/gate-quorum.ts:144`).
