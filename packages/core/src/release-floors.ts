@@ -45,6 +45,9 @@ export const YODEL_NEW_ENVS_FLOOR = "0.124.78";
 /** The first chant whose sql lexicon's `yodelRefusalReply` reads yodel rebase's conflict refusal as yodel prints it, `<a> and the migrations after <p> up to <b>` or `<a> and the chain ending at <b>` (#4821). */
 export const YODEL_CONFLICT_REPLY_FLOOR = "0.124.78";
 
+/** The first chant whose forge reads answer `headRuns`, `run`, `runJobs` and `artifacts`: a head's workflow runs (GitLab's pipelines), a run, its jobs and its artifacts by name (#4846). */
+export const PR_FORGE_RUN_READS_FLOOR = NEXT_RELEASE;
+
 /** The first chant whose `@intentius/chant/pr-forge-reads` exports the forge reads beside the clients (#4809). */
 export const PR_FORGE_READS_FLOOR = "0.124.78";
 
