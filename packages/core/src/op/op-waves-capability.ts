@@ -140,7 +140,7 @@ function resolveCapability(registry: CapabilityRegistry, kind: string): Capabili
 
 /** Plan one run through the spec's step (#4545), writing its plan file at `planPath` (relative to `cwd`) as a per-run `plan` command would. */
 export async function planOpWaveStep(
-  at: { spec: OpWavesSpec; wave: OpWave; cwd: string; registry: CapabilityRegistry; planPath: string; lockGrain?: LockGrain | null; policyBase?: string },
+  at: { spec: OpWavesSpec; wave: OpWave; cwd: string; registry: CapabilityRegistry; planPath: string; lockGrain?: LockGrain | null; policyBase?: string; processEnv?: Record<string, string>; afterInit?: () => Promise<void> },
   run: OpWaveRun,
 ): Promise<OpWaveStepPlan> {
   const { spec, wave, cwd, registry } = at;
@@ -150,7 +150,8 @@ export async function planOpWaveStep(
   let planned: CapabilityPlan;
   let lock: PlannedLock;
   try {
-    planned = await capability.plan({ ...opWaveStepContext(spec, wave, run), ...(at.lockGrain ? { lockGrain: at.lockGrain } : {}), ...(at.policyBase ? { policyBase: at.policyBase } : {}) }, input as never);
+    // #4842: the run hooks' environment and check after init.
+    planned = await capability.plan({ ...opWaveStepContext(spec, wave, run), ...(at.lockGrain ? { lockGrain: at.lockGrain } : {}), ...(at.policyBase ? { policyBase: at.policyBase } : {}), ...(at.processEnv ? { processEnv: at.processEnv } : {}), ...(at.afterInit ? { afterInit: at.afterInit } : {}) }, input as never);
     // #4552: the run's grain (declared at base, else its lexicon's) and, on the resource grain, the rows its apply leases.
     lock = await resolvePlannedLock(capability, input, planned, at.lockGrain);
   } catch (err) {
@@ -225,7 +226,7 @@ export async function opWaveStepFacts(
 }
 
 /** Apply one run through the spec's step (#4545), with the plan the gate decided. */
-export async function applyOpWaveStep(at: { spec: OpWavesSpec; wave: OpWave; registry: CapabilityRegistry }, run: OpWaveRun, plan: OpWaveStepPlan): Promise<OpWaveStepApply> {
+export async function applyOpWaveStep(at: { spec: OpWavesSpec; wave: OpWave; registry: CapabilityRegistry; processEnv?: Record<string, string> }, run: OpWaveRun, plan: OpWaveStepPlan): Promise<OpWaveStepApply> {
   const { spec, wave, registry } = at;
   let capability: Capability<never, unknown>;
   try {
@@ -233,7 +234,7 @@ export async function applyOpWaveStep(at: { spec: OpWavesSpec; wave: OpWave; reg
   } catch (err) {
     return { outcome: "failed", reason: err instanceof Error ? err.message : String(err) };
   }
-  const ctx: DeployContext = { ...opWaveStepContext(spec, wave, run), ...(plan.artifact !== undefined ? { plans: { [plan.member]: plan.artifact } } : {}) };
+  const ctx: DeployContext = { ...opWaveStepContext(spec, wave, run), ...(plan.artifact !== undefined ? { plans: { [plan.member]: plan.artifact } } : {}), ...(at.processEnv ? { processEnv: at.processEnv } : {}) };
   const input = opWaveStepInput(spec, wave, run);
   try {
     const output = await capability.run(ctx, input as never);

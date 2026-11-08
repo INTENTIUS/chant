@@ -108,6 +108,7 @@ async function runOpWaveJobCommand(ctx: CommandContext): Promise<number> {
       ...(product?.afterPlan ? { afterPlan: product.afterPlan } : {}),
       ...(product?.capabilities ? { capabilities: product.capabilities } : {}),
       ...(product?.hookExec ? { hookExec: product.hookExec } : {}),
+      ...(product?.runHooks ? { runHooks: product.runHooks } : {}),
       spec,
       specFile: relative(process.cwd(), path),
       wave: args.wave,

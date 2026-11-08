@@ -126,6 +126,22 @@ export interface DeployContext {
    */
   policyBase?: string;
   /**
+   * Environment variables the run's engine runs with, over the job's
+   * (#4842): an op wave's run hook gives them per run, such as a role's
+   * credentials or values read from a secret store. A capability passes them
+   * to every command it runs for the plan and the apply. Absent: the job's
+   * environment as it is.
+   */
+  processEnv?: Record<string, string>;
+  /**
+   * A check to call once the engine has initialised the run and before its
+   * plan runs any of the run's code (#4842), such as a check of the module
+   * and provider sources the init fetched. It throws to stop the plan. A
+   * capability that has no separate init calls it before it plans. Absent:
+   * nothing to call.
+   */
+  afterInit?: () => Promise<void>;
+  /**
    * The run's row lease (#4594), set by an apply path that plans inside its
    * steps (`run --components`, `components fan-out`, a promote). The driver
    * takes it around a step on the resource grain (./row-lease.ts); a

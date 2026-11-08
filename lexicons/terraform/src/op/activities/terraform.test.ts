@@ -397,6 +397,27 @@ describe("root resolution against terraform.roots (#2086)", () => {
     await terraformInit({ root: "app", cwd: dir });
     expect(execCalls[0].cmd.startsWith("tofu init")).toBe(true);
   });
+
+  test("a root with no entry plans the dir it is given, with the namespace's binary (#4842)", async () => {
+    const dir = project({ binary: "tofu", roots: { app: { dir: "./infra" } } });
+    mkdirSync(join(dir, "live", "net"), { recursive: true });
+    const result = await terraformInit({ root: "live/net", dir: "live/net", cwd: dir });
+    expect(result.dir).toBe(resolve(dir, "live/net"));
+    expect(execCalls[0].cmd).toBe("tofu init -input=false");
+    expect(execCalls[0].opts.cwd).toBe(resolve(dir, "live/net"));
+    // Without a dir, an unknown name still fails.
+    await expect(terraformInit({ root: "live/net", cwd: dir })).rejects.toThrow(/no root named "live\/net"/);
+  });
+
+  test("env is laid over the job's for every command of the root (#4842)", async () => {
+    const dir = project({ roots: { app: { dir: "./infra", workspace: "blue" } } });
+    await terraformInit({ root: "app", cwd: dir, env: { AWS_ROLE_ARN: "arn:aws:iam::1:role/app", TF_WORKSPACE: "green" } });
+    expect(execCalls[0].opts.env).toMatchObject({ TF_IN_AUTOMATION: "1", AWS_ROLE_ARN: "arn:aws:iam::1:role/app", TF_WORKSPACE: "green" });
+    await terraformApply({ root: "app", cwd: dir, planFile: "chant.tfplan", env: { AWS_ROLE_ARN: "arn:aws:iam::1:role/app" } });
+    expect(execCalls[1].opts.env).toMatchObject({ AWS_ROLE_ARN: "arn:aws:iam::1:role/app", TF_WORKSPACE: "blue" });
+    await terraformInit({ root: "app", cwd: dir });
+    expect(execCalls[2].opts.env?.AWS_ROLE_ARN).toBe(process.env.AWS_ROLE_ARN);
+  });
 });
 
 // ── terraformInit ───────────────────────────────────────────────────────────

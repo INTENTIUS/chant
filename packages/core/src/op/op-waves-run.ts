@@ -92,6 +92,7 @@ import { appendRunRecord, DEFAULT_RUN_ENV } from "../lifecycle/run-ledger";
 import { LifecyclePushLostError, pushLifecycleRebasing } from "../lifecycle/git";
 import { resolveCiJob } from "../lifecycle/release-ledger";
 import type { OpRunPolicyRow, OpRunRecordInput, OpRunStepRecord, OpRunWave, OpRunWavePlan, OpRunWaveTarget } from "./runtime";
+import { opWaveRunHookList, opWaveRunHooksProblems, runOpWaveAfterApply, runOpWaveBeforeApply, runOpWaveBeforePlan, type OpWaveRunHooks } from "./op-waves-run-hooks";
 import { foldPolicyRows, opWaveAfterPlanProblems, runOpWaveAfterPlanHooks, type OpWaveAfterPlanHook, type OpWaveAfterPlanRun, type OpWaveAfterPlanWaveOutcome } from "./op-waves-after-plan";
 import { activeOtlp, RunEventTrace, type CapabilityTraceFacts, type OtlpExporter } from "../otlp";
 import { joinRunEventSinks, resolveRunEventRun, type RunEventSink } from "../run-event-stream";
@@ -118,6 +119,7 @@ import {
   planJsonOf,
   planOpWaveStep,
   type OpWaveHolds,
+  type OpWaveStepApply,
   type OpWaveStepPlan,
 } from "./op-waves-capability";
 import {
@@ -879,6 +881,13 @@ export interface RunOpWaveOptions {
    */
   afterPlan?: OpWaveAfterPlanHook | readonly OpWaveAfterPlanHook[];
   /**
+   * Hooks around each run of a wave with a `step`, in the job's own process
+   * (#4842): `beforePlan` gives a run its engine's environment and a check
+   * after init, or refuses it; `beforeApply` and `afterApply` run around
+   * its apply. See `./op-waves-run-hooks.ts`.
+   */
+  runHooks?: OpWaveRunHooks | readonly OpWaveRunHooks[];
+  /**
    * How the spec's command hooks run (#4614), when they call back into the
    * caller's own process: a product that runs the wave in process and serves
    * its hooks from that process passes an exec that lets the event loop run
@@ -955,6 +964,8 @@ interface WaveContext {
   gateRule: { approval: GateApprovalSource; base: string; neverOverMcp: boolean };
   /** With a `step` (#4545): each run's plan through it, by target, which its apply hands back. */
   steps?: Map<string, OpWaveStepPlan>;
+  /** Each run's environment from the run hooks (#4842), by target, which its plan and its apply run with. */
+  runEnv?: Map<string, Record<string, string>>;
   /** The plans file's change set (#4551), which a `pull-request` gate checks the pull request's approval against (#4550). */
   changeSetDoc?: ChangeSetDocument;
   /** An after-plan hook's report of the wave's plans (#4842), stored beside the pending fact. */
@@ -1126,13 +1137,45 @@ async function planRuns(at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: s
   };
 }
 
+/** Which job of the wave this is, as a hook names it. */
+function jobKind(options: Pick<RunOpWaveOptions, "decide" | "share" | "group">): "wave" | "decide" | "share" | "group" {
+  return options.decide ? "decide" : options.group !== undefined ? "group" : options.share !== undefined ? "share" : "wave";
+}
+
+/** A run as a run hook sees it (#4842). */
+function runHookRun(at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: string; options: Pick<RunOpWaveOptions, "decide" | "share" | "group"> }, run: OpWaveRun) {
+  return { spec: at.spec.name, op: at.spec.op, wave: at.k, waveName: at.wave.name, job: jobKind(at.options), target: run.target, runOp: run.op ?? at.spec.op, cwd: at.cwd };
+}
+
+/**
+ * Apply one run through the spec's step (#4545) with the product's run hooks
+ * around it (#4842): `beforeApply` first, which can stop it, then the apply
+ * with the run's environment, then `afterApply`, whose files go on the
+ * result and whose failure fails a run that applied.
+ */
+async function applyStepRun(ctx: WaveContext, registry: CapabilityRegistry, run: OpWaveRun, plan: OpWaveStepPlan): Promise<OpWaveStepApply & { files?: string[] }> {
+  const { spec, wave, k, options } = ctx;
+  const hooks = opWaveRunHookList(options.runHooks);
+  const env = ctx.runEnv?.get(run.target);
+  if (hooks.length === 0) return applyOpWaveStep({ spec, wave, registry, ...(env ? { processEnv: env } : {}) }, run, plan);
+  const planned = { ...runHookRun(ctx, run), planDigest: plan.planDigest, plan: opWavePlanPath(spec, k, run.target), ...(plan.artifact !== undefined ? { artifact: plan.artifact } : {}) };
+  const stop = await runOpWaveBeforeApply(hooks, planned);
+  if (stop !== undefined) return { outcome: "failed", reason: stop };
+  const got = await applyOpWaveStep({ spec, wave, registry, ...(env ? { processEnv: env } : {}) }, run, plan);
+  const after = await runOpWaveAfterApply(hooks, { ...planned, outcome: got.outcome, ...(got.outcome === "applied" ? { output: got.output } : { reason: got.reason }) });
+  const files = after.files.length > 0 ? { files: after.files } : {};
+  if (after.failed && got.outcome === "applied") return { outcome: "failed", reason: `applied, and then ${after.failed}`, ...(got.facts ? { facts: got.facts } : {}), ...files };
+  if (after.failed) ctx.log(`${run.target}: ${after.failed}`);
+  return { ...got, ...files };
+}
+
 /**
  * Plan `runs` of wave `k` (#4545): through the spec's `step` when it names
  * one, each run's plan kept on `at.steps` for its apply, else with the
  * commands ({@link planRuns}).
  */
 async function planWaveRuns(
-  at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: string; exec: OpWaveExec; options: Pick<RunOpWaveOptions, "capabilities" | "lockGrain" | "base" | "waveExec">; steps?: Map<string, OpWaveStepPlan> },
+  at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: string; exec: OpWaveExec; options: Pick<RunOpWaveOptions, "capabilities" | "lockGrain" | "base" | "waveExec" | "runHooks" | "decide" | "share" | "group">; steps?: Map<string, OpWaveStepPlan>; runEnv?: Map<string, Record<string, string>> },
   runs: readonly OpWaveRun[],
   discover = false,
 ): Promise<PlannedRuns> {
@@ -1144,8 +1187,16 @@ async function planWaveRuns(
   // #4613: a step's own policy engine (CrossGuard) reads its packs at the base the wave's rules were read at.
   const policyBase = base && base !== "HEAD" ? base : undefined;
   const plans: OpWaveStepPlan[] = [];
+  const hooks = opWaveRunHookList(at.options.runHooks);
   for (const run of runs) {
-    const plan = await planOpWaveStep({ spec, wave, cwd, registry, planPath: opWavePlanPath(spec, k, run.target), lockGrain, ...(policyBase ? { policyBase } : {}) }, run);
+    // #4842: the product's run hooks give the run its environment and a check after init, or refuse it.
+    const before = hooks.length > 0 ? await runOpWaveBeforePlan(hooks, runHookRun(at, run)) : {};
+    if ("refused" in before) throw new Error(`${run.target} was not planned: ${before.refused}`);
+    if (before.env) {
+      at.runEnv ??= new Map();
+      at.runEnv.set(run.target, before.env);
+    }
+    const plan = await planOpWaveStep({ spec, wave, cwd, registry, planPath: opWavePlanPath(spec, k, run.target), lockGrain, ...(policyBase ? { policyBase } : {}), ...(before.env ? { processEnv: before.env } : {}), ...(before.afterInit ? { afterInit: before.afterInit } : {}) }, run);
     at.steps?.set(run.target, plan);
     plans.push(plan);
   }
@@ -1905,6 +1956,8 @@ export async function runOpWave(options: RunOpWaveOptions): Promise<RunOpWaveRes
   assertOpWavesSpec(options.spec);
   const afterPlanWrong = opWaveAfterPlanProblems(options.afterPlan);
   if (afterPlanWrong.length > 0) throw new Error(`Op waves "${options.spec.name}": ${afterPlanWrong.join("; ")}`);
+  const runHooksWrong = opWaveRunHooksProblems(options.runHooks);
+  if (runHooksWrong.length > 0) throw new Error(`Op waves "${options.spec.name}": ${runHooksWrong.join("; ")}`);
   // #4551: one run record per job, on every way the job ends.
   const started = new Date().toISOString();
   // #4555: the job's run events and its trace, when a reader or an exporter wants them.
@@ -1963,7 +2016,7 @@ function targetStarted(options: RunOpWaveOptions, k: number, target: string): nu
 }
 
 /** A target's apply ended (#4555): its time and facts on the result, and its `step-settle`. */
-function targetSettled(options: RunOpWaveOptions, result: RunOpWaveResult, k: number, target: string, startedMs: number, status: "ok" | "failed" | "skipped", opts: { error?: string; facts?: CapabilityTraceFacts } = {}): void {
+function targetSettled(options: RunOpWaveOptions, result: RunOpWaveResult, k: number, target: string, startedMs: number, status: "ok" | "failed" | "skipped", opts: { error?: string; facts?: CapabilityTraceFacts; files?: string[] } = {}): void {
   const durationMs = Math.max(0, Date.now() - startedMs);
   result.targets = {
     ...result.targets,
@@ -1977,6 +2030,8 @@ function targetSettled(options: RunOpWaveOptions, result: RunOpWaveResult, k: nu
       ...(status === "failed" && opts.facts?.resources?.some((r) => r.status === "failed")
         ? { failedResources: opts.facts.resources.filter((r) => r.status === "failed").map((r) => r.name ?? r.resource) }
         : {}),
+      // #4842: what the run hooks wrote after the apply.
+      ...(opts.files?.length ? { files: opts.files } : {}),
     },
   };
   jobEvents.get(options)?.stepSettle(k, target, status, durationMs, opts);
@@ -3737,10 +3792,11 @@ async function applyLeased(
         }
         const registry = await opWaveRegistry(options, ctx.cwd, options.capabilities);
         const startedMs = targetStarted(options, k, run.target);
-        const got = await applyOpWaveStep({ spec, wave, registry }, run, plan);
+        const got = await applyStepRun(ctx, registry, run, plan);
         targetSettled(options, result, k, run.target, startedMs, got.outcome === "applied" ? "ok" : got.outcome === "moved" ? "skipped" : "failed", {
           ...(got.outcome !== "applied" ? { error: got.reason } : {}),
           ...(got.facts ? { facts: got.facts } : {}),
+          ...(got.files ? { files: got.files } : {}),
         });
         if (got.outcome === "applied") result.applied.push(run.target);
         else if (got.outcome === "moved") {
@@ -3843,10 +3899,11 @@ async function applyStepRunsAtOnce(options: RunOpWaveOptions, ctx: WaveContext, 
         return { failed: true };
       }
       const startedMs = targetStarted(options, k, run.target);
-      const got = await applyOpWaveStep({ spec, wave, registry }, run, plan);
+      const got = await applyStepRun(ctx, registry, run, plan);
       targetSettled(options, result, k, run.target, startedMs, got.outcome === "applied" ? "ok" : got.outcome === "moved" ? "skipped" : "failed", {
         ...(got.outcome !== "applied" ? { error: got.reason } : {}),
         ...(got.facts ? { facts: got.facts } : {}),
+        ...(got.files ? { files: got.files } : {}),
       });
       if (got.outcome === "applied") return { applied: true };
       if (got.outcome === "moved") {

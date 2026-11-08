@@ -232,6 +232,8 @@ export function createSqlMigrateCapability(deps: SqlMigrateDeps = {}): Capabilit
   const run = deps.run ?? defaultYodelRunner;
   const cwdOf = deps.cwd ?? (() => process.cwd());
   const envOf = deps.env ?? (() => process.env);
+  /** The job's environment with a run hook's laid over it (chant#4842, `DeployContext.processEnv`). */
+  const jobEnvOf = (ctx: DeployContext): NodeJS.ProcessEnv => (ctx.processEnv ? { ...envOf(), ...ctx.processEnv } : envOf());
   return {
     kind: "sql-migrate",
     // A migration has no undo short of a revert, which is a change of its own (`yodel revert`).
@@ -240,13 +242,14 @@ export function createSqlMigrateCapability(deps: SqlMigrateDeps = {}): Capabilit
     // #4571: the environment's history is the grain; resource is refused by name (./lock-grain.ts).
     defaultLockGrain: () => sqlDefaultLockGrain(),
     lockGrainRefusal: (_input, grain) => sqlLockGrainRefusal("sql-migrate", grain),
-    async plan(_ctx: DeployContext, input: SqlMigrateStepInput): Promise<CapabilityPlan> {
+    async plan(ctx: DeployContext, input: SqlMigrateStepInput): Promise<CapabilityPlan> {
       requireEnvironment(input);
       const cwd = cwdOf();
       const env = input.environment;
       const files = sqlMigrateFiles(env);
       const legacy = input.legacyExit === true;
-      const reader = readerEnv(envOf());
+      // chant#4842: a run hook's env over the job's, with the writer still taken out.
+      const reader = readerEnv(jobEnvOf(ctx));
       const opts = { cwd, env: reader, ...(input.dir ? { dir: input.dir } : {}) };
       mkdirSync(dirname(join(cwd, files.part)), { recursive: true });
       // A file an earlier plan left must not pass for this one's.
@@ -309,7 +312,7 @@ export function createSqlMigrateCapability(deps: SqlMigrateDeps = {}): Capabilit
         throw new SqlPlanMovedError(env, `sql-migrate: ${decided.wavePlan} holds plan ${String(onDisk.planDigest)}, and the wave decided ${decided.planDigest}; nothing was applied`);
       }
       // The apply alone runs with the job's environment, so the writer reaches it and nothing else.
-      const applied = await runAllowedYodel(run, yodelWaveApplyArgs(env, decided.wavePlan, decided.spec, commonOf(input)), { cwd, env: envOf(), ...(input.dir ? { dir: input.dir } : {}) });
+      const applied = await runAllowedYodel(run, yodelWaveApplyArgs(env, decided.wavePlan, decided.spec, commonOf(input)), { cwd, env: jobEnvOf(ctx), ...(input.dir ? { dir: input.dir } : {}) });
       if (applied.code === 0) return { environment: env, planDigest: decided.planDigest, summary: applied.stdout.trim() };
       const error = runError(`sql-migrate: yodel apply ${env} --wave-apply`, applied, "apply", legacy);
       if (error.chantExit === CHANT_EXIT.moved || (legacy && LEGACY_MOVED.test(`${applied.stderr}\n${applied.stdout}`))) throw new SqlPlanMovedError(env, error.message);

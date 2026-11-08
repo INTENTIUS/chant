@@ -513,6 +513,30 @@ While the wave waits, chant stores the report beside the pending fact at `_gates
 
 A `wave` function that throws follows the hook's `onFailure`, the same as `run`. `OP_WAVE_AFTER_PLAN_WAVE_FLOOR` is the first chant with the wave answer.
 
+#### Run hooks
+
+A wave with a `step` can also take `runHooks`, which run in the job's process around each run's plan and apply ([#4842](https://github.com/INTENTIUS/chant/issues/4842)). Pass them to `runOpWave`, or as `{ wave: { runHooks } }` to `runChantInProcess`. With them a product gives each run its own credentials and checks what the engine fetched before any of it runs:
+
+```ts
+runHooks: {
+  name: "roots",
+  beforePlan: async (r) => ({
+    env: { ...roleEnv(r.target), ...(await secretsFor(r.target)) },
+    afterInit: () => checkSources(r.target),
+  }),
+  beforeApply: (r) => runChecks(r.target, r.plan),
+  afterApply: async (r) => (r.outcome === "applied" ? { files: [await writeStateVersion(r.target)] } : undefined),
+},
+```
+
+| Hook | When | What its answer does |
+|---|---|---|
+| `beforePlan` | Before the run's step plans | `env` is laid over the job's environment for every command the capability runs for this run's plan and apply (`DeployContext.processEnv`). `afterInit` is a check the capability calls after its engine's init and before the plan runs the run's code (`DeployContext.afterInit`). `refuse` stops the run before its engine starts. |
+| `beforeApply` | Before the step applies the plan the gate decided | A hook that throws fails the run, and nothing of it applies. |
+| `afterApply` | Once the apply came back, whatever its outcome | Its `files` go on the run record under the run's target. A hook that throws after an apply fails the run. |
+
+When `beforePlan` refuses a run or its check after init throws, the job fails the way a failed plan does and nothing in the wave applies. Given several hooks, chant calls them in order and merges their `env` maps, the later value winning. A hook with `targets` sees only the runs those patterns match. There is nothing to run them around in a wave with no `step`. Today `terraform-apply` and `sql-migrate` read the `env`, and `terraform-apply` calls the check after init; `pulumi-up` does neither yet. Check `OP_WAVE_RUN_HOOKS_FLOOR` before relying on them.
+
 ### Hooks outside the waves
 
 `chant run <op>` on its own has no spec file, so it runs no stage hooks. A product whose own apply command also runs outside the waves (`yodel apply dev` from a laptop) reads the same hooks at base with `opWaveHooksAtBase` and runs them the same way:
