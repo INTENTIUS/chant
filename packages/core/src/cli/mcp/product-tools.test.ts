@@ -17,6 +17,7 @@ import * as ciProduct from "../../ci-product";
 import { reportReader, reportToolKey, safeReportKey } from "./report-tools";
 import type { ToolDefinition } from "./types";
 import type { McpToolContribution } from "../../mcp/types";
+import { NEXT_RELEASE } from "../../release-floors";
 
 const tool = (name: string, readOnly?: boolean, handler: McpToolContribution["handler"] = async () => ({ name })): McpToolContribution => ({
   name,
@@ -174,5 +175,54 @@ describe("the report tool's keys (#4555)", () => {
     expect(() => reportToolKey({ pr: "1", commit: "a".repeat(40), file: "pr-plan.json", token: "x" })).toThrow(/takes no argument token/);
     expect(() => safeReportKey("a/../b")).toThrow(/not a path below/);
     expect(safeReportKey("/a/b/")).toBe("a/b");
+  });
+});
+
+describe("tool annotations in tools/list (#4823)", () => {
+  async function annotations(server: McpServer): Promise<Map<string, Record<string, unknown> | undefined>> {
+    const res = await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+    return new Map((res.result as { tools: Array<ToolDefinition & { annotations?: Record<string, unknown> }> }).tools.map((t) => [t.name, t.annotations]));
+  }
+  const READ = { readOnlyHint: true, destructiveHint: false };
+
+  test("a product's readOnly tool reads as read-only, a forgeWrite tool as an additive write, and its own annotations pass through", async () => {
+    const hook: ProductMcpHook = {
+      product: "terragucci",
+      propose: true,
+      tools: () => [
+        { ...tool("index", true), annotations: { idempotentHint: true, openWorldHint: false } },
+        { ...tool("request_from_template"), forgeWrite: true },
+      ],
+    };
+    const listedAnnotations = await annotations(new McpServer([], { product: hook }));
+    expect(listedAnnotations.get("terragucci:index")).toEqual({ ...READ, idempotentHint: true, openWorldHint: false });
+    expect(listedAnnotations.get("terragucci:request_from_template")).toEqual({ readOnlyHint: false, destructiveHint: false });
+  });
+
+  test("the declaration wins over an annotation that says otherwise", async () => {
+    const hook: ProductMcpHook = { product: "plywood", tools: () => [{ ...tool("stacks", true), annotations: { readOnlyHint: false, destructiveHint: true, title: "Stacks" } }] };
+    expect((await annotations(new McpServer([], { product: hook }))).get("plywood:stacks")).toEqual({ ...READ, title: "Stacks" });
+  });
+
+  test("a plugin's readOnly tool is annotated, and a tool that declares nothing is not", async () => {
+    const plugin = { name: "lex", mcpTools: () => [tool("catalog", true), tool("generate")] } as unknown as import("../../lexicon").LexiconPlugin;
+    const listedAnnotations = await annotations(new McpServer([plugin]));
+    expect(listedAnnotations.get("lex:catalog")).toEqual(READ);
+    expect(listedAnnotations.get("lex:generate")).toBeUndefined();
+  });
+
+  test("a read-only core tool is annotated, a mutating one is not, and lint is read-only only without fix", async () => {
+    const open = await annotations(new McpServer([]));
+    expect(open.get("search")).toEqual(READ);
+    expect(open.get("op-status")).toEqual(READ);
+    expect(open.get("op-run")).toBeUndefined();
+    expect(open.get("lint")).toBeUndefined();
+    const closed = await annotations(new McpServer([], { readOnly: true }));
+    expect(closed.get("lint")).toEqual(READ);
+    for (const [name, a] of closed) expect(a, name).toEqual(READ);
+  });
+
+  test("the floor names the next release", () => {
+    expect(ciProduct.MCP_TOOL_ANNOTATIONS_FLOOR).toBe(NEXT_RELEASE);
   });
 });

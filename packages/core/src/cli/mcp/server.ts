@@ -19,7 +19,7 @@ import { buildResourcesList, handleResourcesRead } from "./resource-handlers";
 import { createLedgerTools } from "./ledger-tools";
 import { createReportTools } from "./report-tools";
 import { activeProductMcpHook, productMcpContext, productToolsServed, type ProductMcpHook } from "./product-tools";
-import { MUTATING_CORE_TOOLS, READ_ONLY_CORE_TOOLS, ReadOnlyRegistrationError, servesContributedTool } from "./read-only";
+import { contributedToolAnnotations, MUTATING_CORE_TOOLS, READ_ONLY_ANNOTATIONS, READ_ONLY_CORE_TOOLS, ReadOnlyRegistrationError, servesContributedTool } from "./read-only";
 import { CHANT_VERSION } from "../version";
 
 /**
@@ -220,7 +220,11 @@ export class McpServer {
     // and its forgeWrite tools on the --propose tier (chant#4655).
     if (product) {
       for (const tool of productToolsServed(product, productMcpContext(product, cwd, this.readOnly, this.propose))) {
-        this.registerTool({ name: namespacedToolName(product.product, tool.name), description: tool.description, inputSchema: tool.inputSchema }, tool.handler);
+        const annotations = contributedToolAnnotations(tool);
+        this.registerTool(
+          { name: namespacedToolName(product.product, tool.name), description: tool.description, inputSchema: tool.inputSchema, ...(annotations ? { annotations } : {}) },
+          tool.handler,
+        );
       }
     }
   }
@@ -241,11 +245,13 @@ export class McpServer {
     for (const tool of tools) {
       // A read-only server serves a plugin tool only when it says it changes nothing (chant#4543).
       if (!servesContributedTool(tool, this.readOnly)) continue;
+      const annotations = contributedToolAnnotations(tool);
       this.registerTool(
         {
           name: namespacedToolName(plugin.name, tool.name),
           description: tool.description,
           inputSchema: tool.inputSchema,
+          ...(annotations ? { annotations } : {}),
         },
         tool.handler,
       );
@@ -276,13 +282,17 @@ export class McpServer {
    * Register a core tool. On a read-only server a mutating core tool is
    * left out, and a core tool on neither list of ./read-only.ts is refused
    * with an error, so a new tool cannot reach a read-only server unsorted.
+   *
+   * A tool on the read-only list is listed with {@link READ_ONLY_ANNOTATIONS}
+   * (chant#4823), except the ordinary server's `lint`, whose `fix` writes.
    */
   private registerCoreTool(definition: ToolDefinition, handler: ToolHandler): void {
     if (this.readOnly && !READ_ONLY_CORE_TOOLS.has(definition.name)) {
       if (MUTATING_CORE_TOOLS.has(definition.name)) return;
       throw new ReadOnlyRegistrationError(definition.name);
     }
-    this.registerTool(definition, handler);
+    const reads = READ_ONLY_CORE_TOOLS.has(definition.name) && definition !== lintTool;
+    this.registerTool(reads ? { ...definition, annotations: { ...READ_ONLY_ANNOTATIONS } } : definition, handler);
   }
 
   /**

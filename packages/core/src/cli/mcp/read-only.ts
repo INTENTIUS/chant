@@ -17,6 +17,25 @@
 import { workspaceReadTools, workspaceWriteTools } from "./workspace-tools";
 import { ledgerReadTools } from "./ledger-tools";
 import { reportReadTools } from "./report-tools";
+import type { McpToolContribution, ToolAnnotations } from "../../mcp/types";
+
+/** The annotations of a tool that changes nothing (chant#4823). */
+export const READ_ONLY_ANNOTATIONS: Readonly<ToolAnnotations> = Object.freeze({ readOnlyHint: true, destructiveHint: false });
+
+/** The annotations of a product's `forgeWrite` tool, which adds a pull request or a comment and deletes nothing (chant#4823). */
+export const FORGE_WRITE_ANNOTATIONS: Readonly<ToolAnnotations> = Object.freeze({ readOnlyHint: false, destructiveHint: false });
+
+/**
+ * A contributed tool's annotations in `tools/list` (chant#4823): its own,
+ * with `readOnlyHint` and `destructiveHint` set from `readOnly: true` or
+ * `forgeWrite: true`, so a hint never says more than the rule the server
+ * serves the tool by. Undefined when the tool gives and declares nothing.
+ */
+export function contributedToolAnnotations(tool: Pick<McpToolContribution, "readOnly" | "forgeWrite" | "annotations">): ToolAnnotations | undefined {
+  const declared = tool.readOnly === true ? READ_ONLY_ANNOTATIONS : tool.forgeWrite === true ? FORGE_WRITE_ANNOTATIONS : undefined;
+  if (!declared && !tool.annotations) return undefined;
+  return { ...tool.annotations, ...declared };
+}
 
 /**
  * Core tools that change nothing, served in both modes.
