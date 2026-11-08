@@ -37,7 +37,8 @@ export interface LockHolder {
 
 /** A state where it is, for what locks it and keeps beside it. */
 export interface StateStore {
-  readonly backend: LockableState["backend"];
+  /** The backend's type; `http` is a GitLab-managed state (./gitlab.ts). */
+  readonly backend: LockableState["backend"] | "http";
   /** Where the state is. */
   readonly location: string;
   /** Where its lock is: the lock object, or the blob whose lease is the lock. */
