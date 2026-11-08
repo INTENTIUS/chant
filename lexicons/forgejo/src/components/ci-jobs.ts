@@ -9,6 +9,7 @@
 import { githubSecret } from "@intentius/chant/ci-jobs";
 import type { GithubOpPipelineDoc } from "@intentius/chant-lexicon-github/components/generate-op-pipeline";
 import { transformWorkflowObject, type ForgejoDialectOptions } from "../dialect";
+import type { RunGroupKey } from "@intentius/chant/lexicon";
 
 /** Apply the Forgejo dialect to one section of a pipeline doc. */
 export function forgejoize(value: Record<string, unknown>, dialect: ForgejoDialectOptions): Record<string, unknown> {
@@ -98,4 +99,36 @@ export function forgejoWorkflowDoc(doc: GithubOpPipelineDoc, dialect: ForgejoDia
     ...(doc.agentDoc ? { agentDoc: forgejoize(doc.agentDoc, dialect) } : {}),
     ...(doc.commitDoc ? { commitDoc: forgejoize(doc.commitDoc, dialect) } : {}),
   };
+}
+
+/**
+ * A workflow-level run group (#4771). Forgejo gives a run of a workflow with
+ * no workflow-level `concurrency:` a group of its own per ref, workflow and
+ * event, and cancels the run in progress when a push or a pull request update
+ * starts another (with no `cancel-in-progress` set, a push or a pull request
+ * sync cancels). A job-level `concurrency:` does not count. So two merges a
+ * few seconds apart cancel the first merge's wave jobs while they run, which
+ * can leave a stack half updated with nothing recorded.
+ *
+ * A group with `cancel-in-progress: false` only queues the runs that share it:
+ *   - `commit`: one group per event and commit, so a merge's run is never
+ *     cancelled by another commit's, and runs of other commits overlap as
+ *     chant's ledger allows.
+ *   - `pull-request`: one group per run, except that a pull request's runs
+ *     share a group and cancel each other, as Forgejo already does for a new
+ *     push to the pull request. A push to the target branch and a comment
+ *     never cancel anything.
+ *
+ * `name` is the workflow's `name:`, which keeps two workflows' groups apart.
+ */
+export function runGroupConcurrency(name: string, key: RunGroupKey): Record<string, unknown> {
+  return key === "commit"
+    ? { group: `${name}-\${{ github.event_name }}-\${{ github.sha }}`, "cancel-in-progress": false }
+    : { group: `${name}-\${{ github.event_name == 'pull_request' && github.ref || github.run_id }}`, "cancel-in-progress": "${{ github.event_name == 'pull_request' }}" };
+}
+
+/** `doc` with the run group `key` asks for, unless it has a workflow-level `concurrency:` already or no key is given. */
+export function withRunGroup<T extends { name?: string; concurrency?: Record<string, unknown> }>(doc: T, key: RunGroupKey | undefined, fallbackName: string): T {
+  if (!key || doc.concurrency) return doc;
+  return { ...doc, concurrency: runGroupConcurrency(doc.name ?? fallbackName, key) };
 }

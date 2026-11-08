@@ -547,8 +547,25 @@ export interface ComponentPipelineJob {
   needs: string[];
 }
 
+/**
+ * What a Forgejo workflow's run group is keyed on (#4771): `commit`, one
+ * group per event and commit, so a merge's run is never cancelled by another
+ * commit's; `pull-request`, one group per run except that a pull request's
+ * runs share one and cancel each other.
+ */
+export type RunGroupKey = "commit" | "pull-request";
+export const RUN_GROUP_KEYS: readonly RunGroupKey[] = ["commit", "pull-request"];
+
 /** Generic knobs for generate mode, applied once across every generated job (never per component). */
 export interface ComponentPipelineOptions {
+  /**
+   * A workflow-level run group (#4771), written on Forgejo only. Forgejo
+   * gives a workflow with no workflow-level `concurrency:` a group per ref,
+   * workflow and event, and cancels the run in progress when a push starts
+   * another. GitHub cancels nothing without a group and GitLab's jobs are not
+   * `interruptible`, so their files are unchanged. Unset, no group.
+   */
+  runGroup?: RunGroupKey;
   /** Target environment threaded into the trigger command. */
   env?: string;
   /** The trigger command per component, argv with `{name}` substituted. */
@@ -1105,7 +1122,7 @@ export interface OpPipelineResult {
  * of the spec file the jobs read.
  */
 export interface OpWavesPipelineOptions
-  extends Pick<ComponentPipelineOptions, "image" | "beforeScript" | "extraScript" | "variables" | "opsStage" | "opsFileName"> {
+  extends Pick<ComponentPipelineOptions, "image" | "beforeScript" | "extraScript" | "variables" | "opsStage" | "opsFileName" | "runGroup"> {
   /** The spec's path from the repository root. Every job runs `chant run wave --spec <specFile>`. */
   specFile: string;
   /**

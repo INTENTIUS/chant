@@ -142,6 +142,8 @@ export interface GithubPipelineDoc {
   env?: Record<string, unknown>;
   /** The `jobs:` mapping — one entry per component. */
   jobsDoc: Record<string, unknown>;
+  /** A workflow-level `concurrency:`; the GitHub generator sets none, Forgejo's sets its run group (#4771). */
+  concurrency?: Record<string, unknown>;
   /** Wave-ordered stage names (parity with gitlab's `--format json`). */
   stages: string[];
   /** Every generated job, for the machine-readable view. */
@@ -1069,7 +1071,7 @@ function memberArtifactStep(step: Record<string, unknown>, member: PipelineMembe
  * Shared with the forgejo dialect (#969), which transforms the doc first.
  */
 export function emitPipelineYAML(doc: GithubPipelineDoc): string {
-  return emitWorkflowYAML({ name: doc.name, on: doc.on, env: doc.env, defaults: doc.defaults, jobsDoc: doc.jobsDoc });
+  return emitWorkflowYAML({ name: doc.name, on: doc.on, env: doc.env, defaults: doc.defaults, ...(doc.concurrency ? { concurrency: doc.concurrency } : {}), jobsDoc: doc.jobsDoc });
 }
 
 /**

@@ -571,6 +571,8 @@ export interface ParsedArgs {
   ownJobs?: string;
   /** `chant build --components --generate <forge> --keep-own-jobs` (#4769): the jobs of the old output file that run neither chant nor the product's bin are kept after chant's. */
   keepOwnJobs?: boolean;
+  /** `chant build --components --generate forgejo --run-group <key>` and `chant run --generate forgejo --spec <waves> --run-group <key>` (#4771): the Forgejo workflow's run group, `commit` or `pull-request`. */
+  runGroup?: "commit" | "pull-request";
   /** `chant build --pr-loop --stale-notes` (#4628): the note carries its target commit, and a push to the target branch marks open notes stale. */
   staleNotes?: boolean;
   /** `chant components pr-post --stale` (#4628): mark the open pull requests' notes stale after the target branch moved. */

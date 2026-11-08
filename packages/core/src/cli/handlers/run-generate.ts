@@ -99,7 +99,8 @@ async function runOpWavesGenerate(ctx: CommandContext, provider: string, specPat
     console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
     return 1;
   }
-  const result = await generateOpWavesPipeline(spec, provider, { ...options, specFile: specPath.replace(/^\.\//, "") });
+  // #4771: --run-group, or the spec's options.runGroup, gives each Forgejo workflow a run group.
+  const result = await generateOpWavesPipeline(spec, provider, { ...options, ...(args.runGroup ? { runGroup: args.runGroup } : {}), specFile: specPath.replace(/^\.\//, "") });
   if (!result.success) {
     console.error(formatError({ message: result.error ?? "Failed to generate the Op waves pipeline" }));
     return 1;
