@@ -9,8 +9,9 @@
  *    reads the repo and pushes `chant/lifecycle`: it neither administers the
  *    repo nor may push to the default branch, and on GitLab it carries no
  *    scope beyond `read_api`, `read_repository` and `write_repository`
- *    ({@link relayTokenVerdict}). The forge is read through chant's forge
- *    client (`./pr-forge.ts`, `tokenReach`);
+ *    ({@link relayTokenVerdict}). The forge is read with a few GETs of its
+ *    own ({@link readTokenReach}), kept out of `./pr-forge.ts` so the forge
+ *    client's bundles do not grow for the relay;
  * 2. clones the repo into a checkout of its default branch. The token goes
  *    to git as an `http.extraHeader` in the environment
  *    (`GIT_CONFIG_COUNT`/`KEY`/`VALUE`), for this process's git calls only,
@@ -25,7 +26,7 @@ import { execFile } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { forgejoForge, githubForge, gitlabForge, type ForgeFetch, type ForgeKind, type PrForge, type TokenReach } from "./pr-forge";
+import type { ForgeFetch, ForgeKind } from "./pr-forge";
 
 /** The repository the relay clones, read from its clone address. */
 export interface RelayRepo {
@@ -58,12 +59,74 @@ export function relayRepo(url: string, forge?: string): RelayRepo | { error: str
   return { forge: kind, host: `${host}${m[3] ?? ""}`, web, path: m[4]!, url: u, apiBase };
 }
 
-/** The forge client for `repo` with `token`. */
-export function relayForge(repo: RelayRepo, token: string, fetchImpl?: ForgeFetch): PrForge {
-  const f = fetchImpl ? { fetch: fetchImpl } : {};
-  if (repo.forge === "gitlab") return gitlabForge({ apiBase: repo.apiBase, project: repo.path, token, host: repo.host, ...f });
-  const opts = { apiBase: repo.apiBase, repo: repo.path, token, host: repo.host, ...f };
-  return repo.forge === "forgejo" ? forgejoForge(opts) : githubForge(opts);
+/**
+ * What a token may do in a repository, as {@link readTokenReach} reads it.
+ *
+ * - GitHub: whether it is a classic token (GitHub sends `x-oauth-scopes` for
+ *   one), whether its account administers the repository, and whether the
+ *   default branch is protected.
+ * - GitLab: the token's scopes, its user's access level on the project
+ *   (project or group, the higher), and the push access levels of the
+ *   default branch's protection, or null when it is not protected.
+ * - Forgejo: its user's login, whether that user administers the
+ *   repository, and whether it may push to the default branch.
+ */
+export type TokenReach =
+  | { kind: "github"; classic: boolean; admin: boolean; branchProtected: boolean }
+  | { kind: "gitlab"; scopes: string[]; accessLevel: number; pushLevels: number[] | null }
+  | { kind: "forgejo"; login: string; admin: boolean; canPush: boolean };
+
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** The header the forge takes a token in, as chant's forge clients send it. */
+function authHeaders(forge: ForgeKind, token: string): Record<string, string> {
+  if (forge === "gitlab") return { "PRIVATE-TOKEN": token, Accept: "application/json" };
+  if (forge === "forgejo") return { Authorization: `token ${token}`, Accept: "application/json" };
+  return { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" };
+}
+
+/** Read what `token` reaches in `repo`, with GETs against the forge's REST base. Throws when a read the check needs is refused. */
+export async function readTokenReach(repo: RelayRepo, token: string, branch: string, fetchImpl: ForgeFetch = globalThis.fetch as unknown as ForgeFetch): Promise<TokenReach> {
+  const headers = authHeaders(repo.forge, token);
+  const get = async (path: string, missing?: "null"): Promise<{ body: unknown; header: (n: string) => string | null }> => {
+    const url = `${repo.apiBase}${path}`;
+    const res = await fetchImpl(url, { method: "GET", headers });
+    const text = await res.text();
+    const header = (n: string): string | null => (res as { headers?: { get(n: string): string | null } }).headers?.get(n) ?? null;
+    if (res.status === 404 && missing) return { body: null, header };
+    if (!res.ok) throw new Error(`GET ${path} answered ${res.status}`);
+    return { body: text ? JSON.parse(text) : null, header };
+  };
+  const enc = (b: string): string => b.split("/").map(encodeURIComponent).join("/");
+  if (repo.forge === "gitlab") {
+    const project = `/projects/${encodeURIComponent(repo.path)}`;
+    const self = (await get("/personal_access_tokens/self")).body;
+    const scopes = isObject(self) && Array.isArray(self.scopes) ? self.scopes.filter((x): x is string => typeof x === "string") : [];
+    const got = (await get(project)).body;
+    const perms = isObject(got) && isObject(got.permissions) ? got.permissions : {};
+    const level = (k: string): number => {
+      const v = perms[k];
+      return isObject(v) && typeof v.access_level === "number" ? v.access_level : 0;
+    };
+    const accessLevel = Math.max(level("project_access"), level("group_access"));
+    const pb = (await get(`${project}/protected_branches/${encodeURIComponent(branch)}`, "null")).body;
+    if (pb === null) return { kind: "gitlab", scopes, accessLevel, pushLevels: null };
+    const push = isObject(pb) && Array.isArray(pb.push_access_levels) ? pb.push_access_levels : [];
+    const pushLevels = push.map((p) => (isObject(p) && typeof p.access_level === "number" ? p.access_level : undefined)).filter((n): n is number => n !== undefined);
+    return { kind: "gitlab", scopes, accessLevel, pushLevels };
+  }
+  const at = `/repos/${repo.path}`;
+  const adminOf = (v: unknown): boolean => isObject(v) && isObject(v.permissions) && v.permissions.admin === true;
+  if (repo.forge === "forgejo") {
+    const me = (await get("/user")).body;
+    const r = (await get(at)).body;
+    const b = (await get(`${at}/branches/${enc(branch)}`)).body;
+    // Anything but an explicit false counts as a push: a Forgejo that does not say is not trusted.
+    return { kind: "forgejo", login: isObject(me) && typeof me.login === "string" ? me.login : "", admin: adminOf(r), canPush: !(isObject(b) && b.user_can_push === false) };
+  }
+  const r = await get(at);
+  const b = (await get(`${at}/branches/${enc(branch)}`)).body;
+  return { kind: "github", classic: Boolean(r.header("x-oauth-scopes")), admin: adminOf(r.body), branchProtected: isObject(b) && b.protected === true };
 }
 
 /** The scopes an approve-only GitLab token may carry. */
@@ -101,9 +164,7 @@ export function relayTokenVerdict(reach: TokenReach, repoPath: string, branch: s
 /** Read what the token reaches through chant's forge client, and judge it. Never throws. */
 export async function checkRelayToken(repo: RelayRepo, token: string, branch: string, fetchImpl?: ForgeFetch): Promise<{ user: string } | { error: string }> {
   try {
-    const forge = relayForge(repo, token, fetchImpl);
-    if (!forge.tokenReach) return { error: `chant's ${repo.forge} client cannot read what a token reaches` };
-    return relayTokenVerdict(await forge.tokenReach(branch), repo.path, branch);
+    return relayTokenVerdict(await readTokenReach(repo, token, branch, fetchImpl), repo.path, branch);
   } catch (e) {
     return { error: `the forge could not be read with the token (${(e as Error).message})` };
   }

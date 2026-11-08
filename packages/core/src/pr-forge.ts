@@ -41,7 +41,7 @@ export const FORGE_KINDS: readonly ForgeKind[] = ["github", "gitlab", "forgejo"]
 export type ForgeFetch = (
   url: string,
   init: { method: string; headers: Record<string, string>; body?: string },
-) => Promise<{ ok: boolean; status: number; text(): Promise<string>; headers?: { get(name: string): string | null } }>;
+) => Promise<{ ok: boolean; status: number; text(): Promise<string> }>;
 
 export interface ForgeStatus {
   /** The status's name, such as `chant/plan` or `terragucci/plan`. */
@@ -528,30 +528,7 @@ export interface PrForge {
    * belong to the commit alone, so they read the same with or without it.
    */
   commitStatuses?(sha: string, ref?: string): Promise<ReadCommitStatus[]>;
-  /**
-   * What the client's token may do in this repository (#4759), for a caller
-   * that holds a token which must do no more than it needs, such as
-   * `chant notify relay`. `branch` is the default branch.
-   */
-  tokenReach?(branch: string): Promise<TokenReach>;
 }
-
-/**
- * What a token may do in a repository, as {@link PrForge.tokenReach} reads it (#4759).
- *
- * - GitHub: whether it is a classic token (GitHub sends `x-oauth-scopes` for
- *   one), whether its account administers the repository, and whether
- *   `branch` is protected.
- * - GitLab: the token's scopes, its user's access level on the project
- *   (project or group, the higher), and the push access levels of `branch`'s
- *   protection, or null when `branch` is not protected.
- * - Forgejo: its user's login, whether that user administers the
- *   repository, and whether it may push to `branch`.
- */
-export type TokenReach =
-  | { kind: "github"; classic: boolean; admin: boolean; branchProtected: boolean }
-  | { kind: "gitlab"; scopes: string[]; accessLevel: number; pushLevels: number[] | null }
-  | { kind: "forgejo"; login: string; admin: boolean; canPush: boolean };
 
 /** Each context's newest status, newest first, from statuses in any order with a numeric `id` (GitLab) or newest first (GitHub, Forgejo). */
 function newestStatuses(items: unknown[], name: "context" | "name"): ReadCommitStatus[] {
@@ -750,8 +727,6 @@ interface Transport {
   call(method: string, path: string, body?: unknown): Promise<unknown>;
   /** A GET whose body is returned as text, not parsed; undefined on a 404. */
   text(path: string): Promise<string | undefined>;
-  /** A GET, with one response header beside the parsed body: null when the forge sent none. */
-  withHeader(path: string, name: string): Promise<{ body: unknown; header: string | null }>;
   /** Every page of a list, `pageParams(page)` appended to `path`. */
   list(path: string, pageParams: (page: number) => string, pageSize: number): Promise<unknown[]>;
 }
@@ -771,13 +746,6 @@ function transport(base: string, headers: Record<string, string>, fetchImpl: For
   };
   return {
     call,
-    async withHeader(path, name) {
-      const url = `${root}${path}`;
-      const res = await fetchImpl(url, { method: "GET", headers });
-      const text = await res.text();
-      if (!res.ok) throw new ForgeApiError("GET", url, res.status, text);
-      return { body: text ? JSON.parse(text) : null, header: res.headers?.get(name) ?? null };
-    },
     async text(path) {
       const url = `${root}${path}`;
       const res = await fetchImpl(url, { method: "GET", headers });
@@ -1264,21 +1232,6 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
       const got = await api.call("GET", repo);
       return (isObject(got) ? str(got.default_branch) : undefined) ?? "main";
     },
-    async tokenReach(branch) {
-      const at = `${repo}/branches/${branch.split("/").map(encodeURIComponent).join("/")}`;
-      if (kind === "forgejo") {
-        const me = await api.call("GET", "/user");
-        const r = await api.call("GET", repo);
-        const b = await api.call("GET", at);
-        const admin = isObject(r) && isObject(r.permissions) && r.permissions.admin === true;
-        // Anything but an explicit false counts as a push: a Forgejo that does not say is not trusted.
-        return { kind, login: (isObject(me) ? str(me.login) : undefined) ?? "", admin, canPush: !(isObject(b) && b.user_can_push === false) };
-      }
-      const r = await api.withHeader(repo, "x-oauth-scopes");
-      const b = await api.call("GET", at);
-      const admin = isObject(r.body) && isObject(r.body.permissions) && r.body.permissions.admin === true;
-      return { kind, classic: Boolean(r.header), admin, branchProtected: isObject(b) && b.protected === true };
-    },
     async commitStatuses(sha) {
       // Statuses on GitHub and Forgejo belong to the commit; there is no ref to filter by (#4584).
       return newestStatuses(await api.list(`${repo}/commits/${sha}/statuses`, pageParams, pageSize), "context");
@@ -1734,23 +1687,6 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
     async defaultBranch() {
       const got = await api.call("GET", project);
       return (isObject(got) ? str(got.default_branch) : undefined) ?? "main";
-    },
-    async tokenReach(branch) {
-      const self = await api.call("GET", "/personal_access_tokens/self");
-      const scopes = isObject(self) && Array.isArray(self.scopes) ? self.scopes.filter((x): x is string => typeof x === "string") : [];
-      const got = await api.call("GET", project);
-      const perms = isObject(got) && isObject(got.permissions) ? got.permissions : {};
-      const level = (k: string): number => (isObject(perms[k]) ? num((perms[k] as Record<string, unknown>).access_level) ?? 0 : 0);
-      let pb: unknown;
-      try {
-        pb = await api.call("GET", `${project}/protected_branches/${encodeURIComponent(branch)}`);
-      } catch (err) {
-        if (!notFound(err)) throw err;
-        return { kind: "gitlab", scopes, accessLevel: Math.max(level("project_access"), level("group_access")), pushLevels: null };
-      }
-      const push = isObject(pb) && Array.isArray(pb.push_access_levels) ? pb.push_access_levels : [];
-      const pushLevels = push.map((p) => (isObject(p) ? num(p.access_level) : undefined)).filter((n): n is number => n !== undefined);
-      return { kind: "gitlab", scopes, accessLevel: Math.max(level("project_access"), level("group_access")), pushLevels };
     },
     async commitStatuses(sha, ref) {
       const only = ref ? `&ref=${encodeURIComponent(ref)}` : "";
