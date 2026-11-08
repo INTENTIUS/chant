@@ -4,7 +4,10 @@
  * state and merge commit, the pull requests from a branch (or a branch
  * prefix) in any state, every note on a pull request, GitHub's check runs on
  * a commit, a pull request's commits, a collaborator's permission level, and
- * every open pull request in the repository.
+ * every open pull request in the repository; and a head's workflow runs
+ * (GitLab's pipelines), a run, its jobs, and the artifacts it kept, by name in
+ * a run or across the repository, as a product's review agent reads them
+ * (#4846).
  *
  * They take the same options as the clients in `./pr-forge.ts` and live in
  * their own module, imported only by the products that call them, so the
@@ -101,6 +104,85 @@ export interface PullRequestsFromOptions {
   limit?: number;
 }
 
+/**
+ * A workflow run (#4846): a GitHub or Forgejo Actions run, or a GitLab
+ * pipeline.
+ */
+export interface WorkflowRun {
+  id: number;
+  /**
+   * The event that started it. GitHub's `event`. Forgejo's `trigger_event`,
+   * the workflow's own trigger: Forgejo lists a `pull_request_target` run
+   * with `event: pull_request`, which is {@link listedEvent}. GitLab's
+   * `source` (`merge_request_event`, `push`, `schedule`, `api`, ...).
+   */
+  event: string;
+  /** The event as the forge lists it, when that differs from {@link event} (Forgejo's `event` beside its `trigger_event`). */
+  listedEvent?: string;
+  /** The workflow's file name, such as `pipeline.yml`: the last part of GitHub's `path`, Forgejo's `workflow_id`. GitLab has none. */
+  workflow?: string;
+  /** GitHub's workflow path without its `@ref`, such as `.github/workflows/pipeline.yml`. */
+  path?: string;
+  /** The commit it ran on. */
+  headSha: string;
+  /** The branch it ran on (GitLab's `ref`, which for a merge request pipeline is `refs/merge-requests/<iid>/head`). */
+  headBranch?: string;
+  /** The repository its head is in, as `owner/name` (GitHub's `head_repository`), when the forge names it. */
+  headRepo?: string;
+  /** The forge's word for where it is: GitHub's `queued`, `in_progress`, `completed`; Forgejo's and GitLab's `running`, `success`, `failure` or `failed`, ... */
+  status: string;
+  /** GitHub's conclusion once completed. */
+  conclusion?: string;
+  /** It finished, whatever its outcome. */
+  done: boolean;
+  /**
+   * The pull requests the run names: GitHub's `pull_requests`, the
+   * `pull_request` of Forgejo's `event_payload`, GitLab's merge request when
+   * the pipeline is one's. `base` is the base branch the event named.
+   */
+  pullRequests: { number: number; head?: string; headSha?: string; base?: string }[];
+  url?: string;
+}
+
+/** One of a run's jobs. */
+export interface RunJob {
+  id: number;
+  name: string;
+  status: string;
+  conclusion?: string;
+  done: boolean;
+}
+
+/**
+ * An artifact a run kept, not expired. On GitLab, a job's artifacts archive:
+ * `id` is the job's id and `name` its name.
+ */
+export interface RunArtifact {
+  id: number;
+  name: string;
+  /** The run that kept it, when the forge names it. */
+  run?: number;
+  /** The commit that run ran on, when the forge names it. */
+  headSha?: string;
+  size?: number;
+}
+
+/** What {@link ForgeReads.headRuns} reads. */
+export interface HeadRunsOptions {
+  /** Only runs of this event (GitHub's and Forgejo's `event`, GitLab's `source`). */
+  event?: string;
+  /** At most this many runs. Default 100. */
+  limit?: number;
+}
+
+/** What {@link ForgeReads.artifacts} reads. */
+export interface ArtifactsOptions {
+  /** Only the artifacts this run (pipeline) kept. Without it, the repository's. */
+  run?: number;
+  /** At most this many artifacts. Default 100. */
+  limit?: number;
+}
+
 /** The reads, for GitHub, Forgejo and GitLab alike. */
 export interface ForgeReads {
   kind: ForgeKind;
@@ -129,6 +211,14 @@ export interface ForgeReads {
   permission(login: string): Promise<string | undefined>;
   /** Every open pull request in the repository, into any base, ascending by number. */
   openPullRequests(): Promise<OpenPullRequest[]>;
+  /** The workflow runs (GitLab's pipelines) on commit `sha`, newest first (#4846). */
+  headRuns(sha: string, opts?: HeadRunsOptions): Promise<WorkflowRun[]>;
+  /** A workflow run (pipeline), or undefined when the forge has none by that id. */
+  run(id: number): Promise<WorkflowRun | undefined>;
+  /** A run's jobs, in the order the forge lists them. */
+  runJobs(run: number): Promise<RunJob[]>;
+  /** The artifacts named `name` that are not expired, in a run or across the repository, newest first. */
+  artifacts(name: string, opts?: ArtifactsOptions): Promise<RunArtifact[]>;
 }
 
 interface Get {
@@ -185,6 +275,22 @@ const orUndefined = async <T>(read: Promise<T>): Promise<T | undefined> => {
   }
 };
 const DEFAULT_LIMIT = 500;
+const RUN_LIMIT = 100;
+const byIdDesc = (a: { id: number }, b: { id: number }): number => b.id - a.id;
+/** Forgejo's and GitLab's words for a run or job that is over. GitHub says `completed`. */
+const OVER = new Set(["completed", "success", "failure", "failed", "cancelled", "canceled", "skipped"]);
+
+/** Pages of a list the forge wraps in an object (`{ total_count, workflow_runs }`), or answers bare, until a page comes back short. */
+async function listIn(get: Get, path: string, field: string, pageSize: number, pageParams: (page: number) => string, max: number): Promise<Record<string, unknown>[]> {
+  const out: Record<string, unknown>[] = [];
+  for (let page = 1; page <= 50 && out.length < max; page++) {
+    const got = await get(`${path}${path.includes("?") ? "&" : "?"}${pageParams(page)}`);
+    const items = (Array.isArray(got) ? got : isObject(got) && Array.isArray(got[field]) ? got[field] : []).filter(isObject);
+    out.push(...items);
+    if (items.length < pageSize) break;
+  }
+  return out.slice(0, max);
+}
 
 function githubShapedReads(kind: "github" | "forgejo", opts: GithubForgeOptions): ForgeReads {
   const headers =
@@ -217,6 +323,57 @@ function githubShapedReads(kind: "github" | "forgejo", opts: GithubForgeOptions)
     const out: PullRequestDetail = { number, title: str(v.title) ?? "", body: str(v.body) ?? "", state: merged ? "merged" : v.state === "open" ? "open" : "closed", head: str(head.ref) ?? "", sameRepo: sameRepo(v) };
     for (const [k, val] of Object.entries(fields)) if (val !== undefined) (out as unknown as Record<string, unknown>)[k] = val;
     return out;
+  };
+  const pageParams = (page: number): string => (kind === "github" ? `per_page=100&page=${page}` : `limit=50&page=${page}`);
+  const runOf = (v: unknown): WorkflowRun | undefined => {
+    if (!isObject(v)) return undefined;
+    const id = num(v.id);
+    const headSha = str(v.head_sha) ?? str(v.commit_sha);
+    if (id === undefined || !headSha) return undefined;
+    const listed = str(v.event) ?? "";
+    const event = str(v.trigger_event) ?? listed;
+    const path = str(v.path)?.replace(/@.*$/, "");
+    const workflow = str(v.workflow_id) ?? path?.split("/").pop();
+    const status = str(v.status) ?? "";
+    const conclusion = str(v.conclusion);
+    const headRepo = isObject(v.head_repository) ? str(v.head_repository.full_name) : undefined;
+    const pullRequests: WorkflowRun["pullRequests"] = [];
+    for (const p of Array.isArray(v.pull_requests) ? v.pull_requests.filter(isObject) : []) {
+      const number = num(p.number);
+      if (number === undefined) continue;
+      const head = isObject(p.head) ? p.head : {};
+      const fields = { head: str(head.ref), headSha: str(head.sha), base: isObject(p.base) ? str(p.base.ref) : undefined };
+      pullRequests.push({ number, ...Object.fromEntries(Object.entries(fields).filter(([, x]) => x !== undefined)) });
+    }
+    // Forgejo names the event's pull request only in the payload it keeps as a string.
+    let payload: unknown = v.event_payload;
+    if (typeof payload === "string") {
+      try {
+        payload = JSON.parse(payload);
+      } catch {
+        payload = undefined;
+      }
+    }
+    const pull = isObject(payload) && isObject(payload.pull_request) ? payload.pull_request : undefined;
+    const number = pull ? num(pull.number) : undefined;
+    if (pull && number !== undefined && !pullRequests.some((p) => p.number === number)) {
+      const head = isObject(pull.head) ? pull.head : {};
+      const fields = { head: str(head.ref), headSha: str(head.sha), base: isObject(pull.base) ? str(pull.base.ref) : undefined };
+      pullRequests.push({ number, ...Object.fromEntries(Object.entries(fields).filter(([, x]) => x !== undefined)) });
+    }
+    const fields = { listedEvent: listed !== event ? listed : undefined, workflow, path, headBranch: str(v.head_branch), headRepo, conclusion, url: str(v.html_url) };
+    const out: WorkflowRun = { id, event, headSha, status, done: OVER.has(status), pullRequests };
+    for (const [k, val] of Object.entries(fields)) if (val !== undefined) (out as unknown as Record<string, unknown>)[k] = val;
+    return out;
+  };
+  const artifactOf = (v: Record<string, unknown>, name: string): RunArtifact | undefined => {
+    const id = num(v.id);
+    if (id === undefined || str(v.name) !== name || v.expired === true) return undefined;
+    const wr = isObject(v.workflow_run) ? v.workflow_run : {};
+    const run = num(wr.id) ?? num(v.run_id) ?? num(v.workflow_run_id);
+    const headSha = str(wr.head_sha);
+    const size = num(v.size_in_bytes) ?? num(v.size);
+    return { id, name, ...(run !== undefined ? { run } : {}), ...(headSha ? { headSha } : {}), ...(size !== undefined ? { size } : {}) };
   };
   /** Forgejo answers a pull request list with 404 while the repository is still empty; a missing repository 404s on its own read too. */
   const pulls = async (query: string, max?: number): Promise<unknown[]> => {
@@ -315,6 +472,30 @@ function githubShapedReads(kind: "github" | "forgejo", opts: GithubForgeOptions)
       }
       return out.sort((a, b) => a.number - b.number);
     },
+    async headRuns(sha, o = {}) {
+      const query = `head_sha=${encodeURIComponent(sha)}${o.event ? `&event=${encodeURIComponent(o.event)}` : ""}`;
+      const listed = (await listIn(get, `${repo}/actions/runs?${query}`, "workflow_runs", pageSize, pageParams, o.limit ?? RUN_LIMIT)).map(runOf).filter(defined);
+      // Forgejo filters by the listed event, so a pull_request_target run comes back for `pull_request`: both words count.
+      return listed.filter((r) => r.headSha === sha && (!o.event || r.event === o.event || r.listedEvent === o.event)).sort(byIdDesc);
+    },
+    run: async (id) => runOf(await orUndefined(get(`${repo}/actions/runs/${id}`))),
+    async runJobs(run) {
+      const out: RunJob[] = [];
+      for (const j of await listIn(get, `${repo}/actions/runs/${run}/jobs`, "jobs", pageSize, pageParams, 1000)) {
+        const id = num(j.id);
+        const name = str(j.name);
+        if (id === undefined || !name) continue;
+        const status = str(j.status) ?? "";
+        const conclusion = str(j.conclusion);
+        out.push({ id, name, status, ...(conclusion ? { conclusion } : {}), done: OVER.has(status) });
+      }
+      return out;
+    },
+    async artifacts(name, o = {}) {
+      const where = o.run !== undefined ? `${repo}/actions/runs/${o.run}/artifacts` : `${repo}/actions/artifacts`;
+      const listed = await listIn(get, `${where}?name=${encodeURIComponent(name)}`, "artifacts", pageSize, pageParams, o.limit ?? RUN_LIMIT);
+      return listed.map((a) => artifactOf(a, name)).filter(defined).map((a) => (o.run !== undefined && a.run === undefined ? { ...a, run: o.run } : a)).sort(byIdDesc);
+    },
   };
 }
 
@@ -336,6 +517,36 @@ export function gitlabReads(opts: GitlabForgeOptions): ForgeReads {
   const get = getter(opts.apiBase, opts.token ? { [opts.tokenHeader ?? "PRIVATE-TOKEN"]: opts.token } : {}, opts.fetch ?? (globalThis.fetch as unknown as ForgeFetch), 100, (page) => `per_page=100&page=${page}`);
   const project = `/projects/${encodeURIComponent(decodeURIComponent(opts.project))}`;
   const mrs = `${project}/merge_requests`;
+  const gitlabPage = (page: number): string => `per_page=100&page=${page}`;
+  const MR_REF = /^refs\/merge-requests\/(\d+)\/(?:head|merge|train)$/;
+  const pipelineOf = (v: unknown): WorkflowRun | undefined => {
+    if (!isObject(v)) return undefined;
+    const id = num(v.id);
+    const headSha = str(v.sha);
+    if (id === undefined || !headSha) return undefined;
+    const status = str(v.status) ?? "";
+    const ref = str(v.ref);
+    const mr = ref ? MR_REF.exec(ref) : null;
+    const fields = { headBranch: ref, url: str(v.web_url) };
+    const out: WorkflowRun = { id, event: str(v.source) ?? "", headSha, status, done: OVER.has(status), pullRequests: mr ? [{ number: Number(mr[1]), headSha }] : [] };
+    for (const [k, val] of Object.entries(fields)) if (val !== undefined) (out as unknown as Record<string, unknown>)[k] = val;
+    return out;
+  };
+  /** A job's artifacts archive, when it kept one. */
+  const archiveOf = (j: Record<string, unknown>, name: string): RunArtifact | undefined => {
+    const id = num(j.id);
+    if (id === undefined || str(j.name) !== name) return undefined;
+    const files = Array.isArray(j.artifacts) ? j.artifacts.filter(isObject) : [];
+    const archive = files.find((f) => f.file_type === "archive") ?? (isObject(j.artifacts_file) ? j.artifacts_file : undefined);
+    if (!archive) return undefined;
+    const expires = str(j.artifacts_expire_at);
+    if (expires && Date.parse(expires) <= Date.now()) return undefined;
+    const pipeline = isObject(j.pipeline) ? j.pipeline : {};
+    const run = num(pipeline.id);
+    const headSha = str(pipeline.sha);
+    const size = num(archive.size);
+    return { id, name, ...(run !== undefined ? { run } : {}), ...(headSha ? { headSha } : {}), ...(size !== undefined ? { size } : {}) };
+  };
   const own = (v: Record<string, unknown>): boolean => num(v.source_project_id) === undefined || num(v.source_project_id) === num(v.target_project_id);
   const detail = (v: unknown): PullRequestDetail | undefined => {
     if (!isObject(v)) return undefined;
@@ -409,6 +620,29 @@ export function gitlabReads(opts: GitlabForgeOptions): ForgeReads {
         out.push({ number, head, headSha, base, ...(baseSha ? { baseSha } : {}), ...(author ? { author } : {}), fork: !own(m) });
       }
       return out.sort((a, b) => a.number - b.number);
+    },
+    async headRuns(sha, o = {}) {
+      const query = `sha=${encodeURIComponent(sha)}${o.event ? `&source=${encodeURIComponent(o.event)}` : ""}&order_by=id&sort=desc`;
+      const listed = (await listIn(get, `${project}/pipelines?${query}`, "", 100, gitlabPage, o.limit ?? RUN_LIMIT)).map(pipelineOf).filter(defined);
+      return listed.filter((r) => r.headSha === sha && (!o.event || r.event === o.event)).sort(byIdDesc);
+    },
+    run: async (id) => pipelineOf(await orUndefined(get(`${project}/pipelines/${id}`))),
+    async runJobs(run) {
+      const out: RunJob[] = [];
+      for (const j of await get.list(`${project}/pipelines/${run}/jobs?include_retried=false`)) {
+        const id = isObject(j) ? num(j.id) : undefined;
+        const name = isObject(j) ? str(j.name) : undefined;
+        if (!isObject(j) || id === undefined || !name) continue;
+        const status = str(j.status) ?? "";
+        out.push({ id, name, status, done: OVER.has(status) });
+      }
+      return out;
+    },
+    async artifacts(name, o = {}) {
+      const limit = o.limit ?? RUN_LIMIT;
+      // GitLab keeps artifacts per job: a pipeline's jobs of that name, or the project's newest jobs, that kept an archive.
+      const jobs = o.run !== undefined ? await get.list(`${project}/pipelines/${o.run}/jobs`) : await get.list(`${project}/jobs`, 10 * limit);
+      return jobs.filter(isObject).map((j) => archiveOf(j, name)).filter(defined).sort(byIdDesc).slice(0, limit);
     },
   };
 }

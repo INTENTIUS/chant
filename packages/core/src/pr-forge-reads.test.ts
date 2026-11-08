@@ -283,3 +283,153 @@ test("forgeReadsFor builds the reads for a target", async () => {
   expect(await reads.tokenUser()).toEqual({ login: "bot", id: 1 });
   expect(calls[0]!.headers["JOB-TOKEN"]).toBe("cj");
 });
+
+describe("workflow runs, jobs and artifacts (#4846)", () => {
+  const gh = { apiBase: "https://api.github.com", repo: "acme/infra", token: "t0k" };
+  const fj = { apiBase: "https://code.acme.io/api/v1", repo: "acme/infra", token: "t0k", host: "code.acme.io" };
+  const gl = { apiBase: "https://gitlab.com/api/v4", project: "acme/infra", token: "glpat" };
+  const P = "/api/v4/projects/acme%2Finfra";
+  const OTHER = "b".repeat(40);
+
+  test("github: a head's runs of an event, newest first, with their pull requests", async () => {
+    const { fetch, calls } = fakeFetch({
+      "GET /repos/acme/infra/actions/runs": {
+        total_count: 3,
+        workflow_runs: [
+          { id: 10, event: "pull_request", head_sha: SHA, head_branch: "feat", path: ".github/workflows/pipeline.yml@refs/heads/feat", status: "completed", conclusion: "success", head_repository: { full_name: "acme/infra" }, pull_requests: [{ number: 12, head: { ref: "feat", sha: SHA }, base: { ref: "main" } }] },
+          { id: 11, event: "pull_request", head_sha: SHA, path: ".github/workflows/pipeline.yml", status: "in_progress", pull_requests: [] },
+          { id: 12, event: "pull_request", head_sha: OTHER, status: "completed" },
+        ],
+      },
+    });
+    const runs = await githubReads({ ...gh, fetch }).headRuns(SHA, { event: "pull_request" });
+    expect(runs.map((r) => [r.id, r.done])).toEqual([
+      [11, false],
+      [10, true],
+    ]);
+    expect(runs[1]).toEqual({
+      id: 10,
+      event: "pull_request",
+      workflow: "pipeline.yml",
+      path: ".github/workflows/pipeline.yml",
+      headSha: SHA,
+      headBranch: "feat",
+      headRepo: "acme/infra",
+      status: "completed",
+      conclusion: "success",
+      done: true,
+      pullRequests: [{ number: 12, head: "feat", headSha: SHA, base: "main" }],
+    });
+    expect(urls(calls)).toEqual([`GET https://api.github.com/repos/acme/infra/actions/runs?head_sha=${SHA}&event=pull_request&per_page=100&page=1`]);
+  });
+
+  test("github: a run by id, undefined when missing; its jobs over the jobs object", async () => {
+    const { fetch, calls } = fakeFetch({
+      "GET /repos/acme/infra/actions/runs/10": { id: 10, event: "workflow_run", head_sha: SHA, path: ".github/workflows/review.yml", status: "completed" },
+      "GET /repos/acme/infra/actions/runs/10/jobs": { total_count: 2, jobs: [{ id: 1, name: "plan", status: "completed", conclusion: "failure" }, { id: 2, name: "plan-note", status: "queued" }] },
+    });
+    const reads = githubReads({ ...gh, fetch });
+    expect(await reads.run(10)).toMatchObject({ id: 10, event: "workflow_run", path: ".github/workflows/review.yml", workflow: "review.yml" });
+    expect(await reads.run(99)).toBeUndefined();
+    expect(await reads.runJobs(10)).toEqual([
+      { id: 1, name: "plan", status: "completed", conclusion: "failure", done: true },
+      { id: 2, name: "plan-note", status: "queued", done: false },
+    ]);
+    expect(urls(calls)).toContain("GET https://api.github.com/repos/acme/infra/actions/runs/10/jobs?per_page=100&page=1");
+  });
+
+  test("github: artifacts by name in a run and across the repository, expired ones and other names left out", async () => {
+    const { fetch, calls } = fakeFetch({
+      "GET /repos/acme/infra/actions/runs/10/artifacts": { artifacts: [{ id: 5, name: "report", size_in_bytes: 300 }] },
+      "GET /repos/acme/infra/actions/artifacts": {
+        artifacts: [
+          { id: 6, name: "review-x", workflow_run: { id: 20, head_sha: SHA } },
+          { id: 9, name: "review-x", expired: true, workflow_run: { id: 21 } },
+          { id: 8, name: "review-x", workflow_run: { id: 22, head_sha: SHA } },
+          { id: 7, name: "other", workflow_run: { id: 23 } },
+        ],
+      },
+    });
+    const reads = githubReads({ ...gh, fetch });
+    expect(await reads.artifacts("report", { run: 10 })).toEqual([{ id: 5, name: "report", run: 10, size: 300 }]);
+    expect(await reads.artifacts("review-x")).toEqual([
+      { id: 8, name: "review-x", run: 22, headSha: SHA },
+      { id: 6, name: "review-x", run: 20, headSha: SHA },
+    ]);
+    expect(urls(calls)).toEqual([
+      "GET https://api.github.com/repos/acme/infra/actions/runs/10/artifacts?name=report&per_page=100&page=1",
+      "GET https://api.github.com/repos/acme/infra/actions/artifacts?name=review-x&per_page=100&page=1",
+    ]);
+  });
+
+  test("forgejo: trigger_event is the run's event, its listed event kept, and the payload names the pull request", async () => {
+    const payload = JSON.stringify({ pull_request: { number: 3, base: { ref: "main" }, head: { ref: "feat", sha: SHA } } });
+    const { fetch, calls } = fakeFetch({
+      "GET /api/v1/repos/acme/infra/actions/runs": {
+        workflow_runs: [
+          { id: 40, event: "pull_request", trigger_event: "pull_request_target", workflow_id: "review.yml", commit_sha: SHA, status: "running", event_payload: payload },
+          { id: 41, event: "pull_request", trigger_event: "pull_request", workflow_id: "pipeline.yml", commit_sha: SHA, status: "success" },
+        ],
+      },
+      "GET /api/v1/repos/acme/infra/actions/runs/40/jobs": [{ id: 1, name: "plan-note", status: "success" }],
+      "GET /api/v1/repos/acme/infra/actions/runs/40/artifacts": [{ id: 2, name: "report", run_id: 40 }],
+    });
+    const reads = forgejoReads({ ...fj, fetch });
+    const runs = await reads.headRuns(SHA, { event: "pull_request" });
+    expect(runs.map((r) => [r.id, r.event, r.listedEvent, r.workflow, r.done])).toEqual([
+      [41, "pull_request", undefined, "pipeline.yml", true],
+      [40, "pull_request_target", "pull_request", "review.yml", false],
+    ]);
+    expect(runs[1]!.pullRequests).toEqual([{ number: 3, head: "feat", headSha: SHA, base: "main" }]);
+    expect(await reads.runJobs(40)).toEqual([{ id: 1, name: "plan-note", status: "success", done: true }]);
+    expect(await reads.artifacts("report", { run: 40 })).toEqual([{ id: 2, name: "report", run: 40 }]);
+    expect(urls(calls)[0]).toBe(`GET https://code.acme.io/api/v1/repos/acme/infra/actions/runs?head_sha=${SHA}&event=pull_request&limit=50&page=1`);
+  });
+
+  test("gitlab: a head's pipelines by source, a pipeline's merge request from its ref, its jobs", async () => {
+    const { fetch, calls } = fakeFetch({
+      [`GET ${P}/pipelines`]: [
+        { id: 31, sha: SHA, ref: "refs/merge-requests/5/head", source: "merge_request_event", status: "running", web_url: "https://gitlab.com/acme/infra/-/pipelines/31" },
+        { id: 30, sha: SHA, ref: "refs/merge-requests/5/head", source: "merge_request_event", status: "failed" },
+      ],
+      [`GET ${P}/pipelines/30`]: { id: 30, sha: SHA, ref: "main", source: "push", status: "success" },
+      [`GET ${P}/pipelines/30/jobs`]: [{ id: 300, name: "plan", status: "success" }, { id: 301, name: "apply", status: "manual" }],
+    });
+    const reads = gitlabReads({ ...gl, fetch });
+    const runs = await reads.headRuns(SHA, { event: "merge_request_event" });
+    expect(runs.map((r) => [r.id, r.event, r.done])).toEqual([
+      [31, "merge_request_event", false],
+      [30, "merge_request_event", true],
+    ]);
+    expect(runs[0]).toMatchObject({ headBranch: "refs/merge-requests/5/head", pullRequests: [{ number: 5, headSha: SHA }], url: "https://gitlab.com/acme/infra/-/pipelines/31" });
+    expect(await reads.run(30)).toMatchObject({ id: 30, event: "push", headBranch: "main", pullRequests: [] });
+    expect(await reads.run(99)).toBeUndefined();
+    expect(await reads.runJobs(30)).toEqual([
+      { id: 300, name: "plan", status: "success", done: true },
+      { id: 301, name: "apply", status: "manual", done: false },
+    ]);
+    expect(urls(calls)[0]).toBe(`GET https://gitlab.com${P}/pipelines?sha=${SHA}&source=merge_request_event&order_by=id&sort=desc&per_page=100&page=1`);
+  });
+
+  test("gitlab: a job's archive is its artifact, by the job's name, in a pipeline or across the project", async () => {
+    const { fetch, calls } = fakeFetch({
+      [`GET ${P}/pipelines/30/jobs`]: [
+        { id: 300, name: "plan", artifacts: [{ file_type: "archive", size: 12 }, { file_type: "metadata" }], pipeline: { id: 30, sha: SHA } },
+        { id: 301, name: "plan", artifacts: [{ file_type: "trace" }], pipeline: { id: 30, sha: SHA } },
+        { id: 302, name: "lint", artifacts_file: { filename: "artifacts.zip", size: 1 }, pipeline: { id: 30, sha: SHA } },
+      ],
+      [`GET ${P}/jobs`]: [
+        { id: 410, name: "review", artifacts_file: { filename: "artifacts.zip", size: 5 }, pipeline: { id: 41, sha: OTHER } },
+        { id: 400, name: "review", artifacts_file: { filename: "artifacts.zip" }, artifacts_expire_at: "2000-01-01T00:00:00Z", pipeline: { id: 40 } },
+        { id: 390, name: "review", artifacts: [{ file_type: "archive" }], pipeline: { id: 39, sha: SHA } },
+      ],
+    });
+    const reads = gitlabReads({ ...gl, fetch });
+    expect(await reads.artifacts("plan", { run: 30 })).toEqual([{ id: 300, name: "plan", run: 30, headSha: SHA, size: 12 }]);
+    expect(await reads.artifacts("review")).toEqual([
+      { id: 410, name: "review", run: 41, headSha: OTHER, size: 5 },
+      { id: 390, name: "review", run: 39, headSha: SHA },
+    ]);
+    expect(urls(calls)).toEqual([`GET https://gitlab.com${P}/pipelines/30/jobs?per_page=100&page=1`, `GET https://gitlab.com${P}/jobs?per_page=100&page=1`]);
+  });
+});
