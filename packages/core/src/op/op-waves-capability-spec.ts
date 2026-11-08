@@ -62,7 +62,7 @@ export function opWaveStepProblems(spec: Pick<OpWavesSpec, "step" | "plan" | "ap
   }
   if (spec.hooks?.apply?.runBy === "apply") problems.push("`hooks.apply.runBy: \"apply\"` hands the apply-stage hooks to an apply command, and a `step` has none; leave runBy as chant");
   for (const wave of spec.waves) {
-    if (wave.discover) problems.push(`wave "${wave.name}" discovers its runs, which only \`planWave\` can report; a \`step\` plans the runs the spec lists`);
+    // #4842: a step's capability finds a discovering wave's runs (`discoverRuns`), checked when the wave plans.
     if (wave.hooks?.apply?.runBy === "apply") problems.push(`wave "${wave.name}" hands its apply-stage hooks to an apply command, and a \`step\` has none`);
     for (const run of wave.runs ?? []) {
       const input = run.input as unknown;

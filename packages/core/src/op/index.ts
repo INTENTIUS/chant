@@ -124,14 +124,17 @@ export type {
 export {
   OP_WAVE_COST_FORMATS,
   OP_WAVE_COST_MEMBER,
+  OP_WAVE_STEP_WAVE_FLOOR,
+  OP_WAVE_TOGETHER_MEMBER,
   opWaveCostVerdict,
+  opWaveDiscoverInput,
   opWaveHoldsAt,
   opWaveHoldsProblems,
   opWaveStepInput,
   opWaveStepProblems,
   readCostEstimate,
 } from "./op-waves-capability";
-export type { OpWaveCostFormat, OpWaveCostHold, OpWaveCostVerdict, OpWaveHolds, OpWaveRunCost, OpWaveStep, OpWaveStepApply, OpWaveStepPlan } from "./op-waves-capability";
+export type { OpWaveCostFormat, OpWaveCostHold, OpWaveCostVerdict, OpWaveHolds, OpWaveRunCost, OpWaveStep, OpWaveStepApply, OpWaveStepGroup, OpWaveStepPlan } from "./op-waves-capability";
 export { notifyOpWave, opWaveNotifyFields } from "./op-waves-notify";
 export { OP_WAVE_STAND_DOWN_FLOOR, gitOpWaveNewerCommit, newerCommitOnBranch, opWaveRunBranch, opWaveStandDownReason, tipAppliesTargets } from "./op-waves-stand-down";
 export type { OpWaveNewerCommit, OpWaveNewerCommitPort } from "./op-waves-stand-down";

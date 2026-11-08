@@ -68,6 +68,8 @@ export {
   type DeclaredRead,
   type DeclaredReadMember,
   type DeclaredReadsContext,
+  type DiscoveredRuns,
+  type RunDiscoveryContext,
   CapabilityRegistry,
   CapabilityNotImplementedError,
 } from "./capability";
