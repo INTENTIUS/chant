@@ -206,6 +206,34 @@ export interface TerraformApplyStepInput {
    * Absent: the entry's `workspace`, or the run's environment, as before.
    */
   workspace?: string;
+  /**
+   * The binary the root runs, a name on `PATH` or a path, in place of
+   * `terraform.binary` (terragucci issue 1303): a root that pins its own
+   * terraform or tofu release. A product's {@link TerraformRootResolver}
+   * sets it per root. Absent: `terraform.binary`, as before.
+   */
+  binary?: string;
+}
+
+/** What a root runs in place of the step's (terragucci issue 1303). An unset field runs the step's. */
+export interface TerraformRootTools {
+  /** The binary, a name on `PATH` or a path. See {@link TerraformApplyStepInput.binary}. */
+  binary?: string;
+}
+
+/**
+ * What a root runs (terragucci issue 1303), asked once per plan and per
+ * apply with the root and the step's input, as `terragrunt-apply`'s
+ * `resolveUnit` is asked per unit. A product passes its own, which installs
+ * a pinned release and checks its version, so a root runs what it plans
+ * with whatever `chant.config.ts` names.
+ */
+export type TerraformRootResolver = (root: string, input: TerraformApplyStepInput) => TerraformRootTools | Promise<TerraformRootTools>;
+
+/** What {@link terraformApplyCapabilityWith} takes. */
+export interface TerraformApplyDeps {
+  /** What each root runs. Default: the step's `binary`, else `terraform.binary`. */
+  resolveRoot?: TerraformRootResolver;
 }
 
 /** What `terraform-apply` returns. `outputs` is what a dependent's `stackOutput()` reads. */
@@ -277,6 +305,7 @@ const rootArgs = (input: TerraformApplyStepInput, env?: RunEnv) => ({
   ...(input.dir ? { dir: input.dir } : {}),
   ...(env ? { env } : {}),
   ...(input.workspace ? { workspace: input.workspace } : {}),
+  ...(input.binary ? { binary: input.binary } : {}),
 });
 
 function requireRoot(input: TerraformApplyStepInput): void {
@@ -285,6 +314,9 @@ function requireRoot(input: TerraformApplyStepInput): void {
   }
   if (input.workspace !== undefined && (typeof input.workspace !== "string" || input.workspace.trim() === "")) {
     throw new Error(`terraform-apply: root "${input.root}": workspace must name a workspace`);
+  }
+  if (input.binary !== undefined && (typeof input.binary !== "string" || input.binary.trim() === "")) {
+    throw new Error(`terraform-apply: root "${input.root}": binary must name a binary or its path`);
   }
 }
 
@@ -421,8 +453,8 @@ function isShapeArtifact(value: unknown): value is TerraformShapeArtifact {
   return v?.kind === "terraform-apply-shape" && typeof v.digest === "string" && typeof v.shape === "object" && v.shape !== null;
 }
 
-/** The wave's directory each step input was planned or applied in (chant#4854), for the methods core calls with the input alone. */
-const inputCwd = new WeakMap<object, string>();
+/** Each step input core passed, as it was filled (chant#4854, terragucci issue 1303), for the methods core calls with the input alone. */
+const filledInputs = new WeakMap<object, TerraformApplyStepInput>();
 
 /**
  * The step's input with `cwd` set to the caller's directory when it names
@@ -434,20 +466,37 @@ const inputCwd = new WeakMap<object, string>();
  */
 export function withContextCwd(ctx: { cwd?: string } | undefined, input: TerraformApplyStepInput): TerraformApplyStepInput {
   if (!input || typeof input !== "object" || input.cwd !== undefined || ctx?.cwd === undefined) return input;
-  inputCwd.set(input, ctx.cwd);
-  return { ...input, cwd: ctx.cwd };
+  const filled = { ...input, cwd: ctx.cwd };
+  filledInputs.set(input, { ...filledInputs.get(input), ...filled });
+  return filled;
+}
+
+/** The step's input with `cwd` from the context and what `resolveRoot` answers for the root (terragucci issue 1303), remembered for the input core passed. */
+async function filledInput(resolveRoot: TerraformRootResolver | undefined, ctx: { cwd?: string } | undefined, input: TerraformApplyStepInput): Promise<TerraformApplyStepInput> {
+  const at = withContextCwd(ctx, input);
+  if (!resolveRoot || !at || typeof at !== "object" || typeof at.root !== "string" || at.root === "") return at;
+  const tools = await resolveRoot(at.root, at);
+  if (tools?.binary !== undefined && (typeof tools.binary !== "string" || tools.binary.trim() === "")) {
+    throw new Error(`terraform-apply: root "${at.root}": the product's resolveRoot answered a binary that names nothing`);
+  }
+  if (!tools?.binary) return at;
+  const filled = { ...at, binary: tools.binary };
+  filledInputs.set(input, filled);
+  return filled;
 }
 
 /** The root's directory, as `terraform.roots` names it from the nearest `chant.config.*`, and the configured binary. */
-async function rootDir(input: TerraformApplyStepInput): Promise<{ dir: string; binary?: string } | undefined> {
-  const start = resolve(input.cwd ?? inputCwd.get(input) ?? process.cwd());
+async function rootDir(given: TerraformApplyStepInput): Promise<{ dir: string; binary?: string } | undefined> {
+  const input = filledInputs.get(given) ?? given;
+  const start = resolve(input.cwd ?? process.cwd());
   const { config, configPath } = await loadChantConfigUpward(start);
   const terraform = (config as { terraform?: TerraformConfig }).terraform;
   // chant#4842: a root with no entry and a dir of its own is that directory.
   const declared = terraform?.roots?.[input.root]?.dir ?? input.dir;
   if (declared === undefined) return undefined;
   const dir = input.dir ?? declared;
-  return { dir: resolve(configPath ? dirname(configPath) : start, dir), ...(terraform?.binary ? { binary: terraform.binary } : {}) };
+  const binary = input.binary ?? terraform?.binary;
+  return { dir: resolve(configPath ? dirname(configPath) : start, dir), ...(binary ? { binary } : {}) };
 }
 
 const firstLines = (err: unknown): string => {
@@ -594,142 +643,154 @@ async function plannerOf(input: TerraformApplyStepInput, plan?: CapabilityPlan):
   return planner === "terraform" || planner === "tofu" || planner === "choudoufu" ? planner : "terraform";
 }
 
-export const terraformApplyCapability: Capability<TerraformApplyStepInput, TerraformApplyStepOutput> = {
-  kind: "terraform-apply",
-  // A root's apply has no undo short of applying the previous configuration,
-  // which is a change of its own. COMP003 asks the component to say so.
-  rollbackPolicy: "needs-opt-out",
-  // #4300: `--target` passes through as `-target`, and the saved plan holds those addresses alone.
-  targets: "accept",
-  // #4627: `plan` refreshes the root's state before it plans unless told `-refresh=false`, which chant never passes,
-  // so `--refresh` asks for what every plan does and the digest still binds it. `-target` plans a resource with what it
-  // depends on and never what depends on it, so `--target-dependents` has nothing to map onto.
-  planFlags: {
-    refresh: "accept",
-    targetDependents: { refuse: "terraform and tofu plan a -target with what it depends on, never what depends on it, so there is no flag to widen it to its dependents; name each dependent with --target" },
-  },
-  async plan(ctx: DeployContext, step: TerraformApplyStepInput): Promise<CapabilityPlan> {
-    const given = withContextCwd(ctx, step);
-    requireRoot(given);
-    // #4545: a root reading an upstream's output that is not there yet is a hole naming the upstream.
-    const read = await withReads(given);
-    if ("waiting" in read) return waitingOnReads(ctx, given, read);
-    const { input } = read;
-    const unresolved = [...(ctx.unresolvedInputs ?? [])].sort();
-    const targets = ctx.targets && ctx.targets.length > 0 ? ctx.targets : undefined;
-    if (unresolved.length > 0) return previewRoot(ctx, input, unresolved, targets);
-    // A targeted root plans with `plan -target`, and a cone plan with `plan -cone` (#4545), never as a choudoufu one-root set.
-    const env = ctx.processEnv;
-    const wave = targets || input.cone ? { wave: false } : await choudoufuWaveRoot({ ...rootArgs(input, env), ...(input.vars ? { vars: input.vars } : {}) });
-    if (wave.wave) {
-      // chant#4842: live-plan-set inits and plans in one command, so the run hook's check comes before it.
-      await ctx.afterInit?.();
-      const set = await choudoufuPlanSet(rootArgs(input, env));
-      const artifact: ChoudoufuWavePlannedRoot = {
-        planDigest: set.planDigest,
-        choudoufu: { planSetFile: set.planSetFile, setDigest: set.setDigest },
-        lockRows: terraformLockRows(input.root, set.changeSet.member.scope, set.json),
+/**
+ * `terraform-apply` with `deps` in place of the defaults (terragucci issue
+ * 1303). `resolveRoot` answers what each root runs, so a product whose roots
+ * pin their own releases passes its resolver, as it passes `resolveUnit` to
+ * `terragruntApplyCapability`. A composed group (`together`) runs the
+ * project's binary, as before.
+ */
+export function terraformApplyCapabilityWith(deps: TerraformApplyDeps = {}): Capability<TerraformApplyStepInput, TerraformApplyStepOutput> {
+  return {
+    kind: "terraform-apply",
+    // A root's apply has no undo short of applying the previous configuration,
+    // which is a change of its own. COMP003 asks the component to say so.
+    rollbackPolicy: "needs-opt-out",
+    // #4300: `--target` passes through as `-target`, and the saved plan holds those addresses alone.
+    targets: "accept",
+    // #4627: `plan` refreshes the root's state before it plans unless told `-refresh=false`, which chant never passes,
+    // so `--refresh` asks for what every plan does and the digest still binds it. `-target` plans a resource with what it
+    // depends on and never what depends on it, so `--target-dependents` has nothing to map onto.
+    planFlags: {
+      refresh: "accept",
+      targetDependents: { refuse: "terraform and tofu plan a -target with what it depends on, never what depends on it, so there is no flag to widen it to its dependents; name each dependent with --target" },
+    },
+    async plan(ctx: DeployContext, step: TerraformApplyStepInput): Promise<CapabilityPlan> {
+      const given = await filledInput(deps.resolveRoot, ctx, step);
+      requireRoot(given);
+      // #4545: a root reading an upstream's output that is not there yet is a hole naming the upstream.
+      const read = await withReads(given);
+      if ("waiting" in read) return waitingOnReads(ctx, given, read);
+      const { input } = read;
+      const unresolved = [...(ctx.unresolvedInputs ?? [])].sort();
+      const targets = ctx.targets && ctx.targets.length > 0 ? ctx.targets : undefined;
+      if (unresolved.length > 0) return previewRoot(ctx, input, unresolved, targets);
+      // A targeted root plans with `plan -target`, and a cone plan with `plan -cone` (#4545), never as a choudoufu one-root set.
+      const env = ctx.processEnv;
+      const wave = targets || input.cone ? { wave: false } : await choudoufuWaveRoot({ ...rootArgs(input, env), ...(input.vars ? { vars: input.vars } : {}) });
+      if (wave.wave) {
+        // chant#4842: live-plan-set inits and plans in one command, so the run hook's check comes before it.
+        await ctx.afterInit?.();
+        const set = await choudoufuPlanSet(rootArgs(input, env));
+        const artifact: ChoudoufuWavePlannedRoot = {
+          planDigest: set.planDigest,
+          choudoufu: { planSetFile: set.planSetFile, setDigest: set.setDigest },
+          lockRows: terraformLockRows(input.root, set.changeSet.member.scope, set.json),
+        };
+        return { member: input.root, planDigest: set.planDigest, artifact, changeSet: set.changeSet, outputs: terraformPlannedOutputs(set.json), shape: terraformPlanShape(set.json, input.root) };
+      }
+      const { changeSet, json, ...planned } = await planRoot(input, targets, { env, ...(ctx.afterInit ? { afterInit: ctx.afterInit } : {}) });
+      // #4552: a choudoufu root's rows, keyed from the plan document while it is at hand.
+      const lockRows = changeSet?.member.planner === "choudoufu" ? terraformLockRows(input.root, changeSet.member.scope, json) : undefined;
+      return {
+        member: input.root,
+        planDigest: planned.planDigest,
+        artifact: { ...planned, ...(lockRows ? { lockRows } : {}) },
+        ...(changeSet ? { changeSet } : {}),
+        // plywood#55: each changed resource's own digest, which a merged wave compares with the pull request's per resource.
+        resourceDigests: terraformResourceDigests(json),
+        outputs: terraformPlannedOutputs(json),
+        shape: terraformPlanShape(json, input.root),
+        ...(targets ? { targets } : {}),
       };
-      return { member: input.root, planDigest: set.planDigest, artifact, changeSet: set.changeSet, outputs: terraformPlannedOutputs(set.json), shape: terraformPlanShape(set.json, input.root) };
-    }
-    const { changeSet, json, ...planned } = await planRoot(input, targets, { env, ...(ctx.afterInit ? { afterInit: ctx.afterInit } : {}) });
-    // #4552: a choudoufu root's rows, keyed from the plan document while it is at hand.
-    const lockRows = changeSet?.member.planner === "choudoufu" ? terraformLockRows(input.root, changeSet.member.scope, json) : undefined;
-    return {
-      member: input.root,
-      planDigest: planned.planDigest,
-      artifact: { ...planned, ...(lockRows ? { lockRows } : {}) },
-      ...(changeSet ? { changeSet } : {}),
-      // plywood#55: each changed resource's own digest, which a merged wave compares with the pull request's per resource.
-      resourceDigests: terraformResourceDigests(json),
-      outputs: terraformPlannedOutputs(json),
-      shape: terraformPlanShape(json, input.root),
-      ...(targets ? { targets } : {}),
-    };
-  },
-  // The root's outputs as its state holds them now (#3183): what a dependent
-  // planned before this root applies reads through `stackOutput()`.
-  async outputs(ctx: DeployContext, step: TerraformApplyStepInput): Promise<Record<string, unknown>> {
-    const input = withContextCwd(ctx, step);
-    requireRoot(input);
-    await terraformInit(rootArgs(input, ctx.processEnv));
-    return terraformOutputs(rootArgs(input, ctx.processEnv));
-  },
-  // #4447 (ws-107): a group core forms of components that read each other plans and applies as one composed run
-  // when `terraform.compose.enabled` is set (./compose-group.ts). Delegates, so the methods are read when called.
-  groupReads: (ctx, members) => terraformComposeGroup.groupReads(ctx, members),
-  // #4542: a member pointed at a release's recorded copy plans alone, since a composition reads the declared roots.
-  groupFallback: async (ctx, members) =>
-    members.some((m) => typeof m.step.dir === "string")
-      ? { kind: "release-copy", reason: "a member deploys a release's recorded copy of its root, which a composition does not read" }
-      : terraformComposeGroup.groupFallback(ctx, members),
-  // #4542: the root's files, which a release cut records and a promote under it plans.
-  releaseInputs: (input, ctx) => terraformReleaseInputs(input, ctx),
-  // #4552: resource under choudoufu, the root under Terraform, tofu and Terragrunt, which refuse resource by name.
-  async defaultLockGrain(input, plan) {
-    return terraformDefaultLockGrain(await plannerOf(input, plan));
-  },
-  async lockGrainRefusal(input, grain, plan) {
-    if (grain !== "resource") return undefined;
-    const binary = (await rootDir(input).catch(() => undefined))?.binary;
-    return terraformLockGrainRefusal(grain, await plannerOf(input, plan), binary);
-  },
-  // The ruling for ci-products (2026-10-28): a Terraform, tofu or Terragrunt root waits for its root row on the ledger in place of
-  // the backend's lock. A choudoufu root stays on the resource grain and never asks for this row.
-  targetLockRow(input) {
-    return typeof input?.root === "string" && input.root !== "" ? { key: rootRowKey(input.root), target: input.root, address: input.root } : undefined;
-  },
-  lockRows(input, plan) {
-    const kept = (plan.artifact as { lockRows?: LockRow[] } | undefined)?.lockRows;
-    if (Array.isArray(kept)) return kept;
-    return plan.changeSet ? terraformLockRowsFromPart(input.root, plan.changeSet) : [];
-  },
-  // #4555: the root and the binary, for the step's span and run record.
-  traceFacts: async (input, outcome) => terraformTraceFacts(input, outcome, (await rootDir(input).catch(() => undefined))?.binary),
-  planGroup: (ctx, members) => {
-    // chant#4854: each member's lock grain reads the config at the wave's directory too.
-    for (const m of members) if (m.input) withContextCwd(m.ctx ?? ctx, m.input);
-    return terraformComposeGroup.planGroup(ctx, members);
-  },
-  runGroup: (ctx, run, members) => {
-    for (const m of members) if (m.input) withContextCwd(m.ctx ?? ctx, m.input);
-    return terraformComposeGroup.runGroup(ctx, run, members);
-  },
-  async run(ctx: DeployContext, step: TerraformApplyStepInput): Promise<TerraformApplyStepOutput> {
-    const input = withContextCwd(ctx, step);
-    const fromWave = ctx.plans?.[input.root];
-    if (isChoudoufuWavePlan(fromWave)) return runChoudoufuWave(ctx, input, fromWave);
-    if (isShapeArtifact(fromWave)) {
-      // A root previewed with stand-ins (#4463): plan it now with the real
-      // values, and apply that plan only when it is within the preview's shape.
-      const fresh = await planRoot(await readsForRun(input), ctx.targets, { env: ctx.processEnv });
-      const differences = planShapeDifferences(fromWave.shape, terraformPlanShape(fresh.json, input.root));
-      if (differences.length > 0) throw new PlanShapeMovedError(input.root, differences);
-      const applied = await terraformApply({ ...rootArgs(input, ctx.processEnv), planFile: fresh.planFile, ...lockTimeoutOf(input) });
+    },
+    // The root's outputs as its state holds them now (#3183): what a dependent
+    // planned before this root applies reads through `stackOutput()`.
+    async outputs(ctx: DeployContext, step: TerraformApplyStepInput): Promise<Record<string, unknown>> {
+      const input = await filledInput(deps.resolveRoot, ctx, step);
+      requireRoot(input);
+      await terraformInit(rootArgs(input, ctx.processEnv));
+      return terraformOutputs(rootArgs(input, ctx.processEnv));
+    },
+    // #4447 (ws-107): a group core forms of components that read each other plans and applies as one composed run
+    // when `terraform.compose.enabled` is set (./compose-group.ts). Delegates, so the methods are read when called.
+    groupReads: (ctx, members) => terraformComposeGroup.groupReads(ctx, members),
+    // #4542: a member pointed at a release's recorded copy plans alone, since a composition reads the declared roots.
+    groupFallback: async (ctx, members) =>
+      members.some((m) => typeof m.step.dir === "string")
+        ? { kind: "release-copy", reason: "a member deploys a release's recorded copy of its root, which a composition does not read" }
+        : terraformComposeGroup.groupFallback(ctx, members),
+    // #4542: the root's files, which a release cut records and a promote under it plans.
+    releaseInputs: (input, ctx) => terraformReleaseInputs(input, ctx),
+    // #4552: resource under choudoufu, the root under Terraform, tofu and Terragrunt, which refuse resource by name.
+    async defaultLockGrain(input, plan) {
+      return terraformDefaultLockGrain(await plannerOf(input, plan));
+    },
+    async lockGrainRefusal(input, grain, plan) {
+      if (grain !== "resource") return undefined;
+      const binary = (await rootDir(input).catch(() => undefined))?.binary;
+      return terraformLockGrainRefusal(grain, await plannerOf(input, plan), binary);
+    },
+    // The ruling for ci-products (2026-10-28): a Terraform, tofu or Terragrunt root waits for its root row on the ledger in place of
+    // the backend's lock. A choudoufu root stays on the resource grain and never asks for this row.
+    targetLockRow(input) {
+      return typeof input?.root === "string" && input.root !== "" ? { key: rootRowKey(input.root), target: input.root, address: input.root } : undefined;
+    },
+    lockRows(input, plan) {
+      const kept = (plan.artifact as { lockRows?: LockRow[] } | undefined)?.lockRows;
+      if (Array.isArray(kept)) return kept;
+      return plan.changeSet ? terraformLockRowsFromPart(input.root, plan.changeSet) : [];
+    },
+    // #4555: the root and the binary, for the step's span and run record.
+    traceFacts: async (input, outcome) => terraformTraceFacts(input, outcome, (await rootDir(input).catch(() => undefined))?.binary),
+    planGroup: (ctx, members) => {
+      // chant#4854: each member's lock grain reads the config at the wave's directory too.
+      for (const m of members) if (m.input) withContextCwd(m.ctx ?? ctx, m.input);
+      return terraformComposeGroup.planGroup(ctx, members);
+    },
+    runGroup: (ctx, run, members) => {
+      for (const m of members) if (m.input) withContextCwd(m.ctx ?? ctx, m.input);
+      return terraformComposeGroup.runGroup(ctx, run, members);
+    },
+    async run(ctx: DeployContext, step: TerraformApplyStepInput): Promise<TerraformApplyStepOutput> {
+      const input = await filledInput(deps.resolveRoot, ctx, step);
+      const fromWave = ctx.plans?.[input.root];
+      if (isChoudoufuWavePlan(fromWave)) return runChoudoufuWave(ctx, input, fromWave);
+      if (isShapeArtifact(fromWave)) {
+        // A root previewed with stand-ins (#4463): plan it now with the real
+        // values, and apply that plan only when it is within the preview's shape.
+        const fresh = await planRoot(await readsForRun(input), ctx.targets, { env: ctx.processEnv });
+        const differences = planShapeDifferences(fromWave.shape, terraformPlanShape(fresh.json, input.root));
+        if (differences.length > 0) throw new PlanShapeMovedError(input.root, differences);
+        const applied = await terraformApply({ ...rootArgs(input, ctx.processEnv), planFile: fresh.planFile, ...lockTimeoutOf(input) });
+        if (!applied.applied) {
+          throw new Error(`terraform-apply: root "${input.root}" refused the plan it was given (${applied.refused ?? "refused"}). ${applied.refusal ?? ""}`);
+        }
+        const outputs = await terraformOutputs(rootArgs(input, ctx.processEnv));
+        return { root: input.root, planDigest: fresh.planDigest, fromWavePlan: false, outputs };
+      }
+      const planned: PlannedRoot = isPlannedRoot(fromWave)
+        ? fromWave
+        : await planRoot(await readsForRun(input), ctx.targets, { env: ctx.processEnv }).then(({ planFile, planDigest }) => ({ planFile, planDigest }));
+      const applied = await terraformApply({ ...rootArgs(input, ctx.processEnv), planFile: planned.planFile, ...lockTimeoutOf(input) });
       if (!applied.applied) {
-        throw new Error(`terraform-apply: root "${input.root}" refused the plan it was given (${applied.refused ?? "refused"}). ${applied.refusal ?? ""}`);
+        const message =
+          `terraform-apply: root "${input.root}" refused the plan it was given (${applied.refused ?? "refused"}). ` +
+          (applied.refusal ?? "");
+        // A plan the wave approved that choudoufu refuses as no longer matching
+        // moved since the approval (#4553: one made against another estate is a
+        // failure). One this run made itself is planned afresh by the next run.
+        if (applied.refused === "approval-mismatch" && isPlannedRoot(fromWave)) throw new TerraformPlanMovedError(input.root, message);
+        throw new Error(message);
       }
       const outputs = await terraformOutputs(rootArgs(input, ctx.processEnv));
-      return { root: input.root, planDigest: fresh.planDigest, fromWavePlan: false, outputs };
-    }
-    const planned: PlannedRoot = isPlannedRoot(fromWave)
-      ? fromWave
-      : await planRoot(await readsForRun(input), ctx.targets, { env: ctx.processEnv }).then(({ planFile, planDigest }) => ({ planFile, planDigest }));
-    const applied = await terraformApply({ ...rootArgs(input, ctx.processEnv), planFile: planned.planFile, ...lockTimeoutOf(input) });
-    if (!applied.applied) {
-      const message =
-        `terraform-apply: root "${input.root}" refused the plan it was given (${applied.refused ?? "refused"}). ` +
-        (applied.refusal ?? "");
-      // A plan the wave approved that choudoufu refuses as no longer matching
-      // moved since the approval (#4553: one made against another estate is a
-      // failure). One this run made itself is planned afresh by the next run.
-      if (applied.refused === "approval-mismatch" && isPlannedRoot(fromWave)) throw new TerraformPlanMovedError(input.root, message);
-      throw new Error(message);
-    }
-    const outputs = await terraformOutputs(rootArgs(input, ctx.processEnv));
-    return { root: input.root, planDigest: planned.planDigest, fromWavePlan: isPlannedRoot(fromWave), outputs };
-  },
-};
+      return { root: input.root, planDigest: planned.planDigest, fromWavePlan: isPlannedRoot(fromWave), outputs };
+    },
+  };
+}
+
+/** `terraform-apply` with each root on the step's `binary`, else `terraform.binary`. */
+export const terraformApplyCapability: Capability<TerraformApplyStepInput, TerraformApplyStepOutput> = terraformApplyCapabilityWith();
 
 export const TERRAFORM_VERB_FAMILIES = {
   apply: ["terraform-apply"],

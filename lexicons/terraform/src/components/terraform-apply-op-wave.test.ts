@@ -13,8 +13,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, describe, expect, test, vi } from "vitest";
 import { CapabilityRegistry, type Capability } from "@intentius/chant/components/capability";
-import { memoryGateLedgerPort, runOpWave, type OpWaveRunHooks, type OpWavesSpec, type RunOpWaveResult } from "@intentius/chant/op";
-import { terraformApplyCapability } from "./capability-plugin";
+import { memoryGateLedgerPort, opWavePlanPath, runOpWave, type OpWaveRunHooks, type OpWavesSpec, type RunOpWaveResult } from "@intentius/chant/op";
+import { terraformApplyCapability, terraformApplyCapabilityWith, type TerraformRootResolver } from "./capability-plugin";
 
 const made: string[] = [];
 afterAll(() => {
@@ -186,5 +186,62 @@ describe("where the step looks for chant.config (chant#4854)", () => {
     const ran = lines(other);
     expect(ran.length).toBeGreaterThan(0);
     expect(ran.every((l) => l.startsWith("terraform ./roots/app "))).toBe(true);
+  });
+});
+
+describe("a root that runs another binary than chant.config names (terragucci issue 1303)", () => {
+  test("a product's resolveRoot gives each root its own binary, by path, for its plan, apply and outputs", async () => {
+    const p = project(["a", "b"], { binary: "terraform" });
+    const asked: string[] = [];
+    const resolveRoot: TerraformRootResolver = async (root, input) => {
+      asked.push(`${root} ${input.cwd === p.dir ? "at the wave's directory" : String(input.cwd)}`);
+      return root === "roots/b" ? { binary: join(p.bin, "tofu") } : {};
+    };
+    const capabilities = registry(terraformApplyCapabilityWith({ resolveRoot }) as unknown as Capability<never, unknown>);
+    const result = await wave(p.dir, spec([{ target: "roots/a" }, { target: "roots/b" }]), { capabilities });
+    expect(result.exitCode).toBe(0);
+    expect(result.applied).toEqual(["roots/a", "roots/b"]);
+    const ran = lines(p).map((l) => l.split(" ").slice(0, 3).join(" ") + " " + l.split(" ")[3]);
+    expect(ran).toEqual([
+      "terraform ./roots/a ws=- init",
+      "terraform ./roots/a ws=- plan",
+      "terraform ./roots/a ws=- show",
+      "tofu ./roots/b ws=- init",
+      "tofu ./roots/b ws=- plan",
+      "tofu ./roots/b ws=- show",
+      "terraform ./roots/a ws=- apply",
+      "terraform ./roots/a ws=- output",
+      "tofu ./roots/b ws=- apply",
+      "tofu ./roots/b ws=- output",
+    ]);
+    // Asked once per plan and once per apply, with the step's input as the wave filled it.
+    expect(asked).toEqual(["roots/a at the wave's directory", "roots/b at the wave's directory", "roots/a at the wave's directory", "roots/b at the wave's directory"]);
+  });
+
+  test("the change set names the planner each root ran", async () => {
+    const p = project(["b"], { binary: "terraform" });
+    const capabilities = registry(terraformApplyCapabilityWith({ resolveRoot: () => ({ binary: join(p.bin, "tofu") }) }) as unknown as Capability<never, unknown>);
+    const s = spec([{ target: "roots/b" }]);
+    const result = await wave(p.dir, s, { capabilities });
+    expect(result.exitCode).toBe(0);
+    const file = JSON.parse(readFileSync(join(p.dir, opWavePlanPath(s, 1, "roots/b")), "utf-8")) as { changeSet?: { member: { planner: string } } };
+    expect(file.changeSet?.member.planner).toBe("tofu");
+  });
+
+  test("a step's own binary runs without a resolver, and a resolver that answers nothing leaves the config's", async () => {
+    const p = project(["a"], { binary: "terraform" });
+    expect((await wave(p.dir, spec([{ target: "roots/a" }], { binary: "tofu" }))).exitCode).toBe(0);
+    expect(lines(p).every((l) => l.startsWith("tofu "))).toBe(true);
+    const q = project(["a"], { binary: "terraform" });
+    const capabilities = registry(terraformApplyCapabilityWith({ resolveRoot: () => ({}) }) as unknown as Capability<never, unknown>);
+    expect((await wave(q.dir, spec([{ target: "roots/a" }]), { capabilities })).exitCode).toBe(0);
+    expect(lines(q).every((l) => l.startsWith("terraform "))).toBe(true);
+  });
+
+  test("a resolver that throws fails the root's plan", async () => {
+    const p = project(["a"], { binary: "terraform" });
+    const capabilities = registry(terraformApplyCapabilityWith({ resolveRoot: () => { throw new Error("tofu 1.9.1 is not installed"); } }) as unknown as Capability<never, unknown>);
+    await expect(wave(p.dir, spec([{ target: "roots/a" }]), { capabilities })).rejects.toThrow(/tofu 1.9.1 is not installed/);
+    expect(lines(p)).toEqual([]);
   });
 });

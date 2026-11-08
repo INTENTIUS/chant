@@ -21,6 +21,9 @@
  */
 export const NEXT_RELEASE = "0.124.80";
 
+/** The first chant whose terraform lexicon's `terraform-apply` takes `binary`, and `terraformApplyCapabilityWith({ resolveRoot })` gives each root its own binary (terragucci issue 1303). */
+export const TERRAFORM_APPLY_ROOT_BINARY_FLOOR = NEXT_RELEASE;
+
 /** The first chant whose op wave hands a step's capability the wave's `cwd` (`DeployContext.cwd`), where `terraform-apply` looks for `chant.config.*` and `terragrunt-apply` runs when the step names neither (#4854). */
 export const OP_WAVE_STEP_CWD_FLOOR = NEXT_RELEASE;
 
