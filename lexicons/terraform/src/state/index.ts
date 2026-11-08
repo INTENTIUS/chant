@@ -7,6 +7,7 @@
 export * from "./object-store";
 export * from "./backend";
 export * from "./store";
+export * from "./gitlab";
 export * from "./exec";
 export * from "./locks";
 export * from "./root-states";
