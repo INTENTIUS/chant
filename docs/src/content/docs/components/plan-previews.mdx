@@ -76,6 +76,7 @@ The table is generated from the capability plugins that core and the lexicons re
 | `terraform-copy` | terraform | yes | no | `plan` (or a destroy plan) of the root initialised under its copy's backend settings, read with `show -json` | every resource change the copy would make, as for terraform-apply. See [terraform-copy](#terraform-copy) |
 | `terraform-state-push` | terraform | yes | no | nothing from the backend: the step's own facts, the roots whose state files it would push | no entries: a digest over the roots, which the gated request binds. See [terraform-state-push](#terraform-state-push) |
 | `terraform-state-unlock` | terraform | yes | no | nothing from the backend: the step's own facts, the lock ID and its location | no entries: a digest over the lock ID and location, which the gated request binds. See [terraform-state-unlock](#terraform-state-unlock) |
+| `terragrunt-apply` | terraform | yes | no | `terragrunt run --all plan` over the wave's units (one run per pinned pair of releases), or one unit's plan at a time, each read with `show -json` | every resource change per unit, as for terraform-apply, and a member for the whole wave's plan. See [terragrunt-apply](#terragrunt-apply) |
 
 {/* END GENERATED plan-previews */}
 
@@ -245,6 +246,12 @@ The plan runs `yodel plan <env> --part <file>`, one entry per object the pending
 An ephemeral copy of a root plans through this capability, in `lexicons/terraform/src/state-ops.ts` ([#4618](https://github.com/INTENTIUS/chant/issues/4618)). It initialises the root under the copy's backend settings with `init -reconfigure -backend-config=<k>=<v>`.
 
 With `destroy` set, the step asks for a destroy plan instead. Entries come from the saved plan file through the same change-set reader `terraform-apply` uses, and the apply hands that same file to `apply`. A copy waits at chant's `pr-env` gate and takes no request of its own.
+
+### `terragrunt-apply`
+
+A Terragrunt repository's waves plan through this capability, in `lexicons/terraform/src/terragrunt/capability.ts` ([#4842](https://github.com/INTENTIUS/chant/issues/4842)). It finds the units with `terragrunt find` and cuts them into layers by their dependencies. A `together` wave is one `run --all` plan per pinned pair of releases ([#4849](https://github.com/INTENTIUS/chant/issues/4849)), and its apply hands back exactly those saved plans.
+
+Each unit's entries come from its saved plan through the change-set reader `terraform-apply` uses. The wave's whole plan is one more digest member, so a unit added between the plan and the apply moves the digest.
 
 ### `terraform-action`
 

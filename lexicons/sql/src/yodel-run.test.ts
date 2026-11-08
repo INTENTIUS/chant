@@ -8,9 +8,8 @@
  * src/rebase/index.ts, src/commands/rebase.ts and src/commands/new.ts).
  */
 import { describe, expect, test } from "vitest";
-import { CI_COMMIT_REPLY_FLOOR, commitArgv, commitSettingsEnv, commitSettingsFromEnv, resolveCommitSpec } from "@intentius/chant/ci-commit";
+import { CI_COMMIT_ARG_FLOOR, CI_COMMIT_REPLY_FLOOR, commitArgv, commitSettingsEnv, commitSettingsFromEnv, resolveCommitSpec } from "@intentius/chant/ci-commit";
 import { CHANT_EXIT } from "@intentius/chant/exit-codes";
-import { NEXT_RELEASE } from "@intentius/chant/release-floors";
 import { NODE_CHECK_LINE, PACKAGES_INSTALL_LINE } from "./ci-setup";
 import {
   allowedYodelArgv,
@@ -144,16 +143,16 @@ describe("the commit-job specs", () => {
     expect(YODEL_COMMIT_FLOOR).toBe(CI_COMMIT_REPLY_FLOOR);
   });
 
-  test("the conflict reply's floor is the next release until it ships (#4821)", () => {
-    expect(YODEL_REBASE_CONFLICT_FLOOR).toBe(NEXT_RELEASE);
+  test("the conflict reply's floor is the release that shipped it (#4821)", () => {
+    expect(YODEL_REBASE_CONFLICT_FLOOR).toBe("0.124.78");
   });
 
-  test("new's envs floor is the next release until it ships (#4815)", () => {
-    expect(YODEL_NEW_HISTORY_FLOOR).toBe(NEXT_RELEASE);
+  test("new's envs floor is the release that shipped it (#4815)", () => {
+    expect(YODEL_NEW_HISTORY_FLOOR).toBe("0.124.78");
   });
 
   test("the name's floor is core's commit-job argument floor (#4820)", () => {
-    expect(YODEL_NEW_NAME_FLOOR).toBe(NEXT_RELEASE);
+    expect(YODEL_NEW_NAME_FLOOR).toBe(CI_COMMIT_ARG_FLOOR);
   });
 });
 
