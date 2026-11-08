@@ -108,6 +108,12 @@ export interface ReleaseWorkflowInput {
   imageArchives?: string[];
   /** `release.lane` (#4692): the gate's green lane. */
   lane?: string;
+  /**
+   * `release.publish` (#4767). On GitHub, a `forge: "github"` target with no
+   * `tokenEnv` reads `GITHUB_TOKEN`, so the publish job sets it to the job's
+   * token unless `release.workflow.env` sets it.
+   */
+  publish?: ReadonlyArray<{ type: string; forge?: string; tokenEnv?: string }>;
 }
 
 /** The flags `chant release publish` gets under the groups. */
@@ -135,9 +141,14 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
   const after = p.after ?? [];
   const images = input.images === true;
   const extra = jobExtras(p, input.forge);
+  // #4767: Forgejo's job token is not a GitHub token, and GitLab has no such expression.
+  const forgeToken =
+    input.forge === "github" && p.env?.GITHUB_TOKEN === undefined && (input.publish ?? []).some((t) => t.type === "forge" && t.forge === "github" && !t.tokenEnv)
+      ? ["      GITHUB_TOKEN: ${{ github.token }}"]
+      : [];
   if (p.trigger === "dispatch") {
     const archives = images ? (input.imageArchives ?? []).map((a) => (root ? `${root}/${a.replace(/^\.\//, "")}` : a.replace(/^\.\//, ""))) : [];
-    const o = { chant, install, build, root, verify, flags, after, images, archives, forge: input.forge, extra, gate: p.gate ?? "last-green", ...(input.lane ? { lane: input.lane } : {}) };
+    const o = { chant, install, build, root, verify, flags, after, images, archives, forge: input.forge, extra, forgeToken, gate: p.gate ?? "last-green", ...(input.lane ? { lane: input.lane } : {}) };
     return input.forge === "gitlab" ? renderGitlabDispatch(o) : renderGithubDispatch(o);
   }
   // #4657: the images are built from the release, so chant/lifecycle is fetched before them and the build after.
@@ -194,7 +205,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
     "  publish:",
     "    runs-on: ubuntu-latest",
     ...(root ? ["    defaults:", "      run:", `        working-directory: ${root}`] : []),
-    ...extra.githubEnv([]),
+    ...extra.githubEnv(forgeToken),
     "    steps:",
     ...githubSetup(),
     `      - run: ${install}`,
@@ -297,6 +308,8 @@ interface DispatchInput {
   gate: "last-green" | "head";
   lane?: string;
   extra: JobExtras;
+  /** The publish job's `GITHUB_TOKEN` line for a GitHub forge target (#4767), or nothing. */
+  forgeToken: string[];
 }
 
 /** The workflow artifact the cut job hands its image archives on in. */
@@ -413,7 +426,7 @@ function renderGithubDispatch(o: DispatchInput): string {
     "    needs: [gate, cut]",
     "    runs-on: ubuntu-latest",
     ...defaults,
-    ...o.extra.githubEnv([]),
+    ...o.extra.githubEnv(o.forgeToken),
     "    steps:",
     ...githubSetup(commit),
     `      - run: ${o.install}`,
@@ -540,6 +553,7 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     ...(release?.workflow ? { pipeline: release.workflow } : {}),
     ...((release?.images?.length ?? 0) > 0 ? { images: true, imageArchives: release!.images!.map((i) => i.archive) } : {}),
     ...(release?.lane ? { lane: release.lane } : {}),
+    ...(release?.publish ? { publish: release.publish } : {}),
     ...(args.ciInstall ? { install: args.ciInstall } : {}),
     ...(args.buildCommand ? { build: args.buildCommand } : {}),
     ...(args.ciChant ? { chant: args.ciChant } : {}),
