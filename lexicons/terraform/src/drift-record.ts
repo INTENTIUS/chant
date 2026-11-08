@@ -11,6 +11,7 @@
  * | `live-plan -json` | `ownership` | `bound[]`: in-sync, owned by its `source`. `unowned[]` and `adoptable[]`: unclaimed. `ABSENT`: pending. Any other omission: not-observed. `foreign[]`: undeclared, foreign. `controller_held[]`: runtime |
  * | `live-ls -json` | `ownership` | `declared: false`: undeclared. A gap no live-plan row answers: not-observed |
  * | live-plan and a plan together | `plan` | bound with a planned update or replace: drifted with paths, the live-plan ownership kept |
+ * | `show -json` of a live root's full plan | `plan` | planned create: missing. Planned delete or forget: undeclared. Update or any pair of actions: drifted with paths, declared then live. No-op: in-sync |
  *
  * A state read never says in-sync or drifted: `driftRecord` refuses it.
  *
@@ -204,6 +205,63 @@ export function terraformPlanDriftRecords(input: TerraformPlanDriftInput): Drift
     if (actions.length === 1 && (actions[0] === "delete" || actions[0] === "forget")) return driftRecord({ ...at, status: "undeclared" });
     return driftRecord({ ...at, status: "in-sync" });
   });
+}
+
+export interface TerraformLivePlanDriftInput extends DriftAdapterBase {
+  /** The engine that planned the root. Default `choudoufu`, which plans a live root. */
+  engine?: "choudoufu" | "terraform" | "tofu";
+  /** `show -json <planfile>` of the root's full plan, parsed. */
+  plan: unknown;
+}
+
+/**
+ * A live root's records from its full plan, read as drift (#4812). A root
+ * under live resource markers takes no refresh-only plan, and its plan reads
+ * the live system, so what the plan would change is what moved outside the
+ * code: one record per managed instance in `resource_changes`, a planned
+ * create missing (the object no longer exists), a planned delete or forget
+ * undeclared (it exists outside the code), an update or any pair of actions
+ * drifted with the plan's paths, declared before and live after, and a
+ * no-op in-sync. A path whose declared value is known only after the apply
+ * is not a difference and is left out. `resource_drift` is not read.
+ *
+ * The rules are drift-rows' `live: true` read (`./drift-rows.ts`), so the
+ * records that are not in-sync are its rows. `choudoufuLivePlusPlanDriftRecords`
+ * is the read for a root whose `live-plan -json` was taken too: it keeps
+ * live-plan's ownership, which a plan alone does not give.
+ */
+export function terraformLivePlanDriftRecords(input: TerraformLivePlanDriftInput): DriftRecord[] {
+  const engine = input.engine ?? "choudoufu";
+  const doc = isObject(input.plan) ? input.plan : {};
+  const version = input.version ?? asString(doc.terraform_version);
+  const evidence: DriftEvidence = { tool: engine, ...(version ? { version } : {}), command: `${engine} show -json` };
+  const index = indexPlan(input.plan);
+  const types = new Map<string, string>();
+  for (const entry of asArray(doc.resource_changes)) {
+    if (isObject(entry) && asString(entry.address) && asString(entry.type)) types.set(entry.address as string, entry.type as string);
+  }
+  const out: DriftRecord[] = [];
+  for (const [address, change] of index.changes) {
+    if (isDataAddress(address)) continue;
+    const type = types.get(address);
+    const at = { ...common(input, engine, "plan", address), ...(type ? { resourceType: type } : {}), evidence };
+    const actions = change.actions.filter((a) => a !== "no-op" && a !== "read");
+    if (actions.length === 0) {
+      out.push(driftRecord({ ...at, status: "in-sync" }));
+      continue;
+    }
+    if (change.actions.length === 1 && actions[0] === "create") {
+      out.push(driftRecord({ ...at, status: "missing" }));
+      continue;
+    }
+    if (change.actions.length === 1 && (actions[0] === "delete" || actions[0] === "forget")) {
+      out.push(driftRecord({ ...at, status: "undeclared" }));
+      continue;
+    }
+    const attributes = change.changes.filter((c) => c.after !== KNOWN_AFTER_APPLY).map((c) => attributeOf(c, true));
+    out.push(driftRecord({ ...at, status: "drifted", ...(attributes.length > 0 ? { attributes } : {}) }));
+  }
+  return out.sort(byAddress);
 }
 
 // ── choudoufu live-plan ────────────────────────────────────────────────────────

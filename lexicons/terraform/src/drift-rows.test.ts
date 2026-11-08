@@ -10,15 +10,29 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { terraformPlanDriftCount, terraformPlanDriftNames, terraformPlanDriftRows } from "./drift-rows";
+import {
+  terraformDriftPlan,
+  terraformLivePlanDrift,
+  terraformPlanDriftChanges,
+  terraformPlanDriftCount,
+  terraformPlanDriftNames,
+  terraformPlanDriftRows,
+} from "./drift-rows";
 
 const FIX = join(import.meta.dirname, "__fixtures__", "drift-rows");
 const read = (name: string): unknown => JSON.parse(readFileSync(join(FIX, name), "utf-8"));
+const readAt = (...path: string[]): unknown => JSON.parse(readFileSync(join(import.meta.dirname, "__fixtures__", ...path), "utf-8"));
 
 // ── terragucci's rules, copied as they are, for the parity checks ─────────────
 
 type Json = Record<string, unknown>;
 const FLIP: Record<string, string> = { create: "delete", delete: "create" };
+
+function driftPlan(plan: unknown): unknown {
+  if (plan === null || typeof plan !== "object" || Array.isArray(plan)) return plan;
+  const p = plan as Json;
+  return { ...p, resource_changes: Array.isArray(p.resource_drift) ? p.resource_drift : [] };
+}
 
 function liveDrift(plan: unknown): unknown {
   if (plan === null || typeof plan !== "object" || Array.isArray(plan)) return plan;
@@ -130,6 +144,81 @@ describe("documents with nothing to read", () => {
       expect(terraformPlanDriftRows(plan)).toEqual([]);
       expect(terraformPlanDriftRows(plan, { live: true })).toEqual([]);
       expect(terraformPlanDriftCount(plan)).toBe(driftCount(plan));
+    }
+  });
+});
+
+// ── the whole changes (#4812) ─────────────────────────────────────────────────
+
+describe("whole changes", () => {
+  const stock = ["refresh-plan.json", "refresh-plan-module.json"].map(read);
+  const live = [read("live-root-plan.json"), readAt("live-plan-depth", "show-plan.json"), readAt("live-plan-depth", "show-plan-sensitive.json")];
+
+  test("a refresh-only plan's drift report plan is byte-identical to terragucci's driftPlan", () => {
+    for (const plan of stock) expect(JSON.stringify(terraformDriftPlan(plan))).toBe(JSON.stringify(driftPlan(plan)));
+  });
+
+  test("a live root's full plan read as drift is byte-identical to terragucci's liveDrift", () => {
+    for (const plan of live) expect(JSON.stringify(terraformLivePlanDrift(plan))).toBe(JSON.stringify(liveDrift(plan)));
+    // And then as a drift report's plan, as terragucci's stage reads a live root.
+    for (const plan of live) expect(JSON.stringify(terraformDriftPlan(terraformLivePlanDrift(plan)))).toBe(JSON.stringify(driftPlan(liveDrift(plan))));
+  });
+
+  test("a stock change keeps module, index, deposed, the provider and the masks as the plan has them", () => {
+    const plan = read("refresh-plan-module.json") as { resource_drift: unknown[] };
+    const changes = terraformPlanDriftChanges(plan);
+    expect(changes).toEqual(plan.resource_drift);
+    expect(changes[0]).toMatchObject({ module_address: "module.service", index: "orders", provider_name: "registry.terraform.io/hashicorp/aws" });
+    expect(changes[0]!.change).toMatchObject({ before_sensitive: { kms_data_key: true }, after_sensitive: { kms_data_key: true }, after_unknown: {} });
+    expect(changes[1]).toMatchObject({ address: "aws_instance.web", deposed: "00000001", change: { actions: ["delete"], after: null } });
+    // Code waiting on main is not drift.
+    expect((terraformDriftPlan(plan) as { resource_changes: { address: string }[] }).resource_changes.map((c) => c.address)).toEqual([
+      'module.service.aws_sqs_queue.jobs["orders"]',
+      "aws_instance.web",
+    ]);
+  });
+
+  test("a live change is seen from the other side: code before, live after, masks swapped, an unknown taking the live value", () => {
+    const changes = terraformPlanDriftChanges(read("live-root-plan.json"), { live: true });
+    expect(changes.map((c) => [c.address, (c.change as { actions: string[] }).actions])).toEqual([
+      ["aws_s3_bucket.assets", ["delete"]],
+      ["aws_sqs_queue.stray", ["create"]],
+      ["aws_lambda_function.api", ["update"]],
+      ["aws_iam_role.deployer", ["update"]],
+      ["aws_security_group.edge", ["update"]],
+    ]);
+    expect(changes[2]!.change).toEqual({
+      actions: ["update"],
+      before: { function_name: "acme-api", memory_size: 512, version: "7" },
+      after: { function_name: "acme-api", memory_size: 256, version: "7" },
+      before_sensitive: false,
+      after_sensitive: false,
+    });
+    const sensitive = terraformPlanDriftChanges(readAt("live-plan-depth", "show-plan-sensitive.json"), { live: true });
+    const vpc = sensitive.find((c) => c.address === "aws_vpc.main")!.change as Json;
+    const source = (readAt("live-plan-depth", "show-plan-sensitive.json") as { resource_changes: { address: string; change: Json }[] }).resource_changes.find((c) => c.address === "aws_vpc.main")!.change;
+    expect(vpc.before_sensitive).toEqual(source.after_sensitive);
+    expect(vpc.after_sensitive).toEqual(source.before_sensitive);
+  });
+
+  test("one row per whole change, the same count either way", () => {
+    for (const plan of stock) expect(terraformPlanDriftRows(plan).map((r) => r.address)).toEqual(terraformPlanDriftChanges(plan).map((c) => c.address));
+    for (const plan of live) {
+      expect(terraformPlanDriftRows(plan, { live: true }).map((r) => r.address)).toEqual(terraformPlanDriftChanges(plan, { live: true }).map((c) => c.address));
+      expect(terraformPlanDriftCount(terraformLivePlanDrift(plan))).toBe(terraformPlanDriftCount(plan, { live: true }));
+      expect(terraformPlanDriftNames(terraformLivePlanDrift(plan))).toEqual(terraformPlanDriftNames(plan, { live: true }));
+    }
+  });
+
+  test("a missing or malformed plan is returned as it is, with no changes", () => {
+    for (const plan of [undefined, null, "plan", []]) {
+      expect(terraformDriftPlan(plan)).toBe(plan);
+      expect(terraformLivePlanDrift(plan)).toBe(plan);
+      expect(terraformPlanDriftChanges(plan)).toEqual([]);
+    }
+    for (const plan of [{}, { resource_drift: "x" }]) {
+      expect(terraformDriftPlan(plan)).toEqual(driftPlan(plan));
+      expect(terraformLivePlanDrift(plan)).toEqual(liveDrift(plan));
     }
   });
 });

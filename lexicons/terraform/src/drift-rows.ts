@@ -2,8 +2,8 @@
  * Drift rows (#4580): one row per object a plan found drifted, by address,
  * with its action and the object's real name, counted the way a product's
  * drift report counts. `./drift-record.ts` answers a different question (the
- * status of each instance the plan names), so it skips create rows, carries
- * no names and stays as it is.
+ * status of each instance the plan names, redacted), so it skips create
+ * rows and carries no names.
  *
  * A stock root's refresh-only plan reports drift as `resource_drift`, and
  * every entry there is one row, data blocks and creates included. A full
@@ -14,8 +14,15 @@
  * Data blocks, no-op and read entries are not drift.
  *
  * These are terragucci's rules (packages/terragucci/src/report/drift.ts:
- * `liveDrift`, `driftCount`, `driftNames`), so a row count here equals the
- * count its report gives for the same plan.
+ * `driftPlan`, `liveDrift`, `driftCount`, `driftNames`), so a row count here
+ * equals the count its report gives for the same plan.
+ *
+ * Behind every row is a whole change (#4812): the plan's entry for the
+ * object, shaped as a `resource_changes[]` entry with its actions, full
+ * before and after and their masks (`terraformPlanDriftChanges`). A drift
+ * report is a plan report over those changes: `terraformDriftPlan` puts a
+ * refresh-only plan's drift in place of its changes, and
+ * `terraformLivePlanDrift` reads a live root's full plan as drift.
  *
  * A row carries no attribute values. Its `name` is the first non-empty
  * string among `name`, `id`, `bucket`, `function_name` and `arn`, read from
@@ -85,34 +92,99 @@ function stockAction(actions: readonly string[]): string {
   return "update";
 }
 
-/** A refresh-only plan's `resource_drift`, one row per entry. */
-function stockRows(doc: Json): TerraformDriftRow[] {
-  const list = Array.isArray(doc.resource_drift) ? doc.resource_drift : [];
-  return list.map((entry) => {
+/** One row per whole change. */
+function rowsOf(changes: readonly unknown[]): TerraformDriftRow[] {
+  return changes.map((entry) => {
     const ch = isObject(entry) && isObject(entry.change) ? entry.change : {};
     const actions = Array.isArray(ch.actions) ? ch.actions.map(String) : [];
     return rowOf(entry, stockAction(actions), [ch.after, ch.before]);
   });
 }
 
-/** A live root's full plan, its changes read as drift. */
-function liveRows(doc: Json): TerraformDriftRow[] {
+/**
+ * A live root's full plan, its changes read as drift: each one the plan
+ * would make, seen from the other side, as terragucci's `liveDrift` builds
+ * it. The code's value is before and the live value after, the masks swap
+ * with them, and a value the plan knows only after the apply takes the live
+ * one, since it is not a difference.
+ */
+function liveChanges(doc: Json): Json[] {
   const list = Array.isArray(doc.resource_changes) ? doc.resource_changes : [];
-  const out: TerraformDriftRow[] = [];
+  const out: Json[] = [];
   for (const entry of list) {
     if (!isObject(entry) || entry.mode === "data") continue;
     const ch = isObject(entry.change) ? entry.change : {};
     const actions = Array.isArray(ch.actions) ? ch.actions.map(String) : [];
     if (actions.length === 0 || actions.every((a) => a === "no-op" || a === "read")) continue;
     const action = actions.length === 1 ? (FLIP[actions[0]!] ?? actions[0]!) : "update";
-    const live = isObject(ch.before) ? ch.before : null;
-    let code = isObject(ch.after) ? ch.after : null;
-    // A value the plan knows only after the apply is not a difference: the live one stands for it.
+    const live = (ch.before ?? null) as unknown;
+    let code = (ch.after ?? null) as unknown;
     const unknown = isObject(ch.after_unknown) ? ch.after_unknown : {};
-    if (code && live) code = { ...code, ...Object.fromEntries(Object.keys(unknown).filter((k) => unknown[k] === true && k in live).map((k) => [k, live[k]])) };
-    out.push(rowOf(entry, action, [live, code]));
+    if (isObject(code) && isObject(live)) {
+      const known = live;
+      code = { ...code, ...Object.fromEntries(Object.keys(unknown).filter((k) => unknown[k] === true && k in known).map((k) => [k, known[k]])) };
+    }
+    out.push({
+      ...entry,
+      change: { actions: [action], before: code, after: live, before_sensitive: ch.after_sensitive ?? false, after_sensitive: ch.before_sensitive ?? false },
+    });
   }
   return out;
+}
+
+/** A refresh-only plan's `resource_drift`, each entry as the plan has it. */
+function stockChanges(doc: Json): Json[] {
+  return (Array.isArray(doc.resource_drift) ? [...doc.resource_drift] : []) as Json[];
+}
+
+/**
+ * The drift a plan (`show -json`, parsed) found as whole changes (#4812),
+ * one per drifted object in the plan's order, each shaped as a
+ * `resource_changes[]` entry: `address`, `mode`, `type`, `name`,
+ * `module_address`, `index`, `deposed` and `provider_name` as the plan has
+ * them, and `change` with its actions, its full before and after, and their
+ * masks. A stock root's are its `resource_drift` entries unchanged. A live
+ * root's are its full plan's changes seen from the other side: a create
+ * there is a `delete` (the object no longer exists), a delete a `create`
+ * (an object exists outside the code), any pair of actions an `update`, the
+ * code's value before and the live one after, the sensitive masks swapped
+ * with them and an unknown value replaced by the live one.
+ *
+ * Values are not redacted: a change carries what the plan carries, masks
+ * included, for a report that renders the plan. A drift record
+ * (`./drift-record.ts`) is the redacted read.
+ *
+ * Its length is the drift count, and `terraformPlanDriftRows` is one row
+ * per entry. A malformed `resource_drift` entry that is not an object is
+ * passed on as the plan has it, and its row has the address `""`.
+ */
+export function terraformPlanDriftChanges(plan: unknown, options: TerraformPlanDriftRowsOptions = {}): Record<string, unknown>[] {
+  if (!isObject(plan)) return [];
+  return options.live ? liveChanges(plan) : stockChanges(plan);
+}
+
+/**
+ * A refresh-only plan as its drift report reads it: the drift found in place
+ * of the changes proposed, so the report is built from the same JSON as a
+ * plan's and code waiting on the default branch never shows in it.
+ * `resource_changes` becomes `terraformPlanDriftChanges(plan)`; the rest of
+ * the document is kept. Anything not an object is returned as it is.
+ */
+export function terraformDriftPlan(plan: unknown): unknown {
+  if (!isObject(plan)) return plan;
+  return { ...plan, resource_changes: terraformPlanDriftChanges(plan) };
+}
+
+/**
+ * A full plan of a root under live resource markers, as drift: its
+ * `resource_drift` becomes `terraformPlanDriftChanges(plan, { live: true })`
+ * and the rest of the document is kept, so it reads as a refresh-only plan
+ * would (`terraformDriftPlan`, and every function here without `live`).
+ * Anything not an object is returned as it is.
+ */
+export function terraformLivePlanDrift(plan: unknown): unknown {
+  if (!isObject(plan)) return plan;
+  return { ...plan, resource_drift: terraformPlanDriftChanges(plan, { live: true }) };
 }
 
 /**
@@ -120,8 +192,7 @@ function liveRows(doc: Json): TerraformDriftRow[] {
  * in the plan's order. Its length is the drift count.
  */
 export function terraformPlanDriftRows(plan: unknown, options: TerraformPlanDriftRowsOptions = {}): TerraformDriftRow[] {
-  if (!isObject(plan)) return [];
-  return options.live ? liveRows(plan) : stockRows(plan);
+  return rowsOf(terraformPlanDriftChanges(plan, options));
 }
 
 /** How many objects a plan found drifted: `terraformPlanDriftRows(plan, options).length`. */

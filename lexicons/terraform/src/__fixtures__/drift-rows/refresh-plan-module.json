@@ -1,0 +1,48 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.8",
+  "resource_drift": [
+    {
+      "address": "module.service.aws_sqs_queue.jobs[\"orders\"]",
+      "module_address": "module.service",
+      "mode": "managed",
+      "type": "aws_sqs_queue",
+      "name": "jobs",
+      "index": "orders",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["update"],
+        "before": { "name": "shop-orders-jobs", "visibility_timeout_seconds": 30, "tags": { "team": "a" }, "kms_data_key": "hunter2" },
+        "after": { "name": "shop-orders-jobs", "visibility_timeout_seconds": 45, "tags": { "team": "b" }, "kms_data_key": "hunter2" },
+        "after_unknown": {},
+        "before_sensitive": { "kms_data_key": true, "tags": {} },
+        "after_sensitive": { "kms_data_key": true, "tags": {} }
+      }
+    },
+    {
+      "address": "aws_instance.web",
+      "mode": "managed",
+      "type": "aws_instance",
+      "name": "web",
+      "deposed": "00000001",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["delete"],
+        "before": { "id": "i-0001", "instance_type": "t3.micro" },
+        "after": null,
+        "after_unknown": {},
+        "before_sensitive": {},
+        "after_sensitive": false
+      }
+    }
+  ],
+  "resource_changes": [
+    {
+      "address": "aws_s3_bucket.code_only",
+      "mode": "managed",
+      "type": "aws_s3_bucket",
+      "name": "code_only",
+      "change": { "actions": ["create"], "before": null, "after": { "bucket": "waiting-on-main" } }
+    }
+  ]
+}

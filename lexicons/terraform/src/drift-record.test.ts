@@ -14,9 +14,11 @@ import {
   choudoufuLiveLsDriftRecords,
   choudoufuLivePlanDriftRecords,
   choudoufuLivePlusPlanDriftRecords,
+  terraformLivePlanDriftRecords,
   terraformPlanDriftRecords,
   terraformStateDriftRecords,
 } from "./drift-record";
+import { terraformPlanDriftRows } from "./drift-rows";
 
 const FIX = join(import.meta.dirname, "__fixtures__");
 const read = (...path: string[]): unknown => JSON.parse(readFileSync(join(FIX, ...path), "utf-8"));
@@ -219,5 +221,65 @@ describe("choudoufu live+plan", () => {
     expect(text).not.toContain("hunter2");
     expect(text).not.toContain("hunter3");
     roundTrip(records);
+  });
+});
+
+describe("a live root's full plan, read as drift (#4812)", () => {
+  const records = terraformLivePlanDriftRecords({ member: "estate", observedAt: AT, plan: read("live-plan-depth", "show-plan.json") });
+
+  test("a planned create is missing, an update drifted declared then live, a no-op in-sync, all read plan", () => {
+    expect(statusOf(records)).toEqual({
+      "aws_cloudwatch_log_group.adoptable": "missing",
+      "aws_cloudwatch_log_group.app": "drifted",
+      "aws_cloudwatch_log_group.held_elsewhere": "missing",
+      "aws_cloudwatch_log_group.never_applied": "missing",
+      "aws_eip.pool[0]": "in-sync",
+      "aws_eip.pool[1]": "in-sync",
+      "aws_security_group.main": "in-sync",
+      "aws_security_group_rule.https": "missing",
+      "aws_subnet.app": "in-sync",
+      "aws_vpc.adoptable": "missing",
+      "aws_vpc.main": "drifted",
+    });
+    const app = at(records, "aws_cloudwatch_log_group.app");
+    expect(app).toMatchObject({ engine: "choudoufu", read: "plan", resourceType: "aws_cloudwatch_log_group", evidence: { tool: "choudoufu", command: "choudoufu show -json" } });
+    expect(app.attributes).toContainEqual({ path: "retention_in_days", before: 1, after: 3 });
+    expect(at(records, "aws_eip.pool[0]").instanceOf).toBe(at(records, "aws_eip.pool[1]").instanceOf);
+    roundTrip(records);
+  });
+
+  test("the records that are not in-sync are drift-rows' live rows", () => {
+    for (const plan of [read("live-plan-depth", "show-plan.json"), read("drift-rows", "live-root-plan.json")]) {
+      const drifted = terraformLivePlanDriftRecords({ member: "estate", observedAt: AT, plan }).filter((r) => r.status !== "in-sync");
+      expect(drifted.map((r) => r.address)).toEqual(terraformPlanDriftRows(plan, { live: true }).map((r) => r.address).sort());
+    }
+  });
+
+  test("a delete is undeclared, a replacement drifted, and a value known only after the apply is no difference", () => {
+    const live = terraformLivePlanDriftRecords({ member: "estate", observedAt: AT, engine: "tofu", plan: read("drift-rows", "live-root-plan.json") });
+    expect(statusOf(live)).toEqual({
+      "aws_iam_role.deployer": "drifted",
+      "aws_lambda_function.api": "drifted",
+      "aws_s3_bucket.assets": "missing",
+      "aws_s3_bucket.steady": "in-sync",
+      "aws_security_group.edge": "drifted",
+      "aws_sqs_queue.stray": "undeclared",
+    });
+    expect(at(live, "aws_lambda_function.api").attributes).toEqual([{ path: "memory_size", before: 512, after: 256 }]);
+    expect(at(live, "aws_lambda_function.api").evidence).toEqual({ tool: "tofu", version: "1.9.8", command: "tofu show -json" });
+    roundTrip(live);
+  });
+
+  test("a sensitive value never leaves, on either side", () => {
+    const sensitive = terraformLivePlanDriftRecords({ member: "estate", observedAt: AT, plan: read("live-plan-depth", "show-plan-sensitive.json") });
+    expect(at(sensitive, "aws_vpc.main").attributes).toContainEqual({ path: "tags.token", sensitive: true });
+    const text = JSON.stringify(driftDocument(sensitive));
+    expect(text).not.toContain("hunter2");
+    expect(text).not.toContain("hunter3");
+  });
+
+  test("a stock root's plan reader is unchanged: the same plan's changes read as in-sync or pending, not drift", () => {
+    const stock = terraformPlanDriftRecords({ member: "estate", observedAt: AT, plan: read("live-plan-depth", "show-plan.json") });
+    expect(stock.some((r) => r.status === "drifted" || r.status === "missing")).toBe(false);
   });
 });
