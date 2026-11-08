@@ -119,6 +119,14 @@
  *   yet makes the member a hole naming it, so the root is never planned on a
  *   stand-in.
  *
+ * A wave's run hooks in the product's process (chant#4842) reach the step
+ * through its context. `processEnv` goes to every command for the root (a
+ * role's credentials, values from a secret store), and `afterInit` is
+ * called after `init` and before `plan`, or before `live-plan-set`, which
+ * inits and plans in one command. A `root` with no `terraform.roots` entry
+ * plans the step's `dir` as its directory, so a product can name each root
+ * by its path without writing an entry for it.
+ *
  * Every plan also writes its `show -json` beside the plan file and names it
  * as `artifact.planJson`, the document a wave's cost hold prices
  * (`../cost-hold.ts`).
@@ -170,7 +178,7 @@ import { terraformActionCapability } from "../action-ops";
 
 /** The `terraform-apply` step's input. */
 export interface TerraformApplyStepInput {
-  /** Key into `terraform.roots`. Also the member's name in a wave's set digest. */
+  /** Key into `terraform.roots`. Also the member's name in a wave's set digest. With no such entry, `dir` is the root's directory (chant#4842). */
   root: string;
   /** Input variables, after the root's var files. See `TerraformPlanArgs.vars`. */
   vars?: Record<string, unknown>;
@@ -246,7 +254,10 @@ function waitingOnReads(ctx: DeployContext, input: TerraformApplyStepInput, wait
   return { member: input.root, planDigest, changeSet };
 }
 
-const rootArgs = (input: TerraformApplyStepInput) => ({ root: input.root, ...(input.cwd ? { cwd: input.cwd } : {}), ...(input.dir ? { dir: input.dir } : {}) });
+/** A run hook's environment (chant#4842, `DeployContext.processEnv`), which every command for the root runs with. */
+type RunEnv = Record<string, string> | undefined;
+
+const rootArgs = (input: TerraformApplyStepInput, env?: RunEnv) => ({ root: input.root, ...(input.cwd ? { cwd: input.cwd } : {}), ...(input.dir ? { dir: input.dir } : {}), ...(env ? { env } : {}) });
 
 function requireRoot(input: TerraformApplyStepInput): void {
   if (typeof input.root !== "string" || input.root === "") {
@@ -254,14 +265,16 @@ function requireRoot(input: TerraformApplyStepInput): void {
   }
 }
 
-async function planRoot(input: TerraformApplyStepInput, targets?: string[]): Promise<PlannedRoot & { changeSet?: ChangeSetPart; json?: unknown }> {
+async function planRoot(input: TerraformApplyStepInput, targets?: string[], at: { env?: RunEnv; afterInit?: () => Promise<void> } = {}): Promise<PlannedRoot & { changeSet?: ChangeSetPart; json?: unknown }> {
   requireRoot(input);
-  await terraformInit(rootArgs(input));
+  await terraformInit(rootArgs(input, at.env));
+  // chant#4842: the run hook's check, once init fetched the modules and providers and before the plan runs their code.
+  await at.afterInit?.();
   // One `show -json` per plan (#4479): its document is the digest, the change
   // set, the planned outputs and the shape. Nothing here reads the
   // `-no-color` render, so the plan skips it.
   const planned = await terraformPlan({
-    ...rootArgs(input),
+    ...rootArgs(input, at.env),
     ...(input.vars ? { vars: input.vars } : {}),
     ...(targets && targets.length > 0 ? { targets } : {}),
     ...lockTimeoutOf(input),
@@ -390,7 +403,8 @@ async function rootDir(input: TerraformApplyStepInput): Promise<{ dir: string; b
   const start = resolve(input.cwd ?? process.cwd());
   const { config, configPath } = await loadChantConfigUpward(start);
   const terraform = (config as { terraform?: TerraformConfig }).terraform;
-  const declared = terraform?.roots?.[input.root]?.dir;
+  // chant#4842: a root with no entry and a dir of its own is that directory.
+  const declared = terraform?.roots?.[input.root]?.dir ?? input.dir;
   if (declared === undefined) return undefined;
   const dir = input.dir ?? declared;
   return { dir: resolve(configPath ? dirname(configPath) : start, dir), ...(terraform?.binary ? { binary: terraform.binary } : {}) };
@@ -418,9 +432,10 @@ async function previewRoot(ctx: DeployContext, input: TerraformApplyStepInput, u
   if (typeof stand === "string") return waitingRoot(ctx, input, unresolved, stand);
   let planned: Awaited<ReturnType<typeof terraformPlan>>;
   try {
-    await terraformInit(rootArgs(input));
+    await terraformInit(rootArgs(input, ctx.processEnv));
+    await ctx.afterInit?.();
     planned = await terraformPlan({
-      ...rootArgs(input),
+      ...rootArgs(input, ctx.processEnv),
       vars: stand.vars,
       planFile: PREVIEW_PLAN_FILE,
       ...(targets ? { targets } : {}),
@@ -509,7 +524,7 @@ async function runChoudoufuWave(
   planned: ChoudoufuWavePlannedRoot,
 ): Promise<TerraformApplyStepOutput> {
   const applied = await choudoufuWaveApply({
-    ...rootArgs(input),
+    ...rootArgs(input, ctx.processEnv),
     planSetFile: planned.choudoufu.planSetFile,
     setDigest: planned.choudoufu.setDigest,
     ...(ctx.carried?.[input.root] !== undefined ? { carried: ctx.carried[input.root] } : {}),
@@ -520,7 +535,7 @@ async function runChoudoufuWave(
     if (terraformPlanMoved({ command: "live-wave-apply", code: applied.exitCode })) throw new TerraformPlanMovedError(input.root, message);
     throw new Error(message);
   }
-  const outputs = await terraformOutputs(rootArgs(input));
+  const outputs = await terraformOutputs(rootArgs(input, ctx.processEnv));
   return { root: input.root, planDigest: planned.planDigest, fromWavePlan: true, outputs };
 }
 
@@ -563,9 +578,12 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
     const targets = ctx.targets && ctx.targets.length > 0 ? ctx.targets : undefined;
     if (unresolved.length > 0) return previewRoot(ctx, input, unresolved, targets);
     // A targeted root plans with `plan -target`, and a cone plan with `plan -cone` (#4545), never as a choudoufu one-root set.
-    const wave = targets || input.cone ? { wave: false } : await choudoufuWaveRoot({ ...rootArgs(input), ...(input.vars ? { vars: input.vars } : {}) });
+    const env = ctx.processEnv;
+    const wave = targets || input.cone ? { wave: false } : await choudoufuWaveRoot({ ...rootArgs(input, env), ...(input.vars ? { vars: input.vars } : {}) });
     if (wave.wave) {
-      const set = await choudoufuPlanSet(rootArgs(input));
+      // chant#4842: live-plan-set inits and plans in one command, so the run hook's check comes before it.
+      await ctx.afterInit?.();
+      const set = await choudoufuPlanSet(rootArgs(input, env));
       const artifact: ChoudoufuWavePlannedRoot = {
         planDigest: set.planDigest,
         choudoufu: { planSetFile: set.planSetFile, setDigest: set.setDigest },
@@ -573,7 +591,7 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
       };
       return { member: input.root, planDigest: set.planDigest, artifact, changeSet: set.changeSet, outputs: terraformPlannedOutputs(set.json), shape: terraformPlanShape(set.json, input.root) };
     }
-    const { changeSet, json, ...planned } = await planRoot(input, targets);
+    const { changeSet, json, ...planned } = await planRoot(input, targets, { env, ...(ctx.afterInit ? { afterInit: ctx.afterInit } : {}) });
     // #4552: a choudoufu root's rows, keyed from the plan document while it is at hand.
     const lockRows = changeSet?.member.planner === "choudoufu" ? terraformLockRows(input.root, changeSet.member.scope, json) : undefined;
     return {
@@ -590,10 +608,10 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
   },
   // The root's outputs as its state holds them now (#3183): what a dependent
   // planned before this root applies reads through `stackOutput()`.
-  async outputs(_ctx: DeployContext, input: TerraformApplyStepInput): Promise<Record<string, unknown>> {
+  async outputs(ctx: DeployContext, input: TerraformApplyStepInput): Promise<Record<string, unknown>> {
     requireRoot(input);
-    await terraformInit(rootArgs(input));
-    return terraformOutputs(rootArgs(input));
+    await terraformInit(rootArgs(input, ctx.processEnv));
+    return terraformOutputs(rootArgs(input, ctx.processEnv));
   },
   // #4447 (ws-107): a group core forms of components that read each other plans and applies as one composed run
   // when `terraform.compose.enabled` is set (./compose-group.ts). Delegates, so the methods are read when called.
@@ -634,20 +652,20 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
     if (isShapeArtifact(fromWave)) {
       // A root previewed with stand-ins (#4463): plan it now with the real
       // values, and apply that plan only when it is within the preview's shape.
-      const fresh = await planRoot(await readsForRun(input), ctx.targets);
+      const fresh = await planRoot(await readsForRun(input), ctx.targets, { env: ctx.processEnv });
       const differences = planShapeDifferences(fromWave.shape, terraformPlanShape(fresh.json, input.root));
       if (differences.length > 0) throw new PlanShapeMovedError(input.root, differences);
-      const applied = await terraformApply({ ...rootArgs(input), planFile: fresh.planFile, ...lockTimeoutOf(input) });
+      const applied = await terraformApply({ ...rootArgs(input, ctx.processEnv), planFile: fresh.planFile, ...lockTimeoutOf(input) });
       if (!applied.applied) {
         throw new Error(`terraform-apply: root "${input.root}" refused the plan it was given (${applied.refused ?? "refused"}). ${applied.refusal ?? ""}`);
       }
-      const outputs = await terraformOutputs(rootArgs(input));
+      const outputs = await terraformOutputs(rootArgs(input, ctx.processEnv));
       return { root: input.root, planDigest: fresh.planDigest, fromWavePlan: false, outputs };
     }
     const planned: PlannedRoot = isPlannedRoot(fromWave)
       ? fromWave
-      : await planRoot(await readsForRun(input), ctx.targets).then(({ planFile, planDigest }) => ({ planFile, planDigest }));
-    const applied = await terraformApply({ ...rootArgs(input), planFile: planned.planFile, ...lockTimeoutOf(input) });
+      : await planRoot(await readsForRun(input), ctx.targets, { env: ctx.processEnv }).then(({ planFile, planDigest }) => ({ planFile, planDigest }));
+    const applied = await terraformApply({ ...rootArgs(input, ctx.processEnv), planFile: planned.planFile, ...lockTimeoutOf(input) });
     if (!applied.applied) {
       const message =
         `terraform-apply: root "${input.root}" refused the plan it was given (${applied.refused ?? "refused"}). ` +
@@ -658,7 +676,7 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
       if (applied.refused === "approval-mismatch" && isPlannedRoot(fromWave)) throw new TerraformPlanMovedError(input.root, message);
       throw new Error(message);
     }
-    const outputs = await terraformOutputs(rootArgs(input));
+    const outputs = await terraformOutputs(rootArgs(input, ctx.processEnv));
     return { root: input.root, planDigest: planned.planDigest, fromWavePlan: isPlannedRoot(fromWave), outputs };
   },
 };

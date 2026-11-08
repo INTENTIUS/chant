@@ -141,6 +141,8 @@ export type { OpWaveReleaseNames, OpWaveReleaseOutcome, OpWaveReleasePort, OpWav
 export { OP_WAVE_AFTER_PLAN_WAVE_FLOOR, foldPolicyRows, opWaveAfterPlanProblems, opWaveAfterPlanResultProblems, opWaveAfterPlanWaveResultProblems, runOpWaveAfterPlanHooks } from "./op-waves-after-plan";
 export type { OpWaveAfterPlanHook, OpWaveAfterPlanOutcome, OpWaveAfterPlanResult, OpWaveAfterPlanRun, OpWaveAfterPlanRunOutcome, OpWaveAfterPlanWave, OpWaveAfterPlanWaveOutcome, OpWaveAfterPlanWaveResult } from "./op-waves-after-plan";
 export { OP_WAVE_AFTER_PLAN_FLOOR } from "./runtime";
+export { OP_WAVE_RUN_HOOKS_FLOOR, opWaveRunHooksProblems } from "./op-waves-run-hooks";
+export type { OpWaveAfterApplyResult, OpWaveBeforePlanResult, OpWaveRunHookApplied, OpWaveRunHookPlanned, OpWaveRunHookRun, OpWaveRunHooks } from "./op-waves-run-hooks";
 export type { OpRunPolicyRow, OpRunWave, OpRunWavePlan, OpRunWaveTarget } from "./runtime";
 export type { OpWaveOutcome } from "./op-waves-notify";
 export { loadActivities, loadProfiles, resolveActivity } from "./activity-registry";

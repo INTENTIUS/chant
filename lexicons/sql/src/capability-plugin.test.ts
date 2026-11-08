@@ -158,6 +158,19 @@ describe("sql-migrate", () => {
     expect(calls.map((c) => c.env.YODEL_ROLE ?? null)).toEqual([null, null, "writer:dev"]);
   });
 
+  test("a run hook's env is laid over the job's, and the planning commands still never see a writer (chant#4842)", async () => {
+    const cwd = scratch();
+    writeJson(join(cwd, "yodel-waves.json"), { name: "yodel-apply", waves: [{ name: "dev", runs: [{ target: "dev" }] }] });
+    const { run, calls } = fakeRunner(cwd);
+    const cap = createSqlMigrateCapability({ run, cwd: () => cwd, env: () => jobEnv });
+    const input = { environment: "dev", spec: "yodel-waves.json" };
+    const processEnv = { DEV_POSTGRES_HOST: "db.internal", DEV_POSTGRES_WRITER_PASSWORD: "from-the-vault" };
+    const planned = await cap.plan!({ env: "dev", component: "dev", processEnv }, input);
+    await cap.run({ env: "dev", component: "dev", plans: { dev: planned.artifact }, processEnv }, input);
+    expect(calls.map((c) => c.env.DEV_POSTGRES_HOST ?? null)).toEqual(["db.internal", "db.internal", "db.internal"]);
+    expect(calls.map((c) => c.env.DEV_POSTGRES_WRITER_PASSWORD ?? null)).toEqual([null, null, "from-the-vault"]);
+  });
+
   test("an apply the engine refuses as moved is a moved plan; a held lock is not", async () => {
     const cwd = scratch();
     writeJson(join(cwd, "yodel-waves.json"), { name: "yodel-apply", waves: [{ name: "dev", runs: [{ target: "dev" }] }] });

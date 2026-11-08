@@ -203,8 +203,19 @@ export interface TerraformRootArgs {
    * under a release sets it to the release's recorded copy of the root; the
    * entry's workspace, var files, backend config and estate still apply, and
    * its var files and backend-config files resolve against this directory.
+   *
+   * With no `terraform.roots` entry named `root`, a `dir` names the root's
+   * directory itself (chant#4842): the root plans there with the namespace's
+   * binary and no workspace, var files or backend config of an entry.
    */
   dir?: string;
+  /**
+   * Environment variables every command for the root runs with, over the
+   * job's and the root's own (`TF_WORKSPACE`), such as a role's credentials
+   * (chant#4842). An op wave's run hook gives them per run through
+   * `DeployContext.processEnv`.
+   */
+  env?: Record<string, string>;
 }
 
 export interface TerraformInitArgs extends TerraformRootArgs {
@@ -608,8 +619,13 @@ export function terraformEnvironment(root?: Pick<TerraformRootConfig, "workspace
   return {
     TF_IN_AUTOMATION: "1",
     ...(root?.workspace ? { TF_WORKSPACE: root.workspace } : {}),
+    // chant#4842: the run's own environment, which resolveRoot ties to the root it resolved.
+    ...(root ? rootProcessEnv.get(root) : undefined),
   };
 }
+
+/** The `env` a root was resolved with (chant#4842), by the resolved root's entry, so every command run for it gets it. */
+const rootProcessEnv = new WeakMap<object, Record<string, string>>();
 
 /**
  * `terraform init`, with the root's `backendConfigFiles` as
@@ -958,7 +974,10 @@ async function resolveRoot(args: TerraformRootArgs, signal?: AbortSignal): Promi
   const projectRoot = configPath ? dirname(configPath) : start;
   const namespace = (config as { terraform?: TerraformConfig }).terraform;
   const roots = namespace?.roots ?? {};
-  const root = roots[args.root];
+  // chant#4842: a root with no entry and a dir of its own plans that directory.
+  const declared = roots[args.root] ?? (args.dir !== undefined ? { dir: args.dir } : undefined);
+  const root = declared && args.env ? { ...declared } : declared;
+  if (root && args.env) rootProcessEnv.set(root, args.env);
   if (!root) {
     const known = Object.keys(roots).sort();
     throw new Error(

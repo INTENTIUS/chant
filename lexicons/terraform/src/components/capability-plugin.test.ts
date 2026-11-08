@@ -22,14 +22,17 @@ const planTargets: Array<string[] | undefined> = [];
 const planTexts: Array<boolean | undefined> = [];
 // #4463: a plan that fails, as one with a stand-in a validation block rejects does.
 let planError: Error | undefined;
+// #4842: the env each activity was handed.
+const envs: Array<[string, unknown]> = [];
 
 vi.mock("../op/activities/terraform", () => ({
   // The exit constants exit-codes.ts maps choudoufu's statuses with (#4553), as the module has them.
   CHOUDOUFU_APPROVAL_EXIT_CODE: 3,
   CHOUDOUFU_WAVE_EXIT: { landed: 0, error: 1, setMoved: 3, rootFailed: 4 },
   choudoufuWaveRoot: vi.fn(async () => waveRoot),
-  choudoufuPlanSet: vi.fn(async (args: { root: string }) => {
+  choudoufuPlanSet: vi.fn(async (args: { root: string; env?: unknown }) => {
     calls.push(`plan-set ${args.root}`);
+    envs.push(["plan-set", args.env]);
     return {
       setDigest: `sha256:set-${args.root}`,
       rootDigest: `sha256:root-${args.root}`,
@@ -46,24 +49,28 @@ vi.mock("../op/activities/terraform", () => ({
     waveApplyArgs.push(args);
     return waveApply;
   }),
-  terraformInit: vi.fn(async (args: { root: string }) => {
+  terraformInit: vi.fn(async (args: { root: string; env?: unknown }) => {
     calls.push(`init ${args.root}`);
+    envs.push(["init", args.env]);
     return { dir: `/x/${args.root}` };
   }),
-  terraformPlan: vi.fn(async (args: { root: string; vars?: Record<string, unknown>; targets?: string[]; text?: boolean }) => {
+  terraformPlan: vi.fn(async (args: { root: string; vars?: Record<string, unknown>; targets?: string[]; text?: boolean; env?: unknown }) => {
     calls.push(`plan ${args.root} ${JSON.stringify(args.vars ?? {})}`);
+    envs.push(["plan", args.env]);
     planTargets.push(args.targets);
     planTexts.push(args.text);
     if (planError) throw planError;
     // `dir` as the real result has it (#4545 writes the plan document beside the plan file there).
     return { planFile: "chant.tfplan", dir: `/x/${args.root}`, planDigest: `jcs1-sha256:${args.root}`, json: planJson, ...(changeSet ? { changeSet } : {}) };
   }),
-  terraformApply: vi.fn(async (args: { root: string; planFile: string }) => {
+  terraformApply: vi.fn(async (args: { root: string; planFile: string; env?: unknown }) => {
     calls.push(`apply ${args.root} ${args.planFile}`);
+    envs.push(["apply", args.env]);
     return { planFile: args.planFile, dir: `/x/${args.root}`, ...applyResult };
   }),
-  terraformOutputs: vi.fn(async (args: { root: string }) => {
+  terraformOutputs: vi.fn(async (args: { root: string; env?: unknown }) => {
     calls.push(`output ${args.root}`);
+    envs.push(["output", args.env]);
     return { id: `${args.root}-id` };
   }),
 }));
@@ -82,6 +89,38 @@ beforeEach(() => {
   planTargets.length = 0;
   planTexts.length = 0;
   planError = undefined;
+  envs.length = 0;
+});
+
+describe("terraform-apply with a run hook's env and check after init (#4842)", () => {
+  const env = { AWS_ROLE_ARN: "arn:aws:iam::1:role/e01" };
+
+  test("plan and run hand processEnv to init, plan, apply and output, and call afterInit between init and plan", async () => {
+    const order: string[] = [];
+    const planned = await terraformApplyCapability.plan!({ env: "test", component: "e01", processEnv: env, afterInit: async () => void order.push(`check after ${calls.length} calls`) }, { root: "e01" });
+    expect(calls).toEqual(["init e01", "plan e01 {}"]);
+    expect(order).toEqual(["check after 1 calls"]);
+    await terraformApplyCapability.run({ env: "test", component: "e01", processEnv: env, plans: { e01: planned.artifact } }, { root: "e01" });
+    expect(envs).toEqual([["init", env], ["plan", env], ["apply", env], ["output", env]]);
+  });
+
+  test("a check after init that throws stops the plan", async () => {
+    await expect(terraformApplyCapability.plan!({ env: "test", component: "e01", afterInit: async () => { throw new Error("a module outside the list"); } }, { root: "e01" })).rejects.toThrow("a module outside the list");
+    expect(calls).toEqual(["init e01"]);
+  });
+
+  test("a choudoufu root planned as a one-root set gets the env, and the check before its plan", async () => {
+    waveRoot = { wave: true, root: "estates/e01" };
+    const order: string[] = [];
+    await terraformApplyCapability.plan!({ env: "test", component: "e01", processEnv: env, afterInit: async () => void order.push(`check after ${calls.length} calls`) }, { root: "e01" });
+    expect(order).toEqual(["check after 0 calls"]);
+    expect(envs).toEqual([["plan-set", env]]);
+  });
+
+  test("without them nothing changes", async () => {
+    await terraformApplyCapability.plan!({ env: "test", component: "e01" }, { root: "e01" });
+    expect(envs).toEqual([["init", undefined], ["plan", undefined]]);
+  });
 });
 
 describe("terraform-apply plans with one show -json (#4479)", () => {

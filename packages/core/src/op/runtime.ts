@@ -298,6 +298,8 @@ export interface OpRunWaveTarget {
   error?: string;
   /** The resources the engine reported failed (#4629), by name or id. */
   failedResources?: string[];
+  /** Files a run hook wrote after the apply (#4842), relative to the job's directory. */
+  files?: string[];
 }
 
 /** The first chant that writes {@link OpRunRecord.wave}, a run record per op wave job (#4551). */

@@ -379,6 +379,8 @@ export interface ProductWaveHook {
   capabilities?: import("../components/capability").CapabilityRegistry;
   /** How the spec's command hooks run, when they call back into the product's process (`RunOpWaveOptions.hookExec`). */
   hookExec?: import("./stage-hooks").OpWaveAsyncExec;
+  /** Hooks around each run of a wave with a `step` (#4842, `RunOpWaveOptions.runHooks`). */
+  runHooks?: import("./op-waves-run-hooks").OpWaveRunHooks | readonly import("./op-waves-run-hooks").OpWaveRunHooks[];
 }
 
 let activeWave: ProductWaveHook | undefined;
