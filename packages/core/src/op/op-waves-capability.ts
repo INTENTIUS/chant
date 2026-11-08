@@ -31,6 +31,23 @@
  *   capability refuses as moved (`isPlanMovedError`) applied nothing and the
  *   job exits 4, the table's moved code (#4553); any other error fails it.
  *
+ * ## A wave planned as one (#4842)
+ *
+ * Some tools plan a wave as a whole. A `discover` wave asks the step's
+ * capability for its runs (`discoverRuns`), such as one layer of a
+ * Terragrunt repo's units from `terragrunt find`, and plans each run found
+ * with `{target}` filled. A wave marked `together` plans its runs in one
+ * `planGroup` call and applies them in one `runGroup` call, as a fan-out
+ * applies a group (ws-107): Terragrunt's `run --all` over the layer, or a
+ * composed run of roots that read each other. Each run keeps its own member
+ * digest (its share of the plan), and the group digest (the capability's
+ * digest of the whole with each run's, `groupDigest`) is one more digest
+ * member, `(wave plan)`, so an approval of one composition does not apply
+ * another. The group's artifact goes back to `runGroup`; a run's own
+ * artifact stays on its plan file for `{planJson}`. The run hooks run per
+ * run around the one call, each run's `processEnv` and `afterInit` on its
+ * member's context.
+ *
  * The registry is the project's (`fanOutRegistry`, the one `chant run
  * --components` builds), loaded once per job behind a dynamic import, so the
  * wave-job runtime bundle stays without the config loader. A product that
@@ -56,11 +73,13 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { Capability, CapabilityPlan, CapabilityRegistry, DeployContext } from "../components/capability";
+import type { Capability, CapabilityPlan, CapabilityRegistry, DeployContext, GroupContext, GroupMember } from "../components/capability";
 import { isPlanMovedError } from "../components/capability";
 import type { CapabilityTraceFacts } from "../otlp";
 import { composeChangeSet, type ChangeSetDocument, type ChangeSetPart } from "../change-set";
 import { computePlanDigest } from "../lifecycle/plan-digest";
+import { groupDigest } from "../components/group-digest";
+import { NEXT_RELEASE } from "../release-floors";
 import type { GatePolicyExec, GatePolicyRun } from "../gate-policy";
 import type { ResolvedGatePolicySource } from "../policy-source";
 import type { WaveMember } from "../wave-engine";
@@ -86,6 +105,13 @@ export function opWaveStepInput(spec: Pick<OpWavesSpec, "op" | "step">, wave: Pi
   const { kind: _kind, ...rest } = spec.step;
   const vars = { target: run.target, op: run.op ?? spec.op, wave: wave.name };
   return { ...(fill(rest, vars) as Record<string, unknown>), ...((run.input ? fill(run.input, vars) : {}) as Record<string, unknown>) };
+}
+
+/** The input `discoverRuns` gets (#4842): the spec's step with `{op}` and `{wave}` filled and `{target}` left as written. */
+export function opWaveDiscoverInput(spec: Pick<OpWavesSpec, "op" | "step">, wave: Pick<OpWave, "name">): Record<string, unknown> {
+  if (!spec.step) throw new Error("the spec names no step");
+  const { kind: _kind, ...rest } = spec.step;
+  return fill(rest, { target: "{target}", op: spec.op, wave: wave.name }) as Record<string, unknown>;
 }
 
 /** The context a run's step plans and applies with: the spec's `labels.Env`, else the wave's name, and the run's target as the component. */
@@ -124,7 +150,25 @@ export interface OpWaveStepPlan {
   destructive: boolean;
   /** The run's lock grain and rows (#4552), which the apply leases on the resource grain. */
   lock?: PlannedLock;
+  /** Set when the wave planned `together` (#4842): the one plan every run of it shares. */
+  group?: OpWaveStepGroup;
 }
+
+/** A wave's plan in one `planGroup` call (#4842), shared by each of its runs' plans. */
+export interface OpWaveStepGroup {
+  /** The group digest (`groupDigest`): the capability's digest of the whole, with each run's member and plan digest. */
+  digest: string;
+  /** What `planGroup` gave for `runGroup`. */
+  artifact?: unknown;
+  /** Each run's plan as the capability gave it, by target. */
+  plans: Record<string, CapabilityPlan>;
+}
+
+/** The digest member a wave planned `together` adds (#4842): no run has this name. */
+export const OP_WAVE_TOGETHER_MEMBER = "(wave plan)";
+
+/** The release that has `discover` with a `step`, and `together` waves (#4842). */
+export const OP_WAVE_STEP_WAVE_FLOOR = NEXT_RELEASE;
 
 /** Whether a part changes nothing, and whether it destroys or replaces something. */
 export function partEffects(part: ChangeSetPart | undefined): { empty: boolean; destructive: boolean } {
@@ -175,11 +219,16 @@ export async function planOpWaveStep(
     ...effects,
     lock,
   };
-  const file = join(cwd, at.planPath);
+  writeStepPlanFile(join(cwd, at.planPath), plan);
+  return plan;
+}
+
+/** A run's plan file, as a per-run `plan` command writes it: its digest, effects, member, artifact (when it is JSON) and part. */
+function writeStepPlanFile(file: string, plan: OpWaveStepPlan): void {
   mkdirSync(dirname(file), { recursive: true });
   let artifact: unknown;
   try {
-    artifact = planned.artifact === undefined ? undefined : JSON.parse(JSON.stringify(planned.artifact));
+    artifact = plan.artifact === undefined ? undefined : JSON.parse(JSON.stringify(plan.artifact));
   } catch {
     artifact = undefined;
   }
@@ -194,7 +243,190 @@ export async function planOpWaveStep(
       ...(plan.part ? { changeSet: plan.part } : {}),
     }) + "\n",
   );
-  return plan;
+}
+
+/**
+ * The runs of a `discover` wave through the spec's step (#4842): what the
+ * capability's `discoverRuns` finds for wave `k`, each a run of the spec's
+ * op, and how many waves it found.
+ */
+export async function discoverOpWaveStepRuns(at: { spec: OpWavesSpec; wave: OpWave; k: number; registry: CapabilityRegistry }): Promise<{ runs: OpWaveRun[]; waves?: number }> {
+  const { spec, wave, k } = at;
+  const kind = spec.step!.kind;
+  const capability = resolveCapability(at.registry, kind);
+  if (!capability.discoverRuns) throw new Error(`wave ${k} (${wave.name}) discovers its runs, and the capability "${kind}" cannot find them (it has no discoverRuns)`);
+  let found: { targets?: unknown; waves?: unknown };
+  try {
+    found = await capability.discoverRuns({ env: spec.labels?.Env ?? wave.name, wave: { name: wave.name, number: k } }, opWaveDiscoverInput(spec, wave) as never);
+  } catch (err) {
+    throw new Error(`finding the runs of wave ${k} (${wave.name}) through ${kind} failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  const targets = found?.targets;
+  if (!Array.isArray(targets) || !targets.every((t) => typeof t === "string" && t !== "")) throw new Error(`${kind} found the runs of wave ${k} (${wave.name}) as ${JSON.stringify(targets)}; give a list of targets`);
+  const dup = targets.find((t, i) => targets.indexOf(t) !== i);
+  if (dup !== undefined) throw new Error(`${kind} found ${dup} twice in wave ${k} (${wave.name})`);
+  const waves = found.waves;
+  if (waves !== undefined && (typeof waves !== "number" || !Number.isInteger(waves) || waves < 0)) throw new Error(`${kind} found ${JSON.stringify(waves)} waves for wave ${k} (${wave.name}); give a whole number`);
+  return { runs: (targets as string[]).map((target) => ({ target })), ...(waves !== undefined ? { waves: waves as number } : {}) };
+}
+
+/** The group members of a wave's runs (#4842): each run's filled input, its `dependsOn` within the wave, and its own context. */
+function waveGroupMembers(spec: OpWavesSpec, wave: OpWave, runs: readonly OpWaveRun[], ctxOf: (run: OpWaveRun) => DeployContext): GroupMember<Record<string, unknown>>[] {
+  const inWave = new Set(runs.map((r) => r.target));
+  return runs.map((run) => {
+    const input = opWaveStepInput(spec, wave, run);
+    const dependsOn = (run.dependsOn ?? []).filter((d) => inWave.has(d));
+    return { component: run.target, step: input, input, reads: [], ...(dependsOn.length > 0 ? { dependsOn } : {}), ctx: ctxOf(run) };
+  });
+}
+
+function waveGroupContext(spec: OpWavesSpec, wave: OpWave, runs: readonly OpWaveRun[]): GroupContext {
+  return { env: spec.labels?.Env ?? wave.name, components: runs.map((r) => r.target) };
+}
+
+function requireGroup(capability: Capability<never, unknown>, kind: string, wave: OpWave): void {
+  if (!capability.planGroup || !capability.runGroup) throw new Error(`wave "${wave.name}" plans its runs together, and the capability "${kind}" cannot (it needs planGroup and runGroup)`);
+}
+
+/**
+ * Plan a `together` wave's runs in one `planGroup` call (#4842), writing
+ * each run's plan file at `planPath(target)` (relative to `cwd`). Each run's
+ * plan carries the group. Throws when the call does or leaves a run out, and
+ * on a run's plan as {@link planOpWaveStep} does.
+ */
+export async function planOpWaveStepGroup(
+  at: {
+    spec: OpWavesSpec;
+    wave: OpWave;
+    cwd: string;
+    registry: CapabilityRegistry;
+    planPath: (target: string) => string;
+    lockGrain?: LockGrain | null;
+    policyBase?: string;
+    /** Each run's environment and check after init, from the run hooks. */
+    runCtx?: (target: string) => { processEnv?: Record<string, string>; afterInit?: () => Promise<void> };
+  },
+  runs: readonly OpWaveRun[],
+): Promise<OpWaveStepPlan[]> {
+  const { spec, wave } = at;
+  const kind = spec.step!.kind;
+  const capability = resolveCapability(at.registry, kind);
+  requireGroup(capability, kind, wave);
+  const members = waveGroupMembers(spec, wave, runs, (run) => {
+    const own = at.runCtx?.(run.target) ?? {};
+    return {
+      ...opWaveStepContext(spec, wave, run),
+      ...(at.lockGrain ? { lockGrain: at.lockGrain } : {}),
+      ...(at.policyBase ? { policyBase: at.policyBase } : {}),
+      ...(own.processEnv ? { processEnv: own.processEnv } : {}),
+      ...(own.afterInit ? { afterInit: own.afterInit } : {}),
+    };
+  });
+  let planned: { members?: Record<string, CapabilityPlan>; digest?: unknown; artifact?: unknown };
+  try {
+    planned = await capability.planGroup!(waveGroupContext(spec, wave, runs), members as never);
+  } catch (err) {
+    throw new Error(`planning wave "${wave.name}" together through ${kind} failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (typeof planned?.digest !== "string" || planned.digest === "") throw new Error(`${kind} planned wave "${wave.name}" together with no digest of the whole`);
+  const own = new Map<string, CapabilityPlan>();
+  for (const run of runs) {
+    const p = planned.members?.[run.target];
+    if (!p) throw new Error(`${kind} planned wave "${wave.name}" together without a plan for ${run.target}`);
+    own.set(run.target, p);
+  }
+  const digest = groupDigest(kind, runs.map((r) => ({ component: r.target, member: own.get(r.target)!.member, planDigest: own.get(r.target)!.planDigest })), planned.digest);
+  const group: OpWaveStepGroup = { digest, ...(planned.artifact !== undefined ? { artifact: planned.artifact } : {}), plans: Object.fromEntries(own) };
+  const out: OpWaveStepPlan[] = [];
+  for (const [i, run] of runs.entries()) {
+    const p = own.get(run.target)!;
+    if (typeof p.planDigest !== "string" || p.planDigest === "") throw new Error(`${kind} planned ${run.target} with no plan digest`);
+    const holes = p.changeSet?.member.holes ?? [];
+    if (holes.length > 0 && p.artifact === undefined && planned.artifact === undefined) throw new Error(`${run.target} was not planned: ${holes.map((h) => h.reason).join("; ")}`);
+    const effects = partEffects(p.changeSet);
+    if ((p.destructive?.length ?? 0) > 0) effects.destructive = true;
+    let lock: PlannedLock;
+    try {
+      lock = await resolvePlannedLock(capability, members[i]!.input, p, at.lockGrain);
+    } catch (err) {
+      throw new Error(`planning ${run.target} through ${kind} failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    const plan: OpWaveStepPlan = {
+      target: run.target,
+      member: p.member,
+      planDigest: p.planDigest,
+      ...(p.resourceDigests ? { resources: p.resourceDigests } : {}),
+      ...(p.artifact !== undefined ? { artifact: p.artifact } : {}),
+      ...(p.changeSet ? { part: p.changeSet } : {}),
+      ...effects,
+      lock,
+      group,
+    };
+    writeStepPlanFile(join(at.cwd, at.planPath(run.target)), plan);
+    out.push(plan);
+  }
+  return out;
+}
+
+/**
+ * Apply a `together` wave's runs in one `runGroup` call (#4842), with the
+ * plan the gate decided. Each run's outcome, in the order given: `applied`
+ * and `no-changes` applied, with the member's outputs; `partial`, `failed`
+ * and `not-started` failed. A throw fails every run, or moves every run
+ * when it is a moved plan (`isPlanMovedError`).
+ */
+export async function applyOpWaveStepGroup(
+  at: { spec: OpWavesSpec; wave: OpWave; registry: CapabilityRegistry; runEnv?: (target: string) => Record<string, string> | undefined },
+  runs: ReadonlyArray<{ run: OpWaveRun; plan: OpWaveStepPlan }>,
+): Promise<OpWaveStepApply[]> {
+  const { spec, wave } = at;
+  const kind = spec.step!.kind;
+  let capability: Capability<never, unknown>;
+  try {
+    capability = resolveCapability(at.registry, kind);
+    requireGroup(capability, kind, wave);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    return runs.map(() => ({ outcome: "failed", reason }));
+  }
+  const group = runs[0]?.plan.group;
+  if (!group || runs.some((r) => r.plan.group !== group)) return runs.map(() => ({ outcome: "failed", reason: `the runs of wave "${wave.name}" were not planned together, so they cannot apply together` }));
+  const byTarget = new Map(runs.map((r) => [r.run.target, r.plan]));
+  const members = waveGroupMembers(spec, wave, runs.map((r) => r.run), (run) => {
+    const plan = byTarget.get(run.target)!;
+    const env = at.runEnv?.(run.target);
+    return { ...opWaveStepContext(spec, wave, run), ...(plan.artifact !== undefined ? { plans: { [plan.member]: plan.artifact } } : {}), ...(env ? { processEnv: env } : {}) };
+  });
+  const plans = Object.fromEntries(runs.flatMap((r) => (group.plans[r.run.target] ? [[r.run.target, group.plans[r.run.target]!] as const] : [])));
+  let got: { members?: Record<string, { status: string; outputs?: Record<string, unknown>; error?: string }>; error?: string };
+  try {
+    got = await capability.runGroup!(waveGroupContext(spec, wave, runs.map((r) => r.run)), { ...(group.artifact !== undefined ? { artifact: group.artifact } : {}), digest: group.digest, plans }, members as never);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    const moved = isPlanMovedError(err);
+    return Promise.all(
+      runs.map(async (r, i): Promise<OpWaveStepApply> => {
+        const facts = await opWaveStepFacts(capability, members[i]!.input, r.plan, { error: err });
+        return { ...(moved ? { outcome: "moved" as const, reason } : { outcome: "failed" as const, reason }), ...(facts ? { facts } : {}) };
+      }),
+    );
+  }
+  return Promise.all(
+    runs.map(async (r, i): Promise<OpWaveStepApply> => {
+      const o = got?.members?.[r.run.target];
+      const input = members[i]!.input;
+      if (o && (o.status === "applied" || o.status === "no-changes")) {
+        const output = { status: o.status, ...(o.outputs ? { outputs: o.outputs } : {}) };
+        const facts = await opWaveStepFacts(capability, input, r.plan, { output });
+        return { outcome: "applied", output, ...(facts ? { facts } : {}) };
+      }
+      const what = o?.status === "not-started" ? "its part of the wave's apply never started" : o?.status === "partial" ? "part of its plan applied, and the rest did not" : o ? "its part of the wave's apply failed" : `${kind} said nothing of it`;
+      const why = o?.error ?? got?.error;
+      const reason = `${what}${why ? `: ${why}` : ""}`;
+      const facts = await opWaveStepFacts(capability, input, r.plan, { error: new Error(reason) });
+      return { outcome: "failed", reason, ...(facts ? { facts } : {}) };
+    }),
+  );
 }
 
 /** How one run's apply through its step came out, with what the capability knew about it (#4555). */

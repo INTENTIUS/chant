@@ -175,6 +175,7 @@ import { conePlanDigest, type PlanCone } from "../cone";
 import { fillStateReads, stateReadsProblems, waitingReadsReason, type TerraformStateRead } from "../state-reads";
 import { terraformStateOpCapabilities } from "../state-ops";
 import { terraformActionCapability } from "../action-ops";
+import { terragruntApply } from "../terragrunt/capability";
 
 /** The `terraform-apply` step's input. */
 export interface TerraformApplyStepInput {
@@ -696,7 +697,13 @@ export const terraformCapabilityPlugin: CapabilityPlugin = {
     return ownPackageVersion(import.meta.url);
   },
   capabilities(): Array<Capability<never, unknown>> {
-    return [terraformApplyCapability as Capability<never, unknown>, ...terraformStateOpCapabilities.map((c) => c as unknown as Capability<never, unknown>), terraformActionCapability as unknown as Capability<never, unknown>];
+    return [
+      terraformApplyCapability as Capability<never, unknown>,
+      ...terraformStateOpCapabilities.map((c) => c as unknown as Capability<never, unknown>),
+      terraformActionCapability as unknown as Capability<never, unknown>,
+      // #4842: Terragrunt units as an op wave's step, found at plan time and run with one run --all.
+      terragruntApply as unknown as Capability<never, unknown>,
+    ];
   },
   families(): Record<string, readonly string[]> {
     return TERRAFORM_VERB_FAMILIES;

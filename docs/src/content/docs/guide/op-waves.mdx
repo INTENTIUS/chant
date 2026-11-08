@@ -51,7 +51,8 @@ The spec is a JSON file committed to the repository. Its jobs read it at run tim
 | `branches` | Pushes to these branches run the waves. Default `["main"]` |
 | `base` | The commit the gate policy is read from. Default `HEAD^1` |
 | `waves[].runs` | One entry per target. A target appears once per wave |
-| `waves[].discover` | The runs come from `planWave` at plan time, not the spec ([Runs found at plan time](#runs-found-at-plan-time)) |
+| `waves[].discover` | The runs come from `planWave`, or the step's capability, at plan time, not the spec ([Runs found at plan time](#runs-found-at-plan-time)) |
+| `waves[].together` | With a `step`: plan the wave's runs in one call of the capability and apply them in one ([A wave planned as one](#a-wave-planned-as-one)) |
 | `waves[].rest` | On the last, discovering wave: once it applies, the job goes on through every wave the plan found |
 | `waves[].gate` | `always`, `on-destructive` or `never`. Default `always` |
 | `waves[].approval` | `ledger`, `pr-review`, `sealed` or `pull-request`: which approvals count ([Which approvals count](#which-approvals-count)). Default `ledger` |
@@ -259,7 +260,7 @@ The step is `{ kind, ...input }`. chant fills `{target}`, `{op}` and `{wave}` in
 - The apply is `capability.run` with the plan's artifact in `ctx.plans`, so the run applies the plan the gate decided. A run the capability refuses as moved applies nothing, the job lists it under `moved` and exits 4. Any other error fails the run.
 - Each run's plan file at `{plan}` carries `planDigest`, `member`, `artifact` and `changeSet`, so a `perRun` hook can read the plan.
 
-The capabilities are the project's, built the way `chant run --components` builds them from `chant.config`. A product that runs chant in process passes its own registry as `capabilities` to `runOpWave`. A `step` replaces the four commands, so the spec refuses it beside any of them. It also refuses `discover`, which only `planWave` can report, and `hooks.apply.runBy: "apply"`, since no apply command exists to hand the hooks to. Shares and job groups work as with commands: each share plans its slice through the step again and applies the runs whose digest still matches the decision.
+The capabilities are the project's, built the way `chant run --components` builds them from `chant.config`. A product that runs chant in process passes its own registry as `capabilities` to `runOpWave`. A `step` replaces the four commands, so the spec refuses it beside any of them. It also refuses `hooks.apply.runBy: "apply"`, since no apply command exists to hand the hooks to. Shares and job groups work as with commands: each share plans its slice through the step again and applies the runs whose digest still matches the decision.
 
 The wave-job runtime (`wave-runtime.mjs`) does not carry the config loader, so a spec with a `step` needs the full `@intentius/chant` install, or a product's own bin that passes `capabilities`.
 
@@ -319,6 +320,29 @@ Some tools find a wave's runs at run time. A Terragrunt repo's waves are its uni
 A discovering wave's runs file has `"discover": true` and no runs. `planWave` plans the runs it finds for wave `number`, lists them in `{plans}` (an entry may name its `op`), and says how many waves it found in `waves`. A wave number past the last one it found finds no runs, so the wave applies nothing and exits 0.
 
 A `rest` wave applies its own wave and then goes on to wave k+1, k+2 and so on, up to the `waves` its plan reports. It stops at the first wave that does not apply. Each of those waves plans in turn, waits on its own gate (`gateName` with its number), and is read at base under the `rest` wave's name. `--json` lists them under `rest`. A `rest` wave cannot have `shares`. A discovering wave with `shares` hands its share jobs the runs its deciding job found. `--record-plans` follows the `rest` waves too.
+
+With a `step` in place of `planWave`, the step's capability finds the runs ([#4842](https://github.com/INTENTIUS/chant/issues/4842)). chant calls its `discoverRuns` with the wave's name and number and the step's input, with `{op}` and `{wave}` filled and `{target}` left as written. It answers the wave's targets and how many waves it found. Each target then plans through the step with `{target}` filled. A capability with no `discoverRuns` fails the wave before anything plans. The terraform lexicon's `terragrunt-apply` finds a Terragrunt repo's units with `terragrunt find` and cuts them into layers by their dependencies, or, given `layers`, cuts each listed wave again by the graph:
+
+```json
+{
+  "step": { "kind": "terragrunt-apply", "unit": "{target}" },
+  "waves": [
+    { "name": "layer", "runs": [], "discover": true, "together": true },
+    { "name": "rest", "runs": [], "discover": true, "together": true, "rest": true }
+  ]
+}
+```
+
+### A wave planned as one
+
+Some tools plan a wave as a whole: Terragrunt runs a layer's units with one `run --all`, and a composed run plans roots that read each other as one root. A wave with a `step` and `together: true` plans its runs with one call of the capability's `planGroup` and applies them with one call of its `runGroup`, the methods a fan-out uses for a group of components. A capability without both fails the wave before anything plans.
+
+- Each run keeps its own member digest, its share of the plan, and its plan file. A run's own artifact stays on its plan file, so `{planJson}` and a cost hold read it; the whole plan's artifact goes back to `runGroup`.
+- The capability's digest of the whole, with each run's member and plan digest (`groupDigest`), is one more digest member, `(wave plan)`. An approval of one composition does not apply another.
+- The run hooks run for each run around the one call. Each run's `env` and `afterInit` reach its member's context.
+- A `beforeApply` that stops one run stops them all, since the one call applies every run. Each run then ends as its part of the apply did: `applied` and `no-changes` apply, the rest fail. A `runGroup` that throws a moved plan applies nothing, lists every run under `moved` and exits 4.
+
+`terragrunt-apply` plans the units with one `run --all` into its work directory and applies exactly those saved plans with one more. The units of one call need the same settings and the same `env` from the run hooks. `terraform-apply` plans and applies a together wave as one composed run (`ComposedRun`) when `terraform.compose.enabled` is set. A product can pass its own capability with the group methods it needs. A together wave cannot have `parallelism` over 1. `OP_WAVE_STEP_WAVE_FLOOR` is the first chant with `discover` on a step and `together`.
 
 ## Stage hooks
 

@@ -118,6 +118,10 @@ import {
   opWaveStepChangeSet,
   planJsonOf,
   planOpWaveStep,
+  planOpWaveStepGroup,
+  discoverOpWaveStepRuns,
+  applyOpWaveStepGroup,
+  OP_WAVE_TOGETHER_MEMBER,
   type OpWaveHolds,
   type OpWaveStepApply,
   type OpWaveStepPlan,
@@ -1186,9 +1190,12 @@ async function planWaveRuns(
   const lockGrain = at.options.lockGrain ?? (await declaredLockGrain(cwd, base));
   // #4613: a step's own policy engine (CrossGuard) reads its packs at the base the wave's rules were read at.
   const policyBase = base && base !== "HEAD" ? base : undefined;
+  // #4842: a discovering wave's runs are the ones its step's capability finds for wave k.
+  const found = discover ? await discoverOpWaveStepRuns({ spec, wave, k, registry }) : undefined;
+  if (found) runs = found.runs;
   const plans: OpWaveStepPlan[] = [];
   const hooks = opWaveRunHookList(at.options.runHooks);
-  for (const run of runs) {
+  const beforePlan = async (run: OpWaveRun): Promise<{ env?: Record<string, string>; afterInit?: () => Promise<void> }> => {
     // #4842: the product's run hooks give the run its environment and a check after init, or refuse it.
     const before = hooks.length > 0 ? await runOpWaveBeforePlan(hooks, runHookRun(at, run)) : {};
     if ("refused" in before) throw new Error(`${run.target} was not planned: ${before.refused}`);
@@ -1196,9 +1203,29 @@ async function planWaveRuns(
       at.runEnv ??= new Map();
       at.runEnv.set(run.target, before.env);
     }
-    const plan = await planOpWaveStep({ spec, wave, cwd, registry, planPath: opWavePlanPath(spec, k, run.target), lockGrain, ...(policyBase ? { policyBase } : {}), ...(before.env ? { processEnv: before.env } : {}), ...(before.afterInit ? { afterInit: before.afterInit } : {}) }, run);
-    at.steps?.set(run.target, plan);
-    plans.push(plan);
+    return before;
+  };
+  let together: string | undefined;
+  if (wave.together && runs.length > 0) {
+    // #4842: one plan of the whole wave, each run's hooks first.
+    const own = new Map<string, { env?: Record<string, string>; afterInit?: () => Promise<void> }>();
+    for (const run of runs) own.set(run.target, await beforePlan(run));
+    const runCtx = (target: string) => {
+      const b = own.get(target) ?? {};
+      return { ...(b.env ? { processEnv: b.env } : {}), ...(b.afterInit ? { afterInit: b.afterInit } : {}) };
+    };
+    for (const plan of await planOpWaveStepGroup({ spec, wave, cwd, registry, planPath: (target) => opWavePlanPath(spec, k, target), lockGrain, ...(policyBase ? { policyBase } : {}), runCtx }, runs)) {
+      at.steps?.set(plan.target, plan);
+      plans.push(plan);
+    }
+    together = plans[0]?.group?.digest;
+  } else {
+    for (const run of runs) {
+      const before = await beforePlan(run);
+      const plan = await planOpWaveStep({ spec, wave, cwd, registry, planPath: opWavePlanPath(spec, k, run.target), lockGrain, ...(policyBase ? { policyBase } : {}), ...(before.env ? { processEnv: before.env } : {}), ...(before.afterInit ? { afterInit: before.afterInit } : {}) }, run);
+      at.steps?.set(run.target, plan);
+      plans.push(plan);
+    }
   }
   const members = plans.map((p) => ({
     member: p.target,
@@ -1210,7 +1237,14 @@ async function planWaveRuns(
   }));
   const parts = new Map(plans.flatMap((p) => (p.part ? [[p.target, p.part] as const] : [])));
   const changeSet = opWaveStepChangeSet(plans);
-  return { members, ...(parts.size > 0 ? { parts } : {}), ...(changeSet ? { changeSet } : {}) };
+  return {
+    members,
+    ...(parts.size > 0 ? { parts } : {}),
+    ...(changeSet ? { changeSet } : {}),
+    // #4842: the capability's digest of the whole wave is a digest member of its own.
+    ...(together ? { extras: [{ member: OP_WAVE_TOGETHER_MEMBER, planDigest: together }] } : {}),
+    ...(found?.waves !== undefined ? { waves: found.waves } : {}),
+  };
 }
 
 /**
@@ -3768,6 +3802,9 @@ async function applyLeased(
       log(`wave ${k} (${wave.name}): apply failed, so none of ${runs.map((r) => r.target).join(", ")} counts as applied`);
       result.failed.push(...runs.map((r) => r.target));
     }
+  } else if (spec.step && wave.together) {
+    // #4842: the wave's runs apply in one call of the step's capability.
+    await applyStepRunsTogether(options, ctx, runs);
   } else if (spec.step && (wave.parallelism ?? spec.parallelism ?? 1) > 1) {
     // #4625: the step's runs apply several at once.
     await applyStepRunsAtOnce(options, ctx, runs, wave.parallelism ?? spec.parallelism!);
@@ -3868,6 +3905,64 @@ async function applyLeased(
     if (after.failed) failed(ctx, `wave ${k} (${wave.name}) applied, and then a hook after the apply failed`);
   }
   if (recordPath && result.hooks.length > 0) writeRecord(recordPath, decision, result);
+}
+
+/**
+ * A `together` wave's runs applied in one `runGroup` call (#4842), with the
+ * run hooks around it: each run's `beforeApply` first, and any that stops
+ * one fails every run with nothing applied, since the one call applies them
+ * all; then the call, each run with its own environment; then each run's
+ * `afterApply`, whose files go on the run and whose failure fails a run that
+ * applied. The outcomes land in the result in the wave's order.
+ */
+async function applyStepRunsTogether(options: RunOpWaveOptions, ctx: WaveContext, runs: readonly OpWaveRun[]): Promise<void> {
+  const { spec, k, wave, log, result } = ctx;
+  const missing = runs.filter((r) => !ctx.steps?.get(r.target)).map((r) => r.target);
+  if (missing.length > 0) {
+    log(`wave ${k} (${wave.name}): this job holds no plan of ${missing.join(", ")}, so none of its runs applied`);
+    result.failed.push(...runs.map((r) => r.target));
+    return;
+  }
+  const registry = await opWaveRegistry(options, ctx.cwd, options.capabilities);
+  const hooks = opWaveRunHookList(options.runHooks);
+  const planned = runs.map((run) => {
+    const plan = ctx.steps!.get(run.target)!;
+    return { run, plan, hook: { ...runHookRun(ctx, run), planDigest: plan.planDigest, plan: opWavePlanPath(spec, k, run.target), ...(plan.artifact !== undefined ? { artifact: plan.artifact } : {}) } };
+  });
+  const startedMs = new Map(runs.map((r) => [r.target, targetStarted(options, k, r.target)]));
+  for (const p of hooks.length > 0 ? planned : []) {
+    const stop = await runOpWaveBeforeApply(hooks, p.hook);
+    if (stop === undefined) continue;
+    log(`${p.run.target}: ${stop}, so none of wave ${k}'s runs applied`);
+    for (const r of runs) targetSettled(options, result, k, r.target, startedMs.get(r.target)!, "failed", { error: r.target === p.run.target ? stop : `not applied: ${p.run.target}: ${stop}` });
+    result.failed.push(...runs.map((r) => r.target));
+    return;
+  }
+  const got = await applyOpWaveStepGroup({ spec, wave, registry, runEnv: (target) => ctx.runEnv?.get(target) }, planned);
+  for (const [i, p] of planned.entries()) {
+    let outcome = got[i]!;
+    let files: string[] | undefined;
+    if (hooks.length > 0) {
+      const after = await runOpWaveAfterApply(hooks, { ...p.hook, outcome: outcome.outcome, ...(outcome.outcome === "applied" ? { output: outcome.output } : { reason: outcome.reason }) });
+      if (after.files.length > 0) files = after.files;
+      if (after.failed && outcome.outcome === "applied") outcome = { outcome: "failed", reason: `applied, and then ${after.failed}`, ...(outcome.facts ? { facts: outcome.facts } : {}) };
+      else if (after.failed) log(`${p.run.target}: ${after.failed}`);
+    }
+    const target = p.run.target;
+    targetSettled(options, result, k, target, startedMs.get(target)!, outcome.outcome === "applied" ? "ok" : outcome.outcome === "moved" ? "skipped" : "failed", {
+      ...(outcome.outcome !== "applied" ? { error: outcome.reason } : {}),
+      ...(outcome.facts ? { facts: outcome.facts } : {}),
+      ...(files ? { files } : {}),
+    });
+    if (outcome.outcome === "applied") result.applied.push(target);
+    else if (outcome.outcome === "moved") {
+      log(`${target}: its plan moved since wave ${k} was decided, so it was not applied: ${outcome.reason}`);
+      result.moved.push(target);
+    } else {
+      log(`${target}: apply failed: ${outcome.reason}`);
+      result.failed.push(target);
+    }
+  }
 }
 
 /**

@@ -27,6 +27,9 @@
  */
 
 import { computePlanDigest } from "../lifecycle/plan-digest";
+import { groupDigest } from "./group-digest";
+
+export { groupDigest };
 import type { ChangeSetPart } from "../change-set";
 import type { PlanShape } from "./covered-round";
 import {
@@ -573,19 +576,6 @@ export async function regroupRemaining(
 /** The group each component of `plan` is a member of. */
 export function groupsByComponent(plan: Pick<FanOutPlan, "groups">): Map<string, FanOutGroup> {
   return new Map((plan.groups ?? []).flatMap((g) => g.components.map((c) => [c, g] as const)));
-}
-
-/**
- * The group digest (ws-107): over the capability's kind, each member's
- * component, change-set member and own plan digest, sorted, and the
- * capability's digest of the composition. One member more, or the same
- * members composed differently, moves it.
- */
-export function groupDigest(kind: string, members: ReadonlyArray<{ component: string; member: string; planDigest: string }>, composition: string): string {
-  const sorted = [...members]
-    .map((m) => ({ component: m.component, member: m.member, planDigest: m.planDigest }))
-    .sort((a, b) => a.component.localeCompare(b.component) || a.member.localeCompare(b.member));
-  return computePlanDigest("capability-group", { kind, members: sorted, composition });
 }
 
 /**

@@ -411,6 +411,31 @@ export interface Capability<In = unknown, Out = unknown> {
    * error is a moved plan ({@link isPlanMovedError}).
    */
   runGroup?(ctx: GroupContext, run: GroupRun, members: readonly GroupMember<In>[]): Promise<CapabilityGroupOutcome>;
+  /**
+   * Optional (#4842): the runs of an op wave whose runs are found at plan
+   * time (`discover`), such as a Terragrunt repo's units in one layer of
+   * `terragrunt find`'s graph. `input` is the step's input with `{op}` and
+   * `{wave}` filled and `{target}` left as written. Each run found then
+   * plans with `{target}` filled, one at a time, or with `planGroup` on a
+   * wave marked `together`. Throwing fails the wave before anything plans.
+   */
+  discoverRuns?(ctx: RunDiscoveryContext, input: In): Promise<DiscoveredRuns>;
+}
+
+/** What `discoverRuns` is asked with (#4842). */
+export interface RunDiscoveryContext {
+  /** The environment the wave's runs plan in, as `DeployContext.env`. */
+  env: string;
+  /** The wave: its name in the spec and its number from 1. A `rest` wave past the spec's asks with each number in turn. */
+  wave: { name: string; number: number };
+}
+
+/** What `discoverRuns` answers (#4842). */
+export interface DiscoveredRuns {
+  /** The wave's runs, by target, in the order they apply. Empty: the wave has none, and applies nothing. */
+  targets: string[];
+  /** How many waves the discovery found, which a `rest` wave walks to. */
+  waves?: number;
 }
 
 /**

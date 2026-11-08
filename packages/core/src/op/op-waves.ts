@@ -360,9 +360,19 @@ export interface OpWave {
    * The runs come from the product at plan time (#3821): `planWave` gets a
    * runs file with no runs and `discover: true`, and plans the runs it finds
    * for wave k (a Terragrunt repo's dependency layer from `terragrunt find`).
-   * Needs `planWave`.
+   * Needs `planWave`, or a `step` whose capability has `discoverRuns`
+   * (#4842).
    */
   discover?: boolean;
+  /**
+   * With a `step` (#4842): plan the wave's runs in one call of the step's
+   * capability (`planGroup`) and apply them in one (`runGroup`), in place
+   * of one plan and one apply per run. For a tool that plans a wave as one,
+   * such as Terragrunt's `run --all` over a layer's units or a composed run
+   * of roots that read each other. The capability's digest of the whole is
+   * a digest member of its own, `(wave plan)`. Not with `parallelism` over 1.
+   */
+  together?: boolean;
   /**
    * The last wave only, with `discover` (#3821): once it applies, the job
    * goes on to wave k+1, k+2, ... while `planWave` reports more waves
@@ -1067,8 +1077,11 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
     if (wave.jobs !== undefined) assertOpWaveJobGroups(where, wave);
     if (wave.discover !== undefined && typeof wave.discover !== "boolean") throw new Error(`${where}: wave "${wave.name}" has discover ${JSON.stringify(wave.discover)}; use true or false.`);
     if (wave.rest !== undefined && typeof wave.rest !== "boolean") throw new Error(`${where}: wave "${wave.name}" has rest ${JSON.stringify(wave.rest)}; use true or false.`);
+    if (wave.together !== undefined && typeof wave.together !== "boolean") throw new Error(`${where}: wave "${wave.name}" has together ${JSON.stringify(wave.together)}; use true or false.`);
+    if (wave.together && spec.step === undefined) throw new Error(`${where}: wave "${wave.name}" plans its runs together, which only a \`step\`'s capability does. Give step.`);
+    if (wave.together && (wave.parallelism ?? 1) > 1) throw new Error(`${where}: wave "${wave.name}" plans and applies its runs together in one call, so it has no parallelism over 1.`);
     if (wave.discover) {
-      if (spec.planWave === undefined) throw new Error(`${where}: wave "${wave.name}" discovers its runs, which only \`planWave\` can report. Give planWave.`);
+      if (spec.planWave === undefined && spec.step === undefined) throw new Error(`${where}: wave "${wave.name}" discovers its runs, which only \`planWave\` can report. Give planWave.`);
       if ((wave.runs ?? []).length > 0) throw new Error(`${where}: wave "${wave.name}" discovers its runs, so it lists none.`);
     }
     if (wave.rest) {

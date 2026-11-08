@@ -206,6 +206,31 @@ export function terragruntWaves(units: readonly TerragruntUnit[], options: Terra
 }
 
 /**
+ * The waves a pipeline lists (#4842), cut again by the graph discovery gives
+ * now: each listed wave split into its own dependency layers, the listed
+ * order kept, so canary waves listed first stay first. A pipeline written
+ * with the graph comes back as it is. A unit that depends on a unit of a
+ * later listed wave is refused, since the list is stale; units the pipeline
+ * does not list stay out. Empty layers are dropped.
+ */
+export function terragruntListedWaves(listed: readonly (readonly string[])[], units: readonly TerragruntUnit[]): string[][] {
+  const deps = new Map(units.map((u) => [u.path, u.dependencies]));
+  const waveOf = new Map<string, number>();
+  listed.forEach((w, i) => w.forEach((u) => waveOf.set(u, i)));
+  const out: string[][] = [];
+  listed.forEach((wave, i) => {
+    const members = new Set(wave);
+    for (const u of wave) {
+      const later = (deps.get(u) ?? []).filter((d) => (waveOf.get(d) ?? -1) > i);
+      if (later.length > 0) throw new TerragruntWaveError(`${u} depends on ${later.join(", ")}, which the pipeline applies in a later wave; cut the waves again`);
+    }
+    const sub = wave.map((path) => ({ path, dependencies: (deps.get(path) ?? []).filter((d) => members.has(d)) }));
+    out.push(...terragruntWaves(sub).filter((w) => w.length > 0));
+  });
+  return out;
+}
+
+/**
  * Every unit that depends on one of `changed`, directly or through other
  * units, not counting `changed` itself. Sorted by path.
  *
