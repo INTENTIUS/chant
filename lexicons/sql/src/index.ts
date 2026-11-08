@@ -80,6 +80,7 @@ export {
   YODEL_COMMIT_COMMANDS,
   YODEL_COMMIT_FINDINGS,
   YODEL_COMMIT_FLOOR,
+  YODEL_REBASE_CONFLICT_FLOOR,
   YODEL_COMMIT_WORDS,
   allowedYodelCommitArgv,
   yodelCommitRefusalReply,
