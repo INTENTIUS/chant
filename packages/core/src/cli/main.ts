@@ -737,7 +737,12 @@ Ops:
                         CHANT_RELAY_KEY, SLACK_SIGNING_SECRET,
                         TEAMS_WEBHOOK_SECRET, CHANT_RELAY_PRINCIPAL,
                         CHANT_RELAY_MAX_AGE, CHANT_RELAY_HOST (default
-                        127.0.0.1) and CHANT_RELAY_PORT (default 8787)
+                        127.0.0.1, or --host) and CHANT_RELAY_PORT (default
+                        8787, or --port). --repo <url> --token-env <VAR>
+                        (#4759) refuses a token that is more than
+                        approve-only and clones the repo's default branch
+                        itself, the token passed to git as a header only;
+                        --forge names the forge off github.com and gitlab.com
 
   lock <target>...      Lock targets for a pull request on chant/lifecycle
                         (--pr <n>, --stage plan|apply|lock, --head <sha>,

@@ -205,6 +205,29 @@ Then the relay records the approval as `chant approve <op> <gate> --plan <digest
 
 A gate that asks a decision point passes on the point's answer, not an approval. There the relay answers the question the gate waits on instead, as `chant workspace points answer <id> --answer <value> --by <principal> --relayed-by <relay>` would. The value is a yes, or the one answer the gate's `pass` names. The point's quorum decides whether the clicker counts, and a gate that passes on several answers is refused, since a button names no one of them ([#4611](https://github.com/INTENTIUS/chant/issues/4611)).
 
+Each click fetches the default branch first, the one `origin/HEAD` names, so a signer added since the relay started counts without a restart. A click whose fetch fails records nothing. A click on a link button on the same message (one with a `url`) is answered 200 and ignored ([#4759](https://github.com/INTENTIUS/chant/issues/4759)).
+
+### Let the relay clone the repository
+
+A relay container needs no checkout of its own. Given the repository's https clone address and the name of the variable that holds its token, the relay checks the token, clones the default branch into a temporary directory, and serves from there ([#4759](https://github.com/INTENTIUS/chant/issues/4759)):
+
+```bash
+RELAY_TOKEN=... CHANT_RELAY_KEY=... SLACK_SIGNING_SECRET=... \
+  chant notify relay --repo https://github.com/acme/infra.git --token-env RELAY_TOKEN --host 0.0.0.0
+```
+
+`--token-env` defaults to `CHANT_RELAY_TOKEN`, and `CHANT_RELAY_REPO` and `CHANT_RELAY_FORGE` stand in for `--repo` and `--forge`. `--forge github|gitlab|forgejo` names the forge for a host other than github.com and gitlab.com. `--host 0.0.0.0` listens on every interface, as a container's port is reached from outside it; without it the relay keeps to loopback.
+
+The relay pushes `chant/lifecycle` with the token and needs nothing more, so it refuses to start with a token that could do more:
+
+| Forge | Refused when |
+|---|---|
+| GitHub | The token is a classic token, its account administers the repository, or the default branch is not protected. Use a fine-grained token for the one repository with Contents: Read and write |
+| GitLab | The token has a scope beyond `read_api`, `read_repository` and `write_repository`, its user is a Maintainer or Owner, the default branch is not protected, or a role the user holds may push to it |
+| Forgejo | The token's user administers the repository or may push to the default branch |
+
+The token reaches git as an `http.extraHeader` in the environment of the relay's git calls (`GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>`, `GIT_CONFIG_VALUE_<n>`). It is not written to a file or into the remote's address. `NOTIFY_RELAY_CLONE_FLOOR` in `@intentius/chant/notify-relay` is the first chant that does this.
+
 ## See also
 
 - [Op Waves](/chant/guide/op-waves/): the waves, their gates and exit codes

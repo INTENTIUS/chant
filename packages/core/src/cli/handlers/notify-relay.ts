@@ -13,15 +13,31 @@
  * 127.0.0.1:8787). The relay refuses to start with neither chat secret, or
  * with no relay key, since it could then verify nothing.
  *
- * Each click fetches `chant/lifecycle`, reads the signers file at base, and
- * records through `recordGateApproval`, one click at a time, so two clicks
- * never race on the ledger. A gate that asks a decision point gets its
- * question answered through `answerPoint` instead (#4611).
+ * Each click fetches the default branch and `chant/lifecycle`, reads the
+ * signers file at the default branch's tip, and records through
+ * `recordGateApproval`, one click at a time, so two clicks never race on the
+ * ledger. A gate that asks a decision point gets its question answered
+ * through `answerPoint` instead (#4611).
+ *
+ * With `--repo <url>` the relay checks its token and clones the repo itself
+ * (#4759, ../../notify-relay-repo.ts):
+ *
+ * ```
+ * chant notify relay --repo https://github.com/acme/infra.git --token-env RELAY_TOKEN --host 0.0.0.0
+ * ```
+ *
+ * `--token-env` names the variable holding the approve-only token (default
+ * `CHANT_RELAY_TOKEN`), `--forge` the forge for a host other than github.com
+ * and gitlab.com, and `--host` and `--port` override `CHANT_RELAY_HOST` and
+ * `CHANT_RELAY_PORT`. `CHANT_RELAY_REPO` and `CHANT_RELAY_FORGE` stand in for
+ * the flags.
  */
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { activeProductWords } from "../../ci-product-words";
 import { CHANT_EXIT } from "../../exit-codes";
 import { DEFAULT_RELAY_MAX_AGE_SECONDS } from "../../notify";
-import { DEFAULT_RELAY_HOST, DEFAULT_RELAY_PORT, RELAY_ENV, startRelayServer, type RelayDeps, type RelayPending, type RelaySettings } from "../../notify-relay";
+import { DEFAULT_RELAY_HOST, DEFAULT_RELAY_PORT, RELAY_ENV, RELAY_REPO_ENV, startRelayServer, type RelayDeps, type RelayPending, type RelaySettings } from "../../notify-relay";
 import { formatError, formatInfo } from "../format";
 import type { CommandContext } from "../registry";
 
@@ -56,6 +72,31 @@ function serial(): <T>(fn: () => Promise<T>) => Promise<T> {
   };
 }
 
+const run = promisify(execFile);
+
+/**
+ * Fetch the default branch, the one `origin/HEAD` names, so the signers are
+ * read at its current tip (#4759). A checkout with no `origin/HEAD` reads its
+ * local branch as before. A fetch that fails throws: signers read from a
+ * stale tip could still count one removed since.
+ */
+export async function fetchDefaultBranch(cwd: string): Promise<void> {
+  let head: string;
+  try {
+    head = (await run("git", ["symbolic-ref", "-q", "refs/remotes/origin/HEAD"], { cwd })).stdout.trim();
+  } catch {
+    return;
+  }
+  const branch = head.replace(/^refs\/remotes\/origin\//, "");
+  if (!branch || branch === head) return;
+  try {
+    await run("git", ["fetch", "-q", "origin", `+refs/heads/${branch}:refs/remotes/origin/${branch}`], { cwd });
+  } catch (e) {
+    const err = e as { stderr?: string; message: string };
+    throw new Error(`cannot fetch ${branch} to read the signers at its tip: ${(err.stderr ?? "").trim() || err.message}`);
+  }
+}
+
 /** The relay's reads and writes against the checkout at `cwd`. */
 export function checkoutRelayDeps(cwd: string, principal: string): RelayDeps {
   const words = activeProductWords();
@@ -63,11 +104,13 @@ export function checkoutRelayDeps(cwd: string, principal: string): RelayDeps {
   return {
     principal,
     words,
-    async signers() {
-      const { scopeSource } = await import("../../workspace/write-scope");
-      const policy = scopeSource(cwd).policy;
-      return { signers: policy.signers, path: policy.signersPath };
-    },
+    signers: () =>
+      one(async () => {
+        await fetchDefaultBranch(cwd);
+        const { scopeSource } = await import("../../workspace/write-scope");
+        const policy = scopeSource(cwd).policy;
+        return { signers: policy.signers, path: policy.signersPath };
+      }),
     pending: (digest) =>
       one(async () => {
         const { fetchLifecycle } = await import("../../lifecycle/git");
@@ -132,16 +175,55 @@ export function checkoutRelayDeps(cwd: string, principal: string): RelayDeps {
   };
 }
 
+/** The flags and variables that make the relay clone the repo itself (#4759). */
+export interface RelayRepoOptions {
+  repo?: string;
+  tokenEnv?: string;
+  forge?: string;
+  host?: string;
+  port?: string;
+}
+
 /** `chant notify relay`. Runs until the process is stopped. */
-export async function runNotifyRelay(_ctx: CommandContext): Promise<number> {
-  const read = relaySettingsFromEnv(process.env);
-  if ("error" in read) {
-    console.error(formatError({ message: `chant notify relay did not start: ${read.error}` }));
+export async function runNotifyRelay(ctx: CommandContext): Promise<number> {
+  const a = ctx.args;
+  return serveNotifyRelay({
+    ...(a.repoUrl ? { repo: a.repoUrl } : {}),
+    ...(a.tokenEnv ? { tokenEnv: a.tokenEnv } : {}),
+    ...(a.forge ? { forge: a.forge } : {}),
+    ...(a.host ? { host: a.host } : {}),
+    ...(a.port?.[0] ? { port: a.port[0] } : {}),
+  });
+}
+
+/** Read the settings, clone when asked, and serve. Runs until the process is stopped. */
+export async function serveNotifyRelay(o: RelayRepoOptions, env: NodeJS.ProcessEnv = process.env): Promise<number> {
+  const fail = (why: string): number => {
+    console.error(formatError({ message: `chant notify relay did not start: ${why}` }));
     return CHANT_EXIT.failed;
-  }
+  };
+  const read = relaySettingsFromEnv({ ...env, ...(o.host ? { [RELAY_ENV.host]: o.host } : {}), ...(o.port ? { [RELAY_ENV.port]: o.port } : {}) });
+  if ("error" in read) return fail(read.error);
   const words = activeProductWords();
-  const principal = process.env[RELAY_ENV.principal]?.trim() || `${words.product}-relay`;
-  const deps = checkoutRelayDeps(process.cwd(), principal);
+  const principal = env[RELAY_ENV.principal]?.trim() || `${words.product}-relay`;
+  if (/[\r\n]/.test(principal)) return fail(`${RELAY_ENV.principal} is one principal on one line`);
+  let cwd = process.cwd();
+  const repoUrl = o.repo ?? (env[RELAY_REPO_ENV.repo] || undefined);
+  if (repoUrl) {
+    const tokenEnv = o.tokenEnv ?? RELAY_REPO_ENV.token;
+    const { prepareRelayCheckout } = await import("../../notify-relay-repo");
+    const made = await prepareRelayCheckout({ url: repoUrl, token: env[tokenEnv]?.trim() ?? "", forge: o.forge ?? (env[RELAY_REPO_ENV.forge] || undefined), env });
+    if ("error" in made) return fail(made.error.startsWith("the token is empty") ? `${tokenEnv} is empty: the relay pushes approvals with an approve-only token` : made.error);
+    // The token as a git header for this process's git calls only: the relay fetches and pushes chant/lifecycle with it.
+    Object.assign(process.env, made.gitEnv);
+    cwd = made.dir;
+    // chant approve writes and pushes the ledger of the process's directory.
+    process.chdir(cwd);
+    console.error(formatInfo(`cloned ${made.repo.path} (${made.repo.forge}, default branch ${made.branch}) into ${cwd}, pushing as ${made.user}`));
+  } else if (o.tokenEnv || o.forge) {
+    return fail("--token-env and --forge go with --repo <url>");
+  }
+  const deps = checkoutRelayDeps(cwd, principal);
   const { url } = await startRelayServer(read.settings, deps, { host: read.host, port: read.port, log: (line) => console.error(formatInfo(line)) });
   console.error(formatInfo(`${words.product} notify relay listens at ${url} (POST /slack, POST /teams, GET /healthz), recording approvals relayed by ${principal}`));
   await new Promise<void>(() => {});

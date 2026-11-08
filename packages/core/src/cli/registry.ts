@@ -661,6 +661,12 @@ export interface ParsedArgs {
   runIndexLimit?: number;
   /** `chant ci serve --repo <owner/repo>` (#4095): the repository it polls. */
   ciRepo?: string;
+  /** `chant notify relay --repo <url>` (#4759): the https clone address of the repository the relay clones. */
+  repoUrl?: string;
+  /** `chant notify relay --token-env <VAR>` (#4759): the variable holding the relay's approve-only token. */
+  tokenEnv?: string;
+  /** `chant notify relay --host <address>` (#4759): where the relay listens. */
+  host?: string;
   /** `chant ci serve --max-jobs <n>` (#4095): how many jobs run at once. Default 1. */
   maxJobs?: number;
   /** `chant ci serve --author <login>`, repeatable (#4095): plan only pull requests these logins opened. */
