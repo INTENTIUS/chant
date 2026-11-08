@@ -92,7 +92,7 @@ import { appendRunRecord, DEFAULT_RUN_ENV } from "../lifecycle/run-ledger";
 import { LifecyclePushLostError, pushLifecycleRebasing } from "../lifecycle/git";
 import { resolveCiJob } from "../lifecycle/release-ledger";
 import type { OpRunPolicyRow, OpRunRecordInput, OpRunStepRecord, OpRunWave, OpRunWavePlan, OpRunWaveTarget } from "./runtime";
-import { foldPolicyRows, opWaveAfterPlanProblems, runOpWaveAfterPlanHooks, type OpWaveAfterPlanHook, type OpWaveAfterPlanRun } from "./op-waves-after-plan";
+import { foldPolicyRows, opWaveAfterPlanProblems, runOpWaveAfterPlanHooks, type OpWaveAfterPlanHook, type OpWaveAfterPlanRun, type OpWaveAfterPlanWaveOutcome } from "./op-waves-after-plan";
 import { activeOtlp, RunEventTrace, type CapabilityTraceFacts, type OtlpExporter } from "../otlp";
 import { joinRunEventSinks, resolveRunEventRun, type RunEventSink } from "../run-event-stream";
 import { OpWaveRunEvents } from "./op-waves-events";
@@ -279,6 +279,8 @@ export interface OpWaveMember extends WaveMember {
   override?: { by: string; at: string; digest: string; reason: string };
   /** The product's policy holds the plan for a person (#4294). */
   held?: { rules: string[]; reason?: string };
+  /** Who may override this run's denial (#4842), from an after-plan hook, in place of the wave's overriders. */
+  overriders?: string[];
 }
 
 /** Where a wave's policy came from. */
@@ -394,6 +396,12 @@ export interface OpWaveDecision {
   overridesSpentAt?: string;
   /** Digest members that are no run, from the plans file (#3821), such as the wave's cost. */
   extras?: WaveMember[];
+  /**
+   * After an approval of other plans (#4842): the after-plan hook's report of
+   * the plans now and the one stored for the plans approved, written for the
+   * job that explains the refusal. Paths relative to the job's directory.
+   */
+  reports?: { current: string; approved?: string };
   /** On a discovering wave (#3821): how many waves the plan command found. */
   discovered?: { waves?: number };
   /**
@@ -949,6 +957,8 @@ interface WaveContext {
   steps?: Map<string, OpWaveStepPlan>;
   /** The plans file's change set (#4551), which a `pull-request` gate checks the pull request's approval against (#4550). */
   changeSetDoc?: ChangeSetDocument;
+  /** An after-plan hook's report of the wave's plans (#4842), stored beside the pending fact. */
+  report?: string;
 }
 
 function planRun(opts: { spec: OpWavesSpec; wave: number; cwd: string; exec: OpWaveExec }, waveName: string, run: OpWaveRun): OpWaveMember {
@@ -1346,7 +1356,7 @@ async function runAfterPlan(
   members: OpWaveMember[],
   parts: ReadonlyMap<string, ChangeSetPart> | undefined,
   policyRows: ReadonlyMap<string, OpRunPolicyRow>,
-): Promise<{ failed?: string; holds: string[] }> {
+): Promise<{ failed?: string; holds: string[]; wave?: OpWaveAfterPlanWaveOutcome }> {
   const { spec, k, wave, cwd, options, result } = ctx;
   const hooks = afterPlanHooks(options);
   const job: OpWaveAfterPlanRun["job"] = options.decide ? "decide" : options.group !== undefined ? "group" : options.share !== undefined ? "share" : "wave";
@@ -1387,11 +1397,12 @@ async function runAfterPlan(
       if (folded.denied) m.denied = folded.denied;
       if (folded.held) m.held = folded.held;
     }
+    if (mine?.overriders) m.overriders = mine.overriders;
     if (rows.length === 0 && !mine?.files.length) continue;
     plans[m.member] = { planDigest: m.planDigest, ...(rows.length ? { policy: rows } : {}), ...(mine?.files.length ? { files: [...mine.files] } : {}) };
   }
   if (Object.keys(plans).length > 0) result.plans = plans;
-  return { ...(out?.failed ? { failed: out.failed } : {}), holds: out?.holds ?? [] };
+  return { ...(out?.failed ? { failed: out.failed } : {}), holds: out?.holds ?? [], ...(out ? { wave: out.wave } : {}) };
 }
 
 /** One field of a plan file, or undefined when the file or the field is missing. */
@@ -2501,7 +2512,7 @@ async function planOpWave(options: RunOpWaveOptions, { k, pass }: WaveAttempt<Ru
   if (before.failed) return { end: failed(ctx, `a hook before the plan failed, so nothing in wave ${k} was planned or applied`) };
   if (before.waitingOn) return { end: await decided(ctx, decision, recordPath, before.waitingOn) };
   if (spec.step) ctx.steps = new Map();
-  const { members, pending, overriders, overridersSource, extras: planExtras, waves: found, changeSet, parts } = await planWaveRuns(ctx, wave.runs, wave.discover === true);
+  const { members, pending: planPending, overriders: planOverriders, overridersSource: planOverridersSource, extras: planExtras, waves: found, changeSet, parts } = await planWaveRuns(ctx, wave.runs, wave.discover === true);
   // #4545: the holds at base (else the change's), run over the plans before the gate decides.
   let extras = planExtras;
   let policyRows = new Map<string, OpRunPolicyRow>();
@@ -2521,6 +2532,19 @@ async function planOpWave(options: RunOpWaveOptions, { k, pass }: WaveAttempt<Ru
   const inProcess = await runAfterPlan(ctx, members, parts, policyRows);
   if (inProcess.failed) return { end: failed(ctx, `${inProcess.failed}, so nothing in wave ${k} was approved or applied`) };
   holds.push(...inProcess.holds);
+  // #4842: what the hooks added to the wave as a whole, over what a plans file gave.
+  const answer = inProcess.wave;
+  holds.push(...(answer?.holds ?? []));
+  const pending = answer?.pending ? { ...planPending, ...answer.pending } : planPending;
+  const overriders = answer?.overriders ?? planOverriders;
+  const overridersSource = answer?.overriders ? answer.overridersSource : planOverridersSource;
+  if (answer?.members.length) {
+    const named = new Set((extras ?? []).map((m) => m.member));
+    const clash = answer.members.find((m) => named.has(m.member));
+    if (clash) return { end: failed(ctx, `wave ${k} (${wave.name}): an after-plan hook and the wave's holds both name the digest member ${clash.member}, so nothing in it was approved or applied`) };
+    extras = [...(extras ?? []), ...answer.members];
+  }
+  if (answer?.report !== undefined) ctx.report = answer.report;
   if (wave.discover) {
     wave = { ...wave, runs: members.map((m) => ({ target: m.member, ...(m.op !== spec.op ? { op: m.op } : {}) })) };
     ctx.wave = wave;
@@ -2642,6 +2666,7 @@ async function decideOpWave(
     // Plans nobody previewed apply only under an approval of these very plans, whatever the gate policy says.
     if (unseen) refuseUnseen(ctx, decision);
   }
+  if (ctx.report !== undefined) await keepWaveReport(options, ctx, decision, ctx.report);
   const code = await decided(ctx, decision, recordPath);
   if (code.exitCode !== 0) return { end: code };
   log(
@@ -2657,6 +2682,51 @@ async function decideOpWave(
     return { end: result };
   }
   return { go: { runs: wave.runs, earlierHolds: [], recordPath } };
+}
+
+/** Where a wave's reports go for the job that explains a moved approval (#4842), relative to the job's directory. */
+export function opWaveReportDir(spec: Pick<OpWavesSpec, "name">, k: number): string {
+  return `.chant/op-waves/${spec.name}/wave-${k}/report`;
+}
+
+/**
+ * Keep an after-plan hook's report of the wave's plans (#4842). While the
+ * wave waits, it is stored beside the pending fact, once per digest. When
+ * the plans moved after an approval, it and the report stored for the
+ * approved plans are written to {@link opWaveReportDir} and named on the
+ * decision. A report that cannot be kept is logged; it never decides the gate.
+ */
+async function keepWaveReport(options: RunOpWaveOptions, ctx: WaveContext, decision: OpWaveDecision, report: string): Promise<void> {
+  if (decision.status !== "waiting") return;
+  const { spec, k, wave, cwd, log } = ctx;
+  const port = options.gates ?? gitGateLedgerPort({ cwd });
+  const label = `wave ${k} (${wave.name})`;
+  if (port.storeGateReport) {
+    try {
+      await port.storeGateReport(spec.name, decision.gate, decision.digest, report);
+    } catch (err) {
+      log(`${label}: the report of these plans was not kept beside the pending fact: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  const was = decision.mismatch?.approved;
+  if (was === undefined) return;
+  let approved: string | null = null;
+  try {
+    approved = (await port.readGateReport?.(spec.name, decision.gate, was)) ?? null;
+  } catch (err) {
+    log(`${label}: the report of the approved plans could not be read: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (approved === null) log(`${label}: no report was kept for the approved plans ${was}`);
+  const dir = opWaveReportDir(spec, k);
+  mkdirSync(join(cwd, dir), { recursive: true });
+  const current = `${dir}/current.json`;
+  writeFileSync(join(cwd, current), report);
+  const reports: { current: string; approved?: string } = { current };
+  if (approved !== null) {
+    reports.approved = `${dir}/approved.json`;
+    writeFileSync(join(cwd, reports.approved), approved);
+  }
+  decision.reports = reports;
 }
 
 /**
@@ -2858,14 +2928,16 @@ async function settleDenials(ctx: WaveContext, decision: OpWaveDecision, listed:
   let moved = false;
   for (const m of decision.members) {
     if (!m.denied || m.override) continue;
+    // #4842: a run's own overriders, from an after-plan hook, count for it in place of the wave's.
+    const mayOverride = m.overriders ?? overriders;
     const verdict = og.decideOverride({
       ledger,
       applied,
       subject: m.member,
       planDigest: m.planDigest,
       rules: m.denied.rules,
-      overriders,
-      overridersPath: listed ? (source ?? "the overriders the plans file names") : path,
+      overriders: mayOverride,
+      overridersPath: m.overriders ? (source ?? `the overriders an after-plan hook names for ${m.member}`) : listed ? (source ?? "the overriders the plans file names") : path,
       mode: sealed ? "sealed" : "ledger",
       ...(signers ? { signers } : {}),
       now,
@@ -2897,7 +2969,7 @@ async function settleDenials(ctx: WaveContext, decision: OpWaveDecision, listed:
         log(`${m.member}: the denial was not recorded for an override: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
-    log(`${m.member}: ${overriders.length ? `${overriders.join(", ")} may` : "nobody listed may"} override it with: ${og.overrideCommand(m.member, m.denied.rules, sealed)}`);
+    log(`${m.member}: ${mayOverride.length ? `${mayOverride.join(", ")} may` : "nobody listed may"} override it with: ${og.overrideCommand(m.member, m.denied.rules, sealed)}`);
   }
   if (still.length > 0) {
     decision.status = "refused";

@@ -83,6 +83,7 @@ export {
   OP_WAVE_PLAN_PATH_FLOOR,
   OP_WAVES_PREVIEW_FLOOR,
   opWaveRunsPath,
+  opWaveReportDir,
   opWaveSetDigest,
   parseOpWavesSpec,
   recordOpWaveHeadPlans,
@@ -137,8 +138,8 @@ export type { OpWaveNewerCommit, OpWaveNewerCommitPort } from "./op-waves-stand-
 export { OP_WAVE_RELEASE_RECORD_FLOOR, opWaveReleaseNames, opWaveReleaseProblems, releaseOfCommit } from "./op-waves-release";
 export { gitOpWaveReleasePort } from "./op-waves-release-port";
 export type { OpWaveReleaseNames, OpWaveReleaseOutcome, OpWaveReleasePort, OpWaveReleaseRequest } from "./op-waves-release";
-export { foldPolicyRows, opWaveAfterPlanProblems, opWaveAfterPlanResultProblems, runOpWaveAfterPlanHooks } from "./op-waves-after-plan";
-export type { OpWaveAfterPlanHook, OpWaveAfterPlanOutcome, OpWaveAfterPlanResult, OpWaveAfterPlanRun, OpWaveAfterPlanRunOutcome } from "./op-waves-after-plan";
+export { OP_WAVE_AFTER_PLAN_WAVE_FLOOR, foldPolicyRows, opWaveAfterPlanProblems, opWaveAfterPlanResultProblems, opWaveAfterPlanWaveResultProblems, runOpWaveAfterPlanHooks } from "./op-waves-after-plan";
+export type { OpWaveAfterPlanHook, OpWaveAfterPlanOutcome, OpWaveAfterPlanResult, OpWaveAfterPlanRun, OpWaveAfterPlanRunOutcome, OpWaveAfterPlanWave, OpWaveAfterPlanWaveOutcome, OpWaveAfterPlanWaveResult } from "./op-waves-after-plan";
 export { OP_WAVE_AFTER_PLAN_FLOOR } from "./runtime";
 export type { OpRunPolicyRow, OpRunWave, OpRunWavePlan, OpRunWaveTarget } from "./runtime";
 export type { OpWaveOutcome } from "./op-waves-notify";
@@ -154,7 +155,7 @@ export { runOpLocally, parseDuration, OpRunFailure } from "./local-executor";
 export type { StepRecord, OpRunResult, RunOpOptions } from "./local-executor";
 export { currentOpRun, withOpRunContext } from "./run-context";
 export type { OpRunContext, PassedGate } from "./run-context";
-export { evaluateGate, gitGateLedgerPort, memoryGateLedgerPort, approveCommand, describeGateMismatch, gateIsSealed } from "./gate";
+export { evaluateGate, gitGateLedgerPort, memoryGateLedgerPort, approveCommand, describeGateMismatch, gateIsSealed, opWaveGateReportPath } from "./gate";
 export type { GateLedgerPort, GateCheck, GateCheckInput, PendingGatePush, GateDigestMismatch, GateQuorumProgress, GateTally } from "./gate";
 export { tallyGateApprovals, humanQuorumSince, approverOf } from "./gate";
 export { planGateResumes, standingGateFacts } from "./gate-resume-plan";
