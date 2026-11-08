@@ -109,7 +109,24 @@ export const ChantConfigSchema = z.object({
   release: z.object({
     autoRecord: z.boolean().optional(),
     publish: z.array(PublishDeclarationSchema).optional(),
-    images: z.array(z.object({ name: z.string().min(1), build: z.string().min(1), archive: z.string().min(1) }).strict()).optional(),
+    images: z
+      .array(
+        z.union([
+          z.object({ name: z.string().min(1), build: z.string().min(1), archive: z.string().min(1) }).strict(),
+          // #4819: chant builds the Dockerfile as the reproducible OCI archive itself.
+          z
+            .object({
+              name: z.string().min(1),
+              dockerfile: z.string().min(1),
+              context: z.string().min(1).optional(),
+              platforms: z.array(z.string().min(1)).min(1).optional(),
+              archive: z.string().min(1).optional(),
+              prepare: z.string().min(1).optional(),
+            })
+            .strict(),
+        ]),
+      )
+      .optional(),
     lane: z.string().regex(/^[a-z0-9][a-z0-9-]*$/, "a ci.green lane name: lowercase letters, digits and dashes").optional(),
     workflow: z.object({
       trigger: z.enum(["tag", "dispatch"]).optional(),
@@ -393,9 +410,12 @@ export interface ChantConfig {
      * `build` writes the OCI archive at `archive`, and the cut records its
      * digest and hands every digest to the build through `CHANT_RELEASE_DIGESTS`,
      * so a package can pin the images it ships with. An `oci` target pushes
-     * the archive. See ./lifecycle/release-images.ts.
+     * the archive. An entry may name a `dockerfile` (with `context`,
+     * `platforms`, `archive` and `prepare`) in place of `build`, and chant
+     * runs the reproducible build itself (#4819). See
+     * ./lifecycle/release-images.ts.
      */
-    images?: Array<{ name: string; build: string; archive: string }>;
+    images?: import("./lifecycle/release-images").ReleaseImageDeclaration[];
     /**
      * The green lane `chant release cut` and `chant release candidates` check
      * when `--lane` is not given (#4692): one `ci.green.lanes` declares in

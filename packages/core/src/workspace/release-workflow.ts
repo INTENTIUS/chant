@@ -28,6 +28,7 @@
  * renders the tag-triggered file it always did.
  */
 import { ACTION_PINS, tagComments, usesRef } from "../action-pins";
+import { resolveReleaseImages } from "../lifecycle/release-images";
 import { GENERATED_MARKER } from "../discovery/files";
 import type { SecurityGroup } from "./security";
 import type { OpSetupStep } from "../lexicon";
@@ -551,7 +552,7 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     groups,
     workspaceRoot,
     ...(release?.workflow ? { pipeline: release.workflow } : {}),
-    ...((release?.images?.length ?? 0) > 0 ? { images: true, imageArchives: release!.images!.map((i) => i.archive) } : {}),
+    ...((release?.images?.length ?? 0) > 0 ? { images: true, imageArchives: resolveReleaseImages(release!.images!).map((i) => i.archive) } : {}),
     ...(release?.lane ? { lane: release.lane } : {}),
     ...(release?.publish ? { publish: release.publish } : {}),
     ...(args.ciInstall ? { install: args.ciInstall } : {}),

@@ -252,6 +252,26 @@ release: {
 
 Each `build` runs in the member's directory with `SOURCE_DATE_EPOCH` set to the commit's time and `CHANT_RELEASE_LABEL` to the label, and writes the OCI archive at `archive`, a layout directory or a tar file of one. The cut records the archive's top manifest digest, which is the digest a registry serves once the `oci` target pushes it, as an image artifact named after the image. It writes `{ "<name>": "sha256:..." }` to a file and runs `--build` with `CHANT_RELEASE_DIGESTS` naming that file, so the build that packs the package can copy the digests into it. A name that is also a component's is refused (`release-image-name-taken`). The dry run builds the images too, since its compile runs the build command.
 
+An entry may name a Dockerfile instead of a command, and chant runs the reproducible build itself ([#4819](https://github.com/INTENTIUS/chant/issues/4819)):
+
+```ts
+images: [
+  { name: "pulumi", dockerfile: "images/plywood-pulumi/Dockerfile", prepare: "npm run build && npm pack -w @intentius/plywood --pack-destination images/pack" },
+],
+```
+
+chant creates a `docker-container` buildx builder named `chant-release` when there is none. It runs `docker buildx build --no-cache --provenance=false --sbom=false --build-arg SOURCE_DATE_EPOCH=...` for every platform in `platforms` (default `linux/amd64` and `linux/arm64`, one image index) and writes `type=oci,dest=<archive>,rewrite-timestamp=true`. `context` defaults to `.`, and `archive` to `dist/images/<name>.tar`. `prepare` runs once, before any build and with `CHANT_RELEASE_DIGESTS` unset, so whatever the image copies in, such as a bundle or a packed package, is the same in the cut and the publish job. Building arm64 on amd64 needs QEMU's binfmt handlers. An entry with both `build` and `dockerfile` is refused (`release-image-invalid`).
+
+The build that packs the package turns the digests into the table it bakes in with `releaseImagePins` from `@intentius/chant/lifecycle/release-images`. That module loads under plain Node, so a `.mjs` build script can import it. Pass each image's name and its reference at this version, and the package's version:
+
+```js
+const table = releaseImagePins({ images: { pulumi: `ghcr.io/intentius/plywood-pulumi:${version}-pulumi3.272.0` }, version });
+// ... bundle with the table baked in ...
+writeReleaseImagePins(table, { out: "dist/image-digests.json", bundles: ["dist/plywood.mjs"] });
+```
+
+Outside a release build the table is `undefined` and `writeReleaseImagePins` removes the pins file. A `CHANT_RELEASE_LABEL` that is not the version is refused (`release-label-not-version`), and so is a name the digests file has no digest for (`release-image-digest-missing`) and a bundle that does not carry every digest (`release-pin-not-bundled`). `RELEASE_IMAGE_DOCKERFILE_FLOOR` is the first chant with them.
+
 The publish job checks out the release's commit and runs `chant release images <label>` before the build that packs the package. It builds each image again, refuses one whose digest is not the recorded one (`release-image-digest-mismatch`), and writes the recorded digests to `.chant/release-digests.json` (or `-o <file>`), printing `CHANT_RELEASE_DIGESTS=<file>` for the job to export. The `oci` target then refuses an archive that is not the recorded one, so the image pushed is the one the package pins. This needs a build that writes the same archive from the same commit: timestamps rewritten from `SOURCE_DATE_EPOCH`, no logs or caches in the layers, and no attestations built into the archive. #4657's thread has the check against terragucci's Dockerfiles.
 
 An npm target's `pins` names the file in the package that carries the digests. The publish plan refuses a package whose file holds a `sha256:` digest the release does not record as an image (`publish-npm-pin-unknown`), and a target none of whose packages has the file (`publish-npm-pins-missing`). `chant release verify` makes the same check on a package built in the checkout (`release-pin-unknown`).
