@@ -23,6 +23,10 @@ import {
   runCommit,
   COMMIT_PR_ENV,
   CI_COMMIT_ARG_FLOOR,
+  CI_COMMIT_HARNESS_BREAK_FLOOR,
+  COMMIT_HARNESS_BREAK_ENV,
+  COMMIT_HARNESS_FORGE,
+  commitHarnessBreaks,
   commitArgv,
   GITLAB_COMMIT_ARG_VAR,
   type CommitRefusalReply,
@@ -571,5 +575,73 @@ describe("the comment's argument (#4820)", () => {
 
   test("the floor is the next release until it ships", () => {
     expect(CI_COMMIT_ARG_FLOOR).toBe(NEXT_RELEASE);
+  });
+});
+
+describe("the harness's BREAK switch for land (#4836)", () => {
+  const harness = (checks: string) => ({ [COMMIT_HARNESS_BREAK_ENV]: checks, BREAK: "1", GITHUB_SERVER_URL: COMMIT_HARNESS_FORGE });
+
+  test("is read only in a BREAK arm on the harness's Forgejo, and refused anywhere else", () => {
+    expect(commitHarnessBreaks({})).toEqual({ checks: [] });
+    expect(commitHarnessBreaks(harness("paths"))).toEqual({ checks: ["paths"] });
+    expect(commitHarnessBreaks({ ...harness("paths, moved-base"), GITHUB_SERVER_URL: `${COMMIT_HARNESS_FORGE}/` })).toEqual({ checks: ["paths", "moved-base"] });
+    expect(commitHarnessBreaks({ ...harness("paths"), BREAK: undefined })).toMatchObject({ refused: expect.stringMatching(/only in a BREAK arm of chant's e2e harness/) });
+    expect(commitHarnessBreaks({ ...harness("paths"), GITHUB_SERVER_URL: "https://github.com" })).toMatchObject({ refused: expect.stringMatching(/only in a BREAK arm/) });
+    expect(commitHarnessBreaks({ ...harness("paths"), GITHUB_SERVER_URL: undefined })).toMatchObject({ refused: expect.any(String) });
+    expect(commitHarnessBreaks({ ...harness("paths"), GITLAB_CI: "true" })).toMatchObject({ refused: expect.any(String) });
+    expect(commitHarnessBreaks(harness("guarded"))).toMatchObject({ refused: expect.stringMatching(/paths and moved-base/) });
+    expect(commitHarnessBreaks(harness(""))).toEqual({ checks: [] });
+  });
+
+  test("the harness's Forgejo is the one chant's e2e stack runs", async () => {
+    const { HARNESS_HOSTS } = await import("./e2e-harness/stack");
+    expect(COMMIT_HARNESS_FORGE).toBe(HARNESS_HOSTS.forgejo);
+  });
+
+  test("outside a harness the switch fails the land and pushes nothing", async () => {
+    const w = world();
+    const { out } = await cycle(w, settings(), { env: { [COMMIT_HARNESS_BREAK_ENV]: "paths" } });
+    expect(out).toMatchObject({ result: "failed", code: 1 });
+    expect(out.reason).toMatch(new RegExp(COMMIT_HARNESS_BREAK_ENV));
+    expect(sh(["rev-parse", "refs/heads/feature"], w.r.origin).trim()).toBe(w.r.head);
+    expect(w.replies[0]).toMatch(/only in a BREAK arm.*nothing was pushed/);
+  });
+
+  test("paths: a change outside allowed lands, and says the check was off", async () => {
+    const w = world();
+    const { out } = await cycle(w, settings(), { command: formatter({ "other.tf": "z\n" }), env: harness("paths") });
+    expect(out.result).toBe("pushed");
+    expect(out.paths).toEqual(["main.tf", "other.tf"]);
+    expect(out.reason).toContain("BREAK: the path check was off");
+    expect(w.replies[0]).toContain("BREAK: the path check was off");
+  });
+
+  test("paths: a guarded path is still refused", async () => {
+    const w = world();
+    const { out } = await cycle(w, settings(), { command: formatter({ ".github/workflows/x.yml": "on: push\n" }), env: harness("paths") });
+    expect(out.result).toBe("refused");
+    expect(out.reason).toBe("the change touches .github/workflows/x.yml");
+    expect(sh(["rev-parse", "refs/heads/feature"], w.r.origin).trim()).toBe(w.r.head);
+  });
+
+  test("moved-base: a base that moved while the command ran lands the merge of the tip the command ran on", async () => {
+    const w = world();
+    const ran = onMain(w, { "migrations/002.sql": "x\n" });
+    const { out } = await cycle(w, settings({ mergeBase: true }), { env: harness("moved-base"), between: () => void onMain(w, { "migrations/003.sql": "y\n" }, "moved") });
+    expect(out.result).toBe("pushed");
+    expect(out.reason).toContain("BREAK: the moved-base check was off");
+    const parents = sh(["log", "-1", "--format=%P", "refs/heads/feature"], w.r.origin).trim().split(" ");
+    expect(parents).toEqual([w.r.head, ran]);
+  });
+
+  test("one check off leaves the other on", async () => {
+    const w = world();
+    onMain(w, { "migrations/002.sql": "x\n" });
+    const { out } = await cycle(w, settings({ mergeBase: true }), { env: harness("paths"), between: () => void onMain(w, { "migrations/003.sql": "y\n" }, "moved") });
+    expect(out).toMatchObject({ result: "refused", reason: "the base moved" });
+  });
+
+  test("the floor is the next release until it ships", () => {
+    expect(CI_COMMIT_HARNESS_BREAK_FLOOR).toBe(NEXT_RELEASE);
   });
 });

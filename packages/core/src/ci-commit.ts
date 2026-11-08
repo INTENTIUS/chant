@@ -52,6 +52,8 @@ export const CI_COMMIT_FILES_FLOOR = "0.124.73";
 export const CI_COMMIT_REPLY_FLOOR = "0.124.77";
 /** The first chant whose commit job takes `commentArg`, one argument after the comment's word passed into the argv (#4820). */
 export const CI_COMMIT_ARG_FLOOR = NEXT_RELEASE;
+/** The first chant whose `commit land` reads {@link COMMIT_HARNESS_BREAK_ENV} in a BREAK arm of chant's e2e harness (#4836). */
+export const CI_COMMIT_HARNESS_BREAK_FLOOR = NEXT_RELEASE;
 
 /** What starts a commit run: a person's comment, or a check job's finding. */
 export type CommitTrigger = "comment" | "check";
@@ -854,6 +856,51 @@ export async function runCommit(i: CommitRunInput): Promise<{ rc: string; change
   return { rc, changed: patch.length > 0 };
 }
 
+// ── the harness's BREAK switch (#4836) ─────────────────────────────────────
+
+/**
+ * The push job's variable that turns one of land's checks off, for a BREAK
+ * arm of a product's e2e harness scenario: a comma list of
+ * {@link COMMIT_HARNESS_CHECKS}. It proves the check matters: with it off,
+ * the scenario's expectations must fail. Read only by `chant commit land`,
+ * and refused anywhere but chant's harness ({@link commitHarnessBreaks}).
+ * The command never sees it: `commandEnv` refuses every `CHANT_COMMIT_*`.
+ */
+export const COMMIT_HARNESS_BREAK_ENV = "CHANT_COMMIT_HARNESS_BREAK";
+
+/**
+ * The checks the switch may turn off. `paths`: a change outside `allowed`
+ * and `allowedFiles` lands (a guarded path is still refused). `moved-base`:
+ * with `mergeBase`, a base that moved while the command ran lands the merge
+ * of the tip the command ran on.
+ */
+export const COMMIT_HARNESS_CHECKS = ["paths", "moved-base"] as const;
+export type CommitHarnessCheck = (typeof COMMIT_HARNESS_CHECKS)[number];
+
+/** The forge a job of chant's e2e harness reaches, `HARNESS_HOSTS.forgejo` (./e2e-harness/stack.ts). */
+export const COMMIT_HARNESS_FORGE = "http://forgejo:3000";
+
+const HARNESS_WORDS: Record<CommitHarnessCheck, string> = { paths: "the path check", "moved-base": "the moved-base check" };
+
+/**
+ * The checks {@link COMMIT_HARNESS_BREAK_ENV} turns off, or why it is
+ * refused. It is read only in a BREAK arm of chant's e2e harness: `BREAK=1`,
+ * not GitLab, and a job whose `GITHUB_SERVER_URL` is the harness's Forgejo,
+ * {@link COMMIT_HARNESS_FORGE}. Unset or empty, no check is off.
+ */
+export function commitHarnessBreaks(env: Record<string, string | undefined>): { checks: CommitHarnessCheck[] } | { refused: string } {
+  const raw = env[COMMIT_HARNESS_BREAK_ENV]?.trim() ?? "";
+  if (raw === "") return { checks: [] };
+  const server = env.GITHUB_SERVER_URL?.replace(/\/+$/, "");
+  if (env.BREAK !== "1" || env.GITLAB_CI === "true" || server !== COMMIT_HARNESS_FORGE) {
+    return { refused: `${COMMIT_HARNESS_BREAK_ENV} is read only in a BREAK arm of chant's e2e harness (BREAK=1 on the harness's Forgejo, ${COMMIT_HARNESS_FORGE}), and this job is not one` };
+  }
+  const named = raw.split(",").map((c) => c.trim()).filter((c) => c !== "");
+  const bad = named.filter((c) => !(COMMIT_HARNESS_CHECKS as readonly string[]).includes(c));
+  if (bad.length > 0) return { refused: `${COMMIT_HARNESS_BREAK_ENV} names ${bad.join(", ")}; the checks it turns off are ${COMMIT_HARNESS_CHECKS.join(" and ")}` };
+  return { checks: [...new Set(named)] as CommitHarnessCheck[] };
+}
+
 // ── commit land ────────────────────────────────────────────────────────────
 
 /**
@@ -970,6 +1017,10 @@ export async function landCommitChange(i: CommitLandInput): Promise<CommitLandOu
   const req = await resolveCommitRequest(i.words, s, i.env, i.event, i.forge);
   if ("refused" in req) return finish({ result: s.on === "check" ? "skipped" : "refused", reason: req.refused });
   ({ pr, user } = req);
+  // #4836: a BREAK arm of the harness may turn a check off; anywhere else the switch fails the land.
+  const harness = commitHarnessBreaks(i.env);
+  if ("refused" in harness) return finish({ result: "failed", reason: harness.refused }, `${harness.refused}, so nothing was pushed.`);
+  const off = new Set(harness.checks);
   const decision = readCommitDecision(i.dir);
   if (!decision || decision.name !== s.name || decision.on !== s.on || (decision.pr !== undefined && decision.pr !== pr) || (decision.go && decision.arg !== req.arg)) {
     return finish({ result: "failed", reason: "the commit job left no decision this job can read" }, "the commit job left nothing to land, so nothing was pushed.");
@@ -1017,7 +1068,11 @@ export async function landCommitChange(i: CommitLandInput): Promise<CommitLandOu
     } catch (e) {
       return finish({ result: "failed", reason: `could not fetch ${target} (${errText(e)})` });
     }
-    if (baseSha !== decision.baseSha) return finish({ result: s.on === "check" ? "skipped" : "refused", reason: "the base moved" }, `${code(target)} moved while ${s.name} ran, so nothing was pushed. Ask again.`);
+    if (baseSha !== decision.baseSha) {
+      if (!off.has("moved-base")) return finish({ result: s.on === "check" ? "skipped" : "refused", reason: "the base moved" }, `${code(target)} moved while ${s.name} ran, so nothing was pushed. Ask again.`);
+      // BREAK: land the merge of the tip the command ran on, which the check exists to stop.
+      baseSha = decision.baseSha;
+    }
   }
 
   // The limit and the approval again, on this job's own read.
@@ -1055,7 +1110,9 @@ export async function landCommitChange(i: CommitLandInput): Promise<CommitLandOu
     return finish({ result: "refused", reason: `the patch does not apply to ${sha.slice(0, 8)}` }, `the change does not apply to ${sha.slice(0, 8)} (${errText(e)}), so nothing was pushed.`);
   }
   if (paths.length === 0) return nothing();
-  const { forbidden, outside } = commitRefusedPaths(paths, s);
+  const refusedPaths = commitRefusedPaths(paths, s);
+  const forbidden = refusedPaths.forbidden;
+  const outside = off.has("paths") ? [] : refusedPaths.outside;
   if (forbidden.length > 0 || outside.length > 0) {
     const bad = [...new Set([...forbidden, ...outside])];
     return finish(
@@ -1080,10 +1137,11 @@ export async function landCommitChange(i: CommitLandInput): Promise<CommitLandOu
   } catch (e) {
     return finish({ result: "failed", reason: `could not push to ${head.branch} (${errText(e)})`, commit: commitSha }, `could not push to ${code(head.branch)} (${errText(e)}), so nothing was pushed.`);
   }
+  const breakNote = off.size > 0 ? ` (BREAK: ${[...off].map((c) => HARNESS_WORDS[c]).join(" and ")} ${off.size === 1 ? "was" : "were"} off)` : "";
   const voided = approved ? ` The plan of ${code(sha.slice(0, 8))} was approved by ${approved}; the new commit is planned again and needs approval again.` : "";
   return finish(
-    { result: "pushed", reason: `pushed ${commitSha} to ${head.branch}`, commit: commitSha, paths, ...(approved ? { approvalVoided: approved } : {}) },
-    `pushed ${code(commitSha.slice(0, 8))} to ${code(head.branch)}${user ? ` for ${user}` : ""}, from ${baseSha ? `a merge of ${code(decision.base!)} and ` : ""}${code(ranArgv)}, changing ${paths.map(code).join(", ")}.${voided} Nothing was applied, approved or merged.`,
+    { result: "pushed", reason: `pushed ${commitSha} to ${head.branch}${breakNote}`, commit: commitSha, paths, ...(approved ? { approvalVoided: approved } : {}) },
+    `pushed ${code(commitSha.slice(0, 8))} to ${code(head.branch)}${user ? ` for ${user}` : ""}, from ${baseSha ? `a merge of ${code(decision.base!)} and ` : ""}${code(ranArgv)}, changing ${paths.map(code).join(", ")}.${voided} Nothing was applied, approved or merged.${breakNote}`,
   );
 }
 
