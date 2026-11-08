@@ -814,9 +814,23 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.ciSecrets = args[++i];
       if (!result.ciSecrets || result.ciSecrets.startsWith("-")) throw new Error("--secrets needs the host's secrets file, a dotenv or JSON file only its owner can read: --secrets <file>");
     } else if (arg === "--repo") {
-      // `chant ci serve --repo <owner/repo>` (#4095): the repository whose pull requests and target branch it polls.
-      result.ciRepo = args[++i];
-      if (!result.ciRepo || !/^[^/\s-][^/\s]*\/[^/\s]+$/.test(result.ciRepo)) throw new Error("--repo needs the repository as owner/name: --repo <owner/repo>");
+      const value = args[++i];
+      if (value && /^https?:\/\//.test(value)) {
+        // `chant notify relay --repo <url>` (#4759): the repository the relay clones.
+        result.repoUrl = value;
+      } else {
+        // `chant ci serve --repo <owner/repo>` (#4095): the repository whose pull requests and target branch it polls.
+        result.ciRepo = value;
+        if (!result.ciRepo || !/^[^/\s-][^/\s]*\/[^/\s]+$/.test(result.ciRepo)) throw new Error("--repo needs the repository as owner/name, or for chant notify relay its https clone address: --repo <owner/repo>, --repo <url>");
+      }
+    } else if (arg === "--token-env") {
+      // `chant notify relay --token-env <VAR>` (#4759): the variable holding the relay's approve-only token.
+      result.tokenEnv = args[++i];
+      if (!result.tokenEnv || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(result.tokenEnv)) throw new Error("--token-env needs a variable's name: --token-env <VAR>");
+    } else if (arg === "--host") {
+      // `chant notify relay --host <address>` (#4759): where the relay listens; 0.0.0.0 for every interface.
+      result.host = args[++i];
+      if (!result.host || result.host.startsWith("-")) throw new Error("--host needs an address to listen on, such as 0.0.0.0: --host <address>");
     } else if (arg === "--run-index-limit") {
       // `chant ci run --run-index-limit <n>` (#4098): how many runs the index at the report URL keeps.
       const n = Number(args[++i]);

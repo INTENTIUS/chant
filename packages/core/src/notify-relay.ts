@@ -47,6 +47,7 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { CiProductWords } from "./ci-product-words";
 import type { GatedRequest } from "./lifecycle/gated-request-digest";
 import { readRelayToken, RELAY_APPROVE_ACTION, RELAY_DECLINE_ACTION, type RelayRef } from "./notify";
+import { NEXT_RELEASE } from "./release-floors";
 
 /**
  * The first chant whose relay answers a gate's decision point and whose
@@ -55,6 +56,16 @@ import { readRelayToken, RELAY_APPROVE_ACTION, RELAY_DECLINE_ACTION, type RelayR
  * its own (#4611). Products feature-detect on it.
  */
 export const NOTIFY_RELAY_POINTS_FLOOR = "0.124.72";
+
+/**
+ * The first chant whose `chant notify relay --repo <url> --token-env <VAR>`
+ * refuses a token that is more than approve-only and clones the repo itself,
+ * whose `--host` listens where asked, which acknowledges a Slack link button's
+ * click, and which reads the signers at the default branch's current tip
+ * (#4759). A product whose relay container ran its own entrypoint for these
+ * feature-detects on it.
+ */
+export const NOTIFY_RELAY_CLONE_FLOOR = NEXT_RELEASE;
 
 /** The relay's settings, by environment variable. */
 export const RELAY_ENV = {
@@ -70,6 +81,16 @@ export const RELAY_ENV = {
   port: "CHANT_RELAY_PORT",
   /** Comma-separated address prefixes a Slack response_url may have. */
   slackResponse: "CHANT_RELAY_SLACK_RESPONSE",
+} as const;
+
+/** The variables that stand in for `--repo`, the default `--token-env`, and `--forge` (#4759). */
+export const RELAY_REPO_ENV = {
+  /** The repository's https clone address. */
+  repo: "CHANT_RELAY_REPO",
+  /** The variable `--token-env` reads by default: the approve-only token. */
+  token: "CHANT_RELAY_TOKEN",
+  /** github, gitlab or forgejo, for a host other than github.com and gitlab.com. */
+  forge: "CHANT_RELAY_FORGE",
 } as const;
 
 /** Slack's own reply hosts: hooks.slack.com, and GovSlack's. */
@@ -129,8 +150,13 @@ export interface RelayClick {
   thread?: string;
 }
 
-/** A Slack `block_actions` payload (the form field `payload`), or why the relay does not read it. */
-export function slackRelayClick(raw: string): RelayClick | { error: string } {
+/**
+ * A Slack `block_actions` payload (the form field `payload`), or why the
+ * relay does not read it. `ignore` is set for a click on a link button (one
+ * with a `url`, such as a product's Re-plan link on the same message): Slack
+ * posts it too, and the relay acknowledges it and does nothing (#4759).
+ */
+export function slackRelayClick(raw: string): RelayClick | { error: string; ignore?: true } {
   let p: any;
   try {
     p = JSON.parse(new URLSearchParams(raw).get("payload") ?? "");
@@ -143,6 +169,7 @@ export function slackRelayClick(raw: string): RelayClick | { error: string } {
   if (typeof team !== "string" || typeof user !== "string") return { error: "the click names no Slack user" };
   const a = Array.isArray(p.actions) ? p.actions[0] : undefined;
   const action = a?.action_id === RELAY_APPROVE_ACTION ? "approve" : a?.action_id === RELAY_DECLINE_ACTION ? "decline" : undefined;
+  if (!action && typeof a?.url === "string") return { error: `the button ${String(a?.action_id)} is a link`, ignore: true };
   if (!action) return { error: `the button ${String(a?.action_id)} is not chant's` };
   if (typeof a.value !== "string" || !a.value) return { error: "the button carries no reference" };
   const thread = p.container?.message_ts ?? p.message?.ts;
@@ -369,7 +396,7 @@ export async function handleRelayRequest(
       return plain(401, refused);
     }
     const click = slackRelayClick(req.body);
-    if ("error" in click) return plain(400, click.error);
+    if ("error" in click) return click.ignore ? plain(200, "") : plain(400, click.error);
     const answer = await decideRelayClick(click, settings, deps);
     log(`slack: ${click.chatUser} ${click.action}: ${answer.outcome}: ${answer.text}`);
     if (click.responseUrl) {

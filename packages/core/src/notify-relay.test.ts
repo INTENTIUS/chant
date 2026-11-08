@@ -165,6 +165,18 @@ describe("chant notify relay (#4611)", () => {
     expect(approvals).toEqual([]);
   });
 
+  test("a click on a link button on the same message is acknowledged and ignored (#4759)", async () => {
+    const { deps, approvals } = memoryDeps();
+    const r = await relay(deps);
+    const payload = { type: "block_actions", user: { id: "UANA", team_id: "T1" }, actions: [{ action_id: "replan", url: "https://ci.example.com/run/7", value: "x" }], response_url: "https://hooks.slack.com/actions/1" };
+    const out = await r.slack(new URLSearchParams({ payload: JSON.stringify(payload) }).toString());
+    expect(out).toEqual({ status: 200, text: "" });
+    expect(r.posted).toEqual([]);
+    expect(approvals).toEqual([]);
+    // A button that is neither chant's nor a link is still refused.
+    expect((await r.slack(slackBody("UANA", "other", "x"))).status).toBe(400);
+  });
+
   test("only the three paths answer", async () => {
     const r = await relay(memoryDeps().deps);
     expect((await fetch(`${r.url}/healthz`)).status).toBe(200);
