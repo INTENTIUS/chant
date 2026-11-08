@@ -47,6 +47,7 @@ import type { DisruptionQuery, DisruptionVerdict } from "./lifecycle/disruption"
 import type { OwnerChainVerdict } from "./owner-chain";
 import type { CommandGroup } from "./cli/command-group";
 import type { Archetype } from "./components/component";
+import { NEXT_RELEASE } from "./release-floors";
 
 // Re-exported so a lexicon that hosts Op runs (#2121) can type its
 // `opRuntime` from the same entry it imports the plugin contract from.
@@ -1313,6 +1314,15 @@ export interface CompositeEntry {
   /** The component archetype that ships it, when that is known. */
   archetype?: Archetype;
 }
+
+/**
+ * The first chant whose Pulumi lexicon's ci-setup installs a release without
+ * linking it onto PATH (`link: false`) and exports the fetch-and-check script
+ * for image builds (`ciFetchScript`, #4814). It lives here, beside
+ * {@link LexiconPlugin.ciSetup}, so it freezes with chant's release; the
+ * lexicon re-exports it as `PULUMI_CI_SETUP_FLOOR`.
+ */
+export const CI_SETUP_UNLINKED_FLOOR = NEXT_RELEASE;
 
 export interface LexiconPlugin {
   // ── Required ──────────────────────────────────────────────

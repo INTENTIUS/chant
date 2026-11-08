@@ -24,8 +24,20 @@
  *
  * A product with images of its own (plywood keeps its engines under
  * /opt/plywood) passes `root`, so the lines find what its image carries.
+ *
+ * `link: false` (#4814) installs a second release beside the linked one, for
+ * a step that runs `<root>/<engine>-<version>/<engine>` itself (pulumi-up's
+ * `engineVersion` and `engineRoot`): the line skips only when that directory
+ * holds the binary, and never touches PATH. {@link ciFetchScript} is the
+ * download and check alone, for an image build's `RUN` with the arch from
+ * `$TARGETARCH` ({@link CI_DOCKER_ARCH}) and the checksums URL from a build
+ * argument, so a tampered checksums file can be shown to fail the build.
  */
+import { CI_SETUP_UNLINKED_FLOOR } from "@intentius/chant/lexicon";
 import { pulumiMemberEngine } from "./member-engine";
+
+/** The first chant with `link: false` and {@link ciFetchScript} (#4814). It is core's floor, so it freezes with chant's release. */
+export const PULUMI_CI_SETUP_FLOOR: string = CI_SETUP_UNLINKED_FLOOR;
 
 export type CiEngine = "pulumi" | "plunge";
 
@@ -61,6 +73,12 @@ export interface CiInstallOptions {
   root?: string;
   /** Recorded sums by architecture, in place of {@link PINNED_SHA256}'s for this release. */
   sha256?: Partial<Record<CiArch, string>>;
+  /**
+   * Link the binary into /usr/local/bin (default true). `false` (#4814)
+   * leaves PATH alone and skips only on the versioned directory, for a pin
+   * a step runs by its path.
+   */
+  link?: boolean;
 }
 
 /** One release's download: the base URL, the archive per architecture, and its checksums file. */
@@ -110,26 +128,52 @@ export function recordedSums(engine: CiEngine, version: string, given?: Partial<
   return out;
 }
 
-/** The job's architecture as x64 or arm64. */
-const JOB_ARCH = `"$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/')"`;
+/** A shell expression giving the job's architecture as x64 or arm64. */
+export const CI_JOB_ARCH = `"$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/')"`;
+
+/**
+ * A shell expression giving a Docker build's target architecture
+ * (`ARG TARGETARCH`) as x64 or arm64. Each case pattern opens with "(":
+ * bash 3.2 (macOS sh) cannot parse a bare `arm64)` inside `$(...)`.
+ */
+export const CI_DOCKER_ARCH = `"$(case "$TARGETARCH" in (arm64) echo arm64 ;; (*) echo x64 ;; esac)"`;
+
+/** Where {@link ciFetchScript} puts a release and what it checks it against. */
+export interface CiFetchOptions {
+  /** The directory the archive unpacks into, an absolute path: `/out/opt/plywood/pulumi-3.272.0` in an image's fetch stage. */
+  dir: string;
+  /** A shell expression giving x64 or arm64. Default {@link CI_JOB_ARCH}; an image build passes {@link CI_DOCKER_ARCH}. */
+  arch?: string;
+  /** A shell word for the checksums file's URL, such as `"$CHECKSUMS_URL"`. Default the release's own. */
+  checksumsUrl?: string;
+  /** Recorded sums by architecture, in place of {@link PINNED_SHA256}'s for this release. */
+  sha256?: Partial<Record<CiArch, string>>;
+}
 
 /**
  * Shell that downloads one release into `dir` and checks it against the
- * release's checksums file and, when recorded, the sum per architecture.
- * Both archives unpack a top directory named after the engine, which
- * `--strip-components=1` drops.
+ * release's checksums file and, when recorded, the sum per architecture
+ * (#4814). Run it under `set -e`. Both archives unpack a top directory named
+ * after the engine, which `--strip-components=1` drops. `arch` and
+ * `checksumsUrl` go onto the line as they are, so they are the caller's
+ * shell, never a value from outside.
  */
-function fetchScript(engine: CiEngine, version: string, dir: string, sums: Partial<Record<CiArch, string>>): string {
+export function ciFetchScript(engine: CiEngine, version: string, options: CiFetchOptions): string {
+  if (!ROOT.test(options.dir)) throw new Error(`a fetch directory is an absolute path of letters, digits and ._/-, not ${JSON.stringify(options.dir)}`);
+  return fetchScript(engine, version, options.dir, recordedSums(engine, version, options.sha256), options.arch ?? CI_JOB_ARCH, options.checksumsUrl);
+}
+
+function fetchScript(engine: CiEngine, version: string, dir: string, sums: Partial<Record<CiArch, string>>, arch: string, checksumsUrl?: string): string {
   const r = ciRelease(engine, version);
   const recorded = CI_ARCHES.filter((a) => sums[a]);
   const pinCase = recorded.length > 0 ? `case "$a" in ${recorded.map((a) => `${a}) want=${sums[a]} ;;`).join(" ")} *) want= ;; esac` : "want=";
   const file = r.archive("x64").replace("-x64.", "-$a.");
   return [
-    `a=${JOB_ARCH}`,
+    `a=${arch}`,
     `f="${file}"`,
     `t="$(mktemp -d)"`,
     `curl -fsSLo "$t/$f" "${r.base}/$f"`,
-    `curl -fsSLo "$t/sums" "${r.base}/${r.checksums}"`,
+    `curl -fsSLo "$t/sums" ${checksumsUrl ?? `"${r.base}/${r.checksums}"`}`,
     // The archive's line, with any ./ or * before the name taken off.
     `line="$(sed -n "s#^\\([0-9a-f]\\{64\\}\\)  *[*.]*/*$f\\$#\\1#p" "$t/sums")"`,
     `{ [ -n "$line" ] || { echo "${engine} ${version}: $f is not in ${r.checksums}" >&2; exit 1; }; }`,
@@ -141,10 +185,12 @@ function fetchScript(engine: CiEngine, version: string, dir: string, sums: Parti
   ].join(" && ");
 }
 
-/** The line for one engine: skip when present, else fetch and check, then link into /usr/local/bin. */
+/** The line for one engine: skip when present, else fetch and check, then link into /usr/local/bin unless `link` is false. */
 function installLine(engine: CiEngine, version: string, options: CiInstallOptions, present?: string): string {
   const dir = ciEngineDir(engine, version, options.root);
-  const install = `(set -e; ${fetchScript(engine, version, dir, recordedSums(engine, version, options.sha256))})`;
+  const install = `(set -e; ${fetchScript(engine, version, dir, recordedSums(engine, version, options.sha256), CI_JOB_ARCH)})`;
+  // Unlinked: the versioned directory alone says whether this release is there.
+  if (options.link === false) return `[ -x "${dir}/${engine}" ] || ${install}`;
   const link = `ln -sf "${dir}/${engine}" /usr/local/bin/${engine}`;
   const inDir = `[ -x "${dir}/${engine}" ]`;
   return present ? `${present} || { { ${inDir} || ${install}; } && ${link}; }` : `{ ${inDir} || ${install}; } && ${link}`;
@@ -152,7 +198,8 @@ function installLine(engine: CiEngine, version: string, options: CiInstallOption
 
 /**
  * Pulumi at `version` under `<root>/pulumi-<version>/`, checked against the
- * release checksums. Skips when the `pulumi` on PATH is that version.
+ * release checksums. Linked, it skips when the `pulumi` on PATH is that
+ * version; with `link: false` only when the versioned directory holds it.
  */
 export function pulumiInstallLine(version = PULUMI_CI_VERSION, options: CiInstallOptions = {}): string {
   ciRelease("pulumi", version);
