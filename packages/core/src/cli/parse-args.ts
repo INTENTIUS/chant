@@ -895,6 +895,17 @@ export function parseArgs(args: string[]): ParsedArgs {
       const value = args[++i];
       if (value !== "commit" && value !== "pull-request") throw new Error(`--run-group takes commit or pull-request: got "${value ?? ""}"`);
       result.runGroup = value;
+    } else if (arg === "--control") {
+      // `chant build --pr-loop --control <repo>` (#4772).
+      const value = args[++i];
+      if (value === undefined || value.startsWith("-")) throw new Error("--control needs the control repo, such as github.com/acme/control");
+      result.controlRepo = value;
+    } else if (arg === "--control-setting") {
+      // `chant build --pr-loop --control-setting <key>=<value>` (#4772), repeatable.
+      const raw = args[++i] ?? "";
+      const m = /^(op|member|readTokenSecret|tokenSecret|forge|ref|apiBase|sentCheck|markSent)=(.+)$/s.exec(raw);
+      if (!m) throw new Error(`--control-setting needs <key>=<value>, the key one of op, member, readTokenSecret, tokenSecret, forge, ref, apiBase, sentCheck, markSent: got "${raw}"`);
+      (result.controlSettings ??= {})[m[1]!] = m[2]!;
     } else if (arg === "--stale-notes") {
       // `chant build --pr-loop --stale-notes` (#4628).
       result.staleNotes = true;

@@ -110,8 +110,10 @@ function prLoopOption(args: CommandContext["args"], reportUrl: string | undefine
  * they do. Each value is refused by name, as `pr-apply` and `pr-post` refuse
  * it, so a build never writes a job that fails on its own line.
  */
-export function prLoopFlagsProblem(args: Pick<CommandContext["args"], "prLoop" | "applyBeforeMerge" | "merge" | "mergeTokenEnv" | "mergeMethod" | "respond" | "decideBackend" | "decideModel" | "targetDependents">): string | undefined {
+export function prLoopFlagsProblem(args: Pick<CommandContext["args"], "prLoop" | "applyBeforeMerge" | "merge" | "mergeTokenEnv" | "mergeMethod" | "respond" | "decideBackend" | "decideModel" | "targetDependents"> & Partial<Pick<CommandContext["args"], "controlRepo" | "controlSettings">>): string | undefined {
   const given = [
+    ...(args.controlRepo !== undefined ? ["--control"] : []),
+    ...(args.controlSettings !== undefined ? ["--control-setting"] : []),
     ...(args.merge !== undefined ? ["--merge"] : []),
     ...(args.mergeTokenEnv !== undefined ? ["--merge-token-env"] : []),
     ...(args.mergeMethod !== undefined ? ["--merge-method"] : []),
@@ -133,6 +135,7 @@ export function prLoopFlagsProblem(args: Pick<CommandContext["args"], "prLoop" |
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(args.mergeTokenEnv)) return `--merge-token-env takes a variable name, not ${args.mergeTokenEnv}`;
     if (args.mergeMethod !== undefined && !(PR_MERGE_METHODS as readonly string[]).includes(args.mergeMethod)) return `--merge-method takes ${PR_MERGE_METHODS.join(", ")}, not ${args.mergeMethod}`;
   }
+  if (args.controlSettings !== undefined && args.controlRepo === undefined) return "--control-setting sets the control repo's settings, so it needs --control <repo>";
   const respond = args.respond ? parseRespondList(args.respond) : {};
   if ("error" in respond) return respond.error;
   const check = respond.description === "check";
@@ -167,6 +170,32 @@ async function withOwnJobs(yaml: string, lexicon: string, file: string | undefin
     out = kept.text;
   }
   return { yaml: out };
+}
+
+/**
+ * The pull request loop's `control` from `--control <repo>` and each
+ * `--control-setting <key>=<value>` (#4772), checked as an op waves spec's
+ * `control` is: `op` and `member` are needed, since a build has no
+ * repository name to default the member to, and the read secret is never
+ * the dispatch token's. The generated note job then reads the control
+ * repo's records with the read secret (`controlNoteCheckout`), and an apply
+ * on merge sends its dispatch.
+ */
+async function buildControl(repo: string, settings: Record<string, string>): Promise<{ control: { target: import("../../control/dispatch").ControlTarget; sentCheck?: string; markSent?: string } } | { error: string }> {
+  const { controlSettingsProblems, resolveControlTarget, CONTROL_NAME } = await import("../../control/dispatch");
+  const { sentCheck, markSent, ...rest } = settings;
+  const input = { repo, ...rest } as import("../../control/dispatch").ControlSettingsInput;
+  const problems = controlSettingsProblems(input, "control");
+  if (!(typeof input.member === "string" && CONTROL_NAME.test(input.member))) problems.push("control.member must name this repo in the control repo's workspace");
+  for (const [key, line] of [["sentCheck", sentCheck], ["markSent", markSent]] as const) {
+    if (line !== undefined && line.includes("\n")) problems.push(`control.${key} must be one shell line`);
+  }
+  if (problems.length > 0) return { error: `--control: ${problems.join("; ")} (set each with --control-setting <key>=<value>)` };
+  try {
+    return { control: { target: resolveControlTarget(input, input.member!), ...(sentCheck ? { sentCheck } : {}), ...(markSent ? { markSent } : {}) } };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 /**
@@ -321,6 +350,17 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
     lockGrain = (await import("../../workspace/ci-lock-grain")).ciLockGrainAt(resolve(args.path), undefined, plan?.member.name) === "repo" ? "repo" : undefined;
   }
 
+  // #4772: --control names the control repo; the note job reads its records, and an apply on merge tells it.
+  let control: { target: import("../../control/dispatch").ControlTarget; sentCheck?: string; markSent?: string } | undefined;
+  if (args.prLoop && args.controlRepo !== undefined) {
+    const resolved = await buildControl(args.controlRepo, args.controlSettings ?? {});
+    if ("error" in resolved) {
+      console.error(formatError({ message: resolved.error }));
+      return 1;
+    }
+    control = resolved.control;
+  }
+
   // Which lexicons support generate mode is a property of the loaded lexicon
   // plugins (those implementing `generateComponentPipeline`, #688), not a
   // hard-coded core list — `generateComponentsPipeline` returns a descriptive
@@ -342,7 +382,7 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
         : {}),
       // #3183: a plan job per pull request and an apply job per merge.
       // #4292: on the branch ci.branches routes the member to, when it routes it.
-      ...(args.prLoop ? { prLoop: { ...prLoopOption(args, reportUrl, reviewRules, isolatedRunners), ...(plan?.branch ? { branch: plan.branch } : {}), ...(identity ? { identity } : {}), ...(prEnvIdentity ? { prEnvIdentity } : {}), ...(locks ? { locks } : {}), ...(engineSetup.length > 0 ? { engineSetup } : {}), ...(lockGrain ? { lockGrain } : {}) } } : {}),
+      ...(args.prLoop ? { prLoop: { ...prLoopOption(args, reportUrl, reviewRules, isolatedRunners), ...(plan?.branch ? { branch: plan.branch } : {}), ...(identity ? { identity } : {}), ...(prEnvIdentity ? { prEnvIdentity } : {}), ...(locks ? { locks } : {}), ...(engineSetup.length > 0 ? { engineSetup } : {}), ...(lockGrain ? { lockGrain } : {}), ...(control ? { control } : {}) } } : {}),
       // #4002: the job image and the lines that install what it lacks, chant itself included.
       ...(args.image ? { image: args.image } : {}),
       ...(args.beforeScript?.length ? { beforeScript: args.beforeScript } : {}),

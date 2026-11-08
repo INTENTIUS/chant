@@ -1534,6 +1534,11 @@ Options:
                         an op waves spec) Give a Forgejo workflow a run
                         group: commit or pull-request. GitHub and GitLab
                         files are unchanged
+  --control <repo>      (build --pr-loop) The control repo: the note job
+                        reads its records for the cross-stack edges, and an
+                        apply on merge tells it. With --control-setting
+                        <key>=<value> (repeatable) for op, member,
+                        readTokenSecret and the other control settings
   --no-release-record   Skip auto-emitting a release-ledger record after a
                         successful \`run --components\` deploy (default: on;
                         also settable via chant.config.ts's

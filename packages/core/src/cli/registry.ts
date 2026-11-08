@@ -573,6 +573,10 @@ export interface ParsedArgs {
   keepOwnJobs?: boolean;
   /** `chant build --components --generate forgejo --run-group <key>` and `chant run --generate forgejo --spec <waves> --run-group <key>` (#4771): the Forgejo workflow's run group, `commit` or `pull-request`. */
   runGroup?: "commit" | "pull-request";
+  /** `chant build --pr-loop --control <repo>` (#4772): the control repo, as a project key such as github.com/acme/control. The note job reads its records for the cross-stack edges, and an apply on merge tells it. */
+  controlRepo?: string;
+  /** `chant build --pr-loop --control-setting <key>=<value>` (#4772), repeatable: the rest of the control settings (op, member, readTokenSecret, tokenSecret, forge, ref, apiBase, sentCheck, markSent). */
+  controlSettings?: Record<string, string>;
   /** `chant build --pr-loop --stale-notes` (#4628): the note carries its target commit, and a push to the target branch marks open notes stale. */
   staleNotes?: boolean;
   /** `chant components pr-post --stale` (#4628): mark the open pull requests' notes stale after the target branch moved. */
