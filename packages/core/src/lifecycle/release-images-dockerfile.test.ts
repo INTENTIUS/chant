@@ -13,7 +13,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { ChantConfigSchema } from "../config";
-import { NEXT_RELEASE } from "../release-floors";
 import {
   buildReleaseImages,
   checkReleaseImages,
@@ -143,7 +142,7 @@ describe("a release.images entry that names a Dockerfile (#4819)", () => {
     expect(ok([{ name: "both", build: "x", archive: "a.tar", dockerfile: "D" }])).toBe(false);
   });
 
-  test("the floor names the next release", () => expect(RELEASE_IMAGE_DOCKERFILE_FLOOR).toBe(NEXT_RELEASE));
+  test("the floor names the next release", () => expect(RELEASE_IMAGE_DOCKERFILE_FLOOR).toBe("0.124.78"));
 });
 
 describe("the digest table and the pins file (#4819)", () => {

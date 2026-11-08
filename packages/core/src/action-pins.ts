@@ -19,10 +19,8 @@
  *   gh api repos/actions/checkout/commits/v6 --jq .sha
  */
 
-import { NEXT_RELEASE } from "./release-floors";
-
 /** The first chant whose table has the `cache4` row (#4816). */
-export const CACHE4_PIN_FLOOR = NEXT_RELEASE;
+export const CACHE4_PIN_FLOOR = "0.124.78";
 
 export interface ActionPin {
   /** The action, with its subpath: `actions/cache/restore`. */

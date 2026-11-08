@@ -14,7 +14,6 @@
 
 import { CHANT_WORDS, isChantWords, type CiProductNotifyWords, type CiProductWords } from "./ci-product-words";
 import type { NotifyFields, SendNotifyOptions } from "./notify";
-import { NEXT_RELEASE } from "./release-floors";
 
 /**
  * The first chant whose Slack and Teams messages take a product's words, a
@@ -22,7 +21,7 @@ import { NEXT_RELEASE } from "./release-floors";
  * the words, `message` in sendNotify's options, and the third argument of
  * `slackMessage` and `teamsMessage`.
  */
-export const NOTIFY_MESSAGE_WORDS_FLOOR = NEXT_RELEASE;
+export const NOTIFY_MESSAGE_WORDS_FLOOR = "0.124.78";
 
 /** The notify slots of `words`, chant's when a caller built words before #4610. */
 export function productNotifyWords(words: CiProductWords): CiProductNotifyWords {

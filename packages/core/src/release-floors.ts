@@ -19,16 +19,16 @@
  * this constant to the next patch (#4501). The check fails while a floor
  * still names this constant after its version shipped.
  */
-export const NEXT_RELEASE = "0.124.78";
+export const NEXT_RELEASE = "0.124.79";
 
 /** The first chant whose sql lexicon's `yodelCommitSpec("new", ...)` takes `envs`, so `--replace-own` reads those histories as the reader (#4815). */
-export const YODEL_NEW_ENVS_FLOOR = NEXT_RELEASE;
+export const YODEL_NEW_ENVS_FLOOR = "0.124.78";
 
 /** The first chant whose sql lexicon's `yodelRefusalReply` reads yodel rebase's conflict refusal as yodel prints it, `<a> and the migrations after <p> up to <b>` or `<a> and the chain ending at <b>` (#4821). */
-export const YODEL_CONFLICT_REPLY_FLOOR = NEXT_RELEASE;
+export const YODEL_CONFLICT_REPLY_FLOOR = "0.124.78";
 
 /** The first chant whose `@intentius/chant/pr-forge-reads` exports the forge reads beside the clients (#4809). */
-export const PR_FORGE_READS_FLOOR = NEXT_RELEASE;
+export const PR_FORGE_READS_FLOOR = "0.124.78";
 
 /** The first chant whose GitLab `scheduledRuns` takes `schedule`, the selector of an Op's `gitlab.scheduleRule` (#4813). */
-export const SCHEDULED_RUNS_SELECTOR_FLOOR = NEXT_RELEASE;
+export const SCHEDULED_RUNS_SELECTOR_FLOOR = "0.124.78";

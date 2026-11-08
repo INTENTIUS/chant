@@ -49,7 +49,8 @@ export interface ToolDefinition {
   /**
    * JSON schema for `structuredContent` (2025-06-18+), when a tool's result
    * shape is obvious and stable enough to declare. Optional and additive —
-   * most tools omit it (#1194).
+   * most tools omit it (#1194). A handler that returns an array has it
+   * sent as `{ items: [...] }` (#4822), so its schema describes that object.
    */
   outputSchema?: {
     type: "object";

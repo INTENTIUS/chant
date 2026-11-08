@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ACTION_PINS, CACHE4_PIN_FLOOR, pinAtMajor, pinMajor, tagComments, unpinnedActions, usesRef } from "./action-pins";
-import { NEXT_RELEASE } from "./release-floors";
 
 describe("the action pin table", () => {
   it("holds a full commit SHA and a release of the row's major for every action", () => {
@@ -46,7 +45,7 @@ describe("the action pin table", () => {
     // The restore row shares the commit; moving it keeps its own subpath.
     expect(pinAtMajor(ACTION_PINS.cacheRestore4.sha, "v4")).toBe(ACTION_PINS.cacheRestore4);
     expect(tagComments(`  uses: ${usesRef(ACTION_PINS.cache4)}`)).toBe(`  uses: ${usesRef(ACTION_PINS.cache4)} # v4.3.0`);
-    expect(CACHE4_PIN_FLOOR).toBe(NEXT_RELEASE);
+    expect(CACHE4_PIN_FLOOR).toBe("0.124.78");
   });
 });
 

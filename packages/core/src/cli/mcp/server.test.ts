@@ -344,6 +344,36 @@ describe("McpServer", () => {
       expect(result.structuredContent).toBeUndefined();
     });
 
+    // MCP's CallToolResult.structuredContent is a JSON object (schema
+    // 2025-06-18: `structuredContent?: { [key: string]: unknown }`), and the
+    // MCP SDK's Client.callTool refuses anything else (#4822).
+    test("an array-returning handler gets its array as structuredContent.items, and the array as text", async () => {
+      const rows = [{ id: "a" }, { id: "b" }];
+      const plugin = createMockPlugin({
+        name: "test-lex",
+        mcpTools: () => [
+          {
+            name: "rows",
+            description: "Rows",
+            inputSchema: { type: "object", properties: {} },
+            handler: async () => rows,
+          },
+        ],
+      });
+      const s = new McpServer([plugin]);
+      const response = await s.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "test-lex:rows", arguments: {} },
+      });
+      const result = response!.result as { content: Array<{ type: string; text: string }>; structuredContent?: unknown };
+      const sc = result.structuredContent;
+      expect(typeof sc === "object" && sc !== null && !Array.isArray(sc)).toBe(true);
+      expect(sc).toEqual({ items: rows });
+      expect(result.content).toEqual([{ type: "text", text: JSON.stringify(rows, null, 2) }]);
+    });
+
     test("an isError response has no structuredContent", async () => {
       const response = await server.handleRequest({
         jsonrpc: "2.0",
