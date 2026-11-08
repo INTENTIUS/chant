@@ -34,7 +34,7 @@ describe("the pr-forge bundle", () => {
       expect(inputs.filter((i) => pattern.test(i)), String(pattern)).toEqual([]);
     }
     expect(inputs.map((i) => i.replace(/^.*?packages\//, "packages/")).sort()).toEqual(["packages/core/src/pr-forge.ts"]);
-    // About 60.8 KB today, after the pull request authors (#4000), pullRequestOpen for target locks (#4293), the four requires checks of an apply before merge (#4301) the approver filter (#4337) the approved fields (#4287) the plan job's GitLab note (#4328), GitLab's open merge requests for stale notes (#4628), the issues a pull request closes (#4649) and the live runs a lock release reads (#4762).
-    expect(result.outputFiles.reduce((n, f) => n + f.contents.byteLength, 0)).toBeLessThan(64 * 1024);
+    // About 58.5 KB today, after the pull request authors (#4000), pullRequestOpen for target locks (#4293), the four requires checks of an apply before merge (#4301) the approver filter (#4337) the approved fields (#4287) the plan job's GitLab note (#4328), GitLab's open merge requests for stale notes (#4628) and the issues a pull request closes (#4649).
+    expect(result.outputFiles.reduce((n, f) => n + f.contents.byteLength, 0)).toBeLessThan(60 * 1024);
   });
 });

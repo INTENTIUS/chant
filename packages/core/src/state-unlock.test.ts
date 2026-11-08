@@ -5,9 +5,9 @@
  */
 import { describe, expect, test } from "vitest";
 import { fakeLedger } from "./__fixtures__/gated-ledger";
-import { forgejoForge, githubForge, gitlabForge, type ForgeFetch, type LiveRun } from "./pr-forge";
+import type { ForgeFetch } from "./pr-forge";
 import { NEXT_RELEASE } from "./release-floors";
-import { CLOCK_SKEW_MS, parseLockInfo, possibleHolders, releaseStateLock, STATE_UNLOCK_FLOOR, StateUnlockError, type LockInfo, type StateLockSource } from "./state-unlock";
+import { CLOCK_SKEW_MS, forgeLiveRuns, parseLockInfo, possibleHolders, releaseStateLock, STATE_UNLOCK_FLOOR, StateUnlockError, type LiveRun, type LockInfo, type StateLockSource } from "./state-unlock";
 
 const LOCK: LockInfo = { ID: "a1b2", Operation: "OperationTypeApply", Who: "runner@ci", Created: "2026-11-08T08:00:00Z" };
 
@@ -113,45 +113,54 @@ describe("releaseStateLock", () => {
 });
 
 /** A forge answering `routes` by `METHOD path?query`, recording the calls. */
-function forgeFetch(routes: Record<string, unknown>): { fetch: ForgeFetch; urls: string[] } {
+function forgeFetch(routes: Record<string, unknown>): { fetch: ForgeFetch; urls: string[]; headers: Array<Record<string, string>> } {
   const urls: string[] = [];
+  const headers: Array<Record<string, string>> = [];
   const fetch: ForgeFetch = async (url, init) => {
     urls.push(url);
+    headers.push(init.headers);
     const u = new URL(url);
     const found = routes[`${init.method} ${u.pathname}${u.search}`];
     return found === undefined ? { ok: true, status: 200, text: async () => "[]" } : { ok: true, status: 200, text: async () => JSON.stringify(found) };
   };
-  return { fetch, urls };
+  return { fetch, urls, headers };
 }
 
-describe("PrForge.liveRuns", () => {
+describe("forgeLiveRuns", () => {
   test("GitHub: queued, waiting and running runs, once each, with when each began", async () => {
-    const { fetch, urls } = forgeFetch({
+    const { fetch, urls, headers } = forgeFetch({
       "GET /repos/acme/infra/actions/runs?status=in_progress&per_page=100": { workflow_runs: [{ id: 1, status: "in_progress", run_started_at: "2026-11-08T08:00:00Z", html_url: "https://github.com/acme/infra/actions/runs/1" }] },
       "GET /repos/acme/infra/actions/runs?status=queued&per_page=100": { workflow_runs: [{ id: 2, status: "queued", created_at: "2026-11-08T08:05:00Z" }, { id: 1, status: "in_progress", run_started_at: "2026-11-08T08:00:00Z" }] },
     });
-    const runs = await githubForge({ apiBase: "https://api.github.com", repo: "acme/infra", token: "t", fetch }).liveRuns!();
+    const runs = await forgeLiveRuns({ kind: "github", apiBase: "https://api.github.com", repo: "acme/infra", token: "t", fetch });
     expect(runs).toEqual([
       { id: "1", status: "in_progress", started: "2026-11-08T08:00:00Z" },
       { id: "2", status: "queued", started: "2026-11-08T08:05:00Z" },
     ]);
     expect(urls).toHaveLength(5);
+    expect(headers[0]!.Authorization).toBe("Bearer t");
   });
 
   test("Forgejo: a run whose start is the epoch counts from its creation", async () => {
     const { fetch } = forgeFetch({
       "GET /api/v1/repos/acme/infra/actions/runs?status=waiting&limit=50": { workflow_runs: [{ id: 5, status: "waiting", started: "1970-01-01T00:00:00Z", created: "2026-11-08T08:10:00Z" }] },
     });
-    const runs = await forgejoForge({ apiBase: "https://codeberg.org/api/v1", repo: "acme/infra", token: "t", host: "codeberg.org", fetch }).liveRuns!();
+    const runs = await forgeLiveRuns({ kind: "forgejo", apiBase: "https://codeberg.org/api/v1", repo: "acme/infra", token: "t", fetch });
     expect(runs).toEqual([{ id: "5", status: "waiting", started: "2026-11-08T08:10:00Z" }]);
   });
 
+  test("a forge that answers an error throws, so the release is refused", async () => {
+    const fetch: ForgeFetch = async () => ({ ok: false, status: 401, text: async () => '{"message":"401 Unauthorized"}' });
+    await expect(forgeLiveRuns({ kind: "github", apiBase: "https://api.github.com", repo: "acme/infra", fetch })).rejects.toThrow(/401/);
+  });
+
   test("GitLab: running, pending, preparing and waiting pipelines", async () => {
-    const { fetch, urls } = forgeFetch({
+    const { fetch, urls, headers } = forgeFetch({
       "GET /api/v4/projects/42/pipelines?status=pending&per_page=100": [{ id: 77, status: "pending", created_at: "2026-11-08T08:00:00Z", web_url: "https://gitlab.example.com/acme/infra/-/pipelines/77" }],
     });
-    const runs = await gitlabForge({ apiBase: "https://gitlab.example.com/api/v4", project: "42", token: "glpat", host: "gitlab.example.com", fetch }).liveRuns!();
+    const runs = await forgeLiveRuns({ kind: "gitlab", apiBase: "https://gitlab.example.com/api/v4", repo: "42", token: "glpat", fetch });
     expect(runs).toEqual([{ id: "77", status: "pending", started: "2026-11-08T08:00:00Z", url: "https://gitlab.example.com/acme/infra/-/pipelines/77" }]);
     expect(urls.map((u) => new URL(u).searchParams.get("status"))).toEqual(["running", "pending", "preparing", "waiting_for_resource"]);
+    expect(headers[0]!["PRIVATE-TOKEN"]).toBe("glpat");
   });
 });

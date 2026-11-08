@@ -436,13 +436,6 @@ export interface PrForge {
   /** Whether pull request `pr` is open, closed unmerged, or merged (#4298), for `pr-env sweep`. */
   pullRequestState?(pr: number): Promise<"open" | "closed" | "merged">;
   /**
-   * The repository's runs that have not finished (#4762): GitHub's and
-   * Forgejo's Actions runs queued, waiting or in progress, GitLab's pipelines
-   * running, pending, preparing or waiting for a resource. A lock release
-   * reads them to know whether the run that took a lock may still hold it.
-   */
-  liveRuns?(): Promise<LiveRun[]>;
-  /**
    * The issues of this repository that pull request `pr` (merge request `pr`
    * on GitLab) closes when it merges (#4649), ascending, without repeats. One
    * call per pull request. GitHub answers from GraphQL's
@@ -662,15 +655,6 @@ function checksVerdict(what: string, head: string, failing: string[], waiting: s
   if (waiting.length > 0) return refuse(`${names(waiting)} still running on ${short(head)}`, true);
   if (count === 0) return refuse(`no check has reported on ${what}'s head ${short(head)} yet`, true);
   return pass(`${count} check${count === 1 ? "" : "s"} passed on ${short(head)}`);
-}
-
-/** A run of the repository that has not finished, as {@link PrForge.liveRuns} reads it. */
-export interface LiveRun {
-  id: string;
-  status: string;
-  /** When it began, or was created when the forge gives no start. ISO 8601. */
-  started?: string;
-  url?: string;
 }
 
 /** Which scheduled Op job {@link PrForge.scheduledRuns} asks about. */
@@ -1312,23 +1296,6 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
       }
       return [...out].sort((a, b) => a - b);
     },
-    async liveRuns() {
-      const out = new Map<string, LiveRun>();
-      const statuses = kind === "github" ? ["in_progress", "queued", "waiting", "pending", "requested"] : ["running", "waiting", "blocked"];
-      for (const status of statuses) {
-        const body = await api.call("GET", `${repo}/actions/runs?status=${status}&${kind === "github" ? "per_page=100" : "limit=50"}`);
-        const runs = Array.isArray(body) ? body : isObject(body) && Array.isArray(body.workflow_runs) ? body.workflow_runs : [];
-        for (const r of runs) {
-          if (!isObject(r) || r.id === undefined) continue;
-          const started = kind === "github" ? (str(r.run_started_at) ?? str(r.created_at)) : (str(r.started) ?? str(r.created));
-          // Forgejo leaves `started` at the epoch until a job starts.
-          const begun = started && Date.parse(started) > 0 ? started : (str(r.created) ?? str(r.created_at));
-          const url = str(r.html_url);
-          out.set(String(r.id), { id: String(r.id), status: str(r.status) ?? status, ...(begun ? { started: begun } : {}), ...(url ? { url } : {}) });
-        }
-      }
-      return [...out.values()];
-    },
     async pullRequestState(pr) {
       const p = await api.call("GET", `${repo}/pulls/${pr}`);
       if (!isObject(p)) return "open";
@@ -1751,19 +1718,6 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
         if (own === undefined || i.project_id === undefined || i.project_id === own) out.add(i.iid);
       }
       return [...out].sort((a, b) => a - b);
-    },
-    async liveRuns() {
-      const out = new Map<string, LiveRun>();
-      for (const status of ["running", "pending", "preparing", "waiting_for_resource"]) {
-        const rows = await api.call("GET", `${project}/pipelines?status=${status}&per_page=100`);
-        for (const p of Array.isArray(rows) ? rows : []) {
-          if (!isObject(p) || p.id === undefined) continue;
-          const started = str(p.started_at) ?? str(p.created_at);
-          const url = str(p.web_url);
-          out.set(String(p.id), { id: String(p.id), status: str(p.status) ?? status, ...(started ? { started } : {}), ...(url ? { url } : {}) });
-        }
-      }
-      return [...out.values()];
     },
     async pullRequestState(mr) {
       const m = await api.call("GET", `${notes}/${mr}`);

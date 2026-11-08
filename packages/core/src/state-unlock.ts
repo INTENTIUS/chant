@@ -8,7 +8,7 @@
  * lexicon builds one from a root's backend and the binary's `force-unlock`
  * (`@intentius/chant-lexicon-terraform/state-unlock`); a Pulumi stack's lock
  * (`.pulumi/locks/...` and `pulumi cancel`) fits the same calls. The runs
- * come from the forge ({@link PrForge.liveRuns}), or the caller's own list.
+ * come from the forge ({@link forgeLiveRuns}), or the caller's own list.
  *
  *   1. The lock is read, with its ID, who took it and when.
  *   2. A run of the repository that has not finished and began before the
@@ -26,13 +26,88 @@
 import { CHANT_EXIT } from "./exit-codes";
 import { gatedOp, type GatedRequestLedger } from "./lifecycle/gated-op";
 import type { GatedRequestRules } from "./lifecycle/gated-request";
-import type { LiveRun } from "./pr-forge";
+import type { ForgeFetch, ForgeKind } from "./pr-forge";
 import { NEXT_RELEASE } from "./release-floors";
 
-export type { LiveRun } from "./pr-forge";
-
-/** The first chant with the engine-neutral lock release and `PrForge.liveRuns` (#4762). */
+/** The first chant with the engine-neutral lock release and {@link forgeLiveRuns} (#4762). */
 export const STATE_UNLOCK_FLOOR = NEXT_RELEASE;
+
+/** A run of the repository that has not finished, as {@link forgeLiveRuns} reads it. */
+export interface LiveRun {
+  id: string;
+  status: string;
+  /** When it began, or was created when the forge gives no start. ISO 8601. */
+  started?: string;
+  url?: string;
+}
+
+/** Where {@link forgeLiveRuns} reads a repository's runs. */
+export interface LiveRunsTarget {
+  kind: ForgeKind;
+  /** The forge's API base: `https://api.github.com`, `https://<host>/api/v1`, `https://<host>/api/v4`. */
+  apiBase: string;
+  /** `owner/repo` on GitHub and Forgejo; the project's id or path on GitLab. */
+  repo: string;
+  token?: string;
+  /** GitLab: the header the token goes in. Default `PRIVATE-TOKEN`. */
+  tokenHeader?: "PRIVATE-TOKEN" | "JOB-TOKEN";
+  fetch?: ForgeFetch;
+}
+
+const text = (v: unknown): string | undefined => (typeof v === "string" && v !== "" ? v : undefined);
+
+/**
+ * The repository's runs that have not finished: GitHub's and Forgejo's
+ * Actions runs queued, waiting or in progress, GitLab's pipelines running,
+ * pending, preparing or waiting for a resource. Kept here rather than on the
+ * forge clients, so the bundles that carry those clients do not grow with
+ * a read only a lock release makes. Throws on a forge that answers an error.
+ */
+export async function forgeLiveRuns(t: LiveRunsTarget): Promise<LiveRun[]> {
+  const fetchFn = t.fetch ?? (globalThis.fetch as unknown as ForgeFetch);
+  const base = t.apiBase.replace(/\/+$/, "");
+  const headers: Record<string, string> =
+    t.kind === "github"
+      ? { ...(t.token ? { Authorization: `Bearer ${t.token}` } : {}), Accept: "application/vnd.github+json" }
+      : t.kind === "forgejo"
+        ? { ...(t.token ? { Authorization: `token ${t.token}` } : {}), Accept: "application/json" }
+        : { ...(t.token ? { [t.tokenHeader ?? "PRIVATE-TOKEN"]: t.token } : {}), Accept: "application/json" };
+  const get = async (path: string): Promise<unknown> => {
+    const res = await fetchFn(`${base}${path}`, { method: "GET", headers });
+    const body = await res.text();
+    if (!res.ok) throw new Error(`GET ${base}${path}: ${res.status} ${body.slice(0, 200)}`);
+    return body ? (JSON.parse(body) as unknown) : undefined;
+  };
+  const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+  const out = new Map<string, LiveRun>();
+  if (t.kind === "gitlab") {
+    const project = encodeURIComponent(decodeURIComponent(t.repo));
+    for (const status of ["running", "pending", "preparing", "waiting_for_resource"]) {
+      const rows = await get(`/projects/${project}/pipelines?status=${status}&per_page=100`);
+      for (const p of Array.isArray(rows) ? rows : []) {
+        if (!isObject(p) || p.id === undefined) continue;
+        const started = text(p.started_at) ?? text(p.created_at);
+        const url = text(p.web_url);
+        out.set(String(p.id), { id: String(p.id), status: text(p.status) ?? status, ...(started ? { started } : {}), ...(url ? { url } : {}) });
+      }
+    }
+    return [...out.values()];
+  }
+  const statuses = t.kind === "github" ? ["in_progress", "queued", "waiting", "pending", "requested"] : ["running", "waiting", "blocked"];
+  for (const status of statuses) {
+    const body = await get(`/repos/${t.repo}/actions/runs?status=${status}&${t.kind === "github" ? "per_page=100" : "limit=50"}`);
+    const runs = Array.isArray(body) ? body : isObject(body) && Array.isArray(body.workflow_runs) ? body.workflow_runs : [];
+    for (const r of runs) {
+      if (!isObject(r) || r.id === undefined) continue;
+      const started = t.kind === "github" ? (text(r.run_started_at) ?? text(r.created_at)) : (text(r.started) ?? text(r.created));
+      // Forgejo leaves `started` at the epoch until a job starts.
+      const begun = started && Date.parse(started) > 0 ? started : (text(r.created) ?? text(r.created_at));
+      const url = text(r.html_url);
+      out.set(String(r.id), { id: String(r.id), status: text(r.status) ?? status, ...(begun ? { started: begun } : {}), ...(url ? { url } : {}) });
+    }
+  }
+  return [...out.values()];
+}
 
 /** How far a run's start may be after the lock's and still count as a run that could hold it: the clocks of the job and the forge differ. */
 export const CLOCK_SKEW_MS = 2 * 60 * 1000;
@@ -106,8 +181,8 @@ export interface StateUnlockInput {
   by: string;
   lock: StateLockSource;
   /**
-   * The repository's runs that have not finished, such as the forge's
-   * {@link PrForge.liveRuns}. Read before the request and again just before
+   * The repository's runs that have not finished, such as
+   * {@link forgeLiveRuns}. Read before the request and again just before
    * the spend. A throw refuses the release.
    */
   liveRuns: () => Promise<LiveRun[]>;
