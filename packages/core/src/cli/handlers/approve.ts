@@ -73,9 +73,10 @@ const LIFECYCLE_BRANCH = "chant/lifecycle";
  * failure; the exit code is unchanged. With no remote at all there is nobody
  * elsewhere to tell, so that case is a quiet suffix and no warning (#3677).
  */
-async function reportedPush(consequence: string): Promise<{ pushed: boolean; suffix: string }> {
+async function reportedPush(consequence: string, cwd?: string): Promise<{ pushed: boolean; suffix: string }> {
   // #4637: a push another writer beat is replayed onto the remote's tip and tried again; an approval line appends.
-  const { pushed, pushWarning } = await pushLifecycleRebasing().catch((err: unknown) => {
+  // #4760: and the push is of the repository at `cwd`, not whatever one the process runs in.
+  const { pushed, pushWarning } = await pushLifecycleRebasing(...(cwd !== undefined ? [{ cwd }] : [])).catch((err: unknown) => {
     if (err instanceof LifecyclePushLostError) return { pushed: false, pushWarning: err.message };
     throw err;
   });
@@ -328,7 +329,11 @@ export interface GateApprovalOptions {
    * `--statement` and `--signature`.
    */
   binding?: string;
-  /** Where the workspace and the key file are looked up from. Defaults to the process's directory. */
+  /**
+   * The repository the approval is for: its ops, its workspace and key file,
+   * and its `chant/lifecycle`, which is read, appended to and pushed (#4760).
+   * Defaults to the process's directory.
+   */
   cwd?: string;
   /** Replaces the lexicon evaluator a gate policy is loaded from. For tests. */
   evaluator?: GatePolicyEvaluator;
@@ -428,7 +433,13 @@ async function approveGate(
     }));
     return { ok: false };
   }
-  const { ops } = await discoverOps();
+  // #4760: every ledger read, append and push below acts on the repository at
+  // `opts.cwd`, the one the scope and signing key come from, and never on
+  // process.cwd() when a caller names another. With no `opts.cwd` the calls
+  // are made exactly as before, with no location, so they default as they did.
+  const cwd = opts.cwd ?? process.cwd();
+  const at: [] | [{ cwd: string }] = opts.cwd !== undefined ? [{ cwd: opts.cwd }] : [];
+  const { ops } = await discoverOps(...at);
   // `fan-out` is the op name every `chant components fan-out` gate is recorded
   // under (../handlers/fan-out.ts). It is a command rather than a declaration,
   // so there is no `*.op.ts` to find and nothing is wrong when none is there.
@@ -446,7 +457,7 @@ async function approveGate(
   // single commit holding only this resolution — the pending fact it is
   // answering is discarded rather than appended to.
   try {
-    await requireLifecycleLedger();
+    await requireLifecycleLedger(...at);
   } catch (err) {
     console.error(formatError({
       message: `Cannot record the approval: ${err instanceof Error ? err.message : String(err)}`,
@@ -459,7 +470,7 @@ async function approveGate(
   // the new gate has no standing fact of its own. Once it has one, approve
   // the gate the runs now stop at.
   if (successor) {
-    const theirs = latestPendingGate((await readGateLedger(successor.op)).pending, successor.gate);
+    const theirs = latestPendingGate((await readGateLedger(successor.op, ...at)).pending, successor.gate);
     if (theirs && !isPendingGateExpired(theirs, new Date().toISOString())) {
       console.error(formatError({
         message:
@@ -498,7 +509,7 @@ async function approveGate(
   // recorded in, and an approval answers one environment. `--env` picks it;
   // without it, the newest standing fact decides, and the success line below
   // names the environment it chose.
-  const ledgerBefore = await readGateLedger(opName);
+  const ledgerBefore = await readGateLedger(opName, ...at);
   const pendingFor = (all: PendingGateRecord[]): PendingGateRecord[] => {
     const bound = all.some((p) => p.gate === gate && p.environment !== undefined);
     return bound && opts.environment !== undefined ? all.filter((p) => p.environment === opts.environment) : all;
@@ -552,7 +563,7 @@ async function approveGate(
   // commit is superseded. Its promote refuses the release, so an approval of
   // it would count for nothing; refuse it here, whatever plan is named.
   if (standing?.releaseDigest !== undefined) {
-    const refused = await refuseRevokedRelease(opName, gate, standing.releaseDigest, opts.cwd ?? process.cwd());
+    const refused = await refuseRevokedRelease(opName, gate, standing.releaseDigest, cwd);
     if (refused) return { ok: false };
   }
 
@@ -563,7 +574,7 @@ async function approveGate(
   // resolved over the same one has no second party in it. Refused by default,
   // the way #2300 refuses a plan nobody approved.
   const origin = opts.origin ?? currentGateOrigin();
-  const ledger = await readGateLedger(opName);
+  const ledger = await readGateLedger(opName, ...at);
   const standingForOrigin = latestPendingGate(pendingFor(ledger.pending), gate);
 
   // chant#3485: a gate that is never resolved over MCP or ACP says so on its
@@ -625,7 +636,6 @@ async function approveGate(
   // #3163, ws-080: the declaration at base may require a checkable approver
   // (identity.attribution "identified") and a signed approval for this gate
   // (identity.gates). Both are judged before anything is written.
-  const cwd = opts.cwd ?? process.cwd();
   const identity = await import("../../workspace/identity");
   const { scopeSource } = await import("../../workspace/write-scope");
   const scope = scopeSource(cwd);
@@ -832,10 +842,11 @@ async function approveGate(
     ...(standing?.runId ? { runId: standing.runId } : {}),
     origin,
     ...(refusal && opts.allowSameOrigin ? { sameOriginOverride: true } : {}),
-  });
+  }, ...at);
   const push = await reportedPush(
     `The resolution is recorded locally on ${LIFECYCLE_BRANCH}. Until it reaches the remote, ` +
       `a run in another checkout will not see it.`,
+    opts.cwd,
   );
 
   console.error(formatSuccess(
