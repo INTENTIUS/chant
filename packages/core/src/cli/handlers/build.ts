@@ -142,6 +142,34 @@ export function prLoopFlagsProblem(args: Pick<CommandContext["args"], "prLoop" |
 }
 
 /**
+ * `--own-jobs <file>` and `--keep-own-jobs` (#4769): `yaml` with the jobs of
+ * `file` after chant's, then the jobs of the file at `target` that the new
+ * one lacks and that run neither chant nor the product's bin. A
+ * collision, a GitLab keyword, a file that is not a map of jobs, or a forge
+ * with no jobs file is refused.
+ */
+async function withOwnJobs(yaml: string, lexicon: string, file: string | undefined, keep: boolean, target: string | undefined): Promise<{ yaml: string } | { error: string }> {
+  const ownJobs = await import("../../ci-own-jobs");
+  if (!(ownJobs.OWN_JOBS_FORGES as readonly string[]).includes(lexicon)) return { error: `--own-jobs and --keep-own-jobs take a ${ownJobs.OWN_JOBS_FORGES.join(", ")} pipeline, not ${lexicon}` };
+  const forge = lexicon as import("../../ci-own-jobs").OwnJobsForge;
+  if (keep && !target) return { error: "--keep-own-jobs keeps the jobs of the file the build writes over, so it needs --output <file>" };
+  let out = yaml;
+  try {
+    if (file !== undefined) out = ownJobs.mergeOwnJobs(out, forge, ownJobs.readOwnJobsFile(resolve(file), file), { where: file });
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+  if (keep && target) {
+    const { existsSync, readFileSync } = await import("node:fs");
+    const previous = existsSync(target) ? readFileSync(target, "utf-8") : undefined;
+    const words = activeProductWords();
+    const kept = ownJobs.keepOwnJobs(previous, out, forge, { bins: words.bin ? [words.bin] : [] });
+    out = kept.text;
+  }
+  return { yaml: out };
+}
+
+/**
  * `chant build --components --generate <lexicon>` — generate mode (#563,
  * epic #551 Phase 3). Discovers `Component` declarations under `args.path`
  * and synthesizes a thin CI pipeline for `lexicon` instead of running a
@@ -328,7 +356,17 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
-  const yaml = result.yaml ?? "";
+  let yaml = result.yaml ?? "";
+  // #4769: the repository's own jobs, from a file and from the file this build writes over.
+  if (args.ownJobs !== undefined || args.keepOwnJobs) {
+    const target = plan ? plan.target : args.output ? resolve(args.output) : undefined;
+    const own = await withOwnJobs(yaml, lexicon, args.ownJobs, args.keepOwnJobs === true, target);
+    if ("error" in own) {
+      console.error(formatError({ message: own.error }));
+      return 1;
+    }
+    yaml = own.yaml;
+  }
   if (args.format === "json") {
     console.log(
       JSON.stringify(

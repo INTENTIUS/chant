@@ -1519,6 +1519,12 @@ Options:
                         { ops, options }
   --promote-to <env>    (build --components --generate) Add a job that
                         promotes the deployed releases to <env>
+  --own-jobs <file>     (build --components --generate) Add the jobs of a
+                        YAML file, in the forge's syntax, after chant's; a
+                        name chant's file has is refused
+  --keep-own-jobs       (build --components --generate) Keep the jobs of the
+                        old --output file that run neither chant nor the
+                        product's bin
   --no-release-record   Skip auto-emitting a release-ledger record after a
                         successful \`run --components\` deploy (default: on;
                         also settable via chant.config.ts's
