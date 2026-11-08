@@ -128,6 +128,11 @@ export const ChantConfigSchema = z.object({
       )
       .optional(),
     lane: z.string().regex(/^[a-z0-9][a-z0-9-]*$/, "a ci.green lane name: lowercase letters, digits and dashes").optional(),
+    // #4840: the label stamped into these packages' package.json at the cut and the publish.
+    version: z.object({
+      packages: z.array(z.string().min(1)).min(1),
+      lockfile: z.union([z.string().min(1), z.literal(false)]).optional(),
+    }).strict().optional(),
     workflow: z.object({
       trigger: z.enum(["tag", "dispatch"]).optional(),
       gate: z.enum(["last-green", "head"]).optional(),
@@ -423,6 +428,16 @@ export interface ChantConfig {
      * rather than `ci/green/<sha>`.
      */
     lane?: string;
+    /**
+     * The package directories whose `package.json` the release stamps with
+     * its label (#4840), so the version needs no commit: the cut stamps them
+     * before it builds the images and runs the build and puts them back, and
+     * the publish job stamps them with `chant release stamp <label>` before
+     * its build. The lockfile's entries for them follow (`lockfile`, default
+     * `package-lock.json` when there is one). See
+     * ./lifecycle/release-version.ts.
+     */
+    version?: import("./lifecycle/release-version").ReleaseVersionConfig;
     /**
      * The release pipeline `chant release workflow` writes (#4656): a
      * dispatched release with gate, cut, publish and post-release jobs, the

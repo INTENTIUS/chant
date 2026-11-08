@@ -120,6 +120,11 @@ async function releaseImagesOf(cwd: string): Promise<import("../../lifecycle/rel
   return (await loadChantConfig(cwd)).config.release?.images ?? [];
 }
 
+async function releaseVersionOf(cwd: string): Promise<import("../../lifecycle/release-version").ReleaseVersionConfig | undefined> {
+  const { loadChantConfig } = await import("../../config");
+  return (await loadChantConfig(cwd)).config.release?.version;
+}
+
 /** Copy each `release.images` archive from the directory the cut built it in to the same path under `to`. */
 export function copyImageArchives(images: ReadonlyArray<{ archive: string }>, from: string, to: string): void {
   for (const i of images) {
@@ -176,7 +181,7 @@ export async function runReleaseImages(ctx: CommandContext): Promise<number> {
           if (!existsSync(abs)) throw new ReleaseImageError("release-image-no-archive", `image "${d.name}" has no archive at ${d.archive}`, "Hand this job the archives the cut built, or run without --no-build to build them again.");
           return { component: d.name, kind: "image" as const, path: d.archive, digest: ociArchiveDigest(abs) };
         })
-      : buildReleaseImages({ images: declared, cwd, sourceDateEpoch: commitTime(cwd, release.commit), label, archiveDigest: ociArchiveDigest });
+      : buildReleaseImages({ images: declared, cwd, sourceDateEpoch: commitTime(cwd, release.commit), label, archiveDigest: ociArchiveDigest, ...((await releaseVersionOf(cwd)) ? { versionArg: true } : {}) });
   } catch (err) {
     if (err instanceof ReleaseImageError) return fail(err.code, err.message, err.fix);
     throw err;
@@ -197,6 +202,38 @@ export async function runReleaseImages(ctx: CommandContext): Promise<number> {
     console.error(formatSuccess(`${args.noBuild ? "Checked" : "Built"} ${built.length} image(s) to the digests release ${label ?? release.releaseDigest} records, and wrote them to ${relative(cwd, file) || file}`));
     console.log(`${RELEASE_DIGESTS_ENV}=${file}`);
   }
+  return 0;
+}
+
+/**
+ * `release stamp <label> [--json]` (#4840): write the label into the files
+ * `release.version` names, as the cut does before its build, and leave them
+ * so. The publish job runs it before its build; `chant release publish`
+ * takes those files, stamped with the release's label, as the commit's.
+ * `git checkout -- <files>` puts them back.
+ */
+export async function runReleaseStamp(ctx: CommandContext): Promise<number> {
+  const { args } = ctx;
+  const label = args.extraPositional ?? null;
+  const fail = (code: string, message: string, fix?: string): number => {
+    if (args.json) console.log(JSON.stringify({ label, error: { code, message, ...(fix ? { fix } : {}) } }, null, 2));
+    else console.error(formatError({ message: `${message} [${code}]`, ...(fix ? { hint: fix } : {}) }));
+    return 1;
+  };
+  if (label === null) return fail("release-version-no-label", "release stamp needs the release's label", "chant release stamp <label> [--json]");
+  const cwd = resolve(".");
+  const config = await releaseVersionOf(cwd);
+  if (!config) return fail("release-version-not-declared", "this member's chant.config.ts has no release.version, so there is nothing to stamp", "Name the package directories: release: { version: { packages: [\"packages/cli\"] } }");
+  const { stampReleaseVersion, ReleaseVersionError } = await import("../../lifecycle/release-version");
+  let files: string[];
+  try {
+    files = stampReleaseVersion({ cwd, config, label }).files;
+  } catch (err) {
+    if (err instanceof ReleaseVersionError) return fail(err.code, err.message, err.fix);
+    throw err;
+  }
+  if (args.json) console.log(JSON.stringify({ label, files }, null, 2));
+  else console.error(formatSuccess(`Stamped ${label} into ${files.join(", ")}`));
   return 0;
 }
 
@@ -259,6 +296,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
   };
   const at = await import("../../lifecycle/release-at");
   let checkout: import("../../lifecycle/release-at").CommitCheckout | null = null;
+  let stamped: import("../../lifecycle/release-version").Stamped | null = null;
 
   try {
     // The workstation checks come first, in the order #4027 lists them; the
@@ -352,6 +390,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     // --at: the cut reads, compiles and builds the commit's tree, not the checkout's.
     if (args.at !== undefined && top && commit) checkout = at.checkoutCommit(top, cwd, commit);
     const cutCwd = checkout?.memberDir ?? cwd;
+    const versionConfig = await releaseVersionOf(cutCwd);
     // #4657: the images release.images declares are built first, and their digests handed to the build command.
     const declaredImages = await releaseImagesOf(cutCwd);
     const digestsFile = declaredImages.length > 0 ? join(tmpdir(), `chant-release-digests-${process.pid}.json`) : undefined;
@@ -361,13 +400,25 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
           const { buildReleaseImages, writeReleaseDigests, ReleaseImageError } = await import("../../lifecycle/release-images");
           const { ociArchiveDigest } = await import("../../lifecycle/publish-oci");
           try {
-            const built = buildReleaseImages({ images: declaredImages, cwd: cutCwd, sourceDateEpoch: commitTime(cutCwd, at), label, archiveDigest: ociArchiveDigest });
+            const built = buildReleaseImages({ images: declaredImages, cwd: cutCwd, sourceDateEpoch: commitTime(cutCwd, at), label, archiveDigest: ociArchiveDigest, ...(versionConfig ? { versionArg: true } : {}) });
             writeReleaseDigests(digestsFile, Object.fromEntries(built.map((a) => [a.component, a.digest])));
             return built;
           } catch (err) {
             const code = err instanceof ReleaseImageError ? err.code : (err as { code?: unknown }).code;
             const fix = err instanceof ReleaseImageError ? err.fix : undefined;
             throw new ReleaseCutError(code === "release-image-name-taken" ? "release-image-name-taken" : "release-image-build-failed", `no release was cut: ${(err as Error).message}`, fix);
+          }
+        }
+      : undefined;
+    // #4840: release.version stamps the label into package.json once the cut has found the tree clean.
+    const stamp = versionConfig
+      ? async () => {
+          const { stampReleaseVersion, ReleaseVersionError } = await import("../../lifecycle/release-version");
+          try {
+            if (!stamped) stamped = stampReleaseVersion({ cwd: cutCwd, config: versionConfig, label });
+          } catch (err) {
+            if (err instanceof ReleaseVersionError) throw new ReleaseCutError(err.code as import("../../lifecycle/release-cut").ReleaseCutCode, `no release was cut: ${err.message}`, err.fix);
+            throw err;
           }
         }
       : undefined;
@@ -385,6 +436,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       ...(args.overrideGreen ? { overrideGreen: true } : {}),
       ...(Object.keys(images).length > 0 ? { images } : {}),
       ...(buildImages ? { buildImages } : {}),
+      ...(stamp ? { stamp } : {}),
     };
 
     if (dryRun) {
@@ -540,6 +592,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     }
     throw err;
   } finally {
+    (stamped as import("../../lifecycle/release-version").Stamped | null)?.restore();
     checkout?.remove();
   }
 }

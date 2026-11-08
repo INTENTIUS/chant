@@ -14,6 +14,7 @@ chant release candidates [--env <env>] [--branch <branch>] [--lane <name>] [--fo
 chant release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json]
 chant release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json]
 chant release verify <label|digest> [--json]
+chant release stamp <label> [--json]
 chant release workflow [--forge github|gitlab|forgejo] [--install <command>] [--build <command>] [--chant <command>] [--output <file>]
 chant release list [--json]
 chant release export <label|digest> --env <env> [-o <dir>] [--json]
@@ -146,6 +147,36 @@ export default {
 
 A build step's own tool reads the variable directly. A Cargo crate takes it at compile time with `option_env!("CHANT_RELEASE_LABEL")`, which is `None` for a build outside a cut, or a `build.rs` passes it on with `println!("cargo:rustc-env=APP_VERSION={}", std::env::var("CHANT_RELEASE_LABEL").unwrap_or_default())` and `println!("cargo:rerun-if-env-changed=CHANT_RELEASE_LABEL")`. An npm build reads `process.env.CHANT_RELEASE_LABEL` in its bundler config. A label in the caller's shell is never passed through: only the cut sets the variable, and a cut with no label leaves it unset. A parameter that reads the label is recorded on each target like any other, so two labels of one commit are two releases.
 
+### The label as the package version
+
+A package published by an npm target carries the version in its `package.json`, and a bundle that imports `version` from that file carries it too. Without `release.version` the label must already be that version, so a release needs a commit that bumps it first. `release.version` names the package directories whose `package.json` the release stamps with the label instead ([#4840](https://github.com/INTENTIUS/chant/issues/4840)):
+
+```ts
+release: {
+  version: { packages: ["packages/cli"] },
+  images: [/* ... */],
+  publish: [{ type: "npm", packages: ["packages/cli"], pins: "dist/image-digests.json" }],
+},
+```
+
+| Field | Meaning |
+|---|---|
+| `packages` | Package directories relative to the member, `"."` for the member's own. Each `package.json` gets the label as its `version`. No other field changes, dependency ranges included |
+| `lockfile` | The lockfile whose entries for those packages follow, with the root entry and the top-level `version` for `"."`. Default `package-lock.json` when the member has one; `false` for none |
+
+The cut stamps the files once it has found the tree clean, before it builds the images and before any compile or `--build`, and puts them back byte for byte when it is done, whether it cut or failed. Every image build, `prepare` and build then reads the label as the package's version, so `releaseImagePins` accepts the label and the bundle carries it. A Dockerfile entry in `release.images` also gets the label as the build argument `CHANT_RELEASE_LABEL`. The publish job runs [`chant release stamp <label>`](#release-stamp) before its images and its build, and `chant release publish` takes those files as the commit's when each is exactly the commit's file stamped with the release's label. Any other change still makes the tree dirty. A label that is not a version npm takes (`1.4.0`, `1.4.0-rc.1`, not `v1.4.0`) is refused with `release-version-label-invalid`, a cut with no label with `release-version-no-label`, and a directory with no `package.json` with `release-version-no-package`. `RELEASE_VERSION_FLOOR` in `@intentius/chant/lifecycle/release-version` is the first chant with the setting.
+
+#### Files that embed the version
+
+A project on `release.version` follows one rule: the committed tree never holds the version being released. Only the release's build writes that version, from the stamped `package.json` or from `CHANT_RELEASE_LABEL`. In practice:
+
+- The `version` in each stamped `package.json` stays where it is on the default branch and no longer moves. chant's own packages do the same: their versions are older than the releases on npm.
+- A committed file rendered from the package version, such as a golden, an example pipeline or a generated Dockerfile, is rendered from that committed version. It no longer changes when a release is made, so no release needs a commit to regenerate it.
+- A Dockerfile reads the version from a build argument, never from text rendered into it: `ARG CHANT_RELEASE_LABEL` with `LABEL org.opencontainers.image.version="${CHANT_RELEASE_LABEL}"`, and the same argument for a file name that carries the version, such as the tarball `npm pack` writes. A command entry passes `--build-arg CHANT_RELEASE_LABEL="$CHANT_RELEASE_LABEL"` itself, and a Dockerfile entry gets the argument from chant. A build outside a release passes the committed version.
+- A committed file that must name a published release, such as an example that runs the newest image, pins that release as it would pin a dependency, in a change of its own, not as part of a release.
+
+The version-bump script and its recipe can then go, and a release is one dispatched run with the new label.
+
 ### What the dry run prints
 
 ```
@@ -270,7 +301,7 @@ const table = releaseImagePins({ images: { pulumi: `ghcr.io/intentius/plywood-pu
 writeReleaseImagePins(table, { out: "dist/image-digests.json", bundles: ["dist/plywood.mjs"] });
 ```
 
-Outside a release build the table is `undefined` and `writeReleaseImagePins` removes the pins file. A `CHANT_RELEASE_LABEL` that is not the version is refused (`release-label-not-version`), and so is a name the digests file has no digest for (`release-image-digest-missing`) and a bundle that does not carry every digest (`release-pin-not-bundled`). `RELEASE_IMAGE_DOCKERFILE_FLOOR` is the first chant with them.
+Outside a release build the table is `undefined` and `writeReleaseImagePins` removes the pins file. A `CHANT_RELEASE_LABEL` that is not the version is refused (`release-label-not-version`). Under [`release.version`](#the-label-as-the-package-version) the cut and the publish job have stamped the label into `package.json` by then, so a build that reads the version from that file passes it. A name the digests file has no digest for is refused too (`release-image-digest-missing`), and so is a bundle that does not carry every digest (`release-pin-not-bundled`). `RELEASE_IMAGE_DOCKERFILE_FLOOR` is the first chant with them.
 
 The publish job checks out the release's commit and runs `chant release images <label>` before the build that packs the package. It builds each image again, refuses one whose digest is not the recorded one (`release-image-digest-mismatch`), and writes the recorded digests to `.chant/release-digests.json` (or `-o <file>`), printing `CHANT_RELEASE_DIGESTS=<file>` for the job to export. The `oci` target then refuses an archive that is not the recorded one, so the image pushed is the one the package pins. This needs a build that writes the same archive from the same commit: timestamps rewritten from `SOURCE_DATE_EPOCH`, no logs or caches in the layers, and no attestations built into the archive. #4657's thread has the check against terragucci's Dockerfiles.
 
@@ -396,7 +427,7 @@ After a best-effort fetch of `chant/lifecycle`, it refuses before it publishes a
 | `publish-provenance-missing` | `--require-provenance` is given, and the run has no OIDC token. |
 | `publish-config-invalid` | `release.publish` in `chant.config.ts` does not validate. |
 | `release-head-mismatch` | A target is declared, and the checkout's `HEAD` is not the release's commit. |
-| `release-worktree-dirty` | A target is declared, and the tree has a change or an untracked file git does not ignore. |
+| `release-worktree-dirty` | A target is declared, and the tree has a change or an untracked file git does not ignore. Under `release.version`, a file it names that is exactly the commit's stamped with this release's label is not a change ([#4840](https://github.com/INTENTIUS/chant/issues/4840)). |
 
 A release whose cut names a `channel` moves that tag instead of `latest`: the npm target's dist-tag and the OCI target's image tag. The newest cut that names one decides.
 
@@ -506,6 +537,18 @@ With `trigger: "dispatch"` the file has four jobs, and the label is an input of 
 No tag exists until the gate has passed and the cut has run. On GitLab the jobs follow each other by `needs` in the default stage, so `.gitlab-ci.yml` keeps its own `stages`, and the cut and publish jobs push with `CHANT_RELEASE_TOKEN`, a project access token with `write_repository`, since a job token cannot push.
 
 With `release.images` (see [Images the package pins](#images-the-package-pins)), the publish job runs `chant release images <label>` after fetching `chant/lifecycle` and before the build, and exports `CHANT_RELEASE_DIGESTS`. In a dispatched release the cut job hands the archives it built to the publish job as a workflow artifact (`chant-release-images`; on GitLab, the cut job's `artifacts:`), and the publish job checks them with `chant release images <label> --no-build`, which reads the archives on disk and refuses one whose digest is not the recorded one. The images published are then the ones the cut built, even when the package mirror an image installs from moved between the two jobs. This holds for either trigger. `after` with the tag trigger adds an after-release job that follows the publish. A config with only `publish` renders the file it always did.
+
+With `release.version` (see [The label as the package version](#the-label-as-the-package-version)), the publish job runs `chant release stamp <label>` after the install and the setup steps and before the images and the build, under either trigger. The cut job is unchanged: the cut stamps on its own. A config without `release.version` renders the file it did.
+
+## release stamp
+
+Writes the label as the `version` of each `package.json` that `release.version` names, and into the lockfile's entries for them, as the cut does before its build ([#4840](https://github.com/INTENTIUS/chant/issues/4840)). It leaves the files stamped. The publish job runs it before its build, and `chant release publish` takes the stamped files as the commit's. `git checkout -- <files>` puts them back on a workstation.
+
+```bash
+chant release stamp 1.4.0   # Stamped 1.4.0 into packages/cli/package.json, package-lock.json
+```
+
+It refuses a member with no `release.version` (`release-version-not-declared`), and the label and package problems the cut refuses.
 
 ## release verify
 

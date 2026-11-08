@@ -110,6 +110,13 @@ export interface ReleaseWorkflowInput {
   /** `release.lane` (#4692): the gate's green lane. */
   lane?: string;
   /**
+   * The config declares `release.version` (#4840): the publish job runs
+   * `chant release stamp <label>` before the images and the build, so what
+   * it builds and publishes carries the label as its version. The cut
+   * stamps on its own.
+   */
+  version?: boolean;
+  /**
    * `release.publish` (#4767). On GitHub, a `forge: "github"` target with no
    * `tokenEnv` reads `GITHUB_TOKEN`, so the publish job sets it to the job's
    * token unless `release.workflow.env` sets it.
@@ -141,6 +148,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
   const flags = publishFlags(input.groups).join(" ");
   const after = p.after ?? [];
   const images = input.images === true;
+  const version = input.version === true;
   const extra = jobExtras(p, input.forge);
   // #4767: Forgejo's job token is not a GitHub token, and GitLab has no such expression.
   const forgeToken =
@@ -149,7 +157,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
       : [];
   if (p.trigger === "dispatch") {
     const archives = images ? (input.imageArchives ?? []).map((a) => (root ? `${root}/${a.replace(/^\.\//, "")}` : a.replace(/^\.\//, ""))) : [];
-    const o = { chant, install, build, root, verify, flags, after, images, archives, forge: input.forge, extra, forgeToken, gate: p.gate ?? "last-green", ...(input.lane ? { lane: input.lane } : {}) };
+    const o = { chant, install, build, root, verify, flags, after, images, version, archives, forge: input.forge, extra, forgeToken, gate: p.gate ?? "last-green", ...(input.lane ? { lane: input.lane } : {}) };
     return input.forge === "gitlab" ? renderGitlabDispatch(o) : renderGithubDispatch(o);
   }
   // #4657: the images are built from the release, so chant/lifecycle is fetched before them and the build after.
@@ -169,6 +177,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
       ...(root ? [`    - cd ${root}`] : []),
       `    - ${install}`,
       ...extra.gitlabScript.map((l) => `    - ${l}`),
+      ...(version ? [`    - ${chant} release stamp ${label}`] : []),
       ...(images ? [...fetches, ...imageLines(label, `export CHANT_RELEASE_DIGESTS="$PWD/${RELEASE_DIGESTS_FILE}"`).map((l) => `    - ${l}`)] : []),
       ...(build ? [`    - ${build}`] : []),
       ...(images ? [] : fetches),
@@ -211,6 +220,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
     ...githubSetup(),
     `      - run: ${install}`,
     ...extra.githubSteps,
+    ...(version ? [`      - run: ${chant} release stamp ${label}`] : []),
     ...(images ? [...fetches, ...imageLines(label, `echo "CHANT_RELEASE_DIGESTS=$PWD/${RELEASE_DIGESTS_FILE}" >> "$GITHUB_ENV"`).map((l) => `      - run: ${l}`)] : []),
     ...(build ? [`      - run: ${build}`] : []),
     ...(images ? [] : fetches),
@@ -303,6 +313,8 @@ interface DispatchInput {
   flags: string;
   after: string[];
   images: boolean;
+  /** `release.version` (#4840): the publish job stamps the label before the images and the build. */
+  version: boolean;
   /** The image archives the cut hands to the publish job, from the repository root. Empty: the publish job builds them again. */
   archives: string[];
   forge: ReleaseWorkflowForge;
@@ -328,6 +340,11 @@ function commonDir(paths: readonly string[]): string {
 /** The `release images` line of a publish job: checking the archives handed on, or building them again. */
 function imagesLine(o: DispatchInput): string {
   return `${o.chant} release images "$CHANT_RELEASE_LABEL"${o.archives.length > 0 ? " --no-build" : ""} -o ${RELEASE_DIGESTS_FILE}`;
+}
+
+/** The publish job's `release stamp` line (#4840). */
+function stampLine(o: DispatchInput): string {
+  return `${o.chant} release stamp "$CHANT_RELEASE_LABEL"`;
 }
 
 /** The node one-liner that prints a JSON document's field from stdin, or from the file its argument names. */
@@ -436,6 +453,7 @@ function renderGithubDispatch(o: DispatchInput): string {
     ...(o.archives.length > 0
       ? [`      - uses: ${usesRef(o.forge === "forgejo" ? ACTION_PINS.downloadArtifact3 : ACTION_PINS.downloadArtifact4)}`, "        with:", `          name: ${RELEASE_IMAGES_ARTIFACT}`, `          path: ${commonDir(o.archives)}`]
       : []),
+    ...(o.version ? [`      - run: ${stampLine(o)}`] : []),
     ...(o.images ? [`      - run: ${imagesLine(o)}`, `      - run: echo "CHANT_RELEASE_DIGESTS=$PWD/${RELEASE_DIGESTS_FILE}" >> "$GITHUB_ENV"`] : []),
     ...(o.build ? [`      - run: ${o.build}`] : []),
     ...(o.verify ? [`      - run: ${o.chant} release verify "$CHANT_RELEASE_LABEL"`] : []),
@@ -490,6 +508,7 @@ function renderGitlabDispatch(o: DispatchInput): string {
         ...o.extra.gitlabScript,
         ...fetches,
         ...auth,
+        ...(o.version ? [stampLine(o)] : []),
         ...(o.images ? [imagesLine(o), `export CHANT_RELEASE_DIGESTS="$PWD/${RELEASE_DIGESTS_FILE}"`] : []),
         ...(o.build ? [o.build] : []),
         ...(o.verify ? [`${o.chant} release verify "$CHANT_RELEASE_LABEL"`] : []),
@@ -554,6 +573,7 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     ...(release?.workflow ? { pipeline: release.workflow } : {}),
     ...((release?.images?.length ?? 0) > 0 ? { images: true, imageArchives: resolveReleaseImages(release!.images!).map((i) => i.archive) } : {}),
     ...(release?.lane ? { lane: release.lane } : {}),
+    ...(release?.version ? { version: true } : {}),
     ...(release?.publish ? { publish: release.publish } : {}),
     ...(args.ciInstall ? { install: args.ciInstall } : {}),
     ...(args.buildCommand ? { build: args.buildCommand } : {}),

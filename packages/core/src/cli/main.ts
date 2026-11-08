@@ -531,6 +531,11 @@ Releases:
                         the release's commit, refuse one whose digest is not
                         the recorded one, and write the recorded digests to
                         the file CHANT_RELEASE_DIGESTS names for the build.
+  release stamp <label> [--json]
+                        Write the label as the version of each package.json
+                        release.version names, and the lockfile's entries for
+                        them, as the cut does before its build. The publish
+                        job runs it before its build.
   release workflow [--forge github|gitlab|forgejo] [--install <command>]
               [--build <command>] [--chant <command>] [--output <file>]
                         Write the publish workflow, run on a release/** tag.
@@ -1910,6 +1915,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "release verify", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseVerify(ctx) },
   // #4657: build a release's images again in its publish job, checked against the digests it records.
   { name: "release images", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseImages(ctx) },
+  // #4840: the label into the package.json files release.version names, in the publish job before its build.
+  { name: "release stamp", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseStamp(ctx) },
   { name: "release workflow", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/release-workflow")).runReleaseWorkflow(ctx) },
   // #4168 4.3: mode (b), chosen changes composed onto a base on chant/compose/<name>.
   { name: "release compose", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseCompose(ctx) },

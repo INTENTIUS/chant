@@ -99,6 +99,24 @@ describe("a dispatched release (#4656)", () => {
     ]);
   });
 
+  test("under release.version the publish job stamps the label before the images and the build, and the cut stamps on its own (#4840)", () => {
+    const plain = parseYAML(dispatch("github", { groups: SECURE, images: true })) as GhDoc;
+    const doc = parseYAML(dispatch("github", { groups: SECURE, images: true, version: true })) as GhDoc;
+    const publish = runs(plain.jobs.publish!);
+    const at = publish.indexOf(`npx chant release images "$CHANT_RELEASE_LABEL" -o ${RELEASE_DIGESTS_FILE}`);
+    expect(runs(doc.jobs.publish!)).toEqual([...publish.slice(0, at), 'npx chant release stamp "$CHANT_RELEASE_LABEL"', ...publish.slice(at)]);
+    expect(runs(doc.jobs.cut!)).toEqual(runs(plain.jobs.cut!));
+    const gl = parseYAML(dispatch("gitlab", { images: true, version: true })) as Record<string, { script: string[] }>;
+    const script = gl["chant-release-publish"]!.script;
+    expect(script.indexOf('npx chant release stamp "$CHANT_RELEASE_LABEL"')).toBe(script.findIndex((l) => l.includes("release images")) - 1);
+    for (const forge of FORGES) {
+      const tagged = renderReleaseWorkflow({ forge, groups: new Set(), version: true });
+      const stamp = tagged.indexOf("release stamp ");
+      expect(stamp, forge).toBeGreaterThan(0);
+      expect(stamp, forge).toBeLessThan(tagged.indexOf("npm run build"));
+    }
+  });
+
   test("gitlab: four jobs chained by needs in the default stage, started with CHANT_RELEASE_LABEL, the commit handed on as a dotenv, pushes with CHANT_RELEASE_TOKEN", () => {
     const doc = parseYAML(dispatch("gitlab", { groups: SECURE, images: true })) as Record<string, { rules: Array<{ if: string }>; needs?: string[]; script: string[]; stage?: string; artifacts?: unknown; id_tokens?: unknown }>;
     expect(Object.keys(doc)).toEqual(["chant-release-gate", "chant-release-cut", "chant-release-publish", "chant-release-after"]);
