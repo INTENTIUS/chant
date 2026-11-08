@@ -91,6 +91,10 @@ describe("running the engine (#4294)", () => {
     expect(gatePolicyArgv({ engine: "conftest", namespace: "infra" }, { policy: "/p", input: "/i.json" })).toContain("--namespace");
     expect(gatePolicyArgv({ engine: "opa" }, { policy: "/p", input: "/i.json" })).toEqual(["opa", "eval", "--format", "json", "--data", "/p", "--input", "/i.json", "data.main"]);
     expect(gatePolicyArgv({ engine: "opa", command: ["./bin/check", "--rules={policy}", "{input}"] }, { policy: "/p", input: "/i.json" })).toEqual(["./bin/check", "--rules=/p", "/i.json"]);
+    // #4774: an installed engine runs from where it was installed; a command ignores it.
+    expect(gatePolicyArgv({ engine: "opa" }, { policy: "/p", input: "/i.json", binary: "/cache/opa-1.21.4-linux-x64/opa" })[0]).toBe("/cache/opa-1.21.4-linux-x64/opa");
+    expect(gatePolicyArgv({}, { policy: "/p", input: "/i.json", binary: "/cache/conftest" })[0]).toBe("/cache/conftest");
+    expect(gatePolicyArgv({ command: ["./bin/check", "{input}"] }, { policy: "/p", input: "/i.json", binary: "/cache/conftest" })[0]).toBe("./bin/check");
   });
 
   test("the input is written to the file the engine reads, and a denial is a verdict with its sorted rules", () => {
@@ -157,6 +161,9 @@ describe("ci.policy settings (#4294)", () => {
     expect(() => assertGatePolicySettings("ci.policy", { outcomes: ["deny", "allow_unattended"] })).toThrow(/no unattended outcome/);
     expect(() => assertGatePolicySettings("ci.policy", { allow_unattended: true })).toThrow(/no unattended outcome/);
     expect(() => assertGatePolicySettings("ci.policy", { rules: [] })).toThrow(/not a setting/);
+    expect(() => assertGatePolicySettings("ci.policy", { engine: "opa", install: true })).not.toThrow();
+    expect(() => assertGatePolicySettings("ci.policy", { install: "yes" })).toThrow(/install must be true or false/);
+    expect(() => assertGatePolicySettings("ci.policy", { install: true, command: ["./check", "{input}"] })).toThrow(/install and ci.policy.command cannot both be set/);
     expect(() => assertGatePolicySettings("ci.policy", [])).toThrow(/must be/);
   });
 });

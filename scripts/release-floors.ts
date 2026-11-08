@@ -79,6 +79,9 @@ const FLOOR_RE = /export const ([A-Z0-9_]+_FLOOR) = (?:"(\d+\.\d+\.\d+)"|(NEXT_R
  */
 const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: string }[] = [
   // --freeze empties this list after a release ships (#4501); each entry is one line.
+  { file: "packages/core/src/workspace/declaration.schema.json", text: "Read by chant {v} and newer, so a declaration that sets install sets minReader to {v} or newer.", count: 1, floor: "POLICY_ENGINE_INSTALL_FLOOR" },
+  { file: "docs/src/content/docs/guide/gate-policy.mdx", text: "`install` needs a `minReader` of `{v}` or newer (`POLICY_ENGINE_INSTALL_FLOOR`).", count: 1, floor: "POLICY_ENGINE_INSTALL_FLOOR" },
+  { file: "docs/src/content/docs/reference/workspace-declaration.mdx", text: "needs a `minReader` of `{v}` or newer (`POLICY_ENGINE_INSTALL_FLOOR`).", count: 1, floor: "POLICY_ENGINE_INSTALL_FLOOR" },
 ];
 
 interface Args {

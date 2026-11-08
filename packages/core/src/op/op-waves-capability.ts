@@ -270,8 +270,8 @@ export async function opWavePolicyVerdicts(
   at: { spec: Pick<OpWavesSpec, "name">; gate: string; env: string; base: string; head: string; cwd: string; exec?: GatePolicyExec },
   parts: ReadonlyMap<string, ChangeSetPart>,
 ): Promise<{ verdicts: Map<string, OpWaveRunVerdict>; source?: ResolvedGatePolicySource } | { note: string }> {
-  const { prLoopPolicyAt, runPrPolicy } = await import("../components/pr-policy");
-  const read = prLoopPolicyAt(at.cwd, at.base);
+  const { prLoopPolicyAt, preparePrPolicyEngine, runPrPolicy } = await import("../components/pr-policy");
+  const read = await preparePrPolicyEngine(prLoopPolicyAt(at.cwd, at.base));
   if (!read.settings) return { note: read.note ?? `holds.policy: the declaration at ${at.base.slice(0, 12)} names no ci.policy, so no policy runs` };
   const verdicts = new Map<string, OpWaveRunVerdict>();
   for (const [target, part] of parts) {

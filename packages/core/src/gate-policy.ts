@@ -120,6 +120,12 @@ export interface GatePolicySettings {
    * prints the result shape `engine` names.
    */
   command?: string[];
+  /**
+   * Fetch the engine when it is not on PATH (#4774): conftest or OPA at the
+   * release chant pins, checked against its recorded sha256
+   * (`./policy-engine.ts`). Refused beside `command`, which names its own.
+   */
+  install?: boolean;
 }
 
 /** One CrossGuard pack named by `ci.policy.packs`. */
@@ -251,13 +257,17 @@ export function gatePolicyVerdict(engine: GatePolicyEngine, found: GatePolicyFin
 
 const errorVerdict = (engine: GatePolicyEngine, error: string): GatePolicyVerdict => ({ result: "error", engine, denials: [], rules: [], holds: [], warnings: [], error });
 
-/** The argv one check runs: the settings' `command` with its placeholders filled, or the engine's own. */
-export function gatePolicyArgv(settings: GatePolicySettings, at: { policy: string; input: string }): string[] {
+/**
+ * The argv one check runs: the settings' `command` with its placeholders
+ * filled, or the engine's own. `binary` is the engine's executable when it
+ * is not the one on PATH, such as one `./policy-engine.ts` installed.
+ */
+export function gatePolicyArgv(settings: GatePolicySettings, at: { policy: string; input: string; binary?: string }): string[] {
   if (settings.command) return settings.command.map((a) => a.replaceAll("{policy}", at.policy).replaceAll("{input}", at.input));
   if ((settings.engine ?? "conftest") === "opa") {
-    return ["opa", "eval", "--format", "json", "--data", at.policy, "--input", at.input, `data.${settings.namespace ?? "main"}`];
+    return [at.binary ?? "opa", "eval", "--format", "json", "--data", at.policy, "--input", at.input, `data.${settings.namespace ?? "main"}`];
   }
-  return ["conftest", "test", "--no-color", "--output", "json", "--policy", at.policy, ...(settings.namespace ? ["--namespace", settings.namespace] : ["--all-namespaces"]), at.input];
+  return [at.binary ?? "conftest", "test", "--no-color", "--output", "json", "--policy", at.policy, ...(settings.namespace ? ["--namespace", settings.namespace] : ["--all-namespaces"]), at.input];
 }
 
 /** What one run of the engine printed and how it exited. `status` is null when it did not start. */
@@ -284,6 +294,8 @@ export interface CheckGatePolicyOptions {
   /** Where the engine runs. Default the policy directory. */
   cwd?: string;
   exec?: GatePolicyExec;
+  /** The engine's executable, when it is not the one on PATH. Not used with `command`. */
+  binary?: string;
 }
 
 const tail = (text: string): string => text.trim().split("\n").slice(-3).join(" ");
@@ -296,7 +308,7 @@ export function checkGatePolicy(options: CheckGatePolicyOptions): GatePolicyVerd
   try {
     const file = join(work, "input.json");
     writeFileSync(file, typeof options.input === "string" ? options.input : JSON.stringify(options.input));
-    const argv = gatePolicyArgv(settings, { policy: options.policyDir, input: file });
+    const argv = gatePolicyArgv(settings, { policy: options.policyDir, input: file, ...(options.binary ? { binary: options.binary } : {}) });
     const r = (options.exec ?? defaultGatePolicyExec)(argv, options.cwd ?? options.policyDir);
     if (r.status === null) return errorVerdict(engine, `${argv[0]} did not run: ${tail(r.stderr) || "no such command"}`);
     const found = engine === "opa" ? opaFindings(r.stdout, settings.namespace ?? "main") : conftestFindings(r.stdout);
@@ -353,7 +365,8 @@ export function exportGatePolicy(tree: GatePolicyTree, path: string): { dir: str
 
 /** The settings, checked. Throws with what is wrong. `where` names them, such as `ci.policy`. */
 export function assertGatePolicySettings(where: string, raw: unknown): asserts raw is GatePolicySettings {
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) throw new Error(`${where} must be { engine?, path?, source?, namespace?, command?, packs? }`);
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) throw new Error(`${where} must be { engine?, path?, source?, namespace?, command?, packs?, install? }`);
+  if ("install" in raw && "command" in raw) throw new Error(`${where}.install and ${where}.command cannot both be set; install fetches conftest or opa, and the command names its own executable`);
   if ("path" in raw && "source" in raw) throw new Error(`${where}.path and ${where}.source cannot both be set; with a source, ${where}.source.path names the directory inside it`);
   for (const [key, value] of Object.entries(raw)) {
     if (key === "engine") {
@@ -378,10 +391,12 @@ export function assertGatePolicySettings(where: string, raw: unknown): asserts r
     } else if (key === "command") {
       if (!Array.isArray(value) || value.length === 0 || !value.every((a) => typeof a === "string" && a !== "")) throw new Error(`${where}.command must be argv, a non-empty list of strings`);
       if (!value.some((a: string) => a.includes("{input}"))) throw new Error(`${where}.command must pass the input file as {input}`);
+    } else if (key === "install") {
+      if (typeof value !== "boolean") throw new Error(`${where}.install must be true or false`);
     } else if (key === "outcomes" || key === "allow_unattended" || key === "allowUnattended") {
       throw new Error(`${where}.${key}: chant's policy step denies and holds only; a non-empty plan always waits for a person (ws-104), so there is no unattended outcome`);
     } else {
-      throw new Error(`${where}.${key} is not a setting; the settings are engine, path, source, namespace, command and packs`);
+      throw new Error(`${where}.${key} is not a setting; the settings are engine, path, source, namespace, command, packs and install`);
     }
   }
 }

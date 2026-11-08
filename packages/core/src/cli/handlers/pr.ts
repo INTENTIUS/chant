@@ -141,7 +141,7 @@ import { prPlanTargets } from "../../components/pr-targets";
 import { PREVIEW_COMMENT_ENV } from "../../components/pr-pipeline";
 import type { ComponentEnvironmentDeclaration } from "../../components/component";
 import { prLoopHooksAt, runPrHooks, type PrHoldSettled, type PrHookPlace, type PrLoopHooks } from "../../components/pr-hooks";
-import { decidePrPolicyOverride, policyReviewOf, prLoopPolicyAt, prPolicyReport, runPrPolicy, spendPrPolicyOverride, type PrLoopPolicy } from "../../components/pr-policy";
+import { decidePrPolicyOverride, policyReviewOf, prLoopPolicyAt, preparePrPolicyEngine, prPolicyReport, runPrPolicy, spendPrPolicyOverride, type PrLoopPolicy } from "../../components/pr-policy";
 import type { OpWaveHookMoment } from "../../op/op-waves";
 import type { PrHookOutcome } from "../../pr-loop";
 import type { PrMigrationFile } from "../../pr-migrations";
@@ -817,6 +817,8 @@ interface PolicyJudged {
 async function judgePolicy(p: Prepared, at: { stage: "plan" | "apply"; op: string; pr: number | null; set: PrPlanSet }): Promise<PolicyJudged> {
   // The review is read only when a policy will run: a workspace with no policy makes no forge call for it.
   const review = p.policy.settings ? await policyReviewOf(p.forge, at.pr) : undefined;
+  // #4774: with ci.policy.install, the engine is fetched here, once, and only for a stage that runs the policy.
+  p.policy = await preparePrPolicyEngine(p.policy);
   const verdict = runPrPolicy(p.policy, { version: 1, stage: at.stage, op: at.op, gate: p.gate, env: p.env, pr: at.pr, base: p.base, head: p.head, changeSet: at.set.doc, ...(review ? { review } : {}) });
   if (!verdict) return { held: false };
   const report = prPolicyReport(verdict, p.policy.base);
