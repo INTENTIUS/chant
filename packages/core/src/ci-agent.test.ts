@@ -345,4 +345,13 @@ describe("the run record", () => {
     expect(r).toMatchObject({ op: "plywood-drift-app", env: "local", status: "ok", labels: { Agent: "drift" }, outcomes: { agent: { trigger: "drift", result: "opened", usage: { usd: 0.4 } } } });
     expect(r.phases[0]!.steps[0]).toMatchObject({ fn: "agent:drift", status: "ok", durationMs: 300_000 });
   });
+
+  test("takes a product's own trigger word and records it as given (#4817)", () => {
+    const settings = { name: "terragucci-review", on: "review", env: "local" };
+    const r = agentRunRecordInput({ settings, started: "2026-10-27T11:00:00Z", ended: "2026-10-27T11:01:00Z", result: "updated", reason: "noted" });
+    expect(r).toMatchObject({ op: "terragucci-review", labels: { Agent: "review" }, outcomes: { agent: { trigger: "review", result: "updated" } } });
+    expect(r.phases[0]!.steps[0]).toMatchObject({ fn: "agent:review", status: "ok" });
+    const refused = agentRunRecordInput({ settings: { ...settings, name: "terragucci-refused-wave", on: "refused-wave" }, started: "2026-10-27T11:00:00Z", ended: "2026-10-27T11:00:00Z", result: "refused", reason: "refused" });
+    expect(refused).toMatchObject({ status: "ok", labels: { Agent: "refused-wave" }, outcomes: { agent: { trigger: "refused-wave" } } });
+  });
 });

@@ -52,6 +52,14 @@ export type AgentTrigger = "comment" | "drift";
 export const AGENT_TRIGGERS: readonly AgentTrigger[] = ["comment", "drift"];
 
 /**
+ * The trigger a run record names (#4817): one of chant's {@link AgentTrigger}s,
+ * or a product's own word for a model run it records on the same ledger, such
+ * as terragucci's `review` and `refused-wave`. A record's `trigger` was always
+ * a plain string, so a record written with chant's two words reads the same.
+ */
+export type AgentRunTrigger = AgentTrigger | (string & {});
+
+/**
  * A scheduled Op spec's `agent` (#4616): the agent jobs the Op generator
  * writes. With `on: "comment"` the spec is the agent's own workflow,
  * answering `comment` on a pull request, and its trigger is not read. With
@@ -763,9 +771,14 @@ export interface LandInput {
   runUrl?: string;
 }
 
-/** The run record of one agent run (#4551): op `<name>`, one phase with one step, the outcome in `outcomes`. */
+/**
+ * The run record of one agent run (#4551): op `<name>`, one phase with one
+ * step, the outcome in `outcomes`. `settings.on` is the outcome's `trigger`,
+ * the `Agent` label and the step's `agent:<on>`. A trigger outside
+ * {@link AGENT_TRIGGERS}, a product's own word (#4817), is recorded as given.
+ */
 export function agentRunRecordInput(o: {
-  settings: Pick<AgentSettings, "name" | "on" | "env">;
+  settings: Pick<AgentSettings, "name" | "env"> & { on: AgentRunTrigger };
   started: string;
   ended: string;
   result: AgentResult;
