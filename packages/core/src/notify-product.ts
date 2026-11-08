@@ -14,6 +14,15 @@
 
 import { CHANT_WORDS, isChantWords, type CiProductNotifyWords, type CiProductWords } from "./ci-product-words";
 import type { NotifyFields, SendNotifyOptions } from "./notify";
+import { NEXT_RELEASE } from "./release-floors";
+
+/**
+ * The first chant whose Slack and Teams messages take a product's words, a
+ * drift event's `rerunUrl` and the relay's name (#4818): `notify.message` in
+ * the words, `message` in sendNotify's options, and the third argument of
+ * `slackMessage` and `teamsMessage`.
+ */
+export const NOTIFY_MESSAGE_WORDS_FLOOR = NEXT_RELEASE;
 
 /** The notify slots of `words`, chant's when a caller built words before #4610. */
 export function productNotifyWords(words: CiProductWords): CiProductNotifyWords {
@@ -26,12 +35,16 @@ export function productNotifySource(words: CiProductWords): string {
 }
 
 /**
- * `options` with the product's header prefix, unless the caller names one.
- * chant's own words leave `options` as they are, so chant sends `x-chant`.
+ * `options` with the product's header prefix, unless the caller names one,
+ * and its message words (`notify.message`, #4818) under the caller's
+ * `message`. chant's own words with no message words leave `options` as they
+ * are, so chant sends `x-chant`.
  */
 export function productSendOptions(words: CiProductWords, options: SendNotifyOptions = {}): SendNotifyOptions {
-  if (options.prefix !== undefined || isChantWords(words)) return options;
-  return { ...options, prefix: productNotifyWords(words).headers };
+  const own = productNotifyWords(words);
+  const out = own.message ? { ...options, message: { ...own.message, ...options.message } } : options;
+  if (options.prefix !== undefined || isChantWords(words)) return out;
+  return { ...out, prefix: own.headers };
 }
 
 /** What a drift notice concerns. */

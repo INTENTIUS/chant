@@ -172,15 +172,32 @@ await sendNotify({ slack: "SLACK_WEBHOOK_URL", webhook: "YODEL_WEBHOOK_URL", key
 
 A wave job run through a product's bin sends in the product's words ([#4610](https://github.com/INTENTIUS/chant/issues/4610)). The event's `source` is the product's name, so a receiver can route on `plywood` or `terragucci`. The summary uses the product's apply verb, and the signed webhook's headers take the prefix `x-<product>`. A waiting wave's event carries the product's approve command, with chant's own command in `approve.chant`. The schema stays `chant.notify/v1`. Under chant's own words the event and the headers are as before.
 
-The `notify` slot of the words changes three of these:
+The `notify` slot of the words changes these:
 
 | Slot | Default | Use |
 |---|---|---|
 | `notify.source` | the product's name | sql-yodeler passes `sql-yodeler`, the name its receivers already filter on, while its product word is `yodel` |
 | `notify.wave` | `wave {k} ({name}) of {spec}` | how a summary names a wave; `({name})` is dropped for a wave with no name |
 | `notify.headers` | `x-<product>` | the header prefix the receiver verifies with |
+| `notify.message` | chant's words | the words of the Slack and Teams messages, below |
 
-A product that sends its own drift notice builds it with `driftNotifyFields(words, { changed, failed, fingerprint })` from `@intentius/chant/ci-product`, which gives `2 stacks drifted: shop-dev, shop-prod` under plywood's noun. `productSendOptions(words)` gives the header prefix to pass to `sendNotify`.
+A product that sends its own drift notice builds it with `driftNotifyFields(words, { changed, failed, fingerprint })` from `@intentius/chant/ci-product`, which gives `2 stacks drifted: shop-dev, shop-prod` under plywood's noun. `productSendOptions(words)` gives the header prefix and the message words to pass to `sendNotify`.
+
+### Word the chat messages
+
+`notify.message` words chant's own Slack text and Teams card, so a product needs no `render` of its own ([#4818](https://github.com/INTENTIUS/chant/issues/4818)). Every slot is optional, and a message given none is the one chant has always sent.
+
+| Slot | Default | Use |
+|---|---|---|
+| `targets` | `Targets` | the label of the targets line: terragucci's `Roots` |
+| `noTargets` | no line | the value shown when the event names no targets: `see the run` |
+| `reason` | `Reason` | the label of the reason line: `Outcome` |
+| `again` | `run it again` | what the review line asks after the pull request is approved: `run the wave again` |
+| `wave` | no fact | the label of a Teams fact holding the wave's number: `Wave` |
+| `teamsReport` | `true` | `false` leaves the report link off the Teams card |
+| `rerun` | `Run again`, `chant-rerun` | the re-run button's `label`, its Slack `action` id and Slack `block` id |
+
+A drift event that carries `rerunUrl`, the page where a person starts the check again (the workflow's page, or GitLab's pipeline schedules), gets a Slack button and a Teams action that open it. A Teams outgoing webhook reads only a message that mentions it, so `sendNotify(config, event, { message: { relayName: "terragucci" } })` makes the card spell the replies out (`Approve here: reply @terragucci approve <token>. Decline: reply @terragucci decline <token>.`) in place of "mention the relay and reply". `slackMessage(event, relay, words)` and `teamsMessage(event, relay, words)` take the same words. `NOTIFY_MESSAGE_WORDS_FLOOR` in `@intentius/chant/ci-product` is the first chant with them.
 
 ## Approve from chat
 

@@ -64,7 +64,7 @@ export {
   type ParsedProductComment,
   type ProductActionRequest,
 } from "./ci-product-words";
-export { driftNotifyFields, productNotifySource, productNotifyWords, productSendOptions, type DriftNotifyInput } from "./notify-product";
+export { driftNotifyFields, NOTIFY_MESSAGE_WORDS_FLOOR, productNotifySource, productNotifyWords, productSendOptions, type DriftNotifyInput } from "./notify-product";
 
 /** The first chant with `chant notify relay` and the notify relay buttons (#4611). */
 export const NOTIFY_RELAY_FLOOR = "0.124.55";
