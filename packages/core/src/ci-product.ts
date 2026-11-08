@@ -204,6 +204,33 @@ export async function runChantInProcess(argv: string[], words: CiProductWordsInp
 export { CI_AGENT_FLOOR, agentForbiddenPaths, type AgentSettings, type OpAgentSpec } from "./ci-agent";
 
 /**
+ * The agent guard (#4770): a Claude Code PreToolUse hook on Bash and a
+ * wrapper per engine binary that refuse an agent's apply, approve or
+ * override. A product passes its words (its name, the refusal) and rules
+ * (engines, their refused subcommands and flags, its own refused commands)
+ * to `installAgentGuard`, and `agentGuard` checks a command line in process
+ * with the same rule. Feature-detect on `AGENT_GUARD_FLOOR`.
+ */
+export {
+  AGENT_GUARD_FLOOR,
+  agentGuard,
+  agentGuardScript,
+  agentGuardWrapper,
+  CLAUDE_SETTINGS_LOCAL,
+  CLAUDE_SETTINGS_SHARED,
+  installAgentGuard,
+  withAgentGuardHook,
+  type AgentGuard,
+  type AgentGuardEngine,
+  type AgentGuardInstall,
+  type AgentGuardInstallOptions,
+  type AgentGuardRules,
+  type AgentGuardSpec,
+  type AgentGuardVerdict,
+  type AgentGuardWords,
+} from "./agent-guard";
+
+/**
  * After-plan hooks in a wave job's process (#4614): `runChantInProcess(["run",
  * "wave", ...], words, { wave: { afterPlan, capabilities } })`, or
  * `runOpWave({ afterPlan })` from `@intentius/chant/op`. Feature-detect on
