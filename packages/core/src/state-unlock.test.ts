@@ -61,10 +61,10 @@ describe("releaseStateLock", () => {
     const l = lock(LOCK);
     const first = await releaseStateLock(base(ledger, l, async () => [run("8", "2026-11-08T08:30:00Z")]));
     expect(first).toMatchObject({ status: "waiting", exit: 3 });
-    expect(first.status === "waiting" && first.command).toBe(`product approve unlock net --plan ${first.digest}`);
+    expect(first.status === "waiting" && first.command).toBe(`product approve unlock net --plan ${first.status === "waiting" ? first.digest : ""}`);
     ledger.approve("bo");
     const second = await releaseStateLock(base(ledger, l, async () => [], { now: "2026-11-08T12:00:00Z" }));
-    expect(second).toMatchObject({ status: "released", exit: 0, approvedBy: "bo", digest: first.digest });
+    expect(second).toMatchObject({ status: "released", exit: 0, approvedBy: "bo", digest: first.status === "waiting" ? first.digest : "" });
     expect(l.released).toEqual(["a1b2"]);
     expect(ledger.writes).toEqual(["pending", "applied", "finished:applied"]);
     expect(ledger.details[0]).toMatchObject({ by: "ana", lock_id: "a1b2", locked_by: "runner@ci", approved_by: "bo", live_runs: 0, location: "s3://states/net.tfstate.tflock" });
