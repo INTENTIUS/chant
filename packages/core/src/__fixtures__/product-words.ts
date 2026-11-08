@@ -42,3 +42,15 @@ export const YODEL = {
   approval: "per-wave" as const,
   bin: "yodel chant",
 };
+
+/** terragucci's plan note words (#4810), as its report/views.ts writes them. */
+export const TERRAGUCCI_NOTE = {
+  footer: '<sub><img src="https://intentius.io/terragucci/brand/taco-small.png" width="26" height="16" alt=""> Posted by [terragucci](https://intentius.io/terragucci/)</sub>',
+  artifact: "terragucci-report",
+  noReport: "Planned in [this run]({run}), which keeps no report artifact; with `reports` set, the note links the report in the bucket.",
+  marker: "terragucci:waves",
+  anchors: { member: "root-{id}", group: "group-{id}" },
+  overrideKey: "policy.override",
+  approvalRulesKey: "approval_rules",
+  applyStage: "tf-apply",
+};
