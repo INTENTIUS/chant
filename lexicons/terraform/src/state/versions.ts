@@ -57,7 +57,7 @@ function gcsVersions(o: Extract<StoredState, { backend: "gcs" }>, fetchFn?: Stor
   };
 }
 
-function azureVersions(o: Extract<StoredState, { backend: "azurerm" }>, fetchFn?: StoreFetch): StateVersionSource {
+function azureVersions(o: Extract<StoredState, { backend: "azurerm" }>, fetchFn?: StoreFetch, pin = true): StateVersionSource {
   const client = new AzureBlobClient({ account: o.account, container: o.container, endpoint: o.endpoint, ...o.auth } as AzureTarget, fetchFn);
   // A blob that keeps versions names each by its version id; else by a snapshot.
   const at = async (id: string) => ((await client.head(o.key)).versionId ? { versionid: id } : { snapshot: id });
@@ -68,20 +68,25 @@ function azureVersions(o: Extract<StoredState, { backend: "azurerm" }>, fetchFn?
       if (!head.exists) return { exists: false };
       if (head.versionId) return { exists: true, versionId: head.versionId };
       if (!o.snapshot) return { exists: true, off: `blob versioning is off for ${o.account}, and the backend takes no snapshots (snapshot = true), so it keeps only the latest state` };
-      return { exists: true, versionId: await client.snapshot(o.key) };
+      return pin ? { exists: true, versionId: await client.snapshot(o.key) } : { exists: true, off: "the blob keeps no versions, and only a snapshot would name this one" };
     },
     hasVersion: async (id) => (await client.head(o.key, await at(id))).exists,
     readVersion: async (id) => client.readAt(o.key, await at(id)),
   };
 }
 
-/** A root's state as a version source, or why it has none: a refused backend, or a local state, which keeps no versions. */
-export function stateVersionSource(o: StateObject, fetchFn?: StoreFetch): StateVersionSource | { refused: string } {
+/**
+ * A root's state as a version source, or why it has none: a refused backend,
+ * or a local state, which keeps no versions. With `pin: false` an azurerm
+ * blob that keeps no versions names none for its current state, where the
+ * default takes a snapshot to name it.
+ */
+export function stateVersionSource(o: StateObject, fetchFn?: StoreFetch, options: { pin?: boolean } = {}): StateVersionSource | { refused: string } {
   if (isRefused(o)) return { refused: o.reason };
   if (o.backend === "local") return { refused: `the state is a local file, ${stateLocation(o)}, which keeps no versions; ${READS_VERSIONS}` };
   if (o.backend === "s3") return s3Versions(o, fetchFn);
   if (o.backend === "gcs") return gcsVersions(o, fetchFn);
-  return azureVersions(o, fetchFn);
+  return azureVersions(o, fetchFn, options.pin ?? true);
 }
 
 /** A GitLab-managed state as a version source: the version id is the serial. */
