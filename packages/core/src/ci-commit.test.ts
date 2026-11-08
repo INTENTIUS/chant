@@ -22,6 +22,9 @@ import {
   resolveCommitSpec,
   runCommit,
   COMMIT_PR_ENV,
+  CI_COMMIT_ARG_FLOOR,
+  commitArgv,
+  GITLAB_COMMIT_ARG_VAR,
   type CommitRefusalReply,
   type CommitRunCommand,
   type CommitSettings,
@@ -29,6 +32,7 @@ import {
 } from "./ci-commit";
 import { assertProductWords, parseProductComment } from "./ci-product-words";
 import { PLYWOOD } from "./__fixtures__/product-words";
+import { NEXT_RELEASE } from "./release-floors";
 import type { OpRunRecord, OpRunRecordInput } from "./op/runtime";
 import type { PullRequestHead } from "./pr-forge";
 
@@ -480,5 +484,92 @@ describe("the command's variables and its refusal reply (#4724)", () => {
     const { out } = await cycle(w, settings(), { command, refusalReply: () => undefined });
     expect(out).toMatchObject({ result: "failed", reason: "the command exited 3" });
     expect(w.replies[0]).toContain("stopped with exit code 3");
+  });
+});
+
+describe("the comment's argument (#4820)", () => {
+  const NAME_PATTERN = "^[a-z0-9]+(?:[-_][a-z0-9]+)*$";
+  const named = (extra: Partial<OpCommitSpec> = {}) => settings({ commentArg: { pattern: NAME_PATTERN, position: 1 }, ...extra });
+  const seeing = (into: (readonly string[])[]): CommitRunCommand => async (argv, o) => {
+    into.push(argv);
+    return formatter()(argv, o);
+  };
+
+  test("the parse reads one argument only for a word that declares it, against its pattern and chant's own", () => {
+    const args = { fmt: new RegExp(NAME_PATTERN) };
+    expect(parseProductComment(words, "/plywood fmt", {}, args)).toEqual({ kind: "commit", word: "fmt" });
+    expect(parseProductComment(words, "/plywood fmt add-note", {}, args)).toEqual({ kind: "commit", word: "fmt", arg: "add-note" });
+    expect(parseProductComment(words, "/plywood fmt Add-Note", {}, args)).toMatchObject({ kind: "refused", reason: expect.stringMatching(/`\/plywood fmt` takes nothing, or one name after it/) });
+    expect(parseProductComment(words, "/plywood fmt a b", {}, args)).toMatchObject({ kind: "refused" });
+    expect(parseProductComment(words, "/plywood fmt --force", {}, args)).toMatchObject({ kind: "refused" });
+    // chant's own check holds whatever the product's pattern lets through.
+    expect(parseProductComment(words, "/plywood fmt ../x", {}, { fmt: /^.*$/ })).toMatchObject({ kind: "refused" });
+    expect(parseProductComment(words, "/plywood fmt $(id)", {}, { fmt: /^.*$/ })).toMatchObject({ kind: "refused" });
+    expect(parseProductComment(words, "/plywood fmt add-note")).toEqual({ kind: "refused", reason: "`/plywood fmt` takes nothing after it" });
+  });
+
+  test("commentArg round-trips through the job's variables and refuses a loose pattern, a bad position or the check trigger", () => {
+    const s = named();
+    expect(s.commentArg).toEqual({ pattern: NAME_PATTERN, position: 1 });
+    expect(commitSettingsFromEnv(commitSettingsEnv(s), "plywood")).toEqual(s);
+    expect(settings().commentArg).toBeUndefined();
+    expect(() => named({ commentArg: { pattern: "[a-z]+", position: 1 } })).toThrow(/anchored/);
+    expect(() => named({ commentArg: { pattern: "^(?:$", position: 1 } })).toThrow(/pattern/);
+    expect(() => named({ commentArg: { pattern: NAME_PATTERN, position: 0 } })).toThrow(/position/);
+    expect(() => named({ commentArg: { pattern: NAME_PATTERN, position: 4 } })).toThrow(/position/);
+    expect(() => resolveCommitSpec("plywood-fmt", { on: "check", command: ["terraform", "fmt"], allowed: ["main.tf"], commentArg: { pattern: NAME_PATTERN, position: 1 } }, "plywood")).toThrow(/comment trigger/);
+  });
+
+  test("commitArgv puts the argument at its position and refuses one the settings do not take", () => {
+    expect(commitArgv(named(), "add-note")).toEqual(["terraform", "add-note", "fmt", "-recursive"]);
+    expect(commitArgv(named(), undefined)).toEqual(["terraform", "fmt", "-recursive"]);
+    expect(() => commitArgv(settings(), "add-note")).toThrow(/takes no argument/);
+    expect(() => commitArgv(named(), "Bad")).toThrow(/not a name/);
+  });
+
+  test("the comment's argument reaches the command's argv, the commit and the reply", async () => {
+    const w = world();
+    const argvs: (readonly string[])[] = [];
+    const { decision, out } = await cycle(w, named(), { event: comment("/plywood fmt add-note"), command: seeing(argvs) });
+    expect(decision.arg).toBe("add-note");
+    expect(argvs).toEqual([["terraform", "add-note", "fmt", "-recursive"]]);
+    expect(out.result).toBe("pushed");
+    expect(featureLog(w)).toContain("/plywood fmt add-note asked for by ana");
+    expect(featureLog(w)).toContain("Ran terraform add-note fmt -recursive on ");
+    expect(w.replies[0]).toContain("from `terraform add-note fmt -recursive`");
+  });
+
+  test("without an argument the argv is the spec's", async () => {
+    const w = world();
+    const argvs: (readonly string[])[] = [];
+    const { decision } = await cycle(w, named(), { command: seeing(argvs) });
+    expect(decision.arg).toBeUndefined();
+    expect(argvs).toEqual([["terraform", "fmt", "-recursive"]]);
+  });
+
+  test("an argument off the pattern is refused before anything runs", async () => {
+    const w = world();
+    const argvs: (readonly string[])[] = [];
+    const { out } = await cycle(w, named(), { event: comment("/plywood fmt Not_ok!"), command: seeing(argvs) });
+    expect(argvs).toEqual([]);
+    expect(out.result).toBe("refused");
+    expect(out.reason).toMatch(/takes nothing, or one name after it/);
+    expect(sh(["rev-parse", "refs/heads/feature"], w.r.origin).trim()).toBe(w.r.head);
+  });
+
+  test("GitLab takes the argument from its own pipeline variable", async () => {
+    const w = world();
+    const argvs: (readonly string[])[] = [];
+    const env = { GITLAB_CI: "true", CHANT_COMMIT_PR: "7", CHANT_COMMIT: "fmt", [GITLAB_COMMIT_ARG_VAR]: "add-note", GITLAB_USER_LOGIN: "ana" };
+    const { out } = await cycle(w, named(), { event: {}, env, command: seeing(argvs) });
+    expect(out.result).toBe("pushed");
+    expect(argvs).toEqual([["terraform", "add-note", "fmt", "-recursive"]]);
+    const bad = world();
+    const { out: refused } = await cycle(bad, named(), { event: {}, env: { ...env, [GITLAB_COMMIT_ARG_VAR]: "a b" }, command: seeing([]) });
+    expect(refused.result).toBe("refused");
+  });
+
+  test("the floor is the next release until it ships", () => {
+    expect(CI_COMMIT_ARG_FLOOR).toBe(NEXT_RELEASE);
   });
 });

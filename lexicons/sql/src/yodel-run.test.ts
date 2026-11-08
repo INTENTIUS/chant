@@ -8,7 +8,7 @@
  * src/rebase/index.ts, src/commands/rebase.ts and src/commands/new.ts).
  */
 import { describe, expect, test } from "vitest";
-import { CI_COMMIT_REPLY_FLOOR, commitSettingsEnv, commitSettingsFromEnv, resolveCommitSpec } from "@intentius/chant/ci-commit";
+import { CI_COMMIT_REPLY_FLOOR, commitArgv, commitSettingsEnv, commitSettingsFromEnv, resolveCommitSpec } from "@intentius/chant/ci-commit";
 import { CHANT_EXIT } from "@intentius/chant/exit-codes";
 import { NEXT_RELEASE } from "@intentius/chant/release-floors";
 import { NODE_CHECK_LINE, PACKAGES_INSTALL_LINE } from "./ci-setup";
@@ -19,6 +19,7 @@ import {
   YODEL_COMMIT_FLOOR,
   YODEL_REBASE_CONFLICT_FLOOR,
   YODEL_NEW_HISTORY_FLOOR,
+  YODEL_NEW_NAME_FLOOR,
   yodelCommitRefusalReply,
   yodelCommitSetup,
   yodelCommitSpec,
@@ -76,8 +77,24 @@ describe("argv", () => {
 describe("the commit-job specs", () => {
   test("new on a comment changes only the migrations directory and merges nothing first", () => {
     const spec = yodelCommitSpec("new", { on: "comment", dir: "db", tokenEnv: "YODEL_PUSH_TOKEN" });
-    expect(spec).toEqual({ on: "comment", comment: "/yodel new", command: ["yodel", "new", "--if-changed", "--replace-own", "--dir", "db"], allowed: ["db/migrations/"], tokenEnv: "YODEL_PUSH_TOKEN" });
+    expect(spec).toMatchObject({ on: "comment", comment: "/yodel new", command: ["yodel", "new", "--if-changed", "--replace-own", "--dir", "db"], allowed: ["db/migrations/"], tokenEnv: "YODEL_PUSH_TOKEN" });
+    expect(spec.mergeBase).toBeUndefined();
     expect(yodelCommitSpec("new", { on: "comment", tokenEnv: "T" }).allowed).toEqual(["migrations/"]);
+  });
+
+  test("/yodel new on a comment takes a migration name after it, put after new in the argv (#4820)", () => {
+    const spec = yodelCommitSpec("new", { on: "comment", dir: "db", tokenEnv: "T" });
+    expect(spec.commentArg).toEqual({ pattern: "^[a-z0-9]+(?:[-_][a-z0-9]+)*$", position: 2 });
+    const s = resolveCommitSpec("yodel-new", spec, "yodel");
+    expect(commitSettingsFromEnv(commitSettingsEnv(s), "yodel")).toEqual(s);
+    const argv = commitArgv(s, "add-note");
+    expect(argv).toEqual(["yodel", "new", "add-note", "--if-changed", "--replace-own", "--dir", "db"]);
+    expect(allowedYodelCommitArgv(argv.slice(1))).toBe(true);
+    expect(() => commitArgv(s, "Add_Note")).toThrow(/not a name/);
+    // A fixed name, the check trigger and rebase take nothing from the comment.
+    expect(yodelCommitSpec("new", { on: "comment", name: "fixed", tokenEnv: "T" }).commentArg).toBeUndefined();
+    expect(yodelCommitSpec("new", { on: "check", tokenEnv: "T" }).commentArg).toBeUndefined();
+    expect(yodelCommitSpec("rebase", { on: "comment", tokenEnv: "T" }).commentArg).toBeUndefined();
   });
 
   test("on the check trigger each starts on chant's drift code", () => {
@@ -133,6 +150,10 @@ describe("the commit-job specs", () => {
 
   test("new's envs floor is the next release until it ships (#4815)", () => {
     expect(YODEL_NEW_HISTORY_FLOOR).toBe(NEXT_RELEASE);
+  });
+
+  test("the name's floor is core's commit-job argument floor (#4820)", () => {
+    expect(YODEL_NEW_NAME_FLOOR).toBe(NEXT_RELEASE);
   });
 });
 

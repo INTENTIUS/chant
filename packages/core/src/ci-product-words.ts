@@ -471,7 +471,7 @@ export type ParsedProductComment =
    */
   | { kind: "action"; member: string; address: string }
   /** A commit job's command (#4722), by the word typed: `/terragucci fmt`. Several words may each map onto `commit`. */
-  | { kind: "commit"; word: string }
+  | { kind: "commit"; word: string; arg?: string }
   | { kind: "refused"; reason: string };
 
 /** A member as a comment may name it: path segments, no leading dash, no shell or glob syntax. */
@@ -489,6 +489,12 @@ const TARGET = /^[A-Za-z0-9_][A-Za-z0-9_.:\/\[\]"*@=+$,-]{0,499}$/;
  * No leading dash, no spaces, no shell or glob syntax.
  */
 const ACTION = /^[A-Za-z_][A-Za-z0-9_.\[\]"-]{0,299}$/;
+/**
+ * The one argument a commit word may take after it (#4820), on top of the
+ * product's own pattern: a plain name, no leading dash, no path or shell
+ * syntax, at most 100 characters.
+ */
+export const COMMIT_COMMENT_ARG = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/;
 /** The longest ask an agent comment may carry. */
 export const PRODUCT_COMMENT_ASK_MAX = 2000;
 /** Commands a comment never runs, named in the reply so nobody waits on them. */
@@ -502,9 +508,17 @@ const NEVER = new Set(["approve", "override", "force-unlock", "unlock-state", "i
  * comment is untrusted input: only a member path checked against a pattern
  * with no shell syntax, and a wave number, leave this function.
  *
- * `env` turns on an alias whose `when` variable is `1` there.
+ * `env` turns on an alias whose `when` variable is `1` there. `commitArgs`
+ * names the commit words that take one argument after them (#4820), each
+ * with the pattern it must match; it must also match
+ * {@link COMMIT_COMMENT_ARG}. Any other commit word takes nothing.
  */
-export function parseProductComment(words: CiProductWords, body: unknown, env: Record<string, string | undefined> = {}): ParsedProductComment | undefined {
+export function parseProductComment(
+  words: CiProductWords,
+  body: unknown,
+  env: Record<string, string | undefined> = {},
+  commitArgs: Readonly<Record<string, RegExp>> = {},
+): ParsedProductComment | undefined {
   if (typeof body !== "string") return undefined;
   let text = body.trim();
   const prefix = `/${words.product}`;
@@ -547,8 +561,16 @@ export function parseProductComment(words: CiProductWords, body: unknown, env: R
     case "lock":
     case "unlock":
       return parts.length === 2 ? { kind: command } : { kind: "refused", reason: `${line} takes nothing after it` };
-    case "commit":
-      return parts.length === 2 ? { kind: "commit", word: typed } : { kind: "refused", reason: `${line} takes nothing after it` };
+    case "commit": {
+      if (parts.length === 2) return { kind: "commit", word: typed };
+      const pattern = Object.prototype.hasOwnProperty.call(commitArgs, typed) ? commitArgs[typed] : undefined;
+      if (pattern === undefined) return { kind: "refused", reason: `${line} takes nothing after it` };
+      const arg = parts[2]!;
+      if (parts.length !== 3 || !COMMIT_COMMENT_ARG.test(arg) || !pattern.test(arg)) {
+        return { kind: "refused", reason: `${line} takes nothing, or one name after it matching \`${pattern.source}\`` };
+      }
+      return { kind: "commit", word: typed, arg };
+    }
     case "agent": {
       const ask = text.slice(`${prefix} ${typed}`.length).trim();
       if (ask === "") return { kind: "refused", reason: `${line} needs an ask after it, on the same line` };
