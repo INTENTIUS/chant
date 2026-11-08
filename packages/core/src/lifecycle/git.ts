@@ -4,7 +4,7 @@
  * All operations use git plumbing commands — no checkout, no branch switching,
  * no working tree changes.
  */
-import { unlinkSync } from "node:fs";
+import { unlinkSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { getRuntime } from "../runtime-adapter";
 import { memberLedgerPrefix, resolveMemberLedger } from "./member-ledger";
@@ -1028,7 +1028,9 @@ async function rebaseLifecycleOnRemote(remote: string, cwd?: string): Promise<{ 
     for (const commit of ours) {
       const parent = await run(["rev-parse", "--verify", "--quiet", `${commit}^1`]);
       if (parent.exitCode !== 0) return { error: `${commit.slice(0, 12)} shares no history with the remote's ${STATE_BRANCH}` };
-      const merged = await run(["merge-tree", "--write-tree", `--merge-base=${parent.stdout.trim()}`, onto, commit]);
+      let merged = await run(["merge-tree", "--write-tree", `--merge-base=${parent.stdout.trim()}`, onto, commit]);
+      // #4768: git before 2.40 has no --merge-base and exits 129 with its usage text (node:22-bookworm-slim's apt git is 2.39).
+      if (merged.exitCode === 129) merged = await mergeTreesInIndex(parent.stdout.trim(), onto, commit, cwd);
       const subject = firstLine((await run(["log", "-1", "--format=%s", commit])).stdout);
       let tree: string;
       if (merged.exitCode === 1) {
@@ -1061,6 +1063,73 @@ async function rebaseLifecycleOnRemote(remote: string, cwd?: string): Promise<{ 
     return { rebased: ours.length };
   } finally {
     await run(["update-ref", "-d", REBASE_REF]);
+  }
+}
+
+/**
+ * `git merge-tree --write-tree --merge-base=<base> <ours> <theirs>` for git
+ * older than 2.40 (#4768), with the same exit codes: 0 with the merged tree
+ * on stdout, 1 when a path conflicts, anything else when git failed. A 3-way
+ * `read-tree` into a scratch index takes every path only one side changed;
+ * a file both sides changed is merged by `git merge-file`, and any other
+ * path both sides touched (an add on both sides, a delete against a change)
+ * is a conflict. Nothing touches a work tree.
+ */
+async function mergeTreesInIndex(base: string, ours: string, theirs: string, cwd?: string): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  const rt = getRuntime();
+  const scratch = (await rt.spawn(["git", "rev-parse", "--git-path", `chant-lifecycle-merge-${process.pid}`], { cwd, env: C_LOCALE_ENV })).stdout.trim();
+  if (!scratch) return { exitCode: 2, stdout: "", stderr: "no scratch index path" };
+  const index = isAbsolute(scratch) || !cwd ? scratch : join(cwd, scratch);
+  const env = { ...C_LOCALE_ENV, GIT_INDEX_FILE: `${index}.index` };
+  const run = (args: string[], stdin?: string) => rt.spawn(["git", ...args], { cwd, env, ...(stdin !== undefined ? { stdin } : {}) });
+  const files: string[] = [];
+  try {
+    const read = await run(["read-tree", "-i", "-m", "--aggressive", base, ours, theirs]);
+    if (read.exitCode !== 0) return read;
+    const unmerged = await run(["ls-files", "-u", "-z"]);
+    if (unmerged.exitCode !== 0) return unmerged;
+    // "<mode> <sha> <stage>\t<path>" per stage of each path both sides changed.
+    const stages = new Map<string, Map<number, { mode: string; sha: string }>>();
+    for (const entry of unmerged.stdout.split("\0").filter((e) => e !== "")) {
+      const tab = entry.indexOf("\t");
+      const [mode, sha, stage] = entry.slice(0, tab).split(" ");
+      const path = entry.slice(tab + 1);
+      if (!stages.has(path)) stages.set(path, new Map());
+      stages.get(path)!.set(Number(stage), { mode: mode!, sha: sha! });
+    }
+    for (const [path, by] of stages) {
+      const b = by.get(1);
+      const o = by.get(2);
+      const t = by.get(3);
+      if (!b || !o || !t || o.mode !== t.mode || !o.mode.startsWith("100")) return { exitCode: 1, stdout: "", stderr: `${path} conflicts` };
+      const blobs: string[] = [];
+      for (const [i, s] of [b, o, t].entries()) {
+        const content = await run(["cat-file", "blob", s.sha]);
+        if (content.exitCode !== 0) return content;
+        const file = `${index}.${i}`;
+        writeFileSync(file, content.stdout);
+        files.push(file);
+        blobs.push(file);
+      }
+      // merge-file <current> <base> <other>: ours is current, as merge-tree's first branch is.
+      const mergedFile = await rt.spawn(["git", "merge-file", "-p", blobs[1]!, blobs[0]!, blobs[2]!], { cwd, env: C_LOCALE_ENV });
+      if (mergedFile.exitCode !== 0) return { exitCode: mergedFile.exitCode > 0 && mergedFile.exitCode < 128 ? 1 : 2, stdout: "", stderr: mergedFile.stderr || `${path} conflicts` };
+      const hashed = await run(["hash-object", "-w", "--stdin"], mergedFile.stdout);
+      if (hashed.exitCode !== 0) return hashed;
+      const removed = await run(["update-index", "--force-remove", "--", path]);
+      if (removed.exitCode !== 0) return removed;
+      const added = await run(["update-index", "--add", "--cacheinfo", `${o.mode},${hashed.stdout.trim()},${path}`]);
+      if (added.exitCode !== 0) return added;
+    }
+    return await run(["write-tree"]);
+  } finally {
+    for (const f of [...files, `${index}.index`]) {
+      try {
+        unlinkSync(f);
+      } catch {
+        // Not written.
+      }
+    }
   }
 }
 

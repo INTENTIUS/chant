@@ -687,6 +687,98 @@ describe("lifecycle/git", () => {
       }
     });
 
+    describe("on git older than 2.40, without merge-tree --merge-base (#4768)", () => {
+      /** A `git` ahead of the real one on PATH that refuses `merge-tree --merge-base` as git 2.39 does: usage text, exit 129. */
+      async function withOldGit(fn: () => Promise<void>): Promise<void> {
+        const real = spawnSync("sh", ["-c", "command -v git"], { encoding: "utf-8" }).stdout.trim();
+        const bin = join(tmpdir(), `chant-old-git-${Date.now()}-${Math.random()}`);
+        mkdirSync(bin);
+        writeFileSync(
+          join(bin, "git"),
+          `#!/bin/sh\nfor a in "$@"; do case "$a" in --merge-base=*) echo "usage: git merge-tree [--write-tree] [<options>] <branch1> <branch2>" >&2; exit 129;; esac; done\nexec "${real}" "$@"\n`,
+          { mode: 0o755 },
+        );
+        const path = process.env.PATH;
+        process.env.PATH = `${bin}:${path ?? ""}`;
+        try {
+          await fn();
+        } finally {
+          process.env.PATH = path;
+          const { rm } = await import("node:fs/promises");
+          await rm(bin, { recursive: true, force: true });
+        }
+      }
+
+      test("a lost race replays on the remote's tip and lands, with both writes kept", async () => {
+        const { a, b, remotePath, done } = await twoWriters();
+        try {
+          await withOldGit(async () => {
+            await advance(a, "wave.json", '{"wave":1}');
+            await writeBlobToPath("prod", "merge.json", '{"merge":1}', "Merge record: abc", { cwd: b });
+            expect(await pushLifecycleRebasing({ cwd: b })).toEqual({ pushed: true });
+          });
+          const tip = git(["rev-parse", "refs/heads/chant/lifecycle"], remotePath).stdout.trim();
+          expect(git(["show", `${tip}:prod/merge.json`], remotePath).stdout).toBe('{"merge":1}');
+          expect(git(["show", `${tip}:prod/wave.json`], remotePath).stdout).toBe('{"wave":1}');
+          expect(git(["log", "-1", "--format=%s|%an", tip], remotePath).stdout.trim()).toBe("Merge record: abc|Record");
+          expect(git(["log", "-1", "--format=%s", `${tip}^`], remotePath).stdout.trim()).toBe("wave: wave.json");
+        } finally {
+          await done();
+        }
+      });
+
+      test("two writers that append lines to one ledger file both land, in push order", async () => {
+        const { a, b, remotePath, done } = await twoWriters();
+        try {
+          await withOldGit(async () => {
+            git(["fetch", "-q", "origin", "+refs/heads/chant/lifecycle:refs/remotes/origin/chant/lifecycle"], a);
+            await appendReleaseRecordLine("prod", '{"from":"wave"}', { cwd: a });
+            expect(await pushLifecycle({ cwd: a })).toBe(true);
+            await appendReleaseRecordLine("prod", '{"from":"record"}', { cwd: b });
+            expect(await pushLifecycleRebasing({ cwd: b })).toEqual({ pushed: true });
+          });
+          const tip = git(["rev-parse", "refs/heads/chant/lifecycle"], remotePath).stdout.trim();
+          expect(git(["show", `${tip}:prod/releases.jsonl`], remotePath).stdout).toBe('{"from":"wave"}\n{"from":"record"}\n');
+        } finally {
+          await done();
+        }
+      });
+
+      test("edits to different lines of one file by the two writers merge as merge-tree merges them", async () => {
+        const lines = (first: string, last: string) => [first, "2", "3", "4", "5", "6", "7", "8", last].join("\n") + "\n";
+        const { a, b, remotePath, done } = await twoWriters();
+        try {
+          await advance(a, "notes.txt", lines("1", "9"));
+          git(["fetch", "-q", "origin", "chant/lifecycle:chant/lifecycle"], b);
+          git(["fetch", "-q", "origin", "+refs/heads/chant/lifecycle:refs/remotes/origin/chant/lifecycle"], b);
+          await withOldGit(async () => {
+            await advance(a, "notes.txt", lines("wave", "9"));
+            await writeBlobToPath("prod", "notes.txt", lines("1", "record"), "record: notes", { cwd: b });
+            expect(await pushLifecycleRebasing({ cwd: b })).toEqual({ pushed: true });
+          });
+          const tip = git(["rev-parse", "refs/heads/chant/lifecycle"], remotePath).stdout.trim();
+          expect(git(["show", `${tip}:prod/notes.txt`], remotePath).stdout).toBe(lines("wave", "record"));
+        } finally {
+          await done();
+        }
+      });
+
+      test("a commit that rewrote the file the other writer changed is still refused by name", async () => {
+        const { a, b, done } = await twoWriters();
+        try {
+          await withOldGit(async () => {
+            await advance(a, "merge.json", '{"merge":"wave"}');
+            await writeBlobToPath("prod", "merge.json", '{"merge":"record"}', "Merge record: abc", { cwd: b });
+            const err = await pushLifecycleRebasing({ cwd: b }).catch((e: unknown) => e);
+            expect(err).toBeInstanceOf(LifecyclePushLostError);
+            expect((err as Error).message).toContain("changes files the other writer changed too");
+          });
+        } finally {
+          await done();
+        }
+      });
+    });
+
     test("no remote reads as the local note, as pushLifecycleReport says it", async () => {
       await withTestDir(async (dir) => {
         await initRepo(dir);
