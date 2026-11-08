@@ -19,9 +19,11 @@
  * command's lifetime. Every renderer here reads {@link activeProductWords}
  * when it is given none.
  *
- * This module imports nothing: the pull request loop bundle (pr-loop.ts,
- * pr-loop-bundle.test.ts) carries it.
+ * This module imports nothing at run time (the one import is a type): the
+ * pull request loop bundle (pr-loop.ts, pr-loop-bundle.test.ts) carries it.
  */
+
+import type { NotifyMessageWords } from "./notify";
 
 /** The stages a product names: the status context after the prefix, and the word in the note. */
 export type CiProductStage = "plan" | "apply" | "record" | "check" | "drift" | "lock" | "approval" | "control";
@@ -139,6 +141,8 @@ export interface CiProductNotifyWordsInput {
   wave?: string;
   /** The signed webhook's header prefix. Default `x-<product>`, so chant's stays `x-chant`. */
   headers?: string;
+  /** The labels, re-run button and other words of chant's Slack and Teams messages (#4818). Default: chant's. */
+  message?: NotifyMessageWords;
 }
 
 /** The notify slots, filled. */
@@ -146,6 +150,7 @@ export interface CiProductNotifyWords {
   source: string;
   wave: string;
   headers: string;
+  message?: NotifyMessageWords;
 }
 
 /** chant's own wave label in a notify summary. */
@@ -220,6 +225,7 @@ export function resolveProductWords(input: CiProductWordsInput | CiProductWords 
       source: input.notify?.source ?? product,
       wave: input.notify?.wave ?? CHANT_NOTIFY_WAVE_TEMPLATE,
       headers: input.notify?.headers ?? `x-${product}`,
+      ...(input.notify?.message ? { message: input.notify.message } : {}),
     },
   };
 }

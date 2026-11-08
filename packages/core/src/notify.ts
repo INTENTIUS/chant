@@ -102,6 +102,8 @@ export interface NotifyEvent {
   run?: NotifyRun;
   /** A report page for the run. */
   reportUrl?: string;
+  /** On `drift` (#4818): the page where a person runs the check again, which the chat messages open from a button. */
+  rerunUrl?: string;
   /** The product's own record of the outcome, carried whole for programs that know it. */
   detail?: Record<string, unknown>;
 }
@@ -205,15 +207,41 @@ export function notifyHeadline(e: NotifyEvent): string {
   return `${e.source}: ${what} ${HEADLINE[e.event]}`;
 }
 
+/**
+ * A product's words in the Slack and Teams messages (#4818). Each slot left
+ * out keeps chant's, so a message given none is as before.
+ */
+export interface NotifyMessageWords {
+  /** The targets' label. Default `Targets`. */
+  targets?: string;
+  /** The targets' value when the event names none. Default: no line. */
+  noTargets?: string;
+  /** The reason's label. Default `Reason`. */
+  reason?: string;
+  /** What a person does after the review: `run it again`. */
+  again?: string;
+  /** The label of a Teams fact giving the wave's number. Default: no fact. */
+  wave?: string;
+  /** `false` leaves the report link out of the Teams card. */
+  teamsReport?: boolean;
+  /** The re-run button: its label (`Run again`), and the Slack action id (`chant-rerun`) and block id (none). */
+  rerun?: { label?: string; action?: string; block?: string };
+}
+
+/** The words, and the relay's name: a Teams outgoing webhook reads only a message that mentions it, so with the name the card says the whole reply (#4818). */
+export interface NotifyMessageOptions extends NotifyMessageWords {
+  relayName?: string;
+}
+
 /** The label and value lines both chat messages show, in order. */
-function facts(e: NotifyEvent): { title: string; value: string; link?: string }[] {
+function facts(e: NotifyEvent, w: NotifyMessageWords): { title: string; value: string; link?: string }[] {
   const out: { title: string; value: string; link?: string }[] = [];
-  if (e.approve?.review) out.push({ title: "Review and approve", value: `pull request ${e.approve.review.pr}, then run it again`, link: e.approve.review.url });
+  if (e.approve?.review) out.push({ title: "Review and approve", value: `pull request ${e.approve.review.pr}, then ${w.again ?? "run it again"}`, link: e.approve.review.url });
   if (e.drift) {
     if (e.drift.changed.length > 0) out.push({ title: "Drifted", value: e.drift.changed.join(", ") });
     if (e.drift.missing?.length) out.push({ title: "Missing", value: e.drift.missing.join(", ") });
     if (e.drift.failed?.length) out.push({ title: "Not refreshed", value: e.drift.failed.join(", ") });
-  } else if (e.targets.length > 0) out.push({ title: "Targets", value: e.targets.join(", ") });
+  } else if (e.targets.length > 0 || w.noTargets) out.push({ title: w.targets ?? "Targets", value: e.targets.join(", ") || w.noTargets! });
   if (e.ci) {
     out.push({ title: "Commit", value: `${e.ci.commit.slice(0, 12)} on ${e.ci.branch}` });
     if (e.ci.phase) out.push({ title: "Phase", value: e.ci.failedRun ? `${e.ci.phase}: ${e.ci.failedRun.name} ${e.ci.failedRun.conclusion ?? ""}`.trimEnd() : e.ci.phase });
@@ -223,7 +251,7 @@ function facts(e: NotifyEvent): { title: string; value: string; link?: string }[
   }
   if (e.digest) out.push({ title: "Digest", value: e.digest });
   if (e.approve) out.push({ title: e.approve.review ? "Or approve" : "Approve", value: e.approve.command });
-  if (e.reason) out.push({ title: "Reason", value: e.reason });
+  if (e.reason) out.push({ title: w.reason ?? "Reason", value: e.reason });
   if (e.run?.url) out.push({ title: "Run", value: e.run.url, link: e.run.url });
   if (e.reportUrl) out.push({ title: "Report", value: e.reportUrl, link: e.reportUrl });
   return out;
@@ -290,18 +318,20 @@ export interface RelayButtons {
   token: string;
 }
 
-/** A Slack incoming webhook's body: one mrkdwn text, with the approve command as code and the links as links. With `relay`, Approve and Decline buttons (#4611). */
-export function slackMessage(e: NotifyEvent, relay?: RelayButtons): { text: string; blocks?: unknown[] } {
+/** A Slack incoming webhook's body: one mrkdwn text, with the approve command as code and the links as links. With `relay`, Approve and Decline buttons (#4611); with `rerunUrl`, a button that opens it (#4818). */
+export function slackMessage(e: NotifyEvent, relay?: RelayButtons, w: NotifyMessageOptions = {}): { text: string; blocks?: unknown[] } {
   const lines = [`*${notifyHeadline(e)}*`];
-  for (const f of facts(e)) {
-    if (f.title === "Review and approve") lines.push(`${f.title}: <${f.link}|pull request ${e.approve!.review!.pr}>, then run it again`);
-    else if (f.title === "Approve" || f.title === "Or approve" || f.title === "Digest") lines.push(`${f.title}: \`${f.value}\``);
+  const r = w.rerun ?? {};
+  for (const f of facts(e, w)) {
+    if (f.title === "Review and approve") lines.push(`${f.title}: <${f.link}|${f.value.replace(", then", ">, then")}`);
+    else if (/^(Or a|A)pprove$|^Digest$/.test(f.title)) lines.push(`${f.title}: \`${f.value}\``);
     else if (f.link) lines.push(`${f.title}: <${f.link}>`);
     else lines.push(`${f.title}: ${f.value}`);
   }
   const text = lines.join("\n");
-  if (!relay) return { text };
-  return { text, blocks: [{ type: "section", text: { type: "mrkdwn", text } }, slackRelayActions(relay)] };
+  const blocks: unknown[] = relay ? [slackRelayActions(relay)] : [];
+  if (e.rerunUrl) blocks.push({ type: "actions", block_id: r.block, elements: [{ type: "button", action_id: r.action ?? "chant-rerun", text: { type: "plain_text", text: r.label ?? "Run again" }, url: e.rerunUrl }] });
+  return blocks.length ? { text, blocks: [{ type: "section", text: { type: "mrkdwn", text } }, ...blocks] } : { text };
 }
 
 /**
@@ -319,12 +349,19 @@ export function teamsRelayReply(relay: RelayButtons, action: "approve" | "declin
   return `${action} ${relay.token}`;
 }
 
-/** A Teams incoming webhook's body (a Workflows webhook): one Adaptive Card, with buttons that open the review page and the run. With `relay`, the reply that approves through the relay (#4611). */
-export function teamsMessage(e: NotifyEvent, relay?: RelayButtons): Record<string, unknown> {
-  const all = [...facts(e), ...(relay ? [{ title: "Approve in chat", value: `mention the relay and reply: ${teamsRelayReply(relay)}` }] : [])];
+/** A Teams incoming webhook's body (a Workflows webhook): one Adaptive Card, with buttons that open the review page, the re-run page (#4818) and the run. With `relay`, the reply that approves through the relay (#4611), in full when `w.relayName` names it. */
+export function teamsMessage(e: NotifyEvent, relay?: RelayButtons, w: NotifyMessageOptions = {}): Record<string, unknown> {
+  const at = w.relayName && `reply @${w.relayName} `;
+  const all = [
+    ...(w.wave && e.wave ? [{ title: w.wave, value: `${e.wave.number}` }] : []),
+    ...facts(e, w).filter((f) => w.teamsReport !== false || f.title !== "Report"),
+    ...(relay && !at ? [{ title: "Approve in chat", value: `mention the relay and reply: ${teamsRelayReply(relay)}` }] : []),
+  ];
+  const open = (title: string, url: string) => ({ type: "Action.OpenUrl", title, url });
   const actions = [
-    ...(e.approve?.review ? [{ type: "Action.OpenUrl", title: "Review and approve", url: e.approve.review.url }] : []),
-    ...(e.run?.url ? [{ type: "Action.OpenUrl", title: "Open the run", url: e.run.url }] : []),
+    ...(e.approve?.review ? [open("Review and approve", e.approve.review.url)] : []),
+    ...(e.rerunUrl ? [open(w.rerun?.label ?? "Run again", e.rerunUrl)] : []),
+    ...(e.run?.url ? [open("Open the run", e.run.url)] : []),
   ];
   return {
     type: "message",
@@ -339,6 +376,7 @@ export function teamsMessage(e: NotifyEvent, relay?: RelayButtons): Record<strin
           body: [
             { type: "TextBlock", text: notifyHeadline(e), weight: "Bolder", wrap: true },
             { type: "FactSet", facts: all.map((f) => ({ title: f.title, value: f.link && f.title === "Review and approve" ? `${f.value}: ${f.link}` : f.value })) },
+            ...(relay && at ? [{ type: "TextBlock", wrap: true, text: `Approve here: ${at}approve ${relay.token}. Decline: ${at}decline ${relay.token}.` }] : []),
           ],
           ...(actions.length > 0 ? { actions } : {}),
         },
@@ -449,6 +487,8 @@ export interface SendNotifyOptions {
    * {@link slackRelayActions} and {@link teamsRelayReply}.
    */
   render?: { slack?: (e: NotifyEvent, relay?: RelayButtons) => unknown; teams?: (e: NotifyEvent, relay?: RelayButtons) => unknown };
+  /** The product's words and the relay's name for chant's own Slack and Teams bodies (#4818). */
+  message?: NotifyMessageOptions;
   /** Seconds since the epoch, for the signature's timestamp. Default: the clock. */
   now?: number;
 }
@@ -523,7 +563,7 @@ export async function sendNotify(config: NotifyConfig | undefined, event: Notify
     await deliver("webhook", config.webhook, () => {
       const key = config.key ? env[config.key] : undefined;
       if (!key) return `${config.key ?? "the key variable"} is not set, and an event is never sent unsigned`;
-      return webhookRequest(event, key, { ...(options.now !== undefined ? { now: options.now } : {}), ...(options.prefix ? { prefix: options.prefix } : {}), ...(options.userAgent ? { userAgent: options.userAgent } : {}) });
+      return webhookRequest(event, key, { now: options.now, prefix: options.prefix || undefined, userAgent: options.userAgent || undefined });
     });
   }
   // #4611: a waiting event's buttons, when the relay's key is set.
@@ -531,7 +571,7 @@ export async function sendNotify(config: NotifyConfig | undefined, event: Notify
   const relayKey = config.relay ? env[config.relay] : undefined;
   if (config.relay && ref && !relayKey) log(`notify: ${config.relay} is not set, so the message carries no relay buttons`);
   const buttons = ref && relayKey ? { token: relayToken(relayKey, ref) } : undefined;
-  if (config.slack) await deliver("slack", config.slack, () => json(options.render?.slack ? options.render.slack(event, buttons) : slackMessage(event, buttons)));
-  if (config.teams) await deliver("teams", config.teams, () => json(options.render?.teams ? options.render.teams(event, buttons) : teamsMessage(event, buttons)));
+  if (config.slack) await deliver("slack", config.slack, () => json(options.render?.slack ? options.render.slack(event, buttons) : slackMessage(event, buttons, options.message)));
+  if (config.teams) await deliver("teams", config.teams, () => json(options.render?.teams ? options.render.teams(event, buttons) : teamsMessage(event, buttons, options.message)));
   return out;
 }

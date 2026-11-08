@@ -89,6 +89,7 @@
       }
     },
     "reportUrl": { "type": "string" },
+    "rerunUrl": { "type": "string", "description": "On drift (#4818): the page where a person runs the check again, which the Slack and Teams messages open from a button." },
     "detail": { "type": "object", "description": "The product's own record of the outcome, carried whole (terragucci.outcome/v1)." }
   },
   "allOf": [
