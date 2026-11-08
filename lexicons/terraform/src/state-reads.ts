@@ -12,6 +12,14 @@
  * as `-var`, under the step's own `vars`, which win. A read whose upstream
  * has no state, or no such output yet, waits: the root is not planned on a
  * stand-in, and the wave says which upstream to apply first.
+ *
+ * An Atmos instance is read the way terragucci's `upstreamOutputs` reads it
+ * (terragucci issue 1303): `dir` names its directory when it has no
+ * `terraform.roots` entry, and `workspace` the workspace its state is in, so
+ * the read inits in `default`, selects or creates the workspace with
+ * `TF_WORKSPACE` unset, then runs `output -json` in it. A product's
+ * `resolveRoot` answers the binary and the environment (its role) the read
+ * runs with, never the reader's.
  */
 
 /** One var a root reads from another root's state. */
@@ -22,6 +30,10 @@ export interface TerraformStateRead {
   root: string;
   /** The output, then the keys into its value. */
   output: string[];
+  /** The upstream's directory, from the project root, when it has no `terraform.roots` entry (terragucci issue 1303). */
+  dir?: string;
+  /** The workspace the upstream's state is in (terragucci issue 1303), selected or created after an init in `default`. */
+  workspace?: string;
 }
 
 /** What filling a root's reads came to. */
@@ -51,6 +63,8 @@ export function stateReadsProblems(reads: unknown): string[] {
     else vars.add(read.var);
     if (typeof read.root !== "string" || read.root === "") problems.push(`reads[${i}].root must name a terraform.roots entry`);
     if (!Array.isArray(read.output) || read.output.length === 0 || !read.output.every((k) => typeof k === "string" && k !== "")) problems.push(`reads[${i}].output must be the output's name, then any keys into its value`);
+    if (read.dir !== undefined && (typeof read.dir !== "string" || read.dir === "")) problems.push(`reads[${i}].dir must name the upstream's directory`);
+    if (read.workspace !== undefined && (typeof read.workspace !== "string" || read.workspace.trim() === "")) problems.push(`reads[${i}].workspace must name a workspace`);
   }
   return problems;
 }
@@ -71,11 +85,11 @@ export function readOutputValue(outputs: Record<string, unknown>, output: readon
  * Fill `reads` from each upstream's outputs, read once per upstream through
  * `outputsOf`, which throws when the state cannot be read.
  */
-export async function fillStateReads(reads: readonly TerraformStateRead[], outputsOf: (root: string) => Promise<Record<string, unknown>>): Promise<FilledStateReads> {
+export async function fillStateReads(reads: readonly TerraformStateRead[], outputsOf: (root: string, read: TerraformStateRead) => Promise<Record<string, unknown>>): Promise<FilledStateReads> {
   const result: FilledStateReads = { vars: {}, waiting: [], errors: [] };
   const cache = new Map<string, Promise<Record<string, unknown>>>();
   for (const read of reads) {
-    if (!cache.has(read.root)) cache.set(read.root, outputsOf(read.root));
+    if (!cache.has(read.root)) cache.set(read.root, outputsOf(read.root, read));
     let outputs: Record<string, unknown>;
     try {
       outputs = await cache.get(read.root)!;
@@ -103,14 +117,18 @@ export function waitingReadsReason(waiting: FilledStateReads["waiting"]): string
  * The reads an Atmos instance's edges file lists (`{ reads: [{ var,
  * upstream, output }] }`, as terragucci's `atmos write` leaves beside each
  * instance), with each upstream mapped to its `terraform.roots` entry by
- * `rootOf` (by default the upstream's own path).
+ * `rootOf` (by default the upstream's own path). `at` answers, per
+ * upstream, its directory and the workspace its state is in (terragucci
+ * issue 1303), which the read inits and selects.
  */
-export function atmosStateReads(edges: unknown, rootOf: (upstream: string) => string = (u) => u): TerraformStateRead[] {
+export function atmosStateReads(edges: unknown, rootOf: (upstream: string) => string = (u) => u, at?: (upstream: string) => { dir?: string; workspace?: string }): TerraformStateRead[] {
   const reads = (edges as { reads?: unknown } | null)?.reads;
   if (!Array.isArray(reads)) return [];
   return reads.flatMap((r) => {
     const read = r as { var?: unknown; upstream?: unknown; output?: unknown } | null;
     if (!read || typeof read.var !== "string" || typeof read.upstream !== "string" || !Array.isArray(read.output) || !read.output.every((k) => typeof k === "string")) return [];
-    return [{ var: read.var, root: rootOf(read.upstream), output: read.output as string[] }];
+    // terragucci issue 1303: where the upstream instance is and which workspace holds its state, when the caller knows.
+    const where = at?.(read.upstream);
+    return [{ var: read.var, root: rootOf(read.upstream), output: read.output as string[], ...(where?.dir ? { dir: where.dir } : {}), ...(where?.workspace ? { workspace: where.workspace } : {}) }];
   });
 }

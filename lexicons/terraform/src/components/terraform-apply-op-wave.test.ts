@@ -15,6 +15,7 @@ import { afterAll, afterEach, describe, expect, test, vi } from "vitest";
 import { CapabilityRegistry, type Capability } from "@intentius/chant/components/capability";
 import { memoryGateLedgerPort, opWavePlanPath, runOpWave, type OpWaveRunHooks, type OpWavesSpec, type RunOpWaveResult } from "@intentius/chant/op";
 import { terraformApplyCapability, terraformApplyCapabilityWith, type TerraformRootResolver } from "./capability-plugin";
+import { atmosStateReads } from "../state-reads";
 
 const made: string[] = [];
 afterAll(() => {
@@ -26,6 +27,7 @@ afterEach(() => vi.unstubAllEnvs());
 const fake = (name: string) => `#!/bin/sh
 ws="\${TF_WORKSPACE-}"
 echo "${name} $PWD ws=\${TF_WORKSPACE--} $*" >> "$FAKE_LOG"
+[ -n "\${FAKE_ENV_LOG-}" ] && echo "\${PWD##*/} $1 role=\${ROLE--}" >> "$FAKE_ENV_LOG"
 case "$1" in
   init)
     if [ -n "$ws" ] && [ "$ws" != "default" ] && ! grep -qx "$ws" .ws 2>/dev/null; then
@@ -243,5 +245,51 @@ describe("a root that runs another binary than chant.config names (terragucci is
     const capabilities = registry(terraformApplyCapabilityWith({ resolveRoot: () => { throw new Error("tofu 1.9.1 is not installed"); } }) as unknown as Capability<never, unknown>);
     await expect(wave(p.dir, spec([{ target: "roots/a" }]), { capabilities })).rejects.toThrow(/tofu 1.9.1 is not installed/);
     expect(lines(p)).toEqual([]);
+  });
+});
+
+describe("a root that reads an Atmos instance's outputs (terragucci issue 1303)", () => {
+  /** `roots/net`, an instance in workspace ue1-net with a vpc_id, and `roots/app`, which reads it. */
+  function instances(netOutputs: string | undefined) {
+    const p = project(["net", "app"], { binary: "terraform" });
+    writeFileSync(join(p.dir, "roots/net/.ws"), "ue1-net\n");
+    if (netOutputs !== undefined) writeFileSync(join(p.dir, "roots/net/outputs-ue1-net.json"), netOutputs);
+    const envLog = join(p.dir, "env.log");
+    writeFileSync(envLog, "");
+    vi.stubEnv("FAKE_ENV_LOG", envLog);
+    // As terragucci's edges file lists the read, with where the upstream is and its workspace.
+    const reads = atmosStateReads({ reads: [{ var: "vpc_id", upstream: "roots/net", output: ["vpc", "id"], function: "!terraform.state net vpc.id" }] }, (u) => u, (u) => ({ dir: u, workspace: "ue1-net" }));
+    const resolveRoot: TerraformRootResolver = (root) => (root === "roots/net" ? { binary: join(p.bin, "tofu"), readEnv: { ROLE: "net-reader" } } : {});
+    const capabilities = registry(terraformApplyCapabilityWith({ resolveRoot }) as unknown as Capability<never, unknown>);
+    const runHooks: OpWaveRunHooks = { name: "product", beforePlan: () => ({ env: { ROLE: "app" } }) };
+    const s = spec([{ target: "roots/app", input: { workspace: "ue1-app", reads } }]);
+    return { p, envLog, capabilities, runHooks, s };
+  }
+
+  test("reads the upstream in its own directory and workspace, with its binary and role, and plans on the value", async () => {
+    const { p, envLog, capabilities, runHooks, s } = instances('{"vpc":{"value":{"id":"vpc-1"}}}');
+    const result = await wave(p.dir, s, { capabilities, runHooks });
+    expect(result.exitCode).toBe(0);
+    const log = lines(p).map(plain);
+    expect(log.slice(0, 3)).toEqual([
+      "tofu ./roots/net ws=default init -input=false",
+      "tofu ./roots/net ws=- workspace select -or-create=true ue1-net",
+      "tofu ./roots/net ws=ue1-net output -json",
+    ]);
+    expect(log.find((l) => l.includes(" plan "))).toBe("terraform ./roots/app ws=ue1-app plan -input=false -detailed-exitcode -var=vpc_id=vpc-1");
+    const roles = readFileSync(envLog, "utf-8").split("\n").filter(Boolean);
+    expect(roles.filter((l) => l.startsWith("net "))).toEqual(["net init role=net-reader", "net workspace role=net-reader", "net output role=net-reader"]);
+    expect(roles.filter((l) => l.startsWith("app ")).every((l) => l.endsWith("role=app"))).toBe(true);
+  });
+
+  test("an upstream with no state in its workspace yet keeps the root from planning, naming what to apply first", async () => {
+    const { p, capabilities, runHooks, s } = instances(undefined);
+    await expect(wave(p.dir, s, { capabilities, runHooks })).rejects.toThrow("not planned: it reads vpc_id from roots/net, which has no state yet; apply roots/net first");
+    expect(lines(p).some((l) => l.includes("./roots/app "))).toBe(false);
+  });
+
+  test("a read that names a directory or workspace that is not one is refused", async () => {
+    const p = project(["app"], { binary: "terraform" });
+    await expect(wave(p.dir, spec([{ target: "roots/app", input: { reads: [{ var: "x", root: "roots/net", output: ["x"], workspace: " " }] } }]))).rejects.toThrow("reads[0].workspace must name a workspace");
   });
 });
