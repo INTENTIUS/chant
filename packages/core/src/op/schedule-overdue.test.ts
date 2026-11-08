@@ -129,6 +129,32 @@ describe("scheduledRuns", () => {
     expect(await forge.scheduledRuns!({ op: "drift", workflow: "ops.gitlab-ci.yml" })).toEqual({ last: "2026-10-01T06:00:00Z" });
     expect(await forge.scheduledRuns!({ op: "nobody", workflow: "ops.gitlab-ci.yml" })).toEqual({ noSchedule: true });
   });
+
+  test("gitlab: the schedules a scheduleRule picks, a schedule without the variable among them (#4813)", async () => {
+    const schedules: Record<number, unknown> = {
+      1: { id: 1, variables: [{ key: "TERRAGUCCI_SCHEDULE", value: "comments" }], last_pipeline: { id: 900 } },
+      2: { id: 2, variables: [], last_pipeline: { id: 901 } },
+      3: { id: 3, variables: [{ key: "TERRAGUCCI_SCHEDULE", value: "nightly" }], last_pipeline: { id: 902 } },
+    };
+    const created: Record<number, string> = { 900: "2026-10-09T00:00:00Z", 901: "2026-10-05T06:00:00Z", 902: "2026-10-07T06:00:00Z" };
+    const project = (ids: number[]) =>
+      fakeFetch((_m, u) => {
+        const p = u.pathname.replace("/api/v4/projects/42", "");
+        if (p === "/pipeline_schedules") return ids.map((id) => ({ id }));
+        const s = /^\/pipeline_schedules\/(\d+)$/.exec(p);
+        if (s) return schedules[Number(s[1])];
+        const pl = /^\/pipelines\/(\d+)$/.exec(p);
+        return pl ? { id: Number(pl[1]), created_at: created[Number(pl[1])] } : undefined;
+      });
+    const drift = { op: "tf-drift", workflow: ".gitlab-ci.yml", schedule: { variable: "TERRAGUCCI_SCHEDULE", not: ["comments", "resume", "rollouts", "ephemeral"] } };
+    const forge = (ids: number[]) => gitlabForge({ apiBase: "https://gitlab.com/api/v4", project: "42", token: "t", fetch: project(ids) });
+    expect(await forge([1, 2, 3]).scheduledRuns!(drift)).toEqual({ last: "2026-10-07T06:00:00Z" });
+    expect(await forge([1]).scheduledRuns!(drift)).toEqual({ noSchedule: true });
+    // Without a selector, none of these sets CHANT_SCHEDULED_OP.
+    expect(await forge([1, 2, 3]).scheduledRuns!({ op: "tf-drift", workflow: ".gitlab-ci.yml" })).toEqual({ noSchedule: true });
+    // A value picks the schedules that set the variable to it, and `not` still applies.
+    expect(await forge([1, 2, 3]).scheduledRuns!({ ...drift, schedule: { variable: "TERRAGUCCI_SCHEDULE", value: "comments" } })).toEqual({ last: "2026-10-09T00:00:00Z" });
+  });
 });
 
 describe("checkOverdueOps", () => {
