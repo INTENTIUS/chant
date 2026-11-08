@@ -21,6 +21,9 @@
  */
 export const NEXT_RELEASE = "0.124.78";
 
+/** The first chant whose sql lexicon's `yodelCommitSpec("new", ...)` takes `envs`, so `--replace-own` reads those histories as the reader (#4815). */
+export const YODEL_NEW_ENVS_FLOOR = NEXT_RELEASE;
+
 /** The first chant whose sql lexicon's `yodelRefusalReply` reads yodel rebase's conflict refusal as yodel prints it, `<a> and the migrations after <p> up to <b>` or `<a> and the chain ending at <b>` (#4821). */
 export const YODEL_CONFLICT_REPLY_FLOOR = NEXT_RELEASE;
 

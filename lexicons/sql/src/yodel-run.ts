@@ -64,7 +64,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { CI_COMMIT_REPLY_FLOOR, resolveCommitSpec, type CommitRefusalReply, type OpCommitSpec } from "@intentius/chant/ci-commit";
 import { CHANT_EXIT } from "@intentius/chant/exit-codes";
-import { YODEL_CONFLICT_REPLY_FLOOR } from "@intentius/chant/release-floors";
+import { YODEL_CONFLICT_REPLY_FLOOR, YODEL_NEW_ENVS_FLOOR } from "@intentius/chant/release-floors";
 import type { OpSetupRunStep } from "@intentius/chant/lexicon";
 import { sqlCiSetup, type SqlCiDialect } from "./ci-setup";
 
@@ -221,6 +221,13 @@ export const YODEL_COMMIT_FLOOR: string = CI_COMMIT_REPLY_FLOOR;
  */
 export const YODEL_REBASE_CONFLICT_FLOOR: string = YODEL_CONFLICT_REPLY_FLOOR;
 
+/**
+ * The first chant whose {@link yodelCommitSpec} gives `new` the `envs`
+ * rebase takes: `--env <env>` for each and the readers' variables (#4815).
+ * Before it `yodel new` in the commit job reads no history.
+ */
+export const YODEL_NEW_HISTORY_FLOOR: string = YODEL_NEW_ENVS_FLOOR;
+
 /** The words of yodel's commit jobs: `/yodel new` and `/yodel rebase`. */
 export type YodelCommitWord = "new" | "rebase";
 export const YODEL_COMMIT_WORDS: readonly YodelCommitWord[] = ["new", "rebase"];
@@ -237,7 +244,17 @@ const MIGRATION_NAME = /^[a-z0-9]+(?:[-_][a-z0-9]+)*$/;
  * {@link YODEL_COMMANDS}: the capability never runs them, and the commit
  * job never runs the capability's.
  */
-export const YODEL_COMMIT_COMMANDS: readonly string[] = ["yodel new [<name>] --if-changed --replace-own", "yodel rebase [--env <env>]..."];
+export const YODEL_COMMIT_COMMANDS: readonly string[] = ["yodel new [<name>] --if-changed --replace-own [--env <env>]...", "yodel rebase [--env <env>]..."];
+
+/** `--env <env>`... then `--dir <d>` at most: the tail of both commit commands. */
+function envsThenDir(rest: readonly string[]): boolean {
+  let i = 0;
+  while (rest[i] === "--env") {
+    if (!value(rest[i + 1])) return false;
+    i += 2;
+  }
+  return dirTail(rest.slice(i));
+}
 
 /** `--dir <d>` at most, and nothing else: the tail of the commit commands. */
 function dirTail(rest: readonly string[]): boolean {
@@ -249,16 +266,9 @@ function dirTail(rest: readonly string[]): boolean {
 export function allowedYodelCommitArgv(args: readonly string[]): boolean {
   if (args[0] === "new") {
     const at = typeof args[1] === "string" && MIGRATION_NAME.test(args[1]) ? 2 : 1;
-    return args[at] === "--if-changed" && args[at + 1] === "--replace-own" && dirTail(args.slice(at + 2));
+    return args[at] === "--if-changed" && args[at + 1] === "--replace-own" && envsThenDir(args.slice(at + 2));
   }
-  if (args[0] === "rebase") {
-    let i = 1;
-    while (args[i] === "--env") {
-      if (!value(args[i + 1])) return false;
-      i += 2;
-    }
-    return dirTail(args.slice(i));
-  }
+  if (args[0] === "rebase") return envsThenDir(args.slice(1));
   return false;
 }
 
@@ -266,17 +276,19 @@ export function allowedYodelCommitArgv(args: readonly string[]): boolean {
 export const YODEL_MIGRATIONS_DIR = "migrations";
 
 /**
- * `yodel new [<name>] --if-changed --replace-own [--dir <project>]`, without
- * the binary (sql-yodeler#311). With no name yodel takes `ci.new.name`, by
- * default `pr-<number>` from `CHANT_COMMIT_PR`. `--if-changed` writes
- * nothing and exits 0 when the build equals the newest migration's recorded
- * schema; `--replace-own` replaces the newest migration only when the pull
- * request adds it and no history records it, so asking twice gives one
- * migration.
+ * `yodel new [<name>] --if-changed --replace-own [--env <env>]... [--dir
+ * <project>]`, without the binary (sql-yodeler#311). With no name yodel
+ * takes `ci.new.name`, by default `pr-<number>` from `CHANT_COMMIT_PR`.
+ * `--if-changed` writes nothing and exits 0 when the build equals the newest
+ * migration's recorded schema; `--replace-own` replaces the newest migration
+ * only when the pull request adds it and no history records it, so asking
+ * twice gives one migration. The histories it reads are the `--env` ones
+ * (#4815); without `--env` it reads none.
  */
-export function yodelNewArgs(opts: { name?: string; dir?: string } = {}): string[] {
+export function yodelNewArgs(opts: { name?: string; envs?: readonly string[]; dir?: string } = {}): string[] {
   if (opts.name !== undefined && !MIGRATION_NAME.test(opts.name)) throw new Error(`yodel new: ${JSON.stringify(opts.name)} is not a migration name (lowercase letters and digits, words joined by - or _)`);
-  return ["new", ...(opts.name ? [opts.name] : []), "--if-changed", "--replace-own", ...(opts.dir ? ["--dir", opts.dir] : [])];
+  for (const e of opts.envs ?? []) if (!value(e)) throw new Error(`yodel new: ${JSON.stringify(e)} is not an environment name`);
+  return ["new", ...(opts.name ? [opts.name] : []), "--if-changed", "--replace-own", ...(opts.envs ?? []).flatMap((e) => ["--env", e]), ...(opts.dir ? ["--dir", opts.dir] : [])];
 }
 
 /**
@@ -314,11 +326,11 @@ export interface YodelCommitOptions {
   bin?: string;
   /** new: the migration's name. Default: yodel's `ci.new.name`. */
   name?: string;
-  /** rebase: the environments whose histories must not record a migration the rebase rewrites (`--env`). Needs `dialect`. */
+  /** The environments whose histories must not record a migration the job rewrites (`--env`): rebase's rewritten migrations, or the one new's `--replace-own` replaces (#4815). Needs `dialect`. */
   envs?: readonly string[];
-  /** rebase with `envs`: the dialect, for the reader's variable names. */
+  /** With `envs`: the dialect, for the reader's variable names. */
   dialect?: SqlCiDialect;
-  /** rebase with `envs`: the reader's variables, when `credentials()` names others than the defaults. A writer's is refused. */
+  /** With `envs`: the reader's variables, when `credentials()` names others than the defaults. A writer's is refused. */
   readerVariables?: readonly string[];
   /** As the commit job's spec: the push token's secret, or the job's own token. */
   tokenEnv?: string;
@@ -333,8 +345,8 @@ export interface YodelCommitOptions {
  * The commit job's spec for `/yodel new` or `/yodel rebase` (#4724). It may
  * change the project's migrations directory only. rebase merges the base
  * branch into the head first (`mergeBase`, #4723), as a fork shows only on
- * that merge, and with `envs` the command sees those environments' reader
- * variables and nothing of the writer. Checked by chant's
+ * that merge. With `envs`, either command reads those environments'
+ * histories and sees their reader variables and nothing of the writer. Checked by chant's
  * `resolveCommitSpec`, so a bad one fails when the pipeline is generated.
  */
 export function yodelCommitSpec(word: YodelCommitWord, o: YodelCommitOptions): OpCommitSpec {
@@ -342,16 +354,15 @@ export function yodelCommitSpec(word: YodelCommitWord, o: YodelCommitOptions): O
   const dir = (o.dir ?? "").replace(/^\.\/?/, "").replace(/\/+$/, "");
   const product = o.product ?? "yodel";
   const envs = o.envs ?? [];
-  if (word === "new" && envs.length > 0) throw new Error("yodel new reads no history in a commit job, so it takes no envs");
   if (word === "rebase" && o.name !== undefined) throw new Error("yodel rebase takes no name");
   let commandEnv: string[] = [];
   if (envs.length > 0) {
-    if (o.readerVariables === undefined && o.dialect === undefined) throw new Error("yodel rebase with envs needs dialect, for the reader's variable names, or readerVariables");
+    if (o.readerVariables === undefined && o.dialect === undefined) throw new Error(`yodel ${word} with envs needs dialect, for the reader's variable names, or readerVariables`);
     commandEnv = o.readerVariables ? [...o.readerVariables] : envs.flatMap((e) => yodelReaderVariables(e, o.dialect!));
     const writers = commandEnv.filter(writerVariable);
-    if (writers.length > 0) throw new Error(`yodel rebase --env reads histories as the reader only, so it is not given ${writers.join(", ")}`);
+    if (writers.length > 0) throw new Error(`yodel ${word} --env reads histories as the reader only, so it is not given ${writers.join(", ")}`);
   }
-  const args = word === "new" ? yodelNewArgs({ ...(o.name ? { name: o.name } : {}), ...(dir ? { dir } : {}) }) : yodelRebaseArgs({ envs, ...(dir ? { dir } : {}) });
+  const args = word === "new" ? yodelNewArgs({ ...(o.name ? { name: o.name } : {}), envs, ...(dir ? { dir } : {}) }) : yodelRebaseArgs({ envs, ...(dir ? { dir } : {}) });
   if (!allowedYodelCommitArgv(args)) throw new Error(`yodel ${args.join(" ")} is not one of ${YODEL_COMMIT_COMMANDS.join(", ")}`);
   const spec: OpCommitSpec = {
     on: o.on,

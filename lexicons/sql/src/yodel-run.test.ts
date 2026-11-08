@@ -18,6 +18,7 @@ import {
   YODEL_COMMIT_FINDINGS,
   YODEL_COMMIT_FLOOR,
   YODEL_REBASE_CONFLICT_FLOOR,
+  YODEL_NEW_HISTORY_FLOOR,
   yodelCommitRefusalReply,
   yodelCommitSetup,
   yodelCommitSpec,
@@ -42,6 +43,11 @@ describe("argv", () => {
     expect(() => yodelNewArgs({ name: "Bad Name" })).toThrow(/not a migration name/);
   });
 
+  test("yodel new takes --env per history, so --replace-own refuses a migration applied there (#4815)", () => {
+    expect(yodelNewArgs({ name: "pr-12", envs: ["dev", "staging"], dir: "db" })).toEqual(["new", "pr-12", "--if-changed", "--replace-own", "--env", "dev", "--env", "staging", "--dir", "db"]);
+    expect(() => yodelNewArgs({ envs: ["--force"] })).toThrow(/not an environment name/);
+  });
+
   test("yodel rebase resolves the one fork, with --env per history and never --force", () => {
     expect(yodelRebaseArgs()).toEqual(["rebase"]);
     expect(yodelRebaseArgs({ envs: ["dev", "prod"], dir: "db" })).toEqual(["rebase", "--env", "dev", "--env", "prod", "--dir", "db"]);
@@ -49,13 +55,16 @@ describe("argv", () => {
   });
 
   test("both are on the commit job's own list, apart from the capability's, and nothing else of new or rebase is", () => {
-    for (const args of [yodelNewArgs(), yodelNewArgs({ name: "x", dir: "db" }), yodelRebaseArgs(), yodelRebaseArgs({ envs: ["dev"], dir: "db" })]) {
+    for (const args of [yodelNewArgs(), yodelNewArgs({ name: "x", dir: "db" }), yodelNewArgs({ envs: ["dev"], dir: "db" }), yodelRebaseArgs(), yodelRebaseArgs({ envs: ["dev"], dir: "db" })]) {
       expect(allowedYodelCommitArgv(args)).toBe(true);
       expect(allowedYodelArgv(args)).toBe(false);
     }
     expect(allowedYodelCommitArgv(["new", "x"])).toBe(false);
     expect(allowedYodelCommitArgv(["new", "--if-changed"])).toBe(false);
     expect(allowedYodelCommitArgv(["new", "--if-changed", "--replace-own", "--sql"])).toBe(false);
+    expect(allowedYodelCommitArgv(["new", "--if-changed", "--replace-own", "--env", "-x"])).toBe(false);
+    expect(allowedYodelCommitArgv(["new", "--if-changed", "--replace-own", "--dir", "db", "--env", "dev"])).toBe(false);
+    expect(allowedYodelCommitArgv(["new", "--env", "dev", "--if-changed", "--replace-own"])).toBe(false);
     expect(allowedYodelCommitArgv(["rebase", "--force"])).toBe(false);
     expect(allowedYodelCommitArgv(["rebase", A, "--onto", B])).toBe(false);
     expect(allowedYodelCommitArgv(["rebase", "--env", "-x"])).toBe(false);
@@ -87,11 +96,22 @@ describe("the commit-job specs", () => {
     expect(yodelCommitSpec("rebase", { on: "comment", envs: ["dev"], readerVariables: ["DEV_PG_URL", "DEV_RO_USER"], tokenEnv: "T" }).commandEnv).toEqual(["DEV_PG_URL", "DEV_RO_USER"]);
   });
 
-  test("refuses a writer, envs without a dialect, envs on new and a name on rebase", () => {
+  test("new with envs reads each history as the reader, as rebase does (#4815)", () => {
+    const spec = yodelCommitSpec("new", { on: "comment", envs: ["dev"], dialect: "clickhouse", dir: "db", tokenEnv: "T" });
+    expect(spec.command).toEqual(["yodel", "new", "--if-changed", "--replace-own", "--env", "dev", "--dir", "db"]);
+    expect(spec.commandEnv).toEqual(yodelReaderVariables("dev", "clickhouse"));
+    expect(spec.mergeBase).toBeUndefined();
+    const s = resolveCommitSpec("yodel-new", spec, "yodel");
+    expect(commitSettingsFromEnv(commitSettingsEnv(s), "yodel")).toEqual(s);
+    expect(yodelCommitSpec("new", { on: "comment", envs: ["dev"], readerVariables: ["DEV_PG_URL"], tokenEnv: "T" }).commandEnv).toEqual(["DEV_PG_URL"]);
+    expect(() => yodelCommitSpec("new", { on: "comment", envs: ["dev"], tokenEnv: "T" })).toThrow(/yodel new with envs needs dialect/);
+    expect(() => yodelCommitSpec("new", { on: "comment", envs: ["dev"], readerVariables: ["DEV_POSTGRES_WRITER_USER"], tokenEnv: "T" })).toThrow(/yodel new --env reads histories as the reader only/);
+  });
+
+  test("refuses a writer, envs without a dialect and a name on rebase", () => {
     expect(() => yodelCommitSpec("rebase", { on: "comment", envs: ["dev"], readerVariables: ["DEV_POSTGRES_WRITER_PASSWORD"], tokenEnv: "T" })).toThrow(/as the reader only.*DEV_POSTGRES_WRITER_PASSWORD/);
     expect(() => yodelCommitSpec("rebase", { on: "comment", envs: ["dev"], readerVariables: ["YODEL_ROLE"], tokenEnv: "T" })).toThrow(/YODEL_ROLE/);
     expect(() => yodelCommitSpec("rebase", { on: "comment", envs: ["dev"], tokenEnv: "T" })).toThrow(/needs dialect/);
-    expect(() => yodelCommitSpec("new", { on: "comment", envs: ["dev"], dialect: "postgres", tokenEnv: "T" })).toThrow(/takes no envs/);
     expect(() => yodelCommitSpec("rebase", { on: "comment", name: "x", tokenEnv: "T" })).toThrow(/takes no name/);
     expect(() => yodelCommitSpec("drop" as never, { on: "comment", tokenEnv: "T" })).toThrow(/new and rebase/);
   });
@@ -109,6 +129,10 @@ describe("the commit-job specs", () => {
 
   test("the conflict reply's floor is the next release until it ships (#4821)", () => {
     expect(YODEL_REBASE_CONFLICT_FLOOR).toBe(NEXT_RELEASE);
+  });
+
+  test("new's envs floor is the next release until it ships (#4815)", () => {
+    expect(YODEL_NEW_HISTORY_FLOOR).toBe(NEXT_RELEASE);
   });
 });
 
