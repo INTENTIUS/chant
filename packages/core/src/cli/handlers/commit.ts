@@ -25,6 +25,7 @@ import {
   prepareCommitRun,
   runCommit,
   runCommitArgv,
+  activeCommitRefusalReply,
   type HeadApproval,
   COMMIT_PUSHED_FILE,
 } from "../../ci-commit";
@@ -143,6 +144,8 @@ export async function runCommitCommandLine(ctx: CommandContext): Promise<number>
       },
       now: () => new Date(),
       ...(ci ? { runOrigin: ci.runOrigin } : {}),
+      // #4724: the product's bin sets its reply to a command that refused, as it sets its words.
+      ...(activeCommitRefusalReply() ? { refusalReply: activeCommitRefusalReply()! } : {}),
     });
     // #4749: what was pushed, for the push job's `after` lines.
     if (out.result === "pushed" && out.commit) writeFileSync(join(dir, COMMIT_PUSHED_FILE), `${out.commit}\n`);

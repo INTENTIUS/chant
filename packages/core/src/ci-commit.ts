@@ -29,6 +29,8 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CHANT_EXIT } from "./exit-codes";
+import { FORGE_TOKEN_VARS } from "./ci-handover";
+import { NEXT_RELEASE } from "./release-floors";
 import { agentForbiddenPaths, AgentError, branchOk, errText, LOGIN, readSmall, SHA, type AgentGit } from "./ci-agent";
 import { parseProductComment, type CiProductWords } from "./ci-product-words";
 import type { OpRunRecord, OpRunRecordInput } from "./op/runtime";
@@ -42,6 +44,12 @@ export const CI_COMMIT_FLOOR = "0.124.71";
 export const CI_COMMIT_PUSH_FLOOR = "0.124.72";
 /** The first chant whose commit job takes `allowedFiles` (#4758). */
 export const CI_COMMIT_FILES_FLOOR = "0.124.73";
+/**
+ * The first chant whose commit job takes `commandEnv`, gives the command
+ * `CHANT_COMMIT_PR`, keeps the tail of its standard error and replies with a
+ * product's refusal text ({@link setCommitRefusalReply}) (#4724).
+ */
+export const CI_COMMIT_REPLY_FLOOR = NEXT_RELEASE;
 
 /** What starts a commit run: a person's comment, or a check job's finding. */
 export type CommitTrigger = "comment" | "check";
@@ -103,6 +111,14 @@ export interface OpCommitSpec {
    * the new head. Not run when nothing was pushed.
    */
   after?: string[];
+  /**
+   * Variables of the commit job the command sees, by name (#4724), such as a
+   * database reader's user and password. Every other variable is left out,
+   * as before. A forge token's name is refused. GitHub and Forgejo pass each
+   * one from the secret of the same name to the step that runs the command;
+   * on GitLab they are the project's CI/CD variables.
+   */
+  commandEnv?: string[];
 }
 
 /** A commit job's settings, every default filled and checked. */
@@ -123,6 +139,8 @@ export interface CommitSettings {
   jobToken: boolean;
   /** Lines the push job runs after a push (#4749). */
   after: string[];
+  /** The job variables the command sees (#4724). */
+  commandEnv: string[];
 }
 
 export const COMMIT_MAX_RUNS = 3;
@@ -146,7 +164,11 @@ export const COMMIT_ENV = {
   timeout: "CHANT_COMMIT_TIMEOUT",
   env: "CHANT_COMMIT_ENV",
   mergeBase: "CHANT_COMMIT_MERGE_BASE",
+  commandEnv: "CHANT_COMMIT_COMMAND_ENV",
 } as const;
+
+/** The variable the command reads the pull request's number from (#4724), such as for a default name. */
+export const COMMIT_PR_ENV = "CHANT_COMMIT_PR";
 
 /** GitLab starts no pipeline on a note: a pipeline of the default branch started with these runs a comment commit job. */
 export const GITLAB_COMMIT_PR_VAR = "CHANT_COMMIT_PR";
@@ -161,6 +183,10 @@ export const COMMIT_BASE_REF = "refs/chant/commit-base";
 export const COMMIT_DECISION_FILE = "decision.json";
 export const COMMIT_PATCH_FILE = "change.patch";
 export const COMMIT_RC_FILE = "rc";
+/** The tail of the command's standard error (#4724), which a product's refusal reply reads. */
+export const COMMIT_OUTPUT_FILE = "output";
+/** How much of the command's standard error {@link COMMIT_OUTPUT_FILE} keeps, from the end. */
+export const COMMIT_OUTPUT_LIMIT = 8192;
 /** What `chant commit land` leaves when it pushed (#4749): the pushed commit, which the push job's `after` lines read. */
 export const COMMIT_PUSHED_FILE = "pushed";
 
@@ -229,6 +255,10 @@ export function resolveCommitSpec(name: string, spec: OpCommitSpec, product = "c
   if (spec.jobToken && spec.tokenEnv !== undefined) throw new AgentError(`${where}: jobToken pushes with the job's own token, so leave tokenEnv out`);
   const after = spec.after ?? [];
   if (!Array.isArray(after) || !after.every((l) => typeof l === "string" && l.trim() !== "" && !l.includes("\n"))) throw new AgentError(`${where}: after is a list of shell lines, one command each`);
+  const commandEnv = spec.commandEnv ?? [];
+  if (!Array.isArray(commandEnv) || !commandEnv.every((v) => typeof v === "string" && VAR.test(v))) throw new AgentError(`${where}: commandEnv is a list of variable names`);
+  const tokens = commandEnv.filter((v) => (FORGE_TOKEN_VARS as readonly string[]).includes(v) || v === spec.tokenEnv || v.startsWith("CHANT_COMMIT_"));
+  if (tokens.length > 0) throw new AgentError(`${where}: commandEnv may not pass ${tokens.join(", ")}: the command never sees a forge token or the job's own settings`);
   return {
     name,
     on: spec.on,
@@ -244,6 +274,7 @@ export function resolveCommitSpec(name: string, spec: OpCommitSpec, product = "c
     mergeBase: spec.mergeBase === true,
     jobToken: spec.jobToken === true,
     after: [...after],
+    commandEnv: [...new Set(commandEnv)],
   };
 }
 
@@ -262,6 +293,7 @@ export function commitSettingsEnv(s: CommitSettings): Record<string, string> {
     [COMMIT_ENV.timeout]: String(s.timeout),
     [COMMIT_ENV.env]: s.env,
     ...(s.mergeBase ? { [COMMIT_ENV.mergeBase]: "1" } : {}),
+    ...(s.commandEnv.length > 0 ? { [COMMIT_ENV.commandEnv]: JSON.stringify(s.commandEnv) } : {}),
   };
 }
 
@@ -303,6 +335,7 @@ export function commitSettingsFromEnv(env: Record<string, string | undefined>, p
     ...(guarded ? { guarded } : {}),
     ...(env[COMMIT_ENV.env] ? { env: env[COMMIT_ENV.env] } : {}),
     ...(env[COMMIT_ENV.mergeBase] === "1" ? { mergeBase: true } : {}),
+    ...(list(COMMIT_ENV.commandEnv) ? { commandEnv: list(COMMIT_ENV.commandEnv)! } : {}),
   };
   return resolveCommitSpec(name, spec, product);
 }
@@ -641,13 +674,25 @@ export async function prepareCommitRun(i: CommitPrepareInput): Promise<CommitDec
 
 // ── commit run ─────────────────────────────────────────────────────────────
 
-/** Run an argv in `cwd`, with no shell. A failure or a timeout is an outcome. */
-export type CommitRunCommand = (argv: readonly string[], o: { cwd: string; env: Record<string, string>; timeoutMs: number }) => Promise<{ exitCode: number | null; timedOut: boolean }>;
+/**
+ * Run an argv in `cwd`, with no shell. A failure or a timeout is an outcome.
+ * `output` is the tail of its standard error (#4724), at most
+ * {@link COMMIT_OUTPUT_LIMIT} bytes.
+ */
+export type CommitRunCommand = (argv: readonly string[], o: { cwd: string; env: Record<string, string>; timeoutMs: number }) => Promise<{ exitCode: number | null; timedOut: boolean; output?: string }>;
 
 export const runCommitArgv: CommitRunCommand = (argv, o) =>
   new Promise((done) => {
     let timedOut = false;
-    const child = spawn(argv[0]!, argv.slice(1), { cwd: o.cwd, env: o.env, stdio: ["ignore", "inherit", "inherit"] });
+    let tail = Buffer.alloc(0);
+    const child = spawn(argv[0]!, argv.slice(1), { cwd: o.cwd, env: o.env, stdio: ["ignore", "inherit", "pipe"] });
+    // The job's log still gets all of it; the tail is kept for the reply.
+    child.stderr?.on("data", (chunk: Buffer) => {
+      process.stderr.write(chunk);
+      tail = Buffer.concat([tail, chunk]);
+      if (tail.length > COMMIT_OUTPUT_LIMIT) tail = tail.subarray(tail.length - COMMIT_OUTPUT_LIMIT);
+    });
+    const output = (): string => tail.toString("utf8");
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill("SIGTERM");
@@ -655,25 +700,28 @@ export const runCommitArgv: CommitRunCommand = (argv, o) =>
     }, o.timeoutMs);
     child.on("error", () => {
       clearTimeout(timer);
-      done({ exitCode: null, timedOut });
+      done({ exitCode: null, timedOut, output: output() });
     });
     child.on("close", (code) => {
       clearTimeout(timer);
-      done({ exitCode: code, timedOut });
+      done({ exitCode: code, timedOut, output: output() });
     });
   });
 
 /**
  * The variables the command sees: process basics, with the checkout's
  * `node_modules/.bin` first on `PATH` so a product's bin installed on the
- * target branch runs on the head's files. Never a forge or cloud token.
+ * target branch runs on the head's files. Never a forge or cloud token. Also
+ * the variables the spec's `commandEnv` names, and {@link COMMIT_PR_ENV}, the
+ * pull request's number (#4724).
  */
-export function commitCommandEnv(env: Record<string, string | undefined>, checkout: string): Record<string, string> {
+export function commitCommandEnv(env: Record<string, string | undefined>, checkout: string, o: { names?: readonly string[]; pr?: number } = {}): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const name of ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TERM", "SystemRoot", "npm_config_cache"]) {
+  for (const name of ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TERM", "SystemRoot", "npm_config_cache", ...(o.names ?? [])]) {
     const v = env[name];
     if (v !== undefined) out[name] = v;
   }
+  if (o.pr !== undefined) out[COMMIT_PR_ENV] = String(o.pr);
   const bin = join(checkout, "node_modules", ".bin");
   if (existsSync(bin)) out.PATH = out.PATH ? `${bin}:${out.PATH}` : bin;
   return out;
@@ -713,9 +761,11 @@ export async function runCommit(i: CommitRunInput): Promise<{ rc: string; change
       return { rc: "conflict", changed: false };
     }
   }
-  const out = await i.runCommand(i.settings.command, { cwd: i.workDir, env: commitCommandEnv(i.env, i.checkout), timeoutMs: i.settings.timeout * 60_000 });
+  const env = commitCommandEnv(i.env, i.checkout, { names: i.settings.commandEnv, ...(decision.pr !== undefined ? { pr: decision.pr } : {}) });
+  const out = await i.runCommand(i.settings.command, { cwd: i.workDir, env, timeoutMs: i.settings.timeout * 60_000 });
   const rc = out.timedOut ? "timeout" : out.exitCode === null ? "no-exit" : String(out.exitCode);
   writeFileSync(rcFile, `${rc}\n`);
+  if (out.output) writeFileSync(join(i.dir, COMMIT_OUTPUT_FILE), out.output.slice(-COMMIT_OUTPUT_LIMIT));
   i.git(["add", "-A"], { cwd: i.workDir });
   const patch = i.git(["diff", "--cached", "--binary", "--no-renames", "HEAD"], { cwd: i.workDir });
   writeFileSync(join(i.dir, COMMIT_PATCH_FILE), patch);
@@ -723,6 +773,29 @@ export async function runCommit(i: CommitRunInput): Promise<{ rc: string; change
 }
 
 // ── commit land ────────────────────────────────────────────────────────────
+
+/**
+ * A product's reply to a command that exited non-zero (#4724): the text that
+ * says why, from the command's exit code and the tail of its standard error,
+ * or undefined for chant's own reply. The output comes from a command run on
+ * the pull request's files, so a reply quotes from it only what it checked.
+ * A reply makes the run `refused`, not `failed`.
+ */
+export type CommitRefusalReply = (o: { settings: CommitSettings; rc: string; output: string }) => string | undefined;
+
+let activeRefusalReply: CommitRefusalReply | undefined;
+
+/** Set the refusal reply for this process (a product's bin, once, as it sets its words). Returns the one it replaced. */
+export function setCommitRefusalReply(reply: CommitRefusalReply | undefined): CommitRefusalReply | undefined {
+  const was = activeRefusalReply;
+  activeRefusalReply = reply;
+  return was;
+}
+
+/** The refusal reply {@link setCommitRefusalReply} set, if any. */
+export function activeCommitRefusalReply(): CommitRefusalReply | undefined {
+  return activeRefusalReply;
+}
 
 export interface CommitLandOutcome {
   result: CommitResult;
@@ -753,6 +826,8 @@ export interface CommitLandInput {
   record: (input: OpRunRecordInput) => Promise<void>;
   now: () => Date;
   runOrigin?: RunOrigin;
+  /** The product's reply to a command that exited non-zero (#4724). */
+  refusalReply?: CommitRefusalReply;
 }
 
 const code = (s: string): string => "`" + s.replaceAll("`", "'") + "`";
@@ -823,6 +898,15 @@ export async function landCommitChange(i: CommitLandInput): Promise<CommitLandOu
     return finish({ result: "refused", reason: `merging ${decision.base ?? "the base"} into the head conflicts` }, `merging ${code(decision.base ?? "the base")} into the ${what} conflicts, so ${s.name} did not run and nothing was pushed. Resolve the conflict on the branch.`);
   }
   if (rc === "timeout") return finish({ result: "stopped", reason: `the command passed its ${s.timeout} minute limit` }, `${code(s.command.join(" "))} was stopped at its ${s.timeout} minute limit, so nothing was pushed.`);
+  if (rc !== "0" && /^[0-9]+$/.test(rc) && i.refusalReply) {
+    let said: string | undefined;
+    try {
+      said = i.refusalReply({ settings: s, rc, output: readSmall(join(i.dir, COMMIT_OUTPUT_FILE), COMMIT_OUTPUT_LIMIT * 2) ?? "" });
+    } catch {
+      said = undefined;
+    }
+    if (said) return finish({ result: "refused", reason: `the command refused, exiting ${rc}` }, `${said.trim()} Nothing was pushed.`);
+  }
   if (rc !== "0") return finish({ result: "failed", reason: `the command exited ${rc || "with no code"}` }, `${code(s.command.join(" "))} stopped with ${rc ? `exit code ${rc}` : "no exit code"}, so nothing was pushed. The commit job's log has its output.`);
 
   const head = await i.forge.pullRequestHead?.(pr!).catch(() => undefined);
