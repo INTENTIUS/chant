@@ -5,11 +5,22 @@
  * only; nothing is downloaded.
  */
 
+import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, test } from "vitest";
+import { CI_SETUP_UNLINKED_FLOOR } from "@intentius/chant/lexicon";
+import { NEXT_RELEASE } from "@intentius/chant/release-floors";
 import {
   ciEngineDir,
+  ciFetchScript,
   ciRelease,
+  CI_DOCKER_ARCH,
   CI_ENGINE_ROOT,
+  CI_JOB_ARCH,
+  PULUMI_CI_SETUP_FLOOR,
   PINNED_SHA256,
   PLUNGE_CI_VERSION,
   plungeInstallLine,
@@ -119,5 +130,91 @@ describe("pulumi-up's pinned binary (#4592)", () => {
   test("engineRunnerAt refuses a relative binary", async () => {
     const { engineRunnerAt } = await import("./run");
     expect(() => engineRunnerAt("pulumi")).toThrow(/absolute/);
+  });
+});
+
+// #4814: a second release beside the linked one, and the fetch script for image builds.
+describe("an unlinked install line (#4814)", () => {
+  test("installs under the versioned path and never touches PATH", () => {
+    for (const line of [pulumiInstallLine("3.250.0", { root: "/opt/plywood", link: false }), plungeInstallLine("0.2.0", { root: "/opt/plywood", link: false })]) {
+      expect(line).not.toContain("/usr/local/bin");
+      expect(line).not.toContain("ln -s");
+    }
+  });
+
+  test("skips on the versioned directory alone, not on the pulumi that PATH finds", () => {
+    const line = pulumiInstallLine("3.250.0", { root: "/opt/plywood", link: false });
+    expect(line.startsWith('[ -x "/opt/plywood/pulumi-3.250.0/pulumi" ] || (set -e; ')).toBe(true);
+    expect(line).not.toContain("command -v pulumi");
+    expect(line).not.toContain("pulumi version");
+    expect(line.endsWith(")")).toBe(true);
+  });
+
+  test("is the fetch script under the job's architecture, so plywood's unlinkedInstallLine is this call", () => {
+    const sums = { x64: "c".repeat(64), arm64: "d".repeat(64) };
+    expect(plungeInstallLine("0.2.0", { root: "/opt/plywood", sha256: sums, link: false })).toBe(
+      `[ -x "/opt/plywood/plunge-0.2.0/plunge" ] || (set -e; ${ciFetchScript("plunge", "0.2.0", { dir: "/opt/plywood/plunge-0.2.0", sha256: sums })})`,
+    );
+  });
+
+  test("a linked line is the one it was", () => {
+    expect(pulumiInstallLine()).toBe(pulumiInstallLine(PULUMI_CI_VERSION, { link: true }));
+    expect(pulumiInstallLine().startsWith("{ command -v pulumi")).toBe(true);
+  });
+});
+
+describe("ciFetchScript (#4814)", () => {
+  test("takes the target directory, an arch expression and a checksums URL word", () => {
+    const s = ciFetchScript("pulumi", "3.272.0", { dir: "/out/opt/plywood/pulumi-3.272.0", arch: CI_DOCKER_ARCH, checksumsUrl: '"$CHECKSUMS_URL"' });
+    expect(s.startsWith(`a=${CI_DOCKER_ARCH} && `)).toBe(true);
+    expect(CI_DOCKER_ARCH).toBe(`"$(case "$TARGETARCH" in (arm64) echo arm64 ;; (*) echo x64 ;; esac)"`);
+    expect(s).toContain('curl -fsSLo "$t/sums" "$CHECKSUMS_URL"');
+    expect(s).toContain('tar -xzf "$t/$f" -C "/out/opt/plywood/pulumi-3.272.0" --strip-components=1');
+    expect(s).toContain(`x64) want=${PINNED_SHA256["pulumi-v3.272.0-linux-x64.tar.gz"]} ;;`);
+  });
+
+  test("defaults to the job's architecture and the release's own checksums file", () => {
+    const s = ciFetchScript("plunge", "0.1.0", { dir: "/opt/chant/plunge-0.1.0" });
+    expect(s.startsWith(`a=${CI_JOB_ARCH} && `)).toBe(true);
+    expect(s).toContain('curl -fsSLo "$t/sums" "https://github.com/INTENTIUS/plunge/releases/download/plunge-v0.1.0/plunge-v0.1.0-checksums.txt"');
+    expect(() => ciFetchScript("plunge", "0.1.0", { dir: "relative" })).toThrow(/absolute/);
+  });
+
+  test.skipIf(!["sha256sum", "tar", "sh"].every((b) => spawnSync("sh", ["-c", `command -v ${b}`]).status === 0))(
+    "run: installs a release whose sum matches, and refuses a tampered checksums file",
+    () => {
+      const work = mkdtempSync(join(tmpdir(), "chant-ci-fetch-"));
+      const served = join(work, "served");
+      mkdirSync(join(served, "src", "pulumi"), { recursive: true });
+      writeFileSync(join(served, "src", "pulumi", "pulumi"), "#!/bin/sh\necho v3.272.0\n");
+      chmodSync(join(served, "src", "pulumi", "pulumi"), 0o755);
+      const archive = "pulumi-v3.272.0-linux-x64.tar.gz";
+      execFileSync("tar", ["-czf", join(served, archive), "-C", join(served, "src"), "pulumi"]);
+      const sum = createHash("sha256").update(readFileSync(join(served, archive))).digest("hex");
+      writeFileSync(join(served, "pulumi-3.272.0-checksums.txt"), `${sum}  ${archive}\n`);
+      writeFileSync(join(served, "tampered.txt"), `${"0".repeat(64)}  ${archive}\n`);
+      // curl -fsSLo <out> <url>: serve the file the URL names from the served directory.
+      const bin = join(work, "bin");
+      mkdirSync(bin);
+      writeFileSync(join(bin, "curl"), `#!/bin/sh\ncp "${served}/$(basename "$3")" "$2"\n`);
+      chmodSync(join(bin, "curl"), 0o755);
+      const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+      const run = (script: string) => spawnSync("sh", ["-c", `set -e; ${script}`], { env, encoding: "utf8" });
+
+      const dir = join(work, "opt", "pulumi-3.272.0");
+      const ok = run(ciFetchScript("pulumi", "3.272.0", { dir, arch: '"x64"', sha256: { x64: sum } }));
+      expect(ok.stderr).toBe("");
+      expect(ok.status).toBe(0);
+      expect(existsSync(join(dir, "pulumi"))).toBe(true);
+
+      const tampered = run(ciFetchScript("pulumi", "3.272.0", { dir: join(work, "t"), arch: '"x64"', checksumsUrl: '"https://example.test/tampered.txt"', sha256: { x64: sum } }));
+      expect(tampered.status).not.toBe(0);
+      expect(tampered.stderr).toContain(`lists ${"0".repeat(64)} for ${archive}; chant records ${sum}`);
+    },
+  );
+
+  test("the floor names the next release", () => {
+    expect(PULUMI_CI_SETUP_FLOOR).toBe(CI_SETUP_UNLINKED_FLOOR);
+    expect(CI_SETUP_UNLINKED_FLOOR).toBe(NEXT_RELEASE);
   });
 });
