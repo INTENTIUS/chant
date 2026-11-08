@@ -29,10 +29,9 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { isAbsolute, posix, relative, resolve } from "node:path";
-import { NEXT_RELEASE } from "../release-floors";
 
 /** The first chant with `release.version` and `chant release stamp` (#4840). Products feature-detect on it. */
-export const RELEASE_VERSION_FLOOR = NEXT_RELEASE;
+export const RELEASE_VERSION_FLOOR = "0.124.79";
 
 /** `release.version` in `chant.config.ts`. */
 export interface ReleaseVersionConfig {

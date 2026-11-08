@@ -19,13 +19,16 @@
  * this constant to the next patch (#4501). The check fails while a floor
  * still names this constant after its version shipped.
  */
-export const NEXT_RELEASE = "0.124.79";
+export const NEXT_RELEASE = "0.124.80";
+
+/** The first chant whose terraform lexicon's `terraform-apply` takes `workspace`: init in `default`, then `workspace select -or-create=true`, and plan, apply and output in it (#4854). */
+export const TERRAFORM_APPLY_WORKSPACE_FLOOR = NEXT_RELEASE;
 
 /** The first chant whose change-set member can carry `outputs`, the outputs its plan changes, and counts a member with any as a change (#4849). */
-export const CHANGE_SET_OUTPUTS_FLOOR = NEXT_RELEASE;
+export const CHANGE_SET_OUTPUTS_FLOOR = "0.124.79";
 
 /** The first chant whose terraform lexicon's `terragruntApplyCapability` takes `resolveUnit` and plans a wave as one `run --all` per pair of pinned releases (#4849). */
-export const TERRAGRUNT_UNIT_PINS_FLOOR = NEXT_RELEASE;
+export const TERRAGRUNT_UNIT_PINS_FLOOR = "0.124.79";
 
 /** The first chant whose sql lexicon's `yodelCommitSpec("new", ...)` takes `envs`, so `--replace-own` reads those histories as the reader (#4815). */
 export const YODEL_NEW_ENVS_FLOOR = "0.124.78";

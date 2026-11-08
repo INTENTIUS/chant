@@ -216,6 +216,17 @@ export interface TerraformRootArgs {
    * `DeployContext.processEnv`.
    */
   env?: Record<string, string>;
+  /**
+   * The workspace the root runs in, in place of its entry's (chant#4854),
+   * created when the backend does not list it yet. `terraformInit` inits in
+   * `default`, which every backend has, then runs `workspace select
+   * -or-create=true <workspace>` with `TF_WORKSPACE` unset, since init
+   * refuses a selected workspace the backend does not list. Every other
+   * command runs with `TF_WORKSPACE` set to it, over `env`. An entry's own
+   * `workspace` keeps its old behaviour: `TF_WORKSPACE` on every command,
+   * init included, and nothing created.
+   */
+  workspace?: string;
 }
 
 export interface TerraformInitArgs extends TerraformRootArgs {
@@ -621,11 +632,21 @@ export function terraformEnvironment(root?: Pick<TerraformRootConfig, "workspace
     ...(root?.workspace ? { TF_WORKSPACE: root.workspace } : {}),
     // chant#4842: the run's own environment, which resolveRoot ties to the root it resolved.
     ...(root ? rootProcessEnv.get(root) : undefined),
+    // chant#4854: a workspace the step names wins over the run's environment.
+    ...(root && rootOwnWorkspace.has(root) ? { TF_WORKSPACE: rootOwnWorkspace.get(root)! } : {}),
   };
 }
 
 /** The `env` a root was resolved with (chant#4842), by the resolved root's entry, so every command run for it gets it. */
 const rootProcessEnv = new WeakMap<object, Record<string, string>>();
+
+/** The workspace a root was resolved with (chant#4854, `TerraformRootArgs.workspace`), which init selects or creates. */
+const rootOwnWorkspace = new WeakMap<object, string>();
+
+/** `<binary> workspace select -or-create=true <workspace>` (chant#4854): select the workspace, creating it when the backend does not list it. */
+export function terraformWorkspaceSelectCommand(opts: { binary: string; workspace: string }): string {
+  return `${opts.binary} workspace select -or-create=true ${quoteArg(opts.workspace)}`;
+}
 
 /**
  * `terraform init`, with the root's `backendConfigFiles` as
@@ -976,8 +997,10 @@ async function resolveRoot(args: TerraformRootArgs, signal?: AbortSignal): Promi
   const roots = namespace?.roots ?? {};
   // chant#4842: a root with no entry and a dir of its own plans that directory.
   const declared = roots[args.root] ?? (args.dir !== undefined ? { dir: args.dir } : undefined);
-  const root = declared && args.env ? { ...declared } : declared;
+  const own = args.workspace !== undefined && args.workspace !== "" ? args.workspace : undefined;
+  const root = declared && (args.env || own) ? { ...declared, ...(own ? { workspace: own } : {}) } : declared;
   if (root && args.env) rootProcessEnv.set(root, args.env);
+  if (root && own) rootOwnWorkspace.set(root, own);
   if (!root) {
     const known = Object.keys(roots).sort();
     throw new Error(
@@ -1019,8 +1042,11 @@ async function run(
   dir: string,
   env: Record<string, string>,
   signal?: AbortSignal,
+  unset: readonly string[] = [],
 ): Promise<{ stdout: string; stderr: string }> {
-  return execAsync(cmd, { cwd: dir, env: { ...process.env, ...env }, signal, maxBuffer: MAX_BUFFER });
+  const merged: NodeJS.ProcessEnv = { ...process.env, ...env };
+  for (const name of unset) delete merged[name];
+  return execAsync(cmd, { cwd: dir, env: merged, signal, maxBuffer: MAX_BUFFER });
 }
 
 /**
@@ -1072,9 +1098,17 @@ export async function terraformInit(
   const rootPath = workspaceRelativePath(dir);
   const result: TerraformInitResult = { dir, ...(root.workspace ? { workspace: root.workspace } : {}), ...(rootPath !== undefined ? { rootPath } : {}) };
 
+  // chant#4854: a workspace the step names is created after an init in default, which every backend lists.
+  const own = rootOwnWorkspace.get(root);
   let out: { stdout: string; stderr: string };
   try {
-    out = await run(cmd, dir, terraformEnvironment(root), signal);
+    out = await run(cmd, dir, own ? { ...terraformEnvironment(root), TF_WORKSPACE: "default" } : terraformEnvironment(root), signal);
+    if (own) {
+      report(out.stdout, out.stderr);
+      // TF_WORKSPACE would override the select, so the binary runs it with none.
+      const { TF_WORKSPACE: _selected, ...selectEnv } = terraformEnvironment(root);
+      out = await run(terraformWorkspaceSelectCommand({ binary, workspace: own }), dir, selectEnv, signal, ["TF_WORKSPACE"]);
+    }
   } catch (err) {
     throw withKnownOutputs(err, result);
   }
@@ -1351,6 +1385,7 @@ export async function choudoufuWaveRoot(
   const resolved = await resolveRoot(args, signal);
   if (resolved.binary !== "choudoufu") return { wave: false, reason: `the root runs ${resolved.binary}` };
   if (!resolved.live) return { wave: false, reason: "the root declares no live estate" };
+  if (args.workspace) return { wave: false, reason: "the step names the root's workspace, which live-plan-set does not select or create" };
   if (args.vars && Object.values(args.vars).some((v) => v !== undefined)) {
     return { wave: false, reason: "the step passes -var values, which live-plan-set does not take" };
   }

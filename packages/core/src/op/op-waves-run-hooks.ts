@@ -26,11 +26,10 @@
  */
 
 import { isAbsolute } from "node:path";
-import { NEXT_RELEASE } from "../release-floors";
 import { opWaveHookRuns } from "./op-waves";
 
 /** The first chant that runs a product's `runHooks` around each run of a wave with a `step` (#4842), and hands its `env` and `afterInit` to the capability (`DeployContext.processEnv`, `DeployContext.afterInit`). */
-export const OP_WAVE_RUN_HOOKS_FLOOR = NEXT_RELEASE;
+export const OP_WAVE_RUN_HOOKS_FLOOR = "0.124.79";
 
 /** One run of a wave, as a run hook sees it (#4842). */
 export interface OpWaveRunHookRun {

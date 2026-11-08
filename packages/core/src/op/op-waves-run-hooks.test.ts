@@ -176,9 +176,8 @@ describe("run hooks in the job's process (#4842)", () => {
     h.done();
   });
 
-  test("the floor is the next release", async () => {
+  test("the floor is 0.124.79", async () => {
     const entry = await import("./index");
-    const { NEXT_RELEASE } = await import("../release-floors");
-    expect(entry.OP_WAVE_RUN_HOOKS_FLOOR).toBe(NEXT_RELEASE);
+    expect(entry.OP_WAVE_RUN_HOOKS_FLOOR).toBe("0.124.79");
   });
 });
