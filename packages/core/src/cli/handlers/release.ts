@@ -42,7 +42,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { formatBold, formatError, formatSuccess, formatWarning } from "../format";
@@ -884,7 +884,11 @@ export async function runReleaseExport(ctx: CommandContext): Promise<number> {
   return 0;
 }
 
-/** Internal: compile one environment, or build artifacts, in this process, and print the JSON the cut reads. */
+/**
+ * Internal: compile one environment, or build artifacts, in this process, and
+ * write the JSON the cut reads to the file `CHANT_RELEASE_COMPILE_RESULT`
+ * names (#4764), or print it when that is unset.
+ */
 export async function runReleaseCompile(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   const env = args.env;
@@ -892,16 +896,22 @@ export async function runReleaseCompile(ctx: CommandContext): Promise<number> {
     console.error(formatError({ message: "release compile needs --env <env>" }));
     return 1;
   }
-  const { compileEnvironment, buildReleaseArtifacts } = await import("../../components/release-compile");
+  const { compileEnvironment, buildReleaseArtifacts, RELEASE_COMPILE_RESULT_ENV } = await import("../../components/release-compile");
+  // Read and cleared before the project loads, so neither a build command nor a project module inherits it.
+  const resultFile = process.env[RELEASE_COMPILE_RESULT_ENV];
+  delete process.env[RELEASE_COMPILE_RESULT_ENV];
   const params = parseParamFlags(args.param);
   const inputs = compileInputs(ctx, params);
   try {
+    let result: unknown;
     if (args.artifacts) {
       const names = (args.component ?? "").split(",").map((n) => n.trim()).filter(Boolean);
-      console.log(JSON.stringify({ artifacts: await buildReleaseArtifacts(inputs, env, names) }));
+      result = { artifacts: await buildReleaseArtifacts(inputs, env, names) };
     } else {
-      console.log(JSON.stringify(await compileEnvironment(inputs, env)));
+      result = await compileEnvironment(inputs, env);
     }
+    if (resultFile) writeFileSync(resultFile, JSON.stringify(result));
+    else console.log(JSON.stringify(result));
     return 0;
   } catch (err) {
     console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));

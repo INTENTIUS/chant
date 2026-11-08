@@ -7,6 +7,8 @@ import { describe, test, expect } from "vitest";
 import { withTestDir } from "@intentius/chant-test-utils";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { REPO } from "../workspace/__fixtures__/contract-repo";
 import { CapabilityRegistry, type DeployContext } from "./capability";
 import type { DriverComponent } from "./driver";
 import {
@@ -15,6 +17,7 @@ import {
   compileEnvironment,
   recordedInputRefs,
   ReleaseCompileError,
+  spawnTargetCompiler,
   templateRefs,
   withOnlyArchiveSteps,
 } from "./release-compile";
@@ -178,4 +181,48 @@ describe("buildReleaseArtifacts", () => {
       ]);
     });
   });
+});
+
+describe("spawnTargetCompiler (#4764)", () => {
+  const CHANT = [process.execPath, "--import", pathToFileURL(join(REPO, "node_modules", "tsx", "dist", "loader.mjs")).href, join(REPO, "packages", "core", "src", "cli", "main.ts")];
+
+  /** A component file that, with `--json` on the command line, prints a JSON document of its own on load; with `exit`, it then exits 0, as terragucci's scripts/coverage-gaps.ts did. */
+  function printingProject(dir: string, exit: boolean): void {
+    writeFileSync(
+      join(dir, "api.component.ts"),
+      `if (process.argv.includes("--json")) {
+        console.log(JSON.stringify({ gaps: [], total: 0 }));
+        ${exit ? "process.exit(0);" : ""}
+      }
+      export const api = { name: "api", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "cfn-deploy", template: "api.template.json" }] }] };
+      `,
+    );
+    writeFileSync(join(dir, "api.template.json"), `{"Resources":{}}`);
+  }
+
+  test("refuses by environment when a module the project loads prints JSON and exits, in place of the target", async () => {
+    await withTestDir(async (dir) => {
+      printingProject(dir, true);
+      const err = await spawnTargetCompiler({ projectDir: dir }, CHANT).compile("staging").catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ReleaseCompileError);
+      expect((err as Error).message).toMatch(/compiling "staging" printed something that is not a target/);
+    });
+  }, 60_000);
+
+  test("refuses by environment when the file the child writes is not a target", async () => {
+    await withTestDir(async (dir) => {
+      const child = [process.execPath, "-e", `require("node:fs").writeFileSync(process.env.CHANT_RELEASE_COMPILE_RESULT, JSON.stringify({ gaps: [] }))`];
+      await expect(spawnTargetCompiler({ projectDir: dir }, child).compile("prod")).rejects.toThrow(/compiling "prod" printed something that is not a target: its env is undefined/);
+    });
+  });
+
+  test("compiles the target when a module the project loads prints JSON and goes on", async () => {
+    await withTestDir(async (dir) => {
+      printingProject(dir, false);
+      const target = await spawnTargetCompiler({ projectDir: dir }, CHANT).compile("staging");
+      expect(target.env).toBe("staging");
+      expect(target.components).toEqual(["api"]);
+      expect(target.templates).toEqual([{ component: "api", path: "api.template.json", content: `{"Resources":{}}` }]);
+    });
+  }, 60_000);
 });

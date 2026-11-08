@@ -7,8 +7,10 @@
  * imported with a plain `import()`, which caches the module. So each
  * environment is compiled in a child process of its own
  * ({@link spawnTargetCompiler}), running `chant release compile --env <env>`,
- * which calls {@link compileEnvironment} in that process and prints the
- * result as JSON. The artifacts are built in one more child, for the first
+ * which calls {@link compileEnvironment} in that process and writes the
+ * result as JSON to the file the parent names in
+ * {@link RELEASE_COMPILE_RESULT_ENV} (#4764), so a module the project loads
+ * that prints to stdout can't stand in for it. The artifacts are built in one more child, for the first
  * environment in which each component is enabled ({@link buildReleaseArtifacts}).
  *
  * What counts as a template is data, as the build and publish kinds are in
@@ -39,8 +41,9 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { isUtf8 } from "node:buffer";
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { isAbsolute, relative, resolve } from "node:path";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { loadChantConfig, type ChantConfig } from "../config";
 import { resolveFlaggedBuildParams } from "../flag-params";
 import { discoverComponents } from "./discover";
@@ -562,6 +565,25 @@ export async function buildReleaseArtifacts(
   return artifacts;
 }
 
+/**
+ * The variable that names the file `chant release compile` writes its result
+ * to (#4764). Without it the result goes to stdout, as it did before.
+ */
+export const RELEASE_COMPILE_RESULT_ENV = "CHANT_RELEASE_COMPILE_RESULT";
+
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** Why `value` is not the target `chant release compile --env <env>` writes, or undefined when it is one. */
+export function notATarget(value: unknown, env: string): string | undefined {
+  if (!isRecord(value)) return "it is not an object";
+  if (value.env !== env) return `its env is ${JSON.stringify(value.env)}`;
+  if (!Array.isArray(value.components) || !value.components.every((c) => typeof c === "string")) return "it has no components list";
+  if (!Array.isArray(value.params)) return "it has no params list";
+  if (!Array.isArray(value.templates)) return "it has no templates list";
+  for (const field of ["buildSteps", "buildInputs", "componentFiles"]) if (!isRecord(value[field])) return `it has no ${field}`;
+  return undefined;
+}
+
 /** How {@link spawnTargetCompiler} starts this chant. */
 export function ownChantCommand(): string[] {
   const main = process.argv[1] ?? "";
@@ -575,6 +597,7 @@ function runChild(
   env: string,
   releaseLabel?: string,
   releaseDigests?: string,
+  resultFile?: string,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolvePromise, reject) => {
     const [bin, ...lead] = command;
@@ -584,6 +607,8 @@ function runChild(
     delete childEnv[RELEASE_DIGESTS_ENV];
     if (releaseLabel !== undefined) childEnv[RELEASE_LABEL_ENV] = releaseLabel;
     if (releaseDigests !== undefined) childEnv[RELEASE_DIGESTS_ENV] = releaseDigests;
+    delete childEnv[RELEASE_COMPILE_RESULT_ENV];
+    if (resultFile !== undefined) childEnv[RELEASE_COMPILE_RESULT_ENV] = resultFile;
     const child = spawn(bin, [...lead, ...args], { cwd, stdio: ["ignore", "pipe", "pipe"], env: childEnv });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
@@ -600,7 +625,10 @@ function runChild(
 /**
  * The compiler the CLI uses: each environment in a child process of this same
  * chant (`chant release compile --env <env> --json`), with `CHANT_ENV` set to
- * that environment before anything imports the project.
+ * that environment before anything imports the project. The child writes its
+ * result to a file this process names (#4764), and the result is checked for
+ * the target's shape, so a project module that prints JSON on load, or prints
+ * it and exits, is refused by the environment's name.
  */
 export function spawnTargetCompiler(inputs: CompileInputs, command: readonly string[] = ownChantCommand()): TargetCompiler {
   const common = (): string[] => {
@@ -612,21 +640,50 @@ export function spawnTargetCompiler(inputs: CompileInputs, command: readonly str
     if (inputs.paramsFile) args.push("--params-file", inputs.paramsFile);
     return args;
   };
-  const call = async (env: string, extra: string[]): Promise<unknown> => {
-    const run = await runChild(command, ["release", "compile", "--env", env, ...common(), ...extra, "--json"], inputs.projectDir, env, inputs.releaseLabel, inputs.releaseDigests);
-    if (run.code !== 0) throw new ReleaseCompileError(`compiling "${env}" failed (exit ${run.code})`);
+  const call = async (env: string, extra: string[], what: string, check: (value: unknown) => string | undefined): Promise<unknown> => {
+    const dir = mkdtempSync(join(tmpdir(), "chant-release-compile-"));
+    const resultFile = join(dir, "result.json");
     try {
-      return JSON.parse(run.stdout);
-    } catch {
-      throw new ReleaseCompileError(`compiling "${env}" printed something that is not JSON`);
+      const run = await runChild(
+        command,
+        ["release", "compile", "--env", env, ...common(), ...extra, "--json"],
+        inputs.projectDir,
+        env,
+        inputs.releaseLabel,
+        inputs.releaseDigests,
+        resultFile,
+      );
+      if (run.code !== 0) throw new ReleaseCompileError(`compiling "${env}" failed (exit ${run.code})`);
+      const printed = run.stdout.trim();
+      const stdoutNote = printed === "" ? "" : `; its stdout began: ${printed.length > 200 ? `${printed.slice(0, 200)}...` : printed}`;
+      if (!existsSync(resultFile)) {
+        throw new ReleaseCompileError(
+          `compiling "${env}" ${printed === "" ? `exited 0 without writing ${what}` : `printed something that is not ${what} and exited 0 without writing one`}; ` +
+            `a module the project loads may have exited on load (for a project with no components, set sourceDir or --src to the build root)${stdoutNote}`,
+        );
+      }
+      let value: unknown;
+      try {
+        value = JSON.parse(readFileSync(resultFile, "utf-8"));
+      } catch {
+        throw new ReleaseCompileError(`compiling "${env}" wrote something that is not JSON`);
+      }
+      const why = check(value);
+      if (why !== undefined) throw new ReleaseCompileError(`compiling "${env}" printed something that is not ${what}: ${why}${stdoutNote}`);
+      return value;
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   };
   return {
     async compile(env) {
-      return (await call(env, inputs.buildCommand ? ["--build", inputs.buildCommand] : [])) as CompiledTarget;
+      return (await call(env, inputs.buildCommand ? ["--build", inputs.buildCommand] : [], "a target", (v) => notATarget(v, env))) as CompiledTarget;
     },
     async buildArtifacts(env, components) {
-      return ((await call(env, ["--artifacts", "--component", components.join(",")])) as { artifacts: ReleaseArtifact[] }).artifacts;
+      const result = await call(env, ["--artifacts", "--component", components.join(",")], "a list of artifacts", (v) =>
+        isRecord(v) && Array.isArray(v.artifacts) ? undefined : "it has no artifacts list",
+      );
+      return (result as { artifacts: ReleaseArtifact[] }).artifacts;
     },
   };
 }
