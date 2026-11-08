@@ -12,7 +12,17 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CapabilityRegistry } from "@intentius/chant/components/capability";
 import { memoryGateLedgerPort, runOpWave, type OpWavesSpec } from "@intentius/chant/op";
-import { parseTerragruntFind, terragruntApplyCapability, terragruntListedWaves, TerragruntWaveError, type TerragruntExec } from "./index";
+import { computePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
+import {
+  parseTerragruntFind,
+  terragruntApplyCapability,
+  terragruntListedWaves,
+  terragruntUnitPinResolver,
+  terragruntUnitPins,
+  TerragruntWaveError,
+  type TerragruntApplyDeps,
+  type TerragruntExec,
+} from "./index";
 import { terraformCapabilityPlugin } from "../components/capability-plugin";
 
 const recorded = join(dirname(fileURLToPath(import.meta.url)), "../__fixtures__/terragrunt/recorded");
@@ -30,13 +40,14 @@ const tmp = (): string => {
 };
 
 interface Call {
+  file: string;
   args: string[];
   env: Record<string, string>;
 }
 
 /** Terragrunt as recorded: find, render with no dependency, and wave 1's plan and apply (`failPlan` swaps in a report with a failed unit). */
-const stub = (calls: Call[], opts: { failPlan?: boolean } = {}): TerragruntExec => async (_f, args, o) => {
-  calls.push({ args: [...args], env: o.env });
+const stub = (calls: Call[], opts: { failPlan?: boolean; planJson?: (unit: string) => string | undefined } = {}): TerragruntExec => async (f, args, o) => {
+  calls.push({ file: f, args: [...args], env: o.env });
   if (args[0] === "find") return { code: 0, stdout: read("find.json"), stderr: "" };
   if (args[0] === "render") return { code: 0, stdout: '{"dependency":null}', stderr: "" };
   const at = (flag: string): string | undefined => (args.includes(flag) ? args[args.indexOf(flag) + 1] : undefined);
@@ -52,7 +63,7 @@ const stub = (calls: Call[], opts: { failPlan?: boolean } = {}): TerragruntExec 
   if (cmd === "plan") {
     for (const u of filtered) {
       for (const [dir, file, text] of [
-        [at("--json-out-dir")!, "tfplan.json", read(`wave-1/json/${u}/tfplan.json`)],
+        [at("--json-out-dir")!, "tfplan.json", opts.planJson?.(u) ?? read(`wave-1/json/${u}/tfplan.json`)],
         [at("--out-dir")!, "tfplan.tfplan", "binary plan"],
       ] as const) {
         mkdirSync(join(dir, u), { recursive: true });
@@ -78,7 +89,7 @@ function spec(dir: string, together = true): OpWavesSpec {
   };
 }
 
-const wave = (s: OpWavesSpec, cwd: string, exec: TerragruntExec, runHooks?: Parameters<typeof runOpWave>[0]["runHooks"]) =>
+const wave = (s: OpWavesSpec, cwd: string, exec: TerragruntExec, runHooks?: Parameters<typeof runOpWave>[0]["runHooks"], deps: Omit<TerragruntApplyDeps, "exec"> = {}) =>
   runOpWave({
     spec: s,
     specFile: "waves.json",
@@ -86,7 +97,7 @@ const wave = (s: OpWavesSpec, cwd: string, exec: TerragruntExec, runHooks?: Para
     cwd,
     show: () => ({ sha: "b".repeat(40), text: JSON.stringify(s) }),
     gates: memoryGateLedgerPort(),
-    capabilities: new CapabilityRegistry().register(terragruntApplyCapability({ exec })),
+    capabilities: new CapabilityRegistry().register(terragruntApplyCapability({ exec, ...deps })),
     log: () => {},
     ...(runHooks ? { runHooks } : {}),
   });
@@ -178,5 +189,139 @@ describe("an op wave on terragrunt-apply (#4842)", () => {
     const calls: Call[] = [];
     await expect(wave(spec(dir), dir, stub(calls, { failPlan: true }))).rejects.toThrow(/terragrunt-apply: live\/dev\/vpc: failed \(run error: exit status 1\)/);
     expect(runAll(calls).map((c) => c[0])).toEqual(["plan"]);
+  });
+});
+
+describe("units that pin their own releases (#4849)", () => {
+  /** Where each Terragrunt call of the wave ran: the command, its units, the Terragrunt and TG_TF_PATH, and the out dir. */
+  const runs = (calls: Call[]) =>
+    calls.filter((c) => c.args[0] === "run").map((c) => ({
+      cmd: c.args[c.args.indexOf("--") + 1],
+      units: c.args.filter((_, i) => c.args[i - 1] === "--filter"),
+      terragrunt: c.file,
+      binary: c.env.TG_TF_PATH,
+      outDir: c.args[c.args.indexOf("--out-dir") + 1],
+    }));
+  const prodPinned: TerragruntApplyDeps["resolveUnit"] = (unit) => (unit === "live/prod/vpc" ? { terragrunt: "/opt/tg-1.1.5/terragrunt", binary: "/opt/tofu-1.9.0/tofu" } : {});
+
+  it("a together wave plans and applies one run --all per pair of releases, each with its own binaries and saved plans", async () => {
+    const dir = tmp();
+    const calls: Call[] = [];
+    const s = { ...spec(dir), step: { ...spec(dir).step!, terragrunt: "/opt/tg/terragrunt", binary: "/opt/tofu/tofu" } };
+    const result = await wave(s, dir, stub(calls), undefined, { resolveUnit: prodPinned });
+    expect(result.exitCode).toBe(0);
+    const r = runs(calls);
+    expect(r.map(({ cmd, units, terragrunt, binary }) => ({ cmd, units, terragrunt, binary }))).toEqual([
+      { cmd: "plan", units: ["{./live/dev/vpc}"], terragrunt: "/opt/tg/terragrunt", binary: "/opt/tofu/tofu" },
+      { cmd: "plan", units: ["{./live/prod/vpc}"], terragrunt: "/opt/tg-1.1.5/terragrunt", binary: "/opt/tofu-1.9.0/tofu" },
+      { cmd: "apply", units: ["{./live/dev/vpc}"], terragrunt: "/opt/tg/terragrunt", binary: "/opt/tofu/tofu" },
+      { cmd: "apply", units: ["{./live/prod/vpc}"], terragrunt: "/opt/tg-1.1.5/terragrunt", binary: "/opt/tofu-1.9.0/tofu" },
+    ]);
+    // Each group applies the plans it saved, in a directory of its own.
+    expect(r[2]!.outDir).toBe(r[0]!.outDir);
+    expect(r[3]!.outDir).toBe(r[1]!.outDir);
+    expect(r[0]!.outDir).not.toBe(r[1]!.outDir);
+    expect(result.applied).toEqual(["live/dev/vpc", "live/prod/vpc"]);
+    // Each unit keeps its own member digest, beside the wave plan's.
+    const members = result.decision!.members.map((m) => m.member);
+    expect(members).toEqual(["live/dev/vpc", "live/prod/vpc"]);
+    for (const unit of ["live/dev/vpc", "live/prod/vpc"]) {
+      const file = JSON.parse(readFileSync(join(dir, `.chant/op-waves/tf-apply/wave-1/${unit.replaceAll("/", "_")}.plan.json`), "utf-8")) as { artifact: { planJson: string } };
+      expect(JSON.parse(readFileSync(file.artifact.planJson, "utf-8"))).toEqual(JSON.parse(read(`wave-1/json/${unit}/tfplan.json`)));
+    }
+  });
+
+  it("a wave whose units all run the step's releases plans as one run --all, with the same wave plan digest", async () => {
+    const cap = terragruntApplyCapability({ exec: stub([]), resolveUnit: () => ({}) });
+    const dir = tmp();
+    const members = ["live/dev/vpc", "live/prod/vpc"].map((unit) => ({ component: unit, step: { unit, dir }, input: { unit, dir }, ctx: { env: "prod" } }));
+    const calls: Call[] = [];
+    const planned = await terragruntApplyCapability({ exec: stub(calls), resolveUnit: () => ({}) }).planGroup!({ env: "prod" } as never, members as never);
+    expect(runs(calls).map((c) => c.cmd)).toEqual(["plan"]);
+    expect(planned.digest).toBe(computePlanDigest("terragrunt-apply-wave", { units: ["live/dev/vpc", "live/prod/vpc"], destroy: false }));
+    expect(cap.kind).toBe("terragrunt-apply");
+  });
+
+  it("a wave planned run by run plans and applies each unit with its own releases", async () => {
+    const dir = tmp();
+    const calls: Call[] = [];
+    const result = await wave(spec(dir, false), dir, stub(calls), undefined, { resolveUnit: prodPinned });
+    expect(result.exitCode).toBe(0);
+    expect(runs(calls).map(({ cmd, terragrunt, binary }) => [cmd, terragrunt, binary])).toEqual([
+      ["plan", "terragrunt", undefined],
+      ["plan", "/opt/tg-1.1.5/terragrunt", "/opt/tofu-1.9.0/tofu"],
+      ["apply", "terragrunt", undefined],
+      ["apply", "/opt/tg-1.1.5/terragrunt", "/opt/tofu-1.9.0/tofu"],
+    ]);
+  });
+
+  it("reads a unit's pins as terragucci does, and asks the product where each pinned release is", async () => {
+    const dir = tmp();
+    const put = (path: string, text: string) => {
+      mkdirSync(dirname(join(dir, path)), { recursive: true });
+      writeFileSync(join(dir, path), text);
+    };
+    put("live/a/.opentofu-version", "# pinned\nv1.9.0\n");
+    put("live/a/terragrunt.hcl", 'terragrunt_version_constraint = "= 1.1.5" # exact\n');
+    put("live/b/main.tf", 'terraform {\n  required_version = "= 1.8.2"\n}\n');
+    put("live/c/.opentofu-version", "latest\n");
+    put("live/c/terragrunt.hcl", 'terragrunt_version_constraint = ">= 1.1"\n');
+    put("live/d/.terraform-version", "1.13.1\n");
+    expect(terragruntUnitPins(dir, "live/a", "tofu")).toEqual({ binary: { tool: "tofu", version: "1.9.0", source: ".opentofu-version" }, terragrunt: { version: "1.1.5", source: "terragrunt_version_constraint" } });
+    expect(terragruntUnitPins(dir, "live/b", "/usr/bin/tofu")).toEqual({ binary: { tool: "tofu", version: "1.8.2", source: "required_version" } });
+    expect(terragruntUnitPins(dir, "live/c", "tofu")).toEqual({});
+    // A .terraform-version pins terraform only; a stand-in binary pins nothing.
+    expect(terragruntUnitPins(dir, "live/d", "tofu")).toEqual({});
+    expect(terragruntUnitPins(dir, "live/d", "terraform")).toEqual({ binary: { tool: "terraform", version: "1.13.1", source: ".terraform-version" } });
+    expect(terragruntUnitPins(dir, "live/a", "choudoufu")).toEqual({ terragrunt: { version: "1.1.5", source: "terragrunt_version_constraint" } });
+    // A pin the step's release already is runs the step's.
+    const asked: string[] = [];
+    const resolve = terragruntUnitPinResolver({
+      release: (tool, version) => {
+        asked.push(`${tool}@${version}`);
+        return `/opt/${tool}-${version}/${tool}`;
+      },
+      carried: { tofu: "1.8.2" },
+    });
+    const input = { unit: "{target}", dir, binary: "tofu" };
+    expect(await resolve("live/a", input)).toEqual({ binary: "/opt/tofu-1.9.0/tofu", terragrunt: "/opt/terragrunt-1.1.5/terragrunt" });
+    expect(await resolve("live/b", input)).toEqual({});
+    expect(await resolve("live/c", input)).toEqual({});
+    expect(asked).toEqual(["tofu@1.9.0", "terragrunt@1.1.5"]);
+  });
+
+  it("units whose pins name the same releases share one run --all", async () => {
+    const dir = tmp();
+    const calls: Call[] = [];
+    const result = await wave(spec(dir), dir, stub(calls), undefined, { resolveUnit: () => ({ binary: "/opt/tofu-1.9.0/tofu" }) });
+    expect(result.exitCode).toBe(0);
+    expect(runs(calls).map(({ cmd, units, binary }) => [cmd, units.length, binary])).toEqual([
+      ["plan", 2, "/opt/tofu-1.9.0/tofu"],
+      ["apply", 2, "/opt/tofu-1.9.0/tofu"],
+    ]);
+  });
+});
+
+describe("a unit whose plan changes only outputs (#4849)", () => {
+  // The recorded live/dev/vpc plan, with its resource already in place and only its output changing.
+  const outputOnly = (unit: string): string | undefined => {
+    if (unit !== "live/dev/vpc") return undefined;
+    const plan = JSON.parse(read(`wave-1/json/${unit}/tfplan.json`)) as { resource_changes: { change: Record<string, unknown> }[]; output_changes: Record<string, Record<string, unknown>> };
+    for (const r of plan.resource_changes) r.change = { ...r.change, actions: ["no-op"], before: r.change.after };
+    plan.output_changes.id = { ...plan.output_changes.id, actions: ["update"], before: "old-id" };
+    return JSON.stringify(plan);
+  };
+
+  it("is a change, so digest.over changing keeps it in the wave digest", async () => {
+    const decisionOf = async (over: "all" | "changing") => {
+      const dir = tmp();
+      const s: OpWavesSpec = { ...spec(dir), digest: { over } };
+      const result = await wave(s, dir, stub([], { planJson: outputOnly }));
+      expect(result.exitCode).toBe(0);
+      return result.decision!;
+    };
+    const changing = await decisionOf("changing");
+    expect(changing.members.find((m) => m.member === "live/dev/vpc")).not.toHaveProperty("empty");
+    expect(changing.digest).toBe((await decisionOf("all")).digest);
   });
 });

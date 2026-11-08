@@ -29,14 +29,26 @@
  * init of its own before the plan, so `afterInit` is called before it plans.
  * A product passes its own `exec` (`terragruntApplyCapability`) to wrap
  * Terragrunt, as terragucci adds its lock timeout and its backend bootstrap.
+ *
+ * A unit may pin its own releases (#4849): the binary Terragrunt calls and
+ * Terragrunt itself. One `run --all` runs one Terragrunt with one
+ * `TG_TF_PATH`, so `resolveUnit` says what each unit runs, and a wave plans
+ * and applies as one `run --all` per pair of releases, each in a work
+ * directory of its own. The units of a wave read none of each other, so
+ * splitting it changes only how many processes run it. Each unit keeps its
+ * member digest, and the wave its `(wave plan)` member. A product passes its
+ * own resolver (terragucci's `UnitBinaries`), or
+ * {@link terragruntUnitPinResolver}, which reads the pins from the units'
+ * files and asks the product where each pinned release is.
  */
 
 import { createHash } from "node:crypto";
-import { join } from "node:path";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { basename, join } from "node:path";
 import type { Capability, CapabilityGroupOutcome, CapabilityGroupPlan, CapabilityPlan, DeployContext, DiscoveredRuns, GroupMember, GroupMemberOutcome, RunDiscoveryContext } from "@intentius/chant/components/capability";
 import type { ChangeSetPart } from "@intentius/chant/change-set";
 import { computePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
-import { applyTerragruntWave, defaultTerragruntExec, discoverTerragruntUnits, planTerragruntWave, type TerragruntExec } from "./run";
+import { applyTerragruntWave, defaultTerragruntExec, discoverTerragruntUnits, planTerragruntWave, TerragruntMockRefusal, type TerragruntExec } from "./run";
 import { terragruntListedWaves, terragruntWaves } from "./units";
 
 /** The step's input. Each string has `{target}`, `{op}` and `{wave}` filled per run in an op wave. */
@@ -72,9 +84,29 @@ export interface TerragruntApplyStepOutput {
 /** What `plan` and `planGroup` keep for the apply: the work directory and the units planned into it. */
 interface TerragruntWaveArtifact {
   kind: "terragrunt-apply";
+  /** The first group's work directory. */
   workDir: string;
   units: string[];
+  /** Each group's units, work directory and releases (#4849). Absent on a plan from before them: one group on the step's releases. */
+  groups?: TerragruntUnitGroup[];
 }
+
+/** The units of a wave that run one pair of releases, as one `run --all`. */
+interface TerragruntUnitGroup {
+  units: string[];
+  workDir: string;
+  terragrunt?: string;
+  binary?: string;
+}
+
+/** What one unit runs (#4849): the `terragrunt` and the binary it calls. An unset field runs the step's. */
+export interface TerragruntUnitTools {
+  terragrunt?: string;
+  binary?: string;
+}
+
+/** Says what a unit runs, from its pins (#4849). It may install a release, and is asked once per unit per plan or apply. */
+export type TerragruntUnitResolver = (unit: string, input: TerragruntApplyStepInput) => TerragruntUnitTools | Promise<TerragruntUnitTools>;
 
 /** A unit's own artifact: its plan document, for `{planJson}`. */
 interface TerragruntUnitArtifact {
@@ -87,6 +119,98 @@ interface TerragruntUnitArtifact {
 export interface TerragruntApplyDeps {
   /** How Terragrunt runs. Default {@link defaultTerragruntExec}. */
   exec?: TerragruntExec;
+  /** What each unit runs, when units pin their own releases (#4849). Unset: every unit runs the step's `terragrunt` and `binary`. */
+  resolveUnit?: TerragruntUnitResolver;
+}
+
+/** The binaries a unit may pin a release of, and the file that pins each. */
+const VERSION_FILES = { tofu: ".opentofu-version", terraform: ".terraform-version" } as const;
+type PinnedTool = keyof typeof VERSION_FILES;
+const RELEASE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/;
+
+/** What a unit's own files pin (#4849). */
+export interface TerragruntUnitPins {
+  binary?: { tool: PinnedTool; version: string; source: ".opentofu-version" | ".terraform-version" | "required_version" };
+  terragrunt?: { version: string; source: "terragrunt_version_constraint" };
+}
+
+const stripComments = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"])(#|\/\/).*$/gm, "$1");
+
+/** Every exact `required_version` (`= 1.13.1` or `1.13.1`) in one directory's Terraform files. */
+function exactRequiredVersions(dir: string): string[] {
+  let names: string[];
+  try {
+    names = readdirSync(dir).filter((n) => n.endsWith(".tf") || n.endsWith(".tofu") || n.endsWith(".tf.json") || n.endsWith(".tofu.json"));
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  for (const n of names) {
+    const f = join(dir, n);
+    if (!statSync(f).isFile()) continue;
+    const m = stripComments(readFileSync(f, "utf-8")).match(/required_version\s*=\s*"\s*=?\s*(\d+\.\d+\.\d+)\s*"/);
+    if (m && !out.includes(m[1]!)) out.push(m[1]!);
+  }
+  return out;
+}
+
+/**
+ * What `unit` (relative to `dir`) pins, read as terragucci reads it: the
+ * binary from a `.opentofu-version` (tofu) or `.terraform-version`
+ * (terraform), whose first line that is not a comment is an exact release,
+ * else one exact `required_version` in its Terraform files; Terragrunt from
+ * an exact `terragrunt_version_constraint` (`"= 1.1.5"`) in its
+ * `terragrunt.hcl`. `binary` is the one the step runs: only tofu and
+ * terraform are pinned. A product's own pins, such as terragucci.yml's
+ * `version` map, go in its own resolver.
+ */
+export function terragruntUnitPins(dir: string, unit: string, binary: string): TerragruntUnitPins {
+  const at = join(dir, unit);
+  const out: TerragruntUnitPins = {};
+  const name = basename(binary);
+  if (name === "tofu" || name === "terraform") {
+    const file = join(at, VERSION_FILES[name]);
+    const line = existsSync(file) ? readFileSync(file, "utf-8").split("\n").map((l) => l.trim()).find((l) => l !== "" && !l.startsWith("#")) : undefined;
+    const v = line?.replace(/^v/, "");
+    const required = exactRequiredVersions(at);
+    if (v && RELEASE.test(v)) out.binary = { tool: name, version: v, source: VERSION_FILES[name] };
+    else if (required.length === 1) out.binary = { tool: name, version: required[0]!, source: "required_version" };
+  }
+  const hcl = join(at, "terragrunt.hcl");
+  if (existsSync(hcl)) {
+    const text = readFileSync(hcl, "utf-8").replace(/(^|[^:"])(#|\/\/).*$/gm, "$1");
+    const tg = /^\s*terragrunt_version_constraint\s*=\s*"\s*=?\s*v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)\s*"/m.exec(text)?.[1];
+    if (tg) out.terragrunt = { version: tg, source: "terragrunt_version_constraint" };
+  }
+  return out;
+}
+
+export interface TerragruntUnitPinResolverOptions {
+  /** The path of a pinned release's executable, installing it if it must. Asked once per tool and version. */
+  release: (tool: PinnedTool | "terragrunt", version: string, unit: string) => string | Promise<string>;
+  /** The releases the step's own `binary` and `terragrunt` are: a unit pinned to one of them runs the step's. */
+  carried?: Partial<Record<PinnedTool | "terragrunt", string>>;
+}
+
+/** A {@link TerragruntUnitResolver} from the units' own pins ({@link terragruntUnitPins}). The step's `binary` defaults to tofu, as Terragrunt's does. */
+export function terragruntUnitPinResolver(options: TerragruntUnitPinResolverOptions): TerragruntUnitResolver {
+  const releases = new Map<string, Promise<string>>();
+  const releaseOf = (tool: PinnedTool | "terragrunt", version: string, unit: string): Promise<string> => {
+    const key = `${tool}@${version}`;
+    let p = releases.get(key);
+    if (!p) {
+      p = Promise.resolve(options.release(tool, version, unit));
+      releases.set(key, p);
+    }
+    return p;
+  };
+  return async (unit, input) => {
+    const pins = terragruntUnitPins(dirOf(input), unit, input.binary ?? "tofu");
+    const out: TerragruntUnitTools = {};
+    if (pins.binary && pins.binary.version !== options.carried?.[pins.binary.tool]) out.binary = await releaseOf(pins.binary.tool, pins.binary.version, unit);
+    if (pins.terragrunt && pins.terragrunt.version !== options.carried?.terragrunt) out.terragrunt = await releaseOf("terragrunt", pins.terragrunt.version, unit);
+    return out;
+  };
 }
 
 const DEFAULT_WORK_DIR = ".chant/terragrunt-apply";
@@ -163,12 +287,63 @@ async function applyUnits(exec: TerragruntExec, input: TerragruntApplyStepInput,
   });
 }
 
+/** The step's input with what `unit` runs in place of the step's `terragrunt` and `binary`. */
+async function unitInput(resolveUnit: TerragruntUnitResolver | undefined, input: TerragruntApplyStepInput, unit: string): Promise<TerragruntApplyStepInput> {
+  if (!resolveUnit) return input;
+  const t = await resolveUnit(unit, input);
+  return { ...input, ...(t.terragrunt ? { terragrunt: t.terragrunt } : {}), ...(t.binary ? { binary: t.binary } : {}) };
+}
+
+/** A wave's units by the pair of releases they run, the step's own pair first, each with the input its `run --all` takes. */
+async function groupUnits(resolveUnit: TerragruntUnitResolver | undefined, input: TerragruntApplyStepInput, units: readonly string[]): Promise<{ input: TerragruntApplyStepInput; units: string[] }[]> {
+  const key = (i: TerragruntApplyStepInput): string => JSON.stringify([i.terragrunt ?? null, i.binary ?? null]);
+  const own = key(input);
+  const byKey = new Map<string, { input: TerragruntApplyStepInput; units: string[] }>();
+  for (const u of units) {
+    const i = await unitInput(resolveUnit, input, u);
+    const k = key(i);
+    if (!byKey.has(k)) byKey.set(k, { input: i, units: [] });
+    byKey.get(k)!.units.push(u);
+  }
+  const groups = [...byKey.entries()];
+  groups.sort(([a], [b]) => (a === own ? -1 : b === own ? 1 : 0));
+  return groups.map(([, g]) => g);
+}
+
+/**
+ * Plan each group with its own `run --all`. A group whose units would read
+ * `mock_outputs` is refused as one wave is: every group still plans, then one
+ * refusal names every read.
+ */
+async function planGroups(exec: TerragruntExec, groups: { input: TerragruntApplyStepInput; units: string[] }[], env: Record<string, string> | undefined): Promise<{ groups: TerragruntUnitGroup[]; plans: Map<string, CapabilityPlan> }> {
+  const reads: TerragruntMockRefusal["reads"] = [];
+  const out: TerragruntUnitGroup[] = [];
+  const plans = new Map<string, CapabilityPlan>();
+  for (const g of groups) {
+    let planned: Awaited<ReturnType<typeof planUnits>>;
+    try {
+      planned = await planUnits(exec, g.input, g.units, env);
+    } catch (e) {
+      if (e instanceof TerragruntMockRefusal && groups.length > 1) {
+        reads.push(...e.reads);
+        continue;
+      }
+      throw e;
+    }
+    out.push({ units: g.units, workDir: planned.workDir, ...(g.input.terragrunt ? { terragrunt: g.input.terragrunt } : {}), ...(g.input.binary ? { binary: g.input.binary } : {}) });
+    for (const [u, p] of planned.plans) plans.set(u, p);
+  }
+  if (reads.length > 0) throw new TerragruntMockRefusal(reads);
+  return { groups: out, plans };
+}
+
 const isWaveArtifact = (v: unknown): v is TerragruntWaveArtifact => (v as { kind?: unknown } | undefined)?.kind === "terragrunt-apply" && Array.isArray((v as { units?: unknown }).units);
 const isUnitArtifact = (v: unknown): v is TerragruntUnitArtifact => (v as { kind?: unknown } | undefined)?.kind === "terragrunt-apply-unit";
 
 /** The `terragrunt-apply` capability, with `deps` in place of the defaults. */
 export function terragruntApplyCapability(deps: TerragruntApplyDeps = {}): Capability<TerragruntApplyStepInput, TerragruntApplyStepOutput> {
   const exec = deps.exec ?? defaultTerragruntExec;
+  const resolveUnit = deps.resolveUnit;
   return {
     kind: "terragrunt-apply",
     rollbackPolicy: "needs-opt-out",
@@ -190,15 +365,16 @@ export function terragruntApplyCapability(deps: TerragruntApplyDeps = {}): Capab
     async plan(ctx: DeployContext, input: TerragruntApplyStepInput): Promise<CapabilityPlan> {
       if (typeof input.unit !== "string" || input.unit === "") throw new Error("terragrunt-apply: the step names no unit");
       await ctx.afterInit?.();
-      const { plans } = await planUnits(exec, input, [input.unit], ctx.processEnv);
+      const { plans } = await planUnits(exec, await unitInput(resolveUnit, input, input.unit), [input.unit], ctx.processEnv);
       return plans.get(input.unit)!;
     },
 
     async run(ctx: DeployContext, input: TerragruntApplyStepInput): Promise<TerragruntApplyStepOutput> {
       const given = ctx.plans?.[input.unit];
+      const own = await unitInput(resolveUnit, input, input.unit);
       // A unit with no plan from the wave plans now and applies that plan.
-      const workDir = isUnitArtifact(given) ? given.workDir : (await planUnits(exec, input, [input.unit], ctx.processEnv)).workDir;
-      const applied = await applyUnits(exec, input, [input.unit], workDir, ctx.processEnv);
+      const workDir = isUnitArtifact(given) ? given.workDir : (await planUnits(exec, own, [input.unit], ctx.processEnv)).workDir;
+      const applied = await applyUnits(exec, own, [input.unit], workDir, ctx.processEnv);
       const result = applied.results.find((r) => r.unit === input.unit);
       if (result?.status !== "succeeded") throw new Error(`terragrunt-apply: ${input.unit}: ${result?.error ?? "Terragrunt did not apply it"}`);
       return { unit: input.unit, applied: true };
@@ -207,9 +383,14 @@ export function terragruntApplyCapability(deps: TerragruntApplyDeps = {}): Capab
     async planGroup(_ctx, members): Promise<CapabilityGroupPlan> {
       const { input, units, env } = shared(members);
       for (const m of members) await m.ctx.afterInit?.();
-      const { workDir, plans } = await planUnits(exec, input, units, env);
-      const artifact: TerragruntWaveArtifact = { kind: "terragrunt-apply", workDir, units: [...units] };
-      const digest = computePlanDigest("terragrunt-apply-wave", { units: [...units].sort(), destroy: input.destroy === true });
+      const { groups, plans } = await planGroups(exec, await groupUnits(resolveUnit, input, units), env);
+      const artifact: TerragruntWaveArtifact = { kind: "terragrunt-apply", workDir: groups[0]!.workDir, units: [...units], groups };
+      // One group hashes as a wave always has; more name each group's units. Not the releases' paths, which depend on where a job installed them: each unit's plan digest covers what its release planned.
+      const digest = computePlanDigest("terragrunt-apply-wave", {
+        units: [...units].sort(),
+        destroy: input.destroy === true,
+        ...(groups.length > 1 ? { groups: groups.map((g) => [...g.units].sort()).sort((a, b) => a.join("\u0000").localeCompare(b.join("\u0000"))) } : {}),
+      });
       return { members: Object.fromEntries(members.map((m) => [m.component, plans.get(m.input?.unit ?? (m.step.unit as string))!])), digest, artifact };
     },
 
@@ -219,7 +400,21 @@ export function terragruntApplyCapability(deps: TerragruntApplyDeps = {}): Capab
       const planned = new Set(run.artifact.units);
       const unplanned = units.filter((u) => !planned.has(u));
       if (unplanned.length > 0) throw new Error(`terragrunt-apply: ${unplanned.join(", ")} ${unplanned.length === 1 ? "is" : "are"} not in the wave's plan`);
-      const applied = await applyUnits(exec, input, units, run.artifact.workDir, env);
+      const want = new Set(units);
+      const groups: TerragruntUnitGroup[] = run.artifact.groups ?? [{ units: run.artifact.units, workDir: run.artifact.workDir, ...(input.terragrunt ? { terragrunt: input.terragrunt } : {}), ...(input.binary ? { binary: input.binary } : {}) }];
+      const grouped = new Set(groups.flatMap((g) => g.units));
+      const ungrouped = units.filter((u) => !grouped.has(u));
+      if (ungrouped.length > 0) throw new Error(`terragrunt-apply: ${ungrouped.join(", ")} ${ungrouped.length === 1 ? "is" : "are"} in no group of the wave's plan`);
+      const applied: { results: Awaited<ReturnType<typeof applyUnits>>["results"]; code: number | null } = { results: [], code: 0 };
+      // Each group applies its own saved plans with its own releases.
+      for (const g of groups) {
+        const mine = g.units.filter((u) => want.has(u));
+        if (mine.length === 0) continue;
+        const { terragrunt: _tg, binary: _bin, ...rest } = input;
+        const a = await applyUnits(exec, { ...rest, ...(g.terragrunt ? { terragrunt: g.terragrunt } : {}), ...(g.binary ? { binary: g.binary } : {}) }, mine, g.workDir, env);
+        applied.results.push(...a.results);
+        if (applied.code === 0) applied.code = a.code;
+      }
       const byUnit = new Map(applied.results.map((r) => [r.unit, r]));
       const out: Record<string, GroupMemberOutcome> = {};
       for (const m of members) {

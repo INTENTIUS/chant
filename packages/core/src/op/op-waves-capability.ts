@@ -170,11 +170,11 @@ export const OP_WAVE_TOGETHER_MEMBER = "(wave plan)";
 /** The release that has `discover` with a `step`, and `together` waves (#4842). */
 export const OP_WAVE_STEP_WAVE_FLOOR = NEXT_RELEASE;
 
-/** Whether a part changes nothing, and whether it destroys or replaces something. */
+/** Whether a part changes nothing, and whether it destroys or replaces something. A plan that changes only outputs changes something (#4849). */
 export function partEffects(part: ChangeSetPart | undefined): { empty: boolean; destructive: boolean } {
   if (!part) return { empty: false, destructive: false };
   const changing = part.entries.filter((e) => e.action !== "no-op" && e.action !== "read");
-  return { empty: changing.length === 0, destructive: changing.some((e) => e.action === "delete" || e.action === "replace") };
+  return { empty: changing.length === 0 && (part.member.outputs?.length ?? 0) === 0, destructive: changing.some((e) => e.action === "delete" || e.action === "replace") };
 }
 
 function resolveCapability(registry: CapabilityRegistry, kind: string): Capability<never, unknown> {

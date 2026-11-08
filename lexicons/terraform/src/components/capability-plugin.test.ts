@@ -525,3 +525,19 @@ describe("terraform-apply previews a root outside a group with placeholders (#44
     expect(calls.some((c) => c.startsWith("apply"))).toBe(false);
   });
 });
+
+describe("terraform-apply on a root whose plan changes only outputs (#4849)", () => {
+  test("its part names the outputs, so its change set is not empty", async () => {
+    const { terraformChangeSetPart } = await import("../change-set");
+    const { composeChangeSet, isEmptyChangeSet } = await import("@intentius/chant/change-set");
+    const plan = {
+      resource_changes: [{ address: "terraform_data.keep", mode: "managed", type: "terraform_data", name: "keep", change: { actions: ["no-op"], before: { input: "a" }, after: { input: "a" }, after_unknown: {} } }],
+      output_changes: { url: { actions: ["update"], before: "a", after: "b", after_unknown: false } },
+    };
+    planJson = plan;
+    changeSet = terraformChangeSetPart({ member: "e01", plan }) as unknown as Record<string, unknown>;
+    const planned = await terraformApplyCapability.plan!({ env: "test", component: "e01" }, { root: "e01" });
+    expect(planned.changeSet?.member.outputs).toEqual(["url"]);
+    expect(isEmptyChangeSet(composeChangeSet([planned.changeSet!]))).toBe(false);
+  });
+});

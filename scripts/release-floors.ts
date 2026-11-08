@@ -79,6 +79,9 @@ const FLOOR_RE = /export const ([A-Z0-9_]+_FLOOR) = (?:"(\d+\.\d+\.\d+)"|(NEXT_R
  */
 const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: string }[] = [
   // --freeze empties this list after a release ships (#4501); each entry is one line.
+  { file: "packages/core/src/workspace/change-set.schema.json", text: "Added in contract 1 by #4849, written by chant {v} and newer.", count: 1, floor: "CHANGE_SET_OUTPUTS_FLOOR" },
+  { file: "docs/src/content/docs/reference/change-set.mdx", text: "so they are not hashed again. Absent when none changes. Written by chant {v} and newer |", count: 1, floor: "CHANGE_SET_OUTPUTS_FLOOR" },
+  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "| `change-set` | `members[].outputs` | {v} |", count: 1, floor: "CHANGE_SET_OUTPUTS_FLOOR" },
 ];
 
 interface Args {

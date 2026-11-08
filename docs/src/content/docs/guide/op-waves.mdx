@@ -344,6 +344,10 @@ Some tools plan a wave as a whole: Terragrunt runs a layer's units with one `run
 
 `terragrunt-apply` plans the units with one `run --all` into its work directory and applies exactly those saved plans with one more. The units of one call need the same settings and the same `env` from the run hooks. `terraform-apply` plans and applies a together wave as one composed run (`ComposedRun`) when `terraform.compose.enabled` is set. A product can pass its own capability with the group methods it needs. A together wave cannot have `parallelism` over 1. `OP_WAVE_STEP_WAVE_FLOOR` is the first chant with `discover` on a step and `together`.
 
+A Terragrunt unit can pin its own releases ([#4849](https://github.com/INTENTIUS/chant/issues/4849)): the OpenTofu or Terraform release Terragrunt calls, and Terragrunt's. One `run --all` runs one of each, so `terragruntApplyCapability({ resolveUnit })` takes what each unit runs, `{ terragrunt?, binary? }`, and a wave plans and applies as one `run --all` per pair, each group from its own work directory. A field the resolver leaves unset runs the step's. Each unit keeps its member digest, and the wave keeps its `(wave plan)` member, whose digest names the groups only when there are two or more. `terragruntUnitPinResolver({ release, carried })` reads the pins from a unit's files (`.opentofu-version` or `.terraform-version`, an exact `required_version`, an exact `terragrunt_version_constraint` in `terragrunt.hcl`) and asks `release(tool, version)` for the path of each pinned release once. A pin that is already the step's release, as `carried` names it, runs the step's. A product with pins of its own passes its own resolver. `TERRAGRUNT_UNIT_PINS_FLOOR` marks it.
+
+A run whose plan changes only outputs is a change, on `terraform-apply` and `terragrunt-apply` alike ([#4849](https://github.com/INTENTIUS/chant/issues/4849)): its change-set member lists them as `outputs`, so it is not empty and `digest.over: "changing"` keeps it in the wave digest.
+
 ## Stage hooks
 
 Hooks are commands that run before and after a wave's plan and apply, inside the wave's job:

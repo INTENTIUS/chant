@@ -200,6 +200,14 @@ export interface ChangeSetMember {
   placeholders?: string[];
   /** The planner's own digest of the same plan, when it prints one (choudoufu's per-root digest). */
   nativeDigest?: string;
+  /**
+   * The outputs the member's plan changes, by name, sorted (#4849). Absent
+   * when it changes none. A member with any is a change, even when every
+   * entry is a no-op ({@link isEmptyChangeSet}). Not hashed again: the
+   * member's `planDigest` already covers them. Added within contract 1 by
+   * chant `CHANGE_SET_OUTPUTS_FLOOR` (release-floors).
+   */
+  outputs?: string[];
   holes: ChangeSetHole[];
   /**
    * Set on a member a capability planned with others as one group (ws-107,
@@ -475,12 +483,14 @@ export function verifyChangeSetDigest(
  * planner marked `mayAppear`. A release gate over such a document passes
  * without an approval. A member that reads a value its group computes in its
  * apply (`group.reads`, ws-107 ruling 4) makes it not empty: what the plan
- * shows may not be all the apply does.
+ * shows may not be all the apply does. A member whose plan changes an
+ * output (`outputs`, #4849) makes it not empty too.
  */
 export function isEmptyChangeSet(doc: Pick<ChangeSetDocument, "members" | "entries">): boolean {
   if (doc.members.length === 0) return false;
   for (const m of doc.members) {
     if (m.status !== "planned" || m.provisional === true || m.holes.length > 0) return false;
+    if (m.outputs && m.outputs.length > 0) return false;
     if (m.group && m.group.reads.length > 0) return false;
   }
   return doc.entries.every((e) => (e.action === "no-op" || e.action === "read") && e.mayAppear !== true);

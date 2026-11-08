@@ -315,3 +315,23 @@ describe("a grouped member (ws-107, #4440)", () => {
     expect(isEmptyChangeSet(composeChangeSet([part("a", { digest, reads: [] }), part("b", { digest, reads: ["a.id"] })]))).toBe(false);
   });
 });
+
+describe("a member whose plan changes outputs (#4849)", () => {
+  const part = (member: string, outputs?: string[]): ChangeSetPart => ({
+    member: { member, lexicon: "terraform", planner: "tofu", status: "planned", planDigest: computePlanDigest("p", member), holes: [], ...(outputs ? { outputs } : {}) },
+    entries: [{ member, lexicon: "terraform", planner: "tofu", address: "aws_s3_bucket.a", type: "aws_s3_bucket", name: "a", action: "no-op", attributes: [] }],
+  });
+
+  test("a change set whose only change is an output is not empty", () => {
+    expect(isEmptyChangeSet(composeChangeSet([part("a"), part("b")]))).toBe(true);
+    expect(isEmptyChangeSet(composeChangeSet([part("a"), part("b", ["url"])]))).toBe(false);
+  });
+
+  test("the outputs are not hashed again, since the member's plan digest covers them, and the schema reads them", () => {
+    const plain = composeChangeSet([part("a"), part("b")]);
+    const outputs = composeChangeSet([part("a"), part("b", ["url"])]);
+    expect(outputs.digest).toBe(plain.digest);
+    expect(verifyChangeSetDigest(outputs)).toBe(true);
+    expectValid(outputs);
+  });
+});
