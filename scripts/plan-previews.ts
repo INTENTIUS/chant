@@ -115,6 +115,12 @@ export const PLANNERS: Record<string, PlannerNote> = {
     shows: "every resource change with its action, and each changed top-level attribute with its value before and after",
     anchor: "terraform-apply",
   },
+  "terragrunt-apply": {
+    source: "lexicons/terraform/src/terragrunt/capability.ts",
+    reads: "`terragrunt run --all plan` over the wave's units (one run per pinned pair of releases), or one unit's plan at a time, each read with `show -json`",
+    shows: "every resource change per unit, as for terraform-apply, and a member for the whole wave's plan",
+    anchor: "terragrunt-apply",
+  },
   "terraform-action": {
     source: "lexicons/terraform/src/action-ops.ts",
     reads: "`plan -invoke=<address>` of the root, read with `show -json`",
