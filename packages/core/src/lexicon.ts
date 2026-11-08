@@ -47,7 +47,6 @@ import type { DisruptionQuery, DisruptionVerdict } from "./lifecycle/disruption"
 import type { OwnerChainVerdict } from "./owner-chain";
 import type { CommandGroup } from "./cli/command-group";
 import type { Archetype } from "./components/component";
-import { NEXT_RELEASE } from "./release-floors";
 
 // Re-exported so a lexicon that hosts Op runs (#2121) can type its
 // `opRuntime` from the same entry it imports the plugin contract from.
@@ -1322,7 +1321,7 @@ export interface CompositeEntry {
  * {@link LexiconPlugin.ciSetup}, so it freezes with chant's release; the
  * lexicon re-exports it as `PULUMI_CI_SETUP_FLOOR`.
  */
-export const CI_SETUP_UNLINKED_FLOOR = NEXT_RELEASE;
+export const CI_SETUP_UNLINKED_FLOOR = "0.124.78";
 
 export interface LexiconPlugin {
   // ── Required ──────────────────────────────────────────────

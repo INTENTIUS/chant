@@ -15,10 +15,9 @@
  */
 
 import { MAX_DIFF, quoted, REVIEW_RISKS, reviewResultMarker, riskOf, type ReviewRisk } from "./review-agent";
-import { NEXT_RELEASE } from "../../release-floors";
 
 /** The first chant whose review agent takes a product's words, data sections and job id (#4811). */
-export const REVIEW_PRODUCT_FLOOR = NEXT_RELEASE;
+export const REVIEW_PRODUCT_FLOOR = "0.124.78";
 
 const MAX_BODY = 10_000;
 const MAX_REVIEW = 50_000;

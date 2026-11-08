@@ -12,7 +12,6 @@ import { describe, expect, test } from "vitest";
 import { makeNotifyEvent, sendNotify, slackMessage, teamsMessage, type NotifyEvent, type NotifyFetch, type NotifyMessageWords } from "./notify";
 import { driftNotifyFields, NOTIFY_MESSAGE_WORDS_FLOOR, productSendOptions } from "./notify-product";
 import { assertProductWords } from "./ci-product-words";
-import { NEXT_RELEASE } from "./release-floors";
 import { NOTIFY_MESSAGE_EVENTS } from "./__fixtures__/notify-messages/events";
 import recorded from "./__fixtures__/notify-messages/messages.json";
 import * as tg from "./__fixtures__/terragucci-notify";
@@ -182,5 +181,5 @@ describe("chant's own words for the re-run button and the relay (#4818)", () => 
     expect(card.body[2]).toEqual({ type: "TextBlock", wrap: true, text: "Approve here: reply @chant-relay approve signed-ref. Decline: reply @chant-relay decline signed-ref." });
   });
 
-  test("the floor names the next release", () => expect(NOTIFY_MESSAGE_WORDS_FLOOR).toBe(NEXT_RELEASE));
+  test("the floor names the next release", () => expect(NOTIFY_MESSAGE_WORDS_FLOOR).toBe("0.124.78"));
 });

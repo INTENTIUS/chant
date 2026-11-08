@@ -400,7 +400,7 @@ export class McpServer {
       // The client, from this request's _meta (2026-07-28) or else from initialize.
       const clientInfo = parseMeta(params).clientInfo ?? this.clientInfo;
       const result = await handler(toolParams, clientInfo ? { clientInfo } : {});
-      const isStructured = typeof result === "object" && result !== null;
+      const structured = structuredContentOf(result);
       return {
         content: [
           {
@@ -412,7 +412,7 @@ export class McpServer {
         // objects that get stringified above, so agents that want the
         // parsed shape directly get it here too, alongside the text block
         // kept for backward compatibility (#1194).
-        ...(isStructured ? { structuredContent: result } : {}),
+        ...(structured ? { structuredContent: structured } : {}),
       };
     } catch (error) {
       return {
@@ -468,6 +468,19 @@ export class McpServer {
       }
     });
   }
+}
+
+/**
+ * A tool result's `structuredContent`, which MCP types as a JSON object
+ * (`{ [key: string]: unknown }`): a plain object as it is, an array as
+ * `{ items: [...] }` (#4822), and nothing for a string or other scalar. The
+ * text block still carries the result as the handler returned it, so a
+ * client that reads text sees the array.
+ */
+export function structuredContentOf(result: unknown): Record<string, unknown> | undefined {
+  if (Array.isArray(result)) return { items: result };
+  if (typeof result === "object" && result !== null) return result as Record<string, unknown>;
+  return undefined;
 }
 
 /**

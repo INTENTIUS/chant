@@ -12,7 +12,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { CI_SETUP_UNLINKED_FLOOR } from "@intentius/chant/lexicon";
-import { NEXT_RELEASE } from "@intentius/chant/release-floors";
 import {
   ciEngineDir,
   ciFetchScript,
@@ -215,6 +214,6 @@ describe("ciFetchScript (#4814)", () => {
 
   test("the floor names the next release", () => {
     expect(PULUMI_CI_SETUP_FLOOR).toBe(CI_SETUP_UNLINKED_FLOOR);
-    expect(CI_SETUP_UNLINKED_FLOOR).toBe(NEXT_RELEASE);
+    expect(CI_SETUP_UNLINKED_FLOOR).toBe("0.124.78");
   });
 });

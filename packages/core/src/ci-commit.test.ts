@@ -36,7 +36,6 @@ import {
 } from "./ci-commit";
 import { assertProductWords, parseProductComment } from "./ci-product-words";
 import { PLYWOOD } from "./__fixtures__/product-words";
-import { NEXT_RELEASE } from "./release-floors";
 import type { OpRunRecord, OpRunRecordInput } from "./op/runtime";
 import type { PullRequestHead } from "./pr-forge";
 
@@ -574,7 +573,7 @@ describe("the comment's argument (#4820)", () => {
   });
 
   test("the floor is the next release until it ships", () => {
-    expect(CI_COMMIT_ARG_FLOOR).toBe(NEXT_RELEASE);
+    expect(CI_COMMIT_ARG_FLOOR).toBe("0.124.78");
   });
 });
 
@@ -642,6 +641,6 @@ describe("the harness's BREAK switch for land (#4836)", () => {
   });
 
   test("the floor is the next release until it ships", () => {
-    expect(CI_COMMIT_HARNESS_BREAK_FLOOR).toBe(NEXT_RELEASE);
+    expect(CI_COMMIT_HARNESS_BREAK_FLOOR).toBe("0.124.78");
   });
 });

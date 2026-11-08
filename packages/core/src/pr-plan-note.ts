@@ -26,10 +26,9 @@
 import { renderPrNote as renderPrLoopNote, type PrReport } from "./pr-loop";
 import { GITHUB_COMMENT_LIMIT } from "./plan-summary";
 import { activeProductWords, approveLine, overrideLine, type CiProductWords } from "./ci-product-words";
-import { NEXT_RELEASE } from "./release-floors";
 
 /** The first chant with the product plan note (#4810). */
-export const PR_PLAN_NOTE_FLOOR = NEXT_RELEASE;
+export const PR_PLAN_NOTE_FLOOR = "0.124.78";
 
 /** The read contract a {@link PrPlanNote} follows. */
 export const PR_PLAN_NOTE_CONTRACT = 1;
