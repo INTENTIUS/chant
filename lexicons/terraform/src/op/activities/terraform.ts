@@ -227,6 +227,12 @@ export interface TerraformRootArgs {
    * init included, and nothing created.
    */
   workspace?: string;
+  /**
+   * The binary to run, a name on `PATH` or a path, in place of
+   * `terraform.binary` (terragucci issue 1303): a root that pins its own
+   * release. Absent: `terraform.binary`.
+   */
+  binary?: string;
 }
 
 export interface TerraformInitArgs extends TerraformRootArgs {
@@ -1009,7 +1015,7 @@ async function resolveRoot(args: TerraformRootArgs, signal?: AbortSignal): Promi
         (known.length > 0 ? `known roots: ${known.join(", ")}` : "the namespace declares no roots"),
     );
   }
-  const binary = terraformBinary(namespace);
+  const binary = args.binary !== undefined && args.binary !== "" ? args.binary : terraformBinary(namespace);
   const dir = resolve(projectRoot, args.dir ?? root.dir);
   await ensureChoudoufuVersion(binary, signal);
   const estate = binary === "choudoufu" ? detectLiveEstate(dir) : undefined;

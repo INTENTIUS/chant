@@ -8,6 +8,11 @@ export { terraformPlugin } from "./plugin";
 export {
   terraformCapabilityPlugin,
   terraformApplyCapability,
+  // terragucci issue 1303: a product's resolver of what each root runs.
+  terraformApplyCapabilityWith,
+  type TerraformApplyDeps,
+  type TerraformRootResolver,
+  type TerraformRootTools,
   TerraformPlanMovedError,
   TERRAFORM_VERB_FAMILIES,
   // #4455: a choudoufu member's outputs, read for core's `member-outputs`.
