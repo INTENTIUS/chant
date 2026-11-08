@@ -64,6 +64,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { CI_COMMIT_REPLY_FLOOR, resolveCommitSpec, type CommitRefusalReply, type OpCommitSpec } from "@intentius/chant/ci-commit";
 import { CHANT_EXIT } from "@intentius/chant/exit-codes";
+import { YODEL_CONFLICT_REPLY_FLOOR } from "@intentius/chant/release-floors";
 import type { OpSetupRunStep } from "@intentius/chant/lexicon";
 import { sqlCiSetup, type SqlCiDialect } from "./ci-setup";
 
@@ -211,6 +212,14 @@ export const defaultYodelRunner: YodelRunner = (args, opts) =>
  * freezes with it.
  */
 export const YODEL_COMMIT_FLOOR: string = CI_COMMIT_REPLY_FLOOR;
+
+/**
+ * The first chant whose {@link yodelRefusalReply} reads yodel rebase's
+ * conflict refusal as yodel prints it, the other side named as `the
+ * migrations after <p> up to <b>` or `the chain ending at <b>` (#4821).
+ * Before it that refusal gets chant's own reply.
+ */
+export const YODEL_REBASE_CONFLICT_FLOOR: string = YODEL_CONFLICT_REPLY_FLOOR;
 
 /** The words of yodel's commit jobs: `/yodel new` and `/yodel rebase`. */
 export type YodelCommitWord = "new" | "rebase";
@@ -447,8 +456,9 @@ function refusalLine(output: string, verb: string): string | undefined {
  * the pull request's files, so a reply quotes only names that match a
  * migration id or a plain object name, and says the rest in its own words:
  *
- * - rebase, two branches changing one object: `refused: <a> and <b> both
- *   change <objects>, differently; ...`
+ * - rebase, two branches changing one object: `refused: <a> and the
+ *   migrations after <p> up to <b> both change <objects>, differently; ...`,
+ *   or `<a> and the chain ending at <b> ...` when `<a>` starts the chain
  * - rebase, an edit by hand: `refused: <ids> has|have files that differ from
  *   what yodel wrote ...`
  * - rebase, a history: `refused: <env>'s history records <id> (applied),
@@ -463,13 +473,17 @@ export function yodelRefusalReply(o: { command: readonly string[]; rc: string; o
   const text = line.slice("refused: ".length);
 
   if (verb === "rebase") {
-    const both = /^(\S+) and (\S+) both change (.+?), differently;/.exec(text);
+    // yodel names the other side as a range, `the migrations after <p> up to <b>`, or, when the moved
+    // migration starts the chain, `the chain ending at <b>` (#4821).
+    const both = /^(\S+) and (?:the migrations after (\S+) up to (\S+)|the chain ending at (\S+)) both change (.+?), differently;/.exec(text);
     if (both) {
-      const [, mine, theirs, objects] = both as unknown as [string, string, string, string];
+      const [, mine, after, upTo, chainEnd, objects] = both as unknown as [string, string | undefined, string | undefined, string | undefined, string];
+      const ids = [mine, ...(after !== undefined ? [after, upTo!] : [chainEnd!])];
       const names = objects.split(", ");
-      if (!MIGRATION_ID.test(mine) || !MIGRATION_ID.test(theirs) || !quotable(names)) return undefined;
+      if (!ids.every((id) => MIGRATION_ID.test(id)) || !quotable(names)) return undefined;
+      const theirs = after !== undefined ? `the migrations after ${q(after)} up to ${q(upTo!)}` : `the chain ending at ${q(chainEnd!)}`;
       return (
-        `\`yodel rebase\` refused: ${q(mine)} and ${q(theirs)} both change ${names.map(q).join(", ")}, differently, and a rebase does not merge two changes to one object. ` +
+        `\`yodel rebase\` refused: ${q(mine)} and ${theirs} both change ${names.map(q).join(", ")}, differently, and a rebase does not merge two changes to one object. ` +
         `Resolve it on the branch: delete ${q(mine)}'s directory, declare both changes, then run \`yodel new\` (or comment \`/yodel new\`).`
       );
     }

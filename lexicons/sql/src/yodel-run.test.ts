@@ -8,7 +8,7 @@
  * src/rebase/index.ts, src/commands/rebase.ts and src/commands/new.ts).
  */
 import { describe, expect, test } from "vitest";
-import { commitSettingsEnv, commitSettingsFromEnv, resolveCommitSpec } from "@intentius/chant/ci-commit";
+import { CI_COMMIT_REPLY_FLOOR, commitSettingsEnv, commitSettingsFromEnv, resolveCommitSpec } from "@intentius/chant/ci-commit";
 import { CHANT_EXIT } from "@intentius/chant/exit-codes";
 import { NEXT_RELEASE } from "@intentius/chant/release-floors";
 import { NODE_CHECK_LINE, PACKAGES_INSTALL_LINE } from "./ci-setup";
@@ -17,6 +17,7 @@ import {
   allowedYodelCommitArgv,
   YODEL_COMMIT_FINDINGS,
   YODEL_COMMIT_FLOOR,
+  YODEL_REBASE_CONFLICT_FLOOR,
   yodelCommitRefusalReply,
   yodelCommitSetup,
   yodelCommitSpec,
@@ -102,8 +103,12 @@ describe("the commit-job specs", () => {
     expect(yodelCommitSetup({ dir })).toEqual([{ run: NODE_CHECK_LINE }, { run: PACKAGES_INSTALL_LINE }]);
   });
 
-  test("the floor is the commit job's reply floor, the next release until it ships", () => {
-    expect(YODEL_COMMIT_FLOOR).toBe(NEXT_RELEASE);
+  test("the floor is the commit job's reply floor", () => {
+    expect(YODEL_COMMIT_FLOOR).toBe(CI_COMMIT_REPLY_FLOOR);
+  });
+
+  test("the conflict reply's floor is the next release until it ships (#4821)", () => {
+    expect(YODEL_REBASE_CONFLICT_FLOOR).toBe(NEXT_RELEASE);
   });
 });
 
@@ -146,14 +151,21 @@ const REBASE = ["yodel", "rebase"];
 const NEW = ["yodel", "new", "--if-changed", "--replace-own"];
 
 describe("the refusal replies", () => {
-  test("the same object changed on both branches names both migrations and the objects", () => {
+  test("the same object changed on both branches names the migrations on each side and the objects (#4821)", () => {
+    // Copied from yodel rebase's stderr (sql-yodeler src/rebase/index.ts), the moved migration's parent set.
     const output = [
-      "yodel rebase: refused: " + B + " and " + A + " both change shop.orders, shop.order_items, differently; rebase does not merge two changes to one object. " +
-        "Nothing was written. Resolve it by hand: delete " + B + "'s directory, then run yodel new from a declared schema that makes both changes.",
+      "yodel rebase: refused: 20300101T0002-add-memo and the migrations after 20261108T1936-init up to 20300101T0001-add-note both change orders, differently; rebase does not merge two changes to one object. " +
+        "Nothing was written. Resolve it by hand: delete 20300101T0002-add-memo's directory, then run yodel new from a declared schema that makes both changes.",
       "",
     ].join("\n");
     expect(yodelRefusalReply({ command: REBASE, rc: "1", output })).toBe(
-      "`yodel rebase` refused: `" + B + "` and `" + A + "` both change `shop.orders`, `shop.order_items`, differently, and a rebase does not merge two changes to one object. " +
+      "`yodel rebase` refused: `20300101T0002-add-memo` and the migrations after `20261108T1936-init` up to `20300101T0001-add-note` both change `orders`, differently, and a rebase does not merge two changes to one object. " +
+        "Resolve it on the branch: delete `20300101T0002-add-memo`'s directory, declare both changes, then run `yodel new` (or comment `/yodel new`).",
+    );
+    // The moved migration's parent is null: the other side is the chain ending at the new parent.
+    const fromNothing = `yodel rebase: refused: ${B} and the chain ending at ${A} both change shop.orders, shop.order_items / shop.items, differently; rebase does not merge two changes to one object. Nothing was written.\n`;
+    expect(yodelRefusalReply({ command: REBASE, rc: "1", output: fromNothing })).toBe(
+      "`yodel rebase` refused: `" + B + "` and the chain ending at `" + A + "` both change `shop.orders`, `shop.order_items / shop.items`, differently, and a rebase does not merge two changes to one object. " +
         "Resolve it on the branch: delete `" + B + "`'s directory, declare both changes, then run `yodel new` (or comment `/yodel new`).",
     );
   });
@@ -179,9 +191,13 @@ describe("the refusal replies", () => {
   });
 
   test("anything else keeps chant's own reply", () => {
-    const conflict = `yodel rebase: refused: ${B} and ${A} both change \`x\`@everyone, differently; rebase does not merge.\n`;
+    const conflict = `yodel rebase: refused: ${B} and the migrations after ${A} up to ${A} both change \`x\`@everyone, differently; rebase does not merge.\n`;
     expect(yodelRefusalReply({ command: REBASE, rc: "1", output: conflict })).toBeUndefined();
-    expect(yodelRefusalReply({ command: REBASE, rc: "1", output: "yodel rebase: refused: not-an-id and x both change a, differently;\n" })).toBeUndefined();
+    expect(yodelRefusalReply({ command: REBASE, rc: "1", output: "yodel rebase: refused: not-an-id and the chain ending at x both change a, differently;\n" })).toBeUndefined();
+    expect(yodelRefusalReply({ command: REBASE, rc: "1", output: `yodel rebase: refused: ${B} and the migrations after not-an-id up to ${A} both change a, differently;\n` })).toBeUndefined();
+    expect(yodelRefusalReply({ command: REBASE, rc: "1", output: `yodel rebase: refused: ${B} and the migrations after ${A} up to \`${A}\` both change a, differently;\n` })).toBeUndefined();
+    // The single-id form yodel does not print is not read either.
+    expect(yodelRefusalReply({ command: REBASE, rc: "1", output: `yodel rebase: refused: ${B} and ${A} both change a, differently;\n` })).toBeUndefined();
     expect(yodelRefusalReply({ command: REBASE, rc: "1", output: "yodel rebase: chant.config.ts: Cannot find module\n" })).toBeUndefined();
     expect(yodelRefusalReply({ command: REBASE, rc: "2", output: `yodel rebase: refused: ${B} has files that differ from what yodel wrote\n` })).toBeUndefined();
     expect(yodelRefusalReply({ command: ["yodel", "plan"], rc: "1", output: "yodel plan: refused: x\n" })).toBeUndefined();
