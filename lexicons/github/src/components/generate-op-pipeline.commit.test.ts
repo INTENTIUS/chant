@@ -53,6 +53,16 @@ describe("comment commit jobs on GitHub (#4722)", () => {
     expect(land.run).toContain("chant commit land --forge github");
   });
 
+  test("give the command step alone the commandEnv variables, each from its secret (#4724)", () => {
+    const doc = gen({ ...COMMENT, commit: { ...COMMENT.commit!, commandEnv: ["DEV_POSTGRES_URL", "DEV_POSTGRES_READER_USER"] } });
+    const commit = doc.jobs["chant-fmt"]!;
+    expect(commit.env).toMatchObject({ CHANT_COMMIT_COMMAND_ENV: '["DEV_POSTGRES_URL","DEV_POSTGRES_READER_USER"]' });
+    expect(commit.steps.at(-1)!.env).toEqual({ DEV_POSTGRES_URL: "${{ secrets.DEV_POSTGRES_URL }}", DEV_POSTGRES_READER_USER: "${{ secrets.DEV_POSTGRES_READER_USER }}" });
+    const prepare = commit.steps.find((s) => s.name === "Decide whether the command runs")!;
+    expect(prepare.env).not.toHaveProperty("DEV_POSTGRES_READER_USER");
+    for (const step of doc.jobs["chant-fmt-push"]!.steps) expect(step.env ?? {}).not.toHaveProperty("DEV_POSTGRES_READER_USER");
+  });
+
   test("refuse a spec with no push token", () => {
     expect(() => gen({ ...COMMENT, commit: { ...COMMENT.commit!, tokenEnv: undefined } })).toThrow(/no tokenEnv.*starts no run/);
   });

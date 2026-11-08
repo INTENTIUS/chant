@@ -25,7 +25,7 @@
 import { CHECKOUT_TOKEN_ENV, checkoutScript, dropForgeTokens, handoverOutputs, handoverTrap, takeOverScript } from "@intentius/chant/ci-handover";
 import { githubRunsOn, GITHUB_JOB_TOKEN, githubSecret, type CiRunner } from "@intentius/chant/ci-jobs";
 import { agentGitAuthLines, agentHeadFetchLine } from "@intentius/chant/ci-agent";
-import { COMMIT_DECISION_FILE, COMMIT_DIR, COMMIT_HEAD_REF, COMMIT_PATCH_FILE, COMMIT_RC_FILE, commitAfterLines, commitCommandLines, commitPushedHeadFetchLine, commitSettingsEnv, type CommitSettings } from "@intentius/chant/ci-commit";
+import { COMMIT_DECISION_FILE, COMMIT_DIR, COMMIT_HEAD_REF, COMMIT_OUTPUT_FILE, COMMIT_PATCH_FILE, COMMIT_RC_FILE, commitAfterLines, commitCommandLines, commitPushedHeadFetchLine, commitSettingsEnv, type CommitSettings } from "@intentius/chant/ci-commit";
 import { agentCommentIf } from "./agent-jobs";
 
 /** The commit step's id, which the commit job's outputs come from. */
@@ -35,7 +35,7 @@ export const COMMIT_FINDING_STEP_ID = "chant-check";
 /** The variable the push step holds its token in, for git's header and the forge client. */
 const PUSH_TOKEN_ENV = "CHANT_COMMIT_TOKEN";
 
-const HANDED = { label: "chant-commit", noteFiles: [COMMIT_DECISION_FILE, COMMIT_RC_FILE, COMMIT_PATCH_FILE] } as const;
+const HANDED = { label: "chant-commit", noteFiles: [COMMIT_DECISION_FILE, COMMIT_RC_FILE, COMMIT_OUTPUT_FILE, COMMIT_PATCH_FILE] } as const;
 
 /** The commit job's name: the spec's job on a comment, `<job>-commit` after a check. */
 export function commitJobName(jobName: string, on: CommitSettings["on"]): string {
@@ -120,7 +120,13 @@ export function githubCommitJobs(i: GithubCommitJobsInput): { commit: Record<str
       ...before,
       { name: "Decide whether the command runs", env: { GITHUB_TOKEN: GITHUB_JOB_TOKEN }, run: lines.prepare },
       // The job's last step: no forge token, and the commit directory handed on however it ends.
-      { id: COMMIT_STEP_ID, name: "Run the command", run: [drop, ...handoverTrap(COMMIT_DIR, i.forge, HANDED), lines.run].join("\n") },
+      // #4724: the variables the spec's commandEnv names, from the secrets of the same name, on this step alone.
+      {
+        id: COMMIT_STEP_ID,
+        name: "Run the command",
+        ...(s.commandEnv.length > 0 ? { env: Object.fromEntries(s.commandEnv.map((v) => [v, githubSecret(v)])) } : {}),
+        run: [drop, ...handoverTrap(COMMIT_DIR, i.forge, HANDED), lines.run].join("\n"),
+      },
     ],
   };
   const token = i.tokenEnv !== undefined ? githubSecret(i.tokenEnv) : GITHUB_JOB_TOKEN;

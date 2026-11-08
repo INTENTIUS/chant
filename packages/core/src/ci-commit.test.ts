@@ -21,6 +21,8 @@ import {
   prepareCommitRun,
   resolveCommitSpec,
   runCommit,
+  COMMIT_PR_ENV,
+  type CommitRefusalReply,
   type CommitRunCommand,
   type CommitSettings,
   type OpCommitSpec,
@@ -112,7 +114,7 @@ function world(): World {
   return w;
 }
 
-async function cycle(w: World, s: CommitSettings, o: { event?: unknown; command?: CommitRunCommand; env?: Record<string, string>; between?: () => void } = {}) {
+async function cycle(w: World, s: CommitSettings, o: { event?: unknown; command?: CommitRunCommand; env?: Record<string, string>; runEnv?: Record<string, string>; refusalReply?: CommitRefusalReply; between?: () => void } = {}) {
   const d = tmp("dir");
   const forge = {
     pullRequestHead: async () => w.heads(),
@@ -129,7 +131,7 @@ async function cycle(w: World, s: CommitSettings, o: { event?: unknown; command?
   const readRuns = async () => w.records;
   const pullRequestBase = async () => w.heads().base;
   const decision = await prepareCommitRun({ settings: s, words, dir: d, env, event, forge, pullRequestBase, readRuns, approval, git: w.r.git, now: NOW });
-  const ran = await runCommit({ settings: s, dir: d, checkout: w.r.checkout, workDir: join(tmp("work"), "w"), env: { PATH: process.env.PATH }, git: w.r.git, runCommand: o.command ?? formatter() });
+  const ran = await runCommit({ settings: s, dir: d, checkout: w.r.checkout, workDir: join(tmp("work"), "w"), env: { PATH: process.env.PATH, ...o.runEnv }, git: w.r.git, runCommand: o.command ?? formatter() });
   o.between?.();
   let t = NOW.getTime();
   const out = await landCommitChange({
@@ -151,6 +153,7 @@ async function cycle(w: World, s: CommitSettings, o: { event?: unknown; command?
       w.records.push({ version: 1, id: String(w.records.length), ...input } as OpRunRecord);
     },
     now: () => new Date((t += 1000)),
+    ...(o.refusalReply ? { refusalReply: o.refusalReply } : {}),
   });
   // The next cycle sees the branch as it is now.
   w.r.git(["fetch", "-q", "origin", `+refs/heads/feature:${COMMIT_HEAD_REF}`]);
@@ -432,5 +435,50 @@ describe("mergeBase (#4723)", () => {
     expect(out.result).toBe("refused");
     expect(out.reason).toBe("the change touches other.tf");
     expect(sh(["rev-parse", "refs/heads/feature"], w.r.origin).trim()).toBe(w.r.head);
+  });
+});
+
+describe("the command's variables and its refusal reply (#4724)", () => {
+  test("commandEnv round-trips through the job's variables and refuses a forge token or the job's own settings", () => {
+    const s = settings({ commandEnv: ["DEV_POSTGRES_READER_USER", "DEV_POSTGRES_READER_USER"] });
+    expect(s.commandEnv).toEqual(["DEV_POSTGRES_READER_USER"]);
+    expect(commitSettingsFromEnv(commitSettingsEnv(s), "plywood")).toEqual(s);
+    expect(settings().commandEnv).toEqual([]);
+    expect(() => settings({ commandEnv: ["GITHUB_TOKEN"] })).toThrow(/may not pass GITHUB_TOKEN/);
+    expect(() => settings({ commandEnv: ["PUSH_TOKEN"], tokenEnv: "PUSH_TOKEN" })).toThrow(/may not pass PUSH_TOKEN/);
+    expect(() => settings({ commandEnv: ["CHANT_COMMIT_NAME"] })).toThrow(/may not pass CHANT_COMMIT_NAME/);
+    expect(() => settings({ commandEnv: ["not a var"] })).toThrow(/commandEnv is a list of variable names/);
+  });
+
+  test("the command sees the named variables and the pull request's number, and nothing else of the job", async () => {
+    const w = world();
+    let seen: Record<string, string> = {};
+    const command: CommitRunCommand = async (argv, o) => {
+      seen = o.env;
+      return formatter()(argv, o);
+    };
+    await cycle(w, settings({ commandEnv: ["DEV_POSTGRES_READER_USER"] }), { command, runEnv: { DEV_POSTGRES_READER_USER: "reader", DEV_POSTGRES_WRITER_USER: "writer", GITHUB_TOKEN: "t" } });
+    expect(seen.DEV_POSTGRES_READER_USER).toBe("reader");
+    expect(seen[COMMIT_PR_ENV]).toBe("7");
+    expect(seen.DEV_POSTGRES_WRITER_USER).toBeUndefined();
+    expect(seen.GITHUB_TOKEN).toBeUndefined();
+  });
+
+  test("a product's reply to a refusal names what the command said, and the run is refused, not failed", async () => {
+    const w = world();
+    const command: CommitRunCommand = async () => ({ exitCode: 1, timedOut: false, output: "noise\nplywood fmt: refused: main.tf is locked\n" });
+    const refusalReply: CommitRefusalReply = ({ rc, output }) => (rc === "1" && output.includes("is locked") ? "`terraform fmt` refused: `main.tf` is locked." : undefined);
+    const { out } = await cycle(w, settings(), { command, refusalReply });
+    expect(out).toMatchObject({ result: "refused", reason: "the command refused, exiting 1", code: 0 });
+    expect(w.replies).toEqual(["plywood: `terraform fmt` refused: `main.tf` is locked. Nothing was pushed."]);
+    expect(w.records.at(-1)?.outcomes?.commit).toMatchObject({ result: "refused" });
+  });
+
+  test("a refusal the product does not know keeps chant's own reply", async () => {
+    const w = world();
+    const command: CommitRunCommand = async () => ({ exitCode: 3, timedOut: false, output: "something else\n" });
+    const { out } = await cycle(w, settings(), { command, refusalReply: () => undefined });
+    expect(out).toMatchObject({ result: "failed", reason: "the command exited 3" });
+    expect(w.replies[0]).toContain("stopped with exit code 3");
   });
 });

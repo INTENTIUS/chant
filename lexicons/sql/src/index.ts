@@ -75,3 +75,22 @@ export {
 // The lock grain of a SQL member (#4571): target, with resource refused by name.
 export { sqlDefaultLockGrain, sqlLockGrainRefusal, type SqlLockGrainKind } from "./lock-grain";
 export { YODEL_COMMANDS, YODEL_OPTIONAL_FLAGS, runAllowedYodel, allowedYodelArgv, type YodelRunner, type YodelRun } from "./yodel-run";
+// yodel new and yodel rebase as chant's commit jobs (#4724).
+export {
+  YODEL_COMMIT_COMMANDS,
+  YODEL_COMMIT_FINDINGS,
+  YODEL_COMMIT_FLOOR,
+  YODEL_COMMIT_WORDS,
+  allowedYodelCommitArgv,
+  yodelCommitRefusalReply,
+  yodelCommitSetup,
+  yodelCommitSpec,
+  yodelFindingExit,
+  yodelFindingTrigger,
+  yodelNewArgs,
+  yodelRebaseArgs,
+  yodelReaderVariables,
+  yodelRefusalReply,
+  type YodelCommitOptions,
+  type YodelCommitWord,
+} from "./yodel-run";
