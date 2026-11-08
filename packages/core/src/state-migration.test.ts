@@ -4,7 +4,6 @@
  */
 import { describe, expect, test } from "vitest";
 import { fakeLedger } from "./__fixtures__/gated-ledger";
-import { NEXT_RELEASE } from "./release-floors";
 import { runStateMigration, STATE_MIGRATION_FLOOR, writeStateMigration, type MigrationRootPlan, type MigrationStateAt, type StateMigrationEngine } from "./state-migration";
 
 const plan = (proof: string[] = []): MigrationRootPlan[] => [
@@ -129,6 +128,6 @@ describe("runStateMigration", () => {
   });
 
   test("its floor is the next release", () => {
-    expect(STATE_MIGRATION_FLOOR).toBe(NEXT_RELEASE);
+    expect(STATE_MIGRATION_FLOOR).toBe("0.124.77");
   });
 });

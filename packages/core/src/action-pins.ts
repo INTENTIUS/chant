@@ -9,10 +9,20 @@
  * forgejo lexicon moves `upload-artifact` and `download-artifact` to v3, whose
  * rows are here too: v4 and later refuse to run on a Forgejo runner (#4008).
  *
+ * actions/cache has a v4 row beside v6 (#4816): terragucci's Terragrunt cache
+ * step uses the action itself at the commit the restore and save rows pin.
+ * It follows them in the table, so `pinAtMajor` on that shared commit still
+ * starts from the restore row.
+ *
  * Refresh a row by resolving the major tag to its commit:
  *
  *   gh api repos/actions/checkout/commits/v6 --jq .sha
  */
+
+import { NEXT_RELEASE } from "./release-floors";
+
+/** The first chant whose table has the `cache4` row (#4816). */
+export const CACHE4_PIN_FLOOR = NEXT_RELEASE;
 
 export interface ActionPin {
   /** The action, with its subpath: `actions/cache/restore`. */
@@ -47,6 +57,7 @@ export const ACTION_PINS = {
   createGithubAppToken2: pin("actions/create-github-app-token", "v2", "fee1f7d63c2ff003460e3d139729b119787bc349", "v2.2.2"),
   cacheRestore4: pin("actions/cache/restore", "v4", "0057852bfaa89a56745cba8c7296529d2fc39830", "v4.3.0"),
   cacheSave4: pin("actions/cache/save", "v4", "0057852bfaa89a56745cba8c7296529d2fc39830", "v4.3.0"),
+  cache4: pin("actions/cache", "v4", "0057852bfaa89a56745cba8c7296529d2fc39830", "v4.3.0"),
   uploadArtifact4: pin("actions/upload-artifact", "v4", "ea165f8d65b6e75b540449e92b4886f43607fa02", "v4.6.2"),
   uploadArtifact3: pin("actions/upload-artifact", "v3", "ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5", "v3.2.1"),
   downloadArtifact4: pin("actions/download-artifact", "v4", "d3f86a106a0bac45b974a628896c90dbdf5c8093", "v4.3.0"),

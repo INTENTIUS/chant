@@ -54,7 +54,6 @@ describe("--run-group", () => {
 
 test("FORGEJO_RUN_GROUP_FLOOR marks it in the ci-product entry", async () => {
   const ciProduct = await import("../../ci-product");
-  const { NEXT_RELEASE } = await import("../../release-floors");
-  expect(ciProduct.FORGEJO_RUN_GROUP_FLOOR).toBe(NEXT_RELEASE);
+  expect(ciProduct.FORGEJO_RUN_GROUP_FLOOR).toBe("0.124.77");
   expect(ciProduct.RUN_GROUP_KEYS).toEqual(["commit", "pull-request"]);
 });

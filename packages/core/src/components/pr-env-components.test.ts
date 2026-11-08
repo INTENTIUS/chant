@@ -4,7 +4,6 @@
  * that records what it was asked. No engine, ledger or forge is reached.
  */
 import { describe, expect, test } from "vitest";
-import { NEXT_RELEASE } from "../release-floors";
 import { componentsPrEnvAdapter, componentsPrEnvTeardown, PR_ENV_COMPONENTS_FLOOR, type PrEnvComponentPlan } from "./pr-env-components";
 import { prEnvDown, prEnvUp, type PrEnvApproval, type PrEnvPorts } from "./pr-env-run";
 import { livePrEnvironments, type PrEnvRecord } from "./pr-environment";
@@ -133,6 +132,6 @@ describe("componentsPrEnvTeardown", () => {
   });
 
   test("its floor is the next release", () => {
-    expect(PR_ENV_COMPONENTS_FLOOR).toBe(NEXT_RELEASE);
+    expect(PR_ENV_COMPONENTS_FLOOR).toBe("0.124.77");
   });
 });

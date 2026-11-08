@@ -30,7 +30,6 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import { join } from "node:path";
 import { CHANT_EXIT } from "./exit-codes";
 import { FORGE_TOKEN_VARS } from "./ci-handover";
-import { NEXT_RELEASE } from "./release-floors";
 import { agentForbiddenPaths, AgentError, branchOk, errText, LOGIN, readSmall, SHA, type AgentGit } from "./ci-agent";
 import { parseProductComment, type CiProductWords } from "./ci-product-words";
 import type { OpRunRecord, OpRunRecordInput } from "./op/runtime";
@@ -49,7 +48,7 @@ export const CI_COMMIT_FILES_FLOOR = "0.124.73";
  * `CHANT_COMMIT_PR`, keeps the tail of its standard error and replies with a
  * product's refusal text ({@link setCommitRefusalReply}) (#4724).
  */
-export const CI_COMMIT_REPLY_FLOOR = NEXT_RELEASE;
+export const CI_COMMIT_REPLY_FLOOR = "0.124.77";
 
 /** What starts a commit run: a person's comment, or a check job's finding. */
 export type CommitTrigger = "comment" | "check";

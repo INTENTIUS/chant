@@ -23,12 +23,11 @@
  */
 import { waveSetDigest } from "../gated-waves";
 import type { TeardownOutcome } from "../lexicon";
-import { NEXT_RELEASE } from "../release-floors";
 import type { PrEnvAdapter, PrEnvPlanned, PrEnvTarget } from "./pr-env-run";
 import type { LivePrEnvironment, PrEnvReportRow, PrEnvTeardownAdapter } from "./pr-environment";
 
 /** The first chant with the component adapter and teardown, and the terraform lexicon's copies on them (#4762). */
-export const PR_ENV_COMPONENTS_FLOOR = NEXT_RELEASE;
+export const PR_ENV_COMPONENTS_FLOOR = "0.124.77";
 
 /** One component's plan, as an engine answers it. */
 export interface PrEnvComponentPlan {

@@ -36,10 +36,9 @@ import { basename, dirname, join, resolve } from "node:path";
 import { CHANT_EXIT } from "./exit-codes";
 import { gatedOp, type GatedRequestLedger } from "./lifecycle/gated-op";
 import type { GatedRequestRules } from "./lifecycle/gated-request";
-import { NEXT_RELEASE } from "./release-floors";
 
 /** The first chant with the engine-neutral state export (#4762). */
-export const STATE_EXPORT_FLOOR = NEXT_RELEASE;
+export const STATE_EXPORT_FLOOR = "0.124.77";
 
 /** The version a store holds now. */
 export interface StateVersion {

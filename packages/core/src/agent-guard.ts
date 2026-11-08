@@ -33,10 +33,9 @@
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { NEXT_RELEASE } from "./release-floors";
 
 /** The first chant with the shared agent guard (#4770). Products feature-detect on it, or on `installAgentGuard`. */
-export const AGENT_GUARD_FLOOR = NEXT_RELEASE;
+export const AGENT_GUARD_FLOOR = "0.124.77";
 
 /** What the guard refuses of one engine binary (tofu, pulumi, terragrunt). Flag names are written with their dashes. */
 export interface AgentGuardEngine {

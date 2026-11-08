@@ -22,10 +22,9 @@
 
 import { readFileSync } from "node:fs";
 import { emitYAMLEntry, parseYAMLDocument } from "./yaml";
-import { NEXT_RELEASE } from "./release-floors";
 
 /** The first chant with `mergeOwnJobs`, `keepOwnJobs` and `chant build --own-jobs` / `--keep-own-jobs` (#4769). Products feature-detect on it. */
-export const OWN_JOBS_FLOOR = NEXT_RELEASE;
+export const OWN_JOBS_FLOOR = "0.124.77";
 
 /** The forges whose pipeline files take own jobs. */
 export type OwnJobsForge = "github" | "gitlab" | "forgejo";

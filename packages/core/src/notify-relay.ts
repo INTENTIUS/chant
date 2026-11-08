@@ -47,7 +47,6 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { CiProductWords } from "./ci-product-words";
 import type { GatedRequest } from "./lifecycle/gated-request-digest";
 import { readRelayToken, RELAY_APPROVE_ACTION, RELAY_DECLINE_ACTION, type RelayRef } from "./notify";
-import { NEXT_RELEASE } from "./release-floors";
 
 /**
  * The first chant whose relay answers a gate's decision point and whose
@@ -65,7 +64,7 @@ export const NOTIFY_RELAY_POINTS_FLOOR = "0.124.72";
  * (#4759). A product whose relay container ran its own entrypoint for these
  * feature-detects on it.
  */
-export const NOTIFY_RELAY_CLONE_FLOOR = NEXT_RELEASE;
+export const NOTIFY_RELAY_CLONE_FLOOR = "0.124.77";
 
 /** The relay's settings, by environment variable. */
 export const RELAY_ENV = {

@@ -7,7 +7,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { fakeLedger } from "./__fixtures__/gated-ledger";
-import { NEXT_RELEASE } from "./release-floors";
 import { exportStateVersion, exportRefusal, STATE_EXPORT_FLOOR, StateExportError, type StateVersionSource } from "./state-export";
 
 const NO_CI = {};
@@ -120,6 +119,6 @@ describe("exportStateVersion", () => {
   });
 
   test("its floor is the next release", () => {
-    expect(STATE_EXPORT_FLOOR).toBe(NEXT_RELEASE);
+    expect(STATE_EXPORT_FLOOR).toBe("0.124.77");
   });
 });

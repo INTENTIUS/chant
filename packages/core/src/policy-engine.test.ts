@@ -17,7 +17,6 @@ import {
   policyEngineRelease,
   tarEntry,
 } from "./policy-engine";
-import { NEXT_RELEASE } from "./release-floors";
 
 const scratch: string[] = [];
 afterAll(() => {
@@ -69,7 +68,7 @@ describe("the pins (#4774)", () => {
       }
     }
     expect(Object.keys(POLICY_ENGINE_SHA256)).toHaveLength(POLICY_ENGINE_PLATFORMS.length * 2);
-    expect(POLICY_ENGINE_INSTALL_FLOOR).toBe(NEXT_RELEASE);
+    expect(POLICY_ENGINE_INSTALL_FLOOR).toBe("0.124.77");
   });
 
   test("the release files are the ones each project publishes", () => {

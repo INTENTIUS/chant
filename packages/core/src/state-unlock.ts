@@ -27,10 +27,9 @@ import { CHANT_EXIT } from "./exit-codes";
 import { gatedOp, type GatedRequestLedger } from "./lifecycle/gated-op";
 import type { GatedRequestRules } from "./lifecycle/gated-request";
 import type { ForgeFetch, ForgeKind } from "./pr-forge";
-import { NEXT_RELEASE } from "./release-floors";
 
 /** The first chant with the engine-neutral lock release and {@link forgeLiveRuns} (#4762). */
-export const STATE_UNLOCK_FLOOR = NEXT_RELEASE;
+export const STATE_UNLOCK_FLOOR = "0.124.77";
 
 /** A run of the repository that has not finished, as {@link forgeLiveRuns} reads it. */
 export interface LiveRun {
