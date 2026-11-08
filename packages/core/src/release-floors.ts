@@ -20,3 +20,6 @@
  * still names this constant after its version shipped.
  */
 export const NEXT_RELEASE = "0.124.78";
+
+/** The first chant whose `@intentius/chant/pr-forge-reads` exports the forge reads beside the clients (#4809). */
+export const PR_FORGE_READS_FLOOR = NEXT_RELEASE;
