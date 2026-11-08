@@ -93,7 +93,7 @@ import { LifecyclePushLostError, pushLifecycleRebasing } from "../lifecycle/git"
 import { resolveCiJob } from "../lifecycle/release-ledger";
 import type { OpRunPolicyRow, OpRunRecordInput, OpRunStepRecord, OpRunWave, OpRunWavePlan, OpRunWaveTarget } from "./runtime";
 import { opWaveRunHookList, opWaveRunHooksProblems, runOpWaveAfterApply, runOpWaveBeforeApply, runOpWaveBeforePlan, type OpWaveRunHooks } from "./op-waves-run-hooks";
-import { foldPolicyRows, opWaveAfterPlanProblems, runOpWaveAfterPlanHooks, type OpWaveAfterPlanHook, type OpWaveAfterPlanRun, type OpWaveAfterPlanWaveOutcome } from "./op-waves-after-plan";
+import { foldPolicyRows, opWaveAfterPlanProblems, runOpWaveAfterPlanHooks, type OpWaveAfterPlanHook, type OpWaveAfterPlanRun, type OpWaveAfterPlanWaveOutcome, type OpWaveAnswerApproval } from "./op-waves-after-plan";
 import { activeOtlp, RunEventTrace, type CapabilityTraceFacts, type OtlpExporter } from "../otlp";
 import { joinRunEventSinks, resolveRunEventRun, type RunEventSink } from "../run-event-stream";
 import { OpWaveRunEvents } from "./op-waves-events";
@@ -127,7 +127,7 @@ import {
   type OpWaveStepPlan,
 } from "./op-waves-capability";
 import {
-  changeInvolvement, quorumProblems, quorumRuleLine, quorumRulesFor, quorumWaiting, recordedReviewApprovals, ruleNeedsProof, samePrincipal, trustQuorumJudge,
+  changeInvolvement, quorumProblems, quorumRuleLine, quorumRulesFor, quorumWaiting, recordedReviewApprovals, recordedReviewOf, ruleNeedsProof, samePrincipal, trustQuorumJudge,
   type GateQuorumJudge, type GateQuorumRule, type GateQuorumRuleProgress, type QuorumJudgement,
 } from "./gate-quorum";
 import {
@@ -716,10 +716,11 @@ function quorumAtBase(spec: OpWavesSpec, where: string): Pick<OpWaveBaseRules, "
     if (bad.length > 0) return { quorumRefused: `the approval rules in ${where} cannot be read (${bad.join("; ")})` };
     extra.involved = structuredClone(a.involved as OpWavesInvolved);
   }
-  if (raw === undefined) return {};
+  // terragucci issue 1303: the review ledger and the involved count without rules too.
+  if (raw === undefined) return extra;
   const problems = Array.isArray(raw) ? quorumProblems(raw, "approvals.quorum", { notAuthor: true }) : ["`approvals.quorum` must be a list of rules"];
   if (problems.length > 0) return { quorumRefused: `the approval rules in ${where} cannot be read (${problems.join("; ")})` };
-  return (raw as GateQuorumRule[]).length > 0 ? { quorum: raw as GateQuorumRule[], ...extra } : {};
+  return (raw as GateQuorumRule[]).length > 0 ? { quorum: raw as GateQuorumRule[], ...extra } : extra;
 }
 
 /** The holds at base (#4545), or why they cannot be read. */
@@ -974,6 +975,8 @@ interface WaveContext {
   changeSetDoc?: ChangeSetDocument;
   /** An after-plan hook's report of the wave's plans (#4842), stored beside the pending fact. */
   report?: string;
+  /** The approvals the after-plan hooks settled before the gate (terragucci issue 1303), recorded at it before it is decided. */
+  answerApprovals?: OpWaveAnswerApproval[];
 }
 
 function planRun(opts: { spec: OpWavesSpec; wave: number; cwd: string; exec: OpWaveExec }, waveName: string, run: OpWaveRun): OpWaveMember {
@@ -2634,6 +2637,7 @@ async function planOpWave(options: RunOpWaveOptions, { k, pass }: WaveAttempt<Ru
     extras = [...(extras ?? []), ...answer.members];
   }
   if (answer?.report !== undefined) ctx.report = answer.report;
+  if (answer?.approvals.length) ctx.answerApprovals = answer.approvals;
   if (wave.discover) {
     wave = { ...wave, runs: members.map((m) => ({ target: m.member, ...(m.op !== spec.op ? { op: m.op } : {}) })) };
     ctx.wave = wave;
@@ -2707,8 +2711,9 @@ async function decideOpWave(
   decision.members = members;
   // #4290: the rules at base whose targets glob matches one of the wave's runs.
   const takes = planned.rules.quorum ? quorumRulesFor(planned.rules.quorum, members.map((m) => m.member)) : [];
-  if (takes.length > 0) {
-    decision.quorum = takes;
+  if (takes.length > 0) decision.quorum = takes;
+  // terragucci issue 1303: a wave no rule covers still leaves the involved out, and counts a review the product recorded.
+  if (takes.length > 0 || opWaveOneApprover(decision.approval, planned.rules)) {
     if (planned.rules.reviewLedger) decision.reviewLedger = planned.rules.reviewLedger;
     if (planned.rules.involved) decision.involved = planned.rules.involved;
   }
@@ -2751,6 +2756,8 @@ async function decideOpWave(
     decision.status = "approved";
     log(`wave ${k} (${wave.name}): planned again to the same digest, so the approval by ${was.approvedBy} still holds`);
   } else if (decision.status !== "refused" && (unseen || opWaveNeedsApproval(policy, members) || holds.length > 0)) {
+    // terragucci issue 1303: what the product settled before the gate, recorded at it for these plans first.
+    if (ctx.answerApprovals?.length) await recordAnswerApprovals(options, ctx, decision);
     await settleGate(options, ctx, decision);
     // Plans nobody previewed apply only under an approval of these very plans, whatever the gate policy says.
     if (unseen) refuseUnseen(ctx, decision);
@@ -3124,6 +3131,8 @@ function failed(ctx: WaveContext, line: string): RunOpWaveResult {
 async function settleGate(options: RunOpWaveOptions, ctx: WaveContext, decision: OpWaveDecision): Promise<void> {
   if (decision.point) return settlePointGate(options, ctx, decision, decision.point);
   if (decision.quorum?.length) return settleQuorumGate(options, ctx, decision, decision.quorum);
+  // terragucci issue 1303: with no rule, `approvals.involved.exclude` and a review ledger still judge each approval, as one approver's rule does.
+  if ((decision.involved?.exclude || decision.reviewLedger) && decision.approval !== "pull-request") return settleQuorumGate(options, ctx, decision, [{ count: 1 }], true);
   const { spec, k, wave, cwd } = ctx;
   const { gate, digest, approval, base, policy, members } = decision;
   // #4574: the run target a product's approve line names.
@@ -3279,7 +3288,7 @@ const gitCommitsBetween = (cwd: string) => (base: string, head: string): { sha: 
  * the same pull request; with none, no approver can show they are someone
  * else and the rule waits.
  */
-async function settleQuorumGate(options: RunOpWaveOptions, ctx: WaveContext, decision: OpWaveDecision, rules: GateQuorumRule[]): Promise<void> {
+async function settleQuorumGate(options: RunOpWaveOptions, ctx: WaveContext, decision: OpWaveDecision, rules: GateQuorumRule[], oneApprover = false): Promise<void> {
   const { spec, k, wave, cwd, log } = ctx;
   const { gate, digest, approval, base, policy, members } = decision;
   const { ledger, port } = await gatePort(options, cwd, gate, approval, base);
@@ -3384,7 +3393,11 @@ async function settleQuorumGate(options: RunOpWaveOptions, ctx: WaveContext, dec
     ...(reviewed ? { review: reviewed } : {}),
     ...(recorded.length > 0 ? { recorded } : {}),
   });
-  const judge: GateQuorumJudge = (r) => sayExcluded(judgeBase(r));
+  // terragucci issue 1303: on the spec's own ledger a product's review line names every reviewer in one approver, and each reviewer counts on their own line.
+  const judge: GateQuorumJudge = (r) =>
+    decision.reviewLedger === spec.name && recordedReviewOf(r) !== null
+      ? { proven: false, roles: [], excluded: `the review line by ${r.resolvedBy} counts each of its reviewers on their own` }
+      : sayExcluded(judgeBase(r));
   const held = decision.heldBy?.length ? `, held by ${decision.heldBy.join(", ")}` : "";
   const check = await decideWaveGate(port, {
     op: spec.name,
@@ -3404,7 +3417,7 @@ async function settleQuorumGate(options: RunOpWaveOptions, ctx: WaveContext, dec
     decision.via = reviewed && check.resolution.review?.head === reviewed.head ? "pr-review" : "ledger";
     decision.approvedBy = by.join(", ");
     decision.approvedAt = check.resolution.timestamp;
-    log(`${label}: the approval rules at ${base.slice(0, 12)} are met by ${by.join(", ")}`);
+    log(oneApprover ? `${label}: approved by ${by.join(", ")}, who had no hand in the change` : `${label}: the approval rules at ${base.slice(0, 12)} are met by ${by.join(", ")}`);
     return;
   }
   logRefused(log, label, check);
@@ -3412,7 +3425,8 @@ async function settleQuorumGate(options: RunOpWaveOptions, ctx: WaveContext, dec
   decision.recorded = check.recorded;
   decision.waitingSince = check.pending.timestamp;
   if (check.mismatch) decision.mismatch = check.mismatch;
-  if (check.quorum?.rules) {
+  if (oneApprover) log(`${label}: no approval of ${digest} counts once the people behind the change are left out, so it waits for one`);
+  else if (check.quorum?.rules) {
     decision.quorumProgress = check.quorum.rules;
     for (const p of check.quorum.rules) log(`${label}: approval rule ${quorumRuleLine(p)}`);
     log(`${label}: the approval rules at ${base.slice(0, 12)} are not met (${quorumWaiting(check.quorum.rules)}), so it waits for more approvals of ${digest}`);
@@ -4251,4 +4265,54 @@ async function writeHeadPlans(plans: HeadPlans, cwd: string): Promise<void> {
   // The preview, its note and the approval status write the ledger at the same head, so a lost race replays rather than fails the job a pull request's checks wait on.
   const pushed = await pushLifecycleRebasing({ cwd });
   if (!pushed.pushed) throw new Error(`the plans were recorded locally only: ${pushed.pushWarning ?? "chant/lifecycle has no remote to push to"}`);
+}
+
+/**
+ * Whether a wave no approval rule covers is still judged approver by
+ * approver (terragucci issue 1303): `approvals.involved.exclude`, or a
+ * review ledger under `pr-review`, at base. Not under `pull-request`, whose
+ * approval is the pull request's gate.
+ */
+function opWaveOneApprover(approval: GateApprovalSource, rules: Pick<OpWaveBaseRules, "involved" | "reviewLedger">): boolean {
+  if (approval === "pull-request") return false;
+  return rules.involved?.exclude === true || (rules.reviewLedger !== undefined && approval === "pr-review");
+}
+
+/**
+ * Record the approvals the after-plan hooks settled before the gate
+ * (terragucci issue 1303) at the wave's gate, for the digest it decides, on
+ * the spec's op. An approval already recorded for the digest by the same
+ * approver with the same note is not written again. A gate that asks a
+ * decision point records none: only its answer passes the wave.
+ */
+async function recordAnswerApprovals(options: RunOpWaveOptions, ctx: WaveContext, decision: OpWaveDecision): Promise<void> {
+  const { spec, k, wave, cwd, log } = ctx;
+  const label = `wave ${k} (${wave.name})`;
+  const approvals = ctx.answerApprovals ?? [];
+  if (decision.point) {
+    log(`${label}: the gate asks a decision point, so the ${approvals.length} approval${approvals.length === 1 ? "" : "s"} the after-plan hooks gave ${approvals.length === 1 ? "is" : "are"} not recorded`);
+    return;
+  }
+  const ledger = options.gates ?? gitGateLedgerPort({ cwd });
+  if (!ledger.appendResolution) {
+    log(`${label}: the gate ledger takes no approvals, so the ones the after-plan hooks gave are not recorded`);
+    return;
+  }
+  const now = options.now ?? new Date().toISOString();
+  const had = (await ledger.read(spec.name)).resolutions.filter((r) => r.gate === decision.gate && samePlanDigest(r.planDigest, decision.digest));
+  for (const a of approvals) {
+    if (had.some((r) => r.resolvedBy === a.resolvedBy && r.note === a.note)) continue;
+    const review = a.review ? { via: "pr-review", pr: a.review.pr, head: a.review.head, reviewers: a.review.reviewers } : {};
+    await ledger.appendResolution({
+      op: spec.name,
+      gate: decision.gate,
+      resolvedBy: a.resolvedBy,
+      timestamp: now,
+      planDigest: decision.digest,
+      note: a.note,
+      ...(a.url ? { url: a.url } : {}),
+      ...(review as object),
+    } as Parameters<NonNullable<GateLedgerPort["appendResolution"]>>[0]);
+    log(`${label}: ${a.resolvedBy}'s approval recorded for ${decision.digest}: ${a.note}`);
+  }
 }

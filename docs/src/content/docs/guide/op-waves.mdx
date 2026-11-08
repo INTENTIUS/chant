@@ -537,10 +537,11 @@ afterPlan: {
 | `holds` | Makes the wave wait for a person whatever its gate says, one reason per line, as a held hook does. |
 | `overriders`, `overridersSource` | Names who may override a denial in place of the overriders file at base, and where that list comes from for the refusal. A run's own answer can carry `overriders`, which count for that run in place of the wave's. |
 | `report` | The product's report of these plans. |
+| `approvals` | Approvals the product settled before the gate (terragucci issue 1303), each `{ resolvedBy, note, url?, review? }`: a covered round's approver, the approver of a stopped apply whose rest these plans are, or a review the product read. When the gate has to decide, chant records each at the wave's gate on the spec's op for the digest it decides, then decides. An approval already recorded for that digest by the same approver with the same note is not written again. `review: { pr, head, reviewers }` writes the product's review line (`via: "pr-review"`), which an `approvals.reviewLedger` naming the spec's op counts reviewer by reviewer. Each counts as any approval does, under the wave's approval mode and `approvals.involved`. A gate that asks a decision point, or passes without an approval, records none. |
 
 While the wave waits, chant stores the report beside the pending fact at `_gates/<op>/<gate>/<digest>.json` (the digest's `:` written as `_`), once per digest. When the plans moved after an approval, chant writes the current report and the one stored for the approved plans to `.chant/op-waves/<name>/wave-<k>/report/current.json` and `approved.json`, and names them on the decision as `reports`, for the job that explains the refusal. `opWaveGateReportPath` and `opWaveReportDir` give the paths.
 
-A `wave` function that throws follows the hook's `onFailure`, the same as `run`. `OP_WAVE_AFTER_PLAN_WAVE_FLOOR` is the first chant with the wave answer.
+A `wave` function that throws follows the hook's `onFailure`, the same as `run`. `OP_WAVE_AFTER_PLAN_WAVE_FLOOR` is the first chant with the wave answer, and `OP_WAVE_ANSWER_APPROVALS_FLOOR` the first with its `approvals`.
 
 #### Run hooks
 
