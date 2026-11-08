@@ -14,3 +14,4 @@ export * from "./root-states";
 export { S3Client, s3FromEnv, type S3Target } from "./s3";
 export { GcsClient, type GcsTarget } from "./gcs";
 export { AzureBlobClient, type AzureTarget } from "./azure-blob";
+export * from "./versions";
