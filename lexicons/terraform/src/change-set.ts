@@ -152,6 +152,7 @@ export interface TerraformChangeSetPartInput {
  * One terraform-family root's part, from its `show -json` plan.
  *
  * Every `resource_changes` entry becomes an entry, no-op and read included.
+ * The outputs `output_changes` changes are the member's `outputs`.
  * A plan stock marked `errored` is a failed member: its entries are kept,
  * but nothing should apply it.
  */
@@ -189,6 +190,7 @@ export function terraformChangeSetPart(input: TerraformChangeSetPartInput): Chan
   });
   const sideEffects = (Array.isArray(plan.action_invocations) ? plan.action_invocations : []).map(sideEffectFor);
   const errored = plan.errored === true;
+  const outputs = changedOutputs(plan.output_changes);
   return {
     member: {
       member: input.member,
@@ -199,11 +201,28 @@ export function terraformChangeSetPart(input: TerraformChangeSetPartInput): Chan
       ...(errored ? { error: `${planner} marked the plan errored` } : {}),
       planDigest: terraformPlanDigest(plan),
       ...(input.nativeDigest ? { nativeDigest: input.nativeDigest } : {}),
+      ...(outputs.length > 0 ? { outputs } : {}),
       holes: [],
     },
     entries,
     ...(sideEffects.length > 0 ? { sideEffects } : {}),
   };
+}
+
+/**
+ * The outputs a plan's `output_changes` changes, sorted (#4849): each whose
+ * actions are anything but `no-op`. A plan that changes only outputs is a
+ * change, as terragucci counts it.
+ */
+function changedOutputs(raw: unknown): string[] {
+  if (!isObject(raw)) return [];
+  return Object.entries(raw)
+    .filter(([, change]) => {
+      const actions = isObject(change) && Array.isArray(change.actions) ? change.actions : [];
+      return actions.some((a) => a !== "no-op");
+    })
+    .map(([name]) => name)
+    .sort();
 }
 
 /**

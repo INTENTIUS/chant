@@ -155,6 +155,13 @@
           },
           "description": "Added in contract 1 by #4463, written by chant 0.124.54 and newer. The inputs the member was previewed with stand-in values for (#4463), as var.<name>, sorted. Every attribute they drive is marked unknown in its entries, and its planDigest covers them."
         },
+        "outputs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Added in contract 1 by #4849, written by chant 0.124.79 and newer. The outputs the member's plan changes, by name, sorted. Absent when it changes none. A member with any is a change even when every entry is a no-op. Its planDigest covers them."
+        },
         "holes": {
           "type": "array",
           "description": "What the planner could not read, so the plan says nothing about it.",

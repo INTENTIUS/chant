@@ -19,7 +19,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { composeChangeSet, type ChangeSetPart } from "@intentius/chant/change-set";
+import { composeChangeSet, isEmptyChangeSet, type ChangeSetPart } from "@intentius/chant/change-set";
 import { actionFor, choudoufuSetPlanParts, parseTerraformAddress, plannerForBinary, terraformChangeSetPart } from "./change-set";
 import { terraformPlanDigest } from "./plan-digest";
 
@@ -147,5 +147,31 @@ describe("address and action parsing", () => {
     expect(plannerForBinary("/usr/local/bin/tofu")).toBe("tofu");
     expect(plannerForBinary("choudoufu")).toBe("choudoufu");
     expect(plannerForBinary(undefined)).toBe("terraform");
+  });
+});
+
+describe("a plan that changes only outputs (#4849)", () => {
+  // The recorded tofu plan's no-op resource, with output_changes as show -json gives them.
+  const keep = (read("tofu.plan.json") as { resource_changes: { address: string }[] }).resource_changes.find((r) => r.address === "terraform_data.keep")!;
+  const withOutputs = (outputs: Record<string, string[]>) => ({
+    format_version: "1.2",
+    resource_changes: [keep],
+    output_changes: Object.fromEntries(Object.entries(outputs).map(([name, actions]) => [name, { actions, before: "a", after: actions.includes("no-op") ? "a" : "b", after_unknown: false, before_sensitive: false, after_sensitive: false }])),
+  });
+
+  test("the member names each output the plan changes, sorted, and the change set is not empty", () => {
+    const part = terraformChangeSetPart({ member: "root", plan: withOutputs({ url: ["update"], name: ["create"], kept: ["no-op"] }), planner: "tofu" });
+    expect(part.entries.map((e) => e.action)).toEqual(["no-op"]);
+    expect(part.member.outputs).toEqual(["name", "url"]);
+    expect(isEmptyChangeSet(composeChangeSet([part]))).toBe(false);
+  });
+
+  test("a plan whose outputs are all no-op, or that has none, names none, and hashes as before", () => {
+    const plain = withOutputs({ kept: ["no-op"] });
+    const part = terraformChangeSetPart({ member: "root", plan: plain, planner: "tofu" });
+    expect(part.member).not.toHaveProperty("outputs");
+    expect(isEmptyChangeSet(composeChangeSet([part]))).toBe(true);
+    expect(part.member.planDigest).toBe(terraformPlanDigest(plain));
+    expect(terraformChangeSetPart({ member: "estate", plan: read("tofu.plan.json"), planner: "tofu" }).member).not.toHaveProperty("outputs");
   });
 });

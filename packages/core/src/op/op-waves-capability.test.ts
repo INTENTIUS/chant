@@ -214,4 +214,10 @@ describe("the step and holds settings (#4545)", () => {
     expect(partEffects(part("a", "delete"))).toEqual({ empty: false, destructive: true });
     expect(partEffects(undefined)).toEqual({ empty: false, destructive: false });
   });
+
+  test("a part whose plan changes only outputs is not empty (#4849)", () => {
+    const p = part("a", "no-op");
+    expect(partEffects({ ...p, member: { ...p.member, outputs: ["url"] } })).toEqual({ empty: false, destructive: false });
+    expect(partEffects({ ...p, member: { ...p.member, outputs: [] } })).toEqual({ empty: true, destructive: false });
+  });
 });
