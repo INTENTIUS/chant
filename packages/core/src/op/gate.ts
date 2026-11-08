@@ -133,6 +133,14 @@ export interface GateLedgerPort {
    */
   storeRequestAttachment?(op: string, digest: string, text: string): Promise<void>;
   /**
+   * Store a product's report of the plans a wave's pending fact asks approval
+   * for (#4842), at {@link opWaveGateReportPath}, once per digest, and push
+   * it. Absent on a port that keeps none.
+   */
+  storeGateReport?(op: string, gate: string, digest: string, text: string): Promise<void>;
+  /** The report stored for `digest` at `gate` (#4842), or null when none was. */
+  readGateReport?(op: string, gate: string, digest: string): Promise<string | null>;
+  /**
    * Store the checkpoint of a run that stops at a gate that resumes (#3947),
    * at `_gates/<op>/checkpoints/<runId>.json`. Written before the pending
    * fact that names its digest, and pushed with it. Absent on a port that
@@ -236,6 +244,18 @@ export function gitGateLedgerPort(opts?: { cwd?: string }): GateLedgerPort {
       await requireLifecycleLedger(opts);
       if ((await readPathSha(dir, file, opts)) === null) await writeBlobToPath(dir, file, text, `Request on ${op}: ${digest}`, opts);
     },
+    async storeGateReport(op, gate, digest, text) {
+      const { dir, file } = gateReportParts(op, gate, digest);
+      await requireLifecycleLedger(opts);
+      if ((await readPathSha(dir, file, opts)) !== null) return;
+      await writeBlobToPath(dir, file, text, `The plans of ${op} ${gate}: ${digest}`, opts);
+      await pushGateLine(opts);
+    },
+    async readGateReport(op, gate, digest) {
+      await requireLifecycleLedger(opts);
+      const { dir, file } = gateReportParts(op, gate, digest);
+      return readBlobFromPath(dir, file, opts);
+    },
   };
 
   /** Append one line to `_gates/<op>/applied.jsonl` on top of the remote's ledger, retrying on a concurrent writer, and push. */
@@ -265,6 +285,21 @@ export function gitGateLedgerPort(opts?: { cwd?: string }): GateLedgerPort {
   }
 }
 
+/**
+ * Where a product's report of a wave's plans is kept on the ledger branch
+ * (#4842): `_gates/<op>/<gate>/<digest>.json`, the digest's `:` as `_`,
+ * beside the pending fact that asks approval for that digest. terragucci
+ * kept its stored report at this path before chant did.
+ */
+export function opWaveGateReportPath(op: string, gate: string, digest: string): string {
+  const { dir, file } = gateReportParts(op, gate, digest);
+  return `${dir}/${file}`;
+}
+
+function gateReportParts(op: string, gate: string, digest: string): { dir: string; file: string } {
+  return { dir: `_gates/${op}/${gate}`, file: `${digest.replace(/:/g, "_")}.json` };
+}
+
 /** A gate ledger held in memory — what a test, or a caller that has already read the ledger, hands {@link evaluateGate}. */
 export function memoryGateLedgerPort(
   seed: { resolutions?: GateResolutionRecord[]; pending?: PendingGateRecord[]; applied?: AppliedGateRecord[] } = {},
@@ -276,6 +311,8 @@ export function memoryGateLedgerPort(
   finished: FinishedGateRecord[];
   /** Stored request attachments by `<op>/<digest>` (#4623). */
   attachments: Map<string, string>;
+  /** Stored gate reports by their path on the ledger branch (#4842). */
+  reports: Map<string, string>;
   /** Checkpoint texts by `<op>/<runId>` (#3947). */
   checkpoints: Map<string, string>;
 } {
@@ -287,7 +324,16 @@ export function memoryGateLedgerPort(
   const checkpoints = new Map<string, string>();
   const finished: FinishedGateRecord[] = [];
   const attachments = new Map<string, string>();
+  const reports = new Map<string, string>();
   return {
+    reports,
+    async storeGateReport(op, gate, digest, text) {
+      const at = opWaveGateReportPath(op, gate, digest);
+      if (!reports.has(at)) reports.set(at, text);
+    },
+    async readGateReport(op, gate, digest) {
+      return reports.get(opWaveGateReportPath(op, gate, digest)) ?? null;
+    },
     appended,
     resolved,
     applied,

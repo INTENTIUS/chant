@@ -482,6 +482,37 @@ A hook that throws, or answers in a shape chant cannot read, has failed. With th
 
 The spec's command hooks at `after.plan` still run at the same point, after the set digest and before the gate settles. When those hooks call back into the product's own process, pass `hookExec`, an exec that returns a promise, such as `spawnExecAsync`. The job then waits for each hook without blocking the event loop, so the product's process can answer the call.
 
+#### The wave answer
+
+A hook can also have a `wave` function ([#4842](https://github.com/INTENTIUS/chant/issues/4842)). Once `run` has answered for each of the hook's runs, the job calls `wave` with all of them. It answers for the wave as a whole, the way a [plans file](#plan-a-wave-in-one-call) does for a wave-level plan command:
+
+```ts
+afterPlan: {
+  name: "report",
+  run: (r) => ({ policy: myPolicy(r), ...(r.target === "prod/db" ? { overriders: ["github:dba-lead"] } : {}) }),
+  wave: (w) => ({
+    pending: { description: `wave ${w.wave}: ${w.runs.map((r) => r.target).join(", ")}` },
+    members: [{ member: "(monthly cost)", planDigest: costDigest }],
+    holds: unknownReads.map((r) => `${r.root} reads ${r.output}, unknown when the change was reviewed`),
+    overriders: ["github:platform-lead"],
+    overridersSource: "policy.override in my-product.yml",
+    report: JSON.stringify(myReport(w.runs)),
+  }),
+},
+```
+
+| Field | What chant does with it |
+|---|---|
+| `pending` | Adds fields to the wave's pending fact, under a plans file's rules: `description` is allowed, and a field chant writes itself is refused. |
+| `members` | Adds digest members that are not runs, such as the wave's cost from the product's own estimator, so an approval at one cost does not apply at another. |
+| `holds` | Makes the wave wait for a person whatever its gate says, one reason per line, as a held hook does. |
+| `overriders`, `overridersSource` | Names who may override a denial in place of the overriders file at base, and where that list comes from for the refusal. A run's own answer can carry `overriders`, which count for that run in place of the wave's. |
+| `report` | The product's report of these plans. |
+
+While the wave waits, chant stores the report beside the pending fact at `_gates/<op>/<gate>/<digest>.json` (the digest's `:` written as `_`), once per digest. When the plans moved after an approval, chant writes the current report and the one stored for the approved plans to `.chant/op-waves/<name>/wave-<k>/report/current.json` and `approved.json`, and names them on the decision as `reports`, for the job that explains the refusal. `opWaveGateReportPath` and `opWaveReportDir` give the paths.
+
+A `wave` function that throws follows the hook's `onFailure`, the same as `run`. `OP_WAVE_AFTER_PLAN_WAVE_FLOOR` is the first chant with the wave answer.
+
 ### Hooks outside the waves
 
 `chant run <op>` on its own has no spec file, so it runs no stage hooks. A product whose own apply command also runs outside the waves (`yodel apply dev` from a laptop) reads the same hooks at base with `opWaveHooksAtBase` and runs them the same way:
