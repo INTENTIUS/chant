@@ -114,6 +114,10 @@ export type ReleaseCutCode =
   | "release-image-unknown-component"
   | "release-image-name-taken"
   | "release-image-build-failed"
+  | "release-version-no-label"
+  | "release-version-label-invalid"
+  | "release-version-no-package"
+  | "release-version-invalid"
   | "release-unsigned"
   | "release-signer-refused"
   | "declaration-invalid";
@@ -179,6 +183,12 @@ export interface CutRequest {
    * Given the commit being cut; returns each as an image artifact.
    */
   buildImages?: (commit: string) => Promise<ReleaseArtifact[]> | ReleaseArtifact[];
+  /**
+   * Stamp the label into the files `release.version` names (#4840), once the
+   * tree is found clean and before the images are built or any environment
+   * compiled. The caller puts the files back after the cut.
+   */
+  stamp?: () => void | Promise<void>;
 }
 
 export interface CutResult {
@@ -456,6 +466,7 @@ async function prepare(req: CutRequest, record = false): Promise<Prepared> {
       "Commit or stash them, or cut from a clean checkout of the commit.",
     );
   }
+  await req.stamp?.();
 
   let envs = req.environments;
   if (!envs) {

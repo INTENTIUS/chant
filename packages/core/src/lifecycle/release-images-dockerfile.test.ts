@@ -45,6 +45,15 @@ describe("a release.images entry that names a Dockerfile (#4819)", () => {
     expect(own).toContain("mkdir -p out && ");
   });
 
+  test("under release.version the build passes the label as CHANT_RELEASE_LABEL, for the image's version label (#4840)", () => {
+    const entry = { name: "pulumi", dockerfile: "images/plywood-pulumi/Dockerfile" };
+    const plain = releaseImageBuildCommand(entry);
+    expect(plain).not.toContain("CHANT_RELEASE_LABEL");
+    expect(releaseImageBuildCommand(entry, { versionArg: true })).toBe(
+      plain.replace('--build-arg SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH"', '--build-arg SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" --build-arg CHANT_RELEASE_LABEL="$CHANT_RELEASE_LABEL"'),
+    );
+  });
+
   test("the archive defaults to dist/images/<name>.tar, and a build entry is as it was", () => {
     const images: ReleaseImageDeclaration[] = [
       { name: "pulumi", dockerfile: "images/plywood-pulumi/Dockerfile" },

@@ -41,6 +41,7 @@
 
 import { execFileSync } from "node:child_process";
 import type { Release } from "./release-store";
+import { stampedChanges, type ReleaseVersionConfig } from "./release-version";
 import { createRedactor, type Redactor } from "./publish-credentials";
 
 /** Whether this run can sign provenance with an OIDC token, and why not when it can't. */
@@ -421,7 +422,10 @@ export async function preparePublish(req: {
   }
   // A target publishes files from this checkout, so they must be the release commit's (#4047).
   if (targets.length > 0) {
-    const refused = checkCheckoutIsRelease(cwd, release.commit, name);
+    // #4840: the files release.version names may carry the label, as the publish job's `chant release stamp` writes them.
+    const { loadChantConfig } = await import("../config");
+    const version = (await loadChantConfig(cwd)).config.release?.version;
+    const refused = checkCheckoutIsRelease(cwd, release.commit, name, version ? { version, label } : {});
     if (refused) return { refusal: refused };
   }
 
@@ -455,8 +459,16 @@ export async function preparePublish(req: {
  * checkout is the release's commit with nothing changed, so a publish refuses
  * a `HEAD` that is another commit and a tree with changes git sees. A publish
  * with no target reads nothing and checks neither.
+ *
+ * Under `release.version` (#4840), a file it names that is exactly the
+ * commit's stamped with the release's label is the commit's too.
  */
-export function checkCheckoutIsRelease(cwd: string, commit: string, name: string): PublishRefusal | null {
+export function checkCheckoutIsRelease(
+  cwd: string,
+  commit: string,
+  name: string,
+  o: { version?: ReleaseVersionConfig; label?: string | null } = {},
+): PublishRefusal | null {
   const head = tryGit(cwd, ["rev-parse", "HEAD"]);
   if (head !== commit) {
     return {
@@ -465,7 +477,8 @@ export function checkCheckoutIsRelease(cwd: string, commit: string, name: string
       fix: `Check out the release's commit, as a CI job on its tag does: git checkout ${commit}`,
     };
   }
-  const status = tryGit(cwd, ["status", "--porcelain", "--untracked-files=normal"]);
+  let status = tryGit(cwd, ["status", "--porcelain", "--untracked-files=normal"]);
+  if (status && o.version) status = withoutStamps(cwd, commit, o.version, o.label ?? null, status);
   if (status) {
     const n = status.split("\n").length;
     return {
@@ -475,6 +488,24 @@ export function checkCheckoutIsRelease(cwd: string, commit: string, name: string
     };
   }
   return null;
+}
+
+/** The porcelain status without the files {@link stampedChanges} takes as the commit's stamped with the label. */
+function withoutStamps(cwd: string, commit: string, version: ReleaseVersionConfig, label: string | null, status: string): string {
+  let raw: string;
+  let top: string;
+  try {
+    raw = execFileSync("git", ["status", "--porcelain", "--untracked-files=normal"], { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] });
+    top = execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch {
+    return status;
+  }
+  const stamped = stampedChanges({ cwd, top, commit, config: version, label, status: raw });
+  return raw
+    .split("\n")
+    .filter((l) => l.length > 0 && !stamped.has(l.slice(3)))
+    .join("\n")
+    .trim();
 }
 
 function tryGit(cwd: string, args: string[]): string | null {

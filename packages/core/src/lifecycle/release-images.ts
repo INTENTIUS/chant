@@ -104,7 +104,7 @@ const archiveOf = (i: ReleaseImageDeclaration): string => i.archive ?? `dist/ima
  * `SOURCE_DATE_EPOCH` the cut sets passed as a build argument and used to
  * rewrite every timestamp, and every platform in one image index.
  */
-export function releaseImageBuildCommand(i: ReleaseImageDockerfile): string {
+export function releaseImageBuildCommand(i: ReleaseImageDockerfile, o: { versionArg?: boolean } = {}): string {
   const archive = archiveOf(i);
   const b = RELEASE_IMAGE_BUILDER;
   return [
@@ -112,15 +112,15 @@ export function releaseImageBuildCommand(i: ReleaseImageDockerfile): string {
     `mkdir -p ${sh(posix.dirname(archive))}`,
     [
       `docker buildx build --builder ${b} --no-cache --platform ${sh((i.platforms ?? RELEASE_IMAGE_PLATFORMS).join(","))}`,
-      `--provenance=false --sbom=false --build-arg SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH"`,
+      `--provenance=false --sbom=false --build-arg SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH"${o.versionArg ? ' --build-arg CHANT_RELEASE_LABEL="$CHANT_RELEASE_LABEL"' : ""}`,
       `--output ${sh(`type=oci,dest=${archive},rewrite-timestamp=true`)} -f ${sh(i.dockerfile)} ${sh(i.context ?? ".")} >&2`,
     ].join(" "),
   ].join(" && ");
 }
 
 /** Each entry as a command and an archive: a Dockerfile entry's command is {@link releaseImageBuildCommand}, its archive the default when it names none. */
-export function resolveReleaseImages(images: readonly ReleaseImageDeclaration[]): ReleaseImageBuild[] {
-  return images.map((i) => (isDockerfile(i) ? { name: i.name, build: releaseImageBuildCommand(i), archive: archiveOf(i) } : i));
+export function resolveReleaseImages(images: readonly ReleaseImageDeclaration[], o: { versionArg?: boolean } = {}): ReleaseImageBuild[] {
+  return images.map((i) => (isDockerfile(i) ? { name: i.name, build: releaseImageBuildCommand(i, o), archive: archiveOf(i) } : i));
 }
 
 export class ReleaseImageError extends Error {
@@ -168,6 +168,11 @@ export interface BuildImagesInput {
   label: string | null;
   env?: NodeJS.ProcessEnv;
   archiveDigest: ArchiveDigest;
+  /**
+   * `release.version` stamps the label (#4840): a Dockerfile entry gets it as
+   * the build argument `CHANT_RELEASE_LABEL`, for the image's version label.
+   */
+  versionArg?: boolean;
   /** Run one build command; the default runs it through the shell with its output on stderr. */
   run?: (command: string, o: { cwd: string; env: NodeJS.ProcessEnv }) => number | null;
 }
@@ -201,7 +206,7 @@ export function buildReleaseImages(i: BuildImagesInput): ReleaseArtifact[] {
     const status = run(image.prepare, { cwd: i.cwd, env });
     if (status !== 0) throw new ReleaseImageError("release-image-build-failed", `the prepare command of image "${image.name}" exited ${status ?? "with a signal"}: ${image.prepare}`);
   }
-  for (const image of resolveReleaseImages(i.images)) {
+  for (const image of resolveReleaseImages(i.images, i.versionArg ? { versionArg: true } : {})) {
     const env = envFor();
     const status = run(image.build, { cwd: i.cwd, env });
     if (status !== 0) throw new ReleaseImageError("release-image-build-failed", `the build of image "${image.name}" exited ${status ?? "with a signal"}: ${image.build}`);
@@ -230,7 +235,7 @@ const SHA256 = /^sha256:[0-9a-f]{64}$/;
 export interface ReleaseImagePinsInput {
   /** Each image's name in `release.images`, to its reference at this version: `ghcr.io/intentius/plywood-pulumi:0.3.0-pulumi3.272.0`. */
   images: Record<string, string>;
-  /** The package's version. A cut's label (`CHANT_RELEASE_LABEL`) must be it. */
+  /** The package's version. A cut's label (`CHANT_RELEASE_LABEL`) must be it, as it is when `release.version` stamps the package (#4840). */
   version: string;
   env?: NodeJS.ProcessEnv;
 }
