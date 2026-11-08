@@ -9,7 +9,6 @@ import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { isGeneratedJob, jobNames, keepOwnJobs, mergeOwnJobs, OWN_JOBS_LINE, OwnJobsError, readOwnJobsFile } from "./ci-own-jobs";
 import * as ciProduct from "./ci-product";
-import { NEXT_RELEASE } from "./release-floors";
 
 const GITHUB = ["name: chant", "on:", "  pull_request:", "jobs:", "  plan:", "    runs-on: ubuntu-latest", "    steps:", "      - run: chant components pr-plan prod", "  plan-note:", "    runs-on: ubuntu-latest", "    steps:", "      - run: chant components pr-post prod", ""].join("\n");
 const GITLAB = ["stages:", "  - plan", "variables:", "  A: b", "plan:", "  stage: plan", "  script:", "    - chant components pr-plan prod", ""].join("\n");
@@ -103,7 +102,7 @@ describe("keepOwnJobs", () => {
 });
 
 test("the ci-product entry carries both, and OWN_JOBS_FLOOR marks them", () => {
-  expect(ciProduct.OWN_JOBS_FLOOR).toBe(NEXT_RELEASE);
+  expect(ciProduct.OWN_JOBS_FLOOR).toBe("0.124.77");
   expect(typeof ciProduct.mergeOwnJobs).toBe("function");
   expect(typeof ciProduct.keepOwnJobs).toBe("function");
 });

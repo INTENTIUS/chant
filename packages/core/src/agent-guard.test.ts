@@ -10,7 +10,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { AGENT_GUARD_FLOOR, agentGuard, CLAUDE_SETTINGS_LOCAL, CLAUDE_SETTINGS_SHARED, installAgentGuard, withAgentGuardHook } from "./agent-guard";
-import { NEXT_RELEASE } from "./release-floors";
 import { PLYWOOD_GUARD } from "./__fixtures__/agent-guard/plywood";
 import { TERRAGUCCI_GUARD } from "./__fixtures__/agent-guard/terragucci";
 
@@ -60,7 +59,7 @@ function terragucci() {
 }
 
 describe("AGENT_GUARD_FLOOR", () => {
-  it("names the next release", () => expect(AGENT_GUARD_FLOOR).toBe(NEXT_RELEASE));
+  it("names the next release", () => expect(AGENT_GUARD_FLOOR).toBe("0.124.77"));
 });
 
 describe("terragucci's guard: the wrappers", () => {

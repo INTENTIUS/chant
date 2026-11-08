@@ -25,10 +25,9 @@ import { chmodSync, existsSync, mkdirSync, renameSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
-import { NEXT_RELEASE } from "./release-floors";
 
 /** The first chant with `ci.policy.install` and `@intentius/chant/policy-engine` (#4774). Products feature-detect on it. */
-export const POLICY_ENGINE_INSTALL_FLOOR = NEXT_RELEASE;
+export const POLICY_ENGINE_INSTALL_FLOOR = "0.124.77";
 
 export type PolicyEngineName = "conftest" | "opa";
 

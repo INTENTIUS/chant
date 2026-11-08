@@ -37,6 +37,6 @@ describe("the gate-policy bundle", () => {
       outdir: "out",
       logLevel: "silent",
     });
-    expect(Object.keys(result.metafile.inputs).map((i) => i.replace(/^.*?packages\//, "packages/")).sort()).toEqual(["packages/core/src/policy-engine.ts", "packages/core/src/release-floors.ts"]);
+    expect(Object.keys(result.metafile.inputs).map((i) => i.replace(/^.*?packages\//, "packages/")).sort()).toEqual(["packages/core/src/policy-engine.ts"]);
   });
 });

@@ -6,7 +6,6 @@
 import { describe, expect, test } from "vitest";
 import { fakeLedger } from "./__fixtures__/gated-ledger";
 import type { ForgeFetch } from "./pr-forge";
-import { NEXT_RELEASE } from "./release-floors";
 import { CLOCK_SKEW_MS, forgeLiveRuns, parseLockInfo, possibleHolders, releaseStateLock, STATE_UNLOCK_FLOOR, StateUnlockError, type LiveRun, type LockInfo, type StateLockSource } from "./state-unlock";
 
 const LOCK: LockInfo = { ID: "a1b2", Operation: "OperationTypeApply", Who: "runner@ci", Created: "2026-11-08T08:00:00Z" };
@@ -108,7 +107,7 @@ describe("releaseStateLock", () => {
   });
 
   test("its floor is the next release", () => {
-    expect(STATE_UNLOCK_FLOOR).toBe(NEXT_RELEASE);
+    expect(STATE_UNLOCK_FLOOR).toBe("0.124.77");
   });
 });
 

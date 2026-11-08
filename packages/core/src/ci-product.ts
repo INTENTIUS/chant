@@ -13,7 +13,6 @@ import type { CiProductWords, CiProductWordsInput } from "./ci-product-words";
 import type { ProductMcpHook } from "./cli/mcp/product-tools";
 import type { ProductWaveHook } from "./op/op-waves-after-plan";
 import { OTLP_EXPORTER_FLOOR } from "./otlp";
-import { NEXT_RELEASE } from "./release-floors";
 
 /**
  * The first chant with the product pipeline (#4550): the words, the
@@ -209,7 +208,7 @@ export {
  * group of its own keeps it, and GitHub and GitLab files are unchanged. A
  * product feature-detects on this floor.
  */
-export const FORGEJO_RUN_GROUP_FLOOR = NEXT_RELEASE;
+export const FORGEJO_RUN_GROUP_FLOOR = "0.124.77";
 export { RUN_GROUP_KEYS, type RunGroupKey } from "./lexicon";
 
 /**
@@ -220,7 +219,7 @@ export { RUN_GROUP_KEYS, type RunGroupKey } from "./lexicon";
  * the step `productPipelineJobs(...).post.control` returns. A product that
  * writes its pipeline with the build feature-detects on this floor.
  */
-export const PR_LOOP_CONTROL_FLOOR = NEXT_RELEASE;
+export const PR_LOOP_CONTROL_FLOOR = "0.124.77";
 export {
   CI_RESPOND_DEFAULTS,
   CI_RESPOND_ENV,

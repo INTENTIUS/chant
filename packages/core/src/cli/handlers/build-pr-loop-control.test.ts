@@ -83,6 +83,5 @@ describe("build --pr-loop --control", () => {
 
 test("PR_LOOP_CONTROL_FLOOR marks it in the ci-product entry", async () => {
   const ciProduct = await import("../../ci-product");
-  const { NEXT_RELEASE } = await import("../../release-floors");
-  expect((ciProduct as Record<string, unknown>).PR_LOOP_CONTROL_FLOOR).toBe(NEXT_RELEASE);
+  expect((ciProduct as Record<string, unknown>).PR_LOOP_CONTROL_FLOOR).toBe("0.124.77");
 });

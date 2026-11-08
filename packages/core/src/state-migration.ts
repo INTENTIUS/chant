@@ -32,10 +32,9 @@
 import { CHANT_EXIT } from "./exit-codes";
 import { gatedOp, type GatedRequestLedger } from "./lifecycle/gated-op";
 import type { GatedRequestRules } from "./lifecycle/gated-request";
-import { NEXT_RELEASE } from "./release-floors";
 
 /** The first chant with the engine-neutral state migration (#4762). */
-export const STATE_MIGRATION_FLOOR = NEXT_RELEASE;
+export const STATE_MIGRATION_FLOOR = "0.124.77";
 
 /** A state as a migration binds it: its version id, when the store keeps versions, and its digest, null for no state. */
 export interface MigrationStateAt {
