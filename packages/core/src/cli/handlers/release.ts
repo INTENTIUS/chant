@@ -114,8 +114,8 @@ async function laneOf(ctx: CommandContext, cwd: string): Promise<string | undefi
   }
 }
 
-/** The member's `release.images` (#4657), or none when the config declares none. */
-async function releaseImagesOf(cwd: string): Promise<Array<{ name: string; build: string; archive: string }>> {
+/** The member's `release.images` (#4657), or none when the config declares none. A Dockerfile entry (#4819) keeps its form, so its prepare command runs. */
+async function releaseImagesOf(cwd: string): Promise<import("../../lifecycle/release-images").ReleaseImageDeclaration[]> {
   const { loadChantConfig } = await import("../../config");
   return (await loadChantConfig(cwd)).config.release?.images ?? [];
 }
@@ -155,7 +155,7 @@ export async function runReleaseImages(ctx: CommandContext): Promise<number> {
   if (!ref) return fail("release-not-named", "release images needs a release, by label or digest", USAGE);
   const cwd = resolve(".");
   const { resolveRelease } = await import("../../lifecycle/release-store");
-  const { buildReleaseImages, releaseImageDigests, writeReleaseDigests, ReleaseImageError, RELEASE_DIGESTS_ENV } = await import("../../lifecycle/release-images");
+  const { buildReleaseImages, releaseImageDigests, resolveReleaseImages, writeReleaseDigests, ReleaseImageError, RELEASE_DIGESTS_ENV } = await import("../../lifecycle/release-images");
   const { ociArchiveDigest } = await import("../../lifecycle/publish-oci");
   const { getHeadCommit } = await import("../../lifecycle/git");
   const found = await resolveRelease(ref, { cwd });
@@ -171,7 +171,7 @@ export async function runReleaseImages(ctx: CommandContext): Promise<number> {
   try {
     // --no-build: the archives the cut built were handed to this job, so they are read as they are.
     built = args.noBuild
-      ? declared.map((d) => {
+      ? resolveReleaseImages(declared).map((d) => {
           const abs = resolve(cwd, d.archive);
           if (!existsSync(abs)) throw new ReleaseImageError("release-image-no-archive", `image "${d.name}" has no archive at ${d.archive}`, "Hand this job the archives the cut built, or run without --no-build to build them again.");
           return { component: d.name, kind: "image" as const, path: d.archive, digest: ociArchiveDigest(abs) };
@@ -473,7 +473,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     // #4657: under --at the images were built in the commit's own checkout, which is removed below; the archives the
     // release records are put where release.images names them here, so the job's next step (the hand-off to the
     // publish job) finds them.
-    if (checkout && declaredImages.length > 0) copyImageArchives(declaredImages, cutCwd, cwd);
+    if (checkout && declaredImages.length > 0) copyImageArchives((await import("../../lifecycle/release-images")).resolveReleaseImages(declaredImages), cutCwd, cwd);
     const push = await pushLifecycleReport({ cwd }).catch(() => ({ pushed: false, pushWarning: undefined }));
     // The tag names the release's label, which a re-cut with no label reads from the earlier cut.
     let tagged: { name: string; created: boolean } | null = null;

@@ -21,11 +21,24 @@
  * An npm target's `pins` names the file in a package that carries the
  * digests. The publish plan and `chant release verify` read it and refuse a
  * digest the release does not record as an image.
+ *
+ * An entry may name a Dockerfile instead of a command (#4819): chant runs
+ * the reproducible build itself ({@link releaseImageBuildCommand}), a
+ * `docker-container` buildx builder writing an OCI archive with timestamps
+ * rewritten from `SOURCE_DATE_EPOCH` and no attestations, for every
+ * platform. Its `prepare` command (the bundle the image carries, a packed
+ * package) runs first with no digests file named, so the image is the same
+ * in the cut and the publish job. A product's package build turns the
+ * digests file and its `{ name: reference }` into the table it bakes in with
+ * {@link releaseImagePins}, and writes the pins file with
+ * {@link writeReleaseImagePins}. This module reaches only Node's built-ins at
+ * run time, so a product's build script imports it under plain Node.
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, posix, relative, resolve } from "node:path";
+import { NEXT_RELEASE } from "../release-floors";
 import type { PublishDeclaration } from "./publish-declaration";
 import type { Release, ReleaseArtifact } from "./release-store";
 
@@ -35,14 +48,80 @@ export const RELEASE_DIGESTS_ENV = "CHANT_RELEASE_DIGESTS";
 /** The first chant with `release.images`, `CHANT_RELEASE_DIGESTS`, `chant release images` and an npm target's `pins` (#4657). Products feature-detect on it. */
 export const RELEASE_IMAGES_FLOOR = "0.124.71";
 
-/** One image a release builds in its cut. */
-export interface ReleaseImageDeclaration {
+/**
+ * The first chant whose `release.images` takes a Dockerfile entry, with
+ * `releaseImagePins` and `writeReleaseImagePins` for a product's package
+ * build (#4819).
+ */
+export const RELEASE_IMAGE_DOCKERFILE_FLOOR = NEXT_RELEASE;
+
+/** One image a release builds in its cut with a command of the product's. */
+export interface ReleaseImageBuild {
   /** The image's name: its key in the digests file, and its artifact's `component` in the release. */
   name: string;
   /** The shell command, run in the member's directory, that writes the archive. */
   build: string;
   /** The OCI archive the command writes, a layout directory or a tar file, relative to the member. The `oci` target's `image`. */
   archive: string;
+}
+
+/** One image chant builds from a Dockerfile (#4819). */
+export interface ReleaseImageDockerfile {
+  name: string;
+  /** The Dockerfile, relative to the member. */
+  dockerfile: string;
+  /** The build context, relative to the member. Default `.`. */
+  context?: string;
+  /** The platforms the archive's image index holds. Default {@link RELEASE_IMAGE_PLATFORMS}. */
+  platforms?: string[];
+  /** Where the archive goes, relative to the member. Default `dist/images/<name>.tar`. */
+  archive?: string;
+  /** A command run once before the builds, with `CHANT_RELEASE_DIGESTS` unset: what the image copies in, such as the bundle or a packed package. */
+  prepare?: string;
+}
+
+/** One image a release builds in its cut. */
+export type ReleaseImageDeclaration = ReleaseImageBuild | ReleaseImageDockerfile;
+
+/** The platforms a Dockerfile entry builds by default. Building arm64 on amd64 needs QEMU's binfmt handlers. */
+export const RELEASE_IMAGE_PLATFORMS: readonly string[] = ["linux/amd64", "linux/arm64"];
+
+/** The buildx builder a Dockerfile entry builds with, created with the `docker-container` driver when missing: the default driver cannot rewrite timestamps in an OCI archive. */
+export const RELEASE_IMAGE_BUILDER = "chant-release";
+
+const PLATFORM = /^[a-z0-9]+\/[a-z0-9_]+(?:\/[a-z0-9]+)?$/;
+
+/** A word the shell reads as itself. */
+const sh = (s: string): string => (/^[A-Za-z0-9_./:=,@+%-]+$/.test(s) ? s : `'${s.replace(/'/g, "'\\''")}'`);
+
+const isDockerfile = (i: ReleaseImageDeclaration): i is ReleaseImageDockerfile => "dockerfile" in i && i.dockerfile !== undefined;
+
+const archiveOf = (i: ReleaseImageDeclaration): string => i.archive ?? `dist/images/${i.name}.tar`;
+
+/**
+ * The shell command a Dockerfile entry builds with (#4819), the one
+ * terragucci's and plywood's `scripts/release-image.sh` ran: `--no-cache`,
+ * no provenance or SBOM in the archive (chant attaches its own), the
+ * `SOURCE_DATE_EPOCH` the cut sets passed as a build argument and used to
+ * rewrite every timestamp, and every platform in one image index.
+ */
+export function releaseImageBuildCommand(i: ReleaseImageDockerfile): string {
+  const archive = archiveOf(i);
+  const b = RELEASE_IMAGE_BUILDER;
+  return [
+    `{ docker buildx inspect ${b} >/dev/null 2>&1 || docker buildx create --name ${b} --driver docker-container >/dev/null; }`,
+    `mkdir -p ${sh(posix.dirname(archive))}`,
+    [
+      `docker buildx build --builder ${b} --no-cache --platform ${sh((i.platforms ?? RELEASE_IMAGE_PLATFORMS).join(","))}`,
+      `--provenance=false --sbom=false --build-arg SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH"`,
+      `--output ${sh(`type=oci,dest=${archive},rewrite-timestamp=true`)} -f ${sh(i.dockerfile)} ${sh(i.context ?? ".")} >&2`,
+    ].join(" "),
+  ].join(" && ");
+}
+
+/** Each entry as a command and an archive: a Dockerfile entry's command is {@link releaseImageBuildCommand}, its archive the default when it names none. */
+export function resolveReleaseImages(images: readonly ReleaseImageDeclaration[]): ReleaseImageBuild[] {
+  return images.map((i) => (isDockerfile(i) ? { name: i.name, build: releaseImageBuildCommand(i), archive: archiveOf(i) } : i));
 }
 
 export class ReleaseImageError extends Error {
@@ -58,15 +137,22 @@ export class ReleaseImageError extends Error {
 
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 
-/** Check a member's `release.images`: names valid and unique, archives inside the member. */
+const outside = (p: string): boolean => isAbsolute(p) || p.split(/[\\/]/).includes("..");
+
+/** Check a member's `release.images`: names valid and unique, one of `build` and `dockerfile`, paths inside the member, platforms of the form os/arch. */
 export function checkReleaseImages(images: readonly ReleaseImageDeclaration[]): void {
   const seen = new Set<string>();
   for (const i of images) {
     if (!NAME.test(i.name)) throw new ReleaseImageError("release-image-name-invalid", `release.images: "${i.name}" is not a name of letters, digits, ".", "_" and "-"`);
     if (seen.has(i.name)) throw new ReleaseImageError("release-image-name-taken", `release.images names "${i.name}" twice`);
     seen.add(i.name);
-    if (isAbsolute(i.archive) || i.archive.split(/[\\/]/).includes("..")) {
-      throw new ReleaseImageError("release-image-archive-outside", `release.images "${i.name}": the archive ${i.archive} is not a path inside the member`);
+    if (isDockerfile(i) && "build" in i) throw new ReleaseImageError("release-image-invalid", `release.images "${i.name}" names a build command and a Dockerfile; chant builds a Dockerfile itself, so name one`);
+    const paths: [string, string | undefined][] = isDockerfile(i) ? [["the archive", archiveOf(i)], ["the Dockerfile", i.dockerfile], ["the context", i.context]] : [["the archive", i.archive]];
+    for (const [what, p] of paths) {
+      if (p !== undefined && outside(p)) throw new ReleaseImageError("release-image-archive-outside", `release.images "${i.name}": ${what} ${p} is not a path inside the member`);
+    }
+    if (isDockerfile(i) && i.platforms !== undefined && (i.platforms.length === 0 || !i.platforms.every((p) => PLATFORM.test(p)))) {
+      throw new ReleaseImageError("release-image-invalid", `release.images "${i.name}": platforms is a list of os/arch such as linux/amd64, not ${JSON.stringify(i.platforms)}`);
     }
   }
 }
@@ -100,10 +186,24 @@ export function buildReleaseImages(i: BuildImagesInput): ReleaseArtifact[] {
   checkReleaseImages(i.images);
   const run = i.run ?? defaultRun;
   const out: ReleaseArtifact[] = [];
-  for (const image of i.images) {
+  const envFor = (): NodeJS.ProcessEnv => {
     const env: NodeJS.ProcessEnv = { ...(i.env ?? process.env), SOURCE_DATE_EPOCH: String(i.sourceDateEpoch) };
     delete env.CHANT_RELEASE_LABEL;
     if (i.label !== null) env.CHANT_RELEASE_LABEL = i.label;
+    return env;
+  };
+  // #4819: each prepare command once, before any build, with no digests file, as the image's contents are built in the cut and the publish job alike.
+  const prepared = new Set<string>();
+  for (const image of i.images) {
+    if (!isDockerfile(image) || !image.prepare || prepared.has(image.prepare)) continue;
+    prepared.add(image.prepare);
+    const env = envFor();
+    delete env[RELEASE_DIGESTS_ENV];
+    const status = run(image.prepare, { cwd: i.cwd, env });
+    if (status !== 0) throw new ReleaseImageError("release-image-build-failed", `the prepare command of image "${image.name}" exited ${status ?? "with a signal"}: ${image.prepare}`);
+  }
+  for (const image of resolveReleaseImages(i.images)) {
+    const env = envFor();
     const status = run(image.build, { cwd: i.cwd, env });
     if (status !== 0) throw new ReleaseImageError("release-image-build-failed", `the build of image "${image.name}" exited ${status ?? "with a signal"}: ${image.build}`);
     const abs = resolve(i.cwd, image.archive);
@@ -122,6 +222,65 @@ export function releaseImageDigests(release: Pick<Release, "artifactDigests">, n
     out[a.component] = a.digest;
   }
   return out;
+}
+
+// ── a product's package build (#4819) ──────────────────────────────────
+
+const SHA256 = /^sha256:[0-9a-f]{64}$/;
+
+export interface ReleaseImagePinsInput {
+  /** Each image's name in `release.images`, to its reference at this version: `ghcr.io/intentius/plywood-pulumi:0.3.0-pulumi3.272.0`. */
+  images: Record<string, string>;
+  /** The package's version. A cut's label (`CHANT_RELEASE_LABEL`) must be it. */
+  version: string;
+  env?: NodeJS.ProcessEnv;
+}
+
+/**
+ * The digest table a release's package build bakes into its bundle: each
+ * reference in `images` to the digest the cut recorded for its name, in
+ * `images`' order. Undefined outside a release build (no
+ * `CHANT_RELEASE_DIGESTS`), when a pipeline names the images by tag. Refuses
+ * a label that is not the version and a name the digests file has no digest
+ * for.
+ */
+export function releaseImagePins(i: ReleaseImagePinsInput): Record<string, string> | undefined {
+  const env = i.env ?? process.env;
+  const file = env[RELEASE_DIGESTS_ENV];
+  if (!file) return undefined;
+  const label = env.CHANT_RELEASE_LABEL;
+  if (label && label !== i.version) {
+    throw new ReleaseImageError("release-label-not-version", `the release is labelled ${label}, and the package is at ${i.version}`, `Set the package's version to ${label} on the default branch, then cut the merged commit.`);
+  }
+  const named = JSON.parse(readFileSync(file, "utf-8")) as Record<string, unknown>;
+  const table: Record<string, string> = {};
+  for (const [name, reference] of Object.entries(i.images)) {
+    const digest = named[name];
+    if (typeof digest !== "string" || !SHA256.test(digest)) throw new ReleaseImageError("release-image-digest-missing", `${file} has no digest for the ${name} image, which the release builds`);
+    table[reference] = digest;
+  }
+  return table;
+}
+
+/**
+ * Write the pins file an npm target's `pins` names, once the bundle is
+ * built: the table as JSON, after checking that every bundle in `bundles`
+ * carries each digest. With no table (not a release build), remove the file,
+ * so a package never ships a stale one.
+ */
+export function writeReleaseImagePins(table: Record<string, string> | undefined, o: { out: string; bundles?: readonly string[] }): void {
+  if (!table) {
+    rmSync(o.out, { force: true });
+    return;
+  }
+  for (const bundle of o.bundles ?? []) {
+    const text = readFileSync(bundle, "utf-8");
+    for (const [reference, digest] of Object.entries(table)) {
+      if (!text.includes(digest)) throw new ReleaseImageError("release-pin-not-bundled", `${bundle} does not carry ${reference}@${digest}`);
+    }
+  }
+  mkdirSync(dirname(o.out), { recursive: true });
+  writeFileSync(o.out, `${JSON.stringify(table, null, 2)}\n`);
 }
 
 /** Write the digests file a package build reads. */
