@@ -106,7 +106,7 @@ import type { LockGrain } from "../lifecycle/lock-rows";
 import type { LockLiveness } from "../lifecycle/resource-lock";
 import type { GatePolicyExec } from "../gate-policy";
 import { gitOpWaveNewerCommit, opWaveStandDownReason, tipAppliesTargets, type OpWaveNewerCommitPort } from "./op-waves-stand-down";
-import { mapLimited } from "../parallelism";
+import { keyedSerial, mapLimited, type SerialSection } from "../parallelism";
 import {
   applyOpWaveStep,
   opWaveCosts,
@@ -971,6 +971,8 @@ interface WaveContext {
   steps?: Map<string, OpWaveStepPlan>;
   /** Each run's environment from the run hooks (#4842), by target, which its plan and its apply run with. */
   runEnv?: Map<string, Record<string, string>>;
+  /** The wave's serial section (#4864), made when its runs plan or apply several at once and shared by its plans and applies. */
+  serial?: SerialSection;
   /** The plans file's change set (#4551), which a `pull-request` gate checks the pull request's approval against (#4550). */
   changeSetDoc?: ChangeSetDocument;
   /** An after-plan hook's report of the wave's plans (#4842), stored beside the pending fact. */
@@ -1160,15 +1162,16 @@ function runHookRun(at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: strin
  * with the run's environment, then `afterApply`, whose files go on the
  * result and whose failure fails a run that applied.
  */
-async function applyStepRun(ctx: WaveContext, registry: CapabilityRegistry, run: OpWaveRun, plan: OpWaveStepPlan): Promise<OpWaveStepApply & { files?: string[] }> {
+async function applyStepRun(ctx: WaveContext, registry: CapabilityRegistry, run: OpWaveRun, plan: OpWaveStepPlan, serial?: SerialSection): Promise<OpWaveStepApply & { files?: string[] }> {
   const { spec, wave, k, options } = ctx;
   const hooks = opWaveRunHookList(options.runHooks);
   const env = ctx.runEnv?.get(run.target);
-  if (hooks.length === 0) return applyOpWaveStep({ spec, wave, registry, cwd: ctx.cwd, ...(env ? { processEnv: env } : {}) }, run, plan);
+  const at = { spec, wave, registry, cwd: ctx.cwd, ...(env ? { processEnv: env } : {}), ...(serial ? { serial } : {}) };
+  if (hooks.length === 0) return applyOpWaveStep(at, run, plan);
   const planned = { ...runHookRun(ctx, run), planDigest: plan.planDigest, plan: opWavePlanPath(spec, k, run.target), ...(plan.artifact !== undefined ? { artifact: plan.artifact } : {}) };
   const stop = await runOpWaveBeforeApply(hooks, planned);
   if (stop !== undefined) return { outcome: "failed", reason: stop };
-  const got = await applyOpWaveStep({ spec, wave, registry, cwd: ctx.cwd, ...(env ? { processEnv: env } : {}) }, run, plan);
+  const got = await applyOpWaveStep(at, run, plan);
   const after = await runOpWaveAfterApply(hooks, { ...planned, outcome: got.outcome, ...(got.outcome === "applied" ? { output: got.output } : { reason: got.reason }) });
   const files = after.files.length > 0 ? { files: after.files } : {};
   if (after.failed && got.outcome === "applied") return { outcome: "failed", reason: `applied, and then ${after.failed}`, ...(got.facts ? { facts: got.facts } : {}), ...files };
@@ -1179,10 +1182,13 @@ async function applyStepRun(ctx: WaveContext, registry: CapabilityRegistry, run:
 /**
  * Plan `runs` of wave `k` (#4545): through the spec's `step` when it names
  * one, each run's plan kept on `at.steps` for its apply, else with the
- * commands ({@link planRuns}).
+ * commands ({@link planRuns}). With the wave's `parallelism` over 1 the
+ * step plans up to that many runs at once (#4864), each with the wave's
+ * serial section on its context, and the members, parts and plan files come
+ * out as one at a time makes them, in the wave's order.
  */
 async function planWaveRuns(
-  at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: string; exec: OpWaveExec; options: Pick<RunOpWaveOptions, "capabilities" | "lockGrain" | "base" | "waveExec" | "runHooks" | "decide" | "share" | "group">; steps?: Map<string, OpWaveStepPlan>; runEnv?: Map<string, Record<string, string>> },
+  at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: string; exec: OpWaveExec; options: Pick<RunOpWaveOptions, "capabilities" | "lockGrain" | "base" | "waveExec" | "runHooks" | "decide" | "share" | "group">; steps?: Map<string, OpWaveStepPlan>; runEnv?: Map<string, Record<string, string>>; serial?: SerialSection },
   runs: readonly OpWaveRun[],
   discover = false,
 ): Promise<PlannedRuns> {
@@ -1223,11 +1229,39 @@ async function planWaveRuns(
     }
     together = plans[0]?.group?.digest;
   } else {
-    for (const run of runs) {
+    const limit = wave.parallelism ?? spec.parallelism ?? 1;
+    // #4864: runs that plan beside each other share the wave's serial section, such as a turn at the provider cache for init.
+    const serial = limit > 1 && runs.length > 1 ? (at.serial ??= keyedSerial()) : undefined;
+    const planOne = async (run: OpWaveRun): Promise<OpWaveStepPlan> => {
       const before = await beforePlan(run);
-      const plan = await planOpWaveStep({ spec, wave, cwd, registry, planPath: opWavePlanPath(spec, k, run.target), lockGrain, ...(policyBase ? { policyBase } : {}), ...(before.env ? { processEnv: before.env } : {}), ...(before.afterInit ? { afterInit: before.afterInit } : {}) }, run);
-      at.steps?.set(run.target, plan);
-      plans.push(plan);
+      return planOpWaveStep({ spec, wave, cwd, registry, planPath: opWavePlanPath(spec, k, run.target), lockGrain, ...(policyBase ? { policyBase } : {}), ...(before.env ? { processEnv: before.env } : {}), ...(before.afterInit ? { afterInit: before.afterInit } : {}), ...(serial ? { serial } : {}) }, run);
+    };
+    if (!serial) {
+      for (const run of runs) {
+        const plan = await planOne(run);
+        at.steps?.set(run.target, plan);
+        plans.push(plan);
+      }
+    } else {
+      // #4864: up to `limit` plans at once, started in the wave's order. A failure starts no more, and the
+      // first failing run in the wave's order fails the wave, the one a plan one at a time would have stopped at.
+      let stopped = false;
+      const got = await mapLimited(runs, limit, async (run): Promise<{ plan: OpWaveStepPlan } | { error: unknown } | undefined> => {
+        if (stopped) return undefined;
+        try {
+          return { plan: await planOne(run) };
+        } catch (error) {
+          stopped = true;
+          return { error };
+        }
+      });
+      const failure = got.find((g) => g !== undefined && "error" in g);
+      if (failure && "error" in failure) throw failure.error;
+      for (const g of got) {
+        if (!g || !("plan" in g)) continue;
+        at.steps?.set(g.plan.target, g.plan);
+        plans.push(g.plan);
+      }
     }
   }
   const members = plans.map((p) => ({
@@ -3990,6 +4024,8 @@ async function applyStepRunsAtOnce(options: RunOpWaveOptions, ctx: WaveContext, 
   type Outcome = { applied: true } | { failed: true } | { moved: true } | { blockedBy: string };
   const order = new Map(runs.map((r, i) => [r.target, i]));
   const registry = await opWaveRegistry(options, ctx.cwd, options.capabilities);
+  // #4864: the section the wave's plans took turns in, so an apply that inits again waits its turn too.
+  const serial = runs.length > 1 ? (ctx.serial ??= keyedSerial()) : undefined;
   const settled = new Map<string, Promise<Outcome>>();
   const outcomes = await mapLimited(runs, limit, (run, i) => {
     const going = (async (): Promise<Outcome> => {
@@ -4008,7 +4044,7 @@ async function applyStepRunsAtOnce(options: RunOpWaveOptions, ctx: WaveContext, 
         return { failed: true };
       }
       const startedMs = targetStarted(options, k, run.target);
-      const got = await applyStepRun(ctx, registry, run, plan);
+      const got = await applyStepRun(ctx, registry, run, plan, serial);
       targetSettled(options, result, k, run.target, startedMs, got.outcome === "applied" ? "ok" : got.outcome === "moved" ? "skipped" : "failed", {
         ...(got.outcome !== "applied" ? { error: got.reason } : {}),
         ...(got.facts ? { facts: got.facts } : {}),

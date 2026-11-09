@@ -38,6 +38,7 @@ import {
 import {
   parseTerragruntReport,
   terragruntEnv,
+  terragruntInitArgs,
   terragruntUnitResults,
   terragruntWaveArgs,
   terragruntWaveParts,
@@ -171,6 +172,14 @@ export interface TerragruntWaveRunInput extends TerragruntRunOptions {
    * are never applied. Unset, a wave that would read a mock is refused.
    */
   provisional?: boolean;
+  /**
+   * The plan's turn at the provider cache (chant#4864), when units planned
+   * by other calls at once share it. Given, the mock check and an explicit
+   * `run --all -- init` of the units run inside it, and the plan after it,
+   * so its auto-init finds them initialised. An init that fails is left to
+   * the plan, which fails the unit with its report row as before.
+   */
+  initTurn?: <T>(fn: () => Promise<T>) => Promise<T>;
 }
 
 /**
@@ -315,10 +324,15 @@ export async function planTerragruntWave(input: TerragruntWaveRunInput): Promise
   const marker = join(work, PROVISIONAL_MARKER);
   // A plan or report left by an earlier attempt must not stand in for a unit that did not plan this time.
   for (const stale of [outDir, jsonOutDir, reportFile, marker]) rmSync(stale, { recursive: true, force: true });
-  if (!input.provisional) {
-    const reads = await checkTerragruntWaveMocks({ ...input, exec });
-    if (reads.length > 0) throw new TerragruntMockRefusal(reads);
-  }
+  const prepare = async (): Promise<void> => {
+    if (!input.provisional) {
+      const reads = await checkTerragruntWaveMocks({ ...input, exec });
+      if (reads.length > 0) throw new TerragruntMockRefusal(reads);
+    }
+    // chant#4864: the init the plan would run itself, in the turn; a failure is the plan's to report.
+    if (input.initTurn) await exec(tg, terragruntInitArgs({ units: input.units, ...(input.destroy ? { destroy: true } : {}) }), { cwd: input.dir, env: terragruntEnv(input.binary) });
+  };
+  await (input.initTurn ? input.initTurn(prepare) : prepare());
   mkdirSync(work, { recursive: true });
   // Written before planning, so a plan cut short still never applies.
   if (input.provisional) writeFileSync(marker, "planned before its upstream applied; never applied\n");

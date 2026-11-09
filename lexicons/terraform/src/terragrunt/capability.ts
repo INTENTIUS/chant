@@ -27,6 +27,11 @@
  * A run hook's `processEnv` is laid over the environment Terragrunt runs
  * with; the units of one `run --all` must agree on it. Terragrunt has no
  * init of its own before the plan, so `afterInit` is called before it plans.
+ * A wave that plans its units run by run several at once (chant#4864) gives
+ * each its serial section (`DeployContext.serial`): with a provider cache
+ * (`TF_PLUGIN_CACHE_DIR`) a unit's mock check and an explicit `run --all --
+ * init` take their turn there, one unit at a time, and its plan runs beside
+ * the others'.
  * A product passes its own `exec` (`terragruntApplyCapability`) to wrap
  * Terragrunt, as terragucci adds its lock timeout and its backend bootstrap.
  *
@@ -50,6 +55,7 @@ import type { ChangeSetPart } from "@intentius/chant/change-set";
 import { computePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { applyTerragruntWave, defaultTerragruntExec, discoverTerragruntUnits, planTerragruntWave, TerragruntMockRefusal, type TerragruntExec } from "./run";
 import { terragruntListedWaves, terragruntWaves } from "./units";
+import { initTurnKey, type InitSection } from "../init-turn";
 
 /** The step's input. Each string has `{target}`, `{op}` and `{wave}` filled per run in an op wave. */
 export interface TerragruntApplyStepInput {
@@ -261,10 +267,13 @@ function unitPlans(parts: readonly ChangeSetPart[], units: readonly string[], wo
   return out;
 }
 
-async function planUnits(exec: TerragruntExec, input: TerragruntApplyStepInput, units: readonly string[], env: Record<string, string> | undefined): Promise<{ workDir: string; plans: Map<string, CapabilityPlan> }> {
+async function planUnits(exec: TerragruntExec, input: TerragruntApplyStepInput, units: readonly string[], env: Record<string, string> | undefined, serial?: InitSection): Promise<{ workDir: string; plans: Map<string, CapabilityPlan> }> {
   const dir = dirOf(input);
   const workDir = workDirOf(input, units);
+  // chant#4864: units planned at once that share a provider cache take turns at their inits.
+  const cache = serial ? initTurnKey(env) : undefined;
   const planned = await planTerragruntWave({
+    ...(cache ? { initTurn: <T>(fn: () => Promise<T>) => serial!(cache, fn) } : {}),
     dir,
     units,
     workDir,
@@ -370,7 +379,7 @@ export function terragruntApplyCapability(deps: TerragruntApplyDeps = {}): Capab
       const input = atDir(given, ctx.cwd);
       if (typeof input.unit !== "string" || input.unit === "") throw new Error("terragrunt-apply: the step names no unit");
       await ctx.afterInit?.();
-      const { plans } = await planUnits(exec, await unitInput(resolveUnit, input, input.unit), [input.unit], ctx.processEnv);
+      const { plans } = await planUnits(exec, await unitInput(resolveUnit, input, input.unit), [input.unit], ctx.processEnv, ctx.serial);
       return plans.get(input.unit)!;
     },
 
@@ -379,7 +388,7 @@ export function terragruntApplyCapability(deps: TerragruntApplyDeps = {}): Capab
       const given = ctx.plans?.[input.unit];
       const own = await unitInput(resolveUnit, input, input.unit);
       // A unit with no plan from the wave plans now and applies that plan.
-      const workDir = isUnitArtifact(given) ? given.workDir : (await planUnits(exec, own, [input.unit], ctx.processEnv)).workDir;
+      const workDir = isUnitArtifact(given) ? given.workDir : (await planUnits(exec, own, [input.unit], ctx.processEnv, ctx.serial)).workDir;
       const applied = await applyUnits(exec, own, [input.unit], workDir, ctx.processEnv);
       const result = applied.results.find((r) => r.unit === input.unit);
       if (result?.status !== "succeeded") throw new Error(`terragrunt-apply: ${input.unit}: ${result?.error ?? "Terragrunt did not apply it"}`);

@@ -412,7 +412,7 @@ export interface OpWave {
   hooks?: OpWaveHooks;
   /** Where this wave's jobs run (#3914). Default: the spec's `runner`. */
   runner?: OpWaveRunner;
-  /** How many of the wave's runs apply at once (#4625), over the spec's `parallelism`. */
+  /** How many of the wave's runs plan and apply at once (#4625, #4864), over the spec's `parallelism`. */
   parallelism?: number;
   /**
    * The OIDC tokens this wave's jobs get (#3914), as `{ <variable>: <audience> }`;
@@ -513,10 +513,14 @@ export interface OpWavesSpec {
    */
   step?: OpWaveStep;
   /**
-   * How many runs of a wave apply at once (#4625), a wave's own
-   * `parallelism` winning. Default 1, one at a time. Over 1 it needs `step`:
-   * a run whose wave lists one of its `dependsOn` before it waits for that
-   * one, and is blocked when it failed, as one at a time.
+   * How many runs of a wave plan and apply at once (#4625, #4864), a wave's
+   * own `parallelism` winning. Default 1, one at a time. Over 1 it needs
+   * `step`: the plans start in the wave's order and the digest lists them as
+   * one at a time does, and a run whose wave lists one of its `dependsOn`
+   * before it waits for that one to apply, and is blocked when it failed, as
+   * one at a time. Each run's context carries the wave's serial section
+   * (`DeployContext.serial`), which `terraform-apply` and `terragrunt-apply`
+   * take their inits in when the runs share a provider cache.
    */
   parallelism?: number;
   /**

@@ -73,6 +73,28 @@ export function terragruntWaveArgs(input: TerragruntWaveArgsInput): string[] {
 }
 
 /**
+ * Arguments to `terragrunt` that init a wave's units with the same filters
+ * as its plan (chant#4864), for an init that takes its turn at a shared
+ * provider cache before the plan. Throws on an empty wave, as the plan does.
+ */
+export function terragruntInitArgs(input: { units: readonly string[]; destroy?: boolean }): string[] {
+  if (input.units.length === 0) throw new Error("a Terragrunt wave needs at least one unit; with no path filter run --all would run every unit");
+  const units = [...new Set(input.units)].sort();
+  return [
+    "run",
+    "--all",
+    "--non-interactive",
+    "--no-color",
+    "--no-filters-file",
+    ...units.flatMap((u) => ["--filter", unitPathFilter(u)]),
+    ...(input.destroy ? ["--filter-allow-destroy"] : []),
+    "--",
+    "init",
+    "-input=false",
+  ];
+}
+
+/**
  * The environment a wave adds: `TG_TF_PATH` when the project names a binary,
  * nothing otherwise, so Terragrunt's own choice (tofu, then terraform, or a
  * unit's `terraform_binary`) stands.

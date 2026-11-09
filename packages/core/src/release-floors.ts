@@ -19,19 +19,19 @@
  * this constant to the next patch (#4501). The check fails while a floor
  * still names this constant after its version shipped.
  */
-export const NEXT_RELEASE = "0.124.80";
+export const NEXT_RELEASE = "0.124.81";
 
 /** The first chant whose terraform lexicon's `terraform-apply` reads take `dir` and `workspace`, and read an upstream with `resolveRoot`'s binary and `readEnv` (terragucci issue 1303). */
-export const TERRAFORM_APPLY_INSTANCE_READS_FLOOR = NEXT_RELEASE;
+export const TERRAFORM_APPLY_INSTANCE_READS_FLOOR = "0.124.80";
 
 /** The first chant whose terraform lexicon's `terraform-apply` takes `binary`, and `terraformApplyCapabilityWith({ resolveRoot })` gives each root its own binary (terragucci issue 1303). */
-export const TERRAFORM_APPLY_ROOT_BINARY_FLOOR = NEXT_RELEASE;
+export const TERRAFORM_APPLY_ROOT_BINARY_FLOOR = "0.124.80";
 
 /** The first chant whose op wave hands a step's capability the wave's `cwd` (`DeployContext.cwd`), where `terraform-apply` looks for `chant.config.*` and `terragrunt-apply` runs when the step names neither (#4854). */
-export const OP_WAVE_STEP_CWD_FLOOR = NEXT_RELEASE;
+export const OP_WAVE_STEP_CWD_FLOOR = "0.124.80";
 
 /** The first chant whose terraform lexicon's `terraform-apply` takes `workspace`: init in `default`, then `workspace select -or-create=true`, and plan, apply and output in it (#4854). */
-export const TERRAFORM_APPLY_WORKSPACE_FLOOR = NEXT_RELEASE;
+export const TERRAFORM_APPLY_WORKSPACE_FLOOR = "0.124.80";
 
 /** The first chant whose change-set member can carry `outputs`, the outputs its plan changes, and counts a member with any as a change (#4849). */
 export const CHANGE_SET_OUTPUTS_FLOOR = "0.124.79";
@@ -46,13 +46,13 @@ export const YODEL_NEW_ENVS_FLOOR = "0.124.78";
 export const YODEL_CONFLICT_REPLY_FLOOR = "0.124.78";
 
 /** The first chant with `@intentius/chant/ci-note-commands`, `chant components pr-notes` and the GitLab pipeline's `note-commands` job (`--note-commands`), and whose forge reads answer `branchRuns` and `pullRequestsUpdated` (#4785). */
-export const NOTE_COMMANDS_FLOOR = NEXT_RELEASE;
+export const NOTE_COMMANDS_FLOOR = "0.124.80";
 
 /** The first chant whose forge reads answer `compare`, `job` and, on GitLab, `artifactFile`, and whose `RunJob` names its `run`, `ref`, `tag` and `url` (#4862). */
-export const PR_FORGE_COMPARE_READS_FLOOR = NEXT_RELEASE;
+export const PR_FORGE_COMPARE_READS_FLOOR = "0.124.80";
 
 /** The first chant whose forge reads answer `headRuns`, `run`, `runJobs` and `artifacts`: a head's workflow runs (GitLab's pipelines), a run, its jobs and its artifacts by name (#4846). */
-export const PR_FORGE_RUN_READS_FLOOR = NEXT_RELEASE;
+export const PR_FORGE_RUN_READS_FLOOR = "0.124.80";
 
 /** The first chant whose `@intentius/chant/pr-forge-reads` exports the forge reads beside the clients (#4809). */
 export const PR_FORGE_READS_FLOOR = "0.124.78";

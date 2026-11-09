@@ -149,6 +149,17 @@ export interface DeployContext {
    */
   afterInit?: () => Promise<void>;
   /**
+   * Run `fn` alone among the runs beside this one that call it with the
+   * same `key` (#4864), and return what it returns. An op wave whose
+   * `parallelism` plans and applies several runs at once gives each run the
+   * wave's one section, so a capability keeps the part that cannot run twice
+   * at once to one run at a time, such as `terraform init` writing the
+   * shared provider cache (`TF_PLUGIN_CACHE_DIR`), keyed on that directory.
+   * Never nest two calls with the same key: the inner one waits on the
+   * outer. Absent where runs go one at a time: then nothing runs beside it.
+   */
+  serial?: <T>(key: string, fn: () => Promise<T>) => Promise<T>;
+  /**
    * The run's row lease (#4594), set by an apply path that plans inside its
    * steps (`run --components`, `components fan-out`, a promote). The driver
    * takes it around a step on the resource grain (./row-lease.ts); a

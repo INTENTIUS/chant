@@ -346,3 +346,76 @@ describe("terragrunt-apply runs where the wave runs (chant#4854)", () => {
     expect(new Set(calls.map((c) => c.cwd))).toEqual(new Set([dir]));
   });
 });
+
+describe("a wave's units planned at once on one provider cache (chant#4864)", () => {
+  /** The recorded stub with a delay per call (a plan's longest), `init` answered here, and how many inits and plans were ever in flight together. */
+  const slow = (calls: Call[]) => {
+    const inner = stub(calls);
+    const most = { init: 0, plan: 0 };
+    const now = { init: 0, plan: 0 };
+    const exec: TerragruntExec = async (f, args, o) => {
+      const cmd = args[0] === "run" ? args[args.indexOf("--") + 1] : undefined;
+      const kind = cmd === "init" ? "init" : cmd === "plan" ? "plan" : undefined;
+      if (kind) most[kind] = Math.max(most[kind], ++now[kind]);
+      try {
+        await new Promise((r) => setTimeout(r, kind === "plan" ? 120 : 20));
+        if (kind === "init") {
+          calls.push({ file: f, args: [...args], env: o.env });
+          return { code: 0, stdout: "", stderr: "" };
+        }
+        return await inner(f, args, o);
+      } finally {
+        if (kind) now[kind]--;
+      }
+    };
+    return { exec, most };
+  };
+  const parallel = (dir: string): OpWavesSpec => ({ ...spec(dir, false), parallelism: 2 });
+  const env = process.env.TF_PLUGIN_CACHE_DIR;
+  const withCache = async <T>(cache: string | undefined, fn: () => Promise<T>): Promise<T> => {
+    if (cache === undefined) delete process.env.TF_PLUGIN_CACHE_DIR;
+    else process.env.TF_PLUGIN_CACHE_DIR = cache;
+    try {
+      return await fn();
+    } finally {
+      if (env === undefined) delete process.env.TF_PLUGIN_CACHE_DIR;
+      else process.env.TF_PLUGIN_CACHE_DIR = env;
+    }
+  };
+
+  it("with a cache, each unit inits in its turn before its plan, and the plans run at once", async () => {
+    const dir = tmp();
+    const calls: Call[] = [];
+    const { exec, most } = slow(calls);
+    const result = await withCache(join(dir, "cache"), () => wave(parallel(dir), dir, exec));
+    expect(result.exitCode).toBe(0);
+    expect(most).toEqual({ init: 1, plan: 2 });
+    const ran = runAll(calls);
+    expect(ran.filter((r) => r[0] === "init").map((r) => r[1]).sort()).toEqual(["{./live/dev/vpc}", "{./live/prod/vpc}"]);
+    for (const unit of ["{./live/dev/vpc}", "{./live/prod/vpc}"]) {
+      const at = (cmd: string) => ran.findIndex((r) => r[0] === cmd && r[1] === unit);
+      expect(at("init")).toBeLessThan(at("plan"));
+    }
+    expect(calls.find((c) => c.args.includes("init"))!.args).toEqual(["run", "--all", "--non-interactive", "--no-color", "--no-filters-file", "--filter", "{./live/dev/vpc}", "--", "init", "-input=false"]);
+  });
+
+  it("the digest is the one a wave planned one unit at a time decides", async () => {
+    const decided = async (s: OpWavesSpec, dir: string) => {
+      const { exec } = slow([]);
+      return (await withCache(join(dir, "cache"), () => wave(s, dir, exec))).decision?.digest;
+    };
+    const one = tmp();
+    const many = tmp();
+    expect(await decided(parallel(many), many)).toBe(await decided(spec(one, false), one));
+  });
+
+  it("with no cache, the units plan at once with no init of their own", async () => {
+    const dir = tmp();
+    const calls: Call[] = [];
+    const { exec, most } = slow(calls);
+    const result = await withCache(undefined, () => wave(parallel(dir), dir, exec));
+    expect(result.exitCode).toBe(0);
+    expect(most.plan).toBe(2);
+    expect(runAll(calls).map((r) => r[0])).not.toContain("init");
+  });
+});

@@ -224,9 +224,8 @@ describe("approvals a product settled before the gate, in the wave answer (terra
     ]);
   });
 
-  test("the floor is the next release", async () => {
+  test("the floor is the release it shipped in", async () => {
     const entry = await import("./index");
-    const { NEXT_RELEASE } = await import("../release-floors");
-    expect(entry.OP_WAVE_ANSWER_APPROVALS_FLOOR).toBe(NEXT_RELEASE);
+    expect(entry.OP_WAVE_ANSWER_APPROVALS_FLOOR).toBe("0.124.80");
   });
 });
