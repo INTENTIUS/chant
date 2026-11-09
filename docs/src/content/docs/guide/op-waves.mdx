@@ -567,6 +567,18 @@ runHooks: {
 
 When `beforePlan` refuses a run or its check after init throws, the job fails the way a failed plan does and nothing in the wave applies. Given several hooks, chant calls them in order and merges their `env` maps, the later value winning. A hook with `targets` sees only the runs those patterns match. There is nothing to run them around in a wave with no `step`. Today `terraform-apply` and `sql-migrate` read the `env`, and `terraform-apply` calls the check after init; `pulumi-up` does neither yet. Check `OP_WAVE_RUN_HOOKS_FLOOR` before relying on them.
 
+The run hooks see a run's plan and apply as a whole. To time each engine command and give it variables of its own, such as a span receiver's exporter, a product builds `terraform-apply` with `terraformApplyCapabilityWith({ onCommand })` ([#4865](https://github.com/INTENTIUS/chant/issues/4865)). The hook is called before every command the step runs for a root: its `init`, `workspace select`, `plan`, `show`, `apply` and `output`, a choudoufu root's set commands, and the `init` and `output` of each upstream its `reads` name (with `upstream` set). It gets the root, the step method (`plan`, `run` or `outputs`), the binary, the subcommand's `name`, the `args`, the `cwd` and the variables chant sets, and answers `env` to add and an `after` that gets the exit code, `seconds`, `stdout` and `stderr`, on a failure too. Roots a wave runs at once each see their own commands. Check `TERRAFORM_APPLY_COMMAND_HOOK_FLOOR` before relying on it.
+
+```ts
+terraformApplyCapabilityWith({
+  resolveRoot,
+  onCommand: (c) => ({
+    env: { TRACEPARENT: traceparentFor(c.root, c.name) },
+    after: (r) => times.push({ root: c.root, command: c.name, seconds: r.seconds, code: r.code }),
+  }),
+});
+```
+
 ### Hooks outside the waves
 
 `chant run <op>` on its own has no spec file, so it runs no stage hooks. A product whose own apply command also runs outside the waves (`yodel apply dev` from a laptop) reads the same hooks at base with `opWaveHooksAtBase` and runs them the same way:
