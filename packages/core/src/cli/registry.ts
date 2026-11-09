@@ -579,6 +579,10 @@ export interface ParsedArgs {
   controlSettings?: Record<string, string>;
   /** `chant build --pr-loop --stale-notes` (#4628): the note carries its target commit, and a push to the target branch marks open notes stale. */
   staleNotes?: boolean;
+  /** `chant build --pr-loop --note-commands` (#4785): on GitLab, the scheduled job that answers the product's comment commands by polling merge request notes. */
+  noteCommands?: boolean;
+  /** `chant components pr-notes --locks` (#4785): the pipeline has the lock and unlock jobs, so a lock or unlock note starts them. */
+  locks?: boolean;
   /** `chant components pr-post --stale` (#4628): mark the open pull requests' notes stale after the target branch moved. */
   stale?: boolean;
   /** `chant components pr-post --tip <sha>` (#4628): the target branch's commit, which the note carries, or with --stale its commit now. */

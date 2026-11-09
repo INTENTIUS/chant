@@ -34,7 +34,7 @@ import {
   type CiProductWords,
   type CiProductWordsInput,
 } from "../ci-product-words";
-import { prActionJob, prCommentLockJobs, prCommentPreviewJob, prLoopJobs, prLoopPostJob, prLoopRunner, prStaleJob, withProductBin, type PrActionJob, type PrCommentLockJob, type PrCommentPreviewJob, type PrLoopJob, type PrLoopPipelineOptions } from "./pr-pipeline";
+import { prActionJob, prCommentLockJobs, prCommentPreviewJob, prLoopJobs, prLoopPostJob, prLoopRunner, prNoteCommandsJob, prStaleJob, withProductBin, type PrActionJob, type PrCommentLockJob, type PrCommentPreviewJob, type PrLoopJob, type PrLoopPipelineOptions } from "./pr-pipeline";
 import type { DriverComponent } from "./driver";
 import type { ScheduledOpSpec } from "../lexicon";
 import type { CiRunner } from "../ci-jobs";
@@ -155,6 +155,15 @@ export interface ProductPipelineJobs {
    * lexicons render the same job, `stale-notes`.
    */
   stale?: { command: string; env: Record<string, string>; runner?: CiRunner };
+  /**
+   * GitLab's comment commands (#4785), with `noteCommands`: the command of
+   * the `note-commands` job, which a schedule starts with
+   * `CHANT_NOTE_COMMANDS=1` on the target branch. It polls the merge
+   * requests' notes and starts the jobs the commands ask for. The GitLab
+   * lexicon renders the same job from `chant build --pr-loop
+   * --note-commands`. Refused on GitHub and Forgejo.
+   */
+  noteCommands?: { command: string; runner?: CiRunner };
   /**
    * The agent (#4616), with `agent`: the comment it answers, `/<product>
    * agent <ask>`, and the scheduled Op spec whose generated workflow runs
@@ -301,6 +310,9 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   if (action) out.action = { ...action, ...(prLoopRunner(options, "apply") !== undefined ? { runner: prLoopRunner(options, "apply")! } : {}) };
   const stale = prStaleJob(forge, env, prLoop, member);
   if (stale) out.stale = { ...stale, ...defaultRunner };
+  // #4785: GitLab's comment commands, polled from the notes; waves on merge are retried by an apply on a merged merge request.
+  const notes = prNoteCommandsJob(forge, { ...prLoop, ...(options.waves || options.componentWaves ? { applyOnMerge: true } : {}) });
+  if (notes) out.noteCommands = { ...notes, ...defaultRunner };
   const preview = prCommentPreviewJob(forge, env, prLoop, member);
   if (preview) out.preview = { ...preview, ...(defaultRunner.runner !== undefined ? { noteRunner: defaultRunner.runner } : {}) };
   // #4616: the agent answers its comment from a workflow of its own, generated from this spec.

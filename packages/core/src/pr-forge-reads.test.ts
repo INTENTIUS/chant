@@ -433,3 +433,56 @@ describe("workflow runs, jobs and artifacts (#4846)", () => {
     expect(urls(calls)).toEqual([`GET https://gitlab.com${P}/pipelines/30/jobs?per_page=100&page=1`, `GET https://gitlab.com${P}/jobs?per_page=100&page=1`]);
   });
 });
+
+describe("a branch's runs, and the pull requests updated since a time (#4785)", () => {
+  const gh = { apiBase: "https://api.github.com", repo: "acme/infra", token: "t0k" };
+  const gl = { apiBase: "https://gitlab.com/api/v4", project: "acme/infra", token: "glpat" };
+  const P = "/api/v4/projects/acme%2Finfra";
+
+  test("github: a branch's push runs, newest first", async () => {
+    const { fetch, calls } = fakeFetch({
+      "GET /repos/acme/infra/actions/runs": { workflow_runs: [{ id: 3, event: "push", head_sha: SHA, head_branch: "main", status: "completed" }, { id: 4, event: "push", head_sha: MERGED, head_branch: "main", status: "queued" }] },
+    });
+    expect((await githubReads({ ...gh, fetch }).branchRuns("main", { event: "push" })).map((r) => [r.id, r.headSha])).toEqual([
+      [4, MERGED],
+      [3, SHA],
+    ]);
+    expect(urls(calls)).toEqual(["GET https://api.github.com/repos/acme/infra/actions/runs?branch=main&event=push&per_page=100&page=1"]);
+  });
+
+  test("gitlab: a branch's pipelines by ref and source, another ref's left out", async () => {
+    const { fetch, calls } = fakeFetch({
+      [`GET ${P}/pipelines`]: [
+        { id: 12, sha: MERGED, ref: "main", source: "push", status: "success" },
+        { id: 11, sha: SHA, ref: "ci/green/1", source: "push", status: "success" },
+      ],
+    });
+    expect((await gitlabReads({ ...gl, fetch }).branchRuns("main", { event: "push" })).map((r) => r.id)).toEqual([12]);
+    expect(urls(calls)).toEqual([`GET https://gitlab.com${P}/pipelines?ref=main&source=push&order_by=id&sort=desc&per_page=100&page=1`]);
+  });
+
+  test("gitlab: the merge requests updated since a time, forks' among them", async () => {
+    const { fetch, calls } = fakeFetch({
+      [`GET ${P}/merge_requests`]: [
+        { iid: 3, state: "opened", source_branch: "a", source_project_id: 9, target_project_id: 1 },
+        { iid: 2, state: "merged", source_branch: "b", merge_commit_sha: MERGED },
+      ],
+    });
+    expect((await gitlabReads({ ...gl, fetch }).pullRequestsUpdated("2026-11-07T00:00:00.000Z")).map((m) => [m.number, m.state, m.sameRepo])).toEqual([
+      [3, "open", false],
+      [2, "merged", true],
+    ]);
+    expect(urls(calls)).toEqual([`GET https://gitlab.com${P}/merge_requests?state=all&updated_after=2026-11-07T00%3A00%3A00.000Z&order_by=updated_at&sort=desc&per_page=100&page=1`]);
+  });
+
+  test("github: newest update first, stopping at the first one older than the time", async () => {
+    const { fetch, calls } = fakeFetch({
+      "GET /repos/acme/infra/pulls": [
+        { number: 9, state: "open", updated_at: "2026-11-08T00:00:00Z", head: { ref: "x", repo: { full_name: "eve/infra" } } },
+        { number: 8, state: "closed", updated_at: "2026-11-01T00:00:00Z", head: { ref: "y" } },
+      ],
+    });
+    expect((await githubReads({ ...gh, fetch }).pullRequestsUpdated("2026-11-07T00:00:00Z")).map((p) => [p.number, p.sameRepo])).toEqual([[9, false]]);
+    expect(urls(calls)).toEqual(["GET https://api.github.com/repos/acme/infra/pulls?state=all&sort=updated&direction=desc&per_page=100&page=1"]);
+  });
+});

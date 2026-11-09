@@ -53,6 +53,8 @@ async function engineSetupFor(path: string): Promise<string[]> {
  * `--pr-env` (#4298) adds the jobs of a pull request's environment.
  * `--apply-before-merge` (#4301) writes the apply job that applies an open
  * pull request before it merges, beside the record job.
+ * `--note-commands` (#4785) writes GitLab's scheduled job that answers the
+ * product's comment commands by polling the merge requests' notes.
  * `--preview-comment` (#4620) writes the jobs that answer the product's plan
  * comment with a preview of the pull request's head. `--action-job` (#4654)
  * writes the job that answers the product's action comment and a dispatch
@@ -88,6 +90,8 @@ function prLoopOption(args: CommandContext["args"], reportUrl: string | undefine
     ...(args.actionJob ? { actionJob: true } : {}),
     // #4628: the note carries its target commit, and a push marks the open notes stale.
     ...(args.staleNotes ? { staleNotes: true } : {}),
+    // #4785: GitLab's scheduled job that answers the comment commands from the merge requests' notes.
+    ...(args.noteCommands ? { noteCommands: true } : {}),
     ...(args.requires ? { applyRequires: args.requires } : {}),
     // #4625: where the jobs run, and what the jobs that plan or apply get.
     ...(args.prRunners ? { runners: Object.fromEntries(Object.entries(args.prRunners).map(([stage, labels]) => [stage, labels.length === 1 ? labels[0]! : labels])) } : {}),
@@ -225,7 +229,9 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
   const lexicon = args.generate as string;
 
   // #4636, #4629, #4627: the pull request loop's flags are checked before anything loads.
-  const flagsProblem = prLoopFlagsProblem(args);
+  // #4785: the note-commands job polls GitLab's notes; GitHub and Forgejo start a workflow on a comment.
+  const notesProblem = args.noteCommands && !args.prLoop ? "--note-commands adds a job to the pull request loop, so it needs --pr-loop" : args.noteCommands && lexicon !== "gitlab" ? `--note-commands polls GitLab's merge request notes, and ${lexicon} starts a workflow on a comment; drop --note-commands` : undefined;
+  const flagsProblem = notesProblem ?? prLoopFlagsProblem(args);
   if (flagsProblem) {
     console.error(formatError({ message: flagsProblem }));
     return 1;
