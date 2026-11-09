@@ -125,9 +125,10 @@ describe("compose and state give one verdict per root (chant#4478)", () => {
 
 describe("the parts of the verdict", () => {
   test("the lockable list is the one LOCKS spells", () => {
-    expect(LOCKABLE_BACKENDS).toEqual(["s3", "gcs", "azurerm", "local"]);
-    expect(LOCKS).toBe("chant locks and writes s3 (with use_lockfile = true), gcs, azurerm and local states");
-    for (const type of LOCKABLE_BACKENDS) expect(lockRefusal({ backend: { type, config: { use_lockfile: true } } })).toBeUndefined();
+    expect(LOCKABLE_BACKENDS).toEqual(["s3", "gcs", "azurerm", "local", "http"]);
+    expect(LOCKS).toBe("chant locks and writes s3 (with use_lockfile = true), gcs, azurerm, local and GitLab-managed http states");
+    const gitlab = "https://gitlab.example.test/api/v4/projects/7/terraform/state/net";
+    for (const type of LOCKABLE_BACKENDS) expect(lockRefusal({ backend: { type, config: { use_lockfile: true, address: gitlab } } })).toBeUndefined();
   });
 
   test("TF_CLI_ARGS and TF_CLI_ARGS_init -backend-config flags, pairs and files, later over earlier", () => {

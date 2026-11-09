@@ -6,9 +6,15 @@
  * `-backend-config` file or the job's flags supplied it. Nothing here reads
  * a state's contents.
  *
- * chant locks and writes four backends: s3 with `use_lockfile`, gcs, azurerm
- * and local. Every other backend, and a root with a `cloud` block, comes back
- * as a {@link StateRefusal} naming why, and is never locked.
+ * chant locks and writes five backends: s3 with `use_lockfile`, gcs, azurerm,
+ * local, and an http backend whose address is a GitLab project's state API
+ * (./gitlab.ts, #4793). Every other backend, and a root with a `cloud` block,
+ * comes back as a {@link StateRefusal} naming why, and is never locked.
+ *
+ * A read of the state's versions holds no lock, so it is not held to the lock
+ * verdict: {@link readableStateObject} reads an s3 backend without
+ * `use_lockfile` all the same, and goes by what `init` recorded alone
+ * (./versions.ts, #4793).
  *
  * This is also the one place that answers which backend a root has and
  * whether chant can lock it (chant#4478). Before `init` the answer comes
@@ -25,8 +31,10 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
+import type { StoreHints } from "@intentius/chant/object-store";
 import { AZURE_AUTHORITY, type AzureOidc } from "./azure-blob";
 import { GCS_ENDPOINT, type GcsTarget } from "./gcs";
+import { gitlabState, isGitLabAddress, shownUrl, type GitLabState } from "./gitlab";
 import { s3FromEnv, type S3Target } from "./s3";
 import { isJsonConfigFile, listConfigFilesSafe } from "../hcl/files";
 import { blockBody, jsonBlocks, rootTexts } from "../compose/hcl";
@@ -70,8 +78,14 @@ export interface AzureState {
   key: string;
   /** The backend snapshots the blob before each write (`snapshot = true`). */
   snapshot: boolean;
-  /** The account's blob endpoint. */
-  endpoint: string;
+  /** The account's blob endpoint, when the cloud is one chant knows; else `metadataHost` names it. */
+  endpoint?: string;
+  /**
+   * The host of the cloud's metadata (`metadata_host`), whose storage suffix
+   * names the endpoint, for a cloud other than public, china or
+   * usgovernment. The store reads it when it first calls the account (#4793).
+   */
+  metadataHost?: string;
   auth: AzureAuth;
 }
 
@@ -90,28 +104,47 @@ export interface StateRefusal {
   reason: string;
 }
 
-/** Where a root's state lives, or why chant does not lock it. */
-export type StateObject = S3State | GcsState | AzureState | LocalState | StateRefusal;
+/** Where a root's state lives, or why chant does not lock it. An http backend's is a GitLab-managed state (./gitlab.ts). */
+export type StateObject = S3State | GcsState | AzureState | LocalState | GitLabState | StateRefusal;
 
 /** A state in a bucket or a container. */
 export type StoredState = S3State | GcsState | AzureState;
 
 /** A state chant locks and writes. */
-export type LockableState = StoredState | LocalState;
+export type LockableState = StoredState | LocalState | GitLabState;
 
 export const isRefused = (o: StateObject): o is StateRefusal => "refused" in o;
 
 /** Whether the state is in a bucket or a container: s3, gcs or azurerm. */
-export const isStored = (o: StateObject): o is StoredState => !isRefused(o) && o.backend !== "local";
+export const isStored = (o: StateObject): o is StoredState => !isRefused(o) && o.backend !== "local" && o.backend !== "http";
 
-/** The backend types whose state chant locks and writes itself, s3 only with `use_lockfile = true` (#4437). The one list (chant#4478). */
-export const LOCKABLE_BACKENDS: readonly string[] = ["s3", "gcs", "azurerm", "local"];
+/** Whether the state is a GitLab-managed one, an http backend's (#4793). */
+export const isGitLabState = (o: StateObject): o is GitLabState => !isRefused(o) && o.backend === "http";
+
+/**
+ * The backend types whose state chant locks and writes itself (#4437), s3
+ * only with `use_lockfile = true` and http only at a GitLab project's state
+ * API (#4793). The one list (chant#4478).
+ */
+export const LOCKABLE_BACKENDS: readonly string[] = ["s3", "gcs", "azurerm", "local", "http"];
 
 /** What a refusal says chant locks, spelled from {@link LOCKABLE_BACKENDS}. */
 export const LOCKS = (() => {
-  const names = LOCKABLE_BACKENDS.map((b) => (b === "s3" ? "s3 (with use_lockfile = true)" : b));
+  const names = LOCKABLE_BACKENDS.map((b) => (b === "s3" ? "s3 (with use_lockfile = true)" : b === "http" ? "GitLab-managed http" : b));
   return `chant locks and writes ${names.slice(0, -1).join(", ")} and ${names.at(-1)} states`;
 })();
+
+/**
+ * A product's words for the messages a state's credentials refusal gives: what
+ * the bucket and role are called, the STS session name, and the keys that
+ * give the job an identity (#4793). Default chant's.
+ */
+export interface StateStoreWords {
+  setting?: string;
+  roleSetting?: string;
+  sessionName?: string;
+  hints?: StoreHints;
+}
 
 const str = (v: unknown): string | undefined => (typeof v === "string" && v !== "" ? v : undefined);
 
@@ -342,13 +375,17 @@ export function readBackend(dir: string, input: ReadBackendInput = {}): BackendR
  * Whether chant can lock the root's state, from one {@link BackendReading}:
  * undefined when it can, else the refusal and why. The one verdict the
  * composition's `backend` fallback (#4438) and the state refusals (#4437)
- * both give (chant#4478).
+ * both give (chant#4478). An http backend's address is the configuration's,
+ * else `env`'s TF_HTTP_ADDRESS, as the binary reads it.
  */
-export function lockRefusal(reading: BackendReading): StateRefusal | undefined {
+export function lockRefusal(reading: BackendReading, env: NodeJS.ProcessEnv = {}): StateRefusal | undefined {
   const b = reading.backend;
   if (reading.disagreement) return { backend: b.type, refused: "disagree", reason: `${reading.disagreement}, so chant cannot tell which state to lock; run init again with the configuration the root means; ${LOCKS}` };
   if (b.type === "cloud") return { backend: b.type, refused: "cloud", reason: `${CLOUD_REASON}; ${LOCKS}` };
   if (!LOCKABLE_BACKENDS.includes(b.type)) return { backend: b.type, refused: "backend", reason: `the root's backend is ${b.type}; ${LOCKS}` };
+  if (b.type === "http" && !isGitLabAddress(str(b.config.address) ?? str(env.TF_HTTP_ADDRESS))) {
+    return { backend: "http", refused: "backend", reason: `the root's http backend ${httpAddressNamed(b, env)}; ${LOCKS}` };
+  }
   if (b.type === "s3" && b.config.use_lockfile !== true && b.config.use_lockfile !== "true") {
     return { backend: "s3", refused: "no-lockfile", reason: `the s3 backend takes no lock file (use_lockfile = true is unset), so chant cannot hold its lock; ${LOCKS}` };
   }
@@ -375,17 +412,47 @@ export function stateObject(
     ...(flags.backendConfig ? { backendConfig: flags.backendConfig } : {}),
     ...(flags.backendConfigFiles ? { backendConfigFiles: flags.backendConfigFiles } : {}),
   });
-  const refusal = lockRefusal(reading);
+  const refusal = lockRefusal(reading, env);
   if (refusal) return refusal;
-  const chosen = reading.backend;
-  const ws = workspaceOf(dir, env);
+  return backendObject(reading.backend, workspaceOf(dir, env), env);
+}
+
+/** How an http backend's address reads in a refusal: which address, or that it names none. */
+function httpAddressNamed(b: InitialisedBackend, env: NodeJS.ProcessEnv): string {
+  const address = str(b.config.address) ?? str(env.TF_HTTP_ADDRESS);
+  return address ? `address ${shownUrl(address)} is not a GitLab project's state API (.../projects/<id>/terraform/state/<name>)` : "names no address";
+}
+
+/**
+ * Where the root's state is for a read of its versions (#4793), from what
+ * `init` recorded (`backend` stands in for it): a read holds no lock, so the
+ * lock verdict's refusals that are about holding one do not apply. An s3
+ * backend without `use_lockfile` is read all the same (`lockfile: false`),
+ * and a root's code is not compared with the record, since the record is
+ * where the binary wrote. A `cloud` backend and any type chant reads no
+ * versions of is refused (`backend`). No backend recorded reads as a local
+ * one. `words` names the product's settings in a credentials refusal.
+ */
+export function readableStateObject(dir: string, env: NodeJS.ProcessEnv = process.env, backend: InitialisedBackend | undefined = initialisedBackend(dir, env), words: StateStoreWords = {}): StateObject {
+  const b = backend ?? { type: "local", config: {} };
+  if (b.type === "http" && !gitlabState(b.config, env)) return { backend: "http", refused: "backend", reason: `the root's http backend ${httpAddressNamed(b, env)}; ${READS}` };
+  if (!LOCKABLE_BACKENDS.includes(b.type)) return { backend: b.type, refused: "backend", reason: `the root's backend is ${b.type}; ${READS}` };
+  return backendObject(b, workspaceOf(dir, env), env, words);
+}
+
+/** What a read refusal says chant reads. */
+const READS = "chant reads the state of s3, gcs, azurerm, local and GitLab-managed http backends";
+
+/** The state a backend of a type chant reads names, in workspace `ws`, or why it names none. */
+function backendObject(chosen: InitialisedBackend, ws: string, env: NodeJS.ProcessEnv, words: StateStoreWords = {}): StateObject {
   if (chosen.type === "local") {
     const c = chosen.config;
     const path = ws === "default" ? (str(c.path) ?? "terraform.tfstate") : join(str(c.workspace_dir) ?? "terraform.tfstate.d", ws, "terraform.tfstate");
     return { backend: "local", path };
   }
-  if (chosen.type === "gcs") return gcsObject(chosen.config, ws, env);
-  if (chosen.type === "azurerm") return azureObject(chosen.config, ws, env);
+  if (chosen.type === "http") return gitlabState(chosen.config, env) ?? { backend: "http", refused: "backend", reason: `the root's http backend ${httpAddressNamed(chosen, env)}; ${LOCKS}` };
+  if (chosen.type === "gcs") return gcsObject(chosen.config, ws, env, words);
+  if (chosen.type === "azurerm") return azureObject(chosen.config, ws, env, words);
   const c = chosen.config;
   const bucket = str(c.bucket);
   const key = str(c.key);
@@ -398,7 +465,7 @@ export function stateObject(
   const jobEnv = { ...env, AWS_REGION: region, ...(access && secret ? { AWS_ACCESS_KEY_ID: access, AWS_SECRET_ACCESS_KEY: secret, AWS_SESSION_TOKEN: str(c.token) ?? "" } : {}) };
   let target: S3Target;
   try {
-    target = s3FromEnv({ bucket, ...(endpoint ? { endpoint } : {}) }, jobEnv);
+    target = s3FromEnv({ bucket, ...(endpoint ? { endpoint } : {}) }, jobEnv, words);
   } catch (e) {
     return { backend: "s3", refused: "credentials", reason: `the job has no credentials to read s3://${bucket}: ${(e as Error).message}` };
   }
@@ -408,7 +475,7 @@ export function stateObject(
     key: s3StateKey(key, ws, str(c.workspace_key_prefix)),
     region,
     ...(endpoint ? { endpoint: endpoint.replace(/\/+$/, "") } : {}),
-    lockfile: true,
+    lockfile: c.use_lockfile === true || c.use_lockfile === "true",
     target,
   };
 }
@@ -423,7 +490,7 @@ const gcsEndpoint = (e: string): string => e.replace(/\/+$/, "").replace(/\/stor
  * JSON), GOOGLE_BACKEND_CREDENTIALS, GOOGLE_CREDENTIALS, and
  * GOOGLE_APPLICATION_CREDENTIALS.
  */
-function gcsObject(c: Record<string, unknown>, ws: string, env: NodeJS.ProcessEnv): StateObject {
+function gcsObject(c: Record<string, unknown>, ws: string, env: NodeJS.ProcessEnv, words: StateStoreWords): StateObject {
   const bucket = str(c.bucket);
   if (!bucket) return { backend: "gcs", refused: "config", reason: "the gcs backend's bucket is not in the configuration init recorded" };
   const raw = str(c.prefix) ?? "";
@@ -437,7 +504,10 @@ function gcsObject(c: Record<string, unknown>, ws: string, env: NodeJS.ProcessEn
   if (token) target = { ...where, accessToken: token };
   else if (creds) target = creds.trim().startsWith("{") ? { ...where, credentialsJson: creds } : { ...where, credentialsFile: creds };
   else if (env.GOOGLE_APPLICATION_CREDENTIALS) target = { ...where, credentialsFile: env.GOOGLE_APPLICATION_CREDENTIALS };
-  else return { backend: "gcs", refused: "credentials", reason: `the job has no credentials to read gs://${bucket}: set GOOGLE_APPLICATION_CREDENTIALS, GOOGLE_CREDENTIALS or GOOGLE_OAUTH_ACCESS_TOKEN` };
+  else {
+    const how = words.hints?.gcp ? `give the job ${words.hints.gcp} (it sets GOOGLE_APPLICATION_CREDENTIALS), or set GOOGLE_CREDENTIALS or GOOGLE_OAUTH_ACCESS_TOKEN` : "set GOOGLE_APPLICATION_CREDENTIALS, GOOGLE_CREDENTIALS or GOOGLE_OAUTH_ACCESS_TOKEN";
+    return { backend: "gcs", refused: "credentials", reason: `the job has no credentials to read gs://${bucket}: ${how}` };
+  }
   return { backend: "gcs", bucket, key: `${prefix}${ws}.tfstate`, lock: `${prefix}${ws}.tflock`, target };
 }
 
@@ -452,19 +522,20 @@ const CLOUD_ENDPOINTS: Record<string, { storage: string; authority: string }> = 
  * An azurerm backend's state: the blob `key` in `container_name` of
  * `storage_account_name`, `<key>env:<workspace>` in another workspace, with
  * the credentials the backend would use: `access_key` (ARM_ACCESS_KEY),
- * `sas_token` (ARM_SAS_TOKEN), else the job's OIDC identity. An
- * `environment` other than public, china or usgovernment is refused: its
- * storage suffix would need the metadata lookup terragucci makes and chant
- * does not.
+ * `sas_token` (ARM_SAS_TOKEN), else the job's OIDC identity. A backend that
+ * names `metadata_host` (ARM_METADATA_HOSTNAME) gets its endpoint from that
+ * cloud's metadata, which the store reads (#4793); an `environment` other
+ * than public, china or usgovernment without one is refused.
  */
-function azureObject(c: Record<string, unknown>, ws: string, env: NodeJS.ProcessEnv): StateObject {
+function azureObject(c: Record<string, unknown>, ws: string, env: NodeJS.ProcessEnv, words: StateStoreWords): StateObject {
   const account = str(c.storage_account_name);
   const container = str(c.container_name);
   const base = str(c.key);
   if (!account || !container || !base) return { backend: "azurerm", refused: "config", reason: "the azurerm backend's storage_account_name, container_name or key is not in the configuration init recorded" };
   const key = ws === "default" ? base : `${base}env:${ws}`;
   const cloud = CLOUD_ENDPOINTS[str(c.environment) ?? env.ARM_ENVIRONMENT ?? "public"];
-  if (!cloud) return { backend: "azurerm", refused: "config", reason: `the azurerm backend's environment ${str(c.environment) ?? env.ARM_ENVIRONMENT} is not public, china or usgovernment` };
+  const metadataHost = str(c.metadata_host) ?? env.ARM_METADATA_HOSTNAME ?? env.ARM_METADATA_HOST;
+  if (!cloud && !metadataHost) return { backend: "azurerm", refused: "config", reason: `the azurerm backend's environment ${str(c.environment) ?? env.ARM_ENVIRONMENT} is not public, china or usgovernment, and it names no metadata_host` };
   const accessKey = str(c.access_key) ?? env.ARM_ACCESS_KEY;
   const sas = str(c.sas_token) ?? env.ARM_SAS_TOKEN;
   const tenantId = str(c.tenant_id) ?? env.ARM_TENANT_ID;
@@ -473,15 +544,19 @@ function azureObject(c: Record<string, unknown>, ws: string, env: NodeJS.Process
   let auth: AzureAuth;
   if (accessKey) auth = { accountKey: accessKey };
   else if (sas) auth = { sas };
-  else if (tenantId && clientId && tokenFile) auth = { oidc: { tenantId, clientId, tokenFile, authority: (env.AZURE_AUTHORITY_HOST || cloud.authority).replace(/\/+$/, "") } };
-  else return { backend: "azurerm", refused: "credentials", reason: `the job has no credentials to read the container ${container} of ${account}: set ARM_ACCESS_KEY, ARM_SAS_TOKEN, or ARM_TENANT_ID, ARM_CLIENT_ID and ARM_OIDC_TOKEN_FILE_PATH` };
-  return { backend: "azurerm", account, container, key, snapshot: c.snapshot === true || env.ARM_SNAPSHOT === "true", endpoint: `https://${account}.blob.${cloud.storage}`, auth };
+  else if (tenantId && clientId && tokenFile) auth = { oidc: { tenantId, clientId, tokenFile, authority: (env.AZURE_AUTHORITY_HOST || cloud?.authority || AZURE_AUTHORITY).replace(/\/+$/, "") } };
+  else {
+    const how = words.hints?.azure ? `give the job ${words.hints.azure} (it sets ARM_TENANT_ID, ARM_CLIENT_ID and ARM_OIDC_TOKEN_FILE_PATH), or set ARM_ACCESS_KEY` : "set ARM_ACCESS_KEY, ARM_SAS_TOKEN, or ARM_TENANT_ID, ARM_CLIENT_ID and ARM_OIDC_TOKEN_FILE_PATH";
+    return { backend: "azurerm", refused: "credentials", reason: `the job has no credentials to read the container ${container} of ${account}: ${how}` };
+  }
+  return { backend: "azurerm", account, container, key, snapshot: c.snapshot === true || env.ARM_SNAPSHOT === "true", ...(metadataHost ? { metadataHost } : { endpoint: `https://${account}.blob.${cloud!.storage}` }), auth };
 }
 
-/** `s3://<bucket>/<key>`, `gs://<bucket>/<key>`, `az://<account>/<container>/<key>`, or the local file's path; undefined for a refusal. */
+/** `s3://<bucket>/<key>`, `gs://<bucket>/<key>`, `az://<account>/<container>/<key>`, a GitLab state's address without its credentials, or the local file's path; undefined for a refusal. */
 export function stateLocation(o: StateObject): string | undefined {
   if (isRefused(o)) return undefined;
   if (o.backend === "local") return o.path;
+  if (o.backend === "http") return shownUrl(o.address);
   if (o.backend === "gcs") return `gs://${o.bucket}/${o.key}`;
   if (o.backend === "azurerm") return `az://${o.account}/${o.container}/${o.key}`;
   return `s3://${o.bucket}/${o.key}`;

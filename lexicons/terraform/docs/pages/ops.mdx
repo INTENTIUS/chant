@@ -112,6 +112,20 @@ A lock release, a state migration's writes and a pull request's copy of a root r
 
 The plugin registers the same operations as `terraform-state-unlock`, `terraform-state-push` and `terraform-copy`. A run of the first two that still waits throws an error whose `exitCode` is 3.
 
+### State versions
+
+A root's state store reads the versions its backend keeps ([#4793](https://github.com/INTENTIUS/chant/issues/4793)), from `@intentius/chant-lexicon-terraform/state`. `stateStore(object, dir)` gives each store `version(pin?)`, `hasVersion(id)`, `readVersion(id)`, `isAt(id)` and, where the store has a list call, `listVersions()`. A version is read from the object's metadata; its body is read only when `readVersion` asks for it.
+
+| Backend | Version id | When it keeps none |
+|---|---|---|
+| s3 | the object's `x-amz-version-id` | bucket versioning is off |
+| gcs | the object's generation | object versioning is off |
+| azurerm | the blob's `x-ms-version-id`, else the time of a snapshot `version(true)` takes when the backend sets `snapshot = true` | blob versioning is off and the backend takes no snapshots |
+| http (GitLab) | the state's serial | never; GitLab's API has no list of versions, so `listVersions` is absent |
+| local | none | always |
+
+`readStateVersion(dir, env, { fetch?, backend?, words? })` answers what an apply left as `{ backend, location?, version_id?, versioning, note? }`, with `versioning` `on`, `off` or `unknown`, and never throws. It goes by what `init` recorded (`backend` stands in for it, such as a Terragrunt unit's evaluated `remote_state`), and a read holds no lock, so an s3 backend without `use_lockfile` is read as well (`readableStateObject`). A pg, kubernetes or consul backend, or an http backend at any address but GitLab's state API, is `off` with why; any other backend is `unknown`. `listStateVersions(location, env, { fetch?, words? })` lists every version of an `s3://`, `gs://` or `az://` location with the job's own identity, newest first, and answers `skipped` or `error` with why. `words` puts a product's setting names and identity hints in a credentials refusal. A backend that names `metadata_host` gets its blob endpoint from that cloud's metadata. `TERRAFORM_STATE_VERSION_READS_FLOOR` is the first chant with these reads.
+
 ### Actions outside waves
 
 A Terraform `action` block (Terraform 1.14 or newer) can run on its own as a day-2 action, such as a key rotation or a cache flush. `invokeAction` in `@intentius/chant-lexicon-terraform/action-ops` runs it under a gated request, with fixed arguments only:
@@ -160,7 +174,7 @@ A member that cannot compose leaves the group and plans root by root as without 
 | `binary` | Members run different binaries, or choudoufu is too old to run estates as one. |
 | `identity` | The member applies under another cloud identity than the rest: `ci.identity.cloud` resolved for its root as the target. A root matches a target glob by its key in `terraform.roots` or by its directory relative to the project, and the first rule either matches wins. |
 | `workspace` | The root plans in a workspace other than `default`. |
-| `backend` | The backend is one chant does not lock itself (anything but s3 with `use_lockfile`, gcs, azurerm and local), a `cloud` block, a root whose code and `-backend-config` flags disagree with what `init` last recorded, or a root without a `live` block among estates. The backend is read once, for this and for the state locks: the code with `TF_CLI_ARGS`, `TF_CLI_ARGS_init`, the keys of the `backendConfigFiles` and `backendConfig` over it, compared with `.terraform/terraform.tfstate` when init has run, and a disagreement names both. |
+| `backend` | The backend is one chant does not lock itself (anything but s3 with `use_lockfile`, gcs, azurerm, local, and an http backend whose address is a GitLab project's state API, [#4793](https://github.com/INTENTIUS/chant/issues/4793)), a `cloud` block, a root whose code and `-backend-config` flags disagree with what `init` last recorded, or a root without a `live` block among estates. The backend is read once, for this and for the state locks: the code with `TF_CLI_ARGS`, `TF_CLI_ARGS_init`, the keys of the `backendConfigFiles` and `backendConfig` over it, compared with `.terraform/terraform.tfstate` when init has run, and a disagreement names both. |
 | `provider-lock` | Two members lock one provider at different versions. |
 | `read` | A member reads another through a `terraform_remote_state` with `count` or `for_each`, or from inside a module. |
 | `import` | An `import` block takes no literal string `id`. |

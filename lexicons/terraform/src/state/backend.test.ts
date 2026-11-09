@@ -104,11 +104,13 @@ describe("a state chant does not lock", () => {
   });
 
   it("is any other backend, named by its type", () => {
-    for (const type of ["pg", "kubernetes", "consul", "http", "remote", "cos"]) {
+    for (const type of ["pg", "kubernetes", "consul", "remote", "cos"]) {
       const o = stateObject(initialised(type, {}), ENV);
       expect(isRefused(o)).toBe(true);
       expect(o).toMatchObject({ backend: type, refused: "backend", reason: expect.stringContaining(`backend is ${type}`) });
     }
+    // An http backend is locked at a GitLab project's state API only (#4793).
+    expect(stateObject(initialised("http", {}), ENV)).toMatchObject({ backend: "http", refused: "backend", reason: expect.stringContaining("http backend names no address") });
   });
 
   it("is an s3 backend without its bucket or key, or without credentials", () => {

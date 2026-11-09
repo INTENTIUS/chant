@@ -172,7 +172,7 @@ export interface GitLabStateStore extends StateStore {
    * reads the state and keeps those two fields only.
    */
   serial(): Promise<{ serial: number; lineage?: string } | undefined>;
-  /** Whether GitLab keeps the version with this serial: a HEAD, so no state is read. */
+  /** Whether GitLab keeps the version with this serial: a HEAD, so no state is read. An id that is not a serial is none. */
   hasVersion(serial: string | number): Promise<boolean>;
   /** One version of the state, or undefined when GitLab keeps no version with that serial. */
   readVersion(serial: string | number): Promise<string | undefined>;
@@ -248,23 +248,36 @@ export function gitlabStore(s: GitLabState, fetchFn: GitLabFetch = defaultFetch,
     if (!r.ok) throw answered("a write of", url, r.status, text);
   };
 
+  /** The serial and lineage of the state GitLab holds now, read from the state, or undefined when it holds none. */
+  const serialNow = async (): Promise<{ serial: number; lineage?: string } | undefined> => {
+    const text = await read(s.address);
+    if (text === undefined) return undefined;
+    let doc: { serial?: unknown; lineage?: unknown };
+    try {
+      doc = JSON.parse(text) as typeof doc;
+    } catch {
+      throw new StoreError(`GitLab answered ${location} with no state`);
+    }
+    if (typeof doc.serial !== "number") throw new StoreError(`the state at ${location} has no serial`);
+    return { serial: doc.serial, ...(typeof doc.lineage === "string" ? { lineage: doc.lineage } : {}) };
+  };
+
   return {
     backend: "http",
     location,
     lockLocation: shownUrl(s.lockAddress ?? s.address),
-    serial: async () => {
-      const text = await read(s.address);
-      if (text === undefined) return undefined;
-      let doc: { serial?: unknown; lineage?: unknown };
-      try {
-        doc = JSON.parse(text) as typeof doc;
-      } catch {
-        throw new StoreError(`GitLab answered ${location} with no state`);
-      }
-      if (typeof doc.serial !== "number") throw new StoreError(`the state at ${location} has no serial`);
-      return { serial: doc.serial, ...(typeof doc.lineage === "string" ? { lineage: doc.lineage } : {}) };
+    serial: serialNow,
+    // The version id of a GitLab-managed state is its serial (#4793).
+    version: async () => {
+      const now = await serialNow();
+      return now ? { exists: true, versionId: String(now.serial) } : { exists: false };
+    },
+    isAt: async (id) => {
+      const now = await serialNow();
+      return now !== undefined && String(now.serial) === id;
     },
     hasVersion: async (serial) => {
+      if (!/^\d+$/.test(String(serial))) return false;
       const url = gitlabVersionUrl(s, serial);
       const r = await fetchFn(url, { method: "HEAD", headers: headers(s) });
       if (r.status === 404) return false;

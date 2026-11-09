@@ -46,9 +46,9 @@ import { exportStateVersion, StateExportError, type StateExportInput, type State
 import { parseLockInfo, releaseStateLock, StateUnlockError, type LockInfo, type StateLockSource, type StateUnlockInput, type StateUnlockOutcome } from "@intentius/chant/state-unlock";
 import { plannerForBinary, terraformChangeSetPart } from "./change-set";
 import { DEFAULT_LOCK_TIMEOUT, lockTimeoutArgs } from "./lock-timeout";
-import { initialisedBackend, isRefused, stateObject, type StateObject } from "./state/backend";
+import { initialisedBackend, isGitLabState, isRefused, stateObject, type StateObject } from "./state/backend";
 import { lastLines, runBinary, type BinaryExec } from "./state/exec";
-import { gitlabState, gitlabStore, shownUrl, type GitLabFetch, type GitLabState } from "./state/gitlab";
+import { gitlabStore, shownUrl, type GitLabFetch } from "./state/gitlab";
 import type { StoreFetch } from "./state/object-store";
 import { stateStore } from "./state/store";
 import { gitlabVersionSource, stateVersionSource } from "./state/versions";
@@ -243,22 +243,20 @@ async function withBackend<T>(r: RootBackendRun, act: (object: RootStateAt, env:
   }
 }
 
-/** Where a root's state is: a state object, or a GitLab-managed state (./state/gitlab.ts), which the lock verdict refuses and export and release read. */
-type RootStateAt = StateObject | GitLabState;
+/** Where a root's state is: a state object, a GitLab-managed state among them (./state/gitlab.ts, #4793). */
+type RootStateAt = StateObject;
 
-const isGitLab = (o: RootStateAt): o is GitLabState => "address" in o;
+const isGitLab = isGitLabState;
 
 /**
  * The root's state. A read needs no lock file, so an s3 backend that locks
  * with DynamoDB is read as one that takes the lock file: the refusal is
- * about holding its lock, which a read never does. An http backend whose
- * address is GitLab's state API is that state.
+ * about holding its lock, which a read never does.
  */
 function objectOf(dir: string, env: NodeJS.ProcessEnv, binary: string, readOnly: boolean): RootStateAt {
   const o = stateObject(dir, env, undefined, binary);
   if (!isRefused(o)) return o;
   const recorded = initialisedBackend(dir, env);
-  if (o.backend === "http" && recorded?.type === "http") return gitlabState(recorded.config, env) ?? o;
   if (!readOnly || o.refused !== "no-lockfile") return o;
   return stateObject(dir, env, recorded ? { ...recorded, config: { ...recorded.config, use_lockfile: true } } : undefined, binary, { backendConfig: { use_lockfile: "true" } });
 }
