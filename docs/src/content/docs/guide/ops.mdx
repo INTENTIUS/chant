@@ -133,6 +133,31 @@ The same `author` list works for `findComment`, `trackIssue` and `findIssue`. On
 
 `closeOnClear` is off by default, matching `issue` mode, which never closes an issue. Only open issues are read in both, so a closed issue is never reopened and the next finding opens a fresh one. A tool that can tell a cleared finding from a run that did not check turns it on. The bodies are the caller's, and each one has to carry its marker, or the call is refused before it reaches the forge. Every client takes a `fetch`, so a tool's tests need no network. The module imports nothing but `node:fs`, which it uses to read the event payload. Bundled with esbuild for node, it comes to about 50 KB (`packages/core/src/pr-forge-bundle.test.ts:38` holds it under 52 KiB). That test also fails when anything else joins the bundle.
 
+### One drift issue per environment
+
+A tool that reads drift on a schedule keeps one open issue per environment with `keepDriftIssue` from `@intentius/chant/drift-issue` ([#4790](https://github.com/INTENTIUS/chant/issues/4790)). It takes any client with `trackIssue`, so it runs on GitHub, GitLab and Forgejo, and the tool passes its words and the run's drift records:
+
+```ts
+import { forgeClient, forgeTargetFromEnv } from "@intentius/chant/pr-forge";
+import { keepDriftIssue } from "@intentius/chant/drift-issue";
+
+const forge = forgeClient(forgeTargetFromEnv(process.env, { kind: "github" }));
+const r = await keepDriftIssue(forge, {
+  words: { product: "plywood", title: (f) => `plywood: ${f.environment} has drifted`, address: "URN" },
+  environment: "acme/prod",
+  records, // DriftRecord[] from the drift read
+  runUrl,
+});
+```
+
+| The run found | What happens |
+|---|---|
+| a record `drifted` or `missing` | the issue is opened, or the open one is edited. An open issue that already carries the drift's fingerprint is left as it is, so a body that names the run does not edit it on every run (`unchanged`) |
+| nothing drifted, and every record was read | the open issue is closed with the `cleared` comment (`closed`), or nothing happens when none is open (`none`) |
+| nothing drifted, and a record is `not-observed`, or the call passes `unknown` | the open issue is left as it is (`left`, with `why`) |
+
+The marker is `<!-- <product>:drift <environment> -->` on the body's first line unless the call passes `marker`, which a tool whose open issues already carry a marker of its own does so the next run finds them. The fingerprint (`driftIssueFingerprint`) covers each drifted or missing record's member, address, status and attribute paths, and each attribute's two values when the record carries them; the time, the run and the records that could not be read or are in sync are left out. The body (`driftIssueBody`) is the marker, the `intro`, a table of the drifted records (with a member column when more than one member drifted), the records that could not be read, the call's `notes`, the `advice`, the run's URL and a hidden fingerprint line. `words.values` (`{ before: "declared", after: "live" }`) shows each attribute's values; a sensitive one shows none. `statuses` names what counts as drift, `drifted` and `missing` by default; a read with no snapshot, such as the sql lexicon's, gives an object the server lacks as `pending`, so SQL Yodeler adds that. The module imports only types from the clients, and bundles alone to about 6 KB (`packages/core/src/drift-issue-bundle.test.ts`).
+
 ### Passing a value from one step to the next
 
 Give a step an `id` and later steps can read what it returned. `shell()` publishes `stdout`, `stderr` (both trimmed) and `exitCode` ([#2413](https://github.com/INTENTIUS/chant/issues/2413)).
