@@ -21,6 +21,9 @@
  */
 export const NEXT_RELEASE = "0.124.85";
 
+/** The first chant whose overdue check finds a schedule in any pipeline file, and whose `ScheduledWatch` takes a product's `files` and GitLab `schedule` selector (#4789). */
+export const OVERDUE_PIPELINE_FILES_FLOOR = NEXT_RELEASE;
+
 /** The first chant whose terraform lexicon's `terraform-apply` reads take `dir` and `workspace`, and read an upstream with `resolveRoot`'s binary and `readEnv` (terragucci issue 1303). */
 export const TERRAFORM_APPLY_INSTANCE_READS_FLOOR = "0.124.80";
 

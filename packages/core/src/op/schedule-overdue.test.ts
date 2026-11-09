@@ -224,6 +224,91 @@ describe("checkOverdueOps", () => {
     expect(opPipelineFile(root, "gitlab", "drift")).toBe("ops.gitlab-ci.yml");
     expect(opPipelineFile(root, "gitlab", "other")).toBeUndefined();
   });
+
+  // #4789: the schedule can be in a file the generator wrote below the root.
+  const selects = (op: string) => `drift:\n  rules:\n    - if: $CI_PIPELINE_SOURCE == "schedule" && $CHANT_SCHEDULED_OP == "${op}"\n`;
+
+  test("gitlab: a member's file that .gitlab-ci.yml includes, below the root", async () => {
+    const root = repo(
+      {
+        ".gitlab-ci.yml": "include:\n  - local: apps/web/web-ops.gitlab-ci.yml\n  - project: other/group\n    file: ci.yml\n",
+        "apps/web/web-ops.gitlab-ci.yml": selects("drift"),
+      },
+      "2026-10-01T00:00:00Z",
+    );
+    const asked: string[] = [];
+    const found = await checkOverdueOps({
+      watches: [{ op: "drift", cron: "0 6 * * *" }],
+      forge: forgeWith("gitlab", async (q) => {
+        asked.push(q.workflow);
+        return { noSchedule: true };
+      }),
+      repoRoot: root,
+      now: new Date("2026-10-22T00:00:00Z"),
+      log: () => {},
+    });
+    expect(asked).toEqual(["web-ops.gitlab-ci.yml"]);
+    expect(found.map((o) => [o.op, o.neverRan])).toEqual([["drift", true]]);
+  });
+
+  test("gitlab: an include given as a string, a child pipeline's include, and a file under .gitlab/", () => {
+    const root = repo(
+      {
+        ".gitlab-ci.yml": 'include: "ci/main.yml"\n',
+        "ci/main.yml": "child:\n  trigger:\n    include: ci/child.yml\n",
+        "ci/child.yml": selects("child-op"),
+        ".gitlab/yodel-watch.gitlab-ci.yml": selects("watch-prod"),
+        "deep/nested/ops.gitlab-ci.yml": selects("deep-op"),
+      },
+      "2026-10-01T00:00:00Z",
+    );
+    expect(opPipelineFile(root, "gitlab", "child-op")).toBe("ci/child.yml");
+    expect(opPipelineFile(root, "gitlab", "watch-prod")).toBe(".gitlab/yodel-watch.gitlab-ci.yml");
+    expect(opPipelineFile(root, "gitlab", "deep-op")).toBe("deep/nested/ops.gitlab-ci.yml");
+    expect(opPipelineFile(root, "gitlab", "none")).toBeUndefined();
+  });
+
+  test("github and forgejo: a workflow under another name whose name is the Op's, or a .yaml file", () => {
+    const root = repo(
+      {
+        ".github/workflows/scheduled-drift.yml": "name: drift\non:\n  schedule:\n    - cron: '0 6 * * *'\n",
+        ".forgejo/workflows/drift.yaml": "name: drift\n",
+        ".github/workflows/other.yml": "name: other-op\n",
+      },
+      "2026-10-01T00:00:00Z",
+    );
+    expect(opPipelineFile(root, "github", "drift")).toBe(".github/workflows/scheduled-drift.yml");
+    expect(opPipelineFile(root, "forgejo", "drift")).toBe(".forgejo/workflows/drift.yaml");
+    expect(opPipelineFile(root, "github", "missing")).toBeUndefined();
+  });
+
+  test("a product's own files and schedule rule: the first file present, its selector asked and named", async () => {
+    const schedule = { variable: "TERRAGUCCI_SCHEDULE", not: ["comments", "resume"] };
+    const root = repo(
+      {
+        ".gitlab-ci.yml": "include:\n  - local: .gitlab/terragucci.yml\n",
+        ".gitlab/terragucci.yml": 'drift:\n  rules:\n    - if: $CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments" && $TERRAGUCCI_SCHEDULE != "resume"\n',
+        ".github/workflows/terragucci.yml": "name: terragucci\n",
+      },
+      "2026-10-01T00:00:00Z",
+    );
+    const files = [".github/workflows/terragucci-drift.yml", ".github/workflows/terragucci.yml"];
+    expect(opPipelineFile(root, "github", { op: "tf-drift", files })).toBe(".github/workflows/terragucci.yml");
+    expect(opPipelineFile(root, "gitlab", { op: "tf-drift", schedule })).toBe(".gitlab/terragucci.yml");
+    const asked: unknown[] = [];
+    const found = await checkOverdueOps({
+      watches: [{ op: "tf-drift", cron: "0 6 * * *", schedule }],
+      forge: forgeWith("gitlab", async (q) => {
+        asked.push(q.schedule);
+        return { noSchedule: true };
+      }),
+      repoRoot: root,
+      now: new Date("2026-10-22T00:00:00Z"),
+      log: () => {},
+    });
+    expect(asked).toEqual([schedule]);
+    expect(found[0]?.message).toContain("No active pipeline schedule is picked by the Op's rule, one whose TERRAGUCCI_SCHEDULE is none of comments, resume.");
+  });
 });
 
 describe("the plan note", () => {

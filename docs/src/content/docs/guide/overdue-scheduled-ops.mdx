@@ -12,21 +12,27 @@ A scheduled [watch](/chant/guide/watching-lifecycle/) or [reconcile](/chant/guid
 
 ## What the plan checks
 
-`chant components pr-plan` with `--forge` checks every Op it discovers that has a `schedule` and the `Watch` or `Reconcile` label (`packages/core/src/op/schedule-overdue.ts:48`). `WatchOp` and `ReconcileOp` set those labels (`packages/core/src/op/composites/watch-op.ts:80`, `packages/core/src/op/composites/reconcile-op.ts:80`).
+`chant components pr-plan` with `--forge` checks every Op it discovers that has a `schedule` and the `Watch` or `Reconcile` label (`packages/core/src/op/schedule-overdue.ts:64`). `WatchOp` and `ReconcileOp` set those labels (`packages/core/src/op/composites/watch-op.ts:80`, `packages/core/src/op/composites/reconcile-op.ts:80`).
 
-The plan skips an Op unless the checkout holds the file `chant run --generate` wrote for it (`packages/core/src/op/schedule-overdue.ts:146`), so Ops that `chant operator` or another scheduler runs are left alone.
+The plan skips an Op unless the checkout holds the file `chant run --generate` wrote for it (`packages/core/src/op/schedule-overdue.ts:281`), so Ops that `chant operator` or another scheduler runs are left alone.
 
 | Forge | Pipeline file | What the forge is asked |
 |---|---|---|
-| GitHub | `.github/workflows/<op>.yml`, or `<member>-<op>.yml` in a workspace member | The workflow's state, and its newest `schedule` and `workflow_dispatch` runs |
-| Forgejo | `.forgejo/workflows/<op>.yml`, or `<member>-<op>.yml` | The repository's runs, kept to that workflow's `schedule` and `workflow_dispatch` events |
-| GitLab | The root `*.gitlab-ci.yml` whose rules test `$CHANT_SCHEDULED_OP == "<op>"` | The active pipeline schedules that set `CHANT_SCHEDULED_OP` to the Op, and their last pipelines |
+| GitHub | `.github/workflows/<op>.yml` (or `.yaml`), or `<member>-<op>.yml` in a workspace member; failing that, the workflow in that directory whose `name:` is the Op's | The workflow's state, and its newest `schedule` and `workflow_dispatch` runs |
+| Forgejo | `.forgejo/workflows/<op>.yml`, or `<member>-<op>.yml`, found the same way | The repository's runs, kept to that workflow's `schedule` and `workflow_dispatch` events |
+| GitLab | The first pipeline file whose rules test `$CHANT_SCHEDULED_OP == "<op>"` | The active pipeline schedules that set `CHANT_SCHEDULED_OP` to the Op, and their last pipelines |
 
-The paths come from `packages/core/src/op/schedule-overdue.ts:69` and `:73`. The forge calls are in `packages/core/src/pr-forge.ts:814` (GitHub and Forgejo) and `:1046` (GitLab).
+On GitLab the pipeline files are read in this order ([#4789](https://github.com/INTENTIUS/chant/issues/4789), `gitlabPipelineFiles` in `packages/core/src/op/schedule-overdue.ts`): the root's `*.gitlab-ci.yml`, the local files `.gitlab-ci.yml` includes and the child pipelines they trigger with `trigger: include:`, every file under `.gitlab/`, then every `*.gitlab-ci.yml` further down. A workspace member's Op file in the member's directory is found through the root's include. An include with a wildcard or a variable is not followed, so its files are found only when they are under `.gitlab/` or named `*.gitlab-ci.yml`.
+
+The lookup is `opPipelineFile` in `packages/core/src/op/schedule-overdue.ts`. The forge calls are `scheduledRuns` in `packages/core/src/pr-forge.ts`.
+
+### A product's own pipeline files
+
+A CI product that generates its own pipeline calls `checkOverdueOps` from `@intentius/chant/op/schedule-overdue` with one `ScheduledWatch` per job. `files` lists the files its generator wrote for the job, and the first one in the checkout is used. On GitLab, `schedule` is the job's selector when the job's rule is not `$CHANT_SCHEDULED_OP == "<op>"`, such as `{ variable: "TERRAGUCCI_SCHEDULE", not: ["comments", "resume"] }`. The check passes it to `scheduledRuns`, and when no schedule matches, the line names it. Both fields need chant `OVERDUE_PIPELINE_FILES_FLOOR` (`packages/core/src/release-floors.ts`).
 
 ## When it warns
 
-The plan counts the fires of the Op's cron in UTC since the job last ran (`packages/core/src/op/cron.ts:158`). When no run is on record, it counts from the commit that added the pipeline file. Two fires or more is overdue (`packages/core/src/op/schedule-overdue.ts:110`), while one late or dropped run is not.
+The plan counts the fires of the Op's cron in UTC since the job last ran (`packages/core/src/op/cron.ts:158`). When no run is on record, it counts from the commit that added the pipeline file. Two fires or more is overdue (`packages/core/src/op/schedule-overdue.ts:244`), while one late or dropped run is not.
 
 Each overdue Op adds a line to the plan note (`packages/core/src/pr-loop.ts:584`), such as:
 
@@ -36,7 +42,7 @@ Warning: Op `drift-watch` is overdue: its schedule `0 6 * * *` has fired at leas
 
 The job log gets the same line. Chant `0.124.41` and newer also list the Ops in the report's `overdue` field (`packages/core/src/pr-loop.ts:393`). A workspace member's note is posted for an overdue Op even when the change reaches none of its components (`packages/core/src/cli/handlers/pr.ts:455`).
 
-The warning never fails the plan, and when the forge refuses the call the job log says so and the Op gets no verdict (`packages/core/src/op/schedule-overdue.ts:151`).
+The warning never fails the plan, and when the forge refuses the call the job log says so and the Op gets no verdict (`packages/core/src/op/schedule-overdue.ts:287`).
 
 ## Give the note job read access
 
