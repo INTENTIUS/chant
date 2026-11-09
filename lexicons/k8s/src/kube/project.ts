@@ -18,9 +18,9 @@
  * object's coordinates.
  */
 
-import { resolve, relative, isAbsolute } from "node:path";
+import { relative, isAbsolute } from "node:path";
 import { build } from "@intentius/chant/build";
-import { loadChantConfig, type ChantConfig } from "@intentius/chant/config";
+import { loadChantConfig, resolveSourceDir, type ChantConfig } from "@intentius/chant/config";
 import { getProvenance, type EntityProvenance } from "@intentius/chant/provenance";
 import type { Declarable } from "@intentius/chant/declarable";
 import { k8sSerializer } from "../serializer";
@@ -53,7 +53,7 @@ export async function loadKubeProjectContext(cwd: string = process.cwd()): Promi
     // exactly the "outside a chant project" case this function exists to
     // detect, not paper over.
     if (!configPath) return undefined;
-    const root = resolve(cwd, config.sourceDir ?? ".");
+    const root = resolveSourceDir(cwd, config); // #4794: the one source-dir rule
     const result = await build(root, [k8sSerializer]);
     if (result.errors.length > 0) return undefined;
     return { cwd, config, entities: result.entities };

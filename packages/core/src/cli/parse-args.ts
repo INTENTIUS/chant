@@ -185,6 +185,7 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.command = arg;
     } else if (result.path === ".") {
       result.path = arg;
+      result.pathGiven = true;
     } else if (!result.extraPositional) {
       result.extraPositional = arg;
     } else {

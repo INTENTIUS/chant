@@ -104,10 +104,12 @@ export function isSourceFileName(name: string): boolean {
  * Find every TypeScript infrastructure file under `path`, through the one
  * discovery walk (`./walk.ts`, #2527): test and spec files, chant-generated
  * files, skip-marked files and whatever the walk's rules and the project's
- * globs skip are left out.
+ * globs skip are left out. Walked from the root of a project with no
+ * `sourceDir`, its top-level `scripts/` is left out too (#4794,
+ * `ROOT_SOURCE_EXCLUDES`), unless `include` brings it back.
  */
 export async function findInfraFiles(path: string, options?: FindInfraFilesOptions): Promise<string[]> {
-  const globs = options?.globs === null ? undefined : (options?.globs ?? (await resolveDiscoveryGlobs(path)));
+  const globs = options?.globs === null ? undefined : (options?.globs ?? (await resolveDiscoveryGlobs(path, { sourceWalk: true })));
   return walkDiscovery({
     walker: "source",
     root: path,
@@ -125,7 +127,7 @@ export async function findInfraFiles(path: string, options?: FindInfraFilesOptio
  * child projects and the project's `exclude` globs are left out for it too.
  */
 export async function findSourceFiles(path: string, accept: (name: string, full: string) => boolean, options?: FindInfraFilesOptions): Promise<string[]> {
-  const globs = options?.globs === null ? undefined : (options?.globs ?? (await resolveDiscoveryGlobs(path)));
+  const globs = options?.globs === null ? undefined : (options?.globs ?? (await resolveDiscoveryGlobs(path, { sourceWalk: true })));
   return walkDiscovery({
     walker: "source",
     root: path,

@@ -1,11 +1,11 @@
 import { writeFileSync, mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { buildCommand, buildCommandWatch, printErrors, printWarnings, resolveBuildFormat } from "../commands/build";
 import { formatError, formatInfo, formatSuccess, formatBold } from "../format";
 import { reportUninstalledDependencies } from "../dependencies";
 import type { CommandContext } from "../registry";
 import { generateComponentsPipeline } from "../../components/cli-support";
-import { loadChantConfigUpward, type ChantConfig } from "../../config";
+import { loadChantConfigUpward, resolveSourceDir, type ChantConfig } from "../../config";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import { findWorkspaceRoot } from "../../project-root";
 import { resolvePromotionSource } from "../../components/promote-order";
@@ -456,16 +456,33 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
   return 0;
 }
 
+/**
+ * The directory `chant build` builds (#4794). A path argument wins. With
+ * none, at the root of a project, it is the one source-dir rule's
+ * (`resolveSourceDir`): the config's `sourceDir`, else the root. Below the
+ * root it is the directory the command runs in, as it always was. Kept
+ * relative, so the paths the build prints read as before.
+ */
+export async function buildPathOf(args: Pick<CommandContext["args"], "path" | "pathGiven">): Promise<string> {
+  if (args.pathGiven) return args.path;
+  const here = resolve(args.path);
+  const loaded = await loadChantConfigUpward(here).catch(() => undefined);
+  if (!loaded?.configPath || resolve(dirname(loaded.configPath)) !== here || loaded.config.sourceDir === undefined) return args.path;
+  return join(args.path, relative(here, resolveSourceDir(here, loaded.config)));
+}
+
 export async function runBuild(ctx: CommandContext): Promise<number> {
-  const { args, plugins } = ctx;
+  const { plugins } = ctx;
   let { serializers } = ctx;
 
   // Generate mode (#563): synthesize CI YAML from components instead of
   // running a normal lexicon build. Checked first since it does not need
   // `serializers`/lexicon resources at all.
-  if (args.components && args.generate) {
+  if (ctx.args.components && ctx.args.generate) {
     return runGenerateComponents(ctx);
   }
+  // #4794: the lexicon build reads the config's sourceDir when no path is given.
+  const args = { ...ctx.args, path: await buildPathOf(ctx.args) };
 
   // Filter to a single lexicon when --lexicon is specified
   if (args.lexicon) {

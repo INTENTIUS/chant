@@ -7,7 +7,7 @@
  * `loadProfiles` from the project's configured lexicons).
  */
 import { lexiconNames } from "../../lexicon-module";
-import { loadChantConfig } from "../../config";
+import { loadChantConfig, resolveSourceDir } from "../../config";
 import { build } from "../../build";
 import { isObservableDeclarable } from "../../declarable";
 import { collectBuildRootContributors, collectChangeSubscribers } from "../plugins";
@@ -88,7 +88,7 @@ async function collectOperatorSubscribers(
       config as unknown as Record<string, unknown>,
       cwd,
     );
-    const buildResult = await build(config.sourceDir ?? ".", ctx.serializers, undefined, { buildRoots });
+    const buildResult = await build(resolveSourceDir(cwd, config), ctx.serializers, undefined, { buildRoots });
     if (buildResult.errors.length > 0) {
       console.error(formatWarning({
         message: "build failed while scoping the change signal, so this runs on the timer alone",

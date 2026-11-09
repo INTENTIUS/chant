@@ -44,7 +44,7 @@ import { isUtf8 } from "node:buffer";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { loadChantConfig, type ChantConfig } from "../config";
+import { loadChantConfig, resolveSourceDir, type ChantConfig } from "../config";
 import { resolveFlaggedBuildParams } from "../flag-params";
 import { discoverComponents } from "./discover";
 import { withoutDisabled } from "./cli-support";
@@ -465,7 +465,7 @@ export async function compileBuildOutput(inputs: CompileInputs, env: string, con
     );
   }
   const projectDir = resolve(inputs.projectDir);
-  const root = resolve(projectDir, inputs.src ?? config.sourceDir ?? ".");
+  const root = resolveSourceDir(projectDir, config, inputs.src);
   const output = resolve(projectDir, inputs.output ?? DEFAULT_BUILD_OUTPUT);
   const rel = relative(projectDir, output);
   if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {

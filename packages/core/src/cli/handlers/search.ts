@@ -17,7 +17,7 @@ import type { LexiconPlugin, ResourceMetadata } from "../../lexicon";
 import type { ObservationDepth } from "../../lifecycle/types";
 import { formatUnobserved, type RootRead } from "../../observation";
 import { readChantPackageVersion } from "../../package-version";
-import { loadChantConfig, matchesDeclaredEnvironment } from "../../config";
+import { loadChantConfig, matchesDeclaredEnvironment, resolveSourceDir } from "../../config";
 import { collectBuildRootContributors, loadPlugins, resolveProjectLexicons } from "../plugins";
 import { declaredBuildRootContributors, mergeDeclaredBuildRoots, withLexiconEdges } from "./declared-graph";
 import { parseCountBy, countGroups, countsJson, formatCounts, groupMembers, hasManyTerraformRoots, type CountBy } from "./search-count";
@@ -135,7 +135,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   // Why --check-snapshot had nothing to check against, for --json (#4367).
   let driftUnavailable: string | undefined;
   if (args.index !== undefined) {
-    const answered = await indexAnswer(ctx, String(args.index), projectPath, resolve(args.src ?? config.sourceDir ?? "."), config);
+    const answered = await indexAnswer(ctx, String(args.index), projectPath, resolveSourceDir(resolve("."), config, args.src), config);
     if ("error" in answered) return refuse(answered.error);
     ir = answered.ir;
     source = answered.source;
@@ -155,7 +155,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     // root's blocks are entities only once its root is rendered, and an
     // entity the build never produced is never observed.
     const buildRoots = collectBuildRootContributors(plugins, config as unknown as Record<string, unknown>, projectPath);
-    const buildResult = await build(resolve(args.src ?? config.sourceDir ?? "."), plugins.map((p) => p.serializer), undefined, {
+    const buildResult = await build(resolveSourceDir(resolve("."), config, args.src), plugins.map((p) => p.serializer), undefined, {
       buildRoots,
       config: config as unknown as Record<string, unknown>,
     });
@@ -305,7 +305,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     const declared =
       stacks.length > 0
         ? await buildDeclaredPerStack(stacks, projectPath, (g, entities) => withLexiconEdges(g, plugins, entities))
-        : await declaredGraph(ctx, projectPath, resolve(args.src ?? config.sourceDir ?? "."), plugins);
+        : await declaredGraph(ctx, projectPath, resolveSourceDir(resolve("."), config, args.src), plugins);
     if (!declared) return refuse(BUILD_ROOT_FAILED);
     declaredForDrift = declared;
     // Carry the NOT-OBSERVED half of the tri-state (#1089) onto the rows, so a
@@ -352,7 +352,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     // stays pending: only its attributes change.
     ir = { ...ir, nodes: carryAnnotations(ir.nodes, annotations) };
   } else {
-    const declared = await declaredGraph(ctx, projectPath, resolve(args.src ?? config.sourceDir ?? "."));
+    const declared = await declaredGraph(ctx, projectPath, resolveSourceDir(resolve("."), config, args.src));
     if (!declared) return refuse(BUILD_ROOT_FAILED);
     ir = declared;
   }

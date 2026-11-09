@@ -33,6 +33,9 @@ export const PRODUCT_HELPERS_FLOOR = NEXT_RELEASE;
 /** The first chant with `@intentius/chant/drift-issue`, whose `keepDriftIssue` keeps one drift issue per environment from a product's words and the drift records (#4790). */
 export const DRIFT_ISSUE_FLOOR = NEXT_RELEASE;
 
+/** The first chant whose `chant build` with no path builds the config's `sourceDir`, whose root build leaves a top-level `scripts/` out, and whose `@intentius/chant/config` exports `resolveSourceDir`, the one source-dir rule every command shares (#4794). */
+export const SOURCE_DIR_RULE_FLOOR = NEXT_RELEASE;
+
 /** The first chant whose terraform lexicon's `terraform-apply` reads take `dir` and `workspace`, and read an upstream with `resolveRoot`'s binary and `readEnv` (terragucci issue 1303). */
 export const TERRAFORM_APPLY_INSTANCE_READS_FLOOR = "0.124.80";
 

@@ -15,6 +15,20 @@ chant build [path] --components --generate <lexicon> [--env <name>] [--promote-t
 
 `chant build` loads the project at the given path, parses all TypeScript source files, evaluates resource definitions, and serializes the output.
 
+### Source directory
+
+With a path, `chant build` builds that directory. With none, run at the root of a project, it builds the config's `sourceDir`, else the project root. Run below the root with no path, it builds the directory it runs in. This is the rule every command that picks a source directory shares ([#4794](https://github.com/INTENTIUS/chant/issues/4794)): `chant lifecycle`'s `--src`, `chant release compile`, `chant graph`, `chant search`, `chant components status` and the lexicon commands all take an explicit directory first, then `sourceDir`, then the project root. There is no `src` fallback; a project whose declarations live in `src/` beside other code sets `sourceDir: "src"`.
+
+A build from the root of a project with no `sourceDir` leaves its top-level `scripts/` directory out, as it leaves out test and spec files. Add `include: ["scripts"]` to read it. Code that needs the same answer imports it:
+
+```ts
+import { resolveSourceDir } from "@intentius/chant/config";
+
+const dir = resolveSourceDir(projectDir, config); // absolute; a third argument is an explicit directory
+```
+
+`SOURCE_DIR_RULE_FLOOR` in `@intentius/chant/release-floors` is the first chant with this rule.
+
 It reaches no network. Every schema it needs is generated into the lexicon packages ahead of time, and a guard test runs the build over every example project with the socket layer replaced by a throwing stub. See [Network Egress](/chant/reference/network-egress/).
 
 ## Flags
