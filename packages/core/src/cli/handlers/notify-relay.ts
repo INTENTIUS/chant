@@ -109,7 +109,7 @@ export function checkoutRelayDeps(cwd: string, principal: string): RelayDeps {
         await fetchDefaultBranch(cwd);
         const { scopeSource } = await import("../../workspace/write-scope");
         const policy = scopeSource(cwd).policy;
-        return { signers: policy.signers, path: policy.signersPath };
+        return { signers: policy.signers, path: policy.signersPath, problems: policy.problems };
       }),
     pending: (digest) =>
       one(async () => {

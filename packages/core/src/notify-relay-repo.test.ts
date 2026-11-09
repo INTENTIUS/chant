@@ -18,6 +18,8 @@ import { relayToken } from "./notify";
 import { decideRelayClick } from "./notify-relay";
 import { checkRelayToken, prepareRelayCheckout, relayGitAuthEnv, relayRepo, type RelayRepo } from "./notify-relay-repo";
 import { cleanScratch, git, scratchDir, writeFiles } from "./workspace/__fixtures__/contract-repo";
+import { ROTATION_NAMESPACE, rotationStatement, signersDigest } from "./workspace/trust/rotation";
+import { TestRepo } from "./workspace/trust/test-repo";
 
 afterAll(cleanScratch);
 
@@ -193,7 +195,11 @@ describe("the relay's flags (#4759)", () => {
 });
 
 describe("the relay's own checkout (#4759)", () => {
-  const SIGNERS = `alice@acme.com,slack:T1/U1 ssh-ed25519 ${KEY}\nbob@acme.com ssh-ed25519 ${KEY}\n`;
+  // alice holds a real key, so a rotation that adds a signer can be signed by the set before it (#4803).
+  const keys = new TestRepo("relay-keys");
+  afterAll(() => keys.cleanup());
+  const alice = keys.key("alice");
+  const SIGNERS = `alice@acme.com,slack:T1/U1 ${alice.pub}\nbob@acme.com ssh-ed25519 ${KEY}\n`;
   const T = (h: number): string => new Date(Date.now() - 3600_000 + h * 3600_000).toISOString();
   const pending = { version: 1, kind: "pending", op: "tf-apply", gate: "wave-1", timestamp: T(1), expiresAt: T(49), planDigest: D };
 
@@ -244,9 +250,16 @@ describe("the relay's own checkout (#4759)", () => {
     expect(readFileSync(join(made.dir, ".git", "config"), "utf-8")).not.toContain(Buffer.from(`x-access-token:${TOKEN}`).toString("base64"));
     expect(git(made.dir, "remote", "get-url", "origin")).toBe(`${f.url}/acme/infra.git`);
 
-    // A signer added on main after the clone.
-    writeFiles(work, { ".chant/allowed_signers": `${SIGNERS}carol@acme.com,slack:T1/U3 ssh-ed25519 ${KEY}\n` });
-    git(work, "commit", "-qam", "add carol");
+    // A signer added on main after the clone, by a rotation alice signs.
+    const next = `${SIGNERS}carol@acme.com,slack:T1/U3 ssh-ed25519 ${KEY}\n`;
+    const rotation = { version: 2, previous: signersDigest(SIGNERS), threshold: 1 };
+    const signature = keys.sshSign(alice, rotationStatement(rotation, signersDigest(next)), ROTATION_NAMESPACE);
+    writeFiles(work, {
+      ".chant/allowed_signers": next,
+      ".chant/allowed_signers.rotation.json": JSON.stringify({ schema: 1, ...rotation, signatures: [{ principal: "alice@acme.com", signature }] }, null, 2),
+    });
+    git(work, "add", "-A");
+    git(work, "commit", "-qm", "add carol");
     git(work, "push", "-q", bare, "main");
 
     const prev = { env: { ...process.env }, cwd: process.cwd() };
