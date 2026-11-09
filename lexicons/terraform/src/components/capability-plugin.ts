@@ -132,6 +132,14 @@
  * plans the step's `dir` as its directory, so a product can name each root
  * by its path without writing an entry for it.
  *
+ * A wave that plans and applies several roots at once (chant#4864) gives
+ * each run its serial section (`DeployContext.serial`). Every `init` the
+ * step runs, a root's own and an upstream's for its `reads`, takes its turn
+ * there (`../init-turn.ts`): one at a time among the runs that share a
+ * provider cache, else one at a time per directory. A choudoufu one-root
+ * set's `live-plan-set` inits as it plans, so with a shared cache the whole
+ * command takes the turn.
+ *
  * Every plan also writes its `show -json` beside the plan file and names it
  * as `artifact.planJson`, the document a wave's cost hold prices
  * (`../cost-hold.ts`).
@@ -181,6 +189,7 @@ import { fillStateReads, stateReadsProblems, waitingReadsReason, type TerraformS
 import { terraformStateOpCapabilities } from "../state-ops";
 import { terraformActionCapability } from "../action-ops";
 import { terragruntApply } from "../terragrunt/capability";
+import { inInitTurn, pluginCacheDir, type InitSection } from "../init-turn";
 
 /** The `terraform-apply` step's input. */
 export interface TerraformApplyStepInput {
@@ -278,7 +287,7 @@ function lockTimeoutOf(input: TerraformApplyStepInput): { lockTimeout?: string }
  * read once, the values under the step's own `vars`. `waiting` when an
  * upstream has no such output yet. Throws when a state cannot be read.
  */
-async function withReads(input: TerraformApplyStepInput, resolveRoot?: TerraformRootResolver): Promise<{ input: TerraformApplyStepInput } | { waiting: string; upstreams: string[] }> {
+async function withReads(input: TerraformApplyStepInput, resolveRoot?: TerraformRootResolver, serial?: InitSection): Promise<{ input: TerraformApplyStepInput } | { waiting: string; upstreams: string[] }> {
   const reads = input.reads ?? [];
   if (reads.length === 0) return { input };
   const problems = stateReadsProblems(reads);
@@ -294,7 +303,8 @@ async function withReads(input: TerraformApplyStepInput, resolveRoot?: Terraform
       ...(tools?.binary ? { binary: tools.binary } : {}),
       ...(tools?.readEnv ? { env: tools.readEnv } : {}),
     };
-    await terraformInit(at);
+    // chant#4864: runs that plan at once may read the same upstream, so its init takes a turn.
+    await inInitTurn(serial, at.env, initDir(at), () => terraformInit(at));
     return terraformOutputs(at);
   });
   if (filled.errors.length > 0) throw new Error(`terraform-apply: root "${input.root}": ${filled.errors.join("; ")}`);
@@ -324,6 +334,13 @@ const rootArgs = (input: TerraformApplyStepInput, env?: RunEnv) => ({
   ...(input.binary ? { binary: input.binary } : {}),
 });
 
+/** The directory an init runs in, as far as the step's input says, for its turn when no provider cache is shared (chant#4864). */
+const initDir = (at: { root: string; cwd?: string; dir?: string }): string => join(at.cwd ?? process.cwd(), at.dir ?? at.root);
+
+/** `terraform init` of `input`'s root in its turn (chant#4864). */
+const initRoot = (input: TerraformApplyStepInput, env: RunEnv, serial: InitSection | undefined) =>
+  inInitTurn(serial, env, initDir(rootArgs(input, env)), () => terraformInit(rootArgs(input, env)));
+
 function requireRoot(input: TerraformApplyStepInput): void {
   if (typeof input.root !== "string" || input.root === "") {
     throw new Error('terraform-apply: "root" is required and names an entry in terraform.roots');
@@ -336,9 +353,9 @@ function requireRoot(input: TerraformApplyStepInput): void {
   }
 }
 
-async function planRoot(input: TerraformApplyStepInput, targets?: string[], at: { env?: RunEnv; afterInit?: () => Promise<void> } = {}): Promise<PlannedRoot & { changeSet?: ChangeSetPart; json?: unknown }> {
+async function planRoot(input: TerraformApplyStepInput, targets?: string[], at: { env?: RunEnv; afterInit?: () => Promise<void>; serial?: InitSection } = {}): Promise<PlannedRoot & { changeSet?: ChangeSetPart; json?: unknown }> {
   requireRoot(input);
-  await terraformInit(rootArgs(input, at.env));
+  await initRoot(input, at.env, at.serial);
   // chant#4842: the run hook's check, once init fetched the modules and providers and before the plan runs their code.
   await at.afterInit?.();
   // One `show -json` per plan (#4479): its document is the digest, the change
@@ -537,7 +554,7 @@ async function previewRoot(ctx: DeployContext, input: TerraformApplyStepInput, u
   if (typeof stand === "string") return waitingRoot(ctx, input, unresolved, stand);
   let planned: Awaited<ReturnType<typeof terraformPlan>>;
   try {
-    await terraformInit(rootArgs(input, ctx.processEnv));
+    await initRoot(input, ctx.processEnv, ctx.serial);
     await ctx.afterInit?.();
     planned = await terraformPlan({
       ...rootArgs(input, ctx.processEnv),
@@ -645,8 +662,8 @@ async function runChoudoufuWave(
 }
 
 /** The input a `run` that plans for itself plans with (#4545): its reads filled, or an error naming the upstream to apply first. */
-async function readsForRun(input: TerraformApplyStepInput, resolveRoot?: TerraformRootResolver): Promise<TerraformApplyStepInput> {
-  const read = await withReads(input, resolveRoot);
+async function readsForRun(input: TerraformApplyStepInput, resolveRoot?: TerraformRootResolver, serial?: InitSection): Promise<TerraformApplyStepInput> {
+  const read = await withReads(input, resolveRoot, serial);
   if ("waiting" in read) throw new Error(`terraform-apply: root "${input.root}": ${read.waiting}`);
   return read.input;
 }
@@ -685,7 +702,7 @@ export function terraformApplyCapabilityWith(deps: TerraformApplyDeps = {}): Cap
       const given = await filledInput(deps.resolveRoot, ctx, step);
       requireRoot(given);
       // #4545: a root reading an upstream's output that is not there yet is a hole naming the upstream.
-      const read = await withReads(given, deps.resolveRoot);
+      const read = await withReads(given, deps.resolveRoot, ctx.serial);
       if ("waiting" in read) return waitingOnReads(ctx, given, read);
       const { input } = read;
       const unresolved = [...(ctx.unresolvedInputs ?? [])].sort();
@@ -697,7 +714,8 @@ export function terraformApplyCapabilityWith(deps: TerraformApplyDeps = {}): Cap
       if (wave.wave) {
         // chant#4842: live-plan-set inits and plans in one command, so the run hook's check comes before it.
         await ctx.afterInit?.();
-        const set = await choudoufuPlanSet(rootArgs(input, env));
+        // chant#4864: live-plan-set inits too, so with a shared provider cache the whole command takes the init's turn.
+        const set = await inInitTurn(pluginCacheDir(env) ? ctx.serial : undefined, env, undefined, () => choudoufuPlanSet(rootArgs(input, env)));
         const artifact: ChoudoufuWavePlannedRoot = {
           planDigest: set.planDigest,
           choudoufu: { planSetFile: set.planSetFile, setDigest: set.setDigest },
@@ -705,7 +723,7 @@ export function terraformApplyCapabilityWith(deps: TerraformApplyDeps = {}): Cap
         };
         return { member: input.root, planDigest: set.planDigest, artifact, changeSet: set.changeSet, outputs: terraformPlannedOutputs(set.json), shape: terraformPlanShape(set.json, input.root) };
       }
-      const { changeSet, json, ...planned } = await planRoot(input, targets, { env, ...(ctx.afterInit ? { afterInit: ctx.afterInit } : {}) });
+      const { changeSet, json, ...planned } = await planRoot(input, targets, { env, ...(ctx.afterInit ? { afterInit: ctx.afterInit } : {}), ...(ctx.serial ? { serial: ctx.serial } : {}) });
       // #4552: a choudoufu root's rows, keyed from the plan document while it is at hand.
       const lockRows = changeSet?.member.planner === "choudoufu" ? terraformLockRows(input.root, changeSet.member.scope, json) : undefined;
       return {
@@ -725,7 +743,7 @@ export function terraformApplyCapabilityWith(deps: TerraformApplyDeps = {}): Cap
     async outputs(ctx: DeployContext, step: TerraformApplyStepInput): Promise<Record<string, unknown>> {
       const input = await filledInput(deps.resolveRoot, ctx, step);
       requireRoot(input);
-      await terraformInit(rootArgs(input, ctx.processEnv));
+      await initRoot(input, ctx.processEnv, ctx.serial);
       return terraformOutputs(rootArgs(input, ctx.processEnv));
     },
     // #4447 (ws-107): a group core forms of components that read each other plans and applies as one composed run
@@ -775,7 +793,7 @@ export function terraformApplyCapabilityWith(deps: TerraformApplyDeps = {}): Cap
       if (isShapeArtifact(fromWave)) {
         // A root previewed with stand-ins (#4463): plan it now with the real
         // values, and apply that plan only when it is within the preview's shape.
-        const fresh = await planRoot(await readsForRun(input, deps.resolveRoot), ctx.targets, { env: ctx.processEnv });
+        const fresh = await planRoot(await readsForRun(input, deps.resolveRoot, ctx.serial), ctx.targets, { env: ctx.processEnv, ...(ctx.serial ? { serial: ctx.serial } : {}) });
         const differences = planShapeDifferences(fromWave.shape, terraformPlanShape(fresh.json, input.root));
         if (differences.length > 0) throw new PlanShapeMovedError(input.root, differences);
         const applied = await terraformApply({ ...rootArgs(input, ctx.processEnv), planFile: fresh.planFile, ...lockTimeoutOf(input) });
@@ -787,7 +805,7 @@ export function terraformApplyCapabilityWith(deps: TerraformApplyDeps = {}): Cap
       }
       const planned: PlannedRoot = isPlannedRoot(fromWave)
         ? fromWave
-        : await planRoot(await readsForRun(input, deps.resolveRoot), ctx.targets, { env: ctx.processEnv }).then(({ planFile, planDigest }) => ({ planFile, planDigest }));
+        : await planRoot(await readsForRun(input, deps.resolveRoot, ctx.serial), ctx.targets, { env: ctx.processEnv, ...(ctx.serial ? { serial: ctx.serial } : {}) }).then(({ planFile, planDigest }) => ({ planFile, planDigest }));
       const applied = await terraformApply({ ...rootArgs(input, ctx.processEnv), planFile: planned.planFile, ...lockTimeoutOf(input) });
       if (!applied.applied) {
         const message =

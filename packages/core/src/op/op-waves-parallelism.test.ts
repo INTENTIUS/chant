@@ -81,6 +81,11 @@ describe("runs applied at once (#4625)", () => {
     expect(seen.most).toBe(1);
   });
 
+  test("the spec refuses together with a parallelism over 1", () => {
+    const s = spec(2, [{ target: "a" }, { target: "b" }]);
+    expect(() => assertOpWavesSpec({ ...s, waves: [{ ...s.waves[0]!, together: true, parallelism: 2 }] })).toThrow(/no parallelism over 1/);
+  });
+
   test("the spec refuses a parallelism over 1 without a step, and one that is not a whole number", () => {
     const { step: _s, ...noStep } = spec(2, [{ target: "a" }]);
     expect(() => assertOpWavesSpec({ ...noStep, apply: ["./apply", "{target}"], plan: ["./plan", "{target}", "{plan}"] })).toThrow(/apply at once only through `step`/);

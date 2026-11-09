@@ -31,3 +31,29 @@ export async function mapLimited<T, R>(items: readonly T[], limit: number | unde
   await Promise.all(Array.from({ length: Math.max(1, limit) }, worker));
   return out;
 }
+
+/**
+ * Run `fn` alone among the calls with the same `key` (#4864): a call waits
+ * for every earlier call with its key to settle, then runs, while calls
+ * with other keys go on beside it. A call's failure is its own; the next
+ * call with the key runs anyway.
+ */
+export type SerialSection = <T>(key: string, fn: () => Promise<T>) => Promise<T>;
+
+/** A fresh {@link SerialSection}, whose keys are its own: an op wave makes one per wave job. */
+export function keyedSerial(): SerialSection {
+  const tails = new Map<string, Promise<unknown>>();
+  return <T>(key: string, fn: () => Promise<T>): Promise<T> => {
+    const before = tails.get(key) ?? Promise.resolve();
+    const mine = before.then(() => fn());
+    const tail = mine.then(
+      () => undefined,
+      () => undefined,
+    );
+    tails.set(key, tail);
+    void tail.then(() => {
+      if (tails.get(key) === tail) tails.delete(key);
+    });
+    return mine;
+  };
+}

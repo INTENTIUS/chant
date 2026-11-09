@@ -84,6 +84,7 @@ import type { ResolvedGatePolicySource } from "../policy-source";
 import type { WaveMember } from "../wave-engine";
 import type { OpWave, OpWaveRun, OpWavesSpec } from "./op-waves";
 import { resolvePlannedLock, type LockGrain, type PlannedLock } from "../lifecycle/lock-rows";
+import { NEXT_RELEASE } from "../release-floors";
 
 import { OP_WAVE_COST_FORMATS, OP_WAVE_COST_MEMBER, type OpWaveCostFormat, type OpWaveCostHold, type OpWaveStep } from "./op-waves-capability-spec";
 
@@ -170,6 +171,14 @@ export const OP_WAVE_TOGETHER_MEMBER = "(wave plan)";
 /** The release that has `discover` with a `step`, and `together` waves (#4842). */
 export const OP_WAVE_STEP_WAVE_FLOOR = "0.124.79";
 
+/**
+ * The first chant whose step plans a wave's runs `parallelism` at once, as it
+ * applies them, and hands each run the wave's serial section
+ * (`DeployContext.serial`), where `terraform-apply` and `terragrunt-apply`
+ * take their inits one at a time on a shared provider cache (#4864).
+ */
+export const OP_WAVE_PARALLEL_STEP_FLOOR = NEXT_RELEASE;
+
 /** Whether a part changes nothing, and whether it destroys or replaces something. A plan that changes only outputs changes something (#4849). */
 export function partEffects(part: ChangeSetPart | undefined): { empty: boolean; destructive: boolean } {
   if (!part) return { empty: false, destructive: false };
@@ -184,7 +193,7 @@ function resolveCapability(registry: CapabilityRegistry, kind: string): Capabili
 
 /** Plan one run through the spec's step (#4545), writing its plan file at `planPath` (relative to `cwd`) as a per-run `plan` command would. */
 export async function planOpWaveStep(
-  at: { spec: OpWavesSpec; wave: OpWave; cwd: string; registry: CapabilityRegistry; planPath: string; lockGrain?: LockGrain | null; policyBase?: string; processEnv?: Record<string, string>; afterInit?: () => Promise<void> },
+  at: { spec: OpWavesSpec; wave: OpWave; cwd: string; registry: CapabilityRegistry; planPath: string; lockGrain?: LockGrain | null; policyBase?: string; processEnv?: Record<string, string>; afterInit?: () => Promise<void>; serial?: DeployContext["serial"] },
   run: OpWaveRun,
 ): Promise<OpWaveStepPlan> {
   const { spec, wave, cwd, registry } = at;
@@ -195,7 +204,7 @@ export async function planOpWaveStep(
   let lock: PlannedLock;
   try {
     // #4842: the run hooks' environment and check after init.
-    planned = await capability.plan({ ...opWaveStepContext(spec, wave, run, cwd), ...(at.lockGrain ? { lockGrain: at.lockGrain } : {}), ...(at.policyBase ? { policyBase: at.policyBase } : {}), ...(at.processEnv ? { processEnv: at.processEnv } : {}), ...(at.afterInit ? { afterInit: at.afterInit } : {}) }, input as never);
+    planned = await capability.plan({ ...opWaveStepContext(spec, wave, run, cwd), ...(at.lockGrain ? { lockGrain: at.lockGrain } : {}), ...(at.policyBase ? { policyBase: at.policyBase } : {}), ...(at.processEnv ? { processEnv: at.processEnv } : {}), ...(at.afterInit ? { afterInit: at.afterInit } : {}), ...(at.serial ? { serial: at.serial } : {}) }, input as never);
     // #4552: the run's grain (declared at base, else its lexicon's) and, on the resource grain, the rows its apply leases.
     lock = await resolvePlannedLock(capability, input, planned, at.lockGrain);
   } catch (err) {
@@ -458,7 +467,7 @@ export async function opWaveStepFacts(
 }
 
 /** Apply one run through the spec's step (#4545), with the plan the gate decided. */
-export async function applyOpWaveStep(at: { spec: OpWavesSpec; wave: OpWave; registry: CapabilityRegistry; processEnv?: Record<string, string>; cwd?: string }, run: OpWaveRun, plan: OpWaveStepPlan): Promise<OpWaveStepApply> {
+export async function applyOpWaveStep(at: { spec: OpWavesSpec; wave: OpWave; registry: CapabilityRegistry; processEnv?: Record<string, string>; cwd?: string; serial?: DeployContext["serial"] }, run: OpWaveRun, plan: OpWaveStepPlan): Promise<OpWaveStepApply> {
   const { spec, wave, registry } = at;
   let capability: Capability<never, unknown>;
   try {
@@ -466,7 +475,7 @@ export async function applyOpWaveStep(at: { spec: OpWavesSpec; wave: OpWave; reg
   } catch (err) {
     return { outcome: "failed", reason: err instanceof Error ? err.message : String(err) };
   }
-  const ctx: DeployContext = { ...opWaveStepContext(spec, wave, run, at.cwd), ...(plan.artifact !== undefined ? { plans: { [plan.member]: plan.artifact } } : {}), ...(at.processEnv ? { processEnv: at.processEnv } : {}) };
+  const ctx: DeployContext = { ...opWaveStepContext(spec, wave, run, at.cwd), ...(plan.artifact !== undefined ? { plans: { [plan.member]: plan.artifact } } : {}), ...(at.processEnv ? { processEnv: at.processEnv } : {}), ...(at.serial ? { serial: at.serial } : {}) };
   const input = opWaveStepInput(spec, wave, run);
   try {
     const output = await capability.run(ctx, input as never);
