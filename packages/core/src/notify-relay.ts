@@ -249,8 +249,12 @@ export interface RelayPending {
 
 /** What the relay reads and writes, so a test stands in for the repo. */
 export interface RelayDeps {
-  /** The signers file at base, and its path for the refusal. */
-  signers(): Promise<{ signers: ReadonlyArray<{ principal: string; line: number }>; path: string }>;
+  /**
+   * The signers file at base, and its path for the refusal. `problems` are
+   * why the trust policy at base can't be trusted, such as a broken signer
+   * history (#4803); with any, the relay maps no clicker.
+   */
+  signers(): Promise<{ signers: ReadonlyArray<{ principal: string; line: number }>; path: string; problems?: readonly string[] }>;
   /** The standing pending facts whose plan or change set is `digest`. */
   pending(digest: string): Promise<RelayPending[]>;
   /** Record the approval as `chant approve` does. `error` is why it refused. */
@@ -295,7 +299,10 @@ export async function decideRelayClick(click: RelayClick, settings: RelaySetting
   if (!checked.ok) return { ok: false, outcome: /old|future/.test(checked.reason) ? "stale" : "bad-reference", text: `Refused: ${checked.reason}. Nothing was ${click.action === "approve" ? "approved" : "declined"}.` };
   const ref: RelayRef = checked.ref;
   try {
-    const { signers, path } = await deps.signers();
+    const { signers, path, problems } = await deps.signers();
+    if (problems && problems.length > 0) {
+      return { ok: false, outcome: "refused", gate: ref.gate, text: `Refused: the trust policy at base can't be read, so no one in ${path} is trusted and nothing was recorded: ${problems.join("; ")} [trust-policy-unreadable]` };
+    }
     const principal = relayPrincipalFor(signers, click.chatUser);
     if (!principal) {
       return { ok: false, outcome: "ineligible", gate: ref.gate, text: `Refused: ${click.display} (${click.chatUser}) is not mapped to a principal in ${path} at base, so nothing was recorded. A maintainer adds ${click.chatUser} to that person's line.` };
