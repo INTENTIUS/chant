@@ -99,6 +99,7 @@ import { notifyConfigProblem, type NotifyConfig } from "../notify";
 import type { CiResponses } from "../ci-respond";
 import { WAVE_GATE_NAME_PATTERN, waveGateNameFrom, waveShare } from "../wave-layout";
 import { waveOutcomeFileName } from "../wave-blocked";
+import { opWavesEvidenceProblems, type OpWavesEvidence } from "./op-waves-evidence-spec";
 import { opWaveHoldsProblems, opWaveParallelismProblems, opWaveStepProblems, type OpWaveHolds, type OpWaveStep } from "./op-waves-capability-spec";
 import { opWaveReleaseProblems, type OpWaveReleaseNames } from "./op-waves-release";
 import { CONTROL_DISPATCH_JOB, CONTROL_NAME, controlSettingsProblems, resolveControlTarget, type ControlSettingsInput, type ControlTarget } from "../control/dispatch";
@@ -557,6 +558,13 @@ export interface OpWavesSpec {
   /** What happens to an approval once a wave applies under it (#3784). Read at the base commit. */
   approvals?: OpWavesApprovals;
   /**
+   * Check evidence (#4870): `requires` names the checks whose current
+   * evidence the applied commit's tree needs, read at base, such as the
+   * `plan` and `policy` a pull request's plan note job signed. A wave whose
+   * commit lacks one plans and applies nothing. See ./op-waves-evidence.ts.
+   */
+  evidence?: OpWavesEvidence;
+  /**
    * Who may override a run the product's policy denied at plan time (#3821).
    * A plan entry with `denied` refuses the wave unless an override on
    * `_gates/policy-override.jsonl` counts for that run, its plan digest and
@@ -970,6 +978,10 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
   if (spec.waves.length === 0) throw new Error(`${where} has no waves.`);
   {
     const problems = opWaveHoldsProblems(spec.holds);
+    if (problems.length > 0) throw new Error(`${where}: ${problems.join("; ")}.`);
+  }
+  {
+    const problems = opWavesEvidenceProblems((spec as { evidence?: unknown }).evidence);
     if (problems.length > 0) throw new Error(`${where}: ${problems.join("; ")}.`);
   }
   if (spec.labels !== undefined) {

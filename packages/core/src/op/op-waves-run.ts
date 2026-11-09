@@ -90,6 +90,8 @@ import type { GateSigners } from "../lifecycle/gate-seal";
 import { ciRunIdFromEnv } from "./gate-run-locator";
 import { appendRunRecord, DEFAULT_RUN_ENV } from "../lifecycle/run-ledger";
 import { LifecyclePushLostError, pushLifecycleRebasing } from "../lifecycle/git";
+import { opWaveEvidenceRefusal, signOpWaveChecks } from "./op-waves-evidence";
+import { opWavesEvidenceProblems, type OpWavesEvidence } from "./op-waves-evidence-spec";
 import { resolveCiJob } from "../lifecycle/release-ledger";
 import type { OpRunPolicyRow, OpRunRecordInput, OpRunStepRecord, OpRunWave, OpRunWavePlan, OpRunWaveTarget } from "./runtime";
 import { opWaveRunHookList, opWaveRunHooksProblems, runOpWaveAfterApply, runOpWaveBeforeApply, runOpWaveBeforePlan, type OpWaveRunHooks } from "./op-waves-run-hooks";
@@ -644,6 +646,20 @@ export interface OpWaveBaseRules {
   pullRequestGate?: string;
   /** `approvals.preview` at base: the wave applies what the merged pull request's head recorded, or refuses (exit 4). */
   preview?: boolean;
+  /** `evidence.requires` at base (#4870): the checks whose current evidence the wave's commit needs. */
+  evidenceRequires?: string[];
+  /** Set when `evidence` at base cannot be read: the wave fails rather than apply without the checks it asks for. */
+  evidenceRefused?: string;
+}
+
+/** `evidence` at base (#4870), or why it cannot be read. */
+function evidenceAtBase(spec: OpWavesSpec, where: string): Pick<OpWaveBaseRules, "evidenceRequires" | "evidenceRefused"> {
+  const raw = (spec as { evidence?: unknown }).evidence;
+  if (raw === undefined) return {};
+  const problems = opWavesEvidenceProblems(raw);
+  if (problems.length > 0) return { evidenceRefused: `the evidence rules in ${where} cannot be read (${problems.join("; ")})` };
+  const requires = (raw as OpWavesEvidence).requires ?? [];
+  return requires.length > 0 ? { evidenceRequires: [...requires] } : {};
 }
 
 const noHooks = (): Record<OpWaveHookMoment, OpWaveHook[]> =>
@@ -676,7 +692,7 @@ export function readOpWavePolicy(
   const spend = (spec as { approvals?: { spend?: unknown } }).approvals?.spend === true;
   const neverOverMcp = (spec as { neverOverMcp?: unknown }).neverOverMcp === true;
   // #3836: the gate's decision point, the spec's for a wave the base does not have yet.
-  const asks = { ...pointAtBase(spec, name, `${specFile} at ${sha.slice(0, 12)}`), ...quorumAtBase(spec, `${specFile} at ${sha.slice(0, 12)}`), ...holdsAtBase(spec, `${specFile} at ${sha.slice(0, 12)}`), ...pullRequestGateAtBase(spec), ...(spec.approvals?.preview === true ? { preview: true } : {}) };
+  const asks = { ...pointAtBase(spec, name, `${specFile} at ${sha.slice(0, 12)}`), ...quorumAtBase(spec, `${specFile} at ${sha.slice(0, 12)}`), ...holdsAtBase(spec, `${specFile} at ${sha.slice(0, 12)}`), ...evidenceAtBase(spec, `${specFile} at ${sha.slice(0, 12)}`), ...pullRequestGateAtBase(spec), ...(spec.approvals?.preview === true ? { preview: true } : {}) };
   const wave = spec.waves.find((w) => w.name === name);
   if (!wave) return { ...absent, spend, neverOverMcp, ...asks };
   const policy = wave.gate ?? "always";
@@ -2596,6 +2612,12 @@ async function planOpWave(options: RunOpWaveOptions, { k, pass }: WaveAttempt<Ru
   // #4290: rules at base that cannot be read fail the wave; fewer approvers never stand in for them.
   if (rules.quorumRefused) return { end: failed(ctx, `wave ${k} (${wave.name}): ${rules.quorumRefused}, so nothing in it was planned or applied`) };
   if (rules.quorum && rules.point) return { end: failed(ctx, `wave ${k} (${wave.name}): approvals.quorum and a decision point are both set at ${base.slice(0, 12)}; a gate that asks a point takes its deciders from the point, so nothing in it was planned or applied`) };
+  // #4870: the checks whose evidence the commit needs, read at base, before anything is planned.
+  if (rules.evidenceRefused) return { end: failed(ctx, `wave ${k} (${wave.name}): ${rules.evidenceRefused}, so nothing in it was planned or applied`) };
+  if (rules.evidenceRequires) {
+    const refused = await opWaveEvidenceRefusal(cwd, options.head ?? "HEAD", base, rules.evidenceRequires);
+    if (refused) return { end: failed(ctx, `wave ${k} (${wave.name}): ${refused}, so nothing in it was planned or applied`) };
+  }
   if (JSON.stringify(spec.approvals?.quorum ?? null) !== JSON.stringify(rules.quorum ?? null)) {
     log(`wave ${k} (${wave.name}): its approval rules are read at ${base.slice(0, 12)}, and this change's differ; the ones at base hold`);
   }
@@ -2654,6 +2676,8 @@ async function planOpWave(options: RunOpWaveOptions, { k, pass }: WaveAttempt<Ru
     // #4613: the decision names the shared policy commit its runs were judged by.
     if (held.policySource) decision.ciPolicySource = held.policySource;
   }
+  // #4870: with a runner key, the wave's plan and policy checks are signed over its commit.
+  await signOpWaveChecks({ cwd, head: options.head ?? "HEAD", base, wave: wave.name, planDigest: opWaveSetDigest(spec, members), policyRows, log });
   // #4614: the after-plan hooks in the job's process, before the set digest and the gate.
   const inProcess = await runAfterPlan(ctx, members, parts, policyRows);
   if (inProcess.failed) return { end: failed(ctx, `${inProcess.failed}, so nothing in wave ${k} was approved or applied`) };

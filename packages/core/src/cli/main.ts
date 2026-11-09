@@ -273,6 +273,15 @@ CI:
                         perRun, with no forge token or cloud credentials in
                         their environment. Writes check-hooks.json under
                         --output (default .chant/check); exits 1 when one failed.
+  ci evidence sign --check-id <id>[,<id>...] [--at <rev>] [--base <rev>] [--no-push]
+                        Sign that each named check passed at --at, with the
+                        runner key in CHANT_RUNNER_KEY or --key, and keep it on
+                        chant/lifecycle by the commit's tree. With --from-report
+                        <dir> --result <result>, sign plan and policy from the
+                        plan job's report, as a generated plan note job does.
+  ci evidence verify --check-id <id>[,<id>...] [--at <rev>] [--base <rev>] [--json]
+                        Verify the kept evidence for --at's tree against the
+                        runner keys at --base; exits 1 when one is not current.
   ci check-job          The apply-job guard: compare the forge environment,
                         ref and runner the forge gives this job with the
                         expectation in CHANT_JOB_GUARD, which a generated
@@ -1918,6 +1927,7 @@ export const commandRegistry: CommandDef[] = [
   { name: "ci init", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-init")).runCiInit(ctx) },
   // #4556: the ci.hooks.check hooks at base, for a product's check job.
   { name: "ci check", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/ci-check")).runCiCheck(ctx) },
+  { name: "ci evidence", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/ci-evidence")).runCiEvidence(ctx) },
   // #4608: the live forge, cloud trust policies and Pulumi Cloud's OIDC policies against ci.identity.cloud. Read-only.
   // #4624: the apply-job guard, from the expectation the job carries.
   { name: "ci check-job", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/ci-check-job")).runCiCheckJob(ctx) },

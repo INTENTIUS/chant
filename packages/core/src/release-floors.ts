@@ -93,3 +93,6 @@ export const OP_WAVES_JOB_INPUTS_FLOOR = NEXT_RELEASE;
 
 /** The first chant with `@intentius/chant/ci-login`: `githubCloudLogin`, `gitlabCloudLogin` and `forgejoCloudLogin` render a job's AWS, GCP and Azure login from the OIDC token file, per target too (#4788). */
 export const CLOUD_LOGIN_FLOOR = NEXT_RELEASE;
+
+/** The first chant whose generated pipelines sign evidence for each named check they run, with `chant ci evidence`, `ci check` signing each hook, and an Op waves spec's `evidence.requires` (#4870). */
+export const CHECK_EVIDENCE_FLOOR = NEXT_RELEASE;

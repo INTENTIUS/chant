@@ -1162,6 +1162,14 @@ export interface OpWavesPipelineOptions
    * OIDC tokens. Absent: the job renders as without it.
    */
   recordPlans?: OpWavesRecordPlansInputs;
+  /**
+   * The pipeline's runner identity (#4870): the secret (GitHub, Forgejo) or
+   * CI/CD variable (GitLab) holding the runner key `.chant/trust.json`
+   * lists. Each deciding wave job's `chant run wave` step gets it as
+   * `CHANT_RUNNER_KEY` and signs `plan:<wave>` and `policy:<wave>` once the
+   * wave is planned. Absent: the jobs render as without it.
+   */
+  evidence?: import("./ci-evidence-jobs").PipelineEvidence;
 }
 
 /** A run step a product adds to a generated job (#4791): its name, and its shell lines in order. */

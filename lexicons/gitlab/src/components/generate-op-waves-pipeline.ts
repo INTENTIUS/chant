@@ -114,6 +114,7 @@ import { gitlabTradeIdTokens, gitlabTradeLines, TRADE_SPEC_ENV } from "@intentiu
 import { JOB_GUARD_ENV, jobGuardLine, jobGuardSpec, opWaveJobLabel } from "@intentius/chant/ci-job-guard";
 import { CHANT_EXIT } from "@intentius/chant/exit-codes";
 import { resolveProductWords } from "@intentius/chant/ci-product-words";
+import { assertPipelineEvidence, evidenceKeyEnv } from "@intentius/chant/ci-evidence-jobs";
 import { emitGitlabFile } from "./ci-jobs";
 
 /** The one exit an op-wave job allows as a failure (#4322): a run that failed. The guard's refusal (9) is outside it. */
@@ -122,6 +123,7 @@ export const OP_WAVE_ALLOWED_EXIT = CHANT_EXIT.failed;
 /** Render an Op waves spec as one GitLab CI file, `<name>.gitlab-ci.yml` unless `opsFileName` names another. */
 export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWavesPipelineOptions): OpWavesPipelineResult {
   const jobs = opWaveJobs(spec, options.specFile, { bin: options.bin });
+  assertPipelineEvidence(options.evidence);
   const image = options.image ?? CI_IMAGE;
   const subject = `Op waves "${spec.name}"`;
   const rules = pushBranches(spec.branches).map((branch) => {
@@ -223,7 +225,8 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
         timeout: `${timeout.minutes} minutes`,
         ...(environment ? { environment: environmentDoc(environment) } : {}),
         ...(idTokens ? { id_tokens: idTokens } : {}),
-        variables: { ...GITLAB_FULL_HISTORY, ...timeout.env, ...(wave.variables ?? {}), ...(group?.variables ?? {}), ...(cloud ? { [TRADE_SPEC_ENV]: JSON.stringify(cloud) } : {}), [JOB_GUARD_ENV]: JSON.stringify(guard) },
+        // #4870: the deciding job signs the wave's checks with the runner key from the named variable.
+        variables: { ...GITLAB_FULL_HISTORY, ...timeout.env, ...(wave.variables ?? {}), ...(group?.variables ?? {}), ...(cloud ? { [TRADE_SPEC_ENV]: JSON.stringify(cloud) } : {}), [JOB_GUARD_ENV]: JSON.stringify(guard), ...(options.evidence && (job.kind === "wave" || job.kind === "decide") ? evidenceKeyEnv("gitlab", options.evidence) : {}) },
         rules,
         ...(job.needs.length > 0 ? { needs: job.needs } : {}),
         script: [

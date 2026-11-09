@@ -37,6 +37,7 @@ import { forgePrincipalOf, type PrForge } from "./pr-forge";
 import { GITHUB_COMMENT_LIMIT, GITLAB_NOTE_LIMIT } from "./plan-summary";
 import { activeProductWords, commentLine, type CiProductWords } from "./ci-product-words";
 import { controlEdgeFactsFromEnv, remarkCrossStackEdges, type ControlEdgeFacts } from "./control/edges";
+import { checkEvidenceNoteLine } from "./workspace/trust/check-evidence-report";
 import { isPlanNote, planNoteMarker, PR_PLAN_NOTE_CONTRACT, PR_PLAN_NOTE_FILE, renderPlanNote, type PrPlanNoteHandoff, type PrPlanNoteWords } from "./pr-plan-note";
 
 /** The plan report's file under the report directory. */
@@ -250,6 +251,9 @@ async function postOutcome(
   } catch (err) {
     warnings.push(`could not set the ${context} status: ${err instanceof Error ? err.message : String(err)}`);
   }
+  // #4870: the checks the note job signed evidence for, when it signed any.
+  const evidence = note !== undefined ? checkEvidenceNoteLine(input.dir) : undefined;
+  if (note !== undefined && evidence) note = `${note}${note.endsWith("\n") ? "" : "\n"}\n${evidence}\n`;
   if (note !== undefined) {
     try {
       await upsertPlanNote(input.forge, input.pr, prNoteMarker(input.env, input.member), note);
