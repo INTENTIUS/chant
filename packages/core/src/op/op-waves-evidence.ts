@@ -10,7 +10,8 @@
  * - With a runner key in `CHANT_RUNNER_KEY`, the deciding job signs its own
  *   two named checks once the wave is planned: `plan:<wave>`, and
  *   `policy:<wave>` when `ci.policy` ran over the plans and denied nothing.
- *   They go on `chant/lifecycle` with the job's other records.
+ *   They are attached under `refs/notes/chant/evidence` and pushed, where #4867's ref gate
+ *   and a later wave read them.
  *
  * See ../workspace/trust/check-evidence.ts.
  */
@@ -33,9 +34,9 @@ export async function opWaveEvidenceRefusal(cwd: string, head: string, base: str
 /**
  * Sign the wave's plan and policy checks when the job holds a runner key.
  * Never fails the wave: a key the policy at base does not list, or a
- * ledger write that does not land, is a line in the log.
+ * notes push that does not land, is a line in the log.
  */
-export async function signOpWaveChecks(input: { cwd: string; head: string; base: string; wave: string; planDigest?: string; policyRows: ReadonlyMap<string, OpRunPolicyRow>; log: (line: string) => void; env?: NodeJS.ProcessEnv }): Promise<string[]> {
+export async function signOpWaveChecks(input: { cwd: string; head: string; base: string; wave: string; planDigest?: string; policyRows: ReadonlyMap<string, OpRunPolicyRow>; log: (line: string) => void; env?: NodeJS.ProcessEnv; push?: boolean }): Promise<string[]> {
   const pem = (input.env ?? process.env)[CHECK_EVIDENCE_KEY_ENV];
   if (!pem) return [];
   try {
@@ -45,8 +46,8 @@ export async function signOpWaveChecks(input: { cwd: string; head: string; base:
     const checks: Array<{ check: string; claim?: string }> = [{ check: `plan:${input.wave}`, ...(input.planDigest ? { claim: input.planDigest } : {}) }];
     if (rows.length > 0 && rows.every((r) => r.result !== "denied")) checks.push({ check: `policy:${input.wave}`, claim: JSON.stringify(rows) });
     const signed = signChecks(repo, input.head, checks, signer);
-    // The job pushes chant/lifecycle with its run record; the evidence goes with it.
-    await recordChecks(repo, signed, { push: false });
+    const pushed = await recordChecks(repo, signed, { push: input.push !== false });
+    if (input.push !== false && !pushed.pushed && pushed.pushWarning) input.log(`wave ${input.wave}: ${pushed.pushWarning}`);
     input.log(`wave ${input.wave}: signed evidence for ${signed.map((s) => s.check).join(", ")} as ${signer.principal}`);
     return signed.map((s) => s.check);
   } catch (err) {

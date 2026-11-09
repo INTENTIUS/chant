@@ -1,7 +1,8 @@
 /**
- * #4870: `ci.hooks.check`'s runner signs each hook that passed as a named
- * check, `<name>` or `<name>:<target>` for a `perRun` hook, and the key never
- * reaches a hook. Without a signer the report is as before.
+ * #4870: `ci.hooks.check`'s runner signs each hook whose every run passed as
+ * a named check by the hook's name, attached where the ref gate (#4867)
+ * reads it, and the key never reaches a hook. Without a signer the report is
+ * as before.
  */
 
 import { execFileSync } from "node:child_process";
@@ -14,6 +15,7 @@ import { checkHookEnv } from "./check-hooks";
 import { runCheckStage } from "./check-steps";
 import { loadRunnerKey } from "../workspace/trust/dsse";
 import { readCheckEvidence, runnerKeyEvidenceSigner } from "../workspace/trust/check-evidence";
+import { decideRefUpdate } from "../workspace/trust/ref-gate";
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "init.defaultBranch=main", ...args], { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -52,10 +54,17 @@ describe("the check runner signs per hook (#4870)", () => {
       evidence: { signer: runnerKeyEvidenceSigner(cwd, head, pem), push: false },
     });
     expect(report.status).toBe("failed");
-    expect(report.evidence).toEqual({ signed: ["fmt", "tflint:roots/a", "tflint:roots/b"], runner: "ci", commit: head });
-    expect(logs).toContain(`ci check: signed evidence for tflint:roots/a at ${head.slice(0, 12)} as ci`);
-    expect((await readCheckEvidence(cwd, head, head, ["fmt", "tflint:roots/b", "checkov"])).map((v) => v.status)).toEqual(["current", "current", "missing"]);
-    expect(JSON.parse(readFileSync(join(cwd, ".chant/check/check-hooks.json"), "utf8")).evidence.signed).toHaveLength(3);
+    expect(report.evidence).toEqual({ signed: ["fmt", "tflint"], runner: "ci", commit: head });
+    expect(logs).toContain(`ci check: signed evidence for tflint at ${head.slice(0, 12)} as ci`);
+    expect((await readCheckEvidence(cwd, head, head, ["fmt", "tflint", "checkov"])).map((v) => v.status)).toEqual(["current", "current", "missing"]);
+    expect(JSON.parse(readFileSync(join(cwd, ".chant/check/check-hooks.json"), "utf8")).evidence.signed).toEqual(["fmt", "tflint"]);
+    // The ref gate reads the same notes: a rule at base naming fmt and tflint admits the commit.
+    const policy = JSON.parse(readFileSync(join(cwd, ".chant/trust.json"), "utf8"));
+    writeFileSync(join(cwd, ".chant/trust.json"), JSON.stringify({ ...policy, refs: [{ ref: "refs/heads/main", checks: [{ check: "fmt", command: "chant ci check" }, { check: "tflint", command: "chant ci check" }, { check: "checkov", command: "chant ci check" }] }] }));
+    git(cwd, "commit", "--quiet", "-am", "require the checks");
+    const ruled = git(cwd, "rev-parse", "HEAD");
+    const decided = decideRefUpdate({ repo: cwd, base: ruled, update: { ref: "refs/heads/main", old: ruled, new: head } });
+    expect(decided.checks.map((c) => [c.check, c.status])).toEqual([["fmt", "current"], ["tflint", "current"], ["checkov", "missing"]]);
   });
 
   test("without a signer nothing is signed and the report has no evidence", async () => {

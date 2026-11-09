@@ -117,14 +117,14 @@ describe("evidence.requires (#4870)", () => {
     const logs: string[] = [];
     const env = { CHANT_RUNNER_KEY: pem } as NodeJS.ProcessEnv;
     const none = new Map();
-    expect(await signOpWaveChecks({ cwd, head, base, wave: "dev", planDigest: digest("1"), policyRows: none, log: (l) => logs.push(l), env })).toEqual(["plan:dev"]);
+    expect(await signOpWaveChecks({ cwd, head, base, wave: "dev", planDigest: digest("1"), policyRows: none, log: (l) => logs.push(l), env, push: false })).toEqual(["plan:dev"]);
     const passed = new Map([["network", { source: "ci.policy", result: "passed" as const, rules: [] }]]);
-    expect(await signOpWaveChecks({ cwd, head, base, wave: "dev", policyRows: passed, log: (l) => logs.push(l), env })).toEqual(["plan:dev", "policy:dev"]);
+    expect(await signOpWaveChecks({ cwd, head, base, wave: "dev", policyRows: passed, log: (l) => logs.push(l), env, push: false })).toEqual(["plan:dev", "policy:dev"]);
     const denied = new Map([["network", { source: "ci.policy", result: "denied" as const, rules: ["r"] }]]);
-    expect(await signOpWaveChecks({ cwd, head, base, wave: "dev", policyRows: denied, log: (l) => logs.push(l), env })).toEqual(["plan:dev"]);
+    expect(await signOpWaveChecks({ cwd, head, base, wave: "dev", policyRows: denied, log: (l) => logs.push(l), env, push: false })).toEqual(["plan:dev"]);
     expect((await readCheckEvidence(cwd, head, base, ["plan:dev", "policy:dev"])).map((v) => v.status)).toEqual(["current", "current"]);
     expect(logs[0]).toBe("wave dev: signed evidence for plan:dev as ci");
     // No key, nothing signed and nothing said.
-    expect(await signOpWaveChecks({ cwd, head, base, wave: "dev", policyRows: none, log: (l) => logs.push(l), env: {} })).toEqual([]);
+    expect(await signOpWaveChecks({ cwd, head, base, wave: "dev", policyRows: none, log: (l) => logs.push(l), env: {}, push: false })).toEqual([]);
   });
 });

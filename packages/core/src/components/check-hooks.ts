@@ -146,9 +146,16 @@ export interface CheckHooksReport {
   note?: string;
 }
 
-/** The named check a hook's run is signed as (#4870): its name, or `<name>:<target>` for a `perRun` hook. */
-export function checkHookEvidenceId(outcome: Pick<CheckHookOutcome, "name" | "target">): string {
-  return outcome.target ? `${outcome.name}:${outcome.target}` : outcome.name;
+/**
+ * The named checks the hooks' runs are signed as (#4870): each hook by its
+ * name, once every run of it passed, so a `perRun` hook is one check over
+ * all its targets. The name is the one `refs` in `.chant/trust.json` and an
+ * Op waves spec's `evidence.requires` name.
+ */
+export function passedCheckHooks(outcomes: readonly CheckHookOutcome[]): Array<{ check: string; runs: CheckHookOutcome[] }> {
+  const byName = new Map<string, CheckHookOutcome[]>();
+  for (const o of outcomes) byName.set(o.name, [...(byName.get(o.name) ?? []), o]);
+  return [...byName].filter(([, runs]) => runs.every((r) => r.outcome === "passed")).map(([check, runs]) => ({ check, runs }));
 }
 
 /** Where {@link runCheckHooks} writes its runs file and report unless told: `.chant/check`. */

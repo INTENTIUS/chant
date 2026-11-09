@@ -23,7 +23,7 @@ import { join, relative, resolve } from "node:path";
 import { readDeclaration } from "../workspace/declaration";
 import { locateWorkspace } from "../workspace/which-chant";
 import { recordChecks, signChecks, type EvidenceSigner } from "../workspace/trust/check-evidence";
-import { CHECK_HOOKS_DIR, CHECK_HOOKS_REPORT_FILE, checkHookEnv, checkHookEvidenceId, runCheckHooks, type CheckHooksReport, type RunCheckHooksOptions } from "./check-hooks";
+import { CHECK_HOOKS_DIR, CHECK_HOOKS_REPORT_FILE, checkHookEnv, passedCheckHooks, runCheckHooks, type CheckHooksReport, type RunCheckHooksOptions } from "./check-hooks";
 
 /** A workspace member a lexicon's check steps run for. */
 export interface CheckStageMember {
@@ -160,7 +160,7 @@ export async function runCheckStage(options: RunCheckHooksOptions & { adapters: 
 /**
  * Who signs the check stage's evidence (#4870), and where: the stage signs
  * each hook that passed as a named check over `at` (default the checkout's
- * `HEAD`) and keeps it on `chant/lifecycle`. Absent, nothing is signed and
+ * `HEAD`) and attaches it under `refs/notes/chant/evidence`. Absent, nothing is signed and
  * the report is as before.
  */
 export interface CheckStageEvidence {
@@ -174,14 +174,14 @@ export interface CheckStageEvidence {
 /** Sign each passed hook's evidence when the stage has a signer (#4870), and write the report. */
 async function signHooks(options: { dir?: string; evidence?: CheckStageEvidence }, cwd: string, log: (line: string) => void, report: CheckHooksReport): Promise<CheckHooksReport> {
   const dir = relative(cwd, resolve(cwd, options.dir ?? CHECK_HOOKS_DIR)) || ".";
-  const passed = report.hooks.filter((h) => h.outcome === "passed");
+  const passed = passedCheckHooks(report.hooks);
   let out = report;
   if (options.evidence && passed.length > 0) {
     const repo = gitTopOf(cwd);
-    const signed = signChecks(repo, options.evidence.at ?? "HEAD", passed.map((h) => ({ check: checkHookEvidenceId(h), claim: JSON.stringify(h) })), options.evidence.signer);
+    const signed = signChecks(repo, options.evidence.at ?? "HEAD", passed.map((h) => ({ check: h.check, claim: JSON.stringify(h.runs) })), options.evidence.signer);
     const pushed = await recordChecks(repo, signed, { push: options.evidence.push !== false });
     for (const s of signed) log(`ci check: signed evidence for ${s.check} at ${s.commit.slice(0, 12)} as ${s.runner}`);
-    if (options.evidence.push !== false && !pushed.pushed && pushed.pushWarning) log(`ci check: the evidence is on the local chant/lifecycle, and the push did not land: ${pushed.pushWarning}`);
+    if (options.evidence.push !== false && !pushed.pushed && pushed.pushWarning) log(`ci check: the evidence is attached here, and the push did not land: ${pushed.pushWarning}`);
     out = { ...report, evidence: { signed: signed.map((s) => s.check), runner: signed[0]!.runner, commit: signed[0]!.commit, ...(pushed.pushWarning && options.evidence.push !== false ? { pushWarning: pushed.pushWarning } : {}) } };
   }
   writeFileSync(join(cwd, dir, CHECK_HOOKS_REPORT_FILE), JSON.stringify(out, null, 2) + "\n");

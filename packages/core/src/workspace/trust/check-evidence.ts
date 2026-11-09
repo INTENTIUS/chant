@@ -7,12 +7,14 @@
  * what the check said (`claim`) when there is one. No record is a subject:
  * a check reads the tree, and the statement binds the tree.
  *
- * The envelope is kept on `chant/lifecycle` at
- * `_evidence/<tree>/<check>.json`, keyed by the tree rather than the commit,
- * so the merge of a pull request whose tree is the pull request head's finds
- * the evidence its head was given, and #4868's rebase that keeps the tree
- * keeps it too. A newer signing of the same check on the same tree replaces
- * the older one.
+ * The envelope is attached where #4867's ref gate reads evidence: a line
+ * of the commit's git note under `refs/notes/chant/evidence`
+ * (`EVIDENCE_NOTES_REF`, ./ref-gate.ts), which the job then pushes. The
+ * statement names no record, so it counts for the tree it was signed over:
+ * {@link readCheckEvidence} also reads the notes of other commits with the
+ * same tree, so the squash of a pull request whose tree is the head's finds
+ * the evidence the head was given, as #4868's rebase that keeps the tree
+ * will.
  *
  * Who signs is an {@link EvidenceSigner}: today a runner key the policy at
  * base lists ({@link runnerKeyEvidenceSigner}, the key `CHANT_RUNNER_KEY`
@@ -29,16 +31,15 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { canonicalJson } from "../../effect-receipt";
-import { pushLifecycleReport, readBlobFromPath, writeLedgerFiles } from "../../lifecycle/git";
 import { gitRevisionSource } from "../record-source";
 import { IN_TOTO_PAYLOAD_TYPE, loadRunnerKey, signEnvelope, type DsseEnvelope } from "./dsse";
 import { RUNNER_EVIDENCE_PREDICATE, STATEMENT_TYPE, verifyEvidence, type EvidenceStatement } from "./evidence";
 import { readTrustPolicy } from "./policy";
+import { attachEvidence, EVIDENCE_NOTES_REF, parseEvidenceNote } from "./ref-gate";
 
 export { CHECK_EVIDENCE_KEY_ENV } from "./check-evidence-report";
 
-/** The ledger directory the envelopes are kept under. */
-export const CHECK_EVIDENCE_LEDGER_DIR = "_evidence";
+export { EVIDENCE_NOTES_REF };
 
 /** The named checks the plan job stands for (#4870): its plan, and the policy evaluated inside it. */
 export const PLAN_EVIDENCE_CHECKS = ["plan", "policy"] as const;
@@ -87,11 +88,6 @@ export function commitAndTree(repo: string, rev: string): { commit: string; tree
   return { commit, tree: git(repo, ["rev-parse", `${commit}^{tree}`]) };
 }
 
-/** The file name a check's envelope is kept under: anything that is not a plain file-name character becomes `_`. */
-export function checkEvidenceFile(check: string): string {
-  return `${check.replace(/[^A-Za-z0-9._-]/g, "_")}.json`;
-}
-
 /** The check's statement over `commit`, with the digest of what it said when given. */
 export function checkStatement(input: { commit: string; tree: string; check: string; runner: string; claim?: Buffer | string }): EvidenceStatement {
   if (!input.check.trim()) throw new Error("a check's evidence needs the check's name");
@@ -116,8 +112,6 @@ export interface SignedCheck {
   tree: string;
   runner: string;
   envelope: DsseEnvelope;
-  /** Where on `chant/lifecycle` it is kept. */
-  path: string;
 }
 
 /** Sign each of `checks` over `at` with `signer`. Writes nothing. */
@@ -131,32 +125,73 @@ export function signChecks(repo: string, at: string, checks: readonly { check: s
       tree,
       runner: signer.principal,
       envelope: signer.sign(IN_TOTO_PAYLOAD_TYPE, Buffer.from(canonicalJson(statement), "utf8")),
-      path: `${CHECK_EVIDENCE_LEDGER_DIR}/${tree}/${checkEvidenceFile(check)}`,
     };
   });
 }
 
-/**
- * Keep the envelopes on `chant/lifecycle` in one commit, then push the
- * branch. Returns why the push did not land, when it did not; the local
- * branch holds them either way.
- */
-export async function recordChecks(repo: string, signed: readonly SignedCheck[], opts: { push?: boolean } = {}): Promise<{ pushed: boolean; pushWarning?: string }> {
-  if (signed.length === 0) return { pushed: false };
-  const first = signed[0]!;
-  await writeLedgerFiles(
-    signed.map((s) => ({ path: s.path, content: JSON.stringify(s.envelope, null, 2) + "\n" })),
-    `evidence: ${signed.map((s) => s.check).join(", ")} at ${first.commit.slice(0, 12)} by ${first.runner}`,
-    { cwd: repo },
-  );
-  if (opts.push === false) return { pushed: false };
-  return pushLifecycleReport({ cwd: repo });
+/** How many times {@link recordChecks} fetches, attaches and pushes when another job pushed the notes first. */
+const NOTES_PUSH_TRIES = 3;
+
+function tryGit(repo: string, args: string[]): string | undefined {
+  try {
+    return git(repo, args);
+  } catch {
+    return undefined;
+  }
 }
 
-/** What the ledger holds for one check at a commit's tree. */
+/**
+ * Attach each envelope to its commit's evidence note and push
+ * `refs/notes/chant/evidence` to `origin`. The remote's notes are fetched
+ * first, so the push adds to them; a push another job beat is tried again
+ * on the newer notes. Returns why the push did not land, when it did not;
+ * the local notes hold the envelopes either way.
+ */
+export async function recordChecks(repo: string, signed: readonly SignedCheck[], opts: { push?: boolean; remote?: string } = {}): Promise<{ pushed: boolean; pushWarning?: string }> {
+  if (signed.length === 0) return { pushed: false };
+  const push = opts.push !== false;
+  const remote = opts.remote ?? "origin";
+  const hasRemote = push && tryGit(repo, ["remote", "get-url", remote]) !== undefined;
+  if (!hasRemote) {
+    for (const s of signed) attachEvidence(repo, s.commit, s.envelope);
+    return push ? { pushed: false, pushWarning: `no remote ${remote}, so the evidence is attached here only` } : { pushed: false };
+  }
+  let said = "";
+  for (let attempt = 1; attempt <= NOTES_PUSH_TRIES; attempt++) {
+    // The remote's notes are the ones to add to; a CI checkout has none of its own to keep.
+    if (tryGit(repo, ["fetch", "--quiet", "--no-tags", remote, `+${EVIDENCE_NOTES_REF}:${EVIDENCE_NOTES_REF}`]) === undefined && attempt > 1) break;
+    for (const s of signed) attachEvidence(repo, s.commit, s.envelope);
+    try {
+      execFileSync("git", ["push", "--quiet", remote, `${EVIDENCE_NOTES_REF}:${EVIDENCE_NOTES_REF}`], { cwd: repo, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
+      return { pushed: true };
+    } catch (err) {
+      said = String((err as { stderr?: unknown }).stderr ?? (err instanceof Error ? err.message : err)).trim().split("\n")[0] ?? "";
+    }
+  }
+  return { pushed: false, pushWarning: `git push ${remote} ${EVIDENCE_NOTES_REF} did not land${said ? ` (git said: ${said})` : ""}` };
+}
+
+/** Every envelope attached to a commit whose tree is `tree`: `commit`'s own first. */
+function envelopesForTree(repo: string, commit: string, tree: string): unknown[] {
+  const list = tryGit(repo, ["notes", `--ref=${EVIDENCE_NOTES_REF}`, "list"]);
+  if (!list) return [];
+  const own: unknown[] = [];
+  const others: unknown[] = [];
+  for (const line of list.split("\n")) {
+    const [blob, annotated] = line.trim().split(/\s+/);
+    if (!blob || !annotated) continue;
+    const same = annotated === commit || tryGit(repo, ["rev-parse", "--verify", "--quiet", `${annotated}^{tree}`]) === tree;
+    if (!same) continue;
+    const text = tryGit(repo, ["cat-file", "blob", blob]);
+    if (text !== undefined) (annotated === commit ? own : others).push(...parseEvidenceNote(text));
+  }
+  return [...own, ...others];
+}
+
+/** What the evidence notes hold for one check at a commit's tree. */
 export type CheckEvidenceVerdict =
   | { check: string; status: "current"; runner: string; commit: string }
-  | { check: string; status: "missing" | "untrusted" | "stale"; reason: string };
+  | { check: string; status: "missing" | "untrusted"; reason: string };
 
 /**
  * Read and verify the evidence for each of `checks` at `at`'s tree, against
@@ -167,32 +202,33 @@ export type CheckEvidenceVerdict =
 export async function readCheckEvidence(repo: string, at: string, base: string, checks: readonly string[]): Promise<CheckEvidenceVerdict[]> {
   const { tree, commit } = commitAndTree(repo, at);
   const policy = readTrustPolicy(gitRevisionSource(repo, base), base);
-  const out: CheckEvidenceVerdict[] = [];
-  for (const check of checks) {
-    const text = await readBlobFromPath(`${CHECK_EVIDENCE_LEDGER_DIR}/${tree}`, checkEvidenceFile(check), { cwd: repo, ledgerPrefix: "" });
-    if (text === null) {
-      out.push({ check, status: "missing", reason: `no evidence for check ${check} is kept for the tree of ${commit.slice(0, 12)}` });
-      continue;
+  const envelopes = envelopesForTree(repo, commit, tree);
+  return checks.map((check): CheckEvidenceVerdict => {
+    let untrusted: string | undefined;
+    for (const envelope of envelopes) {
+      const v = verifyEvidence(envelope, policy.runners, repo, commit);
+      if (!v.ok) {
+        if (claimedCheck(envelope) === check) untrusted ??= `the evidence attached for check ${check} does not verify against the runner keys at ${base.slice(0, 12)}: ${v.reason}`;
+        continue;
+      }
+      if (v.statement.predicate.check !== check || v.statement.predicate.tree !== tree) continue;
+      if (v.status === "current") return { check, status: "current", runner: v.runner, commit: v.statement.predicate.commit };
     }
-    let envelope: unknown;
-    try {
-      envelope = JSON.parse(text);
-    } catch {
-      out.push({ check, status: "untrusted", reason: `the evidence kept for check ${check} is not JSON` });
-      continue;
-    }
-    const v = verifyEvidence(envelope, policy.runners, repo, commit);
-    if (!v.ok) {
-      out.push({ check, status: "untrusted", reason: `the evidence kept for check ${check} does not verify against the runner keys at ${base.slice(0, 12)}: ${v.reason}` });
-    } else if (v.statement.predicate.check !== check || v.statement.predicate.tree !== tree) {
-      out.push({ check, status: "untrusted", reason: `the evidence kept for check ${check} is for check ${v.statement.predicate.check} on tree ${v.statement.predicate.tree.slice(0, 12)}` });
-    } else if (v.status !== "current") {
-      out.push({ check, status: "stale", reason: `the records check ${check} read changed after it was signed` });
-    } else {
-      out.push({ check, status: "current", runner: v.runner, commit: v.statement.predicate.commit });
-    }
+    if (untrusted) return { check, status: "untrusted", reason: untrusted };
+    return { check, status: "missing", reason: `no evidence for check ${check} is attached under ${EVIDENCE_NOTES_REF} to a commit with the tree of ${commit.slice(0, 12)}` };
+  });
+}
+
+/** The check an envelope says it is for, read without verifying, so a refusal can name it. */
+function claimedCheck(envelope: unknown): string | undefined {
+  try {
+    const payload = (envelope as { payload?: unknown }).payload;
+    if (typeof payload !== "string") return undefined;
+    const check = (JSON.parse(Buffer.from(payload, "base64").toString("utf8")) as { predicate?: { check?: unknown } }).predicate?.check;
+    return typeof check === "string" ? check : undefined;
+  } catch {
+    return undefined;
   }
-  return out;
 }
 
 /** The command that produces a check's evidence, for a refusal to name. */

@@ -62,7 +62,6 @@ export function planEvidenceLines(opts: { dir: string; at: string; base: string;
   const chant = opts.bin ?? "chant";
   return [
     `git fetch --quiet --no-tags --depth=1 origin ${opts.at} || true`,
-    `git fetch --quiet --no-tags origin '+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle' || true`,
     `${chant} ci evidence sign --from-report ${opts.dir} --result ${opts.result} --at ${opts.at} --base ${opts.base}`,
   ];
 }

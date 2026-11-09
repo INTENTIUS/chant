@@ -18,7 +18,7 @@
  *
  * With `evidence` (#4870) the note job signs the plan job's `plan` and
  * `policy` checks from the report it took back, before it posts, so the
- * note says which were signed; the job then pushes `chant/lifecycle`, so it
+ * note says which were signed; the job then pushes `refs/notes/chant/evidence`, so it
  * asks for `contents: write`.
  *
  * Forgejo renders the same document through its dialect
@@ -95,7 +95,7 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
       "runs-on": githubRunsOn(p.noteRunner),
       container: image,
       // #4289: `actions: read` lets pr-post ask when each scheduled watch last ran.
-      // #4870: with evidence, `contents: write` pushes the signed checks to chant/lifecycle.
+      // #4870: with evidence, `contents: write` pushes the signed checks to refs/notes/chant/evidence, where the ref gate (#4867) reads them.
       permissions: { actions: "read", contents: p.evidence ? "write" : "read", "pull-requests": "write", statuses: "write" },
       steps: [
         // The target branch's commit: the bin this job runs is the target branch's, and none of the change's code is here.

@@ -11,7 +11,7 @@
  * `../../components/check-steps.ts`.
  *
  * With a runner key in `CHANT_RUNNER_KEY` (#4870), each hook that passed is
- * signed as a named check over `HEAD` and kept on `chant/lifecycle`, which
+ * signed as a named check over `HEAD` and attached under `refs/notes/chant/evidence`, which
  * is pushed unless `--no-push`; the key never reaches a hook.
  */
 import { resolve } from "node:path";

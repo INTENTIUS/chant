@@ -27,7 +27,7 @@ describe("check evidence in generated pipelines on forgejo (#4870)", () => {
     expect(yaml.match(/yodel chant ci evidence sign --from-report \.chant\/pr --result /g)).toHaveLength(2);
     expect(yaml).toContain("CHANT_RUNNER_KEY:");
     expect(yaml).toContain("CHANT_RUNNER_KEY_PEM");
-    expect(yaml).toContain("refs/heads/chant/lifecycle");
+    expect(yaml).toContain("git fetch --quiet --no-tags --depth=1 origin");
   });
 
   test("each deciding wave job's command step carries the key, and a share job's does not", () => {

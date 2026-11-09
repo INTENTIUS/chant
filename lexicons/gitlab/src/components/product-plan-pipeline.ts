@@ -24,7 +24,7 @@
  * With `evidence` (#4870) each plan job is followed, once it succeeded, by
  * `<plan job>-evidence`, which signs its `plan` and `policy` checks from the
  * plan job's artifact with the runner key in the named CI/CD variable, and
- * pushes them to `chant/lifecycle`.
+ * pushes them to `refs/notes/chant/evidence`, where the ref gate (#4867) reads them.
  */
 
 import { assertGitlabBranch, CI_IMAGE, GITLAB_FULL_HISTORY, GITLAB_MERGE_REQUEST_SOURCE, gitlabTags } from "@intentius/chant/ci-jobs";

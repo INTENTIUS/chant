@@ -17,8 +17,8 @@ export function opWavesEvidenceProblems(raw: unknown): string[] {
   const r = raw as Record<string, unknown>;
   const problems: string[] = [];
   for (const key of Object.keys(r)) if (key !== "requires") problems.push(`\`evidence.${key}\` is not a setting; \`evidence\` takes \`requires\``);
-  if (r.requires !== undefined && (!Array.isArray(r.requires) || r.requires.some((c) => typeof c !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(c)))) {
-    problems.push("`evidence.requires` must be a list of check names (letters, digits, `.`, `_`, `:`, `/` and `-`)");
+  if (r.requires !== undefined && (!Array.isArray(r.requires) || r.requires.some((c) => typeof c !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(c)))) {
+    problems.push("`evidence.requires` must be a list of check names (letters, digits, `.`, `_`, `:` and `-`, as `refs` in .chant/trust.json names them)");
   }
   return problems;
 }

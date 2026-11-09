@@ -14,7 +14,7 @@
  *   signs no `policy`.
  *
  * Kept apart from ./check-evidence.ts so `pr-post` reads the note file
- * without loading the ledger.
+ * without loading the signer.
  */
 
 import { existsSync, readFileSync } from "node:fs";

@@ -71,6 +71,8 @@ git push origin refs/notes/chant/evidence HEAD:main
 
 A check has current evidence when an envelope for it verifies against a runner key at base and every record it names hashes the same at the pushed commit. An envelope that names no records counts only for a commit with the tree it was signed over. Otherwise the check is `stale` (`ref-evidence-stale`), or `missing`: with no envelope for it (`ref-evidence-missing`), or with one that doesn't verify, under that envelope's code, such as `envelope-untrusted` for a key the policy at base doesn't list.
 
+Pipelines chant generates attach their checks' evidence here themselves, signed with the runner key they are given: `chant ci check` per hook, the plan note job for `plan` and `policy`, and each wave job for its wave ([ci evidence](/chant/cli/ci/#ci-evidence), [#4870](https://github.com/INTENTIUS/chant/issues/4870)).
+
 ## Overrides
 
 An override lets one commit through without one check. It is the [override gate](/chant/guide/gate-policy/#override-a-denial)'s: the subject is `ref-gate-<sha12>-<check>`, the rule is the check, and it counts when a person the overriders file at base (`.chant/overriders`) lists wrote it with a reason, after the request for it.

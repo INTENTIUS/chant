@@ -1,6 +1,7 @@
 /**
- * #4870: evidence for each named check, kept on chant/lifecycle by the
- * commit's tree and verified against the runner keys at base. The attacker
+ * #4870: evidence for each named check, attached as git notes where the ref
+ * gate (#4867) reads it, found by the commit's tree and verified against the
+ * runner keys at base. The attacker
  * controls the change: a runner key the change adds, a tree that differs
  * from the one signed, and a person's key posing as a runner's.
  */

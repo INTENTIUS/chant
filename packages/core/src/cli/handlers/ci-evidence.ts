@@ -1,11 +1,12 @@
 /**
  * `chant ci evidence sign|verify` (#4870): evidence for the named checks a
- * generated pipeline runs, kept on `chant/lifecycle` by the commit's tree
+ * generated pipeline runs, attached to the commit under
+ * `refs/notes/chant/evidence`, where #4867's ref gate reads them
  * (../../workspace/trust/check-evidence.ts).
  *
  * - `sign --check-id <id>[,<id>...]` signs that each check passed at `--at`
  *   (default `HEAD`), with the runner key in `--key <file>` or
- *   `CHANT_RUNNER_KEY`, and pushes the ledger unless `--no-push`.
+ *   `CHANT_RUNNER_KEY`, and pushes the notes unless `--no-push`.
  * - `sign --from-report <dir> --result <result>` is the plan note job's
  *   form: it signs `plan` when the plan job succeeded and left a report in
  *   `<dir>`, and `policy` when the policy evaluated inside that plan did not
@@ -101,7 +102,7 @@ async function sign(ctx: CommandContext, repo: string, base: string, at: string)
     note.signed.push({ check: s.check, runner: s.runner, commit: s.commit, tree: s.tree });
     console.error(`ci evidence: signed ${s.check} at ${s.commit.slice(0, 12)} as ${s.runner}`);
   }
-  if (!args.noPush && !pushed.pushed && pushed.pushWarning) console.error(`ci evidence: the evidence is on the local chant/lifecycle, and the push did not land: ${pushed.pushWarning}`);
+  if (!args.noPush && !pushed.pushed && pushed.pushWarning) console.error(`ci evidence: the evidence is attached here, and the push did not land: ${pushed.pushWarning}`);
   return finish(CHANT_EXIT.done);
 }
 
