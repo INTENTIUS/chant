@@ -30,6 +30,9 @@ export const TERRAFORM_APPLY_COMMAND_HOOK_FLOOR = NEXT_RELEASE;
 /** The first chant with `@intentius/chant/forge-flags` (`forgeTargetWith`, `forgeTargetFromFlags`, `apiBaseOf`), `@intentius/chant/chant-install` (`bundledChant`, `chantArgv`, `installChantResolveFallback`) and `noteLimit` and `fitNote` in `@intentius/chant/plan-summary` (#4800). */
 export const PRODUCT_HELPERS_FLOOR = NEXT_RELEASE;
 
+/** The first chant with `@intentius/chant/drift-issue`, whose `keepDriftIssue` keeps one drift issue per environment from a product's words and the drift records (#4790). */
+export const DRIFT_ISSUE_FLOOR = NEXT_RELEASE;
+
 /** The first chant whose terraform lexicon's `terraform-apply` reads take `dir` and `workspace`, and read an upstream with `resolveRoot`'s binary and `readEnv` (terragucci issue 1303). */
 export const TERRAFORM_APPLY_INSTANCE_READS_FLOOR = "0.124.80";
 
