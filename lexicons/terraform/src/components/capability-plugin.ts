@@ -166,10 +166,13 @@ import {
   choudoufuPlanSet,
   choudoufuWaveApply,
   choudoufuWaveRoot,
+  asUpstreamCommands,
   terraformApply,
   terraformInit,
   terraformOutputs,
   terraformPlan,
+  withTerraformCommandHook,
+  type TerraformCommandHook,
 } from "../op/activities/terraform";
 import { terraformPlanMoved } from "../exit-codes";
 import { terraformPlanShape } from "../plan-shape";
@@ -250,7 +253,19 @@ export type TerraformRootResolver = (root: string, input: TerraformApplyStepInpu
 export interface TerraformApplyDeps {
   /** What each root runs. Default: the step's `binary`, else `terraform.binary`. */
   resolveRoot?: TerraformRootResolver;
+  /**
+   * Called around each engine command the step runs for a root (chant#4865):
+   * its `init`, `workspace select`, `plan`, `show`, `apply` and `output`, a
+   * choudoufu root's `live-plan-set` and `live-wave-apply`, and the `init`
+   * and `output` of each upstream its `reads` name. The hook sees the
+   * command's name, args, directory and environment, may add variables to
+   * it, and its `after` gets the exit code, duration and output. Roots a
+   * wave runs at once (chant#4864) each see their own commands.
+   */
+  onCommand?: TerraformCommandHook;
 }
+
+export type { TerraformCommand, TerraformCommandHook, TerraformCommandResult, TerraformCommandRun } from "../op/activities/terraform";
 
 /** What `terraform-apply` returns. `outputs` is what a dependent's `stackOutput()` reads. */
 export interface TerraformApplyStepOutput {
@@ -303,9 +318,12 @@ async function withReads(input: TerraformApplyStepInput, resolveRoot?: Terraform
       ...(tools?.binary ? { binary: tools.binary } : {}),
       ...(tools?.readEnv ? { env: tools.readEnv } : {}),
     };
-    // chant#4864: runs that plan at once may read the same upstream, so its init takes a turn.
-    await inInitTurn(serial, at.env, initDir(at), () => terraformInit(at));
-    return terraformOutputs(at);
+    // chant#4865: the upstream's init and output reach the product's command hook as a read for this root.
+    return asUpstreamCommands(root, async () => {
+      // chant#4864: runs that plan at once may read the same upstream, so its init takes a turn.
+      await inInitTurn(serial, at.env, initDir(at), () => terraformInit(at));
+      return terraformOutputs(at);
+    });
   });
   if (filled.errors.length > 0) throw new Error(`terraform-apply: root "${input.root}": ${filled.errors.join("; ")}`);
   if (filled.waiting.length > 0) return { waiting: waitingReadsReason(filled.waiting), upstreams: [...new Set(filled.waiting.map((w) => w.read.root))].sort() };
@@ -684,6 +702,21 @@ async function plannerOf(input: TerraformApplyStepInput, plan?: CapabilityPlan):
  * project's binary, as before.
  */
 export function terraformApplyCapabilityWith(deps: TerraformApplyDeps = {}): Capability<TerraformApplyStepInput, TerraformApplyStepOutput> {
+  const cap = terraformApplyMethods(deps);
+  const hook = deps.onCommand;
+  if (!hook) return cap;
+  // chant#4865: each method that runs the engine for a root runs it through the product's hook, as commands for that root.
+  const scope = (method: string, step: TerraformApplyStepInput) => ({ root: typeof step?.root === "string" ? step.root : "", method });
+  return {
+    ...cap,
+    plan: (ctx, step) => withTerraformCommandHook(hook, scope("plan", step), () => cap.plan(ctx, step)),
+    run: (ctx, step) => withTerraformCommandHook(hook, scope("run", step), () => cap.run(ctx, step)),
+    outputs: (ctx, step) => withTerraformCommandHook(hook, scope("outputs", step), () => cap.outputs!(ctx, step)),
+  };
+}
+
+/** The step's methods with `deps.resolveRoot`, before {@link terraformApplyCapabilityWith} puts its command hook around them. */
+function terraformApplyMethods(deps: TerraformApplyDeps): Capability<TerraformApplyStepInput, TerraformApplyStepOutput> & Required<Pick<Capability<TerraformApplyStepInput, TerraformApplyStepOutput>, "plan" | "outputs">> {
   return {
     kind: "terraform-apply",
     // A root's apply has no undo short of applying the previous configuration,
