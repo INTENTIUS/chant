@@ -121,7 +121,57 @@ export interface ReleaseWorkflowInput {
    * `tokenEnv` reads `GITHUB_TOKEN`, so the publish job sets it to the job's
    * token unless `release.workflow.env` sets it.
    */
-  publish?: ReadonlyArray<{ type: string; forge?: string; tokenEnv?: string }>;
+  publish?: ReadonlyArray<ReleaseWorkflowTarget>;
+}
+
+/** What the generator reads of a `release.publish` target: enough to know which credentials and tools its job needs. */
+export interface ReleaseWorkflowTarget {
+  type: string;
+  forge?: string;
+  tokenEnv?: string;
+  /** An `oci` target's `<registry host>/<name>`. */
+  repository?: string;
+  usernameEnv?: string;
+  passwordEnv?: string;
+  /** An `npm` target's registry. */
+  registry?: string;
+}
+
+/** npm trusted publishing needs this npm or later (#4786). */
+export const NPM_TRUSTED_PUBLISHING_MIN = "11.5.1";
+/** The npm a publish job installs when the runner's Node bundles one older than {@link NPM_TRUSTED_PUBLISHING_MIN}. */
+export const NPM_TRUSTED_PUBLISHING_VERSION = "11.19.0";
+
+/**
+ * The shell line that installs {@link NPM_TRUSTED_PUBLISHING_VERSION} when the
+ * runner's npm is older than {@link NPM_TRUSTED_PUBLISHING_MIN}, and prints the
+ * npm in use.
+ */
+export const NPM_TRUSTED_PUBLISHING_SETUP = `have="$(npm --version)"; if [ "$(printf '%s\\n' "${NPM_TRUSTED_PUBLISHING_MIN}" "$have" | sort -V | head -n1)" != "${NPM_TRUSTED_PUBLISHING_MIN}" ]; then npm install -g npm@${NPM_TRUSTED_PUBLISHING_VERSION}; fi; npm --version`;
+
+/**
+ * What a GitHub release workflow needs for its targets, worked out from them
+ * (#4786), so no product wires it by hand:
+ *
+ * - an `oci` target on `ghcr.io` that names no credentials pushes with the
+ *   job's token: `packages: write`, and `OCI_USERNAME` and `OCI_PASSWORD`
+ *   from `github.actor` and `github.token`;
+ * - an `npm` target on npmjs publishes with trusted publishing, which needs
+ *   npm {@link NPM_TRUSTED_PUBLISHING_MIN}: the jobs upgrade npm when the
+ *   runner's is older.
+ *
+ * `release.workflow` wins: a scope, variable or the same setup line it names
+ * is not added again. Other forges, and configs without such targets, get
+ * nothing.
+ */
+export function targetExtras(forge: ReleaseWorkflowForge, targets: ReadonlyArray<ReleaseWorkflowTarget>, p: ReleasePipelineConfig): Pick<ReleasePipelineConfig, "permissions" | "env" | "setup"> {
+  if (forge !== "github") return {};
+  const ghcr = targets.some((t) => t.type === "oci" && /^ghcr\.io\//.test(t.repository ?? "") && !t.usernameEnv && !t.passwordEnv);
+  const npm = targets.some((t) => t.type === "npm" && (t.registry === undefined || /^https:\/\/registry\.npmjs\.org\/?$/.test(t.registry)));
+  const permissions = ghcr && p.permissions?.packages === undefined ? { packages: "write" as const } : undefined;
+  const env = ghcr ? Object.fromEntries((["OCI_USERNAME", "OCI_PASSWORD"] as const).filter((k) => p.env?.[k] === undefined).map((k) => [k, k === "OCI_USERNAME" ? "${{ github.actor }}" : "${{ github.token }}"])) : {};
+  const setup = npm && !(p.setup ?? []).some((s) => !("uses" in s) && s.run === NPM_TRUSTED_PUBLISHING_SETUP) ? [{ run: NPM_TRUSTED_PUBLISHING_SETUP }] : [];
+  return { ...(permissions ? { permissions } : {}), ...(Object.keys(env).length > 0 ? { env } : {}), ...(setup.length > 0 ? { setup } : {}) };
 }
 
 /** The flags `chant release publish` gets under the groups. */
@@ -162,7 +212,17 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
   const after = p.after ?? [];
   const images = input.images === true;
   const version = input.version === true;
-  const extra = jobExtras(p, input.forge);
+  // #4786: the targets' own needs first, then the config's, so a config that set them by hand renders the same file without them.
+  const derived = targetExtras(input.forge, input.publish ?? [], p);
+  const extra = jobExtras(
+    {
+      ...p,
+      ...(derived.permissions ? { permissions: { ...p.permissions, ...derived.permissions } } : {}),
+      ...(derived.env ? { env: { ...p.env, ...derived.env } } : {}),
+      ...(derived.setup ? { setup: [...(p.setup ?? []), ...derived.setup] } : {}),
+    },
+    input.forge,
+  );
   // #4767: Forgejo's job token is not a GitHub token, and GitLab has no such expression.
   const forgeToken =
     input.forge === "github" && p.env?.GITHUB_TOKEN === undefined && (input.publish ?? []).some((t) => t.type === "forge" && t.forge === "github" && !t.tokenEnv)

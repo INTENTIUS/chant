@@ -520,10 +520,12 @@ release: {
 | `gate` | For `dispatch`: `last-green` (default) cuts the newest green commit at or below the dispatched one; `head` cuts the dispatched commit and refuses it when it is not green |
 | `install`, `build`, `chant` | As the flags. `build: false` builds nothing. The cut runs `build` as its `--build`, and so does the publish job |
 | `after` | Shell lines run once the release is published, with `CHANT_RELEASE_LABEL` set |
-| `permissions` | Scopes added to the workflow's `contents: write` and `id-token: write`, such as `{ packages: "write" }` for an `oci` target that pushes to GHCR with the run's token. GitHub and Forgejo only ([#4751](https://github.com/INTENTIUS/chant/issues/4751)) |
-| `env` | Variables for the cut and publish jobs, such as `OCI_USERNAME: "${{ github.actor }}"` and `OCI_PASSWORD: "${{ github.token }}"`. A forge expression stays in the job's `env:` (GitLab: `variables:`), off every `run:` line |
-| `setup` | Steps the cut and publish jobs run after the install: `{ run }`, or `{ uses, with }` on GitHub and Forgejo, such as QEMU for a two-platform image or a newer npm. GitLab refuses `uses` |
+| `permissions` | Scopes added to the workflow's `contents: write` and `id-token: write`, such as `{ actions: "read" }`. GitHub and Forgejo only ([#4751](https://github.com/INTENTIUS/chant/issues/4751)) |
+| `env` | Variables for the cut and publish jobs. A forge expression stays in the job's `env:` (GitLab: `variables:`), off every `run:` line |
+| `setup` | Steps the cut and publish jobs run after the install: `{ run }`, or `{ uses, with }` on GitHub and Forgejo, such as QEMU for a two-platform image. GitLab refuses `uses` |
 | `file` | Where the workflow is written, from the repository root, such as `.github/workflows/publish.yml` when npm's trusted publisher names that file |
+
+On GitHub the targets in `release.publish` add what they need, so the config names none of it ([#4786](https://github.com/INTENTIUS/chant/issues/4786)). An `oci` target on `ghcr.io` with no `usernameEnv` or `passwordEnv` pushes with the run's token: the workflow gets `packages: write`, and the cut and publish jobs get `OCI_USERNAME: "${{ github.actor }}"` and `OCI_PASSWORD: "${{ github.token }}"`. An `npm` target on npmjs publishes with trusted publishing, which needs npm 11.5.1 or later, so the cut and publish jobs install a newer npm after `setup` when the runner's is older. A scope or variable `release.workflow` sets wins over the one the targets add.
 
 With `trigger: "dispatch"` the file has four jobs, and the label is an input of the run (a pipeline variable, `CHANT_RELEASE_LABEL`, on GitLab):
 

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseYAML } from "../yaml";
 import { ACTION_PINS } from "../action-pins";
-import { renderReleaseWorkflow, RELEASE_DIGESTS_PATHS, type ReleaseWorkflowInput } from "./release-workflow";
+import { NPM_TRUSTED_PUBLISHING_SETUP, renderReleaseWorkflow, RELEASE_DIGESTS_PATHS, type ReleaseWorkflowInput, type ReleaseWorkflowTarget } from "./release-workflow";
 import type { SecurityGroup } from "./security";
 
 const FIXTURES = join(__dirname, "__fixtures__", "release-workflow");
@@ -243,9 +243,14 @@ describe("the publish job hands GITHUB_TOKEN to a GitHub forge target (#4767)", 
   test("a tokenEnv, another forge's target, or no forge target renders the file it did", () => {
     const plain = renderReleaseWorkflow({ forge: "github", groups: new Set() });
     expect(plain).toBe(readFileSync(join(FIXTURES, "github-plain.yml"), "utf-8"));
-    for (const publish of [[{ ...ghForge, tokenEnv: "RELEASE_TOKEN" }], [{ ...ghForge, forge: "gitlab" as const }], [{ type: "npm" as const, packages: ["."] }], []]) {
+    for (const publish of [[{ ...ghForge, tokenEnv: "RELEASE_TOKEN" }], [{ ...ghForge, forge: "gitlab" as const }], []]) {
       expect(renderReleaseWorkflow({ forge: "github", groups: new Set(), publish }), JSON.stringify(publish)).toBe(plain);
     }
+    // An npm target sets no GITHUB_TOKEN; it adds only the npm upgrade trusted publishing needs (#4786).
+    const npmTarget = { type: "npm" as const, packages: ["."] };
+    const npmOnly = renderReleaseWorkflow({ forge: "github", groups: new Set(), publish: [npmTarget] });
+    expect(npmOnly).not.toContain("GITHUB_TOKEN");
+    expect(npmOnly.split("\n").filter((l) => !plain.split("\n").includes(l))).toEqual([`      - run: ${JSON.stringify(NPM_TRUSTED_PUBLISHING_SETUP)}`]);
     // Forgejo's and GitLab's job tokens are not a GitHub token.
     for (const forge of ["forgejo", "gitlab"] as const) {
       expect(renderReleaseWorkflow({ forge, groups: new Set(), publish: [ghForge] })).toBe(readFileSync(join(FIXTURES, `${forge}-plain.yml`), "utf-8"));
@@ -407,5 +412,56 @@ describe("the gate stops when the green commit's workflow files differ from the 
     for (const forge of ["forgejo", "gitlab"] as const) expect(dispatch(forge)).not.toContain(".github/workflows");
     expect(dispatch("github", { pipeline: { trigger: "dispatch", gate: "head" } })).not.toContain(":(top).github/workflows");
     expect(dispatch("github")).toContain(":(top).github/workflows");
+  });
+});
+
+describe("GHCR credentials and npm trusted publishing from the targets (#4786)", () => {
+  const ghcr: ReleaseWorkflowTarget = { type: "oci", repository: "ghcr.io/acme/app" };
+  const npm: ReleaseWorkflowTarget = { type: "npm" };
+  const qemu = { uses: "docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0", with: { platforms: "arm64" } };
+  const render = (publish: ReleaseWorkflowTarget[], pipeline: ReleaseWorkflowInput["pipeline"] = {}, forge: (typeof FORGES)[number] = "github") =>
+    renderReleaseWorkflow({ forge, groups: new Set(), images: true, imageArchives: ["dist/app.tar"], publish, pipeline: { trigger: "dispatch", ...pipeline } });
+
+  test("an oci target on ghcr.io with no credentials named: packages: write, and the job token as OCI_USERNAME and OCI_PASSWORD in the cut and the publish", () => {
+    const doc = parseYAML(render([ghcr])) as GhDoc;
+    expect(doc.permissions).toEqual({ contents: "write", "id-token": "write", packages: "write" });
+    for (const job of ["cut", "publish"]) {
+      expect(doc.jobs[job]!.env, job).toMatchObject({ OCI_USERNAME: "${{ github.actor }}", OCI_PASSWORD: "${{ github.token }}" });
+    }
+    expect(runs(doc.jobs.publish!)).not.toContain(NPM_TRUSTED_PUBLISHING_SETUP);
+  });
+
+  test("an npm target on npmjs: the cut and the publish upgrade npm after the install when the runner's is older than trusted publishing needs", () => {
+    const doc = parseYAML(render([npm])) as GhDoc;
+    expect(doc.permissions).toEqual({ contents: "write", "id-token": "write" });
+    for (const job of ["cut", "publish"]) {
+      const r = runs(doc.jobs[job]!);
+      expect(r[r.indexOf("npm ci") + 1], job).toBe(NPM_TRUSTED_PUBLISHING_SETUP);
+      expect(doc.jobs[job]!.env?.OCI_PASSWORD, job).toBeUndefined();
+    }
+    expect(NPM_TRUSTED_PUBLISHING_SETUP).toContain('"11.5.1"');
+  });
+
+  test("a config that wired them by hand renders the same file once it drops them", () => {
+    const byHand = render([ghcr, npm], {
+      permissions: { packages: "write" },
+      env: { OCI_USERNAME: "${{ github.actor }}", OCI_PASSWORD: "${{ github.token }}" },
+      setup: [qemu, { run: NPM_TRUSTED_PUBLISHING_SETUP }],
+    });
+    expect(render([ghcr, npm], { setup: [qemu] })).toBe(byHand);
+  });
+
+  test("the config wins: its own credentials, scope or registry, other forges, and a config with neither target render as before", () => {
+    const plain = render([]);
+    expect(render([{ type: "oci", repository: "docker.io/acme/app" }])).toBe(plain);
+    expect(render([{ ...ghcr, usernameEnv: "GHCR_USER", passwordEnv: "GHCR_TOKEN" }])).toBe(plain);
+    expect(render([{ type: "npm", registry: "https://npm.pkg.github.com" }])).toBe(plain);
+    for (const forge of ["forgejo", "gitlab"] as const) expect(render([ghcr, npm], {}, forge), forge).toBe(render([], {}, forge));
+    const own = parseYAML(render([ghcr], { env: { OCI_PASSWORD: "${{ secrets.GHCR }}" } })) as GhDoc;
+    expect(own.jobs.publish!.env).toMatchObject({ OCI_USERNAME: "${{ github.actor }}", OCI_PASSWORD: "${{ secrets.GHCR }}" });
+    // A tag-triggered workflow reads the targets the same way.
+    const tagged = parseYAML(renderReleaseWorkflow({ forge: "github", groups: new Set(), publish: [ghcr, npm] })) as GhDoc;
+    expect(tagged.permissions?.packages).toBe("write");
+    expect(runs(tagged.jobs.publish!)).toContain(NPM_TRUSTED_PUBLISHING_SETUP);
   });
 });
