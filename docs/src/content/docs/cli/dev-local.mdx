@@ -1,0 +1,78 @@
+---
+title: "chant dev local"
+description: Build a product against a chant checkout instead of its pinned release, and check the product's bundle
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant dev local <chant-dir> [--with <package>]... [--build '<command>'] [--json]
+chant dev local --reset [--build '<command>'] [--json]
+chant dev bundle-check [<package-dir>] [--json]
+```
+
+Run in the root of a product, the directory with its `package.json` and `package-lock.json`.
+
+## What `dev local` does
+
+1. Reads the `@intentius/chant*` packages named in the product's root `package.json` and in each workspace package's `package.json`, adds each `--with` package (for example a lexicon that only an image installs), and adds the chant packages those depend on.
+2. Runs `npm ci` in the checkout when its `package-lock.json` changed since the last run. The stamp is `node_modules/.chant-dev-local` in the checkout.
+3. Runs `npm pack` for each package in the checkout, in an order where each package comes after the packages it builds against. Each package's `prepack` builds it. The tarballs go to `.chant-local/` in the product, one fixed name per package (`intentius-chant.tgz`, `intentius-chant-lexicon-k8s.tgz`), so a later run replaces them. The product should list `.chant-local/` in `.gitignore`.
+4. Points every `package.json` of the product at the tarballs and runs `npm install --no-save --legacy-peer-deps`. The root also gets every tarball as a devDependency, so a package that only a lexicon reaches is replaced too. Afterwards it writes each `package.json` and `package-lock.json` back byte for byte, including when the install fails, so `git status` shows no change. Copies of the files are kept in `.chant-local/manifests/`.
+5. Adds a `chantLocal` field, `{ "commit": "<sha>[+dirty]", "dir": "<checkout>" }`, to the `package.json` of every installed copy, wherever npm put it in the tree. It fails if a copy has a version other than the checkout's.
+6. Runs `--build` as a shell command in the product root (`just build-cli`, `npm run build`).
+7. Checks the bundle of every package that declares `chantBundleCheck`, and prints `chant commit: <sha>` last.
+
+`--reset` runs `npm ci` and then checks that every installed chant package is the version `package-lock.json` pins and has no `chantLocal` mark. After that it runs `--build` and the bundle check the same way.
+
+The command does not create or move a worktree. Pass the checkout you want, for example a worktree at chant's `origin/main`:
+
+```
+git -C ../chant worktree add --detach ../chant-local origin/main
+npx chant dev local ../chant-local --build 'just build-cli'
+npx chant dev local --reset --build 'just build-cli'
+```
+
+A product whose pinned chant predates `dev local` (`LOCAL_CHANT_FLOOR`) can run the checkout's own CLI instead: `../chant-local/packages/core/bin/chant dev local ../chant-local`.
+
+Exit codes: 0 when everything passed, 1 when the pack, install, build or bundle check failed, 2 for a usage error.
+
+## Bundle check
+
+`chant dev bundle-check` checks one package (`<package-dir>`), or every package of the product in the current directory that declares `chantBundleCheck` in its `package.json`:
+
+```json
+{
+  "chantBundleCheck": {
+    "bundle": "dist/terragucci.mjs",
+    "maxBytes": 2359296,
+    "needs": ["@intentius/chant"],
+    "optional": ["@intentius/tsad-reference", "@cdktn/hcl2json"],
+    "metafile": "../../node_modules/.cache/terragucci/metafile.json",
+    "deny": [{ "pattern": "^typescript/", "what": "the TypeScript compiler" }]
+  }
+}
+```
+
+Paths are relative to the package. The check fails when:
+
+- the bundle imports something other than Node's modules, its runtime dependencies and the `optional` packages;
+- a chant import (core or a lexicon, with any subpath) is not served by the installed package as compiled JS under Node's `import` condition. Plain Node does not load TypeScript from `node_modules`;
+- a runtime dependency is not imported by the bundle and not listed in `needs`, or a package in `needs` is not a runtime dependency;
+- an `@intentius/chant*` dependency or devDependency is not the root's `@intentius/chant` pin, or that pin is not an exact version;
+- an installed chant package is not the pin and has no `chantLocal` mark;
+- the bundle is over `maxBytes`, or the `npm pack --dry-run` tarball is over `maxPackBytes`;
+- an input in the esbuild `metafile` matches a `deny` pattern. The pattern is matched against the input path with everything up to its last `node_modules/` removed.
+
+## From a build script
+
+`@intentius/chant/bundle-check` imports only Node's modules, so a product's esbuild script can use it directly:
+
+```js
+import { chantExternalPlugin, chantRuntimeTarget, checkBundle } from "@intentius/chant/bundle-check";
+
+await esbuild.build({ /* ... */ plugins: [chantExternalPlugin(pkgDir)] });
+```
+
+`chantExternalPlugin(pkgDir)` leaves external each chant import that the chant installed for `pkgDir` serves as compiled JS, and lets esbuild bundle the rest. `chantRuntimeTarget(specifier, fromDir)` returns the file Node would load for an import, or undefined. `@intentius/chant/local-chant` exports `installLocalChant` and `resetLocalChant`, the functions behind `dev local`.

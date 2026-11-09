@@ -109,6 +109,7 @@ const BOOLEAN_FLAGS = new Set([
   "--artifacts",
   "--push",
   "--only",
+  "--reset",
 ]);
 
 /**
@@ -254,6 +255,14 @@ export function parseArgs(args: string[]): ParsedArgs {
       const v = args[++i];
       if (v === undefined || v === "--" || v.startsWith("--")) throw new Error("--scan needs a directory: --scan <dir>");
       (result.scanDirs ??= []).push(v);
+    } else if (arg === "--reset") {
+      // `chant dev local --reset` (#4787)
+      result.reset = true;
+    } else if (arg === "--with") {
+      // `chant dev local <chant-dir> --with <package>` (#4787), repeatable.
+      const v = args[++i];
+      if (!v || v.startsWith("-")) throw new Error("--with needs a chant package name: --with @intentius/chant-lexicon-<name>");
+      (result.withPackages ??= []).push(v);
     } else if (arg === "--from") {
       // Shared by `migrate --from <lexicon>`, `import --from <env>`,
       // `components promote --from <env>`, `init --from <repo>@<ref>` and

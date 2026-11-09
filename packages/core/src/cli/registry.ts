@@ -93,6 +93,10 @@ export interface ParsedArgs {
   parserOption?: string[];
   /** `chant e2e safe-run --scan <dir>`, repeatable (chant#4587): a directory to scan for a real cloud answering, beside the command's output */
   scanDirs?: string[];
+  /** `chant dev local --reset` (#4787): go back to the lock's pins. */
+  reset?: boolean;
+  /** `chant dev local --with <package>`, repeatable (#4787): a chant package to pack besides the ones the product names. */
+  withPackages?: string[];
   /** `chant carve advise --state <path>` — opt-in .tfstate for accurate instance counts */
   statePath?: string;
   /** Every `--state` value in order (#4461): `chant workspace promote --all --state <member>=<path>`, repeatable. */

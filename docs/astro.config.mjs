@@ -438,6 +438,7 @@ export default defineConfig({
 										{ label: 'dev onboard', slug: 'cli/onboard' },
 										{ label: 'dev check-lexicon', slug: 'cli/check-lexicon' },
 										{ label: 'dev surface-diff', slug: 'cli/surface-diff' },
+										{ label: 'dev local', slug: 'cli/dev-local' },
 									],
 								},
 							],
