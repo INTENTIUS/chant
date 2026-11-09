@@ -1,0 +1,127 @@
+---
+title: "chant workspace ref-gate"
+description: Refuse a ref update whose commit lacks the runner evidence the policy at base requires
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant workspace ref-gate check --ref <ref> [--at <rev>] [--base <rev>] [--dry-run] [--ledger <file>] [--json]
+chant workspace ref-gate status --ref <ref> [--at <rev>] [--base <rev>] [--dry-run] [--ledger <file>] [--json]
+chant workspace ref-gate pre-receive [--ledger <file>] [--json]
+chant workspace ref-gate pre-push [--ledger <file>] [--dry-run] [--json]
+chant workspace ref-gate attach --envelope <file> [--at <rev>]
+chant workspace ref-gate install --hook pre-receive|pre-push [--git-dir <dir>] [--chant <command>]
+```
+
+## Description
+
+The ref gate ([#4867](https://github.com/INTENTIUS/chant/issues/4867)) judges a ref update when it happens. A push to a protected ref is refused when the commit lacks current [runner evidence](/chant/cli/workspace-evidence/) for a check the policy at base requires, and the refusal names each missing check and the command that produces it. Without the gate, chant judges evidence after the push (at the green tick, a land, a gate and a release cut), so a change that was never going to pass still reaches the remote and starts CI.
+
+The same decision runs in three places:
+
+| Where | Command | What it stops |
+|---|---|---|
+| A plain git remote, such as a bare repository or sshd | the `pre-receive` hook `install --hook pre-receive` writes | the push |
+| A forge with an API | `status`, run in a CI job, sets the commit status the forge requires | the merge, where the push can't be refused |
+| The developer's checkout | the `pre-push` hook `install --hook pre-push` writes | the push, before it leaves the machine |
+
+## The policy
+
+The rules are `refs` in `.chant/trust.json`, read at base like the rest of the trust policy: in a hook, the ref's old tip (the default branch for a new ref); for `check` and `status`, `--base`, by default `origin/HEAD`, then `main`, then `master`. A change can't drop a check or add the runner key that signs its own evidence, since neither counts until it is merged. Changing `.chant/trust.json` is a protected write.
+
+```json
+{
+  "schema": 1,
+  "runners": [{ "principal": "ci@github-actions", "class": "runner", "key": "ssh-ed25519 AAAA..." }],
+  "refs": [
+    {
+      "ref": "refs/heads/main",
+      "checks": [
+        { "check": "plan", "action": "block", "command": "chant ci run plan" },
+        { "check": "lint", "action": "warn", "command": "npm run lint" }
+      ],
+      "status": "chant/ref-gate"
+    }
+  ]
+}
+```
+
+| Field | Holds |
+|---|---|
+| `ref` | A full ref name. `*` matches within one `/` segment and `**` across them, so `refs/heads/release/*` matches `refs/heads/release/1`. |
+| `checks[].check` | The check, as the evidence's `predicate.check` names it (`evidence sign --check-id`). |
+| `checks[].action` | `block` (the default) refuses the update without current evidence. `warn` admits it and says what was missing. |
+| `checks[].command` | The command that produces the evidence, printed in the refusal. |
+| `status` | The commit status `status` sets and the forge should require. Default `chant/ref-gate`. |
+| `overrides` | How an override is judged: `sealed` needs a seal that verifies against the signers file at base, `ledger` doesn't. Default `sealed` when the signers file exists at base, else `ledger`. |
+
+When several rules match a ref, their checks add up, and a check any of them blocks is blocked. A ref no rule matches is admitted. A deletion is admitted: the remote or the forge protects deletions on its own. A policy at base that can't be read refuses every update with `trust-policy-unreadable`.
+
+## Evidence
+
+Evidence for a commit is kept as a git note under `refs/notes/chant/evidence`, one DSSE envelope per line. `attach` adds an envelope to a commit's note; pushing the notes ref is the caller's, and a push that brings the notes ref with the protected ref is judged with the notes it brings:
+
+```bash
+chant workspace evidence sign --kind records.kind.mjs --key runner.pem --check-id plan --output plan.json
+chant workspace ref-gate attach --envelope plan.json
+git push origin refs/notes/chant/evidence HEAD:main
+```
+
+A check has current evidence when an envelope for it verifies against a runner key at base and every record it names hashes the same at the pushed commit. An envelope that names no records counts only for a commit with the tree it was signed over. Otherwise the check is `stale` (`ref-evidence-stale`), or `missing`: with no envelope for it (`ref-evidence-missing`), or with one that doesn't verify, under that envelope's code, such as `envelope-untrusted` for a key the policy at base doesn't list.
+
+## Overrides
+
+An override lets one commit through without one check. It is the [override gate](/chant/guide/gate-policy/#override-a-denial)'s: the subject is `ref-gate-<sha12>-<check>`, the rule is the check, and it counts when a person the overriders file at base (`.chant/overriders`) lists wrote it with a reason, after the request for it.
+
+1. The refused push records the request: the `pre-push` hook, or `chant workspace ref-gate check --ref <ref>`, appends it to `chant/lifecycle`. A pre-receive hook can't move a ref, so a push refused only by the remote needs `check` run in the checkout.
+2. The person overrides it: `chant approve policy-override ref-gate-<sha12>-plan --rule plan --reason "<why>"`.
+3. The push goes again with `chant/lifecycle`: `git push origin chant/lifecycle HEAD:main`.
+
+An override is spent by the first update it admits, at the remote's `pre-receive` or in a passing `status`. One push can't spend it on two refs, and a push the remote refuses spends nothing. A `pre-push` or a `check` spends nothing.
+
+## The ledger
+
+Each decision is a line of the gate's ledger: the ref, the previous and new tip, the base, admit or refuse, and each check with its status and why. The ledger is `<git dir>/chant/ref-gate.jsonl` in the repository that decides, since a pre-receive hook may not move a ref; `--ledger` names another file. On the remote, the lines of a push refused as a whole carry `"push": "refused"`. The spent overrides are read from this file, so a CI job that runs `status` keeps it between runs to keep overrides spent there.
+
+## Installing the hooks
+
+```bash
+# On the remote, in the bare repository:
+chant workspace ref-gate install --hook pre-receive --git-dir /srv/git/infra.git
+# In a checkout:
+chant workspace ref-gate install --hook pre-push
+```
+
+The hook runs `chant workspace ref-gate <hook>` with git's arguments and input. `--chant <command>` names another command for chant, such as `npx chant`. `install` replaces a hook it wrote and leaves any other hook as it is.
+
+On a forge, run `status` in the pull request's pipeline and make the forge require its status on the protected branch:
+
+```bash
+chant workspace ref-gate status --ref refs/heads/main --at "$HEAD_SHA" --base origin/main
+```
+
+It reads the forge and its token from the job's environment, as `chant ci run` does, and sets `success` or `failure` with the missing checks in the description.
+
+## Output
+
+With `--json` each subcommand that decides prints a document that `ref-gate.schema.json` describes (`https://intentius.io/chant/schemas/workspace/ref-gate/v1/ref-gate.schema.json`): `ok`, the `ledger` file, and per update the `ref`, `old`, `new`, `base`, `decision`, `status` and `checks`, each with `check`, `action`, `command`, `status` (`current`, `stale`, `missing` or `overridden`), `code`, `reason`, `subject` and the `override` that let it through.
+
+## Reason codes
+
+| Code | Meaning |
+|---|---|
+| `ref-evidence-missing` | No evidence for the check is attached to the pushed commit. |
+| `ref-evidence-stale` | The evidence verifies, but a record it names changed after it was signed, or it names no records and was signed over another tree. |
+| `ref-update-invalid` | The hook's standard input is not what git hands a pre-receive or pre-push hook. |
+| `trust-policy-unreadable` | The policy at base can't be read; every update is refused. |
+
+A check whose only envelope doesn't verify carries that envelope's [evidence code](/chant/cli/workspace-evidence/#reason-codes). The commands can also fail with `not-a-git-repository` or `revision-unknown`. All of them are in the [read contract's closed list](/chant/reference/workspace-read-contract/#reason-codes).
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Every update is admitted. |
+| 1 | An update is refused, or the gate could not decide. |

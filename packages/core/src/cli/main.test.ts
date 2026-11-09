@@ -388,6 +388,12 @@ describe("parseArgs", () => {
     expect(result.url).toBe("https://github.com/org/repo/pull/1");
   });
 
+  test("parses the ref gate's --ref, --hook, --git-dir and --ledger (#4867)", () => {
+    const result = parseArgs(["workspace", "ref-gate", "install", "--hook", "pre-receive", "--git-dir", "/srv/x.git", "--ref", "refs/heads/main", "--ledger", "l.jsonl"]);
+    expect(result).toMatchObject({ hook: "pre-receive", gitDir: "/srv/x.git", ref: "refs/heads/main", ledger: "l.jsonl" });
+    expect(() => parseArgs(["workspace", "ref-gate", "check", "--ref"])).toThrow(/--ref needs a value/);
+  });
+
   test("parses --rule (repeated) and --reason for an override (#3760)", () => {
     const result = parseArgs(["approve", "policy-override", "prod", "--rule", "no-drop", "--rule", "no-lock", "--reason", "the table is empty"]);
     expect(result.rules).toEqual(["no-drop", "no-lock"]);
@@ -878,6 +884,7 @@ describe("workspace init and ls (#2534)", () => {
       "workspace points",
       "workspace promote",
       "workspace records",
+      "workspace ref-gate",
       "workspace run",
       "workspace runs",
       "workspace search",

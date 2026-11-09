@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/ref-gate/v1/ref-gate.schema.json",
+  "title": "chant workspace ref-gate output",
+  "description": "What `chant workspace ref-gate check|status|pre-receive|pre-push --json` prints (#4867): for each ref update, whether the commit carries current runner evidence for every check `refs` in `.chant/trust.json` at base requires for the ref, and the decision. Version 1 of the read contract. Readers ignore fields they do not know; a field is only ever added within a version. The codes are a closed list, each in the one closed list of `reason-codes.ts`.",
+  "oneOf": [
+    { "$ref": "#/$defs/result" },
+    { "$ref": "#/$defs/failure" }
+  ],
+  "$defs": {
+    "result": {
+      "type": "object",
+      "required": ["$schema", "contract", "chant", "ok", "decisions"],
+      "properties": {
+        "$schema": { "const": "https://intentius.io/chant/schemas/workspace/ref-gate/v1/ref-gate.schema.json" },
+        "contract": { "const": 1 },
+        "chant": { "type": "string" },
+        "ok": { "type": "boolean", "description": "True when every update is admitted." },
+        "ledger": { "type": "string", "description": "The ledger file the decisions were appended to, when they were." },
+        "decisions": { "type": "array", "items": { "$ref": "#/$defs/decision" } }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "required": ["$schema", "contract", "chant", "error"],
+      "properties": {
+        "$schema": { "const": "https://intentius.io/chant/schemas/workspace/ref-gate/v1/ref-gate.schema.json" },
+        "contract": { "const": 1 },
+        "chant": { "type": "string" },
+        "error": { "$ref": "#/$defs/error" }
+      }
+    },
+    "error": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "enum": ["not-a-git-repository", "revision-unknown", "trust-policy-unreadable", "ref-update-invalid"] },
+        "message": { "type": "string" }
+      }
+    },
+    "oid": { "type": ["string", "null"], "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
+    "decision": {
+      "type": "object",
+      "required": ["ref", "old", "new", "base", "decision", "status", "checks"],
+      "properties": {
+        "ref": { "type": "string" },
+        "old": { "$ref": "#/$defs/oid", "description": "The ref's tip before the update; null for a new ref." },
+        "new": { "$ref": "#/$defs/oid", "description": "The tip the update sets; null for a deletion." },
+        "base": { "$ref": "#/$defs/oid", "description": "The commit the policy was read at; null when there is none, and nothing is required." },
+        "decision": { "enum": ["admit", "refuse"] },
+        "status": { "type": ["string", "null"], "description": "The commit status a forge requires for the ref, when a rule matched." },
+        "checks": { "type": "array", "items": { "$ref": "#/$defs/check" } },
+        "error": { "$ref": "#/$defs/error", "description": "Set when the gate could not decide; the update is refused." }
+      }
+    },
+    "check": {
+      "type": "object",
+      "required": ["check", "action", "command", "status", "reason", "subject"],
+      "properties": {
+        "check": { "type": "string" },
+        "action": { "enum": ["block", "warn"] },
+        "command": { "type": "string", "description": "The command that produces the evidence." },
+        "status": { "enum": ["current", "stale", "missing", "overridden"] },
+        "code": {
+          "enum": ["ref-evidence-missing", "ref-evidence-stale", "envelope-invalid", "envelope-untrusted", "evidence-payload-type", "evidence-statement-invalid", "evidence-runner-mismatch"],
+          "description": "Why the check has no current evidence."
+        },
+        "reason": { "type": "string" },
+        "runner": { "type": "string", "description": "The runner whose evidence counted." },
+        "subject": { "type": "string", "description": "The subject an override of this check names: ref-gate-<sha12>-<check>." },
+        "override": {
+          "type": "object",
+          "required": ["subject", "by", "at", "reason", "digest"],
+          "properties": {
+            "subject": { "type": "string" },
+            "by": { "type": "string" },
+            "at": { "type": "string" },
+            "reason": { "type": "string" },
+            "digest": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

@@ -984,6 +984,12 @@ export function parseArgs(args: string[]): ParsedArgs {
       if (value === undefined || value.startsWith("-")) throw new Error(`${arg} needs a value`);
       const field = ({ "--key": "key", "--check-id": "checkId", "--claim": "claim", "--environment": "environment", "--envelope": "envelope", "--threshold": "threshold" } as const)[arg];
       result[field] = value;
+    } else if (arg === "--ref" || arg === "--hook" || arg === "--git-dir" || arg === "--ledger") {
+      // `chant workspace ref-gate check|status --ref <ref>`, `install --hook <pre-receive|pre-push> --git-dir <dir>`, `--ledger <file>` (#4867)
+      const value = args[++i];
+      if (value === undefined || value.startsWith("-")) throw new Error(`${arg} needs a value`);
+      const field = ({ "--ref": "ref", "--hook": "hook", "--git-dir": "gitDir", "--ledger": "ledger" } as const)[arg];
+      result[field] = value;
     } else if (arg === "--require") {
       // `chant workspace records|verify --require attested` (#2547)
       result.require = args[++i];

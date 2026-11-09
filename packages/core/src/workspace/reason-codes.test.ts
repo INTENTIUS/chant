@@ -59,6 +59,7 @@ import { CI_GREEN_ERROR_CODES } from "./ci-green";
 import { ROTATION_REFUSAL_CODES } from "./trust/rotation";
 import { SIGNERS_ERROR_CODES } from "./trust/signers-cli";
 import { EVIDENCE_ERROR_CODES } from "./trust/evidence";
+import { REF_GATE_CHECK_CODES, REF_GATE_ERROR_CODES } from "./trust/ref-gate";
 import { METRICS_ERROR_CODES, METRICS_REASON_CODES } from "./delivery-metrics";
 import { SEARCH_ERROR_CODES, SEARCH_MEMBER_REASON_CODES, WORKSPACE_SEARCH_ERROR_CODES } from "./search-contract";
 import { CAPABILITIES_ERROR_CODES, CAPABILITY_SUPPORT_CODES } from "./capabilities-contract";
@@ -142,6 +143,8 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   ROTATION_REFUSAL_CODES,
   SIGNERS_ERROR_CODES,
   EVIDENCE_ERROR_CODES,
+  REF_GATE_ERROR_CODES,
+  REF_GATE_CHECK_CODES,
   METRICS_ERROR_CODES,
   METRICS_REASON_CODES,
   SEARCH_ERROR_CODES,

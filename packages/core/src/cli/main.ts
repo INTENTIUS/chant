@@ -1045,6 +1045,13 @@ Workspace (level 1, #2524):
   workspace evidence verify --envelope <file> [--at <rev>] [--json]
                         Verify runner evidence offline, and whether the
                         records it covers are unchanged
+  workspace ref-gate check|status --ref <ref> [--at <rev>] [--base <rev>] [--json]
+                        Decide a ref update against the checks .chant/trust.json
+                        at base requires for the ref; status sets the commit
+                        status a forge requires
+  workspace ref-gate install --hook pre-receive|pre-push [--git-dir <dir>]
+                        Write the git hook that refuses an update whose commit
+                        lacks current evidence for a blocking check
   workspace lineage [--json]
                         Show each scope in .chant/workspace.lock.json: its
                         template and pin, locally edited files and open
@@ -2062,6 +2069,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "workspace trust", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/trust/trust-write")).runWorkspaceTrust(ctx) },
   { name: "workspace signers", handler: async (ctx) => (await import("../workspace/trust/signers-cli")).runWorkspaceSigners(ctx) },
   { name: "workspace evidence", handler: async (ctx) => (await import("../workspace/trust/evidence-cli")).runWorkspaceEvidence(ctx) },
+  // #4867 — refuse a ref update that lacks the evidence the policy at base requires. Runs in a bare repository's hook, so no config.
+  { name: "workspace ref-gate", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/trust/ref-gate-cli")).runWorkspaceRefGate(ctx) },
 
   // State subcommands
   { name: "lifecycle snapshot", requiresPlugins: true, handler: runLifecycleSnapshot },
