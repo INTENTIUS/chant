@@ -30,9 +30,10 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
+import { join, relative, sep } from "node:path";
 import type { Declarable } from "@intentius/chant/declarable";
 import { GENERATED_MARKER } from "@intentius/chant/discovery/files";
+import { resolveSourceDir } from "@intentius/chant/config";
 import { getProvenance } from "@intentius/chant/provenance";
 import type { SerializerResult } from "@intentius/chant/serializer";
 import { isPostgresObject } from "./postgres/entities";
@@ -58,8 +59,7 @@ export const SQL_TYPES_FILE = "sql-types.d.ts";
  * `sourceDir`, or the project root when it is unset.
  */
 export function sqlTypesPath(projectDir: string, config: Record<string, unknown> | undefined): string {
-  const sourceDir = typeof config?.sourceDir === "string" ? config.sourceDir : ".";
-  return join(resolve(projectDir, sourceDir), SQL_TYPES_FILE);
+  return join(resolveSourceDir(projectDir, config), SQL_TYPES_FILE);
 }
 
 /** The file on disk against what the build's entities render: `missing`, `stale` or `current`. */

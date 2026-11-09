@@ -287,12 +287,10 @@ async function rendersHandler(ctx: CommandGroupContext): Promise<number> {
   if (parsed.positionals.length > 0) {
     throw new Error(`chant helm renders takes no positional arguments, got: ${parsed.positionals.join(", ")}`);
   }
-  const { loadChantConfig } = await import("@intentius/chant/config");
+  const { loadChantConfig, resolveSourceDir } = await import("@intentius/chant/config");
   const { discover } = await import("@intentius/chant");
   const { getHelmRenderRecords, clearHelmRenderRecords } = await import("./render");
   const { renderStability } = await import("./render-digest");
-  const { resolve } = await import("node:path");
-
   const cwd = process.cwd();
   const { config, configPath } = await loadChantConfig(cwd);
   if (!configPath) {
@@ -305,7 +303,7 @@ async function rendersHandler(ctx: CommandGroupContext): Promise<number> {
   // command reports, so start from an empty list (a no-op in the one-shot
   // CLI, but honest if a long-lived caller invokes the handler directly).
   clearHelmRenderRecords();
-  const root = resolve(cwd, config.sourceDir ?? ".");
+  const root = resolveSourceDir(cwd, config); // #4794: the one source-dir rule
   const result = await discover(root);
   if (result.errors.length > 0) {
     for (const error of result.errors) console.error(String(error));

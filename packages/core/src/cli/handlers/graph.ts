@@ -13,7 +13,7 @@ import { carryAnnotations, observeResources } from "../../lifecycle/observe";
 import type { RootRead } from "../../observation";
 import { withLiveReadSession } from "../../live-read-session";
 import { replaySnapshots, hasSnapshot } from "../../lifecycle/replay";
-import { loadChantConfig, environmentNames, matchesDeclaredEnvironment, loadChantConfigUpward, type ChantConfig } from "../../config";
+import { loadChantConfig, environmentNames, matchesDeclaredEnvironment, loadChantConfigUpward, resolveSourceDir, type ChantConfig } from "../../config";
 import { applyLiveEndpoint } from "../../live-endpoint";
 import { applyDetail, detailInertNotice, type DetailLevel } from "../../graph-detail";
 import { applyLens, parseLens } from "../../graph-lens";
@@ -234,7 +234,7 @@ async function runGraphLive(
   // build here didn't, and the overlay called every one of them foreign.
   const buildRoots = collectBuildRootContributors(plugins, config as unknown as Record<string, unknown>, projectPath);
   const buildResult = await build(
-    resolve(args.src ?? config.sourceDir ?? "."),
+    resolveSourceDir(resolve("."), config, args.src),
     plugins.map((p) => p.serializer),
     undefined,
     // #4252: the serializers read lexicon settings from config (gcp.project
@@ -263,7 +263,7 @@ async function runGraphLive(
   // no components (or whose discovery errors) yields no stacks, so
   // `observeResources` falls back to its original single-stack call —
   // unchanged.
-  const componentsDiscovery = await discoverComponents(resolve(args.src ?? config.sourceDir ?? "."), {
+  const componentsDiscovery = await discoverComponents(resolveSourceDir(resolve("."), config, args.src), {
     sandbox: args.sandbox,
   });
   const stacks: Array<{ name: string; region?: string; src?: string }> = [];
@@ -421,7 +421,7 @@ async function runGraphLive(
           : sourceOverlayGraphs(declaredIr, ir, overlayOpts);
     } else {
       const declaredParams = await graphBuildParams(ctx, projectPath);
-      const declared = await discover(resolve(args.src ?? config.sourceDir ?? "."), {
+      const declared = await discover(resolveSourceDir(resolve("."), config, args.src), {
         ...(declaredParams ? { buildParams: declaredParams } : {}),
       });
       // #1626 — the declared canvas must include what the build declares, and

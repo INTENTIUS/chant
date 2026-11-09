@@ -20,11 +20,12 @@
  */
 
 import { readFileSync } from "node:fs";
-import { relative, resolve, sep } from "node:path";
+import { relative, sep } from "node:path";
 import type { Declarable } from "@intentius/chant/declarable";
 import type { BuildRootContext, BuildRootContribution } from "@intentius/chant/lexicon";
 import { findSourceFiles, hasDiscoveryMarkerSync } from "@intentius/chant/discovery/files";
 import { readHead } from "@intentius/chant/discovery/walk";
+import { resolveSourceDir } from "@intentius/chant/config";
 import { SQL_DIALECTS, type SqlDialect } from "../dialects";
 import { isPostgresObject } from "../postgres/entities";
 import { isClickHouseObject } from "../clickhouse/entities";
@@ -65,7 +66,7 @@ export function filesDialect(entities: ReadonlyMap<string, Declarable> | undefin
 
 /** The `buildRoots` contribution: every `.sql` file's declarations, or nothing when the source directory holds none. */
 export async function sqlFilesBuildRoot(ctx: BuildRootContext): Promise<BuildRootContribution> {
-  const sourceDir = ctx.sourceDir ?? resolve(ctx.projectRoot, typeof ctx.config.sourceDir === "string" ? ctx.config.sourceDir : ".");
+  const sourceDir = ctx.sourceDir ?? resolveSourceDir(ctx.projectRoot, ctx.config);
   const files = (await findSourceFiles(sourceDir, isSqlSourceFile)).filter((f) => !inMigrationsDir(sourceDir, f)).sort();
   if (files.length === 0) return { entities: new Map() };
   const dialect = filesDialect(ctx.entities, ctx.config);

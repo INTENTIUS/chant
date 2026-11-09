@@ -47,7 +47,7 @@ import { buildLedgerEntries, componentBomSummary, type BuildLedgerEntry } from "
 import { findBuildManifestByArtifactDigest, readBuildManifest } from "../../lifecycle/build-ledger-store";
 import type { ComponentBomSummary } from "../../lifecycle/build-ledger";
 import type { BuildArchiveManifest } from "../../components/verbs/build-archive";
-import { loadChantConfig } from "../../config";
+import { loadChantConfig, resolveSourceDir } from "../../config";
 import { applyLiveEndpoint } from "../../live-endpoint";
 import { isObservableDeclarable } from "../../declarable";
 import { build } from "../../build";
@@ -575,7 +575,7 @@ export async function runComponentsStatus(ctx: CommandContext): Promise<number> 
   // Discover components (best-effort) so a live/owned-but-never-recorded
   // component still gets a row, not just those that appear in the ledger.
   const { config } = await loadChantConfig(resolve("."));
-  const discovery = await discoverComponents(resolve(args.src ?? config.sourceDir ?? "."), {
+  const discovery = await discoverComponents(resolveSourceDir(resolve("."), config, args.src), {
     sandbox: args.sandbox,
   });
   const allComponents = [...discovery.components.keys()];
@@ -620,7 +620,7 @@ export async function runComponentsStatus(ctx: CommandContext): Promise<number> 
         // absent.
         const statusParams = await commandBuildParams(config.buildParams, args);
         if (!statusParams) return 1;
-        const buildResult = await build(resolve(args.src ?? config.sourceDir ?? "."), targetSerializers, undefined, {
+        const buildResult = await build(resolveSourceDir(resolve("."), config, args.src), targetSerializers, undefined, {
           buildParams: statusParams,
           config: config as unknown as Record<string, unknown>,
         });

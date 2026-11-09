@@ -133,14 +133,14 @@ async function projectEntities(
 ): Promise<{ entities: Map<string, DeclaredEntity[]>; warning?: string }> {
   const entities = new Map<string, DeclaredEntity[]>();
   try {
-    const { loadChantConfigUpward } = await import("../../config");
+    const { loadChantConfigUpward, resolveSourceDir } = await import("../../config");
     const { config, configPath } = await loadChantConfigUpward(projectDir);
     if (!configPath) return { entities };
     const projectPlugins = plugins.filter((p) => p.serializer);
     if (projectPlugins.length === 0) return { entities };
     const { build } = await import("../../build");
     const { isObservableDeclarable } = await import("../../declarable");
-    const root = src ? resolve(src) : resolve(dirname(configPath), config.sourceDir ?? ".");
+    const root = resolveSourceDir(dirname(configPath), config, src ? resolve(src) : undefined);
     const result = await build(root, projectPlugins.map((p) => p.serializer), undefined, { config: config as unknown as Record<string, unknown> });
     if (result.errors.length > 0) {
       return { entities, warning: `the project at ${root} does not build, so no indexed resource was checked against its declarations` };

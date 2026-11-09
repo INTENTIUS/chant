@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "fs";
-import { dirname, join } from "path";
+import { dirname, join, resolve } from "path";
 import { z } from "zod";
 import type { LintConfig } from "./lint/config";
 import type { OwnershipMarker } from "./ownership";
@@ -264,6 +264,12 @@ export interface ChantConfig {
    * of the project root, so a mixed-layout project — chant `src/` alongside app
    * code that has import side effects — can scope the build to just the infra.
    * Defaults to "." (the project root). The `--src` flag overrides it.
+   *
+   * #4794: every command that picks a source directory (`chant build`, the
+   * release compile, `chant lifecycle`, `graph`, `search`, `components`, the
+   * lexicon commands) reads it through {@link resolveSourceDir}. A root build,
+   * one with no `sourceDir`, leaves a top-level `scripts/` directory out
+   * ({@link ROOT_SOURCE_EXCLUDES}) unless `include` brings it back.
    */
   sourceDir?: string;
 
@@ -727,6 +733,39 @@ export function findProjectConfigPastFragments(startDir: string): { dir: string;
   return { dir, configPath };
 }
 
+/**
+ * The source directory a project's config names, relative to the project
+ * root: `sourceDir`, else "." (#4794). The relative half of
+ * {@link resolveSourceDir}, for a caller that names a path inside the
+ * project (a rollback's `git checkout -- <dir>`).
+ */
+export function configuredSourceDir(config: { sourceDir?: unknown } | undefined): string {
+  return typeof config?.sourceDir === "string" && config.sourceDir !== "" ? config.sourceDir : ".";
+}
+
+/**
+ * The one source-dir rule (#4794): the directory a command builds a
+ * project's declarations from, absolute. `explicit` (a `--src` flag or a path
+ * argument) wins, resolved against `projectDir`; else the config's
+ * `sourceDir`; else the project root. There is no `src` fallback: a project
+ * whose declarations live in `src/` beside other code says so with
+ * `sourceDir: "src"`. A root build leaves out {@link ROOT_SOURCE_EXCLUDES}.
+ */
+export function resolveSourceDir(projectDir: string, config: { sourceDir?: unknown } | undefined, explicit?: string): string {
+  return resolve(projectDir, explicit ?? configuredSourceDir(config));
+}
+
+/**
+ * The top-level directories a root build leaves out (#4794): a project with
+ * no `sourceDir`, built from its own root, does not load `scripts/`, where a
+ * script that runs on load (prints and exits) would take the build's place.
+ * Matched against the path relative to the project root, so only the
+ * project's own top-level `scripts/` is skipped. The config's `include`
+ * brings it back. Test and spec files are left out of every build already
+ * (`isSourceFileName`).
+ */
+export const ROOT_SOURCE_EXCLUDES: readonly string[] = ["scripts"];
+
 /** A project's discovery globs (#2519) and the directory they are relative to. */
 export interface DiscoveryGlobs {
   /** The directory holding the config that declared the globs. */
@@ -747,7 +786,7 @@ export interface DiscoveryGlobs {
  * is in `exclude` or `include` themselves: ignoring those would discover the
  * very files the project asked to skip.
  */
-export async function resolveDiscoveryGlobs(startDir: string): Promise<DiscoveryGlobs | undefined> {
+export async function resolveDiscoveryGlobs(startDir: string, options: { sourceWalk?: boolean } = {}): Promise<DiscoveryGlobs | undefined> {
   const { dir, configPath } = findProjectConfigPastFragments(startDir);
   if (!configPath) return undefined;
   let config: ChantConfig;
@@ -757,7 +796,9 @@ export async function resolveDiscoveryGlobs(startDir: string): Promise<Discovery
     if (err instanceof InvalidChantConfigError && (err.key === "exclude" || err.key === "include")) throw err;
     return undefined;
   }
-  const exclude = config.exclude ?? [];
+  // #4794: a source walk from the root of a project with no sourceDir (a root build) leaves out ROOT_SOURCE_EXCLUDES.
+  const rootBuild = options.sourceWalk === true && config.sourceDir === undefined && resolve(startDir) === resolve(dir);
+  const exclude = [...(config.exclude ?? []), ...(rootBuild ? ROOT_SOURCE_EXCLUDES : [])];
   const include = config.include ?? [];
   if (exclude.length === 0 && include.length === 0) return undefined;
   return { root: dir, exclude, include };

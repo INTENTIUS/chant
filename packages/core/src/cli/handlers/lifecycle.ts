@@ -41,7 +41,7 @@ import { changedFilesBetween, lexiconChangedUnits } from "../../components/chang
 import { cfnDeployStacks } from "./components";
 import { affectedStacks } from "../../lifecycle/affected";
 import { rollbackToRevision } from "../../lifecycle/rollback";
-import { loadChantConfig, environmentNames, matchesDeclaredEnvironment, resolveOwnershipStack } from "../../config";
+import { loadChantConfig, environmentNames, matchesDeclaredEnvironment, resolveOwnershipStack, resolveSourceDir, configuredSourceDir } from "../../config";
 import { unknownEnvError, isProdLikeEnvironment } from "../../env";
 import { planTeardown, executeTeardown, type TeardownPlan, type TeardownReport } from "../../lifecycle/teardown";
 import { collectBuildRootContributors } from "../plugins";
@@ -66,10 +66,11 @@ type LoadedChantConfigLike = { observationBaseline?: unknown; snapshots?: unknow
  * subdirectory so a mixed-layout project — chant `src/` next to app code with
  * import side effects — only synthesizes its infra. Precedence: `--src` flag,
  * then `config.sourceDir`, then "." (the root). Snapshot/diff/plan all use this
- * so their build digests stay consistent.
+ * so their build digests stay consistent. The rule is `resolveSourceDir`'s,
+ * which every command that picks a source directory shares (#4794).
  */
 export function resolveBuildRoot(args: ParsedArgs, config: ChantConfig): string {
-  return resolve(args.src ?? config.sourceDir ?? ".");
+  return resolveSourceDir(resolve("."), config, args.src);
 }
 
 /** One stack a lifecycle command operates on: its build root and, for a
@@ -302,7 +303,7 @@ export async function runLifecycleRollback(ctx: CommandContext): Promise<number>
     return 1;
   }
   const { config } = await loadChantConfig(resolve("."));
-  const sourceDir = config.sourceDir ?? ".";
+  const sourceDir = configuredSourceDir(config);
   try {
     const result = await rollbackToRevision({ ref, env: environment, sourceDir, cwd: resolve("."), dryRun: args.dryRun });
     if (result.noop) {

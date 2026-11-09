@@ -7,6 +7,8 @@ import type { Serializer } from "../serializer";
 export interface ParsedArgs {
   command: string;
   path: string;
+  /** True when a positional set `path` (#4794): `chant build` with none builds from the config's `sourceDir`. */
+  pathGiven?: boolean;
   extraPositional?: string;
   extraPositional2?: string;
   /** Every positional after the command word, in order (#3308): for a command with more than three, such as `workspace box listing set <member>`. */

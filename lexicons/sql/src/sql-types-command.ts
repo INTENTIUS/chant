@@ -51,10 +51,10 @@ export function shadowingSource(path: string): string | undefined {
 
 /** The project the working directory belongs to: its config, its root and its source directory. */
 export async function loadProject(cwd: string): Promise<ProjectLocation> {
-  const { loadChantConfigUpward } = await import("@intentius/chant/config");
+  const { loadChantConfigUpward, resolveSourceDir } = await import("@intentius/chant/config");
   const { config, configPath } = await loadChantConfigUpward(cwd);
   const projectDir = configPath ? dirname(configPath) : cwd;
-  return { config, projectDir, sourceDir: resolve(projectDir, config.sourceDir ?? ".") };
+  return { config, projectDir, sourceDir: resolveSourceDir(projectDir, config) };
 }
 
 /**

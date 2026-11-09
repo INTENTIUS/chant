@@ -34,6 +34,8 @@
  */
 
 import { join, posix } from "node:path";
+import { ROOT_SOURCE_EXCLUDES, resolveSourceDir } from "../config";
+import { compileDiscoveryFilter } from "../discovery/files";
 import type { StaticFieldsRead } from "../config-static";
 import { isDeclarable, type Declarable } from "../declarable";
 import type { LexiconUnreadSource, LexiconWorkspaceLinks, LexiconWorkspaceOutput } from "../graph-ir";
@@ -84,12 +86,23 @@ function staticSourceDir(read: StaticFieldsRead): string | undefined {
   return dir === "." || dir === "" ? undefined : dir;
 }
 
+/** The `include` globs a member's config sets, read without running it. */
+function staticInclude(read: StaticFieldsRead): string[] {
+  const value = read.status === "read" ? read.fields.include : undefined;
+  return Array.isArray(value) ? value.filter((g): g is string => typeof g === "string") : [];
+}
+
 /**
  * Only the files under the member's `sourceDir`, when its config sets one, as
- * a build reads them (#3941). Without one, every source file of the member.
+ * a build reads them (#3941). Without one, every source file of the member
+ * but its top-level `scripts/`, which a root build leaves out (#4794,
+ * `ROOT_SOURCE_EXCLUDES`) unless `include` brings it back.
  */
-function withinSourceDir(files: string[], member: string, sourceDir: string | undefined): string[] {
-  if (!sourceDir) return files;
+function withinSourceDir(files: string[], member: string, sourceDir: string | undefined, include: string[] = []): string[] {
+  if (!sourceDir) {
+    const skipped = compileDiscoveryFilter({ root: member || ".", exclude: [...ROOT_SOURCE_EXCLUDES], include });
+    return skipped ? files.filter((f) => !skipped(f)) : files;
+  }
   const prefix = `${member ? `${member}/` : ""}${sourceDir}/`;
   return files.filter((f) => f.startsWith(prefix));
 }
@@ -207,10 +220,13 @@ async function foldMember(
   const what = hook === "workspaceOutputs" ? "outputs" : "links";
   const dir = memberDirOnDisk(root, m.dir);
   const { readConfigFieldsStatically } = await import("../config-static");
+  // Read apart, so an `include` that can't be read statically never costs the member its `sourceDir`.
+  const sourceDir = staticSourceDir(readConfigFieldsStatically(dir, ["sourceDir"]));
   const files = withinSourceDir(
     sourceFiles(tree, memberDir(m.dir), memberExcludes(declaration, groups, m)),
     memberDir(m.dir),
-    staticSourceDir(readConfigFieldsStatically(dir, ["sourceDir"])),
+    sourceDir,
+    sourceDir ? [] : staticInclude(readConfigFieldsStatically(dir, ["include"])),
   );
   let names: string[];
   try {
@@ -280,9 +296,10 @@ async function foldMember(
     if (typeof plugin.buildRoots !== "function") continue;
     const read = readConfigFieldsStatically(dir, [name, "sourceDir"]);
     const config = read.status === "read" ? read.fields : {};
-    const sourceDir = typeof config.sourceDir === "string" ? join(dir, config.sourceDir) : undefined;
+    // #4794: the build's own rule, so the hook reads the directory a build of the member would.
+    const sourceDir = resolveSourceDir(dir, config);
     try {
-      const contributed = await plugin.buildRoots({ projectRoot: dir, config, entities, ...(sourceDir ? { sourceDir } : {}) });
+      const contributed = await plugin.buildRoots({ projectRoot: dir, config, entities, sourceDir });
       for (const [key, entity] of contributed.entities) if (!entities.has(key)) entities.set(key, entity);
     } catch (err) {
       gaps.push(`lexicon "${name}" could not read the member's other source files, so their declarations were not read (${firstLine(err)})`);

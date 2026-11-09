@@ -155,7 +155,7 @@ export function declaredEdgeCoverage(): BehaviourEdgeCoverage {
  * activity registry imports this module statically.
  */
 export async function predictDeclared(projectPath: string, args: PredictBehaviourArgs): Promise<BehaviourResult> {
-  const { loadChantConfigUpward } = await import("../../config");
+  const { loadChantConfigUpward, resolveSourceDir } = await import("../../config");
   const { loadPlugins, resolveProjectLexicons } = await import("../../cli/plugins");
   const { build } = await import("../../build");
   const { buildGraphIr } = await import("../../graph-ir");
@@ -168,7 +168,7 @@ export async function predictDeclared(projectPath: string, args: PredictBehaviou
   // and nothing to refuse when two lexicons both answer — they are additive.
   const kinds = plugins.map((p) => p.behaviourKinds).filter((k): k is BehaviourKinds => k !== undefined);
 
-  const sourceDir = resolve(projectPath, config.sourceDir ?? ".");
+  const sourceDir = resolveSourceDir(projectPath, config);
   const result = await build(sourceDir, plugins.map((p) => p.serializer));
   if (result.errors.length > 0) {
     const messages = result.errors.map((e) => (typeof e === "string" ? e : (e as { message?: string }).message ?? String(e)));

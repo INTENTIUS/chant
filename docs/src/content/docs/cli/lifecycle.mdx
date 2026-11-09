@@ -35,7 +35,7 @@ The environment name (e.g. `dev`, `staging`, `prod`) must be declared in `chant.
 export default { lexicons: ["k8s"], sourceDir: "src" };
 ```
 
-The `--src <dir>` flag overrides `sourceDir` for a single invocation. Use the same source root for `snapshot` and `diff` so their build digests stay comparable.
+The `--src <dir>` flag overrides `sourceDir` for a single invocation. Use the same source root for `snapshot` and `diff` so their build digests stay comparable. `chant build` with no path reads the same `sourceDir`, so a bare build and a lifecycle build see the same declarations ([source directory](/chant/cli/build/#source-directory)).
 
 [Drift Detection](/chant/concepts/drift-detection/) explains the model behind these commands, including observational versus authoritative state and resources versus artifacts. It also says when drift detection is worth running.
 
