@@ -28,13 +28,27 @@
  *      released whatever happens. The finished line holds each root's
  *      location and its version and digest before and after, never a
  *      state's contents.
+ *
+ * A root whose new state is read from somewhere else (a backend move, #4806)
+ * names that place as its `source`: the request binds it, and under the
+ * locks the engine reads it again, so a source that moved refuses the write
+ * as a root's own state does. A request that waits while an approval of an
+ * earlier request of the same migration stands, made since that request was
+ * asked, answers `approval-moved` and names the roots whose state moved
+ * between the two (#4806).
  */
 import { CHANT_EXIT } from "./exit-codes";
-import { gatedOp, type GatedRequestLedger } from "./lifecycle/gated-op";
+import { chantGatedLedger, gatedOp, type GatedRequestLedger } from "./lifecycle/gated-op";
 import type { GatedRequestRules } from "./lifecycle/gated-request";
+import { gatedRequestAttachmentPath } from "./lifecycle/gated-request-digest";
+import { samePlanDigest } from "./lifecycle/plan-digest";
+import { NEXT_RELEASE } from "./release-floors";
 
 /** The first chant with the engine-neutral state migration (#4762). */
 export const STATE_MIGRATION_FLOOR = "0.124.77";
+
+/** The first chant whose migration binds a root's `source` (an engine's `source` read under the locks) and answers `approval-moved`, and whose terraform lexicon plans backend moves (`planTerraformMigration`'s `backends`) and choudoufu estate migrations (`planEstateMigration`) onto it (#4806). */
+export const STATE_MIGRATION_SOURCE_FLOOR = NEXT_RELEASE;
 
 /** A state as a migration binds it: its version id, when the store keeps versions, and its digest, null for no state. */
 export interface MigrationStateAt {
@@ -62,6 +76,15 @@ export interface MigrationRootPlan {
   proof: MigrationCheck;
   /** The plan against the real state, after the write. */
   verify?: MigrationCheck;
+  /** Where the new state is read from, when that is not the root's own state (a backend move, #4806): the request binds it, and the write is refused when it moved. */
+  source?: MigrationSource;
+}
+
+/** A state a migration reads its new state from: where it is, its version id when its store keeps versions, and its digest. */
+export interface MigrationSource {
+  location?: string;
+  version_id?: string;
+  digest: string;
 }
 
 /** The engine's half of a migration's write. */
@@ -70,6 +93,8 @@ export interface StateMigrationEngine {
   lock(): Promise<() => Promise<void>>;
   /** A root's state now, read under the locks. */
   current(root: string): Promise<MigrationStateAt>;
+  /** A root's source now, read under the locks; called for each root whose plan names a `source` (#4806). */
+  source?(root: string): Promise<MigrationStateAt>;
   /** Write every new state, in the engine's order. Throws at the first that fails. */
   write(): Promise<void>;
   /** After the write: the root planned against its real state, its version now, and its version before when only the write named it (a snapshot). */
@@ -103,6 +128,8 @@ export interface StateMigrationInput {
   base?: string;
   /** How long a request waits for its approval. Default 48h. */
   expiry?: string;
+  /** Reads an earlier request's attachment by its digest, to name the roots that moved since its approval. Default: the attachment on chant/lifecycle. */
+  readAttachment?: (op: string, digest: string) => Promise<string | undefined>;
   now?: string;
   runId?: string;
   commit?: string;
@@ -122,6 +149,8 @@ export interface StateMigrationResult {
 export type StateMigrationOutcome =
   | { status: "proof-failed"; exit: 1; roots: MigrationRootPlan[]; failing: string[] }
   | { status: "waiting"; exit: 3; digest: string; command: string }
+  /** It waits, and an approval of an earlier request of this migration stands: the states moved since, and `moved` names the roots whose state is not the one that request bound. Nothing was written. */
+  | { status: "approval-moved"; exit: 4; digest: string; command: string; approved: string; approvedBy: string; moved: string[] }
   | { status: "refused"; exit: 3; digest: string; command: string; by: string; reason: string }
   /** It applied already; a migration applies once. */
   | { status: "spent"; exit: 0; digest: string }
@@ -131,6 +160,15 @@ export type StateMigrationOutcome =
   | { status: "failed"; exit: 1; digest: string; error: string; result?: StateMigrationResult; recorded: boolean };
 
 const same = (a: MigrationStateAt, b: MigrationStateAt): boolean => (a.version_id ?? undefined) === (b.version_id ?? undefined) && a.digest === b.digest;
+
+/** What a request's attachment binds of each root: its location and state before, its new state's digest, and its source when it has one. */
+const boundRoot = (r: MigrationRootPlan) => ({
+  root: r.root,
+  location: r.location ?? null,
+  before: { version_id: r.before.version_id ?? null, digest: r.before.digest },
+  after: r.after.digest,
+  ...(r.source ? { source: { location: r.source.location ?? null, version_id: r.source.version_id ?? null, digest: r.source.digest } } : {}),
+});
 
 /** The finished line's flat facts: how it ended, and each root's location, versions and digests. */
 export function migrationFacts(result: StateMigrationResult): Record<string, string | number | boolean> {
@@ -146,6 +184,8 @@ export function migrationFacts(result: StateMigrationResult): Record<string, str
     if (r.after.version_id) out[`${r.root}.after`] = r.after.version_id;
     if (r.before.digest) out[`${r.root}.before_digest`] = r.before.digest;
     if (r.after.digest) out[`${r.root}.after_digest`] = r.after.digest;
+    if (r.source?.location) out[`${r.root}.source`] = r.source.location;
+    if (r.source?.version_id) out[`${r.root}.source_version`] = r.source.version_id;
   }
   return out;
 }
@@ -160,7 +200,10 @@ export async function writeStateMigration(engine: StateMigrationEngine, roots: M
   const release = await engine.lock();
   try {
     const moved: string[] = [];
-    for (const r of roots) if (!same(await engine.current(r.root), r.before)) moved.push(r.root);
+    for (const r of roots) {
+      if (!same(await engine.current(r.root), r.before)) moved.push(r.root);
+      else if (r.source && engine.source && !same(await engine.source(r.root), r.source)) moved.push(r.root);
+    }
     if (moved.length > 0) return { status: "moved", roots, moved };
     try {
       await engine.write();
@@ -193,7 +236,8 @@ export async function runStateMigration(input: StateMigrationInput): Promise<Sta
   if (failing.length > 0) return { status: "proof-failed", exit: CHANT_EXIT.failed, roots: input.roots, failing };
   const roots = [...input.roots].sort((a, b) => (a.root < b.root ? -1 : a.root > b.root ? 1 : 0));
   // The attachment binds each root's state before and after; the proof's wording is the engine's, not the migration.
-  const attachment = `${JSON.stringify({ name: input.name, roots: roots.map((r) => ({ root: r.root, location: r.location ?? null, before: { version_id: r.before.version_id ?? null, digest: r.before.digest }, after: r.after.digest })) }, null, 2)}\n`;
+  const attachment = `${JSON.stringify({ name: input.name, roots: roots.map(boundRoot) }, null, 2)}\n`;
+  const now = input.now ?? new Date().toISOString();
   const result = await gatedOp(
     {
       op: input.words.op,
@@ -204,7 +248,7 @@ export async function runStateMigration(input: StateMigrationInput): Promise<Sta
       attachment,
       ...(input.base ? { base: input.base } : {}),
       ...(input.cwd ? { cwd: input.cwd } : {}),
-      ...(input.now ? { now: input.now } : {}),
+      now,
       ...(input.runId ? { runId: input.runId } : {}),
       ...(input.commit ? { commit: input.commit } : {}),
       ...(input.ledger ? { ledger: input.ledger } : {}),
@@ -216,8 +260,11 @@ export async function runStateMigration(input: StateMigrationInput): Promise<Sta
   );
   const command = (fallback: string): string => (input.words.approveCommand ? input.words.approveCommand(input.name, result.digest) : fallback);
   switch (result.status) {
-    case "waiting":
+    case "waiting": {
+      const stood = await approvalMovedFrom(input, roots, result.digest, now);
+      if (stood) return { status: "approval-moved", exit: CHANT_EXIT.moved, digest: result.digest, command: command(result.command), ...stood };
       return { status: "waiting", exit: CHANT_EXIT.waiting, digest: result.digest, command: command(result.command) };
+    }
     case "refused":
       return { status: "refused", exit: CHANT_EXIT.waiting, digest: result.digest, command: command(result.command), by: result.by, reason: result.reason };
     case "spent":
@@ -233,4 +280,59 @@ export async function runStateMigration(input: StateMigrationInput): Promise<Sta
       return { status: "failed", exit: CHANT_EXIT.failed, digest: result.digest, error: r.error ?? "the migration failed", result: r, recorded: result.recorded };
     }
   }
+}
+
+/** An earlier request's attachment on chant/lifecycle, by its digest. */
+async function ledgerAttachment(op: string, digest: string, cwd?: string): Promise<string | undefined> {
+  const { readBlobFromPath } = await import("./lifecycle/git");
+  const { dir, file } = gatedRequestAttachmentPath(op, digest);
+  return (await readBlobFromPath(dir, file, cwd ? { cwd } : undefined)) ?? undefined;
+}
+
+/**
+ * The approval a waiting request moved away from (#4806): a state written
+ * after an approval changes the request's digest, so the migration asks
+ * again. The approval that stands is the newest of another request of the
+ * migration, unspent, not its requester's own, and made since the newest
+ * pending fact before this run (`now` is this run's: a pending fact of that
+ * time is the one this run asked). The roots that moved are those whose
+ * bound state differs from that request's attachment, or every root when
+ * the attachment cannot be read. Undefined when no approval stands.
+ *
+ * Lifted from terragucci's `movedSinceChantApproval` and `beforeMembers`.
+ */
+async function approvalMovedFrom(input: StateMigrationInput, roots: MigrationRootPlan[], digest: string, now: string): Promise<{ approved: string; approvedBy: string; moved: string[] } | undefined> {
+  const ledger = input.ledger ?? chantGatedLedger;
+  let requests: Awaited<ReturnType<GatedRequestLedger["readGatedRequests"]>>;
+  try {
+    requests = await ledger.readGatedRequests(input.words.op, input.cwd ? { cwd: input.cwd } : undefined);
+  } catch {
+    return undefined;
+  }
+  const t = (s: string | undefined): number => (s ? Date.parse(s) : 0);
+  const mine = requests.filter((r) => r.gate === input.name);
+  const asked = (r: (typeof mine)[number]): boolean => samePlanDigest(r.digest, digest) && t(r.pending.timestamp) === t(now);
+  const since = Math.max(0, ...mine.filter((r) => !asked(r)).map((r) => t(r.pending.timestamp)).filter((x) => !Number.isNaN(x)));
+  let prior: (typeof mine)[number] | undefined;
+  let approval: (typeof mine)[number]["approvals"][number] | undefined;
+  for (const r of mine) {
+    if (samePlanDigest(r.digest, digest) || r.applied) continue;
+    const requester = r.request.by.toLowerCase();
+    for (const a of r.approvals) {
+      if (a.resolvedBy.toLowerCase() === requester || t(a.timestamp) < since) continue;
+      if (!approval || t(a.timestamp) >= t(approval.timestamp)) [prior, approval] = [r, a];
+    }
+  }
+  if (!prior || !approval) return undefined;
+  let stored: { roots?: unknown } | undefined;
+  try {
+    const text = input.readAttachment ? await input.readAttachment(input.words.op, prior.digest) : await ledgerAttachment(input.words.op, prior.digest, input.cwd);
+    stored = text ? (JSON.parse(text) as { roots?: unknown }) : undefined;
+  } catch {
+    stored = undefined;
+  }
+  const was = new Map<string, string>();
+  if (Array.isArray(stored?.roots)) for (const r of stored.roots as Array<{ root?: unknown }>) if (typeof r.root === "string") was.set(r.root, JSON.stringify({ ...r, after: null }));
+  const moved = Array.isArray(stored?.roots) ? roots.filter((r) => was.get(r.root) !== JSON.stringify({ ...boundRoot(r), after: null })).map((r) => r.root) : roots.map((r) => r.root);
+  return { approved: prior.digest, approvedBy: approval.resolvedBy, moved };
 }
