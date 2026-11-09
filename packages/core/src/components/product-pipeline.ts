@@ -41,6 +41,7 @@ import type { CiRunner } from "../ci-jobs";
 import { resolveAgentSpec, type OpAgentSpec } from "../ci-agent";
 import { resolveCommitSpec, type OpCommitSpec } from "../ci-commit";
 import type { CiResponses } from "../ci-respond";
+import { productPlanJobs, type ProductPlanJob, type ProductPlanOptions } from "./product-plan";
 
 /** Where the generator writes a product's waves spec, which chant reads at base (#4550). */
 export const PRODUCT_WAVES_SPEC_DIR = ".chant/op-waves";
@@ -112,6 +113,17 @@ export interface ProductPipelineOptions extends Omit<PrLoopPipelineOptions, "wor
    * pinned model. Needed with `respond.description: "check"`.
    */
   decide?: { backend: string; model: string };
+  /**
+   * The product's own plan verb in place of `chant components pr-plan`
+   * (#4799, the 2026-11-09 amendment of #4550 ruling A: "pr-plan or the
+   * product's plan verb"): one plan job per target, each with only that
+   * target's variables and secrets, and a plan-note job that posts the
+   * `PrReport` or plan note hand-off the verb wrote ({@link ProductPlanOptions}).
+   * The jobs come back as {@link ProductPipelineJobs.productPlan}, and the
+   * forge lexicons' `generateProductPlanPipeline` renders them. Absent: the
+   * plan job runs `pr-plan`, as before.
+   */
+  productPlan?: ProductPlanOptions;
 }
 
 /** The jobs of one product pipeline. */
@@ -179,6 +191,8 @@ export interface ProductPipelineJobs {
    * Forgejo lexicons render the same job.
    */
   action?: PrActionJob & { runner?: CiRunner };
+  /** The product plan's jobs (#4799), with `productPlan`: a plan job and a plan-note job per target. */
+  productPlan?: ProductPlanJob[];
 }
 
 /** An agent's settings as a product passes them (#4616): {@link OpAgentSpec} without the trigger, which the pipeline names. */
@@ -281,7 +295,7 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   const built: CiProductApplyMode = options.waves || options.componentWaves ? "on-merge" : options.applyBeforeMerge ? "before-merge" : "release";
   const applyMode: CiProductApplyMode = options.words.applyMode === "before-merge" && options.applyBeforeMerge ? "before-merge" : built;
   const words = assertProductWords({ ...options.words, applyMode }, { jobs });
-  const { waves: given, wavesSpecFile, member, agent: _agent, commits: _commits, actions: _actions, componentWaves, ...loop } = options;
+  const { waves: given, wavesSpecFile, member, agent: _agent, commits: _commits, actions: _actions, componentWaves, productPlan, ...loop } = options;
   const { respond } = options;
   // #4629: the pull request loop puts the responses on the apply and note jobs, as `chant build --pr-loop --respond` does.
   const prLoop: PrLoopPipelineOptions = { ...loop, words, gate: options.gate ?? words.prGate };
@@ -303,6 +317,8 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
     post: { ...post, ...(controlTarget ? { control: controlNoteCheckout(forge, controlTarget, words) } : {}), ...defaultRunner },
     comments,
     ...(options.applyBeforeMerge ? { applyBeforeMerge: apply! } : {}),
+    // #4799: the product's plan verb, a plan job and a note job per target.
+    ...(productPlan ? { productPlan: productPlanJobs(forge, env, { ...prLoop, plan: productPlan }, words) } : {}),
   };
   const locks = prCommentLockJobs(forge, { locks: options.locks, words });
   if (locks.length > 0) out.locks = locks.map((job) => ({ ...job, ...defaultRunner }));

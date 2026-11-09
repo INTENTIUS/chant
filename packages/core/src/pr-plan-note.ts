@@ -33,6 +33,40 @@ export const PR_PLAN_NOTE_FLOOR = "0.124.78";
 /** The read contract a {@link PrPlanNote} follows. */
 export const PR_PLAN_NOTE_CONTRACT = 1;
 
+/**
+ * The file a product's plan verb writes its plan note hand-off to (#4799),
+ * beside where `pr-plan` writes `pr-plan.json`: chant's plan-note job posts
+ * it with `pr-post`.
+ */
+export const PR_PLAN_NOTE_FILE = "pr-plan-note.json";
+
+/**
+ * A product's plan note, handed from its plan job to chant's plan-note job
+ * (#4799). `pr-post` checks `pr`, `head`, `env` and `member` against its own
+ * flags, renders `note` with the pipeline's note words, and sets the plan
+ * status to `state` with `description`, or to failure when the plan job
+ * failed. Everything in it is read as data: it was written by the change's
+ * code.
+ */
+export interface PrPlanNoteHandoff {
+  kind: "plan-note-handoff";
+  contract: typeof PR_PLAN_NOTE_CONTRACT;
+  pr: number;
+  /** The commit planned: the same as `note.head`. */
+  head: string;
+  env: string;
+  /** The target (an environment, a member) the note is for, as `pr-post --member` names it. */
+  member?: string;
+  state: "success" | "failure" | "pending";
+  description: string;
+  note: PrPlanNote;
+}
+
+/** The hand-off for `note` (#4799), as a product's plan verb writes it to {@link PR_PLAN_NOTE_FILE}. */
+export function planNoteHandoff(note: PrPlanNote, at: { pr: number; env: string; member?: string; state: PrPlanNoteHandoff["state"]; description: string }): PrPlanNoteHandoff {
+  return { kind: "plan-note-handoff", contract: PR_PLAN_NOTE_CONTRACT, pr: at.pr, head: note.head, env: at.env, ...(at.member !== undefined ? { member: at.member } : {}), state: at.state, description: at.description, note };
+}
+
 /** One change line of a group, as chant's plan summary groups them. */
 export interface PrPlanNoteChange {
   line: string;
