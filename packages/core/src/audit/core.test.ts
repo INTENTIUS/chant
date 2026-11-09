@@ -1,4 +1,4 @@
-import { describe, test, expect } from "vitest";
+import { beforeAll, describe, test, expect } from "vitest";
 import { auditFiles, CROSS_FILE, type AuditInput } from "./core";
 import type { PostSynthCheck } from "../lint/post-synth";
 
@@ -70,6 +70,13 @@ jobs:
 `;
 
 describe("auditFiles", () => {
+  // The first audit of a lexicon loads its plugin and checks; on a CI runner that
+  // took the first test past the 5s unit budget (#2817). Load them once here.
+  // A lexicon that can't load is left for the test that needs it to report.
+  beforeAll(async () => {
+    for (const lexicon of ["github", "gitlab", "forgejo", "terraform", "k8s"]) await auditFiles([{ path: `warm.${lexicon}`, content: "", lexicon }]).catch(() => undefined);
+  }, 60_000);
+
   test("flags unpinned action and write-all permissions in a github workflow", async () => {
     const inputs: AuditInput[] = [
       { path: ".github/workflows/ci.yml", content: DIRTY_GH, lexicon: "github" },

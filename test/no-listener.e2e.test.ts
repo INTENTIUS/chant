@@ -12,7 +12,8 @@
  *    import of `Server` or `createServer` from `node:http`, `node:https`,
  *    `node:http2`, `node:net` or `node:tls`, and no import of `node:dgram`.
  *    `chant serve mcp` and `chant serve lsp` speak over stdio and stay
- *    allowed.
+ *    allowed. {@link LISTENERS} names the one module allowed to listen, and
+ *    why: `chant notify relay`, which a product hosts to receive chat clicks.
  * 2. No module imports, and `package.json` does not depend on, a package in
  *    {@link FORBIDDEN_PACKAGES}: UI frameworks, HTTP and WebSocket server
  *    frameworks, and agent runtimes and model SDKs. Each entry says why.
@@ -116,6 +117,19 @@ interface Finding {
 }
 
 /** Every listener and forbidden import in one file's source. */
+/**
+ * The modules in packages/core allowed to listen, each with why. Only the
+ * listener findings of a named file are let through; a forbidden import in
+ * it still fails the scan.
+ */
+const LISTENERS: Record<string, string> = {
+  "packages/core/src/notify-relay.ts":
+    "`chant notify relay` (#4611): the relay a product hosts in its own cloud to receive Slack and Teams clicks and record them as approvals. It listens only when that command starts it, never from a build, a read or `chant serve`.",
+};
+
+/** The findings that are a listener, as opposed to a forbidden import. */
+const LISTENER_FINDING = /^(imports (Server|createServer|createSecureServer) from node:|calls \S+\(\), which (opens a server|listens on a port)|constructs \S+, a server)/;
+
 function scanSource(file: string, text: string): Finding[] {
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith(".mjs") || file.endsWith(".js") ? ts.ScriptKind.JS : ts.ScriptKind.TS);
   const out: Finding[] = [];
@@ -222,11 +236,14 @@ describe("packages/core opens no listener and imports no UI or agent runtime (#2
     expect(scanSource("sample.ts", sample)).toEqual([]);
   });
 
-  test("no source file in packages/core opens a listener or imports a forbidden package", () => {
+  test("no source file in packages/core opens a listener or imports a forbidden package, except the listeners named", () => {
     const files = [...coreSources(join(CORE, "src")), ...coreSources(join(CORE, "bin"))];
     expect(files.length).toBeGreaterThan(100);
     const findings = files.flatMap((f) => scanSource(relative(repoRoot, f), readFileSync(f, "utf-8")));
-    expect(findings.map((f) => `${f.file}:${f.line}: ${f.what}`)).toEqual([]);
+    const allowed = (f: Finding) => f.file in LISTENERS && LISTENER_FINDING.test(f.what);
+    expect(findings.filter((f) => !allowed(f)).map((f) => `${f.file}:${f.line}: ${f.what}`)).toEqual([]);
+    // An exception that no longer listens is removed, so it can't cover a listener added later.
+    for (const file of Object.keys(LISTENERS)) expect(findings.some((f) => f.file === file && allowed(f)), file).toBe(true);
   });
 
   test("packages/core/package.json depends on no forbidden package", () => {
