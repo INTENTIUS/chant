@@ -140,6 +140,24 @@ On GitHub and Forgejo the trade appends the variables to `GITHUB_ENV` and masks 
 
 terragucci leaves Azure untraded, since the azurerm provider takes only the OIDC token. chant trades it, so the plan job holds an ARM access token and no token another client could be traded for. A tool that needs the OIDC token itself cannot plan under this block.
 
+## Log in from the token file instead
+
+Some tools trade the OIDC token themselves and trade it again when their credentials run out: the AWS SDKs' web identity provider, Google's `external_account` credentials, and the azurerm provider, which takes only the OIDC token. A long apply that outlives an hour of traded credentials, or a job that runs `az`, needs that kind of login. `@intentius/chant/ci-login` renders it ([#4788](https://github.com/INTENTIUS/chant/issues/4788)), with one function per forge: `githubCloudLogin`, `gitlabCloudLogin` and `forgejoCloudLogin`, or `cloudLogin(forge, spec)`.
+
+The spec is a trade spec without Pulumi, such as the `plan` or `apply` side of `resolveCloudIdentity`, so each stage passes its own identities. Each function returns `steps` (`{ name, run }`) and `idTokens` (`{ <variable>: <audience> }`). That is the shape the Op waves pipeline's `waveJobs[wave].before` and `recordPlans` take, along with a wave's `idTokens`. The step runs `node -e` from `/`, like the trade. Per cloud it writes the job's token to a file under `RUNNER_TEMP` (else `TMPDIR`) with mode 0600, then sets:
+
+| Cloud | Variables |
+|---|---|
+| AWS | `AWS_ROLE_ARN`, `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_ROLE_SESSION_NAME` (`sessionName`, default `chant`), `AWS_REGION`, and `AWS_ENDPOINT_URL_STS` with `endpoint` |
+| GCP | `GOOGLE_APPLICATION_CREDENTIALS` and `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`, an `external_account` file that impersonates the service account, so `gcloud` needs no `gcloud auth login` |
+| Azure | `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_FEDERATED_TOKEN_FILE`, `ARM_USE_OIDC`, `ARM_CLIENT_ID`, `ARM_TENANT_ID`, `ARM_OIDC_TOKEN_FILE_PATH` and the subscription. With `cli: true` it also runs `az login --service-principal --federated-token` |
+
+The token comes from the forge's request URL on GitHub, and on Forgejo 15 with Forgejo Runner 12.5 for a job with `enable-openid-connect: true`. On GitLab it comes from the `id_tokens` variable `CHANT_ID_TOKEN_<CLOUD>`. A cloud's `tokenFile` names a file the runner provides instead, such as an older Forgejo runner's, and the job then requests no token for it. On GitHub and Forgejo the variables go to `$GITHUB_ENV`. On GitLab the script evaluates the `export` lines the login prints, then unsets the token variables, so later lines hold the token only in its file.
+
+With `targets`, the step writes the same `CHANT_CLOUD_TARGETS` file the trade writes, with each identity's variables. `targetCloudEnv(env, target)` then hands each target its own role, service account file or client.
+
+The token file is a token: every later step of the job can read it. Use the trade when the job runs the change's code. The login suits the jobs that run merged code, such as the apply waves.
+
 ## What the change's code can reach
 
 After the checkout, every step of the plan job starts again without the forge tokens and without the variables a token is requested with (`OIDC_REQUEST_VARS`, `ci-identity.ts:443`, dropped at `generate-pipeline.ts:358`). Those are `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, `ACTIONS_ID_TOKEN_REQUEST_URL` and GitLab's `CHANT_ID_TOKEN_<CLOUD>`. The way the step starts again is the forge token handover's ([Keep the Forge Token From the Plan](/chant/guide/security-forge-token-handover/)). On GitLab the same `unset` line covers both (`gitlabTradeLines`, `ci-identity.ts:562`). The plan job's file names no apply identity.
