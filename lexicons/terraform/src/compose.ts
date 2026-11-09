@@ -463,6 +463,7 @@ export function compositionFor(input: CompositionInput): Composition {
         ...(rc.config!.backendConfig ? { backendConfig: rc.config!.backendConfig } : {}),
         ...(rc.config!.backendConfigFiles ? { backendConfigFiles: rc.config!.backendConfigFiles } : {}),
       }),
+      input.env,
     );
     if (refusal) return ["backend", `\`${m}\`: ${refusal.reason}`];
     return undefined;
