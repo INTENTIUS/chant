@@ -1451,6 +1451,15 @@ Lexicon development:
   dev rolling-upgrade <dir>  Report rolling-spec drift (aws, azure, github): regen from
                            latest, diff surface vs committed baseline, print delta + PR
                            label (dry run; --force bypasses the spec cache, --format json)
+  dev local <chant-dir>   In a product: npm pack the chant packages its package.json
+                           files name (--with <package> adds one) from the checkout,
+                           install them with npm install --no-save and put the manifests
+                           and lock back, mark each copy chantLocal, run --build '<command>',
+                           then dev bundle-check. --reset runs npm ci and checks the pins
+  dev bundle-check [<package-dir>]
+                           Check a bundle against its package.json chantBundleCheck: imports
+                           only Node, its dependencies and chant served as compiled JS, the
+                           dependencies on the root's chant pin, size ceilings, denied inputs
 
 Local:
   emulator <up|down|status>  Boot/stop/inspect configured lexicons' local
@@ -1950,6 +1959,9 @@ export const commandRegistry: CommandDef[] = [
   { name: "dev surface-diff", handler: runDevSurfaceDiff },
   { name: "dev pinned-upgrade", handler: runDevPinnedUpgrade },
   { name: "dev rolling-upgrade", handler: runDevRollingUpgrade },
+  // #4787: build a product against a chant checkout, and check its bundle. Imported on first use.
+  { name: "dev local", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/local-chant")).runDevLocal(ctx) },
+  { name: "dev bundle-check", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/local-chant")).runDevBundleCheck(ctx) },
 
   // Op / run subcommands
   { name: "run list", handler: runOpList },
