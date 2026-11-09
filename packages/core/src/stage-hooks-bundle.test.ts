@@ -36,6 +36,7 @@ describe("the stage-hooks bundle", () => {
       "packages/core/src/op/gate-point.ts",
       "packages/core/src/op/gate-quorum.ts",
       "packages/core/src/op/op-waves-capability-spec.ts",
+      "packages/core/src/op/op-waves-evidence-spec.ts",
       "packages/core/src/op/op-waves-release.ts",
       "packages/core/src/op/op-waves.ts",
       "packages/core/src/op/stage-hooks.ts",

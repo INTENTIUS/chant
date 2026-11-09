@@ -31,6 +31,7 @@ import { parseJsonText } from "../workspace/jsonc";
 import { memberAtCwd } from "../workspace/security";
 import { locateWorkspace } from "../workspace/which-chant";
 import type { CheckStepOutcome } from "./check-steps";
+import { CHECK_EVIDENCE_KEY_ENV } from "../workspace/trust/check-evidence-report";
 
 export { CI_CHECK_HOOK_FLOOR } from "../op/op-waves";
 
@@ -99,7 +100,8 @@ const CLOUD_CREDENTIAL_VARS = [
  * else.
  */
 export function checkHookEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
-  const drop = new Set<string>([...FORGE_TOKEN_VARS, ...OIDC_REQUEST_VARS, ...Object.values(TRADED_VARS).flat(), ...CLOUD_CREDENTIAL_VARS]);
+  // #4870: the runner key the check runner signs each hook's evidence with never reaches a hook.
+  const drop = new Set<string>([...FORGE_TOKEN_VARS, ...OIDC_REQUEST_VARS, ...Object.values(TRADED_VARS).flat(), ...CLOUD_CREDENTIAL_VARS, CHECK_EVIDENCE_KEY_ENV]);
   const out: Record<string, string> = {};
   for (const [name, value] of Object.entries(env)) {
     if (value === undefined || drop.has(name) || name.startsWith("TF_TOKEN_")) continue;
@@ -137,9 +139,23 @@ export interface CheckHooksReport {
   hooks: CheckHookOutcome[];
   /** The lexicons' check steps (#4633, `./check-steps.ts`), when any ran. */
   steps?: CheckStepOutcome[];
+  /** The checks whose evidence was signed (#4870), when the job has a runner identity. */
+  evidence?: { signed: string[]; runner: string; commit: string; pushWarning?: string };
   /** The first hook that failed, and why; the hooks after it did not run. Or the check steps that failed. */
   failed?: string;
   note?: string;
+}
+
+/**
+ * The named checks the hooks' runs are signed as (#4870): each hook by its
+ * name, once every run of it passed, so a `perRun` hook is one check over
+ * all its targets. The name is the one `refs` in `.chant/trust.json` and an
+ * Op waves spec's `evidence.requires` name.
+ */
+export function passedCheckHooks(outcomes: readonly CheckHookOutcome[]): Array<{ check: string; runs: CheckHookOutcome[] }> {
+  const byName = new Map<string, CheckHookOutcome[]>();
+  for (const o of outcomes) byName.set(o.name, [...(byName.get(o.name) ?? []), o]);
+  return [...byName].filter(([, runs]) => runs.every((r) => r.outcome === "passed")).map(([check, runs]) => ({ check, runs }));
 }
 
 /** Where {@link runCheckHooks} writes its runs file and report unless told: `.chant/check`. */

@@ -35,6 +35,7 @@ import type { ForgeKind } from "../pr-forge";
 import type { CiRunner } from "../ci-jobs";
 import type { CiProductWords } from "../ci-product-words";
 import type { PrPlanNoteWords } from "../pr-plan-note";
+import { assertPipelineEvidence, evidenceKeyEnv, planEvidenceLines, type PipelineEvidence } from "../ci-evidence-jobs";
 import { gitlabPlanJobName, PR_LOOP_REPORT_DIR, PR_PLAN_NOTE_JOB, prLoopPassedEnv, prLoopPostJob, prLoopRunner, type PrLoopPipelineOptions } from "./pr-pipeline";
 
 /** The variable the plan-note job reads the product's note words from (#4799), as JSON. Set from the pipeline, never from the report. */
@@ -107,6 +108,14 @@ export interface ProductPlanJob {
   runner?: CiRunner;
   /** Where the note job runs: the loop's `default` runner. */
   noteRunner?: CiRunner;
+  /**
+   * With the pipeline's `evidence` (#4870): the lines that sign the plan
+   * job's `plan` and `policy` checks from its report, and their variables
+   * (the runner key from its secret). GitHub and Forgejo run them in the
+   * note job before `pr-post`; GitLab in a job of their own after the plan
+   * job, `evidenceJobName`.
+   */
+  evidence?: { lines: string[]; env: Record<string, string>; jobName?: string };
 }
 
 const TARGET_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
@@ -140,7 +149,7 @@ const NOT_WITH_PLAN: ReadonlyArray<[keyof PrLoopPipelineOptions, string]> = [
  * twice, a target variable that is a forge token, and a pull request loop
  * option the product plan does not carry.
  */
-export function productPlanJobs(forge: ForgeKind, env: string, loop: PrLoopPipelineOptions & { plan: ProductPlanOptions }, words: CiProductWords): ProductPlanJob[] {
+export function productPlanJobs(forge: ForgeKind, env: string, loop: PrLoopPipelineOptions & { plan: ProductPlanOptions }, words: CiProductWords, evidence?: PipelineEvidence): ProductPlanJob[] {
   const plan = loop.plan;
   for (const [key, why] of NOT_WITH_PLAN) {
     const value = loop[key];
@@ -185,9 +194,29 @@ export function productPlanJobs(forge: ForgeKind, env: string, loop: PrLoopPipel
       artifact: plan.artifact ? (name ? `${plan.artifact}-${name}` : plan.artifact) : name ? `chant-pr-plan-${name}` : "chant-pr-plan",
       ...(planRunner !== undefined ? { runner: planRunner } : {}),
       ...(noteRunner !== undefined ? { noteRunner } : {}),
+      ...(evidence ? { evidence: planEvidenceOf(forge, evidence, words, jobName) } : {}),
     };
   };
   return targets ? targets.map(one) : [one()];
+}
+
+/** The evidence step of one plan job (#4870), as {@link ProductPlanJob.evidence}. */
+export function planEvidenceOf(forge: ForgeKind, evidence: PipelineEvidence, words: CiProductWords, planJob: string): NonNullable<ProductPlanJob["evidence"]> {
+  assertPipelineEvidence(evidence);
+  const key = evidenceKeyEnv(forge, evidence);
+  const bin = words.bin;
+  if (forge === "gitlab") {
+    // The job runs only once the plan job succeeded, on the merge request's commit.
+    return {
+      jobName: `${planJob}-evidence`,
+      lines: planEvidenceLines({ dir: PR_LOOP_REPORT_DIR, at: '"$CI_COMMIT_SHA"', base: '"$CI_MERGE_REQUEST_DIFF_BASE_SHA"', result: "success", ...(bin ? { bin } : {}) }),
+      env: key,
+    };
+  }
+  return {
+    lines: planEvidenceLines({ dir: PR_LOOP_REPORT_DIR, at: '"$HEAD_SHA"', base: '"$BASE_SHA"', result: '"$PLAN_RESULT"', ...(bin ? { bin } : {}) }),
+    env: { HEAD_SHA: "${{ github.sha }}", BASE_SHA: "${{ github.event.pull_request.base.sha }}", PLAN_RESULT: `\${{ needs.${planJob}.result }}`, ...key },
+  };
 }
 
 /** The GitHub and Forgejo condition that a pull request is from this repository, not a fork (#4799). */

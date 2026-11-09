@@ -33,6 +33,8 @@ chant ci serve --setup-key [--trust [--principal <name>]] [--state <dir>] [--bra
 chant ci run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]
 chant ci init --workflow trunk-curated|trunk-curated+apply-on-merge|apply-before-merge [--forge github|gitlab|forgejo] [--security <group>]... [--yes]
 chant ci check --base <rev> [<target>...] [--output <dir>] [--json]
+chant ci evidence sign (--check-id <id>[,<id>...] | --from-report <dir> --result <result>) [--at <rev>] [--base <rev>] [--key <file>] [--no-push] [--json]
+chant ci evidence verify --check-id <id>[,<id>...] [--at <rev>] [--base <rev>] [--json]
 chant ci forge-check [--env <env>] [--member <name>] [--forge github|gitlab|forgejo] [--repo <owner/name>] [--branch <default>] [--require-clouds] [--json]
 chant ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>]
                   [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>]
@@ -609,6 +611,35 @@ chant ci serve --forge forgejo --repo demo/estate --env local
 ## ci check
 
 `chant ci check --base <rev> [<target>...]` runs the `ci.hooks.check` hooks the workspace declaration at `--base` names ([#4556](https://github.com/INTENTIUS/chant/issues/4556)). A product's check job runs it before any plan. Each target is a root, stack or component the change touches, and a `perRun` hook runs once per target. The hooks run with no forge token or cloud credentials in their environment. When they pass, each lexicon the project lists runs its own check steps for its members ([#4633](https://github.com/INTENTIUS/chant/issues/4633)): the pulumi lexicon runs `pulumi install`, a stack config check and `pulumi about --json` for each pulumi member ([The pulumi member](/chant/lexicons/pulumi/member/#the-check-stage)), in the same environment. `check-hooks.json` under `--output` (default `.chant/check`) lists each hook's and step's result, and `--json` prints it. The command exits 1 when a hook or step failed, and 0 when every one passed or there were none. [Hooks on Pull-Request Jobs](/chant/guide/pull-request-hooks/#the-check-moment) has the shape.
+
+With a runner key in `CHANT_RUNNER_KEY` ([#4870](https://github.com/INTENTIUS/chant/issues/4870)), each hook whose every run passed is signed as a named check, by the hook's name, over `HEAD`, and attached where the [ref gate](/chant/cli/workspace-ref-gate/#evidence) reads evidence: a git note under `refs/notes/chant/evidence`, pushed to `origin` unless `--no-push`. The key never reaches a hook. The key's public half must be listed under `runners` in `.chant/trust.json` at `--base`; a key it does not list fails the job, so a job asked to sign never passes while signing nothing. `check-hooks.json` then has `evidence`, the checks signed and the runner, and the log says which.
+
+## ci evidence
+
+`chant ci evidence` signs and verifies evidence for the named checks a pipeline runs ([#4870](https://github.com/INTENTIUS/chant/issues/4870)). The evidence is the runner evidence of [workspace evidence](/chant/cli/workspace-evidence/) with no record subjects: it binds the commit, its tree and the check's name, and counts for any commit with the same tree, so the squash of a pull request whose tree is the head's carries the head's evidence.
+
+- `sign --check-id plan,policy` signs that each check passed at `--at` (default `HEAD`) with the key in `--key` or `CHANT_RUNNER_KEY`, attaches it under `refs/notes/chant/evidence`, and pushes the notes unless `--no-push`. Without a key it signs nothing and says so.
+- `sign --from-report .chant/pr --result <result>` is the plan note job's form. The policy (Rego, CrossGuard, a product's rules) runs inside the plan, so the plan job stands for two checks: `plan` when the plan job succeeded and left `pr-plan.json` or `pr-plan-note.json`, and `policy` when a policy ran and denied nothing that stands. It writes `evidence.json` beside the report, and `pr-post` ends the note with a line naming the checks signed and those not signed, with why.
+- `verify --check-id <id>` reads the evidence for `--at`'s tree and verifies it against the runner keys at `--base`. It exits 1 when one is not current.
+
+### In generated pipelines
+
+A pipeline generator signs when its options name the secret that holds the runner key, `evidence: { runnerKeySecret: "<NAME>" }`, the same secret `ci workflow --runner-key-secret` takes. Without it every generated file is byte for byte as before.
+
+| Generator | What signs | Checks |
+|---|---|---|
+| `generateProductPlanPipeline`, `generateForgejoProductPlanPipeline` | the note job, after it takes the report back and before it posts; the key is in that one step, in a job that runs none of the change's code | `plan`, `policy` |
+| `generateGitlabProductPlanPipeline` | `<plan job>-evidence`, after each plan job succeeds, from its artifact | `plan`, `policy` |
+| `productPipelineJobs` | `post.evidence` (and each `productPlan[].evidence`): the lines and variables for a product that renders its own note job | `plan`, `policy` |
+| the Op waves pipelines | each deciding wave job's `chant run wave` step, once the wave is planned | `plan:<wave>`, `policy:<wave>` when `ci.policy` ran and denied nothing |
+
+An Op waves spec's `evidence.requires`, read at base, names the checks whose current evidence the applied commit needs. A wave whose commit lacks one plans and applies nothing, exits 1, and names each missing check and the command that signs it:
+
+```json
+{ "name": "roots", "evidence": { "requires": ["plan", "policy"] }, "waves": [] }
+```
+
+The signer is an `EvidenceSigner` (`@intentius/chant/workspace/trust/check-evidence`): today a runner key `.chant/trust.json` lists. A keyless signer from the job's OIDC identity ([#4869](https://github.com/INTENTIUS/chant/issues/4869)) plugs in there, and the steps stay where they are. `CHECK_EVIDENCE_FLOOR` is the first chant with all of this.
 
 ## ci forge-check
 

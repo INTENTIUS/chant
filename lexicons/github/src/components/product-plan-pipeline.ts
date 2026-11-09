@@ -16,6 +16,11 @@
  *
  * With `forks: "skip"` neither job runs for a pull request from a fork.
  *
+ * With `evidence` (#4870) the note job signs the plan job's `plan` and
+ * `policy` checks from the report it took back, before it posts, so the
+ * note says which were signed; the job then pushes `refs/notes/chant/evidence`, so it
+ * asks for `contents: write`.
+ *
  * Forgejo renders the same document through its dialect
  * (`generateForgejoProductPlanPipeline` in the forgejo lexicon).
  */
@@ -90,12 +95,15 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
       "runs-on": githubRunsOn(p.noteRunner),
       container: image,
       // #4289: `actions: read` lets pr-post ask when each scheduled watch last ran.
-      permissions: { actions: "read", contents: "read", "pull-requests": "write", statuses: "write" },
+      // #4870: with evidence, `contents: write` pushes the signed checks to refs/notes/chant/evidence, where the ref gate (#4867) reads them.
+      permissions: { actions: "read", contents: p.evidence ? "write" : "read", "pull-requests": "write", statuses: "write" },
       steps: [
         // The target branch's commit: the bin this job runs is the target branch's, and none of the change's code is here.
         { name: "Check out the target branch's commit", uses: CHECKOUT, with: { ref: "${{ github.event.pull_request.base.sha }}" } },
         ...runSteps(beforeScript),
         { name: "Take the plan report from the plan job", run: takeOverScript(p.jobName, PR_LOOP_REPORT_DIR, forge) },
+        // #4870: the runner key is in this step alone, in a job that runs none of the change's code.
+        ...(p.evidence ? [{ name: "Sign the plan and policy evidence", if: "always()", env: p.evidence.env, run: p.evidence.lines.join("\n") }] : []),
         { name: "Keep the plan report", if: "always()", uses: UPLOAD_ARTIFACT, with: { name: p.artifact, path: PR_LOOP_REPORT_DIR, "if-no-files-found": "ignore", "include-hidden-files": true } },
         { name: `Post the plan note and ${productStatusContext(jobs.words, "plan", p.target)}`, if: "always()", env: p.post.env, run: p.post.command },
       ],

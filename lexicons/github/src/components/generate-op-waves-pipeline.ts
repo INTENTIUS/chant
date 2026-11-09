@@ -118,6 +118,7 @@ import {
 import { OIDC_REQUEST_VARS, TRADE_SPEC_ENV, tradeLine, type CloudTradeSpec } from "@intentius/chant/ci-identity";
 import { JOB_GUARD_ENV, jobGuardLine, jobGuardSpec, opWaveJobLabel } from "@intentius/chant/ci-job-guard";
 import { resolveProductWords } from "@intentius/chant/ci-product-words";
+import { assertPipelineEvidence, evidenceKeyEnv } from "@intentius/chant/ci-evidence-jobs";
 import { checkoutStep, concurrency, DOWNLOAD_ARTIFACT, downloadArtifactStep, keepRecordStep, runSteps } from "./ci-jobs";
 import { emitOpPipelineYAML, type GithubOpPipelineDoc } from "./generate-op-pipeline";
 
@@ -142,6 +143,7 @@ export function buildGithubOpWavesDoc(
 ): { doc: GithubOpPipelineDoc; jobs: OpWavesPipelineResult["jobs"]; resumeDoc?: GithubOpPipelineDoc; plansDoc?: GithubOpPipelineDoc } {
   const jobs = opWaveJobs(spec, options.specFile, { bin: options.bin });
   const forge = dialect.forge ?? "github";
+  assertPipelineEvidence(options.evidence);
   const product = resolveProductWords(options.words ?? {}).product;
   const image = options.image ?? OP_WAVES_IMAGE;
   // `approvals.preview` reads the merged pull request from the forge, as a pr-review wave does.
@@ -195,7 +197,9 @@ export function buildGithubOpWavesDoc(
     later.push(...[...(wave.setup ?? []), ...(group?.setup ?? [])].map(setupStepDoc), ...runSteps(options.beforeScript ?? []));
     const add = inputs[job.wave - 1];
     later.push(...(add?.before ?? []).map(runStepDoc));
-    later.push({ name: describeJob(job.kind, job.wave, wave.name, job.share, job.group), run: job.command.join(" ") });
+    // #4870: the deciding job's command signs the wave's checks, with the key on that step alone.
+    const signs = options.evidence && (job.kind === "wave" || job.kind === "decide");
+    later.push({ name: describeJob(job.kind, job.wave, wave.name, job.share, job.group), ...(signs ? { env: evidenceKeyEnv(forge, options.evidence!) } : {}), run: job.command.join(" ") });
     later.push(...runSteps(options.extraScript ?? []));
     steps.push(...(cloud ? later.map(withoutTokenRequest) : later));
     if (job.kind === "decide") {

@@ -17,11 +17,13 @@
  * read at base so a change cannot drop a required check; a step is part of
  * the lexicon, so there is nothing for a change to remove.
  */
+import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { readDeclaration } from "../workspace/declaration";
 import { locateWorkspace } from "../workspace/which-chant";
-import { CHECK_HOOKS_DIR, CHECK_HOOKS_REPORT_FILE, checkHookEnv, runCheckHooks, type CheckHooksReport, type RunCheckHooksOptions } from "./check-hooks";
+import { recordChecks, signChecks, type EvidenceSigner } from "../workspace/trust/check-evidence";
+import { CHECK_HOOKS_DIR, CHECK_HOOKS_REPORT_FILE, checkHookEnv, passedCheckHooks, runCheckHooks, type CheckHooksReport, type RunCheckHooksOptions } from "./check-hooks";
 
 /** A workspace member a lexicon's check steps run for. */
 export interface CheckStageMember {
@@ -136,11 +138,11 @@ function failedLine(steps: CheckStepOutcome[]): string | undefined {
  * both under `dir` and returns it; `status` is `none` only when no hook is
  * declared and no step ran.
  */
-export async function runCheckStage(options: RunCheckHooksOptions & { adapters: readonly CheckStepsAdapter[]; members?: CheckStageMember[] }): Promise<CheckHooksReport> {
+export async function runCheckStage(options: RunCheckHooksOptions & { adapters: readonly CheckStepsAdapter[]; members?: CheckStageMember[]; evidence?: CheckStageEvidence }): Promise<CheckHooksReport> {
   const cwd = options.cwd ?? process.cwd();
   const log = options.log ?? ((line: string) => console.error(line));
   const hooks = runCheckHooks(options);
-  if (hooks.status === "failed" || options.adapters.length === 0) return hooks;
+  if (hooks.status === "failed" || options.adapters.length === 0) return signHooks(options, cwd, log, hooks);
   const steps = await runCheckSteps({
     adapters: options.adapters,
     ...(options.members ? { members: options.members } : {}),
@@ -149,10 +151,43 @@ export async function runCheckStage(options: RunCheckHooksOptions & { adapters: 
     env: { ...checkHookEnv(), ...options.env },
     log,
   });
-  if (steps.length === 0) return hooks;
+  if (steps.length === 0) return signHooks(options, cwd, log, hooks);
   const failed = failedLine(steps);
   const report: CheckHooksReport = { ...hooks, status: failed ? "failed" : "passed", steps, ...(failed ? { failed } : {}) };
+  return signHooks(options, cwd, log, report);
+}
+
+/**
+ * Who signs the check stage's evidence (#4870), and where: the stage signs
+ * each hook that passed as a named check over `at` (default the checkout's
+ * `HEAD`) and attaches it under `refs/notes/chant/evidence`. Absent, nothing is signed and
+ * the report is as before.
+ */
+export interface CheckStageEvidence {
+  signer: EvidenceSigner;
+  /** The commit the checks ran at. Default `HEAD`. */
+  at?: string;
+  /** Push the ledger once signed. Default true. */
+  push?: boolean;
+}
+
+/** Sign each passed hook's evidence when the stage has a signer (#4870), and write the report. */
+async function signHooks(options: { dir?: string; evidence?: CheckStageEvidence }, cwd: string, log: (line: string) => void, report: CheckHooksReport): Promise<CheckHooksReport> {
   const dir = relative(cwd, resolve(cwd, options.dir ?? CHECK_HOOKS_DIR)) || ".";
-  writeFileSync(join(cwd, dir, CHECK_HOOKS_REPORT_FILE), JSON.stringify(report, null, 2) + "\n");
-  return report;
+  const passed = passedCheckHooks(report.hooks);
+  let out = report;
+  if (options.evidence && passed.length > 0) {
+    const repo = gitTopOf(cwd);
+    const signed = signChecks(repo, options.evidence.at ?? "HEAD", passed.map((h) => ({ check: h.check, claim: JSON.stringify(h.runs) })), options.evidence.signer);
+    const pushed = await recordChecks(repo, signed, { push: options.evidence.push !== false });
+    for (const s of signed) log(`ci check: signed evidence for ${s.check} at ${s.commit.slice(0, 12)} as ${s.runner}`);
+    if (options.evidence.push !== false && !pushed.pushed && pushed.pushWarning) log(`ci check: the evidence is attached here, and the push did not land: ${pushed.pushWarning}`);
+    out = { ...report, evidence: { signed: signed.map((s) => s.check), runner: signed[0]!.runner, commit: signed[0]!.commit, ...(pushed.pushWarning && options.evidence.push !== false ? { pushWarning: pushed.pushWarning } : {}) } };
+  }
+  writeFileSync(join(cwd, dir, CHECK_HOOKS_REPORT_FILE), JSON.stringify(out, null, 2) + "\n");
+  return out;
+}
+
+function gitTopOf(cwd: string): string {
+  return execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }

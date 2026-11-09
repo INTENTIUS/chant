@@ -59,6 +59,7 @@ describe("the gate-decision bundle", () => {
       "packages/core/src/op/gate-quorum.ts",
       // The step and holds settings checks (#4545), with no run-time imports.
       "packages/core/src/op/op-waves-capability-spec.ts",
+      "packages/core/src/op/op-waves-evidence-spec.ts",
       // The release names a wave writes (#4615), checked with the spec.
       "packages/core/src/op/op-waves-release.ts",
       "packages/core/src/op/op-waves.ts",

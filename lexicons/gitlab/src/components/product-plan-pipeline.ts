@@ -20,6 +20,11 @@
  *
  * With `forks: "skip"` the plan jobs run only for a merge request from the
  * project itself.
+ *
+ * With `evidence` (#4870) each plan job is followed, once it succeeded, by
+ * `<plan job>-evidence`, which signs its `plan` and `policy` checks from the
+ * plan job's artifact with the runner key in the named CI/CD variable, and
+ * pushes them to `refs/notes/chant/evidence`, where the ref gate (#4867) reads them.
  */
 
 import { assertGitlabBranch, CI_IMAGE, GITLAB_FULL_HISTORY, GITLAB_MERGE_REQUEST_SOURCE, gitlabTags } from "@intentius/chant/ci-jobs";
@@ -66,7 +71,8 @@ export function generateGitlabProductPlanPipeline(env: string, options: GitlabPr
   };
   const entries: Array<[string, unknown]> = [
     ["workflow", { name: options.productPlan.workflow ?? `chant-pr-${env}`, rules: [{ if: onMergeRequest }, { if: onPlanNotes }] }],
-    ["stages", ["plan", PR_PLAN_NOTE_JOB]],
+    // #4870: the evidence jobs sign each plan job's checks, in a stage of their own after the plans.
+    ["stages", plans.some((p) => p.evidence) ? ["plan", "evidence", PR_PLAN_NOTE_JOB] : ["plan", PR_PLAN_NOTE_JOB]],
     ["variables", { CHANT_ENV: env, ...GITLAB_FULL_HISTORY }],
   ];
   for (const p of plans) {
@@ -81,6 +87,21 @@ export function generateGitlabProductPlanPipeline(env: string, options: GitlabPr
         // #4295: the merge request's code runs in this job, so its shell drops the forge tokens first.
         script: [GITLAB_DROP_FORGE_TOKENS, ...prLoopSetup(image, options.engineSetup), ...beforeScript, ...(p.writeProbe ? [p.writeProbe] : []), p.command, ...extraScript],
         artifacts: { name: p.artifact, when: "always", paths: [PR_LOOP_REPORT_DIR] },
+      },
+    ]);
+  }
+  for (const p of plans) {
+    if (!p.evidence) continue;
+    entries.push([
+      p.evidence.jobName!,
+      {
+        stage: "evidence",
+        image,
+        ...tags(p.noteRunner),
+        rules: [{ if: onMergeRequest }],
+        needs: [{ job: p.jobName, artifacts: true }],
+        variables: p.evidence.env,
+        script: [...beforeScript, ...p.evidence.lines],
       },
     ]);
   }
