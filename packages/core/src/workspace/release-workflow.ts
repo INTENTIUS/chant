@@ -365,12 +365,31 @@ function stampLine(o: DispatchInput): string {
 const field = (path: string): string =>
   `node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(${path}??""))'`;
 
+/**
+ * GitHub refuses the job's token a ref on a commit whose workflow files differ
+ * from the default branch's (#4852). The gate checks before the cut builds
+ * anything: when the green commit's `.github/workflows` differs from the
+ * dispatched commit's, it stops and names the newest commit that changed
+ * them, the one to wait for.
+ */
+function workflowFilesCheck(dispatched: string): string[] {
+  const files = '":(top).github/workflows"';
+  return [
+    `if ! git diff --quiet "$commit" "${dispatched}" -- ${files}; then`,
+    `  changed="$(git log -1 --format=%H "$commit..${dispatched}" -- ${files})"`,
+    `  echo "the newest green commit, $commit, has other workflow files than ${dispatched}, and GitHub refuses this job's token a tag on it, so no release is cut. Dispatch again once \${changed:-${dispatched}}, which changed .github/workflows, or a commit after it is green." >&2`,
+    "  exit 1",
+    "fi",
+  ];
+}
+
 /** The gate's shell: the commit to cut, from `ci last-green`, refused when there is none or, under `head`, when it is not the dispatched one. */
 function gateScript(o: DispatchInput, dispatched: string): string[] {
   return [
     `commit="$(${o.chant} ci last-green --from "${dispatched}"${o.lane ? ` --lane ${o.lane}` : ""} --json | ${field("d.commit?.sha")})"`,
     `if [ -z "$commit" ]; then echo "no green commit at or below ${dispatched}, so no release is cut" >&2; exit 1; fi`,
     ...(o.gate === "head" ? [`if [ "$commit" != "${dispatched}" ]; then echo "${dispatched} is not green (the newest green commit below it is $commit), so no release is cut" >&2; exit 1; fi`] : []),
+    ...(o.forge === "github" && o.gate !== "head" ? workflowFilesCheck(dispatched) : []),
   ];
 }
 
