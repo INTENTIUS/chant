@@ -29,6 +29,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CHANT_EXIT } from "./exit-codes";
+import { NEXT_RELEASE } from "./release-floors";
 import { FORGE_TOKEN_VARS } from "./ci-handover";
 import { agentForbiddenPaths, AgentError, branchOk, errText, LOGIN, readSmall, SHA, type AgentGit } from "./ci-agent";
 import { COMMIT_COMMENT_ARG, parseProductComment, type CiProductWords } from "./ci-product-words";
@@ -53,6 +54,8 @@ export const CI_COMMIT_REPLY_FLOOR = "0.124.77";
 export const CI_COMMIT_ARG_FLOOR = "0.124.78";
 /** The first chant whose `commit land` reads {@link COMMIT_HARNESS_BREAK_ENV} in a BREAK arm of chant's e2e harness (#4836). */
 export const CI_COMMIT_HARNESS_BREAK_FLOOR = "0.124.78";
+/** The first chant whose `commit land` replies to a comment refused as it is read, such as a bad argument or a stray word (#4838). */
+export const CI_COMMIT_REFUSAL_REPLY_FLOOR = NEXT_RELEASE;
 
 /** What starts a commit run: a person's comment, or a check job's finding. */
 export type CommitTrigger = "comment" | "check";
@@ -443,6 +446,27 @@ export interface CommitRequest {
 }
 
 /**
+ * A request refused (#4838). `replyOn` is set when the comment named this
+ * job's command and was refused as it was read (a bad argument, a stray
+ * word): the pull request, who asked, and the comment's first line, so land
+ * can say why on the pull request. A comment for another word has none,
+ * since that word's own job answers it.
+ */
+export interface CommitRequestRefusal {
+  refused: string;
+  replyOn?: { pr: number; user: string; asked: string };
+}
+
+/** The most of a comment a refusal reply quotes (#4838). */
+const ASKED_MAX = 100;
+
+/** The comment's first line as a reply quotes it, cut at {@link ASKED_MAX}. */
+function askedLine(body: string): string {
+  const line = body.trim().split(/\r?\n/)[0]!.trim();
+  return line.length > ASKED_MAX ? `${line.slice(0, ASKED_MAX - 3)}...` : line;
+}
+
+/**
  * The request from the run. `comment`: the event's comment on GitHub and
  * Forgejo, read against the product's grammar, which must name this job's
  * word; on GitLab the pipeline's {@link GITLAB_COMMIT_PR_VAR} and
@@ -450,7 +474,7 @@ export interface CommitRequest {
  * pull request the check ran for, from the `pull_request` event or the
  * merge request pipeline.
  */
-export function commitRequestFromRun(words: CiProductWords, s: Pick<CommitSettings, "on" | "comment"> & Partial<Pick<CommitSettings, "commentArg">>, env: Record<string, string | undefined>, event: unknown): CommitRequest | { refused: string } {
+export function commitRequestFromRun(words: CiProductWords, s: Pick<CommitSettings, "on" | "comment"> & Partial<Pick<CommitSettings, "commentArg">>, env: Record<string, string | undefined>, event: unknown): CommitRequest | CommitRequestRefusal {
   const gitlab = env.GITLAB_CI === "true";
   let pr: unknown;
   if (s.on === "check") {
@@ -475,7 +499,12 @@ export function commitRequestFromRun(words: CiProductWords, s: Pick<CommitSettin
   if (typeof pr !== "number" || !Number.isInteger(pr) || pr < 1) return { refused: "the run names no pull request" };
   if (typeof user !== "string" || !LOGIN.test(user)) return { refused: "the run names nobody who asked" };
   const parsed = parseProductComment(words, body, env, commentArgPatterns(s));
-  if (parsed?.kind === "refused") return { refused: parsed.reason };
+  if (parsed?.kind === "refused") {
+    // #4838: answered only when the comment's command is this job's, so two jobs never both reply.
+    const said = typeof body === "string" ? body.trim().split(/[ \t\r\n]+/) : [];
+    const ours = said[0] === `/${words.product}` && said[1] === word;
+    return { refused: parsed.reason, ...(ours ? { replyOn: { pr, user, asked: askedLine(body as string) } } : {}) };
+  }
   if (parsed?.kind !== "commit" || parsed.word !== word) return { refused: `the comment is not ${s.comment}` };
   return { pr, user, ...(parsed.arg !== undefined ? { arg: parsed.arg } : {}) };
 }
@@ -518,7 +547,7 @@ export async function resolveCommitRequest(
   env: Record<string, string | undefined>,
   event: unknown,
   forge?: Partial<Pick<PrForge, "findPullRequest">>,
-): Promise<CommitRequest | { refused: string }> {
+): Promise<CommitRequest | CommitRequestRefusal> {
   const req = commitRequestFromRun(words, s, env, event);
   if (!("refused" in req) || s.on !== "check" || env.GITLAB_CI === "true" || !forge?.findPullRequest) return req;
   const branch = pushedBranch(env);
@@ -1014,7 +1043,12 @@ export async function landCommitChange(i: CommitLandInput): Promise<CommitLandOu
 
   // Who asked and for which pull request: from the event, never from the commit job's files.
   const req = await resolveCommitRequest(i.words, s, i.env, i.event, i.forge);
-  if ("refused" in req) return finish({ result: s.on === "check" ? "skipped" : "refused", reason: req.refused });
+  if ("refused" in req) {
+    // #4838: a comment refused as it was read is answered, naming it and why.
+    if (!req.replyOn) return finish({ result: s.on === "check" ? "skipped" : "refused", reason: req.refused });
+    ({ pr, user } = req.replyOn);
+    return finish({ result: "refused", reason: req.refused }, `${code(req.replyOn.asked)} was refused: ${req.refused}. ${s.name} did not run, and nothing was pushed.`);
+  }
   ({ pr, user } = req);
   // #4836: a BREAK arm of the harness may turn a check off; anywhere else the switch fails the land.
   const harness = commitHarnessBreaks(i.env);

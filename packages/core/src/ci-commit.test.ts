@@ -24,6 +24,7 @@ import {
   COMMIT_PR_ENV,
   CI_COMMIT_ARG_FLOOR,
   CI_COMMIT_HARNESS_BREAK_FLOOR,
+  CI_COMMIT_REFUSAL_REPLY_FLOOR,
   COMMIT_HARNESS_BREAK_ENV,
   COMMIT_HARNESS_FORGE,
   commitHarnessBreaks,
@@ -36,6 +37,7 @@ import {
 } from "./ci-commit";
 import { assertProductWords, parseProductComment } from "./ci-product-words";
 import { PLYWOOD } from "./__fixtures__/product-words";
+import { NEXT_RELEASE } from "./release-floors";
 import type { OpRunRecord, OpRunRecordInput } from "./op/runtime";
 import type { PullRequestHead } from "./pr-forge";
 
@@ -574,6 +576,49 @@ describe("the comment's argument (#4820)", () => {
 
   test("the floor is the next release until it ships", () => {
     expect(CI_COMMIT_ARG_FLOOR).toBe("0.124.78");
+  });
+});
+
+describe("a comment refused as it is read gets a reply (#4838)", () => {
+  const named = () => settings({ commentArg: { pattern: "^[a-z0-9]+(?:[-_][a-z0-9]+)*$", position: 1 } });
+
+  test("a bad argument and a stray word are answered on the pull request, naming the comment and why, on GitHub and Forgejo", async () => {
+    // Forgejo's event has GitHub's shape, so the one path answers both.
+    for (const [s, body, why] of [
+      [named(), "/plywood fmt Bad", "`/plywood fmt` takes nothing, or one name after it matching `^[a-z0-9]+(?:[-_][a-z0-9]+)*$`"],
+      [settings(), "/plywood fmt now", "`/plywood fmt` takes nothing after it"],
+    ] as const) {
+      const w = world();
+      const { out } = await cycle(w, s, { event: comment(body) });
+      expect(out).toMatchObject({ result: "refused", reason: why, requestedBy: "ana" });
+      expect(w.replies).toEqual([`plywood: \`${body}\` was refused: ${why}. plywood-fmt did not run, and nothing was pushed.`]);
+      expect(w.records[0]!.outcomes.commit).toMatchObject({ result: "refused", pr: 7, requestedBy: "ana" });
+      expect(sh(["rev-parse", "refs/heads/feature"], w.r.origin).trim()).toBe(w.r.head);
+    }
+  });
+
+  test("GitLab answers a bad argument from its pipeline variables", async () => {
+    const w = world();
+    const env = { GITLAB_CI: "true", CHANT_COMMIT_PR: "7", CHANT_COMMIT: "fmt", [GITLAB_COMMIT_ARG_VAR]: "Bad", GITLAB_USER_LOGIN: "ana" };
+    const { out } = await cycle(w, named(), { event: {}, env });
+    expect(out.result).toBe("refused");
+    expect(w.replies).toEqual([expect.stringMatching(/^plywood: `\/plywood fmt Bad` was refused: `\/plywood fmt` takes nothing, or one name after it/)]);
+  });
+
+  test("a comment for another word gets no reply from this job, and a long or many-line comment is quoted by its first line, cut short", async () => {
+    const other = world();
+    await cycle(other, settings(), { event: comment("/plywood up") });
+    expect(other.replies).toEqual([]);
+    const many = world();
+    await cycle(many, settings(), { event: comment("/plywood fmt\nand more") });
+    expect(many.replies).toEqual(["plywood: `/plywood fmt` was refused: a command is one line, and nothing else in the comment. plywood-fmt did not run, and nothing was pushed."]);
+    const long = world();
+    await cycle(long, settings(), { event: comment(`/plywood fmt ${"x".repeat(200)}`) });
+    expect(long.replies[0]).toMatch(new RegExp(`^plywood: \`/plywood fmt x{84}\\.\\.\\.\` was refused`));
+  });
+
+  test("the floor is the next release until it ships", () => {
+    expect(CI_COMMIT_REFUSAL_REPLY_FLOOR).toBe(NEXT_RELEASE);
   });
 });
 
