@@ -66,6 +66,13 @@
  * holds each of the job's tags. A refused guard exits chant's `misplaced`
  * (9), outside the job's allowed failure, so the job fails and the waves
  * after it stop.
+ *
+ * A product's inputs (#4791) go where it used to edit them in:
+ * `options.waveJobs` gives a wave's jobs script lines just before the
+ * command (a login), an `after_script` (a report), and a path its
+ * `artifacts:` keep beside the outcome files. `options.recordPlans` gives
+ * the plans job lines before it plans, variables, and `id_tokens:`.
+ * Without them nothing changes.
  */
 
 import {
@@ -87,6 +94,8 @@ import {
 import {
   opWaveGroupOf,
   opWaveJobs,
+  opWaveJobArtifactName,
+  opWaveJobInputsByWave,
   opWaveJobTimeout,
   opWaveOutcomeDir,
   opWavesControlTarget,
@@ -147,6 +156,10 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
   const entries: Array<readonly [string, unknown]> = [["stages", stages]];
   // The ruling for ci-products (2026-10-28): each wave job's timeout, and the lock wait five minutes under it.
   const timeout = opWaveJobTimeout(options.jobTimeoutMinutes);
+  // #4791: what the product adds to each wave's jobs, and to the plans job.
+  const inputs = opWaveJobInputsByWave(spec, options.waveJobs);
+  const plans = options.recordPlans;
+  const plansIdTokens = gitlabIdTokensDoc(plans?.idTokens);
   const variables = nonEmpty("variables", options.variables).variables;
   if (variables) entries.push(["variables", variables]);
   if (byReview) {
@@ -156,9 +169,15 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
         stage: "plans",
         image,
         ...(specTags ? { tags: specTags } : {}),
-        variables: { ...GITLAB_FULL_HISTORY },
+        ...(plansIdTokens ? { id_tokens: plansIdTokens } : {}),
+        variables: { ...GITLAB_FULL_HISTORY, ...(plans?.variables ?? {}) },
         rules: [{ if: GITLAB_MERGE_REQUEST_SOURCE }],
-        script: [...dropControl, ...(options.beforeScript ?? []), opWavesRecordPlansCommand(options.specFile, options.bin).join(" ")],
+        script: [
+          ...dropControl,
+          ...(options.beforeScript ?? []),
+          ...(plans?.before ?? []).flatMap((st) => st.run),
+          opWavesRecordPlansCommand(options.specFile, options.bin).join(" "),
+        ],
       },
     ]);
     // #4630: a GitLab approval starts no pipeline, so a schedule of the target branch posts every open merge request's status.
@@ -186,6 +205,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
     const idTokens = cloud ? { ...declared, ...gitlabTradeIdTokens(cloud) } : declared;
     // #4624: the apply-job guard, the script's first line, before the trade.
     const runner = group?.runner ?? wave.runner ?? spec.runner;
+    const add = inputs[job.wave - 1];
     const guard = jobGuardSpec({
       forge: "gitlab",
       job: opWaveJobLabel(spec.name, job),
@@ -206,11 +226,27 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
         variables: { ...GITLAB_FULL_HISTORY, ...timeout.env, ...(wave.variables ?? {}), ...(group?.variables ?? {}), ...(cloud ? { [TRADE_SPEC_ENV]: JSON.stringify(cloud) } : {}), [JOB_GUARD_ENV]: JSON.stringify(guard) },
         rules,
         ...(job.needs.length > 0 ? { needs: job.needs } : {}),
-        script: [jobGuardLine(), ...(cloud ? gitlabTradeLines() : []), ...dropControl, ...setup, ...(options.beforeScript ?? []), job.command.join(" "), ...(options.extraScript ?? [])],
+        script: [
+          jobGuardLine(),
+          ...(cloud ? gitlabTradeLines() : []),
+          ...dropControl,
+          ...setup,
+          ...(options.beforeScript ?? []),
+          ...(add?.before ?? []).flatMap((st) => st.run),
+          job.command.join(" "),
+          ...(options.extraScript ?? []),
+        ],
+        // #4791: the product's report, whatever the script's exit.
+        ...(add?.report ? { after_script: add.report.run } : {}),
         // #4322: a run that failed, or was blocked, lets the next wave run; any other failure stops it,
         // a refused guard (9, #4624) included.
         allow_failure: { exit_codes: [OP_WAVE_ALLOWED_EXIT] },
-        artifacts: { when: "always", paths: [...(job.kind === "decide" ? [job.record!] : []), `${opWaveOutcomeDir(spec)}/`], expire_in: "30 days" },
+        artifacts: {
+          ...(add?.artifact ? { name: opWaveJobArtifactName(add.artifact.name, job.jobName) } : {}),
+          when: "always",
+          paths: [...(job.kind === "decide" ? [job.record!] : []), `${opWaveOutcomeDir(spec)}/`, ...(add?.artifact ? [add.artifact.path] : [])],
+          expire_in: "30 days",
+        },
       },
     ]);
   }

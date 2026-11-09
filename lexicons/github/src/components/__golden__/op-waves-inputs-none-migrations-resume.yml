@@ -1,0 +1,26 @@
+name: migrations-resume
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: migrations-resume
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  resume:
+    runs-on: ubuntu-latest
+    container: node:22
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: npm ci
+      - name: Resume the waves of migrations whose approval arrived
+        run: chant run resume --op migrations
+        env:
+          GITHUB_TOKEN: '${{ github.token }}'

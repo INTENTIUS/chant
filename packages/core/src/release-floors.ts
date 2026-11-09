@@ -71,3 +71,6 @@ export const PR_FORGE_READS_FLOOR = "0.124.78";
 
 /** The first chant whose GitLab `scheduledRuns` takes `schedule`, the selector of an Op's `gitlab.scheduleRule` (#4813). */
 export const SCHEDULED_RUNS_SELECTOR_FLOOR = "0.124.78";
+
+/** The first chant whose Op waves pipeline takes `waveJobs` and `recordPlans`, a product's login, report, artifact and plans-job inputs, so it edits nothing chant wrote (#4791). */
+export const OP_WAVES_JOB_INPUTS_FLOOR = NEXT_RELEASE;

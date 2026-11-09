@@ -1,0 +1,52 @@
+name: migrations-plans
+
+on:
+  pull_request:
+    branches:
+      - main
+  pull_request_review:
+    types:
+      - submitted
+      - dismissed
+
+concurrency:
+  group: migrations-plans-${{ github.event_name }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  record-plans:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    container: node:22
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - run: npm ci
+      - name: Plan every wave at the head and record its digests
+        run: chant run wave --spec waves.json --record-plans
+  approval-status:
+    needs:
+      - record-plans
+    if: '${{ always() && (needs.record-plans.result == ''success'' || needs.record-plans.result == ''skipped'') }}'
+    runs-on: ubuntu-latest
+    container: node:22
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - run: npm ci
+      - name: Post the approval status on the head
+        run: chant run wave --spec waves.json --approval-status --pr "$PR_NUMBER" --head "$HEAD_SHA" --base "$BASE_SHA" --forge github
+        env:
+          GITHUB_TOKEN: '${{ github.token }}'
+          PR_NUMBER: '${{ github.event.pull_request.number }}'
+          HEAD_SHA: '${{ github.event.pull_request.head.sha }}'
+          BASE_SHA: '${{ github.event.pull_request.base.sha }}'
