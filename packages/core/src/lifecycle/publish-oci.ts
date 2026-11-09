@@ -175,7 +175,37 @@ function ociCredential(decl: OciPublishDeclaration, repo: OciRepository, ctx: Pu
   return null;
 }
 
-/** A registry client that answers the registry's auth challenge once and keeps the token. */
+/** How many times an upload or a manifest is tried before the target fails (#4877). */
+export const OCI_PUSH_ATTEMPTS = 4;
+/** The wait before the second try, doubled for each try after it. */
+export const OCI_PUSH_RETRY_MS = 2000;
+
+/**
+ * Whether a registry's answer to an upload or a manifest is worth trying
+ * again (#4877): GHCR intermittently refuses a blob PUT with 403 `DENIED`
+ * (`permission_denied: write_package`) under a token that pushed the blob
+ * before it, and any registry can time out, throttle or fail.
+ */
+function retryable(status: number, body: string): boolean {
+  return status === 408 || status === 429 || status >= 500 || (status === 403 && /"DENIED"/.test(body));
+}
+
+/** A registry's answer the target gave up on: what was asked, the status and the body. */
+class RegistryAnswer extends Error {
+  constructor(
+    readonly what: string,
+    readonly status: number,
+    readonly body: string,
+  ) {
+    super(`${what} answered ${status}`);
+  }
+}
+
+/**
+ * A registry client that answers the registry's auth challenge and keeps the
+ * token. A 401 under a token it already holds, as when the registry's token
+ * expires during a long push, is answered once more (#4877).
+ */
 class Registry {
   private auth: string | null = null;
   constructor(
@@ -183,6 +213,7 @@ class Registry {
     private readonly fetch: PublishFetch,
     private readonly cred: { username: string; password: Credential } | null,
     private readonly ctx: PublishContext,
+    private readonly sleep: (ms: number) => Promise<void> = (ms) => new Promise<void>((r) => setTimeout(r, ms)),
   ) {}
 
   private fail(what: string, status: number, body: string): never {
@@ -193,8 +224,14 @@ class Registry {
     const url = /^https?:\/\//.test(path) ? path : `${this.repo.base}${path}`;
     const send = () => this.fetch(url, { method, headers: { ...headers, ...(this.auth ? { authorization: this.auth } : {}) }, ...(body ? { body } : {}) });
     let res = await send();
-    if (res.status === 401 && this.auth === null) {
-      await this.answerChallenge(res.headers.get("www-authenticate") ?? "");
+    if (res.status === 401) {
+      const challenge = res.headers.get("www-authenticate") ?? "";
+      if (this.auth !== null) {
+        if (!challenge) return res;
+        this.ctx.log(`${this.repo.base} asked for credentials again; answering its challenge once more`);
+      }
+      this.auth = null;
+      await this.answerChallenge(challenge);
       res = await send();
     }
     return res;
@@ -224,19 +261,52 @@ class Registry {
     this.auth = `Bearer ${token}`;
   }
 
+  /**
+   * Run `attempt` up to {@link OCI_PUSH_ATTEMPTS} times while it fails with a
+   * {@link retryable} answer or a dropped connection, waiting longer before
+   * each try (#4877). Any other answer fails the target at once.
+   */
+  private async tries<T>(what: string, attempt: () => Promise<T>): Promise<T> {
+    for (let n = 1; ; n++) {
+      try {
+        return await attempt();
+      } catch (err) {
+        const answer = err instanceof RegistryAnswer ? err : null;
+        const dropped = !answer && !(err instanceof PublishTargetError);
+        const again = n < OCI_PUSH_ATTEMPTS && (dropped || (answer !== null && retryable(answer.status, answer.body)));
+        if (!again) {
+          if (answer) this.fail(answer.what, answer.status, answer.body);
+          throw err;
+        }
+        const why = answer ? `answered ${answer.status}${answer.body ? `: ${this.ctx.redactor.redact(answer.body.slice(0, 200))}` : ""}` : `failed: ${this.ctx.redactor.redact(err instanceof Error ? err.message : String(err))}`;
+        const wait = OCI_PUSH_RETRY_MS * 2 ** (n - 1);
+        this.ctx.log(`${what} at ${this.repo.base} ${why}; trying again in ${wait / 1000}s (${n + 1} of ${OCI_PUSH_ATTEMPTS})`);
+        await this.sleep(wait);
+      }
+    }
+  }
+
   /** Upload a blob unless the registry holds it. True when it was uploaded. */
   async pushBlob(digest: string, bytes: () => Uint8Array): Promise<boolean> {
     const head = await this.request("HEAD", `/v2/${this.repo.name}/blobs/${digest}`);
     if (head.status === 200) return false;
-    const start = await this.request("POST", `/v2/${this.repo.name}/blobs/uploads/`, { "content-length": "0" });
-    if (start.status !== 202) this.fail(`starting an upload of ${digest}`, start.status, await start.text());
-    const location = start.headers.get("location");
-    if (!location) this.fail(`starting an upload of ${digest}`, start.status, "with no Location");
-    const abs = /^https?:\/\//.test(location) ? location : `${this.repo.base}${location.startsWith("/") ? "" : "/"}${location}`;
-    const put = `${abs}${abs.includes("?") ? "&" : "?"}digest=${encodeURIComponent(digest)}`;
-    const data = bytes();
-    const done = await this.request("PUT", put, { "content-type": "application/octet-stream", "content-length": String(data.byteLength) }, data);
-    if (done.status !== 201) this.fail(`uploading ${digest}`, done.status, await done.text());
+    await this.tries(`uploading ${digest}`, async () => {
+      // A fresh upload session each try: a refused PUT may have ended the last one.
+      const start = await this.request("POST", `/v2/${this.repo.name}/blobs/uploads/`, { "content-length": "0" });
+      if (start.status !== 202) {
+        const text = await start.text();
+        // A refused POST means the credentials can't push here; that is not tried again.
+        if (start.status === 401 || start.status === 403) this.fail(`starting an upload of ${digest}`, start.status, text);
+        throw new RegistryAnswer(`starting an upload of ${digest}`, start.status, text);
+      }
+      const location = start.headers.get("location");
+      if (!location) this.fail(`starting an upload of ${digest}`, start.status, "with no Location");
+      const abs = /^https?:\/\//.test(location) ? location : `${this.repo.base}${location.startsWith("/") ? "" : "/"}${location}`;
+      const put = `${abs}${abs.includes("?") ? "&" : "?"}digest=${encodeURIComponent(digest)}`;
+      const data = bytes();
+      const done = await this.request("PUT", put, { "content-type": "application/octet-stream", "content-length": String(data.byteLength) }, data);
+      if (done.status !== 201) throw new RegistryAnswer(`uploading ${digest}`, done.status, await done.text());
+    });
     return true;
   }
 
@@ -247,8 +317,10 @@ class Registry {
   }
 
   async putManifest(ref: string, mediaType: string, bytes: Uint8Array): Promise<void> {
-    const res = await this.request("PUT", `/v2/${this.repo.name}/manifests/${ref}`, { "content-type": mediaType }, bytes);
-    if (res.status !== 201) this.fail(`putting manifest ${ref}`, res.status, await res.text());
+    await this.tries(`putting manifest ${ref}`, async () => {
+      const res = await this.request("PUT", `/v2/${this.repo.name}/manifests/${ref}`, { "content-type": mediaType }, bytes);
+      if (res.status !== 201) throw new RegistryAnswer(`putting manifest ${ref}`, res.status, await res.text());
+    });
   }
 }
 
@@ -336,7 +408,7 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
   const referrerItem = (r: Referrer): PublishItem => ({ name: r.attachment.name, destination: `${decl.repository}@${r.digest}, a referrer of the image`, digest: r.digest, attachment: r.attachment.kind });
   const connect = (ctx: PublishContext) => {
     const cred = ociCredential(decl, repo, ctx);
-    return { cred, registry: new Registry(repo, fetchImpl, cred, ctx) };
+    return { cred, registry: new Registry(repo, fetchImpl, cred, ctx, deps.sleep) };
   };
   return {
     kind: "oci",

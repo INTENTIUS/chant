@@ -26,12 +26,27 @@ export interface FakeRegistry {
   close(): Promise<void>;
 }
 
+/** GHCR's answer to a blob PUT it refuses intermittently (#4877). */
+export const GHCR_DENIED = JSON.stringify({ errors: [{ code: "DENIED", message: "permission_denied: write_package" }] });
+
+/**
+ * Faults the registry fake can inject (#4877): `denyPuts` refuses that many
+ * blob PUTs with GHCR's 403 body before it accepts one; `expireTokenAfter`
+ * makes the token it handed out expire after that many accepted blob PUTs,
+ * so the next request is answered 401 with the challenge again, and a new
+ * token is issued.
+ */
+export interface FakeRegistryFaults {
+  denyPuts?: number;
+  expireTokenAfter?: number;
+}
+
 /** A registry fake with a Bearer token service that accepts `username` and `password`. */
-export async function startFakeRegistry(creds: { username: string; password: string; token: string }): Promise<FakeRegistry> {
+export async function startFakeRegistry(creds: { username: string; password: string; token: string }, faults: FakeRegistryFaults = {}): Promise<FakeRegistry> {
   const blobs = new Map<string, Buffer>();
   const manifests = new Map<string, { name: string; type: string; bytes: Buffer }>();
   const requests: FakeRegistry["requests"] = [];
-  const state = { uploads: 0, port: 0 };
+  const state = { uploads: 0, port: 0, denied: 0, token: creds.token, tokens: 0 };
   const read = (req: IncomingMessage) =>
     new Promise<Buffer>((res) => {
       const parts: Buffer[] = [];
@@ -49,18 +64,25 @@ export async function startFakeRegistry(creds: { username: string; password: str
     if (url.pathname === "/token") {
       const basic = `Basic ${Buffer.from(`${creds.username}:${creds.password}`).toString("base64")}`;
       if (req.headers.authorization !== basic) return send(401, {}, "bad credentials");
-      return send(200, { "content-type": "application/json" }, JSON.stringify({ token: creds.token }));
+      state.token = state.tokens === 0 ? creds.token : `${creds.token}-${state.tokens}`;
+      state.tokens++;
+      return send(200, { "content-type": "application/json" }, JSON.stringify({ token: state.token }));
     }
-    if (req.headers.authorization !== `Bearer ${creds.token}`) {
+    if (req.headers.authorization !== `Bearer ${state.token}`) {
       return send(401, { "www-authenticate": `Bearer realm="http://127.0.0.1:${state.port}/token",service="fake-registry"` }, "unauthorized");
     }
     let m = url.pathname.match(/^\/v2\/(.+)\/blobs\/uploads\/(.*)$/);
     if (m) {
       if (req.method === "POST") return send(202, { location: `/v2/${m[1]}/blobs/uploads/u${requests.length}?_state=s` });
       const digest = url.searchParams.get("digest") ?? "";
+      if (req.method === "PUT" && state.denied < (faults.denyPuts ?? 0)) {
+        state.denied++;
+        return send(403, { "content-type": "application/json" }, GHCR_DENIED);
+      }
       if (req.method === "PUT" && sha(body) === digest && url.searchParams.get("_state") === "s") {
         blobs.set(digest, body);
         state.uploads++;
+        if (faults.expireTokenAfter !== undefined && state.uploads === faults.expireTokenAfter) state.token = "expired";
         return send(201, { "docker-content-digest": digest });
       }
       return send(400, {}, "digest invalid");
