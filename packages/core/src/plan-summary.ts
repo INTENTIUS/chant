@@ -56,6 +56,7 @@
  */
 
 import { computePlanDigest, PLAN_DIGEST_PREFIX } from "./lifecycle/plan-digest";
+import type { ForgeKind } from "./pr-forge";
 import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDocument, ChangeSetEntry, ChangeSetMember, ChangeSetSideEffect } from "./change-set";
 
 /** The schema a plan summary names in `$schema`. */
@@ -76,6 +77,45 @@ export const GITHUB_COMMENT_LIMIT = 65_536;
  * "Limited to 1,000,000 characters" (https://docs.gitlab.com/api/notes/).
  */
 export const GITLAB_NOTE_LIMIT = 1_000_000;
+
+/**
+ * The most characters a note on `forge` may hold (#4800): {@link GITLAB_NOTE_LIMIT}
+ * on GitLab, {@link GITHUB_COMMENT_LIMIT} on GitHub and Forgejo, and on a
+ * forge not known yet, so a note that fits there fits everywhere.
+ */
+export function noteLimit(forge?: ForgeKind): number {
+  return forge === "gitlab" ? GITLAB_NOTE_LIMIT : GITHUB_COMMENT_LIMIT;
+}
+
+export interface FitNoteOptions {
+  /** The most characters the note may hold, closing line included. Default {@link GITHUB_COMMENT_LIMIT}. */
+  limit?: number;
+  /** What follows the cut, in the product's words; `{cut}` becomes the characters kept. Default {@link NOTE_CUT_LINE}. */
+  tail?: string;
+}
+
+/** What {@link fitNote} writes after a cut. */
+export const NOTE_CUT_LINE = "\n\nThe note was cut at {cut} characters; the run's report has all of it.";
+
+/**
+ * `body` as it is when it fits `limit`, else its start and the closing line,
+ * the two together at most `limit` (#4800). Length is counted in UTF-16 units,
+ * JavaScript's `length`, which is never less than the code points a forge
+ * counts, and the cut never splits a surrogate pair. This is the one
+ * truncation products call in place of their own `MAX_NOTE` and
+ * `COMMENT_LIMIT` copies; a renderer that drops whole blocks, as
+ * {@link renderPlanSummaryMarkdown} does, compares against {@link noteLimit}.
+ */
+export function fitNote(body: string, options: FitNoteOptions = {}): string {
+  const limit = options.limit ?? GITHUB_COMMENT_LIMIT;
+  if (body.length <= limit) return body;
+  const tail = options.tail ?? NOTE_CUT_LINE;
+  let cut = Math.max(0, limit - tail.replaceAll("{cut}", String(limit)).length);
+  const code = body.charCodeAt(cut - 1);
+  if (code >= 0xd800 && code <= 0xdbff) cut--;
+  const closing = tail.replaceAll("{cut}", String(cut));
+  return (body.slice(0, cut) + closing).slice(0, limit);
+}
 
 /** What a group's units are: whole members, or the instances of one member. */
 export type PlanSummaryUnit = "member" | "instance";

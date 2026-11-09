@@ -27,6 +27,9 @@ export const OVERDUE_PIPELINE_FILES_FLOOR = NEXT_RELEASE;
 /** The first chant whose `terraformApplyCapabilityWith` takes `onCommand`, a hook around each engine command `terraform-apply` runs for a root, its reads' upstreams included (#4865). */
 export const TERRAFORM_APPLY_COMMAND_HOOK_FLOOR = NEXT_RELEASE;
 
+/** The first chant with `@intentius/chant/forge-flags` (`forgeTargetWith`, `forgeTargetFromFlags`, `apiBaseOf`), `@intentius/chant/chant-install` (`bundledChant`, `chantArgv`, `installChantResolveFallback`) and `noteLimit` and `fitNote` in `@intentius/chant/plan-summary` (#4800). */
+export const PRODUCT_HELPERS_FLOOR = NEXT_RELEASE;
+
 /** The first chant whose terraform lexicon's `terraform-apply` reads take `dir` and `workspace`, and read an upstream with `resolveRoot`'s binary and `readEnv` (terragucci issue 1303). */
 export const TERRAFORM_APPLY_INSTANCE_READS_FLOOR = "0.124.80";
 
