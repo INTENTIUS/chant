@@ -348,3 +348,64 @@ describe("the publish job leaves the checkout as the cut left it (#4853)", () =>
     }
   });
 });
+
+describe("the gate stops when the green commit's workflow files differ from the dispatched one's (#4852)", () => {
+  // The gate's shell, run in a scratch repository, with a chant that answers
+  // `ci last-green` with `green`. GitHub refuses the job's token a tag on a
+  // commit whose workflow files differ from the default branch's, so the gate
+  // stops before the cut builds anything.
+  function gate(over: Partial<ReleaseWorkflowInput> = {}) {
+    const dir = mkdtempSync(join(tmpdir(), "chant-4852-"));
+    const git = (...args: string[]) => {
+      const r = spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...args], { cwd: dir, encoding: "utf-8" });
+      if (r.status !== 0) throw new Error(r.stderr);
+      return r.stdout.trim();
+    };
+    git("init", "-q", "-b", "main");
+    const commit = (files: Record<string, string>, msg: string) => {
+      for (const [f, t] of Object.entries(files)) {
+        spawnSync("mkdir", ["-p", join(dir, f, "..")]);
+        spawnSync("sh", ["-c", `printf '%s' "$1" > "$2"`, "sh", t, join(dir, f)]);
+      }
+      git("add", "-A");
+      git("commit", "-q", "-m", msg);
+      return git("rev-parse", "HEAD");
+    };
+    const green = commit({ ".github/workflows/chant-release.yml": "v1\n", "src/a.ts": "1\n" }, "green");
+    const stub = join(dir, "..", `${dir.split("/").pop()}-chant`);
+    spawnSync("sh", ["-c", `printf '#!/bin/sh\\necho "{\\\\"commit\\\\":{\\\\"sha\\\\":\\\\"%s\\\\"}}"\\n' "$1" > "$2" && chmod +x "$2"`, "sh", green, stub]);
+    const doc = parseYAML(renderReleaseWorkflow({ forge: "github", groups: new Set(), pipeline: { trigger: "dispatch", chant: stub }, ...over })) as GhDoc;
+    const script = doc.jobs.gate!.steps.find((s) => s.id === "green")!.run!;
+    const run = (sha: string) => {
+      const out = join(dir, ".gh-output");
+      const r = spawnSync("bash", ["-e", "-c", script], { cwd: dir, encoding: "utf-8", env: { ...process.env, GITHUB_SHA: sha, GITHUB_OUTPUT: out } });
+      return { status: r.status, stderr: r.stderr, output: spawnSync("cat", [out], { encoding: "utf-8" }).stdout };
+    };
+    return { commit, run, green };
+  }
+
+  test("a commit after the green one that changed only code: the gate hands on the green commit", () => {
+    const { commit, run, green } = gate();
+    const head = commit({ "src/a.ts": "2\n" }, "code");
+    const r = run(head);
+    expect(r.stderr).toBe("");
+    expect(r.status).toBe(0);
+    expect(r.output).toBe(`commit=${green}\n`);
+  });
+
+  test("a commit after the green one changed .github/workflows: the gate stops and names it", () => {
+    const { commit, run, green } = gate();
+    const changed = commit({ ".github/workflows/chant-release.yml": "v2\n" }, "workflows");
+    const head = commit({ "src/a.ts": "2\n" }, "code");
+    const r = run(head);
+    expect(r.status).toBe(1);
+    expect(r.output).toBe("");
+    expect(r.stderr).toContain(`the newest green commit, ${green}, has other workflow files than ${head}, and GitHub refuses this job's token a tag on it, so no release is cut. Dispatch again once ${changed}, which changed .github/workflows, or a commit after it is green.`);
+  });
+
+  test("forgejo and gitlab render no such check, and neither does gate: head", () => {
+    for (const forge of ["forgejo", "gitlab"] as const) expect(dispatch(forge)).not.toContain(".github/workflows");
+    expect(dispatch("github", { pipeline: { trigger: "dispatch", gate: "head" } })).not.toContain(":(top).github/workflows");
+    expect(dispatch("github")).toContain(":(top).github/workflows");
+  });
+});
