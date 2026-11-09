@@ -18,10 +18,10 @@ import { createRedactor, REDACTED } from "./publish-credentials";
 import { PublishDeclarationSchema } from "./publish-declaration";
 import { createPublishTargets } from "./publish-targets";
 import { memberSbom } from "./publish-attachments";
-import { parseRepository } from "./publish-oci";
+import { OCI_PUSH_ATTEMPTS, parseRepository } from "./publish-oci";
 import { PublishTargetError, type PublishContext, type PublishTarget, type PublishedTarget } from "./release-publish";
 import { makeRelease, type ReleaseArtifact } from "./release-store";
-import { readFakeNpmRegistry, seedFakeNpmRegistry, startFakeForge, startFakeRegistry, writeFakeNpm, writeLockfile, writeOciLayout, writePackage } from "./__fixtures__/publish-fakes";
+import { GHCR_DENIED, readFakeNpmRegistry, seedFakeNpmRegistry, startFakeForge, startFakeRegistry, writeFakeNpm, writeLockfile, writeOciLayout, writePackage } from "./__fixtures__/publish-fakes";
 
 const dirs: string[] = [];
 afterAll(() => {
@@ -295,6 +295,63 @@ describe("oci", () => {
     } finally {
       await reg.close();
     }
+  });
+
+  describe("a registry that refuses or drops an upload (#4877)", () => {
+    const env = { OCI_USERNAME: "robot", OCI_PASSWORD: "oci-pass-9876" };
+    async function push(faults: Parameters<typeof startFakeRegistry>[1]) {
+      const reg = await startFakeRegistry({ username: "robot", password: "oci-pass-9876", token: "registry-token-abcdef" }, faults);
+      const waits: number[] = [];
+      const dir = temp();
+      writeLockfile(dir);
+      const { digest, configDigest } = writeOciLayout(join(dir, "dist", "api.oci"));
+      const [target] = await createPublishTargets([decl({ type: "oci", image: "dist/api.oci", repository: `${reg.host}/acme/api`, sbom: false })], { sleep: async (ms) => void waits.push(ms) });
+      const ctx = context(dir, { env, artifacts: [{ component: "api", kind: "image", path: "dist/api.oci", digest: configDigest }] });
+      return { reg, waits, digest, ctx, stage: () => target!.stage(ctx) };
+    }
+
+    test("GHCR's intermittent 403 on a blob PUT: a fresh upload is tried again, and the image is staged", async () => {
+      const { reg, waits, digest, ctx, stage } = await push({ denyPuts: 2 });
+      try {
+        await stage();
+        expect(reg.manifests.has(digest)).toBe(true);
+        expect(waits).toEqual([2000, 4000]);
+        const posts = reg.requests.filter((r) => r.method === "POST" && r.path.includes("/blobs/uploads/")).length;
+        expect(posts).toBe(reg.uploads + 2);
+        const out = ctx.lines.join("\n");
+        expect(out).toMatch(/uploading sha256:[0-9a-f]{64} at http:\/\/127\.0\.0\.1:\d+ answered 403: .*permission_denied: write_package.*; trying again in 2s \(2 of 4\)/);
+        expect(out).not.toContain("oci-pass-9876");
+      } finally {
+        await reg.close();
+      }
+    });
+
+    test("a registry that refuses every PUT fails the target with its last answer after the last try", async () => {
+      const { reg, waits, stage } = await push({ denyPuts: 100 });
+      try {
+        const err = await refused(stage());
+        expect(err.code).toBe("publish-oci-failed");
+        expect(err.message).toMatch(/uploading sha256:[0-9a-f]{64} at http:\/\/127\.0\.0\.1:\d+ answered 403: /);
+        expect(err.message).toContain(GHCR_DENIED.slice(0, 40));
+        expect(waits).toHaveLength(OCI_PUSH_ATTEMPTS - 1);
+        expect(reg.manifests.size).toBe(0);
+      } finally {
+        await reg.close();
+      }
+    });
+
+    test("a token that expires during the push is answered again, not given up on", async () => {
+      const { reg, waits, digest, ctx, stage } = await push({ expireTokenAfter: 1 });
+      try {
+        await stage();
+        expect(reg.manifests.has(digest)).toBe(true);
+        expect(waits).toEqual([]);
+        expect(reg.requests.filter((r) => r.path === "/token")).toHaveLength(2);
+        expect(ctx.lines.join("\n")).toContain("asked for credentials again; answering its challenge once more");
+      } finally {
+        await reg.close();
+      }
+    });
   });
 
   test("pushes a docker save style tar with docker config credentials; refuses bad credentials, a layout the release did not build, and a missing one", async () => {
