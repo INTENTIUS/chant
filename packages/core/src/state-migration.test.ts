@@ -4,7 +4,8 @@
  */
 import { describe, expect, test } from "vitest";
 import { fakeLedger } from "./__fixtures__/gated-ledger";
-import { runStateMigration, STATE_MIGRATION_FLOOR, writeStateMigration, type MigrationRootPlan, type MigrationStateAt, type StateMigrationEngine } from "./state-migration";
+import { NEXT_RELEASE } from "./release-floors";
+import { runStateMigration, STATE_MIGRATION_FLOOR, STATE_MIGRATION_SOURCE_FLOOR, writeStateMigration, type MigrationRootPlan, type MigrationStateAt, type StateMigrationEngine } from "./state-migration";
 
 const plan = (proof: string[] = []): MigrationRootPlan[] => [
   { root: "queues", location: "s3://acme/queues.tfstate", before: { version_id: "q1", digest: "sha256:q-before" }, after: { digest: "sha256:q-after" }, proof: { changes: [], summary: "No changes." } },
@@ -129,5 +130,55 @@ describe("runStateMigration", () => {
 
   test("its floor is the next release", () => {
     expect(STATE_MIGRATION_FLOOR).toBe("0.124.77");
+  });
+});
+
+describe("a root's source and an approval the states moved away from (#4806)", () => {
+  const withSource = (): MigrationRootPlan[] => plan().map((r) => (r.root === "queues" ? { ...r, before: { digest: null }, source: { location: "old.tfstate", digest: "sha256:q-after" } } : r));
+  const sourced = (now: MigrationStateAt) => {
+    const e = engine();
+    e.current = async (root) => (root === "queues" ? { digest: null } : { version_id: "p1", digest: "sha256:p-before" });
+    return Object.assign(e, { source: async () => now });
+  };
+
+  test("the request binds the source, the finished line names it, and a source that moved refuses the write", async () => {
+    const ledger = fakeLedger();
+    ledger.approve("bo");
+    const ok = await runStateMigration(base(ledger, sourced({ digest: "sha256:q-after" }), withSource()));
+    expect(ok.status).toBe("applied");
+    expect(ledger.details[0]).toMatchObject({ "queues.source": "old.tfstate" });
+
+    const other = fakeLedger();
+    other.approve("bo");
+    const e = sourced({ digest: "sha256:q-written-since" });
+    const moved = await runStateMigration(base(other, e, withSource()));
+    expect(moved.status === "moved" && moved.result.moved).toEqual(["queues"]);
+    expect(e.calls).not.toContain("write");
+
+    const plain = fakeLedger();
+    const a = await runStateMigration(base(plain, engine(), withSource()));
+    const b = await runStateMigration(base(fakeLedger(), engine(), plan()));
+    expect(a.status === "waiting" && b.status === "waiting" && a.digest !== b.digest).toBe(true);
+  });
+
+  test("a request that waits while an approval of an earlier one stands answers approval-moved, naming the roots that moved", async () => {
+    const ledger = fakeLedger();
+    const earlier = plan().map((r) => (r.root === "platform" ? { ...r, before: { version_id: "p0", digest: "sha256:p-older" } } : r));
+    const attachment = `${JSON.stringify({ name: "move-queues", roots: [...earlier].sort((x, y) => (x.root < y.root ? -1 : 1)).map((r) => ({ root: r.root, location: r.location, before: { version_id: r.before.version_id, digest: r.before.digest }, after: r.after.digest })) })}\n`;
+    const read = ledger.readGatedRequests;
+    ledger.readGatedRequests = async (op) => [
+      ...(await read(op)),
+      { op, gate: "move-queues", digest: "sha256:earlier", request: { kind: "migrate", subject: "move-queues", by: "ana", fields: {} }, pending: { timestamp: "2026-11-08T08:00:00Z" } as never, approvals: [{ resolvedBy: "bo", timestamp: "2026-11-08T08:30:00Z" } as never] } as never,
+    ];
+    const r = await runStateMigration({ ...base(ledger, engine()), readAttachment: async (_op, d) => (d === "sha256:earlier" ? attachment : undefined) });
+    expect(r).toMatchObject({ status: "approval-moved", exit: 4, approved: "sha256:earlier", approvedBy: "bo", moved: ["platform"] });
+
+    const own = fakeLedger();
+    own.readGatedRequests = async (op) => [{ op, gate: "move-queues", digest: "sha256:earlier", request: { kind: "migrate", subject: "move-queues", by: "ana", fields: {} }, pending: { timestamp: "2026-11-08T08:00:00Z" } as never, approvals: [{ resolvedBy: "ana", timestamp: "2026-11-08T08:30:00Z" } as never] } as never];
+    expect((await runStateMigration(base(own, engine()))).status).toBe("waiting");
+  });
+
+  test("its floor is the next release", () => {
+    expect(STATE_MIGRATION_SOURCE_FLOOR).toBe(NEXT_RELEASE);
   });
 });

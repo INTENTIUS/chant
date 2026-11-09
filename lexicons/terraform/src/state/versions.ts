@@ -86,7 +86,7 @@ export function keepsHistory(b: InitialisedBackend, env: NodeJS.ProcessEnv = {})
 }
 
 /** The state's address (../compose/state-address.ts) from the configuration init recorded, credentials left out. */
-function recordedAddress(b: InitialisedBackend): string | undefined {
+export function recordedAddress(b: InitialisedBackend): string | undefined {
   const workspaces = Array.isArray(b.config.workspaces) ? b.config.workspaces[0] : b.config.workspaces;
   const get = (n: string): string | null | undefined => literal(b.config[n] ?? (workspaces && typeof workspaces === "object" ? (workspaces as Record<string, unknown>)[n] : undefined));
   const a = stateAddress(b.type, get, "");
