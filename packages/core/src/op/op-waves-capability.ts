@@ -84,7 +84,6 @@ import type { ResolvedGatePolicySource } from "../policy-source";
 import type { WaveMember } from "../wave-engine";
 import type { OpWave, OpWaveRun, OpWavesSpec } from "./op-waves";
 import { resolvePlannedLock, type LockGrain, type PlannedLock } from "../lifecycle/lock-rows";
-import { NEXT_RELEASE } from "../release-floors";
 
 import { OP_WAVE_COST_FORMATS, OP_WAVE_COST_MEMBER, type OpWaveCostFormat, type OpWaveCostHold, type OpWaveStep } from "./op-waves-capability-spec";
 
@@ -177,7 +176,7 @@ export const OP_WAVE_STEP_WAVE_FLOOR = "0.124.79";
  * (`DeployContext.serial`), where `terraform-apply` and `terragrunt-apply`
  * take their inits one at a time on a shared provider cache (#4864).
  */
-export const OP_WAVE_PARALLEL_STEP_FLOOR = NEXT_RELEASE;
+export const OP_WAVE_PARALLEL_STEP_FLOOR = "0.124.81";
 
 /** Whether a part changes nothing, and whether it destroys or replaces something. A plan that changes only outputs changes something (#4849). */
 export function partEffects(part: ChangeSetPart | undefined): { empty: boolean; destructive: boolean } {
