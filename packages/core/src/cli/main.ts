@@ -1312,7 +1312,14 @@ Component release ledger + status:
                             --decide-model <id> asks whether the
                             description leaves out a destroy or a
                             replacement and posts the finding (#4629)
-  components pr-record     On merge (#4168): plan the same members again,
+  components pr-notes      GitLab (#4785): read the merge requests' notes,
+                            and for each new comment command from a
+                            Developer or above start the job that answers
+                            it (--forge gitlab [--branch <b>]
+                            [--preview-comment] [--apply-before-merge]
+                            [--apply-on-merge] [--locks]); each answered
+                            note is recorded on chant/lifecycle
+  components pr-record    On merge (#4168): plan the same members again,
                             store the change set and write the merge record
                             _merges/<commit>.json; applies and refuses
                             nothing, and a plan that differs from the
@@ -2075,6 +2082,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "components apply-wave", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/pr")).runComponentsApplyWave(ctx) },
   // #4295: posts from the plan report in a job that runs none of the change's code, so it loads no plugins.
   { name: "components pr-post", handler: async (ctx) => (await import("./handlers/pr")).runComponentsPrPost(ctx) },
+  // #4785: GitLab's comment commands, polled from the notes in a job that runs none of the change's code, so it loads no plugins.
+  { name: "components pr-notes", handler: async (ctx) => (await import("./handlers/pr-notes")).runComponentsPrNotes(ctx) },
   { name: "components pr-record", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/pr")).runComponentsPrRecord(ctx) },
   // #4616: the agent jobs' three steps. Imported on first use; none loads plugins.
   { name: "agent prepare", handler: async (ctx) => (await import("./handlers/agent")).runAgentCommandLine(ctx) },

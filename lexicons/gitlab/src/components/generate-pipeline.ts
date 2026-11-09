@@ -70,6 +70,9 @@ import {
   PR_ENV_POST_JOB,
   PR_STALE_JOB,
   prStaleJob,
+  prNoteCommandsJob,
+  GITLAB_NOTE_COMMANDS_VAR,
+  PR_NOTE_COMMANDS_JOB,
   prLoopJobStage,
   prLoopRunner,
 } from "@intentius/chant/components/pr-pipeline";
@@ -453,7 +456,11 @@ function prLoopGitlabPipeline(
   // #4628: a push to the target branch marks the open merge requests' notes posted against another commit stale.
   const stale = prStaleJob("gitlab", env, loop, member?.name);
   const staleName = stale ? named(PR_STALE_JOB) : undefined;
-  const stages = ["plan", PR_PLAN_NOTE_JOB, ...(stale ? [PR_STALE_JOB] : []), ...commentLocks.map((c) => c.job.jobName), ...(preview ? [preview.jobName, preview.noteJobName] : []), ...applies.map((a) => a.stage), ...(control ? [control.name] : []), ...(prEnv ? [PR_ENV_STAGE, PR_ENV_POST_STAGE] : [])];
+  // #4785: GitLab starts no pipeline on a note, so a scheduled pipeline of the target branch polls the notes and starts the jobs above.
+  const notes = prNoteCommandsJob("gitlab", loop);
+  if (notes && !rooted) throw new Error(`--note-commands writes one job for the project, which polls every merge request's notes; give it on the root pipeline, not member ${member!.name}'s`);
+  const notesRule = notes ? `$CI_PIPELINE_SOURCE =~ /^(schedule|web|api|trigger)$/ && $${GITLAB_NOTE_COMMANDS_VAR} == "1" && $CI_COMMIT_BRANCH == ${targetBranch}` : undefined;
+  const stages = ["plan", PR_PLAN_NOTE_JOB, ...(stale ? [PR_STALE_JOB] : []), ...(notes ? [PR_NOTE_COMMANDS_JOB] : []), ...commentLocks.map((c) => c.job.jobName), ...(preview ? [preview.jobName, preview.noteJobName] : []), ...applies.map((a) => a.stage), ...(control ? [control.name] : []), ...(prEnv ? [PR_ENV_STAGE, PR_ENV_POST_STAGE] : [])];
   const noteJob = named(PR_PLAN_NOTE_JOB);
   const post = prLoopPostJob("gitlab", env, member?.name, loop.words ? { ...(loop.words.bin ? { bin: loop.words.bin } : {}) } : undefined, { ...(loop.staleNotes ? { staleNotes: true } : {}), ...(loop.respond ? { respond: loop.respond } : {}), ...(loop.decide ? { decide: loop.decide } : {}) });
   // #4619: with a control repo named, the note job reads its chant/lifecycle, read-only, so pr-post marks the cross-stack edges.
@@ -461,7 +468,7 @@ function prLoopGitlabPipeline(
   const doc: Record<string, unknown> = {
     // Included files merge their top-level keys, so a member's file carries
     // the rules every member shares and no name: two names would collide.
-    workflow: { ...(member ? {} : { name: `chant-pr-${env}` }), rules: [{ if: onMergeRequest }, { if: onMerge }, { if: onPlanNotes }, ...(greens.length > 0 ? [{ if: onGreen }] : []), ...commentLocks.map((c) => ({ if: c.rule })), ...(previewRule ? [{ if: previewRule }] : []), ...(prEnv ? [{ if: GITLAB_SCHEDULE_RULE }] : [])] },
+    workflow: { ...(member ? {} : { name: `chant-pr-${env}` }), rules: [{ if: onMergeRequest }, { if: onMerge }, { if: onPlanNotes }, ...(greens.length > 0 ? [{ if: onGreen }] : []), ...commentLocks.map((c) => ({ if: c.rule })), ...(previewRule ? [{ if: previewRule }] : []), ...(notesRule ? [{ if: notesRule }] : []), ...(prEnv ? [{ if: GITLAB_SCHEDULE_RULE }] : [])] },
     stages,
     variables: { ...options.variables, CHANT_ENV: env, ...GITLAB_FULL_HISTORY },
     [planJob]: {
@@ -487,6 +494,13 @@ function prLoopGitlabPipeline(
       ? {
           // The pushed commit of the target branch: none of a merge request's code is here.
           [staleName]: { stage: PR_STALE_JOB, image, rules: [{ if: onMerge }], variables: stale.env, script: [...enter, ...beforeScript, stale.command] },
+        }
+      : {}),
+    ...(notes && notesRule
+      ? {
+          // The target branch's commit: the job reads the notes as data through the API and runs none of a merge request's code.
+          // One poll at a time, so two never answer the same note.
+          [PR_NOTE_COMMANDS_JOB]: { stage: PR_NOTE_COMMANDS_JOB, image, resource_group: PR_NOTE_COMMANDS_JOB, rules: [{ if: notesRule }], script: [...beforeScript, notes.command] },
         }
       : {}),
     ...Object.fromEntries(
@@ -612,7 +626,7 @@ function prLoopGitlabPipeline(
       if (tags && entry) doc[job.jobName] = { ...entry, tags };
     }
   }
-  const yaml = emitGitlabFile(["workflow", "stages", "variables", planJob, noteJob, ...(staleName ? [staleName] : []), ...commentLocks.map((c) => c.name), ...(previewName && previewNoteName ? [previewName, previewNoteName] : []), ...applies.map((a) => a.name), ...(controlJob ? [controlJob] : []), ...Object.keys(prEnv?.jobs ?? {})].map((key) => [key, doc[key]] as const));
+  const yaml = emitGitlabFile(["workflow", "stages", "variables", planJob, noteJob, ...(staleName ? [staleName] : []), ...(notes ? [PR_NOTE_COMMANDS_JOB] : []), ...commentLocks.map((c) => c.name), ...(previewName && previewNoteName ? [previewName, previewNoteName] : []), ...applies.map((a) => a.name), ...(controlJob ? [controlJob] : []), ...Object.keys(prEnv?.jobs ?? {})].map((key) => [key, doc[key]] as const));
   return { yaml, stages, jobs, env };
 }
 

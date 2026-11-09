@@ -175,6 +175,20 @@ export interface HeadRunsOptions {
   limit?: number;
 }
 
+/** What {@link ForgeReads.branchRuns} reads. */
+export interface BranchRunsOptions {
+  /** Only runs of this event (GitHub's and Forgejo's `event`, GitLab's `source`). */
+  event?: string;
+  /** At most this many runs. Default 100. */
+  limit?: number;
+}
+
+/** What {@link ForgeReads.pullRequestsUpdated} reads. */
+export interface PullRequestsUpdatedOptions {
+  /** At most this many pull requests. Default 500. */
+  limit?: number;
+}
+
 /** What {@link ForgeReads.artifacts} reads. */
 export interface ArtifactsOptions {
   /** Only the artifacts this run (pipeline) kept. Without it, the repository's. */
@@ -213,6 +227,14 @@ export interface ForgeReads {
   openPullRequests(): Promise<OpenPullRequest[]>;
   /** The workflow runs (GitLab's pipelines) on commit `sha`, newest first (#4846). */
   headRuns(sha: string, opts?: HeadRunsOptions): Promise<WorkflowRun[]>;
+  /** The workflow runs (GitLab's pipelines) on branch `branch`, newest first (#4785). */
+  branchRuns(branch: string, opts?: BranchRunsOptions): Promise<WorkflowRun[]>;
+  /**
+   * The pull requests in any state updated at or after `since` (ISO 8601),
+   * forks' among them, newest update first (#4785): what a poll of comment
+   * commands reads.
+   */
+  pullRequestsUpdated(since: string, opts?: PullRequestsUpdatedOptions): Promise<PullRequestDetail[]>;
   /** A workflow run (pipeline), or undefined when the forge has none by that id. */
   run(id: number): Promise<WorkflowRun | undefined>;
   /** A run's jobs, in the order the forge lists them. */
@@ -478,6 +500,41 @@ function githubShapedReads(kind: "github" | "forgejo", opts: GithubForgeOptions)
       // Forgejo filters by the listed event, so a pull_request_target run comes back for `pull_request`: both words count.
       return listed.filter((r) => r.headSha === sha && (!o.event || r.event === o.event || r.listedEvent === o.event)).sort(byIdDesc);
     },
+    async branchRuns(branch, o = {}) {
+      const query = `branch=${encodeURIComponent(branch)}${o.event ? `&event=${encodeURIComponent(o.event)}` : ""}`;
+      const listed = (await listIn(get, `${repo}/actions/runs?${query}`, "workflow_runs", pageSize, pageParams, o.limit ?? RUN_LIMIT)).map(runOf).filter(defined);
+      return listed.filter((r) => r.headBranch === undefined || r.headBranch === branch).filter((r) => !o.event || r.event === o.event || r.listedEvent === o.event).sort(byIdDesc);
+    },
+    async pullRequestsUpdated(since, o = {}) {
+      const limit = o.limit ?? DEFAULT_LIMIT;
+      const from = Date.parse(since);
+      const out: PullRequestDetail[] = [];
+      // Newest update first, so the first page item older than `since` ends the read.
+      const query = kind === "github" ? "state=all&sort=updated&direction=desc" : "state=all&sort=recentupdate";
+      for (let page = 1; page <= 50 && out.length < limit; page++) {
+        let items: unknown;
+        try {
+          items = await get(`${repo}/pulls?${query}&${pageParams(page)}`);
+        } catch (err) {
+          if (kind !== "forgejo" || !notFound(err)) throw err;
+          await get(repo);
+          return [];
+        }
+        const list = Array.isArray(items) ? items : [];
+        let older = false;
+        for (const v of list) {
+          const d = detail(v);
+          if (!d) continue;
+          if (d.updated !== undefined && Date.parse(d.updated) < from) {
+            older = true;
+            break;
+          }
+          out.push(d);
+        }
+        if (older || list.length < pageSize) break;
+      }
+      return out.slice(0, limit);
+    },
     run: async (id) => runOf(await orUndefined(get(`${repo}/actions/runs/${id}`))),
     async runJobs(run) {
       const out: RunJob[] = [];
@@ -625,6 +682,15 @@ export function gitlabReads(opts: GitlabForgeOptions): ForgeReads {
       const query = `sha=${encodeURIComponent(sha)}${o.event ? `&source=${encodeURIComponent(o.event)}` : ""}&order_by=id&sort=desc`;
       const listed = (await listIn(get, `${project}/pipelines?${query}`, "", 100, gitlabPage, o.limit ?? RUN_LIMIT)).map(pipelineOf).filter(defined);
       return listed.filter((r) => r.headSha === sha && (!o.event || r.event === o.event)).sort(byIdDesc);
+    },
+    async branchRuns(branch, o = {}) {
+      const query = `ref=${encodeURIComponent(branch)}${o.event ? `&source=${encodeURIComponent(o.event)}` : ""}&order_by=id&sort=desc`;
+      const listed = (await listIn(get, `${project}/pipelines?${query}`, "", 100, gitlabPage, o.limit ?? RUN_LIMIT)).map(pipelineOf).filter(defined);
+      return listed.filter((r) => r.headBranch === branch && (!o.event || r.event === o.event)).sort(byIdDesc);
+    },
+    async pullRequestsUpdated(since, o = {}) {
+      const listed = await get.list(`${mrs}?state=all&updated_after=${encodeURIComponent(since)}&order_by=updated_at&sort=desc`, o.limit ?? DEFAULT_LIMIT);
+      return listed.map(detail).filter(defined);
     },
     run: async (id) => pipelineOf(await orUndefined(get(`${project}/pipelines/${id}`))),
     async runJobs(run) {

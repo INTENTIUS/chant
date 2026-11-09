@@ -370,6 +370,15 @@ export interface PrLoopPipelineOptions {
    */
   staleNotes?: boolean;
   /**
+   * GitLab's comment commands (#4785): GitLab starts no pipeline on a note,
+   * so a job of the target branch's pipeline, started by a schedule with
+   * `CHANT_NOTE_COMMANDS=1`, polls the merge requests' notes and starts the
+   * jobs the commands ask for ({@link prNoteCommandsJob}). Refused on GitHub
+   * and Forgejo, which start a workflow on a comment. Set from
+   * `--note-commands` beside `--pr-loop`. Default off.
+   */
+  noteCommands?: boolean;
+  /**
    * The responses to pipeline events (#4629, ../ci-respond.ts), from
    * `chant build --pr-loop --respond <list>`: the apply job and the
    * plan-note job carry the list as `CHANT_RESPOND`. Absent, or every event
@@ -605,6 +614,32 @@ export function prActionJob(forge: ForgeKind, options: Pick<PrLoopPipelineOption
 export const PR_COMMENT_PREVIEW_JOB = "comment-preview";
 /** The job that posts the comment preview's note and status (#4620). */
 export const PR_COMMENT_PREVIEW_NOTE_JOB = "comment-preview-note";
+/** The job that polls GitLab's merge request notes for comment commands (#4785). */
+export const PR_NOTE_COMMANDS_JOB = "note-commands";
+/** The variable a schedule (or a person) starts a pipeline of the target branch with to run the note-commands job (#4785). */
+export const GITLAB_NOTE_COMMANDS_VAR = "CHANT_NOTE_COMMANDS";
+
+/**
+ * The note-commands job's command (#4785): `chant components pr-notes
+ * --forge gitlab`, with a flag for each job the pipeline has that a command
+ * starts. Undefined without `noteCommands`; refused on GitHub and Forgejo,
+ * which start a workflow on a comment.
+ */
+export function prNoteCommandsJob(forge: ForgeKind, options: Pick<PrLoopPipelineOptions, "noteCommands" | "previewComment" | "applyBeforeMerge" | "applyOnMerge" | "waveGate" | "locks" | "branch" | "words"> = {}): { command: string } | undefined {
+  if (!options.noteCommands) return undefined;
+  if (forge !== "gitlab") throw new Error(`--note-commands polls GitLab's merge request notes, and ${forge} starts a workflow on a comment; drop --note-commands`);
+  const words = resolveProductWords(options.words);
+  const command = [
+    "chant", "components", "pr-notes", "--forge", "gitlab",
+    ...(options.branch ? ["--branch", JSON.stringify(options.branch)] : []),
+    ...(options.previewComment ? ["--preview-comment"] : []),
+    ...(options.applyBeforeMerge ? ["--apply-before-merge"] : []),
+    ...(options.applyOnMerge || options.waveGate ? ["--apply-on-merge"] : []),
+    ...(options.locks === "plan" ? ["--locks"] : []),
+  ].join(" ");
+  return { command: withProductBin(command, words.bin) };
+}
+
 /** The GitLab variable a pipeline of the target branch is started with to preview a merge request again (#4620). */
 export const GITLAB_PREVIEW_PR_VAR = "CHANT_PREVIEW_PR";
 /** The variable the GitHub-shaped preview job's checkout script reads the pull request's head ref from (#4620). */

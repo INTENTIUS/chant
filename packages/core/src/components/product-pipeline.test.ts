@@ -225,3 +225,17 @@ describe("the commit jobs (#4722)", () => {
     expect(() => productCheckCommit(words, "fmt-check", { command: [], allowed: ["infra/"] })).toThrow(/argv/);
   });
 });
+
+describe("GitLab's comment commands by polling the notes (#4785)", () => {
+  test("noteCommands is one switch: the note-commands job's command, with the jobs a command starts", () => {
+    const jobs = productPipelineJobs("gitlab", "production", { words: PLYWOOD, waves, locks: "plan", previewComment: true, noteCommands: true });
+    expect(jobs.noteCommands!.command).toBe("npx --no-install plywood components pr-notes --forge gitlab --preview-comment --apply-on-merge --locks");
+    expect(productPipelineJobs("gitlab", "production", { words: PLYWOOD, waves, locks: "plan" }).noteCommands).toBeUndefined();
+  });
+
+  test("refused on GitHub and Forgejo, which start a workflow on a comment", () => {
+    for (const forge of ["github", "forgejo"] as const) {
+      expect(() => productPipelineJobs(forge, "production", { words: PLYWOOD, waves, locks: "plan", noteCommands: true })).toThrow(/--note-commands polls GitLab's merge request notes/);
+    }
+  });
+});

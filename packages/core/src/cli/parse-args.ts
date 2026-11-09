@@ -20,6 +20,8 @@ import type { ParsedArgs } from "./registry";
 const BOOLEAN_FLAGS = new Set([
   "--help",
   "--open",
+  "--note-commands",
+  "--locks",
   "--version",
   "--agents",
   "--agent",
@@ -906,6 +908,12 @@ export function parseArgs(args: string[]): ParsedArgs {
       const m = /^(op|member|readTokenSecret|tokenSecret|forge|ref|apiBase|sentCheck|markSent)=(.+)$/s.exec(raw);
       if (!m) throw new Error(`--control-setting needs <key>=<value>, the key one of op, member, readTokenSecret, tokenSecret, forge, ref, apiBase, sentCheck, markSent: got "${raw}"`);
       (result.controlSettings ??= {})[m[1]!] = m[2]!;
+    } else if (arg === "--note-commands") {
+      // `chant build --pr-loop --note-commands` (#4785).
+      result.noteCommands = true;
+    } else if (arg === "--locks") {
+      // `chant components pr-notes --locks` (#4785).
+      result.locks = true;
     } else if (arg === "--stale-notes") {
       // `chant build --pr-loop --stale-notes` (#4628).
       result.staleNotes = true;
