@@ -37,6 +37,7 @@ import { forgePrincipalOf, type PrForge } from "./pr-forge";
 import { GITHUB_COMMENT_LIMIT, GITLAB_NOTE_LIMIT } from "./plan-summary";
 import { activeProductWords, commentLine, type CiProductWords } from "./ci-product-words";
 import { controlEdgeFactsFromEnv, remarkCrossStackEdges, type ControlEdgeFacts } from "./control/edges";
+import { isPlanNote, planNoteMarker, PR_PLAN_NOTE_CONTRACT, PR_PLAN_NOTE_FILE, renderPlanNote, type PrPlanNoteHandoff, type PrPlanNoteWords } from "./pr-plan-note";
 
 /** The plan report's file under the report directory. */
 export const PR_PLAN_REPORT_FILE = "pr-plan.json";
@@ -82,6 +83,12 @@ export interface PlanPostInput {
    * Forgejo: the note, without its hidden lines, is added to it.
    */
   summaryFile?: string;
+  /**
+   * The words a product's plan note hand-off renders with (#4799). Default:
+   * the JSON in `CHANT_PLAN_NOTE_WORDS`, which the generated note job sets
+   * from the pipeline, never from the report.
+   */
+  noteWords?: PrPlanNoteWords;
 }
 
 /** What {@link postPlanReport} did. */
@@ -171,6 +178,8 @@ const cut = (text: string, max = 140): string => (text.length > max ? `${text.sl
  * the caller's sets a failed status and posts no note.
  */
 export async function postPlanReport(input: PlanPostInput): Promise<PlanPostResult> {
+  // #4799: a product's plan verb wrote its plan note hand-off in place of pr-plan's report.
+  if (!existsSync(join(input.dir, PR_PLAN_REPORT_FILE)) && existsSync(join(input.dir, PR_PLAN_NOTE_FILE))) return postPlanNoteHandoff(input);
   const warnings: string[] = [];
   const context = prStatusContext("plan", input.member);
   const read = readPlanReport(input);
@@ -211,6 +220,31 @@ export async function postPlanReport(input: PlanPostInput): Promise<PlanPostResu
       description = cut(`the plan job failed; ${description}`);
     }
   }
+  note = await postOutcome(input, context, state, description, note, refused, warnings);
+  if (input.description && "report" in read && !failedJob) {
+    try {
+      await input.description(read.report);
+    } catch (err) {
+      warnings.push(`the description check did not run: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return { state, description: cut(description), noted: note !== undefined, ...(refused ? { refused } : {}), warnings };
+}
+
+/**
+ * Set the plan status, post the note when there is one, and add it to the
+ * job summary (#4295, #4628). Returns the note, or undefined when posting
+ * it failed.
+ */
+async function postOutcome(
+  input: PlanPostInput,
+  context: string,
+  state: PlanPostResult["state"],
+  description: string,
+  note: string | undefined,
+  refused: string | undefined,
+  warnings: string[],
+): Promise<string | undefined> {
   try {
     await input.forge.setStatus(input.head, { context, state, description: cut(description), ...(input.forge.runUrl ? { url: input.forge.runUrl } : {}) });
   } catch (err) {
@@ -232,13 +266,96 @@ export async function postPlanReport(input: PlanPostInput): Promise<PlanPostResu
       warnings.push(`could not write the job summary: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
-  if (input.description && "report" in read && !failedJob) {
+  return note;
+}
+
+/**
+ * Read a product's plan note hand-off under `dir` (#4799) and check it is the
+ * one the caller ran, as {@link readPlanReport} checks a report.
+ */
+export function readPlanNoteHandoff(input: Pick<PlanPostInput, "dir" | "pr" | "head" | "env" | "member">): { handoff: PrPlanNoteHandoff } | { refused: string } {
+  let doc: unknown;
+  try {
+    doc = JSON.parse(readFileSync(join(input.dir, PR_PLAN_NOTE_FILE), "utf-8"));
+  } catch (err) {
+    return { refused: `the plan note does not read: ${err instanceof Error ? err.message : String(err)}` };
+  }
+  if (!doc || typeof doc !== "object" || Array.isArray(doc)) return { refused: "the plan note is not an object" };
+  const r = doc as Record<string, unknown>;
+  if (r.kind !== "plan-note-handoff") return { refused: `the file is not a plan note hand-off (kind ${JSON.stringify(r.kind)})` };
+  if (r.contract !== PR_PLAN_NOTE_CONTRACT) return { refused: `the plan note follows contract ${JSON.stringify(r.contract)}, and this chant reads ${PR_PLAN_NOTE_CONTRACT}` };
+  if (r.pr !== input.pr) return { refused: `the plan note is for pull request ${JSON.stringify(r.pr)}, not ${input.pr}` };
+  if (typeof r.head !== "string" || !SHA.test(r.head) || r.head !== input.head) return { refused: `the plan note is for head ${JSON.stringify(r.head)}, not ${input.head}` };
+  if (r.env !== input.env) return { refused: `the plan note is for environment ${JSON.stringify(r.env)}, not ${input.env}` };
+  if ((r.member ?? undefined) !== input.member) return { refused: `the plan note is for ${JSON.stringify(r.member ?? null)}, not ${JSON.stringify(input.member ?? null)}` };
+  if (r.state !== "success" && r.state !== "failure" && r.state !== "pending") return { refused: `the plan note's state ${JSON.stringify(r.state)} is not success, failure or pending` };
+  if (typeof r.description !== "string") return { refused: "the plan note has no description" };
+  if (!isPlanNote(r.note) || r.note.head !== r.head || !Array.isArray(r.note.waves) || !Array.isArray(r.note.groups) || !Array.isArray(r.note.named)) {
+    return { refused: "the plan note's note is not a plan note for its head" };
+  }
+  return { handoff: doc as PrPlanNoteHandoff };
+}
+
+/** The note words from `CHANT_PLAN_NOTE_WORDS` (#4799), or undefined when unset or not an object. */
+function noteWordsFromEnv(): PrPlanNoteWords | undefined {
+  const raw = process.env.CHANT_PLAN_NOTE_WORDS;
+  if (!raw) return undefined;
+  try {
+    const w = JSON.parse(raw) as unknown;
+    return w && typeof w === "object" && !Array.isArray(w) ? (w as PrPlanNoteWords) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The note for a product's plan note hand-off (#4799): rendered here with
+ * the pipeline's note words, every `<!--` after the marker line defused as
+ * {@link planNoteFor} does, except the waves marker chant itself rendered
+ * from the note's waves, which the product reads back.
+ */
+export function planNoteHandoffNote(handoff: PrPlanNoteHandoff, forge: Pick<PrForge, "kind">, marker: string, noteWords?: PrPlanNoteWords, baseTip?: string): string {
+  const words = activeProductWords();
+  const rendered = renderPlanNote(handoff.note, { limit: forge.kind === "gitlab" ? GITLAB_NOTE_LIMIT : GITHUB_COMMENT_LIMIT, words, ...(noteWords ? { note: noteWords } : {}) });
+  let body = rendered.split("<!--").join("&lt;!--");
+  const n = handoff.note;
+  const previews = n.previews ?? [];
+  const waves = planNoteMarker(noteWords?.marker ?? `${words.product}:waves`, { head: n.head, waves: n.waves.map((x) => ({ number: x.number, digest: x.digest ?? null, waits: x.waits === true })), ...(previews.length ? { previews } : {}) });
+  body = body.replace(`&lt;!--${waves.slice(4)}`, waves);
+  const tip = baseTip && SHA.test(baseTip) ? `${body.endsWith("\n") ? "" : "\n"}${prNoteTipMarker(baseTip)}\n` : "";
+  return `${marker}\n${body}${tip}`;
+}
+
+/** {@link postPlanReport} for a product's plan note hand-off (#4799). */
+async function postPlanNoteHandoff(input: PlanPostInput): Promise<PlanPostResult> {
+  const warnings: string[] = [];
+  const context = prStatusContext("plan", input.member);
+  const read = readPlanNoteHandoff(input);
+  const failedJob = input.result === "failure" || input.result === "cancelled";
+  let state: PlanPostResult["state"];
+  let description: string;
+  let note: string | undefined;
+  let refused: string | undefined;
+  if ("refused" in read) {
+    refused = read.refused;
+    state = "failure";
+    description = cut(read.refused);
+  } else {
+    state = read.handoff.state;
+    description = read.handoff.description;
     try {
-      await input.description(read.report);
+      note = planNoteHandoffNote(read.handoff, input.forge, prNoteMarker(input.env, input.member), input.noteWords ?? noteWordsFromEnv(), input.baseTip);
     } catch (err) {
-      warnings.push(`the description check did not run: ${err instanceof Error ? err.message : String(err)}`);
+      refused = `the plan note does not render: ${err instanceof Error ? err.message : String(err)}`;
+      state = "failure";
+      description = cut(refused);
+    }
+    if (failedJob && state !== "failure") {
+      state = "failure";
+      description = cut(`the plan job failed; ${description}`);
     }
   }
+  note = await postOutcome(input, context, state, description, note, refused, warnings);
   return { state, description: cut(description), noted: note !== undefined, ...(refused ? { refused } : {}), warnings };
 }
 
@@ -323,6 +440,9 @@ export async function postOpenPlanReports(input: OpenPlanPostInput): Promise<{ p
       try {
         const text = await forge.jobArtifact(job.id, `${input.artifactDir.replace(/\/+$/, "")}/${PR_PLAN_REPORT_FILE}`);
         if (text !== undefined) writeFileSync(join(dir, PR_PLAN_REPORT_FILE), text);
+        // #4799: a product's plan verb writes its plan note hand-off in place of the report.
+        const handoff = text === undefined ? await forge.jobArtifact(job.id, `${input.artifactDir.replace(/\/+$/, "")}/${PR_PLAN_NOTE_FILE}`) : undefined;
+        if (handoff !== undefined) writeFileSync(join(dir, PR_PLAN_NOTE_FILE), handoff);
         const posted = await postPlanReport({
           // The status links to the plan job it reports on, which is how the next run knows it is posted.
           forge: job.url ? { ...forge, runUrl: job.url } : forge,

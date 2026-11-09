@@ -13,6 +13,7 @@ import type { CiProductWords, CiProductWordsInput } from "./ci-product-words";
 import type { ProductMcpHook } from "./cli/mcp/product-tools";
 import type { ProductWaveHook } from "./op/op-waves-after-plan";
 import { OTLP_EXPORTER_FLOOR } from "./otlp";
+import { NEXT_RELEASE } from "./release-floors";
 
 /**
  * The first chant with the product pipeline (#4550): the words, the
@@ -116,6 +117,23 @@ export {
   type ProductPipelineOptions,
 } from "./components/product-pipeline";
 export { prActionJob, PR_ACTION_JOB, prApplyComment, prCommentLockJobs, prCommentPreviewJob, prLoopSetup, engineSetupLines, withProductBin, type PrActionJob, type PrActionJobOptions, type PrCommentLockJob, type PrCommentPreviewJob } from "./components/pr-pipeline";
+
+/**
+ * The product plan (#4799): `productPipelineJobs(forge, env, { words,
+ * productPlan })` runs the product's plan verb in place of `pr-plan`, one
+ * plan job and one plan-note job per target, each with only its target's
+ * variables and secrets and an optional write probe, and `pr-post` posts the
+ * plan note hand-off the verb wrote (`planNoteHandoff`, `PR_PLAN_NOTE_FILE`
+ * in `@intentius/chant/pr-plan-note`). The forge lexicons render the
+ * workflow in process with no component graph: `generateProductPlanPipeline`
+ * (github), `generateForgejoProductPlanPipeline` (forgejo) and
+ * `generateGitlabProductPlanPipeline` (gitlab), each under
+ * `components/product-plan-pipeline`. A product feature-detects on this
+ * floor.
+ */
+export const PRODUCT_PLAN_FLOOR = NEXT_RELEASE;
+export { productPlanJobs, PR_PLAN_NOTE_WORDS_ENV, type ProductPlanJob, type ProductPlanOptions, type ProductPlanTarget } from "./components/product-plan";
+export { planNoteHandoff, PR_PLAN_NOTE_FILE, type PrPlanNoteHandoff } from "./pr-plan-note";
 
 /**
  * Day-2 actions in the product pipeline (#4654): the `action` comment
