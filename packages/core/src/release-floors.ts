@@ -30,6 +30,9 @@ export const TERRAFORM_APPLY_COMMAND_HOOK_FLOOR = NEXT_RELEASE;
 /** The first chant with `@intentius/chant/forge-flags` (`forgeTargetWith`, `forgeTargetFromFlags`, `apiBaseOf`), `@intentius/chant/chant-install` (`bundledChant`, `chantArgv`, `installChantResolveFallback`) and `noteLimit` and `fitNote` in `@intentius/chant/plan-summary` (#4800). */
 export const PRODUCT_HELPERS_FLOOR = NEXT_RELEASE;
 
+/** The first chant with `@intentius/chant/ci-image`: `productImageStages`, `productImageDockerfile` and `derivedImageDockerfile` for a product's CI image, and `ciToolFetchScript`, `ciToolInstallLine` and `installCiTool`, the digest-checked engine installs, with the terraform lexicon's `choudoufuInstallLine` checked the same way (#4784). */
+export const CI_IMAGE_FLOOR = NEXT_RELEASE;
+
 /** The first chant with `@intentius/chant/drift-issue`, whose `keepDriftIssue` keeps one drift issue per environment from a product's words and the drift records (#4790). */
 export const DRIFT_ISSUE_FLOOR = NEXT_RELEASE;
 

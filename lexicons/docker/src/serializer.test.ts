@@ -3,6 +3,7 @@ import { dockerSerializer } from "./serializer";
 import { composeKey } from "./compose-key";
 import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
 import { INTRINSIC_MARKER } from "@intentius/chant/intrinsic";
+import { dockerfileText, productImageStages } from "@intentius/chant/ci-image";
 
 // ── Mock entities ──────────────────────────────────────────────────
 
@@ -314,6 +315,18 @@ describe("dockerSerializer.serialize — Dockerfile steps", () => {
     const result = dockerSerializer.serialize(new Map<string, Declarable>([["app", new MockDockerfile(props)]]));
     return (result as { files: Record<string, string> }).files["Dockerfile.app"]!;
   };
+
+  test("a product image's stages from @intentius/chant/ci-image serialize as ci-image writes them (#4784)", () => {
+    const stages = productImageStages({
+      name: "terragucci-tofu",
+      product: "terragucci",
+      description: "OpenTofu 1.13.1 and the terragucci engine",
+      source: "https://github.com/INTENTIUS/terragucci",
+      tools: [{ tool: "tofu", version: "1.13.1" }],
+      bundle: { file: "packages/terragucci/dist/terragucci.mjs", bin: "terragucci" },
+    });
+    expect(dockerfile({ stages })).toBe(dockerfileText(stages));
+  });
 
   test("steps are written in the order given, interleaving COPY and RUN", () => {
     expect(dockerfile({
