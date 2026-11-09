@@ -24,6 +24,9 @@ export const NEXT_RELEASE = "0.124.86";
 /** The first chant with `chant dev local` and `chant dev bundle-check`, `@intentius/chant/local-chant` and `@intentius/chant/bundle-check` (`chantRuntimeTarget`, `chantExternalPlugin`, `checkBundle`): a product built against a chant checkout, and its bundle checked, without its own scripts (#4787). */
 export const LOCAL_CHANT_FLOOR = NEXT_RELEASE;
 
+/** The first chant with `chant workspace ref-gate` (pre-receive, pre-push, check, status, attach, install) and `refs` in `.chant/trust.json`, the checks a ref update needs evidence for (#4867). */
+export const REF_GATE_FLOOR = NEXT_RELEASE;
+
 /** The first chant whose overdue check finds a schedule in any pipeline file, and whose `ScheduledWatch` takes a product's `files` and GitLab `schedule` selector (#4789). */
 export const OVERDUE_PIPELINE_FILES_FLOOR = NEXT_RELEASE;
 

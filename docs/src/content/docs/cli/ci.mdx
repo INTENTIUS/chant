@@ -572,7 +572,7 @@ chant ci serve --forge github --repo acme/app --env prod --land \
 
 ### Any git server
 
-`--forge git` serves a repository on a git server with no forge API, such as plain sshd, Soft Serve or a bare repository ([#4016](https://github.com/INTENTIUS/chant/issues/4016) gap 6). The target's head comes from `git ls-remote origin`. There are no pull requests to plan, so the target moves only through land branches and direct pushes. No commit status is set, and `ci serve` says so once on stderr. The jobs run without `--forge`. `--repo` is optional and only names the state file's repository, by default `origin`'s URL. The remote should protect the `ci/*` and `release/*` tags itself, with a pre-receive hook where it has no rule for them.
+`--forge git` serves a repository on a git server with no forge API, such as plain sshd, Soft Serve or a bare repository ([#4016](https://github.com/INTENTIUS/chant/issues/4016) gap 6). The target's head comes from `git ls-remote origin`. There are no pull requests to plan, so the target moves only through land branches and direct pushes. No commit status is set, and `ci serve` says so once on stderr. The jobs run without `--forge`. `--repo` is optional and only names the state file's repository, by default `origin`'s URL. The remote should protect the `ci/*` and `release/*` tags itself, with a pre-receive hook where it has no rule for them. The [ref gate](/chant/cli/workspace-ref-gate/) writes a pre-receive hook that refuses a push to a protected branch whose commit lacks the evidence `.chant/trust.json` at base requires.
 
 ```bash
 chant ci serve --forge git --env prod --land --build-command 'npm ci && npx chant run check'

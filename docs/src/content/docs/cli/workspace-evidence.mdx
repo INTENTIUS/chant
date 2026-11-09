@@ -28,6 +28,8 @@ Verifying needs the envelope, the repository's objects and the runner keys in th
 
 Evidence is never reused on trust. `verify` hashes each record again at `--at` (default `HEAD`). If every record still matches, the evidence is `current`. If any record changed or is gone, it's `stale`, and the command exits 1.
 
+A ref update can require current evidence for named checks: see [`workspace ref-gate`](/chant/cli/workspace-ref-gate/).
+
 ## Runner keys
 
 Runner keys belong to a service or a CI identity, never to a person. They're listed in `.chant/trust.json` at base:

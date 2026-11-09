@@ -771,6 +771,14 @@ export interface ParsedArgs {
   signer?: string;
   /** `chant workspace evidence verify --envelope <file>` (#2553). */
   envelope?: string;
+  /** `chant workspace ref-gate check|status --ref <ref>` (#4867): the ref the update is to. */
+  ref?: string;
+  /** `chant workspace ref-gate install --hook <pre-receive|pre-push>` (#4867). */
+  hook?: string;
+  /** `chant workspace ref-gate install --git-dir <dir>` (#4867): the repository whose hooks directory gets the hook. */
+  gitDir?: string;
+  /** `chant workspace ref-gate --ledger <file>` (#4867): the ledger file decisions are appended to. */
+  ledger?: string;
   /** `chant workspace signers rotate --threshold <n>` (#2553). */
   threshold?: string;
   /**

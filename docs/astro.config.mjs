@@ -410,6 +410,7 @@ export default defineConfig({
 								{ label: 'workspace trust', slug: 'cli/workspace-trust' },
 								{ label: 'workspace signers', slug: 'cli/workspace-signers' },
 								{ label: 'workspace evidence', slug: 'cli/workspace-evidence' },
+								{ label: 'workspace ref-gate', slug: 'cli/workspace-ref-gate' },
 								{ label: 'workspace lineage', slug: 'cli/workspace-lineage' },
 								{ label: 'workspace upgrade', slug: 'cli/workspace-upgrade' },
 								{ label: 'workspace adopt-lineage', slug: 'cli/workspace-adopt-lineage' },

@@ -47,6 +47,7 @@ Each schema ships in `@intentius/chant` at `src/workspace/<command>.schema.json`
 | [`chant workspace wip`](/chant/cli/workspace-wip/#reading-work-in-progress) | `--json` | `https://intentius.io/chant/schemas/workspace/wip/v1/wip.schema.json` |
 | [`chant workspace signers`](/chant/cli/workspace-signers/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/signers/v1/signers.schema.json` |
 | [`chant workspace evidence verify`](/chant/cli/workspace-evidence/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/evidence/v1/evidence.schema.json` |
+| [`chant workspace ref-gate`](/chant/cli/workspace-ref-gate/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/ref-gate/v1/ref-gate.schema.json` |
 | [`chant ci last-green`](/chant/cli/ci/#ci-last-green) | `--json` | `https://intentius.io/chant/schemas/workspace/ci-last-green/v1/ci-last-green.schema.json` |
 | [`chant ci list`](/chant/cli/ci/#ci-list) | `--json` | `https://intentius.io/chant/schemas/workspace/ci-list/v1/ci-list.schema.json` |
 | [`chant ci run --report-url`](/chant/cli/ci/#the-run-index), the file it keeps, and [`chant ci runs`](/chant/cli/ci/#ci-runs) with `--json` | `<report-url>/runs/index.json`, floor chant 0.124.31 | `https://intentius.io/chant/schemas/workspace/ci-run-index/v1/ci-run-index.schema.json` |
@@ -407,6 +408,9 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `runner-key-invalid` | error, `evidence sign`, `runs sign` and `trust runner add` | The key is not an Ed25519 private key in PEM. For `trust runner add`, it is not an `ssh-ed25519` public key or an Ed25519 key in PEM. |
 | `runner-key-is-signer` | error, `evidence sign`, `runs sign` and `trust runner add` | The key is a person's key in the signers file, or `trust runner add` names a signer. Evidence and run statements are signed by a service or CI identity. |
 | `runner-key-unlisted` | error, `evidence sign` and `runs sign` | The policy at base lists no runner with the key. |
+| `ref-update-invalid` | error, `ref-gate pre-receive` and `pre-push` | The hook's standard input is not the lines git hands a pre-receive or pre-push hook. |
+| `ref-evidence-missing` | check verdict, `ref-gate` | No runner evidence for a check the policy at base requires for the ref is attached to the pushed commit ([#4867](https://github.com/INTENTIUS/chant/issues/4867)). |
+| `ref-evidence-stale` | check verdict, `ref-gate` | Evidence for a required check verifies, but a record it names changed after it was signed, or it names no records and was signed over another tree. |
 | `lock-invalid` | finding, `check` | The lineage lock can't be read. |
 | `manual-step-open` | finding, `check` | A scope in the lineage lock has an open manual step. |
 | `work-kind-missing` | error, `work` | No work kind to find the item in: `--kind` names a kind with no work block, or the declaration names no work kind. |

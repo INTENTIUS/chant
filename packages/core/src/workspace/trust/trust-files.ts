@@ -202,7 +202,7 @@ export function trustConfigProblems(raw: unknown): string[] {
   const check = (field: string, ok: boolean, message: string) => {
     if (!ok) problems.push(`${field}: ${message}`);
   };
-  check("/", only(raw, ["schema", "signers", "roles", "adopted", "runners", "passkeys", "admitted"]), "unknown key");
+  check("/", only(raw, ["schema", "signers", "roles", "adopted", "runners", "passkeys", "admitted", "refs"]), "unknown key");
   check("schema", raw.schema === 1, "expected 1");
   check("signers", optional(raw.signers, isRepoPath), "a path inside the repository, with / separators and no ..");
   check(
@@ -254,6 +254,26 @@ export function trustConfigProblems(raw: unknown): string[] {
       ),
     ),
     "admitted signers, by return id",
+  );
+  check(
+    "refs",
+    optional(raw.refs, (a) =>
+      Array.isArray(a) &&
+      a.every(
+        (e) =>
+          isObject(e) && only(e, ["ref", "checks", "status", "overrides"]) &&
+          typeof e.ref === "string" && /^refs\/[^\s\\]+$/.test(e.ref) &&
+          optional(e.status, nonEmpty) && optional(e.overrides, (o) => o === "ledger" || o === "sealed") &&
+          Array.isArray(e.checks) && e.checks.length > 0 &&
+          e.checks.every(
+            (c) =>
+              isObject(c) && only(c, ["check", "action", "command"]) &&
+              typeof c.check === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(c.check) &&
+              optional(c.action, (x) => x === "block" || x === "warn") && nonEmpty(c.command),
+          ),
+      ),
+    ),
+    "ref rules: a ref pattern and the checks it requires, each with a command",
   );
   return problems;
 }

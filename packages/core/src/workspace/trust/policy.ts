@@ -49,6 +49,11 @@ const repoPath = z
     message: "a path inside the repository, with / separators and no ..",
   });
 
+/** A check name a ref rule requires (#4867): it is also part of an override's subject. */
+export const REF_CHECK_NAME = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
+/** A ref pattern (#4867): a full ref name, where `*` matches within one `/` segment and `**` matches across them. */
+export const REF_PATTERN = /^refs\/[^\s\\]+$/;
+
 export const trustConfigSchema = z
   .object({
     schema: z.literal(1),
@@ -127,6 +132,37 @@ export const trustConfigSchema = z
           .strict(),
       )
       .optional(),
+    /**
+     * The checks a ref update must carry evidence for (#4867). Each entry
+     * names a ref pattern and the checks a commit pushed there needs current
+     * runner evidence of, each with what to do without it (`block` refuses
+     * the update, `warn` admits it and says what was missing) and the command
+     * that produces it. `status` is the commit status a forge requires, by
+     * default `chant/ref-gate`. `overrides` says how an override is judged:
+     * `sealed` when the signers file at base exists, else `ledger`.
+     */
+    refs: z
+      .array(
+        z
+          .object({
+            ref: z.string().regex(REF_PATTERN, "a full ref name such as refs/heads/main, where * and ** match"),
+            checks: z
+              .array(
+                z
+                  .object({
+                    check: z.string().regex(REF_CHECK_NAME, "a check name: letters, digits, . _ : -"),
+                    action: z.enum(["block", "warn"]).optional(),
+                    command: z.string().min(1),
+                  })
+                  .strict(),
+              )
+              .min(1),
+            status: z.string().min(1).optional(),
+            overrides: z.enum(["ledger", "sealed"]).optional(),
+          })
+          .strict(),
+      )
+      .optional(),
   })
   .strict();
 
@@ -134,6 +170,14 @@ export type TrustConfig = z.infer<typeof trustConfigSchema>;
 
 /** The role whose holders may change the policy. Without any grant of it, every signer may. */
 export const ADMIN_ROLE = "admin";
+
+/** A ref rule of `.chant/trust.json` (#4867), with `action` filled in. */
+export interface RefRule {
+  ref: string;
+  checks: Array<{ check: string; action: "block" | "warn"; command: string }>;
+  status?: string;
+  overrides?: "ledger" | "sealed";
+}
 
 /** A key that signs runner evidence: a service or CI identity. */
 export interface RunnerKey {
@@ -163,6 +207,8 @@ export interface TrustPolicy {
   passkeys?: PasskeySigner[];
   /** Signers admitted per return (#2552), keyed by return id. They verify that return's commits and seals only. */
   admitted: Record<string, Signer[]>;
+  /** The checks a ref update needs evidence for (#4867). Absent on a policy built by hand: none. */
+  refs?: RefRule[];
   /**
    * Set on a copy of the policy used for one returned record (#2552): the
    * return it came back in. A seal by a principal the policy does not list
@@ -194,7 +240,7 @@ export function policyWriters(policy: TrustPolicy): Set<string> {
 
 /** A policy with nothing in it: attestation off. */
 export function emptyPolicy(base: string | null, problems: string[] = []): TrustPolicy {
-  return { base, signersPath: DEFAULT_SIGNERS_PATH, active: false, signers: [], excluded: [], roles: {}, adopted: [], runners: [], excludedRunners: [], passkeys: [], admitted: {}, problems };
+  return { base, signersPath: DEFAULT_SIGNERS_PATH, active: false, signers: [], excluded: [], roles: {}, adopted: [], runners: [], excludedRunners: [], passkeys: [], admitted: {}, refs: [], problems };
 }
 
 /**
@@ -250,6 +296,7 @@ export function readTrustPolicy(source: RecordSource, base: string | null): Trus
     excludedRunners,
     passkeys: config.passkeys ?? [],
     admitted: admittedOf(config),
+    refs: (config.refs ?? []).map((r) => ({ ...r, checks: r.checks.map((c) => ({ ...c, action: c.action ?? "block" })) })),
     problems: [],
   };
 }
