@@ -7,7 +7,8 @@
  * every open pull request in the repository; and a head's workflow runs
  * (GitLab's pipelines), a run, its jobs, and the artifacts it kept, by name in
  * a run or across the repository, as a product's review agent reads them
- * (#4846).
+ * (#4846); the files a head changes since its merge base, a job by id, and
+ * a file of a GitLab job's artifacts (#4862).
  *
  * They take the same options as the clients in `./pr-forge.ts` and live in
  * their own module, imported only by the products that call them, so the
@@ -151,6 +152,31 @@ export interface RunJob {
   status: string;
   conclusion?: string;
   done: boolean;
+  /** The run (pipeline) it belongs to, when the forge names it (#4862). */
+  run?: number;
+  /** The branch or ref it ran on: GitHub's and Forgejo's `head_branch`, GitLab's `ref`. */
+  ref?: string;
+  /** GitLab only: true when it ran for a tag. */
+  tag?: boolean;
+  /** The job's page on the forge. */
+  url?: string;
+}
+
+/** A file a comparison changes, with the path it had before a rename when the forge names it (#4862). */
+export interface ChangedFile {
+  path: string;
+  previousPath?: string;
+}
+
+/** What {@link ForgeReads.compare} reads. */
+export interface Comparison {
+  files: ChangedFile[];
+  /**
+   * True when the forge may have left files out: GitHub lists at most 300,
+   * Forgejo listed fewer commits than it counts or a commit without its
+   * files, GitLab's compare timed out.
+   */
+  truncated: boolean;
 }
 
 /**
@@ -241,12 +267,30 @@ export interface ForgeReads {
   runJobs(run: number): Promise<RunJob[]>;
   /** The artifacts named `name` that are not expired, in a run or across the repository, newest first. */
   artifacts(name: string, opts?: ArtifactsOptions): Promise<RunArtifact[]>;
+  /**
+   * The files `head` changes since its merge base with `base` (#4862):
+   * GitHub's and Forgejo's `compare/<base>...<head>`, GitLab's
+   * `repository/compare` with `straight=false`. Forgejo names each commit's
+   * files, without a rename's old path, so a file a later commit changes
+   * back is still listed.
+   */
+  compare(base: string, head: string): Promise<Comparison>;
+  /** A job by id, or undefined when the forge has none by that id (#4862). */
+  job(id: number): Promise<RunJob | undefined>;
+  /**
+   * GitLab only: one file of a job's artifacts, as text, or undefined when
+   * the job kept no such file (#4862). GitHub and Forgejo hand an artifact
+   * out as one archive.
+   */
+  artifactFile?(job: number, path: string): Promise<string | undefined>;
 }
 
 interface Get {
   (path: string): Promise<unknown>;
   /** Pages of a list until one comes back short, at most `max` items. */
   list(path: string, max?: number): Promise<unknown[]>;
+  /** The body as text, or undefined on a 404. */
+  text(path: string): Promise<string | undefined>;
 }
 
 function getter(base: string, headers: Record<string, string>, fetchImpl: ForgeFetch, pageSize: number, pageParams: (page: number) => string): Get {
@@ -267,6 +311,14 @@ function getter(base: string, headers: Record<string, string>, fetchImpl: ForgeF
       if (items.length < pageSize) break;
     }
     return out.slice(0, max);
+  };
+  get.text = async (path) => {
+    const url = `${root}${path}`;
+    const res = await fetchImpl(url, { method: "GET", headers });
+    const text = await res.text();
+    if (res.status === 404) return undefined;
+    if (!res.ok) throw new ForgeApiError("GET", url, res.status, text);
+    return text;
   };
   return get;
 }
@@ -536,23 +588,70 @@ function githubShapedReads(kind: "github" | "forgejo", opts: GithubForgeOptions)
       return out.slice(0, limit);
     },
     run: async (id) => runOf(await orUndefined(get(`${repo}/actions/runs/${id}`))),
-    async runJobs(run) {
-      const out: RunJob[] = [];
-      for (const j of await listIn(get, `${repo}/actions/runs/${run}/jobs`, "jobs", pageSize, pageParams, 1000)) {
-        const id = num(j.id);
-        const name = str(j.name);
-        if (id === undefined || !name) continue;
-        const status = str(j.status) ?? "";
-        const conclusion = str(j.conclusion);
-        out.push({ id, name, status, ...(conclusion ? { conclusion } : {}), done: OVER.has(status) });
-      }
-      return out;
-    },
+    runJobs: async (run) => (await listIn(get, `${repo}/actions/runs/${run}/jobs`, "jobs", pageSize, pageParams, 1000)).map(jobOf).filter(defined),
     async artifacts(name, o = {}) {
       const where = o.run !== undefined ? `${repo}/actions/runs/${o.run}/artifacts` : `${repo}/actions/artifacts`;
       const listed = await listIn(get, `${where}?name=${encodeURIComponent(name)}`, "artifacts", pageSize, pageParams, o.limit ?? RUN_LIMIT);
       return listed.map((a) => artifactOf(a, name)).filter(defined).map((a) => (o.run !== undefined && a.run === undefined ? { ...a, run: o.run } : a)).sort(byIdDesc);
     },
+    async compare(base, head) {
+      const got = await get(`${repo}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`);
+      const c = isObject(got) ? got : {};
+      if (kind === "github") {
+        const listed = Array.isArray(c.files) ? c.files.filter(isObject) : [];
+        const files = listed.map((f) => changed(f.filename, f.previous_filename)).filter(defined);
+        return { files, truncated: listed.length >= GITHUB_COMPARE_FILES };
+      }
+      // Forgejo names the files of each commit between the merge base and the head.
+      const commits = Array.isArray(c.commits) ? c.commits.filter(isObject) : [];
+      const seen = new Set<string>();
+      const files: ChangedFile[] = [];
+      for (const commit of commits) {
+        for (const f of Array.isArray(commit.files) ? commit.files.filter(isObject) : []) {
+          const file = changed(f.filename);
+          if (file && !seen.has(file.path)) {
+            seen.add(file.path);
+            files.push(file);
+          }
+        }
+      }
+      const total = num(c.total_commits);
+      return { files, truncated: (total !== undefined && commits.length < total) || commits.some((commit) => !Array.isArray(commit.files)) };
+    },
+    job: async (id) => jobOf(await orUndefined(get(`${repo}/actions/jobs/${id}`))),
+  };
+}
+
+/** GitHub lists at most this many files of a comparison. */
+const GITHUB_COMPARE_FILES = 300;
+
+const changed = (path: unknown, previous?: unknown): ChangedFile | undefined => {
+  const p = str(path);
+  const was = str(previous);
+  return p ? { path: p, ...(was && was !== p ? { previousPath: was } : {}) } : undefined;
+};
+
+/** A job as GitHub, Forgejo or GitLab answers it. */
+function jobOf(j: unknown): RunJob | undefined {
+  if (!isObject(j)) return undefined;
+  const id = num(j.id);
+  const name = str(j.name);
+  if (id === undefined || !name) return undefined;
+  const status = str(j.status) ?? "";
+  const conclusion = str(j.conclusion);
+  const run = num(j.run_id) ?? (isObject(j.pipeline) ? num(j.pipeline.id) : undefined);
+  const ref = str(j.head_branch) ?? str(j.ref);
+  const url = str(j.html_url) ?? str(j.web_url);
+  return {
+    id,
+    name,
+    status,
+    ...(conclusion ? { conclusion } : {}),
+    done: OVER.has(status),
+    ...(run !== undefined ? { run } : {}),
+    ...(ref ? { ref } : {}),
+    ...(typeof j.tag === "boolean" ? { tag: j.tag } : {}),
+    ...(url ? { url } : {}),
   };
 }
 
@@ -693,23 +792,21 @@ export function gitlabReads(opts: GitlabForgeOptions): ForgeReads {
       return listed.map(detail).filter(defined);
     },
     run: async (id) => pipelineOf(await orUndefined(get(`${project}/pipelines/${id}`))),
-    async runJobs(run) {
-      const out: RunJob[] = [];
-      for (const j of await get.list(`${project}/pipelines/${run}/jobs?include_retried=false`)) {
-        const id = isObject(j) ? num(j.id) : undefined;
-        const name = isObject(j) ? str(j.name) : undefined;
-        if (!isObject(j) || id === undefined || !name) continue;
-        const status = str(j.status) ?? "";
-        out.push({ id, name, status, done: OVER.has(status) });
-      }
-      return out;
-    },
+    runJobs: async (run) => (await get.list(`${project}/pipelines/${run}/jobs?include_retried=false`)).map(jobOf).filter(defined),
     async artifacts(name, o = {}) {
       const limit = o.limit ?? RUN_LIMIT;
       // GitLab keeps artifacts per job: a pipeline's jobs of that name, or the project's newest jobs, that kept an archive.
       const jobs = o.run !== undefined ? await get.list(`${project}/pipelines/${o.run}/jobs`) : await get.list(`${project}/jobs`, 10 * limit);
       return jobs.filter(isObject).map((j) => archiveOf(j, name)).filter(defined).sort(byIdDesc).slice(0, limit);
     },
+    async compare(base, head) {
+      const got = await get(`${project}/repository/compare?from=${encodeURIComponent(base)}&to=${encodeURIComponent(head)}&straight=false`);
+      const c = isObject(got) ? got : {};
+      const files = (Array.isArray(c.diffs) ? c.diffs.filter(isObject) : []).map((d) => changed(d.new_path ?? d.old_path, d.old_path)).filter(defined);
+      return { files, truncated: c.compare_timeout === true };
+    },
+    job: async (id) => jobOf(await orUndefined(get(`${project}/jobs/${id}`))),
+    artifactFile: (job, path) => get.text(`${project}/jobs/${job}/artifacts/${path.split("/").map(encodeURIComponent).join("/")}`),
   };
 }
 

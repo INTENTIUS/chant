@@ -48,6 +48,9 @@ export const YODEL_CONFLICT_REPLY_FLOOR = "0.124.78";
 /** The first chant with `@intentius/chant/ci-note-commands`, `chant components pr-notes` and the GitLab pipeline's `note-commands` job (`--note-commands`), and whose forge reads answer `branchRuns` and `pullRequestsUpdated` (#4785). */
 export const NOTE_COMMANDS_FLOOR = NEXT_RELEASE;
 
+/** The first chant whose forge reads answer `compare`, `job` and, on GitLab, `artifactFile`, and whose `RunJob` names its `run`, `ref`, `tag` and `url` (#4862). */
+export const PR_FORGE_COMPARE_READS_FLOOR = NEXT_RELEASE;
+
 /** The first chant whose forge reads answer `headRuns`, `run`, `runJobs` and `artifacts`: a head's workflow runs (GitLab's pipelines), a run, its jobs and its artifacts by name (#4846). */
 export const PR_FORGE_RUN_READS_FLOOR = NEXT_RELEASE;
 
