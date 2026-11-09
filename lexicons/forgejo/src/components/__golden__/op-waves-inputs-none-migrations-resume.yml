@@ -1,0 +1,22 @@
+name: migrations-resume
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: migrations-resume
+  cancel-in-progress: true
+
+jobs:
+  resume:
+    runs-on: docker
+    container: node:22
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: npm ci
+      - name: Resume the waves of migrations whose approval arrived
+        run: chant run resume --op migrations
+        env:
+          CHANT_FORGE_TOKEN: '${{ secrets.CHANT_FORGE_TOKEN }}'

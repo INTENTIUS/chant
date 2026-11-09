@@ -89,7 +89,7 @@
  * the wave (exit 8). See `./op-waves-run.ts`.
  */
 
-import type { OpEnvironment, OpSetupStep } from "../lexicon";
+import type { OpEnvironment, OpSetupStep, OpWaveJobInputs } from "../lexicon";
 import type { CiRunner } from "../ci-jobs";
 import type { CloudTradeSpec } from "../ci-identity";
 import { gatePointProblems, type GatePoint } from "./gate-point";
@@ -818,6 +818,24 @@ export interface OpWavesResume {
 export function opWaveBinArgv(bin?: string): string[] {
   const words = (bin ?? "").split(/\s+/).filter(Boolean);
   return words.length > 0 ? words : ["chant"];
+}
+
+/**
+ * A product's inputs for each wave's jobs (#4791, `OpWavesPipelineOptions.waveJobs`),
+ * by wave index from 0. Throws on a key that names none of the spec's waves,
+ * so a renamed wave cannot drop its login or report without a word.
+ */
+export function opWaveJobInputsByWave(spec: Pick<OpWavesSpec, "name" | "waves">, waveJobs: Readonly<Record<string, OpWaveJobInputs>> | undefined): Array<OpWaveJobInputs | undefined> {
+  const names = spec.waves.map((w) => w.name);
+  for (const key of Object.keys(waveJobs ?? {})) {
+    if (!names.includes(key)) throw new Error(`Op waves "${spec.name}": waveJobs names the wave "${key}", which the spec does not have (${names.join(", ")}).`);
+  }
+  return names.map((name) => waveJobs?.[name]);
+}
+
+/** A wave job's artifact name (#4791): `{job}` in `name` is the job's name. */
+export function opWaveJobArtifactName(name: string, jobName: string): string {
+  return name.split("{job}").join(jobName);
 }
 
 /** The command a resume job runs, through the product's bin when it has one (#4607). */

@@ -1,0 +1,155 @@
+name: migrations
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  wave-1-dev:
+    runs-on: ubuntu-latest
+    container: node:22
+    timeout-minutes: 180
+    env:
+      CHANT_LOCK_WAIT: '10500'
+    steps:
+      - name: Check the job runs where the spec set it to run
+        env:
+          CHANT_JOB_GUARD: '{"forge":"github","job":"wave 1 (dev) of migrations","branches":["main"]}'
+        run: '(cd / && node -e ''"use strict";const E=process.env,A="chant-check-job";const shown=(v)=>v===undefined||v===null||v===""?"none":v;const fail=(m)=>{console.error("check-job: "+m);process.exit(9)};let x;try{x=JSON.parse(E.CHANT_JOB_GUARD||"")}catch(e){fail("CHANT_JOB_GUARD is not JSON")}if(!x||!["github","gitlab","forgejo"].includes(x.forge)||!Array.isArray(x.branches))fail("CHANT_JOB_GUARD is not a guard spec");const tags=(r)=>{if(r===undefined)return undefined;const t=r.trim();if(t.startsWith("[")){try{const v=JSON.parse(t);if(Array.isArray(v))return v.map(String)}catch(e){}}return t===""?[]:t.split(",").map((s)=>s.trim()).filter((s)=>s!=="")};const claimsOf=(tok)=>{const p=tok.split(".")[1];if(!p)throw new Error("the forge\u0027s OIDC token is not a JWT");const c=JSON.parse(Buffer.from(p.replace(/-/g,"+").replace(/_/g,"/"),"base64").toString("utf-8"));if(!c||typeof c!=="object")throw new Error("the forge\u0027s OIDC token has no claims");return c};async function seenOf(){if(x.forge==="gitlab")return{forgeEnvironment:E.CI_ENVIRONMENT_NAME||null,ref:E.CI_COMMIT_REF_NAME,refProtected:E.CI_COMMIT_REF_PROTECTED,runnerTags:tags(E.CI_RUNNER_TAGS)};const s={ref:E.GITHUB_REF};let c;if(x.forge==="github"&&x.forgeEnvironment!==undefined){try{if(!E.ACTIONS_ID_TOKEN_REQUEST_URL||!E.ACTIONS_ID_TOKEN_REQUEST_TOKEN)throw new Error("the job may request no OIDC token (no ACTIONS_ID_TOKEN_REQUEST_URL); it needs the id-token: write permission");const r=await fetch(E.ACTIONS_ID_TOKEN_REQUEST_URL+"&audience="+encodeURIComponent(A),{headers:{authorization:"bearer "+E.ACTIONS_ID_TOKEN_REQUEST_TOKEN}});if(!r.ok)throw new Error("the OIDC token request answered "+r.status);const v=(await r.json()).value;if(typeof v!=="string")throw new Error("the OIDC token request answered no token");c=claimsOf(v);s.forgeEnvironment=typeof c.environment==="string"&&c.environment!==""?c.environment:null}catch(e){s.forgeEnvironmentError=e&&e.message?e.message:String(e)}}const run=c&&typeof c.runner_environment==="string"?c.runner_environment:E.RUNNER_ENVIRONMENT;if(run)s.runnerEnvironment=run;return s}seenOf().then((s)=>{const P=[],C=[],S=[];const fe=x.forgeEnvironment;if(x.forge==="forgejo")S.push("forge environment (Forgejo has none)");else if(fe!==undefined){if(s.forgeEnvironmentError!==undefined)P.push("forge environment: expected "+fe+", and it could not be read: "+s.forgeEnvironmentError);else if(s.forgeEnvironment!==fe)P.push("forge environment: expected "+fe+", found "+shown(s.forgeEnvironment));else C.push("forge environment "+fe)}const b=x.branches.filter((v)=>v!=="");if(b.length===0)P.push("ref: the job names no branch to run from");else if(x.forge==="gitlab"){if(!s.ref||!b.includes(s.ref))P.push("ref: expected "+b.join(" or ")+", found "+shown(s.ref));else C.push("ref "+s.ref);if(s.refProtected!=="true")P.push("ref: expected a protected ref (CI_COMMIT_REF_PROTECTED true), found "+shown(s.refProtected));else C.push("protected ref")}else{const refs=b.map((v)=>"refs/heads/"+v);if(!s.ref||!refs.includes(s.ref))P.push("ref: expected "+refs.join(" or ")+", found "+shown(s.ref));else C.push("ref "+s.ref)}if(x.forge==="gitlab"){const w=x.runnerTags||[];if(w.length>0){const h=s.runnerTags;const miss=w.filter((t)=>!(h||[]).includes(t));if(h===undefined)P.push("runner: expected tags "+w.join(", ")+", and the job has no CI_RUNNER_TAGS");else if(miss.length>0)P.push("runner: expected tags "+w.join(", ")+", found "+(h.length?h.join(", "):"none"));else C.push("runner tags "+w.join(", "))}}else if(x.selfHosted){if(s.runnerEnvironment===undefined)S.push("runner (the runner says nothing about itself: no RUNNER_ENVIRONMENT)");else if(s.runnerEnvironment!=="self-hosted")P.push("runner: expected self-hosted, found "+s.runnerEnvironment);else C.push("self-hosted runner")}const at=(x.product||"chant")+" check-job: "+x.job;if(P.length>0){for(const p of P)console.error(at+": "+p);console.error(at+": this job does not run where the spec set it to run, so it stops before any credential is taken or code checked out");process.exit(9)}console.log(at+": "+(C.length?C.join(", "):"nothing to check")+(S.length?"; not checked: "+S.join(", "):""))}).catch((e)=>fail(e&&e.message?e.message:String(e)));'')'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - run: npm ci
+      - name: Plan, gate and apply wave 1 (dev)
+        run: chant run wave --spec waves.json --wave 1
+      - name: Keep the job's outcome
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: migrations-wave-1-dev-outcome
+          path: .chant/op-waves/migrations/outcomes/outcome-wave-1.json
+          if-no-files-found: ignore
+          include-hidden-files: true
+          overwrite: true
+  wave-2-prod-decide:
+    runs-on: ubuntu-latest
+    needs:
+      - wave-1-dev
+    if: '!cancelled()'
+    container: node:22
+    timeout-minutes: 180
+    env:
+      CHANT_LOCK_WAIT: '10500'
+    steps:
+      - name: Check the job runs where the spec set it to run
+        env:
+          CHANT_JOB_GUARD: '{"forge":"github","job":"the deciding job of wave 2 (prod) of migrations","branches":["main"]}'
+        run: '(cd / && node -e ''"use strict";const E=process.env,A="chant-check-job";const shown=(v)=>v===undefined||v===null||v===""?"none":v;const fail=(m)=>{console.error("check-job: "+m);process.exit(9)};let x;try{x=JSON.parse(E.CHANT_JOB_GUARD||"")}catch(e){fail("CHANT_JOB_GUARD is not JSON")}if(!x||!["github","gitlab","forgejo"].includes(x.forge)||!Array.isArray(x.branches))fail("CHANT_JOB_GUARD is not a guard spec");const tags=(r)=>{if(r===undefined)return undefined;const t=r.trim();if(t.startsWith("[")){try{const v=JSON.parse(t);if(Array.isArray(v))return v.map(String)}catch(e){}}return t===""?[]:t.split(",").map((s)=>s.trim()).filter((s)=>s!=="")};const claimsOf=(tok)=>{const p=tok.split(".")[1];if(!p)throw new Error("the forge\u0027s OIDC token is not a JWT");const c=JSON.parse(Buffer.from(p.replace(/-/g,"+").replace(/_/g,"/"),"base64").toString("utf-8"));if(!c||typeof c!=="object")throw new Error("the forge\u0027s OIDC token has no claims");return c};async function seenOf(){if(x.forge==="gitlab")return{forgeEnvironment:E.CI_ENVIRONMENT_NAME||null,ref:E.CI_COMMIT_REF_NAME,refProtected:E.CI_COMMIT_REF_PROTECTED,runnerTags:tags(E.CI_RUNNER_TAGS)};const s={ref:E.GITHUB_REF};let c;if(x.forge==="github"&&x.forgeEnvironment!==undefined){try{if(!E.ACTIONS_ID_TOKEN_REQUEST_URL||!E.ACTIONS_ID_TOKEN_REQUEST_TOKEN)throw new Error("the job may request no OIDC token (no ACTIONS_ID_TOKEN_REQUEST_URL); it needs the id-token: write permission");const r=await fetch(E.ACTIONS_ID_TOKEN_REQUEST_URL+"&audience="+encodeURIComponent(A),{headers:{authorization:"bearer "+E.ACTIONS_ID_TOKEN_REQUEST_TOKEN}});if(!r.ok)throw new Error("the OIDC token request answered "+r.status);const v=(await r.json()).value;if(typeof v!=="string")throw new Error("the OIDC token request answered no token");c=claimsOf(v);s.forgeEnvironment=typeof c.environment==="string"&&c.environment!==""?c.environment:null}catch(e){s.forgeEnvironmentError=e&&e.message?e.message:String(e)}}const run=c&&typeof c.runner_environment==="string"?c.runner_environment:E.RUNNER_ENVIRONMENT;if(run)s.runnerEnvironment=run;return s}seenOf().then((s)=>{const P=[],C=[],S=[];const fe=x.forgeEnvironment;if(x.forge==="forgejo")S.push("forge environment (Forgejo has none)");else if(fe!==undefined){if(s.forgeEnvironmentError!==undefined)P.push("forge environment: expected "+fe+", and it could not be read: "+s.forgeEnvironmentError);else if(s.forgeEnvironment!==fe)P.push("forge environment: expected "+fe+", found "+shown(s.forgeEnvironment));else C.push("forge environment "+fe)}const b=x.branches.filter((v)=>v!=="");if(b.length===0)P.push("ref: the job names no branch to run from");else if(x.forge==="gitlab"){if(!s.ref||!b.includes(s.ref))P.push("ref: expected "+b.join(" or ")+", found "+shown(s.ref));else C.push("ref "+s.ref);if(s.refProtected!=="true")P.push("ref: expected a protected ref (CI_COMMIT_REF_PROTECTED true), found "+shown(s.refProtected));else C.push("protected ref")}else{const refs=b.map((v)=>"refs/heads/"+v);if(!s.ref||!refs.includes(s.ref))P.push("ref: expected "+refs.join(" or ")+", found "+shown(s.ref));else C.push("ref "+s.ref)}if(x.forge==="gitlab"){const w=x.runnerTags||[];if(w.length>0){const h=s.runnerTags;const miss=w.filter((t)=>!(h||[]).includes(t));if(h===undefined)P.push("runner: expected tags "+w.join(", ")+", and the job has no CI_RUNNER_TAGS");else if(miss.length>0)P.push("runner: expected tags "+w.join(", ")+", found "+(h.length?h.join(", "):"none"));else C.push("runner tags "+w.join(", "))}}else if(x.selfHosted){if(s.runnerEnvironment===undefined)S.push("runner (the runner says nothing about itself: no RUNNER_ENVIRONMENT)");else if(s.runnerEnvironment!=="self-hosted")P.push("runner: expected self-hosted, found "+s.runnerEnvironment);else C.push("self-hosted runner")}const at=(x.product||"chant")+" check-job: "+x.job;if(P.length>0){for(const p of P)console.error(at+": "+p);console.error(at+": this job does not run where the spec set it to run, so it stops before any credential is taken or code checked out");process.exit(9)}console.log(at+": "+(C.length?C.join(", "):"nothing to check")+(S.length?"; not checked: "+S.join(", "):""))}).catch((e)=>fail(e&&e.message?e.message:String(e)));'')'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Download the earlier jobs' outcomes
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: .chant/op-waves/migrations/outcomes
+      - run: npm ci
+      - name: Plan wave 2 (prod) and decide its gate
+        run: chant run wave --spec waves.json --wave 2 --decide
+      - name: Keep wave 2's decision
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: migrations-wave-2-decision
+          path: .chant/op-waves/migrations/wave-2.json
+          if-no-files-found: ignore
+          include-hidden-files: true
+          overwrite: true
+      - name: Keep the job's outcome
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: migrations-wave-2-prod-decide-outcome
+          path: .chant/op-waves/migrations/outcomes/outcome-wave-2.json
+          if-no-files-found: ignore
+          include-hidden-files: true
+          overwrite: true
+  wave-2-prod-share-1:
+    runs-on: ubuntu-latest
+    needs:
+      - wave-2-prod-decide
+    container: node:22
+    timeout-minutes: 180
+    env:
+      CHANT_LOCK_WAIT: '10500'
+    steps:
+      - name: Check the job runs where the spec set it to run
+        env:
+          CHANT_JOB_GUARD: '{"forge":"github","job":"share 1 of wave 2 (prod) of migrations","branches":["main"]}'
+        run: '(cd / && node -e ''"use strict";const E=process.env,A="chant-check-job";const shown=(v)=>v===undefined||v===null||v===""?"none":v;const fail=(m)=>{console.error("check-job: "+m);process.exit(9)};let x;try{x=JSON.parse(E.CHANT_JOB_GUARD||"")}catch(e){fail("CHANT_JOB_GUARD is not JSON")}if(!x||!["github","gitlab","forgejo"].includes(x.forge)||!Array.isArray(x.branches))fail("CHANT_JOB_GUARD is not a guard spec");const tags=(r)=>{if(r===undefined)return undefined;const t=r.trim();if(t.startsWith("[")){try{const v=JSON.parse(t);if(Array.isArray(v))return v.map(String)}catch(e){}}return t===""?[]:t.split(",").map((s)=>s.trim()).filter((s)=>s!=="")};const claimsOf=(tok)=>{const p=tok.split(".")[1];if(!p)throw new Error("the forge\u0027s OIDC token is not a JWT");const c=JSON.parse(Buffer.from(p.replace(/-/g,"+").replace(/_/g,"/"),"base64").toString("utf-8"));if(!c||typeof c!=="object")throw new Error("the forge\u0027s OIDC token has no claims");return c};async function seenOf(){if(x.forge==="gitlab")return{forgeEnvironment:E.CI_ENVIRONMENT_NAME||null,ref:E.CI_COMMIT_REF_NAME,refProtected:E.CI_COMMIT_REF_PROTECTED,runnerTags:tags(E.CI_RUNNER_TAGS)};const s={ref:E.GITHUB_REF};let c;if(x.forge==="github"&&x.forgeEnvironment!==undefined){try{if(!E.ACTIONS_ID_TOKEN_REQUEST_URL||!E.ACTIONS_ID_TOKEN_REQUEST_TOKEN)throw new Error("the job may request no OIDC token (no ACTIONS_ID_TOKEN_REQUEST_URL); it needs the id-token: write permission");const r=await fetch(E.ACTIONS_ID_TOKEN_REQUEST_URL+"&audience="+encodeURIComponent(A),{headers:{authorization:"bearer "+E.ACTIONS_ID_TOKEN_REQUEST_TOKEN}});if(!r.ok)throw new Error("the OIDC token request answered "+r.status);const v=(await r.json()).value;if(typeof v!=="string")throw new Error("the OIDC token request answered no token");c=claimsOf(v);s.forgeEnvironment=typeof c.environment==="string"&&c.environment!==""?c.environment:null}catch(e){s.forgeEnvironmentError=e&&e.message?e.message:String(e)}}const run=c&&typeof c.runner_environment==="string"?c.runner_environment:E.RUNNER_ENVIRONMENT;if(run)s.runnerEnvironment=run;return s}seenOf().then((s)=>{const P=[],C=[],S=[];const fe=x.forgeEnvironment;if(x.forge==="forgejo")S.push("forge environment (Forgejo has none)");else if(fe!==undefined){if(s.forgeEnvironmentError!==undefined)P.push("forge environment: expected "+fe+", and it could not be read: "+s.forgeEnvironmentError);else if(s.forgeEnvironment!==fe)P.push("forge environment: expected "+fe+", found "+shown(s.forgeEnvironment));else C.push("forge environment "+fe)}const b=x.branches.filter((v)=>v!=="");if(b.length===0)P.push("ref: the job names no branch to run from");else if(x.forge==="gitlab"){if(!s.ref||!b.includes(s.ref))P.push("ref: expected "+b.join(" or ")+", found "+shown(s.ref));else C.push("ref "+s.ref);if(s.refProtected!=="true")P.push("ref: expected a protected ref (CI_COMMIT_REF_PROTECTED true), found "+shown(s.refProtected));else C.push("protected ref")}else{const refs=b.map((v)=>"refs/heads/"+v);if(!s.ref||!refs.includes(s.ref))P.push("ref: expected "+refs.join(" or ")+", found "+shown(s.ref));else C.push("ref "+s.ref)}if(x.forge==="gitlab"){const w=x.runnerTags||[];if(w.length>0){const h=s.runnerTags;const miss=w.filter((t)=>!(h||[]).includes(t));if(h===undefined)P.push("runner: expected tags "+w.join(", ")+", and the job has no CI_RUNNER_TAGS");else if(miss.length>0)P.push("runner: expected tags "+w.join(", ")+", found "+(h.length?h.join(", "):"none"));else C.push("runner tags "+w.join(", "))}}else if(x.selfHosted){if(s.runnerEnvironment===undefined)S.push("runner (the runner says nothing about itself: no RUNNER_ENVIRONMENT)");else if(s.runnerEnvironment!=="self-hosted")P.push("runner: expected self-hosted, found "+s.runnerEnvironment);else C.push("self-hosted runner")}const at=(x.product||"chant")+" check-job: "+x.job;if(P.length>0){for(const p of P)console.error(at+": "+p);console.error(at+": this job does not run where the spec set it to run, so it stops before any credential is taken or code checked out");process.exit(9)}console.log(at+": "+(C.length?C.join(", "):"nothing to check")+(S.length?"; not checked: "+S.join(", "):""))}).catch((e)=>fail(e&&e.message?e.message:String(e)));'')'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Download wave 2's decision
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: migrations-wave-2-decision
+          path: .chant/op-waves/migrations
+      - name: Download the earlier jobs' outcomes
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: .chant/op-waves/migrations/outcomes
+      - run: npm ci
+      - name: Apply share 1 of wave 2 (prod)
+        run: chant run wave --spec waves.json --wave 2 --share 1
+      - name: Keep the job's outcome
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: migrations-wave-2-prod-share-1-outcome
+          path: .chant/op-waves/migrations/outcomes/outcome-wave-2-share-1.json
+          if-no-files-found: ignore
+          include-hidden-files: true
+          overwrite: true
+  wave-2-prod-share-2:
+    runs-on: ubuntu-latest
+    needs:
+      - wave-2-prod-decide
+    container: node:22
+    timeout-minutes: 180
+    env:
+      CHANT_LOCK_WAIT: '10500'
+    steps:
+      - name: Check the job runs where the spec set it to run
+        env:
+          CHANT_JOB_GUARD: '{"forge":"github","job":"share 2 of wave 2 (prod) of migrations","branches":["main"]}'
+        run: '(cd / && node -e ''"use strict";const E=process.env,A="chant-check-job";const shown=(v)=>v===undefined||v===null||v===""?"none":v;const fail=(m)=>{console.error("check-job: "+m);process.exit(9)};let x;try{x=JSON.parse(E.CHANT_JOB_GUARD||"")}catch(e){fail("CHANT_JOB_GUARD is not JSON")}if(!x||!["github","gitlab","forgejo"].includes(x.forge)||!Array.isArray(x.branches))fail("CHANT_JOB_GUARD is not a guard spec");const tags=(r)=>{if(r===undefined)return undefined;const t=r.trim();if(t.startsWith("[")){try{const v=JSON.parse(t);if(Array.isArray(v))return v.map(String)}catch(e){}}return t===""?[]:t.split(",").map((s)=>s.trim()).filter((s)=>s!=="")};const claimsOf=(tok)=>{const p=tok.split(".")[1];if(!p)throw new Error("the forge\u0027s OIDC token is not a JWT");const c=JSON.parse(Buffer.from(p.replace(/-/g,"+").replace(/_/g,"/"),"base64").toString("utf-8"));if(!c||typeof c!=="object")throw new Error("the forge\u0027s OIDC token has no claims");return c};async function seenOf(){if(x.forge==="gitlab")return{forgeEnvironment:E.CI_ENVIRONMENT_NAME||null,ref:E.CI_COMMIT_REF_NAME,refProtected:E.CI_COMMIT_REF_PROTECTED,runnerTags:tags(E.CI_RUNNER_TAGS)};const s={ref:E.GITHUB_REF};let c;if(x.forge==="github"&&x.forgeEnvironment!==undefined){try{if(!E.ACTIONS_ID_TOKEN_REQUEST_URL||!E.ACTIONS_ID_TOKEN_REQUEST_TOKEN)throw new Error("the job may request no OIDC token (no ACTIONS_ID_TOKEN_REQUEST_URL); it needs the id-token: write permission");const r=await fetch(E.ACTIONS_ID_TOKEN_REQUEST_URL+"&audience="+encodeURIComponent(A),{headers:{authorization:"bearer "+E.ACTIONS_ID_TOKEN_REQUEST_TOKEN}});if(!r.ok)throw new Error("the OIDC token request answered "+r.status);const v=(await r.json()).value;if(typeof v!=="string")throw new Error("the OIDC token request answered no token");c=claimsOf(v);s.forgeEnvironment=typeof c.environment==="string"&&c.environment!==""?c.environment:null}catch(e){s.forgeEnvironmentError=e&&e.message?e.message:String(e)}}const run=c&&typeof c.runner_environment==="string"?c.runner_environment:E.RUNNER_ENVIRONMENT;if(run)s.runnerEnvironment=run;return s}seenOf().then((s)=>{const P=[],C=[],S=[];const fe=x.forgeEnvironment;if(x.forge==="forgejo")S.push("forge environment (Forgejo has none)");else if(fe!==undefined){if(s.forgeEnvironmentError!==undefined)P.push("forge environment: expected "+fe+", and it could not be read: "+s.forgeEnvironmentError);else if(s.forgeEnvironment!==fe)P.push("forge environment: expected "+fe+", found "+shown(s.forgeEnvironment));else C.push("forge environment "+fe)}const b=x.branches.filter((v)=>v!=="");if(b.length===0)P.push("ref: the job names no branch to run from");else if(x.forge==="gitlab"){if(!s.ref||!b.includes(s.ref))P.push("ref: expected "+b.join(" or ")+", found "+shown(s.ref));else C.push("ref "+s.ref);if(s.refProtected!=="true")P.push("ref: expected a protected ref (CI_COMMIT_REF_PROTECTED true), found "+shown(s.refProtected));else C.push("protected ref")}else{const refs=b.map((v)=>"refs/heads/"+v);if(!s.ref||!refs.includes(s.ref))P.push("ref: expected "+refs.join(" or ")+", found "+shown(s.ref));else C.push("ref "+s.ref)}if(x.forge==="gitlab"){const w=x.runnerTags||[];if(w.length>0){const h=s.runnerTags;const miss=w.filter((t)=>!(h||[]).includes(t));if(h===undefined)P.push("runner: expected tags "+w.join(", ")+", and the job has no CI_RUNNER_TAGS");else if(miss.length>0)P.push("runner: expected tags "+w.join(", ")+", found "+(h.length?h.join(", "):"none"));else C.push("runner tags "+w.join(", "))}}else if(x.selfHosted){if(s.runnerEnvironment===undefined)S.push("runner (the runner says nothing about itself: no RUNNER_ENVIRONMENT)");else if(s.runnerEnvironment!=="self-hosted")P.push("runner: expected self-hosted, found "+s.runnerEnvironment);else C.push("self-hosted runner")}const at=(x.product||"chant")+" check-job: "+x.job;if(P.length>0){for(const p of P)console.error(at+": "+p);console.error(at+": this job does not run where the spec set it to run, so it stops before any credential is taken or code checked out");process.exit(9)}console.log(at+": "+(C.length?C.join(", "):"nothing to check")+(S.length?"; not checked: "+S.join(", "):""))}).catch((e)=>fail(e&&e.message?e.message:String(e)));'')'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Download wave 2's decision
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: migrations-wave-2-decision
+          path: .chant/op-waves/migrations
+      - name: Download the earlier jobs' outcomes
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: .chant/op-waves/migrations/outcomes
+      - run: npm ci
+      - name: Apply share 2 of wave 2 (prod)
+        run: chant run wave --spec waves.json --wave 2 --share 2
+      - name: Keep the job's outcome
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: migrations-wave-2-prod-share-2-outcome
+          path: .chant/op-waves/migrations/outcomes/outcome-wave-2-share-2.json
+          if-no-files-found: ignore
+          include-hidden-files: true
+          overwrite: true

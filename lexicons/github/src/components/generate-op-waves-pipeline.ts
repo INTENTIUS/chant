@@ -73,12 +73,21 @@
  * runner whose labels include `self-hosted`, on a self-hosted runner. The
  * forgejo generator passes `forge: "forgejo"`, which checks the ref and
  * runner only.
+ *
+ * A product's inputs (#4791) go where it used to edit them in:
+ * `options.waveJobs` gives a wave's jobs steps just before the command (a
+ * login), and a report step and an upload after every other step, both
+ * with `if: always()`. `options.recordPlans` gives the plans job steps
+ * before it plans, its `env:`, and OIDC tokens, which ask for `id-token:
+ * write` on the job. Without them nothing changes.
  */
 
 import {
   notifyVariables,
   opWaveGroupOf,
   opWaveJobs,
+  opWaveJobArtifactName,
+  opWaveJobInputsByWave,
   opWaveJobTimeout,
   opWaveOutcomeDir,
   opWavesControlTarget,
@@ -91,7 +100,7 @@ import {
   type OpWavesSpec,
 } from "@intentius/chant/op/op-waves";
 import { CONTROL_OUTCOME_VAR, controlDispatchJob } from "@intentius/chant/control/dispatch";
-import type { OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
+import type { OpWaveJobInputs, OpWaveRunStep, OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
 import {
   assertEnvironment,
   assertSetupSteps,
@@ -150,6 +159,8 @@ export function buildGithubOpWavesDoc(
   const permissions = { contents: "write", ...(byReview ? { "pull-requests": "read" } : {}) };
   // The ruling for ci-products (2026-10-28): every wave job carries its timeout and the lock wait under it.
   const timeout = opWaveJobTimeout(options.jobTimeoutMinutes);
+  // #4791: what the product adds to each wave's jobs.
+  const inputs = opWaveJobInputsByWave(spec, options.waveJobs);
 
   const jobsDoc: Record<string, unknown> = {};
   for (const job of jobs) {
@@ -182,6 +193,8 @@ export function buildGithubOpWavesDoc(
     }
     const later: Array<Record<string, unknown>> = [];
     later.push(...[...(wave.setup ?? []), ...(group?.setup ?? [])].map(setupStepDoc), ...runSteps(options.beforeScript ?? []));
+    const add = inputs[job.wave - 1];
+    later.push(...(add?.before ?? []).map(runStepDoc));
     later.push({ name: describeJob(job.kind, job.wave, wave.name, job.share, job.group), run: job.command.join(" ") });
     later.push(...runSteps(options.extraScript ?? []));
     steps.push(...(cloud ? later.map(withoutTokenRequest) : later));
@@ -189,6 +202,8 @@ export function buildGithubOpWavesDoc(
       steps.push(keepRecordStep(`Keep wave ${job.wave}'s decision`, opWaveRecordArtifact(spec, job.wave), job.record!));
     }
     steps.push(keepRecordStep(`Keep the job's outcome`, opWaveOutcomeArtifact(spec, job.jobName), job.outcome));
+    const report = reportSteps(add, job.jobName);
+    steps.push(...(cloud ? report.map(withoutTokenRequest) : report));
     jobsDoc[job.jobName] = {
       "runs-on": githubRunsOn(runner),
       ...(job.needs.length > 0 ? { needs: job.needs } : {}),
@@ -303,6 +318,11 @@ function buildResumeDoc(spec: OpWavesSpec, options: OpWavesPipelineOptions): Git
  */
 function buildPlansDoc(spec: OpWavesSpec, options: OpWavesPipelineOptions, forge: "github" | "forgejo"): GithubOpPipelineDoc {
   const steps: Array<Record<string, unknown>> = [checkoutStep(true), ...(spec.waves[0]?.setup ?? []).map(setupStepDoc), ...runSteps(options.beforeScript ?? [])];
+  // #4791: the product's steps before the job plans, its variables and its OIDC tokens.
+  const add = options.recordPlans;
+  steps.push(...(add?.before ?? []).map(runStepDoc));
+  const idTokens = add?.idTokens && Object.keys(add.idTokens).length > 0 ? add.idTokens : undefined;
+  const env = { ...(add?.variables ?? {}), ...idTokenAudienceEnv(idTokens) };
   steps.push({ name: "Plan every wave at the head and record its digests", run: opWavesRecordPlansCommand(options.specFile, options.bin).join(" ") });
   const statusSteps: Array<Record<string, unknown>> = [checkoutStep(true), ...runSteps(options.beforeScript ?? [])];
   statusSteps.push({
@@ -323,7 +343,14 @@ function buildPlansDoc(spec: OpWavesSpec, options: OpWavesPipelineOptions, forge
     // contents: write pushes the record to chant/lifecycle.
     permissions: { contents: "write" },
     jobsDoc: {
-      "record-plans": { if: "github.event_name == 'pull_request'", "runs-on": githubRunsOn(spec.runner), container: options.image ?? OP_WAVES_IMAGE, steps },
+      "record-plans": {
+        if: "github.event_name == 'pull_request'",
+        "runs-on": githubRunsOn(spec.runner),
+        container: options.image ?? OP_WAVES_IMAGE,
+        ...(idTokens ? { permissions: { contents: "write", "id-token": "write" } } : {}),
+        ...nonEmpty("env", env),
+        steps,
+      },
       "approval-status": {
         needs: ["record-plans"],
         // On a review the record-plans job is skipped, and the status reads the plans an earlier push recorded.
@@ -335,6 +362,19 @@ function buildPlansDoc(spec: OpWavesSpec, options: OpWavesPipelineOptions, forge
       },
     },
   };
+}
+
+/** A product's run step (#4791): its lines, one after another. */
+function runStepDoc(step: OpWaveRunStep): Record<string, unknown> {
+  return { name: step.name, run: step.run.join("\n") };
+}
+
+/** A wave job's report and the upload of what it wrote (#4791), after every other step and whatever the exit. */
+function reportSteps(add: OpWaveJobInputs | undefined, jobName: string): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = [];
+  if (add?.report) out.push({ name: add.report.name, if: "always()", run: add.report.run.join("\n") });
+  if (add?.artifact) out.push(keepRecordStep(add.artifact.step, opWaveJobArtifactName(add.artifact.name, jobName), add.artifact.path));
+  return out;
 }
 
 /** The apply-job guard step (#4624): the job's expectation in CHANT_JOB_GUARD, checked by `node -e` from `/`. */

@@ -1147,6 +1147,66 @@ export interface OpWavesPipelineOptions
    * `OP_WAVE_JOB_TIMEOUT_MINUTES` (180).
    */
   jobTimeoutMinutes?: number;
+  /**
+   * What a product adds to each wave's jobs, keyed by wave name (#4791): a
+   * login before the job's command and a report after it, with the files
+   * the report writes. A product passes them here instead of parsing the
+   * generated file and editing it. A name that is not one of the spec's
+   * waves is refused. Absent: the jobs render as without it.
+   */
+  waveJobs?: Record<string, OpWaveJobInputs>;
+  /**
+   * What a product adds to the plans job, `record-plans` (#4791), which a
+   * `pr-review` or `pull-request` wave adds: the steps before it plans
+   * (a login, a check that the job cannot write), its variables and its
+   * OIDC tokens. Absent: the job renders as without it.
+   */
+  recordPlans?: OpWavesRecordPlansInputs;
+}
+
+/** A run step a product adds to a generated job (#4791): its name, and its shell lines in order. */
+export interface OpWaveRunStep {
+  name: string;
+  run: string[];
+}
+
+/** What a product adds to each job of one wave (#4791, {@link OpWavesPipelineOptions.waveJobs}). */
+export interface OpWaveJobInputs {
+  /**
+   * Steps run just before the job's command, after `beforeScript`, such as
+   * a cloud login. GitHub and Forgejo: one step each, its lines joined by
+   * newlines. GitLab: their lines in the job's script. With the wave's
+   * `cloud`, they run after the token request is unset, as every later step.
+   */
+  before?: OpWaveRunStep[];
+  /**
+   * A step run after the job whatever its exit, since a wave that waits at
+   * its gate exits 3. GitHub and Forgejo: a step with `if: always()` after
+   * the job's own steps. GitLab: its lines are the job's `after_script`.
+   */
+  report?: OpWaveRunStep;
+  /**
+   * Files the job keeps as an artifact whatever its exit. `{job}` in
+   * `name` is the job's name, so a wide wave's jobs keep one each. GitHub
+   * and Forgejo: an upload step named `step` after the report. GitLab: the
+   * path joins the job's `artifacts:`, which keep the outcome files too,
+   * under `name`.
+   */
+  artifact?: { step: string; name: string; path: string };
+}
+
+/** What a product adds to the plans job, `record-plans` (#4791, {@link OpWavesPipelineOptions.recordPlans}). */
+export interface OpWavesRecordPlansInputs {
+  /** Steps run just before the job plans, after `beforeScript`, as {@link OpWaveJobInputs.before}. */
+  before?: OpWaveRunStep[];
+  /** The job's own variables: GitHub and Forgejo `env:`, GitLab `variables:`. */
+  variables?: Record<string, string>;
+  /**
+   * OIDC tokens the job requests, `{ <variable>: <audience> }` as a wave's
+   * `idTokens`: GitLab `id_tokens:`; on GitHub and Forgejo the job asks for
+   * `id-token: write` and gets each audience as `<NAME>_AUDIENCE`.
+   */
+  idTokens?: Record<string, string>;
 }
 
 /** An Op waves pipeline: one file, and its jobs in order. */
