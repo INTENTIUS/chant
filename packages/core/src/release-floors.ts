@@ -19,7 +19,7 @@
  * this constant to the next patch (#4501). The check fails while a floor
  * still names this constant after its version shipped.
  */
-export const NEXT_RELEASE = "0.124.83";
+export const NEXT_RELEASE = "0.124.84";
 
 /** The first chant whose terraform lexicon's `terraform-apply` reads take `dir` and `workspace`, and read an upstream with `resolveRoot`'s binary and `readEnv` (terragucci issue 1303). */
 export const TERRAFORM_APPLY_INSTANCE_READS_FLOOR = "0.124.80";

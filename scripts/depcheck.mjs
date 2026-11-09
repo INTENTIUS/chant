@@ -31,7 +31,7 @@ for (const base of ["packages", "lexicons"]) {
 
 // Directories whose .ts files legitimately contain `import` statements as strings
 // (docs/scaffold codegen) or are test fixtures — not real imports of this package.
-const SKIP_DIR = /(^|[\\/])(codegen|templates?|__fixtures__|__generated__|testdata|test-?data|fixtures)([\\/]|$)/;
+const SKIP_DIR = /(^|[\\/])(codegen|templates?|__fixtures__|__project__|__generated__|testdata|test-?data|fixtures)([\\/]|$)/;
 const importRe = /^\s*import\s+(?!type\s)(?:[^;]*?\s+from\s+)?["']([^"']+)["']/gm;
 
 function walk(dir, out = []) {
