@@ -129,8 +129,21 @@ export function publishFlags(groups: ReadonlySet<SecurityGroup>): string[] {
   return [...(groups.has("supply-chain") ? ["--require-provenance"] : []), "--yes"];
 }
 
-/** Where `chant release images` writes the digests the publish job's build reads (#4657). */
+/** Where `chant release images` writes the digests the publish job's build reads (#4657), by default and at a workstation. */
 export const RELEASE_DIGESTS_FILE = ".chant/release-digests.json";
+
+/**
+ * Where a generated publish job writes the digests: the runner's temp
+ * directory, outside the checkout, so `chant release publish` finds the tree
+ * as the cut left it (#4853). A repository that commits files under `.chant/`
+ * can't ignore the directory, and a digests file there made the publish
+ * refuse with `release-worktree-dirty`.
+ */
+export const RELEASE_DIGESTS_PATHS: Record<ReleaseWorkflowForge, string> = {
+  github: "$RUNNER_TEMP/chant-release-digests.json",
+  forgejo: "$RUNNER_TEMP/chant-release-digests.json",
+  gitlab: "/tmp/chant-release-digests.json",
+};
 
 /** A string as a single-quoted shell word. */
 function sq(s: string): string {
@@ -161,7 +174,8 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
     return input.forge === "gitlab" ? renderGitlabDispatch(o) : renderGithubDispatch(o);
   }
   // #4657: the images are built from the release, so chant/lifecycle is fetched before them and the build after.
-  const imageLines = (label: string, env: string): string[] => [`${chant} release images ${label} -o ${RELEASE_DIGESTS_FILE}`, env];
+  const digests = RELEASE_DIGESTS_PATHS[input.forge];
+  const imageLines = (label: string, env: string): string[] => [`${chant} release images ${label} -o "${digests}"`, env];
   if (input.forge === "gitlab") {
     const label = '"${CI_COMMIT_TAG#release/}"';
     const fetches = ["    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'", "    - git fetch origin chant/lifecycle:chant/lifecycle"];
@@ -178,7 +192,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
       `    - ${install}`,
       ...extra.gitlabScript.map((l) => `    - ${l}`),
       ...(version ? [`    - ${chant} release stamp ${label}`] : []),
-      ...(images ? [...fetches, ...imageLines(label, `export CHANT_RELEASE_DIGESTS="$PWD/${RELEASE_DIGESTS_FILE}"`).map((l) => `    - ${l}`)] : []),
+      ...(images ? [...fetches, ...imageLines(label, `export CHANT_RELEASE_DIGESTS="${digests}"`).map((l) => `    - ${l}`)] : []),
       ...(build ? [`    - ${build}`] : []),
       ...(images ? [] : fetches),
       ...(verify ? [`    - ${chant} release verify ${label}`] : []),
@@ -221,7 +235,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
     `      - run: ${install}`,
     ...extra.githubSteps,
     ...(version ? [`      - run: ${chant} release stamp ${label}`] : []),
-    ...(images ? [...fetches, ...imageLines(label, `echo "CHANT_RELEASE_DIGESTS=$PWD/${RELEASE_DIGESTS_FILE}" >> "$GITHUB_ENV"`).map((l) => `      - run: ${l}`)] : []),
+    ...(images ? [...fetches, ...imageLines(label, `echo "CHANT_RELEASE_DIGESTS=${digests}" >> "$GITHUB_ENV"`).map((l) => `      - run: ${l}`)] : []),
     ...(build ? [`      - run: ${build}`] : []),
     ...(images ? [] : fetches),
     ...(verify ? [`      - run: ${chant} release verify ${label}`] : []),
@@ -339,7 +353,7 @@ function commonDir(paths: readonly string[]): string {
 
 /** The `release images` line of a publish job: checking the archives handed on, or building them again. */
 function imagesLine(o: DispatchInput): string {
-  return `${o.chant} release images "$CHANT_RELEASE_LABEL"${o.archives.length > 0 ? " --no-build" : ""} -o ${RELEASE_DIGESTS_FILE}`;
+  return `${o.chant} release images "$CHANT_RELEASE_LABEL"${o.archives.length > 0 ? " --no-build" : ""} -o "${RELEASE_DIGESTS_PATHS[o.forge]}"`;
 }
 
 /** The publish job's `release stamp` line (#4840). */
@@ -454,7 +468,7 @@ function renderGithubDispatch(o: DispatchInput): string {
       ? [`      - uses: ${usesRef(o.forge === "forgejo" ? ACTION_PINS.downloadArtifact3 : ACTION_PINS.downloadArtifact4)}`, "        with:", `          name: ${RELEASE_IMAGES_ARTIFACT}`, `          path: ${commonDir(o.archives)}`]
       : []),
     ...(o.version ? [`      - run: ${stampLine(o)}`] : []),
-    ...(o.images ? [`      - run: ${imagesLine(o)}`, `      - run: echo "CHANT_RELEASE_DIGESTS=$PWD/${RELEASE_DIGESTS_FILE}" >> "$GITHUB_ENV"`] : []),
+    ...(o.images ? [`      - run: ${imagesLine(o)}`, `      - run: echo "CHANT_RELEASE_DIGESTS=${RELEASE_DIGESTS_PATHS[o.forge]}" >> "$GITHUB_ENV"`] : []),
     ...(o.build ? [`      - run: ${o.build}`] : []),
     ...(o.verify ? [`      - run: ${o.chant} release verify "$CHANT_RELEASE_LABEL"`] : []),
     `      - run: ${o.chant} release publish "$CHANT_RELEASE_LABEL" ${o.flags}`,
@@ -509,7 +523,7 @@ function renderGitlabDispatch(o: DispatchInput): string {
         ...fetches,
         ...auth,
         ...(o.version ? [stampLine(o)] : []),
-        ...(o.images ? [imagesLine(o), `export CHANT_RELEASE_DIGESTS="$PWD/${RELEASE_DIGESTS_FILE}"`] : []),
+        ...(o.images ? [imagesLine(o), `export CHANT_RELEASE_DIGESTS="${RELEASE_DIGESTS_PATHS.gitlab}"`] : []),
         ...(o.build ? [o.build] : []),
         ...(o.verify ? [`${o.chant} release verify "$CHANT_RELEASE_LABEL"`] : []),
         `${o.chant} release publish "$CHANT_RELEASE_LABEL" ${o.flags}`,

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseYAML } from "../yaml";
 import { ACTION_PINS } from "../action-pins";
-import { renderReleaseWorkflow, RELEASE_DIGESTS_FILE, type ReleaseWorkflowInput } from "./release-workflow";
+import { renderReleaseWorkflow, RELEASE_DIGESTS_PATHS, type ReleaseWorkflowInput } from "./release-workflow";
 import type { SecurityGroup } from "./security";
 
 const FIXTURES = join(__dirname, "__fixtures__", "release-workflow");
@@ -91,8 +91,8 @@ describe("a dispatched release (#4656)", () => {
       "npm ci",
       "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'",
       "git fetch origin chant/lifecycle:chant/lifecycle",
-      `npx chant release images "$CHANT_RELEASE_LABEL" -o ${RELEASE_DIGESTS_FILE}`,
-      `echo "CHANT_RELEASE_DIGESTS=$PWD/${RELEASE_DIGESTS_FILE}" >> "$GITHUB_ENV"`,
+      'npx chant release images "$CHANT_RELEASE_LABEL" -o "$RUNNER_TEMP/chant-release-digests.json"',
+      'echo "CHANT_RELEASE_DIGESTS=$RUNNER_TEMP/chant-release-digests.json" >> "$GITHUB_ENV"',
       "npm run build",
       'npx chant release verify "$CHANT_RELEASE_LABEL"',
       'npx chant release publish "$CHANT_RELEASE_LABEL" --require-provenance --yes',
@@ -103,7 +103,7 @@ describe("a dispatched release (#4656)", () => {
     const plain = parseYAML(dispatch("github", { groups: SECURE, images: true })) as GhDoc;
     const doc = parseYAML(dispatch("github", { groups: SECURE, images: true, version: true })) as GhDoc;
     const publish = runs(plain.jobs.publish!);
-    const at = publish.indexOf(`npx chant release images "$CHANT_RELEASE_LABEL" -o ${RELEASE_DIGESTS_FILE}`);
+    const at = publish.indexOf('npx chant release images "$CHANT_RELEASE_LABEL" -o "$RUNNER_TEMP/chant-release-digests.json"');
     expect(runs(doc.jobs.publish!)).toEqual([...publish.slice(0, at), 'npx chant release stamp "$CHANT_RELEASE_LABEL"', ...publish.slice(at)]);
     expect(runs(doc.jobs.cut!)).toEqual(runs(plain.jobs.cut!));
     const gl = parseYAML(dispatch("gitlab", { images: true, version: true })) as Record<string, { script: string[] }>;
@@ -132,8 +132,8 @@ describe("a dispatched release (#4656)", () => {
     const publish = doc["chant-release-publish"]!;
     expect(publish.id_tokens).toEqual({ SIGSTORE_ID_TOKEN: { aud: "sigstore" } });
     expect(publish.script.slice(-5)).toEqual([
-      `npx chant release images "$CHANT_RELEASE_LABEL" -o ${RELEASE_DIGESTS_FILE}`,
-      `export CHANT_RELEASE_DIGESTS="$PWD/${RELEASE_DIGESTS_FILE}"`,
+      'npx chant release images "$CHANT_RELEASE_LABEL" -o "/tmp/chant-release-digests.json"',
+      'export CHANT_RELEASE_DIGESTS="/tmp/chant-release-digests.json"',
       "npm run build",
       'npx chant release verify "$CHANT_RELEASE_LABEL"',
       'npx chant release publish "$CHANT_RELEASE_LABEL" --require-provenance --yes',
@@ -155,8 +155,8 @@ describe("the tag trigger with images or after (#4656)", () => {
       "npm ci",
       "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'",
       "git fetch origin chant/lifecycle:chant/lifecycle",
-      `npx chant release images "\${GITHUB_REF_NAME#release/}" -o ${RELEASE_DIGESTS_FILE}`,
-      `echo "CHANT_RELEASE_DIGESTS=$PWD/${RELEASE_DIGESTS_FILE}" >> "$GITHUB_ENV"`,
+      'npx chant release images "${GITHUB_REF_NAME#release/}" -o "$RUNNER_TEMP/chant-release-digests.json"',
+      'echo "CHANT_RELEASE_DIGESTS=$RUNNER_TEMP/chant-release-digests.json" >> "$GITHUB_ENV"',
       "npm run build",
       'npx chant release publish "${GITHUB_REF_NAME#release/}" --yes',
     ]);
@@ -301,7 +301,7 @@ describe("the cut hands its image archives to the publish job (#4657)", () => {
     expect(down).toBeGreaterThan(-1);
     expect(publish[down]!.with).toEqual({ name: "chant-release-images", path: "dist/images" });
     expect(check).toBeGreaterThan(down);
-    expect(publish[check]!.run).toBe('npx chant release images "$CHANT_RELEASE_LABEL" --no-build -o .chant/release-digests.json');
+    expect(publish[check]!.run).toBe('npx chant release images "$CHANT_RELEASE_LABEL" --no-build -o "$RUNNER_TEMP/chant-release-digests.json"');
   });
 
   test("Forgejo takes v3 of the artifact actions, and a workspace root prefixes the paths", () => {
@@ -315,12 +315,36 @@ describe("the cut hands its image archives to the publish job (#4657)", () => {
   test("GitLab: the cut keeps the archives as artifacts the publish job needs, and checks them without building", () => {
     const doc = parseYAML(renderReleaseWorkflow({ forge: "gitlab", groups: new Set(), images: true, imageArchives: archives, pipeline: { trigger: "dispatch" } })) as Record<string, { artifacts?: unknown; script: string[] }>;
     expect(doc["chant-release-cut"]!.artifacts).toEqual({ paths: archives, expire_in: "1 day" });
-    expect(doc["chant-release-publish"]!.script).toContain('npx chant release images "$CHANT_RELEASE_LABEL" --no-build -o .chant/release-digests.json');
+    expect(doc["chant-release-publish"]!.script).toContain('npx chant release images "$CHANT_RELEASE_LABEL" --no-build -o "/tmp/chant-release-digests.json"');
   });
 
   test("without the archive paths the publish job builds the images again, as before", () => {
     const doc = parseYAML(renderReleaseWorkflow({ forge: "github", groups: new Set(), images: true, pipeline: { trigger: "dispatch" } })) as { jobs: Record<string, { steps: Step[] }> };
     expect(doc.jobs.publish!.steps.some((s) => s.uses?.includes("download-artifact"))).toBe(false);
     expect(doc.jobs.publish!.steps.find((s) => s.run?.includes("release images"))!.run).not.toContain("--no-build");
+  });
+});
+
+describe("the publish job leaves the checkout as the cut left it (#4853)", () => {
+  // `chant release publish` refuses a dirty tree, and a repository that commits
+  // files under .chant/ can't ignore the directory, so no step the generator
+  // writes may put the digests in the checkout.
+  const lines = (doc: unknown): string[] =>
+    typeof doc === "string" ? doc.split("\n") : Array.isArray(doc) ? doc.flatMap(lines) : doc && typeof doc === "object" ? Object.values(doc).flatMap(lines) : [];
+  test("on every forge and trigger, the digests go to the runner's temp directory and CHANT_RELEASE_DIGESTS names that file", () => {
+    for (const forge of FORGES) {
+      for (const trigger of ["tag", "dispatch"] as const) {
+        for (const root of [".", "packages/app"]) {
+          const all = lines(parseYAML(renderReleaseWorkflow({ forge, groups: SECURE, images: true, imageArchives: ["dist/app.tar"], workspaceRoot: root, pipeline: { trigger } })));
+          const where = `${forge} ${trigger} ${root}`;
+          const images = all.filter((l) => l.includes("release images "));
+          expect(images.length, where).toBe(1);
+          expect(images[0], where).toMatch(new RegExp(` -o "${RELEASE_DIGESTS_PATHS[forge].replace(/[$.]/g, "\\$&")}"$`));
+          const env = all.filter((l) => l.includes("CHANT_RELEASE_DIGESTS="));
+          expect(env, where).toEqual([forge === "gitlab" ? `export CHANT_RELEASE_DIGESTS="${RELEASE_DIGESTS_PATHS.gitlab}"` : `echo "CHANT_RELEASE_DIGESTS=${RELEASE_DIGESTS_PATHS[forge]}" >> "$GITHUB_ENV"`]);
+          expect(all.join("\n"), where).not.toContain(".chant/");
+        }
+      }
+    }
   });
 });
