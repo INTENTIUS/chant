@@ -39,20 +39,23 @@ export const chantGatedLedger: GatedRequestLedger = { requestGate, spendGatedReq
 /**
  * The time a request was first asked, so asking again binds the same
  * digest. The newest standing, unspent request with the same kind, subject,
- * requester and fields gives its `at`; with none, `now`.
+ * requester and fields gives its `at`; with none, `now`. With `reuseApplied`
+ * (#4808) a request that applied already counts too, so the same call asked
+ * again answers `spent` rather than asking anew: a retried job never acts
+ * twice on one approval.
  */
 export async function requestedAt(
   op: string,
   request: Omit<GatedRequest, "at">,
-  options: { now?: string; cwd?: string; ledger?: Pick<GatedRequestLedger, "readGatedRequests"> } = {},
+  options: { now?: string; cwd?: string; ledger?: Pick<GatedRequestLedger, "readGatedRequests">; reuseApplied?: boolean } = {},
 ): Promise<string> {
   const now = options.now ?? new Date().toISOString();
   const read = await (options.ledger ?? chantGatedLedger).readGatedRequests(op, options.cwd ? { cwd: options.cwd } : undefined).catch(() => []);
   const same = JSON.stringify(Object.entries(request.fields).sort());
   const standing = read
-    .filter((g) => !g.applied && g.request.kind === request.kind && g.request.subject === request.subject && g.request.by === request.by)
+    .filter((g) => (options.reuseApplied || !g.applied) && g.request.kind === request.kind && g.request.subject === request.subject && g.request.by === request.by)
     .filter((g) => JSON.stringify(Object.entries(g.request.fields).sort()) === same)
-    .filter((g) => !g.pending.expiresAt || g.pending.expiresAt > now)
+    .filter((g) => g.applied || !g.pending.expiresAt || g.pending.expiresAt > now)
     .at(-1);
   return standing?.request.at ?? now;
 }
@@ -70,6 +73,8 @@ export interface GatedOpInput {
   base?: string;
   /** A document the request carries, such as a migration's proof; its digest joins the request. */
   attachment?: string;
+  /** Reuse the `at` of a request with the same fields that applied already, so the call answers `spent` ({@link requestedAt}, #4808). */
+  reuseApplied?: boolean;
   cwd?: string;
   now?: string;
   runId?: string;
@@ -111,7 +116,7 @@ export async function gatedOp<T>(input: GatedOpInput, act: GatedOpAct<T>): Promi
   const ledger = input.ledger ?? chantGatedLedger;
   // The proof's digest is a field of the stored request, so the standing request is matched with it.
   const fields = input.attachment !== undefined ? { ...input.request.fields, proof: attachmentDigest(input.attachment) } : input.request.fields;
-  const at = input.request.at ?? (await requestedAt(input.op, { ...input.request, fields }, { ...(input.now ? { now: input.now } : {}), ...(input.cwd ? { cwd: input.cwd } : {}), ledger }));
+  const at = input.request.at ?? (await requestedAt(input.op, { ...input.request, fields }, { ...(input.now ? { now: input.now } : {}), ...(input.cwd ? { cwd: input.cwd } : {}), ...(input.reuseApplied ? { reuseApplied: true } : {}), ledger }));
   const request: GatedRequest = { kind: input.request.kind, subject: input.request.subject, by: input.request.by, at, fields };
   const asked = await ledger.requestGate({
     op: input.op,

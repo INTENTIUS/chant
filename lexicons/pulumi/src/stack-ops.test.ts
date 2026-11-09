@@ -6,7 +6,7 @@
  * answering with recorded documents (`testdata/pulumi-preview`), so no
  * binary runs and no ledger or backend is written.
  */
-import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
@@ -88,8 +88,9 @@ describe("export", () => {
     const common: PulumiStackOpCommon = { by: "alice", rules: { mode: "ledger" }, gated: l.api, env: {}, run: pulumi.run };
     const first = await gatedStackExport({ ...common, dir: stackDir(), stack: "dev", engine: "pulumi", out });
     expect(first.status).toBe("waiting");
-    expect(pulumi.calls).toEqual([]);
-    expect(first.request).toMatchObject({ kind: "stack-export", subject: "dev", fields: { stack: "dev", engine: "pulumi", deliver: "requester" } });
+    // #4808: the first call names the version (no numbered history, so the export's digest) and writes nothing.
+    expect(first.request).toMatchObject({ kind: "stack-export", subject: "dev", fields: { version_id: expect.stringMatching(/^sha256:/) } });
+    expect(existsSync(out)).toBe(false);
 
     l.approve(first.digest, "alice");
     expect((await gatedStackExport({ ...common, dir: stackDir(), stack: "dev", engine: "pulumi", out })).status).toBe("refused");
@@ -98,10 +99,11 @@ describe("export", () => {
     const done = await gatedStackExport({ ...common, dir: stackDir(), stack: "dev", engine: "pulumi", out });
     expect(done.status).toBe("done");
     expect(done.digest).toBe(first.digest);
-    expect(pulumi.calls).toEqual([["stack", "export", "--stack", "dev"]]);
+    expect(pulumi.calls.filter((c) => c[1] === "export").at(-1)).toEqual(["stack", "export", "--stack", "dev"]);
     expect(readFileSync(out, "utf-8")).toBe(exportText);
     expect(statSync(out).mode & 0o777).toBe(0o600);
-    expect(l.finished[0]).toMatchObject({ result: "applied", detail: { resources: expect.any(Number) } });
+    expect(done).toMatchObject({ result: { resources: expect.any(Number), bytes: exportText.length } });
+    expect(l.finished[0]).toMatchObject({ result: "applied", detail: { content_digest: expect.stringMatching(/^sha256:/) } });
     expect(JSON.stringify(l.finished)).not.toContain("ciphertext");
 
     // The same request again (its `at` kept) answers spent and runs nothing.
@@ -110,7 +112,7 @@ describe("export", () => {
     const again = await gatedStackExport({ ...common, now: "2000-01-01T00:00:00.000Z", dir: stackDir(), stack: "dev", engine: "pulumi", out: join(outside(), "again.json") });
     expect(again.status).toBe("waiting");
     expect(again.digest).not.toBe(first.digest);
-    expect(pulumi.calls).toHaveLength(1);
+    expect(existsSync(join(outside(), "again.json"))).toBe(false);
   });
 
   test("refused in CI, inside a git working tree, and over an existing file, before anything is asked", async () => {
@@ -122,7 +124,7 @@ describe("export", () => {
     await expect(gatedStackExport({ ...base, env: {}, out: join(repo, "x.json") })).rejects.toThrow(/inside the git working tree/);
     const taken = join(outside(), "taken.json");
     writeFileSync(taken, "{}");
-    await expect(gatedStackExport({ ...base, env: {}, out: taken })).rejects.toThrow(/never overwrites/);
+    await expect(gatedStackExport({ ...base, env: {}, out: taken })).rejects.toThrow(/never writes over a file/);
     expect(l.pending).toEqual([]);
   });
 });
@@ -137,19 +139,22 @@ describe("cancel", () => {
 
     const dir = stackDir(`file://${root}`);
     const l = ledger();
-    const pulumi = runner();
-    const common = { by: "alice", rules: { mode: "ledger" as const }, gated: l.api, env: {}, run: pulumi.run, dir, stack: "dev", engine: "pulumi" as const };
+    // Like pulumi on a file backend, cancel takes the lock file away (moved aside, so the test deletes nothing).
+    const pulumi = runner((args) => {
+      if (args[0] === "cancel") renameSync(join(locks, "lock-1.json"), join(root, "released-lock-1.json"));
+      return "{}";
+    });
+    const common = { by: "alice", rules: { mode: "ledger" as const }, gated: l.api, env: {}, run: pulumi.run, dir, stack: "dev", engine: "pulumi" as const, liveRuns: async () => [] };
 
-    const stale = await gatedStackCancel({ ...common, lockId: "lock-0" });
-    l.approve(stale.digest, "bob");
+    // #4808: a lock id that is not the one held is refused before anything is asked.
     await expect(gatedStackCancel({ ...common, lockId: "lock-0" })).rejects.toThrow(/not the one it holds now \(lock-1\)/);
-    expect(l.spent.size).toBe(0);
+    expect(l.pending).toEqual([]);
 
     const asked = await gatedStackCancel({ ...common, lockId: "lock-1" });
     expect(asked.status).toBe("waiting");
     l.approve(asked.digest, "bob");
     const done = await gatedStackCancel({ ...common, lockId: "lock-1" });
-    expect(done).toMatchObject({ status: "done", result: { lockChecked: true } });
+    expect(done).toMatchObject({ status: "done", result: { lockChecked: true, liveRuns: 0 } });
     expect(pulumi.calls).toEqual([["cancel", "--yes", "--stack", "dev"]]);
   });
 
@@ -209,13 +214,12 @@ describe("move", () => {
     expect(l.finished[0]).toMatchObject({ result: "applied", detail: { afterNoChange: true } });
   });
 
-  test("a preview that changes more than the move refuses after approval, leaving it unspent", async () => {
+  test("a preview that changes more than the move refuses before anything is asked", async () => {
     const l = ledger();
     const pulumi = runner((args) => (args[args.indexOf("--stack") + 1] === "net" ? previewDoc([step("delete", src("logs")), step("delete", src("other"))]) : previewDoc([step("create", dst("logs"))])));
     const opts = { by: "alice", rules: { mode: "ledger" as const }, gated: l.api, env: {}, run: pulumi.run, engine: "pulumi" as const, source: { member: "net", dir: stackDir(), stack: "net" }, dest: { member: "app", dir: stackDir(), stack: "app" }, urns: [src("logs")] };
-    l.approve((await gatedStackMove(opts)).digest, "bob");
     await expect(gatedStackMove(opts)).rejects.toThrow(/change more than the moved resources.*delete .*other/);
-    expect(l.spent.size).toBe(0);
+    expect(l.pending).toEqual([]);
     expect(pulumi.calls.some((c) => c[0] === "state")).toBe(false);
   });
 
@@ -238,7 +242,9 @@ describe("move", () => {
     l.approve((await gatedStackMove(opts)).digest, "bob");
     const done = await gatedStackMove(opts);
     expect(done.status).toBe("done");
+    // Each call plans with plunge's own plan; the move runs once, after the approval.
     expect(plunge.calls.filter((c) => c[1] === "move")).toEqual([
+      ["stack", "move", "--stack", "net", "--dest", "app", src("logs"), "--json"],
       ["stack", "move", "--stack", "net", "--dest", "app", src("logs"), "--json"],
       ["stack", "move", "--stack", "net", "--dest", "app", src("logs"), "--json", "--yes"],
     ]);
@@ -251,9 +257,8 @@ describe("move", () => {
       return args[args.indexOf("--stack") + 1] === "net" ? previewDoc([step("delete", src("logs"))]) : previewDoc([step("create", dst("logs"))]);
     });
     const opts = { by: "alice", rules: { mode: "ledger" as const }, gated: l.api, env: {}, plunge: plunge.run, engine: "plunge" as const, source: { member: "net", dir: stackDir(), stack: "net" }, dest: { member: "app", dir: stackDir(), stack: "app" }, urns: [src("logs")] };
-    l.approve((await gatedStackMove(opts)).digest, "bob");
     await expect(gatedStackMove(opts)).rejects.toThrow(/plan is refused: .*already owns/);
-    expect(l.spent.size).toBe(0);
+    expect(l.pending).toEqual([]);
   });
 
   test("the requests sit under one op", () => {
@@ -394,5 +399,22 @@ describe("action (chant#4654)", () => {
     l.approve(first.digest, "bob");
     expect((await gatedStackAction(opts)).status).toBe("done");
     expect(plunge.calls).toEqual([previewArgs, previewArgs, upArgs]);
+  });
+});
+
+describe("the version reads (#4808)", () => {
+  test("runStackOpReadPulumi runs exactly the history and versioned export forms", async () => {
+    const { pulumiStackExportVersionArgs, pulumiStackHistoryArgs, runStackOpReadPulumi } = await import("./run");
+    const pulumi = runner(() => "[]");
+    await runStackOpReadPulumi(pulumi.run, pulumiStackHistoryArgs("dev"), "/tmp");
+    await runStackOpReadPulumi(pulumi.run, pulumiStackExportVersionArgs("dev", "12"), "/tmp");
+    expect(pulumi.calls).toEqual([
+      ["stack", "history", "--json", "--page-size", "1", "--stack", "dev"],
+      ["stack", "export", "--stack", "dev", "--version", "12"],
+    ]);
+    for (const bad of [["stack", "export", "--stack", "dev", "--version", "0"], ["stack", "export", "--stack", "dev", "--show-secrets", "1"], ["stack", "history", "--json", "--show-secrets", "--stack", "dev"], ["stack", "export", "--stack", "dev"]]) {
+      await expect(runStackOpReadPulumi(pulumi.run, bad, "/tmp")).rejects.toThrow(/reads a stack's versions only as/);
+    }
+    expect(pulumi.calls).toHaveLength(2);
   });
 });

@@ -41,6 +41,8 @@ export const DRIFT_ISSUE_FLOOR = NEXT_RELEASE;
 
 /** The first chant whose `chant build` with no path builds the config's `sourceDir`, whose root build leaves a top-level `scripts/` out, and whose `@intentius/chant/config` exports `resolveSourceDir`, the one source-dir rule every command shares (#4794). */
 export const SOURCE_DIR_RULE_FLOOR = NEXT_RELEASE;
+/** The first chant whose pulumi lexicon runs `gatedStackExport`, `gatedStackCancel` and `gatedStackMove` on core's `exportStateVersion`, `releaseStateLock` and `runStateMigration`: export by version, the live-run check before a cancel (`liveRuns`, `forge`), and the check that nothing moved between a move's plan and its write (#4808). */
+export const PULUMI_STACK_OPS_ON_CORE_FLOOR = NEXT_RELEASE;
 /** The first chant whose terraform lexicon's state stores read versions (`version`, `hasVersion`, `readVersion`, `isAt`, `listVersions`), with `readStateVersion` and `listStateVersions`, and lock and write a GitLab-managed http backend's state (#4793). */
 export const TERRAFORM_STATE_VERSION_READS_FLOOR = NEXT_RELEASE;
 

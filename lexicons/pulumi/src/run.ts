@@ -576,6 +576,43 @@ function allowedGatedPulumi(args: string[]): boolean {
   return false;
 }
 
+/**
+ * The reads a gated stack export makes to name and fetch one version
+ * (#4808), for `./stack-ops.ts` alone. They stay off
+ * {@link runAllowedPulumi}'s list, which refuses `--version`, so no other
+ * caller reads an older update:
+ *
+ * - `pulumi stack history --json --page-size 1 --stack <stack>`: the newest
+ *   update's number, on a backend that numbers its updates (Pulumi Cloud).
+ *   A file backend answers `0`. Config secrets print as `[secret]`;
+ * - `pulumi stack export --stack <stack> --version <n>`: that update's
+ *   export, run only after the export's request is approved and spent.
+ */
+export const PULUMI_STACK_OP_READS: readonly string[] = ["pulumi stack history --json --page-size 1 --stack <stack>", "pulumi stack export --stack <stack> --version <n>"];
+
+/** `stack history --json --page-size 1 --stack <stack>`. */
+export function pulumiStackHistoryArgs(stack: string): string[] {
+  return ["stack", "history", "--json", "--page-size", "1", "--stack", stack];
+}
+
+/** `stack export --stack <stack> --version <n>`. */
+export function pulumiStackExportVersionArgs(stack: string, version: string): string[] {
+  return ["stack", "export", "--stack", stack, "--version", version];
+}
+
+function allowedStackOpRead(args: string[]): boolean {
+  if (args[0] !== "stack") return false;
+  if (args[1] === "history") return args.length === 7 && args[2] === "--json" && args[3] === "--page-size" && args[4] === "1" && args[5] === "--stack" && isValue(args[6]);
+  if (args[1] === "export") return args.length === 6 && args[2] === "--stack" && isValue(args[3]) && args[4] === "--version" && /^[1-9][0-9]*$/.test(args[5] ?? "");
+  return false;
+}
+
+/** Run one of {@link PULUMI_STACK_OP_READS}, refusing any other argv. Only `./stack-ops.ts` calls it. */
+export async function runStackOpReadPulumi(run: PulumiRunner, args: string[], cwd: string, env?: Record<string, string>): Promise<{ stdout: string }> {
+  if (!allowedStackOpRead(args)) throw new Error(`chant reads a stack's versions only as ${PULUMI_STACK_OP_READS.join(" or ")}, not pulumi ${args.join(" ")}`);
+  return run(args, env ? { cwd, env } : { cwd });
+}
+
 /** Run one of {@link PULUMI_GATED_COMMANDS}, refusing any other argv. Only `./stack-ops.ts` calls it, after the request is spent. */
 export async function runGatedPulumi(run: PulumiRunner, args: string[], cwd: string, env?: Record<string, string>): Promise<{ stdout: string }> {
   if (!allowedGatedPulumi(args)) {
