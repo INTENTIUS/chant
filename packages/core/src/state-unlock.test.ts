@@ -6,7 +6,7 @@
 import { describe, expect, test } from "vitest";
 import { fakeLedger } from "./__fixtures__/gated-ledger";
 import type { ForgeFetch } from "./pr-forge";
-import { CLOCK_SKEW_MS, forgeLiveRuns, parseLockInfo, possibleHolders, releaseStateLock, STATE_UNLOCK_FLOOR, StateUnlockError, type LiveRun, type LockInfo, type StateLockSource } from "./state-unlock";
+import { CLOCK_SKEW_MS, forgeLiveRuns, forgeLiveRunsOf, forgeTargetLiveRuns, parseLockInfo, possibleHolders, releaseStateLock, STATE_UNLOCK_FLOOR, StateUnlockError, type LiveRun, type LockInfo, type StateLockSource } from "./state-unlock";
 
 const LOCK: LockInfo = { ID: "a1b2", Operation: "OperationTypeApply", Who: "runner@ci", Created: "2026-11-08T08:00:00Z" };
 
@@ -161,5 +161,37 @@ describe("forgeLiveRuns", () => {
     expect(runs).toEqual([{ id: "77", status: "pending", started: "2026-11-08T08:00:00Z", url: "https://gitlab.example.com/acme/infra/-/pipelines/77" }]);
     expect(urls.map((u) => new URL(u).searchParams.get("status"))).toEqual(["running", "pending", "preparing", "waiting_for_resource"]);
     expect(headers[0]!["PRIVATE-TOKEN"]).toBe("glpat");
+  });
+});
+
+// #4911: one helper from a forge target to its live runs; #4920: the origin remote names the forge on a laptop.
+describe("forgeTargetLiveRuns and forgeLiveRunsOf", () => {
+  test("a target's runs, its GitLab token header kept", async () => {
+    const { fetch, urls, headers } = forgeFetch({});
+    await forgeTargetLiveRuns({ kind: "gitlab", apiBase: "https://gl.example/api/v4", repo: "g/p", token: "ci", tokenHeader: "JOB-TOKEN" }, fetch);
+    expect(urls[0]).toBe("https://gl.example/api/v4/projects/g%2Fp/pipelines?status=running&per_page=100");
+    expect(headers[0]!["JOB-TOKEN"]).toBe("ci");
+  });
+
+  test("in a job, the job's repository; the remote is not read", async () => {
+    const { fetch, urls } = forgeFetch({});
+    const read: string[] = [];
+    const env = { GITHUB_ACTIONS: "true", GITHUB_REPOSITORY: "acme/infra", GITHUB_SERVER_URL: "https://github.com", GITHUB_TOKEN: "t" };
+    await forgeLiveRunsOf(env, {}, { cwd: "/repo", fetch, remoteUrl: (cwd) => (read.push(cwd), "git@github.com:other/repo.git") })();
+    expect(read).toEqual([]);
+    expect(urls[0]).toContain("/repos/acme/infra/actions/runs");
+  });
+
+  test("on a laptop, the origin remote's forge and repository, the product's kind and url over it", async () => {
+    const { fetch, urls } = forgeFetch({});
+    await forgeLiveRunsOf({ GITHUB_TOKEN: "t" }, {}, { cwd: "/repo", fetch, remoteUrl: () => "git@github.com:acme/infra.git" })();
+    expect(urls[0]).toBe("https://api.github.com/repos/acme/infra/actions/runs?status=in_progress&per_page=100");
+    const fj = forgeFetch({});
+    await forgeLiveRunsOf({ FORGEJO_TOKEN: "f" }, { kind: "forgejo", url: "http://git.lan:3000" }, { cwd: "/repo", fetch: fj.fetch, remoteUrl: () => "ssh://git@git.lan:2222/acme/infra.git" })();
+    expect(fj.urls[0]).toBe("http://git.lan:3000/api/v1/repos/acme/infra/actions/runs?status=running&limit=50");
+  });
+
+  test("on a laptop with no remote and no repository, the read throws, so the release is refused", async () => {
+    await expect(forgeLiveRunsOf({ GITHUB_TOKEN: "t" }, { kind: "github" }, { cwd: "/repo", remoteUrl: () => undefined })()).rejects.toThrow(/GITHUB_REPOSITORY/);
   });
 });

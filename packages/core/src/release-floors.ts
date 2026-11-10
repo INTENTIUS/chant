@@ -119,3 +119,11 @@ export const LIVE_DRIFT_RECORDS_FLOOR = NEXT_RELEASE;
 
 /** The first chant whose `chant sql types --path` prints where `sql-types.d.ts` is by the source-dir rule, the path `sqlTypesPath` answers (#4897). */
 export const SQL_TYPES_PATH_FLOOR = NEXT_RELEASE;
+/** The first chant whose forge target carries its web `origin` (`forgeTargetWith`) and whose `@intentius/chant/forge-flags` has `jobForgeTarget`, a job's target or undefined where the job cannot reach the forge, so a product keeps no target type of its own (#4888). */
+export const FORGE_TARGET_ORIGIN_FLOOR = NEXT_RELEASE;
+
+/** The first chant with `actorFromEnv` (`@intentius/chant/actor`), `forgeTargetLiveRuns` and `forgeLiveRunsOf` in `@intentius/chant/state-unlock`, and a pulumi lexicon whose stack ops take the product's `approveCommand`, with `pulumiStackLockToCancel` and `pulumiMoveDestStack`, a move naming its own `--dest` from both sides' `project` (#4911). */
+export const STACK_OPS_PRODUCT_HELPERS_FLOOR = NEXT_RELEASE;
+
+/** The first chant with `@intentius/chant/forge-remote` (`forgeOfRemote`, `forgeOfCheckout`, `forgeKindOfHost`), the forge and repository a checkout's origin remote names, and a pulumi `gatedStackCancel` that reads the forge's runs from it on a laptop (#4920). */
+export const FORGE_REMOTE_FLOOR = NEXT_RELEASE;

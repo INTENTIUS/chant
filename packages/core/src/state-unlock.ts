@@ -26,7 +26,8 @@
 import { CHANT_EXIT } from "./exit-codes";
 import { gatedOp, type GatedRequestLedger } from "./lifecycle/gated-op";
 import type { GatedRequestRules } from "./lifecycle/gated-request";
-import type { ForgeFetch, ForgeKind } from "./pr-forge";
+import type { ForgeOverrides } from "./forge-flags";
+import type { ForgeFetch, ForgeKind, ForgeTarget, ForgeTargetOptions } from "./pr-forge";
 
 /** The first chant with the engine-neutral lock release and {@link forgeLiveRuns} (#4762). */
 export const STATE_UNLOCK_FLOOR = "0.124.77";
@@ -106,6 +107,53 @@ export async function forgeLiveRuns(t: LiveRunsTarget): Promise<LiveRun[]> {
     }
   }
   return [...out.values()];
+}
+
+/**
+ * The live runs of a {@link ForgeTarget} (#4911), from `forgeTargetFromEnv`,
+ * `forgeTargetWith` or `forgeTargetFromFlags`: {@link forgeLiveRuns} with
+ * the target's forge, REST base, repository, token and GitLab token header.
+ */
+export function forgeTargetLiveRuns(target: Pick<ForgeTarget, "kind" | "apiBase" | "repo" | "token" | "tokenHeader">, fetch?: ForgeFetch): Promise<LiveRun[]> {
+  return forgeLiveRuns({ kind: target.kind, apiBase: target.apiBase, repo: target.repo, token: target.token, ...(target.tokenHeader ? { tokenHeader: target.tokenHeader } : {}), ...(fetch ? { fetch } : {}) });
+}
+
+/** What {@link forgeLiveRunsOf} reads the forge from besides the environment. */
+export interface ForgeLiveRunsOptions {
+  /**
+   * A checkout whose origin remote names the forge (#4920) when the
+   * environment names no CI forge and `forge` no repository: its kind, web
+   * origin and repository, each under what `forge` gives.
+   */
+  cwd?: string;
+  /** The remote in `cwd`. Default `origin`. */
+  remote?: string;
+  fetch?: ForgeFetch;
+  /** Reads a remote's URL. Default `git remote get-url`. For tests. */
+  remoteUrl?: (cwd: string, remote: string) => string | undefined;
+}
+
+/**
+ * The `liveRuns` reader of the forge `forge` names over `env` (#4911),
+ * read each time it is called: `forgeTargetWith`'s target (a product's
+ * `--forge`, `--repo` and `--url` over the job's environment), and its runs.
+ * On a laptop, with no CI variables and no repository given, the origin
+ * remote of `opts.cwd` names the forge and the repository (#4920), so a
+ * release run there needs only a token. A forge that cannot be named, or a
+ * missing token, throws, and the release it guards is refused.
+ */
+export function forgeLiveRunsOf(env: Record<string, string | undefined>, forge: ForgeTargetOptions & ForgeOverrides = {}, opts: ForgeLiveRunsOptions = {}): () => Promise<LiveRun[]> {
+  return async () => {
+    const [{ forgeTargetWith }, { detectForge }] = await Promise.all([import("./forge-flags"), import("./pr-forge")]);
+    let given = forge;
+    if (opts.cwd && !detectForge(env) && !forge.repo?.trim()) {
+      const { forgeOfCheckout } = await import("./forge-remote");
+      const at = forgeOfCheckout(opts.cwd, { ...(opts.remote ? { remote: opts.remote } : {}), ...(forge.kind ? { kind: forge.kind } : {}), ...(opts.remoteUrl ? { remoteUrl: opts.remoteUrl } : {}) });
+      const set = Object.fromEntries(Object.entries(forge).filter(([, v]) => v !== undefined && v !== "")) as typeof forge;
+      if (at) given = { kind: at.kind, repo: at.repo, url: at.url, ...set };
+    }
+    return forgeTargetLiveRuns(forgeTargetWith(env, given), opts.fetch);
+  };
 }
 
 /** How far a run's start may be after the lock's and still count as a run that could hold it: the clocks of the job and the forge differ. */

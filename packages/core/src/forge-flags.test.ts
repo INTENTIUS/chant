@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, test } from "vitest";
-import { apiBaseOf, ForgeFlagError, forgeFlagHints, forgeTargetFromFlags, forgeTargetOptionsFromFlags, forgeTargetWith } from "./forge-flags";
+import { apiBaseOf, ForgeFlagError, forgeFlagHints, forgeTargetFromFlags, forgeTargetOptionsFromFlags, forgeTargetWith, jobForgeTarget } from "./forge-flags";
 import { ForgeEnvironmentError } from "./pr-forge";
 
 const SHA = "a".repeat(40);
@@ -106,5 +106,29 @@ describe("forgeTargetFromFlags (#4800)", () => {
     }
     expect((missing as ForgeEnvironmentError).missing).toEqual(["GITHUB_REPOSITORY", "a pull request (a pull_request event, or refs/pull/<n>/ in GITHUB_REF)", "a token (CHANT_GITHUB_TOKEN, GH_TOKEN, GITHUB_TOKEN)"]);
     expect(forgeFlagHints(missing as ForgeEnvironmentError, { requirePr: true })).toEqual(["outside CI pass --repo, --pr and --api-url", "name another token variable with --token-env"]);
+  });
+});
+
+// #4888: the one target type terragucci needs: the web origin on it, and undefined where the job cannot reach the forge.
+describe("the target's web origin and jobForgeTarget (#4888)", () => {
+  test("the origin is --url, else the job's server, else https on the host", () => {
+    expect(forgeTargetWith({ FORGEJO_TOKEN: "f" }, { kind: "forgejo", repo: "a/b", url: "http://forgejo:3000/" }).origin).toBe("http://forgejo:3000");
+    expect(forgeTargetWith({ GITHUB_ACTIONS: "true", GITHUB_REPOSITORY: "a/b", GITHUB_SERVER_URL: "https://ghe.example", GITHUB_API_URL: "https://ghe.example/api/v3", GITHUB_TOKEN: "t" }).origin).toBe("https://ghe.example");
+    expect(forgeTargetWith({ GITLAB_CI: "true", CI_SERVER_URL: "https://gl.example", CI_API_V4_URL: "https://gl.example/api/v4", CI_PROJECT_ID: "7", GITLAB_TOKEN: "g" }).origin).toBe("https://gl.example");
+    expect(forgeTargetWith({ GITHUB_TOKEN: "t" }, { kind: "github", repo: "a/b", apiUrl: "https://api.github.com" }).origin).toBe("https://github.com");
+  });
+
+  const job = { GITHUB_ACTIONS: "true", GITHUB_REPOSITORY: "acme/infra", GITHUB_SERVER_URL: "https://github.com", TG_TOKEN: "tg" };
+
+  test("a job's target with the token the product holds, or with none for a read", () => {
+    expect(jobForgeTarget({ token: "given" }, job)).toMatchObject({ kind: "github", repo: "acme/infra", token: "given", origin: "https://github.com" });
+    expect(jobForgeTarget({ tokenEnv: "TG_TOKEN" }, job)).toMatchObject({ token: "tg", tokenSource: "TG_TOKEN" });
+    expect(jobForgeTarget({ tokenEnv: "TG_TOKEN" }, { ...job, TG_TOKEN: "" }, { tokenOptional: true })).toMatchObject({ token: "", repo: "acme/infra" });
+  });
+
+  test("undefined where the job names no forge or lacks a piece, and a bad flag still throws", () => {
+    expect(jobForgeTarget({ tokenEnv: "TG_TOKEN" }, {})).toBeUndefined();
+    expect(jobForgeTarget({ tokenEnv: "TG_TOKEN" }, { ...job, TG_TOKEN: "" })).toBeUndefined();
+    expect(() => jobForgeTarget({ forge: "svn" }, job)).toThrow(ForgeFlagError);
   });
 });

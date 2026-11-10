@@ -1866,6 +1866,8 @@ export interface ForgeTarget {
   repo: string;
   /** Lower-cased. */
   host: string;
+  /** The web origin, `https://host` or `http://host:port` (#4888). Set by `forgeTargetWith` in `@intentius/chant/forge-flags`. */
+  origin?: string;
   token: string;
   /** The variable the token came from, for messages. Never the token itself. */
   tokenSource: string;

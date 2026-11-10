@@ -42,6 +42,7 @@ import { cloudLogin, type CloudLoginSpec } from "../ci-login";
 import type { OpWaveRunStep } from "../lexicon";
 import { controlNoteCheckout, type ControlNoteCheckout, type ControlTarget } from "../control/dispatch";
 import { commentLine, productStatusContext } from "../ci-product-words";
+import { PLAN_WATCHES_ENV, scheduledWatchProblem, type ScheduledWatch } from "../op/schedule-overdue";
 
 /** The variable the plan-note job reads the product's note words from (#4799), as JSON. Set from the pipeline, never from the report. */
 export const PR_PLAN_NOTE_WORDS_ENV = "CHANT_PLAN_NOTE_WORDS";
@@ -216,6 +217,17 @@ export interface ProductPlanOptions {
    * posts every open merge request's note in one run, so it takes none.
    */
   noteSteps?: { before?: string[]; after?: string[] };
+  /**
+   * The product's own scheduled jobs the note job checks for having stopped
+   * (#4888), such as terragucci's drift job: each a `ScheduledWatch` with
+   * its cron, the files the product's generator wrote it in, and on GitLab
+   * its schedule selector. The note job holds the token the plan job lacks,
+   * so `pr-post` asks the forge when each last ran, in its checkout of the
+   * target branch's commit, and adds the line for one that is overdue under
+   * the note's counts. They reach it as `CHANT_PLAN_WATCHES`, from the
+   * pipeline, never from the plan job's report.
+   */
+  watches?: ScheduledWatch[];
 }
 
 /** One plan job and its note job, for one target or for the whole pipeline (#4799). */
@@ -337,7 +349,16 @@ export function productPlanJobs(forge: ForgeKind, env: string, loop: PrLoopPipel
   const base = github
     ? { BASE_SHA: "${{ github.event.pull_request.base.sha }}", PR_NUMBER: "${{ github.event.pull_request.number }}" }
     : { BASE_SHA: "$CI_MERGE_REQUEST_DIFF_BASE_SHA", PR_NUMBER: "$CI_MERGE_REQUEST_IID" };
-  const noteWords: Record<string, string> = plan.noteWords ? { [PR_PLAN_NOTE_WORDS_ENV]: JSON.stringify(plan.noteWords) } : {};
+  for (const w of plan.watches ?? []) {
+    const problem = scheduledWatchProblem(w);
+    if (problem) throw new Error(`the product plan's watches: ${problem}`);
+  }
+  if (new Set((plan.watches ?? []).map((w) => w.op)).size !== (plan.watches ?? []).length) throw new Error("the product plan's watches name an Op twice");
+  // The note job's variables from the pipeline: the note words, and the product's watches (#4888).
+  const noteWords: Record<string, string> = {
+    ...(plan.noteWords ? { [PR_PLAN_NOTE_WORDS_ENV]: JSON.stringify(plan.noteWords) } : {}),
+    ...(plan.watches?.length ? { [PLAN_WATCHES_ENV]: JSON.stringify(plan.watches) } : {}),
+  };
   const fill = (line: string, name: string | undefined): string => line.replaceAll("{target}", name ?? env).replaceAll("{output}", PR_LOOP_REPORT_DIR);
   const control = plan.controlRead ? controlNoteCheckout(forge, plan.controlRead, words) : undefined;
   const one = (target?: ProductPlanTarget): ProductPlanJob => {

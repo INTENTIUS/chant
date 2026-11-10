@@ -6,6 +6,7 @@
 import { describe, expect, test } from "vitest";
 import { productPipelineJobs } from "./product-pipeline";
 import { PR_PLAN_NOTE_WORDS_ENV } from "./product-plan";
+import { PLAN_WATCHES_ENV } from "../op/schedule-overdue";
 import { TERRAGUCCI, TERRAGUCCI_NOTE, YODEL } from "../__fixtures__/product-words";
 import type { CiProductCommand } from "../ci-product-words";
 
@@ -51,6 +52,17 @@ describe("the product plan (#4799)", () => {
     expect(plan).toMatchObject({ jobName: "plan", noteJobName: "plan-note", command: "terragucci plan --pr-note .chant/pr", artifact: "terragucci-report" });
     expect(plan!.post.command).not.toContain("--member");
     expect(JSON.parse(plan!.post.env[PR_PLAN_NOTE_WORDS_ENV]!)).toEqual(TERRAGUCCI_NOTE);
+  });
+
+  // #4888: the product's own scheduled jobs reach the note job's pr-post from the pipeline, as terragucci's drift-schedule.json did from the plan job.
+  test.each(["github", "forgejo", "gitlab"] as const)("on %s, the product's watches reach the note job, and a watch that is not one is refused", (forge) => {
+    const drift = { op: "tf-drift", cron: "0 6 * * *", files: [".github/workflows/terragucci-drift.yml"], ...(forge === "gitlab" ? { schedule: { variable: "TERRAGUCCI_SCHEDULE", not: ["comments"] } } : {}) };
+    const [plan] = productPipelineJobs(forge, "default", { words: terragucci, productPlan: { command: "terragucci plan --pr-note {output}", watches: [drift] } }).productPlan!;
+    expect(JSON.parse(plan!.post.env[PLAN_WATCHES_ENV]!)).toEqual([drift]);
+    const [none] = productPipelineJobs(forge, "default", { words: terragucci, productPlan: { command: "terragucci plan --pr-note {output}" } }).productPlan!;
+    expect(none!.post.env).not.toHaveProperty(PLAN_WATCHES_ENV);
+    expect(() => productPipelineJobs(forge, "default", { words: terragucci, productPlan: { command: "terragucci plan", watches: [{ op: "tf-drift", cron: "daily" }] } })).toThrow(/the product plan's watches: watch tf-drift's cron "daily" is not five fields/);
+    expect(() => productPipelineJobs(forge, "default", { words: terragucci, productPlan: { command: "terragucci plan", watches: [drift, drift] } })).toThrow(/name an Op twice/);
   });
 
   test("the pipeline's passed values reach every target, and a name both give is refused", () => {

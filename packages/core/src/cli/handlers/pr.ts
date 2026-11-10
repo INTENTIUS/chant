@@ -1033,10 +1033,14 @@ async function newMigrations(p: Prepared): Promise<PrMigrationFile[]> {
  * the Ops cannot be read, nothing is checked and the plan goes on. The
  * generated plan holds no forge token (#4295), so there the plan-note job's
  * `pr-post` asks instead, reading the Ops at the target branch's commit.
+ * A product plan's own watches (#4888) come from `CHANT_PLAN_WATCHES`, which
+ * the generated note job sets from the pipeline.
  */
 async function overdueOps(forge: PrForge | undefined, member: string | undefined): Promise<PrOverdue[]> {
-  const { overdueOpsAt } = await import("../../op/schedule-overdue");
-  return overdueOpsAt({ forge, cwd: resolve("."), ...(member ? { member } : {}), log: (line) => console.error(formatWarning({ message: line })) });
+  const { overdueOpsAt, plannedWatchesFromEnv } = await import("../../op/schedule-overdue");
+  const log = (line: string): void => console.error(formatWarning({ message: line }));
+  const watches = plannedWatchesFromEnv(process.env, log);
+  return overdueOpsAt({ forge, cwd: resolve("."), ...(member ? { member } : {}), ...(watches.length > 0 ? { watches } : {}), log });
 }
 
 /** chant components pr-apply --base <ref> [--pr <n>] [--env <env>] [--gate <name>] [--forge <kind>] [--require-review] [--before-merge [--requires <list>]] [--output <dir>] [--json] [--events-json] [--report-url <url>] */

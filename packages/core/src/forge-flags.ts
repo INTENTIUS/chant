@@ -34,6 +34,15 @@ export interface ForgeOverrides {
 
 const trimUrl = (u: string | undefined): string | undefined => u?.trim().replace(/\/+$/, "") || undefined;
 
+/** `scheme://host[:port]` of a URL, the path dropped. */
+const originOf = (url: string): string => {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return url;
+  }
+};
+
 const hostOf = (url: string): string | undefined => {
   try {
     return new URL(url).host.toLowerCase();
@@ -102,6 +111,9 @@ export function forgeTargetWith(env: Record<string, string | undefined> = proces
   const out: ForgeTarget = { ...t };
   if (noToken) Object.assign(out, { token: "", tokenSource: "" });
   if (kind !== "gitlab" && apiUrl && !url) out.host = hostOf(apiUrl)!.replace(/^api\.github\.com$/, "github.com");
+  // #4888: the web origin, for a product's links and messages: `url`, else the job's server when it is the target's host, else https on the host.
+  const server = url ?? trimUrl(kind === "gitlab" ? e.CI_SERVER_URL : ((fj ? e.FORGEJO_SERVER_URL : undefined) ?? e.GITHUB_SERVER_URL));
+  out.origin = server && /^https?:\/\//i.test(server) && hostOf(server) === out.host ? originOf(server) : `https://${out.host}`;
   if (kind !== "gitlab" && (repo || url)) {
     const server = trimUrl(job("SERVER_URL"));
     const jobRepo = job("REPOSITORY");
@@ -191,6 +203,28 @@ export function forgeTargetFromFlags(
   // The token came from the product, not a variable; say so rather than name chant's.
   const t = forgeTargetWith({ ...env, [GIVEN_TOKEN]: token }, { ...opts, ...fromFlags, tokenEnv: GIVEN_TOKEN });
   return { ...t, tokenSource: "the token given" };
+}
+
+/**
+ * {@link forgeTargetFromFlags}, or undefined where it would throw
+ * {@link ForgeEnvironmentError} (#4888): the environment names no forge, or
+ * lacks the repository or the token. For a product step that does its
+ * forge work only when the job can, as terragucci's own `targetFromEnv`
+ * did: give the token the product holds as `token`, the one variable to
+ * read as `tokenEnv`, and `tokenOptional` for a read a public repository
+ * answers with none.
+ */
+export function jobForgeTarget(
+  flags: ForgeFlags,
+  env: Record<string, string | undefined> = process.env,
+  opts: Pick<ForgeTargetOptions, "requirePr" | "readFile"> & Pick<ForgeOverrides, "tokenOptional"> = {},
+): ForgeTarget | undefined {
+  try {
+    return forgeTargetFromFlags(flags, env, opts);
+  } catch (err) {
+    if (err instanceof ForgeEnvironmentError) return undefined;
+    throw err;
+  }
 }
 
 /**

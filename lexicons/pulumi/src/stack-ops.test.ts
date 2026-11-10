@@ -19,7 +19,10 @@ import {
   gatedStackAction,
   gatedStackMove,
   moveLeftovers,
+  pulumiMoveDestStack,
+  pulumiStackLockToCancel,
   PulumiStackActionRefused,
+  stackOpApproveCommand,
   stackActionScope,
   pulumiStackLockIds,
   PULUMI_STACK_OPS_OP,
@@ -416,5 +419,93 @@ describe("the version reads (#4808)", () => {
       await expect(runStackOpReadPulumi(pulumi.run, bad, "/tmp")).rejects.toThrow(/reads a stack's versions only as/);
     }
     expect(pulumi.calls).toHaveLength(2);
+  });
+});
+
+// #4911: what plywood built beside the lexicon's verbs.
+describe("the product's approve line, lock, destination and requester (#4911)", () => {
+  test("a template the product words its approve line in, filled with the op, the gate, the digest and --sign when sealed", () => {
+    const line = stackOpApproveCommand({ approveCommand: "plywood approve {gate} --op {op} --plan {digest} {sign}", rules: { mode: "ledger" } })!;
+    expect(line("dev", "sha256:ab")).toBe(`plywood approve dev --op ${PULUMI_STACK_OPS_OP} --plan sha256:ab`);
+    const sealed = stackOpApproveCommand({ approveCommand: "plywood approve {gate} --op {op} --plan {digest} {sign}", rules: { mode: "sealed" }, op: "mine" })!;
+    expect(sealed("dev", "d")).toBe("plywood approve dev --op mine --plan d --sign");
+    expect(stackOpApproveCommand({ rules: { mode: "ledger" } })).toBeUndefined();
+  });
+
+  test("a waiting cancel and a waiting move print the product's line", async () => {
+    const root = outside();
+    const locks = join(root, ".pulumi", "locks", "organization", "shop", "dev");
+    mkdirSync(locks, { recursive: true });
+    writeFileSync(join(locks, "lock-1.json"), "{}");
+    const l = ledger();
+    const approveCommand = (gate: string, digest: string) => `plywood approve ${gate} --plan ${digest}`;
+    const asked = await gatedStackCancel({ by: "alice", rules: { mode: "ledger" }, gated: l.api, env: {}, dir: stackDir(`file://${root}`), stack: "dev", engine: "pulumi", lockId: "lock-1", liveRuns: async () => [], approveCommand });
+    expect(asked).toMatchObject({ status: "waiting", command: `plywood approve dev --plan ${asked.digest}` });
+  });
+
+  test("the lock to cancel: the one given, the one held, or a refusal the product words", async () => {
+    const root = outside();
+    const locks = join(root, ".pulumi", "locks", "organization", "shop", "dev");
+    mkdirSync(locks, { recursive: true });
+    const dir = stackDir(`file://${root}`);
+    expect(await pulumiStackLockToCancel("given", { dir, stack: "dev", env: {} })).toEqual({ lockId: "given", read: false });
+    expect(await pulumiStackLockToCancel(undefined, { dir, stack: "dev", env: {} })).toMatchObject({ refusal: "no-lock", ids: [] });
+    writeFileSync(join(locks, "lock-1.json"), "{}");
+    expect(await pulumiStackLockToCancel(undefined, { dir, stack: "dev", env: {} })).toEqual({ lockId: "lock-1", read: true });
+    writeFileSync(join(locks, "lock-2.json"), "{}");
+    expect(await pulumiStackLockToCancel(undefined, { dir, stack: "dev", env: {} })).toMatchObject({ refusal: "many-locks", ids: ["lock-1", "lock-2"] });
+    expect(await pulumiStackLockToCancel(undefined, { dir: stackDir("s3://bucket"), stack: "dev", env: {} })).toMatchObject({ refusal: "not-listed", backend: "s3://bucket" });
+  });
+
+  test("--dest: the bare stack in one project, else qualified, the org on Pulumi Cloud only", () => {
+    expect(pulumiMoveDestStack({ project: "shop" }, { project: "shop", stack: "app" })).toBe("app");
+    expect(pulumiMoveDestStack({ project: "net" }, { project: "shop", stack: "app" }, { org: "acme" })).toBe("acme/shop/app");
+    expect(pulumiMoveDestStack({ project: "net" }, { project: "shop", stack: "app", backend: "https://api.pulumi.com" }, { org: "acme" })).toBe("acme/shop/app");
+    expect(pulumiMoveDestStack({ project: "net" }, { project: "shop", stack: "app", backend: "file:///state" }, { org: "acme" })).toBe("organization/shop/app");
+    expect(pulumiMoveDestStack({ project: "net" }, { project: "shop", stack: "app" })).toBe("organization/shop/app");
+    expect(pulumiMoveDestStack({ project: "net" }, { project: "shop", stack: "o/shop/app" })).toBe("o/shop/app");
+  });
+
+  test("a move given both projects names the destination itself", async () => {
+    const l = ledger();
+    const pulumi = runner((args) => {
+      const stack = args[args.indexOf("--stack") + 1];
+      return stack === "net" ? previewDoc([step("delete", src("logs"))]) : previewDoc([step("create", dst("logs"))]);
+    });
+    const asked = await gatedStackMove({
+      by: "alice",
+      rules: { mode: "ledger" },
+      gated: l.api,
+      env: {},
+      run: pulumi.run,
+      engine: "pulumi",
+      source: { member: "infra/net", dir: stackDir(`file://${outside()}`), stack: "net", project: "infra" },
+      dest: { member: "shop/app", dir: stackDir(`file://${outside()}`), stack: "app", project: "shop" },
+      urns: [src("logs")],
+      org: "acme",
+      approveCommand: "plywood approve {gate} --op {op} --plan {digest} {sign}",
+    });
+    expect(asked).toMatchObject({ status: "waiting", request: { subject: "move:net:organization/shop/app", fields: { dest: "organization/shop/app" } } });
+    if (asked.status === "waiting") expect(asked.command).toBe(`plywood approve move:net:organization/shop/app --op ${PULUMI_STACK_OPS_OP} --plan ${asked.digest}`);
+  });
+});
+
+// #4920: a laptop cancel names the forge and the repository from the stack checkout's origin remote.
+describe("cancel on a laptop (#4920)", () => {
+  test("with no CI variables and no repository given, the origin remote names the repository; only the token is missing", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const root = outside();
+    const locks = join(root, ".pulumi", "locks", "organization", "shop", "dev");
+    mkdirSync(locks, { recursive: true });
+    writeFileSync(join(locks, "lock-1.json"), "{}");
+    const dir = stackDir(`file://${root}`);
+    const base = { by: "alice", rules: { mode: "ledger" as const }, env: {}, dir, stack: "dev", engine: "pulumi" as const, lockId: "lock-1", forge: { kind: "github" as const } };
+    const before = await gatedStackCancel({ ...base, gated: ledger().api }).then(() => "", (e: Error) => e.message);
+    expect(before).toMatch(/GITHUB_REPOSITORY/);
+    execFileSync("git", ["-C", dir, "init", "-q"]);
+    execFileSync("git", ["-C", dir, "remote", "add", "origin", "git@github.com:acme/infra.git"]);
+    const after = await gatedStackCancel({ ...base, gated: ledger().api }).then(() => "", (e: Error) => e.message);
+    expect(after).toMatch(/a token/);
+    expect(after).not.toMatch(/GITHUB_REPOSITORY/);
   });
 });

@@ -52,6 +52,7 @@ import { gitlabStore, shownUrl, type GitLabFetch } from "./state/gitlab";
 import type { StoreFetch } from "./state/object-store";
 import { stateStore } from "./state/store";
 import { gitlabVersionSource, stateVersionSource } from "./state/versions";
+import { actorFromEnv } from "@intentius/chant/actor";
 
 /** The ops the gated requests of this module wait at, one per kind, as terragucci named them. */
 export const STATE_OPS = {
@@ -377,7 +378,8 @@ export interface CopyStepInput {
   lockTimeout?: string | false;
 }
 
-const actorOf = (env: NodeJS.ProcessEnv): string => env.GITHUB_ACTOR || env.GITLAB_USER_LOGIN || env.USER || env.USERNAME || "unknown";
+/** Who asks when the caller names nobody: core's actor fallback (#4911). */
+const actorOf = (env: NodeJS.ProcessEnv): string => actorFromEnv(env);
 
 const dirOf = (cwd: string | undefined, input: { root: string; dir?: string }): string => input.dir ?? join(cwd ?? process.cwd(), input.root);
 

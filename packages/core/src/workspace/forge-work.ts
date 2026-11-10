@@ -23,8 +23,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { remoteRepoPath } from "../op/activities/forge-pull-request";
-import { remoteHost } from "../op/activities/gh-host";
+import { forgeKindOfHost, forgeOfRemote } from "../forge-remote";
 import { detectForge, FORGE_TOKEN_ORDER, ForgeApiError, forgeClient, forgeTargetFromEnv, type ForgeFetch, type ForgeKind, type ForgeTarget, type PrForge } from "../pr-forge";
 
 /** What the forge says one pull request closes. */
@@ -85,14 +84,8 @@ function ghAuthToken(host: string): string | undefined {
   }
 }
 
-/** The forge kind a remote host is: github.com and hosts named for GitHub, GitLab, or Forgejo and Gitea (codeberg.org too). Null for any other. */
-export function forgeKindOfHost(host: string): ForgeKind | null {
-  const h = host.toLowerCase().replace(/:\d+$/, "");
-  if (h === "github.com" || /(^|[.-])github([.-]|$)/.test(h)) return "github";
-  if (h === "gitlab.com" || /(^|[.-])gitlab([.-]|$)/.test(h)) return "gitlab";
-  if (h === "codeberg.org" || /(^|[.-])(forgejo|gitea)([.-]|$)/.test(h)) return "forgejo";
-  return null;
-}
+/** The forge kind a remote host is, as `@intentius/chant/forge-remote` reads it (#4920). */
+export { forgeKindOfHost };
 
 /** The REST base of a forge at `host`, as the clients take it. */
 export function forgeApiBase(kind: ForgeKind, host: string): string {
@@ -113,10 +106,10 @@ function locate(top: string, opts: ForgeWorkOptions): { target: ForgeTarget } | 
   }
   const url = opts.remoteUrl !== undefined ? opts.remoteUrl : gitRemote(top);
   if (!url) return { source: null, reason: "there is no origin remote to name the forge" };
-  const host = remoteHost(url);
-  const repo = remoteRepoPath(url);
-  const kind = host ? forgeKindOfHost(host) : null;
-  if (!host || !repo || !kind) return { source: null, reason: `origin (${url}) is not on a forge chant reads issues from: GitHub, GitLab or Forgejo` };
+  // #4920: the origin remote's forge, as `@intentius/chant/forge-remote` reads it.
+  const at = forgeOfRemote(url);
+  if (!at) return { source: null, reason: `origin (${url}) is not on a forge chant reads issues from: GitHub, GitLab or Forgejo` };
+  const { kind, host, repo } = at;
   const source = { kind, host, repo };
   const names = ["CHANT_FORGE_TOKEN", ...FORGE_TOKEN_ORDER[kind]];
   const tokenSource = names.find((n) => env[n]?.trim());
