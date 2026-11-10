@@ -574,7 +574,7 @@ describe("the comment's argument (#4820)", () => {
     expect(refused.result).toBe("refused");
   });
 
-  test("the floor is the next release until it ships", () => {
+  test("the floor is the release that shipped it", () => {
     expect(CI_COMMIT_ARG_FLOOR).toBe("0.124.78");
   });
 });
@@ -617,8 +617,8 @@ describe("a comment refused as it is read gets a reply (#4838)", () => {
     expect(long.replies[0]).toMatch(new RegExp(`^plywood: \`/plywood fmt x{84}\\.\\.\\.\` was refused`));
   });
 
-  test("the floor is the next release until it ships", () => {
-    expect(CI_COMMIT_REFUSAL_REPLY_FLOOR).toBe(NEXT_RELEASE);
+  test("the floor is the release that shipped it", () => {
+    expect(CI_COMMIT_REFUSAL_REPLY_FLOOR).toBe("0.124.86");
   });
 });
 
@@ -685,7 +685,7 @@ describe("the harness's BREAK switch for land (#4836)", () => {
     expect(out).toMatchObject({ result: "refused", reason: "the base moved" });
   });
 
-  test("the floor is the next release until it ships", () => {
+  test("the floor is the release that shipped it", () => {
     expect(CI_COMMIT_HARNESS_BREAK_FLOOR).toBe("0.124.78");
   });
 });
