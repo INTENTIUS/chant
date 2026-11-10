@@ -619,6 +619,12 @@ Ops:
                         names (a JSON argv) with CHANT_WAVES_SPEC_AT set to
                         the base, writes the spec it prints over --spec, and
                         reads the rules at base from it (#4982).
+                        --phase plan|gate|apply|record: one of a wave's four
+                        jobs before merge (#4987). plan saves the plan and
+                        writes nothing to chant/lifecycle; gate decides the
+                        gate on the saved plan at the default branch; apply
+                        applies the saved plans the decision holds; record
+                        writes the applying jobs' run records.
                         --op <name> --wave <last> --merge auto|manual
                         --forge <kind> [--gate <name>] [--merge-token-env
                         <VAR>]: the job after a before-merge run's last wave

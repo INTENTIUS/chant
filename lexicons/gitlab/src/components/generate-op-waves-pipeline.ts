@@ -41,6 +41,13 @@
  * before the setup. A `before-merge-done` stage after the waves merges and
  * releases the locks, with the merge token's variable.
  *
+ * #4987: with `beforeMerge` each wave, in a push's pipeline as well, is four
+ * jobs ({@link gitlabSplitEntries}, `@intentius/chant/op/op-waves-split`):
+ * the plan and applying jobs drop `CHANT_FORGE_TOKEN` and the job token
+ * once the head is fetched, and the gate and record jobs, at the default
+ * branch's code, write `chant/lifecycle`. Without it, each wave keeps its
+ * one job.
+ *
  * With `applyStatus` (#4987) a job `apply-status-<n>` in each wave's stage
  * needs that wave's jobs, runs whatever they ended (`when: always`), and
  * posts the status from the outcome files at the pipeline's commit, with
@@ -144,7 +151,9 @@ import {
   type OpWavesSpec,
 } from "@intentius/chant/op/op-waves";
 import { CONTROL_OUTCOME_VAR, CONTROL_TOKEN_VARS, controlDispatchJob } from "@intentius/chant/control/dispatch";
-import type { OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
+import type { OpWaveJobInputs, OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
+import { opWaveSavedPlanDir, opWaveSplitJobLabel, opWaveSplitJobs, opWaveSplitLastJobs, type OpWaveSplitJob } from "@intentius/chant/op/op-waves-split";
+import { GITLAB_DROP_FORGE_TOKENS } from "@intentius/chant/ci-handover";
 import { gitlabTradeIdTokens, gitlabTradeLines, TRADE_SPEC_ENV } from "@intentius/chant/ci-identity";
 import { JOB_GUARD_ENV, jobGuardLine, jobGuardSpec, opWaveJobLabel } from "@intentius/chant/ci-job-guard";
 import { CHANT_EXIT } from "@intentius/chant/exit-codes";
@@ -186,6 +195,8 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
   const bm = options.beforeMerge;
   if (bm) assertOpWavesBeforeMerge("gitlab", bm);
   const jobs = opWaveJobs(spec, options.specFile, { bin: options.bin, ...(options.renderSpec ? { renderSpec: true } : {}), ...(bm ? { beforeMerge: true } : {}) });
+  // #4987: before merge each wave is a plan, a gate, an apply and a record job, so the change's code never runs beside CHANT_FORGE_TOKEN.
+  const split = bm ? opWaveSplitJobs(spec, jobs) : undefined;
   assertPipelineEvidence(options.evidence);
   const image = options.image ?? CI_IMAGE;
   const subject = `Op waves "${spec.name}"`;
@@ -270,7 +281,10 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
     return opWaveEvidencePlan(spec, job, { signs, keylessCloud: signs && evidenceKeyless(options.evidence) && cloud !== undefined, keyOutOfWave: signs && !evidenceKeyless(options.evidence) });
   };
   const evidenceNeeds = opWaveEvidenceNeeds(spec, jobs.map((job) => ({ wave: job.wave, plan: evidenceOf(job) })));
-  for (const job of jobs) {
+  if (split) {
+    entries.push(...gitlabSplitEntries({ spec, options, product, image, timeout, inputs, renderEnv, split, setupOf, groupSetup, dropControl, waveRules, stageOf: (k) => stages[k - 1 + (byReview ? 1 : 0)]! }));
+  }
+  for (const job of split ? [] : jobs) {
     const wave = spec.waves[job.wave - 1]!;
     const group = opWaveGroupOf(spec, job);
     const setup = [...setupOf[job.wave - 1]!, ...(group ? groupSetup.get(`${wave.name}/${group.name}`)! : [])];
@@ -398,6 +412,8 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
       ]);
     }
   }
+  // #4987: a split pipeline's waves end with the last wave's record job.
+  const last = split ? opWaveSplitLastJobs(spec) : opWavesLastJobs(jobs);
   if (bm) {
     // #4984: after a before-merge pipeline's last wave, at the default branch's commit: the merge and the release of the locks.
     // Its needs hand on every outcome file; a wave that failed as allowed still lets it run, and it reads the outcomes itself.
@@ -409,7 +425,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
         ...(specTags ? { tags: specTags } : {}),
         variables: { ...GITLAB_FULL_HISTORY, ...(bm.merge === "auto" && bm.mergeTokenSecret ? { [BEFORE_MERGE_TOKEN_ENV]: `$${bm.mergeTokenSecret}` } : {}) },
         rules: bmRules,
-        needs: opWavesLastJobs(jobs),
+        needs: last,
         script: [...dropControl, ...setupOf[0]!, ...(options.beforeScript ?? []), beforeMergeDoneCommand(spec, "gitlab", bm, options.bin)],
       },
     ]);
@@ -429,7 +445,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
           ...(specTags ? { tags: specTags } : {}),
           variables: { ...GITLAB_FULL_HISTORY },
           rules: waveRules.map((r) => ({ ...r, when: "always" })),
-          needs: jobs.filter((j) => j.wave === k).map((j) => j.jobName),
+          needs: (split ?? jobs).filter((j) => j.wave === k).map((j) => j.jobName),
           script: [...dropControl, ...setupOf[0]!, ...(options.beforeScript ?? []), applyStatusCommand(spec, k, status.context, "gitlab", at, options.bin)],
           allow_failure: true,
         },
@@ -466,7 +482,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
         ...(specTags ? { tags: specTags } : {}),
         rules,
         // The last wave's jobs hand on every job's outcome file through their artifacts.
-        needs: opWavesLastJobs(jobs),
+        needs: last,
         // The setup and the outcome run in a subshell without the control token, and only the outcome reaches stdout.
         script: [
           [
@@ -514,5 +530,173 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
     ...(control ? [`# After the last wave, the control-dispatch job tells ${control.repo} how the waves ended.`] : []),
   ];
   const name = options.opsFileName ?? `${spec.name}.gitlab-ci.yml`;
-  return { files: [{ name, yaml: emitGitlabFile(entries, header) }], jobs };
+  return { files: [{ name, yaml: emitGitlabFile(entries, header) }], jobs: split ?? jobs };
+}
+
+/** The exits of a split wave's applying job that let its record job run (#4987): a failed run, a moved plan, a held or stood-down apply. The record job ends with them. */
+export const OP_WAVE_SPLIT_APPLY_ALLOWED_EXITS = [CHANT_EXIT.failed, CHANT_EXIT.moved, CHANT_EXIT.held, CHANT_EXIT.superseded];
+
+/**
+ * The runner's clone keeps the job token in origin's URL; a job that runs
+ * the change's code drops it once the head is fetched (#4899, #4987).
+ */
+const GITLAB_SCRUB_ORIGIN = `git remote set-url origin "$(git remote get-url origin | sed -E 's#//[^@/]*@#//#')"`;
+
+/** What the split jobs read from the pipeline they are in (#4987). */
+interface GitlabSplitInput {
+  spec: OpWavesSpec;
+  options: OpWavesPipelineOptions;
+  product: string;
+  image: string;
+  timeout: { minutes: number; env: Record<string, string> };
+  inputs: Array<OpWaveJobInputs | undefined>;
+  renderEnv: Record<string, string>;
+  split: OpWaveSplitJob[];
+  setupOf: string[][];
+  groupSetup: Map<string, string[]>;
+  dropControl: string[];
+  waveRules: Array<{ if: string }>;
+  stageOf: (k: number) => string;
+}
+
+/**
+ * The jobs of a before-merge pipeline, each wave split in four (#4987,
+ * `@intentius/chant/op/op-waves-split`). A CI/CD variable reaches every job,
+ * so the plan and apply jobs, and the plan's policy job, drop
+ * `CHANT_FORGE_TOKEN`, the job token and the other token variables
+ * (`GITLAB_DROP_FORGE_TOKENS`) and the job token in origin's URL right after
+ * the head is fetched, before any of the change's code; their
+ * `after_script` drops them again, since it is a shell of its own. The gate
+ * and record jobs check out nothing of the merge request but its commit,
+ * fetched, and write `chant/lifecycle`. GitLab hands on artifacts through
+ * `needs:` alone, so each job keeps the outcome directory, and the gate job
+ * the saved plan and the decision for the applying jobs. An applying job's
+ * moved, held or stood-down apply is an allowed failure, so the record job
+ * writes its run record and then ends with it, and the waves after it stop.
+ */
+function gitlabSplitEntries(input: GitlabSplitInput): Array<readonly [string, unknown]> {
+  const { spec, options, product, image, timeout, inputs, renderEnv, split, setupOf, groupSetup, dropControl, waveRules, stageOf } = input;
+  const evidenceOf = (job: OpWaveSplitJob) => (job.phase === "plan" && options.evidence !== undefined ? opWaveEvidencePlan(spec, job, { signs: true, keylessCloud: false, keyOutOfWave: true }) : undefined);
+  const evidenceNeeds = opWaveEvidenceNeeds(spec, split.map((job) => ({ wave: job.wave, plan: evidenceOf(job) })));
+  const specTags = gitlabTags(spec.runner);
+  const outcomes = `${opWaveOutcomeDir(spec)}/`;
+  const checksDir = `${opWaveChecksDir(spec)}/`;
+  const out: Array<readonly [string, unknown]> = [];
+  for (const job of split) {
+    const k = job.wave;
+    const wave = spec.waves[k - 1]!;
+    const stage = stageOf(k);
+    const savedPlan = `${opWaveSavedPlanDir(spec, k)}/`;
+    if (!job.runsChange) {
+      // The gate and record jobs: the default branch's code, with CHANT_FORGE_TOKEN.
+      const gate = job.phase === "gate";
+      const guard = jobGuardSpec({ forge: "gitlab", job: opWaveSplitJobLabel(spec.name, job), product, branches: pushBranches(spec.branches), ...(spec.runner !== undefined ? { runner: spec.runner } : {}), beforeMerge: { op: spec.name } });
+      out.push([
+        job.jobName,
+        {
+          stage,
+          image,
+          ...(specTags ? { tags: specTags } : {}),
+          variables: { ...GITLAB_FULL_HISTORY, ...renderEnv, ...(wave.variables ?? {}), [JOB_GUARD_ENV]: JSON.stringify(guard) },
+          rules: waveRules,
+          needs: job.needs,
+          // The gate reads the head's commit, notes and wave stop; the record job writes what ran, whatever the merge request did since.
+          script: [jobGuardLine(), ...(gate ? [beforeMergeCheckoutScript("gitlab", product, { checkout: false })] : []), ...dropControl, ...setupOf[k - 1]!, ...(options.beforeScript ?? []), job.command.join(" ")],
+          // A gate that fails as a run fails (its plan job's end) lets the applying job record the wave's outcome; one that waits stops here.
+          allow_failure: { exit_codes: [OP_WAVE_ALLOWED_EXIT] },
+          artifacts: { when: "always", paths: gate ? [job.record!, savedPlan, outcomes] : [outcomes], expire_in: "30 days" },
+        },
+      ]);
+      continue;
+    }
+    // The plan and apply jobs, and the plan's policy job: the change's code, with no forge token.
+    const group = opWaveGroupOf(spec, job);
+    const setup = [...setupOf[k - 1]!, ...(group ? groupSetup.get(`${wave.name}/${group.name}`)! : [])];
+    const tags = gitlabTags(group?.runner ?? wave.runner ?? spec.runner);
+    const environment = group?.environment ?? wave.environment;
+    const cloud = group?.cloud ?? wave.cloud;
+    const declared = gitlabIdTokensDoc(group?.idTokens ?? wave.idTokens);
+    const idTokens = cloud ? { ...declared, ...gitlabTradeIdTokens(cloud) } : declared;
+    const runner = group?.runner ?? wave.runner ?? spec.runner;
+    const add = inputs[k - 1];
+    const evidence = evidenceOf(job);
+    const guard = jobGuardSpec({ forge: "gitlab", job: opWaveSplitJobLabel(spec.name, job), product, ...(environment ? { environment: environment.name } : {}), branches: pushBranches(spec.branches), ...(runner !== undefined ? { runner } : {}), beforeMerge: { op: spec.name } });
+    const head = [jobGuardLine(), ...(cloud ? gitlabTradeLines() : []), beforeMergeCheckoutScript("gitlab", product), GITLAB_SCRUB_ORIGIN, GITLAB_DROP_FORGE_TOKENS];
+    const variables = {
+      ...GITLAB_FULL_HISTORY,
+      ...timeout.env,
+      ...renderEnv,
+      ...(wave.variables ?? {}),
+      ...(group?.variables ?? {}),
+      ...(cloud ? { [TRADE_SPEC_ENV]: JSON.stringify(cloud) } : {}),
+      [JOB_GUARD_ENV]: JSON.stringify(guard),
+    };
+    const policyJob = evidence?.policyStep ? opWavePolicyJobName(job) : undefined;
+    if (policyJob) {
+      out.push([
+        policyJob,
+        {
+          stage,
+          image,
+          ...(tags ? { tags } : {}),
+          timeout: `${timeout.minutes} minutes`,
+          ...(environment ? { environment: { ...environmentDoc(environment), action: "prepare" } } : {}),
+          ...(idTokens && Object.keys(idTokens).length > 0 ? { id_tokens: idTokens } : {}),
+          variables,
+          rules: waveRules,
+          ...(job.needs.length > 0 ? { needs: job.needs } : {}),
+          script: [...head, ...dropControl, ...setup, ...(options.beforeScript ?? []), ...(add?.before ?? []).flatMap((st) => st.run), ...(add?.prelude ?? []), opWavePolicyCommand(job).join(" ")],
+          allow_failure: true,
+          artifacts: { when: "always", paths: [checksDir], expire_in: "30 days" },
+        },
+      ]);
+    }
+    const plan = job.phase === "plan";
+    const needs = [...job.needs, ...(policyJob ? [policyJob] : []), ...(plan ? evidenceNeeds(k) : [])];
+    out.push([
+      job.jobName,
+      {
+        stage,
+        image,
+        ...(tags ? { tags } : {}),
+        timeout: `${timeout.minutes} minutes`,
+        // The plan job deploys nothing; the applying job is the deployment.
+        ...(environment ? { environment: plan ? { ...environmentDoc(environment), action: "prepare" } : environmentDoc(environment) } : {}),
+        ...(idTokens && Object.keys(idTokens).length > 0 ? { id_tokens: idTokens } : {}),
+        variables: { ...variables, ...(evidence?.commandMode ? { [WAVE_EVIDENCE_ENV]: evidence.commandMode } : {}) },
+        rules: waveRules,
+        ...(needs.length > 0 ? { needs } : {}),
+        script: [...head, ...dropControl, ...setup, ...(options.beforeScript ?? []), ...(add?.before ?? []).flatMap((st) => st.run), ...(add?.prelude ?? []), job.command.join(" "), ...(options.extraScript ?? [])],
+        ...(add?.report ? { after_script: [GITLAB_DROP_FORGE_TOKENS, ...add.report.run] } : {}),
+        allow_failure: { exit_codes: plan ? [OP_WAVE_ALLOWED_EXIT] : OP_WAVE_SPLIT_APPLY_ALLOWED_EXITS },
+        artifacts: {
+          ...(add?.artifact ? { name: opWaveJobArtifactName(add.artifact.name, job.jobName) } : {}),
+          when: "always",
+          paths: [...(plan ? [savedPlan] : []), outcomes, ...(evidence?.evidenceJob ? [checksDir] : []), ...(add?.artifact ? [add.artifact.path] : [])],
+          expire_in: "30 days",
+        },
+      },
+    ]);
+    if (evidence?.evidenceJob) {
+      // #4926: after the plan job, a job that runs none of the change's code signs from the jobs' statuses, at the decided head.
+      const lines = opWaveEvidenceLines(spec, evidence, job, { sha: `"\${${BEFORE_MERGE_HEAD_ENV}:-$CI_COMMIT_SHA}"`, ...(options.bin ? { bin: options.bin } : {}), beforeMerge: true });
+      const signingTokens = evidenceIdTokens(options.evidence);
+      out.push([
+        evidence.evidenceJob.name,
+        {
+          stage,
+          image,
+          ...(specTags ? { tags: specTags } : {}),
+          ...(evidenceKeyless(options.evidence) ? {} : { environment: { name: GITLAB_EVIDENCE_ENVIRONMENT, action: "access" } }),
+          ...(Object.keys(signingTokens).length > 0 ? { id_tokens: signingTokens } : {}),
+          variables: { ...GITLAB_FULL_HISTORY, [EVIDENCE_SOURCES_ENV]: JSON.stringify(opWaveEvidenceSources("gitlab", evidence, job, wave.name, "")), ...evidenceKeyEnv("gitlab", options.evidence!) },
+          rules: waveRules,
+          needs: [job.jobName, ...(policyJob ? [policyJob] : [])],
+          script: [...dropControl, ...lines.checkout, ...setupOf[k - 1]!, ...(options.beforeScript ?? []), ...lines.sign],
+          allow_failure: true,
+        },
+      ]);
+    }
+  }
+  return out;
 }

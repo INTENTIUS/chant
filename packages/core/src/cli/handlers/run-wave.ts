@@ -14,6 +14,8 @@ import { formatError, formatWarning } from "../format";
 import { ledgerRecordingOff, NO_RECORD_ENV, noRecordEndNote, noRecordStartNote, resetNoRecordLedger } from "../../lifecycle/no-record";
 import type { CommandContext } from "../registry";
 import { waveStopLine } from "../../op/wave-stop";
+import { OP_WAVE_PHASES, type OpWavePhase } from "../../op/op-waves-split";
+import { beforeMergeRunFromEnv } from "../../op/before-merge";
 import { CHANT_EXIT } from "../../exit-codes";
 
 /**
@@ -99,6 +101,14 @@ async function runOpWaveJobCommand(ctx: CommandContext): Promise<number> {
     console.error(formatError({ message: `--policy-only runs a wave's policy in its own or its deciding job; a --${args.share !== undefined ? "share" : "group"} job has none of its own` }));
     return 1;
   }
+  // #4987: one of a split wave's four jobs before merge.
+  const phase = args.phase as OpWavePhase | undefined;
+  if (phase !== undefined && !OP_WAVE_PHASES.includes(phase)) {
+    console.error(formatError({ message: `--phase is one of ${OP_WAVE_PHASES.join(", ")}: a split wave's plan, gate, apply or record job`, hint: `got ${JSON.stringify(args.phase ?? "")}` }));
+    return 1;
+  }
+  // The gate and record jobs run at the default branch; a before-merge run's applied commit is its decided head.
+  const decidedHead = phase === "gate" || phase === "record" ? beforeMergeRunFromEnv().head : undefined;
   let spec: OpWavesSpec | undefined;
   const job = { ...(args.share !== undefined ? { share: args.share } : {}), ...(args.group !== undefined ? { group: args.group } : {}) };
   if (args.eventsJson && args.json) {
@@ -123,8 +133,9 @@ async function runOpWaveJobCommand(ctx: CommandContext): Promise<number> {
       spec = parseOpWavesSpec(readFileSync(path, "utf-8"), `--spec ${specFile}`);
     }
     // #4979: a comment that ran the apply again through wave n leaves the waves after it waiting, as a gate does.
-    if (!args.policyOnly) {
-      const stopped = await waveStopLine(spec.name, args.wave);
+    // #4987: in a split wave the gate job reads the stop, with the token, at the decided head.
+    if (!args.policyOnly && (phase === undefined || phase === "gate")) {
+      const stopped = await waveStopLine(spec.name, args.wave, decidedHead ? { sha: decidedHead } : {});
       if (stopped) {
         console.error(stopped);
         return CHANT_EXIT.waiting;
@@ -151,10 +162,15 @@ async function runOpWaveJobCommand(ctx: CommandContext): Promise<number> {
       ...(args.group !== undefined ? { group: args.group } : {}),
       ...(args.base ? { base: args.base } : {}),
       ...(show ? { show } : {}),
+      ...(phase ? { phase } : {}),
+      ...(decidedHead ? { head: decidedHead } : {}),
     });
     if (args.json) console.log(JSON.stringify(result, null, 2));
     // #4926: the policy step applied nothing; the wave's own step tells people how it went.
     if (args.policyOnly) return result.exitCode;
+    // #4987: the plan and apply jobs run the change's code and hold no token; the gate job tells people when the wave stops
+    // there, and the record job how it applied.
+    if (phase === "plan" || phase === "apply" || (phase === "gate" && result.exitCode === CHANT_EXIT.done)) return result.exitCode;
     // #3761: tell people, when the spec says where. Delivery never changes the exit code.
     await notifyOpWave(spec, args.wave, { result }, job);
     // #4629: a refused wave's diff and a failed apply's triage, on the pull request or a tracking issue.
@@ -163,7 +179,7 @@ async function runOpWaveJobCommand(ctx: CommandContext): Promise<number> {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(formatError({ message }));
-    if (spec) {
+    if (spec && phase !== "plan" && phase !== "apply") {
       await notifyOpWave(spec, args.wave, { error: message }, job);
       await respondWave(spec, args.wave, { error: message });
     }

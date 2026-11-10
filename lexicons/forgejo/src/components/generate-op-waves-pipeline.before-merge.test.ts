@@ -12,7 +12,9 @@ import { generateForgejoOpWavesPipeline } from "./generate-op-waves-pipeline";
 const spec: OpWavesSpec = {
   name: "tf-apply",
   op: "tf-apply",
-  step: { kind: "terraform-apply", root: "{target}" },
+  // #4987: a spec with `step` cannot split before merge, so these waves plan and apply with commands.
+  plan: ["terragucci", "plan", "{target}", "--out", "{plan}"],
+  apply: ["terragucci", "apply", "{target}", "--plan", "{plan}"],
   waves: [{ name: "dev", runs: [{ target: "dev" }] }, { name: "prod", runs: [{ target: "prod" }] }],
 } as OpWavesSpec;
 const options = { specFile: ".chant/op-waves/tf-apply.spec.json", bin: "terragucci" };
@@ -27,9 +29,10 @@ describe("the before-merge mode on Forgejo (#4984)", () => {
     expect(Object.keys(doc.on.workflow_dispatch!.inputs!)).toEqual(["pr", "head", "digest"]);
     const wave = doc.jobs["wave-1-dev"]!;
     expect(JSON.parse(wave.steps[0]!.env!.CHANT_JOB_GUARD!)).toMatchObject({ forge: "forgejo", beforeMerge: { op: "tf-apply" } });
-    expect(wave.steps.some((s) => s.name === "Check out the pull request's decided head" && s.run!.includes("refs/pull/${CHANT_BEFORE_MERGE_PR}/head"))).toBe(true);
+    // #4987: the checkout step fetches the head with the job's token in its own environment alone.
+    expect(wave.steps.some((s) => s.env?.CHANT_CHECKOUT_TOKEN === "${{ github.token }}" && s.run!.includes("refs/pull/${CHANT_BEFORE_MERGE_PR}/head"))).toBe(true);
     const done = doc.jobs["before-merge-done"]!;
-    expect(done.needs).toEqual(["wave-2-prod"]);
+    expect(done.needs).toEqual(["wave-2-prod-record"]);
     expect(done.steps.at(-1)!.run).toBe("terragucci run wave --op tf-apply --wave 2 --merge auto --forge forgejo --merge-token-env CHANT_MERGE_TOKEN");
   });
 

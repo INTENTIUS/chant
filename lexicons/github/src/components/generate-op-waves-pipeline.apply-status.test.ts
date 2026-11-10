@@ -11,7 +11,9 @@ import { generateGithubOpWavesPipeline } from "./generate-op-waves-pipeline";
 const spec: OpWavesSpec = {
   name: "tf-apply",
   op: "tf-apply",
-  step: { kind: "terraform-apply", root: "{target}" },
+  // #4987: a spec with `step` cannot split before merge, so these waves plan and apply with commands.
+  plan: ["terragucci", "plan", "{target}", "--out", "{plan}"],
+  apply: ["terragucci", "apply", "{target}", "--plan", "{plan}"],
   waves: [
     { name: "dev", runs: [{ target: "dev" }], setup: [{ run: "npm ci" }] },
     { name: "prod", runs: [{ target: "prod" }], environment: { name: "prod" } },
@@ -43,11 +45,12 @@ describe("the apply statuses on GitHub (#4987)", () => {
   test("the status job runs none of the change's code: it never checks out the pull request's head", () => {
     const { jobs: bm } = docOf({ beforeMerge: {} });
     const job = bm["apply-status-2"]!;
-    expect(job.steps.map((s) => s.name)).not.toContain("Check out the pull request's decided head");
     expect(JSON.stringify(job.steps)).not.toContain("refs/pull/");
-    // Before merge it posts on the decided head, which the dispatch carries.
+    expect(JSON.stringify(job.steps)).not.toContain('git checkout -q --detach \\"$CHANT_BEFORE_MERGE_HEAD\\"');
+    // Before merge it posts on the decided head, which the dispatch carries, after each of the wave's split jobs (#4987).
     expect(job.env).toMatchObject({ CHANT_BEFORE_MERGE_HEAD: "${{ github.event.inputs.head }}" });
     expect(job.steps.at(-1)!.run).toContain('--at "${CHANT_BEFORE_MERGE_HEAD:-$GITHUB_SHA}"');
+    expect(job.needs).toEqual(["wave-2-prod-plan", "wave-2-prod-gate", "wave-2-prod", "wave-2-prod-record"]);
     // The wave jobs post no status of their own.
     expect(bm["wave-1-dev"]!.permissions?.statuses).toBeUndefined();
   });

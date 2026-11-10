@@ -180,18 +180,23 @@ export function runSummary(outcomes: Iterable<WaveMemberOutcome>): string | unde
   return parts.join(", ");
 }
 
-/** The outcome file of a wave's job, or of one group or share of it. */
-export function waveOutcomeFileName(wave: number, part: { group?: string; share?: number } = {}): string {
+/**
+ * The outcome file of a wave's job, or of one group or share of it. With
+ * `apply` (#4987), a split wave's own applying job's: `-apply`, so it is
+ * never the gate job's file of the same wave, which that job reads.
+ */
+export function waveOutcomeFileName(wave: number, part: { group?: string; share?: number; apply?: boolean } = {}): string {
   const group = part.group !== undefined ? `-group-${part.group.replace(/[^A-Za-z0-9._-]/g, "_")}` : "";
   const share = part.share !== undefined ? `-share-${part.share}` : "";
-  return `outcome-wave-${wave}${group}${share}.json`;
+  const apply = part.apply === true && !group && !share ? "-apply" : "";
+  return `outcome-wave-${wave}${group}${share}${apply}.json`;
 }
 
 /** Write a wave job's outcome file in `dir`, members sorted by name. Returns its path. */
 export function writeWaveOutcomeFile(
   dir: string,
   wave: number,
-  part: { group?: string; share?: number },
+  part: { group?: string; share?: number; apply?: boolean },
   members: Record<string, WaveMemberOutcome>,
   at = new Date().toISOString(),
   holdsAll = false,

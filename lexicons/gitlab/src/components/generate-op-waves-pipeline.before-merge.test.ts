@@ -15,7 +15,9 @@ const cloud = { aws: { role: "arn:aws:iam::123456789012:role/apply", region: "us
 const spec: OpWavesSpec = {
   name: "tf-apply",
   op: "tf-apply",
-  step: { kind: "terraform-apply", root: "{target}" },
+  // #4987: a spec with `step` cannot split before merge, so these waves plan and apply with commands.
+  plan: ["terragucci", "plan", "{target}", "--out", "{plan}"],
+  apply: ["terragucci", "apply", "{target}", "--plan", "{plan}"],
   waves: [
     { name: "dev", runs: [{ target: "dev" }], setup: [{ run: "npm ci" }] },
     { name: "prod", runs: [{ target: "prod" }], cloud },
@@ -46,13 +48,14 @@ describe("the before-merge mode on GitLab (#4984)", () => {
     expect(script[head]).toContain('CHANT_WAVES_BASE="$(git rev-parse HEAD)"; export CHANT_WAVES_BASE');
     const dev = jobs["wave-1-dev"]!.script!;
     expect(dev.findIndex((l) => l === "npm ci")).toBeGreaterThan(dev.findIndex((l) => l.includes("before-merge-head")));
-    expect(dev.at(-1)).toBe('terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --wave 1 --base "${CHANT_WAVES_BASE:-HEAD^1}"');
+    // #4987: the wave's own job applies the saved plan.
+    expect(dev.at(-1)).toBe('terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --wave 1 --base "${CHANT_WAVES_BASE:-HEAD^1}" --phase apply');
   });
 
   test("the done job runs in a before-merge pipeline alone, after the last wave, with the merge token", () => {
     const done = jobs["before-merge-done"]!;
     expect(done.stage).toBe("before-merge-done");
-    expect(done.needs).toEqual(["wave-2-prod"]);
+    expect(done.needs).toEqual(["wave-2-prod-record"]);
     expect(done.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/ && $CHANT_BEFORE_MERGE_HEAD =~ /^[0-9a-f]{40,64}$/ && $CI_COMMIT_BRANCH == "main"' }]);
     expect(done.variables).toEqual({ GIT_DEPTH: "0", CHANT_MERGE_TOKEN: "$CHANT_MERGE_PAT" });
     expect(done.script!.at(-1)).toBe("terragucci run wave --op tf-apply --wave 2 --merge auto --forge gitlab --merge-token-env CHANT_MERGE_TOKEN");

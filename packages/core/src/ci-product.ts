@@ -186,6 +186,12 @@ export const WAVES_APPLY_STATUS_FLOOR = NEXT_RELEASE;
 export { applyStatusJobName, opWaveApplyStatus, postOpWaveApplyStatus, type OpWaveApplyStatus, type OpWavesApplyStatus } from "./op/apply-status";
 
 /**
+ * The first chant whose before-merge waves never run the change's code beside a write token (#4987): with `beforeMerge` each wave is a plan job (the change's code, a checkout with no credentials kept, a read-only token; GitLab drops `CHANT_FORGE_TOKEN` and the job token), a gate job at the default branch with the token, an applying job on the saved plan with no write token, and a record job at the default branch that writes the run records (`chant run wave --phase plan|gate|apply|record`, `@intentius/chant/op/op-waves-split`). A `step` spec or a `rest` wave is refused with `beforeMerge`.
+ */
+export const WAVES_BEFORE_MERGE_SPLIT_FLOOR = NEXT_RELEASE;
+export { opWaveSplitJobs, type OpWavePhase, type OpWaveSplitJob } from "./op/op-waves-split";
+
+/**
  * The first chant whose product plan takes `watches`, the product's own scheduled jobs the note job's `pr-post` checks for having stopped with the job's token (#4888), and whose `checkOverdueOps` and `overdueOpsAt` take a product's `logPrefix` and `label`.
  */
 export const PRODUCT_PLAN_WATCHES_FLOOR = "0.124.88";
