@@ -199,7 +199,8 @@ function productLineOf(name: string | undefined, marker: unknown): string | unde
 /** The one plain word a re-plan was narrowed to (#4963), or undefined. */
 function narrowedTo(input: Pick<PlanPostInput, "notAffected">): string | undefined {
   const a = input.notAffected?.trim();
-  return a && /^[A-Za-z0-9_.\/@+=,:-]+$/.test(a) ? a : undefined;
+  // #4984: a word that starts with `-` is a flag, never the argument a re-plan was narrowed to.
+  return a && /^[A-Za-z0-9_.\/@+=,:][A-Za-z0-9_.\/@+=,:-]*$/.test(a) ? a : undefined;
 }
 
 /**

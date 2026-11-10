@@ -16,7 +16,9 @@
 
 import { readFileSync } from "node:fs";
 import { activeProductWords } from "../../ci-product-words";
-import { answerProductComment, COMMENT_JOBS_ENV, commentRuns, type CommentJobs } from "../../ci-comment-commands";
+import { answerProductComment, COMMENT_JOBS_ENV, commentRuns, type CommentBeforeMerge, type CommentJobs } from "../../ci-comment-commands";
+import type { WavesBeforeMergeJobs } from "../../op/before-merge-decide";
+import { PR_APPLY_REQUIRES } from "../../pr-requires";
 import { forgeFromEnv, forgeTargetFromEnv, type PrForge } from "../../pr-forge";
 import { forgeReadsFor } from "../../pr-forge-reads";
 import { formatError, formatInfo } from "../format";
@@ -32,10 +34,15 @@ export function commentJobsFromEnv(raw: string | undefined): CommentJobs {
   if (raw === undefined || raw.trim() === "") return {};
   const v: unknown = JSON.parse(raw);
   if (typeof v !== "object" || v === null || Array.isArray(v)) throw new Error(`${COMMENT_JOBS_ENV} is a JSON object of the jobs the pipeline has`);
-  const known = new Set(["preview", "applyBeforeMerge", "applyOnMerge", "locks", "agent", "commits", "actions", "skipForks", "targets", "noPlanFlags", "waves"]);
+  const known = new Set(["preview", "applyBeforeMerge", "applyOnMerge", "locks", "agent", "commits", "actions", "skipForks", "targets", "noPlanFlags", "waves", "wavesBeforeMerge"]);
   const jobs: Record<string, unknown> = {};
   for (const [k, x] of Object.entries(v)) {
     if (!known.has(k)) throw new Error(`${COMMENT_JOBS_ENV} names ${JSON.stringify(k)}, which is not one of ${[...known].join(", ")}`);
+    // #4984: the waves before merge.
+    if (k === "wavesBeforeMerge") {
+      jobs.wavesBeforeMerge = wavesBeforeMergeOf(x);
+      continue;
+    }
     // #4979: the waves' op and count, for a wave stop on a re-run.
     if (k === "waves") {
       const w = x as { op?: unknown; count?: unknown } | null;
@@ -51,7 +58,81 @@ export function commentJobsFromEnv(raw: string | undefined): CommentJobs {
     if (typeof x !== "boolean") throw new Error(`${COMMENT_JOBS_ENV}.${k} is true or false`);
     if (x) jobs[k] = true;
   }
+  if (jobs.wavesBeforeMerge && !jobs.waves) throw new Error(`${COMMENT_JOBS_ENV}.wavesBeforeMerge needs waves: { op, count }, the waves it starts`);
   return jobs as CommentJobs;
+}
+
+/** {@link COMMENT_JOBS_ENV}'s `wavesBeforeMerge` (#4984), each field checked, since the comment job pushes and dispatches with what it names. */
+export function wavesBeforeMergeOf(x: unknown): WavesBeforeMergeJobs {
+  const what = `${COMMENT_JOBS_ENV}.wavesBeforeMerge`;
+  const o = x as Partial<WavesBeforeMergeJobs> | null;
+  if (!o || typeof o !== "object" || Array.isArray(o)) throw new Error(`${what} is { workflow?, requires?, plan, pipelineFiles, locks? }`);
+  const strings = (v: unknown): v is string[] => Array.isArray(v) && v.every((s) => typeof s === "string" && s.trim() !== "" && !/[\r\n]/.test(s));
+  if (o.workflow !== undefined && (typeof o.workflow !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*\.ya?ml$/.test(o.workflow))) throw new Error(`${what}.workflow is a workflow file name, like deploy.yml`);
+  if (o.requires !== undefined && (!Array.isArray(o.requires) || o.requires.some((r) => !(PR_APPLY_REQUIRES as readonly string[]).includes(r)))) throw new Error(`${what}.requires is a list of ${PR_APPLY_REQUIRES.join(", ")}`);
+  if (!strings(o.plan)) throw new Error(`${what}.plan is the list of plan statuses that must pass on the head`);
+  if (!strings(o.pipelineFiles)) throw new Error(`${what}.pipelineFiles is the list of paths a change may not touch`);
+  if (o.locks !== undefined && (typeof o.locks !== "object" || o.locks === null || (o.locks.gate !== undefined && (typeof o.locks.gate !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(o.locks.gate))))) throw new Error(`${what}.locks is { gate? }`);
+  return {
+    ...(o.workflow ? { workflow: o.workflow } : {}),
+    ...(o.requires ? { requires: [...o.requires] } : {}),
+    plan: [...o.plan],
+    pipelineFiles: [...o.pipelineFiles],
+    ...(o.locks ? { locks: { ...(o.locks.gate ? { gate: o.locks.gate } : {}) } } : {}),
+  };
+}
+
+/**
+ * What the decision before merge reads and writes with (#4984), in the
+ * comment job (GitHub, Forgejo) and the note poll (GitLab): the requires
+ * and statuses through the job's client, git in the checkout of the
+ * default branch, the reach line's locks at stage apply, and the decision
+ * and the wave stop on this checkout's `chant/lifecycle`.
+ */
+export async function beforeMergeDeps(forge: PrForge, jobs: CommentJobs, env: NodeJS.ProcessEnv = process.env): Promise<CommentBeforeMerge> {
+  const bm = jobs.wavesBeforeMerge!;
+  const op = jobs.waves!.op;
+  const { spawnSync } = await import("node:child_process");
+  const { checkPrRequires, unmetRequires } = await import("../../pr-requires");
+  const { productStatusContext, activeProductWords } = await import("../../ci-product-words");
+  const { LOCK_REACH_ENV, reachedTargets } = await import("../../lifecycle/reach-locks");
+  const { takeTargetLocks, describeHeldTargetLocks } = await import("../../lifecycle/target-lock");
+  const { recordBeforeMerge } = await import("../../op/before-merge-store");
+  const { setWaveStop } = await import("../../op/wave-stop");
+  const { PR_APPLY_GATE } = await import("../../pr-loop");
+  const words = activeProductWords();
+  const line = env[LOCK_REACH_ENV];
+  const name = (n: number) => (forge.kind === "gitlab" ? `!${n}` : `pull request ${n}`);
+  return {
+    // The plan and apply statuses never hold the apply back: the plan status is asked for by name.
+    requires: async (pr, head) => unmetRequires(await checkPrRequires(forge, pr, head, { ignore: [productStatusContext(words, "apply"), productStatusContext(words, "plan"), `${productStatusContext(words, "plan")}/`], ...(bm.requires ? { only: bm.requires } : {}) })),
+    statuses: async (sha) => (await forge.commitStatuses?.(sha)) ?? [],
+    git: (argv, o) => {
+      const r = spawnSync(argv[0]!, argv.slice(1), { encoding: "utf8", ...(o.cwd ? { cwd: o.cwd } : {}) });
+      return { status: r.status, stdout: r.stdout ?? "", stderr: r.error ? r.error.message : (r.stderr ?? "") };
+    },
+    // #4979's reach line says what the change reaches; the locks go up at stage apply, refused while another holds one.
+    ...(line && line.trim()
+      ? {
+          lock: async (pr: number, head: string, base: string, by: string) => {
+            const reached = reachedTargets({ forge: forge.kind, pr, head, base, line });
+            if ("error" in reached) throw new Error(reached.error);
+            if ("moved" in reached) return { ok: false as const, text: `${name(pr)} moved while this comment was read, so nothing is ${words.verbs.apply[1]}; comment again once its checks pass` };
+            const isOpen = forge.pullRequestOpen?.bind(forge);
+            const r = await takeTargetLocks(bm.locks?.gate ?? PR_APPLY_GATE, reached.targets, { pr, by, at: new Date().toISOString(), stage: "apply", head }, { ...(isOpen ? { isOpen } : {}) });
+            if (!r.ok) {
+              const request = forge.kind === "gitlab" ? "merge request" : "pull request";
+              return { ok: false as const, text: `${describeHeldTargetLocks(r.held, name)}, so ${name(pr)} is not ${words.verbs.apply[1]}. It ${words.verbs.apply[0]}s once that ${request} merges or closes, or someone with write access unlocks it` };
+            }
+            return { ok: true as const, targets: r.taken };
+          },
+        }
+      : {}),
+    record: (d) => recordBeforeMerge(op, d),
+    stop: async (head, through) => {
+      await setWaveStop(op, head, through === null ? null : { through, at: new Date().toISOString() });
+    },
+  };
 }
 
 export async function runComponentsPrComment(ctx: CommandContext): Promise<number> {
@@ -87,6 +168,8 @@ export async function runComponentsPrComment(ctx: CommandContext): Promise<numbe
     base,
     jobs,
     env,
+    // #4984: the decision before merge, its record and its wave stop on this checkout's chant/lifecycle.
+    ...(jobs.wavesBeforeMerge ? { beforeMerge: await beforeMergeDeps(poster, jobs, env) } : {}),
     // #4979: the wave stop goes on this checkout's chant/lifecycle, which the job pushes with its token.
     ...(jobs.waves
       ? {

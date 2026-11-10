@@ -46,6 +46,8 @@ export async function runOpWaveCommand(ctx: CommandContext): Promise<number> {
 
 async function runOpWaveJobCommand(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
+  // #4984: the job after a before-merge run's last wave merges the pull request, or says it is ready.
+  if (args.merge !== undefined) return runBeforeMergeDone(ctx);
   const specFile = args.opsSpec;
   if (specFile && args.recordPlans) {
     try {
@@ -164,6 +166,69 @@ async function runOpWaveJobCommand(ctx: CommandContext): Promise<number> {
       await respondWave(spec, args.wave, { error: message });
     }
     return 1;
+  }
+}
+
+/**
+ * `chant run wave --op <op> --wave <last> --merge auto|manual --forge <kind>
+ * [--gate <name>] [--merge-token-env <VAR>]` (#4984): the job after a
+ * before-merge run's last wave (`../../op/before-merge-done.ts`). A push run
+ * names no decided head, and the job does nothing.
+ */
+async function runBeforeMergeDone(ctx: CommandContext): Promise<number> {
+  const { args } = ctx;
+  const fail = (message: string): number => {
+    console.error(formatError({ message }));
+    return 1;
+  };
+  if (args.merge !== "auto" && args.merge !== "manual") return fail("--merge is auto or manual: auto merges the pull request once every wave applied its decided head, manual says it is ready");
+  const op = args.op;
+  if (!op || args.wave === undefined) return fail("--merge closes a before-merge run: --op <name> --wave <last wave> --merge auto|manual --forge <kind>");
+  const { FORGE_KINDS } = await import("../../pr-forge");
+  if (!args.forge || !(FORGE_KINDS as readonly string[]).includes(args.forge)) return fail(`--merge replies on the pull request: --forge ${FORGE_KINDS.join("|")}`);
+  const kind = args.forge as (typeof FORGE_KINDS)[number];
+  const { beforeMergeRunFromEnv, isBeforeMergeRun } = await import("../../op/before-merge");
+  const run = beforeMergeRunFromEnv();
+  if (!isBeforeMergeRun(run)) {
+    console.error("this run names no decided head: a push applies on its own, so nothing is merged here");
+    return 0;
+  }
+  try {
+    const { beforeMergeRecordAt } = await import("../../op/before-merge-store");
+    const { beforeMergeDone } = await import("../../op/before-merge-done");
+    const { opWaveOutcomeDir } = await import("../../op/op-waves");
+    const { earlierWaveOutcomes } = await import("../../wave-blocked");
+    const { applyOutcomeOf } = await import("../../control/applied");
+    const { forgeFromJobEnv } = await import("../../pr-forge-job");
+    const { mergeTokenEnv } = await import("../../pr-merge");
+    const { releaseTargetLocks } = await import("../../lifecycle/target-lock");
+    const { PR_APPLY_GATE } = await import("../../pr-loop");
+    const { activeProductWords } = await import("../../ci-product-words");
+    const record = run.head ? await beforeMergeRecordAt(op, run.head) : undefined;
+    const outcome = applyOutcomeOf(earlierWaveOutcomes([resolve(opWaveOutcomeDir({ name: op }))], Number.MAX_SAFE_INTEGER).members);
+    let merger;
+    if (args.merge === "auto" && args.mergeTokenEnv) {
+      const env = mergeTokenEnv(args.mergeTokenEnv);
+      if ("error" in env) return fail(String(env.error));
+      merger = forgeFromJobEnv(kind, env);
+    }
+    const gate = args.gate ?? PR_APPLY_GATE;
+    const done = await beforeMergeDone({
+      op,
+      waves: args.wave,
+      run,
+      record,
+      outcome,
+      merge: args.merge,
+      forge: forgeFromJobEnv(kind),
+      ...(merger ? { merger } : {}),
+      release: async (pr) => (await releaseTargetLocks(gate, pr)).released,
+      words: activeProductWords(),
+    });
+    console.error(done.text);
+    return done.code;
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err));
   }
 }
 

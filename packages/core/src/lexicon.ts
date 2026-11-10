@@ -1185,6 +1185,22 @@ export interface OpWavesPipelineOptions
    * rules. Absent: the jobs read the committed spec as before.
    */
   renderSpec?: import("./op/op-waves-render-spec").OpWavesRenderSpec;
+  /**
+   * The before-merge mode (#4984, `@intentius/chant/op/before-merge`): the
+   * workflow also runs for an open pull request's head that the comment job
+   * (GitHub, Forgejo) or the note poll (GitLab) decided and recorded on
+   * `chant/lifecycle`. GitHub and Forgejo dispatch it on the default branch
+   * with the inputs `pr`, `head` and `digest`; GitLab starts a pipeline of
+   * the default branch with `CHANT_BEFORE_MERGE_PR`, `_HEAD` and `_DIGEST`.
+   * Each wave job's guard admits that head alone, the job checks it out
+   * after the default branch's checkout, and its command reads the gates
+   * and the spec at the default branch's commit. The runners, the trades
+   * and the evidence jobs are the push run's. After the last wave the
+   * `before-merge-done` job merges the pull request (`merge: "auto"`) and
+   * releases its locks, or says it is ready. Absent: the jobs run on a push
+   * alone, as before.
+   */
+  beforeMerge?: import("./op/before-merge").OpWavesBeforeMerge;
 }
 
 /** A run step a product adds to a generated job (#4791): its name, and its shell lines in order. */
@@ -1202,6 +1218,14 @@ export interface OpWaveJobInputs {
    * `cloud`, they run after the token request is unset, as every later step.
    */
   before?: OpWaveRunStep[];
+  /**
+   * Shell lines run in the command's own step, just before the command
+   * (#4984), such as terragucci's Terragrunt prelude: cache exports and
+   * the apply roles' variables, which a step of their own would lose on
+   * GitHub and Forgejo, where each step is a shell of its own. GitLab: the
+   * lines before the command in the job's script.
+   */
+  prelude?: string[];
   /**
    * A step run after the job whatever its exit, since a wave that waits at
    * its gate exits 3. GitHub and Forgejo: a step with `if: always()` after

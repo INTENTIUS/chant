@@ -28,6 +28,7 @@
 
 import { EVIDENCE_SOURCES_ENV, WAVE_EVIDENCE_ENV, type EvidenceSourceSpec } from "../ci-evidence-claims";
 import { opWaveBinArgv, opWaveChecksDir, type OpWaveJob, type OpWavesSpec } from "./op-waves";
+import { BEFORE_MERGE_HEAD_ENV } from "./before-merge";
 
 export { EVIDENCE_SOURCES_ENV, WAVE_EVIDENCE_ENV };
 
@@ -102,13 +103,20 @@ export function opWaveEvidenceSources(forge: "github" | "forgejo" | "gitlab", pl
  * setup and the product's command after it are the base's code and none of
  * the change's runs, then sign from the wave job. `sha` is the run's commit
  * as the shell reads it; the first line keeps the base in
- * {@link OP_WAVE_EVIDENCE_BASE_VAR}.
+ * {@link OP_WAVE_EVIDENCE_BASE_VAR}. With `beforeMerge` (#4984), a run of a
+ * pull request's decided head takes the checkout's commit, the default
+ * branch's the run started at, as its base; `sha` then names the head.
  */
-export function opWaveEvidenceLines(spec: Pick<OpWavesSpec, "name" | "base">, plan: OpWaveEvidencePlan, job: Pick<OpWaveJob, "jobName">, opts: { sha: string; bin?: string }): { checkout: string[]; sign: string[] } {
+export function opWaveEvidenceLines(spec: Pick<OpWavesSpec, "name" | "base">, plan: OpWaveEvidencePlan, job: Pick<OpWaveJob, "jobName">, opts: { sha: string; bin?: string; beforeMerge?: boolean }): { checkout: string[]; sign: string[] } {
   const base = spec.base ?? "HEAD^1";
   const quoted = `'${base.replace(/'/g, "'\\''")}'`;
+  const fromSpec = `${OP_WAVE_EVIDENCE_BASE_VAR}="$(git rev-parse --verify ${quoted}^{commit})" || exit 1`;
+  // #4984: a run of a pull request's decided head was measured from the default branch's commit it started at, the checkout here.
+  const baseLine = opts.beforeMerge
+    ? `if [ -n "\${${BEFORE_MERGE_HEAD_ENV}:-}" ]; then ${OP_WAVE_EVIDENCE_BASE_VAR}="$(git rev-parse --verify HEAD^{commit})" || exit 1; else ${fromSpec}; fi`
+    : fromSpec;
   return {
-    checkout: [`${OP_WAVE_EVIDENCE_BASE_VAR}="$(git rev-parse --verify ${quoted}^{commit})" || exit 1`, `git checkout --quiet --detach "$${OP_WAVE_EVIDENCE_BASE_VAR}" || exit 1`],
+    checkout: [baseLine, `git checkout --quiet --detach "$${OP_WAVE_EVIDENCE_BASE_VAR}" || exit 1`],
     sign: [
       [
         ...opWaveBinArgv(opts.bin),

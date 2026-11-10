@@ -26,7 +26,9 @@ import {
   pollNoteCommands,
   type ChantNoteJobs,
   type NoteCommandRuns,
+  type NoteCommandsOptions,
 } from "./ci-note-commands";
+import { beforeMergeDigest } from "./op/before-merge";
 
 const NOW = new Date("2026-10-07T12:00:00Z");
 const BOT = 900;
@@ -125,7 +127,7 @@ beforeEach(() => {
 const mr = (iid: number, over: Record<string, unknown> = {}) => ({ iid, state: "opened", sha: HEAD, source_branch: `feat-${iid}`, target_branch: "main", source_project_id: 7, target_project_id: 7, updated_at: recent(5), ...over });
 const note = (id: number, body: string, by = "alice", over: Record<string, unknown> = {}) => ({ id, body, system: false, author: user(by), created_at: recent(10), ...over });
 
-async function poll(w: World, o: { jobs?: ChantNoteJobs; runs?: NoteCommandRuns; log?: ReturnType<typeof memoryNoteLog>; minRole?: "developer" | "maintainer" } = {}) {
+async function poll(w: World, o: { jobs?: ChantNoteJobs; runs?: NoteCommandRuns; log?: ReturnType<typeof memoryNoteLog>; minRole?: "developer" | "maintainer"; stops?: NoteCommandsOptions["stops"] } = {}) {
   world = w;
   const opts = { apiBase: base, project: "7", token: "t", host: "gitlab" };
   const log = o.log ?? memoryNoteLog();
@@ -139,6 +141,7 @@ async function poll(w: World, o: { jobs?: ChantNoteJobs; runs?: NoteCommandRuns;
     log,
     now: NOW,
     ...(o.minRole ? { minRole: o.minRole } : {}),
+    ...(o.stops ? { stops: o.stops } : {}),
   });
   return { ...got, log };
 }
@@ -348,6 +351,78 @@ describe("pollNoteCommands: apply on a merged merge request", () => {
   test("the apply jobs: chant's, a member's and terragucci's shares", () => {
     for (const name of ["apply", "apply-wave-3", "api-apply-wave-1", "apply-wave-2-share-4"]) expect(APPLY_JOBS.test(name)).toBe(true);
     for (const name of ["plan", "comment-preview", "apply-wave-0", "applying"]) expect(APPLY_JOBS.test(name)).toBe(false);
+  });
+});
+
+describe("pollNoteCommands: the waves' stop and the waves before merge (#4984)", () => {
+  const members = { [uid("alice")]: 30 };
+  const pipelines = [{ id: 10, sha: MERGE, ref: "main", source: "push", status: "failed" }];
+  const applyJobs = { 10: [{ id: 2, name: "apply-wave-1", status: "success" }, { id: 3, name: "apply-wave-2", status: "failed" }] };
+  const waves = { op: "deploy", count: 3 };
+
+  test("a merged merge request's wave-<n> writes the stop for the merge commit before the retry, and an apply without one clears it", async () => {
+    const stops: unknown[] = [];
+    const stopsFn: NoteCommandsOptions["stops"] = async (op, sha, stop) => void stops.push([op, sha, stop && { through: stop.through, by: stop.by, pr: stop.pr }]);
+    const w: World = { mrs: [mr(3, { state: "merged", merge_commit_sha: MERGE })], notes: { 3: [note(41, "/plywood up wave-2")] }, members, pipelines, jobs: applyJobs };
+    const got = await poll(w, { jobs: { applyOnMerge: true, waves }, stops: stopsFn });
+    expect(stops).toEqual([["deploy", MERGE, { through: 2, by: "alice", pr: 3 }]]);
+    expect(posts(/\/retry$/)).toHaveLength(1);
+    expect(got.outcomes[0]!.reason).toMatch(/; it stops after `wave-2`, and the waves after it wait until `\/plywood up` runs it again$/);
+    await poll({ ...w, notes: { 3: [note(42, "/plywood up")] } }, { jobs: { applyOnMerge: true, waves }, stops: stopsFn });
+    expect(stops.at(-1)).toEqual(["deploy", MERGE, null]);
+    // A wave the waves do not have is refused before anything is written.
+    const over = await poll({ ...w, notes: { 3: [note(43, "/plywood up wave-4")] } }, { jobs: { applyOnMerge: true, waves }, stops: stopsFn });
+    expect(over.outcomes[0]!.reason).toBe("the update of this project runs in 3 waves, so there is no `wave-4`");
+    expect(stops).toHaveLength(2);
+  });
+
+  test("an open merge request's apply is decided, recorded, and started as a pipeline of the default branch with the decision's variables", async () => {
+    await withTestDir(async (dir) => {
+      const git = (...args: string[]) => {
+        const r = spawnSync("git", args, { cwd: dir, encoding: "utf-8", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } });
+        if (r.status !== 0) throw new Error(r.stderr);
+        return r.stdout.trim();
+      };
+      // The default branch and the merge request's head ref, in one repository that is its own origin.
+      git("init", "-q", "-b", "main");
+      writeFileSync(join(dir, "main.tf"), "1");
+      git("add", ".");
+      git("commit", "-q", "-m", "base");
+      git("checkout", "-q", "-b", "feat-3");
+      writeFileSync(join(dir, "main.tf"), "2");
+      git("commit", "-q", "-am", "head");
+      const head = git("rev-parse", "HEAD");
+      git("update-ref", "refs/merge-requests/3/head", head);
+      git("checkout", "-q", "main");
+      git("remote", "add", "origin", dir);
+      const recorded: unknown[] = [];
+      const runs = chantNoteRuns(
+        { applyOnMerge: true, waves, wavesBeforeMerge: { plan: ["plywood/preview"], pipelineFiles: [".gitlab-ci.yml"] } },
+        {
+          beforeMerge: {
+            requires: async () => null,
+            statuses: async () => [{ context: "plywood/preview", state: "success" }],
+            git: (argv, o) => {
+              const r = spawnSync(argv[0]!, argv.slice(1), { encoding: "utf8", ...(o.cwd ? { cwd: o.cwd } : {}) });
+              return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+            },
+            cwd: dir,
+            record: async (d) => (recorded.push(d), { ...d, digest: beforeMergeDigest("deploy", d) }),
+            stop: async () => {},
+            now: () => NOW.toISOString(),
+          },
+        },
+      );
+      const w: World = { mrs: [mr(3, { sha: head })], notes: { 3: [note(41, "/plywood up")] }, members };
+      const got = await poll(w, { runs });
+      const started = posts(/^\/projects\/7\/pipeline$/);
+      expect(started).toHaveLength(1);
+      const vars = Object.fromEntries((started[0]!.body as { variables: Array<{ key: string; value: string }> }).variables.map((v) => [v.key, v.value]));
+      const decision = { pr: 3, head, base: git("rev-parse", "main"), at: NOW.toISOString(), by: "alice" };
+      expect(recorded).toEqual([decision]);
+      expect(vars).toEqual({ CHANT_BEFORE_MERGE_PR: "3", CHANT_BEFORE_MERGE_HEAD: head, CHANT_BEFORE_MERGE_DIGEST: beforeMergeDigest("deploy", decision) });
+      expect(got.outcomes[0]!.reason).toBe(`started pipeline http://gitlab/acme/infra/-/pipelines/78 on main to update !3's head ${head.slice(0, 8)} before it merges for alice`);
+    });
   });
 });
 

@@ -32,6 +32,10 @@
  *   the reply says so.
  * - with `noPlanFlags` (#4979), a plan comment with flags the product
  *   plan's re-plan cannot take, with the reason.
+ * - with `wavesBeforeMerge` (#4984), `/<product> apply [wave-<n>]` on an
+ *   open pull request: the decision before merge
+ *   (./op/before-merge-decide.ts) records the head on `chant/lifecycle`
+ *   and dispatches the waves workflow on the default branch for it.
  *
  * Who asked comes first. On GitHub the commenter's permission is read from
  * the forge; Forgejo answers 403 when a job's token asks for another user's
@@ -51,6 +55,7 @@ import { retryApply, type ApplyRerun, type ApplyRetried, type ChantNoteJobs, typ
 import { parseProductComment, type CiProductWords, type ParsedProductComment } from "./ci-product-words";
 import { ForgeApiError, type ForgeFetch, type PrForge } from "./pr-forge";
 import type { ForgeReads, PullRequestDetail } from "./pr-forge-reads";
+import type { DecideBeforeMergeInput, WavesBeforeMergeJobs } from "./op/before-merge-decide";
 
 /** The comment job's name in a generated workflow (#4946). */
 export const PR_COMMENT_JOB = "comment";
@@ -90,7 +95,17 @@ export interface CommentJobs extends Omit<ChantNoteJobs, "members"> {
    * clears it.
    */
   waves?: { op: string; count: number };
+  /**
+   * The waves before merge (#4984), with `waves`: `/<product> apply
+   * [wave-<n>]` on an open pull request is this job's. It decides
+   * (./op/before-merge-decide.ts), records the decided head on
+   * `chant/lifecycle`, and dispatches the waves workflow for it.
+   */
+  wavesBeforeMerge?: WavesBeforeMergeJobs;
 }
+
+/** What the decision before merge reads and writes with (#4984), the comment job's handler's. */
+export type CommentBeforeMerge = Pick<DecideBeforeMergeInput, "requires" | "statuses" | "git" | "cwd" | "lock" | "record" | "stop" | "now">;
 
 /** Writes a wave stop for op `op` at `sha` on `chant/lifecycle`, or clears it (#4979). */
 export type CommentWaveStops = (op: string, sha: string, stop: { through: number; at: string; by?: string; pr?: number } | null) => Promise<void>;
@@ -106,8 +121,8 @@ export const RERUN_APPLY_JOBS = /^(?:wave-([1-9][0-9]*)-[a-z0-9][a-z0-9_-]*|(?:[
 export interface CommentRuns {
   /** GitHub: `POST /repos/{repo}/actions/runs/{run}/rerun-failed-jobs`. */
   rerunFailed(run: number): Promise<StartedRun>;
-  /** Forgejo: `POST /repos/{repo}/actions/workflows/{workflow}/dispatches` on `ref`. */
-  dispatch(workflow: string, ref: string): Promise<StartedRun>;
+  /** Forgejo (and before merge, #4984, both): `POST /repos/{repo}/actions/workflows/{workflow}/dispatches` on `ref`, with `inputs`. */
+  dispatch(workflow: string, ref: string, inputs?: Record<string, string>): Promise<StartedRun>;
 }
 
 /** The writes for a GitHub or Forgejo API root, repository and token. */
@@ -123,7 +138,7 @@ export function commentRuns(opts: { apiBase: string; repo: string; token: string
   };
   return {
     rerunFailed: (run) => post(`/actions/runs/${run}/rerun-failed-jobs`, {}),
-    dispatch: (workflow, ref) => post(`/actions/workflows/${encodeURIComponent(workflow)}/dispatches`, { ref }),
+    dispatch: (workflow, ref, inputs) => post(`/actions/workflows/${encodeURIComponent(workflow)}/dispatches`, { ref, ...(inputs ? { inputs } : {}) }),
   };
 }
 
@@ -150,6 +165,8 @@ export interface AnswerCommentOptions {
   stops?: CommentWaveStops;
   /** The time a stop is written at. Default now. */
   now?: () => string;
+  /** With `jobs.wavesBeforeMerge` (#4984): what the decision reads and writes with. Absent: an open pull request's apply is refused, as before. */
+  beforeMerge?: CommentBeforeMerge;
 }
 
 /** What the comment job did. */
@@ -281,7 +298,7 @@ export async function answerProductComment(o: AnswerCommentOptions): Promise<Com
   }
 
   // An apply: the apply before merge answers an open pull request; this job a merged one, with applyOnMerge.
-  if (!o.jobs.applyBeforeMerge && !o.jobs.applyOnMerge) return reply(notRunReply(o.words, "apply", o.forge));
+  if (!o.jobs.applyBeforeMerge && !o.jobs.applyOnMerge && !o.jobs.wavesBeforeMerge) return reply(notRunReply(o.words, "apply", o.forge));
   let pr: PullRequestDetail | undefined;
   try {
     pr = await o.reads.pullRequest(n);
@@ -293,6 +310,28 @@ export async function answerProductComment(o: AnswerCommentOptions): Promise<Com
   const verb = o.words.verbs.apply;
   if (pr.state === "open") {
     if (o.jobs.applyBeforeMerge) return silent("the apply before merge answers this comment", command);
+    // #4984: the waves before merge: decide, record the head and dispatch the waves workflow for it.
+    const bm = o.jobs.wavesBeforeMerge;
+    if (bm && o.jobs.waves && o.beforeMerge) {
+      const workflow = bm.workflow;
+      if (!workflow) return broke("the waves before merge name no workflow to dispatch", command);
+      const { decideWavesBeforeMerge } = await import("./op/before-merge-decide");
+      const done = await decideWavesBeforeMerge({
+        ...o.beforeMerge,
+        forge: o.forge,
+        pr,
+        user,
+        base: o.base,
+        ...(parsed.wave !== undefined ? { wave: parsed.wave } : {}),
+        op: o.jobs.waves.op,
+        count: o.jobs.waves.count,
+        jobs: bm,
+        words: o.words,
+        start: (r) => o.runs.dispatch(workflow, o.base, { pr: String(r.pr), head: r.head, digest: r.digest }),
+      });
+      if (done.kind === "fail") return broke(done.reason, command);
+      return reply(done.text, done.kind === "ran", done.kind === "ran" ? done.url : undefined);
+    }
     return reply(`${at} is not merged: \`/${o.words.product} ${typedApply(o.words)}\` runs the ${verb[0]} of a merged ${t.request} again, from the default branch, and never ${verb[0]}s a ${t.request}'s branch`);
   }
   if (pr.state === "closed") return reply(`${at} was closed without merging, so there is nothing of it to ${verb[0]}`);

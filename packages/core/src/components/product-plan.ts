@@ -163,6 +163,22 @@ export interface ProductPlanReplanJob {
   notAffected?: true;
 }
 
+/**
+ * The one word a comment re-plan takes after the command (#4899): letters,
+ * digits and `_./@+=,:-`, and (#4984) never starting with `-`, so a flag
+ * such as `--target=x` is refused rather than read as a root. The source
+ * of a regular expression, without anchors.
+ */
+export const REPLAN_WORD_SOURCE = "[A-Za-z0-9_.\\/@+=,:][A-Za-z0-9_.\\/@+=,:-]*";
+
+/** {@link REPLAN_WORD_SOURCE} anchored, as the re-plan's `node -e` program writes it between slashes. */
+const REPLAN_WORD_JS = `^${REPLAN_WORD_SOURCE}$`;
+
+/** Whether `word` is one a re-plan takes (#4984). */
+export function isReplanWord(word: string): boolean {
+  return new RegExp(`^${REPLAN_WORD_SOURCE}$`).test(word);
+}
+
 /** The variable a comment re-plan's one argument reaches the plan verb in (#4899). Empty on a pull request's own plan. */
 export const PLAN_ARGUMENT_ENV = "CHANT_PLAN_ARGUMENT";
 
@@ -462,7 +478,7 @@ const TARGET_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
 /** The pull request loop's options the product plan's jobs do not carry, and what each needs. Each is refused with `plan` (#4799). */
 const NOT_WITH_PLAN: ReadonlyArray<[keyof PrLoopPipelineOptions, string]> = [
-  ["applyBeforeMerge", "the apply before merge runs pr-apply on pr-plan's report"],
+  ["applyBeforeMerge", "the apply before merge runs pr-apply on pr-plan's report; give wavesBeforeMerge to run the waves on an open pull request's head (#4984)"],
   ["applyOnMerge", "the apply on merge runs on op waves, from the waves spec"],
   ["waveGate", "the apply on merge runs on op waves, from the waves spec"],
   ["previewComment", "the comment preview re-runs pr-plan"],
@@ -691,7 +707,8 @@ function literal(text: string): string {
  * a target, the command with at most one word after it.
  */
 export function gitlabReplanCommentIf(replan: Pick<ProductPlanReplanJob, "comments" | "gated">, target?: string): string {
-  const arg = target ? `( +${literal(target)})?` : "( +[A-Za-z0-9_.\\/@+=,:-]+)?";
+  // #4984: the one word never starts with `-`, so a flag such as `--target=x` starts no re-plan.
+  const arg = target ? `( +${literal(target)})?` : `( +${REPLAN_WORD_SOURCE})?`;
   const one = (c: string): string => `$${GITLAB_REPLAN_COMMENT_VAR} =~ /^${literal(c)}${arg} *$/`;
   return [...replan.comments.map(one), ...replan.gated.map((g) => `($${g.when} && ${one(g.comment)})`)].join(" || ");
 }
@@ -739,15 +756,19 @@ export function replanDecideJs(opts: { dispatch?: boolean; reply?: boolean } = {
     'const body=String((e.comment&&e.comment.body)||"").trim();',
     'const cmds=JSON.parse(process.env.CHANT_REPLAN_COMMANDS||"[]");',
     'for(const g of JSON.parse(process.env.CHANT_REPLAN_GATED||"[]")){const v=process.env[g.when]||"";if(v&&v!=="0"&&v!=="false")cmds.push(g.comment)}',
-    "let arg;",
+    "let arg,flag;",
     ...(reply ? ['let refusal;const product=process.env.CHANT_REPLAN_PRODUCT||"",others=JSON.parse(process.env.CHANT_REPLAN_OTHERS||"[]");const says=(c)=>body===c||body.startsWith(c+" ")||body.startsWith(c+"\\t");'] : []),
     ...(dispatch
       ? [
           'if(dispatch){const pv=String(inputs.pr==null?"":inputs.pr).trim();if(!pv){say("the dispatch names no pull request");process.exit(0)}if(!/^[1-9][0-9]{0,9}$/.test(pv)){console.error("chant: the dispatch\\u0027s pr input is a pull request number, like 42");process.exit(1)}',
-          'const k=process.env.CHANT_REPLAN_DISPATCH_ARGUMENT||"argument",a=String(inputs[k]==null?"":inputs[k]).trim();if(a&&!/^[A-Za-z0-9_.\\/@+=,:-]+$/.test(a)){console.error("chant: the dispatch\\u0027s "+k+" input is one word of letters, digits and _./@+=,:-");process.exit(1)}arg=a}else ',
+          `const k=process.env.CHANT_REPLAN_DISPATCH_ARGUMENT||"argument",a=String(inputs[k]==null?"":inputs[k]).trim();if(a&&!/${REPLAN_WORD_JS}/.test(a)){console.error("chant: the dispatch\\u0027s "+k+" input is one word of letters, digits and _./@+=,:-, not starting with -");process.exit(1)}arg=a}else `,
         ]
       : []),
-    'for(const c of cmds){if(body===c){arg="";break}if(body.startsWith(c+" ")){const r=body.slice(c.length).trim();if(/^[A-Za-z0-9_.\\/@+=,:-]+$/.test(r)){arg=r;break}}}',
+    // #4984: a word that starts with `-` is a flag (`--target=x`), which the re-plan does not take.
+    `for(const c of cmds){if(body===c){arg="";break}if(body.startsWith(c+" ")){const r=body.slice(c.length).trim();if(r.startsWith("-")){flag=r.split(/\\s/)[0];break}if(/${REPLAN_WORD_JS}/.test(r)){arg=r;break}}}`,
+    reply
+      ? 'if(flag!==undefined){refusal="the re-plan takes no flags, and "+flag+" is one: write the command alone, or with one word that does not start with -";arg=""}'
+      : 'if(flag!==undefined){say("the re-plan takes no flags, and "+flag+" is one, so nothing is planned again");process.exit(0)}',
     reply
       ? 'if(arg===undefined){if(product&&says(product)&&!others.some(says)){refusal="the commands are "+cmds.concat(others).map((c)=>"`"+c+"`").join(", ")}else{say("the comment asks for no plan");process.exit(0)}}'
       : 'if(arg===undefined){say("the comment asks for no plan");process.exit(0)}',

@@ -171,6 +171,14 @@ export const WAVE_STOP_FLOOR = "0.124.89";
 export { setWaveStop, waveStopAt, waveStopLine, type WaveStop } from "./op/wave-stop";
 
 /**
+ * The first chant whose Op waves run before merge (#4984): `wavesBeforeMerge` in the product pipeline, where the comment job (GitHub, Forgejo) or the note poll (GitLab) decides `/<product> apply [wave-<n>]` on an open pull request (`decideWavesBeforeMerge`, `@intentius/chant/op/before-merge-decide`), records the head and its digest on `chant/lifecycle` (`_waves/<op>.before-merge.json`) and starts the waves for it; the generators' `beforeMerge`, whose guard admits that head alone, whose jobs check it out and read the base from the default branch, and whose `before-merge-done` job merges and releases the locks (`chant run wave --merge`); `waveJobs.<wave>.prelude`; the GitLab note poll's wave stop (`chantNoteRuns`' `waves`); a re-plan word that never starts with `-`; and the terraform lexicon's reach helpers (`@intentius/chant-lexicon-terraform/reach`).
+ */
+export const WAVES_BEFORE_MERGE_FLOOR = NEXT_RELEASE;
+export { BEFORE_MERGE_DIGEST_ENV, BEFORE_MERGE_DONE_JOB, BEFORE_MERGE_HEAD_ENV, BEFORE_MERGE_PR_ENV, beforeMergeDigest, beforeMergePath, beforeMergeProblems, WAVES_BASE_ENV, type BeforeMergeDecision, type BeforeMergeRecord, type OpWavesBeforeMerge } from "./op/before-merge";
+export { decideWavesBeforeMerge, defaultPipelineFiles, type WavesBeforeMergeJobs } from "./op/before-merge-decide";
+export type { ProductWavesBeforeMerge } from "./components/product-pipeline";
+
+/**
  * The first chant whose product plan takes `watches`, the product's own scheduled jobs the note job's `pr-post` checks for having stopped with the job's token (#4888), and whose `checkOverdueOps` and `overdueOpsAt` take a product's `logPrefix` and `label`.
  */
 export const PRODUCT_PLAN_WATCHES_FLOOR = "0.124.88";

@@ -373,9 +373,11 @@ function commentJobsDoc(forge: "github" | "forgejo", jobs: ProductPipelineJobs, 
       "runs-on": githubRunsOn(c.runner),
       container: image,
       // #4979: with the waves' op it writes a wave stop on chant/lifecycle before a re-run, so it pushes.
-      permissions: { actions: c.jobs.applyOnMerge ? "write" : "read", contents: c.jobs.waves ? "write" : "read", "pull-requests": "write", statuses: "read" },
+      // #4984: before merge it also reads the checks the requires ask about, and dispatches the waves for the decided head.
+      permissions: { actions: c.jobs.applyOnMerge || c.jobs.wavesBeforeMerge ? "write" : "read", contents: c.jobs.waves ? "write" : "read", "pull-requests": "write", statuses: "read", ...(c.jobs.wavesBeforeMerge ? { checks: "read" } : {}) },
       steps: [
-        { name: "Check out the target branch's commit", uses: CHECKOUT },
+        // #4984: the decision diffs the change from the default branch's history, so it takes all of it.
+        { name: "Check out the target branch's commit", uses: CHECKOUT, ...(c.jobs.wavesBeforeMerge ? { with: { "fetch-depth": 0 } } : {}) },
         ...runSteps(beforeScript),
         { name: "Answer the comment", env: c.env, run: c.command },
       ],

@@ -241,6 +241,10 @@ describe("the re-plan decision script (#4899)", () => {
       expect(await run("/yodel plans")).toEqual({});
       expect(await run("/yodel plan a; touch x")).toEqual({});
       expect(await run("/yodel plan live/app")).toMatchObject({ go: "1", argument: "live/app" });
+      // #4984: a word that starts with - is a flag, never the root to plan.
+      expect(await run("/yodel plan --target=x")).toEqual({});
+      expect(await run("/yodel plan -refresh")).toEqual({});
+      expect(await run("/yodel plan a-b")).toMatchObject({ go: "1", argument: "a-b" });
       // Forgejo: the commenter must be able to write.
       expect(await run("/yodel plan", { CHANT_REPLAN_PERMISSION: "1" })).toEqual({});
       pull = { ...pull, head: { sha: head, repo: { full_name: "fork/r" } } };
@@ -394,6 +398,8 @@ describe("the re-plan decision with dispatch and reply (#4963)", () => {
       expect(await run({ inputs: { pr: "" } }, { GITHUB_EVENT_NAME: "workflow_dispatch" })).toEqual({ out: {}, code: 0 });
       expect((await run({ inputs: { pr: "seven" } }, { GITHUB_EVENT_NAME: "workflow_dispatch" })).code).not.toBe(0);
       expect((await run({ inputs: { pr: "7", root: "a; b" } }, { GITHUB_EVENT_NAME: "workflow_dispatch" })).code).not.toBe(0);
+      // #4984: a dispatched argument that starts with - is a flag, and fails the job.
+      expect((await run({ inputs: { pr: "7", root: "--target=x" } }, { GITHUB_EVENT_NAME: "workflow_dispatch" })).code).not.toBe(0);
       // A comment is answered as before.
       expect((await run(comment("/terragucci plan live/app"))).out).toMatchObject({ go: "1", argument: "live/app" });
       expect(replies).toEqual([]);
@@ -412,6 +418,10 @@ describe("the re-plan decision with dispatch and reply (#4963)", () => {
       expect((await run(comment("/terragucci plan"), { CHANT_REPLAN_FORKS: "skip" })).out).toEqual({});
       expect(replies.at(-1)).toMatch(/^terragucci: pull request 7 is from a fork/);
       expect(replies).toHaveLength(3);
+      // #4984: a flag after the plan command gets a reply that says the re-plan takes none, and nothing plans.
+      pull = { ...pull, head: { sha: head, repo: { full_name: "o/r" } } };
+      expect((await run(comment("/terragucci plan --target=x"))).out).toEqual({});
+      expect(replies.at(-1)).toBe("terragucci: the re-plan takes no flags, and --target=x is one: write the command alone, or with one word that does not start with -");
     } finally {
       server.close();
     }

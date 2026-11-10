@@ -619,6 +619,12 @@ Ops:
                         names (a JSON argv) with CHANT_WAVES_SPEC_AT set to
                         the base, writes the spec it prints over --spec, and
                         reads the rules at base from it (#4982).
+                        --op <name> --wave <last> --merge auto|manual
+                        --forge <kind> [--gate <name>] [--merge-token-env
+                        <VAR>]: the job after a before-merge run's last wave
+                        (#4984): checks the decided head and that every wave
+                        applied, then merges the pull request at that head
+                        and releases its locks (auto), or says it is ready.
                         --record-plans (no --wave), in a pull request's
                         pipeline: plan every wave at its head and record the
                         digests a pr-review approval mode compares.
