@@ -23,8 +23,8 @@ import { join, relative, resolve } from "node:path";
 import { readDeclaration } from "../workspace/declaration";
 import { locateWorkspace } from "../workspace/which-chant";
 import { recordChecks, signChecks, type EvidenceSigner } from "../workspace/trust/check-evidence";
-import { acceptedLocalEvidence, acceptsLocalEvidence, fetchLocalEvidence, recordLocalChecks, signLocalChecks, type LocalEvidenceSigner } from "../workspace/trust/local-evidence";
-import { CHECK_HOOKS_DIR, CHECK_HOOKS_REPORT_FILE, checkHookEnv, checkHookName, checkHooksAt, passedCheckHooks, runCheckHooks, type CheckHooksReport, type RunCheckHooksOptions } from "./check-hooks";
+import { recordLocalChecks, signLocalChecks, type LocalEvidenceSigner } from "../workspace/trust/local-evidence";
+import { CHECK_HOOKS_DIR, CHECK_HOOKS_REPORT_FILE, checkHookEnv, passedCheckHooks, runCheckHooks, type CheckHooksReport, type RunCheckHooksOptions } from "./check-hooks";
 
 /** A workspace member a lexicon's check steps run for. */
 export interface CheckStageMember {
@@ -140,11 +140,11 @@ function failedLine(steps: CheckStepOutcome[]): string | undefined {
  * declared and no step ran.
  */
 export async function runCheckStage(
-  options: RunCheckHooksOptions & { adapters: readonly CheckStepsAdapter[]; members?: CheckStageMember[]; evidence?: CheckStageEvidence; localEvidence?: CheckStageLocalEvidence },
+  options: RunCheckHooksOptions & { adapters: readonly CheckStepsAdapter[]; members?: CheckStageMember[]; evidence?: CheckStageEvidence },
 ): Promise<CheckHooksReport> {
   const cwd = options.cwd ?? process.cwd();
   const log = options.log ?? ((line: string) => console.error(line));
-  const hooks = runCheckHooks(withLocalSkips(options, cwd, log));
+  const hooks = runCheckHooks(options);
   if (hooks.status === "failed" || options.adapters.length === 0) return signHooks(options, cwd, log, hooks);
   const steps = await runCheckSteps({
     adapters: options.adapters,
@@ -173,42 +173,6 @@ export interface CheckStageEvidence {
   at?: string;
   /** Push the ledger once signed. Default true. */
   push?: boolean;
-}
-
-/**
- * Skipping hooks on local evidence (#4868): `base` is the full commit whose
- * `.chant/trust.json` says which checks take local evidence and whose keys
- * sign it. Absent, every hook runs.
- */
-export interface CheckStageLocalEvidence {
-  base: string;
-  /** The commit the checks run at. Default `HEAD`. */
-  at?: string;
-  /** Fetch `refs/notes/chant/local-evidence` from `origin` first, as a CI job does. Default true. */
-  fetch?: boolean;
-}
-
-/**
- * `options` with `skip` set to the hooks whose current local evidence the
- * policy at base accepts (#4868). Each hook is judged on its own, so a job
- * that runs several hooks runs the rest. Nothing is fetched or read when the
- * policy names no check, so a project that never opted in has the job it had.
- */
-function withLocalSkips<T extends RunCheckHooksOptions & { localEvidence?: CheckStageLocalEvidence }>(options: T, cwd: string, log: (line: string) => void): T {
-  const local = options.localEvidence;
-  if (!local) return options;
-  const repo = gitTopOf(cwd);
-  if (!acceptsLocalEvidence(repo, local.base)) return options;
-  const read = options.read ?? checkHooksAt(cwd, options.base);
-  if (read.hooks.length === 0) return { ...options, read };
-  if (local.fetch !== false && !fetchLocalEvidence(repo)) log("ci check: refs/notes/chant/local-evidence could not be fetched from origin; using the local evidence this checkout has");
-  const names = [...new Set(read.hooks.map(checkHookName))];
-  const skip = new Map<string, { signer: string; class: "person" | "agent"; commit: string }>();
-  for (const v of acceptedLocalEvidence(repo, local.at ?? "HEAD", local.base, names)) {
-    if (v.status === "accepted") skip.set(v.check, { signer: v.signer, class: v.class, commit: v.commit });
-    else if (v.status === "untrusted") log(`ci check: ${v.check} runs: ${v.reason}`);
-  }
-  return { ...options, read, skip };
 }
 
 function isLocalSigner(signer: EvidenceSigner): signer is LocalEvidenceSigner {

@@ -18,7 +18,7 @@
  * `ci.hooks`, keeping the declaration's formatting.
  */
 
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { CHECK_HOOK_MOMENT, assertCheckHooks, type CiHooks, type OpWaveHook } from "../op/op-waves";
@@ -32,6 +32,7 @@ import { memberAtCwd } from "../workspace/security";
 import { locateWorkspace } from "../workspace/which-chant";
 import type { CheckStepOutcome } from "./check-steps";
 import { CHECK_EVIDENCE_KEY_ENV, LOCAL_EVIDENCE_KEY_ENV } from "../workspace/trust/check-evidence-report";
+import { acceptedLocalEvidence, acceptsLocalEvidence, fetchLocalEvidence } from "../workspace/trust/local-evidence";
 
 export { CI_CHECK_HOOK_FLOOR } from "../op/op-waves";
 
@@ -188,6 +189,42 @@ export interface RunCheckHooksOptions {
    * the evidence, the rest run, and the report passes when they do.
    */
   skip?: ReadonlyMap<string, { signer: string; class: "person" | "agent"; commit: string }>;
+  /** Skip each hook whose current local evidence the policy at `localEvidence.base` accepts (#4868), added to `skip`. */
+  localEvidence?: CheckHooksLocalEvidence;
+}
+
+/**
+ * Skipping hooks on local evidence (#4868): `base` is the full commit whose
+ * `.chant/trust.json` says which checks take local evidence and whose keys
+ * sign it. Absent, every hook runs.
+ */
+export interface CheckHooksLocalEvidence {
+  base: string;
+  /** The commit the checks run at. Default `HEAD`. */
+  at?: string;
+  /** Fetch `refs/notes/chant/local-evidence` from `origin` first, as a CI job does. Default true. */
+  fetch?: boolean;
+}
+
+/**
+ * `options.skip` plus the hooks whose current local evidence the
+ * policy at base accepts (#4868). Each hook is judged on its own, so a job
+ * that runs several hooks runs the rest. Nothing is fetched or read when the
+ * policy names no check, so a project that never opted in has the job it had.
+ */
+function localSkips(options: RunCheckHooksOptions, read: CheckHooksRead, cwd: string, log: (line: string) => void): RunCheckHooksOptions["skip"] {
+  const local = options.localEvidence;
+  if (!local || read.hooks.length === 0) return options.skip;
+  const repo = execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  if (!acceptsLocalEvidence(repo, local.base)) return options.skip;
+  if (local.fetch !== false && !fetchLocalEvidence(repo)) log("check hooks: refs/notes/chant/local-evidence could not be fetched from origin; using the local evidence this checkout has");
+  const names = [...new Set(read.hooks.map(checkHookName))];
+  const skip = new Map(options.skip ?? []);
+  for (const v of acceptedLocalEvidence(repo, local.at ?? "HEAD", local.base, names)) {
+    if (v.status === "accepted") skip.set(v.check, { signer: v.signer, class: v.class, commit: v.commit });
+    else if (v.status === "untrusted") log(`check hook ${v.check} runs: ${v.reason}`);
+  }
+  return skip;
 }
 
 /** A hook's name as the runner reports it. */
@@ -221,7 +258,7 @@ export function runCheckHooks(options: RunCheckHooksOptions): CheckHooksReport {
   const runs: OpWaveHookRun[] = targets.map((target) => ({ target, op }));
   const runsFile = join(dir, "runs.json");
   writeFileSync(join(cwd, runsFile), JSON.stringify({ version: 1, op, stage: "check", base: read.base, hook: CHECK_HOOK_MOMENT, runs }, null, 2) + "\n");
-  const skip = options.skip ?? new Map();
+  const skip = localSkips(options, read, cwd, log) ?? new Map();
   const toRun = read.hooks.filter((h) => !skip.has(checkHookName(h)));
   for (const h of read.hooks) {
     const by = skip.get(checkHookName(h));

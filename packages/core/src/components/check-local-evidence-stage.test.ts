@@ -10,7 +10,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { checkHookEnv } from "./check-hooks";
+import { checkHookEnv, runCheckHooks } from "./check-hooks";
 import { runCheckStage } from "./check-steps";
 import { loadRunnerKey } from "../workspace/trust/dsse";
 import { localKeyEvidenceSigner, recordLocalChecks, signLocalChecks } from "../workspace/trust/local-evidence";
@@ -124,6 +124,15 @@ describe("the check runner skips a hook on local evidence (#4868)", () => {
     expect(signed.evidence?.signed).toEqual(["fmt"]);
     const { ran } = await stage(cwd, base);
     expect(ran).not.toContain("fmt");
+  });
+
+  test("runCheckHooks, which a product's own check job calls, skips the same way", async () => {
+    const { cwd, base, alice } = repo();
+    await signLocally(cwd, base, alice, ["fmt"]);
+    const ran: string[] = [];
+    const report = runCheckHooks({ base, cwd, read: { base, hooks: [hooks[0]!, hooks[2]!] }, exec: (argv) => (ran.push(argv[0]!), 0), log: () => {}, localEvidence: { base, fetch: false } });
+    expect(ran).toEqual(["checkov"]);
+    expect(report.hooks.map((h) => h.outcome)).toEqual(["skipped", "passed"]);
   });
 
   test("a hook never sees the local evidence key", () => {
