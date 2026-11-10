@@ -144,3 +144,63 @@ describe("pr-post posts a product's plan note hand-off (#4799)", () => {
     expect(notes[0]!.marker).toBe(prNoteMarker("default", "prod"));
   });
 });
+
+describe("pr-post keeps the product's marker and adds the note job's notices (#4931)", () => {
+  const markerWords = { ...TERRAGUCCI_NOTE, productMarker: "terragucci:plan" };
+
+  test("the hand-off's marker body goes under chant's marker as the product's own hidden line", async () => {
+    const { forge, notes } = fakeForge();
+    await withProductWords(TERRAGUCCI, () => postPlanReport({ forge, dir: handoffDir(planNoteHandoff(NOTE, { ...at, marker: "roots=live/a,live/b" })), pr: 7, head: HEAD, env: "default", noteWords: markerWords }));
+    const lines = notes[0]!.body.split("\n");
+    expect(lines[0]).toBe(prNoteMarker("default"));
+    expect(lines[1]).toBe("<!-- terragucci:plan roots=live/a,live/b -->");
+    expect(notes[0]!.body.split("<!--")).toHaveLength(4);
+  });
+
+  test("without a productMarker in the words, the hand-off's marker is left out", async () => {
+    const { forge, notes } = fakeForge();
+    await withProductWords(TERRAGUCCI, () => postPlanReport({ forge, dir: handoffDir(planNoteHandoff(NOTE, { ...at, marker: "roots=a" })), pr: 7, head: HEAD, env: "default", noteWords: TERRAGUCCI_NOTE }));
+    expect(notes[0]!.body).not.toContain("terragucci:plan");
+  });
+
+  test.each([["a comment end", "roots=a --> <!-- x"], ["a newline", "roots=a\nb"], ["a quote", 'roots="a"']])("a marker with %s is refused, and no note is posted", async (_what, marker) => {
+    const { forge, notes, statuses } = fakeForge();
+    const r = await withProductWords(TERRAGUCCI, () => postPlanReport({ forge, dir: handoffDir(planNoteHandoff(NOTE, { ...at, marker })), pr: 7, head: HEAD, env: "default", noteWords: markerWords }));
+    expect(r.refused).toMatch(/marker is not words/);
+    expect(notes).toEqual([]);
+    expect(statuses[0]!.status.state).toBe("failure");
+  });
+
+  test("the note job's notices and the overdue Ops go under the counts, each once", async () => {
+    const { forge, notes } = fakeForge();
+    const overdue = async () => [{ op: "tf-drift", cron: "0 * * * *", since: "2026-11-01T00:00:00Z", message: "Op `tf-drift` is overdue: it last ran 2026-11-01." }];
+    await withProductWords(TERRAGUCCI, () =>
+      postPlanReport({ forge, dir: handoffDir(planNoteHandoff(NOTE, at)), pr: 7, head: HEAD, env: "default", noteWords: TERRAGUCCI_NOTE, overdue, notices: ["A review by bob doesn't count toward the gate.", "A review by bob doesn't count toward the gate."] }),
+    );
+    const body = notes[0]!.body;
+    expect(body).toContain("> Op `tf-drift` is overdue: it last ran 2026-11-01.");
+    expect(body.split("> A review by bob doesn't count toward the gate.")).toHaveLength(2);
+  });
+
+  test("an Op the product's own notices call overdue is not said twice", async () => {
+    const { forge, notes } = fakeForge();
+    const own = { ...NOTE, notices: ["Op `tf-drift` is overdue: the plan job saw it."] };
+    const overdue = async () => [{ op: "tf-drift", cron: "0 * * * *", since: "2026-11-01T00:00:00Z", message: "Op `tf-drift` is overdue: it last ran 2026-11-01." }];
+    await withProductWords(TERRAGUCCI, () => postPlanReport({ forge, dir: handoffDir(planNoteHandoff(own, at)), pr: 7, head: HEAD, env: "default", noteWords: TERRAGUCCI_NOTE, overdue }));
+    expect(notes[0]!.body).not.toContain("it last ran 2026-11-01");
+  });
+
+  test("the notices come from the file CHANT_PLAN_NOTE_NOTICES names", async () => {
+    const { forge, notes } = fakeForge();
+    const file = join(mkdtempSync(join(tmpdir(), "chant-notices-")), "notices");
+    dirs.push(file.slice(0, file.lastIndexOf("/")));
+    writeFileSync(file, "first notice\n\nsecond notice\n");
+    process.env.CHANT_PLAN_NOTE_NOTICES = file;
+    try {
+      await withProductWords(TERRAGUCCI, () => postPlanReport({ forge, dir: handoffDir(planNoteHandoff(NOTE, at)), pr: 7, head: HEAD, env: "default", noteWords: TERRAGUCCI_NOTE }));
+    } finally {
+      delete process.env.CHANT_PLAN_NOTE_NOTICES;
+    }
+    expect(notes[0]!.body).toContain("> first notice\n\n> second notice");
+  });
+});

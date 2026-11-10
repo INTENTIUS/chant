@@ -336,7 +336,8 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   const stale = prStaleJob(forge, env, prLoop, member);
   if (stale) out.stale = { ...stale, ...defaultRunner };
   // #4785: GitLab's comment commands, polled from the notes; waves on merge are retried by an apply on a merged merge request.
-  const notes = prNoteCommandsJob(forge, { ...prLoop, ...(options.waves || options.componentWaves ? { applyOnMerge: true } : {}) });
+  // #4899: the product plan's comment re-plan runs in the preview's pipeline, so the poll starts it as it starts a preview.
+  const notes = prNoteCommandsJob(forge, { ...prLoop, ...(options.waves || options.componentWaves ? { applyOnMerge: true } : {}), ...(productPlan?.replan ? { previewComment: true } : {}) });
   if (notes) out.noteCommands = { ...notes, ...defaultRunner };
   const preview = prCommentPreviewJob(forge, env, prLoop, member);
   if (preview) out.preview = { ...preview, ...(defaultRunner.runner !== undefined ? { noteRunner: defaultRunner.runner } : {}) };

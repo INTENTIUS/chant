@@ -25,13 +25,31 @@
  * `<plan job>-evidence`, which signs its `plan` and `policy` checks from the
  * plan job's artifact with the runner key in the named CI/CD variable, and
  * pushes them to `refs/notes/chant/evidence`, where the ref gate (#4867) reads them.
+ *
+ * With `replan` (#4899) the note-commands job (`noteCommands`) starts a
+ * pipeline of the target branch for a plan comment, with the comment
+ * preview's variables, and the re-plan jobs (`replan`, or
+ * `<target>-replan`) whose target the comment names run in it: each drops
+ * the forge tokens, checks out the merge request's head, and plans; the
+ * job after it posts the note.
  */
 
 import { assertGitlabBranch, CI_IMAGE, GITLAB_FULL_HISTORY, GITLAB_MERGE_REQUEST_SOURCE, gitlabTags } from "@intentius/chant/ci-jobs";
 import { GITLAB_DROP_FORGE_TOKENS } from "@intentius/chant/ci-handover";
-import { GITLAB_PLAN_NOTES_VAR, PR_LOOP_REPORT_DIR, PR_PLAN_NOTE_JOB, prLoopSetup } from "@intentius/chant/components/pr-pipeline";
+import { GITLAB_NOTE_COMMANDS_VAR, GITLAB_PLAN_NOTES_VAR, PR_LOOP_REPORT_DIR, PR_NOTE_COMMANDS_JOB, PR_PLAN_NOTE_JOB, prLoopSetup, pullRequestCheckout } from "@intentius/chant/components/pr-pipeline";
 import { productPipelineJobs, type ProductPipelineJobs, type ProductPipelineOptions } from "@intentius/chant/components/product-pipeline";
-import { GITLAB_SAME_PROJECT_IF, type ProductPlanOptions } from "@intentius/chant/components/product-plan";
+import {
+  GITLAB_REPLAN_COMMENT_VAR,
+  GITLAB_REPLAN_PR_VAR,
+  GITLAB_SAME_PROJECT_IF,
+  gitlabReplanCommentIf,
+  PLAN_ARGUMENT_ENV,
+  planVerbLines,
+  REPLAN_JOB,
+  REPLAN_NOTE_JOB,
+  type ProductPlanJob,
+  type ProductPlanOptions,
+} from "@intentius/chant/components/product-plan";
 import { emitGitlabFile } from "./ci-jobs";
 
 /** What {@link generateGitlabProductPlanPipeline} takes: the product pipeline's options with `productPlan`, and how the jobs are set up. */
@@ -45,6 +63,8 @@ export interface GitlabProductPlanPipelineOptions extends ProductPipelineOptions
   extraScript?: string[];
   /** Comment lines above the document, `#` included. */
   header?: string[];
+  /** The plan jobs' `cache:` (#4899): GitLab's own for what a GitHub plan job restores with a `uses` setup step. */
+  cache?: unknown;
 }
 
 /** The product plan pipeline: its YAML, its top-level entries in order, and the product pipeline's jobs. */
@@ -54,25 +74,48 @@ export interface GitlabProductPlanPipeline {
   jobs: ProductPipelineJobs;
 }
 
+/** The runner's clone keeps the job token in origin's URL; a re-plan drops it before the merge request's code runs (#4899). */
+const GITLAB_SCRUB_ORIGIN = `git remote set-url origin "$(git remote get-url origin | sed -E 's#//[^@/]*@#//#')"`;
+
 /** The product plan pipeline on GitLab CI (#4799): a plan job and a plan-note job per target. */
 export function generateGitlabProductPlanPipeline(env: string, options: GitlabProductPlanPipelineOptions): GitlabProductPlanPipeline {
-  const { image: given, beforeScript = [], extraScript = [], header = [], ...pipeline } = options;
+  const { image: given, beforeScript = [], extraScript = [], header = [], cache, ...pipeline } = options;
   const image = given ?? CI_IMAGE;
   if (options.branch !== undefined) assertGitlabBranch("The merge-request pipeline", options.branch);
   const jobs = productPipelineJobs("gitlab", env, pipeline);
   const plans = jobs.productPlan!;
+  const plan = options.productPlan;
   const target = options.branch ? JSON.stringify(options.branch) : "$CI_DEFAULT_BRANCH";
-  const onMergeRequest = options.productPlan.forks === "skip" ? `${GITLAB_MERGE_REQUEST_SOURCE} && ${GITLAB_SAME_PROJECT_IF}` : GITLAB_MERGE_REQUEST_SOURCE;
+  const onMergeRequest = plan.forks === "skip" ? `${GITLAB_MERGE_REQUEST_SOURCE} && ${GITLAB_SAME_PROJECT_IF}` : GITLAB_MERGE_REQUEST_SOURCE;
   // #4328: the notes are posted from a pipeline of the target branch, never from the merge request's own.
   const onPlanNotes = `$CI_PIPELINE_SOURCE =~ /^(schedule|web|api|trigger)$/ && $${GITLAB_PLAN_NOTES_VAR} == "1" && $CI_COMMIT_BRANCH == ${target}`;
+  // #4899: the note-commands job starts a pipeline of the target branch for a re-plan comment, as for the comment preview.
+  const replans = plans.filter((p) => p.replan);
+  const onReplan = replans.length > 0 ? `$CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/ && $${GITLAB_REPLAN_PR_VAR} =~ /^[0-9]+$/ && $CI_COMMIT_BRANCH == ${target}` : undefined;
+  const notes = jobs.noteCommands;
+  const onNotes = notes ? `$CI_PIPELINE_SOURCE =~ /^(schedule|web|api|trigger)$/ && $${GITLAB_NOTE_COMMANDS_VAR} == "1" && $CI_COMMIT_BRANCH == ${target}` : undefined;
   const tags = (runner: (typeof plans)[number]["runner"]): Record<string, unknown> => {
     const t = gitlabTags(runner);
     return t ? { tags: t } : {};
   };
+  // #4931: the OIDC tokens the login and the product's command read.
+  const idTokens = (p: ProductPlanJob): Record<string, unknown> => (p.idTokens ? { id_tokens: Object.fromEntries(Object.entries(p.idTokens).map(([v, aud]) => [v, { aud }])) } : {});
+  // #4899: the control read, before any of the change's code runs; its token goes with it.
+  const controlLines = (p: ProductPlanJob): string[] => (p.control ? [p.control.script, "unset CHANT_CONTROL_READ_TOKEN"] : []);
+  // The lines after the checkout and before the plan verb (#4899, #4931): the product's run steps, the setup lines, the login and the probe.
+  // GitLab has no actions, so a uses step is left out; the generator's cache is GitLab's.
+  const middle = (p: ProductPlanJob): string[] => [
+    ...(p.setup ?? []).flatMap((st) => (st.run !== undefined ? [st.run] : [])),
+    ...prLoopSetup(image, options.engineSetup),
+    ...beforeScript,
+    ...(p.login ?? []).flatMap((st) => st.run),
+    ...(p.writeProbe ? [p.writeProbe] : []),
+  ];
+  const interruptible = plan.concurrency?.cancelInProgress ? { interruptible: true } : {};
   const entries: Array<[string, unknown]> = [
-    ["workflow", { name: options.productPlan.workflow ?? `chant-pr-${env}`, rules: [{ if: onMergeRequest }, { if: onPlanNotes }] }],
+    ["workflow", { name: plan.workflow ?? `chant-pr-${env}`, rules: [{ if: onMergeRequest }, { if: onPlanNotes }, ...(onReplan ? [{ if: onReplan }] : []), ...(onNotes ? [{ if: onNotes }] : [])] }],
     // #4870: the evidence jobs sign each plan job's checks, in a stage of their own after the plans.
-    ["stages", plans.some((p) => p.evidence) ? ["plan", "evidence", PR_PLAN_NOTE_JOB] : ["plan", PR_PLAN_NOTE_JOB]],
+    ["stages", [...(plans.some((p) => p.evidence) ? ["plan", "evidence", PR_PLAN_NOTE_JOB] : ["plan", PR_PLAN_NOTE_JOB]), ...(notes ? [PR_NOTE_COMMANDS_JOB] : []), ...(replans.length > 0 ? [REPLAN_JOB, REPLAN_NOTE_JOB] : [])]],
     ["variables", { CHANT_ENV: env, ...GITLAB_FULL_HISTORY }],
   ];
   for (const p of plans) {
@@ -83,9 +126,12 @@ export function generateGitlabProductPlanPipeline(env: string, options: GitlabPr
         image,
         ...tags(p.runner),
         rules: [{ if: onMergeRequest }],
-        variables: p.env,
+        ...interruptible,
+        variables: { ...(p.jobEnv ?? {}), ...p.env },
+        ...idTokens(p),
+        ...(cache !== undefined ? { cache } : {}),
         // #4295: the merge request's code runs in this job, so its shell drops the forge tokens first.
-        script: [GITLAB_DROP_FORGE_TOKENS, ...prLoopSetup(image, options.engineSetup), ...beforeScript, ...(p.writeProbe ? [p.writeProbe] : []), p.command, ...extraScript],
+        script: [...controlLines(p), GITLAB_DROP_FORGE_TOKENS, ...middle(p), ...planVerbLines(p), ...extraScript],
         artifacts: { name: p.artifact, when: "always", paths: [PR_LOOP_REPORT_DIR] },
       },
     ]);
@@ -117,6 +163,62 @@ export function generateGitlabProductPlanPipeline(env: string, options: GitlabPr
         rules: [{ if: onPlanNotes }],
         ...(Object.keys(p.post.env).length > 0 ? { variables: p.post.env } : {}),
         script: [...beforeScript, p.post.command],
+      },
+    ]);
+  }
+  if (notes && onNotes) {
+    // The target branch's commit: the job reads the notes as data through the API and runs none of a merge request's code. One poll at a time.
+    entries.push([PR_NOTE_COMMANDS_JOB, { stage: PR_NOTE_COMMANDS_JOB, image, ...tags(notes.runner), resource_group: PR_NOTE_COMMANDS_JOB, rules: [{ if: onNotes }], script: [...beforeScript, notes.command] }]);
+  }
+  for (const p of replans) {
+    const r = p.replan!;
+    // The comment's one word after the command, which the rule already held to plain characters.
+    const byLength = [...r.comments, ...r.gated.map((g) => g.comment)].sort((a, b) => b.length - a.length);
+    const argument = [
+      `case "$${GITLAB_REPLAN_COMMENT_VAR}" in ${byLength.map((c) => `"${c}"*) chant_rest="\${${GITLAB_REPLAN_COMMENT_VAR}#"${c}"}" ;;`).join(" ")} *) chant_rest="" ;; esac`,
+      `${PLAN_ARGUMENT_ENV}="$(printf '%s' "$chant_rest" | tr -d ' ')" && export ${PLAN_ARGUMENT_ENV}`,
+    ];
+    entries.push([
+      r.jobName,
+      {
+        stage: REPLAN_JOB,
+        image,
+        ...tags(p.runner),
+        rules: [{ if: `${onReplan} && (${gitlabReplanCommentIf(r, p.target)})` }],
+        variables: { ...(p.jobEnv ?? {}), ...p.env, BASE_SHA: "$CI_COMMIT_SHA", PR_NUMBER: `$${GITLAB_REPLAN_PR_VAR}` },
+        ...idTokens(p),
+        ...(cache !== undefined ? { cache } : {}),
+        // A pipeline of the target branch holds the protected tokens, so the job drops them before it checks out the merge request's head.
+        script: [
+          ...controlLines(p),
+          GITLAB_DROP_FORGE_TOKENS,
+          "unset CHANT_RUNNER_KEY",
+          pullRequestCheckout("gitlab"),
+          // The ledger while the clone can still fetch it: a plan reads the gate ledger from the local branch.
+          "git fetch -q --no-tags origin '+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle' 2>/dev/null || true",
+          GITLAB_SCRUB_ORIGIN,
+          ...argument,
+          ...middle(p),
+          ...planVerbLines(p),
+          ...extraScript,
+        ],
+        artifacts: { name: r.artifact, when: "always", paths: [PR_LOOP_REPORT_DIR] },
+      },
+    ]);
+  }
+  for (const p of replans) {
+    const r = p.replan!;
+    entries.push([
+      r.noteJobName,
+      {
+        stage: REPLAN_NOTE_JOB,
+        image,
+        ...tags(p.noteRunner),
+        needs: [{ job: r.jobName, artifacts: true }],
+        rules: [{ if: `${onReplan} && (${gitlabReplanCommentIf(r, p.target)})`, when: "always" }],
+        variables: r.post.env,
+        // The target branch's commit: the job's own clone, where none of the merge request's code runs.
+        script: [...beforeScript, ...(r.post.setup ?? []), r.post.command],
       },
     ]);
   }

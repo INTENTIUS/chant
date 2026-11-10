@@ -60,11 +60,33 @@ export interface PrPlanNoteHandoff {
   state: "success" | "failure" | "pending";
   description: string;
   note: PrPlanNote;
+  /**
+   * The product's own hidden line's body (#4931), such as terragucci's
+   * `roots=a,b`: `pr-post` writes `<!-- <productMarker> <marker> -->` on the
+   * note's second line, under chant's marker, when the pipeline's note words
+   * name a `productMarker`. Letters, digits and `_.,/@+=:-`, words split by
+   * one space, at most {@link PRODUCT_MARKER_LIMIT} characters.
+   */
+  marker?: string;
+}
+
+/** The most characters a hand-off's {@link PrPlanNoteHandoff.marker} holds (#4931). */
+export const PRODUCT_MARKER_LIMIT = 4096;
+
+/** What a hand-off's marker may hold (#4931): no `-->`, no `<` or `>`, nothing that ends the comment or starts another. */
+export const PRODUCT_MARKER_BODY = /^[A-Za-z0-9_.,\/@+=:-]+( [A-Za-z0-9_.,\/@+=:-]+)*$/;
+
+/** What a note words' {@link PrPlanNoteWords.productMarker} may be (#4931): a name such as `terragucci:plan`. */
+export const PRODUCT_MARKER_NAME = /^[a-z][a-z0-9-]*(:[a-z][a-z0-9-]*)*$/;
+
+/** The product's hidden line (#4931): `<!-- <name> <body> -->`, or `<!-- <name> -->` with an empty body. */
+export function productMarkerLine(name: string, body: string): string {
+  return body ? `<!-- ${name} ${body} -->` : `<!-- ${name} -->`;
 }
 
 /** The hand-off for `note` (#4799), as a product's plan verb writes it to {@link PR_PLAN_NOTE_FILE}. */
-export function planNoteHandoff(note: PrPlanNote, at: { pr: number; env: string; member?: string; state: PrPlanNoteHandoff["state"]; description: string }): PrPlanNoteHandoff {
-  return { kind: "plan-note-handoff", contract: PR_PLAN_NOTE_CONTRACT, pr: at.pr, head: note.head, env: at.env, ...(at.member !== undefined ? { member: at.member } : {}), state: at.state, description: at.description, note };
+export function planNoteHandoff(note: PrPlanNote, at: { pr: number; env: string; member?: string; state: PrPlanNoteHandoff["state"]; description: string; marker?: string }): PrPlanNoteHandoff {
+  return { kind: "plan-note-handoff", contract: PR_PLAN_NOTE_CONTRACT, pr: at.pr, head: note.head, env: at.env, ...(at.member !== undefined ? { member: at.member } : {}), state: at.state, description: at.description, note, ...(at.marker !== undefined ? { marker: at.marker } : {}) };
 }
 
 /** One change line of a group, as chant's plan summary groups them. */
@@ -229,9 +251,16 @@ export interface PrPlanNoteWords {
   planFile?: string;
   /** The op an override is recorded under. */
   overrideOp?: string;
+  /**
+   * The name of the product's own hidden line (#4931), such as
+   * `terragucci:plan`: a hand-off's `marker` is kept as `<!-- <name>
+   * <marker> -->` on the note's second line, where the product finds its
+   * note by it. Absent: a hand-off's marker is dropped.
+   */
+  productMarker?: string;
 }
 
-const NOTE_WORDS: Required<Omit<PrPlanNoteWords, "marker">> = {
+const NOTE_WORDS: Required<Omit<PrPlanNoteWords, "marker" | "productMarker">> = {
   footer: "",
   page: "report.html",
   artifact: "chant-pr",

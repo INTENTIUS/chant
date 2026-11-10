@@ -85,3 +85,92 @@ test("PRODUCT_PLAN_FLOOR marks the product plan in the ci-product entry", async 
   expect(ciProduct.PRODUCT_PLAN_FLOOR).toBe("0.124.86");
   expect(typeof ciProduct.planNoteHandoff).toBe("function");
 });
+
+describe("the product plan's steps beside the plan verb (#4899, #4931)", () => {
+  const login = { aws: { role: "arn:aws:iam::123456789012:role/yodel-reader", region: "eu-west-1" } };
+
+  test("a config without the new options gives jobs without their fields", () => {
+    const [staging] = productPipelineJobs("github", "default", { words: yodel, productPlan: environments }).productPlan!;
+    for (const key of ["jobEnv", "login", "idTokens", "pending", "control", "setup", "report", "replan", "noteSteps"]) expect(staging).not.toHaveProperty(key);
+  });
+
+  test.each(["github", "forgejo", "gitlab"] as const)("on %s, a target's login is chant's ci-login, and the job asks for its tokens", (forge) => {
+    const [staging, prod] = productPipelineJobs(forge, "default", { words: yodel, productPlan: { ...environments, login, targets: [{ ...environments.targets[0]!, login: { gcp: { provider: "projects/1/locations/global/workloadIdentityPools/p/providers/q", serviceAccount: "r@p.iam.gserviceaccount.com" } } }, environments.targets[1]!] } }).productPlan!;
+    expect(staging!.login![0]!.name).toBe("Cloud login (chant ci-login: gcp)");
+    expect(prod!.login![0]!.name).toBe("Cloud login (chant ci-login: aws)");
+    expect(prod!.idTokens).toEqual({ CHANT_ID_TOKEN_AWS: "sts.amazonaws.com" });
+    expect(staging!.idTokens).toEqual({ CHANT_ID_TOKEN_GCP: "https://iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/p/providers/q" });
+  });
+
+  test("the product's own id tokens, the job's env, the pending status, the setup steps and the report line", () => {
+    const [plan] = productPipelineJobs("github", "default", {
+      words: terragucci,
+      productPlan: {
+        command: "terragucci plan --pr-note {output}",
+        idTokens: { TERRAGUCCI_OIDC: "sts.amazonaws.com" },
+        env: { TG_LOG: "info" },
+        pending: true,
+        setup: [{ name: "Restore the cache", uses: "actions/cache/restore@v4", with: { path: "~/.cache" } }],
+        report: "terragucci report --out {output}/report",
+      },
+    }).productPlan!;
+    expect(plan).toMatchObject({ idTokens: { TERRAGUCCI_OIDC: "sts.amazonaws.com" }, jobEnv: { TG_LOG: "info" }, pending: { context: "terragucci/plan", description: "planning" }, report: "terragucci report --out .chant/pr/report" });
+    // GitLab's plan job holds no token, so it posts no pending status.
+    expect(productPipelineJobs("gitlab", "default", { words: terragucci, productPlan: { command: "x", pending: true } }).productPlan![0]).not.toHaveProperty("pending");
+  });
+
+  test("the comment re-plan answers the plan command and the words' aliases for it, per target", () => {
+    const [staging] = productPipelineJobs("github", "default", { words: { ...yodel, commands: { plan: "plan" as const } }, productPlan: { ...environments, replan: true } }).productPlan!;
+    expect(staging!.replan).toMatchObject({ jobName: "replan-staging", noteJobName: "replan-note-staging", comments: ["/yodel plan"], gated: [], artifact: "chant-pr-plan-staging-replan" });
+    expect(staging!.replan!.post.env.HEAD_SHA).toBe("${{ needs.replan-staging.outputs.head }}");
+    const [tg] = productPipelineJobs("gitlab", "default", { words: { ...TERRAGUCCI, commands: { plan: "plan" as const }, aliases: [TERRAGUCCI.aliases[0]!] }, noteCommands: true, productPlan: { command: "terragucci plan", replan: true } }).productPlan!;
+    expect(tg!.replan).toMatchObject({ jobName: "replan", comments: ["/terragucci plan"], gated: [{ comment: "atlantis plan", when: "TG_ATLANTIS_COMMENTS" }] });
+    expect(tg!.replan!.post.command).toContain("components pr-post --pr \"$PR_NUMBER\" --head \"$HEAD_SHA\" --env default --output .chant/pr --forge gitlab");
+    expect(tg!.replan!.post.command).not.toContain("--result");
+  });
+
+  test.each([
+    ["replan without a plan command", { replan: true }, /words name no plan command/],
+    ["a setup step with both run and uses", { setup: [{ run: "x", uses: "y" }] }, /gives one of run and uses/],
+    ["a forge token in the job's env", { env: { GITHUB_TOKEN: "x" } }, /GITHUB_TOKEN is one the jobs set or drop/],
+    ["a concurrency group that is not a name", { concurrency: { group: "a b" } }, /concurrency group/],
+    ["an id token with no audience", { idTokens: { T: "" } }, /names no audience/],
+  ])("refuses %s", (_what, extra, error) => {
+    expect(() => productPipelineJobs("github", "default", { words: yodel, productPlan: { command: "yodel plan {target}", ...extra } })).toThrow(error);
+  });
+
+  test("noteSteps are refused on GitLab, and noteCommands without replan", () => {
+    expect(() => productPipelineJobs("gitlab", "default", { words: yodel, productPlan: { command: "x", noteSteps: { before: ["y"] } } })).toThrow(/GitLab's note job posts every open merge request's note/);
+    expect(() => productPipelineJobs("gitlab", "default", { words: yodel, noteCommands: true, productPlan: { command: "x" } })).toThrow(/noteCommands without replan/);
+  });
+
+  test("with replan, GitLab's note-commands job starts the preview's pipeline", () => {
+    const jobs = productPipelineJobs("gitlab", "default", { words: { ...yodel, commands: { plan: "plan" as const } }, noteCommands: true, productPlan: { command: "x", replan: true } });
+    expect(jobs.noteCommands!.command).toContain("--preview-comment");
+  });
+});
+
+describe("the re-plan decision and the pending status scripts (#4899)", () => {
+  test("hold no single quote, so they go in a node -e '...' line", async () => {
+    const { REPLAN_DECIDE_JS, PENDING_JS } = await import("./product-plan");
+    expect(REPLAN_DECIDE_JS).not.toContain("'");
+    expect(PENDING_JS).not.toContain("'");
+    expect(() => new Function(REPLAN_DECIDE_JS)).not.toThrow();
+    expect(() => new Function(PENDING_JS)).not.toThrow();
+  });
+
+  test("the GitLab rule matches the command alone or with this target, and the aliases behind their variable", async () => {
+    const { gitlabReplanCommentIf } = await import("./product-plan");
+    expect(gitlabReplanCommentIf({ comments: ["/yodel plan"], gated: [] }, "prod")).toBe("$CHANT_PREVIEW_COMMENT =~ /^\\/yodel plan( +prod)? *$/");
+    expect(gitlabReplanCommentIf({ comments: ["/terragucci plan"], gated: [{ comment: "atlantis plan", when: "TG_ATLANTIS_COMMENTS" }] })).toBe(
+      "$CHANT_PREVIEW_COMMENT =~ /^\\/terragucci plan( +[A-Za-z0-9_.\\/@+=,:-]+)? *$/ || ($TG_ATLANTIS_COMMENTS && $CHANT_PREVIEW_COMMENT =~ /^atlantis plan( +[A-Za-z0-9_.\\/@+=,:-]+)? *$/)",
+    );
+  });
+});
+
+test("PRODUCT_PLAN_STEPS_FLOOR marks the plan-job steps in the ci-product entry", async () => {
+  const { NEXT_RELEASE } = await import("../release-floors");
+  const ciProduct = (await import("../ci-product")) as Record<string, unknown>;
+  expect(ciProduct.PRODUCT_PLAN_STEPS_FLOOR).toBe(NEXT_RELEASE);
+  expect(ciProduct.PLAN_NOTE_NOTICES_ENV).toBe("CHANT_PLAN_NOTE_NOTICES");
+});
