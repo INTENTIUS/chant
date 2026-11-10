@@ -14,6 +14,8 @@ import { composeChangeSet, lifecyclePlanPart, type ChangeSetDocument } from "../
 import type { ChangeSet as LifecycleChangeSet } from "../../lifecycle/change-set";
 import { persistChangeSet } from "../../lifecycle/change-set-store";
 import { appendPendingGate, readGateLedger } from "../../lifecycle/gate-ledger";
+import { gatedRequestAttachmentPath } from "../../lifecycle/gated-request-digest";
+import { writeBlobToPath } from "../../lifecycle/git";
 import { resetGateOrigin } from "../../lifecycle/gate-origin";
 import { CHANT_EXIT } from "../../exit-codes";
 import type { ParsedArgs } from "../registry";
@@ -199,6 +201,39 @@ describe("confirmApproval (#4575)", () => {
       const c = await confirmApproval("app-apply", "prod-apply", { cwd: dir, plan: OTHER, out: () => undefined, err: (t) => (said += t), ask: async () => "prod" });
       expect(c).toEqual({ status: "confirmed", plan: OTHER, target: "prod" });
       expect(said).toContain(`No plan is stored on chant/lifecycle under ${OTHER}`);
+    });
+  });
+});
+
+describe("confirmApproval on a gated request's attachment (#4928)", () => {
+  const cwd = process.cwd();
+  afterEach(() => {
+    process.chdir(cwd);
+    resetGateOrigin();
+  });
+
+  test("a migration's request shows its roots and the product's record, which its digest binds", async () => {
+    await withTestDir(async (dir) => {
+      git(["init", "-q", "-b", "main"], dir);
+      git(["config", "user.email", "t@chant.dev"], dir);
+      git(["config", "user.name", "T"], dir);
+      writeFileSync(join(dir, "README.md"), "x\n");
+      git(["add", "."], dir);
+      git(["commit", "-q", "-m", "init"], dir);
+      const digest = `sha256:${"a".repeat(64)}`;
+      const attachment = `${JSON.stringify({ name: "move-queues", roots: [{ root: "queues", location: "s3://acme/queues.tfstate" }], record: { moves: [{ addresses: ["aws_sqs_queue.jobs"], from: "platform", to: "queues" }], stamps: [] } })}\n`;
+      const { dir: at, file } = gatedRequestAttachmentPath("tf-migrate", digest);
+      await writeBlobToPath(at, file, attachment, "Request migrate on move-queues", { cwd: dir });
+      await appendPendingGate({ op: "tf-migrate", gate: "move-queues", timestamp: "2026-11-09T00:00:00.000Z", expiresAt: "2999-01-01T00:00:00.000Z", planDigest: digest, description: "migration move-queues: queues" }, { cwd: dir });
+      process.chdir(dir);
+      let shown = "";
+      let said = "";
+      const c = await confirmApproval("tf-migrate", "move-queues", { cwd: dir, out: (t) => (shown += t), err: (t) => (said += t), ask: async () => "move-queues" });
+      expect(c).toEqual({ status: "confirmed", plan: digest, target: "move-queues" });
+      expect(shown).toContain(`The request binds _gates/tf-migrate/requests/sha256_${"a".repeat(64)}.json`);
+      expect(shown).toContain('"aws_sqs_queue.jobs"');
+      expect(shown).toContain('"record"');
+      expect(said).not.toContain("No plan is stored");
     });
   });
 });

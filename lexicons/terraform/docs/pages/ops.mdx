@@ -97,6 +97,20 @@ A `root` that has no `terraform.roots` entry plans the step's `dir` as its direc
 
 Every plan also writes its `show -json` beside the plan file, as `<plan file>.json`, and names it in the artifact as `planJson`. A wave's cost hold prices that file. `terraformCostHold({ approveAbove })` from `@intentius/chant-lexicon-terraform/cost-hold` gives the infracost command for it.
 
+### Engine timings
+
+`engineTimings()` from `@intentius/chant-lexicon-terraform/engine-timings` times each root's engine commands and reads the spans the engine sends ([#4887](https://github.com/INTENTIUS/chant/issues/4887)). Its `onCommand` goes in `terraformApplyCapabilityWith({ onCommand })`. It listens on a loopback port and points each `plan` and `apply` at it with `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and a header naming the root and the command. OpenTofu and choudoufu send OTLP spans; Terraform sends none, and its commands are still timed.
+
+```ts
+const timings = await engineTimings({ inner: productTraceHook, forward: collector });
+const cap = terraformApplyCapabilityWith({ resolveRoot, onCommand: timings.onCommand });
+// ... run the wave ...
+await timings.close();
+for (const [root, t] of Object.entries(timings.roots())) report(root, t.plan_seconds, t.apply_seconds, t.spans, t.lock_waits);
+```
+
+Each root's timings have `seconds`, `init_seconds`, `plan_seconds`, `apply_seconds`, `spans`, `detail`, the slowest `resources` and `provider_calls`, `provider_init`, `lock_waits` (from the engine's `State lock wait` spans) and `aggregates`, with the field names terragucci's report uses, and the `commands` they came from. `run()` gives the run's slowest roots and resources. An upstream's reads for a root are not timed. `inner` is the product's own hook, run first, such as one that sets a trace parent; `forward` sends each batch on to the product's collector unchanged. A composed group's `init`, `plan`, `show` and `apply` go through `onCommand` too, with `members` naming the group's roots, so each member gets the group's times and spans, `composed` lists the members, and `run()` counts the group's resources once. `TERRAFORM_ENGINE_TIMINGS_FLOOR` is the first chant with these.
+
 ### State operations outside waves
 
 A lock release, a state migration's writes and a pull request's copy of a root run the binary outside any wave ([#4618](https://github.com/INTENTIUS/chant/issues/4618)). `@intentius/chant-lexicon-terraform/state-ops` has each as a fixed operation: the caller names the root, the binary and what the operation acts on, and never passes arguments of its own.
@@ -111,6 +125,18 @@ A lock release, a state migration's writes and a pull request's copy of a root r
 `gatedStateOp` puts the gate around an operation. It asks for the request with `requestGate`, reusing the time of a standing request with the same fields so the digest stays the same between runs, and acts only once an approval counts. It spends the approval with `spendGatedRequest` before it acts, so two jobs never act on one approval, and records how the act ended with `finishGatedRequest`. A check passed as `beforeSpend` can stop it with the approval left unspent, for a fact that can change while the request waited. The requests wait at `tf-unlock`, `tf-migrate` and `tf-state-export`, and `chant approve <op> <root> --plan <digest>` approves one. The records are those of a gated request ([#4551](https://github.com/INTENTIUS/chant/issues/4551)): the pending fact in `_gates/<op>.jsonl` and the applied and finished lines in `_gates/<op>/applied.jsonl`, which `chant ledger` lists.
 
 The plugin registers the same operations as `terraform-state-unlock`, `terraform-state-push` and `terraform-copy`. A run of the first two that still waits throws an error whose `exitCode` is 3.
+
+A state migration through core's `runStateMigration` can pass the product's own `record` of it, such as its moves, retags and stamps ([#4928](https://github.com/INTENTIUS/chant/issues/4928)). The request's attachment holds it beside the roots as canonical JSON, so the digest binds it and `chant approve` at a terminal shows it. A record over `STATE_MIGRATION_RECORD_MAX_BYTES` (64 KiB as canonical JSON), or one that is not JSON, throws `StateMigrationRecordError` before anything is asked. `STATE_MIGRATION_RECORD_FLOOR` is the first chant that takes it.
+
+`@intentius/chant-lexicon-terraform/migration-history` reads a migration op's history back from what chant wrote ([#4910](https://github.com/INTENTIUS/chant/issues/4910)). `finishedMigrationLines(appliedText, op)` turns each `finished` line of `_gates/<op>/applied.jsonl` into a history line with each root's location and its version and digest before and after, leaving out a run refused under the locks. `migrationHistory(show, { op, earlier })` puts a product's earlier file of such lines first. `revertMigration(name, history)` answers the `restores` that put each root of an applied migration back, and a file asking for them, and refuses a backend move, a revert, an estate retag or adoption, and a root whose backend keeps no versions, with why.
+
+### Live roots, unit places and the binary's environment
+
+`@intentius/chant-lexicon-terraform/live-roots` reads which roots keep their resources under choudoufu's live markers ([#4910](https://github.com/INTENTIUS/chant/issues/4910)): `liveRoots(repo, roots)` and `estateOf(dir)`, a root's estate and the estates whose outputs it reads through `data "terraform_estate_outputs"`. `readLiveSetup(dir)` runs `choudoufu live-check -json` once per directory and keeps its `estate`, `estate_source` and `record_store`; `resolvedEstate(dir)` prefers it to the files' name. `setupLine`, `bucketTarget`, `checkStoreBucket` and `bucketLines` put the resolved store in a log line and through core's bucket check.
+
+`terragruntUnitPlace({ projectDir, unit, binary, env, work })` from `@intentius/chant-lexicon-terraform/terragrunt` runs `terragrunt run -- init` with a `TG_TF_PATH` wrapper that records where Terragrunt runs the binary and with what, and answers that directory and environment, so a migration or an export runs the binary in a unit as in a plain root.
+
+`tokenlessBinaryExec(tokens)` from `@intentius/chant-lexicon-terraform/state` is `runBinary` with the forge's tokens left out of the binary's environment (`engineEnv`): chant's forge token variables, the product's own named in `tokens`, and any variable holding one's value, never a `TF_` variable. `runBinary` itself passes the environment as given. `TERRAFORM_ROOT_HELPERS_FLOOR` is the first chant with these.
 
 ### State versions
 

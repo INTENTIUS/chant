@@ -39,7 +39,6 @@
  * {@link MIN_CHOUDOUFU_VERSION}.
  */
 
-import { AsyncLocalStorage } from "node:async_hooks";
 import { exec } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -53,6 +52,7 @@ import { choudoufuSetPlanParts, plannerForBinary, terraformChangeSetPart } from 
 import type { ChangeSetPart } from "@intentius/chant/change-set";
 import type { TerraformConfig, TerraformRootConfig } from "../../config";
 import { detectLiveEstate } from "./live-detect";
+import { commandWords, currentCommandScope, scopedCommand, type TerraformCommand } from "../command-hook";
 import { backendConfigValues } from "../../backend-config";
 import { lockTimeoutArgs } from "../../lock-timeout";
 import { coneArgs, readPlanCone, type PlanCone } from "../../cone";
@@ -1043,112 +1043,15 @@ interface ExecFailure {
   stderr?: string;
 }
 
-/**
- * One engine command as a product's {@link TerraformCommandHook} sees it
- * before it runs (chant#4865).
- */
-export interface TerraformCommand {
-  /** The step's root the command runs for. */
-  root: string;
-  /** The upstream root whose state the command reads for `root`'s `reads`, when it runs for one. */
-  upstream?: string;
-  /** The step method that runs it: `plan`, `run` (the apply) or `outputs`. */
-  method: string;
-  /** The binary, as the command line names it. */
-  binary: string;
-  /** The subcommand, the first argument that is not a flag: `init`, `plan`, `show`, `apply`, `output`, `workspace`, `live-plan-set`. */
-  name: string;
-  /** The arguments after the binary, unquoted. */
-  args: string[];
-  /** The command line as the shell runs it. */
-  line: string;
-  /** The directory it runs in. */
-  cwd: string;
-  /** The variables chant sets for it over the job's environment, such as `TF_IN_AUTOMATION`, `TF_WORKSPACE` and the run hook's `processEnv`. */
-  env: Record<string, string>;
-}
-
-/** How a {@link TerraformCommand} came out, for the hook's `after` (chant#4865). */
-export interface TerraformCommandResult {
-  /** The exit code; null when the command did not exit on its own (a signal, an abort, a spawn failure). */
-  code: number | null;
-  /** How long it ran, in seconds. */
-  seconds: number;
-  stdout: string;
-  stderr: string;
-}
-
-/** What a {@link TerraformCommandHook} answers for one command (chant#4865). */
-export interface TerraformCommandRun {
-  /** Variables laid over the command's own, such as a span receiver's exporter or a trace parent. */
-  env?: Record<string, string>;
-  /** Called once the command ends, on a failure too, before the step reads its result. */
-  after?: (result: TerraformCommandResult) => void | Promise<void>;
-}
-
-/**
- * A product's hook around each engine command a `terraform-apply` step runs
- * for a root (chant#4865), `terraformApplyCapabilityWith({ onCommand })`:
- * called before the command with what it is, and its answer's `after` once
- * it ends. terragucci times each root's plan and apply with it and sets its
- * span receiver's variables, as its own runs of the binary did.
- */
-export type TerraformCommandHook = (command: TerraformCommand) => TerraformCommandRun | void | Promise<TerraformCommandRun | void>;
-
-/** The hook, and the root and method it is for, that the commands run in an async call see (chant#4865). */
-interface CommandScope {
-  hook: TerraformCommandHook;
-  root: string;
-  upstream?: string;
-  method: string;
-}
-
-/**
- * The command scope of the step call that runs the engine (chant#4865). An
- * async-local store, so each root a wave runs at once (chant#4864) sees its
- * own, and the activities need no hook argument threaded through.
- */
-const commandScope = new AsyncLocalStorage<CommandScope>();
-
-/**
- * Run `fn` with every engine command it runs going through `hook`, as
- * commands for `scope.root` (chant#4865). Inside another scope, a field this
- * one leaves out (`upstream`) is not kept from the outer.
- */
-export function withTerraformCommandHook<T>(hook: TerraformCommandHook | undefined, scope: Omit<CommandScope, "hook">, fn: () => Promise<T>): Promise<T> {
-  if (!hook) return fn();
-  return commandScope.run({ hook, ...scope }, fn);
-}
-
-/** Run `fn` with the commands it runs marked as a read of `upstream`'s state for the scope's root (chant#4865). Outside a scope, `fn` as it is. */
-export function asUpstreamCommands<T>(upstream: string, fn: () => Promise<T>): Promise<T> {
-  const scope = commandScope.getStore();
-  return scope ? commandScope.run({ ...scope, upstream }, fn) : fn();
-}
-
-/** The words of a command line the builders here wrote: plain words, and `quoteArg`'s single-quoted ones. */
-export function commandWords(line: string): string[] {
-  const words: string[] = [];
-  let word: string | undefined;
-  for (let i = 0; i < line.length; i++) {
-    const c = line[i]!;
-    if (c === " ") {
-      if (word !== undefined) words.push(word);
-      word = undefined;
-    } else if (c === "'") {
-      const end = line.indexOf("'", i + 1);
-      const stop = end < 0 ? line.length : end;
-      word = (word ?? "") + line.slice(i + 1, stop);
-      i = stop;
-    } else if (c === "\\" && i + 1 < line.length) {
-      word = (word ?? "") + line[++i];
-    } else {
-      word = (word ?? "") + c;
-    }
-  }
-  if (word !== undefined) words.push(word);
-  return words;
-}
+export {
+  asUpstreamCommands,
+  commandWords,
+  withTerraformCommandHook,
+  type TerraformCommand,
+  type TerraformCommandHook,
+  type TerraformCommandResult,
+  type TerraformCommandRun,
+} from "../command-hook";
 
 /** Run `cmd` in `dir`, forwarding the signal so an abort kills the child. */
 function runPlain(cmd: string, dir: string, env: Record<string, string>, signal?: AbortSignal, unset: readonly string[] = []): Promise<{ stdout: string; stderr: string }> {
@@ -1169,14 +1072,12 @@ async function run(
   signal?: AbortSignal,
   unset: readonly string[] = [],
 ): Promise<{ stdout: string; stderr: string }> {
-  const scope = commandScope.getStore();
+  const scope = currentCommandScope();
   if (!scope) return runPlain(cmd, dir, env, signal, unset);
   const words = commandWords(cmd);
   const args = words.slice(1);
   const command: TerraformCommand = {
-    root: scope.root,
-    ...(scope.upstream !== undefined ? { upstream: scope.upstream } : {}),
-    method: scope.method,
+    ...scopedCommand(scope),
     binary: words[0] ?? "",
     name: args.find((a) => !a.startsWith("-")) ?? "",
     args,

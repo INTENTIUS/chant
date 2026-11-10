@@ -154,4 +154,22 @@ describe("terraform-apply's hook around each engine command (chant#4865)", () =>
     expect(results[0]![1].code).toBe(1);
     expect(results[0]![1].stderr).toContain("broken");
   });
+  test("a composed group's commands reach the hook as commands for each member (chant#4887)", async () => {
+    const p = project();
+    // The lexicon's runBinary passes `-chdir=<dir>` first, so the fake logs its second word, the subcommand.
+    writeFileSync(join(p.dir, "bin", "tofu"), `#!/bin/sh\necho "$2 \${1##*/} \${FAKE_TAG:-none}" >> "$FAKE_LOG"\necho "Error: no provider" >&2\nexit 1\n`);
+    chmodSync(join(p.dir, "bin", "tofu"), 0o755);
+    writeFileSync(join(p.dir, "roots", "a", "main.tf"), 'output "id" {\n  value = "a"\n}\n');
+    writeFileSync(join(p.dir, "roots", "b", "main.tf"), 'variable "a_id" {\n  type = string\n}\n');
+    writeFileSync(join(p.dir, "chant.config.json"), JSON.stringify({ lexicons: ["terraform"], terraform: { binary: "tofu", roots: { a: { dir: "roots/a" }, b: { dir: "roots/b" } }, compose: { enabled: true } } }));
+    const seen: TerraformCommand[] = [];
+    const cap = terraformApplyCapabilityWith({ onCommand: (c) => ({ env: { FAKE_TAG: `${c.members?.join("+")}:${c.name}` }, after: () => void seen.push(c) }) });
+    const members = [
+      { component: "a", step: { root: "a", vars: {} }, input: { root: "a", vars: {} }, reads: [], dependsOn: [], ctx: { env: "test", component: "a" } },
+      { component: "b", step: { root: "b", vars: { a_id: { stackOutput: { stack: "a", name: "id" } } } }, input: { root: "b", vars: { a_id: undefined } }, reads: [{ at: "/vars/a_id", ref: "a.id", component: "a", output: "id" }], dependsOn: ["a"], ctx: { env: "test", component: "b" } },
+    ];
+    await expect(cap.planGroup!({ env: "test", cwd: p.dir } as never, members as never)).rejects.toThrow(/init failed/);
+    expect(seen.map((c) => [c.name, c.root, c.members, c.method])).toEqual([["init", "a", ["a", "b"], "plan"]]);
+    expect(readFileSync(p.log, "utf-8").trim()).toBe("init a a+b:init");
+  });
 });

@@ -36,18 +36,39 @@
  * earlier request of the same migration stands, made since that request was
  * asked, answers `approval-moved` and names the roots whose state moved
  * between the two (#4806).
+ *
+ * A product's own record of the migration (its moves, retags and stamps)
+ * goes in the attachment beside the roots as `record` (#4928): canonical
+ * JSON, at most {@link STATE_MIGRATION_RECORD_MAX_BYTES}, so the digest binds
+ * it and `chant approve` shows it with the roots.
  */
+import { canonicalJson } from "./effect-receipt";
 import { CHANT_EXIT } from "./exit-codes";
 import { chantGatedLedger, gatedOp, type GatedRequestLedger } from "./lifecycle/gated-op";
 import type { GatedRequestRules } from "./lifecycle/gated-request";
 import { gatedRequestAttachmentPath } from "./lifecycle/gated-request-digest";
 import { samePlanDigest } from "./lifecycle/plan-digest";
+import { NEXT_RELEASE } from "./release-floors";
 
 /** The first chant with the engine-neutral state migration (#4762). */
 export const STATE_MIGRATION_FLOOR = "0.124.77";
 
 /** The first chant whose migration binds a root's `source` (an engine's `source` read under the locks) and answers `approval-moved`, and whose terraform lexicon plans backend moves (`planTerraformMigration`'s `backends`) and choudoufu estate migrations (`planEstateMigration`) onto it (#4806). */
 export const STATE_MIGRATION_SOURCE_FLOOR = "0.124.86";
+
+/** The first chant whose `runStateMigration` takes a product's `record`, which the request's attachment binds beside the roots and `chant approve` shows (#4928). */
+export const STATE_MIGRATION_RECORD_FLOOR = NEXT_RELEASE;
+
+/** The most a product's migration `record` may take, as canonical JSON in UTF-8 (#4928): a record names moves, retags and stamps, never a state's contents. */
+export const STATE_MIGRATION_RECORD_MAX_BYTES = 64 * 1024;
+
+/** A product's migration `record` that cannot be bound: not JSON, or over {@link STATE_MIGRATION_RECORD_MAX_BYTES}. Thrown before anything is asked. */
+export class StateMigrationRecordError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "StateMigrationRecordError";
+  }
+}
 
 /** A state as a migration binds it: its version id, when the store keeps versions, and its digest, null for no state. */
 export interface MigrationStateAt {
@@ -119,6 +140,16 @@ export interface StateMigrationInput {
   words: StateMigrationWords;
   /** The product's facts the request binds, such as the migration file's path and digest. */
   fields?: Record<string, string>;
+  /**
+   * The product's own record of the migration, such as its moves, retags and
+   * stamps (#4928). It goes in the request's attachment beside the roots as
+   * canonical JSON (keys sorted), so the request's digest binds it and
+   * `chant approve` shows it. At most {@link STATE_MIGRATION_RECORD_MAX_BYTES};
+   * a record that is larger or is not JSON throws {@link StateMigrationRecordError}
+   * before anything is asked. Never a state's contents. Unset, the attachment
+   * is the roots alone, as before.
+   */
+  record?: unknown;
   /** The product's facts the finished line adds, given how it ended. */
   detail?: (result: StateMigrationResult) => Record<string, string | number | boolean>;
   rules: GatedRequestRules;
@@ -168,6 +199,24 @@ const boundRoot = (r: MigrationRootPlan) => ({
   after: r.after.digest,
   ...(r.source ? { source: { location: r.source.location ?? null, version_id: r.source.version_id ?? null, digest: r.source.digest } } : {}),
 });
+
+/**
+ * A product's record as the attachment binds it (#4928): its canonical JSON
+ * read back, so its keys are in sorted order, once it is known to fit.
+ */
+export function boundRecord(record: unknown): unknown {
+  let text: string;
+  try {
+    text = canonicalJson(record);
+  } catch (e) {
+    throw new StateMigrationRecordError(`the migration's record is not JSON: ${(e as Error).message}`);
+  }
+  const bytes = Buffer.byteLength(text, "utf8");
+  if (bytes > STATE_MIGRATION_RECORD_MAX_BYTES) {
+    throw new StateMigrationRecordError(`the migration's record is ${bytes} bytes as canonical JSON, over the ${STATE_MIGRATION_RECORD_MAX_BYTES} a request binds; keep the moves, retags and stamps, and leave the rest in the product's report`);
+  }
+  return JSON.parse(text) as unknown;
+}
 
 /** The finished line's flat facts: how it ended, and each root's location, versions and digests. */
 export function migrationFacts(result: StateMigrationResult): Record<string, string | number | boolean> {
@@ -234,8 +283,9 @@ export async function runStateMigration(input: StateMigrationInput): Promise<Sta
   const failing = input.roots.filter((r) => r.proof.changes.length > 0).map((r) => r.root);
   if (failing.length > 0) return { status: "proof-failed", exit: CHANT_EXIT.failed, roots: input.roots, failing };
   const roots = [...input.roots].sort((a, b) => (a.root < b.root ? -1 : a.root > b.root ? 1 : 0));
-  // The attachment binds each root's state before and after; the proof's wording is the engine's, not the migration.
-  const attachment = `${JSON.stringify({ name: input.name, roots: roots.map(boundRoot) }, null, 2)}\n`;
+  // The attachment binds each root's state before and after, and the product's record when it gives one (#4928); the proof's wording is the engine's, not the migration.
+  const record = input.record === undefined ? undefined : boundRecord(input.record);
+  const attachment = `${JSON.stringify({ name: input.name, roots: roots.map(boundRoot), ...(record !== undefined ? { record } : {}) }, null, 2)}\n`;
   const now = input.now ?? new Date().toISOString();
   const result = await gatedOp(
     {

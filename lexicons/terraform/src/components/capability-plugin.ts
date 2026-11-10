@@ -260,7 +260,12 @@ export interface TerraformApplyDeps {
    * and `output` of each upstream its `reads` name. The hook sees the
    * command's name, args, directory and environment, may add variables to
    * it, and its `after` gets the exit code, duration and output. Roots a
-   * wave runs at once (chant#4864) each see their own commands.
+   * wave runs at once (chant#4864) each see their own commands. A composed
+   * group's `init`, `plan`, `show` and `apply` (`terraform.compose`) go
+   * through it too, as commands for all the group's roots: `members` names
+   * them and `root` is the first (chant#4887). `engineTimings()`
+   * (`../engine-timings.ts`) is a hook that times each root and collects the
+   * engine's spans.
    */
   onCommand?: TerraformCommandHook;
 }
@@ -707,11 +712,18 @@ export function terraformApplyCapabilityWith(deps: TerraformApplyDeps = {}): Cap
   if (!hook) return cap;
   // chant#4865: each method that runs the engine for a root runs it through the product's hook, as commands for that root.
   const scope = (method: string, step: TerraformApplyStepInput) => ({ root: typeof step?.root === "string" ? step.root : "", method });
+  // chant#4887: a composed group's commands run once for all its members; the hook sees them as commands for each, `root` the first.
+  const groupScope = (method: string, members: readonly { step: { root?: unknown } }[]) => {
+    const roots = [...new Set(members.map((m) => (typeof m.step?.root === "string" ? m.step.root : "")).filter((r) => r !== ""))].sort();
+    return { root: roots[0] ?? "", members: roots, method };
+  };
   return {
     ...cap,
     plan: (ctx, step) => withTerraformCommandHook(hook, scope("plan", step), () => cap.plan(ctx, step)),
     run: (ctx, step) => withTerraformCommandHook(hook, scope("run", step), () => cap.run(ctx, step)),
     outputs: (ctx, step) => withTerraformCommandHook(hook, scope("outputs", step), () => cap.outputs!(ctx, step)),
+    planGroup: (ctx, members) => withTerraformCommandHook(hook, groupScope("plan", members), () => cap.planGroup!(ctx, members)),
+    runGroup: (ctx, run, members) => withTerraformCommandHook(hook, groupScope("run", members), () => cap.runGroup!(ctx, run, members)),
   };
 }
 
