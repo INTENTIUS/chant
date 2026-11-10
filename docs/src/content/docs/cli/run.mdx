@@ -15,6 +15,7 @@ chant run cancel <name> [flags]
 chant run log <name> [flags]
 chant run events <run> [--json] [--follow]
 chant run wave --spec <file> --wave <k> [--decide | --share <i> | --group <name> [--share <i>]] [--base <ref>]
+chant run wave --spec <file> --wave <k> --policy-only [--decide] [--base <ref>]
 chant run resume [--op <name>] [--gate <name>] [--dry-run] [--json]
 chant run pending --plan <digest> [--op <name>] [--json]
 chant run wave --spec <file> --record-plans
@@ -291,6 +292,8 @@ A gate that asks a decision point counts as answered once its question has an an
 
 `--record-plans`, in a pull request's pipeline, plans every wave at the pull request's head and records each wave's digest on `chant/lifecycle`. A wave whose `approval` is `pr-review` compares its digest with that record after the merge ([Which approvals count](/chant/guide/op-waves/#which-approvals-count)).
 
+`--policy-only` plans the wave and runs its policy hold (`holds.policy`), and nothing after it ([#4926](https://github.com/INTENTIUS/chant/issues/4926)). It exits 0 only when `ci.policy` ran over the wave's plans and denied nothing, 7 when it denied a run, and 1 when it did not run. It writes `policy:<wave>`'s claim file under `.chant/op-waves/<name>/checks` and no outcome file or run record. A generated waves pipeline that signs evidence runs it as the wave job's policy step, whose result the wave's evidence job signs from ([A wave's policy step and evidence job](/chant/cli/ci/#a-waves-policy-step-and-evidence-job)).
+
 After the last wave, `--waves-outcome` reads every wave job's outcome file under `.chant/op-waves/<name>/outcomes` and prints one word on stdout: `applied`, `partial`, `unchanged`, `waiting` or `failed` ([#4617](https://github.com/INTENTIUS/chant/issues/4617)). The counts by status go to stderr. With `--json` it prints `{ outcome, applied, counts }`. A spec's `control-dispatch` job sends that word to the control repo ([Tell the control repo](/chant/guide/op-waves/#tell-the-control-repo)). It exits 0 whatever the outcome, and 1 when the spec does not read.
 
 ### `run pending`
@@ -480,6 +483,7 @@ A run without `--release` writes records with no `releaseDigest`, even when `HEA
 | `--spec <file>` | JSON Op specs to generate instead of every Op with a `schedule` (`run --generate`), or the Op waves spec (`run --generate`, `run wave`) |
 | `--wave <k>` | The wave to run, from 1 (`run wave`) |
 | `--decide` | Plan the wave and decide its gate without applying it (`run wave`) |
+| `--policy-only` | Plan the wave and run its policy hold, applying nothing: the wave job's policy step (`run wave`) |
 | `--record-plans` | Plan every wave at a pull request's head and record the digests a `pr-review` wave compares (`run wave`) |
 | `--waves-outcome` | Print how the wave jobs' outcome files add up, the outcome a control dispatch carries (`run wave`) |
 | `--share <i>` | Apply share `i` of a decided wide wave, or with `--group`, of that job group (`run wave`) |

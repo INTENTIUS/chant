@@ -28,6 +28,13 @@
  *   does, skipping a check already signed for the head's tree, and keeps
  *   `<out>/<iid>/evidence.json` for the note job. No job of a merge request
  *   pipeline, which the change's own files build, holds the key.
+ * - `sign --from-job <job> --check-id <id>[,<id>...] [--claims <dir>]`
+ *   (#4926) is a wave's evidence job's form: it reads the job of that name
+ *   in this run through the forge, refuses one of another run or commit,
+ *   and signs each check whose step (named in `CHANT_EVIDENCE_SOURCES`; on
+ *   GitLab, whose jobs have no steps, the job) the forge reports passed and
+ *   whose claim file in `<dir>` says so. Each statement names the run, job
+ *   and step it relied on (`source`).
  * - `verify --check-id <id>[,<id>...]` reads the evidence for `--at`'s tree
  *   and verifies it against the runner keys at `--base`; exits 1 when one
  *   is not current.
@@ -63,6 +70,7 @@ import { CHECK_EVIDENCE_FILE, LOCAL_EVIDENCE_KEY_ENV, planReportChecks, type Che
 const USAGE =
   "chant ci evidence sign (--check-id <id>[,<id>...] | --from-report <dir> --result <result>) [--at <rev>] [--base <rev>] [--key <file>] [--claim <file>] [--no-push] [--json]\n" +
   "  chant ci evidence sign --open --job <job> --from-report <dir> -o <out> [--branch <branch>] [--base <rev>] [--key <file>] [--no-push] [--json]\n" +
+  "  chant ci evidence sign --from-job <job> --check-id <id>[,<id>...] [--claims <dir>] [--at <rev>] [--base <rev>] [--key <file>] [--no-push] [--json]\n" +
   "  chant ci evidence sign --local --check-id <id>[,<id>...] [--at <rev>] [--base <rev>] [--key <file>] [--claim <file>] [--no-push] [--json]\n" +
   "  chant ci evidence verify [--local] --check-id <id>[,<id>...] [--at <rev>] [--base <rev>] [--json]";
 
@@ -125,9 +133,41 @@ async function verifyLocal(ctx: CommandContext, repo: string, base: string, at: 
   return verdicts.every((v) => v.status === "accepted") ? CHANT_EXIT.done : CHANT_EXIT.failed;
 }
 
+/**
+ * `sign --from-job <job>` (#4926): the wave's evidence job, signing each
+ * named check whose step in that job of this run and commit the forge
+ * reports as passed (../../ci-evidence-from-job.ts). Exits 1 when the job is
+ * another run's or commit's.
+ */
+async function signFromJobCommand(ctx: CommandContext, repo: string, base: string): Promise<number> {
+  const { args } = ctx;
+  const checks = idsOf(args.checkId);
+  if (checks.length === 0) return usage("sign --from-job needs --check-id <id>[,<id>...], the checks the job ran");
+  if (args.fromReport) return usage("--from-job and --from-report are two ways to sign; pass one");
+  const pem = args.key ? readFileSync(args.key, "utf-8") : undefined;
+  try {
+    const { forgeTargetFromEnv } = await import("../../pr-forge");
+    const { forgeReadsFor } = await import("../../pr-forge-reads");
+    const { signFromJob } = await import("../../ci-evidence-from-job");
+    const reads = forgeReadsFor(forgeTargetFromEnv(process.env));
+    const done = await signFromJob({ repo, base, fromJob: args.fromJob!, checks, ...(args.claims ? { claims: args.claims } : {}), ...(args.at ? { at: args.at } : {}), reads, ...(pem ? { key: pem } : {}), push: !args.noPush });
+    if ("refused" in done) {
+      console.error(formatError({ message: `ci evidence: ${done.refused}`, hint: USAGE }));
+      return CHANT_EXIT.failed;
+    }
+    if (args.json) console.log(JSON.stringify({ signed: done.signed, skipped: done.skipped }, null, 2));
+    return CHANT_EXIT.done;
+  } catch (err) {
+    console.error(formatError({ message: err instanceof Error ? err.message : String(err), hint: USAGE }));
+    return CHANT_EXIT.failed;
+  }
+}
+
 async function sign(ctx: CommandContext, repo: string, base: string, at: string): Promise<number> {
   const { args } = ctx;
+  if (args.open && args.fromJob) return usage("--open and --from-job are two ways to sign; pass one");
   if (args.open) return signOpen(ctx, repo, base);
+  if (args.fromJob) return signFromJobCommand(ctx, repo, base);
   const fromReport = args.fromReport;
   if (!fromReport && idsOf(args.checkId).length === 0) return usage("sign needs --check-id <id>, or --from-report <dir> in a plan note job");
   const pem = args.key ? readFileSync(args.key, "utf-8") : process.env[CHECK_EVIDENCE_KEY_ENV];

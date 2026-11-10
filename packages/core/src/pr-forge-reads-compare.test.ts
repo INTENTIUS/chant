@@ -115,7 +115,8 @@ describe("a job by id, and the jobs' URLs", () => {
   test("gitlab: a job with its pipeline, ref, tag and URL; a pipeline's jobs with their URLs", async () => {
     routes[`GET ${P}/jobs/5`] = { id: 5, name: "review", status: "success", ref: "main", tag: false, web_url: "https://gitlab.com/acme/infra/-/jobs/5", pipeline: { id: 10, sha: SHA } };
     routes[`GET ${P}/jobs/6`] = { id: 6, name: "plan", status: "failed", ref: "v1", tag: true, pipeline: { id: 11 } };
-    expect(await gl().job(5)).toEqual({ id: 5, name: "review", status: "success", done: true, run: 10, ref: "main", tag: false, url: "https://gitlab.com/acme/infra/-/jobs/5" });
+    // #4926: the pipeline's commit is the job's.
+    expect(await gl().job(5)).toEqual({ id: 5, name: "review", status: "success", done: true, run: 10, ref: "main", tag: false, url: "https://gitlab.com/acme/infra/-/jobs/5", headSha: SHA });
     expect(await gl().job(6)).toEqual({ id: 6, name: "plan", status: "failed", done: true, run: 11, ref: "v1", tag: true });
     expect(await gl().job(7)).toBeUndefined();
     routes[`GET ${P}/pipelines/10/jobs`] = [{ id: 4, name: "plan", status: "success", ref: "refs/merge-requests/3/head", tag: false, web_url: "https://gitlab.com/acme/infra/-/jobs/4", pipeline: { id: 10 } }];

@@ -23,7 +23,11 @@
  *   name none, so GitLab never hands them the key.
  * - A wave job (the waves pipeline) gets the key on its `chant run wave`
  *   step, and signs `plan:<wave>` and `policy:<wave>` once the wave is
- *   planned (../op/op-waves-evidence.ts).
+ *   planned (../op/op-waves-evidence.ts). A wave with a policy runs it as a
+ *   step of its own and a `<wave job>-evidence` job signs `policy:<wave>`
+ *   from that step's result; a wave that trades cloud credentials and signs
+ *   keyless signs `plan:<wave>` there too (#4926,
+ *   ./op/op-waves-evidence-jobs.ts).
  * - A product's check job runs `chant ci check` with the key in
  *   `CHANT_RUNNER_KEY`; the check runner signs each hook (./components/check-steps.ts).
  *
@@ -50,7 +54,7 @@ export const EVIDENCE_ID_TOKEN_VAR = "CHANT_ID_TOKEN_SIGSTORE";
 /** The audience a keyless signing job's token is requested for unless told: sigstore's. */
 export const EVIDENCE_DEFAULT_AUDIENCE = "sigstore";
 
-export { CHECK_EVIDENCE_FLOOR, CHECK_JOB_FLOOR, GITLAB_OPEN_EVIDENCE_FLOOR, KEYLESS_EVIDENCE_FLOOR, LOCAL_EVIDENCE_FLOOR, PR_LOOP_EVIDENCE_FLOOR, REF_GATE_STATUS_JOB_FLOOR } from "./release-floors";
+export { CHECK_EVIDENCE_FLOOR, CHECK_JOB_FLOOR, GITLAB_OPEN_EVIDENCE_FLOOR, KEYLESS_EVIDENCE_FLOOR, LOCAL_EVIDENCE_FLOOR, PR_LOOP_EVIDENCE_FLOOR, REF_GATE_STATUS_JOB_FLOOR, WAVE_EVIDENCE_JOB_FLOOR } from "./release-floors";
 
 /**
  * The GitLab environment every signing job names (#4914), with `action:

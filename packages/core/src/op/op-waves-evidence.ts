@@ -13,6 +13,12 @@
  *   `policy:<wave>` when `ci.policy` ran over the plans and denied nothing.
  *   They are attached under `refs/notes/chant/evidence` and pushed, where #4867's ref gate
  *   and a later wave read them.
+ * - A generated pipeline (#4926) runs the wave's policy as a step of its own
+ *   (`--policy-only`; on GitLab a `<wave job>-policy` job) and signs
+ *   `policy:<wave>` in an evidence job after the wave job, from the forge's
+ *   record of that step; a wave that trades cloud credentials and signs
+ *   keyless signs `plan:<wave>` there too. `CHANT_WAVE_EVIDENCE` tells the
+ *   command step which of the two it still signs itself.
  *
  * See ../workspace/trust/check-evidence.ts.
  */
@@ -20,6 +26,7 @@
 import { execFileSync } from "node:child_process";
 import type { OpRunPolicyRow } from "./runtime";
 export { opWavesEvidenceProblems, type OpWavesEvidence } from "./op-waves-evidence-spec";
+import { WAVE_EVIDENCE_ENV, writeCheckClaimFile } from "../ci-evidence-claims";
 import { CHECK_EVIDENCE_KEY_ENV, missingCheckEvidence, recordChecks, RUNNER_IDENTITY_ENV, runnerEvidenceSigner, signChecks } from "../workspace/trust/check-evidence";
 
 function top(cwd: string): string {
@@ -32,20 +39,33 @@ export async function opWaveEvidenceRefusal(cwd: string, head: string, base: str
   return missingCheckEvidence(top(cwd), head, base, requires);
 }
 
+export { WAVE_EVIDENCE_ENV };
+
 /**
  * Sign the wave's plan and policy checks when the job has a runner identity.
  * Never fails the wave: a key or identity the policy at base does not list, or a
- * notes push that does not land, is a line in the log.
+ * notes push that does not land, is a line in the log. With
+ * `CHANT_WAVE_EVIDENCE` (#4926) it signs only what that leaves to the step,
+ * and writes the plan's claim file in `checksDir`.
  */
-export async function signOpWaveChecks(input: { cwd: string; head: string; base: string; wave: string; planDigest?: string; policyRows: ReadonlyMap<string, OpRunPolicyRow>; log: (line: string) => void; env?: NodeJS.ProcessEnv; push?: boolean; fetch?: typeof fetch }): Promise<string[]> {
+export async function signOpWaveChecks(input: { cwd: string; head: string; base: string; wave: string; planDigest?: string; policyRows: ReadonlyMap<string, OpRunPolicyRow>; log: (line: string) => void; env?: NodeJS.ProcessEnv; push?: boolean; fetch?: typeof fetch; checksDir?: string }): Promise<string[]> {
   const env = input.env ?? process.env;
+  const mode = env[WAVE_EVIDENCE_ENV];
+  if (mode && input.checksDir) {
+    try {
+      writeCheckClaimFile(input.checksDir, { check: `plan:${input.wave}`, passed: true, ...(input.planDigest ? { claim: input.planDigest } : {}) });
+    } catch (err) {
+      input.log(`wave ${input.wave}: the plan's claim file was not written: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  if (mode === "job") return [];
   if (!env[CHECK_EVIDENCE_KEY_ENV] && !env[RUNNER_IDENTITY_ENV]) return [];
   try {
     const repo = top(input.cwd);
     const signer = (await runnerEvidenceSigner(repo, input.base, { env, ...(input.fetch ? { fetch: input.fetch } : {}) }))!;
     const rows = [...input.policyRows.values()];
     const checks: Array<{ check: string; claim?: string }> = [{ check: `plan:${input.wave}`, ...(input.planDigest ? { claim: input.planDigest } : {}) }];
-    if (rows.length > 0 && rows.every((r) => r.result !== "denied")) checks.push({ check: `policy:${input.wave}`, claim: JSON.stringify(rows) });
+    if (mode !== "plan" && rows.length > 0 && rows.every((r) => r.result !== "denied")) checks.push({ check: `policy:${input.wave}`, claim: JSON.stringify(rows) });
     const signed = await signChecks(repo, input.head, checks, signer);
     const pushed = await recordChecks(repo, signed, { push: input.push !== false });
     if (input.push !== false && !pushed.pushed && pushed.pushWarning) input.log(`wave ${input.wave}: ${pushed.pushWarning}`);

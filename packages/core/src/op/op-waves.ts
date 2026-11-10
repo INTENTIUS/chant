@@ -921,6 +921,17 @@ export function opWaveOutcomeDir(spec: Pick<OpWavesSpec, "name">): string {
   return `.chant/op-waves/${spec.name}/outcomes`;
 }
 
+/**
+ * Where a wave job's steps leave the claim files of the checks they ran
+ * (#4926), for the wave's evidence job: `plan-<wave>.json` from the wave's
+ * command, `policy-<wave>.json` from its policy step. Beside the outcome
+ * directory; a later job that downloads every artifact into that directory
+ * skips them, since they are not named as outcome files.
+ */
+export function opWaveChecksDir(spec: Pick<OpWavesSpec, "name">): string {
+  return `.chant/op-waves/${spec.name}/checks`;
+}
+
 /** The outcome file of wave `wave`'s job, or of one group or share of it (#4322). */
 export function opWaveOutcomePath(spec: Pick<OpWavesSpec, "name">, wave: number, part: { group?: string; share?: number } = {}): string {
   return `${opWaveOutcomeDir(spec)}/${waveOutcomeFileName(wave, part)}`;

@@ -284,6 +284,10 @@ CI:
                         With --open --job <job> --from-report <dir> -o <out>,
                         in a GitLab pipeline of the target branch, sign each
                         open merge request's settled <job> from its artifact.
+                        With --from-job <job> [--claims <dir>], sign each
+                        named check whose step in that job of this run and
+                        commit the forge reports as passed, as a wave's
+                        evidence job does (#4926).
   ci evidence verify --check-id <id>[,<id>...] [--at <rev>] [--base <rev>] [--json]
                         Verify the kept evidence for --at's tree against the
                         runner keys at --base; exits 1 when one is not current.
@@ -604,6 +608,10 @@ Ops:
                         pipeline runs. --decide plans and decides only;
                         --share <i> applies one share of a decided wave;
                         --group <name> applies one job group's runs.
+                        --policy-only plans the wave and runs its policy
+                        hold, applying nothing, and exits 0 only when the
+                        policy ran and denied nothing: the wave job's
+                        policy step, whose result its evidence job reads (#4926).
                         --record-plans (no --wave), in a pull request's
                         pipeline: plan every wave at its head and record the
                         digests a pr-review approval mode compares.

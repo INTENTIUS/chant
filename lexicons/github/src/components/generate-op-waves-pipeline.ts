@@ -80,10 +80,24 @@
  * with `if: always()`. `options.recordPlans` gives the plans job steps
  * before it plans, its `env:`, and OIDC tokens, which ask for `id-token:
  * write` on the job. Without them nothing changes.
+ *
+ * With `evidence` (#4870), each wave's own or deciding job signs its checks
+ * (`@intentius/chant/op/op-waves-evidence-jobs`, #4926). A wave with
+ * `holds.policy` runs `chant run wave --policy-only` as a step of its own
+ * (`id: chant-policy`) before the command, which runs after it whether it
+ * passed or failed. A job `<wave job>-evidence` after the wave job checks out
+ * the base, takes back the wave job's claim files, and runs `chant ci
+ * evidence sign --from-job`, which signs `policy:<wave>` when the forge
+ * reports the policy step passed. A wave that trades cloud credentials and
+ * signs keyless signs `plan:<wave>` there too, from the command step's
+ * result, since after the trade no step of the wave job may request the
+ * signing token; any other wave signs it in the command step. A later wave
+ * whose `evidence.requires` names a check an evidence job signs needs it.
  */
 
 import {
   notifyVariables,
+  opWaveChecksDir,
   opWaveGroupOf,
   opWaveJobs,
   opWaveJobArtifactName,
@@ -119,6 +133,19 @@ import { OIDC_REQUEST_VARS, TRADE_SPEC_ENV, tradeLine, type CloudTradeSpec } fro
 import { JOB_GUARD_ENV, jobGuardLine, jobGuardSpec, opWaveJobLabel } from "@intentius/chant/ci-job-guard";
 import { resolveProductWords } from "@intentius/chant/ci-product-words";
 import { assertPipelineEvidence, evidenceKeyEnv, evidenceKeyless } from "@intentius/chant/ci-evidence-jobs";
+import {
+  EVIDENCE_SOURCES_ENV,
+  OP_WAVE_EVIDENCE_BASE_VAR,
+  OP_WAVE_POLICY_STEP_ID,
+  opWaveEvidenceLines,
+  opWaveEvidenceNeeds,
+  opWaveEvidencePlan,
+  opWaveEvidenceSources,
+  opWavePolicyCommand,
+  opWavePolicyStepName,
+  WAVE_EVIDENCE_ENV,
+  type OpWaveEvidencePlan,
+} from "@intentius/chant/op/op-waves-evidence-jobs";
 import { checkoutStep, concurrency, DOWNLOAD_ARTIFACT, downloadArtifactStep, keepRecordStep, runSteps } from "./ci-jobs";
 import { emitOpPipelineYAML, type GithubOpPipelineDoc } from "./generate-op-pipeline";
 
@@ -164,6 +191,15 @@ export function buildGithubOpWavesDoc(
   // #4791: what the product adds to each wave's jobs.
   const inputs = opWaveJobInputsByWave(spec, options.waveJobs);
 
+  // #4926: how each wave job signs its checks, and the evidence jobs a later wave's evidence.requires waits for.
+  const evidenceOf = (job: (typeof jobs)[number]) => {
+    const wave = spec.waves[job.wave - 1]!;
+    const cloud = opWaveGroupOf(spec, job)?.cloud ?? wave.cloud;
+    const signs = options.evidence !== undefined && (job.kind === "wave" || job.kind === "decide");
+    return opWaveEvidencePlan(spec, job, { signs, keylessCloud: signs && evidenceKeyless(options.evidence) && cloud !== undefined });
+  };
+  const evidenceNeeds = opWaveEvidenceNeeds(spec, jobs.map((job) => ({ wave: job.wave, plan: evidenceOf(job) })));
+
   const jobsDoc: Record<string, unknown> = {};
   for (const job of jobs) {
     const wave = spec.waves[job.wave - 1]!;
@@ -174,14 +210,11 @@ export function buildGithubOpWavesDoc(
     const environment = group?.environment ?? wave.environment;
     const idTokens = group?.idTokens ?? wave.idTokens;
     // #4870: the deciding job's command signs the wave's checks; #4869: keyless, from the job's own OIDC token.
-    const signs = options.evidence !== undefined && (job.kind === "wave" || job.kind === "decide");
+    // #4926: a wave that trades cloud credentials and signs keyless signs in its evidence job instead, since after
+    // the trade no step may request the signing token; a wave's policy is signed there from its own step's result.
+    const evidence = evidenceOf(job);
+    const signs = evidence !== undefined && evidence.commandSigns;
     const keyless = signs && evidenceKeyless(options.evidence);
-    if (keyless && cloud) {
-      // The trade's later steps start without the token request variables, so the wave's step could not request the signing token.
-      throw new Error(
-        `${spec.name}/${wave.name}: evidence.identity oidc signs from the wave's own step, and this wave trades cloud credentials, after which no step may request an OIDC token. Sign this pipeline with evidence.runnerKeySecret, or drop the wave's cloud (#4869)`,
-      );
-    }
     const idToken = idTokens !== undefined || cloud !== undefined || keyless;
     const runner = group?.runner ?? wave.runner ?? spec.runner;
     // #4624: the guard first, before the trade and the checkout.
@@ -206,19 +239,33 @@ export function buildGithubOpWavesDoc(
     later.push(...[...(wave.setup ?? []), ...(group?.setup ?? [])].map(setupStepDoc), ...runSteps(options.beforeScript ?? []));
     const add = inputs[job.wave - 1];
     later.push(...(add?.before ?? []).map(runStepDoc));
+    // #4926: the wave's policy as a step of its own, whose result the forge reports. The command runs after it
+    // whether it passed or failed (a denied run may still apply under an override), and not after any other failure.
+    const policyStep = evidence?.policyStep === true;
+    if (policyStep) later.push({ name: opWavePolicyStepName(job.wave, wave.name), id: OP_WAVE_POLICY_STEP_ID, run: opWavePolicyCommand(job).join(" ") });
     // #4870: the key (or #4869 the keyless signing) on that step alone.
-    later.push({ name: describeJob(job.kind, job.wave, wave.name, job.share, job.group), ...(signs ? { env: evidenceKeyEnv(forge, options.evidence!) } : {}), run: job.command.join(" ") });
+    const commandStep = describeJob(job.kind, job.wave, wave.name, job.share, job.group);
+    const commandEnv = { ...(signs ? evidenceKeyEnv(forge, options.evidence!) : {}), ...(evidence?.commandMode ? { [WAVE_EVIDENCE_ENV]: evidence.commandMode } : {}) };
+    later.push({
+      name: commandStep,
+      ...(policyStep ? { if: `\${{ !cancelled() && (success() || steps.${OP_WAVE_POLICY_STEP_ID}.outcome == 'failure') }}` } : {}),
+      ...(Object.keys(commandEnv).length > 0 ? { env: commandEnv } : {}),
+      run: job.command.join(" "),
+    });
     later.push(...runSteps(options.extraScript ?? []));
     steps.push(...(cloud ? later.map(withoutTokenRequest) : later));
     if (job.kind === "decide") {
       steps.push(keepRecordStep(`Keep wave ${job.wave}'s decision`, opWaveRecordArtifact(spec, job.wave), job.record!));
     }
     steps.push(keepRecordStep(`Keep the job's outcome`, opWaveOutcomeArtifact(spec, job.jobName), job.outcome));
+    // #4926: the checks' claim files, for the evidence job.
+    if (evidence?.evidenceJob) steps.push(keepRecordStep(`Keep the job's check claims`, opWaveChecksArtifact(spec, job.jobName), opWaveChecksDir(spec)));
     const report = reportSteps(add, job.jobName);
     steps.push(...(cloud ? report.map(withoutTokenRequest) : report));
+    const needs = [...job.needs, ...(job.kind === "share" ? [] : evidenceNeeds(job.wave))];
     jobsDoc[job.jobName] = {
       "runs-on": githubRunsOn(runner),
-      ...(job.needs.length > 0 ? { needs: job.needs } : {}),
+      ...(needs.length > 0 ? { needs } : {}),
       // #4322: a wave's jobs run after a failure in the wave before; a share job runs only on its deciding job's success.
       ...(job.needs.length > 0 && job.kind !== "share" ? { if: "!cancelled()" } : {}),
       container: image,
@@ -229,6 +276,7 @@ export function buildGithubOpWavesDoc(
       env: { ...timeout.env, ...(group || idTokens ? { ...wave.variables, ...group?.variables, ...idTokenAudienceEnv(idTokens) } : wave.variables) },
       steps,
     };
+    if (evidence?.evidenceJob) jobsDoc[evidence.evidenceJob.name] = evidenceJob(spec, options, forge, job, evidence, commandStep, image, permissions);
   }
 
   // #4617: once the last wave ran, one job tells the control repo how the waves ended.
@@ -253,6 +301,57 @@ export function buildGithubOpWavesDoc(
     jobs,
     ...(spec.resume ? { resumeDoc: buildResumeDoc(spec, options) } : {}),
     ...(statusBeforeMerge ? { plansDoc: buildPlansDoc(spec, options, forge) } : {}),
+  };
+}
+
+/** The artifact a wave job keeps its checks' claim files in (#4926). */
+export function opWaveChecksArtifact(spec: Pick<OpWavesSpec, "name">, jobName: string): string {
+  return `${spec.name}-${jobName}-checks`;
+}
+
+/**
+ * A wave job's evidence job (#4926): after the wave job, whatever it did,
+ * it checks out the base so none of the change's code runs, takes back the
+ * wave job's claim files, and signs each check whose step the forge reports
+ * passed, with the job token reading the run's jobs. Signing keyless, it
+ * asks for its own OIDC token.
+ */
+function evidenceJob(
+  spec: OpWavesSpec,
+  options: OpWavesPipelineOptions,
+  forge: "github" | "forgejo",
+  job: OpWavesPipelineResult["jobs"][number],
+  evidence: OpWaveEvidencePlan,
+  commandStep: string,
+  image: string,
+  permissions: Record<string, unknown>,
+): Record<string, unknown> {
+  const wave = spec.waves[job.wave - 1]!;
+  const lines = opWaveEvidenceLines(spec, evidence, job, { sha: '"$GITHUB_SHA"', ...(options.bin ? { bin: options.bin } : {}) });
+  const sources = opWaveEvidenceSources(forge, evidence, job, wave.name, commandStep);
+  return {
+    "runs-on": githubRunsOn(spec.runner),
+    needs: [job.jobName],
+    // The wave job's steps say what passed, whatever the job's own result.
+    if: "!cancelled()",
+    container: image,
+    // contents: write pushes the evidence notes; actions: read lists the run's jobs.
+    permissions: { ...permissions, actions: "read", ...(evidenceKeyless(options.evidence) ? { "id-token": "write" } : {}) },
+    steps: [
+      checkoutStep(true),
+      { name: "Check out the base, so none of the change's code runs here", run: [...lines.checkout, `echo "${OP_WAVE_EVIDENCE_BASE_VAR}=$${OP_WAVE_EVIDENCE_BASE_VAR}" >> "$GITHUB_ENV"`].join("\n") },
+      ...(wave.setup ?? []).map(setupStepDoc),
+      ...runSteps(options.beforeScript ?? []),
+      // A wave job that stopped before its checks kept no claims, so there is nothing to download. The signing step
+      // runs anyway and signs nothing, saying why (Forgejo drops `continue-on-error`, hence the step's own `if:`).
+      { ...downloadArtifactStep("Download the wave job's check claims", opWaveChecksArtifact(spec, job.jobName), opWaveChecksDir(spec)), "continue-on-error": true },
+      {
+        name: `Sign wave ${job.wave} (${wave.name})'s checks from the job's step results`,
+        if: "!cancelled()",
+        env: { GITHUB_TOKEN: GITHUB_JOB_TOKEN, [EVIDENCE_SOURCES_ENV]: JSON.stringify(sources), ...evidenceKeyEnv(forge, options.evidence!) },
+        run: lines.sign.join("\n"),
+      },
+    ],
   };
 }
 

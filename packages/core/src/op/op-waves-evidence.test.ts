@@ -7,7 +7,8 @@
 
 import { execFileSync } from "node:child_process";
 import { generateKeyPairSync } from "node:crypto";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { readCheckClaimFile } from "../ci-evidence-claims";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
@@ -36,14 +37,14 @@ const spec: OpWavesSpec = {
 };
 
 /** A base commit with the spec and a runner key in .chant/trust.json, and a merge on top of it. */
-function repo(): { cwd: string; base: string; head: string; pem: string } {
+function repo(atBase: OpWavesSpec = spec): { cwd: string; base: string; head: string; pem: string } {
   const cwd = mkdtempSync(join(tmpdir(), "chant-4870-waves-"));
   const { privateKey } = generateKeyPairSync("ed25519");
   const pem = privateKey.export({ format: "pem", type: "pkcs8" }).toString();
   git(cwd, "init", "--quiet");
   mkdirSync(join(cwd, ".chant"));
   writeFileSync(join(cwd, ".chant/trust.json"), JSON.stringify({ schema: 1, runners: [{ principal: "ci", class: "runner", key: loadRunnerKey(pem).publicKey }] }));
-  writeFileSync(join(cwd, "waves.json"), JSON.stringify(spec));
+  writeFileSync(join(cwd, "waves.json"), JSON.stringify(atBase));
   git(cwd, "add", ".");
   git(cwd, "commit", "--quiet", "-m", "base");
   const base = git(cwd, "rev-parse", "HEAD");
@@ -126,5 +127,37 @@ describe("evidence.requires (#4870)", () => {
     expect(logs[0]).toBe("wave dev: signed evidence for plan:dev as ci");
     // No key, nothing signed and nothing said.
     expect(await signOpWaveChecks({ cwd, head, base, wave: "dev", policyRows: none, log: (l) => logs.push(l), env: {}, push: false })).toEqual([]);
+  });
+
+  test("#4926: beside an evidence job the command step signs only its plan, or nothing, and leaves the plan's claim file", async () => {
+    const { cwd, base, head, pem } = repo();
+    const checksDir = join(cwd, "checks");
+    const passed = new Map([["network", { source: "ci.policy", result: "passed" as const, rules: [] }]]);
+    const env = { CHANT_RUNNER_KEY: pem, CHANT_WAVE_EVIDENCE: "plan" } as NodeJS.ProcessEnv;
+    expect(await signOpWaveChecks({ cwd, head, base, wave: "dev", planDigest: digest("1"), policyRows: passed, log: () => {}, env, push: false, checksDir })).toEqual(["plan:dev"]);
+    expect(readCheckClaimFile(checksDir, "plan:dev")).toEqual({ check: "plan:dev", passed: true, claim: digest("1") });
+    expect(await signOpWaveChecks({ cwd, head, base, wave: "dev", policyRows: passed, log: () => {}, env: { ...env, CHANT_WAVE_EVIDENCE: "job" }, push: false, checksDir })).toEqual([]);
+  });
+});
+
+describe("chant run wave --policy-only (#4926)", () => {
+  const policySpec: OpWavesSpec = { name: "roots", op: "tf-apply", step: { kind: "fake-apply", root: "{target}" }, waves: [{ name: "dev", runs: [{ target: "network" }], gate: "never" }] };
+
+  test("with no policy over the plans it fails, applies nothing, and its claim file says policy did not pass", async () => {
+    const { cwd, head } = repo(policySpec);
+    const { registry, ran } = fakeCapability();
+    const logs: string[] = [];
+    const result = await runOpWave({ spec: policySpec, specFile: "waves.json", wave: 1, policyOnly: true, cwd, head, show: atBase, gates: memoryGateLedgerPort(), capabilities: registry, runs, log: (l) => logs.push(l) });
+    expect(result.exitCode).toBe(CHANT_EXIT.failed);
+    expect(result.policyRows).toEqual([]);
+    expect(ran).toEqual([]);
+    expect(logs.at(-1)).toContain("no ci.policy ran over its plans");
+    expect(readCheckClaimFile(join(cwd, ".chant/op-waves/roots/checks"), "policy:dev")).toEqual({ check: "policy:dev", passed: false });
+    expect(existsSync(join(cwd, ".chant/op-waves/roots/outcomes/outcome-wave-1.json"))).toBe(false);
+  });
+
+  test("a share job has no policy step of its own", async () => {
+    const { cwd, head } = repo();
+    await expect(runOpWave({ spec: policySpec, specFile: "waves.json", wave: 1, policyOnly: true, share: 1, cwd, head, show: atBase, gates: memoryGateLedgerPort(), runs })).rejects.toThrow(/a share or job group's job has none/);
   });
 });

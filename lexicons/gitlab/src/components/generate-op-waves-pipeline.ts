@@ -73,6 +73,17 @@
  * `artifacts:` keep beside the outcome files. `options.recordPlans` gives
  * the plans job lines before it plans, variables, and `id_tokens:`.
  * Without them nothing changes.
+ *
+ * With `evidence` (#4870), each wave's own or deciding job signs its checks
+ * (`@intentius/chant/op/op-waves-evidence-jobs`, #4926). GitLab reports no
+ * steps, so a wave with `holds.policy` runs `chant run wave --policy-only`
+ * in a job of its own, `<wave job>-policy`, an allowed failure the wave job
+ * needs. A job `<wave job>-evidence` after the wave job checks out the base
+ * and runs `chant ci evidence sign --from-job`, which signs `policy:<wave>`
+ * when the policy job's status is `success`, and, for a wave that trades
+ * cloud credentials and signs keyless, `plan:<wave>` when the wave job's
+ * is. It reads the pipeline's jobs with `CHANT_GITLAB_TOKEN` (`read_api`)
+ * when set, else the job token. It is an allowed failure too.
  */
 
 import {
@@ -92,6 +103,7 @@ import {
   pushBranches,
 } from "@intentius/chant/ci-jobs";
 import {
+  opWaveChecksDir,
   opWaveGroupOf,
   opWaveJobs,
   opWaveJobArtifactName,
@@ -114,7 +126,17 @@ import { gitlabTradeIdTokens, gitlabTradeLines, TRADE_SPEC_ENV } from "@intentiu
 import { JOB_GUARD_ENV, jobGuardLine, jobGuardSpec, opWaveJobLabel } from "@intentius/chant/ci-job-guard";
 import { CHANT_EXIT } from "@intentius/chant/exit-codes";
 import { resolveProductWords } from "@intentius/chant/ci-product-words";
-import { assertPipelineEvidence, evidenceIdTokens, evidenceKeyEnv } from "@intentius/chant/ci-evidence-jobs";
+import { assertPipelineEvidence, evidenceIdTokens, evidenceKeyEnv, evidenceKeyless } from "@intentius/chant/ci-evidence-jobs";
+import {
+  EVIDENCE_SOURCES_ENV,
+  opWaveEvidenceLines,
+  opWaveEvidenceNeeds,
+  opWaveEvidencePlan,
+  opWaveEvidenceSources,
+  opWavePolicyCommand,
+  opWavePolicyJobName,
+  WAVE_EVIDENCE_ENV,
+} from "@intentius/chant/op/op-waves-evidence-jobs";
 import { emitGitlabFile } from "./ci-jobs";
 
 /** The one exit an op-wave job allows as a failure (#4322): a run that failed. The guard's refusal (9) is outside it. */
@@ -195,6 +217,13 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
       },
     ]);
   }
+  // #4926: how each wave job signs its checks, and the evidence jobs a later wave's evidence.requires waits for.
+  const evidenceOf = (job: (typeof jobs)[number]) => {
+    const cloud = opWaveGroupOf(spec, job)?.cloud ?? spec.waves[job.wave - 1]!.cloud;
+    const signs = options.evidence !== undefined && (job.kind === "wave" || job.kind === "decide");
+    return opWaveEvidencePlan(spec, job, { signs, keylessCloud: signs && evidenceKeyless(options.evidence) && cloud !== undefined });
+  };
+  const evidenceNeeds = opWaveEvidenceNeeds(spec, jobs.map((job) => ({ wave: job.wave, plan: evidenceOf(job) })));
   for (const job of jobs) {
     const wave = spec.waves[job.wave - 1]!;
     const group = opWaveGroupOf(spec, job);
@@ -205,7 +234,10 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
     const cloud = group?.cloud ?? wave.cloud;
     const declared = gitlabIdTokensDoc(group?.idTokens ?? wave.idTokens);
     // #4870: the deciding job signs the wave's checks; #4869: signing keyless, it requests the signing token too.
-    const signs = options.evidence !== undefined && (job.kind === "wave" || job.kind === "decide");
+    // #4926: a keyless wave that trades cloud credentials signs in its evidence job, as on GitHub and Forgejo, and a
+    // wave's policy runs in a job of its own, whose status the evidence job signs `policy:<wave>` from.
+    const evidence = evidenceOf(job);
+    const signs = evidence !== undefined && evidence.commandSigns;
     const signing = signs ? evidenceIdTokens(options.evidence) : {};
     const traded = cloud ? { ...declared, ...gitlabTradeIdTokens(cloud) } : declared;
     const idTokens = Object.keys(signing).length > 0 ? { ...traded, ...signing } : traded;
@@ -220,19 +252,53 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
       branches: pushBranches(spec.branches),
       ...(runner !== undefined ? { runner } : {}),
     });
+    const stage = stages[job.wave - 1 + (byReview ? 1 : 0)];
+    const checksDir = `${opWaveChecksDir(spec)}/`;
+    const policyJob = evidence?.policyStep ? opWavePolicyJobName(job) : undefined;
+    if (policyJob) {
+      // #4926: the wave's policy, planned in a job of its own whose status GitLab reports. The wave job runs after it
+      // whatever it ended (a denied run may still apply under an override); it deploys nothing, so its environment is `prepare`.
+      entries.push([
+        policyJob,
+        {
+          stage,
+          image,
+          ...(tags ? { tags } : {}),
+          timeout: `${timeout.minutes} minutes`,
+          ...(environment ? { environment: { ...environmentDoc(environment), action: "prepare" } } : {}),
+          ...(traded && Object.keys(traded).length > 0 ? { id_tokens: traded } : {}),
+          variables: { ...GITLAB_FULL_HISTORY, ...timeout.env, ...(wave.variables ?? {}), ...(cloud ? { [TRADE_SPEC_ENV]: JSON.stringify(cloud) } : {}), [JOB_GUARD_ENV]: JSON.stringify(guard) },
+          rules,
+          ...(job.needs.length > 0 ? { needs: job.needs } : {}),
+          script: [jobGuardLine(), ...(cloud ? gitlabTradeLines() : []), ...dropControl, ...setup, ...(options.beforeScript ?? []), ...(add?.before ?? []).flatMap((st) => st.run), opWavePolicyCommand(job).join(" ")],
+          allow_failure: true,
+          artifacts: { when: "always", paths: [checksDir], expire_in: "30 days" },
+        },
+      ]);
+    }
+    const needs = [...job.needs, ...(policyJob ? [policyJob] : []), ...(job.kind === "share" ? [] : evidenceNeeds(job.wave))];
     entries.push([
       job.jobName,
       {
-        stage: stages[job.wave - 1 + (byReview ? 1 : 0)],
+        stage,
         image,
         ...(tags ? { tags } : {}),
         timeout: `${timeout.minutes} minutes`,
         ...(environment ? { environment: environmentDoc(environment) } : {}),
         ...(idTokens ? { id_tokens: idTokens } : {}),
         // #4870: the deciding job signs the wave's checks with the runner key from the named variable, or (#4869) keyless.
-        variables: { ...GITLAB_FULL_HISTORY, ...timeout.env, ...(wave.variables ?? {}), ...(group?.variables ?? {}), ...(cloud ? { [TRADE_SPEC_ENV]: JSON.stringify(cloud) } : {}), [JOB_GUARD_ENV]: JSON.stringify(guard), ...(signs ? evidenceKeyEnv("gitlab", options.evidence!) : {}) },
+        variables: {
+          ...GITLAB_FULL_HISTORY,
+          ...timeout.env,
+          ...(wave.variables ?? {}),
+          ...(group?.variables ?? {}),
+          ...(cloud ? { [TRADE_SPEC_ENV]: JSON.stringify(cloud) } : {}),
+          [JOB_GUARD_ENV]: JSON.stringify(guard),
+          ...(signs ? evidenceKeyEnv("gitlab", options.evidence!) : {}),
+          ...(evidence?.commandMode ? { [WAVE_EVIDENCE_ENV]: evidence.commandMode } : {}),
+        },
         rules,
-        ...(job.needs.length > 0 ? { needs: job.needs } : {}),
+        ...(needs.length > 0 ? { needs } : {}),
         script: [
           jobGuardLine(),
           ...(cloud ? gitlabTradeLines() : []),
@@ -251,11 +317,31 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
         artifacts: {
           ...(add?.artifact ? { name: opWaveJobArtifactName(add.artifact.name, job.jobName) } : {}),
           when: "always",
-          paths: [...(job.kind === "decide" ? [job.record!] : []), `${opWaveOutcomeDir(spec)}/`, ...(add?.artifact ? [add.artifact.path] : [])],
+          paths: [...(job.kind === "decide" ? [job.record!] : []), `${opWaveOutcomeDir(spec)}/`, ...(evidence?.evidenceJob ? [checksDir] : []), ...(add?.artifact ? [add.artifact.path] : [])],
           expire_in: "30 days",
         },
       },
     ]);
+    if (evidence?.evidenceJob) {
+      // #4926: after the wave job, a job that runs none of the change's code signs from the jobs' statuses.
+      const lines = opWaveEvidenceLines(spec, evidence, job, { sha: '"$CI_COMMIT_SHA"', ...(options.bin ? { bin: options.bin } : {}) });
+      const signingTokens = evidenceIdTokens(options.evidence);
+      entries.push([
+        evidence.evidenceJob.name,
+        {
+          stage,
+          image,
+          ...(specTags ? { tags: specTags } : {}),
+          ...(Object.keys(signingTokens).length > 0 ? { id_tokens: signingTokens } : {}),
+          variables: { ...GITLAB_FULL_HISTORY, [EVIDENCE_SOURCES_ENV]: JSON.stringify(opWaveEvidenceSources("gitlab", evidence, job, wave.name, "")), ...evidenceKeyEnv("gitlab", options.evidence!) },
+          rules,
+          needs: [job.jobName, ...(policyJob ? [policyJob] : [])],
+          script: [...dropControl, ...lines.checkout, ...setupOf[job.wave - 1]!, ...(options.beforeScript ?? []), ...lines.sign],
+          // A refused or failed evidence job leaves the later waves to run; their evidence.requires speaks for itself.
+          allow_failure: true,
+        },
+      ]);
+    }
   }
   if (control) {
     const dispatch = controlDispatchJob("gitlab", control, "$CI_COMMIT_SHA", {
