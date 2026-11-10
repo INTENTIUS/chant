@@ -43,7 +43,8 @@
  *
  * ## Adapters
  *
- * The chant ones are here: `lifecycle diff --live` ({@link liveDiffDriftRecords}),
+ * The chant ones are here: `lifecycle diff --live` ({@link liveDiffDriftRecords},
+ * and {@link lexiconDriftRecords} for one lexicon's whole section, #4896),
  * deep observe ({@link deepDiffDriftRecords}, {@link mergeDeepDrift}) and
  * component status ({@link componentStatusDriftRecords}). The terraform and
  * choudoufu ones live in the terraform lexicon's `drift-record` subpath,
@@ -1005,20 +1006,32 @@ function chantEvidence(input: DriftAdapterBase, command: string): DriftEvidence 
   return { tool: "chant", ...(input.version ? { version: input.version } : {}), command };
 }
 
+/**
+ * What a declared entity the provider confirmed absent (the live diff's
+ * `missing`) is, when no snapshot says it was deployed (#4896). `pending`,
+ * the default, reads it as not deployed yet. `missing` reads it as gone,
+ * which is what a SQL server lacking a declared table means: the sql
+ * lexicon declares it (`LexiconPlugin.liveAbsentStatus`), and
+ * `chant lifecycle diff --live --json` writes it as the section's `absent`.
+ */
+export type LiveAbsentStatus = Extract<DriftStatus, "pending" | "missing">;
+
 export interface LiveDiffDriftInput extends DriftAdapterBase {
   /** `chant lifecycle diff --live --json`, parsed. */
   diff: LiveDiffResult;
   /** Entity types by name, for the records whose diff row carries none. */
   types?: Record<string, string>;
+  /** The status of a `missing` entity, default `pending` ({@link LiveAbsentStatus}). */
+  absent?: LiveAbsentStatus;
 }
 
 /**
  * A chant member's records, from `lifecycle diff --live`: `unchanged` and
  * `newlyObserved` are in-sync, `driftedSinceSnapshot` drifted (before is the
- * snapshot, after the read), `missing` pending, `disappeared` missing,
- * `orphan` undeclared, `runtimeChildren` runtime, `unobserved` not-observed.
- * An entity in both `missing` and `disappeared` was deployed and is gone,
- * so it is missing.
+ * snapshot, after the read), `missing` pending (or `input.absent`),
+ * `disappeared` missing, `orphan` undeclared, `runtimeChildren` runtime,
+ * `unobserved` not-observed. An entity in both `missing` and `disappeared`
+ * was deployed and is gone, so it is missing.
  */
 export function liveDiffDriftRecords(input: LiveDiffDriftInput): DriftRecord[] {
   const { diff } = input;
@@ -1042,7 +1055,7 @@ export function liveDiffDriftRecords(input: LiveDiffDriftInput): DriftRecord[] {
     }, d.type);
   }
   for (const name of diff.disappeared ?? []) put(name, { status: "missing" });
-  for (const name of diff.missing ?? []) put(name, { status: "pending" });
+  for (const name of diff.missing ?? []) put(name, { status: input.absent ?? "pending" });
   for (const name of diff.orphan ?? []) put(name, { status: "undeclared" });
   for (const r of diff.runtimeChildren ?? []) put(r.name, { status: "runtime", ownership: { verdict: "foreign", ownedBy: r.owner } }, r.type);
   for (const name of [...(diff.unchanged ?? []), ...(diff.newlyObserved ?? [])]) put(name, { status: "in-sync" });
@@ -1124,6 +1137,42 @@ export function mergeDeepDrift(thin: Iterable<DriftRecord>, deep: Iterable<Drift
     }
   }
   return [...out.values()].sort((a, b) => byString(key(a), key(b)));
+}
+
+/**
+ * One lexicon's section of `chant lifecycle diff --live --json`
+ * (`lexicons.<name>`, or `stacks.<stack>.<name>`), as far as its drift
+ * records read it.
+ */
+export interface LiveDiffLexiconSection {
+  resources?: LiveDiffResult;
+  /** The live state per entity; its `type` names a record's resource type. */
+  observed?: Record<string, { type?: unknown }>;
+  deep?: DeepDiffResult;
+  /** What a confirmed-absent entity is, when the lexicon says (#4896). Left out, `pending`. */
+  absent?: LiveAbsentStatus;
+}
+
+export interface LexiconDriftInput extends DriftAdapterBase {
+  section: LiveDiffLexiconSection;
+}
+
+/**
+ * One lexicon's drift records from its section of `lifecycle diff --live
+ * --json` (#4896): {@link liveDiffDriftRecords} over `resources`, with the
+ * types `observed` names and the section's `absent`, and the deep read laid
+ * over it with {@link mergeDeepDrift}. `chant workspace drift` reads a chant
+ * member this way, and a product that runs the diff itself (SQL Yodeler
+ * reads `lexicons.sql`) gets the same records. A section with no
+ * `resources` has none.
+ */
+export function lexiconDriftRecords(input: LexiconDriftInput): DriftRecord[] {
+  const { section, ...base } = input;
+  if (!section.resources) return [];
+  const types: Record<string, string> = {};
+  for (const [name, meta] of Object.entries(section.observed ?? {})) if (typeof meta?.type === "string") types[name] = meta.type;
+  const thin = liveDiffDriftRecords({ ...base, diff: section.resources, types, ...(section.absent ? { absent: section.absent } : {}) });
+  return section.deep ? mergeDeepDrift(thin, deepDiffDriftRecords({ ...base, diff: section.deep })) : thin;
 }
 
 export interface ComponentStatusDriftInput extends DriftAdapterBase {

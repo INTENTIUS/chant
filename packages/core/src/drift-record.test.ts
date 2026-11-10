@@ -26,6 +26,7 @@ import {
   encodeDriftLine,
   encodeDriftLines,
   foldDriftLines,
+  lexiconDriftRecords,
   liveDiffDriftRecords,
   mapDriftToGraph,
   mergeDeepDrift,
@@ -592,5 +593,29 @@ describe("component status, constructed shapes", () => {
 
   test("round-trips", () => {
     roundTrip(records);
+  });
+});
+
+describe("one lexicon's section of lifecycle diff --live --json (#4896)", () => {
+  const resources = { missing: ["app.events"], orphan: [], runtimeChildren: [], disappeared: [], newlyObserved: [], driftedSinceSnapshot: [], unchanged: ["app.users", "app.orders"], unobserved: [{ name: "app.audit", reason: "no-credentials" }] } as LiveDiffResult;
+  const deep = { drifted: [{ name: "app.users", type: "Postgres::Table", changes: [{ path: "columns[1].type", kind: "changed", declared: "int", live: "bigint" }] }], unchanged: ["app.orders"], unobserved: [], undeclaredEntities: [] } as unknown as DeepDiffResult;
+  const base = { member: "prod", observedAt: AT };
+
+  test("absent: missing gives a declared object the server lacks as missing", () => {
+    expect(statusOf(liveDiffDriftRecords({ ...base, diff: resources, absent: "missing" }))["app.events"]).toBe("missing");
+    expect(statusOf(liveDiffDriftRecords({ ...base, diff: resources }))["app.events"]).toBe("pending");
+  });
+
+  test("the section's own absent, types and deep read make the records", () => {
+    const records = lexiconDriftRecords({ ...base, section: { resources, deep, absent: "missing", observed: { "app.users": { type: "Postgres::Table" } } } });
+    expect(statusOf(records)).toEqual({ "app.audit": "not-observed", "app.events": "missing", "app.orders": "in-sync", "app.users": "drifted" });
+    expect(records.find((r) => r.address === "app.users")!.attributes).toEqual([{ path: "columns[1].type", before: "int", after: "bigint" }]);
+    expect(records.find((r) => r.address === "app.users")!.resourceType).toBe("Postgres::Table");
+    roundTrip(records);
+  });
+
+  test("a section with no absent keeps pending, and one with no resources has no records", () => {
+    expect(statusOf(lexiconDriftRecords({ ...base, section: { resources } }))["app.events"]).toBe("pending");
+    expect(lexiconDriftRecords({ ...base, section: { deep } })).toEqual([]);
   });
 });

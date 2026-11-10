@@ -811,6 +811,8 @@ interface LiveDiffOutcome {
     string,
     {
       resources?: LiveDiffResult;
+      /** The lexicon's `liveAbsentStatus` (#4896): what an entity in `resources.missing` is. Present only when the lexicon sets it. */
+      absent?: "pending" | "missing";
       observed?: Record<string, ResourceMetadata>;
       /** Declared entities the lexicon could not read (#1089), keyed by name. */
       unobserved?: Record<string, UnobservedEntity>;
@@ -997,6 +999,8 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome
       if (args.json) {
         const entry = (byLexicon[lexiconName] ??= {});
         entry.resources = diff;
+        // What a confirmed-absent entity is, when the lexicon says (#4896); left out for every other lexicon.
+        if (plugin.liveAbsentStatus) entry.absent = plugin.liveAbsentStatus;
         entry.observed = observedNow; // live state (#862) — status/attributes per resource
         if (Object.keys(observed.unobserved).length > 0) entry.unobserved = observed.unobserved;
       } else renderLiveDiff(lexiconName, args.environment, diff);

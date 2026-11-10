@@ -258,6 +258,13 @@ export const sqlPlugin: LexiconPlugin = {
   },
 
   /**
+   * A declared object the server lacks is gone (#4896), so its drift record
+   * says `missing`: a database the project's migrations set up holds every
+   * declared object, and one that does not lost it.
+   */
+  liveAbsentStatus: "missing",
+
+  /**
    * Which declared objects exist on the environment's server
    * (`sql.profiles.<env>`, else `CLICKHOUSE_URL` or `POSTGRES_URL`). The
    * declarations' dialect picks the reader; node-postgres loads only for a

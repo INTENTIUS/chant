@@ -114,3 +114,8 @@ export const RELEASE_WORKFLOW_QEMU_FLOOR = NEXT_RELEASE;
 
 /** The first chant whose npm publish target refuses at plan time a package that would carry an image archive the release records (`publish-npm-carries-image`), naming the file and the `files` entry that leaves it out (#4934). */
 export const NPM_CARRIES_IMAGE_FLOOR = NEXT_RELEASE;
+/** The first chant with `driftRunFingerprint` in `@intentius/chant/drift-issue` and `lexiconDriftRecords` in `@intentius/chant/drift-record`, whose `chant lifecycle diff --live --json` writes a lexicon's `absent`, and whose sql lexicon reports a declared object the server lacks as `missing` instead of `pending` (#4896). */
+export const LIVE_DRIFT_RECORDS_FLOOR = NEXT_RELEASE;
+
+/** The first chant whose `chant sql types --path` prints where `sql-types.d.ts` is by the source-dir rule, the path `sqlTypesPath` answers (#4897). */
+export const SQL_TYPES_PATH_FLOOR = NEXT_RELEASE;

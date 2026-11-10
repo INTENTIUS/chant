@@ -51,6 +51,8 @@ chant sql types
 
 The command builds the project the way `chant build` does and writes `sql-types.d.ts` in the project's `sourceDir`, or in the project root when `sourceDir` is unset. Any tsconfig that includes the schema includes the file too. `--output <path>` writes it somewhere else. `chant build` never writes it.
 
+`chant sql types --path` builds nothing and prints the file's absolute path, by the same source-dir rule (`resolveSourceDir` in `@intentius/chant/config`), or the `--output` path when one is given ([#4897](https://github.com/INTENTIUS/chant/issues/4897)). A tool that needs to know whether a project keeps the file asks it there, and code in the same process calls `sqlTypesPath(projectDir, config)` from `@intentius/chant-lexicon-sql/sql-types`. `SQL_TYPES_PATH_FLOOR` in `@intentius/chant/release-floors` is the first chant with `--path`.
+
 The file starts with chant's generated-file marker, so source discovery skips it, and it is a module that augments the dialect's `SqlSchema` interface:
 
 ```ts

@@ -1,5 +1,5 @@
 /**
- * `chant sql types [--output <path>] [--check]` (#3751): build the project the way
+ * `chant sql types [--output <path>] [--check] [--path]` (#3751): build the project the way
  * `chant build` does, folded, and write the declarations
  * {@link renderSqlTypes} renders from its entities, so a tag given its
  * qualified name as the type argument has typed columns.
@@ -11,12 +11,17 @@
  * resolves the `.ts` first and would drop the declarations. `chant build`
  * never writes the file. `--check` renders the same text and compares it with
  * the file instead of writing it: exit 1, naming the file, when they differ.
+ * `--path` (#4897) builds nothing and prints the file's absolute path, the
+ * one {@link sqlTypesPath} answers (or `--output`'s), so a product finds the
+ * file by chant's source-dir rule instead of working out `sourceDir` itself.
+ * A product in process calls `sqlTypesPath` from
+ * `@intentius/chant-lexicon-sql/sql-types`.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, relative, resolve } from "node:path";
 import type { CommandGroupContext } from "@intentius/chant/cli/command-group";
-import { renderSqlTypes, SQL_TYPES_FILE } from "./sql-types";
+import { renderSqlTypes, sqlTypesPath } from "./sql-types";
 
 export interface ProjectLocation {
   config: Awaited<ReturnType<typeof import("@intentius/chant/config").loadChantConfigUpward>>["config"];
@@ -24,22 +29,24 @@ export interface ProjectLocation {
   sourceDir: string;
 }
 
-const USAGE = "usage: chant sql types [--output <path>] [--check]";
+const USAGE = "usage: chant sql types [--output <path>] [--check] [--path]";
 
 /** The `--output` value, or an error message. */
-function parseArgs(args: readonly string[]): { output?: string; check: boolean } | { error: string } {
+function parseArgs(args: readonly string[]): { output?: string; check: boolean; path: boolean } | { error: string } {
   let output: string | undefined;
   let check = false;
+  let path = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === "--output") {
       output = args[++i];
       if (!output) return { error: "--output needs a path" };
     } else if (a === "--check") check = true;
+    else if (a === "--path") path = true;
     else if (a.startsWith("--output=")) output = a.slice("--output=".length);
     else return { error: `unknown argument ${a}` };
   }
-  return output === undefined ? { check } : { output, check };
+  return output === undefined ? { check, path } : { output, check, path };
 }
 
 /** The file tsc would read instead of `path`: `sql-types.ts` beside `sql-types.d.ts`. */
@@ -87,7 +94,11 @@ export async function runTypes(ctx: CommandGroupContext): Promise<number> {
   }
   const cwd = process.cwd();
   const { config, projectDir, sourceDir } = await loadProject(cwd);
-  const output = args.output !== undefined ? resolve(cwd, args.output) : join(sourceDir, SQL_TYPES_FILE);
+  const output = args.output !== undefined ? resolve(cwd, args.output) : sqlTypesPath(projectDir, config as unknown as Record<string, unknown>);
+  if (args.path) {
+    console.log(output);
+    return 0;
+  }
   const shadow = shadowingSource(output);
   if (shadow) {
     console.error(`chant sql types: ${relative(cwd, shadow) || basename(shadow)} sits beside ${relative(cwd, output) || basename(output)}, and tsc reads it instead of the declarations; rename one`);

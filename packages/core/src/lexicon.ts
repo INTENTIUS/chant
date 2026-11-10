@@ -1937,6 +1937,19 @@ export interface LexiconPlugin {
 
   // State
   /**
+   * What a declared entity {@link describeResources} confirmed absent is,
+   * when no snapshot says it was deployed (#4896). Left out, it is
+   * `pending`: not deployed yet, the right reading for a cloud stack. A
+   * lexicon whose environments always hold what is declared once they are
+   * set up says `missing`, gone: the sql lexicon does, since a server that
+   * lacks a declared table lost it. `chant lifecycle diff --live --json`
+   * writes it as the lexicon section's `absent`, and the drift records
+   * (`lexiconDriftRecords` on `@intentius/chant/drift-record`) read it from
+   * there. The live diff's own `missing` list is unchanged.
+   */
+  liveAbsentStatus?: "pending" | "missing";
+
+  /**
    * Query deployed resources and return API metadata. Opt-in.
    *
    * Use this when each chant entity has a 1:1 cloud equivalent — e.g. an
