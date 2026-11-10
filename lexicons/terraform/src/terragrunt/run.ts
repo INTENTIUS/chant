@@ -7,9 +7,10 @@
  */
 
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import type { ChangeSetPart, ChangeSetPlanner } from "@intentius/chant/change-set";
+import type { TerraformCommand, TerraformCommandHook, TerraformCommandRun } from "../op/command-hook";
 import { plannerForBinary } from "../change-set";
 import {
   parseTerragruntFind,
@@ -42,6 +43,7 @@ import {
   terragruntUnitResults,
   terragruntWaveArgs,
   terragruntWaveParts,
+  type TerragruntReportRow,
   type TerragruntUnitResult,
 } from "./wave";
 
@@ -180,6 +182,119 @@ export interface TerragruntWaveRunInput extends TerragruntRunOptions {
    * the plan, which fails the unit with its report row as before.
    */
   initTurn?: <T>(fn: () => Promise<T>) => Promise<T>;
+  /**
+   * The product's hook around each unit's plan (chant#4954), the
+   * `TerraformCommandHook` `terraform-apply` takes as `onCommand`, such as
+   * `engineTimings().onCommand`. Terragrunt runs the binary itself, so the
+   * hook is asked for every unit of the wave before `run --all`, as a `plan`
+   * command for that unit (`root` is the unit's path, `method` is `plan`).
+   * The variables it answers reach that unit's plan alone, through a
+   * `TG_TF_PATH` wrapper that matches the `-out` path Terragrunt gives it.
+   * Once the wave ends, each unit's `after` gets its time (`at`) and result
+   * from the run report. Needs `binary`: without it Terragrunt picks the
+   * binary per unit, and the hook is not called.
+   */
+  onCommand?: TerraformCommandHook;
+}
+
+/** A word single-quoted for `sh`. */
+const shq = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
+
+/**
+ * The `TG_TF_PATH` wrapper for one wave (chant#4954): a shell script that
+ * runs `binary` with the variables of the unit whose plan it runs.
+ * Terragrunt hands each unit's plan `-out=<out-dir>/<unit>/tfplan.tfplan`,
+ * which names the unit; every other call (init, show, output, version) runs
+ * the binary as it is. `outDirs` are the wave's plan directory as given and
+ * as its real path. Lifted from terragucci's `unitWrapper` (report/stage.ts).
+ */
+export function terragruntUnitWrapper(binary: string, outDirs: readonly string[], units: ReadonlyMap<string, Record<string, string>>): string {
+  const lines = [
+    "#!/bin/sh",
+    "# chant: each unit's plan runs with the variables its command hook answered. Written for one wave.",
+    'out=""',
+    'prev=""',
+    'for a in "$@"; do',
+    '  case "$a" in -out=*|--out=*) out="${a#*=}" ;; esac',
+    '  if [ "$prev" = "-out" ] || [ "$prev" = "--out" ]; then out="$a"; fi',
+    '  prev="$a"',
+    "done",
+    'case "$out" in',
+  ];
+  for (const [unit, vars] of units) {
+    const set = Object.entries(vars).filter(([k]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k));
+    if (set.length === 0) continue;
+    const patterns = [...new Set(outDirs.map((d) => join(d, unit, "tfplan.tfplan")))].map(shq).join(" | ");
+    lines.push(`  ${patterns}) export ${set.map(([k, v]) => `${k}=${shq(v)}`).join(" ")} ;;`);
+  }
+  lines.push("esac", `exec ${shq(binary)} "$@"`);
+  return lines.join("\n") + "\n";
+}
+
+/**
+ * Ask `hook` for each unit's plan before the wave runs (chant#4954), and
+ * write the wrapper that hands each its variables when any has some.
+ * Answers the variables the run adds and what to call once the run report
+ * is read.
+ */
+async function unitCommandRuns(
+  hook: TerraformCommandHook,
+  input: TerragruntWaveRunInput & { binary: string },
+  work: string,
+  outDir: string,
+  waveArgs: readonly string[],
+): Promise<{ env: Record<string, string>; done: (report: Map<string, TerragruntReportRow>) => Promise<void> }> {
+  const units = [...new Set(input.units)].sort();
+  const args = waveArgs.slice(waveArgs.indexOf("--") + 1);
+  const runs = new Map<string, TerraformCommandRun>();
+  for (const unit of units) {
+    const command: TerraformCommand = {
+      root: unit,
+      method: "plan",
+      binary: input.binary,
+      name: "plan",
+      args: [...args],
+      line: [input.binary, ...args].map((w) => (/^[\w@%+=:,./-]+$/.test(w) ? w : shq(w))).join(" "),
+      cwd: resolve(input.dir, unit),
+      env: {},
+    };
+    runs.set(unit, (await hook(command)) ?? {});
+  }
+  const vars = new Map([...runs].map(([unit, run]) => [unit, run.env ?? {}] as const));
+  let env: Record<string, string> = {};
+  if ([...vars.values()].some((v) => Object.keys(v).length > 0)) {
+    let real = outDir;
+    try {
+      real = join(realpathSync(work), "plans");
+    } catch {
+      // The path as given is matched alone.
+    }
+    const bin = join(work, "unit-bin");
+    mkdirSync(bin, { recursive: true });
+    // The wrapper carries the binary's name, which Terragrunt prefixes its log lines with.
+    const wrapper = join(bin, basename(input.binary) || "tofu");
+    writeFileSync(wrapper, terragruntUnitWrapper(input.binary, [outDir, real], vars));
+    chmodSync(wrapper, 0o755);
+    env = { TG_TF_PATH: wrapper };
+  }
+  const done = async (report: Map<string, TerragruntReportRow>): Promise<void> => {
+    for (const [unit, run] of runs) {
+      if (!run.after) continue;
+      const row = report.get(unit);
+      const start = row?.started ? Date.parse(row.started) : NaN;
+      const end = row?.ended ? Date.parse(row.ended) : NaN;
+      const timed = Number.isFinite(start) && Number.isFinite(end) && end >= start;
+      const why = row && row.result !== "succeeded" ? [row.result, row.reason, row.cause].filter(Boolean).join(": ") : "";
+      await run.after({
+        code: row ? (row.result === "succeeded" ? 0 : 1) : null,
+        seconds: timed ? (end - start) / 1000 : 0,
+        stdout: "",
+        stderr: row ? why : "not in Terragrunt's run report, so it did not run",
+        ...(timed ? { at: { start, end } } : {}),
+      });
+    }
+  };
+  return { env, done };
 }
 
 /**
@@ -345,8 +460,17 @@ export async function planTerragruntWave(input: TerragruntWaveRunInput): Promise
     ...(input.destroy ? { destroy: true } : {}),
     ...(input.parallelism !== undefined ? { parallelism: input.parallelism } : {}),
   });
-  const r = await exec(tg, args, { cwd: input.dir, env: terragruntEnv(input.binary) });
-  const report = existsSync(reportFile) ? parseTerragruntReport(readFileSync(reportFile, "utf8")) : new Map();
+  // chant#4954: each unit's plan goes through the product's hook, its variables through a TG_TF_PATH wrapper.
+  const units = input.onCommand && input.binary ? await unitCommandRuns(input.onCommand, { ...input, binary: input.binary }, work, outDir, args) : undefined;
+  let r: ExecResult;
+  try {
+    r = await exec(tg, args, { cwd: input.dir, env: { ...terragruntEnv(input.binary), ...(units?.env ?? {}) } });
+  } catch (err) {
+    await units?.done(new Map());
+    throw err;
+  }
+  const report = existsSync(reportFile) ? parseTerragruntReport(readFileSync(reportFile, "utf8")) : new Map<string, TerragruntReportRow>();
+  await units?.done(report);
   const planFor = (unit: string): unknown => {
     const f = join(jsonOutDir, unit, "tfplan.json");
     return existsSync(f) ? (JSON.parse(readFileSync(f, "utf8")) as unknown) : undefined;
