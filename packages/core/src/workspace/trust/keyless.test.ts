@@ -207,3 +207,14 @@ describe("the runner identity an init writes (#4869)", () => {
     expect(() => ciRunnerIdentity({ forge: "forgejo", repository: "acme/infra", workflow: "x.yml" })).toThrow(/certificate authority the project runs/);
   });
 });
+
+describe("DER INTEGERs (#4869)", () => {
+  test("a serial with leading zero bytes is written in minimal form, so OpenSSL reads the certificate", async () => {
+    const { derInt } = await import("./keyless");
+    expect(derInt(Buffer.from("003a2d0f26856400", "hex")).toString("hex")).toBe("02073a2d0f26856400");
+    expect(derInt(Buffer.from("0000ff", "hex")).toString("hex")).toBe("020200ff");
+    expect(derInt(Buffer.from("80", "hex")).toString("hex")).toBe("02020080");
+    expect(derInt(Buffer.from("0000", "hex")).toString("hex")).toBe("020100");
+    expect(derInt(3).toString("hex")).toBe("020103");
+  });
+});

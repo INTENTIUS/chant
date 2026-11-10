@@ -114,11 +114,18 @@ export function oidOf(value: Buffer): string {
   return out.join(".");
 }
 
-/** A non-negative INTEGER. */
+/**
+ * A non-negative INTEGER, in DER's minimal form: a Buffer's leading zero
+ * bytes are dropped (OpenSSL refuses `00 3a ...` as a bad INTEGER), and one
+ * zero byte is put back only when the first byte left has its top bit set.
+ */
 export function derInt(n: number | bigint | Buffer): Buffer {
   let hex = Buffer.isBuffer(n) ? "" : BigInt(n).toString(16);
   if (hex.length % 2) hex = `0${hex}`;
   let b = Buffer.isBuffer(n) ? n : Buffer.from(hex, "hex");
+  let start = 0;
+  while (start < b.length - 1 && b[start] === 0) start++;
+  b = b.subarray(start);
   if (b.length === 0) b = Buffer.from([0]);
   if (b[0]! & 0x80) b = Buffer.concat([Buffer.from([0]), b]);
   return der(DER.INTEGER, b);
