@@ -195,7 +195,8 @@ export default defineConfig({
         test: {
           name: "unit",
           include: UNIT_INCLUDE,
-          exclude: [...configDefaults.exclude, "**/*.e2e.test.ts"],
+          // The build fixtures under cli/commands/__fixtures__ hold a test file the build must skip (#4794); it is not a test.
+          exclude: [...configDefaults.exclude, "**/*.e2e.test.ts", "packages/core/src/cli/commands/__fixtures__/**"],
           // The per-test budget (chant #2817). CHANT_UNIT_TEST_BUDGET_MS
           // overrides the 5s default; 0 turns it off, for a debugger. The
           // named slow git/signing files in packages/core get 15s (#4472,
