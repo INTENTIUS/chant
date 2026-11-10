@@ -39,7 +39,8 @@ import type { CiRunner } from "../ci-jobs";
 import type { CiProductWords } from "../ci-product-words";
 import type { PrPlanNoteWords } from "../pr-plan-note";
 import { assertPipelineEvidence, evidenceIdTokens, evidenceKeyEnv, evidenceKeyless, gitlabOpenEvidenceDir, openEvidenceLines, planEvidenceLines, type PipelineEvidence } from "../ci-evidence-jobs";
-import { gitlabPlanJobName, PR_LOOP_REPORT_DIR, PR_PLAN_NOTE_JOB, prLoopPassedEnv, prLoopPostJob, prLoopRunner, type PrLoopPipelineOptions } from "./pr-pipeline";
+import { gitlabPlanJobName, PR_LOCK_JOB, PR_LOOP_REPORT_DIR, PR_PLAN_NOTE_JOB, prLoopPassedEnv, prLoopPostJob, prLoopRunner, withProductBin, type PrLoopPipelineOptions } from "./pr-pipeline";
+import { LOCK_REACH_ENV } from "../lifecycle/reach-locks";
 import { GITHUB_JOB_TOKEN } from "../ci-jobs";
 import { cloudLogin, type CloudLoginSpec } from "../ci-login";
 import type { OpWaveRunStep } from "../lexicon";
@@ -329,6 +330,64 @@ export interface ProductPlanOptions {
    * Unsigned, as `pr-plan`'s is (#4328). Default off.
    */
   record?: boolean;
+  /**
+   * What the lock job locks under `locks: "plan"` (#4979): the targets the
+   * change reaches, by the product's reach line, in place of what a
+   * `PrReport` selected. `command` is one shell line that prints the target
+   * names the change from `$BASE_SHA` to `$HEAD_SHA` reaches, one a line,
+   * reading the change's files as data from git (`git diff`, `git show`),
+   * such as terragucci's roots, Terragrunt units or Atmos instances. It
+   * runs at the target branch's commit, after chant fetched the pull
+   * request's head and checked it is the head the job was started for
+   * (`chant lock --reach`, ../lifecycle/reach-locks.ts), so none of the
+   * change's code runs in the job that holds the write token. `gate` names
+   * the lock file, `_locks/<gate>.json` (default the pull request loop's).
+   *
+   * GitHub and Forgejo run one `lock` job on each push of a pull request
+   * from this repository, beside the plan, and the `unlock` job on close.
+   * On GitLab, where a merge request's pipeline is built from its own files,
+   * the `lock` job runs in the target branch's plan notes pipeline and locks
+   * every open merge request (`--open`), releasing the locks of one that is
+   * no longer open; with `noteCommands` the comment lock and unlock jobs
+   * answer `/<product> lock` and `/<product> unlock` there too.
+   */
+  reach?: { command: string; gate?: string };
+}
+
+/** The lock job a product plan with {@link ProductPlanOptions.reach} writes (#4979): its command and the values the command reads. */
+export interface ProductPlanReachLock {
+  jobName: typeof PR_LOCK_JOB;
+  command: string;
+  env: Record<string, string>;
+  runner?: CiRunner;
+}
+
+/**
+ * The reach lock job (#4979), under `locks: "plan"` with `reach`: `chant lock
+ * --reach` through the words' bin, with the reach line as
+ * {@link LOCK_REACH_ENV}. On GitHub and Forgejo it locks the pull request of
+ * the event; on GitLab every open merge request into the branch.
+ */
+export function productPlanReachLock(forge: ForgeKind, loop: Pick<PrLoopPipelineOptions, "locks" | "runners"> & { plan: Pick<ProductPlanOptions, "reach"> }, words: CiProductWords): ProductPlanReachLock | undefined {
+  const reach = loop.plan.reach;
+  if (!reach) return undefined;
+  if (loop.locks !== "plan") throw new Error("the product plan's reach says what the lock job locks, and there is none without locks: \"plan\"; set locks: \"plan\", or drop reach");
+  if (!reach.command.trim()) throw new Error("the product plan's reach.command is empty; give the line that prints the targets a change reaches");
+  if (/[\r\n]/.test(reach.command)) throw new Error("the product plan's reach.command is one shell line");
+  if (reach.gate !== undefined) {
+    // The lock file's name, as ../lifecycle/target-lock.ts takes it.
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(reach.gate)) throw new Error(`the product plan's reach.gate ${JSON.stringify(reach.gate)} is not a lock file name: letters, digits, '.', '_' and '-', starting with a letter or digit`);
+  }
+  const gate = reach.gate !== undefined ? ["--gate", reach.gate] : [];
+  const github = forge !== "gitlab";
+  const line = github
+    ? ["chant", "lock", "--reach", "--pr", '"$PR_NUMBER"', "--head", '"$HEAD_SHA"', "--base", '"$BASE_SHA"', "--stage", "plan", ...gate, "--forge", forge]
+    : ["chant", "lock", "--reach", "--open", "--base", '"$CI_COMMIT_SHA"', "--stage", "plan", ...gate, "--forge", "gitlab"];
+  const env: Record<string, string> = github
+    ? { PR_NUMBER: "${{ github.event.pull_request.number }}", HEAD_SHA: "${{ github.event.pull_request.head.sha }}", BASE_SHA: "${{ github.event.pull_request.base.sha }}", GITHUB_TOKEN: GITHUB_JOB_TOKEN, [LOCK_REACH_ENV]: reach.command }
+    : { [LOCK_REACH_ENV]: reach.command };
+  const runner = prLoopRunner(loop, "default");
+  return { jobName: PR_LOCK_JOB, command: withProductBin(line.join(" "), words.bin), env, ...(runner !== undefined ? { runner } : {}) };
 }
 
 /** The file a product plan job writes its run record to under the hand-off directory, and the Op it is recorded under: `pr-plan`'s (#4899, ../pr-plan-record.ts). */
@@ -434,8 +493,9 @@ export function productPlanJobs(forge: ForgeKind, env: string, loop: PrLoopPipel
     const value = loop[key];
     if (value !== undefined && value !== false) throw new Error(`the product plan (plan) takes no ${key}: ${why}`);
   }
-  // #4946: GitHub's and Forgejo's product plan writes the lock jobs around the plan verb's PrReport; GitLab's writes none yet.
-  if (loop.locks && forge === "gitlab") throw new Error("the product plan (plan) takes no locks on GitLab: its workflow has no lock jobs; the lock job reads a PrReport the plan verb writes, on GitHub and Forgejo");
+  // #4946: GitHub's and Forgejo's product plan writes the lock jobs around the plan verb's PrReport.
+  // #4979: GitLab's locks what each open merge request reaches, from the plan notes pipeline, so it needs the reach line.
+  if (loop.locks && forge === "gitlab" && !plan.reach) throw new Error("the product plan (plan) takes locks on GitLab only with reach: a merge request's pipeline is built from its own files, so the lock job runs in the target branch's plan notes pipeline and locks what reach prints for each open merge request");
   // #4899: GitLab's comment commands start the re-plan, so the note-commands job comes with it.
   if (loop.noteCommands && !plan.replan) throw new Error("the product plan (plan) takes no noteCommands without replan: the note-commands job starts its comment re-plan");
   if (!plan.command.trim()) throw new Error("the product plan's command is empty; give the product's plan verb");

@@ -42,7 +42,7 @@ import type { CiRunner } from "../ci-jobs";
 import { resolveAgentSpec, type OpAgentSpec } from "../ci-agent";
 import { resolveCommitSpec, type OpCommitSpec } from "../ci-commit";
 import type { CiResponses } from "../ci-respond";
-import { planEvidenceOf, productPlanJobs, type ProductPlanJob, type ProductPlanOptions } from "./product-plan";
+import { planEvidenceOf, productPlanJobs, productPlanReachLock, type ProductPlanJob, type ProductPlanOptions, type ProductPlanReachLock } from "./product-plan";
 import { gitlabOpenEvidenceDir, type PipelineEvidence } from "../ci-evidence-jobs";
 import { prCheckJob, prRefGateJob, type PrCheckJob, type PrRefGateJob } from "./pr-checks";
 import { COMMENT_JOBS_ENV, PR_COMMENT_JOB, type CommentJobs } from "../ci-comment-commands";
@@ -241,6 +241,12 @@ export interface ProductPipelineJobs {
   refGate?: PrRefGateJob & { runner?: CiRunner };
   /** The comment job (#4946), with `commentJob`. */
   comment?: ProductCommentJob;
+  /**
+   * The reach lock job (#4979), with `locks: "plan"` and the product plan's
+   * `reach`: `chant lock --reach`, in place of the lock jobs that read a
+   * `PrReport`. The forge lexicons render it.
+   */
+  reachLock?: ProductPlanReachLock;
 }
 
 /** An agent's settings as a product passes them (#4616): {@link OpAgentSpec} without the trigger, which the pipeline names. */
@@ -383,6 +389,9 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   if (options.refGateStatus) out.refGate = { ...prRefGateJob(forge, { ...(words.bin ? { bin: words.bin } : {}), ...(options.branch ? { branch: options.branch } : {}) }), ...defaultRunner };
   const locks = prCommentLockJobs(forge, { locks: options.locks, words });
   if (locks.length > 0) out.locks = locks.map((job) => ({ ...job, ...defaultRunner }));
+  // #4979: the product plan's reach says what the lock job locks.
+  const reachLock = productPlan ? productPlanReachLock(forge, { ...prLoop, plan: productPlan }, words) : undefined;
+  if (reachLock) out.reachLock = reachLock;
   const action = prActionJob(forge, prLoop);
   if (action) out.action = { ...action, ...(prLoopRunner(options, "apply") !== undefined ? { runner: prLoopRunner(options, "apply")! } : {}) };
   const stale = prStaleJob(forge, env, prLoop, member);
@@ -406,6 +415,11 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
       return { comment: spec.commit!.comment!, name: spec.name, spec };
     });
   }
+  // #4588: without a spec of the product's own, the component graph's waves on op waves.
+  const op = words.op ?? componentWaves?.waveGate ?? words.prGate;
+  const spec = given ?? (componentWaves
+    ? componentWavesSpec(componentWaves.components, words, componentWaveSteps({ ...(words.bin ? { bin: words.bin } : {}), env, base: componentWaves.base ?? "HEAD^1", ...(member ? { member } : {}), op, gate: prLoop.gate }), { ...(componentWaves.waveGate ? { gate: componentWaves.waveGate } : {}) })
+    : undefined);
   // #4946: the comment job answers what no other job of the pipeline takes, so it is told which jobs there are.
   if (options.commentJob) {
     // #4963's re-plan reply answers the same stray comments, so one of the two answers them.
@@ -418,6 +432,10 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
       ...(productPlan?.replan && productPlan.forks === "skip" ? { skipForks: true } : {}),
       ...(options.applyBeforeMerge ? { applyBeforeMerge: true } : {}),
       ...(given || componentWaves ? { applyOnMerge: true } : {}),
+      // #4979: the waves' op (the name productWavesSpec gives them) and count, so a wave-<n> stops a re-run after wave n.
+      ...(spec ? { waves: { op: words.op ?? spec.name, count: spec.waves.length } } : {}),
+      // #4979: the product plan's re-plan takes no flags, so the comment job answers a plan comment that carries them.
+      ...(productPlan?.replan ? { noPlanFlags: true } : {}),
       ...(locks.length > 0 ? { locks: true } : {}),
       ...(out.agent ? { agent: true } : {}),
       ...(out.commits ? { commits: true } : {}),
@@ -425,11 +443,6 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
     };
     out.comment = { ...productCommentJob(forge, words, commentJobs), ...defaultRunner };
   }
-  // #4588: without a spec of the product's own, the component graph's waves on op waves.
-  const op = words.op ?? componentWaves?.waveGate ?? words.prGate;
-  const spec = given ?? (componentWaves
-    ? componentWavesSpec(componentWaves.components, words, componentWaveSteps({ ...(words.bin ? { bin: words.bin } : {}), env, base: componentWaves.base ?? "HEAD^1", ...(member ? { member } : {}), op, gate: prLoop.gate }), { ...(componentWaves.waveGate ? { gate: componentWaves.waveGate } : {}) })
-    : undefined);
   if (!spec) return { ...out, record: record! };
   const wavesRespond = respond ? Object.fromEntries(Object.entries(respond).filter(([e]) => e !== "description")) : {};
   // #4625: the waves run on the apply runner and with the plan's parallelism, unless the spec names its own.

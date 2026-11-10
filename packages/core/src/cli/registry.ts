@@ -916,6 +916,13 @@ export interface ParsedArgs {
    * until it closes or `chant unlock`. What `/<product> lock` runs.
    */
   keepLocks?: boolean;
+  /**
+   * `chant lock --reach` (#4979): lock the targets the reach line in
+   * `CHANT_LOCK_REACH` prints for the change from `--base` to `--head`,
+   * after fetching the pull request's head; with `--open`, every open merge
+   * request's (GitLab's plan notes pipeline).
+   */
+  lockReach?: boolean;
   /** `chant components plan-wave|apply-wave --runs <file>` (#4588): the runs file `chant run wave` writes, `{runs}`. */
   runsFile?: string;
   /** `chant components plan-wave|apply-wave --plans <file>` (#4588): the wave's plans file, `{plans}`. */

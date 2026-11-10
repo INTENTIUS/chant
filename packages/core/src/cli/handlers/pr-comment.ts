@@ -32,10 +32,17 @@ export function commentJobsFromEnv(raw: string | undefined): CommentJobs {
   if (raw === undefined || raw.trim() === "") return {};
   const v: unknown = JSON.parse(raw);
   if (typeof v !== "object" || v === null || Array.isArray(v)) throw new Error(`${COMMENT_JOBS_ENV} is a JSON object of the jobs the pipeline has`);
-  const known = new Set(["preview", "applyBeforeMerge", "applyOnMerge", "locks", "agent", "commits", "actions", "skipForks", "targets"]);
+  const known = new Set(["preview", "applyBeforeMerge", "applyOnMerge", "locks", "agent", "commits", "actions", "skipForks", "targets", "noPlanFlags", "waves"]);
   const jobs: Record<string, unknown> = {};
   for (const [k, x] of Object.entries(v)) {
     if (!known.has(k)) throw new Error(`${COMMENT_JOBS_ENV} names ${JSON.stringify(k)}, which is not one of ${[...known].join(", ")}`);
+    // #4979: the waves' op and count, for a wave stop on a re-run.
+    if (k === "waves") {
+      const w = x as { op?: unknown; count?: unknown } | null;
+      if (!w || typeof w !== "object" || typeof w.op !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(w.op) || !Number.isInteger(w.count) || (w.count as number) < 1) throw new Error(`${COMMENT_JOBS_ENV}.waves is { op, count }: the waves' op name and how many waves there are`);
+      jobs.waves = { op: w.op, count: w.count };
+      continue;
+    }
     if (k === "targets") {
       if (!Array.isArray(x) || x.some((t) => typeof t !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(t))) throw new Error(`${COMMENT_JOBS_ENV}.targets is a list of target names`);
       if (x.length > 0) jobs.targets = x;
@@ -80,6 +87,15 @@ export async function runComponentsPrComment(ctx: CommandContext): Promise<numbe
     base,
     jobs,
     env,
+    // #4979: the wave stop goes on this checkout's chant/lifecycle, which the job pushes with its token.
+    ...(jobs.waves
+      ? {
+          stops: async (op, sha, stop) => {
+            const { setWaveStop } = await import("../../op/wave-stop");
+            await setWaveStop(op, sha, stop);
+          },
+        }
+      : {}),
   });
   const line = `pr-comment: ${outcome.reason}`;
   if (outcome.fail) return fail(line);

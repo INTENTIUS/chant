@@ -24,9 +24,14 @@
  *   (`rerun-failed-jobs`), each wave behind its own gate. Forgejo has no
  *   call that runs a run again, so the waves workflow is dispatched on the
  *   default branch, and only while the merge commit is still the branch's
- *   newest push. A wave-n is refused on both: a re-run cannot stop the
- *   waves after it. On a fork, a pull request merged elsewhere, or one
- *   closed without merging, the reply says so.
+ *   newest push. A forge re-run cannot stop the waves after one, so with
+ *   the waves' op (`jobs.waves`, #4979) a `wave-<n>` writes a stop for the
+ *   merge commit on `chant/lifecycle` before the run starts, and the waves
+ *   after n wait (./op/wave-stop.ts); without it a wave-n is refused. On a
+ *   fork, a pull request merged elsewhere, or one closed without merging,
+ *   the reply says so.
+ * - with `noPlanFlags` (#4979), a plan comment with flags the product
+ *   plan's re-plan cannot take, with the reason.
  *
  * Who asked comes first. On GitHub the commenter's permission is read from
  * the forge; Forgejo answers 403 when a job's token asks for another user's
@@ -69,7 +74,26 @@ export interface CommentJobs extends Omit<ChantNoteJobs, "members"> {
   targets?: readonly string[];
   /** The product plan's re-plan skips a fork's pull request (`forks: "skip"`) without a word, so the comment job replies with the words' `fork` sentence. */
   skipForks?: boolean;
+  /**
+   * The plan comment's job is the product plan's re-plan (#4979), which
+   * takes at most one word after the command and no flags: a plan comment
+   * with `--target`, `--refresh` or `--target-dependents` gets a reply that
+   * says so, where the re-plan would skip it without a word.
+   */
+  noPlanFlags?: boolean;
+  /**
+   * The waves on merge (#4979): the op they run as and how many there are.
+   * With them a merged pull request's `/<product> apply wave-<n>` runs the
+   * apply again and stops after wave n: the job writes the stop on
+   * `chant/lifecycle` for the merge commit (./op/wave-stop.ts) before it
+   * starts the run, and each later wave waits. An apply without a wave
+   * clears it.
+   */
+  waves?: { op: string; count: number };
 }
+
+/** Writes a wave stop for op `op` at `sha` on `chant/lifecycle`, or clears it (#4979). */
+export type CommentWaveStops = (op: string, sha: string, stop: { through: number; at: string; by?: string; pr?: number } | null) => Promise<void>;
 
 /**
  * The apply jobs a re-run looks for at a merge commit: chant's op waves
@@ -122,6 +146,10 @@ export interface AnswerCommentOptions {
   env?: Record<string, string | undefined>;
   /** The commit words that take an argument, as `parseProductComment` takes them. */
   commitArgs?: Readonly<Record<string, RegExp>>;
+  /** With `jobs.waves` (#4979): writes the wave stop before a re-run starts. Absent: a `wave-<n>` is refused, as before. */
+  stops?: CommentWaveStops;
+  /** The time a stop is written at. Default now. */
+  now?: () => string;
 }
 
 /** What the comment job did. */
@@ -224,6 +252,8 @@ export async function answerProductComment(o: AnswerCommentOptions): Promise<Com
   if (parsed.kind === "refused") return reply(parsed.reason);
   // The product plan's re-plan skips these without a word: a target that is none of its own, and a fork with forks: "skip".
   if (parsed.kind === "plan" && o.jobs.preview) {
+    // #4979: the product plan's re-plan plans what its verb plans, and takes no flag the grammar reads.
+    if (o.jobs.noPlanFlags && (parsed.targets?.length || parsed.refresh || parsed.targetDependents)) return reply(planFlagsReply(o.words));
     if (parsed.member !== undefined && o.jobs.targets?.length && !o.jobs.targets.includes(parsed.member)) return reply(memberReply(o.words, parsed.member, o.jobs.targets, o.forge));
     if (o.jobs.skipForks) {
       let pr: PullRequestDetail | undefined;
@@ -268,14 +298,39 @@ export async function answerProductComment(o: AnswerCommentOptions): Promise<Com
   if (pr.state === "closed") return reply(`${at} was closed without merging, so there is nothing of it to ${verb[0]}`);
   if (!o.jobs.applyOnMerge) return reply(`${at} is merged, and this ${t.place} ${verb[0]}s a ${t.request} before it merges, so there is nothing of it left to ${verb[0]}`);
   if (!pr.sameRepo) return reply(forkReply(o.words, o.forge));
-  if (parsed.wave !== undefined) {
-    return reply(`a run started again runs the waves after the one that stopped by itself, so \`wave-${parsed.wave}\` cannot stop them; write \`/${o.words.product} ${typedApply(o.words)}\`, and each wave still waits behind its own gate`);
+  // #4979: with the waves' op the stop is written for the run; without it a re-run cannot stop.
+  const waves = o.stops ? o.jobs.waves : undefined;
+  const wave = parsed.wave;
+  if (wave !== undefined && !waves) {
+    return reply(`a run started again runs the waves after the one that stopped by itself, so \`wave-${wave}\` cannot stop them; write \`/${o.words.product} ${typedApply(o.words)}\`, and each wave still waits behind its own gate`);
   }
+  if (wave !== undefined && waves && wave > waves.count) return reply(`the ${verb[0]} of this ${t.place} runs in ${waves.count} wave${waves.count === 1 ? "" : "s"}, so there is no \`wave-${wave}\``);
   if (pr.base !== undefined && pr.base !== o.base) return reply(`${at} was merged into ${pr.base}, not the default branch ${o.base}, so nothing ${verb[1]} from it`);
   if (!pr.mergeCommit) return broke(`${at} has no merge commit`, command);
-  const done = await retryApply({ reads: o.reads, forge: o.poster, words: o.words, base: o.base }, o.forge, pr, user, { kind: "retry", sha: pr.mergeCommit, jobs: RERUN_APPLY_JOBS }, o.forge === "github" ? githubRerun(o.runs) : forgejoRerun(o.runs, o.reads));
+  const mergeCommit = pr.mergeCommit;
+  const start = o.forge === "github" ? githubRerun(o.runs) : forgejoRerun(o.runs, o.reads);
+  // The stop goes on chant/lifecycle just before the run starts, so every wave job of the run reads it; an apply without a wave clears it.
+  const rerun: ApplyRerun = waves
+    ? async (run, jobs, ctx) => {
+        try {
+          await o.stops!(waves.op, mergeCommit, wave !== undefined ? { through: wave, at: (o.now ?? (() => new Date().toISOString()))(), by: user, pr: n } : null);
+        } catch (err) {
+          return { kind: "fail", reason: `could not write the wave stop for ${short(mergeCommit)}, so nothing was started (${message(err)})` };
+        }
+        return start(run, jobs, ctx);
+      }
+    : start;
+  const done = await retryApply({ reads: o.reads, forge: o.poster, words: o.words, base: o.base }, o.forge, pr, user, { kind: "retry", sha: mergeCommit, jobs: RERUN_APPLY_JOBS }, rerun);
   if (done.kind === "fail") return broke(done.reason, command);
-  return reply(done.text, done.kind === "ran", done.kind === "ran" ? done.url : undefined);
+  const stopped = done.kind === "ran" && wave !== undefined && waves && wave < waves.count ? `; it stops after \`wave-${wave}\`, and the waves after it wait until \`/${o.words.product} ${typedApply(o.words)}\` runs it again` : "";
+  return reply(`${done.text}${stopped}`, done.kind === "ran", done.kind === "ran" ? done.url : undefined);
+}
+
+/** The reply to a plan comment with flags the product plan's re-plan cannot take (#4979). */
+export function planFlagsReply(words: CiProductWords): string {
+  const line = Object.entries(words.commands).find(([, c]) => c === "plan")?.[0] ?? "plan";
+  const typed = `/${words.product} ${line}`;
+  return `\`${typed}\` plans whole ${words.noun[1]} again, every one or the one named after it, so it takes no \`--target\`, \`--refresh\` or \`--target-dependents\`; write \`${typed}\` or \`${typed} <${words.noun[0]}>\``;
 }
 
 /** The typed apply word. */

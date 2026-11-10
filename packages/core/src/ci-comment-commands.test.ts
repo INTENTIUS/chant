@@ -286,3 +286,91 @@ describe("the words' replies and alias refusals are checked (#4946)", () => {
     expect(() => commentJobsFromEnv('{"locks":"yes"}')).toThrow(/true or false/);
   });
 });
+
+describe("a wave stop on a re-run, and a re-plan comment with flags (#4979)", () => {
+  const waves = { 10: [{ id: 1, name: "wave-1-network", status: "completed", conclusion: "failure", done: true }, { id: 2, name: "wave-2-apps", status: "completed", conclusion: "skipped", done: true }, { id: 3, name: "wave-3-edge", status: "completed", conclusion: "skipped", done: true }] } as Record<number, RunJob[]>;
+  const jobs: CommentJobs = { applyOnMerge: true, waves: { op: "tf-apply", count: 3 } };
+  const withStops = (s: ReturnType<typeof setup>) => {
+    const stops: Array<[string, string, unknown]> = [];
+    s.opts.stops = async (op, sha, stop) => {
+      stops.push([op, sha, stop]);
+    };
+    s.opts.now = () => "2026-11-10T00:00:00.000Z";
+    return stops;
+  };
+
+  test("wave-n writes the stop for the merge commit before the run starts, and the reply says the waves after it wait", async () => {
+    const s = setup({ runs: [run(10, MERGE)], jobs: waves, branch: [run(10, MERGE)] }, jobs, "/terragucci apply wave-2");
+    const stops = withStops(s);
+    const got = await answerProductComment(s.opts);
+    expect(stops).toEqual([["tf-apply", MERGE, { through: 2, at: "2026-11-10T00:00:00.000Z", by: "alice", pr: 12 }]]);
+    expect(s.reran).toEqual([10]);
+    expect(got.ran).toBe(true);
+    expect(s.posted[0]).toMatch(/again for alice; .*; it stops after `wave-2`, and the waves after it wait until `\/terragucci apply` runs it again$/);
+  });
+
+  test("an apply without a wave clears the stop, and the last wave stops nothing after it", async () => {
+    const plain = setup({ runs: [run(10, MERGE)], jobs: waves, branch: [run(10, MERGE)] }, jobs, "/terragucci apply");
+    const cleared = withStops(plain);
+    await answerProductComment(plain.opts);
+    expect(cleared).toEqual([["tf-apply", MERGE, null]]);
+    expect(plain.posted[0]).not.toMatch(/stops after/);
+    const last = setup({ runs: [run(10, MERGE)], jobs: waves, branch: [run(10, MERGE)] }, jobs, "/terragucci apply wave-3");
+    withStops(last);
+    await answerProductComment(last.opts);
+    expect(last.posted[0]).not.toMatch(/stops after/);
+  });
+
+  test("a wave the waves do not have is refused, and no run starts or stop is written", async () => {
+    const s = setup({ runs: [run(10, MERGE)], jobs: waves, branch: [run(10, MERGE)] }, jobs, "/terragucci apply wave-4");
+    const stops = withStops(s);
+    await answerProductComment(s.opts);
+    expect(s.posted[0]).toBe("terragucci: the apply of this repository runs in 3 waves, so there is no `wave-4`");
+    expect(stops).toEqual([]);
+    expect(s.reran).toEqual([]);
+  });
+
+  test("a stop that cannot be written fails the job, and nothing is started", async () => {
+    const s = setup({ runs: [run(10, MERGE)], jobs: waves, branch: [run(10, MERGE)] }, jobs, "/terragucci apply wave-1");
+    s.opts.stops = async () => {
+      throw new Error("push refused");
+    };
+    const got = await answerProductComment(s.opts);
+    expect(got.fail).toBe(true);
+    expect(got.reason).toMatch(/could not write the wave stop for aaaaaaaa, so nothing was started \(push refused\)/);
+    expect(s.reran).toEqual([]);
+  });
+
+  test("on Forgejo the dispatch carries the stop the same way", async () => {
+    const s = setup({ runs: [run(10, MERGE)], jobs: waves, branch: [run(10, MERGE)] }, jobs, "/terragucci apply wave-1", { forge: "forgejo" });
+    const stops = withStops(s);
+    await answerProductComment(s.opts);
+    expect(stops).toHaveLength(1);
+    expect(s.dispatched).toEqual([["terragucci-apply.yml", "main"]]);
+  });
+
+  test("without the waves' op a wave-n is still refused, as before", async () => {
+    const s = setup({ runs: [run(10, MERGE)], jobs: waves }, { applyOnMerge: true }, "/terragucci apply wave-2");
+    withStops(s);
+    await answerProductComment(s.opts);
+    expect(s.posted[0]).toMatch(/cannot stop them/);
+  });
+
+  test("the product plan's re-plan takes no flags, so a plan comment with them gets the reason", async () => {
+    for (const body of ["/terragucci plan --target aws_s3_bucket.logs", "/terragucci plan --refresh"]) {
+      const s = setup({}, { preview: true, noPlanFlags: true }, body);
+      const got = await answerProductComment(s.opts);
+      expect(got.replied, body).toBe(true);
+      expect(s.posted[0], body).toBe("terragucci: `/terragucci plan` plans whole roots again, every one or the one named after it, so it takes no `--target`, `--refresh` or `--target-dependents`; write `/terragucci plan` or `/terragucci plan <root>`");
+    }
+    // A plain re-plan is the re-plan's, and a comment preview takes the flags.
+    expect((await answerProductComment(setup({}, { preview: true, noPlanFlags: true }, "/terragucci plan envs/dev").opts)).replied).toBe(false);
+    expect((await answerProductComment(setup({}, { preview: true }, "/terragucci plan --target aws_s3_bucket.logs").opts)).replied).toBe(false);
+  });
+
+  test("CHANT_COMMENT_JOBS carries the waves and noPlanFlags", () => {
+    expect(commentJobsFromEnv('{"waves":{"op":"tf-apply","count":2},"noPlanFlags":true}')).toEqual({ waves: { op: "tf-apply", count: 2 }, noPlanFlags: true });
+    expect(() => commentJobsFromEnv('{"waves":{"op":"a b","count":2}}')).toThrow(/waves is \{ op, count \}/);
+    expect(() => commentJobsFromEnv('{"waves":{"op":"tf-apply","count":0}}')).toThrow(/waves is \{ op, count \}/);
+  });
+});

@@ -42,6 +42,14 @@
  * trade the job's OIDC token first, before the re-plan checks out the
  * head; with `replan: { notAffected }` the re-plan's note job reads the
  * comment's argument again and passes it to `pr-post --not-affected`.
+ *
+ * With `locks: "plan"` and `productPlan.reach` (#4979) the `lock` job runs
+ * in the plan notes pipeline, at the target branch's commit: `chant lock
+ * --reach --open` locks what each open merge request from the project
+ * reaches, by the product's reach line, and releases the locks of one that
+ * is no longer open. With `noteCommands`, `/<product> lock` and
+ * `/<product> unlock` start a pipeline of the target branch whose
+ * `comment-lock` or `comment-unlock` job keeps or releases them.
  */
 
 import { assertGitlabBranch, CI_IMAGE, GITLAB_FULL_HISTORY, GITLAB_MERGE_REQUEST_SOURCE, gitlabTags } from "@intentius/chant/ci-jobs";
@@ -139,9 +147,18 @@ export function generateGitlabProductPlanPipeline(env: string, options: GitlabPr
     ...(jobs.check ? { check: jobs.check } : {}),
     ...(jobs.refGate ? { refGate: jobs.refGate } : {}),
   });
-  const stagesBefore = [...(plans.some((p) => p.evidence) ? ["plan", "evidence", PR_PLAN_NOTE_JOB] : ["plan", PR_PLAN_NOTE_JOB]), ...(notes ? [PR_NOTE_COMMANDS_JOB] : []), ...(replans.length > 0 ? [REPLAN_JOB, REPLAN_NOTE_JOB] : [])];
+  // #4979: with reach, the lock job in the plan notes pipeline, and the comment lock and unlock jobs in a pipeline of the target branch each starts.
+  const reach = jobs.reachLock;
+  const commentLocks = reach ? (jobs.locks ?? []).map((job) => ({ job, rule: `$CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/ && $${job.gitlabVar} =~ /^[0-9]+$/ && $CI_COMMIT_BRANCH == ${target}` })) : [];
+  const stagesBefore = [
+    ...(plans.some((p) => p.evidence) ? ["plan", "evidence", PR_PLAN_NOTE_JOB] : ["plan", PR_PLAN_NOTE_JOB]),
+    ...(reach ? [reach.jobName] : []),
+    ...(notes ? [PR_NOTE_COMMANDS_JOB] : []),
+    ...commentLocks.map((c) => c.job.jobName),
+    ...(replans.length > 0 ? [REPLAN_JOB, REPLAN_NOTE_JOB] : []),
+  ];
   const entries: Array<[string, unknown]> = [
-    ["workflow", { name: plan.workflow ?? `chant-pr-${env}`, rules: [{ if: onMergeRequest }, { if: onPlanNotes }, ...(onReplan ? [{ if: onReplan }] : []), ...(onNotes ? [{ if: onNotes }] : [])] }],
+    ["workflow", { name: plan.workflow ?? `chant-pr-${env}`, rules: [{ if: onMergeRequest }, { if: onPlanNotes }, ...(onReplan ? [{ if: onReplan }] : []), ...(onNotes ? [{ if: onNotes }] : []), ...commentLocks.map((c) => ({ if: c.rule }))] }],
     // #4870: the evidence jobs sign each plan job's checks, in a stage of their own after the plans.
     ["stages", withCheckStages(stagesBefore, checkEntries, PR_PLAN_NOTE_JOB)],
     ["variables", { CHANT_ENV: env, ...GITLAB_FULL_HISTORY }],
@@ -184,10 +201,18 @@ export function generateGitlabProductPlanPipeline(env: string, options: GitlabPr
       },
     ]);
   }
+  if (reach) {
+    // The target branch's commit: the reach line reads each merge request's change as data from git, and runs none of its code. One at a time.
+    entries.push([reach.jobName, { stage: reach.jobName, image, ...tags(reach.runner), resource_group: reach.jobName, rules: [{ if: onPlanNotes }], variables: reach.env, script: [...beforeScript, reach.command] }]);
+  }
   entries.push(...checkEntries);
   if (notes && onNotes) {
     // The target branch's commit: the job reads the notes as data through the API and runs none of a merge request's code. One poll at a time.
     entries.push([PR_NOTE_COMMANDS_JOB, { stage: PR_NOTE_COMMANDS_JOB, image, ...tags(notes.runner), resource_group: PR_NOTE_COMMANDS_JOB, rules: [{ if: onNotes }], script: [...beforeScript, notes.command] }]);
+  }
+  // #4979: `/<product> lock` keeps the locks the lock job took, `/<product> unlock` releases them, each at the target branch's commit.
+  for (const { job, rule } of commentLocks) {
+    entries.push([job.jobName, { stage: job.jobName, image, ...tags(job.runner), rules: [{ if: rule }], variables: job.env, script: [...beforeScript, job.line] }]);
   }
   for (const p of replans) {
     const r = p.replan!;

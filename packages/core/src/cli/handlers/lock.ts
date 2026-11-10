@@ -6,6 +6,8 @@
  * chant lock <target>... --pr <n> [--stage plan|apply|lock] [--head <sha>] [--by <who>] [--gate <name>] [--forge <kind>] [--json]
  * chant lock --from-report <pr-plan.json> --pr <n> [--stage plan] [--forge <kind>] [--json]
  * chant lock --keep --pr <n> [--head <sha>] [--gate <name>] [--forge <kind>] [--json]
+ * chant lock --reach --pr <n> --head <sha> --base <sha> --forge <kind> [--stage plan|apply|lock] [--gate <name>] [--json]
+ * chant lock --reach --open --base <sha> --forge gitlab [--branch <name>] [--stage plan] [--gate <name>] [--json]
  * chant lock --list [--gate <name>] [--json]
  * chant lock --alive <run>
  * chant unlock --pr <n> [<target>...] [--gate <name>] [--json]
@@ -19,6 +21,13 @@
  * lock what the plan job, which ran the pull request's code, selected. When
  * a member is on the resource lock grain (#4552) the report carries
  * `lockTargets`, its row keys, and those are locked instead.
+ *
+ * `--reach` (#4979) locks what a change reaches by the pipeline's reach line
+ * in `CHANT_LOCK_REACH`, which prints target names one a line from the
+ * change's files read as data (../../lifecycle/reach-locks.ts). chant first
+ * fetches the pull request's head and checks it is `--head`. With `--open`
+ * (GitLab's plan notes pipeline) every open merge request into the branch is
+ * locked, and a holder that is no longer open releases its locks.
  *
  * `--list` prints the target locks, then the apply rows of the gate's rows
  * file (#4552, #4594), each with the run that holds it and when it took it.
@@ -68,6 +77,7 @@ import {
   TARGET_LOCK_STAGES,
   type TargetLockStage,
 } from "../../lifecycle/target-lock";
+import { LOCK_REACH_ENV, reachedTargets, reachOpen } from "../../lifecycle/reach-locks";
 
 /** The exit for a target another open pull request holds: `CHANT_EXIT.held`, 5 (#4553). */
 const HELD_EXIT_CODE = CHANT_EXIT.held;
@@ -197,13 +207,29 @@ export async function runLock(ctx: CommandContext): Promise<number> {
     return 0;
   }
 
+  // #4979: GitLab's lock job, in the target branch's plan notes pipeline, locks what every open merge request reaches.
+  if (args.lockReach && args.open) return runReachOpen(ctx, gate);
   if (args.pr === undefined) return fail("chant lock needs the pull or merge request that holds the locks: --pr <n>", "chant lock --list prints the locks held now.");
   const stage = (args.lockStage ?? "lock") as TargetLockStage;
   if (!(TARGET_LOCK_STAGES as readonly string[]).includes(stage)) return fail(`--stage ${args.lockStage} is not one of ${TARGET_LOCK_STAGES.join(", ")}`);
 
   let targets = targetsOf(ctx);
   let head = args.head;
-  if (args.keepLocks) {
+  if (args.lockReach) {
+    // #4979: the targets the change reaches, from the pipeline's reach line, after the head is fetched and checked.
+    if (targets.length > 0 || args.fromReport || args.keepLocks) return fail("--reach locks what the reach line prints; drop the names, --from-report and --keep");
+    const line = process.env[LOCK_REACH_ENV] ?? "";
+    if (!line.trim()) return fail(`--reach runs the reach line in ${LOCK_REACH_ENV}, which is not set`, "The generated lock job sets it from the product plan's reach.");
+    if (args.forge === undefined || !(FORGE_KINDS as readonly string[]).includes(args.forge)) return fail("--reach fetches the pull request's head from the forge: give --forge github, gitlab or forgejo");
+    if (!head || args.base === undefined) return fail("--reach measures the change from --base <sha> to --head <sha>");
+    const reached = reachedTargets({ forge: args.forge as ForgeKind, pr: args.pr, head, base: args.base, line });
+    if ("error" in reached) return fail(reached.error);
+    if ("moved" in reached) {
+      console.error(formatInfo(reached.moved));
+      return 0;
+    }
+    targets = reached.targets;
+  } else if (args.keepLocks) {
     if (targets.length > 0 || args.fromReport) return fail("--keep keeps the locks the pull request holds; drop the names and --from-report");
     let file;
     try {
@@ -262,6 +288,73 @@ export async function runLock(ctx: CommandContext): Promise<number> {
   if (result.expired.length > 0) console.error(formatInfo(`took over ${result.expired.join(", ")} from pull requests that merged or closed`));
   if (!result.pushed && (result.taken.length > 0 || result.released.length > 0)) console.error(formatInfo("chant/lifecycle was not pushed: this repository has no remote, or recording is off"));
   return 0;
+}
+
+/**
+ * `chant lock --reach --open --base <sha> --forge gitlab [--branch <name>]`
+ * (#4979): GitLab's lock job, in a pipeline of the target branch. Every
+ * open merge request from the project that merges into the branch (default
+ * `CI_COMMIT_BRANCH`) takes the locks of what its change reaches, and a
+ * holder that is no longer open releases its locks. Exit 3 when another
+ * merge request holds what one reaches, 1 when a reach could not be read.
+ */
+async function runReachOpen(ctx: CommandContext, gate: string): Promise<number> {
+  const { args } = ctx;
+  const line = process.env[LOCK_REACH_ENV] ?? "";
+  if (!line.trim()) return fail(`--reach runs the reach line in ${LOCK_REACH_ENV}, which is not set`);
+  if (args.pr !== undefined || targetsOf(ctx).length > 0) return fail("--open locks every open merge request; drop --pr and the names");
+  if (args.base === undefined) return fail("--reach measures each change from --base <sha>, the target branch's commit");
+  const stage = (args.lockStage ?? "plan") as TargetLockStage;
+  if (!(TARGET_LOCK_STAGES as readonly string[]).includes(stage)) return fail(`--stage ${args.lockStage} is not one of ${TARGET_LOCK_STAGES.join(", ")}`);
+  const forge = forgeOf(ctx);
+  if (!forge) return fail("--open asks the forge for the open merge requests: give --forge gitlab");
+  if ("error" in forge) return fail(forge.error);
+  const branch = args.branch ?? process.env.CI_COMMIT_BRANCH ?? "";
+  if (!branch) return fail("--open locks the merge requests into one branch: give --branch <name>, or run it in a branch pipeline");
+  if (!forge.openPullRequests || !forge.pullRequestOpen) return fail(`the ${forge.kind} client cannot list the open merge requests`);
+  const isOpen = forge.pullRequestOpen.bind(forge);
+  const name = prName(forge);
+  let open;
+  try {
+    open = await forge.openPullRequests(branch);
+  } catch (err) {
+    return fail(`could not list the open merge requests into ${branch}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  const by = actorFromEnv();
+  const { outcomes, released } = await reachOpen({
+    forge: forge.kind,
+    base: args.base,
+    line,
+    branch,
+    open,
+    isOpen,
+    take: async (pr, head, targets) => {
+      const r = await takeTargetLocks(gate, targets, { pr, by, at: new Date().toISOString(), stage, head }, { isOpen, releaseStalePlan: stage === "plan" });
+      if (r.ok) {
+        await postStatus(forge, head, "success", r.taken.length > 0 ? `holds ${r.taken.join(", ")}` : "reaches no target");
+        return { ok: true, released: r.released };
+      }
+      await postStatus(forge, head, "failure", `locked by ${[...new Set(r.held.map((h) => h.pr))].map(name).join(", ")}: ${r.held.map((h) => h.target).join(", ")}`);
+      return { ok: false, held: `${describeHeldTargetLocks(r.held, name)}, so ${name(pr)} is not locked` };
+    },
+    holders: async () => [...new Set(Object.values((await readTargetLocks(gate)).locks).map((l) => l.pr))].sort((a, b) => a - b),
+    release: async (pr) => (await releaseTargetLocks(gate, pr)).released,
+  });
+  let code = 0;
+  for (const o of outcomes) {
+    if (o.kind === "locked") console.error(formatSuccess(`${name(o.pr)} ${o.targets.length > 0 ? `holds ${o.targets.join(", ")}` : "reaches no target"} on ${gate}${o.released.length > 0 ? `; released ${o.released.join(", ")}, which it no longer reaches` : ""}`));
+    else if (o.kind === "skipped") console.error(formatInfo(o.text));
+    else if (o.kind === "held") {
+      console.error(formatError({ message: o.text }));
+      if (code === 0) code = HELD_EXIT_CODE;
+    } else {
+      console.error(formatError({ message: `${name(o.pr)}: ${o.text}` }));
+      code = 1;
+    }
+  }
+  for (const r of released) console.error(formatInfo(`${name(r.pr)} is not open, so its locks on ${r.targets.join(", ")} are released`));
+  if (args.json) console.log(JSON.stringify({ gate, outcomes, released }, null, 2));
+  return code;
 }
 
 /** chant unlock */
