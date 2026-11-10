@@ -48,7 +48,6 @@ import { chantGatedLedger, gatedOp, type GatedRequestLedger } from "./lifecycle/
 import type { GatedRequestRules } from "./lifecycle/gated-request";
 import { gatedRequestAttachmentPath } from "./lifecycle/gated-request-digest";
 import { samePlanDigest } from "./lifecycle/plan-digest";
-import { NEXT_RELEASE } from "./release-floors";
 
 /** The first chant with the engine-neutral state migration (#4762). */
 export const STATE_MIGRATION_FLOOR = "0.124.77";
@@ -57,7 +56,7 @@ export const STATE_MIGRATION_FLOOR = "0.124.77";
 export const STATE_MIGRATION_SOURCE_FLOOR = "0.124.86";
 
 /** The first chant whose `runStateMigration` takes a product's `record`, which the request's attachment binds beside the roots and `chant approve` shows (#4928). */
-export const STATE_MIGRATION_RECORD_FLOOR = NEXT_RELEASE;
+export const STATE_MIGRATION_RECORD_FLOOR = "0.124.88";
 
 /** The most a product's migration `record` may take, as canonical JSON in UTF-8 (#4928): a record names moves, retags and stamps, never a state's contents. */
 export const STATE_MIGRATION_RECORD_MAX_BYTES = 64 * 1024;

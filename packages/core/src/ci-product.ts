@@ -13,7 +13,6 @@ import type { CiProductWords, CiProductWordsInput } from "./ci-product-words";
 import type { ProductMcpHook } from "./cli/mcp/product-tools";
 import type { ProductWaveHook } from "./op/op-waves-after-plan";
 import { OTLP_EXPORTER_FLOOR } from "./otlp";
-import { NEXT_RELEASE } from "./release-floors";
 
 /**
  * The first chant with the product pipeline (#4550): the words, the
@@ -140,24 +139,24 @@ export { planNoteHandoff, PR_PLAN_NOTE_FILE, type PrPlanNoteHandoff } from "./pr
 /**
  * The first chant whose product plan carries the plan-job steps beside the plan verb and the note job's own lines (#4899, #4931): `productPlan.login` and a target's `login` (ci-login) with the job's OIDC token, `idTokens`, `pending`, `controlRead`, `setup` steps, job-level `env`, `report`, `concurrency`, the comment re-plan `replan`, and `noteSteps`; a hand-off's `marker` kept under the note words' `productMarker`; and the note job's notices and overdue Ops under a hand-off's counts.
  */
-export const PRODUCT_PLAN_STEPS_FLOOR = NEXT_RELEASE;
+export const PRODUCT_PLAN_STEPS_FLOOR = "0.124.88";
 export { PLAN_ARGUMENT_ENV, PLAN_NOTE_NOTICES_ENV, type ProductPlanReplanJob, type ProductPlanSetupStep } from "./components/product-plan";
 
 /**
  * The first chant whose `parseProductComment` takes `leaveCommit` and that has `commitWordOf` (#4890): a comment job that is not the commit job leaves every comment for a commit word to it, a malformed one included, so the comment gets one reply.
  */
-export const COMMENT_LEAVES_COMMIT_FLOOR = NEXT_RELEASE;
+export const COMMENT_LEAVES_COMMIT_FLOOR = "0.124.88";
 
 /**
  * The first chant whose product plan takes `watches`, the product's own scheduled jobs the note job's `pr-post` checks for having stopped with the job's token (#4888), and whose `checkOverdueOps` and `overdueOpsAt` take a product's `logPrefix` and `label`.
  */
-export const PRODUCT_PLAN_WATCHES_FLOOR = NEXT_RELEASE;
+export const PRODUCT_PLAN_WATCHES_FLOOR = "0.124.88";
 export { PLAN_WATCHES_ENV } from "./op/schedule-overdue";
 
 /**
  * The first chant whose product plan takes `record` (#4899): the plan step writes the plan job's run record into the hand-off, and the note job keeps it as Op `pr-plan` on `chant/lifecycle` with `pr-post --record-run <plan job>` (`--open` on GitLab), as `chant ci run plan --in-place` records `pr-plan`'s.
  */
-export const PRODUCT_PLAN_RECORD_FLOOR = NEXT_RELEASE;
+export const PRODUCT_PLAN_RECORD_FLOOR = "0.124.88";
 export { PLAN_RUN_OP, PLAN_RUN_RECORD_FILE, readPlanRunRecord } from "./pr-plan-record";
 
 /**

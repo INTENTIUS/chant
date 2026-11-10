@@ -19,7 +19,7 @@
  * this constant to the next patch (#4501). The check fails while a floor
  * still names this constant after its version shipped.
  */
-export const NEXT_RELEASE = "0.124.88";
+export const NEXT_RELEASE = "0.124.89";
 
 /** The first chant with `chant dev local` and `chant dev bundle-check`, `@intentius/chant/local-chant` and `@intentius/chant/bundle-check` (`chantRuntimeTarget`, `chantExternalPlugin`, `checkBundle`): a product built against a chant checkout, and its bundle checked, without its own scripts (#4787). */
 export const LOCAL_CHANT_FLOOR = "0.124.86";
@@ -34,10 +34,10 @@ export const OVERDUE_PIPELINE_FILES_FLOOR = "0.124.86";
 export const TERRAFORM_APPLY_COMMAND_HOOK_FLOOR = "0.124.86";
 
 /** The first chant whose terraform lexicon times each root's engine commands and reads its spans and lock waits (`@intentius/chant-lexicon-terraform/engine-timings`, `engineTimings()` as `terraformApplyCapabilityWith`'s `onCommand`), and runs a composed group's commands through that hook (#4887). */
-export const TERRAFORM_ENGINE_TIMINGS_FLOOR = NEXT_RELEASE;
+export const TERRAFORM_ENGINE_TIMINGS_FLOOR = "0.124.88";
 
 /** The first chant whose terraform lexicon finds live roots and estates (`live-roots`), places a Terragrunt unit (`terragruntUnitPlace`), reads a state migration's history and revert from its finished lines (`migration-history`), and runs the binary without the forge's tokens (`tokenlessBinaryExec`, `engineEnv`) (#4910). */
-export const TERRAFORM_ROOT_HELPERS_FLOOR = NEXT_RELEASE;
+export const TERRAFORM_ROOT_HELPERS_FLOOR = "0.124.88";
 
 /** The first chant with `@intentius/chant/forge-flags` (`forgeTargetWith`, `forgeTargetFromFlags`, `apiBaseOf`), `@intentius/chant/chant-install` (`bundledChant`, `chantArgv`, `installChantResolveFallback`) and `noteLimit` and `fitNote` in `@intentius/chant/plan-summary` (#4800). */
 export const PRODUCT_HELPERS_FLOOR = "0.124.86";
@@ -113,64 +113,64 @@ export const LOCAL_EVIDENCE_FLOOR = "0.124.86";
 export const KEYLESS_EVIDENCE_FLOOR = "0.124.87";
 
 /** The first chant whose waves generators run each wave's policy as a step of its own (`chant run wave --policy-only`; on GitLab a `<wave job>-policy` job) and sign its checks in a `<wave job>-evidence` job with `chant ci evidence sign --from-job`, from the forge's record of the wave job's steps, so a wave that trades cloud credentials signs keyless with `evidence.identity: "oidc"` instead of being refused (#4926). */
-export const WAVE_EVIDENCE_JOB_FLOOR = NEXT_RELEASE;
+export const WAVE_EVIDENCE_JOB_FLOOR = "0.124.88";
 
 /** The first chant whose cloud login leaves the region to the job unless the spec names one, takes `sameStep` to export into the step that runs it, accepts an AWS spec with no role (the token file alone), and whose trade sets `CHANT_CLOUD_TRADED` so a login's targets file is told from a trade's (#4930). */
-export const CLOUD_LOGIN_SAME_STEP_FLOOR = NEXT_RELEASE;
+export const CLOUD_LOGIN_SAME_STEP_FLOOR = "0.124.88";
 
 /** The first chant whose `chant release workflow` sets up QEMU in the cut and publish jobs for the platforms `release.images` builds that the runner can't (`docker/setup-qemu-action` at its pin on GitHub and Forgejo, a `tonistiigi/binfmt` run line on GitLab), and whose `release.images` command entries take `platforms` (#4876). */
-export const RELEASE_WORKFLOW_QEMU_FLOOR = NEXT_RELEASE;
+export const RELEASE_WORKFLOW_QEMU_FLOOR = "0.124.88";
 
 /** The first chant whose npm publish target refuses at plan time a package that would carry an image archive the release records (`publish-npm-carries-image`), naming the file and the `files` entry that leaves it out (#4934). */
-export const NPM_CARRIES_IMAGE_FLOOR = NEXT_RELEASE;
+export const NPM_CARRIES_IMAGE_FLOOR = "0.124.88";
 /** The first chant with `driftRunFingerprint` in `@intentius/chant/drift-issue` and `lexiconDriftRecords` in `@intentius/chant/drift-record`, whose `chant lifecycle diff --live --json` writes a lexicon's `absent`, and whose sql lexicon reports a declared object the server lacks as `missing` instead of `pending` (#4896). */
-export const LIVE_DRIFT_RECORDS_FLOOR = NEXT_RELEASE;
+export const LIVE_DRIFT_RECORDS_FLOOR = "0.124.88";
 
 /** The first chant whose `chant sql types --path` prints where `sql-types.d.ts` is by the source-dir rule, the path `sqlTypesPath` answers (#4897). */
-export const SQL_TYPES_PATH_FLOOR = NEXT_RELEASE;
+export const SQL_TYPES_PATH_FLOOR = "0.124.88";
 /** The first chant whose forge target carries its web `origin` (`forgeTargetWith`) and whose `@intentius/chant/forge-flags` has `jobForgeTarget`, a job's target or undefined where the job cannot reach the forge, so a product keeps no target type of its own (#4888). */
-export const FORGE_TARGET_ORIGIN_FLOOR = NEXT_RELEASE;
+export const FORGE_TARGET_ORIGIN_FLOOR = "0.124.88";
 
 /** The first chant with `actorFromEnv` (`@intentius/chant/actor`), `forgeTargetLiveRuns` and `forgeLiveRunsOf` in `@intentius/chant/state-unlock`, and a pulumi lexicon whose stack ops take the product's `approveCommand`, with `pulumiStackLockToCancel` and `pulumiMoveDestStack`, a move naming its own `--dest` from both sides' `project` (#4911). */
-export const STACK_OPS_PRODUCT_HELPERS_FLOOR = NEXT_RELEASE;
+export const STACK_OPS_PRODUCT_HELPERS_FLOOR = "0.124.88";
 
 /** The first chant with `@intentius/chant/forge-remote` (`forgeOfRemote`, `forgeOfCheckout`, `forgeKindOfHost`), the forge and repository a checkout's origin remote names, and a pulumi `gatedStackCancel` that reads the forge's runs from it on a laptop (#4920). */
-export const FORGE_REMOTE_FLOOR = NEXT_RELEASE;
+export const FORGE_REMOTE_FLOOR = "0.124.88";
 /** The first chant with `chant dev generated-check` (`chantGenerated` in a product's root package.json, `@intentius/chant/generated-check`) and `chant dev local-image` (`localChantImage` in `@intentius/chant/local-chant`): a drift check of a product's committed generated files, and an image build with the product's chant, local or pinned, without the product's own scripts (#4909). */
-export const GENERATED_CHECK_FLOOR = NEXT_RELEASE;
+export const GENERATED_CHECK_FLOOR = "0.124.88";
 
 /** The first chant whose `chant dev local` keeps the product's peer dependencies installed and packs the checkout at its `NEXT_RELEASE`, and whose root build of a project with no `sourceDir` leaves its top-level `migrations/` out, with the sql lexicon opening no `.sql` file under a `migrations` directory (#4921). */
-export const LOCAL_CHANT_NEXT_RELEASE_FLOOR = NEXT_RELEASE;
+export const LOCAL_CHANT_NEXT_RELEASE_FLOOR = "0.124.88";
 
 /** The first chant whose `chantExternalPlugin` keeps external only the chant packages it is given, by default the ones in the package's `dependencies`, so a product that bundles its lexicons uses it as is (#4922). */
-export const CHANT_EXTERNAL_PACKAGES_FLOOR = NEXT_RELEASE;
+export const CHANT_EXTERNAL_PACKAGES_FLOOR = "0.124.88";
 
 /** The first chant whose `ciToolInstallLine` takes `sudo` and `binDir` and a root under a shell variable, for a job that is not root, whose `CI_TOOL_SHA256` records terraform 1.14.9, terragrunt 1.2.0 and the AWS CLI 2.37.9, and whose Pulumi lexicon's `ciFetchScript` and `PINNED_SHA256` are ci-image's (#4908). */
-export const CI_IMAGE_NON_ROOT_FLOOR = NEXT_RELEASE;
+export const CI_IMAGE_NON_ROOT_FLOOR = "0.124.88";
 
 /** The first chant whose `productImageStages` stages type as the docker lexicon's `DockerfileStage[]` under `exactOptionalPropertyTypes`, so `new Dockerfile({ stages: productImageStages(spec) })` compiles (#4932). */
-export const CI_IMAGE_DOCKER_STAGES_FLOOR = NEXT_RELEASE;
+export const CI_IMAGE_DOCKER_STAGES_FLOOR = "0.124.88";
 
 /** The first chant whose setup steps (`OpSetupStep`: an Op waves spec's wave and job group `setup`, a scheduled Op's `setup`, `release.workflow.setup`) take a `name`, rendered as the step's name on GitHub and Forgejo (#4932). */
-export const OP_SETUP_STEP_NAME_FLOOR = NEXT_RELEASE;
+export const OP_SETUP_STEP_NAME_FLOOR = "0.124.88";
 
 /** The first chant whose cloud login takes `restart` (log in, then start the step's script again without the token request variables, and empty the token files when the step exits), sets `CHANT_CLOUD_TOKEN_FILES` for `LOGIN_CLEAR_TOKENS`, takes a full token URL as GCP's `stsEndpoint`, and whose GitLab trade evaluates its exports without writing a file (#4912). */
-export const CLOUD_LOGIN_RESTART_FLOOR = NEXT_RELEASE;
+export const CLOUD_LOGIN_RESTART_FLOOR = "0.124.88";
 
 /** The first chant whose `chant build --pr-loop` takes `evidence` (`--evidence-runner-key-secret`, `--evidence-identity oidc`, `--evidence-audience`) and signs the plan job's `plan` and `policy` checks in its note job on GitHub, GitLab and Forgejo (#4935). */
-export const PR_LOOP_EVIDENCE_FLOOR = NEXT_RELEASE;
+export const PR_LOOP_EVIDENCE_FLOOR = "0.124.88";
 
 /** The first chant whose pull request pipelines take `checkJob` (`--check-job`): a check job that runs `chant ci check` on the pull request's commit with no token or runner identity, and with `evidence` a `check-evidence` job that signs each passed hook from its report with `chant ci evidence sign --from-report .chant/check` (#4935). */
-export const CHECK_JOB_FLOOR = NEXT_RELEASE;
+export const CHECK_JOB_FLOOR = "0.124.88";
 
 /** The first chant whose GitLab pipelines sign evidence in the target branch's plan notes pipeline, in jobs that name the `chant-evidence` environment, with `chant ci evidence sign --open`, and whose `pr-post --open --evidence-dir` ends each merge request's note with the checks line; no job of a merge request pipeline holds the runner key (#4914). */
-export const GITLAB_OPEN_EVIDENCE_FLOOR = NEXT_RELEASE;
+export const GITLAB_OPEN_EVIDENCE_FLOOR = "0.124.88";
 
 /** The first chant whose `chant ci check` takes `--summary <file>` and whose `checkReportSummary` renders the check report's markdown section, so a product's check step runs chant's check stage and keeps the section in its own report (#4914). */
-export const CHECK_SUMMARY_FLOOR = NEXT_RELEASE;
+export const CHECK_SUMMARY_FLOOR = "0.124.88";
 
 /** The first chant whose pull request pipelines take `refGateStatus` (`--ref-gate-status`): a `ref-gate` job that runs `chant workspace ref-gate status` for the pull request's commit, and on GitLab `ref-gate status --open` for every open merge request (#4935). */
-export const REF_GATE_STATUS_JOB_FLOOR = NEXT_RELEASE;
+export const REF_GATE_STATUS_JOB_FLOOR = "0.124.88";
 
 /** The first chant with `@intentius/chant/ref-gate-rules` (`refGateRulesAt`), `require` in `checkPrRequires`, `refGateStatus` in `pipelineContract` and `ci forge-check --ref-gate-status`, `@intentius/chant/ref-gate-init` (`refGateInitPlan`, `writeRefGateInit`), and a pre-receive refusal that prints the command recording the override request (#4913). */
-export const REF_GATE_PIECES_FLOOR = NEXT_RELEASE;
+export const REF_GATE_PIECES_FLOOR = "0.124.88";

@@ -27,7 +27,6 @@ import {
   lastJsonLine,
   runChant,
 } from "./chant-install";
-import { NEXT_RELEASE } from "./release-floors";
 
 const scratch = mkdtempSync(join(tmpdir(), "chant-install-"));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
@@ -214,7 +213,7 @@ describe("runChant (#4889)", () => {
     await expect(runChant([], { chant: join(scratch, "no-such-chant") })).rejects.toThrow(/ENOENT/);
   });
 
-  test("CHANT_RUN_FLOOR is the next release", () => {
-    expect(CHANT_RUN_FLOOR).toBe(NEXT_RELEASE);
+  test("CHANT_RUN_FLOOR is the release that shipped it", () => {
+    expect(CHANT_RUN_FLOOR).toBe("0.124.88");
   });
 });
