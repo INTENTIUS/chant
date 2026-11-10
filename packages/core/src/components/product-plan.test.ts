@@ -185,3 +185,42 @@ test("PRODUCT_PLAN_STEPS_FLOOR marks the plan-job steps in the ci-product entry"
   expect(ciProduct.PRODUCT_PLAN_STEPS_FLOOR).toBe("0.124.88");
   expect(ciProduct.PLAN_NOTE_NOTICES_ENV).toBe("CHANT_PLAN_NOTE_NOTICES");
 });
+
+describe("what terragucci's and sql-yodeler's plan jobs need (#4963)", () => {
+  const trade = { aws: { region: "us-east-1", audience: "sts.amazonaws.com", role: "arn:aws:iam::123456789012:role/plan" } };
+
+  test("PRODUCT_PLAN_REPLAN_FLOOR is the next release, in the ci-product entry", async () => {
+    const ciProduct = (await import("../ci-product")) as Record<string, unknown>;
+    const { NEXT_RELEASE } = await import("../release-floors");
+    expect(ciProduct.PRODUCT_PLAN_REPLAN_FLOOR).toBe(NEXT_RELEASE);
+    expect(typeof ciProduct.planBodyHandoff).toBe("function");
+  });
+
+  test("a trade's OIDC token is the job's, beside its own; a target's login or trade stands in for the plan's", () => {
+    const [one] = productPipelineJobs("gitlab", "default", { words: terragucci, productPlan: { command: "x", trade, idTokens: { TG_OIDC: "tg" } } }).productPlan!;
+    expect(one!.trade).toEqual(trade);
+    expect(one!.idTokens).toEqual({ CHANT_ID_TOKEN_AWS: "sts.amazonaws.com", TG_OIDC: "tg" });
+    const [a, b] = productPipelineJobs("github", "default", { words: yodel, productPlan: { ...environments, trade, targets: [{ name: "a", login: { aws: { role: "arn:aws:iam::1:role/r" } } }, { name: "b" }] } }).productPlan!;
+    expect(a!.trade).toBeUndefined();
+    expect(a!.login).toBeDefined();
+    expect(b!.trade).toEqual(trade);
+    expect(() => productPipelineJobs("github", "default", { words: terragucci, productPlan: { command: "x", trade, idTokens: { CHANT_ID_TOKEN_AWS: "other" } } })).toThrow(/the trade's, with another audience/);
+  });
+
+  test("the re-plan's options are checked", () => {
+    const plan = (replan: unknown) => () => productPipelineJobs("github", "default", { words: terragucci, productPlan: { command: "x", replan: replan as never } });
+    expect(plan({ dispatch: { argument: "pr" } })).toThrow(/input name/);
+    expect(plan({ dispatch: { argument: "Root Dir" } })).toThrow(/input name/);
+    expect(plan({ reply: { others: ["/plywood up"] } })).toThrow(/not a \/terragucci comment/);
+    expect(plan({ reply: { others: ["/terragucci it's"] } })).toThrow(/quote/);
+    const [p] = productPipelineJobs("github", "default", { words: terragucci, productPlan: { command: "x", replan: { dispatch: true, reply: true, notAffected: true } } }).productPlan!;
+    expect(p!.replan).toMatchObject({ dispatch: { argument: "argument" }, reply: { prefix: "/terragucci", others: [] }, notAffected: true });
+    expect(p!.replan!.post.command).toMatch(/ --not-affected "\$CHANT_PLAN_ARGUMENT"$/);
+    expect(p!.post.command).not.toContain("--not-affected");
+  });
+
+  test("previousMarker names chant's marker for the target and the product's marker", () => {
+    const [, prod] = productPipelineJobs("forgejo", "default", { words: yodel, productPlan: { ...environments, previousMarker: true, noteWords: { productMarker: "yodel:plan" } } }).productPlan!;
+    expect(prod!.previous).toEqual({ marker: "<!-- chant-pr:default:prod -->", name: "yodel:plan" });
+  });
+});

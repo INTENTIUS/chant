@@ -34,14 +34,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { prNoteMarker, prStatusContext, prStatusDescription, prStatusState, renderPrNote, type PrOverdue, type PrReport } from "./pr-loop";
 import { forgePrincipalOf, type PrForge } from "./pr-forge";
-import { GITHUB_COMMENT_LIMIT, GITLAB_NOTE_LIMIT } from "./plan-summary";
+import { fitNote, GITHUB_COMMENT_LIMIT, GITLAB_NOTE_LIMIT } from "./plan-summary";
 import { activeProductWords, commentLine, type CiProductWords } from "./ci-product-words";
 import { controlEdgeFactsFromEnv, remarkCrossStackEdges, type ControlEdgeFacts } from "./control/edges";
 import { CHECK_EVIDENCE_FILE, checkEvidenceNoteLine, openEvidenceFor } from "./workspace/trust/check-evidence-report";
 import { PLAN_RUN_RECORD_FILE, readPlanRunRecord } from "./pr-plan-record";
 import type { OpRunRecordInput } from "./op/runtime";
 import type { RunOrigin } from "./lifecycle/release-ledger";
-import { isPlanNote, planNoteMarker, PR_PLAN_NOTE_CONTRACT, PR_PLAN_NOTE_FILE, PRODUCT_MARKER_BODY, PRODUCT_MARKER_LIMIT, PRODUCT_MARKER_NAME, productMarkerLine, renderPlanNote, type PrPlanNoteHandoff, type PrPlanNoteWords } from "./pr-plan-note";
+import { isPlanNote, PLAN_BODY_LIMIT, planNoteMarker, PR_PLAN_NOTE_CONTRACT, PR_PLAN_NOTE_FILE, PRODUCT_MARKER_BODY, PRODUCT_MARKER_LIMIT, PRODUCT_MARKER_NAME, productMarkerLine, renderPlanNote, type PrPlanBodyHandoff, type PrPlanNoteHandoff, type PrPlanNoteWords } from "./pr-plan-note";
 
 /** The plan report's file under the report directory. */
 export const PR_PLAN_REPORT_FILE = "pr-plan.json";
@@ -107,6 +107,14 @@ export interface PlanPostInput {
    * pushes. `keep` returns a warning to say, when there is one.
    */
   recordRun?: PlanRunRecorder;
+  /**
+   * The one argument a re-plan was narrowed to (#4963), such as a
+   * terragucci root: when the report or the hand-off says the change
+   * reaches nothing, the pull request gets a reply that the argument is not
+   * affected, and the note and the status stay as they were. Ignored when
+   * empty or not one plain word.
+   */
+  notAffected?: string;
 }
 
 /** How the note job keeps the plan job's run record (#4899). */
@@ -162,7 +170,7 @@ export function readPlanReport(input: Pick<PlanPostInput, "dir" | "pr" | "head" 
  * The note for `report`, rendered here, with every `<!--` after the marker
  * line written as `&lt;!--`, so the note carries no hidden marker but its own.
  */
-export function planNoteFor(report: PrReport, forge: Pick<PrForge, "kind" | "host">, marker: string, baseTip?: string): string {
+export function planNoteFor(report: PrReport, forge: Pick<PrForge, "kind" | "host">, marker: string, baseTip?: string, own?: string): string {
   const note = renderPrNote(report, {
     limit: forge.kind === "gitlab" ? GITLAB_NOTE_LIMIT : GITHUB_COMMENT_LIMIT,
     approver: forgePrincipalOf(forge.kind, forge.host, "<your-login>"),
@@ -171,7 +179,42 @@ export function planNoteFor(report: PrReport, forge: Pick<PrForge, "kind" | "hos
   const rest = (at < 0 ? "" : note.slice(at + 1)).split("<!--").join("&lt;!--");
   // #4628: the tip line is written after the defusing, from the caller's sha, never the report's.
   const tip = baseTip && SHA.test(baseTip) ? `${rest.endsWith("\n") ? "" : "\n"}${prNoteTipMarker(baseTip)}\n` : "";
-  return `${marker}\n${rest}${tip}`;
+  // #4963: the product's own line, already checked, under chant's marker.
+  return `${marker}\n${own ? `${own}\n` : ""}${rest}${tip}`;
+}
+
+/**
+ * The product's hidden line for a report or a hand-off (#4931, #4963): from
+ * the pipeline's `productMarker` and the file's `marker`, checked against
+ * {@link PRODUCT_MARKER_BODY}. Undefined when either is missing or the
+ * marker is not plain words.
+ */
+function productLineOf(name: string | undefined, marker: unknown): string | undefined {
+  if (name === undefined || !PRODUCT_MARKER_NAME.test(name) || typeof marker !== "string" || marker.length > PRODUCT_MARKER_LIMIT) return undefined;
+  if (marker !== "" && !PRODUCT_MARKER_BODY.test(marker)) return undefined;
+  return productMarkerLine(name, marker);
+}
+
+/** The one plain word a re-plan was narrowed to (#4963), or undefined. */
+function narrowedTo(input: Pick<PlanPostInput, "notAffected">): string | undefined {
+  const a = input.notAffected?.trim();
+  return a && /^[A-Za-z0-9_.\/@+=,:-]+$/.test(a) ? a : undefined;
+}
+
+/**
+ * The reply for a re-plan narrowed to an argument the change does not
+ * reach (#4963), in place of the note and the status, as terragucci's
+ * plan-note job replied (plan-note.ts).
+ */
+async function replyNotAffected(input: PlanPostInput, argument: string, state: PlanPostResult["state"], warnings: string[]): Promise<PlanPostResult> {
+  const description = `${argument} is not affected by this pull request, so nothing was planned.`;
+  try {
+    await input.forge.addComment(input.pr, `${activeProductWords().product}: ${description}`);
+  } catch (err) {
+    warnings.push(`could not reply on #${input.pr}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  const recorded = await keepRunRecord(input, warnings);
+  return { state, description: cut(description), noted: false, ...(recorded ? { recorded } : {}), warnings };
 }
 
 /** The hidden line a note carries with the target branch's commit it was posted against (#4628). */
@@ -221,6 +264,9 @@ export async function postPlanReport(input: PlanPostInput): Promise<PlanPostResu
     description = cut(read.refused);
   } else {
     let report = read.report;
+    // #4963: a re-plan narrowed to an argument the change does not reach.
+    const narrowed = narrowedTo(input);
+    if (narrowed && report.status === "nothing" && !failedJob) return replyNotAffected(input, narrowed, "success", warnings);
     if (input.overdue) {
       const { overdue: _forged, ...rest } = report;
       const found = await input.overdue().catch(() => [] as PrOverdue[]);
@@ -235,7 +281,9 @@ export async function postPlanReport(input: PlanPostInput): Promise<PlanPostResu
       state = prStatusState(report);
       description = prStatusDescription(report);
       // A member the change does not reach has nothing to say on the pull request (as pr-plan's own publish).
-      if (!(input.member && report.status === "nothing" && !report.overdue?.length && !report.migrations?.length)) note = planNoteFor(report, input.forge, prNoteMarker(input.env, input.member), input.baseTip);
+      // #4963: the report's own `marker`, under the pipeline's productMarker, as a hand-off's.
+      const own = productLineOf((input.noteWords ?? noteWordsFromEnv())?.productMarker, (read.report as { marker?: unknown }).marker);
+      if (!(input.member && report.status === "nothing" && !report.overdue?.length && !report.migrations?.length)) note = planNoteFor(report, input.forge, prNoteMarker(input.env, input.member), input.baseTip, own);
     } catch (err) {
       refused = `the plan report does not render: ${err instanceof Error ? err.message : String(err)}`;
       state = "failure";
@@ -336,7 +384,7 @@ async function postOutcome(
  * Read a product's plan note hand-off under `dir` (#4799) and check it is the
  * one the caller ran, as {@link readPlanReport} checks a report.
  */
-export function readPlanNoteHandoff(input: Pick<PlanPostInput, "dir" | "pr" | "head" | "env" | "member">): { handoff: PrPlanNoteHandoff } | { refused: string } {
+export function readPlanNoteHandoff(input: Pick<PlanPostInput, "dir" | "pr" | "head" | "env" | "member">): { handoff: PrPlanNoteHandoff | PrPlanBodyHandoff } | { refused: string } {
   let doc: unknown;
   try {
     doc = JSON.parse(readFileSync(join(input.dir, PR_PLAN_NOTE_FILE), "utf-8"));
@@ -353,14 +401,33 @@ export function readPlanNoteHandoff(input: Pick<PlanPostInput, "dir" | "pr" | "h
   if ((r.member ?? undefined) !== input.member) return { refused: `the plan note is for ${JSON.stringify(r.member ?? null)}, not ${JSON.stringify(input.member ?? null)}` };
   if (r.state !== "success" && r.state !== "failure" && r.state !== "pending") return { refused: `the plan note's state ${JSON.stringify(r.state)} is not success, failure or pending` };
   if (typeof r.description !== "string") return { refused: "the plan note has no description" };
-  if (!isPlanNote(r.note) || r.note.head !== r.head || !Array.isArray(r.note.waves) || !Array.isArray(r.note.groups) || !Array.isArray(r.note.named)) {
+  // #4963: the product's own text in place of a plan note.
+  if (r.body !== undefined) {
+    if (r.note !== undefined) return { refused: "the plan note gives both a note and a body; give one" };
+    if (typeof r.body !== "string" || r.body.length > PLAN_BODY_LIMIT) return { refused: `the plan note's body is not text of at most ${PLAN_BODY_LIMIT} characters` };
+  } else if (!isPlanNote(r.note) || r.note.head !== r.head || !Array.isArray(r.note.waves) || !Array.isArray(r.note.groups) || !Array.isArray(r.note.named)) {
     return { refused: "the plan note's note is not a plan note for its head" };
   }
   // #4931: the product's hidden line is the change's too, so it holds only plain words.
   if (r.marker !== undefined && (typeof r.marker !== "string" || r.marker.length > PRODUCT_MARKER_LIMIT || (r.marker !== "" && !PRODUCT_MARKER_BODY.test(r.marker)))) {
     return { refused: `the plan note's marker is not words of letters, digits and _.,/@+=:- of at most ${PRODUCT_MARKER_LIMIT} characters` };
   }
-  return { handoff: doc as PrPlanNoteHandoff };
+  return { handoff: doc as PrPlanNoteHandoff | PrPlanBodyHandoff };
+}
+
+/**
+ * The note for a hand-off of the product's own text (#4963): chant's
+ * marker, the product's line, the body with every `<!--` defused, the
+ * notices as quoted lines under it, the tip line, cut to the forge's limit.
+ */
+export function planBodyHandoffNote(handoff: PrPlanBodyHandoff, forge: Pick<PrForge, "kind">, marker: string, noteWords?: PrPlanNoteWords, baseTip?: string, notices: readonly string[] = []): string {
+  const limit = forge.kind === "gitlab" ? GITLAB_NOTE_LIMIT : GITHUB_COMMENT_LIMIT;
+  const line = productLineOf(noteWords?.productMarker, handoff.marker);
+  const head = `${marker}\n${line ? `${line}\n` : ""}`;
+  const said = notices.length > 0 ? `\n${notices.map((n) => `> ${n.split("<!--").join("&lt;!--")}`).join("\n")}\n` : "";
+  const tip = baseTip && SHA.test(baseTip) ? `${prNoteTipMarker(baseTip)}\n` : "";
+  const body = handoff.body.split("<!--").join("&lt;!--").replace(/\n*$/, "\n");
+  return `${head}${fitNote(body, { limit: Math.max(0, limit - head.length - said.length - tip.length) })}${said}${tip}`;
 }
 
 /** The notices in the file `CHANT_PLAN_NOTE_NOTICES` names (#4931), one a line, or none when unset or unreadable. */
@@ -424,14 +491,19 @@ async function postPlanNoteHandoff(input: PlanPostInput): Promise<PlanPostResult
   } else {
     state = read.handoff.state;
     description = read.handoff.description;
+    const h = read.handoff;
+    // #4963: a re-plan narrowed to an argument the change does not reach.
+    const narrowed = narrowedTo(input);
+    if (narrowed && "note" in h && h.note.nothing === true && !failedJob) return replyNotAffected(input, narrowed, state, warnings);
     // #4931: the overdue Ops (#4289), asked here with the job's token, and the note job's own notices, under the counts.
-    const given = read.handoff.note.notices ?? [];
+    const given = "note" in h ? (h.note.notices ?? []) : [];
     // An Op the product's own notices already call overdue is not said twice.
     const overdue = input.overdue ? (await input.overdue().catch(() => [] as PrOverdue[])).filter((o) => !given.some((g) => g.includes(`\`${o.op}\``) && g.includes("overdue"))).map((o) => o.message) : [];
     const added = [...overdue, ...(input.notices ?? noticesFromEnv())].filter((n, i, all) => !given.includes(n) && all.indexOf(n) === i);
-    const handoff = added.length > 0 ? { ...read.handoff, note: { ...read.handoff.note, notices: [...given, ...added] } } : read.handoff;
     try {
-      note = planNoteHandoffNote(handoff, input.forge, prNoteMarker(input.env, input.member), input.noteWords ?? noteWordsFromEnv(), input.baseTip);
+      note = "note" in h
+        ? planNoteHandoffNote(added.length > 0 ? { ...h, note: { ...h.note, notices: [...given, ...added] } } : h, input.forge, prNoteMarker(input.env, input.member), input.noteWords ?? noteWordsFromEnv(), input.baseTip)
+        : planBodyHandoffNote(h, input.forge, prNoteMarker(input.env, input.member), input.noteWords ?? noteWordsFromEnv(), input.baseTip, added);
     } catch (err) {
       refused = `the plan note does not render: ${err instanceof Error ? err.message : String(err)}`;
       state = "failure";

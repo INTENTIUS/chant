@@ -62,3 +62,19 @@ describe("the product plan's steps on Forgejo (#4899, #4931)", () => {
     expect(yaml).toContain('"$GITHUB_ENV" github-env forgejo)');
   });
 });
+
+describe("terragucci's plan jobs on Forgejo (#4963)", () => {
+  test("the trade asks for the OIDC token with enable-openid-connect, and a dispatch re-plans without asking the commenter's permission", () => {
+    const { doc } = generateForgejoProductPlanPipeline("default", {
+      words: { ...words, commands: { plan: "plan" as const } },
+      productPlan: { command: "terragucci plan --pr-note {output}", trade: { aws: { region: "us-east-1", audience: "sts.amazonaws.com", role: "arn:aws:iam::123456789012:role/tg-plan" } }, replan: { dispatch: { argument: "root" }, reply: true } },
+    });
+    const plan = doc.jobsDoc["plan"] as Record<string, unknown> & Job;
+    expect(plan["enable-openid-connect"]).toBe(true);
+    expect(plan.steps[0]!.name).toBe("Trade the job's OIDC token for the plan identities");
+    expect(doc.on).toHaveProperty("workflow_dispatch");
+    const replan = doc.jobsDoc["replan"] as Job;
+    expect(replan.steps[0]!.env).toMatchObject({ CHANT_REPLAN_PERMISSION: "1", CHANT_REPLAN_DISPATCH_ARGUMENT: "root", CHANT_REPLAN_PRODUCT: "/terragucci" });
+    expect(replan.steps[0]!.run).toContain("CHANT_REPLAN_PERMISSION&&!dispatch");
+  });
+});

@@ -44,6 +44,9 @@ import { controlNoteCheckout, type ControlNoteCheckout, type ControlTarget } fro
 import { commentLine, productStatusContext } from "../ci-product-words";
 import { PLAN_WATCHES_ENV, scheduledWatchProblem, type ScheduledWatch } from "../op/schedule-overdue";
 import { PLAN_RUN_OP, PLAN_RUN_RECORD_FILE } from "../pr-plan-record";
+import { idTokenVar, tradedClouds, type CloudTradeSpec } from "../ci-identity";
+import { prNoteMarker } from "../pr-loop";
+import { PRODUCT_MARKER_NAME } from "../pr-plan-note";
 
 /** The variable the plan-note job reads the product's note words from (#4799), as JSON. Set from the pipeline, never from the report. */
 export const PR_PLAN_NOTE_WORDS_ENV = "CHANT_PLAN_NOTE_WORDS";
@@ -71,6 +74,45 @@ export interface ProductPlanTarget {
   login?: CloudLoginSpec;
   /** OIDC tokens this target's plan job requests besides its login's, `{ <variable>: <audience> }`, in place of the plan's {@link ProductPlanOptions.idTokens}. */
   idTokens?: Record<string, string>;
+  /** This target's trade (#4963), in place of the plan's {@link ProductPlanOptions.trade}. A target gives one of `login` and `trade`. */
+  trade?: CloudTradeSpec;
+}
+
+/**
+ * What the comment re-plan does besides answering the plan command (#4963),
+ * `replan: { ... }` in place of `replan: true`.
+ */
+export interface ProductPlanReplanOptions {
+  /**
+   * Re-plan from `workflow_dispatch` too, on GitHub and Forgejo: the inputs
+   * `pr` (the pull request) and `argument` (default `argument`; the target,
+   * or the one word {@link PLAN_ARGUMENT_ENV} reads, such as terragucci's
+   * `root`). Either forge lets only someone who can write to the repository
+   * dispatch, so the decision asks no permission for it. On GitLab a web
+   * pipeline of the target branch with `CHANT_PREVIEW_PR` and
+   * `CHANT_PREVIEW_COMMENT` is the dispatch already, so it renders nothing
+   * more there.
+   */
+  dispatch?: boolean | { argument?: string };
+  /**
+   * Reply to a `/<product>` comment no other job takes (#4963), on GitHub
+   * and Forgejo: a word that is not the plan command, a target that is none
+   * of the plan's, and a pull request from a fork with `forks: "skip"`. The
+   * reply names the commands. `others` are the comments the product's own
+   * jobs answer, such as `/terragucci apply`: the re-plan leaves them alone.
+   * With targets, the first target's re-plan job replies. GitLab's
+   * note-commands job answers every comment already.
+   */
+  reply?: boolean | { others?: string[] };
+  /**
+   * Reply "not affected" for a re-plan narrowed to one argument the change
+   * does not reach (#4963): when the hand-off's note says `nothing` (or a
+   * `PrReport` says `nothing`), the re-plan's note job comments
+   * `<product>: <argument> is not affected by this pull request, so
+   * nothing was planned.` and leaves the note and the status as they were
+   * (`pr-post --not-affected <argument>`).
+   */
+  notAffected?: boolean;
 }
 
 /**
@@ -109,6 +151,12 @@ export interface ProductPlanReplanJob {
   post: { command: string; env: Record<string, string>; setup?: string[] };
   /** The artifact the note job (GitHub, Forgejo) or the re-plan job (GitLab) keeps the directory as. */
   artifact: string;
+  /** With `dispatch` (#4963), GitHub and Forgejo: the `workflow_dispatch` input that names the argument. */
+  dispatch?: { argument: string };
+  /** With `reply` (#4963), GitHub and Forgejo, on one re-plan job: the product's prefix and the comments other jobs answer. */
+  reply?: { prefix: string; others: string[] };
+  /** With `notAffected` (#4963): the note job's command carries `--not-affected`, and reads the argument as {@link PLAN_ARGUMENT_ENV}. */
+  notAffected?: true;
 }
 
 /** The variable a comment re-plan's one argument reaches the plan verb in (#4899). Empty on a pull request's own plan. */
@@ -206,7 +254,32 @@ export interface ProductPlanOptions {
    * pipeline of the target branch for the comment, which runs the re-plan
    * jobs whose target the comment names.
    */
-  replan?: boolean;
+  replan?: boolean | ProductPlanReplanOptions;
+  /**
+   * The plan job's trade (#4963): chant's trade of the job's OIDC token for
+   * the plan identities' own credentials (`@intentius/chant/ci-identity`,
+   * #4296), before the change is checked out, as terragucci's re-plan
+   * trades. The plan job and the re-plan job trade in a step of their own
+   * (GitHub, Forgejo: after the pending status and the re-plan's decision,
+   * before the checkout; GitLab: the script's first lines, before the
+   * re-plan checks out the head), and every later step starts without the
+   * variables a token is requested with, so the change's code holds the
+   * traded credentials and no OIDC token. Give one of `login` and `trade`.
+   */
+  trade?: CloudTradeSpec;
+  /**
+   * The previous note's product marker for the plan verb (#4963), on GitHub
+   * and Forgejo: a step before the checkout, which alone holds the job's
+   * token, finds the pull request's note by chant's marker and sets
+   * `CHANT_PLAN_PREVIOUS_MARKER` to the body of its second line, the
+   * product's own (`noteWords.productMarker`, a hand-off's `marker`), so a
+   * plan verb such as `yodel plan` reads the digest subject it left there
+   * and says what moved. Empty when there is no note yet. The body was
+   * checked against the marker's pattern before chant posted it, and is
+   * checked again. Needs `noteWords.productMarker`. GitLab's plan job holds
+   * no token to read a note with, so it takes none.
+   */
+  previousMarker?: boolean;
   /**
    * Lines the note job runs (#4931), on GitHub and Forgejo, in the job that
    * holds the token and none of the change's code: `before` after the report
@@ -216,8 +289,13 @@ export interface ProductPlanOptions {
    * note's counts, such as terragucci's notice naming whose review does not
    * count. They reach the job's token as `GITHUB_TOKEN`. GitLab's note job
    * posts every open merge request's note in one run, so it takes none.
+   *
+   * With `pullRequest` (#4963) the lines also read the pull request and the
+   * commit planned as `PR_NUMBER` and `HEAD_SHA`, the note's own, which in
+   * a re-plan's note job come from the re-plan job, such as terragucci's
+   * notice and approval status, which ask the forge about the head.
    */
-  noteSteps?: { before?: string[]; after?: string[] };
+  noteSteps?: { before?: string[]; after?: string[]; pullRequest?: boolean };
   /**
    * The product's own scheduled jobs the note job checks for having stopped
    * (#4888), such as terragucci's drift job: each a `ScheduledWatch` with
@@ -302,8 +380,12 @@ export interface ProductPlanJob {
   report?: string;
   /** The comment re-plan's jobs for this target (#4899). */
   replan?: ProductPlanReplanJob;
-  /** The note job's own lines (#4931). */
-  noteSteps?: { before: string[]; after: string[] };
+  /** The note job's own lines (#4931); with `pullRequest` (#4963) they read `PR_NUMBER` and `HEAD_SHA`. */
+  noteSteps?: { before: string[]; after: string[]; pullRequest?: true };
+  /** The trade before the checkout (#4963), and on GitLab the `id_tokens` it reads (in `idTokens` too). */
+  trade?: CloudTradeSpec;
+  /** With `previousMarker` (#4963): the note's marker and the product marker's name the read step looks for. */
+  previous?: { marker: string; name: string };
   /** With `record` (#4899): the plan step writes the run record, `env` its op, environment and labels as {@link PLAN_RUN_RECORD_ENV}; the note job's command records it. */
   record?: { env: Record<string, string> };
 }
@@ -318,7 +400,7 @@ const NOT_WITH_PLAN: ReadonlyArray<[keyof PrLoopPipelineOptions, string]> = [
   ["locks", "the lock job reads pr-plan's report"],
   ["previewComment", "the comment preview re-runs pr-plan"],
   ["staleNotes", "the stale marking names one note per pipeline"],
-  ["identity", "the identity trade runs before pr-plan's checkout; give the product plan's login (or a target's) instead"],
+  ["identity", "the identity trade runs before pr-plan's checkout; give the product plan's trade or login (or a target's) instead"],
   ["build", "the plan verb builds what it plans"],
   ["buildCommand", "the plan verb builds what it plans"],
   ["refresh", "--refresh is a pr-plan flag"],
@@ -367,6 +449,18 @@ export function productPlanJobs(forge: ForgeKind, env: string, loop: PrLoopPipel
   }
   if (plan.concurrency?.group !== undefined && !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(plan.concurrency.group)) throw new Error(`the product plan's concurrency group ${JSON.stringify(plan.concurrency.group)} is not a name of letters, digits, ., - and _`);
   const replanComments = plan.replan ? replanCommentsOf(words) : undefined;
+  // #4963: what the re-plan does besides the plan command.
+  const replanOpts: ProductPlanReplanOptions = typeof plan.replan === "object" ? plan.replan : {};
+  const dispatchArg = replanOpts.dispatch ? (typeof replanOpts.dispatch === "object" && replanOpts.dispatch.argument !== undefined ? replanOpts.dispatch.argument : "argument") : undefined;
+  if (dispatchArg !== undefined && (dispatchArg === "pr" || !/^[a-z][a-z0-9_-]*$/.test(dispatchArg))) throw new Error(`the product plan's replan.dispatch.argument ${JSON.stringify(dispatchArg)} is not an input name of lowercase letters, digits, - and _ other than pr`);
+  const others = typeof replanOpts.reply === "object" ? (replanOpts.reply.others ?? []) : [];
+  for (const o of others) {
+    if (!o.startsWith(`/${words.product} `) && !o.startsWith(`/${words.product}\t`) && o !== `/${words.product}`) throw new Error(`the product plan's replan.reply.others ${JSON.stringify(o)} is not a /${words.product} comment`);
+    if (/['\r\n]/.test(o)) throw new Error(`the product plan's replan.reply.others ${JSON.stringify(o)} holds a quote or a line break`);
+  }
+  if (plan.previousMarker && !github) throw new Error("the product plan's previousMarker reads the pull request's note before the checkout, with the job's token, and GitLab's plan job holds no token to read a merge request's notes with; leave previousMarker out on GitLab");
+  const productMarker = plan.noteWords?.productMarker;
+  if (plan.previousMarker && (productMarker === undefined || !PRODUCT_MARKER_NAME.test(productMarker))) throw new Error("the product plan's previousMarker reads the note's product marker, and the note words name none; give noteWords.productMarker");
   if (plan.noteSteps && !github && ((plan.noteSteps.before?.length ?? 0) > 0 || (plan.noteSteps.after?.length ?? 0) > 0)) {
     throw new Error("the product plan's noteSteps run in the note job of one pull request, and GitLab's note job posts every open merge request's note in one run (pr-post --open); leave noteSteps out on GitLab");
   }
@@ -404,17 +498,34 @@ export function productPlanJobs(forge: ForgeKind, env: string, loop: PrLoopPipel
     // The note job reads its own plan job's result, by that job's name.
     const postEnv: Record<string, string> = github ? { ...post.env, PLAN_RESULT: `\${{ needs.${jobName}.result }}`, ...noteWords } : { ...post.env, ...noteWords };
     // #4931: the target's login, else the plan's, from the OIDC token file (ci-login, #4788).
-    const loginSpec = target?.login ?? plan.login;
+    // #4963: a target's own login or trade stands in for both of the plan's.
+    const own2 = target?.login !== undefined || target?.trade !== undefined;
+    const loginSpec = own2 ? target?.login : plan.login;
+    const tradeSpec = own2 ? target?.trade : plan.trade;
+    if (loginSpec && tradeSpec) throw new Error(`the product plan${name ? `'s target ${name}` : ""} gives both login and trade; the trade leaves no token for a login to read, so give one`);
+    if (tradeSpec && tradedClouds(tradeSpec).length === 0) throw new Error(`the product plan${name ? `'s target ${name}` : ""} trades for no identity; give the trade a cloud`);
     const login = loginSpec ? cloudLogin(forge, loginSpec) : undefined;
+    const tradeTokens: Record<string, string> = tradeSpec ? Object.fromEntries(tradedClouds(tradeSpec).map((c) => [idTokenVar(c), tradeSpec[c]!.audience])) : {};
     const ownTokens = target?.idTokens ?? plan.idTokens;
     for (const [v, aud] of Object.entries(ownTokens ?? {})) {
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(v)) throw new Error(`the product plan's id token ${JSON.stringify(v)} is not a variable name`);
       if (!aud.trim() || /\s/.test(aud)) throw new Error(`the product plan's id token ${v} names no audience`);
       if (login && v in login.idTokens && login.idTokens[v] !== aud) throw new Error(`the product plan's id token ${v} is the login's, with another audience`);
+      if (v in tradeTokens && tradeTokens[v] !== aud) throw new Error(`the product plan's id token ${v} is the trade's, with another audience`);
     }
-    const idTokens = { ...(login?.idTokens ?? {}), ...(ownTokens ?? {}) };
+    const idTokens = { ...(login?.idTokens ?? {}), ...tradeTokens, ...(ownTokens ?? {}) };
     const artifact = plan.artifact ? (name ? `${plan.artifact}-${name}` : plan.artifact) : name ? `chant-pr-plan-${name}` : "chant-pr-plan";
-    const replan0 = replanComments ? { ...replanJobOf(forge, env, words, name, artifact, noteWords), ...replanComments } : undefined;
+    // #4963: on GitHub and Forgejo the first re-plan job replies to the comments no other job takes.
+    const replies = github && Boolean(replanOpts.reply) && (targets === undefined || target === targets[0]);
+    const replan0 = replanComments
+      ? {
+          ...replanJobOf(forge, env, words, name, artifact, noteWords, { notAffected: replanOpts.notAffected === true }),
+          ...replanComments,
+          ...(github && dispatchArg !== undefined ? { dispatch: { argument: dispatchArg } } : {}),
+          ...(replies ? { reply: { prefix: `/${words.product}`, others } } : {}),
+          ...(replanOpts.notAffected ? { notAffected: true as const } : {}),
+        }
+      : undefined;
     const replan = replan0 && plan.record ? { ...replan0, post: { ...replan0.post, command: `${replan0.post.command} --record-run ${replan0.jobName}` } } : replan0;
     const record = plan.record ? { env: { [PLAN_RUN_RECORD_ENV]: JSON.stringify({ op: PLAN_RUN_OP, env, labels: { Env: env, Pipeline: "pr", Job: "plan", ...(name ? { Target: name } : {}) } }) } } : undefined;
     const noteBefore = plan.noteSteps?.before ?? [];
@@ -439,8 +550,10 @@ export function productPlanJobs(forge: ForgeKind, env: string, loop: PrLoopPipel
       ...(plan.setup?.length ? { setup: plan.setup } : {}),
       ...(plan.report ? { report: fill(plan.report, name) } : {}),
       ...(replan ? { replan } : {}),
-      ...(noteBefore.length > 0 || noteAfter.length > 0 ? { noteSteps: { before: noteBefore, after: noteAfter } } : {}),
+      ...(noteBefore.length > 0 || noteAfter.length > 0 ? { noteSteps: { before: noteBefore, after: noteAfter, ...(plan.noteSteps?.pullRequest ? { pullRequest: true as const } : {}) } } : {}),
       ...(record ? { record } : {}),
+      ...(tradeSpec ? { trade: tradeSpec } : {}),
+      ...(plan.previousMarker && productMarker ? { previous: { marker: prNoteMarker(env, name), name: productMarker } } : {}),
     };
   };
   return targets ? targets.map(one) : [one()];
@@ -455,12 +568,15 @@ function replanCommentsOf(words: CiProductWords): { comments: string[]; gated: A
 }
 
 /** The re-plan's jobs for one target (#4899), its comments filled in by the caller. */
-function replanJobOf(forge: ForgeKind, env: string, words: CiProductWords, name: string | undefined, artifact: string, noteWords: Record<string, string>): Omit<ProductPlanReplanJob, "comments" | "gated"> {
+function replanJobOf(forge: ForgeKind, env: string, words: CiProductWords, name: string | undefined, artifact: string, noteWords0: Record<string, string>, opts: { notAffected?: boolean } = {}): Omit<ProductPlanReplanJob, "comments" | "gated"> {
   const github = forge !== "gitlab";
   const jobName = github ? (name ? `${REPLAN_JOB}-${name}` : REPLAN_JOB) : name ? `${name}-${REPLAN_JOB}` : REPLAN_JOB;
   const noteJobName = github ? (name ? `${REPLAN_NOTE_JOB}-${name}` : REPLAN_NOTE_JOB) : name ? `${name}-${REPLAN_NOTE_JOB}` : REPLAN_NOTE_JOB;
   // pr-post reads the pull request and the head from the re-plan job, never the comment. GitLab's is GitHub's line with its own --forge.
-  const command = github ? prLoopPostJob(forge, env, name, words).command : prLoopPostJob("github", env, name, words).command.replace(" --forge github ", " --forge gitlab ");
+  const command0 = github ? prLoopPostJob(forge, env, name, words).command : prLoopPostJob("github", env, name, words).command.replace(" --forge github ", " --forge gitlab ");
+  // #4963: the argument the re-plan was narrowed to, which pr-post answers "not affected" for when the change does not reach it.
+  const command = opts.notAffected ? `${command0} --not-affected "$${PLAN_ARGUMENT_ENV}"` : command0;
+  const noteWords = opts.notAffected && github ? { ...noteWords0, [PLAN_ARGUMENT_ENV]: `\${{ needs.${jobName}.outputs.argument }}` } : noteWords0;
   const post = github
     ? {
         command,
@@ -519,35 +635,126 @@ export function gitlabReplanCommentIf(replan: Pick<ProductPlanReplanJob, "commen
  * commenter), whether the commenter can write. It writes `go=1`, `pr`,
  * `head`, `base` and `argument` to the step's outputs.
  */
-export const REPLAN_DECIDE_JS = [
+export const REPLAN_DECIDE_JS = replanDecideJs();
+
+/**
+ * The re-plan's decision script (#4899) with what `replan`'s options add
+ * (#4963). With neither it is {@link REPLAN_DECIDE_JS}, as before.
+ *
+ * - `dispatch`: on `workflow_dispatch` the pull request is the `pr` input
+ *   and the argument the input `CHANT_REPLAN_DISPATCH_ARGUMENT` names;
+ *   a `pr` that is not a number, or an argument that is not one plain
+ *   word, fails the job. No permission is asked: only a writer dispatches.
+ * - `reply`: a comment that starts with `CHANT_REPLAN_PRODUCT` and is not
+ *   the plan command, nor one of `CHANT_REPLAN_OTHERS`, a target that is
+ *   none of the plan's, and a fork's pull request with `forks: "skip"`
+ *   get a reply comment with the reason, once the commenter's permission
+ *   is known (Forgejo). A dispatch's reason goes to the log alone.
+ */
+export function replanDecideJs(opts: { dispatch?: boolean; reply?: boolean } = {}): string {
+  const { dispatch = false, reply = false } = opts;
+  const replyLine = reply
+    ? [
+        // The reply, as the product: on a dispatch the log alone.
+        `const post=async(t)=>{say(t);${dispatch ? "if(dispatch)return;" : ""}const r=await fetch(api+"/repos/"+repo+"/issues/"+n+"/comments",{method:"POST",headers:{authorization:"token "+process.env.CHANT_REPLAN_TOKEN,accept:"application/json","content-type":"application/json"},body:JSON.stringify({body:product.slice(1)+": "+t})});if(!r.ok)console.error("chant: the reply was not posted: the forge answered "+r.status)};`,
+      ]
+    : [];
+  return [
+    'const fs=require("fs");',
+    'const say=(m)=>console.log("chant: "+m);',
+    'const out=(k,v)=>fs.appendFileSync(process.env.GITHUB_OUTPUT,k+"="+v+"\\n");',
+    "let e;try{e=JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH,\"utf8\"))}catch{say(\"the event file does not read, so nothing is planned again\");process.exit(0)}",
+    ...(dispatch ? ['const dispatch=process.env.GITHUB_EVENT_NAME==="workflow_dispatch",inputs=e.inputs&&typeof e.inputs==="object"?e.inputs:{};'] : []),
+    'const body=String((e.comment&&e.comment.body)||"").trim();',
+    'const cmds=JSON.parse(process.env.CHANT_REPLAN_COMMANDS||"[]");',
+    'for(const g of JSON.parse(process.env.CHANT_REPLAN_GATED||"[]")){const v=process.env[g.when]||"";if(v&&v!=="0"&&v!=="false")cmds.push(g.comment)}',
+    "let arg;",
+    ...(reply ? ['let refusal;const product=process.env.CHANT_REPLAN_PRODUCT||"",others=JSON.parse(process.env.CHANT_REPLAN_OTHERS||"[]");const says=(c)=>body===c||body.startsWith(c+" ")||body.startsWith(c+"\\t");'] : []),
+    ...(dispatch
+      ? [
+          'if(dispatch){const pv=String(inputs.pr==null?"":inputs.pr).trim();if(!pv){say("the dispatch names no pull request");process.exit(0)}if(!/^[1-9][0-9]{0,9}$/.test(pv)){console.error("chant: the dispatch\\u0027s pr input is a pull request number, like 42");process.exit(1)}',
+          'const k=process.env.CHANT_REPLAN_DISPATCH_ARGUMENT||"argument",a=String(inputs[k]==null?"":inputs[k]).trim();if(a&&!/^[A-Za-z0-9_.\\/@+=,:-]+$/.test(a)){console.error("chant: the dispatch\\u0027s "+k+" input is one word of letters, digits and _./@+=,:-");process.exit(1)}arg=a}else ',
+        ]
+      : []),
+    'for(const c of cmds){if(body===c){arg="";break}if(body.startsWith(c+" ")){const r=body.slice(c.length).trim();if(/^[A-Za-z0-9_.\\/@+=,:-]+$/.test(r)){arg=r;break}}}',
+    reply
+      ? 'if(arg===undefined){if(product&&says(product)&&!others.some(says)){refusal="the commands are "+cmds.concat(others).map((c)=>"`"+c+"`").join(", ")}else{say("the comment asks for no plan");process.exit(0)}}'
+      : 'if(arg===undefined){say("the comment asks for no plan");process.exit(0)}',
+    'const target=process.env.CHANT_REPLAN_TARGET||"",targets=JSON.parse(process.env.CHANT_REPLAN_TARGETS||"[]");',
+    reply
+      ? 'if(targets.length&&arg&&!targets.includes(arg)){refusal=arg+" is none of "+targets.join(", ")+", so nothing is planned again";arg=""}'
+      : 'if(targets.length&&arg&&!targets.includes(arg)){say(arg+" is none of "+targets.join(", ")+", so nothing is planned again");process.exit(0)}',
+    'if(targets.length&&arg&&arg!==target){say("the comment plans "+arg+" again, not "+target);process.exit(0)}',
+    dispatch
+      ? 'const n=dispatch?Number(String(inputs.pr).trim()):e.issue&&e.issue.number;if(!dispatch&&(!Number.isInteger(n)||!(e.issue.pull_request||e.is_pull))){say("the comment is not on a pull request");process.exit(0)}'
+      : 'const n=e.issue&&e.issue.number;if(!Number.isInteger(n)||!(e.issue.pull_request||e.is_pull)){say("the comment is not on a pull request");process.exit(0)}',
+    'const api=String(process.env.GITHUB_API_URL||"").replace(/\\/+$/,""),repo=process.env.GITHUB_REPOSITORY;',
+    'const get=async(p)=>{const r=await fetch(api+"/repos/"+repo+p,{headers:{authorization:"token "+process.env.CHANT_REPLAN_TOKEN,accept:"application/json"}});if(!r.ok)throw new Error(p+" answered "+r.status);return r.json()};',
+    ...replyLine,
+    "(async()=>{",
+    ...(reply
+      ? [
+          // Who asked comes first: a commenter who cannot write gets no reply.
+          `if(process.env.CHANT_REPLAN_PERMISSION${dispatch ? "&&!dispatch" : ""}){const who=e.comment&&e.comment.user&&e.comment.user.login;const p=who?await get("/collaborators/"+encodeURIComponent(who)+"/permission"):{};`,
+          'if(!["owner","admin","maintain","write"].includes(p.permission)){say((who||"the commenter")+" cannot write to "+repo+", so nothing is planned again");return}}',
+          "if(refusal){await post(refusal);return}",
+          'const pr=await get("/pulls/"+n);',
+          'if(pr.state!=="open"){say("pull request "+n+" is not open, so it is not planned again");return}',
+          'const same=Boolean(pr.head&&pr.head.repo&&pr.head.repo.full_name===repo);',
+          'if(!same&&process.env.CHANT_REPLAN_FORKS==="skip"){await post("pull request "+n+" is from a fork, and its code never runs with this repository\\u0027s credentials, so it is not planned again");return}',
+        ]
+      : [
+          'const pr=await get("/pulls/"+n);',
+          'if(pr.state!=="open"){say("pull request "+n+" is not open, so it is not planned again");return}',
+          'const same=Boolean(pr.head&&pr.head.repo&&pr.head.repo.full_name===repo);',
+          'if(!same&&process.env.CHANT_REPLAN_FORKS==="skip"){say("pull request "+n+" is from a fork, and its code never runs with this repository\\u0027s credentials");return}',
+          `if(process.env.CHANT_REPLAN_PERMISSION${dispatch ? "&&!dispatch" : ""}){const who=e.comment&&e.comment.user&&e.comment.user.login;const p=who?await get("/collaborators/"+encodeURIComponent(who)+"/permission"):{};`,
+          'if(!["owner","admin","maintain","write"].includes(p.permission)){say((who||"the commenter")+" cannot write to "+repo+", so nothing is planned again");return}}',
+        ]),
+    'const sha=/^[0-9a-f]{40}$/;if(!sha.test(String(pr.head&&pr.head.sha))||!sha.test(String(pr.base&&pr.base.sha)))throw new Error("the pull request names no head or base commit");',
+    'out("go","1");out("pr",String(n));out("head",pr.head.sha);out("base",pr.base.sha);out("argument",arg);',
+    'say("planning pull request "+n+" again at "+pr.head.sha.slice(0,12)+(arg?" for "+arg:""))',
+    '})().catch((err)=>{console.error("chant: the re-plan could not decide: "+(err&&err.message?err.message:String(err)));process.exit(1)});',
+  ].join("");
+}
+
+/**
+ * The previous note's read step on GitHub and Forgejo (#4963): `node -e`,
+ * from `/`, with the job's token in `CHANT_PREVIOUS_TOKEN` alone. It pages
+ * through pull request `CHANT_PREVIOUS_PR`'s comments for the one whose
+ * first line is `CHANT_PREVIOUS_NOTE` (chant's marker), takes its second
+ * line's body when it is `<!-- <CHANT_PREVIOUS_NAME> <body> -->` and the
+ * body is plain words, and appends `CHANT_PLAN_PREVIOUS_MARKER=<body>` to
+ * `$GITHUB_ENV`, empty when there is none. A forge that refuses is a
+ * warning: the plan verb plans without it.
+ */
+export const PREVIOUS_MARKER_JS = [
   'const fs=require("fs");',
-  'const say=(m)=>console.log("chant: "+m);',
-  'const out=(k,v)=>fs.appendFileSync(process.env.GITHUB_OUTPUT,k+"="+v+"\\n");',
-  "let e;try{e=JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH,\"utf8\"))}catch{say(\"the event file does not read, so nothing is planned again\");process.exit(0)}",
-  'const body=String((e.comment&&e.comment.body)||"").trim();',
-  'const cmds=JSON.parse(process.env.CHANT_REPLAN_COMMANDS||"[]");',
-  'for(const g of JSON.parse(process.env.CHANT_REPLAN_GATED||"[]")){const v=process.env[g.when]||"";if(v&&v!=="0"&&v!=="false")cmds.push(g.comment)}',
-  "let arg;",
-  'for(const c of cmds){if(body===c){arg="";break}if(body.startsWith(c+" ")){const r=body.slice(c.length).trim();if(/^[A-Za-z0-9_.\\/@+=,:-]+$/.test(r)){arg=r;break}}}',
-  'if(arg===undefined){say("the comment asks for no plan");process.exit(0)}',
-  'const target=process.env.CHANT_REPLAN_TARGET||"",targets=JSON.parse(process.env.CHANT_REPLAN_TARGETS||"[]");',
-  'if(targets.length&&arg&&!targets.includes(arg)){say(arg+" is none of "+targets.join(", ")+", so nothing is planned again");process.exit(0)}',
-  'if(targets.length&&arg&&arg!==target){say("the comment plans "+arg+" again, not "+target);process.exit(0)}',
-  'const n=e.issue&&e.issue.number;if(!Number.isInteger(n)||!(e.issue.pull_request||e.is_pull)){say("the comment is not on a pull request");process.exit(0)}',
-  'const api=String(process.env.GITHUB_API_URL||"").replace(/\\/+$/,""),repo=process.env.GITHUB_REPOSITORY;',
-  'const get=async(p)=>{const r=await fetch(api+"/repos/"+repo+p,{headers:{authorization:"token "+process.env.CHANT_REPLAN_TOKEN,accept:"application/json"}});if(!r.ok)throw new Error(p+" answered "+r.status);return r.json()};',
+  'const api=String(process.env.GITHUB_API_URL||"").replace(/\\/+$/,""),repo=process.env.GITHUB_REPOSITORY,n=process.env.CHANT_PREVIOUS_PR||"";',
+  'const note=process.env.CHANT_PREVIOUS_NOTE||"",name=process.env.CHANT_PREVIOUS_NAME||"";',
+  'const put=(v)=>fs.appendFileSync(process.env.GITHUB_ENV,"CHANT_PLAN_PREVIOUS_MARKER="+v+"\\n");',
+  'const esc=(s)=>s.replace(/[.*+?^${}()|[\\]\\\\]/g,"\\\\$&");',
+  'const own=new RegExp("^<!-- "+esc(name)+"(?: ([A-Za-z0-9_.,\\\\/@+=:-]+(?: [A-Za-z0-9_.,\\\\/@+=:-]+)*))? -->$");',
+  'if(!/^[0-9]+$/.test(n)){console.log("chant: no pull request to read the previous note of");put("");process.exit(0)}',
   "(async()=>{",
-  'const pr=await get("/pulls/"+n);',
-  'if(pr.state!=="open"){say("pull request "+n+" is not open, so it is not planned again");return}',
-  'const same=Boolean(pr.head&&pr.head.repo&&pr.head.repo.full_name===repo);',
-  'if(!same&&process.env.CHANT_REPLAN_FORKS==="skip"){say("pull request "+n+" is from a fork, and its code never runs with this repository\\u0027s credentials");return}',
-  'if(process.env.CHANT_REPLAN_PERMISSION){const who=e.comment&&e.comment.user&&e.comment.user.login;const p=who?await get("/collaborators/"+encodeURIComponent(who)+"/permission"):{};',
-  'if(!["owner","admin","maintain","write"].includes(p.permission)){say((who||"the commenter")+" cannot write to "+repo+", so nothing is planned again");return}}',
-  'const sha=/^[0-9a-f]{40}$/;if(!sha.test(String(pr.head&&pr.head.sha))||!sha.test(String(pr.base&&pr.base.sha)))throw new Error("the pull request names no head or base commit");',
-  'out("go","1");out("pr",String(n));out("head",pr.head.sha);out("base",pr.base.sha);out("argument",arg);',
-  'say("planning pull request "+n+" again at "+pr.head.sha.slice(0,12)+(arg?" for "+arg:""))',
-  '})().catch((err)=>{console.error("chant: the re-plan could not decide: "+(err&&err.message?err.message:String(err)));process.exit(1)});',
+  "for(let page=1;page<=50;page++){",
+  'const r=await fetch(api+"/repos/"+repo+"/issues/"+n+"/comments?per_page=100&limit=50&page="+page,{headers:{authorization:"token "+process.env.CHANT_PREVIOUS_TOKEN,accept:"application/json"}});',
+  'if(!r.ok)throw new Error("the forge answered "+r.status);',
+  "const list=await r.json();if(!Array.isArray(list)||list.length===0)break;",
+  'for(const c of list){const lines=String(c&&c.body||"").replace(/\\r\\n/g,"\\n").split("\\n");if(lines[0]!==note)continue;const m=own.exec(lines[1]||"");const v=m&&m[1]&&m[1].length<=4096?m[1]:"";put(v);console.log("chant: the previous note"+(v?" carries "+name:" carries no "+name));return}',
+  "}",
+  'put("");console.log("chant: the pull request has no note yet")',
+  '})().catch((err)=>{put("");console.log("chant: the previous note was not read: "+(err&&err.message?err.message:String(err)))});',
 ].join("");
+
+/** The GitLab re-plan's lines that set {@link PLAN_ARGUMENT_ENV} from the comment's one word after the command (#4899), which the rule already held to plain characters. */
+export function gitlabReplanArgumentLines(replan: Pick<ProductPlanReplanJob, "comments" | "gated">): string[] {
+  const byLength = [...replan.comments, ...replan.gated.map((g) => g.comment)].sort((a, b) => b.length - a.length);
+  return [
+    `case "$${GITLAB_REPLAN_COMMENT_VAR}" in ${byLength.map((c) => `"${c}"*) chant_rest="\${${GITLAB_REPLAN_COMMENT_VAR}#"${c}"}" ;;`).join(" ")} *) chant_rest="" ;; esac`,
+    `${PLAN_ARGUMENT_ENV}="$(printf '%s' "$chant_rest" | tr -d ' ')" && export ${PLAN_ARGUMENT_ENV}`,
+  ];
+}
 
 /**
  * The pending step's script on GitHub and Forgejo (#4899): `node -e`, from

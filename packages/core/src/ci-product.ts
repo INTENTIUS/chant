@@ -13,6 +13,7 @@ import type { CiProductWords, CiProductWordsInput } from "./ci-product-words";
 import type { ProductMcpHook } from "./cli/mcp/product-tools";
 import type { ProductWaveHook } from "./op/op-waves-after-plan";
 import { OTLP_EXPORTER_FLOOR } from "./otlp";
+import { NEXT_RELEASE } from "./release-floors";
 
 /**
  * The first chant with the product pipeline (#4550): the words, the
@@ -158,6 +159,13 @@ export { PLAN_WATCHES_ENV } from "./op/schedule-overdue";
  */
 export const PRODUCT_PLAN_RECORD_FLOOR = "0.124.88";
 export { PLAN_RUN_OP, PLAN_RUN_RECORD_FILE, readPlanRunRecord } from "./pr-plan-record";
+
+/**
+ * The first chant whose product plan carries what terragucci's and sql-yodeler's plan jobs did themselves (#4963, #4951): `trade` (a plan's or a target's) before the checkout, `replan: { dispatch, reply, notAffected }` (a re-plan from `workflow_dispatch`, a reply to a comment no other job takes, `pr-post --not-affected`), `previousMarker` (`CHANT_PLAN_PREVIOUS_MARKER`), `noteSteps.pullRequest`, a `PrReport`'s `marker`, and a hand-off of the product's own note text (`planBodyHandoff`).
+ */
+export const PRODUCT_PLAN_REPLAN_FLOOR = NEXT_RELEASE;
+export { gitlabReplanArgumentLines, PREVIOUS_MARKER_JS, replanDecideJs, type ProductPlanReplanOptions } from "./components/product-plan";
+export { planBodyHandoff, PLAN_BODY_LIMIT, type PrPlanBodyHandoff } from "./pr-plan-note";
 
 /**
  * Day-2 actions in the product pipeline (#4654): the `action` comment

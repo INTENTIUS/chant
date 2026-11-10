@@ -27,6 +27,13 @@
  * write`. With `checkJob` and `refGateStatus` (#4935) the check, check
  * evidence and ref gate jobs come after the note jobs (`./pr-check-jobs.ts`).
  *
+ * With `productPlan.trade` (#4963) the plan and re-plan jobs trade the
+ * job's OIDC token before the checkout, and later steps drop the token
+ * request variables; `previousMarker` reads the previous note's product
+ * marker before the checkout; `replan: { dispatch, reply, notAffected }`
+ * re-plans from `workflow_dispatch`, replies to the `/<product>` comments
+ * no other job takes, and answers "not affected" for a narrowed re-plan.
+ *
  * Forgejo renders the same document through its dialect
  * (`generateForgejoProductPlanPipeline` in the forgejo lexicon).
  */
@@ -35,8 +42,9 @@ import { CI_IMAGE, GITHUB_JOB_TOKEN, githubRunsOn } from "@intentius/chant/ci-jo
 import { CHECKOUT_TOKEN_ENV, checkoutScript, dropForgeTokens, handoverOutputs, handoverTrap, takeOverScript } from "@intentius/chant/ci-handover";
 import { PR_LOOP_REPORT_DIR, prLoopSetup } from "@intentius/chant/components/pr-pipeline";
 import { productPipelineJobs, type ProductPipelineJobs, type ProductPipelineOptions } from "@intentius/chant/components/product-pipeline";
-import { PENDING_JS, PLAN_ARGUMENT_ENV, PLAN_NOTE_NOTICES_ENV, planVerbLines, REPLAN_DECIDE_JS, SAME_REPOSITORY_IF, type ProductPlanJob, type ProductPlanOptions } from "@intentius/chant/components/product-plan";
+import { PENDING_JS, PLAN_ARGUMENT_ENV, PLAN_NOTE_NOTICES_ENV, planVerbLines, PREVIOUS_MARKER_JS, REPLAN_DECIDE_JS, replanDecideJs, SAME_REPOSITORY_IF, type ProductPlanJob, type ProductPlanOptions } from "@intentius/chant/components/product-plan";
 import { productStatusContext } from "@intentius/chant/ci-product-words";
+import { OIDC_REQUEST_VARS, TRADE_SPEC_ENV, tradeLine } from "@intentius/chant/ci-identity";
 import { CHECKOUT, emitWorkflowYAML, runSteps, UPLOAD_ARTIFACT, type GithubWorkflowDoc } from "./ci-jobs";
 import { githubCheckJobs } from "./pr-check-jobs";
 
@@ -72,23 +80,39 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
   const plan = options.productPlan;
   const branch = options.branch ?? "main";
   const fork = plan.forks === "skip" ? ` && ${SAME_REPOSITORY_IF}` : "";
-  const drop = dropForgeTokens("sh");
-  const headStep = (line: string, cond?: string): Record<string, unknown> => ({ ...(cond ? { if: cond } : {}), run: `${drop}\n${line}` });
+  // #4963: after a trade, every later step also starts without the variables a token is requested with.
+  const dropOf = (p: ProductPlanJob): string => (p.trade ? dropForgeTokens("sh", OIDC_REQUEST_VARS) : dropForgeTokens("sh"));
   const setup = [...prLoopSetup(image, options.engineSetup), ...beforeScript];
   const targets = plans.flatMap((p) => (p.target ? [p.target] : []));
   // The steps between the checkout and the plan step (#4899, #4931): the control read, the product's steps, the setup lines, the login and the probe.
-  const middle = (p: ProductPlanJob, env: Record<string, string>, cond?: string): Record<string, unknown>[] => [
-    ...(p.control ? [{ ...(cond ? { if: cond } : {}), name: p.control.stepName, env: p.control.env, run: p.control.script }] : []),
-    ...(p.setup ?? []).map((s) =>
-      s.uses !== undefined
-        ? { ...(cond ? { if: cond } : {}), ...(s.name ? { name: s.name } : {}), uses: s.uses, ...(s.with ? { with: s.with } : {}), ...(s.env ? { env: s.env } : {}) }
-        : { ...(cond ? { if: cond } : {}), ...(s.name ? { name: s.name } : {}), ...(s.env ? { env: s.env } : {}), run: `${drop}\n${s.run}` },
-    ),
-    ...setup.map((line) => headStep(line, cond)),
-    ...(p.login ?? []).map((st) => ({ ...(cond ? { if: cond } : {}), name: st.name, run: `${drop}\n${st.run.join("\n")}` })),
-    ...(p.writeProbe ? [{ ...(cond ? { if: cond } : {}), name: "This job cannot write", env, run: `${drop}\n${p.writeProbe}` }] : []),
-  ];
-  const planRun = (p: ProductPlanJob, before: string[] = []): string => [drop, ...handoverTrap(PR_LOOP_REPORT_DIR, forge), ...before, ...planVerbLines(p), ...extraScript].join("\n");
+  const middle = (p: ProductPlanJob, env: Record<string, string>, cond?: string): Record<string, unknown>[] => {
+    const drop = dropOf(p);
+    return [
+      ...(p.control ? [{ ...(cond ? { if: cond } : {}), name: p.control.stepName, env: p.control.env, run: p.control.script }] : []),
+      ...(p.setup ?? []).map((s) =>
+        s.uses !== undefined
+          ? { ...(cond ? { if: cond } : {}), ...(s.name ? { name: s.name } : {}), uses: s.uses, ...(s.with ? { with: s.with } : {}), ...(s.env ? { env: s.env } : {}) }
+          : { ...(cond ? { if: cond } : {}), ...(s.name ? { name: s.name } : {}), ...(s.env ? { env: s.env } : {}), run: `${drop}\n${s.run}` },
+      ),
+      ...setup.map((line) => ({ ...(cond ? { if: cond } : {}), run: `${drop}\n${line}` })),
+      ...(p.login ?? []).map((st) => ({ ...(cond ? { if: cond } : {}), name: st.name, run: `${drop}\n${st.run.join("\n")}` })),
+      ...(p.writeProbe ? [{ ...(cond ? { if: cond } : {}), name: "This job cannot write", env, run: `${drop}\n${p.writeProbe}` }] : []),
+    ];
+  };
+  const planRun = (p: ProductPlanJob, before: string[] = []): string => [dropOf(p), ...handoverTrap(PR_LOOP_REPORT_DIR, forge), ...before, ...planVerbLines(p), ...extraScript].join("\n");
+  // #4963: the trade, before the checkout, for the plan identities' own credentials; the later steps hold no OIDC token.
+  const tradeStep = (p: ProductPlanJob, cond?: string): Record<string, unknown>[] =>
+    p.trade ? [{ ...(cond ? { if: cond } : {}), name: "Trade the job's OIDC token for the plan identities", env: { [TRADE_SPEC_ENV]: JSON.stringify(p.trade) }, run: tradeLine("$GITHUB_ENV", "github-env") }] : [];
+  // #4963: the previous note's product marker for the plan verb, read with the token before the checkout.
+  const previousStep = (p: ProductPlanJob, pr: string, cond?: string): Record<string, unknown>[] =>
+    p.previous
+      ? [{
+          ...(cond ? { if: cond } : {}),
+          name: "Read the previous note's marker",
+          env: { CHANT_PREVIOUS_TOKEN: GITHUB_JOB_TOKEN, CHANT_PREVIOUS_PR: pr, CHANT_PREVIOUS_NOTE: p.previous.marker, CHANT_PREVIOUS_NAME: p.previous.name },
+          run: `(cd / && node -e '${PREVIOUS_MARKER_JS}')`,
+        }]
+      : [];
   const permissions = (p: ProductPlanJob): Record<string, string> => ({ contents: "read", ...(p.pending ? { statuses: "write" } : {}), ...(p.idTokens ? { "id-token": "write" } : {}) });
   const pendingStep = (p: ProductPlanJob, sha: string, cond?: string): Record<string, unknown>[] =>
     p.pending
@@ -102,8 +126,11 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
   // #4931: the note job's own lines, before pr-post (writing notices to a file outside the report) and after it.
   // The file is named in the step's shell: RUNNER_TEMP is the container's, which `runner.temp` is not in a container job.
   const notices = `export ${PLAN_NOTE_NOTICES_ENV}="\${RUNNER_TEMP:-/tmp}/chant-plan-note-notices"`;
-  const noteBefore = (p: ProductPlanJob): Record<string, unknown>[] => (p.noteSteps?.before.length ? [{ name: "The product's lines before the note", if: "always()", env: { GITHUB_TOKEN: GITHUB_JOB_TOKEN }, run: [notices, ...p.noteSteps.before].join("\n") }] : []);
-  const noteAfter = (p: ProductPlanJob): Record<string, unknown>[] => (p.noteSteps?.after.length ? [{ name: "The product's lines after the note", if: "always()", env: { GITHUB_TOKEN: GITHUB_JOB_TOKEN }, run: p.noteSteps.after.join("\n") }] : []);
+  // #4963: with pullRequest the lines read the note's pull request and head, the post step's.
+  const noteEnv = (p: ProductPlanJob, post: Record<string, string>): Record<string, string> =>
+    p.noteSteps?.pullRequest ? { GITHUB_TOKEN: GITHUB_JOB_TOKEN, PR_NUMBER: post.PR_NUMBER!, HEAD_SHA: post.HEAD_SHA! } : { GITHUB_TOKEN: GITHUB_JOB_TOKEN };
+  const noteBefore = (p: ProductPlanJob, post: Record<string, string>): Record<string, unknown>[] => (p.noteSteps?.before.length ? [{ name: "The product's lines before the note", if: "always()", env: noteEnv(p, post), run: [notices, ...p.noteSteps.before].join("\n") }] : []);
+  const noteAfter = (p: ProductPlanJob, post: Record<string, string>): Record<string, unknown>[] => (p.noteSteps?.after.length ? [{ name: "The product's lines after the note", if: "always()", env: noteEnv(p, post), run: p.noteSteps.after.join("\n") }] : []);
   const postRun = (p: ProductPlanJob, command: string): string => (p.noteSteps?.before.length ? `${notices}\n${command}` : command);
   const jobsDoc: Record<string, unknown> = {};
   for (const p of plans) {
@@ -117,6 +144,9 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
       steps: [
         // #4899: before the checkout, the one step that holds the token for the status.
         ...pendingStep(p, "${{ github.sha }}"),
+        // #4963: the previous note's marker and the trade, before any of the change's code is here.
+        ...previousStep(p, "${{ github.event.pull_request.number }}"),
+        ...tradeStep(p),
         // A script, not actions/checkout, whose post step runs at the job's end with the token as its input.
         { name: "Check out the change", env: { [CHECKOUT_TOKEN_ENV]: GITHUB_JOB_TOKEN }, run: checkoutScript(true, true) },
         ...middle(p, p.env),
@@ -148,9 +178,9 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
         // #4870: the runner key (or #4869 the keyless signing) is in this step alone, in a job that runs none of the change's code.
         ...(p.evidence ? [{ name: "Sign the plan and policy evidence", if: "always()", env: p.evidence.env, run: p.evidence.lines.join("\n") }] : []),
         { name: "Keep the plan report", if: "always()", uses: UPLOAD_ARTIFACT, with: { name: p.artifact, path: PR_LOOP_REPORT_DIR, "if-no-files-found": "ignore", "include-hidden-files": true } },
-        ...noteBefore(p),
+        ...noteBefore(p, p.post.env),
         { name: `Post the plan note and ${productStatusContext(jobs.words, "plan", p.target)}`, if: "always()", env: p.post.env, run: postRun(p, p.post.command) },
-        ...noteAfter(p),
+        ...noteAfter(p, p.post.env),
       ],
     };
   }
@@ -162,20 +192,30 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
     const says = r.comments.map((c) => `startsWith(github.event.comment.body, '${c}')`);
     const gated = r.gated.map((g) => `startsWith(github.event.comment.body, '${g.comment}')`);
     const github = forge === "github";
+    // #4963: the reply job also answers every /<product> comment no other job takes.
+    const replyIf = r.reply ? [`(${[`startsWith(github.event.comment.body, '${r.reply.prefix}')`, ...r.reply.others.map((o) => `!startsWith(github.event.comment.body, '${o}')`)].join(" && ")})`] : [];
+    const commentIf = [
+      "github.event_name == 'issue_comment'",
+      github ? "github.event.issue.pull_request" : "(github.event.issue.pull_request || github.event.is_pull)",
+      `(${[...says, ...gated, ...replyIf].join(" || ")})`,
+      ...(github ? ["contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.comment.author_association)"] : []),
+    ].join(" && ");
     // The plan step reads the pull request, its base and the comment's argument from the decision, never the event.
     const replanEnv = { ...p.env, ...(p.record?.env ?? {}), BASE_SHA: "${{ steps.decide.outputs.base }}", PR_NUMBER: "${{ steps.decide.outputs.pr }}", [PLAN_ARGUMENT_ENV]: "${{ steps.decide.outputs.argument }}" };
     jobsDoc[r.jobName] = {
-      if: [
-        "github.event_name == 'issue_comment'",
-        github ? "github.event.issue.pull_request" : "(github.event.issue.pull_request || github.event.is_pull)",
-        `(${[...says, ...gated].join(" || ")})`,
-        ...(github ? ["contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.comment.author_association)"] : []),
-      ].join(" && "),
+      // #4963: a dispatch that names a pull request re-plans it as the comment does.
+      if: r.dispatch ? `(${commentIf}) || ${REPLAN_DISPATCH_IF}` : commentIf,
       "runs-on": githubRunsOn(p.runner),
       container: image,
-      permissions: { ...permissions(p), "pull-requests": "read" },
+      permissions: { ...permissions(p), "pull-requests": r.reply ? "write" : "read" },
       ...(p.jobEnv ? { env: p.jobEnv } : {}),
-      outputs: { go: "${{ steps.decide.outputs.go }}", pr: "${{ steps.decide.outputs.pr }}", [REPLAN_HEAD_OUTPUT]: `\${{ steps.${REPLAN_HEAD_STEP_ID}.outputs.${REPLAN_HEAD_OUTPUT} }}`, ...handoverOutputs(PLAN_STEP_ID, forge) },
+      outputs: {
+        go: "${{ steps.decide.outputs.go }}",
+        pr: "${{ steps.decide.outputs.pr }}",
+        [REPLAN_HEAD_OUTPUT]: `\${{ steps.${REPLAN_HEAD_STEP_ID}.outputs.${REPLAN_HEAD_OUTPUT} }}`,
+        ...(r.notAffected ? { argument: "${{ steps.decide.outputs.argument }}" } : {}),
+        ...handoverOutputs(PLAN_STEP_ID, forge),
+      },
       steps: [
         // Before anything is checked out: the comment from the event file, the pull request and the commenter from the forge.
         {
@@ -188,10 +228,15 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
             ...(p.target ? { CHANT_REPLAN_TARGET: p.target, CHANT_REPLAN_TARGETS: JSON.stringify(targets) } : {}),
             ...(plan.forks === "skip" ? { CHANT_REPLAN_FORKS: "skip" } : {}),
             ...(github ? {} : { CHANT_REPLAN_PERMISSION: "1" }),
+            ...(r.dispatch ? { CHANT_REPLAN_DISPATCH_ARGUMENT: r.dispatch.argument } : {}),
+            ...(r.reply ? { CHANT_REPLAN_PRODUCT: r.reply.prefix, ...(r.reply.others.length > 0 ? { CHANT_REPLAN_OTHERS: JSON.stringify(r.reply.others) } : {}) } : {}),
           },
-          run: `(cd / && node -e '${REPLAN_DECIDE_JS}')`,
+          run: `(cd / && node -e '${r.dispatch || r.reply ? replanDecideJs({ dispatch: Boolean(r.dispatch), reply: Boolean(r.reply) }) : REPLAN_DECIDE_JS}')`,
         },
         ...pendingStep(p, "${{ steps.decide.outputs.head }}", go),
+        // #4963: the previous note's marker and the trade, before the head is checked out.
+        ...previousStep(p, "${{ steps.decide.outputs.pr }}", go),
+        ...tradeStep(p, go),
         {
           if: go,
           name: "Check out the pull request's head",
@@ -205,7 +250,7 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
     };
     jobsDoc[r.noteJobName] = {
       needs: [r.jobName],
-      if: `always() && github.event_name == 'issue_comment' && needs.${r.jobName}.outputs.go == '1' && (needs.${r.jobName}.result == 'success' || needs.${r.jobName}.result == 'failure')`,
+      if: `always() && ${r.dispatch ? "(github.event_name == 'issue_comment' || github.event_name == 'workflow_dispatch')" : "github.event_name == 'issue_comment'"} && needs.${r.jobName}.outputs.go == '1' && (needs.${r.jobName}.result == 'success' || needs.${r.jobName}.result == 'failure')`,
       "runs-on": githubRunsOn(p.noteRunner),
       container: image,
       permissions: { actions: "read", contents: p.record ? "write" : "read", "pull-requests": "write", statuses: "write" },
@@ -215,9 +260,9 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
         ...runSteps(beforeScript),
         { name: "Take the plan report from the re-plan job", run: takeOverScript(r.jobName, PR_LOOP_REPORT_DIR, forge) },
         { name: "Keep the plan report", if: "always()", uses: UPLOAD_ARTIFACT, with: { name: r.artifact, path: PR_LOOP_REPORT_DIR, "if-no-files-found": "ignore", "include-hidden-files": true } },
-        ...noteBefore(p),
+        ...noteBefore(p, r.post.env),
         { name: `Post the plan note and ${productStatusContext(jobs.words, "plan", p.target)}`, if: "always()", env: r.post.env, run: postRun(p, r.post.command) },
-        ...noteAfter(p),
+        ...noteAfter(p, r.post.env),
       ],
     };
   }
@@ -238,17 +283,38 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
     }),
   );
   const name = plan.workflow ?? `chant-pr-${env}`;
+  // #4963: a dispatch re-plans the pull request its pr input names, the argument from the input the re-plan names.
+  const dispatch = replans.find((p) => p.replan!.dispatch)?.replan!.dispatch;
   // #4899: one run per pull request; a comment's run is in a group of its own comment, so it never cancels a plan.
+  // #4963: a dispatch's run is in a group of its own run.
+  const groupKey = replans.length === 0
+    ? "github.event.pull_request.number"
+    : dispatch
+      ? "github.event.pull_request.number || github.event.comment.id && format('comment-{0}', github.event.comment.id) || format('dispatch-{0}', github.run_id)"
+      : "github.event.pull_request.number || format('comment-{0}', github.event.comment.id)";
   const concurrency = plan.concurrency
     ? {
-        group: `${plan.concurrency.group ?? name}-\${{ ${replans.length > 0 ? "github.event.pull_request.number || format('comment-{0}', github.event.comment.id)" : "github.event.pull_request.number"} }}`,
+        group: `${plan.concurrency.group ?? name}-\${{ ${groupKey} }}`,
         "cancel-in-progress": plan.concurrency.cancelInProgress === true,
       }
     : undefined;
   const doc: GithubWorkflowDoc = {
     ...(header && header.length > 0 ? { header } : {}),
     name,
-    on: { pull_request: { branches: [branch] }, ...(replans.length > 0 ? { issue_comment: { types: ["created"] } } : {}) },
+    on: {
+      pull_request: { branches: [branch] },
+      ...(replans.length > 0 ? { issue_comment: { types: ["created"] } } : {}),
+      ...(dispatch
+        ? {
+            workflow_dispatch: {
+              inputs: {
+                pr: { description: "The number of a pull request to plan again", required: false, type: "string" },
+                [dispatch.argument]: { description: targets.length > 0 ? `One target of it to plan again: ${targets.join(", ")}` : "The one word the plan command takes after it, to plan part of it again", required: false, type: "string" },
+              },
+            },
+          }
+        : {}),
+    },
     env: { CHANT_ENV: env },
     ...(concurrency ? { concurrency } : {}),
     jobsDoc,
@@ -261,6 +327,8 @@ const REPLAN_HEAD_STEP_ID = "head";
 const REPLAN_HEAD_OUTPUT = "head";
 /** The variable the re-plan's checkout script reads the pull request's head ref from (#4899). */
 const REPLAN_REF_ENV = "CHANT_REPLAN_REF";
+/** A dispatch that names a pull request (#4963): the re-plan's, as terragucci's `REPLAN_DISPATCH`. */
+export const REPLAN_DISPATCH_IF = "(github.event_name == 'workflow_dispatch' && github.event.inputs.pr != '')";
 
 /**
  * The product plan workflow on GitHub Actions (#4799): a plan job and a

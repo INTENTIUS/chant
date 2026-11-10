@@ -253,3 +253,198 @@ describe("the re-plan decision script (#4899)", () => {
     }
   });
 });
+
+describe("what terragucci's and sql-yodeler's plan jobs need of the product plan on GitHub (#4963)", () => {
+  const tgWords = { ...words, product: "terragucci", bin: "terragucci chant", commands: { plan: "plan" as const } };
+  const trade = { aws: { region: "us-east-1", audience: "sts.amazonaws.com", role: "arn:aws:iam::123456789012:role/tg-plan" } };
+  const tg = generateProductPlanPipeline("default", {
+    words: tgWords,
+    productPlan: {
+      command: "terragucci plan --pr-note {output}",
+      forks: "skip",
+      pending: true,
+      trade,
+      replan: { dispatch: { argument: "root" }, reply: { others: ["/terragucci apply"] }, notAffected: true },
+      concurrency: {},
+      noteSteps: { before: ["terragucci plan-note-notices"], pullRequest: true },
+    },
+  });
+  const job = (name: string) => tg.doc.jobsDoc[name] as Job & { outputs?: Record<string, string> };
+  const names = (j: Job) => j.steps.map((s) => s.name ?? s.uses ?? "");
+
+  test("the trade runs before the checkout, in the plan job and in the re-plan, and the later steps drop the token request variables", () => {
+    expect(names(job("plan")).slice(0, 3)).toEqual(["Say on the head that the plan started", "Trade the job's OIDC token for the plan identities", "Check out the change"]);
+    const r = names(job("replan"));
+    expect(r.indexOf("Trade the job's OIDC token for the plan identities")).toBeLessThan(r.indexOf("Check out the pull request's head"));
+    const traded = job("plan").steps[1]!;
+    expect(traded.env).toEqual({ CHANT_CLOUD_TRADE: JSON.stringify(trade) });
+    expect(traded.run).toContain('"$GITHUB_ENV" github-env');
+    expect(job("plan").permissions).toMatchObject({ "id-token": "write" });
+    expect(job("plan").steps.at(-1)!.run!.split("\n")[0]).toContain("-u ACTIONS_ID_TOKEN_REQUEST_TOKEN");
+  });
+
+  test("a dispatch with a pr input re-plans, with the argument from the input the re-plan names", () => {
+    expect(tg.doc.on).toMatchObject({ workflow_dispatch: { inputs: { pr: { type: "string", required: false }, root: { type: "string", required: false } } } });
+    expect(job("replan").if).toMatch(/\|\| \(github\.event_name == 'workflow_dispatch' && github\.event\.inputs\.pr != ''\)$/);
+    expect(job("replan-note").if).toContain("(github.event_name == 'issue_comment' || github.event_name == 'workflow_dispatch')");
+    expect(job("replan").steps[0]!.env).toMatchObject({ CHANT_REPLAN_DISPATCH_ARGUMENT: "root" });
+    expect(tg.doc.concurrency!.group).toContain("format('dispatch-{0}', github.run_id)");
+  });
+
+  test("the re-plan job also takes the /terragucci comments no other job takes, and may reply", () => {
+    const r = job("replan");
+    expect(r.if).toContain("(startsWith(github.event.comment.body, '/terragucci') && !startsWith(github.event.comment.body, '/terragucci apply'))");
+    expect(r.permissions["pull-requests"]).toBe("write");
+    expect(r.steps[0]!.env).toMatchObject({ CHANT_REPLAN_PRODUCT: "/terragucci", CHANT_REPLAN_OTHERS: '["/terragucci apply"]' });
+  });
+
+  test("the re-plan's note job answers not affected for the argument, and the note's lines read the pull request and head", () => {
+    expect(job("replan").outputs).toMatchObject({ argument: "${{ steps.decide.outputs.argument }}" });
+    const post = job("replan-note").steps.find((s) => s.name?.startsWith("Post the plan note"))!;
+    expect(post.run).toContain('--not-affected "$CHANT_PLAN_ARGUMENT"');
+    expect(post.env).toMatchObject({ CHANT_PLAN_ARGUMENT: "${{ needs.replan.outputs.argument }}" });
+    expect(job("plan-note").steps.find((s) => s.name?.startsWith("Post the plan note"))!.run).not.toContain("--not-affected");
+    const lines = job("replan-note").steps.find((s) => s.name === "The product's lines before the note")!;
+    expect(lines.env).toEqual({ GITHUB_TOKEN: "${{ github.token }}", PR_NUMBER: "${{ needs.replan.outputs.pr }}", HEAD_SHA: "${{ needs.replan.outputs.head }}" });
+  });
+
+  test("with targets, the first target's re-plan job replies", () => {
+    const y = generateProductPlanPipeline("default", { ...options, words: { ...words, commands: { plan: "plan" as const } }, productPlan: { ...options.productPlan, replan: { reply: true } } });
+    expect((y.doc.jobsDoc["replan-staging"] as Job).steps[0]!.env).toHaveProperty("CHANT_REPLAN_PRODUCT", "/yodel");
+    expect((y.doc.jobsDoc["replan-prod"] as Job).steps[0]!.env).not.toHaveProperty("CHANT_REPLAN_PRODUCT");
+  });
+
+  test("sql-yodeler's plan step reads the previous note's marker, from a step before the checkout", () => {
+    const y = generateProductPlanPipeline("default", { ...options, productPlan: { ...options.productPlan, previousMarker: true, noteWords: { productMarker: "yodel:plan" } } });
+    const steps = (y.doc.jobsDoc["plan-prod"] as Job).steps;
+    expect(steps[0]!.name).toBe("Read the previous note's marker");
+    expect(steps[0]!.env).toMatchObject({ CHANT_PREVIOUS_TOKEN: "${{ github.token }}", CHANT_PREVIOUS_PR: "${{ github.event.pull_request.number }}", CHANT_PREVIOUS_NOTE: "<!-- chant-pr:default:prod -->", CHANT_PREVIOUS_NAME: "yodel:plan" });
+    expect(steps[1]!.name).toBe("Check out the change");
+    expect(() => generateProductPlanPipeline("default", { ...options, productPlan: { ...options.productPlan, previousMarker: true } })).toThrow(/productMarker/);
+  });
+
+  test("a job gives one of login and trade", () => {
+    expect(() => generateProductPlanPipeline("default", { words: tgWords, productPlan: { command: "x", trade, login: { aws: { role: "arn:aws:iam::1:role/r" } } } })).toThrow(/both login and trade/);
+  });
+});
+
+describe("the re-plan decision with dispatch and reply (#4963)", () => {
+  test("without them the script is the one before; with them a dispatch plans, and a comment no other job takes gets a reply", async () => {
+    const { mkdtempSync, writeFileSync, readFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { createServer } = await import("node:http");
+    const { REPLAN_DECIDE_JS, replanDecideJs } = await import("@intentius/chant/components/product-plan");
+    expect(replanDecideJs()).toBe(REPLAN_DECIDE_JS);
+    const head = "b".repeat(40);
+    const base = "c".repeat(40);
+    let pull: Record<string, unknown> = { state: "open", head: { sha: head, repo: { full_name: "o/r" } }, base: { sha: base } };
+    const replies: string[] = [];
+    const server = createServer((req, res) => {
+      res.setHeader("content-type", "application/json");
+      if (req.headers.authorization !== "token t") return void res.writeHead(401).end("{}");
+      if (req.url === "/repos/o/r/pulls/7") return void res.end(JSON.stringify(pull));
+      if (req.method === "POST" && req.url === "/repos/o/r/issues/7/comments") {
+        let data = "";
+        req.on("data", (c) => (data += c));
+        req.on("end", () => {
+          replies.push((JSON.parse(data) as { body: string }).body);
+          res.writeHead(201).end("{}");
+        });
+        return;
+      }
+      res.writeHead(404).end("{}");
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    const port = (server.address() as { port: number }).port;
+    const dir = mkdtempSync(join(tmpdir(), "chant-replan-4963-"));
+    const js = replanDecideJs({ dispatch: true, reply: true });
+    // The step runs it as `node -e '<js>'`.
+    for (const o of [{ dispatch: true }, { reply: true }, { dispatch: true, reply: true }]) expect(replanDecideJs(o)).not.toContain("'");
+    const run = async (event: Record<string, unknown>, env: Record<string, string> = {}): Promise<{ out: Record<string, string>; code: number }> => {
+      writeFileSync(join(dir, "event.json"), JSON.stringify(event));
+      writeFileSync(join(dir, "out"), "");
+      const { execFile } = await import("node:child_process");
+      const code = await new Promise<number>((resolve) =>
+        execFile(process.execPath, ["-e", js], {
+          env: { PATH: process.env.PATH ?? "", GITHUB_EVENT_PATH: join(dir, "event.json"), GITHUB_OUTPUT: join(dir, "out"), GITHUB_API_URL: `http://127.0.0.1:${port}`, GITHUB_REPOSITORY: "o/r", CHANT_REPLAN_TOKEN: "t", CHANT_REPLAN_COMMANDS: '["/terragucci plan"]', CHANT_REPLAN_PRODUCT: "/terragucci", CHANT_REPLAN_OTHERS: '["/terragucci apply"]', CHANT_REPLAN_DISPATCH_ARGUMENT: "root", ...env },
+        }, (err) => resolve(err ? ((err as { code?: number }).code ?? 1) : 0)),
+      );
+      return { out: Object.fromEntries(readFileSync(join(dir, "out"), "utf8").split("\n").filter(Boolean).map((l) => l.split("=") as [string, string])), code };
+    };
+    const comment = (body: string) => ({ comment: { body, user: { login: "alice" } }, issue: { number: 7, pull_request: {} } });
+    try {
+      // A dispatch: the pr input and the argument input, no comment.
+      expect(await run({ inputs: { pr: "7", root: "live/app" } }, { GITHUB_EVENT_NAME: "workflow_dispatch" })).toEqual({ out: { go: "1", pr: "7", head, base, argument: "live/app" }, code: 0 });
+      expect(await run({ inputs: { pr: "7" } }, { GITHUB_EVENT_NAME: "workflow_dispatch" })).toMatchObject({ out: { go: "1", argument: "" } });
+      expect(await run({ inputs: { pr: "" } }, { GITHUB_EVENT_NAME: "workflow_dispatch" })).toEqual({ out: {}, code: 0 });
+      expect((await run({ inputs: { pr: "seven" } }, { GITHUB_EVENT_NAME: "workflow_dispatch" })).code).not.toBe(0);
+      expect((await run({ inputs: { pr: "7", root: "a; b" } }, { GITHUB_EVENT_NAME: "workflow_dispatch" })).code).not.toBe(0);
+      // A comment is answered as before.
+      expect((await run(comment("/terragucci plan live/app"))).out).toMatchObject({ go: "1", argument: "live/app" });
+      expect(replies).toEqual([]);
+      // A /terragucci comment no job takes gets the commands; another job's comment and someone else's get nothing.
+      expect((await run(comment("/terragucci plans"))).out).toEqual({});
+      expect(replies).toEqual(["terragucci: the commands are `/terragucci plan`, `/terragucci apply`"]);
+      expect((await run(comment("/terragucci apply"))).out).toEqual({});
+      expect((await run(comment("/terraguccix plan"))).out).toEqual({});
+      expect((await run(comment("hello"))).out).toEqual({});
+      expect(replies).toHaveLength(1);
+      // A target that is none of the plan's.
+      expect((await run(comment("/terragucci plan nowhere"), { CHANT_REPLAN_TARGET: "prod", CHANT_REPLAN_TARGETS: '["staging","prod"]' })).out).toEqual({});
+      expect(replies.at(-1)).toBe("terragucci: nowhere is none of staging, prod, so nothing is planned again");
+      // A fork's pull request, with forks: skip.
+      pull = { ...pull, head: { sha: head, repo: { full_name: "fork/r" } } };
+      expect((await run(comment("/terragucci plan"), { CHANT_REPLAN_FORKS: "skip" })).out).toEqual({});
+      expect(replies.at(-1)).toMatch(/^terragucci: pull request 7 is from a fork/);
+      expect(replies).toHaveLength(3);
+    } finally {
+      server.close();
+    }
+  });
+});
+
+describe("the previous note's marker read (#4963)", () => {
+  test("finds the note by chant's marker and hands on the product's line's body, empty when there is none", async () => {
+    const { mkdtempSync, writeFileSync, readFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { createServer } = await import("node:http");
+    const { PREVIOUS_MARKER_JS } = await import("@intentius/chant/components/product-plan");
+    expect(PREVIOUS_MARKER_JS).not.toContain("'");
+    let comments: Array<{ body: string }> = [];
+    const server = createServer((req, res) => {
+      res.setHeader("content-type", "application/json");
+      if (req.headers.authorization !== "token t") return void res.writeHead(401).end("[]");
+      const url = new URL(req.url ?? "", "http://x");
+      if (url.pathname !== "/repos/o/r/issues/7/comments") return void res.writeHead(404).end("[]");
+      const page = Number(url.searchParams.get("page"));
+      res.end(JSON.stringify(page === 1 ? comments : []));
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    const port = (server.address() as { port: number }).port;
+    const dir = mkdtempSync(join(tmpdir(), "chant-previous-4963-"));
+    const run = async (): Promise<string> => {
+      writeFileSync(join(dir, "env"), "");
+      const { execFile } = await import("node:child_process");
+      await new Promise<void>((resolve, reject) =>
+        execFile(process.execPath, ["-e", PREVIOUS_MARKER_JS], {
+          env: { PATH: process.env.PATH ?? "", GITHUB_ENV: join(dir, "env"), GITHUB_API_URL: `http://127.0.0.1:${port}`, GITHUB_REPOSITORY: "o/r", CHANT_PREVIOUS_TOKEN: "t", CHANT_PREVIOUS_PR: "7", CHANT_PREVIOUS_NOTE: "<!-- chant-pr:default:prod -->", CHANT_PREVIOUS_NAME: "yodel:plan" },
+        }, (err) => (err ? reject(err) : resolve())),
+      );
+      return readFileSync(join(dir, "env"), "utf8");
+    };
+    try {
+      expect(await run()).toBe("CHANT_PLAN_PREVIOUS_MARKER=\n");
+      comments = [
+        { body: "<!-- chant-pr:default:staging -->\n<!-- yodel:plan env=staging subject=s1 -->\n" },
+        { body: "<!-- chant-pr:default:prod -->\n<!-- yodel:plan env=prod subject=p_2 -->\nthe note" },
+      ];
+      expect(await run()).toBe("CHANT_PLAN_PREVIOUS_MARKER=env=prod subject=p_2\n");
+      comments = [{ body: "<!-- chant-pr:default:prod -->\n<!-- yodel:plan env=prod $(touch x) -->\n" }];
+      expect(await run()).toBe("CHANT_PLAN_PREVIOUS_MARKER=\n");
+    } finally {
+      server.close();
+    }
+  });
+});

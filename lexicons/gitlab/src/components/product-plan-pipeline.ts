@@ -37,18 +37,24 @@
  * `<target>-replan`) whose target the comment names run in it: each drops
  * the forge tokens, checks out the merge request's head, and plans; the
  * job after it posts the note.
+ *
+ * With `productPlan.trade` (#4963) the plan and re-plan jobs' scripts
+ * trade the job's OIDC token first, before the re-plan checks out the
+ * head; with `replan: { notAffected }` the re-plan's note job reads the
+ * comment's argument again and passes it to `pr-post --not-affected`.
  */
 
 import { assertGitlabBranch, CI_IMAGE, GITLAB_FULL_HISTORY, GITLAB_MERGE_REQUEST_SOURCE, gitlabTags } from "@intentius/chant/ci-jobs";
 import { GITLAB_DROP_FORGE_TOKENS } from "@intentius/chant/ci-handover";
+import { gitlabTradeLines, TRADE_SPEC_ENV } from "@intentius/chant/ci-identity";
 import { GITLAB_NOTE_COMMANDS_VAR, GITLAB_PLAN_NOTES_VAR, PR_LOOP_REPORT_DIR, PR_NOTE_COMMANDS_JOB, PR_PLAN_NOTE_JOB, prLoopSetup, pullRequestCheckout } from "@intentius/chant/components/pr-pipeline";
 import { productPipelineJobs, type ProductPipelineJobs, type ProductPipelineOptions } from "@intentius/chant/components/product-pipeline";
 import {
   GITLAB_REPLAN_COMMENT_VAR,
   GITLAB_REPLAN_PR_VAR,
   GITLAB_SAME_PROJECT_IF,
+  gitlabReplanArgumentLines,
   gitlabReplanCommentIf,
-  PLAN_ARGUMENT_ENV,
   planVerbLines,
   REPLAN_JOB,
   REPLAN_NOTE_JOB,
@@ -106,6 +112,9 @@ export function generateGitlabProductPlanPipeline(env: string, options: GitlabPr
   };
   // #4931: the OIDC tokens the login and the product's command read.
   const idTokens = (p: ProductPlanJob): Record<string, unknown> => (p.idTokens ? { id_tokens: Object.fromEntries(Object.entries(p.idTokens).map(([v, aud]) => [v, { aud }])) } : {});
+  // #4963: the trade, the script's first lines after the control read; GitLab's id_tokens come with p.idTokens.
+  const tradeVars = (p: ProductPlanJob): Record<string, string> => (p.trade ? { [TRADE_SPEC_ENV]: JSON.stringify(p.trade) } : {});
+  const tradeLines = (p: ProductPlanJob): string[] => (p.trade ? gitlabTradeLines() : []);
   // #4899: the control read, before any of the change's code runs; its token goes with it.
   const controlLines = (p: ProductPlanJob): string[] => (p.control ? [p.control.script, "unset CHANT_CONTROL_READ_TOKEN"] : []);
   // The lines after the checkout and before the plan verb (#4899, #4931): the product's run steps, the setup lines, the login and the probe.
@@ -147,11 +156,11 @@ export function generateGitlabProductPlanPipeline(env: string, options: GitlabPr
         rules: [{ if: onMergeRequest }],
         ...interruptible,
         // #4899: with record, the record line reads its op, environment and labels.
-        variables: { ...(p.jobEnv ?? {}), ...p.env, ...(p.record?.env ?? {}) },
+        variables: { ...(p.jobEnv ?? {}), ...p.env, ...(p.record?.env ?? {}), ...tradeVars(p) },
         ...idTokens(p),
         ...(cache !== undefined ? { cache } : {}),
         // #4295: the merge request's code runs in this job, so its shell drops the forge tokens first.
-        script: [...controlLines(p), GITLAB_DROP_FORGE_TOKENS, ...middle(p), ...planVerbLines(p), ...extraScript],
+        script: [...controlLines(p), ...tradeLines(p), GITLAB_DROP_FORGE_TOKENS, ...middle(p), ...planVerbLines(p), ...extraScript],
         artifacts: { name: p.artifact, when: "always", paths: [PR_LOOP_REPORT_DIR] },
       },
     ]);
@@ -183,11 +192,7 @@ export function generateGitlabProductPlanPipeline(env: string, options: GitlabPr
   for (const p of replans) {
     const r = p.replan!;
     // The comment's one word after the command, which the rule already held to plain characters.
-    const byLength = [...r.comments, ...r.gated.map((g) => g.comment)].sort((a, b) => b.length - a.length);
-    const argument = [
-      `case "$${GITLAB_REPLAN_COMMENT_VAR}" in ${byLength.map((c) => `"${c}"*) chant_rest="\${${GITLAB_REPLAN_COMMENT_VAR}#"${c}"}" ;;`).join(" ")} *) chant_rest="" ;; esac`,
-      `${PLAN_ARGUMENT_ENV}="$(printf '%s' "$chant_rest" | tr -d ' ')" && export ${PLAN_ARGUMENT_ENV}`,
-    ];
+    const argument = gitlabReplanArgumentLines(r);
     entries.push([
       r.jobName,
       {
@@ -195,12 +200,14 @@ export function generateGitlabProductPlanPipeline(env: string, options: GitlabPr
         image,
         ...tags(p.runner),
         rules: [{ if: `${onReplan} && (${gitlabReplanCommentIf(r, p.target)})` }],
-        variables: { ...(p.jobEnv ?? {}), ...p.env, ...(p.record?.env ?? {}), BASE_SHA: "$CI_COMMIT_SHA", PR_NUMBER: `$${GITLAB_REPLAN_PR_VAR}` },
+        variables: { ...(p.jobEnv ?? {}), ...p.env, ...(p.record?.env ?? {}), BASE_SHA: "$CI_COMMIT_SHA", PR_NUMBER: `$${GITLAB_REPLAN_PR_VAR}`, ...tradeVars(p) },
         ...idTokens(p),
         ...(cache !== undefined ? { cache } : {}),
         // A pipeline of the target branch holds the protected tokens, so the job drops them before it checks out the merge request's head.
+        // #4963: the trade first, before the head is checked out.
         script: [
           ...controlLines(p),
+          ...tradeLines(p),
           GITLAB_DROP_FORGE_TOKENS,
           "unset CHANT_RUNNER_KEY",
           pullRequestCheckout("gitlab"),
@@ -228,7 +235,8 @@ export function generateGitlabProductPlanPipeline(env: string, options: GitlabPr
         rules: [{ if: `${onReplan} && (${gitlabReplanCommentIf(r, p.target)})`, when: "always" }],
         variables: r.post.env,
         // The target branch's commit: the job's own clone, where none of the merge request's code runs.
-        script: [...beforeScript, ...(r.post.setup ?? []), r.post.command],
+        // #4963: with notAffected, the argument the re-plan was narrowed to, read again from the comment.
+        script: [...beforeScript, ...(r.post.setup ?? []), ...(r.notAffected ? gitlabReplanArgumentLines(r) : []), r.post.command],
       },
     ]);
   }
