@@ -796,6 +796,10 @@ export async function gatedStackMove(opts: PulumiStackMoveOptions): Promise<Pulu
       return { status: "refused", digest: r.digest, request, by: r.by, reason: r.reason, command: r.command };
     case "spent":
       return { status: "spent", digest: r.digest, request };
+    case "approval-moved":
+      // An approval of an earlier request for these stacks stands, but their state moved since it (#4806), so it
+      // doesn't count for this one, and this request waits for its own.
+      return { status: "waiting", digest: r.digest, request, command: r.command };
     case "moved":
       return {
         status: "failed",
