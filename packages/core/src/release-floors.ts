@@ -19,7 +19,7 @@
  * this constant to the next patch (#4501). The check fails while a floor
  * still names this constant after its version shipped.
  */
-export const NEXT_RELEASE = "0.124.87";
+export const NEXT_RELEASE = "0.124.88";
 
 /** The first chant with `chant dev local` and `chant dev bundle-check`, `@intentius/chant/local-chant` and `@intentius/chant/bundle-check` (`chantRuntimeTarget`, `chantExternalPlugin`, `checkBundle`): a product built against a chant checkout, and its bundle checked, without its own scripts (#4787). */
 export const LOCAL_CHANT_FLOOR = "0.124.86";
@@ -104,4 +104,4 @@ export const CHECK_EVIDENCE_FLOOR = "0.124.86";
 export const LOCAL_EVIDENCE_FLOOR = "0.124.86";
 
 /** The first chant that signs runner statements keyless from the CI job's OIDC identity and verifies them against `keyless` in `.chant/trust.json`, with `evidence.identity: "oidc"` in the generators (#4869). */
-export const KEYLESS_EVIDENCE_FLOOR = NEXT_RELEASE;
+export const KEYLESS_EVIDENCE_FLOOR = "0.124.87";
