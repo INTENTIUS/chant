@@ -34,7 +34,7 @@ import { sortedJsonReplacer } from "../../utils";
 import { rankFoldBlockers, toCollapsedFormat, type FoldRankResult } from "../../discovery/fold-rank";
 import { foldExecutionCounts } from "../../discovery/fold-import";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
-import { writeFileSync, mkdirSync } from "fs";
+import { existsSync, statSync, writeFileSync, mkdirSync } from "fs";
 import { resolve, dirname, join, relative } from "path";
 import { watchDirectory, formatTimestamp, formatChangedFiles } from "../watch";
 
@@ -924,7 +924,32 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
       console.error(formatInfo(`Wrote ${irWritten} op.json file(s) under ${join(options.path ?? ".", "dist", "ops")}/`));
     }
 
-    if (options.output) {
+    // #4950: `--output <dir>/` (or an existing directory) writes the
+    // additional files into that directory and no primary file, so a docker
+    // project of Dockerfiles alone renders them where they are committed
+    // (`chant build images -o images/`) with no compose file to throw away.
+    // A build whose primary output holds anything needs a file to put it in.
+    const outputDir =
+      options.output !== undefined && (/[\\/]$/.test(options.output) || (existsSync(options.output) && statSync(options.output).isDirectory()))
+        ? resolve(options.output)
+        : undefined;
+    if (outputDir !== undefined) {
+      if (output.trim() !== "") {
+        errors.push(
+          formatError({
+            message: `--output ${options.output} names a directory, which takes a build's additional files (a docker project's Dockerfiles) but not its primary output; this build has one, so name a file for it`,
+          }),
+        );
+      } else if (additionalFiles.size === 0) {
+        errors.push(formatError({ message: `--output ${options.output} names a directory, but this build has no files to write into it` }));
+      } else {
+        try {
+          for (const [filename, entry] of additionalFiles) writeOutput(join(outputDir, filename), entry.content);
+        } catch (err) {
+          errors.push(formatError({ message: `Failed to write output file: ${err instanceof Error ? err.message : String(err)}` }));
+        }
+      }
+    } else if (options.output) {
       // Write to file — ensure parent directories exist for both the primary
       // output path and any nested additional-file paths (e.g. ops/<name>/...).
       try {

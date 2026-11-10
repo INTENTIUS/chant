@@ -34,7 +34,8 @@ function product(): string {
     private: true,
     chantGenerated: {
       regenerate: "chant release workflow --forge github",
-      renders: [{ name: "release", run: `${chantCommand} release workflow --forge github --output {out}/.github/workflows/chant-release.yml`, files: [".github/workflows/chant-release.yml"] }],
+      // #4950: no --output; under the check the default file goes to the render tree.
+      renders: [{ name: "release", run: `${chantCommand} release workflow --forge github`, files: [".github/workflows/chant-release.yml"] }],
     },
   });
   mkdirSync(join(dir, ".github/workflows"), { recursive: true });
@@ -64,6 +65,25 @@ describe("chant dev generated-check (#4909)", () => {
     expect(bad.stderr).toContain(".github/workflows/chant-release.yml is not what 'release' renders. Run 'chant release workflow --forge github' and commit the result.");
     expect(bad.stderr).toContain("+ name: chant release");
     expect(bad.stderr).toMatch(/the renders are in .*chant-generated-/);
+  }, 120_000);
+
+  it("writes a module's file-text export in place with dev render, then checks it as a module render (#4950)", () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "chant-4950-e2e-")));
+    write(join(dir, "src/images.ts"), `export const dockerfiles = (): Record<string, string> => ({ "images/a/Dockerfile": "FROM a\\n" });\n`);
+    write(join(dir, "package.json"), { name: "product", private: true, chantGenerated: { regenerate: "chant dev render src/images.ts dockerfiles", renders: [{ name: "images", module: "src/images.ts", export: "dockerfiles" }] } });
+    const missing = chant(dir, "dev", "generated-check");
+    expect(missing.status).toBe(1);
+    expect(missing.stderr).toContain("images/a/Dockerfile is what 'images' renders, but it is not committed.");
+
+    const rendered = chant(dir, "dev", "render", "src/images.ts", "dockerfiles");
+    expect(rendered.status).toBe(0);
+    expect(readFileSync(join(dir, "images/a/Dockerfile"), "utf8")).toBe("FROM a\n");
+    const ok = chant(dir, "dev", "generated-check", "--json");
+    expect(ok.status).toBe(0);
+    expect(JSON.parse(ok.stdout).matched).toEqual(["images/a/Dockerfile"]);
+
+    const usage = chant(dir, "dev", "render", "src/images.ts");
+    expect(usage.status).toBe(2);
   }, 120_000);
 
   it("refuses a product with no chantGenerated", () => {

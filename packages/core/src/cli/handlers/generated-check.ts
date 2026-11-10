@@ -4,7 +4,8 @@
  * package.json) into a directory under the OS temp directory, compare each
  * with the committed file, and exit 1 naming every one that drifted. The
  * directory is left in place and printed. Exit 2 when the product declares
- * no `chantGenerated`.
+ * no `chantGenerated`. Also `chant dev render` (#4950), which writes a
+ * module's file-text export in place.
  */
 import { checkGenerated, readGeneratedCheckConfig } from "../../generated-check";
 import { formatError } from "../format";
@@ -36,4 +37,33 @@ export async function runDevGeneratedCheck(ctx: CommandContext): Promise<number>
     if (result.ok) console.error(`generated-check: ${result.matched.length} files match ${result.renders.length} renders`);
   }
   return result.ok ? 0 : 1;
+}
+
+const RENDER_USAGE = "chant dev render <module> <export> [--output <root>]";
+
+/**
+ * `chant dev render <module> <export> [--output <root>]` (#4950): import the
+ * module, call its export (a `{ path: text }` object, or a function that
+ * returns one) and write each file at its path below the root, the working
+ * directory unless `--output` names one. Under `chant dev generated-check`
+ * a path inside the product goes to the render tree instead.
+ */
+export async function runDevRender(ctx: CommandContext): Promise<number> {
+  const [, modulePath, exportName] = ctx.args.positionals ?? [];
+  if (!modulePath || !exportName) {
+    console.error(formatError({ message: "name the module and its export that returns the files", hint: RENDER_USAGE }));
+    return 2;
+  }
+  const { resolve } = await import("node:path");
+  const { renderPathOf } = await import("../../generated-check");
+  const { renderModuleFiles, writeRenderedFiles } = await import("../../render-module");
+  try {
+    const files = await renderModuleFiles(modulePath, exportName);
+    const root = resolve(ctx.args.output ?? ".");
+    for (const path of writeRenderedFiles(root, files, renderPathOf)) console.error(`  wrote ${path}`);
+    return 0;
+  } catch (err) {
+    console.error(formatError({ message: `chant dev render: ${err instanceof Error ? err.message : String(err)}`, hint: RENDER_USAGE }));
+    return 1;
+  }
 }

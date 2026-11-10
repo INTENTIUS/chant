@@ -26,9 +26,15 @@
  * {@link committedPathOf}): under a check, `chant ci workflow` and `chant
  * release workflow` write every file into the render tree, the trigger edits
  * to other workflows included, and name the committed path in their header,
- * so the render matches the file that was written without `--output`.
+ * so the render matches the file that was written without `--output`. #4950:
+ * with no `--output` they write into the render tree too.
  *
- * This module imports only Node's own modules.
+ * A render can also be a module and its export (#4950, `./render-module`):
+ * the check imports the module and writes the `{ path: text }` files the
+ * export returns below the render tree, with no command or bundler.
+ *
+ * This module imports only Node's own modules; a module render loads
+ * `./render-module` when it runs.
  */
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
@@ -40,7 +46,11 @@ export const GENERATED_OUT_ENV = "CHANT_GENERATED_OUT";
 /** The product root the check renders for: the committed paths are relative to it. */
 export const GENERATED_ROOT_ENV = "CHANT_GENERATED_ROOT";
 
-/** One render: a command that writes some of the product's generated files. */
+/**
+ * One render: a command that writes some of the product's generated files,
+ * or (#4950) a module whose export returns them. Each render has `run`, or
+ * `module` and `export`.
+ */
 export interface GeneratedRender {
   /** A short name, in the output: `ci`, `images`. */
   name: string;
@@ -49,12 +59,22 @@ export interface GeneratedRender {
    * quoted for the shell; the command writes each file at its committed path
    * below it (`npx chant build ci -o {out}/.github/workflows/ci.yml`).
    */
-  run: string;
+  run?: string;
+  /**
+   * #4950: a TypeScript or JavaScript module, relative to the product root,
+   * whose {@link export} is a `{ path: text }` object, or a function that
+   * returns one. chant imports it and writes each file at its path below the
+   * render tree, as `chant dev render <module> <export>` writes it in place.
+   */
+  module?: string;
+  /** The export of {@link module} that renders the files: `dockerfiles`. */
+  export?: string;
   /**
    * The committed files it renders, relative to the product root. A `*` in a
    * path's last segment matches within it (`images/Dockerfile.*`), and then
-   * every match on either side must have its twin. A render with no files
-   * passes when its command exits 0 (a script with a check of its own).
+   * every match on either side must have its twin. A command render with no
+   * files passes when its command exits 0 (a script with a check of its
+   * own); a module render with no files compares every file it renders.
    */
   files?: string[];
 }
@@ -97,7 +117,13 @@ export function readGeneratedCheckConfig(productDir: string): GeneratedCheckConf
   if (!c || typeof c !== "object" || !Array.isArray(c.renders)) throw new Error(`${f}: chantGenerated needs a renders list`);
   const names = new Set<string>();
   for (const [i, r] of c.renders.entries()) {
-    if (!r || typeof r.name !== "string" || !r.name || typeof r.run !== "string" || !r.run) throw new Error(`${f}: chantGenerated.renders[${i}] needs a name and a run command`);
+    if (!r || typeof r.name !== "string" || !r.name) throw new Error(`${f}: chantGenerated.renders[${i}] needs a name and a run command`);
+    const isRun = r.run !== undefined;
+    const isModule = r.module !== undefined || r.export !== undefined;
+    if (isRun === isModule) throw new Error(`${f}: chantGenerated.renders[${i}] needs a run command, or a module and its export`);
+    if (isRun && (typeof r.run !== "string" || !r.run)) throw new Error(`${f}: chantGenerated.renders[${i}] needs a name and a run command`);
+    if (isModule && (typeof r.module !== "string" || !r.module || typeof r.export !== "string" || !r.export)) throw new Error(`${f}: chantGenerated.renders[${i}] needs a module and the name of its export`);
+    if (isModule && (r.module!.startsWith("/") || r.module!.split("/").includes(".."))) throw new Error(`${f}: chantGenerated.renders[${i}].module must be a path inside the product`);
     if (names.has(r.name)) throw new Error(`${f}: chantGenerated.renders names '${r.name}' twice`);
     names.add(r.name);
     if (r.files !== undefined && (!Array.isArray(r.files) || r.files.some((p) => typeof p !== "string" || p.startsWith("/") || p.split("/").includes("..")))) {
@@ -222,7 +248,21 @@ export async function checkGenerated(productDir: string, config: GeneratedCheckC
   const env = { ...process.env, [GENERATED_OUT_ENV]: out, [GENERATED_ROOT_ENV]: root };
   const ran = await Promise.all(
     renders.map(async (r) => {
-      const command = r.run.split("{out}").join(shellQuote(out));
+      if (r.module !== undefined) {
+        // #4950: a module render runs here, in chant's process, with the
+        // TypeScript loader and chant served as itself. Exit 1 and the error
+        // stand in for a command's exit code and output.
+        const command = `chant dev render ${shellQuote(r.module)} ${shellQuote(r.export!)}`;
+        try {
+          const { renderModuleFiles, writeRenderedFiles } = await import("./render-module");
+          const rendered = await renderModuleFiles(r.module, r.export!, root);
+          writeRenderedFiles(out, rendered);
+          return { r, command, exitCode: 0, output: "", rendered: Object.keys(rendered) };
+        } catch (err) {
+          return { r, command, exitCode: 1, output: err instanceof Error ? err.message : String(err) };
+        }
+      }
+      const command = r.run!.split("{out}").join(shellQuote(out));
       return { r, command, ...(await runRender(command, root, env)) };
     }),
   );
@@ -230,14 +270,15 @@ export async function checkGenerated(productDir: string, config: GeneratedCheckC
   const results: GeneratedRenderResult[] = [];
   const matched: string[] = [];
   const hint = config.regenerate ? ` Run '${config.regenerate}' and commit the result.` : "";
-  for (const { r, command, exitCode, output } of ran) {
+  for (const { r, command, exitCode, output, rendered } of ran as ((typeof ran)[number] & { rendered?: string[] })[]) {
     const files: string[] = [];
     results.push({ name: r.name, command, exitCode, output, files });
     if (exitCode !== 0) {
       problems.push(`render '${r.name}' exited ${exitCode}: ${command}${output.trim() ? `\n${output.trimEnd().split("\n").map((l) => `    ${l}`).join("\n")}` : ""}`);
       continue;
     }
-    for (const path of r.files ?? []) {
+    // A module render with no files compares every file it rendered.
+    for (const path of r.files ?? rendered ?? []) {
       const committed = expand(root, path);
       const rendered = expand(out, path);
       if (!path.includes("*") && rendered.length === 0) {

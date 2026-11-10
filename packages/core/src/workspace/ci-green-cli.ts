@@ -232,10 +232,11 @@ export async function runCiWorkflow(ctx: CommandContext): Promise<number> {
     const root = realpathSync(found.dir);
     const repoRoot = gitTop(root) ?? root;
     const member = resolveMemberContext(cwd, found);
-    const target = ctx.args.output ? resolve(realpathSync(cwd), ctx.args.output) : join(repoRoot, CI_GREEN_WORKFLOW_FILE);
     // #4909: under `chant dev generated-check` the file goes to the render
-    // tree; it is read and named as the committed file it stands for.
+    // tree; it is read and named as the committed file it stands for. #4950:
+    // with no --output too, so a render needs no `--output {out}/...`.
     const { committedPathOf, isRenderPath, renderPathOf } = await import("../generated-check");
+    const target = ctx.args.output ? resolve(realpathSync(cwd), ctx.args.output) : renderPathOf(join(repoRoot, CI_GREEN_WORKFLOW_FILE));
     const rendering = isRenderPath(target);
     const asCommitted = committedPathOf(target);
     const fromRepo = relative(repoRoot, asCommitted).split(sep).join("/");

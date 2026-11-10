@@ -83,6 +83,72 @@ describe("checkGenerated (#4909)", () => {
   });
 });
 
+describe("a module render (#4950)", () => {
+  /** plywood's shape: a TypeScript module whose export returns each Dockerfile by its path from the root. */
+  function moduleProduct(): string {
+    const dir = mkdtempSync(join(tmpdir(), "chant-4950-module-"));
+    write(join(dir, "images/a/Dockerfile"), "FROM a\n");
+    write(join(dir, "images/b/Dockerfile"), "FROM b\n");
+    write(join(dir, "schema.json"), "{}\n");
+    write(
+      join(dir, "src/images.ts"),
+      [
+        `const names: string[] = ["a", "b"];`,
+        `export function dockerfiles(): Record<string, string> {`,
+        `  return Object.fromEntries(names.map((n) => [\`images/\${n}/Dockerfile\`, \`FROM \${n}\\n\`]));`,
+        `}`,
+        `export const schema = { "schema.json": "{}\\n" };`,
+        `export const outside = async () => ({ "../escape": "x" });`,
+        `export const notFiles = () => 3;`,
+      ].join("\n"),
+    );
+    return dir;
+  }
+
+  it("renders a function's or an object's files into the render tree and compares them, all of them with no files listed", async () => {
+    const dir = moduleProduct();
+    const r = await checkGenerated(dir, {
+      renders: [
+        { name: "images", module: "src/images.ts", export: "dockerfiles" },
+        { name: "schema", module: "src/images.ts", export: "schema", files: ["schema.json"] },
+      ],
+    });
+    expect(r.problems).toEqual([]);
+    expect(r.matched).toEqual(["images/a/Dockerfile", "images/b/Dockerfile", "schema.json"]);
+    expect(r.renders[0]!.command).toBe("chant dev render src/images.ts dockerfiles");
+    expect(readFileSync(join(r.out, "images/b/Dockerfile"), "utf8")).toBe("FROM b\n");
+  });
+
+  it("fails a drifted file, a missing export, a path outside the root and an export that is not files", async () => {
+    const dir = moduleProduct();
+    write(join(dir, "images/a/Dockerfile"), "FROM hand\n");
+    const r = await checkGenerated(dir, {
+      renders: [
+        { name: "images", module: "src/images.ts", export: "dockerfiles" },
+        { name: "absent", module: "src/images.ts", export: "nope" },
+        { name: "outside", module: "src/images.ts", export: "outside" },
+        { name: "number", module: "src/images.ts", export: "notFiles" },
+      ],
+    });
+    expect(r.problems[0]).toContain("images/a/Dockerfile is not what 'images' renders.");
+    expect(r.problems[1]).toBe("render 'absent' exited 1: chant dev render src/images.ts nope\n    src/images.ts has no export named nope");
+    expect(r.problems[2]).toContain(`src/images.ts export outside names "../escape", which is not a relative path inside the output root`);
+    expect(r.problems[3]).toContain("src/images.ts export notFiles must be, or return, an object of file paths to their text");
+  });
+
+  it("reads a module render and refuses one with both a command and a module, or a module with no export", () => {
+    const dir = moduleProduct();
+    write(join(dir, "package.json"), { chantGenerated: { renders: [{ name: "images", module: "src/images.ts", export: "dockerfiles" }] } });
+    expect(readGeneratedCheckConfig(dir)?.renders[0]).toEqual({ name: "images", module: "src/images.ts", export: "dockerfiles" });
+    write(join(dir, "package.json"), { chantGenerated: { renders: [{ name: "x", run: "true", module: "src/images.ts", export: "dockerfiles" }] } });
+    expect(() => readGeneratedCheckConfig(dir)).toThrow("needs a run command, or a module and its export");
+    write(join(dir, "package.json"), { chantGenerated: { renders: [{ name: "x", module: "src/images.ts" }] } });
+    expect(() => readGeneratedCheckConfig(dir)).toThrow("needs a module and the name of its export");
+    write(join(dir, "package.json"), { chantGenerated: { renders: [{ name: "x", module: "../src/images.ts", export: "dockerfiles" }] } });
+    expect(() => readGeneratedCheckConfig(dir)).toThrow("module must be a path inside the product");
+  });
+});
+
 describe("chant's writers under a check (#4909)", () => {
   afterEach(() => {
     delete process.env[GENERATED_OUT_ENV];

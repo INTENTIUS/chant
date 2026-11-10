@@ -35,7 +35,7 @@ It reaches no network. Every schema it needs is generated into the lexicon packa
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `-o, --output` | `string` | stdout | Write output to file |
+| `-o, --output` | `string` | stdout | Write output to file. A directory (a trailing `/`, or one that exists) takes the build's additional files and no primary file, and refuses a build with a primary output (#4950) |
 | `-f, --format` | `string` | `json` | Output format: `json` or `yaml` |
 | `-d, --lexicon` | `string` | all | Build only the specified lexicon (e.g. `aws`, `gitlab`) |
 | `--lexicon-output <lexicon>=<path>` | `string` | — | Repeatable. Write that lexicon's output to its own file. See [One file per lexicon](#one-file-per-lexicon) |
@@ -69,6 +69,9 @@ chant build --output stack.json
 
 # YAML output
 chant build --format yaml --output stack.yaml
+
+# A directory (trailing slash): only the additional files, such as a docker project's Dockerfiles
+chant build images --output images/
 
 # Watch mode
 chant build --watch

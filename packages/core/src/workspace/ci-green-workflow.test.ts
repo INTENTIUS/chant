@@ -4,10 +4,11 @@
  * the generated-file rules (ws-042, #2524 D14).
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, test, vi } from "vitest";
 import { GENERATED_MARKER } from "../discovery/files";
+import { GENERATED_OUT_ENV, GENERATED_ROOT_ENV } from "../generated-check";
 import type { CommandContext } from "../cli/registry";
 import { parseYAMLDocument } from "../yaml";
 import { runCiWorkflow } from "./ci-green-cli";
@@ -181,6 +182,36 @@ describe("chant ci workflow (#3573)", () => {
       expect(await runCiWorkflow(ctx)).toBe(0);
       expect(readFileSync(file, "utf-8")).toBe(first);
     } finally {
+      cwd.mockRestore();
+      log.mockRestore();
+      error.mockRestore();
+    }
+  });
+
+  test("under chant dev generated-check, writes into the render tree with no --output and leaves the committed file (#4950)", async () => {
+    const root = realpathSync(scratchDir("chant-ci-workflow-"));
+    const out = realpathSync(scratchDir("chant-ci-workflow-out-"));
+    git(root, "init", "-q");
+    writeFiles(root, {
+      "chant.workspace.json": declaration([], { ci: { green: GREEN } }),
+      ".github/workflows/ci.yml": CI,
+      ".github/workflows/macos.yml": MACOS,
+      [CI_GREEN_WORKFLOW_FILE]: "committed\n",
+    });
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(root);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    process.env[GENERATED_OUT_ENV] = out;
+    process.env[GENERATED_ROOT_ENV] = root;
+    try {
+      expect(await runCiWorkflow({ args: {} } as unknown as CommandContext)).toBe(0);
+      expect(readFileSync(join(root, CI_GREEN_WORKFLOW_FILE), "utf-8")).toBe("committed\n");
+      const rendered = readFileSync(join(out, CI_GREEN_WORKFLOW_FILE), "utf-8");
+      expect(rendered.split("\n")[0]).toBe(`# ${GENERATED_MARKER}. Regenerate with: chant ci workflow (in the workspace root)`);
+      expect(existsSync(join(root, ".chant", "generated.json"))).toBe(false);
+    } finally {
+      delete process.env[GENERATED_OUT_ENV];
+      delete process.env[GENERATED_ROOT_ENV];
       cwd.mockRestore();
       log.mockRestore();
       error.mockRestore();

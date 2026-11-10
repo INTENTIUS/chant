@@ -185,3 +185,6 @@ export const RELEASE_CUT_RECORD_FLOOR = NEXT_RELEASE;
 export const RELEASE_CUT_CARRIES_IMAGE_FLOOR = NEXT_RELEASE;
 /** The first chant whose `ciToolFetchScript` and `ciToolInstallLine` take `download: "node"`, a fetch and unzip with node for an image with no curl or unzip, whose `CI_TOOL_SHA256` records just 1.36.0 and act 0.2.89 and checks them against their releases' checksums files, and whose overdue check deepens a shallow checkout before it dates a pipeline file (#4952). */
 export const CI_TOOL_NODE_DOWNLOAD_FLOOR = NEXT_RELEASE;
+
+/** The first chant whose `chant build -o <dir>/` writes a build's additional files (a docker project's Dockerfiles) into the directory with no primary file, whose `chantGenerated` renders take a `module` and its `export` (a `{ path: text }` object or a function returning one) and `chant dev render <module> <export>` writes them in place, and whose `chant ci workflow` and `chant release workflow` write into `chant dev generated-check`'s render tree with no `--output` (#4950). */
+export const RENDER_KINDS_FLOOR = NEXT_RELEASE;

@@ -1,13 +1,15 @@
 /** #4656: `chant release workflow` renders the release pipeline from the `release` block. */
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseYAML } from "../yaml";
 import { ACTION_PINS } from "../action-pins";
 import { IMAGE_PINS } from "../image-pins";
-import { NPM_TRUSTED_PUBLISHING_SETUP, renderReleaseWorkflow, RELEASE_DIGESTS_PATHS, type ReleaseWorkflowInput, type ReleaseWorkflowTarget } from "./release-workflow";
+import type { CommandContext } from "../cli/registry";
+import { GENERATED_OUT_ENV, GENERATED_ROOT_ENV } from "../generated-check";
+import { NPM_TRUSTED_PUBLISHING_SETUP, releaseWorkflowHeader, renderReleaseWorkflow, runReleaseWorkflow, RELEASE_DIGESTS_PATHS, RELEASE_WORKFLOW_FILES, type ReleaseWorkflowInput, type ReleaseWorkflowTarget } from "./release-workflow";
 import type { SecurityGroup } from "./security";
 
 const FIXTURES = join(__dirname, "__fixtures__", "release-workflow");
@@ -535,5 +537,32 @@ describe("QEMU for the platforms release.images builds (#4876)", () => {
   test("other architectures go in as QEMU names them", () => {
     const steps = ghSteps(render("github", ["linux/amd64", "linux/arm/v7", "linux/riscv64", "linux/arm64"]), "cut");
     expect(steps.find((s) => s.uses?.startsWith("docker/setup-qemu-action@"))!.with).toEqual({ platforms: "arm,arm64,riscv64" });
+  });
+});
+
+describe("chant release workflow under chant dev generated-check (#4950)", () => {
+  test("writes into the render tree with no --output, names no --output in the header, and leaves the committed file", async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "chant-4950-release-")));
+    const out = realpathSync(mkdtempSync(join(tmpdir(), "chant-4950-release-out-")));
+    writeFileSync(join(root, "chant.workspace.json"), JSON.stringify({ name: "product", schema: 1, members: [] }));
+    writeFileSync(join(root, "chant.config.json"), JSON.stringify({ lexicons: [] }));
+    mkdirSync(join(root, ".github/workflows"), { recursive: true });
+    writeFileSync(join(root, RELEASE_WORKFLOW_FILES.github), "committed\n");
+    expect(spawnSync("git", ["init", "-q"], { cwd: root }).status).toBe(0);
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(root);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    process.env[GENERATED_OUT_ENV] = out;
+    process.env[GENERATED_ROOT_ENV] = root;
+    try {
+      expect(await runReleaseWorkflow({ args: { forge: "github" } } as unknown as CommandContext)).toBe(0);
+      expect(readFileSync(join(root, RELEASE_WORKFLOW_FILES.github), "utf-8")).toBe("committed\n");
+      const rendered = readFileSync(join(out, RELEASE_WORKFLOW_FILES.github), "utf-8");
+      expect(rendered.split("\n")[0]).toBe(releaseWorkflowHeader("chant release workflow --forge github").trimEnd());
+    } finally {
+      delete process.env[GENERATED_OUT_ENV];
+      delete process.env[GENERATED_ROOT_ENV];
+      cwd.mockRestore();
+      log.mockRestore();
+    }
   });
 });
