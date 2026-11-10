@@ -181,8 +181,7 @@ describe("the re-plan decision and the pending status scripts (#4899)", () => {
 });
 
 test("PRODUCT_PLAN_STEPS_FLOOR marks the plan-job steps in the ci-product entry", async () => {
-  const { NEXT_RELEASE } = await import("../release-floors");
   const ciProduct = (await import("../ci-product")) as Record<string, unknown>;
-  expect(ciProduct.PRODUCT_PLAN_STEPS_FLOOR).toBe(NEXT_RELEASE);
+  expect(ciProduct.PRODUCT_PLAN_STEPS_FLOOR).toBe("0.124.88");
   expect(ciProduct.PLAN_NOTE_NOTICES_ENV).toBe("CHANT_PLAN_NOTE_NOTICES");
 });

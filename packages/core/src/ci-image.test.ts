@@ -27,7 +27,6 @@ import {
   unzipEntry,
   type CiTool,
 } from "./ci-image";
-import { NEXT_RELEASE } from "./release-floors";
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), "ci-image-"));
 const sha = (b: Uint8Array): string => createHash("sha256").update(b).digest("hex");
@@ -165,10 +164,10 @@ describe("ciToolRelease", () => {
     expect(() => ciToolSha256("tofu", "1.13.1", { amd64: "nothex" })).toThrow(/64 lower-case hex/);
   });
 
-  test("CI_IMAGE_FLOOR is the release that shipped it, and #4908's and #4932's floors the next", () => {
+  test("CI_IMAGE_FLOOR is the release that shipped it, and #4908's and #4932's floors theirs", () => {
     expect(CI_IMAGE_FLOOR).toBe("0.124.86");
-    expect(CI_IMAGE_NON_ROOT_FLOOR).toBe(NEXT_RELEASE);
-    expect(CI_IMAGE_DOCKER_STAGES_FLOOR).toBe(NEXT_RELEASE);
+    expect(CI_IMAGE_NON_ROOT_FLOOR).toBe("0.124.88");
+    expect(CI_IMAGE_DOCKER_STAGES_FLOOR).toBe("0.124.88");
   });
 });
 

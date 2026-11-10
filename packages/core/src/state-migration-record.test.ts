@@ -7,7 +7,6 @@
 import { describe, expect, test } from "vitest";
 import { fakeLedger } from "./__fixtures__/gated-ledger";
 import type { RequestGateInput } from "./lifecycle/gated-request";
-import { NEXT_RELEASE } from "./release-floors";
 import {
   runStateMigration,
   STATE_MIGRATION_RECORD_FLOOR,
@@ -84,7 +83,7 @@ describe("runStateMigration's record (#4928)", () => {
     expect(l.attachments).toEqual([]);
   });
 
-  test("the floor is the next release", () => {
-    expect(STATE_MIGRATION_RECORD_FLOOR).toBe(NEXT_RELEASE);
+  test("the floor is the release that shipped it", () => {
+    expect(STATE_MIGRATION_RECORD_FLOOR).toBe("0.124.88");
   });
 });

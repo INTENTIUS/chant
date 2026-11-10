@@ -38,7 +38,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, posix, relative, resolve } from "node:path";
-import { NEXT_RELEASE } from "../release-floors";
 import type { PublishDeclaration } from "./publish-declaration";
 import type { Release, ReleaseArtifact } from "./release-store";
 
@@ -56,7 +55,7 @@ export const RELEASE_IMAGES_FLOOR = "0.124.71";
 export const RELEASE_IMAGE_DOCKERFILE_FLOOR = "0.124.78";
 
 /** The first chant whose Dockerfile entry in `release.images` takes `args`, build arguments beside the two chant passes (#4908). */
-export const RELEASE_IMAGE_ARGS_FLOOR = NEXT_RELEASE;
+export const RELEASE_IMAGE_ARGS_FLOOR = "0.124.88";
 
 /** One image a release builds in its cut with a command of the product's. */
 export interface ReleaseImageBuild {

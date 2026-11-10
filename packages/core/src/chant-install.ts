@@ -33,10 +33,9 @@ import { existsSync, readFileSync } from "node:fs";
 import * as nodeModule from "node:module";
 import { delimiter, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { NEXT_RELEASE } from "./release-floors";
 
 /** The first chant with `runChant`, `lastJsonLine`, `installResolveFallback` and `fallbackImportArgs` in `@intentius/chant/chant-install` (#4889): a product runs chant and reads its `--json` document, and a file with no `node_modules` above it imports the product's packages, with no code of the product's own. */
-export const CHANT_RUN_FLOOR = NEXT_RELEASE;
+export const CHANT_RUN_FLOOR = "0.124.88";
 
 /** Where a chant package is installed. */
 export interface ChantInstall {

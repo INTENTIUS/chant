@@ -38,7 +38,6 @@ import {
 import { COMMENT_LEAVES_COMMIT_FLOOR } from "./ci-product";
 import { assertProductWords, commitWordOf, parseProductComment } from "./ci-product-words";
 import { PLYWOOD } from "./__fixtures__/product-words";
-import { NEXT_RELEASE } from "./release-floors";
 import type { OpRunRecord, OpRunRecordInput } from "./op/runtime";
 import type { PullRequestHead } from "./pr-forge";
 
@@ -663,8 +662,8 @@ describe("a comment job leaves the commit job's words to it, so a comment gets o
     expect(parseProductComment(aliased, "pw fmt", {}, {}, { leaveCommit: true })).toBeUndefined();
   });
 
-  test("the floor is the next release", () => {
-    expect(COMMENT_LEAVES_COMMIT_FLOOR).toBe(NEXT_RELEASE);
+  test("the floor is the release that shipped it", () => {
+    expect(COMMENT_LEAVES_COMMIT_FLOOR).toBe("0.124.88");
   });
 });
 
