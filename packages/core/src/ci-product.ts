@@ -149,6 +149,12 @@ export { PLAN_ARGUMENT_ENV, PLAN_NOTE_NOTICES_ENV, type ProductPlanReplanJob, ty
 export const COMMENT_LEAVES_COMMIT_FLOOR = NEXT_RELEASE;
 
 /**
+ * The first chant whose product plan takes `watches`, the product's own scheduled jobs the note job's `pr-post` checks for having stopped with the job's token (#4888), and whose `checkOverdueOps` and `overdueOpsAt` take a product's `logPrefix` and `label`.
+ */
+export const PRODUCT_PLAN_WATCHES_FLOOR = NEXT_RELEASE;
+export { PLAN_WATCHES_ENV } from "./op/schedule-overdue";
+
+/**
  * Day-2 actions in the product pipeline (#4654): the `action` comment
  * command counted as answered by the product's own workflow
  * (`productPipelineJobs(forge, env, { words, actions: true })`), or the

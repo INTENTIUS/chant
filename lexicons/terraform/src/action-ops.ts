@@ -48,6 +48,7 @@ import { terraformChangeSetPart } from "./change-set";
 import { DEFAULT_LOCK_TIMEOUT, lockTimeoutArgs } from "./lock-timeout";
 import { lastLines, runBinary, type BinaryExec } from "./state/exec";
 import { gatedStateOp, StateOpError, StateOpWaitingError, type GatedRequestLedger } from "./state-ops";
+import { actorFromEnv } from "@intentius/chant/actor";
 
 /** The op an action's request waits at. */
 export const ACTION_OP = "tf-action";
@@ -323,7 +324,8 @@ export interface ActionStepInput {
   lockTimeout?: string | false;
 }
 
-const actorOf = (env: NodeJS.ProcessEnv): string => env.GITHUB_ACTOR || env.GITLAB_USER_LOGIN || env.USER || env.USERNAME || "unknown";
+/** Who asks when the caller names nobody: core's actor fallback (#4911). */
+const actorOf = (env: NodeJS.ProcessEnv): string => actorFromEnv(env);
 
 function stepInvoke(input: ActionStepInput): InvokeActionInput {
   const cwd = input.cwd ?? process.cwd();

@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { cronFiresUtc } from "./cron";
-import { checkOverdueOps, opPipelineFile, overdueVerdict, scheduledWatches } from "./schedule-overdue";
+import { checkOverdueOps, opPipelineFile, overdueOpsAt, overdueVerdict, PLAN_WATCHES_ENV, plannedWatchesFromEnv, scheduledWatches, scheduledWatchProblem } from "./schedule-overdue";
 import { forgejoForge, githubForge, gitlabForge, type ForgeFetch, type PrForge } from "../pr-forge";
 import { renderPrNote, type PrReport } from "../pr-loop";
 import type { OpConfig } from "./types";
@@ -327,5 +327,87 @@ describe("the plan note", () => {
       overdue: [{ op: "drift", cron: "0 6 * * *", since: "2026-10-01T00:00:00Z", message: "Op `drift` is overdue: test." }],
     } as unknown as PrReport;
     expect(renderPrNote(report)).toContain("Warning: Op `drift` is overdue: test.");
+  });
+});
+
+// #4888: a product's prefix and label, and its own watches beside the discovered Ops.
+describe("a product's words and watches", () => {
+  /** A temporary repository, left for the OS to clear. */
+  function repo(files: Record<string, string>): string {
+    const dir = mkdtempSync(join(tmpdir(), "chant-overdue-words-"));
+    const date = "2026-10-01T00:00:00Z";
+    const git = (...args: string[]) => execFileSync("git", ["-C", dir, ...args], { env: { ...process.env, GIT_COMMITTER_DATE: date, GIT_AUTHOR_DATE: date }, stdio: "pipe" });
+    git("init", "-q");
+    for (const [path, body] of Object.entries(files)) {
+      mkdirSync(join(dir, path, ".."), { recursive: true });
+      writeFileSync(join(dir, path), body);
+    }
+    git("add", ".");
+    git("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "add");
+    return dir;
+  }
+
+  const forge = (scheduledRuns: PrForge["scheduledRuns"]): PrForge => ({ kind: "github", host: "example", scheduledRuns }) as PrForge;
+  const now = new Date("2026-10-22T00:00:00Z");
+
+  test("logPrefix goes before every log line and label before each verdict's message", async () => {
+    const root = repo({ ".github/workflows/drift.yml": "on: schedule", ".github/workflows/other.yml": "on: schedule" });
+    const lines: string[] = [];
+    const found = await checkOverdueOps({
+      watches: [
+        { op: "drift", cron: "0 6 * * *" },
+        { op: "other", cron: "0 6 * * *" },
+      ],
+      forge: forge(async (q) => {
+        if (q.op === "other") throw new Error("403\nmore");
+        return {};
+      }),
+      repoRoot: root,
+      now,
+      log: (l) => lines.push(l),
+      logPrefix: "yodel plan: ",
+      label: "Warning: ",
+    });
+    expect(found).toHaveLength(1);
+    expect(found[0]!.message).toMatch(/^Warning: Op `drift` is overdue: /);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatch(/^yodel plan: Op `drift` is overdue: /);
+    expect(lines[1]).toBe("yodel plan: schedule check: github did not say when Op other last ran, so it is not checked: 403");
+  });
+
+  test("without words the lines and messages are chant's as before", async () => {
+    const root = repo({ ".github/workflows/drift.yml": "on: schedule" });
+    const lines: string[] = [];
+    const found = await checkOverdueOps({ watches: [{ op: "drift", cron: "0 6 * * *" }], forge: forge(async () => ({})), repoRoot: root, now, log: (l) => lines.push(l) });
+    expect(found[0]!.message).toMatch(/^Op `drift` is overdue: /);
+    expect(lines).toEqual([found[0]!.message]);
+  });
+
+  test("overdueOpsAt checks a product's watches where no Op is discovered", async () => {
+    const root = repo({ ".github/workflows/terragucci-drift.yml": "on: schedule" });
+    const asked: string[] = [];
+    const found = await overdueOpsAt({
+      forge: forge(async (q) => {
+        asked.push(`${q.op} ${q.workflow}`);
+        return {};
+      }),
+      cwd: root,
+      now,
+      log: () => {},
+      watches: [{ op: "tf-drift", cron: "0 6 * * *", files: [".github/workflows/terragucci-drift.yml", ".github/workflows/terragucci.yml"] }],
+    });
+    expect(asked).toEqual(["tf-drift terragucci-drift.yml"]);
+    expect(found.map((o) => o.op)).toEqual(["tf-drift"]);
+  });
+
+  test("the watches the pipeline names, each checked; one that is not a watch is said and left out", () => {
+    const lines: string[] = [];
+    const good = { op: "tf-drift", cron: "0 6 * * *", files: [".gitlab/terragucci-drift.yml"], schedule: { variable: "TERRAGUCCI_SCHEDULE", not: ["comments", "resume"] } };
+    const env = { [PLAN_WATCHES_ENV]: JSON.stringify([good, { op: "x", cron: "nope" }, { op: "y", cron: "0 6 * * *", files: ["../etc/passwd"] }]) };
+    expect(plannedWatchesFromEnv(env, (l) => lines.push(l))).toEqual([good]);
+    expect(lines).toEqual([`${PLAN_WATCHES_ENV}: watch x's cron "nope" is not five fields, so it is not checked`, `${PLAN_WATCHES_ENV}: watch y's files are not paths from the repository root, so it is not checked`]);
+    expect(plannedWatchesFromEnv({})).toEqual([]);
+    expect(plannedWatchesFromEnv({ [PLAN_WATCHES_ENV]: "{" }, (l) => lines.push(l))).toEqual([]);
+    expect(scheduledWatchProblem({ op: "a", cron: "0 6 * * *", schedule: { variable: "V", value: 'x" || true' } })).toContain("schedule value");
   });
 });

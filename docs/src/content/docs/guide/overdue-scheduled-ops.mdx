@@ -30,6 +30,10 @@ The lookup is `opPipelineFile` in `packages/core/src/op/schedule-overdue.ts`. Th
 
 A CI product that generates its own pipeline calls `checkOverdueOps` from `@intentius/chant/op/schedule-overdue` with one `ScheduledWatch` per job. `files` lists the files its generator wrote for the job, and the first one in the checkout is used. On GitLab, `schedule` is the job's selector when the job's rule is not `$CHANT_SCHEDULED_OP == "<op>"`, such as `{ variable: "TERRAGUCCI_SCHEDULE", not: ["comments", "resume"] }`. The check passes it to `scheduledRuns`, and when no schedule matches, the line names it. Both fields need chant `OVERDUE_PIPELINE_FILES_FLOOR` (`packages/core/src/release-floors.ts`).
 
+A product passes its own words ([#4888](https://github.com/INTENTIUS/chant/issues/4888)): `logPrefix` goes before every line the check writes to `log`, such as `yodel plan: `, and `label` before each verdict's `message`, such as `Warning: `, so it does not wrap `log` or the messages itself. `overdueOpsAt` takes the same two.
+
+A product whose plan runs on chant's product plan (`productPlan` in `@intentius/chant/ci-product`) lists its scheduled jobs as `watches`, each a `ScheduledWatch`. The plan job holds no token, so it cannot ask the forge for a private repository. The note job gets the watches from the pipeline as `CHANT_PLAN_WATCHES`, and its `pr-post` checks them with the job's token beside the Ops it discovers, in its checkout of the target branch's commit, and adds the line for each overdue job under the note's counts. A watch whose op is a discovered Op's takes its place. Both need chant `PRODUCT_PLAN_WATCHES_FLOOR`.
+
 ## When it warns
 
 The plan counts the fires of the Op's cron in UTC since the job last ran (`packages/core/src/op/cron.ts:158`). When no run is on record, it counts from the commit that added the pipeline file. Two fires or more is overdue (`packages/core/src/op/schedule-overdue.ts:244`), while one late or dropped run is not.

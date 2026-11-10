@@ -273,9 +273,10 @@ export async function checkOverdueOps(input: {
   member?: string;
   now: Date;
   log: (line: string) => void;
-}): Promise<OverdueOp[]> {
+} & OverdueWords): Promise<OverdueOp[]> {
   const { forge } = input;
   if (!forge.scheduledRuns) return [];
+  const log = (line: string): void => input.log(`${input.logPrefix ?? ""}${line}`);
   const out: OverdueOp[] = [];
   for (const watch of input.watches) {
     const file = opPipelineFile(input.repoRoot, forge.kind, watch, input.member);
@@ -284,14 +285,87 @@ export async function checkOverdueOps(input: {
     try {
       runs = await forge.scheduledRuns({ op: watch.op, workflow: file.split("/").pop()!, ...(watch.schedule ? { schedule: watch.schedule } : {}) });
     } catch (err) {
-      input.log(`schedule check: ${forge.kind} did not say when Op ${watch.op} last ran, so it is not checked: ${(err instanceof Error ? err.message : String(err)).split("\n")[0]}`);
+      log(`schedule check: ${forge.kind} did not say when Op ${watch.op} last ran, so it is not checked: ${(err instanceof Error ? err.message : String(err)).split("\n")[0]}`);
       continue;
     }
     const found = overdueVerdict(watch, forge.kind, runs, runs.last ? undefined : fileAdded(input.repoRoot, file), input.now);
     if (found) {
-      input.log(found.message);
-      out.push(found);
+      log(found.message);
+      out.push(input.label ? { ...found, message: `${input.label}${found.message}` } : found);
     }
+  }
+  return out;
+}
+
+/**
+ * A product's words for the overdue check (#4888), so it passes them in
+ * place of wrapping `log` and each verdict's message itself.
+ */
+export interface OverdueWords {
+  /** Put before every line the check writes to `log`, such as `yodel plan: `. */
+  logPrefix?: string;
+  /** Put before each verdict's `message`, the line the note shows, such as `Warning: `. The log line keeps chant's words. */
+  label?: string;
+}
+
+/**
+ * The variable the generated plan-note job names a product's own scheduled
+ * watches in (#4888): a JSON array of {@link ScheduledWatch}, from the
+ * pipeline (`productPlan.watches`), never from the plan job's report.
+ * `pr-post` checks them with the job's token beside the Ops it discovers.
+ */
+export const PLAN_WATCHES_ENV = "CHANT_PLAN_WATCHES";
+
+const OP_NAME = /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/;
+const REL_PATH = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9_.\/-]+$/;
+const VAR_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * Why `watch` is not a scheduled watch a pipeline may name (#4888), or
+ * undefined when it is: an Op name, a cron of five fields, `files` as
+ * relative paths with no `..`, and a GitLab selector of a variable name and
+ * plain values. None of them holds a `$`, so GitLab, which expands
+ * variables in a job's variables, passes the JSON as written.
+ */
+export function scheduledWatchProblem(watch: unknown): string | undefined {
+  if (!isRecord(watch)) return "a watch is an object with op and cron";
+  if (typeof watch.op !== "string" || !OP_NAME.test(watch.op)) return `the watch's op ${JSON.stringify(watch.op)} is not an Op name`;
+  if (typeof watch.cron !== "string" || !/^[0-9A-Za-z*\/,? -]+$/.test(watch.cron) || watch.cron.trim().split(/\s+/).length !== 5) return `watch ${watch.op}'s cron ${JSON.stringify(watch.cron)} is not five fields`;
+  if (watch.files !== undefined && (!Array.isArray(watch.files) || watch.files.some((f) => typeof f !== "string" || !REL_PATH.test(f)))) return `watch ${watch.op}'s files are not paths from the repository root`;
+  if (watch.schedule !== undefined) {
+    const s = watch.schedule;
+    const plain = (v: unknown): boolean => typeof v === "string" && /^[A-Za-z0-9_.:\/-]+$/.test(v);
+    if (!isRecord(s) || typeof s.variable !== "string" || !VAR_NAME.test(s.variable)) return `watch ${watch.op}'s schedule names no variable`;
+    if (s.value !== undefined && !plain(s.value)) return `watch ${watch.op}'s schedule value is not a plain word`;
+    if (s.not !== undefined && (!Array.isArray(s.not) || !s.not.every(plain))) return `watch ${watch.op}'s schedule not is not a list of plain words`;
+  }
+  return undefined;
+}
+
+/**
+ * The watches {@link PLAN_WATCHES_ENV} names (#4888), each checked with
+ * {@link scheduledWatchProblem}; one that is not a watch is a line in `log`
+ * and left out. None when the variable is unset or not a JSON array.
+ */
+export function plannedWatchesFromEnv(env: Record<string, string | undefined> = process.env, log: (line: string) => void = () => undefined): ScheduledWatch[] {
+  const raw = env[PLAN_WATCHES_ENV];
+  if (!raw?.trim()) return [];
+  let doc: unknown;
+  try {
+    doc = JSON.parse(raw);
+  } catch {
+    log(`${PLAN_WATCHES_ENV} is not JSON, so no product watch is checked`);
+    return [];
+  }
+  if (!Array.isArray(doc)) {
+    log(`${PLAN_WATCHES_ENV} is not a JSON array, so no product watch is checked`);
+    return [];
+  }
+  const out: ScheduledWatch[] = [];
+  for (const w of doc) {
+    const problem = scheduledWatchProblem(w);
+    if (problem) log(`${PLAN_WATCHES_ENV}: ${problem}, so it is not checked`);
+    else out.push(w as ScheduledWatch);
   }
   return out;
 }
@@ -305,14 +379,36 @@ export async function checkOverdueOps(input: {
  * when a job ran, nothing is checked. A failure is a line in `log` and no
  * verdict, and the plan goes on.
  */
-export async function overdueOpsAt(input: { forge: PrForge | undefined; cwd: string; member?: string; now?: Date; log: (line: string) => void }): Promise<OverdueOp[]> {
+export async function overdueOpsAt(
+  input: {
+    forge: PrForge | undefined;
+    cwd: string;
+    member?: string;
+    now?: Date;
+    log: (line: string) => void;
+    /**
+     * A product's own scheduled watches (#4888), checked beside the
+     * discovered Ops; one of the same name takes the discovered Op's place.
+     * They are checked even when discovery fails.
+     */
+    watches?: readonly ScheduledWatch[];
+  } & OverdueWords,
+): Promise<OverdueOp[]> {
   const { forge } = input;
   if (!forge?.scheduledRuns) return [];
+  const own = input.watches ?? [];
+  let discovered: ScheduledWatch[] = [];
   try {
     const { discoverOps } = await import("./discover");
-    const discovered = await discoverOps({ cwd: input.cwd });
-    const watches = scheduledWatches([...discovered.ops.values()].map((d) => d.config));
-    if (watches.length === 0) return [];
+    const found = await discoverOps({ cwd: input.cwd });
+    discovered = scheduledWatches([...found.ops.values()].map((d) => d.config));
+  } catch (err) {
+    input.log(`${input.logPrefix ?? ""}could not check the scheduled Ops, so none is reported overdue: ${err instanceof Error ? err.message : String(err)}`);
+    if (own.length === 0) return [];
+  }
+  const watches = [...discovered.filter((d) => !own.some((w) => w.op === d.op)), ...own];
+  if (watches.length === 0) return [];
+  try {
     const top = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd: input.cwd, encoding: "utf-8" });
     if (top.status !== 0) return [];
     return await checkOverdueOps({
@@ -322,9 +418,11 @@ export async function overdueOpsAt(input: { forge: PrForge | undefined; cwd: str
       ...(input.member ? { member: input.member } : {}),
       now: input.now ?? new Date(),
       log: input.log,
+      ...(input.logPrefix ? { logPrefix: input.logPrefix } : {}),
+      ...(input.label ? { label: input.label } : {}),
     });
   } catch (err) {
-    input.log(`could not check the scheduled Ops, so none is reported overdue: ${err instanceof Error ? err.message : String(err)}`);
+    input.log(`${input.logPrefix ?? ""}could not check the scheduled Ops, so none is reported overdue: ${err instanceof Error ? err.message : String(err)}`);
     return [];
   }
 }

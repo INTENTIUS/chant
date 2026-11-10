@@ -95,7 +95,7 @@ import type { GatedRequest, GatedRequestRules } from "@intentius/chant/lifecycle
 import type { ForgeTargetOptions } from "@intentius/chant/pr-forge";
 import { exportStateVersion, StateExportError, type StateVersionSource } from "@intentius/chant/state-export";
 import { runStateMigration, type MigrationCheck, type MigrationRootPlan, type StateMigrationEngine } from "@intentius/chant/state-migration";
-import { describeRun, forgeLiveRuns, releaseStateLock, type LiveRun, type LockInfo, type StateLockSource } from "@intentius/chant/state-unlock";
+import { describeRun, forgeLiveRunsOf, releaseStateLock, type LiveRun, type LockInfo, type StateLockSource } from "@intentius/chant/state-unlock";
 import { parsePulumiUrn, pulumiNodeKey } from "@intentius/chant/pulumi-urn";
 import { pulumiStackBackend } from "./adopt";
 import { pulumiExportResources, pulumiPreviewDigest, pulumiSteps, PULUMI_UNCHANGED_OPS } from "./change-set";
@@ -148,6 +148,35 @@ export interface PulumiStackOpCommon {
   plunge?: PulumiRunner;
   env?: Record<string, string | undefined>;
   gated?: GatedRequestApi;
+  /**
+   * The command a waiting or refused request prints (#4911), as the product
+   * words it: a function of the gate (the request's subject) and the
+   * digest, which core's adapters take as `words.approveCommand`, or a
+   * template whose `{op}`, `{gate}`, `{digest}` and `{sign}` chant fills,
+   * `{sign}` being `--sign` when `rules.mode` is `sealed`. Default core's
+   * line.
+   */
+  approveCommand?: string | ((subject: string, digest: string) => string);
+}
+
+/** The approve line `common` asks for (#4911), as core's adapters take `words.approveCommand`; undefined for core's own. */
+export function stackOpApproveCommand(common: Pick<PulumiStackOpCommon, "approveCommand" | "rules" | "op">): ((subject: string, digest: string) => string) | undefined {
+  const given = common.approveCommand;
+  if (given === undefined) return undefined;
+  if (typeof given === "function") return given;
+  const op = common.op ?? PULUMI_STACK_OPS_OP;
+  const sign = common.rules.mode === "sealed" ? "--sign" : "";
+  return (gate, digest) =>
+    given
+      .replace(/\{(op|gate|digest|sign)\}/g, (_, k: string) => ({ op, gate, digest, sign })[k as "op"])
+      .replace(/\s+/g, " ")
+      .trim();
+}
+
+/** The words core's walks take: the op, the kind, and the product's approve line when it gives one. */
+function wordsOf(common: PulumiStackOpCommon, kind: PulumiStackOpKind) {
+  const approveCommand = stackOpApproveCommand(common);
+  return { op: common.op ?? PULUMI_STACK_OPS_OP, kind, ...(approveCommand ? { approveCommand } : {}) };
 }
 
 /** Which of core's checks stopped an operation that was approved (#4808): a state that moved between the plan and the write. */
@@ -353,7 +382,7 @@ export async function gatedStackExport(opts: PulumiStackExportOptions): Promise<
     source,
     out,
     ...(opts.version ? { version: opts.version } : {}),
-    words: { op: opts.op ?? PULUMI_STACK_OPS_OP, kind: "stack-export" },
+    words: wordsOf(opts, "stack-export"),
     env,
     ...gatedSettings(opts),
   });
@@ -464,6 +493,36 @@ export async function pulumiStackLockIds(opts: { dir: string; stack: string; cwd
   return { checked: true, ...(at.backend ? { backend: at.backend } : {}), ids: diyStackLockIds(at.root, at.project, opts.stack) };
 }
 
+/** Why {@link pulumiStackLockToCancel} names no lock (#4911). */
+export type PulumiLockToCancelRefusal = "read-failed" | "not-listed" | "no-lock" | "many-locks";
+
+/** The lock a cancel releases, or why none can be named without the caller's id. */
+export type PulumiLockToCancel =
+  | { lockId: string; read: boolean }
+  | { refusal: PulumiLockToCancelRefusal; message: string; backend?: string; ids?: string[] };
+
+/**
+ * The lock id a cancel asks to release (#4911): `given` when the caller
+ * names one, else the one lock {@link pulumiStackLockIds} finds on the
+ * stack's `file://` backend. No lock, two locks, a backend chant cannot
+ * list, or a read that failed answers a `refusal` with chant's message; a
+ * product words it from the code, the `backend` and the `ids`.
+ */
+export async function pulumiStackLockToCancel(given: string | undefined, stack: { dir: string; stack: string; cwd?: string; project?: string; engine?: PulumiMemberEngine; env?: NodeJS.ProcessEnv }): Promise<PulumiLockToCancel> {
+  if (given) return { lockId: given, read: false };
+  let locks: PulumiStackLocks;
+  try {
+    locks = await pulumiStackLockIds(stack);
+  } catch (e) {
+    return { refusal: "read-failed", message: `a cancel names the lock it releases, and reading stack ${stack.stack}'s lock failed: ${(e as Error).message}` };
+  }
+  const backend = locks.backend ? { backend: locks.backend } : {};
+  if (!locks.checked) return { refusal: "not-listed", ...backend, message: `a cancel names the lock it releases here: chant reads a stack's lock from a file:// backend only, and stack ${stack.stack}'s backend is ${locks.backend ?? "none chant can find"}` };
+  if (locks.ids.length === 0) return { refusal: "no-lock", ...backend, ids: [], message: `stack ${stack.stack} holds no lock now, so there is nothing to cancel` };
+  if (locks.ids.length > 1) return { refusal: "many-locks", ...backend, ids: locks.ids, message: `stack ${stack.stack} holds ${locks.ids.length} locks (${locks.ids.join(", ")}); name the one to release` };
+  return { lockId: locks.ids[0]!, read: true };
+}
+
 export interface PulumiStackCancelOptions extends PulumiStackOpCommon {
   dir: string;
   cwd?: string;
@@ -479,8 +538,10 @@ export interface PulumiStackCancelOptions extends PulumiStackOpCommon {
    * The repository's runs that have not finished (#4808), read before the
    * request and again just before the spend: while one that began before
    * the lock was taken is alive, nothing is released. A throw refuses the
-   * release. Default core's `forgeLiveRuns` of the forge {@link forge}
-   * names over the environment (`forgeTargetWith`).
+   * release. Default core's `forgeLiveRunsOf` of the forge {@link forge}
+   * names over the environment (`forgeTargetWith`); with no CI variables
+   * and no `forge.repo`, the stack directory's origin remote names the
+   * forge and the repository (#4920).
    */
   liveRuns?: () => Promise<LiveRun[]>;
   /** The forge whose runs are read when no `liveRuns` is given: `--forge`, `--repo` and the rest a product's flags give. */
@@ -493,15 +554,6 @@ export interface PulumiStackCancelResult {
   lockChecked: boolean;
   /** How many of the repository's runs were alive at the check, none of them able to hold the lock. */
   liveRuns: number;
-}
-
-/** The runs of the forge `forge` names over `env`, as core reads them (#4808). */
-function forgeRuns(env: Record<string, string | undefined>, forge: (ForgeTargetOptions & ForgeOverrides) | undefined): () => Promise<LiveRun[]> {
-  return async () => {
-    const { forgeTargetWith } = await import("@intentius/chant/forge-flags");
-    const t = forgeTargetWith(env, forge ?? {});
-    return forgeLiveRuns({ kind: t.kind, apiBase: t.apiBase, repo: t.repo, token: t.token, ...(t.tokenHeader ? { tokenHeader: t.tokenHeader } : {}) });
-  };
 }
 
 /**
@@ -560,8 +612,9 @@ export async function gatedStackCancel(opts: PulumiStackCancelOptions): Promise<
     subject: opts.stack,
     by: opts.by,
     lock,
-    liveRuns: opts.liveRuns ?? forgeRuns(env, opts.forge),
-    words: { op: opts.op ?? PULUMI_STACK_OPS_OP, kind: "stack-cancel" },
+    // #4911, #4920: core's reader of the forge's runs, the origin remote naming the forge on a laptop.
+    liveRuns: opts.liveRuns ?? forgeLiveRunsOf(env, opts.forge ?? {}, { cwd: dir }),
+    words: wordsOf(opts, "stack-cancel"),
     ...(opts.commit ? { commit: opts.commit } : {}),
     ...gatedSettings(opts),
   });
@@ -596,6 +649,25 @@ export interface PulumiMoveStack {
   dir: string;
   /** The stack, as `--source` or `--dest` takes it (`<org>/<project>/<stack>` across projects). */
   stack: string;
+  /**
+   * The stack's project (#4911). Given on both sides with a bare `stack`,
+   * the move names the destination as `--dest` takes it itself
+   * ({@link pulumiMoveDestStack}).
+   */
+  project?: string;
+}
+
+/**
+ * The destination as `pulumi state move --dest` takes it (#4911): the bare
+ * stack in the source's project, else `<org>/<project>/<stack>`. A DIY
+ * backend's organization is always `organization`; on Pulumi Cloud (no
+ * backend, or an http(s) one) it is `org` when given. A stack already
+ * qualified is kept.
+ */
+export function pulumiMoveDestStack(source: { project: string }, dest: { project: string; stack: string; backend?: string }, opts: { org?: string } = {}): string {
+  if (dest.stack.includes("/") || dest.project === source.project) return dest.stack;
+  const cloud = !dest.backend || /^https?:\/\//.test(dest.backend);
+  return `${(cloud ? opts.org : undefined) ?? "organization"}/${dest.project}/${dest.stack}`;
 }
 
 export interface PulumiStackMoveOptions extends PulumiStackOpCommon {
@@ -607,6 +679,8 @@ export interface PulumiStackMoveOptions extends PulumiStackOpCommon {
   engine?: PulumiMemberEngine;
   runId?: string;
   commit?: string;
+  /** The Pulumi Cloud organization a destination in another project is named under ({@link pulumiMoveDestStack}). */
+  org?: string;
 }
 
 export interface PulumiStackMoveResult {
@@ -687,9 +761,15 @@ export async function gatedStackMove(opts: PulumiStackMoveOptions): Promise<Pulu
   if (engine !== destEngine) throw new Error(`${opts.source.member} runs on ${engine} and ${opts.dest.member} on ${destEngine}; a move needs both stacks on one engine`);
   const urns = [...new Set(opts.urns)].sort();
   const runners = { ...(opts.run ? { run: opts.run } : {}), ...(opts.plunge ? { plunge: opts.plunge } : {}), engine };
+  // #4911: with both projects, the destination's --dest name is the lexicon's to decide.
+  const destBackend = opts.source.project && opts.dest.project ? pulumiStackBackend(destDir, { env })?.url : undefined;
+  const destStack =
+    opts.source.project && opts.dest.project
+      ? pulumiMoveDestStack({ project: opts.source.project }, { project: opts.dest.project, stack: opts.dest.stack, ...(destBackend ? { backend: destBackend } : {}) }, opts.org ? { org: opts.org } : {})
+      : opts.dest.stack;
   const sides = [
     { ...opts.source, dir: sourceDir },
-    { ...opts.dest, dir: destDir },
+    { ...opts.dest, stack: destStack, dir: destDir },
   ];
   const side = (member: string) => sides.find((s) => s.member === member)!;
 
@@ -706,7 +786,7 @@ export async function gatedStackMove(opts: PulumiStackMoveOptions): Promise<Pulu
   const left = moveLeftovers(urns, before.source, before.dest);
   if (left.length > 0) throw new Error(`refusing to move: the previews change more than the moved resources, so the stacks would not preview no change after it: ${left.join("; ")}`);
   if (engine === "plunge") {
-    const args = plungeMoveArgs({ source: opts.source.stack, dest: opts.dest.stack, urns });
+    const args = plungeMoveArgs({ source: opts.source.stack, dest: destStack, urns });
     let view: ReturnType<typeof moveView>;
     try {
       view = moveView((await runAllowedPlunge(opts.plunge ?? defaultPlungeRunner, args, sourceDir)).stdout);
@@ -720,7 +800,7 @@ export async function gatedStackMove(opts: PulumiStackMoveOptions): Promise<Pulu
     }
   }
   const digestOf = async (member: string): Promise<string> => sha256(await exportNow({ ...side(member), ...runners }));
-  const move = { source: opts.source.stack, dest: opts.dest.stack, urns };
+  const move = { source: opts.source.stack, dest: destStack, urns };
   const proof: MigrationCheck = { changes: [], summary: `the previews change only the ${urns.length} moved resource(s)` };
   const roots: MigrationRootPlan[] = [];
   for (const s of sides) {
@@ -771,17 +851,17 @@ export async function gatedStackMove(opts: PulumiStackMoveOptions): Promise<Pulu
     },
   };
 
-  const subject = `move:${opts.source.stack}:${opts.dest.stack}`;
-  const fields = { source: opts.source.stack, dest: opts.dest.stack, engine, urns: urns.join(",") };
+  const subject = `move:${opts.source.stack}:${destStack}`;
+  const fields = { source: opts.source.stack, dest: destStack, engine, urns: urns.join(",") };
   const r = await runStateMigration({
     name: subject,
     by: opts.by,
     roots,
     engine: migration,
-    words: { op: opts.op ?? PULUMI_STACK_OPS_OP, kind: "stack-move" },
+    words: wordsOf(opts, "stack-move"),
     fields,
     detail: (res) => ({ urns: urns.length, engine, afterNoChange: res.status === "applied" }),
-    description: `move of ${urns.length} resource(s) from ${opts.source.stack} to ${opts.dest.stack}`,
+    description: `move of ${urns.length} resource(s) from ${opts.source.stack} to ${destStack}`,
     ...(opts.runId ? { runId: opts.runId } : {}),
     ...(opts.commit ? { commit: opts.commit } : {}),
     ...gatedSettings(opts),
@@ -981,11 +1061,13 @@ export async function gatedStackAction(opts: PulumiStackActionOptions): Promise<
       }
     }) as GatedOpAct<{ result: PulumiStackActionResult; error?: string }>,
   );
+  const approve = stackOpApproveCommand(opts);
+  const command = (fallback: string): string => (approve ? approve(subject, r.digest) : fallback);
   switch (r.status) {
     case "waiting":
-      return { status: "waiting", digest: r.digest, request: r.request, command: r.command };
+      return { status: "waiting", digest: r.digest, request: r.request, command: command(r.command) };
     case "refused":
-      return { status: "refused", digest: r.digest, request: r.request, by: r.by, reason: r.reason, command: r.command };
+      return { status: "refused", digest: r.digest, request: r.request, by: r.by, reason: r.reason, command: command(r.command) };
     case "spent":
       return { status: "spent", digest: r.digest, request: r.request };
     case "held":
