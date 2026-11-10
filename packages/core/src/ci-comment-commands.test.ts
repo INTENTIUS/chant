@@ -374,3 +374,66 @@ describe("a wave stop on a re-run, and a re-plan comment with flags (#4979)", ()
     expect(() => commentJobsFromEnv('{"waves":{"op":"tf-apply","count":0}}')).toThrow(/waves is \{ op, count \}/);
   });
 });
+
+describe("the comment job's apply before merge on the waves (#4984)", () => {
+  const bm = { workflow: "tf-apply.yml", plan: ["terragucci/plan"], pipelineFiles: [".github/workflows/"] };
+  const jobs: CommentJobs = { applyOnMerge: true, waves: { op: "tf-apply", count: 2 }, wavesBeforeMerge: bm };
+
+  test("an open pull request's apply is decided, and the waves workflow dispatched on the default branch with the decided head", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { beforeMergeDigest } = await import("./op/before-merge");
+    const dir = mkdtempSync(join(tmpdir(), "chant-cc-bm-"));
+    const git = (...args: string[]) => {
+      const r = spawnSync("git", args, { cwd: dir, encoding: "utf-8", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } });
+      if (r.status !== 0) throw new Error(r.stderr);
+      return r.stdout.trim();
+    };
+    git("init", "-q", "-b", "main");
+    writeFileSync(join(dir, "main.tf"), "1");
+    git("add", ".");
+    git("commit", "-q", "-m", "base");
+    const baseSha = git("rev-parse", "HEAD");
+    git("checkout", "-q", "-b", "feature");
+    writeFileSync(join(dir, "main.tf"), "2");
+    git("commit", "-q", "-am", "head");
+    const head = git("rev-parse", "HEAD");
+    git("update-ref", "refs/pull/12/head", head);
+    git("checkout", "-q", "main");
+    git("remote", "add", "origin", dir);
+    const s = setup({ pr: { state: "open", headSha: head, mergeCommit: undefined } }, jobs, "/terragucci apply wave-1");
+    const sent: Array<[string, string, Record<string, string> | undefined]> = [];
+    const stops: Array<[string, number | null]> = [];
+    const at = "2026-11-10T12:00:00.000Z";
+    const got = await answerProductComment({
+      ...s.opts,
+      runs: { rerunFailed: async () => ({}), dispatch: async (wf, ref, inputs) => (sent.push([wf, ref, inputs]), {}) },
+      beforeMerge: {
+        requires: async () => null,
+        statuses: async () => [{ context: "terragucci/plan", state: "success" }],
+        git: (argv, o) => {
+          const r = spawnSync(argv[0]!, argv.slice(1), { encoding: "utf8", ...(o.cwd ? { cwd: o.cwd } : {}) });
+          return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+        },
+        cwd: dir,
+        record: async (d) => ({ ...d, digest: beforeMergeDigest("tf-apply", d) }),
+        stop: async (h, through) => void stops.push([h, through]),
+        now: () => at,
+      },
+    });
+    const digest = beforeMergeDigest("tf-apply", { pr: 12, head, base: baseSha, through: 1, at, by: "alice" });
+    expect(sent).toEqual([["tf-apply.yml", "main", { pr: "12", head, digest }]]);
+    expect(stops).toEqual([[head, 1]]);
+    expect(got).toMatchObject({ command: "apply", ran: true, replied: true });
+    expect(s.posted).toEqual([`terragucci: started the waves of tf-apply on pull request 12's head ${head.slice(0, 8)} through wave 1 for alice; each wave's gate decides, and the run says when the head applied`]);
+  });
+
+  test("CHANT_COMMENT_JOBS carries the waves before merge, each field checked", () => {
+    expect(commentJobsFromEnv(JSON.stringify(jobs))).toEqual(jobs);
+    expect(() => commentJobsFromEnv(JSON.stringify({ wavesBeforeMerge: bm }))).toThrow("wavesBeforeMerge needs waves");
+    expect(() => commentJobsFromEnv(JSON.stringify({ ...jobs, wavesBeforeMerge: { ...bm, workflow: "../x" } }))).toThrow("workflow is a workflow file name");
+    expect(() => commentJobsFromEnv(JSON.stringify({ ...jobs, wavesBeforeMerge: { ...bm, requires: ["green"] } }))).toThrow("requires is a list of approved, mergeable, undiverged, checks");
+  });
+});

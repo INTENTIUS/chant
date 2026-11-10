@@ -41,9 +41,25 @@
  * label. Someone who can edit the workflow can delete it too: the forge's
  * environment and runner settings and the cloud role's trust are what keep
  * a job out.
+ *
+ * Before merge (#4984): a waves workflow with a before-merge mode carries
+ * `beforeMerge: { op }`. A run started for an open pull request's head
+ * names it in `CHANT_BEFORE_MERGE_PR`, `CHANT_BEFORE_MERGE_HEAD` and
+ * `CHANT_BEFORE_MERGE_DIGEST` (./op/before-merge.ts), and still runs on one
+ * of the spec's branches. The guard then fetches `chant/lifecycle` into a
+ * directory of its own, with the job's token (GitHub and Forgejo
+ * `GITHUB_TOKEN`, GitLab `CI_JOB_TOKEN`), reads the decision for that head,
+ * and admits the run only when the pull request and the digest are the
+ * decision's and the decision's fields still give its digest. A job of a
+ * workflow without the mode refuses any run that names a head.
  */
+import { spawnSync } from "node:child_process";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { isRunnerGroup, type CiRunner } from "./ci-jobs";
 import { CHANT_EXIT } from "./exit-codes";
+import { BEFORE_MERGE_DIGEST_ENV, BEFORE_MERGE_HEAD_ENV, BEFORE_MERGE_PR_ENV, beforeMergePath, beforeMergeProblems, beforeMergeRunFromEnv, isBeforeMergeRun, parseBeforeMerge, type BeforeMergeRecord, type BeforeMergeRun } from "./op/before-merge";
 
 /** The variable the generated step carries its expectation in. */
 export const JOB_GUARD_ENV = "CHANT_JOB_GUARD";
@@ -68,6 +84,8 @@ export interface JobGuardSpec {
   runnerTags?: string[];
   /** GitHub and Forgejo: the runner must be self-hosted. */
   selfHosted?: boolean;
+  /** The waves have a before-merge mode (#4984): a run that names a head runs only as op `op`'s recorded decision. */
+  beforeMerge?: { op: string };
 }
 
 /** What the job sees. Undefined: the forge did not say. */
@@ -80,6 +98,12 @@ export interface JobSeen {
   refProtected?: string;
   runnerTags?: string[];
   runnerEnvironment?: string;
+  /** The decision the run names (#4984), from its variables. */
+  beforeMerge?: BeforeMergeRun;
+  /** The recorded decision for that head; null when there is none. Read only when the spec has a before-merge mode. */
+  beforeMergeRecord?: BeforeMergeRecord | null;
+  /** Why the decisions could not be read, when they could not. */
+  beforeMergeError?: string;
 }
 
 export interface JobGuardResult {
@@ -104,6 +128,8 @@ export interface JobGuardInput {
   runner?: CiRunner;
   /** GitHub: the job may request an OIDC token (`id-token: write`), so the guard can read its environment. */
   idToken?: boolean;
+  /** The waves' before-merge mode (#4984), with the op its decisions are recorded under. */
+  beforeMerge?: { op: string };
 }
 
 /**
@@ -121,6 +147,7 @@ export function jobGuardSpec(input: JobGuardInput): JobGuardSpec {
     branches: [...input.branches],
     ...(input.forge === "gitlab" && labels.length > 0 ? { runnerTags: labels } : {}),
     ...(input.forge !== "gitlab" && labels.includes("self-hosted") ? { selfHosted: true } : {}),
+    ...(input.beforeMerge ? { beforeMerge: { op: input.beforeMerge.op } } : {}),
   };
 }
 
@@ -140,6 +167,7 @@ export function parseJobGuardSpec(raw: string | undefined): JobGuardSpec {
   if (!Array.isArray(o.branches) || o.branches.some((b) => typeof b !== "string")) throw new Error(`${JOB_GUARD_ENV}.branches is not a list of branches`);
   if (o.forgeEnvironment !== undefined && typeof o.forgeEnvironment !== "string") throw new Error(`${JOB_GUARD_ENV}.forgeEnvironment is not a name`);
   if (o.runnerTags !== undefined && (!Array.isArray(o.runnerTags) || o.runnerTags.some((t) => typeof t !== "string"))) throw new Error(`${JOB_GUARD_ENV}.runnerTags is not a list of tags`);
+  if (o.beforeMerge !== undefined && (typeof o.beforeMerge !== "object" || o.beforeMerge === null || typeof o.beforeMerge.op !== "string")) throw new Error(`${JOB_GUARD_ENV}.beforeMerge is { op }`);
   return o as JobGuardSpec;
 }
 
@@ -194,6 +222,18 @@ export function checkJob(expect: JobGuardSpec, seen: JobSeen): JobGuardResult {
     else out.checked.push(`ref ${seen.ref}`);
   }
 
+  // #4984: a run started for an open pull request's head runs only as the decision recorded for it.
+  const run = seen.beforeMerge;
+  if (run && isBeforeMergeRun(run)) {
+    if (!expect.beforeMerge) out.problems.push(`before merge: the run names pull request ${run.pr ?? "none"}'s head ${run.head ?? "none"}, and this job applies only the pushes to its branches`);
+    else if (seen.beforeMergeError !== undefined) out.problems.push(`before merge: the decisions on chant/lifecycle could not be read: ${seen.beforeMergeError}`);
+    else {
+      const problems = beforeMergeProblems(expect.beforeMerge.op, run, seen.beforeMergeRecord ?? undefined);
+      if (problems.length > 0) out.problems.push(...problems);
+      else out.checked.push(`before merge: pull request ${run.pr}'s decided head ${run.head!.slice(0, 12)}`);
+    }
+  }
+
   if (expect.forge === "gitlab") {
     const want = expect.runnerTags ?? [];
     if (want.length > 0) {
@@ -224,7 +264,56 @@ async function githubClaims(env: NodeJS.ProcessEnv, fetchFn: typeof fetch): Prom
 }
 
 /** What the job sees, from the forge's variables, and on GitHub from its token's claims when the forge environment is to be checked. */
-export async function jobSeen(expect: JobGuardSpec, env: NodeJS.ProcessEnv = process.env, fetchFn: typeof fetch = fetch): Promise<JobSeen> {
+export async function jobSeen(expect: JobGuardSpec, env: NodeJS.ProcessEnv = process.env, fetchFn: typeof fetch = fetch, readLifecycle: LifecycleFileReader = lifecycleFileByGit): Promise<JobSeen> {
+  const seen = await forgeSeen(expect, env, fetchFn);
+  // #4984: the decision a run names, read only when the spec has a before-merge mode.
+  const run = beforeMergeRunFromEnv(env);
+  if (!isBeforeMergeRun(run)) return seen;
+  seen.beforeMerge = run;
+  if (!expect.beforeMerge || !run.head) return seen;
+  try {
+    const text = readLifecycle(expect.forge, env, beforeMergePath(expect.beforeMerge.op));
+    seen.beforeMergeRecord = parseBeforeMerge(text).heads[run.head] ?? null;
+  } catch (e) {
+    seen.beforeMergeError = (e as Error).message;
+  }
+  return seen;
+}
+
+/** Reads one file of `chant/lifecycle` as the remote has it; null when the branch has no such file (#4984). */
+export type LifecycleFileReader = (forge: JobGuardForge, env: NodeJS.ProcessEnv, path: string) => string | null;
+
+/** The repository's git URL and the job token's basic credentials, as the guard fetches with them (#4984). */
+export function guardRemote(forge: JobGuardForge, env: NodeJS.ProcessEnv): { url: string; user: string; token: string } {
+  if (forge === "gitlab") {
+    if (!env.CI_SERVER_URL || !env.CI_PROJECT_PATH) throw new Error("the job names no repository (no CI_SERVER_URL or CI_PROJECT_PATH)");
+    return { url: `${env.CI_SERVER_URL.replace(/\/+$/, "")}/${env.CI_PROJECT_PATH}.git`, user: "gitlab-ci-token", token: env.CI_JOB_TOKEN ?? "" };
+  }
+  if (!env.GITHUB_SERVER_URL || !env.GITHUB_REPOSITORY) throw new Error("the job names no repository (no GITHUB_SERVER_URL or GITHUB_REPOSITORY)");
+  return { url: `${env.GITHUB_SERVER_URL.replace(/\/+$/, "")}/${env.GITHUB_REPOSITORY}.git`, user: "x-access-token", token: env.GITHUB_TOKEN ?? "" };
+}
+
+/**
+ * {@link LifecycleFileReader} through git: `chant/lifecycle` fetched at depth
+ * one into a directory of the guard's own, outside the checkout, with the
+ * token as a basic credential header, and the file shown from it. The
+ * `node -e` program does the same.
+ */
+export const lifecycleFileByGit: LifecycleFileReader = (forge, env, path) => {
+  const remote = guardRemote(forge, env);
+  const dir = mkdtempSync(join(tmpdir(), "chant-guard-"));
+  const git = (args: string[]) => spawnSync("git", args, { cwd: dir, encoding: "utf-8", env: { ...env, GIT_TERMINAL_PROMPT: "0" } });
+  const init = git(["init", "-q"]);
+  if (init.status !== 0) throw new Error(`git init failed: ${(init.stderr || "").trim()}`);
+  const auth = `Authorization: Basic ${Buffer.from(`${remote.user}:${remote.token}`).toString("base64")}`;
+  const fetched = git(["-c", `http.extraHeader=${auth}`, "fetch", "-q", "--depth=1", remote.url, "refs/heads/chant/lifecycle"]);
+  if (fetched.status !== 0) throw new Error(`could not fetch chant/lifecycle: ${(fetched.stderr || "").trim().split("\n").pop()}`);
+  const shown = git(["show", `FETCH_HEAD:${path}`]);
+  return shown.status === 0 ? shown.stdout : null;
+};
+
+/** What the forge's own variables and token say, before the decision is read. */
+async function forgeSeen(expect: JobGuardSpec, env: NodeJS.ProcessEnv, fetchFn: typeof fetch): Promise<JobSeen> {
   if (expect.forge === "gitlab") {
     return {
       forgeEnvironment: env.CI_ENVIRONMENT_NAME || null,
@@ -263,6 +352,43 @@ export function describeJobGuard(expect: JobGuardSpec, result: JobGuardResult): 
 }
 
 /**
+ * The before-merge part of the `node -e` program (#4984): the run's three
+ * variables, the read of `chant/lifecycle` as {@link lifecycleFileByGit}
+ * does it, the decision entry as {@link parseBeforeMerge} keeps it, and the
+ * lines of {@link beforeMergeProblems}, digest included. No single quote,
+ * since the program is one shell word in single quotes.
+ */
+const BM_PATH = beforeMergePath("\u0000").split("\u0000") as [string, string];
+/** Each apostrophe in the program's strings as `'`, since the whole program is one single-quoted shell word. */
+const noQuote = (s: string): string => s.replace(/'/g, "\\u0027");
+const BEFORE_MERGE_JS = [
+  `const bmV=[${JSON.stringify(BEFORE_MERGE_PR_ENV)},${JSON.stringify(BEFORE_MERGE_HEAD_ENV)},${JSON.stringify(BEFORE_MERGE_DIGEST_ENV)}].map((k)=>String(E[k]||"").trim());`,
+  'const bmRun={};if(bmV[0])bmRun.pr=bmV[0];if(bmV[1])bmRun.head=bmV[1];if(bmV[2])bmRun.digest=bmV[2];const bmOn=Boolean(bmV[0]||bmV[1]||bmV[2]);',
+  "const SHA=/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;",
+  String.raw`const bmRead=(file)=>{const cp=require("child_process"),fs=require("fs"),os=require("os"),pa=require("path");let url,user,tok;`,
+  String.raw`if(x.forge==="gitlab"){if(!E.CI_SERVER_URL||!E.CI_PROJECT_PATH)throw new Error("the job names no repository (no CI_SERVER_URL or CI_PROJECT_PATH)");url=E.CI_SERVER_URL.replace(/\/+$/,"")+"/"+E.CI_PROJECT_PATH+".git";user="gitlab-ci-token";tok=E.CI_JOB_TOKEN||""}`,
+  String.raw`else{if(!E.GITHUB_SERVER_URL||!E.GITHUB_REPOSITORY)throw new Error("the job names no repository (no GITHUB_SERVER_URL or GITHUB_REPOSITORY)");url=E.GITHUB_SERVER_URL.replace(/\/+$/,"")+"/"+E.GITHUB_REPOSITORY+".git";user="x-access-token";tok=E.GITHUB_TOKEN||""}`,
+  String.raw`const d=fs.mkdtempSync(pa.join(os.tmpdir(),"chant-guard-"));const g=(a)=>cp.spawnSync("git",a,{cwd:d,encoding:"utf-8",env:Object.assign({},E,{GIT_TERMINAL_PROMPT:"0"})});`,
+  String.raw`const i=g(["init","-q"]);if(i.status!==0)throw new Error("git init failed: "+String(i.stderr||"").trim());`,
+  String.raw`const f=g(["-c","http.extraHeader=Authorization: Basic "+Buffer.from(user+":"+tok).toString("base64"),"fetch","-q","--depth=1",url,"refs/heads/chant/lifecycle"]);`,
+  String.raw`if(f.status!==0)throw new Error("could not fetch chant/lifecycle: "+String(f.stderr||"").trim().split("\n").pop());`,
+  String.raw`const o=g(["show","FETCH_HEAD:"+file]);return o.status===0?o.stdout:null};`,
+  String.raw`const bmEntry=(t,h)=>{let v;try{v=JSON.parse(t===null?"null":t)}catch(e){return null}const hs=v&&typeof v==="object"&&v.version===1?v.heads:undefined;if(!hs||typeof hs!=="object"||!SHA.test(h))return null;const e=hs[h];`,
+  String.raw`if(!e||typeof e!=="object"||e.head!==h||!Number.isInteger(e.pr)||e.pr<1||typeof e.base!=="string"||!SHA.test(e.base)||typeof e.at!=="string"||typeof e.by!=="string"||typeof e.digest!=="string")return null;`,
+  String.raw`if(e.through!==undefined&&(!Number.isInteger(e.through)||e.through<1))return null;const r={pr:e.pr,head:h,base:e.base,at:e.at,by:e.by,digest:e.digest};if(e.through!==undefined)r.through=e.through;return r};`,
+  `const bmSeen=(s)=>{if(!bmOn)return s;s.beforeMerge=bmRun;if(!x.beforeMerge||!bmRun.head)return s;try{s.rec=bmEntry(bmRead(${JSON.stringify(BM_PATH[0])}+x.beforeMerge.op+${JSON.stringify(BM_PATH[1])}),bmRun.head)}catch(e){s.bmErr=e&&e.message?e.message:String(e)}return s};`,
+  'const shownJ=(v)=>v===undefined||v===""?"none":JSON.stringify(v);',
+  String.raw`const bmProblems=(op,r,rec)=>{const p=[];if(!r.pr||!/^[1-9][0-9]{0,9}$/.test(r.pr))p.push("before merge: the run's pull request "+shownJ(r.pr)+" is not a number");`,
+  String.raw`if(!r.head||!SHA.test(r.head))p.push("before merge: the run's head "+shownJ(r.head)+" is not a commit sha");`,
+  String.raw`if(!r.digest||!/^sha256:[0-9a-f]{64}$/.test(r.digest))p.push("before merge: the run's digest "+shownJ(r.digest)+" is not a sha256 digest");`,
+  String.raw`if(p.length)return p;const h=r.head.slice(0,12);if(!rec)return["before merge: no decision on chant/lifecycle names head "+h+" of "+op+", so this run applies nothing"];`,
+  String.raw`if(rec.pr!==Number(r.pr))p.push("before merge: the decision for head "+h+" is pull request "+rec.pr+"'s, not "+r.pr+"'s");`,
+  String.raw`if(rec.digest!==r.digest)p.push("before merge: the run carries digest "+r.digest+", and the decision for head "+h+" has "+rec.digest);`,
+  String.raw`const dg="sha256:"+require("crypto").createHash("sha256").update(JSON.stringify(["chant-before-merge/1",op,rec.pr,rec.head,rec.base,rec.through===undefined?0:rec.through,rec.at,rec.by])).digest("hex");`,
+  String.raw`if(dg!==rec.digest)p.push("before merge: the decision for head "+h+" was changed after it was made: its fields give another digest");return p};`,
+].map(noQuote);
+
+/**
  * The guard as one `node -e` program: the same checks as {@link checkJob},
  * {@link jobSeen} and {@link describeJobGuard}, reading {@link JOB_GUARD_ENV}.
  * Exits chant's `misplaced` (9) with one line per value that differs, and
@@ -278,15 +404,16 @@ export const JOB_GUARD_JS = [
   "if(!x||![\"github\",\"gitlab\",\"forgejo\"].includes(x.forge)||!Array.isArray(x.branches))fail(\"" + JOB_GUARD_ENV + " is not a guard spec\");",
   'const tags=(r)=>{if(r===undefined)return undefined;const t=r.trim();if(t.startsWith("[")){try{const v=JSON.parse(t);if(Array.isArray(v))return v.map(String)}catch(e){}}return t===""?[]:t.split(",").map((s)=>s.trim()).filter((s)=>s!=="")};',
   'const claimsOf=(tok)=>{const p=tok.split(".")[1];if(!p)throw new Error("the forge\\u0027s OIDC token is not a JWT");const c=JSON.parse(Buffer.from(p.replace(/-/g,"+").replace(/_/g,"/"),"base64").toString("utf-8"));if(!c||typeof c!=="object")throw new Error("the forge\\u0027s OIDC token has no claims");return c};',
+  ...BEFORE_MERGE_JS,
   "async function seenOf(){",
-  'if(x.forge==="gitlab")return{forgeEnvironment:E.CI_ENVIRONMENT_NAME||null,ref:E.CI_COMMIT_REF_NAME,refProtected:E.CI_COMMIT_REF_PROTECTED,runnerTags:tags(E.CI_RUNNER_TAGS)};',
+  'if(x.forge==="gitlab")return bmSeen({forgeEnvironment:E.CI_ENVIRONMENT_NAME||null,ref:E.CI_COMMIT_REF_NAME,refProtected:E.CI_COMMIT_REF_PROTECTED,runnerTags:tags(E.CI_RUNNER_TAGS)});',
   "const s={ref:E.GITHUB_REF};let c;",
   'if(x.forge==="github"&&x.forgeEnvironment!==undefined){try{',
   'if(!E.ACTIONS_ID_TOKEN_REQUEST_URL||!E.ACTIONS_ID_TOKEN_REQUEST_TOKEN)throw new Error("the job may request no OIDC token (no ACTIONS_ID_TOKEN_REQUEST_URL); it needs the id-token: write permission");',
   'const r=await fetch(E.ACTIONS_ID_TOKEN_REQUEST_URL+"&audience="+encodeURIComponent(A),{headers:{authorization:"bearer "+E.ACTIONS_ID_TOKEN_REQUEST_TOKEN}});',
   'if(!r.ok)throw new Error("the OIDC token request answered "+r.status);const v=(await r.json()).value;if(typeof v!=="string")throw new Error("the OIDC token request answered no token");',
   'c=claimsOf(v);s.forgeEnvironment=typeof c.environment==="string"&&c.environment!==""?c.environment:null}catch(e){s.forgeEnvironmentError=e&&e.message?e.message:String(e)}}',
-  'const run=c&&typeof c.runner_environment==="string"?c.runner_environment:E.RUNNER_ENVIRONMENT;if(run)s.runnerEnvironment=run;return s}',
+  'const run=c&&typeof c.runner_environment==="string"?c.runner_environment:E.RUNNER_ENVIRONMENT;if(run)s.runnerEnvironment=run;return bmSeen(s)}',
   "seenOf().then((s)=>{const P=[],C=[],S=[];const fe=x.forgeEnvironment;",
   'if(x.forge==="forgejo")S.push("forge environment (Forgejo has none)");',
   'else if(fe!==undefined){if(s.forgeEnvironmentError!==undefined)P.push("forge environment: expected "+fe+", and it could not be read: "+s.forgeEnvironmentError);else if(s.forgeEnvironment!==fe)P.push("forge environment: expected "+fe+", found "+shown(s.forgeEnvironment));else C.push("forge environment "+fe)}',
@@ -295,6 +422,11 @@ export const JOB_GUARD_JS = [
   'else if(x.forge==="gitlab"){if(!s.ref||!b.includes(s.ref))P.push("ref: expected "+b.join(" or ")+", found "+shown(s.ref));else C.push("ref "+s.ref);',
   'if(s.refProtected!=="true")P.push("ref: expected a protected ref (CI_COMMIT_REF_PROTECTED true), found "+shown(s.refProtected));else C.push("protected ref")}',
   'else{const refs=b.map((v)=>"refs/heads/"+v);if(!s.ref||!refs.includes(s.ref))P.push("ref: expected "+refs.join(" or ")+", found "+shown(s.ref));else C.push("ref "+s.ref)}',
+  ...[
+    String.raw`if(s.beforeMerge){const r=s.beforeMerge;if(!x.beforeMerge)P.push("before merge: the run names pull request "+(r.pr||"none")+"'s head "+(r.head||"none")+", and this job applies only the pushes to its branches");`,
+    String.raw`else if(s.bmErr!==undefined)P.push("before merge: the decisions on chant/lifecycle could not be read: "+s.bmErr);`,
+    String.raw`else{const Q=bmProblems(x.beforeMerge.op,r,s.rec||undefined);if(Q.length)P.push(...Q);else C.push("before merge: pull request "+r.pr+"'s decided head "+r.head.slice(0,12))}}`,
+  ].map(noQuote),
   'if(x.forge==="gitlab"){const w=x.runnerTags||[];if(w.length>0){const h=s.runnerTags;const miss=w.filter((t)=>!(h||[]).includes(t));',
   'if(h===undefined)P.push("runner: expected tags "+w.join(", ")+", and the job has no CI_RUNNER_TAGS");else if(miss.length>0)P.push("runner: expected tags "+w.join(", ")+", found "+(h.length?h.join(", "):"none"));else C.push("runner tags "+w.join(", "))}}',
   'else if(x.selfHosted){if(s.runnerEnvironment===undefined)S.push("runner (the runner says nothing about itself: no RUNNER_ENVIRONMENT)");else if(s.runnerEnvironment!=="self-hosted")P.push("runner: expected self-hosted, found "+s.runnerEnvironment);else C.push("self-hosted runner")}',

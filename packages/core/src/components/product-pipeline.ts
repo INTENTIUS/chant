@@ -30,6 +30,7 @@ import {
   CHANT_WORDS,
   CI_PRODUCT_COMMANDS,
   commentLine,
+  productStatusContext,
   type CiProductApplyMode,
   type CiProductCommand,
   type CiProductWords,
@@ -47,6 +48,10 @@ import { gitlabOpenEvidenceDir, type PipelineEvidence } from "../ci-evidence-job
 import { prCheckJob, prRefGateJob, type PrCheckJob, type PrRefGateJob } from "./pr-checks";
 import { COMMENT_JOBS_ENV, PR_COMMENT_JOB, type CommentJobs } from "../ci-comment-commands";
 import { GITHUB_JOB_TOKEN } from "../ci-jobs";
+import type { OpWavesBeforeMerge } from "../op/before-merge";
+import { defaultPipelineFiles, type WavesBeforeMergeJobs } from "../op/before-merge-decide";
+import type { PrApplyRequire } from "../pr-requires";
+import { LOCK_REACH_ENV } from "../lifecycle/reach-locks";
 
 /** Where the generator writes a product's waves spec, which chant reads at base (#4550). */
 export const PRODUCT_WAVES_SPEC_DIR = ".chant/op-waves";
@@ -147,6 +152,33 @@ export interface ProductPipelineOptions extends Omit<PrLoopPipelineOptions, "wor
    * there.
    */
   commentJob?: boolean;
+  /**
+   * Waves before merge (#4984, maintainer decision 2026-11-10): `/<product>
+   * apply [wave-<n>]` on an open pull request runs the waves on its head.
+   * The comment job (GitHub, Forgejo; needs `commentJob`) or the note poll
+   * (GitLab; needs `noteCommands`) decides it by the product plan's rules
+   * (../op/before-merge-decide.ts): this repository's pull request into the
+   * default branch, its head unmoved, `requires` met, every plan status
+   * passed on the head, none of `pipelineFiles` touched, and with the
+   * product plan's `reach` the locks at stage apply. It records the head
+   * and the decision's digest on `chant/lifecycle` and starts the waves
+   * workflow for it, whose guard admits that head alone. After the last
+   * wave, `merge: "auto"` merges the pull request at that head and releases
+   * its locks. Needs `waves` (or `componentWaves`).
+   */
+  wavesBeforeMerge?: ProductWavesBeforeMerge;
+}
+
+/** {@link ProductPipelineOptions.wavesBeforeMerge} (#4984). */
+export interface ProductWavesBeforeMerge {
+  /** The requires the forge is asked before the apply (`apply.requires`). Default every one: approved, mergeable, undiverged, checks. */
+  requires?: PrApplyRequire[];
+  /** `auto`: merge after the last wave, and release the locks. `manual` (default): reply that it is ready. */
+  merge?: "auto" | "manual";
+  /** The merge token's secret or CI/CD variable, with `merge: "auto"` (needed on Forgejo and GitLab). */
+  mergeTokenSecret?: string;
+  /** Paths a change may not touch to apply before merge; one ending in `/` is a directory. Default the forge's workflow directory and `.chant/op-waves/`. */
+  pipelineFiles?: string[];
 }
 
 /** The comment job (#4946): its command, the values it reads, and the comment prefixes that start it. */
@@ -183,8 +215,13 @@ export interface ProductPipelineJobs {
   applyBeforeMerge?: PrLoopJob;
   /** The comment each command answers, `/<product> <word>`, for the commands the pipeline has a job for. */
   comments: Partial<Record<CiProductCommand, string>>;
-  /** The apply on merge: the spec with the words' names, its file, and a job per wave (per share or group). */
-  waves?: { spec: OpWavesSpec; specFile: string; jobs: OpWaveJob[] };
+  /**
+   * The apply on merge: the spec with the words' names, its file, and a job
+   * per wave (per share or group). With `wavesBeforeMerge` (#4984),
+   * `beforeMerge` is the generators' `OpWavesPipelineOptions.beforeMerge`:
+   * the product passes it on when it renders the waves.
+   */
+  waves?: { spec: OpWavesSpec; specFile: string; jobs: OpWaveJob[]; beforeMerge?: OpWavesBeforeMerge };
   /**
    * The comment lock and unlock jobs (#4588), under `locks: "plan"`:
    * `/<product> lock` keeps the locks the plan took, `/<product> unlock`
@@ -212,7 +249,7 @@ export interface ProductPipelineJobs {
    * lexicon renders the same job from `chant build --pr-loop
    * --note-commands`. Refused on GitHub and Forgejo.
    */
-  noteCommands?: { command: string; runner?: CiRunner };
+  noteCommands?: { command: string; runner?: CiRunner; env?: Record<string, string> };
   /**
    * The agent (#4616), with `agent`: the comment it answers, `/<product>
    * agent <ask>`, and the scheduled Op spec whose generated workflow runs
@@ -351,7 +388,7 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   // #4946: the comment job answers every command but a commit word (the commit job's) with a reply, so the words may name any.
   const answered: CiProductCommand[] = options.commentJob ? [...new Set<CiProductCommand>([...jobs, ...CI_PRODUCT_COMMANDS.filter((c) => c !== "commit")])] : jobs;
   const words = assertProductWords({ ...options.words, applyMode }, { jobs: answered });
-  const { waves: given, wavesSpecFile, member, agent: _agent, commits: _commits, actions: _actions, componentWaves, productPlan, evidence, commentJob: _commentJob, ...loop } = options;
+  const { waves: given, wavesSpecFile, member, agent: _agent, commits: _commits, actions: _actions, componentWaves, productPlan, evidence, commentJob: _commentJob, wavesBeforeMerge, ...loop } = options;
   const { respond } = options;
   // #4629: the pull request loop puts the responses on the apply and note jobs, as `chant build --pr-loop --respond` does.
   const prLoop: PrLoopPipelineOptions = { ...loop, words, gate: options.gate ?? words.prGate };
@@ -420,6 +457,32 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   const spec = given ?? (componentWaves
     ? componentWavesSpec(componentWaves.components, words, componentWaveSteps({ ...(words.bin ? { bin: words.bin } : {}), env, base: componentWaves.base ?? "HEAD^1", ...(member ? { member } : {}), op, gate: prLoop.gate }), { ...(componentWaves.waveGate ? { gate: componentWaves.waveGate } : {}) })
     : undefined);
+  // #4984: the waves before merge: the comment job (the note poll on GitLab) decides an open pull request's apply and starts them.
+  const wavesOp = spec ? (words.op ?? spec.name) : undefined;
+  let bmJobs: WavesBeforeMergeJobs | undefined;
+  if (wavesBeforeMerge) {
+    if (!spec || !wavesOp) throw new Error("wavesBeforeMerge runs the waves on an open pull request's head, and there are none: give waves (or componentWaves)");
+    if (options.applyBeforeMerge) throw new Error("wavesBeforeMerge and applyBeforeMerge both answer an open pull request's apply; give one");
+    if (forge === "gitlab" ? !options.noteCommands : !options.commentJob) throw new Error(`wavesBeforeMerge is decided by ${forge === "gitlab" ? "the note poll: set noteCommands" : "the comment job: set commentJob"}`);
+    const targets = productPlan?.targets?.map((t) => t.name);
+    bmJobs = {
+      ...(forge !== "gitlab" ? { workflow: `${wavesOp}.yml` } : {}),
+      ...(wavesBeforeMerge.requires ? { requires: [...wavesBeforeMerge.requires] } : {}),
+      plan: targets?.length ? targets.map((t) => productStatusContext(words, "plan", t)) : [productStatusContext(words, "plan", member)],
+      pipelineFiles: wavesBeforeMerge.pipelineFiles ?? defaultPipelineFiles(forge),
+      ...(productPlan?.reach ? { locks: { ...(productPlan.reach.gate ? { gate: productPlan.reach.gate } : {}) } } : {}),
+    };
+  }
+  // #4984: GitLab's note poll writes a wave stop for a merged merge request, and decides the waves before merge.
+  if (out.noteCommands && spec && wavesOp) {
+    out.noteCommands = {
+      ...out.noteCommands,
+      env: {
+        [COMMENT_JOBS_ENV]: JSON.stringify({ waves: { op: wavesOp, count: spec.waves.length }, ...(bmJobs ? { wavesBeforeMerge: bmJobs } : {}) }),
+        ...(bmJobs && productPlan?.reach ? { [LOCK_REACH_ENV]: productPlan.reach.command } : {}),
+      },
+    };
+  }
   // #4946: the comment job answers what no other job of the pipeline takes, so it is told which jobs there are.
   if (options.commentJob) {
     // #4963's re-plan reply answers the same stray comments, so one of the two answers them.
@@ -434,6 +497,7 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
       ...(given || componentWaves ? { applyOnMerge: true } : {}),
       // #4979: the waves' op (the name productWavesSpec gives them) and count, so a wave-<n> stops a re-run after wave n.
       ...(spec ? { waves: { op: words.op ?? spec.name, count: spec.waves.length } } : {}),
+      ...(bmJobs ? { wavesBeforeMerge: bmJobs } : {}),
       // #4979: the product plan's re-plan takes no flags, so the comment job answers a plan comment that carries them.
       ...(productPlan?.replan ? { noPlanFlags: true } : {}),
       ...(locks.length > 0 ? { locks: true } : {}),
@@ -441,7 +505,10 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
       ...(out.commits ? { commits: true } : {}),
       ...(options.actions || options.actionJob ? { actions: true } : {}),
     };
-    out.comment = { ...productCommentJob(forge, words, commentJobs), ...defaultRunner };
+    const comment = productCommentJob(forge, words, commentJobs);
+    // #4984: the decision before merge locks what the reach line prints, at stage apply.
+    if (bmJobs && productPlan?.reach) comment.env = { ...comment.env, [LOCK_REACH_ENV]: productPlan.reach.command };
+    out.comment = { ...comment, ...defaultRunner };
   }
   if (!spec) return { ...out, record: record! };
   const wavesRespond = respond ? Object.fromEntries(Object.entries(respond).filter(([e]) => e !== "description")) : {};
@@ -459,7 +526,11 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
     ...(Object.keys(wavesRespond).length > 0 ? { respond: { ...(spec.respond ?? {}), ...wavesRespond } } : {}),
   };
   const specFile = wavesSpecFile ?? productWavesSpecFile(named.name);
-  return { ...out, waves: { spec: named, specFile, jobs: opWaveJobs(named, specFile, { bin: words.bin }) } };
+  // #4984: what the generator's before-merge mode takes: the merge after the last wave and the lock file it releases.
+  const beforeMerge: OpWavesBeforeMerge | undefined = wavesBeforeMerge
+    ? { ...(wavesBeforeMerge.merge ? { merge: wavesBeforeMerge.merge } : {}), ...(wavesBeforeMerge.mergeTokenSecret ? { mergeTokenSecret: wavesBeforeMerge.mergeTokenSecret } : {}), ...(productPlan?.reach?.gate ? { gate: productPlan.reach.gate } : {}) }
+    : undefined;
+  return { ...out, waves: { spec: named, specFile, jobs: opWaveJobs(named, specFile, { bin: words.bin, ...(beforeMerge ? { beforeMerge: true } : {}) }), ...(beforeMerge ? { beforeMerge } : {}) } };
 }
 
 /** The capability steps a component waves spec runs (#4545, #4541): argv templates over `{runs}` and `{plans}`. */

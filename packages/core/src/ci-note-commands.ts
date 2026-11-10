@@ -34,6 +34,7 @@ import { commandLine, commentTerms, forkReply, memberReply, notRunReply } from "
 import { GITLAB_APPLY_PR_VAR, GITLAB_LOCK_PR_VAR, GITLAB_PREVIEW_PR_VAR, GITLAB_UNLOCK_PR_VAR, PREVIEW_COMMENT_ENV } from "./components/pr-pipeline";
 import { ForgeApiError, type ForgeFetch, type ForgeKind, type GitlabForgeOptions, type PrForge } from "./pr-forge";
 import type { ForgeReads, PullRequestDetail, PullRequestNote, RunJob, WorkflowRun } from "./pr-forge-reads";
+import type { DecideBeforeMergeInput, WavesBeforeMergeJobs } from "./op/before-merge-decide";
 
 export { GITLAB_NOTE_COMMANDS_VAR } from "./components/pr-pipeline";
 
@@ -119,7 +120,17 @@ export type NoteRun =
    * that has such a job. Refused when a later commit of the default branch
    * already carries the product's apply status.
    */
-  | { kind: "retry"; sha: string; jobs?: RegExp }
+  | {
+      kind: "retry";
+      sha: string;
+      jobs?: RegExp;
+      /**
+       * With the waves' op (#4984, the GitLab half of #4979's stop): the
+       * stop written for `sha` on `chant/lifecycle` just before the retry,
+       * the last wave that runs, or null to clear an earlier one.
+       */
+      stop?: { op: string; through: number | null };
+    }
   /** A reply, and nothing runs. */
   | { kind: "reply"; text: string }
   /** Something broke: the note gets no reply and is read again next poll. */
@@ -184,6 +195,8 @@ export interface NoteCommandsOptions {
   env?: Record<string, string | undefined>;
   /** The commit words that take an argument, as `parseProductComment` takes them. */
   commitArgs?: Readonly<Record<string, RegExp>>;
+  /** Writes a retry's wave stop for op `op` at `sha`, or clears it (#4984). Absent: a retry that carries a stop is refused. */
+  stops?: (op: string, sha: string, stop: { through: number; at: string; by?: string; pr?: number } | null) => Promise<void>;
 }
 
 export interface NotePoll {
@@ -306,7 +319,25 @@ async function answer(o: NoteCommandsOptions, mr: PullRequestDetail, note: PullR
       return reply(`started pipeline${link(started)} to ${run.doing} for ${note.author}`, true, started.url);
     }
     case "retry": {
-      const done = await retryApply(o, "gitlab", mr, note.author, run, gitlabRetry(o.pipelines));
+      // #4984: the stop goes on chant/lifecycle just before the retry, so every wave job after it reads it.
+      const stop = run.stop;
+      if (stop && !o.stops) return broke("the retry carries a wave stop, and this poll cannot write one");
+      const retry = gitlabRetry(o.pipelines);
+      const author = note.author;
+      const rerun: ApplyRerun = stop
+        ? async (pipeline, jobs, ctx) => {
+            try {
+              await o.stops!(stop.op, run.sha, stop.through === null ? null : { through: stop.through, at, by: author, pr: mr.number });
+            } catch (e) {
+              return { kind: "fail", reason: `could not write the wave stop for ${short(run.sha)}, so nothing was retried (${message(e)})` };
+            }
+            return retry(pipeline, jobs, ctx);
+          }
+        : retry;
+      const done = await retryApply(o, "gitlab", mr, note.author, run, rerun);
+      if (done.kind === "ran" && stop?.through !== null && stop?.through !== undefined) {
+        return reply(`${done.text}; it stops after \`wave-${stop.through}\`, and the waves after it wait until ${commandLine(o.words, "apply")} runs it again`, true, done.url);
+      }
       if (done.kind === "fail") return broke(done.reason);
       return reply(done.text, done.kind === "ran", done.kind === "ran" ? done.url : undefined);
     }
@@ -447,6 +478,27 @@ export interface ChantNoteJobs {
    * reply, and nothing starts. Absent: any member a comment may name.
    */
   members?: readonly string[];
+  /**
+   * The waves on merge (#4984, as the comment job's #4979): their op and
+   * count. With them a merged merge request's `wave-<n>` writes a stop for
+   * the merge commit before the retry, and an apply without a wave clears
+   * it; without them a `wave-<n>` is refused, as before.
+   */
+  waves?: { op: string; count: number };
+  /**
+   * The waves before merge (#4984), with `waves`: an open merge request's
+   * apply is decided here (./op/before-merge-decide.ts), recorded on
+   * `chant/lifecycle`, and runs in a pipeline of the default branch started
+   * with `CHANT_BEFORE_MERGE_PR`, `CHANT_BEFORE_MERGE_HEAD` and
+   * `CHANT_BEFORE_MERGE_DIGEST`.
+   */
+  wavesBeforeMerge?: WavesBeforeMergeJobs;
+}
+
+/** What {@link chantNoteRuns} reads and writes with besides the jobs (#4984). */
+export interface ChantNoteRunsOptions {
+  /** With `jobs.wavesBeforeMerge`: what the decision before merge reads and writes with. */
+  beforeMerge?: Pick<DecideBeforeMergeInput, "requires" | "statuses" | "git" | "cwd" | "lock" | "record" | "stop" | "now">;
 }
 
 /**
@@ -454,8 +506,8 @@ export interface ChantNoteJobs {
  * A command no job runs gets the words' reply for it (`words.replies`,
  * #4946), else chant's.
  */
-export function chantNoteRuns(jobs: ChantNoteJobs): NoteCommandRuns {
-  return ({ mr, note, parsed, base, words }): NoteRun => {
+export function chantNoteRuns(jobs: ChantNoteJobs, opts: ChantNoteRunsOptions = {}): NoteCommandRuns {
+  return ({ mr, note, parsed, base, words }): NoteRun | Promise<NoteRun> => {
     const iid = String(mr.number);
     const at = `!${mr.number}`;
     const line = (kind: CiProductCommand): string => commandLine(words, kind);
@@ -466,7 +518,7 @@ export function chantNoteRuns(jobs: ChantNoteJobs): NoteCommandRuns {
     const open = mr.state === "open";
     const intoBase = mr.base === undefined || mr.base === base;
     // #4946: the product's sentence for an apply no job answers, in place of chant's, which say what the merge does.
-    if (parsed.kind === "apply" && !jobs.applyBeforeMerge && !jobs.applyOnMerge && words.replies?.apply !== undefined) return { kind: "reply", text: words.replies.apply };
+    if (parsed.kind === "apply" && !jobs.applyBeforeMerge && !jobs.applyOnMerge && !jobs.wavesBeforeMerge && words.replies?.apply !== undefined) return { kind: "reply", text: words.replies.apply };
     switch (parsed.kind) {
       case "plan":
         if (!open) return { kind: "reply", text: `${at} is not open, so it is not ${words.verbs.plan[1]}` };
@@ -474,6 +526,8 @@ export function chantNoteRuns(jobs: ChantNoteJobs): NoteCommandRuns {
         return { kind: "merge-request-pipeline", doing: `${words.verbs.plan[0]} ${at} again` };
       case "apply":
         if (open) {
+          // #4984: the waves before merge decide here, and the pipeline they start runs the decided head.
+          if (jobs.wavesBeforeMerge && jobs.waves && opts.beforeMerge && !jobs.applyBeforeMerge) return wavesBeforeMergeRun(jobs, opts.beforeMerge, { mr, note, parsed, base, words });
           if (!jobs.applyBeforeMerge) return { kind: "reply", text: `${at} is not merged, and this project ${words.verbs.apply[0]}s after a merge request merges, never from its branch` };
           if (!intoBase) return { kind: "reply", text: `${at} targets ${mr.base}, not the default branch ${base}, so it is not ${words.verbs.apply[1]}` };
           return { kind: "pipeline", ref: base, variables: { [GITLAB_APPLY_PR_VAR]: iid }, doing: `${words.verbs.apply[0]} ${at}'s head${mr.headSha ? ` ${short(mr.headSha)}` : ""}` };
@@ -482,10 +536,12 @@ export function chantNoteRuns(jobs: ChantNoteJobs): NoteCommandRuns {
         if (!jobs.applyOnMerge) {
           return { kind: "reply", text: jobs.applyBeforeMerge ? `${at} is merged, and this project ${words.verbs.apply[0]}s a merge request before it merges, so there is nothing of it left to ${words.verbs.apply[0]}` : `${at} is merged, and a merge here records the plan: a release deploys it` };
         }
-        if (parsed.wave !== undefined) return { kind: "reply", text: `GitLab runs the waves after a retried apply job by itself, so \`wave-${parsed.wave}\` cannot stop them; write ${line("apply")}, and each wave still waits behind its own gate` };
+        // #4984: with the waves' op, a wave-<n> writes a stop for the merge commit before the retry, as on GitHub and Forgejo.
+        if (parsed.wave !== undefined && !jobs.waves) return { kind: "reply", text: `GitLab runs the waves after a retried apply job by itself, so \`wave-${parsed.wave}\` cannot stop them; write ${line("apply")}, and each wave still waits behind its own gate` };
+        if (parsed.wave !== undefined && jobs.waves && parsed.wave > jobs.waves.count) return { kind: "reply", text: `the ${words.verbs.apply[0]} of this project runs in ${jobs.waves.count} wave${jobs.waves.count === 1 ? "" : "s"}, so there is no \`wave-${parsed.wave}\`` };
         if (!intoBase) return { kind: "reply", text: `${at} was merged into ${mr.base}, not the default branch ${base}, so nothing applies from it` };
         if (!mr.mergeCommit) return { kind: "fail", reason: `${at} has no merge commit` };
-        return { kind: "retry", sha: mr.mergeCommit };
+        return { kind: "retry", sha: mr.mergeCommit, ...(jobs.waves ? { stop: { op: jobs.waves.op, through: parsed.wave !== undefined && parsed.wave < jobs.waves.count ? parsed.wave : null } } : {}) };
       case "lock":
       case "unlock":
         if (!jobs.locks) return { kind: "reply", text: notRunReply(words, parsed.kind, "gitlab") };
@@ -504,6 +560,39 @@ export function chantNoteRuns(jobs: ChantNoteJobs): NoteCommandRuns {
         return { kind: "reply", text: `${line("action")} does not run from a merge request note on GitLab: run \`${words.bin ?? words.product} action ${parsed.member} ${parsed.address}\` from a checkout of the default branch` };
     }
   };
+}
+
+/**
+ * An open merge request's apply under the waves before merge (#4984): the
+ * decision records the head, and the run is a pipeline of the default branch
+ * started with the decision's three variables, which the wave jobs' guard
+ * checks against the record.
+ */
+async function wavesBeforeMergeRun(jobs: ChantNoteJobs, deps: NonNullable<ChantNoteRunsOptions["beforeMerge"]>, c: Omit<NoteCommand, "role">): Promise<NoteRun> {
+  const parsed = c.parsed as Extract<NoteCommand["parsed"], { kind: "apply" }>;
+  const { decideWavesBeforeMerge } = await import("./op/before-merge-decide");
+  const { BEFORE_MERGE_DIGEST_ENV, BEFORE_MERGE_HEAD_ENV, BEFORE_MERGE_PR_ENV } = await import("./op/before-merge");
+  let variables: Record<string, string> | undefined;
+  const done = await decideWavesBeforeMerge({
+    ...deps,
+    forge: "gitlab",
+    pr: c.mr,
+    user: c.note.author ?? "",
+    base: c.base,
+    ...(parsed.wave !== undefined ? { wave: parsed.wave } : {}),
+    op: jobs.waves!.op,
+    count: jobs.waves!.count,
+    jobs: jobs.wavesBeforeMerge!,
+    words: c.words,
+    // The poll starts the pipeline once the decision is recorded, and its reply links it.
+    start: async (r) => {
+      variables = { [BEFORE_MERGE_PR_ENV]: String(r.pr), [BEFORE_MERGE_HEAD_ENV]: r.head, [BEFORE_MERGE_DIGEST_ENV]: r.digest };
+      return {};
+    },
+  });
+  if (done.kind !== "ran") return done.kind === "fail" ? { kind: "fail", reason: done.reason } : { kind: "reply", text: done.text };
+  const through = parsed.wave !== undefined && parsed.wave < jobs.waves!.count ? ` through wave ${parsed.wave}` : "";
+  return { kind: "pipeline", ref: c.base, variables: variables!, doing: `${c.words.verbs.apply[0]} !${c.mr.number}'s head ${short(c.mr.headSha ?? "")}${through} before it merges` };
 }
 
 /** The directory on `chant/lifecycle` that keeps the notes the poll answered. */

@@ -99,6 +99,18 @@
  * and its command and policy step pass `--render-spec`, so chant runs the
  * product's command for the spec at base. The jobs, their steps, the
  * trade, the evidence jobs and the gates are the ones `spec` gives.
+ *
+ * With `options.beforeMerge` (#4984) the workflow also runs for an open
+ * pull request's head that the comment job decided: `workflow_dispatch`
+ * takes the inputs `pr`, `head` and `digest`, every wave and evidence job
+ * maps them into `CHANT_BEFORE_MERGE_*`, and the guard (with the job's
+ * token in its step alone) admits the run only as the decision recorded on
+ * `chant/lifecycle`. After the checkout a step fetches the pull request's
+ * head ref, stops when it moved, keeps the default branch's commit in
+ * `CHANT_WAVES_BASE` for the command's `--base`, and checks the head out,
+ * before the wave's setup. The evidence job signs at the head. The control
+ * job runs for a push alone, and `before-merge-done` after the last wave
+ * merges and releases the locks (`chant run wave --merge`).
  */
 
 import {
@@ -153,6 +165,16 @@ import {
   type OpWaveEvidencePlan,
 } from "@intentius/chant/op/op-waves-evidence-jobs";
 import { opWavesRenderSpecEnv } from "@intentius/chant/op/op-waves-render-spec";
+import {
+  assertOpWavesBeforeMerge,
+  BEFORE_MERGE_DONE_JOB,
+  BEFORE_MERGE_HEAD_ENV,
+  BEFORE_MERGE_INPUTS,
+  BEFORE_MERGE_TOKEN_ENV,
+  beforeMergeCheckoutScript,
+  beforeMergeDoneCommand,
+  type OpWavesBeforeMerge,
+} from "@intentius/chant/op/before-merge";
 import { checkoutStep, concurrency, DOWNLOAD_ARTIFACT, downloadArtifactStep, keepRecordStep, runSteps } from "./ci-jobs";
 import { emitOpPipelineYAML, type GithubOpPipelineDoc } from "./generate-op-pipeline";
 
@@ -177,8 +199,12 @@ export function buildGithubOpWavesDoc(
 ): { doc: GithubOpPipelineDoc; jobs: OpWavesPipelineResult["jobs"]; resumeDoc?: GithubOpPipelineDoc; plansDoc?: GithubOpPipelineDoc } {
   // #4982: with renderSpec each wave job renders the spec at base through the product's command; `spec` is the jobs' shape.
   const renderEnv = opWavesRenderSpecEnv(options.renderSpec);
-  const jobs = opWaveJobs(spec, options.specFile, { bin: options.bin, ...(options.renderSpec ? { renderSpec: true } : {}) });
   const forge = dialect.forge ?? "github";
+  // #4984: the before-merge mode, a dispatch for a pull request's decided head, its three inputs on every job that reads them.
+  const bm = options.beforeMerge;
+  if (bm) assertOpWavesBeforeMerge(forge, bm);
+  const bmEnv: Record<string, string> = bm ? Object.fromEntries(Object.entries(BEFORE_MERGE_INPUTS).map(([input, v]) => [v, `\${{ github.event.inputs.${input} }}`])) : {};
+  const jobs = opWaveJobs(spec, options.specFile, { bin: options.bin, ...(options.renderSpec ? { renderSpec: true } : {}), ...(bm ? { beforeMerge: true } : {}) });
   assertPipelineEvidence(options.evidence);
   const product = resolveProductWords(options.words ?? {}).product;
   const image = options.image ?? OP_WAVES_IMAGE;
@@ -235,8 +261,14 @@ export function buildGithubOpWavesDoc(
       branches: pushBranches(spec.branches),
       ...(runner !== undefined ? { runner } : {}),
       idToken,
+      ...(bm ? { beforeMerge: { op: spec.name } } : {}),
     });
     const steps: Array<Record<string, unknown>> = [guard, ...(cloud ? [tradeStep(cloud)] : []), checkoutStep(true)];
+    // #4984: a run for a pull request's decided head checks it out before any of the change's code.
+    if (bm) {
+      const head = { name: "Check out the pull request's decided head", run: beforeMergeCheckoutScript(forge, product) };
+      steps.push(cloud ? withoutTokenRequest(head) : head);
+    }
     if (job.kind === "share") {
       steps.push(downloadArtifactStep(`Download wave ${job.wave}'s decision`, opWaveRecordArtifact(spec, job.wave), dirnameOf(job.record!)));
     }
@@ -251,7 +283,7 @@ export function buildGithubOpWavesDoc(
     // #4926: the wave's policy as a step of its own, whose result the forge reports. The command runs after it
     // whether it passed or failed (a denied run may still apply under an override), and not after any other failure.
     const policyStep = evidence?.policyStep === true;
-    if (policyStep) later.push({ name: opWavePolicyStepName(job.wave, wave.name), id: OP_WAVE_POLICY_STEP_ID, run: opWavePolicyCommand(job).join(" ") });
+    if (policyStep) later.push({ name: opWavePolicyStepName(job.wave, wave.name), id: OP_WAVE_POLICY_STEP_ID, run: [...(add?.prelude ?? []), opWavePolicyCommand(job).join(" ")].join("\n") });
     // #4870: the key (or #4869 the keyless signing) on that step alone.
     const commandStep = describeJob(job.kind, job.wave, wave.name, job.share, job.group);
     const commandEnv = { ...(signs ? evidenceKeyEnv(forge, options.evidence!) : {}), ...(evidence?.commandMode ? { [WAVE_EVIDENCE_ENV]: evidence.commandMode } : {}) };
@@ -259,7 +291,8 @@ export function buildGithubOpWavesDoc(
       name: commandStep,
       ...(policyStep ? { if: `\${{ !cancelled() && (success() || steps.${OP_WAVE_POLICY_STEP_ID}.outcome == 'failure') }}` } : {}),
       ...(Object.keys(commandEnv).length > 0 ? { env: commandEnv } : {}),
-      run: job.command.join(" "),
+      // #4984: the product's prelude in the command's own shell, so what it exports reaches the command.
+      run: [...(add?.prelude ?? []), job.command.join(" ")].join("\n"),
     });
     later.push(...runSteps(options.extraScript ?? []));
     steps.push(...(cloud ? later.map(withoutTokenRequest) : later));
@@ -282,23 +315,25 @@ export function buildGithubOpWavesDoc(
       // #3914: a job's own permissions replace the workflow's, so they repeat them.
       ...(idToken ? { permissions: { ...permissions, "id-token": "write" } } : {}),
       "timeout-minutes": timeout.minutes,
-      env: { ...timeout.env, ...renderEnv, ...(group || idTokens ? { ...wave.variables, ...group?.variables, ...idTokenAudienceEnv(idTokens) } : wave.variables) },
+      env: { ...timeout.env, ...renderEnv, ...bmEnv, ...(group || idTokens ? { ...wave.variables, ...group?.variables, ...idTokenAudienceEnv(idTokens) } : wave.variables) },
       steps,
     };
-    if (evidence?.evidenceJob) jobsDoc[evidence.evidenceJob.name] = evidenceJob(spec, options, forge, job, evidence, commandStep, image, permissions);
+    if (evidence?.evidenceJob) jobsDoc[evidence.evidenceJob.name] = evidenceJob(spec, options, forge, job, evidence, commandStep, image, permissions, bmEnv);
   }
 
-  // #4617: once the last wave ran, one job tells the control repo how the waves ended.
+  // #4617: once the last wave ran, one job tells the control repo how the waves ended. #4984: a push's run only.
   if (spec.control) {
     const [name, job] = controlJob(spec, options, jobs, image, permissions);
-    jobsDoc[name] = job;
+    jobsDoc[name] = bm ? { ...job, if: "${{ !cancelled() && github.event.inputs.head == '' }}" } : job;
   }
+  // #4984: after a before-merge run's last wave, the merge and the release of the change's locks.
+  if (bm) jobsDoc[BEFORE_MERGE_DONE_JOB] = beforeMergeDoneJob(spec, options, bm, forge, jobs, image, bmEnv);
 
   // #3761: the notify variables come from the secrets of the same name.
   const env = { ...githubSecretEnv(notifyVariables(spec.notify)), ...(options.variables ?? {}) };
   const doc: GithubOpPipelineDoc = {
     name: spec.name,
-    on: { push: { branches: pushBranches(spec.branches) }, workflow_dispatch: {} },
+    on: { push: { branches: pushBranches(spec.branches) }, workflow_dispatch: bm ? { inputs: BEFORE_MERGE_DISPATCH_INPUTS } : {} },
     ...nonEmpty("env", env),
     // The ruling for ci-products (2026-10-28): no workflow-level concurrency group. Runs on the target and repo grains wait for
     // their rows on chant's ledger, oldest commit first; plunge stacks on the resource grain lease their resource rows and run.
@@ -334,9 +369,12 @@ function evidenceJob(
   commandStep: string,
   image: string,
   permissions: Record<string, unknown>,
+  bmEnv: Record<string, string> = {},
 ): Record<string, unknown> {
   const wave = spec.waves[job.wave - 1]!;
-  const lines = opWaveEvidenceLines(spec, evidence, job, { sha: '"$GITHUB_SHA"', ...(options.bin ? { bin: options.bin } : {}) });
+  // #4984: a before-merge run applied the decided head, so its checks are signed at it.
+  const bm = options.beforeMerge !== undefined;
+  const lines = opWaveEvidenceLines(spec, evidence, job, { sha: bm ? `"\${${BEFORE_MERGE_HEAD_ENV}:-$GITHUB_SHA}"` : '"$GITHUB_SHA"', ...(options.bin ? { bin: options.bin } : {}), ...(bm ? { beforeMerge: true } : {}) });
   const sources = opWaveEvidenceSources(forge, evidence, job, wave.name, commandStep);
   return {
     "runs-on": githubRunsOn(spec.runner),
@@ -344,6 +382,7 @@ function evidenceJob(
     // The wave job's steps say what passed, whatever the job's own result.
     if: "!cancelled()",
     container: image,
+    ...(Object.keys(bmEnv).length > 0 ? { env: bmEnv } : {}),
     // contents: write pushes the evidence notes; actions: read lists the run's jobs.
     permissions: { ...permissions, actions: "read", ...(evidenceKeyless(options.evidence) ? { "id-token": "write" } : {}) },
     steps: [
@@ -499,7 +538,56 @@ function reportSteps(add: OpWaveJobInputs | undefined, jobName: string): Array<R
 
 /** The apply-job guard step (#4624): the job's expectation in CHANT_JOB_GUARD, checked by `node -e` from `/`. */
 function guardStep(input: Parameters<typeof jobGuardSpec>[0]): Record<string, unknown> {
-  return { name: "Check the job runs where the spec set it to run", env: { [JOB_GUARD_ENV]: JSON.stringify(jobGuardSpec(input)) }, run: jobGuardLine() };
+  // #4984: before merge the guard reads the decision from chant/lifecycle with the job's token, in this step alone.
+  return { name: "Check the job runs where the spec set it to run", env: { [JOB_GUARD_ENV]: JSON.stringify(jobGuardSpec(input)), ...(input.beforeMerge ? { GITHUB_TOKEN: GITHUB_JOB_TOKEN } : {}) }, run: jobGuardLine() };
+}
+
+/** The `workflow_dispatch` inputs of the before-merge mode (#4984), which the comment job fills. */
+export const BEFORE_MERGE_DISPATCH_INPUTS: Record<string, { description: string; required: false; type: "string" }> = {
+  pr: { description: "Before merge: the pull request whose decided head the waves apply", required: false, type: "string" },
+  head: { description: "Before merge: the decided head, a commit sha", required: false, type: "string" },
+  digest: { description: "Before merge: the digest of the decision on chant/lifecycle", required: false, type: "string" },
+};
+
+/**
+ * The job after a before-merge run's last wave (#4984): at the default
+ * branch's commit, with every job's outcome file, `chant run wave --merge`
+ * checks the decision again, that every wave applied, and then merges the
+ * pull request at its decided head and releases its locks (`auto`), or
+ * says it is ready (`manual`). It runs none of the change's code, so it is
+ * the one job that holds the merge token.
+ */
+function beforeMergeDoneJob(
+  spec: OpWavesSpec,
+  options: OpWavesPipelineOptions,
+  bm: OpWavesBeforeMerge,
+  forge: "github" | "forgejo",
+  jobs: OpWavesPipelineResult["jobs"],
+  image: string,
+  bmEnv: Record<string, string>,
+): Record<string, unknown> {
+  const token = bm.merge === "auto" && bm.mergeTokenSecret ? { [BEFORE_MERGE_TOKEN_ENV]: `\${{ secrets.${bm.mergeTokenSecret} }}` } : {};
+  return {
+    "runs-on": githubRunsOn(spec.runner),
+    needs: opWavesLastJobs(jobs),
+    // Every wave job succeeded; a wave that waits or fails leaves the pull request as it is.
+    if: "${{ success() && github.event.inputs.head != '' }}",
+    container: image,
+    // contents: write releases the locks on chant/lifecycle; pull-requests: write merges and replies.
+    permissions: { contents: "write", "pull-requests": "write", statuses: "read", checks: "read" },
+    env: bmEnv,
+    steps: [
+      checkoutStep(true),
+      { name: "Download the waves' outcomes", uses: DOWNLOAD_ARTIFACT, with: { path: opWaveOutcomeDir(spec) } },
+      ...(spec.waves[0]?.setup ?? []).map(setupStepDoc),
+      ...runSteps(options.beforeScript ?? []),
+      {
+        name: bm.merge === "auto" ? "Merge the pull request whose head the waves applied" : "Say the pull request's head applied",
+        env: { GITHUB_TOKEN: GITHUB_JOB_TOKEN, ...token },
+        run: beforeMergeDoneCommand(spec, forge, bm, options.bin),
+      },
+    ],
+  };
 }
 
 /** The step that trades the job's OIDC token for `cloud` (#4332), writing the credentials to GITHUB_ENV. */

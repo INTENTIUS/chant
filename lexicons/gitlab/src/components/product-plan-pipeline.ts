@@ -208,7 +208,8 @@ export function generateGitlabProductPlanPipeline(env: string, options: GitlabPr
   entries.push(...checkEntries);
   if (notes && onNotes) {
     // The target branch's commit: the job reads the notes as data through the API and runs none of a merge request's code. One poll at a time.
-    entries.push([PR_NOTE_COMMANDS_JOB, { stage: PR_NOTE_COMMANDS_JOB, image, ...tags(notes.runner), resource_group: PR_NOTE_COMMANDS_JOB, rules: [{ if: onNotes }], script: [...beforeScript, notes.command] }]);
+    // #4984: with waves, the poll is told their op and count (a wave stop on a retry) and the waves before merge, in CHANT_COMMENT_JOBS.
+    entries.push([PR_NOTE_COMMANDS_JOB, { stage: PR_NOTE_COMMANDS_JOB, image, ...tags(notes.runner), resource_group: PR_NOTE_COMMANDS_JOB, ...(notes.env ? { variables: { ...notes.env } } : {}), rules: [{ if: onNotes }], script: [...beforeScript, notes.command] }]);
   }
   // #4979: `/<product> lock` keeps the locks the lock job took, `/<product> unlock` releases them, each at the target branch's commit.
   for (const { job, rule } of commentLocks) {

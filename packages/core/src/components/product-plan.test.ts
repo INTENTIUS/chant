@@ -175,8 +175,16 @@ describe("the re-plan decision and the pending status scripts (#4899)", () => {
     const { gitlabReplanCommentIf } = await import("./product-plan");
     expect(gitlabReplanCommentIf({ comments: ["/yodel plan"], gated: [] }, "prod")).toBe("$CHANT_PREVIEW_COMMENT =~ /^\\/yodel plan( +prod)? *$/");
     expect(gitlabReplanCommentIf({ comments: ["/terragucci plan"], gated: [{ comment: "atlantis plan", when: "TG_ATLANTIS_COMMENTS" }] })).toBe(
-      "$CHANT_PREVIEW_COMMENT =~ /^\\/terragucci plan( +[A-Za-z0-9_.\\/@+=,:-]+)? *$/ || ($TG_ATLANTIS_COMMENTS && $CHANT_PREVIEW_COMMENT =~ /^atlantis plan( +[A-Za-z0-9_.\\/@+=,:-]+)? *$/)",
+      "$CHANT_PREVIEW_COMMENT =~ /^\\/terragucci plan( +[A-Za-z0-9_.\\/@+=,:][A-Za-z0-9_.\\/@+=,:-]*)? *$/ || ($TG_ATLANTIS_COMMENTS && $CHANT_PREVIEW_COMMENT =~ /^atlantis plan( +[A-Za-z0-9_.\\/@+=,:][A-Za-z0-9_.\\/@+=,:-]*)? *$/)",
     );
+  });
+
+  test("a re-plan word never starts with - (#4984), so a flag is not read as a root", async () => {
+    const { isReplanWord } = await import("./product-plan");
+    expect(isReplanWord("live/app")).toBe(true);
+    expect(isReplanWord("a-b")).toBe(true);
+    expect(isReplanWord("--target=x")).toBe(false);
+    expect(isReplanWord("-r")).toBe(false);
   });
 });
 

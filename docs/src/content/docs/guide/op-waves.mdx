@@ -92,6 +92,7 @@ Each wave is one job, `wave-<k>-<name>`, and it needs the job before it. A push 
 A CI product passes what it adds to the generated jobs as options, so it edits nothing chant wrote ([#4791](https://github.com/INTENTIUS/chant/issues/4791)). `waveJobs`, keyed by wave name, gives each of that wave's jobs:
 
 - `before`: steps run just before the wave's command and after `beforeScript`, such as a cloud login. On GitLab their lines go into the script.
+- `prelude`: shell lines run in the command's own step, just before the command, and before the policy step's command too ([#4984](https://github.com/INTENTIUS/chant/issues/4984)), such as a Terragrunt prelude that exports cache paths and the apply roles' variables. A `before` step is a shell of its own on GitHub and Forgejo, so what it exports is gone by the command; the prelude's exports reach it. On GitLab the lines go into the script before the command.
 - `report`: a step run whatever the job's exit, after its own steps (`if: always()`). On GitLab its lines are the job's `after_script`.
 - `artifact`: `{ step, name, path }`, the files the report writes, kept whatever the exit. `{job}` in `name` is the job's name. On GitLab the path joins the job's `artifacts:`, beside the outcome files.
 
@@ -1003,6 +1004,31 @@ Every wave, deciding and share job, and the policy step, then runs `chant run wa
 The command's output is the gate policy, so it has to read the product's config at the commit it is handed (`git show "$CHANT_WAVES_SPEC_AT:terragucci.yml"`) and never from the working tree, which holds the change. It prints nothing and exits 0 when that commit has no config, which reads as a spec missing at base: the wave's gate is `always`. Any other exit fails the job.
 
 The spec handed to the generator is the pipeline's shape, and the rendered spec decides the rules. The shape gives the jobs, with their runners and environments, and their steps: a wave with `cloud` gets the trade, and a wave with `holds.policy` in a pipeline that signs gets the policy step and the evidence job. A Terragrunt repo's waves are `discover` waves and the last one has `rest`, so the units are found when the wave plans and every wave past the pipeline's jobs runs in the last one. A share or job group the shape has and the rendered spec does not applies nothing and exits 0. The resume and plans workflows and the control job still read the committed spec file, so a product keeps one there (terragucci's init writes it). `RUNTIME_WAVES_SPEC_FLOOR` is the first chant with this.
+
+## Waves before merge
+
+The waves can apply an open pull request's head before it merges ([#4984](https://github.com/INTENTIUS/chant/issues/4984)), in the same jobs a push runs: each wave keeps its runner, its environment, its cloud trade and its evidence job. The generator takes `beforeMerge`:
+
+```ts
+await generateOpWavesPipeline(spec, "github", {
+  specFile: ".chant/op-waves/tf-apply.spec.json",
+  bin: "terragucci",
+  beforeMerge: { merge: "auto", gate: "tf-apply" },
+}, process.cwd());
+```
+
+Nothing starts such a run but a decision. The product pipeline's comment job on GitHub and Forgejo, or its note poll on GitLab, decides `/<product> apply [wave-<n>]` on an open pull request (`wavesBeforeMerge` in the [product pipeline](/chant/concepts/ci-products/)). It writes the decision to `chant/lifecycle`, `_waves/<op>.before-merge.json`: the pull request, the head, the default branch's commit it was measured from, the last wave, who asked and when, and a digest, sha256 over those fields in a fixed order. It then starts the waves workflow on the default branch for that head. GitHub and Forgejo dispatch it with the inputs `pr`, `head` and `digest`. GitLab starts a pipeline of the default branch with `CHANT_BEFORE_MERGE_PR`, `CHANT_BEFORE_MERGE_HEAD` and `CHANT_BEFORE_MERGE_DIGEST`, and the wave jobs' rules take an API, web or trigger pipeline whose head variable is a commit sha.
+
+In such a run each wave job:
+
+1. runs the guard first, as on a push. The ref must still be one of the spec's branches. The guard then fetches `chant/lifecycle` with the job's token into a directory of its own, reads the decision for the head, and stops the job (exit 9) unless the pull request and the digest are the decision's and the decision's fields still give its digest. A job of a workflow without `beforeMerge` refuses any run that names a head.
+2. trades its OIDC token, if it has `cloud`, and checks out the default branch, as on a push.
+3. fetches the pull request's head ref (`refs/pull/<n>/head`, GitLab `refs/merge-requests/<n>/head`), stops (exit 9) when the pull request moved since the decision, keeps the default branch's commit in `CHANT_WAVES_BASE`, and checks the head out. This comes before the wave's setup, so none of the change's code runs before it.
+4. runs `chant run wave --base "${CHANT_WAVES_BASE:-<spec base>}"`, so the gate policy, the holds and a spec rendered at run time come from the default branch and never from the pull request. A push run leaves the variable unset and reads its base as before.
+
+The evidence job of a wave signs at the decided head, measured from the default branch's commit. The control job runs for a push alone. After the last wave, the `before-merge-done` job runs at the default branch's commit with every job's outcome file: `chant run wave --op <op> --wave <last> --merge auto|manual --forge <kind>`. It reads the decision again and checks that every wave applied. With `merge: "auto"` it asks the forge whether the pull request is still approved at that head, merges it only while the head is still that commit (`mergeAfterApply`), and releases the locks the change holds in `_locks/<gate>.json`. With `manual`, the default, it replies that the head applied, and the locks hold until the pull request merges or closes. GitHub merges with the job's own token unless `mergeTokenSecret` names another. Forgejo refuses a merge made with the job's own token, and GitLab's job token cannot merge, so both need `mergeTokenSecret` with `auto`. A wave that waits or fails leaves the pull request open. A comment that named `wave-<n>` also wrote a wave stop for the head (`_waves/<op>.stops.json`, as for a merged pull request's re-run), so the waves after n wait.
+
+`WAVES_BEFORE_MERGE_FLOOR` (`@intentius/chant/ci-product`) is the first chant with this.
 
 ## A wave over many targets
 

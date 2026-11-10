@@ -32,6 +32,15 @@
  * arrived, with `CHANT_FORGE_TOKEN` (a project access token with the `api`
  * scope and the Developer role; the job token cannot retry jobs).
  *
+ * With `beforeMerge` (#4984) the wave, policy and evidence jobs also run in
+ * a pipeline of the default branch that the note poll starts for a merge
+ * request's decided head (`gitlabBeforeMergeRule`), with the decision in
+ * `CHANT_BEFORE_MERGE_PR`, `_HEAD` and `_DIGEST`. The guard admits that
+ * head alone; the script then fetches `refs/merge-requests/<n>/head`,
+ * stops when it moved, exports `CHANT_WAVES_BASE` and checks the head out,
+ * before the setup. A `before-merge-done` stage after the waves merges and
+ * releases the locks, with the merge token's variable.
+ *
  * A `pr-review` wave (#3684), or a `pull-request` wave (#4630), adds
  * `<name>-record-plans`, run in merge request pipelines only, which records
  * the digests the merge request's head plans.
@@ -144,7 +153,17 @@ import {
   WAVE_EVIDENCE_ENV,
 } from "@intentius/chant/op/op-waves-evidence-jobs";
 import { opWavesRenderSpecEnv } from "@intentius/chant/op/op-waves-render-spec";
+import { assertOpWavesBeforeMerge, BEFORE_MERGE_DONE_JOB, BEFORE_MERGE_HEAD_ENV, BEFORE_MERGE_TOKEN_ENV, beforeMergeCheckoutScript, beforeMergeDoneCommand } from "@intentius/chant/op/before-merge";
 import { emitGitlabFile } from "./ci-jobs";
+
+/**
+ * The rule of a pipeline the note poll starts for a merge request's decided
+ * head (#4984): an API, web or trigger pipeline of `branch` (a JSON string)
+ * whose `CHANT_BEFORE_MERGE_HEAD` is a commit sha. The guard reads the rest.
+ */
+export function gitlabBeforeMergeRule(branch: string): string {
+  return `$CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/ && $${BEFORE_MERGE_HEAD_ENV} =~ /^[0-9a-f]{40,64}$/ && $CI_COMMIT_BRANCH == ${branch}`;
+}
 
 /** The one exit an op-wave job allows as a failure (#4322): a run that failed. The guard's refusal (9) is outside it. */
 export const OP_WAVE_ALLOWED_EXIT = CHANT_EXIT.failed;
@@ -153,7 +172,10 @@ export const OP_WAVE_ALLOWED_EXIT = CHANT_EXIT.failed;
 export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWavesPipelineOptions): OpWavesPipelineResult {
   // #4982: with renderSpec each wave job renders the spec at base through the product's command; `spec` is the jobs' shape.
   const renderEnv = opWavesRenderSpecEnv(options.renderSpec);
-  const jobs = opWaveJobs(spec, options.specFile, { bin: options.bin, ...(options.renderSpec ? { renderSpec: true } : {}) });
+  // #4984: the before-merge mode, a pipeline of the default branch the note poll starts for a merge request's decided head.
+  const bm = options.beforeMerge;
+  if (bm) assertOpWavesBeforeMerge("gitlab", bm);
+  const jobs = opWaveJobs(spec, options.specFile, { bin: options.bin, ...(options.renderSpec ? { renderSpec: true } : {}), ...(bm ? { beforeMerge: true } : {}) });
   assertPipelineEvidence(options.evidence);
   const image = options.image ?? CI_IMAGE;
   const subject = `Op waves "${spec.name}"`;
@@ -161,6 +183,9 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
     assertGitlabBranch(subject, branch);
     return { if: gitlabPushRule(JSON.stringify(branch)) };
   });
+  // #4984: the wave jobs also run in a pipeline started for a decided head; the guard decides whether it is the recorded one.
+  const bmRules = bm ? pushBranches(spec.branches).map((branch) => ({ if: gitlabBeforeMergeRule(JSON.stringify(branch)) })) : [];
+  const waveRules = [...rules, ...bmRules];
   // The setup and environment each wave's jobs carry, checked as an Op's are.
   const setupOf = spec.waves.map((wave) => gitlabSetupScript(`${subject} wave "${wave.name}"`, wave.setup));
   for (const wave of spec.waves) if (wave.environment) assertGitlabEnvironment(`${spec.name}/${wave.name}`, wave.environment);
@@ -184,6 +209,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
   // #4617: the control repo's token variables, which every job but the dispatch drops first.
   const control = spec.control ? opWavesControlTarget(spec.control) : undefined;
   const dropControl = control ? [`unset ${[...new Set([...CONTROL_TOKEN_VARS, control.tokenSecret, control.readTokenSecret])].join(" ")}`] : [];
+  if (bm) stages.push(BEFORE_MERGE_DONE_JOB);
   if (control) stages.push("control");
   if (spec.resume) stages.push("resume");
   const entries: Array<readonly [string, unknown]> = [["stages", stages]];
@@ -261,7 +287,10 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
       ...(environment ? { environment: environment.name } : {}),
       branches: pushBranches(spec.branches),
       ...(runner !== undefined ? { runner } : {}),
+      ...(bm ? { beforeMerge: { op: spec.name } } : {}),
     });
+    // #4984: a pipeline for a decided head checks it out after the guard and the trade, before any of the change's code.
+    const headLines = bm ? [beforeMergeCheckoutScript("gitlab", product)] : [];
     const stage = stages[job.wave - 1 + (byReview ? 1 : 0)];
     const checksDir = `${opWaveChecksDir(spec)}/`;
     const policyJob = evidence?.policyStep ? opWavePolicyJobName(job) : undefined;
@@ -278,9 +307,9 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
           ...(environment ? { environment: { ...environmentDoc(environment), action: "prepare" } } : {}),
           ...(traded && Object.keys(traded).length > 0 ? { id_tokens: traded } : {}),
           variables: { ...GITLAB_FULL_HISTORY, ...timeout.env, ...renderEnv, ...(wave.variables ?? {}), ...(cloud ? { [TRADE_SPEC_ENV]: JSON.stringify(cloud) } : {}), [JOB_GUARD_ENV]: JSON.stringify(guard) },
-          rules,
+          rules: waveRules,
           ...(job.needs.length > 0 ? { needs: job.needs } : {}),
-          script: [jobGuardLine(), ...(cloud ? gitlabTradeLines() : []), ...dropControl, ...setup, ...(options.beforeScript ?? []), ...(add?.before ?? []).flatMap((st) => st.run), opWavePolicyCommand(job).join(" ")],
+          script: [jobGuardLine(), ...(cloud ? gitlabTradeLines() : []), ...headLines, ...dropControl, ...setup, ...(options.beforeScript ?? []), ...(add?.before ?? []).flatMap((st) => st.run), ...(add?.prelude ?? []), opWavePolicyCommand(job).join(" ")],
           allow_failure: true,
           artifacts: { when: "always", paths: [checksDir], expire_in: "30 days" },
         },
@@ -308,15 +337,17 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
           ...(signs ? evidenceKeyEnv("gitlab", options.evidence!) : {}),
           ...(evidence?.commandMode ? { [WAVE_EVIDENCE_ENV]: evidence.commandMode } : {}),
         },
-        rules,
+        rules: waveRules,
         ...(needs.length > 0 ? { needs } : {}),
         script: [
           jobGuardLine(),
           ...(cloud ? gitlabTradeLines() : []),
+          ...headLines,
           ...dropControl,
           ...setup,
           ...(options.beforeScript ?? []),
           ...(add?.before ?? []).flatMap((st) => st.run),
+          ...(add?.prelude ?? []),
           job.command.join(" "),
           ...(options.extraScript ?? []),
         ],
@@ -335,7 +366,8 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
     ]);
     if (evidence?.evidenceJob) {
       // #4926: after the wave job, a job that runs none of the change's code signs from the jobs' statuses.
-      const lines = opWaveEvidenceLines(spec, evidence, job, { sha: '"$CI_COMMIT_SHA"', ...(options.bin ? { bin: options.bin } : {}) });
+      // #4984: a before-merge pipeline applied the decided head, so its checks are signed at it.
+      const lines = opWaveEvidenceLines(spec, evidence, job, { sha: bm ? `"\${${BEFORE_MERGE_HEAD_ENV}:-$CI_COMMIT_SHA}"` : '"$CI_COMMIT_SHA"', ...(options.bin ? { bin: options.bin } : {}), ...(bm ? { beforeMerge: true } : {}) });
       const signingTokens = evidenceIdTokens(options.evidence);
       entries.push([
         evidence.evidenceJob.name,
@@ -347,7 +379,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
           ...(evidenceKeyless(options.evidence) ? {} : { environment: { name: GITLAB_EVIDENCE_ENVIRONMENT, action: "access" } }),
           ...(Object.keys(signingTokens).length > 0 ? { id_tokens: signingTokens } : {}),
           variables: { ...GITLAB_FULL_HISTORY, [EVIDENCE_SOURCES_ENV]: JSON.stringify(opWaveEvidenceSources("gitlab", evidence, job, wave.name, "")), ...evidenceKeyEnv("gitlab", options.evidence!) },
-          rules,
+          rules: waveRules,
           needs: [job.jobName, ...(policyJob ? [policyJob] : [])],
           script: [...dropControl, ...lines.checkout, ...setupOf[job.wave - 1]!, ...(options.beforeScript ?? []), ...lines.sign],
           // A refused or failed evidence job leaves the later waves to run; their evidence.requires speaks for itself.
@@ -355,6 +387,22 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
         },
       ]);
     }
+  }
+  if (bm) {
+    // #4984: after a before-merge pipeline's last wave, at the default branch's commit: the merge and the release of the locks.
+    // Its needs hand on every outcome file; a wave that failed as allowed still lets it run, and it reads the outcomes itself.
+    entries.push([
+      BEFORE_MERGE_DONE_JOB,
+      {
+        stage: BEFORE_MERGE_DONE_JOB,
+        image,
+        ...(specTags ? { tags: specTags } : {}),
+        variables: { ...GITLAB_FULL_HISTORY, ...(bm.merge === "auto" && bm.mergeTokenSecret ? { [BEFORE_MERGE_TOKEN_ENV]: `$${bm.mergeTokenSecret}` } : {}) },
+        rules: bmRules,
+        needs: opWavesLastJobs(jobs),
+        script: [...dropControl, ...setupOf[0]!, ...(options.beforeScript ?? []), beforeMergeDoneCommand(spec, "gitlab", bm, options.bin)],
+      },
+    ]);
   }
   if (control) {
     const dispatch = controlDispatchJob("gitlab", control, "$CI_COMMIT_SHA", {
