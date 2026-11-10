@@ -18,6 +18,10 @@
  * server's, that copy is what is reported, with the server in `observedOn`,
  * which the drift report prints as `seen on`.
  *
+ * A table's columns are addressed by name, its column order is one value,
+ * `columnOrder`, and a column the server has that the declaration does not
+ * is pending, since an apply drops it (#4944, `../../core/deep-columns.ts`).
+ *
  * Where the profile manages access, each grant declaration is read as
  * `grants.<grantee>.<atom>` (#4582): a privilege or role it declares that the
  * grantee does not hold (revoked by hand, SQLCH273) is `absent` drift on that
@@ -46,6 +50,7 @@ import { database, dictionary, func, policy, quota, role, settingsProfile, table
 import { canonicalObject, grantsObject, objectKey, type CanonicalColumn, type CanonicalObject } from "./normalize";
 import { atomKey, declaredGrantAtoms, grantStatement, grantsByGrantee, holdsAtom, revokeStatement, type GrantAtom } from "../access";
 import { renderFor } from "../topology";
+import { columnNames, columnOrderKey, liveColumnOrder, undeclaredColumns, withDeclaredColumnOrder } from "../../core/deep-columns";
 
 type Props = Record<string, unknown>;
 
@@ -89,9 +94,14 @@ export function liveGrantTree(ddl: string, held: ReadonlyMap<string, readonly Gr
 
 export const sqlDeepNormalizationHooks: DeepNormalizationHooks = {
   prune: (node) => PRUNED.has(node.pattern.split(/[.[]/)[0]!),
-  // A grant declaration is compared atom by atom (#4582); the reader writes the live side in this shape.
+  // A table's columns by name (#4944): `columns[#country].default.expr`.
+  orderKey: columnOrderKey,
   prepare: (tree, { entityType, side }) => {
-    if (entityType !== CLICKHOUSE_ENTITY_TYPES.grant || side !== "declared" || typeof tree.ddl !== "string") return tree;
+    if (side !== "declared") return tree;
+    // A ClickHouse table's column order as one value (#4944); the reader writes the live side's.
+    if (entityType !== CLICKHOUSE_ENTITY_TYPES.grant) return withDeclaredColumnOrder(tree, entityType);
+    // A grant declaration is compared atom by atom (#4582); the reader writes the live side in this shape.
+    if (typeof tree.ddl !== "string") return tree;
     return declaredGrantTree(tree.ddl) ?? tree;
   },
 };
@@ -176,6 +186,9 @@ export function inDeclaredVocabulary(declared: Props, live: Props, d: CanonicalO
       const di = dc ? declaredColumns[dc.position] : undefined;
       return lc && dc && di && sameColumn(lc, dc) ? di : c;
     });
+    // Columns are keyed by name in the diff (#4944), so their order is compared here, as SQLCH209 compares it.
+    const order = liveColumnOrder(columnNames(declared), columnNames(live));
+    if (order !== undefined) out.columnOrder = order;
   }
   return out;
 }
@@ -349,6 +362,19 @@ export async function observeResourcesDeep(
     try {
       const d = canonicalObject(renderFor(String(props.ddl), target.topology), target.defaultDatabase);
       const physicalId = o.uuid ?? `${db ? `${db}.` : ""}${o.name}`;
+      // A column the server has and the declaration does not: pending, and out of the tree (#4944).
+      const withoutUndeclared = (properties: Props): Props => {
+        const split = undeclaredColumns({
+          entity: name,
+          entityType: entity.entityType,
+          qualified: `${db ? `${db}.` : ""}${o.name}`,
+          declared: props,
+          live: properties,
+          previously: d.columns.map((c) => c.previously).filter((p): p is string => p !== undefined),
+        });
+        pending.push(...split.pending);
+        return split.live;
+      };
       const other = copies && !isDb ? copyToReport(copies, `${db ?? ""}.${o.name}`, d, target.defaultDatabase) : undefined;
       if (other) {
         // The servers disagree: report the copy that departs from the declaration, and where it was seen.
@@ -356,7 +382,7 @@ export async function observeResourcesDeep(
         resources[name] = {
           type: o.type,
           physicalId,
-          properties: inDeclaredVocabulary(props, liveProps(copy), d, canonicalObject(copy.statement, target.defaultDatabase)),
+          properties: withoutUndeclared(inDeclaredVocabulary(props, liveProps(copy), d, canonicalObject(copy.statement, target.defaultDatabase))),
           observedOn: other.host,
         };
         continue;
@@ -372,7 +398,7 @@ export async function observeResourcesDeep(
       resources[name] = {
         type: o.type,
         physicalId,
-        properties: inDeclaredVocabulary(props, liveProps(o), d, l),
+        properties: withoutUndeclared(inDeclaredVocabulary(props, liveProps(o), d, l)),
       };
     } catch (err) {
       unobserved[name] = { type: entity.entityType, reason: "read-failed", detail: `the server's definition does not parse: ${(err as Error).message}` };

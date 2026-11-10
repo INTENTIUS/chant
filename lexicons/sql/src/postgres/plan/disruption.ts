@@ -28,7 +28,8 @@ function ruleFor(path: string): PgClassifierRuleId | "ambiguous" | undefined {
   if (root === "elements" || root === "where" || root === "include" || root === "unique" || root === "method") return "SQLPG243";
   if (["primaryKey", "uniques", "checks", "foreignKeys", "exclusions"].includes(root)) return "ambiguous";
   if (root === "columns") {
-    const field = /^columns\[\d+\]\.(\w+)/.exec(path)?.[1];
+    // A column by its name (`columns[#email]`, #4944), or by position.
+    const field = /^columns\[(?:\d+|#[^\]]*)\]\.(\w+)/.exec(path)?.[1];
     if (field === undefined || field === "type" || field === "name" || field === "notNull" || field === "generated") return "ambiguous";
     if (field === "default") return "SQLPG209";
     if (field === "comment") return "SQLPG216";

@@ -130,7 +130,9 @@ describe.skipIf(!enabled)("the kinds #3911 adds, against the pinned server", () 
     const deep = await observeResourcesDeep({ environment: "test", entityNames: [...v1.entities.keys()], entities: v1.entities, config: config(), env: {} });
     expect(deep.unobserved ?? {}).toEqual({});
     for (const k of ["perUser", "base", "analysts", "nums", "typedNums", "hourly", "events"]) {
-      expect(compared(deep.resources[k]!.properties), k).toEqual(compared(v1.entities.get(k)!.props));
+      // The declared tree as the diff prepares it: a table's `columnOrder` (#4944).
+      const e = v1.entities.get(k)!;
+      expect(compared(deep.resources[k]!.properties), k).toEqual(compared(sqlDeepNormalizationHooks.prepare!(e.props, { entityType: e.entityType, side: "declared" })));
     }
 
     // Imported back: the schema from the catalog, access control from SHOW CREATE in a .sql file.

@@ -24,6 +24,12 @@ describe("classifyDisruption", () => {
     expect(run(["orderBy"]).disruption).toBe("unknown");
   });
 
+  test("a column by its name classifies as by its position, and a column moved is metadata (#4944)", () => {
+    expect(run(["columns[#country].type"]).disruption).toBe("unknown");
+    expect(run(["columns[#country].comment"]).disruption).toBe("in-place");
+    expect(run(["columnOrder"]).disruption).toBe("in-place");
+  });
+
   test("another lexicon's entry is left alone", () => {
     expect(classifyDisruption({ environment: "e", changes: [{ name: "x", type: "K8s::Core::Pod", deltas: [] }] })).toEqual({});
   });

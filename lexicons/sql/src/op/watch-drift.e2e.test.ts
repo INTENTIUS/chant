@@ -288,7 +288,8 @@ export const ordersStatus = index\`CREATE INDEX orders_status_idx ON \${orders} 
     await q(`ALTER TABLE ${NAME}.orders ALTER COLUMN status SET DEFAULT 'pending'`);
     const watch = await p.run("schema-watch", READER_ENV);
     expect(watch.output).toContain("PROPERTY DRIFT");
-    expect(watch.output).toMatch(/- orders \(Postgres::Table\)\n\s+columns\[1\]\.default: 'new' → 'pending'::text/);
+    // The column by its name (#4944).
+    expect(watch.output).toMatch(/- orders \(Postgres::Table\)\n\s+columns\[#status\]\.default: 'new' → 'pending'::text/);
     expect(watch.drift).toBe(true);
     await q(`ALTER TABLE ${NAME}.orders ALTER COLUMN status SET DEFAULT 'new'`);
   }, 120_000);

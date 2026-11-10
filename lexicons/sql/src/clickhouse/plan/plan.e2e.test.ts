@@ -60,7 +60,9 @@ describe.skipIf(!enabled)("planning the getting-started example against a server
     const deep = await observeResourcesDeep({ environment: "e2e", entityNames: [...entities.keys()], entities, ...env() });
     expect(deep.unobserved ?? {}).toEqual({});
     for (const [name, e] of entities) {
-      expect(compared(deep.resources[name]!.properties), name).toEqual(JSON.parse(JSON.stringify(compared(e.props))));
+      // The declared tree as the diff prepares it: a table's `columnOrder` (#4944).
+      const declared = sqlDeepNormalizationHooks.prepare!(e.props, { entityType: e.entityType, side: "declared" });
+      expect(compared(deep.resources[name]!.properties), name).toEqual(JSON.parse(JSON.stringify(compared(declared))));
     }
   }, 120_000);
 
