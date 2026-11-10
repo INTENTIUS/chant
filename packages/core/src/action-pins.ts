@@ -49,6 +49,8 @@ export const ACTION_PINS = {
   setupBun2: pin("oven-sh/setup-bun", "v2", "0c5077e51419868618aeaa5fe8019c62421857d6", "v2.2.0"),
   golangciLint9: pin("golangci/golangci-lint-action", "v9", "ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a", "v9.3.0"),
   dockerLogin4: pin("docker/login-action", "v4", "81c6f93d4bc991e510b342a00b419b3bb4efc5c6", "v4.7.0"),
+  // #4876: the release workflow's QEMU binfmt setup for a `release.images` platform the runner can't run.
+  dockerSetupQemu4: pin("docker/setup-qemu-action", "v4", "99012661954931238ded8c8b007157a8430204e1", "v4.4.0"),
   dockerSetupBuildx4: pin("docker/setup-buildx-action", "v4", "f87e5991a6d7451dcb8d9637bfbc97413f497069", "v4.4.1"),
   dockerMetadata6: pin("docker/metadata-action", "v6", "dc802804100637a589fabce1cb79ff13a1411302", "v6.2.0"),
   dockerBuildPush7: pin("docker/build-push-action", "v7", "c3c9e263c25d99ce0380d002d59b67737d91b0dc", "v7.4.0"),

@@ -108,3 +108,9 @@ export const KEYLESS_EVIDENCE_FLOOR = "0.124.87";
 
 /** The first chant whose cloud login leaves the region to the job unless the spec names one, takes `sameStep` to export into the step that runs it, accepts an AWS spec with no role (the token file alone), and whose trade sets `CHANT_CLOUD_TRADED` so a login's targets file is told from a trade's (#4930). */
 export const CLOUD_LOGIN_SAME_STEP_FLOOR = NEXT_RELEASE;
+
+/** The first chant whose `chant release workflow` sets up QEMU in the cut and publish jobs for the platforms `release.images` builds that the runner can't (`docker/setup-qemu-action` at its pin on GitHub and Forgejo, a `tonistiigi/binfmt` run line on GitLab), and whose `release.images` command entries take `platforms` (#4876). */
+export const RELEASE_WORKFLOW_QEMU_FLOOR = NEXT_RELEASE;
+
+/** The first chant whose npm publish target refuses at plan time a package that would carry an image archive the release records (`publish-npm-carries-image`), naming the file and the `files` entry that leaves it out (#4934). */
+export const NPM_CARRIES_IMAGE_FLOOR = NEXT_RELEASE;

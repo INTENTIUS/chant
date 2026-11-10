@@ -55,7 +55,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { packageSbom } from "./publish-attachments";
 import type { NpmPublishDeclaration } from "./publish-declaration";
 import { checkReleaseDigest, fileDigest, isDir, memberFile, publishTargetKey } from "./publish-targets";
@@ -194,6 +194,53 @@ export function checkPackagePins(decl: Pick<NpmPublishDeclaration, "pins">, rele
   if (found === 0) throw new PublishTargetError("publish-npm-pins-missing", `no package of the npm target holds ${decl.pins}, which pins names`, "Build the package so it carries the file, or remove pins.");
 }
 
+/** The output of `npm pack --dry-run --json`: one entry per package, with the files it would carry. */
+type NpmPackListing = Array<{ files?: Array<{ path?: unknown }> }>;
+
+/**
+ * #4934: refuse a package that would carry an image archive the release
+ * records (`release.images`). In a dispatched release the publish job takes
+ * the cut's archives into their directory under the checkout, as the tag
+ * workflow's `release images` and a workstation cut write them there, so a
+ * package whose `files` takes that directory packs the image and the registry
+ * refuses it (413) after the other targets published. For each package that
+ * an archive lies inside, `npm pack --dry-run --json --ignore-scripts` lists
+ * what `npm publish` would send, and an archive among it, or a file under an
+ * archive that is a layout directory, is refused at the plan, before any
+ * target publishes, naming the file and the `files` entry that leaves it out.
+ * A package no archive lies inside runs no npm, and a packed `.tgz` holds
+ * what it was packed with, which the plan reads as it is.
+ */
+export function checkPackageImages(release: PublishContext["release"], cwd: string, pkgs: ReadonlyArray<Pick<NpmPackage, "path" | "abs" | "name">>, bin = "npm", env: NodeJS.ProcessEnv = process.env): void {
+  const archives = release.artifactDigests.filter((a) => a.kind === "image" && a.path !== "").map((a) => ({ component: a.component, abs: resolve(cwd, a.path) }));
+  if (archives.length === 0) return;
+  for (const pkg of pkgs) {
+    if (!isDir(pkg.abs)) continue;
+    const inside = archives.map((a) => ({ ...a, rel: relative(pkg.abs, a.abs).split(sep).join("/") })).filter((a) => a.rel !== "" && a.rel !== ".." && !a.rel.startsWith("../"));
+    if (inside.length === 0) continue;
+    let files: string[];
+    try {
+      const out = execFileSync(bin, ["pack", "--dry-run", "--json", "--ignore-scripts"], { cwd: pkg.abs, env, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 256 * 1024 * 1024 });
+      files = (JSON.parse(out.slice(out.indexOf("["))) as NpmPackListing).flatMap((e) => (e.files ?? []).map((f) => String(f.path)));
+    } catch (err) {
+      throw new PublishTargetError(
+        "publish-npm-pack-failed",
+        `npm pack --dry-run --json could not list what ${pkg.name} (${pkg.path}) carries, so whether it packs the image archive ${inside[0]!.rel} is not known: ${err instanceof Error ? err.message.split("\n")[0] : String(err)}`,
+        "Run npm pack --dry-run in the package to see why it fails.",
+      );
+    }
+    for (const a of inside) {
+      const carried = files.find((f) => f === a.rel || f.startsWith(`${a.rel}/`));
+      if (carried === undefined) continue;
+      throw new PublishTargetError(
+        "publish-npm-carries-image",
+        `${pkg.name} (${pkg.path}) would carry ${carried}, the archive of image "${a.component}" that release.images names; the image goes to its own target, and npmjs refuses a package that size (413)`,
+        `Add "!${a.rel}" to "files" in ${pkg.path === "." ? "" : `${pkg.path}/`}package.json (or ${a.rel} to its .npmignore when it has no "files"), so the package leaves the image out.`,
+      );
+    }
+  }
+}
+
 export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): PublishTarget {
   const bin = deps.npm ?? "npm";
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
@@ -249,8 +296,14 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
     return pkgs;
   };
   const extra = (pkg: NpmPackage) => ({ ...(pkg.digest ? { digest: pkg.digest } : {}), ...(pkg.sbom ? { sbom: pkg.sbom } : {}) });
+  /** #4934: what plan and stage read, with the image archives a package would carry refused. */
+  const readChecked = (ctx: PublishContext) => {
+    const pkgs = read(ctx);
+    checkPackageImages(ctx.release, ctx.cwd, pkgs, bin, ctx.env);
+    return pkgs;
+  };
   const plan = async (ctx: PublishContext): Promise<PublishItem[]> =>
-    read(ctx).map((pkg) => ({ name: `${pkg.name}@${pkg.version}`, destination: staging ? `${shown(NPM_STAGE_TAG)}, then ${revealTag(ctx)}` : shown(revealTag(ctx)), ...extra(pkg) }));
+    readChecked(ctx).map((pkg) => ({ name: `${pkg.name}@${pkg.version}`, destination: staging ? `${shown(NPM_STAGE_TAG)}, then ${revealTag(ctx)}` : shown(revealTag(ctx)), ...extra(pkg) }));
   /**
    * In CI, install what was published into an empty directory and run
    * `npm audit signatures` there (#4049), which checks each package's
@@ -343,7 +396,7 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
     key: publishTargetKey(decl),
     plan,
     async stage(ctx) {
-      const pkgs = read(ctx);
+      const pkgs = readChecked(ctx);
       const items: PublishItem[] = [];
       for (const pkg of pkgs) {
         const item: PublishItem = { name: `${pkg.name}@${pkg.version}`, destination: shown(stageTag(ctx)), ...extra(pkg) };

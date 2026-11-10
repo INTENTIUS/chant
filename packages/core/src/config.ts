@@ -112,7 +112,8 @@ export const ChantConfigSchema = z.object({
     images: z
       .array(
         z.union([
-          z.object({ name: z.string().min(1), build: z.string().min(1), archive: z.string().min(1) }).strict(),
+          // #4876: `platforms`, what the command builds, for the release workflow's QEMU setup.
+          z.object({ name: z.string().min(1), build: z.string().min(1), archive: z.string().min(1), platforms: z.array(z.string().min(1)).min(1).optional() }).strict(),
           // #4819: chant builds the Dockerfile as the reproducible OCI archive itself.
           z
             .object({

@@ -465,3 +465,62 @@ describe("GHCR credentials and npm trusted publishing from the targets (#4786)",
     expect(runs(tagged.jobs.publish!)).toContain(NPM_TRUSTED_PUBLISHING_SETUP);
   });
 });
+
+describe("QEMU for the platforms release.images builds (#4876)", () => {
+  type Step = { uses?: string; run?: string; with?: Record<string, unknown> };
+  const TWO = ["linux/amd64", "linux/arm64"];
+  const render = (forge: (typeof FORGES)[number], imagePlatforms: string[], pipeline: ReleaseWorkflowInput["pipeline"] = {}, trigger: "dispatch" | "tag" = "dispatch") =>
+    renderReleaseWorkflow({ forge, groups: new Set(), images: true, imageArchives: ["dist/images/app.tar"], imagePlatforms, pipeline: { ...(trigger === "dispatch" ? { trigger } : {}), ...pipeline } });
+  const ghSteps = (yaml: string, job: string): Step[] => (parseYAML(yaml) as { jobs: Record<string, { steps: Step[] }> }).jobs[job]!.steps;
+
+  test("a two-platform release.images: the cut and the publish set up QEMU for arm64 after the install, before the config's setup, on GitHub and Forgejo", () => {
+    for (const forge of ["github", "forgejo"] as const) {
+      const yaml = render(forge, TWO, { setup: [{ run: "echo own" }] });
+      for (const job of ["cut", "publish"]) {
+        const steps = ghSteps(yaml, job);
+        const at = steps.findIndex((s) => s.uses?.startsWith("docker/setup-qemu-action@"));
+        expect(steps[at], `${forge} ${job}`).toEqual({ uses: `docker/setup-qemu-action@${ACTION_PINS.dockerSetupQemu4.sha}`, with: { platforms: "arm64" } });
+        expect(steps[at - 1]!.run, `${forge} ${job}`).toBe("npm ci");
+        expect(steps[at + 1]!.run, `${forge} ${job}`).toBe("echo own");
+      }
+      expect(yaml).toContain(`docker/setup-qemu-action@${ACTION_PINS.dockerSetupQemu4.sha} # v4.4.0`);
+      // The tag-triggered publish job builds the images too.
+      expect(ghSteps(render(forge, TWO, {}, "tag"), "publish").some((s) => s.uses?.startsWith("docker/setup-qemu-action@")), forge).toBe(true);
+    }
+  });
+
+  test("on GitLab, a binfmt run line in the cut and the publish", () => {
+    const doc = parseYAML(render("gitlab", TWO)) as Record<string, { script: string[] }>;
+    for (const job of ["chant-release-cut", "chant-release-publish"]) {
+      const script = doc[job]!.script;
+      expect(script[script.indexOf("npm ci") + 1], job).toBe("docker run --privileged --rm tonistiigi/binfmt --install arm64");
+    }
+  });
+
+  test("a one-platform release.images, or none, renders no QEMU on any forge", () => {
+    for (const forge of FORGES) {
+      for (const platforms of [["linux/amd64"], []]) {
+        const yaml = render(forge, platforms);
+        expect(yaml, forge).not.toContain("setup-qemu-action");
+        expect(yaml, forge).not.toContain("binfmt");
+      }
+    }
+    // A config with no release.images builds nothing, whatever the platforms.
+    expect(renderReleaseWorkflow({ forge: "github", groups: new Set(), imagePlatforms: TWO, pipeline: { trigger: "dispatch" } })).not.toContain("setup-qemu-action");
+  });
+
+  test("a config that names the step itself renders as today, and drops it to the same file", () => {
+    const qemu = { uses: `docker/setup-qemu-action@${ACTION_PINS.dockerSetupQemu4.sha} # v4.4.0`, with: { platforms: "arm64" } };
+    const own = { run: 'echo "npm"' };
+    const byHand = render("github", TWO, { setup: [qemu, own] });
+    expect(byHand).toBe(render("github", [], { setup: [qemu, own] }));
+    expect(render("github", TWO, { setup: [own] })).toBe(byHand);
+    const binfmt = { run: "docker run --privileged --rm tonistiigi/binfmt --install arm64" };
+    expect(render("gitlab", TWO, { setup: [binfmt] })).toBe(render("gitlab", [], { setup: [binfmt] }));
+  });
+
+  test("other architectures go in as QEMU names them", () => {
+    const steps = ghSteps(render("github", ["linux/amd64", "linux/arm/v7", "linux/riscv64", "linux/arm64"]), "cut");
+    expect(steps.find((s) => s.uses?.startsWith("docker/setup-qemu-action@"))!.with).toEqual({ platforms: "arm,arm64,riscv64" });
+  });
+});
