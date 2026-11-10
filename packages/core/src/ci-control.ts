@@ -137,6 +137,7 @@ export {
 export {
   CONSUMERS_CONTRACT,
   CONSUMERS_FILE,
+  CONTROL_CONSUMERS_FLOOR,
   consumersDocument,
   joinControlConsumers,
   parseConsumersDocument,

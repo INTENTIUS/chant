@@ -24,6 +24,14 @@ import type { ParsedArgs } from "../registry";
 import type { PendingGateRecord } from "../../lifecycle/gate-ledger";
 import { CHANT_EXIT } from "../../exit-codes";
 
+/**
+ * The first chant with `confirmApproval` here, the type-the-name
+ * confirmation a product's approve word asks through (#4575). #4916
+ * declared it after the fact, so `chant dev dead-guards` sees a product's
+ * lazy load of this subpath.
+ */
+export const APPROVE_CONFIRM_FLOOR = "0.124.55";
+
 /** The streams the terminal check reads. `process` in the CLI; tests pass their own. */
 export interface ApprovalTerminal {
   stdin: { isTTY?: boolean };

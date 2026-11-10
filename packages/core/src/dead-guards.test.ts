@@ -190,13 +190,34 @@ describe("the floor table (#4792)", () => {
     expect(chantMeets("0.124.86", "FLOOR_TABLE_FLOOR")).toBe(true);
   });
 
-  it("answers a released floor, and the higher version of a name two files declare", () => {
+  it("answers a released floor, and each name from its one declaration (#4916)", () => {
     expect(floorVersion("CI_CHECK_HOOK_FLOOR")).toBe("0.124.55");
     expect(chantMeets("0.124.84", "CI_CHECK_HOOK_FLOOR")).toBe(true);
     expect(chantMeets("0.124.54", "CI_CHECK_HOOK_FLOOR")).toBe(false);
-    expect(FLOOR_TABLE.filter((r) => r.name === "RELEASE_VERSION_FLOOR").map((r) => r.version).sort()).toEqual(["0.124.55", "0.124.79"]);
-    expect(floorVersion("RELEASE_VERSION_FLOOR")).toBe("0.124.79");
+    expect(FLOOR_TABLE.filter((r) => r.name === "RELEASE_VERSION_FLOOR").map((r) => r.version)).toEqual(["0.124.79"]);
+    expect(floorVersion("RELEASE_RECORD_VERSION_FLOOR")).toBe("0.124.55");
     expect(floorVersion("NO_SUCH_FLOOR")).toBeUndefined();
+  });
+
+  // #4916: sql-yodeler's lazy load of chant's terminal confirmation, and a
+  // lexicon subpath loaded the same way, are checks on the table's floors.
+  it("finds a lazy load of approve-confirm and of a lexicon subpath", () => {
+    const src = `export async function chantConfirm() {
+  const specifier = "@intentius/chant/cli/handlers/approve-confirm";
+  try {
+    return await import(specifier);
+  } catch {
+    return undefined;
+  }
+}
+export const catalog = () => import("@intentius/chant-lexicon-terraform/module-catalog").catch(() => undefined);
+export const registry = () => import("@intentius/chant-lexicon-terraform/registry").catch(() => undefined);
+`;
+    expect(guardsIn(src).map((g) => `${g.line} ${g.kind} ${g.floor} ${g.version}`)).toEqual([
+      "2 module @intentius/chant/cli/handlers/approve-confirm 0.124.55",
+      "9 module @intentius/chant-lexicon-terraform/module-catalog 0.124.55",
+      "10 module @intentius/chant-lexicon-terraform/registry 0.124.55",
+    ]);
   });
 
   it("names the subpaths a product imports a floor from", () => {
