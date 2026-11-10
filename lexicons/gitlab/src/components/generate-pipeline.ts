@@ -77,6 +77,11 @@ import {
   prLoopRunner,
 } from "@intentius/chant/components/pr-pipeline";
 import { REPO_APPLY_GROUP } from "@intentius/chant/components/repo-lock";
+import { assertRootChecks } from "@intentius/chant/components/pr-pipeline";
+import { planEvidenceOf } from "@intentius/chant/components/product-plan";
+import { prCheckJob, prRefGateJob } from "@intentius/chant/components/pr-checks";
+import { resolveProductWords as resolveLoopWords } from "@intentius/chant/ci-product-words";
+import { gitlabCheckJobs, withCheckStages } from "./pr-check-jobs";
 import { memberGitlabChanges, memberRepoPath, memberShellDir } from "@intentius/chant/lexicon";
 import { FORGE_TOKEN_VARS, GITLAB_DROP_FORGE_TOKENS } from "@intentius/chant/ci-handover";
 import { CONTROL_TOKEN_VARS, controlDispatchJob, controlNoteCheckout } from "@intentius/chant/control/dispatch";
@@ -388,6 +393,8 @@ function prLoopGitlabPipeline(
 ): GenerateGitlabResult {
   const loop = options.prLoop!;
   const member = options.member;
+  // #4935: the checks and their evidence are the commit's, so the root pipeline has them.
+  assertRootChecks(loop, member?.name);
   const rooted = !member || member.dir === "." || member.dir === "";
   const [plan, apply, record] = prLoopJobs("gitlab", env, loop, member?.name);
   const reportPath = member ? memberRepoPath(member, PR_LOOP_REPORT_DIR) : PR_LOOP_REPORT_DIR;
@@ -460,7 +467,36 @@ function prLoopGitlabPipeline(
   const notes = prNoteCommandsJob("gitlab", loop);
   if (notes && !rooted) throw new Error(`--note-commands writes one job for the project, which polls every merge request's notes; give it on the root pipeline, not member ${member!.name}'s`);
   const notesRule = notes ? `$CI_PIPELINE_SOURCE =~ /^(schedule|web|api|trigger)$/ && $${GITLAB_NOTE_COMMANDS_VAR} == "1" && $CI_COMMIT_BRANCH == ${targetBranch}` : undefined;
-  const stages = ["plan", PR_PLAN_NOTE_JOB, ...(stale ? [PR_STALE_JOB] : []), ...(notes ? [PR_NOTE_COMMANDS_JOB] : []), ...commentLocks.map((c) => c.job.jobName), ...(preview ? [preview.jobName, preview.noteJobName] : []), ...applies.map((a) => a.stage), ...(control ? [control.name] : []), ...(prEnv ? [PR_ENV_STAGE, PR_ENV_POST_STAGE] : [])];
+  // #4935: the plan's evidence job, the check job, its evidence job and the ref gate's status job.
+  const loopWords = resolveLoopWords(loop.words);
+  const bin = loopWords.bin ? { bin: loopWords.bin } : {};
+  const planEvidence = loop.evidence ? planEvidenceOf("gitlab", loop.evidence, loopWords, planJob) : undefined;
+  const checkEntries = gitlabCheckJobs({
+    image,
+    setup: [...prLoopSetup(image, loop.engineSetup), ...beforeScript],
+    beforeScript,
+    onMergeRequest,
+    onPlanNotes,
+    ...(loop.evidence?.runnerKeySecret ? { unset: [loop.evidence.runnerKeySecret] } : {}),
+    ...(loop.checkJob ? { check: prCheckJob("gitlab", { ...bin, ...(loop.evidence ? { evidence: loop.evidence } : {}) }) } : {}),
+    ...(loop.refGateStatus ? { refGate: prRefGateJob("gitlab", bin) } : {}),
+  });
+  const evidenceEntries: Array<[string, Record<string, unknown>]> = [
+    ...(planEvidence
+      ? [[planEvidence.jobName!, {
+          stage: "evidence",
+          image,
+          rules: [{ if: onMergeRequest }],
+          needs: [{ job: planJob, artifacts: true }],
+          variables: planEvidence.env,
+          ...(planEvidence.idTokens ? { id_tokens: planEvidence.idTokens } : {}),
+          script: [...beforeScript, ...planEvidence.lines],
+        }] as [string, Record<string, unknown>]]
+      : []),
+    ...checkEntries,
+  ];
+  const stagesBefore = ["plan", ...(planEvidence ? ["evidence"] : []), PR_PLAN_NOTE_JOB, ...(stale ? [PR_STALE_JOB] : []), ...(notes ? [PR_NOTE_COMMANDS_JOB] : []), ...commentLocks.map((c) => c.job.jobName), ...(preview ? [preview.jobName, preview.noteJobName] : []), ...applies.map((a) => a.stage), ...(control ? [control.name] : []), ...(prEnv ? [PR_ENV_STAGE, PR_ENV_POST_STAGE] : [])];
+  const stages = withCheckStages(stagesBefore, evidenceEntries, PR_PLAN_NOTE_JOB);
   const noteJob = named(PR_PLAN_NOTE_JOB);
   const post = prLoopPostJob("gitlab", env, member?.name, loop.words ? { ...(loop.words.bin ? { bin: loop.words.bin } : {}) } : undefined, { ...(loop.staleNotes ? { staleNotes: true } : {}), ...(loop.respond ? { respond: loop.respond } : {}), ...(loop.decide ? { decide: loop.decide } : {}) });
   // #4619: with a control repo named, the note job reads its chant/lifecycle, read-only, so pr-post marks the cross-stack edges.
@@ -490,6 +526,7 @@ function prLoopGitlabPipeline(
       ...(Object.keys(post.env).length > 0 ? { variables: post.env } : {}),
       script: [...enter, ...beforeScript, ...(controlRead ? [controlRead.script] : []), post.command],
     },
+    ...Object.fromEntries(evidenceEntries),
     ...(stale && staleName
       ? {
           // The pushed commit of the target branch: none of a merge request's code is here.
@@ -600,6 +637,7 @@ function prLoopGitlabPipeline(
   const jobs: GeneratedJob[] = [
     { jobName: planJob, component: "merge request plan", stage: "plan", needs: [] },
     { jobName: noteJob, component: "merge request plan note", stage: PR_PLAN_NOTE_JOB, needs: [] },
+    ...evidenceEntries.map(([name, job]) => ({ jobName: name, component: name === "check" ? "merge request check" : name === "ref-gate" ? "merge request ref gate status" : name === "check-evidence" ? "merge request check evidence" : "merge request plan evidence", stage: job.stage as string, needs: ((job.needs as Array<{ job: string }> | undefined) ?? []).map((n) => n.job) })),
     ...(stale && staleName ? [{ jobName: staleName, component: "merge request stale notes", stage: PR_STALE_JOB, needs: [] }] : []),
     ...commentLocks.map(({ job, name }) => ({ jobName: name, component: `merge request ${job.command} comment`, stage: job.jobName, needs: [] })),
     ...(preview && previewName && previewNoteName
@@ -626,7 +664,7 @@ function prLoopGitlabPipeline(
       if (tags && entry) doc[job.jobName] = { ...entry, tags };
     }
   }
-  const yaml = emitGitlabFile(["workflow", "stages", "variables", planJob, noteJob, ...(staleName ? [staleName] : []), ...(notes ? [PR_NOTE_COMMANDS_JOB] : []), ...commentLocks.map((c) => c.name), ...(previewName && previewNoteName ? [previewName, previewNoteName] : []), ...applies.map((a) => a.name), ...(controlJob ? [controlJob] : []), ...Object.keys(prEnv?.jobs ?? {})].map((key) => [key, doc[key]] as const));
+  const yaml = emitGitlabFile(["workflow", "stages", "variables", planJob, noteJob, ...evidenceEntries.map(([name]) => name), ...(staleName ? [staleName] : []), ...(notes ? [PR_NOTE_COMMANDS_JOB] : []), ...commentLocks.map((c) => c.name), ...(previewName && previewNoteName ? [previewName, previewNoteName] : []), ...applies.map((a) => a.name), ...(controlJob ? [controlJob] : []), ...Object.keys(prEnv?.jobs ?? {})].map((key) => [key, doc[key]] as const));
   return { yaml, stages, jobs, env };
 }
 

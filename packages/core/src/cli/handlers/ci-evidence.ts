@@ -15,6 +15,12 @@
  *   deny it (a `pr-plan.json`'s `policy`, a plan note hand-off's overrides).
  *   It writes `evidence.json` in `<dir>`, which `pr-post` reads to say in the
  *   note which checks were signed.
+ * - `sign --from-report <dir>` on a check job's report (#4935), a
+ *   `check-hooks.json` from `chant ci check`, is the `check-evidence` job's
+ *   form: it signs each hook that passed, by name, with the runs as its
+ *   claim, as `ci check` with a runner identity signs them. A hook skipped on
+ *   local evidence did not pass here and is not signed. With `--result`, a
+ *   check job that neither succeeded nor failed signs nothing.
  * - `verify --check-id <id>[,<id>...]` reads the evidence for `--at`'s tree
  *   and verifies it against the runner keys at `--base`; exits 1 when one
  *   is not current.
@@ -27,7 +33,7 @@
  * `local.keys` at base lists, and pushes `refs/notes/chant/local-evidence`;
  * `verify --local` says whether CI would skip each check on that evidence.
  */
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CHANT_EXIT } from "../../exit-codes";
 import { formatError } from "../format";
@@ -118,7 +124,13 @@ async function sign(ctx: CommandContext, repo: string, base: string, at: string)
   const identity = pem !== undefined && pem !== "" ? "key" : process.env[RUNNER_IDENTITY_ENV] ? "oidc" : undefined;
   const note: CheckEvidenceNote = { signed: [], skipped: [] };
   let wanted: Array<{ check: string; claim?: Buffer | string }>;
-  if (fromReport) {
+  if (fromReport && isCheckReportDir(fromReport)) {
+    // #4935: a check job's report, each passed hook signed by name.
+    const decided = await checkReportChecks(fromReport, args.planResult);
+    if ("error" in decided) return usage(decided.error);
+    wanted = decided.sign;
+    note.skipped.push(...decided.skipped);
+  } else if (fromReport) {
     const decided = planReportChecks(fromReport, args.planResult);
     wanted = decided.sign;
     note.skipped.push(...decided.skipped);
@@ -153,6 +165,38 @@ async function sign(ctx: CommandContext, repo: string, base: string, at: string)
   }
   if (!args.noPush && !pushed.pushed && pushed.pushWarning) console.error(`ci evidence: the evidence is attached here, and the push did not land: ${pushed.pushWarning}`);
   return finish(CHANT_EXIT.done);
+}
+
+/** Whether `dir` holds a check job's report and no plan report (#4935). */
+function isCheckReportDir(dir: string): boolean {
+  return existsSync(join(dir, "check-hooks.json")) && !existsSync(join(dir, "pr-plan.json")) && !existsSync(join(dir, "pr-plan-note.json"));
+}
+
+/**
+ * The hooks to sign from a check job's report (#4935): each hook whose every
+ * run passed, with its runs as the claim, as the check runner signs them
+ * (../../components/check-steps.ts). The report is the check job's, which ran
+ * the change's code, so it is read as data: a hook with no name or outcome is
+ * left out. A job `result` other than success or failure signs none.
+ */
+async function checkReportChecks(dir: string, result: string | undefined): Promise<{ sign: Array<{ check: string; claim: string }>; skipped: CheckEvidenceNote["skipped"] } | { error: string }> {
+  const { CHECK_HOOKS_REPORT_FILE, passedCheckHooks } = await import("../../components/check-hooks");
+  let doc: unknown;
+  try {
+    doc = JSON.parse(readFileSync(join(dir, CHECK_HOOKS_REPORT_FILE), "utf-8"));
+  } catch (err) {
+    return { error: `--from-report ${dir}: ${CHECK_HOOKS_REPORT_FILE} does not read: ${err instanceof Error ? err.message : String(err)}` };
+  }
+  const hooks = doc && typeof doc === "object" && Array.isArray((doc as { hooks?: unknown }).hooks) ? ((doc as { hooks: unknown[] }).hooks as Array<Record<string, unknown>>) : undefined;
+  if (!hooks) return { error: `--from-report ${dir}: ${CHECK_HOOKS_REPORT_FILE} lists no hooks` };
+  const runs = hooks.filter((h) => h && typeof h.name === "string" && h.name.length > 0 && h.name.length <= 200 && (h.outcome === "passed" || h.outcome === "failed" || h.outcome === "skipped"));
+  const passed = passedCheckHooks(runs as unknown as Parameters<typeof passedCheckHooks>[0]);
+  if (result !== undefined && result !== "success" && result !== "failure") {
+    return { sign: [], skipped: passed.map((p) => ({ check: p.check, reason: `the check job's result is ${result}` })) };
+  }
+  const signed = new Set(passed.map((p) => p.check));
+  const skipped = [...new Set(runs.map((h) => h.name as string))].filter((n) => !signed.has(n)).map((check) => ({ check, reason: "the hook did not pass in the check job" }));
+  return { sign: passed.map((p) => ({ check: p.check, claim: JSON.stringify(p.runs) })), skipped };
 }
 
 async function verify(ctx: CommandContext, repo: string, base: string, at: string): Promise<number> {

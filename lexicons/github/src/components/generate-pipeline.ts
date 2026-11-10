@@ -101,6 +101,10 @@ import { forgejoRepoLockLines, REPO_APPLY_GROUP } from "@intentius/chant/compone
 import { memberRepoPath } from "@intentius/chant/lexicon";
 import { productStatusContext, resolveProductWords } from "@intentius/chant/ci-product-words";
 import { controlDispatchJob, controlNoteCheckout } from "@intentius/chant/control/dispatch";
+import { assertRootChecks } from "@intentius/chant/components/pr-pipeline";
+import { planEvidenceOf } from "@intentius/chant/components/product-plan";
+import { prCheckJob, prRefGateJob } from "@intentius/chant/components/pr-checks";
+import { githubCheckJobs } from "./pr-check-jobs";
 import type {
   ComponentPipelineJob as GeneratedJob,
   ComponentPipelineOptions as GenerateGithubOptions,
@@ -267,6 +271,13 @@ function gatedWaveGithubDoc(
  * --before-merge`, which asks the forge the requires checks before any of
  * the head's code loads. On GitHub the commenter must be an owner, member
  * or collaborator. A push still records.
+ *
+ * With `evidence` (#4935) the `plan-note` job signs the plan job's `plan`
+ * and `policy` checks from the report it took back, before it posts, so the
+ * note says which were signed, and pushes `refs/notes/chant/evidence`
+ * (`contents: write`; `id-token: write` signing keyless). With `checkJob`
+ * and `refGateStatus` the check, check evidence and ref gate jobs come after
+ * (`./pr-check-jobs.ts`).
  */
 function prLoopGithubDoc(
   components: DriverComponent[],
@@ -279,6 +290,8 @@ function prLoopGithubDoc(
   const loop = options.prLoop!;
   const branch = loop.branch ?? "main";
   const member = options.member;
+  // #4935: the checks and their evidence are the commit's, so the root pipeline has them.
+  assertRootChecks(loop, member?.name);
   const rooted = !member || member.dir === "." || member.dir === "";
   const [plan, apply, record] = prLoopJobs(loop.forge ?? "github", env, loop, member?.name);
   const reportPath = member ? memberRepoPath(member, PR_LOOP_REPORT_DIR) : PR_LOOP_REPORT_DIR;
@@ -447,15 +460,34 @@ function prLoopGithubDoc(
     : {};
   // #4619: with a control repo named, the note job reads its chant/lifecycle, read-only, so pr-post marks the cross-stack edges.
   const controlRead = loop.control ? controlNoteCheckout(forgeName, loop.control.target, loop.words ?? {}) : undefined;
+  // #4935: with evidence, the note job signs the plan job's plan and policy before it posts.
+  const loopWords = resolveProductWords(loop.words);
+  const planEvidence = loop.evidence ? planEvidenceOf(forgeName, loop.evidence, loopWords, "plan") : undefined;
   const noteSteps: Array<Record<string, unknown>> = [
     // The target branch's commit: the chant this job runs is the target branch's, and none of the change's code is here.
     { name: "Check out the target branch's commit", uses: CHECKOUT, with: { ref: "${{ github.event.pull_request.base.sha }}" } },
     ...runSteps(beforeScript),
     { name: "Take the plan report from the plan job", run: takeOverScript("plan", PR_LOOP_REPORT_DIR, forgeName) },
+    // The runner key (or the keyless signing) is in this step alone, in a job that runs none of the change's code.
+    ...(planEvidence ? [{ name: "Sign the plan and policy evidence", if: "always()", env: planEvidence.env, run: planEvidence.lines.join("\n") }] : []),
     { name: "Keep the plan report", if: "always()", uses: UPLOAD_ARTIFACT, with: { name: reportName(plan), path: reportPath, "if-no-files-found": "ignore", "include-hidden-files": true } },
     ...(controlRead ? [{ name: controlRead.stepName, if: "always()", env: controlRead.env, run: controlRead.script }] : []),
     { name: `Post the plan note and ${productStatusContext(resolveProductWords(loop.words), "plan")}`, if: "always()", env: post.env, run: post.command },
   ];
+  // #4935: the check job, its evidence job and the ref gate's status job.
+  const check = loop.checkJob ? prCheckJob(forgeName, { ...(loopWords.bin ? { bin: loopWords.bin } : {}), ...(loop.evidence ? { evidence: loop.evidence } : {}) }) : undefined;
+  const refGate = loop.refGateStatus ? prRefGateJob(forgeName, { ...(loopWords.bin ? { bin: loopWords.bin } : {}), branch }) : undefined;
+  const checkJobs = githubCheckJobs({
+    forge: forgeName === "forgejo" ? "forgejo" : "github",
+    image,
+    setup: [...prLoopSetup(image, loop.engineSetup), ...beforeScript],
+    beforeScript,
+    when: "github.event_name == 'pull_request' && github.event.action != 'closed'",
+    ...(check ? { check } : {}),
+    ...(refGate ? { refGate } : {}),
+    refGateNeeds: [PR_PLAN_NOTE_JOB],
+  });
+  const checkNames = Object.keys(checkJobs);
   // #4298: with a pull request environment the pull_request trigger fires on close too, and the plan skips that event.
   const prEnv = loop.prEnvironment ? prEnvGithubJobs(loop.forge ?? "github", image, beforeScript, extraScript, loop, member) : undefined;
   // #4327: with ci.locks: plan the pull_request trigger fires on close too, for the unlock job, and the plan skips that event.
@@ -616,9 +648,11 @@ function prLoopGithubDoc(
       "runs-on": GITHUB_RUNNER,
       container: image,
       // #4289: `actions: read` lets pr-post ask when each scheduled watch or reconcile Op last ran.
-      permissions: { actions: "read", contents: "read", "pull-requests": "write", statuses: "write" },
+      // #4935: with evidence, `contents: write` pushes the signed checks, and signing keyless the job asks for its OIDC token.
+      permissions: { actions: "read", contents: planEvidence ? "write" : "read", "pull-requests": "write", statuses: "write", ...(planEvidence?.idToken ? { "id-token": "write" } : {}) },
       steps: noteSteps,
     },
+    ...checkJobs,
     ...lockJobs,
     ...commentLockJobs,
     ...previewJobs,
@@ -664,10 +698,11 @@ function prLoopGithubDoc(
     ...(rooted ? {} : { defaults: { run: { "working-directory": member!.dir } } }),
     env: { ...options.variables, CHANT_ENV: env },
     jobsDoc,
-    stages: ["plan", PR_PLAN_NOTE_JOB, ...(locks ? [PR_LOCK_JOB, PR_UNLOCK_JOB] : []), ...commentLocks.map((j) => j.jobName), ...(preview ? [preview.jobName, preview.noteJobName] : []), ...(action ? [action.jobName] : []), ...(stale ? [PR_STALE_JOB] : []), ...applyNames, ...controlJobs.map(([name]) => name), ...(prEnv ? ["env-up", PR_ENV_POST_JOB, "env-down", "env-sweep"] : [])],
+    stages: ["plan", PR_PLAN_NOTE_JOB, ...checkNames, ...(locks ? [PR_LOCK_JOB, PR_UNLOCK_JOB] : []), ...commentLocks.map((j) => j.jobName), ...(preview ? [preview.jobName, preview.noteJobName] : []), ...(action ? [action.jobName] : []), ...(stale ? [PR_STALE_JOB] : []), ...applyNames, ...controlJobs.map(([name]) => name), ...(prEnv ? ["env-up", PR_ENV_POST_JOB, "env-down", "env-sweep"] : [])],
     jobs: [
       { jobName: "plan", component: "pull request plan", stage: "plan", needs: [] },
       { jobName: PR_PLAN_NOTE_JOB, component: "pull request plan note", stage: PR_PLAN_NOTE_JOB, needs: ["plan"] },
+      ...checkNames.map((name) => ({ jobName: name, component: name === "check" ? "pull request check" : name === "ref-gate" ? "pull request ref gate status" : "pull request check evidence", stage: name, needs: ((checkJobs[name] as { needs?: string[] }).needs ?? []) })),
       ...(stale ? [{ jobName: PR_STALE_JOB, component: "pull request stale notes", stage: PR_STALE_JOB, needs: [] }] : []),
       ...(locks
         ? [

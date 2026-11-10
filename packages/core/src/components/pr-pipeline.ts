@@ -101,6 +101,7 @@ import { commandWord, commentLine, PRODUCT_ACTION_ENV, PRODUCT_ACTION_EVENT_FLAG
 import { CHANT_EXIT } from "../exit-codes";
 import type { ControlTarget } from "../control/dispatch";
 import { CI_RESPOND_ENV, respondList, type CiResponses } from "../ci-respond";
+import type { PipelineEvidence } from "../ci-evidence-jobs";
 
 /** The variable `chant ci run` reads its runner key from (`RUNNER_KEY_ENV` in ../workspace/ci-green.ts). */
 const RUNNER_KEY_ENV = "CHANT_RUNNER_KEY";
@@ -391,6 +392,44 @@ export interface PrLoopPipelineOptions {
    * to `pr-post`. Needed with `respond.description: "check"`.
    */
   decide?: { backend: string; model: string };
+  /**
+   * The pipeline's runner identity (#4935, as #4870's `PipelineEvidence`):
+   * the plan-note job signs the plan job's `plan` and `policy` checks from
+   * its report before it posts, with the runner key from the named secret or
+   * (#4869) keyless from the job's OIDC identity. On GitLab a
+   * `<plan job>-evidence` job after the plan job signs from its artifact.
+   * With `checkJob`, the `check-evidence` job signs each passed hook. Set
+   * from `--evidence-runner-key-secret`, or `--evidence-identity oidc` with
+   * an optional `--evidence-audience`. Absent: nothing is signed, and every
+   * job is as before. Refused on a workspace member's pipeline: the checks
+   * are the commit's, so one pipeline signs them.
+   */
+  evidence?: PipelineEvidence;
+  /**
+   * The check job (#4935, ./pr-checks.ts): `chant ci check --base <base>` on
+   * the pull request's commit, with no forge token, runner key or OIDC token
+   * while the hooks run. Set from `--check-job`. Refused on a member's
+   * pipeline: the hooks are the workspace's.
+   */
+  checkJob?: boolean;
+  /**
+   * The ref gate's status job (#4935, ./pr-checks.ts): `chant workspace
+   * ref-gate status` for the pull request's commit, after the note and the
+   * check evidence, so `chant/ref-gate` can be a required status. Set from
+   * `--ref-gate-status`. Refused on a member's pipeline.
+   */
+  refGateStatus?: boolean;
+}
+
+/**
+ * Refuse the loop's `evidence`, `checkJob` and `refGateStatus` (#4935) on a
+ * workspace member's pipeline: a check and its evidence are the commit's,
+ * so the root pipeline runs and signs them once.
+ */
+export function assertRootChecks(options: Pick<PrLoopPipelineOptions, "evidence" | "checkJob" | "refGateStatus">, member: string | undefined): void {
+  if (!member) return;
+  const given = [...(options.evidence ? ["evidence"] : []), ...(options.checkJob ? ["checkJob"] : []), ...(options.refGateStatus ? ["refGateStatus"] : [])];
+  if (given.length > 0) throw new Error(`${given.join(", ")} sign and judge the pull request's commit once, for the whole workspace, so give ${given.length === 1 ? "it" : "them"} on the root pipeline, not member ${member}'s`);
 }
 
 /** The `CHANT_RESPOND` value of `respond` (#4629), or undefined when every event is at its default. Throws on a description check with no decide service. */
@@ -427,7 +466,8 @@ export function prLoopRunner(options: Pick<PrLoopPipelineOptions, "runners">, st
  */
 export function prLoopJobStage(name: string, member?: string): PrLoopRunnerStage {
   const bare = member && name.startsWith(`${member}-`) ? name.slice(member.length + 1) : name;
-  if (bare === "plan" || bare === PR_COMMENT_PREVIEW_JOB) return "plan";
+  // #4935: the check job runs the change's code, as the plan does.
+  if (bare === "plan" || bare === PR_COMMENT_PREVIEW_JOB || bare === "check") return "plan";
   if (bare === "apply" || bare === "record" || bare === PR_ACTION_JOB || /^apply-wave-\d+$/.test(bare) || bare === "env-up" || bare === "env-down" || bare === "env-sweep") return "apply";
   return "default";
 }

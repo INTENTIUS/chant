@@ -38,6 +38,9 @@ import { GITHUB_COMMENT_LIMIT, GITLAB_NOTE_LIMIT } from "./plan-summary";
 import { activeProductWords, commentLine, type CiProductWords } from "./ci-product-words";
 import { controlEdgeFactsFromEnv, remarkCrossStackEdges, type ControlEdgeFacts } from "./control/edges";
 import { checkEvidenceNoteLine } from "./workspace/trust/check-evidence-report";
+import { PLAN_RUN_RECORD_FILE, readPlanRunRecord } from "./pr-plan-record";
+import type { OpRunRecordInput } from "./op/runtime";
+import type { RunOrigin } from "./lifecycle/release-ledger";
 import { isPlanNote, planNoteMarker, PR_PLAN_NOTE_CONTRACT, PR_PLAN_NOTE_FILE, PRODUCT_MARKER_BODY, PRODUCT_MARKER_LIMIT, PRODUCT_MARKER_NAME, productMarkerLine, renderPlanNote, type PrPlanNoteHandoff, type PrPlanNoteWords } from "./pr-plan-note";
 
 /** The plan report's file under the report directory. */
@@ -97,6 +100,20 @@ export interface PlanPostInput {
    * note job sets to a file outside the report the plan job handed on.
    */
   notices?: string[];
+  /**
+   * Keep the plan job's run record (#4899, ./pr-plan-record.ts), when it
+   * wrote one into the hand-off: read as data, with `origin` naming the plan
+   * job's run, and handed to `keep`, which appends it to the run ledger and
+   * pushes. `keep` returns a warning to say, when there is one.
+   */
+  recordRun?: PlanRunRecorder;
+}
+
+/** How the note job keeps the plan job's run record (#4899). */
+export interface PlanRunRecorder {
+  /** The plan job's run, as the note job names it. */
+  origin?: RunOrigin;
+  keep(record: OpRunRecordInput): Promise<string | undefined>;
 }
 
 /** What {@link postPlanReport} did. */
@@ -107,6 +124,8 @@ export interface PlanPostResult {
   noted: boolean;
   /** Why the report was not used, when it was not. */
   refused?: string;
+  /** The id of the plan job's run record kept on chant/lifecycle (#4899), when one was. */
+  recorded?: string;
   warnings: string[];
 }
 
@@ -236,7 +255,40 @@ export async function postPlanReport(input: PlanPostInput): Promise<PlanPostResu
       warnings.push(`the description check did not run: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
-  return { state, description: cut(description), noted: note !== undefined, ...(refused ? { refused } : {}), warnings };
+  const recorded = await keepRunRecord(input, warnings);
+  return { state, description: cut(description), noted: note !== undefined, ...(refused ? { refused } : {}), ...(recorded ? { recorded } : {}), warnings };
+}
+
+/**
+ * Keep the plan job's run record on chant/lifecycle (#4899), with
+ * `input.recordRun`. A record that is missing, refused or not kept is a
+ * warning: the note and the status stand. Returns the record's id once kept.
+ */
+async function keepRunRecord(input: PlanPostInput, warnings: string[]): Promise<string | undefined> {
+  if (!input.recordRun) return undefined;
+  const read = readPlanRunRecord(input.dir, {
+    env: input.env,
+    head: input.head,
+    ...(input.member ? { target: input.member } : {}),
+    ...(input.result ? { result: input.result } : {}),
+    ...(input.recordRun.origin ? { origin: input.recordRun.origin } : {}),
+  });
+  if (!read) {
+    warnings.push("the plan job wrote no run record, so none is kept");
+    return undefined;
+  }
+  if ("refused" in read) {
+    warnings.push(`the plan job's run record was not kept: ${read.refused}`);
+    return undefined;
+  }
+  try {
+    const said = await input.recordRun.keep(read.record);
+    if (said) warnings.push(said);
+    return read.record.id;
+  } catch (err) {
+    warnings.push(`the plan job's run record was not kept on chant/lifecycle: ${err instanceof Error ? err.message : String(err)}`);
+    return undefined;
+  }
 }
 
 /**
@@ -391,7 +443,8 @@ async function postPlanNoteHandoff(input: PlanPostInput): Promise<PlanPostResult
     }
   }
   note = await postOutcome(input, context, state, description, note, refused, warnings);
-  return { state, description: cut(description), noted: note !== undefined, ...(refused ? { refused } : {}), warnings };
+  const recorded = await keepRunRecord(input, warnings);
+  return { state, description: cut(description), noted: note !== undefined, ...(refused ? { refused } : {}), ...(recorded ? { recorded } : {}), warnings };
 }
 
 /**
@@ -429,6 +482,11 @@ export interface OpenPlanPostInput {
   description?: (report: PrReport) => Promise<void>;
   /** The target branch's commit this pipeline runs at (#4628), for each note's tip line. */
   baseTip?: string;
+  /**
+   * Keep each plan job's run record (#4899) from its artifacts, the job
+   * named as its run origin's `jobId`. `repo` is the project's path.
+   */
+  recordRun?: { repo?: string; keep: PlanRunRecorder["keep"] };
 }
 
 /** What {@link postOpenPlanReports} did for one merge request. */
@@ -478,6 +536,9 @@ export async function postOpenPlanReports(input: OpenPlanPostInput): Promise<{ p
         // #4799: a product's plan verb writes its plan note hand-off in place of the report.
         const handoff = text === undefined ? await forge.jobArtifact(job.id, `${input.artifactDir.replace(/\/+$/, "")}/${PR_PLAN_NOTE_FILE}`) : undefined;
         if (handoff !== undefined) writeFileSync(join(dir, PR_PLAN_NOTE_FILE), handoff);
+        // #4899: the plan job's run record, kept with its note.
+        const runRecord = input.recordRun ? await forge.jobArtifact(job.id, `${input.artifactDir.replace(/\/+$/, "")}/${PLAN_RUN_RECORD_FILE}`) : undefined;
+        if (runRecord !== undefined) writeFileSync(join(dir, PLAN_RUN_RECORD_FILE), runRecord);
         const posted = await postPlanReport({
           // The status links to the plan job it reports on, which is how the next run knows it is posted.
           forge: job.url ? { ...forge, runUrl: job.url } : forge,
@@ -490,6 +551,9 @@ export async function postOpenPlanReports(input: OpenPlanPostInput): Promise<{ p
           ...(overdueOnce ? { overdue: overdueOnce } : {}),
           ...(input.description ? { description: input.description } : {}),
           ...(input.baseTip ? { baseTip: input.baseTip } : {}),
+          ...(input.recordRun
+            ? { recordRun: { origin: { forge: "gitlab", ...(input.recordRun.repo ? { repo: input.recordRun.repo } : {}), ...(job.url ? { url: job.url } : {}), jobId: String(job.id) }, keep: input.recordRun.keep } }
+            : {}),
         });
         posts.push({ pr: job.pr, head: job.head, posted });
       } finally {

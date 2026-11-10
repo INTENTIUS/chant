@@ -9,6 +9,7 @@ diataxis: reference
 ```
 chant workspace ref-gate check --ref <ref> [--at <rev>] [--base <rev>] [--dry-run] [--ledger <file>] [--json]
 chant workspace ref-gate status --ref <ref> [--at <rev>] [--base <rev>] [--dry-run] [--ledger <file>] [--json]
+chant workspace ref-gate status --open --ref refs/heads/<branch> [--base <rev>] [--dry-run] [--ledger <file>] [--json]
 chant workspace ref-gate pre-receive [--ledger <file>] [--json]
 chant workspace ref-gate pre-push [--ledger <file>] [--dry-run] [--json]
 chant workspace ref-gate attach --envelope <file> [--at <rev>]
@@ -105,6 +106,14 @@ chant workspace ref-gate status --ref refs/heads/main --at "$HEAD_SHA" --base or
 ```
 
 It reads the forge and its token from the job's environment, as `chant ci run` does, and sets `success` or `failure` with the missing checks in the description.
+
+`chant build --pr-loop --ref-gate-status` and `productPipelineJobs({ refGateStatus: true })` write this job, `ref-gate`, for you ([#4935](https://github.com/INTENTIUS/chant/issues/4935)). On GitHub and Forgejo it runs once the note job and the check evidence job settled, at the target branch's commit, fetches the pull request's commit and `refs/notes/chant/evidence`, and runs `status` for `github.sha`. GitLab sets a commit status only with the protected token a target-branch pipeline holds, so there it runs in the plan notes pipeline after the note jobs, as:
+
+```bash
+chant workspace ref-gate status --open --ref "refs/heads/$CI_COMMIT_BRANCH" --base "$CI_COMMIT_SHA"
+```
+
+`--open` sets the status of every open pull request into the branch, each head fetched and decided against the policy at `--base` (default `HEAD`). A head that does not fetch, or a status the forge refuses, is said, and the others go on; it exits 0 once each is set.
 
 ## Output
 

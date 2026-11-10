@@ -21,6 +21,8 @@ const BOOLEAN_FLAGS = new Set([
   "--help",
   "--open",
   "--note-commands",
+  "--check-job",
+  "--ref-gate-status",
   "--locks",
   "--version",
   "--agents",
@@ -926,6 +928,28 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--note-commands") {
       // `chant build --pr-loop --note-commands` (#4785).
       result.noteCommands = true;
+    } else if (arg === "--check-job") {
+      // `chant build --pr-loop --check-job` (#4935): the check job, chant ci check on the pull request's commit.
+      result.checkJob = true;
+    } else if (arg === "--ref-gate-status") {
+      // `chant build --pr-loop --ref-gate-status` (#4935): the job that sets the ref gate's status.
+      result.refGateStatus = true;
+    } else if (arg === "--evidence-runner-key-secret") {
+      // `chant build --pr-loop --evidence-runner-key-secret <NAME>` (#4935): the secret holding the runner key the note job signs with.
+      result.evidenceRunnerKeySecret = args[++i];
+      if (!result.evidenceRunnerKeySecret || result.evidenceRunnerKeySecret.startsWith("-")) throw new Error("--evidence-runner-key-secret needs the secret holding the runner key: --evidence-runner-key-secret <NAME>");
+    } else if (arg === "--evidence-identity") {
+      // `chant build --pr-loop --evidence-identity oidc` (#4935, #4869): sign keyless from the job's OIDC identity.
+      result.evidenceIdentity = args[++i];
+      if (result.evidenceIdentity !== "oidc") throw new Error(`--evidence-identity takes oidc, the one identity chant signs keyless with: got "${result.evidenceIdentity ?? ""}"`);
+    } else if (arg === "--evidence-audience") {
+      // `chant build --pr-loop --evidence-identity oidc --evidence-audience <aud>` (#4935, #4869).
+      result.evidenceAudience = args[++i];
+      if (!result.evidenceAudience || result.evidenceAudience.startsWith("-")) throw new Error("--evidence-audience needs the OIDC token's audience: --evidence-audience <aud>");
+    } else if (arg === "--record-run") {
+      // `chant components pr-post --record-run <plan job>` (#4899): keep the product plan job's run record on chant/lifecycle.
+      result.recordRun = args[++i];
+      if (!result.recordRun || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(result.recordRun)) throw new Error(`--record-run needs the plan job's name: got "${result.recordRun ?? ""}"`);
     } else if (arg === "--locks") {
       // `chant components pr-notes --locks` (#4785).
       result.locks = true;

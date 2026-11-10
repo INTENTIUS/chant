@@ -45,7 +45,7 @@ export const EVIDENCE_ID_TOKEN_VAR = "CHANT_ID_TOKEN_SIGSTORE";
 /** The audience a keyless signing job's token is requested for unless told: sigstore's. */
 export const EVIDENCE_DEFAULT_AUDIENCE = "sigstore";
 
-export { CHECK_EVIDENCE_FLOOR, KEYLESS_EVIDENCE_FLOOR, LOCAL_EVIDENCE_FLOOR } from "./release-floors";
+export { CHECK_EVIDENCE_FLOOR, CHECK_JOB_FLOOR, KEYLESS_EVIDENCE_FLOOR, LOCAL_EVIDENCE_FLOOR, PR_LOOP_EVIDENCE_FLOOR, REF_GATE_STATUS_JOB_FLOOR } from "./release-floors";
 
 /**
  * A pipeline's runner identity (#4870): a runner key's secret, or (#4869)

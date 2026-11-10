@@ -21,6 +21,12 @@
  * note says which were signed; the job then pushes `refs/notes/chant/evidence`, so it
  * asks for `contents: write`.
  *
+ * With `productPlan.record` (#4899) the plan step writes the plan job's
+ * run record into `.chant/pr`, and the note job keeps it on
+ * `chant/lifecycle` with `pr-post --record-run`, so it asks for `contents:
+ * write`. With `checkJob` and `refGateStatus` (#4935) the check, check
+ * evidence and ref gate jobs come after the note jobs (`./pr-check-jobs.ts`).
+ *
  * Forgejo renders the same document through its dialect
  * (`generateForgejoProductPlanPipeline` in the forgejo lexicon).
  */
@@ -32,6 +38,7 @@ import { productPipelineJobs, type ProductPipelineJobs, type ProductPipelineOpti
 import { PENDING_JS, PLAN_ARGUMENT_ENV, PLAN_NOTE_NOTICES_ENV, planVerbLines, REPLAN_DECIDE_JS, SAME_REPOSITORY_IF, type ProductPlanJob, type ProductPlanOptions } from "@intentius/chant/components/product-plan";
 import { productStatusContext } from "@intentius/chant/ci-product-words";
 import { CHECKOUT, emitWorkflowYAML, runSteps, UPLOAD_ARTIFACT, type GithubWorkflowDoc } from "./ci-jobs";
+import { githubCheckJobs } from "./pr-check-jobs";
 
 /** What {@link generateProductPlanPipeline} takes: the product pipeline's options with `productPlan`, and how the jobs are set up. */
 export interface ProductPlanPipelineOptions extends ProductPipelineOptions {
@@ -117,7 +124,8 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
         {
           name: p.target ? `Plan ${p.target}` : "Plan the change",
           id: PLAN_STEP_ID,
-          env: p.env,
+          // #4899: with record, the record line reads its op, environment and labels.
+          env: p.record ? { ...p.env, ...p.record.env } : p.env,
           run: planRun(p),
         },
       ],
@@ -130,7 +138,8 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
       // #4289: `actions: read` lets pr-post ask when each scheduled watch last ran.
       // #4870: with evidence, `contents: write` pushes the signed checks to refs/notes/chant/evidence, where the ref gate (#4867) reads them.
       // #4869: signing keyless, the job asks for its OIDC token; Forgejo's dialect turns it into enable-openid-connect.
-      permissions: { actions: "read", contents: p.evidence ? "write" : "read", "pull-requests": "write", statuses: "write", ...(p.evidence?.idToken ? { "id-token": "write" } : {}) },
+      // #4899: with record, `contents: write` pushes chant/lifecycle with the plan job's run record.
+      permissions: { actions: "read", contents: p.evidence || p.record ? "write" : "read", "pull-requests": "write", statuses: "write", ...(p.evidence?.idToken ? { "id-token": "write" } : {}) },
       steps: [
         // The target branch's commit: the bin this job runs is the target branch's, and none of the change's code is here.
         { name: "Check out the target branch's commit", uses: CHECKOUT, with: { ref: "${{ github.event.pull_request.base.sha }}" } },
@@ -154,7 +163,7 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
     const gated = r.gated.map((g) => `startsWith(github.event.comment.body, '${g.comment}')`);
     const github = forge === "github";
     // The plan step reads the pull request, its base and the comment's argument from the decision, never the event.
-    const replanEnv = { ...p.env, BASE_SHA: "${{ steps.decide.outputs.base }}", PR_NUMBER: "${{ steps.decide.outputs.pr }}", [PLAN_ARGUMENT_ENV]: "${{ steps.decide.outputs.argument }}" };
+    const replanEnv = { ...p.env, ...(p.record?.env ?? {}), BASE_SHA: "${{ steps.decide.outputs.base }}", PR_NUMBER: "${{ steps.decide.outputs.pr }}", [PLAN_ARGUMENT_ENV]: "${{ steps.decide.outputs.argument }}" };
     jobsDoc[r.jobName] = {
       if: [
         "github.event_name == 'issue_comment'",
@@ -199,7 +208,7 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
       if: `always() && github.event_name == 'issue_comment' && needs.${r.jobName}.outputs.go == '1' && (needs.${r.jobName}.result == 'success' || needs.${r.jobName}.result == 'failure')`,
       "runs-on": githubRunsOn(p.noteRunner),
       container: image,
-      permissions: { actions: "read", contents: "read", "pull-requests": "write", statuses: "write" },
+      permissions: { actions: "read", contents: p.record ? "write" : "read", "pull-requests": "write", statuses: "write" },
       steps: [
         // The target branch's commit, which an issue_comment run checks out: none of the change's code is here.
         { name: "Check out the target branch's commit", uses: CHECKOUT },
@@ -212,6 +221,22 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
       ],
     };
   }
+  // #4935: the check job, its evidence job and the ref gate's status job, after the plan note jobs.
+  Object.assign(
+    jobsDoc,
+    githubCheckJobs({
+      forge,
+      image,
+      setup,
+      beforeScript,
+      // The check job holds no credentials, so a fork's pull request runs it too.
+      when: "github.event_name == 'pull_request'",
+      trustedWhen: `github.event_name == 'pull_request'${fork}`,
+      ...(jobs.check ? { check: jobs.check } : {}),
+      ...(jobs.refGate ? { refGate: jobs.refGate } : {}),
+      refGateNeeds: plans.map((p) => p.noteJobName),
+    }),
+  );
   const name = plan.workflow ?? `chant-pr-${env}`;
   // #4899: one run per pull request; a comment's run is in a group of its own comment, so it never cancels a plan.
   const concurrency = plan.concurrency

@@ -623,6 +623,7 @@ A hook whose check takes [local evidence](#local-evidence) is skipped when curre
 
 - `sign --check-id plan,policy` signs that each check passed at `--at` (default `HEAD`) with the key in `--key` or `CHANT_RUNNER_KEY`, attaches it under `refs/notes/chant/evidence`, and pushes the notes unless `--no-push`. Without a key it signs nothing and says so.
 - `sign --from-report .chant/pr --result <result>` is the plan note job's form. The policy (Rego, CrossGuard, a product's rules) runs inside the plan, so the plan job stands for two checks: `plan` when the plan job succeeded and left `pr-plan.json` or `pr-plan-note.json`, and `policy` when a policy ran and denied nothing that stands. It writes `evidence.json` beside the report, and `pr-post` ends the note with a line naming the checks signed and those not signed, with why.
+- `sign --from-report .chant/check [--result <result>]` is the `check-evidence` job's form ([#4935](https://github.com/INTENTIUS/chant/issues/4935)): the directory holds `check-hooks.json` from a check job, and each hook whose every run passed is signed by its name, with its runs as the claim, as `ci check` with a runner key signs them. A hook skipped on local evidence did not pass there and is not signed. A `--result` other than `success` or `failure` signs none. The check job ran the change's code, so the report is read as data, and the key stays in this job, which runs none of it.
 - `verify --check-id <id>` reads the evidence for `--at`'s tree and verifies it against the runner keys at `--base`. It exits 1 when one is not current.
 
 ### In generated pipelines
@@ -633,6 +634,8 @@ A pipeline generator signs when its options name the secret that holds the runne
 |---|---|---|
 | `generateProductPlanPipeline`, `generateForgejoProductPlanPipeline` | the note job, after it takes the report back and before it posts; the key is in that one step, in a job that runs none of the change's code | `plan`, `policy` |
 | `generateGitlabProductPlanPipeline` | `<plan job>-evidence`, after each plan job succeeds, from its artifact | `plan`, `policy` |
+| `chant build --pr-loop` with `--evidence-runner-key-secret <NAME>` or `--evidence-identity oidc` ([#4935](https://github.com/INTENTIUS/chant/issues/4935)) | the `plan-note` job on GitHub and Forgejo; on GitLab `plan-evidence`, after the plan job, from its artifact | `plan`, `policy` |
+| `checkJob` (`--check-job`) with evidence ([#4935](https://github.com/INTENTIUS/chant/issues/4935)) | `check-evidence`, at the target branch's commit, from the `check` job's report (`sign --from-report .chant/check`); on GitLab after the check job succeeds, from its artifact | each hook that passed, by name |
 | `productPipelineJobs` | `post.evidence` (and each `productPlan[].evidence`): the lines and variables for a product that renders its own note job | `plan`, `policy` |
 | the Op waves pipelines | each deciding wave job's `chant run wave` step, once the wave is planned | `plan:<wave>`, `policy:<wave>` when `ci.policy` ran and denied nothing |
 

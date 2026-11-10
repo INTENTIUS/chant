@@ -48,6 +48,7 @@ const OVERRIDE_REQUEST_HOURS = 72;
 const USAGE =
   "chant workspace ref-gate check --ref <ref> [--at <rev>] [--base <rev>] [--dry-run] [--ledger <file>] [--json]\n" +
   "  chant workspace ref-gate status --ref <ref> [--at <rev>] [--base <rev>] [--dry-run] [--ledger <file>] [--json]\n" +
+  "  chant workspace ref-gate status --open --ref refs/heads/<branch> [--base <rev>] [--dry-run] [--ledger <file>] [--json]\n" +
   "  chant workspace ref-gate pre-receive|pre-push [--ledger <file>] [--dry-run] [--json]   (git hook input on stdin)\n" +
   "  chant workspace ref-gate attach --envelope <file> [--at <rev>]\n" +
   "  chant workspace ref-gate install --hook pre-receive|pre-push [--git-dir <dir>] [--chant <command>]";
@@ -176,6 +177,10 @@ export async function runWorkspaceRefGate(ctx: CommandContext): Promise<number> 
 
   // check and status: one update, from a checkout or a CI job.
   if (!args.ref || !args.ref.startsWith("refs/")) return usage("--ref <ref> is required, as a full ref name such as refs/heads/main");
+  if (args.open) {
+    if (sub !== "status") return usage("--open sets the status of every open pull request, so it goes with status");
+    return statusOpen(here.repo, args.ref, args.base, args.ledger, args.dryRun === true, args.json, now);
+  }
   const at = commitOf(here.repo, args.at ?? "HEAD");
   if (!at) return fail(args.json, "revision-unknown", `--at ${args.at ?? "HEAD"} names no commit`);
   const resolved = resolveBase(here.repo, args.base);
@@ -201,6 +206,57 @@ export async function runWorkspaceRefGate(ctx: CommandContext): Promise<number> 
     }
   }
   return d.decision === "admit" ? 0 : 1;
+}
+
+/**
+ * `status --open --ref refs/heads/<branch>` (#4935): the status of every open
+ * pull request into the branch, from a pipeline of the branch. GitLab sets a
+ * commit status only with the protected token a target-branch pipeline holds
+ * (#4328), so its generated `ref-gate` job runs here, beside the plan notes.
+ * Each head is fetched and decided as `status --at <head>` decides it, against
+ * the policy at `base` (default this checkout's `HEAD`, the branch's commit).
+ * A head that does not fetch, or a forge that refuses one status, is said
+ * and the others go on. Exits 0 once each is set, whatever it decided: each
+ * pull request's status says it.
+ */
+async function statusOpen(repo: string, ref: string, baseRev: string | undefined, ledgerFlag: string | undefined, dryRun: boolean, json: boolean | undefined, now: string): Promise<number> {
+  if (!ref.startsWith("refs/heads/")) return usage("--open names the branch the pull requests merge into: --ref refs/heads/<branch>");
+  const base = commitOf(repo, baseRev ?? "HEAD");
+  if (!base) return fail(json, "revision-unknown", `--base ${baseRev ?? "HEAD"} names no commit`);
+  const { detectForge, forgeFromEnv } = await import("../../pr-forge");
+  const kind = detectForge();
+  if (!kind && !dryRun) {
+    console.error(formatError({ message: "no forge detected, so no status was set", hint: "run it in a GitHub, GitLab or Forgejo job, or pass --dry-run" }));
+    return 1;
+  }
+  const forge = kind ? forgeFromEnv(kind) : undefined;
+  if (!forge?.openPullRequests) return fail(json, "ref-update-invalid", `--open lists the open pull requests, which ${kind ?? "no"} forge client here can`);
+  const branch = ref.slice("refs/heads/".length);
+  const ledger = ledgerFlag ?? refGateLedgerPath(repo);
+  const decisions: RefDecision[] = [];
+  for (const pr of await forge.openPullRequests(branch)) {
+    const fetched = spawnSync("git", ["fetch", "--quiet", "--no-tags", "origin", pr.headSha], { cwd: repo, encoding: "utf-8" });
+    if (!commitOf(repo, pr.headSha)) {
+      console.error(`chant ref gate: #${pr.number}'s head ${pr.headSha.slice(0, 8)} did not fetch${fetched.stderr ? ` (${fetched.stderr.trim().split("\n")[0]})` : ""}, so its status is left as it is`);
+      continue;
+    }
+    const spent = spentOverrides(readRefGateLedger(ledger));
+    const d = decideRefUpdate({ repo, update: { ref, old: base, new: pr.headSha }, base, spent, now });
+    decisions.push(d);
+    if (dryRun) {
+      if (d.status !== null) console.error(`chant ref gate: would set ${d.status} to ${d.decision === "admit" ? "success" : "failure"} on #${pr.number} at ${pr.headSha.slice(0, 8)}`);
+      continue;
+    }
+    appendRefGateLedger(ledger, [{ ...d, version: 1, kind: "ref-update", site: "status", timestamp: now }]);
+    try {
+      await postRefGateStatus(forge, d);
+    } catch (err) {
+      console.error(`chant ref gate: could not set the status on #${pr.number}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  print(json, decisions, dryRun ? undefined : ledger, "err");
+  if (decisions.length === 0) console.error(`chant ref gate: no open pull request into ${branch} to set a status on`);
+  return 0;
 }
 
 /** The commit status a forge requires for `d`'s ref: `success` when it is admitted, `failure` naming the missing checks when not. */

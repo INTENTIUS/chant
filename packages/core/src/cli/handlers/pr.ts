@@ -2821,11 +2821,39 @@ export async function runComponentsPrPost(ctx: CommandContext): Promise<number> 
     // #4628: the target branch's commit for the note's tip line, and the job summary where the forge keeps one.
     ...(args.tip ? { baseTip: args.tip } : {}),
     ...(args.forge !== "gitlab" && process.env.GITHUB_STEP_SUMMARY ? { summaryFile: process.env.GITHUB_STEP_SUMMARY } : {}),
+    // #4899: the product plan job's run record, kept on chant/lifecycle with the note.
+    ...(args.recordRun ? { recordRun: await planRunRecorder(args.forge as ForgeKind, args.recordRun) } : {}),
   });
   for (const message of posted.warnings) console.error(formatWarning({ message }));
   if (posted.refused) console.error(formatWarning({ message: `the plan report was not used: ${posted.refused}` }));
-  console.error(formatInfo(`pr-post: ${prStatusContext("plan", member)} ${posted.state}: ${posted.description}${posted.noted ? "; note posted" : ""}`));
+  console.error(formatInfo(`pr-post: ${prStatusContext("plan", member)} ${posted.state}: ${posted.description}${posted.noted ? "; note posted" : ""}${posted.recorded ? `; run ${posted.recorded} recorded` : ""}`));
   return 0;
+}
+
+/**
+ * How `pr-post --record-run <plan job>` keeps a product plan job's run
+ * record (#4899): its run is this run on GitHub and Forgejo, named by the
+ * plan job's key, and this pipeline on GitLab, where a re-plan's note job
+ * runs in the re-plan's own pipeline. The record is appended to the run
+ * ledger once, by its id, and `chant/lifecycle` is pushed.
+ */
+async function planRunRecorder(forge: ForgeKind, job: string): Promise<import("../../pr-post").PlanRunRecorder> {
+  const { resolveCiJob, resolveCiRun } = await import("../../lifecycle/release-ledger");
+  const ci = forge === "gitlab" ? resolveCiRun(process.env) : resolveCiJob(process.env);
+  const origin = ci ? (forge === "gitlab" ? ci.runOrigin : { ...ci.runOrigin, jobId: job }) : undefined;
+  return { ...(origin ? { origin } : {}), keep: keepPlanRunRecord };
+}
+
+/** Append `record` to the run ledger unless a record with its id is there, and push `chant/lifecycle` (#4899). Returns a warning when the push did not land. */
+async function keepPlanRunRecord(record: import("../../op/runtime").OpRunRecordInput): Promise<string | undefined> {
+  const { fetchLifecycleStatus, pushLifecycleReport } = await import("../../lifecycle/git");
+  const { appendRunRecord, readRunLedger } = await import("../../lifecycle/run-ledger");
+  await fetchLifecycleStatus().catch(() => undefined);
+  const { records } = await readRunLedger(record.env, record.op);
+  if (records.some((r) => r.id === record.id)) return undefined;
+  await appendRunRecord(record);
+  const pushed = await pushLifecycleReport();
+  return pushed.pushed ? undefined : `the plan job's run record is on this job's chant/lifecycle only: ${pushed.pushWarning ?? "the push did not land"}`;
 }
 
 /**
@@ -2944,6 +2972,8 @@ async function runComponentsPrPostOpen(ctx: CommandContext): Promise<number> {
       ...(description ? { description } : {}),
       // #4628: the target branch's commit this pipeline runs at, which each note's tip line names.
       ...(args.tip ? { baseTip: args.tip } : {}),
+      // #4899: each product plan job's run record, from its artifacts.
+      ...(args.recordRun ? { recordRun: { ...(process.env.CI_PROJECT_PATH ? { repo: process.env.CI_PROJECT_PATH } : {}), keep: keepPlanRunRecord } } : {}),
     });
   } catch (err) {
     return fail(err instanceof Error ? err.message : String(err));
@@ -2957,7 +2987,7 @@ async function runComponentsPrPostOpen(ctx: CommandContext): Promise<number> {
     const posted = p.posted!;
     for (const message of posted.warnings) console.error(formatWarning({ message: `!${p.pr}: ${message}` }));
     if (posted.refused) console.error(formatWarning({ message: `!${p.pr}: the plan report was not used: ${posted.refused}` }));
-    console.error(formatInfo(`pr-post: !${p.pr} ${prStatusContext("plan", member)} ${posted.state}: ${posted.description}${posted.noted ? "; note posted" : ""}`));
+    console.error(formatInfo(`pr-post: !${p.pr} ${prStatusContext("plan", member)} ${posted.state}: ${posted.description}${posted.noted ? "; note posted" : ""}${posted.recorded ? `; run ${posted.recorded} recorded` : ""}`));
   }
   if (done.posts.length === 0) console.error(formatInfo(`pr-post: no open merge request into ${branch} has a ${gitlabPlanJobName(member)} job`));
   return 0;

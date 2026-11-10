@@ -43,6 +43,7 @@ import type { OpWaveRunStep } from "../lexicon";
 import { controlNoteCheckout, type ControlNoteCheckout, type ControlTarget } from "../control/dispatch";
 import { commentLine, productStatusContext } from "../ci-product-words";
 import { PLAN_WATCHES_ENV, scheduledWatchProblem, type ScheduledWatch } from "../op/schedule-overdue";
+import { PLAN_RUN_OP, PLAN_RUN_RECORD_FILE } from "../pr-plan-record";
 
 /** The variable the plan-note job reads the product's note words from (#4799), as JSON. Set from the pipeline, never from the report. */
 export const PR_PLAN_NOTE_WORDS_ENV = "CHANT_PLAN_NOTE_WORDS";
@@ -228,7 +229,27 @@ export interface ProductPlanOptions {
    * pipeline, never from the plan job's report.
    */
   watches?: ScheduledWatch[];
+  /**
+   * A run record for the plan job (#4899), as `chant ci run plan --in-place`
+   * writes one for `pr-plan`'s: Op `pr-plan` in the run ledger,
+   * `<env>/runs__pr-plan.jsonl` on `chant/lifecycle`. The plan job holds no
+   * token, so its plan step writes the record into the hand-off
+   * ({@link PLAN_RUN_RECORD_FILE}) once the plan verb and the report line ran,
+   * and the note job, which holds the token, appends it to the ledger and
+   * pushes it with the note (`pr-post --record-run <plan job>`). The note job
+   * reads the record as data: it keeps the record's id, times and exit code,
+   * and names the op, environment, commit, run and status from what it knows
+   * itself. The note job then asks `contents: write` on GitHub and Forgejo.
+   * Unsigned, as `pr-plan`'s is (#4328). Default off.
+   */
+  record?: boolean;
 }
+
+/** The file a product plan job writes its run record to under the hand-off directory, and the Op it is recorded under: `pr-plan`'s (#4899, ../pr-plan-record.ts). */
+export { PLAN_RUN_OP, PLAN_RUN_RECORD_FILE } from "../pr-plan-record";
+
+/** The variable the plan step reads the record's op, environment and labels from (#4899), as JSON. */
+export const PLAN_RUN_RECORD_ENV = "CHANT_PLAN_RECORD";
 
 /** One plan job and its note job, for one target or for the whole pipeline (#4799). */
 export interface ProductPlanJob {
@@ -280,6 +301,8 @@ export interface ProductPlanJob {
   replan?: ProductPlanReplanJob;
   /** The note job's own lines (#4931). */
   noteSteps?: { before: string[]; after: string[] };
+  /** With `record` (#4899): the plan step writes the run record, `env` its op, environment and labels as {@link PLAN_RUN_RECORD_ENV}; the note job's command records it. */
+  record?: { env: Record<string, string> };
 }
 
 const TARGET_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
@@ -370,7 +393,9 @@ export function productPlanJobs(forge: ForgeKind, env: string, loop: PrLoopPipel
       if (key in shared) throw new Error(`target ${name}'s ${key} is the pipeline's too; give it on the target or on the pipeline`);
       if (key in jobEnv) throw new Error(`target ${name}'s ${key} is the product plan's env too; give it once`);
     }
-    const post = prLoopPostJob(forge, env, name, words);
+    const post0 = prLoopPostJob(forge, env, name, words);
+    // #4899: the note job records the plan job's run, named by that job.
+    const post = plan.record ? { ...post0, command: `${post0.command} --record-run ${jobName}` } : post0;
     // The note job reads its own plan job's result, by that job's name.
     const postEnv: Record<string, string> = github ? { ...post.env, PLAN_RESULT: `\${{ needs.${jobName}.result }}`, ...noteWords } : { ...post.env, ...noteWords };
     // #4931: the target's login, else the plan's, from the OIDC token file (ci-login, #4788).
@@ -384,7 +409,9 @@ export function productPlanJobs(forge: ForgeKind, env: string, loop: PrLoopPipel
     }
     const idTokens = { ...(login?.idTokens ?? {}), ...(ownTokens ?? {}) };
     const artifact = plan.artifact ? (name ? `${plan.artifact}-${name}` : plan.artifact) : name ? `chant-pr-plan-${name}` : "chant-pr-plan";
-    const replan = replanComments ? { ...replanJobOf(forge, env, words, name, artifact, noteWords), ...replanComments } : undefined;
+    const replan0 = replanComments ? { ...replanJobOf(forge, env, words, name, artifact, noteWords), ...replanComments } : undefined;
+    const replan = replan0 && plan.record ? { ...replan0, post: { ...replan0.post, command: `${replan0.post.command} --record-run ${replan0.jobName}` } } : replan0;
+    const record = plan.record ? { env: { [PLAN_RUN_RECORD_ENV]: JSON.stringify({ op: PLAN_RUN_OP, env, labels: { Env: env, Pipeline: "pr", Job: "plan", ...(name ? { Target: name } : {}) } }) } } : undefined;
     const noteBefore = plan.noteSteps?.before ?? [];
     const noteAfter = plan.noteSteps?.after ?? [];
     return {
@@ -408,6 +435,7 @@ export function productPlanJobs(forge: ForgeKind, env: string, loop: PrLoopPipel
       ...(plan.report ? { report: fill(plan.report, name) } : {}),
       ...(replan ? { replan } : {}),
       ...(noteBefore.length > 0 || noteAfter.length > 0 ? { noteSteps: { before: noteBefore, after: noteAfter } } : {}),
+      ...(record ? { record } : {}),
     };
   };
   return targets ? targets.map(one) : [one()];
@@ -535,10 +563,37 @@ export const PENDING_JS = [
  * report line whatever the verb's exit, then the step exits with the verb's
  * status. Without a report line, the verb alone.
  */
-export function planVerbLines(p: Pick<ProductPlanJob, "command" | "report">): string[] {
-  if (!p.report) return [p.command];
-  return ["chant_plan_exit=0", `${p.command} || chant_plan_exit=$?`, `${p.report} || echo "chant: the report line exited $?" >&2`, '[ "$chant_plan_exit" -eq 0 ] || exit "$chant_plan_exit"'];
+export function planVerbLines(p: Pick<ProductPlanJob, "command" | "report" | "record">): string[] {
+  if (!p.report && !p.record) return [p.command];
+  return [
+    ...(p.record ? ['chant_plan_started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"'] : []),
+    "chant_plan_exit=0",
+    `${p.command} || chant_plan_exit=$?`,
+    ...(p.report ? [`${p.report} || echo "chant: the report line exited $?" >&2`] : []),
+    // #4899: the run record goes into the hand-off, for the note job to keep on chant/lifecycle.
+    ...(p.record ? [`CHANT_PLAN_EXIT="$chant_plan_exit" CHANT_PLAN_STARTED="$chant_plan_started" node -e '${PLAN_RECORD_JS}' ${PR_LOOP_REPORT_DIR} || echo "chant: the plan's run record was not written" >&2`] : []),
+    '[ "$chant_plan_exit" -eq 0 ] || exit "$chant_plan_exit"',
+  ];
 }
+
+/**
+ * The plan step's record line (#4899): `node -e`, writing the run record of
+ * the plan verb into the directory it is given, {@link PLAN_RUN_RECORD_FILE}.
+ * It reads the op, environment and labels from {@link PLAN_RUN_RECORD_ENV},
+ * the verb's exit from `CHANT_PLAN_EXIT`, its start from
+ * `CHANT_PLAN_STARTED`, and the commit from git. The shape is an
+ * `OpRunRecordInput` (../op/runtime.ts) with no run origin, which the note
+ * job names.
+ */
+export const PLAN_RECORD_JS = [
+  'const fs=require("fs"),path=require("path"),cp=require("child_process"),crypto=require("crypto");',
+  "const c=JSON.parse(process.env.CHANT_PLAN_RECORD||\"{}\"),dir=process.argv[1];",
+  'const code=Number(process.env.CHANT_PLAN_EXIT||"1"),ended=new Date().toISOString(),started=new Date(Date.parse(process.env.CHANT_PLAN_STARTED||"")||Date.now()).toISOString();',
+  'let sha="";try{sha=cp.execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8",stdio:["ignore","pipe","ignore"]}).trim()}catch{}',
+  'const ok=code===0,status=ok?"ok":"fail",ms=Math.max(0,Date.parse(ended)-Date.parse(started));',
+  'const rec={id:crypto.randomUUID(),op:c.op,env:c.env,started,ended,status,labels:c.labels||{},outcomes:{},phases:[{name:"plan",status,steps:[{fn:"shellCmd",status,durationMs:ms,...(ok?{}:{error:"command exited "+code})}]}],...(sha?{gitSha:sha}:{}),...(ok?{}:{failure:{code:"command-failed",reason:"the plan verb exited "+code,phase:"plan",exitCode:code}})};',
+  `fs.mkdirSync(dir,{recursive:true});fs.writeFileSync(path.join(dir,"${PLAN_RUN_RECORD_FILE}"),JSON.stringify(rec)+"\\n");`,
+].join("");
 
 /** The evidence step of one plan job (#4870), as {@link ProductPlanJob.evidence}. */
 export function planEvidenceOf(forge: ForgeKind, evidence: PipelineEvidence, words: CiProductWords, planJob: string): NonNullable<ProductPlanJob["evidence"]> {

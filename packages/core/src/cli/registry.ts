@@ -589,6 +589,18 @@ export interface ParsedArgs {
   staleNotes?: boolean;
   /** `chant build --pr-loop --note-commands` (#4785): on GitLab, the scheduled job that answers the product's comment commands by polling merge request notes. */
   noteCommands?: boolean;
+  /** `chant build --pr-loop --check-job` (#4935): the check job, `chant ci check` on the pull request's commit. */
+  checkJob?: boolean;
+  /** `chant build --pr-loop --ref-gate-status` (#4935): the job that runs `chant workspace ref-gate status` for the pull request's commit. */
+  refGateStatus?: boolean;
+  /** `chant build --pr-loop --evidence-runner-key-secret <NAME>` (#4935): the secret holding the runner key the note job signs `plan` and `policy` with. */
+  evidenceRunnerKeySecret?: string;
+  /** `chant build --pr-loop --evidence-identity oidc` (#4935, #4869): sign keyless from the job's OIDC identity. */
+  evidenceIdentity?: string;
+  /** `chant build --pr-loop --evidence-audience <aud>` (#4935, #4869): the keyless signing token's audience. */
+  evidenceAudience?: string;
+  /** `chant components pr-post --record-run <plan job>` (#4899): keep the product plan job's run record on chant/lifecycle. */
+  recordRun?: string;
   /** `chant components pr-notes --locks` (#4785): the pipeline has the lock and unlock jobs, so a lock or unlock note starts them. */
   locks?: boolean;
   /** `chant components pr-post --stale` (#4628): mark the open pull requests' notes stale after the target branch moved. */

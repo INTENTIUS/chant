@@ -153,3 +153,12 @@ export const OP_SETUP_STEP_NAME_FLOOR = NEXT_RELEASE;
 
 /** The first chant whose cloud login takes `restart` (log in, then start the step's script again without the token request variables, and empty the token files when the step exits), sets `CHANT_CLOUD_TOKEN_FILES` for `LOGIN_CLEAR_TOKENS`, takes a full token URL as GCP's `stsEndpoint`, and whose GitLab trade evaluates its exports without writing a file (#4912). */
 export const CLOUD_LOGIN_RESTART_FLOOR = NEXT_RELEASE;
+
+/** The first chant whose `chant build --pr-loop` takes `evidence` (`--evidence-runner-key-secret`, `--evidence-identity oidc`, `--evidence-audience`) and signs the plan job's `plan` and `policy` checks in its note job on GitHub, GitLab and Forgejo (#4935). */
+export const PR_LOOP_EVIDENCE_FLOOR = NEXT_RELEASE;
+
+/** The first chant whose pull request pipelines take `checkJob` (`--check-job`): a check job that runs `chant ci check` on the pull request's commit with no token or runner identity, and with `evidence` a `check-evidence` job that signs each passed hook from its report with `chant ci evidence sign --from-report .chant/check` (#4935). */
+export const CHECK_JOB_FLOOR = NEXT_RELEASE;
+
+/** The first chant whose pull request pipelines take `refGateStatus` (`--ref-gate-status`): a `ref-gate` job that runs `chant workspace ref-gate status` for the pull request's commit, and on GitLab `ref-gate status --open` for every open merge request (#4935). */
+export const REF_GATE_STATUS_JOB_FLOOR = NEXT_RELEASE;
