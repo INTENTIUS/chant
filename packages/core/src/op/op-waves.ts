@@ -933,7 +933,7 @@ export function opWaveChecksDir(spec: Pick<OpWavesSpec, "name">): string {
 }
 
 /** The outcome file of wave `wave`'s job, or of one group or share of it (#4322). */
-export function opWaveOutcomePath(spec: Pick<OpWavesSpec, "name">, wave: number, part: { group?: string; share?: number } = {}): string {
+export function opWaveOutcomePath(spec: Pick<OpWavesSpec, "name">, wave: number, part: { group?: string; share?: number; apply?: boolean } = {}): string {
   return `${opWaveOutcomeDir(spec)}/${waveOutcomeFileName(wave, part)}`;
 }
 

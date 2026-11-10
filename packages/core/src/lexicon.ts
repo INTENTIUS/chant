@@ -1194,11 +1194,18 @@ export interface OpWavesPipelineOptions
    * the default branch with `CHANT_BEFORE_MERGE_PR`, `_HEAD` and `_DIGEST`.
    * Each wave job's guard admits that head alone, the job checks it out
    * after the default branch's checkout, and its command reads the gates
-   * and the spec at the default branch's commit. The runners, the trades
-   * and the evidence jobs are the push run's. After the last wave the
+   * and the spec at the default branch's commit. After the last wave the
    * `before-merge-done` job merges the pull request (`merge: "auto"`) and
    * releases its locks, or says it is ready. Absent: the jobs run on a push
    * alone, as before.
+   *
+   * #4987: with it, every wave (on a push too) is four jobs
+   * (`@intentius/chant/op/op-waves-split`): a plan job and an applying job
+   * that run the change's code with no write token and no credentials in
+   * the checkout, keeping the wave's runners, trades and environment, and a
+   * gate job and a record job at the default branch's code that write
+   * `chant/lifecycle`. The evidence job signs the plan job's checks. A
+   * `step` spec or a `rest` wave is refused.
    */
   beforeMerge?: import("./op/before-merge").OpWavesBeforeMerge;
   /**

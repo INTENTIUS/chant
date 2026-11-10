@@ -1016,7 +1016,10 @@ export interface ParsedArgs {
   ciTimeoutMinutes?: number;
   /** `chant ci last-green --lane <name>` and `chant ci base --lane <name>` (#4662) — a ci.green lane. `chant release cut --lane <name>` and `chant release candidates --lane <name>` (#4692) — check that lane's green tags. */
   lane?: string;
-  /** `chant ci base --phase <name>` (#4643) — the ci.green phase whose base to find. `chant ci quarantine filter --phase <name>` (#4677) — the phase whose runner takes the filter. */
+  /**
+   * `chant ci base --phase <name>` (#4643) — the ci.green phase whose base to find. `chant ci quarantine filter --phase <name>` (#4677) — the phase whose runner takes the filter.
+   * `chant run wave --phase plan|gate|apply|record` (#4987) — one of a split wave's four jobs before merge.
+   */
   phase?: string;
   /** `chant ci quarantine filter --runner nextest|playwright|list` (#4677). */
   quarantineRunner?: string;

@@ -88,12 +88,14 @@ export async function waveStopAt(op: string, sha: string, opts: { cwd?: string }
  * What a wave job of op `op` says when wave `k` waits behind a comment's
  * stop at the job's checkout (`git rev-parse HEAD`). Undefined when it runs:
  * no stop, no commit to read, or a branch that cannot be read, so a stop
- * never fails a wave that would have run.
+ * never fails a wave that would have run. `sha` (#4987) names the commit
+ * in place of the checkout's: a split wave's gate job runs at the default
+ * branch and reads the stop of the decided head.
  */
-export async function waveStopLine(op: string, k: number, opts: { cwd?: string } = {}): Promise<string | undefined> {
+export async function waveStopLine(op: string, k: number, opts: { cwd?: string; sha?: string } = {}): Promise<string | undefined> {
   let sha: string;
   try {
-    sha = await getHeadCommit(opts);
+    sha = opts.sha ?? (await getHeadCommit(opts));
   } catch {
     return undefined;
   }

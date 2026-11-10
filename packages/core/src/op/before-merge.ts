@@ -238,9 +238,12 @@ export function beforeMergeDoneCommand(spec: { name: string; waves: readonly unk
  * chant's `misplaced`) unless it is still the decided head, keep the
  * default branch's commit as {@link WAVES_BASE_ENV} for the command, and
  * check the head out. One shell block, so on GitLab it sits among the
- * script's lines.
+ * script's lines. With `checkout: false` (#4987) it fetches and checks the
+ * head and keeps the base, and leaves the default branch checked out: the
+ * gate and record jobs of a split wave read the head's commit and notes
+ * and run none of its code.
  */
-export function beforeMergeCheckoutScript(forge: "github" | "forgejo" | "gitlab", product: string): string {
+export function beforeMergeCheckoutScript(forge: "github" | "forgejo" | "gitlab", product: string, opts: { checkout?: boolean } = {}): string {
   const ref = forge === "gitlab" ? `refs/merge-requests/\${${BEFORE_MERGE_PR_ENV}}/head` : `refs/pull/\${${BEFORE_MERGE_PR_ENV}}/head`;
   const what = forge === "gitlab" ? `!$${BEFORE_MERGE_PR_ENV}` : `pull request $${BEFORE_MERGE_PR_ENV}`;
   const keep = forge === "gitlab" ? `${WAVES_BASE_ENV}="$(git rev-parse HEAD)"; export ${WAVES_BASE_ENV}` : `echo "${WAVES_BASE_ENV}=$(git rev-parse HEAD)" >> "$GITHUB_ENV"`;
@@ -250,7 +253,7 @@ export function beforeMergeCheckoutScript(forge: "github" | "forgejo" | "gitlab"
     '  now="$(git rev-parse refs/remotes/chant/before-merge-head)"',
     `  if [ "$now" != "$${BEFORE_MERGE_HEAD_ENV}" ]; then echo "${product}: ${what} moved to $(printf %.12s "$now") after its head $(printf %.12s "$${BEFORE_MERGE_HEAD_ENV}") was decided, so nothing is applied; comment the apply again" >&2; exit ${CHANT_EXIT.misplaced}; fi`,
     `  ${keep}`,
-    `  git checkout -q --detach "$${BEFORE_MERGE_HEAD_ENV}" || exit 1`,
+    ...(opts.checkout === false ? [] : [`  git checkout -q --detach "$${BEFORE_MERGE_HEAD_ENV}" || exit 1`]),
     "fi",
   ].join("\n");
 }

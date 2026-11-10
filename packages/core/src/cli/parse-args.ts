@@ -1391,6 +1391,7 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.quarantineOnly = true;
     } else if (arg === "--phase") {
       // `chant ci base --phase <name>` (#4643): the ci.green phase whose base to find.
+      // `chant run wave --phase plan|gate|apply|record` (#4987): one job of a split wave; the handler checks the word.
       result.phase = args[++i];
     } else if (arg === "--audit-log") {
       // `chant audit-log attribute|unrecorded --audit-log aws[:<region>]` (#4632).

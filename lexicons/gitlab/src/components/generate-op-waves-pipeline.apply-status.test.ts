@@ -11,7 +11,9 @@ import { generateGitlabOpWavesPipeline } from "./generate-op-waves-pipeline";
 const spec: OpWavesSpec = {
   name: "tf-apply",
   op: "tf-apply",
-  step: { kind: "terraform-apply", root: "{target}" },
+  // #4987: a spec with `step` cannot split before merge, so these waves plan and apply with commands.
+  plan: ["terragucci", "plan", "{target}", "--out", "{plan}"],
+  apply: ["terragucci", "apply", "{target}", "--plan", "{plan}"],
   waves: [
     { name: "dev", runs: [{ target: "dev" }], setup: [{ run: "npm ci" }] },
     { name: "prod", runs: [{ target: "prod" }] },
@@ -28,9 +30,11 @@ describe("the apply statuses on GitLab (#4987)", () => {
 
   test("a job in each wave's stage needs the wave's jobs and runs whatever they ended", () => {
     expect(doc["apply-status-1"]!.stage).toBe("wave-1-dev");
-    expect(doc["apply-status-1"]!.needs).toEqual(["wave-1-dev"]);
+    // #4987: before merge, each of the wave's split jobs.
+    expect(doc["apply-status-1"]!.needs).toEqual(["wave-1-dev-plan", "wave-1-dev-gate", "wave-1-dev", "wave-1-dev-record"]);
     expect(doc["apply-status-2"]!.stage).toBe("wave-2-prod");
-    expect(doc["apply-status-2"]!.needs).toEqual(["wave-2-prod"]);
+    expect(doc["apply-status-2"]!.needs).toEqual(["wave-2-prod-plan", "wave-2-prod-gate", "wave-2-prod", "wave-2-prod-record"]);
+    expect(docOf()["apply-status-2"]!.needs).toEqual(["wave-2-prod"]);
     // The push's pipeline and the before-merge pipeline, each always.
     expect(doc["apply-status-2"]!.rules.map((r) => r.when)).toEqual(["always", "always"]);
     expect(doc["apply-status-2"]!.rules.map((r) => r.if)).toEqual(doc["wave-2-prod"]!.rules.map((r) => r.if));
