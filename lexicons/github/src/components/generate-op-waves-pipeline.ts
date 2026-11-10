@@ -111,6 +111,13 @@
  * before the wave's setup. The evidence job signs at the head. The control
  * job runs for a push alone, and `before-merge-done` after the last wave
  * merges and releases the locks (`chant run wave --merge`).
+ *
+ * With `options.applyStatus` (#4987) a job `apply-status-<n>` after each
+ * wave, at the default branch's commit and running none of the change's
+ * code, downloads the outcome files and posts the status on the push's
+ * commit or the decided head (`chant run wave --apply-status`). With
+ * `options.staleNotes` a `stale-notes` job beside wave 1, on a push alone,
+ * marks the open pull requests' plan notes stale.
  */
 
 import {
@@ -175,6 +182,8 @@ import {
   beforeMergeDoneCommand,
   type OpWavesBeforeMerge,
 } from "@intentius/chant/op/before-merge";
+import { applyStatusCommand, applyStatusJobName, assertApplyStatusContext, type OpWavesApplyStatus } from "@intentius/chant/op/apply-status";
+import { PR_STALE_JOB } from "@intentius/chant/components/pr-pipeline";
 import { checkoutStep, concurrency, DOWNLOAD_ARTIFACT, downloadArtifactStep, keepRecordStep, runSteps } from "./ci-jobs";
 import { emitOpPipelineYAML, type GithubOpPipelineDoc } from "./generate-op-pipeline";
 
@@ -328,6 +337,13 @@ export function buildGithubOpWavesDoc(
   }
   // #4984: after a before-merge run's last wave, the merge and the release of the change's locks.
   if (bm) jobsDoc[BEFORE_MERGE_DONE_JOB] = beforeMergeDoneJob(spec, options, bm, forge, jobs, image, bmEnv);
+  // #4987: each wave's apply status, from a job that runs none of the change's code.
+  if (options.applyStatus) {
+    assertApplyStatusContext(options.applyStatus.context);
+    for (let k = 1; k <= spec.waves.length; k++) jobsDoc[applyStatusJobName(k)] = applyStatusJob(spec, options, options.applyStatus, forge, jobs, k, image, bmEnv);
+  }
+  // #4987: a push marks the open pull requests' plan notes stale, beside wave 1.
+  if (options.staleNotes) jobsDoc[PR_STALE_JOB] = staleNotesJob(spec, options, options.staleNotes, image);
 
   // #3761: the notify variables come from the secrets of the same name.
   const env = { ...githubSecretEnv(notifyVariables(spec.notify)), ...(options.variables ?? {}) };
@@ -587,6 +603,58 @@ function beforeMergeDoneJob(
         run: beforeMergeDoneCommand(spec, forge, bm, options.bin),
       },
     ],
+  };
+}
+
+/**
+ * The job after wave `k` that posts its apply status (#4987): at the
+ * default branch's commit, with every outcome file of the run, it posts
+ * the status on the push's commit, or on a before-merge run's decided
+ * head. It runs after the wave whatever the wave did, and none of the
+ * change's code, so it is the job that holds `statuses: write`.
+ */
+function applyStatusJob(
+  spec: OpWavesSpec,
+  options: OpWavesPipelineOptions,
+  status: OpWavesApplyStatus,
+  forge: "github" | "forgejo",
+  jobs: OpWavesPipelineResult["jobs"],
+  k: number,
+  image: string,
+  bmEnv: Record<string, string>,
+): Record<string, unknown> {
+  const at = options.beforeMerge ? `"\${${BEFORE_MERGE_HEAD_ENV}:-$GITHUB_SHA}"` : '"$GITHUB_SHA"';
+  return {
+    "runs-on": githubRunsOn(spec.runner),
+    needs: jobs.filter((j) => j.wave === k).map((j) => j.jobName),
+    if: "${{ !cancelled() }}",
+    container: image,
+    permissions: { contents: "read", statuses: "write" },
+    ...(Object.keys(bmEnv).length > 0 ? { env: bmEnv } : {}),
+    steps: [
+      checkoutStep(true),
+      { name: "Download the waves' outcomes", uses: DOWNLOAD_ARTIFACT, with: { path: opWaveOutcomeDir(spec) } },
+      ...(spec.waves[0]?.setup ?? []).map(setupStepDoc),
+      ...runSteps(options.beforeScript ?? []),
+      { name: `Post ${status.context} after wave ${k}`, env: { GITHUB_TOKEN: GITHUB_JOB_TOKEN }, run: applyStatusCommand(spec, k, status.context, forge, at, options.bin) },
+    ],
+  };
+}
+
+/**
+ * The stale marking job (#4987, #4628): on a push, beside wave 1, at the
+ * pushed commit, it marks each open pull request's plan note posted
+ * against another commit stale. A dispatch (a before-merge run, or one
+ * by hand) moves no branch, so it never runs there.
+ */
+function staleNotesJob(spec: OpWavesSpec, options: OpWavesPipelineOptions, stale: { command: string; env: Record<string, string> }, image: string): Record<string, unknown> {
+  return {
+    "runs-on": githubRunsOn(spec.runner),
+    if: "${{ github.event_name == 'push' }}",
+    container: image,
+    // pull-requests: write edits the notes; statuses: write sets each stale plan status back to pending.
+    permissions: { contents: "read", "pull-requests": "write", statuses: "write" },
+    steps: [checkoutStep(), ...(spec.waves[0]?.setup ?? []).map(setupStepDoc), ...runSteps(options.beforeScript ?? []), { name: "Mark the plan notes this push made stale", env: stale.env, run: stale.command }],
   };
 }
 

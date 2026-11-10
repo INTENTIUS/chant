@@ -344,6 +344,10 @@ export interface ParsedArgs {
   approvalStatus?: boolean;
   /** `chant run wave --waves-outcome` (#4617) — print how every wave job's outcome file adds up: the outcome a control dispatch carries. */
   wavesOutcome?: boolean;
+  /** `chant run wave --op <op> --wave <n> --of <count> --apply-status <context> --at <sha> --forge <kind>` (#4987) — post wave n's apply status from the outcome files. */
+  applyStatus?: string;
+  /** `chant run wave --of <count>` (#4987) — how many waves the run has, with `--apply-status`. */
+  of?: number;
   /** `chant run wave --share <i>` (#3679) — apply share `i` of a decided wide wave. */
   share?: number;
   /** `chant run wave --group <name>` (#3914) — apply one job group's runs of a decided wave. */

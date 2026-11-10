@@ -38,7 +38,7 @@ import {
 } from "../ci-product-words";
 import { checkJobOptions, PR_LOOP_REPORT_DIR, prActionJob, prCommentLockJobs, prCommentPreviewJob, prLoopJobs, prLoopPostJob, prLoopRunner, prNoteCommandsJob, prStaleJob, withProductBin, type PrActionJob, type PrCommentLockJob, type PrCommentPreviewJob, type PrLoopJob, type PrLoopPipelineOptions } from "./pr-pipeline";
 import type { DriverComponent } from "./driver";
-import type { ScheduledOpSpec } from "../lexicon";
+import type { OpWavesPipelineOptions, ScheduledOpSpec } from "../lexicon";
 import type { CiRunner } from "../ci-jobs";
 import { resolveAgentSpec, type OpAgentSpec } from "../ci-agent";
 import { resolveCommitSpec, type OpCommitSpec } from "../ci-commit";
@@ -167,6 +167,16 @@ export interface ProductPipelineOptions extends Omit<PrLoopPipelineOptions, "wor
    * its locks. Needs `waves` (or `componentWaves`).
    */
   wavesBeforeMerge?: ProductWavesBeforeMerge;
+  /**
+   * The apply statuses (#4987): the waves workflow posts `<product>/apply`
+   * (`<product>/apply/<member>` for a member) on the commit the waves
+   * applied, from a job after each wave that runs none of the change's
+   * code (`@intentius/chant/op/apply-status`): pending after each wave,
+   * success after the last, failed when a run failed. Needs `waves` (or
+   * `componentWaves`); the product passes `waves.pipeline` on when it
+   * renders them.
+   */
+  applyStatus?: boolean;
 }
 
 /** {@link ProductPipelineOptions.wavesBeforeMerge} (#4984). */
@@ -221,7 +231,19 @@ export interface ProductPipelineJobs {
    * `beforeMerge` is the generators' `OpWavesPipelineOptions.beforeMerge`:
    * the product passes it on when it renders the waves.
    */
-  waves?: { spec: OpWavesSpec; specFile: string; jobs: OpWaveJob[]; beforeMerge?: OpWavesBeforeMerge };
+  waves?: {
+    spec: OpWavesSpec;
+    specFile: string;
+    jobs: OpWaveJob[];
+    beforeMerge?: OpWavesBeforeMerge;
+    /**
+     * What the generators take from the pipeline (#4987): `beforeMerge`,
+     * `applyStatus` and, with `staleNotes`, the stale marking job that runs
+     * beside wave 1 on a push (one `--member` per product plan target). The
+     * product spreads it into the `OpWavesPipelineOptions` it renders with.
+     */
+    pipeline: Pick<OpWavesPipelineOptions, "beforeMerge" | "applyStatus" | "staleNotes">;
+  };
   /**
    * The comment lock and unlock jobs (#4588), under `locks: "plan"`:
    * `/<product> lock` keeps the locks the plan took, `/<product> unlock`
@@ -388,7 +410,8 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   // #4946: the comment job answers every command but a commit word (the commit job's) with a reply, so the words may name any.
   const answered: CiProductCommand[] = options.commentJob ? [...new Set<CiProductCommand>([...jobs, ...CI_PRODUCT_COMMANDS.filter((c) => c !== "commit")])] : jobs;
   const words = assertProductWords({ ...options.words, applyMode }, { jobs: answered });
-  const { waves: given, wavesSpecFile, member, agent: _agent, commits: _commits, actions: _actions, componentWaves, productPlan, evidence, commentJob: _commentJob, wavesBeforeMerge, ...loop } = options;
+  const { waves: given, wavesSpecFile, member, agent: _agent, commits: _commits, actions: _actions, componentWaves, productPlan, evidence, commentJob: _commentJob, wavesBeforeMerge, applyStatus: _applyStatus, ...loop } = options;
+  if (options.applyStatus && !given && !componentWaves) throw new Error("applyStatus posts the waves' apply statuses, and there are none: give waves (or componentWaves)");
   const { respond } = options;
   // #4629: the pull request loop puts the responses on the apply and note jobs, as `chant build --pr-loop --respond` does.
   const prLoop: PrLoopPipelineOptions = { ...loop, words, gate: options.gate ?? words.prGate };
@@ -431,7 +454,12 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   if (reachLock) out.reachLock = reachLock;
   const action = prActionJob(forge, prLoop);
   if (action) out.action = { ...action, ...(prLoopRunner(options, "apply") !== undefined ? { runner: prLoopRunner(options, "apply")! } : {}) };
-  const stale = prStaleJob(forge, env, prLoop, member);
+  // #4987: a product plan's notes are marked from the waves workflow's push run, one --member per target, naming the re-plan comment.
+  const planStale = productPlan
+    ? prStaleJob(forge, env, { ...prLoop, ...(productPlan.replan ? { previewComment: true } : {}) }, productPlan.targets?.map((t) => t.name) ?? member)
+    : undefined;
+  if (planStale && !options.waves && !options.componentWaves) throw new Error("staleNotes with the product plan marks the notes from the waves workflow's push run, beside wave 1, and there are no waves: give waves (or componentWaves), or drop staleNotes");
+  const stale = productPlan ? undefined : prStaleJob(forge, env, prLoop, member);
   if (stale) out.stale = { ...stale, ...defaultRunner };
   // #4785: GitLab's comment commands, polled from the notes; waves on merge are retried by an apply on a merged merge request.
   // #4899: the product plan's comment re-plan runs in the preview's pipeline, so the poll starts it as it starts a preview.
@@ -530,7 +558,13 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   const beforeMerge: OpWavesBeforeMerge | undefined = wavesBeforeMerge
     ? { ...(wavesBeforeMerge.merge ? { merge: wavesBeforeMerge.merge } : {}), ...(wavesBeforeMerge.mergeTokenSecret ? { mergeTokenSecret: wavesBeforeMerge.mergeTokenSecret } : {}), ...(productPlan?.reach?.gate ? { gate: productPlan.reach.gate } : {}) }
     : undefined;
-  return { ...out, waves: { spec: named, specFile, jobs: opWaveJobs(named, specFile, { bin: words.bin, ...(beforeMerge ? { beforeMerge: true } : {}) }), ...(beforeMerge ? { beforeMerge } : {}) } };
+  // #4987: the apply statuses after each wave, and with a product plan the stale marking beside wave 1, one --member per target.
+  const pipeline: Pick<OpWavesPipelineOptions, "beforeMerge" | "applyStatus" | "staleNotes"> = {
+    ...(beforeMerge ? { beforeMerge } : {}),
+    ...(options.applyStatus ? { applyStatus: { context: productStatusContext(words, "apply", member) } } : {}),
+    ...(planStale ? { staleNotes: planStale } : {}),
+  };
+  return { ...out, waves: { spec: named, specFile, jobs: opWaveJobs(named, specFile, { bin: words.bin, ...(beforeMerge ? { beforeMerge: true } : {}) }), ...(beforeMerge ? { beforeMerge } : {}), pipeline } };
 }
 
 /** The capability steps a component waves spec runs (#4545, #4541): argv templates over `{runs}` and `{plans}`. */

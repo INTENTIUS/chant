@@ -1201,6 +1201,25 @@ export interface OpWavesPipelineOptions
    * alone, as before.
    */
   beforeMerge?: import("./op/before-merge").OpWavesBeforeMerge;
+  /**
+   * The apply statuses (#4987, `@intentius/chant/op/apply-status`): after
+   * each wave a job `apply-status-<n>` at the default branch's commit reads
+   * the outcome files and posts `context` on the commit the waves applied
+   * (the push's, or a before-merge run's decided head): pending after each
+   * wave, success after the last, failed when a run failed. It runs none of
+   * the change's code. On GitLab it posts with `CHANT_FORGE_TOKEN` (the job
+   * token cannot post a status). Absent: no job posts one.
+   */
+  applyStatus?: import("./op/apply-status").OpWavesApplyStatus;
+  /**
+   * The stale marking (#4987, #4628): the command and values of the job
+   * `stale-notes`, which runs beside wave 1 on a push (never in a
+   * before-merge run) and marks stale each open pull request's plan note
+   * posted against another commit of the branch. A product plan's
+   * pipeline gives it from `productPipelineJobs`, one `--member` per plan
+   * target. On GitLab it posts with `CHANT_FORGE_TOKEN`.
+   */
+  staleNotes?: { command: string; env: Record<string, string> };
 }
 
 /** A run step a product adds to a generated job (#4791): its name, and its shell lines in order. */

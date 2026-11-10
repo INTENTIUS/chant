@@ -48,6 +48,8 @@ async function runOpWaveJobCommand(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   // #4984: the job after a before-merge run's last wave merges the pull request, or says it is ready.
   if (args.merge !== undefined) return runBeforeMergeDone(ctx);
+  // #4987: the job after a wave posts its apply status, at the default branch's commit.
+  if (args.applyStatus !== undefined) return runApplyStatus(ctx);
   const specFile = args.opsSpec;
   if (specFile && args.recordPlans) {
     try {
@@ -229,6 +231,45 @@ async function runBeforeMergeDone(ctx: CommandContext): Promise<number> {
     return done.code;
   } catch (err) {
     return fail(err instanceof Error ? err.message : String(err));
+  }
+}
+
+/**
+ * `chant run wave --op <op> --wave <n> --of <count> --apply-status <context>
+ * --at <sha> --forge <kind>` (#4987): the job after wave n posts its apply
+ * status on the commit the waves applied, from every outcome file the job
+ * downloaded (`../../op/apply-status.ts`). It runs at the default branch's
+ * commit and none of the change's code. A refused post fails the job.
+ */
+async function runApplyStatus(ctx: CommandContext): Promise<number> {
+  const { args } = ctx;
+  const fail = (message: string): number => {
+    console.error(formatError({ message }));
+    return 1;
+  };
+  const op = args.op;
+  if (!op || args.wave === undefined || args.of === undefined || !args.at) return fail("--apply-status posts one wave's apply status: --op <name> --wave <n> --of <count> --apply-status <context> --at <sha> --forge <kind>");
+  const { FORGE_KINDS } = await import("../../pr-forge");
+  if (!args.forge || !(FORGE_KINDS as readonly string[]).includes(args.forge)) return fail(`--apply-status posts on a forge: --forge ${FORGE_KINDS.join("|")}`);
+  const kind = args.forge as (typeof FORGE_KINDS)[number];
+  try {
+    const { postOpWaveApplyStatus } = await import("../../op/apply-status");
+    const { opWaveOutcomeDir } = await import("../../op/op-waves");
+    const { forgeFromJobEnv } = await import("../../pr-forge-job");
+    const pipeline = kind === "gitlab" && args.at === process.env.CI_COMMIT_SHA && /^[0-9]+$/.test(process.env.CI_PIPELINE_ID ?? "") ? Number(process.env.CI_PIPELINE_ID) : undefined;
+    const line = await postOpWaveApplyStatus({
+      forge: forgeFromJobEnv(kind),
+      dirs: [resolve(opWaveOutcomeDir({ name: op }))],
+      wave: args.wave,
+      of: args.of,
+      context: args.applyStatus!,
+      at: args.at,
+      ...(pipeline !== undefined ? { pipelineId: pipeline } : {}),
+    });
+    console.error(line);
+    return 0;
+  } catch (err) {
+    return fail(`the apply status was not posted: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 

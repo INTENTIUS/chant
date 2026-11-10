@@ -625,6 +625,11 @@ Ops:
                         (#4984): checks the decided head and that every wave
                         applied, then merges the pull request at that head
                         and releases its locks (auto), or says it is ready.
+                        --op <name> --wave <n> --of <count> --apply-status
+                        <context> --at <sha> --forge <kind>: the job after
+                        wave n posts <context> on the commit the waves
+                        applied, from the outcome files: pending until the
+                        last wave's success, failed for a failed run (#4987).
                         --record-plans (no --wave), in a pull request's
                         pipeline: plan every wave at its head and record the
                         digests a pr-review approval mode compares.
