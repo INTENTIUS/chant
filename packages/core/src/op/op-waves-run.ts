@@ -91,6 +91,7 @@ import { ciRunIdFromEnv } from "./gate-run-locator";
 import { appendRunRecord, DEFAULT_RUN_ENV } from "../lifecycle/run-ledger";
 import { LifecyclePushLostError, pushLifecycleRebasing } from "../lifecycle/git";
 import { opWaveEvidenceRefusal, signOpWaveChecks } from "./op-waves-evidence";
+import { writeCheckClaimFile } from "../ci-evidence-claims";
 import { opWavesEvidenceProblems, type OpWavesEvidence } from "./op-waves-evidence-spec";
 import { resolveCiJob } from "../lifecycle/release-ledger";
 import type { OpRunPolicyRow, OpRunRecordInput, OpRunStepRecord, OpRunWave, OpRunWavePlan, OpRunWaveTarget } from "./runtime";
@@ -143,6 +144,7 @@ import {
   opWaveGateName,
   opWaveHooksAt,
   opWaveHookRuns,
+  opWaveChecksDir,
   opWaveOutcomeDir,
   opWavePointAt,
   opWavePointProblems,
@@ -785,6 +787,15 @@ export interface RunOpWaveOptions {
   wave: number;
   /** Plan and decide only (a wide wave's deciding job). */
   decide?: boolean;
+  /**
+   * Plan the wave and run its policy hold, and nothing after it (#4926): the
+   * wave job's policy step, whose result the forge reports and the wave's
+   * evidence job signs `policy:<wave>` from. Exits 0 only when `ci.policy`
+   * ran over the wave's plans and denied nothing, 7 when it denied a run, 1
+   * when it did not run. Writes the check's claim file under
+   * {@link opWaveChecksDir} and no outcome file or run record.
+   */
+  policyOnly?: boolean;
   /** Apply this 1-based share of a decided wave, or with `group`, of that job group. */
   share?: number;
   /**
@@ -969,6 +980,8 @@ export interface RunOpWaveResult {
   targets?: Record<string, OpRunWaveTarget>;
   /** Each planned run with policy rows or an after-plan hook's files (#4614), as the run record's `wave.plans`. */
   plans?: Record<string, OpRunWavePlan>;
+  /** With `policyOnly` (#4926): the `ci.policy` rows the wave's policy hold gave, in run order. Empty when no policy ran. */
+  policyRows?: OpRunPolicyRow[];
 }
 
 /** What one wave job works with. */
@@ -2045,6 +2058,8 @@ export async function runOpWave(options: RunOpWaveOptions): Promise<RunOpWaveRes
   if (afterPlanWrong.length > 0) throw new Error(`Op waves "${options.spec.name}": ${afterPlanWrong.join("; ")}`);
   const runHooksWrong = opWaveRunHooksProblems(options.runHooks);
   if (runHooksWrong.length > 0) throw new Error(`Op waves "${options.spec.name}": ${runHooksWrong.join("; ")}`);
+  // #4926: the policy step applies nothing, so it keeps no run record and no outcome file.
+  if (options.policyOnly) return runOpWavePolicyOnly(options);
   // #4551: one run record per job, on every way the job ends.
   const started = new Date().toISOString();
   // #4555: the job's run events and its trace, when a reader or an exporter wants them.
@@ -2322,6 +2337,41 @@ async function runOpWaveJob(options: RunOpWaveOptions): Promise<RunOpWaveResult>
   }
   writeOpWaveOutcome(options, dir, result);
   return result;
+}
+
+/**
+ * The wave job's policy step (#4926): plan the wave, run its policy hold,
+ * and write `policy:<wave>`'s claim file, passed only when `ci.policy` ran
+ * over the plans and denied nothing. The exit says the same, so the forge's
+ * record of the step (GitLab: of the `<wave>-policy` job) carries it where
+ * the change's code in the later steps cannot rewrite it. A share or job
+ * group's job has no policy of its own; its deciding job's stands.
+ */
+async function runOpWavePolicyOnly(options: RunOpWaveOptions): Promise<RunOpWaveResult> {
+  const { spec } = options;
+  if (options.share !== undefined || options.group !== undefined) throw new Error("--policy-only runs a wave's policy in its own or its deciding job; a share or job group's job has none of its own");
+  const log = options.log ?? ((line: string) => console.error(line));
+  const cwd = options.cwd ?? process.cwd();
+  const outcomeDir = options.outcomeDir ?? opWaveOutcomeDir(spec);
+  const dir = isAbsolute(outcomeDir) ? outcomeDir : join(cwd, outcomeDir);
+  const wave = spec.waves[options.wave - 1] ?? spec.waves[spec.waves.length - 1]!;
+  const check = `policy:${wave.name}`;
+  const end = (exitCode: number, rows: OpRunPolicyRow[], line?: string): RunOpWaveResult => {
+    if (line) log(line);
+    const passed = exitCode === 0;
+    writeCheckClaimFile(join(cwd, opWaveChecksDir(spec)), { check, passed, ...(passed ? { claim: JSON.stringify(rows) } : {}) });
+    return { exitCode, applied: [], failed: [], moved: [], hooks: [], policyRows: rows };
+  };
+  const before = opWaveBefore(options, dir);
+  if (before.stop) return end(CHANT_EXIT.failed, [], `${before.stop.line}; wave ${options.wave}'s policy did not run`);
+  const step = await planOpWave(options, { k: options.wave, pass: 0 }, before.blocked);
+  const got = "end" in step ? step.end : undefined;
+  const rows = got?.policyRows ?? [];
+  if (!got || got.exitCode !== 0 || got.policyRows === undefined) return end(got && got.exitCode !== 0 ? got.exitCode : CHANT_EXIT.failed, rows, `wave ${options.wave} (${wave.name}): its policy did not run to the end, so ${check} did not pass`);
+  if (rows.length === 0) return end(CHANT_EXIT.failed, rows, `wave ${options.wave} (${wave.name}): no ci.policy ran over its plans (holds.policy is off, or the hold at base could not be read), so ${check} did not pass`);
+  const denied = rows.filter((r) => r.result === "denied");
+  if (denied.length > 0) return end(CHANT_EXIT.denied, rows, `wave ${options.wave} (${wave.name}): ci.policy denied ${denied.length} of its ${rows.length} plans, so ${check} did not pass`);
+  return end(CHANT_EXIT.done, rows, `wave ${options.wave} (${wave.name}): ci.policy ran over its ${rows.length} plans and denied none`);
 }
 
 /** The wave engine's loop over this module's steps, from `options.wave` on, with the runs in `skip` left out of that wave. */
@@ -2658,6 +2708,8 @@ async function planOpWave(options: RunOpWaveOptions, { k, pass }: WaveAttempt<Ru
   }
   const before = await runBeforePlanHooks(ctx, rules.hooks, wave.runs);
   if (before.failed) return { end: failed(ctx, `a hook before the plan failed, so nothing in wave ${k} was planned or applied`) };
+  // #4926: the policy step records no decision; the wave's own step does.
+  if (before.waitingOn && options.policyOnly) return { end: failed(ctx, `wave ${k} (${wave.name}): a hook before the plan waits on ${before.waitingOn}, so its policy did not run`) };
   if (before.waitingOn) return { end: await decided(ctx, decision, recordPath, before.waitingOn) };
   if (spec.step) ctx.steps = new Map();
   const { members, pending: planPending, overriders: planOverriders, overridersSource: planOverridersSource, extras: planExtras, waves: found, changeSet, parts } = await planWaveRuns(ctx, wave.runs, wave.discover === true);
@@ -2676,8 +2728,11 @@ async function planOpWave(options: RunOpWaveOptions, { k, pass }: WaveAttempt<Ru
     // #4613: the decision names the shared policy commit its runs were judged by.
     if (held.policySource) decision.ciPolicySource = held.policySource;
   }
-  // #4870: with a runner key, the wave's plan and policy checks are signed over its commit.
-  await signOpWaveChecks({ cwd, head: options.head ?? "HEAD", base, wave: wave.name, planDigest: opWaveSetDigest(spec, members), policyRows, log });
+  // #4926: the policy step ends here, with the rows its result stands for.
+  if (options.policyOnly) return { end: { ...result, policyRows: [...policyRows.values()] } };
+  // #4870: with a runner key, the wave's plan and policy checks are signed over its commit;
+  // #4926: with an evidence job after it, the plan's claim file is left for that job.
+  await signOpWaveChecks({ cwd, head: options.head ?? "HEAD", base, wave: wave.name, planDigest: opWaveSetDigest(spec, members), policyRows, log, checksDir: join(cwd, opWaveChecksDir(spec)) });
   // #4614: the after-plan hooks in the job's process, before the set digest and the gate.
   const inProcess = await runAfterPlan(ctx, members, parts, policyRows);
   if (inProcess.failed) return { end: failed(ctx, `${inProcess.failed}, so nothing in wave ${k} was approved or applied`) };

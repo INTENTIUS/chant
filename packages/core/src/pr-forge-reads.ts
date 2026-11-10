@@ -8,7 +8,9 @@
  * (GitLab's pipelines), a run, its jobs, and the artifacts it kept, by name in
  * a run or across the repository, as a product's review agent reads them
  * (#4846); the files a head changes since its merge base, a job by id, and
- * a file of a GitLab job's artifacts (#4862).
+ * a file of a GitLab job's artifacts (#4862); and the commit each job ran
+ * on with, on GitHub and Forgejo, its steps' conclusions, which a wave's
+ * evidence job signs from (#4926).
  *
  * They take the same options as the clients in `./pr-forge.ts` and live in
  * their own module, imported only by the products that call them, so the
@@ -160,6 +162,25 @@ export interface RunJob {
   tag?: boolean;
   /** The job's page on the forge. */
   url?: string;
+  /** The commit it ran on (#4926): GitHub's and Forgejo's `head_sha`, GitLab's `commit.id` or `pipeline.sha`. */
+  headSha?: string;
+  /**
+   * Its steps as the runner reported them (#4926): GitHub's and Forgejo's
+   * `steps[]`, by name, in order. GitLab reports no steps, so it has none,
+   * and a check there reads the job's own status.
+   */
+  steps?: RunJobStep[];
+}
+
+/** One step of a {@link RunJob} (#4926). */
+export interface RunJobStep {
+  name: string;
+  /** 1-based, as the forge numbers it. */
+  number?: number;
+  /** `queued`, `in_progress`, `completed` (Forgejo: also `success`, `failure`, ...). */
+  status: string;
+  /** `success`, `failure`, `skipped`, `cancelled`, once it finished. */
+  conclusion?: string;
 }
 
 /** A file a comparison changes, with the path it had before a rename when the forge names it (#4862). */
@@ -642,6 +663,9 @@ function jobOf(j: unknown): RunJob | undefined {
   const run = num(j.run_id) ?? (isObject(j.pipeline) ? num(j.pipeline.id) : undefined);
   const ref = str(j.head_branch) ?? str(j.ref);
   const url = str(j.html_url) ?? str(j.web_url);
+  // #4926: the commit, and on GitHub and Forgejo the steps, which `chant ci evidence sign --from-job` reads.
+  const headSha = str(j.head_sha) ?? (isObject(j.commit) ? str(j.commit.id) : undefined) ?? (isObject(j.pipeline) ? str(j.pipeline.sha) : undefined);
+  const steps = Array.isArray(j.steps) ? j.steps.map(stepOf).filter(defined) : undefined;
   return {
     id,
     name,
@@ -652,7 +676,19 @@ function jobOf(j: unknown): RunJob | undefined {
     ...(ref ? { ref } : {}),
     ...(typeof j.tag === "boolean" ? { tag: j.tag } : {}),
     ...(url ? { url } : {}),
+    ...(headSha ? { headSha } : {}),
+    ...(steps ? { steps } : {}),
   };
+}
+
+/** A job's step as GitHub or Forgejo answers it (#4926). */
+function stepOf(s: unknown): RunJobStep | undefined {
+  if (!isObject(s)) return undefined;
+  const name = str(s.name);
+  if (!name) return undefined;
+  const number = num(s.number);
+  const conclusion = str(s.conclusion);
+  return { name, ...(number !== undefined ? { number } : {}), status: str(s.status) ?? "", ...(conclusion ? { conclusion } : {}) };
 }
 
 /** GitLab's access levels, by the number its API answers. */

@@ -159,8 +159,19 @@ export function commitAndTree(repo: string, rev: string): { commit: string; tree
   return { commit, tree: git(repo, ["rev-parse", `${commit}^{tree}`]) };
 }
 
-/** The check's statement over `commit`, with the digest of what it said when given. */
-export function checkStatement(input: { commit: string; tree: string; check: string; runner: string; claim?: Buffer | string }): EvidenceStatement {
+/** Where a check's pass was read from (#4926): the forge's run and job ids, and the step whose conclusion said so. */
+export interface CheckSource {
+  run: number;
+  job: number;
+  step?: string;
+}
+
+/**
+ * The check's statement over `commit`, with the digest of what it said when
+ * given, and (#4926) the run, job and step a signer outside the check's job
+ * read its pass from, so a verifier can look them up.
+ */
+export function checkStatement(input: { commit: string; tree: string; check: string; runner: string; claim?: Buffer | string; source?: CheckSource }): EvidenceStatement {
   if (!input.check.trim()) throw new Error("a check's evidence needs the check's name");
   return {
     _type: STATEMENT_TYPE,
@@ -172,6 +183,7 @@ export function checkStatement(input: { commit: string; tree: string; check: str
       tree: input.tree,
       check: input.check,
       ...(input.claim !== undefined ? { claim: { sha256: createHash("sha256").update(input.claim).digest("hex") } } : {}),
+      ...(input.source ? { source: { run: input.source.run, job: input.source.job, ...(input.source.step ? { step: input.source.step } : {}) } } : {}),
     },
   };
 }
@@ -186,11 +198,11 @@ export interface SignedCheck {
 }
 
 /** Sign each of `checks` over `at` with `signer`. Writes nothing. */
-export async function signChecks(repo: string, at: string, checks: readonly { check: string; claim?: Buffer | string }[], signer: EvidenceSigner): Promise<SignedCheck[]> {
+export async function signChecks(repo: string, at: string, checks: readonly { check: string; claim?: Buffer | string; source?: CheckSource }[], signer: EvidenceSigner): Promise<SignedCheck[]> {
   const { commit, tree } = commitAndTree(repo, at);
   const out: SignedCheck[] = [];
-  for (const { check, claim } of checks) {
-    const statement = checkStatement({ commit, tree, check, runner: signer.principal, ...(claim !== undefined ? { claim } : {}) });
+  for (const { check, claim, source } of checks) {
+    const statement = checkStatement({ commit, tree, check, runner: signer.principal, ...(claim !== undefined ? { claim } : {}), ...(source ? { source } : {}) });
     out.push({ check, commit, tree, runner: signer.principal, envelope: await signer.sign(IN_TOTO_PAYLOAD_TYPE, Buffer.from(canonicalJson(statement), "utf8")) });
   }
   return out;

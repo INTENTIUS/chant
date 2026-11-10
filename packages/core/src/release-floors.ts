@@ -112,6 +112,9 @@ export const LOCAL_EVIDENCE_FLOOR = "0.124.86";
 /** The first chant that signs runner statements keyless from the CI job's OIDC identity and verifies them against `keyless` in `.chant/trust.json`, with `evidence.identity: "oidc"` in the generators (#4869). */
 export const KEYLESS_EVIDENCE_FLOOR = "0.124.87";
 
+/** The first chant whose waves generators run each wave's policy as a step of its own (`chant run wave --policy-only`; on GitLab a `<wave job>-policy` job) and sign its checks in a `<wave job>-evidence` job with `chant ci evidence sign --from-job`, from the forge's record of the wave job's steps, so a wave that trades cloud credentials signs keyless with `evidence.identity: "oidc"` instead of being refused (#4926). */
+export const WAVE_EVIDENCE_JOB_FLOOR = NEXT_RELEASE;
+
 /** The first chant whose cloud login leaves the region to the job unless the spec names one, takes `sameStep` to export into the step that runs it, accepts an AWS spec with no role (the token file alone), and whose trade sets `CHANT_CLOUD_TRADED` so a login's targets file is told from a trade's (#4930). */
 export const CLOUD_LOGIN_SAME_STEP_FLOOR = NEXT_RELEASE;
 

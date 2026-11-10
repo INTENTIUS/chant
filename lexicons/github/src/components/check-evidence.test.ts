@@ -53,9 +53,11 @@ describe("check evidence in generated pipelines on github (#4870)", () => {
     expect(yaml).not.toContain("CHANT_RUNNER_KEY");
   });
 
-  test("#4869: keyless on a wave that trades cloud credentials is refused, since its later steps may request no token", () => {
+  test("#4926: keyless on a wave that trades cloud credentials renders an evidence job in place of the refusal", () => {
     const cloudy: OpWavesSpec = { ...spec, waves: [{ ...spec.waves[0]!, cloud: { aws: { role: "arn:aws:iam::123456789012:role/plan", region: "us-east-1", audience: "sts.amazonaws.com" } } }] };
-    expect(() => generateGithubOpWavesPipeline(cloudy, { ...waves, evidence: { identity: "oidc" } })).toThrow(/trades cloud credentials/);
+    const yaml = generateGithubOpWavesPipeline(cloudy, { ...waves, evidence: { identity: "oidc" } }).files[0]!.yaml;
+    expect(yaml).toContain("wave-1-dev-evidence:");
+    expect(yaml).toContain("ci evidence sign --from-job wave-1-dev --check-id plan:dev");
     expect(() => generateProductPlanPipeline("default", { ...plan, evidence: { identity: "oidc", runnerKeySecret: "K" } })).toThrow(/one of them/);
   });
 });

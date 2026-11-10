@@ -334,6 +334,8 @@ export interface ParsedArgs {
   wave?: number;
   /** `chant run wave --decide` (#3679) — plan a wide wave and decide its gate, applying nothing. */
   decide?: boolean;
+  /** `chant run wave --policy-only` (#4926) — plan the wave and run its policy hold, applying nothing: the wave job's policy step. */
+  policyOnly?: boolean;
   /** `chant run wave --record-plans` (#3684) — plan every wave at a pull request's head and record the digests for a `pr-review` gate. */
   recordPlans?: boolean;
   /** `chant run wave --approval-status` (#4630) — post `<product>/approval` on an open pull request's head under `pr-review` or `pull-request`. */
@@ -375,6 +377,10 @@ export interface ParsedArgs {
   lockStage?: string;
   /** `chant lock --from-report <file>` (#4293): lock the components a `pr-plan.json` lists. */
   fromReport?: string;
+  /** `chant ci evidence sign --from-job <job>` (#4926): sign the checks whose steps in that job of this run passed. */
+  fromJob?: string;
+  /** `chant ci evidence sign --from-job <job> --claims <dir>` (#4926): the directory of the checks' claim files. */
+  claims?: string;
   /** `chant lock --alive <run>` (#4552): print `alive` or `dead` for a run that holds rows or the repo lock tag. */
   aliveRun?: string;
   /** `chant lock --beat <run>` (#4660): the heartbeat side process of the rows a run holds. Not for people. */

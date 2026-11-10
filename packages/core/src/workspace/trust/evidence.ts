@@ -81,6 +81,11 @@ export const evidenceStatementSchema = z
         check: z.string().min(1),
         claim: z.object({ sha256: sha256Hex }).strict().optional(),
         environment: z.object({ sha256: sha256Hex }).strict().optional(),
+        // #4926: the forge's record the signer relied on: the run, the job, and the step whose conclusion it read.
+        source: z
+          .object({ run: z.number().int().nonnegative(), job: z.number().int().nonnegative(), step: z.string().min(1).optional() })
+          .strict()
+          .optional(),
       })
       .strict(),
   })

@@ -88,6 +88,10 @@ async function runOpWaveJobCommand(ctx: CommandContext): Promise<number> {
     console.error(formatError({ message: `--decide and --${args.share !== undefined ? "share" : "group"} are two different jobs; pass one` }));
     return 1;
   }
+  if (args.policyOnly && (args.share !== undefined || args.group !== undefined)) {
+    console.error(formatError({ message: `--policy-only runs a wave's policy in its own or its deciding job; a --${args.share !== undefined ? "share" : "group"} job has none of its own` }));
+    return 1;
+  }
   let spec: OpWavesSpec | undefined;
   const job = { ...(args.share !== undefined ? { share: args.share } : {}), ...(args.group !== undefined ? { group: args.group } : {}) };
   if (args.eventsJson && args.json) {
@@ -113,11 +117,14 @@ async function runOpWaveJobCommand(ctx: CommandContext): Promise<number> {
       specFile: relative(process.cwd(), path),
       wave: args.wave,
       ...(args.decide ? { decide: true } : {}),
+      ...(args.policyOnly ? { policyOnly: true } : {}),
       ...(args.share !== undefined ? { share: args.share } : {}),
       ...(args.group !== undefined ? { group: args.group } : {}),
       ...(args.base ? { base: args.base } : {}),
     });
     if (args.json) console.log(JSON.stringify(result, null, 2));
+    // #4926: the policy step applied nothing; the wave's own step tells people how it went.
+    if (args.policyOnly) return result.exitCode;
     // #3761: tell people, when the spec says where. Delivery never changes the exit code.
     await notifyOpWave(spec, args.wave, { result }, job);
     // #4629: a refused wave's diff and a failed apply's triage, on the pull request or a tracking issue.

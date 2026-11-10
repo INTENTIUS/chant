@@ -105,6 +105,7 @@ const BOOLEAN_FLAGS = new Set([
   "--root-only",
   "--generated",
   "--decide",
+  "--policy-only",
   "--record-plans",
   "--approval-status",
   "--waves-outcome",
@@ -486,6 +487,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.wave = wave;
     } else if (arg === "--decide") {
       result.decide = true;
+    } else if (arg === "--policy-only") {
+      // `chant run wave --policy-only` (#4926): plan the wave and run its policy hold, as a step of its own.
+      result.policyOnly = true;
     } else if (arg === "--record-plans") {
       result.recordPlans = true;
     } else if (arg === "--approval-status") {
@@ -573,6 +577,12 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant lock --from-report <pr-plan.json>` (#4293): lock the components a pull-request report lists.
       result.fromReport = args[++i];
       if (!result.fromReport || result.fromReport.startsWith("-")) throw new Error("--from-report needs a report file: --from-report <pr-plan.json>");
+    } else if (arg === "--from-job" || arg === "--claims") {
+      // `chant ci evidence sign --from-job <job> [--claims <dir>]` (#4926): sign from another job's step results.
+      const value = args[++i];
+      if (value === undefined || value.startsWith("-")) throw new Error(arg === "--from-job" ? "--from-job needs the job's name: --from-job <job>" : "--claims needs a directory: --claims <dir>");
+      if (arg === "--from-job") result.fromJob = value;
+      else result.claims = value;
     } else if (arg === "--report-url") {
       // `chant components pr-plan|pr-apply --report-url <url>` (#4007).
       const url = args[++i];
