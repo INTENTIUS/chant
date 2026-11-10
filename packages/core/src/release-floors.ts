@@ -91,6 +91,9 @@ export const SCHEDULED_RUNS_SELECTOR_FLOOR = "0.124.78";
 /** The first chant whose Op waves pipeline takes `waveJobs` and `recordPlans`, a product's login, report, artifact and plans-job inputs, so it edits nothing chant wrote (#4791). */
 export const OP_WAVES_JOB_INPUTS_FLOOR = NEXT_RELEASE;
 
+/** The first chant with `@intentius/chant/floor-table` (`FLOOR_TABLE`, `floorVersion`, `chantMeets`), every floor as one table, and `chant dev dead-guards` with `@intentius/chant/dead-guards` (`findDeadGuards`), which fails on a feature-detect the product's chant pin meets (#4792). */
+export const FLOOR_TABLE_FLOOR = NEXT_RELEASE;
+
 /** The first chant with `@intentius/chant/ci-login`: `githubCloudLogin`, `gitlabCloudLogin` and `forgejoCloudLogin` render a job's AWS, GCP and Azure login from the OIDC token file, per target too (#4788). */
 export const CLOUD_LOGIN_FLOOR = NEXT_RELEASE;
 

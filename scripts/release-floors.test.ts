@@ -196,6 +196,8 @@ describe("release floors --freeze, scoped to the release commit (#4540)", () => 
       const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", ...args], { cwd: repo, encoding: "utf-8" });
       git("init", "-q");
       write("scripts/release-floors.ts", readFileSync(join(root, "scripts/release-floors.ts"), "utf8"));
+      write("scripts/floor-table.ts", readFileSync(join(root, "scripts/floor-table.ts"), "utf8"));
+      write("packages/core/package.json", JSON.stringify({ exports: { "./*": "./src/*.ts" } }));
       write("packages/core/src/release-floors.ts", 'export const NEXT_RELEASE = "0.124.54";\n');
       write("packages/core/src/a.ts", 'import { NEXT_RELEASE } from "./release-floors";\nexport const SHIPPED_FLOOR = NEXT_RELEASE;\n');
       git("add", "-A");
@@ -210,6 +212,10 @@ describe("release floors --freeze, scoped to the release commit (#4540)", () => 
       expect(readFileSync(join(repo, "packages/core/src/a.ts"), "utf8")).toBe('export const SHIPPED_FLOOR = "0.124.54";\n');
       expect(readFileSync(join(repo, "packages/core/src/b.ts"), "utf8")).toContain("export const LATER_FLOOR = NEXT_RELEASE;");
       expect(readFileSync(join(repo, "packages/core/src/release-floors.ts"), "utf8")).toBe('export const NEXT_RELEASE = "0.124.55";\n');
+      // #4792: the floor table takes the frozen literal and keeps the later floor on the constant.
+      const table = readFileSync(join(repo, "packages/core/src/floor-table.data.ts"), "utf8");
+      expect(table).toContain('{ name: "SHIPPED_FLOOR", version: "0.124.54",');
+      expect(table).toContain('{ name: "LATER_FLOOR", version: NEXT_RELEASE,');
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }
@@ -221,6 +227,7 @@ describe("release floors --freeze, scoped to the release commit (#4540)", () => 
       mkdirSync(join(repo, "scripts"), { recursive: true });
       mkdirSync(join(repo, "packages/core/src"), { recursive: true });
       writeFileSync(join(repo, "scripts/release-floors.ts"), readFileSync(join(root, "scripts/release-floors.ts"), "utf8"));
+      writeFileSync(join(repo, "scripts/floor-table.ts"), readFileSync(join(root, "scripts/floor-table.ts"), "utf8"));
       writeFileSync(join(repo, "packages/core/src/release-floors.ts"), 'export const NEXT_RELEASE = "0.124.54";\n');
       execFileSync("git", ["init", "-q"], { cwd: repo });
       const tsx = join(root, "node_modules", ".bin", "tsx");

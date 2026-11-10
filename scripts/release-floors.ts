@@ -61,11 +61,17 @@
  * `toBe(NEXT_RELEASE)` and names a frozen floor, and, when a floor file
  * dropped its import, a bundle test whose expected module list names
  * packages/core/src/release-floors.ts.
+ *
+ * The check also fails while packages/core/src/floor-table.data.ts, the
+ * table of every floor a product reads (#4792), is not what
+ * scripts/floor-table.ts writes from the floors, and `--freeze` writes it
+ * again once the floors are literals.
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { TABLE_FILE, tableAgainst, writeTable } from "./floor-table";
 
 const ROOT = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" }).trim();
 const CONSTANT_FILE = "packages/core/src/release-floors.ts";
@@ -341,6 +347,8 @@ function freeze(version: string, next: string | undefined, rev: string | undefin
   const self = "scripts/release-floors.ts";
   writeFileSync(join(ROOT, self), freezeTextList(read(self), kept));
   writeFileSync(join(ROOT, CONSTANT_FILE), read(CONSTANT_FILE).replace(CONSTANT_RE, `export const NEXT_RELEASE = "${to}";`));
+  // #4792: the table's rows for the frozen floors take the literal too.
+  if (writeTable(ROOT)) console.log(`wrote ${TABLE_FILE}`);
   console.log(`froze ${shipped.length} floors at ${version} (release commit ${at.slice(0, 12)}) in ${frozen} files, NEXT_RELEASE ${version} -> ${to}`);
   if (keep.length > 0) console.log(`left on NEXT_RELEASE, merged after ${version}'s commit: ${keep.join(", ")}${byFile.size > 0 ? `; their texts moved to ${to} in ${byFile.size} files` : ""}`);
   const tests = git(["ls-files", "--", "*.test.ts"])
@@ -387,6 +395,9 @@ function check(args: Args): number {
   const named = [{ name: "NEXT_RELEASE", file: CONSTANT_FILE, version: next }, ...floors(read, args.rev, next)];
   problems.push(...unreleasedFloors(named, allowed, args.npm));
   problems.push(...shippedSymbolic(next, named, known, stamp));
+  // #4792: the floor table a product reads lists every floor, at its version.
+  const table = tableAgainst(ROOT, args.rev);
+  if (table.want !== table.have) problems.push(`${TABLE_FILE}: ${table.have === undefined ? "missing" : "does not list every floor at its version"}; run \`npx tsx scripts/floor-table.ts\``);
 
   const where = args.rev ? `at ${args.rev}` : "in the working tree";
   if (problems.length > 0) {
