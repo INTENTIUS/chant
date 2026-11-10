@@ -74,7 +74,9 @@ import {
 import { forgePrEnvPublisher, lifecyclePrEnvPorts } from "../../components/pr-env-ports";
 import { applyPrSet, type PrPlanSet } from "../../components/pr-run";
 import { prOp } from "../../pr-loop";
-import { FORGE_KINDS, forgeFromEnv, forgePrincipalOf, type ForgeKind, type PrForge } from "../../pr-forge";
+import { FORGE_KINDS, forgePrincipalOf, type ForgeKind, type PrForge } from "../../pr-forge";
+// #4964: a status for a pull_request run's merge preview goes on the pull request's head.
+import { forgeFromJobEnv } from "../../pr-forge-job";
 import { formatError, formatInfo, formatWarning } from "../format";
 import { withComponentEndpoint } from "../component-endpoint";
 import type { CommandContext } from "../registry";
@@ -103,7 +105,7 @@ function forgeOf(ctx: CommandContext): PrForge | undefined | number {
   if (kind === undefined || ctx.args.noStatus) return undefined;
   if (!(FORGE_KINDS as readonly string[]).includes(kind)) return fail(`--forge ${kind} is not one of ${FORGE_KINDS.join(", ")}`);
   try {
-    return forgeFromEnv(kind as ForgeKind);
+    return forgeFromJobEnv(kind as ForgeKind);
   } catch (err) {
     return fail(err instanceof Error ? err.message : String(err));
   }

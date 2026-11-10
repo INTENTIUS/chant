@@ -53,7 +53,9 @@ import { CHANT_EXIT } from "../../exit-codes";
 import { resolve } from "node:path";
 import type { CommandContext } from "../registry";
 import { formatError, formatInfo, formatSuccess, formatWarning } from "../format";
-import { FORGE_KINDS, forgeFromEnv, type ForgeKind, type PrForge } from "../../pr-forge";
+import { FORGE_KINDS, type ForgeKind, type PrForge } from "../../pr-forge";
+// #4964: a status for a pull_request run's merge preview goes on the pull request's head.
+import { forgeFromJobEnv } from "../../pr-forge-job";
 import { PR_APPLY_GATE } from "../../pr-loop";
 import { actorFromEnv } from "../../actor";
 import {
@@ -94,7 +96,7 @@ function forgeOf(ctx: CommandContext): PrForge | undefined | { error: string } {
   if (kind === undefined) return undefined;
   if (!(FORGE_KINDS as readonly string[]).includes(kind)) return { error: `--forge ${kind} is not one of ${FORGE_KINDS.join(", ")}` };
   try {
-    return forgeFromEnv(kind as ForgeKind);
+    return forgeFromJobEnv(kind as ForgeKind);
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) };
   }

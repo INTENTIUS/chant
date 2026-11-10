@@ -120,6 +120,11 @@ describe("the plan job's two checks (#4870)", () => {
     expect(planReportChecks(dir(handoff([{ member: "a", rules: ["r"], overriders: [] }])), "success").sign.map((c) => c.check)).toEqual(["plan"]);
   });
 
+  test("a workspace member's plan job signs its checks under the member's name (#4964)", () => {
+    expect(planReportChecks(dir({ "pr-plan.json": { policy: { result: "passed" } } }), "success", "app").sign.map((c) => c.check)).toEqual(["plan:app", "policy:app"]);
+    expect(planReportChecks(dir({ "pr-plan.json": {} }), "failure", "app").skipped.map((s) => s.check)).toEqual(["plan:app", "policy:app"]);
+  });
+
   test("a failed plan job signs neither, and the note line says which were signed", () => {
     const failed = planReportChecks(dir({ "pr-plan.json": { policy: { result: "passed" } } }), "failure");
     expect(failed.sign).toEqual([]);

@@ -33,7 +33,15 @@
  *
  * The commit is the one the plan job checked out and every other status of
  * the loop names: `github.sha` on GitHub and Forgejo, `CI_COMMIT_SHA` in a
- * GitLab merge request pipeline.
+ * GitLab merge request pipeline. On a GitHub `pull_request` run that is the
+ * merge preview, and the status goes on the pull request's head, where the
+ * forge shows and requires it (#4964, ../pr-forge-job.ts).
+ *
+ * #4964: a workspace member's pipeline takes all three. The check job runs
+ * in the member's directory, the product's own service containers,
+ * variables, lines and report directory come with `PrCheckJobOptions`, and
+ * a product's own workflow renders the jobs through the lexicons'
+ * `productCheckJobs`.
  */
 
 import type { ForgeKind } from "../pr-forge";
@@ -56,15 +64,50 @@ export const PR_CHECK_REPORT_DIR = ".chant/check";
 /** The artifact the check report is kept as. */
 export const PR_CHECK_ARTIFACT = "chant-pr-check";
 
+/**
+ * A service container the check job starts beside it (#4964), such as a
+ * throwaway database its hooks replay into. The job reaches it by `name`.
+ * GitHub and Forgejo hold the job's steps until `health` passes; GitLab
+ * does not wait, so a check job there waits in its `before` lines.
+ */
+export interface PrCheckService {
+  /** The service's host name on the job's network: lower-case letters, digits, `.`, `_` and `-`. */
+  name: string;
+  image: string;
+  /** The service container's environment. */
+  env?: Record<string, string>;
+  /** A command the forge runs in the service container until it passes (GitHub's and Forgejo's `--health-cmd`). */
+  health?: string;
+}
+
+/**
+ * The check job's own settings (#4964), as a product passes them in
+ * `checkJob: { ... }`. `true` is all of them left out.
+ */
+export interface PrCheckJobOptions {
+  /** Service containers beside the job. */
+  services?: PrCheckService[];
+  /** Variables of the check step, such as a service's URL. No forge token, runner key or `BASE_SHA`. */
+  env?: Record<string, string>;
+  /** Lines the check step runs before `chant ci check`, after the tokens are dropped, such as a wait for a service. */
+  before?: string[];
+  /** The report directory, repository-relative from the job's directory: `chant ci check --output <dir>`. Default `.chant/check`. */
+  dir?: string;
+}
+
 /** The check job (#4935): its command and the values it reads. */
 export interface PrCheckJob {
   jobName: string;
-  /** `chant ci check --base "$BASE_SHA"`, through the words' bin. */
+  /** `chant ci check --base "$BASE_SHA"`, through the words' bin, with `--output <dir>` for a directory of the product's own. */
   command: string;
-  /** `BASE_SHA`, as the forge spells it. */
+  /** `BASE_SHA`, as the forge spells it, and the product's own variables (#4964). */
   env: Record<string, string>;
   /** The report directory it writes and hands on. */
   dir: string;
+  /** The service containers beside it (#4964). */
+  services?: PrCheckService[];
+  /** The lines before the command (#4964). */
+  before?: string[];
   /**
    * With `evidence`: the signing job's lines and variables. GitHub and
    * Forgejo run them in `check-evidence` after taking the report back;
@@ -77,16 +120,51 @@ export interface PrCheckJob {
   evidence?: { jobName: string; lines: string[]; env: Record<string, string>; dir?: string; idToken?: true; idTokens?: Record<string, { aud: string }> };
 }
 
-/** The check job for `forge` (#4935), with the check evidence job when `evidence` names a runner identity. */
-export function prCheckJob(forge: ForgeKind, opts: { bin?: string; evidence?: PipelineEvidence; noForks?: boolean } = {}): PrCheckJob {
+/** The variables a check job's own `env` may not set: the ones the job and its handover read, and the credentials it drops. */
+const CHECK_RESERVED_ENV = /^(BASE_SHA|HEAD_SHA|CHECK_RESULT|CHANT_RUNNER_KEY|CHANT_RUNNER_IDENTITY|CHANT_LOCAL_EVIDENCE_KEY|CHANT_CHECKOUT_TOKEN|GITHUB_TOKEN|GH_TOKEN|FORGEJO_TOKEN|GITLAB_TOKEN|CI_JOB_TOKEN|CHANT_FORGE_TOKEN|ACTIONS_ID_TOKEN_REQUEST_(URL|TOKEN))$/;
+
+/** Refuse check job settings no job could hold (#4964). */
+function assertCheckJobOptions(opts: PrCheckJobOptions): void {
+  if (opts.dir !== undefined && (!/^[A-Za-z0-9._][A-Za-z0-9._\/-]*$/.test(opts.dir) || opts.dir.split("/").includes(".."))) {
+    throw new Error(`the check job's report directory ${JSON.stringify(opts.dir)} is not a relative path inside the checkout`);
+  }
+  const names = new Set<string>();
+  for (const s of opts.services ?? []) {
+    if (!/^[a-z0-9][a-z0-9._-]*$/.test(s.name)) throw new Error(`the check job's service name ${JSON.stringify(s.name)} is not a host name: lower-case letters, digits, . _ -`);
+    if (names.has(s.name)) throw new Error(`the check job names service ${s.name} twice`);
+    names.add(s.name);
+    if (!s.image.trim() || /\s/.test(s.image)) throw new Error(`the check job's service ${s.name} needs an image reference`);
+  }
+  for (const name of Object.keys(opts.env ?? {})) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) throw new Error(`the check job's variable ${JSON.stringify(name)} is not a variable name`);
+    if (CHECK_RESERVED_ENV.test(name)) throw new Error(`the check job sets ${name} itself, or drops it before the hooks run, so checkJob.env cannot name it`);
+  }
+}
+
+/**
+ * The check job for `forge` (#4935), with the check evidence job when
+ * `evidence` names a runner identity. #4964: the product's services,
+ * variables, lines and report directory (`PrCheckJobOptions`), and for a
+ * workspace member's GitLab file (`member`) the jobs named
+ * `<member>-check` and `<member>-check-evidence`, with the report read from
+ * the artifact at the member's `reportPath`, as GitLab includes every
+ * member's file in one pipeline. On GitHub and Forgejo a member's workflow
+ * is a file of its own, and the jobs keep their names.
+ */
+export function prCheckJob(forge: ForgeKind, opts: { bin?: string; evidence?: PipelineEvidence; noForks?: boolean; member?: { name: string; reportPath: string } } & PrCheckJobOptions = {}): PrCheckJob {
   assertPipelineEvidence(opts.evidence);
+  assertCheckJobOptions(opts);
   const gitlab = forge === "gitlab";
   const base = gitlab ? "$CI_MERGE_REQUEST_DIFF_BASE_SHA" : "${{ github.event.pull_request.base.sha }}";
+  const dir = opts.dir ?? PR_CHECK_REPORT_DIR;
+  const named = (job: string) => (gitlab && opts.member ? `${opts.member.name}-${job}` : job);
   const job: PrCheckJob = {
-    jobName: PR_CHECK_JOB,
-    command: withProductBin('chant ci check --base "$BASE_SHA"', opts.bin),
-    env: { BASE_SHA: base },
-    dir: PR_CHECK_REPORT_DIR,
+    jobName: named(PR_CHECK_JOB),
+    command: withProductBin(`chant ci check --base "$BASE_SHA"${dir === PR_CHECK_REPORT_DIR ? "" : ` --output ${dir}`}`, opts.bin),
+    env: { BASE_SHA: base, ...opts.env },
+    dir,
+    ...(opts.services?.length ? { services: opts.services } : {}),
+    ...(opts.before?.length ? { before: opts.before } : {}),
   };
   const evidence = opts.evidence;
   if (!evidence) return job;
@@ -95,15 +173,15 @@ export function prCheckJob(forge: ForgeKind, opts: { bin?: string; evidence?: Pi
   if (gitlab) {
     // #4914: the job runs in the target branch's plan notes pipeline and signs every open merge request's
     // settled check job from its artifact; no job of a merge request pipeline holds the key.
-    const dir = gitlabOpenEvidenceDir(PR_CHECK_JOB);
+    const out = gitlabOpenEvidenceDir(job.jobName);
     return {
       ...job,
       evidence: {
-        jobName: PR_CHECK_EVIDENCE_JOB,
+        jobName: named(PR_CHECK_EVIDENCE_JOB),
         // A fork's check job runs too, as it holds nothing; with noForks (a product plan's forks: "skip") its hooks are not signed for.
-        lines: openEvidenceLines({ job: PR_CHECK_JOB, dir: PR_CHECK_REPORT_DIR, out: dir, ...bin, ...(opts.noForks ? { noForks: true } : {}) }),
+        lines: openEvidenceLines({ job: job.jobName, dir: opts.member?.reportPath ?? dir, out, ...bin, ...(opts.noForks ? { noForks: true } : {}) }),
         env: key,
-        dir,
+        dir: out,
         ...(evidenceKeyless(evidence) ? { idTokens: evidenceIdTokens(evidence) } : {}),
       },
     };
@@ -112,7 +190,7 @@ export function prCheckJob(forge: ForgeKind, opts: { bin?: string; evidence?: Pi
     ...job,
     evidence: {
       jobName: PR_CHECK_EVIDENCE_JOB,
-      lines: planEvidenceLines({ dir: PR_CHECK_REPORT_DIR, at: '"$HEAD_SHA"', base: '"$BASE_SHA"', result: '"$CHECK_RESULT"', ...bin }),
+      lines: planEvidenceLines({ dir, at: '"$HEAD_SHA"', base: '"$BASE_SHA"', result: '"$CHECK_RESULT"', ...bin }),
       env: { HEAD_SHA: "${{ github.sha }}", BASE_SHA: base, CHECK_RESULT: `\${{ needs.${PR_CHECK_JOB}.result }}`, ...key },
       ...(evidenceKeyless(evidence) ? { idToken: true as const } : {}),
     },
@@ -134,12 +212,19 @@ export interface PrRefGateJob {
  * The ref gate's status job for `forge` (#4935). `branch` is the target
  * branch on GitHub and Forgejo (default `main`); GitLab's job runs in a
  * pipeline of the target branch and names it from `CI_COMMIT_BRANCH`.
+ *
+ * #4964: in a workspace member's GitLab file (`member`) the job is
+ * `<member>-ref-gate`. Each member's pipeline decides the whole update
+ * against the one rule and sets the one status, so the last job to run
+ * after the evidence it needs is in sets success; one that ran before
+ * another member's evidence was in set failure, and a re-run settles it.
+ * None sets success while a required check lacks evidence.
  */
-export function prRefGateJob(forge: ForgeKind, opts: { bin?: string; branch?: string } = {}): PrRefGateJob {
+export function prRefGateJob(forge: ForgeKind, opts: { bin?: string; branch?: string; member?: string } = {}): PrRefGateJob {
   const notes = "'+refs/notes/chant/evidence:refs/notes/chant/evidence'";
   if (forge === "gitlab") {
     return {
-      jobName: PR_REF_GATE_JOB,
+      jobName: opts.member ? `${opts.member}-${PR_REF_GATE_JOB}` : PR_REF_GATE_JOB,
       // The heads are fetched by the command, one merge request at a time.
       setup: [`git fetch --quiet --no-tags origin ${notes} || true`],
       command: withProductBin('chant workspace ref-gate status --open --ref "refs/heads/$CI_COMMIT_BRANCH" --base "$CI_COMMIT_SHA"', opts.bin),
@@ -156,4 +241,4 @@ export function prRefGateJob(forge: ForgeKind, opts: { bin?: string; branch?: st
   };
 }
 
-export { CHECK_JOB_FLOOR, GITLAB_OPEN_EVIDENCE_FLOOR, PR_LOOP_EVIDENCE_FLOOR, REF_GATE_STATUS_JOB_FLOOR } from "../release-floors";
+export { CHECK_JOB_FLOOR, GITLAB_OPEN_EVIDENCE_FLOOR, MEMBER_SIGNED_CHECKS_FLOOR, PR_LOOP_EVIDENCE_FLOOR, PRODUCT_CHECK_JOBS_FLOOR, REF_GATE_STATUS_JOB_FLOOR } from "../release-floors";

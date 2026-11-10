@@ -15,7 +15,11 @@
  *   policy, and `plan:<wave>` too when the wave trades cloud credentials and
  *   signs keyless, since after the trade no step of the wave job may request
  *   the signing token (#4869).
- * - signs `plan:<wave>` in its command step otherwise, as before (#4870).
+ * - signs `plan:<wave>` in its command step otherwise, as before (#4870),
+ *   except on GitLab with a runner key (#4964): a wave job names its own
+ *   deploy environment, so it cannot name the `chant-evidence` one the
+ *   key's variable is scoped to, and the evidence job, which does, signs
+ *   `plan:<wave>` from the wave job's status and claim file.
  *
  * A wave with no policy and no keyless cloud trade renders as before.
  * A later wave whose `evidence.requires` names a check an earlier wave's
@@ -51,15 +55,17 @@ export interface OpWaveEvidencePlan {
  * pipeline). `keylessCloud` is whether the job signs keyless and trades
  * cloud credentials.
  */
-export function opWaveEvidencePlan(spec: Pick<OpWavesSpec, "holds" | "waves">, job: Pick<OpWaveJob, "kind" | "jobName" | "wave">, opts: { signs: boolean; keylessCloud: boolean }): OpWaveEvidencePlan | undefined {
+export function opWaveEvidencePlan(spec: Pick<OpWavesSpec, "holds" | "waves">, job: Pick<OpWaveJob, "kind" | "jobName" | "wave">, opts: { signs: boolean; keylessCloud: boolean; keyOutOfWave?: boolean }): OpWaveEvidencePlan | undefined {
   if (!opts.signs || (job.kind !== "wave" && job.kind !== "decide")) return undefined;
   const name = spec.waves[job.wave - 1]!.name;
   const plan = `plan:${name}`;
   const policy = `policy:${name}`;
   const policyStep = spec.holds?.policy === true;
-  const checks = [...(opts.keylessCloud ? [plan] : []), ...(policyStep ? [policy] : [])];
+  // #4964: with `keyOutOfWave` (GitLab with a runner key) the wave job holds no key, so its evidence job signs the plan too.
+  const inJob = opts.keylessCloud || opts.keyOutOfWave === true;
+  const checks = [...(inJob ? [plan] : []), ...(policyStep ? [policy] : [])];
   if (checks.length === 0) return { plan, policy, policyStep, commandSigns: true };
-  return { plan, policy, policyStep, commandMode: opts.keylessCloud ? "job" : "plan", commandSigns: !opts.keylessCloud, evidenceJob: { name: `${job.jobName}-evidence`, checks } };
+  return { plan, policy, policyStep, commandMode: inJob ? "job" : "plan", commandSigns: !inJob, evidenceJob: { name: `${job.jobName}-evidence`, checks } };
 }
 
 /** The GitLab job a wave's policy runs in (#4926). */

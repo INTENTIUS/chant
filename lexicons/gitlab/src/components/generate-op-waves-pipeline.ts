@@ -126,7 +126,7 @@ import { gitlabTradeIdTokens, gitlabTradeLines, TRADE_SPEC_ENV } from "@intentiu
 import { JOB_GUARD_ENV, jobGuardLine, jobGuardSpec, opWaveJobLabel } from "@intentius/chant/ci-job-guard";
 import { CHANT_EXIT } from "@intentius/chant/exit-codes";
 import { resolveProductWords } from "@intentius/chant/ci-product-words";
-import { assertPipelineEvidence, evidenceIdTokens, evidenceKeyEnv, evidenceKeyless } from "@intentius/chant/ci-evidence-jobs";
+import { assertPipelineEvidence, evidenceIdTokens, evidenceKeyEnv, evidenceKeyless, GITLAB_EVIDENCE_ENVIRONMENT } from "@intentius/chant/ci-evidence-jobs";
 import {
   EVIDENCE_SOURCES_ENV,
   opWaveEvidenceLines,
@@ -221,7 +221,8 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
   const evidenceOf = (job: (typeof jobs)[number]) => {
     const cloud = opWaveGroupOf(spec, job)?.cloud ?? spec.waves[job.wave - 1]!.cloud;
     const signs = options.evidence !== undefined && (job.kind === "wave" || job.kind === "decide");
-    return opWaveEvidencePlan(spec, job, { signs, keylessCloud: signs && evidenceKeyless(options.evidence) && cloud !== undefined });
+    // #4964: with a runner key, no wave job holds it; each wave's evidence job, in the chant-evidence environment, signs.
+    return opWaveEvidencePlan(spec, job, { signs, keylessCloud: signs && evidenceKeyless(options.evidence) && cloud !== undefined, keyOutOfWave: signs && !evidenceKeyless(options.evidence) });
   };
   const evidenceNeeds = opWaveEvidenceNeeds(spec, jobs.map((job) => ({ wave: job.wave, plan: evidenceOf(job) })));
   for (const job of jobs) {
@@ -332,6 +333,8 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
           stage,
           image,
           ...(specTags ? { tags: specTags } : {}),
+          // #4964: the runner key's variable is scoped to this environment and protected, so no wave job is handed it.
+          ...(evidenceKeyless(options.evidence) ? {} : { environment: { name: GITLAB_EVIDENCE_ENVIRONMENT, action: "access" } }),
           ...(Object.keys(signingTokens).length > 0 ? { id_tokens: signingTokens } : {}),
           variables: { ...GITLAB_FULL_HISTORY, [EVIDENCE_SOURCES_ENV]: JSON.stringify(opWaveEvidenceSources("gitlab", evidence, job, wave.name, "")), ...evidenceKeyEnv("gitlab", options.evidence!) },
           rules,

@@ -14,7 +14,9 @@
  *   `<dir>`, and `policy` when the policy evaluated inside that plan did not
  *   deny it (a `pr-plan.json`'s `policy`, a plan note hand-off's overrides).
  *   It writes `evidence.json` in `<dir>`, which `pr-post` reads to say in the
- *   note which checks were signed.
+ *   note which checks were signed. With `--member <name>` (#4964), a
+ *   workspace member's plan report, the two are `plan:<name>` and
+ *   `policy:<name>`.
  * - `sign --from-report <dir>` on a check job's report (#4935), a
  *   `check-hooks.json` from `chant ci check`, is the `check-evidence` job's
  *   form: it signs each hook that passed, by name, with the runs as its
@@ -68,8 +70,8 @@ import {
 import { CHECK_EVIDENCE_FILE, LOCAL_EVIDENCE_KEY_ENV, planReportChecks, type CheckEvidenceNote } from "../../workspace/trust/check-evidence-report";
 
 const USAGE =
-  "chant ci evidence sign (--check-id <id>[,<id>...] | --from-report <dir> --result <result>) [--at <rev>] [--base <rev>] [--key <file>] [--claim <file>] [--no-push] [--json]\n" +
-  "  chant ci evidence sign --open --job <job> --from-report <dir> -o <out> [--branch <branch>] [--base <rev>] [--key <file>] [--no-push] [--json]\n" +
+  "chant ci evidence sign (--check-id <id>[,<id>...] | --from-report <dir> [--member <name>] --result <result>) [--at <rev>] [--base <rev>] [--key <file>] [--claim <file>] [--no-push] [--json]\n" +
+  "  chant ci evidence sign --open --job <job> --from-report <dir> [--member <name>] -o <out> [--branch <branch>] [--base <rev>] [--key <file>] [--no-push] [--json]\n" +
   "  chant ci evidence sign --from-job <job> --check-id <id>[,<id>...] [--claims <dir>] [--at <rev>] [--base <rev>] [--key <file>] [--no-push] [--json]\n" +
   "  chant ci evidence sign --local --check-id <id>[,<id>...] [--at <rev>] [--base <rev>] [--key <file>] [--claim <file>] [--no-push] [--json]\n" +
   "  chant ci evidence verify [--local] --check-id <id>[,<id>...] [--at <rev>] [--base <rev>] [--json]";
@@ -170,17 +172,31 @@ async function sign(ctx: CommandContext, repo: string, base: string, at: string)
   if (args.fromJob) return signFromJobCommand(ctx, repo, base);
   const fromReport = args.fromReport;
   if (!fromReport && idsOf(args.checkId).length === 0) return usage("sign needs --check-id <id>, or --from-report <dir> in a plan note job");
+  const member = memberOf(args.members, Boolean(fromReport));
+  if (typeof member === "object") return usage(member.usage);
   const pem = args.key ? readFileSync(args.key, "utf-8") : process.env[CHECK_EVIDENCE_KEY_ENV];
   let wanted: Array<{ check: string; claim?: Buffer | string }> | undefined;
   if (!fromReport) {
     const claim = args.claim ? readFileSync(args.claim) : undefined;
     wanted = idsOf(args.checkId).map((check) => ({ check, ...(claim ? { claim } : {}) }));
   }
-  const done = await signChecksOf(repo, base, at, { ...(fromReport ? { fromReport } : {}), ...(wanted ? { wanted } : {}), ...(args.planResult ? { result: args.planResult } : {}), pem, push: !args.noPush });
+  const done = await signChecksOf(repo, base, at, { ...(fromReport ? { fromReport } : {}), ...(wanted ? { wanted } : {}), ...(args.planResult ? { result: args.planResult } : {}), ...(member ? { member } : {}), pem, push: !args.noPush });
   if ("usage" in done) return usage(done.usage);
   if (fromReport) writeFileSync(join(fromReport, CHECK_EVIDENCE_FILE), JSON.stringify(done.note, null, 2) + "\n");
   if (args.json) console.log(JSON.stringify(done.note, null, 2));
   return done.code;
+}
+
+/**
+ * `--member <name>` (#4964): the workspace member whose plan report this is,
+ * so `plan` and `policy` are signed as `plan:<name>` and `policy:<name>`.
+ * One name, and only with a plan report.
+ */
+function memberOf(members: string[] | undefined, fromReport: boolean): string | undefined | { usage: string } {
+  if (!members || members.length === 0) return undefined;
+  if (!fromReport) return { usage: "--member names the member whose plan report --from-report signs; --check-id names its checks in full" };
+  if (members.length > 1 || !/^[a-z0-9][a-z0-9-]*$/.test(members[0]!)) return { usage: `--member takes one member name, lower-case letters, digits and -, not ${members.join(",")}` };
+  return members[0];
 }
 
 /**
@@ -194,20 +210,21 @@ async function signChecksOf(
   repo: string,
   base: string,
   at: string,
-  opts: { fromReport?: string; wanted?: Array<{ check: string; claim?: Buffer | string }>; result?: string; pem?: string; push: boolean; skipCurrent?: boolean },
+  opts: { fromReport?: string; wanted?: Array<{ check: string; claim?: Buffer | string }>; result?: string; member?: string; pem?: string; push: boolean; skipCurrent?: boolean },
 ): Promise<{ note: CheckEvidenceNote; code: number } | { usage: string }> {
   const { fromReport, pem } = opts;
   const identity = pem !== undefined && pem !== "" ? "key" : process.env[RUNNER_IDENTITY_ENV] ? "oidc" : undefined;
   const note: CheckEvidenceNote = { signed: [], skipped: [] };
   let wanted: Array<{ check: string; claim?: Buffer | string }>;
   if (fromReport && isCheckReportDir(fromReport)) {
-    // #4935: a check job's report, each passed hook signed by name.
+    // #4935: a check job's report, each passed hook signed by name; #4964: a hook is the workspace's or the member's by its own name.
+    if (opts.member) return { usage: `--member names a plan report's member, and ${fromReport} is a check job's report, whose hooks are signed by their own names` };
     const decided = await checkReportChecks(fromReport, opts.result);
     if ("error" in decided) return { usage: decided.error };
     wanted = decided.sign;
     note.skipped.push(...decided.skipped);
   } else if (fromReport) {
-    const decided = planReportChecks(fromReport, opts.result);
+    const decided = planReportChecks(fromReport, opts.result, opts.member);
     wanted = decided.sign;
     note.skipped.push(...decided.skipped);
   } else {
@@ -268,6 +285,8 @@ async function signOpen(ctx: CommandContext, repo: string, base: string): Promis
   if (!args.fromReport) return usage("sign --open needs the job's report directory as its artifact keeps it: --from-report .chant/pr");
   if (!args.output) return usage("sign --open needs where to keep each merge request's evidence.json: -o .chant/evidence/<job>");
   if (args.checkId || args.at || args.planResult) return usage("sign --open finds each merge request's head and its job's result itself, so it takes no --check-id, --at or --result");
+  const member = memberOf(args.members, true);
+  if (typeof member === "object") return usage(member.usage);
   const branch = args.branch ?? process.env.CI_COMMIT_BRANCH;
   if (!branch) return usage("sign --open signs for the merge requests into a branch: run it in a branch pipeline, or pass --branch <branch>");
   const pem = args.key ? readFileSync(args.key, "utf-8") : process.env[CHECK_EVIDENCE_KEY_ENV];
@@ -287,7 +306,7 @@ async function signOpen(ctx: CommandContext, repo: string, base: string): Promis
       ...(args.noForks ? { noForks: true } : {}),
       fetchHead: (pr, head) => fetchMergeRequestHead(repo, pr, head),
       sign: async (dir, head, result) => {
-        const r = await signChecksOf(repo, base, head, { fromReport: dir, result, ...(pem ? { pem } : {}), push: !args.noPush, skipCurrent: true });
+        const r = await signChecksOf(repo, base, head, { fromReport: dir, result, ...(member ? { member } : {}), ...(pem ? { pem } : {}), push: !args.noPush, skipCurrent: true });
         if ("usage" in r) throw new Error(r.usage);
         if (r.code !== CHANT_EXIT.done) failed = true;
         return r.note;

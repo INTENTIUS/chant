@@ -102,6 +102,7 @@ import { CHANT_EXIT } from "../exit-codes";
 import type { ControlTarget } from "../control/dispatch";
 import { CI_RESPOND_ENV, respondList, type CiResponses } from "../ci-respond";
 import type { PipelineEvidence } from "../ci-evidence-jobs";
+import type { PrCheckJobOptions } from "./pr-checks";
 
 /** The variable `chant ci run` reads its runner key from (`RUNNER_KEY_ENV` in ../workspace/ci-green.ts). */
 const RUNNER_KEY_ENV = "CHANT_RUNNER_KEY";
@@ -401,35 +402,36 @@ export interface PrLoopPipelineOptions {
    * With `checkJob`, the `check-evidence` job signs each passed hook. Set
    * from `--evidence-runner-key-secret`, or `--evidence-identity oidc` with
    * an optional `--evidence-audience`. Absent: nothing is signed, and every
-   * job is as before. Refused on a workspace member's pipeline: the checks
-   * are the commit's, so one pipeline signs them.
+   * job is as before. #4964: a workspace member's pipeline plans that member
+   * alone, so it signs `plan:<member>` and `policy:<member>`
+   * (`memberEvidenceCheck`), which the `refs` rule names for each member.
    */
   evidence?: PipelineEvidence;
   /**
    * The check job (#4935, ./pr-checks.ts): `chant ci check --base <base>` on
    * the pull request's commit, with no forge token, runner key or OIDC token
-   * while the hooks run. Set from `--check-job`. Refused on a member's
-   * pipeline: the hooks are the workspace's.
+   * while the hooks run. Set from `--check-job`. #4964: an object gives the
+   * job service containers, variables, lines before the check and its own
+   * report directory (`PrCheckJobOptions`). In a workspace member's pipeline
+   * it runs in the member's directory: the top level's hooks and the
+   * member's, each signed by its own name, the same for every member that
+   * runs it.
    */
-  checkJob?: boolean;
+  checkJob?: boolean | PrCheckJobOptions;
   /**
    * The ref gate's status job (#4935, ./pr-checks.ts): `chant workspace
    * ref-gate status` for the pull request's commit, after the note and the
    * check evidence, so `chant/ref-gate` can be a required status. Set from
-   * `--ref-gate-status`. Refused on a member's pipeline.
+   * `--ref-gate-status`. #4964: in a member's pipeline it decides the whole
+   * update against the one rule, as the root's does, and sets the one
+   * status (`prRefGateJob`).
    */
   refGateStatus?: boolean;
 }
 
-/**
- * Refuse the loop's `evidence`, `checkJob` and `refGateStatus` (#4935) on a
- * workspace member's pipeline: a check and its evidence are the commit's,
- * so the root pipeline runs and signs them once.
- */
-export function assertRootChecks(options: Pick<PrLoopPipelineOptions, "evidence" | "checkJob" | "refGateStatus">, member: string | undefined): void {
-  if (!member) return;
-  const given = [...(options.evidence ? ["evidence"] : []), ...(options.checkJob ? ["checkJob"] : []), ...(options.refGateStatus ? ["refGateStatus"] : [])];
-  if (given.length > 0) throw new Error(`${given.join(", ")} sign and judge the pull request's commit once, for the whole workspace, so give ${given.length === 1 ? "it" : "them"} on the root pipeline, not member ${member}'s`);
+/** The check job's own settings from `checkJob` (#4964): undefined when there is no check job, `{}` for `true`. */
+export function checkJobOptions(checkJob: boolean | PrCheckJobOptions | undefined): PrCheckJobOptions | undefined {
+  return checkJob === true ? {} : checkJob ? checkJob : undefined;
 }
 
 /** The `CHANT_RESPOND` value of `respond` (#4629), or undefined when every event is at its default. Throws on a description check with no decide service. */

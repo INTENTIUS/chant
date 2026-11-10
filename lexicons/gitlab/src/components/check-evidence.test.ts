@@ -6,6 +6,7 @@
  */
 import { describe, expect, test } from "vitest";
 import type { OpWavesSpec } from "@intentius/chant/op/op-waves";
+import { parseYAML } from "@intentius/chant/yaml";
 import { generateGitlabProductPlanPipeline } from "./product-plan-pipeline";
 import { generateGitlabOpWavesPipeline } from "./generate-op-waves-pipeline";
 
@@ -30,10 +31,22 @@ describe("check evidence in generated pipelines on gitlab (#4870)", () => {
     expect(yaml).toContain("CHANT_RUNNER_KEY_PEM");
   });
 
-  test("each deciding wave job's command step carries the key, and a share job's does not", () => {
-    const yaml = generateGitlabOpWavesPipeline(spec, { ...waves, evidence }).files[0]!.yaml;
+  test("no wave job holds the key: each deciding wave job's evidence job signs its plan, in the chant-evidence environment (#4964)", () => {
+    type Job = { needs?: string[]; environment?: unknown; variables?: Record<string, string>; script: string[] };
+    const doc = parseYAML(generateGitlabOpWavesPipeline(spec, { ...waves, evidence }).files[0]!.yaml) as Record<string, Job>;
+    const waveJobs = Object.keys(doc).filter((k) => k.startsWith("wave-") && !k.endsWith("-evidence"));
+    expect(waveJobs.length).toBeGreaterThan(2);
+    for (const name of waveJobs) expect(JSON.stringify(doc[name]!.variables ?? {}), name).not.toContain("CHANT_RUNNER_KEY");
     // Wave 1 (one job) and wave 2's deciding job; wave 2's two share jobs plan again and sign nothing.
-    expect(yaml.match(/CHANT_RUNNER_KEY:/g)).toHaveLength(2);
+    const signing = Object.keys(doc).filter((k) => k.endsWith("-evidence"));
+    expect(signing).toHaveLength(2);
+    for (const name of signing) {
+      const job = doc[name]!;
+      expect(job.environment).toEqual({ name: "chant-evidence", action: "access" });
+      expect(job.variables!.CHANT_RUNNER_KEY).toBe("$CHANT_RUNNER_KEY_PEM");
+      expect(job.script.at(-1)).toMatch(/^chant ci evidence sign --from-job wave-\d-\S+ --check-id plan:(dev|prod) /);
+      expect(doc[job.needs![0]!]!.variables!.CHANT_WAVE_EVIDENCE).toBe("job");
+    }
   });
 
   test("a secret name the forge could not hold is refused", () => {

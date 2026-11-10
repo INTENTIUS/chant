@@ -812,25 +812,31 @@ export const PLAN_RECORD_JS = [
   `fs.mkdirSync(dir,{recursive:true});fs.writeFileSync(path.join(dir,"${PLAN_RUN_RECORD_FILE}"),JSON.stringify(rec)+"\\n");`,
 ].join("");
 
-/** The evidence step of one plan job (#4870), as {@link ProductPlanJob.evidence}. */
-export function planEvidenceOf(forge: ForgeKind, evidence: PipelineEvidence, words: CiProductWords, planJob: string, opts: { noForks?: boolean } = {}): NonNullable<ProductPlanJob["evidence"]> {
+/**
+ * The evidence step of one plan job (#4870), as {@link ProductPlanJob.evidence}.
+ * #4964: for a workspace member's pipeline (`member`) the checks are signed
+ * as `plan:<member>` and `policy:<member>` (`--member`), and on GitLab the
+ * report is read from the plan job's artifact at the member's `reportPath`.
+ */
+export function planEvidenceOf(forge: ForgeKind, evidence: PipelineEvidence, words: CiProductWords, planJob: string, opts: { noForks?: boolean; member?: { name: string; reportPath: string } } = {}): NonNullable<ProductPlanJob["evidence"]> {
   assertPipelineEvidence(evidence);
   const key = evidenceKeyEnv(forge, evidence);
   const bin = words.bin;
+  const member = opts.member ? { member: opts.member.name } : {};
   if (forge === "gitlab") {
     // #4914: the job runs in the target branch's plan notes pipeline, before the note job, and signs every open
     // merge request's settled plan job from its artifact; no job of a merge request pipeline holds the key.
     const dir = gitlabOpenEvidenceDir(planJob);
     return {
       jobName: `${planJob}-evidence`,
-      lines: openEvidenceLines({ job: planJob, dir: PR_LOOP_REPORT_DIR, out: dir, ...(bin ? { bin } : {}), ...(opts.noForks ? { noForks: true } : {}) }),
+      lines: openEvidenceLines({ job: planJob, dir: opts.member?.reportPath ?? PR_LOOP_REPORT_DIR, out: dir, ...(bin ? { bin } : {}), ...(opts.noForks ? { noForks: true } : {}), ...member }),
       env: key,
       dir,
       ...(evidenceKeyless(evidence) ? { idTokens: evidenceIdTokens(evidence) } : {}),
     };
   }
   return {
-    lines: planEvidenceLines({ dir: PR_LOOP_REPORT_DIR, at: '"$HEAD_SHA"', base: '"$BASE_SHA"', result: '"$PLAN_RESULT"', ...(bin ? { bin } : {}) }),
+    lines: planEvidenceLines({ dir: PR_LOOP_REPORT_DIR, at: '"$HEAD_SHA"', base: '"$BASE_SHA"', result: '"$PLAN_RESULT"', ...(bin ? { bin } : {}), ...member }),
     env: { HEAD_SHA: "${{ github.sha }}", BASE_SHA: "${{ github.event.pull_request.base.sha }}", PLAN_RESULT: `\${{ needs.${planJob}.result }}`, ...key },
     ...(evidenceKeyless(evidence) ? { idToken: true as const } : {}),
   };

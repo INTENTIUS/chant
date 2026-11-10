@@ -232,6 +232,16 @@ describe("the developer's side and the forge", () => {
     ]);
   });
 
+  test("a policy at base that does not read fails the status closed (#4964)", async () => {
+    const { r, base } = setup("status-unreadable");
+    r.write(".chant/trust.json", "{ not json");
+    const broken = r.commit("broken policy");
+    const posted: Array<{ sha: string; context: string; state: string; description: string }> = [];
+    const forge = { setStatus: async (sha: string, s: { context: string; state: string; description: string }) => void posted.push({ sha, ...s }) };
+    await postRefGateStatus(forge, decideRefUpdate({ repo: r.work, update: { ref: "refs/heads/main", old: base, new: broken }, base: broken, now: NOW }));
+    expect(posted).toEqual([{ sha: broken, context: "chant/ref-gate", state: "failure", description: "refused: trust-policy-unreadable" }]);
+  });
+
   test("the hooks run chant with git's arguments and input", () => {
     expect(refGateHook("pre-receive")).toBe('#!/bin/sh\n# chant ref gate (#4867)\nexec chant workspace ref-gate pre-receive "$@"\n');
     expect(refGateHook("pre-push", "npx chant")).toContain("exec npx chant workspace ref-gate pre-push");

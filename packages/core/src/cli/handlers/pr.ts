@@ -120,6 +120,8 @@ import {
   type PrOverdue,
 } from "../../pr-loop";
 import { FORGE_KINDS, forgeFromEnv, forgePrincipalOf, type ForgeKind, type PrForge } from "../../pr-forge";
+// #4964: a status for a pull_request run's merge preview goes on the pull request's head.
+import { forgeFromJobEnv } from "../../pr-forge-job";
 import { GITHUB_COMMENT_LIMIT, GITLAB_NOTE_LIMIT } from "../../plan-summary";
 import { upsertPlanNote } from "../../pr-post";
 import { activeProductWords, commandWord, parseProductComment, productContext } from "../../ci-product-words";
@@ -248,7 +250,7 @@ export async function prepare(ctx: CommandContext, stage: "plan" | "apply" | "re
   let forge: PrForge | undefined;
   if (args.forge && !(stage === "plan" && args.noStatus)) {
     try {
-      forge = forgeFromEnv(args.forge as ForgeKind);
+      forge = forgeFromJobEnv(args.forge as ForgeKind);
     } catch (err) {
       return fail(err instanceof Error ? err.message : String(err));
     }
@@ -1405,7 +1407,7 @@ async function mergeAfterUpdate(ctx: CommandContext, p: Prepared, pr: number): P
   }
   let forge: PrForge;
   try {
-    forge = forgeFromEnv(kind, env);
+    forge = forgeFromJobEnv(kind, env);
   } catch (err) {
     console.error(formatWarning({ message: `the pull request was not merged: ${err instanceof Error ? err.message : String(err)}` }));
     return CHANT_EXIT.waiting;
@@ -1482,7 +1484,7 @@ async function beforeMergeChecks(ctx: CommandContext): Promise<PrBeforeMerge | n
   let head: string;
   let base: string;
   try {
-    forge = forgeFromEnv(args.forge as ForgeKind);
+    forge = forgeFromJobEnv(args.forge as ForgeKind);
     head = await resolveCommit(cwd, args.head ?? "HEAD");
     base = await resolveMergeBase(cwd, args.base, head);
   } catch (err) {
@@ -2800,7 +2802,7 @@ export async function runComponentsPrPost(ctx: CommandContext): Promise<number> 
   if (args.members && args.members.length > 1) return fail(`pr-post takes one --member, not ${args.members.join(", ")}`);
   let forge: PrForge;
   try {
-    forge = forgeFromEnv(args.forge as ForgeKind);
+    forge = forgeFromJobEnv(args.forge as ForgeKind);
   } catch (err) {
     return fail(err instanceof Error ? err.message : String(err));
   }
@@ -2911,7 +2913,7 @@ async function runComponentsPrPostStale(ctx: CommandContext): Promise<number> {
   if (!branch) return fail("pr-post --stale marks the notes of the pull requests into a branch: run it in a job of a push, or pass --branch <branch>");
   let forge: PrForge;
   try {
-    forge = forgeFromEnv(args.forge as ForgeKind);
+    forge = forgeFromJobEnv(args.forge as ForgeKind);
   } catch (err) {
     return fail(err instanceof Error ? err.message : String(err));
   }

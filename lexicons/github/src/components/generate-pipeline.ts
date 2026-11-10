@@ -101,7 +101,7 @@ import { forgejoRepoLockLines, REPO_APPLY_GROUP } from "@intentius/chant/compone
 import { memberRepoPath } from "@intentius/chant/lexicon";
 import { productStatusContext, resolveProductWords } from "@intentius/chant/ci-product-words";
 import { controlDispatchJob, controlNoteCheckout } from "@intentius/chant/control/dispatch";
-import { assertRootChecks } from "@intentius/chant/components/pr-pipeline";
+import { checkJobOptions } from "@intentius/chant/components/pr-pipeline";
 import { planEvidenceOf } from "@intentius/chant/components/product-plan";
 import { prCheckJob, prRefGateJob } from "@intentius/chant/components/pr-checks";
 import { githubCheckJobs } from "./pr-check-jobs";
@@ -277,7 +277,9 @@ function gatedWaveGithubDoc(
  * note says which were signed, and pushes `refs/notes/chant/evidence`
  * (`contents: write`; `id-token: write` signing keyless). With `checkJob`
  * and `refGateStatus` the check, check evidence and ref gate jobs come after
- * (`./pr-check-jobs.ts`).
+ * (`./pr-check-jobs.ts`). #4964: in a workspace member's workflow the note
+ * job signs `plan:<member>` and `policy:<member>`, and the check job runs in
+ * the member's directory.
  */
 function prLoopGithubDoc(
   components: DriverComponent[],
@@ -290,8 +292,6 @@ function prLoopGithubDoc(
   const loop = options.prLoop!;
   const branch = loop.branch ?? "main";
   const member = options.member;
-  // #4935: the checks and their evidence are the commit's, so the root pipeline has them.
-  assertRootChecks(loop, member?.name);
   const rooted = !member || member.dir === "." || member.dir === "";
   const [plan, apply, record] = prLoopJobs(loop.forge ?? "github", env, loop, member?.name);
   const reportPath = member ? memberRepoPath(member, PR_LOOP_REPORT_DIR) : PR_LOOP_REPORT_DIR;
@@ -462,7 +462,8 @@ function prLoopGithubDoc(
   const controlRead = loop.control ? controlNoteCheckout(forgeName, loop.control.target, loop.words ?? {}) : undefined;
   // #4935: with evidence, the note job signs the plan job's plan and policy before it posts.
   const loopWords = resolveProductWords(loop.words);
-  const planEvidence = loop.evidence ? planEvidenceOf(forgeName, loop.evidence, loopWords, "plan") : undefined;
+  // #4964: a member's pipeline signs its plan and policy under the member's name.
+  const planEvidence = loop.evidence ? planEvidenceOf(forgeName, loop.evidence, loopWords, "plan", member ? { member: { name: member.name, reportPath: reportPath } } : {}) : undefined;
   const noteSteps: Array<Record<string, unknown>> = [
     // The target branch's commit: the chant this job runs is the target branch's, and none of the change's code is here.
     { name: "Check out the target branch's commit", uses: CHECKOUT, with: { ref: "${{ github.event.pull_request.base.sha }}" } },
@@ -475,7 +476,9 @@ function prLoopGithubDoc(
     { name: `Post the plan note and ${productStatusContext(resolveProductWords(loop.words), "plan")}`, if: "always()", env: post.env, run: post.command },
   ];
   // #4935: the check job, its evidence job and the ref gate's status job.
-  const check = loop.checkJob ? prCheckJob(forgeName, { ...(loopWords.bin ? { bin: loopWords.bin } : {}), ...(loop.evidence ? { evidence: loop.evidence } : {}) }) : undefined;
+  // #4964: with the product's services, variables, lines and report directory; in a member's pipeline, in its directory.
+  const checkOptions = checkJobOptions(loop.checkJob);
+  const check = checkOptions ? prCheckJob(forgeName, { ...checkOptions, ...(loopWords.bin ? { bin: loopWords.bin } : {}), ...(loop.evidence ? { evidence: loop.evidence } : {}) }) : undefined;
   const refGate = loop.refGateStatus ? prRefGateJob(forgeName, { ...(loopWords.bin ? { bin: loopWords.bin } : {}), branch }) : undefined;
   const checkJobs = githubCheckJobs({
     forge: forgeName === "forgejo" ? "forgejo" : "github",
@@ -486,6 +489,7 @@ function prLoopGithubDoc(
     ...(check ? { check } : {}),
     ...(refGate ? { refGate } : {}),
     refGateNeeds: [PR_PLAN_NOTE_JOB],
+    ...(rooted ? {} : { memberDir: member!.dir }),
   });
   const checkNames = Object.keys(checkJobs);
   // #4298: with a pull request environment the pull_request trigger fires on close too, and the plan skips that event.
