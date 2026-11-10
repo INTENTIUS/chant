@@ -41,7 +41,7 @@ import { CHECK_EVIDENCE_FILE, checkEvidenceNoteLine, openEvidenceFor } from "./w
 import { PLAN_RUN_RECORD_FILE, readPlanRunRecord } from "./pr-plan-record";
 import type { OpRunRecordInput } from "./op/runtime";
 import type { RunOrigin } from "./lifecycle/release-ledger";
-import { isPlanNote, PLAN_BODY_LIMIT, planNoteMarker, PR_PLAN_NOTE_CONTRACT, PR_PLAN_NOTE_FILE, PRODUCT_MARKER_BODY, PRODUCT_MARKER_LIMIT, PRODUCT_MARKER_NAME, productMarkerLine, renderPlanNote, type PrPlanBodyHandoff, type PrPlanNoteHandoff, type PrPlanNoteWords } from "./pr-plan-note";
+import { isPlanNote, PLAN_BODY_LIMIT, PLAN_SUBJECT_LIMIT, planNoteMarker, planSubjectProblem, PR_PLAN_NOTE_CONTRACT, PR_PLAN_NOTE_FILE, PRODUCT_MARKER_BODY, PRODUCT_MARKER_LIMIT, PRODUCT_MARKER_NAME, productMarkerLine, renderPlanNote, sinceLastLine, type PrPlanBodyHandoff, type PrPlanNoteHandoff, type PrPlanNoteWords, type PrPlanSubject } from "./pr-plan-note";
 
 /** The plan report's file under the report directory. */
 export const PR_PLAN_REPORT_FILE = "pr-plan.json";
@@ -225,6 +225,55 @@ export function prNoteTipMarker(sha: string): string {
 /** The hidden line a note marked stale carries, with the commit it was marked at (#4628). */
 export function prNoteStaleMarker(sha: string): string {
   return `<!-- chant-pr-stale:${sha} -->`;
+}
+
+/**
+ * The hidden line a note keeps its plan's subject in (#4972): base64url of
+ * the subject's JSON, `{ id }` alone when its parts would make the line
+ * longer than {@link PLAN_SUBJECT_LIMIT}. Undefined when even that is.
+ */
+export function prNoteSubjectMarker(subject: PrPlanSubject): string | undefined {
+  const line = (s: PrPlanSubject) => `<!-- chant-pr-subject:${Buffer.from(JSON.stringify(s), "utf8").toString("base64url")} -->`;
+  const full = line(subject);
+  if (full.length <= PLAN_SUBJECT_LIMIT) return full;
+  const bare = line({ id: subject.id });
+  return bare.length <= PLAN_SUBJECT_LIMIT ? bare : undefined;
+}
+
+const SUBJECT_LINE = /^<!-- chant-pr-subject:([A-Za-z0-9_-]+) -->$/m;
+
+/**
+ * The subject a note kept (#4972), checked again: the line was chant's, but
+ * what it holds came from an earlier plan job. Undefined when there is none.
+ */
+export function subjectInNote(body: string): PrPlanSubject | undefined {
+  const m = SUBJECT_LINE.exec(body.replace(/\r\n/g, "\n"));
+  if (!m?.[1] || m[1].length > PLAN_SUBJECT_LIMIT) return undefined;
+  try {
+    const s = JSON.parse(Buffer.from(m[1], "base64url").toString("utf8")) as unknown;
+    return planSubjectProblem(s) === undefined ? (s as PrPlanSubject) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The line saying what changed since the previous note (#4972): the
+ * previous note of the same environment and member is read with the job's
+ * token, and its kept subject compared with the hand-off's. Undefined when
+ * there is no previous note, it kept no subject, or the id is the same. A
+ * forge that refuses the read is a warning.
+ */
+async function sinceLastOf(input: PlanPostInput, subject: PrPlanSubject, words: PrPlanNoteWords | undefined, warnings: string[]): Promise<string | undefined> {
+  let found: { body: string } | undefined;
+  try {
+    found = await input.forge.findComment(input.pr, prNoteMarker(input.env, input.member));
+  } catch (err) {
+    warnings.push(`could not read the previous note on #${input.pr}, so the note does not say what changed since it: ${err instanceof Error ? err.message : String(err)}`);
+    return undefined;
+  }
+  const previous = found ? subjectInNote(found.body) : undefined;
+  return previous ? sinceLastLine(previous, subject, words ?? {}) : undefined;
 }
 
 const TIP_LINE = /<!-- chant-pr-tip:([0-9a-f]{40}) -->/;
@@ -412,6 +461,9 @@ export function readPlanNoteHandoff(input: Pick<PlanPostInput, "dir" | "pr" | "h
   if (r.marker !== undefined && (typeof r.marker !== "string" || r.marker.length > PRODUCT_MARKER_LIMIT || (r.marker !== "" && !PRODUCT_MARKER_BODY.test(r.marker)))) {
     return { refused: `the plan note's marker is not words of letters, digits and _.,/@+=:- of at most ${PRODUCT_MARKER_LIMIT} characters` };
   }
+  // #4972: the subject is kept in the note and said back in a later one, so it holds only plain words too.
+  const subjectProblem = r.subject !== undefined ? planSubjectProblem(r.subject) : undefined;
+  if (subjectProblem) return { refused: `the plan note's subject ${subjectProblem}` };
   return { handoff: doc as PrPlanNoteHandoff | PrPlanBodyHandoff };
 }
 
@@ -426,8 +478,11 @@ export function planBodyHandoffNote(handoff: PrPlanBodyHandoff, forge: Pick<PrFo
   const head = `${marker}\n${line ? `${line}\n` : ""}`;
   const said = notices.length > 0 ? `\n${notices.map((n) => `> ${n.split("<!--").join("&lt;!--")}`).join("\n")}\n` : "";
   const tip = baseTip && SHA.test(baseTip) ? `${prNoteTipMarker(baseTip)}\n` : "";
+  // #4972: the subject, kept for the next note to compare with.
+  const kept = handoff.subject ? prNoteSubjectMarker(handoff.subject) : undefined;
+  const subject = kept ? `${kept}\n` : "";
   const body = handoff.body.split("<!--").join("&lt;!--").replace(/\n*$/, "\n");
-  return `${head}${fitNote(body, { limit: Math.max(0, limit - head.length - said.length - tip.length) })}${said}${tip}`;
+  return `${head}${fitNote(body, { limit: Math.max(0, limit - head.length - said.length - tip.length - subject.length) })}${said}${tip}${subject}`;
 }
 
 /** The notices in the file `CHANT_PLAN_NOTE_NOTICES` names (#4931), one a line, or none when unset or unreadable. */
@@ -461,7 +516,10 @@ function noteWordsFromEnv(): PrPlanNoteWords | undefined {
  */
 export function planNoteHandoffNote(handoff: PrPlanNoteHandoff, forge: Pick<PrForge, "kind">, marker: string, noteWords?: PrPlanNoteWords, baseTip?: string): string {
   const words = activeProductWords();
-  const rendered = renderPlanNote(handoff.note, { limit: forge.kind === "gitlab" ? GITLAB_NOTE_LIMIT : GITHUB_COMMENT_LIMIT, words, ...(noteWords ? { note: noteWords } : {}) });
+  // #4972: the subject, kept for the next note to compare with, within the forge's limit.
+  const kept = handoff.subject ? prNoteSubjectMarker(handoff.subject) : undefined;
+  const limit = (forge.kind === "gitlab" ? GITLAB_NOTE_LIMIT : GITHUB_COMMENT_LIMIT) - (kept ? kept.length + 1 : 0);
+  const rendered = renderPlanNote(handoff.note, { limit, words, ...(noteWords ? { note: noteWords } : {}) });
   let body = rendered.split("<!--").join("&lt;!--");
   const n = handoff.note;
   const previews = n.previews ?? [];
@@ -471,7 +529,8 @@ export function planNoteHandoffNote(handoff: PrPlanNoteHandoff, forge: Pick<PrFo
   // #4931: the product's own line, from the pipeline's name and the hand-off's checked body, under chant's marker.
   const name = noteWords?.productMarker;
   const own = name !== undefined && PRODUCT_MARKER_NAME.test(name) && handoff.marker !== undefined ? `${productMarkerLine(name, handoff.marker)}\n` : "";
-  return `${marker}\n${own}${body}${tip}`;
+  const subject = kept ? `${body.endsWith("\n") || tip ? "" : "\n"}${kept}\n` : "";
+  return `${marker}\n${own}${body}${tip}${subject}`;
 }
 
 /** {@link postPlanReport} for a product's plan note hand-off (#4799). */
@@ -499,11 +558,14 @@ async function postPlanNoteHandoff(input: PlanPostInput): Promise<PlanPostResult
     const given = "note" in h ? (h.note.notices ?? []) : [];
     // An Op the product's own notices already call overdue is not said twice.
     const overdue = input.overdue ? (await input.overdue().catch(() => [] as PrOverdue[])).filter((o) => !given.some((g) => g.includes(`\`${o.op}\``) && g.includes("overdue"))).map((o) => o.message) : [];
-    const added = [...overdue, ...(input.notices ?? noticesFromEnv())].filter((n, i, all) => !given.includes(n) && all.indexOf(n) === i);
+    const noteWords = input.noteWords ?? noteWordsFromEnv();
+    // #4972: what changed since the previous note, from the subject it kept, read here with the job's token.
+    const since = h.subject ? await sinceLastOf(input, h.subject, noteWords, warnings) : undefined;
+    const added = [...(since ? [since] : []), ...overdue, ...(input.notices ?? noticesFromEnv())].filter((n, i, all) => !given.includes(n) && all.indexOf(n) === i);
     try {
       note = "note" in h
-        ? planNoteHandoffNote(added.length > 0 ? { ...h, note: { ...h.note, notices: [...given, ...added] } } : h, input.forge, prNoteMarker(input.env, input.member), input.noteWords ?? noteWordsFromEnv(), input.baseTip)
-        : planBodyHandoffNote(h, input.forge, prNoteMarker(input.env, input.member), input.noteWords ?? noteWordsFromEnv(), input.baseTip, added);
+        ? planNoteHandoffNote(added.length > 0 ? { ...h, note: { ...h.note, notices: [...given, ...added] } } : h, input.forge, prNoteMarker(input.env, input.member), noteWords, input.baseTip)
+        : planBodyHandoffNote(h, input.forge, prNoteMarker(input.env, input.member), noteWords, input.baseTip, added);
     } catch (err) {
       refused = `the plan note does not render: ${err instanceof Error ? err.message : String(err)}`;
       state = "failure";

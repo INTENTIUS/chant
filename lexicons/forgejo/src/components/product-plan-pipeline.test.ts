@@ -63,6 +63,17 @@ describe("the product plan's steps on Forgejo (#4899, #4931)", () => {
   });
 });
 
+describe("the note job compares the plan's subject on Forgejo (#4972)", () => {
+  test("the plan job reads no note, and the note job gets the note words", () => {
+    const noteWords = { productMarker: "yodel:plan", sinceLastOnly: "The plan changed since `{previous}`." };
+    const { doc } = generateForgejoProductPlanPipeline("default", { words, productPlan: { command: "yodel plan {target} --pr-note {output}", noteWords, targets: [{ name: "prod" }] } });
+    const plan = doc.jobsDoc["plan-prod"] as Job;
+    expect(JSON.stringify(plan)).not.toMatch(/CHANT_PLAN_PREVIOUS_MARKER|CHANT_PREVIOUS_TOKEN|Read the previous note/);
+    const post = (doc.jobsDoc["plan-note-prod"] as Job).steps.find((s) => s.name?.startsWith("Post the plan note"))!;
+    expect(JSON.parse(post.env!.CHANT_PLAN_NOTE_WORDS!)).toEqual(noteWords);
+  });
+});
+
 describe("terragucci's plan jobs on Forgejo (#4963)", () => {
   test("the trade asks for the OIDC token with enable-openid-connect, and a dispatch re-plans without asking the commenter's permission", () => {
     const { doc } = generateForgejoProductPlanPipeline("default", {

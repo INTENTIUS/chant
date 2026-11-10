@@ -323,6 +323,20 @@ describe("what terragucci's and sql-yodeler's plan jobs need of the product plan
     expect(() => generateProductPlanPipeline("default", { ...options, productPlan: { ...options.productPlan, previousMarker: true } })).toThrow(/productMarker/);
   });
 
+  test("#4972: with the subject compared in the note job, the plan job reads no note and may not read the pull request, and the note jobs get the words", () => {
+    const noteWords = { productMarker: "yodel:plan", sinceLast: "Since the previous version of this note (`{previous}`): {changes}.", subjectParts: { pending: { added: "new pending migrations: {items}" } } };
+    const y = generateProductPlanPipeline("default", { ...options, words: { ...words, commands: { plan: "plan" as const } }, productPlan: { ...options.productPlan, noteWords, replan: true } });
+    const plan = y.doc.jobsDoc["plan-prod"] as Job;
+    expect(plan.steps.map((s) => s.name)).not.toContain("Read the previous note's marker");
+    // The job's token reaches only the checkout, with contents: read.
+    expect(JSON.stringify(plan)).not.toMatch(/CHANT_PLAN_PREVIOUS_MARKER|CHANT_PREVIOUS_TOKEN/);
+    expect(plan.permissions).toEqual({ contents: "read" });
+    for (const name of ["plan-note-prod", "replan-note-prod"]) {
+      const post = (y.doc.jobsDoc[name] as Job).steps.find((s) => s.name?.startsWith("Post the plan note"))!;
+      expect(JSON.parse(post.env!.CHANT_PLAN_NOTE_WORDS!)).toEqual(noteWords);
+    }
+  });
+
   test("a job gives one of login and trade", () => {
     expect(() => generateProductPlanPipeline("default", { words: tgWords, productPlan: { command: "x", trade, login: { aws: { role: "arn:aws:iam::1:role/r" } } } })).toThrow(/both login and trade/);
   });
