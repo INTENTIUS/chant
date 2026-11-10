@@ -770,6 +770,47 @@ export const testEntity = {
     expect(existsSync(join(testDir, "dist", "ops", "alb-deploy", "worker.ts"))).toBe(true);
   });
 
+  describe("--output naming a directory (#4950)", () => {
+    /** Stands in for the docker lexicon on a project of Dockerfiles alone: a blank compose file and one file per Dockerfile. */
+    const dockerfilesOnly = (primary = "\n"): Serializer => ({
+      name: "dock",
+      rulePrefix: "DOCK",
+      serialize: () => ({ primary, files: { "Dockerfile.tofu": "FROM tofu\n", "Dockerfile.node": "FROM node\n" } }),
+    });
+    const declare = () =>
+      writeFile(
+        join(testDir, "images.ts"),
+        `export const tofu = { [Symbol.for("chant.declarable")]: true, entityType: "Docker::Dockerfile", lexicon: "dock", kind: "resource", props: {}, attributes: {} };\n`,
+      );
+
+    test("writes the additional files into it and no primary file, when the primary output is blank", async () => {
+      await declare();
+      const dir = join(testDir, "out", "images");
+      const result = await buildCommand({ path: testDir, output: `${dir}/`, format: "yaml", serializers: [dockerfilesOnly()] });
+      expect(result.errors).toEqual([]);
+      expect(readFileSync(join(dir, "Dockerfile.tofu"), "utf8")).toBe("FROM tofu\n");
+      expect(readFileSync(join(dir, "Dockerfile.node"), "utf8")).toBe("FROM node\n");
+      expect(existsSync(join(testDir, "out", "images.yaml"))).toBe(false);
+    });
+
+    test("takes an existing directory without the trailing slash", async () => {
+      await declare();
+      const dir = join(testDir, "existing");
+      await mkdir(dir, { recursive: true });
+      const result = await buildCommand({ path: testDir, output: dir, format: "yaml", serializers: [dockerfilesOnly()] });
+      expect(result.errors).toEqual([]);
+      expect(readFileSync(join(dir, "Dockerfile.tofu"), "utf8")).toBe("FROM tofu\n");
+    });
+
+    test("refuses a build with a primary output, which needs a file", async () => {
+      await declare();
+      const result = await buildCommand({ path: testDir, output: `${join(testDir, "d")}/`, format: "yaml", serializers: [dockerfilesOnly("services:\n  a: {}\n")] });
+      expect(result.success).toBe(false);
+      expect(result.errors.join("\n")).toContain("names a directory");
+      expect(existsSync(join(testDir, "d", "Dockerfile.tofu"))).toBe(false);
+    });
+  });
+
   describe("committed-encrypted secret sidecars", () => {
     const CIPHERTEXT = 'apiVersion: v1\nkind: Secret\nstringData:\n  T: ENC[AES256_GCM,data:xx]\nsops:\n  version: 3.9.4\n';
 

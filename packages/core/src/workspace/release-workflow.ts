@@ -714,11 +714,12 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     ...(args.buildCommand ? { build: args.buildCommand } : {}),
     ...(args.ciChant ? { chant: args.ciChant } : {}),
   });
-  const target = args.output ? resolve(process.cwd(), args.output) : join(repoRoot, release?.workflow?.file ?? RELEASE_WORKFLOW_FILES[forge]);
   // #4909: under `chant dev generated-check` the header names the committed file the render stands for.
-  const { committedPathOf, isRenderPath } = await import("../generated-check");
-  const asCommitted = committedPathOf(target);
+  // #4950: with no --output the file goes to the render tree too, so a render needs no `--output {out}/...`.
+  const { committedPathOf, isRenderPath, renderPathOf } = await import("../generated-check");
   const defaultTarget = join(repoRoot, release?.workflow?.file ?? RELEASE_WORKFLOW_FILES[forge]);
+  const target = args.output ? resolve(process.cwd(), args.output) : renderPathOf(defaultTarget);
+  const asCommitted = committedPathOf(target);
   const parts = ["chant", "release", "workflow", "--forge", forge];
   if (args.ciInstall) parts.push("--install", args.ciInstall);
   if (args.buildCommand) parts.push("--build", args.buildCommand);

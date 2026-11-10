@@ -204,6 +204,16 @@ describe("dockerSerializer.serialize — Dockerfile", () => {
     expect(result.primary).toContain("web:");
   });
 
+  test("Dockerfiles alone leave the compose output blank, so `chant build -o <dir>/` writes only them (#4950)", () => {
+    const entities = new Map<string, Declarable>();
+    entities.set("tofu", new MockDockerfile({ from: "tofu" }));
+    entities.set("node", new MockDockerfile({ from: "node:22" }));
+
+    const result = dockerSerializer.serialize(entities) as { primary: string; files: Record<string, string> };
+    expect(result.primary.trim()).toBe("");
+    expect(Object.keys(result.files).sort()).toEqual(["Dockerfile.node", "Dockerfile.tofu"]);
+  });
+
   test("returns string (no SerializerResult) when no Dockerfile entities", () => {
     const entities = new Map<string, Declarable>();
     entities.set("web", new MockService({ image: "nginx" }));

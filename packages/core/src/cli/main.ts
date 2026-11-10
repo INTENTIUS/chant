@@ -1499,6 +1499,9 @@ Lexicon development:
                            Render the files package.json's chantGenerated declares into a
                            directory under the OS temp dir, compare each with the committed
                            file, and fail naming the ones that drifted
+  dev render <module> <export> [--output <root>]
+                           Import the module and write the { path: text } files its export
+                           returns below the root (the working directory by default)
   dev dead-guards [<product-dir>]
                            Fail naming each feature-detect on a chant floor (a floor read off
                            a lazily loaded module, a subpath loaded behind a catch, the
@@ -2018,6 +2021,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "dev bundle-check", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/local-chant")).runDevBundleCheck(ctx) },
   { name: "dev local-image", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/local-chant")).runDevLocalImage(ctx) },
   { name: "dev generated-check", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/generated-check")).runDevGeneratedCheck(ctx) },
+  // #4950: a module's { path: text } export, written in place.
+  { name: "dev render", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/generated-check")).runDevRender(ctx) },
   // #4792: the feature-detects on a chant floor the product's pin already meets.
   { name: "dev dead-guards", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/dead-guards")).runDevDeadGuards(ctx) },
 

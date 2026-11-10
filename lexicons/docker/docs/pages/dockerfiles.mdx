@@ -14,6 +14,14 @@ prompt: |
 
 The `Dockerfile` constructor writes a `Dockerfile.{name}` file next to `docker-compose.yml`. The export name is the suffix: `export const server = new Dockerfile(...)` writes `Dockerfile.server`.
 
+A project that declares Dockerfiles and no Compose resources has no compose file to write. Give `-o` a directory, with a trailing slash, and the build writes only the Dockerfiles there ([#4950](https://github.com/INTENTIUS/chant/issues/4950)):
+
+```sh
+npx chant build images -o images/
+```
+
+`images/Dockerfile.server` is written, and nothing else. A project that also declares a service needs a file for its compose output, so the build stops and asks for one.
+
 ## Steps
 
 A stage is a `from` image plus a list of `steps`. Each step is an object with one key, the instruction, and its value. Steps are written in the order you list them, one instruction per step.

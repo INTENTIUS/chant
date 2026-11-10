@@ -106,9 +106,9 @@ npx chant dev local-image --with @intentius/chant-lexicon-fountain -- \
     "regenerate": "just ci",
     "renders": [
       { "name": "ci", "run": "npx chant build ci -o {out}/.github/workflows/ci.yml --format yaml", "files": [".github/workflows/ci.yml"] },
-      { "name": "green", "run": "npx chant ci workflow --token-secret CI_GREEN_TOKEN --output {out}/.github/workflows/chant-ci-green.yml", "files": [".github/workflows/chant-ci-green.yml"] },
-      { "name": "images", "run": "npx chant build images -o {out}/images/compose.yml --format yaml", "files": ["images/Dockerfile.*"] },
-      { "name": "schema", "run": "node scripts/build-schema.mjs --out {out}", "files": ["packages/plywood/plywood.schema.json"] }
+      { "name": "green", "run": "npx chant ci workflow --token-secret CI_GREEN_TOKEN", "files": [".github/workflows/chant-ci-green.yml"] },
+      { "name": "images", "run": "npx chant build images -o {out}/images/", "files": ["images/Dockerfile.*"] },
+      { "name": "schema", "module": "packages/plywood/src/config/index.ts", "export": "schemaFiles", "files": ["packages/plywood/plywood.schema.json"] }
     ]
   }
 }
@@ -116,9 +116,19 @@ npx chant dev local-image --with @intentius/chant-lexicon-fountain -- \
 
 The command makes one directory under the OS temp directory, the render tree, and runs every render's `run` in the product root at once. `{out}` in the command, and `CHANT_GENERATED_OUT` in its environment, name the render tree, and each render writes its files at their committed paths below it. Then it compares each of a render's `files` with its twin in the render tree, in declaration order. A `*` in a path's last segment matches within it, and then every match on either side needs its twin. A render with no `files` passes when it exits 0. Arguments name the renders to run.
 
+A render can name a `module` and its `export` in place of `run` ([#4950](https://github.com/INTENTIUS/chant/issues/4950)). The export is an object of file paths to their text, or a function, async or not, that returns one, and each path is relative to the product root. The check imports the module itself, TypeScript included, with chant's own modules served as the running chant, so the product needs no bundler or script to call it, and writes each file below the render tree. A module render with no `files` compares every file the export returns; list them, or a pattern, to also catch a file the export no longer returns.
+
+`chant dev render <module> <export> [--output <root>]` writes the same files in place, below the working directory or `--output`, for the product's regenerate command:
+
+```sh
+npx chant dev render packages/plywood/src/images.ts dockerfiles
+```
+
+`chant build -o <dir>/` (a trailing slash, or a directory that exists) writes a build's additional files into the directory and no primary file ([#4950](https://github.com/INTENTIUS/chant/issues/4950)). A docker project that declares only Dockerfiles renders `Dockerfile.<name>` there with no compose file beside them. A build whose primary output holds anything fails and asks for a file. `RENDER_KINDS_FLOOR` in `@intentius/chant/release-floors` is the first chant with module renders, `dev render`, a directory `-o`, and the workflow commands writing into the render tree with no `--output`.
+
 It exits 1 naming each file that differs (with the first changed lines), that is committed but no longer rendered, that is rendered but not committed, and each render that failed or wrote no file it declares, with `regenerate` in the message. The render tree is never removed: the command prints where it is, and the OS clears it.
 
-`chant ci workflow` and `chant release workflow` know the render tree. Under the check they write every file into it, the trigger edits to other workflows and the merge-queue workflow included, record nothing in a member's `.chant/generated.json`, and name the committed file in their header, leaving out `--output` when the committed file is the default. A render of them matches the file written without `--output`.
+`chant ci workflow` and `chant release workflow` know the render tree. Under the check they write every file into it, the trigger edits to other workflows and the merge-queue workflow included, record nothing in a member's `.chant/generated.json`, and name the committed file in their header, leaving out `--output` when the committed file is the default. A render of them matches the file written without `--output`, and needs no `--output` itself: with none, they write the default file into the render tree ([#4950](https://github.com/INTENTIUS/chant/issues/4950)).
 
 `checkGenerated(productDir, config)` in `@intentius/chant/generated-check` runs the check from a script, and `renderPathOf` and `committedPathOf` map a path for a writer of the product's own.
 
