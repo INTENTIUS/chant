@@ -198,7 +198,7 @@ export const DRIFT_NOTIFY_STACKS_FLOOR = NEXT_RELEASE;
 /** The first chant whose workspace member's pull request pipeline takes `evidence`, `checkJob` and `refGateStatus` (`chant build --pr-loop` in a member), signing the member's plan job as `plan:<member>` and `policy:<member>` (`ci evidence sign --member`, `memberEvidenceCheck`) and running the check job in the member's directory (#4964). */
 export const MEMBER_SIGNED_CHECKS_FLOOR = NEXT_RELEASE;
 
-/** The first chant whose `checkJob` takes `{ services, env, before, dir }` (`PrCheckJobOptions`: service containers, the check step's variables and lines, the report directory) and whose github, forgejo and gitlab lexicons render the check, check evidence and ref gate jobs for a product's own workflow (`productCheckJobs`, `forgejoProductCheckJobs`, `gitlabProductCheckJobs`) (#4964). */
+/** The first chant whose `checkJob` takes `{ services, env, before, dir, args }` (`PrCheckJobOptions`: service containers, the check step's variables and lines, the report directory, the arguments after `--base`) and whose github, forgejo and gitlab lexicons render the check, check evidence and ref gate jobs for a product's own workflow (`productCheckJobs`, `forgejoProductCheckJobs`, `gitlabProductCheckJobs`) (#4964). */
 export const PRODUCT_CHECK_JOBS_FLOOR = NEXT_RELEASE;
 
 /** The first chant whose GitLab Op waves pipeline with a runner key hands it to no wave job: each deciding wave's `<wave job>-evidence` job names the `chant-evidence` environment and signs `plan:<wave>` from the wave job (#4964). */

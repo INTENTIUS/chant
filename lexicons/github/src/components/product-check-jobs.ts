@@ -12,8 +12,8 @@
  * (`forgejoProductCheckJobs` in the forgejo lexicon).
  *
  * The jobs are plain job mappings, as `GithubWorkflowDoc.jobsDoc` holds
- * them: the product merges them into its workflow's `jobs:`, or wraps each
- * one as a `Job` of this lexicon. They run on `pull_request`, so the
+ * them: the product merges them into its workflow's `jobs:` mapping (with
+ * `emitWorkflowYAML`, or its own emitter). They run on `pull_request`, so the
  * workflow needs that trigger; the check evidence job asks for `contents:
  * write` and the ref gate's for `statuses: write`, each in its own
  * `permissions:`.

@@ -93,6 +93,13 @@ export interface PrCheckJobOptions {
   before?: string[];
   /** The report directory, repository-relative from the job's directory: `chant ci check --output <dir>`. Default `.chant/check`. */
   dir?: string;
+  /** Arguments after `--base` (and `--output`), each one word, quoted where the shell needs it: `--summary <file>` and the targets a `perRun` hook runs for. */
+  args?: string[];
+}
+
+/** One shell word: as it is when it needs no quoting, else in single quotes. */
+function shellWord(word: string): string {
+  return /^[A-Za-z0-9._\/=:@+,-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`;
 }
 
 /** The check job (#4935): its command and the values it reads. */
@@ -128,6 +135,9 @@ function assertCheckJobOptions(opts: PrCheckJobOptions): void {
   if (opts.dir !== undefined && (!/^[A-Za-z0-9._][A-Za-z0-9._\/-]*$/.test(opts.dir) || opts.dir.split("/").includes(".."))) {
     throw new Error(`the check job's report directory ${JSON.stringify(opts.dir)} is not a relative path inside the checkout`);
   }
+  for (const a of opts.args ?? []) {
+    if (a === "" || /[\0\n]/.test(a) || a === "--base" || a === "--output" || a === "-o") throw new Error(`the check job's argument ${JSON.stringify(a)} is not one it takes: --base and --output are its own`);
+  }
   const names = new Set<string>();
   for (const s of opts.services ?? []) {
     if (!/^[a-z0-9][a-z0-9._-]*$/.test(s.name)) throw new Error(`the check job's service name ${JSON.stringify(s.name)} is not a host name: lower-case letters, digits, . _ -`);
@@ -160,7 +170,7 @@ export function prCheckJob(forge: ForgeKind, opts: { bin?: string; evidence?: Pi
   const named = (job: string) => (gitlab && opts.member ? `${opts.member.name}-${job}` : job);
   const job: PrCheckJob = {
     jobName: named(PR_CHECK_JOB),
-    command: withProductBin(`chant ci check --base "$BASE_SHA"${dir === PR_CHECK_REPORT_DIR ? "" : ` --output ${dir}`}`, opts.bin),
+    command: withProductBin(`chant ci check --base "$BASE_SHA"${dir === PR_CHECK_REPORT_DIR ? "" : ` --output ${dir}`}${(opts.args ?? []).map((a) => ` ${shellWord(a)}`).join("")}`, opts.bin),
     env: { BASE_SHA: base, ...opts.env },
     dir,
     ...(opts.services?.length ? { services: opts.services } : {}),

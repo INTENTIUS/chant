@@ -35,9 +35,11 @@ describe("the check jobs in a product's own workflow (#4964)", () => {
   });
 
   test("a report directory of the product's own: ci check writes it, and the evidence job signs from it", () => {
-    const { jobsDoc } = productCheckJobs("github", "default", { words: { ...yodel, bin: "npx --no-install terragucci" }, checkJob: { dir: "terragucci-check/hooks" }, evidence: { identity: "oidc" } });
+    const checkJob = { dir: "terragucci-check/hooks", args: ["--summary", "terragucci-check/report.md", "live/prod", "live/my app"] };
+    const { jobsDoc } = productCheckJobs("github", "default", { words: { ...yodel, bin: "npx --no-install terragucci" }, checkJob, evidence: { identity: "oidc" } });
     const doc = jobsDoc as Record<string, Job>;
-    expect(doc.check!.steps.at(-1)!.run!.trimEnd().split("\n").at(-1)).toBe('npx --no-install terragucci ci check --base "$BASE_SHA" --output terragucci-check/hooks');
+    expect(doc.check!.steps.at(-1)!.run!.trimEnd().split("\n").at(-1)).toBe(`npx --no-install terragucci ci check --base "$BASE_SHA" --output terragucci-check/hooks --summary terragucci-check/report.md live/prod 'live/my app'`);
+    expect(() => productCheckJobs("github", "default", { words: yodel, checkJob: { args: ["--output", "x"] } })).toThrow(/its own/);
     expect(doc["check-evidence"]!.steps.find((s) => s.name?.startsWith("Sign"))!.run).toContain("ci evidence sign --from-report terragucci-check/hooks ");
   });
 });
