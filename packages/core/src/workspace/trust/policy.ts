@@ -27,7 +27,8 @@ import type { RecordSource } from "../record-source";
 import { DEFAULT_SIGNERS_PATH, TRUST_CONFIG_PATH, parseAllowedSigners, type ExcludedSigner, type Signer } from "./trust-files";
 import type { PasskeySigner } from "../../lifecycle/gate-webauthn";
 import { execFileSync } from "node:child_process";
-import { DEFAULT_FULCIO_URL, DEFAULT_SIGNING_AUDIENCE, DEFAULT_TIMESTAMP_URL, parseTrustedRoot, type KeylessRoots } from "./keyless";
+import { DEFAULT_FULCIO_URL, DEFAULT_SIGNING_AUDIENCE, DEFAULT_TIMESTAMP_URL, keylessVerifier, parseTrustedRoot, type KeylessRoots } from "./keyless";
+import type { DsseSignature, KeylessCheck } from "./dsse";
 
 export {
   DEFAULT_SIGNERS_PATH,
@@ -303,6 +304,8 @@ export interface RunnerIdentity {
   /** A pattern over the certificate's subject alternative name: `*` within a `/` segment, `**` across. */
   subject: string;
   roots: KeylessRoots;
+  /** Verifies one keyless signature against this identity and its trusted root (./dsse.ts's `TrustedIdentity`). */
+  verifyKeyless(message: Buffer, signature: DsseSignature): KeylessCheck;
 }
 
 /** A runner as a statement's verifier takes it: a key, or a keyless identity. */
@@ -503,7 +506,10 @@ function keylessOf(config: TrustConfig, source: RecordSource, humanNames: Set<st
   const runnerIdentities: RunnerIdentity[] = [];
   for (const i of k.identities) {
     if (humanNames.has(i.principal)) excluded.push({ principal: i.principal, reason: "the signers file lists this principal; a keyless identity is a CI job's, never a signer's" });
-    else runnerIdentities.push({ ...i, roots });
+    else {
+      const verify = keylessVerifier({ ...i, roots });
+      runnerIdentities.push({ ...i, roots, verifyKeyless: (message, signature) => verify(message, signature) });
+    }
   }
   return { runnerIdentities, keyless };
 }

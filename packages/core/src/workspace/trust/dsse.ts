@@ -13,11 +13,12 @@
  *
  * A signature can instead be keyless (#4869, ./keyless.ts): it carries the
  * short-lived certificate of a CI job's OIDC identity and a timestamp, and
- * verifies against an identity the policy lists rather than a key.
+ * verifies against an identity the policy lists rather than a key. The
+ * identity brings its own verifier, so this file, which bundles such as the
+ * runner-start verifier carry, holds no certificate code.
  */
 
 import { createHash, createPrivateKey, createPublicKey, sign, verify, type KeyObject } from "node:crypto";
-import { isKeylessSignature, verifyKeylessSignature, type TrustedIdentity } from "./keyless";
 
 export const IN_TOTO_PAYLOAD_TYPE = "application/vnd.in-toto+json";
 
@@ -105,8 +106,20 @@ export interface TrustedKey {
   key: string;
 }
 
+/** What a keyless identity says of one signature (#4869). `named`: the certificate is this identity's, and something else failed. */
+export type KeylessCheck = { ok: true; keyid: string; issuer: string; subject: string; signedAt: string } | { ok: false; named: boolean; reason: string };
+
+/** A CI identity that signs keyless (#4869), as the policy at base reads it, with the verifier for its trusted root. */
+export interface TrustedIdentity {
+  principal: string;
+  issuer: string;
+  verifyKeyless(message: Buffer, signature: DsseSignature): KeylessCheck;
+}
+
 /** Who may sign: a runner key, or a CI identity that signs keyless (#4869). */
 export type TrustedSigner = TrustedKey | TrustedIdentity;
+
+const isKeyless = (s: DsseSignature): boolean => Array.isArray(s.certificates) && typeof s.timestamp === "string";
 
 export type EnvelopeVerdict =
   | { ok: true; principal: string; keyid: string; payloadType: string; payload: Buffer; keyless?: { issuer: string; subject: string; signedAt: string } }
@@ -122,14 +135,20 @@ export function verifyEnvelope(envelope: unknown, trusted: readonly TrustedSigne
   if (payload.toString("base64") !== envelope.payload) return { ok: false, code: "envelope-invalid", reason: "the payload is not canonical base64" };
   const message = pae(envelope.payloadType, payload);
   const keys = trusted.filter((t): t is TrustedKey => typeof (t as TrustedKey).key === "string");
-  const identities = trusted.filter((t): t is TrustedIdentity => typeof (t as TrustedIdentity).issuer === "string");
+  const identities = trusted.filter((t): t is TrustedIdentity => typeof (t as TrustedIdentity).verifyKeyless === "function");
   const byId = new Map(keys.map((t) => [sshFingerprint(t.key), t]));
   let keyless: string | undefined;
   for (const s of envelope.signatures) {
-    if (isKeylessSignature(s)) {
-      const k = verifyKeylessSignature(message, s, identities);
-      if (k.ok) return { ok: true, principal: k.principal, keyid: k.keyid, payloadType: envelope.payloadType, payload, keyless: { issuer: k.issuer, subject: k.subject, signedAt: k.signedAt } };
-      keyless ??= k.reason;
+    if (isKeyless(s)) {
+      if (identities.length === 0) keyless ??= "the signature is keyless, and the policy at base lists no keyless identity";
+      let named: string | undefined;
+      for (const id of identities) {
+        const k = id.verifyKeyless(message, s);
+        if (k.ok) return { ok: true, principal: id.principal, keyid: k.keyid, payloadType: envelope.payloadType, payload, keyless: { issuer: k.issuer, subject: k.subject, signedAt: k.signedAt } };
+        if (k.named) named ??= k.reason;
+        else keyless ??= k.reason;
+      }
+      if (named) keyless = named;
       continue;
     }
     const t = byId.get(s.keyid);

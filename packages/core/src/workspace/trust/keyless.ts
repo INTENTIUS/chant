@@ -193,7 +193,7 @@ export function parseTrustedRoot(text: string): KeylessRoots {
 // ── Identities ───────────────────────────────────────────────────────────────
 
 /** A CI identity `.chant/trust.json` lets sign runner statements keyless (#4869). */
-export interface TrustedIdentity {
+export interface KeylessIdentity {
   principal: string;
   /** The OIDC issuer the certificate names, exactly. */
   issuer: string;
@@ -388,7 +388,7 @@ export function certificateKeyid(cert: X509Certificate): string {
 
 export type KeylessVerdict =
   | { ok: true; principal: string; keyid: string; issuer: string; subject: string; signedAt: string }
-  | { ok: false; reason: string };
+  | { ok: false; named: boolean; reason: string };
 
 /**
  * Verify one keyless signature over `message` (the envelope's PAE) against
@@ -396,14 +396,14 @@ export type KeylessVerdict =
  * at the timestamp's time, the timestamp must verify, and the certificate's
  * issuer and subject must match one identity, whose principal is returned.
  */
-export function verifyKeylessSignature(message: Buffer, s: KeylessSignature, identities: readonly TrustedIdentity[]): KeylessVerdict {
-  if (identities.length === 0) return { ok: false, reason: "the policy at base lists no keyless identity" };
+export function verifyKeylessSignature(message: Buffer, s: KeylessSignature, identities: readonly KeylessIdentity[]): KeylessVerdict {
+  if (identities.length === 0) return { ok: false, named: false, reason: "the policy at base lists no keyless identity" };
   let leaf: X509Certificate;
   let chain: X509Certificate[];
   try {
     [leaf, ...chain] = s.certificates.map((c) => new X509Certificate(Buffer.from(c, "base64"))) as [X509Certificate, ...X509Certificate[]];
   } catch (err) {
-    return { ok: false, reason: `the signature's certificates do not parse: ${err instanceof Error ? err.message : String(err)}` };
+    return { ok: false, named: false, reason: `the signature's certificates do not parse: ${err instanceof Error ? err.message : String(err)}` };
   }
   const sig = Buffer.from(s.sig, "base64");
   const pub = leaf.publicKey;
@@ -413,13 +413,13 @@ export function verifyKeylessSignature(message: Buffer, s: KeylessSignature, ide
   } catch {
     good = false;
   }
-  if (!good) return { ok: false, reason: "the signature does not verify against its certificate's key" };
-  if (!usableFor(leaf, OID.codeSigning)) return { ok: false, reason: "the certificate was not issued for code signing" };
+  if (!good) return { ok: false, named: false, reason: "the signature does not verify against its certificate's key" };
+  if (!usableFor(leaf, OID.codeSigning)) return { ok: false, named: false, reason: "the certificate was not issued for code signing" };
   const issuer = certificateIssuer(leaf);
   const subjects = certificateSubjects(leaf);
   const said = `${issuer ?? "no issuer"} ${subjects.join(" ") || "no subject"}`;
   const named = identities.filter((i) => i.issuer === issuer && subjects.some((s2) => subjectPattern(i.subject).test(s2)));
-  if (named.length === 0) return { ok: false, reason: `the certificate's identity (${said}) is not one the policy at base lists under keyless.identities` };
+  if (named.length === 0) return { ok: false, named: false, reason: `the certificate's identity (${said}) is not one the policy at base lists under keyless.identities` };
   const problems: string[] = [];
   for (const id of named) {
     let at: Date;
@@ -436,7 +436,12 @@ export function verifyKeylessSignature(message: Buffer, s: KeylessSignature, ide
     const subject = subjects.find((s2) => subjectPattern(id.subject).test(s2))!;
     return { ok: true, principal: id.principal, keyid: certificateKeyid(leaf), issuer: issuer!, subject, signedAt: at.toISOString() };
   }
-  return { ok: false, reason: `the keyless signature by ${said} does not verify: ${[...new Set(problems)].join("; ")}` };
+  return { ok: false, named: true, reason: `the keyless signature by ${said} does not verify: ${[...new Set(problems)].join("; ")}` };
+}
+
+/** The verifier a policy's identity carries (./dsse.ts's `TrustedIdentity.verifyKeyless`). */
+export function keylessVerifier(identity: KeylessIdentity): (message: Buffer, signature: unknown) => KeylessVerdict {
+  return (message, signature) => (isKeylessSignature(signature) ? verifyKeylessSignature(message, signature, [identity]) : { ok: false, named: false, reason: "the signature is not keyless" });
 }
 
 // ── Sign ─────────────────────────────────────────────────────────────────────
