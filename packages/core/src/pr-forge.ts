@@ -259,8 +259,6 @@ export interface MergeRequestJob {
   status: string;
   /** The job's page. */
   url?: string;
-  /** The merge request's source project is a fork (#4914). */
-  fork?: boolean;
 }
 
 export interface OpenPullRequest {
@@ -1687,8 +1685,7 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
         const id = found ? num(found.id) : undefined;
         if (!found || id === undefined) continue;
         const url = str(found.web_url);
-        const fork = num(m.source_project_id) !== undefined && num(m.source_project_id) !== num(m.target_project_id);
-        out.push({ pr: iid, head, id, status: str(found.status) ?? "unknown", ...(url ? { url } : {}), ...(fork ? { fork } : {}) });
+        out.push({ pr: iid, head, id, status: str(found.status) ?? "unknown", ...(url ? { url } : {}) });
       }
       return out.sort((a, b) => a.pr - b.pr);
     },

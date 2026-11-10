@@ -49,14 +49,17 @@ function repo(): { dir: string; base: string; head: string; pem: string } {
   return { dir, base, head, pem };
 }
 
-/** A GitLab client with the merge requests' jobs and each job's artifact files. */
-function gitlab(jobs: MergeRequestJob[], artifacts: Record<number, Record<string, string>>) {
+/** A GitLab client with the merge requests' jobs, each job's artifact files, and the merge requests from a fork. */
+function gitlab(jobs: MergeRequestJob[], artifacts: Record<number, Record<string, string>>, forks: number[] = []) {
   const asked: string[] = [];
   const client = {
     kind: "gitlab",
     async mergeRequestJobs(_branch: string, job: string) {
       asked.push(job);
       return jobs;
+    },
+    async openPullRequests(base: string) {
+      return jobs.map((j) => ({ number: j.pr, head: `mr-${j.pr}`, headSha: j.head, base, fork: forks.includes(j.pr) }));
     },
     async jobArtifact(id: number, path: string) {
       return artifacts[id]?.[path];
@@ -112,9 +115,10 @@ describe("ci evidence sign --open (#4914)", () => {
     const g = gitlab(
       [
         { pr: 7, head: r.head, id: 201, status: "failed" },
-        { pr: 9, head: r.head, id: 202, status: "success", fork: true },
+        { pr: 9, head: r.head, id: 202, status: "success" },
       ],
       { 201: { ".chant/check/check-hooks.json": CHECK }, 202: { ".chant/check/check-hooks.json": CHECK } },
+      [9],
     );
     forge.current = g.client;
     process.env.CHANT_RUNNER_KEY = r.pem;
