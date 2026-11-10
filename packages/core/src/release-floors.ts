@@ -99,3 +99,6 @@ export const CLOUD_LOGIN_FLOOR = NEXT_RELEASE;
 
 /** The first chant whose generated pipelines sign evidence for each named check they run, with `chant ci evidence`, `ci check` signing each hook, and an Op waves spec's `evidence.requires` (#4870). */
 export const CHECK_EVIDENCE_FLOOR = NEXT_RELEASE;
+
+/** The first chant that accepts local evidence (#4868): `local` in `.chant/trust.json`, `chant ci evidence sign --local`, and `chant ci check` skipping a hook whose current local evidence the policy at base accepts. */
+export const LOCAL_EVIDENCE_FLOOR = NEXT_RELEASE;

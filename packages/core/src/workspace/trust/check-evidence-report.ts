@@ -23,6 +23,9 @@ import { join } from "node:path";
 /** The variable a generated job hands the runner key in, as PEM (the same one the tick and `chant ci run` read). */
 export const CHECK_EVIDENCE_KEY_ENV = "CHANT_RUNNER_KEY";
 
+/** The variable a developer's or an agent's local evidence key is read from, as PEM (#4868). A check hook never sees it. */
+export const LOCAL_EVIDENCE_KEY_ENV = "CHANT_LOCAL_EVIDENCE_KEY";
+
 /** The file the signing step writes beside the plan report, which `pr-post` reads. */
 export const CHECK_EVIDENCE_FILE = "evidence.json";
 
