@@ -500,6 +500,26 @@ export const PRODUCT_COMMENT_ASK_MAX = 2000;
 /** Commands a comment never runs, named in the reply so nobody waits on them. */
 const NEVER = new Set(["approve", "override", "force-unlock", "unlock-state", "import", "state", "destroy", "merge"]);
 
+/** {@link parseProductComment}'s options. */
+export interface ProductCommentOptions {
+  /** Leave every comment for a commit word to the commit job (#4890): it is undefined here, a refused one included. */
+  leaveCommit?: boolean;
+}
+
+/**
+ * The commit word a comment names (#4890): its first two words, split on
+ * any space, are `/<product> <word>` and the words map `<word>` onto
+ * `commit`. The commit job replies to a refused comment by this rule
+ * (#4838), so a comment job that skips these never answers a comment the
+ * commit job answers. Undefined for any other comment.
+ */
+export function commitWordOf(words: CiProductWords, body: unknown): string | undefined {
+  if (typeof body !== "string") return undefined;
+  const said = body.trim().split(/[ \t\r\n]+/);
+  if (said[0] !== `/${words.product}` || said[1] === undefined) return undefined;
+  return words.commands[said[1]] === "commit" ? said[1] : undefined;
+}
+
 /**
  * Read a comment against the product's grammar (moved from terragucci's
  * comment.ts). Undefined when it is not addressed to the product. A comment
@@ -512,14 +532,22 @@ const NEVER = new Set(["approve", "override", "force-unlock", "unlock-state", "i
  * names the commit words that take one argument after them (#4820), each
  * with the pattern it must match; it must also match
  * {@link COMMIT_COMMENT_ARG}. Any other commit word takes nothing.
+ *
+ * `leaveCommit` (#4890) is for a comment job that is not the commit job: a
+ * comment for a commit word is undefined, a malformed one included
+ * ({@link commitWordOf}), because the commit job answers it, refusals and
+ * all (#4838). Without it, a malformed `/<product> <commit word> x` would
+ * get a reply from both jobs.
  */
 export function parseProductComment(
   words: CiProductWords,
   body: unknown,
   env: Record<string, string | undefined> = {},
   commitArgs: Readonly<Record<string, RegExp>> = {},
+  options: ProductCommentOptions = {},
 ): ParsedProductComment | undefined {
   if (typeof body !== "string") return undefined;
+  if (options.leaveCommit && commitWordOf(words, body) !== undefined) return undefined;
   let text = body.trim();
   const prefix = `/${words.product}`;
   for (const a of words.aliases) {
@@ -562,6 +590,8 @@ export function parseProductComment(
     case "unlock":
       return parts.length === 2 ? { kind: command } : { kind: "refused", reason: `${line} takes nothing after it` };
     case "commit": {
+      // An alias for a commit word, which commitWordOf does not read, is the commit job's too.
+      if (options.leaveCommit) return undefined;
       if (parts.length === 2) return { kind: "commit", word: typed };
       const pattern = Object.prototype.hasOwnProperty.call(commitArgs, typed) ? commitArgs[typed] : undefined;
       if (pattern === undefined) return { kind: "refused", reason: `${line} takes nothing after it` };

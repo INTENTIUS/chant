@@ -35,7 +35,8 @@ import {
   type CommitSettings,
   type OpCommitSpec,
 } from "./ci-commit";
-import { assertProductWords, parseProductComment } from "./ci-product-words";
+import { COMMENT_LEAVES_COMMIT_FLOOR } from "./ci-product";
+import { assertProductWords, commitWordOf, parseProductComment } from "./ci-product-words";
 import { PLYWOOD } from "./__fixtures__/product-words";
 import { NEXT_RELEASE } from "./release-floors";
 import type { OpRunRecord, OpRunRecordInput } from "./op/runtime";
@@ -619,6 +620,51 @@ describe("a comment refused as it is read gets a reply (#4838)", () => {
 
   test("the floor is the release that shipped it", () => {
     expect(CI_COMMIT_REFUSAL_REPLY_FLOOR).toBe("0.124.86");
+  });
+});
+
+describe("a comment job leaves the commit job's words to it, so a comment gets one reply (#4890)", () => {
+  const named = () => settings({ commentArg: { pattern: "^[a-z0-9]+(?:[-_][a-z0-9]+)*$", position: 1 } });
+  /** What a comment job that is not the commit job makes of the comment: a refusal is a reply. */
+  const commentJob = (body: string, leaveCommit: boolean) => parseProductComment(words, body, {}, {}, { leaveCommit });
+
+  test("a malformed comment for a commit word is answered by the commit job alone", async () => {
+    for (const [s, body] of [
+      [settings(), "/plywood fmt now"],
+      [named(), "/plywood fmt Bad"],
+      [settings(), "/plywood fmt\nand more"],
+      [settings(), "/plywood\tfmt  now"],
+    ] as const) {
+      const w = world();
+      await cycle(w, s, { event: comment(body) });
+      expect(w.replies, body).toHaveLength(1);
+      // Without leaveCommit the comment job refused it too: the second reply #4890 is about.
+      expect(commentJob(body, false), body).toMatchObject({ kind: "refused" });
+      expect(commentJob(body, true), body).toBeUndefined();
+      expect(commitWordOf(words, body), body).toBe("fmt");
+    }
+  });
+
+  test("a well-formed commit comment is the commit job's too, and every other comment is still the comment job's", () => {
+    expect(commentJob("/plywood fmt", true)).toBeUndefined();
+    expect(commentJob("/plywood up now", true)).toMatchObject({ kind: "refused" });
+    expect(commentJob("/plywood up", true)).toEqual({ kind: "apply" });
+    expect(commentJob("/plywood fmtx", true)).toMatchObject({ kind: "refused", reason: expect.stringMatching(/the commands are/) });
+    expect(commentJob("/plywood", true)).toMatchObject({ kind: "refused" });
+    expect(commentJob("/plywoodfmt", true)).toBeUndefined();
+    expect(commitWordOf(words, "/plywood up")).toBeUndefined();
+    expect(commitWordOf(words, "/plywood constructor")).toBeUndefined();
+    expect(commitWordOf(words, 7)).toBeUndefined();
+  });
+
+  test("an alias for a commit word is left to the commit job", () => {
+    const aliased = assertProductWords({ ...PLYWOOD, commands: { ...PLYWOOD.commands, fmt: "commit" as const }, aliases: [{ from: "pw fmt", command: "commit" as const }] });
+    expect(parseProductComment(aliased, "pw fmt")).toEqual({ kind: "commit", word: "fmt" });
+    expect(parseProductComment(aliased, "pw fmt", {}, {}, { leaveCommit: true })).toBeUndefined();
+  });
+
+  test("the floor is the next release", () => {
+    expect(COMMENT_LEAVES_COMMIT_FLOOR).toBe(NEXT_RELEASE);
   });
 });
 

@@ -37,6 +37,7 @@ export {
   CiProductWordsError,
   commandWord,
   commentLine,
+  commitWordOf,
   isChantWords,
   notifyWaveLabel,
   overrideLine,
@@ -63,6 +64,7 @@ export {
   type CiProductWordsInput,
   type OverrideLineInput,
   type ParsedProductComment,
+  type ProductCommentOptions,
   type ProductActionRequest,
 } from "./ci-product-words";
 export { driftNotifyFields, NOTIFY_MESSAGE_WORDS_FLOOR, productNotifySource, productNotifyWords, productSendOptions, type DriftNotifyInput } from "./notify-product";
@@ -140,6 +142,11 @@ export { planNoteHandoff, PR_PLAN_NOTE_FILE, type PrPlanNoteHandoff } from "./pr
  */
 export const PRODUCT_PLAN_STEPS_FLOOR = NEXT_RELEASE;
 export { PLAN_ARGUMENT_ENV, PLAN_NOTE_NOTICES_ENV, type ProductPlanReplanJob, type ProductPlanSetupStep } from "./components/product-plan";
+
+/**
+ * The first chant whose `parseProductComment` takes `leaveCommit` and that has `commitWordOf` (#4890): a comment job that is not the commit job leaves every comment for a commit word to it, a malformed one included, so the comment gets one reply.
+ */
+export const COMMENT_LEAVES_COMMIT_FLOOR = NEXT_RELEASE;
 
 /**
  * Day-2 actions in the product pipeline (#4654): the `action` comment
