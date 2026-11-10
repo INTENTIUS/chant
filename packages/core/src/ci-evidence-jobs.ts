@@ -31,7 +31,7 @@ import type { ForgeKind } from "./pr-forge";
 /** The variable the signing steps read the key from. */
 export const EVIDENCE_KEY_ENV = "CHANT_RUNNER_KEY";
 
-export { CHECK_EVIDENCE_FLOOR } from "./release-floors";
+export { CHECK_EVIDENCE_FLOOR, LOCAL_EVIDENCE_FLOOR } from "./release-floors";
 
 /** A pipeline's runner identity (#4870). */
 export interface PipelineEvidence {

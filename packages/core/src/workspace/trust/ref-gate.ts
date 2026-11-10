@@ -214,9 +214,12 @@ export function evidenceFor(repo: string, commit: string, notes?: string | null)
   return text === undefined ? [] : parseEvidenceNote(text);
 }
 
-/** Attach `envelope` to `commit` as one line of its evidence note. Pushing `refs/notes/chant/evidence` is the caller's. */
-export function attachEvidence(repo: string, commit: string, envelope: unknown): void {
-  git(repo, ["notes", `--ref=${EVIDENCE_NOTES_REF}`, "append", "-m", JSON.stringify(envelope), commit]);
+/**
+ * Attach `envelope` to `commit` as one line of its evidence note. Pushing `refs/notes/chant/evidence` is the caller's.
+ * `notesRef` is another notes ref, for local evidence (#4868), which the ref gate never reads.
+ */
+export function attachEvidence(repo: string, commit: string, envelope: unknown, notesRef: string = EVIDENCE_NOTES_REF): void {
+  git(repo, ["notes", `--ref=${notesRef}`, "append", "-m", JSON.stringify(envelope), commit]);
 }
 
 /** The check an envelope claims to be for, read without verifying, so a refusal can say which check a bad envelope was meant for. */

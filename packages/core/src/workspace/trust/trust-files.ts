@@ -202,7 +202,7 @@ export function trustConfigProblems(raw: unknown): string[] {
   const check = (field: string, ok: boolean, message: string) => {
     if (!ok) problems.push(`${field}: ${message}`);
   };
-  check("/", only(raw, ["schema", "signers", "roles", "adopted", "runners", "passkeys", "admitted", "refs"]), "unknown key");
+  check("/", only(raw, ["schema", "signers", "roles", "adopted", "runners", "passkeys", "admitted", "refs", "local"]), "unknown key");
   check("schema", raw.schema === 1, "expected 1");
   check("signers", optional(raw.signers, isRepoPath), "a path inside the repository, with / separators and no ..");
   check(
@@ -274,6 +274,26 @@ export function trustConfigProblems(raw: unknown): string[] {
       ),
     ),
     "ref rules: a ref pattern and the checks it requires, each with a command",
+  );
+  // #4868: keep in step with LOCAL_EVIDENCE_NEVER in ./policy.ts.
+  const never = ["plan", "policy", "apply", "drift", "release", "gate", "approval", "confirm"];
+  check(
+    "local",
+    optional(raw.local, (l) =>
+      isObject(l) && only(l, ["keys", "checks"]) &&
+      optional(l.keys, (a) => Array.isArray(a) && a.every((e) => isObject(e) && only(e, ["principal", "class", "key"]) && nonEmpty(e.principal) && (e.class === "person" || e.class === "agent") && typeof e.key === "string" && SSH_ED25519.test(e.key))) &&
+      optional(l.checks, (a) =>
+        Array.isArray(a) &&
+        a.every(
+          (c) =>
+            isObject(c) && only(c, ["check", "from"]) &&
+            typeof c.check === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(c.check) &&
+            !never.some((n) => c.check === n || (c.check as string).startsWith(`${n}:`)) &&
+            optional(c.from, (f) => Array.isArray(f) && f.length > 0 && f.every((x) => x === "person" || x === "agent")),
+        ),
+      ),
+    ),
+    "local evidence: person or agent keys, and the checks it stands in for (never plan, policy, apply, drift, release, gate, approval, confirm)",
   );
   return problems;
 }

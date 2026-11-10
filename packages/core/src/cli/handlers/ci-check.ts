@@ -13,6 +13,12 @@
  * With a runner key in `CHANT_RUNNER_KEY` (#4870), each hook that passed is
  * signed as a named check over `HEAD` and attached under `refs/notes/chant/evidence`, which
  * is pushed unless `--no-push`; the key never reaches a hook.
+ *
+ * #4868: with a local key in `CHANT_LOCAL_EVIDENCE_KEY` (a developer's or an
+ * agent session's, listed under `local.keys` at base) each hook that passed
+ * is signed as local evidence instead, under `refs/notes/chant/local-evidence`.
+ * Without one, a hook whose check `local.checks` at base names is skipped
+ * when current local evidence for the tree stands in for it; the rest run.
  */
 import { resolve } from "node:path";
 import type { CheckStageEvidence, CheckStepsAdapter } from "../../components/check-steps";
@@ -47,13 +53,34 @@ const USAGE = "chant ci check --base <rev> [<target>...] [--output <dir>] [--no-
  * a job asked to sign never passes while signing nothing.
  */
 async function checkEvidenceSigner(base: string, noPush: boolean): Promise<CheckStageEvidence | undefined> {
-  const { CHECK_EVIDENCE_KEY_ENV, runnerKeyEvidenceSigner } = await import("../../workspace/trust/check-evidence");
+  const { CHECK_EVIDENCE_KEY_ENV, LOCAL_EVIDENCE_KEY_ENV } = await import("../../workspace/trust/check-evidence-report");
   const pem = process.env[CHECK_EVIDENCE_KEY_ENV];
-  if (!pem) return undefined;
+  const localPem = process.env[LOCAL_EVIDENCE_KEY_ENV];
+  if (!pem && !localPem) return undefined;
+  if (pem && localPem) throw new Error(`${CHECK_EVIDENCE_KEY_ENV} and ${LOCAL_EVIDENCE_KEY_ENV} are both set; a job signs as a runner or as a person or agent, never both`);
+  const { top, commit } = await baseCommit(base);
+  if (localPem) {
+    const { localKeyEvidenceSigner } = await import("../../workspace/trust/local-evidence");
+    return { signer: localKeyEvidenceSigner(top, commit, localPem), ...(noPush ? { push: false } : {}) };
+  }
+  const { runnerKeyEvidenceSigner } = await import("../../workspace/trust/check-evidence");
+  return { signer: runnerKeyEvidenceSigner(top, commit, pem!), ...(noPush ? { push: false } : {}) };
+}
+
+async function baseCommit(base: string): Promise<{ top: string; commit: string }> {
   const { execFileSync } = await import("node:child_process");
   const top = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
   const commit = execFileSync("git", ["rev-parse", "--verify", `${base}^{commit}`], { cwd: top, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-  return { signer: runnerKeyEvidenceSigner(top, commit, pem), ...(noPush ? { push: false } : {}) };
+  return { top, commit };
+}
+
+/** Skipping on local evidence (#4868), judged by the policy at `base`; undefined outside a git repository. */
+async function localEvidenceAt(base: string): Promise<{ base: string } | undefined> {
+  try {
+    return { base: (await baseCommit(base)).commit };
+  } catch {
+    return undefined;
+  }
 }
 
 export async function runCiCheck(ctx: CommandContext): Promise<number> {
@@ -68,7 +95,9 @@ export async function runCiCheck(ctx: CommandContext): Promise<number> {
   try {
     const adapters = await lexiconCheckSteps(ctx, process.cwd());
     const evidence = await checkEvidenceSigner(args.base, args.noPush === true);
-    report = await runCheckStage({ base: args.base, targets, adapters, ...(args.output ? { dir: args.output } : {}), ...(evidence ? { evidence } : {}) });
+    // #4868: a job that signs local evidence runs every hook; any other may skip one on local evidence.
+    const local = evidence && "class" in evidence.signer ? undefined : await localEvidenceAt(args.base);
+    report = await runCheckStage({ base: args.base, targets, adapters, ...(args.output ? { dir: args.output } : {}), ...(evidence ? { evidence } : {}), ...(local ? { localEvidence: local } : {}) });
   } catch (err) {
     console.error(formatError({ message: err instanceof Error ? err.message : String(err), hint: USAGE }));
     return CHANT_EXIT.failed;
@@ -80,6 +109,8 @@ export async function runCiCheck(ctx: CommandContext): Promise<number> {
     console.error(`ci check: ${all.filter((h) => h.outcome === "passed").length} passed, ${all.filter((h) => h.outcome === "failed").length} failed, ${all.filter((h) => h.outcome === "skipped").length} skipped`);
     if (report.failed) console.error(`ci check: ${report.failed}`);
     if (report.evidence) console.error(`ci check: signed ${report.evidence.signed.join(", ")} as ${report.evidence.runner}`);
+    const onLocal = report.hooks.filter((h) => h.localEvidence);
+    if (onLocal.length > 0) console.error(`ci check: skipped on local evidence: ${onLocal.map((h) => `${h.name} (${h.localEvidence!.class} ${h.localEvidence!.signer})`).join(", ")}`);
   }
   return report.status === "failed" ? CHANT_EXIT.failed : CHANT_EXIT.done;
 }

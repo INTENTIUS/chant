@@ -54,6 +54,22 @@ export const REF_CHECK_NAME = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 /** A ref pattern (#4867): a full ref name, where `*` matches within one `/` segment and `**` matches across them. */
 export const REF_PATTERN = /^refs\/[^\s\\]+$/;
 
+/**
+ * Checks local evidence never stands in for (#4868): the ones that gate an
+ * apply, a release or a gate. A name is refused when it is one of these, or
+ * one of these followed by `:` (a wave's `plan:<wave>`).
+ */
+export const LOCAL_EVIDENCE_NEVER = ["plan", "policy", "apply", "drift", "release", "gate", "approval", "confirm"] as const;
+
+/** Whether local evidence may ever be accepted for `check` (#4868). */
+export function localEvidenceAllowedFor(check: string): boolean {
+  return !LOCAL_EVIDENCE_NEVER.some((n) => check === n || check.startsWith(`${n}:`));
+}
+
+/** Who signs local evidence (#4868): a person on their machine, or an agent session as itself. */
+export const LOCAL_SIGNER_CLASSES = ["person", "agent"] as const;
+export type LocalSignerClass = (typeof LOCAL_SIGNER_CLASSES)[number];
+
 export const trustConfigSchema = z
   .object({
     schema: z.literal(1),
@@ -163,6 +179,42 @@ export const trustConfigSchema = z
           .strict(),
       )
       .optional(),
+    /**
+     * Local evidence (#4868): keys that sign on a developer's machine, for a
+     * person or an agent session, and the checks whose CI run such evidence
+     * stands in for. Off for every check not named in `checks`, and never
+     * for the checks {@link LOCAL_EVIDENCE_NEVER} names. A local key is
+     * never a runner key: local evidence never counts as runner evidence.
+     */
+    local: z
+      .object({
+        keys: z
+          .array(
+            z
+              .object({
+                principal: z.string().min(1),
+                class: z.enum(LOCAL_SIGNER_CLASSES),
+                key: z.string().regex(/^ssh-ed25519 [A-Za-z0-9+/]+={0,2}$/, "an ssh-ed25519 public key, with no comment"),
+              })
+              .strict(),
+          )
+          .optional(),
+        checks: z
+          .array(
+            z
+              .object({
+                check: z
+                  .string()
+                  .regex(REF_CHECK_NAME, "a check name: letters, digits, . _ : -")
+                  .refine(localEvidenceAllowedFor, { message: `local evidence never stands in for ${LOCAL_EVIDENCE_NEVER.join(", ")} (or <name>:<wave>)` }),
+                from: z.array(z.enum(LOCAL_SIGNER_CLASSES)).min(1).optional(),
+              })
+              .strict(),
+          )
+          .optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -177,6 +229,23 @@ export interface RefRule {
   checks: Array<{ check: string; action: "block" | "warn"; command: string }>;
   status?: string;
   overrides?: "ledger" | "sealed";
+}
+
+/** A key that signs local evidence (#4868): a person's or an agent session's. */
+export interface LocalKey {
+  principal: string;
+  class: LocalSignerClass;
+  /** `ssh-ed25519 <base64>`. */
+  key: string;
+}
+
+/** What `local` in `.chant/trust.json` at base says (#4868), with `from` filled in (default: people only). */
+export interface LocalEvidencePolicy {
+  keys: LocalKey[];
+  /** Keys left out, and why. */
+  excluded: Array<{ principal: string; reason: string }>;
+  /** The checks local evidence stands in for, and from whom. */
+  checks: Array<{ check: string; from: LocalSignerClass[] }>;
 }
 
 /** A key that signs runner evidence: a service or CI identity. */
@@ -209,6 +278,8 @@ export interface TrustPolicy {
   admitted: Record<string, Signer[]>;
   /** The checks a ref update needs evidence for (#4867). Absent on a policy built by hand: none. */
   refs?: RefRule[];
+  /** Local evidence (#4868). Absent on a policy built by hand: no key, no check accepts it. */
+  local?: LocalEvidencePolicy;
   /**
    * Set on a copy of the policy used for one returned record (#2552): the
    * return it came back in. A seal by a principal the policy does not list
@@ -240,7 +311,7 @@ export function policyWriters(policy: TrustPolicy): Set<string> {
 
 /** A policy with nothing in it: attestation off. */
 export function emptyPolicy(base: string | null, problems: string[] = []): TrustPolicy {
-  return { base, signersPath: DEFAULT_SIGNERS_PATH, active: false, signers: [], excluded: [], roles: {}, adopted: [], runners: [], excludedRunners: [], passkeys: [], admitted: {}, refs: [], problems };
+  return { base, signersPath: DEFAULT_SIGNERS_PATH, active: false, signers: [], excluded: [], roles: {}, adopted: [], runners: [], excludedRunners: [], passkeys: [], admitted: {}, refs: [], local: { keys: [], excluded: [], checks: [] }, problems };
 }
 
 /**
@@ -297,8 +368,23 @@ export function readTrustPolicy(source: RecordSource, base: string | null): Trus
     passkeys: config.passkeys ?? [],
     admitted: admittedOf(config),
     refs: (config.refs ?? []).map((r) => ({ ...r, checks: r.checks.map((c) => ({ ...c, action: c.action ?? "block" })) })),
+    local: localOf(config, runners),
     problems: [],
   };
+}
+
+/** The local evidence policy (#4868): a key a runner entry also holds is left out, so one key never speaks as both. */
+function localOf(config: TrustConfig, runners: readonly RunnerKey[]): LocalEvidencePolicy {
+  const runnerKeys = new Set([...runners.map((r) => r.key), ...(config.runners ?? []).map((r) => r.key)]);
+  const all = config.local?.keys ?? [];
+  const keys: LocalKey[] = [];
+  const excluded: Array<{ principal: string; reason: string }> = [];
+  for (const k of all) {
+    if (runnerKeys.has(k.key)) excluded.push({ principal: k.principal, reason: "a runner entry has this key; local evidence is signed by a person's or an agent's key, never a runner's" });
+    else if (all.filter((o) => o.key === k.key || o.principal === k.principal).length > 1) excluded.push({ principal: k.principal, reason: "another local key has the same key or principal" });
+    else keys.push(k);
+  }
+  return { keys, excluded, checks: (config.local?.checks ?? []).map((c) => ({ check: c.check, from: c.from ?? ["person"] })) };
 }
 
 /** The admitted signers, by return id. Two entries for one return add up. */

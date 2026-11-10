@@ -19,6 +19,11 @@
  *
  * Without a runner key, `sign` signs nothing and says so: a project that
  * declares no runner identity gets the same job it had.
+ *
+ * `--local` (#4868) is the developer's or agent session's form: `sign
+ * --local` signs with the key in `--key` or `CHANT_LOCAL_EVIDENCE_KEY`, which
+ * `local.keys` at base lists, and pushes `refs/notes/chant/local-evidence`;
+ * `verify --local` says whether CI would skip each check on that evidence.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -35,11 +40,12 @@ import {
   signChecks,
   type EvidenceSigner,
 } from "../../workspace/trust/check-evidence";
-import { CHECK_EVIDENCE_FILE, planReportChecks, type CheckEvidenceNote } from "../../workspace/trust/check-evidence-report";
+import { CHECK_EVIDENCE_FILE, LOCAL_EVIDENCE_KEY_ENV, planReportChecks, type CheckEvidenceNote } from "../../workspace/trust/check-evidence-report";
 
 const USAGE =
   "chant ci evidence sign (--check-id <id>[,<id>...] | --from-report <dir> --result <result>) [--at <rev>] [--base <rev>] [--key <file>] [--claim <file>] [--no-push] [--json]\n" +
-  "  chant ci evidence verify --check-id <id>[,<id>...] [--at <rev>] [--base <rev>] [--json]";
+  "  chant ci evidence sign --local --check-id <id>[,<id>...] [--at <rev>] [--base <rev>] [--key <file>] [--claim <file>] [--no-push] [--json]\n" +
+  "  chant ci evidence verify [--local] --check-id <id>[,<id>...] [--at <rev>] [--base <rev>] [--json]";
 
 function usage(message: string): number {
   console.error(formatError({ message, hint: USAGE }));
@@ -59,7 +65,45 @@ export async function runCiEvidence(ctx: CommandContext): Promise<number> {
   const base = resolveBase(repo, args.base);
   if (!base.commit) return usage(base.problem ?? "no base: pass --base <rev>, the commit whose .chant/trust.json lists the runner keys");
   const at = args.at ?? "HEAD";
+  if (args.local) return sub === "sign" ? signLocal(ctx, repo, base.commit, at) : verifyLocal(ctx, repo, base.commit, at);
   return sub === "sign" ? sign(ctx, repo, base.commit, at) : verify(ctx, repo, base.commit, at);
+}
+
+/** `sign --local` (#4868): local evidence for each named check, signed by a person's or an agent's key. */
+async function signLocal(ctx: CommandContext, repo: string, base: string, at: string): Promise<number> {
+  const { args } = ctx;
+  const checks = idsOf(args.checkId);
+  if (checks.length === 0) return usage("sign --local needs --check-id <id>");
+  if (args.fromReport) return usage("--from-report is the plan note job's; plan and policy never take local evidence");
+  const pem = args.key ? readFileSync(args.key, "utf-8") : process.env[LOCAL_EVIDENCE_KEY_ENV];
+  if (!pem) return usage(`sign --local needs a local evidence key: --key <file> or ${LOCAL_EVIDENCE_KEY_ENV}`);
+  const { localKeyEvidenceSigner, recordLocalChecks, signLocalChecks } = await import("../../workspace/trust/local-evidence");
+  let signer;
+  try {
+    signer = localKeyEvidenceSigner(repo, base, pem);
+  } catch (err) {
+    console.error(formatError({ message: err instanceof Error ? err.message : String(err), hint: USAGE }));
+    return CHANT_EXIT.failed;
+  }
+  const claim = args.claim ? readFileSync(args.claim) : undefined;
+  const signed = signLocalChecks(repo, at, checks.map((check) => ({ check, ...(claim ? { claim } : {}) })), signer);
+  const pushed = await recordLocalChecks(repo, signed, { push: !args.noPush });
+  for (const s of signed) console.error(`ci evidence: signed local evidence for ${s.check} at ${s.commit.slice(0, 12)} as ${signer.class} ${s.runner}`);
+  if (!args.noPush && !pushed.pushed && pushed.pushWarning) console.error(`ci evidence: the evidence is attached here, and the push did not land: ${pushed.pushWarning}`);
+  if (args.json) console.log(JSON.stringify({ signed: signed.map((s) => ({ check: s.check, signer: s.runner, class: signer.class, commit: s.commit, tree: s.tree })) }, null, 2));
+  return CHANT_EXIT.done;
+}
+
+/** `verify --local` (#4868): whether CI would skip each check on local evidence; exits 1 when one would run. */
+async function verifyLocal(ctx: CommandContext, repo: string, base: string, at: string): Promise<number> {
+  const { args } = ctx;
+  const checks = idsOf(args.checkId);
+  if (checks.length === 0) return usage("verify --local needs --check-id <id>");
+  const { acceptedLocalEvidence } = await import("../../workspace/trust/local-evidence");
+  const verdicts = acceptedLocalEvidence(repo, at, base, checks);
+  if (args.json) console.log(JSON.stringify({ at, base, local: true, checks: verdicts }, null, 2));
+  else for (const v of verdicts) console.error(v.status === "accepted" ? `  accepted      ${v.check} (${v.class} ${v.signer} at ${v.commit.slice(0, 12)})` : `  ${v.status.padEnd(12)}  ${v.check}: ${v.reason}`);
+  return verdicts.every((v) => v.status === "accepted") ? CHANT_EXIT.done : CHANT_EXIT.failed;
 }
 
 async function sign(ctx: CommandContext, repo: string, base: string, at: string): Promise<number> {

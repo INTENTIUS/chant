@@ -147,33 +147,38 @@ function tryGit(repo: string, args: string[]): string | undefined {
  * on the newer notes. Returns why the push did not land, when it did not;
  * the local notes hold the envelopes either way.
  */
-export async function recordChecks(repo: string, signed: readonly SignedCheck[], opts: { push?: boolean; remote?: string } = {}): Promise<{ pushed: boolean; pushWarning?: string }> {
+export async function recordChecks(repo: string, signed: readonly SignedCheck[], opts: { push?: boolean; remote?: string; notesRef?: string } = {}): Promise<{ pushed: boolean; pushWarning?: string }> {
   if (signed.length === 0) return { pushed: false };
   const push = opts.push !== false;
   const remote = opts.remote ?? "origin";
+  // #4868: local evidence goes under a notes ref of its own.
+  const notesRef = opts.notesRef ?? EVIDENCE_NOTES_REF;
   const hasRemote = push && tryGit(repo, ["remote", "get-url", remote]) !== undefined;
   if (!hasRemote) {
-    for (const s of signed) attachEvidence(repo, s.commit, s.envelope);
+    for (const s of signed) attachEvidence(repo, s.commit, s.envelope, notesRef);
     return push ? { pushed: false, pushWarning: `no remote ${remote}, so the evidence is attached here only` } : { pushed: false };
   }
   let said = "";
   for (let attempt = 1; attempt <= NOTES_PUSH_TRIES; attempt++) {
     // The remote's notes are the ones to add to; a CI checkout has none of its own to keep.
-    if (tryGit(repo, ["fetch", "--quiet", "--no-tags", remote, `+${EVIDENCE_NOTES_REF}:${EVIDENCE_NOTES_REF}`]) === undefined && attempt > 1) break;
-    for (const s of signed) attachEvidence(repo, s.commit, s.envelope);
+    if (tryGit(repo, ["fetch", "--quiet", "--no-tags", remote, `+${notesRef}:${notesRef}`]) === undefined && attempt > 1) break;
+    for (const s of signed) attachEvidence(repo, s.commit, s.envelope, notesRef);
     try {
-      execFileSync("git", ["push", "--quiet", remote, `${EVIDENCE_NOTES_REF}:${EVIDENCE_NOTES_REF}`], { cwd: repo, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
+      execFileSync("git", ["push", "--quiet", remote, `${notesRef}:${notesRef}`], { cwd: repo, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
       return { pushed: true };
     } catch (err) {
       said = String((err as { stderr?: unknown }).stderr ?? (err instanceof Error ? err.message : err)).trim().split("\n")[0] ?? "";
     }
   }
-  return { pushed: false, pushWarning: `git push ${remote} ${EVIDENCE_NOTES_REF} did not land${said ? ` (git said: ${said})` : ""}` };
+  return { pushed: false, pushWarning: `git push ${remote} ${notesRef} did not land${said ? ` (git said: ${said})` : ""}` };
 }
 
-/** Every envelope attached to a commit whose tree is `tree`: `commit`'s own first. */
-function envelopesForTree(repo: string, commit: string, tree: string): unknown[] {
-  const list = tryGit(repo, ["notes", `--ref=${EVIDENCE_NOTES_REF}`, "list"]);
+/**
+ * Every envelope attached to a commit whose tree is `tree`: `commit`'s own first. Read from `notesRef`
+ * (default {@link EVIDENCE_NOTES_REF}; #4868 reads local evidence from its own).
+ */
+export function envelopesForTree(repo: string, commit: string, tree: string, notesRef: string = EVIDENCE_NOTES_REF): unknown[] {
+  const list = tryGit(repo, ["notes", `--ref=${notesRef}`, "list"]);
   if (!list) return [];
   const own: unknown[] = [];
   const others: unknown[] = [];

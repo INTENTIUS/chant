@@ -23,6 +23,7 @@ import { join, relative, resolve } from "node:path";
 import { readDeclaration } from "../workspace/declaration";
 import { locateWorkspace } from "../workspace/which-chant";
 import { recordChecks, signChecks, type EvidenceSigner } from "../workspace/trust/check-evidence";
+import { recordLocalChecks, signLocalChecks, type LocalEvidenceSigner } from "../workspace/trust/local-evidence";
 import { CHECK_HOOKS_DIR, CHECK_HOOKS_REPORT_FILE, checkHookEnv, passedCheckHooks, runCheckHooks, type CheckHooksReport, type RunCheckHooksOptions } from "./check-hooks";
 
 /** A workspace member a lexicon's check steps run for. */
@@ -138,7 +139,9 @@ function failedLine(steps: CheckStepOutcome[]): string | undefined {
  * both under `dir` and returns it; `status` is `none` only when no hook is
  * declared and no step ran.
  */
-export async function runCheckStage(options: RunCheckHooksOptions & { adapters: readonly CheckStepsAdapter[]; members?: CheckStageMember[]; evidence?: CheckStageEvidence }): Promise<CheckHooksReport> {
+export async function runCheckStage(
+  options: RunCheckHooksOptions & { adapters: readonly CheckStepsAdapter[]; members?: CheckStageMember[]; evidence?: CheckStageEvidence },
+): Promise<CheckHooksReport> {
   const cwd = options.cwd ?? process.cwd();
   const log = options.log ?? ((line: string) => console.error(line));
   const hooks = runCheckHooks(options);
@@ -161,26 +164,38 @@ export async function runCheckStage(options: RunCheckHooksOptions & { adapters: 
  * Who signs the check stage's evidence (#4870), and where: the stage signs
  * each hook that passed as a named check over `at` (default the checkout's
  * `HEAD`) and attaches it under `refs/notes/chant/evidence`. Absent, nothing is signed and
- * the report is as before.
+ * the report is as before. A {@link LocalEvidenceSigner} (#4868, a developer's or an agent's
+ * key) signs local evidence instead, under `refs/notes/chant/local-evidence`.
  */
 export interface CheckStageEvidence {
-  signer: EvidenceSigner;
+  signer: EvidenceSigner | LocalEvidenceSigner;
   /** The commit the checks ran at. Default `HEAD`. */
   at?: string;
   /** Push the ledger once signed. Default true. */
   push?: boolean;
 }
 
-/** Sign each passed hook's evidence when the stage has a signer (#4870), and write the report. */
+function isLocalSigner(signer: EvidenceSigner): signer is LocalEvidenceSigner {
+  return "class" in signer;
+}
+
+/**
+ * Sign each passed hook's evidence when the stage has a signer (#4870), and write the report.
+ * A local signer (#4868) signs local evidence, kept under `refs/notes/chant/local-evidence`.
+ */
 async function signHooks(options: { dir?: string; evidence?: CheckStageEvidence }, cwd: string, log: (line: string) => void, report: CheckHooksReport): Promise<CheckHooksReport> {
   const dir = relative(cwd, resolve(cwd, options.dir ?? CHECK_HOOKS_DIR)) || ".";
   const passed = passedCheckHooks(report.hooks);
   let out = report;
   if (options.evidence && passed.length > 0) {
     const repo = gitTopOf(cwd);
-    const signed = signChecks(repo, options.evidence.at ?? "HEAD", passed.map((h) => ({ check: h.check, claim: JSON.stringify(h.runs) })), options.evidence.signer);
-    const pushed = await recordChecks(repo, signed, { push: options.evidence.push !== false });
-    for (const s of signed) log(`ci check: signed evidence for ${s.check} at ${s.commit.slice(0, 12)} as ${s.runner}`);
+    const signer = options.evidence.signer;
+    const at = options.evidence.at ?? "HEAD";
+    const wanted = passed.map((h) => ({ check: h.check, claim: JSON.stringify(h.runs) }));
+    const signed = isLocalSigner(signer) ? signLocalChecks(repo, at, wanted, signer) : signChecks(repo, at, wanted, signer);
+    const push = { push: options.evidence.push !== false };
+    const pushed = isLocalSigner(signer) ? await recordLocalChecks(repo, signed, push) : await recordChecks(repo, signed, push);
+    for (const s of signed) log(`ci check: signed ${isLocalSigner(signer) ? "local " : ""}evidence for ${s.check} at ${s.commit.slice(0, 12)} as ${s.runner}`);
     if (options.evidence.push !== false && !pushed.pushed && pushed.pushWarning) log(`ci check: the evidence is attached here, and the push did not land: ${pushed.pushWarning}`);
     out = { ...report, evidence: { signed: signed.map((s) => s.check), runner: signed[0]!.runner, commit: signed[0]!.commit, ...(pushed.pushWarning && options.evidence.push !== false ? { pushWarning: pushed.pushWarning } : {}) } };
   }

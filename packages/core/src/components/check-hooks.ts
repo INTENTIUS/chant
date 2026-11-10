@@ -18,7 +18,7 @@
  * `ci.hooks`, keeping the declaration's formatting.
  */
 
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { CHECK_HOOK_MOMENT, assertCheckHooks, type CiHooks, type OpWaveHook } from "../op/op-waves";
@@ -31,7 +31,8 @@ import { parseJsonText } from "../workspace/jsonc";
 import { memberAtCwd } from "../workspace/security";
 import { locateWorkspace } from "../workspace/which-chant";
 import type { CheckStepOutcome } from "./check-steps";
-import { CHECK_EVIDENCE_KEY_ENV } from "../workspace/trust/check-evidence-report";
+import { CHECK_EVIDENCE_KEY_ENV, LOCAL_EVIDENCE_KEY_ENV } from "../workspace/trust/check-evidence-report";
+import { acceptedLocalEvidence, acceptsLocalEvidence, fetchLocalEvidence } from "../workspace/trust/local-evidence";
 
 export { CI_CHECK_HOOK_FLOOR } from "../op/op-waves";
 
@@ -100,8 +101,8 @@ const CLOUD_CREDENTIAL_VARS = [
  * else.
  */
 export function checkHookEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
-  // #4870: the runner key the check runner signs each hook's evidence with never reaches a hook.
-  const drop = new Set<string>([...FORGE_TOKEN_VARS, ...OIDC_REQUEST_VARS, ...Object.values(TRADED_VARS).flat(), ...CLOUD_CREDENTIAL_VARS, CHECK_EVIDENCE_KEY_ENV]);
+  // #4870, #4868: the runner key and the local evidence key the check runner signs each hook's evidence with never reach a hook.
+  const drop = new Set<string>([...FORGE_TOKEN_VARS, ...OIDC_REQUEST_VARS, ...Object.values(TRADED_VARS).flat(), ...CLOUD_CREDENTIAL_VARS, CHECK_EVIDENCE_KEY_ENV, LOCAL_EVIDENCE_KEY_ENV]);
   const out: Record<string, string> = {};
   for (const [name, value] of Object.entries(env)) {
     if (value === undefined || drop.has(name) || name.startsWith("TF_TOKEN_")) continue;
@@ -125,6 +126,8 @@ export interface CheckHookOutcome {
   exit: number;
   outcome: "passed" | "failed" | "skipped";
   reason?: string;
+  /** Set when the hook was skipped because current local evidence stands in for it (#4868): who signed it, at which commit. */
+  localEvidence?: { signer: string; class: "person" | "agent"; commit: string };
 }
 
 /** What the check hooks came to, for the product's check report. */
@@ -180,6 +183,54 @@ export interface RunCheckHooksOptions {
   /** Default {@link checkHookExec}. */
   exec?: OpWaveExec;
   log?: (line: string) => void;
+  /**
+   * Hooks not to run, by name, because current local evidence the policy at
+   * base accepts stands in for them (#4868). Each is reported `skipped` with
+   * the evidence, the rest run, and the report passes when they do.
+   */
+  skip?: ReadonlyMap<string, { signer: string; class: "person" | "agent"; commit: string }>;
+  /** Skip each hook whose current local evidence the policy at `localEvidence.base` accepts (#4868), added to `skip`. */
+  localEvidence?: CheckHooksLocalEvidence;
+}
+
+/**
+ * Skipping hooks on local evidence (#4868): `base` is the full commit whose
+ * `.chant/trust.json` says which checks take local evidence and whose keys
+ * sign it. Absent, every hook runs.
+ */
+export interface CheckHooksLocalEvidence {
+  base: string;
+  /** The commit the checks run at. Default `HEAD`. */
+  at?: string;
+  /** Fetch `refs/notes/chant/local-evidence` from `origin` first, as a CI job does. Default true. */
+  fetch?: boolean;
+}
+
+/**
+ * `options.skip` plus the hooks whose current local evidence the
+ * policy at base accepts (#4868). Each hook is judged on its own, so a job
+ * that runs several hooks runs the rest. Nothing is fetched or read when the
+ * policy names no check, so a project that never opted in has the job it had.
+ */
+function localSkips(options: RunCheckHooksOptions, read: CheckHooksRead, cwd: string, log: (line: string) => void): RunCheckHooksOptions["skip"] {
+  const local = options.localEvidence;
+  if (!local || read.hooks.length === 0) return options.skip;
+  const repo = execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  if (!acceptsLocalEvidence(repo, local.base)) return options.skip;
+  if (local.fetch !== false && !fetchLocalEvidence(repo)) log("check hooks: refs/notes/chant/local-evidence could not be fetched from origin; using the local evidence this checkout has");
+  const names = [...new Set(read.hooks.map(checkHookName))];
+  const skip = new Map(options.skip ?? []);
+  for (const v of acceptedLocalEvidence(repo, local.at ?? "HEAD", local.base, names)) {
+    if (v.status === "accepted") skip.set(v.check, { signer: v.signer, class: v.class, commit: v.commit });
+    else if (v.status === "untrusted") log(`check hook ${v.check} runs: ${v.reason}`);
+  }
+  return skip;
+}
+
+/** A hook's name as the runner reports it. */
+export function checkHookName(hook: OpWaveHook): string {
+  const command = hook.command.join(" ");
+  return hook.name ?? (command.length > 60 ? `${command.slice(0, 57)}...` : command);
 }
 
 /**
@@ -207,7 +258,13 @@ export function runCheckHooks(options: RunCheckHooksOptions): CheckHooksReport {
   const runs: OpWaveHookRun[] = targets.map((target) => ({ target, op }));
   const runsFile = join(dir, "runs.json");
   writeFileSync(join(cwd, runsFile), JSON.stringify({ version: 1, op, stage: "check", base: read.base, hook: CHECK_HOOK_MOMENT, runs }, null, 2) + "\n");
-  const ran = runStageHooks(CHECK_HOOK_MOMENT, read.hooks, {
+  const skip = localSkips(options, read, cwd, log) ?? new Map();
+  const toRun = read.hooks.filter((h) => !skip.has(checkHookName(h)));
+  for (const h of read.hooks) {
+    const by = skip.get(checkHookName(h));
+    if (by) log(`check hook ${checkHookName(h)}: skipped, current local evidence from ${by.class} ${by.signer} (signed at ${by.commit.slice(0, 12)}) stands in for it`);
+  }
+  const ran = runStageHooks(CHECK_HOOK_MOMENT, toRun, {
     name: op,
     op,
     wave: op,
@@ -219,13 +276,20 @@ export function runCheckHooks(options: RunCheckHooksOptions): CheckHooksReport {
     exec: options.exec ?? checkHookExec,
     log,
   });
-  const hooks = ran.outcomes.map((o): CheckHookOutcome => ({
+  const outcomes = ran.outcomes.map((o): CheckHookOutcome => ({
     name: o.name,
     ...(o.target ? { target: o.target } : {}),
     exit: o.exit,
     outcome: o.outcome === "skipped" ? "skipped" : o.outcome === "passed" ? "passed" : "failed",
     ...(o.reason ? { reason: o.reason } : {}),
   }));
+  // In the declaration's order: a skipped hook where it would have run.
+  const hooks = read.hooks.flatMap((h): CheckHookOutcome[] => {
+    const name = checkHookName(h);
+    const by = skip.get(name);
+    if (by) return [{ name, exit: 0, outcome: "skipped", reason: `current local evidence from ${by.class} ${by.signer}`, localEvidence: by }];
+    return outcomes.filter((o) => o.name === name);
+  });
   const failed = ran.failed ?? (hooks.some((h) => h.outcome === "failed") ? `a check hook failed: ${hooks.filter((h) => h.outcome === "failed").map((h) => h.name).join(", ")}` : undefined);
   return report({ status: failed ? "failed" : "passed", hooks, ...(failed ? { failed } : {}) });
 }

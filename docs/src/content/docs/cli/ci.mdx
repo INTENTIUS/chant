@@ -34,7 +34,8 @@ chant ci run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branc
 chant ci init --workflow trunk-curated|trunk-curated+apply-on-merge|apply-before-merge [--forge github|gitlab|forgejo] [--security <group>]... [--yes]
 chant ci check --base <rev> [<target>...] [--output <dir>] [--json]
 chant ci evidence sign (--check-id <id>[,<id>...] | --from-report <dir> --result <result>) [--at <rev>] [--base <rev>] [--key <file>] [--no-push] [--json]
-chant ci evidence verify --check-id <id>[,<id>...] [--at <rev>] [--base <rev>] [--json]
+chant ci evidence sign --local --check-id <id>[,<id>...] [--at <rev>] [--base <rev>] [--key <file>] [--no-push] [--json]
+chant ci evidence verify [--local] --check-id <id>[,<id>...] [--at <rev>] [--base <rev>] [--json]
 chant ci forge-check [--env <env>] [--member <name>] [--forge github|gitlab|forgejo] [--repo <owner/name>] [--branch <default>] [--require-clouds] [--json]
 chant ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>]
                   [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>]
@@ -614,6 +615,8 @@ chant ci serve --forge forgejo --repo demo/estate --env local
 
 With a runner key in `CHANT_RUNNER_KEY` ([#4870](https://github.com/INTENTIUS/chant/issues/4870)), each hook whose every run passed is signed as a named check, by the hook's name, over `HEAD`, and attached where the [ref gate](/chant/cli/workspace-ref-gate/#evidence) reads evidence: a git note under `refs/notes/chant/evidence`, pushed to `origin` unless `--no-push`. The key never reaches a hook. The key's public half must be listed under `runners` in `.chant/trust.json` at `--base`; a key it does not list fails the job, so a job asked to sign never passes while signing nothing. `check-hooks.json` then has `evidence`, the checks signed and the runner, and the log says which.
 
+A hook whose check takes [local evidence](#local-evidence) is skipped when current local evidence for the commit's tree is kept under `refs/notes/chant/local-evidence`, which the job fetches from `origin` first. Each hook is judged on its own: the others run, the skipped one is `skipped` in `check-hooks.json` with `localEvidence` (who signed it, at which commit), and the job passes when the rest do, so jobs that `need` the check job still run. With a local key in `CHANT_LOCAL_EVIDENCE_KEY` in place of a runner key, every hook runs and each one that passed is signed as local evidence instead. Nothing is fetched or skipped when `.chant/trust.json` at `--base` names no check under `local.checks`. A product whose check job calls `runCheckHooks` (`@intentius/chant/components/check-hooks`) itself gets the same skip by passing `localEvidence: { base }`, the full commit of the base.
+
 ## ci evidence
 
 `chant ci evidence` signs and verifies evidence for the named checks a pipeline runs ([#4870](https://github.com/INTENTIUS/chant/issues/4870)). The evidence is the runner evidence of [workspace evidence](/chant/cli/workspace-evidence/) with no record subjects: it binds the commit, its tree and the check's name, and counts for any commit with the same tree, so the squash of a pull request whose tree is the head's carries the head's evidence.
@@ -640,6 +643,34 @@ An Op waves spec's `evidence.requires`, read at base, names the checks whose cur
 ```
 
 The signer is an `EvidenceSigner` (`@intentius/chant/workspace/trust/check-evidence`): today a runner key `.chant/trust.json` lists. A keyless signer from the job's OIDC identity ([#4869](https://github.com/INTENTIUS/chant/issues/4869)) plugs in there, and the steps stay where they are. `CHECK_EVIDENCE_FLOOR` is the first chant with all of this.
+
+### Local evidence
+
+Lint, type checks and unit tests that already passed on a developer's machine needn't run again in CI ([#4868](https://github.com/INTENTIUS/chant/issues/4868)). Local evidence is a check statement signed on that machine, by a person's key or an agent session's own key, which `.chant/trust.json` at base lists under `local`:
+
+```json
+{
+  "schema": 1,
+  "local": {
+    "keys": [
+      { "principal": "alice@example.com", "class": "person", "key": "ssh-ed25519 AAAA..." },
+      { "principal": "agent:review-bot", "class": "agent", "key": "ssh-ed25519 AAAA..." }
+    ],
+    "checks": [
+      { "check": "fmt", "from": ["person", "agent"] },
+      { "check": "tflint" }
+    ]
+  }
+}
+```
+
+- `checks` names each check whose CI run local evidence stands in for, by the hook's name, and `from` who may sign it (default `["person"]`). A check it doesn't name accepts none, so the default is no for every check.
+- `plan`, `policy`, `apply`, `drift`, `release`, `gate`, `approval` and `confirm`, and any of them followed by `:` (a wave's `plan:<wave>`), can't be named: a policy that names one doesn't parse, and CI then accepts no local evidence at all.
+- A local key is never a runner key. The statement has its own predicate type (`https://intentius.io/chant/local-evidence/v1`) and is kept under `refs/notes/chant/local-evidence`, so the [ref gate](/chant/cli/workspace-ref-gate/) and an Op waves spec's `evidence.requires` never count it. A check the ref gate requires still needs runner evidence; don't name it under `local.checks` too, or a skipped run leaves the ref gate without it.
+- The statement binds the commit and its tree, and counts for any commit with the same tree: a rebase or an amend that keeps the tree keeps it current, and one that changes the tree means the check runs again. On a pull request whose CI checks out a merge commit, the merge's tree is the head's only while the branch is up to date with its base.
+- The policy is read at base, like the rest of `.chant/trust.json`: a key the change adds signs nothing CI accepts until it is merged.
+
+On the developer's machine, `chant ci check --base origin/main` with the key in `CHANT_LOCAL_EVIDENCE_KEY` runs the hooks and signs each one that passed, or `chant ci evidence sign --local --check-id fmt,tflint` signs named checks. Both push `refs/notes/chant/local-evidence` to `origin` unless `--no-push`. `chant ci evidence verify --local --check-id fmt` says, per check, whether CI would skip it: `accepted`, `not-accepted` (the policy doesn't name it), `missing`, `untrusted` (a key the policy at base doesn't list, or an agent's key where the check takes people only) or `refused` (a check that gates an apply). `LOCAL_EVIDENCE_FLOOR` is the first chant with local evidence.
 
 ## ci forge-check
 
