@@ -84,11 +84,11 @@ describe("the trade script stays inside one shell word", () => {
   test("it holds no single quote, so tradeLine can quote it", () => {
     expect(TRADE_JS).not.toContain("'");
   });
-  test("GitLab's lines trade, unset the token variables and the extra ones, then source the credentials", () => {
+  test("GitLab's lines trade into a shell variable, unset the token variables and the extra ones, then evaluate the credentials (#4912)", () => {
     const [trade, unset, source] = gitlabTradeLines(["CHANT_FORGE_TOKEN"]);
-    expect(trade).toContain("node -e");
+    expect(trade).toMatch(/^CHANT_CLOUD_TRADE_VARS="\$\(cd \/ && node -e '.*' "-" sh\)"$/);
     expect(unset).toBe(`unset CHANT_FORGE_TOKEN ${OIDC_REQUEST_VARS.join(" ")}`);
-    expect(source).toMatch(/^\. "\$\{TMPDIR:-\/tmp\}\/chant-cloud-\$CI_JOB_ID\.sh" && rm -f /);
+    expect(source).toBe('eval "$CHANT_CLOUD_TRADE_VARS"; unset CHANT_CLOUD_TRADE_VARS');
     expect(gitlabTradeIdTokens(resolveCloudIdentity(DECL, "prod", "app")!.plan)).toEqual({
       CHANT_ID_TOKEN_AWS: { aud: "sts.amazonaws.com" },
       CHANT_ID_TOKEN_GCP: { aud: "https://iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/ci/providers/forge" },

@@ -77,10 +77,23 @@ export const NO_FORGE_TOKEN_MARKER = "CHANT_NO_FORGE_TOKEN";
  * `$0` is that file. terragucci's `restartWithout` (render.ts:1826).
  */
 export function dropForgeTokens(shell: "sh" | "bash" = "sh", extra: readonly string[] = []): string {
-  const again = shell === "bash" ? 'bash --noprofile --norc -e -o pipefail "$0"' : 'sh -e "$0"';
-  const marker = NO_FORGE_TOKEN_MARKER;
   // #4296: a plan job that traded its OIDC token drops the variables a token is requested with too.
-  const vars = [...FORGE_TOKEN_VARS, ...extra];
+  return restartWithout(shell, [...FORGE_TOKEN_VARS, ...extra], NO_FORGE_TOKEN_MARKER);
+}
+
+/**
+ * The line that restarts the step's shell once without `vars` in its
+ * process environment, setting `marker` so the restarted shell does not
+ * restart again, or, when it cannot restart, unsets them (#4912). The
+ * restart runs the step's script file (`$0`) again from its first line,
+ * with every exported variable but `vars`, so the line goes at the top of
+ * the step. It needs that file, `env` and the shell on the PATH; without
+ * them (a script given to `sh -c`, GitLab's piped script) the shell unsets
+ * `vars` and runs on. {@link dropForgeTokens} and ci-login's `restart` use
+ * it. terragucci's `restartWithout` (render.ts:2101).
+ */
+export function restartWithout(shell: "sh" | "bash", vars: readonly string[], marker: string): string {
+  const again = shell === "bash" ? 'bash --noprofile --norc -e -o pipefail "$0"' : 'sh -e "$0"';
   const can = `[ -z "\${${marker}:-}" ] && [ "\${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "\${0##*/}" = sh ] || [ "\${0##*/}" = bash ] || [ "\${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v ${shell} >/dev/null 2>&1`;
   return `if ${can}; then exec env ${vars.map((v) => `-u ${v}`).join(" ")} ${marker}=1 ${again}; fi; unset ${vars.join(" ")}`;
 }

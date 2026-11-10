@@ -130,8 +130,8 @@ describe("the generated plan script, run: the merge request's code never holds a
     expect(text).not.toContain(APPLY_ROLE);
     expect(text).not.toContain("apply-client");
     for (const v of OIDC_REQUEST_VARS) expect(text).not.toMatch(new RegExp(`^${v}=`, "m"));
-    // The credentials file is gone once sourced.
-    expect(readFileSync(seen, "utf-8")).not.toContain("chant-cloud-4296.sh=");
+    // #4912: no credentials file is written; the script evaluates what the trade printed.
+    expect(readFileSync(seen, "utf-8")).not.toContain("CHANT_CLOUD_TRADE_VARS=");
     expect(() => readFileSync(join(dir, "chant-cloud-4296.sh"))).toThrow();
   });
 });
