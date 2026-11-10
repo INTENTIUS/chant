@@ -77,6 +77,30 @@ describe("the merge request loop's evidence, check and ref gate jobs on gitlab (
   });
 });
 
+describe("a workspace member's merge request pipeline on gitlab (#4964)", () => {
+  const member = { name: "app", dir: "app" };
+  const doc = parseYAML(generateGitlabPipeline(ESTATE, { env: "prod", member, prLoop: { checkJob: true, refGateStatus: true, evidence: { runnerKeySecret: "K" } } } as never).yaml) as Doc;
+
+  test("the jobs take the member's name, and the plan and policy are signed under it", () => {
+    const ev = doc["app-plan-evidence"] as Job;
+    expect(ev.environment).toEqual({ name: "chant-evidence", action: "access" });
+    expect(ev.script).toEqual(["cd app", 'chant ci evidence sign --open --job app-plan --from-report app/.chant/pr --member app --base "$CI_COMMIT_SHA" --output .chant/evidence/app-plan']);
+    // Written in the member's directory, and kept from there, where the note job reads it.
+    expect(ev.artifacts!.paths).toEqual(["app/.chant/evidence/app-plan"]);
+    expect((doc["app-plan-note"] as Job).script).toContain("cd app");
+    expect((doc["app-plan-note"] as Job).script.at(-1)).toMatch(/--evidence-dir \.chant\/evidence\/app-plan$/);
+  });
+
+  test("the check runs in the member's directory, and the ref gate posts from the notes pipeline", () => {
+    const check = doc["app-check"] as Job;
+    expect(check.script).toContain("cd app");
+    expect(check.artifacts!.paths).toEqual(["app/.chant/check"]);
+    expect((doc["app-check-evidence"] as Job).script.at(-1)).toBe('chant ci evidence sign --open --job app-check --from-report app/.chant/check --base "$CI_COMMIT_SHA" --output .chant/evidence/app-check');
+    expect((doc["app-ref-gate"] as Job).script.at(-1)).toBe('chant workspace ref-gate status --open --ref "refs/heads/$CI_COMMIT_BRANCH" --base "$CI_COMMIT_SHA"');
+    for (const name of ["check", "check-evidence", "ref-gate", "plan-evidence"]) expect(doc[name], name).toBeUndefined();
+  });
+});
+
 const yodel = { product: "yodel", noun: ["environment", "environments"] as [string, string], commands: {}, approve: "yodel approve {target} --plan {digest} {sign}", op: "yodel-apply", gateName: "yodel-apply-wave-{k}", approval: "per-wave" as const, bin: "yodel chant" };
 const product = { words: yodel, productPlan: { command: "yodel plan {target} --pr-note {output}", targets: [{ name: "staging" }] } };
 

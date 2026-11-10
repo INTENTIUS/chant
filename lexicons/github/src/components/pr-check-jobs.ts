@@ -21,7 +21,7 @@
 
 import { CHECKOUT_TOKEN_ENV, checkoutScript, dropForgeTokens, handoverOutputs, handoverTrap, takeOverScript } from "@intentius/chant/ci-handover";
 import { githubRunsOn } from "@intentius/chant/ci-jobs";
-import { PR_CHECK_ARTIFACT, type PrCheckJob, type PrRefGateJob } from "@intentius/chant/components/pr-checks";
+import { PR_CHECK_ARTIFACT, type PrCheckJob, type PrCheckService, type PrRefGateJob } from "@intentius/chant/components/pr-checks";
 import { CHECKOUT, runSteps, UPLOAD_ARTIFACT } from "./ci-jobs";
 
 /** The check step's id, whose outputs carry the report to the check evidence job. */
@@ -43,6 +43,28 @@ export interface GithubCheckJobsInput {
   refGate?: PrRefGateJob & { runner?: unknown };
   /** The jobs the ref gate waits for besides the check jobs: the plan note jobs, which sign `plan` and `policy`. */
   refGateNeeds: string[];
+  /**
+   * A workspace member's pipeline (#4964), whose `run:` steps start in the
+   * member's directory (`defaults.run.working-directory`): the directory,
+   * repository-relative. The check job's checkout script then runs at the
+   * root, where the directory is not yet, and the report is kept from the
+   * member's directory.
+   */
+  memberDir?: string;
+}
+
+/** The check job's service containers as GitHub (and Forgejo) spell them (#4964): one entry per name, held until `health` passes. */
+export function githubCheckServices(services: readonly PrCheckService[]): Record<string, unknown> {
+  return Object.fromEntries(
+    services.map((s) => [
+      s.name,
+      {
+        image: s.image,
+        ...(s.env && Object.keys(s.env).length > 0 ? { env: s.env } : {}),
+        ...(s.health ? { options: `--health-cmd ${JSON.stringify(s.health)} --health-interval 2s --health-timeout 5s --health-retries 45` } : {}),
+      },
+    ]),
+  );
 }
 
 /** The jobs by name, in order: check, check-evidence, ref-gate, those asked for. */
@@ -52,23 +74,27 @@ export function githubCheckJobs(input: GithubCheckJobsInput): Record<string, unk
   const out: Record<string, unknown> = {};
   const drop = dropForgeTokens("sh");
   const runsOn = (runner: unknown) => githubRunsOn(runner as Parameters<typeof githubRunsOn>[0]);
+  // #4964: in a member's directory, the checkout runs at the root and the report is kept from the member's directory.
+  const member = input.memberDir && input.memberDir !== "." ? input.memberDir.replace(/\/+$/, "") : undefined;
   if (check) {
     out[check.jobName] = {
       if: input.when,
       "runs-on": runsOn(check.runner),
       container: image,
+      // #4964: the product's service containers, such as the throwaway server its hooks replay into.
+      ...(check.services?.length ? { services: githubCheckServices(check.services) } : {}),
       permissions: { contents: "read" },
       outputs: handoverOutputs(CHECK_STEP_ID, forge),
       steps: [
         // A script, not actions/checkout, whose post step runs at the job's end with the token as its input.
-        { name: "Check out the change", env: { [CHECKOUT_TOKEN_ENV]: "${{ github.token }}" }, run: checkoutScript(true) },
+        { name: "Check out the change", ...(member ? { "working-directory": "." } : {}), env: { [CHECKOUT_TOKEN_ENV]: "${{ github.token }}" }, run: checkoutScript(true) },
         ...input.setup.map((line) => ({ run: `${drop}\n${line}` })),
         // The job's last step: the hooks run the change's code, and a step after them would start beside whatever it left running.
         {
           name: "Run the check hooks the base names",
           id: CHECK_STEP_ID,
           env: check.env,
-          run: [drop, ...handoverTrap(check.dir, forge, { label: "chant", noteFiles: ["check-hooks.json"] }), check.command].join("\n"),
+          run: [drop, ...handoverTrap(check.dir, forge, { label: "chant", noteFiles: ["check-hooks.json"] }), ...(check.before ?? []), check.command].join("\n"),
         },
       ],
     };
@@ -88,7 +114,7 @@ export function githubCheckJobs(input: GithubCheckJobsInput): Record<string, unk
           { name: "Take the check report from the check job", run: takeOverScript(check.jobName, check.dir, forge) },
           // The runner key (or the keyless signing) is in this step alone.
           { name: "Sign the evidence of each check hook that passed", env: ev.env, run: ev.lines.join("\n") },
-          { name: "Keep the check report", if: "always()", uses: UPLOAD_ARTIFACT, with: { name: PR_CHECK_ARTIFACT, path: check.dir, "if-no-files-found": "ignore", "include-hidden-files": true } },
+          { name: "Keep the check report", if: "always()", uses: UPLOAD_ARTIFACT, with: { name: PR_CHECK_ARTIFACT, path: member ? `${member}/${check.dir}` : check.dir, "if-no-files-found": "ignore", "include-hidden-files": true } },
         ],
       };
     }

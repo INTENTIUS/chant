@@ -21,7 +21,7 @@
  */
 
 import { GITLAB_DROP_FORGE_TOKENS } from "@intentius/chant/ci-handover";
-import { PR_CHECK_ARTIFACT, type PrCheckJob, type PrRefGateJob } from "@intentius/chant/components/pr-checks";
+import { PR_CHECK_ARTIFACT, type PrCheckJob, type PrCheckService, type PrRefGateJob } from "@intentius/chant/components/pr-checks";
 import { gitlabTags } from "@intentius/chant/ci-jobs";
 import { GITLAB_EVIDENCE_ENVIRONMENT } from "@intentius/chant/ci-evidence-jobs";
 
@@ -45,6 +45,24 @@ export interface GitlabCheckJobsInput {
   unset?: string[];
   check?: PrCheckJob & { runner?: unknown; evidenceRunner?: unknown };
   refGate?: PrRefGateJob & { runner?: unknown };
+  /**
+   * A workspace member's file (#4964): the line that enters the member's
+   * directory, which the evidence and ref gate jobs run first (the check
+   * job's `setup` carries it), and the member's directory, which the
+   * artifact paths are kept from.
+   */
+  member?: { enter: string[]; dir: string };
+}
+
+/** The check job's service containers as GitLab spells them (#4964): the image, reached by its alias. GitLab does not wait for them. */
+export function gitlabCheckServices(services: readonly PrCheckService[]): Array<Record<string, unknown>> {
+  return services.map((s) => ({ name: s.image, alias: s.name, ...(s.env && Object.keys(s.env).length > 0 ? { variables: s.env } : {}) }));
+}
+
+/** `path`, relative to the member's directory, from the repository root, as GitLab keeps artifacts. */
+function fromRoot(member: GitlabCheckJobsInput["member"], path: string): string {
+  if (!member || member.dir === "." || member.dir === "") return path;
+  return `${member.dir.replace(/\/+$/, "")}/${path.replace(/^\.\/+/, "")}`;
 }
 
 /** The stages the jobs run in: the check beside the plan, the evidence after it, the ref gate after the notes. */
@@ -58,6 +76,7 @@ export function gitlabCheckJobs(input: GitlabCheckJobsInput): Array<[string, Rec
     return t ? { tags: t } : {};
   };
   const out: Array<[string, Record<string, unknown>]> = [];
+  const enter = input.member?.enter ?? [];
   if (check) {
     out.push([
       check.jobName,
@@ -66,14 +85,16 @@ export function gitlabCheckJobs(input: GitlabCheckJobsInput): Array<[string, Rec
         image,
         ...tags(check.runner),
         rules: [{ if: input.onMergeRequest }],
+        // #4964: the product's service containers, such as the throwaway server its hooks replay into.
+        ...(check.services?.length ? { services: gitlabCheckServices(check.services) } : {}),
         variables: check.env,
         // #4295: the hooks run the merge request's code, so the job's shell drops the tokens and the runner key first.
-        script: [GITLAB_DROP_FORGE_TOKENS, ...(input.unset?.length ? [`unset ${input.unset.join(" ")}`] : []), ...input.setup, check.command],
-        artifacts: { name: PR_CHECK_ARTIFACT, when: "always", paths: [check.dir] },
+        script: [GITLAB_DROP_FORGE_TOKENS, ...(input.unset?.length ? [`unset ${input.unset.join(" ")}`] : []), ...input.setup, ...(check.before ?? []), check.command],
+        artifacts: { name: PR_CHECK_ARTIFACT, when: "always", paths: [fromRoot(input.member, check.dir)] },
       },
     ]);
     if (check.evidence) {
-      out.push(gitlabOpenEvidenceJob(check.evidence, { image, runner: check.evidenceRunner, beforeScript: input.beforeScript, onPlanNotes: input.onPlanNotes }));
+      out.push(gitlabOpenEvidenceJob(check.evidence, { image, runner: check.evidenceRunner, beforeScript: [...enter, ...input.beforeScript], onPlanNotes: input.onPlanNotes, ...(input.member ? { member: input.member } : {}) }));
     }
   }
   if (refGate) {
@@ -86,7 +107,7 @@ export function gitlabCheckJobs(input: GitlabCheckJobsInput): Array<[string, Rec
         rules: [{ if: input.onPlanNotes }],
         ...(Object.keys(refGate.env).length > 0 ? { variables: refGate.env } : {}),
         // The target branch's commit: the policy at base, and none of a merge request's code.
-        script: [...input.beforeScript, ...refGate.setup, refGate.command],
+        script: [...enter, ...input.beforeScript, ...refGate.setup, refGate.command],
       },
     ]);
   }
@@ -103,7 +124,7 @@ export function gitlabCheckJobs(input: GitlabCheckJobsInput): Array<[string, Rec
  */
 export function gitlabOpenEvidenceJob(
   ev: { jobName?: string; lines: string[]; env: Record<string, string>; dir?: string; idTokens?: Record<string, { aud: string }> },
-  input: { image: string; runner?: unknown; beforeScript: string[]; onPlanNotes: string },
+  input: { image: string; runner?: unknown; beforeScript: string[]; onPlanNotes: string; member?: GitlabCheckJobsInput["member"] },
 ): [string, Record<string, unknown>] {
   const t = gitlabTags(input.runner as Parameters<typeof gitlabTags>[0]);
   return [
@@ -120,7 +141,8 @@ export function gitlabOpenEvidenceJob(
       ...(ev.idTokens ? { id_tokens: ev.idTokens } : {}),
       // The target branch's commit: the reports are read from the merge requests' artifacts as data.
       script: [...input.beforeScript, ...ev.lines],
-      ...(ev.dir ? { artifacts: { when: "always", paths: [ev.dir] } } : {}),
+      // #4964: a member's job writes in the member's directory, where its note job reads.
+      ...(ev.dir ? { artifacts: { when: "always", paths: [fromRoot(input.member, ev.dir)] } } : {}),
     },
   ];
 }

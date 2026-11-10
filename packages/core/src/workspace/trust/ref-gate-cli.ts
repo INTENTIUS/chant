@@ -27,6 +27,7 @@ import {
   describeDecision,
   readRefGateLedger,
   refGateLedgerPath,
+  REF_GATE_STATUS,
   RefUpdateInputError,
   runPrePush,
   runPreReceive,
@@ -192,17 +193,20 @@ export async function runWorkspaceRefGate(ctx: CommandContext): Promise<number> 
   if (!args.dryRun) appendRefGateLedger(ledger, [{ ...d, version: 1, kind: "ref-update", site, timestamp: now }]);
   print(args.json, [d], args.dryRun ? undefined : ledger, "out");
   if (site === "check" && d.decision === "refuse" && !args.dryRun && !here.bare) await recordRequests(here.repo, [d], now);
-  if (site === "status" && d.status !== null) {
+  const context = refGateStatusContext(d);
+  if (site === "status" && context !== null) {
     if (args.dryRun) {
-      console.error(`chant ref gate: would set ${d.status} to ${d.decision === "admit" ? "success" : "failure"} on ${at.slice(0, 8)}`);
+      console.error(`chant ref gate: would set ${context} to ${d.decision === "admit" ? "success" : "failure"} on ${at.slice(0, 8)}`);
     } else {
-      const { detectForge, forgeFromEnv } = await import("../../pr-forge");
+      const { detectForge } = await import("../../pr-forge");
       const kind = detectForge();
       if (!kind) {
-        console.error(formatError({ message: `no forge detected, so ${d.status} was not set`, hint: "run it in a GitHub, GitLab or Forgejo job, or pass --dry-run" }));
+        console.error(formatError({ message: `no forge detected, so ${context} was not set`, hint: "run it in a GitHub, GitLab or Forgejo job, or pass --dry-run" }));
         return 1;
       }
-      await postRefGateStatus(forgeFromEnv(kind), d);
+      // #4964: `--at` is a pull_request run's merge preview; the status goes on the pull request's head.
+      const { forgeFromJobEnv } = await import("../../pr-forge-job");
+      await postRefGateStatus(forgeFromJobEnv(kind), d);
     }
   }
   return d.decision === "admit" ? 0 : 1;
@@ -244,7 +248,8 @@ async function statusOpen(repo: string, ref: string, baseRev: string | undefined
     const d = decideRefUpdate({ repo, update: { ref, old: base, new: pr.headSha }, base, spent, now });
     decisions.push(d);
     if (dryRun) {
-      if (d.status !== null) console.error(`chant ref gate: would set ${d.status} to ${d.decision === "admit" ? "success" : "failure"} on #${pr.number} at ${pr.headSha.slice(0, 8)}`);
+      const context = refGateStatusContext(d);
+      if (context !== null) console.error(`chant ref gate: would set ${context} to ${d.decision === "admit" ? "success" : "failure"} on #${pr.number} at ${pr.headSha.slice(0, 8)}`);
       continue;
     }
     appendRefGateLedger(ledger, [{ ...d, version: 1, kind: "ref-update", site: "status", timestamp: now }]);
@@ -259,9 +264,26 @@ async function statusOpen(repo: string, ref: string, baseRev: string | undefined
   return 0;
 }
 
-/** The commit status a forge requires for `d`'s ref: `success` when it is admitted, `failure` naming the missing checks when not. */
+/** The status `d` sets: its rule's, or `chant/ref-gate` when the gate could not decide (#4964); null when no rule matched. */
+export function refGateStatusContext(d: Pick<RefDecision, "status" | "error">): string | null {
+  return d.status ?? (d.error ? REF_GATE_STATUS : null);
+}
+
+/**
+ * The commit status a forge requires for `d`'s ref: `success` when it is
+ * admitted, `failure` naming the missing checks when not. A gate that could
+ * not decide (#4964: the policy at base does not read, or the commit is not
+ * there) fails `chant/ref-gate` closed: the policy that would name another
+ * status is the one that did not read, and a forge that requires the status
+ * then refuses the merge rather than waiting for a status that never comes.
+ */
 export async function postRefGateStatus(forge: { setStatus(sha: string, status: { context: string; state: "success" | "failure"; description: string }): Promise<void> }, d: RefDecision): Promise<void> {
-  if (d.status === null || d.new === null) return;
+  const context = refGateStatusContext(d);
+  if (context === null || d.new === null) return;
+  if (d.status === null) {
+    await forge.setStatus(d.new, { context, state: "failure", description: `refused: ${d.error!.code}` });
+    return;
+  }
   const missing = d.checks.filter((c) => c.action === "block" && (c.status === "missing" || c.status === "stale"));
   const overridden = d.checks.filter((c) => c.status === "overridden").map((c) => c.check);
   const description = d.error

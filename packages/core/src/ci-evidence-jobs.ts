@@ -54,7 +54,7 @@ export const EVIDENCE_ID_TOKEN_VAR = "CHANT_ID_TOKEN_SIGSTORE";
 /** The audience a keyless signing job's token is requested for unless told: sigstore's. */
 export const EVIDENCE_DEFAULT_AUDIENCE = "sigstore";
 
-export { CHECK_EVIDENCE_FLOOR, CHECK_JOB_FLOOR, GITLAB_OPEN_EVIDENCE_FLOOR, KEYLESS_EVIDENCE_FLOOR, LOCAL_EVIDENCE_FLOOR, PR_LOOP_EVIDENCE_FLOOR, REF_GATE_STATUS_JOB_FLOOR, WAVE_EVIDENCE_JOB_FLOOR } from "./release-floors";
+export { CHECK_EVIDENCE_FLOOR, CHECK_JOB_FLOOR, GITLAB_OPEN_EVIDENCE_FLOOR, GITLAB_WAVE_KEY_SCOPE_FLOOR, KEYLESS_EVIDENCE_FLOOR, LOCAL_EVIDENCE_FLOOR, MEMBER_SIGNED_CHECKS_FLOOR, PR_LOOP_EVIDENCE_FLOOR, REF_GATE_STATUS_JOB_FLOOR, WAVE_EVIDENCE_JOB_FLOOR } from "./release-floors";
 
 /**
  * The GitLab environment every signing job names (#4914), with `action:
@@ -79,9 +79,27 @@ export function gitlabOpenEvidenceDir(job: string): string {
  * With `noForks`, a merge request from a fork is not signed for, as a
  * product plan with `forks: "skip"` plans none.
  */
-export function openEvidenceLines(opts: { job: string; dir: string; out: string; bin?: string; noForks?: boolean }): string[] {
+export function openEvidenceLines(opts: { job: string; dir: string; out: string; bin?: string; noForks?: boolean; member?: string }): string[] {
   const chant = opts.bin ?? "chant";
-  return [`${chant} ci evidence sign --open --job ${opts.job} --from-report ${opts.dir} --base "$CI_COMMIT_SHA" --output ${opts.out}${opts.noForks ? " --no-forks" : ""}`];
+  return [`${chant} ci evidence sign --open --job ${opts.job} --from-report ${opts.dir}${memberFlag(opts.member)} --base "$CI_COMMIT_SHA" --output ${opts.out}${opts.noForks ? " --no-forks" : ""}`];
+}
+
+/**
+ * The check a workspace member's pipeline signs for one of the plan job's
+ * two (#4964): `plan:<member>`, `policy:<member>`. A member's plan job plans
+ * that member alone, so its pass says nothing of another member's plan; a
+ * `refs` rule names each member's checks. The root pipeline's are `plan`
+ * and `policy`.
+ */
+export function memberEvidenceCheck(check: "plan" | "policy", member?: string): string {
+  return member ? `${check}:${member}` : check;
+}
+
+/** ` --member <name>` on a signing line of a member's plan evidence (#4964), or nothing. */
+function memberFlag(member: string | undefined): string {
+  if (member === undefined) return "";
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(member)) throw new Error(`the member name ${JSON.stringify(member)} is not one a check name can carry: lower-case letters, digits and -`);
+  return ` --member ${member}`;
 }
 
 /**
@@ -133,10 +151,10 @@ export function evidenceKeyEnv(forge: ForgeKind, evidence: PipelineEvidence): Re
  * the report directory. `result` is the plan job's result as the shell
  * reads it.
  */
-export function planEvidenceLines(opts: { dir: string; at: string; base: string; result: string; bin?: string }): string[] {
+export function planEvidenceLines(opts: { dir: string; at: string; base: string; result: string; bin?: string; member?: string }): string[] {
   const chant = opts.bin ?? "chant";
   return [
     `git fetch --quiet --no-tags --depth=1 origin ${opts.at} || true`,
-    `${chant} ci evidence sign --from-report ${opts.dir} --result ${opts.result} --at ${opts.at} --base ${opts.base}`,
+    `${chant} ci evidence sign --from-report ${opts.dir}${memberFlag(opts.member)} --result ${opts.result} --at ${opts.at} --base ${opts.base}`,
   ];
 }

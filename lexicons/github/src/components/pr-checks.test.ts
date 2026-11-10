@@ -82,8 +82,27 @@ describe("the pull request loop's evidence, check and ref gate jobs on github (#
     expect(step.env).toEqual({ HEAD_SHA: "${{ github.sha }}", BASE_SHA: "${{ github.event.pull_request.base.sha }}", GITHUB_TOKEN: "${{ github.token }}" });
   });
 
-  test("a member's pipeline refuses them", () => {
-    expect(() => generateGithubPipeline(ESTATE, { env: "prod", member: { name: "app", dir: "app" }, prLoop: { checkJob: true } } as never)).toThrow(/root pipeline, not member app's/);
+  test("a member's pipeline takes them: its plan and policy signed under its name, its check in its directory (#4964)", () => {
+    const opts = { env: "prod", member: { name: "app", dir: "app" }, prLoop: { words: WORDS, checkJob: true, refGateStatus: true, evidence: { runnerKeySecret: "K" } } };
+    const doc = parseYAML(generateGithubPipeline(ESTATE, opts as never).yaml) as Doc;
+    const sign = doc.jobs["plan-note"]!.steps.find((s) => s.name === "Sign the plan and policy evidence")!;
+    expect(sign.run).toContain("ci evidence sign --from-report .chant/pr --member app --result");
+    const check = doc.jobs.check!;
+    expect((check.steps[0] as Step & { "working-directory"?: string })["working-directory"]).toBe(".");
+    const keep = doc.jobs["check-evidence"]!.steps.find((s) => s.name === "Keep the check report") as Step & { with: Record<string, unknown> };
+    expect(keep.with.path).toBe("app/.chant/check");
+    expect(doc.jobs["ref-gate"]!.needs).toEqual(["plan-note", "check-evidence"]);
+  });
+
+  test("the check job takes service containers, its own variables and lines, and a report directory (#4964)", () => {
+    const service = { name: "replay-postgres", image: "postgres:18.6", env: { POSTGRES_PASSWORD: "replay" }, health: "pg_isready -h 127.0.0.1 -U postgres" };
+    const doc = loop({ words: WORDS, checkJob: { services: [service], env: { REPLAY_URL: "postgres://replay-postgres:5432/postgres" }, before: ["wait-for replay-postgres"], dir: "own/check" }, evidence: { runnerKeySecret: "K" } });
+    const check = doc.jobs.check! as Job & { services: Record<string, unknown> };
+    expect(check.services).toEqual({ "replay-postgres": { image: "postgres:18.6", env: { POSTGRES_PASSWORD: "replay" }, options: '--health-cmd "pg_isready -h 127.0.0.1 -U postgres" --health-interval 2s --health-timeout 5s --health-retries 45' } });
+    const last = check.steps.at(-1)!;
+    expect(last.env).toMatchObject({ REPLAY_URL: "postgres://replay-postgres:5432/postgres" });
+    expect(last.run!.trimEnd().split("\n").slice(-2)).toEqual(["wait-for replay-postgres", 'npx --no-install plywood ci check --base "$BASE_SHA" --output own/check']);
+    expect(doc.jobs["check-evidence"]!.steps.find((s) => s.name?.startsWith("Sign"))!.run).toContain("--from-report own/check ");
   });
 });
 

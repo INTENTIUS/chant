@@ -77,9 +77,9 @@ import {
   prLoopRunner,
 } from "@intentius/chant/components/pr-pipeline";
 import { REPO_APPLY_GROUP } from "@intentius/chant/components/repo-lock";
-import { assertRootChecks } from "@intentius/chant/components/pr-pipeline";
+import { checkJobOptions } from "@intentius/chant/components/pr-pipeline";
 import { planEvidenceOf } from "@intentius/chant/components/product-plan";
-import { prCheckJob, prRefGateJob } from "@intentius/chant/components/pr-checks";
+import { PR_CHECK_REPORT_DIR, prCheckJob, prRefGateJob } from "@intentius/chant/components/pr-checks";
 import { resolveProductWords as resolveLoopWords } from "@intentius/chant/ci-product-words";
 import { gitlabCheckJobs, gitlabOpenEvidenceJob, withCheckStages } from "./pr-check-jobs";
 import { memberGitlabChanges, memberRepoPath, memberShellDir } from "@intentius/chant/lexicon";
@@ -393,8 +393,6 @@ function prLoopGitlabPipeline(
 ): GenerateGitlabResult {
   const loop = options.prLoop!;
   const member = options.member;
-  // #4935: the checks and their evidence are the commit's, so the root pipeline has them.
-  assertRootChecks(loop, member?.name);
   const rooted = !member || member.dir === "." || member.dir === "";
   const [plan, apply, record] = prLoopJobs("gitlab", env, loop, member?.name);
   const reportPath = member ? memberRepoPath(member, PR_LOOP_REPORT_DIR) : PR_LOOP_REPORT_DIR;
@@ -470,20 +468,34 @@ function prLoopGitlabPipeline(
   // #4935: the plan's evidence job, the check job, its evidence job and the ref gate's status job.
   const loopWords = resolveLoopWords(loop.words);
   const bin = loopWords.bin ? { bin: loopWords.bin } : {};
-  const planEvidence = loop.evidence ? planEvidenceOf("gitlab", loop.evidence, loopWords, planJob) : undefined;
+  // #4964: a member's file names its jobs after the member, signs its plan and policy under the member's name,
+  // and runs each job in the member's directory, reading the reports from the artifacts kept from there.
+  const planEvidence = loop.evidence ? planEvidenceOf("gitlab", loop.evidence, loopWords, planJob, member ? { member: { name: member.name, reportPath } } : {}) : undefined;
+  const checkOptions = checkJobOptions(loop.checkJob);
+  const memberChecks = member ? { member: { enter, dir: member.dir } } : {};
   const checkEntries = gitlabCheckJobs({
     image,
-    setup: [...prLoopSetup(image, loop.engineSetup), ...beforeScript],
+    setup: [...prLoopSetup(image, loop.engineSetup), ...enter, ...beforeScript],
     beforeScript,
     onMergeRequest,
     onPlanNotes,
     ...(loop.evidence?.runnerKeySecret ? { unset: [loop.evidence.runnerKeySecret] } : {}),
-    ...(loop.checkJob ? { check: prCheckJob("gitlab", { ...bin, ...(loop.evidence ? { evidence: loop.evidence } : {}) }) } : {}),
-    ...(loop.refGateStatus ? { refGate: prRefGateJob("gitlab", bin) } : {}),
+    ...(checkOptions
+      ? {
+          check: prCheckJob("gitlab", {
+            ...checkOptions,
+            ...bin,
+            ...(loop.evidence ? { evidence: loop.evidence } : {}),
+            ...(member ? { member: { name: member.name, reportPath: memberRepoPath(member, checkOptions.dir ?? PR_CHECK_REPORT_DIR) } } : {}),
+          }),
+        }
+      : {}),
+    ...(loop.refGateStatus ? { refGate: prRefGateJob("gitlab", { ...bin, ...(member ? { member: member.name } : {}) }) } : {}),
+    ...memberChecks,
   });
   // #4914: the plan's evidence job runs in the plan notes pipeline, before the note job, for every open merge request.
   const evidenceEntries: Array<[string, Record<string, unknown>]> = [
-    ...(planEvidence ? [gitlabOpenEvidenceJob(planEvidence, { image, beforeScript, onPlanNotes })] : []),
+    ...(planEvidence ? [gitlabOpenEvidenceJob(planEvidence, { image, beforeScript: [...enter, ...beforeScript], onPlanNotes, ...memberChecks })] : []),
     ...checkEntries,
   ];
   const stagesBefore = ["plan", ...(planEvidence ? ["evidence"] : []), PR_PLAN_NOTE_JOB, ...(stale ? [PR_STALE_JOB] : []), ...(notes ? [PR_NOTE_COMMANDS_JOB] : []), ...commentLocks.map((c) => c.job.jobName), ...(preview ? [preview.jobName, preview.noteJobName] : []), ...applies.map((a) => a.stage), ...(control ? [control.name] : []), ...(prEnv ? [PR_ENV_STAGE, PR_ENV_POST_STAGE] : [])];
@@ -630,7 +642,7 @@ function prLoopGitlabPipeline(
   const jobs: GeneratedJob[] = [
     { jobName: planJob, component: "merge request plan", stage: "plan", needs: [] },
     { jobName: noteJob, component: "merge request plan note", stage: PR_PLAN_NOTE_JOB, needs: [] },
-    ...evidenceEntries.map(([name, job]) => ({ jobName: name, component: name === "check" ? "merge request check" : name === "ref-gate" ? "merge request ref gate status" : name === "check-evidence" ? "merge request check evidence" : "merge request plan evidence", stage: job.stage as string, needs: ((job.needs as Array<{ job: string }> | undefined) ?? []).map((n) => n.job) })),
+    ...evidenceEntries.map(([name, job]) => ({ jobName: name, component: name === named("check") ? "merge request check" : name === named("ref-gate") ? "merge request ref gate status" : name === named("check-evidence") ? "merge request check evidence" : "merge request plan evidence", stage: job.stage as string, needs: ((job.needs as Array<{ job: string }> | undefined) ?? []).map((n) => n.job) })),
     ...(stale && staleName ? [{ jobName: staleName, component: "merge request stale notes", stage: PR_STALE_JOB, needs: [] }] : []),
     ...commentLocks.map(({ job, name }) => ({ jobName: name, component: `merge request ${job.command} comment`, stage: job.jobName, needs: [] })),
     ...(preview && previewName && previewNoteName

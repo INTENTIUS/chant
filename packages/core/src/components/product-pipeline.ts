@@ -34,7 +34,7 @@ import {
   type CiProductWords,
   type CiProductWordsInput,
 } from "../ci-product-words";
-import { prActionJob, prCommentLockJobs, prCommentPreviewJob, prLoopJobs, prLoopPostJob, prLoopRunner, prNoteCommandsJob, prStaleJob, withProductBin, type PrActionJob, type PrCommentLockJob, type PrCommentPreviewJob, type PrLoopJob, type PrLoopPipelineOptions } from "./pr-pipeline";
+import { checkJobOptions, PR_LOOP_REPORT_DIR, prActionJob, prCommentLockJobs, prCommentPreviewJob, prLoopJobs, prLoopPostJob, prLoopRunner, prNoteCommandsJob, prStaleJob, withProductBin, type PrActionJob, type PrCommentLockJob, type PrCommentPreviewJob, type PrLoopJob, type PrLoopPipelineOptions } from "./pr-pipeline";
 import type { DriverComponent } from "./driver";
 import type { ScheduledOpSpec } from "../lexicon";
 import type { CiRunner } from "../ci-jobs";
@@ -44,7 +44,6 @@ import type { CiResponses } from "../ci-respond";
 import { planEvidenceOf, productPlanJobs, type ProductPlanJob, type ProductPlanOptions } from "./product-plan";
 import { gitlabOpenEvidenceDir, type PipelineEvidence } from "../ci-evidence-jobs";
 import { prCheckJob, prRefGateJob, type PrCheckJob, type PrRefGateJob } from "./pr-checks";
-import { assertRootChecks } from "./pr-pipeline";
 
 /** Where the generator writes a product's waves spec, which chant reads at base (#4550). */
 export const PRODUCT_WAVES_SPEC_DIR = ".chant/op-waves";
@@ -316,8 +315,6 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   const words = assertProductWords({ ...options.words, applyMode }, { jobs });
   const { waves: given, wavesSpecFile, member, agent: _agent, commits: _commits, actions: _actions, componentWaves, productPlan, evidence, ...loop } = options;
   const { respond } = options;
-  // #4935: the check job and the ref gate's status judge the commit once, from the root pipeline.
-  assertRootChecks({ checkJob: options.checkJob, refGateStatus: options.refGateStatus }, member);
   // #4629: the pull request loop puts the responses on the apply and note jobs, as `chant build --pr-loop --respond` does.
   const prLoop: PrLoopPipelineOptions = { ...loop, words, gate: options.gate ?? words.prGate };
   const [plan, apply, record] = prLoopJobs(forge, env, prLoop, member);
@@ -337,17 +334,19 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   const out: ProductPipelineJobs = {
     words,
     plan: plan!,
-    // #4870: the note job signs the plan job's plan and policy checks before it posts.
-    post: { ...post, ...(controlTarget ? { control: controlNoteCheckout(forge, controlTarget, words) } : {}), ...defaultRunner, ...(evidence ? { evidence: planEvidenceOf(forge, evidence, words, plan!.jobName) } : {}) },
+    // #4870: the note job signs the plan job's plan and policy checks before it posts; #4964: a member's under its name.
+    post: { ...post, ...(controlTarget ? { control: controlNoteCheckout(forge, controlTarget, words) } : {}), ...defaultRunner, ...(evidence ? { evidence: planEvidenceOf(forge, evidence, words, plan!.jobName, member ? { member: { name: member, reportPath: PR_LOOP_REPORT_DIR } } : {}) } : {}) },
     comments,
     ...(options.applyBeforeMerge ? { applyBeforeMerge: apply! } : {}),
     // #4799: the product's plan verb, a plan job and a note job per target.
     ...(productPlan ? { productPlan: productPlanJobs(forge, env, { ...prLoop, plan: productPlan }, words, evidence) } : {}),
   };
   // #4935: the check job runs the change's code on the plan runner; the signing and the status run on the default one.
-  if (options.checkJob) {
+  // #4964: with the product's own services, variables, lines and report directory.
+  const checkOptions = checkJobOptions(options.checkJob);
+  if (checkOptions) {
     const planRunner = prLoopRunner(options, "plan");
-    out.check = { ...prCheckJob(forge, { ...(words.bin ? { bin: words.bin } : {}), ...(evidence ? { evidence } : {}), ...(productPlan?.forks === "skip" ? { noForks: true } : {}) }), ...(planRunner !== undefined ? { runner: planRunner } : {}), ...(runnerOfDefault !== undefined ? { evidenceRunner: runnerOfDefault } : {}) };
+    out.check = { ...prCheckJob(forge, { ...checkOptions, ...(words.bin ? { bin: words.bin } : {}), ...(evidence ? { evidence } : {}), ...(productPlan?.forks === "skip" ? { noForks: true } : {}) }), ...(planRunner !== undefined ? { runner: planRunner } : {}), ...(runnerOfDefault !== undefined ? { evidenceRunner: runnerOfDefault } : {}) };
   }
   if (options.refGateStatus) out.refGate = { ...prRefGateJob(forge, { ...(words.bin ? { bin: words.bin } : {}), ...(options.branch ? { branch: options.branch } : {}) }), ...defaultRunner };
   const locks = prCommentLockJobs(forge, { locks: options.locks, words });

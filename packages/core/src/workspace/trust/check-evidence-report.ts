@@ -76,24 +76,31 @@ function policyOf(dir: string): { passed: boolean; reason: string } | null {
   return standing === 0 ? { passed: true, reason: "the policy denied nothing that stands" } : { passed: false, reason: `the policy denied ${standing} unit${standing === 1 ? "" : "s"} with no override` };
 }
 
-/** The checks to sign from the plan job's hand-off directory and result, and those left unsigned with why. */
-export function planReportChecks(dir: string, result: string | undefined): { sign: Array<{ check: string; claim?: Buffer }>; skipped: CheckEvidenceNote["skipped"] } {
+/**
+ * The checks to sign from the plan job's hand-off directory and result, and
+ * those left unsigned with why. #4964: a workspace member's plan job plans
+ * that member alone, so with `member` the two are `plan:<member>` and
+ * `policy:<member>`.
+ */
+export function planReportChecks(dir: string, result: string | undefined, member?: string): { sign: Array<{ check: string; claim?: Buffer }>; skipped: CheckEvidenceNote["skipped"] } {
+  const planCheck = member ? `plan:${member}` : "plan";
+  const policyCheck = member ? `policy:${member}` : "policy";
   const file = [REPORT_FILE, HANDOFF_FILE].map((f) => join(dir, f)).find((f) => existsSync(f));
   if (result !== "success") {
     const why = `the plan job's result is ${result ?? "not given"}`;
-    return { sign: [], skipped: [{ check: "plan", reason: why }, { check: "policy", reason: why }] };
+    return { sign: [], skipped: [{ check: planCheck, reason: why }, { check: policyCheck, reason: why }] };
   }
   if (!file) {
     const why = `the plan job left no ${REPORT_FILE} or ${HANDOFF_FILE}`;
-    return { sign: [], skipped: [{ check: "plan", reason: why }, { check: "policy", reason: why }] };
+    return { sign: [], skipped: [{ check: planCheck, reason: why }, { check: policyCheck, reason: why }] };
   }
   const claim = readFileSync(file);
-  const sign: Array<{ check: string; claim?: Buffer }> = [{ check: "plan", claim }];
+  const sign: Array<{ check: string; claim?: Buffer }> = [{ check: planCheck, claim }];
   const skipped: CheckEvidenceNote["skipped"] = [];
   const policy = policyOf(dir);
-  if (policy === null) skipped.push({ check: "policy", reason: "the plan ran no policy" });
-  else if (policy.passed) sign.push({ check: "policy", claim });
-  else skipped.push({ check: "policy", reason: policy.reason });
+  if (policy === null) skipped.push({ check: policyCheck, reason: "the plan ran no policy" });
+  else if (policy.passed) sign.push({ check: policyCheck, claim });
+  else skipped.push({ check: policyCheck, reason: policy.reason });
   return { sign, skipped };
 }
 
