@@ -976,6 +976,9 @@ function pushReportOf(result: LifecyclePushStatus): { pushed: boolean; pushWarni
 /** How many pushes {@link pushLifecycleRebasing} makes, as the snapshot store's `publishRef` does. */
 export const LIFECYCLE_PUSH_TRIES = 3;
 
+/** With `requireLanded`, how long {@link pushLifecycleRebasing} waits after a failed push, times the try's number (#4965). */
+export const LIFECYCLE_PUSH_WAIT_MS = 2_000;
+
 /**
  * Thrown by {@link pushLifecycleRebasing} when the ledger branch did not reach
  * the remote: another writer pushed before each of its tries, or this
@@ -1013,6 +1016,8 @@ async function rebaseLifecycleOnRemote(remote: string, cwd?: string): Promise<{ 
   const firstLine = (s: string | undefined) => (s ?? "").trim().split("\n")[0] ?? "";
   try {
     const fetched = await run(["fetch", "--no-tags", "--force", remote, `refs/heads/${STATE_BRANCH}:${REBASE_REF}`]);
+    // #4965: the remote refused the branch's first push (a hook, a rule) and still has none: nothing to replay onto.
+    if (fetched.exitCode !== 0 && /couldn't find remote ref/i.test(fetched.stderr ?? "")) return { rebased: 0 };
     if (fetched.exitCode !== 0) return { error: `the fetch of the remote's tip failed (git said: ${firstLine(fetched.stderr)})` };
     const remoteTip = (await run(["rev-parse", "--verify", REBASE_REF])).stdout.trim();
     const local = await getStateBranchTip(cwd);
@@ -1206,22 +1211,40 @@ async function replayAppends(parent: string, commit: string, onto: string, cwd?:
  * remote, recording off and a push git refused for another reason (no
  * network, no credentials) are returned as {@link pushLifecycleReport}
  * returns them.
+ *
+ * `requireLanded` (#4965) is for a writer that must not go on without its
+ * record on the remote, such as `chant release cut` before the workflow pushes
+ * the release tag: a push git refused for another reason is tried again too,
+ * `waitMs` times the try's number after it (default
+ * {@link LIFECYCLE_PUSH_WAIT_MS}), and the last refusal throws
+ * {@link LifecyclePushLostError}. No remote and recording off still return.
  */
-export async function pushLifecycleRebasing(opts?: { cwd?: string; tries?: number }): Promise<{ pushed: boolean; pushWarning?: string }> {
+export async function pushLifecycleRebasing(opts?: { cwd?: string; tries?: number; requireLanded?: boolean; waitMs?: number }): Promise<{ pushed: boolean; pushWarning?: string }> {
   const tries = Math.max(1, opts?.tries ?? LIFECYCLE_PUSH_TRIES);
   const cwd = opts?.cwd;
+  const waitMs = opts?.waitMs ?? LIFECYCLE_PUSH_WAIT_MS;
   for (let attempt = 1; ; attempt++) {
     let result: LifecyclePushStatus;
     try {
       result = await pushLifecycleStatus({ cwd });
     } catch (err) {
-      return { pushed: false, pushWarning: err instanceof Error ? err.message : String(err) };
+      const message = err instanceof Error ? err.message : String(err);
+      if (!opts?.requireLanded) return { pushed: false, pushWarning: message };
+      result = { status: "failed", remote: "(unknown)", stderr: message };
+    }
+    if (result.status === "failed" && opts?.requireLanded) {
+      if (attempt >= tries) throw new LifecyclePushLostError(result.remote, attempt, describeLifecyclePush(result) ?? "the push did not land");
+      if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs * attempt));
+      continue;
     }
     if (result.status !== "stale") return pushReportOf(result);
     if (attempt >= tries) {
-      const said = result.stderr.trim().split("\n")[0];
-      throw new LifecyclePushLostError(result.remote, attempt, `another writer pushed before each try${said ? ` (git said: ${said})` : ""}`);
+      // #4965: "[remote rejected]" is the remote's own refusal (a hook, a rule), which no other writer explains.
+      const said = result.stderr.trim().split("\n").find((l) => /remote rejected/.test(l))?.trim() ?? result.stderr.trim().split("\n")[0];
+      const why = /remote rejected/.test(result.stderr) ? "the remote refused each try" : "another writer pushed before each try";
+      throw new LifecyclePushLostError(result.remote, attempt, `${why}${said ? ` (git said: ${said})` : ""}`);
     }
+    if (opts?.requireLanded && waitMs > 0) await new Promise((r) => setTimeout(r, waitMs * attempt));
     const rebased = await rebaseLifecycleOnRemote(result.remote, cwd);
     if ("error" in rebased) throw new LifecyclePushLostError(result.remote, attempt, rebased.error);
   }

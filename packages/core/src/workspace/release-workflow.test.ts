@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseYAML } from "../yaml";
 import { ACTION_PINS } from "../action-pins";
+import { IMAGE_PINS } from "../image-pins";
 import { NPM_TRUSTED_PUBLISHING_SETUP, renderReleaseWorkflow, RELEASE_DIGESTS_PATHS, type ReleaseWorkflowInput, type ReleaseWorkflowTarget } from "./release-workflow";
 import type { SecurityGroup } from "./security";
 
@@ -500,11 +501,12 @@ describe("QEMU for the platforms release.images builds (#4876)", () => {
     }
   });
 
-  test("on GitLab, a binfmt run line in the cut and the publish", () => {
+  test("on GitLab, a binfmt run line in the cut and the publish, the image pinned by digest (#4941)", () => {
     const doc = parseYAML(render("gitlab", TWO)) as Record<string, { script: string[] }>;
     for (const job of ["chant-release-cut", "chant-release-publish"]) {
       const script = doc[job]!.script;
-      expect(script[script.indexOf("npm ci") + 1], job).toBe("docker run --privileged --rm tonistiigi/binfmt --install arm64");
+      expect(script[script.indexOf("npm ci") + 1], job).toBe(`docker run --privileged --rm tonistiigi/binfmt:${IMAGE_PINS.binfmt.tag}@${IMAGE_PINS.binfmt.digest} --install arm64`);
+      expect(IMAGE_PINS.binfmt.digest).toMatch(/^sha256:[0-9a-f]{64}$/);
     }
   });
 

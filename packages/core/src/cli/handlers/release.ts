@@ -286,7 +286,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
   const { spawnTargetCompiler, ReleaseCompileError } = await import("../../components/release-compile");
   const { cutRelease, planRelease, ReleaseCutError } = await import("../../lifecycle/release-cut");
   const { ReleaseLabelError } = await import("../../lifecycle/release-store");
-  const { pushLifecycleReport, getHeadCommit } = await import("../../lifecycle/git");
+  const { pushLifecycleRebasing, getHeadCommit } = await import("../../lifecycle/git");
   const { resolveCiRun } = await import("../../lifecycle/release-ledger");
   const ws = await import("../../lifecycle/release-workstation");
   const { detectProvenance, releasePublishTargets } = await import("../../lifecycle/release-publish");
@@ -526,7 +526,19 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     // release records are put where release.images names them here, so the job's next step (the hand-off to the
     // publish job) finds them.
     if (checkout && declaredImages.length > 0) copyImageArchives((await import("../../lifecycle/release-images")).resolveReleaseImages(declaredImages), cutCwd, cwd);
-    const push = await pushLifecycleReport({ cwd }).catch(() => ({ pushed: false, pushWarning: undefined }));
+    // #4965: the record must be on the remote before the release is tagged. The release workflow pushes the tag
+    // right after the cut, and a tag whose record never landed spends the label: the publish job finds no release.
+    // A refused push is tried again; one that never lands stops the cut here, untagged and non-zero.
+    let push: { pushed: boolean; pushWarning?: string };
+    try {
+      push = await pushLifecycleRebasing({ cwd, requireLanded: true });
+    } catch (err) {
+      return fail(
+        "release-record-not-pushed",
+        `the release was cut and its record did not reach the remote, so the commit was not tagged: ${err instanceof Error ? err.message : String(err)}`,
+        "Nothing was tagged, so the label is not spent. Run the cut again (in CI, run the release workflow again) once the remote takes pushes to chant/lifecycle.",
+      );
+    }
     // The tag names the release's label, which a re-cut with no label reads from the earlier cut.
     let tagged: { name: string; created: boolean } | null = null;
     let tagWarning: string | undefined;

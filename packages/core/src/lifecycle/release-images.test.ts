@@ -283,4 +283,60 @@ describe("an npm package that would carry an image archive (#4934)", () => {
     const { dir, release } = fixture("npm-leaves-image-out", ["dist", "!dist/images/app.tar", "sbom.spdx.json"]);
     expect((await planOf(dir, release)).map((i) => i.name)).toEqual(["@acme/app@2.0.0"]);
   });
+
+  /** #4941: a member whose release.publish has an npm target for the package at its root, cut with an image built into dist/images. */
+  const cutCarrying = async (name: string, files: string[]) => {
+    const r = new TestRepo(name);
+    repos.push(r);
+    r.write("chant.config.ts", `export default { environments: ["dev"], release: { publish: [{ type: "npm", packages: ["."] }] } };\n`);
+    r.write("package.json", JSON.stringify({ name: "@acme/app", version: "2.0.0", files }, null, 2));
+    r.write(".gitignore", "dist/\n");
+    const head = r.commit("init");
+    r.git(["tag", `ci/green/${head}`]);
+    const compiler: TargetCompiler = {
+      async compile(env): Promise<CompiledTarget> {
+        writeFileSync(join(r.dir, "dist", "index.js"), "export {};\n");
+        return { env, params: [], components: [], buildSteps: {}, buildInputs: {}, componentFiles: {}, templates: [{ component: null, path: "dist/out.json", content: "{}\n" }] };
+      },
+      async buildArtifacts(): Promise<ReleaseArtifact[]> {
+        return [];
+      },
+    };
+    const cut = cutRelease({
+      cwd: r.dir,
+      compiler,
+      label: "v2",
+      actor: "alice",
+      env: {},
+      buildImages: () =>
+        buildReleaseImages({
+          images: [{ name: "app", build: "build", archive: "dist/images/app.tar" }],
+          cwd: r.dir,
+          sourceDateEpoch: 1762473600,
+          label: "v2",
+          archiveDigest: ociArchiveDigest,
+          run: (_c, o) => {
+            writeOciLayout(join(o.cwd, "dist/images/app.tar"), "app layer");
+            return 0;
+          },
+        }),
+    });
+    return { r, cut };
+  };
+
+  test("#4941: a cut whose npm package would carry the image archive stops before it records anything, so the label is not spent", async () => {
+    const { r, cut } = await cutCarrying("cut-carries-image", ["dist"]);
+    const err = await cut.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ReleaseCutError);
+    expect((err as ReleaseCutError).code).toBe("publish-npm-carries-image");
+    expect((err as ReleaseCutError).message).toMatch(/^no release was cut: @acme\/app \(\.\) would carry dist\/images\/app\.tar\//);
+    expect((err as ReleaseCutError).fix).toContain('Add "!dist/images/app.tar" to "files" in package.json');
+    expect(() => r.git(["rev-parse", "--verify", "--quiet", "refs/heads/chant/lifecycle"])).toThrow();
+  });
+
+  test("#4941: the same cut with the archive left out of the package records the release", async () => {
+    const { cut } = await cutCarrying("cut-leaves-image-out", ["dist", "!dist/images/app.tar"]);
+    const { release } = await cut;
+    expect(release.artifactDigests.map((a) => a.component)).toEqual(["app"]);
+  });
 });

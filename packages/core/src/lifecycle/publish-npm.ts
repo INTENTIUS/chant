@@ -53,7 +53,7 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { packageSbom } from "./publish-attachments";
@@ -238,6 +238,36 @@ export function checkPackageImages(release: PublishContext["release"], cwd: stri
         `Add "!${a.rel}" to "files" in ${pkg.path === "." ? "" : `${pkg.path}/`}package.json (or ${a.rel} to its .npmignore when it has no "files"), so the package leaves the image out.`,
       );
     }
+  }
+}
+
+/**
+ * #4941: {@link checkPackageImages} for every npm target `release.publish`
+ * declares, run by the cut once the images are built and before anything is
+ * recorded, so a package that would carry an archive stops the cut instead of
+ * the publish job after the label is spent. A package that is not a
+ * directory with a package.json yet is left for the publish's plan to refuse.
+ */
+export function checkDeclaredPackageImages(
+  decls: ReadonlyArray<{ type: string; packages?: readonly string[] }>,
+  release: PublishContext["release"],
+  cwd: string,
+  bin = "npm",
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  for (const decl of decls) {
+    if (decl.type !== "npm") continue;
+    const pkgs = (decl.packages ?? []).flatMap((path) => {
+      const abs = resolve(cwd, path);
+      if (!existsSync(abs) || !isDir(abs)) return [];
+      try {
+        const name = (JSON.parse(readFileSync(join(abs, "package.json"), "utf-8")) as { name?: unknown }).name;
+        return [{ path, abs, name: typeof name === "string" ? name : path }];
+      } catch {
+        return [];
+      }
+    });
+    checkPackageImages(release, cwd, pkgs, bin, env);
   }
 }
 

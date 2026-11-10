@@ -28,6 +28,7 @@
  * renders the tag-triggered file it always did.
  */
 import { ACTION_PINS, tagComments, usesRef } from "../action-pins";
+import { IMAGE_PINS, imageRef } from "../image-pins";
 import { releaseImagePlatforms, resolveReleaseImages } from "../lifecycle/release-images";
 import { GENERATED_MARKER } from "../discovery/files";
 import type { SecurityGroup } from "./security";
@@ -183,8 +184,8 @@ export function targetExtras(forge: ReleaseWorkflowForge, targets: ReadonlyArray
 /** The platform the jobs `chant release workflow` writes run on: GitHub's and Forgejo's `ubuntu-latest`, and a GitLab runner's default (#4876). */
 export const RELEASE_RUNNER_PLATFORM = "linux/amd64";
 
-/** The binfmt image a GitLab job installs QEMU's handlers with (#4876). */
-export const RELEASE_BINFMT_IMAGE = "tonistiigi/binfmt";
+/** The binfmt image a GitLab job installs QEMU's handlers with (#4876): the repository, which a config's own setup line is recognised by. */
+export const RELEASE_BINFMT_IMAGE = IMAGE_PINS.binfmt.repository;
 
 /** The architectures among `platforms` the runner can't run, as QEMU names them (`linux/arm/v7` is `arm`), each once. */
 export function qemuArchitectures(platforms: readonly string[]): string[] {
@@ -196,7 +197,8 @@ export function qemuArchitectures(platforms: readonly string[]): string[] {
  * runner can't, such as `linux/arm64` on an amd64 runner (#4876), so no
  * product names it in `release.workflow.setup`. GitHub and Forgejo get
  * `docker/setup-qemu-action` at its pin; GitLab a `docker run --privileged`
- * of {@link RELEASE_BINFMT_IMAGE}, which `chant release workflow` notes needs
+ * of {@link RELEASE_BINFMT_IMAGE} by the digest `IMAGE_PINS.binfmt` records
+ * (#4941, ../image-pins.ts), which `chant release workflow` notes needs
  * an executor that runs privileged containers. A config whose `setup` names
  * the action or the binfmt image already gets nothing more, so its file
  * renders as it did.
@@ -206,7 +208,7 @@ export function qemuSetup(forge: ReleaseWorkflowForge, platforms: readonly strin
   if (archs.length === 0) return [];
   const named = (p.setup ?? []).some((s) => ("uses" in s ? /^docker\/setup-qemu-action@/.test(s.uses) : s.run.includes(RELEASE_BINFMT_IMAGE)));
   if (named) return [];
-  return forge === "gitlab" ? [{ run: `docker run --privileged --rm ${RELEASE_BINFMT_IMAGE} --install ${archs.join(",")}` }] : [{ uses: usesRef(ACTION_PINS.dockerSetupQemu4), with: { platforms: archs.join(",") } }];
+  return forge === "gitlab" ? [{ run: `docker run --privileged --rm ${imageRef(IMAGE_PINS.binfmt)} --install ${archs.join(",")}` }] : [{ uses: usesRef(ACTION_PINS.dockerSetupQemu4), with: { platforms: archs.join(",") } }];
 }
 
 /** The flags `chant release publish` gets under the groups. */
