@@ -267,14 +267,17 @@ E2E harness:
                         CLEAN, or the rejecting lines and exits 3.
 
 CI:
-  ci check --base <rev> [<target>...] [--output <dir>] [--summary <file>] [--json]
+  ci check [--base <rev>] [<target>...] [--output <dir>] [--summary <file>] [--json]
                         Run the ci.hooks.check hooks the workspace declaration
                         at --base names, once each, or once per target with
                         perRun, with no forge token or cloud credentials in
                         their environment. Writes check-hooks.json under
                         --output (default .chant/check), and with --summary
                         appends the report's markdown section to the file;
-                        exits 1 when one failed.
+                        exits 1 when one failed. With no --base, a pull
+                        request's target branch, else origin/<default> for a
+                        push to another branch (--branch names the default
+                        branch where the job does not).
   ci evidence sign --check-id <id>[,<id>...] [--at <rev>] [--base <rev>] [--no-push]
                         Sign that each named check passed at --at, with the
                         runner key in CHANT_RUNNER_KEY or --key, and keep it on

@@ -12,7 +12,8 @@ import { afterAll, describe, expect, test, vi } from "vitest";
 import type { CommandContext } from "./cli/registry";
 import { parseArgs } from "./cli/parse-args";
 import { postOpenPlanReports, postPlanReport, readPlanReport } from "./pr-post";
-import { prNoteMarker, prStatusState, type PrReport } from "./pr-loop";
+import { prNoteMarker, type PrReport } from "./pr-loop";
+import { prStatusState } from "./pr-status";
 import type { ForgeStatus, PrForge } from "./pr-forge";
 
 const FIXTURE = join(import.meta.dirname, "__fixtures__", "pr-loop", "pr-plan.golden.json");

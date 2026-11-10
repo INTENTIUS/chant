@@ -173,6 +173,23 @@ describe("the contract chant's pipelines make (#4608)", () => {
     expect(pipelineContract({ forge: "github", repository: repo(), pipelines: [{ name: "production", identity: awsIdentity }] }).requiredStatuses).toEqual(["chant/plan"]);
   });
 
+  test("a product's own jobs follow the pipelines' jobs, with chant's statuses, ref gate status and protected branches (#4966)", () => {
+    const own: ForgeCheckContract["jobs"][number] = {
+      name: "production apply",
+      identity: "apply",
+      token: jobToken("github", repo(), { on: "branch", forgeEnvironment: "production" }),
+      forgeEnvironment: "production",
+      aws: { roles: ["arn:aws:iam::123456789012:role/apply"], audience: "sts.amazonaws.com" },
+    };
+    const alone = pipelineContract({ forge: "github", repository: repo(), pipelines: [], jobs: [own], requiredStatuses: ["terragucci/plan"], refGateStatus: "chant/ref-gate", protectedBranches: [] });
+    expect(alone.jobs).toEqual([own]);
+    expect(alone.requiredStatuses).toEqual(["terragucci/plan", "chant/ref-gate"]);
+    expect(alone.protectedBranches).toEqual([]);
+    const both = pipelineContract({ forge: "github", repository: repo(), pipelines: [{ name: "dev", identity: awsIdentity }], jobs: [own] });
+    expect(both.jobs.map((j) => j.name)).toEqual(["dev plan", "dev record", "dev apply", "production apply"]);
+    expect(both.requiredStatuses).toEqual(["chant/plan"]);
+  });
+
   test("Forgejo has no environments, so an apply environment is left out", () => {
     const c = pipelineContract({ forge: "forgejo", repository: { ...repo(), host: "code.example.com" }, pipelines: [{ name: "p", identity: awsIdentity, forgeEnvironment: "prod" }] });
     expect(c.jobs[2]!.forgeEnvironment).toBeUndefined();

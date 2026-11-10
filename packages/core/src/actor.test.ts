@@ -1,8 +1,10 @@
 /** #4911: one actor fallback for the lexicons' gated requests and the products' requesters. */
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { expect, test } from "vitest";
-import { actorFromEnv } from "./actor";
+import { beforeAll, describe, expect, test } from "vitest";
+import { ACTOR_ENV_ORDER, actorFromEnv, actorOf, actorOrder } from "./actor";
 
 test("the forge's actor, then the login, then unknown", () => {
   expect(actorFromEnv({ GITHUB_ACTOR: "octo", GITLAB_USER_LOGIN: "gl", USER: "me" })).toBe("octo");
@@ -11,6 +13,43 @@ test("the forge's actor, then the login, then unknown", () => {
   expect(actorFromEnv({ USERNAME: "win" })).toBe("win");
   expect(actorFromEnv({})).toBe("unknown");
   expect(actorFromEnv({}, "chant")).toBe("chant");
+});
+
+/** #4966: a product's requester order, with the triggering actor and git's user.name. */
+describe("actorOf", () => {
+  let repo: string;
+  beforeAll(() => {
+    repo = mkdtempSync(join(tmpdir(), "chant-actor-"));
+    execFileSync("git", ["init", "-q", repo]);
+    execFileSync("git", ["-C", repo, "config", "user.name", "Ada Person"]);
+    execFileSync("git", ["-C", repo, "config", "user.email", "ada@example.com"]);
+  });
+
+  test("with no options it answers as actorFromEnv", () => {
+    for (const env of [{ GITHUB_ACTOR: "octo", USER: "me" }, { GITLAB_USER_LOGIN: "gl" }, { USERNAME: "win" }, {}]) {
+      expect(actorOf({ env })).toBe(actorFromEnv(env));
+    }
+    expect(actorOrder()).toEqual([...ACTOR_ENV_ORDER]);
+  });
+
+  test("the triggering actor comes ahead of the forge's actor", () => {
+    expect(actorOf({ env: { GITHUB_TRIGGERING_ACTOR: "rerunner", GITHUB_ACTOR: "starter" }, triggering: true })).toBe("rerunner");
+    expect(actorOf({ env: { GITHUB_TRIGGERING_ACTOR: " ", GITHUB_ACTOR: "starter" }, triggering: true })).toBe("starter");
+    expect(actorOf({ env: { GITHUB_TRIGGERING_ACTOR: "rerunner", GITHUB_ACTOR: "starter" } })).toBe("starter");
+  });
+
+  test("git's user.name comes after the forge's actor and before the login", () => {
+    expect(actorOf({ env: { GITHUB_ACTOR: "octo", USER: "me" }, repo })).toBe("octo");
+    expect(actorOf({ env: { USER: "me" }, repo })).toBe("Ada Person");
+    expect(actorOf({ env: { USER: "me" }, repo, gitKeys: ["user.email", "user.name"] })).toBe("ada@example.com");
+    expect(actorOrder({ triggering: true, repo })).toEqual(["GITHUB_TRIGGERING_ACTOR", "GITHUB_ACTOR", "GITLAB_USER_LOGIN", "git:user.name", "USER", "USERNAME"]);
+  });
+
+  test("the forge and the login can be left out, and the fallback named", () => {
+    expect(actorOf({ env: { GITHUB_ACTOR: "octo", USER: "me" }, forge: false, repo })).toBe("Ada Person");
+    expect(actorOf({ env: { USER: "me" }, triggering: true, login: false, fallback: "" })).toBe("");
+    expect(actorOf({ env: {}, fallback: "terragucci" })).toBe("terragucci");
+  });
 });
 
 /**

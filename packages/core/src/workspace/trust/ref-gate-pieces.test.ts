@@ -10,6 +10,7 @@
 import { existsSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
+import { beforeMergeBranch, beforeMergeRefGate } from "../../cli/handlers/pr";
 import { refGateInitPlan, RefGateInitError, writeRefGateInit } from "../../ref-gate-init";
 import { REF_GATE_STATUS, refGateRulesAt, refGateStatusFor } from "../../ref-gate-rules";
 import { decideRefUpdate, describeDecision, requestCommand } from "./ref-gate";
@@ -74,6 +75,30 @@ describe("the ref gate's rules as a library (#4913)", () => {
     bare.write(".chant/trust.json", "[]");
     bare.commit("not a policy");
     expect(refGateStatusFor(bare.work, "main").problem).toContain("the trust policy can't be read");
+  });
+});
+
+describe("an apply before merge waits for the ref gate's status (#4966)", () => {
+  test("the target branch: --branch, the pull request's target, then the branch the job runs on", () => {
+    expect(beforeMergeBranch("release/2", { GITHUB_REF_NAME: "main" })).toBe("release/2");
+    expect(beforeMergeBranch(undefined, { GITHUB_BASE_REF: "trunk", GITHUB_REF_NAME: "7/merge" })).toBe("trunk");
+    expect(beforeMergeBranch(undefined, { CI_COMMIT_BRANCH: "main" })).toBe("main");
+    expect(beforeMergeBranch(undefined, { GITHUB_REF_NAME: "main" })).toBe("main");
+    expect(beforeMergeBranch(" ", {})).toBeUndefined();
+  });
+
+  test("the status the policy at base sets for the target branch is required, and none without a rule", async () => {
+    const r = new GateRepos("4966-before-merge");
+    const ci = runnerKey();
+    r.write(".chant/trust.json", JSON.stringify({ schema: 1, runners: [{ principal: RUNNER, class: "runner", key: ci.pub }], refs: [{ ref: "refs/heads/main", checks: CHECKS, status: "acme/gate" }] }));
+    const base = r.commit("policy");
+    expect(await beforeMergeRefGate(r.work, base, undefined, { GITHUB_REF_NAME: "main" })).toMatchObject({ require: ["acme/gate"] });
+    expect(await beforeMergeRefGate(r.work, base, "feature", {})).toEqual({ require: [] });
+    expect(await beforeMergeRefGate(r.work, base, undefined, {})).toMatchObject({ require: [], note: expect.stringContaining("names no target branch") });
+    r.write(".chant/trust.json", "{ not json");
+    const broken = r.commit("broken policy");
+    const refused = await beforeMergeRefGate(r.work, broken, "main", {});
+    expect("problem" in refused && refused.problem).toContain("the trust policy at base can't be read");
   });
 });
 

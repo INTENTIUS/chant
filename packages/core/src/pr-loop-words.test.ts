@@ -5,7 +5,8 @@
  */
 import { describe, expect, test } from "vitest";
 import { composeChangeSet } from "./change-set";
-import { memberCounts, PR_REPORT_SCHEMA_ID, prApproveCommand, prApproveCommands, prMergeSentence, prStatusContext, prStatusDescription, renderPrNote, type PrReport } from "./pr-loop";
+import { memberCounts, PR_REPORT_SCHEMA_ID, prApproveCommand, prApproveCommands, prMergeSentence, prStatusContext, renderPrNote, type PrReport } from "./pr-loop";
+import { prStatusDescription } from "./pr-status";
 import { assertProductWords, CHANT_WORDS } from "./ci-product-words";
 import { PLYWOOD, TERRAGUCCI, YODEL } from "./__fixtures__/product-words";
 

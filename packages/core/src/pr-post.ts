@@ -32,7 +32,8 @@
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { prNoteMarker, prStatusContext, prStatusDescription, prStatusState, renderPrNote, type PrOverdue, type PrReport } from "./pr-loop";
+import { prNoteMarker, prStatusContext, renderPrNote, type PrOverdue, type PrReport } from "./pr-loop";
+import { prStatusDescription, prStatusState } from "./pr-status";
 import { forgePrincipalOf, type PrForge } from "./pr-forge";
 import { fitNote, GITHUB_COMMENT_LIMIT, GITLAB_NOTE_LIMIT } from "./plan-summary";
 import { activeProductWords, commentLine, type CiProductWords } from "./ci-product-words";
