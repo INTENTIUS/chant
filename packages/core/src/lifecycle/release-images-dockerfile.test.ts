@@ -54,6 +54,26 @@ describe("a release.images entry that names a Dockerfile (#4819)", () => {
     );
   });
 
+  test("args go to the build as build arguments, so sql-yodeler's release-image.sh is a Dockerfile entry (#4908)", () => {
+    const entry = {
+      name: "sql-yodeler",
+      dockerfile: ".github/image/Dockerfile",
+      context: "dist/image-context",
+      prepare: "mkdir -p dist/image-context && npm pack --pack-destination dist/image-context",
+      args: { YODEL_PACKAGE: "/ctx/intentius-sql-yodeler-0.14.0.tgz", CHANT_PINS: "@intentius/chant@0.124.87 @intentius/chant-lexicon-sql@0.124.87" },
+    };
+    expect(releaseImageBuildCommand(entry, { versionArg: true })).toContain(
+      `--build-arg SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" --build-arg CHANT_RELEASE_LABEL="$CHANT_RELEASE_LABEL" --build-arg YODEL_PACKAGE=/ctx/intentius-sql-yodeler-0.14.0.tgz --build-arg 'CHANT_PINS=@intentius/chant@0.124.87 @intentius/chant-lexicon-sql@0.124.87' --output`,
+    );
+    expect(releaseImageBuildCommand(entry)).toContain(" -f .github/image/Dockerfile dist/image-context >&2");
+    expect(() => checkReleaseImages([entry])).not.toThrow();
+    expect(() => checkReleaseImages([{ ...entry, args: { "BAD-NAME": "x" } }])).toThrow(/not a build argument name/);
+    expect(() => checkReleaseImages([{ ...entry, args: { SOURCE_DATE_EPOCH: "0" } }])).toThrow(/chant passes itself/);
+    expect(() => checkReleaseImages([{ ...entry, args: { A: "x\ny" } }])).toThrow(/one-line/);
+    const parsed = ChantConfigSchema.safeParse({ release: { images: [entry] } });
+    expect(parsed.success).toBe(true);
+  });
+
   test("the archive defaults to dist/images/<name>.tar, and a build entry is as it was", () => {
     const images: ReleaseImageDeclaration[] = [
       { name: "pulumi", dockerfile: "images/plywood-pulumi/Dockerfile" },

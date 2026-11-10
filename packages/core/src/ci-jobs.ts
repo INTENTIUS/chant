@@ -339,6 +339,9 @@ const USES_PATTERN = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)((?:\/[A-Za-z0-9_.-]+
 export function assertSetupSteps(name: string, setup: OpSetupStep[]): void {
   setup.forEach((step, index) => {
     const where = `Scheduled Op "${name}" setup step ${index + 1}`;
+    if (step.name !== undefined && (step.name.trim() === "" || /[\r\n]/.test(step.name))) {
+      throw new Error(`${where} has a blank or multi-line \`name\`. Give the step a one-line name, or leave it out.`);
+    }
     if ("uses" in step) {
       const ref = step.uses.trim();
       const match = USES_PATTERN.exec(ref);
@@ -368,16 +371,18 @@ export function assertSetupSteps(name: string, setup: OpSetupStep[]): void {
   });
 }
 
-/** One setup entry as a GitHub Actions step: `with:` and `env:` only when they hold something. */
+/** One setup entry as a GitHub Actions step: its `name` when it has one (#4932), `with:` and `env:` only when they hold something. */
 export function setupStepDoc(step: OpSetupStep): Record<string, unknown> {
+  const name = step.name !== undefined ? { name: step.name } : {};
   if ("uses" in step) {
     return {
+      ...name,
       uses: step.uses,
       ...nonEmpty("with", step.with),
       ...nonEmpty("env", step.env),
     };
   }
-  return { run: step.run, ...nonEmpty("env", step.env) };
+  return { ...name, run: step.run, ...nonEmpty("env", step.env) };
 }
 
 /**

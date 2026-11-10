@@ -384,11 +384,14 @@ function jobExtras(p: ReleasePipelineConfig, forge: ReleaseWorkflowForge): JobEx
       if (!/^[a-z][a-z-]*$/.test(k) || (v !== "read" && v !== "write")) throw new Error(`${where}.permissions: ${k}: ${String(v)} is not a scope and read or write`);
     }
     for (const s of setup) if (!("uses" in s) && s.run.trim() === "") throw new Error(`${where}.setup: a run step is empty`);
+    for (const s of setup) if (s.name !== undefined && (s.name.trim() === "" || /[\r\n]/.test(s.name))) throw new Error(`${where}.setup: a step's name is blank or more than one line`);
   }
   const q = (v: string | number | boolean): string => JSON.stringify(v);
   const map = (indent: string, entries: Array<[string, string | number | boolean]>): string[] => entries.map(([k, v]) => `${indent}${k}: ${q(v)}`);
+  // #4932: a named step opens with its name.
   const githubSteps = setup.flatMap((s) => [
-    "uses" in s ? `      - uses: ${s.uses}` : `      - run: ${q(s.run)}`,
+    ...(s.name !== undefined ? [`      - name: ${q(s.name)}`] : []),
+    `      ${s.name !== undefined ? " " : "-"} ${"uses" in s ? `uses: ${s.uses}` : `run: ${q(s.run)}`}`,
     ...("uses" in s && s.with && Object.keys(s.with).length > 0 ? ["        with:", ...map("          ", Object.entries(s.with))] : []),
     ...(s.env && Object.keys(s.env).length > 0 ? ["        env:", ...map("          ", Object.entries(s.env))] : []),
   ]);

@@ -38,10 +38,10 @@ function blocks(file: string): Block[] {
 }
 
 /** Type errors in in-memory files, compiled against the lexicon's source with the repo typecheck's options. */
-function typeErrors(files: Map<string, string>): string[] {
+function typeErrors(files: Map<string, string>, extra: ts.CompilerOptions = {}): string[] {
   const config = ts.readConfigFile(join(repoRoot, "tsconfig.typecheck.json"), ts.sys.readFile);
   const { options } = ts.parseJsonConfigFileContent(config.config, ts.sys, repoRoot);
-  const checkOptions = { ...options, noEmit: true, types: [], skipLibCheck: true, declaration: false, declarationMap: false, sourceMap: false };
+  const checkOptions = { ...options, noEmit: true, types: [], skipLibCheck: true, declaration: false, declarationMap: false, sourceMap: false, ...extra };
   const host = ts.createCompilerHost(checkOptions);
   const getSourceFile = host.getSourceFile.bind(host);
   host.getSourceFile = (name, lang, ...rest) =>
@@ -103,5 +103,23 @@ describe("docker TypeScript outside the repo typecheck type-checks", () => {
     }
     expect(files.size).toBeGreaterThanOrEqual(4);
     expect(typeErrors(files)).toEqual([]);
+  }, 120_000);
+
+  test("a product's image as ci-image's stages, under exactOptionalPropertyTypes (#4932)", () => {
+    // As sql-yodeler writes it: its tsconfig sets exactOptionalPropertyTypes, which CiImageStep's Partial record did not satisfy.
+    const code = [
+      `import { Dockerfile, type DockerfileStage } from "@intentius/chant-lexicon-docker";`,
+      `import { productImageStages } from "@intentius/chant/ci-image";`,
+      `const stages = productImageStages({`,
+      `  name: "sql-yodeler", product: "yodel", description: "yodel on Node 22", source: "https://github.com/INTENTIUS/sql-yodeler",`,
+      `  tools: [{ tool: "pulumi", version: "3.272.0" }],`,
+      `  steps: [{ run: "true" }, { env: "A=1" }],`,
+      `  bundle: { npm: '"$PKG"', prefix: "/opt/yodel", mountContext: true, require: ["PKG"] },`,
+      `});`,
+      `export const typed: DockerfileStage[] = stages;`,
+      `export const image = new Dockerfile({ stages: productImageStages({ name: "x", product: "x", description: "d", source: "s", bundle: { file: "a", bin: "a" } }) });`,
+    ].join("\n");
+    const files = new Map([[join(virtualRoot, "ci-image", "image.ts"), code]]);
+    expect(typeErrors(files, { exactOptionalPropertyTypes: true })).toEqual([]);
   }, 120_000);
 });

@@ -26,7 +26,7 @@
  * the reproducible build itself ({@link releaseImageBuildCommand}), a
  * `docker-container` buildx builder writing an OCI archive with timestamps
  * rewritten from `SOURCE_DATE_EPOCH` and no attestations, for every
- * platform. Its `prepare` command (the bundle the image carries, a packed
+ * platform, with the entry's own build arguments (`args`, #4908). Its `prepare` command (the bundle the image carries, a packed
  * package) runs first with no digests file named, so the image is the same
  * in the cut and the publish job. A product's package build turns the
  * digests file and its `{ name: reference }` into the table it bakes in with
@@ -38,6 +38,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, posix, relative, resolve } from "node:path";
+import { NEXT_RELEASE } from "../release-floors";
 import type { PublishDeclaration } from "./publish-declaration";
 import type { Release, ReleaseArtifact } from "./release-store";
 
@@ -53,6 +54,9 @@ export const RELEASE_IMAGES_FLOOR = "0.124.71";
  * build (#4819).
  */
 export const RELEASE_IMAGE_DOCKERFILE_FLOOR = "0.124.78";
+
+/** The first chant whose Dockerfile entry in `release.images` takes `args`, build arguments beside the two chant passes (#4908). */
+export const RELEASE_IMAGE_ARGS_FLOOR = NEXT_RELEASE;
 
 /** One image a release builds in its cut with a command of the product's. */
 export interface ReleaseImageBuild {
@@ -83,6 +87,13 @@ export interface ReleaseImageDockerfile {
   archive?: string;
   /** A command run once before the builds, with `CHANT_RELEASE_DIGESTS` unset: what the image copies in, such as the bundle or a packed package. */
   prepare?: string;
+  /**
+   * Build arguments beside `SOURCE_DATE_EPOCH` and `CHANT_RELEASE_LABEL`
+   * (#4908), such as the packed package's file and the chant packages the
+   * image installs beside it, as sql-yodeler's `release-image.sh` passed
+   * them. Values are literal; the config computes them.
+   */
+  args?: Record<string, string>;
 }
 
 /** One image a release builds in its cut. */
@@ -118,7 +129,9 @@ export function releaseImageBuildCommand(i: ReleaseImageDockerfile, o: { version
     `mkdir -p ${sh(posix.dirname(archive))}`,
     [
       `docker buildx build --builder ${b} --no-cache --platform ${sh((i.platforms ?? RELEASE_IMAGE_PLATFORMS).join(","))}`,
-      `--provenance=false --sbom=false --build-arg SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH"${o.versionArg ? ' --build-arg CHANT_RELEASE_LABEL="$CHANT_RELEASE_LABEL"' : ""}`,
+      `--provenance=false --sbom=false --build-arg SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH"${o.versionArg ? ' --build-arg CHANT_RELEASE_LABEL="$CHANT_RELEASE_LABEL"' : ""}${Object.entries(i.args ?? {})
+        .map(([k, v]) => ` --build-arg ${sh(`${k}=${v}`)}`)
+        .join("")}`,
       `--output ${sh(`type=oci,dest=${archive},rewrite-timestamp=true`)} -f ${sh(i.dockerfile)} ${sh(i.context ?? ".")} >&2`,
     ].join(" "),
   ].join(" && ");
@@ -150,6 +163,9 @@ export class ReleaseImageError extends Error {
 }
 
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+const BUILD_ARG = /^[A-Za-z_][A-Za-z0-9_]*$/;
+/** The build arguments chant passes itself, which an entry's `args` cannot set. */
+const CHANT_BUILD_ARGS = ["SOURCE_DATE_EPOCH", "CHANT_RELEASE_LABEL"];
 
 const outside = (p: string): boolean => isAbsolute(p) || p.split(/[\\/]/).includes("..");
 
@@ -164,6 +180,11 @@ export function checkReleaseImages(images: readonly ReleaseImageDeclaration[]): 
     const paths: [string, string | undefined][] = isDockerfile(i) ? [["the archive", archiveOf(i)], ["the Dockerfile", i.dockerfile], ["the context", i.context]] : [["the archive", i.archive]];
     for (const [what, p] of paths) {
       if (p !== undefined && outside(p)) throw new ReleaseImageError("release-image-archive-outside", `release.images "${i.name}": ${what} ${p} is not a path inside the member`);
+    }
+    for (const [k, v] of Object.entries((isDockerfile(i) && i.args) || {})) {
+      if (!BUILD_ARG.test(k)) throw new ReleaseImageError("release-image-invalid", `release.images "${i.name}": args names ${JSON.stringify(k)}, which is not a build argument name`);
+      if (CHANT_BUILD_ARGS.includes(k)) throw new ReleaseImageError("release-image-invalid", `release.images "${i.name}": args sets ${k}, which chant passes itself`);
+      if (typeof v !== "string" || /[\r\n]/.test(v)) throw new ReleaseImageError("release-image-invalid", `release.images "${i.name}": args.${k} is not a one-line string`);
     }
     if (i.platforms !== undefined && (i.platforms.length === 0 || !i.platforms.every((p) => PLATFORM.test(p)))) {
       throw new ReleaseImageError("release-image-invalid", `release.images "${i.name}": platforms is a list of os/arch such as linux/amd64, not ${JSON.stringify(i.platforms)}`);

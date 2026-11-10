@@ -16,9 +16,10 @@
  *   product records others in its own config and passes them as `sha256`.
  * - {@link ciToolFetchScript} is the shell that downloads one release and
  *   checks it, for an image's fetch stage; {@link ciToolInstallLine} is the
- *   job line that runs it unless the binary is there; {@link installCiTool}
- *   does the same from Node, for a product that installs a pinned release
- *   at run time.
+ *   job line that runs it unless the binary is there (with `sudo`, or under
+ *   a root such as `$RUNNER_TEMP/chant-tools`, for a job that is not root,
+ *   #4908); {@link installCiTool} does the same from Node, for a product
+ *   that installs a pinned release at run time.
  * - {@link productImageStages} is a product's image as stages a Dockerfile
  *   takes (the docker lexicon's `new Dockerfile({ stages })`), and
  *   {@link productImageDockerfile} is the same as text. The product passes
@@ -46,9 +47,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync, inflateRawSync } from "node:zlib";
 import { tarEntry } from "./policy-engine";
-import { CI_IMAGE_FLOOR } from "./release-floors";
+import { CI_IMAGE_DOCKER_STAGES_FLOOR, CI_IMAGE_FLOOR, CI_IMAGE_NON_ROOT_FLOOR } from "./release-floors";
 
-export { CI_IMAGE_FLOOR };
+export { CI_IMAGE_DOCKER_STAGES_FLOOR, CI_IMAGE_FLOOR, CI_IMAGE_NON_ROOT_FLOOR };
 
 // ---------------------------------------------------------------------------
 // Engine releases
@@ -230,6 +231,14 @@ export const CI_TOOL_SHA256: Readonly<Record<string, string>> = {
   "plunge-0.2.0-linux-arm64": "c176a82f038164085aa19c8ad6530d6022e560e124050e535dbe364ae0473357",
   "aws-cli-2.22.0-linux-amd64": "f315aa564190a12ae05a05bd8ab7b0645dd4a1ad71ce9e47dae4ff3dfeee8ceb",
   "aws-cli-2.22.0-linux-arm64": "c932ac00901ea3c430f3829140b8dc00fa6e9b8b99d6891929a4795947de7f3e",
+  // #4908: terragucci's image pins (its TOOL_SHA256, from terraform_1.14.9_SHA256SUMS and terragrunt v1.2.0's SHA256SUMS)
+  // and the AWS CLI its drift job installs (its AWS_CLI), so a product's image and job lines need no sums of their own.
+  "terraform-1.14.9-linux-amd64": "2e5cffc20a0b48a67a76268723bd5a10b8666f69b2aa4f04906e206726bedd63",
+  "terraform-1.14.9-linux-arm64": "863002085b886453795d9ff4b8989b8468784478150b70ba8a1df3e3ad66da99",
+  "terragrunt-1.2.0-linux-amd64": "45b6df8a8494c8cfe34b4abf919e894709557163e4d3b5704d11083002ab787a",
+  "terragrunt-1.2.0-linux-arm64": "b069ce4310572bc46ee6f057057acc4bc6a9077ef8687e157a64b0551290a371",
+  "aws-cli-2.37.9-linux-amd64": "6b3a6a3d7bb3997928f0bdf7b866914224abf242c2e54e1dcebbe84bee64f356",
+  "aws-cli-2.37.9-linux-arm64": "e7d2cca3622af4765871fe9ce7eeed03acd09dca10a99ebc46e92f79d78765c0",
 };
 
 /** One release file of one tool for one architecture. */
@@ -256,6 +265,13 @@ export interface CiToolRelease {
 const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 const DIR = /^\/[A-Za-z0-9._/-]*$/;
+/**
+ * A directory a job line may name (#4908): an absolute path, or one under a
+ * variable the job's shell expands, such as `$RUNNER_TEMP/chant-tools` or
+ * `$HOME/.local/bin`, so a job that is not root installs where it can write.
+ * Every line writes it inside double quotes.
+ */
+const SHELL_DIR = /^(?:\/|\$[A-Za-z_][A-Za-z0-9_]*(?=\/|$)|\$\{[A-Za-z_][A-Za-z0-9_]*\})[A-Za-z0-9._/-]*$/;
 
 function spec(tool: CiTool): ToolSpec {
   const s = TOOLS[tool];
@@ -304,10 +320,10 @@ export function ciToolSha256(tool: CiTool, version: string, given?: Partial<Reco
   return out;
 }
 
-/** Where a tool lives once installed: `<root>/<tool>-<version>`. */
+/** Where a tool lives once installed: `<root>/<tool>-<version>`. A job line's root may start with a shell variable (#4908). */
 export function ciToolDir(tool: CiTool, version: string, root: string): string {
   checkVersion(tool, version);
-  if (!DIR.test(root)) throw new Error(`a tool root is an absolute path of letters, digits and ._/-, not ${JSON.stringify(root)}`);
+  if (!SHELL_DIR.test(root)) throw new Error(`a tool root is an absolute path of letters, digits and ._/-, or one under a variable such as $RUNNER_TEMP, not ${JSON.stringify(root)}`);
   return `${root.replace(/\/+$/, "")}/${tool}-${version}`;
 }
 
@@ -340,6 +356,12 @@ export interface CiToolFetchOptions extends CiToolCheckOptions {
   arch?: string;
   /** A shell word for the checksums file's URL, such as `"$CHECKSUMS_URL"`. Default the release's own. */
   checksumsUrl?: string;
+  /**
+   * Write into `dir` with `sudo` (#4908), for a job that runs as a user who
+   * cannot write the tool root, such as GitHub's hosted runners under
+   * /opt. The download and the check run as the job's user. Default false.
+   */
+  sudo?: boolean;
 }
 
 function needPins(tool: CiTool, version: string, sums: Partial<Record<CiToolArch, string>>, requirePin: boolean): void {
@@ -358,7 +380,8 @@ function needPins(tool: CiTool, version: string, sums: Partial<Record<CiToolArch
  * release needs a recorded sha256 it lacks.
  */
 export function ciToolFetchScript(tool: CiTool, version: string, options: CiToolFetchOptions): string {
-  if (!DIR.test(options.dir)) throw new Error(`a fetch directory is an absolute path of letters, digits and ._/-, not ${JSON.stringify(options.dir)}`);
+  if (!SHELL_DIR.test(options.dir)) throw new Error(`a fetch directory is an absolute path of letters, digits and ._/-, or one under a variable such as $RUNNER_TEMP, not ${JSON.stringify(options.dir)}`);
+  const su = options.sudo ? "sudo " : "";
   const s = spec(tool);
   const sums = ciToolSha256(tool, version, options.sha256);
   needPins(tool, version, sums, options.requirePin === true);
@@ -387,33 +410,49 @@ export function ciToolFetchScript(tool: CiTool, version: string, options: CiTool
   } else {
     lines.push(`{ [ -n "$want" ] || { echo "${name}: no sha256 is recorded for $f" >&2; exit 1; }; }`);
   }
-  lines.push(`echo "$want  $t/$f" | sha256sum -c - >/dev/null`, `mkdir -p "${dir}"`);
+  lines.push(`echo "$want  $t/$f" | sha256sum -c - >/dev/null`, `${su}mkdir -p "${dir}"`);
   const member = s.member?.("$w") ?? s.bin;
   switch (s.layout) {
     case "binary":
-      lines.push(`install -m 0755 "$t/$f" "${dir}/${s.bin}"`);
+      lines.push(`${su}install -m 0755 "$t/$f" "${dir}/${s.bin}"`);
       break;
     case "tar.gz":
-      lines.push(`tar -xzf "$t/$f" -C "$t" "${member}"`, `install -m 0755 "$t/${member}" "${dir}/${s.bin}"`);
+      lines.push(`tar -xzf "$t/$f" -C "$t" "${member}"`, `${su}install -m 0755 "$t/${member}" "${dir}/${s.bin}"`);
       break;
     case "zip":
-      lines.push(`unzip -q -o "$t/$f" "${member}" -d "$t"`, `install -m 0755 "$t/${member}" "${dir}/${s.bin}"`);
+      lines.push(`unzip -q -o "$t/$f" "${member}" -d "$t"`, `${su}install -m 0755 "$t/${member}" "${dir}/${s.bin}"`);
       break;
     case "tree":
-      lines.push(`tar -xzf "$t/$f" -C "${dir}" --strip-components=1`);
+      lines.push(`${su}tar -xzf "$t/$f" -C "${dir}" --strip-components=1`);
       break;
     case "aws-cli":
-      lines.push(`unzip -q "$t/$f" -d "$t"`, `"$t/aws/install" -i "${dir}" -b "${dir}/bin"`);
+      lines.push(`unzip -q "$t/$f" -d "$t"`, `${su}"$t/aws/install" -i "${dir}" -b "${dir}/bin"`);
       break;
   }
   return lines.join(" && ");
 }
 
 export interface CiToolInstallOptions extends CiToolCheckOptions {
-  /** Where the versioned directories live. Default {@link CI_TOOL_ROOT}. */
+  /**
+   * Where the versioned directories live. Default {@link CI_TOOL_ROOT}. It
+   * may start with a variable the job's shell expands (#4908), such as
+   * `$RUNNER_TEMP/chant-tools`, for a job that is not root.
+   */
   root?: string;
-  /** Link the binary into /usr/local/bin (default true). `false` leaves PATH alone, for a pin a step runs by its path. */
+  /** Link the binary into `binDir` (default true). `false` leaves PATH alone, for a pin a step runs by its path. */
   link?: boolean;
+  /**
+   * Where the link goes. Default /usr/local/bin. Like `root` it may start
+   * with a variable (#4908), such as `$HOME/.local/bin`; the job puts it on
+   * PATH.
+   */
+  binDir?: string;
+  /**
+   * Install into `root` and link into `binDir` with `sudo` (#4908), for a
+   * job that runs as a user who cannot write them, as on GitHub's hosted
+   * runners. The download and the check run as the job's user. Default false.
+   */
+  sudo?: boolean;
   /** Skip the install when any `<bin>` is on PATH, whatever its version. Default false: only the versioned directory counts. */
   onPath?: boolean;
 }
@@ -433,9 +472,15 @@ export function ciToolInstallLine(tool: CiTool, version: string, options: CiTool
   const dir = ciToolDir(tool, version, root);
   const bin = ciToolBin(tool, version, root);
   const s = spec(tool);
-  const install = `(set -e; ${ciToolFetchScript(tool, version, { dir, sha256: options.sha256, requirePin: options.requirePin })})`;
+  const binDir = (options.binDir ?? "/usr/local/bin").replace(/(.)\/+$/, "$1");
+  if (!SHELL_DIR.test(binDir)) throw new Error(`binDir is an absolute path of letters, digits and ._/-, or one under a variable such as $HOME, not ${JSON.stringify(options.binDir)}`);
+  const su = options.sudo ? "sudo " : "";
+  const install = `(set -e; ${ciToolFetchScript(tool, version, { dir, sha256: options.sha256, requirePin: options.requirePin, sudo: options.sudo })})`;
   const inDir = `[ -x "${bin}" ]`;
-  const line = options.link === false ? `${inDir} || ${install}` : `{ ${inDir} || ${install}; } && ln -sf "${bin}" /usr/local/bin/${s.bin}`;
+  // A plain path is written as it always was; one under a variable is quoted, so the shell expands it as one word.
+  const target = DIR.test(binDir) ? `${binDir}/${s.bin}` : `"${binDir}/${s.bin}"`;
+  const link = `${su}${options.binDir !== undefined ? `mkdir -p "${binDir}" && ${su}` : ""}ln -sf "${bin}" ${target}`;
+  const line = options.link === false ? `${inDir} || ${install}` : `{ ${inDir} || ${install}; } && ${link}`;
   return options.onPath ? `command -v ${s.bin} >/dev/null 2>&1 || { ${line}; }` : line;
 }
 
@@ -582,7 +627,19 @@ export const CI_BASE_IMAGES = {
 export const CI_IMAGE_LABEL_ARG = "CHANT_RELEASE_LABEL";
 
 /** One Dockerfile instruction, as the docker lexicon's stage `steps` take it: `{ run: "..." }`. */
-export type CiImageStep = Readonly<Partial<Record<"arg" | "env" | "run" | "copy" | "label" | "cmd" | "user" | "workdir" | "expose" | "entrypoint", string>>>;
+/** The Dockerfile instructions a {@link CiImageStep} names. */
+export type CiImageInstruction = "arg" | "env" | "run" | "copy" | "label" | "cmd" | "user" | "workdir" | "expose" | "entrypoint";
+
+/**
+ * One Dockerfile instruction, as the docker lexicon's stage `steps` take it:
+ * `{ run: "..." }`. One key each, the others `never`, the shape of the
+ * lexicon's `DockerfileStep`, so `new Dockerfile({ stages:
+ * productImageStages(spec) })` compiles under `exactOptionalPropertyTypes`
+ * (#4932).
+ */
+export type CiImageStep = {
+  [K in CiImageInstruction]: { readonly [P in K]: string } & { readonly [P in Exclude<CiImageInstruction, K>]?: never };
+}[CiImageInstruction];
 
 /** One stage, as the docker lexicon's `new Dockerfile({ stages })` takes it. */
 export interface CiImageStage {
@@ -736,6 +793,8 @@ export function productImageStages(spec: ProductImageSpec): CiImageStage[] {
   for (const p of spec.npm ?? []) if (!PKG.test(p)) throw new Error(`npm package ${JSON.stringify(p)} is not a name at an exact version`);
   if (spec.chant !== undefined && !VERSION.test(spec.chant)) throw new Error(`chant ${JSON.stringify(spec.chant)} is not a release version`);
   const root = spec.toolRoot ?? `/opt/${spec.product}`;
+  // An image's COPY takes no shell variable, so the tool root is a plain path here.
+  if (!DIR.test(root)) throw new Error(`toolRoot ${JSON.stringify(root)} is not an absolute path of letters, digits and ._/-`);
   const tools = spec.tools ?? [];
   const seen = new Set<string>();
   for (const t of tools) {

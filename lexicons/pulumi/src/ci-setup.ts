@@ -32,8 +32,15 @@
  * download and check alone, for an image build's `RUN` with the arch from
  * `$TARGETARCH` ({@link CI_DOCKER_ARCH}) and the checksums URL from a build
  * argument, so a tampered checksums file can be shown to fail the build.
+ *
+ * Since #4908 the download, the check and the recorded sums are
+ * `@intentius/chant/ci-image`'s, the one copy every engine install uses:
+ * {@link ciFetchScript} is `ciToolFetchScript` and {@link PINNED_SHA256} is
+ * read from `CI_TOOL_SHA256`. This module keeps the Pulumi words (the x64
+ * and arm64 archive names, the sums by them) and the install lines.
  */
 import { CI_SETUP_UNLINKED_FLOOR } from "@intentius/chant/lexicon";
+import { CI_TOOL_DOCKER_ARCH, CI_TOOL_JOB_ARCH, CI_TOOL_SHA256, ciToolFetchScript, ciToolRelease, ciToolSha256, type CiToolArch } from "@intentius/chant/ci-image";
 import { pulumiMemberEngine } from "./member-engine";
 
 /** The first chant with `link: false` and {@link ciFetchScript} (#4814). It is core's floor, so it freezes with chant's release. */
@@ -54,18 +61,40 @@ export const CI_ENGINE_ROOT = "/opt/chant";
 export type CiArch = "x64" | "arm64";
 export const CI_ARCHES: readonly CiArch[] = ["x64", "arm64"];
 
+const TOOL_ARCH: Record<CiArch, CiToolArch> = { x64: "amd64", arm64: "arm64" };
+
+/** One release's download: the base URL, the archive per architecture, and its checksums file. */
+export interface CiRelease {
+  base: string;
+  archive(arch: CiArch): string;
+  checksums: string;
+}
+
+const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+const ROOT = /^\/[A-Za-z0-9._/-]*$/;
+
+/** The release of `engine` at `version`, as ci-image names it (#4908). A version is a plain semver, so it is safe on a shell line. */
+export function ciRelease(engine: CiEngine, version: string): CiRelease {
+  if (!VERSION.test(version)) throw new Error(`${engine} version ${JSON.stringify(version)} is not a release version such as 3.272.0`);
+  const r = ciToolRelease(engine, version, "amd64");
+  return {
+    base: r.url.slice(0, r.url.lastIndexOf("/")),
+    archive: (arch) => ciToolRelease(engine, version, TOOL_ARCH[arch]).asset,
+    checksums: r.checksums!,
+  };
+}
+
 /**
- * The sha256 of each recorded Linux archive, copied from its release's
- * checksums file (the same sums plywood#12 records). A checksums file that
- * lists another sum for one of these fails the install. Add a release's
- * two lines when moving a default version.
+ * The sha256 of each recorded Linux archive, by its file name: ci-image's
+ * `CI_TOOL_SHA256` for Pulumi and plunge (#4908), where a release's two
+ * lines are added when a default version moves.
  */
-export const PINNED_SHA256: Readonly<Record<string, string>> = {
-  "pulumi-v3.272.0-linux-x64.tar.gz": "58d545f2b98761051922008ebd381ecef95484d7f7a5ff7faa15d7a780ea84f6",
-  "pulumi-v3.272.0-linux-arm64.tar.gz": "4f0741901b8982c4326b702dabf483c63d2cf77c88ac42dd752b72541284a534",
-  "plunge-v0.1.0-linux-x64.tar.gz": "22b89da39ab7dc11268c7b625fec3d99c0793c9c47bf8d031fa94e6967ee8187",
-  "plunge-v0.1.0-linux-arm64.tar.gz": "6855611b8cf8381d73f5ddf0b5c0a0d83bdc2a5bd8c50d415e52bb05a4574f83",
-};
+export const PINNED_SHA256: Readonly<Record<string, string>> = Object.fromEntries(
+  Object.entries(CI_TOOL_SHA256).flatMap(([key, sum]) => {
+    const m = /^(pulumi|plunge)-(.+)-linux-(amd64|arm64)$/.exec(key);
+    return m ? [[ciRelease(m[1] as CiEngine, m[2]!).archive(m[3] === "amd64" ? "x64" : "arm64"), sum]] : [];
+  }),
+);
 
 /** What a caller may set on an install line. */
 export interface CiInstallOptions {
@@ -81,50 +110,26 @@ export interface CiInstallOptions {
   link?: boolean;
 }
 
-/** One release's download: the base URL, the archive per architecture, and its checksums file. */
-export interface CiRelease {
-  base: string;
-  archive(arch: CiArch): string;
-  checksums: string;
-}
-
-const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
-const SHA256 = /^[0-9a-f]{64}$/;
-const ROOT = /^\/[A-Za-z0-9._/-]*$/;
-
-/** The release of `engine` at `version`. A version is a plain semver, so it is safe on a shell line. */
-export function ciRelease(engine: CiEngine, version: string): CiRelease {
-  if (!VERSION.test(version)) throw new Error(`${engine} version ${JSON.stringify(version)} is not a release version such as 3.272.0`);
-  if (engine === "pulumi") {
-    return {
-      base: `https://github.com/pulumi/pulumi/releases/download/v${version}`,
-      archive: (arch) => `pulumi-v${version}-linux-${arch}.tar.gz`,
-      checksums: `pulumi-${version}-checksums.txt`,
-    };
-  }
-  return {
-    base: `https://github.com/INTENTIUS/plunge/releases/download/plunge-v${version}`,
-    archive: (arch) => `plunge-v${version}-linux-${arch}.tar.gz`,
-    checksums: `plunge-v${version}-checksums.txt`,
-  };
-}
-
 /** Where one release of one engine lives after its line runs. */
 export function ciEngineDir(engine: CiEngine, version: string, root = CI_ENGINE_ROOT): string {
   if (!ROOT.test(root)) throw new Error(`an engine root is an absolute path of letters, digits and ._/-, not ${JSON.stringify(root)}`);
   return `${root.replace(/\/+$/, "")}/${engine}-${version}`;
 }
 
+/** The caller's sums by ci-image's architecture names. */
+function toolSums(given: Partial<Record<CiArch, string>> | undefined): Partial<Record<CiToolArch, string>> | undefined {
+  if (!given) return undefined;
+  const out: Partial<Record<CiToolArch, string>> = {};
+  for (const arch of CI_ARCHES) if (given[arch] !== undefined) out[TOOL_ARCH[arch]] = given[arch];
+  return out;
+}
+
 /** The recorded sums for `version`, by architecture: the caller's, else {@link PINNED_SHA256}'s. */
 export function recordedSums(engine: CiEngine, version: string, given?: Partial<Record<CiArch, string>>): Partial<Record<CiArch, string>> {
-  const r = ciRelease(engine, version);
+  ciRelease(engine, version);
+  const sums = ciToolSha256(engine, version, toolSums(given));
   const out: Partial<Record<CiArch, string>> = {};
-  for (const arch of CI_ARCHES) {
-    const sum = given ? given[arch] : PINNED_SHA256[r.archive(arch)];
-    if (sum === undefined) continue;
-    if (!SHA256.test(sum)) throw new Error(`the recorded sha256 for ${r.archive(arch)} is not 64 hex digits`);
-    out[arch] = sum;
-  }
+  for (const arch of CI_ARCHES) if (sums[TOOL_ARCH[arch]] !== undefined) out[arch] = sums[TOOL_ARCH[arch]];
   return out;
 }
 
@@ -137,6 +142,17 @@ export const CI_JOB_ARCH = `"$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/')"
  * bash 3.2 (macOS sh) cannot parse a bare `arm64)` inside `$(...)`.
  */
 export const CI_DOCKER_ARCH = `"$(case "$TARGETARCH" in (arm64) echo arm64 ;; (*) echo x64 ;; esac)"`;
+
+/**
+ * `arch`, an expression giving x64 or arm64, as ci-image's amd64 or arm64.
+ * The two expressions here are ci-image's own; another is mapped in the
+ * shell.
+ */
+function toolArch(arch: string | undefined): string {
+  if (arch === undefined || arch === CI_JOB_ARCH) return CI_TOOL_JOB_ARCH;
+  if (arch === CI_DOCKER_ARCH) return CI_TOOL_DOCKER_ARCH;
+  return `"$(case ${arch} in (x64) echo amd64 ;; (*) echo ${arch} ;; esac)"`;
+}
 
 /** Where {@link ciFetchScript} puts a release and what it checks it against. */
 export interface CiFetchOptions {
@@ -153,42 +169,27 @@ export interface CiFetchOptions {
 /**
  * Shell that downloads one release into `dir` and checks it against the
  * release's checksums file and, when recorded, the sum per architecture
- * (#4814). Run it under `set -e`. Both archives unpack a top directory named
- * after the engine, which `--strip-components=1` drops. `arch` and
- * `checksumsUrl` go onto the line as they are, so they are the caller's
- * shell, never a value from outside.
+ * (#4814): ci-image's `ciToolFetchScript` (#4908). Run it under `set -e`.
+ * Both archives unpack a top directory named after the engine, which
+ * `--strip-components=1` drops. `arch` and `checksumsUrl` go onto the line
+ * as they are, so they are the caller's shell, never a value from outside.
  */
 export function ciFetchScript(engine: CiEngine, version: string, options: CiFetchOptions): string {
   if (!ROOT.test(options.dir)) throw new Error(`a fetch directory is an absolute path of letters, digits and ._/-, not ${JSON.stringify(options.dir)}`);
-  return fetchScript(engine, version, options.dir, recordedSums(engine, version, options.sha256), options.arch ?? CI_JOB_ARCH, options.checksumsUrl);
-}
-
-function fetchScript(engine: CiEngine, version: string, dir: string, sums: Partial<Record<CiArch, string>>, arch: string, checksumsUrl?: string): string {
-  const r = ciRelease(engine, version);
-  const recorded = CI_ARCHES.filter((a) => sums[a]);
-  const pinCase = recorded.length > 0 ? `case "$a" in ${recorded.map((a) => `${a}) want=${sums[a]} ;;`).join(" ")} *) want= ;; esac` : "want=";
-  const file = r.archive("x64").replace("-x64.", "-$a.");
-  return [
-    `a=${arch}`,
-    `f="${file}"`,
-    `t="$(mktemp -d)"`,
-    `curl -fsSLo "$t/$f" "${r.base}/$f"`,
-    `curl -fsSLo "$t/sums" ${checksumsUrl ?? `"${r.base}/${r.checksums}"`}`,
-    // The archive's line, with any ./ or * before the name taken off.
-    `line="$(sed -n "s#^\\([0-9a-f]\\{64\\}\\)  *[*.]*/*$f\\$#\\1#p" "$t/sums")"`,
-    `{ [ -n "$line" ] || { echo "${engine} ${version}: $f is not in ${r.checksums}" >&2; exit 1; }; }`,
-    pinCase,
-    `{ [ -z "$want" ] || [ "$line" = "$want" ] || { echo "${engine} ${version}: ${r.checksums} lists $line for $f; chant records $want" >&2; exit 1; }; }`,
-    `echo "$line  $t/$f" | sha256sum -c - >/dev/null`,
-    `mkdir -p "${dir}"`,
-    `tar -xzf "$t/$f" -C "${dir}" --strip-components=1`,
-  ].join(" && ");
+  ciRelease(engine, version);
+  const sha256 = toolSums(options.sha256);
+  return ciToolFetchScript(engine, version, {
+    dir: options.dir,
+    arch: toolArch(options.arch),
+    ...(sha256 ? { sha256 } : {}),
+    ...(options.checksumsUrl !== undefined ? { checksumsUrl: options.checksumsUrl } : {}),
+  });
 }
 
 /** The line for one engine: skip when present, else fetch and check, then link into /usr/local/bin unless `link` is false. */
 function installLine(engine: CiEngine, version: string, options: CiInstallOptions, present?: string): string {
   const dir = ciEngineDir(engine, version, options.root);
-  const install = `(set -e; ${fetchScript(engine, version, dir, recordedSums(engine, version, options.sha256), CI_JOB_ARCH)})`;
+  const install = `(set -e; ${ciFetchScript(engine, version, { dir, ...(options.sha256 ? { sha256: options.sha256 } : {}) })})`;
   // Unlinked: the versioned directory alone says whether this release is there.
   if (options.link === false) return `[ -x "${dir}/${engine}" ] || ${install}`;
   const link = `ln -sf "${dir}/${engine}" /usr/local/bin/${engine}`;

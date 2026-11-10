@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { CI_SETUP_UNLINKED_FLOOR } from "@intentius/chant/lexicon";
+import { CI_TOOL_DOCKER_ARCH, CI_TOOL_JOB_ARCH, CI_TOOL_SHA256, ciToolFetchScript } from "@intentius/chant/ci-image";
 import {
   ciEngineDir,
   ciFetchScript,
@@ -56,7 +57,7 @@ describe("recordedSums", () => {
   test("an unrecorded release has none, and the caller's sums replace the table", () => {
     expect(recordedSums("pulumi", "3.300.0")).toEqual({});
     expect(recordedSums("pulumi", "3.300.0", { x64: "a".repeat(64) })).toEqual({ x64: "a".repeat(64) });
-    expect(() => recordedSums("pulumi", "3.300.0", { x64: "nope" })).toThrow(/64 hex/);
+    expect(() => recordedSums("pulumi", "3.300.0", { x64: "nope" })).toThrow(/64 lower-case hex/);
   });
 });
 
@@ -71,8 +72,8 @@ describe("pulumiInstallLine", () => {
 
   test("checks the checksums file, then the recorded sum per architecture, then the archive", () => {
     expect(line).toContain(`/pulumi-${PULUMI_CI_VERSION}-checksums.txt"`);
-    expect(line).toContain(`x64) want=${PINNED_SHA256["pulumi-v3.272.0-linux-x64.tar.gz"]} ;;`);
-    expect(line).toContain(`arm64) want=${PINNED_SHA256["pulumi-v3.272.0-linux-arm64.tar.gz"]} ;;`);
+    expect(line).toContain(`(amd64) want=${PINNED_SHA256["pulumi-v3.272.0-linux-x64.tar.gz"]} ;;`);
+    expect(line).toContain(`(arm64) want=${PINNED_SHA256["pulumi-v3.272.0-linux-arm64.tar.gz"]} ;;`);
     expect(line).toContain("sha256sum -c -");
     expect(line.indexOf("want=")).toBeLessThan(line.indexOf("sha256sum -c"));
   });
@@ -85,15 +86,15 @@ describe("pulumiInstallLine", () => {
   test("another version, unrecorded, checks only the checksums file", () => {
     const other = pulumiInstallLine("3.300.0");
     expect(other).toContain("/opt/chant/pulumi-3.300.0");
-    expect(other).toContain("want= &&");
-    expect(other).not.toContain("x64) want=");
+    expect(other).toContain('case "$a" in  (*) want= ;; esac');
+    expect(other).not.toContain("(amd64) want=");
   });
 
   test("a product's root and sums", () => {
     const own = pulumiInstallLine("3.272.0", { root: "/opt/plywood", sha256: { x64: "b".repeat(64) } });
     expect(own).toContain('"/opt/plywood/pulumi-3.272.0/pulumi"');
-    expect(own).toContain(`x64) want=${"b".repeat(64)} ;;`);
-    expect(own).not.toContain("arm64) want=");
+    expect(own).toContain(`(amd64) want=${"b".repeat(64)} ;;`);
+    expect(own).not.toContain("(arm64) want=");
     expect(() => pulumiInstallLine("3.272.0", { root: "relative/dir" })).toThrow(/absolute/);
   });
 });
@@ -103,7 +104,7 @@ describe("plungeInstallLine", () => {
     const line = plungeInstallLine();
     expect(line.startsWith(`{ [ -x "${CI_ENGINE_ROOT}/plunge-${PLUNGE_CI_VERSION}/plunge" ] || (set -e;`)).toBe(true);
     expect(line).toContain(`plunge-v${PLUNGE_CI_VERSION}-checksums.txt`);
-    expect(line).toContain(`x64) want=${PINNED_SHA256["plunge-v0.1.0-linux-x64.tar.gz"]} ;;`);
+    expect(line).toContain(`(amd64) want=${PINNED_SHA256["plunge-v0.1.0-linux-x64.tar.gz"]} ;;`);
     expect(line).toContain("--strip-components=1");
     expect(line).toContain(`ln -sf "${ciEngineDir("plunge", PLUNGE_CI_VERSION)}/plunge" /usr/local/bin/plunge`);
     expect(line).not.toContain("plunge version");
@@ -165,16 +166,18 @@ describe("an unlinked install line (#4814)", () => {
 describe("ciFetchScript (#4814)", () => {
   test("takes the target directory, an arch expression and a checksums URL word", () => {
     const s = ciFetchScript("pulumi", "3.272.0", { dir: "/out/opt/plywood/pulumi-3.272.0", arch: CI_DOCKER_ARCH, checksumsUrl: '"$CHECKSUMS_URL"' });
-    expect(s.startsWith(`a=${CI_DOCKER_ARCH} && `)).toBe(true);
+    // #4908: ci-image's script, which reads the Docker build's architecture as amd64 or arm64.
+    expect(s.startsWith(`a=${CI_TOOL_DOCKER_ARCH} && `)).toBe(true);
     expect(CI_DOCKER_ARCH).toBe(`"$(case "$TARGETARCH" in (arm64) echo arm64 ;; (*) echo x64 ;; esac)"`);
     expect(s).toContain('curl -fsSLo "$t/sums" "$CHECKSUMS_URL"');
     expect(s).toContain('tar -xzf "$t/$f" -C "/out/opt/plywood/pulumi-3.272.0" --strip-components=1');
-    expect(s).toContain(`x64) want=${PINNED_SHA256["pulumi-v3.272.0-linux-x64.tar.gz"]} ;;`);
+    expect(s).toContain(`(amd64) want=${PINNED_SHA256["pulumi-v3.272.0-linux-x64.tar.gz"]} ;;`);
   });
 
   test("defaults to the job's architecture and the release's own checksums file", () => {
     const s = ciFetchScript("plunge", "0.1.0", { dir: "/opt/chant/plunge-0.1.0" });
-    expect(s.startsWith(`a=${CI_JOB_ARCH} && `)).toBe(true);
+    expect(s.startsWith(`a=${CI_TOOL_JOB_ARCH} && `)).toBe(true);
+    expect(CI_JOB_ARCH).toBe(`"$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/')"`);
     expect(s).toContain('curl -fsSLo "$t/sums" "https://github.com/INTENTIUS/plunge/releases/download/plunge-v0.1.0/plunge-v0.1.0-checksums.txt"');
     expect(() => ciFetchScript("plunge", "0.1.0", { dir: "relative" })).toThrow(/absolute/);
   });
@@ -211,6 +214,18 @@ describe("ciFetchScript (#4814)", () => {
       expect(tampered.stderr).toContain(`lists ${"0".repeat(64)} for ${archive}; chant records ${sum}`);
     },
   );
+
+  test("is ci-image's fetch script, and the pins are ci-image's (#4908)", () => {
+    const sums = { x64: "e".repeat(64), arm64: "f".repeat(64) };
+    expect(ciFetchScript("pulumi", "3.272.0", { dir: "/out/p", arch: CI_DOCKER_ARCH, sha256: sums, checksumsUrl: '"$U"' })).toBe(
+      ciToolFetchScript("pulumi", "3.272.0", { dir: "/out/p", arch: CI_TOOL_DOCKER_ARCH, sha256: { amd64: sums.x64, arm64: sums.arm64 }, checksumsUrl: '"$U"' }),
+    );
+    expect(ciFetchScript("plunge", "0.2.0", { dir: "/out/g" })).toBe(ciToolFetchScript("plunge", "0.2.0", { dir: "/out/g" }));
+    expect(PINNED_SHA256["pulumi-v3.272.0-linux-x64.tar.gz"]).toBe(CI_TOOL_SHA256["pulumi-3.272.0-linux-amd64"]);
+    expect(PINNED_SHA256["plunge-v0.2.0-linux-arm64.tar.gz"]).toBe(CI_TOOL_SHA256["plunge-0.2.0-linux-arm64"]);
+    // plywood's pinnedSums, which turned ci-image's sums into these words, is this call.
+    expect(recordedSums("plunge", "0.2.0")).toEqual({ x64: CI_TOOL_SHA256["plunge-0.2.0-linux-amd64"], arm64: CI_TOOL_SHA256["plunge-0.2.0-linux-arm64"] });
+  });
 
   test("the floor names the next release", () => {
     expect(PULUMI_CI_SETUP_FLOOR).toBe(CI_SETUP_UNLINKED_FLOOR);
