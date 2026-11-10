@@ -21,6 +21,10 @@ describe("sql plugin", () => {
     expect(typeof sqlPlugin.docs).toBe("function");
   });
 
+  test("a declared object the server lacks is missing, not pending (#4896)", () => {
+    expect(sqlPlugin.liveAbsentStatus).toBe("missing");
+  });
+
   test("every rule and check id it ships starts with SQL", () => {
     const ids = [...(sqlPlugin.lintRules?.() ?? []).map((r) => r.id), ...(sqlPlugin.postSynthChecks?.() ?? []).map((c) => c.id)];
     for (const id of ids) expect(id.startsWith("SQL")).toBe(true);

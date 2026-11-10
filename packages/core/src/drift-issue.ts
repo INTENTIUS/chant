@@ -108,9 +108,11 @@ export interface DriftIssueInput {
   match?: MarkerMatch;
   /**
    * The statuses that are drift. Default {@link DRIFT_ISSUE_STATUSES}. A
-   * read with no snapshot, such as the sql lexicon's, gives a declared
-   * object the server lacks as `pending`, which SQL Yodeler reports as gone:
-   * it passes `["drifted", "missing", "pending"]`.
+   * read with no snapshot gives a declared object the provider lacks as
+   * `pending`, not deployed yet, unless its lexicon says such an object is
+   * gone: the sql lexicon does since #4896, so its records say `missing`
+   * and the default covers them. A caller that passes `pending` here (SQL
+   * Yodeler did, for a chant before #4896) still gets the same issue.
    */
   statuses?: readonly DriftStatus[];
 }
@@ -161,6 +163,29 @@ export function driftIssueFingerprint(records: readonly DriftIssueRecord[], stat
     .map((r) => [r.member, r.address, r.status, ...attributesOf(r).map(attributeKey).sort()].join("\t"))
     .join("\n");
   return createHash("sha256").update(text, "utf8").digest("hex").slice(0, 16);
+}
+
+/** One stack's (or environment's) drift records, for {@link driftRunFingerprint}. */
+export interface DriftRunStack {
+  stack: string;
+  records: readonly DriftIssueRecord[];
+}
+
+/**
+ * A run's fingerprint over several stacks (#4896), for the drift notice a
+ * run sends (`driftNotifyFields`'s `fingerprint` on
+ * `@intentius/chant/ci-product`): each stack that has drift, as its name and
+ * its {@link driftIssueFingerprint}, sorted and hashed. A stack with no
+ * drift record is left out, so a clean stack, or one whose read failed and
+ * gave no records, does not move it. 16 hex digits of a SHA-256, the value
+ * plywood's notices carried before chant computed it.
+ */
+export function driftRunFingerprint(stacks: readonly DriftRunStack[], statuses: readonly DriftStatus[] = DRIFT_ISSUE_STATUSES): string {
+  const parts = stacks
+    .filter((s) => driftIssueRecords(s.records, statuses).length > 0)
+    .map((s) => `${s.stack}\t${driftIssueFingerprint(s.records, statuses)}`)
+    .sort();
+  return createHash("sha256").update(parts.join("\n")).digest("hex").slice(0, 16);
 }
 
 /** The issue's body: the marker, the product's intro, the table, what could not be read, the notes, the advice, the run, the fingerprint. */

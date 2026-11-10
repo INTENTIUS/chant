@@ -166,6 +166,10 @@ MISSING (declared, provider reports not in cloud):
 
 In `--json` the fingerprints arrive as `resources.definitions`, a `name → fingerprint` map over the missing entities. `lifecycle plan --json` carries the same fingerprint as `definition` on each `create` entry, so a change-set part's plan digest covers it too.
 
+#### What a missing entity is, for a drift record
+
+A missing entity with no snapshot behind it reads as not deployed yet, so its drift record says `pending`. A lexicon whose environments hold everything declared once they are set up says otherwise with `liveAbsentStatus: "missing"`, and `--json` writes it as the lexicon section's `absent` (`"sql": { "resources": { … }, "absent": "missing" }`). The sql lexicon sets it, since a server that lacks a declared table lost it. `lexiconDriftRecords` in `@intentius/chant/drift-record` reads the section, `absent` included, so `chant workspace drift` and a product reading the diff itself both get `missing` ([#4896](https://github.com/INTENTIUS/chant/issues/4896)). Other lexicons' sections carry no `absent`, and the `resources.missing` list and the plan are the same either way.
+
 #### `--namespace <ns>` — where to read scope-less entities
 
 When a controller stamps an object's namespace instead of the source declaring it (a GitOps estate where one project declares the `Kustomization` with `spec.targetNamespace` and another declares the bare objects), the read falls through to `default` and reports a running estate as absent. `--namespace <ns>` replaces that fallback:

@@ -8,7 +8,7 @@
  *
  * | kind | default read | how |
  * |---|---|---|
- * | `chant` | `live-read` | the member's `chant lifecycle diff <env> --live --json`, through `liveDiffDriftRecords` and, when a lexicon has a deep reader, `mergeDeepDrift`. `--components` adds `chant components status <env> --live --json` through `componentStatusDriftRecords`. Needs `--env` |
+ * | `chant` | `live-read` | the member's `chant lifecycle diff <env> --live --json`, each lexicon's section through `lexiconDriftRecords` (`liveDiffDriftRecords`, with `mergeDeepDrift` when a lexicon has a deep reader, and the section's `absent`, #4896). `--components` adds `chant components status <env> --live --json` through `componentStatusDriftRecords`. Needs `--env` |
  * | `terraform` | `state` | `chant lifecycle drift` in the member's reader project: the terraform lexicon's `readDrift`, `terraform show -json` over state, or `--read plan` for a saved plan's `show -json` |
  * | `choudoufu` | `ownership` | the same, through `choudoufu live-plan -json` (and `live-ls`), or `--read plan` for live-plan with a plan beside it; `--resource <addr>` passes `choudoufu live-plan -resource=<addr>`'s stream through |
  * | `pulumi` | `refresh` | `chant lifecycle drift` in the member's reader project: the pulumi lexicon's `readDrift`, `pulumi refresh --preview-only --json --target <urn>` per resource in the checked-in export, or `plunge drift --resource <urn> --stream` for a member on plunge; `--resource <urn>` reads that URN alone (#4455) |
@@ -50,7 +50,6 @@ import {
   componentStatusDriftRecords,
   countDriftStatuses,
   decodeDriftLines,
-  deepDiffDriftRecords,
   DRIFT_READS,
   DRIFT_SCHEMA_ID,
   DRIFT_VERSION,
@@ -61,15 +60,13 @@ import {
   driftStart,
   encodeDriftLines,
   foldDriftLines,
-  liveDiffDriftRecords,
-  mergeDeepDrift,
+  lexiconDriftRecords,
   type DriftDocument,
   type DriftLine,
   type DriftRead,
   type DriftRecord,
+  type LiveDiffLexiconSection,
 } from "../drift-record";
-import type { DeepDiffResult } from "../lifecycle/deep-diff";
-import type { LiveDiffResult } from "../lifecycle/live-diff";
 import type { ComponentStatusRow } from "../lifecycle/status";
 import { readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError } from "./declaration";
 import { prepareKindReaders } from "./kind-readers";
@@ -214,13 +211,8 @@ function chantRecords(member: string, diffOut: string, componentsOut: string | u
   const lexicons: LexiconDiff[] = [...Object.values(doc.lexicons ?? {}), ...Object.values(doc.stacks ?? {}).flatMap((s) => Object.values(s))];
   const base = { member, observedAt, ...(version ? { version } : {}) };
   const out: DriftRecord[] = [];
-  for (const lex of lexicons) {
-    if (!lex.resources) continue;
-    const types: Record<string, string> = {};
-    for (const [name, meta] of Object.entries(lex.observed ?? {})) if (typeof meta?.type === "string") types[name] = meta.type;
-    const thin = liveDiffDriftRecords({ ...base, diff: lex.resources, types });
-    out.push(...(lex.deep ? mergeDeepDrift(thin, deepDiffDriftRecords({ ...base, diff: lex.deep })) : thin));
-  }
+  // The section's own `absent` (#4896): the sql lexicon's confirmed-absent objects are missing, not pending.
+  for (const section of lexicons) out.push(...lexiconDriftRecords({ ...base, section }));
   if (componentsOut !== undefined) {
     let rows: ComponentStatusRow[];
     try {
@@ -233,11 +225,7 @@ function chantRecords(member: string, diffOut: string, componentsOut: string | u
   return out;
 }
 
-interface LexiconDiff {
-  resources?: LiveDiffResult;
-  observed?: Record<string, { type?: unknown }>;
-  deep?: DeepDiffResult;
-}
+type LexiconDiff = LiveDiffLexiconSection;
 
 /** The command line the member runs. */
 function memberArgv(kind: string, query: DriftQuery, read: DriftRead): string[] {

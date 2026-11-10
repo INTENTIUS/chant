@@ -103,6 +103,25 @@ describe("SQL102 on a hand-built context", () => {
     expect(sql102.check(ctx)).toEqual([]);
   });
 
+  test("chant sql types --path answers where the file is, for a product that finds it (#4897)", async () => {
+    const cwd = process.cwd();
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "chant-4897-path-")));
+    mkdirSync(join(root, "db", "nested"), { recursive: true });
+    writeFileSync(join(root, "chant.config.json"), JSON.stringify({ lexicons: ["sql"], sourceDir: "db" }));
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((m: unknown) => void logs.push(String(m)));
+    try {
+      process.chdir(join(root, "db", "nested"));
+      expect(await runTypes({ verb: "types", rawArgs: ["--path"] })).toBe(0);
+      expect(await runTypes({ verb: "types", rawArgs: ["--path", "--output", "out/t.d.ts"] })).toBe(0);
+    } finally {
+      process.chdir(cwd);
+      vi.restoreAllMocks();
+    }
+    expect(logs).toEqual([join(root, "db", "sql-types.d.ts"), join(root, "db", "nested", "out", "t.d.ts")]);
+    expect(sqlTypesPath(root, { sourceDir: "db" })).toBe(logs[0]);
+  });
+
   test("the default path is the source directory, else the project root", () => {
     expect(sqlTypesPath("/p", { sourceDir: "src" })).toBe("/p/src/sql-types.d.ts");
     expect(sqlTypesPath("/p", {})).toBe("/p/sql-types.d.ts");

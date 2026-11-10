@@ -517,6 +517,26 @@ describe("runLifecycleDiff --live", () => {
     expect(seen?.attributes?.chart).toBe("web-1.2.3");
   });
 
+  test("--live --json writes a lexicon's liveAbsentStatus as its section's absent, and nothing for one that sets none (#4896)", async () => {
+    buildMock.mockResolvedValue(makeBuildResult({ sql: ["events"], aws: ["bucket"] }));
+    fetchLifecycleMock.mockResolvedValue(undefined);
+    readSnapshotMock.mockResolvedValue(null);
+    const plugins: LexiconPlugin[] = [
+      { ...createMockPlugin({ name: "sql", describeResources: staticObservation({}) }), liveAbsentStatus: "missing" },
+      createMockPlugin({ name: "aws", describeResources: staticObservation({}) }),
+    ];
+    await runLifecycleDiff({
+      args: makeArgs({ command: "state", path: "diff", extraPositional: "prod", live: true, json: true }),
+      plugins,
+      serializers: plugins.map((p) => p.serializer),
+    } as never);
+    const payload = JSON.parse(stdoutBuf.join("\n")) as { lexicons: Record<string, { absent?: string; resources?: { missing: string[] } }> };
+    expect(payload.lexicons.sql.resources?.missing).toEqual(["events"]);
+    expect(payload.lexicons.sql.absent).toBe("missing");
+    expect(payload.lexicons.aws.resources?.missing).toEqual(["bucket"]);
+    expect("absent" in payload.lexicons.aws).toBe(false);
+  });
+
   test("--live lists artifacts for a configured lexicon with NO built entities — the deploy-step estate shape", async () => {
     // kubemicrovm-ops: helm is a configured lexicon whose releases exist only
     // as component helm-upgrade steps, so the built manifest carries no helm

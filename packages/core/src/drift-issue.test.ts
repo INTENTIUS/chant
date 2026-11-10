@@ -4,7 +4,8 @@
  */
 
 import { describe, expect, test } from "vitest";
-import { driftIssueBody, driftIssueFingerprint, driftIssueMarker, keepDriftIssue, type DriftIssueInput, type DriftIssueRecord, type DriftIssueWords } from "./drift-issue";
+import { createHash } from "node:crypto";
+import { driftIssueBody, driftIssueFingerprint, driftIssueMarker, driftRunFingerprint, keepDriftIssue, type DriftIssueInput, type DriftIssueRecord, type DriftIssueWords } from "./drift-issue";
 import { forgejoForge, githubForge, gitlabForge, type ForgeFetch, type PrForge } from "./pr-forge";
 
 interface FakeIssue {
@@ -202,5 +203,32 @@ describe("the drift issue's parts (#4790)", () => {
 
   test("the default marker cannot end its comment", () => {
     expect(driftIssueMarker("plywood", "a b-->c")).toBe("<!-- plywood:drift a_bc -->");
+  });
+});
+
+describe("driftRunFingerprint (#4896)", () => {
+  const other = record("urn:pulumi:staging::infra::aws:s3/bucket:Bucket::logs", "drifted", { member: "infra/staging", attributes: [{ path: "tags.owner", before: "ops", after: "qa" }] });
+
+  test("is each drifted stack's finding fingerprint, sorted and hashed, as plywood's notices had it", () => {
+    const stacks = [
+      { stack: "staging", records: [other] },
+      { stack: "prod", records: [bucket, queue, role] },
+    ];
+    // plywood's runFingerprint before #4896, kept so a notice's fingerprint does not move.
+    const parts = [`prod\t${driftIssueFingerprint([bucket, queue, role])}`, `staging\t${driftIssueFingerprint([other])}`].sort();
+    expect(driftRunFingerprint(stacks)).toBe(createHash("sha256").update(parts.join("\n")).digest("hex").slice(0, 16));
+    expect(driftRunFingerprint([...stacks].reverse())).toBe(driftRunFingerprint(stacks));
+  });
+
+  test("a stack with no drift is left out, and a run with none has the empty run's fingerprint", () => {
+    const clean = { stack: "dev", records: [role] };
+    expect(driftRunFingerprint([{ stack: "prod", records: [bucket] }, clean])).toBe(driftRunFingerprint([{ stack: "prod", records: [bucket] }]));
+    expect(driftRunFingerprint([clean])).toBe(driftRunFingerprint([]));
+  });
+
+  test("statuses names what is drift, as for one stack", () => {
+    const gone = record("app.events", "pending");
+    expect(driftRunFingerprint([{ stack: "prod", records: [gone] }])).toBe(driftRunFingerprint([]));
+    expect(driftRunFingerprint([{ stack: "prod", records: [gone] }], ["pending"])).not.toBe(driftRunFingerprint([]));
   });
 });
