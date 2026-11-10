@@ -7,7 +7,9 @@ import { crc32, deflateRawSync, gzipSync } from "node:zlib";
 import { describe, expect, test } from "vitest";
 import {
   CI_BASE_IMAGES,
+  CI_IMAGE_DOCKER_STAGES_FLOOR,
   CI_IMAGE_FLOOR,
+  CI_IMAGE_NON_ROOT_FLOOR,
   CI_TOOL_DOCKER_ARCH,
   CI_TOOL_SHA256,
   CI_TOOLS,
@@ -163,8 +165,10 @@ describe("ciToolRelease", () => {
     expect(() => ciToolSha256("tofu", "1.13.1", { amd64: "nothex" })).toThrow(/64 lower-case hex/);
   });
 
-  test("CI_IMAGE_FLOOR is the release that shipped it", () => {
+  test("CI_IMAGE_FLOOR is the release that shipped it, and #4908's and #4932's floors the next", () => {
     expect(CI_IMAGE_FLOOR).toBe("0.124.86");
+    expect(CI_IMAGE_NON_ROOT_FLOOR).toBe(NEXT_RELEASE);
+    expect(CI_IMAGE_DOCKER_STAGES_FLOOR).toBe(NEXT_RELEASE);
   });
 });
 
@@ -238,13 +242,13 @@ describe("ciToolFetchScript against local fixtures", () => {
   test("a bare binary, and a zip's member, install as the command", () => {
     const tg = Buffer.from("#!/bin/sh\necho terragrunt\n");
     const out = tmp();
-    const s1 = ciToolFetchScript("terragrunt", "1.2.0", { dir: `${out}/tg`, arch: CI_TOOL_DOCKER_ARCH });
+    const s1 = ciToolFetchScript("terragrunt", "1.1.0", { dir: `${out}/tg`, arch: CI_TOOL_DOCKER_ARCH });
     expect(runShell(s1, { terragrunt_linux_arm64: tg, SHA256SUMS: `${sha(tg)} *terragrunt_linux_arm64\n` }, { TARGETARCH: "arm64" }).status).toBe(0);
     expect(readFileSync(`${out}/tg/terragrunt`, "utf-8")).toContain("echo terragrunt");
 
     const z = zip({ terraform: "#!/bin/sh\necho terraform\n", "LICENSE.txt": "x" });
-    const s2 = ciToolFetchScript("terraform", "1.14.9", { dir: `${out}/tf`, arch: CI_TOOL_DOCKER_ARCH });
-    const r = runShell(s2, { "terraform_1.14.9_linux_amd64.zip": z, "terraform_1.14.9_SHA256SUMS": `${sha(z)}  terraform_1.14.9_linux_amd64.zip\n` }, { TARGETARCH: "amd64" });
+    const s2 = ciToolFetchScript("terraform", "1.14.8", { dir: `${out}/tf`, arch: CI_TOOL_DOCKER_ARCH });
+    const r = runShell(s2, { "terraform_1.14.8_linux_amd64.zip": z, "terraform_1.14.8_SHA256SUMS": `${sha(z)}  terraform_1.14.8_linux_amd64.zip\n` }, { TARGETARCH: "amd64" });
     expect(r.stderr).toBe("");
     expect(readFileSync(`${out}/tf/terraform`, "utf-8")).toContain("echo terraform");
   });
@@ -258,7 +262,7 @@ describe("ciToolFetchScript against local fixtures", () => {
 
   test("refuses, before any shell, a release that needs a recorded sha256 it lacks", () => {
     expect(() => ciToolFetchScript("act", "0.2.89", { dir: "/out/act" })).toThrow(/no recorded sha256 for act 0.2.89 on amd64 and arm64; act's release publishes no checksums file/);
-    expect(() => ciToolFetchScript("terragrunt", "1.2.0", { dir: "/out/tg", requirePin: true })).toThrow(/no recorded sha256 for terragrunt 1.2.0/);
+    expect(() => ciToolFetchScript("terragrunt", "1.1.0", { dir: "/out/tg", requirePin: true })).toThrow(/no recorded sha256 for terragrunt 1.1.0/);
     expect(() => ciToolFetchScript("tofu", "1.13.1", { dir: "/out/x y" })).toThrow(/absolute path/);
   });
 });
@@ -282,6 +286,52 @@ describe("ciToolInstallLine", () => {
     expect(runShell(line, files).status).toBe(0);
     expect(existsSync(`${root}/tofu-1.13.1/tofu`)).toBe(true);
     expect(runShell(line, files).urls).toEqual([]);
+  });
+});
+
+describe("non-root job lines (#4908)", () => {
+  test("sudo writes the tool root and the link, and leaves the download and the check to the job's user", () => {
+    const line = ciToolInstallLine("tofu", "1.13.1", { sudo: true });
+    expect(line).toContain('sudo mkdir -p "/opt/chant/tofu-1.13.1"');
+    expect(line).toContain('sudo install -m 0755 "$t/tofu" "/opt/chant/tofu-1.13.1/tofu"');
+    expect(line.endsWith('sudo ln -sf "/opt/chant/tofu-1.13.1/tofu" /usr/local/bin/tofu')).toBe(true);
+    expect(line).not.toContain("sudo curl");
+    expect(line).not.toContain("sudo sha256sum");
+    expect(ciToolFetchScript("pulumi", "3.272.0", { dir: "/opt/p/pulumi-3.272.0", sudo: true })).toContain('sudo tar -xzf "$t/$f" -C "/opt/p/pulumi-3.272.0" --strip-components=1');
+    expect(ciToolInstallLine("aws-cli", "2.37.9", { sudo: true })).toContain('sudo "$t/aws/install" -i "/opt/chant/aws-cli-2.37.9" -b "/opt/chant/aws-cli-2.37.9/bin"');
+    expect(ciToolInstallLine("tofu", "1.13.1")).not.toContain("sudo");
+  });
+
+  test("a root and a binDir under a variable the job expands, quoted", () => {
+    const line = ciToolInstallLine("aws-cli", "2.37.9", { root: "$RUNNER_TEMP/chant-tools", binDir: "${HOME}/.local/bin/" });
+    expect(line.startsWith('{ [ -x "$RUNNER_TEMP/chant-tools/aws-cli-2.37.9/v2/current/bin/aws" ] || (set -e;')).toBe(true);
+    expect(line.endsWith('mkdir -p "${HOME}/.local/bin" && ln -sf "$RUNNER_TEMP/chant-tools/aws-cli-2.37.9/v2/current/bin/aws" "${HOME}/.local/bin/aws"')).toBe(true);
+    expect(ciToolBin("tofu", "1.13.1", "$RUNNER_TEMP/t")).toBe("$RUNNER_TEMP/t/tofu-1.13.1/tofu");
+    expect(() => ciToolInstallLine("tofu", "1.13.1", { root: "$(id)/x" })).toThrow(/tool root/);
+    expect(() => ciToolInstallLine("tofu", "1.13.1", { root: "relative/x" })).toThrow(/tool root/);
+    expect(() => ciToolInstallLine("tofu", "1.13.1", { binDir: "$HOME x" })).toThrow(/binDir/);
+    // An image's COPY expands no shell variable.
+    expect(() => productImageStages({ name: "p", product: "p", description: "d", source: "s", toolRoot: "$HOME/t", tools: [{ tool: "tofu", version: "1.13.1" }], bundle: { file: "a", bin: "a" } })).toThrow(/toolRoot/);
+  });
+
+  test("runs as a user: installs under a variable root and links into a variable binDir", () => {
+    const a = tarGz({ tofu: "#!/bin/sh\necho user-install\n" });
+    const home = tmp();
+    const line = ciToolInstallLine("tofu", "1.13.1", { root: "$TOOLS/t", binDir: "$TOOLS/bin", sha256: { amd64: sha(a), arm64: sha(a) } });
+    const files = { "tofu_1.13.1_linux_amd64.tar.gz": a, "tofu_1.13.1_linux_arm64.tar.gz": a, "tofu_1.13.1_SHA256SUMS": `${sha(a)}  tofu_1.13.1_linux_amd64.tar.gz\n${sha(a)}  tofu_1.13.1_linux_arm64.tar.gz\n` };
+    const r = runShell(line, files, { TOOLS: home });
+    expect(r.stderr).toBe("");
+    expect(r.status).toBe(0);
+    expect(readFileSync(`${home}/bin/tofu`, "utf-8")).toContain("echo user-install");
+  });
+
+  test("chant records terragucci's terraform and terragrunt pins and its drift job's AWS CLI", () => {
+    expect(ciToolSha256("terraform", "1.14.9")).toEqual({ amd64: "2e5cffc20a0b48a67a76268723bd5a10b8666f69b2aa4f04906e206726bedd63", arm64: "863002085b886453795d9ff4b8989b8468784478150b70ba8a1df3e3ad66da99" });
+    expect(ciToolSha256("terragrunt", "1.2.0")).toEqual({ amd64: "45b6df8a8494c8cfe34b4abf919e894709557163e4d3b5704d11083002ab787a", arm64: "b069ce4310572bc46ee6f057057acc4bc6a9077ef8687e157a64b0551290a371" });
+    expect(ciToolSha256("aws-cli", "2.37.9")).toEqual({ amd64: "6b3a6a3d7bb3997928f0bdf7b866914224abf242c2e54e1dcebbe84bee64f356", arm64: "e7d2cca3622af4765871fe9ce7eeed03acd09dca10a99ebc46e92f79d78765c0" });
+    // So an image carries them with no sums of the product's, and a job line can require the pin.
+    expect(() => productImageStages({ name: "t", product: "t", description: "d", source: "s", tools: [{ tool: "terraform", version: "1.14.9" }, { tool: "terragrunt", version: "1.2.0" }], bundle: { file: "a", bin: "a" } })).not.toThrow();
+    expect(ciToolInstallLine("terragrunt", "1.2.0", { requirePin: true, sudo: true, link: false })).toContain("want=45b6df8a");
   });
 });
 
@@ -332,9 +382,9 @@ describe("installCiTool", () => {
   test("unpacks a zip's member, a bare binary and a tree", async () => {
     const root = tmp();
     const z = zip({ terraform: "tf" });
-    const tf = "https://releases.hashicorp.com/terraform/1.14.9";
-    await installCiTool("terraform", "1.14.9", { ...opts, root, download: served({ [`${tf}/terraform_1.14.9_linux_amd64.zip`]: z, [`${tf}/terraform_1.14.9_SHA256SUMS`]: `${sha(z)}  terraform_1.14.9_linux_amd64.zip\n` }).download });
-    expect(readFileSync(join(root, "terraform-1.14.9", "terraform"), "utf-8")).toBe("tf");
+    const tf = "https://releases.hashicorp.com/terraform/1.14.8";
+    await installCiTool("terraform", "1.14.8", { ...opts, root, download: served({ [`${tf}/terraform_1.14.8_linux_amd64.zip`]: z, [`${tf}/terraform_1.14.8_SHA256SUMS`]: `${sha(z)}  terraform_1.14.8_linux_amd64.zip\n` }).download });
+    expect(readFileSync(join(root, "terraform-1.14.8", "terraform"), "utf-8")).toBe("tf");
 
     const cosign = Buffer.from("cosign");
     const cb = "https://github.com/sigstore/cosign/releases/download/v2.6.5";
@@ -407,7 +457,7 @@ describe("productImageStages", () => {
   });
 
   test("an image refuses an engine with no recorded sha256", () => {
-    expect(() => productImageStages({ ...terragucci, tools: [{ tool: "terragrunt", version: "1.2.0" }] })).toThrow(/no recorded sha256 for terragrunt 1.2.0 on amd64 and arm64/);
+    expect(() => productImageStages({ ...terragucci, tools: [{ tool: "terragrunt", version: "1.1.0" }] })).toThrow(/no recorded sha256 for terragrunt 1.1.0 on amd64 and arm64/);
     expect(() => productImageStages({ ...terragucci, tools: [{ tool: "tofu", version: "1.13.1" }, { tool: "tofu", version: "1.13.1" }] })).toThrow(/listed twice/);
   });
 

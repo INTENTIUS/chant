@@ -135,3 +135,12 @@ export const LOCAL_CHANT_NEXT_RELEASE_FLOOR = NEXT_RELEASE;
 
 /** The first chant whose `chantExternalPlugin` keeps external only the chant packages it is given, by default the ones in the package's `dependencies`, so a product that bundles its lexicons uses it as is (#4922). */
 export const CHANT_EXTERNAL_PACKAGES_FLOOR = NEXT_RELEASE;
+
+/** The first chant whose `ciToolInstallLine` takes `sudo` and `binDir` and a root under a shell variable, for a job that is not root, whose `CI_TOOL_SHA256` records terraform 1.14.9, terragrunt 1.2.0 and the AWS CLI 2.37.9, and whose Pulumi lexicon's `ciFetchScript` and `PINNED_SHA256` are ci-image's (#4908). */
+export const CI_IMAGE_NON_ROOT_FLOOR = NEXT_RELEASE;
+
+/** The first chant whose `productImageStages` stages type as the docker lexicon's `DockerfileStage[]` under `exactOptionalPropertyTypes`, so `new Dockerfile({ stages: productImageStages(spec) })` compiles (#4932). */
+export const CI_IMAGE_DOCKER_STAGES_FLOOR = NEXT_RELEASE;
+
+/** The first chant whose setup steps (`OpSetupStep`: an Op waves spec's wave and job group `setup`, a scheduled Op's `setup`, `release.workflow.setup`) take a `name`, rendered as the step's name on GitHub and Forgejo (#4932). */
+export const OP_SETUP_STEP_NAME_FLOOR = NEXT_RELEASE;

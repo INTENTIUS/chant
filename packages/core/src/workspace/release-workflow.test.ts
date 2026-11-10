@@ -213,6 +213,17 @@ describe("the release workflow's permissions, env and setup (#4751)", () => {
     expect(() => renderReleaseWorkflow({ forge: "gitlab", groups: new Set(), pipeline: { ...pipeline, permissions: undefined } })).toThrow(/give it as \{ run \}/);
   });
 
+  test("a named setup step renders with its name on GitHub, and as its line on GitLab (#4932)", () => {
+    const named = { trigger: "dispatch" as const, setup: [{ name: "QEMU for arm64", uses: "docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392", with: { platforms: "arm64" } }, { name: "npm 11", run: "npm install -g npm@11.19.0" }] };
+    const doc = parseYAML(renderReleaseWorkflow({ forge: "github", groups: new Set(), images: true, pipeline: named })) as GhDoc;
+    const i = doc.jobs.cut!.steps.findIndex((s) => s.run === "npm ci");
+    expect(doc.jobs.cut!.steps[i + 1]).toEqual({ name: "QEMU for arm64", uses: "docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392", with: { platforms: "arm64" } });
+    expect(doc.jobs.cut!.steps[i + 2]).toEqual({ name: "npm 11", run: "npm install -g npm@11.19.0" });
+    const gl = parseYAML(renderReleaseWorkflow({ forge: "gitlab", groups: new Set(), pipeline: { trigger: "dispatch", setup: [{ name: "npm 11", run: "npm install -g npm@11.19.0" }] } })) as Record<string, { script: string[] }>;
+    expect(gl["chant-release-cut"]!.script).toContain("npm install -g npm@11.19.0");
+    expect(() => renderReleaseWorkflow({ forge: "github", groups: new Set(), pipeline: { setup: [{ name: "", run: "x" }] } })).toThrow(/name is blank/);
+  });
+
   test("a scope already granted and a bad variable name are refused", () => {
     expect(() => renderReleaseWorkflow({ forge: "github", groups: new Set(), pipeline: { permissions: { contents: "read" } } })).toThrow(/already granted/);
     expect(() => renderReleaseWorkflow({ forge: "github", groups: new Set(), pipeline: { env: { "BAD-NAME": "x" } } })).toThrow(/not a variable name/);

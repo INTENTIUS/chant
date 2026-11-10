@@ -123,6 +123,8 @@ export const ChantConfigSchema = z.object({
               platforms: z.array(z.string().min(1)).min(1).optional(),
               archive: z.string().min(1).optional(),
               prepare: z.string().min(1).optional(),
+              // #4908: build arguments beside the two chant passes.
+              args: z.record(z.string(), z.string()).optional(),
             })
             .strict(),
         ]),
@@ -423,8 +425,8 @@ export interface ChantConfig {
      * digest and hands every digest to the build through `CHANT_RELEASE_DIGESTS`,
      * so a package can pin the images it ships with. An `oci` target pushes
      * the archive. An entry may name a `dockerfile` (with `context`,
-     * `platforms`, `archive` and `prepare`) in place of `build`, and chant
-     * runs the reproducible build itself (#4819). See
+     * `platforms`, `archive`, `prepare` and `args`) in place of `build`, and
+     * chant runs the reproducible build itself (#4819, #4908). See
      * ./lifecycle/release-images.ts.
      */
     images?: import("./lifecycle/release-images").ReleaseImageDeclaration[];

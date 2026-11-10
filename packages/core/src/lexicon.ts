@@ -793,6 +793,8 @@ export interface OpSetupUsesStep {
    * `assertSetupSteps`, which refuses both at build time.
    */
   uses: string;
+  /** The step's name on GitHub and Forgejo, such as "Log in to AWS" (#4932). GitLab script lines have none. Absent: the forge names it from the action. */
+  name?: string;
   /** The action's inputs, emitted as the step's `with:` mapping. */
   with?: Record<string, string | number | boolean>;
   /** Environment for this step alone, emitted as the step's `env:` mapping. */
@@ -803,6 +805,8 @@ export interface OpSetupUsesStep {
 export interface OpSetupRunStep {
   /** The shell line, emitted as the step's `run:`. */
   run: string;
+  /** The step's name on GitHub and Forgejo, such as "Log in to AWS" (#4932). GitLab script lines have none. Absent: the forge shows the line. */
+  name?: string;
   /** Environment for this step alone, emitted as the step's `env:` mapping. */
   env?: Record<string, string>;
 }
