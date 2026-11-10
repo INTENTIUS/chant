@@ -120,7 +120,10 @@ export type ReleaseCutCode =
   | "release-version-invalid"
   | "release-unsigned"
   | "release-signer-refused"
-  | "declaration-invalid";
+  | "declaration-invalid"
+  /** #4941: the npm target's image check, run by the cut (./publish-npm.ts `checkPackageImages`). */
+  | "publish-npm-carries-image"
+  | "publish-npm-pack-failed";
 
 export class ReleaseCutError extends Error {
   constructor(
@@ -722,6 +725,19 @@ export async function cutRelease(req: CutRequest): Promise<CutResult> {
   }
   const { targets, templates } = targetsOf(compiled);
   const release = makeRelease({ member: p.member, commit, artifactDigests: artifacts, targets });
+  // #4941: an npm package that would carry an image archive stops the cut here, before anything is recorded or
+  // tagged, rather than the publish job once the label is spent. The check is the npm target's own plan check.
+  if (release.artifactDigests.some((a) => a.kind === "image" && a.path !== "")) {
+    const { loadChantConfig } = await import("../config");
+    const { checkDeclaredPackageImages } = await import("./publish-npm");
+    const { PublishTargetError } = await import("./release-publish");
+    try {
+      checkDeclaredPackageImages((await loadChantConfig(cwd)).config.release?.publish ?? [], release, cwd);
+    } catch (err) {
+      if (err instanceof PublishTargetError) throw new ReleaseCutError(err.code as ReleaseCutCode, `no release was cut: ${err.message}`, err.fix);
+      throw err;
+    }
+  }
   const timestamp = (req.now ?? (() => new Date()))().toISOString();
   const signed = { releaseDigest: release.releaseDigest, label: req.label, actor: req.actor, timestamp };
   let signature: string | null = null;

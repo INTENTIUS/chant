@@ -187,4 +187,39 @@ describe("chant release cut, publish and list", () => {
     },
     240_000,
   );
+
+  // #4965: plywood's 0.3.9 cut warned that the chant/lifecycle push was refused, tagged, and the publish found no release.
+  test(
+    "a chant/lifecycle push the remote refuses once is pushed again; one it always refuses stops the cut, untagged and non-zero",
+    () => {
+      const root = mkdtempSync(join(tmpdir(), "chant-release-cut-refused-"));
+      try {
+        const { dir, sha, remote } = project(root);
+        git(dir, "tag", `ci/green/${sha}`);
+        const hook = join(remote, "hooks", "update");
+        const cut = (label: string) => chant(dir, ["release", "cut", label, "--build", BUILD, "--yes", "--json"]);
+
+        // Always refused: no tag, exit 1, and the record stays in this checkout only.
+        writeFileSync(hook, `#!/bin/sh\necho 'fatal error in commit_refs_rules' >&2\nexit 1\n`, { mode: 0o755 });
+        const refused = cut("v1");
+        expect(refused.code, refused.stderr).toBe(1);
+        expect(refused.stderr).toContain("[release-record-not-pushed]");
+        expect(refused.stderr).toContain("chant/lifecycle was not pushed to \"origin\" after 3 tries: the remote refused each try");
+        expect(refused.stdout).toBe("");
+        expect(hasRef(dir, "refs/tags/release/v1")).toBe(false);
+        expect(hasRef(remote, "refs/heads/chant/lifecycle")).toBe(false);
+
+        // Refused once: the second push lands, and the cut tags as it always has.
+        writeFileSync(hook, `#!/bin/sh\nif [ ! -f '${remote}/refused' ]; then touch '${remote}/refused'; echo 'fatal error in commit_refs_rules' >&2; exit 1; fi\nexit 0\n`, { mode: 0o755 });
+        const landed = cut("v1");
+        expect(landed.code, landed.stderr).toBe(0);
+        expect(JSON.parse(landed.stdout)).toMatchObject({ label: "v1", tag: { name: "release/v1" } });
+        expect(git(dir, "rev-parse", "release/v1^{commit}")).toBe(sha);
+        expect(git(remote, "rev-parse", "refs/heads/chant/lifecycle")).toBe(git(dir, "rev-parse", "refs/heads/chant/lifecycle"));
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+    240_000,
+  );
 });

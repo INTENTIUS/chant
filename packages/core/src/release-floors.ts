@@ -177,3 +177,9 @@ export const REF_GATE_STATUS_JOB_FLOOR = "0.124.88";
 
 /** The first chant with `@intentius/chant/ref-gate-rules` (`refGateRulesAt`), `require` in `checkPrRequires`, `refGateStatus` in `pipelineContract` and `ci forge-check --ref-gate-status`, `@intentius/chant/ref-gate-init` (`refGateInitPlan`, `writeRefGateInit`), and a pre-receive refusal that prints the command recording the override request (#4913). */
 export const REF_GATE_PIECES_FLOOR = "0.124.88";
+
+/** The first chant whose `chant release cut --yes` pushes `chant/lifecycle` again when the remote refuses it, and exits non-zero untagged (`release-record-not-pushed`) when the release record never lands, so the release workflow does not push the tag (#4965). */
+export const RELEASE_CUT_RECORD_FLOOR = NEXT_RELEASE;
+
+/** The first chant whose release cut refuses, before it records or tags, a release whose npm publish target would carry an image archive (`publish-npm-carries-image`), and whose GitLab release workflow runs the binfmt image by digest from `IMAGE_PINS` (#4941). */
+export const RELEASE_CUT_CARRIES_IMAGE_FLOOR = NEXT_RELEASE;

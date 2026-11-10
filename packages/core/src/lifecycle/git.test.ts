@@ -634,6 +634,54 @@ describe("lifecycle/git", () => {
       }
     });
 
+    /** An update hook that refuses the first push with GitHub's words from plywood's 0.3.9 cut, and takes the rest (#4965). */
+    const refuseOnce = (remotePath: string) =>
+      writeFileSync(
+        join(remotePath, "hooks", "update"),
+        `#!/bin/sh\nif [ ! -f '${remotePath}/refused' ]; then touch '${remotePath}/refused'; echo 'fatal error in commit_refs_rules' >&2; exit 1; fi\nexit 0\n`,
+        { mode: 0o755 },
+      );
+
+    test("#4965: a push the remote refuses once is pushed again and lands", async () => {
+      const { b, remotePath, done } = await twoWriters();
+      try {
+        refuseOnce(remotePath);
+        await writeBlobToPath("prod", "release.json", '{"cut":1}', "Release cut", { cwd: b });
+        expect(await pushLifecycleRebasing({ cwd: b, requireLanded: true, waitMs: 0 })).toEqual({ pushed: true });
+        expect(git(["rev-parse", "refs/heads/chant/lifecycle"], remotePath).stdout.trim()).toBe(git(["rev-parse", "refs/heads/chant/lifecycle"], b).stdout.trim());
+      } finally {
+        await done();
+      }
+    });
+
+    test("#4965: the first push of the branch, refused once, is pushed again and lands", async () => {
+      const { clonePath, remotePath, cleanup } = await setupClonePair();
+      try {
+        refuseOnce(remotePath);
+        await writeBlobToPath("prod", "release.json", '{"cut":1}', "Release cut", { cwd: clonePath });
+        expect(await pushLifecycleRebasing({ cwd: clonePath, requireLanded: true, waitMs: 0 })).toEqual({ pushed: true });
+        expect(git(["show", "chant/lifecycle:prod/release.json"], remotePath).stdout).toBe('{"cut":1}');
+      } finally {
+        await cleanup();
+      }
+    });
+
+    test("#4965: with requireLanded, a push that fails for another reason is tried again and then throws", async () => {
+      const { clonePath, cleanup } = await setupClonePair();
+      try {
+        await writeBlobToPath("prod", "release.json", '{"cut":1}', "Release cut", { cwd: clonePath });
+        git(["remote", "set-url", "origin", join(tmpdir(), `chant-no-such-remote-${Date.now()}`)], clonePath);
+        // Without it the failure is a warning, as before.
+        expect((await pushLifecycleRebasing({ cwd: clonePath })).pushed).toBe(false);
+        const err = await pushLifecycleRebasing({ cwd: clonePath, requireLanded: true, waitMs: 0 }).catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(LifecyclePushLostError);
+        expect((err as LifecyclePushLostError).tries).toBe(LIFECYCLE_PUSH_TRIES);
+        expect((err as Error).message).toContain("the push of chant/lifecycle to \"origin\" failed");
+      } finally {
+        await cleanup();
+      }
+    });
+
     test("plywood#22 finding 9: two writers that append lines to one ledger file both land, in push order", async () => {
       const { a, b, remotePath, done } = await twoWriters();
       try {
