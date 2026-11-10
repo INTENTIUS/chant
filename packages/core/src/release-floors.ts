@@ -19,7 +19,7 @@
  * this constant to the next patch (#4501). The check fails while a floor
  * still names this constant after its version shipped.
  */
-export const NEXT_RELEASE = "0.124.89";
+export const NEXT_RELEASE = "0.124.90";
 
 /** The first chant with `chant dev local` and `chant dev bundle-check`, `@intentius/chant/local-chant` and `@intentius/chant/bundle-check` (`chantRuntimeTarget`, `chantExternalPlugin`, `checkBundle`): a product built against a chant checkout, and its bundle checked, without its own scripts (#4787). */
 export const LOCAL_CHANT_FLOOR = "0.124.86";
@@ -40,7 +40,7 @@ export const TERRAFORM_ENGINE_TIMINGS_FLOOR = "0.124.88";
 export const TERRAFORM_ROOT_HELPERS_FLOOR = "0.124.88";
 
 /** The first chant whose terraform lexicon has one runner of the engine for a product (`engineRunner` in `engine-runner`: a hooked `exec`, `execSync`, `terragrunt` and the tokenless `script`), traces each engine command (`commandTrace`, `commandTraceEnv`), sends each Terragrunt unit's plan through `planTerragruntWave({ onCommand })`, and resolves a live root's record store (`liveRecordStore`, `writtenRecordStore`, `rootBackendAttrs` in `live-roots`) (#4954). */
-export const TERRAFORM_ENGINE_RUNNER_FLOOR = NEXT_RELEASE;
+export const TERRAFORM_ENGINE_RUNNER_FLOOR = "0.124.89";
 
 /** The first chant with `@intentius/chant/forge-flags` (`forgeTargetWith`, `forgeTargetFromFlags`, `apiBaseOf`), `@intentius/chant/chant-install` (`bundledChant`, `chantArgv`, `installChantResolveFallback`) and `noteLimit` and `fitNote` in `@intentius/chant/plan-summary` (#4800). */
 export const PRODUCT_HELPERS_FLOOR = "0.124.86";
@@ -179,51 +179,51 @@ export const REF_GATE_STATUS_JOB_FLOOR = "0.124.88";
 export const REF_GATE_PIECES_FLOOR = "0.124.88";
 
 /** The first chant whose `chant release cut --yes` pushes `chant/lifecycle` again when the remote refuses it, and exits non-zero untagged (`release-record-not-pushed`) when the release record never lands, so the release workflow does not push the tag (#4965). */
-export const RELEASE_CUT_RECORD_FLOOR = NEXT_RELEASE;
+export const RELEASE_CUT_RECORD_FLOOR = "0.124.89";
 
 /** The first chant whose release cut refuses, before it records or tags, a release whose npm publish target would carry an image archive (`publish-npm-carries-image`), and whose GitLab release workflow runs the binfmt image by digest from `IMAGE_PINS` (#4941). */
-export const RELEASE_CUT_CARRIES_IMAGE_FLOOR = NEXT_RELEASE;
+export const RELEASE_CUT_CARRIES_IMAGE_FLOOR = "0.124.89";
 /** The first chant whose `ciToolFetchScript` and `ciToolInstallLine` take `download: "node"`, a fetch and unzip with node for an image with no curl or unzip, whose `CI_TOOL_SHA256` records just 1.36.0 and act 0.2.89 and checks them against their releases' checksums files, and whose overdue check deepens a shallow checkout before it dates a pipeline file (#4952). */
-export const CI_TOOL_NODE_DOWNLOAD_FLOOR = NEXT_RELEASE;
+export const CI_TOOL_NODE_DOWNLOAD_FLOOR = "0.124.89";
 
 /** The first chant whose `chant build -o <dir>/` writes a build's additional files (a docker project's Dockerfiles) into the directory with no primary file, whose `chantGenerated` renders take a `module` and its `export` (a `{ path: text }` object or a function returning one) and `chant dev render <module> <export>` writes them in place, and whose `chant ci workflow` and `chant release workflow` write into `chant dev generated-check`'s render tree with no `--output` (#4950). */
-export const RENDER_KINDS_FLOOR = NEXT_RELEASE;
+export const RENDER_KINDS_FLOOR = "0.124.89";
 
 /** The first chant whose sql lexicon's `chant lifecycle diff --live` addresses a table's columns by name (`columns[#country].default.expr`), compares a ClickHouse table's column order as `columnOrder`, and reports a column the server has and the declaration does not as pending, and whose `lexiconDriftRecords` counts a deep read's pending changes (that column, a ClickHouse or Postgres privilege granted by hand) as drift (#4944). */
-export const SQL_LIVE_COLUMNS_FLOOR = NEXT_RELEASE;
+export const SQL_LIVE_COLUMNS_FLOOR = "0.124.89";
 
 /** The first chant whose `driftNotifyFields` takes `stacks`, each member's drift records, and from them names the drifted members and computes the run's fingerprint (#4944). */
-export const DRIFT_NOTIFY_STACKS_FLOOR = NEXT_RELEASE;
+export const DRIFT_NOTIFY_STACKS_FLOOR = "0.124.89";
 
 /** The first chant whose workspace member's pull request pipeline takes `evidence`, `checkJob` and `refGateStatus` (`chant build --pr-loop` in a member), signing the member's plan job as `plan:<member>` and `policy:<member>` (`ci evidence sign --member`, `memberEvidenceCheck`) and running the check job in the member's directory (#4964). */
-export const MEMBER_SIGNED_CHECKS_FLOOR = NEXT_RELEASE;
+export const MEMBER_SIGNED_CHECKS_FLOOR = "0.124.89";
 
 /** The first chant whose `checkJob` takes `{ services, env, before, dir, args }` (`PrCheckJobOptions`: service containers, the check step's variables and lines, the report directory, the arguments after `--base`) and whose github, forgejo and gitlab lexicons render the check, check evidence and ref gate jobs for a product's own workflow (`productCheckJobs`, `forgejoProductCheckJobs`, `gitlabProductCheckJobs`) (#4964). */
-export const PRODUCT_CHECK_JOBS_FLOOR = NEXT_RELEASE;
+export const PRODUCT_CHECK_JOBS_FLOOR = "0.124.89";
 
 /** The first chant whose GitLab Op waves pipeline with a runner key hands it to no wave job: each deciding wave's `<wave job>-evidence` job names the `chant-evidence` environment and signs `plan:<wave>` from the wave job (#4964). */
-export const GITLAB_WAVE_KEY_SCOPE_FLOOR = NEXT_RELEASE;
+export const GITLAB_WAVE_KEY_SCOPE_FLOOR = "0.124.89";
 
 /** The first chant with `actorOf` and `actorOrder` in `@intentius/chant/actor`: the actor fallback with `GITHUB_TRIGGERING_ACTOR` ahead of the forge's actor and git's `user.name` before the login, each place switched on or off by the caller (#4966). */
-export const ACTOR_ORDER_FLOOR = NEXT_RELEASE;
+export const ACTOR_ORDER_FLOOR = "0.124.89";
 
 /** The first chant with `@intentius/chant/ci-base` (`ciBaseRef`), the base a CI job measures a change from (the pull request's target branch, else the default branch for a push to another branch), and whose `chant ci check` defaults `--base` to it (#4966). */
-export const CI_BASE_REF_FLOOR = NEXT_RELEASE;
+export const CI_BASE_REF_FLOOR = "0.124.89";
 
 /** The first chant with `@intentius/chant/planned-files` (`planFile`, `planRemoval`, `writePlannedFiles`, `staleGeneratedFiles`): an init's planned files with their modes, written or removed in one call, and the generated files a product no longer renders, found by their header (#4966). */
-export const PLANNED_FILES_FLOOR = NEXT_RELEASE;
+export const PLANNED_FILES_FLOOR = "0.124.89";
 
 /** The first chant whose `pipelineContract` takes `jobs`, the jobs a product builds from its own config, beside or in place of `pipelines`, so a product's forge check gets the required statuses and `refGateStatus` from chant (#4966). */
-export const FORGE_CHECK_OWN_JOBS_FLOOR = NEXT_RELEASE;
+export const FORGE_CHECK_OWN_JOBS_FLOOR = "0.124.89";
 
 /** The first chant whose `chant components pr-apply --before-merge` waits for the ref gate's status: the status the policy at base sets for the target branch is passed as `require` to the `checks` require (#4966). */
-export const BEFORE_MERGE_REF_GATE_FLOOR = NEXT_RELEASE;
+export const BEFORE_MERGE_REF_GATE_FLOOR = "0.124.89";
 
 /** The first chant whose product plan with `targets` and `evidence` signs each target's plan job as `plan:<target>` and `policy:<target>` (`ci evidence sign --member <target>`, `targetEvidenceCheck`, `productPlanEvidenceChecks`), and whose `refGateInitPlan` takes `targets` and names those checks in the `refs` rule (#4978). */
-export const TARGET_SIGNED_CHECKS_FLOOR = NEXT_RELEASE;
+export const TARGET_SIGNED_CHECKS_FLOOR = "0.124.89";
 
 /** The first chant whose Op waves generators take `renderSpec` (the wave jobs run `chant run wave --render-spec`, and `CHANT_WAVES_SPEC_COMMAND` names the product command that prints the spec at the commit in `CHANT_WAVES_SPEC_AT`), so a product whose spec is built from its config at base renders its wave jobs, policy step, evidence job and cloud trade through chant (#4982). */
-export const RUNTIME_WAVES_SPEC_FLOOR = NEXT_RELEASE;
+export const RUNTIME_WAVES_SPEC_FLOOR = "0.124.89";
 
 /** The first chant whose `chant run resume` (`resumeGateRun`) on GitLab retries a wave job's `<wave job>-evidence` with the wave job when the evidence job already ran, and whose `ci evidence sign --from-job` waits for a job it reads to finish, so a resumed wave's evidence job signs from the new try (#4978). */
-export const GITLAB_WAVE_EVIDENCE_RETRY_FLOOR = NEXT_RELEASE;
+export const GITLAB_WAVE_EVIDENCE_RETRY_FLOOR = "0.124.89";
