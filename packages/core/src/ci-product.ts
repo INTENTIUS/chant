@@ -10,6 +10,7 @@
  */
 
 import type { CiProductWords, CiProductWordsInput } from "./ci-product-words";
+import { NEXT_RELEASE } from "./release-floors";
 import type { ProductMcpHook } from "./cli/mcp/product-tools";
 import type { ProductWaveHook } from "./op/op-waves-after-plan";
 import { OTLP_EXPORTER_FLOOR } from "./otlp";
