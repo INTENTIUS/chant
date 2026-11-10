@@ -179,6 +179,6 @@ describe("a root's source and an approval the states moved away from (#4806)", (
   });
 
   test("its floor is the next release", () => {
-    expect(STATE_MIGRATION_SOURCE_FLOOR).toBe(NEXT_RELEASE);
+    expect(STATE_MIGRATION_SOURCE_FLOOR).toBe("0.124.86");
   });
 });

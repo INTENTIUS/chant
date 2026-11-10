@@ -29,7 +29,6 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CHANT_EXIT } from "./exit-codes";
-import { NEXT_RELEASE } from "./release-floors";
 import { FORGE_TOKEN_VARS } from "./ci-handover";
 import { agentForbiddenPaths, AgentError, branchOk, errText, LOGIN, readSmall, SHA, type AgentGit } from "./ci-agent";
 import { COMMIT_COMMENT_ARG, parseProductComment, type CiProductWords } from "./ci-product-words";
@@ -55,7 +54,7 @@ export const CI_COMMIT_ARG_FLOOR = "0.124.78";
 /** The first chant whose `commit land` reads {@link COMMIT_HARNESS_BREAK_ENV} in a BREAK arm of chant's e2e harness (#4836). */
 export const CI_COMMIT_HARNESS_BREAK_FLOOR = "0.124.78";
 /** The first chant whose `commit land` replies to a comment refused as it is read, such as a bad argument or a stray word (#4838). */
-export const CI_COMMIT_REFUSAL_REPLY_FLOOR = NEXT_RELEASE;
+export const CI_COMMIT_REFUSAL_REPLY_FLOOR = "0.124.86";
 
 /** What starts a commit run: a person's comment, or a check job's finding. */
 export type CommitTrigger = "comment" | "check";

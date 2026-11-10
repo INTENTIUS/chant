@@ -42,13 +42,12 @@ import { chantGatedLedger, gatedOp, type GatedRequestLedger } from "./lifecycle/
 import type { GatedRequestRules } from "./lifecycle/gated-request";
 import { gatedRequestAttachmentPath } from "./lifecycle/gated-request-digest";
 import { samePlanDigest } from "./lifecycle/plan-digest";
-import { NEXT_RELEASE } from "./release-floors";
 
 /** The first chant with the engine-neutral state migration (#4762). */
 export const STATE_MIGRATION_FLOOR = "0.124.77";
 
 /** The first chant whose migration binds a root's `source` (an engine's `source` read under the locks) and answers `approval-moved`, and whose terraform lexicon plans backend moves (`planTerraformMigration`'s `backends`) and choudoufu estate migrations (`planEstateMigration`) onto it (#4806). */
-export const STATE_MIGRATION_SOURCE_FLOOR = NEXT_RELEASE;
+export const STATE_MIGRATION_SOURCE_FLOOR = "0.124.86";
 
 /** A state as a migration binds it: its version id, when the store keeps versions, and its digest, null for no state. */
 export interface MigrationStateAt {

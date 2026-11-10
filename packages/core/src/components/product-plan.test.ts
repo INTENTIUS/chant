@@ -82,6 +82,6 @@ describe("the product plan (#4799)", () => {
 test("PRODUCT_PLAN_FLOOR marks the product plan in the ci-product entry", async () => {
   const { NEXT_RELEASE } = await import("../release-floors");
   const ciProduct = (await import("../ci-product")) as Record<string, unknown>;
-  expect(ciProduct.PRODUCT_PLAN_FLOOR).toBe(NEXT_RELEASE);
+  expect(ciProduct.PRODUCT_PLAN_FLOOR).toBe("0.124.86");
   expect(typeof ciProduct.planNoteHandoff).toBe("function");
 });

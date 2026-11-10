@@ -185,8 +185,9 @@ describe("findDeadGuards (#4792)", () => {
 
 describe("the floor table (#4792)", () => {
   it("resolves a floor not yet released to the next release", () => {
-    expect(floorVersion("FLOOR_TABLE_FLOOR")).toBe(NEXT_RELEASE);
-    expect(chantMeets("0.124.84", "FLOOR_TABLE_FLOOR")).toBe(compareChantVersions("0.124.84", NEXT_RELEASE) >= 0);
+    expect(floorVersion("FLOOR_TABLE_FLOOR")).toBe("0.124.86");
+    expect(chantMeets("0.124.84", "FLOOR_TABLE_FLOOR")).toBe(false);
+    expect(chantMeets("0.124.86", "FLOOR_TABLE_FLOOR")).toBe(true);
   });
 
   it("answers a released floor, and the higher version of a name two files declare", () => {
