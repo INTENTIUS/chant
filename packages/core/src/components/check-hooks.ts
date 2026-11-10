@@ -31,7 +31,7 @@ import { parseJsonText } from "../workspace/jsonc";
 import { memberAtCwd } from "../workspace/security";
 import { locateWorkspace } from "../workspace/which-chant";
 import type { CheckStepOutcome } from "./check-steps";
-import { CHECK_EVIDENCE_KEY_ENV, LOCAL_EVIDENCE_KEY_ENV } from "../workspace/trust/check-evidence-report";
+import { CHECK_EVIDENCE_KEY_ENV, LOCAL_EVIDENCE_KEY_ENV, SIGNING_ID_TOKEN_VAR } from "../workspace/trust/check-evidence-report";
 import { acceptedLocalEvidence, acceptsLocalEvidence, fetchLocalEvidence } from "../workspace/trust/local-evidence";
 
 export { CI_CHECK_HOOK_FLOOR } from "../op/op-waves";
@@ -101,8 +101,8 @@ const CLOUD_CREDENTIAL_VARS = [
  * else.
  */
 export function checkHookEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
-  // #4870, #4868: the runner key and the local evidence key the check runner signs each hook's evidence with never reach a hook.
-  const drop = new Set<string>([...FORGE_TOKEN_VARS, ...OIDC_REQUEST_VARS, ...Object.values(TRADED_VARS).flat(), ...CLOUD_CREDENTIAL_VARS, CHECK_EVIDENCE_KEY_ENV, LOCAL_EVIDENCE_KEY_ENV]);
+  // #4870, #4868: the runner key and the local evidence key the check runner signs each hook's evidence with never reach a hook, nor (#4869) GitLab's signing token.
+  const drop = new Set<string>([...FORGE_TOKEN_VARS, ...OIDC_REQUEST_VARS, ...Object.values(TRADED_VARS).flat(), ...CLOUD_CREDENTIAL_VARS, CHECK_EVIDENCE_KEY_ENV, LOCAL_EVIDENCE_KEY_ENV, SIGNING_ID_TOKEN_VAR]);
   const out: Record<string, string> = {};
   for (const [name, value] of Object.entries(env)) {
     if (value === undefined || drop.has(name) || name.startsWith("TF_TOKEN_")) continue;

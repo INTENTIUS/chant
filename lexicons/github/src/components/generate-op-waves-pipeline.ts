@@ -118,7 +118,7 @@ import {
 import { OIDC_REQUEST_VARS, TRADE_SPEC_ENV, tradeLine, type CloudTradeSpec } from "@intentius/chant/ci-identity";
 import { JOB_GUARD_ENV, jobGuardLine, jobGuardSpec, opWaveJobLabel } from "@intentius/chant/ci-job-guard";
 import { resolveProductWords } from "@intentius/chant/ci-product-words";
-import { assertPipelineEvidence, evidenceKeyEnv } from "@intentius/chant/ci-evidence-jobs";
+import { assertPipelineEvidence, evidenceKeyEnv, evidenceKeyless } from "@intentius/chant/ci-evidence-jobs";
 import { checkoutStep, concurrency, DOWNLOAD_ARTIFACT, downloadArtifactStep, keepRecordStep, runSteps } from "./ci-jobs";
 import { emitOpPipelineYAML, type GithubOpPipelineDoc } from "./generate-op-pipeline";
 
@@ -173,7 +173,16 @@ export function buildGithubOpWavesDoc(
     const cloud = group?.cloud ?? wave.cloud;
     const environment = group?.environment ?? wave.environment;
     const idTokens = group?.idTokens ?? wave.idTokens;
-    const idToken = idTokens !== undefined || cloud !== undefined;
+    // #4870: the deciding job's command signs the wave's checks; #4869: keyless, from the job's own OIDC token.
+    const signs = options.evidence !== undefined && (job.kind === "wave" || job.kind === "decide");
+    const keyless = signs && evidenceKeyless(options.evidence);
+    if (keyless && cloud) {
+      // The trade's later steps start without the token request variables, so the wave's step could not request the signing token.
+      throw new Error(
+        `${spec.name}/${wave.name}: evidence.identity oidc signs from the wave's own step, and this wave trades cloud credentials, after which no step may request an OIDC token. Sign this pipeline with evidence.runnerKeySecret, or drop the wave's cloud (#4869)`,
+      );
+    }
+    const idToken = idTokens !== undefined || cloud !== undefined || keyless;
     const runner = group?.runner ?? wave.runner ?? spec.runner;
     // #4624: the guard first, before the trade and the checkout.
     const guard = guardStep({
@@ -197,8 +206,7 @@ export function buildGithubOpWavesDoc(
     later.push(...[...(wave.setup ?? []), ...(group?.setup ?? [])].map(setupStepDoc), ...runSteps(options.beforeScript ?? []));
     const add = inputs[job.wave - 1];
     later.push(...(add?.before ?? []).map(runStepDoc));
-    // #4870: the deciding job's command signs the wave's checks, with the key on that step alone.
-    const signs = options.evidence && (job.kind === "wave" || job.kind === "decide");
+    // #4870: the key (or #4869 the keyless signing) on that step alone.
     later.push({ name: describeJob(job.kind, job.wave, wave.name, job.share, job.group), ...(signs ? { env: evidenceKeyEnv(forge, options.evidence!) } : {}), run: job.command.join(" ") });
     later.push(...runSteps(options.extraScript ?? []));
     steps.push(...(cloud ? later.map(withoutTokenRequest) : later));

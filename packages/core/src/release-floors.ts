@@ -102,3 +102,6 @@ export const CHECK_EVIDENCE_FLOOR = NEXT_RELEASE;
 
 /** The first chant that accepts local evidence (#4868): `local` in `.chant/trust.json`, `chant ci evidence sign --local`, and `chant ci check` skipping a hook whose current local evidence the policy at base accepts. */
 export const LOCAL_EVIDENCE_FLOOR = NEXT_RELEASE;
+
+/** The first chant that signs runner statements keyless from the CI job's OIDC identity and verifies them against `keyless` in `.chant/trust.json`, with `evidence.identity: "oidc"` in the generators (#4869). */
+export const KEYLESS_EVIDENCE_FLOOR = NEXT_RELEASE;

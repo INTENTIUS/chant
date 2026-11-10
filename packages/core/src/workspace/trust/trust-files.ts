@@ -202,7 +202,7 @@ export function trustConfigProblems(raw: unknown): string[] {
   const check = (field: string, ok: boolean, message: string) => {
     if (!ok) problems.push(`${field}: ${message}`);
   };
-  check("/", only(raw, ["schema", "signers", "roles", "adopted", "runners", "passkeys", "admitted", "refs", "local"]), "unknown key");
+  check("/", only(raw, ["schema", "signers", "roles", "adopted", "runners", "keyless", "passkeys", "admitted", "refs", "local"]), "unknown key");
   check("schema", raw.schema === 1, "expected 1");
   check("signers", optional(raw.signers, isRepoPath), "a path inside the repository, with / separators and no ..");
   check(
@@ -225,6 +225,19 @@ export function trustConfigProblems(raw: unknown): string[] {
       a.every((e) => isObject(e) && only(e, ["principal", "class", "key"]) && nonEmpty(e.principal) && (e.class === "runner" || e.class === "service") && typeof e.key === "string" && SSH_ED25519.test(e.key)),
     ),
     "runner keys: a principal, a class and an ssh-ed25519 key",
+  );
+  const httpUrl = (v: unknown): boolean => typeof v === "string" && /^https?:\/\/[^\s]+$/.test(v);
+  check(
+    "keyless",
+    optional(raw.keyless, (k) =>
+      isObject(k) && only(k, ["trustedRoot", "identities", "since", "fulcio", "timestamp", "audience"]) &&
+      isRepoPath(k.trustedRoot) &&
+      optional(k.since, (f) => typeof f === "string" && FULL_COMMIT.test(f)) &&
+      optional(k.fulcio, httpUrl) && optional(k.timestamp, httpUrl) && optional(k.audience, nonEmpty) &&
+      Array.isArray(k.identities) && k.identities.length > 0 &&
+      k.identities.every((e) => isObject(e) && only(e, ["principal", "class", "issuer", "subject"]) && nonEmpty(e.principal) && (e.class === "runner" || e.class === "service") && httpUrl(e.issuer) && nonEmpty(e.subject)),
+    ),
+    "keyless identities (#4869): a trusted root path and identities, each a principal, a class, an issuer URL and a subject pattern",
   );
   const b64url = (v: unknown): boolean => typeof v === "string" && /^[A-Za-z0-9_-]+$/.test(v);
   check(

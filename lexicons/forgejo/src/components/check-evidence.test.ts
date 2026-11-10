@@ -40,4 +40,15 @@ describe("check evidence in generated pipelines on forgejo (#4870)", () => {
     expect(() => generateForgejoProductPlanPipeline("default", { ...plan, evidence: { runnerKeySecret: "not a name" } })).toThrow(/not a secret name/);
     expect(() => generateForgejoOpWavesPipeline(spec, { ...waves, evidence: { runnerKeySecret: "1X" } })).toThrow(/not a secret name/);
   });
+
+  test("#4869: signing keyless, each target's note job and each deciding wave job get enable-openid-connect, and no secret is named", () => {
+    const keyless = { identity: "oidc" as const };
+    const plan_ = generateForgejoProductPlanPipeline("default", { ...plan, evidence: keyless }).yaml;
+    expect(plan_).toContain("CHANT_RUNNER_IDENTITY: oidc");
+    expect(plan_).not.toContain("CHANT_RUNNER_KEY");
+    expect(plan_.match(/enable-openid-connect: true/g)).toHaveLength(2);
+    const yaml = generateForgejoOpWavesPipeline(spec, { ...waves, evidence: keyless }).files[0]!.yaml;
+    expect(yaml.match(/CHANT_RUNNER_IDENTITY: oidc/g)).toHaveLength(2);
+    expect(yaml.match(/enable-openid-connect: true/g)).toHaveLength(2);
+  });
 });

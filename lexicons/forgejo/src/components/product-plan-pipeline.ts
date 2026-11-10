@@ -8,7 +8,7 @@
 import { buildProductPlanGithubDoc, type ProductPlanPipeline, type ProductPlanPipelineOptions } from "@intentius/chant-lexicon-github/components/product-plan-pipeline";
 import { emitWorkflowYAML, type GithubWorkflowDoc } from "@intentius/chant-lexicon-github/components/ci-jobs";
 import type { ForgejoDialectOptions } from "../dialect";
-import { forgejoize } from "./ci-jobs";
+import { forgejoize, withOpenIdConnect } from "./ci-jobs";
 
 export type { ProductPlanPipeline, ProductPlanPipelineOptions };
 
@@ -19,7 +19,8 @@ export function generateForgejoProductPlanPipeline(env: string, options: Product
     ...github,
     on: forgejoize(github.on, dialectOptions),
     ...(github.env ? { env: forgejoize(github.env, dialectOptions) } : {}),
-    jobsDoc: forgejoize(github.jobsDoc, dialectOptions),
+    // #4869: a job that asks for `id-token: write` (the note job signing keyless) gets enable-openid-connect.
+    jobsDoc: withOpenIdConnect(forgejoize(github.jobsDoc, dialectOptions), (github as { permissions?: unknown }).permissions),
   };
   return { yaml: emitWorkflowYAML(doc), doc, jobs };
 }

@@ -101,6 +101,8 @@ export function generateGitlabProductPlanPipeline(env: string, options: GitlabPr
         rules: [{ if: onMergeRequest }],
         needs: [{ job: p.jobName, artifacts: true }],
         variables: p.evidence.env,
+        // #4869: signing keyless, the job's token for the signing audience.
+        ...(p.evidence.idTokens ? { id_tokens: p.evidence.idTokens } : {}),
         script: [...beforeScript, ...p.evidence.lines],
       },
     ]);

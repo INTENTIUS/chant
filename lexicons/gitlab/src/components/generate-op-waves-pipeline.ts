@@ -114,7 +114,7 @@ import { gitlabTradeIdTokens, gitlabTradeLines, TRADE_SPEC_ENV } from "@intentiu
 import { JOB_GUARD_ENV, jobGuardLine, jobGuardSpec, opWaveJobLabel } from "@intentius/chant/ci-job-guard";
 import { CHANT_EXIT } from "@intentius/chant/exit-codes";
 import { resolveProductWords } from "@intentius/chant/ci-product-words";
-import { assertPipelineEvidence, evidenceKeyEnv } from "@intentius/chant/ci-evidence-jobs";
+import { assertPipelineEvidence, evidenceIdTokens, evidenceKeyEnv } from "@intentius/chant/ci-evidence-jobs";
 import { emitGitlabFile } from "./ci-jobs";
 
 /** The one exit an op-wave job allows as a failure (#4322): a run that failed. The guard's refusal (9) is outside it. */
@@ -204,7 +204,11 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
     // #4332: the job's cloud identities, traded first.
     const cloud = group?.cloud ?? wave.cloud;
     const declared = gitlabIdTokensDoc(group?.idTokens ?? wave.idTokens);
-    const idTokens = cloud ? { ...declared, ...gitlabTradeIdTokens(cloud) } : declared;
+    // #4870: the deciding job signs the wave's checks; #4869: signing keyless, it requests the signing token too.
+    const signs = options.evidence !== undefined && (job.kind === "wave" || job.kind === "decide");
+    const signing = signs ? evidenceIdTokens(options.evidence) : {};
+    const traded = cloud ? { ...declared, ...gitlabTradeIdTokens(cloud) } : declared;
+    const idTokens = Object.keys(signing).length > 0 ? { ...traded, ...signing } : traded;
     // #4624: the apply-job guard, the script's first line, before the trade.
     const runner = group?.runner ?? wave.runner ?? spec.runner;
     const add = inputs[job.wave - 1];
@@ -225,8 +229,8 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
         timeout: `${timeout.minutes} minutes`,
         ...(environment ? { environment: environmentDoc(environment) } : {}),
         ...(idTokens ? { id_tokens: idTokens } : {}),
-        // #4870: the deciding job signs the wave's checks with the runner key from the named variable.
-        variables: { ...GITLAB_FULL_HISTORY, ...timeout.env, ...(wave.variables ?? {}), ...(group?.variables ?? {}), ...(cloud ? { [TRADE_SPEC_ENV]: JSON.stringify(cloud) } : {}), [JOB_GUARD_ENV]: JSON.stringify(guard), ...(options.evidence && (job.kind === "wave" || job.kind === "decide") ? evidenceKeyEnv("gitlab", options.evidence) : {}) },
+        // #4870: the deciding job signs the wave's checks with the runner key from the named variable, or (#4869) keyless.
+        variables: { ...GITLAB_FULL_HISTORY, ...timeout.env, ...(wave.variables ?? {}), ...(group?.variables ?? {}), ...(cloud ? { [TRADE_SPEC_ENV]: JSON.stringify(cloud) } : {}), [JOB_GUARD_ENV]: JSON.stringify(guard), ...(signs ? evidenceKeyEnv("gitlab", options.evidence!) : {}) },
         rules,
         ...(job.needs.length > 0 ? { needs: job.needs } : {}),
         script: [

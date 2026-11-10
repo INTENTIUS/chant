@@ -30,7 +30,7 @@ import type { RunEndLine, RunStartLine, RunView } from "../runs";
 import { IN_TOTO_PAYLOAD_TYPE, signEnvelope, verifyEnvelope, type DsseEnvelope } from "./dsse";
 import { STATEMENT_TYPE } from "./evidence";
 import type { KeyObject } from "node:crypto";
-import type { RunnerKey } from "./policy";
+import type { Runner, RunnerKey } from "./policy";
 
 export const AGENT_RUN_PREDICATE = "https://intentius.io/chant/agent-run/v1";
 
@@ -138,7 +138,7 @@ const same = (a: unknown, b: unknown) => canonicalJson(a ?? null) === canonicalJ
  * well-formed statement whose signer is that key's principal, for this run,
  * and agreeing with its record. Never throws.
  */
-export function verifyRunStatement(envelope: unknown, runners: readonly RunnerKey[], run: RunView): RunStatementVerdict {
+export function verifyRunStatement(envelope: unknown, runners: readonly Runner[], run: RunView): RunStatementVerdict {
   const v = verifyEnvelope(envelope, runners);
   if (!v.ok) return { status: v.code === "envelope-untrusted" ? "untrusted" : "invalid", code: v.code, reason: v.reason };
   const runner = runners.find((r) => r.principal === v.principal)!;
@@ -202,7 +202,7 @@ export interface RunAttestation {
 const RANK = { mismatch: 0, untrusted: 1, invalid: 2 } as const;
 
 /** Judge every statement the ledger holds for `run`. */
-export function attestRun(run: RunView, runners: readonly RunnerKey[]): RunAttestation {
+export function attestRun(run: RunView, runners: readonly Runner[]): RunAttestation {
   const verdicts = run.statements.map((s) => verifyRunStatement(s.envelope, runners, run));
   const good = verdicts.find((v): v is Extract<RunStatementVerdict, { status: "verified" }> => v.status === "verified");
   if (good) {

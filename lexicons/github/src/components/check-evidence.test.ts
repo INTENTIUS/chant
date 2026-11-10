@@ -40,4 +40,22 @@ describe("check evidence in generated pipelines on github (#4870)", () => {
     expect(() => generateProductPlanPipeline("default", { ...plan, evidence: { runnerKeySecret: "not a name" } })).toThrow(/not a secret name/);
     expect(() => generateGithubOpWavesPipeline(spec, { ...waves, evidence: { runnerKeySecret: "1X" } })).toThrow(/not a secret name/);
   });
+
+  test("#4869: signing keyless, each target's note job and each deciding wave job ask for id-token: write, and no secret is named", () => {
+    const keyless = { identity: "oidc" as const };
+    const plan_ = generateProductPlanPipeline("default", { ...plan, evidence: keyless }).yaml;
+    expect(plan_).toContain("CHANT_RUNNER_IDENTITY: oidc");
+    expect(plan_).not.toContain("CHANT_RUNNER_KEY");
+    expect(plan_.match(/^\s+id-token: write$/gm)).toHaveLength(2);
+    const yaml = generateGithubOpWavesPipeline(spec, { ...waves, evidence: keyless }).files[0]!.yaml;
+    expect(yaml.match(/CHANT_RUNNER_IDENTITY: oidc/g)).toHaveLength(2);
+    expect(yaml.match(/^\s+id-token: write$/gm)).toHaveLength(2);
+    expect(yaml).not.toContain("CHANT_RUNNER_KEY");
+  });
+
+  test("#4869: keyless on a wave that trades cloud credentials is refused, since its later steps may request no token", () => {
+    const cloudy: OpWavesSpec = { ...spec, waves: [{ ...spec.waves[0]!, cloud: { aws: { role: "arn:aws:iam::123456789012:role/plan", region: "us-east-1", audience: "sts.amazonaws.com" } } }] };
+    expect(() => generateGithubOpWavesPipeline(cloudy, { ...waves, evidence: { identity: "oidc" } })).toThrow(/trades cloud credentials/);
+    expect(() => generateProductPlanPipeline("default", { ...plan, evidence: { identity: "oidc", runnerKeySecret: "K" } })).toThrow(/one of them/);
+  });
 });

@@ -10,9 +10,10 @@
  * failed. See `../../components/check-hooks.ts` and
  * `../../components/check-steps.ts`.
  *
- * With a runner key in `CHANT_RUNNER_KEY` (#4870), each hook that passed is
+ * With a runner key in `CHANT_RUNNER_KEY` (#4870), or `CHANT_RUNNER_IDENTITY=oidc`
+ * to sign keyless from the job's OIDC identity (#4869), each hook that passed is
  * signed as a named check over `HEAD` and attached under `refs/notes/chant/evidence`, which
- * is pushed unless `--no-push`; the key never reaches a hook.
+ * is pushed unless `--no-push`; neither the key nor the token request reaches a hook.
  *
  * #4868: with a local key in `CHANT_LOCAL_EVIDENCE_KEY` (a developer's or an
  * agent session's, listed under `local.keys` at base) each hook that passed
@@ -47,24 +48,27 @@ async function lexiconCheckSteps(ctx: CommandContext, cwd: string): Promise<Chec
 const USAGE = "chant ci check --base <rev> [<target>...] [--output <dir>] [--no-push] [--json]";
 
 /**
- * The check stage's signer (#4870), when the job holds a runner key in
- * `CHANT_RUNNER_KEY`: the runner `.chant/trust.json` at `base` lists for it.
- * Throws when the key is there and the policy at base does not list it, so
- * a job asked to sign never passes while signing nothing.
+ * The check stage's signer (#4870), when the job has a runner identity: a
+ * runner key in `CHANT_RUNNER_KEY`, or its OIDC identity with
+ * `CHANT_RUNNER_IDENTITY=oidc` (#4869), as `.chant/trust.json` at `base`
+ * lists it. Throws when the job has one and the policy at base does not
+ * list it, so a job asked to sign never passes while signing nothing.
  */
 async function checkEvidenceSigner(base: string, noPush: boolean): Promise<CheckStageEvidence | undefined> {
-  const { CHECK_EVIDENCE_KEY_ENV, LOCAL_EVIDENCE_KEY_ENV } = await import("../../workspace/trust/check-evidence-report");
-  const pem = process.env[CHECK_EVIDENCE_KEY_ENV];
+  const { CHECK_EVIDENCE_KEY_ENV, LOCAL_EVIDENCE_KEY_ENV, RUNNER_IDENTITY_ENV } = await import("../../workspace/trust/check-evidence-report");
+  const runner = process.env[CHECK_EVIDENCE_KEY_ENV] || process.env[RUNNER_IDENTITY_ENV];
   const localPem = process.env[LOCAL_EVIDENCE_KEY_ENV];
-  if (!pem && !localPem) return undefined;
-  if (pem && localPem) throw new Error(`${CHECK_EVIDENCE_KEY_ENV} and ${LOCAL_EVIDENCE_KEY_ENV} are both set; a job signs as a runner or as a person or agent, never both`);
+  if (!runner && !localPem) return undefined;
+  if (runner && localPem) throw new Error(`${process.env[CHECK_EVIDENCE_KEY_ENV] ? CHECK_EVIDENCE_KEY_ENV : RUNNER_IDENTITY_ENV} and ${LOCAL_EVIDENCE_KEY_ENV} are both set; a job signs as a runner or as a person or agent, never both`);
   const { top, commit } = await baseCommit(base);
   if (localPem) {
     const { localKeyEvidenceSigner } = await import("../../workspace/trust/local-evidence");
     return { signer: localKeyEvidenceSigner(top, commit, localPem), ...(noPush ? { push: false } : {}) };
   }
-  const { runnerKeyEvidenceSigner } = await import("../../workspace/trust/check-evidence");
-  return { signer: runnerKeyEvidenceSigner(top, commit, pem!), ...(noPush ? { push: false } : {}) };
+  // #4869: the runner key, or the job's OIDC identity, read in one place.
+  const { runnerEvidenceSigner } = await import("../../workspace/trust/check-evidence");
+  const signer = await runnerEvidenceSigner(top, commit);
+  return signer ? { signer, ...(noPush ? { push: false } : {}) } : undefined;
 }
 
 async function baseCommit(base: string): Promise<{ top: string; commit: string }> {

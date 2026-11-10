@@ -70,7 +70,7 @@ import type { ReasonCode } from "./reason-codes";
 import { gitTop } from "./tree";
 import { locateWorkspace } from "./which-chant";
 import { gitRevisionSource } from "./record-source";
-import { emptyPolicy, readTrustPolicy } from "./trust/policy";
+import { emptyPolicy, readTrustPolicy, runnersAt } from "./trust/policy";
 import { loadRunnerKey } from "./trust/dsse";
 import { signCiTagRecord, verifyCiTagStatement, CI_TAG_SIGNER_ROLE, type CiTagFailure, type CiTagRecord, type CiTagSigner } from "./trust/ci-tag-statement";
 import { COMPOSE_BRANCH_PREFIX, composedIncluding, isComposeBranch, remoteComposeBranches } from "../lifecycle/compose-refs";
@@ -513,7 +513,7 @@ export function readCiTags(top: string, green: CiGreen | null = null, base: stri
     const p = policyAtBase();
     // A tag the tick made walking a compose branch (#4168 4.3) is checked against that branch.
     const walked = isComposeBranch(t.record?.branch) ? (t.record!.branch as string) : green!.branch;
-    const v = verifyCiTagStatement(t.record, { sha: t.sha, kind: t.kind, branch: walked, ...(lane !== undefined ? { lane } : {}) }, p.runners, p.roles);
+    const v = verifyCiTagStatement(t.record, { sha: t.sha, kind: t.kind, branch: walked, ...(lane !== undefined ? { lane } : {}) }, runnersAt(p, { repo: top, commit: t.sha }), p.roles);
     if (v.status === "signed") counted(v.signer);
     else ignore(v.status, `${v.reason}; ci.green.signedSince is ${green!.signedSince}, so a tag on a commit that is not a strict first-parent ancestor of it needs one`);
   }
@@ -1313,7 +1313,8 @@ export async function readOpRunSource(cwd: string, top: string, base: string, si
         if (!record.gitSha) continue;
         // #4161: a job `ci run --local` ran stays on the machine that ran it, and is never CI's verdict.
         if (record.runOrigin?.forge === "local") continue;
-        const v = verifyOpRunStatement(record, policy.runners, policy.roles);
+        // #4869: a keyless identity's statement counts too; under keyless.since, a key's only for a commit before it.
+        const v = verifyOpRunStatement(record, runnersAt(policy, { repo: top, commit: record.gitSha }), policy.roles);
         const counts = v.status === "signed" || (v.status === "unsigned" && (before === null || before.has(record.gitSha)));
         if (counts) byCommit.set(record.gitSha, [...(byCommit.get(record.gitSha) ?? []), opRunCheckRun(record, v.status === "signed" ? v.signer : null)]);
         else {

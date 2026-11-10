@@ -6,7 +6,9 @@
  *
  * - `sign --check-id <id>[,<id>...]` signs that each check passed at `--at`
  *   (default `HEAD`), with the runner key in `--key <file>` or
- *   `CHANT_RUNNER_KEY`, and pushes the notes unless `--no-push`.
+ *   `CHANT_RUNNER_KEY`, or keyless from the job's OIDC identity with
+ *   `CHANT_RUNNER_IDENTITY=oidc` (#4869), and pushes the notes unless
+ *   `--no-push`.
  * - `sign --from-report <dir> --result <result>` is the plan note job's
  *   form: it signs `plan` when the plan job succeeded and left a report in
  *   `<dir>`, and `policy` when the policy evaluated inside that plan did not
@@ -17,7 +19,7 @@
  *   and verifies it against the runner keys at `--base`; exits 1 when one
  *   is not current.
  *
- * Without a runner key, `sign` signs nothing and says so: a project that
+ * Without a runner identity, `sign` signs nothing and says so: a project that
  * declares no runner identity gets the same job it had.
  *
  * `--local` (#4868) is the developer's or agent session's form: `sign
@@ -34,9 +36,11 @@ import { gitRoot } from "../../workspace/record-source";
 import { resolveBase } from "../../workspace/trust/provenance";
 import {
   CHECK_EVIDENCE_KEY_ENV,
+  noRunnerIdentity,
   readCheckEvidence,
   recordChecks,
-  runnerKeyEvidenceSigner,
+  RUNNER_IDENTITY_ENV,
+  runnerEvidenceSigner,
   signChecks,
   type EvidenceSigner,
 } from "../../workspace/trust/check-evidence";
@@ -111,6 +115,7 @@ async function sign(ctx: CommandContext, repo: string, base: string, at: string)
   const fromReport = args.fromReport;
   if (!fromReport && idsOf(args.checkId).length === 0) return usage("sign needs --check-id <id>, or --from-report <dir> in a plan note job");
   const pem = args.key ? readFileSync(args.key, "utf-8") : process.env[CHECK_EVIDENCE_KEY_ENV];
+  const identity = pem !== undefined && pem !== "" ? "key" : process.env[RUNNER_IDENTITY_ENV] ? "oidc" : undefined;
   const note: CheckEvidenceNote = { signed: [], skipped: [] };
   let wanted: Array<{ check: string; claim?: Buffer | string }>;
   if (fromReport) {
@@ -126,21 +131,21 @@ async function sign(ctx: CommandContext, repo: string, base: string, at: string)
     if (args.json) console.log(JSON.stringify(note, null, 2));
     return code;
   };
-  if (!pem) {
-    note.skipped.push(...wanted.map((w) => ({ check: w.check, reason: `no runner key: ${CHECK_EVIDENCE_KEY_ENV} is not set` })));
-    console.error(`ci evidence: no runner key in ${CHECK_EVIDENCE_KEY_ENV}, so no check was signed`);
+  if (!identity) {
+    note.skipped.push(...wanted.map((w) => ({ check: w.check, reason: noRunnerIdentity() })));
+    console.error(`ci evidence: ${noRunnerIdentity()}, so no check was signed`);
     return finish(CHANT_EXIT.done);
   }
   let signer: EvidenceSigner;
   try {
-    signer = runnerKeyEvidenceSigner(repo, base, pem);
+    signer = (await runnerEvidenceSigner(repo, base, pem ? { key: pem } : {}))!;
   } catch (err) {
     console.error(formatError({ message: err instanceof Error ? err.message : String(err), hint: USAGE }));
     return finish(CHANT_EXIT.failed);
   }
   for (const s of note.skipped) console.error(`ci evidence: ${s.check} not signed: ${s.reason}`);
   if (wanted.length === 0) return finish(CHANT_EXIT.done);
-  const signed = signChecks(repo, at, wanted, signer);
+  const signed = await signChecks(repo, at, wanted, signer);
   const pushed = await recordChecks(repo, signed, { push: !args.noPush });
   for (const s of signed) {
     note.signed.push({ check: s.check, runner: s.runner, commit: s.commit, tree: s.tree });
