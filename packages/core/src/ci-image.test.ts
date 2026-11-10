@@ -163,8 +163,8 @@ describe("ciToolRelease", () => {
     expect(() => ciToolSha256("tofu", "1.13.1", { amd64: "nothex" })).toThrow(/64 lower-case hex/);
   });
 
-  test("CI_IMAGE_FLOOR is the next release", () => {
-    expect(CI_IMAGE_FLOOR).toBe(NEXT_RELEASE);
+  test("CI_IMAGE_FLOOR is the release that shipped it", () => {
+    expect(CI_IMAGE_FLOOR).toBe("0.124.86");
   });
 });
 
