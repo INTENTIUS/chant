@@ -143,6 +143,18 @@ const plan = refGateInitPlan(repo, {
 writeRefGateInit(plan); // or fold plan.files into the product's own plan, and print plan.notes
 ```
 
+A product plan with `targets` signs each target's plan job as `plan:<target>` and `policy:<target>` ([#4978](https://github.com/INTENTIUS/chant/issues/4978)), so a pass in one target's plan job is no evidence for another's. Pass the same names as `targets`, and each check named `plan` or `policy` becomes one per target, with the same action and command:
+
+```ts
+refGateInitPlan(repo, {
+  checks: [{ check: "plan", command: "/yodel plan" }, { check: "policy", command: "/yodel plan" }],
+  targets: ["staging", "prod"],
+});
+// refs rule checks: plan:staging, plan:prod, policy:staging, policy:prod
+```
+
+`targetEvidenceCheck("plan", target)` and `productPlanEvidenceChecks(targets)` from `@intentius/chant/ci-evidence-jobs` give the same names for a product that writes the rule itself. Floor: `TARGET_SIGNED_CHECKS_FLOOR`.
+
 The plan creates `.chant/trust.json` with the `refs` rule, or adds the rule in place to a file that has none for the branch, and leaves a file that has one, or that doesn't parse, as it is. It adds the `pre-push` hook `install` writes, marked `local` since git never commits it, and leaves another hook as it is. When the policy lists no runner key and no keyless identity, a note gives the commands that make and list a key, since without one no evidence verifies and every push is refused. The plan writes nothing; `writeRefGateInit` writes its files and makes the hook executable.
 
 ## Output

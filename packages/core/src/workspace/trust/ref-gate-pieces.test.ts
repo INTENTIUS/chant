@@ -11,7 +11,8 @@ import { existsSync, readFileSync, realpathSync, statSync, writeFileSync } from 
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { beforeMergeBranch, beforeMergeRefGate } from "../../cli/handlers/pr";
-import { refGateInitPlan, RefGateInitError, writeRefGateInit } from "../../ref-gate-init";
+import { refGateInitChecks, refGateInitPlan, RefGateInitError, writeRefGateInit } from "../../ref-gate-init";
+import { productPlanEvidenceChecks, targetEvidenceCheck } from "../../ci-evidence-jobs";
 import { REF_GATE_STATUS, refGateRulesAt, refGateStatusFor } from "../../ref-gate-rules";
 import { decideRefUpdate, describeDecision, requestCommand } from "./ref-gate";
 import { REF_GATE_HOOK_MARK } from "./ref-gate-cli";
@@ -162,6 +163,25 @@ describe("the ref gate's init pieces (#4913)", () => {
     const bad = refGateInitPlan(r.work, { checks: CHECKS, prePush: false });
     expect(bad.files).toEqual([]);
     expect(bad.notes[0]).toContain("does not read as chant's trust policy");
+  });
+
+  test("#4978: with a product plan's targets, plan and policy are each target's, the checks the targets' note jobs sign", () => {
+    const r = new GateRepos("4978-init-targets");
+    r.commit("start");
+    const checks = [{ check: "lint", command: "npm run lint" }, { check: "plan", command: "/yodel plan" }, { check: "policy", action: "warn" as const, command: "/yodel plan" }];
+    const plan = refGateInitPlan(r.work, { checks, targets: ["staging", "prod"], prePush: false });
+    expect(JSON.parse(plan.files[0]!.content).refs[0].checks).toEqual([
+      { check: "lint", command: "npm run lint" },
+      { check: "plan:staging", command: "/yodel plan" },
+      { check: "plan:prod", command: "/yodel plan" },
+      { check: "policy:staging", action: "warn", command: "/yodel plan" },
+      { check: "policy:prod", action: "warn", command: "/yodel plan" },
+    ]);
+    expect(productPlanEvidenceChecks(["staging", "prod"])).toEqual(["plan:staging", "policy:staging", "plan:prod", "policy:prod"]);
+    expect(productPlanEvidenceChecks()).toEqual(["plan", "policy"]);
+    expect(targetEvidenceCheck("policy", "prod")).toBe("policy:prod");
+    expect(refGateInitChecks(checks, [])).toEqual(checks);
+    expect(() => refGateInitPlan(r.work, { checks, targets: ["no:colon"], prePush: false })).toThrow("is not a product plan target's name");
   });
 
   test("options no rule can hold, or a directory outside git, are refused", () => {

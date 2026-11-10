@@ -22,9 +22,11 @@ describe("check evidence in generated pipelines on forgejo (#4870)", () => {
     expect(generateForgejoOpWavesPipeline(spec, waves).files.map((f) => f.yaml).join("\n")).not.toContain("CHANT_RUNNER_KEY");
   });
 
-  test("the plan pipeline signs plan and policy for each target, with the key from the secret", () => {
+  test("the plan pipeline signs plan:<target> and policy:<target> for each target, with the key from the secret (#4978)", () => {
     const yaml = generateForgejoProductPlanPipeline("default", { ...plan, evidence }).yaml;
-    expect(yaml.match(/yodel chant ci evidence sign --from-report \.chant\/pr --result /g)).toHaveLength(2);
+    expect(yaml.match(/yodel chant ci evidence sign --from-report \.chant\/pr --member (staging|prod) --result /g)).toHaveLength(2);
+    expect(yaml).toContain("--member staging --result");
+    expect(yaml).toContain("--member prod --result");
     expect(yaml).toContain("CHANT_RUNNER_KEY:");
     expect(yaml).toContain("CHANT_RUNNER_KEY_PEM");
     expect(yaml).toContain("git fetch --quiet --no-tags --depth=1 origin");

@@ -15,8 +15,8 @@
  *   deny it (a `pr-plan.json`'s `policy`, a plan note hand-off's overrides).
  *   It writes `evidence.json` in `<dir>`, which `pr-post` reads to say in the
  *   note which checks were signed. With `--member <name>` (#4964), a
- *   workspace member's plan report, the two are `plan:<name>` and
- *   `policy:<name>`.
+ *   workspace member's plan report or (#4978) a product plan target's, the
+ *   two are `plan:<name>` and `policy:<name>`.
  * - `sign --from-report <dir>` on a check job's report (#4935), a
  *   `check-hooks.json` from `chant ci check`, is the `check-evidence` job's
  *   form: it signs each hook that passed, by name, with the runs as its
@@ -52,6 +52,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { EVIDENCE_MEMBER_NAME } from "../../ci-evidence-jobs";
 import { CHANT_EXIT } from "../../exit-codes";
 import { formatError } from "../format";
 import type { CommandContext } from "../registry";
@@ -189,13 +190,14 @@ async function sign(ctx: CommandContext, repo: string, base: string, at: string)
 
 /**
  * `--member <name>` (#4964): the workspace member whose plan report this is,
- * so `plan` and `policy` are signed as `plan:<name>` and `policy:<name>`.
- * One name, and only with a plan report.
+ * or (#4978) the product plan target whose plan job wrote it, so `plan` and
+ * `policy` are signed as `plan:<name>` and `policy:<name>`. One name, and
+ * only with a plan report.
  */
 function memberOf(members: string[] | undefined, fromReport: boolean): string | undefined | { usage: string } {
   if (!members || members.length === 0) return undefined;
   if (!fromReport) return { usage: "--member names the member whose plan report --from-report signs; --check-id names its checks in full" };
-  if (members.length > 1 || !/^[a-z0-9][a-z0-9-]*$/.test(members[0]!)) return { usage: `--member takes one member name, lower-case letters, digits and -, not ${members.join(",")}` };
+  if (members.length > 1 || !EVIDENCE_MEMBER_NAME.test(members[0]!)) return { usage: `--member takes one member or target name, letters, digits, - and _, not ${members.join(",")}` };
   return members[0];
 }
 

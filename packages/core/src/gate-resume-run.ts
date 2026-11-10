@@ -19,7 +19,10 @@
  * | Forgejo | `POST /repos/{repo}/actions/workflows/{file}/dispatches` on the run's branch | a token with the `write:repository` scope; Forgejo has no API to re-run a run, so it starts a new run of the workflow |
  *
  * GitHub re-runs the failed job and the jobs that need it, at the same
- * commit. GitLab retries the job, and the jobs it skipped run after it. A
+ * commit. GitLab retries the job, and the jobs it skipped run after it; a
+ * job that already ran is not run again, so a waves job's
+ * `<wave job>-evidence` that ran after the stopped try is retried with it
+ * (#4978), and signs from the new try once it ends. A
  * Forgejo dispatch runs the whole workflow again at the branch's head, so the
  * jobs before the gate run again too; they must be safe to repeat (a wave
  * whose runs already applied plans nothing and applies nothing new).
@@ -63,6 +66,17 @@ export interface ResumeGateRunOptions {
    */
   dryRun?: boolean;
 }
+
+/**
+ * The job that signs a GitLab Op waves job's checks (#4926, #4978):
+ * `<wave job>-evidence`, as the waves pipeline names it.
+ */
+export function gitlabEvidenceJobOf(job: string): string {
+  return `${job}-evidence`;
+}
+
+/** The GitLab job statuses of a job that ran and ended; a `skipped` or `created` job GitLab runs again after a retry itself. */
+const GITLAB_FINISHED = new Set(["success", "failed", "canceled"]);
 
 const trimSlash = (s: string): string => s.replace(/\/+$/, "");
 
@@ -123,6 +137,7 @@ export async function resumeGateRun(loc: GateRunLocator, opts: ResumeGateRunOpti
     if (status === "success") return skip(`job ${loc.job} succeeded`);
     if (!["failed", "canceled", "skipped"].includes(status)) return skip(`job ${loc.job} is ${status}, not finished`);
     const name = loc.jobName ?? (typeof job.name === "string" ? job.name : undefined);
+    let evidence: Record<string, unknown> | undefined;
     if (name) {
       // The pipeline's jobs list leaves retried jobs out, so the job of this name is its newest try.
       const jobs = await call("GET", `${project}/pipelines/${loc.run}/jobs?per_page=100`);
@@ -130,11 +145,20 @@ export async function resumeGateRun(loc: GateRunLocator, opts: ResumeGateRunOpti
       if (isObject(newest) && String(newest.id) !== String(loc.job)) {
         return skip(`job ${loc.job} (${name}) was already retried as job ${String(newest.id)}`);
       }
+      // #4978: a wave job's evidence job that already ran signed for the stopped try; GitLab runs again only the jobs it skipped.
+      const found = Array.isArray(jobs) ? jobs.find((j) => isObject(j) && j.name === gitlabEvidenceJobOf(name)) : undefined;
+      if (isObject(found) && GITLAB_FINISHED.has(String(found.status))) evidence = found;
     }
-    if (opts.dryRun) return wouldResume(`retry job ${loc.job}`);
+    if (opts.dryRun) return wouldResume(`retry job ${loc.job}${evidence ? ` and its evidence job ${String(evidence.id)}` : ""}`);
     const retried = await call("POST", `${project}/jobs/${loc.job}/retry`);
     const id = isObject(retried) && retried.id !== undefined ? ` as job ${String(retried.id)}` : "";
-    return { status: "resumed", forge: "gitlab", how: `retried job ${loc.job}${id}`, ...url };
+    let also = "";
+    if (evidence) {
+      // It needs the wave job, so it waits for the retried one; `ci evidence sign --from-job` waits for it too, should it start first.
+      const again = await call("POST", `${project}/jobs/${String(evidence.id)}/retry`);
+      also = `, and its evidence job ${String(evidence.id)}${isObject(again) && again.id !== undefined ? ` as job ${String(again.id)}` : ""}`;
+    }
+    return { status: "resumed", forge: "gitlab", how: `retried job ${loc.job}${id}${also}`, ...url };
   }
 
   const call = client(loc.api, { Authorization: `token ${opts.token}`, Accept: "application/json" }, fetchImpl);

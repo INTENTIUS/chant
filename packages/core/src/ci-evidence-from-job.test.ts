@@ -102,6 +102,24 @@ describe("which checks a job's record lets the evidence job sign (#4926)", () =>
     expect(got).toEqual({ sign: [{ check: "plan:dev", source: { run: 9, job: 40 } }], skipped: [{ check: "policy:dev", reason: "job wave-1-dev-policy ended failed" }] });
   });
 
+  test("#4978: a wave job retried with its evidence job is waited for, and signs once its new try ends", async () => {
+    const tries: RunJob[][] = [
+      [{ id: 50, name: "wave-1-dev", status: "created", done: false, run: 9, headSha: SHA }],
+      [{ id: 50, name: "wave-1-dev", status: "running", done: false, run: 9, headSha: SHA }],
+      [{ id: 50, name: "wave-1-dev", status: "success", done: true, run: 9, headSha: SHA }],
+    ];
+    let reads = 0;
+    const slept: number[] = [];
+    const runJobs = async () => tries[Math.min(reads++, tries.length - 1)]!;
+    const got = await checksFromJob({ reads: { runJobs }, run: 9, sha: SHA, fromJob: "wave-1-dev", checks: ["plan:dev"], waitMs: 60_000, pollMs: 10_000, sleep: async (ms) => void slept.push(ms) });
+    expect(got).toEqual({ sign: [{ check: "plan:dev", source: { run: 9, job: 50 } }], skipped: [] });
+    expect(slept).toEqual([10_000, 10_000]);
+    // Out of time, the job still going is not signed.
+    reads = 0;
+    const late = await checksFromJob({ reads: { runJobs: async () => tries[0]! }, run: 9, sha: SHA, fromJob: "wave-1-dev", checks: ["plan:dev"], waitMs: 20_000, pollMs: 10_000, sleep: async () => {} });
+    expect(late).toEqual({ sign: [], skipped: [{ check: "plan:dev", reason: "job wave-1-dev has not finished (created)" }] });
+  });
+
   test("the sources and claim files read as data", () => {
     expect(parseEvidenceSources('{"plan:dev":"Plan","policy:dev":{"job":"p"}}')).toEqual({ sources: { "plan:dev": { step: "Plan" }, "policy:dev": { job: "p" } } });
     expect(parseEvidenceSources("[]")).toHaveProperty("problem");

@@ -122,8 +122,8 @@ describe("the product plan's record and check jobs on gitlab (#4899, #4935)", ()
     const ev = doc["staging-plan-evidence"] as Job;
     expect(ev.rules[0]!.if).toContain("CHANT_PLAN_NOTES");
     expect(ev.environment).toEqual({ name: "chant-evidence", action: "access" });
-    // forks: "skip" plans no fork's merge request, and signs none either.
-    expect(ev.script.at(-1)).toBe('yodel chant ci evidence sign --open --job staging-plan --from-report .chant/pr --base "$CI_COMMIT_SHA" --output .chant/evidence/staging-plan --no-forks');
+    // forks: "skip" plans no fork's merge request, and signs none either; #4978: the target's checks are plan:staging and policy:staging.
+    expect(ev.script.at(-1)).toBe('yodel chant ci evidence sign --open --job staging-plan --from-report .chant/pr --member staging --base "$CI_COMMIT_SHA" --output .chant/evidence/staging-plan --no-forks');
     expect((doc["check-evidence"] as Job).script.at(-1)).toMatch(/--job check .* --no-forks$/);
     expect((doc["staging-plan-note"] as Job).script.at(-1)).toMatch(/pr-post --open .*--member staging.* --evidence-dir \.chant\/evidence\/staging-plan$/);
     for (const name of ["staging-plan", "check"]) {

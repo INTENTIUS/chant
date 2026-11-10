@@ -25,6 +25,9 @@
  * target's own variables and secrets, and an optional write probe before the
  * plan. A target is the note's and the status's member: `pr-post --member
  * <target>`, so each target has its note and its `<product>/plan/<target>`.
+ * With `evidence`, a target's note job (GitLab: `<target>-plan-evidence`)
+ * signs `plan:<target>` and `policy:<target>` (#4978,
+ * `targetEvidenceCheck`): one target's plan says nothing of another's.
  *
  * The forge lexicons render these descriptors
  * (`generateProductPlanPipeline` in each): the products call them in
@@ -358,7 +361,8 @@ export interface ProductPlanJob {
   noteRunner?: CiRunner;
   /**
    * With the pipeline's `evidence` (#4870): the lines that sign the plan
-   * job's `plan` and `policy` checks from its report, and their variables
+   * job's `plan` and `policy` checks from its report (with a target,
+   * `plan:<target>` and `policy:<target>`, #4978), and their variables
    * (the runner key from its secret). GitHub and Forgejo run them in the
    * note job before `pr-post`; GitLab in a job of their own, `jobName`, in
    * the target branch's plan notes pipeline before the note job (#4914),
@@ -547,7 +551,8 @@ export function productPlanJobs(forge: ForgeKind, env: string, loop: PrLoopPipel
       artifact,
       ...(planRunner !== undefined ? { runner: planRunner } : {}),
       ...(noteRunner !== undefined ? { noteRunner } : {}),
-      ...(evidence ? { evidence: planEvidenceOf(forge, evidence, words, jobName, plan.forks === "skip" ? { noForks: true } : {}) } : {}),
+      // #4978: a target's plan job plans that target alone, so its checks are `plan:<target>` and `policy:<target>`.
+      ...(evidence ? { evidence: planEvidenceOf(forge, evidence, words, jobName, { ...(plan.forks === "skip" ? { noForks: true } : {}), ...(name ? { member: { name, reportPath: PR_LOOP_REPORT_DIR } } : {}) }) } : {}),
       ...(Object.keys(jobEnv).length > 0 ? { jobEnv } : {}),
       ...(login && login.steps.length > 0 ? { login: login.steps } : {}),
       ...(Object.keys(idTokens).length > 0 ? { idTokens } : {}),
@@ -818,6 +823,8 @@ export const PLAN_RECORD_JS = [
  * #4964: for a workspace member's pipeline (`member`) the checks are signed
  * as `plan:<member>` and `policy:<member>` (`--member`), and on GitLab the
  * report is read from the plan job's artifact at the member's `reportPath`.
+ * #4978: a product plan target's plan job is signed the same way, under the
+ * target's name.
  */
 export function planEvidenceOf(forge: ForgeKind, evidence: PipelineEvidence, words: CiProductWords, planJob: string, opts: { noForks?: boolean; member?: { name: string; reportPath: string } } = {}): NonNullable<ProductPlanJob["evidence"]> {
   assertPipelineEvidence(evidence);
