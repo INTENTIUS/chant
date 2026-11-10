@@ -61,6 +61,7 @@ import { COMPOSE_STEP_KIND, composeOff, compositionIfEnabled, identityKey, rootH
 import type { TerraformConfig } from "../config";
 import { terraformBinary, terraformOutputs } from "../op/activities/terraform";
 import { runBinary, type BinaryExec } from "../state/exec";
+import { hookedBinaryExec } from "../op/command-hook";
 import { estateVersionFallback, EstateRun, type ComposedRunner } from "../compose/estate";
 import { ComposedRun } from "../compose/run";
 import { relPath, rootTexts } from "../compose/hcl";
@@ -113,7 +114,11 @@ export interface ComposeGroupDeps {
    * `declaredTargetCloudIdentity` from the project root.
    */
   identity?: (projectRoot: string, env: string) => Promise<TargetCloudIdentityLookup | undefined>;
-  /** How `choudoufu version` runs. Default `runBinary`. */
+  /**
+   * How the binary runs: `choudoufu version`, and the composed run's own
+   * commands when `runner` is not given. Default `runBinary`. Either way each
+   * run goes through the step's command hook (chant#4887).
+   */
   exec?: BinaryExec;
   /** A root's outputs as its state holds them, for a member whose part of the working state could not be shown. Default `terraformOutputs`. */
   outputs?: (root: string) => Promise<Record<string, unknown>>;
@@ -137,11 +142,12 @@ async function loadProject(cwd?: string): Promise<ComposeProject> {
   return { projectRoot, terraform: { ...(terraform ?? {}), roots: terraform?.roots ?? {} } as TerraformConfig };
 }
 
-function defaultRunner(o: GroupRunnerOptions, log?: (line: string) => void): ComposedRunner {
+function defaultRunner(o: GroupRunnerOptions, exec: BinaryExec, log?: (line: string) => void): ComposedRunner {
   if (o.composition.estate) {
-    return new EstateRun({ projectRoot: o.projectRoot, composition: o.composition, terraform: o.terraform, env: o.env, work: o.work, ...(log ? { log } : {}) });
+    return new EstateRun({ projectRoot: o.projectRoot, composition: o.composition, terraform: o.terraform, env: o.env, work: o.work, exec, ...(log ? { log } : {}) });
   }
   return new ComposedRun({
+    exec,
     projectRoot: o.projectRoot,
     composition: o.composition,
     terraform: o.terraform,
@@ -354,7 +360,8 @@ export class ComposedPlanMovedError extends Error {
 /** The group methods, with `deps` in place of the defaults. */
 export function composeGroup(deps: ComposeGroupDeps = {}): ComposeGroupMethods {
   const project = deps.project ?? loadProject;
-  const exec = deps.exec ?? runBinary;
+  // chant#4887: the composed group's commands go through the step's command hook, as a plain root's do.
+  const exec = hookedBinaryExec(deps.exec ?? runBinary);
   const envOf = (): NodeJS.ProcessEnv => deps.env ?? process.env;
   const log = deps.log ?? ((line: string) => console.error(line));
   const readOutputs = deps.outputs ?? ((root: string) => terraformOutputs({ root }));
@@ -391,7 +398,7 @@ export function composeGroup(deps: ComposeGroupDeps = {}): ComposeGroupMethods {
       env: envOf(),
       work,
     };
-    const runner = deps.runner ? deps.runner(o) : defaultRunner(o, log);
+    const runner = deps.runner ? deps.runner(o) : defaultRunner(o, exec, log);
     try {
       return await fn(runner);
     } finally {

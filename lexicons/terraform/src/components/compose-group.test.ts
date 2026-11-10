@@ -484,3 +484,32 @@ describe("helpers (#4447)", () => {
     expect(c.reads.get("b")).toEqual([{ via: "vars", upstream: "a", variable: "a_id", output: "id" }]);
   });
 });
+
+describe("the composed run's commands go through the step's command hook (chant#4887)", () => {
+  test("with no runner given, each command the composed run makes reaches the hook as a command for every member", async () => {
+    const { withTerraformCommandHook } = await import("../op/command-hook");
+    const dir = project();
+    const ran: string[] = [];
+    const g = composeGroup({
+      project: async () => ({ projectRoot: dir, terraform: terraform(true) }),
+      identity: async () => undefined,
+      // The first member's init fails, so the run stops before it plans: what matters is that its command went through the hook.
+      exec: async (_bin, args, _dir, env) => {
+        ran.push(`${args[0]} ${env.HOOK_TAG ?? "none"}`);
+        return { code: 1, stdout: "", out: "Error: no provider" };
+      },
+      env: {},
+      log: () => {},
+    });
+    const seen: Array<{ name: string; root: string; members?: string[]; method: string; code?: number | null }> = [];
+    const hook = (c: { name: string; root: string; members?: string[]; method: string }) => {
+      const at = seen.push({ name: c.name, root: c.root, ...(c.members ? { members: c.members } : {}), method: c.method }) - 1;
+      return { env: { HOOK_TAG: `${c.method}:${c.name}` }, after: (r: { code: number | null }) => void (seen[at]!.code = r.code) };
+    };
+    await expect(
+      withTerraformCommandHook(hook, { root: "a", members: ["a", "b", "c"], method: "plan" }, () => g.planGroup({ env: "test" } as never, members())),
+    ).rejects.toThrow(/init failed/);
+    expect(ran).toEqual(["init plan:init"]);
+    expect(seen).toEqual([{ name: "init", root: "a", members: ["a", "b", "c"], method: "plan", code: 1 }]);
+  });
+});

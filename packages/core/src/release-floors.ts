@@ -33,6 +33,12 @@ export const OVERDUE_PIPELINE_FILES_FLOOR = "0.124.86";
 /** The first chant whose `terraformApplyCapabilityWith` takes `onCommand`, a hook around each engine command `terraform-apply` runs for a root, its reads' upstreams included (#4865). */
 export const TERRAFORM_APPLY_COMMAND_HOOK_FLOOR = "0.124.86";
 
+/** The first chant whose terraform lexicon times each root's engine commands and reads its spans and lock waits (`@intentius/chant-lexicon-terraform/engine-timings`, `engineTimings()` as `terraformApplyCapabilityWith`'s `onCommand`), and runs a composed group's commands through that hook (#4887). */
+export const TERRAFORM_ENGINE_TIMINGS_FLOOR = NEXT_RELEASE;
+
+/** The first chant whose terraform lexicon finds live roots and estates (`live-roots`), places a Terragrunt unit (`terragruntUnitPlace`), reads a state migration's history and revert from its finished lines (`migration-history`), and runs the binary without the forge's tokens (`tokenlessBinaryExec`, `engineEnv`) (#4910). */
+export const TERRAFORM_ROOT_HELPERS_FLOOR = NEXT_RELEASE;
+
 /** The first chant with `@intentius/chant/forge-flags` (`forgeTargetWith`, `forgeTargetFromFlags`, `apiBaseOf`), `@intentius/chant/chant-install` (`bundledChant`, `chantArgv`, `installChantResolveFallback`) and `noteLimit` and `fitNote` in `@intentius/chant/plan-summary` (#4800). */
 export const PRODUCT_HELPERS_FLOOR = "0.124.86";
 

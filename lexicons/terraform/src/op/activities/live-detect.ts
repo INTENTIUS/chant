@@ -189,3 +189,90 @@ export function detectLivePolicyVerbs(dir: string, binary = "choudoufu"): LivePo
 
   return undefined;
 }
+
+/**
+ * Whether the root module directory `dir` keeps its resources under
+ * choudoufu's live markers (chant#4910): an `estate.chdf.hcl` sidecar, or a
+ * `live` block in a `terraform` block, whether or not it names an estate.
+ */
+export function declaresLive(dir: string, binary = "choudoufu"): boolean {
+  if (existsSync(join(dir, LIVE_SIDECAR_FILENAME))) return true;
+  let names: string[];
+  try {
+    names = liveFiles(dir, binary);
+  } catch {
+    return false;
+  }
+  return names.some((name) => {
+    try {
+      return liveBlocksOf(name, stripLineComments(name, readFileSync(join(dir, name), "utf-8"))).length > 0;
+    } catch {
+      return false;
+    }
+  });
+}
+
+/**
+ * Each `data "terraform_estate_outputs"` block of the root module directory
+ * `dir` (chant#4910): its label and the estate whose recorded outputs it
+ * reads. A block that names no estate as a literal is left out.
+ */
+export function estateOutputReads(dir: string, binary = "choudoufu"): Array<{ name: string; estate: string }> {
+  let names: string[];
+  try {
+    names = liveFiles(dir, binary);
+  } catch {
+    return [];
+  }
+  const out: Array<{ name: string; estate: string }> = [];
+  for (const name of names) {
+    let source: string;
+    try {
+      source = readFileSync(join(dir, name), "utf-8");
+    } catch {
+      continue;
+    }
+    if (isJsonConfigFile(name)) {
+      let doc: unknown;
+      try {
+        doc = JSON.parse(source);
+      } catch {
+        continue;
+      }
+      const data = [(doc as { data?: unknown } | null)?.data].flat();
+      for (const d of data) {
+        const reads = d && typeof d === "object" ? (d as Record<string, unknown>).terraform_estate_outputs : undefined;
+        for (const r of [reads].flat()) {
+          if (!r || typeof r !== "object") continue;
+          for (const [label, body] of Object.entries(r as Record<string, unknown>)) {
+            const estate = [body].flat().map((b) => nonEmpty((b as { estate?: unknown } | null)?.estate)).find((e) => e !== undefined);
+            if (estate) out.push({ name: label, estate });
+          }
+        }
+      }
+      continue;
+    }
+    const text = stripLineComments(name, source);
+    for (const m of text.matchAll(/\bdata\s+"terraform_estate_outputs"\s+"([^"]+)"\s*\{/g)) {
+      const body = bodyAt(text, m.index! + m[0].length - 1);
+      const estate = body === undefined ? undefined : extractEstateAttr(body);
+      if (estate) out.push({ name: m[1]!, estate });
+    }
+  }
+  return out;
+}
+
+/** An HCL file's text with its `#` and `//` line comments blanked; a JSON file's as it is. */
+function stripLineComments(name: string, source: string): string {
+  return isJsonConfigFile(name) ? source : source.replace(/^\s*(#|\/\/).*$/gm, "");
+}
+
+/** The inner text of the `{ ... }` block whose opening brace is at `open`, or undefined when it never closes. */
+function bodyAt(source: string, open: number): string | undefined {
+  let depth = 0;
+  for (let i = open; i < source.length; i++) {
+    if (source[i] === "{") depth++;
+    else if (source[i] === "}" && --depth === 0) return source.slice(open + 1, i);
+  }
+  return undefined;
+}

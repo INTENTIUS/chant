@@ -175,6 +175,8 @@ export async function confirmApproval(opName: string, gate: string, opts: Confir
       err(`The stored plan can't be read: ${e instanceof Error ? e.message : String(e)}\n`);
     }
   }
+  // #4928: a gated request's attachment (a state migration's roots and the product's record) is what its digest binds; show it.
+  if (!shown) shown = await showAttachment(opName, digest, cwd, out, err);
   if (!shown) {
     err(
       `No plan is stored on chant/lifecycle under ${changeSet}. The run that stopped at the gate printed it; ` +
@@ -205,4 +207,38 @@ export async function confirmApproval(opName: string, gate: string, opts: Confir
     }
   }
   return { status: "confirmed", plan: digest, target };
+}
+
+/** The most of an attachment `chant approve` prints before it says where the rest is (#4928). */
+const ATTACHMENT_SHOWN_BYTES = 64 * 1024;
+
+/**
+ * Print the attachment a gated request stored under `digest` (#4928), such
+ * as a state migration's roots and the product's record. JSON is printed
+ * indented, anything else as stored, and either is cut at
+ * {@link ATTACHMENT_SHOWN_BYTES} with the path of the whole. False when none is stored.
+ */
+export async function showAttachment(op: string, digest: string, cwd: string, out: (text: string) => void, err: (text: string) => void): Promise<boolean> {
+  const { gatedRequestAttachmentPath } = await import("../../lifecycle/gated-request-digest");
+  const { readBlobFromPath } = await import("../../lifecycle/git");
+  const { dir, file } = gatedRequestAttachmentPath(op, digest);
+  let text: string | null;
+  try {
+    text = await readBlobFromPath(dir, file, { cwd });
+  } catch (e) {
+    err(`The request's attachment can't be read: ${e instanceof Error ? e.message : String(e)}\n`);
+    return false;
+  }
+  if (text === null) return false;
+  let shown = text;
+  try {
+    shown = `${JSON.stringify(JSON.parse(text), null, 2)}\n`;
+  } catch {
+    // Not JSON: shown as stored.
+  }
+  const cut = Buffer.byteLength(shown, "utf8") > ATTACHMENT_SHOWN_BYTES;
+  out(`The request binds ${dir}/${file}:\n`);
+  out(cut ? `${Buffer.from(shown, "utf8").subarray(0, ATTACHMENT_SHOWN_BYTES).toString("utf8")}\n...\n` : shown);
+  if (cut) err(`The attachment is longer than ${ATTACHMENT_SHOWN_BYTES} bytes; the whole is at ${dir}/${file} on chant/lifecycle.\n`);
+  return true;
 }

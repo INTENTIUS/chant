@@ -6,6 +6,7 @@
  * `BinaryExec`, `runBinary`, `StateFile`, `StateResource` and `pullState`.
  */
 import { spawn } from "node:child_process";
+import { FORGE_TOKEN_VARS } from "@intentius/chant/ci-handover";
 
 export interface Ran {
   code: number;
@@ -67,6 +68,43 @@ export const runBinary: BinaryExec = (binary, args, dir, env, io) =>
       done({ code: code ?? 1, stdout, out });
     });
   });
+
+/**
+ * `env` without the forge's tokens, for the engine (chant#4910): the
+ * providers, modules and external data sources the binary runs are the
+ * change's own code, and none of it needs the forge's API. Left out: chant's
+ * {@link FORGE_TOKEN_VARS}, the product's own token variables (`tokens`,
+ * such as terragucci's `TG_TOKEN` and `TG_MERGE_TOKEN`), and any other
+ * variable holding the same value as one of them (GitLab's `GITLAB_TOKEN`
+ * set from the product's, or a variable a product's `token_env` names). A
+ * variable whose name starts with `TF_` is passed as set, so a backend
+ * password or a `TF_VAR_` given to the binary on purpose still reaches it.
+ *
+ * Lifted from terragucci's `binaryEnv` (binary-env.ts).
+ */
+export function engineEnv(env: NodeJS.ProcessEnv, tokens: readonly string[] = []): NodeJS.ProcessEnv {
+  const names = new Set<string>([...FORGE_TOKEN_VARS, ...tokens]);
+  const secrets = new Set([...names].map((n) => env[n]).filter((v): v is string => typeof v === "string" && v.length > 0));
+  const out: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (names.has(k)) continue;
+    if (v !== undefined && secrets.has(v) && !k.startsWith("TF_")) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
+/**
+ * {@link runBinary} with the forge's tokens left out of the binary's
+ * environment ({@link engineEnv}), `tokens` naming the product's own
+ * (chant#4910). A product that ran the binary through its own wrapper over
+ * `runBinary` passes this one wherever a `BinaryExec` is taken. `runBinary`
+ * itself still passes the environment as given, since a project's provider
+ * may read a forge token on purpose (the GitHub provider reads `GITHUB_TOKEN`).
+ */
+export function tokenlessBinaryExec(tokens: readonly string[] = [], exec: BinaryExec = runBinary): BinaryExec {
+  return (binary, args, dir, env, io) => exec(binary, args, dir, engineEnv(env, tokens), io);
+}
 
 /** A state file as `state pull` prints it (format version 4); only what a run touches is named. */
 export interface StateFile {
