@@ -72,6 +72,7 @@ import { GATED_EXIT_CODE } from "./run";
 import type { CommandContext } from "../registry";
 import { withComponentEndpoint } from "../component-endpoint";
 import { redeployLine, releaseRollbackLine, rollbackTarget, unsettledComponents } from "../../lifecycle/mixed-environment";
+import { actorFromEnv } from "../../actor";
 
 const PROMOTE_USAGE =
   "chant components promote --to <env> [--from <env>] [--allow-skip] [--release <label|digest>] [--component <name> [--digest <sha256:...>] | --digest <component>=<sha256:...> ...] [--wave-gate <gate>] [--resume <file>] [--dry-run] [--json]";
@@ -117,7 +118,7 @@ function planJson(plan: PromotionPlan, removed: Map<string, string[]>) {
 }
 
 function resolveActor(ctx: CommandContext): string | undefined {
-  return ctx.args.actor ?? process.env.GITHUB_ACTOR ?? process.env.GITLAB_USER_LOGIN ?? process.env.USER;
+  return ctx.args.actor ?? (actorFromEnv(process.env, "") || undefined);
 }
 
 /**

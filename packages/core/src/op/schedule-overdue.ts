@@ -213,9 +213,61 @@ function yamlDocs(repoRoot: string, path: string): Record<string, unknown>[] {
 
 /** When `path` was first committed (ISO 8601), if the checkout's history has it. */
 export function fileAdded(repoRoot: string, path: string): string | undefined {
-  const r = spawnSync("git", ["-C", repoRoot, "log", "--format=%cI", "--diff-filter=A", "--", path], { encoding: "utf-8" });
+  return addedCommit(repoRoot, path)?.at;
+}
+
+/** The oldest commit the checkout's history says added `path`, with its commit time. */
+function addedCommit(repoRoot: string, path: string): { sha: string; at: string } | undefined {
+  const r = spawnSync("git", ["-C", repoRoot, "log", "--format=%H %cI", "--diff-filter=A", "--", path], { encoding: "utf-8" });
   if (r.status !== 0) return undefined;
-  return r.stdout.trim().split("\n").filter(Boolean).pop();
+  const last = r.stdout.trim().split("\n").filter(Boolean).pop();
+  if (!last) return undefined;
+  const [sha, at] = last.split(" ");
+  return sha && at ? { sha, at } : undefined;
+}
+
+/**
+ * The commits a shallow checkout's history stops at (#4952), from git's
+ * `shallow` file. Empty for a full clone.
+ */
+function shallowBoundary(repoRoot: string): Set<string> {
+  const r = spawnSync("git", ["-C", repoRoot, "rev-parse", "--path-format=absolute", "--git-path", "shallow"], { encoding: "utf-8" });
+  if (r.status !== 0) return new Set();
+  try {
+    return new Set(readFileSync(r.stdout.trim(), "utf-8").split("\n").map((l) => l.trim()).filter(Boolean));
+  } catch {
+    return new Set();
+  }
+}
+
+/** How long the check waits for the fetch that deepens a shallow checkout. */
+const DEEPEN_TIMEOUT_MS = 120_000;
+
+/**
+ * When `path` was added, read so a shallow checkout does not under-report
+ * (#4952). A CI checkout is often shallow, and its oldest commit lists
+ * every file as added, so a job that never ran would count from that
+ * commit. When the commit found is at the shallow boundary, the check
+ * fetches the rest of the history once per run (`git fetch --unshallow`,
+ * with the job's own credentials) and reads the file again. When that fetch
+ * fails, the boundary's time is still a lower bound, so the check counts
+ * from it and says so in the log.
+ */
+function addedDate(repoRoot: string, path: string, op: string, state: { deepened?: boolean; failed?: string }, log: (line: string) => void): string | undefined {
+  let found = addedCommit(repoRoot, path);
+  if (!found || !shallowBoundary(repoRoot).has(found.sha)) return found?.at;
+  if (!state.deepened) {
+    state.deepened = true;
+    const r = spawnSync("git", ["-C", repoRoot, "fetch", "--quiet", "--unshallow"], { encoding: "utf-8", timeout: DEEPEN_TIMEOUT_MS });
+    if (r.status !== 0) state.failed = (r.stderr || r.error?.message || `git fetch exited ${r.status}`).trim().split("\n")[0];
+    // A checkout with no remote answers 0 and stays shallow.
+    else if (shallowBoundary(repoRoot).size > 0) state.failed = "git fetch --unshallow left it shallow";
+    found = addedCommit(repoRoot, path) ?? found;
+  }
+  if (state.failed !== undefined && shallowBoundary(repoRoot).has(found.sha)) {
+    log(`schedule check: the checkout is shallow and its history could not be fetched, so Op ${op} counts from its oldest commit, ${found.at.slice(0, 10)}: ${state.failed}`);
+  }
+  return found.at;
 }
 
 const HINT: Record<ForgeKind, string> = {
@@ -278,6 +330,8 @@ export async function checkOverdueOps(input: {
   if (!forge.scheduledRuns) return [];
   const log = (line: string): void => input.log(`${input.logPrefix ?? ""}${line}`);
   const out: OverdueOp[] = [];
+  // One fetch at most per check, however many Ops count from a shallow boundary (#4952).
+  const history: { deepened?: boolean; failed?: string } = {};
   for (const watch of input.watches) {
     const file = opPipelineFile(input.repoRoot, forge.kind, watch, input.member);
     if (!file) continue;
@@ -288,7 +342,7 @@ export async function checkOverdueOps(input: {
       log(`schedule check: ${forge.kind} did not say when Op ${watch.op} last ran, so it is not checked: ${(err instanceof Error ? err.message : String(err)).split("\n")[0]}`);
       continue;
     }
-    const found = overdueVerdict(watch, forge.kind, runs, runs.last ? undefined : fileAdded(input.repoRoot, file), input.now);
+    const found = overdueVerdict(watch, forge.kind, runs, runs.last ? undefined : addedDate(input.repoRoot, file, watch.op, history, log), input.now);
     if (found) {
       log(found.message);
       out.push(input.label ? { ...found, message: `${input.label}${found.message}` } : found);

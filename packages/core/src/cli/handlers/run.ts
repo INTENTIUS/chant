@@ -40,6 +40,7 @@ import { adoptionReview, loadDeployAdoption, type DeployAdoption } from "../../c
 import { isApplyRecord, resolveCiRun, type ReleaseRecord, type RunOrigin } from "../../lifecycle/release-ledger";
 import { gateAdmission, gateApprover } from "../../components/promote";
 import { runOpGenerate } from "./run-generate";
+import { actorFromEnv } from "../../actor";
 
 /**
  * The exit code a run that stopped at an unapproved gate uses (#2119).
@@ -1132,7 +1133,7 @@ export async function recordSkips(
 ): Promise<ReleaseRecord[]> {
   const fresh = [...skipped.values()].filter((v) => !v.recorded);
   if (fresh.length === 0) return [];
-  const actor = process.env.GITHUB_ACTOR ?? process.env.GITLAB_USER_LOGIN ?? process.env.USER;
+  const actor = actorFromEnv(process.env, "");
   if (!actor) {
     console.error(formatWarning({ message: `the skips of ${fresh.map((v) => v.since.component).join(", ")} were not recorded: no actor (GITHUB_ACTOR, GITLAB_USER_LOGIN or USER)` }));
     return [];

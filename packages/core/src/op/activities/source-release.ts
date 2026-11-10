@@ -23,6 +23,7 @@ import { join, resolve } from "node:path";
 import type { ReleaseAdmission } from "../../lifecycle/release-ledger";
 import { sortedJsonReplacer } from "../../utils";
 import { archiveSourceTree, sha256Digest, type SourceArchive } from "../source-archive";
+import { actorFromEnv } from "../../actor";
 
 // ── sourceArchive ─────────────────────────────────────────────────────────────
 
@@ -149,7 +150,7 @@ export async function releaseRecord(args: ReleaseRecordArgs): Promise<ReleaseRec
     return { recorded: false, digest: plan.digest, env, component, approver };
   }
 
-  const actor = args.actor || process.env.GITHUB_ACTOR || process.env.GITLAB_USER_LOGIN || process.env.USER;
+  const actor = args.actor || actorFromEnv(process.env, "");
   if (!actor) throw new Error("releaseRecord: no actor: pass one, or set GITHUB_ACTOR, GITLAB_USER_LOGIN or USER");
   const { runId, runOrigin } = resolveRunId(args.runId);
   await persistReleasePlan(plan, opts);
