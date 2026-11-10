@@ -39,6 +39,9 @@ export const TERRAFORM_ENGINE_TIMINGS_FLOOR = "0.124.88";
 /** The first chant whose terraform lexicon finds live roots and estates (`live-roots`), places a Terragrunt unit (`terragruntUnitPlace`), reads a state migration's history and revert from its finished lines (`migration-history`), and runs the binary without the forge's tokens (`tokenlessBinaryExec`, `engineEnv`) (#4910). */
 export const TERRAFORM_ROOT_HELPERS_FLOOR = "0.124.88";
 
+/** The first chant whose terraform lexicon has one runner of the engine for a product (`engineRunner` in `engine-runner`: a hooked `exec`, `execSync`, `terragrunt` and the tokenless `script`), traces each engine command (`commandTrace`, `commandTraceEnv`), sends each Terragrunt unit's plan through `planTerragruntWave({ onCommand })`, and resolves a live root's record store (`liveRecordStore`, `writtenRecordStore`, `rootBackendAttrs` in `live-roots`) (#4954). */
+export const TERRAFORM_ENGINE_RUNNER_FLOOR = NEXT_RELEASE;
+
 /** The first chant with `@intentius/chant/forge-flags` (`forgeTargetWith`, `forgeTargetFromFlags`, `apiBaseOf`), `@intentius/chant/chant-install` (`bundledChant`, `chantArgv`, `installChantResolveFallback`) and `noteLimit` and `fitNote` in `@intentius/chant/plan-summary` (#4800). */
 export const PRODUCT_HELPERS_FLOOR = "0.124.86";
 

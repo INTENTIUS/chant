@@ -17,14 +17,22 @@
  *   {@link checkStoreBucket} and {@link bucketLines}: the setup as a log line,
  *   and core's bucket check (`@intentius/chant/bucket-check`, chant#4558) on
  *   the resolved store.
+ * - {@link liveRecordStore}: where a live root's records are, choudoufu's
+ *   resolved store over the one its files write ({@link writtenRecordStore}),
+ *   and {@link rootBackendAttrs}, the backend block's strings the bucket
+ *   check and an s3 store's region read (chant#4954).
  *
  * Text reads, as `./op/activities/live-detect.ts` does them: no HCL parser
  * is loaded. Lifted from terragucci's `detect.ts` (`liveRoots`, `estateOf`)
- * and `live-setup.ts`, so terragucci deletes its copies.
+ * and `live-setup.ts`, and `cdf-records.ts` (`recordStoreOf`), so
+ * terragucci deletes its copies.
  */
+import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { checkBucket, type BucketReport, type BucketTarget } from "@intentius/chant/bucket-check";
+import { blankComments, blockBody, hclAttr, rootTexts } from "./compose/hcl";
 import { declaresLive, detectLiveEstate, estateOutputReads } from "./op/activities/live-detect";
+import { declaredBackend } from "./state/backend";
 import { runBinary, type BinaryExec } from "./state/exec";
 
 export { declaresLive, detectLiveEstate, estateOutputReads } from "./op/activities/live-detect";
@@ -137,6 +145,101 @@ export async function readLiveSetup(dir: string, options: { binary?: string; exe
 /** A live root's estate: choudoufu's resolved name when it was read, else the name its files write. */
 export function resolvedEstate(dir: string, binary = "choudoufu"): string | undefined {
   return knownLiveSetup(dir)?.estate ?? estateOf(dir, binary).estate;
+}
+
+/**
+ * Where a live root's records are, for a product that lists them
+ * (chant#4954): an S3 bucket, a directory, or a store it does not read
+ * (`name` is its kind). `prefix` has one trailing slash.
+ */
+export type RecordStore =
+  | { kind: "s3"; bucket: string; prefix: string; region?: string }
+  | { kind: "local"; dir: string; prefix: string }
+  | { kind: "unread"; name: string };
+
+/** A key namespace with exactly one trailing slash, as choudoufu's NamespacePrefix makes it. */
+const namespace = (prefix: string): string => `${prefix.replace(/\/+$/, "")}/`;
+
+/**
+ * The text of a root's `live` block, comments blanked: its `estate.chdf.hcl`
+ * sidecar whole, else the `live` block in a `terraform` block of its HCL
+ * files. Undefined when it has neither.
+ */
+export function liveBlockText(dir: string, binary = "choudoufu"): string | undefined {
+  const sidecar = join(dir, "estate.chdf.hcl");
+  if (existsSync(sidecar)) return blankComments(readFileSync(sidecar, "utf-8"));
+  for (const { text, json } of rootTexts(dir, binary)) {
+    if (json) continue;
+    for (const t of text.matchAll(/^\s*terraform\s*\{/gm)) {
+      const body = blockBody(text, t.index!);
+      const live = body.match(/\blive\s*\{/);
+      if (live) return blockBody(body, live.index!);
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The record store a live root's files write for `estate` (chant#4954): the
+ * `record_store "<kind>"` block in its `live` block or sidecar, its
+ * `key_prefix` (default `tofu-records/<estate>/`), an s3 store's `bucket` and
+ * `region`, a local store's `path` (default `.tofu-records`, beside the
+ * root). No `record_store` block is the local store. Undefined when the root
+ * has no live block. Lifted from terragucci's `recordStoreOf`
+ * (cdf-records.ts).
+ */
+export function writtenRecordStore(dir: string, estate: string, binary = "choudoufu"): RecordStore | undefined {
+  const live = liveBlockText(dir, binary);
+  if (live === undefined) return undefined;
+  const m = /\brecord_store\s+"([^"]+)"\s*\{/.exec(live);
+  const attr = m ? hclAttr(blockBody(live, m.index)) : () => undefined;
+  const str = (name: string): string | undefined => {
+    const v = attr(name);
+    return typeof v === "string" ? v : undefined;
+  };
+  const prefix = namespace(str("key_prefix") ?? `tofu-records/${estate}`);
+  const kind = m?.[1] ?? "local";
+  if (kind === "s3") {
+    const bucket = str("bucket");
+    if (!bucket) return { kind: "unread", name: "s3" };
+    const region = str("region");
+    return { kind: "s3", bucket, prefix, ...(region ? { region } : {}) };
+  }
+  if (kind === "local") return { kind: "local", dir: join(dir, str("path") ?? ".tofu-records"), prefix };
+  return { kind: "unread", name: kind };
+}
+
+/**
+ * The string attributes of a root's backend block as its code writes them
+ * (chant#4954), for the bucket check's s3 region and azurerm subscription
+ * and resource group. Empty for a `cloud` block or no backend. Read with
+ * {@link declaredBackend}, without the job's `-backend-config` flags.
+ */
+export function rootBackendAttrs(dir: string, binary = "choudoufu"): Record<string, string> {
+  const b = declaredBackend(dir, { binary, env: {} });
+  if (!b || b.type === "cloud") return {};
+  return Object.fromEntries(Object.entries(b.config).filter((e): e is [string, string] => typeof e[1] === "string"));
+}
+
+/**
+ * A live root's record store (chant#4954): choudoufu's resolved store when
+ * {@link readLiveSetup} read it for the root, else the one its files write
+ * ({@link writtenRecordStore}). An s3 store's region, which `live-check
+ * -json` does not print, comes from the `record_store` block, else the
+ * backend block. Undefined when the root has no live block. Lifted from
+ * terragucci's `resolvedRecordStore` (live-setup.ts).
+ */
+export function liveRecordStore(dir: string, estate: string, binary = "choudoufu"): RecordStore | undefined {
+  if (liveBlockText(dir, binary) === undefined) return undefined;
+  const s = knownLiveSetup(dir)?.store;
+  if (!s) return writtenRecordStore(dir, estate, binary);
+  if (s.kind === "local") return { kind: "local", dir: resolve(dir, s.bucket || ".tofu-records"), prefix: s.prefix };
+  if (s.kind === "s3" && s.bucket) {
+    const written = writtenRecordStore(dir, estate, binary);
+    const region = (written?.kind === "s3" ? written.region : undefined) ?? rootBackendAttrs(dir, binary).region;
+    return { kind: "s3", bucket: s.bucket, prefix: s.prefix, ...(region ? { region } : {}) };
+  }
+  return { kind: "unread", name: s.kind };
 }
 
 const STORE_FROM: Record<string, string> = {

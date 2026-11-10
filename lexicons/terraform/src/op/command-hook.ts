@@ -48,6 +48,13 @@ export interface TerraformCommandResult {
   seconds: number;
   stdout: string;
   stderr: string;
+  /**
+   * When it ran, in Unix milliseconds, for a command timed apart from its
+   * call (chant#4954): a Terragrunt unit's plan, from Terragrunt's run
+   * report, whose `after` is called once the whole wave ends. Unset, it ran
+   * from the hook's call to its `after`.
+   */
+  at?: { start: number; end: number };
 }
 
 /** What a {@link TerraformCommandHook} answers for one command (chant#4865). */
