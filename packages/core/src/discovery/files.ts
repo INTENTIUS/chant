@@ -105,7 +105,7 @@ export function isSourceFileName(name: string): boolean {
  * discovery walk (`./walk.ts`, #2527): test and spec files, chant-generated
  * files, skip-marked files and whatever the walk's rules and the project's
  * globs skip are left out. Walked from the root of a project with no
- * `sourceDir`, its top-level `scripts/` is left out too (#4794,
+ * `sourceDir`, its top-level `scripts/` and `migrations/` are left out too (#4794, #4921,
  * `ROOT_SOURCE_EXCLUDES`), unless `include` brings it back.
  */
 export async function findInfraFiles(path: string, options?: FindInfraFilesOptions): Promise<string[]> {

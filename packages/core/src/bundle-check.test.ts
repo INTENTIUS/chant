@@ -64,6 +64,28 @@ describe("chantRuntimeTarget (#4787)", () => {
     expect(cb!({ path: "@intentius/chant/ts-only" })).toBeUndefined();
     expect([...external]).toEqual(["@intentius/chant/notify"]);
   });
+
+  it("keeps external only the chant packages in the package's dependencies, or the ones it is given (#4922)", () => {
+    const { app, root } = product();
+    const lexicon = join(root, "node_modules/@intentius/chant-lexicon-k8s");
+    write(join(lexicon, "package.json"), { name: "@intentius/chant-lexicon-k8s", version: "1.2.3", exports: { ".": { import: "./dist/index.js" } } });
+    write(join(lexicon, "dist/index.js"), "export {};\n");
+    const resolver = (plugin: ReturnType<typeof chantExternalPlugin>) => {
+      let cb: ((a: { path: string }) => unknown) | undefined;
+      plugin.setup({ onResolve: (_o, f) => { cb = f; } });
+      return cb!;
+    };
+    // The app depends on @intentius/chant only, so the lexicon (a devDependency it bundles) stays in the bundle.
+    const byDeps = resolver(chantExternalPlugin(app));
+    expect(byDeps({ path: "@intentius/chant/notify" })).toEqual({ path: "@intentius/chant/notify", external: true });
+    expect(byDeps({ path: "@intentius/chant-lexicon-k8s" })).toBeUndefined();
+    // Named packages win over the dependencies.
+    const external = new Set<string>();
+    const named = resolver(chantExternalPlugin(app, { packages: ["@intentius/chant-lexicon-k8s"], external }));
+    expect(named({ path: "@intentius/chant-lexicon-k8s" })).toEqual({ path: "@intentius/chant-lexicon-k8s", external: true });
+    expect(named({ path: "@intentius/chant" })).toBeUndefined();
+    expect([...external]).toEqual(["@intentius/chant-lexicon-k8s"]);
+  });
 });
 
 describe("bundleImports (#4787)", () => {

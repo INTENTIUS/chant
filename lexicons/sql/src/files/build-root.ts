@@ -12,7 +12,9 @@
  * directory (#3713): versioned migrations and an ORM's generated migrations
  * are `ALTER`s and repeated `CREATE`s of objects declared elsewhere, and a
  * build of the project root, as `chant lifecycle diff` and an ApplyOp's plan
- * run with no `sourceDir`, walks into them.
+ * run with no `sourceDir`, walks into them. Such a file is not opened at all
+ * (#4921), and a root build leaves the top-level `migrations/` out of its walk
+ * (`ROOT_SOURCE_EXCLUDES`).
  *
  * The dialect is the declarations': a project whose templates are Postgres
  * reads its files as Postgres. With no templates it is `sql.dialect`, and
@@ -67,7 +69,8 @@ export function filesDialect(entities: ReadonlyMap<string, Declarable> | undefin
 /** The `buildRoots` contribution: every `.sql` file's declarations, or nothing when the source directory holds none. */
 export async function sqlFilesBuildRoot(ctx: BuildRootContext): Promise<BuildRootContribution> {
   const sourceDir = ctx.sourceDir ?? resolveSourceDir(ctx.projectRoot, ctx.config);
-  const files = (await findSourceFiles(sourceDir, isSqlSourceFile)).filter((f) => !inMigrationsDir(sourceDir, f)).sort();
+  // #4921: a file under migrations/ is refused before its head is read for a marker, so the build opens none.
+  const files = (await findSourceFiles(sourceDir, (name, full) => !inMigrationsDir(sourceDir, full) && isSqlSourceFile(name, full))).sort();
   if (files.length === 0) return { entities: new Map() };
   const dialect = filesDialect(ctx.entities, ctx.config);
   const sources = files.map((f) => ({ origin: relative(ctx.projectRoot, f) || f, ddl: readFileSync(f, "utf8") }));

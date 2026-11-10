@@ -127,3 +127,11 @@ export const STACK_OPS_PRODUCT_HELPERS_FLOOR = NEXT_RELEASE;
 
 /** The first chant with `@intentius/chant/forge-remote` (`forgeOfRemote`, `forgeOfCheckout`, `forgeKindOfHost`), the forge and repository a checkout's origin remote names, and a pulumi `gatedStackCancel` that reads the forge's runs from it on a laptop (#4920). */
 export const FORGE_REMOTE_FLOOR = NEXT_RELEASE;
+/** The first chant with `chant dev generated-check` (`chantGenerated` in a product's root package.json, `@intentius/chant/generated-check`) and `chant dev local-image` (`localChantImage` in `@intentius/chant/local-chant`): a drift check of a product's committed generated files, and an image build with the product's chant, local or pinned, without the product's own scripts (#4909). */
+export const GENERATED_CHECK_FLOOR = NEXT_RELEASE;
+
+/** The first chant whose `chant dev local` keeps the product's peer dependencies installed and packs the checkout at its `NEXT_RELEASE`, and whose root build of a project with no `sourceDir` leaves its top-level `migrations/` out, with the sql lexicon opening no `.sql` file under a `migrations` directory (#4921). */
+export const LOCAL_CHANT_NEXT_RELEASE_FLOOR = NEXT_RELEASE;
+
+/** The first chant whose `chantExternalPlugin` keeps external only the chant packages it is given, by default the ones in the package's `dependencies`, so a product that bundles its lexicons uses it as is (#4922). */
+export const CHANT_EXTERNAL_PACKAGES_FLOOR = NEXT_RELEASE;

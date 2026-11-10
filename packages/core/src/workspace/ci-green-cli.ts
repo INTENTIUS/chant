@@ -233,7 +233,12 @@ export async function runCiWorkflow(ctx: CommandContext): Promise<number> {
     const repoRoot = gitTop(root) ?? root;
     const member = resolveMemberContext(cwd, found);
     const target = ctx.args.output ? resolve(realpathSync(cwd), ctx.args.output) : join(repoRoot, CI_GREEN_WORKFLOW_FILE);
-    const fromRepo = relative(repoRoot, target).split(sep).join("/");
+    // #4909: under `chant dev generated-check` the file goes to the render
+    // tree; it is read and named as the committed file it stands for.
+    const { committedPathOf, isRenderPath, renderPathOf } = await import("../generated-check");
+    const rendering = isRenderPath(target);
+    const asCommitted = committedPathOf(target);
+    const fromRepo = relative(repoRoot, asCommitted).split(sep).join("/");
 
     // The merge queue's verdict (#4644) is ours too, and holds no phase.
     const sources = readWorkflowSources(repoRoot, fromRepo).filter((s) => s.path !== MERGE_QUEUE_WORKFLOW_FILE);
@@ -252,7 +257,7 @@ export async function runCiWorkflow(ctx: CommandContext): Promise<number> {
 
     const base = member ? member.memberRoot : root;
     const parts = ["chant", "ci", "workflow", ...extra.flatMap((w) => ["--workflow", w])];
-    if (ctx.args.output) parts.push("--output", relative(base, target).split(sep).join("/"));
+    if (ctx.args.output && !(rendering && asCommitted === join(repoRoot, CI_GREEN_WORKFLOW_FILE))) parts.push("--output", relative(base, asCommitted).split(sep).join("/"));
     if (ctx.args.ciChant) parts.push("--chant", ctx.args.ciChant);
     if (ctx.args.ciInstall) parts.push("--install", ctx.args.ciInstall);
     if (push && "secret" in push) parts.push("--token-secret", push.secret);
@@ -269,19 +274,20 @@ export async function runCiWorkflow(ctx: CommandContext): Promise<number> {
     const npmLock = ctx.args.ciInstall && existsSync(join(root, "package-lock.json")) ? (workspaceRoot === "." ? "package-lock.json" : `${workspaceRoot}/package-lock.json`) : undefined;
     const yaml = renderCiGreenWorkflow({ green, workflows, chantVersion: readerVersion(), workspaceRoot, chant: ctx.args.ciChant, install: ctx.args.ciInstall, npmLock, push, ...(runnerKeySecret ? { runnerKeySecret } : {}), ...(compose ? { compose } : {}) });
     const written = writeWorkflowFile(target, ciGreenHeader(command, member ? "member" : "root") + yaml);
-    if (member) recordGeneratedFiles(member.memberRoot, [{ path: fromRepo, command }]);
+    if (member && !rendering) recordGeneratedFiles(member.memberRoot, [{ path: fromRepo, command }]);
     console.log(`Wrote ${written}: ticks when ${workflows.join(", ")} complete${workflows.length === 1 ? "s" : ""} on ${greenBranches(green).join(", ")}${compose ? " or a chant/compose/ branch" : ""}, and every 15 minutes.`);
     // #4644: the merge queue's verdict, beside the tick and from the same command.
     if (green.mergeQueue && !member) {
       const queue = renderMergeQueueWorkflow({ green, chantVersion: readerVersion(), workspaceRoot, chant: ctx.args.ciChant, install: ctx.args.ciInstall, npmLock });
-      const at = writeWorkflowFile(join(repoRoot, MERGE_QUEUE_WORKFLOW_FILE), ciGreenHeader(command, "root") + queue);
+      const at = writeWorkflowFile(rendering ? renderPathOf(join(repoRoot, MERGE_QUEUE_WORKFLOW_FILE)) : join(repoRoot, MERGE_QUEUE_WORKFLOW_FILE), ciGreenHeader(command, "root") + queue);
       const retries = green.mergeQueue.retries;
       const again = retries > 0 ? `, re-running a failed job's workflow run up to ${retries} time${retries === 1 ? "" : "s"} first` : "";
       console.log(`Wrote ${at}: on each merge group, ${MERGE_QUEUE_VERDICT_JOB} passes when every required phase passed on the group's commit${again}. Require ${MERGE_QUEUE_VERDICT_JOB} in the branch's ruleset.`);
     }
     for (const e of edits) {
-      if (!e.changed) continue;
-      const path = writeWorkflowFile(join(repoRoot, e.path), e.text);
+      // A check renders every edited workflow, changed or not, so each has its twin in the render tree.
+      if (!e.changed && !rendering) continue;
+      const path = writeWorkflowFile(rendering ? renderPathOf(join(repoRoot, e.path)) : join(repoRoot, e.path), e.text);
       console.log(
         e.build === "newest"
           ? `Wrote ${path}'s triggers and concurrency: ${e.phases.join(", ")} build${e.phases.length === 1 ? "s" : ""} the newest commit on ${greenBranches(green).join(", ")} when a run ends, and a ci/build/<sha> tag by hand.`

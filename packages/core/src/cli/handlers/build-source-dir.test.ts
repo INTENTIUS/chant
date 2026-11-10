@@ -38,6 +38,10 @@ describe("a root build (#4794)", () => {
     expect(await loaded(root, root)).toEqual(["infra.ts"]);
   });
 
+  test("nor its top-level migrations/, whose backfill scripts run on load (#4921)", async () => {
+    expect((await findInfraFiles(root)).map((f) => relative(root, f).split("\\").join("/"))).toEqual(["infra.ts"]);
+  });
+
   test("include brings scripts/ back", async () => {
     expect((await findInfraFiles(include)).map((f) => relative(include, f).split("\\").join("/")).sort()).toEqual(["infra.ts", "scripts/run-on-load.ts"]);
   });

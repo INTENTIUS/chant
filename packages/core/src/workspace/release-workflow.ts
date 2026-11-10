@@ -710,11 +710,15 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     ...(args.ciChant ? { chant: args.ciChant } : {}),
   });
   const target = args.output ? resolve(process.cwd(), args.output) : join(repoRoot, release?.workflow?.file ?? RELEASE_WORKFLOW_FILES[forge]);
+  // #4909: under `chant dev generated-check` the header names the committed file the render stands for.
+  const { committedPathOf, isRenderPath } = await import("../generated-check");
+  const asCommitted = committedPathOf(target);
+  const defaultTarget = join(repoRoot, release?.workflow?.file ?? RELEASE_WORKFLOW_FILES[forge]);
   const parts = ["chant", "release", "workflow", "--forge", forge];
   if (args.ciInstall) parts.push("--install", args.ciInstall);
   if (args.buildCommand) parts.push("--build", args.buildCommand);
   if (args.ciChant) parts.push("--chant", args.ciChant);
-  if (args.output) parts.push("--output", relative(root, target).split(sep).join("/"));
+  if (args.output && !(isRenderPath(target) && asCommitted === defaultTarget)) parts.push("--output", relative(root, asCommitted).split(sep).join("/"));
   mkdirSync(dirname(target), { recursive: true });
   writeFileSync(target, releaseWorkflowHeader(parts.map(shellArg).join(" ")) + text);
   const shown = relative(process.cwd(), target).split(sep).join("/") || target;

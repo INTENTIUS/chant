@@ -95,8 +95,8 @@ function staticInclude(read: StaticFieldsRead): string[] {
 /**
  * Only the files under the member's `sourceDir`, when its config sets one, as
  * a build reads them (#3941). Without one, every source file of the member
- * but its top-level `scripts/`, which a root build leaves out (#4794,
- * `ROOT_SOURCE_EXCLUDES`) unless `include` brings it back.
+ * but its top-level `scripts/` and `migrations/`, which a root build leaves
+ * out (#4794, #4921, `ROOT_SOURCE_EXCLUDES`) unless `include` brings one back.
  */
 function withinSourceDir(files: string[], member: string, sourceDir: string | undefined, include: string[] = []): string[] {
   if (!sourceDir) {

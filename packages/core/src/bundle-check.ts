@@ -113,18 +113,46 @@ export interface EsbuildPluginLike {
   }): void;
 }
 
+/** What {@link chantExternalPlugin} keeps external, and where it records it. */
+export interface ChantExternalOptions {
+  /**
+   * The chant packages whose imports may stay external (#4922). Default: the
+   * `@intentius/chant*` packages in the `dependencies` of `pkgDir`'s
+   * package.json, the ones an install of the published package brings. A
+   * product that bundles its lexicons (devDependencies) and depends only on
+   * `@intentius/chant` gets core external and the lexicons bundled.
+   */
+  packages?: Iterable<string>;
+  /** Collects the specifiers left external. */
+  external?: Set<string>;
+}
+
+/** The `@intentius/chant*` names in the `dependencies` of the package at `pkgDir`. */
+function chantDependencies(pkgDir: string): string[] {
+  const f = join(pkgDir, "package.json");
+  if (!existsSync(f)) return [];
+  const deps = (JSON.parse(readFileSync(f, "utf8")) as { dependencies?: Record<string, string> }).dependencies ?? {};
+  return Object.keys(deps).filter((n) => CHANT.test(n));
+}
+
 /**
  * An esbuild plugin that leaves an `@intentius/chant*` import external when
- * the chant installed for `pkgDir` (where the bin runs) serves it as compiled
- * JS, so the bundle runs the installed, pinned chant. Any other chant import
- * goes on to the next plugin and esbuild, which bundle it. `external`, when
- * given, collects the specifiers left external.
+ * its package is one of `options.packages` (by default the package's chant
+ * `dependencies`, #4922) and the chant installed for `pkgDir` (where the bin
+ * runs) serves it as compiled JS, so the bundle runs the installed, pinned
+ * chant. Any other chant import goes on to the next plugin and esbuild, which
+ * bundle it. A bundled lexicon's own imports of core come through here too.
+ * The second argument may still be the `external` set alone.
  */
-export function chantExternalPlugin(pkgDir: string, external?: Set<string>): EsbuildPluginLike {
+export function chantExternalPlugin(pkgDir: string, options?: ChantExternalOptions | Set<string>): EsbuildPluginLike {
+  const opts: ChantExternalOptions = options instanceof Set ? { external: options } : (options ?? {});
+  const external = opts.external;
+  const keep = new Set(opts.packages ?? chantDependencies(pkgDir));
   return {
     name: "chant-external",
     setup(b) {
       b.onResolve({ filter: CHANT }, (args) => {
+        if (!keep.has(CHANT.exec(args.path)![1])) return undefined;
         if (chantRuntimeTarget(args.path, pkgDir) === undefined) return undefined;
         external?.add(args.path);
         return { path: args.path, external: true };
