@@ -1,6 +1,6 @@
 ---
 title: "chant dev local"
-description: Build a product against a chant checkout instead of its pinned release, and check the product's bundle
+description: Build a product against a chant checkout instead of its pinned release, check the product's bundle and generated files, and build its images with the same chant
 diataxis: reference
 ---
 
@@ -10,6 +10,8 @@ diataxis: reference
 chant dev local <chant-dir> [--with <package>]... [--build '<command>'] [--json]
 chant dev local --reset [--build '<command>'] [--json]
 chant dev bundle-check [<package-dir>] [--json]
+chant dev local-image [--with <package>]... [--json] [-- <docker build arguments>...]
+chant dev generated-check [<render>...] [--json]
 ```
 
 Run in the root of a product, the directory with its `package.json` and `package-lock.json`.
@@ -19,10 +21,12 @@ Run in the root of a product, the directory with its `package.json` and `package
 1. Reads the `@intentius/chant*` packages named in the product's root `package.json` and in each workspace package's `package.json`, adds each `--with` package (for example a lexicon that only an image installs), and adds the chant packages those depend on.
 2. Runs `npm ci` in the checkout when its `package-lock.json` changed since the last run. The stamp is `node_modules/.chant-dev-local` in the checkout.
 3. Runs `npm pack` for each package in the checkout, in an order where each package comes after the packages it builds against. Each package's `prepack` builds it. The tarballs go to `.chant-local/` in the product, one fixed name per package (`intentius-chant.tgz`, `intentius-chant-lexicon-k8s.tgz`), so a later run replaces them. The product should list `.chant-local/` in `.gitignore`.
-4. Points every `package.json` of the product at the tarballs and runs `npm install --no-save --legacy-peer-deps`. The root also gets every tarball as a devDependency, so a package that only a lexicon reaches is replaced too. Afterwards it writes each `package.json` and `package-lock.json` back byte for byte, including when the install fails, so `git status` shows no change. Copies of the files are kept in `.chant-local/manifests/`.
+
+   Every tarball carries the checkout's next release, `NEXT_RELEASE` in `packages/core/src/release-floors.ts`, when that is newer than the version in the checkout's `package.json` ([#4921](https://github.com/INTENTIUS/chant/issues/4921)). A checkout's `package.json` keeps an old version between releases, which failed a product's floor and `minReader` checks. Each tarball's chant dependencies and peers name that version too. The `chantLocal` mark (step 5) says the build is local; the version does not, since a prerelease of `NEXT_RELEASE` would sort below the floors the checkout declares. The tarballs are unpacked and packed again under the OS temp directory, which is left for the OS to clear.
+4. Points every `package.json` of the product at the tarballs and runs `npm install --no-save`. The root also gets every tarball as a devDependency, so a package that only a lexicon reaches is replaced too. A peer dependency on a packed package names the packed version. The install keeps peer dependencies, so a test runner's peers (vitest's vite, rolldown and lightningcss) stay installed ([#4921](https://github.com/INTENTIUS/chant/issues/4921)). Afterwards it writes each `package.json` and `package-lock.json` back byte for byte, including when the install fails, so `git status` shows no change. Copies of the files are kept in `.chant-local/manifests/`.
 5. Adds a `chantLocal` field, `{ "commit": "<sha>[+dirty]", "dir": "<checkout>" }`, to the `package.json` of every installed copy, wherever npm put it in the tree. It fails if a copy has a version other than the checkout's.
 6. Runs `--build` as a shell command in the product root (`just build-cli`, `npm run build`).
-7. Checks the bundle of every package that declares `chantBundleCheck`, and prints `chant commit: <sha>` last.
+7. Checks the bundle of every package that declares `chantBundleCheck`, and prints `chant commit: <sha>` and `chant version: <version> (local build)` last.
 
 `--reset` runs `npm ci` and then checks that every installed chant package is the version `package-lock.json` pins and has no `chantLocal` mark. After that it runs `--build` and the bundle check the same way.
 
@@ -65,6 +69,59 @@ Paths are relative to the package. The check fails when:
 - the bundle is over `maxBytes`, or the `npm pack --dry-run` tarball is over `maxPackBytes`;
 - an input in the esbuild `metafile` matches a `deny` pattern. The pattern is matched against the input path with everything up to its last `node_modules/` removed.
 
+## Images with the product's chant
+
+`chant dev local-image` ([#4909](https://github.com/INTENTIUS/chant/issues/4909)) builds a product's image with the chant the product has installed. With no docker arguments it prints the chant version the image installs: the root's `@intentius/chant` pin, or `local-<commit>` after `dev local`. A product puts it in a label to rebuild the image when it changes. `--json` prints the version, the `chantLocal` mark and the docker arguments.
+
+After `--`, the rest are `docker build` arguments, and the command runs `docker build` with `--build-arg CHANT_VERSION=<version>` first. For a local build it also passes `--build-context chant-local=<product>/.chant-local`, after checking that `.chant-local/` holds the tarballs of the commit the mark names: core's, and each `--with` package's. The Dockerfile installs from that stage when it holds the tarballs, and from npm otherwise:
+
+```dockerfile
+FROM scratch AS chant-local
+FROM node:22
+ARG CHANT_VERSION
+RUN --mount=type=bind,from=chant-local,target=/chant-local \
+    if [ -f /chant-local/intentius-chant.tgz ]; then \
+      set -- /chant-local/intentius-chant.tgz /chant-local/intentius-chant-lexicon-fountain.tgz; \
+    else \
+      set -- "@intentius/chant@${CHANT_VERSION}" "@intentius/chant-lexicon-fountain@${CHANT_VERSION}"; \
+    fi \
+ && npm install -g "$@"
+```
+
+```
+version="$(npx chant dev local-image --with @intentius/chant-lexicon-fountain)"
+npx chant dev local-image --with @intentius/chant-lexicon-fountain -- \
+  --label "steward=$version" -t steward:local stack/fountain
+```
+
+`localChantImage(productDir, { with })` in `@intentius/chant/local-chant` returns the same answer to a script.
+
+## Generated-file check
+
+`chant dev generated-check` ([#4909](https://github.com/INTENTIUS/chant/issues/4909)) checks that the files a product commits and renders from its sources (workflows, Dockerfiles, a JSON Schema, a stack's configs) are what the sources render. The product declares its renders in `chantGenerated` in its root `package.json`:
+
+```json
+{
+  "chantGenerated": {
+    "regenerate": "just ci",
+    "renders": [
+      { "name": "ci", "run": "npx chant build ci -o {out}/.github/workflows/ci.yml --format yaml", "files": [".github/workflows/ci.yml"] },
+      { "name": "green", "run": "npx chant ci workflow --token-secret CI_GREEN_TOKEN --output {out}/.github/workflows/chant-ci-green.yml", "files": [".github/workflows/chant-ci-green.yml"] },
+      { "name": "images", "run": "npx chant build images -o {out}/images/compose.yml --format yaml", "files": ["images/Dockerfile.*"] },
+      { "name": "schema", "run": "node scripts/build-schema.mjs --out {out}", "files": ["packages/plywood/plywood.schema.json"] }
+    ]
+  }
+}
+```
+
+The command makes one directory under the OS temp directory, the render tree, and runs every render's `run` in the product root at once. `{out}` in the command, and `CHANT_GENERATED_OUT` in its environment, name the render tree, and each render writes its files at their committed paths below it. Then it compares each of a render's `files` with its twin in the render tree, in declaration order. A `*` in a path's last segment matches within it, and then every match on either side needs its twin. A render with no `files` passes when it exits 0. Arguments name the renders to run.
+
+It exits 1 naming each file that differs (with the first changed lines), that is committed but no longer rendered, that is rendered but not committed, and each render that failed or wrote no file it declares, with `regenerate` in the message. The render tree is never removed: the command prints where it is, and the OS clears it.
+
+`chant ci workflow` and `chant release workflow` know the render tree. Under the check they write every file into it, the trigger edits to other workflows and the merge-queue workflow included, record nothing in a member's `.chant/generated.json`, and name the committed file in their header, leaving out `--output` when the committed file is the default. A render of them matches the file written without `--output`.
+
+`checkGenerated(productDir, config)` in `@intentius/chant/generated-check` runs the check from a script, and `renderPathOf` and `committedPathOf` map a path for a writer of the product's own.
+
 ## From a build script
 
 `@intentius/chant/bundle-check` imports only Node's modules, so a product's esbuild script can use it directly:
@@ -75,4 +132,4 @@ import { chantExternalPlugin, chantRuntimeTarget, checkBundle } from "@intentius
 await esbuild.build({ /* ... */ plugins: [chantExternalPlugin(pkgDir)] });
 ```
 
-`chantExternalPlugin(pkgDir)` leaves external each chant import that the chant installed for `pkgDir` serves as compiled JS, and lets esbuild bundle the rest. `chantRuntimeTarget(specifier, fromDir)` returns the file Node would load for an import, or undefined. `@intentius/chant/local-chant` exports `installLocalChant` and `resetLocalChant`, the functions behind `dev local`.
+`chantExternalPlugin(pkgDir)` leaves external each chant import that the chant installed for `pkgDir` serves as compiled JS, from the chant packages in the package's `dependencies`, and lets esbuild bundle the rest ([#4922](https://github.com/INTENTIUS/chant/issues/4922)). A product that bundles its lexicons (devDependencies) and depends only on `@intentius/chant` gets core external and the lexicons in the bundle, and a bundled lexicon's own imports of core go to the installed core. `chantExternalPlugin(pkgDir, { packages, external })` names the packages to keep external instead, and `external` collects the specifiers it left external (a `Set` alone as the second argument still works). `chantRuntimeTarget(specifier, fromDir)` returns the file Node would load for an import, or undefined. `@intentius/chant/local-chant` exports `installLocalChant` and `resetLocalChant`, the functions behind `dev local`.

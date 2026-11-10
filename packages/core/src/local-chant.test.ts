@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { chantPackages, installLocalChant, LocalChantError, lockMismatches, packOrder, pointAtTarballs, productChantNames, productManifests, type Runner } from "./local-chant";
+import { chantPackages, installLocalChant, LocalChantError, localChantVersion, lockMismatches, packOrder, pointAtTarballs, productChantNames, productManifests, type Runner } from "./local-chant";
 
 /** #4787: what terragucci's and plywood's scripts/chant-local.sh did, as chant's `chant dev local`. */
 
@@ -60,10 +60,26 @@ describe("the packages to pack (#4787)", () => {
     const root = pointAtTarballs({ dependencies: { "@intentius/chant": "1.0.0" } }, local, true);
     expect(root).toEqual({ dependencies: { "@intentius/chant": "file:/t/a.tgz" }, devDependencies: { "@intentius/chant-lexicon-k8s": "file:/t/b.tgz" } });
   });
+
+  it("gives a peer on a packed package its packed version (#4921)", () => {
+    const local = new Map([["@intentius/chant", "file:/t/a.tgz"]]);
+    const app = pointAtTarballs({ peerDependencies: { "@intentius/chant": "1.0.0", vitest: ">=2" } }, local, false, new Map([["@intentius/chant", "2.1.0"]]));
+    expect(app.peerDependencies).toEqual({ "@intentius/chant": "2.1.0", vitest: ">=2" });
+  });
+});
+
+describe("localChantVersion (#4921)", () => {
+  it("is the checkout's NEXT_RELEASE when it is newer than core's package.json version", () => {
+    const chant = checkout();
+    expect(localChantVersion(chant, "2.0.0")).toBe("2.0.0");
+    write(join(chant, "packages/core/src/release-floors.ts"), 'export const NEXT_RELEASE = "2.1.0";\n');
+    expect(localChantVersion(chant, "2.0.0")).toBe("2.1.0");
+    expect(localChantVersion(chant, "2.2.0")).toBe("2.2.0");
+  });
 });
 
 /** A runner standing in for npm: pack writes a versioned tarball; install copies each `file:` dependency the manifests name into node_modules. */
-function fakeNpm(seen: { manifests?: string[]; calls: string[] }, opts: { installVersion?: string } = {}): Runner {
+function fakeNpm(seen: { manifests?: string[]; calls: string[]; installArgs?: string[] }, opts: { installVersion?: string } = {}): Runner {
   return (command, args, cwd) => {
     seen.calls.push(`${command} ${args[0]} ${basename(cwd)}`);
     if (args[0] === "pack") {
@@ -73,6 +89,7 @@ function fakeNpm(seen: { manifests?: string[]; calls: string[] }, opts: { instal
       return `${file}\n`;
     }
     if (args[0] === "install") {
+      seen.installArgs = args;
       seen.manifests = productManifests(cwd).map((f) => readFileSync(join(cwd, f), "utf8"));
       for (const f of productManifests(cwd)) {
         const p = JSON.parse(readFileSync(join(cwd, f), "utf8"));
@@ -95,11 +112,13 @@ describe("installLocalChant (#4787)", () => {
     const chant = checkout();
     const dir = product();
     const before = ["package.json", "packages/app/package.json", "package-lock.json"].map((f) => readFileSync(join(dir, f), "utf8"));
-    const seen: { manifests?: string[]; calls: string[] } = { calls: [] };
+    const seen: { manifests?: string[]; calls: string[]; installArgs?: string[] } = { calls: [] };
     const r = installLocalChant({ productDir: dir, chantDir: chant, install: false, run: fakeNpm(seen), log: () => {} });
 
     expect(r.packed.map((p) => p.dir)).toEqual(["packages/core", "lexicons/k8s"]);
     expect(seen.calls).toEqual(["npm pack core", "npm pack k8s", `npm install ${basename(dir)}`]);
+    // #4921: peers stay installed.
+    expect(seen.installArgs).not.toContain("--legacy-peer-deps");
     expect(existsSync(join(dir, ".chant-local/intentius-chant.tgz"))).toBe(true);
     expect(existsSync(join(dir, ".chant-local/intentius-chant-2.0.0.tgz"))).toBe(false);
     // During the install every manifest named the tarballs.

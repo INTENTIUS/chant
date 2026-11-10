@@ -1476,6 +1476,14 @@ Lexicon development:
                            Check a bundle against its package.json chantBundleCheck: imports
                            only Node, its dependencies and chant served as compiled JS, the
                            dependencies on the root's chant pin, size ceilings, denied inputs
+  dev local-image [--with <package>]... [-- <docker build args>]
+                           Print the chant an image installs (the pin, or local-<commit>
+                           after dev local), or run docker build with CHANT_VERSION and,
+                           for a local build, the chant-local build context
+  dev generated-check [<render>...]
+                           Render the files package.json's chantGenerated declares into a
+                           directory under the OS temp dir, compare each with the committed
+                           file, and fail naming the ones that drifted
   dev dead-guards [<product-dir>]
                            Fail naming each feature-detect on a chant floor (a floor read off
                            a lazily loaded module, a subpath loaded behind a catch, the
@@ -1984,6 +1992,8 @@ export const commandRegistry: CommandDef[] = [
   // #4787: build a product against a chant checkout, and check its bundle. Imported on first use.
   { name: "dev local", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/local-chant")).runDevLocal(ctx) },
   { name: "dev bundle-check", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/local-chant")).runDevBundleCheck(ctx) },
+  { name: "dev local-image", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/local-chant")).runDevLocalImage(ctx) },
+  { name: "dev generated-check", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/generated-check")).runDevGeneratedCheck(ctx) },
   // #4792: the feature-detects on a chant floor the product's pin already meets.
   { name: "dev dead-guards", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/dead-guards")).runDevDeadGuards(ctx) },
 

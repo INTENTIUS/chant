@@ -19,7 +19,7 @@ chant build [path] --components --generate <lexicon> [--env <name>] [--promote-t
 
 With a path, `chant build` builds that directory. With none, run at the root of a project, it builds the config's `sourceDir`, else the project root. Run below the root with no path, it builds the directory it runs in. This is the rule every command that picks a source directory shares ([#4794](https://github.com/INTENTIUS/chant/issues/4794)): `chant lifecycle`'s `--src`, `chant release compile`, `chant graph`, `chant search`, `chant components status` and the lexicon commands all take an explicit directory first, then `sourceDir`, then the project root. There is no `src` fallback; a project whose declarations live in `src/` beside other code sets `sourceDir: "src"`.
 
-A build from the root of a project with no `sourceDir` leaves its top-level `scripts/` directory out, as it leaves out test and spec files. Add `include: ["scripts"]` to read it. Code that needs the same answer imports it:
+A build from the root of a project with no `sourceDir` leaves its top-level `scripts/` and `migrations/` directories out, as it leaves out test and spec files. A migration's `.sql` files and backfill scripts are not declarations, and the sql lexicon opens no `.sql` file under a `migrations` directory at any depth. Add `include: ["scripts"]` (or `"migrations"`) to read one. Code that needs the same answer imports it:
 
 ```ts
 import { resolveSourceDir } from "@intentius/chant/config";

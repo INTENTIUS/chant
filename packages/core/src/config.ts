@@ -759,13 +759,15 @@ export function resolveSourceDir(projectDir: string, config: { sourceDir?: unkno
 /**
  * The top-level directories a root build leaves out (#4794): a project with
  * no `sourceDir`, built from its own root, does not load `scripts/`, where a
- * script that runs on load (prints and exits) would take the build's place.
- * Matched against the path relative to the project root, so only the
- * project's own top-level `scripts/` is skipped. The config's `include`
- * brings it back. Test and spec files are left out of every build already
+ * script that runs on load (prints and exits) would take the build's place,
+ * nor `migrations/` (#4921), whose `.sql` files are `ALTER`s of objects
+ * declared elsewhere and whose backfill scripts run on load too. Matched
+ * against the path relative to the project root, so only the project's own
+ * top-level directories are skipped. The config's `include` brings one back.
+ * Test and spec files are left out of every build already
  * (`isSourceFileName`).
  */
-export const ROOT_SOURCE_EXCLUDES: readonly string[] = ["scripts"];
+export const ROOT_SOURCE_EXCLUDES: readonly string[] = ["scripts", "migrations"];
 
 /** A project's discovery globs (#2519) and the directory they are relative to. */
 export interface DiscoveryGlobs {
