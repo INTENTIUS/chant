@@ -55,6 +55,7 @@ import type { CommandContext } from "../registry";
 import { formatError, formatInfo, formatSuccess, formatWarning } from "../format";
 import { FORGE_KINDS, forgeFromEnv, type ForgeKind, type PrForge } from "../../pr-forge";
 import { PR_APPLY_GATE } from "../../pr-loop";
+import { actorFromEnv } from "../../actor";
 import {
   describeHeldTargetLocks,
   readTargetLocks,
@@ -224,7 +225,7 @@ export async function runLock(ctx: CommandContext): Promise<number> {
   const forge = forgeOf(ctx);
   if (forge && "error" in forge) return fail(forge.error);
   const isOpen = forge?.pullRequestOpen?.bind(forge);
-  const by = args.by ?? process.env.GITHUB_ACTOR ?? process.env.GITLAB_USER_LOGIN ?? process.env.USER ?? "unknown";
+  const by = args.by ?? actorFromEnv();
   const name = prName(forge);
 
   let result;

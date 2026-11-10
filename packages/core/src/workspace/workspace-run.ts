@@ -47,6 +47,7 @@ import { executePlan, planMembers } from "./member-commands";
 import { locateWorkspace } from "./which-chant";
 import { appendWorkspaceRun, type WorkspaceRunRecord, type WorkspaceRunStep } from "./workspace-ledger";
 import { appendWorkspaceGatePending, type WorkspaceGateCover, type WorkspaceGatePending } from "./workspace-gates";
+import { actorFromEnv } from "../actor";
 
 /** `chant run`'s exit code for a run that stopped at an unapproved gate (`GATED_EXIT_CODE`). */
 const GATED_EXIT = CHANT_EXIT.waiting;
@@ -444,7 +445,7 @@ async function runWorkspaceRunApprove(ctx: CommandContext, words: string[]): Pro
     return 1;
   }
   const { approveWorkspaceGate } = await import("./workspace-gates");
-  const approvedBy = ctx.args.approver ?? ctx.args.actor ?? process.env.GITHUB_ACTOR ?? process.env.GITLAB_USER_LOGIN ?? process.env.USER ?? "unknown";
+  const approvedBy = ctx.args.approver ?? ctx.args.actor ?? actorFromEnv();
   try {
     const record = await approveWorkspaceGate(resolve("."), {
       gate,

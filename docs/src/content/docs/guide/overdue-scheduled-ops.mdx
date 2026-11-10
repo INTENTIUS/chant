@@ -36,7 +36,9 @@ A product whose plan runs on chant's product plan (`productPlan` in `@intentius/
 
 ## When it warns
 
-The plan counts the fires of the Op's cron in UTC since the job last ran (`packages/core/src/op/cron.ts:158`). When no run is on record, it counts from the commit that added the pipeline file. Two fires or more is overdue (`packages/core/src/op/schedule-overdue.ts:244`), while one late or dropped run is not.
+The plan counts the fires of the Op's cron in UTC since the job last ran (`packages/core/src/op/cron.ts:158`). When no run is on record, it counts from the commit that added the pipeline file. Two fires or more is overdue (`packages/core/src/op/schedule-overdue.ts:296`), while one late or dropped run is not.
+
+A CI checkout is often shallow, and its oldest commit lists every file as added. When the commit that added the pipeline file is that oldest commit, the check runs `git fetch --unshallow` once with the job's own credentials and then reads the commit again ([#4952](https://github.com/INTENTIUS/chant/issues/4952)). If the fetch fails, the check counts from the oldest commit and says so in the job log. That date is later than the real one, so the check can only warn late.
 
 Each overdue Op adds a line to the plan note (`packages/core/src/pr-loop.ts:584`), such as:
 

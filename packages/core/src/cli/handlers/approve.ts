@@ -35,6 +35,7 @@ import { readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { formatError, formatWarning, formatSuccess, formatInfo } from "../format";
 import type { CommandContext } from "../registry";
+import { actorFromEnv } from "../../actor";
 
 // ── chant approve <op> <gate> ───────────────────────────────────────────────
 
@@ -623,7 +624,7 @@ async function approveGate(
       // "unattested" reads as what it is; a name the model chose would read in
       // the ledger exactly like a name a person gave.
       ? UNATTESTED_APPROVER
-      : process.env.GITHUB_ACTOR ?? process.env.GITLAB_USER_LOGIN ?? process.env.USER ?? "unknown");
+      : actorFromEnv());
 
   // #2508: who this is, as the gate's quorum and policy read it. A model on
   // MCP or ACP is an agent whatever it claims, the same reasoning that gives

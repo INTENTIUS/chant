@@ -309,6 +309,49 @@ describe("checkOverdueOps", () => {
     expect(asked).toEqual([schedule]);
     expect(found[0]?.message).toContain("No active pipeline schedule is picked by the Op's rule, one whose TERRAGUCCI_SCHEDULE is none of comments, resume.");
   });
+
+  /**
+   * #4952: a shallow checkout's oldest commit lists every file as added, so
+   * the job that never ran counts from that commit and the check
+   * under-reports. The check deepens the history and reads the real commit.
+   */
+  describe("a shallow checkout", () => {
+    function shallowClone(): string {
+      const origin = repo({ ".github/workflows/drift.yml": "on: schedule" }, "2026-09-01T00:00:00Z");
+      const later = "2026-10-20T00:00:00Z";
+      writeFileSync(join(origin, "README.md"), "later\n");
+      execFileSync("git", ["-C", origin, "add", "."], { stdio: "pipe" });
+      execFileSync("git", ["-C", origin, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "later"], { env: { ...process.env, GIT_COMMITTER_DATE: later, GIT_AUTHOR_DATE: later }, stdio: "pipe" });
+      const clone = join(origin, ".clone");
+      execFileSync("git", ["clone", "-q", "--depth", "1", `file://${origin}`, clone], { stdio: "pipe" });
+      return clone;
+    }
+    const run = (root: string, lines: string[]) =>
+      checkOverdueOps({
+        watches: [{ op: "drift", cron: "0 6 * * *" }],
+        forge: forgeWith("github", async () => ({})),
+        repoRoot: root,
+        now: new Date("2026-10-22T00:00:00Z"),
+        log: (l) => lines.push(l),
+      });
+
+    test("deepens the history and counts from the commit that added the file", async () => {
+      const clone = shallowClone();
+      const lines: string[] = [];
+      const found = await run(clone, lines);
+      expect(found.map((o) => o.since.slice(0, 10))).toEqual(["2026-09-01"]);
+      expect(execFileSync("git", ["-C", clone, "rev-parse", "--is-shallow-repository"], { encoding: "utf-8" }).trim()).toBe("false");
+    });
+
+    test("a fetch that fails counts from the oldest commit there is, and says so", async () => {
+      const clone = shallowClone();
+      execFileSync("git", ["-C", clone, "remote", "remove", "origin"], { stdio: "pipe" });
+      const lines: string[] = [];
+      const found = await run(clone, lines);
+      expect(found.map((o) => o.since.slice(0, 10))).toEqual(["2026-10-20"]);
+      expect(lines.some((l) => l.includes("the checkout is shallow and its history could not be fetched"))).toBe(true);
+    });
+  });
 });
 
 describe("the plan note", () => {

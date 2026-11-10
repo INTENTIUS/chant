@@ -3,7 +3,9 @@
  * actor in a job (`GITHUB_ACTOR`, which Forgejo sets too, then
  * `GITLAB_USER_LOGIN`), else the login (`USER`, `USERNAME` on Windows).
  * The terraform and pulumi lexicons' gated requests and the products'
- * requesters read it here rather than each writing the order.
+ * requesters read it here rather than each writing the order, and so do
+ * chant's own CLI handlers and the records they write (#4952). A caller
+ * that refuses when nobody is named passes `""` as the fallback.
  */
 
 /** The actor fallback's variables, in the order {@link actorFromEnv} reads them. */

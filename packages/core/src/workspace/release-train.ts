@@ -18,6 +18,7 @@ import { readAllReleases, readCuts } from "../lifecycle/release-store";
 import { readDeclaration, WorkspaceReadError } from "./declaration";
 import { locateWorkspace } from "./which-chant";
 import { appendWorkspaceLine, readWorkspaceLines } from "./workspace-ledger";
+import { actorFromEnv } from "../actor";
 
 export interface TrainMember {
   member: string;
@@ -140,7 +141,7 @@ export async function runWorkspaceTrain(ctx: CommandContext): Promise<number> {
       for (const p of picked.problems) console.error(`  ${p}`);
       return 1;
     }
-    const actor = ctx.args.actor ?? process.env.GITHUB_ACTOR ?? process.env.GITLAB_USER_LOGIN ?? process.env.USER ?? "unknown";
+    const actor = ctx.args.actor ?? actorFromEnv();
     const record: ReleaseTrainRecord = { version: 1, id: `train-${randomUUID()}`, env, timestamp: new Date().toISOString(), actor, members: picked.members };
     if (!ctx.args.dryRun) await appendReleaseTrain(root, record);
     if (ctx.args.json) console.log(JSON.stringify({ ...record, written: !ctx.args.dryRun }, null, 2));

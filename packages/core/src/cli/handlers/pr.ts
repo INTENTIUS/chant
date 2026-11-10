@@ -146,6 +146,7 @@ import type { OpWaveHookMoment } from "../../op/op-waves";
 import type { PrHookOutcome } from "../../pr-loop";
 import type { PrMigrationFile } from "../../pr-migrations";
 import { lexiconNames } from "../../lexicon-module";
+import { actorFromEnv } from "../../actor";
 
 
 /** Where the reports land unless `--output` says. */
@@ -1538,7 +1539,7 @@ function earlyStop(ctx: CommandContext, forge: PrForge, at: { pr: number; base: 
 async function takeApplyLocks(p: Prepared, pr: number, targets: readonly string[] = p.plan.order): Promise<string | null | number> {
   const { takeTargetLocks, describeHeldTargetLocks } = await import("../../lifecycle/target-lock");
   const isOpen = p.forge?.pullRequestOpen?.bind(p.forge);
-  const by = process.env.GITHUB_ACTOR ?? process.env.GITLAB_USER_LOGIN ?? process.env.USER ?? "unknown";
+  const by = actorFromEnv();
   let result;
   try {
     result = await takeTargetLocks(p.gate, targets, { pr, by, at: new Date().toISOString(), stage: "apply", head: p.head }, { ...(isOpen ? { isOpen } : {}) });

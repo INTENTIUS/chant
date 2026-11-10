@@ -10,6 +10,7 @@ import {
   CI_IMAGE_DOCKER_STAGES_FLOOR,
   CI_IMAGE_FLOOR,
   CI_IMAGE_NON_ROOT_FLOOR,
+  CI_TOOL_NODE_DOWNLOAD_FLOOR,
   CI_TOOL_DOCKER_ARCH,
   CI_TOOL_SHA256,
   CI_TOOLS,
@@ -27,6 +28,7 @@ import {
   unzipEntry,
   type CiTool,
 } from "./ci-image";
+import { NEXT_RELEASE } from "./release-floors";
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), "ci-image-"));
 const sha = (b: Uint8Array): string => createHash("sha256").update(b).digest("hex");
@@ -56,8 +58,8 @@ function tarGz(files: Record<string, string>): Uint8Array {
   return gzipSync(Buffer.concat(blocks));
 }
 
-/** A zip of `files`, deflated, with a central directory, as a release's `.zip` holds them. */
-function zip(files: Record<string, string>): Uint8Array {
+/** A zip of `files`, deflated, with a central directory, as a release's `.zip` holds them; `modes` gives an entry its Unix mode, as the AWS CLI's installer has. */
+function zip(files: Record<string, string>, modes: Record<string, number> = {}): Uint8Array {
   const locals: Buffer[] = [];
   const centrals: Buffer[] = [];
   let offset = 0;
@@ -82,6 +84,11 @@ function zip(files: Record<string, string>): Uint8Array {
     central.writeUInt32LE(data.length, 20);
     central.writeUInt32LE(raw.length, 24);
     central.writeUInt16LE(n.length, 28);
+    if (modes[name] !== undefined) {
+      // Made by Unix (3), with the mode in the external attributes' high half.
+      central.writeUInt16LE((3 << 8) | 20, 4);
+      central.writeUInt32LE(((0o100000 | modes[name]!) << 16) >>> 0, 38);
+    }
     central.writeUInt32LE(offset, 42);
     locals.push(local, n, data);
     centrals.push(central, n);
@@ -133,6 +140,40 @@ function runShell(script: string, fixtures: Record<string, Uint8Array | string>,
   return { status: r.status ?? -1, stderr: r.stderr, urls: existsSync(log) ? readFileSync(log, "utf-8").trim().split("\n") : [] };
 }
 
+/**
+ * Runs a fetch script as a job with no curl and no unzip would (#4952):
+ * both are on PATH as commands that fail, and node's `fetch` is replaced,
+ * through `NODE_OPTIONS=--import`, by one that serves the fixtures by the
+ * URL's last segment.
+ */
+function runNodeShell(script: string, fixtures: Record<string, Uint8Array | string>, env: Record<string, string> = {}): { status: number; stderr: string; urls: string[] } {
+  const dir = tmp();
+  const serve = join(dir, "serve");
+  const bin = join(dir, "bin");
+  mkdirSync(serve);
+  mkdirSync(bin);
+  for (const [name, body] of Object.entries(fixtures)) writeFileSync(join(serve, name), body);
+  const log = join(dir, "urls");
+  for (const missing of ["curl", "unzip"]) {
+    writeFileSync(join(bin, missing), `#!/bin/sh\necho "${missing}: not in this image" >&2\nexit 127\n`);
+    chmodSync(join(bin, missing), 0o755);
+  }
+  const preload = join(dir, "fetch.mjs");
+  writeFileSync(
+    preload,
+    [
+      'import { appendFileSync, existsSync, readFileSync } from "node:fs";',
+      "globalThis.fetch = async (url) => {",
+      `  appendFileSync(${JSON.stringify(log)}, String(url) + "\\n");`,
+      `  const f = ${JSON.stringify(serve)} + "/" + String(url).split("/").pop();`,
+      '  return existsSync(f) ? new Response(readFileSync(f)) : new Response("not found", { status: 404 });',
+      "};",
+    ].join("\n"),
+  );
+  const r = spawnSync("sh", ["-c", `set -e; ${script}`], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, NODE_OPTIONS: `--import ${preload}`, ...env }, encoding: "utf-8" });
+  return { status: r.status ?? -1, stderr: r.stderr, urls: existsSync(log) ? readFileSync(log, "utf-8").trim().split("\n") : [] };
+}
+
 describe("ciToolRelease", () => {
   test("names each release file and its checksums file per architecture", () => {
     expect(ciToolRelease("tofu", "1.13.1", "arm64")).toMatchObject({
@@ -168,6 +209,7 @@ describe("ciToolRelease", () => {
     expect(CI_IMAGE_FLOOR).toBe("0.124.86");
     expect(CI_IMAGE_NON_ROOT_FLOOR).toBe("0.124.88");
     expect(CI_IMAGE_DOCKER_STAGES_FLOOR).toBe("0.124.88");
+    expect(CI_TOOL_NODE_DOWNLOAD_FLOOR).toBe(NEXT_RELEASE);
   });
 });
 
@@ -230,11 +272,12 @@ describe("ciToolFetchScript against local fixtures", () => {
     const binary = Buffer.from("#!/bin/sh\necho just\n");
     const archiveJust = tarGz({ just: binary.toString() });
     const out = tmp();
-    const script = ciToolFetchScript("just", "1.36.0", { dir: `${out}/d`, arch: CI_TOOL_DOCKER_ARCH, sha256: { amd64: sha(archiveJust), arm64: "2".repeat(64) } });
+    // just publishes a checksums file from 1.35.0 (#4952), so an older release is checked on its recorded sha256.
+    const script = ciToolFetchScript("just", "1.34.0", { dir: `${out}/d`, arch: CI_TOOL_DOCKER_ARCH, sha256: { amd64: sha(archiveJust), arm64: "2".repeat(64) } });
     expect(script).not.toContain("sums");
-    expect(runShell(script, { "just-1.36.0-x86_64-unknown-linux-musl.tar.gz": archiveJust }, { TARGETARCH: "amd64" }).status).toBe(0);
+    expect(runShell(script, { "just-1.34.0-x86_64-unknown-linux-musl.tar.gz": archiveJust }, { TARGETARCH: "amd64" }).status).toBe(0);
     expect(readFileSync(`${out}/d/just`, "utf-8")).toContain("echo just");
-    const r = runShell(script, { "just-1.36.0-aarch64-unknown-linux-musl.tar.gz": archiveJust }, { TARGETARCH: "arm64" });
+    const r = runShell(script, { "just-1.34.0-aarch64-unknown-linux-musl.tar.gz": archiveJust }, { TARGETARCH: "arm64" });
     expect(r.status).not.toBe(0);
   });
 
@@ -260,7 +303,7 @@ describe("ciToolFetchScript against local fixtures", () => {
   });
 
   test("refuses, before any shell, a release that needs a recorded sha256 it lacks", () => {
-    expect(() => ciToolFetchScript("act", "0.2.89", { dir: "/out/act" })).toThrow(/no recorded sha256 for act 0.2.89 on amd64 and arm64; act's release publishes no checksums file/);
+    expect(() => ciToolFetchScript("just", "1.34.0", { dir: "/out/just" })).toThrow(/no recorded sha256 for just 1.34.0 on amd64 and arm64; just's release publishes no checksums file/);
     expect(() => ciToolFetchScript("terragrunt", "1.1.0", { dir: "/out/tg", requirePin: true })).toThrow(/no recorded sha256 for terragrunt 1.1.0/);
     expect(() => ciToolFetchScript("tofu", "1.13.1", { dir: "/out/x y" })).toThrow(/absolute path/);
   });
@@ -331,6 +374,85 @@ describe("non-root job lines (#4908)", () => {
     // So an image carries them with no sums of the product's, and a job line can require the pin.
     expect(() => productImageStages({ name: "t", product: "t", description: "d", source: "s", tools: [{ tool: "terraform", version: "1.14.9" }, { tool: "terragrunt", version: "1.2.0" }], bundle: { file: "a", bin: "a" } })).not.toThrow();
     expect(ciToolInstallLine("terragrunt", "1.2.0", { requirePin: true, sudo: true, link: false })).toContain("want=45b6df8a");
+  });
+});
+
+describe("a job with no curl or unzip (#4952)", () => {
+  test("download: node fetches and checks a release with node, and the line names neither tool", () => {
+    const a = tarGz({ tofu: "#!/bin/sh\necho node-fetched\n" });
+    const root = tmp();
+    const line = ciToolInstallLine("tofu", "1.13.1", { root, link: false, download: "node", sha256: { amd64: sha(a), arm64: sha(a) } });
+    expect(line).not.toMatch(/\bcurl\b|\bunzip\b/);
+    const files = { "tofu_1.13.1_linux_amd64.tar.gz": a, "tofu_1.13.1_linux_arm64.tar.gz": a, "tofu_1.13.1_SHA256SUMS": `${sha(a)}  tofu_1.13.1_linux_amd64.tar.gz\n${sha(a)}  tofu_1.13.1_linux_arm64.tar.gz\n` };
+    const r = runNodeShell(line, files);
+    expect(r.stderr).toBe("");
+    expect(r.status).toBe(0);
+    expect(readFileSync(`${root}/tofu-1.13.1/tofu`, "utf-8")).toContain("echo node-fetched");
+    expect(r.urls).toHaveLength(2);
+  });
+
+  test("download: node fails a tampered archive and a missing file, and installs nothing", () => {
+    const a = tarGz({ tofu: "#!/bin/sh\n" });
+    const out = tmp();
+    const script = ciToolFetchScript("tofu", "1.13.1", { dir: `${out}/d`, arch: CI_TOOL_DOCKER_ARCH, download: "node", sha256: { amd64: sha(a), arm64: sha(a) } });
+    const sums = `${sha(a)}  tofu_1.13.1_linux_amd64.tar.gz\n`;
+    expect(runNodeShell(script, { "tofu_1.13.1_linux_amd64.tar.gz": tarGz({ tofu: "evil" }), "tofu_1.13.1_SHA256SUMS": sums }, { TARGETARCH: "amd64" }).status).not.toBe(0);
+    const missing = runNodeShell(script, { "tofu_1.13.1_SHA256SUMS": sums }, { TARGETARCH: "amd64" });
+    expect(missing.status).not.toBe(0);
+    expect(missing.stderr).toContain("tofu_1.13.1_linux_amd64.tar.gz: HTTP 404");
+    expect(existsSync(`${out}/d/tofu`)).toBe(false);
+  });
+
+  test("download: node unpacks a zip's member, and the AWS CLI's whole zip for its installer", () => {
+    const out = tmp();
+    const z = zip({ terraform: "#!/bin/sh\necho terraform\n", "LICENSE.txt": "x" });
+    const s1 = ciToolFetchScript("terraform", "1.14.8", { dir: `${out}/tf`, arch: CI_TOOL_DOCKER_ARCH, download: "node" });
+    const r1 = runNodeShell(s1, { "terraform_1.14.8_linux_amd64.zip": z, "terraform_1.14.8_SHA256SUMS": `${sha(z)}  terraform_1.14.8_linux_amd64.zip\n` }, { TARGETARCH: "amd64" });
+    expect(r1.stderr).toBe("");
+    expect(readFileSync(`${out}/tf/terraform`, "utf-8")).toContain("echo terraform");
+
+    // The installer writes the binary where `-i` points, as the AWS CLI's does.
+    const installer = '#!/bin/sh\nmkdir -p "$2/v2/current/bin"\ncp "$(dirname "$0")/dist/aws" "$2/v2/current/bin/aws"\n';
+    const aws = zip({ "aws/": "", "aws/install": installer, "aws/dist/aws": "#!/bin/sh\necho aws-cli\n" }, { "aws/install": 0o755, "aws/dist/aws": 0o755 });
+    const root = tmp();
+    const line = ciToolInstallLine("aws-cli", "2.37.9", { root, link: false, download: "node", sha256: { amd64: sha(aws), arm64: sha(aws) } });
+    expect(line).not.toMatch(/\bcurl\b|\bunzip\b/);
+    const r2 = runNodeShell(line, { "awscli-exe-linux-x86_64-2.37.9.zip": aws, "awscli-exe-linux-aarch64-2.37.9.zip": aws });
+    expect(r2.stderr).toBe("");
+    expect(r2.status).toBe(0);
+    expect(spawnSync(`${root}/aws-cli-2.37.9/v2/current/bin/aws`, { encoding: "utf-8" }).stdout).toBe("aws-cli\n");
+  });
+
+  test("curl stays the default, and download names curl or node only", () => {
+    expect(ciToolInstallLine("tofu", "1.13.1")).toContain("curl -fsSLo");
+    expect(() => ciToolFetchScript("tofu", "1.13.1", { dir: "/out/t", download: "wget" as never })).toThrow(/download is curl or node/);
+  });
+});
+
+describe("just's and act's checksums files and recorded sums (#4952)", () => {
+  test("just 1.36.0 and act 0.2.89 are recorded, copied from the releases' checksums files", () => {
+    expect(ciToolSha256("just", "1.36.0")).toEqual({ amd64: "bc7c9f377944f8de9cd0418b11d2955adebfa25a488c0b5e3dd2d2c0e9d732da", arm64: "bb3886b15e2cbcb9c0eb19956297d36de4eaef45b89d3f5fa5d1fc4ed3b5b51d" });
+    expect(ciToolSha256("act", "0.2.89")).toEqual({ amd64: "0191d6f1f3b716b5c55820032605d05fc3c1cdbf581ebeff655019e5dd1524c0", arm64: "daa8679ba9615a74d2d0cec321dc593f21948a2a11bb65862b063d8b930f4bcb" });
+    expect(() => ciToolInstallLine("just", "1.36.0", { requirePin: true })).not.toThrow();
+    expect(() => ciToolInstallLine("act", "0.2.89", { requirePin: true })).not.toThrow();
+  });
+
+  test("each is checked against its release's checksums file: just's per file to 1.36.0, SHA256SUMS from 1.37.0, act's checksums.txt", () => {
+    expect(ciToolRelease("just", "1.36.0", "amd64").checksumsUrl).toBe("https://github.com/casey/just/releases/download/1.36.0/just-1.36.0-x86_64-unknown-linux-musl.tar.gz.sha256sum");
+    expect(ciToolRelease("just", "1.35.0", "arm64").checksums).toBe("just-1.35.0-aarch64-unknown-linux-musl.tar.gz.sha256sum");
+    expect(ciToolRelease("just", "1.37.0", "amd64").checksumsUrl).toBe("https://github.com/casey/just/releases/download/1.37.0/SHA256SUMS");
+    expect(ciToolRelease("just", "1.34.0", "amd64").checksumsUrl).toBeUndefined();
+    expect(ciToolRelease("act", "0.2.89", "arm64").checksumsUrl).toBe("https://github.com/nektos/act/releases/download/v0.2.89/checksums.txt");
+  });
+
+  test("the shell reads just's per-file checksums file", () => {
+    const a = tarGz({ just: "#!/bin/sh\necho just\n" });
+    const out = tmp();
+    const s = ciToolFetchScript("just", "1.36.0", { dir: `${out}/j`, arch: CI_TOOL_DOCKER_ARCH, sha256: { amd64: sha(a), arm64: sha(a) } });
+    const r = runShell(s, { "just-1.36.0-x86_64-unknown-linux-musl.tar.gz": a, "just-1.36.0-x86_64-unknown-linux-musl.tar.gz.sha256sum": `${sha(a)}  just-1.36.0-x86_64-unknown-linux-musl.tar.gz\n` }, { TARGETARCH: "amd64" });
+    expect(r.stderr).toBe("");
+    expect(r.urls[1]).toBe("https://github.com/casey/just/releases/download/1.36.0/just-1.36.0-x86_64-unknown-linux-musl.tar.gz.sha256sum");
+    expect(readFileSync(`${out}/j/just`, "utf-8")).toContain("echo just");
   });
 });
 

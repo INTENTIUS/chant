@@ -26,6 +26,7 @@ import { realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { ReleaseAdmission, ReleaseRecord, ReleaseRef } from "../../lifecycle/release-ledger";
 import { archiveSourceTree } from "../source-archive";
+import { actorFromEnv } from "../../actor";
 import { readReleasePlan, releasePlan, releasePlanDigest } from "./source-release";
 
 // ── releaseRollbackPlan ───────────────────────────────────────────────────────
@@ -219,7 +220,7 @@ export async function releaseRollbackRecord(args: ReleaseRollbackRecordArgs): Pr
     return { recorded: false, digest: rollback.to, env, component, approver };
   }
 
-  const actor = args.actor || process.env.GITHUB_ACTOR || process.env.GITLAB_USER_LOGIN || process.env.USER;
+  const actor = args.actor || actorFromEnv(process.env, "");
   if (!actor) throw new Error("releaseRollbackRecord: no actor: pass one, or set GITHUB_ACTOR, GITLAB_USER_LOGIN or USER");
   const { runId, runOrigin } = resolveRunId(args.runId);
   await appendReleaseRecord(

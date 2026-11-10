@@ -183,3 +183,5 @@ export const RELEASE_CUT_RECORD_FLOOR = NEXT_RELEASE;
 
 /** The first chant whose release cut refuses, before it records or tags, a release whose npm publish target would carry an image archive (`publish-npm-carries-image`), and whose GitLab release workflow runs the binfmt image by digest from `IMAGE_PINS` (#4941). */
 export const RELEASE_CUT_CARRIES_IMAGE_FLOOR = NEXT_RELEASE;
+/** The first chant whose `ciToolFetchScript` and `ciToolInstallLine` take `download: "node"`, a fetch and unzip with node for an image with no curl or unzip, whose `CI_TOOL_SHA256` records just 1.36.0 and act 0.2.89 and checks them against their releases' checksums files, and whose overdue check deepens a shallow checkout before it dates a pipeline file (#4952). */
+export const CI_TOOL_NODE_DOWNLOAD_FLOOR = NEXT_RELEASE;

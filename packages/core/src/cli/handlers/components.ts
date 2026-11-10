@@ -60,6 +60,7 @@ import type { Phase, Component } from "../../components/component";
 import { deployUnits } from "../../components/deploy-units";
 import { sortedJsonReplacer } from "../../utils";
 import { withoutReadFlags } from "../../lifecycle/legacy-digest";
+import { actorFromEnv } from "../../actor";
 
 /**
  * chant components release <env> --component <name> --digest <sha256:...>
@@ -141,7 +142,8 @@ export async function runComponentsReleaseRecord(ctx: CommandContext): Promise<n
   // Id + origin resolved together from the same environment (#2045), so the
   // recorded runId always says which id space it lives in and how to reach it.
   const { runId, runOrigin } = resolveRunId(args.runId);
-  const actor = args.actor ?? process.env.GITHUB_ACTOR ?? process.env.GITLAB_USER_LOGIN ?? process.env.USER;
+  // #4952: the fallback is actorFromEnv's; an empty answer is no actor, refused below.
+  const actor = args.actor ?? (actorFromEnv(process.env, "") || undefined);
   // Who approved a gated change (#1035). Optional — omitted for an ungated
   // change, and never defaulted to `actor`, since recording the approver as the
   // triggerer would defeat the separation-of-duties the field exists to attest.

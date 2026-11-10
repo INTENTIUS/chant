@@ -18,7 +18,8 @@
  *   checks it, for an image's fetch stage; {@link ciToolInstallLine} is the
  *   job line that runs it unless the binary is there (with `sudo`, or under
  *   a root such as `$RUNNER_TEMP/chant-tools`, for a job that is not root,
- *   #4908); {@link installCiTool} does the same from Node, for a product
+ *   #4908). With `download: "node"` both fetch and unpack with node, for
+ *   an image with no curl or unzip (#4952). {@link installCiTool} does the same from Node, for a product
  *   that installs a pinned release at run time.
  * - {@link productImageStages} is a product's image as stages a Dockerfile
  *   takes (the docker lexicon's `new Dockerfile({ stages })`), and
@@ -31,7 +32,7 @@
  * project publishes a checksums file is checked against that file's line
  * for the archive, and against the recorded sha256 when there is one, so a
  * tampered checksums file fails as a tampered archive does. A release with
- * no checksums file (the AWS CLI, just, act) needs a recorded sha256. An
+ * no checksums file (the AWS CLI, just before 1.35.0) needs a recorded sha256. An
  * image always needs a recorded sha256 for both architectures, and a caller
  * passes `requirePin` to ask the same of a job line or a run-time install.
  *
@@ -47,9 +48,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync, inflateRawSync } from "node:zlib";
 import { tarEntry } from "./policy-engine";
-import { CI_IMAGE_DOCKER_STAGES_FLOOR, CI_IMAGE_FLOOR, CI_IMAGE_NON_ROOT_FLOOR } from "./release-floors";
+import { CI_IMAGE_DOCKER_STAGES_FLOOR, CI_IMAGE_FLOOR, CI_IMAGE_NON_ROOT_FLOOR, CI_TOOL_NODE_DOWNLOAD_FLOOR } from "./release-floors";
 
-export { CI_IMAGE_DOCKER_STAGES_FLOOR, CI_IMAGE_FLOOR, CI_IMAGE_NON_ROOT_FLOOR };
+export { CI_IMAGE_DOCKER_STAGES_FLOOR, CI_IMAGE_FLOOR, CI_IMAGE_NON_ROOT_FLOOR, CI_TOOL_NODE_DOWNLOAD_FLOOR };
 
 // ---------------------------------------------------------------------------
 // Engine releases
@@ -88,13 +89,19 @@ interface ToolSpec {
   words: Record<CiToolArch, string>;
   base(version: string): string;
   asset(version: string, word: string): string;
-  /** The checksums file, beside the asset under `base`; absent when the release publishes none. */
-  checksums?(version: string, asset: string): string;
+  /** The checksums file, beside the asset under `base`; absent, or undefined for a version, when the release publishes none. */
+  checksums?(version: string, asset: string): string | undefined;
   layout: CiToolLayout;
   /** The binary inside the archive, for `tar.gz` and `zip`. Default `bin`. */
   member?(word: string): string;
   /** The binary under the install directory, for `tree` and `aws-cli`. Default `bin`. */
   path?: string;
+}
+
+/** Whether a release version is at least `major.minor`. */
+function atLeast(version: string, major: number, minor: number): boolean {
+  const [a = 0, b = 0] = version.split(".").map((n) => Number.parseInt(n, 10));
+  return a > major || (a === major && b >= minor);
 }
 
 const STD = { amd64: "amd64", arm64: "arm64" };
@@ -197,6 +204,8 @@ const TOOLS: Record<CiTool, ToolSpec> = {
     words: GNU,
     base: (v) => `https://github.com/casey/just/releases/download/${v}`,
     asset: (v, w) => `just-${v}-${w}-unknown-linux-musl.tar.gz`,
+    // #4952: just publishes `SHA256SUMS` from 1.37.0, one `<file>.sha256sum` per file in 1.35.0 and 1.36.0, and none before.
+    checksums: (v, asset) => (atLeast(v, 1, 37) ? "SHA256SUMS" : atLeast(v, 1, 35) ? `${asset}.sha256sum` : undefined),
     layout: "tar.gz",
   },
   act: {
@@ -204,6 +213,7 @@ const TOOLS: Record<CiTool, ToolSpec> = {
     words: { amd64: "x86_64", arm64: "arm64" },
     base: (v) => `https://github.com/nektos/act/releases/download/v${v}`,
     asset: (_v, w) => `act_Linux_${w}.tar.gz`,
+    checksums: () => "checksums.txt",
     layout: "tar.gz",
   },
 };
@@ -239,6 +249,14 @@ export const CI_TOOL_SHA256: Readonly<Record<string, string>> = {
   "terragrunt-1.2.0-linux-arm64": "b069ce4310572bc46ee6f057057acc4bc6a9077ef8687e157a64b0551290a371",
   "aws-cli-2.37.9-linux-amd64": "6b3a6a3d7bb3997928f0bdf7b866914224abf242c2e54e1dcebbe84bee64f356",
   "aws-cli-2.37.9-linux-arm64": "e7d2cca3622af4765871fe9ce7eeed03acd09dca10a99ebc46e92f79d78765c0",
+  // #4952: terragucci's just and act pins (its workflows/shared.ts), read on 2026-11-10 from
+  // https://github.com/casey/just/releases/download/1.36.0/just-1.36.0-{x86_64,aarch64}-unknown-linux-musl.tar.gz.sha256sum
+  // and https://github.com/nektos/act/releases/download/v0.2.89/checksums.txt.
+  // squawk is not here: its releases publish no checksums file, only bare binaries, and no product pins a release.
+  "just-1.36.0-linux-amd64": "bc7c9f377944f8de9cd0418b11d2955adebfa25a488c0b5e3dd2d2c0e9d732da",
+  "just-1.36.0-linux-arm64": "bb3886b15e2cbcb9c0eb19956297d36de4eaef45b89d3f5fa5d1fc4ed3b5b51d",
+  "act-0.2.89-linux-amd64": "0191d6f1f3b716b5c55820032605d05fc3c1cdbf581ebeff655019e5dd1524c0",
+  "act-0.2.89-linux-arm64": "daa8679ba9615a74d2d0cec321dc593f21948a2a11bb65862b063d8b930f4bcb",
 };
 
 /** One release file of one tool for one architecture. */
@@ -349,6 +367,48 @@ export interface CiToolCheckOptions {
   requirePin?: boolean;
 }
 
+/**
+ * How a fetch line downloads and unpacks a release (#4952): `curl` (the
+ * default) with `unzip` for a zip, or `node`, which downloads with node's
+ * `fetch` and unpacks a zip with node, for a job whose image carries node
+ * but neither curl nor unzip. The check is the same either way; tar,
+ * sha256sum and sed are still the image's.
+ */
+export type CiToolDownload = "curl" | "node";
+
+/** The download line's script for `download: "node"`: `node -e <it> <url> <file>`. A failed answer exits 1 naming the URL and the status. */
+const NODE_FETCH_JS =
+  'const [u,o]=process.argv.slice(1);fetch(u).then(async(r)=>{if(!r.ok)throw new Error(u+": HTTP "+r.status);require("fs").writeFileSync(o,Buffer.from(await r.arrayBuffer()))}).catch((e)=>{console.error(e.message);process.exit(1)})';
+
+/**
+ * The unpack line's script for `download: "node"`: `node -e <it> <zip>
+ * <dir> [member]`, every entry (or the one member) written under `dir`
+ * with its executable bit and symbolic links kept, as the AWS CLI's
+ * installer needs. Stored and deflated entries only, as {@link unzipEntry}
+ * reads them; an entry whose path leaves `dir` fails the line. Written with
+ * no single quote or `$`, so it goes inside the shell's single quotes as it is.
+ */
+const NODE_UNZIP_JS = [
+  'const fs=require("fs"),p=require("path"),z=require("zlib");const [f,d,m]=process.argv.slice(1);const b=fs.readFileSync(f);',
+  'let e=b.length-22;while(e>=0&&b.readUInt32LE(e)!==0x06054b50)e--;if(e<0)throw new Error(f+" is not a zip archive");',
+  "const top=p.resolve(d);let o=b.readUInt32LE(e+16),hit=false;",
+  "for(let i=b.readUInt16LE(e+10);i>0;i--){",
+  'const meth=b.readUInt16LE(o+10),size=b.readUInt32LE(o+20),nl=b.readUInt16LE(o+28),xl=b.readUInt16LE(o+30),cl=b.readUInt16LE(o+32),mode=b.readUInt32LE(o+38)>>>16,l=b.readUInt32LE(o+42),n=b.toString("utf8",o+46,o+46+nl);',
+  "o+=46+nl+xl+cl;if(m&&n!==m)continue;hit=true;",
+  'const t=p.resolve(top,n);if(t!==top&&!t.startsWith(top+p.sep))throw new Error(n+" is outside "+d);',
+  'if(n.endsWith("/")){fs.mkdirSync(t,{recursive:true});continue}',
+  "const s=l+30+b.readUInt16LE(l+26)+b.readUInt16LE(l+28),raw=b.subarray(s,s+size),data=meth===0?raw:meth===8?z.inflateRawSync(raw):null;",
+  'if(!data)throw new Error(n+" uses compression method "+meth);fs.mkdirSync(p.dirname(t),{recursive:true});',
+  "if((mode&0o170000)===0o120000)fs.symlinkSync(data.toString(),t);else fs.writeFileSync(t,data,{mode:mode&0o111?0o755:0o644})}",
+  'if(m&&!hit)throw new Error(m+" is not in "+f)',
+].join("");
+
+function checkDownload(download: unknown): CiToolDownload {
+  if (download === undefined || download === "curl") return "curl";
+  if (download === "node") return "node";
+  throw new Error(`download is curl or node, not ${JSON.stringify(download)}`);
+}
+
 export interface CiToolFetchOptions extends CiToolCheckOptions {
   /** The directory the tool installs into, an absolute path: {@link ciToolDir} under the image's tool root. */
   dir: string;
@@ -362,10 +422,12 @@ export interface CiToolFetchOptions extends CiToolCheckOptions {
    * /opt. The download and the check run as the job's user. Default false.
    */
   sudo?: boolean;
+  /** Download with curl (the default) or with node, for an image with no curl or unzip (#4952). */
+  download?: CiToolDownload;
 }
 
 function needPins(tool: CiTool, version: string, sums: Partial<Record<CiToolArch, string>>, requirePin: boolean): void {
-  const hasSums = spec(tool).checksums !== undefined;
+  const hasSums = spec(tool).checksums?.(version, "") !== undefined;
   const missing = CI_TOOL_ARCHES.filter((a) => !sums[a]);
   if (missing.length && (requirePin || !hasSums)) {
     const why = hasSums ? "" : `; ${tool}'s release publishes no checksums file, so chant needs one`;
@@ -385,6 +447,11 @@ export function ciToolFetchScript(tool: CiTool, version: string, options: CiTool
   const s = spec(tool);
   const sums = ciToolSha256(tool, version, options.sha256);
   needPins(tool, version, sums, options.requirePin === true);
+  const node = checkDownload(options.download) === "node";
+  // #4952: `get <url word> <file>` and `unzipTo <zip> <dir> [member]`, with curl and unzip or with node.
+  const get = (url: string, out: string): string => (node ? `node -e '${NODE_FETCH_JS}' ${url} "${out}"` : `curl -fsSLo "${out}" ${url}`);
+  const unzipTo = (zipFile: string, into: string, member?: string): string =>
+    node ? `node -e '${NODE_UNZIP_JS}' "${zipFile}" "${into}"${member ? ` "${member}"` : ""}` : `unzip -q${member ? " -o" : ""} "${zipFile}"${member ? ` "${member}"` : ""} -d "${into}"`;
   const name = `${tool} ${version}`;
   const base = s.base(version);
   const file = s.asset(version, "$w");
@@ -394,13 +461,13 @@ export function ciToolFetchScript(tool: CiTool, version: string, options: CiTool
     `case "$a" in ${CI_TOOL_ARCHES.map((a) => `(${a}) w=${s.words[a]} ;;`).join(" ")} (*) echo "${name}: chant fetches it for ${CI_TOOL_ARCHES.join(" and ")}, not $a" >&2; exit 1 ;; esac`,
     `f="${file}"`,
     `t="$(mktemp -d)"`,
-    `curl -fsSLo "$t/$f" "${base}/$f"`,
+    get(`"${base}/$f"`, "$t/$f"),
     `case "$a" in ${CI_TOOL_ARCHES.filter((a) => sums[a]).map((a) => `(${a}) want=${sums[a]} ;;`).join(" ")} (*) want= ;; esac`,
   ];
   const checksums = s.checksums?.(version, file);
   if (checksums) {
     lines.push(
-      `curl -fsSLo "$t/sums" ${options.checksumsUrl ?? `"${base}/${checksums}"`}`,
+      get(options.checksumsUrl ?? `"${base}/${checksums}"`, "$t/sums"),
       // The archive's line, with any ./ or * before the name taken off.
       `line="$(sed -n "s#^\\([0-9a-f]\\{64\\}\\)  *[*.]*/*$f\\$#\\1#p" "$t/sums")"`,
       `{ [ -n "$line" ] || { echo "${name}: $f is not in ${checksums}" >&2; exit 1; }; }`,
@@ -420,13 +487,13 @@ export function ciToolFetchScript(tool: CiTool, version: string, options: CiTool
       lines.push(`tar -xzf "$t/$f" -C "$t" "${member}"`, `${su}install -m 0755 "$t/${member}" "${dir}/${s.bin}"`);
       break;
     case "zip":
-      lines.push(`unzip -q -o "$t/$f" "${member}" -d "$t"`, `${su}install -m 0755 "$t/${member}" "${dir}/${s.bin}"`);
+      lines.push(unzipTo("$t/$f", "$t", member), `${su}install -m 0755 "$t/${member}" "${dir}/${s.bin}"`);
       break;
     case "tree":
       lines.push(`${su}tar -xzf "$t/$f" -C "${dir}" --strip-components=1`);
       break;
     case "aws-cli":
-      lines.push(`unzip -q "$t/$f" -d "$t"`, `${su}"$t/aws/install" -i "${dir}" -b "${dir}/bin"`);
+      lines.push(unzipTo("$t/$f", "$t"), `${su}"$t/aws/install" -i "${dir}" -b "${dir}/bin"`);
       break;
   }
   return lines.join(" && ");
@@ -455,6 +522,12 @@ export interface CiToolInstallOptions extends CiToolCheckOptions {
   sudo?: boolean;
   /** Skip the install when any `<bin>` is on PATH, whatever its version. Default false: only the versioned directory counts. */
   onPath?: boolean;
+  /**
+   * Download with curl (the default) or with node (#4952), for a job whose
+   * image carries node but neither curl nor unzip, such as terragucci's
+   * images installing the AWS CLI for drift attribution.
+   */
+  download?: CiToolDownload;
 }
 
 /** Where a job line installs each release by default. */
@@ -475,7 +548,7 @@ export function ciToolInstallLine(tool: CiTool, version: string, options: CiTool
   const binDir = (options.binDir ?? "/usr/local/bin").replace(/(.)\/+$/, "$1");
   if (!SHELL_DIR.test(binDir)) throw new Error(`binDir is an absolute path of letters, digits and ._/-, or one under a variable such as $HOME, not ${JSON.stringify(options.binDir)}`);
   const su = options.sudo ? "sudo " : "";
-  const install = `(set -e; ${ciToolFetchScript(tool, version, { dir, sha256: options.sha256, requirePin: options.requirePin, sudo: options.sudo })})`;
+  const install = `(set -e; ${ciToolFetchScript(tool, version, { dir, sha256: options.sha256, requirePin: options.requirePin, sudo: options.sudo, download: options.download })})`;
   const inDir = `[ -x "${bin}" ]`;
   // A plain path is written as it always was; one under a variable is quoted, so the shell expands it as one word.
   const target = DIR.test(binDir) ? `${binDir}/${s.bin}` : `"${binDir}/${s.bin}"`;

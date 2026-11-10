@@ -30,6 +30,7 @@ import { appendReleaseRecord, InvalidReleaseRecordError, type ReleaseAdmission, 
 import { changeSetDigest } from "../change-set";
 import type { DriverComponent, DriverStepRecord } from "./driver";
 import { componentInputDigests } from "./fan-out-inputs";
+import { actorFromEnv } from "../actor";
 
 /**
  * A step output that represents a *promoted* artifact — a publish-family result
@@ -165,7 +166,7 @@ export interface AutoReleaseOptions {
 }
 
 function resolveActor(override?: string): string | undefined {
-  return override ?? process.env.GITHUB_ACTOR ?? process.env.GITLAB_USER_LOGIN ?? process.env.USER;
+  return override ?? (actorFromEnv(process.env, "") || undefined);
 }
 
 /**

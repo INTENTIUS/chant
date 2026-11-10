@@ -79,6 +79,7 @@ import { formatError, formatInfo, formatWarning } from "../format";
 import { withComponentEndpoint } from "../component-endpoint";
 import type { CommandContext } from "../registry";
 import type { Prepared } from "./pr";
+import { actorFromEnv } from "../../actor";
 
 const USAGE = "chant components pr-env up --base <ref> --pr <n> [--no-push] | post --pr <n> --head <sha> | down --pr <n> [--reason closed|expired] | sweep";
 
@@ -109,7 +110,7 @@ function forgeOf(ctx: CommandContext): PrForge | undefined | number {
 }
 
 function actor(): string {
-  return process.env.GITHUB_ACTOR || process.env.GITLAB_USER_LOGIN || process.env.USER || "chant";
+  return actorFromEnv(process.env, "chant");
 }
 
 function memberOf(ctx: CommandContext): string | undefined {
