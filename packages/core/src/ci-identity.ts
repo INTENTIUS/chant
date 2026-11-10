@@ -124,7 +124,12 @@ export interface GcpCloudIdentity {
   provider: string;
   /** The OIDC token's audience. Default `https://iam.googleapis.com/<provider>`. */
   audience?: string;
-  /** Google's STS, for an emulator. Default `https://sts.googleapis.com`. */
+  /**
+   * Google's STS, for a regional endpoint or an emulator: its base URL, to
+   * which `/v1/token` is added, or its full token URL, one that ends in
+   * `/token` (#4912, terragucci's `token_url`). Default
+   * `https://sts.googleapis.com`.
+   */
   stsEndpoint?: string;
   /** IAM credentials, for an emulator. Default `https://iamcredentials.googleapis.com`. */
   iamEndpoint?: string;
@@ -569,8 +574,9 @@ export const TRADED_VARS: Record<IdentityCloud, readonly string[]> = {
 /**
  * How the trade leaves what it got. `github-env`: `NAME=value` lines
  * appended to the file argv 1 names (`$GITHUB_ENV`), and an `::add-mask::`
- * line for each secret, so every later step of the job has them. `sh`: a
- * file of `export` lines a GitLab script sources, mode 0600.
+ * line for each secret, so every later step of the job has them. `sh`:
+ * `export` lines, printed when argv 1 is `-` (GitLab's script captures and
+ * evaluates them, #4912), else written to that file, mode 0600.
  */
 export type TradeFormat = "github-env" | "sh";
 
@@ -649,7 +655,8 @@ export const TRADE_JS = [
   "if(a.role)Object.assign(vars,by.aws[a.role])}",
   'if(spec.gcp){const c=spec.gcp;const tok=await idToken("gcp",c.audience);by.gcp={};',
   'const sts=trim(c.stsEndpoint||"https://sts.googleapis.com"),iam=trim(c.iamEndpoint||"https://iamcredentials.googleapis.com");',
-  'const fed=json(await post(sts+"/v1/token",{"content-type":"application/json"},JSON.stringify({grantType:"urn:ietf:params:oauth:grant-type:token-exchange",audience:"//iam.googleapis.com/"+c.provider,scope:"https://www.googleapis.com/auth/cloud-platform",requestedTokenType:"urn:ietf:params:oauth:token-type:access_token",subjectToken:tok,subjectTokenType:"urn:ietf:params:oauth:token-type:jwt"})),"Google STS").access_token;',
+  // #4912: stsEndpoint is Google's STS, or its full token URL (terragucci's `token_url`).
+  'const fed=json(await post(/\\/token$/.test(sts)?sts:sts+"/v1/token",{"content-type":"application/json"},JSON.stringify({grantType:"urn:ietf:params:oauth:grant-type:token-exchange",audience:"//iam.googleapis.com/"+c.provider,scope:"https://www.googleapis.com/auth/cloud-platform",requestedTokenType:"urn:ietf:params:oauth:token-type:access_token",subjectToken:tok,subjectTokenType:"urn:ietf:params:oauth:token-type:jwt"})),"Google STS").access_token;',
   'if(!clean(fed))throw new Error("Google STS gave no token");',
   'for(const sa of ids("gcp")){',
   'const at=json(await post(iam+"/v1/projects/-/serviceAccounts/"+encodeURIComponent(sa)+":generateAccessToken",{"content-type":"application/json",authorization:"Bearer "+fed},JSON.stringify({scope:["https://www.googleapis.com/auth/cloud-platform"]})),"IAM credentials").accessToken;',
@@ -685,7 +692,7 @@ export const TRADE_JS = [
   `if(clouds.length)vars.${CLOUD_TRADED_ENV}=clouds.join(",");`,
   'for(const [k,v] of Object.entries(vars))if(!clean(v))throw new Error(k+" is not a value the job can hold");',
   'if(format==="github-env"){for(const s of secrets)console.log("::add-mask::"+s);fs.appendFileSync(out,Object.entries(vars).map(([k,v])=>k+"="+v+"\\n").join(""))}',
-  'else fs.writeFileSync(out,Object.entries(vars).map(([k,v])=>"export "+k+"="+Q+v.split(Q).join(Q+"\\\\"+Q+Q)+Q+"\\n").join(""),{mode:0o600});',
+  'else{const sh=Object.entries(vars).map(([k,v])=>"export "+k+"="+Q+v.split(Q).join(Q+"\\\\"+Q+Q)+Q+"\\n").join("");if(out==="-")process.stdout.write(sh);else fs.writeFileSync(out,sh,{mode:0o600})}',
   'for(const s of said)console.error("chant: traded the job\\u0027s OIDC token for "+s)};',
   "run().catch((e)=>fail(e&&e.message?e.message:String(e)));",
 ].join("");
@@ -699,19 +706,30 @@ export function tradeLine(out: string, format: TradeFormat): string {
   return `(cd / && node -e '${TRADE_JS}' "${out}" ${format})`;
 }
 
-/** The GitLab file the trade writes and the plan script sources, outside the project directory. */
+/**
+ * The file GitLab's trade wrote and sourced before #4912. `gitlabTradeLines`
+ * writes none now; kept for a product that names it.
+ * @deprecated `gitlabTradeLines` captures the trade's `export` lines in {@link GITLAB_TRADE_VARS}.
+ */
 export const GITLAB_TRADE_FILE = "${TMPDIR:-/tmp}/chant-cloud-$CI_JOB_ID.sh";
+
+/** The shell variable GitLab's script holds the trade's `export` lines in until it evaluates them (#4912), as ci-login's `CHANT_CLOUD_LOGIN_VARS`. Not exported, so no child sees it. */
+export const GITLAB_TRADE_VARS = "CHANT_CLOUD_TRADE_VARS";
 
 /**
  * The lines a GitLab job's script starts with when it trades: the trade,
- * the unset of the token variables (and, with `extraUnset`, the forge
- * tokens'), and the source of what the trade wrote, which it then deletes.
+ * its `export` lines captured in {@link GITLAB_TRADE_VARS}, the unset of
+ * the token variables (and, with `extraUnset`, the forge tokens'), and the
+ * evaluation of what the trade printed, then the unset of the variable
+ * that held it. No file of credentials is written (#4912), as ci-login's
+ * `gitlabCloudLogin`. An assignment's status is its command substitution's,
+ * so a failed trade stops the script.
  */
 export function gitlabTradeLines(extraUnset: readonly string[] = []): string[] {
   return [
-    tradeLine(GITLAB_TRADE_FILE, "sh"),
+    `${GITLAB_TRADE_VARS}="$${tradeLine("-", "sh")}"`,
     `unset ${[...extraUnset, ...OIDC_REQUEST_VARS].join(" ")}`,
-    `. "${GITLAB_TRADE_FILE}" && rm -f "${GITLAB_TRADE_FILE}"`,
+    `eval "$${GITLAB_TRADE_VARS}"; unset ${GITLAB_TRADE_VARS}`,
   ];
 }
 

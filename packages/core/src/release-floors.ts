@@ -150,3 +150,6 @@ export const CI_IMAGE_DOCKER_STAGES_FLOOR = NEXT_RELEASE;
 
 /** The first chant whose setup steps (`OpSetupStep`: an Op waves spec's wave and job group `setup`, a scheduled Op's `setup`, `release.workflow.setup`) take a `name`, rendered as the step's name on GitHub and Forgejo (#4932). */
 export const OP_SETUP_STEP_NAME_FLOOR = NEXT_RELEASE;
+
+/** The first chant whose cloud login takes `restart` (log in, then start the step's script again without the token request variables, and empty the token files when the step exits), sets `CHANT_CLOUD_TOKEN_FILES` for `LOGIN_CLEAR_TOKENS`, takes a full token URL as GCP's `stsEndpoint`, and whose GitLab trade evaluates its exports without writing a file (#4912). */
+export const CLOUD_LOGIN_RESTART_FLOOR = NEXT_RELEASE;

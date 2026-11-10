@@ -69,6 +69,7 @@ import {
   type Cloud,
   type CloudTradeSpec,
 } from "./ci-identity";
+import { restartWithout } from "./ci-handover";
 import type { OpWaveRunStep } from "./lexicon";
 
 /** The variable the login step reads its {@link CloudLoginSpec} from, as JSON. */
@@ -113,6 +114,36 @@ export interface CloudLoginSpec {
     };
 }
 
+/**
+ * The variable the login sets (#4912): the token files it wrote itself,
+ * joined by `:`. A runner's `tokenFile` is not among them.
+ * {@link LOGIN_CLEAR_TOKENS} empties them.
+ */
+export const LOGIN_TOKEN_FILES_ENV = "CHANT_CLOUD_TOKEN_FILES";
+
+/**
+ * A shell line that empties each file {@link LOGIN_TOKEN_FILES_ENV} names
+ * (#4912), so a step that runs after the cloud's tool finds no token in
+ * them. It truncates and deletes nothing. The login's `restart` runs it
+ * when the step exits. A job whose login is a step of its own runs it in
+ * the step after the tool's last use.
+ */
+export const LOGIN_CLEAR_TOKENS = `(set -f; IFS=:; for f in \${${LOGIN_TOKEN_FILES_ENV}:-}; do [ ! -f "$f" ] || : > "$f"; done)`;
+
+/** The marker of a step the login's `restart` started again (#4912): its login is done. */
+export const LOGIN_RESTART_MARKER = "CHANT_CLOUD_LOGGED_IN";
+
+/** The variables a GitHub or Forgejo step requests an OIDC token with. */
+const ACTIONS_REQUEST_VARS = ["ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"] as const;
+
+/** What the login's `restart` takes (#4912). */
+export interface CloudLoginRestart {
+  /** The shell the step restarts in, with `-e` (bash also `-o pipefail`). Default `bash`. */
+  shell?: "bash" | "sh";
+  /** More variables the restarted step starts without, such as the forge tokens (`FORGE_TOKEN_VARS`). */
+  also?: readonly string[];
+}
+
 /** How a login is rendered. */
 export interface CloudLoginOptions {
   /**
@@ -125,6 +156,24 @@ export interface CloudLoginOptions {
    * with `|| exit 1`, for a script that runs with `-e` off. Default false.
    */
   sameStep?: boolean;
+  /**
+   * Log in, then start the step's script again without the token request
+   * variables (#4912): the login's lines with `sameStep`, run once, then
+   * the restart (ci-handover's `restartWithout`) without
+   * `ACTIONS_ID_TOKEN_REQUEST_URL`, `ACTIONS_ID_TOKEN_REQUEST_TOKEN` and
+   * `also`, so the change's code and the tool cannot request another token,
+   * and on Forgejo cannot reach the run's runtime token through them. The
+   * restarted step keeps the login's variables and empties the login's
+   * token files when it exits ({@link LOGIN_CLEAR_TOKENS}, an `EXIT` trap;
+   * a step that sets its own `EXIT` trap runs that line in it). The lines
+   * go at the top of the step, since the restart runs the script again from
+   * its first line. A script that is no file (`bash -c`) is not restarted:
+   * the variables are unset and it runs on. On GitLab the login already
+   * unsets the `id_tokens` variables, and the script is no file, so
+   * `restart` adds the unset of `also` and the trap. Implies `sameStep`.
+   * terragucci's `stageTokens` and `restartWithout`.
+   */
+  restart?: boolean | CloudLoginRestart;
 }
 
 /** A job's login: its steps, and the OIDC tokens the job requests. */
@@ -205,6 +254,7 @@ export const LOGIN_JS = [
   'const rand=()=>crypto.randomBytes(8).toString("hex");',
   'const NO={github:"it needs permissions: id-token: write, and a pull request from a fork gets none",forgejo:"Forgejo serves one from version 15, with Forgejo Runner 12.5 or later, to a job with enable-openid-connect: true; on an older Forgejo give the cloud a tokenFile the runner provides"};',
   // A cloud's token: the runner's file, else GitLab's id_tokens variable, else the forge's request URL, into a file of its own.
+  "const mine=[];",
   "const tokenFile=async(cloud,s)=>{",
   'if(s.tokenFile){const f=s.tokenFile.replace(/^\\$\\{?([A-Za-z_][A-Za-z0-9_]*)\\}?/,(m,v)=>process.env[v]||"");let t;try{t=fs.readFileSync(f,"utf8").trim()}catch{throw new Error(cloud+"\\u0027s tokenFile "+f+" cannot be read")}if(!t)throw new Error(cloud+"\\u0027s tokenFile "+f+" is empty");return f}',
   'const name="CHANT_ID_TOKEN_"+cloud.toUpperCase();let v=process.env[name];',
@@ -215,7 +265,7 @@ export const LOGIN_JS = [
   'if(!r.ok)throw new Error("the OIDC token request answered "+r.status);',
   'try{v=JSON.parse(await r.text()).value}catch{throw new Error("the OIDC token request answered with no JSON")}}',
   'if(!clean(v))throw new Error("the job\\u0027s OIDC token for "+cloud+" is not a token");',
-  'const f=tmp+"/chant-oidc-"+cloud+"-"+rand();fs.writeFileSync(f,v,{mode:0o600,flag:"wx"});return f};',
+  'const f=tmp+"/chant-oidc-"+cloud+"-"+rand();fs.writeFileSync(f,v,{mode:0o600,flag:"wx"});mine.push(f);return f};',
   `const KEY=${JSON.stringify(IDENTITY_KEY)};`,
   'const ids=(c)=>{const s=spec[c],l=[];if(s[KEY[c]])l.push(s[KEY[c]]);for(const t of s.targets||[])if(!l.includes(t[KEY[c]]))l.push(t[KEY[c]]);return l};',
   "const vars={},said=[],by={};",
@@ -227,8 +277,10 @@ export const LOGIN_JS = [
   'if(a.role)Object.assign(vars,by.aws[a.role]);else{Object.assign(vars,base);console.error("chant: wrote the aws OIDC token file, with no role of the job\\u0027s own")}}',
   'if(spec.gcp){const c=spec.gcp;const f=await tokenFile("gcp",c);by.gcp={};',
   'const sts=trim(c.stsEndpoint||"https://sts.googleapis.com"),iam=trim(c.iamEndpoint||"https://iamcredentials.googleapis.com");',
+  // #4912: stsEndpoint is Google's STS, or its full token URL (terragucci's `token_url`).
+  'const tu=/\\/token$/.test(sts)?sts:sts+"/v1/token";',
   'for(const sa of ids("gcp")){const cf=tmp+"/chant-gcp-"+rand()+".json";',
-  'fs.writeFileSync(cf,JSON.stringify({type:"external_account",audience:"//iam.googleapis.com/"+c.provider,subject_token_type:"urn:ietf:params:oauth:token-type:jwt",token_url:sts+"/v1/token",service_account_impersonation_url:iam+"/v1/projects/-/serviceAccounts/"+sa+":generateAccessToken",credential_source:{file:f}})+"\\n",{mode:0o600,flag:"wx"});',
+  'fs.writeFileSync(cf,JSON.stringify({type:"external_account",audience:"//iam.googleapis.com/"+c.provider,subject_token_type:"urn:ietf:params:oauth:token-type:jwt",token_url:tu,service_account_impersonation_url:iam+"/v1/projects/-/serviceAccounts/"+sa+":generateAccessToken",credential_source:{file:f}})+"\\n",{mode:0o600,flag:"wx"});',
   "by.gcp[sa]={GOOGLE_APPLICATION_CREDENTIALS:cf,CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE:cf};said.push(sa)}",
   "if(c.serviceAccount)Object.assign(vars,by.gcp[c.serviceAccount])}",
   'if(spec.azure){const z=spec.azure;const f=await tokenFile("azure",z);by.azure={};',
@@ -242,6 +294,8 @@ export const LOGIN_JS = [
   'const clouds=Object.keys(by);if(clouds.some((c)=>(spec[c].targets||[]).length>0)){',
   'const doc={version:1,clouds:{}};for(const c of clouds){const s=spec[c];doc.clouds[c]={...(s[KEY[c]]?{default:s[KEY[c]]}:{}),targets:(s.targets||[]).map((t)=>({targets:t.targets,identity:t[KEY[c]]})),vars:by[c]}}',
   `const tf=tmp+"/chant-cloud-targets-"+rand()+".json";fs.writeFileSync(tf,JSON.stringify(doc),{mode:0o600,flag:"wx"});vars.${CLOUD_TARGETS_ENV}=tf}`,
+  // #4912: the token files the login wrote, which LOGIN_CLEAR_TOKENS empties; a runner's own stays out.
+  `if(mine.length)vars.${LOGIN_TOKEN_FILES_ENV}=mine.join(":");`,
   'for(const [k,v] of Object.entries(vars))if(!clean(v))throw new Error(k+" is not a value the job can hold");',
   'if(format==="github-env")fs.appendFileSync(out,Object.entries(vars).map(([k,v])=>k+"="+v+"\\n").join(""));',
   'else process.stdout.write(Object.entries(vars).map(([k,v])=>"export "+k+"="+Q+v.split(Q).join(Q+"\\\\"+Q+Q)+Q+"\\n").join(""));',
@@ -279,10 +333,21 @@ function shellLines(spec: CloudLoginSpec, forge: LoginForge, unset: readonly str
   ];
 }
 
+/** The `restart` option, filled: undefined without it. */
+const restartOf = (options: CloudLoginOptions): CloudLoginRestart | undefined => (options.restart ? (options.restart === true ? {} : options.restart) : undefined);
+
+/** The trap a restarted login sets: the login's token files emptied when the step exits (#4912). */
+const clearOnExit = `trap ${sh(LOGIN_CLEAR_TOKENS)} EXIT`;
+
 /** A GitHub Actions or Forgejo Actions login: one step that appends the variables to `$GITHUB_ENV`, or with `sameStep` exports them in its own shell. */
 function actionsLogin(forge: "github" | "forgejo", given: CloudLoginSpec, options: CloudLoginOptions = {}): CloudLoginSteps {
   const spec = cloudLoginSpec(given);
   if (Object.keys(spec).length === 0) return { steps: [], idTokens: {} };
+  const restart = restartOf(options);
+  if (restart) {
+    const lines = [`if [ -z "\${${LOGIN_RESTART_MARKER}:-}" ]; then`, ...shellLines(spec, forge, [], true), "fi", restartWithout(restart.shell ?? "bash", [...ACTIONS_REQUEST_VARS, ...(restart.also ?? [])], LOGIN_RESTART_MARKER), clearOnExit];
+    return { steps: [{ name: stepName(spec), run: lines }], idTokens: loginIdTokens(spec) };
+  }
   if (options.sameStep) return { steps: [{ name: stepName(spec), run: shellLines(spec, forge, [], true) }], idTokens: loginIdTokens(spec) };
   return {
     steps: [{ name: stepName(spec), run: [`export ${LOGIN_SPEC_ENV}=${sh(JSON.stringify(spec))}`, loginLine("$GITHUB_ENV", "github-env", forge)] }],
@@ -325,8 +390,12 @@ export function gitlabCloudLogin(given: CloudLoginSpec, options: CloudLoginOptio
   const spec = cloudLoginSpec(given);
   if (Object.keys(spec).length === 0) return { steps: [], idTokens: {} };
   const idTokens = loginIdTokens(spec);
+  const restart = restartOf(options);
   // A GitLab script is one shell already; sameStep adds `|| exit 1`, for a script with -e off.
-  return { steps: [{ name: stepName(spec), run: shellLines(spec, "gitlab", Object.keys(idTokens), options.sameStep === true) }], idTokens };
+  const lines = shellLines(spec, "gitlab", Object.keys(idTokens), options.sameStep === true || restart !== undefined);
+  // #4912: GitLab's script is no file to restart; the id_tokens variables are unset above, `also` here.
+  if (restart) lines.push(...(restart.also?.length ? [`unset ${restart.also.join(" ")}`] : []), clearOnExit);
+  return { steps: [{ name: stepName(spec), run: lines }], idTokens };
 }
 
 /** A job's cloud login on `forge` (#4788): {@link githubCloudLogin}, {@link gitlabCloudLogin} or {@link forgejoCloudLogin}. */
