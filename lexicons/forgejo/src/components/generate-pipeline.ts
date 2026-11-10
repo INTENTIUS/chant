@@ -35,7 +35,9 @@ import type {
   ComponentPipelineResult,
 } from "@intentius/chant/lexicon";
 import type { ForgejoDialectOptions } from "../dialect";
-import { forgejoize, withRunGroup } from "./ci-jobs";
+import { forgejoize, withOpenIdConnect, withRunGroup } from "./ci-jobs";
+import { PR_PLAN_NOTE_JOB } from "@intentius/chant/components/pr-pipeline";
+import { PR_CHECK_EVIDENCE_JOB } from "@intentius/chant/components/pr-checks";
 
 /**
  * Synthesize a `.forgejo/workflows/*.yml` pipeline from a set of components.
@@ -63,11 +65,22 @@ export function generateForgejoPipeline(
     ...(doc.env ? { env: forgejoize(doc.env, dialectOptions) } : {}),
     // A workspace member's working directory (#2542) reads the same on Forgejo.
     ...(doc.defaults ? { defaults: doc.defaults } : {}),
-    jobsDoc: forgejoize(doc.jobsDoc, dialectOptions),
+    jobsDoc: signingJobsKeyless(forgejoize(doc.jobsDoc, dialectOptions), options.prLoop?.evidence?.identity === "oidc"),
     stages: doc.stages,
     jobs: doc.jobs,
     // #4771: the run group a product asks for, so Forgejo does not cancel a run when the next push starts one.
   }, options.runGroup, "chant");
 
   return { yaml: emitPipelineYAML(forgejoDoc), stages: doc.stages, jobs: doc.jobs, env: doc.environment };
+}
+
+/**
+ * #4935: a pull request loop that signs keyless gives its signing jobs, the
+ * plan note and the check evidence, `enable-openid-connect: true`, which
+ * Forgejo reads in place of `id-token: write`. Every other job is as before.
+ */
+function signingJobsKeyless(jobsDoc: Record<string, unknown>, keyless: boolean): Record<string, unknown> {
+  if (!keyless) return jobsDoc;
+  const signing = Object.fromEntries([PR_PLAN_NOTE_JOB, PR_CHECK_EVIDENCE_JOB].filter((n) => n in jobsDoc).map((n) => [n, jobsDoc[n]]));
+  return { ...jobsDoc, ...withOpenIdConnect(signing, undefined) };
 }

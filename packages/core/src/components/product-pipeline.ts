@@ -43,6 +43,8 @@ import { resolveCommitSpec, type OpCommitSpec } from "../ci-commit";
 import type { CiResponses } from "../ci-respond";
 import { planEvidenceOf, productPlanJobs, type ProductPlanJob, type ProductPlanOptions } from "./product-plan";
 import type { PipelineEvidence } from "../ci-evidence-jobs";
+import { prCheckJob, prRefGateJob, type PrCheckJob, type PrRefGateJob } from "./pr-checks";
+import { assertRootChecks } from "./pr-pipeline";
 
 /** Where the generator writes a product's waves spec, which chant reads at base (#4550). */
 export const PRODUCT_WAVES_SPEC_DIR = ".chant/op-waves";
@@ -201,6 +203,15 @@ export interface ProductPipelineJobs {
   action?: PrActionJob & { runner?: CiRunner };
   /** The product plan's jobs (#4799), with `productPlan`: a plan job and a plan-note job per target. */
   productPlan?: ProductPlanJob[];
+  /**
+   * The check job (#4935), with `checkJob`: `chant ci check` on the pull
+   * request's commit through the words' bin, and with `evidence` the
+   * `check-evidence` job's lines that sign each passed hook from its report
+   * (./pr-checks.ts). The forge lexicons render the same jobs.
+   */
+  check?: PrCheckJob & { runner?: CiRunner; evidenceRunner?: CiRunner };
+  /** The ref gate's status job (#4935), with `refGateStatus` (./pr-checks.ts). */
+  refGate?: PrRefGateJob & { runner?: CiRunner };
 }
 
 /** An agent's settings as a product passes them (#4616): {@link OpAgentSpec} without the trigger, which the pipeline names. */
@@ -305,6 +316,8 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   const words = assertProductWords({ ...options.words, applyMode }, { jobs });
   const { waves: given, wavesSpecFile, member, agent: _agent, commits: _commits, actions: _actions, componentWaves, productPlan, evidence, ...loop } = options;
   const { respond } = options;
+  // #4935: the check job and the ref gate's status judge the commit once, from the root pipeline.
+  assertRootChecks({ checkJob: options.checkJob, refGateStatus: options.refGateStatus }, member);
   // #4629: the pull request loop puts the responses on the apply and note jobs, as `chant build --pr-loop --respond` does.
   const prLoop: PrLoopPipelineOptions = { ...loop, words, gate: options.gate ?? words.prGate };
   const [plan, apply, record] = prLoopJobs(forge, env, prLoop, member);
@@ -329,6 +342,12 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
     // #4799: the product's plan verb, a plan job and a note job per target.
     ...(productPlan ? { productPlan: productPlanJobs(forge, env, { ...prLoop, plan: productPlan }, words, evidence) } : {}),
   };
+  // #4935: the check job runs the change's code on the plan runner; the signing and the status run on the default one.
+  if (options.checkJob) {
+    const planRunner = prLoopRunner(options, "plan");
+    out.check = { ...prCheckJob(forge, { ...(words.bin ? { bin: words.bin } : {}), ...(evidence ? { evidence } : {}) }), ...(planRunner !== undefined ? { runner: planRunner } : {}), ...(runnerOfDefault !== undefined ? { evidenceRunner: runnerOfDefault } : {}) };
+  }
+  if (options.refGateStatus) out.refGate = { ...prRefGateJob(forge, { ...(words.bin ? { bin: words.bin } : {}), ...(options.branch ? { branch: options.branch } : {}) }), ...defaultRunner };
   const locks = prCommentLockJobs(forge, { locks: options.locks, words });
   if (locks.length > 0) out.locks = locks.map((job) => ({ ...job, ...defaultRunner }));
   const action = prActionJob(forge, prLoop);

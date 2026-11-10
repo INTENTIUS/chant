@@ -155,6 +155,12 @@ export const PRODUCT_PLAN_WATCHES_FLOOR = NEXT_RELEASE;
 export { PLAN_WATCHES_ENV } from "./op/schedule-overdue";
 
 /**
+ * The first chant whose product plan takes `record` (#4899): the plan step writes the plan job's run record into the hand-off, and the note job keeps it as Op `pr-plan` on `chant/lifecycle` with `pr-post --record-run <plan job>` (`--open` on GitLab), as `chant ci run plan --in-place` records `pr-plan`'s.
+ */
+export const PRODUCT_PLAN_RECORD_FLOOR = NEXT_RELEASE;
+export { PLAN_RUN_OP, PLAN_RUN_RECORD_FILE, readPlanRunRecord } from "./pr-plan-record";
+
+/**
  * Day-2 actions in the product pipeline (#4654): the `action` comment
  * command counted as answered by the product's own workflow
  * (`productPipelineJobs(forge, env, { words, actions: true })`), or the

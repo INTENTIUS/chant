@@ -51,6 +51,7 @@ import {
   type ProductPlanOptions,
 } from "@intentius/chant/components/product-plan";
 import { emitGitlabFile } from "./ci-jobs";
+import { gitlabCheckJobs, withCheckStages } from "./pr-check-jobs";
 
 /** What {@link generateGitlabProductPlanPipeline} takes: the product pipeline's options with `productPlan`, and how the jobs are set up. */
 export interface GitlabProductPlanPipelineOptions extends ProductPipelineOptions {
@@ -112,10 +113,24 @@ export function generateGitlabProductPlanPipeline(env: string, options: GitlabPr
     ...(p.writeProbe ? [p.writeProbe] : []),
   ];
   const interruptible = plan.concurrency?.cancelInProgress ? { interruptible: true } : {};
+  // #4935: the check job beside the plans, its evidence job after them, and the ref gate's status after the notes.
+  const checkEntries = gitlabCheckJobs({
+    image,
+    setup: [...prLoopSetup(image, options.engineSetup), ...beforeScript],
+    beforeScript,
+    // The check job holds no credentials, so a fork's merge request runs it too.
+    onMergeRequest: GITLAB_MERGE_REQUEST_SOURCE,
+    onTrustedMergeRequest: onMergeRequest,
+    onPlanNotes,
+    ...(options.evidence?.runnerKeySecret ? { unset: [options.evidence.runnerKeySecret] } : {}),
+    ...(jobs.check ? { check: jobs.check } : {}),
+    ...(jobs.refGate ? { refGate: jobs.refGate } : {}),
+  });
+  const stagesBefore = [...(plans.some((p) => p.evidence) ? ["plan", "evidence", PR_PLAN_NOTE_JOB] : ["plan", PR_PLAN_NOTE_JOB]), ...(notes ? [PR_NOTE_COMMANDS_JOB] : []), ...(replans.length > 0 ? [REPLAN_JOB, REPLAN_NOTE_JOB] : [])];
   const entries: Array<[string, unknown]> = [
     ["workflow", { name: plan.workflow ?? `chant-pr-${env}`, rules: [{ if: onMergeRequest }, { if: onPlanNotes }, ...(onReplan ? [{ if: onReplan }] : []), ...(onNotes ? [{ if: onNotes }] : [])] }],
     // #4870: the evidence jobs sign each plan job's checks, in a stage of their own after the plans.
-    ["stages", [...(plans.some((p) => p.evidence) ? ["plan", "evidence", PR_PLAN_NOTE_JOB] : ["plan", PR_PLAN_NOTE_JOB]), ...(notes ? [PR_NOTE_COMMANDS_JOB] : []), ...(replans.length > 0 ? [REPLAN_JOB, REPLAN_NOTE_JOB] : [])]],
+    ["stages", withCheckStages(stagesBefore, checkEntries, PR_PLAN_NOTE_JOB)],
     ["variables", { CHANT_ENV: env, ...GITLAB_FULL_HISTORY }],
   ];
   for (const p of plans) {
@@ -127,7 +142,8 @@ export function generateGitlabProductPlanPipeline(env: string, options: GitlabPr
         ...tags(p.runner),
         rules: [{ if: onMergeRequest }],
         ...interruptible,
-        variables: { ...(p.jobEnv ?? {}), ...p.env },
+        // #4899: with record, the record line reads its op, environment and labels.
+        variables: { ...(p.jobEnv ?? {}), ...p.env, ...(p.record?.env ?? {}) },
         ...idTokens(p),
         ...(cache !== undefined ? { cache } : {}),
         // #4295: the merge request's code runs in this job, so its shell drops the forge tokens first.
@@ -166,6 +182,7 @@ export function generateGitlabProductPlanPipeline(env: string, options: GitlabPr
       },
     ]);
   }
+  entries.push(...checkEntries);
   if (notes && onNotes) {
     // The target branch's commit: the job reads the notes as data through the API and runs none of a merge request's code. One poll at a time.
     entries.push([PR_NOTE_COMMANDS_JOB, { stage: PR_NOTE_COMMANDS_JOB, image, ...tags(notes.runner), resource_group: PR_NOTE_COMMANDS_JOB, rules: [{ if: onNotes }], script: [...beforeScript, notes.command] }]);
@@ -185,7 +202,7 @@ export function generateGitlabProductPlanPipeline(env: string, options: GitlabPr
         image,
         ...tags(p.runner),
         rules: [{ if: `${onReplan} && (${gitlabReplanCommentIf(r, p.target)})` }],
-        variables: { ...(p.jobEnv ?? {}), ...p.env, BASE_SHA: "$CI_COMMIT_SHA", PR_NUMBER: `$${GITLAB_REPLAN_PR_VAR}` },
+        variables: { ...(p.jobEnv ?? {}), ...p.env, ...(p.record?.env ?? {}), BASE_SHA: "$CI_COMMIT_SHA", PR_NUMBER: `$${GITLAB_REPLAN_PR_VAR}` },
         ...idTokens(p),
         ...(cache !== undefined ? { cache } : {}),
         // A pipeline of the target branch holds the protected tokens, so the job drops them before it checks out the merge request's head.

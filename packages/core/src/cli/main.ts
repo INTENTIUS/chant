@@ -1057,7 +1057,8 @@ Workspace (level 1, #2524):
   workspace ref-gate check|status --ref <ref> [--at <rev>] [--base <rev>] [--json]
                         Decide a ref update against the checks .chant/trust.json
                         at base requires for the ref; status sets the commit
-                        status a forge requires
+                        status a forge requires; status --open sets it on
+                        every open pull request into the branch (#4935)
   workspace ref-gate install --hook pre-receive|pre-push [--git-dir <dir>]
                         Write the git hook that refuses an update whose commit
                         lacks current evidence for a blocking check
@@ -1589,6 +1590,14 @@ Options:
                         apply on merge tells it. With --control-setting
                         <key>=<value> (repeatable) for op, member,
                         readTokenSecret and the other control settings
+  --evidence-runner-key-secret <NAME>, --evidence-identity oidc [--evidence-audience <aud>]
+                        (build --pr-loop) The runner identity the note job
+                        signs plan and policy with (#4935)
+  --check-job           (build --pr-loop) A check job that runs ci check on
+                        the pull request's commit, and with evidence a job
+                        that signs each passed hook (#4935)
+  --ref-gate-status     (build --pr-loop) A job that sets the ref gate's
+                        status on the pull request's commit (#4935)
   --no-release-record   Skip auto-emitting a release-ledger record after a
                         successful \`run --components\` deploy (default: on;
                         also settable via chant.config.ts's

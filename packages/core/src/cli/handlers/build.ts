@@ -65,7 +65,11 @@ async function engineSetupFor(path: string): Promise<string[]> {
  * `--merge auto --merge-token-env <VAR> [--merge-method <m>]` (#4636) merges
  * the pull request after its update before merge. `--respond <list>`,
  * `--decide-backend` and `--decide-model` (#4629) set the apply and note
- * jobs' responses and the description check's service. {@link prLoopFlagsProblem}
+ * jobs' responses and the description check's service.
+ * `--evidence-runner-key-secret <NAME>`, or `--evidence-identity oidc` with
+ * `--evidence-audience` (#4935), give the loop its runner identity: the note
+ * job signs `plan` and `policy`. `--check-job` and `--ref-gate-status`
+ * (#4935) write the check job and the ref gate's status job. {@link prLoopFlagsProblem}
  * has checked all of them first.
  */
 function prLoopOption(args: CommandContext["args"], reportUrl: string | undefined, requireReview = false, requireRunnerStart = false): PrLoopPipelineOptions {
@@ -105,6 +109,11 @@ function prLoopOption(args: CommandContext["args"], reportUrl: string | undefine
     // #4629: the responses on the apply and note jobs, and the description check's service.
     ...(respond && Object.keys(respond).length > 0 ? { respond } : {}),
     ...(args.decideBackend && args.decideModel ? { decide: { backend: args.decideBackend, model: args.decideModel } } : {}),
+    // #4935: the runner identity the note job signs with, the check job and the ref gate's status job.
+    ...(args.evidenceRunnerKeySecret ? { evidence: { runnerKeySecret: args.evidenceRunnerKeySecret } } : {}),
+    ...(args.evidenceIdentity === "oidc" ? { evidence: { identity: "oidc" as const, ...(args.evidenceAudience ? { audience: args.evidenceAudience } : {}) } } : {}),
+    ...(args.checkJob ? { checkJob: true } : {}),
+    ...(args.refGateStatus ? { refGateStatus: true } : {}),
   };
 }
 
@@ -114,8 +123,13 @@ function prLoopOption(args: CommandContext["args"], reportUrl: string | undefine
  * they do. Each value is refused by name, as `pr-apply` and `pr-post` refuse
  * it, so a build never writes a job that fails on its own line.
  */
-export function prLoopFlagsProblem(args: Pick<CommandContext["args"], "prLoop" | "applyBeforeMerge" | "merge" | "mergeTokenEnv" | "mergeMethod" | "respond" | "decideBackend" | "decideModel" | "targetDependents"> & Partial<Pick<CommandContext["args"], "controlRepo" | "controlSettings">>): string | undefined {
+export function prLoopFlagsProblem(args: Pick<CommandContext["args"], "prLoop" | "applyBeforeMerge" | "merge" | "mergeTokenEnv" | "mergeMethod" | "respond" | "decideBackend" | "decideModel" | "targetDependents"> & Partial<Pick<CommandContext["args"], "controlRepo" | "controlSettings" | "evidenceRunnerKeySecret" | "evidenceIdentity" | "evidenceAudience" | "checkJob" | "refGateStatus">>): string | undefined {
   const given = [
+    ...(args.evidenceRunnerKeySecret !== undefined ? ["--evidence-runner-key-secret"] : []),
+    ...(args.evidenceIdentity !== undefined ? ["--evidence-identity"] : []),
+    ...(args.evidenceAudience !== undefined ? ["--evidence-audience"] : []),
+    ...(args.checkJob ? ["--check-job"] : []),
+    ...(args.refGateStatus ? ["--ref-gate-status"] : []),
     ...(args.controlRepo !== undefined ? ["--control"] : []),
     ...(args.controlSettings !== undefined ? ["--control-setting"] : []),
     ...(args.merge !== undefined ? ["--merge"] : []),
@@ -140,6 +154,10 @@ export function prLoopFlagsProblem(args: Pick<CommandContext["args"], "prLoop" |
     if (args.mergeMethod !== undefined && !(PR_MERGE_METHODS as readonly string[]).includes(args.mergeMethod)) return `--merge-method takes ${PR_MERGE_METHODS.join(", ")}, not ${args.mergeMethod}`;
   }
   if (args.controlSettings !== undefined && args.controlRepo === undefined) return "--control-setting sets the control repo's settings, so it needs --control <repo>";
+  // #4935: one runner identity, as PipelineEvidence takes it.
+  if (args.evidenceRunnerKeySecret !== undefined && args.evidenceIdentity !== undefined) return "--evidence-runner-key-secret and --evidence-identity each name the runner identity the jobs sign with; give one of them";
+  if (args.evidenceAudience !== undefined && args.evidenceIdentity === undefined) return "--evidence-audience is the keyless signing token's audience, so it goes with --evidence-identity oidc";
+  if (args.evidenceRunnerKeySecret !== undefined && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(args.evidenceRunnerKeySecret)) return `--evidence-runner-key-secret takes a secret name of letters, digits and _, not ${args.evidenceRunnerKeySecret}`;
   const respond = args.respond ? parseRespondList(args.respond) : {};
   if ("error" in respond) return respond.error;
   const check = respond.description === "check";
