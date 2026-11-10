@@ -14,8 +14,13 @@
  *   before posting the note, which then says which checks were signed. The
  *   key is in that one step, in a job that runs none of the change's code.
  *   GitLab posts its notes from a target-branch pipeline that reads every
- *   open merge request, so there a job of its own after each plan job
- *   (`<plan job>-evidence`) signs from the plan job's artifact.
+ *   open merge request, so there a job of its own in that pipeline, before
+ *   the note job (`<plan job>-evidence`), signs from each merge request's
+ *   plan job artifact (#4914): a merge request pipeline is built from the
+ *   change's own files, so no job in it may hold the key. The signing job
+ *   names the environment {@link GITLAB_EVIDENCE_ENVIRONMENT}, which the
+ *   key's variable is scoped to, protected; the jobs that run the change
+ *   name none, so GitLab never hands them the key.
  * - A wave job (the waves pipeline) gets the key on its `chant run wave`
  *   step, and signs `plan:<wave>` and `policy:<wave>` once the wave is
  *   planned (../op/op-waves-evidence.ts).
@@ -45,7 +50,35 @@ export const EVIDENCE_ID_TOKEN_VAR = "CHANT_ID_TOKEN_SIGSTORE";
 /** The audience a keyless signing job's token is requested for unless told: sigstore's. */
 export const EVIDENCE_DEFAULT_AUDIENCE = "sigstore";
 
-export { CHECK_EVIDENCE_FLOOR, CHECK_JOB_FLOOR, KEYLESS_EVIDENCE_FLOOR, LOCAL_EVIDENCE_FLOOR, PR_LOOP_EVIDENCE_FLOOR, REF_GATE_STATUS_JOB_FLOOR } from "./release-floors";
+export { CHECK_EVIDENCE_FLOOR, CHECK_JOB_FLOOR, GITLAB_OPEN_EVIDENCE_FLOOR, KEYLESS_EVIDENCE_FLOOR, LOCAL_EVIDENCE_FLOOR, PR_LOOP_EVIDENCE_FLOOR, REF_GATE_STATUS_JOB_FLOOR } from "./release-floors";
+
+/**
+ * The GitLab environment every signing job names (#4914), with `action:
+ * access`, so it creates no deployment. Scope the runner key's CI/CD
+ * variable to it and protect it: GitLab then hands the key only to the
+ * signing jobs of a protected branch's pipeline, and to none of the jobs
+ * that run a merge request's code.
+ */
+export const GITLAB_EVIDENCE_ENVIRONMENT = "chant-evidence";
+
+/** Where a GitLab signing job keeps what it signed for each merge request (#4914): `.chant/evidence/<job>/<iid>/evidence.json`. */
+export function gitlabOpenEvidenceDir(job: string): string {
+  return `.chant/evidence/${job}`;
+}
+
+/**
+ * The lines of a GitLab signing job in the target branch's plan notes
+ * pipeline (#4914): `chant ci evidence sign --open` finds every open merge
+ * request's newest `job`, reads its report from the job's artifact at
+ * `dir`, fetches the head and signs it against the policy at the branch's
+ * commit, and keeps each merge request's `evidence.json` under `out`.
+ * With `noForks`, a merge request from a fork is not signed for, as a
+ * product plan with `forks: "skip"` plans none.
+ */
+export function openEvidenceLines(opts: { job: string; dir: string; out: string; bin?: string; noForks?: boolean }): string[] {
+  const chant = opts.bin ?? "chant";
+  return [`${chant} ci evidence sign --open --job ${opts.job} --from-report ${opts.dir} --base "$CI_COMMIT_SHA" --output ${opts.out}${opts.noForks ? " --no-forks" : ""}`];
+}
 
 /**
  * A pipeline's runner identity (#4870): a runner key's secret, or (#4869)

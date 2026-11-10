@@ -24,10 +24,10 @@ describe("check evidence in generated pipelines on gitlab (#4870)", () => {
 
   test("the plan pipeline signs plan and policy for each target, with the key from the secret", () => {
     const yaml = generateGitlabProductPlanPipeline("default", { ...plan, evidence }).yaml;
-    expect(yaml.match(/yodel chant ci evidence sign --from-report \.chant\/pr --result /g)).toHaveLength(2);
+    // #4914: in the plan notes pipeline, for every open merge request's plan job.
+    expect(yaml.match(/yodel chant ci evidence sign --open --job (staging|prod)-plan --from-report \.chant\/pr /g)).toHaveLength(2);
     expect(yaml).toContain("CHANT_RUNNER_KEY:");
     expect(yaml).toContain("CHANT_RUNNER_KEY_PEM");
-    expect(yaml).toContain("git fetch --quiet --no-tags --depth=1 origin");
   });
 
   test("each deciding wave job's command step carries the key, and a share job's does not", () => {

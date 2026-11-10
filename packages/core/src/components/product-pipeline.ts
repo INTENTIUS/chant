@@ -42,7 +42,7 @@ import { resolveAgentSpec, type OpAgentSpec } from "../ci-agent";
 import { resolveCommitSpec, type OpCommitSpec } from "../ci-commit";
 import type { CiResponses } from "../ci-respond";
 import { planEvidenceOf, productPlanJobs, type ProductPlanJob, type ProductPlanOptions } from "./product-plan";
-import type { PipelineEvidence } from "../ci-evidence-jobs";
+import { gitlabOpenEvidenceDir, type PipelineEvidence } from "../ci-evidence-jobs";
 import { prCheckJob, prRefGateJob, type PrCheckJob, type PrRefGateJob } from "./pr-checks";
 import { assertRootChecks } from "./pr-pipeline";
 
@@ -331,7 +331,9 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   }
   // #4619: the loop's control target, else the waves spec's.
   const controlTarget = options.control?.target ?? (given?.control ? opWavesControlTarget(given.control) : undefined);
-  const post = prLoopPostJob(forge, env, member, words, { ...(options.staleNotes ? { staleNotes: true } : {}), ...(respond ? { respond } : {}), ...(options.decide ? { decide: options.decide } : {}) });
+  const post0 = prLoopPostJob(forge, env, member, words, { ...(options.staleNotes ? { staleNotes: true } : {}), ...(respond ? { respond } : {}), ...(options.decide ? { decide: options.decide } : {}) });
+  // #4914: on GitLab the signing job of the plan notes pipeline keeps each merge request's evidence, which the note reads.
+  const post = evidence && forge === "gitlab" ? { ...post0, command: `${post0.command} --evidence-dir ${gitlabOpenEvidenceDir(plan!.jobName)}` } : post0;
   const out: ProductPipelineJobs = {
     words,
     plan: plan!,
@@ -345,7 +347,7 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   // #4935: the check job runs the change's code on the plan runner; the signing and the status run on the default one.
   if (options.checkJob) {
     const planRunner = prLoopRunner(options, "plan");
-    out.check = { ...prCheckJob(forge, { ...(words.bin ? { bin: words.bin } : {}), ...(evidence ? { evidence } : {}) }), ...(planRunner !== undefined ? { runner: planRunner } : {}), ...(runnerOfDefault !== undefined ? { evidenceRunner: runnerOfDefault } : {}) };
+    out.check = { ...prCheckJob(forge, { ...(words.bin ? { bin: words.bin } : {}), ...(evidence ? { evidence } : {}), ...(productPlan?.forks === "skip" ? { noForks: true } : {}) }), ...(planRunner !== undefined ? { runner: planRunner } : {}), ...(runnerOfDefault !== undefined ? { evidenceRunner: runnerOfDefault } : {}) };
   }
   if (options.refGateStatus) out.refGate = { ...prRefGateJob(forge, { ...(words.bin ? { bin: words.bin } : {}), ...(options.branch ? { branch: options.branch } : {}) }), ...defaultRunner };
   const locks = prCommentLockJobs(forge, { locks: options.locks, words });

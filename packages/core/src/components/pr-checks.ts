@@ -16,9 +16,11 @@
  *   that passed, by name, from the check job's report, in a job that checks
  *   out the target branch's commit and runs none of the change's code, as
  *   the plan note job signs `plan` and `policy` from the plan job's report.
- *   It pushes `refs/notes/chant/evidence`. On GitLab it runs in the merge
- *   request pipeline after the check job, from its artifact, as the plan's
- *   `<plan job>-evidence` job does, and only once the check job succeeded.
+ *   It pushes `refs/notes/chant/evidence`. On GitLab it runs in the target
+ *   branch's plan notes pipeline (#4914), as the plan's `<plan job>-evidence`
+ *   job does: `ci evidence sign --open` signs every open merge request's
+ *   settled check job from its artifact, so no job of the merge request's
+ *   own pipeline holds the key.
  * - The `ref-gate` job runs `chant workspace ref-gate status` (#4867) for
  *   the pull request's commit once the plan note and the check evidence are
  *   in: it reads the evidence notes, decides the update a merge into the
@@ -36,7 +38,7 @@
 
 import type { ForgeKind } from "../pr-forge";
 import { GITHUB_JOB_TOKEN } from "../ci-jobs";
-import { assertPipelineEvidence, evidenceIdTokens, evidenceKeyEnv, evidenceKeyless, planEvidenceLines, type PipelineEvidence } from "../ci-evidence-jobs";
+import { assertPipelineEvidence, evidenceIdTokens, evidenceKeyEnv, evidenceKeyless, gitlabOpenEvidenceDir, openEvidenceLines, planEvidenceLines, type PipelineEvidence } from "../ci-evidence-jobs";
 import { withProductBin } from "./pr-pipeline";
 
 /** The check job's name (#4935). */
@@ -66,15 +68,17 @@ export interface PrCheckJob {
   /**
    * With `evidence`: the signing job's lines and variables. GitHub and
    * Forgejo run them in `check-evidence` after taking the report back;
-   * GitLab in `check-evidence` with the check job's artifact. Signing
-   * keyless, the job asks for an OIDC token: `idToken` (GitHub's `id-token:
-   * write`, Forgejo's `enable-openid-connect`) or GitLab's `idTokens`.
+   * GitLab in `check-evidence` in the target branch's plan notes pipeline
+   * (#4914), for every open merge request's check job, keeping `dir`.
+   * Signing keyless, the job asks for an OIDC token: `idToken` (GitHub's
+   * `id-token: write`, Forgejo's `enable-openid-connect`) or GitLab's
+   * `idTokens`.
    */
-  evidence?: { jobName: string; lines: string[]; env: Record<string, string>; idToken?: true; idTokens?: Record<string, { aud: string }> };
+  evidence?: { jobName: string; lines: string[]; env: Record<string, string>; dir?: string; idToken?: true; idTokens?: Record<string, { aud: string }> };
 }
 
 /** The check job for `forge` (#4935), with the check evidence job when `evidence` names a runner identity. */
-export function prCheckJob(forge: ForgeKind, opts: { bin?: string; evidence?: PipelineEvidence } = {}): PrCheckJob {
+export function prCheckJob(forge: ForgeKind, opts: { bin?: string; evidence?: PipelineEvidence; noForks?: boolean } = {}): PrCheckJob {
   assertPipelineEvidence(opts.evidence);
   const gitlab = forge === "gitlab";
   const base = gitlab ? "$CI_MERGE_REQUEST_DIFF_BASE_SHA" : "${{ github.event.pull_request.base.sha }}";
@@ -89,13 +93,17 @@ export function prCheckJob(forge: ForgeKind, opts: { bin?: string; evidence?: Pi
   const key = evidenceKeyEnv(forge, evidence);
   const bin = opts.bin ? { bin: opts.bin } : {};
   if (gitlab) {
-    // The job runs only once the check job succeeded, on the merge request's commit.
+    // #4914: the job runs in the target branch's plan notes pipeline and signs every open merge request's
+    // settled check job from its artifact; no job of a merge request pipeline holds the key.
+    const dir = gitlabOpenEvidenceDir(PR_CHECK_JOB);
     return {
       ...job,
       evidence: {
         jobName: PR_CHECK_EVIDENCE_JOB,
-        lines: planEvidenceLines({ dir: PR_CHECK_REPORT_DIR, at: '"$CI_COMMIT_SHA"', base: '"$CI_MERGE_REQUEST_DIFF_BASE_SHA"', result: "success", ...bin }),
+        // A fork's check job runs too, as it holds nothing; with noForks (a product plan's forks: "skip") its hooks are not signed for.
+        lines: openEvidenceLines({ job: PR_CHECK_JOB, dir: PR_CHECK_REPORT_DIR, out: dir, ...bin, ...(opts.noForks ? { noForks: true } : {}) }),
         env: key,
+        dir,
         ...(evidenceKeyless(evidence) ? { idTokens: evidenceIdTokens(evidence) } : {}),
       },
     };
@@ -148,4 +156,4 @@ export function prRefGateJob(forge: ForgeKind, opts: { bin?: string; branch?: st
   };
 }
 
-export { CHECK_JOB_FLOOR, PR_LOOP_EVIDENCE_FLOOR, REF_GATE_STATUS_JOB_FLOOR } from "../release-floors";
+export { CHECK_JOB_FLOOR, GITLAB_OPEN_EVIDENCE_FLOOR, PR_LOOP_EVIDENCE_FLOOR, REF_GATE_STATUS_JOB_FLOOR } from "../release-floors";

@@ -35,6 +35,7 @@ import { CHECK_EVIDENCE_KEY_ENV, LOCAL_EVIDENCE_KEY_ENV, SIGNING_ID_TOKEN_VAR } 
 import { acceptedLocalEvidence, acceptsLocalEvidence, fetchLocalEvidence } from "../workspace/trust/local-evidence";
 
 export { CI_CHECK_HOOK_FLOOR } from "../op/op-waves";
+export { CHECK_SUMMARY_FLOOR } from "../release-floors";
 
 /** The check hooks a job runs, and where they were read. */
 export interface CheckHooksRead {
@@ -159,6 +160,27 @@ export function passedCheckHooks(outcomes: readonly CheckHookOutcome[]): Array<{
   const byName = new Map<string, CheckHookOutcome[]>();
   for (const o of outcomes) byName.set(o.name, [...(byName.get(o.name) ?? []), o]);
   return [...byName].filter(([, runs]) => runs.every((r) => r.outcome === "passed")).map(([check, runs]) => ({ check, runs }));
+}
+
+/**
+ * The check report's markdown section (#4914): a heading naming the base
+ * the hooks were read at, a line per hook run and per lexicon check step,
+ * the failure, and the checks whose evidence was signed. A product's check
+ * step keeps it in its own report or job summary (`chant ci check
+ * --summary <file>`) instead of rendering `check-hooks.json` itself. Empty
+ * when no hook is declared and no step ran.
+ */
+export function checkReportSummary(report: Pick<CheckHooksReport, "status" | "base" | "hooks" | "steps" | "failed" | "evidence">): string[] {
+  if (report.status === "none") return [];
+  const at = report.base === "HEAD" ? "" : ` (read at ${/^[0-9a-f]{40}$/.test(report.base) ? report.base.slice(0, 12) : report.base})`;
+  const hooks = report.hooks.map(
+    (h) => `- ${h.outcome}: \`${h.name}\`${h.target ? ` for \`${h.target}\`` : ""}${h.outcome === "failed" ? `, exit ${h.exit}` : ""}${h.reason ? ` (${h.reason})` : ""}`,
+  );
+  const steps = (report.steps ?? []).map(
+    (s) => `- ${s.outcome}: \`${s.lexicon} ${s.step}\` for \`${s.member}\`${s.stack ? ` (stack \`${s.stack}\`)` : ""}${s.outcome === "failed" ? `, exit ${s.exit}` : ""}${s.reason && s.outcome !== "failed" ? ` (${s.reason})` : ""}`,
+  );
+  const signed = report.evidence ? [`- signed: ${report.evidence.signed.map((c) => `\`${c}\``).join(", ")} as ${report.evidence.runner}`] : [];
+  return [`### Check hooks${at}`, "", ...hooks, ...steps, ...(report.failed ? [`- ${report.failed}`] : []), ...signed, ""];
 }
 
 /** Where {@link runCheckHooks} writes its runs file and report unless told: `.chant/check`. */

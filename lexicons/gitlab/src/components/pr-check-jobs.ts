@@ -8,9 +8,12 @@
  *   forge tokens and the runner key's variable before any of the change's
  *   code runs (#4295), runs `chant ci check`, and keeps `.chant/check` as
  *   its artifact.
- * - `check-evidence`, with `evidence`, runs once the check job succeeded,
- *   from its artifact, and signs each passed hook, as the plan's
- *   `<plan job>-evidence` job signs `plan` and `policy` (#4870).
+ * - `check-evidence`, with `evidence`, runs in the plan notes pipeline of
+ *   the target branch before the note jobs (#4914), and signs each passed
+ *   hook of every open merge request's settled check job from its
+ *   artifact, as the plan's `<plan job>-evidence` job signs `plan` and
+ *   `policy` (#4870). It names the `chant-evidence` environment, which the
+ *   runner key's variable is scoped to; the check job names none.
  * - `ref-gate` runs in the plan notes pipeline of the target branch, after
  *   the note jobs, which alone holds the protected token a commit status
  *   needs (#4328): `ref-gate status --open` sets the status of every open
@@ -20,6 +23,7 @@
 import { GITLAB_DROP_FORGE_TOKENS } from "@intentius/chant/ci-handover";
 import { PR_CHECK_ARTIFACT, type PrCheckJob, type PrRefGateJob } from "@intentius/chant/components/pr-checks";
 import { gitlabTags } from "@intentius/chant/ci-jobs";
+import { GITLAB_EVIDENCE_ENVIRONMENT } from "@intentius/chant/ci-evidence-jobs";
 
 /** What {@link gitlabCheckJobs} renders the jobs with. */
 export interface GitlabCheckJobsInput {
@@ -30,11 +34,14 @@ export interface GitlabCheckJobsInput {
   beforeScript: string[];
   /** The merge request pipeline's rule. */
   onMergeRequest: string;
-  /** The rule of the jobs that hold a key: `onMergeRequest`, and with `forks: "skip"` the project's own. Default `onMergeRequest`. */
-  onTrustedMergeRequest?: string;
-  /** The plan notes pipeline's rule. */
+  /** The plan notes pipeline's rule: the signing and status jobs run there (#4914). */
   onPlanNotes: string;
-  /** Variables the check job unsets with the forge tokens: the runner key's, which GitLab hands every job. */
+  /**
+   * Variables the check job unsets with the forge tokens: the runner key's.
+   * Scoped to the `chant-evidence` environment and protected, GitLab hands
+   * it to no job of a merge request pipeline (#4914); the unset is for a
+   * project that has not scoped it yet.
+   */
   unset?: string[];
   check?: PrCheckJob & { runner?: unknown; evidenceRunner?: unknown };
   refGate?: PrRefGateJob & { runner?: unknown };
@@ -66,21 +73,7 @@ export function gitlabCheckJobs(input: GitlabCheckJobsInput): Array<[string, Rec
       },
     ]);
     if (check.evidence) {
-      const ev = check.evidence;
-      out.push([
-        ev.jobName,
-        {
-          stage: GITLAB_CHECK_STAGES.evidence,
-          image,
-          ...tags(check.evidenceRunner),
-          rules: [{ if: input.onTrustedMergeRequest ?? input.onMergeRequest }],
-          needs: [{ job: check.jobName, artifacts: true }],
-          variables: ev.env,
-          // #4869: signing keyless, the job's token for the signing audience.
-          ...(ev.idTokens ? { id_tokens: ev.idTokens } : {}),
-          script: [...input.beforeScript, ...ev.lines],
-        },
-      ]);
+      out.push(gitlabOpenEvidenceJob(check.evidence, { image, runner: check.evidenceRunner, beforeScript: input.beforeScript, onPlanNotes: input.onPlanNotes }));
     }
   }
   if (refGate) {
@@ -98,6 +91,38 @@ export function gitlabCheckJobs(input: GitlabCheckJobsInput): Array<[string, Rec
     ]);
   }
   return out;
+}
+
+/**
+ * A signing job of the target branch's plan notes pipeline (#4914): the
+ * plan's `<plan job>-evidence` or `check-evidence`. It runs `chant ci
+ * evidence sign --open` before the note jobs, for every open merge
+ * request, names {@link GITLAB_EVIDENCE_ENVIRONMENT} so the runner key's
+ * variable can be scoped to it, and keeps each merge request's
+ * `evidence.json` for the note job.
+ */
+export function gitlabOpenEvidenceJob(
+  ev: { jobName?: string; lines: string[]; env: Record<string, string>; dir?: string; idTokens?: Record<string, { aud: string }> },
+  input: { image: string; runner?: unknown; beforeScript: string[]; onPlanNotes: string },
+): [string, Record<string, unknown>] {
+  const t = gitlabTags(input.runner as Parameters<typeof gitlabTags>[0]);
+  return [
+    ev.jobName!,
+    {
+      stage: GITLAB_CHECK_STAGES.evidence,
+      image: input.image,
+      ...(t ? { tags: t } : {}),
+      rules: [{ if: input.onPlanNotes }],
+      // The key's variable is scoped to this environment and protected: no job of a merge request pipeline names it.
+      environment: { name: GITLAB_EVIDENCE_ENVIRONMENT, action: "access" },
+      variables: ev.env,
+      // #4869: signing keyless, the job's token for the signing audience.
+      ...(ev.idTokens ? { id_tokens: ev.idTokens } : {}),
+      // The target branch's commit: the reports are read from the merge requests' artifacts as data.
+      script: [...input.beforeScript, ...ev.lines],
+      ...(ev.dir ? { artifacts: { when: "always", paths: [ev.dir] } } : {}),
+    },
+  ];
 }
 
 /** The stages {@link gitlabCheckJobs}' jobs add after the plan, in order, for a pipeline whose stages are `before`. */

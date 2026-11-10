@@ -35,7 +35,7 @@ import type { ForgeKind } from "../pr-forge";
 import type { CiRunner } from "../ci-jobs";
 import type { CiProductWords } from "../ci-product-words";
 import type { PrPlanNoteWords } from "../pr-plan-note";
-import { assertPipelineEvidence, evidenceIdTokens, evidenceKeyEnv, evidenceKeyless, planEvidenceLines, type PipelineEvidence } from "../ci-evidence-jobs";
+import { assertPipelineEvidence, evidenceIdTokens, evidenceKeyEnv, evidenceKeyless, gitlabOpenEvidenceDir, openEvidenceLines, planEvidenceLines, type PipelineEvidence } from "../ci-evidence-jobs";
 import { gitlabPlanJobName, PR_LOOP_REPORT_DIR, PR_PLAN_NOTE_JOB, prLoopPassedEnv, prLoopPostJob, prLoopRunner, type PrLoopPipelineOptions } from "./pr-pipeline";
 import { GITHUB_JOB_TOKEN } from "../ci-jobs";
 import { cloudLogin, type CloudLoginSpec } from "../ci-login";
@@ -277,12 +277,15 @@ export interface ProductPlanJob {
    * With the pipeline's `evidence` (#4870): the lines that sign the plan
    * job's `plan` and `policy` checks from its report, and their variables
    * (the runner key from its secret). GitHub and Forgejo run them in the
-   * note job before `pr-post`; GitLab in a job of their own after the plan
-   * job, `evidenceJobName`. Signing keyless (#4869), the job asks for an
-   * OIDC token: `idToken` (GitHub's `id-token: write`, Forgejo's
+   * note job before `pr-post`; GitLab in a job of their own, `jobName`, in
+   * the target branch's plan notes pipeline before the note job (#4914),
+   * which keeps `dir` as its artifact and names the environment
+   * `GITLAB_EVIDENCE_ENVIRONMENT`; the note job reads `dir`
+   * (`--evidence-dir`). Signing keyless (#4869), the job asks for an OIDC
+   * token: `idToken` (GitHub's `id-token: write`, Forgejo's
    * `enable-openid-connect`) or GitLab's `idTokens`.
    */
-  evidence?: { lines: string[]; env: Record<string, string>; jobName?: string; idToken?: true; idTokens?: Record<string, { aud: string }> };
+  evidence?: { lines: string[]; env: Record<string, string>; jobName?: string; dir?: string; idToken?: true; idTokens?: Record<string, { aud: string }> };
   /** The job's own variables (#4899), every step's. */
   jobEnv?: Record<string, string>;
   /** The cloud login's steps (#4931), after the setup lines and before the write probe. GitLab: their lines in the script. */
@@ -395,7 +398,9 @@ export function productPlanJobs(forge: ForgeKind, env: string, loop: PrLoopPipel
     }
     const post0 = prLoopPostJob(forge, env, name, words);
     // #4899: the note job records the plan job's run, named by that job.
-    const post = plan.record ? { ...post0, command: `${post0.command} --record-run ${jobName}` } : post0;
+    const post1 = plan.record ? { ...post0, command: `${post0.command} --record-run ${jobName}` } : post0;
+    // #4914: on GitLab the signing job of the same pipeline keeps each merge request's evidence, which the note's checks line reads.
+    const post = evidence && !github ? { ...post1, command: `${post1.command} --evidence-dir ${gitlabOpenEvidenceDir(jobName)}` } : post1;
     // The note job reads its own plan job's result, by that job's name.
     const postEnv: Record<string, string> = github ? { ...post.env, PLAN_RESULT: `\${{ needs.${jobName}.result }}`, ...noteWords } : { ...post.env, ...noteWords };
     // #4931: the target's login, else the plan's, from the OIDC token file (ci-login, #4788).
@@ -425,7 +430,7 @@ export function productPlanJobs(forge: ForgeKind, env: string, loop: PrLoopPipel
       artifact,
       ...(planRunner !== undefined ? { runner: planRunner } : {}),
       ...(noteRunner !== undefined ? { noteRunner } : {}),
-      ...(evidence ? { evidence: planEvidenceOf(forge, evidence, words, jobName) } : {}),
+      ...(evidence ? { evidence: planEvidenceOf(forge, evidence, words, jobName, plan.forks === "skip" ? { noForks: true } : {}) } : {}),
       ...(Object.keys(jobEnv).length > 0 ? { jobEnv } : {}),
       ...(login && login.steps.length > 0 ? { login: login.steps } : {}),
       ...(Object.keys(idTokens).length > 0 ? { idTokens } : {}),
@@ -596,16 +601,19 @@ export const PLAN_RECORD_JS = [
 ].join("");
 
 /** The evidence step of one plan job (#4870), as {@link ProductPlanJob.evidence}. */
-export function planEvidenceOf(forge: ForgeKind, evidence: PipelineEvidence, words: CiProductWords, planJob: string): NonNullable<ProductPlanJob["evidence"]> {
+export function planEvidenceOf(forge: ForgeKind, evidence: PipelineEvidence, words: CiProductWords, planJob: string, opts: { noForks?: boolean } = {}): NonNullable<ProductPlanJob["evidence"]> {
   assertPipelineEvidence(evidence);
   const key = evidenceKeyEnv(forge, evidence);
   const bin = words.bin;
   if (forge === "gitlab") {
-    // The job runs only once the plan job succeeded, on the merge request's commit.
+    // #4914: the job runs in the target branch's plan notes pipeline, before the note job, and signs every open
+    // merge request's settled plan job from its artifact; no job of a merge request pipeline holds the key.
+    const dir = gitlabOpenEvidenceDir(planJob);
     return {
       jobName: `${planJob}-evidence`,
-      lines: planEvidenceLines({ dir: PR_LOOP_REPORT_DIR, at: '"$CI_COMMIT_SHA"', base: '"$CI_MERGE_REQUEST_DIFF_BASE_SHA"', result: "success", ...(bin ? { bin } : {}) }),
+      lines: openEvidenceLines({ job: planJob, dir: PR_LOOP_REPORT_DIR, out: dir, ...(bin ? { bin } : {}), ...(opts.noForks ? { noForks: true } : {}) }),
       env: key,
+      dir,
       ...(evidenceKeyless(evidence) ? { idTokens: evidenceIdTokens(evidence) } : {}),
     };
   }

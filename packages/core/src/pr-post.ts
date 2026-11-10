@@ -37,7 +37,7 @@ import { forgePrincipalOf, type PrForge } from "./pr-forge";
 import { GITHUB_COMMENT_LIMIT, GITLAB_NOTE_LIMIT } from "./plan-summary";
 import { activeProductWords, commentLine, type CiProductWords } from "./ci-product-words";
 import { controlEdgeFactsFromEnv, remarkCrossStackEdges, type ControlEdgeFacts } from "./control/edges";
-import { checkEvidenceNoteLine } from "./workspace/trust/check-evidence-report";
+import { CHECK_EVIDENCE_FILE, checkEvidenceNoteLine, openEvidenceFor } from "./workspace/trust/check-evidence-report";
 import { PLAN_RUN_RECORD_FILE, readPlanRunRecord } from "./pr-plan-record";
 import type { OpRunRecordInput } from "./op/runtime";
 import type { RunOrigin } from "./lifecycle/release-ledger";
@@ -487,6 +487,12 @@ export interface OpenPlanPostInput {
    * named as its run origin's `jobId`. `repo` is the project's path.
    */
   recordRun?: { repo?: string; keep: PlanRunRecorder["keep"] };
+  /**
+   * Where the signing job of this pipeline kept each merge request's
+   * `evidence.json` (#4914), `<dir>/<iid>/evidence.json`: the note of a
+   * merge request whose file names its head ends with the checks line.
+   */
+  evidenceDir?: string;
 }
 
 /** What {@link postOpenPlanReports} did for one merge request. */
@@ -539,6 +545,9 @@ export async function postOpenPlanReports(input: OpenPlanPostInput): Promise<{ p
         // #4899: the plan job's run record, kept with its note.
         const runRecord = input.recordRun ? await forge.jobArtifact(job.id, `${input.artifactDir.replace(/\/+$/, "")}/${PLAN_RUN_RECORD_FILE}`) : undefined;
         if (runRecord !== undefined) writeFileSync(join(dir, PLAN_RUN_RECORD_FILE), runRecord);
+        // #4914: what the signing job signed for this head, which the note's checks line says.
+        const evidence = input.evidenceDir ? openEvidenceFor(input.evidenceDir, job.pr, job.head) : undefined;
+        if (evidence !== undefined) writeFileSync(join(dir, CHECK_EVIDENCE_FILE), evidence);
         const posted = await postPlanReport({
           // The status links to the plan job it reports on, which is how the next run knows it is posted.
           forge: job.url ? { ...forge, runUrl: job.url } : forge,

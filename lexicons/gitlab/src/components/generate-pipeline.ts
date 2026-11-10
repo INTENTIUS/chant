@@ -81,7 +81,7 @@ import { assertRootChecks } from "@intentius/chant/components/pr-pipeline";
 import { planEvidenceOf } from "@intentius/chant/components/product-plan";
 import { prCheckJob, prRefGateJob } from "@intentius/chant/components/pr-checks";
 import { resolveProductWords as resolveLoopWords } from "@intentius/chant/ci-product-words";
-import { gitlabCheckJobs, withCheckStages } from "./pr-check-jobs";
+import { gitlabCheckJobs, gitlabOpenEvidenceJob, withCheckStages } from "./pr-check-jobs";
 import { memberGitlabChanges, memberRepoPath, memberShellDir } from "@intentius/chant/lexicon";
 import { FORGE_TOKEN_VARS, GITLAB_DROP_FORGE_TOKENS } from "@intentius/chant/ci-handover";
 import { CONTROL_TOKEN_VARS, controlDispatchJob, controlNoteCheckout } from "@intentius/chant/control/dispatch";
@@ -481,18 +481,9 @@ function prLoopGitlabPipeline(
     ...(loop.checkJob ? { check: prCheckJob("gitlab", { ...bin, ...(loop.evidence ? { evidence: loop.evidence } : {}) }) } : {}),
     ...(loop.refGateStatus ? { refGate: prRefGateJob("gitlab", bin) } : {}),
   });
+  // #4914: the plan's evidence job runs in the plan notes pipeline, before the note job, for every open merge request.
   const evidenceEntries: Array<[string, Record<string, unknown>]> = [
-    ...(planEvidence
-      ? [[planEvidence.jobName!, {
-          stage: "evidence",
-          image,
-          rules: [{ if: onMergeRequest }],
-          needs: [{ job: planJob, artifacts: true }],
-          variables: planEvidence.env,
-          ...(planEvidence.idTokens ? { id_tokens: planEvidence.idTokens } : {}),
-          script: [...beforeScript, ...planEvidence.lines],
-        }] as [string, Record<string, unknown>]]
-      : []),
+    ...(planEvidence ? [gitlabOpenEvidenceJob(planEvidence, { image, beforeScript, onPlanNotes })] : []),
     ...checkEntries,
   ];
   const stagesBefore = ["plan", ...(planEvidence ? ["evidence"] : []), PR_PLAN_NOTE_JOB, ...(stale ? [PR_STALE_JOB] : []), ...(notes ? [PR_NOTE_COMMANDS_JOB] : []), ...commentLocks.map((c) => c.job.jobName), ...(preview ? [preview.jobName, preview.noteJobName] : []), ...applies.map((a) => a.stage), ...(control ? [control.name] : []), ...(prEnv ? [PR_ENV_STAGE, PR_ENV_POST_STAGE] : [])];
@@ -522,9 +513,11 @@ function prLoopGitlabPipeline(
     [noteJob]: {
       stage: PR_PLAN_NOTE_JOB,
       image,
-      rules: [{ if: onPlanNotes }],
+      // #4914: a signing job that failed leaves the notes to post, without the checks line.
+      rules: [planEvidence ? { if: onPlanNotes, when: "always" } : { if: onPlanNotes }],
       ...(Object.keys(post.env).length > 0 ? { variables: post.env } : {}),
-      script: [...enter, ...beforeScript, ...(controlRead ? [controlRead.script] : []), post.command],
+      // #4914: the plan evidence job of this pipeline kept each merge request's evidence.json, which the note's checks line reads.
+      script: [...enter, ...beforeScript, ...(controlRead ? [controlRead.script] : []), planEvidence?.dir ? `${post.command} --evidence-dir ${planEvidence.dir}` : post.command],
     },
     ...Object.fromEntries(evidenceEntries),
     ...(stale && staleName
