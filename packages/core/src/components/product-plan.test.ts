@@ -189,10 +189,9 @@ test("PRODUCT_PLAN_STEPS_FLOOR marks the plan-job steps in the ci-product entry"
 describe("what terragucci's and sql-yodeler's plan jobs need (#4963)", () => {
   const trade = { aws: { region: "us-east-1", audience: "sts.amazonaws.com", role: "arn:aws:iam::123456789012:role/plan" } };
 
-  test("PRODUCT_PLAN_REPLAN_FLOOR is the next release, in the ci-product entry", async () => {
+  test("PRODUCT_PLAN_REPLAN_FLOOR is the release that shipped it, in the ci-product entry", async () => {
     const ciProduct = (await import("../ci-product")) as Record<string, unknown>;
-    const { NEXT_RELEASE } = await import("../release-floors");
-    expect(ciProduct.PRODUCT_PLAN_REPLAN_FLOOR).toBe(NEXT_RELEASE);
+    expect(ciProduct.PRODUCT_PLAN_REPLAN_FLOOR).toBe("0.124.89");
     expect(typeof ciProduct.planBodyHandoff).toBe("function");
   });
 

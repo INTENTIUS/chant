@@ -23,7 +23,6 @@ import {
   renderOpWavesSpecFile,
   RUNTIME_WAVES_SPEC_FLOOR,
 } from "./op-waves-render-spec";
-import { NEXT_RELEASE } from "../release-floors";
 import type { OpWavesSpec } from "./op-waves";
 import { parseArgs } from "../cli/parse-args";
 import { runOpWaveCommand } from "../cli/handlers/run-wave";
@@ -138,7 +137,7 @@ describe("a waves spec the job renders at run time (#4982)", () => {
     expect(opWavesRenderSpecEnv({ command: ["terragucci", "waves-spec"] })).toEqual({ CHANT_WAVES_SPEC_COMMAND: '["terragucci","waves-spec"]' });
     expect(opWavesRenderSpecEnv(undefined)).toEqual({});
     expect(() => opWavesRenderSpecEnv({ command: [] })).toThrow(/renderSpec.command must be/);
-    expect(RUNTIME_WAVES_SPEC_FLOOR).toBe(NEXT_RELEASE);
+    expect(RUNTIME_WAVES_SPEC_FLOOR).toBe("0.124.89");
   });
 
   test("chant run wave --render-spec writes the rendered spec, and a share it does not have exits 0", async () => {

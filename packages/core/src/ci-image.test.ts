@@ -28,7 +28,6 @@ import {
   unzipEntry,
   type CiTool,
 } from "./ci-image";
-import { NEXT_RELEASE } from "./release-floors";
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), "ci-image-"));
 const sha = (b: Uint8Array): string => createHash("sha256").update(b).digest("hex");
@@ -209,7 +208,7 @@ describe("ciToolRelease", () => {
     expect(CI_IMAGE_FLOOR).toBe("0.124.86");
     expect(CI_IMAGE_NON_ROOT_FLOOR).toBe("0.124.88");
     expect(CI_IMAGE_DOCKER_STAGES_FLOOR).toBe("0.124.88");
-    expect(CI_TOOL_NODE_DOWNLOAD_FLOOR).toBe(NEXT_RELEASE);
+    expect(CI_TOOL_NODE_DOWNLOAD_FLOOR).toBe("0.124.89");
   });
 });
 

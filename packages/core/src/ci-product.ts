@@ -13,7 +13,6 @@ import type { CiProductWords, CiProductWordsInput } from "./ci-product-words";
 import type { ProductMcpHook } from "./cli/mcp/product-tools";
 import type { ProductWaveHook } from "./op/op-waves-after-plan";
 import { OTLP_EXPORTER_FLOOR } from "./otlp";
-import { NEXT_RELEASE } from "./release-floors";
 
 /**
  * The first chant with the product pipeline (#4550): the words, the
@@ -151,7 +150,7 @@ export const COMMENT_LEAVES_COMMIT_FLOOR = "0.124.88";
 /**
  * The first chant with the comment job on GitHub and Forgejo and the replies to commands no job runs (#4946): `commentJob` in the product pipeline (`chant components pr-comment`, `answerProductComment` in `@intentius/chant/ci-comment-commands`), which replies to a refusal and to a command the pipeline runs no job for, and with waves on merge starts a merged pull request's apply again; the words' `replies` and an alias's `refuse`, which the GitLab note poll reads too, as `chantNoteRuns`' `members`; `retryApply`; and `locks: "plan"` in GitHub's and Forgejo's product plan, with the lock, unlock and comment lock jobs.
  */
-export const COMMENT_COMMANDS_FLOOR = NEXT_RELEASE;
+export const COMMENT_COMMANDS_FLOOR = "0.124.89";
 export { answerProductComment, answeredElsewhere, COMMENT_JOBS_ENV, commentRuns, PR_COMMENT_JOB, RERUN_APPLY_JOBS, type CommentJobs, type CommentOutcome, type CommentRuns, type AnswerCommentOptions } from "./ci-comment-commands";
 export { forkReply, memberReply, notRunReply } from "./ci-comment-replies";
 export type { CiProductCommentReplies } from "./ci-product-words";
@@ -160,7 +159,7 @@ export { productCommentJob, type ProductCommentJob } from "./components/product-
 /**
  * The first chant whose product plan locks what a change reaches (#4979): `productPlan.reach`, a reach line the lock job runs at the target branch's commit with `chant lock --reach` (`@intentius/chant/lifecycle/reach-locks`), on GitHub, Forgejo and GitLab, where the lock job runs in the plan notes pipeline with `--open` beside the comment lock and unlock jobs; and whose comment job answers a re-plan comment with flags the product plan's re-plan cannot take (`noPlanFlags`).
  */
-export const PRODUCT_PLAN_REACH_LOCKS_FLOOR = NEXT_RELEASE;
+export const PRODUCT_PLAN_REACH_LOCKS_FLOOR = "0.124.89";
 export { LOCK_REACH_ENV, reachedTargets, reachOpen, type Reached, type ReachInput } from "./lifecycle/reach-locks";
 export { productPlanReachLock, type ProductPlanReachLock } from "./components/product-plan";
 export { planFlagsReply } from "./ci-comment-commands";
@@ -168,7 +167,7 @@ export { planFlagsReply } from "./ci-comment-commands";
 /**
  * The first chant whose comment job stops a merged pull request's re-run at a wave (#4979): `/<product> apply wave-<n>` writes a stop for the merge commit on `chant/lifecycle` (`_waves/<op>.stops.json`, `@intentius/chant/op/wave-stop`) before GitHub's re-run or Forgejo's dispatch, and `chant run wave` leaves each wave after n waiting (exit 3).
  */
-export const WAVE_STOP_FLOOR = NEXT_RELEASE;
+export const WAVE_STOP_FLOOR = "0.124.89";
 export { setWaveStop, waveStopAt, waveStopLine, type WaveStop } from "./op/wave-stop";
 
 /**
@@ -186,14 +185,14 @@ export { PLAN_RUN_OP, PLAN_RUN_RECORD_FILE, readPlanRunRecord } from "./pr-plan-
 /**
  * The first chant whose product plan carries what terragucci's and sql-yodeler's plan jobs did themselves (#4963, #4951): `trade` (a plan's or a target's) before the checkout, `replan: { dispatch, reply, notAffected }` (a re-plan from `workflow_dispatch`, a reply to a comment no other job takes, `pr-post --not-affected`), `previousMarker` (`CHANT_PLAN_PREVIOUS_MARKER`), `noteSteps.pullRequest`, a `PrReport`'s `marker`, and a hand-off of the product's own note text (`planBodyHandoff`).
  */
-export const PRODUCT_PLAN_REPLAN_FLOOR = NEXT_RELEASE;
+export const PRODUCT_PLAN_REPLAN_FLOOR = "0.124.89";
 export { gitlabReplanArgumentLines, PREVIOUS_MARKER_JS, replanDecideJs, type ProductPlanReplanOptions } from "./components/product-plan";
 export { planBodyHandoff, PLAN_BODY_LIMIT, type PrPlanBodyHandoff } from "./pr-plan-note";
 
 /**
  * The first chant whose note job compares the plan's subject with the previous note's (#4972), on GitHub, Forgejo and GitLab: a plan note hand-off's `subject` (`PrPlanSubject`, an id and named parts) is kept in the note, and `pr-post` adds the note words' `sinceLast` line, naming the parts added, gone and changed (`subjectParts`), when the previous note kept another id. The plan job reads no note, and `previousMarker` is deprecated.
  */
-export const PRODUCT_PLAN_SUBJECT_FLOOR = NEXT_RELEASE;
+export const PRODUCT_PLAN_SUBJECT_FLOOR = "0.124.89";
 export { PLAN_SUBJECT_LIMIT, planSubjectProblem, sinceLastLine, subjectChanges, type PrPlanSubject, type PrPlanSubjectPartWords } from "./pr-plan-note";
 
 /**
