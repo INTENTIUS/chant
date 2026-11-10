@@ -93,6 +93,12 @@
  * result, since after the trade no step of the wave job may request the
  * signing token; any other wave signs it in the command step. A later wave
  * whose `evidence.requires` names a check an evidence job signs needs it.
+ *
+ * With `options.renderSpec` (#4982) the job renders the spec at run time:
+ * every wave, deciding and share job carries `CHANT_WAVES_SPEC_COMMAND`,
+ * and its command and policy step pass `--render-spec`, so chant runs the
+ * product's command for the spec at base. The jobs, their steps, the
+ * trade, the evidence jobs and the gates are the ones `spec` gives.
  */
 
 import {
@@ -146,6 +152,7 @@ import {
   WAVE_EVIDENCE_ENV,
   type OpWaveEvidencePlan,
 } from "@intentius/chant/op/op-waves-evidence-jobs";
+import { opWavesRenderSpecEnv } from "@intentius/chant/op/op-waves-render-spec";
 import { checkoutStep, concurrency, DOWNLOAD_ARTIFACT, downloadArtifactStep, keepRecordStep, runSteps } from "./ci-jobs";
 import { emitOpPipelineYAML, type GithubOpPipelineDoc } from "./generate-op-pipeline";
 
@@ -168,7 +175,9 @@ export function buildGithubOpWavesDoc(
   options: OpWavesPipelineOptions,
   dialect: { forge?: "github" | "forgejo" } = {},
 ): { doc: GithubOpPipelineDoc; jobs: OpWavesPipelineResult["jobs"]; resumeDoc?: GithubOpPipelineDoc; plansDoc?: GithubOpPipelineDoc } {
-  const jobs = opWaveJobs(spec, options.specFile, { bin: options.bin });
+  // #4982: with renderSpec each wave job renders the spec at base through the product's command; `spec` is the jobs' shape.
+  const renderEnv = opWavesRenderSpecEnv(options.renderSpec);
+  const jobs = opWaveJobs(spec, options.specFile, { bin: options.bin, ...(options.renderSpec ? { renderSpec: true } : {}) });
   const forge = dialect.forge ?? "github";
   assertPipelineEvidence(options.evidence);
   const product = resolveProductWords(options.words ?? {}).product;
@@ -273,7 +282,7 @@ export function buildGithubOpWavesDoc(
       // #3914: a job's own permissions replace the workflow's, so they repeat them.
       ...(idToken ? { permissions: { ...permissions, "id-token": "write" } } : {}),
       "timeout-minutes": timeout.minutes,
-      env: { ...timeout.env, ...(group || idTokens ? { ...wave.variables, ...group?.variables, ...idTokenAudienceEnv(idTokens) } : wave.variables) },
+      env: { ...timeout.env, ...renderEnv, ...(group || idTokens ? { ...wave.variables, ...group?.variables, ...idTokenAudienceEnv(idTokens) } : wave.variables) },
       steps,
     };
     if (evidence?.evidenceJob) jobsDoc[evidence.evidenceJob.name] = evidenceJob(spec, options, forge, job, evidence, commandStep, image, permissions);

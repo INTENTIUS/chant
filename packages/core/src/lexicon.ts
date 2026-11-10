@@ -1174,6 +1174,17 @@ export interface OpWavesPipelineOptions
    * wave is planned. Absent: the jobs render as without it.
    */
   evidence?: import("./ci-evidence-jobs").PipelineEvidence;
+  /**
+   * A spec the job renders at run time (#4982,
+   * `@intentius/chant/op/op-waves-render-spec`): every wave, deciding and
+   * share job and the policy step runs `chant run wave --render-spec`, with
+   * `CHANT_WAVES_SPEC_COMMAND` set to `command`, which prints the spec at
+   * the commit in `CHANT_WAVES_SPEC_AT`. The spec handed to the generator
+   * is the pipeline's shape (its waves, shares, job groups, `cloud`,
+   * runners, environments and `holds.policy`); the rendered one sets the
+   * rules. Absent: the jobs read the committed spec as before.
+   */
+  renderSpec?: import("./op/op-waves-render-spec").OpWavesRenderSpec;
 }
 
 /** A run step a product adds to a generated job (#4791): its name, and its shell lines in order. */

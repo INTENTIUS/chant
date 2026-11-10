@@ -107,6 +107,7 @@ const BOOLEAN_FLAGS = new Set([
   "--generated",
   "--decide",
   "--policy-only",
+  "--render-spec",
   "--record-plans",
   "--approval-status",
   "--waves-outcome",
@@ -494,6 +495,9 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--policy-only") {
       // `chant run wave --policy-only` (#4926): plan the wave and run its policy hold, as a step of its own.
       result.policyOnly = true;
+    } else if (arg === "--render-spec") {
+      // `chant run wave --render-spec` (#4982): the product's command prints the spec at base.
+      result.renderSpec = true;
     } else if (arg === "--record-plans") {
       result.recordPlans = true;
     } else if (arg === "--approval-status") {

@@ -222,5 +222,8 @@ export const BEFORE_MERGE_REF_GATE_FLOOR = NEXT_RELEASE;
 /** The first chant whose product plan with `targets` and `evidence` signs each target's plan job as `plan:<target>` and `policy:<target>` (`ci evidence sign --member <target>`, `targetEvidenceCheck`, `productPlanEvidenceChecks`), and whose `refGateInitPlan` takes `targets` and names those checks in the `refs` rule (#4978). */
 export const TARGET_SIGNED_CHECKS_FLOOR = NEXT_RELEASE;
 
+/** The first chant whose Op waves generators take `renderSpec` (the wave jobs run `chant run wave --render-spec`, and `CHANT_WAVES_SPEC_COMMAND` names the product command that prints the spec at the commit in `CHANT_WAVES_SPEC_AT`), so a product whose spec is built from its config at base renders its wave jobs, policy step, evidence job and cloud trade through chant (#4982). */
+export const RUNTIME_WAVES_SPEC_FLOOR = NEXT_RELEASE;
+
 /** The first chant whose `chant run resume` (`resumeGateRun`) on GitLab retries a wave job's `<wave job>-evidence` with the wave job when the evidence job already ran, and whose `ci evidence sign --from-job` waits for a job it reads to finish, so a resumed wave's evidence job signs from the new try (#4978). */
 export const GITLAB_WAVE_EVIDENCE_RETRY_FLOOR = NEXT_RELEASE;

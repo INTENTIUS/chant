@@ -137,6 +137,16 @@ export {
 } from "./op-waves-capability";
 export type { OpWaveCostFormat, OpWaveCostHold, OpWaveCostVerdict, OpWaveHolds, OpWaveRunCost, OpWaveStep, OpWaveStepApply, OpWaveStepGroup, OpWaveStepPlan } from "./op-waves-capability";
 export { notifyOpWave, opWaveNotifyFields } from "./op-waves-notify";
+export {
+  OP_WAVES_RENDER_SPEC_FLAG,
+  OP_WAVES_SPEC_AT_ENV,
+  OP_WAVES_SPEC_COMMAND_ENV,
+  OP_WAVES_SPEC_FILE_ENV,
+  RUNTIME_WAVES_SPEC_FLOOR,
+  opWavesRenderSpecEnv,
+  opWavesRenderSpecProblems,
+} from "./op-waves-render-spec";
+export type { OpWavesRenderSpec } from "./op-waves-render-spec";
 export { OP_WAVE_STAND_DOWN_FLOOR, gitOpWaveNewerCommit, newerCommitOnBranch, opWaveRunBranch, opWaveStandDownReason, tipAppliesTargets } from "./op-waves-stand-down";
 export type { OpWaveNewerCommit, OpWaveNewerCommitPort } from "./op-waves-stand-down";
 export { OP_WAVE_RELEASE_RECORD_FLOOR, opWaveReleaseNames, opWaveReleaseProblems, releaseOfCommit } from "./op-waves-release";

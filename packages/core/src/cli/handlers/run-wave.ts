@@ -6,9 +6,10 @@
 import { readFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { notifyOpWave } from "../../op/op-waves-notify";
-import { parseOpWavesSpec, recordOpWaveHeadPlans, runOpWave } from "../../op/op-waves-run";
+import { gitShowAtBase, parseOpWavesSpec, recordOpWaveHeadPlans, runOpWave } from "../../op/op-waves-run";
 import { activeProductWaveHook } from "../../op/op-waves-after-plan";
 import type { OpWavesSpec } from "../../op/op-waves";
+import type { OpWaveShowAtBase } from "../../op/op-waves-run";
 import { formatError, formatWarning } from "../format";
 import { ledgerRecordingOff, NO_RECORD_ENV, noRecordEndNote, noRecordStartNote, resetNoRecordLedger } from "../../lifecycle/no-record";
 import type { CommandContext } from "../registry";
@@ -102,7 +103,21 @@ async function runOpWaveJobCommand(ctx: CommandContext): Promise<number> {
   }
   try {
     const path = resolve(specFile);
-    spec = parseOpWavesSpec(readFileSync(path, "utf-8"), `--spec ${specFile}`);
+    // #4982: --render-spec has the product's command print the spec at base, and reads the rules from it there too.
+    let show: OpWaveShowAtBase | undefined;
+    if (args.renderSpec) {
+      const at = await import("../../op/op-waves-render-spec");
+      const file = relative(process.cwd(), path);
+      show = at.renderedSpecShow(file, at.commandSpecRender(at.opWavesSpecCommandFromEnv(), file, process.cwd()), gitShowAtBase);
+      spec = at.renderOpWavesSpecFile({ specFile: file, base: args.base ?? "HEAD^1", cwd: process.cwd(), show, parse: parseOpWavesSpec }).spec;
+      const missing = at.renderedJobMissing(spec, args.wave, job);
+      if (missing) {
+        console.error(`${missing}, so this job has nothing to apply`);
+        return 0;
+      }
+    } else {
+      spec = parseOpWavesSpec(readFileSync(path, "utf-8"), `--spec ${specFile}`);
+    }
     // #4979: a comment that ran the apply again through wave n leaves the waves after it waiting, as a gate does.
     if (!args.policyOnly) {
       const stopped = await waveStopLine(spec.name, args.wave);
@@ -131,6 +146,7 @@ async function runOpWaveJobCommand(ctx: CommandContext): Promise<number> {
       ...(args.share !== undefined ? { share: args.share } : {}),
       ...(args.group !== undefined ? { group: args.group } : {}),
       ...(args.base ? { base: args.base } : {}),
+      ...(show ? { show } : {}),
     });
     if (args.json) console.log(JSON.stringify(result, null, 2));
     // #4926: the policy step applied nothing; the wave's own step tells people how it went.

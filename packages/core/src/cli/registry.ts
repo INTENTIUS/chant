@@ -336,6 +336,8 @@ export interface ParsedArgs {
   decide?: boolean;
   /** `chant run wave --policy-only` (#4926) — plan the wave and run its policy hold, applying nothing: the wave job's policy step. */
   policyOnly?: boolean;
+  /** `chant run wave --render-spec` (#4982) — run the command `CHANT_WAVES_SPEC_COMMAND` names to print the spec at base, and run the wave on it. */
+  renderSpec?: boolean;
   /** `chant run wave --record-plans` (#3684) — plan every wave at a pull request's head and record the digests for a `pr-review` gate. */
   recordPlans?: boolean;
   /** `chant run wave --approval-status` (#4630) — post `<product>/approval` on an open pull request's head under `pr-review` or `pull-request`. */
