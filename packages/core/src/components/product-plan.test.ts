@@ -93,7 +93,7 @@ describe("the product plan (#4799)", () => {
 
   test.each([
     ["previewComment", { previewComment: true }],
-    ["staleNotes", { staleNotes: true }],
+    // #4987: staleNotes is carried now, one note per target, marked from the waves' push run (product-pipeline.apply-status.test.ts).
     ["applyBeforeMerge", { applyBeforeMerge: true }],
     ["build", { build: true }],
   ])("refuses %s, which the product plan does not carry", (key, extra) => {

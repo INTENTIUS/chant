@@ -1037,15 +1037,17 @@ export const PR_STALE_JOB = "stale-notes";
  * `staleNotes`: on a push to the target branch, at its commit, `pr-post
  * --stale` marks each open pull request's note posted against another
  * commit stale and sets its plan status back to pending. It names the plan
- * comment with `previewComment`. Undefined without `staleNotes`.
+ * comment with `previewComment`. Undefined without `staleNotes`. A list
+ * of members (#4987, a product plan's targets) marks each one's note.
  */
-export function prStaleJob(forge: ForgeKind, env: string, options: Pick<PrLoopPipelineOptions, "staleNotes" | "previewComment" | "branch" | "words"> = {}, member?: string): { command: string; env: Record<string, string> } | undefined {
+export function prStaleJob(forge: ForgeKind, env: string, options: Pick<PrLoopPipelineOptions, "staleNotes" | "previewComment" | "branch" | "words"> = {}, member?: string | readonly string[]): { command: string; env: Record<string, string> } | undefined {
   if (!options.staleNotes) return undefined;
   const words = resolveProductWords(options.words);
+  const members = member === undefined ? [] : typeof member === "string" ? [member] : [...member];
   const command = [
     "chant", "components", "pr-post", "--stale", "--tip", '"$TIP_SHA"', "--env", env, "--forge", forge,
     ...(options.branch ? ["--branch", JSON.stringify(options.branch)] : []),
-    ...(member ? ["--member", member] : []),
+    ...members.flatMap((m) => ["--member", m]),
     ...(options.previewComment ? ["--preview-comment"] : []),
   ].join(" ");
   return {

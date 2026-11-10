@@ -485,7 +485,6 @@ const NOT_WITH_PLAN: ReadonlyArray<[keyof PrLoopPipelineOptions, string]> = [
   ["applyOnMerge", "the apply on merge runs on op waves, from the waves spec"],
   ["waveGate", "the apply on merge runs on op waves, from the waves spec"],
   ["previewComment", "the comment preview re-runs pr-plan"],
-  ["staleNotes", "the stale marking names one note per pipeline"],
   ["identity", "the identity trade runs before pr-plan's checkout; give the product plan's trade or login (or a target's) instead"],
   ["build", "the plan verb builds what it plans"],
   ["buildCommand", "the plan verb builds what it plans"],
@@ -583,7 +582,8 @@ export function productPlanJobs(forge: ForgeKind, env: string, loop: PrLoopPipel
       if (key in shared) throw new Error(`target ${name}'s ${key} is the pipeline's too; give it on the target or on the pipeline`);
       if (key in jobEnv) throw new Error(`target ${name}'s ${key} is the product plan's env too; give it once`);
     }
-    const post0 = prLoopPostJob(forge, env, name, words);
+    // #4987: with staleNotes each target's note carries the target branch's commit, so the waves' push can mark it stale.
+    const post0 = prLoopPostJob(forge, env, name, words, loop.staleNotes ? { staleNotes: true } : {});
     // #4899: the note job records the plan job's run, named by that job.
     const post1 = plan.record ? { ...post0, command: `${post0.command} --record-run ${jobName}` } : post0;
     // #4914: on GitLab the signing job of the same pipeline keeps each merge request's evidence, which the note's checks line reads.
@@ -612,7 +612,7 @@ export function productPlanJobs(forge: ForgeKind, env: string, loop: PrLoopPipel
     const replies = github && Boolean(replanOpts.reply) && (targets === undefined || target === targets[0]);
     const replan0 = replanComments
       ? {
-          ...replanJobOf(forge, env, words, name, artifact, noteWords, { notAffected: replanOpts.notAffected === true }),
+          ...replanJobOf(forge, env, words, name, artifact, noteWords, { notAffected: replanOpts.notAffected === true, ...(loop.staleNotes ? { staleNotes: true } : {}) }),
           ...replanComments,
           ...(github && dispatchArg !== undefined ? { dispatch: { argument: dispatchArg } } : {}),
           ...(replies ? { reply: { prefix: `/${words.product}`, others } } : {}),
@@ -662,15 +662,18 @@ function replanCommentsOf(words: CiProductWords): { comments: string[]; gated: A
 }
 
 /** The re-plan's jobs for one target (#4899), its comments filled in by the caller. */
-function replanJobOf(forge: ForgeKind, env: string, words: CiProductWords, name: string | undefined, artifact: string, noteWords0: Record<string, string>, opts: { notAffected?: boolean } = {}): Omit<ProductPlanReplanJob, "comments" | "gated"> {
+function replanJobOf(forge: ForgeKind, env: string, words: CiProductWords, name: string | undefined, artifact: string, noteWords0: Record<string, string>, opts: { notAffected?: boolean; staleNotes?: boolean } = {}): Omit<ProductPlanReplanJob, "comments" | "gated"> {
   const github = forge !== "gitlab";
   const jobName = github ? (name ? `${REPLAN_JOB}-${name}` : REPLAN_JOB) : name ? `${name}-${REPLAN_JOB}` : REPLAN_JOB;
   const noteJobName = github ? (name ? `${REPLAN_NOTE_JOB}-${name}` : REPLAN_NOTE_JOB) : name ? `${name}-${REPLAN_NOTE_JOB}` : REPLAN_NOTE_JOB;
   // pr-post reads the pull request and the head from the re-plan job, never the comment. GitLab's is GitHub's line with its own --forge.
-  const command0 = github ? prLoopPostJob(forge, env, name, words).command : prLoopPostJob("github", env, name, words).command.replace(" --forge github ", " --forge gitlab ");
+  // #4987: with staleNotes the note's tip line is the target branch's commit the re-plan ran at, as the comment preview's is.
+  const stale = opts.staleNotes ? { staleNotes: true } : {};
+  const command0 = github ? prLoopPostJob(forge, env, name, words, stale).command : prLoopPostJob("github", env, name, words, stale).command.replace(" --forge github ", " --forge gitlab ");
   // #4963: the argument the re-plan was narrowed to, which pr-post answers "not affected" for when the change does not reach it.
   const command = opts.notAffected ? `${command0} --not-affected "$${PLAN_ARGUMENT_ENV}"` : command0;
-  const noteWords = opts.notAffected && github ? { ...noteWords0, [PLAN_ARGUMENT_ENV]: `\${{ needs.${jobName}.outputs.argument }}` } : noteWords0;
+  const noteWords1 = opts.notAffected && github ? { ...noteWords0, [PLAN_ARGUMENT_ENV]: `\${{ needs.${jobName}.outputs.argument }}` } : noteWords0;
+  const noteWords = opts.staleNotes ? { ...noteWords1, TIP_SHA: github ? "${{ github.sha }}" : "$CI_COMMIT_SHA" } : noteWords1;
   const post = github
     ? {
         command,

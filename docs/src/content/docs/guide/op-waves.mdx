@@ -1030,6 +1030,20 @@ The evidence job of a wave signs at the decided head, measured from the default 
 
 `WAVES_BEFORE_MERGE_FLOOR` (`@intentius/chant/ci-product`) is the first chant with this.
 
+## Apply statuses
+
+The generator takes `applyStatus: { context }` ([#4987](https://github.com/INTENTIUS/chant/issues/4987)), such as `terragucci/apply`. After each wave a job `apply-status-<n>` runs, whatever the wave ended, at the default branch's commit. It downloads the outcome files, runs `chant run wave --op <op> --wave <n> --of <count> --apply-status <context> --at <sha> --forge <kind>` through the product's bin, and posts the status on the push's commit, or in a before-merge run on the decided head:
+
+| Waves 1 to n | Status |
+| --- | --- |
+| every run applied or had nothing to apply | pending, `wave n of N applied`; success after the last wave |
+| a run waits at its gate | pending, `wave n of N waits for an approval` (failed on GitLab, which will not move a running status back to pending) |
+| a run failed, or a run it holds was blocked | failed, with the counts |
+
+A wave that wrote no outcome, because its job stopped before its command or the waves stopped before it, gets no status, and the one before it stands. The job checks out nothing of a pull request, so none of the change's code runs beside the status token. On GitHub and Forgejo it asks `statuses: write`. On GitLab it is in the wave's stage, needs the wave's jobs, and posts with `CHANT_FORGE_TOKEN`, since the job token cannot post a status.
+
+The generator also takes `staleNotes: { command, env }`, the pull request loop's stale marking job (`prStaleJob`). A `stale-notes` job beside wave 1, on a push alone, runs it to mark each open pull request's plan note posted against another commit stale. A product plan's pipeline gives it with one `--member` per target. `WAVES_APPLY_STATUS_FLOOR` (`@intentius/chant/ci-product`) is the first chant with both.
+
 ## A wave over many targets
 
 A wave with hundreds of targets can be split with `shares`:

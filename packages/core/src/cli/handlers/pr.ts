@@ -2935,7 +2935,8 @@ async function descriptionCheckOf(ctx: CommandContext, forge: PrForge): Promise<
  * `--preview-comment`, and set its plan status back to pending
  * (`markStaleNotes`, ../../pr-post.ts). The branch is `--branch`, else the
  * job's (`GITHUB_REF_NAME`, `CI_COMMIT_BRANCH`). It exits 0 once it has
- * marked, as `pr-post` does.
+ * marked, as `pr-post` does. `--member` given more than once (#4987, a
+ * product plan's targets) marks each member's note in turn.
  */
 async function runComponentsPrPostStale(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
@@ -2943,7 +2944,6 @@ async function runComponentsPrPostStale(ctx: CommandContext): Promise<number> {
   if (!args.tip) return fail("pr-post --stale needs the target branch's commit now: --tip <sha>");
   if (!args.env) return fail("pr-post needs the environment the plan was for: --env <env>");
   if (!args.forge || !(FORGE_KINDS as readonly string[]).includes(args.forge)) return fail(`pr-post posts to a forge: --forge ${FORGE_KINDS.join("|")}`);
-  if (args.members && args.members.length > 1) return fail(`pr-post takes one --member, not ${args.members.join(", ")}`);
   const branch = args.branch ?? process.env.CI_COMMIT_BRANCH ?? process.env.GITHUB_REF_NAME;
   if (!branch) return fail("pr-post --stale marks the notes of the pull requests into a branch: run it in a job of a push, or pass --branch <branch>");
   let forge: PrForge;
@@ -2952,17 +2952,20 @@ async function runComponentsPrPostStale(ctx: CommandContext): Promise<number> {
   } catch (err) {
     return fail(err instanceof Error ? err.message : String(err));
   }
-  const member = args.members?.[0];
+  // #4987: a product plan's targets each have their note, so --member may be given once per target.
+  const members: Array<string | undefined> = args.members?.length ? [...new Set(args.members)] : [undefined];
   const { markStaleNotes } = await import("../../pr-post");
-  let done: Awaited<ReturnType<typeof markStaleNotes>>;
-  try {
-    done = await markStaleNotes({ forge, branch, tip: args.tip, env: args.env, ...(member ? { member } : {}), ...(args.previewComment ? { previewComment: true } : {}) });
-  } catch (err) {
-    return fail(err instanceof Error ? err.message : String(err));
+  for (const member of members) {
+    let done: Awaited<ReturnType<typeof markStaleNotes>>;
+    try {
+      done = await markStaleNotes({ forge, branch, tip: args.tip, env: args.env, ...(member ? { member } : {}), ...(args.previewComment ? { previewComment: true } : {}) });
+    } catch (err) {
+      return fail(err instanceof Error ? err.message : String(err));
+    }
+    for (const message of done.warnings) console.error(formatWarning({ message }));
+    const marked = done.marks.filter((m) => m.marked).map((m) => `#${m.pr}`);
+    console.error(formatInfo(`pr-post --stale${member ? ` (${member})` : ""}: ${marked.length > 0 ? `marked ${marked.join(", ")} stale` : "no note to mark"} after ${branch} moved to ${args.tip.slice(0, 12)}`));
   }
-  for (const message of done.warnings) console.error(formatWarning({ message }));
-  const marked = done.marks.filter((m) => m.marked).map((m) => `#${m.pr}`);
-  console.error(formatInfo(`pr-post --stale: ${marked.length > 0 ? `marked ${marked.join(", ")} stale` : "no note to mark"} after ${branch} moved to ${args.tip.slice(0, 12)}`));
   return 0;
 }
 

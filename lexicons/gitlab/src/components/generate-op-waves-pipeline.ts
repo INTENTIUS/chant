@@ -41,6 +41,14 @@
  * before the setup. A `before-merge-done` stage after the waves merges and
  * releases the locks, with the merge token's variable.
  *
+ * With `applyStatus` (#4987) a job `apply-status-<n>` in each wave's stage
+ * needs that wave's jobs, runs whatever they ended (`when: always`), and
+ * posts the status from the outcome files at the pipeline's commit, with
+ * `CHANT_FORGE_TOKEN` (the job token cannot post one), on the pushed
+ * commit or the decided head. With `staleNotes` a `stale-notes` job in the
+ * first wave's stage, in a push's pipeline alone, marks the open merge
+ * requests' plan notes stale with the same token.
+ *
  * A `pr-review` wave (#3684), or a `pull-request` wave (#4630), adds
  * `<name>-record-plans`, run in merge request pipelines only, which records
  * the digests the merge request's head plans.
@@ -153,6 +161,8 @@ import {
   WAVE_EVIDENCE_ENV,
 } from "@intentius/chant/op/op-waves-evidence-jobs";
 import { opWavesRenderSpecEnv } from "@intentius/chant/op/op-waves-render-spec";
+import { applyStatusCommand, applyStatusJobName, assertApplyStatusContext } from "@intentius/chant/op/apply-status";
+import { PR_STALE_JOB } from "@intentius/chant/components/pr-pipeline";
 import { assertOpWavesBeforeMerge, BEFORE_MERGE_DONE_JOB, BEFORE_MERGE_HEAD_ENV, BEFORE_MERGE_TOKEN_ENV, beforeMergeCheckoutScript, beforeMergeDoneCommand } from "@intentius/chant/op/before-merge";
 import { emitGitlabFile } from "./ci-jobs";
 
@@ -401,6 +411,43 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
         rules: bmRules,
         needs: opWavesLastJobs(jobs),
         script: [...dropControl, ...setupOf[0]!, ...(options.beforeScript ?? []), beforeMergeDoneCommand(spec, "gitlab", bm, options.bin)],
+      },
+    ]);
+  }
+  // #4987: each wave's apply status, from a job after it at the default branch's commit that runs none of the change's code.
+  // It runs whatever the wave ended, and a refused post leaves the waves as they are.
+  if (options.applyStatus) {
+    const status = options.applyStatus;
+    assertApplyStatusContext(status.context);
+    const at = bm ? `"\${${BEFORE_MERGE_HEAD_ENV}:-$CI_COMMIT_SHA}"` : '"$CI_COMMIT_SHA"';
+    for (let k = 1; k <= spec.waves.length; k++) {
+      entries.push([
+        applyStatusJobName(k),
+        {
+          stage: stages[k - 1 + (byReview ? 1 : 0)],
+          image,
+          ...(specTags ? { tags: specTags } : {}),
+          variables: { ...GITLAB_FULL_HISTORY },
+          rules: waveRules.map((r) => ({ ...r, when: "always" })),
+          needs: jobs.filter((j) => j.wave === k).map((j) => j.jobName),
+          script: [...dropControl, ...setupOf[0]!, ...(options.beforeScript ?? []), applyStatusCommand(spec, k, status.context, "gitlab", at, options.bin)],
+          allow_failure: true,
+        },
+      ]);
+    }
+  }
+  // #4987: a push marks the open merge requests' plan notes stale, beside wave 1; a before-merge pipeline moves no branch.
+  if (options.staleNotes) {
+    entries.push([
+      PR_STALE_JOB,
+      {
+        stage: stages[byReview ? 1 : 0],
+        image,
+        ...(specTags ? { tags: specTags } : {}),
+        ...(Object.keys(options.staleNotes.env).length > 0 ? { variables: { ...options.staleNotes.env } } : {}),
+        rules,
+        script: [...dropControl, ...setupOf[0]!, ...(options.beforeScript ?? []), options.staleNotes.command],
+        allow_failure: true,
       },
     ]);
   }

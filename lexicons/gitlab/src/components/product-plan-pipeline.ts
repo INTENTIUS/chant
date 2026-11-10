@@ -54,6 +54,7 @@
 
 import { assertGitlabBranch, CI_IMAGE, GITLAB_FULL_HISTORY, GITLAB_MERGE_REQUEST_SOURCE, gitlabTags } from "@intentius/chant/ci-jobs";
 import { GITLAB_DROP_FORGE_TOKENS } from "@intentius/chant/ci-handover";
+import { LOCK_REACH_ENV } from "@intentius/chant/lifecycle/reach-locks";
 import { gitlabTradeLines, TRADE_SPEC_ENV } from "@intentius/chant/ci-identity";
 import { GITLAB_NOTE_COMMANDS_VAR, GITLAB_PLAN_NOTES_VAR, PR_LOOP_REPORT_DIR, PR_NOTE_COMMANDS_JOB, PR_PLAN_NOTE_JOB, prLoopSetup, pullRequestCheckout } from "@intentius/chant/components/pr-pipeline";
 import { productPipelineJobs, type ProductPipelineJobs, type ProductPipelineOptions } from "@intentius/chant/components/product-pipeline";
@@ -96,6 +97,18 @@ export interface GitlabProductPlanPipeline {
 
 /** The runner's clone keeps the job token in origin's URL; a re-plan drops it before the merge request's code runs (#4899). */
 const GITLAB_SCRUB_ORIGIN = `git remote set-url origin "$(git remote get-url origin | sed -E 's#//[^@/]*@#//#')"`;
+
+/**
+ * A job's variables with the reach line kept as written (#4987): GitLab
+ * expands `$VAR` in a variable's value when the job starts, so a reach
+ * line that reads `$BASE_SHA` and `$HEAD_SHA` (which `chant lock --reach`
+ * and the note poll set for each merge request) would reach the job with
+ * them already empty. `expand: false` keeps the line literal.
+ */
+export function gitlabUnexpandedReach(env: Record<string, string>): Record<string, string | { value: string; expand: false }> {
+  const line = env[LOCK_REACH_ENV];
+  return line === undefined ? env : { ...env, [LOCK_REACH_ENV]: { value: line, expand: false } };
+}
 
 /** The product plan pipeline on GitLab CI (#4799): a plan job and a plan-note job per target. */
 export function generateGitlabProductPlanPipeline(env: string, options: GitlabProductPlanPipelineOptions): GitlabProductPlanPipeline {
@@ -203,13 +216,13 @@ export function generateGitlabProductPlanPipeline(env: string, options: GitlabPr
   }
   if (reach) {
     // The target branch's commit: the reach line reads each merge request's change as data from git, and runs none of its code. One at a time.
-    entries.push([reach.jobName, { stage: reach.jobName, image, ...tags(reach.runner), resource_group: reach.jobName, rules: [{ if: onPlanNotes }], variables: reach.env, script: [...beforeScript, reach.command] }]);
+    entries.push([reach.jobName, { stage: reach.jobName, image, ...tags(reach.runner), resource_group: reach.jobName, rules: [{ if: onPlanNotes }], variables: gitlabUnexpandedReach(reach.env), script: [...beforeScript, reach.command] }]);
   }
   entries.push(...checkEntries);
   if (notes && onNotes) {
     // The target branch's commit: the job reads the notes as data through the API and runs none of a merge request's code. One poll at a time.
     // #4984: with waves, the poll is told their op and count (a wave stop on a retry) and the waves before merge, in CHANT_COMMENT_JOBS.
-    entries.push([PR_NOTE_COMMANDS_JOB, { stage: PR_NOTE_COMMANDS_JOB, image, ...tags(notes.runner), resource_group: PR_NOTE_COMMANDS_JOB, ...(notes.env ? { variables: { ...notes.env } } : {}), rules: [{ if: onNotes }], script: [...beforeScript, notes.command] }]);
+    entries.push([PR_NOTE_COMMANDS_JOB, { stage: PR_NOTE_COMMANDS_JOB, image, ...tags(notes.runner), resource_group: PR_NOTE_COMMANDS_JOB, ...(notes.env ? { variables: gitlabUnexpandedReach(notes.env) } : {}), rules: [{ if: onNotes }], script: [...beforeScript, notes.command] }]);
   }
   // #4979: `/<product> lock` keeps the locks the lock job took, `/<product> unlock` releases them, each at the target branch's commit.
   for (const { job, rule } of commentLocks) {

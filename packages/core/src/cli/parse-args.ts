@@ -505,6 +505,16 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.approvalStatus = true;
     } else if (arg === "--waves-outcome") {
       result.wavesOutcome = true;
+    } else if (arg === "--apply-status") {
+      // `chant run wave --op <op> --wave <n> --of <count> --apply-status <context> --at <sha>` (#4987): post wave n's apply status.
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error("--apply-status needs the status's name: --apply-status <context>");
+      result.applyStatus = value;
+    } else if (arg === "--of") {
+      const raw = args[++i];
+      const of = Number(raw);
+      if (!Number.isInteger(of) || of < 1) throw new Error(`--of needs the number of waves: got "${raw ?? ""}"`);
+      result.of = of;
     } else if (arg === "--group") {
       const raw = args[++i];
       if (!raw || raw.startsWith("-")) throw new Error("--group needs a job group's name: --group <name>");

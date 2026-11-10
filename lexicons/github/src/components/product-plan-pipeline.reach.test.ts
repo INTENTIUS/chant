@@ -26,7 +26,7 @@ const base = {
 };
 
 type Job = { if?: string; needs?: string[]; permissions?: Record<string, string>; steps: Array<{ name?: string; env?: Record<string, string>; run?: string; uses?: string; with?: Record<string, unknown> }> };
-type GitlabJob = { stage: string; rules: Array<{ if: string }>; variables?: Record<string, string>; script: string[]; resource_group?: string };
+type GitlabJob = { stage: string; rules: Array<{ if: string }>; variables?: Record<string, unknown>; script: string[]; resource_group?: string };
 
 describe("the reach lock job on GitHub and Forgejo (#4979)", () => {
   test("locks what the change reaches, beside the plan, at the target branch's commit, for a pull request of this repository", () => {
@@ -86,7 +86,8 @@ describe("the reach lock job on GitLab (#4979)", () => {
     expect(lock.stage).toBe("lock");
     expect(lock.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE =~ /^(schedule|web|api|trigger)$/ && $CHANT_PLAN_NOTES == "1" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH' }]);
     expect(lock.resource_group).toBe("lock");
-    expect(lock.variables).toEqual({ CHANT_LOCK_REACH: reach.command });
+    // #4987: GitLab would expand the line's $BASE_SHA and $HEAD_SHA when the job starts.
+    expect(lock.variables).toEqual({ CHANT_LOCK_REACH: { value: reach.command, expand: false } });
     expect(lock.script).toEqual(["npm ci", 'npx --no-install terragucci lock --reach --open --base "$CI_COMMIT_SHA" --stage plan --gate tf-apply --forge gitlab']);
     expect((doc.stages as string[]).slice(0, 3)).toEqual(["plan", "plan-note", "lock"]);
     expect(jobs.reachLock?.command).toContain("--open");

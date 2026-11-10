@@ -180,6 +180,12 @@ export { decideWavesBeforeMerge, defaultPipelineFiles, type WavesBeforeMergeJobs
 export type { ProductWavesBeforeMerge } from "./components/product-pipeline";
 
 /**
+ * The first chant whose Op waves post the apply statuses (#4987): the generators' `applyStatus`, a job `apply-status-<n>` after each wave at the default branch's commit that posts `<product>/apply` on the commit the waves applied (a before-merge run's decided head) with `chant run wave --apply-status` (`@intentius/chant/op/apply-status`), and the product pipeline's `applyStatus`; whose product plan takes `staleNotes`, each target's note carrying the target branch's commit and a `stale-notes` job beside wave 1 on a push marking each target's note (`pr-post --stale` with one `--member` per target); whose `productPipelineJobs` returns `waves.pipeline` for the generators; and whose GitLab reach line reaches the lock and note-commands jobs unexpanded (`expand: false`).
+ */
+export const WAVES_APPLY_STATUS_FLOOR = NEXT_RELEASE;
+export { applyStatusJobName, opWaveApplyStatus, postOpWaveApplyStatus, type OpWaveApplyStatus, type OpWavesApplyStatus } from "./op/apply-status";
+
+/**
  * The first chant whose product plan takes `watches`, the product's own scheduled jobs the note job's `pr-post` checks for having stopped with the job's token (#4888), and whose `checkOverdueOps` and `overdueOpsAt` take a product's `logPrefix` and `label`.
  */
 export const PRODUCT_PLAN_WATCHES_FLOOR = "0.124.88";
