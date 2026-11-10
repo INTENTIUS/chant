@@ -219,7 +219,22 @@ export function evidenceFor(repo: string, commit: string, notes?: string | null)
  * `notesRef` is another notes ref, for local evidence (#4868), which the ref gate never reads.
  */
 export function attachEvidence(repo: string, commit: string, envelope: unknown, notesRef: string = EVIDENCE_NOTES_REF): void {
-  git(repo, ["notes", `--ref=${notesRef}`, "append", "-m", JSON.stringify(envelope), commit]);
+  git(repo, [...notesIdentity(repo), "notes", `--ref=${notesRef}`, "append", "-m", JSON.stringify(envelope), commit]);
+}
+
+/**
+ * A notes commit needs an author and a committer, and a CI job often has no
+ * git identity configured, so `git notes append` failed there ("Author
+ * identity unknown"). Where the repository names none, the evidence notes
+ * are written as chant's. The envelope's signature, not the notes commit's
+ * author, says who signed the evidence.
+ */
+function notesIdentity(repo: string): string[] {
+  const named = (key: string) => !!tryGit(repo, ["config", "--get", key])?.trim();
+  return [
+    ...(named("user.name") || process.env.GIT_AUTHOR_NAME ? [] : ["-c", "user.name=chant evidence"]),
+    ...(named("user.email") || process.env.GIT_AUTHOR_EMAIL ? [] : ["-c", "user.email=chant-evidence@localhost"]),
+  ];
 }
 
 /** The check an envelope claims to be for, read without verifying, so a refusal can say which check a bad envelope was meant for. */
