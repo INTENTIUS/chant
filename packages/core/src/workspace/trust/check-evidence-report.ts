@@ -98,6 +98,30 @@ export function planReportChecks(dir: string, result: string | undefined): { sig
 }
 
 /**
+ * What a GitLab signing job in the target branch's pipeline keeps for one
+ * merge request (#4914), `<out>/<iid>/evidence.json`: the note, with the
+ * merge request and the head it was signed for, so the note job uses it
+ * only for that head.
+ */
+export interface OpenEvidenceFile extends CheckEvidenceNote {
+  pr: number;
+  head: string;
+}
+
+/**
+ * The `evidence.json` the signing job kept for merge request `pr` at
+ * `head` under `dir` (#4914), as text for the note job's report directory,
+ * or undefined when it kept none for that head. The file comes from a job
+ * of the same target-branch pipeline, which ran none of the change's code;
+ * it is read as data all the same.
+ */
+export function openEvidenceFor(dir: string, pr: number, head: string): string | undefined {
+  const doc = readJson(join(dir, String(pr), CHECK_EVIDENCE_FILE)) as Partial<OpenEvidenceFile> | undefined;
+  if (!doc || doc.pr !== pr || doc.head !== head || !Array.isArray(doc.signed) || !Array.isArray(doc.skipped)) return undefined;
+  return JSON.stringify({ signed: doc.signed, skipped: doc.skipped }, null, 2) + "\n";
+}
+
+/**
  * The line the plan note ends with when the signing step wrote
  * {@link CHECK_EVIDENCE_FILE} in `dir`, or undefined when it did not.
  */

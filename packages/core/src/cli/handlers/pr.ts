@@ -2933,7 +2933,9 @@ async function runComponentsPrPostStale(ctx: CommandContext): Promise<number> {
  * (`postOpenPlanReports`, ../../pr-post.ts). The branch is `--branch`, else
  * the pipeline's own (`CI_COMMIT_BRANCH`). The plan job is `plan`, or
  * `<member>-plan` with `--member`, as the gitlab lexicon names it, and the
- * artifact path is `--output` from the repository root. It exits 0 once it
+ * artifact path is `--output` from the repository root. With
+ * `--evidence-dir <dir>` (#4914) each note ends with the checks the
+ * pipeline's signing job signed for that head. It exits 0 once it
  * has posted, as `pr-post` does.
  */
 async function runComponentsPrPostOpen(ctx: CommandContext): Promise<number> {
@@ -2974,6 +2976,8 @@ async function runComponentsPrPostOpen(ctx: CommandContext): Promise<number> {
       ...(args.tip ? { baseTip: args.tip } : {}),
       // #4899: each product plan job's run record, from its artifacts.
       ...(args.recordRun ? { recordRun: { ...(process.env.CI_PROJECT_PATH ? { repo: process.env.CI_PROJECT_PATH } : {}), keep: keepPlanRunRecord } } : {}),
+      // #4914: each merge request's evidence.json from this pipeline's signing job, for the note's checks line.
+      ...(args.evidenceDir ? { evidenceDir: resolve(args.evidenceDir) } : {}),
     });
   } catch (err) {
     return fail(err instanceof Error ? err.message : String(err));

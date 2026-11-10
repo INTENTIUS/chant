@@ -21,6 +21,13 @@
  *   claim, as `ci check` with a runner identity signs them. A hook skipped on
  *   local evidence did not pass here and is not signed. With `--result`, a
  *   check job that neither succeeded nor failed signs nothing.
+ * - `sign --open --job <job> --from-report <dir> -o <out>` (#4914) is the
+ *   GitLab signing job's form, in a pipeline of the target branch: for each
+ *   open merge request it reads the report from the newest pipeline's
+ *   `<job>` artifact, fetches the head and signs it as `--from-report`
+ *   does, skipping a check already signed for the head's tree, and keeps
+ *   `<out>/<iid>/evidence.json` for the note job. No job of a merge request
+ *   pipeline, which the change's own files build, holds the key.
  * - `verify --check-id <id>[,<id>...]` reads the evidence for `--at`'s tree
  *   and verifies it against the runner keys at `--base`; exits 1 when one
  *   is not current.
@@ -33,6 +40,7 @@
  * `local.keys` at base lists, and pushes `refs/notes/chant/local-evidence`;
  * `verify --local` says whether CI would skip each check on that evidence.
  */
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CHANT_EXIT } from "../../exit-codes";
@@ -54,6 +62,7 @@ import { CHECK_EVIDENCE_FILE, LOCAL_EVIDENCE_KEY_ENV, planReportChecks, type Che
 
 const USAGE =
   "chant ci evidence sign (--check-id <id>[,<id>...] | --from-report <dir> --result <result>) [--at <rev>] [--base <rev>] [--key <file>] [--claim <file>] [--no-push] [--json]\n" +
+  "  chant ci evidence sign --open --job <job> --from-report <dir> -o <out> [--branch <branch>] [--base <rev>] [--key <file>] [--no-push] [--json]\n" +
   "  chant ci evidence sign --local --check-id <id>[,<id>...] [--at <rev>] [--base <rev>] [--key <file>] [--claim <file>] [--no-push] [--json]\n" +
   "  chant ci evidence verify [--local] --check-id <id>[,<id>...] [--at <rev>] [--base <rev>] [--json]";
 
@@ -118,53 +127,154 @@ async function verifyLocal(ctx: CommandContext, repo: string, base: string, at: 
 
 async function sign(ctx: CommandContext, repo: string, base: string, at: string): Promise<number> {
   const { args } = ctx;
+  if (args.open) return signOpen(ctx, repo, base);
   const fromReport = args.fromReport;
   if (!fromReport && idsOf(args.checkId).length === 0) return usage("sign needs --check-id <id>, or --from-report <dir> in a plan note job");
   const pem = args.key ? readFileSync(args.key, "utf-8") : process.env[CHECK_EVIDENCE_KEY_ENV];
+  let wanted: Array<{ check: string; claim?: Buffer | string }> | undefined;
+  if (!fromReport) {
+    const claim = args.claim ? readFileSync(args.claim) : undefined;
+    wanted = idsOf(args.checkId).map((check) => ({ check, ...(claim ? { claim } : {}) }));
+  }
+  const done = await signChecksOf(repo, base, at, { ...(fromReport ? { fromReport } : {}), ...(wanted ? { wanted } : {}), ...(args.planResult ? { result: args.planResult } : {}), pem, push: !args.noPush });
+  if ("usage" in done) return usage(done.usage);
+  if (fromReport) writeFileSync(join(fromReport, CHECK_EVIDENCE_FILE), JSON.stringify(done.note, null, 2) + "\n");
+  if (args.json) console.log(JSON.stringify(done.note, null, 2));
+  return done.code;
+}
+
+/**
+ * Sign the checks of a report directory (`fromReport`) or the named ones
+ * (`wanted`) at `at`, against the runner identities at `base`. With
+ * `skipCurrent` (#4914), a check whose current evidence the notes already
+ * hold is not signed again and is listed as signed by that runner, so a
+ * pipeline that runs on every schedule signs each head once.
+ */
+async function signChecksOf(
+  repo: string,
+  base: string,
+  at: string,
+  opts: { fromReport?: string; wanted?: Array<{ check: string; claim?: Buffer | string }>; result?: string; pem?: string; push: boolean; skipCurrent?: boolean },
+): Promise<{ note: CheckEvidenceNote; code: number } | { usage: string }> {
+  const { fromReport, pem } = opts;
   const identity = pem !== undefined && pem !== "" ? "key" : process.env[RUNNER_IDENTITY_ENV] ? "oidc" : undefined;
   const note: CheckEvidenceNote = { signed: [], skipped: [] };
   let wanted: Array<{ check: string; claim?: Buffer | string }>;
   if (fromReport && isCheckReportDir(fromReport)) {
     // #4935: a check job's report, each passed hook signed by name.
-    const decided = await checkReportChecks(fromReport, args.planResult);
-    if ("error" in decided) return usage(decided.error);
+    const decided = await checkReportChecks(fromReport, opts.result);
+    if ("error" in decided) return { usage: decided.error };
     wanted = decided.sign;
     note.skipped.push(...decided.skipped);
   } else if (fromReport) {
-    const decided = planReportChecks(fromReport, args.planResult);
+    const decided = planReportChecks(fromReport, opts.result);
     wanted = decided.sign;
     note.skipped.push(...decided.skipped);
   } else {
-    const claim = args.claim ? readFileSync(args.claim) : undefined;
-    wanted = idsOf(args.checkId).map((check) => ({ check, ...(claim ? { claim } : {}) }));
+    wanted = opts.wanted ?? [];
   }
-  const finish = (code: number): number => {
-    if (fromReport) writeFileSync(join(fromReport, CHECK_EVIDENCE_FILE), JSON.stringify(note, null, 2) + "\n");
-    if (args.json) console.log(JSON.stringify(note, null, 2));
-    return code;
-  };
   if (!identity) {
     note.skipped.push(...wanted.map((w) => ({ check: w.check, reason: noRunnerIdentity() })));
     console.error(`ci evidence: ${noRunnerIdentity()}, so no check was signed`);
-    return finish(CHANT_EXIT.done);
+    return { note, code: CHANT_EXIT.done };
   }
   let signer: EvidenceSigner;
   try {
     signer = (await runnerEvidenceSigner(repo, base, pem ? { key: pem } : {}))!;
   } catch (err) {
     console.error(formatError({ message: err instanceof Error ? err.message : String(err), hint: USAGE }));
-    return finish(CHANT_EXIT.failed);
+    return { note, code: CHANT_EXIT.failed };
   }
   for (const s of note.skipped) console.error(`ci evidence: ${s.check} not signed: ${s.reason}`);
-  if (wanted.length === 0) return finish(CHANT_EXIT.done);
+  if (opts.skipCurrent && wanted.length > 0) {
+    const { tree } = commitTree(repo, at);
+    const current = (await readCheckEvidence(repo, at, base, wanted.map((w) => w.check))).filter((v) => v.status === "current");
+    for (const v of current) {
+      note.signed.push({ check: v.check, runner: v.runner, commit: v.commit, tree });
+      console.error(`ci evidence: ${v.check} at ${at.slice(0, 12)} is already signed by ${v.runner}`);
+    }
+    const kept = new Set(current.map((v) => v.check));
+    wanted = wanted.filter((w) => !kept.has(w.check));
+  }
+  if (wanted.length === 0) return { note, code: CHANT_EXIT.done };
   const signed = await signChecks(repo, at, wanted, signer);
-  const pushed = await recordChecks(repo, signed, { push: !args.noPush });
+  const pushed = await recordChecks(repo, signed, { push: opts.push });
   for (const s of signed) {
     note.signed.push({ check: s.check, runner: s.runner, commit: s.commit, tree: s.tree });
     console.error(`ci evidence: signed ${s.check} at ${s.commit.slice(0, 12)} as ${s.runner}`);
   }
-  if (!args.noPush && !pushed.pushed && pushed.pushWarning) console.error(`ci evidence: the evidence is attached here, and the push did not land: ${pushed.pushWarning}`);
-  return finish(CHANT_EXIT.done);
+  if (opts.push && !pushed.pushed && pushed.pushWarning) console.error(`ci evidence: the evidence is attached here, and the push did not land: ${pushed.pushWarning}`);
+  return { note, code: CHANT_EXIT.done };
+}
+
+/** A commit's full sha and tree, read with git. */
+function commitTree(repo: string, rev: string): { commit: string; tree: string } {
+  const read = (spec: string) => execFileSync("git", ["rev-parse", "--verify", spec], { cwd: repo, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  return { commit: read(`${rev}^{commit}`), tree: read(`${rev}^{tree}`) };
+}
+
+/**
+ * `sign --open --job <job> --from-report <dir> -o <out>` (#4914): in a
+ * GitLab pipeline of the target branch, sign each open merge request's
+ * settled `job` from its artifact (../../workspace/trust/open-evidence.ts),
+ * against the policy at `--base` (the generated job passes the branch's
+ * commit). The branch is `--branch`, else the pipeline's own. Exits 0 once
+ * each merge request is signed or said, and 1 when the job's runner
+ * identity is not one the policy at base lists.
+ */
+async function signOpen(ctx: CommandContext, repo: string, base: string): Promise<number> {
+  const { args } = ctx;
+  if (!args.ciJob || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(args.ciJob)) return usage("sign --open needs the job to sign for, by name: --job plan");
+  if (!args.fromReport) return usage("sign --open needs the job's report directory as its artifact keeps it: --from-report .chant/pr");
+  if (!args.output) return usage("sign --open needs where to keep each merge request's evidence.json: -o .chant/evidence/<job>");
+  if (args.checkId || args.at || args.planResult) return usage("sign --open finds each merge request's head and its job's result itself, so it takes no --check-id, --at or --result");
+  const branch = args.branch ?? process.env.CI_COMMIT_BRANCH;
+  if (!branch) return usage("sign --open signs for the merge requests into a branch: run it in a branch pipeline, or pass --branch <branch>");
+  const pem = args.key ? readFileSync(args.key, "utf-8") : process.env[CHECK_EVIDENCE_KEY_ENV];
+  const { forgeFromEnv } = await import("../../pr-forge");
+  const { signOpenReports } = await import("../../workspace/trust/open-evidence");
+  // The notes there are the ones to skip a head already signed by, and to add to.
+  spawnSync("git", ["fetch", "--quiet", "--no-tags", "origin", "+refs/notes/chant/evidence:refs/notes/chant/evidence"], { cwd: repo, encoding: "utf-8" });
+  let failed = false;
+  let done: Awaited<ReturnType<typeof signOpenReports>>;
+  try {
+    done = await signOpenReports({
+      forge: forgeFromEnv("gitlab"),
+      branch,
+      job: args.ciJob,
+      artifactDir: args.fromReport,
+      out: args.output,
+      ...(args.noForks ? { noForks: true } : {}),
+      fetchHead: (pr, head) => fetchMergeRequestHead(repo, pr, head),
+      sign: async (dir, head, result) => {
+        const r = await signChecksOf(repo, base, head, { fromReport: dir, result, ...(pem ? { pem } : {}), push: !args.noPush, skipCurrent: true });
+        if ("usage" in r) throw new Error(r.usage);
+        if (r.code !== CHANT_EXIT.done) failed = true;
+        return r.note;
+      },
+    });
+  } catch (err) {
+    console.error(formatError({ message: err instanceof Error ? err.message : String(err), hint: USAGE }));
+    return CHANT_EXIT.failed;
+  }
+  for (const w of done.warnings) console.error(`ci evidence: ${w}`);
+  for (const d of done.done) {
+    if (d.skipped) console.error(`ci evidence: !${d.pr}: ${d.skipped}`);
+    else console.error(`ci evidence: !${d.pr} at ${d.head.slice(0, 12)}: signed ${d.note!.signed.map((s) => s.check).join(", ") || "nothing"}`);
+  }
+  if (done.done.length === 0) console.error(`ci evidence: no open merge request into ${branch} has a ${args.ciJob} job`);
+  if (args.json) console.log(JSON.stringify(done.done, null, 2));
+  return failed ? CHANT_EXIT.failed : CHANT_EXIT.done;
+}
+
+/** Fetch merge request `pr`'s head (`refs/merge-requests/<iid>/head`, a fork's too), else the commit itself; true once it is here. */
+function fetchMergeRequestHead(repo: string, pr: number, head: string): boolean {
+  const here = () => spawnSync("git", ["cat-file", "-e", `${head}^{commit}`], { cwd: repo }).status === 0;
+  if (here()) return true;
+  spawnSync("git", ["fetch", "--quiet", "--no-tags", "origin", `refs/merge-requests/${pr}/head`], { cwd: repo, encoding: "utf-8" });
+  if (here()) return true;
+  spawnSync("git", ["fetch", "--quiet", "--no-tags", "origin", head], { cwd: repo, encoding: "utf-8" });
+  return here();
 }
 
 /** Whether `dir` holds a check job's report and no plan report (#4935). */

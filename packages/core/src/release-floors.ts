@@ -160,6 +160,12 @@ export const PR_LOOP_EVIDENCE_FLOOR = NEXT_RELEASE;
 /** The first chant whose pull request pipelines take `checkJob` (`--check-job`): a check job that runs `chant ci check` on the pull request's commit with no token or runner identity, and with `evidence` a `check-evidence` job that signs each passed hook from its report with `chant ci evidence sign --from-report .chant/check` (#4935). */
 export const CHECK_JOB_FLOOR = NEXT_RELEASE;
 
+/** The first chant whose GitLab pipelines sign evidence in the target branch's plan notes pipeline, in jobs that name the `chant-evidence` environment, with `chant ci evidence sign --open`, and whose `pr-post --open --evidence-dir` ends each merge request's note with the checks line; no job of a merge request pipeline holds the runner key (#4914). */
+export const GITLAB_OPEN_EVIDENCE_FLOOR = NEXT_RELEASE;
+
+/** The first chant whose `chant ci check` takes `--summary <file>` and whose `checkReportSummary` renders the check report's markdown section, so a product's check step runs chant's check stage and keeps the section in its own report (#4914). */
+export const CHECK_SUMMARY_FLOOR = NEXT_RELEASE;
+
 /** The first chant whose pull request pipelines take `refGateStatus` (`--ref-gate-status`): a `ref-gate` job that runs `chant workspace ref-gate status` for the pull request's commit, and on GitLab `ref-gate status --open` for every open merge request (#4935). */
 export const REF_GATE_STATUS_JOB_FLOOR = NEXT_RELEASE;
 

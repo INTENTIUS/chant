@@ -20,6 +20,10 @@
  * is signed as local evidence instead, under `refs/notes/chant/local-evidence`.
  * Without one, a hook whose check `local.checks` at base names is skipped
  * when current local evidence for the tree stands in for it; the rest run.
+ *
+ * #4914: `--summary <file>` appends the report's markdown section
+ * (`checkReportSummary`) to the file, as a product's check report keeps it,
+ * and a job with `GITHUB_STEP_SUMMARY` set gets it in its summary too.
  */
 import { resolve } from "node:path";
 import type { CheckStageEvidence, CheckStepsAdapter } from "../../components/check-steps";
@@ -45,7 +49,7 @@ async function lexiconCheckSteps(ctx: CommandContext, cwd: string): Promise<Chec
   return plugins.map((p) => p.checkSteps?.()).filter((a): a is CheckStepsAdapter => a !== undefined);
 }
 
-const USAGE = "chant ci check --base <rev> [<target>...] [--output <dir>] [--no-push] [--json]";
+const USAGE = "chant ci check --base <rev> [<target>...] [--output <dir>] [--summary <file>] [--no-push] [--json]";
 
 /**
  * The check stage's signer (#4870), when the job has a runner identity: a
@@ -105,6 +109,20 @@ export async function runCiCheck(ctx: CommandContext): Promise<number> {
   } catch (err) {
     console.error(formatError({ message: err instanceof Error ? err.message : String(err), hint: USAGE }));
     return CHANT_EXIT.failed;
+  }
+  // #4914: the report's markdown section, in the product's own report and the job summary of a forge that keeps one.
+  for (const file of [...new Set([args.checkSummary, process.env.GITHUB_STEP_SUMMARY].filter((f): f is string => Boolean(f)))]) {
+    const { checkReportSummary } = await import("../../components/check-hooks");
+    const lines = checkReportSummary(report);
+    if (lines.length === 0) continue;
+    try {
+      const { appendFileSync, mkdirSync } = await import("node:fs");
+      const { dirname } = await import("node:path");
+      mkdirSync(dirname(resolve(file)), { recursive: true });
+      appendFileSync(file, `${lines.join("\n")}\n`);
+    } catch (err) {
+      console.error(`ci check: could not write the summary to ${file}: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
   if (args.json) console.log(JSON.stringify(report, null, 2));
   else if (report.status === "none") console.error("ci check: no ci.hooks.check at base and no lexicon check step, so nothing ran");

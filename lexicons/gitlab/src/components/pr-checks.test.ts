@@ -11,7 +11,7 @@ import { generateGitlabPipeline } from "./generate-pipeline";
 import { generateGitlabProductPlanPipeline } from "./product-plan-pipeline";
 
 const ESTATE: DriverComponent[] = [{ name: "net", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "terraform-apply", root: "net" }] }] }];
-type Job = { stage: string; rules: Array<{ if: string }>; needs?: Array<{ job: string }>; variables?: Record<string, string>; id_tokens?: unknown; script: string[]; artifacts?: { paths: string[] } };
+type Job = { stage: string; rules: Array<{ if: string; when?: string }>; needs?: Array<{ job: string }>; variables?: Record<string, string>; id_tokens?: unknown; environment?: unknown; script: string[]; artifacts?: { paths: string[] } };
 type Doc = Record<string, unknown> & { stages: string[] };
 const loopYaml = (prLoop: Record<string, unknown>) => generateGitlabPipeline(ESTATE, { env: "prod", prLoop }).yaml;
 
@@ -21,13 +21,34 @@ describe("the merge request loop's evidence, check and ref gate jobs on gitlab (
     expect(loopYaml({})).not.toContain("ci evidence");
   });
 
-  test("with evidence a plan-evidence job signs plan and policy from the plan job's artifact", () => {
+  test("with evidence a plan-evidence job of the plan notes pipeline signs every open merge request's plan, and the note reads it (#4914)", () => {
     const doc = parseYAML(loopYaml({ evidence: { runnerKeySecret: "CHANT_RUNNER_KEY_PEM" } })) as Doc;
     expect(doc.stages.slice(0, 3)).toEqual(["plan", "evidence", "plan-note"]);
     const ev = doc["plan-evidence"] as Job;
-    expect(ev.needs).toEqual([{ job: "plan", artifacts: true }]);
+    // The target branch's pipeline, never the merge request's, and the environment the key's variable is scoped to.
+    expect(ev.rules).toEqual([{ if: (doc["plan-note"] as Job).rules[0]!.if }]);
+    expect(ev.rules[0]!.if).toContain("CHANT_PLAN_NOTES");
+    expect(ev.environment).toEqual({ name: "chant-evidence", action: "access" });
+    expect(ev.needs).toBeUndefined();
     expect(ev.variables).toEqual({ CHANT_RUNNER_KEY: "$CHANT_RUNNER_KEY_PEM" });
-    expect(ev.script.at(-1)).toBe('chant ci evidence sign --from-report .chant/pr --result success --at "$CI_COMMIT_SHA" --base "$CI_MERGE_REQUEST_DIFF_BASE_SHA"');
+    expect(ev.script.at(-1)).toBe('chant ci evidence sign --open --job plan --from-report .chant/pr --base "$CI_COMMIT_SHA" --output .chant/evidence/plan');
+    expect(ev.artifacts!.paths).toEqual([".chant/evidence/plan"]);
+    const note = doc["plan-note"] as Job;
+    expect(note.script.at(-1)).toMatch(/pr-post --open .* --evidence-dir \.chant\/evidence\/plan$/);
+    expect(note.rules[0]).toMatchObject({ when: "always" });
+  });
+
+  test("with evidence no job of the merge request pipeline names the key or the signing environment (#4914)", () => {
+    for (const evidence of [{ runnerKeySecret: "CHANT_RUNNER_KEY_PEM" }, { identity: "oidc" }]) {
+      const doc = parseYAML(loopYaml({ evidence, checkJob: true })) as Doc;
+      const mergeRequest = Object.entries(doc).filter(([name, j]) => name !== "workflow" && (j as Job | undefined)?.rules?.some((r) => r.if.includes("merge_request_event")));
+      expect(mergeRequest.map(([name]) => name).sort()).toEqual(["check", "plan"]);
+      for (const [, job] of mergeRequest) {
+        expect(JSON.stringify((job as Job).variables ?? {})).not.toMatch(/CHANT_RUNNER_KEY|CHANT_RUNNER_IDENTITY/);
+        expect((job as Job).environment).toBeUndefined();
+        expect((job as Job).id_tokens).toBeUndefined();
+      }
+    }
   });
 
   test("keyless, the evidence job asks for the signing token", () => {
@@ -45,8 +66,10 @@ describe("the merge request loop's evidence, check and ref gate jobs on gitlab (
     expect(check.variables).toEqual({ BASE_SHA: "$CI_MERGE_REQUEST_DIFF_BASE_SHA" });
     expect(check.artifacts!.paths).toEqual([".chant/check"]);
     const ev = doc["check-evidence"] as Job;
-    expect(ev.needs).toEqual([{ job: "check", artifacts: true }]);
-    expect(ev.script.at(-1)).toContain("ci evidence sign --from-report .chant/check");
+    expect(ev.needs).toBeUndefined();
+    expect(ev.rules[0]!.if).toContain("CHANT_PLAN_NOTES");
+    expect(ev.environment).toEqual({ name: "chant-evidence", action: "access" });
+    expect(ev.script.at(-1)).toBe('chant ci evidence sign --open --job check --from-report .chant/check --base "$CI_COMMIT_SHA" --output .chant/evidence/check');
     const gate = doc["ref-gate"] as Job;
     expect(doc.stages.indexOf("ref-gate")).toBe(doc.stages.indexOf("plan-note") + 1);
     expect(gate.rules[0]!.if).toContain("CHANT_PLAN_NOTES");
@@ -68,6 +91,21 @@ describe("the product plan's record and check jobs on gitlab (#4899, #4935)", ()
     expect(plan.script.some((l) => l.includes("node -e") && l.includes("CHANT_PLAN_EXIT"))).toBe(true);
     expect(JSON.parse(plan.variables!.CHANT_PLAN_RECORD!).labels.Target).toBe("staging");
     expect((doc["staging-plan-note"] as Job).script.at(-1)).toMatch(/pr-post --open .*--record-run staging-plan$/);
+  });
+
+  test("with evidence the signing jobs are the plan notes pipeline's, and each note job reads its plan's evidence (#4914)", () => {
+    const doc = parseYAML(generateGitlabProductPlanPipeline("default", { ...product, productPlan: { ...product.productPlan, forks: "skip" }, checkJob: true, evidence: { runnerKeySecret: "K" } }).yaml) as Doc;
+    const ev = doc["staging-plan-evidence"] as Job;
+    expect(ev.rules[0]!.if).toContain("CHANT_PLAN_NOTES");
+    expect(ev.environment).toEqual({ name: "chant-evidence", action: "access" });
+    // forks: "skip" plans no fork's merge request, and signs none either.
+    expect(ev.script.at(-1)).toBe('yodel chant ci evidence sign --open --job staging-plan --from-report .chant/pr --base "$CI_COMMIT_SHA" --output .chant/evidence/staging-plan --no-forks');
+    expect((doc["check-evidence"] as Job).script.at(-1)).toMatch(/--job check .* --no-forks$/);
+    expect((doc["staging-plan-note"] as Job).script.at(-1)).toMatch(/pr-post --open .*--member staging.* --evidence-dir \.chant\/evidence\/staging-plan$/);
+    for (const name of ["staging-plan", "check"]) {
+      expect(JSON.stringify((doc[name] as Job).variables ?? {})).not.toContain("CHANT_RUNNER_KEY");
+      expect((doc[name] as Job).environment).toBeUndefined();
+    }
   });
 
   test("checkJob and refGateStatus render beside the product's plans", () => {

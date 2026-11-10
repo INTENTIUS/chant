@@ -82,6 +82,7 @@ const BOOLEAN_FLAGS = new Set([
   "--require-runner-start",
   "--require-clouds",
   "--no-push",
+  "--no-forks",
   "--list",
   "--no-require-review",
   "--expire",
@@ -581,6 +582,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant components pr-post --result <result>` (#4295): the plan job's own result, which fails the status when it failed.
       result.planResult = args[++i];
       if (!result.planResult || result.planResult.startsWith("-")) throw new Error("--result needs the plan job's result: --result success|failure|cancelled");
+    } else if (arg === "--no-forks") {
+      // `chant ci evidence sign --open --no-forks` (#4914): sign for no merge request from a fork.
+      result.noForks = true;
     } else if (arg === "--no-status") {
       // `chant ci run|serve --no-status` (#4097): post no commit status for the job.
       result.noStatus = true;
@@ -950,6 +954,14 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant components pr-post --record-run <plan job>` (#4899): keep the product plan job's run record on chant/lifecycle.
       result.recordRun = args[++i];
       if (!result.recordRun || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(result.recordRun)) throw new Error(`--record-run needs the plan job's name: got "${result.recordRun ?? ""}"`);
+    } else if (arg === "--evidence-dir") {
+      // `chant components pr-post --open --evidence-dir <dir>` (#4914): each merge request's evidence.json, from the GitLab signing job.
+      result.evidenceDir = args[++i];
+      if (!result.evidenceDir || result.evidenceDir.startsWith("-")) throw new Error("--evidence-dir needs the directory the signing job kept: --evidence-dir .chant/evidence/plan");
+    } else if (arg === "--summary") {
+      // `chant ci check --summary <file>` (#4914): the check report's markdown section, appended to the file.
+      result.checkSummary = args[++i];
+      if (!result.checkSummary || result.checkSummary.startsWith("-")) throw new Error("--summary needs a file to append the check report's section to: --summary <file>");
     } else if (arg === "--locks") {
       // `chant components pr-notes --locks` (#4785).
       result.locks = true;

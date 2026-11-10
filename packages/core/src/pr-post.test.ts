@@ -227,6 +227,36 @@ describe("pr-post --open posts each open merge request's plan from a pipeline of
     expect(g.overdueCalls()).toBe(1);
   });
 
+  test("#4914: with --evidence-dir the note ends with the checks the signing job signed for that head, and a file for another head is not used", async () => {
+    const evidence = reportDir(undefined);
+    const keep = (pr: number, head: string, signed: string[]) => {
+      mkdirSync(join(evidence, String(pr)), { recursive: true });
+      writeFileSync(
+        join(evidence, String(pr), "evidence.json"),
+        JSON.stringify({ pr, head, signed: signed.map((check) => ({ check, runner: "ci", commit: head, tree: "t".repeat(40) })), skipped: [{ check: "policy", reason: "the plan ran no policy" }] }),
+      );
+    };
+    keep(REPORT.pr!, HEAD, ["plan"]);
+    keep(9, OTHER, ["plan"]);
+    const g = gitlab({
+      jobs: [
+        { pr: REPORT.pr!, head: HEAD, id: 101, status: "success" },
+        { pr: 9, head: HEAD, id: 103, status: "success" },
+      ],
+      artifacts: { 101: JSON.stringify(REPORT), 103: JSON.stringify({ ...REPORT, pr: 9 }) },
+    });
+    const { posts } = await postOpenPlanReports({ forge: g.forge, branch: "main", job: "plan", artifactDir: ".chant/pr", env: REPORT.env, evidenceDir: evidence });
+    expect(posts.map((p) => p.posted?.noted)).toEqual([true, true]);
+    const byPr = new Map(g.notes.map((n) => [n.pr, n.body]));
+    expect(byPr.get(REPORT.pr!)).toContain("Checks: signed evidence for `plan` as ci; not signed: `policy` (the plan ran no policy).");
+    // !9's file names another head: the note says nothing it cannot stand behind.
+    expect(byPr.get(9)).not.toContain("Checks:");
+  });
+
+  test("#4914: the flag parses", () => {
+    expect(parseArgs(["components", "pr-post", "--open", "--env", "prod", "--forge", "gitlab", "--evidence-dir", ".chant/evidence/plan"])).toMatchObject({ open: true, evidenceDir: ".chant/evidence/plan" });
+  });
+
   test("a forge that cannot list merge request jobs is refused", async () => {
     await expect(postOpenPlanReports({ forge: fakeForge().forge, branch: "main", job: "plan", artifactDir: ".chant/pr", env: REPORT.env })).rejects.toThrow(/it is for GitLab/);
   });

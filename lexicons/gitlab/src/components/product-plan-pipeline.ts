@@ -21,10 +21,15 @@
  * With `forks: "skip"` the plan jobs run only for a merge request from the
  * project itself.
  *
- * With `evidence` (#4870) each plan job is followed, once it succeeded, by
- * `<plan job>-evidence`, which signs its `plan` and `policy` checks from the
- * plan job's artifact with the runner key in the named CI/CD variable, and
- * pushes them to `refs/notes/chant/evidence`, where the ref gate (#4867) reads them.
+ * With `evidence` (#4870) each plan job has `<plan job>-evidence`, which
+ * signs its `plan` and `policy` checks with the runner key in the named
+ * CI/CD variable, and pushes them to `refs/notes/chant/evidence`, where the
+ * ref gate (#4867) reads them. It runs in the plan notes pipeline, before
+ * the note jobs (#4914), for every open merge request's settled plan job,
+ * from its artifact: a merge request pipeline is built from the change's
+ * own files, so none of its jobs may hold the key. The job names the
+ * `chant-evidence` environment, which the key's variable is scoped to, and
+ * the note job ends each note with the checks it signed.
  *
  * With `replan` (#4899) the note-commands job (`noteCommands`) starts a
  * pipeline of the target branch for a plan comment, with the comment
@@ -51,7 +56,7 @@ import {
   type ProductPlanOptions,
 } from "@intentius/chant/components/product-plan";
 import { emitGitlabFile } from "./ci-jobs";
-import { gitlabCheckJobs, withCheckStages } from "./pr-check-jobs";
+import { gitlabCheckJobs, gitlabOpenEvidenceJob, withCheckStages } from "./pr-check-jobs";
 
 /** What {@link generateGitlabProductPlanPipeline} takes: the product pipeline's options with `productPlan`, and how the jobs are set up. */
 export interface GitlabProductPlanPipelineOptions extends ProductPipelineOptions {
@@ -118,9 +123,8 @@ export function generateGitlabProductPlanPipeline(env: string, options: GitlabPr
     image,
     setup: [...prLoopSetup(image, options.engineSetup), ...beforeScript],
     beforeScript,
-    // The check job holds no credentials, so a fork's merge request runs it too.
+    // The check job holds no credentials, so a fork's merge request runs it too; with forks: "skip" its hooks are not signed for (#4914).
     onMergeRequest: GITLAB_MERGE_REQUEST_SOURCE,
-    onTrustedMergeRequest: onMergeRequest,
     onPlanNotes,
     ...(options.evidence?.runnerKeySecret ? { unset: [options.evidence.runnerKeySecret] } : {}),
     ...(jobs.check ? { check: jobs.check } : {}),
@@ -152,22 +156,10 @@ export function generateGitlabProductPlanPipeline(env: string, options: GitlabPr
       },
     ]);
   }
+  // #4914: the evidence jobs run in the plan notes pipeline, before the note jobs, for every open merge request.
   for (const p of plans) {
     if (!p.evidence) continue;
-    entries.push([
-      p.evidence.jobName!,
-      {
-        stage: "evidence",
-        image,
-        ...tags(p.noteRunner),
-        rules: [{ if: onMergeRequest }],
-        needs: [{ job: p.jobName, artifacts: true }],
-        variables: p.evidence.env,
-        // #4869: signing keyless, the job's token for the signing audience.
-        ...(p.evidence.idTokens ? { id_tokens: p.evidence.idTokens } : {}),
-        script: [...beforeScript, ...p.evidence.lines],
-      },
-    ]);
+    entries.push(gitlabOpenEvidenceJob(p.evidence, { image, runner: p.noteRunner, beforeScript, onPlanNotes }));
   }
   for (const p of plans) {
     entries.push([
@@ -176,7 +168,8 @@ export function generateGitlabProductPlanPipeline(env: string, options: GitlabPr
         stage: PR_PLAN_NOTE_JOB,
         image,
         ...tags(p.noteRunner),
-        rules: [{ if: onPlanNotes }],
+        // #4914: a signing job that failed leaves the notes to post, without the checks line.
+        rules: [p.evidence ? { if: onPlanNotes, when: "always" } : { if: onPlanNotes }],
         ...(Object.keys(p.post.env).length > 0 ? { variables: p.post.env } : {}),
         script: [...beforeScript, p.post.command],
       },
