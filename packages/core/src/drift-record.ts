@@ -1081,6 +1081,13 @@ export interface DeepDiffDriftInput extends DriftAdapterBase {
  * `undeclaredEntities` undeclared. Accepted and held paths are not drift and
  * are left out. To lay these over the thin read's records, so a deep hole
  * stays on the attribute surface, use {@link mergeDeepDrift}.
+ *
+ * A pending change (`pending`: a privilege granted by hand, a column the
+ * declaration does not have) is drift too (#4944), as `lifecycle diff
+ * --live` counts it: an attribute on each entity behind it, its path the
+ * change's subject and its after what an apply would do, the entity's record
+ * drifted unless it is not-observed. A pending change that names no entity
+ * is a drifted record of its own, addressed by its subject.
  */
 export function deepDiffDriftRecords(input: DeepDiffDriftInput): DriftRecord[] {
   const { diff } = input;
@@ -1106,6 +1113,15 @@ export function deepDiffDriftRecords(input: DeepDiffDriftInput): DriftRecord[] {
         ...(c.kind === "changed" && c.live !== undefined ? { after: c.live } : {}),
       })),
     });
+  }
+  for (const p of diff.pending ?? []) {
+    const attribute: DriftAttribute = { path: p.subject, after: p.change };
+    for (const name of p.entities && p.entities.length > 0 ? p.entities : [p.subject]) {
+      const had = out.get(name);
+      if (had?.status === "not-observed") continue;
+      if (had) out.set(name, driftRecord({ ...had, status: "drifted", attributes: [...(had.attributes ?? []), attribute] }));
+      else put(name, { status: "drifted", attributes: [attribute] });
+    }
   }
   for (const name of diff.undeclaredEntities ?? []) put(name, { status: "undeclared" });
   for (const name of diff.unchanged ?? []) put(name, { status: "in-sync" });

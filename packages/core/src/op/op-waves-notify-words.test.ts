@@ -7,6 +7,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { assertProductWords, CHANT_WORDS, notifyWaveLabel, productWordsProblems, resolveProductWords, setActiveProductWords } from "../ci-product-words";
 import { makeNotifyEvent, slackMessage, teamsMessage, verifyWebhook, type NotifyFetch, type NotifyFields } from "../notify";
 import { driftNotifyFields, productSendOptions } from "../notify-product";
+import { driftRunFingerprint, type DriftIssueRecord } from "../drift-issue";
 import type { OpWavesSpec } from "./op-waves";
 import { notifyOpWave, opWaveNotifyFields, type OpWaveOutcome } from "./op-waves-notify";
 
@@ -95,6 +96,23 @@ describe("notify words (#4610)", () => {
       drift: { changed: ["shop-dev", "shop-prod"], fingerprint: "fp" },
     });
     expect(driftNotifyFields(CHANT_WORDS, { changed: ["net"], failed: ["db"] }).summary).toBe("1 member drifted: net; 1 member could not be refreshed: db");
+  });
+
+  test("a drift notice given the stacks' records names the drifted ones and computes the run's fingerprint (#4944)", () => {
+    const record = (member: string, status: "drifted" | "in-sync"): DriftIssueRecord => ({ member, address: "bucket", status, ...(status === "drifted" ? { attributes: [{ path: "acl", before: "private", after: "public-read" }] } : {}) });
+    const stacks = [
+      { stack: "shop-prod", records: [record("shop-prod", "drifted")] },
+      { stack: "shop-dev", records: [record("shop-dev", "in-sync")] },
+      { stack: "shop-eu", records: [record("shop-eu", "drifted")] },
+    ];
+    const fields = driftNotifyFields(PLYWOOD, { stacks, failed: ["shop-us"] });
+    expect(fields).toMatchObject({
+      summary: "2 stacks drifted: shop-prod, shop-eu; 1 stack could not be refreshed: shop-us",
+      targets: ["shop-prod", "shop-eu"],
+      drift: { changed: ["shop-prod", "shop-eu"], failed: ["shop-us"], fingerprint: driftRunFingerprint(stacks) },
+    });
+    expect(driftNotifyFields(PLYWOOD, { stacks, fingerprint: "fp" }).drift?.fingerprint).toBe("fp");
+    expect(driftNotifyFields(PLYWOOD, { stacks, changed: ["shop-prod"] }).drift?.changed).toEqual(["shop-prod"]);
   });
 
   test("sql-yodeler's words keep source sql-yodeler while its product word is yodel", () => {

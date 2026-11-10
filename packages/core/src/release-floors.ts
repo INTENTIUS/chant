@@ -188,3 +188,9 @@ export const CI_TOOL_NODE_DOWNLOAD_FLOOR = NEXT_RELEASE;
 
 /** The first chant whose `chant build -o <dir>/` writes a build's additional files (a docker project's Dockerfiles) into the directory with no primary file, whose `chantGenerated` renders take a `module` and its `export` (a `{ path: text }` object or a function returning one) and `chant dev render <module> <export>` writes them in place, and whose `chant ci workflow` and `chant release workflow` write into `chant dev generated-check`'s render tree with no `--output` (#4950). */
 export const RENDER_KINDS_FLOOR = NEXT_RELEASE;
+
+/** The first chant whose sql lexicon's `chant lifecycle diff --live` addresses a table's columns by name (`columns[#country].default.expr`), compares a ClickHouse table's column order as `columnOrder`, and reports a column the server has and the declaration does not as pending, and whose `lexiconDriftRecords` counts a deep read's pending changes (that column, a ClickHouse or Postgres privilege granted by hand) as drift (#4944). */
+export const SQL_LIVE_COLUMNS_FLOOR = NEXT_RELEASE;
+
+/** The first chant whose `driftNotifyFields` takes `stacks`, each member's drift records, and from them names the drifted members and computes the run's fingerprint (#4944). */
+export const DRIFT_NOTIFY_STACKS_FLOOR = NEXT_RELEASE;

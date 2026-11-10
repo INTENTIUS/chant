@@ -40,8 +40,10 @@ function ruleFor(path: string): ClassifierRuleId | "ambiguous" | undefined {
     const spec = key ? (MERGE_TREE_SETTINGS as Record<string, { readonly: boolean } | undefined>)[key] : undefined;
     return spec?.readonly ? "SQLCH218" : "SQLCH206";
   }
+  if (root === "columnOrder") return "SQLCH209";
   if (root === "columns") {
-    const field = /^columns\[\d+\]\.(\w+)/.exec(path)?.[1];
+    // A column by its name (`columns[#country]`, #4944), or by position.
+    const field = /^columns\[(?:\d+|#[^\]]*)\]\.(\w+)/.exec(path)?.[1];
     if (field === undefined) return "ambiguous"; // a column added, dropped or moved
     if (field === "type" || field === "nullable" || field === "name") return "ambiguous";
     if (field === "default") return "SQLCH207";

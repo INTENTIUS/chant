@@ -121,7 +121,8 @@ describe.skipIf(!enabled)("a dictionary on a single node (#3682)", () => {
     const entities = new Map(Object.entries(v1).map(([k, e]) => [k, { entityType: e.entityType, props: e.props as unknown as Record<string, unknown> }]));
     const deep = await observeResourcesDeep({ environment: "test", entityNames: [...entities.keys()], entities, config: {}, env: envOf(endpoint) });
     expect(deep.unobserved ?? {}).toEqual({});
-    expect(compared(deep.resources.ratesDict!.properties)).toEqual(compared(v1.ratesDict.props));
+    // The declared tree as the diff prepares it: the dictionary's `columnOrder` (#4944).
+    expect(compared(deep.resources.ratesDict!.properties)).toEqual(compared(sqlDeepNormalizationHooks.prepare!(entities.get("ratesDict")!.props, { entityType: "ClickHouse::Dictionary", side: "declared" })));
     expect(deep.resources.ratesDict!.type).toBe("ClickHouse::Dictionary");
 
     // A foreign dictionary and a Dictionary-engine table, made by hand: listed, not left out.

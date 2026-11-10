@@ -55,9 +55,13 @@ On ClickHouse, a user with `SELECT` on the project's databases and `readonly = 1
 |---|---|---|
 | what the build declares, as applied | `No drift detected` | `false` |
 | an object the project did not create, beside the owned ones | nothing; the diff reads only declared objects | `false` |
-| an owned object's property changed out of band (`ALTER TABLE ... MODIFY TTL`, a column default) | `PROPERTY DRIFT`, the property's declared and live values | `true` |
+| an owned object's property changed out of band (`ALTER TABLE ... MODIFY TTL`, a column default) | `PROPERTY DRIFT`, the property's declared and live values; a column's property is named by the column, `columns[#country].default.expr` | `true` |
+| a column added to an owned table by hand (`ALTER TABLE ... ADD COLUMN note String`) | `PENDING`, `column shop.events.note: the server has column note String, which the declaration does not` | `true` |
 | an owned object dropped | `MISSING`, the object and the address that was read | `true` |
+| a ClickHouse table's columns moved (`MODIFY COLUMN ... AFTER`) | `PROPERTY DRIFT` on `columnOrder`, the declared order and the server's | `true` |
 | a Postgres table's columns in another order than the declaration's, such as a column a `PostgresMigrationOp` rename added last | nothing; columns are compared by name, since Postgres cannot move a column without rewriting the table | `false` |
+
+Columns are addressed by name since [#4944](https://github.com/INTENTIUS/chant/issues/4944); before it a path read `columns[3].default.expr`, and a column added on the server was listed under `UNCLAIMED`, which is not drift. An accepted deviation recorded against a `columns[N]` path no longer matches and has to be accepted again.
 
 The diff compares the server with what the checkout declares, not with what was last applied, so a change merged but not yet applied reads as drift too.
 

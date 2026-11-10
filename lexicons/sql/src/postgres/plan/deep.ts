@@ -11,6 +11,10 @@
  * the name Postgres gave it, do not read as drift; a field that differs keeps
  * the server's value. `deepNormalizationHooks` prunes what is not a property
  * of the object (the DDL text, the template source, lineage, reads).
+ *
+ * A table's columns are addressed by name, and a column the server has that
+ * the declaration does not is pending, since an apply drops it (#4944,
+ * `../../core/deep-columns.ts`).
  */
 
 import { deepObservation, type DeepObservationResult, type DeepPendingChange, type DeepResourceObservation } from "@intentius/chant/deep-observation";
@@ -25,6 +29,8 @@ import { serverNormalized } from "./server-normalize";
 import type { PostgresClient } from "../live/client";
 import { accessChangesAgainst } from "../access/changes";
 import { POSTGRES_LATEST_MAJOR } from "../../spec/postgres-pin";
+import { undeclaredColumns } from "../../core/deep-columns";
+import { renameHints } from "./schema";
 
 type Props = Record<string, unknown>;
 
@@ -325,7 +331,17 @@ export async function observeResourcesDeep(
         if ((d.kind === "trigger" && d.fields.when !== l.fields.when) || (d.kind === "policy" && (d.fields.using !== l.fields.using || d.fields.check !== l.fields.check))) {
           d = await serverNormalized(client, d, target.defaultSchema);
         }
-        resources[name] = { type: o.type, physicalId: o.oid, properties: inDeclaredVocabulary(entity.props, lp, d, l) };
+        // A column the server has and the declaration does not: pending, and out of the tree (#4944).
+        const split = undeclaredColumns({
+          entity: name,
+          entityType: entity.entityType,
+          qualified: `${schema}.${objectName}`,
+          declared: entity.props,
+          live: inDeclaredVocabulary(entity.props, lp, d, l),
+          previously: Object.values(renameHints(String(entity.props.ddl ?? "")).columns),
+        });
+        pending.push(...split.pending);
+        resources[name] = { type: o.type, physicalId: o.oid, properties: split.live };
       } catch (err) {
         unobserved[name] = { type: entity.entityType, reason: "read-failed", detail: `the server's definition does not parse: ${(err as Error).message}` };
       }

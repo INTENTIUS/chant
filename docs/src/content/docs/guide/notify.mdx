@@ -181,7 +181,7 @@ The `notify` slot of the words changes these:
 | `notify.headers` | `x-<product>` | the header prefix the receiver verifies with |
 | `notify.message` | chant's words | the words of the Slack and Teams messages, below |
 
-A product that sends its own drift notice builds it with `driftNotifyFields(words, { changed, failed, fingerprint })` from `@intentius/chant/ci-product`, which gives `2 stacks drifted: shop-dev, shop-prod` under plywood's noun. `productSendOptions(words)` gives the header prefix and the message words to pass to `sendNotify`.
+A product that sends its own drift notice builds it with `driftNotifyFields(words, { changed, failed, fingerprint })` from `@intentius/chant/ci-product`, which gives `2 stacks drifted: shop-dev, shop-prod` under plywood's noun. Given `stacks`, each member's drift records as `{ stack, records }`, it names the members with drift itself and carries `driftRunFingerprint` of them, so the product passes what it read ([#4944](https://github.com/INTENTIUS/chant/issues/4944), `DRIFT_NOTIFY_STACKS_FLOOR`). `productSendOptions(words)` gives the header prefix and the message words to pass to `sendNotify`.
 
 ### Word the chat messages
 

@@ -618,4 +618,24 @@ describe("one lexicon's section of lifecycle diff --live --json (#4896)", () => 
     expect(statusOf(lexiconDriftRecords({ ...base, section: { resources } }))["app.events"]).toBe("pending");
     expect(lexiconDriftRecords({ ...base, section: { deep } })).toEqual([]);
   });
+
+  test("a deep read's pending changes are drift on the entities behind them (#4944)", () => {
+    const withPending = {
+      ...deep,
+      pending: [
+        { subject: "column app.orders.note", change: "drop column note text, which the declaration does not have", entities: ["app.orders"] },
+        { subject: "column app.users.legacy", change: "drop column legacy text, which the declaration does not have", entities: ["app.users"] },
+        { subject: "grants app", change: "REVOKE INSERT ON `shop`.`events` FROM `app`" },
+      ],
+    } as DeepDiffResult;
+    const records = lexiconDriftRecords({ ...base, section: { resources, deep: withPending, absent: "missing" } });
+    expect(statusOf(records)).toEqual({ "app.audit": "not-observed", "app.events": "missing", "app.orders": "drifted", "app.users": "drifted", "grants app": "drifted" });
+    expect(records.find((r) => r.address === "app.orders")!.attributes).toEqual([{ path: "column app.orders.note", after: "drop column note text, which the declaration does not have" }]);
+    expect(records.find((r) => r.address === "app.users")!.attributes).toEqual([
+      { path: "column app.users.legacy", after: "drop column legacy text, which the declaration does not have" },
+      { path: "columns[1].type", before: "int", after: "bigint" },
+    ]);
+    expect(records.find((r) => r.address === "grants app")!.attributes).toEqual([{ path: "grants app", after: "REVOKE INSERT ON `shop`.`events` FROM `app`" }]);
+    roundTrip(records);
+  });
 });
