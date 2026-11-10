@@ -1,0 +1,74 @@
+---
+title: "chant dev dead-guards"
+description: Fail on a product's feature-detect for a chant part that the product's chant pin already has
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant dev dead-guards [<product-dir>] [--chant-version <version>] [--json]
+```
+
+A product that runs on more than one chant release checks for a chant part before it calls it and keeps a fallback for a chant without it. Once the product pins a chant that has the part, the check always passes. The fallback is then dead code that is still tested and kept. `dev dead-guards` finds each such check and exits 1, naming its file and line, so the product can delete the check and its fallback.
+
+With no directory it checks the current one. Exit 0 when no check is dead, 1 when one is, 2 for a usage error or when no `package.json` pins `@intentius/chant`.
+
+## The pin
+
+Each source file is checked against the `@intentius/chant` version of the nearest `package.json` above it that names chant in `dependencies`, `devDependencies`, `peerDependencies` or `optionalDependencies`. A range counts as the lowest version it admits, so `^0.124.78` is 0.124.78. A `workspace:` or `file:` range has no version, and the files under it are not checked. `--chant-version <version>` checks every file against that version.
+
+The scan reads `.ts`, `.tsx`, `.js`, `.mjs`, `.cjs`, `.mts` and `.cts` files. It skips declaration files, `*.test.*` and `*.spec.*` files, hidden directories, `node_modules`, `dist`, `build`, `out`, `coverage`, `test`, `tests`, `__tests__`, `fixtures` and `__fixtures__`.
+
+## What counts as a check
+
+Each check is matched to a floor in chant's floor table (below).
+
+| Kind | Matches | Its floor |
+|------|---------|-----------|
+| `floor` | A floor's name read off a module the file did not import statically (`m.CI_CHECK_HOOK_FLOOR`, `typeof m.E2E_HARNESS_FLOOR === "string"`), written as a member of a type the product declares for a lazily loaded chant module (`CI_CONTROL_FLOOR: string;`), in a string on a line that loads or asks a module (`exportsAll("@intentius/chant/op", ["OP_WAVE_STAND_DOWN_FLOOR"])`, `"X_FLOOR" in m`), or destructured from a dynamic import | that floor |
+| `module` | A chant subpath loaded with `import()` inside a `try` that has a `catch`, or with `.catch(` on the load, directly or through `const specifier = "@intentius/chant/..."` | the lowest floor the subpath serves: a chant with that floor has the subpath |
+| `product-floor` | The product's own constant for the chant it needs, `const CHANT_CI_FLOOR = "0.124.67"` | that version |
+
+Using a floor the file imports statically (`import { CI_AGENT_FLOOR } from "@intentius/chant/ci-product"`), or reads off a namespace import of chant, is not a check: the file only builds against a chant with that floor. Comments are not read.
+
+To keep a check on purpose, for example for a chant a user installs beside the product, put `chant-dead-guards: keep` on its line or in a comment on the line above.
+
+The scan does not see a check on an export that has no floor, such as `typeof m.writeCiHook === "function"` on its own. When chant adds a floor for a part, a product can check that floor instead.
+
+## The floor table
+
+`@intentius/chant/floor-table` lists every floor constant in chant core as `FLOOR_TABLE`. Each row has:
+
+- `name`, the constant, such as `CI_IMAGE_FLOOR`;
+- `version`, the first chant release with the part. A floor added since the last release has the number of the next one (`NEXT_RELEASE`);
+- `gates`, the first sentence of the constant's doc comment;
+- `issue`, the issue that added it;
+- `file`, the file under `packages/core/src` that declares it;
+- `modules`, the `@intentius/chant` subpaths a product can import the constant from.
+
+`floorVersion(name)` returns a floor's version, and `chantMeets(version, name)` says whether a chant version has the part:
+
+```ts
+import { chantMeets } from "@intentius/chant/floor-table";
+
+if (chantMeets(installedChant, "DRIFT_ISSUE_FLOOR")) {
+  // call @intentius/chant/drift-issue
+}
+```
+
+`scripts/floor-table.ts` writes the table from the constants. chant's release check (`just release-floors`) fails while the table is missing a floor or names an old version, and `just release-floors --freeze` writes it again when a release's floors become literals.
+
+## From a script
+
+`@intentius/chant/dead-guards` exports the scan behind the command:
+
+```ts
+import { deadGuardLine, findDeadGuards } from "@intentius/chant/dead-guards";
+
+const r = findDeadGuards({ productDir: process.cwd() });
+for (const g of r.dead) console.error(deadGuardLine(g));
+process.exit(r.ok ? 0 : 1);
+```
+
+`findDeadGuards` returns `dead`, the checks the pin meets, `live`, the checks it does not meet yet, `pins`, the `package.json` files read and their versions, `files`, the number of files read, and `unpinned`, the files with no pin above them.

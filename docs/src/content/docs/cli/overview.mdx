@@ -58,12 +58,13 @@ These commands are for **lexicon authors**.
 | [`dev check-lexicon`](/chant/cli/check-lexicon/) | Validate a lexicon bundle |
 | [`dev surface-diff`](/chant/cli/surface-diff/) | Diff a regenerated lexicon's API surface against its baseline |
 
-Products built on chant use two of them to build against an unreleased chant:
+Products built on chant use two of them to build against an unreleased chant, and a third to find checks for chant parts their pin already has:
 
 | Command | Description |
 |---------|-------------|
 | [`dev local`](/chant/cli/dev-local/) | Pack a chant checkout and install it into a product, then check the product's bundle |
 | [`dev bundle-check`](/chant/cli/dev-local/#bundle-check) | Check a product's bundle against its `chantBundleCheck` |
+| [`dev dead-guards`](/chant/cli/dev-dead-guards/) | Fail on a feature-detect for a chant floor the product's pin already meets |
 
 ## Op Commands
 

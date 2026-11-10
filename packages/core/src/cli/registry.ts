@@ -97,6 +97,8 @@ export interface ParsedArgs {
   reset?: boolean;
   /** `chant dev local --with <package>`, repeatable (#4787): a chant package to pack besides the ones the product names. */
   withPackages?: string[];
+  /** `chant dev dead-guards --chant-version <v>` (#4792): check the product against this chant in place of its pins. */
+  chantVersion?: string;
   /** `chant carve advise --state <path>` — opt-in .tfstate for accurate instance counts */
   statePath?: string;
   /** Every `--state` value in order (#4461): `chant workspace promote --all --state <member>=<path>`, repeatable. */

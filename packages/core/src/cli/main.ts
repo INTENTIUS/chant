@@ -1476,6 +1476,11 @@ Lexicon development:
                            Check a bundle against its package.json chantBundleCheck: imports
                            only Node, its dependencies and chant served as compiled JS, the
                            dependencies on the root's chant pin, size ceilings, denied inputs
+  dev dead-guards [<product-dir>]
+                           Fail naming each feature-detect on a chant floor (a floor read off
+                           a lazily loaded module, a subpath loaded behind a catch, the
+                           product's own CHANT_*_FLOOR) that the product's chant pin meets;
+                           --chant-version <v> checks against v, --json
 
 Local:
   emulator <up|down|status>  Boot/stop/inspect configured lexicons' local
@@ -1979,6 +1984,8 @@ export const commandRegistry: CommandDef[] = [
   // #4787: build a product against a chant checkout, and check its bundle. Imported on first use.
   { name: "dev local", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/local-chant")).runDevLocal(ctx) },
   { name: "dev bundle-check", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/local-chant")).runDevBundleCheck(ctx) },
+  // #4792: the feature-detects on a chant floor the product's pin already meets.
+  { name: "dev dead-guards", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/dead-guards")).runDevDeadGuards(ctx) },
 
   // Op / run subcommands
   { name: "run list", handler: runOpList },

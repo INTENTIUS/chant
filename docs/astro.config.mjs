@@ -440,6 +440,7 @@ export default defineConfig({
 										{ label: 'dev check-lexicon', slug: 'cli/check-lexicon' },
 										{ label: 'dev surface-diff', slug: 'cli/surface-diff' },
 										{ label: 'dev local', slug: 'cli/dev-local' },
+										{ label: 'dev dead-guards', slug: 'cli/dev-dead-guards' },
 									],
 								},
 							],

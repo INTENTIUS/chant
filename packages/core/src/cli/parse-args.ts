@@ -258,6 +258,11 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--reset") {
       // `chant dev local --reset` (#4787)
       result.reset = true;
+    } else if (arg === "--chant-version") {
+      // `chant dev dead-guards --chant-version <version>` (#4792)
+      const v = args[++i];
+      if (!v || !/^\d+\.\d+\.\d+$/.test(v)) throw new Error("--chant-version needs a chant version: --chant-version 0.124.84");
+      result.chantVersion = v;
     } else if (arg === "--with") {
       // `chant dev local <chant-dir> --with <package>` (#4787), repeatable.
       const v = args[++i];
