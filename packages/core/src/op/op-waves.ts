@@ -1462,14 +1462,17 @@ export function opWaveShare<T extends { target: string }>(runs: readonly T[], sh
  * The jobs of an Op waves pipeline, in order. `specFile` is the spec's path
  * from the job's working directory, which every command names. `bin` is the
  * product's command in place of `chant` (#4607, {@link opWaveBinArgv}).
+ * With `renderSpec` (#4982) every command passes `--render-spec`: the job
+ * renders the spec at base through the product's command
+ * (`./op-waves-render-spec.ts`), and `spec` is the pipeline's shape.
  */
-export function opWaveJobs(spec: OpWavesSpec, specFile: string, options: { bin?: string } = {}): OpWaveJob[] {
+export function opWaveJobs(spec: OpWavesSpec, specFile: string, options: { bin?: string; renderSpec?: boolean } = {}): OpWaveJob[] {
   assertOpWavesSpec(spec);
   const jobs: OpWaveJob[] = [];
   let previous: string[] = [];
   spec.waves.forEach((wave, index) => {
     const k = index + 1;
-    const command = [...opWaveBinArgv(options.bin), "run", "wave", "--spec", specFile, "--wave", String(k), ...(spec.base ? ["--base", spec.base] : [])];
+    const command = [...opWaveBinArgv(options.bin), "run", "wave", "--spec", specFile, "--wave", String(k), ...(spec.base ? ["--base", spec.base] : []), ...(options.renderSpec ? ["--render-spec"] : [])];
     const prefix = `wave-${k}-${wave.name}`;
     const shares = wave.shares ?? 1;
     if (shares === 1 && wave.jobs === undefined) {

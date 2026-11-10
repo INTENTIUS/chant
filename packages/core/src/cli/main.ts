@@ -615,6 +615,10 @@ Ops:
                         hold, applying nothing, and exits 0 only when the
                         policy ran and denied nothing: the wave job's
                         policy step, whose result its evidence job reads (#4926).
+                        --render-spec runs the command CHANT_WAVES_SPEC_COMMAND
+                        names (a JSON argv) with CHANT_WAVES_SPEC_AT set to
+                        the base, writes the spec it prints over --spec, and
+                        reads the rules at base from it (#4982).
                         --record-plans (no --wave), in a pull request's
                         pipeline: plan every wave at its head and record the
                         digests a pr-review approval mode compares.

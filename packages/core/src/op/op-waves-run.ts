@@ -578,7 +578,8 @@ export interface OpWaveApplyHooksRun {
 /** Reads one file at one commit, or null when the commit has no such file. Injected for tests. */
 export type OpWaveShowAtBase = (base: string, path: string, cwd: string) => { sha: string; text: string | null };
 
-const gitShowAtBase: OpWaveShowAtBase = (base, path, cwd) => {
+/** {@link OpWaveShowAtBase} through git: `git show <base>:<path>`. A run-time spec (#4982, `./op-waves-render-spec.ts`) reads every other file through it. */
+export const gitShowAtBase: OpWaveShowAtBase = (base, path, cwd) => {
   let sha: string;
   try {
     sha = execFileSync("git", ["rev-parse", "--verify", `${base}^{commit}`], { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();

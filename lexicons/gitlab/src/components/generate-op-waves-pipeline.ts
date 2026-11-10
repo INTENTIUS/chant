@@ -84,6 +84,12 @@
  * cloud credentials and signs keyless, `plan:<wave>` when the wave job's
  * is. It reads the pipeline's jobs with `CHANT_GITLAB_TOKEN` (`read_api`)
  * when set, else the job token. It is an allowed failure too.
+ *
+ * With `options.renderSpec` (#4982) the job renders the spec at run time:
+ * every wave, deciding, share and policy job carries
+ * `CHANT_WAVES_SPEC_COMMAND`, and its command passes `--render-spec`, so
+ * chant runs the product's command for the spec at base. The jobs, the
+ * trade, the evidence jobs and the gates are the ones `spec` gives.
  */
 
 import {
@@ -137,6 +143,7 @@ import {
   opWavePolicyJobName,
   WAVE_EVIDENCE_ENV,
 } from "@intentius/chant/op/op-waves-evidence-jobs";
+import { opWavesRenderSpecEnv } from "@intentius/chant/op/op-waves-render-spec";
 import { emitGitlabFile } from "./ci-jobs";
 
 /** The one exit an op-wave job allows as a failure (#4322): a run that failed. The guard's refusal (9) is outside it. */
@@ -144,7 +151,9 @@ export const OP_WAVE_ALLOWED_EXIT = CHANT_EXIT.failed;
 
 /** Render an Op waves spec as one GitLab CI file, `<name>.gitlab-ci.yml` unless `opsFileName` names another. */
 export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWavesPipelineOptions): OpWavesPipelineResult {
-  const jobs = opWaveJobs(spec, options.specFile, { bin: options.bin });
+  // #4982: with renderSpec each wave job renders the spec at base through the product's command; `spec` is the jobs' shape.
+  const renderEnv = opWavesRenderSpecEnv(options.renderSpec);
+  const jobs = opWaveJobs(spec, options.specFile, { bin: options.bin, ...(options.renderSpec ? { renderSpec: true } : {}) });
   assertPipelineEvidence(options.evidence);
   const image = options.image ?? CI_IMAGE;
   const subject = `Op waves "${spec.name}"`;
@@ -268,7 +277,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
           timeout: `${timeout.minutes} minutes`,
           ...(environment ? { environment: { ...environmentDoc(environment), action: "prepare" } } : {}),
           ...(traded && Object.keys(traded).length > 0 ? { id_tokens: traded } : {}),
-          variables: { ...GITLAB_FULL_HISTORY, ...timeout.env, ...(wave.variables ?? {}), ...(cloud ? { [TRADE_SPEC_ENV]: JSON.stringify(cloud) } : {}), [JOB_GUARD_ENV]: JSON.stringify(guard) },
+          variables: { ...GITLAB_FULL_HISTORY, ...timeout.env, ...renderEnv, ...(wave.variables ?? {}), ...(cloud ? { [TRADE_SPEC_ENV]: JSON.stringify(cloud) } : {}), [JOB_GUARD_ENV]: JSON.stringify(guard) },
           rules,
           ...(job.needs.length > 0 ? { needs: job.needs } : {}),
           script: [jobGuardLine(), ...(cloud ? gitlabTradeLines() : []), ...dropControl, ...setup, ...(options.beforeScript ?? []), ...(add?.before ?? []).flatMap((st) => st.run), opWavePolicyCommand(job).join(" ")],
@@ -291,6 +300,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
         variables: {
           ...GITLAB_FULL_HISTORY,
           ...timeout.env,
+          ...renderEnv,
           ...(wave.variables ?? {}),
           ...(group?.variables ?? {}),
           ...(cloud ? { [TRADE_SPEC_ENV]: JSON.stringify(cloud) } : {}),

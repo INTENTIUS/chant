@@ -949,6 +949,12 @@ With `policy: true`, the deciding job runs the workspace's `ci.policy`, read fro
 
 With `cost`, chant runs `command` once for each run whose plan changes something. `{target}` and `{plan}` are filled in, and `{planJson}` gets the engine's plan document when the capability's artifact names one (`terraform-apply` writes `show -json` beside its plan file). The command prints the estimate: infracost's JSON by default, or `{ "monthlyDelta": <number> }` with `format: "chant"`. chant sums the monthly change over the wave. When the sum is over `approveAbove`, or a run could not be priced, the wave waits for a person whatever its gate says. `heldBy` gives the reason. The sum is a member of the set digest, `(monthly cost)`, so an approval at one cost does not apply at another, and `--record-plans` puts the same member in the head's digest. The terraform lexicon's preset is `terraformCostHold({ approveAbove })` from `@intentius/chant-lexicon-terraform/cost-hold`.
 
+### A wave with signed evidence plans twice
+
+In a pipeline that signs its checks (`evidence`), a wave with `holds.policy` plans in two places: the policy step (`--policy-only`, on GitLab the `<wave job>-policy` job) plans the wave and runs `ci.policy` over the plans, and the command step plans the wave again before it decides the gate and applies ([#4926](https://github.com/INTENTIUS/chant/issues/4926)). The maintainer decided to keep both plans ([#4982](https://github.com/INTENTIUS/chant/issues/4982)). The steps run in one job, after the change's code has run in it (its setup, its `before` steps, the engine's providers), so the plan files the policy step leaves behind could have been rewritten by the time the command step starts. The command step trusts none of them: it plans again, and applies what it planned itself. The policy step's result is what `policy:<wave>` is signed from, and the forge keeps that result where the later steps cannot change it.
+
+The cost is a second plan of every run in the wave: twice the engine's plan time and twice the reads against the cloud's APIs and the state backend. A wave with no `holds.policy`, or a pipeline that signs nothing, plans once.
+
 ## Keep a product's gate names
 
 A product that ran its own wave gates before moving onto `chant run wave` has pending facts and approvals on `chant/lifecycle` under its own gate names, and maybe a plan note that shows a digest over the runs that change something. Three spec fields keep those valid across the move:
@@ -978,6 +984,25 @@ The policy, the approval mode, the decision point, the spend rule and the hooks 
 The same goes for hooks. A change cannot add, edit or remove a hook that its own apply runs, and the log says so when the change's hooks differ from the ones at base. A wave or file missing at base has no hooks. If the hooks at base are malformed, none of them run and the wave waits for an approval.
 
 Everything else in the spec is read from the commit being applied.
+
+### A spec rendered at run time
+
+A CI product that builds the spec from its own config at base, as terragucci builds `tf-apply` from `terragucci.yml` (the gate per environment, the approval mode, the holds), has no spec to commit once. Such a product hands the generator `renderSpec`, with the command that prints the spec ([#4982](https://github.com/INTENTIUS/chant/issues/4982)):
+
+```ts
+await generateOpWavesPipeline(shape, "github", {
+  specFile: ".chant/op-waves/tf-apply.spec.json",
+  bin: "terragucci",
+  renderSpec: { command: ["terragucci", "waves-spec"] },
+  evidence: { identity: "oidc" },
+}, process.cwd());
+```
+
+Every wave, deciding and share job, and the policy step, then runs `chant run wave ... --render-spec`, and the job carries `CHANT_WAVES_SPEC_COMMAND`, the command as a JSON list of words. chant runs that command with `CHANT_WAVES_SPEC_AT` set to the base commit and `CHANT_WAVES_SPEC_FILE` to the spec's path, and reads the spec from its standard output. It writes that spec over the spec file, so the hooks, the decision record and the share jobs read the one the job runs, and it reads the policy, the holds, the hooks and the evidence rules from the same render in place of `git show <base>:<spec file>`. The stand-down renders the spec at the newer commit the same way.
+
+The command's output is the gate policy, so it has to read the product's config at the commit it is handed (`git show "$CHANT_WAVES_SPEC_AT:terragucci.yml"`) and never from the working tree, which holds the change. It prints nothing and exits 0 when that commit has no config, which reads as a spec missing at base: the wave's gate is `always`. Any other exit fails the job.
+
+The spec handed to the generator is the pipeline's shape, and the rendered spec decides the rules. The shape gives the jobs, with their runners and environments, and their steps: a wave with `cloud` gets the trade, and a wave with `holds.policy` in a pipeline that signs gets the policy step and the evidence job. A Terragrunt repo's waves are `discover` waves and the last one has `rest`, so the units are found when the wave plans and every wave past the pipeline's jobs runs in the last one. A share or job group the shape has and the rendered spec does not applies nothing and exits 0. The resume and plans workflows and the control job still read the committed spec file, so a product keeps one there (terragucci's init writes it). `RUNTIME_WAVES_SPEC_FLOOR` is the first chant with this.
 
 ## A wave over many targets
 
