@@ -38,7 +38,7 @@ import { GITHUB_COMMENT_LIMIT, GITLAB_NOTE_LIMIT } from "./plan-summary";
 import { activeProductWords, commentLine, type CiProductWords } from "./ci-product-words";
 import { controlEdgeFactsFromEnv, remarkCrossStackEdges, type ControlEdgeFacts } from "./control/edges";
 import { checkEvidenceNoteLine } from "./workspace/trust/check-evidence-report";
-import { isPlanNote, planNoteMarker, PR_PLAN_NOTE_CONTRACT, PR_PLAN_NOTE_FILE, renderPlanNote, type PrPlanNoteHandoff, type PrPlanNoteWords } from "./pr-plan-note";
+import { isPlanNote, planNoteMarker, PR_PLAN_NOTE_CONTRACT, PR_PLAN_NOTE_FILE, PRODUCT_MARKER_BODY, PRODUCT_MARKER_LIMIT, PRODUCT_MARKER_NAME, productMarkerLine, renderPlanNote, type PrPlanNoteHandoff, type PrPlanNoteWords } from "./pr-plan-note";
 
 /** The plan report's file under the report directory. */
 export const PR_PLAN_REPORT_FILE = "pr-plan.json";
@@ -90,6 +90,13 @@ export interface PlanPostInput {
    * from the pipeline, never from the report.
    */
   noteWords?: PrPlanNoteWords;
+  /**
+   * Notices the note job's own lines wrote (#4931), each added under a
+   * product's plan note hand-off's counts, after its own. Default: the
+   * lines of the file `CHANT_PLAN_NOTE_NOTICES` names, which the generated
+   * note job sets to a file outside the report the plan job handed on.
+   */
+  notices?: string[];
 }
 
 /** What {@link postPlanReport} did. */
@@ -297,7 +304,22 @@ export function readPlanNoteHandoff(input: Pick<PlanPostInput, "dir" | "pr" | "h
   if (!isPlanNote(r.note) || r.note.head !== r.head || !Array.isArray(r.note.waves) || !Array.isArray(r.note.groups) || !Array.isArray(r.note.named)) {
     return { refused: "the plan note's note is not a plan note for its head" };
   }
+  // #4931: the product's hidden line is the change's too, so it holds only plain words.
+  if (r.marker !== undefined && (typeof r.marker !== "string" || r.marker.length > PRODUCT_MARKER_LIMIT || (r.marker !== "" && !PRODUCT_MARKER_BODY.test(r.marker)))) {
+    return { refused: `the plan note's marker is not words of letters, digits and _.,/@+=:- of at most ${PRODUCT_MARKER_LIMIT} characters` };
+  }
   return { handoff: doc as PrPlanNoteHandoff };
+}
+
+/** The notices in the file `CHANT_PLAN_NOTE_NOTICES` names (#4931), one a line, or none when unset or unreadable. */
+export function noticesFromEnv(env: NodeJS.ProcessEnv = process.env): string[] {
+  const file = env.CHANT_PLAN_NOTE_NOTICES;
+  if (!file || !existsSync(file)) return [];
+  try {
+    return readFileSync(file, "utf-8").split("\n").map((l) => l.trim()).filter((l) => l !== "");
+  } catch {
+    return [];
+  }
 }
 
 /** The note words from `CHANT_PLAN_NOTE_WORDS` (#4799), or undefined when unset or not an object. */
@@ -327,7 +349,10 @@ export function planNoteHandoffNote(handoff: PrPlanNoteHandoff, forge: Pick<PrFo
   const waves = planNoteMarker(noteWords?.marker ?? `${words.product}:waves`, { head: n.head, waves: n.waves.map((x) => ({ number: x.number, digest: x.digest ?? null, waits: x.waits === true })), ...(previews.length ? { previews } : {}) });
   body = body.replace(`&lt;!--${waves.slice(4)}`, waves);
   const tip = baseTip && SHA.test(baseTip) ? `${body.endsWith("\n") ? "" : "\n"}${prNoteTipMarker(baseTip)}\n` : "";
-  return `${marker}\n${body}${tip}`;
+  // #4931: the product's own line, from the pipeline's name and the hand-off's checked body, under chant's marker.
+  const name = noteWords?.productMarker;
+  const own = name !== undefined && PRODUCT_MARKER_NAME.test(name) && handoff.marker !== undefined ? `${productMarkerLine(name, handoff.marker)}\n` : "";
+  return `${marker}\n${own}${body}${tip}`;
 }
 
 /** {@link postPlanReport} for a product's plan note hand-off (#4799). */
@@ -347,8 +372,14 @@ async function postPlanNoteHandoff(input: PlanPostInput): Promise<PlanPostResult
   } else {
     state = read.handoff.state;
     description = read.handoff.description;
+    // #4931: the overdue Ops (#4289), asked here with the job's token, and the note job's own notices, under the counts.
+    const given = read.handoff.note.notices ?? [];
+    // An Op the product's own notices already call overdue is not said twice.
+    const overdue = input.overdue ? (await input.overdue().catch(() => [] as PrOverdue[])).filter((o) => !given.some((g) => g.includes(`\`${o.op}\``) && g.includes("overdue"))).map((o) => o.message) : [];
+    const added = [...overdue, ...(input.notices ?? noticesFromEnv())].filter((n, i, all) => !given.includes(n) && all.indexOf(n) === i);
+    const handoff = added.length > 0 ? { ...read.handoff, note: { ...read.handoff.note, notices: [...given, ...added] } } : read.handoff;
     try {
-      note = planNoteHandoffNote(read.handoff, input.forge, prNoteMarker(input.env, input.member), input.noteWords ?? noteWordsFromEnv(), input.baseTip);
+      note = planNoteHandoffNote(handoff, input.forge, prNoteMarker(input.env, input.member), input.noteWords ?? noteWordsFromEnv(), input.baseTip);
     } catch (err) {
       refused = `the plan note does not render: ${err instanceof Error ? err.message : String(err)}`;
       state = "failure";

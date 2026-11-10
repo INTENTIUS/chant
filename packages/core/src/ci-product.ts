@@ -13,6 +13,7 @@ import type { CiProductWords, CiProductWordsInput } from "./ci-product-words";
 import type { ProductMcpHook } from "./cli/mcp/product-tools";
 import type { ProductWaveHook } from "./op/op-waves-after-plan";
 import { OTLP_EXPORTER_FLOOR } from "./otlp";
+import { NEXT_RELEASE } from "./release-floors";
 
 /**
  * The first chant with the product pipeline (#4550): the words, the
@@ -133,6 +134,12 @@ export { prActionJob, PR_ACTION_JOB, prApplyComment, prCommentLockJobs, prCommen
 export const PRODUCT_PLAN_FLOOR = "0.124.86";
 export { productPlanJobs, PR_PLAN_NOTE_WORDS_ENV, type ProductPlanJob, type ProductPlanOptions, type ProductPlanTarget } from "./components/product-plan";
 export { planNoteHandoff, PR_PLAN_NOTE_FILE, type PrPlanNoteHandoff } from "./pr-plan-note";
+
+/**
+ * The first chant whose product plan carries the plan-job steps beside the plan verb and the note job's own lines (#4899, #4931): `productPlan.login` and a target's `login` (ci-login) with the job's OIDC token, `idTokens`, `pending`, `controlRead`, `setup` steps, job-level `env`, `report`, `concurrency`, the comment re-plan `replan`, and `noteSteps`; a hand-off's `marker` kept under the note words' `productMarker`; and the note job's notices and overdue Ops under a hand-off's counts.
+ */
+export const PRODUCT_PLAN_STEPS_FLOOR = NEXT_RELEASE;
+export { PLAN_ARGUMENT_ENV, PLAN_NOTE_NOTICES_ENV, type ProductPlanReplanJob, type ProductPlanSetupStep } from "./components/product-plan";
 
 /**
  * Day-2 actions in the product pipeline (#4654): the `action` comment

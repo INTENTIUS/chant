@@ -62,3 +62,60 @@ describe("the product plan pipeline on GitLab (#4799)", () => {
     expect(note.script).toEqual(["yodel ci --fetch-ledger", "yodel chant components pr-post --open --env default --output .chant/pr --forge gitlab --member prod"]);
   });
 });
+
+describe("the product plan's steps on GitLab (#4899, #4931)", () => {
+  const { entries, yaml } = generateGitlabProductPlanPipeline("default", {
+    words: { ...words, commands: { plan: "plan" } },
+    noteCommands: true,
+    cache: { key: "yodel", paths: [".cache/yodel"] },
+    productPlan: {
+      command: "yodel plan {target} --pr-note {output}",
+      env: { YODEL_LOG: "info" },
+      login: { aws: { role: "arn:aws:iam::123456789012:role/r" } },
+      idTokens: { YODEL_OIDC: "yodel" },
+      pending: true,
+      setup: [{ uses: "actions/cache/restore@v4" }, { run: "yodel warm" }],
+      report: "yodel report {target} --out {output}/report",
+      concurrency: { cancelInProgress: true },
+      replan: true,
+      targets: [{ name: "staging", writeProbe: "probe staging" }, { name: "prod" }],
+    },
+  });
+  const job = (name: string) => entries.find(([k]) => k === name)![1] as Job & { id_tokens?: Record<string, { aud: string }>; cache?: unknown; interruptible?: boolean; needs?: unknown };
+
+  test("the plan job: its tokens, its variables, the run steps alone, the login before the probe, and the report after the verb", () => {
+    const plan = job("staging-plan");
+    expect(plan.id_tokens).toEqual({ CHANT_ID_TOKEN_AWS: { aud: "sts.amazonaws.com" }, YODEL_OIDC: { aud: "yodel" } });
+    expect(plan.variables).toEqual({ YODEL_LOG: "info", BASE_SHA: "$CI_MERGE_REQUEST_DIFF_BASE_SHA", PR_NUMBER: "$CI_MERGE_REQUEST_IID" });
+    expect(plan.cache).toEqual({ key: "yodel", paths: [".cache/yodel"] });
+    expect(plan.interruptible).toBe(true);
+    const s = plan.script;
+    expect(s[0]).toMatch(/^unset CHANT_FORGE_TOKEN/);
+    expect(s[1]).toBe("yodel warm");
+    expect(s.join("\n")).not.toContain("actions/cache");
+    expect(s.indexOf('eval "$CHANT_CLOUD_LOGIN_VARS"')).toBeLessThan(s.indexOf("probe staging"));
+    expect(s.slice(-3)).toEqual(["yodel plan staging --pr-note .chant/pr || chant_plan_exit=$?", 'yodel report staging --out .chant/pr/report || echo "chant: the report line exited $?" >&2', '[ "$chant_plan_exit" -eq 0 ] || exit "$chant_plan_exit"']);
+    // GitLab's plan job holds no token, so it posts no pending status.
+    expect(yaml).not.toContain("CHANT_PENDING");
+  });
+
+  test("the note-commands job starts the re-plan's pipeline, whose jobs run for the target the comment names", () => {
+    expect(entries.map(([k]) => k)).toEqual(["workflow", "stages", "variables", "staging-plan", "prod-plan", "staging-plan-note", "prod-plan-note", "note-commands", "staging-replan", "prod-replan", "staging-replan-note", "prod-replan-note"]);
+    expect(job("note-commands").script.at(-1)).toBe("yodel chant components pr-notes --forge gitlab --preview-comment");
+    const replan = job("prod-replan");
+    expect(replan.rules[0]!.if).toBe("$CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/ && $CHANT_PREVIEW_PR =~ /^[0-9]+$/ && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && ($CHANT_PREVIEW_COMMENT =~ /^\\/yodel plan( +prod)? *$/)");
+    expect(replan.variables).toMatchObject({ BASE_SHA: "$CI_COMMIT_SHA", PR_NUMBER: "$CHANT_PREVIEW_PR" });
+    // The tokens go before the merge request's head is checked out.
+    expect(replan.script[0]).toMatch(/^unset CHANT_FORGE_TOKEN/);
+    expect(replan.script.findIndex((l) => l.includes("refs/merge-requests/$PR_NUMBER/head"))).toBe(2);
+    const note = job("prod-replan-note");
+    expect(note.needs).toEqual([{ job: "prod-replan", artifacts: true }]);
+    expect(note.script.at(-1)).toBe('yodel chant components pr-post --pr "$PR_NUMBER" --head "$HEAD_SHA" --env default --output .chant/pr --forge gitlab --member prod');
+  });
+
+  test("a config without the new options renders no new stage or rule", () => {
+    const plain = generateGitlabProductPlanPipeline("default", { words, productPlan: { command: "yodel plan {target}" } });
+    expect(plain.entries.map(([k]) => k)).toEqual(["workflow", "stages", "variables", "plan", "plan-note"]);
+    expect(plain.yaml).not.toMatch(/interruptible|id_tokens|CHANT_PREVIEW|note-commands/);
+  });
+});

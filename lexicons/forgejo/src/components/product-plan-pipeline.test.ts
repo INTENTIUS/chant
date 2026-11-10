@@ -43,3 +43,22 @@ describe("the product plan workflow on Forgejo (#4799)", () => {
     expect(yaml).toContain("jobs:");
   });
 });
+
+describe("the product plan's steps on Forgejo (#4899, #4931)", () => {
+  test("a login asks for the OIDC token with enable-openid-connect, and the re-plan asks the forge whether the commenter can write", async () => {
+    const { generateForgejoProductPlanPipeline } = await import("./product-plan-pipeline");
+    const { doc, yaml } = generateForgejoProductPlanPipeline("default", {
+      words: { product: "yodel", noun: ["environment", "environments"], commands: { plan: "plan" }, approve: "yodel approve {target} --plan {digest} {sign}", op: "yodel-apply", gateName: "yodel-apply-wave-{k}", approval: "per-wave", bin: "yodel chant" },
+      productPlan: { command: "yodel plan {target}", replan: true, pending: true, concurrency: { group: "yodel-pr" }, login: { aws: { role: "arn:aws:iam::123456789012:role/r" } }, targets: [{ name: "staging" }] },
+    });
+    const plan = doc.jobsDoc["plan-staging"] as Record<string, unknown>;
+    expect(plan["enable-openid-connect"]).toBe(true);
+    const replan = doc.jobsDoc["replan-staging"] as { if: string; steps: Array<{ env?: Record<string, string> }> };
+    expect(replan.if).toContain("(github.event.issue.pull_request || github.event.is_pull)");
+    expect(replan.if).not.toContain("author_association");
+    expect(replan.steps[0]!.env).toMatchObject({ CHANT_REPLAN_PERMISSION: "1" });
+    expect(yaml).toContain("group: yodel-pr-${{ github.event.pull_request.number || format('comment-{0}', github.event.comment.id) }}");
+    expect(yaml).toContain("Cloud login (chant ci-login: aws)");
+    expect(yaml).toContain('"$GITHUB_ENV" github-env forgejo)');
+  });
+});
