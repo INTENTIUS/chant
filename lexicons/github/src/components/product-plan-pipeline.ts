@@ -34,13 +34,18 @@
  * re-plans from `workflow_dispatch`, replies to the `/<product>` comments
  * no other job takes, and answers "not affected" for a narrowed re-plan.
  *
+ * With `commentJob` (#4946) the `comment` job answers every `/<product>`
+ * comment no other job takes, and with `locks: "plan"` the lock jobs take
+ * what each plan selected, release it on close, and answer the lock and
+ * unlock comments (`commentJobsDoc` below).
+ *
  * Forgejo renders the same document through its dialect
  * (`generateForgejoProductPlanPipeline` in the forgejo lexicon).
  */
 
 import { CI_IMAGE, GITHUB_JOB_TOKEN, githubRunsOn } from "@intentius/chant/ci-jobs";
 import { CHECKOUT_TOKEN_ENV, checkoutScript, dropForgeTokens, handoverOutputs, handoverTrap, takeOverScript } from "@intentius/chant/ci-handover";
-import { PR_LOOP_REPORT_DIR, prLoopSetup } from "@intentius/chant/components/pr-pipeline";
+import { PR_LOCK_JOB, PR_LOOP_REPORT_DIR, PR_UNLOCK_JOB, prLockCommand, prLoopSetup, prUnlockCommand } from "@intentius/chant/components/pr-pipeline";
 import { productPipelineJobs, type ProductPipelineJobs, type ProductPipelineOptions } from "@intentius/chant/components/product-pipeline";
 import { PENDING_JS, PLAN_ARGUMENT_ENV, PLAN_NOTE_NOTICES_ENV, planVerbLines, PREVIOUS_MARKER_JS, REPLAN_DECIDE_JS, replanDecideJs, SAME_REPOSITORY_IF, type ProductPlanJob, type ProductPlanOptions } from "@intentius/chant/components/product-plan";
 import { productStatusContext } from "@intentius/chant/ci-product-words";
@@ -82,6 +87,9 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
   const fork = plan.forks === "skip" ? ` && ${SAME_REPOSITORY_IF}` : "";
   // #4963: after a trade, every later step also starts without the variables a token is requested with.
   const dropOf = (p: ProductPlanJob): string => (p.trade ? dropForgeTokens("sh", OIDC_REQUEST_VARS) : dropForgeTokens("sh"));
+  // #4946: with `locks: "plan"` a closed pull request starts the unlock job alone.
+  const locks = (jobs.locks?.length ?? 0) > 0;
+  const notClosed = locks ? " && github.event.action != 'closed'" : "";
   const setup = [...prLoopSetup(image, options.engineSetup), ...beforeScript];
   const targets = plans.flatMap((p) => (p.target ? [p.target] : []));
   // The steps between the checkout and the plan step (#4899, #4931): the control read, the product's steps, the setup lines, the login and the probe.
@@ -135,7 +143,7 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
   const jobsDoc: Record<string, unknown> = {};
   for (const p of plans) {
     jobsDoc[p.jobName] = {
-      if: `github.event_name == 'pull_request'${fork}`,
+      if: `github.event_name == 'pull_request'${notClosed}${fork}`,
       "runs-on": githubRunsOn(p.runner),
       container: image,
       permissions: permissions(p),
@@ -266,6 +274,8 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
       ],
     };
   }
+  // #4946: the comment job, the lock jobs and the comment lock jobs, each at the target branch's commit.
+  Object.assign(jobsDoc, commentJobsDoc(forge, jobs, plans, image, beforeScript));
   // #4935: the check job, its evidence job and the ref gate's status job, after the plan note jobs.
   Object.assign(
     jobsDoc,
@@ -275,8 +285,8 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
       setup,
       beforeScript,
       // The check job holds no credentials, so a fork's pull request runs it too.
-      when: "github.event_name == 'pull_request'",
-      trustedWhen: `github.event_name == 'pull_request'${fork}`,
+      when: `github.event_name == 'pull_request'${notClosed}`,
+      trustedWhen: `github.event_name == 'pull_request'${notClosed}${fork}`,
       ...(jobs.check ? { check: jobs.check } : {}),
       ...(jobs.refGate ? { refGate: jobs.refGate } : {}),
       refGateNeeds: plans.map((p) => p.noteJobName),
@@ -285,9 +295,11 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
   const name = plan.workflow ?? `chant-pr-${env}`;
   // #4963: a dispatch re-plans the pull request its pr input names, the argument from the input the re-plan names.
   const dispatch = replans.find((p) => p.replan!.dispatch)?.replan!.dispatch;
+  // #4946: the comment job and the comment lock jobs start on a comment too.
+  const comments = replans.length > 0 || jobs.comment !== undefined || locks;
   // #4899: one run per pull request; a comment's run is in a group of its own comment, so it never cancels a plan.
   // #4963: a dispatch's run is in a group of its own run.
-  const groupKey = replans.length === 0
+  const groupKey = !comments
     ? "github.event.pull_request.number"
     : dispatch
       ? "github.event.pull_request.number || github.event.comment.id && format('comment-{0}', github.event.comment.id) || format('dispatch-{0}', github.run_id)"
@@ -302,8 +314,9 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
     ...(header && header.length > 0 ? { header } : {}),
     name,
     on: {
-      pull_request: { branches: [branch] },
-      ...(replans.length > 0 ? { issue_comment: { types: ["created"] } } : {}),
+      // #4946: with locks the pull_request trigger fires on close too, for the unlock job, and the plan skips that event.
+      pull_request: { branches: [branch], ...(locks ? { types: ["opened", "synchronize", "reopened", "closed"] } : {}) },
+      ...(comments ? { issue_comment: { types: ["created"] } } : {}),
       ...(dispatch
         ? {
             workflow_dispatch: {
@@ -320,6 +333,90 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
     jobsDoc,
   };
   return { doc, jobs };
+}
+
+/**
+ * The comment job and the lock jobs (#4946), GitHub-shaped for both forges.
+ *
+ * - `comment`, with `commentJob`: on every `/<product>` comment (and every
+ *   alias's), `chant components pr-comment` answers what no other job
+ *   takes. GitHub starts it for an owner, member or collaborator alone; the
+ *   command reads the commenter's permission itself on both forges. With
+ *   waves on merge it may start the waves' run again, so it asks for
+ *   `actions: write`.
+ * - With `locks: "plan"`: a `lock` job (`lock-<target>`) after each plan
+ *   job takes the locks its `PrReport` selected (`chant lock
+ *   --from-report`; a plan note hand-off selects none, so it takes none),
+ *   `unlock` releases them when the pull request closes, and the comment
+ *   lock and unlock jobs answer `/<product> lock` and `/<product> unlock`.
+ *
+ * Each runs at the target branch's commit, so none of the change's code
+ * runs in a job that holds a write token.
+ */
+function commentJobsDoc(forge: "github" | "forgejo", jobs: ProductPipelineJobs, plans: ProductPlanJob[], image: string, beforeScript: string[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const github = forge === "github";
+  const onPr = github ? "github.event.issue.pull_request" : "(github.event.issue.pull_request || github.event.is_pull)";
+  const trusted = github ? ["contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.comment.author_association)"] : [];
+  const atTarget = { name: "Check out the target branch's commit", uses: CHECKOUT, with: { "fetch-depth": 0 } };
+  const c = jobs.comment;
+  if (c) {
+    out[c.jobName] = {
+      if: ["github.event_name == 'issue_comment'", onPr, `(${c.prefixes.map((p) => `startsWith(github.event.comment.body, '${p}')`).join(" || ")})`, ...trusted].join(" && "),
+      "runs-on": githubRunsOn(c.runner),
+      container: image,
+      permissions: { actions: c.jobs.applyOnMerge ? "write" : "read", contents: "read", "pull-requests": "write", statuses: "read" },
+      steps: [
+        { name: "Check out the target branch's commit", uses: CHECKOUT },
+        ...runSteps(beforeScript),
+        { name: "Answer the comment", env: c.env, run: c.command },
+      ],
+    };
+  }
+  if (!jobs.locks?.length) return out;
+  const bin = jobs.words.bin;
+  const report = `${PR_LOOP_REPORT_DIR}/pr-plan.json`;
+  for (const p of plans) {
+    out[p.target ? `${PR_LOCK_JOB}-${p.target}` : PR_LOCK_JOB] = {
+      // The plan job's outputs carry the report; a plan that was skipped or failed leaves this job skipped.
+      needs: [p.jobName],
+      if: "github.event_name == 'pull_request' && github.event.action != 'closed'",
+      "runs-on": githubRunsOn(p.noteRunner),
+      container: image,
+      permissions: { contents: "write", "pull-requests": "read", statuses: "write" },
+      steps: [
+        { name: "Check out the target branch's commit", uses: CHECKOUT, with: { ref: "${{ github.event.pull_request.base.sha }}", "fetch-depth": 0 } },
+        ...runSteps(beforeScript),
+        { name: "Take the plan report from the plan job", run: takeOverScript(p.jobName, PR_LOOP_REPORT_DIR, forge) },
+        {
+          name: p.target ? `Lock what the plan of ${p.target} selected` : "Lock what the plan selected",
+          env: { PR_NUMBER: "${{ github.event.pull_request.number }}", HEAD_SHA: "${{ github.event.pull_request.head.sha }}", GITHUB_TOKEN: GITHUB_JOB_TOKEN },
+          run: `if [ -f ${report} ]; then ${prLockCommand(forge, bin)}; else echo "The plan wrote no ${report}, so it selected nothing to lock."; fi`,
+        },
+      ],
+    };
+  }
+  out[PR_UNLOCK_JOB] = {
+    if: "github.event_name == 'pull_request' && github.event.action == 'closed'",
+    "runs-on": githubRunsOn(jobs.locks[0]!.runner),
+    container: image,
+    permissions: { contents: "write" },
+    steps: [
+      { name: "Check out the target branch's commit", uses: CHECKOUT, with: { ref: "${{ github.event.pull_request.base.sha }}", "fetch-depth": 0 } },
+      ...runSteps(beforeScript),
+      { name: "Release the pull request's locks", env: { PR_NUMBER: "${{ github.event.pull_request.number }}" }, run: prUnlockCommand(bin) },
+    ],
+  };
+  for (const job of jobs.locks) {
+    out[job.jobName] = {
+      if: ["github.event_name == 'issue_comment'", onPr, `startsWith(github.event.comment.body, '${job.comment}')`, ...trusted].join(" && "),
+      "runs-on": githubRunsOn(job.runner),
+      container: image,
+      permissions: { contents: "write", "pull-requests": "read", statuses: "write" },
+      steps: [atTarget, ...runSteps(beforeScript), { name: job.command === "lock" ? "Keep the locks the pull request's plan took" : "Release the pull request's locks", env: job.env, run: job.line }],
+    };
+  }
+  return out;
 }
 
 /** The re-plan's checkout step and its output, the commit it checked out (#4899). */

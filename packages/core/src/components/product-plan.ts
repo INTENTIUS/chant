@@ -402,7 +402,6 @@ const NOT_WITH_PLAN: ReadonlyArray<[keyof PrLoopPipelineOptions, string]> = [
   ["applyBeforeMerge", "the apply before merge runs pr-apply on pr-plan's report"],
   ["applyOnMerge", "the apply on merge runs on op waves, from the waves spec"],
   ["waveGate", "the apply on merge runs on op waves, from the waves spec"],
-  ["locks", "the lock job reads pr-plan's report"],
   ["previewComment", "the comment preview re-runs pr-plan"],
   ["staleNotes", "the stale marking names one note per pipeline"],
   ["identity", "the identity trade runs before pr-plan's checkout; give the product plan's trade or login (or a target's) instead"],
@@ -431,6 +430,8 @@ export function productPlanJobs(forge: ForgeKind, env: string, loop: PrLoopPipel
     const value = loop[key];
     if (value !== undefined && value !== false) throw new Error(`the product plan (plan) takes no ${key}: ${why}`);
   }
+  // #4946: GitHub's and Forgejo's product plan writes the lock jobs around the plan verb's PrReport; GitLab's writes none yet.
+  if (loop.locks && forge === "gitlab") throw new Error("the product plan (plan) takes no locks on GitLab: its workflow has no lock jobs; the lock job reads a PrReport the plan verb writes, on GitHub and Forgejo");
   // #4899: GitLab's comment commands start the re-plan, so the note-commands job comes with it.
   if (loop.noteCommands && !plan.replan) throw new Error("the product plan (plan) takes no noteCommands without replan: the note-commands job starts its comment re-plan");
   if (!plan.command.trim()) throw new Error("the product plan's command is empty; give the product's plan verb");

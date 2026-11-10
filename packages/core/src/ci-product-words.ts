@@ -68,7 +68,47 @@ export interface CiProductAlias {
   command: CiProductCommand;
   /** The variable that turns the alias on in a job (terragucci's `TG_ATLANTIS_COMMENTS`). Absent: always on. */
   when?: string;
+  /**
+   * Flags of the other tool that the product has no counterpart for, each
+   * with the reply that refuses it (#4946), such as terragucci's `{ "-p":
+   * "a root goes by its path, not a project name: ..." }` on `atlantis
+   * plan`. A flag here is refused before the alias reads `-d`, so a product
+   * can refuse `atlantis apply -d` too. `--` refuses everything after it.
+   */
+  refuse?: Record<string, string>;
 }
+
+/**
+ * What a comment job replies to a command the pipeline runs no job for
+ * (#4946), in the product's own sentences. Each slot left out takes
+ * chant's. The comment job on GitHub and Forgejo and the note poll on
+ * GitLab both read these.
+ */
+export interface CiProductCommentReplies {
+  /** A plan comment where no job plans on a comment (GitHub and Forgejo; GitLab starts a merge request pipeline). */
+  plan?: string;
+  /** An apply comment where no job applies on a comment: neither an apply before merge nor the re-run of a merged pull request's apply. */
+  apply?: string;
+  /** A lock comment where the pipeline takes no locks. */
+  lock?: string;
+  /** An unlock comment where the pipeline takes no locks. */
+  unlock?: string;
+  /** An action comment where no workflow runs actions (GitHub and Forgejo; GitLab names the checkout to run it from). */
+  action?: string;
+  /** An agent comment where the agent is off. */
+  agent?: string;
+  /** Any command on a pull request from a fork. */
+  fork?: string;
+  /**
+   * A comment that names a member the pipeline was not written with, over
+   * `{member}` (the one named) and `{members}` (the pipeline's, each in
+   * backticks, sorted, comma separated).
+   */
+  member?: string;
+}
+
+/** The reply slots, for checking a product's words. */
+export const CI_PRODUCT_COMMENT_REPLIES: readonly (keyof CiProductCommentReplies)[] = ["plan", "apply", "lock", "unlock", "action", "agent", "fork", "member"];
 
 /** The words a product passes. Every slot is optional; a missing one takes chant's. */
 export interface CiProductWordsInput {
@@ -124,6 +164,8 @@ export interface CiProductWordsInput {
   adoptMarkers?: string[];
   /** What chant's notify sends under these words (#4610). */
   notify?: CiProductNotifyWordsInput;
+  /** The replies to commands the pipeline runs no job for (#4946). Default: chant's. */
+  replies?: CiProductCommentReplies;
 }
 
 /** The notify slots a product passes (#4610). */
@@ -174,6 +216,8 @@ export interface CiProductWords {
   bin?: string;
   adoptMarkers: string[];
   notify: CiProductNotifyWords;
+  /** The product's replies to commands no job runs (#4946), when it gives any. */
+  replies?: CiProductCommentReplies;
 }
 
 /** chant's own approve line. */
@@ -227,6 +271,7 @@ export function resolveProductWords(input: CiProductWordsInput | CiProductWords 
       headers: input.notify?.headers ?? `x-${product}`,
       ...(input.notify?.message ? { message: input.notify.message } : {}),
     },
+    ...(input.replies !== undefined ? { replies: input.replies } : {}),
   };
 }
 
@@ -278,6 +323,17 @@ export function productWordsProblems(words: CiProductWords, options: { jobs?: re
   for (const a of words.aliases) {
     if (!/^[a-z0-9][a-z0-9 -]*$/.test(a.from)) problems.push(`the alias ${JSON.stringify(a.from)} is lowercase words`);
     if (!Object.values(words.commands).includes(a.command)) problems.push(`the alias ${JSON.stringify(a.from)} stands for ${a.command}, which no command names`);
+    // #4946: a refused flag is one word starting with -, and its reply one line.
+    for (const [flag, reason] of Object.entries(a.refuse ?? {})) {
+      if (!/^--?[A-Za-z0-9-]*$/.test(flag)) problems.push(`the alias ${JSON.stringify(a.from)} refuses ${JSON.stringify(flag)}, and a flag is - or -- then letters, digits and -`);
+      if (typeof reason !== "string" || reason.trim() === "" || /[\r\n]/.test(reason)) problems.push(`the alias ${JSON.stringify(a.from)} refuses ${flag} with no one-line reply`);
+    }
+  }
+  // #4946: each reply is one line of text; the member reply's placeholders are {member} and {members}.
+  for (const [slot, text] of Object.entries(words.replies ?? {})) {
+    if (!CI_PRODUCT_COMMENT_REPLIES.includes(slot as keyof CiProductCommentReplies)) problems.push(`replies.${slot} is not one of ${CI_PRODUCT_COMMENT_REPLIES.join(", ")}`);
+    else if (typeof text !== "string" || text.trim() === "" || /[\r\n]/.test(text)) problems.push(`replies.${slot} is one line of text`);
+    else for (const m of text.matchAll(/\{([^}]*)\}/g)) if (slot !== "member" || (m[1] !== "member" && m[1] !== "members")) problems.push(`replies.${slot} names {${m[1]}}, which chant does not fill`);
   }
   for (const [where, template] of [["approve", words.approve], ["override", words.override]] as const) {
     for (const m of template.matchAll(/\{([^}]*)\}/g)) if (!PLACEHOLDERS.has(m[1]!)) problems.push(`${where} names {${m[1]}}, which chant does not fill`);
@@ -560,6 +616,9 @@ export function parseProductComment(
     const args: string[] = [];
     for (let i = 0; i < rest.length; i++) {
       const w = rest[i]!;
+      // #4946: a flag the product has no counterpart for gets the product's own reason.
+      const refused = a.refuse && Object.prototype.hasOwnProperty.call(a.refuse, w) ? a.refuse[w] : undefined;
+      if (refused !== undefined) return { kind: "refused", reason: refused };
       if (w === "-d" || w === "--dir") {
         const dir = rest[++i];
         if (dir === undefined) return { kind: "refused", reason: `\`${w}\` names the ${words.noun[0]}'s directory` };

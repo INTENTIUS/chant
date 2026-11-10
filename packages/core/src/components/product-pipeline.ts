@@ -28,6 +28,7 @@ import { controlNoteCheckout, type ControlNoteCheckout } from "../control/dispat
 import {
   assertProductWords,
   CHANT_WORDS,
+  CI_PRODUCT_COMMANDS,
   commentLine,
   type CiProductApplyMode,
   type CiProductCommand,
@@ -44,6 +45,8 @@ import type { CiResponses } from "../ci-respond";
 import { planEvidenceOf, productPlanJobs, type ProductPlanJob, type ProductPlanOptions } from "./product-plan";
 import { gitlabOpenEvidenceDir, type PipelineEvidence } from "../ci-evidence-jobs";
 import { prCheckJob, prRefGateJob, type PrCheckJob, type PrRefGateJob } from "./pr-checks";
+import { COMMENT_JOBS_ENV, PR_COMMENT_JOB, type CommentJobs } from "../ci-comment-commands";
+import { GITHUB_JOB_TOKEN } from "../ci-jobs";
 
 /** Where the generator writes a product's waves spec, which chant reads at base (#4550). */
 export const PRODUCT_WAVES_SPEC_DIR = ".chant/op-waves";
@@ -133,6 +136,31 @@ export interface ProductPipelineOptions extends Omit<PrLoopPipelineOptions, "wor
    * Absent: nothing is signed, and the jobs are as before.
    */
   evidence?: PipelineEvidence;
+  /**
+   * The comment job (#4946), GitHub and Forgejo: one job on every
+   * `/<product>` comment (and every alias's) that answers what no other job
+   * of the pipeline takes, with `chant components pr-comment`: a refusal,
+   * a command the pipeline has no job for (the words' `replies`, else
+   * chant's), and with waves on merge the re-run of a merged pull request's
+   * apply. The jobs it leaves comments to are the ones these options write.
+   * On GitLab the note-commands job answers every note already; refused
+   * there.
+   */
+  commentJob?: boolean;
+}
+
+/** The comment job (#4946): its command, the values it reads, and the comment prefixes that start it. */
+export interface ProductCommentJob {
+  jobName: typeof PR_COMMENT_JOB;
+  /** `<bin> components pr-comment --forge <forge>`. */
+  command: string;
+  /** `GITHUB_TOKEN` and {@link COMMENT_JOBS_ENV}. */
+  env: Record<string, string>;
+  /** What a comment starts with for the job to start: `/<product>`, then each alias. */
+  prefixes: string[];
+  /** The jobs it leaves comments to. */
+  jobs: CommentJobs;
+  runner?: CiRunner;
 }
 
 /** The jobs of one product pipeline. */
@@ -211,6 +239,8 @@ export interface ProductPipelineJobs {
   check?: PrCheckJob & { runner?: CiRunner; evidenceRunner?: CiRunner };
   /** The ref gate's status job (#4935), with `refGateStatus` (./pr-checks.ts). */
   refGate?: PrRefGateJob & { runner?: CiRunner };
+  /** The comment job (#4946), with `commentJob`. */
+  comment?: ProductCommentJob;
 }
 
 /** An agent's settings as a product passes them (#4616): {@link OpAgentSpec} without the trigger, which the pipeline names. */
@@ -312,8 +342,10 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   // Words that ask for before-merge keep it when the pipeline has that job beside its waves.
   const built: CiProductApplyMode = options.waves || options.componentWaves ? "on-merge" : options.applyBeforeMerge ? "before-merge" : "release";
   const applyMode: CiProductApplyMode = options.words.applyMode === "before-merge" && options.applyBeforeMerge ? "before-merge" : built;
-  const words = assertProductWords({ ...options.words, applyMode }, { jobs });
-  const { waves: given, wavesSpecFile, member, agent: _agent, commits: _commits, actions: _actions, componentWaves, productPlan, evidence, ...loop } = options;
+  // #4946: the comment job answers every command but a commit word (the commit job's) with a reply, so the words may name any.
+  const answered: CiProductCommand[] = options.commentJob ? [...new Set<CiProductCommand>([...jobs, ...CI_PRODUCT_COMMANDS.filter((c) => c !== "commit")])] : jobs;
+  const words = assertProductWords({ ...options.words, applyMode }, { jobs: answered });
+  const { waves: given, wavesSpecFile, member, agent: _agent, commits: _commits, actions: _actions, componentWaves, productPlan, evidence, commentJob: _commentJob, ...loop } = options;
   const { respond } = options;
   // #4629: the pull request loop puts the responses on the apply and note jobs, as `chant build --pr-loop --respond` does.
   const prLoop: PrLoopPipelineOptions = { ...loop, words, gate: options.gate ?? words.prGate };
@@ -373,6 +405,25 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
       const spec = productCommitSpec(words, c);
       return { comment: spec.commit!.comment!, name: spec.name, spec };
     });
+  }
+  // #4946: the comment job answers what no other job of the pipeline takes, so it is told which jobs there are.
+  if (options.commentJob) {
+    // #4963's re-plan reply answers the same stray comments, so one of the two answers them.
+    if (typeof productPlan?.replan === "object" && productPlan.replan.reply) throw new Error("commentJob answers every /<product> comment no other job takes, and so does the product plan's replan.reply; drop replan.reply, since the comment job answers the re-plan's refusals too");
+    // The product plan's re-plan skips a target that is none of its own and, with forks: "skip", a fork's pull request without a word; the comment job says why.
+    const planTargets = productPlan?.replan ? productPlan.targets?.map((t) => t.name) : undefined;
+    const commentJobs: CommentJobs = {
+      ...(productPlan?.replan || options.previewComment ? { preview: true } : {}),
+      ...(planTargets?.length ? { targets: planTargets } : {}),
+      ...(productPlan?.replan && productPlan.forks === "skip" ? { skipForks: true } : {}),
+      ...(options.applyBeforeMerge ? { applyBeforeMerge: true } : {}),
+      ...(given || componentWaves ? { applyOnMerge: true } : {}),
+      ...(locks.length > 0 ? { locks: true } : {}),
+      ...(out.agent ? { agent: true } : {}),
+      ...(out.commits ? { commits: true } : {}),
+      ...(options.actions || options.actionJob ? { actions: true } : {}),
+    };
+    out.comment = { ...productCommentJob(forge, words, commentJobs), ...defaultRunner };
   }
   // #4588: without a spec of the product's own, the component graph's waves on op waves.
   const op = words.op ?? componentWaves?.waveGate ?? words.prGate;
@@ -504,6 +555,25 @@ export function componentWavesSpec(
     op: options.op,
     waves: named.waves.map((w) => ({ ...w, approval: "pull-request" as const })),
     approvals: { ...(named.approvals ?? {}), pullRequest: { gate: options.prGate ?? words.prGate } },
+  };
+}
+
+/**
+ * The comment job's descriptor (#4946): `chant components pr-comment
+ * --forge <forge>` through the words' bin, the jobs it leaves comments to as
+ * {@link COMMENT_JOBS_ENV}, and the comment prefixes the forge's `if:`
+ * starts it on. Throws on GitLab, whose note-commands job answers every
+ * note.
+ */
+export function productCommentJob(forge: ForgeKind, words: CiProductWords, jobs: CommentJobs): ProductCommentJob {
+  if (forge === "gitlab") throw new Error("the comment job answers a GitHub or Forgejo comment; on GitLab the note-commands job (noteCommands) answers every note, so drop commentJob");
+  for (const a of words.aliases) if (/['\\]/.test(a.from)) throw new Error(`the alias ${JSON.stringify(a.from)} holds a quote, which the comment job's condition cannot carry`);
+  return {
+    jobName: PR_COMMENT_JOB,
+    command: withProductBin(`chant components pr-comment --forge ${forge}`, words.bin),
+    env: { GITHUB_TOKEN: GITHUB_JOB_TOKEN, [COMMENT_JOBS_ENV]: JSON.stringify(jobs) },
+    prefixes: [`/${words.product}`, ...words.aliases.map((a) => a.from)],
+    jobs,
   };
 }
 

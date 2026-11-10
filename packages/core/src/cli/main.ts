@@ -1350,6 +1350,12 @@ Component release ledger + status:
                             [--preview-comment] [--apply-before-merge]
                             [--apply-on-merge] [--locks]); each answered
                             note is recorded on chant/lifecycle
+  components pr-comment    GitHub and Forgejo (#4946): answer a comment
+                            command no other job of the pipeline takes:
+                            a refusal, a command the pipeline runs no job
+                            for, or a merged pull request's apply run
+                            again (--forge github|forgejo [--branch <b>];
+                            the jobs from CHANT_COMMENT_JOBS)
   components pr-record    On merge (#4168): plan the same members again,
                             store the change set and write the merge record
                             _merges/<commit>.json; applies and refuses
@@ -2161,6 +2167,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "components pr-post", handler: async (ctx) => (await import("./handlers/pr")).runComponentsPrPost(ctx) },
   // #4785: GitLab's comment commands, polled from the notes in a job that runs none of the change's code, so it loads no plugins.
   { name: "components pr-notes", handler: async (ctx) => (await import("./handlers/pr-notes")).runComponentsPrNotes(ctx) },
+  // #4946: GitHub's and Forgejo's comment job, at the target branch's commit, so it loads no plugins.
+  { name: "components pr-comment", handler: async (ctx) => (await import("./handlers/pr-comment")).runComponentsPrComment(ctx) },
   { name: "components pr-record", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/pr")).runComponentsPrRecord(ctx) },
   // #4616: the agent jobs' three steps. Imported on first use; none loads plugins.
   { name: "agent prepare", handler: async (ctx) => (await import("./handlers/agent")).runAgentCommandLine(ctx) },

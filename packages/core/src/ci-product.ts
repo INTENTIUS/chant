@@ -149,6 +149,15 @@ export { PLAN_ARGUMENT_ENV, PLAN_NOTE_NOTICES_ENV, type ProductPlanReplanJob, ty
 export const COMMENT_LEAVES_COMMIT_FLOOR = "0.124.88";
 
 /**
+ * The first chant with the comment job on GitHub and Forgejo and the replies to commands no job runs (#4946): `commentJob` in the product pipeline (`chant components pr-comment`, `answerProductComment` in `@intentius/chant/ci-comment-commands`), which replies to a refusal and to a command the pipeline runs no job for, and with waves on merge starts a merged pull request's apply again; the words' `replies` and an alias's `refuse`, which the GitLab note poll reads too, as `chantNoteRuns`' `members`; `retryApply`; and `locks: "plan"` in GitHub's and Forgejo's product plan, with the lock, unlock and comment lock jobs.
+ */
+export const COMMENT_COMMANDS_FLOOR = NEXT_RELEASE;
+export { answerProductComment, answeredElsewhere, COMMENT_JOBS_ENV, commentRuns, PR_COMMENT_JOB, RERUN_APPLY_JOBS, type CommentJobs, type CommentOutcome, type CommentRuns, type AnswerCommentOptions } from "./ci-comment-commands";
+export { forkReply, memberReply, notRunReply } from "./ci-comment-replies";
+export type { CiProductCommentReplies } from "./ci-product-words";
+export { productCommentJob, type ProductCommentJob } from "./components/product-pipeline";
+
+/**
  * The first chant whose product plan takes `watches`, the product's own scheduled jobs the note job's `pr-post` checks for having stopped with the job's token (#4888), and whose `checkOverdueOps` and `overdueOpsAt` take a product's `logPrefix` and `label`.
  */
 export const PRODUCT_PLAN_WATCHES_FLOOR = "0.124.88";

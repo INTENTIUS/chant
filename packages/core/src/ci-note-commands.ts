@@ -29,9 +29,10 @@
 
 import { GITLAB_AGENT_ASK_VAR, GITLAB_AGENT_PR_VAR } from "./ci-agent";
 import { GITLAB_COMMIT_ARG_VAR, GITLAB_COMMIT_PR_VAR, GITLAB_COMMIT_WORD_VAR } from "./ci-commit";
-import { parseProductComment, productStatusContext, type CiProductWords, type ParsedProductComment } from "./ci-product-words";
+import { parseProductComment, productStatusContext, type CiProductCommand, type CiProductWords, type ParsedProductComment } from "./ci-product-words";
+import { commandLine, commentTerms, forkReply, memberReply, notRunReply } from "./ci-comment-replies";
 import { GITLAB_APPLY_PR_VAR, GITLAB_LOCK_PR_VAR, GITLAB_PREVIEW_PR_VAR, GITLAB_UNLOCK_PR_VAR, PREVIEW_COMMENT_ENV } from "./components/pr-pipeline";
-import { ForgeApiError, type ForgeFetch, type GitlabForgeOptions, type PrForge } from "./pr-forge";
+import { ForgeApiError, type ForgeFetch, type ForgeKind, type GitlabForgeOptions, type PrForge } from "./pr-forge";
 import type { ForgeReads, PullRequestDetail, PullRequestNote, RunJob, WorkflowRun } from "./pr-forge-reads";
 
 export { GITLAB_NOTE_COMMANDS_VAR } from "./components/pr-pipeline";
@@ -304,8 +305,11 @@ async function answer(o: NoteCommandsOptions, mr: PullRequestDetail, note: PullR
       }
       return reply(`started pipeline${link(started)} to ${run.doing} for ${note.author}`, true, started.url);
     }
-    case "retry":
-      return retry(o, mr, note.author, run, reply, broke);
+    case "retry": {
+      const done = await retryApply(o, "gitlab", mr, note.author, run, gitlabRetry(o.pipelines));
+      if (done.kind === "fail") return broke(done.reason);
+      return reply(done.text, done.kind === "ran", done.kind === "ran" ? done.url : undefined);
+    }
   }
 }
 
@@ -314,17 +318,53 @@ export const APPLY_JOBS = /^(?:[a-z0-9][a-z0-9-]*-)?apply(?:-wave-([1-9][0-9]*)(
 
 const NOT_DONE = new Set(["created", "pending", "running", "waiting_for_resource", "preparing", "scheduled"]);
 
-async function retry(
-  o: NoteCommandsOptions,
-  mr: PullRequestDetail,
-  user: string,
-  run: Extract<NoteRun, { kind: "retry" }>,
-  reply: (text: string, ran?: boolean, url?: string) => Promise<NoteOutcome>,
-  broke: (reason: string) => NoteOutcome,
-): Promise<NoteOutcome> {
+/** What starting a merge commit's apply again came to: a reply alone, a run started (`ran`), or a forge answer that broke it. */
+export type ApplyRetried = { kind: "reply"; text: string } | { kind: "ran"; text: string; url?: string } | { kind: "fail"; reason: string };
+
+/** What {@link ApplyRerun} is told: the merge commit, the pull request's name in a reply, who asked, and the default branch. */
+export interface ApplyRerunContext {
+  sha: string;
+  /** `!12`, or `pull request 12`. */
+  at: string;
+  user: string;
+  base: string;
+  /** The pattern the apply jobs matched, whose groups are the wave and the share. */
+  pattern: RegExp;
+}
+
+/**
+ * How a forge starts a merge commit's apply again (#4946), once
+ * {@link retryApply} found the push run at the commit with apply jobs and no
+ * later apply. GitLab retries the first apply job that did not succeed
+ * ({@link gitlabRetry}); GitHub and Forgejo answer in ./ci-comment-commands.ts.
+ */
+export type ApplyRerun = (run: WorkflowRun, jobs: RunJob[], c: ApplyRerunContext) => Promise<ApplyRetried>;
+
+/** What {@link retryApply} reads with. */
+export interface ApplyRetryReads {
+  reads: ForgeReads;
+  /** chant's client: it reads the later commits' statuses. */
+  forge: Pick<PrForge, "commitStatuses">;
+  words: CiProductWords;
+  /** The default branch. */
+  base: string;
+}
+
+/**
+ * Start a merged pull request's apply again (#4785; shared with GitHub and
+ * Forgejo in #4946): the newest push run at the merge commit that has an
+ * apply job, refused when a later commit of the default branch already
+ * carries the product's apply status, since going back to this one would
+ * undo it. `rerun` is the forge's own start.
+ */
+export async function retryApply(o: ApplyRetryReads, forgeKind: ForgeKind, mr: PullRequestDetail, user: string, run: Extract<NoteRun, { kind: "retry" }>, rerun: ApplyRerun): Promise<ApplyRetried> {
   const { sha } = run;
   const pattern = run.jobs ?? APPLY_JOBS;
-  const iid = mr.number;
+  const t = commentTerms(forgeKind);
+  const at = t.at(mr.number);
+  const gitlab = forgeKind === "gitlab";
+  const runWord = gitlab ? "pipeline" : "workflow run";
+  const reply = (text: string): ApplyRetried => ({ kind: "reply", text });
   // The newest push pipeline at the merge commit with an apply job: a branch pipeline, or a ci/green tag's.
   let pipeline: WorkflowRun | undefined;
   let jobs: RunJob[] = [];
@@ -338,10 +378,10 @@ async function retry(
         break;
       }
     }
-    if (!pipeline) return reply(`no pipeline at the merge commit ${short(sha)} of !${iid} has an apply job, so there is nothing to retry; push to ${o.base} again`);
+    if (!pipeline) return reply(`no ${runWord} at the merge commit ${short(sha)} of ${at} has an apply job, so there is nothing to ${gitlab ? "retry" : "run again"}; push to ${o.base} again`);
     newer = await o.reads.branchRuns(o.base, { event: "push", limit: NOTE_COMMANDS_NEWER_PIPELINES });
   } catch (e) {
-    return broke(`could not read the pipelines at ${short(sha)} (${message(e)})`);
+    return { kind: "fail", reason: `could not read the ${runWord}s at ${short(sha)} (${message(e)})` };
   }
   // A later commit whose apply started applied a newer tree: going back to this one would undo it.
   const applyContext = productStatusContext(o.words, "apply");
@@ -351,32 +391,40 @@ async function retry(
     try {
       applied = (await o.forge.commitStatuses?.(c))?.find((s) => s.context === applyContext);
     } catch (e) {
-      return broke(`could not read the statuses of ${short(c)} (${message(e)})`);
+      return { kind: "fail", reason: `could not read the statuses of ${short(c)} (${message(e)})` };
     }
     if (applied) {
-      const at = applied.targetUrl && /^https?:\/\//.test(applied.targetUrl) ? ` (${applied.targetUrl})` : "";
-      return reply(`a later apply already ran on ${o.base} at ${short(c)}${at}, so the merge commit ${short(sha)} of !${iid} is not applied: comment on the merge request that commit came from, or push again`);
+      const link = applied.targetUrl && /^https?:\/\//.test(applied.targetUrl) ? ` (${applied.targetUrl})` : "";
+      return reply(`a later apply already ran on ${o.base} at ${short(c)}${link}, so the merge commit ${short(sha)} of ${at} is not applied: comment on the ${t.request} that commit came from, or push again`);
     }
   }
-  const order = (j: RunJob): [number, number] => {
-    const m = pattern.exec(j.name);
-    return [m?.[1] ? Number(m[1]) : 0, m?.[2] ? Number(m[2]) : 0];
+  return rerun(pipeline, jobs, { sha, at, user, base: o.base, pattern });
+}
+
+/** GitLab's start: retry the first apply job, by wave and share, that did not succeed; the jobs after it follow by themselves. */
+export function gitlabRetry(pipelines: Pick<GitlabPipelines, "retryJob">): ApplyRerun {
+  return async (pipeline, jobs, { sha, at, user, base, pattern }) => {
+    const reply = (text: string): ApplyRetried => ({ kind: "reply", text });
+    const order = (j: RunJob): [number, number] => {
+      const m = pattern.exec(j.name);
+      return [m?.[1] ? Number(m[1]) : 0, m?.[2] ? Number(m[2]) : 0];
+    };
+    const sorted = [...jobs].sort((a, b) => order(a)[0] - order(b)[0] || order(a)[1] - order(b)[1]);
+    const next = sorted.find((j) => j.status !== "success");
+    if (!next) return reply(`every apply job of ${at}'s merge commit ${short(sha)} already succeeded`);
+    if (NOT_DONE.has(next.status)) return reply(`${next.name} at ${short(sha)} is ${next.status} already, so it is not retried`);
+    if (next.status !== "failed" && next.status !== "canceled") {
+      return reply(`${next.name} at ${short(sha)} was ${next.status}, and GitLab retries only a failed or canceled job; push to ${base} again`);
+    }
+    let retried: StartedRun;
+    try {
+      retried = await pipelines.retryJob(next.id);
+    } catch (e) {
+      return { kind: "fail", reason: `could not retry ${next.name} of pipeline ${pipeline.id} (${message(e)})` };
+    }
+    const link = retried.url ? ` (${retried.url})` : "";
+    return { kind: "ran", text: `retried ${next.name} of ${at}'s merge commit ${short(sha)}${link} for ${user}; its gate decides again, and the jobs after it follow, each behind its own gate`, ...(retried.url ? { url: retried.url } : {}) };
   };
-  const sorted = [...jobs].sort((a, b) => order(a)[0] - order(b)[0] || order(a)[1] - order(b)[1]);
-  const next = sorted.find((j) => j.status !== "success");
-  if (!next) return reply(`every apply job of !${iid}'s merge commit ${short(sha)} already succeeded`);
-  if (NOT_DONE.has(next.status)) return reply(`${next.name} at ${short(sha)} is ${next.status} already, so it is not retried`);
-  if (next.status !== "failed" && next.status !== "canceled") {
-    return reply(`${next.name} at ${short(sha)} was ${next.status}, and GitLab retries only a failed or canceled job; push to ${o.base} again`);
-  }
-  let retried: StartedRun;
-  try {
-    retried = await o.pipelines.retryJob(next.id);
-  } catch (e) {
-    return broke(`could not retry ${next.name} of pipeline ${pipeline.id} (${message(e)})`);
-  }
-  const link = retried.url ? ` (${retried.url})` : "";
-  return reply(`retried ${next.name} of !${iid}'s merge commit ${short(sha)}${link} for ${user}; its gate decides again, and the jobs after it follow, each behind its own gate`, true, retried.url);
 }
 
 /** The jobs chant's GitLab pipeline has, which {@link chantNoteRuns} starts. */
@@ -393,17 +441,32 @@ export interface ChantNoteJobs {
   agent?: boolean;
   /** The commit jobs, started with `CHANT_COMMIT_PR`, `CHANT_COMMIT` and `CHANT_COMMIT_ARG`. */
   commits?: boolean;
+  /**
+   * The members the pipeline was written with (#4946), such as terragucci's
+   * roots: a plan or an action naming any other gets the words' `member`
+   * reply, and nothing starts. Absent: any member a comment may name.
+   */
+  members?: readonly string[];
 }
 
-/** What a command runs in chant's own GitLab pipeline, for the jobs it has. */
+/**
+ * What a command runs in chant's own GitLab pipeline, for the jobs it has.
+ * A command no job runs gets the words' reply for it (`words.replies`,
+ * #4946), else chant's.
+ */
 export function chantNoteRuns(jobs: ChantNoteJobs): NoteCommandRuns {
   return ({ mr, note, parsed, base, words }): NoteRun => {
     const iid = String(mr.number);
     const at = `!${mr.number}`;
-    const line = (kind: string): string => `\`/${words.product} ${Object.entries(words.commands).find(([, c]) => c === kind)?.[0] ?? kind}\``;
-    if (!mr.sameRepo) return { kind: "reply", text: `a merge request from a fork runs no command: its code never runs with this project's credentials` };
+    const line = (kind: CiProductCommand): string => commandLine(words, kind);
+    // #4946: a member outside the pipeline's is refused before anything starts, a fork's included.
+    const member = parsed.kind === "plan" || parsed.kind === "action" ? parsed.member : undefined;
+    if (member !== undefined && jobs.members && !jobs.members.includes(member)) return { kind: "reply", text: memberReply(words, member, jobs.members, "gitlab") };
+    if (!mr.sameRepo) return { kind: "reply", text: forkReply(words, "gitlab") };
     const open = mr.state === "open";
     const intoBase = mr.base === undefined || mr.base === base;
+    // #4946: the product's sentence for an apply no job answers, in place of chant's, which say what the merge does.
+    if (parsed.kind === "apply" && !jobs.applyBeforeMerge && !jobs.applyOnMerge && words.replies?.apply !== undefined) return { kind: "reply", text: words.replies.apply };
     switch (parsed.kind) {
       case "plan":
         if (!open) return { kind: "reply", text: `${at} is not open, so it is not ${words.verbs.plan[1]}` };
@@ -425,11 +488,11 @@ export function chantNoteRuns(jobs: ChantNoteJobs): NoteCommandRuns {
         return { kind: "retry", sha: mr.mergeCommit };
       case "lock":
       case "unlock":
-        if (!jobs.locks) return { kind: "reply", text: `${line(parsed.kind)} does not run here: this project takes no locks` };
+        if (!jobs.locks) return { kind: "reply", text: notRunReply(words, parsed.kind, "gitlab") };
         if (parsed.kind === "lock" && !open) return { kind: "reply", text: `${at} is not open, so it takes no lock` };
         return { kind: "pipeline", ref: base, variables: { [parsed.kind === "lock" ? GITLAB_LOCK_PR_VAR : GITLAB_UNLOCK_PR_VAR]: iid }, doing: `${parsed.kind} the ${words.noun[1]} of ${at}` };
       case "agent":
-        if (!jobs.agent) return { kind: "reply", text: `the agent command is off in this project` };
+        if (!jobs.agent) return { kind: "reply", text: notRunReply(words, "agent", "gitlab") };
         if (!open) return { kind: "reply", text: `${at} is not open, so the agent does not run` };
         if (mr.head === base) return { kind: "reply", text: `${at}'s source branch is the default branch, and an agent never pushes there` };
         return { kind: "pipeline", ref: base, variables: { [GITLAB_AGENT_PR_VAR]: iid, [GITLAB_AGENT_ASK_VAR]: parsed.ask }, doing: `run the agent on ${at}` };
