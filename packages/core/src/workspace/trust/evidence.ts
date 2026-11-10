@@ -21,7 +21,7 @@ import { canonicalJson } from "../../effect-receipt";
 import type { ReasonCode } from "../reason-codes";
 import { IN_TOTO_PAYLOAD_TYPE, signEnvelope, verifyEnvelope, type DsseEnvelope } from "./dsse";
 import type { KeyObject } from "node:crypto";
-import type { RunnerKey } from "./policy";
+import type { Runner, RunnerKey } from "./policy";
 
 export const STATEMENT_TYPE = "https://in-toto.io/Statement/v1";
 export const RUNNER_EVIDENCE_PREDICATE = "https://intentius.io/chant/runner-evidence/v1";
@@ -169,7 +169,7 @@ export type EvidenceVerdict =
  * Verify an envelope against the runner keys at base, then compare each
  * subject with the record as committed at `at`.
  */
-export function verifyEvidence(envelope: unknown, runners: readonly RunnerKey[], repo: string, at: string): EvidenceVerdict {
+export function verifyEvidence(envelope: unknown, runners: readonly Runner[], repo: string, at: string): EvidenceVerdict {
   const v = verifyEnvelope(envelope, runners);
   if (!v.ok) return v;
   if (v.payloadType !== IN_TOTO_PAYLOAD_TYPE) return { ok: false, code: "evidence-payload-type", reason: `payload type ${v.payloadType} is not ${IN_TOTO_PAYLOAD_TYPE}` };

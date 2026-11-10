@@ -96,13 +96,14 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
       container: image,
       // #4289: `actions: read` lets pr-post ask when each scheduled watch last ran.
       // #4870: with evidence, `contents: write` pushes the signed checks to refs/notes/chant/evidence, where the ref gate (#4867) reads them.
-      permissions: { actions: "read", contents: p.evidence ? "write" : "read", "pull-requests": "write", statuses: "write" },
+      // #4869: signing keyless, the job asks for its OIDC token; Forgejo's dialect turns it into enable-openid-connect.
+      permissions: { actions: "read", contents: p.evidence ? "write" : "read", "pull-requests": "write", statuses: "write", ...(p.evidence?.idToken ? { "id-token": "write" } : {}) },
       steps: [
         // The target branch's commit: the bin this job runs is the target branch's, and none of the change's code is here.
         { name: "Check out the target branch's commit", uses: CHECKOUT, with: { ref: "${{ github.event.pull_request.base.sha }}" } },
         ...runSteps(beforeScript),
         { name: "Take the plan report from the plan job", run: takeOverScript(p.jobName, PR_LOOP_REPORT_DIR, forge) },
-        // #4870: the runner key is in this step alone, in a job that runs none of the change's code.
+        // #4870: the runner key (or #4869 the keyless signing) is in this step alone, in a job that runs none of the change's code.
         ...(p.evidence ? [{ name: "Sign the plan and policy evidence", if: "always()", env: p.evidence.env, run: p.evidence.lines.join("\n") }] : []),
         { name: "Keep the plan report", if: "always()", uses: UPLOAD_ARTIFACT, with: { name: p.artifact, path: PR_LOOP_REPORT_DIR, "if-no-files-found": "ignore", "include-hidden-files": true } },
         { name: `Post the plan note and ${productStatusContext(jobs.words, "plan", p.target)}`, if: "always()", env: p.post.env, run: p.post.command },

@@ -40,4 +40,15 @@ describe("check evidence in generated pipelines on gitlab (#4870)", () => {
     expect(() => generateGitlabProductPlanPipeline("default", { ...plan, evidence: { runnerKeySecret: "not a name" } })).toThrow(/not a secret name/);
     expect(() => generateGitlabOpWavesPipeline(spec, { ...waves, evidence: { runnerKeySecret: "1X" } })).toThrow(/not a secret name/);
   });
+
+  test("#4869: signing keyless, each evidence job and each deciding wave job request the signing token, and no secret is named", () => {
+    const keyless = { identity: "oidc" as const };
+    const plan_ = generateGitlabProductPlanPipeline("default", { ...plan, evidence: keyless }).yaml;
+    expect(plan_).toContain("CHANT_RUNNER_IDENTITY: oidc");
+    expect(plan_).not.toContain("CHANT_RUNNER_KEY");
+    expect(plan_.match(/CHANT_ID_TOKEN_SIGSTORE:\s+aud: sigstore/g)).toHaveLength(2);
+    const yaml = generateGitlabOpWavesPipeline(spec, { ...waves, evidence: { ...keyless, audience: "https://fulcio.internal" } }).files[0]!.yaml;
+    expect(yaml.match(/CHANT_RUNNER_IDENTITY: oidc/g)).toHaveLength(2);
+    expect(yaml.match(/CHANT_ID_TOKEN_SIGSTORE:\s+aud: https:\/\/fulcio\.internal/g)).toHaveLength(2);
+  });
 });

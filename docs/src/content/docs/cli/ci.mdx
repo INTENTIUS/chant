@@ -642,7 +642,43 @@ An Op waves spec's `evidence.requires`, read at base, names the checks whose cur
 { "name": "roots", "evidence": { "requires": ["plan", "policy"] }, "waves": [] }
 ```
 
-The signer is an `EvidenceSigner` (`@intentius/chant/workspace/trust/check-evidence`): today a runner key `.chant/trust.json` lists. A keyless signer from the job's OIDC identity ([#4869](https://github.com/INTENTIUS/chant/issues/4869)) plugs in there, and the steps stay where they are. `CHECK_EVIDENCE_FLOOR` is the first chant with all of this.
+The signer is an `EvidenceSigner` (`@intentius/chant/workspace/trust/check-evidence`): a runner key `.chant/trust.json` lists, or the job's own OIDC identity, below. `CHECK_EVIDENCE_FLOOR` is the first chant with all of this.
+
+### Keyless, from the job's OIDC identity
+
+A runner key is a secret to store and rotate, and a leaked one signs anything until someone does. A job can sign keyless instead ([#4869](https://github.com/INTENTIUS/chant/issues/4869)). It asks the forge for an OIDC token with the audience `sigstore`, trades it at a Fulcio certificate authority for a ten-minute certificate over a key it made for this run, signs the same DSSE envelope with that key, and has the signature timestamped by an RFC 3161 timestamp authority. The envelope's signature carries the certificate chain and the timestamp, so it verifies offline, and still does after the certificate expired: the certificate is judged at the timestamp's time. Nothing is sent to a transparency log.
+
+`.chant/trust.json` at base lists the identities that may sign, next to or instead of `runners`:
+
+```json
+{
+  "schema": 1,
+  "roles": { "runner": ["ci"] },
+  "keyless": {
+    "trustedRoot": ".chant/trusted_root.json",
+    "identities": [
+      {
+        "principal": "ci",
+        "class": "runner",
+        "issuer": "https://token.actions.githubusercontent.com",
+        "subject": "https://github.com/acme/infra/.github/workflows/chant-*.yml@refs/heads/main"
+      }
+    ],
+    "since": "8b045980cf9cd1351dd4f60c9c46ee69d45ec0d7"
+  }
+}
+```
+
+- `issuer` is the OIDC issuer the certificate names, exactly. `subject` is a pattern over the certificate's subject alternative name, which names the repository, the workflow file and the ref: on GitHub `https://github.com/<owner>/<repo>/<workflow>@<ref>`, on GitLab `<server>/<project>//<ci config>@<ref>`. `*` matches within one `/` segment and `**` across them.
+- `trustedRoot` is a file in sigstore's `trusted_root.json` format with the certificate authorities' and timestamp authorities' certificates. For sigstore's public instances it is the `trusted_root.json` the sigstore TUF repository publishes; for a private instance, the file its operator publishes. Changing it is a protected write, as for the rest of the policy.
+- `fulcio`, `timestamp` and `audience` say where a signing job trades its token. They default to `https://fulcio.sigstore.dev`, `https://timestamp.sigstore.dev/api/v1/timestamp` and `sigstore`. A Forgejo job's token is accepted only by a certificate authority the project runs, so name it and its timestamp authority there.
+- `since` switches from keys to identities the way [`ci.green.signedSince`](#signed-tags) switches to signed tags. A statement over a strict ancestor of that commit still counts when a runner key signed it; one over that commit or any other counts only when it is signed keyless. Without `since`, both count.
+
+A job signs keyless with `CHANT_RUNNER_IDENTITY=oidc` and no `CHANT_RUNNER_KEY`: `ci check`, `ci evidence sign` and the wave jobs read both in one place. Every reader verifies keyless statements: the ref gate, `ci evidence verify`, a wave's `evidence.requires`, and the ci tags and Op runs `ci tick`, `ci list` and `release cut` judge. The tick and `chant run` still sign their tags and runs with a runner key.
+
+In a generator, `evidence: { identity: "oidc" }` takes the place of `runnerKeySecret`, with `audience` when `keyless.audience` is not `sigstore`. The signing step gets `CHANT_RUNNER_IDENTITY: oidc` and its job asks for the token, so a product adds nothing: `id-token: write` on GitHub, `enable-openid-connect: true` on Forgejo, and on GitLab `id_tokens: CHANT_ID_TOKEN_SIGSTORE: aud: sigstore`, which no hook sees. A GitHub or Forgejo wave that trades cloud credentials is refused, since the steps after the trade may request no token. `KEYLESS_EVIDENCE_FLOOR` is the first chant with this.
+
+An init writes the identity with `ciRunnerIdentity` and `withRunnerIdentity` from `@intentius/chant/workspace/trust/runner-identity`: the first names the generated workflow's identity on its forge, the second adds it to the file's text under `keyless` and its principal to `roles.runner`.
 
 ### Local evidence
 

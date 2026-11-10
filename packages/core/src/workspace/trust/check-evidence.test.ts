@@ -50,7 +50,7 @@ describe("check evidence (#4870)", () => {
   test("a signed check is current for its commit, and for another commit with the same tree", async () => {
     const r = repo();
     const signer = runnerKeyEvidenceSigner(r.dir, r.base, r.ci.pem);
-    const signed = signChecks(r.dir, r.head, [{ check: "plan", claim: "{}" }, { check: "policy" }], signer);
+    const signed = await signChecks(r.dir, r.head, [{ check: "plan", claim: "{}" }, { check: "policy" }], signer);
     expect(signed.map((s) => s.check)).toEqual(["plan", "policy"]);
     await recordChecks(r.dir, signed, { push: false });
     expect(await readCheckEvidence(r.dir, r.head, r.base, ["plan", "policy"])).toEqual([
@@ -68,7 +68,7 @@ describe("check evidence (#4870)", () => {
 
   test("a commit whose tree differs has none, and the refusal names each missing check and its command", async () => {
     const r = repo();
-    await recordChecks(r.dir, signChecks(r.dir, r.head, [{ check: "plan" }], runnerKeyEvidenceSigner(r.dir, r.base, r.ci.pem)), { push: false });
+    await recordChecks(r.dir, await signChecks(r.dir, r.head, [{ check: "plan" }], runnerKeyEvidenceSigner(r.dir, r.base, r.ci.pem)), { push: false });
     expect((await readCheckEvidence(r.dir, r.base, r.base, ["plan"]))[0]!.status).toBe("missing");
     const refused = await missingCheckEvidence(r.dir, r.head, r.base, ["plan", "policy"]);
     expect(refused).toContain("policy");
@@ -85,7 +85,7 @@ describe("check evidence (#4870)", () => {
     const head = git(r.dir, "rev-parse", "HEAD");
     expect(() => runnerKeyEvidenceSigner(r.dir, r.base, added.pem)).toThrow(/lists no runner with this key/);
     // Signed against the change's own policy, and kept: the base still does not trust it.
-    await recordChecks(r.dir, signChecks(r.dir, head, [{ check: "plan" }], runnerKeyEvidenceSigner(r.dir, head, added.pem)), { push: false });
+    await recordChecks(r.dir, await signChecks(r.dir, head, [{ check: "plan" }], runnerKeyEvidenceSigner(r.dir, head, added.pem)), { push: false });
     expect((await readCheckEvidence(r.dir, head, r.base, ["plan"]))[0]).toMatchObject({ status: "untrusted" });
     expect(await readCheckEvidence(r.dir, head, head, ["plan"])).toEqual([{ check: "plan", status: "current", runner: "mine", commit: head }]);
   });

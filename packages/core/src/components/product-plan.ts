@@ -35,7 +35,7 @@ import type { ForgeKind } from "../pr-forge";
 import type { CiRunner } from "../ci-jobs";
 import type { CiProductWords } from "../ci-product-words";
 import type { PrPlanNoteWords } from "../pr-plan-note";
-import { assertPipelineEvidence, evidenceKeyEnv, planEvidenceLines, type PipelineEvidence } from "../ci-evidence-jobs";
+import { assertPipelineEvidence, evidenceIdTokens, evidenceKeyEnv, evidenceKeyless, planEvidenceLines, type PipelineEvidence } from "../ci-evidence-jobs";
 import { gitlabPlanJobName, PR_LOOP_REPORT_DIR, PR_PLAN_NOTE_JOB, prLoopPassedEnv, prLoopPostJob, prLoopRunner, type PrLoopPipelineOptions } from "./pr-pipeline";
 
 /** The variable the plan-note job reads the product's note words from (#4799), as JSON. Set from the pipeline, never from the report. */
@@ -113,9 +113,11 @@ export interface ProductPlanJob {
    * job's `plan` and `policy` checks from its report, and their variables
    * (the runner key from its secret). GitHub and Forgejo run them in the
    * note job before `pr-post`; GitLab in a job of their own after the plan
-   * job, `evidenceJobName`.
+   * job, `evidenceJobName`. Signing keyless (#4869), the job asks for an
+   * OIDC token: `idToken` (GitHub's `id-token: write`, Forgejo's
+   * `enable-openid-connect`) or GitLab's `idTokens`.
    */
-  evidence?: { lines: string[]; env: Record<string, string>; jobName?: string };
+  evidence?: { lines: string[]; env: Record<string, string>; jobName?: string; idToken?: true; idTokens?: Record<string, { aud: string }> };
 }
 
 const TARGET_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
@@ -211,11 +213,13 @@ export function planEvidenceOf(forge: ForgeKind, evidence: PipelineEvidence, wor
       jobName: `${planJob}-evidence`,
       lines: planEvidenceLines({ dir: PR_LOOP_REPORT_DIR, at: '"$CI_COMMIT_SHA"', base: '"$CI_MERGE_REQUEST_DIFF_BASE_SHA"', result: "success", ...(bin ? { bin } : {}) }),
       env: key,
+      ...(evidenceKeyless(evidence) ? { idTokens: evidenceIdTokens(evidence) } : {}),
     };
   }
   return {
     lines: planEvidenceLines({ dir: PR_LOOP_REPORT_DIR, at: '"$HEAD_SHA"', base: '"$BASE_SHA"', result: '"$PLAN_RESULT"', ...(bin ? { bin } : {}) }),
     env: { HEAD_SHA: "${{ github.sha }}", BASE_SHA: "${{ github.event.pull_request.base.sha }}", PLAN_RESULT: `\${{ needs.${planJob}.result }}`, ...key },
+    ...(evidenceKeyless(evidence) ? { idToken: true as const } : {}),
   };
 }
 

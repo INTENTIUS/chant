@@ -26,6 +26,8 @@ import { z } from "zod";
 import type { RecordSource } from "../record-source";
 import { DEFAULT_SIGNERS_PATH, TRUST_CONFIG_PATH, parseAllowedSigners, type ExcludedSigner, type Signer } from "./trust-files";
 import type { PasskeySigner } from "../../lifecycle/gate-webauthn";
+import { execFileSync } from "node:child_process";
+import { DEFAULT_FULCIO_URL, DEFAULT_SIGNING_AUDIENCE, DEFAULT_TIMESTAMP_URL, parseTrustedRoot, type KeylessRoots } from "./keyless";
 
 export {
   DEFAULT_SIGNERS_PATH,
@@ -48,6 +50,9 @@ const repoPath = z
   .refine((p) => !p.startsWith("/") && !p.includes("\\") && posix.normalize(p) === p && !p.split("/").includes(".."), {
     message: "a path inside the repository, with / separators and no ..",
   });
+
+/** An http or https URL (#4869): an OIDC issuer, a certificate or timestamp authority. */
+const httpUrl = z.string().regex(/^https?:\/\/[^\s]+$/, "an http or https URL");
 
 /** A check name a ref rule requires (#4867): it is also part of an override's subject. */
 export const REF_CHECK_NAME = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
@@ -101,6 +106,40 @@ export const trustConfigSchema = z
           })
           .strict(),
       )
+      .optional(),
+    /**
+     * CI identities that sign runner statements keyless (#4869): each an
+     * OIDC issuer and a pattern over the subject alternative name of the
+     * certificate the job's token was traded for, which names the
+     * repository, the workflow and the ref. `trustedRoot` is a file in
+     * sigstore's `trusted_root.json` format with the certificate and
+     * timestamp authorities. `fulcio`, `timestamp` and `audience` tell a
+     * signing job where to trade its token; sigstore's public instances by
+     * default. With `since`, a statement over that commit or any commit not
+     * a strict ancestor of it counts only when signed keyless; a runner key's
+     * statement over an earlier commit still counts.
+     */
+    keyless: z
+      .object({
+        trustedRoot: repoPath,
+        identities: z
+          .array(
+            z
+              .object({
+                principal: z.string().min(1),
+                class: z.enum(["runner", "service"]),
+                issuer: httpUrl,
+                subject: z.string().min(1),
+              })
+              .strict(),
+          )
+          .min(1),
+        since: fullCommit.optional(),
+        fulcio: httpUrl.optional(),
+        timestamp: httpUrl.optional(),
+        audience: z.string().min(1).optional(),
+      })
+      .strict()
       .optional(),
     /**
      * Passkeys that sign gate approvals for people (#4646): a WebAuthn
@@ -256,6 +295,28 @@ export interface RunnerKey {
   key: string;
 }
 
+/** A CI identity that signs runner statements keyless (#4869), with the trusted root it is verified against. */
+export interface RunnerIdentity {
+  principal: string;
+  class: "runner" | "service";
+  issuer: string;
+  /** A pattern over the certificate's subject alternative name: `*` within a `/` segment, `**` across. */
+  subject: string;
+  roots: KeylessRoots;
+}
+
+/** A runner as a statement's verifier takes it: a key, or a keyless identity. */
+export type Runner = RunnerKey | RunnerIdentity;
+
+/** Where a keyless signing job trades its token (#4869), and from which commit only keyless statements count. */
+export interface KeylessPolicy {
+  since?: string;
+  fulcio: string;
+  timestamp: string;
+  audience: string;
+  trustedRoot: string;
+}
+
 /** The policy a check applies, as read at base. */
 export interface TrustPolicy {
   /** The full commit id the policy was read at, or null when there is no base. */
@@ -270,6 +331,10 @@ export interface TrustPolicy {
   adopted: Array<{ from?: string; to: string }>;
   /** Runner and service keys that may sign runner evidence (#2553). */
   runners: RunnerKey[];
+  /** CI identities that sign runner statements keyless (#4869). Absent on a policy built by hand: none. */
+  runnerIdentities?: RunnerIdentity[];
+  /** The keyless settings (#4869), when `keyless` is set and its trusted root reads. */
+  keyless?: KeylessPolicy;
   /** Runner entries that are not used, and why. */
   excludedRunners: Array<{ principal: string; reason: string }>;
   /** Passkeys that sign people's gate approvals (#4646). Absent on a policy built by hand: none. */
@@ -296,10 +361,37 @@ export interface TrustPolicy {
   signersAt?: (commit: string) => { version: number; signers: Signer[] } | null;
 }
 
-/** Paths whose change is a protected write under `policy`: the config, the signers file and its rotation file (#2553). */
+/** Paths whose change is a protected write under `policy`: the config, the signers file and its rotation file (#2553), and the keyless trusted root (#4869). */
 export function protectedPaths(policy: TrustPolicy): string[] {
   const s = policy.signersPath;
-  return [...new Set([TRUST_CONFIG_PATH, s, posix.join(posix.dirname(s), `${posix.basename(s)}.rotation.json`)])].sort();
+  return [...new Set([TRUST_CONFIG_PATH, s, posix.join(posix.dirname(s), `${posix.basename(s)}.rotation.json`), ...(policy.keyless ? [policy.keyless.trustedRoot] : [])])].sort();
+}
+
+/**
+ * The runners whose statements over `commit` count (#4869): the runner keys
+ * and the keyless identities. With `keyless.since`, a runner key counts
+ * only for a commit that is a strict ancestor of `since`, the way
+ * `ci.green.signedSince` judges tags by position in history; a `since` the
+ * clone does not have leaves the keys out. Without `at`, under `since`, only
+ * the identities.
+ */
+export function runnersAt(policy: TrustPolicy, at?: { repo: string; commit: string }): Runner[] {
+  const ids = policy.runnerIdentities ?? [];
+  const since = policy.keyless?.since;
+  if (!since) return [...policy.runners, ...ids];
+  if (!at || !strictAncestor(at.repo, at.commit, since)) return ids;
+  return [...policy.runners, ...ids];
+}
+
+function strictAncestor(repo: string, commit: string, of: string): boolean {
+  try {
+    const full = execFileSync("git", ["rev-parse", "--verify", "--quiet", `${commit}^{commit}`], { cwd: repo, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    if (full === of) return false;
+    execFileSync("git", ["merge-base", "--is-ancestor", full, of], { cwd: repo, stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Principals allowed to change the policy: the admins when any are granted, otherwise every signer. */
@@ -355,6 +447,7 @@ export function readTrustPolicy(source: RecordSource, base: string | null): Trus
       runners.push(r);
     }
   }
+  const { runnerIdentities, keyless } = keylessOf(config, source, humanNames, excludedRunners);
   return {
     base,
     signersPath,
@@ -365,6 +458,7 @@ export function readTrustPolicy(source: RecordSource, base: string | null): Trus
     adopted: config.adopted ?? [],
     runners,
     excludedRunners,
+    ...(keyless ? { runnerIdentities, keyless } : {}),
     passkeys: config.passkeys ?? [],
     admitted: admittedOf(config),
     refs: (config.refs ?? []).map((r) => ({ ...r, checks: r.checks.map((c) => ({ ...c, action: c.action ?? "block" })) })),
@@ -385,6 +479,33 @@ function localOf(config: TrustConfig, runners: readonly RunnerKey[]): LocalEvide
     else keys.push(k);
   }
   return { keys, excluded, checks: (config.local?.checks ?? []).map((c) => ({ check: c.check, from: c.from ?? ["person"] })) };
+}
+
+/**
+ * The keyless identities (#4869), each with the trusted root read through
+ * `source`. A trusted root that cannot be read leaves every identity out,
+ * with the reason in `excluded`; the runner keys still count.
+ */
+function keylessOf(config: TrustConfig, source: RecordSource, humanNames: Set<string>, excluded: Array<{ principal: string; reason: string }>): { runnerIdentities: RunnerIdentity[]; keyless?: KeylessPolicy } {
+  const k = config.keyless;
+  if (!k) return { runnerIdentities: [] };
+  // Kept when the root does not read, so `since` still leaves the keys out: fail closed.
+  const keyless: KeylessPolicy = { ...(k.since ? { since: k.since } : {}), fulcio: k.fulcio ?? DEFAULT_FULCIO_URL, timestamp: k.timestamp ?? DEFAULT_TIMESTAMP_URL, audience: k.audience ?? DEFAULT_SIGNING_AUDIENCE, trustedRoot: k.trustedRoot };
+  let roots: KeylessRoots;
+  try {
+    const text = readOptional(source, k.trustedRoot);
+    if (text === undefined) throw new Error("the file is not there");
+    roots = parseTrustedRoot(text);
+  } catch (err) {
+    for (const i of k.identities) excluded.push({ principal: i.principal, reason: `the keyless trusted root ${k.trustedRoot} cannot be read: ${err instanceof Error ? err.message : String(err)}` });
+    return { runnerIdentities: [], keyless };
+  }
+  const runnerIdentities: RunnerIdentity[] = [];
+  for (const i of k.identities) {
+    if (humanNames.has(i.principal)) excluded.push({ principal: i.principal, reason: "the signers file lists this principal; a keyless identity is a CI job's, never a signer's" });
+    else runnerIdentities.push({ ...i, roots });
+  }
+  return { runnerIdentities, keyless };
 }
 
 /** The admitted signers, by return id. Two entries for one return add up. */

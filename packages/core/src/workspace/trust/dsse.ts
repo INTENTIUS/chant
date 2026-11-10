@@ -10,15 +10,24 @@
  * Public keys are written the way ssh writes them (`ssh-ed25519 AAAA...`), so
  * the runner keys in `.chant/trust.json` read like the signers file beside
  * them, and a key id is the key's ssh fingerprint (`SHA256:...`).
+ *
+ * A signature can instead be keyless (#4869, ./keyless.ts): it carries the
+ * short-lived certificate of a CI job's OIDC identity and a timestamp, and
+ * verifies against an identity the policy lists rather than a key.
  */
 
 import { createHash, createPrivateKey, createPublicKey, sign, verify, type KeyObject } from "node:crypto";
+import { isKeylessSignature, verifyKeylessSignature, type TrustedIdentity } from "./keyless";
 
 export const IN_TOTO_PAYLOAD_TYPE = "application/vnd.in-toto+json";
 
 export interface DsseSignature {
   keyid: string;
   sig: string;
+  /** Keyless (#4869): the certificate chain, base64 DER, the signing certificate first. */
+  certificates?: string[];
+  /** Keyless (#4869): the RFC 3161 timestamp token over the signature, base64 DER. */
+  timestamp?: string;
 }
 
 export interface DsseEnvelope {
@@ -96,18 +105,33 @@ export interface TrustedKey {
   key: string;
 }
 
+/** Who may sign: a runner key, or a CI identity that signs keyless (#4869). */
+export type TrustedSigner = TrustedKey | TrustedIdentity;
+
 export type EnvelopeVerdict =
-  | { ok: true; principal: string; keyid: string; payloadType: string; payload: Buffer }
+  | { ok: true; principal: string; keyid: string; payloadType: string; payload: Buffer; keyless?: { issuer: string; subject: string; signedAt: string } }
   | { ok: false; code: "envelope-invalid" | "envelope-untrusted"; reason: string };
 
-/** Verify an envelope against `trusted`. One valid signature by a trusted key is enough. */
-export function verifyEnvelope(envelope: unknown, trusted: readonly TrustedKey[]): EnvelopeVerdict {
+/**
+ * Verify an envelope against `trusted`. One valid signature by a trusted
+ * key, or one keyless signature by a trusted identity (#4869), is enough.
+ */
+export function verifyEnvelope(envelope: unknown, trusted: readonly TrustedSigner[]): EnvelopeVerdict {
   if (!isEnvelope(envelope)) return { ok: false, code: "envelope-invalid", reason: "not a DSSE envelope: it needs payloadType, payload and signatures" };
   const payload = Buffer.from(envelope.payload, "base64");
   if (payload.toString("base64") !== envelope.payload) return { ok: false, code: "envelope-invalid", reason: "the payload is not canonical base64" };
   const message = pae(envelope.payloadType, payload);
-  const byId = new Map(trusted.map((t) => [sshFingerprint(t.key), t]));
+  const keys = trusted.filter((t): t is TrustedKey => typeof (t as TrustedKey).key === "string");
+  const identities = trusted.filter((t): t is TrustedIdentity => typeof (t as TrustedIdentity).issuer === "string");
+  const byId = new Map(keys.map((t) => [sshFingerprint(t.key), t]));
+  let keyless: string | undefined;
   for (const s of envelope.signatures) {
+    if (isKeylessSignature(s)) {
+      const k = verifyKeylessSignature(message, s, identities);
+      if (k.ok) return { ok: true, principal: k.principal, keyid: k.keyid, payloadType: envelope.payloadType, payload, keyless: { issuer: k.issuer, subject: k.subject, signedAt: k.signedAt } };
+      keyless ??= k.reason;
+      continue;
+    }
     const t = byId.get(s.keyid);
     if (!t) continue;
     let good = false;
@@ -119,6 +143,7 @@ export function verifyEnvelope(envelope: unknown, trusted: readonly TrustedKey[]
     if (good) return { ok: true, principal: t.principal, keyid: s.keyid, payloadType: envelope.payloadType, payload };
   }
   const ids = envelope.signatures.map((s) => s.keyid).join(", ") || "none";
+  if (keyless) return { ok: false, code: "envelope-untrusted", reason: keyless };
   return { ok: false, code: "envelope-untrusted", reason: `no signature verifies against a runner key the policy at base lists (key ids: ${ids})` };
 }
 

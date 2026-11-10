@@ -192,7 +192,7 @@ async function signHooks(options: { dir?: string; evidence?: CheckStageEvidence 
     const signer = options.evidence.signer;
     const at = options.evidence.at ?? "HEAD";
     const wanted = passed.map((h) => ({ check: h.check, claim: JSON.stringify(h.runs) }));
-    const signed = isLocalSigner(signer) ? signLocalChecks(repo, at, wanted, signer) : signChecks(repo, at, wanted, signer);
+    const signed = isLocalSigner(signer) ? signLocalChecks(repo, at, wanted, signer) : await signChecks(repo, at, wanted, signer);
     const push = { push: options.evidence.push !== false };
     const pushed = isLocalSigner(signer) ? await recordLocalChecks(repo, signed, push) : await recordChecks(repo, signed, push);
     for (const s of signed) log(`ci check: signed ${isLocalSigner(signer) ? "local " : ""}evidence for ${s.check} at ${s.commit.slice(0, 12)} as ${s.runner}`);

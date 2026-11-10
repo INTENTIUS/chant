@@ -34,7 +34,7 @@ import type { OpRunRecord } from "../../op/runtime";
 import { IN_TOTO_PAYLOAD_TYPE, signEnvelope, verifyEnvelope, type DsseEnvelope } from "./dsse";
 import { STATEMENT_TYPE } from "./evidence";
 import { CI_TAG_SIGNER_ROLE, type CiTagFailure, type CiTagSigner } from "./ci-tag-statement";
-import type { RunnerKey } from "./policy";
+import type { Runner, RunnerKey } from "./policy";
 
 export const OP_RUN_PREDICATE = "https://intentius.io/chant/op-run/v1";
 
@@ -113,7 +113,7 @@ const normalise = (name: string): string => name.normalize("NFKC").trim().toLowe
  * `runner` role, over a statement for this run, its commit and its record as
  * the ledger holds it. Never throws.
  */
-export function verifyOpRunStatement(record: OpRunRecord, runners: readonly RunnerKey[], roles: Readonly<Record<string, readonly string[]>>): OpRunVerdict {
+export function verifyOpRunStatement(record: OpRunRecord, runners: readonly Runner[], roles: Readonly<Record<string, readonly string[]>>): OpRunVerdict {
   const run = `run ${record.id} of ${record.op}`;
   if (record.statement === undefined) return { status: "unsigned", reason: `${run} carries no statement signed by a runner key` };
   const v = verifyEnvelope(record.statement, runners);

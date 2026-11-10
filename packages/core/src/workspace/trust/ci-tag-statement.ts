@@ -32,7 +32,7 @@ import { canonicalJson } from "../../effect-receipt";
 import { IN_TOTO_PAYLOAD_TYPE, signEnvelope, verifyEnvelope, type DsseEnvelope } from "./dsse";
 import { STATEMENT_TYPE } from "./evidence";
 import type { KeyObject } from "node:crypto";
-import type { RunnerKey } from "./policy";
+import type { Runner, RunnerKey } from "./policy";
 
 export const CI_TAG_PREDICATE = "https://intentius.io/chant/ci-tag/v1";
 
@@ -114,7 +114,7 @@ const normalise = (name: string): string => name.normalize("NFKC").trim().toLowe
 export function verifyCiTagStatement(
   record: Record<string, unknown> | null,
   expect: { sha: string; kind: "green" | "revoked"; branch: string; lane?: string },
-  runners: readonly RunnerKey[],
+  runners: readonly Runner[],
   roles: Readonly<Record<string, readonly string[]>>,
 ): CiTagVerdict {
   const tag = `ci/${expect.kind}${expect.lane !== undefined ? `-${expect.lane}` : ""}/${expect.sha}`;

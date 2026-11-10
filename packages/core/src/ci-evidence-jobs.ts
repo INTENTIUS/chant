@@ -22,8 +22,13 @@
  * - A product's check job runs `chant ci check` with the key in
  *   `CHANT_RUNNER_KEY`; the check runner signs each hook (./components/check-steps.ts).
  *
- * The key is a stored secret today. #4869 swaps it for the job's OIDC
- * identity: the steps stay where they are and request a token instead.
+ * With `identity: "oidc"` (#4869) the same steps sign keyless from the
+ * job's OIDC identity: no secret, `CHANT_RUNNER_IDENTITY=oidc` on the
+ * signing step, and the job asks the forge for a token, so no product adds
+ * that itself: `id-token: write` on GitHub (Forgejo's dialect turns it into
+ * `enable-openid-connect: true`), and on GitLab `id_tokens:` with
+ * `CHANT_ID_TOKEN_SIGSTORE` for the signing audience. `.chant/trust.json`
+ * at base lists the workflow's identity under `keyless`.
  */
 
 import type { ForgeKind } from "./pr-forge";
@@ -31,24 +36,57 @@ import type { ForgeKind } from "./pr-forge";
 /** The variable the signing steps read the key from. */
 export const EVIDENCE_KEY_ENV = "CHANT_RUNNER_KEY";
 
-export { CHECK_EVIDENCE_FLOOR, LOCAL_EVIDENCE_FLOOR } from "./release-floors";
+/** The variable that makes a signing step sign keyless (#4869). */
+export const EVIDENCE_IDENTITY_ENV = "CHANT_RUNNER_IDENTITY";
 
-/** A pipeline's runner identity (#4870). */
+/** The GitLab `id_tokens` variable a keyless signing job's token comes in (#4869). */
+export const EVIDENCE_ID_TOKEN_VAR = "CHANT_ID_TOKEN_SIGSTORE";
+
+/** The audience a keyless signing job's token is requested for unless told: sigstore's. */
+export const EVIDENCE_DEFAULT_AUDIENCE = "sigstore";
+
+export { CHECK_EVIDENCE_FLOOR, KEYLESS_EVIDENCE_FLOOR, LOCAL_EVIDENCE_FLOOR } from "./release-floors";
+
+/**
+ * A pipeline's runner identity (#4870): a runner key's secret, or (#4869)
+ * the job's own OIDC identity. Exactly one.
+ */
 export interface PipelineEvidence {
   /** The secret (GitHub, Forgejo) or CI/CD variable (GitLab) holding the runner key as PEM. */
-  runnerKeySecret: string;
+  runnerKeySecret?: string;
+  /** `oidc` (#4869): sign keyless from the job's OIDC identity, which `.chant/trust.json` at base lists under `keyless.identities`. */
+  identity?: "oidc";
+  /** With `identity`: the token's audience, as `keyless.audience` in `.chant/trust.json` says. Default `sigstore`. */
+  audience?: string;
 }
 
 const SECRET_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-/** Refuse a secret name the forge could not hold. */
+/** Refuse a secret name the forge could not hold, and an evidence block that names both identities or neither. */
 export function assertPipelineEvidence(evidence: PipelineEvidence | undefined): void {
   if (evidence === undefined) return;
+  if (evidence.identity !== undefined) {
+    if (evidence.runnerKeySecret !== undefined) throw new Error("evidence names a runnerKeySecret and an identity; a pipeline signs with one of them (#4869)");
+    if (evidence.identity !== "oidc") throw new Error(`evidence.identity ${JSON.stringify(evidence.identity)} is not oidc, the one identity chant signs with keyless`);
+    if (evidence.audience !== undefined && !/^[\x21-\x7e]+$/.test(evidence.audience)) throw new Error(`evidence.audience ${JSON.stringify(evidence.audience)} is not printable ASCII with no space`);
+    return;
+  }
   if (!SECRET_NAME.test(evidence.runnerKeySecret ?? "")) throw new Error(`evidence.runnerKeySecret ${JSON.stringify(evidence.runnerKeySecret)} is not a secret name: letters, digits and _, not starting with a digit`);
 }
 
-/** The signing step's key variable, from the forge's secret. */
+/** Whether the pipeline signs keyless (#4869), so its signing jobs ask the forge for an OIDC token. */
+export function evidenceKeyless(evidence: PipelineEvidence | undefined): boolean {
+  return evidence?.identity === "oidc";
+}
+
+/** The GitLab `id_tokens:` a keyless signing job requests (#4869); empty with a runner key. */
+export function evidenceIdTokens(evidence: PipelineEvidence | undefined): Record<string, { aud: string }> {
+  return evidenceKeyless(evidence) ? { [EVIDENCE_ID_TOKEN_VAR]: { aud: evidence!.audience ?? EVIDENCE_DEFAULT_AUDIENCE } } : {};
+}
+
+/** The signing step's variables: the key from the forge's secret, or (#4869) `CHANT_RUNNER_IDENTITY=oidc`. */
 export function evidenceKeyEnv(forge: ForgeKind, evidence: PipelineEvidence): Record<string, string> {
+  if (evidenceKeyless(evidence)) return { [EVIDENCE_IDENTITY_ENV]: "oidc" };
   return { [EVIDENCE_KEY_ENV]: forge === "gitlab" ? `$${evidence.runnerKeySecret}` : `\${{ secrets.${evidence.runnerKeySecret} }}` };
 }
 

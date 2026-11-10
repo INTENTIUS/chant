@@ -38,7 +38,7 @@ import { dirname, isAbsolute, join } from "node:path";
 import type { ReasonCode } from "../reason-codes";
 import { verifyEvidence, type EvidenceErrorCode } from "./evidence";
 import { policyAtBase } from "./provenance";
-import type { RefRule, TrustPolicy } from "./policy";
+import { runnersAt, type RefRule, type TrustPolicy } from "./policy";
 import {
   OVERRIDE_APPLIED,
   OVERRIDE_LEDGER,
@@ -256,7 +256,8 @@ function judgeCheck(repo: string, policy: TrustPolicy, envelopes: readonly unkno
   let stale: string | undefined;
   let bad: { code: EvidenceErrorCode; reason: string } | undefined;
   for (const env of envelopes) {
-    const v = verifyEvidence(env, policy.runners, repo, commit);
+    // #4869: keys and keyless identities; under keyless.since, keys only for a commit before it.
+    const v = verifyEvidence(env, runnersAt(policy, { repo, commit }), repo, commit);
     if (!v.ok) {
       if (claimedCheck(env) === check && !bad) bad = { code: v.code, reason: v.reason };
       continue;

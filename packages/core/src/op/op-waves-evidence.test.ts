@@ -106,7 +106,7 @@ describe("evidence.requires (#4870)", () => {
 
   test("the same commit applies once its tree has current evidence for each required check", async () => {
     const { cwd, base, head, pem } = repo();
-    await recordChecks(cwd, signChecks(cwd, head, [{ check: "plan" }, { check: "policy" }], runnerKeyEvidenceSigner(cwd, base, pem)), { push: false });
+    await recordChecks(cwd, await signChecks(cwd, head, [{ check: "plan" }, { check: "policy" }], runnerKeyEvidenceSigner(cwd, base, pem)), { push: false });
     const { result, ran } = await wave(cwd, head);
     expect(result.exitCode).toBe(0);
     expect(ran).toEqual(["network"]);

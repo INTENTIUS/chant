@@ -30,7 +30,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { canonicalJson } from "../../effect-receipt";
 import { gitRevisionSource } from "../record-source";
-import { IN_TOTO_PAYLOAD_TYPE, loadRunnerKey, signEnvelope, verifyEnvelope } from "./dsse";
+import { IN_TOTO_PAYLOAD_TYPE, loadRunnerKey, signEnvelope, verifyEnvelope, type DsseEnvelope } from "./dsse";
 import { STATEMENT_TYPE } from "./evidence";
 import { commitAndTree, recordChecks, type EvidenceSigner, type SignedCheck } from "./check-evidence";
 import { localEvidenceAllowedFor, readTrustPolicy, type LocalSignerClass, type TrustPolicy } from "./policy";
@@ -70,6 +70,8 @@ export type LocalStatement = z.infer<typeof localStatementSchema>;
 /** A local signer: the key's principal and class as `.chant/trust.json` at base lists them. */
 export interface LocalEvidenceSigner extends EvidenceSigner {
   class: LocalSignerClass;
+  /** A local key signs on the spot; only a keyless runner (#4869) waits on a service. */
+  sign(payloadType: string, payload: Buffer): DsseEnvelope;
 }
 
 /**
