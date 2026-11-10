@@ -62,6 +62,12 @@ export interface ReleaseImageBuild {
   build: string;
   /** The OCI archive the command writes, a layout directory or a tar file, relative to the member. The `oci` target's `image`. */
   archive: string;
+  /**
+   * The platforms the command builds, such as `["linux/amd64", "linux/arm64"]`
+   * (#4876). chant does not pass them to the command; `chant release workflow`
+   * reads them to set up QEMU for those the runner can't run. Unset: none.
+   */
+  platforms?: string[];
 }
 
 /** One image chant builds from a Dockerfile (#4819). */
@@ -123,6 +129,15 @@ export function resolveReleaseImages(images: readonly ReleaseImageDeclaration[],
   return images.map((i) => (isDockerfile(i) ? { name: i.name, build: releaseImageBuildCommand(i, o), archive: archiveOf(i) } : i));
 }
 
+/**
+ * Every platform the images build (#4876): a Dockerfile entry's, or
+ * {@link RELEASE_IMAGE_PLATFORMS} when it names none, and a command entry's
+ * `platforms`. Sorted, each once.
+ */
+export function releaseImagePlatforms(images: readonly ReleaseImageDeclaration[]): string[] {
+  return [...new Set(images.flatMap((i) => (isDockerfile(i) ? (i.platforms ?? RELEASE_IMAGE_PLATFORMS) : (i.platforms ?? []))))].sort();
+}
+
 export class ReleaseImageError extends Error {
   constructor(
     readonly code: string,
@@ -150,7 +165,7 @@ export function checkReleaseImages(images: readonly ReleaseImageDeclaration[]): 
     for (const [what, p] of paths) {
       if (p !== undefined && outside(p)) throw new ReleaseImageError("release-image-archive-outside", `release.images "${i.name}": ${what} ${p} is not a path inside the member`);
     }
-    if (isDockerfile(i) && i.platforms !== undefined && (i.platforms.length === 0 || !i.platforms.every((p) => PLATFORM.test(p)))) {
+    if (i.platforms !== undefined && (i.platforms.length === 0 || !i.platforms.every((p) => PLATFORM.test(p)))) {
       throw new ReleaseImageError("release-image-invalid", `release.images "${i.name}": platforms is a list of os/arch such as linux/amd64, not ${JSON.stringify(i.platforms)}`);
     }
   }

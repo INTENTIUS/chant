@@ -28,7 +28,7 @@
  * renders the tag-triggered file it always did.
  */
 import { ACTION_PINS, tagComments, usesRef } from "../action-pins";
-import { resolveReleaseImages } from "../lifecycle/release-images";
+import { releaseImagePlatforms, resolveReleaseImages } from "../lifecycle/release-images";
 import { GENERATED_MARKER } from "../discovery/files";
 import type { SecurityGroup } from "./security";
 import type { OpSetupStep } from "../lexicon";
@@ -74,9 +74,9 @@ export interface ReleasePipelineConfig {
   env?: Record<string, string>;
   /**
    * Steps the cut and publish jobs run after the install (#4751): `{ run }`,
-   * or `{ uses, with }` on GitHub and Forgejo, such as QEMU's binfmt handlers
-   * for a two-platform image build, or a newer npm. GitLab takes `run` steps
-   * as script lines and refuses `uses` by name.
+   * or `{ uses, with }` on GitHub and Forgejo, such as a newer npm. GitLab
+   * takes `run` steps as script lines and refuses `uses` by name. QEMU for
+   * the platforms `release.images` builds is set up without one (#4876).
    */
   setup?: OpSetupStep[];
   /** Where the workflow is written, from the repository root, such as `.github/workflows/publish.yml` for an npm trusted publisher that names that file. Default {@link RELEASE_WORKFLOW_FILES}. */
@@ -107,6 +107,12 @@ export interface ReleaseWorkflowInput {
    * two jobs cannot change what is published.
    */
   imageArchives?: string[];
+  /**
+   * The platforms `release.images` builds (#4876). Those the runner can't run
+   * ({@link RELEASE_RUNNER_PLATFORM}) get QEMU's binfmt handlers in the cut
+   * and publish jobs, before `release.workflow.setup`.
+   */
+  imagePlatforms?: string[];
   /** `release.lane` (#4692): the gate's green lane. */
   lane?: string;
   /**
@@ -174,6 +180,35 @@ export function targetExtras(forge: ReleaseWorkflowForge, targets: ReadonlyArray
   return { ...(permissions ? { permissions } : {}), ...(Object.keys(env).length > 0 ? { env } : {}), ...(setup.length > 0 ? { setup } : {}) };
 }
 
+/** The platform the jobs `chant release workflow` writes run on: GitHub's and Forgejo's `ubuntu-latest`, and a GitLab runner's default (#4876). */
+export const RELEASE_RUNNER_PLATFORM = "linux/amd64";
+
+/** The binfmt image a GitLab job installs QEMU's handlers with (#4876). */
+export const RELEASE_BINFMT_IMAGE = "tonistiigi/binfmt";
+
+/** The architectures among `platforms` the runner can't run, as QEMU names them (`linux/arm/v7` is `arm`), each once. */
+export function qemuArchitectures(platforms: readonly string[]): string[] {
+  return [...new Set(platforms.filter((p) => p.split("/").slice(0, 2).join("/") !== RELEASE_RUNNER_PLATFORM).map((p) => p.split("/")[1] ?? p))].sort();
+}
+
+/**
+ * QEMU's binfmt setup for the platforms `release.images` builds that the
+ * runner can't, such as `linux/arm64` on an amd64 runner (#4876), so no
+ * product names it in `release.workflow.setup`. GitHub and Forgejo get
+ * `docker/setup-qemu-action` at its pin; GitLab a `docker run --privileged`
+ * of {@link RELEASE_BINFMT_IMAGE}, which `chant release workflow` notes needs
+ * an executor that runs privileged containers. A config whose `setup` names
+ * the action or the binfmt image already gets nothing more, so its file
+ * renders as it did.
+ */
+export function qemuSetup(forge: ReleaseWorkflowForge, platforms: readonly string[], p: ReleasePipelineConfig): OpSetupStep[] {
+  const archs = qemuArchitectures(platforms);
+  if (archs.length === 0) return [];
+  const named = (p.setup ?? []).some((s) => ("uses" in s ? /^docker\/setup-qemu-action@/.test(s.uses) : s.run.includes(RELEASE_BINFMT_IMAGE)));
+  if (named) return [];
+  return forge === "gitlab" ? [{ run: `docker run --privileged --rm ${RELEASE_BINFMT_IMAGE} --install ${archs.join(",")}` }] : [{ uses: usesRef(ACTION_PINS.dockerSetupQemu4), with: { platforms: archs.join(",") } }];
+}
+
 /** The flags `chant release publish` gets under the groups. */
 export function publishFlags(groups: ReadonlySet<SecurityGroup>): string[] {
   return [...(groups.has("supply-chain") ? ["--require-provenance"] : []), "--yes"];
@@ -214,12 +249,14 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
   const version = input.version === true;
   // #4786: the targets' own needs first, then the config's, so a config that set them by hand renders the same file without them.
   const derived = targetExtras(input.forge, input.publish ?? [], p);
+  // #4876: QEMU before the config's setup, where the products named it.
+  const qemu = images ? qemuSetup(input.forge, input.imagePlatforms ?? [], p) : [];
   const extra = jobExtras(
     {
       ...p,
       ...(derived.permissions ? { permissions: { ...p.permissions, ...derived.permissions } } : {}),
       ...(derived.env ? { env: { ...p.env, ...derived.env } } : {}),
-      ...(derived.setup ? { setup: [...(p.setup ?? []), ...derived.setup] } : {}),
+      ...(derived.setup || qemu.length > 0 ? { setup: [...qemu, ...(p.setup ?? []), ...(derived.setup ?? [])] } : {}),
     },
     input.forge,
   );
@@ -664,7 +701,7 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     groups,
     workspaceRoot,
     ...(release?.workflow ? { pipeline: release.workflow } : {}),
-    ...((release?.images?.length ?? 0) > 0 ? { images: true, imageArchives: resolveReleaseImages(release!.images!).map((i) => i.archive) } : {}),
+    ...((release?.images?.length ?? 0) > 0 ? { images: true, imageArchives: resolveReleaseImages(release!.images!).map((i) => i.archive), imagePlatforms: releaseImagePlatforms(release!.images!) } : {}),
     ...(release?.lane ? { lane: release.lane } : {}),
     ...(release?.version ? { version: true } : {}),
     ...(release?.publish ? { publish: release.publish } : {}),
@@ -685,6 +722,10 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
   const what = release?.workflow?.trigger === "dispatch" ? "cuts and publishes a release started by hand with its label, from a green commit" : "publishes the release a release/** tag names";
   console.log(formatSuccess(`Wrote ${shown}: ${what}${extras.length > 0 ? `, and ${extras.join(" and ")}` : ""}.`));
   if (forge === "gitlab") console.log(`Include it from .gitlab-ci.yml: include: [{ local: ${release?.workflow?.file ?? RELEASE_WORKFLOW_FILES.gitlab} }]`);
+  // #4876: a GitLab executor that refuses privileged containers can't install the handlers from the job.
+  const archs = (release?.images?.length ?? 0) > 0 ? qemuArchitectures(releaseImagePlatforms(release!.images!)) : [];
+  if (forge === "gitlab" && archs.length > 0 && text.includes(`${RELEASE_BINFMT_IMAGE} --install`))
+    console.log(`The cut and publish jobs install QEMU's binfmt handlers for ${archs.join(", ")} with docker run --privileged ${RELEASE_BINFMT_IMAGE}: the runner's executor must run privileged containers, or have the handlers installed on its host.`);
   if (forge === "gitlab" && release?.workflow?.trigger === "dispatch") console.log("The cut and publish jobs push with CHANT_RELEASE_TOKEN: a project access token with write_repository, as a masked CI/CD variable.");
   return 0;
 }

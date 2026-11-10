@@ -21,6 +21,7 @@ import {
   pinnedDigests,
   readPins,
   releaseImageDigests,
+  releaseImagePlatforms,
   ReleaseImageError,
   unknownPins,
   writeReleaseDigests,
@@ -43,6 +44,13 @@ describe("release.images (#4657)", () => {
     expect(() => checkReleaseImages([{ name: "a b", build: "x", archive: "a.tar" }])).toThrow(/not a name/);
     expect(() => checkReleaseImages([{ name: "a", build: "x", archive: "a.tar" }, { name: "a", build: "y", archive: "b.tar" }])).toThrow(/twice/);
     expect(() => checkReleaseImages([{ name: "a", build: "x", archive: "../a.tar" }])).toThrow(/not a path inside the member/);
+  });
+
+  test("the platforms the images build: a Dockerfile entry's or the default, and a command entry's own (#4876)", () => {
+    expect(releaseImagePlatforms([{ name: "a", dockerfile: "Dockerfile" }])).toEqual(["linux/amd64", "linux/arm64"]);
+    expect(releaseImagePlatforms([{ name: "a", dockerfile: "Dockerfile", platforms: ["linux/amd64"] }, { name: "b", build: "x", archive: "b.tar" }])).toEqual(["linux/amd64"]);
+    expect(releaseImagePlatforms([{ name: "b", build: "x", archive: "b.tar", platforms: ["linux/arm64", "linux/amd64"] }])).toEqual(["linux/amd64", "linux/arm64"]);
+    expect(() => checkReleaseImages([{ name: "b", build: "x", archive: "b.tar", platforms: ["arm64"] }])).toThrow(/os\/arch/);
   });
 
   test("each build runs with SOURCE_DATE_EPOCH and the label, and its archive's top manifest digest is recorded", () => {
@@ -239,4 +247,40 @@ test("the digests file is sorted JSON of name to digest", () => {
   writeReleaseDigests(file, { z: D("1"), a: D("2") });
   expect(readFileSync(file, "utf-8")).toBe(`{\n  "a": "${D("2")}",\n  "z": "${D("1")}"\n}\n`);
   writeFileSync(file, "");
+});
+
+describe("an npm package that would carry an image archive (#4934)", () => {
+  /** A member that is itself the package, as sql-yodeler's is, with the image archive under dist/images and `files` as given. */
+  const fixture = (name: string, files: string[]): { dir: string; release: Release } => {
+    const r = new TestRepo(name);
+    repos.push(r);
+    writePackage(r.dir, "@acme/app", "2.0.0");
+    const pkg = JSON.parse(readFileSync(join(r.dir, "package.json"), "utf-8")) as Record<string, unknown>;
+    writeFileSync(join(r.dir, "package.json"), JSON.stringify({ ...pkg, files }, null, 2));
+    mkdirSync(join(r.dir, "dist", "images"), { recursive: true });
+    writeFileSync(join(r.dir, "dist", "index.js"), "export {};\n");
+    writeFileSync(join(r.dir, "dist", "images", "app.tar"), "image bytes");
+    const image: ReleaseArtifact = { component: "app", kind: "image", path: "dist/images/app.tar", digest: D("a") };
+    return { dir: r.dir, release: { artifactDigests: [image] } as unknown as Release };
+  };
+  const planOf = async (dir: string, release: Release) => {
+    const [target] = await createPublishTargets([PublishDeclarationSchema.parse({ type: "npm", packages: ["."] })], {});
+    const env = { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "" };
+    const ctx: PublishContext = { release, label: "v2", releaseTag: "release/v2", provenance: NO_OIDC, cwd: dir, tag: null, env, redactor: createRedactor(env), log: () => {} };
+    return target!.plan(ctx);
+  };
+
+  test("a package whose files takes the archive's directory is refused at plan time, naming the file and the files entry to add", async () => {
+    const { dir, release } = fixture("npm-carries-image", ["dist", "sbom.spdx.json"]);
+    const err = await planOf(dir, release).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(PublishTargetError);
+    expect((err as PublishTargetError).code).toBe("publish-npm-carries-image");
+    expect((err as PublishTargetError).message).toContain("would carry dist/images/app.tar");
+    expect((err as PublishTargetError).fix).toContain('Add "!dist/images/app.tar" to "files" in package.json');
+  });
+
+  test("the same package with the archive left out plans", async () => {
+    const { dir, release } = fixture("npm-leaves-image-out", ["dist", "!dist/images/app.tar", "sbom.spdx.json"]);
+    expect((await planOf(dir, release)).map((i) => i.name)).toEqual(["@acme/app@2.0.0"]);
+  });
 });
