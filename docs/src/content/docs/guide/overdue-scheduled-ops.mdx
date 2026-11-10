@@ -12,9 +12,9 @@ A scheduled [watch](/chant/guide/watching-lifecycle/) or [reconcile](/chant/guid
 
 ## What the plan checks
 
-`chant components pr-plan` with `--forge` checks every Op it discovers that has a `schedule` and the `Watch` or `Reconcile` label (`packages/core/src/op/schedule-overdue.ts:64`). `WatchOp` and `ReconcileOp` set those labels (`packages/core/src/op/composites/watch-op.ts:80`, `packages/core/src/op/composites/reconcile-op.ts:80`).
+`chant components pr-plan` with `--forge` checks every Op it discovers that has a `schedule` and the `Watch` or `Reconcile` label (`packages/core/src/op/schedule-overdue.ts:80`). `WatchOp` and `ReconcileOp` set those labels (`packages/core/src/op/composites/watch-op.ts:80`, `packages/core/src/op/composites/reconcile-op.ts:80`).
 
-The plan skips an Op unless the checkout holds the file `chant run --generate` wrote for it (`packages/core/src/op/schedule-overdue.ts:281`), so Ops that `chant operator` or another scheduler runs are left alone.
+The plan skips an Op unless the checkout holds the file `chant run --generate` wrote for it (`packages/core/src/op/schedule-overdue.ts:297`), so Ops that `chant operator` or another scheduler runs are left alone.
 
 | Forge | Pipeline file | What the forge is asked |
 |---|---|---|
@@ -34,9 +34,11 @@ A product passes its own words ([#4888](https://github.com/INTENTIUS/chant/issue
 
 A product whose plan runs on chant's product plan (`productPlan` in `@intentius/chant/ci-product`) lists its scheduled jobs as `watches`, each a `ScheduledWatch`. The plan job holds no token, so it cannot ask the forge for a private repository. The note job gets the watches from the pipeline as `CHANT_PLAN_WATCHES`, and its `pr-post` checks them with the job's token beside the Ops it discovers, in its checkout of the target branch's commit, and adds the line for each overdue job under the note's counts. A watch whose op is a discovered Op's takes its place. Both need chant `PRODUCT_PLAN_WATCHES_FLOOR`.
 
+With the product plan's `targets`, every target's note checks every watch unless the watch names its own `targets` ([#4988](https://github.com/INTENTIUS/chant/issues/4988)). An environment's drift watch with `targets: ["prod"]` is checked by the `prod` note alone. The other notes check neither that watch nor a discovered Op of the same name, so the staging note does not warn about the prod watch. Each note job still gets the whole list, and its `pr-post --member <target>` picks its own (`watchesForTarget` in `@intentius/chant/op/schedule-overdue`). A target the plan does not have is refused, and so is `targets` on a plan with none. Needs chant `PRODUCT_PLAN_WATCH_TARGETS_FLOOR`.
+
 ## When it warns
 
-The plan counts the fires of the Op's cron in UTC since the job last ran (`packages/core/src/op/cron.ts:158`). When no run is on record, it counts from the commit that added the pipeline file. Two fires or more is overdue (`packages/core/src/op/schedule-overdue.ts:296`), while one late or dropped run is not.
+The plan counts the fires of the Op's cron in UTC since the job last ran (`packages/core/src/op/cron.ts:158`). When no run is on record, it counts from the commit that added the pipeline file. Two fires or more is overdue (`packages/core/src/op/schedule-overdue.ts:312`), while one late or dropped run is not.
 
 A CI checkout is often shallow, and its oldest commit lists every file as added. When the commit that added the pipeline file is that oldest commit, the check runs `git fetch --unshallow` once with the job's own credentials and then reads the commit again ([#4952](https://github.com/INTENTIUS/chant/issues/4952)). If the fetch fails, the check counts from the oldest commit and says so in the job log. That date is later than the real one, so the check can only warn late.
 
@@ -48,7 +50,7 @@ Warning: Op `drift-watch` is overdue: its schedule `0 6 * * *` has fired at leas
 
 The job log gets the same line. Chant `0.124.41` and newer also list the Ops in the report's `overdue` field (`packages/core/src/pr-loop.ts:393`). A workspace member's note is posted for an overdue Op even when the change reaches none of its components (`packages/core/src/cli/handlers/pr.ts:455`).
 
-The warning never fails the plan, and when the forge refuses the call the job log says so and the Op gets no verdict (`packages/core/src/op/schedule-overdue.ts:287`).
+The warning never fails the plan, and when the forge refuses the call the job log says so and the Op gets no verdict (`packages/core/src/op/schedule-overdue.ts:303`).
 
 ## Give the note job read access
 

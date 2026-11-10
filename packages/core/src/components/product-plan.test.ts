@@ -65,6 +65,17 @@ describe("the product plan (#4799)", () => {
     expect(() => productPipelineJobs(forge, "default", { words: terragucci, productPlan: { command: "terragucci plan", watches: [drift, drift] } })).toThrow(/name an Op twice/);
   });
 
+  // #4988: an environment's drift watch scoped to that environment's note, as sql-yodeler warned per environment.
+  test.each(["github", "forgejo", "gitlab"] as const)("on %s, a watch's targets reach every target's note job, and a target the plan lacks is refused", (forge) => {
+    const staging = { op: "yodel-watch-staging", cron: "0 6 * * *", targets: ["staging"] };
+    const prod = { op: "yodel-watch-prod", cron: "0 6 * * *", targets: ["prod"] };
+    const jobs = productPipelineJobs(forge, "default", { words: yodel, productPlan: { ...environments, watches: [staging, prod] } }).productPlan!;
+    // pr-post --member <target> picks its own (watchesForTarget), so every note job reads the one list.
+    for (const j of jobs) expect(JSON.parse(j.post.env[PLAN_WATCHES_ENV]!)).toEqual([staging, prod]);
+    expect(() => productPipelineJobs(forge, "default", { words: yodel, productPlan: { ...environments, watches: [{ ...prod, targets: ["dev"] }] } })).toThrow("the product plan's watch yodel-watch-prod names target dev, which the plan does not have");
+    expect(() => productPipelineJobs(forge, "default", { words: terragucci, productPlan: { command: "terragucci plan", watches: [prod] } })).toThrow("the product plan's watch yodel-watch-prod names target prod, which the plan cannot scope to: it has no targets");
+  });
+
   test("the pipeline's passed values reach every target, and a name both give is refused", () => {
     const [staging] = productPipelineJobs("github", "default", { words: yodel, variables: { YODEL_LOG: "info" }, productPlan: environments }).productPlan!;
     expect(staging!.env.YODEL_LOG).toBe("info");

@@ -201,6 +201,9 @@ export const MEMBER_SIGNED_CHECKS_FLOOR = "0.124.89";
 /** The first chant whose `checkJob` takes `{ services, env, before, dir, args }` (`PrCheckJobOptions`: service containers, the check step's variables and lines, the report directory, the arguments after `--base`) and whose github, forgejo and gitlab lexicons render the check, check evidence and ref gate jobs for a product's own workflow (`productCheckJobs`, `forgejoProductCheckJobs`, `gitlabProductCheckJobs`) (#4964). */
 export const PRODUCT_CHECK_JOBS_FLOOR = "0.124.89";
 
+/** The first chant whose `checkJob` takes `artifacts: { paths, reports }` (`PrCheckArtifacts`), which GitLab's check job keeps beside its report as `artifacts:paths` and `artifacts:reports`, such as a lint hook's `codequality` report (#4988). */
+export const CHECK_JOB_ARTIFACTS_FLOOR = NEXT_RELEASE;
+
 /** The first chant whose GitLab Op waves pipeline with a runner key hands it to no wave job: each deciding wave's `<wave job>-evidence` job names the `chant-evidence` environment and signs `plan:<wave>` from the wave job (#4964). */
 export const GITLAB_WAVE_KEY_SCOPE_FLOOR = "0.124.89";
 

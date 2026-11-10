@@ -41,6 +41,22 @@ export interface ScheduledWatch {
    * missing schedule's line names it.
    */
   schedule?: ScheduledRunsQuery["schedule"];
+  /**
+   * The product plan's targets whose note checks this watch (#4988), such
+   * as the environment a drift watch reads. Left out, every target's note
+   * does. A note of another target checks neither the watch nor a
+   * discovered Op of the same name.
+   */
+  targets?: readonly string[];
+}
+
+/**
+ * The watches the note of `target` checks (#4988): the ones with no
+ * `targets`, and the ones naming it. Without a target, every one.
+ */
+export function watchesForTarget(watches: readonly ScheduledWatch[], target: string | undefined): ScheduledWatch[] {
+  if (target === undefined) return [...watches];
+  return watches.filter((w) => w.targets === undefined || w.targets.includes(target));
 }
 
 /** An Op the plan note warns about. */
@@ -373,6 +389,8 @@ export const PLAN_WATCHES_ENV = "CHANT_PLAN_WATCHES";
 const OP_NAME = /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/;
 const REL_PATH = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9_.\/-]+$/;
 const VAR_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+/** A product plan target's name, as ../components/product-plan.ts takes it. */
+const WATCH_TARGET = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
 /**
  * Why `watch` is not a scheduled watch a pipeline may name (#4888), or
@@ -393,6 +411,8 @@ export function scheduledWatchProblem(watch: unknown): string | undefined {
     if (s.value !== undefined && !plain(s.value)) return `watch ${watch.op}'s schedule value is not a plain word`;
     if (s.not !== undefined && (!Array.isArray(s.not) || !s.not.every(plain))) return `watch ${watch.op}'s schedule not is not a list of plain words`;
   }
+  // #4988: the targets whose note checks the watch, by name.
+  if (watch.targets !== undefined && (!Array.isArray(watch.targets) || watch.targets.length === 0 || watch.targets.some((t) => typeof t !== "string" || !WATCH_TARGET.test(t)))) return `watch ${watch.op}'s targets are not a list of target names`;
   return undefined;
 }
 
@@ -443,14 +463,18 @@ export async function overdueOpsAt(
     /**
      * A product's own scheduled watches (#4888), checked beside the
      * discovered Ops; one of the same name takes the discovered Op's place.
-     * They are checked even when discovery fails.
+     * They are checked even when discovery fails. #4988: with `member`, the
+     * product plan's target, a watch whose `targets` leave it out is not
+     * checked, and neither is the discovered Op of its name.
      */
     watches?: readonly ScheduledWatch[];
   } & OverdueWords,
 ): Promise<OverdueOp[]> {
   const { forge } = input;
   if (!forge?.scheduledRuns) return [];
-  const own = input.watches ?? [];
+  const all = input.watches ?? [];
+  const own = watchesForTarget(all, input.member);
+  const elsewhere = all.filter((w) => !own.includes(w));
   let discovered: ScheduledWatch[] = [];
   try {
     const { discoverOps } = await import("./discover");
@@ -460,7 +484,7 @@ export async function overdueOpsAt(
     input.log(`${input.logPrefix ?? ""}could not check the scheduled Ops, so none is reported overdue: ${err instanceof Error ? err.message : String(err)}`);
     if (own.length === 0) return [];
   }
-  const watches = [...discovered.filter((d) => !own.some((w) => w.op === d.op)), ...own];
+  const watches = [...discovered.filter((d) => !own.some((w) => w.op === d.op) && !elsewhere.some((w) => w.op === d.op)), ...own];
   if (watches.length === 0) return [];
   try {
     const top = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd: input.cwd, encoding: "utf-8" });
