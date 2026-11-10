@@ -119,6 +119,33 @@ describe("resumeGateRun", () => {
     expect(await resumeGateRun(gitlab, { token: "t", fetch: retried.fetch })).toMatchObject({ status: "skipped", reason: expect.stringContaining("job 556") });
   });
 
+  test("GitLab (#4978): a wave job's evidence job that already ran is retried with it, and one GitLab skipped is left to GitLab", async () => {
+    const gitlab: GateRunLocator = { forge: "gitlab", api: "https://gl/api/v4", repo: "7", run: "100", job: "555", jobName: "wave-2-staging" };
+    const ran = fakeForge({
+      "GET /api/v4/projects/7/jobs/555": { status: "failed", name: "wave-2-staging" },
+      "GET /api/v4/projects/7/pipelines/100/jobs": [{ id: 555, name: "wave-2-staging", status: "failed" }, { id: 560, name: "wave-2-staging-evidence", status: "success" }],
+      "POST /api/v4/projects/7/jobs/555/retry": { id: 556 },
+      "POST /api/v4/projects/7/jobs/560/retry": { id: 561 },
+    });
+    expect(await resumeGateRun(gitlab, { token: "t", fetch: ran.fetch })).toMatchObject({ status: "resumed", how: "retried job 555 as job 556, and its evidence job 560 as job 561" });
+    // The wave job first, so the evidence job's need is the new try.
+    expect(ran.calls.filter((c) => c.method === "POST").map((c) => c.url)).toEqual(["https://gl/api/v4/projects/7/jobs/555/retry", "https://gl/api/v4/projects/7/jobs/560/retry"]);
+
+    const skipped = fakeForge({
+      "GET /api/v4/projects/7/jobs/555": { status: "failed", name: "wave-2-staging" },
+      "GET /api/v4/projects/7/pipelines/100/jobs": [{ id: 555, name: "wave-2-staging", status: "failed" }, { id: 560, name: "wave-2-staging-evidence", status: "skipped" }],
+      "POST /api/v4/projects/7/jobs/555/retry": { id: 556 },
+    });
+    expect(await resumeGateRun(gitlab, { token: "t", fetch: skipped.fetch })).toMatchObject({ status: "resumed", how: "retried job 555 as job 556" });
+    expect(skipped.calls.filter((c) => c.method === "POST")).toHaveLength(1);
+
+    const dry = fakeForge({
+      "GET /api/v4/projects/7/jobs/555": { status: "failed", name: "wave-2-staging" },
+      "GET /api/v4/projects/7/pipelines/100/jobs": [{ id: 555, name: "wave-2-staging", status: "failed" }, { id: 560, name: "wave-2-staging-evidence", status: "failed" }],
+    });
+    expect(await resumeGateRun(gitlab, { token: "t", fetch: dry.fetch, dryRun: true })).toMatchObject({ status: "would-resume", how: "would retry job 555 and its evidence job 560" });
+  });
+
   test("Forgejo: dispatches the workflow on its branch, unless a run of it started after the approval", async () => {
     const forgejo: GateRunLocator = { forge: "forgejo", api: "https://fj/api/v1", repo: "acme/db", run: "9", workflow: "migrations.yml", ref: "main" };
     const forge = fakeForge({

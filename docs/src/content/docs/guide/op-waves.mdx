@@ -651,7 +651,7 @@ The approval is recorded and pushed first. If the push does not land, nothing is
 | Forge | What `--resume` asks | Least access its token needs |
 |---|---|---|
 | GitHub | re-run the failed jobs of the run (`POST /repos/{repo}/actions/runs/{run}/rerun-failed-jobs`); the waves after it run too | `actions: write`: a fine-grained token with Actions read and write, or a job's `GITHUB_TOKEN` granted it |
-| GitLab | retry the waiting job (`POST /projects/{id}/jobs/{job}/retry`); the jobs it skipped run after it | a project or personal access token with the `api` scope, as a member with the Developer role. `CI_JOB_TOKEN` cannot retry jobs |
+| GitLab | retry the waiting job (`POST /projects/{id}/jobs/{job}/retry`); the jobs it skipped run after it, and its `<wave job>-evidence`, when that one already ran, is retried with it ([#4978](https://github.com/INTENTIUS/chant/issues/4978)) | a project or personal access token with the `api` scope, as a member with the Developer role. `CI_JOB_TOKEN` cannot retry jobs |
 | Forgejo | dispatch the workflow again on its branch (`POST /repos/{repo}/actions/workflows/{file}/dispatches`), since Forgejo has no API to re-run a run | a token with the `write:repository` scope |
 
 The token is read from `CHANT_FORGE_TOKEN`, else `GITHUB_TOKEN` or `GH_TOKEN` on GitHub and Forgejo, else `GITLAB_TOKEN` on GitLab. On GitHub and GitLab the run resumes at the commit that waited. A Forgejo dispatch runs the whole workflow at the branch's head, so the waves before the gate run again. Their plans are empty because their runs already applied, so they wait for nothing. Their `apply` command still runs again and has to be safe to repeat.

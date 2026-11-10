@@ -6,7 +6,8 @@
  * {@link refGateInitPlan} plans, and writes nothing, so a product folds the
  * files into its own plan and keeps its dry run:
  *
- * - `.chant/trust.json` with a `refs` rule for the branch (#4867): created
+ * - `.chant/trust.json` with a `refs` rule for the branch (#4867), whose
+ *   `plan` and `policy` are each target's with `targets` (#4978): created
  *   with `"schema": 1` when there is none, the rule added in place when the
  *   file has no rule for the branch, left as it is when it has one or does
  *   not parse.
@@ -26,13 +27,14 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { writePlannedFiles } from "./planned-files";
+import { EVIDENCE_MEMBER_NAME, targetEvidenceCheck } from "./ci-evidence-jobs";
 import { appendElement, setProperty } from "./workspace/json-edit";
 import { parseJsonText } from "./workspace/jsonc";
 import { REF_CHECK_NAME, TRUST_CONFIG_PATH, trustConfigSchema, type TrustConfig } from "./workspace/trust/policy";
 import { refPatternRegExp, REF_GATE_STATUS } from "./workspace/trust/ref-gate";
 import { REF_GATE_HOOK_MARK, refGateHook } from "./workspace/trust/ref-gate-cli";
 
-export { REF_GATE_PIECES_FLOOR } from "./release-floors";
+export { REF_GATE_PIECES_FLOOR, TARGET_SIGNED_CHECKS_FLOOR } from "./release-floors";
 
 /** One check the rule requires evidence for, as `refs[].checks[]` holds it. */
 export interface RefGateInitCheck {
@@ -48,6 +50,13 @@ export interface RefGateInitOptions {
   branch?: string;
   /** The checks an update of the branch needs current evidence for. At least one. */
   checks: readonly RefGateInitCheck[];
+  /**
+   * The product plan's targets (#4978), as `productPlan.targets` names them.
+   * A target's note job signs `plan:<target>` and `policy:<target>`, so with
+   * targets a check named `plan` or `policy` stands for each target's, with
+   * the same action and command, in the order the targets are given.
+   */
+  targets?: readonly string[];
   /** The commit status the gate's status job sets. Default `chant/ref-gate`, which the rule then leaves out. */
   status?: string;
   /** Write the `pre-push` hook in this checkout. Default true. */
@@ -95,11 +104,21 @@ function planned(path: string, content: string, extra: Pick<RefGateInitFile, "mo
   return { path, status: before === undefined ? "created" : before === content ? "unchanged" : "updated", content, ...extra };
 }
 
+/**
+ * The rule's checks (#4978): with `targets`, `plan` and `policy` become each
+ * target's `plan:<target>` and `policy:<target>` (`targetEvidenceCheck`),
+ * which is what a product plan with targets signs.
+ */
+export function refGateInitChecks(checks: readonly RefGateInitCheck[], targets?: readonly string[]): RefGateInitCheck[] {
+  if (!targets || targets.length === 0) return [...checks];
+  return checks.flatMap((c) => (c.check === "plan" || c.check === "policy" ? targets.map((t) => ({ ...c, check: targetEvidenceCheck(c.check as "plan" | "policy", t) })) : [c]));
+}
+
 /** The `refs` rule for `ref`, with `action` and `status` only where they differ from the defaults. */
 function ruleFor(ref: string, opts: RefGateInitOptions): Record<string, unknown> {
   return {
     ref,
-    checks: opts.checks.map((c) => ({ check: c.check, ...(c.action === "warn" ? { action: "warn" } : {}), command: c.command })),
+    checks: refGateInitChecks(opts.checks, opts.targets).map((c) => ({ check: c.check, ...(c.action === "warn" ? { action: "warn" } : {}), command: c.command })),
     ...(opts.status && opts.status !== REF_GATE_STATUS ? { status: opts.status } : {}),
   };
 }
@@ -114,6 +133,9 @@ export function refGateInitPlan(repo: string, opts: RefGateInitOptions): RefGate
   const ref = `refs/heads/${branch}`;
   if (!branch || /\s|\*/.test(branch)) throw new RefGateInitError(`the branch is one branch name, such as main, not ${JSON.stringify(branch)}`);
   if (opts.checks.length === 0) throw new RefGateInitError("the ref gate's rule needs at least one check");
+  for (const t of opts.targets ?? []) {
+    if (!EVIDENCE_MEMBER_NAME.test(t)) throw new RefGateInitError(`${JSON.stringify(t)} is not a product plan target's name: letters, digits, - and _`);
+  }
   for (const c of opts.checks) {
     if (!REF_CHECK_NAME.test(c.check)) throw new RefGateInitError(`${JSON.stringify(c.check)} is not a check name: letters, digits, . _ : -`);
     if (!c.command.trim()) throw new RefGateInitError(`check ${c.check} needs the command that produces its evidence`);

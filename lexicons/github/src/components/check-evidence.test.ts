@@ -22,9 +22,15 @@ describe("check evidence in generated pipelines on github (#4870)", () => {
     expect(generateGithubOpWavesPipeline(spec, waves).files.map((f) => f.yaml).join("\n")).not.toContain("CHANT_RUNNER_KEY");
   });
 
-  test("the plan pipeline signs plan and policy for each target, with the key from the secret", () => {
+  test("the plan pipeline signs plan:<target> and policy:<target> for each target, with the key from the secret (#4978)", () => {
     const yaml = generateProductPlanPipeline("default", { ...plan, evidence }).yaml;
-    expect(yaml.match(/yodel chant ci evidence sign --from-report \.chant\/pr --result /g)).toHaveLength(2);
+    expect(yaml.match(/yodel chant ci evidence sign --from-report \.chant\/pr --member (staging|prod) --result /g)).toHaveLength(2);
+    expect(yaml).toContain("--member staging --result");
+    expect(yaml).toContain("--member prod --result");
+    // Without targets the one plan job signs plain plan and policy, as before.
+    const one = generateProductPlanPipeline("default", { ...plan, productPlan: { command: plan.productPlan.command }, evidence }).yaml;
+    expect(one).toContain("ci evidence sign --from-report .chant/pr --result");
+    expect(one).not.toContain("--member");
     expect(yaml).toContain("CHANT_RUNNER_KEY:");
     expect(yaml).toContain("CHANT_RUNNER_KEY_PEM");
     expect(yaml).toContain("git fetch --quiet --no-tags --depth=1 origin");

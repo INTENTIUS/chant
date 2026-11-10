@@ -54,7 +54,7 @@ export const EVIDENCE_ID_TOKEN_VAR = "CHANT_ID_TOKEN_SIGSTORE";
 /** The audience a keyless signing job's token is requested for unless told: sigstore's. */
 export const EVIDENCE_DEFAULT_AUDIENCE = "sigstore";
 
-export { CHECK_EVIDENCE_FLOOR, CHECK_JOB_FLOOR, GITLAB_OPEN_EVIDENCE_FLOOR, GITLAB_WAVE_KEY_SCOPE_FLOOR, KEYLESS_EVIDENCE_FLOOR, LOCAL_EVIDENCE_FLOOR, MEMBER_SIGNED_CHECKS_FLOOR, PR_LOOP_EVIDENCE_FLOOR, REF_GATE_STATUS_JOB_FLOOR, WAVE_EVIDENCE_JOB_FLOOR } from "./release-floors";
+export { CHECK_EVIDENCE_FLOOR, CHECK_JOB_FLOOR, GITLAB_OPEN_EVIDENCE_FLOOR, GITLAB_WAVE_EVIDENCE_RETRY_FLOOR, GITLAB_WAVE_KEY_SCOPE_FLOOR, KEYLESS_EVIDENCE_FLOOR, LOCAL_EVIDENCE_FLOOR, MEMBER_SIGNED_CHECKS_FLOOR, PR_LOOP_EVIDENCE_FLOOR, REF_GATE_STATUS_JOB_FLOOR, TARGET_SIGNED_CHECKS_FLOOR, WAVE_EVIDENCE_JOB_FLOOR } from "./release-floors";
 
 /**
  * The GitLab environment every signing job names (#4914), with `action:
@@ -95,10 +95,37 @@ export function memberEvidenceCheck(check: "plan" | "policy", member?: string): 
   return member ? `${check}:${member}` : check;
 }
 
-/** ` --member <name>` on a signing line of a member's plan evidence (#4964), or nothing. */
+/**
+ * The check a product plan target's note job signs for one of its plan
+ * job's two (#4978): `plan:<target>`, `policy:<target>`. Each target has a
+ * plan job of its own, so its pass says nothing of another target's plan,
+ * and a `refs` rule names each target's checks. A product plan without
+ * targets signs `plan` and `policy`.
+ */
+export function targetEvidenceCheck(check: "plan" | "policy", target?: string): string {
+  return memberEvidenceCheck(check, target);
+}
+
+/**
+ * The checks a product plan's note jobs sign (#4978), in the order a `refs`
+ * rule lists them: `plan` and `policy`, or with `targets` each target's
+ * `plan:<target>` and `policy:<target>`.
+ */
+export function productPlanEvidenceChecks(targets?: readonly string[]): string[] {
+  if (!targets || targets.length === 0) return ["plan", "policy"];
+  return targets.flatMap((t) => [targetEvidenceCheck("plan", t), targetEvidenceCheck("policy", t)]);
+}
+
+/**
+ * The name `--member` takes (#4964): a workspace member's or (#4978) a
+ * product plan target's, which a check name carries after `plan:`.
+ */
+export const EVIDENCE_MEMBER_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+
+/** ` --member <name>` on a signing line of a member's or a target's plan evidence (#4964, #4978), or nothing. */
 function memberFlag(member: string | undefined): string {
   if (member === undefined) return "";
-  if (!/^[a-z0-9][a-z0-9-]*$/.test(member)) throw new Error(`the member name ${JSON.stringify(member)} is not one a check name can carry: lower-case letters, digits and -`);
+  if (!EVIDENCE_MEMBER_NAME.test(member)) throw new Error(`the name ${JSON.stringify(member)} is not one a check name can carry: letters, digits, - and _`);
   return ` --member ${member}`;
 }
 

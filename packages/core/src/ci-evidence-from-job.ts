@@ -21,6 +21,11 @@
  *
  * Each check signed carries `source: { run, job, step }`, the ids it relied
  * on, so a verifier can look them up.
+ *
+ * A job it reads that has not finished is waited for, up to
+ * {@link FROM_JOB_WAIT_MS} (#4978): `chant run resume` retries a GitLab
+ * wave job's evidence job with the wave job, and the two may start
+ * together.
  */
 
 import type { ForgeReads, RunJob } from "./pr-forge-reads";
@@ -41,6 +46,16 @@ export interface ChecksFromJobInput {
   sources?: Readonly<Record<string, EvidenceSourceSpec>>;
   /** The directory of the jobs' claim files. Without it, a check needs only its step's success and signs no claim. */
   claims?: string;
+  /**
+   * How long to wait for a job it reads that has not finished (#4978), in
+   * milliseconds, reading the run's jobs again every `pollMs` (default 15
+   * seconds). A GitLab evidence job retried with its wave job can start
+   * before the new try ends. Default 0: a job not finished is not signed.
+   */
+  waitMs?: number;
+  pollMs?: number;
+  /** For tests: in place of a timer. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 /** What may be signed, and what not and why. */
@@ -55,9 +70,28 @@ function jobPassed(job: RunJob): boolean {
   return job.conclusion !== undefined ? job.conclusion === SUCCESS : job.status === SUCCESS;
 }
 
+/**
+ * The run's jobs once every job the checks read has finished, or as they
+ * are when `waitMs` runs out (#4978). A job not in the run is left to
+ * {@link checksFromJob} to refuse.
+ */
+async function settledJobs(input: ChecksFromJobInput): Promise<RunJob[]> {
+  const names = new Set(input.checks.map((c) => input.sources?.[c]?.job ?? input.fromJob));
+  const sleep = input.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const poll = Math.max(1, input.pollMs ?? 15_000);
+  let left = input.waitMs ?? 0;
+  for (;;) {
+    const jobs = await input.reads.runJobs(input.run);
+    const going = jobs.some((j) => names.has(j.name) && !j.done);
+    if (!going || left <= 0) return jobs;
+    await sleep(Math.min(poll, left));
+    left -= poll;
+  }
+}
+
 /** The checks the run's record lets this job sign (#4926), or why the job it names does not count at all. */
 export async function checksFromJob(input: ChecksFromJobInput): Promise<ChecksFromJob> {
-  const jobs = await input.reads.runJobs(input.run);
+  const jobs = await settledJobs(input);
   const found = new Map<string, RunJob | string>();
   const jobNamed = (name: string): RunJob | string => {
     const had = found.get(name);
@@ -142,7 +176,18 @@ export interface SignFromJobInput {
   push?: boolean;
   fetch?: typeof fetch;
   log?: (line: string) => void;
+  /** How long to wait for an unfinished job it reads (#4978). Default {@link FROM_JOB_WAIT_MS}. */
+  waitMs?: number;
+  pollMs?: number;
+  sleep?: (ms: number) => Promise<void>;
 }
+
+/**
+ * How long `sign --from-job` waits for a job it reads to finish (#4978): a
+ * GitLab `<wave job>-evidence` retried with its wave job by `chant run
+ * resume` may start before the wave job's new try ends. 30 minutes.
+ */
+export const FROM_JOB_WAIT_MS = 30 * 60_000;
 
 /** What {@link signFromJob} signed and skipped, or why it refused. */
 export type SignFromJobResult =
@@ -172,7 +217,18 @@ export async function signFromJob(input: SignFromJobInput): Promise<SignFromJobR
   if (commit !== sha) return { refused: `--at names ${commit.slice(0, 12)}, and this run is for ${sha.slice(0, 12)}; --from-job signs only the run's own commit` };
   const parsed = parseEvidenceSources(env[EVIDENCE_SOURCES_ENV]);
   if ("problem" in parsed) return { refused: parsed.problem };
-  const decided = await checksFromJob({ reads: input.reads, run: Number(rawRun), sha, fromJob: input.fromJob, checks: input.checks, sources: parsed.sources, ...(input.claims !== undefined ? { claims: input.claims } : {}) });
+  const decided = await checksFromJob({
+    reads: input.reads,
+    run: Number(rawRun),
+    sha,
+    fromJob: input.fromJob,
+    checks: input.checks,
+    sources: parsed.sources,
+    ...(input.claims !== undefined ? { claims: input.claims } : {}),
+    waitMs: input.waitMs ?? FROM_JOB_WAIT_MS,
+    ...(input.pollMs !== undefined ? { pollMs: input.pollMs } : {}),
+    ...(input.sleep ? { sleep: input.sleep } : {}),
+  });
   if ("refused" in decided) return decided;
   for (const s of decided.skipped) log(`ci evidence: ${s.check} not signed: ${s.reason}`);
   if (decided.sign.length === 0) return { signed: [], skipped: decided.skipped };
