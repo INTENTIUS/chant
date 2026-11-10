@@ -13,8 +13,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { cloudLogin, forgejoCloudLogin, githubCloudLogin, gitlabCloudLogin, LOGIN_JS, LOGIN_SPEC_ENV, type CloudLoginSpec, type LoginForge } from "./ci-login";
-import { CLOUD_TARGETS_ENV, resolveCloudIdentity, targetCloudEnv, type CloudIdentityDeclaration } from "./ci-identity";
+import { cloudLogin, cloudLoginSpec, forgejoCloudLogin, githubCloudLogin, GITLAB_LOGIN_VARS, gitlabCloudLogin, LOGIN_JS, LOGIN_SPEC_ENV, type CloudLoginSpec, type LoginForge } from "./ci-login";
+import { CLOUD_TARGETS_ENV, CLOUD_TRADED_ENV, cloudsTraded, resolveCloudIdentity, targetCloudEnv, TRADE_SPEC_ENV, tradeLine, type CloudIdentityDeclaration, type CloudTradeSpec } from "./ci-identity";
 import { EMULATED_JWT_PREFIX, startOidcEmulator, type OidcEmulator } from "./__fixtures__/oidc-emulator";
 
 const run = promisify(execFile);
@@ -78,7 +78,7 @@ describe("the rendered login (#4788)", () => {
     expect(() => githubCloudLogin({ pulumi: { organization: "o", audience: "a", token: "team:x" } } as unknown as CloudLoginSpec)).toThrow(/Pulumi Cloud\) is traded/);
     expect(() => githubCloudLogin({ azure: { ...SPEC.azure!, database: true } } as unknown as CloudLoginSpec)).toThrow(/no database token/);
     expect(() => githubCloudLogin({ aws: { role: "arn:aws:iam::1:role/a b" } })).toThrow(/role is .*printable ASCII with no space/);
-    expect(() => githubCloudLogin({ aws: {} })).toThrow(/names no identity/);
+    expect(() => githubCloudLogin({ azure: { tenantId: TENANT } })).toThrow(/names no identity/);
     expect(() => githubCloudLogin({ aws: { role: "r", sessionName: "x" } })).toThrow(/sessionName/);
     expect(() => githubCloudLogin({ aws: { role: "r", tokenFile: "$(id)" } })).toThrow(/tokenFile/);
     expect(() => githubCloudLogin({ azure: { tenantId: TENANT, targets: [{ targets: ["a"], clientId: "c" }], cli: true } })).toThrow(/needs clientId/);
@@ -231,5 +231,133 @@ describe("the login, run (#4788)", () => {
     const lines = readFileSync(calls, "utf-8").trim().split("\n");
     expect(lines[0]).toMatch(new RegExp(`^login --service-principal --username ${SPEC.azure!.clientId} --tenant ${TENANT} --federated-token ${EMULATED_JWT_PREFIX}\\.\\S+ --allow-no-subscriptions --output none$`));
     expect(lines[1]).toBe(`account set --subscription ${SPEC.azure!.subscriptionId}`);
+  });
+});
+
+describe("the gaps terragucci's login needs closed (#4930)", () => {
+  let emu: OidcEmulator;
+  beforeAll(async () => {
+    emu = await startOidcEmulator();
+  });
+  afterAll(async () => {
+    await emu.close();
+  });
+
+  const parseEnv = (text: string): Record<string, string> => Object.fromEntries(text.trim().split("\n").filter(Boolean).map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]));
+
+  /**
+   * Runs a login and then `env` in one shell with -e off, as terragucci's
+   * steps run (they read each stage's exit code): the variables the same
+   * step sees, and what `$GITHUB_ENV` got.
+   */
+  async function oneStep(forge: LoginForge, spec: CloudLoginSpec, sameStep: boolean, env: Record<string, string> = {}) {
+    const dir = mkdtempSync(join(tmpdir(), "chant-login-4930-"));
+    const githubEnv = join(dir, "github-env");
+    writeFileSync(githubEnv, "");
+    const { steps, idTokens } = cloudLogin(forge, spec, { sameStep });
+    const tokens = forge === "gitlab" ? Object.fromEntries(Object.keys(idTokens).map((k) => [k, `eyJgitlab.${k}.1`])) : emu.requestEnv;
+    const script = ["set +e", ...steps[0]!.run, "env"].join("\n");
+    const r = await run("bash", ["-c", script], { env: { PATH: process.env.PATH!, GITHUB_ENV: githubEnv, RUNNER_TEMP: dir, TMPDIR: dir, ...tokens, ...env } }).catch((e: { stdout: string; stderr: string; code: number }) => ({ stdout: e.stdout, stderr: e.stderr, failed: e.code }));
+    return { dir, step: parseEnv(r.stdout), githubEnv: parseEnv(readFileSync(githubEnv, "utf-8")), run: r };
+  }
+
+  test.each(FORGES)("%s: a spec with no region leaves the job's region, and one that names it sets it as before", async (forge) => {
+    const none = await oneStep(forge, { aws: { role: "arn:aws:iam::1:role/p" } }, true, { AWS_REGION: "ap-south-1", AWS_DEFAULT_REGION: "ap-south-1" });
+    expect(none.step).toMatchObject({ AWS_ROLE_ARN: "arn:aws:iam::1:role/p", AWS_REGION: "ap-south-1", AWS_DEFAULT_REGION: "ap-south-1" });
+    const unset = await oneStep(forge, { aws: { role: "arn:aws:iam::1:role/p" } }, true);
+    expect(unset.step.AWS_REGION).toBeUndefined();
+    expect(unset.step.AWS_DEFAULT_REGION).toBeUndefined();
+    expect(cloudLoginSpec({ aws: { role: "r" } })).toEqual({ aws: { role: "r", audience: "sts.amazonaws.com" } });
+    const named = await oneStep(forge, SPEC, true);
+    expect(named.step).toMatchObject({ AWS_REGION: "eu-west-1", AWS_DEFAULT_REGION: "eu-west-1" });
+  });
+
+  test("a spec that names a region renders as before: the same spec, in the same order", () => {
+    expect(cloudLoginSpec(SPEC).aws).toEqual({ role: SPEC.aws!.role, region: "eu-west-1", sessionName: "terragucci-plan", audience: "sts.amazonaws.com" });
+    expect(Object.keys(cloudLoginSpec(SPEC).aws!)).toEqual(["role", "region", "sessionName", "audience"]);
+    expect(Object.keys(cloudLoginSpec({ aws: { region: "eu-west-1", role: "r" } }).aws!)).toEqual(["region", "role", "audience"]);
+    for (const forge of FORGES) expect(cloudLogin(forge, SPEC, { sameStep: false })).toEqual(cloudLogin(forge, SPEC));
+  });
+
+  test.each(["github", "forgejo"] as const)("%s: sameStep exports into the step that runs the login, and leaves $GITHUB_ENV alone", async (forge) => {
+    const { step, githubEnv, run: r } = await oneStep(forge, SPEC, true);
+    expect(r).not.toHaveProperty("failed");
+    expect(githubEnv).toEqual({});
+    expect(step).toMatchObject({ AWS_ROLE_ARN: SPEC.aws!.role, ARM_CLIENT_ID: SPEC.azure!.clientId });
+    expect(readFileSync(step.AWS_WEB_IDENTITY_TOKEN_FILE!, "utf-8")).toContain(Buffer.from(AUD.aws).toString("base64url"));
+    expect(JSON.parse(readFileSync(step.GOOGLE_APPLICATION_CREDENTIALS!, "utf-8")).type).toBe("external_account");
+    for (const k of [LOGIN_SPEC_ENV, GITLAB_LOGIN_VARS]) expect(step[k]).toBeUndefined();
+    // Without it, the step itself sees nothing: the variables are for later steps.
+    const later = await oneStep(forge, SPEC, false);
+    expect(later.step.AWS_ROLE_ARN).toBeUndefined();
+    expect(later.githubEnv.AWS_ROLE_ARN).toBe(SPEC.aws!.role);
+  });
+
+  test("gitlab: sameStep is the script's own lines, as before, and the id_tokens variables are unset", async () => {
+    const { step, run: r } = await oneStep("gitlab", SPEC, true);
+    expect(r).not.toHaveProperty("failed");
+    expect(step).toMatchObject({ AWS_ROLE_ARN: SPEC.aws!.role });
+    expect(readFileSync(step.AWS_WEB_IDENTITY_TOKEN_FILE!, "utf-8")).toBe("eyJgitlab.CHANT_ID_TOKEN_AWS.1");
+    for (const k of ["CHANT_ID_TOKEN_AWS", "CHANT_ID_TOKEN_GCP", "CHANT_ID_TOKEN_AZURE", LOGIN_SPEC_ENV]) expect(step[k]).toBeUndefined();
+  });
+
+  test.each(FORGES)("%s: sameStep stops the step on a failed login even with -e off, before the next line", async (forge) => {
+    const { run: r, step } = await oneStep(forge, { aws: { role: "r", tokenFile: "$NOWHERE/token" } }, true, { NOWHERE: "/nonexistent-4930" });
+    expect(r).toMatchObject({ failed: 1, stderr: expect.stringContaining("aws's tokenFile /nonexistent-4930/token cannot be read") });
+    expect(step).toEqual({});
+  });
+
+  test.each(FORGES)("%s: an AWS spec with no role points the job at the token file alone, as a Terragrunt credentials job takes it", async (forge) => {
+    const dir = mkdtempSync(join(tmpdir(), "chant-login-4930-tok-"));
+    writeFileSync(join(dir, "aws"), "eyJstaged.token.1\n");
+    expect(cloudLogin(forge, { aws: { tokenFile: "$STAGED/aws" } }).idTokens).toEqual({});
+    const staged = await oneStep(forge, { aws: { tokenFile: "$STAGED/aws", sessionName: "terragucci-plan" } }, true, { STAGED: dir });
+    expect(staged.run).not.toHaveProperty("failed");
+    expect(staged.step).toMatchObject({ AWS_WEB_IDENTITY_TOKEN_FILE: join(dir, "aws"), AWS_ROLE_SESSION_NAME: "terragucci-plan" });
+    expect(staged.step.AWS_ROLE_ARN).toBeUndefined();
+    // With no tokenFile the job requests the token, as for a role.
+    expect(cloudLogin(forge, { aws: {} }).idTokens).toEqual({ CHANT_ID_TOKEN_AWS: AUD.aws });
+    const requested = await oneStep(forge, { aws: {} }, true);
+    expect(readFileSync(requested.step.AWS_WEB_IDENTITY_TOKEN_FILE!, "utf-8")).toMatch(forge === "gitlab" ? /^eyJgitlab\.CHANT_ID_TOKEN_AWS\.1$/ : new RegExp(Buffer.from(AUD.aws).toString("base64url")));
+    expect(requested.step.AWS_ROLE_SESSION_NAME).toBe("chant");
+    // GCP and Azure still need an identity: their files and variables name one.
+    expect(() => cloudLogin(forge, { gcp: { provider: PROVIDER } })).toThrow(/names no identity/);
+  });
+
+  test("an AWS spec with roles by target and none of its own: each target's role, and the token file for the rest", async () => {
+    const { step } = await oneStep("github", { aws: { targets: [{ targets: ["envs/prod/**"], role: "arn:aws:iam::1:role/prod" }] } }, true, { AWS_REGION: "ap-south-1" });
+    expect(step.AWS_ROLE_ARN).toBeUndefined();
+    expect(step.AWS_WEB_IDENTITY_TOKEN_FILE).toBeDefined();
+    const prod = targetCloudEnv(step, "envs/prod/net");
+    expect(prod).toMatchObject({ AWS_ROLE_ARN: "arn:aws:iam::1:role/prod", AWS_WEB_IDENTITY_TOKEN_FILE: step.AWS_WEB_IDENTITY_TOKEN_FILE, AWS_REGION: "ap-south-1" });
+    expect(targetCloudEnv(step, "envs/dev/net").AWS_ROLE_ARN).toBeUndefined();
+  });
+
+  test.each(FORGES)("%s: a login's targets file is no trade's: CHANT_CLOUD_TRADED stays unset", async (forge) => {
+    const spec: CloudLoginSpec = { aws: { role: "arn:aws:iam::1:role/default", targets: [{ targets: ["envs/prod/**"], role: "arn:aws:iam::1:role/prod" }] } };
+    const { step } = await oneStep(forge, spec, true);
+    expect(step[CLOUD_TARGETS_ENV]).toBeDefined();
+    expect(step[CLOUD_TRADED_ENV]).toBeUndefined();
+    expect(cloudsTraded(step)).toEqual([]);
+  });
+
+  test("the trade says it traded, with or without targets, so its targets file is told from a login's", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "chant-trade-4930-"));
+    const trade = async (spec: CloudTradeSpec): Promise<Record<string, string>> => {
+      const file = join(dir, `github-env-${Math.random().toString(16).slice(2)}`);
+      writeFileSync(file, "");
+      await run("sh", ["-c", tradeLine(file, "github-env")], { env: { PATH: process.env.PATH!, ...emu.requestEnv, RUNNER_TEMP: dir, [TRADE_SPEC_ENV]: JSON.stringify(emu.pointAt(spec)) } });
+      return parseEnv(readFileSync(file, "utf-8"));
+    };
+    const aws = { role: "arn:aws:iam::1:role/default", region: "eu-west-1", audience: "sts.amazonaws.com" };
+    const targeted = await trade({ aws: { ...aws, targets: [{ targets: ["envs/prod/**"], role: "arn:aws:iam::1:role/prod" }] }, gcp: { serviceAccount: "plan@p.iam.gserviceaccount.com", provider: PROVIDER, audience: AUD.gcp } });
+    expect(targeted[CLOUD_TARGETS_ENV]).toBeDefined();
+    expect(targeted[CLOUD_TRADED_ENV]).toBe("aws,gcp");
+    expect(cloudsTraded(targeted)).toEqual(["aws", "gcp"]);
+    // A trade's identity sets its own region, so a target still gets it.
+    expect(targetCloudEnv({ ...targeted, AWS_REGION: "ap-south-1" }, "envs/prod/net").AWS_REGION).toBe("eu-west-1");
+    const plain = await trade({ aws });
+    expect(plain[CLOUD_TARGETS_ENV]).toBeUndefined();
+    expect(plain[CLOUD_TRADED_ENV]).toBe("aws");
   });
 });
