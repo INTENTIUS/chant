@@ -14,10 +14,13 @@
  * it counts static rows only.
  *
  * This subpath, `@intentius/chant-lexicon-terraform/module-catalog`, imports
- * nothing but its own data, so a consumer can load it on its own.
+ * nothing but its own data and the lexicon's floors file (#4916), so a
+ * consumer can load it on its own.
  */
 import { SOURCE_COMMIT, SOURCE_PATH, STATIC_MEASUREMENT, STATIC_ROWS } from "./static-tier";
 import type { StaticRow } from "./types";
+
+export { MODULE_CATALOG_FLOOR } from "../chant-floors";
 
 export type { StaticRefusal, StaticRow, StaticMeasurement, StaticSource } from "./types";
 

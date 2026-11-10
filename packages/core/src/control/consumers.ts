@@ -22,6 +22,13 @@
 import type { CatalogConsumer, CatalogConsumersInput } from "../lifecycle/release-catalog";
 import type { ControlEntry } from "./records";
 
+/**
+ * The first chant with the consumers join, {@link joinControlConsumers} and
+ * {@link readControlConsumers} on `@intentius/chant/ci-control` (#4600).
+ * #4916 declared it after the fact, for `chant dev dead-guards`.
+ */
+export const CONTROL_CONSUMERS_FLOOR = "0.124.55";
+
 /** The file each project keeps its consumers in. */
 export const CONSUMERS_FILE = "consumers.json";
 /** The contract version of {@link ConsumersDocument}. */

@@ -10,7 +10,7 @@ The model lives in `packages/core/src/lifecycle/release-catalog.ts` and the site
 
 ## Release versions
 
-A release record already uses `version` for its schema version (always `1`). The version a publish gives a release, such as `1.4.0` for a module or `2.0.0-rc.1` for a package, is recorded as `releaseVersion`. chant 0.124.55 and newer write and read it (`RELEASE_VERSION_FLOOR`). A record without it still parses, and the catalog lists that release by its digest. A value that is not a non-empty string is refused by `appendReleaseRecord` and dropped on read, so the rest of the record still reads.
+A release record already uses `version` for its schema version (always `1`). The version a publish gives a release, such as `1.4.0` for a module or `2.0.0-rc.1` for a package, is recorded as `releaseVersion`. chant 0.124.55 and newer write and read it (`RELEASE_RECORD_VERSION_FLOOR` in `@intentius/chant/lifecycle/release-ledger`). A record without it still parses, and the catalog lists that release by its digest. A value that is not a non-empty string is refused by `appendReleaseRecord` and dropped on read, so the rest of the record still reads.
 
 ## Release status
 

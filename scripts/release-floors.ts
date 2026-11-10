@@ -20,7 +20,10 @@
  *
  * The check then fails when a floor names a version that has no release and
  * no local build stamp. A floor is NEXT_RELEASE and every `export const
- * <NAME>_FLOOR = "<version>"` under packages/core/src.
+ * <NAME>_FLOOR = "<version>"` under packages/core/src and in each lexicon's
+ * src/chant-floors.ts (#4916). A lexicon floor that names the next release
+ * imports NEXT_RELEASE from `@intentius/chant/release-floors`, and
+ * `--freeze` writes it as a literal the same way.
  *
  * A published release is read from the checkout's tags, release/npm/<v> and
  * chant-v<v>, so the default mode needs no network; fetch the tags first
@@ -140,7 +143,7 @@ function count(haystack: string, needle: string): number {
   return n;
 }
 
-/** Every floor constant under packages/core/src, with the version it names. */
+/** Every floor constant under packages/core/src and in the lexicons' floors files, with the version it names. */
 function floors(read: (file: string) => string, rev: string | undefined, next: string): Floor[] {
   const out: Floor[] = [];
   for (const file of floorFiles(rev)) {
@@ -158,10 +161,11 @@ export interface Floor {
   symbolic?: boolean;
 }
 
+/** The files floors are declared in: core's sources, and each lexicon's src/chant-floors.ts (#4916). */
 function floorFiles(rev: string | undefined): string[] {
-  return git(rev ? ["ls-tree", "-r", "--name-only", rev, "--", "packages/core/src"] : ["ls-files", "--", "packages/core/src"])
+  return git(rev ? ["ls-tree", "-r", "--name-only", rev, "--", "packages/core/src", "lexicons"] : ["ls-files", "--", "packages/core/src", "lexicons"])
     .split("\n")
-    .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"));
+    .filter((f) => (f.startsWith("packages/core/src/") && f.endsWith(".ts") && !f.endsWith(".test.ts")) || /^lexicons\/[^/]+\/src\/chant-floors\.ts$/.test(f));
 }
 
 /**

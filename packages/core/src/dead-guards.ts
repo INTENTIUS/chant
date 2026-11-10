@@ -19,10 +19,13 @@
  *   (`CI_CONTROL_FLOOR: string;`), or destructured from a dynamic import. A
  *   floor the file imports statically is the product using the part, so it
  *   is not a check.
- * - `module`: a chant subpath loaded with `import()` where a `catch` is near
- *   (`try { await import(specifier) } catch { return undefined }`, or
- *   `.catch(`), the shape of a chant-next.ts loader. Its floor is the lowest
- *   floor the subpath serves: a chant with that floor has the subpath.
+ * - `module`: a chant subpath, or a lexicon's
+ *   (`@intentius/chant-lexicon-terraform/registry`, #4916), loaded with
+ *   `import()` where a `catch` is near (`try { await import(specifier) }
+ *   catch { return undefined }`, or `.catch(`), the shape of a chant-next.ts
+ *   loader. Its floor is the lowest floor the subpath serves: a chant with
+ *   that floor has the subpath. Lexicons release with chant at the same
+ *   version, so a lexicon subpath is checked against the chant pin too.
  * - `product-floor`: a product's own constant for the chant it needs,
  *   `const CHANT_CI_FLOOR = "0.124.67"`, whose checks the pin meets.
  *
@@ -361,8 +364,8 @@ export function guardsIn(src: string, table: readonly FloorRow[] = FLOOR_TABLE):
     push(at, "floor", name, version);
   }
 
-  // module: a chant subpath loaded with import() inside a try, or with .catch( on the load.
-  for (const m of src.matchAll(/(["'`])(@intentius\/chant(?:\/[A-Za-z0-9_./-]+)?)\1/g)) {
+  // module: a chant or lexicon subpath loaded with import() inside a try, or with .catch( on the load.
+  for (const m of src.matchAll(/(["'`])(@intentius\/chant(?:-lexicon-[a-z0-9-]+)?(?:\/[A-Za-z0-9_./-]+)?)\1/g)) {
     const at = m.index!;
     const spec = m[2];
     const version = modules.get(spec);

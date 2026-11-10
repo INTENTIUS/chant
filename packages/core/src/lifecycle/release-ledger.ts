@@ -78,9 +78,10 @@ export const RUN_ORIGIN_JOB_FLOOR = "0.124.32";
 /**
  * The first chant that writes and reads `releaseVersion` on a release record
  * (#4595). A record from an older chant has none, and a reader lists it by
- * digest.
+ * digest. It was named `RELEASE_VERSION_FLOOR` until #4916 gave that name to
+ * ./release-version.ts alone, the floor of `release.version`.
  */
-export const RELEASE_VERSION_FLOOR = "0.124.55";
+export const RELEASE_RECORD_VERSION_FLOOR = "0.124.55";
 
 /**
  * The gate resolution that admitted a deploy (#4020): the gate's address in the
@@ -291,7 +292,7 @@ export interface ReleaseRecord {
    * Optional: the version the publish gave this release (#4595), such as a
    * module's `1.4.0` or a package's `2.0.0-rc.1`, when the component has
    * versions of its own. `version` is taken by the record's schema version,
-   * so the field has this name. Written from {@link RELEASE_VERSION_FLOOR};
+   * so the field has this name. Written from {@link RELEASE_RECORD_VERSION_FLOOR};
    * absent on older records and on deploys that name no version. The
    * release catalog (./release-catalog.ts) lists a version by it, and a
    * record without one by its digest.

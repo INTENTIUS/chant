@@ -1,7 +1,8 @@
 /**
- * The floor table (#4792) lists every floor chant core exports, at the
- * version its constant names, and scripts/floor-table.ts reads each floor's
- * comment, issue and subpaths the way the table says.
+ * The floor table (#4792) lists every floor chant core exports and each
+ * lexicon's floors file declares (#4916), at the version its constant
+ * names, and scripts/floor-table.ts reads each floor's comment, issue and
+ * subpaths the way the table says.
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -33,6 +34,39 @@ describe("the floor table (#4792)", () => {
     expect(declared.length).toBeGreaterThan(100);
     const listed = new Set(FLOOR_TABLE.map((r) => `${r.file}|${r.name}|${r.version}`));
     expect(declared.filter((d) => !listed.has(`${d.file}|${d.name}|${d.version}`))).toEqual([]);
+  });
+
+  it("declares each floor name once (#4916)", () => {
+    const names = FLOOR_TABLE.map((r) => r.name);
+    expect(names.filter((n, i) => names.indexOf(n) !== i)).toEqual([]);
+    expect(FLOOR_TABLE.find((r) => r.name === "RELEASE_VERSION_FLOOR")?.file).toBe("lifecycle/release-version.ts");
+    expect(FLOOR_TABLE.find((r) => r.name === "RELEASE_RECORD_VERSION_FLOOR")?.file).toBe("lifecycle/release-ledger.ts");
+  });
+
+  // #4916: the parts sql-yodeler and terragucci load or check, each at the release that first carried it.
+  it.each([
+    ["APPROVE_CONFIRM_FLOOR", "@intentius/chant/cli/handlers/approve-confirm", "#4575"],
+    ["CONTROL_CONSUMERS_FLOOR", "@intentius/chant/ci-control", "#4600"],
+    ["MODULE_CONSUMERS_FLOOR", "@intentius/chant-lexicon-terraform/registry", "#4599"],
+    ["USED_SOURCES_FLOOR", "@intentius/chant-lexicon-terraform/registry", "#3924"],
+    ["MODULE_CATALOG_FLOOR", "@intentius/chant-lexicon-terraform/module-catalog", "#4560"],
+  ])("lists %s, served by %s", (name, module, issue) => {
+    const row = FLOOR_TABLE.find((r) => r.name === name);
+    expect(row?.version).toBe("0.124.55");
+    expect(row?.modules).toContain(module);
+    expect(row?.issue).toBe(issue);
+  });
+
+  it("reads a lexicon's floors file and no other _FLOOR constant in it", () => {
+    const files = execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "--", "lexicons"], { cwd: root, encoding: "utf-8" })
+      .split("\n")
+      .filter((f) => /^lexicons\/[^/]+\/src\/chant-floors\.ts$/.test(f));
+    expect(files).toContain("lexicons/terraform/src/chant-floors.ts");
+    for (const file of files) {
+      const src = readFileSync(join(root, file), "utf-8");
+      for (const m of src.matchAll(/export const ([A-Z0-9_]+_FLOOR) = /g)) expect(FLOOR_TABLE.find((r) => r.name === m[1])?.file).toBe(file);
+    }
+    expect(FLOOR_TABLE.find((r) => r.name === "NEXUS_HOSTED_FLOOR")).toBeUndefined();
   });
 });
 
@@ -69,5 +103,25 @@ describe("scripts/floor-table.ts (#4792)", () => {
     const text = renderTable(rows);
     expect(text).toContain('{ name: "B_FLOOR", version: NEXT_RELEASE,');
     expect(text).toContain('{ name: "A_FLOOR", version: "0.124.80",');
+  });
+
+  it("refuses a name two files declare (#4916)", () => {
+    const twice = { ...files, "packages/core/src/b.ts": 'export const A_FLOOR = "0.124.81";\n' };
+    expect(() => floorRows(Object.keys(twice), (f) => twice[f]!, { "./*": "./src/*.ts" })).toThrow(/A_FLOOR is declared again; packages\/core\/src\/a\.ts declares it/);
+  });
+
+  it("reads a lexicon's floors file, at its own subpath and each entry that re-exports it (#4916)", () => {
+    const lex: Record<string, string> = {
+      ...files,
+      "lexicons/x/src/chant-floors.ts": "/** The first chant whose x lexicon has `thing` (#4599). */\nexport const X_THING_FLOOR = \"0.124.55\";\n",
+      "lexicons/x/src/thing/index.ts": 'export { X_THING_FLOOR } from "../chant-floors";\nexport const thing = 1;\n',
+      "lexicons/x/src/tool.ts": 'export const TOOL_FLOOR = "3.89.0";\n',
+    };
+    const pkg = { src: "lexicons/x/src/", name: "@intentius/chant-lexicon-x", exports: { "./*": { development: "./src/*.ts", default: "./dist/*.js" }, "./thing": { development: "./src/thing/index.ts", default: "./dist/thing/index.js" } } };
+    const rows = floorRows(Object.keys(lex), (f) => lex[f]!, { "./*": "./src/*.ts" }, [pkg]);
+    const x = rows.find((r) => r.name === "X_THING_FLOOR")!;
+    expect([x.version, x.issue, x.file, x.modules]).toEqual(["0.124.55", "#4599", "lexicons/x/src/chant-floors.ts", ["@intentius/chant-lexicon-x/chant-floors", "@intentius/chant-lexicon-x/thing", "@intentius/chant-lexicon-x/thing/index"]]);
+    expect(rows.find((r) => r.name === "TOOL_FLOOR")).toBeUndefined();
+    expect(renderTable([x])).toContain('file: "lexicons/x/src/chant-floors.ts"');
   });
 });

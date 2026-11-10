@@ -2,7 +2,7 @@
 /**
  * Writes packages/core/src/floor-table.data.ts, the table of every floor a
  * product may feature-detect on (#4792), from the floor constants under
- * packages/core/src.
+ * packages/core/src and in each lexicon's src/chant-floors.ts (#4916).
  *
  *   npx tsx scripts/floor-table.ts           write the table
  *   npx tsx scripts/floor-table.ts --check   fail when the committed table is stale
@@ -12,9 +12,18 @@
  * checks. Each row has the floor's name, its version (`NEXT_RELEASE` itself
  * while the floor is unreleased, so the row moves with the constant), the
  * first sentence of its doc comment as what it gates, the issue the comment
- * names, the file, and the `@intentius/chant` subpaths a product can import
- * it from. scripts/release-floors.ts runs `--check`'s comparison, and
- * `--freeze` writes the table again after it writes the floors as literals.
+ * names, the file, and the package subpaths a product can import it from.
+ * scripts/release-floors.ts runs `--check`'s comparison, and `--freeze`
+ * writes the table again after it writes the floors as literals.
+ *
+ * A lexicon declares the chant floors of its parts in one file,
+ * `lexicons/<name>/src/chant-floors.ts` (#4916), and the entries that serve
+ * those parts re-export them by name. Lexicons release with chant at the
+ * same version, so a lexicon floor names a chant release. Only that file is
+ * read in a lexicon: other `_FLOOR` constants there name versions of other
+ * tools (the terraform lexicon's `NEXUS_HOSTED_FLOOR` is a Nexus version).
+ *
+ * Each name is declared once (#4916); the script fails on a second.
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -23,6 +32,8 @@ import { pathToFileURL } from "node:url";
 
 export const TABLE_FILE = "packages/core/src/floor-table.data.ts";
 const SRC = "packages/core/src/";
+/** A lexicon's floors file (#4916). */
+const LEXICON_FLOORS_RE = /^lexicons\/([^/]+)\/src\/chant-floors\.ts$/;
 const DECL_RE = /export const ([A-Z0-9_]+_FLOOR) = (?:"(\d+\.\d+\.\d+)"|(NEXT_RELEASE)|([A-Z0-9_]+_FLOOR));/g;
 
 /** One floor as the table lists it. `version` is a literal, or "NEXT_RELEASE" for the constant. */
@@ -77,23 +88,39 @@ export function firstSentence(doc: string): string {
   return doc;
 }
 
+/** A package that declares floors: its source directory, its npm name and its package.json exports. */
+export interface FloorPackage {
+  /** `packages/core/src/`, `lexicons/terraform/src/`. */
+  src: string;
+  /** `@intentius/chant`, `@intentius/chant-lexicon-terraform`. */
+  name: string;
+  exports: Record<string, unknown>;
+}
+
+/** chant core, with its package.json exports. */
+export function corePackage(exportsMap: Record<string, unknown>): FloorPackage {
+  return { src: SRC, name: "@intentius/chant", exports: exportsMap };
+}
+
 /**
- * The subpaths of `@intentius/chant` that serve each source file: its own
+ * The subpaths of a package that serve each of its source files: its own
  * (`./*` serves every file under src), each named entry of the package's
  * exports, and each other file, whose module re-exports it with `export *` or
- * by name.
+ * by name. `files` are the package's own.
  */
-export function modulesOf(files: string[], read: (file: string) => string, exportsMap: Record<string, unknown>): Map<string, Map<string, Set<string> | "all">> {
+export function modulesOf(files: string[], read: (file: string) => string, pkg: FloorPackage): Map<string, Map<string, Set<string> | "all">> {
+  const dir = pkg.src.replace(/src\/$/, "");
   // entry subpath -> its source file
   const entries = new Map<string, string>();
-  for (const [key, value] of Object.entries(exportsMap)) {
+  for (const [key, value] of Object.entries(pkg.exports)) {
     if (key.includes("*")) continue;
-    const target = typeof value === "string" ? value : (value as Record<string, unknown>).default;
+    const fields = value as Record<string, unknown>;
+    const target = typeof value === "string" ? value : (fields.development ?? fields.default);
     if (typeof target !== "string" || !target.startsWith("./src/") || !target.endsWith(".ts")) continue;
-    entries.set(key === "." ? "@intentius/chant" : `@intentius/chant/${key.slice(2)}`, `packages/core/${target.slice(2)}`);
+    entries.set(key === "." ? pkg.name : `${pkg.name}/${key.slice(2)}`, `${dir}${target.slice(2)}`);
   }
   // `./*` serves every source file at its own subpath.
-  for (const f of files) if (!f.endsWith(".test.ts")) entries.set(ownModule(f), f);
+  for (const f of files) if (!f.endsWith(".test.ts")) entries.set(ownModule(f, pkg), f);
   const known = new Set(files);
   const resolveFrom = (from: string, spec: string): string | undefined => {
     if (!spec.startsWith(".")) return undefined;
@@ -141,30 +168,47 @@ export function modulesOf(files: string[], read: (file: string) => string, expor
 }
 
 /** The subpath `./*` serves a source file at. */
-function ownModule(file: string): string {
-  return `@intentius/chant/${file.slice(SRC.length).replace(/\.ts$/, "")}`;
+function ownModule(file: string, pkg: FloorPackage): string {
+  return `${pkg.name}/${file.slice(pkg.src.length).replace(/\.ts$/, "")}`;
 }
 
-/** Every floor under packages/core/src, in file order, as rows. */
-export function floorRows(files: string[], readFile: (file: string) => string, exportsMap: Record<string, unknown>): FloorRow[] {
+/**
+ * Every floor under packages/core/src, then in each lexicon's
+ * src/chant-floors.ts (#4916), in file order, as rows. `lexicons` are the
+ * packages whose floors file is among `files`.
+ */
+export function floorRows(files: string[], readFile: (file: string) => string, exportsMap: Record<string, unknown>, lexicons: readonly FloorPackage[] = []): FloorRow[] {
   const cache = new Map<string, string>();
   const read = (f: string): string => {
     let src = cache.get(f);
     if (src === undefined) cache.set(f, (src = readFile(f)));
     return src;
   };
-  const sources = files.filter((f) => f.startsWith(SRC) && f.endsWith(".ts") && !f.endsWith(".test.ts") && f !== TABLE_FILE);
-  const reach = modulesOf(sources, read, exportsMap);
+  const isSource = (f: string) => f.endsWith(".ts") && !f.endsWith(".test.ts") && f !== TABLE_FILE;
+  const reach = new Map<string, Map<string, Set<string> | "all">>();
+  const declaring: [string, FloorPackage][] = [];
+  for (const pkg of [corePackage(exportsMap), ...lexicons]) {
+    const own = files.filter((f) => f.startsWith(pkg.src) && isSource(f));
+    for (const [file, m] of modulesOf(own, read, pkg)) reach.set(file, m);
+    for (const f of own) if (pkg.src === SRC || LEXICON_FLOORS_RE.test(f)) declaring.push([f, pkg]);
+  }
   const raw: (FloorRow & { alias?: string })[] = [];
-  for (const file of sources) {
+  for (const [file, pkg] of declaring) {
     const src = read(file);
     for (const m of src.matchAll(DECL_RE)) {
       const doc = docBefore(src, m.index!);
       const issue = issueOf(doc);
       const entries = [...(reach.get(file) ?? new Map()).entries()].filter(([, names]) => names === "all" || names.has(m[1])).map(([e]) => e);
-      const modules = [...new Set([ownModule(file), ...entries])].sort();
+      const modules = [...new Set([ownModule(file, pkg), ...entries])].sort();
       raw.push({ name: m[1], version: m[2] ?? (m[3] ? "NEXT_RELEASE" : ""), alias: m[4], gates: firstSentence(doc), ...(issue ? { issue } : {}), file, modules });
     }
+  }
+  // #4916: one declaration per name, so a check names one version.
+  const first = new Map<string, string>();
+  for (const r of raw) {
+    const had = first.get(r.name);
+    if (had !== undefined) throw new Error(`${r.file}: ${r.name} is declared again; ${had} declares it. Give one of them another name`);
+    first.set(r.name, r.file);
   }
   return raw.map(({ alias, ...row }) => {
     if (!alias) return row;
@@ -179,11 +223,12 @@ export function renderTable(rows: FloorRow[]): string {
   const lines = rows.map((r) => {
     const version = r.version === "NEXT_RELEASE" ? "NEXT_RELEASE" : JSON.stringify(r.version);
     const issue = r.issue ? `, issue: ${JSON.stringify(r.issue)}` : "";
-    return `  { name: ${JSON.stringify(r.name)}, version: ${version}, gates: ${JSON.stringify(r.gates)}${issue}, file: ${JSON.stringify(r.file.slice(SRC.length))}, modules: ${JSON.stringify(r.modules)} },`;
+    return `  { name: ${JSON.stringify(r.name)}, version: ${version}, gates: ${JSON.stringify(r.gates)}${issue}, file: ${JSON.stringify(r.file.startsWith(SRC) ? r.file.slice(SRC.length) : r.file)}, modules: ${JSON.stringify(r.modules)} },`;
   });
   return [
     "// Written by scripts/floor-table.ts (#4792) from the floor constants under",
-    "// packages/core/src; run `npx tsx scripts/floor-table.ts` after adding one.",
+    "// packages/core/src and in each lexicon's src/chant-floors.ts (#4916); run",
+    "// `npx tsx scripts/floor-table.ts` after adding one.",
     "// scripts/release-floors.ts fails while this file is stale.",
     'import { NEXT_RELEASE } from "./release-floors";',
     'import type { FloorRow } from "./floor-table";',
@@ -206,11 +251,17 @@ function git(root: string, args: string[]): string {
  */
 export function tableAgainst(root: string, rev?: string): { want: string; have: string | undefined } {
   const read = rev ? (f: string) => git(root, ["show", `${rev}:${f}`]) : (f: string) => readFileSync(join(root, f), "utf-8");
-  const files = rev
-    ? git(root, ["ls-tree", "-r", "--name-only", rev, "--", "packages/core/src"]).split("\n")
-    : git(root, ["ls-files", "--cached", "--others", "--exclude-standard", "--", "packages/core/src"]).split("\n");
-  const exportsMap = (JSON.parse(read("packages/core/package.json")) as { exports: Record<string, unknown> }).exports;
-  const want = renderTable(floorRows(files.filter(Boolean), read, exportsMap));
+  const list = (paths: string[]) =>
+    (rev ? git(root, ["ls-tree", "-r", "--name-only", rev, "--", ...paths]) : git(root, ["ls-files", "--cached", "--others", "--exclude-standard", "--", ...paths])).split("\n").filter(Boolean);
+  const exportsOf = (dir: string) => JSON.parse(read(`${dir}/package.json`)) as { name: string; exports: Record<string, unknown> };
+  // #4916: each lexicon with a floors file, and its sources for the subpaths that serve them.
+  const lexiconDirs = [...new Set(list(["lexicons"]).map((f) => LEXICON_FLOORS_RE.exec(f)?.[1]).filter((n): n is string => n !== undefined))].sort();
+  const lexicons = lexiconDirs.map((n) => {
+    const pkg = exportsOf(`lexicons/${n}`);
+    return { src: `lexicons/${n}/src/`, name: pkg.name, exports: pkg.exports };
+  });
+  const files = list(["packages/core/src", ...lexicons.map((l) => l.src)]);
+  const want = renderTable(floorRows(files, read, exportsOf("packages/core").exports, lexicons));
   let have: string | undefined;
   try {
     have = read(TABLE_FILE);

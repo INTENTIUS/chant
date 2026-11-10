@@ -27,7 +27,7 @@ Each check is matched to a floor in chant's floor table (below).
 | Kind | Matches | Its floor |
 |------|---------|-----------|
 | `floor` | A floor's name read off a module the file did not import statically (`m.CI_CHECK_HOOK_FLOOR`, `typeof m.E2E_HARNESS_FLOOR === "string"`), written as a member of a type the product declares for a lazily loaded chant module (`CI_CONTROL_FLOOR: string;`), in a string on a line that loads or asks a module (`exportsAll("@intentius/chant/op", ["OP_WAVE_STAND_DOWN_FLOOR"])`, `"X_FLOOR" in m`), or destructured from a dynamic import | that floor |
-| `module` | A chant subpath loaded with `import()` inside a `try` that has a `catch`, or with `.catch(` on the load, directly or through `const specifier = "@intentius/chant/..."` | the lowest floor the subpath serves: a chant with that floor has the subpath |
+| `module` | A chant or lexicon subpath loaded with `import()` inside a `try` that has a `catch`, or with `.catch(` on the load, directly or through `const specifier = "@intentius/chant/..."` | the lowest floor the subpath serves: a chant with that floor has the subpath |
 | `product-floor` | The product's own constant for the chant it needs, `const CHANT_CI_FLOOR = "0.124.67"` | that version |
 
 Using a floor the file imports statically (`import { CI_AGENT_FLOOR } from "@intentius/chant/ci-product"`), or reads off a namespace import of chant, is not a check: the file only builds against a chant with that floor. Comments are not read.
@@ -36,16 +36,18 @@ To keep a check on purpose, for example for a chant a user installs beside the p
 
 The scan does not see a check on an export that has no floor, such as `typeof m.writeCiHook === "function"` on its own. When chant adds a floor for a part, a product can check that floor instead.
 
+Lexicons release with chant at the same version, so a lazy load of a lexicon subpath such as `@intentius/chant-lexicon-terraform/registry` is checked against the `@intentius/chant` pin as well.
+
 ## The floor table
 
-`@intentius/chant/floor-table` lists every floor constant in chant core as `FLOOR_TABLE`. Each row has:
+`@intentius/chant/floor-table` lists every floor constant in chant core, and every floor a lexicon declares, as `FLOOR_TABLE`. Each name is declared once. Each row has:
 
 - `name`, the constant, such as `CI_IMAGE_FLOOR`;
 - `version`, the first chant release with the part. A floor added since the last release has the number of the next one (`NEXT_RELEASE`);
 - `gates`, the first sentence of the constant's doc comment;
 - `issue`, the issue that added it;
-- `file`, the file under `packages/core/src` that declares it;
-- `modules`, the `@intentius/chant` subpaths a product can import the constant from.
+- `file`, the file under `packages/core/src` that declares it, or for a lexicon's floor `lexicons/<name>/src/chant-floors.ts`;
+- `modules`, the subpaths a product can import the constant from, `@intentius/chant/...` or the lexicon's own.
 
 `floorVersion(name)` returns a floor's version, and `chantMeets(version, name)` says whether a chant version has the part:
 
@@ -57,7 +59,9 @@ if (chantMeets(installedChant, "DRIFT_ISSUE_FLOOR")) {
 }
 ```
 
-`scripts/floor-table.ts` writes the table from the constants. chant's release check (`just release-floors`) fails while the table is missing a floor or names an old version, and `just release-floors --freeze` writes it again when a release's floors become literals.
+A lexicon declares the floors of its parts in `src/chant-floors.ts`, each the first chant release whose lexicon has the part, and the entries that serve a part re-export its floor by name. Only that file is read in a lexicon, since other `_FLOOR` constants there can name versions of other tools. The terraform lexicon's are `MODULE_CONSUMERS_FLOOR` and `USED_SOURCES_FLOOR` on `@intentius/chant-lexicon-terraform/registry` and `MODULE_CATALOG_FLOOR` on `@intentius/chant-lexicon-terraform/module-catalog`.
+
+`scripts/floor-table.ts` writes the table from the constants, and fails when two files declare the same name. chant's release check (`just release-floors`) fails while the table is missing a floor or names an old version, and `just release-floors --freeze` writes it again when a release's floors become literals.
 
 ## From a script
 

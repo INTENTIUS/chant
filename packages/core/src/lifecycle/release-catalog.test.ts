@@ -11,7 +11,7 @@ import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import schema from "../workspace/release-catalog.schema.json";
-import { appendReleaseRecord, InvalidReleaseRecordError, readReleaseLedger, RELEASE_VERSION_FLOOR, type ReleaseRecord } from "./release-ledger";
+import { appendReleaseRecord, InvalidReleaseRecordError, readReleaseLedger, RELEASE_RECORD_VERSION_FLOOR, type ReleaseRecord } from "./release-ledger";
 import { parseReleaseLedger } from "./release-read";
 import {
   buildReleaseCatalog,
@@ -46,7 +46,7 @@ describe("release catalog schema", () => {
 
   test("its floors shipped in 0.124.55", () => {
     expect(RELEASE_CATALOG_FLOOR).toBe("0.124.55");
-    expect(RELEASE_VERSION_FLOOR).toBe("0.124.55");
+    expect(RELEASE_RECORD_VERSION_FLOOR).toBe("0.124.55");
   });
 });
 

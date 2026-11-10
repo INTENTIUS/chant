@@ -29,3 +29,4 @@ export * from "./source-forms";
 export * from "./proxies";
 export { moduleConsumers, isLocalSource, type ModuleConsumer } from "../pin/consumers";
 export { usedSources, type UsedSource, type UnreadSource, type UsedSourcesOptions } from "../used-sources";
+export { MODULE_CONSUMERS_FLOOR, USED_SOURCES_FLOOR } from "../chant-floors";
