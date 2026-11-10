@@ -329,7 +329,10 @@ export interface ProductPlanOptions {
    * so `pr-post` asks the forge when each last ran, in its checkout of the
    * target branch's commit, and adds the line for one that is overdue under
    * the note's counts. They reach it as `CHANT_PLAN_WATCHES`, from the
-   * pipeline, never from the plan job's report.
+   * pipeline, never from the plan job's report. #4988: a watch's `targets`
+   * scope it to those targets' notes, such as an environment's drift
+   * watch to that environment's note; left out, every target's note checks
+   * it.
    */
   watches?: ScheduledWatch[];
   /**
@@ -558,6 +561,10 @@ export function productPlanJobs(forge: ForgeKind, env: string, loop: PrLoopPipel
   for (const w of plan.watches ?? []) {
     const problem = scheduledWatchProblem(w);
     if (problem) throw new Error(`the product plan's watches: ${problem}`);
+    // #4988: a watch scoped to targets names the plan's own.
+    for (const t of w.targets ?? []) {
+      if (!seen.has(t)) throw new Error(`the product plan's watch ${w.op} names target ${t}, which the plan ${targets?.length ? "does not have" : "cannot scope to: it has no targets"}`);
+    }
   }
   if (new Set((plan.watches ?? []).map((w) => w.op)).size !== (plan.watches ?? []).length) throw new Error("the product plan's watches name an Op twice");
   // The note job's variables from the pipeline: the note words, and the product's watches (#4888).

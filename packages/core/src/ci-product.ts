@@ -183,7 +183,12 @@ export type { ProductWavesBeforeMerge } from "./components/product-pipeline";
  * The first chant whose product plan takes `watches`, the product's own scheduled jobs the note job's `pr-post` checks for having stopped with the job's token (#4888), and whose `checkOverdueOps` and `overdueOpsAt` take a product's `logPrefix` and `label`.
  */
 export const PRODUCT_PLAN_WATCHES_FLOOR = "0.124.88";
-export { PLAN_WATCHES_ENV } from "./op/schedule-overdue";
+export { PLAN_WATCHES_ENV, watchesForTarget } from "./op/schedule-overdue";
+
+/**
+ * The first chant whose product plan's `watches` take `targets` (#4988): a watch scoped to those targets is checked by their notes alone, and the note of another target checks neither it nor the discovered Op of its name (`watchesForTarget`).
+ */
+export const PRODUCT_PLAN_WATCH_TARGETS_FLOOR = NEXT_RELEASE;
 
 /**
  * The first chant whose product plan takes `record` (#4899): the plan step writes the plan job's run record into the hand-off, and the note job keeps it as Op `pr-plan` on `chant/lifecycle` with `pr-post --record-run <plan job>` (`--open` on GitLab), as `chant ci run plan --in-place` records `pr-plan`'s.

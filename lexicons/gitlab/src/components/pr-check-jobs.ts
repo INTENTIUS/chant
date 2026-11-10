@@ -7,7 +7,8 @@
  * - `check` runs in the merge request pipeline beside the plan, drops the
  *   forge tokens and the runner key's variable before any of the change's
  *   code runs (#4295), runs `chant ci check`, and keeps `.chant/check` as
- *   its artifact.
+ *   its artifact, with the product's own `artifacts` paths and reports
+ *   beside it (#4988).
  * - `check-evidence`, with `evidence`, runs in the plan notes pipeline of
  *   the target branch before the note jobs (#4914), and signs each passed
  *   hook of every open merge request's settled check job from its
@@ -90,7 +91,15 @@ export function gitlabCheckJobs(input: GitlabCheckJobsInput): Array<[string, Rec
         variables: check.env,
         // #4295: the hooks run the merge request's code, so the job's shell drops the tokens and the runner key first.
         script: [GITLAB_DROP_FORGE_TOKENS, ...(input.unset?.length ? [`unset ${input.unset.join(" ")}`] : []), ...input.setup, ...(check.before ?? []), check.command],
-        artifacts: { name: PR_CHECK_ARTIFACT, when: "always", paths: [fromRoot(input.member, check.dir)] },
+        // #4988: the product's own files beside the report, such as a hook's code quality report, kept from the job's directory.
+        artifacts: {
+          name: PR_CHECK_ARTIFACT,
+          when: "always",
+          paths: [fromRoot(input.member, check.dir), ...(check.artifacts?.paths ?? []).map((p) => fromRoot(input.member, p))],
+          ...(check.artifacts?.reports
+            ? { reports: Object.fromEntries(Object.entries(check.artifacts.reports).map(([type, p]) => [type, Array.isArray(p) ? p.map((q) => fromRoot(input.member, q)) : fromRoot(input.member, p)])) }
+            : {}),
+        },
       },
     ]);
     if (check.evidence) {

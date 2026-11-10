@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { cronFiresUtc } from "./cron";
-import { checkOverdueOps, opPipelineFile, overdueOpsAt, overdueVerdict, PLAN_WATCHES_ENV, plannedWatchesFromEnv, scheduledWatches, scheduledWatchProblem } from "./schedule-overdue";
+import { checkOverdueOps, opPipelineFile, overdueOpsAt, overdueVerdict, PLAN_WATCHES_ENV, plannedWatchesFromEnv, scheduledWatches, scheduledWatchProblem, watchesForTarget } from "./schedule-overdue";
 import { forgejoForge, githubForge, gitlabForge, type ForgeFetch, type PrForge } from "../pr-forge";
 import { renderPrNote, type PrReport } from "../pr-loop";
 import type { OpConfig } from "./types";
@@ -452,5 +452,33 @@ describe("a product's words and watches", () => {
     expect(plannedWatchesFromEnv({})).toEqual([]);
     expect(plannedWatchesFromEnv({ [PLAN_WATCHES_ENV]: "{" }, (l) => lines.push(l))).toEqual([]);
     expect(scheduledWatchProblem({ op: "a", cron: "0 6 * * *", schedule: { variable: "V", value: 'x" || true' } })).toContain("schedule value");
+  });
+
+  // #4988: a product plan's watch scoped to the targets whose note checks it.
+  test("a target's note checks the watches scoped to it and the unscoped ones, not another target's", async () => {
+    const root = repo({ ".gitlab/yodel-watch.gitlab-ci.yml": "drift" });
+    const files = [".gitlab/yodel-watch.gitlab-ci.yml"];
+    const watches = [
+      { op: "yodel-watch-staging", cron: "0 6 * * *", files, targets: ["staging"] },
+      { op: "yodel-watch-prod", cron: "0 6 * * *", files, targets: ["prod"] },
+      { op: "shared", cron: "0 6 * * *", files },
+    ];
+    const asked = async (member: string | undefined): Promise<string[]> => {
+      const ops: string[] = [];
+      await overdueOpsAt({ forge: forge(async (q) => (ops.push(q.op), {})), cwd: root, now, log: () => {}, watches, ...(member ? { member } : {}) });
+      return ops;
+    };
+    expect(await asked("staging")).toEqual(["yodel-watch-staging", "shared"]);
+    expect(await asked("prod")).toEqual(["yodel-watch-prod", "shared"]);
+    expect(await asked(undefined)).toEqual(["yodel-watch-staging", "yodel-watch-prod", "shared"]);
+    expect(watchesForTarget(watches, "dev").map((w) => w.op)).toEqual(["shared"]);
+  });
+
+  test("a watch's targets reach the note job as names; anything else is not a watch", () => {
+    const scoped = { op: "yodel-watch-prod", cron: "0 6 * * *", targets: ["prod"] };
+    expect(plannedWatchesFromEnv({ [PLAN_WATCHES_ENV]: JSON.stringify([scoped]) })).toEqual([scoped]);
+    expect(scheduledWatchProblem({ ...scoped, targets: [] })).toBe("watch yodel-watch-prod's targets are not a list of target names");
+    expect(scheduledWatchProblem({ ...scoped, targets: ["prod; rm"] })).toBe("watch yodel-watch-prod's targets are not a list of target names");
+    expect(scheduledWatchProblem({ ...scoped, targets: "prod" })).toBe("watch yodel-watch-prod's targets are not a list of target names");
   });
 });

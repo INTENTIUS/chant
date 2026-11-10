@@ -42,6 +42,10 @@
  * variables, lines and report directory come with `PrCheckJobOptions`, and
  * a product's own workflow renders the jobs through the lexicons'
  * `productCheckJobs`.
+ *
+ * #4988: on GitLab the check job keeps a product's own files beside the
+ * report (`artifacts: { paths, reports }`), such as a lint hook's code
+ * quality report, so a product's lint job can move onto chant's.
  */
 
 import type { ForgeKind } from "../pr-forge";
@@ -95,6 +99,28 @@ export interface PrCheckJobOptions {
   dir?: string;
   /** Arguments after `--base` (and `--output`), each one word, quoted where the shell needs it: `--summary <file>` and the targets a `perRun` hook runs for. */
   args?: string[];
+  /**
+   * GitLab only (#4988): files the check job keeps beside its report, such
+   * as a hook's code quality report. See {@link PrCheckArtifacts}.
+   */
+  artifacts?: PrCheckArtifacts;
+}
+
+/**
+ * What a GitLab check job keeps besides its report directory (#4988),
+ * relative to the job's directory as `dir` is: `paths`, more files or
+ * directories for `artifacts:paths`, and `reports`, GitLab's
+ * `artifacts:reports` by report type, such as `{ codequality:
+ * "gl-code-quality-report.json" }`, so a merge request shows a hook's
+ * findings. Kept when the check fails too, as the report is.
+ *
+ * GitHub and Forgejo take none: the check step is the job's last step
+ * (#4295), so no upload step can follow it, and a hook there shows its
+ * findings as annotations in the log (`--format forge`).
+ */
+export interface PrCheckArtifacts {
+  paths?: string[];
+  reports?: Record<string, string | string[]>;
 }
 
 /** One shell word: as it is when it needs no quoting, else in single quotes. */
@@ -115,6 +141,8 @@ export interface PrCheckJob {
   services?: PrCheckService[];
   /** The lines before the command (#4964). */
   before?: string[];
+  /** GitLab: the files kept beside the report (#4988). */
+  artifacts?: PrCheckArtifacts;
   /**
    * With `evidence`: the signing job's lines and variables. GitHub and
    * Forgejo run them in `check-evidence` after taking the report back;
@@ -130,9 +158,32 @@ export interface PrCheckJob {
 /** The variables a check job's own `env` may not set: the ones the job and its handover read, and the credentials it drops. */
 const CHECK_RESERVED_ENV = /^(BASE_SHA|HEAD_SHA|CHECK_RESULT|CHANT_RUNNER_KEY|CHANT_RUNNER_IDENTITY|CHANT_LOCAL_EVIDENCE_KEY|CHANT_CHECKOUT_TOKEN|GITHUB_TOKEN|GH_TOKEN|FORGEJO_TOKEN|GITLAB_TOKEN|CI_JOB_TOKEN|CHANT_FORGE_TOKEN|ACTIONS_ID_TOKEN_REQUEST_(URL|TOKEN))$/;
 
+/** A relative path inside the checkout: no leading `/`, no `..`, and with `glob` GitLab's `*` wildcards. */
+function insideCheckout(path: string, glob = false): boolean {
+  return (glob ? /^[A-Za-z0-9._*][A-Za-z0-9._*\/-]*$/ : /^[A-Za-z0-9._][A-Za-z0-9._\/-]*$/).test(path) && !path.split("/").includes("..");
+}
+
+/** The check job's extra artifacts (#4988), or undefined when they name nothing; refused off GitLab and for a path outside the checkout. */
+function checkArtifacts(forge: ForgeKind, artifacts: PrCheckArtifacts | undefined): PrCheckArtifacts | undefined {
+  const paths = artifacts?.paths ?? [];
+  const reports = Object.entries(artifacts?.reports ?? {});
+  if (paths.length === 0 && reports.length === 0) return undefined;
+  if (forge !== "gitlab") throw new Error("the check job's artifacts are GitLab's artifacts:paths and artifacts:reports; on GitHub and Forgejo the check is the job's last step, so leave artifacts out there");
+  for (const p of paths) {
+    if (!insideCheckout(p, true)) throw new Error(`the check job's artifact path ${JSON.stringify(p)} is not a relative path inside the checkout`);
+  }
+  for (const [type, value] of reports) {
+    if (!/^[a-z][a-z_]*$/.test(type)) throw new Error(`the check job's artifact report ${JSON.stringify(type)} is not a GitLab report type`);
+    if (type === "coverage_report") throw new Error("the check job's artifact reports take a path for each report type, and GitLab's coverage_report takes a format besides; keep it in a job of the product's own");
+    const list = Array.isArray(value) ? value : [value];
+    if (list.length === 0 || list.some((p) => !insideCheckout(p, true))) throw new Error(`the check job's ${type} report ${JSON.stringify(value)} is not a relative path inside the checkout`);
+  }
+  return { ...(paths.length > 0 ? { paths } : {}), ...(reports.length > 0 ? { reports: Object.fromEntries(reports) } : {}) };
+}
+
 /** Refuse check job settings no job could hold (#4964). */
 function assertCheckJobOptions(opts: PrCheckJobOptions): void {
-  if (opts.dir !== undefined && (!/^[A-Za-z0-9._][A-Za-z0-9._\/-]*$/.test(opts.dir) || opts.dir.split("/").includes(".."))) {
+  if (opts.dir !== undefined && !insideCheckout(opts.dir)) {
     throw new Error(`the check job's report directory ${JSON.stringify(opts.dir)} is not a relative path inside the checkout`);
   }
   for (const a of opts.args ?? []) {
@@ -164,6 +215,7 @@ function assertCheckJobOptions(opts: PrCheckJobOptions): void {
 export function prCheckJob(forge: ForgeKind, opts: { bin?: string; evidence?: PipelineEvidence; noForks?: boolean; member?: { name: string; reportPath: string } } & PrCheckJobOptions = {}): PrCheckJob {
   assertPipelineEvidence(opts.evidence);
   assertCheckJobOptions(opts);
+  const artifacts = checkArtifacts(forge, opts.artifacts);
   const gitlab = forge === "gitlab";
   const base = gitlab ? "$CI_MERGE_REQUEST_DIFF_BASE_SHA" : "${{ github.event.pull_request.base.sha }}";
   const dir = opts.dir ?? PR_CHECK_REPORT_DIR;
@@ -175,6 +227,7 @@ export function prCheckJob(forge: ForgeKind, opts: { bin?: string; evidence?: Pi
     dir,
     ...(opts.services?.length ? { services: opts.services } : {}),
     ...(opts.before?.length ? { before: opts.before } : {}),
+    ...(artifacts ? { artifacts } : {}),
   };
   const evidence = opts.evidence;
   if (!evidence) return job;
@@ -251,4 +304,4 @@ export function prRefGateJob(forge: ForgeKind, opts: { bin?: string; branch?: st
   };
 }
 
-export { CHECK_JOB_FLOOR, GITLAB_OPEN_EVIDENCE_FLOOR, MEMBER_SIGNED_CHECKS_FLOOR, PR_LOOP_EVIDENCE_FLOOR, PRODUCT_CHECK_JOBS_FLOOR, REF_GATE_STATUS_JOB_FLOOR } from "../release-floors";
+export { CHECK_JOB_ARTIFACTS_FLOOR, CHECK_JOB_FLOOR, GITLAB_OPEN_EVIDENCE_FLOOR, MEMBER_SIGNED_CHECKS_FLOOR, PR_LOOP_EVIDENCE_FLOOR, PRODUCT_CHECK_JOBS_FLOOR, REF_GATE_STATUS_JOB_FLOOR } from "../release-floors";
