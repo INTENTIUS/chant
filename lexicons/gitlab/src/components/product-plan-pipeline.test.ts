@@ -119,3 +119,36 @@ describe("the product plan's steps on GitLab (#4899, #4931)", () => {
     expect(plain.yaml).not.toMatch(/interruptible|id_tokens|CHANT_PREVIEW|note-commands/);
   });
 });
+
+describe("terragucci's plan jobs on GitLab (#4963)", () => {
+  const trade = { aws: { region: "us-east-1", audience: "sts.amazonaws.com", role: "arn:aws:iam::123456789012:role/tg-plan" } };
+  const { entries } = generateGitlabProductPlanPipeline("default", {
+    words: { ...words, product: "terragucci", bin: "terragucci chant", commands: { plan: "plan" } },
+    noteCommands: true,
+    productPlan: { command: "terragucci plan --pr-note {output}", trade, replan: { notAffected: true, dispatch: true, reply: true } },
+  });
+  const job = (name: string) => entries.find(([k]) => k === name)![1] as Job & { id_tokens?: Record<string, { aud: string }> };
+
+  test("the plan and re-plan jobs trade first, before the tokens go and before the head is checked out", () => {
+    for (const name of ["plan", "replan"]) {
+      const j = job(name);
+      expect(j.id_tokens).toEqual({ CHANT_ID_TOKEN_AWS: { aud: "sts.amazonaws.com" } });
+      expect(j.variables).toMatchObject({ CHANT_CLOUD_TRADE: JSON.stringify(trade) });
+      expect(j.script[0]).toMatch(/^CHANT_CLOUD_TRADE_VARS=/);
+      expect(j.script[1]).toContain("ACTIONS_ID_TOKEN_REQUEST_TOKEN");
+      expect(j.script.findIndex((l) => l.startsWith("unset CHANT_FORGE_TOKEN"))).toBe(3);
+    }
+    expect(job("replan").script.findIndex((l) => l.includes("refs/merge-requests/$PR_NUMBER/head"))).toBeGreaterThan(3);
+  });
+
+  test("the re-plan's note job reads the argument from the comment and answers not affected; dispatch and reply add nothing here", () => {
+    const note = job("replan-note");
+    expect(note.script.at(-1)).toBe('terragucci chant components pr-post --pr "$PR_NUMBER" --head "$HEAD_SHA" --env default --output .chant/pr --forge gitlab --not-affected "$CHANT_PLAN_ARGUMENT"');
+    expect(note.script.at(-2)).toMatch(/^CHANT_PLAN_ARGUMENT=/);
+    expect(JSON.stringify(entries)).not.toMatch(/CHANT_REPLAN_PRODUCT|workflow_dispatch/);
+  });
+
+  test("previousMarker is refused: the plan job holds no token to read a note with", () => {
+    expect(() => generateGitlabProductPlanPipeline("default", { words, productPlan: { command: "x", previousMarker: true, noteWords: { productMarker: "yodel:plan" } } })).toThrow(/GitLab's plan job holds no token/);
+  });
+});

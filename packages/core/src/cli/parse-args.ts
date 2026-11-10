@@ -964,6 +964,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant components pr-post --record-run <plan job>` (#4899): keep the product plan job's run record on chant/lifecycle.
       result.recordRun = args[++i];
       if (!result.recordRun || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(result.recordRun)) throw new Error(`--record-run needs the plan job's name: got "${result.recordRun ?? ""}"`);
+    } else if (arg === "--not-affected") {
+      // `chant components pr-post --not-affected <argument>` (#4963): the re-plan's argument, which may be empty; pr-post checks it.
+      if (i + 1 >= args.length) throw new Error('--not-affected needs the re-plan\'s argument, empty for none: --not-affected "$CHANT_PLAN_ARGUMENT"');
+      result.notAffected = args[++i];
     } else if (arg === "--evidence-dir") {
       // `chant components pr-post --open --evidence-dir <dir>` (#4914): each merge request's evidence.json, from the GitLab signing job.
       result.evidenceDir = args[++i];

@@ -2779,7 +2779,7 @@ function writeWaveChangeSet(ctx: CommandContext, wave: number, doc: PrPlanSet["d
 }
 
 /**
- * chant components pr-post --pr <n> --head <sha> --env <env> --forge <kind> [--member <name>] [--output <dir>] [--result <result>] (#4295)
+ * chant components pr-post --pr <n> --head <sha> --env <env> --forge <kind> [--member <name>] [--output <dir>] [--result <result>] [--not-affected <argument>] (#4295, #4963)
  * chant components pr-post --open --env <env> --forge gitlab [--branch <branch>] [--member <name>] [--output <dir>] (#4328)
  *
  * Post the plan note and the `chant/plan` status from the report a plan job
@@ -2824,6 +2824,8 @@ export async function runComponentsPrPost(ctx: CommandContext): Promise<number> 
     ...(args.forge !== "gitlab" && process.env.GITHUB_STEP_SUMMARY ? { summaryFile: process.env.GITHUB_STEP_SUMMARY } : {}),
     // #4899: the product plan job's run record, kept on chant/lifecycle with the note.
     ...(args.recordRun ? { recordRun: await planRunRecorder(args.forge as ForgeKind, args.recordRun) } : {}),
+    // #4963: a re-plan narrowed to an argument the change does not reach gets a reply in place of the note.
+    ...(args.notAffected ? { notAffected: args.notAffected } : {}),
   });
   for (const message of posted.warnings) console.error(formatWarning({ message }));
   if (posted.refused) console.error(formatWarning({ message: `the plan report was not used: ${posted.refused}` }));

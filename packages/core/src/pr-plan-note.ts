@@ -70,6 +70,28 @@ export interface PrPlanNoteHandoff {
   marker?: string;
 }
 
+/**
+ * A product's plan note hand-off whose note is the product's own text
+ * (#4963), in place of a {@link PrPlanNote}: sql-yodeler's tenant set note,
+ * which chant's note cannot carry yet. `pr-post` checks it as it checks a
+ * {@link PrPlanNoteHandoff}, writes every `<!--` in `body` as `&lt;!--`,
+ * puts chant's marker and the product's line (`marker`) above it, adds the
+ * overdue Ops and the note job's notices under it, and cuts it to the
+ * forge's limit.
+ */
+export interface PrPlanBodyHandoff extends Omit<PrPlanNoteHandoff, "note"> {
+  /** The note's markdown, at most {@link PLAN_BODY_LIMIT} characters. */
+  body: string;
+}
+
+/** The most characters a {@link PrPlanBodyHandoff.body} holds (#4963). */
+export const PLAN_BODY_LIMIT = 1_000_000;
+
+/** The hand-off for a product's own note text (#4963), as a plan verb writes it to {@link PR_PLAN_NOTE_FILE}. */
+export function planBodyHandoff(body: string, at: { pr: number; head: string; env: string; member?: string; state: PrPlanNoteHandoff["state"]; description: string; marker?: string }): PrPlanBodyHandoff {
+  return { kind: "plan-note-handoff", contract: PR_PLAN_NOTE_CONTRACT, pr: at.pr, head: at.head, env: at.env, ...(at.member !== undefined ? { member: at.member } : {}), state: at.state, description: at.description, body, ...(at.marker !== undefined ? { marker: at.marker } : {}) };
+}
+
 /** The most characters a hand-off's {@link PrPlanNoteHandoff.marker} holds (#4931). */
 export const PRODUCT_MARKER_LIMIT = 4096;
 
