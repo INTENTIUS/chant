@@ -6,7 +6,8 @@
  */
 import { describe, expect, test } from "vitest";
 import { composeChangeSet } from "./change-set";
-import { memberCounts, PR_REPORT_SCHEMA_ID, prStatusDescription, renderPrNote, type PrReport } from "./pr-loop";
+import { memberCounts, PR_REPORT_SCHEMA_ID, renderPrNote, type PrReport } from "./pr-loop";
+import { prStatusDescription } from "./pr-status";
 import { assertProductWords } from "./ci-product-words";
 import { PLYWOOD } from "./__fixtures__/product-words";
 

@@ -105,9 +105,7 @@ import {
   prApproveCommands,
   prNoteMarker,
   prOp,
-  prStatusDescription,
   prStatusContext,
-  prStatusState,
   renderPrNote,
   type PrApproval,
   type PrBeforeMerge,
@@ -119,6 +117,7 @@ import {
   type PrRound,
   type PrOverdue,
 } from "../../pr-loop";
+import { prStatusDescription, prStatusState } from "../../pr-status";
 import { FORGE_KINDS, forgeFromEnv, forgePrincipalOf, type ForgeKind, type PrForge } from "../../pr-forge";
 // #4964: a status for a pull_request run's merge preview goes on the pull request's head.
 import { forgeFromJobEnv } from "../../pr-forge-job";
@@ -1510,14 +1509,50 @@ async function beforeMergeChecks(ctx: CommandContext): Promise<PrBeforeMerge | n
   // plywood#66: the forge also reports the pull-request pipeline's plan job, `chant-pr.<member>.<env> / plan (<event>)`, which a denial fails too.
   const planJob = [`chant-pr.${member ?? "*"}.${ctx.args.env ?? "*"} / plan*`];
   const ignore = [...new Set([productContext(activeProductWords(), gate), productContext(activeProductWords(), PR_APPLY_GATE), `chant/${gate}`, `chant/${PR_APPLY_GATE}`, prStatusContext("apply", member), prStatusContext("plan"), `${prStatusContext("plan")}/`, ...planJob])];
+  // #4966: the `checks` require waits for the ref gate's status too, when the policy at base has a rule for the target branch.
+  const refGate = await beforeMergeRefGate(cwd, args.base, args.branch);
+  if ("problem" in refGate) return fail(refGate.problem);
+  if (refGate.note) console.error(formatInfo(refGate.note));
   // ws-106 gives the declaration no way to leave a check out, so with no --requires all four are asked (#4336, #4607).
-  const requires = await checkPrRequires(forge, args.pr, head, { ignore, ...(only ? { only: only.checks } : {}) });
+  const requires = await checkPrRequires(forge, args.pr, head, { ignore, ...(only ? { only: only.checks } : {}), ...(refGate.require.length > 0 ? { require: refGate.require } : {}) });
   for (const r of requires) console.error(formatInfo(`${r.name}: ${r.passed ? "passed" : r.pending ? "pending" : "unmet"}, ${r.reason}`));
   const unmet = unmetRequires(requires);
   if (unmet) {
     return early({ requires }, "requires-unmet", `${forge.kind === "gitlab" ? `Merge request !${args.pr}` : `Pull request ${args.pr}`} is not ready to apply before merge: ${unmet}. Nothing was applied.`, GATED_EXIT_CODE);
   }
   return { requires };
+}
+
+/**
+ * The branch an apply before merge lands on (#4966): `--branch`, else the
+ * pull request's target as its job names it, else the branch the job runs
+ * on, which for the generated apply job is the target branch (an
+ * `issue_comment` run on GitHub and Forgejo, a target-branch pipeline on
+ * GitLab).
+ */
+export function beforeMergeBranch(explicit: string | undefined, env: Record<string, string | undefined> = process.env): string | undefined {
+  for (const v of [explicit, env.GITHUB_BASE_REF, env.CI_MERGE_REQUEST_TARGET_BRANCH_NAME, env.CI_COMMIT_BRANCH, env.GITHUB_REF_NAME]) {
+    if (v && v.trim()) return v.trim();
+  }
+  return undefined;
+}
+
+/**
+ * The statuses an apply before merge waits for beside the forge's own
+ * (#4966): the ref gate's status for the target branch, as the policy at
+ * `base` sets it (`refGateRulesAt`), passed as `require` to the `checks`
+ * require, so `checks` does not pass before the `ref-gate` job posted it.
+ * No rule for the branch requires nothing; a policy that can't be read is
+ * a problem, and the apply stops.
+ */
+export async function beforeMergeRefGate(cwd: string, base: string, branch: string | undefined, env: Record<string, string | undefined> = process.env): Promise<{ require: string[]; note?: string } | { problem: string }> {
+  const target = beforeMergeBranch(branch, env);
+  if (!target) return { require: [], note: "the job names no target branch (--branch), so the ref gate's status is not waited for" };
+  const { refGateRulesAt } = await import("../../ref-gate-rules");
+  const rules = refGateRulesAt(cwd, { ref: `refs/heads/${target}`, base });
+  if (rules.problems.length > 0) return { problem: `the trust policy at base can't be read, so the apply before merge can't tell which ref gate status to wait for: ${rules.problems.join("; ")}. Nothing was applied.` };
+  if (!rules.matched || !rules.status) return { require: [] };
+  return { require: [rules.status], note: `the checks require waits for ${rules.status}, the ref gate's status for refs/heads/${target}` };
 }
 
 /** The refusal report of an apply before merge stopped before it planned (#4301): nothing selected, nothing planned. */

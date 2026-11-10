@@ -24,8 +24,13 @@
  * #4914: `--summary <file>` appends the report's markdown section
  * (`checkReportSummary`) to the file, as a product's check report keeps it,
  * and a job with `GITHUB_STEP_SUMMARY` set gets it in its summary too.
+ *
+ * #4966: `--base` defaults to the job's base (`ciBaseRef`,
+ * `@intentius/chant/ci-base`), `--branch` naming the default branch on a
+ * forge whose job does not carry it.
  */
 import { resolve } from "node:path";
+import { ciBaseRef } from "../../ci-base";
 import type { CheckStageEvidence, CheckStepsAdapter } from "../../components/check-steps";
 import { CHANT_EXIT } from "../../exit-codes";
 import { formatError } from "../format";
@@ -49,7 +54,7 @@ async function lexiconCheckSteps(ctx: CommandContext, cwd: string): Promise<Chec
   return plugins.map((p) => p.checkSteps?.()).filter((a): a is CheckStepsAdapter => a !== undefined);
 }
 
-const USAGE = "chant ci check --base <rev> [<target>...] [--output <dir>] [--summary <file>] [--no-push] [--json]";
+const USAGE = "chant ci check [--base <rev>] [--branch <default branch>] [<target>...] [--output <dir>] [--summary <file>] [--no-push] [--json]";
 
 /**
  * The check stage's signer (#4870), when the job has a runner identity: a
@@ -91,10 +96,17 @@ async function localEvidenceAt(base: string): Promise<{ base: string } | undefin
   }
 }
 
-export async function runCiCheck(ctx: CommandContext): Promise<number> {
+export async function runCiCheck(ctx: CommandContext, env: Record<string, string | undefined> = process.env): Promise<number> {
   const { args } = ctx;
-  if (!args.base) {
-    console.error(formatError({ message: "chant ci check needs --base <rev>, the commit the change is measured from", hint: `${USAGE}. The hooks are read at base, so a change cannot remove a required check.` }));
+  // #4966: with no --base, the job's own (`ciBaseRef`): a pull request's target branch, else the default branch (--branch) for a push to another branch.
+  const base = args.base ?? ciBaseRef(env, args.branch ? { defaultBranch: args.branch } : {});
+  if (!base) {
+    console.error(
+      formatError({
+        message: "chant ci check needs --base <rev>, the commit the change is measured from, and the job names no pull request target or default branch to take it from",
+        hint: `${USAGE}. The hooks are read at base, so a change cannot remove a required check.`,
+      }),
+    );
     return 1;
   }
   const targets = (args.positionals ?? []).slice(1);
@@ -102,10 +114,10 @@ export async function runCiCheck(ctx: CommandContext): Promise<number> {
   let report;
   try {
     const adapters = await lexiconCheckSteps(ctx, process.cwd());
-    const evidence = await checkEvidenceSigner(args.base, args.noPush === true);
+    const evidence = await checkEvidenceSigner(base, args.noPush === true);
     // #4868: a job that signs local evidence runs every hook; any other may skip one on local evidence.
-    const local = evidence && "class" in evidence.signer ? undefined : await localEvidenceAt(args.base);
-    report = await runCheckStage({ base: args.base, targets, adapters, ...(args.output ? { dir: args.output } : {}), ...(evidence ? { evidence } : {}), ...(local ? { localEvidence: local } : {}) });
+    const local = evidence && "class" in evidence.signer ? undefined : await localEvidenceAt(base);
+    report = await runCheckStage({ base, targets, adapters, ...(args.output ? { dir: args.output } : {}), ...(evidence ? { evidence } : {}), ...(local ? { localEvidence: local } : {}) });
   } catch (err) {
     console.error(formatError({ message: err instanceof Error ? err.message : String(err), hint: USAGE }));
     return CHANT_EXIT.failed;

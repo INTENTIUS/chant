@@ -23,11 +23,10 @@ import {
   PR_GATE_OP,
   prOp,
   prStatusContext,
-  prStatusDescription,
-  prStatusState,
   renderPrNote,
   type PrReport,
 } from "./pr-loop";
+import { prStatusDescription, prStatusState } from "./pr-status";
 import { contract, validSchema } from "./workspace/__fixtures__/contract-repo";
 import schema from "./workspace/pr-report.schema.json";
 import changeSetSchema from "./workspace/change-set.schema.json";

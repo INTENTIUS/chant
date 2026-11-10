@@ -23,8 +23,9 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
+import { writePlannedFiles } from "./planned-files";
 import { appendElement, setProperty } from "./workspace/json-edit";
 import { parseJsonText } from "./workspace/jsonc";
 import { REF_CHECK_NAME, TRUST_CONFIG_PATH, trustConfigSchema, type TrustConfig } from "./workspace/trust/policy";
@@ -180,10 +181,6 @@ export function refGateInitPlan(repo: string, opts: RefGateInitOptions): RefGate
 
 /** Write the files of a plan, each directory made and the hook executable. An unchanged file is not touched. */
 export function writeRefGateInit(plan: Pick<RefGateInitPlan, "files">): void {
-  for (const f of plan.files) {
-    if (f.status === "unchanged") continue;
-    mkdirSync(dirname(f.path), { recursive: true });
-    writeFileSync(f.path, f.content);
-    if (f.mode !== undefined) chmodSync(f.path, f.mode);
-  }
+  // #4966: chant's one planned-file writer.
+  writePlannedFiles(plan.files);
 }

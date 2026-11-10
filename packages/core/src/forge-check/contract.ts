@@ -167,7 +167,15 @@ export interface ContractPipeline {
 export interface PipelineContractInput {
   forge: ForgeKind;
   repository: ForgeCheckRepository;
+  /** chant's generated pipelines. Empty for a product whose jobs are all its own (`jobs`). */
   pipelines: ContractPipeline[];
+  /**
+   * Jobs a product builds from its own config (#4966), such as terragucci's
+   * per-environment stages, after the pipelines' jobs. They add no status
+   * of their own: a product whose jobs are all its own names its
+   * `requiredStatuses`.
+   */
+  jobs?: ForgeCheckJob[];
   /** The product's words: the stage words in job names and the default required statuses. */
   words?: CiProductWordsInput | CiProductWords;
   /** Default: the default branch. */
@@ -190,7 +198,9 @@ export interface PipelineContractInput {
  * the plan job (pull request, plan identities), the record job (default
  * branch, plan identities) and the apply job (default branch or its forge
  * environment, apply identities). A Forgejo forge has no environments, so
- * `forgeEnvironment` is left out there.
+ * `forgeEnvironment` is left out there. A product's own `jobs` follow
+ * them, so the required statuses, the ref gate's status and the protected
+ * branches are chant's however the jobs were built (#4966).
  */
 export function pipelineContract(input: PipelineContractInput): ForgeCheckContract {
   const words = resolveProductWords(input.words);
@@ -212,6 +222,7 @@ export function pipelineContract(input: PipelineContractInput): ForgeCheckContra
     const ctx = productStatusContext(words, "plan", p.member);
     if (!statuses.includes(ctx)) statuses.push(ctx);
   }
+  jobs.push(...(input.jobs ?? []));
   const required = [...(input.requiredStatuses ?? statuses)];
   if (input.refGateStatus && !required.includes(input.refGateStatus)) required.push(input.refGateStatus);
   return {

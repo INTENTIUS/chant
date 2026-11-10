@@ -126,7 +126,7 @@ chant workspace ref-gate status --open --ref "refs/heads/$CI_COMMIT_BRANCH" --ba
 
 A product reads the gate and sets it up through chant ([#4913](https://github.com/INTENTIUS/chant/issues/4913)), feature-detected on `REF_GATE_PIECES_FLOOR`.
 
-`@intentius/chant/ref-gate-rules` reads the rules. `refGateRulesAt(repo, { ref, base })` returns, from the policy at `base` (by default as `check` picks it), whether a rule matches `ref`, its `checks`, the `status` the gate sets and its `problems` when the policy can't be read. An apply before merge passes `status` as `require` to `checkPrRequires` (`@intentius/chant/pr-requires`): `checks` then waits for the gate's status, and one not posted yet is pending rather than passed. `refGateStatusFor(repo, defaultBranch)` gives the status a forge check requires, read at `origin/<default>`.
+`@intentius/chant/ref-gate-rules` reads the rules. `refGateRulesAt(repo, { ref, base })` returns, from the policy at `base` (by default as `check` picks it), whether a rule matches `ref`, its `checks`, the `status` the gate sets and its `problems` when the policy can't be read. An apply before merge passes `status` as `require` to `checkPrRequires` (`@intentius/chant/pr-requires`): `checks` then waits for the gate's status, and one not posted yet is pending rather than passed. `chant components pr-apply --before-merge` does this for the target branch (`--branch`, else the branch the job names) since [#4966](https://github.com/INTENTIUS/chant/issues/4966), and stops when the policy at base can't be read. `refGateStatusFor(repo, defaultBranch)` gives the status a forge check requires, read at `origin/<default>`.
 
 `@intentius/chant/ref-gate-init` writes the setup a product's init needs:
 

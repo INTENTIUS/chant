@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { DriverComponent } from "../../components/driver";
 import type { DeployContext } from "../../components/capability";
 import type { ParsedArgs } from "../registry";
-import { prStatusState } from "../../pr-loop";
+import { prStatusState } from "../../pr-status";
 
 const HEAD = "a".repeat(40);
 const BASE = "b".repeat(40);

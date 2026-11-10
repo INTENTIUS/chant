@@ -42,4 +42,6 @@ export {
 export { pulumiRows, policyGrants, PULUMI_TOKEN_ENV } from "./pulumi";
 /** `refGateStatus` in `pipelineContract` (#4913). */
 export { REF_GATE_PIECES_FLOOR } from "../release-floors";
+/** `jobs` in `pipelineContract` (#4966). */
+export { FORGE_CHECK_OWN_JOBS_FLOOR } from "../release-floors";
 export { forgeCheck, forgeCheckExit, describeForgeCheck, countRows, forgeCheckCommand, forgeCheckSchema, forgeCheckTarget, uncheckedClouds, ForgeCheckTargetError, type ForgeCheckInput } from "./check";

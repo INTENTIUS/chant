@@ -203,3 +203,18 @@ export const PRODUCT_CHECK_JOBS_FLOOR = NEXT_RELEASE;
 
 /** The first chant whose GitLab Op waves pipeline with a runner key hands it to no wave job: each deciding wave's `<wave job>-evidence` job names the `chant-evidence` environment and signs `plan:<wave>` from the wave job (#4964). */
 export const GITLAB_WAVE_KEY_SCOPE_FLOOR = NEXT_RELEASE;
+
+/** The first chant with `actorOf` and `actorOrder` in `@intentius/chant/actor`: the actor fallback with `GITHUB_TRIGGERING_ACTOR` ahead of the forge's actor and git's `user.name` before the login, each place switched on or off by the caller (#4966). */
+export const ACTOR_ORDER_FLOOR = NEXT_RELEASE;
+
+/** The first chant with `@intentius/chant/ci-base` (`ciBaseRef`), the base a CI job measures a change from (the pull request's target branch, else the default branch for a push to another branch), and whose `chant ci check` defaults `--base` to it (#4966). */
+export const CI_BASE_REF_FLOOR = NEXT_RELEASE;
+
+/** The first chant with `@intentius/chant/planned-files` (`planFile`, `planRemoval`, `writePlannedFiles`, `staleGeneratedFiles`): an init's planned files with their modes, written or removed in one call, and the generated files a product no longer renders, found by their header (#4966). */
+export const PLANNED_FILES_FLOOR = NEXT_RELEASE;
+
+/** The first chant whose `pipelineContract` takes `jobs`, the jobs a product builds from its own config, beside or in place of `pipelines`, so a product's forge check gets the required statuses and `refGateStatus` from chant (#4966). */
+export const FORGE_CHECK_OWN_JOBS_FLOOR = NEXT_RELEASE;
+
+/** The first chant whose `chant components pr-apply --before-merge` waits for the ref gate's status: the status the policy at base sets for the target branch is passed as `require` to the `checks` require (#4966). */
+export const BEFORE_MERGE_REF_GATE_FLOOR = NEXT_RELEASE;
