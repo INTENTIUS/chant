@@ -32,8 +32,14 @@ export const OPEN_CHECK_FILE = "check-hooks.json";
 
 /** What {@link signOpenReports} signs for. */
 export interface OpenEvidenceInput {
-  /** A GitLab client with {@link PrForge.mergeRequestJobs} and {@link PrForge.jobArtifact}. */
-  forge: Pick<PrForge, "kind" | "mergeRequestJobs" | "jobArtifact">;
+  /**
+   * A GitLab client with {@link PrForge.mergeRequestJobs} and
+   * {@link PrForge.jobArtifact}, and with `noForks` {@link PrForge.openPullRequests},
+   * which says which merge requests come from a fork. The fork test is read
+   * here, not in `mergeRequestJobs`, to keep it out of the pull request loop's
+   * bundle (its ceiling, pr-loop-bundle.test.ts).
+   */
+  forge: Pick<PrForge, "kind" | "mergeRequestJobs" | "jobArtifact" | "openPullRequests">;
   /** The branch the merge requests merge into: the pipeline's own. */
   branch: string;
   /** The job whose report is signed: `plan`, `<target>-plan` or `check`. */
@@ -69,8 +75,13 @@ export async function signOpenReports(input: OpenEvidenceInput): Promise<{ done:
   const done: OpenEvidence[] = [];
   const warnings: string[] = [];
   const at = input.artifactDir.replace(/\/+$/, "");
+  let forks = new Set<number>();
+  if (input.noForks) {
+    if (!forge.openPullRequests) throw new Error(`ci evidence sign --open --no-forks reads which merge requests come from a fork, which ${forge.kind} cannot say`);
+    forks = new Set((await forge.openPullRequests(input.branch)).filter((p) => p.fork).map((p) => p.number));
+  }
   for (const job of await forge.mergeRequestJobs(input.branch, input.job)) {
-    if (input.noForks && job.fork) {
+    if (forks.has(job.pr)) {
       done.push({ pr: job.pr, head: job.head, skipped: "the merge request is from a fork" });
       continue;
     }
