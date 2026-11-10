@@ -23,8 +23,11 @@
  * `/tmp`), mode 0600. Then it sets:
  *
  *   AWS    AWS_ROLE_ARN, AWS_WEB_IDENTITY_TOKEN_FILE, AWS_ROLE_SESSION_NAME,
- *          AWS_REGION, AWS_DEFAULT_REGION (and AWS_ENDPOINT_URL_STS with
- *          `endpoint`)
+ *          with `region` AWS_REGION and AWS_DEFAULT_REGION (else the job
+ *          keeps its own, #4930), and AWS_ENDPOINT_URL_STS with
+ *          `endpoint`. With no role the job gets the token file and the
+ *          session name alone, for a tool that assumes its own roles,
+ *          such as Terragrunt's `credentials` (#4930)
  *   GCP    GOOGLE_APPLICATION_CREDENTIALS and
  *          CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE, an `external_account`
  *          file per service account that trades the token at Google's STS
@@ -37,9 +40,11 @@
  *
  * gcloud reads CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE, so it needs no
  * `gcloud auth login`. On GitHub and Forgejo the variables go to
- * `$GITHUB_ENV`; on GitLab the script evaluates the `export` lines the
- * login prints, which name files and hold no token, then unsets the token
- * variables and the spec. No file of variables is left to delete.
+ * `$GITHUB_ENV`, which later steps read; on GitLab the script evaluates the
+ * `export` lines the login prints, which name files and hold no token, then
+ * unsets the token variables and the spec. No file of variables is left to
+ * delete. With {@link CloudLoginOptions.sameStep} every forge takes the
+ * GitLab form, so the step that logs in can run the tool too (#4930).
  *
  * Per target and per stage: the spec is a {@link CloudTradeSpec} without
  * Pulumi, the plan or apply side of what `resolveCloudIdentity` gives, so a
@@ -47,7 +52,9 @@
  * other targets take (#4332). The step then writes the
  * {@link CLOUD_TARGETS_ENV} file the trade writes, each identity's
  * variables in it, and a product hands each target's tool its own with
- * `targetCloudEnv`, as after the trade.
+ * `targetCloudEnv`, as after the trade. The login sets no
+ * `CLOUD_TRADED_ENV`, which the trade does, so a product tells the login's
+ * targets file from a trade's (#4930).
  *
  * The functions return {@link OpWaveRunStep}s and the job's `idTokens`, the
  * shape `OpWavesPipelineOptions.waveJobs[].before` and `recordPlans` take
@@ -85,7 +92,7 @@ interface TokenFileOption {
 export interface CloudLoginSpec {
   aws?: Omit<NonNullable<CloudTradeSpec["aws"]>, "region" | "audience"> &
     TokenFileOption & {
-      /** Default `us-east-1`. */
+      /** AWS_REGION and AWS_DEFAULT_REGION. Unset: the job keeps its own region (#4930). */
       region?: string;
       /** The token's audience. Default `sts.amazonaws.com`. */
       audience?: string;
@@ -106,11 +113,26 @@ export interface CloudLoginSpec {
     };
 }
 
+/** How a login is rendered. */
+export interface CloudLoginOptions {
+  /**
+   * The login's variables in the step that runs it (#4930). GitHub and
+   * Forgejo then evaluate the `export` lines the login prints, as GitLab
+   * does, and nothing goes to `$GITHUB_ENV`: a product that logs in and
+   * runs its tool in one step (terragucci's, after it fetched its tokens
+   * and restarted the step without the token request variables) puts
+   * `steps[0].run` in that step. The lines stop the step on a failed login
+   * with `|| exit 1`, for a script that runs with `-e` off. Default false.
+   */
+  sameStep?: boolean;
+}
+
 /** A job's login: its steps, and the OIDC tokens the job requests. */
 export interface CloudLoginSteps {
   /**
    * The steps, in order. GitHub and Forgejo: each one `run:` step, its lines
-   * joined by newlines. GitLab: their lines in the job's script.
+   * joined by newlines. GitLab, and any forge with `sameStep`: their lines
+   * in the job's script or step.
    */
   steps: OpWaveRunStep[];
   /**
@@ -139,7 +161,8 @@ export function cloudLoginSpec(spec: CloudLoginSpec): CloudLoginSpec {
   if (extra.length > 0) throw new Error(`a cloud login covers ${LOGIN_CLOUDS.join(", ")}; ${extra.join(", ")} ${extra.includes("pulumi") ? "(Pulumi Cloud) is traded, with ci-identity's trade step" : "is no cloud it knows"}`);
   if ((spec.azure as { database?: unknown } | undefined)?.database) throw new Error("a cloud login gives Azure no database token: trade the token with ci-identity's trade step for azure.database");
   const out: CloudLoginSpec = {};
-  if (spec.aws) out.aws = { ...spec.aws, region: spec.aws.region ?? "us-east-1", audience: spec.aws.audience ?? "sts.amazonaws.com" };
+  // #4930: no default region, so the job's own stays. A named one stays where the spec put it, so the step renders as before.
+  if (spec.aws) out.aws = { ...spec.aws, audience: spec.aws.audience ?? "sts.amazonaws.com" };
   if (spec.gcp) {
     const provider = providerPath(spec.gcp.provider);
     out.gcp = { ...spec.gcp, provider, audience: spec.gcp.audience ?? `https://iam.googleapis.com/${provider}` };
@@ -150,7 +173,8 @@ export function cloudLoginSpec(spec: CloudLoginSpec): CloudLoginSpec {
     if (!c) continue;
     const key = IDENTITY_KEY[cloud];
     const ids = [c[key], ...(c.targets ?? []).map((t) => t[key])].filter((v) => v !== undefined);
-    if (ids.length === 0) throw new Error(`the ${cloud} login names no identity: give it ${key}, or targets`);
+    // #4930: AWS with no role is the token file alone. GCP's credential file and Azure's variables name an identity.
+    if (ids.length === 0 && cloud !== "aws") throw new Error(`the ${cloud} login names no identity: give it ${key}, or targets`);
     for (const [k, v] of Object.entries(c)) {
       if (typeof v === "string" && !SAFE.test(v)) throw new Error(`the ${cloud} login's ${k} is ${JSON.stringify(v)}; a job holds printable ASCII with no space`);
     }
@@ -197,8 +221,10 @@ export const LOGIN_JS = [
   "const vars={},said=[],by={};",
   "const run=async()=>{",
   'if(spec.aws){const a=spec.aws;const f=await tokenFile("aws",a);by.aws={};',
-  'for(const role of ids("aws")){by.aws[role]={AWS_ROLE_ARN:role,AWS_WEB_IDENTITY_TOKEN_FILE:f,AWS_ROLE_SESSION_NAME:a.sessionName||"chant",AWS_REGION:a.region,AWS_DEFAULT_REGION:a.region,...(a.endpoint?{AWS_ENDPOINT_URL_STS:trim(a.endpoint)}:{})};said.push(role)}',
-  "if(a.role)Object.assign(vars,by.aws[a.role])}",
+  // #4930: the region only when the spec names one; with no role of the job's own, the token file and session name alone.
+  'const base={AWS_WEB_IDENTITY_TOKEN_FILE:f,AWS_ROLE_SESSION_NAME:a.sessionName||"chant",...(a.region?{AWS_REGION:a.region,AWS_DEFAULT_REGION:a.region}:{}),...(a.endpoint?{AWS_ENDPOINT_URL_STS:trim(a.endpoint)}:{})};',
+  'for(const role of ids("aws")){by.aws[role]={AWS_ROLE_ARN:role,...base};said.push(role)}',
+  'if(a.role)Object.assign(vars,by.aws[a.role]);else{Object.assign(vars,base);console.error("chant: wrote the aws OIDC token file, with no role of the job\\u0027s own")}}',
   'if(spec.gcp){const c=spec.gcp;const f=await tokenFile("gcp",c);by.gcp={};',
   'const sts=trim(c.stsEndpoint||"https://sts.googleapis.com"),iam=trim(c.iamEndpoint||"https://iamcredentials.googleapis.com");',
   'for(const sa of ids("gcp")){const cf=tmp+"/chant-gcp-"+rand()+".json";',
@@ -238,10 +264,26 @@ export function loginLine(out: string, format: "github-env" | "sh", forge: Login
   return `(cd / && node -e '${LOGIN_JS}' "${out}" ${format} ${forge})`;
 }
 
-/** A GitHub Actions or Forgejo Actions login: one step that appends the variables to `$GITHUB_ENV`. */
-function actionsLogin(forge: "github" | "forgejo", given: CloudLoginSpec): CloudLoginSteps {
+/**
+ * The lines that log in and evaluate the variables in the shell that runs
+ * them, then unset what held them and `unset`: GitLab's script, and with
+ * `sameStep` (#4930) any forge's step. `exit` stops a script with `-e` off.
+ */
+function shellLines(spec: CloudLoginSpec, forge: LoginForge, unset: readonly string[], exit: boolean): string[] {
+  return [
+    `export ${LOGIN_SPEC_ENV}=${sh(JSON.stringify(spec))}`,
+    // An assignment's status is its command substitution's, so a failed login stops the script.
+    `${GITLAB_LOGIN_VARS}="$${loginLine("-", "sh", forge)}"${exit ? " || exit 1" : ""}`,
+    `eval "$${GITLAB_LOGIN_VARS}"`,
+    `unset ${[GITLAB_LOGIN_VARS, LOGIN_SPEC_ENV, ...unset].join(" ")}`,
+  ];
+}
+
+/** A GitHub Actions or Forgejo Actions login: one step that appends the variables to `$GITHUB_ENV`, or with `sameStep` exports them in its own shell. */
+function actionsLogin(forge: "github" | "forgejo", given: CloudLoginSpec, options: CloudLoginOptions = {}): CloudLoginSteps {
   const spec = cloudLoginSpec(given);
   if (Object.keys(spec).length === 0) return { steps: [], idTokens: {} };
+  if (options.sameStep) return { steps: [{ name: stepName(spec), run: shellLines(spec, forge, [], true) }], idTokens: loginIdTokens(spec) };
   return {
     steps: [{ name: stepName(spec), run: [`export ${LOGIN_SPEC_ENV}=${sh(JSON.stringify(spec))}`, loginLine("$GITHUB_ENV", "github-env", forge)] }],
     idTokens: loginIdTokens(spec),
@@ -254,8 +296,8 @@ function actionsLogin(forge: "github" | "forgejo", given: CloudLoginSpec): Cloud
  * variables to `$GITHUB_ENV`, so every later step has them. The job needs
  * `id-token: write`, which `idTokens` asks chant's generators for.
  */
-export function githubCloudLogin(spec: CloudLoginSpec): CloudLoginSteps {
-  return actionsLogin("github", spec);
+export function githubCloudLogin(spec: CloudLoginSpec, options?: CloudLoginOptions): CloudLoginSteps {
+  return actionsLogin("github", spec, options);
 }
 
 /**
@@ -265,11 +307,11 @@ export function githubCloudLogin(spec: CloudLoginSpec): CloudLoginSteps {
  * that asks for `id-token: write`. On an older Forgejo, give each cloud a
  * `tokenFile` the runner provides; the job then requests none.
  */
-export function forgejoCloudLogin(spec: CloudLoginSpec): CloudLoginSteps {
-  return actionsLogin("forgejo", spec);
+export function forgejoCloudLogin(spec: CloudLoginSpec, options?: CloudLoginOptions): CloudLoginSteps {
+  return actionsLogin("forgejo", spec, options);
 }
 
-/** The GitLab variable the login's `export` lines are kept in until the script evaluates them. */
+/** The variable the login's `export` lines are kept in until the script evaluates them: GitLab's, and with `sameStep` any forge's (#4930). */
 export const GITLAB_LOGIN_VARS = "CHANT_CLOUD_LOGIN_VARS";
 
 /**
@@ -279,29 +321,16 @@ export const GITLAB_LOGIN_VARS = "CHANT_CLOUD_LOGIN_VARS";
  * only in its file. The job's `id_tokens:` are `idTokens`, each
  * `{ aud: <audience> }`.
  */
-export function gitlabCloudLogin(given: CloudLoginSpec): CloudLoginSteps {
+export function gitlabCloudLogin(given: CloudLoginSpec, options: CloudLoginOptions = {}): CloudLoginSteps {
   const spec = cloudLoginSpec(given);
   if (Object.keys(spec).length === 0) return { steps: [], idTokens: {} };
   const idTokens = loginIdTokens(spec);
-  return {
-    steps: [
-      {
-        name: stepName(spec),
-        run: [
-          `export ${LOGIN_SPEC_ENV}=${sh(JSON.stringify(spec))}`,
-          // An assignment's status is its command substitution's, so a failed login stops the script.
-          `${GITLAB_LOGIN_VARS}="$${loginLine("-", "sh", "gitlab")}"`,
-          `eval "$${GITLAB_LOGIN_VARS}"`,
-          `unset ${[GITLAB_LOGIN_VARS, LOGIN_SPEC_ENV, ...Object.keys(idTokens)].join(" ")}`,
-        ],
-      },
-    ],
-    idTokens,
-  };
+  // A GitLab script is one shell already; sameStep adds `|| exit 1`, for a script with -e off.
+  return { steps: [{ name: stepName(spec), run: shellLines(spec, "gitlab", Object.keys(idTokens), options.sameStep === true) }], idTokens };
 }
 
 /** A job's cloud login on `forge` (#4788): {@link githubCloudLogin}, {@link gitlabCloudLogin} or {@link forgejoCloudLogin}. */
-export function cloudLogin(forge: LoginForge, spec: CloudLoginSpec): CloudLoginSteps {
-  return forge === "gitlab" ? gitlabCloudLogin(spec) : actionsLogin(forge, spec);
+export function cloudLogin(forge: LoginForge, spec: CloudLoginSpec, options?: CloudLoginOptions): CloudLoginSteps {
+  return forge === "gitlab" ? gitlabCloudLogin(spec, options) : actionsLogin(forge, spec, options);
 }
 

@@ -148,13 +148,15 @@ The spec is a trade spec without Pulumi, such as the `plan` or `apply` side of `
 
 | Cloud | Variables |
 |---|---|
-| AWS | `AWS_ROLE_ARN`, `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_ROLE_SESSION_NAME` (`sessionName`, default `chant`), `AWS_REGION`, and `AWS_ENDPOINT_URL_STS` with `endpoint` |
+| AWS | `AWS_ROLE_ARN`, `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_ROLE_SESSION_NAME` (`sessionName`, default `chant`), `AWS_REGION` and `AWS_DEFAULT_REGION` when the spec names a `region` (else the job keeps its own), and `AWS_ENDPOINT_URL_STS` with `endpoint`. With no `role` the job gets the token file and session name alone, for a tool that assumes its own roles, such as Terragrunt's `credentials` |
 | GCP | `GOOGLE_APPLICATION_CREDENTIALS` and `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`, an `external_account` file that impersonates the service account, so `gcloud` needs no `gcloud auth login` |
 | Azure | `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_FEDERATED_TOKEN_FILE`, `ARM_USE_OIDC`, `ARM_CLIENT_ID`, `ARM_TENANT_ID`, `ARM_OIDC_TOKEN_FILE_PATH` and the subscription. With `cli: true` it also runs `az login --service-principal --federated-token` |
 
 The token comes from the forge's request URL on GitHub, and on Forgejo 15 with Forgejo Runner 12.5 for a job with `enable-openid-connect: true`. On GitLab it comes from the `id_tokens` variable `CHANT_ID_TOKEN_<CLOUD>`. A cloud's `tokenFile` names a file the runner provides instead, such as an older Forgejo runner's, and the job then requests no token for it. On GitHub and Forgejo the variables go to `$GITHUB_ENV`. On GitLab the script evaluates the `export` lines the login prints, then unsets the token variables, so later lines hold the token only in its file.
 
-With `targets`, the step writes the same `CHANT_CLOUD_TARGETS` file the trade writes, with each identity's variables. `targetCloudEnv(env, target)` then hands each target its own role, service account file or client.
+`$GITHUB_ENV` reaches only the steps after the login. A product that logs in and runs its tool in the same step passes `{ sameStep: true }` as the third argument ([#4930](https://github.com/INTENTIUS/chant/issues/4930)). Every forge then gets GitLab's form: the step evaluates the `export` lines itself, and nothing goes to `$GITHUB_ENV`. The login line ends with `|| exit 1`, so a script that runs with `-e` off still stops on a failed login. Put `steps[0].run` in the step where the tool runs. A step that has already fetched its tokens and restarted without the token request variables gives each cloud a `tokenFile` naming the file it fetched.
+
+With `targets`, the step writes the same `CHANT_CLOUD_TARGETS` file the trade writes, with each identity's variables. `targetCloudEnv(env, target)` then hands each target its own role, service account file or client. A target keeps the job's region when its identity sets none. The trade also sets `CHANT_CLOUD_TRADED` (`CLOUD_TRADED_ENV`) to the clouds it traded, such as `aws,gcp`, and the login never sets it. Since both write the targets file, a product that treats traded credentials differently reads `cloudsTraded(env)` to tell which one ran. A product feature-detects all of this with `CLOUD_LOGIN_SAME_STEP_FLOOR`.
 
 The token file is a token: every later step of the job can read it. Use the trade when the job runs the change's code. The login suits the jobs that run merged code, such as the apply waves.
 

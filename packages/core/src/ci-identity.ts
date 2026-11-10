@@ -582,6 +582,22 @@ export type TradeFormat = "github-env" | "sh";
  */
 export const CLOUD_TARGETS_ENV = "CHANT_CLOUD_TARGETS";
 
+/**
+ * The variable the trade sets (#4930): the clouds it traded the job's
+ * token for, comma-separated (`aws,gcp`). The trade and ci-login's login
+ * both write a {@link CLOUD_TARGETS_ENV} file, so a product that hands a
+ * target traded credentials (terragucci's re-plan) reads this, not the
+ * file, to know the job traded. The login never sets it.
+ */
+export const CLOUD_TRADED_ENV = "CHANT_CLOUD_TRADED";
+
+/** The clouds the job's trade traded for, from {@link CLOUD_TRADED_ENV}: none when the job did not trade, such as after ci-login's login (#4930). */
+export function cloudsTraded(env: Readonly<Record<string, string | undefined>>): IdentityCloud[] {
+  const v = env[CLOUD_TRADED_ENV];
+  if (!v) return [];
+  return v.split(",").filter((c): c is IdentityCloud => (IDENTITY_CLOUDS as readonly string[]).includes(c));
+}
+
 /** The file {@link CLOUD_TARGETS_ENV} names: per cloud, the job's own identity, the targets that take another, and each identity's variables. */
 export interface CloudTargetsFile {
   version: 1;
@@ -665,6 +681,8 @@ export const TRADE_JS = [
   'const doc={version:1,clouds:{}};for(const c of clouds){const s=spec[c];doc.clouds[c]={...(s[KEY[c]]?{default:s[KEY[c]]}:{}),targets:(s.targets||[]).map((t)=>({targets:t.targets,identity:t[KEY[c]]})),vars:by[c]}}',
   'const tf=trim(process.env.RUNNER_TEMP||process.env.TMPDIR||"/tmp")+"/chant-cloud-targets-"+require("crypto").randomBytes(8).toString("hex")+".json";',
   `fs.writeFileSync(tf,JSON.stringify(doc),{mode:0o600,flag:"wx"});vars.${CLOUD_TARGETS_ENV}=tf}`,
+  // #4930: which clouds this job traded, so a product tells the trade's targets file from a login's.
+  `if(clouds.length)vars.${CLOUD_TRADED_ENV}=clouds.join(",");`,
   'for(const [k,v] of Object.entries(vars))if(!clean(v))throw new Error(k+" is not a value the job can hold");',
   'if(format==="github-env"){for(const s of secrets)console.log("::add-mask::"+s);fs.appendFileSync(out,Object.entries(vars).map(([k,v])=>k+"="+v+"\\n").join(""))}',
   'else fs.writeFileSync(out,Object.entries(vars).map(([k,v])=>"export "+k+"="+Q+v.split(Q).join(Q+"\\\\"+Q+Q)+Q+"\\n").join(""),{mode:0o600});',
@@ -702,6 +720,9 @@ export function gitlabTradeIdTokens(spec: CloudTradeSpec): Record<string, { aud:
   return Object.fromEntries(tradedClouds(spec).map((c) => [idTokenVar(c), { aud: spec[c]!.audience }]));
 }
 
+/** The AWS region variables, which {@link targetCloudEnv} replaces only when the target's identity sets them. */
+const JOB_REGION_VARS: ReadonlySet<string> = new Set(["AWS_REGION", "AWS_DEFAULT_REGION"]);
+
 /**
  * `env` for one target's tool (#4332): the job's environment with each
  * cloud's credentials replaced by those of the identity `target` takes, as
@@ -722,7 +743,8 @@ export function targetCloudEnv(env: Readonly<Record<string, string | undefined>>
     if (id === undefined || id === c.default) continue;
     const vars = c.vars[id];
     if (!vars) throw new Error(`${CLOUD_TARGETS_ENV} (${path}) holds no ${cloud} credentials for ${id}`);
-    for (const k of TRADED_VARS[cloud]) delete out[k];
+    // The region is the job's, not the identity's: a login that names none (#4930) leaves the job's in place, and a trade's identity sets its own.
+    for (const k of TRADED_VARS[cloud]) if (!JOB_REGION_VARS.has(k)) delete out[k];
     Object.assign(out, vars);
   }
   return out;
