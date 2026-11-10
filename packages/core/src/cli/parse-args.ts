@@ -24,6 +24,7 @@ const BOOLEAN_FLAGS = new Set([
   "--check-job",
   "--ref-gate-status",
   "--locks",
+  "--reach",
   "--version",
   "--agents",
   "--agent",
@@ -429,6 +430,9 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--keep") {
       // `chant lock --keep --pr <n>` (#4588): keep the locks the pull request's plan took, as `/<product> lock` asks.
       result.keepLocks = true;
+    } else if (arg === "--reach") {
+      // `chant lock --reach --pr <n> --head <sha> --base <sha>` (#4979): lock what the reach line in CHANT_LOCK_REACH prints.
+      result.lockReach = true;
     } else if (arg === "--runs" || arg === "--plans" || arg === "--wave-outputs") {
       // `chant components plan-wave|apply-wave` (#4588): the op-waves runs and plans files, and the outputs the waves hand on.
       const value = args[++i];

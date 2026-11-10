@@ -43,10 +43,11 @@ describe("the comment job (#4946)", () => {
     expect(c.steps[1]!.run).toBe("npm ci");
     const answer = c.steps[2]!;
     expect(answer.run).toBe("npx --no-install terragucci components pr-comment --forge github");
-    expect(JSON.parse(answer.env!.CHANT_COMMENT_JOBS!)).toEqual({ preview: true, applyOnMerge: true });
+    // #4979: the waves' op and count, for a wave stop on a re-run, and the re-plan's want of flags.
+    expect(JSON.parse(answer.env!.CHANT_COMMENT_JOBS!)).toEqual({ preview: true, applyOnMerge: true, waves: { op: "tf-apply", count: 1 }, noPlanFlags: true });
     expect(answer.env!.GITHUB_TOKEN).toBe("${{ github.token }}");
-    // With waves on merge it may start their run again.
-    expect(c.permissions).toEqual({ actions: "write", contents: "read", "pull-requests": "write", statuses: "read" });
+    // With waves on merge it may start their run again, after it wrote the wave stop on chant/lifecycle (#4979).
+    expect(c.permissions).toEqual({ actions: "write", contents: "write", "pull-requests": "write", statuses: "read" });
     expect(doc.on).toMatchObject({ issue_comment: { types: ["created"] } });
     expect(jobs.comment!.prefixes).toEqual(["/terragucci", "atlantis plan"]);
   });
@@ -68,7 +69,7 @@ describe("the comment job (#4946)", () => {
 
   test("tells the job the re-plan's targets and fork rule, and is refused beside the re-plan's own reply", () => {
     const { doc } = generateProductPlanPipeline("default", { ...base, productPlan: { ...base.productPlan, forks: "skip" as const, targets: [{ name: "staging" }, { name: "prod" }] }, commentJob: true });
-    expect(JSON.parse((doc.jobsDoc.comment as Job).steps[2]!.env!.CHANT_COMMENT_JOBS!)).toEqual({ preview: true, targets: ["staging", "prod"], skipForks: true });
+    expect(JSON.parse((doc.jobsDoc.comment as Job).steps[2]!.env!.CHANT_COMMENT_JOBS!)).toEqual({ preview: true, targets: ["staging", "prod"], skipForks: true, noPlanFlags: true });
     expect(() => generateProductPlanPipeline("default", { ...base, productPlan: { ...base.productPlan, replan: { reply: true } }, commentJob: true })).toThrow(/drop replan\.reply/);
   });
 
@@ -109,6 +110,6 @@ describe("the product plan's locks (#4946)", () => {
     expect(job("comment-lock").steps[2]!.run).toBe('npx --no-install terragucci lock --keep --pr "$PR_NUMBER" --forge github');
     expect(job("comment-unlock").steps[2]!.run).toBe('npx --no-install terragucci unlock --pr "$PR_NUMBER"');
     // The comment job leaves lock and unlock to them.
-    expect(JSON.parse(job("comment").steps[2]!.env!.CHANT_COMMENT_JOBS!)).toEqual({ preview: true, locks: true });
+    expect(JSON.parse(job("comment").steps[2]!.env!.CHANT_COMMENT_JOBS!)).toEqual({ preview: true, locks: true, noPlanFlags: true });
   });
 });

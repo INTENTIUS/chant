@@ -12,6 +12,8 @@ import type { OpWavesSpec } from "../../op/op-waves";
 import { formatError, formatWarning } from "../format";
 import { ledgerRecordingOff, NO_RECORD_ENV, noRecordEndNote, noRecordStartNote, resetNoRecordLedger } from "../../lifecycle/no-record";
 import type { CommandContext } from "../registry";
+import { waveStopLine } from "../../op/wave-stop";
+import { CHANT_EXIT } from "../../exit-codes";
 
 /**
  * `chant run wave`, with recording off under `--no-record` or
@@ -101,6 +103,14 @@ async function runOpWaveJobCommand(ctx: CommandContext): Promise<number> {
   try {
     const path = resolve(specFile);
     spec = parseOpWavesSpec(readFileSync(path, "utf-8"), `--spec ${specFile}`);
+    // #4979: a comment that ran the apply again through wave n leaves the waves after it waiting, as a gate does.
+    if (!args.policyOnly) {
+      const stopped = await waveStopLine(spec.name, args.wave);
+      if (stopped) {
+        console.error(stopped);
+        return CHANT_EXIT.waiting;
+      }
+    }
     // #4555: --events-json streams the job's run events, a phase per wave and a step per run target.
     const stream = args.eventsJson
       ? await (await import("../run-events")).openCliRunEvents(args, { kind: "op", name: spec.name, cwd: process.cwd() })

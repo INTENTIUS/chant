@@ -158,6 +158,20 @@ export type { CiProductCommentReplies } from "./ci-product-words";
 export { productCommentJob, type ProductCommentJob } from "./components/product-pipeline";
 
 /**
+ * The first chant whose product plan locks what a change reaches (#4979): `productPlan.reach`, a reach line the lock job runs at the target branch's commit with `chant lock --reach` (`@intentius/chant/lifecycle/reach-locks`), on GitHub, Forgejo and GitLab, where the lock job runs in the plan notes pipeline with `--open` beside the comment lock and unlock jobs; and whose comment job answers a re-plan comment with flags the product plan's re-plan cannot take (`noPlanFlags`).
+ */
+export const PRODUCT_PLAN_REACH_LOCKS_FLOOR = NEXT_RELEASE;
+export { LOCK_REACH_ENV, reachedTargets, reachOpen, type Reached, type ReachInput } from "./lifecycle/reach-locks";
+export { productPlanReachLock, type ProductPlanReachLock } from "./components/product-plan";
+export { planFlagsReply } from "./ci-comment-commands";
+
+/**
+ * The first chant whose comment job stops a merged pull request's re-run at a wave (#4979): `/<product> apply wave-<n>` writes a stop for the merge commit on `chant/lifecycle` (`_waves/<op>.stops.json`, `@intentius/chant/op/wave-stop`) before GitHub's re-run or Forgejo's dispatch, and `chant run wave` leaves each wave after n waiting (exit 3).
+ */
+export const WAVE_STOP_FLOOR = NEXT_RELEASE;
+export { setWaveStop, waveStopAt, waveStopLine, type WaveStop } from "./op/wave-stop";
+
+/**
  * The first chant whose product plan takes `watches`, the product's own scheduled jobs the note job's `pr-post` checks for having stopped with the job's token (#4888), and whose `checkOverdueOps` and `overdueOpsAt` take a product's `logPrefix` and `label`.
  */
 export const PRODUCT_PLAN_WATCHES_FLOOR = "0.124.88";

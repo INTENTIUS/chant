@@ -779,6 +779,8 @@ Ops:
                         (--pr <n>, --stage plan|apply|lock, --head <sha>,
                         --by <who>, --gate <name>, --json). --from-report
                         <pr-plan.json> locks the components a plan selected.
+                        --reach locks what the line in CHANT_LOCK_REACH prints
+                        for --base..--head (--open: every open merge request).
                         --forge <kind> reads which holders are still open and
                         posts chant/lock on --head. Exits 3 when another open
                         pull request holds a target. --list prints the locks

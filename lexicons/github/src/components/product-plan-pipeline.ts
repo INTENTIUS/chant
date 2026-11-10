@@ -39,6 +39,13 @@
  * what each plan selected, release it on close, and answer the lock and
  * unlock comments (`commentJobsDoc` below).
  *
+ * With `productPlan.reach` (#4979) one `lock` job, beside the plans and
+ * at the target branch's commit, locks what the change reaches by the
+ * product's reach line (`chant lock --reach`), in place of the lock jobs
+ * that read a `PrReport`. With waves on merge the comment job writes a
+ * `wave-<n>` stop on `chant/lifecycle` before it runs the apply again, so it
+ * asks for `contents: write`.
+ *
  * Forgejo renders the same document through its dialect
  * (`generateForgejoProductPlanPipeline` in the forgejo lexicon).
  */
@@ -365,7 +372,8 @@ function commentJobsDoc(forge: "github" | "forgejo", jobs: ProductPipelineJobs, 
       if: ["github.event_name == 'issue_comment'", onPr, `(${c.prefixes.map((p) => `startsWith(github.event.comment.body, '${p}')`).join(" || ")})`, ...trusted].join(" && "),
       "runs-on": githubRunsOn(c.runner),
       container: image,
-      permissions: { actions: c.jobs.applyOnMerge ? "write" : "read", contents: "read", "pull-requests": "write", statuses: "read" },
+      // #4979: with the waves' op it writes a wave stop on chant/lifecycle before a re-run, so it pushes.
+      permissions: { actions: c.jobs.applyOnMerge ? "write" : "read", contents: c.jobs.waves ? "write" : "read", "pull-requests": "write", statuses: "read" },
       steps: [
         { name: "Check out the target branch's commit", uses: CHECKOUT },
         ...runSteps(beforeScript),
@@ -376,7 +384,23 @@ function commentJobsDoc(forge: "github" | "forgejo", jobs: ProductPipelineJobs, 
   if (!jobs.locks?.length) return out;
   const bin = jobs.words.bin;
   const report = `${PR_LOOP_REPORT_DIR}/pr-plan.json`;
-  for (const p of plans) {
+  const reach = jobs.reachLock;
+  // #4979: with reach, one lock job beside the plans locks what the change reaches, read from git at the target branch's commit.
+  // A fork's pull request takes no lock: its run holds no token that writes.
+  if (reach) {
+    out[reach.jobName] = {
+      if: `github.event_name == 'pull_request' && github.event.action != 'closed' && ${SAME_REPOSITORY_IF}`,
+      "runs-on": githubRunsOn(reach.runner),
+      container: image,
+      permissions: { contents: "write", "pull-requests": "read", statuses: "write" },
+      steps: [
+        { name: "Check out the target branch's commit", uses: CHECKOUT, with: { ref: "${{ github.event.pull_request.base.sha }}", "fetch-depth": 0 } },
+        ...runSteps(beforeScript),
+        { name: "Lock what the change reaches", env: reach.env, run: reach.command },
+      ],
+    };
+  }
+  for (const p of reach ? [] : plans) {
     out[p.target ? `${PR_LOCK_JOB}-${p.target}` : PR_LOCK_JOB] = {
       // The plan job's outputs carry the report; a plan that was skipped or failed leaves this job skipped.
       needs: [p.jobName],
