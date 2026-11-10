@@ -148,6 +148,18 @@ describe("terragucci's plan jobs on GitLab (#4963)", () => {
     expect(JSON.stringify(entries)).not.toMatch(/CHANT_REPLAN_PRODUCT|workflow_dispatch/);
   });
 
+  test("#4972: the subject is compared in the target branch's note job, so the plan job needs no token and the note job gets the words", () => {
+    const noteWords = { productMarker: "yodel:plan", subjectParts: { pending: { added: "new pending migrations: {items}" } } };
+    const g = generateGitlabProductPlanPipeline("default", { words, productPlan: { command: "yodel plan {target} --pr-note {output}", noteWords, targets: [{ name: "prod" }] } });
+    const at = (name: string) => g.entries.find(([k]) => k === name)![1] as Job;
+    const plan = at("prod-plan");
+    expect(plan.script[0]).toMatch(/^unset .*CHANT_FORGE_TOKEN/);
+    expect(JSON.stringify(plan)).not.toMatch(/CHANT_PLAN_PREVIOUS_MARKER|CHANT_PLAN_NOTE_WORDS/);
+    const note = at("prod-plan-note");
+    expect(JSON.parse(note.variables!.CHANT_PLAN_NOTE_WORDS!)).toEqual(noteWords);
+    expect(note.script.at(-1)).toContain("pr-post --open");
+  });
+
   test("previousMarker is refused: the plan job holds no token to read a note with", () => {
     expect(() => generateGitlabProductPlanPipeline("default", { words, productPlan: { command: "x", previousMarker: true, noteWords: { productMarker: "yodel:plan" } } })).toThrow(/GitLab's plan job holds no token/);
   });

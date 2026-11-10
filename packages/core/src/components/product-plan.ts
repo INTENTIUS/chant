@@ -278,6 +278,11 @@ export interface ProductPlanOptions {
    * checked against the marker's pattern before chant posted it, and is
    * checked again. Needs `noteWords.productMarker`. GitLab's plan job holds
    * no token to read a note with, so it takes none.
+   *
+   * @deprecated #4972: hand the plan's `subject` in the plan note hand-off
+   * instead. The note job compares it with the previous note's on every
+   * forge and says what changed, so the plan job reads no note. This option
+   * still works on GitHub and Forgejo.
    */
   previousMarker?: boolean;
   /**

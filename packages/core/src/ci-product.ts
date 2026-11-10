@@ -168,6 +168,12 @@ export { gitlabReplanArgumentLines, PREVIOUS_MARKER_JS, replanDecideJs, type Pro
 export { planBodyHandoff, PLAN_BODY_LIMIT, type PrPlanBodyHandoff } from "./pr-plan-note";
 
 /**
+ * The first chant whose note job compares the plan's subject with the previous note's (#4972), on GitHub, Forgejo and GitLab: a plan note hand-off's `subject` (`PrPlanSubject`, an id and named parts) is kept in the note, and `pr-post` adds the note words' `sinceLast` line, naming the parts added, gone and changed (`subjectParts`), when the previous note kept another id. The plan job reads no note, and `previousMarker` is deprecated.
+ */
+export const PRODUCT_PLAN_SUBJECT_FLOOR = NEXT_RELEASE;
+export { PLAN_SUBJECT_LIMIT, planSubjectProblem, sinceLastLine, subjectChanges, type PrPlanSubject, type PrPlanSubjectPartWords } from "./pr-plan-note";
+
+/**
  * Day-2 actions in the product pipeline (#4654): the `action` comment
  * command counted as answered by the product's own workflow
  * (`productPipelineJobs(forge, env, { words, actions: true })`), or the

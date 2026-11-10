@@ -68,6 +68,63 @@ export interface PrPlanNoteHandoff {
    * one space, at most {@link PRODUCT_MARKER_LIMIT} characters.
    */
   marker?: string;
+  /**
+   * What the plan is taken over (#4972), such as sql-yodeler's plan digest
+   * and its subject's parts: `pr-post` compares it with the subject it kept
+   * in the previous note for the same environment and member, says what
+   * changed when its id differs, and keeps this one in the new note.
+   */
+  subject?: PrPlanSubject;
+}
+
+/**
+ * A plan's subject (#4972), as a plan verb hands it to the note job, which
+ * compares it with the previous note's, so the plan job needs no forge
+ * token to read the previous note on any forge. Both are the change's code,
+ * so each word is checked against {@link PLAN_SUBJECT_WORD}.
+ */
+export interface PrPlanSubject {
+  /** The plan as one word, such as its digest: a different id is a changed plan. */
+  id: string;
+  /**
+   * The parts the id is taken over, each `<group>` or `<group>/<item>` to a
+   * word (a checksum, a list joined by commas): `pr-post` names the parts
+   * added, gone and changed, group by group, in the note words'
+   * `subjectParts`. Absent: the line says only that the plan changed.
+   */
+  parts?: Record<string, string>;
+}
+
+/** A word of a plan subject (#4972): letters, digits and `_.,:+=-`, at most 1024 characters, nothing that ends a comment or mentions anyone. */
+export const PLAN_SUBJECT_WORD = /^[A-Za-z0-9_.,:+=-]{1,1024}$/;
+
+/** A plan subject part's key (#4972): `<group>` or `<group>/<item>`. */
+export const PLAN_SUBJECT_KEY = /^[A-Za-z0-9_.:+=-]{1,128}(\/[A-Za-z0-9_.,:+=-]{1,256})?$/;
+
+/** The most characters the note's kept subject line holds (#4972); a subject with more parts is kept by its id alone. */
+export const PLAN_SUBJECT_LIMIT = 16_384;
+
+/** Why `subject` is not a {@link PrPlanSubject} (#4972), or undefined when it is one. */
+export function planSubjectProblem(subject: unknown): string | undefined {
+  if (!subject || typeof subject !== "object" || Array.isArray(subject)) return "is not an object";
+  const s = subject as Record<string, unknown>;
+  if (typeof s.id !== "string" || !PLAN_SUBJECT_WORD.test(s.id)) return "has no id of letters, digits and _.,:+=-";
+  if (s.parts === undefined) return undefined;
+  if (!s.parts || typeof s.parts !== "object" || Array.isArray(s.parts)) return "has parts that are not an object";
+  for (const [k, v] of Object.entries(s.parts)) {
+    if (!PLAN_SUBJECT_KEY.test(k)) return `has a part ${JSON.stringify(k.slice(0, 64))} that is not <group> or <group>/<item>`;
+    if (typeof v !== "string" || !PLAN_SUBJECT_WORD.test(v)) return `has a part ${k} whose value is not a word of letters, digits and _.,:+=-`;
+  }
+  return undefined;
+}
+
+/** How the note words name one group's changes (#4972), each over `{group}` and `{items}`, the group's items as `item` writes them, joined by ", ". */
+export interface PrPlanSubjectPartWords {
+  added?: string;
+  gone?: string;
+  changed?: string;
+  /** One item, over `{item}`, `{before}` and `{after}`. Default `{item}`, or for a part with no item `{before} -> {after}` (changed), `{after}` (added), `{before}` (gone). */
+  item?: string;
 }
 
 /**
@@ -88,8 +145,8 @@ export interface PrPlanBodyHandoff extends Omit<PrPlanNoteHandoff, "note"> {
 export const PLAN_BODY_LIMIT = 1_000_000;
 
 /** The hand-off for a product's own note text (#4963), as a plan verb writes it to {@link PR_PLAN_NOTE_FILE}. */
-export function planBodyHandoff(body: string, at: { pr: number; head: string; env: string; member?: string; state: PrPlanNoteHandoff["state"]; description: string; marker?: string }): PrPlanBodyHandoff {
-  return { kind: "plan-note-handoff", contract: PR_PLAN_NOTE_CONTRACT, pr: at.pr, head: at.head, env: at.env, ...(at.member !== undefined ? { member: at.member } : {}), state: at.state, description: at.description, body, ...(at.marker !== undefined ? { marker: at.marker } : {}) };
+export function planBodyHandoff(body: string, at: { pr: number; head: string; env: string; member?: string; state: PrPlanNoteHandoff["state"]; description: string; marker?: string; subject?: PrPlanSubject }): PrPlanBodyHandoff {
+  return { kind: "plan-note-handoff", contract: PR_PLAN_NOTE_CONTRACT, pr: at.pr, head: at.head, env: at.env, ...(at.member !== undefined ? { member: at.member } : {}), state: at.state, description: at.description, body, ...(at.marker !== undefined ? { marker: at.marker } : {}), ...(at.subject !== undefined ? { subject: at.subject } : {}) };
 }
 
 /** The most characters a hand-off's {@link PrPlanNoteHandoff.marker} holds (#4931). */
@@ -107,8 +164,8 @@ export function productMarkerLine(name: string, body: string): string {
 }
 
 /** The hand-off for `note` (#4799), as a product's plan verb writes it to {@link PR_PLAN_NOTE_FILE}. */
-export function planNoteHandoff(note: PrPlanNote, at: { pr: number; env: string; member?: string; state: PrPlanNoteHandoff["state"]; description: string; marker?: string }): PrPlanNoteHandoff {
-  return { kind: "plan-note-handoff", contract: PR_PLAN_NOTE_CONTRACT, pr: at.pr, head: note.head, env: at.env, ...(at.member !== undefined ? { member: at.member } : {}), state: at.state, description: at.description, note, ...(at.marker !== undefined ? { marker: at.marker } : {}) };
+export function planNoteHandoff(note: PrPlanNote, at: { pr: number; env: string; member?: string; state: PrPlanNoteHandoff["state"]; description: string; marker?: string; subject?: PrPlanSubject }): PrPlanNoteHandoff {
+  return { kind: "plan-note-handoff", contract: PR_PLAN_NOTE_CONTRACT, pr: at.pr, head: note.head, env: at.env, ...(at.member !== undefined ? { member: at.member } : {}), state: at.state, description: at.description, note, ...(at.marker !== undefined ? { marker: at.marker } : {}), ...(at.subject !== undefined ? { subject: at.subject } : {}) };
 }
 
 /** One change line of a group, as chant's plan summary groups them. */
@@ -280,9 +337,82 @@ export interface PrPlanNoteWords {
    * note by it. Absent: a hand-off's marker is dropped.
    */
   productMarker?: string;
+  /**
+   * The line `pr-post` adds when a hand-off's subject differs from the
+   * previous note's (#4972), over `{previous}` (the previous subject's id)
+   * and `{changes}` (what changed, part by part, joined by "; "). Default
+   * "Since the previous version of this note (`{previous}`): {changes}.".
+   */
+  sinceLast?: string;
+  /**
+   * The line when no part says what changed (#4972): the subject has no
+   * parts, or the previous note kept its id alone. Over `{previous}`.
+   * Default "The plan changed since the previous version of this note (`{previous}`).".
+   */
+  sinceLastOnly?: string;
+  /** How `{changes}` names each group of the subject's parts (#4972), by group. Default "{group}: {items} added" (gone, changed). */
+  subjectParts?: Record<string, PrPlanSubjectPartWords>;
 }
 
-const NOTE_WORDS: Required<Omit<PrPlanNoteWords, "marker" | "productMarker">> = {
+/** The {@link PrPlanNoteWords.sinceLast} default (#4972). */
+export const SINCE_LAST_LINE = "Since the previous version of this note (`{previous}`): {changes}.";
+/** The {@link PrPlanNoteWords.sinceLastOnly} default (#4972). */
+export const SINCE_LAST_ONLY_LINE = "The plan changed since the previous version of this note (`{previous}`).";
+
+/**
+ * What changed from `before` to `after`, group by group (#4972): each
+ * group's added, gone and changed parts in the note words, groups in the
+ * order `after` names them, then those only `before` names.
+ */
+export function subjectChanges(before: Record<string, string>, after: Record<string, string>, words: Record<string, PrPlanSubjectPartWords> = {}): string[] {
+  const groupOf = (k: string): [string, string] => {
+    const at = k.indexOf("/");
+    return at < 0 ? [k, ""] : [k.slice(0, at), k.slice(at + 1)];
+  };
+  const has = (o: object, k: string): boolean => Object.prototype.hasOwnProperty.call(o, k);
+  const groups: string[] = [];
+  for (const k of [...Object.keys(after), ...Object.keys(before)]) {
+    const [g] = groupOf(k);
+    if (!groups.includes(g)) groups.push(g);
+  }
+  const fill = (t: string, v: Record<string, string>): string => t.replace(/\{(group|items|item|before|after)\}/g, (_, n: string) => v[n] ?? "");
+  const out: string[] = [];
+  for (const group of groups) {
+    const w = has(words, group) ? words[group]! : {};
+    const kinds: Record<"added" | "gone" | "changed", string[]> = { added: [], gone: [], changed: [] };
+    const say = (kind: "added" | "gone" | "changed", item: string, b: string, a: string) => {
+      const dflt = item !== "" ? "{item}" : kind === "changed" ? "{before} -> {after}" : kind === "added" ? "{after}" : "{before}";
+      kinds[kind].push(fill(w.item ?? dflt, { item, before: b, after: a, group }));
+    };
+    for (const k of Object.keys(after)) {
+      const [g, item] = groupOf(k);
+      if (g !== group) continue;
+      if (!has(before, k)) say("added", item, "", after[k]!);
+      else if (before[k] !== after[k]) say("changed", item, before[k]!, after[k]!);
+    }
+    for (const k of Object.keys(before)) {
+      const [g, item] = groupOf(k);
+      if (g === group && !has(after, k)) say("gone", item, before[k]!, "");
+    }
+    for (const kind of ["added", "gone", "changed"] as const) {
+      if (kinds[kind].length > 0) out.push(fill(w[kind] ?? `{group}: {items} ${kind}`, { group, items: kinds[kind].join(", ") }));
+    }
+  }
+  return out;
+}
+
+/**
+ * The line for a plan whose subject is no longer `previous`'s (#4972), in
+ * the note words, or undefined when the ids are the same.
+ */
+export function sinceLastLine(previous: PrPlanSubject, now: PrPlanSubject, words: Pick<PrPlanNoteWords, "sinceLast" | "sinceLastOnly" | "subjectParts"> = {}): string | undefined {
+  if (previous.id === now.id) return undefined;
+  const changes = previous.parts && now.parts ? subjectChanges(previous.parts, now.parts, words.subjectParts) : [];
+  const fill = (t: string): string => t.replace(/\{(previous|changes)\}/g, (_, n: string) => (n === "previous" ? previous.id : changes.join("; ")));
+  return changes.length > 0 ? fill(words.sinceLast ?? SINCE_LAST_LINE) : fill(words.sinceLastOnly ?? SINCE_LAST_ONLY_LINE);
+}
+
+const NOTE_WORDS: Required<Omit<PrPlanNoteWords, "marker" | "productMarker" | "sinceLast" | "sinceLastOnly" | "subjectParts">> = {
   footer: "",
   page: "report.html",
   artifact: "chant-pr",
