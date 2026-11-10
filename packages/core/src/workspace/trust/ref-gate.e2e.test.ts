@@ -60,6 +60,23 @@ describe("the ref gate's hooks", () => {
     expect(r.run(r.origin, ["rev-parse", "main"]).trim()).toBe(head);
   }, 60_000);
 
+  test("a push only the remote refused prints the command that records the request for an override, and it does from the checkout (#4913)", () => {
+    const { r, base, head } = setup("e2e-request");
+    const installed = chant(r, r.work, ["workspace", "ref-gate", "install", "--hook", "pre-receive", "--git-dir", r.origin, "--chant", CHANT]);
+    expect(installed.status, installed.stderr).toBe(0);
+    const refused = push(r, `${head}:refs/heads/main`);
+    expect(refused.status).not.toBe(0);
+    const printed = refused.stderr.split("\n").map((l) => l.replace(/^remote:\s*/, "").trim()).find((l) => l.startsWith("chant workspace ref-gate check "));
+    expect(printed).toBe(`chant workspace ref-gate check --ref refs/heads/main --at ${head} --base ${base}`);
+
+    const recorded = chant(r, r.work, printed!.split(" ").slice(1));
+    expect(recorded.status).toBe(1);
+    expect(recorded.stderr).toContain("is recorded on chant/lifecycle");
+    const ledger = r.git(["show", "chant/lifecycle:_gates/policy-override.jsonl"]);
+    expect(ledger).toContain(`"gate":"ref-gate-${head.slice(0, 12)}-plan"`);
+    expect(ledger).toContain(`"gate":"ref-gate-${head.slice(0, 12)}-policy"`);
+  }, 60_000);
+
   test("chant's pre-push hook refuses the same push before the network", () => {
     const { r, ci, base, head } = setup("e2e-push");
     const installed = chant(r, r.work, ["workspace", "ref-gate", "install", "--hook", "pre-push", "--chant", CHANT]);

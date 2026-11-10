@@ -83,7 +83,7 @@ function repoHere(): { repo: string; bare: boolean } | null {
   return { repo: top, bare: false };
 }
 
-function print(json: boolean | undefined, decisions: RefDecision[], ledger: string | undefined, stream: "out" | "err"): void {
+function print(json: boolean | undefined, decisions: RefDecision[], ledger: string | undefined, stream: "out" | "err", site?: RefGateSite): void {
   const ok = decisions.every((d) => d.decision === "admit");
   if (json) {
     console.log(JSON.stringify({ ...head(), ok, ...(ledger ? { ledger } : {}), decisions }, null, 2));
@@ -91,7 +91,7 @@ function print(json: boolean | undefined, decisions: RefDecision[], ledger: stri
   }
   for (const d of decisions) {
     if (d.status === null && d.checks.length === 0 && !d.error) continue;
-    const text = describeDecision(d).join("\n");
+    const text = describeDecision(d, site ? { site } : {}).join("\n");
     if (stream === "err" || d.decision === "refuse") console.error(text);
     else console.log(text);
   }
@@ -162,7 +162,7 @@ export async function runWorkspaceRefGate(ctx: CommandContext): Promise<number> 
     try {
       if (sub === "pre-receive") {
         const r = runPreReceive(here.repo, stdin, { ...(args.ledger ? { ledger: args.ledger } : {}), now });
-        print(args.json, r.decisions, r.ledger, "err");
+        print(args.json, r.decisions, r.ledger, "err", "pre-receive");
         return r.ok ? 0 : 1;
       }
       const r = runPrePush(here.repo, stdin, { ...(args.ledger ? { ledger: args.ledger } : {}), now, base: (repo) => resolveBase(repo).commit });

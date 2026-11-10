@@ -287,12 +287,13 @@ CI:
                         expectation in CHANT_JOB_GUARD, which a generated
                         op-wave job carries. Exits 1, one line per value
                         that differs, before any credential is taken.
-  ci forge-check [--env <env>] [--member <name>] [--forge <forge>] [--repo <owner/name>] [--branch <default>] [--require-clouds] [--json]
+  ci forge-check [--env <env>] [--member <name>] [--forge <forge>] [--repo <owner/name>] [--branch <default>] [--require-clouds] [--ref-gate-status] [--json]
                         Read the forge, each cloud's trust policy and Pulumi
                         Cloud's OIDC policies against the pipelines
                         ci.identity.cloud gives --env (default production):
                         apply environments, branch protection, required
                         statuses, and each identity trusted to its own jobs.
+                        --ref-gate-status requires the ref gate's status too.
                         Read-only; exits 1 on a mismatch, and with
                         --require-clouds on a cloud it had no credentials for.
   ci last-green [--json] [--lane <name>] [--from <rev>]  The newest first-parent commit of
@@ -1597,7 +1598,8 @@ Options:
                         the pull request's commit, and with evidence a job
                         that signs each passed hook (#4935)
   --ref-gate-status     (build --pr-loop) A job that sets the ref gate's
-                        status on the pull request's commit (#4935)
+                        status on the pull request's commit (#4935); (ci
+                        forge-check) the default branch requires it (#4913)
   --no-release-record   Skip auto-emitting a release-ledger record after a
                         successful \`run --components\` deploy (default: on;
                         also settable via chant.config.ts's

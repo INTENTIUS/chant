@@ -932,7 +932,7 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant build --pr-loop --check-job` (#4935): the check job, chant ci check on the pull request's commit.
       result.checkJob = true;
     } else if (arg === "--ref-gate-status") {
-      // `chant build --pr-loop --ref-gate-status` (#4935): the job that sets the ref gate's status.
+      // `chant build --pr-loop --ref-gate-status` (#4935): the job that sets the ref gate's status; on `ci forge-check` (#4913), require it.
       result.refGateStatus = true;
     } else if (arg === "--evidence-runner-key-secret") {
       // `chant build --pr-loop --evidence-runner-key-secret <NAME>` (#4935): the secret holding the runner key the note job signs with.

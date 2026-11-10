@@ -162,3 +162,6 @@ export const CHECK_JOB_FLOOR = NEXT_RELEASE;
 
 /** The first chant whose pull request pipelines take `refGateStatus` (`--ref-gate-status`): a `ref-gate` job that runs `chant workspace ref-gate status` for the pull request's commit, and on GitLab `ref-gate status --open` for every open merge request (#4935). */
 export const REF_GATE_STATUS_JOB_FLOOR = NEXT_RELEASE;
+
+/** The first chant with `@intentius/chant/ref-gate-rules` (`refGateRulesAt`), `require` in `checkPrRequires`, `refGateStatus` in `pipelineContract` and `ci forge-check --ref-gate-status`, `@intentius/chant/ref-gate-init` (`refGateInitPlan`, `writeRefGateInit`), and a pre-receive refusal that prints the command recording the override request (#4913). */
+export const REF_GATE_PIECES_FLOOR = NEXT_RELEASE;

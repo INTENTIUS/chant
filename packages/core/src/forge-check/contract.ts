@@ -174,6 +174,14 @@ export interface PipelineContractInput {
   protectedBranches?: string[];
   /** Default: each pipeline's plan status, such as `chant/plan` or `plywood/preview/<member>`. */
   requiredStatuses?: string[];
+  /**
+   * The ref gate's status (#4913), added to the required statuses: the one
+   * the generated `ref-gate` job sets when the pipeline renders it
+   * (`refGateStatus`, `--ref-gate-status`). Read it with `refGateRulesAt`
+   * (`@intentius/chant/ref-gate-rules`): its `status` for the default branch,
+   * by default `chant/ref-gate`.
+   */
+  refGateStatus?: string;
   gitlabVariables?: string[];
 }
 
@@ -204,12 +212,14 @@ export function pipelineContract(input: PipelineContractInput): ForgeCheckContra
     const ctx = productStatusContext(words, "plan", p.member);
     if (!statuses.includes(ctx)) statuses.push(ctx);
   }
+  const required = [...(input.requiredStatuses ?? statuses)];
+  if (input.refGateStatus && !required.includes(input.refGateStatus)) required.push(input.refGateStatus);
   return {
     forge,
     repository,
     jobs,
     protectedBranches: input.protectedBranches ?? [repository.defaultBranch],
-    requiredStatuses: input.requiredStatuses ?? statuses,
+    requiredStatuses: required,
     ...(input.gitlabVariables ? { gitlabVariables: input.gitlabVariables } : {}),
   };
 }
