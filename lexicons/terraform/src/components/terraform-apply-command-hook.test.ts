@@ -172,4 +172,29 @@ describe("terraform-apply's hook around each engine command (chant#4865)", () =>
     expect(seen.map((c) => [c.name, c.root, c.members, c.method])).toEqual([["init", "a", ["a", "b"], "plan"]]);
     expect(readFileSync(p.log, "utf-8").trim()).toBe("init a a+b:init");
   });
+  test("a product's own compose deps are taken by the capability, so its group's commands reach the hook too (chant#4887)", async () => {
+    const seen: string[] = [];
+    const ran: string[] = [];
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "chant-tf-hook-compose-")));
+    for (const r of ["a", "b"]) mkdirSync(join(dir, "roots", r), { recursive: true });
+    writeFileSync(join(dir, "roots", "a", "main.tf"), 'output "id" {\n  value = "a"\n}\n');
+    writeFileSync(join(dir, "roots", "b", "main.tf"), 'variable "a_id" {\n  type = string\n}\n');
+    const cap = terraformApplyCapabilityWith({
+      onCommand: (c) => ({ env: { TAG: `${c.members?.join("+")}:${c.name}` }, after: () => void seen.push(`${c.method} ${c.name} ${c.members?.join("+")}`) }),
+      compose: {
+        project: async () => ({ projectRoot: dir, terraform: { binary: "tofu", roots: { a: { dir: "roots/a" }, b: { dir: "roots/b" } }, compose: { enabled: true } } as never }),
+        identity: async () => undefined,
+        exec: async (_bin, args, _dir, env) => (ran.push(`${args[0]} ${env.TAG}`), { code: 1, stdout: "", out: "Error: no provider" }),
+        env: {},
+        log: () => {},
+      },
+    });
+    const members = [
+      { component: "a", step: { root: "a", vars: {} }, input: { root: "a", vars: {} }, reads: [], dependsOn: [], ctx: { env: "test", component: "a" } },
+      { component: "b", step: { root: "b", vars: { a_id: { stackOutput: { stack: "a", name: "id" } } } }, input: { root: "b", vars: { a_id: undefined } }, reads: [{ at: "/vars/a_id", ref: "a.id", component: "a", output: "id" }], dependsOn: ["a"], ctx: { env: "test", component: "b" } },
+    ];
+    await expect(cap.planGroup!({ env: "test" } as never, members as never)).rejects.toThrow(/init failed/);
+    expect(seen).toEqual(["plan init a+b"]);
+    expect(ran).toEqual(["init a+b:init"]);
+  });
 });

@@ -182,7 +182,7 @@ import { rootRowKey, type LockRow } from "@intentius/chant/lifecycle/lock-rows";
 import type { TerraformConfig } from "../config";
 import { rootTexts } from "../compose/hcl";
 import { declaredVariables } from "../compose/root";
-import { terraformComposeGroup } from "./compose-group";
+import { composeGroup, terraformComposeGroup, type ComposeGroupDeps } from "./compose-group";
 import { markPlaceholderDriven, placeholderVars, waitingHole } from "./placeholder-preview";
 import { terraformReleaseInputs } from "./release-inputs";
 import { terraformTraceFacts } from "./trace-facts";
@@ -268,6 +268,14 @@ export interface TerraformApplyDeps {
    * engine's spans.
    */
   onCommand?: TerraformCommandHook;
+  /**
+   * The composed group's deps (`terraform.compose`), such as the project,
+   * the identities and the environment its run takes, in place of the
+   * defaults (chant#4887). A product that spread `composeGroup(...)`'s
+   * methods over this capability passes its deps here instead, so the
+   * group's commands go through `onCommand` too.
+   */
+  compose?: ComposeGroupDeps;
 }
 
 export type { TerraformCommand, TerraformCommandHook, TerraformCommandResult, TerraformCommandRun } from "../op/activities/terraform";
@@ -729,6 +737,7 @@ export function terraformApplyCapabilityWith(deps: TerraformApplyDeps = {}): Cap
 
 /** The step's methods with `deps.resolveRoot`, before {@link terraformApplyCapabilityWith} puts its command hook around them. */
 function terraformApplyMethods(deps: TerraformApplyDeps): Capability<TerraformApplyStepInput, TerraformApplyStepOutput> & Required<Pick<Capability<TerraformApplyStepInput, TerraformApplyStepOutput>, "plan" | "outputs">> {
+  const group = deps.compose ? composeGroup(deps.compose) : terraformComposeGroup;
   return {
     kind: "terraform-apply",
     // A root's apply has no undo short of applying the previous configuration,
@@ -793,12 +802,12 @@ function terraformApplyMethods(deps: TerraformApplyDeps): Capability<TerraformAp
     },
     // #4447 (ws-107): a group core forms of components that read each other plans and applies as one composed run
     // when `terraform.compose.enabled` is set (./compose-group.ts). Delegates, so the methods are read when called.
-    groupReads: (ctx, members) => terraformComposeGroup.groupReads(ctx, members),
+    groupReads: (ctx, members) => group.groupReads(ctx, members),
     // #4542: a member pointed at a release's recorded copy plans alone, since a composition reads the declared roots.
     groupFallback: async (ctx, members) =>
       members.some((m) => typeof m.step.dir === "string")
         ? { kind: "release-copy", reason: "a member deploys a release's recorded copy of its root, which a composition does not read" }
-        : terraformComposeGroup.groupFallback(ctx, members),
+        : group.groupFallback(ctx, members),
     // #4542: the root's files, which a release cut records and a promote under it plans.
     releaseInputs: (input, ctx) => terraformReleaseInputs(input, ctx),
     // #4552: resource under choudoufu, the root under Terraform, tofu and Terragrunt, which refuse resource by name.
@@ -825,11 +834,11 @@ function terraformApplyMethods(deps: TerraformApplyDeps): Capability<TerraformAp
     planGroup: (ctx, members) => {
       // chant#4854: each member's lock grain reads the config at the wave's directory too.
       for (const m of members) if (m.input) withContextCwd(m.ctx ?? ctx, m.input);
-      return terraformComposeGroup.planGroup(ctx, members);
+      return group.planGroup(ctx, members);
     },
     runGroup: (ctx, run, members) => {
       for (const m of members) if (m.input) withContextCwd(m.ctx ?? ctx, m.input);
-      return terraformComposeGroup.runGroup(ctx, run, members);
+      return group.runGroup(ctx, run, members);
     },
     async run(ctx: DeployContext, step: TerraformApplyStepInput): Promise<TerraformApplyStepOutput> {
       const input = await filledInput(deps.resolveRoot, ctx, step);
