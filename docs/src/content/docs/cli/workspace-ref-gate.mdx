@@ -78,7 +78,12 @@ Pipelines chant generates attach their checks' evidence here themselves, signed 
 
 An override lets one commit through without one check. It is the [override gate](/chant/guide/gate-policy/#override-a-denial)'s: the subject is `ref-gate-<sha12>-<check>`, the rule is the check, and it counts when a person the overriders file at base (`.chant/overriders`) lists wrote it with a reason, after the request for it.
 
-1. The refused push records the request: the `pre-push` hook, or `chant workspace ref-gate check --ref <ref>`, appends it to `chant/lifecycle`. A pre-receive hook can't move a ref, so a push refused only by the remote needs `check` run in the checkout.
+1. The refused push records the request: the `pre-push` hook, or `chant workspace ref-gate check --ref <ref>`, appends it to `chant/lifecycle`. A pre-receive hook can't move a ref, so a push refused only by the remote needs `check` run in the checkout. The remote's refusal prints that command with the ref, the commit and the base it decided against ([#4913](https://github.com/INTENTIUS/chant/issues/4913)), so `check` in the checkout reaches the same decision:
+
+   ```
+   remote:   To let 3f9c2a1b through without a check, record the request for an override in your checkout (this remote can't):
+   remote:     chant workspace ref-gate check --ref refs/heads/main --at <commit> --base <old tip>
+   ```
 2. The person overrides it: `chant approve policy-override ref-gate-<sha12>-plan --rule plan --reason "<why>"`.
 3. The push goes again with `chant/lifecycle`: `git push origin chant/lifecycle HEAD:main`.
 
@@ -114,6 +119,31 @@ chant workspace ref-gate status --open --ref "refs/heads/$CI_COMMIT_BRANCH" --ba
 ```
 
 `--open` sets the status of every open pull request into the branch, each head fetched and decided against the policy at `--base` (default `HEAD`). A head that does not fetch, or a status the forge refuses, is said, and the others go on; it exits 0 once each is set.
+
+[`chant ci forge-check --ref-gate-status`](/chant/cli/ci/#ci-forge-check) checks that the default branch requires this status ([#4913](https://github.com/INTENTIUS/chant/issues/4913)).
+
+## From a product
+
+A product reads the gate and sets it up through chant ([#4913](https://github.com/INTENTIUS/chant/issues/4913)), feature-detected on `REF_GATE_PIECES_FLOOR`.
+
+`@intentius/chant/ref-gate-rules` reads the rules. `refGateRulesAt(repo, { ref, base })` returns, from the policy at `base` (by default as `check` picks it), whether a rule matches `ref`, its `checks`, the `status` the gate sets and its `problems` when the policy can't be read. An apply before merge passes `status` as `require` to `checkPrRequires` (`@intentius/chant/pr-requires`): `checks` then waits for the gate's status, and one not posted yet is pending rather than passed. `refGateStatusFor(repo, defaultBranch)` gives the status a forge check requires, read at `origin/<default>`.
+
+`@intentius/chant/ref-gate-init` writes the setup a product's init needs:
+
+```ts
+import { refGateInitPlan, writeRefGateInit } from "@intentius/chant/ref-gate-init";
+
+const plan = refGateInitPlan(repo, {
+  branch: "main",
+  checks: [{ check: "plan", command: "terragucci plan" }, { check: "policy", command: "terragucci plan" }],
+  chant: "npx chant",
+  runner: "ci:acme/infra",
+  runnerKeySecret: "CHANT_RUNNER_KEY",
+});
+writeRefGateInit(plan); // or fold plan.files into the product's own plan, and print plan.notes
+```
+
+The plan creates `.chant/trust.json` with the `refs` rule, or adds the rule in place to a file that has none for the branch, and leaves a file that has one, or that doesn't parse, as it is. It adds the `pre-push` hook `install` writes, marked `local` since git never commits it, and leaves another hook as it is. When the policy lists no runner key and no keyless identity, a note gives the commands that make and list a key, since without one no evidence verifies and every push is refused. The plan writes nothing; `writeRefGateInit` writes its files and makes the hook executable.
 
 ## Output
 

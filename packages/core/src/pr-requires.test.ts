@@ -129,6 +129,20 @@ describe("github", () => {
     const f = forge({ [`GET ${repo}/commits/${HEAD}/status`]: { statuses: [] }, [`GET ${repo}/commits/${HEAD}/check-runs`]: { check_runs: [] } });
     expect(await f.prChecksPassed!(7, HEAD)).toMatchObject({ passed: false, pending: true });
   });
+
+  test("checks: a required status that has not reported is pending, through checkPrRequires' require (#4913)", async () => {
+    const green = { [`GET ${repo}/commits/${HEAD}/check-runs`]: { check_runs: [{ name: "lint", status: "completed", conclusion: "success" }] } };
+    const before = forge({ [`GET ${repo}/commits/${HEAD}/status`]: { statuses: [{ context: "ci/test", state: "success" }] }, ...green });
+    expect(await before.prChecksPassed!(7, HEAD, [], ["chant/ref-gate"])).toEqual({ passed: false, pending: true, reason: "chant/ref-gate still running on aaaaaaaa" });
+    const out = await checkPrRequires(before, 7, HEAD, { only: ["checks"], require: ["chant/ref-gate"], wait: async () => {} });
+    expect(out.find((o) => o.name === "checks")).toMatchObject({ passed: false, pending: true, reason: "chant/ref-gate still running on aaaaaaaa" });
+    // Without require, the same head passes: the gap the ref gate's status job leaves until it posts.
+    expect((await before.prChecksPassed!(7, HEAD)).passed).toBe(true);
+    const after = forge({ [`GET ${repo}/commits/${HEAD}/status`]: { statuses: [{ context: "ci/test", state: "success" }, { context: "chant/ref-gate", state: "success" }] }, ...green });
+    expect(await after.prChecksPassed!(7, HEAD, [], ["chant/ref-gate"])).toEqual({ passed: true, reason: "3 checks passed on aaaaaaaa" });
+    const refused = forge({ [`GET ${repo}/commits/${HEAD}/status`]: { statuses: [{ context: "chant/ref-gate", state: "failure" }] }, ...green });
+    expect((await refused.prChecksPassed!(7, HEAD, [], ["chant/ref-gate"])).reason).toBe("chant/ref-gate failed on aaaaaaaa");
+  });
 });
 
 describe("forgejo", () => {
@@ -263,6 +277,12 @@ describe("gitlab", () => {
     });
     expect(await f.prChecksPassed!(3, HEAD, ["apply"])).toEqual({ passed: true, reason: "2 checks passed on aaaaaaaa" });
     expect((await f.prChecksPassed!(3, HEAD)).pending).toBe(true);
+  });
+
+  test("checks: a required status that has not reported is pending (#4913)", async () => {
+    const f = (statuses: unknown[]) => forge({ [`GET ${project}/repository/commits/${HEAD}/statuses`]: statuses });
+    expect(await f([{ id: 1, name: "test", status: "success" }]).prChecksPassed!(3, HEAD, [], ["chant/ref-gate"])).toEqual({ passed: false, pending: true, reason: "chant/ref-gate still running on aaaaaaaa" });
+    expect((await f([{ id: 1, name: "test", status: "success" }, { id: 2, name: "chant/ref-gate", status: "success" }]).prChecksPassed!(3, HEAD, [], ["chant/ref-gate"])).passed).toBe(true);
   });
 });
 

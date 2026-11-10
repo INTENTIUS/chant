@@ -505,8 +505,12 @@ export interface PrForge {
    * Every status and check reported on `head` passed, and at least one did.
    * Statuses named in `ignore` are left out, such as the apply's own.
    * Pending while one still runs or none has reported.
+   *
+   * Commit statuses named in `require` (#4913) must have reported as well,
+   * such as the ref gate's (`@intentius/chant/ref-gate-rules`), which a job
+   * posts later than the others: one not posted yet counts as still running.
    */
-  prChecksPassed?(pr: number, head: string, ignore?: readonly string[]): Promise<PrRequireResult>;
+  prChecksPassed?(pr: number, head: string, ignore?: readonly string[], require?: readonly string[]): Promise<PrRequireResult>;
   /**
    * GitLab (#4328): each open merge request into `branch` whose newest
    * pipeline at its head commit, in this project, ran a job named `job`,
@@ -1117,16 +1121,18 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
       if (!tip || !base) return refuse(`the forge did not say where ${into} is or where ${short(head)} left it`);
       return base === tip ? pass(`${short(head)} contains ${into} at ${short(tip)}`) : refuse(`${short(head)} does not contain ${into} at ${short(tip)}`);
     },
-    async prChecksPassed(_pr, head, ignore = []) {
+    async prChecksPassed(_pr, head, ignore = [], need = []) {
       const skip = ignoredStatus(ignore);
       const failing: string[] = [];
       const waiting: string[] = [];
+      const seen = new Set<string>();
       let count = 0;
       // The combined status holds each context's newest status.
       const combined = await api.call("GET", `${repo}/commits/${head}/status`);
       for (const st of isObject(combined) && Array.isArray(combined.statuses) ? combined.statuses : []) {
         const context = isObject(st) ? str(st.context) : undefined;
         if (!context) continue;
+        seen.add(context);
         const state = str(st.state) ?? str(st.status) ?? "";
         // A status left out still shows the checks reported, unless it is what held them back.
         if (skip(context)) {
@@ -1147,6 +1153,8 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
           else if (!["success", "neutral", "skipped"].includes(String(run.conclusion))) failing.push(name);
         }
       }
+      // #4913: a required status not posted yet is waited for.
+      waiting.push(...need.filter((n) => !seen.has(n)));
       return checksVerdict(`pull request ${_pr}`, head, failing, waiting, count);
     },
     async pullRequestOpen(pr) {
@@ -1564,7 +1572,7 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
       if (behind === undefined) return refuse(`GitLab did not say how far ${short(head)} is behind ${into}`);
       return behind === 0 ? pass(`${short(head)} contains ${into}`) : refuse(`${short(head)} is ${behind} commit${behind === 1 ? "" : "s"} behind ${into}`);
     },
-    async prChecksPassed(mr, head, ignore = []) {
+    async prChecksPassed(mr, head, ignore = [], need = []) {
       const skip = ignoredStatus(ignore);
       // Each name's newest status; a job allowed to fail holds nothing back.
       const newest = new Map<string, Record<string, unknown>>();
@@ -1588,6 +1596,7 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
         if ((state === "failed" || state === "canceled") && st.allow_failure !== true) failing.push(name);
         else if (GITLAB_RUNNING.has(state)) waiting.push(name);
       }
+      waiting.push(...need.filter((n) => !newest.has(n)));
       return checksVerdict(`merge request !${mr}`, head, failing, waiting, count);
     },
     async pullRequestOpen(mr) {

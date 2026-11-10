@@ -16,6 +16,9 @@
  */
 import type { PrApproverFilter, PrExcludedApprover, PrForge, PrRequireResult } from "./pr-forge";
 
+/** `require` in {@link PrRequiresOptions} (#4913). */
+export { REF_GATE_PIECES_FLOOR } from "./release-floors";
+
 /** The four checks, in the order they run and the report lists them. */
 export const PR_APPLY_REQUIRES = ["approved", "mergeable", "undiverged", "checks"] as const;
 
@@ -40,6 +43,12 @@ export interface PrRequiresOptions {
   approvers?: PrApproverFilter;
   /** Status names the `checks` require leaves out: the apply's own. */
   ignore?: readonly string[];
+  /**
+   * Statuses the `checks` require needs to have reported and passed (#4913),
+   * such as the ref gate's: `refGateRulesAt(...).status` from
+   * `@intentius/chant/ref-gate-rules`. One not reported yet is pending.
+   */
+  require?: readonly string[];
   /** How many times a pending check is asked in all. Default 5. */
   reads?: number;
   /** The wait between reads. Default 3 seconds. */
@@ -61,7 +70,7 @@ export async function checkPrRequires(forge: PrForge, pr: number, head: string, 
     approved: forge.prApproved ? () => forge.prApproved!(pr, head, opts.approvers) : undefined,
     mergeable: forge.prMergeable ? () => forge.prMergeable!(pr, head) : undefined,
     undiverged: forge.prUndiverged ? () => forge.prUndiverged!(pr, head) : undefined,
-    checks: forge.prChecksPassed ? () => forge.prChecksPassed!(pr, head, opts.ignore ?? []) : undefined,
+    checks: forge.prChecksPassed ? () => forge.prChecksPassed!(pr, head, opts.ignore ?? [], opts.require ?? []) : undefined,
   };
   const out: PrRequireOutcome[] = [];
   const asked = new Set<PrApplyRequire>(opts.only ?? PR_APPLY_REQUIRES);

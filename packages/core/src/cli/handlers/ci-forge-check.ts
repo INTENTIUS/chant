@@ -1,9 +1,12 @@
 /**
  * `chant ci forge-check [--env <env>] [--member <name>] [--forge <forge>]
- * [--repo <owner/name>] [--branch <default>] [--require-clouds] [--json]`
- * (#4608): read the live forge, the clouds and Pulumi Cloud against the
- * pull-request pipelines `ci.identity.cloud` gives the workspace, one row
- * per expected setting. Read-only. Exits chant's `failed` (1) on a
+ * [--repo <owner/name>] [--branch <default>] [--require-clouds]
+ * [--ref-gate-status] [--json]` (#4608): read the live forge, the clouds and
+ * Pulumi Cloud against the pull-request pipelines `ci.identity.cloud` gives
+ * the workspace, one row per expected setting. With `--ref-gate-status`
+ * (#4913), for pipelines built with it, the default branch also requires
+ * the ref gate's status, named as the policy at `origin/<default>` (else
+ * `HEAD`) names it. Read-only. Exits chant's `failed` (1) on a
  * mismatch, or with --require-clouds on a cloud left unchecked; `done` (0)
  * otherwise. See ../../forge-check/index.ts.
  */
@@ -12,7 +15,7 @@ import type { CloudIdentityDeclaration } from "../../ci-identity";
 import type { ForgeFetch } from "../../pr-forge";
 import type { CommandContext } from "../registry";
 
-const USAGE = "chant ci forge-check [--env <env>] [--member <name>] [--forge github|gitlab|forgejo] [--repo <owner/name>] [--branch <default>] [--require-clouds] [--json]";
+const USAGE = "chant ci forge-check [--env <env>] [--member <name>] [--forge github|gitlab|forgejo] [--repo <owner/name>] [--branch <default>] [--require-clouds] [--ref-gate-status] [--json]";
 
 /** The environment chant's generated pull-request pipelines default to. */
 const DEFAULT_ENV = "production";
@@ -62,29 +65,39 @@ export async function runCiForgeCheck(ctx: CommandContext): Promise<number> {
   });
   const words = activeProductWords();
   const host = target.host;
+  // #4913: with --ref-gate-status the default branch requires the ref gate's status too, named as the policy names it.
+  let gate: { status?: string; note?: string; problem?: string } = {};
+  const statusFor = args.refGateStatus ? (await import("../../ref-gate-rules")).refGateStatusFor : undefined;
   const result = await forgeCheck(
     {
       target,
       words,
       ...(args.requireClouds ? { requireClouds: true } : {}),
-      contract: (live) =>
-        pipelineContract({
+      contract: (live) => {
+        const defaultBranch = args.branch ?? live.defaultBranch ?? "main";
+        if (statusFor) gate = statusFor(found?.dir ?? process.cwd(), defaultBranch);
+        const status = gate.status;
+        return pipelineContract({
           forge: target.kind,
           repository: {
             host,
             path: live.path ?? target.repo,
-            defaultBranch: args.branch ?? live.defaultBranch ?? "main",
+            defaultBranch,
             ...(live.ownerId ? { ownerId: live.ownerId } : {}),
             ...(live.repoId ? { repoId: live.repoId } : {}),
           },
           pipelines,
           words,
-        }),
+          ...(status ? { refGateStatus: status } : {}),
+        });
+      },
     },
     { fetch: globalThis.fetch as unknown as ForgeFetch, env: process.env },
   );
+  if (gate.problem) return fail(`--ref-gate-status: ${gate.problem}`);
   if (args.json) console.log(JSON.stringify(result, null, 2));
   else console.log(describeForgeCheck(result));
+  if (gate.note) console.error(`ci forge-check: ${gate.note}`);
   if (!decl) console.error("ci forge-check: no ci.identity.cloud in the workspace declaration, so no trust was checked");
   else if (pipelines.length === 0) console.error(`ci forge-check: no rule of ci.identity.cloud covers environment ${env}, so no trust was checked`);
   return forgeCheckExit(result);

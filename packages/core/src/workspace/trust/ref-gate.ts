@@ -37,7 +37,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import type { ReasonCode } from "../reason-codes";
 import { verifyEvidence, type EvidenceErrorCode } from "./evidence";
-import { policyAtBase } from "./provenance";
+import { policyAtBase, resolveBase } from "./provenance";
 import { runnersAt, type RefRule, type TrustPolicy } from "./policy";
 import {
   OVERRIDE_APPLIED,
@@ -170,6 +170,63 @@ export function rulesFor(policy: Pick<TrustPolicy, "refs">, ref: string): { matc
     status: matching.find((r) => r.status)?.status ?? REF_GATE_STATUS,
     ...(overrides ? { overrides } : {}),
   };
+}
+
+/** The ref gate's rules for one ref, read at base, as a product reads them (#4913). */
+export interface RefGateRules {
+  ref: string;
+  /** The commit the policy was read at, or null when there is none. */
+  base: string | null;
+  /** A rule of the policy at base matches the ref. */
+  matched: boolean;
+  /** The commit status the ref gate's status job sets for the ref, which the forge should require; null when no rule matches. */
+  status: string | null;
+  /** The checks an update of the ref needs current evidence for, each once, as {@link rulesFor} merges them. */
+  checks: RefRule["checks"];
+  overrides?: "ledger" | "sealed";
+  /**
+   * Why the policy at base cannot be read. The gate then refuses every
+   * update of the ref and sets no status, so a product should refuse too.
+   */
+  problems: string[];
+}
+
+/**
+ * The ref gate's rules for `ref` from the policy at `base` (#4913), the same
+ * read {@link decideRefUpdate} makes, for a product that acts on them
+ * without deciding an update: an apply that waits for the status the gate
+ * sets (`@intentius/chant/ref-gate-rules`), or a forge check that requires
+ * it. `base` defaults as `check` and `status` default it: `origin/HEAD`,
+ * then `main`, then `master`. A base that names no commit is a problem; no
+ * base at all is no policy, so nothing is required.
+ */
+export function refGateRulesAt(repo: string, opts: { ref: string; base?: string }): RefGateRules {
+  const resolved = resolveBase(repo, opts.base);
+  const none = { ref: opts.ref, base: resolved.commit, matched: false, status: null, checks: [] };
+  if (!resolved.commit) return { ...none, problems: opts.base !== undefined && resolved.problem ? [resolved.problem] : [] };
+  const policy = policyAtBase(repo, resolved);
+  if (policy.problems.length > 0) return { ...none, problems: [...policy.problems] };
+  const rules = rulesFor(policy, opts.ref);
+  if (!rules.matched) return { ...none, problems: [] };
+  return { ref: opts.ref, base: resolved.commit, matched: true, status: rules.status, checks: rules.checks, ...(rules.overrides ? { overrides: rules.overrides } : {}), problems: [] };
+}
+
+/**
+ * The status a forge's default branch should require for the ref gate
+ * (#4913), for a forge check whose pipeline renders the `ref-gate` job: the
+ * policy's status for `refs/heads/<defaultBranch>`, read at
+ * `origin/<defaultBranch>` when the checkout has it, else at `HEAD`. With
+ * no rule for the branch the job sets no status, so none is required and
+ * `note` says so; a policy that can't be read is a `problem`.
+ */
+export function refGateStatusFor(repo: string, defaultBranch: string): { status?: string; note?: string; problem?: string } {
+  const remote = `refs/remotes/origin/${defaultBranch}`;
+  const rules = refGateRulesAt(repo, { ref: `refs/heads/${defaultBranch}`, base: commitOf(repo, remote) ? remote : "HEAD" });
+  if (rules.problems.length > 0) return { problem: `the trust policy can't be read, so the ref gate sets no status to require: ${rules.problems.join("; ")}` };
+  if (!rules.matched || !rules.status) {
+    return { note: `no refs rule in .chant/trust.json${rules.base ? ` at ${rules.base.slice(0, 8)}` : ""} matches refs/heads/${defaultBranch}, so the ref-gate job sets no status there and none is required` };
+  }
+  return { status: rules.status };
 }
 
 // ── evidence notes ───────────────────────────────────────────────────────
@@ -510,8 +567,24 @@ export function runPrePush(repo: string, stdin: string, opts: { ledger?: string;
 
 const short = (s: string | null): string => (s ? s.slice(0, 8) : "(none)");
 
-/** What the gate says about one decision: each missing check and its command, and how to override a blocked one. */
-export function describeDecision(d: RefDecision): string[] {
+/**
+ * The command that records the request for an override of `d`'s blocked
+ * checks from a checkout (#4913): `check` for the same ref, commit and base
+ * the remote decided, so it reaches the same decision and records the
+ * request on `chant/lifecycle`, which a pre-receive hook can't move.
+ */
+export function requestCommand(d: Pick<RefDecision, "ref" | "new" | "base">): string {
+  return `chant workspace ref-gate check --ref ${d.ref} --at ${d.new ?? "HEAD"}${d.base ? ` --base ${d.base}` : ""}`;
+}
+
+/**
+ * What the gate says about one decision: each missing check and its command,
+ * and how to override a blocked one. At `pre-receive` (#4913) the request
+ * can't be recorded where the decision is made, so the refusal prints the
+ * exact command that records it from the checkout, then the override and
+ * the push that spends it.
+ */
+export function describeDecision(d: RefDecision, opts: { site?: RefGateSite } = {}): string[] {
   const out: string[] = [];
   const verb = d.decision === "admit" ? "admitted" : "refused";
   out.push(`chant ref gate: ${verb} ${d.ref} ${short(d.old)}..${short(d.new)}`);
@@ -531,9 +604,17 @@ export function describeDecision(d: RefDecision): string[] {
   const blocked = d.checks.filter((c) => c.action === "block" && (c.status === "missing" || c.status === "stale"));
   if (blocked.length > 0) {
     out.push(`  Attach each check's evidence to ${short(d.new)} (chant workspace ref-gate attach --envelope <file> --at ${short(d.new)}) and push ${EVIDENCE_NOTES_REF} with the ref.`);
-    out.push(`  To let ${short(d.new)} through without a check, a person listed in ${OVERRIDERS_PATH} at base can override it once the request is recorded`);
-    out.push(`  (the pre-push hook records it, or chant workspace ref-gate check --ref ${d.ref} --at ${short(d.new)}):`);
-    for (const c of blocked) out.push(`    ${overrideCommand(c.subject, [c.check])}`);
+    if (opts.site === "pre-receive") {
+      out.push(`  To let ${short(d.new)} through without a check, record the request for an override in your checkout (this remote can't):`);
+      out.push(`    ${requestCommand(d)}`);
+      out.push(`  then a person listed in ${OVERRIDERS_PATH} at base overrides each check:`);
+      for (const c of blocked) out.push(`    ${overrideCommand(c.subject, [c.check])}`);
+      out.push(`  and the push goes again with chant/lifecycle: git push origin chant/lifecycle ${d.new ?? "HEAD"}:${d.ref}`);
+    } else {
+      out.push(`  To let ${short(d.new)} through without a check, a person listed in ${OVERRIDERS_PATH} at base can override it once the request is recorded`);
+      out.push(`  (the pre-push hook records it, or ${requestCommand(d)}):`);
+      for (const c of blocked) out.push(`    ${overrideCommand(c.subject, [c.check])}`);
+    }
   }
   return out;
 }

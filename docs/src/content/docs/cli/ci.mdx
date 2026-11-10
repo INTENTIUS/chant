@@ -36,7 +36,7 @@ chant ci check --base <rev> [<target>...] [--output <dir>] [--json]
 chant ci evidence sign (--check-id <id>[,<id>...] | --from-report <dir> --result <result>) [--at <rev>] [--base <rev>] [--key <file>] [--no-push] [--json]
 chant ci evidence sign --local --check-id <id>[,<id>...] [--at <rev>] [--base <rev>] [--key <file>] [--no-push] [--json]
 chant ci evidence verify [--local] --check-id <id>[,<id>...] [--at <rev>] [--base <rev>] [--json]
-chant ci forge-check [--env <env>] [--member <name>] [--forge github|gitlab|forgejo] [--repo <owner/name>] [--branch <default>] [--require-clouds] [--json]
+chant ci forge-check [--env <env>] [--member <name>] [--forge github|gitlab|forgejo] [--repo <owner/name>] [--branch <default>] [--require-clouds] [--ref-gate-status] [--json]
 chant ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>]
                   [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>]
                   [--runner-key-secret <NAME>]
@@ -726,6 +726,8 @@ On the developer's machine, `chant ci check --base origin/main` with the key in 
 | Pulumi Cloud | the forge is a registered OIDC issuer of the organization, and the issuer's policies grant each token to its own jobs alone |
 
 The plan status is the product's, such as `chant/plan` or `plywood/preview`. Each required status also gets a row for whether it has been posted on the default branch's head. One not posted yet reads `unknown`, since the pipeline may not have run.
+
+For pipelines built with `--ref-gate-status`, pass it here too ([#4913](https://github.com/INTENTIUS/chant/issues/4913)): the default branch then also requires the [ref gate](/chant/cli/workspace-ref-gate/)'s status, named as the `refs` rule for the branch in `.chant/trust.json` names it (by default `chant/ref-gate`), read at `origin/<default>` when the checkout has it, else at `HEAD`. With no rule for the branch the `ref-gate` job sets no status, so none is required and the check says so. A policy that can't be read fails the check. A product's forge check passes the status to `pipelineContract` as `refGateStatus`.
 
 A row reads `match` or `mismatch`. It reads `unknown` when the setting could not be read, such as a scope the token lacks or a GitLab edition without protected environments, and `not-checked` when no credentials for that cloud are set. Credentials come from the environment:
 

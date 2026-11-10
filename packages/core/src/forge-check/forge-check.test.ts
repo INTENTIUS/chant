@@ -165,6 +165,14 @@ describe("the contract chant's pipelines make (#4608)", () => {
     expect(c.jobs[2]!.pulumi).toEqual({ organization: "acme", tokens: ["team:deployers"], audience: "urn:pulumi:org:acme", apiUrl: PULUMI_API });
   });
 
+  test("the ref gate's status is required beside the plan status when the pipeline sets it (#4913)", () => {
+    const c = pipelineContract({ forge: "github", repository: repo(), pipelines: [{ name: "production", identity: awsIdentity }], refGateStatus: "chant/ref-gate" });
+    expect(c.requiredStatuses).toEqual(["chant/plan", "chant/ref-gate"]);
+    const given = pipelineContract({ forge: "github", repository: repo(), pipelines: [{ name: "production", identity: awsIdentity }], requiredStatuses: ["acme/ci", "acme/gate"], refGateStatus: "acme/gate" });
+    expect(given.requiredStatuses).toEqual(["acme/ci", "acme/gate"]);
+    expect(pipelineContract({ forge: "github", repository: repo(), pipelines: [{ name: "production", identity: awsIdentity }] }).requiredStatuses).toEqual(["chant/plan"]);
+  });
+
   test("Forgejo has no environments, so an apply environment is left out", () => {
     const c = pipelineContract({ forge: "forgejo", repository: { ...repo(), host: "code.example.com" }, pipelines: [{ name: "p", identity: awsIdentity, forgeEnvironment: "prod" }] });
     expect(c.jobs[2]!.forgeEnvironment).toBeUndefined();

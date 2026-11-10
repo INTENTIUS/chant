@@ -591,7 +591,7 @@ export interface ParsedArgs {
   noteCommands?: boolean;
   /** `chant build --pr-loop --check-job` (#4935): the check job, `chant ci check` on the pull request's commit. */
   checkJob?: boolean;
-  /** `chant build --pr-loop --ref-gate-status` (#4935): the job that runs `chant workspace ref-gate status` for the pull request's commit. */
+  /** `chant build --pr-loop --ref-gate-status` (#4935): the job that runs `chant workspace ref-gate status` for the pull request's commit. `chant ci forge-check --ref-gate-status` (#4913): the default branch requires its status. */
   refGateStatus?: boolean;
   /** `chant build --pr-loop --evidence-runner-key-secret <NAME>` (#4935): the secret holding the runner key the note job signs `plan` and `policy` with. */
   evidenceRunnerKeySecret?: string;
