@@ -22,32 +22,32 @@
 export const NEXT_RELEASE = "0.124.87";
 
 /** The first chant with `chant dev local` and `chant dev bundle-check`, `@intentius/chant/local-chant` and `@intentius/chant/bundle-check` (`chantRuntimeTarget`, `chantExternalPlugin`, `checkBundle`): a product built against a chant checkout, and its bundle checked, without its own scripts (#4787). */
-export const LOCAL_CHANT_FLOOR = NEXT_RELEASE;
+export const LOCAL_CHANT_FLOOR = "0.124.86";
 
 /** The first chant with `chant workspace ref-gate` (pre-receive, pre-push, check, status, attach, install) and `refs` in `.chant/trust.json`, the checks a ref update needs evidence for (#4867). */
-export const REF_GATE_FLOOR = NEXT_RELEASE;
+export const REF_GATE_FLOOR = "0.124.86";
 
 /** The first chant whose overdue check finds a schedule in any pipeline file, and whose `ScheduledWatch` takes a product's `files` and GitLab `schedule` selector (#4789). */
-export const OVERDUE_PIPELINE_FILES_FLOOR = NEXT_RELEASE;
+export const OVERDUE_PIPELINE_FILES_FLOOR = "0.124.86";
 
 /** The first chant whose `terraformApplyCapabilityWith` takes `onCommand`, a hook around each engine command `terraform-apply` runs for a root, its reads' upstreams included (#4865). */
-export const TERRAFORM_APPLY_COMMAND_HOOK_FLOOR = NEXT_RELEASE;
+export const TERRAFORM_APPLY_COMMAND_HOOK_FLOOR = "0.124.86";
 
 /** The first chant with `@intentius/chant/forge-flags` (`forgeTargetWith`, `forgeTargetFromFlags`, `apiBaseOf`), `@intentius/chant/chant-install` (`bundledChant`, `chantArgv`, `installChantResolveFallback`) and `noteLimit` and `fitNote` in `@intentius/chant/plan-summary` (#4800). */
-export const PRODUCT_HELPERS_FLOOR = NEXT_RELEASE;
+export const PRODUCT_HELPERS_FLOOR = "0.124.86";
 
 /** The first chant with `@intentius/chant/ci-image`: `productImageStages`, `productImageDockerfile` and `derivedImageDockerfile` for a product's CI image, and `ciToolFetchScript`, `ciToolInstallLine` and `installCiTool`, the digest-checked engine installs, with the terraform lexicon's `choudoufuInstallLine` checked the same way (#4784). */
-export const CI_IMAGE_FLOOR = NEXT_RELEASE;
+export const CI_IMAGE_FLOOR = "0.124.86";
 
 /** The first chant with `@intentius/chant/drift-issue`, whose `keepDriftIssue` keeps one drift issue per environment from a product's words and the drift records (#4790). */
-export const DRIFT_ISSUE_FLOOR = NEXT_RELEASE;
+export const DRIFT_ISSUE_FLOOR = "0.124.86";
 
 /** The first chant whose `chant build` with no path builds the config's `sourceDir`, whose root build leaves a top-level `scripts/` out, and whose `@intentius/chant/config` exports `resolveSourceDir`, the one source-dir rule every command shares (#4794). */
-export const SOURCE_DIR_RULE_FLOOR = NEXT_RELEASE;
+export const SOURCE_DIR_RULE_FLOOR = "0.124.86";
 /** The first chant whose pulumi lexicon runs `gatedStackExport`, `gatedStackCancel` and `gatedStackMove` on core's `exportStateVersion`, `releaseStateLock` and `runStateMigration`: export by version, the live-run check before a cancel (`liveRuns`, `forge`), and the check that nothing moved between a move's plan and its write (#4808). */
-export const PULUMI_STACK_OPS_ON_CORE_FLOOR = NEXT_RELEASE;
+export const PULUMI_STACK_OPS_ON_CORE_FLOOR = "0.124.86";
 /** The first chant whose terraform lexicon's state stores read versions (`version`, `hasVersion`, `readVersion`, `isAt`, `listVersions`), with `readStateVersion` and `listStateVersions`, and lock and write a GitLab-managed http backend's state (#4793). */
-export const TERRAFORM_STATE_VERSION_READS_FLOOR = NEXT_RELEASE;
+export const TERRAFORM_STATE_VERSION_READS_FLOOR = "0.124.86";
 
 /** The first chant whose terraform lexicon's `terraform-apply` reads take `dir` and `workspace`, and read an upstream with `resolveRoot`'s binary and `readEnv` (terragucci issue 1303). */
 export const TERRAFORM_APPLY_INSTANCE_READS_FLOOR = "0.124.80";
@@ -89,19 +89,19 @@ export const PR_FORGE_READS_FLOOR = "0.124.78";
 export const SCHEDULED_RUNS_SELECTOR_FLOOR = "0.124.78";
 
 /** The first chant whose Op waves pipeline takes `waveJobs` and `recordPlans`, a product's login, report, artifact and plans-job inputs, so it edits nothing chant wrote (#4791). */
-export const OP_WAVES_JOB_INPUTS_FLOOR = NEXT_RELEASE;
+export const OP_WAVES_JOB_INPUTS_FLOOR = "0.124.86";
 
 /** The first chant with `@intentius/chant/floor-table` (`FLOOR_TABLE`, `floorVersion`, `chantMeets`), every floor as one table, and `chant dev dead-guards` with `@intentius/chant/dead-guards` (`findDeadGuards`), which fails on a feature-detect the product's chant pin meets (#4792). */
-export const FLOOR_TABLE_FLOOR = NEXT_RELEASE;
+export const FLOOR_TABLE_FLOOR = "0.124.86";
 
 /** The first chant with `@intentius/chant/ci-login`: `githubCloudLogin`, `gitlabCloudLogin` and `forgejoCloudLogin` render a job's AWS, GCP and Azure login from the OIDC token file, per target too (#4788). */
-export const CLOUD_LOGIN_FLOOR = NEXT_RELEASE;
+export const CLOUD_LOGIN_FLOOR = "0.124.86";
 
 /** The first chant whose generated pipelines sign evidence for each named check they run, with `chant ci evidence`, `ci check` signing each hook, and an Op waves spec's `evidence.requires` (#4870). */
-export const CHECK_EVIDENCE_FLOOR = NEXT_RELEASE;
+export const CHECK_EVIDENCE_FLOOR = "0.124.86";
 
 /** The first chant that accepts local evidence (#4868): `local` in `.chant/trust.json`, `chant ci evidence sign --local`, and `chant ci check` skipping a hook whose current local evidence the policy at base accepts. */
-export const LOCAL_EVIDENCE_FLOOR = NEXT_RELEASE;
+export const LOCAL_EVIDENCE_FLOOR = "0.124.86";
 
 /** The first chant that signs runner statements keyless from the CI job's OIDC identity and verifies them against `keyless` in `.chant/trust.json`, with `evidence.identity: "oidc"` in the generators (#4869). */
 export const KEYLESS_EVIDENCE_FLOOR = NEXT_RELEASE;
