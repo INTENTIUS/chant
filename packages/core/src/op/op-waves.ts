@@ -405,6 +405,15 @@ export interface OpWave {
   shares?: number;
   /** The forge deployment environment the wave's jobs run in (GitHub and GitLab; Forgejo has none). */
   environment?: OpEnvironment;
+  /**
+   * Before merge (#4992), the environment of the wave's plan job alone. A
+   * split wave's applying job is its deployment and names `environment`, so
+   * its reviewers approve the wave once; the plan job names none on GitHub
+   * (on GitLab it names `environment` with `action: prepare`, which deploys
+   * nothing). Name one here, with no required reviewers, when the plan needs
+   * an environment's secrets or its OIDC claim. Forgejo has none.
+   */
+  planEnvironment?: OpEnvironment;
   /** Variables for this wave's jobs alone. */
   variables?: Record<string, string>;
   /** Steps this wave's jobs run after the checkout, as `ScheduledOpSpec.setup`. */

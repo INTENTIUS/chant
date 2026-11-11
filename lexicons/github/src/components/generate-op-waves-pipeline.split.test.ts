@@ -91,7 +91,9 @@ describe("a split wave before merge on GitHub (#4987)", () => {
     expect(doc.jobs["wave-1-dev"]!.needs).toEqual(["wave-1-dev-gate"]);
     expect(doc.jobs["wave-2-fleet-plan"]!.needs).toEqual(["wave-1-dev-record"]);
     expect(doc.jobs["wave-2-fleet-share-2"]!.needs).toEqual(["wave-2-fleet-gate"]);
-    expect(doc.jobs["wave-2-fleet-record"]!.needs).toEqual(["wave-2-fleet-share-1", "wave-2-fleet-share-2"]);
+    // #4992: the record job needs the gate too, whose decision names the rows it leased.
+    expect(doc.jobs["wave-2-fleet-record"]!.needs).toEqual(["wave-2-fleet-share-1", "wave-2-fleet-share-2", "wave-2-fleet-gate"]);
+    expect(doc.jobs["wave-2-fleet-record"]!.steps.find((s) => s.name === "Download wave 2's decision")!.with).toEqual({ name: "tf-apply-wave-2-decision", path: ".chant/op-waves/tf-apply" });
     expect(doc.jobs["wave-2-fleet-share-2"]!.steps.find((s) => s.name === "Apply share 2 of wave 2 (fleet) from the saved plan")!.run).toContain("--wave 2 --base \"${CHANT_WAVES_BASE:-HEAD^1}\" --share 2 --phase apply");
   });
 
@@ -142,10 +144,32 @@ describe("a split wave before merge on GitHub (#4987)", () => {
     expect(JSON.parse(evidence.steps.at(-1)!.env!.CHANT_EVIDENCE_SOURCES!)).toEqual({ "plan:dev": { step: "Plan wave 1 (dev) and save the plan" }, "policy:dev": { step: "Check wave 1 (dev)'s plans against the policy" } });
   });
 
-  test("a step spec or a rest wave cannot split, and is refused with beforeMerge alone", () => {
-    const step = { ...splitSpec, plan: undefined, apply: undefined, step: { kind: "terraform-apply", root: "{target}" } } as never;
-    expect(() => generateGithubOpWavesPipeline(step, splitOptions as never)).toThrow("a spec with `step` plans in the job's own process");
-    expect(() => generateGithubOpWavesPipeline(step, { ...splitOptions, beforeMerge: undefined } as never)).not.toThrow();
+  test("the environment's reviewers are asked once a wave: the applying job names it, the plan job names planEnvironment or none (#4992)", () => {
+    expect(doc.jobs["wave-3-prod"]!.environment).toEqual({ name: "prod" });
+    expect(doc.jobs["wave-3-prod-plan"]!.environment).toBeUndefined();
+    expect(JSON.parse(doc.jobs["wave-3-prod-plan"]!.steps[0]!.env!.CHANT_JOB_GUARD!).forgeEnvironment).toBeUndefined();
+    expect(JSON.parse(doc.jobs["wave-3-prod"]!.steps[0]!.env!.CHANT_JOB_GUARD!).forgeEnvironment).toBe("prod");
+    const read = { ...splitSpec, waves: [...splitSpec.waves.slice(0, 2), { ...splitSpec.waves[2]!, planEnvironment: { name: "prod-plan" } }] } as OpWavesSpec;
+    const withRead = parseYAML(generateGithubOpWavesPipeline(read, splitOptions as never).files[0]!.yaml) as Doc;
+    expect(withRead.jobs["wave-3-prod-plan"]!.environment).toEqual({ name: "prod-plan" });
+    expect(JSON.parse(withRead.jobs["wave-3-prod-plan"]!.steps[0]!.env!.CHANT_JOB_GUARD!).forgeEnvironment).toBe("prod-plan");
+    expect(withRead.jobs["wave-3-prod"]!.environment).toEqual({ name: "prod" });
+    const environments = Object.values(withRead.jobs).filter((j) => JSON.stringify(j.environment ?? null).includes('"prod"'));
+    expect(environments).toHaveLength(1);
+    expect(() => generateGithubOpWavesPipeline({ ...read, waves: [{ ...splitSpec.waves[0]!, planEnvironment: { name: " " } }] } as OpWavesSpec, splitOptions as never)).toThrow("empty `name`");
+  });
+
+  test("a step spec splits: the gate job carries the timeout its lease waits under (#4992)", () => {
+    const step = { ...splitSpec, plan: undefined, apply: undefined, step: { kind: "terragrunt-apply", unit: "{target}" } } as OpWavesSpec;
+    const split = parseYAML(generateGithubOpWavesPipeline(step, splitOptions as never).files[0]!.yaml) as Doc & { jobs: Record<string, Job & { "timeout-minutes"?: number }> };
+    expect(Object.keys(split.jobs).filter((j) => j.startsWith("wave-1-"))).toEqual(["wave-1-dev-plan", "wave-1-dev-plan-evidence", "wave-1-dev-gate", "wave-1-dev", "wave-1-dev-record"]);
+    expectNoWriteTokenBesideTheChange(split, "github");
+    const gate = split.jobs["wave-1-dev-gate"]!;
+    expect(gate["timeout-minutes"]).toBe(split.jobs["wave-1-dev"]!["timeout-minutes"]);
+    expect(gate.env?.CHANT_LOCK_WAIT).toBe(split.jobs["wave-1-dev"]!.env?.CHANT_LOCK_WAIT);
+  });
+
+  test("a rest wave cannot split, and is refused with beforeMerge alone", () => {
     const rest = { ...splitSpec, plan: undefined, planWave: ["terragucci", "plan-wave", "{runs}", "{plans}"], waves: [...splitSpec.waves.slice(0, 2), { ...splitSpec.waves[2]!, rest: true, discover: true, runs: [] }] } as never;
     expect(() => generateGithubOpWavesPipeline(rest, splitOptions as never)).toThrow('wave "prod" has `rest`');
   });
