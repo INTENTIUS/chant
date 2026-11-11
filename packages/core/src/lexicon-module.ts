@@ -243,11 +243,15 @@ export function packageNameOf(spec: string): string | undefined {
 }
 
 /** True when `err` says the package `pkg` itself could not be found, not something it imports. */
-function isPackageNotFound(err: unknown, pkg: string): boolean {
+export function isPackageNotFound(err: unknown, pkg: string): boolean {
   const code = (err as { code?: unknown } | null)?.code;
   if (code !== "ERR_MODULE_NOT_FOUND" && code !== "MODULE_NOT_FOUND") return false;
   const message = err instanceof Error ? err.message : String(err);
-  return message.includes(`'${pkg}'`) || message.includes(`"${pkg}"`) || message.includes(`${pkg}/`);
+  // The specifier itself is quoted: `'pkg'`, or `'pkg/sub'` for a subpath.
+  // chant#4881 — a file missing inside an installed package is named by its
+  // path (`'/…/node_modules/pkg/generated/index.js'`), which is not quoted at
+  // the package name, so it doesn't count as the package being missing.
+  return [`'${pkg}'`, `"${pkg}"`, `'${pkg}/`, `"${pkg}/`].some((quoted) => message.includes(quoted));
 }
 
 /**
