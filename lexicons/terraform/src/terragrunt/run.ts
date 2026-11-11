@@ -290,6 +290,7 @@ async function unitCommandRuns(
         seconds: timed ? (end - start) / 1000 : 0,
         stdout: "",
         stderr: row ? why : "not in Terragrunt's run report, so it did not run",
+        ...(row ? {} : { error: "not in Terragrunt's run report, so it did not run" }),
         ...(timed ? { at: { start, end } } : {}),
       });
     }
