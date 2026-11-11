@@ -1,0 +1,331 @@
+name: terragucci
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - closed
+  issue_comment:
+    types:
+      - created
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: The number of a pull request to plan again
+        required: false
+        type: string
+      root:
+        description: The one word the plan command takes after it, to plan part of it again
+        required: false
+        type: string
+
+env:
+  CHANT_ENV: default
+
+jobs:
+  plan:
+    if: github.event_name == 'pull_request' && github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: docker
+    container: node:22
+    outputs:
+      report_0: '${{ steps.plan.outputs.report_0 }}'
+      report_1: '${{ steps.plan.outputs.report_1 }}'
+      report_2: '${{ steps.plan.outputs.report_2 }}'
+      report_3: '${{ steps.plan.outputs.report_3 }}'
+    steps:
+      - name: Say on the head that the plan started
+        env:
+          CHANT_PENDING_TOKEN: '${{ github.token }}'
+          CHANT_PENDING_SHA: '${{ github.sha }}'
+          CHANT_PENDING_CONTEXT: terragucci/plan
+          CHANT_PENDING_DESCRIPTION: planning
+        run: '(cd / && node -e ''const api=String(process.env.GITHUB_API_URL||"").replace(/\/+$/,""),repo=process.env.GITHUB_REPOSITORY,sha=process.env.CHANT_PENDING_SHA||"";if(!/^[0-9a-f]{40}$/.test(sha)){console.log("chant: no commit to say the plan started on");process.exit(0)}const run=process.env.GITHUB_SERVER_URL&&process.env.GITHUB_RUN_ID?process.env.GITHUB_SERVER_URL+"/"+repo+"/actions/runs/"+process.env.GITHUB_RUN_ID:undefined;fetch(api+"/repos/"+repo+"/statuses/"+sha,{method:"POST",headers:{authorization:"token "+process.env.CHANT_PENDING_TOKEN,accept:"application/json","content-type":"application/json"},body:JSON.stringify({state:"pending",context:process.env.CHANT_PENDING_CONTEXT,description:process.env.CHANT_PENDING_DESCRIPTION,...(run?{target_url:run}:{})})}).then((r)=>console.log(r.ok?"chant: "+process.env.CHANT_PENDING_CONTEXT+" is pending":"chant: the forge answered "+r.status+" to the pending status"),(err)=>console.log("chant: the pending status was not posted: "+err.message));'')'
+      - name: Check out the change
+        env:
+          CHANT_CHECKOUT_TOKEN: '${{ github.token }}'
+        run: |
+          set -eu
+          git config --global --add safe.directory "$PWD" 2>/dev/null || true
+          [ -d .git ] || git init -q .
+          git remote get-url origin >/dev/null 2>&1 || git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          if [ -n "${CHANT_CHECKOUT_TOKEN:-}" ]; then
+            chant_auth="$(printf 'x-access-token:%s' "$CHANT_CHECKOUT_TOKEN" | base64 | tr -d '\n')"
+            export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $chant_auth"
+            unset chant_auth
+          fi
+          ref="$GITHUB_REF"
+          want="$GITHUB_SHA"
+          case "$ref" in
+            refs/heads/*) target="refs/remotes/origin/${ref#refs/heads/}" ;;
+            refs/tags/*) target="$ref" ;;
+            refs/*) target="refs/remotes/${ref#refs/}" ;;
+            *) target="refs/remotes/origin/chant-head" ;;
+          esac
+          if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
+          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"
+          git -c protocol.version=2 fetch -q --no-tags origin '+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle' 2>/dev/null || true
+          case "$ref" in
+            refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
+            *) git checkout -q --force --detach "$target" ;;
+          esac
+      - run: |
+          if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
+          command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
+      - run: |
+          if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
+          npm ci
+      - name: Plan the change
+        id: plan
+        env:
+          BASE_SHA: '${{ github.event.pull_request.base.sha }}'
+          PR_NUMBER: '${{ github.event.pull_request.number }}'
+          CHANT_PLAN_RECORD: '{"op":"pr-plan","env":"default","labels":{"Env":"default","Pipeline":"pr","Job":"plan"}}'
+        run: |
+          if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
+          chant_report="$PWD/terragucci-report"
+          chant_handover() { node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const [dir,out]=process.argv.slice(1);const CHUNK=1000000,PARTS=4,NOTE=["pr-plan.json","pr-note.md"];const all={};const walk=(d,r)=>{let n=[];try{n=fs.readdirSync(d).sort()}catch{return}for(const x of n){const f=p.join(d,x),k=r?r+"/"+x:x;let s;try{s=fs.lstatSync(f)}catch{continue}if(s.isDirectory())walk(f,k);else if(s.isFile())all[k]=fs.readFileSync(f).toString("base64")}};walk(dir,"");const pack=(o)=>z.gzipSync(JSON.stringify(o)).toString("base64");let b=pack(all);if(b.length>CHUNK*PARTS){b=pack(Object.fromEntries(Object.entries(all).filter(([k])=>NOTE.includes(k))));if(b.length>CHUNK*PARTS){b=pack({});console.error("chant: the plan report is too large to hand to the note job, even cut to the report and the note; it hands on none of it")}else console.error("chant: the plan report is too large to hand to the note job whole; it hands on pr-plan.json and pr-note.md")}let o="";for(let i=0;i*CHUNK<b.length;i++)o+="report_"+i+"="+b.slice(i*CHUNK,(i+1)*CHUNK)+"\n";fs.appendFileSync(out,o);' "$chant_report" "${GITHUB_OUTPUT:-/dev/null}" || echo "chant: the plan report could not be handed to the note job" >&2; }
+          trap chant_handover EXIT
+          chant_plan_started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          chant_plan_exit=0
+          terragucci plan --pr-note terragucci-report || chant_plan_exit=$?
+          CHANT_PLAN_EXIT="$chant_plan_exit" CHANT_PLAN_STARTED="$chant_plan_started" node -e 'const fs=require("fs"),path=require("path"),cp=require("child_process"),crypto=require("crypto");const c=JSON.parse(process.env.CHANT_PLAN_RECORD||"{}"),dir=process.argv[1];const code=Number(process.env.CHANT_PLAN_EXIT||"1"),ended=new Date().toISOString(),started=new Date(Date.parse(process.env.CHANT_PLAN_STARTED||"")||Date.now()).toISOString();let sha="";try{sha=cp.execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8",stdio:["ignore","pipe","ignore"]}).trim()}catch{}const ok=code===0,status=ok?"ok":"fail",ms=Math.max(0,Date.parse(ended)-Date.parse(started));const rec={id:crypto.randomUUID(),op:c.op,env:c.env,started,ended,status,labels:c.labels||{},outcomes:{},phases:[{name:"plan",status,steps:[{fn:"shellCmd",status,durationMs:ms,...(ok?{}:{error:"command exited "+code})}]}],...(sha?{gitSha:sha}:{}),...(ok?{}:{failure:{code:"command-failed",reason:"the plan verb exited "+code,phase:"plan",exitCode:code}})};fs.mkdirSync(dir,{recursive:true});fs.writeFileSync(path.join(dir,"run-record.json"),JSON.stringify(rec)+"\n");' terragucci-report || echo "chant: the plan's run record was not written" >&2
+          [ "$chant_plan_exit" -eq 0 ] || exit "$chant_plan_exit"
+  plan-note:
+    needs:
+      - plan
+    if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (needs.plan.result == 'success' || needs.plan.result == 'failure')
+    runs-on: docker
+    container: node:22
+    steps:
+      - name: Check out the target branch's commit
+        uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: '${{ github.event.pull_request.base.sha }}'
+      - run: npm ci
+      - name: Take the plan report from the plan job
+        run: |
+          set -u
+          node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const dir=process.argv[1];let b="";for(const l of fs.readFileSync(0,"utf8").split("\n")){if(!l.trim())continue;let s="";try{s=JSON.parse(l)}catch{}if(typeof s==="string")b+=s}if(!b){console.log("chant: the plan job handed on no report");process.exit(0)}let files;try{files=JSON.parse(z.gunzipSync(Buffer.from(b,"base64"),{maxOutputLength:268435456}).toString("utf8"))}catch(e){console.log("chant: the report the plan job handed on does not read: "+e.message);process.exit(0)}if(!files||typeof files!=="object"||Array.isArray(files)){console.log("chant: the report the plan job handed on is not a set of files");process.exit(0)}let n=0;for(const [k,v] of Object.entries(files)){const parts=k.split("/");if(typeof v!=="string"||k.length>1024||parts.some((x)=>!x||x==="."||x===".."||/[\\\x00-\x1f]/.test(x))){console.log("chant: left out "+JSON.stringify(k));continue}try{const f=p.join(dir,...parts);fs.mkdirSync(p.dirname(f),{recursive:true});fs.writeFileSync(f,Buffer.from(v,"base64"));n++}catch(e){console.log("chant: could not write "+JSON.stringify(k)+": "+e.message)}}console.log("chant: took "+n+" report files from the plan job")' terragucci-report <<'END_OF_REPORT'
+          ${{ toJSON(needs.plan.outputs.report_0) }}
+          ${{ toJSON(needs.plan.outputs.report_1) }}
+          ${{ toJSON(needs.plan.outputs.report_2) }}
+          ${{ toJSON(needs.plan.outputs.report_3) }}
+          END_OF_REPORT
+      - name: Sign the plan and policy evidence
+        if: always()
+        env:
+          HEAD_SHA: '${{ github.sha }}'
+          BASE_SHA: '${{ github.event.pull_request.base.sha }}'
+          PLAN_RESULT: '${{ needs.plan.result }}'
+          CHANT_RUNNER_KEY: '${{ secrets.CHANT_RUNNER_KEY_PEM }}'
+        run: |
+          git fetch --quiet --no-tags --depth=1 origin "$HEAD_SHA" || true
+          terragucci chant ci evidence sign --from-report terragucci-report --result "$PLAN_RESULT" --at "$HEAD_SHA" --base "$BASE_SHA"
+      - name: Keep the plan report
+        if: always()
+        uses: https://code.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1
+        with:
+          name: terragucci-report
+          path: terragucci-report
+          if-no-files-found: ignore
+      - name: Post the plan note and terragucci/plan
+        if: always()
+        env:
+          PR_NUMBER: '${{ github.event.pull_request.number }}'
+          HEAD_SHA: '${{ github.sha }}'
+          PLAN_RESULT: '${{ needs.plan.result }}'
+          GITHUB_TOKEN: '${{ github.token }}'
+        run: terragucci chant components pr-post --pr "$PR_NUMBER" --head "$HEAD_SHA" --env default --output terragucci-report --forge forgejo --result "$PLAN_RESULT" --context terragucci/plan --record-run plan
+  replan:
+    if: (github.event_name == 'issue_comment' && (github.event.issue.pull_request || github.event.is_pull) && (startsWith(github.event.comment.body, '/terragucci plan') || (startsWith(github.event.comment.body, '/terragucci')))) || (github.event_name == 'workflow_dispatch' && github.event.inputs.pr != '')
+    runs-on: docker
+    container: node:22
+    outputs:
+      go: '${{ steps.decide.outputs.go }}'
+      pr: '${{ steps.decide.outputs.pr }}'
+      head: '${{ steps.head.outputs.head }}'
+      argument: '${{ steps.decide.outputs.argument }}'
+      report_0: '${{ steps.plan.outputs.report_0 }}'
+      report_1: '${{ steps.plan.outputs.report_1 }}'
+      report_2: '${{ steps.plan.outputs.report_2 }}'
+      report_3: '${{ steps.plan.outputs.report_3 }}'
+    steps:
+      - name: Read the comment and decide whether it plans again
+        id: decide
+        env:
+          CHANT_REPLAN_TOKEN: '${{ github.token }}'
+          CHANT_REPLAN_COMMANDS: '["/terragucci plan"]'
+          CHANT_REPLAN_FORKS: skip
+          CHANT_REPLAN_PERMISSION: '1'
+          CHANT_REPLAN_DISPATCH_ARGUMENT: root
+          CHANT_REPLAN_PRODUCT: /terragucci
+        run: '(cd / && node -e ''const fs=require("fs");const say=(m)=>console.log("chant: "+m);const out=(k,v)=>fs.appendFileSync(process.env.GITHUB_OUTPUT,k+"="+v+"\n");let e;try{e=JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH,"utf8"))}catch{say("the event file does not read, so nothing is planned again");process.exit(0)}const dispatch=process.env.GITHUB_EVENT_NAME==="workflow_dispatch",inputs=e.inputs&&typeof e.inputs==="object"?e.inputs:{};const body=String((e.comment&&e.comment.body)||"").trim();const cmds=JSON.parse(process.env.CHANT_REPLAN_COMMANDS||"[]");for(const g of JSON.parse(process.env.CHANT_REPLAN_GATED||"[]")){const v=process.env[g.when]||"";if(v&&v!=="0"&&v!=="false")cmds.push(g.comment)}let arg,flag;let refusal;const product=process.env.CHANT_REPLAN_PRODUCT||"",others=JSON.parse(process.env.CHANT_REPLAN_OTHERS||"[]");const says=(c)=>body===c||body.startsWith(c+" ")||body.startsWith(c+"\t");if(dispatch){const pv=String(inputs.pr==null?"":inputs.pr).trim();if(!pv){say("the dispatch names no pull request");process.exit(0)}if(!/^[1-9][0-9]{0,9}$/.test(pv)){console.error("chant: the dispatch\u0027s pr input is a pull request number, like 42");process.exit(1)}const k=process.env.CHANT_REPLAN_DISPATCH_ARGUMENT||"argument",a=String(inputs[k]==null?"":inputs[k]).trim();if(a&&!/^[A-Za-z0-9_.\/@+=,:][A-Za-z0-9_.\/@+=,:-]*$/.test(a)){console.error("chant: the dispatch\u0027s "+k+" input is one word of letters, digits and _./@+=,:-, not starting with -");process.exit(1)}arg=a}else for(const c of cmds){if(body===c){arg="";break}if(body.startsWith(c+" ")){const r=body.slice(c.length).trim();if(r.startsWith("-")){flag=r.split(/\s/)[0];break}if(/^[A-Za-z0-9_.\/@+=,:][A-Za-z0-9_.\/@+=,:-]*$/.test(r)){arg=r;break}}}if(flag!==undefined){refusal="the re-plan takes no flags, and "+flag+" is one: write the command alone, or with one word that does not start with -";arg=""}if(arg===undefined){if(product&&says(product)&&!others.some(says)){refusal="the commands are "+cmds.concat(others).map((c)=>"`"+c+"`").join(", ")}else{say("the comment asks for no plan");process.exit(0)}}const target=process.env.CHANT_REPLAN_TARGET||"",targets=JSON.parse(process.env.CHANT_REPLAN_TARGETS||"[]");if(targets.length&&arg&&!targets.includes(arg)){refusal=arg+" is none of "+targets.join(", ")+", so nothing is planned again";arg=""}if(targets.length&&arg&&arg!==target){say("the comment plans "+arg+" again, not "+target);process.exit(0)}const n=dispatch?Number(String(inputs.pr).trim()):e.issue&&e.issue.number;if(!dispatch&&(!Number.isInteger(n)||!(e.issue.pull_request||e.is_pull))){say("the comment is not on a pull request");process.exit(0)}const api=String(process.env.GITHUB_API_URL||"").replace(/\/+$/,""),repo=process.env.GITHUB_REPOSITORY;const get=async(p)=>{const r=await fetch(api+"/repos/"+repo+p,{headers:{authorization:"token "+process.env.CHANT_REPLAN_TOKEN,accept:"application/json"}});if(!r.ok)throw new Error(p+" answered "+r.status);return r.json()};const post=async(t)=>{say(t);if(dispatch)return;const r=await fetch(api+"/repos/"+repo+"/issues/"+n+"/comments",{method:"POST",headers:{authorization:"token "+process.env.CHANT_REPLAN_TOKEN,accept:"application/json","content-type":"application/json"},body:JSON.stringify({body:product.slice(1)+": "+t})});if(!r.ok)console.error("chant: the reply was not posted: the forge answered "+r.status)};(async()=>{if(process.env.CHANT_REPLAN_PERMISSION&&!dispatch){const who=e.comment&&e.comment.user&&e.comment.user.login;const p=who?await get("/collaborators/"+encodeURIComponent(who)+"/permission"):{};if(!["owner","admin","maintain","write"].includes(p.permission)){say((who||"the commenter")+" cannot write to "+repo+", so nothing is planned again");return}}if(refusal){await post(refusal);return}const pr=await get("/pulls/"+n);if(pr.state!=="open"){say("pull request "+n+" is not open, so it is not planned again");return}const same=Boolean(pr.head&&pr.head.repo&&pr.head.repo.full_name===repo);if(!same&&process.env.CHANT_REPLAN_FORKS==="skip"){await post("pull request "+n+" is from a fork, and its code never runs with this repository\u0027s credentials, so it is not planned again");return}const sha=/^[0-9a-f]{40}$/;if(!sha.test(String(pr.head&&pr.head.sha))||!sha.test(String(pr.base&&pr.base.sha)))throw new Error("the pull request names no head or base commit");out("go","1");out("pr",String(n));out("head",pr.head.sha);out("base",pr.base.sha);out("argument",arg);say("planning pull request "+n+" again at "+pr.head.sha.slice(0,12)+(arg?" for "+arg:""))})().catch((err)=>{console.error("chant: the re-plan could not decide: "+(err&&err.message?err.message:String(err)));process.exit(1)});'')'
+      - if: steps.decide.outputs.go == '1'
+        name: Say on the head that the plan started
+        env:
+          CHANT_PENDING_TOKEN: '${{ github.token }}'
+          CHANT_PENDING_SHA: '${{ steps.decide.outputs.head }}'
+          CHANT_PENDING_CONTEXT: terragucci/plan
+          CHANT_PENDING_DESCRIPTION: planning
+        run: '(cd / && node -e ''const api=String(process.env.GITHUB_API_URL||"").replace(/\/+$/,""),repo=process.env.GITHUB_REPOSITORY,sha=process.env.CHANT_PENDING_SHA||"";if(!/^[0-9a-f]{40}$/.test(sha)){console.log("chant: no commit to say the plan started on");process.exit(0)}const run=process.env.GITHUB_SERVER_URL&&process.env.GITHUB_RUN_ID?process.env.GITHUB_SERVER_URL+"/"+repo+"/actions/runs/"+process.env.GITHUB_RUN_ID:undefined;fetch(api+"/repos/"+repo+"/statuses/"+sha,{method:"POST",headers:{authorization:"token "+process.env.CHANT_PENDING_TOKEN,accept:"application/json","content-type":"application/json"},body:JSON.stringify({state:"pending",context:process.env.CHANT_PENDING_CONTEXT,description:process.env.CHANT_PENDING_DESCRIPTION,...(run?{target_url:run}:{})})}).then((r)=>console.log(r.ok?"chant: "+process.env.CHANT_PENDING_CONTEXT+" is pending":"chant: the forge answered "+r.status+" to the pending status"),(err)=>console.log("chant: the pending status was not posted: "+err.message));'')'
+      - if: steps.decide.outputs.go == '1'
+        name: Check out the pull request's head
+        id: head
+        env:
+          CHANT_CHECKOUT_TOKEN: '${{ github.token }}'
+          CHANT_REPLAN_REF: refs/pull/${{ steps.decide.outputs.pr }}/head
+        run: |
+          set -eu
+          git config --global --add safe.directory "$PWD" 2>/dev/null || true
+          [ -d .git ] || git init -q .
+          git remote get-url origin >/dev/null 2>&1 || git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          if [ -n "${CHANT_CHECKOUT_TOKEN:-}" ]; then
+            chant_auth="$(printf 'x-access-token:%s' "$CHANT_CHECKOUT_TOKEN" | base64 | tr -d '\n')"
+            export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $chant_auth"
+            unset chant_auth
+          fi
+          ref="${CHANT_REPLAN_REF:-$GITHUB_REF}"
+          want="${CHANT_REPLAN_REF:-$GITHUB_SHA}"
+          case "$ref" in
+            refs/heads/*) target="refs/remotes/origin/${ref#refs/heads/}" ;;
+            refs/tags/*) target="$ref" ;;
+            refs/*) target="refs/remotes/${ref#refs/}" ;;
+            *) target="refs/remotes/origin/chant-head" ;;
+          esac
+          if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
+          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"
+          git -c protocol.version=2 fetch -q --no-tags origin '+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle' 2>/dev/null || true
+          case "$ref" in
+            refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
+            *) git checkout -q --force --detach "$target" ;;
+          esac
+          echo "head=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - if: steps.decide.outputs.go == '1'
+        run: |
+          if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
+          command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
+      - if: steps.decide.outputs.go == '1'
+        run: |
+          if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
+          npm ci
+      - if: steps.decide.outputs.go == '1'
+        name: Plan the pull request again
+        id: plan
+        env:
+          BASE_SHA: '${{ steps.decide.outputs.base }}'
+          PR_NUMBER: '${{ steps.decide.outputs.pr }}'
+          CHANT_PLAN_RECORD: '{"op":"pr-plan","env":"default","labels":{"Env":"default","Pipeline":"pr","Job":"plan"}}'
+          CHANT_PLAN_ARGUMENT: '${{ steps.decide.outputs.argument }}'
+        run: |
+          if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
+          chant_report="$PWD/terragucci-report"
+          chant_handover() { node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const [dir,out]=process.argv.slice(1);const CHUNK=1000000,PARTS=4,NOTE=["pr-plan.json","pr-note.md"];const all={};const walk=(d,r)=>{let n=[];try{n=fs.readdirSync(d).sort()}catch{return}for(const x of n){const f=p.join(d,x),k=r?r+"/"+x:x;let s;try{s=fs.lstatSync(f)}catch{continue}if(s.isDirectory())walk(f,k);else if(s.isFile())all[k]=fs.readFileSync(f).toString("base64")}};walk(dir,"");const pack=(o)=>z.gzipSync(JSON.stringify(o)).toString("base64");let b=pack(all);if(b.length>CHUNK*PARTS){b=pack(Object.fromEntries(Object.entries(all).filter(([k])=>NOTE.includes(k))));if(b.length>CHUNK*PARTS){b=pack({});console.error("chant: the plan report is too large to hand to the note job, even cut to the report and the note; it hands on none of it")}else console.error("chant: the plan report is too large to hand to the note job whole; it hands on pr-plan.json and pr-note.md")}let o="";for(let i=0;i*CHUNK<b.length;i++)o+="report_"+i+"="+b.slice(i*CHUNK,(i+1)*CHUNK)+"\n";fs.appendFileSync(out,o);' "$chant_report" "${GITHUB_OUTPUT:-/dev/null}" || echo "chant: the plan report could not be handed to the note job" >&2; }
+          trap chant_handover EXIT
+          chant_plan_started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          chant_plan_exit=0
+          terragucci plan --pr-note terragucci-report || chant_plan_exit=$?
+          CHANT_PLAN_EXIT="$chant_plan_exit" CHANT_PLAN_STARTED="$chant_plan_started" node -e 'const fs=require("fs"),path=require("path"),cp=require("child_process"),crypto=require("crypto");const c=JSON.parse(process.env.CHANT_PLAN_RECORD||"{}"),dir=process.argv[1];const code=Number(process.env.CHANT_PLAN_EXIT||"1"),ended=new Date().toISOString(),started=new Date(Date.parse(process.env.CHANT_PLAN_STARTED||"")||Date.now()).toISOString();let sha="";try{sha=cp.execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8",stdio:["ignore","pipe","ignore"]}).trim()}catch{}const ok=code===0,status=ok?"ok":"fail",ms=Math.max(0,Date.parse(ended)-Date.parse(started));const rec={id:crypto.randomUUID(),op:c.op,env:c.env,started,ended,status,labels:c.labels||{},outcomes:{},phases:[{name:"plan",status,steps:[{fn:"shellCmd",status,durationMs:ms,...(ok?{}:{error:"command exited "+code})}]}],...(sha?{gitSha:sha}:{}),...(ok?{}:{failure:{code:"command-failed",reason:"the plan verb exited "+code,phase:"plan",exitCode:code}})};fs.mkdirSync(dir,{recursive:true});fs.writeFileSync(path.join(dir,"run-record.json"),JSON.stringify(rec)+"\n");' terragucci-report || echo "chant: the plan's run record was not written" >&2
+          [ "$chant_plan_exit" -eq 0 ] || exit "$chant_plan_exit"
+  replan-note:
+    needs:
+      - replan
+    if: always() && (github.event_name == 'issue_comment' || github.event_name == 'workflow_dispatch') && needs.replan.outputs.go == '1' && (needs.replan.result == 'success' || needs.replan.result == 'failure')
+    runs-on: docker
+    container: node:22
+    steps:
+      - name: Check out the target branch's commit
+        uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: npm ci
+      - name: Take the plan report from the re-plan job
+        run: |
+          set -u
+          node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const dir=process.argv[1];let b="";for(const l of fs.readFileSync(0,"utf8").split("\n")){if(!l.trim())continue;let s="";try{s=JSON.parse(l)}catch{}if(typeof s==="string")b+=s}if(!b){console.log("chant: the replan job handed on no report");process.exit(0)}let files;try{files=JSON.parse(z.gunzipSync(Buffer.from(b,"base64"),{maxOutputLength:268435456}).toString("utf8"))}catch(e){console.log("chant: the report the replan job handed on does not read: "+e.message);process.exit(0)}if(!files||typeof files!=="object"||Array.isArray(files)){console.log("chant: the report the replan job handed on is not a set of files");process.exit(0)}let n=0;for(const [k,v] of Object.entries(files)){const parts=k.split("/");if(typeof v!=="string"||k.length>1024||parts.some((x)=>!x||x==="."||x===".."||/[\\\x00-\x1f]/.test(x))){console.log("chant: left out "+JSON.stringify(k));continue}try{const f=p.join(dir,...parts);fs.mkdirSync(p.dirname(f),{recursive:true});fs.writeFileSync(f,Buffer.from(v,"base64"));n++}catch(e){console.log("chant: could not write "+JSON.stringify(k)+": "+e.message)}}console.log("chant: took "+n+" report files from the replan job")' terragucci-report <<'END_OF_REPORT'
+          ${{ toJSON(needs.replan.outputs.report_0) }}
+          ${{ toJSON(needs.replan.outputs.report_1) }}
+          ${{ toJSON(needs.replan.outputs.report_2) }}
+          ${{ toJSON(needs.replan.outputs.report_3) }}
+          END_OF_REPORT
+      - name: Keep the plan report
+        if: always()
+        uses: https://code.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1
+        with:
+          name: terragucci-report-replan
+          path: terragucci-report
+          if-no-files-found: ignore
+      - name: Post the plan note and terragucci/plan
+        if: always()
+        env:
+          PR_NUMBER: '${{ needs.replan.outputs.pr }}'
+          HEAD_SHA: '${{ needs.replan.outputs.head }}'
+          PLAN_RESULT: '${{ needs.replan.result }}'
+          GITHUB_TOKEN: '${{ github.token }}'
+          CHANT_PLAN_ARGUMENT: '${{ needs.replan.outputs.argument }}'
+        run: terragucci chant components pr-post --pr "$PR_NUMBER" --head "$HEAD_SHA" --env default --output terragucci-report --forge forgejo --result "$PLAN_RESULT" --context terragucci/plan --not-affected "$CHANT_PLAN_ARGUMENT" --record-run replan
+  lock:
+    if: github.event_name == 'pull_request' && github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: docker
+    container: node:22
+    steps:
+      - name: Check out the target branch's commit
+        uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: '${{ github.event.pull_request.base.sha }}'
+          fetch-depth: 0
+      - run: npm ci
+      - name: Lock what the change reaches
+        env:
+          PR_NUMBER: '${{ github.event.pull_request.number }}'
+          HEAD_SHA: '${{ github.event.pull_request.head.sha }}'
+          BASE_SHA: '${{ github.event.pull_request.base.sha }}'
+          GITHUB_TOKEN: '${{ github.token }}'
+          CHANT_LOCK_REACH: terragucci reached --base "$BASE_SHA" --head "$HEAD_SHA"
+        run: terragucci chant lock --reach --pr "$PR_NUMBER" --head "$HEAD_SHA" --base "$BASE_SHA" --stage plan --forge forgejo
+  unlock:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    runs-on: docker
+    container: node:22
+    steps:
+      - name: Check out the target branch's commit
+        uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: '${{ github.event.pull_request.base.sha }}'
+          fetch-depth: 0
+      - run: npm ci
+      - name: Release the pull request's locks
+        env:
+          PR_NUMBER: '${{ github.event.pull_request.number }}'
+        run: terragucci chant unlock --pr "$PR_NUMBER"
+  comment-lock:
+    if: github.event_name == 'issue_comment' && (github.event.issue.pull_request || github.event.is_pull) && startsWith(github.event.comment.body, '/terragucci lock')
+    runs-on: docker
+    container: node:22
+    steps:
+      - name: Check out the target branch's commit
+        uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - run: npm ci
+      - name: Keep the locks the pull request's plan took
+        env:
+          PR_NUMBER: '${{ github.event.issue.number }}'
+          GITHUB_TOKEN: '${{ github.token }}'
+        run: terragucci chant lock --keep --pr "$PR_NUMBER" --forge forgejo
+  comment-unlock:
+    if: github.event_name == 'issue_comment' && (github.event.issue.pull_request || github.event.is_pull) && startsWith(github.event.comment.body, '/terragucci unlock')
+    runs-on: docker
+    container: node:22
+    steps:
+      - name: Check out the target branch's commit
+        uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - run: npm ci
+      - name: Release the pull request's locks
+        env:
+          PR_NUMBER: '${{ github.event.issue.number }}'
+          GITHUB_TOKEN: '${{ github.token }}'
+        run: terragucci chant unlock --pr "$PR_NUMBER"

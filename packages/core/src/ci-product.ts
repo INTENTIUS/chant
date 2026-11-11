@@ -13,6 +13,7 @@ import type { CiProductWords, CiProductWordsInput } from "./ci-product-words";
 import type { ProductMcpHook } from "./cli/mcp/product-tools";
 import type { ProductWaveHook } from "./op/op-waves-after-plan";
 import { OTLP_EXPORTER_FLOOR } from "./otlp";
+import { NEXT_RELEASE } from "./release-floors";
 
 /**
  * The first chant with the product pipeline (#4550): the words, the
@@ -242,6 +243,12 @@ export { planBodyHandoff, PLAN_BODY_LIMIT, type PrPlanBodyHandoff } from "./pr-p
  */
 export const PRODUCT_PLAN_SUBJECT_FLOOR = "0.124.89";
 export { PLAN_SUBJECT_LIMIT, planSubjectProblem, sinceLastLine, subjectChanges, type PrPlanSubject, type PrPlanSubjectPartWords } from "./pr-plan-note";
+
+/**
+ * The first chant whose product plan keeps a product's own names (#5003): `workflowFile` (the generators' `path`), `jobNames` (the plan, note, re-plan and re-plan note jobs, with `{target}`), `statusContext` (which `pr-post --context`, the pending step, the stale job and the apply before merge use) and `reportDir` (`{output}`, the hand-off, the artifact's path and `pr-post --output`), and whose `pr-post --open` finds a plan job of the product's name (`--plan-job`).
+ */
+export const PRODUCT_PLAN_NAMES_FLOOR = NEXT_RELEASE;
+export { productPlanContext, productPlanReportDir, productPlanWorkflowFile } from "./components/product-plan";
 
 /**
  * Day-2 actions in the product pipeline (#4654): the `action` comment

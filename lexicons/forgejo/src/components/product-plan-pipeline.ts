@@ -14,7 +14,7 @@ export type { ProductPlanPipeline, ProductPlanPipelineOptions };
 
 /** The product plan workflow on Forgejo Actions (#4799). */
 export function generateForgejoProductPlanPipeline(env: string, options: ProductPlanPipelineOptions, dialectOptions: ForgejoDialectOptions = {}): ProductPlanPipeline {
-  const { doc: github, jobs } = buildProductPlanGithubDoc("forgejo", env, options);
+  const { doc: github, jobs, path } = buildProductPlanGithubDoc("forgejo", env, options);
   const doc: GithubWorkflowDoc = {
     ...github,
     on: forgejoize(github.on, dialectOptions),
@@ -22,5 +22,5 @@ export function generateForgejoProductPlanPipeline(env: string, options: Product
     // #4869: a job that asks for `id-token: write` (the note job signing keyless) gets enable-openid-connect.
     jobsDoc: withOpenIdConnect(forgejoize(github.jobsDoc, dialectOptions), (github as { permissions?: unknown }).permissions),
   };
-  return { yaml: emitWorkflowYAML(doc), doc, jobs };
+  return { yaml: emitWorkflowYAML(doc), doc, jobs, path };
 }

@@ -371,6 +371,47 @@ export interface ProductPlanOptions {
    * answer `/<product> lock` and `/<product> unlock` there too.
    */
   reach?: { command: string; gate?: string };
+  /**
+   * The file the product writes the workflow to (#5003), from the
+   * repository root: on GitHub a file directly under `.github/workflows/`,
+   * on Forgejo under `.forgejo/workflows/`, on GitLab a `.yml` file, such
+   * as one the project's `.gitlab-ci.yml` includes. The generators return it as
+   * `path`. Default `<forge's workflow directory>/<workflow>.yml`, and on
+   * GitLab `.gitlab/<workflow>.gitlab-ci.yml`, with `workflow` the
+   * workflow's name.
+   */
+  workflowFile?: string;
+  /**
+   * The plan jobs' names (#5003), so a product's required checks keep
+   * matching: `plan`, the plan job; `note`, its note job; `replan` and
+   * `replanNote`, the comment re-plan's. With `targets` each name holds
+   * `{target}`, filled with the target's name. Left out, a name is chant's:
+   * `plan`, `plan-note`, `replan`, `replan-note`, with targets
+   * `plan-{target}`, `plan-note-{target}`, `replan-{target}` and
+   * `replan-note-{target}` on GitHub and Forgejo and `{target}-plan`,
+   * `{target}-plan-note`, `{target}-replan` and `{target}-replan-note` on
+   * GitLab. A name is letters, digits, `_` and `-`, starting with a letter
+   * or `_` (on GitLab a digit too, and no top-level keyword such as
+   * `stages`), and no two jobs share one.
+   */
+  jobNames?: { plan?: string; note?: string; replan?: string; replanNote?: string };
+  /**
+   * The plan status's context (#5003), which the note job posts
+   * (`pr-post --context`), the pending step says is pending, the stale job
+   * sets back to pending, and the apply before merge asks has passed. With
+   * `targets` it holds `{target}`. Default the words' `<product>/<plan
+   * stage>`, with targets `<product>/<plan stage>/<target>`. Letters,
+   * digits and `_./:-`.
+   */
+  statusContext?: string;
+  /**
+   * The directory the plan verb writes into and the jobs hand on, keep as
+   * the artifact's path and post from (#5003): `{output}` in `command`
+   * and `report`, and `pr-post --output`. A path from the checkout's root
+   * that stays inside it, such as terragucci's `terragucci-report`.
+   * Default {@link PR_LOOP_REPORT_DIR}.
+   */
+  reportDir?: string;
 }
 
 /** The lock job a product plan with {@link ProductPlanOptions.reach} writes (#4979): its command and the values the command reads. */
@@ -475,6 +516,44 @@ export interface ProductPlanJob {
   previous?: { marker: string; name: string };
   /** With `record` (#4899): the plan step writes the run record, `env` its op, environment and labels as {@link PLAN_RUN_RECORD_ENV}; the note job's command records it. */
   record?: { env: Record<string, string> };
+  /** With `statusContext` (#5003): the plan status's context, filled for the target. Absent: the words' {@link productStatusContext}. */
+  context?: string;
+  /** With `reportDir` (#5003): the directory the plan verb writes into and the jobs hand on. Absent: {@link PR_LOOP_REPORT_DIR}. */
+  reportDir?: string;
+}
+
+/** The plan status's context of one plan job (#5003): its own, else the words'. */
+export function productPlanContext(p: Pick<ProductPlanJob, "context" | "target">, words: CiProductWords): string {
+  return p.context ?? productStatusContext(words, "plan", p.target);
+}
+
+/** The directory one plan job hands on (#5003): its own, else {@link PR_LOOP_REPORT_DIR}. */
+export function productPlanReportDir(p: Pick<ProductPlanJob, "reportDir">): string {
+  return p.reportDir ?? PR_LOOP_REPORT_DIR;
+}
+
+/** The workflow's default name (#4799): `chant-pr-<env>`. */
+function defaultWorkflowName(env: string): string {
+  return `chant-pr-${env}`;
+}
+
+/**
+ * The file a product plan's workflow is written to (#5003),
+ * {@link ProductPlanOptions.workflowFile}: the product's, checked for the
+ * forge, else the workflow's name in the forge's workflow directory
+ * (`.gitlab/<name>.gitlab-ci.yml` on GitLab).
+ */
+export function productPlanWorkflowFile(forge: ForgeKind, env: string, plan: Pick<ProductPlanOptions, "workflow" | "workflowFile">): string {
+  const name = plan.workflow ?? defaultWorkflowName(env);
+  const dir = forge === "github" ? ".github/workflows" : forge === "forgejo" ? ".forgejo/workflows" : ".gitlab";
+  const file = plan.workflowFile;
+  if (file === undefined) return forge === "gitlab" ? `${dir}/${name}.gitlab-ci.yml` : `${dir}/${name}.yml`;
+  if (!/\.ya?ml$/.test(file)) throw new Error(`the product plan's workflowFile ${JSON.stringify(file)} is not a .yml or .yaml file`);
+  if (file.startsWith("/") || file.split("/").some((part) => part === "" || part === "." || part === "..") || !/^[A-Za-z0-9_.\/-]+$/.test(file)) {
+    throw new Error(`the product plan's workflowFile ${JSON.stringify(file)} is not a path from the repository root of letters, digits and _.-, inside it`);
+  }
+  if (forge !== "gitlab" && (!file.startsWith(`${dir}/`) || file.slice(dir.length + 1).includes("/"))) throw new Error(`the product plan's workflowFile ${JSON.stringify(file)} is not directly under ${dir}/, where ${forge === "github" ? "GitHub" : "Forgejo"} reads workflows`);
+  return file;
 }
 
 const TARGET_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
@@ -526,6 +605,17 @@ export function productPlanJobs(forge: ForgeKind, env: string, loop: PrLoopPipel
     seen.add(t.name);
   }
   const github = forge !== "gitlab";
+  // #5003: the product's own names, checked before any job is written.
+  if (plan.workflowFile !== undefined) productPlanWorkflowFile(forge, env, plan);
+  const reportDir = plan.reportDir;
+  if (reportDir !== undefined && !isReportDir(reportDir)) throw new Error(`the product plan's reportDir ${JSON.stringify(reportDir)} is not a directory from the checkout's root that stays inside it: letters, digits and _.-, parts joined by /, with no . or .. part and no / at either end`);
+  const outputDir = reportDir ?? PR_LOOP_REPORT_DIR;
+  const statusContext = plan.statusContext;
+  if (statusContext !== undefined) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.\/:{}-]*$/.test(statusContext) || /[{}]/.test(statusContext.replaceAll("{target}", ""))) throw new Error(`the product plan's statusContext ${JSON.stringify(statusContext)} is not a status context of letters, digits and _./:-${targets ? ", with {target}" : ""}`);
+    if (Boolean(targets) !== statusContext.includes("{target}")) throw new Error(targets ? `the product plan's statusContext ${JSON.stringify(statusContext)} is every target's, so it holds {target}` : `the product plan's statusContext ${JSON.stringify(statusContext)} holds {target}, and the plan has no targets`);
+  }
+  const namesOf = productPlanJobNames(forge, plan, targets?.map((t) => t.name));
   const shared = prLoopPassedEnv(forge, loop);
   const jobEnv = plan.env ? prLoopPassedEnv(forge, { variables: plan.env }) : {};
   for (const key of Object.keys(jobEnv)) {
@@ -571,19 +661,24 @@ export function productPlanJobs(forge: ForgeKind, env: string, loop: PrLoopPipel
     ...(plan.noteWords ? { [PR_PLAN_NOTE_WORDS_ENV]: JSON.stringify(plan.noteWords) } : {}),
     ...(plan.watches?.length ? { [PLAN_WATCHES_ENV]: JSON.stringify(plan.watches) } : {}),
   };
-  const fill = (line: string, name: string | undefined): string => line.replaceAll("{target}", name ?? env).replaceAll("{output}", PR_LOOP_REPORT_DIR);
+  const fill = (line: string, name: string | undefined): string => line.replaceAll("{target}", name ?? env).replaceAll("{output}", outputDir);
   const control = plan.controlRead ? controlNoteCheckout(forge, plan.controlRead, words) : undefined;
   const one = (target?: ProductPlanTarget): ProductPlanJob => {
     const name = target?.name;
-    const jobName = github ? (name ? `plan-${name}` : "plan") : gitlabPlanJobName(name);
-    const noteJobName = github ? (name ? `${PR_PLAN_NOTE_JOB}-${name}` : PR_PLAN_NOTE_JOB) : name ? `${name}-${PR_PLAN_NOTE_JOB}` : PR_PLAN_NOTE_JOB;
+    const names = namesOf(name);
+    const jobName = names.plan;
+    const noteJobName = names.note;
+    // #5003: the product's status context, and on GitLab its plan job's name for `pr-post --open` to find.
+    const context = statusContext?.replaceAll("{target}", name ?? "");
+    const named = [...(context !== undefined ? ["--context", context] : []), ...(!github && jobName !== gitlabPlanJobName(name) ? ["--plan-job", jobName] : [])];
+    const withNames = <T extends { command: string }>(p: T): T => (named.length > 0 ? { ...p, command: `${p.command} ${named.join(" ")}` } : p);
     const own = target ? prLoopPassedEnv(forge, { ...(target.variables ? { variables: target.variables } : {}), ...(target.secrets ? { secrets: target.secrets } : {}) }) : {};
     for (const key of Object.keys(own)) {
       if (key in shared) throw new Error(`target ${name}'s ${key} is the pipeline's too; give it on the target or on the pipeline`);
       if (key in jobEnv) throw new Error(`target ${name}'s ${key} is the product plan's env too; give it once`);
     }
     // #4987: with staleNotes each target's note carries the target branch's commit, so the waves' push can mark it stale.
-    const post0 = prLoopPostJob(forge, env, name, words, loop.staleNotes ? { staleNotes: true } : {});
+    const post0 = withNames(prLoopPostJob(forge, env, name, words, { ...(loop.staleNotes ? { staleNotes: true } : {}), ...(reportDir !== undefined ? { output: reportDir } : {}) }));
     // #4899: the note job records the plan job's run, named by that job.
     const post1 = plan.record ? { ...post0, command: `${post0.command} --record-run ${jobName}` } : post0;
     // #4914: on GitLab the signing job of the same pipeline keeps each merge request's evidence, which the note's checks line reads.
@@ -612,7 +707,14 @@ export function productPlanJobs(forge: ForgeKind, env: string, loop: PrLoopPipel
     const replies = github && Boolean(replanOpts.reply) && (targets === undefined || target === targets[0]);
     const replan0 = replanComments
       ? {
-          ...replanJobOf(forge, env, words, name, artifact, noteWords, { notAffected: replanOpts.notAffected === true, ...(loop.staleNotes ? { staleNotes: true } : {}) }),
+          ...replanJobOf(forge, env, words, name, artifact, noteWords, {
+            notAffected: replanOpts.notAffected === true,
+            ...(loop.staleNotes ? { staleNotes: true } : {}),
+            jobName: names.replan,
+            noteJobName: names.replanNote,
+            ...(reportDir !== undefined ? { output: reportDir } : {}),
+            ...(context !== undefined ? { context } : {}),
+          }),
           ...replanComments,
           ...(github && dispatchArg !== undefined ? { dispatch: { argument: dispatchArg } } : {}),
           ...(replies ? { reply: { prefix: `/${words.product}`, others } } : {}),
@@ -635,11 +737,11 @@ export function productPlanJobs(forge: ForgeKind, env: string, loop: PrLoopPipel
       ...(planRunner !== undefined ? { runner: planRunner } : {}),
       ...(noteRunner !== undefined ? { noteRunner } : {}),
       // #4978: a target's plan job plans that target alone, so its checks are `plan:<target>` and `policy:<target>`.
-      ...(evidence ? { evidence: planEvidenceOf(forge, evidence, words, jobName, { ...(plan.forks === "skip" ? { noForks: true } : {}), ...(name ? { member: { name, reportPath: PR_LOOP_REPORT_DIR } } : {}) }) } : {}),
+      ...(evidence ? { evidence: planEvidenceOf(forge, evidence, words, jobName, { ...(plan.forks === "skip" ? { noForks: true } : {}), ...(name ? { member: { name, reportPath: outputDir } } : {}), ...(reportDir !== undefined ? { dir: reportDir } : {}) }) } : {}),
       ...(Object.keys(jobEnv).length > 0 ? { jobEnv } : {}),
       ...(login && login.steps.length > 0 ? { login: login.steps } : {}),
       ...(Object.keys(idTokens).length > 0 ? { idTokens } : {}),
-      ...(plan.pending && github ? { pending: { context: productStatusContext(words, "plan", name), description: "planning" } } : {}),
+      ...(plan.pending && github ? { pending: { context: context ?? productStatusContext(words, "plan", name), description: "planning" } } : {}),
       ...(control ? { control } : {}),
       ...(plan.setup?.length ? { setup: plan.setup } : {}),
       ...(plan.report ? { report: fill(plan.report, name) } : {}),
@@ -648,9 +750,59 @@ export function productPlanJobs(forge: ForgeKind, env: string, loop: PrLoopPipel
       ...(record ? { record } : {}),
       ...(tradeSpec ? { trade: tradeSpec } : {}),
       ...(plan.previousMarker && productMarker ? { previous: { marker: prNoteMarker(env, name), name: productMarker } } : {}),
+      ...(context !== undefined ? { context } : {}),
+      ...(reportDir !== undefined ? { reportDir } : {}),
     };
   };
   return targets ? targets.map(one) : [one()];
+}
+
+/** Whether `dir` is a report directory a product plan takes (#5003): a relative path that stays in the checkout. */
+function isReportDir(dir: string): boolean {
+  return /^[A-Za-z0-9_.\/-]+$/.test(dir) && !dir.startsWith("-") && dir.split("/").every((part) => part !== "" && part !== "." && part !== "..");
+}
+
+/** GitLab's top-level keywords, which no job may be named (#5003). */
+const GITLAB_KEYWORDS = new Set(["default", "include", "stages", "variables", "workflow", "image", "services", "cache", "before_script", "after_script", "spec", "pages"]);
+
+/**
+ * The plan jobs' names for each target (#5003), from
+ * {@link ProductPlanOptions.jobNames}, else chant's. Throws on a name that
+ * is not one, a `{target}` given without targets or left out with them, and
+ * two jobs of the plan that share a name.
+ */
+function productPlanJobNames(forge: ForgeKind, plan: Pick<ProductPlanOptions, "jobNames" | "replan">, targets: string[] | undefined): (target?: string) => { plan: string; note: string; replan: string; replanNote: string } {
+  const github = forge !== "gitlab";
+  const given = plan.jobNames ?? {};
+  const chant = { plan: "plan", note: PR_PLAN_NOTE_JOB, replan: REPLAN_JOB, replanNote: REPLAN_NOTE_JOB };
+  const keys = ["plan", "note", "replan", "replanNote"] as const;
+  for (const key of keys) {
+    const t = given[key];
+    if (t === undefined) continue;
+    if (Boolean(targets) !== t.includes("{target}")) throw new Error(targets ? `the product plan's jobNames.${key} ${JSON.stringify(t)} names every target's job, so it holds {target}` : `the product plan's jobNames.${key} ${JSON.stringify(t)} holds {target}, and the plan has no targets`);
+  }
+  const namesOf = (target?: string) => {
+    const out = {} as Record<(typeof keys)[number], string>;
+    for (const key of keys) {
+      const t = given[key];
+      // chant's: `plan-<target>` on GitHub and Forgejo, `<target>-plan` on GitLab.
+      out[key] = t !== undefined ? t.replaceAll("{target}", target ?? "") : target ? (github ? `${chant[key]}-${target}` : `${target}-${chant[key]}`) : chant[key];
+    }
+    return out;
+  };
+  const seen = new Map<string, string>();
+  for (const target of targets ?? [undefined]) {
+    const names = namesOf(target);
+    for (const key of plan.replan ? keys : (["plan", "note"] as const)) {
+      const n = names[key];
+      const ok = github ? /^[A-Za-z_][A-Za-z0-9_-]*$/.test(n) : /^[A-Za-z0-9_][A-Za-z0-9_-]*$/.test(n) && !GITLAB_KEYWORDS.has(n);
+      if (!ok) throw new Error(`the product plan's ${given[key] !== undefined ? `jobNames.${key}` : `${key} job`} ${JSON.stringify(n)} is not a job name of letters, digits, _ and -, starting with a letter or _${github ? "" : " or a digit, and no GitLab keyword"}`);
+      const other = seen.get(n);
+      if (other !== undefined) throw new Error(`the product plan names two jobs ${n}: ${other} and ${key}${target ? ` of ${target}` : ""}`);
+      seen.set(n, `${key}${target ? ` of ${target}` : ""}`);
+    }
+  }
+  return namesOf;
 }
 
 /** The comments the re-plan answers (#4899): the plan command, then the words' aliases for it. Refused when the words name no plan command. */
@@ -662,16 +814,25 @@ function replanCommentsOf(words: CiProductWords): { comments: string[]; gated: A
 }
 
 /** The re-plan's jobs for one target (#4899), its comments filled in by the caller. */
-function replanJobOf(forge: ForgeKind, env: string, words: CiProductWords, name: string | undefined, artifact: string, noteWords0: Record<string, string>, opts: { notAffected?: boolean; staleNotes?: boolean } = {}): Omit<ProductPlanReplanJob, "comments" | "gated"> {
+function replanJobOf(
+  forge: ForgeKind,
+  env: string,
+  words: CiProductWords,
+  name: string | undefined,
+  artifact: string,
+  noteWords0: Record<string, string>,
+  opts: { notAffected?: boolean; staleNotes?: boolean; jobName: string; noteJobName: string; output?: string; context?: string },
+): Omit<ProductPlanReplanJob, "comments" | "gated"> {
   const github = forge !== "gitlab";
-  const jobName = github ? (name ? `${REPLAN_JOB}-${name}` : REPLAN_JOB) : name ? `${name}-${REPLAN_JOB}` : REPLAN_JOB;
-  const noteJobName = github ? (name ? `${REPLAN_NOTE_JOB}-${name}` : REPLAN_NOTE_JOB) : name ? `${name}-${REPLAN_NOTE_JOB}` : REPLAN_NOTE_JOB;
+  const { jobName, noteJobName } = opts;
   // pr-post reads the pull request and the head from the re-plan job, never the comment. GitLab's is GitHub's line with its own --forge.
   // #4987: with staleNotes the note's tip line is the target branch's commit the re-plan ran at, as the comment preview's is.
-  const stale = opts.staleNotes ? { staleNotes: true } : {};
-  const command0 = github ? prLoopPostJob(forge, env, name, words, stale).command : prLoopPostJob("github", env, name, words, stale).command.replace(" --forge github ", " --forge gitlab ");
+  // #5003: the product's report directory and status context.
+  const post0 = { ...(opts.staleNotes ? { staleNotes: true } : {}), ...(opts.output !== undefined ? { output: opts.output } : {}) };
+  const command0 = github ? prLoopPostJob(forge, env, name, words, post0).command : prLoopPostJob("github", env, name, words, post0).command.replace(" --forge github ", " --forge gitlab ");
+  const command1 = opts.context !== undefined ? `${command0} --context ${opts.context}` : command0;
   // #4963: the argument the re-plan was narrowed to, which pr-post answers "not affected" for when the change does not reach it.
-  const command = opts.notAffected ? `${command0} --not-affected "$${PLAN_ARGUMENT_ENV}"` : command0;
+  const command = opts.notAffected ? `${command1} --not-affected "$${PLAN_ARGUMENT_ENV}"` : command1;
   const noteWords1 = opts.notAffected && github ? { ...noteWords0, [PLAN_ARGUMENT_ENV]: `\${{ needs.${jobName}.outputs.argument }}` } : noteWords0;
   const noteWords = opts.staleNotes ? { ...noteWords1, TIP_SHA: github ? "${{ github.sha }}" : "$CI_COMMIT_SHA" } : noteWords1;
   const post = github
@@ -877,7 +1038,7 @@ export const PENDING_JS = [
  * report line whatever the verb's exit, then the step exits with the verb's
  * status. Without a report line, the verb alone.
  */
-export function planVerbLines(p: Pick<ProductPlanJob, "command" | "report" | "record">): string[] {
+export function planVerbLines(p: Pick<ProductPlanJob, "command" | "report" | "record" | "reportDir">): string[] {
   if (!p.report && !p.record) return [p.command];
   return [
     ...(p.record ? ['chant_plan_started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"'] : []),
@@ -885,7 +1046,7 @@ export function planVerbLines(p: Pick<ProductPlanJob, "command" | "report" | "re
     `${p.command} || chant_plan_exit=$?`,
     ...(p.report ? [`${p.report} || echo "chant: the report line exited $?" >&2`] : []),
     // #4899: the run record goes into the hand-off, for the note job to keep on chant/lifecycle.
-    ...(p.record ? [`CHANT_PLAN_EXIT="$chant_plan_exit" CHANT_PLAN_STARTED="$chant_plan_started" node -e '${PLAN_RECORD_JS}' ${PR_LOOP_REPORT_DIR} || echo "chant: the plan's run record was not written" >&2`] : []),
+    ...(p.record ? [`CHANT_PLAN_EXIT="$chant_plan_exit" CHANT_PLAN_STARTED="$chant_plan_started" node -e '${PLAN_RECORD_JS}' ${productPlanReportDir(p)} || echo "chant: the plan's run record was not written" >&2`] : []),
     '[ "$chant_plan_exit" -eq 0 ] || exit "$chant_plan_exit"',
   ];
 }
@@ -917,25 +1078,27 @@ export const PLAN_RECORD_JS = [
  * #4978: a product plan target's plan job is signed the same way, under the
  * target's name.
  */
-export function planEvidenceOf(forge: ForgeKind, evidence: PipelineEvidence, words: CiProductWords, planJob: string, opts: { noForks?: boolean; member?: { name: string; reportPath: string } } = {}): NonNullable<ProductPlanJob["evidence"]> {
+export function planEvidenceOf(forge: ForgeKind, evidence: PipelineEvidence, words: CiProductWords, planJob: string, opts: { noForks?: boolean; member?: { name: string; reportPath: string }; dir?: string } = {}): NonNullable<ProductPlanJob["evidence"]> {
   assertPipelineEvidence(evidence);
   const key = evidenceKeyEnv(forge, evidence);
   const bin = words.bin;
   const member = opts.member ? { member: opts.member.name } : {};
+  // #5003: the product plan's report directory, which the plan job handed on.
+  const reportDir = opts.dir ?? PR_LOOP_REPORT_DIR;
   if (forge === "gitlab") {
     // #4914: the job runs in the target branch's plan notes pipeline, before the note job, and signs every open
     // merge request's settled plan job from its artifact; no job of a merge request pipeline holds the key.
     const dir = gitlabOpenEvidenceDir(planJob);
     return {
       jobName: `${planJob}-evidence`,
-      lines: openEvidenceLines({ job: planJob, dir: opts.member?.reportPath ?? PR_LOOP_REPORT_DIR, out: dir, ...(bin ? { bin } : {}), ...(opts.noForks ? { noForks: true } : {}), ...member }),
+      lines: openEvidenceLines({ job: planJob, dir: opts.member?.reportPath ?? reportDir, out: dir, ...(bin ? { bin } : {}), ...(opts.noForks ? { noForks: true } : {}), ...member }),
       env: key,
       dir,
       ...(evidenceKeyless(evidence) ? { idTokens: evidenceIdTokens(evidence) } : {}),
     };
   }
   return {
-    lines: planEvidenceLines({ dir: PR_LOOP_REPORT_DIR, at: '"$HEAD_SHA"', base: '"$BASE_SHA"', result: '"$PLAN_RESULT"', ...(bin ? { bin } : {}), ...member }),
+    lines: planEvidenceLines({ dir: reportDir, at: '"$HEAD_SHA"', base: '"$BASE_SHA"', result: '"$PLAN_RESULT"', ...(bin ? { bin } : {}), ...member }),
     env: { HEAD_SHA: "${{ github.sha }}", BASE_SHA: "${{ github.event.pull_request.base.sha }}", PLAN_RESULT: `\${{ needs.${planJob}.result }}`, ...key },
     ...(evidenceKeyless(evidence) ? { idToken: true as const } : {}),
   };

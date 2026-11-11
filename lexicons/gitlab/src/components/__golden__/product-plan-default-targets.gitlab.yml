@@ -1,0 +1,194 @@
+workflow:
+  name: chant-pr-default
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE =~ /^(schedule|web|api|trigger)$/ && $CHANT_PLAN_NOTES == "1" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/ && $CHANT_PREVIEW_PR =~ /^[0-9]+$/ && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE =~ /^(schedule|web|api|trigger)$/ && $CHANT_NOTE_COMMANDS == "1" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+stages:
+  - plan
+  - evidence
+  - plan-note
+  - note-commands
+  - replan
+  - replan-note
+
+variables:
+  CHANT_ENV: default
+  GIT_DEPTH: '0'
+
+staging-plan:
+  stage: plan
+  image: node:22
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  variables:
+    BASE_SHA: '$CI_MERGE_REQUEST_DIFF_BASE_SHA'
+    PR_NUMBER: '$CI_MERGE_REQUEST_IID'
+  script:
+    - unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
+    - command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
+    - yodel plan staging --pr-note .chant/pr
+  artifacts:
+    name: chant-pr-plan-staging
+    when: always
+    paths:
+      - .chant/pr
+
+prod-plan:
+  stage: plan
+  image: node:22
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  variables:
+    BASE_SHA: '$CI_MERGE_REQUEST_DIFF_BASE_SHA'
+    PR_NUMBER: '$CI_MERGE_REQUEST_IID'
+  script:
+    - unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
+    - command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
+    - yodel plan prod --pr-note .chant/pr
+  artifacts:
+    name: chant-pr-plan-prod
+    when: always
+    paths:
+      - .chant/pr
+
+staging-plan-evidence:
+  stage: evidence
+  image: node:22
+  rules:
+    - if: '$CI_PIPELINE_SOURCE =~ /^(schedule|web|api|trigger)$/ && $CHANT_PLAN_NOTES == "1" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  environment:
+    name: chant-evidence
+    action: access
+  variables:
+    CHANT_RUNNER_KEY: '$CHANT_RUNNER_KEY_PEM'
+  script:
+    - yodel chant ci evidence sign --open --job staging-plan --from-report .chant/pr --member staging --base "$CI_COMMIT_SHA" --output .chant/evidence/staging-plan
+  artifacts:
+    when: always
+    paths:
+      - .chant/evidence/staging-plan
+
+prod-plan-evidence:
+  stage: evidence
+  image: node:22
+  rules:
+    - if: '$CI_PIPELINE_SOURCE =~ /^(schedule|web|api|trigger)$/ && $CHANT_PLAN_NOTES == "1" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  environment:
+    name: chant-evidence
+    action: access
+  variables:
+    CHANT_RUNNER_KEY: '$CHANT_RUNNER_KEY_PEM'
+  script:
+    - yodel chant ci evidence sign --open --job prod-plan --from-report .chant/pr --member prod --base "$CI_COMMIT_SHA" --output .chant/evidence/prod-plan
+  artifacts:
+    when: always
+    paths:
+      - .chant/evidence/prod-plan
+
+staging-plan-note:
+  stage: plan-note
+  image: node:22
+  rules:
+    - if: '$CI_PIPELINE_SOURCE =~ /^(schedule|web|api|trigger)$/ && $CHANT_PLAN_NOTES == "1" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: always
+  script:
+    - yodel chant components pr-post --open --env default --output .chant/pr --forge gitlab --member staging --evidence-dir .chant/evidence/staging-plan
+
+prod-plan-note:
+  stage: plan-note
+  image: node:22
+  rules:
+    - if: '$CI_PIPELINE_SOURCE =~ /^(schedule|web|api|trigger)$/ && $CHANT_PLAN_NOTES == "1" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: always
+  script:
+    - yodel chant components pr-post --open --env default --output .chant/pr --forge gitlab --member prod --evidence-dir .chant/evidence/prod-plan
+
+note-commands:
+  stage: note-commands
+  image: node:22
+  resource_group: note-commands
+  rules:
+    - if: '$CI_PIPELINE_SOURCE =~ /^(schedule|web|api|trigger)$/ && $CHANT_NOTE_COMMANDS == "1" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  script:
+    - yodel chant components pr-notes --forge gitlab --preview-comment
+
+staging-replan:
+  stage: replan
+  image: node:22
+  rules:
+    - if: '$CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/ && $CHANT_PREVIEW_PR =~ /^[0-9]+$/ && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && ($CHANT_PREVIEW_COMMENT =~ /^\/yodel plan( +staging)? *$/)'
+  variables:
+    BASE_SHA: '$CI_COMMIT_SHA'
+    PR_NUMBER: '$CHANT_PREVIEW_PR'
+  script:
+    - unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
+    - unset CHANT_RUNNER_KEY
+    - echo "$PR_NUMBER" | grep -Eq '^[0-9]+$' && git fetch --quiet origin "+refs/merge-requests/$PR_NUMBER/head:refs/remotes/origin/chant-apply/$PR_NUMBER" && git checkout --quiet --detach "refs/remotes/origin/chant-apply/$PR_NUMBER"
+    - git fetch -q --no-tags origin '+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle' 2>/dev/null || true
+    - 'git remote set-url origin "$(git remote get-url origin | sed -E ''s#//[^@/]*@#//#'')"'
+    - 'case "$CHANT_PREVIEW_COMMENT" in "/yodel plan"*) chant_rest="${CHANT_PREVIEW_COMMENT#"/yodel plan"}" ;; *) chant_rest="" ;; esac'
+    - CHANT_PLAN_ARGUMENT="$(printf '%s' "$chant_rest" | tr -d ' ')" && export CHANT_PLAN_ARGUMENT
+    - command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
+    - yodel plan staging --pr-note .chant/pr
+  artifacts:
+    name: chant-pr-plan-staging-replan
+    when: always
+    paths:
+      - .chant/pr
+
+prod-replan:
+  stage: replan
+  image: node:22
+  rules:
+    - if: '$CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/ && $CHANT_PREVIEW_PR =~ /^[0-9]+$/ && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && ($CHANT_PREVIEW_COMMENT =~ /^\/yodel plan( +prod)? *$/)'
+  variables:
+    BASE_SHA: '$CI_COMMIT_SHA'
+    PR_NUMBER: '$CHANT_PREVIEW_PR'
+  script:
+    - unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
+    - unset CHANT_RUNNER_KEY
+    - echo "$PR_NUMBER" | grep -Eq '^[0-9]+$' && git fetch --quiet origin "+refs/merge-requests/$PR_NUMBER/head:refs/remotes/origin/chant-apply/$PR_NUMBER" && git checkout --quiet --detach "refs/remotes/origin/chant-apply/$PR_NUMBER"
+    - git fetch -q --no-tags origin '+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle' 2>/dev/null || true
+    - 'git remote set-url origin "$(git remote get-url origin | sed -E ''s#//[^@/]*@#//#'')"'
+    - 'case "$CHANT_PREVIEW_COMMENT" in "/yodel plan"*) chant_rest="${CHANT_PREVIEW_COMMENT#"/yodel plan"}" ;; *) chant_rest="" ;; esac'
+    - CHANT_PLAN_ARGUMENT="$(printf '%s' "$chant_rest" | tr -d ' ')" && export CHANT_PLAN_ARGUMENT
+    - command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
+    - yodel plan prod --pr-note .chant/pr
+  artifacts:
+    name: chant-pr-plan-prod-replan
+    when: always
+    paths:
+      - .chant/pr
+
+staging-replan-note:
+  stage: replan-note
+  image: node:22
+  needs:
+    - job: staging-replan
+      artifacts: true
+  rules:
+    - if: '$CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/ && $CHANT_PREVIEW_PR =~ /^[0-9]+$/ && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && ($CHANT_PREVIEW_COMMENT =~ /^\/yodel plan( +staging)? *$/)'
+      when: always
+  variables:
+    PR_NUMBER: '$CHANT_PREVIEW_PR'
+  script:
+    - HEAD_SHA="$(git ls-remote origin "refs/merge-requests/$PR_NUMBER/head" | cut -f1)" && export HEAD_SHA
+    - yodel chant components pr-post --pr "$PR_NUMBER" --head "$HEAD_SHA" --env default --output .chant/pr --forge gitlab --member staging
+
+prod-replan-note:
+  stage: replan-note
+  image: node:22
+  needs:
+    - job: prod-replan
+      artifacts: true
+  rules:
+    - if: '$CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/ && $CHANT_PREVIEW_PR =~ /^[0-9]+$/ && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && ($CHANT_PREVIEW_COMMENT =~ /^\/yodel plan( +prod)? *$/)'
+      when: always
+  variables:
+    PR_NUMBER: '$CHANT_PREVIEW_PR'
+  script:
+    - HEAD_SHA="$(git ls-remote origin "refs/merge-requests/$PR_NUMBER/head" | cut -f1)" && export HEAD_SHA
+    - yodel chant components pr-post --pr "$PR_NUMBER" --head "$HEAD_SHA" --env default --output .chant/pr --forge gitlab --member prod

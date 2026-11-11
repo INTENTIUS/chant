@@ -615,6 +615,10 @@ export interface ParsedArgs {
   recordRun?: string;
   /** `chant components pr-post --not-affected <argument>` (#4963): the argument a re-plan was narrowed to, which gets a "not affected" reply when the change reaches nothing. */
   notAffected?: string;
+  /** `chant components pr-post --context <context>` (#5003): the product plan's own plan status context; with `--stale`, one a `--member`. */
+  statusContexts?: string[];
+  /** `chant components pr-post --open --plan-job <name>` (#5003): the product plan's own GitLab plan job, whose artifacts hold the report. */
+  planJob?: string;
   /** `chant components pr-post --open --evidence-dir <dir>` (#4914): where the GitLab signing job kept each merge request's `evidence.json`, for the note's checks line. */
   evidenceDir?: string;
   /** `chant ci evidence sign --open --no-forks` (#4914): sign for no merge request from a fork. */

@@ -56,7 +56,7 @@ import { assertGitlabBranch, CI_IMAGE, GITLAB_FULL_HISTORY, GITLAB_MERGE_REQUEST
 import { GITLAB_DROP_FORGE_TOKENS } from "@intentius/chant/ci-handover";
 import { LOCK_REACH_ENV } from "@intentius/chant/lifecycle/reach-locks";
 import { gitlabTradeLines, TRADE_SPEC_ENV } from "@intentius/chant/ci-identity";
-import { GITLAB_NOTE_COMMANDS_VAR, GITLAB_PLAN_NOTES_VAR, PR_LOOP_REPORT_DIR, PR_NOTE_COMMANDS_JOB, PR_PLAN_NOTE_JOB, prLoopSetup, pullRequestCheckout } from "@intentius/chant/components/pr-pipeline";
+import { GITLAB_NOTE_COMMANDS_VAR, GITLAB_PLAN_NOTES_VAR, PR_NOTE_COMMANDS_JOB, PR_PLAN_NOTE_JOB, prLoopSetup, pullRequestCheckout } from "@intentius/chant/components/pr-pipeline";
 import { productPipelineJobs, type ProductPipelineJobs, type ProductPipelineOptions } from "@intentius/chant/components/product-pipeline";
 import {
   GITLAB_REPLAN_COMMENT_VAR,
@@ -65,6 +65,8 @@ import {
   gitlabReplanArgumentLines,
   gitlabReplanCommentIf,
   planVerbLines,
+  productPlanReportDir,
+  productPlanWorkflowFile,
   REPLAN_JOB,
   REPLAN_NOTE_JOB,
   type ProductPlanJob,
@@ -88,11 +90,13 @@ export interface GitlabProductPlanPipelineOptions extends ProductPipelineOptions
   cache?: unknown;
 }
 
-/** The product plan pipeline: its YAML, its top-level entries in order, and the product pipeline's jobs. */
+/** The product plan pipeline: its YAML, its top-level entries in order, the product pipeline's jobs, and the file it goes in. */
 export interface GitlabProductPlanPipeline {
   yaml: string;
   entries: Array<[string, unknown]>;
   jobs: ProductPipelineJobs;
+  /** The file to write the YAML to, from the repository root (#5003): `productPlan.workflowFile`, or `.gitlab/<workflow>.gitlab-ci.yml`. */
+  path: string;
 }
 
 /** The runner's clone keeps the job token in origin's URL; a re-plan drops it before the merge request's code runs (#4899). */
@@ -191,7 +195,7 @@ export function generateGitlabProductPlanPipeline(env: string, options: GitlabPr
         ...(cache !== undefined ? { cache } : {}),
         // #4295: the merge request's code runs in this job, so its shell drops the forge tokens first.
         script: [...controlLines(p), ...tradeLines(p), GITLAB_DROP_FORGE_TOKENS, ...middle(p), ...planVerbLines(p), ...extraScript],
-        artifacts: { name: p.artifact, when: "always", paths: [PR_LOOP_REPORT_DIR] },
+        artifacts: { name: p.artifact, when: "always", paths: [productPlanReportDir(p)] },
       },
     ]);
   }
@@ -258,7 +262,7 @@ export function generateGitlabProductPlanPipeline(env: string, options: GitlabPr
           ...planVerbLines(p),
           ...extraScript,
         ],
-        artifacts: { name: r.artifact, when: "always", paths: [PR_LOOP_REPORT_DIR] },
+        artifacts: { name: r.artifact, when: "always", paths: [productPlanReportDir(p)] },
       },
     ]);
   }
@@ -279,5 +283,5 @@ export function generateGitlabProductPlanPipeline(env: string, options: GitlabPr
       },
     ]);
   }
-  return { yaml: emitGitlabFile(entries, header), entries, jobs };
+  return { yaml: emitGitlabFile(entries, header), entries, jobs, path: productPlanWorkflowFile("gitlab", env, plan) };
 }

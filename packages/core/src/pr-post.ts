@@ -58,6 +58,8 @@ export interface PlanPostInput {
   head: string;
   env: string;
   member?: string;
+  /** The plan status's context (#5003, a product plan's `statusContext`), in place of {@link prStatusContext}'s. */
+  context?: string;
   /** The plan job's own result (`needs.plan.result`). `failure` fails the status. */
   result?: string;
   /**
@@ -302,7 +304,7 @@ export async function postPlanReport(input: PlanPostInput): Promise<PlanPostResu
   // #4799: a product's plan verb wrote its plan note hand-off in place of pr-plan's report.
   if (!existsSync(join(input.dir, PR_PLAN_REPORT_FILE)) && existsSync(join(input.dir, PR_PLAN_NOTE_FILE))) return postPlanNoteHandoff(input);
   const warnings: string[] = [];
-  const context = prStatusContext("plan", input.member);
+  const context = input.context ?? prStatusContext("plan", input.member);
   const read = readPlanReport(input);
   const failedJob = input.result === "failure" || input.result === "cancelled";
   let state: PlanPostResult["state"];
@@ -538,7 +540,7 @@ export function planNoteHandoffNote(handoff: PrPlanNoteHandoff, forge: Pick<PrFo
 /** {@link postPlanReport} for a product's plan note hand-off (#4799). */
 async function postPlanNoteHandoff(input: PlanPostInput): Promise<PlanPostResult> {
   const warnings: string[] = [];
-  const context = prStatusContext("plan", input.member);
+  const context = input.context ?? prStatusContext("plan", input.member);
   const read = readPlanNoteHandoff(input);
   const failedJob = input.result === "failure" || input.result === "cancelled";
   let state: PlanPostResult["state"];
@@ -613,6 +615,8 @@ export interface OpenPlanPostInput {
   artifactDir: string;
   env: string;
   member?: string;
+  /** The plan status's context (#5003), in place of {@link prStatusContext}'s. */
+  context?: string;
   overdue?: () => Promise<PrOverdue[]>;
   /** The description check, as {@link PlanPostInput.description}. */
   description?: (report: PrReport) => Promise<void>;
@@ -655,7 +659,7 @@ export async function postOpenPlanReports(input: OpenPlanPostInput): Promise<{ p
   if (!forge.mergeRequestJobs || !forge.jobArtifact || !forge.statusUrl) {
     throw new Error(`pr-post --open reads the plan jobs of open merge requests, which ${forge.kind} cannot say; it is for GitLab`);
   }
-  const context = prStatusContext("plan", input.member);
+  const context = input.context ?? prStatusContext("plan", input.member);
   const warnings: string[] = [];
   let overdue: Promise<PrOverdue[]> | undefined;
   const overdueOnce = input.overdue ? () => (overdue ??= input.overdue!()) : undefined;
@@ -692,6 +696,7 @@ export async function postOpenPlanReports(input: OpenPlanPostInput): Promise<{ p
           head: job.head,
           env: input.env,
           ...(input.member ? { member: input.member } : {}),
+          ...(input.context ? { context: input.context } : {}),
           result: settled,
           ...(overdueOnce ? { overdue: overdueOnce } : {}),
           ...(input.description ? { description: input.description } : {}),
@@ -721,6 +726,8 @@ export interface StaleMarkInput {
   tip: string;
   env: string;
   member?: string;
+  /** The plan status's context (#5003), which goes back to pending, in place of {@link prStatusContext}'s. */
+  context?: string;
   /** The pipeline answers the plan comment (`--preview-comment`), so the stale line names it. */
   previewComment?: boolean;
   words?: CiProductWords;
@@ -750,7 +757,7 @@ export async function markStaleNotes(input: StaleMarkInput): Promise<{ marks: St
   if (!forge.openPullRequests) throw new Error(`marking notes stale lists the open pull requests into ${input.branch}, which this ${forge.kind} client cannot`);
   const words = input.words ?? activeProductWords();
   const marker = prNoteMarker(input.env, input.member);
-  const context = prStatusContext("plan", input.member, words);
+  const context = input.context ?? prStatusContext("plan", input.member, words);
   const comment = input.previewComment ? commentLine(words, "plan") : undefined;
   const verb = words.verbs.plan[0];
   const again = comment ? `comment \`${comment}\` to ${verb} again` : `push a commit to ${verb} again`;

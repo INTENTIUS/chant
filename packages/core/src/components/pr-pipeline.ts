@@ -508,8 +508,9 @@ export const PR_UNLOCK_JOB = "unlock";
  * With a product's `bin` (its words), the line runs through it, as the comment lock jobs do
  * (INTENTIUS/plywood#22): a product's job image need not carry `chant` on PATH.
  */
-export function prLockCommand(forge: ForgeKind, bin?: string): string {
-  return withProductBin(["chant", "lock", "--from-report", `${PR_LOOP_REPORT_DIR}/pr-plan.json`, "--pr", '"$PR_NUMBER"', "--head", '"$HEAD_SHA"', "--stage", "plan", "--forge", forge].join(" "), bin);
+export function prLockCommand(forge: ForgeKind, bin?: string, dir: string = PR_LOOP_REPORT_DIR): string {
+  // #5003: a product plan's report directory.
+  return withProductBin(["chant", "lock", "--from-report", `${dir}/pr-plan.json`,"--pr", '"$PR_NUMBER"', "--head", '"$HEAD_SHA"', "--stage", "plan", "--forge", forge].join(" "), bin);
 }
 
 /** `chant unlock` for the pull request that closed; reads `PR_NUMBER`. */
@@ -992,8 +993,11 @@ export const PR_PLAN_NOTE_JOB = "plan-note";
  * merge request's files, so no job in it holds the token. `pr-post --open`
  * asks GitLab for each open merge request's plan job and reads its report
  * from the job's artifacts.
+ *
+ * `output` (#5003) is the report directory, `--output`: a product plan's
+ * `reportDir`, default {@link PR_LOOP_REPORT_DIR}.
  */
-export function prLoopPostJob(forge: ForgeKind, env: string, member?: string, words?: Pick<CiProductWordsInput, "bin">, opts: { staleNotes?: boolean } & Pick<PrLoopPipelineOptions, "respond" | "decide"> = {}): { command: string; env: Record<string, string> } {
+export function prLoopPostJob(forge: ForgeKind, env: string, member?: string, words?: Pick<CiProductWordsInput, "bin">, opts: { staleNotes?: boolean; output?: string } & Pick<PrLoopPipelineOptions, "respond" | "decide"> = {}): { command: string; env: Record<string, string> } {
   // #4629: the responses as CHANT_RESPOND, and with the description check its decide service on the line.
   const respondEnv = prLoopRespondEnv(opts);
   const decide = opts.respond?.description === "check" && opts.decide ? ` --decide-backend ${JSON.stringify(opts.decide.backend)} --decide-model ${JSON.stringify(opts.decide.model)}` : "";
@@ -1001,18 +1005,19 @@ export function prLoopPostJob(forge: ForgeKind, env: string, member?: string, wo
   return decide || Object.keys(respondEnv).length > 0 ? { command: `${job.command}${decide}`, env: { ...job.env, ...respondEnv } } : job;
 }
 
-function prLoopPostJobBase(forge: ForgeKind, env: string, member: string | undefined, words: Pick<CiProductWordsInput, "bin"> | undefined, opts: { staleNotes?: boolean }): { command: string; env: Record<string, string> } {
+function prLoopPostJobBase(forge: ForgeKind, env: string, member: string | undefined, words: Pick<CiProductWordsInput, "bin"> | undefined, opts: { staleNotes?: boolean; output?: string }): { command: string; env: Record<string, string> } {
   // #4628: with staleNotes the note carries the target branch's commit, so a later push can mark it stale.
   const tip = opts.staleNotes ? ["--tip", '"$TIP_SHA"'] : [];
+  const output = opts.output ?? PR_LOOP_REPORT_DIR;
   if (forge === "gitlab") {
     return {
-      command: withProductBin(["chant", "components", "pr-post", "--open", "--env", env, "--output", PR_LOOP_REPORT_DIR, "--forge", forge, ...(member ? ["--member", member] : []), ...tip].join(" "), words?.bin),
+      command: withProductBin(["chant", "components", "pr-post", "--open", "--env", env, "--output", output, "--forge", forge, ...(member ? ["--member", member] : []), ...tip].join(" "), words?.bin),
       env: opts.staleNotes ? { TIP_SHA: "$CI_COMMIT_SHA" } : {},
     };
   }
   const command = [
     "chant", "components", "pr-post", "--pr", '"$PR_NUMBER"', "--head", '"$HEAD_SHA"',
-    "--env", env, "--output", PR_LOOP_REPORT_DIR, "--forge", forge,
+    "--env", env, "--output", output, "--forge", forge,
     ...(member ? ["--member", member] : []),
     "--result", '"$PLAN_RESULT"',
     ...tip,
@@ -1039,15 +1044,20 @@ export const PR_STALE_JOB = "stale-notes";
  * commit stale and sets its plan status back to pending. It names the plan
  * comment with `previewComment`. Undefined without `staleNotes`. A list
  * of members (#4987, a product plan's targets) marks each one's note.
+ * `contexts` (#5003, a product plan's `statusContext`) are the plan
+ * statuses it sets back to pending, one per member in the same order (one
+ * for none), as `--context`.
  */
-export function prStaleJob(forge: ForgeKind, env: string, options: Pick<PrLoopPipelineOptions, "staleNotes" | "previewComment" | "branch" | "words"> = {}, member?: string | readonly string[]): { command: string; env: Record<string, string> } | undefined {
+export function prStaleJob(forge: ForgeKind, env: string, options: Pick<PrLoopPipelineOptions, "staleNotes" | "previewComment" | "branch" | "words"> = {}, member?: string | readonly string[], contexts?: readonly string[]): { command: string; env: Record<string, string> } | undefined {
   if (!options.staleNotes) return undefined;
   const words = resolveProductWords(options.words);
   const members = member === undefined ? [] : typeof member === "string" ? [member] : [...member];
+  if (contexts !== undefined && contexts.length !== Math.max(1, members.length)) throw new Error(`the stale job sets back ${contexts.length} plan statuses for ${members.length} members; give one context a member`);
   const command = [
     "chant", "components", "pr-post", "--stale", "--tip", '"$TIP_SHA"', "--env", env, "--forge", forge,
     ...(options.branch ? ["--branch", JSON.stringify(options.branch)] : []),
     ...members.flatMap((m) => ["--member", m]),
+    ...(contexts ?? []).flatMap((c) => ["--context", c]),
     ...(options.previewComment ? ["--preview-comment"] : []),
   ].join(" ");
   return {
