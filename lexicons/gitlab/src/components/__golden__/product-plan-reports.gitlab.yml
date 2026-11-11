@@ -1,0 +1,94 @@
+workflow:
+  name: terragucci
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE =~ /^(schedule|web|api|trigger)$/ && $CHANT_PLAN_NOTES == "1" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/ && $CHANT_PREVIEW_PR =~ /^[0-9]+$/ && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE =~ /^(schedule|web|api|trigger)$/ && $CHANT_NOTE_COMMANDS == "1" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+stages:
+  - plan
+  - plan-note
+  - note-commands
+  - replan
+  - replan-note
+
+variables:
+  CHANT_ENV: default
+  GIT_DEPTH: '0'
+
+plan:
+  stage: plan
+  image: node:22
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  variables:
+    BASE_SHA: '$CI_MERGE_REQUEST_DIFF_BASE_SHA'
+    PR_NUMBER: '$CI_MERGE_REQUEST_IID'
+  script:
+    - unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
+    - command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
+    - terragucci plan --pr-note terragucci-report
+  artifacts:
+    name: terragucci-report
+    when: always
+    paths:
+      - terragucci-report
+    reports:
+      terraform: terragucci-report/gitlab-terraform.json
+
+plan-note:
+  stage: plan-note
+  image: node:22
+  rules:
+    - if: '$CI_PIPELINE_SOURCE =~ /^(schedule|web|api|trigger)$/ && $CHANT_PLAN_NOTES == "1" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  script:
+    - terragucci chant components pr-post --open --env default --output terragucci-report --forge gitlab
+
+note-commands:
+  stage: note-commands
+  image: node:22
+  resource_group: note-commands
+  rules:
+    - if: '$CI_PIPELINE_SOURCE =~ /^(schedule|web|api|trigger)$/ && $CHANT_NOTE_COMMANDS == "1" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  script:
+    - terragucci chant components pr-notes --forge gitlab --preview-comment
+
+replan:
+  stage: replan
+  image: node:22
+  rules:
+    - if: '$CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/ && $CHANT_PREVIEW_PR =~ /^[0-9]+$/ && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && ($CHANT_PREVIEW_COMMENT =~ /^\/terragucci plan( +[A-Za-z0-9_.\/@+=,:][A-Za-z0-9_.\/@+=,:-]*)? *$/)'
+  variables:
+    BASE_SHA: '$CI_COMMIT_SHA'
+    PR_NUMBER: '$CHANT_PREVIEW_PR'
+  script:
+    - unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
+    - unset CHANT_RUNNER_KEY
+    - echo "$PR_NUMBER" | grep -Eq '^[0-9]+$' && git fetch --quiet origin "+refs/merge-requests/$PR_NUMBER/head:refs/remotes/origin/chant-apply/$PR_NUMBER" && git checkout --quiet --detach "refs/remotes/origin/chant-apply/$PR_NUMBER"
+    - git fetch -q --no-tags origin '+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle' 2>/dev/null || true
+    - 'git remote set-url origin "$(git remote get-url origin | sed -E ''s#//[^@/]*@#//#'')"'
+    - 'case "$CHANT_PREVIEW_COMMENT" in "/terragucci plan"*) chant_rest="${CHANT_PREVIEW_COMMENT#"/terragucci plan"}" ;; *) chant_rest="" ;; esac'
+    - CHANT_PLAN_ARGUMENT="$(printf '%s' "$chant_rest" | tr -d ' ')" && export CHANT_PLAN_ARGUMENT
+    - command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
+    - terragucci plan --pr-note terragucci-report
+  artifacts:
+    name: terragucci-report-replan
+    when: always
+    paths:
+      - terragucci-report
+
+replan-note:
+  stage: replan-note
+  image: node:22
+  needs:
+    - job: replan
+      artifacts: true
+  rules:
+    - if: '$CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/ && $CHANT_PREVIEW_PR =~ /^[0-9]+$/ && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && ($CHANT_PREVIEW_COMMENT =~ /^\/terragucci plan( +[A-Za-z0-9_.\/@+=,:][A-Za-z0-9_.\/@+=,:-]*)? *$/)'
+      when: always
+  variables:
+    PR_NUMBER: '$CHANT_PREVIEW_PR'
+  script:
+    - HEAD_SHA="$(git ls-remote origin "refs/merge-requests/$PR_NUMBER/head" | cut -f1)" && export HEAD_SHA
+    - terragucci chant components pr-post --pr "$PR_NUMBER" --head "$HEAD_SHA" --env default --output terragucci-report --forge gitlab

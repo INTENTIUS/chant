@@ -251,6 +251,11 @@ export const PRODUCT_PLAN_NAMES_FLOOR = NEXT_RELEASE;
 export { productPlanContext, productPlanReportDir, productPlanWorkflowFile } from "./components/product-plan";
 
 /**
+ * The first chant whose GitLab product plan job keeps a product's own artifacts beside the report directory (#5004): `productPlan.artifacts: { paths, reports }`, as `artifacts:paths` and `artifacts:reports`, such as terragucci's `terraform` report for the merge request's widget, with `{target}` and `{output}` filled. GitHub and Forgejo refuse it.
+ */
+export const PRODUCT_PLAN_ARTIFACTS_FLOOR = NEXT_RELEASE;
+
+/**
  * Day-2 actions in the product pipeline (#4654): the `action` comment
  * command counted as answered by the product's own workflow
  * (`productPipelineJobs(forge, env, { words, actions: true })`), or the

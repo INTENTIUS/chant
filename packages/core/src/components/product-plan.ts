@@ -51,6 +51,7 @@ import { PLAN_RUN_OP, PLAN_RUN_RECORD_FILE } from "../pr-plan-record";
 import { idTokenVar, tradedClouds, type CloudTradeSpec } from "../ci-identity";
 import { prNoteMarker } from "../pr-loop";
 import { PRODUCT_MARKER_NAME } from "../pr-plan-note";
+import { gitlabJobArtifacts, type PrCheckArtifacts } from "./pr-checks";
 
 /** The variable the plan-note job reads the product's note words from (#4799), as JSON. Set from the pipeline, never from the report. */
 export const PR_PLAN_NOTE_WORDS_ENV = "CHANT_PLAN_NOTE_WORDS";
@@ -412,6 +413,19 @@ export interface ProductPlanOptions {
    * Default {@link PR_LOOP_REPORT_DIR}.
    */
   reportDir?: string;
+  /**
+   * GitLab only (#5004): what each plan job keeps beside the report
+   * directory, as the check job's `artifacts` (#4988, {@link PrCheckArtifacts}):
+   * `paths` after it in `artifacts:paths`, and `reports` as
+   * `artifacts:reports`, such as terragucci's `{ terraform:
+   * "{output}/gitlab-terraform.json" }` for the merge request's widget.
+   * `{target}` and `{output}` are filled as in `command`. Kept when the plan
+   * fails too, as the report is. The re-plan jobs keep only the report
+   * directory: they run in a pipeline of the target branch, whose reports
+   * GitLab would read as the target branch's own. GitHub and Forgejo refuse
+   * it, since the plan verb is the job's last step there.
+   */
+  artifacts?: PrCheckArtifacts;
 }
 
 /** The lock job a product plan with {@link ProductPlanOptions.reach} writes (#4979): its command and the values the command reads. */
@@ -520,6 +534,8 @@ export interface ProductPlanJob {
   context?: string;
   /** With `reportDir` (#5003): the directory the plan verb writes into and the jobs hand on. Absent: {@link PR_LOOP_REPORT_DIR}. */
   reportDir?: string;
+  /** With `artifacts` (#5004), GitLab: the plan job's own paths and reports beside the report directory, `{target}` and `{output}` filled. */
+  artifacts?: PrCheckArtifacts;
 }
 
 /** The plan status's context of one plan job (#5003): its own, else the words'. */
@@ -703,6 +719,18 @@ export function productPlanJobs(forge: ForgeKind, env: string, loop: PrLoopPipel
     }
     const idTokens = { ...(login?.idTokens ?? {}), ...tradeTokens, ...(ownTokens ?? {}) };
     const artifact = plan.artifact ? (name ? `${plan.artifact}-${name}` : plan.artifact) : name ? `chant-pr-plan-${name}` : "chant-pr-plan";
+    // #5004: on GitLab the plan job's own paths and reports beside the report directory, such as terragucci's terraform report.
+    const given = plan.artifacts;
+    const artifacts = given
+      ? gitlabJobArtifacts(
+          forge,
+          {
+            ...(given.paths ? { paths: given.paths.map((p) => fill(p, name)) } : {}),
+            ...(given.reports ? { reports: Object.fromEntries(Object.entries(given.reports).map(([type, p]) => [type, Array.isArray(p) ? p.map((q) => fill(q, name)) : fill(p, name)])) } : {}),
+          },
+          { job: "the product plan", last: "the plan verb is the plan job's last step" },
+        )
+      : undefined;
     // #4963: on GitHub and Forgejo the first re-plan job replies to the comments no other job takes.
     const replies = github && Boolean(replanOpts.reply) && (targets === undefined || target === targets[0]);
     const replan0 = replanComments
@@ -752,6 +780,7 @@ export function productPlanJobs(forge: ForgeKind, env: string, loop: PrLoopPipel
       ...(plan.previousMarker && productMarker ? { previous: { marker: prNoteMarker(env, name), name: productMarker } } : {}),
       ...(context !== undefined ? { context } : {}),
       ...(reportDir !== undefined ? { reportDir } : {}),
+      ...(artifacts ? { artifacts } : {}),
     };
   };
   return targets ? targets.map(one) : [one()];
