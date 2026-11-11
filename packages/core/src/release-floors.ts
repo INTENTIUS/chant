@@ -210,6 +210,9 @@ export const GITLAB_WAVE_KEY_SCOPE_FLOOR = "0.124.89";
 /** The first chant with `actorOf` and `actorOrder` in `@intentius/chant/actor`: the actor fallback with `GITHUB_TRIGGERING_ACTOR` ahead of the forge's actor and git's `user.name` before the login, each place switched on or off by the caller (#4966). */
 export const ACTOR_ORDER_FLOOR = "0.124.89";
 
+/** The first chant whose `actorOf({ env, repo })` runs `git config` in `repo` with the `env` it is given rather than the process's, so a job's `GIT_CONFIG_GLOBAL` or `HOME` picks the `user.name` it reads (#5005). */
+export const ACTOR_GIT_ENV_FLOOR = NEXT_RELEASE;
+
 /** The first chant with `@intentius/chant/ci-base` (`ciBaseRef`), the base a CI job measures a change from (the pull request's target branch, else the default branch for a push to another branch), and whose `chant ci check` defaults `--base` to it (#4966). */
 export const CI_BASE_REF_FLOOR = "0.124.89";
 

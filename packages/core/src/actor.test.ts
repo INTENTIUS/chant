@@ -1,6 +1,6 @@
 /** #4911: one actor fallback for the lexicons' gated requests and the products' requesters. */
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { beforeAll, describe, expect, test } from "vitest";
@@ -43,6 +43,19 @@ describe("actorOf", () => {
     expect(actorOf({ env: { USER: "me" }, repo })).toBe("Ada Person");
     expect(actorOf({ env: { USER: "me" }, repo, gitKeys: ["user.email", "user.name"] })).toBe("ada@example.com");
     expect(actorOrder({ triggering: true, repo })).toEqual(["GITHUB_TRIGGERING_ACTOR", "GITHUB_ACTOR", "GITLAB_USER_LOGIN", "git:user.name", "USER", "USERNAME"]);
+  });
+
+  /** #5005: git reads the config the given env names, not the process's. */
+  test("git config runs with the env it is given", () => {
+    const home = mkdtempSync(join(tmpdir(), "chant-actor-home-"));
+    const bare = mkdtempSync(join(tmpdir(), "chant-actor-bare-"));
+    execFileSync("git", ["init", "-q", bare]);
+    const global = join(home, "gitconfig");
+    writeFileSync(global, "[user]\n\tname = Job Identity\n");
+    const base = { PATH: process.env.PATH, HOME: home, GIT_CONFIG_NOSYSTEM: "1", USER: "me" };
+    expect(actorOf({ env: { ...base, GIT_CONFIG_GLOBAL: global }, repo: bare })).toBe("Job Identity");
+    expect(actorOf({ env: { ...base, GIT_CONFIG_GLOBAL: join(home, "none") }, repo: bare })).toBe("me");
+    expect(actorOf({ env: { ...base, GIT_CONFIG_GLOBAL: global }, repo })).toBe("Ada Person");
   });
 
   test("the forge and the login can be left out, and the fallback named", () => {
