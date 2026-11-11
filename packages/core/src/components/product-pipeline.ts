@@ -43,7 +43,7 @@ import type { CiRunner } from "../ci-jobs";
 import { resolveAgentSpec, type OpAgentSpec } from "../ci-agent";
 import { resolveCommitSpec, type OpCommitSpec } from "../ci-commit";
 import type { CiResponses } from "../ci-respond";
-import { planEvidenceOf, productPlanJobs, productPlanReachLock, type ProductPlanJob, type ProductPlanOptions, type ProductPlanReachLock } from "./product-plan";
+import { planEvidenceOf, productPlanContext, productPlanJobs, productPlanReachLock, type ProductPlanJob, type ProductPlanOptions, type ProductPlanReachLock } from "./product-plan";
 import { gitlabOpenEvidenceDir, type PipelineEvidence } from "../ci-evidence-jobs";
 import { prCheckJob, prRefGateJob, type PrCheckJob, type PrRefGateJob } from "./pr-checks";
 import { COMMENT_JOBS_ENV, PR_COMMENT_JOB, type CommentJobs } from "../ci-comment-commands";
@@ -455,8 +455,10 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   const action = prActionJob(forge, prLoop);
   if (action) out.action = { ...action, ...(prLoopRunner(options, "apply") !== undefined ? { runner: prLoopRunner(options, "apply")! } : {}) };
   // #4987: a product plan's notes are marked from the waves workflow's push run, one --member per target, naming the re-plan comment.
+  // #5003: with the product's status context, the stale job sets that status back to pending, one a target.
+  const planContexts = productPlan?.statusContext !== undefined ? out.productPlan!.map((p) => productPlanContext(p, words)) : undefined;
   const planStale = productPlan
-    ? prStaleJob(forge, env, { ...prLoop, ...(productPlan.replan ? { previewComment: true } : {}) }, productPlan.targets?.map((t) => t.name) ?? member)
+    ? prStaleJob(forge, env, { ...prLoop, ...(productPlan.replan ? { previewComment: true } : {}) }, productPlan.targets?.map((t) => t.name) ?? member, planContexts)
     : undefined;
   if (planStale && !options.waves && !options.componentWaves) throw new Error("staleNotes with the product plan marks the notes from the waves workflow's push run, beside wave 1, and there are no waves: give waves (or componentWaves), or drop staleNotes");
   const stale = productPlan ? undefined : prStaleJob(forge, env, prLoop, member);
@@ -496,7 +498,8 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
     bmJobs = {
       ...(forge !== "gitlab" ? { workflow: `${wavesOp}.yml` } : {}),
       ...(wavesBeforeMerge.requires ? { requires: [...wavesBeforeMerge.requires] } : {}),
-      plan: targets?.length ? targets.map((t) => productStatusContext(words, "plan", t)) : [productStatusContext(words, "plan", member)],
+      // #5003: the product's own status contexts, when it named them.
+      plan: planContexts ?? (targets?.length ? targets.map((t) => productStatusContext(words, "plan", t)) : [productStatusContext(words, "plan", member)]),
       pipelineFiles: wavesBeforeMerge.pipelineFiles ?? defaultPipelineFiles(forge),
       ...(productPlan?.reach ? { locks: { ...(productPlan.reach.gate ? { gate: productPlan.reach.gate } : {}) } } : {}),
     };

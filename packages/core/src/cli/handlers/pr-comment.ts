@@ -104,8 +104,8 @@ export async function beforeMergeDeps(forge: PrForge, jobs: CommentJobs, env: No
   const line = env[LOCK_REACH_ENV];
   const name = (n: number) => (forge.kind === "gitlab" ? `!${n}` : `pull request ${n}`);
   return {
-    // The plan and apply statuses never hold the apply back: the plan status is asked for by name.
-    requires: async (pr, head) => unmetRequires(await checkPrRequires(forge, pr, head, { ignore: [productStatusContext(words, "apply"), productStatusContext(words, "plan"), `${productStatusContext(words, "plan")}/`], ...(bm.requires ? { only: bm.requires } : {}) })),
+    // The plan and apply statuses never hold the apply back: the plan status is asked for by name (#5003: the product plan's own names too).
+    requires: async (pr, head) => unmetRequires(await checkPrRequires(forge, pr, head, { ignore: [...new Set([productStatusContext(words, "apply"), productStatusContext(words, "plan"), `${productStatusContext(words, "plan")}/`, ...bm.plan])], ...(bm.requires ? { only: bm.requires } : {}) })),
     statuses: async (sha) => (await forge.commitStatuses?.(sha)) ?? [],
     git: (argv, o) => {
       const r = spawnSync(argv[0]!, argv.slice(1), { encoding: "utf8", ...(o.cwd ? { cwd: o.cwd } : {}) });

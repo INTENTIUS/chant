@@ -52,10 +52,23 @@
 
 import { CI_IMAGE, GITHUB_JOB_TOKEN, githubRunsOn } from "@intentius/chant/ci-jobs";
 import { CHECKOUT_TOKEN_ENV, checkoutScript, dropForgeTokens, handoverOutputs, handoverTrap, takeOverScript } from "@intentius/chant/ci-handover";
-import { PR_LOCK_JOB, PR_LOOP_REPORT_DIR, PR_UNLOCK_JOB, prLockCommand, prLoopSetup, prUnlockCommand } from "@intentius/chant/components/pr-pipeline";
+import { PR_LOCK_JOB, PR_UNLOCK_JOB, prLockCommand, prLoopSetup, prUnlockCommand } from "@intentius/chant/components/pr-pipeline";
 import { productPipelineJobs, type ProductPipelineJobs, type ProductPipelineOptions } from "@intentius/chant/components/product-pipeline";
-import { PENDING_JS, PLAN_ARGUMENT_ENV, PLAN_NOTE_NOTICES_ENV, planVerbLines, PREVIOUS_MARKER_JS, REPLAN_DECIDE_JS, replanDecideJs, SAME_REPOSITORY_IF, type ProductPlanJob, type ProductPlanOptions } from "@intentius/chant/components/product-plan";
-import { productStatusContext } from "@intentius/chant/ci-product-words";
+import {
+  PENDING_JS,
+  PLAN_ARGUMENT_ENV,
+  PLAN_NOTE_NOTICES_ENV,
+  planVerbLines,
+  PREVIOUS_MARKER_JS,
+  productPlanContext,
+  productPlanReportDir,
+  productPlanWorkflowFile,
+  REPLAN_DECIDE_JS,
+  replanDecideJs,
+  SAME_REPOSITORY_IF,
+  type ProductPlanJob,
+  type ProductPlanOptions,
+} from "@intentius/chant/components/product-plan";
 import { OIDC_REQUEST_VARS, TRADE_SPEC_ENV, tradeLine } from "@intentius/chant/ci-identity";
 import { CHECKOUT, emitWorkflowYAML, runSteps, UPLOAD_ARTIFACT, type GithubWorkflowDoc } from "./ci-jobs";
 import { githubCheckJobs } from "./pr-check-jobs";
@@ -73,18 +86,20 @@ export interface ProductPlanPipelineOptions extends ProductPipelineOptions {
   header?: string[];
 }
 
-/** The product plan workflow: its YAML, the document it was emitted from, and the product pipeline's jobs. */
+/** The product plan workflow: its YAML, the document it was emitted from, the product pipeline's jobs, and the file it goes in. */
 export interface ProductPlanPipeline {
   yaml: string;
   doc: GithubWorkflowDoc;
   jobs: ProductPipelineJobs;
+  /** The file to write the YAML to, from the repository root (#5003): `productPlan.workflowFile`, or `<workflow directory>/<workflow>.yml`. */
+  path: string;
 }
 
 /** The plan step's id, whose outputs carry the hand-off directory to the note job. */
 const PLAN_STEP_ID = "plan";
 
 /** The product plan workflow's document for GitHub or Forgejo (#4799). */
-export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: string, options: ProductPlanPipelineOptions): { doc: GithubWorkflowDoc; jobs: ProductPipelineJobs } {
+export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: string, options: ProductPlanPipelineOptions): { doc: GithubWorkflowDoc; jobs: ProductPipelineJobs; path: string } {
   const { image: given, beforeScript = [], extraScript = [], header, ...pipeline } = options;
   const image = given ?? CI_IMAGE;
   const jobs = productPipelineJobs(forge, env, pipeline);
@@ -114,7 +129,10 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
       ...(p.writeProbe ? [{ ...(cond ? { if: cond } : {}), name: "This job cannot write", env, run: `${drop}\n${p.writeProbe}` }] : []),
     ];
   };
-  const planRun = (p: ProductPlanJob, before: string[] = []): string => [dropOf(p), ...handoverTrap(PR_LOOP_REPORT_DIR, forge), ...before, ...planVerbLines(p), ...extraScript].join("\n");
+  // #5003: each job's report directory and status context, the product's or chant's.
+  const dirOf = productPlanReportDir;
+  const contextOf = (p: ProductPlanJob): string => productPlanContext(p, jobs.words);
+  const planRun = (p: ProductPlanJob, before: string[] = []): string => [dropOf(p), ...handoverTrap(dirOf(p), forge), ...before, ...planVerbLines(p), ...extraScript].join("\n");
   // #4963: the trade, before the checkout, for the plan identities' own credentials; the later steps hold no OIDC token.
   const tradeStep = (p: ProductPlanJob, cond?: string): Record<string, unknown>[] =>
     p.trade ? [{ ...(cond ? { if: cond } : {}), name: "Trade the job's OIDC token for the plan identities", env: { [TRADE_SPEC_ENV]: JSON.stringify(p.trade) }, run: tradeLine("$GITHUB_ENV", "github-env") }] : [];
@@ -189,12 +207,12 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
         // The target branch's commit: the bin this job runs is the target branch's, and none of the change's code is here.
         { name: "Check out the target branch's commit", uses: CHECKOUT, with: { ref: "${{ github.event.pull_request.base.sha }}" } },
         ...runSteps(beforeScript),
-        { name: "Take the plan report from the plan job", run: takeOverScript(p.jobName, PR_LOOP_REPORT_DIR, forge) },
+        { name: "Take the plan report from the plan job", run: takeOverScript(p.jobName, dirOf(p), forge) },
         // #4870: the runner key (or #4869 the keyless signing) is in this step alone, in a job that runs none of the change's code.
         ...(p.evidence ? [{ name: "Sign the plan and policy evidence", if: "always()", env: p.evidence.env, run: p.evidence.lines.join("\n") }] : []),
-        { name: "Keep the plan report", if: "always()", uses: UPLOAD_ARTIFACT, with: { name: p.artifact, path: PR_LOOP_REPORT_DIR, "if-no-files-found": "ignore", "include-hidden-files": true } },
+        { name: "Keep the plan report", if: "always()", uses: UPLOAD_ARTIFACT, with: { name: p.artifact, path: dirOf(p), "if-no-files-found": "ignore", "include-hidden-files": true } },
         ...noteBefore(p, p.post.env),
-        { name: `Post the plan note and ${productStatusContext(jobs.words, "plan", p.target)}`, if: "always()", env: p.post.env, run: postRun(p, p.post.command) },
+        { name: `Post the plan note and ${contextOf(p)}`, if: "always()", env: p.post.env, run: postRun(p, p.post.command) },
         ...noteAfter(p, p.post.env),
       ],
     };
@@ -273,10 +291,10 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
         // The target branch's commit, which an issue_comment run checks out: none of the change's code is here.
         { name: "Check out the target branch's commit", uses: CHECKOUT },
         ...runSteps(beforeScript),
-        { name: "Take the plan report from the re-plan job", run: takeOverScript(r.jobName, PR_LOOP_REPORT_DIR, forge) },
-        { name: "Keep the plan report", if: "always()", uses: UPLOAD_ARTIFACT, with: { name: r.artifact, path: PR_LOOP_REPORT_DIR, "if-no-files-found": "ignore", "include-hidden-files": true } },
+        { name: "Take the plan report from the re-plan job", run: takeOverScript(r.jobName, dirOf(p), forge) },
+        { name: "Keep the plan report", if: "always()", uses: UPLOAD_ARTIFACT, with: { name: r.artifact, path: dirOf(p), "if-no-files-found": "ignore", "include-hidden-files": true } },
         ...noteBefore(p, r.post.env),
-        { name: `Post the plan note and ${productStatusContext(jobs.words, "plan", p.target)}`, if: "always()", env: r.post.env, run: postRun(p, r.post.command) },
+        { name: `Post the plan note and ${contextOf(p)}`, if: "always()", env: r.post.env, run: postRun(p, r.post.command) },
         ...noteAfter(p, r.post.env),
       ],
     };
@@ -339,7 +357,7 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
     ...(concurrency ? { concurrency } : {}),
     jobsDoc,
   };
-  return { doc, jobs };
+  return { doc, jobs, path: productPlanWorkflowFile(forge, env, plan) };
 }
 
 /**
@@ -385,7 +403,6 @@ function commentJobsDoc(forge: "github" | "forgejo", jobs: ProductPipelineJobs, 
   }
   if (!jobs.locks?.length) return out;
   const bin = jobs.words.bin;
-  const report = `${PR_LOOP_REPORT_DIR}/pr-plan.json`;
   const reach = jobs.reachLock;
   // #4979: with reach, one lock job beside the plans locks what the change reaches, read from git at the target branch's commit.
   // A fork's pull request takes no lock: its run holds no token that writes.
@@ -403,6 +420,9 @@ function commentJobsDoc(forge: "github" | "forgejo", jobs: ProductPipelineJobs, 
     };
   }
   for (const p of reach ? [] : plans) {
+    // #5003: the plan job's report directory, the product's or chant's.
+    const dir = productPlanReportDir(p);
+    const report = `${dir}/pr-plan.json`;
     out[p.target ? `${PR_LOCK_JOB}-${p.target}` : PR_LOCK_JOB] = {
       // The plan job's outputs carry the report; a plan that was skipped or failed leaves this job skipped.
       needs: [p.jobName],
@@ -413,11 +433,11 @@ function commentJobsDoc(forge: "github" | "forgejo", jobs: ProductPipelineJobs, 
       steps: [
         { name: "Check out the target branch's commit", uses: CHECKOUT, with: { ref: "${{ github.event.pull_request.base.sha }}", "fetch-depth": 0 } },
         ...runSteps(beforeScript),
-        { name: "Take the plan report from the plan job", run: takeOverScript(p.jobName, PR_LOOP_REPORT_DIR, forge) },
+        { name: "Take the plan report from the plan job", run: takeOverScript(p.jobName, dir, forge) },
         {
           name: p.target ? `Lock what the plan of ${p.target} selected` : "Lock what the plan selected",
           env: { PR_NUMBER: "${{ github.event.pull_request.number }}", HEAD_SHA: "${{ github.event.pull_request.head.sha }}", GITHUB_TOKEN: GITHUB_JOB_TOKEN },
-          run: `if [ -f ${report} ]; then ${prLockCommand(forge, bin)}; else echo "The plan wrote no ${report}, so it selected nothing to lock."; fi`,
+          run: `if [ -f ${report} ]; then ${prLockCommand(forge, bin, dir)}; else echo "The plan wrote no ${report}, so it selected nothing to lock."; fi`,
         },
       ],
     };
@@ -459,6 +479,6 @@ export const REPLAN_DISPATCH_IF = "(github.event_name == 'workflow_dispatch' && 
  * `productPlan`, and no component graph.
  */
 export function generateProductPlanPipeline(env: string, options: ProductPlanPipelineOptions): ProductPlanPipeline {
-  const { doc, jobs } = buildProductPlanGithubDoc("github", env, options);
-  return { yaml: emitWorkflowYAML(doc), doc, jobs };
+  const { doc, jobs, path } = buildProductPlanGithubDoc("github", env, options);
+  return { yaml: emitWorkflowYAML(doc), doc, jobs, path };
 }

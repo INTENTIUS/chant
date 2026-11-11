@@ -986,6 +986,15 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant components pr-post --not-affected <argument>` (#4963): the re-plan's argument, which may be empty; pr-post checks it.
       if (i + 1 >= args.length) throw new Error('--not-affected needs the re-plan\'s argument, empty for none: --not-affected "$CHANT_PLAN_ARGUMENT"');
       result.notAffected = args[++i];
+    } else if (arg === "--context") {
+      // `chant components pr-post --context <context>` (#5003): the product plan's own plan status context; with --stale, one a --member.
+      const value = args[++i];
+      if (!value || !/^[A-Za-z0-9][A-Za-z0-9_.\/:-]*$/.test(value)) throw new Error(`--context needs the plan status's context, letters, digits and _./:-: got "${value ?? ""}"`);
+      result.statusContexts = [...(result.statusContexts ?? []), value];
+    } else if (arg === "--plan-job") {
+      // `chant components pr-post --open --plan-job <name>` (#5003): the product plan's own GitLab plan job, whose artifacts hold the report.
+      result.planJob = args[++i];
+      if (!result.planJob || !/^[A-Za-z0-9_][A-Za-z0-9_-]*$/.test(result.planJob)) throw new Error(`--plan-job needs the plan job's name: got "${result.planJob ?? ""}"`);
     } else if (arg === "--evidence-dir") {
       // `chant components pr-post --open --evidence-dir <dir>` (#4914): each merge request's evidence.json, from the GitLab signing job.
       result.evidenceDir = args[++i];

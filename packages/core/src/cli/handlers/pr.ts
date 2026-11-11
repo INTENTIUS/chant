@@ -2816,8 +2816,8 @@ function writeWaveChangeSet(ctx: CommandContext, wave: number, doc: PrPlanSet["d
 }
 
 /**
- * chant components pr-post --pr <n> --head <sha> --env <env> --forge <kind> [--member <name>] [--output <dir>] [--result <result>] [--not-affected <argument>] (#4295, #4963)
- * chant components pr-post --open --env <env> --forge gitlab [--branch <branch>] [--member <name>] [--output <dir>] (#4328)
+ * chant components pr-post --pr <n> --head <sha> --env <env> --forge <kind> [--member <name>] [--output <dir>] [--result <result>] [--not-affected <argument>] [--context <context>] (#4295, #4963, #5003)
+ * chant components pr-post --open --env <env> --forge gitlab [--branch <branch>] [--member <name>] [--output <dir>] [--context <context>] [--plan-job <name>] (#4328, #5003)
  *
  * Post the plan note and the `chant/plan` status from the report a plan job
  * wrote with `pr-plan --no-status`, in a job that runs none of the change's
@@ -2835,6 +2835,8 @@ export async function runComponentsPrPost(ctx: CommandContext): Promise<number> 
   if (!args.env) return fail("pr-post needs the environment the plan was for: --env <env>");
   if (!args.forge || !(FORGE_KINDS as readonly string[]).includes(args.forge)) return fail(`pr-post posts to a forge: --forge ${FORGE_KINDS.join("|")}`);
   if (args.members && args.members.length > 1) return fail(`pr-post takes one --member, not ${args.members.join(", ")}`);
+  if (args.statusContexts && args.statusContexts.length > 1) return fail(`pr-post takes one --context, not ${args.statusContexts.join(", ")}`);
+  if (args.planJob) return fail("pr-post --plan-job names the GitLab plan job pr-post --open reads; a post for one pull request reads its report from --output");
   let forge: PrForge;
   try {
     forge = forgeFromJobEnv(args.forge as ForgeKind);
@@ -2843,6 +2845,8 @@ export async function runComponentsPrPost(ctx: CommandContext): Promise<number> 
   }
   const { postPlanReport } = await import("../../pr-post");
   const member = args.members?.[0];
+  // #5003: the product plan's own status context.
+  const context = args.statusContexts?.[0];
   const description = await descriptionCheckOf(ctx, forge);
   if (typeof description === "number") return description;
   const posted = await postPlanReport({
@@ -2852,6 +2856,7 @@ export async function runComponentsPrPost(ctx: CommandContext): Promise<number> 
     head: args.head,
     env: args.env,
     ...(member ? { member } : {}),
+    ...(context ? { context } : {}),
     ...(args.planResult ? { result: args.planResult } : {}),
     // #4289: the plan job could not ask the forge, so the note job does, from the Ops at the commit it checked out.
     overdue: () => overdueOps(forge, member),
@@ -2866,7 +2871,7 @@ export async function runComponentsPrPost(ctx: CommandContext): Promise<number> 
   });
   for (const message of posted.warnings) console.error(formatWarning({ message }));
   if (posted.refused) console.error(formatWarning({ message: `the plan report was not used: ${posted.refused}` }));
-  console.error(formatInfo(`pr-post: ${prStatusContext("plan", member)} ${posted.state}: ${posted.description}${posted.noted ? "; note posted" : ""}${posted.recorded ? `; run ${posted.recorded} recorded` : ""}`));
+  console.error(formatInfo(`pr-post: ${context ?? prStatusContext("plan", member)} ${posted.state}: ${posted.description}${posted.noted ? "; note posted" : ""}${posted.recorded ? `; run ${posted.recorded} recorded` : ""}`));
   return 0;
 }
 
@@ -2953,12 +2958,16 @@ async function runComponentsPrPostStale(ctx: CommandContext): Promise<number> {
     return fail(err instanceof Error ? err.message : String(err));
   }
   // #4987: a product plan's targets each have their note, so --member may be given once per target.
-  const members: Array<string | undefined> = args.members?.length ? [...new Set(args.members)] : [undefined];
+  // #5003: a product plan's own status contexts, one a --member in the same order (one with none).
+  const contexts = args.statusContexts;
+  const members: Array<string | undefined> = args.members?.length ? (contexts ? [...args.members] : [...new Set(args.members)]) : [undefined];
+  if (contexts && contexts.length !== members.length) return fail(`pr-post --stale takes one --context a --member (one with none), and got ${contexts.length} for ${members.length}`);
+  if (args.planJob) return fail("pr-post --plan-job names the GitLab plan job pr-post --open reads; --stale reads no plan job");
   const { markStaleNotes } = await import("../../pr-post");
-  for (const member of members) {
+  for (const [i, member] of members.entries()) {
     let done: Awaited<ReturnType<typeof markStaleNotes>>;
     try {
-      done = await markStaleNotes({ forge, branch, tip: args.tip, env: args.env, ...(member ? { member } : {}), ...(args.previewComment ? { previewComment: true } : {}) });
+      done = await markStaleNotes({ forge, branch, tip: args.tip, env: args.env, ...(member ? { member } : {}), ...(contexts ? { context: contexts[i]! } : {}), ...(args.previewComment ? { previewComment: true } : {}) });
     } catch (err) {
       return fail(err instanceof Error ? err.message : String(err));
     }
@@ -2998,20 +3007,25 @@ async function runComponentsPrPostOpen(ctx: CommandContext): Promise<number> {
   const top = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" });
   if (top.status !== 0) return fail("pr-post --open reads the plan report's path from the repository root, and this directory is not in a git repository");
   const member = args.members?.[0];
+  if (args.statusContexts && args.statusContexts.length > 1) return fail(`pr-post --open takes one --context, not ${args.statusContexts.join(", ")}`);
+  // #5003: the product plan's own status context and plan job.
+  const context = args.statusContexts?.[0];
   const description = await descriptionCheckOf(ctx, forge);
   if (typeof description === "number") return description;
   const artifactDir = relative(realpathSync(top.stdout.trim()), resolve(args.output ?? PR_REPORT_DIR)).split(sep).join("/");
   const { postOpenPlanReports } = await import("../../pr-post");
   const { gitlabPlanJobName } = await import("../../components/pr-pipeline");
+  const planJob = args.planJob ?? gitlabPlanJobName(member);
   let done: Awaited<ReturnType<typeof postOpenPlanReports>>;
   try {
     done = await postOpenPlanReports({
       forge,
       branch,
-      job: gitlabPlanJobName(member),
+      job: planJob,
       artifactDir,
       env: args.env,
       ...(member ? { member } : {}),
+      ...(context ? { context } : {}),
       // #4289: the Ops at the commit this pipeline checked out, the target branch's.
       overdue: () => overdueOps(forge, member),
       ...(description ? { description } : {}),
@@ -3034,8 +3048,8 @@ async function runComponentsPrPostOpen(ctx: CommandContext): Promise<number> {
     const posted = p.posted!;
     for (const message of posted.warnings) console.error(formatWarning({ message: `!${p.pr}: ${message}` }));
     if (posted.refused) console.error(formatWarning({ message: `!${p.pr}: the plan report was not used: ${posted.refused}` }));
-    console.error(formatInfo(`pr-post: !${p.pr} ${prStatusContext("plan", member)} ${posted.state}: ${posted.description}${posted.noted ? "; note posted" : ""}${posted.recorded ? `; run ${posted.recorded} recorded` : ""}`));
+    console.error(formatInfo(`pr-post: !${p.pr} ${context ?? prStatusContext("plan", member)} ${posted.state}: ${posted.description}${posted.noted ? "; note posted" : ""}${posted.recorded ? `; run ${posted.recorded} recorded` : ""}`));
   }
-  if (done.posts.length === 0) console.error(formatInfo(`pr-post: no open merge request into ${branch} has a ${gitlabPlanJobName(member)} job`));
+  if (done.posts.length === 0) console.error(formatInfo(`pr-post: no open merge request into ${branch} has a ${planJob} job`));
   return 0;
 }

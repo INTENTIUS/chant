@@ -1,0 +1,446 @@
+name: yodel-pr
+
+on:
+  pull_request:
+    branches:
+      - main
+  issue_comment:
+    types:
+      - created
+
+env:
+  CHANT_ENV: default
+
+jobs:
+  yodel-plan-staging:
+    if: github.event_name == 'pull_request'
+    runs-on: docker
+    container: node:22
+    outputs:
+      report_0: '${{ steps.plan.outputs.report_0 }}'
+      report_1: '${{ steps.plan.outputs.report_1 }}'
+      report_2: '${{ steps.plan.outputs.report_2 }}'
+      report_3: '${{ steps.plan.outputs.report_3 }}'
+    steps:
+      - name: Say on the head that the plan started
+        env:
+          CHANT_PENDING_TOKEN: '${{ github.token }}'
+          CHANT_PENDING_SHA: '${{ github.sha }}'
+          CHANT_PENDING_CONTEXT: yodel/staging/plan
+          CHANT_PENDING_DESCRIPTION: planning
+        run: '(cd / && node -e ''const api=String(process.env.GITHUB_API_URL||"").replace(/\/+$/,""),repo=process.env.GITHUB_REPOSITORY,sha=process.env.CHANT_PENDING_SHA||"";if(!/^[0-9a-f]{40}$/.test(sha)){console.log("chant: no commit to say the plan started on");process.exit(0)}const run=process.env.GITHUB_SERVER_URL&&process.env.GITHUB_RUN_ID?process.env.GITHUB_SERVER_URL+"/"+repo+"/actions/runs/"+process.env.GITHUB_RUN_ID:undefined;fetch(api+"/repos/"+repo+"/statuses/"+sha,{method:"POST",headers:{authorization:"token "+process.env.CHANT_PENDING_TOKEN,accept:"application/json","content-type":"application/json"},body:JSON.stringify({state:"pending",context:process.env.CHANT_PENDING_CONTEXT,description:process.env.CHANT_PENDING_DESCRIPTION,...(run?{target_url:run}:{})})}).then((r)=>console.log(r.ok?"chant: "+process.env.CHANT_PENDING_CONTEXT+" is pending":"chant: the forge answered "+r.status+" to the pending status"),(err)=>console.log("chant: the pending status was not posted: "+err.message));'')'
+      - name: Check out the change
+        env:
+          CHANT_CHECKOUT_TOKEN: '${{ github.token }}'
+        run: |
+          set -eu
+          git config --global --add safe.directory "$PWD" 2>/dev/null || true
+          [ -d .git ] || git init -q .
+          git remote get-url origin >/dev/null 2>&1 || git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          if [ -n "${CHANT_CHECKOUT_TOKEN:-}" ]; then
+            chant_auth="$(printf 'x-access-token:%s' "$CHANT_CHECKOUT_TOKEN" | base64 | tr -d '\n')"
+            export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $chant_auth"
+            unset chant_auth
+          fi
+          ref="$GITHUB_REF"
+          want="$GITHUB_SHA"
+          case "$ref" in
+            refs/heads/*) target="refs/remotes/origin/${ref#refs/heads/}" ;;
+            refs/tags/*) target="$ref" ;;
+            refs/*) target="refs/remotes/${ref#refs/}" ;;
+            *) target="refs/remotes/origin/chant-head" ;;
+          esac
+          if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
+          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"
+          git -c protocol.version=2 fetch -q --no-tags origin '+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle' 2>/dev/null || true
+          case "$ref" in
+            refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
+            *) git checkout -q --force --detach "$target" ;;
+          esac
+      - run: |
+          if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
+          command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
+      - name: Plan staging
+        id: plan
+        env:
+          BASE_SHA: '${{ github.event.pull_request.base.sha }}'
+          PR_NUMBER: '${{ github.event.pull_request.number }}'
+        run: |
+          if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
+          chant_report="$PWD/out/yodel"
+          chant_handover() { node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const [dir,out]=process.argv.slice(1);const CHUNK=1000000,PARTS=4,NOTE=["pr-plan.json","pr-note.md"];const all={};const walk=(d,r)=>{let n=[];try{n=fs.readdirSync(d).sort()}catch{return}for(const x of n){const f=p.join(d,x),k=r?r+"/"+x:x;let s;try{s=fs.lstatSync(f)}catch{continue}if(s.isDirectory())walk(f,k);else if(s.isFile())all[k]=fs.readFileSync(f).toString("base64")}};walk(dir,"");const pack=(o)=>z.gzipSync(JSON.stringify(o)).toString("base64");let b=pack(all);if(b.length>CHUNK*PARTS){b=pack(Object.fromEntries(Object.entries(all).filter(([k])=>NOTE.includes(k))));if(b.length>CHUNK*PARTS){b=pack({});console.error("chant: the plan report is too large to hand to the note job, even cut to the report and the note; it hands on none of it")}else console.error("chant: the plan report is too large to hand to the note job whole; it hands on pr-plan.json and pr-note.md")}let o="";for(let i=0;i*CHUNK<b.length;i++)o+="report_"+i+"="+b.slice(i*CHUNK,(i+1)*CHUNK)+"\n";fs.appendFileSync(out,o);' "$chant_report" "${GITHUB_OUTPUT:-/dev/null}" || echo "chant: the plan report could not be handed to the note job" >&2; }
+          trap chant_handover EXIT
+          yodel plan staging --pr-note out/yodel
+  yodel-note-staging:
+    needs:
+      - yodel-plan-staging
+    if: always() && github.event_name == 'pull_request' && (needs.yodel-plan-staging.result == 'success' || needs.yodel-plan-staging.result == 'failure')
+    runs-on: docker
+    container: node:22
+    steps:
+      - name: Check out the target branch's commit
+        uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: '${{ github.event.pull_request.base.sha }}'
+      - name: Take the plan report from the plan job
+        run: |
+          set -u
+          node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const dir=process.argv[1];let b="";for(const l of fs.readFileSync(0,"utf8").split("\n")){if(!l.trim())continue;let s="";try{s=JSON.parse(l)}catch{}if(typeof s==="string")b+=s}if(!b){console.log("chant: the yodel-plan-staging job handed on no report");process.exit(0)}let files;try{files=JSON.parse(z.gunzipSync(Buffer.from(b,"base64"),{maxOutputLength:268435456}).toString("utf8"))}catch(e){console.log("chant: the report the yodel-plan-staging job handed on does not read: "+e.message);process.exit(0)}if(!files||typeof files!=="object"||Array.isArray(files)){console.log("chant: the report the yodel-plan-staging job handed on is not a set of files");process.exit(0)}let n=0;for(const [k,v] of Object.entries(files)){const parts=k.split("/");if(typeof v!=="string"||k.length>1024||parts.some((x)=>!x||x==="."||x===".."||/[\\\x00-\x1f]/.test(x))){console.log("chant: left out "+JSON.stringify(k));continue}try{const f=p.join(dir,...parts);fs.mkdirSync(p.dirname(f),{recursive:true});fs.writeFileSync(f,Buffer.from(v,"base64"));n++}catch(e){console.log("chant: could not write "+JSON.stringify(k)+": "+e.message)}}console.log("chant: took "+n+" report files from the yodel-plan-staging job")' out/yodel <<'END_OF_REPORT'
+          ${{ toJSON(needs.yodel-plan-staging.outputs.report_0) }}
+          ${{ toJSON(needs.yodel-plan-staging.outputs.report_1) }}
+          ${{ toJSON(needs.yodel-plan-staging.outputs.report_2) }}
+          ${{ toJSON(needs.yodel-plan-staging.outputs.report_3) }}
+          END_OF_REPORT
+      - name: Sign the plan and policy evidence
+        if: always()
+        env:
+          HEAD_SHA: '${{ github.sha }}'
+          BASE_SHA: '${{ github.event.pull_request.base.sha }}'
+          PLAN_RESULT: '${{ needs.yodel-plan-staging.result }}'
+          CHANT_RUNNER_KEY: '${{ secrets.CHANT_RUNNER_KEY_PEM }}'
+        run: |
+          git fetch --quiet --no-tags --depth=1 origin "$HEAD_SHA" || true
+          yodel chant ci evidence sign --from-report out/yodel --member staging --result "$PLAN_RESULT" --at "$HEAD_SHA" --base "$BASE_SHA"
+      - name: Keep the plan report
+        if: always()
+        uses: https://code.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1
+        with:
+          name: yodel-report-staging
+          path: out/yodel
+          if-no-files-found: ignore
+      - name: Post the plan note and yodel/staging/plan
+        if: always()
+        env:
+          PR_NUMBER: '${{ github.event.pull_request.number }}'
+          HEAD_SHA: '${{ github.sha }}'
+          PLAN_RESULT: '${{ needs.yodel-plan-staging.result }}'
+          GITHUB_TOKEN: '${{ github.token }}'
+        run: yodel chant components pr-post --pr "$PR_NUMBER" --head "$HEAD_SHA" --env default --output out/yodel --forge forgejo --member staging --result "$PLAN_RESULT" --context yodel/staging/plan
+  yodel-plan-prod:
+    if: github.event_name == 'pull_request'
+    runs-on: docker
+    container: node:22
+    outputs:
+      report_0: '${{ steps.plan.outputs.report_0 }}'
+      report_1: '${{ steps.plan.outputs.report_1 }}'
+      report_2: '${{ steps.plan.outputs.report_2 }}'
+      report_3: '${{ steps.plan.outputs.report_3 }}'
+    steps:
+      - name: Say on the head that the plan started
+        env:
+          CHANT_PENDING_TOKEN: '${{ github.token }}'
+          CHANT_PENDING_SHA: '${{ github.sha }}'
+          CHANT_PENDING_CONTEXT: yodel/prod/plan
+          CHANT_PENDING_DESCRIPTION: planning
+        run: '(cd / && node -e ''const api=String(process.env.GITHUB_API_URL||"").replace(/\/+$/,""),repo=process.env.GITHUB_REPOSITORY,sha=process.env.CHANT_PENDING_SHA||"";if(!/^[0-9a-f]{40}$/.test(sha)){console.log("chant: no commit to say the plan started on");process.exit(0)}const run=process.env.GITHUB_SERVER_URL&&process.env.GITHUB_RUN_ID?process.env.GITHUB_SERVER_URL+"/"+repo+"/actions/runs/"+process.env.GITHUB_RUN_ID:undefined;fetch(api+"/repos/"+repo+"/statuses/"+sha,{method:"POST",headers:{authorization:"token "+process.env.CHANT_PENDING_TOKEN,accept:"application/json","content-type":"application/json"},body:JSON.stringify({state:"pending",context:process.env.CHANT_PENDING_CONTEXT,description:process.env.CHANT_PENDING_DESCRIPTION,...(run?{target_url:run}:{})})}).then((r)=>console.log(r.ok?"chant: "+process.env.CHANT_PENDING_CONTEXT+" is pending":"chant: the forge answered "+r.status+" to the pending status"),(err)=>console.log("chant: the pending status was not posted: "+err.message));'')'
+      - name: Check out the change
+        env:
+          CHANT_CHECKOUT_TOKEN: '${{ github.token }}'
+        run: |
+          set -eu
+          git config --global --add safe.directory "$PWD" 2>/dev/null || true
+          [ -d .git ] || git init -q .
+          git remote get-url origin >/dev/null 2>&1 || git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          if [ -n "${CHANT_CHECKOUT_TOKEN:-}" ]; then
+            chant_auth="$(printf 'x-access-token:%s' "$CHANT_CHECKOUT_TOKEN" | base64 | tr -d '\n')"
+            export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $chant_auth"
+            unset chant_auth
+          fi
+          ref="$GITHUB_REF"
+          want="$GITHUB_SHA"
+          case "$ref" in
+            refs/heads/*) target="refs/remotes/origin/${ref#refs/heads/}" ;;
+            refs/tags/*) target="$ref" ;;
+            refs/*) target="refs/remotes/${ref#refs/}" ;;
+            *) target="refs/remotes/origin/chant-head" ;;
+          esac
+          if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
+          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"
+          git -c protocol.version=2 fetch -q --no-tags origin '+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle' 2>/dev/null || true
+          case "$ref" in
+            refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
+            *) git checkout -q --force --detach "$target" ;;
+          esac
+      - run: |
+          if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
+          command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
+      - name: Plan prod
+        id: plan
+        env:
+          BASE_SHA: '${{ github.event.pull_request.base.sha }}'
+          PR_NUMBER: '${{ github.event.pull_request.number }}'
+        run: |
+          if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
+          chant_report="$PWD/out/yodel"
+          chant_handover() { node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const [dir,out]=process.argv.slice(1);const CHUNK=1000000,PARTS=4,NOTE=["pr-plan.json","pr-note.md"];const all={};const walk=(d,r)=>{let n=[];try{n=fs.readdirSync(d).sort()}catch{return}for(const x of n){const f=p.join(d,x),k=r?r+"/"+x:x;let s;try{s=fs.lstatSync(f)}catch{continue}if(s.isDirectory())walk(f,k);else if(s.isFile())all[k]=fs.readFileSync(f).toString("base64")}};walk(dir,"");const pack=(o)=>z.gzipSync(JSON.stringify(o)).toString("base64");let b=pack(all);if(b.length>CHUNK*PARTS){b=pack(Object.fromEntries(Object.entries(all).filter(([k])=>NOTE.includes(k))));if(b.length>CHUNK*PARTS){b=pack({});console.error("chant: the plan report is too large to hand to the note job, even cut to the report and the note; it hands on none of it")}else console.error("chant: the plan report is too large to hand to the note job whole; it hands on pr-plan.json and pr-note.md")}let o="";for(let i=0;i*CHUNK<b.length;i++)o+="report_"+i+"="+b.slice(i*CHUNK,(i+1)*CHUNK)+"\n";fs.appendFileSync(out,o);' "$chant_report" "${GITHUB_OUTPUT:-/dev/null}" || echo "chant: the plan report could not be handed to the note job" >&2; }
+          trap chant_handover EXIT
+          yodel plan prod --pr-note out/yodel
+  yodel-note-prod:
+    needs:
+      - yodel-plan-prod
+    if: always() && github.event_name == 'pull_request' && (needs.yodel-plan-prod.result == 'success' || needs.yodel-plan-prod.result == 'failure')
+    runs-on: docker
+    container: node:22
+    steps:
+      - name: Check out the target branch's commit
+        uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: '${{ github.event.pull_request.base.sha }}'
+      - name: Take the plan report from the plan job
+        run: |
+          set -u
+          node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const dir=process.argv[1];let b="";for(const l of fs.readFileSync(0,"utf8").split("\n")){if(!l.trim())continue;let s="";try{s=JSON.parse(l)}catch{}if(typeof s==="string")b+=s}if(!b){console.log("chant: the yodel-plan-prod job handed on no report");process.exit(0)}let files;try{files=JSON.parse(z.gunzipSync(Buffer.from(b,"base64"),{maxOutputLength:268435456}).toString("utf8"))}catch(e){console.log("chant: the report the yodel-plan-prod job handed on does not read: "+e.message);process.exit(0)}if(!files||typeof files!=="object"||Array.isArray(files)){console.log("chant: the report the yodel-plan-prod job handed on is not a set of files");process.exit(0)}let n=0;for(const [k,v] of Object.entries(files)){const parts=k.split("/");if(typeof v!=="string"||k.length>1024||parts.some((x)=>!x||x==="."||x===".."||/[\\\x00-\x1f]/.test(x))){console.log("chant: left out "+JSON.stringify(k));continue}try{const f=p.join(dir,...parts);fs.mkdirSync(p.dirname(f),{recursive:true});fs.writeFileSync(f,Buffer.from(v,"base64"));n++}catch(e){console.log("chant: could not write "+JSON.stringify(k)+": "+e.message)}}console.log("chant: took "+n+" report files from the yodel-plan-prod job")' out/yodel <<'END_OF_REPORT'
+          ${{ toJSON(needs.yodel-plan-prod.outputs.report_0) }}
+          ${{ toJSON(needs.yodel-plan-prod.outputs.report_1) }}
+          ${{ toJSON(needs.yodel-plan-prod.outputs.report_2) }}
+          ${{ toJSON(needs.yodel-plan-prod.outputs.report_3) }}
+          END_OF_REPORT
+      - name: Sign the plan and policy evidence
+        if: always()
+        env:
+          HEAD_SHA: '${{ github.sha }}'
+          BASE_SHA: '${{ github.event.pull_request.base.sha }}'
+          PLAN_RESULT: '${{ needs.yodel-plan-prod.result }}'
+          CHANT_RUNNER_KEY: '${{ secrets.CHANT_RUNNER_KEY_PEM }}'
+        run: |
+          git fetch --quiet --no-tags --depth=1 origin "$HEAD_SHA" || true
+          yodel chant ci evidence sign --from-report out/yodel --member prod --result "$PLAN_RESULT" --at "$HEAD_SHA" --base "$BASE_SHA"
+      - name: Keep the plan report
+        if: always()
+        uses: https://code.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1
+        with:
+          name: yodel-report-prod
+          path: out/yodel
+          if-no-files-found: ignore
+      - name: Post the plan note and yodel/prod/plan
+        if: always()
+        env:
+          PR_NUMBER: '${{ github.event.pull_request.number }}'
+          HEAD_SHA: '${{ github.sha }}'
+          PLAN_RESULT: '${{ needs.yodel-plan-prod.result }}'
+          GITHUB_TOKEN: '${{ github.token }}'
+        run: yodel chant components pr-post --pr "$PR_NUMBER" --head "$HEAD_SHA" --env default --output out/yodel --forge forgejo --member prod --result "$PLAN_RESULT" --context yodel/prod/plan
+  yodel-replan-staging:
+    if: github.event_name == 'issue_comment' && (github.event.issue.pull_request || github.event.is_pull) && (startsWith(github.event.comment.body, '/yodel plan'))
+    runs-on: docker
+    container: node:22
+    outputs:
+      go: '${{ steps.decide.outputs.go }}'
+      pr: '${{ steps.decide.outputs.pr }}'
+      head: '${{ steps.head.outputs.head }}'
+      report_0: '${{ steps.plan.outputs.report_0 }}'
+      report_1: '${{ steps.plan.outputs.report_1 }}'
+      report_2: '${{ steps.plan.outputs.report_2 }}'
+      report_3: '${{ steps.plan.outputs.report_3 }}'
+    steps:
+      - name: Read the comment and decide whether it plans again
+        id: decide
+        env:
+          CHANT_REPLAN_TOKEN: '${{ github.token }}'
+          CHANT_REPLAN_COMMANDS: '["/yodel plan"]'
+          CHANT_REPLAN_TARGET: staging
+          CHANT_REPLAN_TARGETS: '["staging","prod"]'
+          CHANT_REPLAN_PERMISSION: '1'
+        run: '(cd / && node -e ''const fs=require("fs");const say=(m)=>console.log("chant: "+m);const out=(k,v)=>fs.appendFileSync(process.env.GITHUB_OUTPUT,k+"="+v+"\n");let e;try{e=JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH,"utf8"))}catch{say("the event file does not read, so nothing is planned again");process.exit(0)}const body=String((e.comment&&e.comment.body)||"").trim();const cmds=JSON.parse(process.env.CHANT_REPLAN_COMMANDS||"[]");for(const g of JSON.parse(process.env.CHANT_REPLAN_GATED||"[]")){const v=process.env[g.when]||"";if(v&&v!=="0"&&v!=="false")cmds.push(g.comment)}let arg,flag;for(const c of cmds){if(body===c){arg="";break}if(body.startsWith(c+" ")){const r=body.slice(c.length).trim();if(r.startsWith("-")){flag=r.split(/\s/)[0];break}if(/^[A-Za-z0-9_.\/@+=,:][A-Za-z0-9_.\/@+=,:-]*$/.test(r)){arg=r;break}}}if(flag!==undefined){say("the re-plan takes no flags, and "+flag+" is one, so nothing is planned again");process.exit(0)}if(arg===undefined){say("the comment asks for no plan");process.exit(0)}const target=process.env.CHANT_REPLAN_TARGET||"",targets=JSON.parse(process.env.CHANT_REPLAN_TARGETS||"[]");if(targets.length&&arg&&!targets.includes(arg)){say(arg+" is none of "+targets.join(", ")+", so nothing is planned again");process.exit(0)}if(targets.length&&arg&&arg!==target){say("the comment plans "+arg+" again, not "+target);process.exit(0)}const n=e.issue&&e.issue.number;if(!Number.isInteger(n)||!(e.issue.pull_request||e.is_pull)){say("the comment is not on a pull request");process.exit(0)}const api=String(process.env.GITHUB_API_URL||"").replace(/\/+$/,""),repo=process.env.GITHUB_REPOSITORY;const get=async(p)=>{const r=await fetch(api+"/repos/"+repo+p,{headers:{authorization:"token "+process.env.CHANT_REPLAN_TOKEN,accept:"application/json"}});if(!r.ok)throw new Error(p+" answered "+r.status);return r.json()};(async()=>{const pr=await get("/pulls/"+n);if(pr.state!=="open"){say("pull request "+n+" is not open, so it is not planned again");return}const same=Boolean(pr.head&&pr.head.repo&&pr.head.repo.full_name===repo);if(!same&&process.env.CHANT_REPLAN_FORKS==="skip"){say("pull request "+n+" is from a fork, and its code never runs with this repository\u0027s credentials");return}if(process.env.CHANT_REPLAN_PERMISSION){const who=e.comment&&e.comment.user&&e.comment.user.login;const p=who?await get("/collaborators/"+encodeURIComponent(who)+"/permission"):{};if(!["owner","admin","maintain","write"].includes(p.permission)){say((who||"the commenter")+" cannot write to "+repo+", so nothing is planned again");return}}const sha=/^[0-9a-f]{40}$/;if(!sha.test(String(pr.head&&pr.head.sha))||!sha.test(String(pr.base&&pr.base.sha)))throw new Error("the pull request names no head or base commit");out("go","1");out("pr",String(n));out("head",pr.head.sha);out("base",pr.base.sha);out("argument",arg);say("planning pull request "+n+" again at "+pr.head.sha.slice(0,12)+(arg?" for "+arg:""))})().catch((err)=>{console.error("chant: the re-plan could not decide: "+(err&&err.message?err.message:String(err)));process.exit(1)});'')'
+      - if: steps.decide.outputs.go == '1'
+        name: Say on the head that the plan started
+        env:
+          CHANT_PENDING_TOKEN: '${{ github.token }}'
+          CHANT_PENDING_SHA: '${{ steps.decide.outputs.head }}'
+          CHANT_PENDING_CONTEXT: yodel/staging/plan
+          CHANT_PENDING_DESCRIPTION: planning
+        run: '(cd / && node -e ''const api=String(process.env.GITHUB_API_URL||"").replace(/\/+$/,""),repo=process.env.GITHUB_REPOSITORY,sha=process.env.CHANT_PENDING_SHA||"";if(!/^[0-9a-f]{40}$/.test(sha)){console.log("chant: no commit to say the plan started on");process.exit(0)}const run=process.env.GITHUB_SERVER_URL&&process.env.GITHUB_RUN_ID?process.env.GITHUB_SERVER_URL+"/"+repo+"/actions/runs/"+process.env.GITHUB_RUN_ID:undefined;fetch(api+"/repos/"+repo+"/statuses/"+sha,{method:"POST",headers:{authorization:"token "+process.env.CHANT_PENDING_TOKEN,accept:"application/json","content-type":"application/json"},body:JSON.stringify({state:"pending",context:process.env.CHANT_PENDING_CONTEXT,description:process.env.CHANT_PENDING_DESCRIPTION,...(run?{target_url:run}:{})})}).then((r)=>console.log(r.ok?"chant: "+process.env.CHANT_PENDING_CONTEXT+" is pending":"chant: the forge answered "+r.status+" to the pending status"),(err)=>console.log("chant: the pending status was not posted: "+err.message));'')'
+      - if: steps.decide.outputs.go == '1'
+        name: Check out the pull request's head
+        id: head
+        env:
+          CHANT_CHECKOUT_TOKEN: '${{ github.token }}'
+          CHANT_REPLAN_REF: refs/pull/${{ steps.decide.outputs.pr }}/head
+        run: |
+          set -eu
+          git config --global --add safe.directory "$PWD" 2>/dev/null || true
+          [ -d .git ] || git init -q .
+          git remote get-url origin >/dev/null 2>&1 || git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          if [ -n "${CHANT_CHECKOUT_TOKEN:-}" ]; then
+            chant_auth="$(printf 'x-access-token:%s' "$CHANT_CHECKOUT_TOKEN" | base64 | tr -d '\n')"
+            export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $chant_auth"
+            unset chant_auth
+          fi
+          ref="${CHANT_REPLAN_REF:-$GITHUB_REF}"
+          want="${CHANT_REPLAN_REF:-$GITHUB_SHA}"
+          case "$ref" in
+            refs/heads/*) target="refs/remotes/origin/${ref#refs/heads/}" ;;
+            refs/tags/*) target="$ref" ;;
+            refs/*) target="refs/remotes/${ref#refs/}" ;;
+            *) target="refs/remotes/origin/chant-head" ;;
+          esac
+          if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
+          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"
+          git -c protocol.version=2 fetch -q --no-tags origin '+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle' 2>/dev/null || true
+          case "$ref" in
+            refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
+            *) git checkout -q --force --detach "$target" ;;
+          esac
+          echo "head=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - if: steps.decide.outputs.go == '1'
+        run: |
+          if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
+          command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
+      - if: steps.decide.outputs.go == '1'
+        name: Plan staging again
+        id: plan
+        env:
+          BASE_SHA: '${{ steps.decide.outputs.base }}'
+          PR_NUMBER: '${{ steps.decide.outputs.pr }}'
+          CHANT_PLAN_ARGUMENT: '${{ steps.decide.outputs.argument }}'
+        run: |
+          if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
+          chant_report="$PWD/out/yodel"
+          chant_handover() { node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const [dir,out]=process.argv.slice(1);const CHUNK=1000000,PARTS=4,NOTE=["pr-plan.json","pr-note.md"];const all={};const walk=(d,r)=>{let n=[];try{n=fs.readdirSync(d).sort()}catch{return}for(const x of n){const f=p.join(d,x),k=r?r+"/"+x:x;let s;try{s=fs.lstatSync(f)}catch{continue}if(s.isDirectory())walk(f,k);else if(s.isFile())all[k]=fs.readFileSync(f).toString("base64")}};walk(dir,"");const pack=(o)=>z.gzipSync(JSON.stringify(o)).toString("base64");let b=pack(all);if(b.length>CHUNK*PARTS){b=pack(Object.fromEntries(Object.entries(all).filter(([k])=>NOTE.includes(k))));if(b.length>CHUNK*PARTS){b=pack({});console.error("chant: the plan report is too large to hand to the note job, even cut to the report and the note; it hands on none of it")}else console.error("chant: the plan report is too large to hand to the note job whole; it hands on pr-plan.json and pr-note.md")}let o="";for(let i=0;i*CHUNK<b.length;i++)o+="report_"+i+"="+b.slice(i*CHUNK,(i+1)*CHUNK)+"\n";fs.appendFileSync(out,o);' "$chant_report" "${GITHUB_OUTPUT:-/dev/null}" || echo "chant: the plan report could not be handed to the note job" >&2; }
+          trap chant_handover EXIT
+          yodel plan staging --pr-note out/yodel
+  yodel-replan-note-staging:
+    needs:
+      - yodel-replan-staging
+    if: always() && github.event_name == 'issue_comment' && needs.yodel-replan-staging.outputs.go == '1' && (needs.yodel-replan-staging.result == 'success' || needs.yodel-replan-staging.result == 'failure')
+    runs-on: docker
+    container: node:22
+    steps:
+      - name: Check out the target branch's commit
+        uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Take the plan report from the re-plan job
+        run: |
+          set -u
+          node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const dir=process.argv[1];let b="";for(const l of fs.readFileSync(0,"utf8").split("\n")){if(!l.trim())continue;let s="";try{s=JSON.parse(l)}catch{}if(typeof s==="string")b+=s}if(!b){console.log("chant: the yodel-replan-staging job handed on no report");process.exit(0)}let files;try{files=JSON.parse(z.gunzipSync(Buffer.from(b,"base64"),{maxOutputLength:268435456}).toString("utf8"))}catch(e){console.log("chant: the report the yodel-replan-staging job handed on does not read: "+e.message);process.exit(0)}if(!files||typeof files!=="object"||Array.isArray(files)){console.log("chant: the report the yodel-replan-staging job handed on is not a set of files");process.exit(0)}let n=0;for(const [k,v] of Object.entries(files)){const parts=k.split("/");if(typeof v!=="string"||k.length>1024||parts.some((x)=>!x||x==="."||x===".."||/[\\\x00-\x1f]/.test(x))){console.log("chant: left out "+JSON.stringify(k));continue}try{const f=p.join(dir,...parts);fs.mkdirSync(p.dirname(f),{recursive:true});fs.writeFileSync(f,Buffer.from(v,"base64"));n++}catch(e){console.log("chant: could not write "+JSON.stringify(k)+": "+e.message)}}console.log("chant: took "+n+" report files from the yodel-replan-staging job")' out/yodel <<'END_OF_REPORT'
+          ${{ toJSON(needs.yodel-replan-staging.outputs.report_0) }}
+          ${{ toJSON(needs.yodel-replan-staging.outputs.report_1) }}
+          ${{ toJSON(needs.yodel-replan-staging.outputs.report_2) }}
+          ${{ toJSON(needs.yodel-replan-staging.outputs.report_3) }}
+          END_OF_REPORT
+      - name: Keep the plan report
+        if: always()
+        uses: https://code.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1
+        with:
+          name: yodel-report-staging-replan
+          path: out/yodel
+          if-no-files-found: ignore
+      - name: Post the plan note and yodel/staging/plan
+        if: always()
+        env:
+          PR_NUMBER: '${{ needs.yodel-replan-staging.outputs.pr }}'
+          HEAD_SHA: '${{ needs.yodel-replan-staging.outputs.head }}'
+          PLAN_RESULT: '${{ needs.yodel-replan-staging.result }}'
+          GITHUB_TOKEN: '${{ github.token }}'
+        run: yodel chant components pr-post --pr "$PR_NUMBER" --head "$HEAD_SHA" --env default --output out/yodel --forge forgejo --member staging --result "$PLAN_RESULT" --context yodel/staging/plan
+  yodel-replan-prod:
+    if: github.event_name == 'issue_comment' && (github.event.issue.pull_request || github.event.is_pull) && (startsWith(github.event.comment.body, '/yodel plan'))
+    runs-on: docker
+    container: node:22
+    outputs:
+      go: '${{ steps.decide.outputs.go }}'
+      pr: '${{ steps.decide.outputs.pr }}'
+      head: '${{ steps.head.outputs.head }}'
+      report_0: '${{ steps.plan.outputs.report_0 }}'
+      report_1: '${{ steps.plan.outputs.report_1 }}'
+      report_2: '${{ steps.plan.outputs.report_2 }}'
+      report_3: '${{ steps.plan.outputs.report_3 }}'
+    steps:
+      - name: Read the comment and decide whether it plans again
+        id: decide
+        env:
+          CHANT_REPLAN_TOKEN: '${{ github.token }}'
+          CHANT_REPLAN_COMMANDS: '["/yodel plan"]'
+          CHANT_REPLAN_TARGET: prod
+          CHANT_REPLAN_TARGETS: '["staging","prod"]'
+          CHANT_REPLAN_PERMISSION: '1'
+        run: '(cd / && node -e ''const fs=require("fs");const say=(m)=>console.log("chant: "+m);const out=(k,v)=>fs.appendFileSync(process.env.GITHUB_OUTPUT,k+"="+v+"\n");let e;try{e=JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH,"utf8"))}catch{say("the event file does not read, so nothing is planned again");process.exit(0)}const body=String((e.comment&&e.comment.body)||"").trim();const cmds=JSON.parse(process.env.CHANT_REPLAN_COMMANDS||"[]");for(const g of JSON.parse(process.env.CHANT_REPLAN_GATED||"[]")){const v=process.env[g.when]||"";if(v&&v!=="0"&&v!=="false")cmds.push(g.comment)}let arg,flag;for(const c of cmds){if(body===c){arg="";break}if(body.startsWith(c+" ")){const r=body.slice(c.length).trim();if(r.startsWith("-")){flag=r.split(/\s/)[0];break}if(/^[A-Za-z0-9_.\/@+=,:][A-Za-z0-9_.\/@+=,:-]*$/.test(r)){arg=r;break}}}if(flag!==undefined){say("the re-plan takes no flags, and "+flag+" is one, so nothing is planned again");process.exit(0)}if(arg===undefined){say("the comment asks for no plan");process.exit(0)}const target=process.env.CHANT_REPLAN_TARGET||"",targets=JSON.parse(process.env.CHANT_REPLAN_TARGETS||"[]");if(targets.length&&arg&&!targets.includes(arg)){say(arg+" is none of "+targets.join(", ")+", so nothing is planned again");process.exit(0)}if(targets.length&&arg&&arg!==target){say("the comment plans "+arg+" again, not "+target);process.exit(0)}const n=e.issue&&e.issue.number;if(!Number.isInteger(n)||!(e.issue.pull_request||e.is_pull)){say("the comment is not on a pull request");process.exit(0)}const api=String(process.env.GITHUB_API_URL||"").replace(/\/+$/,""),repo=process.env.GITHUB_REPOSITORY;const get=async(p)=>{const r=await fetch(api+"/repos/"+repo+p,{headers:{authorization:"token "+process.env.CHANT_REPLAN_TOKEN,accept:"application/json"}});if(!r.ok)throw new Error(p+" answered "+r.status);return r.json()};(async()=>{const pr=await get("/pulls/"+n);if(pr.state!=="open"){say("pull request "+n+" is not open, so it is not planned again");return}const same=Boolean(pr.head&&pr.head.repo&&pr.head.repo.full_name===repo);if(!same&&process.env.CHANT_REPLAN_FORKS==="skip"){say("pull request "+n+" is from a fork, and its code never runs with this repository\u0027s credentials");return}if(process.env.CHANT_REPLAN_PERMISSION){const who=e.comment&&e.comment.user&&e.comment.user.login;const p=who?await get("/collaborators/"+encodeURIComponent(who)+"/permission"):{};if(!["owner","admin","maintain","write"].includes(p.permission)){say((who||"the commenter")+" cannot write to "+repo+", so nothing is planned again");return}}const sha=/^[0-9a-f]{40}$/;if(!sha.test(String(pr.head&&pr.head.sha))||!sha.test(String(pr.base&&pr.base.sha)))throw new Error("the pull request names no head or base commit");out("go","1");out("pr",String(n));out("head",pr.head.sha);out("base",pr.base.sha);out("argument",arg);say("planning pull request "+n+" again at "+pr.head.sha.slice(0,12)+(arg?" for "+arg:""))})().catch((err)=>{console.error("chant: the re-plan could not decide: "+(err&&err.message?err.message:String(err)));process.exit(1)});'')'
+      - if: steps.decide.outputs.go == '1'
+        name: Say on the head that the plan started
+        env:
+          CHANT_PENDING_TOKEN: '${{ github.token }}'
+          CHANT_PENDING_SHA: '${{ steps.decide.outputs.head }}'
+          CHANT_PENDING_CONTEXT: yodel/prod/plan
+          CHANT_PENDING_DESCRIPTION: planning
+        run: '(cd / && node -e ''const api=String(process.env.GITHUB_API_URL||"").replace(/\/+$/,""),repo=process.env.GITHUB_REPOSITORY,sha=process.env.CHANT_PENDING_SHA||"";if(!/^[0-9a-f]{40}$/.test(sha)){console.log("chant: no commit to say the plan started on");process.exit(0)}const run=process.env.GITHUB_SERVER_URL&&process.env.GITHUB_RUN_ID?process.env.GITHUB_SERVER_URL+"/"+repo+"/actions/runs/"+process.env.GITHUB_RUN_ID:undefined;fetch(api+"/repos/"+repo+"/statuses/"+sha,{method:"POST",headers:{authorization:"token "+process.env.CHANT_PENDING_TOKEN,accept:"application/json","content-type":"application/json"},body:JSON.stringify({state:"pending",context:process.env.CHANT_PENDING_CONTEXT,description:process.env.CHANT_PENDING_DESCRIPTION,...(run?{target_url:run}:{})})}).then((r)=>console.log(r.ok?"chant: "+process.env.CHANT_PENDING_CONTEXT+" is pending":"chant: the forge answered "+r.status+" to the pending status"),(err)=>console.log("chant: the pending status was not posted: "+err.message));'')'
+      - if: steps.decide.outputs.go == '1'
+        name: Check out the pull request's head
+        id: head
+        env:
+          CHANT_CHECKOUT_TOKEN: '${{ github.token }}'
+          CHANT_REPLAN_REF: refs/pull/${{ steps.decide.outputs.pr }}/head
+        run: |
+          set -eu
+          git config --global --add safe.directory "$PWD" 2>/dev/null || true
+          [ -d .git ] || git init -q .
+          git remote get-url origin >/dev/null 2>&1 || git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          if [ -n "${CHANT_CHECKOUT_TOKEN:-}" ]; then
+            chant_auth="$(printf 'x-access-token:%s' "$CHANT_CHECKOUT_TOKEN" | base64 | tr -d '\n')"
+            export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $chant_auth"
+            unset chant_auth
+          fi
+          ref="${CHANT_REPLAN_REF:-$GITHUB_REF}"
+          want="${CHANT_REPLAN_REF:-$GITHUB_SHA}"
+          case "$ref" in
+            refs/heads/*) target="refs/remotes/origin/${ref#refs/heads/}" ;;
+            refs/tags/*) target="$ref" ;;
+            refs/*) target="refs/remotes/${ref#refs/}" ;;
+            *) target="refs/remotes/origin/chant-head" ;;
+          esac
+          if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
+          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"
+          git -c protocol.version=2 fetch -q --no-tags origin '+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle' 2>/dev/null || true
+          case "$ref" in
+            refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
+            *) git checkout -q --force --detach "$target" ;;
+          esac
+          echo "head=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - if: steps.decide.outputs.go == '1'
+        run: |
+          if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
+          command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
+      - if: steps.decide.outputs.go == '1'
+        name: Plan prod again
+        id: plan
+        env:
+          BASE_SHA: '${{ steps.decide.outputs.base }}'
+          PR_NUMBER: '${{ steps.decide.outputs.pr }}'
+          CHANT_PLAN_ARGUMENT: '${{ steps.decide.outputs.argument }}'
+        run: |
+          if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
+          chant_report="$PWD/out/yodel"
+          chant_handover() { node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const [dir,out]=process.argv.slice(1);const CHUNK=1000000,PARTS=4,NOTE=["pr-plan.json","pr-note.md"];const all={};const walk=(d,r)=>{let n=[];try{n=fs.readdirSync(d).sort()}catch{return}for(const x of n){const f=p.join(d,x),k=r?r+"/"+x:x;let s;try{s=fs.lstatSync(f)}catch{continue}if(s.isDirectory())walk(f,k);else if(s.isFile())all[k]=fs.readFileSync(f).toString("base64")}};walk(dir,"");const pack=(o)=>z.gzipSync(JSON.stringify(o)).toString("base64");let b=pack(all);if(b.length>CHUNK*PARTS){b=pack(Object.fromEntries(Object.entries(all).filter(([k])=>NOTE.includes(k))));if(b.length>CHUNK*PARTS){b=pack({});console.error("chant: the plan report is too large to hand to the note job, even cut to the report and the note; it hands on none of it")}else console.error("chant: the plan report is too large to hand to the note job whole; it hands on pr-plan.json and pr-note.md")}let o="";for(let i=0;i*CHUNK<b.length;i++)o+="report_"+i+"="+b.slice(i*CHUNK,(i+1)*CHUNK)+"\n";fs.appendFileSync(out,o);' "$chant_report" "${GITHUB_OUTPUT:-/dev/null}" || echo "chant: the plan report could not be handed to the note job" >&2; }
+          trap chant_handover EXIT
+          yodel plan prod --pr-note out/yodel
+  yodel-replan-note-prod:
+    needs:
+      - yodel-replan-prod
+    if: always() && github.event_name == 'issue_comment' && needs.yodel-replan-prod.outputs.go == '1' && (needs.yodel-replan-prod.result == 'success' || needs.yodel-replan-prod.result == 'failure')
+    runs-on: docker
+    container: node:22
+    steps:
+      - name: Check out the target branch's commit
+        uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Take the plan report from the re-plan job
+        run: |
+          set -u
+          node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const dir=process.argv[1];let b="";for(const l of fs.readFileSync(0,"utf8").split("\n")){if(!l.trim())continue;let s="";try{s=JSON.parse(l)}catch{}if(typeof s==="string")b+=s}if(!b){console.log("chant: the yodel-replan-prod job handed on no report");process.exit(0)}let files;try{files=JSON.parse(z.gunzipSync(Buffer.from(b,"base64"),{maxOutputLength:268435456}).toString("utf8"))}catch(e){console.log("chant: the report the yodel-replan-prod job handed on does not read: "+e.message);process.exit(0)}if(!files||typeof files!=="object"||Array.isArray(files)){console.log("chant: the report the yodel-replan-prod job handed on is not a set of files");process.exit(0)}let n=0;for(const [k,v] of Object.entries(files)){const parts=k.split("/");if(typeof v!=="string"||k.length>1024||parts.some((x)=>!x||x==="."||x===".."||/[\\\x00-\x1f]/.test(x))){console.log("chant: left out "+JSON.stringify(k));continue}try{const f=p.join(dir,...parts);fs.mkdirSync(p.dirname(f),{recursive:true});fs.writeFileSync(f,Buffer.from(v,"base64"));n++}catch(e){console.log("chant: could not write "+JSON.stringify(k)+": "+e.message)}}console.log("chant: took "+n+" report files from the yodel-replan-prod job")' out/yodel <<'END_OF_REPORT'
+          ${{ toJSON(needs.yodel-replan-prod.outputs.report_0) }}
+          ${{ toJSON(needs.yodel-replan-prod.outputs.report_1) }}
+          ${{ toJSON(needs.yodel-replan-prod.outputs.report_2) }}
+          ${{ toJSON(needs.yodel-replan-prod.outputs.report_3) }}
+          END_OF_REPORT
+      - name: Keep the plan report
+        if: always()
+        uses: https://code.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1
+        with:
+          name: yodel-report-prod-replan
+          path: out/yodel
+          if-no-files-found: ignore
+      - name: Post the plan note and yodel/prod/plan
+        if: always()
+        env:
+          PR_NUMBER: '${{ needs.yodel-replan-prod.outputs.pr }}'
+          HEAD_SHA: '${{ needs.yodel-replan-prod.outputs.head }}'
+          PLAN_RESULT: '${{ needs.yodel-replan-prod.result }}'
+          GITHUB_TOKEN: '${{ github.token }}'
+        run: yodel chant components pr-post --pr "$PR_NUMBER" --head "$HEAD_SHA" --env default --output out/yodel --forge forgejo --member prod --result "$PLAN_RESULT" --context yodel/prod/plan
