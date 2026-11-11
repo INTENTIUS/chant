@@ -11,8 +11,10 @@
  * - A hook in the plan or apply job that holds the wave on another gate
  *   reads that gate with no write token: while it waits, the gate job (a
  *   plan job's hold) or the record job (an apply job's) records its pending
- *   fact. A hold that asks chant to record the gate fails in those jobs
- *   once approved, since its approval is spent before the hook runs again.
+ *   fact. A hold that asks chant to record the gate fails in the apply job
+ *   once approved, since its approval is spent before the hook runs again;
+ *   the plan job leaves the spend to the gate job (#4994,
+ *   `op-waves-split-product.test.ts`).
  */
 import { afterAll, describe, expect, test } from "vitest";
 import { execFileSync } from "node:child_process";
@@ -253,15 +255,28 @@ describe("a hold on another gate in a split wave (#4992)", () => {
     expect(approved.appended).toEqual([]);
   });
 
-  test("an approved hold that asks chant to record its gate fails in the plan job, which cannot spend it", async () => {
+  test("an approved hold that asks chant to record its gate waits in the plan job, which leaves the spend to the gate job (#4994)", async () => {
     const h = holdHarness("plan", { record: true });
     const approved = memoryGateLedgerPort({ resolutions: [h.approval] });
     const lines: string[] = [];
     const planned = await runOpWave({ ...h.base, phase: "plan", gates: approved, runs: noWrites, log: (l) => lines.push(l) });
-    expect(planned.exitCode).toBe(CHANT_EXIT.failed);
+    expect(planned.exitCode).toBe(CHANT_EXIT.waiting);
     expect(h.reruns).toEqual([]);
     expect(approved.applied).toEqual([]);
-    expect(lines.join("\n")).toContain("this plan job of a split wave holds no write token, so it cannot spend it");
+    expect(lines.join("\n")).toContain("this plan job holds no write token, so the gate job spends it");
+  });
+
+  test("an approved hold that asks chant to record its gate fails in the applying job, which cannot spend it", async () => {
+    const h = holdHarness("apply", { record: true });
+    const approved = memoryGateLedgerPort({ resolutions: [h.approval] });
+    await runOpWave({ ...h.base, phase: "plan", gates: approved, runs: noWrites });
+    expect((await runOpWave({ ...h.base, phase: "gate", gates: approved })).exitCode).toBe(CHANT_EXIT.done);
+    const lines: string[] = [];
+    const applied = await runOpWave({ ...h.base, phase: "apply", gates: approved, runs: noWrites, log: (l) => lines.push(l) });
+    expect(applied.exitCode).toBe(CHANT_EXIT.failed);
+    expect(h.reruns).toEqual([]);
+    expect(approved.applied).toEqual([]);
+    expect(lines.join("\n")).toContain("this apply job of a split wave holds no write token, so it cannot spend it");
   });
 
   test("an applying job's hold is recorded by the record job, and the wave waits", async () => {

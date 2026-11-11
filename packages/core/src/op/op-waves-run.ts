@@ -81,7 +81,7 @@ import { approveCommand, evaluateGate, gitGateLedgerPort, type GateCheck, type G
 import type { GateAnswerRef, PendingGateInput, PendingGateRecord } from "../lifecycle/gate-ledger";
 import type { GatePointAsker } from "../point-decision";
 import type { WaitingPoint } from "./steward-points";
-import { isApprovalSpent, type AppliedGateRecord, type FinishedGateRecord } from "../lifecycle/gate-applied";
+import { finishedApply, isApprovalSpent, type AppliedGateRecord, type FinishedGateRecord } from "../lifecycle/gate-applied";
 import { samePlanDigest } from "../lifecycle/plan-digest";
 import { movedSincePreview } from "./op-waves-preview";
 import { isLifecycleLocalNote } from "../lifecycle/local-note";
@@ -174,6 +174,7 @@ import {
   holdFinishedPath,
   readHoldFinished,
   readHoldRequest,
+  inProcessHookOf,
   runHookList,
   runHookListAsync,
   runStageHooks,
@@ -187,6 +188,8 @@ import {
   type OpWaveHoldRequest,
   type OpWaveHookOutcome,
   type OpWaveHookRun,
+  type OpWaveInProcessHook,
+  type OpWaveInProcessHookCall,
   type OtherGateHold,
   type RunStageHooksAsyncOptions,
   type RunStageHooksOptions,
@@ -194,7 +197,7 @@ import {
 } from "./stage-hooks";
 
 export { OP_WAVE_PENDING_RESERVED, opWaveArgv, runStageHooks, runStageHooksAsync, spawnExecAsync };
-export type { OpWaveAsyncExec, OpWaveExec, OpWaveHoldFinished, OpWaveHoldRequest, OpWaveHookOutcome, OpWaveHookRun, RunStageHooksAsyncOptions, RunStageHooksOptions, StageHooksRun };
+export type { OpWaveAsyncExec, OpWaveExec, OpWaveHoldFinished, OpWaveHoldRequest, OpWaveHookOutcome, OpWaveHookRun, OpWaveInProcessHook, OpWaveInProcessHookCall, RunStageHooksAsyncOptions, RunStageHooksOptions, StageHooksRun };
 
 /** What a run's plan command writes to `{plan}`. */
 export interface OpWavePlanFile {
@@ -501,8 +504,22 @@ export interface OpWaveHeldOn {
    * token: the pending fact it read the gate for and did not record, and
    * the file the request carries. The gate job (for a plan job's hold) or
    * the record job (for an apply job's) records them and drops this.
+   *
+   * `spend` (#4994): the gate is approved and the hold asks chant to
+   * `record` it, so its approval is spent before the hook runs again. The
+   * plan job cannot spend it; the gate job checks the approval again under
+   * its own rules and spends it for a re-run of the hook at `head`, and the
+   * wave waits until it runs again from its plan job.
    */
-  deferred?: { input: GateCheckInput; mode: GateApprovalSource; base: string; attachment?: string };
+  deferred?: { input: GateCheckInput; mode: GateApprovalSource; base: string; attachment?: string; spend?: { approvedBy: string; approvedAt: string; head?: string } };
+  /**
+   * Set by a split wave's plan job (#4994): the applied line the gate job of
+   * an earlier run of the same head wrote for this hold, with no finished
+   * line yet. The hook runs again under it, and the next gate job writes the
+   * finished line. On a decision it says the approval was spent for that
+   * re-run and the wave waits for it.
+   */
+  spentForRerun?: AppliedGateRecord;
 }
 
 /** An approved hold on another gate (#3847), as `CHANT_HOLD_APPROVED` and `CHANT_HOLDS_APPROVED` carry it. */
@@ -952,6 +969,16 @@ export interface RunOpWaveOptions {
    * while a hook does. Default: `exec`, which waits with `spawnSync`.
    */
   hookExec?: OpWaveAsyncExec;
+  /**
+   * Hooks served in the job's own process (#4994), by the spec hook's
+   * `name`: a hook the spec names (read at base) whose name this holds is
+   * called with its command's argv and variables in place of running the
+   * command, at every moment and in every job that runs it, a split wave's
+   * plan, gate and applying jobs included. Its exit code counts as the
+   * command's, and its approved re-run after a hold on another gate calls it
+   * again. See {@link OpWaveInProcessHook}.
+   */
+  inProcessHooks?: Readonly<Record<string, OpWaveInProcessHook>>;
 }
 
 /** Where an op wave job's run record goes (#4551). */
@@ -1728,9 +1755,11 @@ async function runHooks(
 ): Promise<HooksOutcome> {
   if (!hooks || hooks.length === 0) return { holds: [] };
   const runsPath = writeRunsFile(ctx, runs, members, digest);
-  const hookExec = ctx.options.hookExec;
+  const own = ctx.options.inProcessHooks;
+  // #4994: a hook the job's process serves runs in it; the other hooks run as before, through hookExec or exec.
+  const hookExec = ctx.options.hookExec ?? (own ? (argv: string[], cwd: string, env?: Record<string, string>) => Promise.resolve(ctx.exec(argv, cwd, env)) : undefined);
   const out = hookExec
-    ? await runHookListAsync({ ...placeOf(ctx), exec: hookExec }, moment, hooks, hookRuns(ctx, runs, members), runsPath, extraEnv)
+    ? await runHookListAsync({ ...placeOf(ctx), exec: hookExec, ...(own ? { inProcess: own } : {}) }, moment, hooks, hookRuns(ctx, runs, members), runsPath, extraEnv)
     : runHookList(placeOf(ctx), moment, hooks, hookRuns(ctx, runs, members), runsPath, extraEnv);
   ctx.result.hooks.push(...out.outcomes);
   const back: HooksOutcome = { holds: out.holds, ...(out.failed ? { failed: out.failed } : {}) };
@@ -1760,14 +1789,22 @@ async function runHooks(
       // #4623: a hold that asks chant to record its gate is spent here, before the re-run acts under the approval.
       let spent: AppliedGateRecord | undefined;
       let finishedAt: string | undefined;
-      if (hold.request.record && noTokenPhase(ctx.options)) {
+      // #4994: the gate job of an earlier run of this head spent the approval for this re-run; the gate job after this
+      // plan job writes the finished line, from what the re-run leaves at CHANT_HOLD_FINISHED.
+      const spentEarlier = hold.request.record && ctx.options.phase === "plan" ? held.spentForRerun : undefined;
+      if (spentEarlier) {
+        spent = spentEarlier;
+        const finishedRel = holdFinishedPath(hold.env.CHANT_HOLD!);
+        finishedAt = join(ctx.cwd, finishedRel);
+        rmSync(finishedAt, { force: true });
+        approvedEnv.CHANT_HOLD_FINISHED = finishedRel;
+      } else if (hold.request.record && noTokenPhase(ctx.options)) {
         // #4992: the approval is spent before the re-run acts under it, and a job with no write token cannot spend it.
         ctx.result.hooks.push({ moment, name: hold.name, ...target, exit: 1, outcome: "failed" });
         back.failed = `${hold.label}: ${held.approvedBy} approved ${held.op} / ${held.gate}, and the hold asks chant to record the gate, which spends the approval before the hook runs again; this ${ctx.options.phase} job of a split wave holds no write token, so it cannot spend it and the hook did not run again`;
         ctx.log(back.failed);
         return back;
-      }
-      if (hold.request.record) {
+      } else if (hold.request.record) {
         const got = await spendHeldGate(ctx, hold, now);
         if ("failed" in got) {
           ctx.result.hooks.push({ moment, name: hold.name, ...target, exit: 1, outcome: "failed" });
@@ -1783,12 +1820,17 @@ async function runHooks(
       }
       let code: number;
       try {
-        code = hookExec ? await hookExec(hold.argv, ctx.cwd, approvedEnv) : ctx.exec(hold.argv, ctx.cwd, approvedEnv);
+        // #4994: an in-process hook runs again in this process, as it ran the first time.
+        const again = inProcessHookOf(own, hold.name);
+        code = again
+          ? await again({ name: hold.name, moment: hold.moment, ...(hold.target ? { target: hold.target } : {}), argv: hold.argv, cwd: ctx.cwd, env: approvedEnv })
+          : hookExec ? await hookExec(hold.argv, ctx.cwd, approvedEnv) : ctx.exec(hold.argv, ctx.cwd, approvedEnv);
       } catch (err) {
         ctx.log(`${hold.label} did not run: ${err instanceof Error ? err.message : String(err)}`);
         code = 127;
       }
-      if (spent && finishedAt) await finishHeldGate(ctx, hold, spent, readHoldFinished(finishedAt, ctx.log, hold.label), code);
+      if (spent && finishedAt && spentEarlier) handHoldFinished(ctx, hold, spent, readHoldFinished(finishedAt, ctx.log, hold.label), code);
+      else if (spent && finishedAt) await finishHeldGate(ctx, hold, spent, readHoldFinished(finishedAt, ctx.log, hold.label), code);
       if (code === 0) {
         ctx.result.hooks.push({ moment, name: hold.name, ...target, exit: code, outcome: "passed" });
         ctx.log(`${hold.label}: ${held.approvedBy} approved ${held.op} / ${held.gate} at ${held.digest}, and the hook ran again and passed`);
@@ -1961,10 +2003,31 @@ async function settleOtherGate(ctx: WaveContext, hold: OtherGateHold, runs: read
   const check = await evaluateGate(deferring ? readOnlyGatePort(port) : port, input);
   const base = { op, gate: hold.request.gate, digest: hold.request.digest, hook: hold.label };
   logRefused(log, `${op} / ${hold.request.gate}`, check);
-  if (check.satisfied) return { ...base, status: "approved", approvedBy: check.resolution.resolvedBy, approvedAt: check.resolution.timestamp };
   // #4574: a per-run hook's hold names its run; else the wave's target, as the wave's own gate does.
   const target = hold.target ?? waveApproveTarget(wave.name, runs.map((r) => r.target));
   const approve = approveCommand(op, hold.request.gate, undefined, hold.request.digest, mode === "sealed", target);
+  // #4994: a split wave's plan job cannot spend the approval a `record` hold needs spent before its hook runs again.
+  const spendLater = deferring && hold.request.record === true && ctx.options.phase === "plan";
+  if (spendLater) {
+    // The gate job of an earlier run of this commit spent the approval for this very re-run, and no finished line names it yet.
+    const spent = await spentForRerun(port, op, hold.request.gate, hold.request.digest, waveHeadOf(ctx.options, ctx.cwd));
+    if (spent) {
+      log(`${hold.label}: the approval by ${spent.approvedBy} of ${op} / ${hold.request.gate} at ${hold.request.digest} was spent at ${spent.timestamp} for this re-run of the hook, so it runs again under it`);
+      return { ...base, status: "approved", approvedBy: spent.approvedBy, approvedAt: spent.approvedAt, spentForRerun: spent };
+    }
+  }
+  if (check.satisfied && spendLater) {
+    const head = waveHeadOf(ctx.options, ctx.cwd);
+    log(`wave ${k} (${wave.name}): ${check.resolution.resolvedBy} approved ${op} / ${hold.request.gate} at ${hold.request.digest}, and ${hold.label} asks chant to record the gate, which spends the approval before the hook runs again; this plan job holds no write token, so the gate job spends it and the wave waits until it runs again from its plan job, where the hook runs again under it`);
+    return {
+      ...base,
+      status: "waiting",
+      approve,
+      recorded: false,
+      deferred: { input, mode, base: rules.base, ...(attachment !== undefined ? { attachment } : {}), spend: { approvedBy: check.resolution.resolvedBy, approvedAt: check.resolution.timestamp, ...(head ? { head } : {}) } },
+    };
+  }
+  if (check.satisfied) return { ...base, status: "approved", approvedBy: check.resolution.resolvedBy, approvedAt: check.resolution.timestamp };
   log(`wave ${k} (${wave.name}) waits on ${op} / ${hold.request.gate}, which ${hold.label} holds it on: nobody approved ${hold.request.digest}. Approve: ${approve}`);
   if (deferring) {
     log(`wave ${k} (${wave.name}): this job holds no write token, so the ${ctx.options.phase === "plan" ? "gate" : "record"} job records the pending fact of ${op} / ${hold.request.gate}`);
@@ -1978,6 +2041,162 @@ async function settleOtherGate(ctx: WaveContext, hold: OtherGateHold, runs: read
     recorded: check.recorded,
     ...(check.mismatch ? { mismatch: check.mismatch } : {}),
   };
+}
+
+/** The commit a wave job runs (#4994): `options.head`, a split wave's decided head, else the checkout's HEAD; undefined outside a git checkout. */
+function waveHeadOf(options: Pick<RunOpWaveOptions, "head">, cwd: string): string | undefined {
+  if (options.head) return options.head;
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The applied line a split wave's gate job wrote for a re-run of a held
+ * hook at `head` (#4994), when no finished line names it yet; else
+ * undefined. A port that cannot read finished lines gives none, so no
+ * approval is used twice.
+ */
+async function spentForRerun(port: GateLedgerPort, op: string, gate: string, digest: string, head: string | undefined): Promise<AppliedGateRecord | undefined> {
+  if (!head || !port.readApplied || !port.readFinished) return undefined;
+  const line = (await port.readApplied(op)).filter((a) => a.gate === gate && samePlanDigest(a.planDigest, digest)).at(-1);
+  if (!line || line.rerun?.head !== head) return undefined;
+  return finishedApply(await port.readFinished(op), line) ? undefined : line;
+}
+
+/** The finished lines a split wave's plan job leaves its gate job to write (#4994), by the job's options. */
+const handedFinished = new WeakMap<RunOpWaveOptions, OpWaveHandedFinished[]>();
+
+/**
+ * A held hook's re-run in a split wave's plan job under an approval an
+ * earlier gate job spent (#4994): how it ended, which the gate job after
+ * this plan job writes as the finished line.
+ */
+export interface OpWaveHandedFinished {
+  hook: string;
+  /** The applied line the re-run ran under. */
+  applied: Pick<AppliedGateRecord, "op" | "gate" | "planDigest" | "timestamp" | "rerun">;
+  result: "applied" | "failed";
+  detail?: Record<string, string | number | boolean>;
+}
+
+/** Keep a re-run's end for the gate job (#4994), in the saved plan. */
+function handHoldFinished(ctx: WaveContext, hold: OtherGateHold, spent: AppliedGateRecord, wrote: OpWaveHoldFinished | undefined, code: number): void {
+  const list = handedFinished.get(ctx.options) ?? [];
+  list.push({
+    hook: hold.label,
+    applied: { op: spent.op, gate: spent.gate, planDigest: spent.planDigest, timestamp: spent.timestamp, ...(spent.rerun ? { rerun: spent.rerun } : {}) },
+    result: wrote?.result ?? (code === 0 ? "applied" : "failed"),
+    ...(wrote?.detail ? { detail: wrote.detail } : {}),
+  });
+  handedFinished.set(ctx.options, list);
+}
+
+/**
+ * Write the finished lines a split wave's plan job handed on (#4994), with
+ * the token: each for an applied line the ledger holds, spent for a re-run
+ * at this job's head and not finished yet. The plan job ran the change's
+ * code, so a line it names that is not one of those is left out.
+ */
+async function writeHandedFinished(options: RunOpWaveOptions, cwd: string, handed: readonly OpWaveHandedFinished[] | undefined, log: (line: string) => void): Promise<void> {
+  if (!handed?.length) return;
+  const port = options.gates ?? gitGateLedgerPort({ cwd });
+  const head = waveHeadOf(options, cwd);
+  for (const h of handed) {
+    const where = `${h.applied.op} / ${h.applied.gate}`;
+    try {
+      if (!port.appendFinished || !port.readApplied || !port.readFinished) throw new Error("this gate ledger keeps no finished lines");
+      const line = (await port.readApplied(h.applied.op)).find((a) => a.gate === h.applied.gate && samePlanDigest(a.planDigest, h.applied.planDigest) && a.timestamp === h.applied.timestamp);
+      if (!line || !head || line.rerun?.head !== head) {
+        log(`${h.hook}: the plan job says it ran again under ${where} applied at ${h.applied.timestamp}, which the ledger holds no re-run of this commit for, so no finished line is written`);
+        continue;
+      }
+      if (finishedApply(await port.readFinished(h.applied.op), line)) continue;
+      const record: FinishedGateRecord = {
+        version: 1,
+        kind: "finished",
+        op: line.op,
+        gate: line.gate,
+        planDigest: line.planDigest,
+        applied: line.timestamp,
+        result: h.result,
+        timestamp: options.now ?? new Date().toISOString(),
+        ...(h.detail ? { detail: h.detail } : {}),
+      };
+      const pushed = await port.appendFinished(record);
+      if (!pushed.pushed && pushed.pushWarning && !isLifecycleLocalNote(pushed.pushWarning)) log(`${h.hook}: the finished line of ${where} was written and not pushed: ${pushed.pushWarning}`);
+      log(`${h.hook}: wrote the finished line of ${where} (${h.result}) for the plan job's re-run`);
+    } catch (err) {
+      log(`${h.hook}: the finished line of ${where} was not written: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+}
+
+/**
+ * Spend the approval a split wave's plan job found for a `record` hold
+ * (#4994), with the token, under this job's rules at base: the gate is read
+ * again, and still approved, an applied line bound to this job's head is
+ * written for the hook's re-run in the next run's plan job. Not approved
+ * any more, the hold is recorded as waiting (`recordDeferredHold`). A digest
+ * already applied under the gate is not spent again.
+ */
+async function spendDeferredHold(
+  options: RunOpWaveOptions,
+  ctx: WaveContext,
+  heldOn: OpWaveHeldOn,
+  log: (line: string) => void,
+): Promise<{ heldOn: OpWaveHeldOn } | { failed: string }> {
+  const deferred = heldOn.deferred!;
+  const rule = ctx.gateRule;
+  const mode: GateApprovalSource = rule.approval === "sealed" ? "sealed" : "ledger";
+  const { port } = await gatePort(options, ctx.cwd, deferred.input.gate, mode, rule.base);
+  const where = `${deferred.input.op} / ${deferred.input.gate}`;
+  const digest = deferred.input.planDigest!;
+  // A re-run this commit's earlier gate job spent the approval for, which the plan job did not take up: the wave waits for it.
+  const pending = await spentForRerun(port, deferred.input.op, deferred.input.gate, digest, waveHeadOf(options, ctx.cwd));
+  if (pending) {
+    log(`${heldOn.hook}: the approval of ${where} at ${digest} is already spent for a re-run of the hook; the wave waits until it runs again from its plan job`);
+    const { deferred: _d, ...rest } = heldOn;
+    return { heldOn: { ...rest, approvedBy: pending.approvedBy, approvedAt: pending.approvedAt, spentForRerun: pending } };
+  }
+  const check = await evaluateGate(readOnlyGatePort(port), { ...deferred.input, now: options.now ?? new Date().toISOString(), ...(rule.neverOverMcp || deferred.input.neverOverMcp ? { neverOverMcp: true } : {}) });
+  if (!check.satisfied) {
+    log(`${heldOn.hook}: ${where} is not approved under this job's rules, so its approval is not spent`);
+    const { spend: _s, ...waiting } = deferred;
+    return { heldOn: await recordDeferredHold(options, ctx.cwd, { ...heldOn, deferred: waiting }, rule, log) };
+  }
+  const head = waveHeadOf(options, ctx.cwd);
+  if (!head) return { failed: `${heldOn.hook}: this job cannot tell which commit the wave runs, so it does not spend the approval of ${where} for the hook's re-run` };
+  if (deferred.spend?.head && deferred.spend.head !== head) return { failed: `${heldOn.hook}: the plan job ran at ${deferred.spend.head.slice(0, 12)} and this job at ${head.slice(0, 12)}, so the approval of ${where} is not spent` };
+  try {
+    if (!port.appendApplied || !port.readApplied) throw new Error("this gate ledger cannot record an applied approval");
+    const prior = (await port.readApplied(deferred.input.op)).filter((a) => a.gate === deferred.input.gate && samePlanDigest(a.planDigest, digest)).at(-1);
+    if (prior) return { failed: `${heldOn.hook}: ${where} at ${digest} applied already under the approval by ${prior.approvedBy} (${prior.timestamp}); a held request applies once, so it is not spent again` };
+    const commit = typeof deferred.input.fields?.commit === "string" ? deferred.input.fields.commit : undefined;
+    const runId = ciRunIdFromEnv();
+    const record: AppliedGateRecord = {
+      version: 1,
+      kind: "applied",
+      op: deferred.input.op,
+      gate: deferred.input.gate,
+      planDigest: digest,
+      approvedAt: check.resolution.timestamp,
+      approvedBy: check.resolution.resolvedBy,
+      timestamp: options.now ?? new Date().toISOString(),
+      wave: { number: ctx.k, name: ctx.wave.name },
+      ...(runId ? { runId } : {}),
+      ...(commit ? { commit } : {}),
+      rerun: { head },
+    };
+    requireSpendPushed(await port.appendApplied(record));
+    log(`${heldOn.hook}: ${where} applies under the approval by ${record.approvedBy} at ${record.approvedAt}, which is now spent for the hook's re-run at ${head.slice(0, 12)}; run the wave again, and its plan job runs the hook again under it`);
+    const { deferred: _d, ...rest } = heldOn;
+    return { heldOn: { ...rest, approvedBy: record.approvedBy, approvedAt: record.approvedAt, spentForRerun: record } };
+  } catch (err) {
+    return { failed: `${heldOn.hook}: could not record that ${where} applies under the approval by ${check.resolution.resolvedBy}: ${err instanceof Error ? err.message : String(err)}` };
+  }
 }
 
 /** Whether a split wave's job holds no write token (#4992): its plan and applying jobs run the change's code. */
@@ -2567,6 +2786,12 @@ export interface OpWaveSavedPlan {
    * through the step and applies each whose plan digest the decision holds.
    */
   steps?: OpWaveSavedStep[];
+  /**
+   * The held hooks the plan job ran again under an approval an earlier gate
+   * job spent for them (#4994), and how each ended: the gate job writes
+   * their finished lines, whatever else the plan job came to.
+   */
+  holdsFinished?: OpWaveHandedFinished[];
 }
 
 /** A run's step plan as a split wave's plan job saves it (#4992). */
@@ -2606,7 +2831,9 @@ function saveOpWavePlan(options: RunOpWaveOptions, plan: Omit<OpWaveSavedPlan, "
   const path = join(options.cwd ?? process.cwd(), opWaveSavedPlanPath(options.spec, options.wave));
   mkdirSync(dirname(path), { recursive: true });
   const name = options.spec.waves[options.wave - 1]?.name ?? `wave-${options.wave}`;
-  const saved: OpWaveSavedPlan = { version: 1, op: options.spec.name, wave: options.wave, name, ...plan };
+  // #4994: the re-runs under an approval an earlier gate job spent, whose finished lines the gate job writes.
+  const finished = handedFinished.get(options);
+  const saved: OpWaveSavedPlan = { version: 1, op: options.spec.name, wave: options.wave, name, ...plan, ...(finished?.length ? { holdsFinished: finished } : {}) };
   writeFileSync(path, JSON.stringify(saved, null, 2) + "\n");
 }
 
@@ -2712,6 +2939,8 @@ async function runOpWaveGatePhase(options: RunOpWaveOptions, dir: string): Promi
   const cwd = options.cwd ?? process.cwd();
   const log = options.log ?? ((line: string) => console.error(line));
   const saved = readSavedOpWavePlan(options);
+  // #4994: the plan job ran a held hook again under an approval an earlier gate job spent; this job writes how it ended.
+  await writeHandedFinished(options, cwd, saved.holdsFinished, log);
   const at = spec.waves[k - 1];
   // #4992: a hook in the plan job held the wave on another gate it could not record; this job records it.
   const heldOn = saved.end?.exitCode === CHANT_EXIT.waiting ? saved.end.decision?.heldOn : undefined;
@@ -2737,6 +2966,12 @@ async function runOpWaveGatePhase(options: RunOpWaveOptions, dir: string): Promi
     // The decision is this job's own, from the rules at base: of the plan job's end it takes only the hold.
     const opened = await openWaveDecision(options, ctx, { evidence: false });
     if ("end" in opened) return end(opened.end);
+    // #4994: an approved `record` hold, whose approval this job spends for the hook's re-run in the next run's plan job.
+    if (heldOn.deferred.spend) {
+      const spent = await spendDeferredHold(options, ctx, heldOn, log);
+      if ("failed" in spent) return end(failed(ctx, `wave ${k} (${at.name}): ${spent.failed}`));
+      return end(await decided(ctx, opened.go.decision, join(cwd, opWaveRecordPath(spec, k)), spent.heldOn));
+    }
     const recorded = await recordDeferredHold(options, cwd, heldOn, ctx.gateRule, log);
     return end(await decided(ctx, opened.go.decision, join(cwd, opWaveRecordPath(spec, k)), recorded));
   }
@@ -3650,6 +3885,11 @@ async function decided(ctx: WaveContext, decision: OpWaveDecision, recordPath: s
     log(`The pull request's review does not approve wave ${k}: ${decision.review.reason}`);
   }
   const hook = await runGateHooks(ctx, decision, recordPath);
+  if (decision.status === "waiting" && decision.heldOn?.spentForRerun) {
+    // #4994: the approval is spent for the held hook's re-run; nobody needs to approve anything more.
+    log(`Nothing in wave ${k} or after it ran. The approval of ${decision.heldOn.op} / ${decision.heldOn.gate} by ${decision.heldOn.spentForRerun.approvedBy} is spent for ${decision.heldOn.hook} to run again; run the wave again from its plan job`);
+    return { ...result, exitCode: CHANT_EXIT.waiting };
+  }
   if (decision.status === "waiting") {
     log(`Nothing in wave ${k} or after it ran. ${decision.heldOn ? `It waits on ${decision.heldOn.op} / ${decision.heldOn.gate}.` : "Read the plans, then"} approve: ${decision.approve} (with --resume, the approval also starts this job again)`);
     return { ...result, exitCode: CHANT_EXIT.waiting };

@@ -46,6 +46,13 @@ export interface AppliedGateRecord {
    * once it is gone, and the wave applies the rest under the same approval.
    */
   resume?: GateRunLocator;
+  /**
+   * Spent by a split wave's gate job for a held hook that runs again in the
+   * plan job of a later run of the same commit (#4994): `head` is that
+   * commit. Until a finished line names this line, such a plan job runs the
+   * hook again under it; any other job reads it as spent.
+   */
+  rerun?: { head: string };
 }
 
 /**

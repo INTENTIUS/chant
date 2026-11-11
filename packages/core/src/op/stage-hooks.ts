@@ -101,6 +101,36 @@ export const spawnExec: OpWaveExec = (argv, cwd, env) => {
 /** {@link OpWaveExec} for {@link runStageHooksAsync} (#4334): the exit code comes back as a promise, so the event loop runs while a hook does. */
 export type OpWaveAsyncExec = (argv: string[], cwd: string, env?: Record<string, string>) => Promise<number>;
 
+/**
+ * One call of a hook a product serves in its own process (#4994), as
+ * {@link OpWaveInProcessHook} gets it: the hook's name and moment, its run
+ * for a `perRun` hook, the argv its command would have run with, the job's
+ * directory and the `CHANT_*` variables the command would have had.
+ */
+export interface OpWaveInProcessHookCall {
+  name: string;
+  moment: CiHookMoment;
+  target?: string;
+  argv: string[];
+  cwd: string;
+  env: Record<string, string>;
+}
+
+/**
+ * A hook a product's bin serves in the job's own process (#4994), in place
+ * of the hook's command: the spec, read at base, still names the hook and
+ * its command, and a job whose process hands a function under that name
+ * calls it with the command's argv and variables. Its exit code counts as
+ * the command's would, a hold included: it writes `CHANT_HOLD` and returns
+ * non-zero. It runs in whichever job runs the hook, so one split wave's plan,
+ * gate and applying jobs each call it in their own process; what it needs
+ * from an earlier job it reads from files that job left, such as its own
+ * under `opWaveProductStateDir` (`./op-waves-split.ts`), which the plan job
+ * hands the gate and applying jobs. This replaces a hook that called back
+ * into a long-lived product process over a socket.
+ */
+export type OpWaveInProcessHook = (call: OpWaveInProcessHookCall) => Promise<number>;
+
 /** {@link spawnExec} on `spawn`: it rejects when the command cannot start. */
 export const spawnExecAsync: OpWaveAsyncExec = (argv, cwd, env) =>
   new Promise((resolve, reject) => {
@@ -220,6 +250,10 @@ export interface HookPlace {
 /** One hook call {@link hookListSteps} asks its driver to run. The driver sends back the exit code. */
 interface HookCall {
   label: string;
+  /** The hook's name and moment, and its run for a `perRun` hook: what an in-process hook is found by and gets (#4994). */
+  name: string;
+  moment: CiHookMoment;
+  target?: string;
   argv: string[];
   cwd: string;
   env: Record<string, string>;
@@ -269,7 +303,7 @@ function* hookListSteps(
     for (const call of calls) {
       const label = `${moment} hook ${name}${call.target ? ` (${call.target})` : ""}`;
       rmSync(join(cwd, holdPath), { force: true });
-      const code = yield { label, argv: call.argv, cwd, env: call.env };
+      const code = yield { label, name, moment, ...(call.target ? { target: call.target } : {}), argv: call.argv, cwd, env: call.env };
       const base = { moment, name, ...(call.target ? { target: call.target } : {}), exit: code };
       if (code === 0) {
         out.outcomes.push({ ...base, outcome: "passed" });
@@ -294,6 +328,13 @@ function* hookListSteps(
     }
   }
   return out;
+}
+
+/** The in-process hook a product serves under `name` (#4994), or undefined: an own property that is a function. */
+export function inProcessHookOf(hooks: Readonly<Record<string, OpWaveInProcessHook>> | undefined, name: string): OpWaveInProcessHook | undefined {
+  if (!hooks || !Object.prototype.hasOwnProperty.call(hooks, name)) return undefined;
+  const fn = hooks[name];
+  return typeof fn === "function" ? fn : undefined;
 }
 
 /** The exit code a call that did not start counts as, after its error is logged. */
@@ -330,9 +371,13 @@ export function runHookList(
   return step.value;
 }
 
-/** {@link runHookList} with an exec that returns a promise (#4334). */
+/**
+ * {@link runHookList} with an exec that returns a promise (#4334). A hook
+ * whose name `at.inProcess` holds is called in this process in place of its
+ * command (#4994).
+ */
 export async function runHookListAsync(
-  at: Omit<HookPlace, "exec"> & { exec: OpWaveAsyncExec },
+  at: Omit<HookPlace, "exec"> & { exec: OpWaveAsyncExec; inProcess?: Readonly<Record<string, OpWaveInProcessHook>> },
   moment: CiHookMoment,
   hooks: readonly OpWaveHook[] | undefined,
   runs: readonly OpWaveHookRun[],
@@ -345,7 +390,10 @@ export async function runHookListAsync(
     const call = step.value;
     let code: number;
     try {
-      code = await at.exec(call.argv, call.cwd, call.env);
+      const own = inProcessHookOf(at.inProcess, call.name);
+      code = own
+        ? await own({ name: call.name, moment: call.moment, ...(call.target ? { target: call.target } : {}), argv: call.argv, cwd: call.cwd, env: call.env })
+        : await at.exec(call.argv, call.cwd, call.env);
     } catch (err) {
       code = didNotRun(call, err, at.log);
     }

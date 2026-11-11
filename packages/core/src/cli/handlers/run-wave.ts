@@ -153,6 +153,8 @@ async function runOpWaveJobCommand(ctx: CommandContext): Promise<number> {
       ...(product?.capabilities ? { capabilities: product.capabilities } : {}),
       ...(product?.hookExec ? { hookExec: product.hookExec } : {}),
       ...(product?.runHooks ? { runHooks: product.runHooks } : {}),
+      // #4994: the spec's hooks the product serves in this process, in whichever job of a split wave runs them.
+      ...(product?.hooks ? { inProcessHooks: product.hooks } : {}),
       spec,
       specFile: relative(process.cwd(), path),
       wave: args.wave,

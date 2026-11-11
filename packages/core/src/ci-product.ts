@@ -198,6 +198,14 @@ export const WAVES_BEFORE_MERGE_STEP_FLOOR = NEXT_RELEASE;
 export type { OpWaveSavedStep, OpWaveSplitHandoff, OpWaveSplitLease } from "./op/op-waves-run";
 
 /**
+ * The first chant whose split waves run a product's own process in every job (#4994): the product wave hook's `hooks` (`runChantInProcess(["run", "wave", ..., "--phase", <phase>], words, { wave: { afterPlan, capabilities, hookExec, runHooks, hooks } })`, `RunOpWaveOptions.inProcessHooks`) serves a spec hook by its name in the process of whichever job runs it, plan, gate or applying job or the one-job shape, in place of a command that called back over a socket; `opWaveProductStateDir` is where the plan job's code keeps what the later jobs read; a `record: true` hold in the plan job is spent by the gate job for a re-run of the hook at the wave's commit (an applied line with `rerun.head`), which the next run's plan job runs and its gate job finishes (`holdsFinished`); and `waveJobs.<wave>.artifact.path` takes a list and `waveJobs.<wave>.gate` gives the gate job a report and an artifact, so a product's own upload steps go through chant's Forgejo hand-off.
+ */
+export const WAVES_PRODUCT_HOOKS_FLOOR = NEXT_RELEASE;
+export type { OpWaveHandedFinished, OpWaveInProcessHook, OpWaveInProcessHookCall } from "./op/op-waves-run";
+export type { ProductWaveHook } from "./op/op-waves-after-plan";
+export { opWaveProductStateDir } from "./op/op-waves-split";
+
+/**
  * The first chant whose product plan takes `watches`, the product's own scheduled jobs the note job's `pr-post` checks for having stopped with the job's token (#4888), and whose `checkOverdueOps` and `overdueOpsAt` take a product's `logPrefix` and `label`.
  */
 export const PRODUCT_PLAN_WATCHES_FLOOR = "0.124.88";
