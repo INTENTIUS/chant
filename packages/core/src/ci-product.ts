@@ -210,6 +210,11 @@ export { opWaveProductStateDir } from "./op/op-waves-split";
 export const WAVES_BEFORE_MERGE_REST_FLOOR = NEXT_RELEASE;
 
 /**
+ * The first chant whose rest wave's record job records each follow-on it starts on `chant/lifecycle` before it starts it (#4998): `_waves/<op>.follow-on.json` keeps, per decided head or pushed commit, the wave started, the run that started it, the decision (`pr`, `digest`) or the `commit`, and the outcomes of every run of the chain so far; the guard admits a follow-on only for the wave that record names, so a wave started by hand past it is refused; and the last run's control dispatch, apply status and `before-merge-done` add up the outcomes of every run of the chain (the note's `chain`), so a chain whose last wave changed nothing reports `applied`.
+ */
+export const WAVES_FOLLOW_ON_RECORD_FLOOR = NEXT_RELEASE;
+
+/**
  * The first chant whose product plan takes `watches`, the product's own scheduled jobs the note job's `pr-post` checks for having stopped with the job's token (#4888), and whose `checkOverdueOps` and `overdueOpsAt` take a product's `logPrefix` and `label`.
  */
 export const PRODUCT_PLAN_WATCHES_FLOOR = "0.124.88";

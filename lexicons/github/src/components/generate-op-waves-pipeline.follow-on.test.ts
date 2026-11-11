@@ -105,6 +105,20 @@ describe("a rest wave before merge on GitHub runs one wave per run (#4992)", () 
     expect(send.env!.CHANT_CONTROL_SHA).toBe("${{ github.event.inputs.commit || github.sha }}");
   });
 
+  test("#4998: each rest wave job's guard reads the chain's record with the job's token, the record job may write it, and the jobs after the waves get the note", () => {
+    for (const name of ["wave-3-rest-plan", "wave-3-rest-gate", "wave-3-rest", "wave-3-rest-record"]) {
+      const guard = doc.jobs[name]!.steps[0]!;
+      // The guard reads _waves/tf-apply.follow-on.json for the op its spec names, as it reads the decisions.
+      expect(JSON.parse(guard.env!.CHANT_JOB_GUARD!), name).toMatchObject({ beforeMerge: { op: "tf-apply" }, rest: 3 });
+      expect(guard.env!.GITHUB_TOKEN, name).toBe("${{ github.token }}");
+    }
+    // contents: write pushes the record to chant/lifecycle before the dispatch.
+    expect(doc.jobs["wave-3-rest-record"]!.permissions!.contents).toBe("write");
+    // The status and control jobs download every artifact of the run, the note (and its chain) among them.
+    expect(step(doc.jobs["apply-status-3"]!, "Download the waves' outcomes").with).toEqual({ path: ".chant/op-waves/tf-apply/outcomes" });
+    expect(step(doc.jobs["control-dispatch"]!, "Download the waves' outcomes").with).toEqual({ path: ".chant/op-waves/tf-apply/outcomes" });
+  });
+
   test("a pipeline without a rest wave, or without beforeMerge, renders none of it", () => {
     const plain = docOf({ ...spec, waves: spec.waves.slice(0, 2) } as OpWavesSpec);
     expect(Object.keys(plain.on.workflow_dispatch.inputs)).toEqual(["pr", "head", "digest"]);

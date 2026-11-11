@@ -14,6 +14,7 @@ import { beforeAll, describe, expect, test } from "vitest";
 import { checkJob, describeJobGuard, JOB_GUARD_ENV, JOB_GUARD_JS, jobGuardSpec, jobSeen, parseJobGuardSpec, type JobGuardSpec } from "./ci-job-guard";
 import { CHANT_EXIT } from "./exit-codes";
 import { beforeMergeDigest, beforeMergePath, renderBeforeMerge, type BeforeMergeRecord } from "./op/before-merge";
+import { followOnPath, renderFollowOn, type FollowOnRecord } from "./op/follow-on-run";
 
 const HEAD = "a".repeat(40);
 const OTHER = "b".repeat(40);
@@ -23,24 +24,31 @@ const decision = { pr: 7, head: HEAD, base: BASE, at: "2026-11-10T12:00:00.000Z"
 const record: BeforeMergeRecord = { ...decision, digest: beforeMergeDigest("deploy", decision) };
 const run = { pr: "7", head: HEAD, digest: record.digest };
 
-const rest: JobGuardSpec = { forge: "github", job: "the plan job of wave 3 (rest) of deploy", branches: ["main"], beforeMerge: { op: "deploy" }, rest: 3 };
+/** #4998: the record a record job wrote when it started wave `wave` of the chain keyed `key`. */
+const chained = (key: string, wave: number, extra: Partial<FollowOnRecord> = {}): FollowOnRecord => ({ key, wave, from: wave - 1, run: "41", at: "2026-11-10T12:30:00.000Z", outcomes: {}, ...extra });
+const headChain = chained(HEAD, 4, { pr: 7, digest: record.digest });
+const pushChain = chained(PUSHED, 4, { commit: PUSHED });
+
+const rest: JobGuardSpec ={ forge: "github", job: "the plan job of wave 3 (rest) of deploy", branches: ["main"], beforeMerge: { op: "deploy" }, rest: 3 };
 const earlier: JobGuardSpec = { forge: "github", job: "the plan job of wave 2 (layer) of deploy", branches: ["main"], beforeMerge: { op: "deploy" } };
 const at = { ref: "refs/heads/main" };
 
 describe("checkJob in a follow-on run (#4992)", () => {
   test("the rest wave's jobs admit a follow-on of the decided head for a later wave", () => {
-    const r = checkJob(rest, { ...at, beforeMerge: run, beforeMergeRecord: record, followOn: { wave: "4" } });
+    const r = checkJob(rest, { ...at, beforeMerge: run, beforeMergeRecord: record, followOn: { wave: "4" }, followOnRecord: headChain });
     expect(r.problems).toEqual([]);
     expect(r.checked).toEqual(["ref refs/heads/main", `before merge: pull request 7's decided head ${HEAD.slice(0, 12)}`, "follow-on wave 4"]);
   });
 
   test("a follow-on for another head or another digest is refused", () => {
-    expect(checkJob(rest, { ...at, beforeMerge: { ...run, head: OTHER }, beforeMergeRecord: null, followOn: { wave: "4" } }).problems).toEqual([
+    expect(checkJob(rest, { ...at, beforeMerge: { ...run, head: OTHER }, beforeMergeRecord: null, followOn: { wave: "4" }, followOnRecord: null }).problems).toEqual([
       `before merge: no decision on chant/lifecycle names head ${OTHER.slice(0, 12)} of deploy, so this run applies nothing`,
+      `follow-on: no record job of deploy started a follow-on for head ${OTHER.slice(0, 12)}, so this run applies nothing`,
     ]);
     const other = `sha256:${"0".repeat(64)}`;
-    expect(checkJob(rest, { ...at, beforeMerge: { ...run, digest: other }, beforeMergeRecord: record, followOn: { wave: "4" } }).problems).toEqual([
+    expect(checkJob(rest, { ...at, beforeMerge: { ...run, digest: other }, beforeMergeRecord: record, followOn: { wave: "4" }, followOnRecord: headChain }).problems).toEqual([
       `before merge: the run carries digest ${other}, and the decision for head ${HEAD.slice(0, 12)} has ${record.digest}`,
+      `follow-on: wave 4 of head ${HEAD.slice(0, 12)} was started for the decision with digest ${record.digest}, and the run carries ${other}`,
     ]);
   });
 
@@ -62,7 +70,7 @@ describe("checkJob in a follow-on run (#4992)", () => {
   });
 
   test("a push's follow-on names the commit it goes on with", () => {
-    const r = checkJob(rest, { ...at, followOn: { wave: "4", commit: PUSHED } });
+    const r = checkJob(rest, { ...at, followOn: { wave: "4", commit: PUSHED }, followOnRecord: pushChain });
     expect(r.problems).toEqual([]);
     expect(r.checked).toEqual(["ref refs/heads/main", `follow-on wave 4 at ${PUSHED.slice(0, 12)}`]);
     expect(checkJob(rest, { ...at, followOn: { wave: "4" } }).problems).toEqual(["follow-on: a push's follow-on names the commit it goes on with, and the run's none is not a commit sha"]);
@@ -93,6 +101,7 @@ describe("the node -e program agrees in a follow-on run", () => {
     git(work, "init", "-q", "-b", "chant/lifecycle");
     mkdirSync(join(work, "_waves"));
     writeFileSync(join(work, beforeMergePath("deploy")), renderBeforeMerge({ version: 1, heads: { [HEAD]: record } }));
+    writeFileSync(join(work, followOnPath("deploy")), renderFollowOn({ version: 1, chains: { [HEAD]: headChain, [PUSHED]: pushChain } }));
     git(work, "add", ".");
     git(work, "commit", "-q", "-m", "decide");
     git(work, "push", "-q", join(server, "acme", "infra.git"), "chant/lifecycle");
@@ -110,7 +119,7 @@ describe("the node -e program agrees in a follow-on run", () => {
 
   const cases: Array<[string, JobGuardSpec, Record<string, string>, boolean]> = [
     ["GitHub: a follow-on of the decided head", rest, { ...decided, CHANT_WAVES_WAVE: "4" }, true],
-    ["GitLab: a follow-on of the decided head", gl, { ...decided, CHANT_WAVES_WAVE: "5" }, true],
+    ["GitLab: a follow-on of the decided head", gl, { ...decided, CHANT_WAVES_WAVE: "4" }, true],
     ["Forgejo: a push's follow-on", fj, { CHANT_WAVES_WAVE: "4", CHANT_WAVES_COMMIT: PUSHED }, true],
     ["GitHub: the rest wave's own number in a run that is none", rest, { ...decided, CHANT_WAVES_WAVE: "3" }, true],
     ["GitHub: a follow-on for another head", rest, { ...decided, CHANT_BEFORE_MERGE_HEAD: OTHER, CHANT_WAVES_WAVE: "4" }, false],

@@ -32,6 +32,16 @@
  * dispatch and the apply status read it, so a run that started a follow-on
  * is not the last: nothing merges, the control repo hears from the last
  * run, and the status stays pending with `wave k of M applied`.
+ *
+ * #4998: before it starts a follow-on, the record job records it on
+ * `chant/lifecycle` (./follow-on-run.ts, ./follow-on-store.ts): the wave it
+ * starts, its own run, the decision or the pushed commit, and the outcomes
+ * of every run of the chain so far, its own added. The follow-on's guard
+ * admits that wave alone. A follow-on's record job reads the record that
+ * started it and puts the earlier runs' outcomes in its note as `chain`, so
+ * the last run's control dispatch and apply status add up the whole chain
+ * ({@link withChainOutcomes}): a chain whose last wave changed nothing
+ * reports `applied` when an earlier run applied.
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -39,7 +49,8 @@ import { isAbsolute, join } from "node:path";
 import { CHANT_EXIT } from "../exit-codes";
 import { CONTROL_OUTCOME_VAR } from "../control/dispatch";
 import { beforeMergeRunFromEnv, isBeforeMergeRun } from "./before-merge";
-import { OP_WAVES_COMMIT_ENV, OP_WAVES_WAVE_ENV } from "./follow-on-run";
+import { OP_WAVES_COMMIT_ENV, OP_WAVES_WAVE_ENV, type FollowOnChainPort, type FollowOnOutcome, type FollowOnRecord } from "./follow-on-run";
+import type { WaveMemberOutcome } from "../wave-blocked";
 import { opWaveOutcomeDir, opWaveRecordPath, type OpWavesSpec } from "./op-waves";
 
 export { FOLLOW_ON_INPUTS, OP_WAVES_COMMIT_ENV, OP_WAVES_WAVE_ENV } from "./follow-on-run";
@@ -137,6 +148,38 @@ export interface OpWaveRestNote {
   found: number;
   /** The wave of the follow-on the record job started. Absent: this run is the last. */
   next?: number;
+  /** A follow-on's: the outcomes of the chain's earlier runs, by member (#4998), from the record that started it. */
+  chain?: Record<string, FollowOnOutcome>;
+}
+
+/** A member's outcome as the jobs after the waves add it up: `earlierWaveOutcomes`' entries. */
+export type ChainedOutcome = WaveMemberOutcome & { wave: number; at: string };
+
+/** The outcomes of a chain's runs: a valid entry of each, the rest dropped. */
+function chainOf(v: unknown): Record<string, FollowOnOutcome> | undefined {
+  if (!v || typeof v !== "object") return undefined;
+  const out: Record<string, FollowOnOutcome> = {};
+  for (const [member, o] of Object.entries(v as Record<string, Partial<FollowOnOutcome> | null>)) {
+    if (!o || typeof o.status !== "string" || !Number.isInteger(o.wave) || typeof o.at !== "string" || (o.by !== undefined && typeof o.by !== "string")) continue;
+    out[member] = { status: o.status, ...(o.by !== undefined ? { by: o.by } : {}), wave: o.wave!, at: o.at };
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * The outcomes the jobs after the waves add up (#4998): this run's, from
+ * its outcome files (`members`, `earlierWaveOutcomes` below wave `before`),
+ * with the chain's earlier runs' from the rest wave's note. A member's
+ * newer outcome wins. With no note, or one with no chain, `members`.
+ */
+export function withChainOutcomes(members: ReadonlyMap<string, ChainedOutcome>, note: OpWaveRestNote | undefined, before: number = Number.MAX_SAFE_INTEGER): Map<string, ChainedOutcome> {
+  const out = new Map<string, ChainedOutcome>();
+  for (const [member, o] of Object.entries(note?.chain ?? {})) if (o.wave < before) out.set(member, o as ChainedOutcome);
+  for (const [member, o] of members) {
+    const had = out.get(member);
+    if (!had || had.at <= o.at) out.set(member, o);
+  }
+  return out;
 }
 
 /** Where the record job writes the note. */
@@ -175,7 +218,8 @@ export function readOpWaveRestNote(dirs: readonly string[]): OpWaveRestNote | un
       }
       if (!v || v.version !== 1 || typeof v.op !== "string" || !Number.isInteger(v.wave) || !Number.isInteger(v.found)) continue;
       if (v.next !== undefined && (!Number.isInteger(v.next) || v.next !== v.wave! + 1)) continue;
-      if (!found || v.wave! > found.wave) found = { version: 1, op: v.op, wave: v.wave!, found: v.found!, ...(v.next !== undefined ? { next: v.next } : {}) };
+      const chain = chainOf(v.chain);
+      if (!found || v.wave! > found.wave) found = { version: 1, op: v.op, wave: v.wave!, found: v.found!, ...(v.next !== undefined ? { next: v.next } : {}), ...(chain ? { chain } : {}) };
     }
   };
   for (const d of dirs) if (existsSync(d)) walk(d, 0);
@@ -198,7 +242,30 @@ export interface FollowOnAfterRecordInput {
   env?: Record<string, string | undefined>;
   /** Start the follow-on; default the forge's API ({@link startFollowOn}). */
   start?: (target: OpWavesFollowOnTarget, wave: number, env: Record<string, string | undefined>) => Promise<StartedFollowOn>;
+  /** Where the chain's record is read and written (#4998); default `chant/lifecycle` through the checkout's git. */
+  chain?: FollowOnChainPort;
+  now?: () => Date;
   log?: (line: string) => void;
+}
+
+/** What a chain is keyed by and what its record names (#4998): before merge the decision, for a push the commit the run applied. */
+export function followOnChainOf(forge: OpWavesFollowOnTarget["forge"], env: Record<string, string | undefined>): Pick<FollowOnRecord, "key" | "pr" | "digest" | "commit"> | undefined {
+  const run = beforeMergeRunFromEnv(env);
+  if (isBeforeMergeRun(run)) return run.head ? { key: run.head, ...(run.pr && /^[1-9][0-9]*$/.test(run.pr) ? { pr: Number(run.pr) } : {}), ...(run.digest ? { digest: run.digest } : {}) } : undefined;
+  const commit = env[OP_WAVES_COMMIT_ENV]?.trim() || (forge === "gitlab" ? env.CI_COMMIT_SHA : env.GITHUB_SHA)?.trim();
+  return commit ? { key: commit, commit } : undefined;
+}
+
+/** The run a record job runs in, as the record names it: GitHub and Forgejo `GITHUB_RUN_ID`, GitLab `CI_PIPELINE_ID`, and its page when the forge says. */
+function runOf(forge: OpWavesFollowOnTarget["forge"], env: Record<string, string | undefined>): Pick<FollowOnRecord, "run" | "url"> {
+  if (forge === "gitlab") {
+    const url = env.CI_PIPELINE_URL?.trim();
+    return { run: env.CI_PIPELINE_ID?.trim() || "unknown", ...(url && /^https?:\/\//.test(url) ? { url } : {}) };
+  }
+  const id = env.GITHUB_RUN_ID?.trim();
+  const server = env.GITHUB_SERVER_URL?.trim().replace(/\/+$/, "");
+  const repo = env.GITHUB_REPOSITORY?.trim();
+  return { run: id || "unknown", ...(forge === "github" && id && server && repo && /^https?:\/\//.test(server) ? { url: `${server}/${repo}/actions/runs/${id}` } : {}) };
 }
 
 /**
@@ -230,15 +297,42 @@ export async function followOnAfterRecord(i: FollowOnAfterRecordInput): Promise<
   const dir = isAbsolute(outcomeDir) ? outcomeDir : join(cwd, outcomeDir);
   const { earlierWaveOutcomes } = await import("../wave-blocked");
   const { applyOutcomeOf } = await import("../control/applied");
-  const summary = applyOutcomeOf(earlierWaveOutcomes([dir], Number.MAX_SAFE_INTEGER).members);
+  const own = earlierWaveOutcomes([dir], Number.MAX_SAFE_INTEGER).members;
+  const summary = applyOutcomeOf(own);
   const through = summary.outcome === "applied" || summary.outcome === "unchanged";
   const next = i.exitCode === CHANT_EXIT.done && through && found !== undefined && found > i.wave ? i.wave + 1 : undefined;
+  // #4998: a follow-on's record job reads the record that started it, for the outcomes of the chain's earlier runs.
+  const chainKey = followOnChainOf(target.forge, env);
+  let port = i.chain;
+  const chainPort = async (): Promise<FollowOnChainPort> => (port ??= (await import("./follow-on-store")).gitFollowOnChainPort({ cwd }));
+  let chain: Record<string, FollowOnOutcome> = {};
+  if (i.wave > rest && chainKey) {
+    try {
+      const started = await (await chainPort()).read(i.spec.name, chainKey.key);
+      if (started && started.wave === i.wave) chain = started.outcomes;
+      else log(`wave ${i.wave}: no record on chant/lifecycle started this wave for ${chainKey.key.slice(0, 12)}, so the outcomes of the chain's earlier runs are not added up`);
+    } catch (err) {
+      log(`wave ${i.wave}: the record that started this run could not be read (${(err instanceof Error ? err.message : String(err)).split("\n")[0]}), so the outcomes of the chain's earlier runs are not added up`);
+    }
+  }
   mkdirSync(dir, { recursive: true });
-  const note: OpWaveRestNote = { version: 1, op: i.spec.name, wave: i.wave, found: found ?? i.wave, ...(next !== undefined ? { next } : {}) };
+  const note: OpWaveRestNote = { version: 1, op: i.spec.name, wave: i.wave, found: found ?? i.wave, ...(next !== undefined ? { next } : {}), ...(Object.keys(chain).length > 0 ? { chain } : {}) };
   writeFileSync(join(dir, OP_WAVE_REST_NOTE), JSON.stringify(note, null, 2) + "\n");
   if (next === undefined) {
     if (found !== undefined && found > i.wave) log(`wave ${i.wave}: the plan found ${found} waves, and this run ended ${summary.outcome} (exit ${i.exitCode}), so no run starts wave ${i.wave + 1}`);
     return i.exitCode;
+  }
+  // #4998: record the follow-on before it starts: its guard admits the wave this record names, and no other.
+  try {
+    if (!chainKey) throw new Error("the run names no decided head and no commit to go on with");
+    const outcomes: Record<string, FollowOnOutcome> = {};
+    for (const [member, o] of withChainOutcomes(own, note)) outcomes[member] = { status: o.status, ...(o.by !== undefined ? { by: o.by } : {}), wave: o.wave, at: o.at };
+    const record: FollowOnRecord = { ...chainKey, wave: next, from: i.wave, ...runOf(target.forge, env), at: (i.now ?? (() => new Date()))().toISOString(), outcomes };
+    await (await chainPort()).write(i.spec.name, record);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log(`wave ${i.wave} applied, and the follow-on for wave ${next} could not be recorded on chant/lifecycle (${message.split("\n")[0]}), so none is started: its guard would refuse it`);
+    return CHANT_EXIT.failed;
   }
   try {
     const started = await (i.start ?? startFollowOn)(target, next, env);
@@ -259,7 +353,7 @@ export async function followOnAfterRecord(i: FollowOnAfterRecordInput): Promise<
 export async function startFollowOn(target: OpWavesFollowOnTarget, wave: number, env: Record<string, string | undefined>, fetchFn: typeof fetch = fetch): Promise<StartedFollowOn> {
   const run = beforeMergeRunFromEnv(env);
   const bm = isBeforeMergeRun(run);
-  const commit = bm ? undefined : (env[OP_WAVES_COMMIT_ENV]?.trim() || (target.forge === "gitlab" ? env.CI_COMMIT_SHA : env.GITHUB_SHA));
+  const commit = bm ? undefined : followOnChainOf(target.forge, env)?.commit;
   if (!bm && !commit) throw new Error("the run names no commit to go on with");
   const values: Record<string, string> = bm ? { pr: run.pr!, head: run.head!, digest: run.digest!, wave: String(wave) } : { wave: String(wave), commit: commit! };
   const { forgeTargetFromEnv } = await import("../pr-forge");

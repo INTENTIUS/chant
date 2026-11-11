@@ -60,6 +60,13 @@
  * or, for a push, the pushed commit in `CHANT_WAVES_COMMIT`. The guard
  * admits it only in a job of the rest wave and only for a wave after it; any
  * other job refuses a run that names either variable.
+ *
+ * #4998: and only for the wave the newest record job of its chain started.
+ * The guard reads the follow-on records of the op (`_waves/<op>.follow-on.json`
+ * on `chant/lifecycle`, as it reads the decisions) and admits the run when
+ * the entry for its decided head, or a push's commit, names the run's wave
+ * and, before merge, the run's decision digest. A wave started by hand past
+ * the one the chain reached is refused, though each wave's gate would ask.
  */
 import { spawnSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
@@ -68,7 +75,7 @@ import { join } from "node:path";
 import { isRunnerGroup, type CiRunner } from "./ci-jobs";
 import { CHANT_EXIT } from "./exit-codes";
 import { BEFORE_MERGE_DIGEST_ENV, BEFORE_MERGE_HEAD_ENV, BEFORE_MERGE_PR_ENV, beforeMergePath, beforeMergeProblems, beforeMergeRunFromEnv, isBeforeMergeRun, parseBeforeMerge, type BeforeMergeRecord, type BeforeMergeRun } from "./op/before-merge";
-import { followOnProblems, followOnRunFromEnv, OP_WAVES_COMMIT_ENV, OP_WAVES_WAVE_ENV, type FollowOnRun } from "./op/follow-on-run";
+import { followOnPath, followOnProblems, followOnRecordProblems, followOnRunFromEnv, OP_WAVES_COMMIT_ENV, OP_WAVES_WAVE_ENV, parseFollowOn, type FollowOnRecord, type FollowOnRun } from "./op/follow-on-run";
 
 /** The variable the generated step carries its expectation in. */
 export const JOB_GUARD_ENV = "CHANT_JOB_GUARD";
@@ -117,6 +124,10 @@ export interface JobSeen {
   beforeMergeError?: string;
   /** The follow-on variables the run names (#4992). */
   followOn?: FollowOnRun;
+  /** The follow-on record of the run's chain (#4998); null when there is none. Read only for a follow-on the rest wave's job would admit. */
+  followOnRecord?: FollowOnRecord | null;
+  /** Why the follow-on records could not be read, when they could not. */
+  followOnError?: string;
 }
 
 export interface JobGuardResult {
@@ -252,9 +263,20 @@ export function checkJob(expect: JobGuardSpec, seen: JobSeen): JobGuardResult {
   }
 
   // #4992: a follow-on run of the rest wave, admitted in the rest wave's jobs alone and for a later wave.
-  const follow = followOnProblems(expect.rest, seen.followOn ?? {}, run !== undefined && isBeforeMergeRun(run));
+  const bmRun = run !== undefined && isBeforeMergeRun(run);
+  const follow = followOnProblems(expect.rest, seen.followOn ?? {}, bmRun);
   out.problems.push(...follow.problems);
-  if (follow.checked) out.checked.push(follow.checked);
+  if (follow.checked) {
+    // #4998: and only for the wave the newest record job of its chain started.
+    const key = (bmRun ? run!.head : seen.followOn?.commit) ?? "";
+    const rec = !expect.beforeMerge
+      ? ["follow-on: this job names no op whose follow-on records it reads, so it admits no follow-on"]
+      : seen.followOnError !== undefined
+        ? [`follow-on: the follow-on records on chant/lifecycle could not be read: ${seen.followOnError}`]
+        : followOnRecordProblems(expect.beforeMerge.op, seen.followOn!.wave!, key, bmRun ? (run!.digest ?? "") : undefined, seen.followOnRecord);
+    if (rec.length > 0) out.problems.push(...rec);
+    else out.checked.push(follow.checked);
+  }
 
   if (expect.forge === "gitlab") {
     const want = expect.runnerTags ?? [];
@@ -293,14 +315,26 @@ export async function jobSeen(expect: JobGuardSpec, env: NodeJS.ProcessEnv = pro
   if (follow.wave !== undefined || follow.commit !== undefined) seen.followOn = follow;
   // #4984: the decision a run names, read only when the spec has a before-merge mode.
   const run = beforeMergeRunFromEnv(env);
-  if (!isBeforeMergeRun(run)) return seen;
-  seen.beforeMerge = run;
-  if (!expect.beforeMerge || !run.head) return seen;
-  try {
-    const text = readLifecycle(expect.forge, env, beforeMergePath(expect.beforeMerge.op));
-    seen.beforeMergeRecord = parseBeforeMerge(text).heads[run.head] ?? null;
-  } catch (e) {
-    seen.beforeMergeError = (e as Error).message;
+  const bm = isBeforeMergeRun(run);
+  if (bm) {
+    seen.beforeMerge = run;
+    if (expect.beforeMerge && run.head) {
+      try {
+        const text = readLifecycle(expect.forge, env, beforeMergePath(expect.beforeMerge.op));
+        seen.beforeMergeRecord = parseBeforeMerge(text).heads[run.head] ?? null;
+      } catch (e) {
+        seen.beforeMergeError = (e as Error).message;
+      }
+    }
+  }
+  // #4998: the record of the run's chain, read only for a follow-on the rest wave's job would admit.
+  const key = bm ? run.head : follow.commit;
+  if (expect.beforeMerge && key && followOnProblems(expect.rest, follow, bm).checked !== undefined) {
+    try {
+      seen.followOnRecord = parseFollowOn(readLifecycle(expect.forge, env, followOnPath(expect.beforeMerge.op))).chains[key] ?? null;
+    } catch (e) {
+      seen.followOnError = (e as Error).message;
+    }
   }
   return seen;
 }
@@ -413,7 +447,12 @@ const BEFORE_MERGE_JS = [
   String.raw`if(dg!==rec.digest)p.push("before merge: the decision for head "+h+" was changed after it was made: its fields give another digest");return p};`,
 ].map(noQuote);
 
-/** The follow-on part of the program (#4992): the run's two variables and the lines of {@link followOnProblems}. After {@link BEFORE_MERGE_JS}, whose `SHA` it reads. */
+const FO_PATH = followOnPath("\u0000").split("\u0000") as [string, string];
+/**
+ * The follow-on part of the program (#4992): the run's two variables and the lines of {@link followOnProblems}, and
+ * (#4998) the read of the chain's record and the lines of {@link followOnRecordProblems}. After {@link BEFORE_MERGE_JS},
+ * whose `SHA`, `bmRead` and decision variables it reads.
+ */
 const FOLLOW_ON_JS = [
   `const foV=[${JSON.stringify(OP_WAVES_WAVE_ENV)},${JSON.stringify(OP_WAVES_COMMIT_ENV)}].map((k)=>String(E[k]||"").trim());const foRun={};if(foV[0])foRun.wave=foV[0];if(foV[1])foRun.commit=foV[1];`,
   String.raw`const foProblems=(rest,r,bm)=>{const w=r.wave,c=r.commit;`,
@@ -423,6 +462,14 @@ const FOLLOW_ON_JS = [
   String.raw`if(bm){if(c!==undefined)return{p:["follow-on: a follow-on of a decided head checks out that head, and the run names the commit "+c+" too"]};return{p:[],c:"follow-on wave "+w}}`,
   String.raw`if(c===undefined||!SHA.test(c))return{p:["follow-on: a push's follow-on names the commit it goes on with, and the run's "+(c===undefined?"none":JSON.stringify(c))+" is not a commit sha"]};`,
   String.raw`return{p:[],c:"follow-on wave "+w+" at "+c.slice(0,12)}};`,
+  // #4998: the record of the run's chain, as parseFollowOn keeps an entry, and the lines of followOnRecordProblems.
+  String.raw`const foEntry=(t,k)=>{let v;try{v=JSON.parse(t===null?"null":t)}catch(e){return null}const cs=v&&typeof v==="object"&&v.version===1?v.chains:undefined;if(!cs||typeof cs!=="object"||!SHA.test(k))return null;const e=cs[k];const W=(n,m)=>Number.isInteger(n)&&n>=m;`,
+  String.raw`if(!e||typeof e!=="object"||e.key!==k||!W(e.wave,2)||!W(e.from,1)||typeof e.run!=="string"||typeof e.at!=="string")return null;`,
+  String.raw`if((e.digest!==undefined&&typeof e.digest!=="string")||(e.pr!==undefined&&!W(e.pr,1))||(e.commit!==undefined&&(typeof e.commit!=="string"||!SHA.test(e.commit)))||!e.outcomes||typeof e.outcomes!=="object")return null;return e};`,
+  `const foSeen=(s)=>{const k=bmOn?bmRun.head:foRun.commit;if(!x.beforeMerge||!k||foProblems(x.rest,foRun,bmOn).c===undefined)return s;try{s.foRec=foEntry(bmRead(${JSON.stringify(FO_PATH[0])}+x.beforeMerge.op+${JSON.stringify(FO_PATH[1])}),k)}catch(e){s.foErr=e&&e.message?e.message:String(e)}return s};`,
+  String.raw`const foRecProblems=(op,w,k,dg,rec)=>{const what=dg!==undefined?"head":"commit";const sh=k.slice(0,12);if(!rec)return["follow-on: no record job of "+op+" started a follow-on for "+what+" "+sh+", so this run applies nothing"];const p=[];`,
+  String.raw`if(String(rec.wave)!==w)p.push("follow-on: the newest record job of "+op+" for "+what+" "+sh+" started wave "+rec.wave+", and this run names wave "+w);`,
+  String.raw`if(dg!==undefined&&rec.digest!==dg)p.push("follow-on: wave "+rec.wave+" of "+what+" "+sh+" was started for the decision with digest "+(rec.digest===undefined?"none":rec.digest)+", and the run carries "+dg);return p};`,
 ].map(noQuote);
 
 /**
@@ -444,14 +491,14 @@ export const JOB_GUARD_JS = [
   ...BEFORE_MERGE_JS,
   ...FOLLOW_ON_JS,
   "async function seenOf(){",
-  'if(x.forge==="gitlab")return bmSeen({forgeEnvironment:E.CI_ENVIRONMENT_NAME||null,ref:E.CI_COMMIT_REF_NAME,refProtected:E.CI_COMMIT_REF_PROTECTED,runnerTags:tags(E.CI_RUNNER_TAGS)});',
+  'if(x.forge==="gitlab")return foSeen(bmSeen({forgeEnvironment:E.CI_ENVIRONMENT_NAME||null,ref:E.CI_COMMIT_REF_NAME,refProtected:E.CI_COMMIT_REF_PROTECTED,runnerTags:tags(E.CI_RUNNER_TAGS)}));',
   "const s={ref:E.GITHUB_REF};let c;",
   'if(x.forge==="github"&&x.forgeEnvironment!==undefined){try{',
   'if(!E.ACTIONS_ID_TOKEN_REQUEST_URL||!E.ACTIONS_ID_TOKEN_REQUEST_TOKEN)throw new Error("the job may request no OIDC token (no ACTIONS_ID_TOKEN_REQUEST_URL); it needs the id-token: write permission");',
   'const r=await fetch(E.ACTIONS_ID_TOKEN_REQUEST_URL+"&audience="+encodeURIComponent(A),{headers:{authorization:"bearer "+E.ACTIONS_ID_TOKEN_REQUEST_TOKEN}});',
   'if(!r.ok)throw new Error("the OIDC token request answered "+r.status);const v=(await r.json()).value;if(typeof v!=="string")throw new Error("the OIDC token request answered no token");',
   'c=claimsOf(v);s.forgeEnvironment=typeof c.environment==="string"&&c.environment!==""?c.environment:null}catch(e){s.forgeEnvironmentError=e&&e.message?e.message:String(e)}}',
-  'const run=c&&typeof c.runner_environment==="string"?c.runner_environment:E.RUNNER_ENVIRONMENT;if(run)s.runnerEnvironment=run;return bmSeen(s)}',
+  'const run=c&&typeof c.runner_environment==="string"?c.runner_environment:E.RUNNER_ENVIRONMENT;if(run)s.runnerEnvironment=run;return foSeen(bmSeen(s))}',
   "seenOf().then((s)=>{const P=[],C=[],S=[];const fe=x.forgeEnvironment;",
   'if(x.forge==="forgejo")S.push("forge environment (Forgejo has none)");',
   'else if(fe!==undefined){if(s.forgeEnvironmentError!==undefined)P.push("forge environment: expected "+fe+", and it could not be read: "+s.forgeEnvironmentError);else if(s.forgeEnvironment!==fe)P.push("forge environment: expected "+fe+", found "+shown(s.forgeEnvironment));else C.push("forge environment "+fe)}',
@@ -465,7 +512,7 @@ export const JOB_GUARD_JS = [
     String.raw`else if(s.bmErr!==undefined)P.push("before merge: the decisions on chant/lifecycle could not be read: "+s.bmErr);`,
     String.raw`else{const Q=bmProblems(x.beforeMerge.op,r,s.rec||undefined);if(Q.length)P.push(...Q);else C.push("before merge: pull request "+r.pr+"'s decided head "+r.head.slice(0,12))}}`,
   ].map(noQuote),
-  "{const F=foProblems(x.rest,foRun,bmOn);P.push(...F.p);if(F.c)C.push(F.c)}",
+  "{const F=foProblems(x.rest,foRun,bmOn);P.push(...F.p);if(F.c){const G=!x.beforeMerge?[\"follow-on: this job names no op whose follow-on records it reads, so it admits no follow-on\"]:s.foErr!==undefined?[\"follow-on: the follow-on records on chant/lifecycle could not be read: \"+s.foErr]:foRecProblems(x.beforeMerge.op,foRun.wave,(bmOn?bmRun.head:foRun.commit)||\"\",bmOn?(bmRun.digest||\"\"):undefined,s.foRec);if(G.length)P.push(...G);else C.push(F.c)}}",
   'if(x.forge==="gitlab"){const w=x.runnerTags||[];if(w.length>0){const h=s.runnerTags;const miss=w.filter((t)=>!(h||[]).includes(t));',
   'if(h===undefined)P.push("runner: expected tags "+w.join(", ")+", and the job has no CI_RUNNER_TAGS");else if(miss.length>0)P.push("runner: expected tags "+w.join(", ")+", found "+(h.length?h.join(", "):"none"));else C.push("runner tags "+w.join(", "))}}',
   'else if(x.selfHosted){if(s.runnerEnvironment===undefined)S.push("runner (the runner says nothing about itself: no RUNNER_ENVIRONMENT)");else if(s.runnerEnvironment!=="self-hosted")P.push("runner: expected self-hosted, found "+s.runnerEnvironment);else C.push("self-hosted runner")}',

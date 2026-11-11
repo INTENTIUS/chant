@@ -23,6 +23,7 @@ import {
   type OpWavesFollowOnTarget,
 } from "./op-waves-follow-on";
 import { memoryGateLedgerPort } from "./gate";
+import { memoryFollowOnChainPort } from "./follow-on-store";
 import { beforeMergeDone } from "./before-merge-done";
 import { beforeMergeDigest } from "./before-merge";
 import { opWaveApplyStatus, postOpWaveApplyStatus } from "./apply-status";
@@ -44,7 +45,9 @@ const spec: OpWavesSpec = {
   ],
 };
 const github: OpWavesFollowOnTarget = { forge: "github", workflow: "tf-apply.yml" };
-const env = { CHANT_WAVES_FOLLOW_ON: JSON.stringify(github) };
+const env = { CHANT_WAVES_FOLLOW_ON: JSON.stringify(github), GITHUB_SHA: "d".repeat(40) };
+/** #4998: the record each record job writes before it starts a follow-on, held in memory. */
+const chain = memoryFollowOnChainPort();
 
 /** A job's checkout: `layers[k-1]` is what wave k's plan finds. */
 function checkout(layers: Array<Record<string, { planDigest: string }>>) {
@@ -102,7 +105,7 @@ describe("the rest wave's jobs run the wave a follow-on run names (#4992)", () =
     expect(slot.record).toMatchObject({ exitCode: 0, applied: ["db"] });
     const started: Array<[OpWavesFollowOnTarget, number]> = [];
     const start = async (t: OpWavesFollowOnTarget, wave: number) => (started.push([t, wave]), {});
-    expect(await followOnAfterRecord({ spec, wave: 2, exitCode: slot.record.exitCode, cwd: first.cwd, env, start, log: () => {} })).toBe(CHANT_EXIT.done);
+    expect(await followOnAfterRecord({ spec, wave: 2, exitCode: slot.record.exitCode, cwd: first.cwd, env, chain, start, log: () => {} })).toBe(CHANT_EXIT.done);
     expect(started).toEqual([[github, 3]]);
     expect(readOpWaveRestNote([join(first.cwd, opWaveOutcomeDir(spec))])).toEqual({ version: 1, op: "tf-apply", wave: 2, found: 4, next: 3 });
 
@@ -116,15 +119,18 @@ describe("the rest wave's jobs run the wave a follow-on run names (#4992)", () =
     // Planned once, in the plan job, and applied once, in the applying job, at wave 3's files.
     expect(second.calls.map((c) => c.split(" ").slice(0, 3).join(" "))).toEqual(["tg plan rest", "tg apply rest"]);
     expect(second.calls[1]).toContain("wave-3");
-    expect(await followOnAfterRecord({ spec, wave: 3, exitCode: three.record.exitCode, cwd: second.cwd, env, start, log: () => {} })).toBe(0);
+    expect(await followOnAfterRecord({ spec, wave: 3, exitCode: three.record.exitCode, cwd: second.cwd, env, chain, start, log: () => {} })).toBe(0);
     expect(started.at(-1)).toEqual([github, 4]);
 
     const third = checkout(layers);
     const four = await runSlot(third, 4);
     expect(four.record).toMatchObject({ exitCode: 0, applied: ["edge"] });
-    expect(await followOnAfterRecord({ spec, wave: 4, exitCode: four.record.exitCode, cwd: third.cwd, env, start, log: () => {} })).toBe(0);
+    expect(await followOnAfterRecord({ spec, wave: 4, exitCode: four.record.exitCode, cwd: third.cwd, env, chain, start, log: () => {} })).toBe(0);
     expect(started).toHaveLength(2);
-    expect(readOpWaveRestNote([join(third.cwd, opWaveOutcomeDir(spec))])).toEqual({ version: 1, op: "tf-apply", wave: 4, found: 4 });
+    // #4998: the last run's note carries the outcomes of the runs before it, from the record that started it.
+    const note = readOpWaveRestNote([join(third.cwd, opWaveOutcomeDir(spec))]);
+    expect({ ...note, chain: undefined }).toEqual({ version: 1, op: "tf-apply", wave: 4, found: 4, chain: undefined });
+    expect(Object.fromEntries(Object.entries(note!.chain!).map(([m, o]) => [m, [o.status, o.wave]]))).toEqual({ db: ["applied", 2], app: ["applied", 3] });
   });
 });
 
@@ -142,24 +148,24 @@ describe("the rest wave's record job (#4992)", () => {
 
   test("a run that failed, or a plan that found no more waves, starts nothing and says it is the last", async () => {
     const failed = recorded(2, 4, "failed");
-    expect(await followOnAfterRecord({ spec, wave: 2, exitCode: CHANT_EXIT.failed, cwd: failed, env, start: none, log: () => {} })).toBe(CHANT_EXIT.failed);
+    expect(await followOnAfterRecord({ spec, wave: 2, exitCode: CHANT_EXIT.failed, cwd: failed, env, chain, start: none, log: () => {} })).toBe(CHANT_EXIT.failed);
     expect(readOpWaveRestNote([join(failed, opWaveOutcomeDir(spec))])).toEqual({ version: 1, op: "tf-apply", wave: 2, found: 4 });
     const done = recorded(2, 2);
-    expect(await followOnAfterRecord({ spec, wave: 2, exitCode: 0, cwd: done, env, start: none, log: () => {} })).toBe(0);
+    expect(await followOnAfterRecord({ spec, wave: 2, exitCode: 0, cwd: done, env, chain, start: none, log: () => {} })).toBe(0);
     expect(readOpWaveRestNote([join(done, opWaveOutcomeDir(spec))])).toEqual({ version: 1, op: "tf-apply", wave: 2, found: 2 });
   });
 
   test("a follow-on that cannot be started fails the job, and the note still says one was to start", async () => {
     const cwd = recorded(2, 3);
     const lines: string[] = [];
-    expect(await followOnAfterRecord({ spec, wave: 2, exitCode: 0, cwd, env, start: async () => Promise.reject(new Error("403 Forbidden")), log: (l) => lines.push(l) })).toBe(CHANT_EXIT.failed);
+    expect(await followOnAfterRecord({ spec, wave: 2, exitCode: 0, cwd, env, chain, start: async () => Promise.reject(new Error("403 Forbidden")), log: (l) => lines.push(l) })).toBe(CHANT_EXIT.failed);
     expect(lines.at(-1)).toContain("the follow-on run for wave 3 could not be started (403 Forbidden)");
     expect(readOpWaveRestNote([join(cwd, opWaveOutcomeDir(spec))])?.next).toBe(3);
   });
 
   test("a job that is not the rest wave's, or a pipeline that sets no follow-on, is left as it is", async () => {
     const cwd = recorded(1, 4);
-    expect(await followOnAfterRecord({ spec, wave: 1, exitCode: 0, cwd, env, start: none })).toBe(0);
+    expect(await followOnAfterRecord({ spec, wave: 1, exitCode: 0, cwd, env, chain, start: none })).toBe(0);
     expect(await followOnAfterRecord({ spec, wave: 2, exitCode: 0, cwd: recorded(2, 4), env: {}, start: none })).toBe(0);
     expect(() => readFileSync(join(cwd, opWaveOutcomeDir(spec), OP_WAVE_REST_NOTE))).toThrow();
     expect(() => parseFollowOnTarget('{"forge":"github"}')).toThrow("workflow");
@@ -224,13 +230,13 @@ describe("the jobs after the waves read the note (#4992)", () => {
   test("the apply status counts the waves the plan found, and stays pending in a run that started a follow-on", async () => {
     const started = recorded(2, 4);
     const dir = join(started, opWaveOutcomeDir(spec));
-    await followOnAfterRecord({ spec, wave: 2, exitCode: 0, cwd: started, env, start: async () => ({}), log: () => {} });
+    await followOnAfterRecord({ spec, wave: 2, exitCode: 0, cwd: started, env, chain, start: async () => ({}), log: () => {} });
     const posted: unknown[] = [];
     const forge = { kind: "github" as const, setStatus: async (_sha: string, s: unknown) => void posted.push(s) };
     expect(await postOpWaveApplyStatus({ forge, dirs: [dir], wave: 2, of: 2, context: "x/apply", at: HEAD })).toContain("running: wave 2 of 4 applied");
     // The last follow-on run, wave 4 of 4, posts the one success.
     const last = recorded(4, 4);
-    await followOnAfterRecord({ spec, wave: 4, exitCode: 0, cwd: last, env, start: async () => ({}), log: () => {} });
+    await followOnAfterRecord({ spec, wave: 4, exitCode: 0, cwd: last, env, chain, start: async () => ({}), log: () => {} });
     expect(await postOpWaveApplyStatus({ forge, dirs: [join(last, opWaveOutcomeDir(spec))], wave: 4, of: 2, context: "x/apply", at: HEAD })).toContain("success: all 4 waves applied");
     // A follow-on whose gate waits leaves no note: the wave it ran is counted as the last one known.
     const waiting = mkdtempSync(join(tmpdir(), "op-waves-follow-on-wait-"));
