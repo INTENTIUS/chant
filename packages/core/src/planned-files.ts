@@ -12,6 +12,8 @@
  *
  * - {@link planFile} plans one file against what is on disk, its mode
  *   included, and writes nothing, so a dry run prints the plan as it is.
+ *   Its content is text, or bytes for a file such as terragucci's
+ *   `registry edge` bundles, compared byte for byte (#5006).
  * - {@link planRemoval} plans the removal of a file an earlier run wrote.
  * - {@link writePlannedFiles} writes the plan: each directory made, each
  *   file's mode set, each removed file unlinked, an unchanged one left as
@@ -28,14 +30,17 @@
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-/** One planned file. */
-export interface PlannedFile {
+/** What a planned file holds: text, or bytes such as a bundle or a zip, written as they are (#5006). A `Buffer` is a `Uint8Array`. */
+export type PlannedContent = string | Uint8Array;
+
+/** One planned file. Its content is text unless the plan was made with bytes (#5006). */
+export interface PlannedFile<C extends PlannedContent = string> {
   /** Where it is written. Absolute, or relative to the process's directory. */
   path: string;
   /** `removed`: a file an earlier run wrote that this one no longer asks for. */
   status: "created" | "updated" | "unchanged" | "removed";
-  /** The text to write; empty for a removal. */
-  content: string;
+  /** The text or bytes to write; empty text for a removal. */
+  content: C;
   /** The permission bits to set, such as `0o755` for a script. Unset, a new file gets the process's default and an existing one keeps its own. */
   mode?: number;
   /** In the git directory or otherwise never committed, such as a hook. */
@@ -51,15 +56,25 @@ function modeOf(path: string): number | undefined {
   }
 }
 
+/** Whether the file at `path` holds `content`: text compared as UTF-8 text, bytes compared byte for byte (#5006). */
+function holds(path: string, content: PlannedContent): boolean {
+  if (typeof content === "string") return readFileSync(path, "utf-8") === content;
+  return Buffer.from(content.buffer, content.byteOffset, content.byteLength).equals(readFileSync(path));
+}
+
 /**
  * Plan `content` at `path`: `created` when there is no file, `unchanged`
  * when the file holds the content (and, with `mode`, has that mode),
- * `updated` otherwise. Writes nothing.
+ * `updated` otherwise. Writes nothing. Content given as bytes is compared
+ * with the file byte for byte, and the plan carries the bytes (#5006).
  */
-export function planFile(path: string, content: string, extra: Pick<PlannedFile, "mode" | "local"> = {}): PlannedFile {
+export function planFile(path: string, content: string, extra?: Pick<PlannedFile, "mode" | "local">): PlannedFile;
+export function planFile(path: string, content: Uint8Array, extra?: Pick<PlannedFile, "mode" | "local">): PlannedFile<Uint8Array>;
+export function planFile(path: string, content: PlannedContent, extra?: Pick<PlannedFile, "mode" | "local">): PlannedFile<PlannedContent>;
+export function planFile(path: string, content: PlannedContent, extra: Pick<PlannedFile, "mode" | "local"> = {}): PlannedFile<PlannedContent> {
   const own = { ...(extra.mode !== undefined ? { mode: extra.mode } : {}), ...(extra.local ? { local: true } : {}) };
   if (!existsSync(path)) return { path, status: "created", content, ...own };
-  const same = readFileSync(path, "utf-8") === content && (extra.mode === undefined || modeOf(path) === extra.mode);
+  const same = holds(path, content) && (extra.mode === undefined || modeOf(path) === extra.mode);
   return { path, status: same ? "unchanged" : "updated", content, ...own };
 }
 
@@ -71,9 +86,10 @@ export function planRemoval(path: string): PlannedFile | undefined {
 /**
  * Write a plan: each created or updated file written, its directory made
  * and its mode set; each removed file unlinked; an unchanged file not
- * touched. A removed file that is already gone is not an error.
+ * touched. A removed file that is already gone is not an error. Bytes
+ * are written as they are (#5006).
  */
-export function writePlannedFiles(files: readonly Pick<PlannedFile, "path" | "status" | "content" | "mode">[]): void {
+export function writePlannedFiles(files: readonly Pick<PlannedFile<PlannedContent>, "path" | "status" | "content" | "mode">[]): void {
   for (const f of files) {
     if (f.status === "unchanged") continue;
     if (f.status === "removed") {
@@ -131,4 +147,4 @@ export function staleGeneratedFiles(options: StaleGeneratedOptions): string[] {
   return out;
 }
 
-export { PLANNED_FILES_FLOOR } from "./release-floors";
+export { PLANNED_BYTES_FLOOR, PLANNED_FILES_FLOOR } from "./release-floors";

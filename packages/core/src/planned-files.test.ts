@@ -34,6 +34,39 @@ describe("planFile and writePlannedFiles", () => {
     expect(modeOf(script)).toBe(0o755);
   });
 
+  /** #5006: a product's byte files, such as terragucci's `registry edge` bundles, beside its text ones. */
+  test("bytes are written unchanged and compared with the file byte for byte", () => {
+    const root = dir();
+    const zip = join(root, "edge", "bundle.zip");
+    const bytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0xff, 0x00, 0xfe]);
+    const files: { path: string; content: string | Buffer }[] = [
+      { path: "worker.mjs", content: Buffer.from([0xef, 0xbb, 0xbf, 0x80]) },
+      { path: "wrangler.toml", content: "name = \"r\"\n" },
+    ];
+    const plan = [planFile(zip, bytes), ...files.map((f) => planFile(join(root, "edge", f.path), f.content))];
+    expect(plan.map((f) => f.status)).toEqual(["created", "created", "created"]);
+    expect(plan[0].content).toBe(bytes);
+    writePlannedFiles(plan);
+    expect([...readFileSync(zip)]).toEqual([...bytes]);
+    expect([...readFileSync(join(root, "edge", "worker.mjs"))]).toEqual([0xef, 0xbb, 0xbf, 0x80]);
+    expect(readFileSync(join(root, "edge", "wrangler.toml"), "utf-8")).toBe("name = \"r\"\n");
+    expect(planFile(zip, Buffer.from(bytes)).status).toBe("unchanged");
+    expect(planFile(join(root, "edge", "worker.mjs"), files[0].content).status).toBe("unchanged");
+    // A view into a larger buffer compares only its own bytes.
+    const wider = new Uint8Array([9, ...bytes, 9]);
+    expect(planFile(zip, wider.subarray(1, 1 + bytes.length)).status).toBe("unchanged");
+    // 0xff and 0xfe both read as U+FFFD in UTF-8 text, so only a byte compare tells them apart.
+    const odd = join(root, "odd.bin");
+    writeFileSync(odd, Buffer.from([0xff]));
+    expect(planFile(odd, "�").status).toBe("unchanged");
+    expect(planFile(odd, new Uint8Array([0xfe])).status).toBe("updated");
+    expect(planFile(odd, new Uint8Array([0xff, 0x00])).status).toBe("updated");
+    const binary = planFile(odd, new Uint8Array([0xfe]), { mode: 0o600 });
+    writePlannedFiles([binary]);
+    expect([...readFileSync(odd)]).toEqual([0xfe]);
+    expect(modeOf(odd)).toBe(0o600);
+  });
+
   test("a removal is planned only for a file that is there, and written by unlinking it", () => {
     const root = dir();
     const old = join(root, "old.yml");

@@ -219,6 +219,9 @@ export const CI_BASE_REF_FLOOR = "0.124.89";
 /** The first chant with `@intentius/chant/planned-files` (`planFile`, `planRemoval`, `writePlannedFiles`, `staleGeneratedFiles`): an init's planned files with their modes, written or removed in one call, and the generated files a product no longer renders, found by their header (#4966). */
 export const PLANNED_FILES_FLOOR = "0.124.89";
 
+/** The first chant whose `planFile` in `@intentius/chant/planned-files` takes bytes (`Uint8Array` or `Buffer`) as well as text: `writePlannedFiles` writes them unchanged and the plan compares them with the file byte for byte (#5006). */
+export const PLANNED_BYTES_FLOOR = NEXT_RELEASE;
+
 /** The first chant whose `pipelineContract` takes `jobs`, the jobs a product builds from its own config, beside or in place of `pipelines`, so a product's forge check gets the required statuses and `refGateStatus` from chant (#4966). */
 export const FORGE_CHECK_OWN_JOBS_FLOOR = "0.124.89";
 
