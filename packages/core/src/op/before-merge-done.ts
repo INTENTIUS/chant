@@ -12,6 +12,10 @@
  * the head applied, and the locks hold until the pull request merges or
  * closes, when the unlock job releases them. A refusal is posted on the
  * pull request and the job exits `waiting` (3), so the run shows it.
+ *
+ * A run whose `rest` wave started a follow-on run for the next wave the
+ * plan found (#4992, ./op-waves-follow-on.ts) is not the last: the job says
+ * so and does nothing more, and the follow-on's done job merges.
  */
 
 import { CHANT_EXIT } from "../exit-codes";
@@ -30,6 +34,8 @@ export interface BeforeMergeDoneInput {
   record: BeforeMergeRecord | undefined;
   /** The waves' outcome, from every job's outcome file. */
   outcome: ApplyOutcomeSummary;
+  /** The rest wave of this run started a follow-on run for wave `next` (#4992): that run merges, so this one does nothing more. */
+  followOn?: { wave: number; next: number; found: number };
   merge: "auto" | "manual";
   /** The job's client: it replies and reads the approval. */
   forge: Pick<PrForge, "kind" | "addComment"> & Partial<Pick<PrForge, "prApproved">>;
@@ -60,6 +66,10 @@ export async function beforeMergeDone(i: BeforeMergeDoneInput): Promise<BeforeMe
     await i.forge.addComment(r.pr, `${i.words.product}: ${text}`);
     return { code, text, ...(merged !== undefined ? { merged } : {}) };
   };
+  // #4992: not the last run of the head's waves; the follow-on's done job merges and replies.
+  if (i.followOn) {
+    return { code: CHANT_EXIT.done, text: `wave ${i.followOn.wave} of ${i.followOn.found} ${verb[1]} ${at}'s head ${short(r.head)}, and a follow-on run goes on with wave ${i.followOn.next}; its done job merges, so nothing is merged here` };
+  }
   if (r.through !== undefined && r.through < i.waves) {
     return say(`${verb[1]} ${i.op} through wave ${r.through} of ${i.waves} at ${at}'s head ${short(r.head)}; the waves after it wait until the ${verb[0]} is asked for again without a wave, so nothing is merged`, CHANT_EXIT.done);
   }

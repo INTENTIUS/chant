@@ -58,10 +58,14 @@
  * command, and what the plan job's code keeps for the later jobs goes under
  * {@link opWaveProductStateDir}.
  *
- * A `rest` wave runs the waves its plan finds in one job; before merge each
- * wave needs jobs of its own, so {@link assertOpWavesSplit} refuses it.
+ * A `rest` wave (#4992) runs one wave per run: its four jobs run wave N,
+ * the last rendered one, or in a follow-on run the wave the run names
+ * (`--wave "${CHANT_WAVES_WAVE:-N}"`), and its record job starts the
+ * follow-on for the next wave the plan found (./op-waves-follow-on.ts).
+ * Its jobs carry `rest: true`.
  */
 
+import { OP_WAVES_WAVE_ENV } from "./follow-on-run";
 import { opWaveOutcomePath, opWaveRecordPath, type OpWaveJob, type OpWavesSpec } from "./op-waves";
 
 /** The four jobs of a split wave (#4987). */
@@ -74,6 +78,8 @@ export interface OpWaveSplitJob extends OpWaveJob {
   phase: OpWavePhase;
   /** The job checks out and runs the change's code: the plan and apply jobs. It holds no write token. */
   runsChange: boolean;
+  /** A job of the `rest` wave (#4992): it runs the wave `CHANT_WAVES_WAVE` names, its own number by default. */
+  rest?: true;
 }
 
 /** Where a wave's plan job saves its plan, beside the run plan files the apply reads (#4987). */
@@ -107,18 +113,19 @@ export function opWaveRunRecordFileName(wave: number, part: { group?: string; sh
 /** A run record file's name, as {@link opWaveRunRecordFileName} gives it; group 1 is the wave. */
 export const OP_WAVE_RUN_RECORD_FILE = /^run-record-wave-(\d+)(?:-group-[A-Za-z0-9._-]+)?(?:-share-\d+)?\.json$/;
 
-/** Refuse a spec whose waves cannot run as four jobs each, naming why. A `step` spec splits (#4992). */
-export function assertOpWavesSplit(spec: Pick<OpWavesSpec, "name" | "waves">): void {
-  const where = `Op waves "${spec.name}" with beforeMerge`;
-  const rest = spec.waves.find((w) => w.rest === true);
-  if (rest) {
-    throw new Error(`${where}: wave "${rest.name}" has \`rest\`, which runs the waves its plan finds in one job; before merge each wave is a plan, a gate, an apply and a record job, so the pipeline needs a job for every wave it runs.`);
-  }
-}
+/**
+ * Refuse a spec whose waves cannot run as four jobs each, naming why. A
+ * `step` spec splits (#4992), and a `rest` wave runs one wave per run
+ * (./op-waves-follow-on.ts), so nothing is refused today.
+ */
+export function assertOpWavesSplit(_spec: Pick<OpWavesSpec, "name" | "waves">): void {}
 
-/** A wave job's command without `--decide`, which the plan and gate jobs take the place of. */
-function baseCommand(job: OpWaveJob): string[] {
-  return job.command.filter((w) => w !== "--decide");
+/** A wave job's command without `--decide`, which the plan and gate jobs take the place of; a rest wave's names the wave `CHANT_WAVES_WAVE` gives (#4992). */
+function baseCommand(job: OpWaveJob, rest = false): string[] {
+  const words = job.command.filter((w) => w !== "--decide");
+  if (!rest) return words;
+  const at = words.indexOf("--wave");
+  return at < 0 ? words : [...words.slice(0, at + 1), `"\${${OP_WAVES_WAVE_ENV}:-${job.wave}}"`, ...words.slice(at + 2)];
 }
 
 /** The job after which the waves after wave `k` start: its record job. */
@@ -143,18 +150,21 @@ export function opWaveSplitJobs(spec: OpWavesSpec, jobs: readonly OpWaveJob[]): 
     const first = own[0]!;
     const prefix = `wave-${k}-${first.waveName}`;
     const needs = k === 1 ? [] : [opWaveRecordJobName(spec, k - 1)];
-    const base = baseCommand(first);
+    // #4992: the rest wave's jobs run the wave a follow-on run names.
+    const rest = spec.waves[k - 1]!.rest === true;
+    const marks = rest ? { rest: true as const } : {};
+    const base = baseCommand(first, rest);
     const plan = `${prefix}-plan`;
     const gate = `${prefix}-gate`;
-    out.push({ jobName: plan, wave: k, waveName: first.waveName, kind: "decide", needs, command: [...base, "--phase", "plan"], outcome: opWaveOutcomePath(spec, k), phase: "plan", runsChange: true });
-    out.push({ jobName: gate, wave: k, waveName: first.waveName, kind: "decide", needs: [plan], command: [...base, "--phase", "gate"], record: opWaveRecordPath(spec, k), outcome: opWaveOutcomePath(spec, k), phase: "gate", runsChange: false });
+    out.push({ jobName: plan, wave: k, waveName: first.waveName, kind: "decide", needs, command: [...base, "--phase", "plan"], outcome: opWaveOutcomePath(spec, k), phase: "plan", runsChange: true, ...marks });
+    out.push({ jobName: gate, wave: k, waveName: first.waveName, kind: "decide", needs: [plan], command: [...base, "--phase", "gate"], record: opWaveRecordPath(spec, k), outcome: opWaveOutcomePath(spec, k), phase: "gate", runsChange: false, ...marks });
     const applying = first.kind === "wave" ? [first] : own.filter((j) => j.kind === "share");
     for (const job of applying) {
       // The wave's own applying job writes `-apply`, so it never reads its own outcome as the gate job's.
       const outcome = job.kind === "wave" ? opWaveOutcomePath(spec, k, { apply: true }) : job.outcome;
-      out.push({ ...job, kind: "share", needs: [gate], command: [...baseCommand(job), "--phase", "apply"], record: opWaveRecordPath(spec, k), outcome, phase: "apply", runsChange: true });
+      out.push({ ...job, kind: "share", needs: [gate], command: [...baseCommand(job, rest), "--phase", "apply"], record: opWaveRecordPath(spec, k), outcome, phase: "apply", runsChange: true, ...marks });
     }
-    out.push({ jobName: opWaveRecordJobName(spec, k), wave: k, waveName: first.waveName, kind: "wave", needs: [...applying.map((j) => j.jobName), gate], record: opWaveRecordPath(spec, k), command: [...base, "--phase", "record"], outcome: opWaveOutcomePath(spec, k), phase: "record", runsChange: false });
+    out.push({ jobName: opWaveRecordJobName(spec, k), wave: k, waveName: first.waveName, kind: "wave", needs: [...applying.map((j) => j.jobName), gate], record: opWaveRecordPath(spec, k), command: [...base, "--phase", "record"], outcome: opWaveOutcomePath(spec, k), phase: "record", runsChange: false, ...marks });
   }
   return out;
 }

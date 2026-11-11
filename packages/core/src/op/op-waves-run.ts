@@ -142,6 +142,7 @@ import {
   assertOpWaveHooks,
   assertOpWavesSpec,
   opWaveApplyHooksRunBy,
+  opWaveAt,
   opWaveGateName,
   opWaveHooksAt,
   opWaveHookRuns,
@@ -2570,7 +2571,7 @@ export function opWaveRunRecord(
   const wave: OpRunWave = {
     spec: spec.name,
     number: options.wave,
-    name: spec.waves[options.wave - 1]?.name ?? `wave-${options.wave}`,
+    name: opWaveAt(spec, options.wave)?.name ?? `wave-${options.wave}`,
     job: options.decide ? "decide" : options.group !== undefined ? "group" : options.share !== undefined ? "share" : "wave",
     ...(options.share !== undefined ? { share: options.share } : {}),
     ...(options.group !== undefined ? { group: options.group } : {}),
@@ -2830,7 +2831,7 @@ function opWavePhaseProblem(options: RunOpWaveOptions): string | undefined {
 function saveOpWavePlan(options: RunOpWaveOptions, plan: Omit<OpWaveSavedPlan, "version" | "op" | "wave" | "name">): void {
   const path = join(options.cwd ?? process.cwd(), opWaveSavedPlanPath(options.spec, options.wave));
   mkdirSync(dirname(path), { recursive: true });
-  const name = options.spec.waves[options.wave - 1]?.name ?? `wave-${options.wave}`;
+  const name = opWaveAt(options.spec, options.wave)?.name ?? `wave-${options.wave}`;
   // #4994: the re-runs under an approval an earlier gate job spent, whose finished lines the gate job writes.
   const finished = handedFinished.get(options);
   const saved: OpWaveSavedPlan = { version: 1, op: options.spec.name, wave: options.wave, name, ...plan, ...(finished?.length ? { holdsFinished: finished } : {}) };
@@ -2941,7 +2942,8 @@ async function runOpWaveGatePhase(options: RunOpWaveOptions, dir: string): Promi
   const saved = readSavedOpWavePlan(options);
   // #4994: the plan job ran a held hook again under an approval an earlier gate job spent; this job writes how it ended.
   await writeHandedFinished(options, cwd, saved.holdsFinished, log);
-  const at = spec.waves[k - 1];
+  // #4992: a follow-on run's wave past the spec's is the rest wave's.
+  const at = opWaveAt(spec, k);
   // #4992: a hook in the plan job held the wave on another gate it could not record; this job records it.
   const heldOn = saved.end?.exitCode === CHANT_EXIT.waiting ? saved.end.decision?.heldOn : undefined;
   if (saved.end && !(heldOn?.deferred && at)) {
@@ -3225,7 +3227,7 @@ interface OpWaveBefore {
  */
 function opWaveBefore(options: RunOpWaveOptions, dir: string): OpWaveBefore {
   const { spec, wave: k } = options;
-  const wave = spec.waves[k - 1];
+  const wave = opWaveAt(spec, k);
   if (!wave) return { blocked: new Map() };
   // #4987: a split wave's applying job reads its gate job's outcome, as a share reads its deciding job's.
   if (options.share !== undefined || options.group !== undefined || options.phase === "apply") {
@@ -3271,7 +3273,7 @@ function opWaveBefore(options: RunOpWaveOptions, dir: string): OpWaveBefore {
 
 /** The runs of wave `options.wave` this job holds (#4322): its slice for a share job, every run otherwise. Empty for a discovering wave. */
 function jobRuns(options: RunOpWaveOptions, runs?: readonly OpWaveRun[]): string[] {
-  const wave = options.spec.waves[options.wave - 1];
+  const wave = opWaveAt(options.spec, options.wave);
   if (!wave) return [];
   const all = runs ?? (wave.discover ? [] : wave.runs);
   if (options.share === undefined && options.group === undefined) return all.map((r) => r.target);

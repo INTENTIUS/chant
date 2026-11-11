@@ -120,6 +120,13 @@
  * `<wave>-gate` and `<wave>-record` run the default branch's code with
  * `contents: write`. Without it, each wave keeps its one job.
  *
+ * #4992: a split pipeline's `rest` wave runs one wave per run. The
+ * workflow takes two more inputs, `wave` and `commit`; the rest wave's jobs
+ * run the wave `wave` names (their own by default) and the record job,
+ * once the plan found another wave, dispatches the workflow again for it
+ * (`@intentius/chant/op/op-waves-follow-on`). The jobs of the waves before
+ * the rest wave do not run in such a follow-on run.
+ *
  * With `options.applyStatus` (#4987) a job `apply-status-<n>` after each
  * wave, at the default branch's commit and running none of the change's
  * code, downloads the outcome files and posts the status on the push's
@@ -195,6 +202,19 @@ import { applyStatusCommand, applyStatusJobName, assertApplyStatusContext, type 
 import { PR_STALE_JOB } from "@intentius/chant/components/pr-pipeline";
 import { opWaveRunRecordFileName, opWaveSavedPlanDir, opWaveSavedPlanPath, opWaveSplitJobLabel, opWaveSplitJobs, opWaveSplitLastJobs, type OpWaveSplitJob } from "@intentius/chant/op/op-waves-split";
 import { CHECKOUT_TOKEN_ENV, checkoutScript, dropForgeTokens, handoverOutputs, packJs, takeOverScript } from "@intentius/chant/ci-handover";
+import {
+  FOLLOW_ON_TOKEN_ENV,
+  FORGE_TOKEN_VAR,
+  followOnCommitScript,
+  followOnControlSkip,
+  OP_WAVES_COMMIT_ENV,
+  OP_WAVES_FOLLOW_ON_ENV,
+  OP_WAVES_WAVE_ENV,
+  opWaveRestNotePath,
+  opWaveRestPath,
+  opWavesFollowOnEnv,
+  opWavesRestWave,
+} from "@intentius/chant/op/op-waves-follow-on";
 import { checkoutStep, concurrency, DOWNLOAD_ARTIFACT, downloadArtifactStep, keepRecordStep, runSteps } from "./ci-jobs";
 import { emitOpPipelineYAML, type GithubOpPipelineDoc } from "./generate-op-pipeline";
 
@@ -227,6 +247,8 @@ export function buildGithubOpWavesDoc(
   const jobs = opWaveJobs(spec, options.specFile, { bin: options.bin, ...(options.renderSpec ? { renderSpec: true } : {}), ...(bm ? { beforeMerge: true } : {}) });
   // #4987: before merge each wave is a plan, a gate, an apply and a record job, so the change's code never runs beside a write token.
   const split = bm ? opWaveSplitJobs(spec, jobs) : undefined;
+  // #4992: a split pipeline's rest wave runs one wave per run, each run's record job starting the next.
+  const restWave = split ? opWavesRestWave(spec) : undefined;
   assertPipelineEvidence(options.evidence);
   const product = resolveProductWords(options.words ?? {}).product;
   const image = options.image ?? OP_WAVES_IMAGE;
@@ -261,7 +283,7 @@ export function buildGithubOpWavesDoc(
   const jobsDoc: Record<string, unknown> = {};
   // #3761: the notify variables come from the secrets of the same name. #4987: before merge, on the jobs that run the default branch's code alone.
   const notifyEnv = githubSecretEnv(notifyVariables(spec.notify));
-  if (split) Object.assign(jobsDoc, githubSplitJobsDoc({ spec, options, forge, product, image, byReview, timeout, inputs, renderEnv, bmEnv, notifyEnv, split }));
+  if (split) Object.assign(jobsDoc, githubSplitJobsDoc({ spec, options, forge, product, image, byReview, timeout, inputs, renderEnv, bmEnv, notifyEnv, split, ...(restWave !== undefined ? { restWave } : {}) }));
   for (const job of split ? [] : jobs) {
     const wave = spec.waves[job.wave - 1]!;
     // #3914: a job group's job runs with the group's settings over the wave's.
@@ -351,15 +373,18 @@ export function buildGithubOpWavesDoc(
   // #4987: a split pipeline's waves end with the last wave's record job.
   const last = split ? opWaveSplitLastJobs(spec) : opWavesLastJobs(jobs);
   if (spec.control) {
-    const [name, job] = controlJob(spec, options, last, image, permissions);
+    const [name, job] = controlJob(spec, options, last, image, permissions, restWave !== undefined ? product : undefined);
     jobsDoc[name] = bm ? { ...job, if: "${{ !cancelled() && github.event.inputs.head == '' }}" } : job;
   }
   // #4984: after a before-merge run's last wave, the merge and the release of the change's locks.
-  if (bm) jobsDoc[BEFORE_MERGE_DONE_JOB] = beforeMergeDoneJob(spec, options, bm, forge, last, image, bmEnv);
+  if (bm) jobsDoc[BEFORE_MERGE_DONE_JOB] = beforeMergeDoneJob(spec, options, bm, forge, last, image, bmEnv, restWave !== undefined);
   // #4987: each wave's apply status, from a job that runs none of the change's code.
   if (options.applyStatus) {
     assertApplyStatusContext(options.applyStatus.context);
-    for (let k = 1; k <= spec.waves.length; k++) jobsDoc[applyStatusJobName(k)] = applyStatusJob(spec, options, options.applyStatus, forge, split ?? jobs, k, image, bmEnv);
+    for (let k = 1; k <= spec.waves.length; k++) {
+      const status = applyStatusJob(spec, options, options.applyStatus, forge, split ?? jobs, k, image, bmEnv, restWave);
+      jobsDoc[applyStatusJobName(k)] = restWave !== undefined && k < restWave ? beforeFollowOn(status) : status;
+    }
   }
   // #4987: a push marks the open pull requests' plan notes stale, beside wave 1.
   if (options.staleNotes) jobsDoc[PR_STALE_JOB] = staleNotesJob(spec, options, options.staleNotes, image);
@@ -368,7 +393,7 @@ export function buildGithubOpWavesDoc(
   const env = { ...(split ? {} : notifyEnv), ...(options.variables ?? {}) };
   const doc: GithubOpPipelineDoc = {
     name: spec.name,
-    on: { push: { branches: pushBranches(spec.branches) }, workflow_dispatch: bm ? { inputs: BEFORE_MERGE_DISPATCH_INPUTS } : {} },
+    on: { push: { branches: pushBranches(spec.branches) }, workflow_dispatch: bm ? { inputs: { ...BEFORE_MERGE_DISPATCH_INPUTS, ...(restWave !== undefined ? FOLLOW_ON_DISPATCH_INPUTS : {}) } } : {} },
     ...nonEmpty("env", env),
     // The ruling for ci-products (2026-10-28): no workflow-level concurrency group. Runs on the target and repo grains wait for
     // their rows on chant's ledger, oldest commit first; plunge stacks on the resource grain lease their resource rows and run.
@@ -412,7 +437,49 @@ interface SplitJobsInput {
   bmEnv: Record<string, string>;
   notifyEnv: Record<string, string>;
   split: OpWaveSplitJob[];
+  /** The rest wave's number (#4992), when the last wave has `rest`. */
+  restWave?: number;
 }
+
+/**
+ * Where a rest wave's path (#4992) names its wave: {@link fillRestWave}
+ * puts `CHANT_WAVES_WAVE` there, as `${{ env.… }}` in a `with:` and as the
+ * shell variable in a `run:`, where every such path sits in single quotes.
+ * Plain letters and underscores, so the hand-off's note files take it.
+ */
+const REST_WAVE_MARK = "__chant_rest_wave__";
+
+/** A rest wave job's steps with {@link REST_WAVE_MARK} filled in (#4992). */
+function fillRestWave(steps: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  return steps.map((step) => {
+    const out: Record<string, unknown> = { ...step };
+    if (typeof step.run === "string") out.run = step.run.replaceAll(REST_WAVE_MARK, `'"$${OP_WAVES_WAVE_ENV}"'`);
+    if (step.with && typeof step.with === "object") {
+      out.with = Object.fromEntries(Object.entries(step.with as Record<string, unknown>).map(([k, v]) => [k, typeof v === "string" ? v.replaceAll(REST_WAVE_MARK, `\${{ env.${OP_WAVES_WAVE_ENV} }}`) : v]));
+    }
+    return out;
+  });
+}
+
+/**
+ * The variables of a rest wave's jobs (#4992): the wave they run, a
+ * follow-on run's or their own, and the commit a push's follow-on goes on with.
+ */
+function followOnEnv(restWave: number): Record<string, string> {
+  return { [OP_WAVES_WAVE_ENV]: `\${{ github.event.inputs.wave || '${restWave}' }}`, [OP_WAVES_COMMIT_ENV]: "${{ github.event.inputs.commit }}" };
+}
+
+/** A job of a wave before the rest wave (#4992): it does not run in a follow-on run, which names a wave. */
+function beforeFollowOn(job: Record<string, unknown>): Record<string, unknown> {
+  const cond = typeof job.if === "string" ? job.if.replace(/^\$\{\{\s*([\s\S]*?)\s*\}\}$/, "$1") : undefined;
+  return { ...job, if: `\${{ ${cond ? `(${cond}) && ` : ""}github.event.inputs.wave == '' }}` };
+}
+
+/** The `workflow_dispatch` inputs a follow-on run of the rest wave carries (#4992), which its record job fills. */
+export const FOLLOW_ON_DISPATCH_INPUTS: Record<string, { description: string; required: false; type: "string" }> = {
+  wave: { description: "Follow-on: the wave past the listed ones that the rest wave's jobs run", required: false, type: "string" },
+  commit: { description: "Follow-on of a push: the pushed commit the waves go on with", required: false, type: "string" },
+};
 
 /**
  * The jobs of a before-merge pipeline, each wave split in four (#4987,
@@ -432,9 +499,18 @@ interface SplitJobsInput {
  * and run the command with `contents: write`. They alone carry the notify
  * secrets. Forgejo ignores `permissions:`, so its job token can write; the
  * plan and apply jobs keep it to the checkout step there too.
+ *
+ * #4992: the rest wave's jobs run the wave `CHANT_WAVES_WAVE` names (the
+ * `wave` input of a follow-on run, else their own), keep their files at
+ * that wave's paths, and in a push's follow-on check out the `commit` input
+ * once it is on the branch. Its record job may start the follow-on: on
+ * GitHub with the job's token and `actions: write`, on Forgejo with the
+ * `CHANT_FORGE_TOKEN` secret, in that step alone; it keeps the rest wave's
+ * note. The jobs of the waves before it do not run in a follow-on.
  */
 function githubSplitJobsDoc(input: SplitJobsInput): Record<string, unknown> {
-  const { spec, options, forge, product, image, byReview, timeout, inputs, renderEnv, bmEnv, notifyEnv, split } = input;
+  const { spec, options, forge, product, image, byReview, timeout, inputs, renderEnv, bmEnv, notifyEnv, split, restWave } = input;
+  const follow = restWave !== undefined ? followOnEnv(restWave) : {};
   // #4992: Forgejo's plan and applying jobs hand their files on as job outputs, never through the artifact upload.
   const handover = forge === "forgejo";
   const evidenceOf = (job: OpWaveSplitJob) => (job.phase === "plan" && options.evidence !== undefined ? opWaveEvidencePlan(spec, job, { signs: true, keylessCloud: false, keyOutOfWave: true }) : undefined);
@@ -445,21 +521,35 @@ function githubSplitJobsDoc(input: SplitJobsInput): Record<string, unknown> {
     const k = job.wave;
     const wave = spec.waves[k - 1]!;
     const add = inputs[k - 1];
+    // #4992: the rest wave's jobs run the wave a follow-on names; the jobs of the waves before it do not run in one.
+    const rest = job.rest === true;
+    const restEnv = rest ? follow : {};
+    const finish = (doc: Record<string, unknown>, steps: Array<Record<string, unknown>>): Record<string, unknown> => {
+      const filled = { ...doc, steps: rest ? fillRestWave(steps) : steps };
+      return restWave !== undefined && k < restWave ? beforeFollowOn(filled) : filled;
+    };
+    const followCommit = rest ? [{ name: "Check out the commit a push's follow-on goes on with", run: followOnCommitScript(product) }] : [];
     if (!job.runsChange) {
       // The gate and record jobs: the default branch's code, with the token.
       const gate = job.phase === "gate";
       // #4992: on Forgejo the plan and applying jobs hand their files on as job outputs; these jobs take them back and keep them as artifacts.
       const from = gate ? split.filter((j) => j.jobName === job.needs[0]) : split.filter((j) => j.phase === "apply" && job.needs.includes(j.jobName));
       const takeOver = handover ? from.map((j) => takeOverStep(spec, j, handedPaths(spec, j, add))) : [];
+      // #4992: the rest wave's record job starts the follow-on run, with a token that may, in its own step alone.
+      const starts = rest && !gate;
+      const startEnv = starts
+        ? { [OP_WAVES_FOLLOW_ON_ENV]: opWavesFollowOnEnv({ forge, workflow: `${spec.name}.yml` }), [FOLLOW_ON_TOKEN_ENV]: forge === "github" ? GITHUB_JOB_TOKEN : `\${{ secrets.${FORGE_TOKEN_VAR} }}` }
+        : undefined;
       const steps: Array<Record<string, unknown>> = [
-        guardStep({ forge, job: opWaveSplitJobLabel(spec.name, job), product, branches, ...(spec.runner !== undefined ? { runner: spec.runner } : {}), idToken: false, beforeMerge: { op: spec.name } }),
+        guardStep({ forge, job: opWaveSplitJobLabel(spec.name, job), product, branches, ...(spec.runner !== undefined ? { runner: spec.runner } : {}), idToken: false, beforeMerge: { op: spec.name }, ...(rest ? { rest: k } : {}) }),
         checkoutStep(true),
+        ...followCommit,
         // The gate reads the head's commit, its notes and its wave stop, and stops when the pull request moved; the
         // record job writes what the applying jobs ran, whatever the pull request did since.
         ...(gate
           ? [
               { name: "Fetch the pull request's decided head without checking it out", run: beforeMergeCheckoutScript(forge, product, { checkout: false }) },
-              ...(handover ? takeOver : [downloadArtifactStep(`Download wave ${k}'s saved plan`, opWavePlanArtifact(spec, k), opWaveSavedPlanDir(spec, k))]),
+              ...(handover ? takeOver : [downloadArtifactStep(`Download wave ${k}'s saved plan`, opWavePlanArtifact(spec, k), restAt(job, opWaveSavedPlanDir(spec, k)))]),
             ]
           : [
               { name: "Download the waves' outcomes and run records", uses: DOWNLOAD_ARTIFACT, with: { path: opWaveOutcomeDir(spec) } },
@@ -469,28 +559,33 @@ function githubSplitJobsDoc(input: SplitJobsInput): Record<string, unknown> {
             ]),
         ...(wave.setup ?? []).map(setupStepDoc),
         ...runSteps(options.beforeScript ?? []),
-        { name: splitStepName(job), run: job.command.join(" ") },
+        { name: splitStepName(job), ...(startEnv ? { env: startEnv } : {}), run: job.command.join(" ") },
       ];
       if (gate) {
-        steps.push(keepRecordStep(`Keep wave ${k}'s decision`, opWaveRecordArtifact(spec, k), job.record!));
-        steps.push(keepRecordStep(`Keep the job's outcome`, opWaveOutcomeArtifact(spec, job.jobName), job.outcome));
+        steps.push(keepRecordStep(`Keep wave ${k}'s decision`, opWaveRecordArtifact(spec, k), restAt(job, job.record!)));
+        steps.push(keepRecordStep(`Keep the job's outcome`, opWaveOutcomeArtifact(spec, job.jobName), restAt(job, job.outcome)));
         // #4994: the product's report of the decision its after-gate hooks wrote, kept whatever the job's exit.
         steps.push(...reportSteps(add?.gate, job.jobName));
       }
+      // #4992: the rest wave's note, which says whether this run started a follow-on, for the jobs after the waves.
+      if (starts) steps.push(keepRecordStep("Keep the rest wave's note", opWaveOutcomeArtifact(spec, job.jobName), opWaveRestNotePath(spec)));
       // What the plan or applying jobs handed on, kept as the artifacts they keep on GitHub.
       if (handover) for (const j of from) steps.push(...keptHandedSteps(spec, j, add));
-      out[job.jobName] = {
-        "runs-on": githubRunsOn(spec.runner),
-        needs: job.needs,
-        // The gate decides whatever its plan job ended (a plan that failed is recorded there); the record job writes what the applying jobs ran.
-        if: gate ? "${{ !cancelled() }}" : "${{ !cancelled() && !contains(needs.*.result, 'skipped') }}",
-        container: image,
-        permissions: { contents: "write", ...(gate && byReview ? { "pull-requests": "read" } : {}) },
-        // #4992: the gate job of a step spec waits for its rows on the ledger, up to the job's timeout.
-        ...(gate ? { "timeout-minutes": timeout.minutes } : {}),
-        env: { ...(gate ? timeout.env : {}), ...renderEnv, ...bmEnv, ...notifyEnv, ...(wave.variables ?? {}) },
+      out[job.jobName] = finish(
+        {
+          "runs-on": githubRunsOn(spec.runner),
+          needs: job.needs,
+          // The gate decides whatever its plan job ended (a plan that failed is recorded there); the record job writes what the applying jobs ran.
+          if: gate ? "${{ !cancelled() }}" : "${{ !cancelled() && !contains(needs.*.result, 'skipped') }}",
+          container: image,
+          // #4992: the rest wave's record job dispatches the follow-on run.
+          permissions: { contents: "write", ...(gate && byReview ? { "pull-requests": "read" } : {}), ...(starts ? { actions: "write" } : {}) },
+          // #4992: the gate job of a step spec waits for its rows on the ledger, up to the job's timeout.
+          ...(gate ? { "timeout-minutes": timeout.minutes } : {}),
+          env: { ...(gate ? timeout.env : {}), ...renderEnv, ...bmEnv, ...restEnv, ...notifyEnv, ...(wave.variables ?? {}) },
+        },
         steps,
-      };
+      );
       continue;
     }
     // The plan and apply jobs: the change's code, with no write token.
@@ -508,16 +603,17 @@ function githubSplitJobsDoc(input: SplitJobsInput): Record<string, unknown> {
     const checkout = {
       name: "Check out the default branch and the pull request's decided head, with the token in this step alone",
       env: { [CHECKOUT_TOKEN_ENV]: GITHUB_JOB_TOKEN },
-      run: [checkoutScript(true), beforeMergeCheckoutScript(forge, product)].join("\n"),
+      // #4992: a push's follow-on checks out the commit it goes on with, once it is on the branch.
+      run: [checkoutScript(true), beforeMergeCheckoutScript(forge, product), ...(rest ? [followOnCommitScript(product)] : [])].join("\n"),
     };
     const steps: Array<Record<string, unknown>> = [
-      guardStep({ forge, job: opWaveSplitJobLabel(spec.name, job), product, ...(environment && forge === "github" ? { environment: environment.name } : {}), branches, ...(runner !== undefined ? { runner } : {}), idToken, beforeMerge: { op: spec.name } }),
+      guardStep({ forge, job: opWaveSplitJobLabel(spec.name, job), product, ...(environment && forge === "github" ? { environment: environment.name } : {}), branches, ...(runner !== undefined ? { runner } : {}), idToken, beforeMerge: { op: spec.name }, ...(rest ? { rest: k } : {}) }),
       ...(cloud ? [tradeStep(cloud)] : []),
       cloud ? withoutTokenRequest(checkout) : checkout,
     ];
     if (job.phase === "apply") {
       steps.push(downloadArtifactStep(`Download wave ${k}'s decision`, opWaveRecordArtifact(spec, k), dirnameOf(job.record!)));
-      steps.push(downloadArtifactStep(`Download wave ${k}'s saved plan`, opWavePlanArtifact(spec, k), opWaveSavedPlanDir(spec, k)));
+      steps.push(downloadArtifactStep(`Download wave ${k}'s saved plan`, opWavePlanArtifact(spec, k), restAt(job, opWaveSavedPlanDir(spec, k))));
     }
     if (job.phase === "apply" || job.needs.length > 0) steps.push({ name: "Download the earlier jobs' outcomes", uses: DOWNLOAD_ARTIFACT, with: { path: opWaveOutcomeDir(spec) } });
     const later: Array<Record<string, unknown>> = [...[...(wave.setup ?? []), ...(group?.setup ?? [])].map(setupStepDoc), ...runSteps(options.beforeScript ?? []), ...(add?.before ?? []).map(runStepDoc)];
@@ -539,30 +635,33 @@ function githubSplitJobsDoc(input: SplitJobsInput): Record<string, unknown> {
       steps.push(...(add?.report ? [noToken({ name: add.report.name, if: "always()", run: add.report.run.join("\n") })] : []));
       steps.push(noToken(handOverStep(spec, job, handedPaths(spec, job, add))));
     } else {
-      if (job.phase === "plan") steps.push(keepRecordStep(`Keep wave ${k}'s saved plan`, opWavePlanArtifact(spec, k), opWaveSavedPlanDir(spec, k)));
+      if (job.phase === "plan") steps.push(keepRecordStep(`Keep wave ${k}'s saved plan`, opWavePlanArtifact(spec, k), restAt(job, opWaveSavedPlanDir(spec, k))));
       steps.push(keepRecordStep(job.phase === "apply" ? "Keep the job's outcome and run record" : "Keep the job's outcome", opWaveOutcomeArtifact(spec, job.jobName), keptOutcome(spec, job)));
       if (evidence?.evidenceJob) steps.push(keepRecordStep(`Keep the job's check claims`, opWaveChecksArtifact(spec, job.jobName), opWaveChecksDir(spec)));
       steps.push(...reportSteps(add, job.jobName).map(noToken));
     }
     const needs = [...job.needs, ...(job.phase === "plan" ? evidenceNeeds(k) : [])];
-    out[job.jobName] = {
-      "runs-on": githubRunsOn(runner),
-      ...(needs.length > 0 ? { needs } : {}),
-      // An applying job applies what its gate job decided; a plan job after the first wave runs after a failure in the wave before.
-      ...(job.phase === "apply" ? { if: `\${{ !cancelled() && needs.${job.needs[0]}.result == 'success' }}` } : job.needs.length > 0 ? { if: "!cancelled()" } : {}),
-      container: image,
-      ...(environment ? { environment: environmentDoc(environment) } : {}),
-      // The job's token reads; the checkout step alone holds it.
-      permissions: { contents: "read", ...(idToken ? { "id-token": "write" } : {}) },
-      "timeout-minutes": timeout.minutes,
-      env: { ...timeout.env, ...renderEnv, ...bmEnv, ...(group || idTokens ? { ...wave.variables, ...group?.variables, ...idTokenAudienceEnv(idTokens) } : wave.variables) },
-      ...(handover ? { outputs: handoverOutputs(SPLIT_HANDOVER_STEP, "forgejo") } : {}),
+    out[job.jobName] = finish(
+      {
+        "runs-on": githubRunsOn(runner),
+        ...(needs.length > 0 ? { needs } : {}),
+        // An applying job applies what its gate job decided; a plan job after the first wave runs after a failure in the wave before.
+        ...(job.phase === "apply" ? { if: `\${{ !cancelled() && needs.${job.needs[0]}.result == 'success' }}` } : job.needs.length > 0 ? { if: "!cancelled()" } : {}),
+        container: image,
+        ...(environment ? { environment: environmentDoc(environment) } : {}),
+        // The job's token reads; the checkout step alone holds it.
+        permissions: { contents: "read", ...(idToken ? { "id-token": "write" } : {}) },
+        "timeout-minutes": timeout.minutes,
+        env: { ...timeout.env, ...renderEnv, ...bmEnv, ...restEnv, ...(group || idTokens ? { ...wave.variables, ...group?.variables, ...idTokenAudienceEnv(idTokens) } : wave.variables) },
+        ...(handover ? { outputs: handoverOutputs(SPLIT_HANDOVER_STEP, "forgejo") } : {}),
+      },
       steps,
-    };
+    );
     if (evidence?.evidenceJob) {
       // #4992: on Forgejo the evidence job takes the claims back from the plan job's outputs.
       const claims = handover ? takeOverStep(spec, job, [opWaveChecksDir(spec)], "Take the plan job's check claims from its outputs") : undefined;
-      out[evidence.evidenceJob.name] = evidenceJob(spec, options, forge, job, evidence, commandStep, image, { contents: "write", ...(byReview ? { "pull-requests": "read" } : {}) }, bmEnv, claims);
+      const signer = evidenceJob(spec, options, forge, job, evidence, commandStep, image, { contents: "write", ...(byReview ? { "pull-requests": "read" } : {}) }, { ...bmEnv, ...restEnv }, claims, rest ? product : undefined);
+      out[evidence.evidenceJob.name] = restWave !== undefined && k < restWave ? beforeFollowOn(signer) : signer;
     }
   }
   return out;
@@ -576,14 +675,19 @@ export function splitHandoverDir(spec: Pick<OpWavesSpec, "name">, jobName: strin
   return `.chant/op-waves/${spec.name}/handover/${jobName}`;
 }
 
+/** A path of a split job's wave, a rest wave's with {@link REST_WAVE_MARK} for its wave (#4992). */
+function restAt(job: Pick<OpWaveSplitJob, "rest" | "wave">, path: string): string {
+  return job.rest ? opWaveRestPath(path, job.wave, REST_WAVE_MARK) : path;
+}
+
 /** What a plan or applying job keeps as its outcome artifact: its outcome file, and an applying job's run record. */
 function keptOutcome(spec: OpWavesSpec, job: OpWaveSplitJob): string {
-  return job.phase === "apply" ? `${job.outcome}\n${runRecordPath(spec, job)}` : job.outcome;
+  return job.phase === "apply" ? `${restAt(job, job.outcome)}\n${runRecordPath(spec, job)}` : restAt(job, job.outcome);
 }
 
 /** The file an applying job leaves its run record in (#4987). */
 function runRecordPath(spec: OpWavesSpec, job: OpWaveSplitJob): string {
-  return `${opWaveOutcomeDir(spec)}/${opWaveRunRecordFileName(job.wave, { ...(job.group !== undefined ? { group: job.group } : {}), ...(job.share !== undefined ? { share: job.share } : {}) })}`;
+  return restAt(job, `${opWaveOutcomeDir(spec)}/${opWaveRunRecordFileName(job.wave, { ...(job.group !== undefined ? { group: job.group } : {}), ...(job.share !== undefined ? { share: job.share } : {}) })}`);
 }
 
 /**
@@ -593,13 +697,13 @@ function runRecordPath(spec: OpWavesSpec, job: OpWaveSplitJob): string {
  * product's artifact path either keeps.
  */
 function handedPaths(spec: OpWavesSpec, job: OpWaveSplitJob, add: OpWaveJobInputs | undefined): string[] {
-  const own = job.phase === "plan" ? [opWaveSavedPlanDir(spec, job.wave), job.outcome, opWaveChecksDir(spec)] : [job.outcome, runRecordPath(spec, job)];
+  const own = job.phase === "plan" ? [restAt(job, opWaveSavedPlanDir(spec, job.wave)), restAt(job, job.outcome), opWaveChecksDir(spec)] : [restAt(job, job.outcome), runRecordPath(spec, job)];
   return [...own, ...(add?.artifact ? opWaveJobArtifactPaths(add.artifact) : [])];
 }
 
 /** The files a too large hand-off is cut to (#4992): the saved plan or run record, and the outcome. */
 function handedCore(spec: OpWavesSpec, job: OpWaveSplitJob): string[] {
-  return job.phase === "plan" ? [opWaveSavedPlanPath(spec, job.wave), job.outcome] : [runRecordPath(spec, job), job.outcome];
+  return job.phase === "plan" ? [restAt(job, opWaveSavedPlanPath(spec, job.wave)), restAt(job, job.outcome)] : [runRecordPath(spec, job), restAt(job, job.outcome)];
 }
 
 /** A word in single quotes, for a shell line. */
@@ -651,7 +755,7 @@ function takeOverStep(spec: OpWavesSpec, from: OpWaveSplitJob, paths: readonly s
 function keptHandedSteps(spec: OpWavesSpec, job: OpWaveSplitJob, add: OpWaveJobInputs | undefined): Array<Record<string, unknown>> {
   const out: Array<Record<string, unknown>> = [];
   if (job.phase === "plan") {
-    out.push(keepRecordStep(`Keep wave ${job.wave}'s saved plan`, opWavePlanArtifact(spec, job.wave), opWaveSavedPlanDir(spec, job.wave)));
+    out.push(keepRecordStep(`Keep wave ${job.wave}'s saved plan`, opWavePlanArtifact(spec, job.wave), restAt(job, opWaveSavedPlanDir(spec, job.wave))));
   } else {
     out.push(keepRecordStep(`Keep ${opWaveSplitJobLabel(spec.name, job)}'s outcome and run record`, opWaveOutcomeArtifact(spec, job.jobName), keptOutcome(spec, job)));
   }
@@ -687,11 +791,14 @@ function evidenceJob(
   permissions: Record<string, unknown>,
   bmEnv: Record<string, string> = {},
   claims?: Record<string, unknown>,
+  restProduct?: string,
 ): Record<string, unknown> {
   const wave = spec.waves[job.wave - 1]!;
   // #4984: a before-merge run applied the decided head, so its checks are signed at it.
   const bm = options.beforeMerge !== undefined;
-  const lines = opWaveEvidenceLines(spec, evidence, job, { sha: bm ? `"\${${BEFORE_MERGE_HEAD_ENV}:-$GITHUB_SHA}"` : '"$GITHUB_SHA"', ...(options.bin ? { bin: options.bin } : {}), ...(bm ? { beforeMerge: true } : {}) });
+  // #4992: a push's follow-on of the rest wave applied the commit it goes on with; this job checks it out first.
+  const pushed = restProduct !== undefined ? `\${${OP_WAVES_COMMIT_ENV}:-$GITHUB_SHA}` : "$GITHUB_SHA";
+  const lines = opWaveEvidenceLines(spec, evidence, job, { sha: bm ? `"\${${BEFORE_MERGE_HEAD_ENV}:-${pushed}}"` : '"$GITHUB_SHA"', ...(options.bin ? { bin: options.bin } : {}), ...(bm ? { beforeMerge: true } : {}) });
   const sources = opWaveEvidenceSources(forge, evidence, job, wave.name, commandStep);
   return {
     "runs-on": githubRunsOn(spec.runner),
@@ -704,7 +811,7 @@ function evidenceJob(
     permissions: { ...permissions, actions: "read", ...(evidenceKeyless(options.evidence) ? { "id-token": "write" } : {}) },
     steps: [
       checkoutStep(true),
-      { name: "Check out the base, so none of the change's code runs here", run: [...lines.checkout, `echo "${OP_WAVE_EVIDENCE_BASE_VAR}=$${OP_WAVE_EVIDENCE_BASE_VAR}" >> "$GITHUB_ENV"`].join("\n") },
+      { name: "Check out the base, so none of the change's code runs here", run: [...(restProduct !== undefined ? [followOnCommitScript(restProduct)] : []), ...lines.checkout, `echo "${OP_WAVE_EVIDENCE_BASE_VAR}=$${OP_WAVE_EVIDENCE_BASE_VAR}" >> "$GITHUB_ENV"`].join("\n") },
       ...(wave.setup ?? []).map(setupStepDoc),
       ...runSteps(options.beforeScript ?? []),
       // A wave job that stopped before its checks kept no claims, so there is nothing to download. The signing step
@@ -732,9 +839,11 @@ function controlJob(
   last: string[],
   image: string,
   permissions: Record<string, unknown>,
+  restProduct?: string,
 ): [string, Record<string, unknown>] {
   const control = spec.control!;
-  const dispatch = controlDispatchJob("github", opWavesControlTarget(control), "${{ github.sha }}", {
+  // #4992: a push's follow-on run tells the control repo about the commit the waves went on with.
+  const dispatch = controlDispatchJob("github", opWavesControlTarget(control), restProduct !== undefined ? "${{ github.event.inputs.commit || github.sha }}" : "${{ github.sha }}", {
     ...(options.words ? { words: options.words } : {}),
     ...(control.sentCheck ? { sentCheck: control.sentCheck } : {}),
     ...(control.markSent ? { markSent: control.markSent } : {}),
@@ -750,7 +859,8 @@ function controlJob(
       name: "Add up the waves' outcomes",
       run: `outcome="$(${opWavesOutcomeCommand(options.specFile, options.bin).join(" ")})" || exit 1\necho "${CONTROL_OUTCOME_VAR}=$outcome" >> "$GITHUB_ENV"`,
     },
-    { name: `Tell the control repo ${control.repo} how ${control.member}'s waves ended`, env: { ...dispatch.env, ...(marks ? { GITHUB_TOKEN: GITHUB_JOB_TOKEN } : {}) }, run: dispatch.script },
+    // #4992: a run that started a follow-on added up no outcome, and sends none.
+    { name: `Tell the control repo ${control.repo} how ${control.member}'s waves ended`, env: { ...dispatch.env, ...(marks ? { GITHUB_TOKEN: GITHUB_JOB_TOKEN } : {}) }, run: restProduct !== undefined ? `${followOnControlSkip(restProduct)}\n${dispatch.script}` : dispatch.script },
   ];
   return [
     dispatch.name,
@@ -883,13 +993,15 @@ function beforeMergeDoneJob(
   last: string[],
   image: string,
   bmEnv: Record<string, string>,
+  rest = false,
 ): Record<string, unknown> {
   const token = bm.merge === "auto" && bm.mergeTokenSecret ? { [BEFORE_MERGE_TOKEN_ENV]: `\${{ secrets.${bm.mergeTokenSecret} }}` } : {};
   return {
     "runs-on": githubRunsOn(spec.runner),
     needs: last,
-    // Every wave job succeeded; a wave that waits or fails leaves the pull request as it is.
-    if: "${{ success() && github.event.inputs.head != '' }}",
+    // Every wave job succeeded; a wave that waits or fails leaves the pull request as it is. #4992: in a follow-on run the
+    // waves before the rest wave were skipped, which success() counts against it, so it reads the last wave's own result.
+    if: rest ? "${{ !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'skipped') && github.event.inputs.head != '' }}" : "${{ success() && github.event.inputs.head != '' }}",
     container: image,
     // contents: write releases the locks on chant/lifecycle; pull-requests: write merges and replies.
     permissions: { contents: "write", "pull-requests": "write", statuses: "read", checks: "read" },
@@ -924,21 +1036,25 @@ function applyStatusJob(
   k: number,
   image: string,
   bmEnv: Record<string, string>,
+  restWave?: number,
 ): Record<string, unknown> {
-  const at = options.beforeMerge ? `"\${${BEFORE_MERGE_HEAD_ENV}:-$GITHUB_SHA}"` : '"$GITHUB_SHA"';
+  // #4992: the rest wave's status job posts for the wave its run ran, on the commit a push's follow-on went on with.
+  const rest = restWave === k;
+  const at = options.beforeMerge ? `"\${${BEFORE_MERGE_HEAD_ENV}:-${rest ? `\${${OP_WAVES_COMMIT_ENV}:-$GITHUB_SHA}` : "$GITHUB_SHA"}}"` : '"$GITHUB_SHA"';
+  const env = { ...bmEnv, ...(rest ? followOnEnv(k) : {}) };
   return {
     "runs-on": githubRunsOn(spec.runner),
     needs: jobs.filter((j) => j.wave === k).map((j) => j.jobName),
     if: "${{ !cancelled() }}",
     container: image,
     permissions: { contents: "read", statuses: "write" },
-    ...(Object.keys(bmEnv).length > 0 ? { env: bmEnv } : {}),
+    ...(Object.keys(env).length > 0 ? { env } : {}),
     steps: [
       checkoutStep(true),
       { name: "Download the waves' outcomes", uses: DOWNLOAD_ARTIFACT, with: { path: opWaveOutcomeDir(spec) } },
       ...(spec.waves[0]?.setup ?? []).map(setupStepDoc),
       ...runSteps(options.beforeScript ?? []),
-      { name: `Post ${status.context} after wave ${k}`, env: { GITHUB_TOKEN: GITHUB_JOB_TOKEN }, run: applyStatusCommand(spec, k, status.context, forge, at, options.bin) },
+      { name: `Post ${status.context} after wave ${k}`, env: { GITHUB_TOKEN: GITHUB_JOB_TOKEN }, run: applyStatusCommand(spec, rest ? `"\${${OP_WAVES_WAVE_ENV}:-${k}}"` : k, status.context, forge, at, options.bin) },
     ],
   };
 }

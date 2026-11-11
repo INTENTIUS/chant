@@ -53,7 +53,7 @@ The spec is a JSON file committed to the repository. Its jobs read it at run tim
 | `waves[].runs` | One entry per target. A target appears once per wave |
 | `waves[].discover` | The runs come from `planWave`, or the step's capability, at plan time, not the spec ([Runs found at plan time](#runs-found-at-plan-time)) |
 | `waves[].together` | With a `step`: plan the wave's runs in one call of the capability and apply them in one ([A wave planned as one](#a-wave-planned-as-one)) |
-| `waves[].rest` | On the last, discovering wave: once it applies, the job goes on through every wave the plan found |
+| `waves[].rest` | On the last, discovering wave: once it applies, the job goes on through every wave the plan found (before merge, one wave per run: [Rest waves before merge](#rest-waves-before-merge)) |
 | `waves[].gate` | `always`, `on-destructive` or `never`. Default `always` |
 | `waves[].approval` | `ledger`, `pr-review`, `sealed` or `pull-request`: which approvals count ([Which approvals count](#which-approvals-count)). Default `ledger` |
 | `waves[].point` | This wave's own decision point, in place of the spec's |
@@ -1085,7 +1085,23 @@ A hook that holds a wave on another gate ([#3821](https://github.com/INTENTIUS/c
 
 The approval is used once: a run of another commit reads it as spent, so does any run once the finished line is written, and a gate job does not spend an approval of a digest that already applied under the gate. `after.plan` and `after.gate` hooks run in the gate job, which holds the token.
 
-The split applies to every run of a pipeline generated with `beforeMerge`, its push runs included, since one workflow serves both. A pipeline without `beforeMerge` keeps one job per wave (a deciding job and its shares for a wide wave), byte for byte as before: its waves run only on a push to the spec's branches, which runs merged code, so the token in those jobs sits beside code the default branch already holds. A `rest` wave cannot split, and the generator refuses it with `beforeMerge`: it runs the waves its plan finds in one job. `WAVES_BEFORE_MERGE_SPLIT_FLOOR` (`@intentius/chant/ci-product`) is the first chant with the four jobs, and `WAVES_BEFORE_MERGE_STEP_FLOOR` the first whose split takes a step spec, records the holds from the gate and record jobs, hands Forgejo's files on as outputs, and names the environment on the applying job alone.
+### Rest waves before merge
+
+A `rest` wave walks on to the waves its plan finds ([Runs found at plan time](#runs-found-at-plan-time)), and wave k+1 can only be planned once wave k applied. Split, each of those waves needs four jobs of its own, which the pipeline cannot render without knowing how many there are. So a split `rest` wave runs one wave per run ([#4992](https://github.com/INTENTIUS/chant/issues/4992), the maintainer's decision of 2026-11-10: a follow-on run).
+
+The rest wave's four jobs (the last wave the pipeline renders, N) run the wave `CHANT_WAVES_WAVE` names: their command is `--wave "${CHANT_WAVES_WAVE:-N}"`, and they keep their files at that wave's paths (`wave-<k>.json`, `wave-<k>/`, `outcome-wave-<k>*.json`). In a run that is no follow-on the variable is N. Once the record job wrote its run records, and every wave of the run applied or had nothing to apply, and the plan found more waves than this one, it starts the waves workflow again for the next wave:
+
+| Forge | How the record job starts it | Carries |
+| --- | --- | --- |
+| GitHub | a `workflow_dispatch` of the waves workflow on its branch, with the job's token (`actions: write` on that job alone) | the inputs `wave`, and before merge the decision's `pr`, `head` and `digest`; for a push, `commit` |
+| Forgejo | the same dispatch, with the `CHANT_FORGE_TOKEN` secret (a token with the `write:repository` scope) in the command's step alone | the same inputs |
+| GitLab | a pipeline of the branch through the API, with `CHANT_FORGE_TOKEN` (the job token cannot start one) | `CHANT_WAVES_WAVE`, and the decision's three variables or `CHANT_WAVES_COMMIT` |
+
+In that follow-on run the jobs of waves 1 to N-1 do not run (on GitLab they are left out of the pipeline, and the rest wave's needs on them are optional), and the rest wave's jobs run wave N+1. The guard admits it in the rest wave's jobs alone and for a wave after N; before merge it checks the decision as for any run, so a follow-on for another head or another digest is refused. A push's follow-on carries the pushed commit the first run applied; every job of the rest wave stops (exit 9) unless that commit is on the branch, and then checks it out, so the follow-on applies the same commit even when the branch moved on. The record job of each run does the same, until the wave the plan found last.
+
+The record job leaves a note beside the outcomes, `rest-wave.json`: the wave it ran, how many the plan found, and the wave it started, if any. The jobs after the waves read it, so a run that started a follow-on is not the last. `before-merge-done` says the follow-on merges and does nothing more, the control dispatch sends nothing (the last run sends the outcome), and the apply status after the rest wave counts the waves the plan found and stays pending, `wave k of M applied`, until the last run posts the one success. A follow-on that cannot be started fails the record job, and the note still says one was to start, so nothing merges; start the waves workflow by hand with the wave the log names and the run's other inputs. A push run of the same pipeline runs its rest wave the same way. `WAVES_BEFORE_MERGE_REST_FLOOR` (`@intentius/chant/ci-product`) is the first chant with it.
+
+The split applies to every run of a pipeline generated with `beforeMerge`, its push runs included, since one workflow serves both. A pipeline without `beforeMerge` keeps one job per wave (a deciding job and its shares for a wide wave), byte for byte as before: its waves run only on a push to the spec's branches, which runs merged code, so the token in those jobs sits beside code the default branch already holds, and its `rest` wave walks its waves in one job. `WAVES_BEFORE_MERGE_SPLIT_FLOOR` (`@intentius/chant/ci-product`) is the first chant with the four jobs, `WAVES_BEFORE_MERGE_STEP_FLOOR` the first whose split takes a step spec, records the holds from the gate and record jobs, hands Forgejo's files on as outputs, and names the environment on the applying job alone, and `WAVES_BEFORE_MERGE_REST_FLOOR` the first whose split takes a `rest` wave.
 
 ## Apply statuses
 
