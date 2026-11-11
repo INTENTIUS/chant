@@ -165,18 +165,29 @@ function insideCheckout(path: string, glob = false): boolean {
 
 /** The check job's extra artifacts (#4988), or undefined when they name nothing; refused off GitLab and for a path outside the checkout. */
 function checkArtifacts(forge: ForgeKind, artifacts: PrCheckArtifacts | undefined): PrCheckArtifacts | undefined {
+  return gitlabJobArtifacts(forge, artifacts, { job: "the check job", last: "the check is the job's last step" });
+}
+
+/**
+ * A GitLab job's extra artifacts (#4988; #5004, the product plan's plan
+ * job), or undefined when they name nothing. Refused off GitLab, where
+ * `who.last` says why no upload can follow, for a path outside the
+ * checkout, a report type that is not a lower-case word, and
+ * `coverage_report`, which takes a format besides a path.
+ */
+export function gitlabJobArtifacts(forge: ForgeKind, artifacts: PrCheckArtifacts | undefined, who: { job: string; last: string }): PrCheckArtifacts | undefined {
   const paths = artifacts?.paths ?? [];
   const reports = Object.entries(artifacts?.reports ?? {});
   if (paths.length === 0 && reports.length === 0) return undefined;
-  if (forge !== "gitlab") throw new Error("the check job's artifacts are GitLab's artifacts:paths and artifacts:reports; on GitHub and Forgejo the check is the job's last step, so leave artifacts out there");
+  if (forge !== "gitlab") throw new Error(`${who.job}'s artifacts are GitLab's artifacts:paths and artifacts:reports; on GitHub and Forgejo ${who.last}, so leave artifacts out there`);
   for (const p of paths) {
-    if (!insideCheckout(p, true)) throw new Error(`the check job's artifact path ${JSON.stringify(p)} is not a relative path inside the checkout`);
+    if (!insideCheckout(p, true)) throw new Error(`${who.job}'s artifact path ${JSON.stringify(p)} is not a relative path inside the checkout`);
   }
   for (const [type, value] of reports) {
-    if (!/^[a-z][a-z_]*$/.test(type)) throw new Error(`the check job's artifact report ${JSON.stringify(type)} is not a GitLab report type`);
-    if (type === "coverage_report") throw new Error("the check job's artifact reports take a path for each report type, and GitLab's coverage_report takes a format besides; keep it in a job of the product's own");
+    if (!/^[a-z][a-z_]*$/.test(type)) throw new Error(`${who.job}'s artifact report ${JSON.stringify(type)} is not a GitLab report type`);
+    if (type === "coverage_report") throw new Error(`${who.job}'s artifact reports take a path for each report type, and GitLab's coverage_report takes a format besides; keep it in a job of the product's own`);
     const list = Array.isArray(value) ? value : [value];
-    if (list.length === 0 || list.some((p) => !insideCheckout(p, true))) throw new Error(`the check job's ${type} report ${JSON.stringify(value)} is not a relative path inside the checkout`);
+    if (list.length === 0 || list.some((p) => !insideCheckout(p, true))) throw new Error(`${who.job}'s ${type} report ${JSON.stringify(value)} is not a relative path inside the checkout`);
   }
   return { ...(paths.length > 0 ? { paths } : {}), ...(reports.length > 0 ? { reports: Object.fromEntries(reports) } : {}) };
 }

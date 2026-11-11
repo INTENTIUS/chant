@@ -7,7 +7,8 @@
  * Each plan job (`plan`, or `<target>-plan`) runs in the merge request's
  * pipeline, drops the forge tokens before any of the change's code runs
  * (#4295), runs the target's write probe and the plan verb with the
- * target's variables, and keeps `.chant/pr` as its artifact. GitLab hands
+ * target's variables, and keeps `.chant/pr` as its artifact, with the
+ * product's own `artifacts` paths and reports beside it (#5004). GitLab hands
  * every job the project's CI/CD variables, so a target's credentials stay
  * apart only by the variables' protection and environment scope, as the
  * pull request loop's do.
@@ -195,7 +196,13 @@ export function generateGitlabProductPlanPipeline(env: string, options: GitlabPr
         ...(cache !== undefined ? { cache } : {}),
         // #4295: the merge request's code runs in this job, so its shell drops the forge tokens first.
         script: [...controlLines(p), ...tradeLines(p), GITLAB_DROP_FORGE_TOKENS, ...middle(p), ...planVerbLines(p), ...extraScript],
-        artifacts: { name: p.artifact, when: "always", paths: [productPlanReportDir(p)] },
+        // #5004: the product's own paths and reports beside the report directory, such as the merge request widget's terraform report.
+        artifacts: {
+          name: p.artifact,
+          when: "always",
+          paths: [productPlanReportDir(p), ...(p.artifacts?.paths ?? [])],
+          ...(p.artifacts?.reports ? { reports: p.artifacts.reports } : {}),
+        },
       },
     ]);
   }
