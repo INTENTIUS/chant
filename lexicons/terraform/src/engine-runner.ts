@@ -15,7 +15,13 @@
  * - {@link commandTrace} is a `TerraformCommandHook` that opens a span per
  *   engine command under the product's span for its root, and gives the
  *   command `TRACEPARENT` and the resource attributes that name the span
- *   ({@link commandTraceEnv}). Pass it as `engineTimings({ inner })`.
+ *   ({@link commandTraceEnv}). Pass it as `engineTimings({ inner })`, or
+ *   beside a product's own hook through `composeCommandHooks` (chant#5007).
+ *
+ * Every run `exec` makes answers its stderr apart (`Ran.stderr`) and, for a
+ * binary that could not be started, the spawn error (`Ran.error`), which the
+ * hook's `after` gets as a null code with `error` and `commandTrace` puts on
+ * the span (chant#5007).
  *
  * A Terragrunt unit's plan reaches the same hook through
  * `planTerragruntWave({ onCommand })` (`./terragrunt/run.ts`).
@@ -35,7 +41,7 @@ import { hookedBinaryExec, type TerraformCommand, type TerraformCommandHook } fr
 import { engineEnv, runBinary, tokenlessBinaryExec, type BinaryExec, type Ran } from "./state/exec";
 import type { TerragruntExec } from "./terragrunt/run";
 
-export { withTerraformCommandHook, asUpstreamCommands, type TerraformCommand, type TerraformCommandHook, type TerraformCommandResult, type TerraformCommandRun } from "./op/command-hook";
+export { withTerraformCommandHook, asUpstreamCommands, composeCommandHooks, type TerraformCommand, type TerraformCommandHook, type TerraformCommandResult, type TerraformCommandRun } from "./op/command-hook";
 
 /** A run of the binary that blocks: `-chdir=<dir>`, `TF_IN_AUTOMATION=1`, as {@link runBinary} runs it. */
 export type BinaryExecSync = (binary: string, args: string[], dir: string, env: NodeJS.ProcessEnv) => Ran;
@@ -102,7 +108,9 @@ export function engineRunner(options: EngineRunnerOptions = {}): EngineRunner {
   const execSync: BinaryExecSync = (binary, args, dir, given) => {
     const p = spawnSync(binary, [`-chdir=${dir}`, ...args], { encoding: "utf-8", env: { ...env(given), TF_IN_AUTOMATION: "1" }, maxBuffer: 512 * 1024 * 1024 });
     const stdout = p.stdout ?? "";
-    return { code: p.error && p.status === null ? 127 : (p.status ?? 1), stdout, out: `${stdout}${p.stderr ?? ""}${p.error ? p.error.message : ""}` };
+    const stderr = p.stderr ?? "";
+    const error = p.error && p.status === null ? { error: p.error.message } : {};
+    return { code: p.error && p.status === null ? 127 : (p.status ?? 1), stdout, out: `${stdout}${stderr}${p.error ? p.error.message : ""}`, stderr, ...error };
   };
   const terragrunt: TerragruntExec = (file, args, opts) =>
     new Promise((done) => {
@@ -170,7 +178,9 @@ export interface CommandTraceOptions {
  * `process.command_args`) under `parent(command)`, the variables
  * {@link commandTraceEnv} gives for it, and the span ended with
  * `process.exit.code` once the command ends, failed unless it exited 0 (or 2
- * for a `plan`, `-detailed-exitcode`'s changes). A command timed apart from
+ * for a `plan`, `-detailed-exitcode`'s changes), its error the result's
+ * `error` when the command did not exit (a binary that could not be started,
+ * chant#5007), `exit <code>` otherwise. A command timed apart from
  * its call (`at`, a Terragrunt unit's plan) spans the time it ran. Pass it as
  * `engineTimings({ inner })`, so the engine's spans join the trace and reach
  * the timings' receiver.
@@ -184,7 +194,7 @@ export function commandTrace(options: CommandTraceOptions): TerraformCommandHook
       after: (r) => {
         if (r.at) span.start = BigInt(Math.round(r.at.start)) * 1_000_000n;
         const ok = r.code === 0 || (c.name === "plan" && r.code === 2);
-        options.trace.end(span, { "process.exit.code": r.code ?? -1 }, ok ? undefined : `exit ${r.code}`, r.at?.end);
+        options.trace.end(span, { "process.exit.code": r.code ?? -1 }, ok ? undefined : r.code === null && r.error ? r.error : `exit ${r.code}`, r.at?.end);
       },
     };
   };

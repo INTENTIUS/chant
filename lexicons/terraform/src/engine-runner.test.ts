@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { OtlpTrace } from "@intentius/chant/otlp";
-import { commandTrace, commandTraceEnv, engineRunner, withTerraformCommandHook, type TerraformCommand, type TerraformCommandResult } from "./engine-runner";
+import { commandTrace, commandTraceEnv, composeCommandHooks, engineRunner, withTerraformCommandHook, type TerraformCommand, type TerraformCommandHook, type TerraformCommandResult } from "./engine-runner";
 import { engineTimings } from "./engine-timings";
 import type { BinaryExec } from "./state/exec";
 import { planTerragruntWave, terragruntUnitWrapper, type TerragruntExec } from "./terragrunt/run";
@@ -253,9 +253,95 @@ describe("a Terragrunt unit's plan", () => {
       return { code: 0, stdout: "", stderr: "" };
     };
     await planTerragruntWave({ dir, units: ["live/a"], workDir: "w", binary: bin, provisional: true, exec, onCommand: () => ({ after: (r) => void after.push(r) }) });
-    expect(after).toMatchObject([{ code: null, seconds: 0 }]);
+    expect(after).toMatchObject([{ code: null, seconds: 0, error: "not in Terragrunt's run report, so it did not run" }]);
     let called = false;
     await planTerragruntWave({ dir, units: ["live/a"], workDir: "w2", provisional: true, exec, onCommand: () => void (called = true) });
     expect(called).toBe(false);
+  });
+});
+
+describe("what a product's own command trace read (chant#5007)", () => {
+  test("exec answers stderr apart, and a binary that could not be started as the spawn error", async () => {
+    const dir = tmp();
+    const bin = script(join(dir, "bin/tofu"), "echo out\necho err >&2\nexit 1");
+    const runner = engineRunner();
+    const ran = await runner.exec(bin, ["init"], dir, { ...JOB });
+    expect(ran).toMatchObject({ code: 1, stdout: "out\n", stderr: "err\n" });
+    expect(ran.error).toBeUndefined();
+    const missing = await runner.exec(join(dir, "missing"), ["init"], dir, { ...JOB });
+    expect(missing.code).toBe(127);
+    expect(missing.error).toMatch(/ENOENT/);
+    const sync = runner.execSync(bin, ["init"], dir, { ...JOB });
+    expect(sync).toMatchObject({ code: 1, stdout: "out\n", stderr: "err\n" });
+    expect(runner.execSync(join(dir, "missing"), ["init"], dir, { ...JOB }).error).toMatch(/ENOENT/);
+  });
+
+  test("a stage's own run is traced once, as the product's trace was: span, attributes, variables, exit and error", async () => {
+    const dir = tmp();
+    const record = join(dir, "env");
+    const bin = script(join(dir, "bin/tofu"), `echo "$TRACEPARENT $OTEL_RESOURCE_ATTRIBUTES $OTEL_TRACES_EXPORTER" >> '${record}'\n[ "$1" = "-chdir=${dir}" ] || exit 9\n[ "$2" = plan ] && exit 2\nexit 0`);
+    const trace = new OtlpTrace();
+    const root = trace.start("root roots/a", undefined, { "terragucci.root": "roots/a" });
+    const results: TerraformCommandResult[] = [];
+    // The product's own timing half, beside chant's trace.
+    const timing: TerraformCommandHook = () => ({ after: (r) => void results.push(r) });
+    const hook = composeCommandHooks(timing, commandTrace({ trace, prefix: "terragucci", parent: () => root, env: { OTEL_RESOURCE_ATTRIBUTES: "team=infra" } }));
+    const runner = engineRunner({ tokens: ["TG_TOKEN"] });
+    await withTerraformCommandHook(hook, { root: "roots/a", method: "plan" }, async () => {
+      expect((await runner.exec(bin, ["init", "-input=false"], dir, { ...JOB })).code).toBe(0);
+      expect((await runner.exec(bin, ["plan", "-out=p"], dir, { ...JOB })).code).toBe(2);
+      expect((await runner.exec(join(dir, "missing"), ["show"], dir, { ...JOB })).code).toBe(127);
+    });
+    const spans = trace.spans.filter((s) => s !== root);
+    expect(spans.map((s) => [s.name, s.parentSpanId, s.kind, s.attributes["process.executable.name"], s.attributes["process.command_args"], s.attributes["process.exit.code"]])).toEqual([
+      [`${bin} init`, root.spanId, 3, bin, "init -input=false", 0],
+      [`${bin} plan`, root.spanId, 3, bin, "plan -out=p", 2],
+      [`${join(dir, "missing")} show`, root.spanId, 3, join(dir, "missing"), "show", -1],
+    ]);
+    expect(spans[0]!.error).toBeUndefined();
+    expect(spans[1]!.error).toBeUndefined();
+    expect(spans[2]!.error).toMatch(/ENOENT/);
+    const lines = readFileSync(record, "utf-8").trim().split("\n");
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain(trace.traceparent(spans[0]!));
+    expect(lines[0]).toContain("team=infra");
+    expect(lines[0]).toContain(`terragucci.span_id=${spans[0]!.spanId}`);
+    expect(lines[0]).toContain("terragucci.root=roots%2Fa");
+    expect(lines[0]!.endsWith(" otlp")).toBe(true);
+    expect(results.map((r) => [r.code, r.error === undefined ? undefined : /ENOENT/.test(r.error)])).toEqual([
+      [0, undefined],
+      [2, undefined],
+      [null, true],
+    ]);
+  });
+
+  test("composeCommandHooks calls each hook in turn over the variables before it, and every after even when one throws", async () => {
+    const order: string[] = [];
+    const seenEnv: Array<Record<string, string>> = [];
+    const hook = composeCommandHooks(
+      (c) => {
+        seenEnv.push({ ...c.env });
+        return { env: { A: "1", OTEL_RESOURCE_ATTRIBUTES: "first=1" }, after: () => void order.push("first") };
+      },
+      undefined,
+      (c) => {
+        seenEnv.push({ ...c.env });
+        return {
+          env: { B: "2" },
+          after: () => {
+            order.push("second");
+            throw new Error("second failed");
+          },
+        };
+      },
+      () => ({ after: () => void order.push("third") }),
+    );
+    const base: TerraformCommand = { root: "r", method: "plan", binary: "tofu", name: "plan", args: ["plan"], line: "tofu plan", cwd: "/w", env: { TF_IN_AUTOMATION: "1" } };
+    const run = await hook(base);
+    expect(seenEnv).toEqual([{ TF_IN_AUTOMATION: "1" }, { TF_IN_AUTOMATION: "1", A: "1", OTEL_RESOURCE_ATTRIBUTES: "first=1" }]);
+    expect(run?.env).toEqual({ A: "1", OTEL_RESOURCE_ATTRIBUTES: "first=1", B: "2" });
+    await expect(run!.after!({ code: 0, seconds: 1, stdout: "", stderr: "" })).rejects.toThrow("second failed");
+    expect(order).toEqual(["first", "second", "third"]);
+    expect(await composeCommandHooks(() => undefined)(base)).toBeUndefined();
   });
 });

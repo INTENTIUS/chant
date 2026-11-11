@@ -236,3 +236,6 @@ export const RUNTIME_WAVES_SPEC_FLOOR = "0.124.89";
 
 /** The first chant whose `chant run resume` (`resumeGateRun`) on GitLab retries a wave job's `<wave job>-evidence` with the wave job when the evidence job already ran, and whose `ci evidence sign --from-job` waits for a job it reads to finish, so a resumed wave's evidence job signs from the new try (#4978). */
 export const GITLAB_WAVE_EVIDENCE_RETRY_FLOOR = "0.124.89";
+
+/** The first chant whose terraform lexicon's engine runs carry what a product's own command tracing read: `runBinary` and the engine runner's `exec` and `execSync` answer stderr apart (`Ran.stderr`) and a spawn failure's message (`Ran.error`), a hook's `after` gets a binary that could not be started as a null code with `error`, `commandTrace` ends that span with the message, and `composeCommandHooks` runs a product's own hook and `commandTrace` as one `onCommand` (#5007). */
+export const TERRAFORM_COMMAND_TRACE_FLOOR = NEXT_RELEASE;

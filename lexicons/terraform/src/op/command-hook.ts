@@ -55,6 +55,12 @@ export interface TerraformCommandResult {
    * from the hook's call to its `after`.
    */
   at?: { start: number; end: number };
+  /**
+   * Why the command did not exit on its own, when `code` is null (chant#5007):
+   * the spawn error's message for a binary that could not be started, the
+   * error a run threw, or why a Terragrunt unit did not run.
+   */
+  error?: string;
 }
 
 /** What a {@link TerraformCommandHook} answers for one command (chant#4865). */
@@ -151,13 +157,55 @@ export function hookedBinaryExec(exec: BinaryExec): BinaryExec {
     try {
       ran = await exec(binary, args, dir, given.env ? { ...env, ...given.env } : env, io);
     } catch (err) {
-      await given.after?.({ code: null, seconds: (performance.now() - start) / 1000, stdout: "", stderr: err instanceof Error ? err.message : String(err) });
+      const message = err instanceof Error ? err.message : String(err);
+      await given.after?.({ code: null, seconds: (performance.now() - start) / 1000, stdout: "", stderr: message, error: message });
       throw err;
     }
-    // `out` holds stdout and stderr together, as they came; stderr alone is what is left once stdout is taken out of it.
-    const stderr = ran.out.startsWith(ran.stdout) ? ran.out.slice(ran.stdout.length) : ran.out;
-    await given.after?.({ code: ran.code, seconds: (performance.now() - start) / 1000, stdout: ran.stdout, stderr });
+    // `out` holds stdout and stderr together, as they came; an exec that does not keep stderr apart leaves what is left once stdout is taken out of it.
+    const stderr = ran.stderr ?? (ran.out.startsWith(ran.stdout) ? ran.out.slice(ran.stdout.length) : ran.out);
+    // A binary that could not be started did not exit (chant#5007): its code is the hook's null, with the spawn error's message.
+    const failed = ran.error !== undefined ? { code: null, error: ran.error } : { code: ran.code };
+    await given.after?.({ ...failed, seconds: (performance.now() - start) / 1000, stdout: ran.stdout, stderr });
     return ran;
+  };
+}
+
+/**
+ * Several command hooks as one (chant#5007), such as a product's own timing
+ * hook and `commandTrace`, for a step that takes one `onCommand`. Each is
+ * called in turn and sees the command with the variables the hooks before
+ * it answered laid over its `env`, so a hook that reads the command's
+ * `OTEL_RESOURCE_ATTRIBUTES` keeps what an earlier one set; the variables
+ * they answer are laid over each other in the same order. Once the command
+ * ends every `after` is called in the same order, all of them even when
+ * one throws, and the first error is thrown after the last. An undefined
+ * hook is left out.
+ */
+export function composeCommandHooks(...hooks: Array<TerraformCommandHook | undefined>): TerraformCommandHook {
+  const list = hooks.filter((h): h is TerraformCommandHook => h !== undefined);
+  return async (command) => {
+    const runs: TerraformCommandRun[] = [];
+    let env: Record<string, string> = {};
+    for (const hook of list) {
+      const run = (await hook(Object.keys(env).length > 0 ? { ...command, env: { ...command.env, ...env } } : command)) ?? {};
+      runs.push(run);
+      if (run.env) env = { ...env, ...run.env };
+    }
+    if (runs.every((r) => !r.env && !r.after)) return;
+    return {
+      ...(Object.keys(env).length > 0 ? { env } : {}),
+      after: async (result) => {
+        let first: { error: unknown } | undefined;
+        for (const run of runs) {
+          try {
+            await run.after?.(result);
+          } catch (error) {
+            first ??= { error };
+          }
+        }
+        if (first) throw first.error;
+      },
+    };
   };
 }
 

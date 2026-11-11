@@ -13,6 +13,10 @@ export interface Ran {
   stdout: string;
   /** stdout and stderr together, as they came. */
   out: string;
+  /** stderr alone, less the lines `io.stderr` took (chant#5007). {@link runBinary} sets it; an exec of a product's or a test's may leave it out. */
+  stderr?: string;
+  /** Why the binary did not run, when it could not be started: the spawn error's message (chant#5007). `code` is then 127. */
+  error?: string;
 }
 
 /** What a run of the binary hands back while it runs: `stderr` sees each line of stderr as it arrives, and a line it takes (true) is left out of `out`. */
@@ -28,6 +32,7 @@ export const runBinary: BinaryExec = (binary, args, dir, env, io) =>
   new Promise((done) => {
     const child = spawn(binary, [`-chdir=${dir}`, ...args], { env: { ...env, TF_IN_AUTOMATION: "1" }, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
+    let stderr = "";
     let out = "";
     let partial = "";
     const stderrLine = (line: string): void => {
@@ -37,7 +42,10 @@ export const runBinary: BinaryExec = (binary, args, dir, env, io) =>
       } catch {
         taken = false;
       }
-      if (!taken) out += `${line}\n`;
+      if (!taken) {
+        out += `${line}\n`;
+        stderr += `${line}\n`;
+      }
     };
     child.stdout.on("data", (d) => {
       stdout += d;
@@ -48,6 +56,7 @@ export const runBinary: BinaryExec = (binary, args, dir, env, io) =>
     child.stderr.on("data", (d) => {
       if (!io?.stderr) {
         out += d;
+        stderr += d;
         return;
       }
       partial += d;
@@ -61,11 +70,11 @@ export const runBinary: BinaryExec = (binary, args, dir, env, io) =>
     };
     child.on("error", (e) => {
       rest();
-      done({ code: 127, stdout, out: `${out}${e.message}` });
+      done({ code: 127, stdout, out: `${out}${e.message}`, stderr, error: e.message });
     });
     child.on("close", (code) => {
       rest();
-      done({ code: code ?? 1, stdout, out });
+      done({ code: code ?? 1, stdout, out, stderr });
     });
   });
 

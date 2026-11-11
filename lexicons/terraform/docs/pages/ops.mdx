@@ -115,6 +115,19 @@ The same hook takes commands run outside a wave ([#4954](https://github.com/INTE
 
 `commandTrace({ trace, prefix, parent })` from `@intentius/chant-lexicon-terraform/engine-runner` is a hook that opens a span `<binary> <name>` per command under `parent(command)`, the product's span for the root, and ends it with the exit code. The command gets `TRACEPARENT` and `OTEL_RESOURCE_ATTRIBUTES` naming `<prefix>.trace_id`, `<prefix>.span_id` and `<prefix>.root` (`commandTraceEnv`), so OpenTofu's and choudoufu's spans join the product's trace and a binary that ignores `TRACEPARENT` still names the span that ran it. Pass it as `engineTimings({ inner: commandTrace(...) })`. `TERRAFORM_ENGINE_RUNNER_FLOOR` is the first chant with these.
 
+A product that kept its own command tracing can hand it to these ([#5007](https://github.com/INTENTIUS/chant/issues/5007)). `runBinary`, and so the engine runner's `exec` and `execSync`, answer stderr apart as `stderr` beside `out`, and a binary that could not be started as `code` 127 with the spawn error's message in `error`. A hook's `after` gets such a run as a null `code` with that `error`, and `commandTrace` ends its span with the message where it would write `exit <code>`; a Terragrunt unit missing from the run report gets an `error` too. `composeCommandHooks(...hooks)` runs several hooks as one `onCommand`, such as the product's own timing hook and `commandTrace`: each is called in turn and sees the variables the ones before it answered, the variables are laid over each other in that order, and every `after` runs even when one throws. The parent a span hangs under is read when the hook is called, so put a hook that opens or reopens the root's span before `commandTrace`. `TERRAFORM_COMMAND_TRACE_FLOOR` is the first chant with these.
+
+| Product's own trace read | From chant |
+|---|---|
+| a span `<binary> <first argument>` per run, kind client, under the root's span | `commandTrace({ parent })`, a span `<binary> <name>` |
+| `process.executable.name`, `process.command_args` | the same attributes |
+| `TRACEPARENT`, `OTEL_TRACES_EXPORTER`, `OTEL_RESOURCE_ATTRIBUTES` with `<prefix>.trace_id`, `<prefix>.span_id`, `<prefix>.root` | `commandTraceEnv` |
+| `process.exit.code`, and the error `exit <code>` (a plan's 2 is no failure) | the same, on `after` |
+| a spawn error's message on the span, exit code -1 | `Ran.error`, the hook's null `code` and `error` |
+| the run's time | the hook's `seconds`, or `at` for a Terragrunt unit |
+| stdout and stderr apart | `Ran.stdout`, `Ran.stderr` |
+| one hook for timing and tracing | `composeCommandHooks(timing, commandTrace(...))` |
+
 ### State operations outside waves
 
 A lock release, a state migration's writes and a pull request's copy of a root run the binary outside any wave ([#4618](https://github.com/INTENTIUS/chant/issues/4618)). `@intentius/chant-lexicon-terraform/state-ops` has each as a fixed operation: the caller names the root, the binary and what the operation acts on, and never passes arguments of its own.
