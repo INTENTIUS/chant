@@ -10,7 +10,6 @@
  */
 
 import type { CiProductWords, CiProductWordsInput } from "./ci-product-words";
-import { NEXT_RELEASE } from "./release-floors";
 import type { ProductMcpHook } from "./cli/mcp/product-tools";
 import type { ProductWaveHook } from "./op/op-waves-after-plan";
 import { OTLP_EXPORTER_FLOOR } from "./otlp";
@@ -174,7 +173,7 @@ export { setWaveStop, waveStopAt, waveStopLine, type WaveStop } from "./op/wave-
 /**
  * The first chant whose Op waves run before merge (#4984): `wavesBeforeMerge` in the product pipeline, where the comment job (GitHub, Forgejo) or the note poll (GitLab) decides `/<product> apply [wave-<n>]` on an open pull request (`decideWavesBeforeMerge`, `@intentius/chant/op/before-merge-decide`), records the head and its digest on `chant/lifecycle` (`_waves/<op>.before-merge.json`) and starts the waves for it; the generators' `beforeMerge`, whose guard admits that head alone, whose jobs check it out and read the base from the default branch, and whose `before-merge-done` job merges and releases the locks (`chant run wave --merge`); `waveJobs.<wave>.prelude`; the GitLab note poll's wave stop (`chantNoteRuns`' `waves`); a re-plan word that never starts with `-`; and the terraform lexicon's reach helpers (`@intentius/chant-lexicon-terraform/reach`).
  */
-export const WAVES_BEFORE_MERGE_FLOOR = NEXT_RELEASE;
+export const WAVES_BEFORE_MERGE_FLOOR = "0.124.90";
 export { BEFORE_MERGE_DIGEST_ENV, BEFORE_MERGE_DONE_JOB, BEFORE_MERGE_HEAD_ENV, BEFORE_MERGE_PR_ENV, beforeMergeDigest, beforeMergePath, beforeMergeProblems, WAVES_BASE_ENV, type BeforeMergeDecision, type BeforeMergeRecord, type OpWavesBeforeMerge } from "./op/before-merge";
 export { decideWavesBeforeMerge, defaultPipelineFiles, type WavesBeforeMergeJobs } from "./op/before-merge-decide";
 export type { ProductWavesBeforeMerge } from "./components/product-pipeline";
@@ -182,37 +181,37 @@ export type { ProductWavesBeforeMerge } from "./components/product-pipeline";
 /**
  * The first chant whose Op waves post the apply statuses (#4987): the generators' `applyStatus`, a job `apply-status-<n>` after each wave at the default branch's commit that posts `<product>/apply` on the commit the waves applied (a before-merge run's decided head) with `chant run wave --apply-status` (`@intentius/chant/op/apply-status`), and the product pipeline's `applyStatus`; whose product plan takes `staleNotes`, each target's note carrying the target branch's commit and a `stale-notes` job beside wave 1 on a push marking each target's note (`pr-post --stale` with one `--member` per target); whose `productPipelineJobs` returns `waves.pipeline` for the generators; and whose GitLab reach line reaches the lock and note-commands jobs unexpanded (`expand: false`).
  */
-export const WAVES_APPLY_STATUS_FLOOR = NEXT_RELEASE;
+export const WAVES_APPLY_STATUS_FLOOR = "0.124.90";
 export { applyStatusJobName, opWaveApplyStatus, postOpWaveApplyStatus, type OpWaveApplyStatus, type OpWavesApplyStatus } from "./op/apply-status";
 
 /**
  * The first chant whose before-merge waves never run the change's code beside a write token (#4987): with `beforeMerge` each wave is a plan job (the change's code, a checkout with no credentials kept, a read-only token; GitLab drops `CHANT_FORGE_TOKEN` and the job token), a gate job at the default branch with the token, an applying job on the saved plan with no write token, and a record job at the default branch that writes the run records (`chant run wave --phase plan|gate|apply|record`, `@intentius/chant/op/op-waves-split`). A `rest` wave is refused with `beforeMerge`.
  */
-export const WAVES_BEFORE_MERGE_SPLIT_FLOOR = NEXT_RELEASE;
+export const WAVES_BEFORE_MERGE_SPLIT_FLOOR = "0.124.90";
 export { opWaveSplitJobs, type OpWavePhase, type OpWaveSplitJob } from "./op/op-waves-split";
 
 /**
  * The first chant whose split before-merge waves take a `step` spec, Forgejo's hand-off, holds on other gates and one approval per wave (#4992): the plan job saves each run's step plan, the gate job leases the rows they change (no heartbeat; the decision names the lease) before it spends the approval, the applying job plans its runs again through the step and applies each whose digest the decision holds, and the record job writes the release records and lets go of the rows; a hook in the plan or apply job that holds the wave on another gate reads it with no write token and leaves its pending fact to the gate or record job; on Forgejo the plan and applying jobs hand their files on as job outputs (`packJs`), never through the artifact upload, and the gate and record jobs keep them as the artifacts; the plan job names no environment on GitHub (a wave's `planEnvironment` when set; on GitLab it prepares it), so the environment's reviewers are asked once. A `rest` wave splits from {@link WAVES_BEFORE_MERGE_REST_FLOOR} on.
  */
-export const WAVES_BEFORE_MERGE_STEP_FLOOR = NEXT_RELEASE;
+export const WAVES_BEFORE_MERGE_STEP_FLOOR = "0.124.90";
 export type { OpWaveSavedStep, OpWaveSplitHandoff, OpWaveSplitLease } from "./op/op-waves-run";
 
 /**
  * The first chant whose split waves run a product's own process in every job (#4994): the product wave hook's `hooks` (`runChantInProcess(["run", "wave", ..., "--phase", <phase>], words, { wave: { afterPlan, capabilities, hookExec, runHooks, hooks } })`, `RunOpWaveOptions.inProcessHooks`) serves a spec hook by its name in the process of whichever job runs it, plan, gate or applying job or the one-job shape, in place of a command that called back over a socket; `opWaveProductStateDir` is where the plan job's code keeps what the later jobs read; a `record: true` hold in the plan job is spent by the gate job for a re-run of the hook at the wave's commit (an applied line with `rerun.head`), which the next run's plan job runs and its gate job finishes (`holdsFinished`); and `waveJobs.<wave>.artifact.path` takes a list and `waveJobs.<wave>.gate` gives the gate job a report and an artifact, so a product's own upload steps go through chant's Forgejo hand-off.
  */
-export const WAVES_PRODUCT_HOOKS_FLOOR = NEXT_RELEASE;
+export const WAVES_PRODUCT_HOOKS_FLOOR = "0.124.90";
 export type { OpWaveHandedFinished, OpWaveInProcessHook, OpWaveInProcessHookCall } from "./op/op-waves-run";
 export { opWaveProductStateDir } from "./op/op-waves-split";
 
 /**
  * The first chant whose split before-merge waves take a `rest` wave (#4992): its four jobs run one wave per run, the wave `CHANT_WAVES_WAVE` names (their own by default), and its record job, once the run applied and the plan found another wave, starts the waves workflow again for it (GitHub and Forgejo: a dispatch with the inputs `wave` and the decision's `pr`, `head` and `digest`, or a push's `commit`; GitLab: a pipeline with the same variables, with `CHANT_FORGE_TOKEN`), whose guard admits it as the same decided head; the jobs of the waves before it do not run in that follow-on; the record job's note (`rest-wave.json` beside the outcomes, `@intentius/chant/op/op-waves-follow-on`) tells `before-merge-done`, the control dispatch and the apply status that a run which started a follow-on is not the last.
  */
-export const WAVES_BEFORE_MERGE_REST_FLOOR = NEXT_RELEASE;
+export const WAVES_BEFORE_MERGE_REST_FLOOR = "0.124.90";
 
 /**
  * The first chant whose rest wave's record job records each follow-on it starts on `chant/lifecycle` before it starts it (#4998): `_waves/<op>.follow-on.json` keeps, per decided head or pushed commit, the wave started, the run that started it, the decision (`pr`, `digest`) or the `commit`, and the outcomes of every run of the chain so far; the guard admits a follow-on only for the wave that record names, so a wave started by hand past it is refused; and the last run's control dispatch, apply status and `before-merge-done` add up the outcomes of every run of the chain (the note's `chain`), so a chain whose last wave changed nothing reports `applied`.
  */
-export const WAVES_FOLLOW_ON_RECORD_FLOOR = NEXT_RELEASE;
+export const WAVES_FOLLOW_ON_RECORD_FLOOR = "0.124.90";
 
 /**
  * The first chant whose product plan takes `watches`, the product's own scheduled jobs the note job's `pr-post` checks for having stopped with the job's token (#4888), and whose `checkOverdueOps` and `overdueOpsAt` take a product's `logPrefix` and `label`.
@@ -223,7 +222,7 @@ export { PLAN_WATCHES_ENV, watchesForTarget } from "./op/schedule-overdue";
 /**
  * The first chant whose product plan's `watches` take `targets` (#4988): a watch scoped to those targets is checked by their notes alone, and the note of another target checks neither it nor the discovered Op of its name (`watchesForTarget`).
  */
-export const PRODUCT_PLAN_WATCH_TARGETS_FLOOR = NEXT_RELEASE;
+export const PRODUCT_PLAN_WATCH_TARGETS_FLOOR = "0.124.90";
 
 /**
  * The first chant whose product plan takes `record` (#4899): the plan step writes the plan job's run record into the hand-off, and the note job keeps it as Op `pr-plan` on `chant/lifecycle` with `pr-post --record-run <plan job>` (`--open` on GitLab), as `chant ci run plan --in-place` records `pr-plan`'s.

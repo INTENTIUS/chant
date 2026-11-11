@@ -19,7 +19,7 @@
  * this constant to the next patch (#4501). The check fails while a floor
  * still names this constant after its version shipped.
  */
-export const NEXT_RELEASE = "0.124.90";
+export const NEXT_RELEASE = "0.124.91";
 
 /** The first chant with `chant dev local` and `chant dev bundle-check`, `@intentius/chant/local-chant` and `@intentius/chant/bundle-check` (`chantRuntimeTarget`, `chantExternalPlugin`, `checkBundle`): a product built against a chant checkout, and its bundle checked, without its own scripts (#4787). */
 export const LOCAL_CHANT_FLOOR = "0.124.86";
@@ -202,7 +202,7 @@ export const MEMBER_SIGNED_CHECKS_FLOOR = "0.124.89";
 export const PRODUCT_CHECK_JOBS_FLOOR = "0.124.89";
 
 /** The first chant whose `checkJob` takes `artifacts: { paths, reports }` (`PrCheckArtifacts`), which GitLab's check job keeps beside its report as `artifacts:paths` and `artifacts:reports`, such as a lint hook's `codequality` report (#4988). */
-export const CHECK_JOB_ARTIFACTS_FLOOR = NEXT_RELEASE;
+export const CHECK_JOB_ARTIFACTS_FLOOR = "0.124.90";
 
 /** The first chant whose GitLab Op waves pipeline with a runner key hands it to no wave job: each deciding wave's `<wave job>-evidence` job names the `chant-evidence` environment and signs `plan:<wave>` from the wave job (#4964). */
 export const GITLAB_WAVE_KEY_SCOPE_FLOOR = "0.124.89";
