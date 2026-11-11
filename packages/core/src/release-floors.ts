@@ -19,7 +19,7 @@
  * this constant to the next patch (#4501). The check fails while a floor
  * still names this constant after its version shipped.
  */
-export const NEXT_RELEASE = "0.124.91";
+export const NEXT_RELEASE = "0.124.92";
 
 /** The first chant with `chant dev local` and `chant dev bundle-check`, `@intentius/chant/local-chant` and `@intentius/chant/bundle-check` (`chantRuntimeTarget`, `chantExternalPlugin`, `checkBundle`): a product built against a chant checkout, and its bundle checked, without its own scripts (#4787). */
 export const LOCAL_CHANT_FLOOR = "0.124.86";
@@ -211,7 +211,7 @@ export const GITLAB_WAVE_KEY_SCOPE_FLOOR = "0.124.89";
 export const ACTOR_ORDER_FLOOR = "0.124.89";
 
 /** The first chant whose `actorOf({ env, repo })` runs `git config` in `repo` with the `env` it is given rather than the process's, so a job's `GIT_CONFIG_GLOBAL` or `HOME` picks the `user.name` it reads (#5005). */
-export const ACTOR_GIT_ENV_FLOOR = NEXT_RELEASE;
+export const ACTOR_GIT_ENV_FLOOR = "0.124.91";
 
 /** The first chant with `@intentius/chant/ci-base` (`ciBaseRef`), the base a CI job measures a change from (the pull request's target branch, else the default branch for a push to another branch), and whose `chant ci check` defaults `--base` to it (#4966). */
 export const CI_BASE_REF_FLOOR = "0.124.89";
@@ -220,7 +220,7 @@ export const CI_BASE_REF_FLOOR = "0.124.89";
 export const PLANNED_FILES_FLOOR = "0.124.89";
 
 /** The first chant whose `planFile` in `@intentius/chant/planned-files` takes bytes (`Uint8Array` or `Buffer`) as well as text: `writePlannedFiles` writes them unchanged and the plan compares them with the file byte for byte (#5006). */
-export const PLANNED_BYTES_FLOOR = NEXT_RELEASE;
+export const PLANNED_BYTES_FLOOR = "0.124.91";
 
 /** The first chant whose `pipelineContract` takes `jobs`, the jobs a product builds from its own config, beside or in place of `pipelines`, so a product's forge check gets the required statuses and `refGateStatus` from chant (#4966). */
 export const FORGE_CHECK_OWN_JOBS_FLOOR = "0.124.89";
@@ -238,4 +238,4 @@ export const RUNTIME_WAVES_SPEC_FLOOR = "0.124.89";
 export const GITLAB_WAVE_EVIDENCE_RETRY_FLOOR = "0.124.89";
 
 /** The first chant whose terraform lexicon's engine runs carry what a product's own command tracing read: `runBinary` and the engine runner's `exec` and `execSync` answer stderr apart (`Ran.stderr`) and a spawn failure's message (`Ran.error`), a hook's `after` gets a binary that could not be started as a null code with `error`, `commandTrace` ends that span with the message, and `composeCommandHooks` runs a product's own hook and `commandTrace` as one `onCommand` (#5007). */
-export const TERRAFORM_COMMAND_TRACE_FLOOR = NEXT_RELEASE;
+export const TERRAFORM_COMMAND_TRACE_FLOOR = "0.124.91";
