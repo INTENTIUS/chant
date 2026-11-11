@@ -105,6 +105,9 @@ export type {
   OpWaveHoldRequest,
   OpWaveHookOutcome,
   OpWaveHookRun,
+  OpWaveInProcessHook,
+  OpWaveInProcessHookCall,
+  OpWaveHandedFinished,
   OpWaveHooksFile,
   OpWaveHooksResult,
   OpWaveMember,
@@ -153,6 +156,8 @@ export { OP_WAVE_RELEASE_RECORD_FLOOR, opWaveReleaseNames, opWaveReleaseProblems
 export { gitOpWaveReleasePort } from "./op-waves-release-port";
 export type { OpWaveReleaseNames, OpWaveReleaseOutcome, OpWaveReleasePort, OpWaveReleaseRequest } from "./op-waves-release";
 export { OP_WAVE_AFTER_PLAN_WAVE_FLOOR, OP_WAVE_ANSWER_APPROVALS_FLOOR, foldPolicyRows, opWaveAfterPlanProblems, opWaveAfterPlanResultProblems, opWaveAfterPlanWaveResultProblems, runOpWaveAfterPlanHooks } from "./op-waves-after-plan";
+export type { ProductWaveHook } from "./op-waves-after-plan";
+export { opWaveProductStateDir } from "./op-waves-split";
 export type { OpWaveAfterPlanHook, OpWaveAnswerApproval, OpWaveAfterPlanOutcome, OpWaveAfterPlanResult, OpWaveAfterPlanRun, OpWaveAfterPlanRunOutcome, OpWaveAfterPlanWave, OpWaveAfterPlanWaveOutcome, OpWaveAfterPlanWaveResult } from "./op-waves-after-plan";
 export { OP_WAVE_AFTER_PLAN_FLOOR } from "./runtime";
 export { OP_WAVE_RUN_HOOKS_FLOOR, opWaveRunHooksProblems } from "./op-waves-run-hooks";

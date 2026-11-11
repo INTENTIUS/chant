@@ -134,6 +134,7 @@ import {
   opWaveGroupOf,
   opWaveJobs,
   opWaveJobArtifactName,
+  opWaveJobArtifactPaths,
   opWaveJobInputsByWave,
   opWaveJobTimeout,
   opWaveOutcomeDir,
@@ -147,7 +148,7 @@ import {
   type OpWavesSpec,
 } from "@intentius/chant/op/op-waves";
 import { CONTROL_OUTCOME_VAR, controlDispatchJob } from "@intentius/chant/control/dispatch";
-import type { OpWaveJobInputs, OpWaveRunStep, OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
+import type { OpWaveJobArtifact, OpWaveJobInputs, OpWaveRunStep, OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
 import {
   assertEnvironment,
   assertSetupSteps,
@@ -473,6 +474,8 @@ function githubSplitJobsDoc(input: SplitJobsInput): Record<string, unknown> {
       if (gate) {
         steps.push(keepRecordStep(`Keep wave ${k}'s decision`, opWaveRecordArtifact(spec, k), job.record!));
         steps.push(keepRecordStep(`Keep the job's outcome`, opWaveOutcomeArtifact(spec, job.jobName), job.outcome));
+        // #4994: the product's report of the decision its after-gate hooks wrote, kept whatever the job's exit.
+        steps.push(...reportSteps(add?.gate, job.jobName));
       }
       // What the plan or applying jobs handed on, kept as the artifacts they keep on GitHub.
       if (handover) for (const j of from) steps.push(...keptHandedSteps(spec, j, add));
@@ -591,7 +594,7 @@ function runRecordPath(spec: OpWavesSpec, job: OpWaveSplitJob): string {
  */
 function handedPaths(spec: OpWavesSpec, job: OpWaveSplitJob, add: OpWaveJobInputs | undefined): string[] {
   const own = job.phase === "plan" ? [opWaveSavedPlanDir(spec, job.wave), job.outcome, opWaveChecksDir(spec)] : [job.outcome, runRecordPath(spec, job)];
-  return [...own, ...(add?.artifact ? [add.artifact.path] : [])];
+  return [...own, ...(add?.artifact ? opWaveJobArtifactPaths(add.artifact) : [])];
 }
 
 /** The files a too large hand-off is cut to (#4992): the saved plan or run record, and the outcome. */
@@ -652,8 +655,13 @@ function keptHandedSteps(spec: OpWavesSpec, job: OpWaveSplitJob, add: OpWaveJobI
   } else {
     out.push(keepRecordStep(`Keep ${opWaveSplitJobLabel(spec.name, job)}'s outcome and run record`, opWaveOutcomeArtifact(spec, job.jobName), keptOutcome(spec, job)));
   }
-  if (add?.artifact) out.push(keepRecordStep(add.artifact.step, opWaveJobArtifactName(add.artifact.name, job.jobName), add.artifact.path));
+  if (add?.artifact) out.push(keepArtifactStep(add.artifact, job.jobName));
   return out;
+}
+
+/** The upload of a product's artifact of a wave job (#4791), whatever the job's exit: each of its paths (#4994), `{job}` the job's name. */
+function keepArtifactStep(artifact: OpWaveJobArtifact, jobName: string): Record<string, unknown> {
+  return keepRecordStep(artifact.step, opWaveJobArtifactName(artifact.name, jobName), opWaveJobArtifactPaths(artifact).join("\n"));
 }
 
 /** The artifact a wave job keeps its checks' claim files in (#4926). */
@@ -839,10 +847,10 @@ function runStepDoc(step: OpWaveRunStep): Record<string, unknown> {
 }
 
 /** A wave job's report and the upload of what it wrote (#4791), after every other step and whatever the exit. */
-function reportSteps(add: OpWaveJobInputs | undefined, jobName: string): Array<Record<string, unknown>> {
+function reportSteps(add: Pick<OpWaveJobInputs, "report" | "artifact"> | undefined, jobName: string): Array<Record<string, unknown>> {
   const out: Array<Record<string, unknown>> = [];
   if (add?.report) out.push({ name: add.report.name, if: "always()", run: add.report.run.join("\n") });
-  if (add?.artifact) out.push(keepRecordStep(add.artifact.step, opWaveJobArtifactName(add.artifact.name, jobName), add.artifact.path));
+  if (add?.artifact) out.push(keepArtifactStep(add.artifact, jobName));
   return out;
 }
 

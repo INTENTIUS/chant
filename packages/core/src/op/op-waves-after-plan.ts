@@ -430,6 +430,13 @@ export function foldPolicyRows(
  * (#4614): `runChantInProcess(["run", "wave", ...], words, { wave })`. The
  * job then calls the product's after-plan hooks, and plans and applies a
  * `step` through the product's own capability registry when it gives one.
+ *
+ * #4994: the same hook works in each job of a split wave
+ * (`run wave --phase plan|gate|apply|record`) and in the one-job shape. The
+ * plan job calls `afterPlan` and plans through `capabilities` and
+ * `runHooks`; the applying job plans its runs again and applies them
+ * through them; the gate and record jobs plan nothing. `hooks` serves the
+ * spec's own hooks in the process of whichever job runs them.
  */
 export interface ProductWaveHook {
   afterPlan?: OpWaveAfterPlanHook | readonly OpWaveAfterPlanHook[];
@@ -438,6 +445,12 @@ export interface ProductWaveHook {
   hookExec?: import("./stage-hooks").OpWaveAsyncExec;
   /** Hooks around each run of a wave with a `step` (#4842, `RunOpWaveOptions.runHooks`). */
   runHooks?: import("./op-waves-run-hooks").OpWaveRunHooks | readonly import("./op-waves-run-hooks").OpWaveRunHooks[];
+  /**
+   * The spec's hooks served in this process, by name (#4994,
+   * `RunOpWaveOptions.inProcessHooks`): in place of a hook command that
+   * called back into a long-lived product process over a socket.
+   */
+  hooks?: Readonly<Record<string, import("./stage-hooks").OpWaveInProcessHook>>;
 }
 
 let activeWave: ProductWaveHook | undefined;

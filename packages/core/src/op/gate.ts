@@ -51,7 +51,7 @@ import {
 } from "../lifecycle/gate-ledger";
 import { describePlanDigest, samePlanDigest } from "../lifecycle/plan-digest";
 import { isModelAuthored } from "../lifecycle/gate-origin";
-import { appliedGatePath, isApprovalSpent, parseAppliedGateLines, type AppliedGateRecord, type FinishedGateRecord } from "../lifecycle/gate-applied";
+import { appliedGatePath, isApprovalSpent, parseAppliedGateFile, parseAppliedGateLines, type AppliedGateRecord, type FinishedGateRecord } from "../lifecycle/gate-applied";
 import { gatedRequestAttachmentPath } from "../lifecycle/gated-request-digest";
 import { sortedJsonReplacer } from "../utils";
 import { gateContextDigest, type GateApprover, type GateBaseApproval, type ResolvedGateApproval } from "./gate-approval";
@@ -125,6 +125,12 @@ export interface GateLedgerPort {
    * Absent on a port that keeps none.
    */
   appendFinished?(record: FinishedGateRecord): Promise<{ pushed: boolean; pushWarning?: string }>;
+  /**
+   * The finished lines of `_gates/<op>/applied.jsonl` (#4994), oldest first,
+   * which say an apply under an approval ended. Absent on a port that keeps
+   * none.
+   */
+  readFinished?(op: string): Promise<FinishedGateRecord[]>;
   /**
    * Store a file a held request carries, such as a migration's proof, at
    * `_gates/<op>/requests/<digest>.json` (#4623), once, before the pending
@@ -232,6 +238,12 @@ export function gitGateLedgerPort(opts?: { cwd?: string }): GateLedgerPort {
       const { dir, file } = appliedGatePath(op);
       const text = await readBlobFromPath(dir, file, opts);
       return text ? parseAppliedGateLines(text) : [];
+    },
+    async readFinished(op) {
+      await requireLifecycleLedger(opts);
+      const { dir, file } = appliedGatePath(op);
+      const text = await readBlobFromPath(dir, file, opts);
+      return text ? parseAppliedGateFile(text).finished.map((f) => ({ ...f, op: f.op || op })) : [];
     },
     async appendApplied(record) {
       return appendAppliedFileLine(record.op, record as unknown as Record<string, unknown>, `Applied under ${record.gate}`);
@@ -343,6 +355,9 @@ export function memoryGateLedgerPort(
     async appendFinished(record) {
       finished.push(record);
       return { pushed: true };
+    },
+    async readFinished(op) {
+      return finished.filter((f) => f.op === op);
     },
     async storeRequestAttachment(op, digest, text) {
       if (!attachments.has(`${op}/${digest}`)) attachments.set(`${op}/${digest}`, text);

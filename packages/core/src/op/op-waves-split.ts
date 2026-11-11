@@ -41,7 +41,22 @@
  * waiting, the job leaves the gate's pending fact to the gate job (a plan
  * job's hold) or the record job (an apply job's), which records it, and the
  * wave waits. A hold that asks chant to `record` the gate is spent before
- * its hook runs again, so it fails in those jobs once approved.
+ * its hook runs again, so it fails in an applying job once approved.
+ *
+ * #4994: in the plan job, such a hold once approved waits, and the gate job
+ * spends the approval under its own rules at base, for a re-run of the hook
+ * at the wave's commit (an applied line with `rerun.head`). The plan job of
+ * the next run of that commit finds the line, with no finished line yet, and
+ * runs the hook again under it with `CHANT_HOLD_APPROVED`; the wave then
+ * plans on what the hook did. Its gate job writes the finished line from the
+ * hook's `CHANT_HOLD_FINISHED`, which the saved plan hands on
+ * (`holdsFinished`). Any other commit's job, and any job once the line is
+ * finished, reads the approval as spent.
+ *
+ * A product's hooks run in whichever job runs them (#4994): a hook its
+ * process serves by name (`inProcessHooks`) is called there in place of its
+ * command, and what the plan job's code keeps for the later jobs goes under
+ * {@link opWaveProductStateDir}.
  *
  * A `rest` wave runs the waves its plan finds in one job; before merge each
  * wave needs jobs of its own, so {@link assertOpWavesSplit} refuses it.
@@ -64,6 +79,17 @@ export interface OpWaveSplitJob extends OpWaveJob {
 /** Where a wave's plan job saves its plan, beside the run plan files the apply reads (#4987). */
 export function opWaveSavedPlanDir(spec: Pick<OpWavesSpec, "name">, wave: number): string {
   return `.chant/op-waves/${spec.name}/wave-${wave}`;
+}
+
+/**
+ * Where a product keeps what its own code in a split wave's later jobs reads
+ * (#4994): its report rows, the plans it read, a hook's state. It is inside
+ * the saved plan's directory, so every forge hands it from the plan job to
+ * the gate job and the applying jobs with the saved plan. The plan job runs
+ * the change's code, so a gate job reads it as a report, never as a rule.
+ */
+export function opWaveProductStateDir(spec: Pick<OpWavesSpec, "name">, wave: number): string {
+  return `${opWaveSavedPlanDir(spec, wave)}/product`;
 }
 
 /** The saved plan file itself. */

@@ -850,6 +850,11 @@ export function opWaveJobInputsByWave(spec: Pick<OpWavesSpec, "name" | "waves">,
   return names.map((name) => waveJobs?.[name]);
 }
 
+/** The paths a product's wave job artifact keeps (#4994): `path`, one or a list. */
+export function opWaveJobArtifactPaths(artifact: { path: string | readonly string[] }): string[] {
+  return typeof artifact.path === "string" ? [artifact.path] : [...artifact.path];
+}
+
 /** A wave job's artifact name (#4791): `{job}` in `name` is the job's name. */
 export function opWaveJobArtifactName(name: string, jobName: string): string {
   return name.split("{job}").join(jobName);

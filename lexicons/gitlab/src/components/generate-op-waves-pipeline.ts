@@ -137,6 +137,7 @@ import {
   opWaveGroupOf,
   opWaveJobs,
   opWaveJobArtifactName,
+  opWaveJobArtifactPaths,
   opWaveJobInputsByWave,
   opWaveJobTimeout,
   opWaveOutcomeDir,
@@ -386,7 +387,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
         artifacts: {
           ...(add?.artifact ? { name: opWaveJobArtifactName(add.artifact.name, job.jobName) } : {}),
           when: "always",
-          paths: [...(job.kind === "decide" ? [job.record!] : []), `${opWaveOutcomeDir(spec)}/`, ...(evidence?.evidenceJob ? [checksDir] : []), ...(add?.artifact ? [add.artifact.path] : [])],
+          paths: [...(job.kind === "decide" ? [job.record!] : []), `${opWaveOutcomeDir(spec)}/`, ...(evidence?.evidenceJob ? [checksDir] : []), ...(add?.artifact ? opWaveJobArtifactPaths(add.artifact) : [])],
           expire_in: "30 days",
         },
       },
@@ -593,6 +594,8 @@ function gitlabSplitEntries(input: GitlabSplitInput): Array<readonly [string, un
     if (!job.runsChange) {
       // The gate and record jobs: the default branch's code, with CHANT_FORGE_TOKEN.
       const gate = job.phase === "gate";
+      // #4994: the product's report of the decision its after-gate hooks wrote, and the files it keeps.
+      const own = gate ? inputs[k - 1]?.gate : undefined;
       const guard = jobGuardSpec({ forge: "gitlab", job: opWaveSplitJobLabel(spec.name, job), product, branches: pushBranches(spec.branches), ...(spec.runner !== undefined ? { runner: spec.runner } : {}), beforeMerge: { op: spec.name } });
       out.push([
         job.jobName,
@@ -609,8 +612,14 @@ function gitlabSplitEntries(input: GitlabSplitInput): Array<readonly [string, un
           // The gate reads the head's commit, notes and wave stop; the record job writes what ran, whatever the merge request did since.
           script: [jobGuardLine(), ...(gate ? [beforeMergeCheckoutScript("gitlab", product, { checkout: false })] : []), ...dropControl, ...setupOf[k - 1]!, ...(options.beforeScript ?? []), job.command.join(" ")],
           // A gate that fails as a run fails (its plan job's end) lets the applying job record the wave's outcome; one that waits stops here.
+          ...(own?.report ? { after_script: own.report.run } : {}),
           allow_failure: { exit_codes: [OP_WAVE_ALLOWED_EXIT] },
-          artifacts: { when: "always", paths: gate ? [job.record!, savedPlan, outcomes] : [outcomes], expire_in: "30 days" },
+          artifacts: {
+            ...(own?.artifact ? { name: opWaveJobArtifactName(own.artifact.name, job.jobName) } : {}),
+            when: "always",
+            paths: gate ? [job.record!, savedPlan, outcomes, ...(own?.artifact ? opWaveJobArtifactPaths(own.artifact) : [])] : [outcomes],
+            expire_in: "30 days",
+          },
         },
       ]);
       continue;
@@ -680,7 +689,7 @@ function gitlabSplitEntries(input: GitlabSplitInput): Array<readonly [string, un
         artifacts: {
           ...(add?.artifact ? { name: opWaveJobArtifactName(add.artifact.name, job.jobName) } : {}),
           when: "always",
-          paths: [...(plan ? [savedPlan] : []), outcomes, ...(evidence?.evidenceJob ? [checksDir] : []), ...(add?.artifact ? [add.artifact.path] : [])],
+          paths: [...(plan ? [savedPlan] : []), outcomes, ...(evidence?.evidenceJob ? [checksDir] : []), ...(add?.artifact ? opWaveJobArtifactPaths(add.artifact) : [])],
           expire_in: "30 days",
         },
       },

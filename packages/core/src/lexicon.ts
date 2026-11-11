@@ -1268,8 +1268,31 @@ export interface OpWaveJobInputs {
    * and Forgejo: an upload step named `step` after the report. GitLab: the
    * path joins the job's `artifacts:`, which keep the outcome files too,
    * under `name`.
+   *
+   * #4994: `path` may be a list, so one artifact keeps every directory the
+   * product used to upload in steps of its own (a report and an agent's
+   * input). With `beforeMerge`, a Forgejo plan or applying job hands each
+   * path on as its job outputs (#4992), and its gate or record job keeps
+   * them as this artifact, so the product needs no upload step of its own.
    */
-  artifact?: { step: string; name: string; path: string };
+  artifact?: OpWaveJobArtifact;
+  /**
+   * With `beforeMerge` (#4994): what the wave's gate job adds, which runs the
+   * after-gate hooks (a product's report of the decision) at the default
+   * branch's code with the token. `report` runs after the job's command
+   * whatever its exit, as above; `artifact` keeps what the report and the
+   * hooks wrote, `{job}` being the gate job's name. Absent: the gate job
+   * renders as before.
+   */
+  gate?: { report?: OpWaveRunStep; artifact?: OpWaveJobArtifact };
+}
+
+/** A product's artifact of a wave job (#4791, {@link OpWaveJobInputs.artifact}). */
+export interface OpWaveJobArtifact {
+  step: string;
+  name: string;
+  /** One path, or several (#4994). */
+  path: string | string[];
 }
 
 /** What a product adds to the plans job, `record-plans` (#4791, {@link OpWavesPipelineOptions.recordPlans}). */
