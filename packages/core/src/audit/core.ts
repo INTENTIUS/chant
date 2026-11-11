@@ -27,7 +27,7 @@ import { applyInlineSuppressions, type SuppressionMetaFinding } from "../lint/su
 import type { SerializerResult } from "../serializer";
 import type { AuditEntitiesInput, LexiconPlugin } from "../lexicon";
 import type { Declarable } from "../declarable";
-import { lexiconModulePath, lexiconPackagesToInstall, lexiconSourceLabel } from "../lexicon-module";
+import { isPackageNotFound, lexiconModulePath, lexiconPackagesToInstall, lexiconSourceLabel } from "../lexicon-module";
 
 /**
  * The lexicon whose post-synth checks run against an audited file. Any lexicon
@@ -164,6 +164,18 @@ async function load(names: string[]): Promise<LexiconPlugin[]> {
     if (pkgs.length === 0) {
       throw new MissingLexiconError(
         `Could not load the lexicon module ${paths.join(", ")} needed to audit ${names.join("/")} workflows.\n(${detail})`,
+      );
+    }
+    // chant#4881 — only a package that can't be resolved is missing. Any other
+    // failure (a module the package imports, its `init()`, a cross-lexicon
+    // conflict) is reported as itself, so nobody is told to install a package
+    // they have.
+    if (paths.length === 0 && !pkgs.some((pkg) => isPackageNotFound(err, pkg))) {
+      const generated = /[\\/]generated[\\/]index\b/.test(detail)
+        ? " Its src/generated/ code is missing; in a source checkout, run the lexicon's `npm run generate`."
+        : "";
+      throw new Error(
+        `The lexicon package ${pkgs.join(", ")} needed to audit ${names.join("/")} workflows is installed but failed to load: ${detail}${generated}`,
       );
     }
     const fromPath = paths.length > 0 ? ` The lexicon module ${paths.join(", ")} is declared by path and has nothing to install.` : "";
