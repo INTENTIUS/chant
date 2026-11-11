@@ -81,6 +81,18 @@ describe("a rest wave before merge on GitLab runs one wave per pipeline (#4992)"
     expect(doc["before-merge-done"]!.rules!.map((r) => r.if)).not.toContain(follow);
   });
 
+  test("#4998: each rest wave job's guard reads the chain's record, and the status and control jobs get the note", () => {
+    for (const name of ["wave-2-rest-plan", "wave-2-rest-gate", "wave-2-rest", "wave-2-rest-record"]) {
+      const job = doc[name]!;
+      // The guard reads _waves/tf-apply.follow-on.json with CI_JOB_TOKEN, as it reads the decisions.
+      expect(JSON.parse(job.variables!.CHANT_JOB_GUARD!), name).toMatchObject({ forge: "gitlab", beforeMerge: { op: "tf-apply" }, rest: 2 });
+      expect(job.script![0], name).toMatch(/^\(cd \/ && node -e /);
+    }
+    // The record job's outcome directory, its note included, reaches the jobs after the wave.
+    expect(doc["apply-status-2"]!.needs).toContain("wave-2-rest-record");
+    expect(doc["control-dispatch"]!.needs).toContain("wave-2-rest-record");
+  });
+
   test("a pipeline without a rest wave renders none of it", () => {
     const plain = docOf({ ...spec, waves: [spec.waves[0]!, { ...spec.waves[0]!, name: "layer-2" }] } as OpWavesSpec);
     // The guard's program, the first script line, reads the variables in every job; nothing else does.

@@ -26,6 +26,8 @@
  * a follow-on run names in `CHANT_WAVES_WAVE`, counted out of the waves the
  * plan found, from the rest wave's note (./op-waves-follow-on.ts): a run
  * that started a follow-on is not the last, so its status stays pending.
+ * The last run's status adds up every run of the chain (#4998): the
+ * earlier runs' outcomes come in the note's `chain`.
  *
  * Kept free of the forge client and git, so the generators import the
  * names and the command line alone.
@@ -34,7 +36,7 @@
 import { applyOutcomeOf } from "../control/applied";
 import { earlierWaveOutcomes, passesThrough, type WaveMemberOutcome } from "../wave-blocked";
 import type { ForgeStatusState, PrForge } from "../pr-forge";
-import { readOpWaveRestNote } from "./op-waves-follow-on";
+import { readOpWaveRestNote, withChainOutcomes } from "./op-waves-follow-on";
 
 /** The apply statuses option of an Op waves pipeline (#4987), `OpWavesPipelineOptions.applyStatus`. */
 export interface OpWavesApplyStatus {
@@ -78,7 +80,8 @@ export interface OpWaveApplyStatus {
  * `dirs`. Undefined when wave `wave` wrote no outcome.
  */
 export function opWaveApplyStatus(dirs: readonly string[], wave: number, of: number, forge: "github" | "forgejo" | "gitlab"): OpWaveApplyStatus | undefined {
-  const { members } = earlierWaveOutcomes(dirs, wave + 1);
+  // #4998: a follow-on's note carries the outcomes of the chain's earlier runs, which the status adds up with this run's.
+  const members = withChainOutcomes(earlierWaveOutcomes(dirs, wave + 1).members, readOpWaveRestNote(dirs), wave + 1);
   if (![...members.values()].some((m) => m.wave === wave)) return undefined;
   const summary = applyOutcomeOf(members);
   const where = `wave ${wave} of ${of}`;

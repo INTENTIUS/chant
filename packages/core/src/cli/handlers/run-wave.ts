@@ -80,7 +80,9 @@ async function runOpWaveJobCommand(ctx: CommandContext): Promise<number> {
         console.error(`${spec.name}: wave ${note.wave} started a follow-on run for wave ${note.next}, so this run's outcome is not the waves'; that run sends it`);
         return 0;
       }
-      const summary = applyOutcomeOf(earlierWaveOutcomes([resolve(opWaveOutcomeDir(spec))], Number.MAX_SAFE_INTEGER).members);
+      // #4998: the last run of a chain adds up the earlier runs' outcomes, which its note carries.
+      const { withChainOutcomes } = await import("../../op/op-waves-follow-on");
+      const summary = applyOutcomeOf(withChainOutcomes(earlierWaveOutcomes([resolve(opWaveOutcomeDir(spec))], Number.MAX_SAFE_INTEGER).members, note));
       if (args.json) console.log(JSON.stringify(summary, null, 2));
       else {
         console.log(summary.outcome);
@@ -234,10 +236,11 @@ async function runBeforeMergeDone(ctx: CommandContext): Promise<number> {
     const { PR_APPLY_GATE } = await import("../../pr-loop");
     const { activeProductWords } = await import("../../ci-product-words");
     const record = run.head ? await beforeMergeRecordAt(op, run.head) : undefined;
-    const outcome = applyOutcomeOf(earlierWaveOutcomes([resolve(opWaveOutcomeDir({ name: op }))], Number.MAX_SAFE_INTEGER).members);
     // #4992: a run whose rest wave started a follow-on leaves the merge to that run.
-    const { readOpWaveRestNote } = await import("../../op/op-waves-follow-on");
+    const { readOpWaveRestNote, withChainOutcomes } = await import("../../op/op-waves-follow-on");
     const note = readOpWaveRestNote([resolve(opWaveOutcomeDir({ name: op }))]);
+    // #4998: the last run of a chain adds up the earlier runs' outcomes, which its note carries.
+    const outcome = applyOutcomeOf(withChainOutcomes(earlierWaveOutcomes([resolve(opWaveOutcomeDir({ name: op }))], Number.MAX_SAFE_INTEGER).members, note));
     let merger;
     if (args.merge === "auto" && args.mergeTokenEnv) {
       const env = mergeTokenEnv(args.mergeTokenEnv);

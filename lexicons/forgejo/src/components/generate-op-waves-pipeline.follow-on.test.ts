@@ -52,6 +52,15 @@ describe("a rest wave before merge on Forgejo runs one wave per run (#4992)", ()
     });
   });
 
+  test("#4998: each rest wave job's guard reads the chain's record with the job's token, and the record job keeps the note", () => {
+    for (const name of ["wave-2-rest-plan", "wave-2-rest-gate", "wave-2-rest", "wave-2-rest-record"]) {
+      const guard = doc.jobs[name]!.steps[0]!;
+      expect(JSON.parse(guard.env!.CHANT_JOB_GUARD!), name).toMatchObject({ forge: "forgejo", beforeMerge: { op: "tf-apply" }, rest: 2 });
+      expect(guard.env!.GITHUB_TOKEN, name).toBe("${{ github.token }}");
+    }
+    expect(doc.jobs["wave-2-rest-record"]!.steps.find((s) => s.name === "Keep the rest wave's note")!.with).toMatchObject({ path: ".chant/op-waves/tf-apply/outcomes/rest-wave.json" });
+  });
+
   test("the hand-off round-trips at the wave the follow-on names", () => {
     const planJob = mkdtempSync(join(tmpdir(), "forgejo-follow-on-plan-"));
     const gateJob = mkdtempSync(join(tmpdir(), "forgejo-follow-on-gate-"));
