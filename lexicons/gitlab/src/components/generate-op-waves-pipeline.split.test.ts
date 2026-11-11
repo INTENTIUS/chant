@@ -51,7 +51,8 @@ describe("a split wave before merge on GitLab (#4987)", () => {
     expect(doc["wave-1-dev-plan"]!.needs).toEqual(["wave-1-dev-plan-policy"]);
     expect(doc["wave-1-dev-gate"]!.needs).toEqual(["wave-1-dev-plan"]);
     expect(doc["wave-1-dev"]!.needs).toEqual(["wave-1-dev-gate"]);
-    expect(doc["wave-1-dev-record"]!.needs).toEqual(["wave-1-dev"]);
+    // #4992: the record job needs the gate job too, whose decision (an artifact it hands on) names the rows it leased.
+    expect(doc["wave-1-dev-record"]!.needs).toEqual(["wave-1-dev", "wave-1-dev-gate"]);
     expect(doc["wave-2-prod-plan"]!.needs).toEqual(["wave-1-dev-record", "wave-2-prod-plan-policy"]);
     expect(doc["wave-2-prod-plan-evidence"]!.needs).toEqual(["wave-2-prod-plan", "wave-2-prod-plan-policy"]);
     expect(doc["before-merge-done"]!.needs).toEqual(["wave-2-prod-record"]);
@@ -96,6 +97,25 @@ describe("a split wave before merge on GitLab (#4987)", () => {
     expect(doc["wave-2-prod"]!.allow_failure).toEqual({ exit_codes: [1, 4, 5, 6] });
     // The plan job holds no signing identity; its evidence job signs from its status.
     expect(doc["wave-2-prod-plan"]!.variables!.CHANT_WAVE_EVIDENCE).toBe("job");
+  });
+
+  test("the environment's approval is asked once a wave: only the applying job deploys, and the plan job prepares planEnvironment when set (#4992)", () => {
+    const deploying = Object.entries(doc).filter(([, j]) => j && typeof j === "object" && (j as Job).environment && (j as Job).environment!.action === undefined && (j as Job).environment!.name === "prod");
+    expect(deploying.map(([n]) => n)).toEqual(["wave-2-prod"]);
+    const read = { ...spec, waves: [spec.waves[0]!, { ...spec.waves[1]!, planEnvironment: { name: "prod-plan" } }] } as OpWavesSpec;
+    const withRead = parseYAML(generateGitlabOpWavesPipeline(read, options).files[0]!.yaml) as Record<string, Job>;
+    expect(withRead["wave-2-prod-plan"]!.environment).toEqual({ name: "prod-plan", action: "prepare" });
+    expect(withRead["wave-2-prod-plan-policy"]!.environment).toEqual({ name: "prod-plan", action: "prepare" });
+    expect(JSON.parse(withRead["wave-2-prod-plan"]!.variables!.CHANT_JOB_GUARD as string).forgeEnvironment).toBe("prod-plan");
+    expect(withRead["wave-2-prod"]!.environment).toEqual({ name: "prod" });
+  });
+
+  test("a step spec splits, and its gate job waits for the rows under the job's timeout (#4992)", () => {
+    const step = { ...spec, plan: undefined, apply: undefined, step: { kind: "terragrunt-apply", unit: "{target}" } } as OpWavesSpec;
+    const split = parseYAML(generateGitlabOpWavesPipeline(step, options).files[0]!.yaml) as Record<string, Job & { timeout?: string }>;
+    expect(split["wave-1-dev-gate"]!.timeout).toBe(split["wave-1-dev"]!.timeout);
+    expect(split["wave-1-dev-gate"]!.variables!.CHANT_LOCK_WAIT).toBe(split["wave-1-dev"]!.variables!.CHANT_LOCK_WAIT);
+    expect(split["wave-1-dev-record"]!.script!.at(-1)).toContain("--phase record");
   });
 
   test("without beforeMerge each wave keeps its one job", () => {

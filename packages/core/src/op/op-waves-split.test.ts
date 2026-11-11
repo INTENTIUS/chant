@@ -60,12 +60,12 @@ describe("the split jobs of a before-merge pipeline (#4987)", () => {
       ["wave-1-staging-plan", "plan", true, []],
       ["wave-1-staging-gate", "gate", false, ["wave-1-staging-plan"]],
       ["wave-1-staging", "apply", true, ["wave-1-staging-gate"]],
-      ["wave-1-staging-record", "record", false, ["wave-1-staging"]],
+      ["wave-1-staging-record", "record", false, ["wave-1-staging", "wave-1-staging-gate"]],
       ["wave-2-prod-plan", "plan", true, ["wave-1-staging-record"]],
       ["wave-2-prod-gate", "gate", false, ["wave-2-prod-plan"]],
       ["wave-2-prod-share-1", "apply", true, ["wave-2-prod-gate"]],
       ["wave-2-prod-share-2", "apply", true, ["wave-2-prod-gate"]],
-      ["wave-2-prod-record", "record", false, ["wave-2-prod-share-1", "wave-2-prod-share-2"]],
+      ["wave-2-prod-record", "record", false, ["wave-2-prod-share-1", "wave-2-prod-share-2", "wave-2-prod-gate"]],
     ]);
     // The deciding job's --decide gives way to the phase; a share keeps its slice.
     expect(split[4]!.command.join(" ")).toBe('chant run wave --spec waves.json --wave 2 --base "${CHANT_WAVES_BASE:-HEAD^1}" --phase plan');
@@ -76,8 +76,8 @@ describe("the split jobs of a before-merge pipeline (#4987)", () => {
     expect(opWaveSplitLastJobs(spec)).toEqual(["wave-2-prod-record"]);
   });
 
-  test("a step spec and a rest wave cannot split", () => {
-    expect(() => assertOpWavesSplit({ ...spec, step: { kind: "terraform-apply", root: "{target}" } } as OpWavesSpec)).toThrow("a spec with `step` plans in the job's own process");
+  test("a step spec splits (#4992); a rest wave cannot", () => {
+    expect(() => assertOpWavesSplit({ ...spec, step: { kind: "terraform-apply", root: "{target}" } } as OpWavesSpec)).not.toThrow();
     expect(() => assertOpWavesSplit({ ...spec, waves: [{ ...spec.waves[1]!, rest: true }] })).toThrow('wave "prod" has `rest`');
   });
 });
@@ -189,7 +189,6 @@ describe("a split wave's phases (#4987)", () => {
   test("a phase that cannot run is refused", async () => {
     const h = harness({});
     await expect(runOpWave({ ...h.base, wave: 2, phase: "plan", share: 1 })).rejects.toThrow("--share names an applying job; the plan job covers the whole wave");
-    await expect(runOpWave({ ...h.base, spec: { ...spec, plan: undefined, apply: undefined, step: { kind: "x", root: "{target}" } } as OpWavesSpec, wave: 1, phase: "apply" })).rejects.toThrow("cannot run in phases");
     await expect(runOpWave({ ...h.base, wave: 1, phase: "gate" })).rejects.toThrow("found no saved plan");
     await expect(runOpWave({ ...h.base, wave: 1, phase: "sideways" as never })).rejects.toThrow("the phase is one of plan, gate, apply, record");
     h.done();

@@ -54,7 +54,9 @@ describe("the before-merge mode on GitHub (#4984)", () => {
       const names = wave.steps.map((s) => s.name ?? s.uses?.replace(/@.*/, ""));
       expect(names.slice(0, 3)).toEqual(["Check the job runs where the spec set it to run", "Trade the job's OIDC token for its cloud identities", HEAD_STEP]);
       const guard = wave.steps[0]!;
-      expect(JSON.parse(guard.env!.CHANT_JOB_GUARD!)).toMatchObject({ forge: "github", branches: ["main"], forgeEnvironment: "prod", beforeMerge: { op: "tf-apply" } });
+      expect(JSON.parse(guard.env!.CHANT_JOB_GUARD!)).toMatchObject({ forge: "github", branches: ["main"], beforeMerge: { op: "tf-apply" } });
+      // #4992: the applying job alone names the wave's environment, so its guard alone checks it.
+      expect(JSON.parse(guard.env!.CHANT_JOB_GUARD!).forgeEnvironment).toBe(name === "wave-2-prod" ? "prod" : undefined);
       expect(guard.env!.GITHUB_TOKEN).toBe("${{ github.token }}");
       // After the trade, the token request is unset first.
       expect(wave.steps[2]!.run).toMatch(/^unset ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL .*\nset -eu\n/);
@@ -72,10 +74,10 @@ describe("the before-merge mode on GitHub (#4984)", () => {
     expect(command.run).toContain('terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --wave 1 --base "${CHANT_WAVES_BASE:-HEAD^1}" --phase plan');
     const push = parseYAML(generateGithubOpWavesPipeline(spec, options).files[0]!.yaml) as Doc;
     for (const name of ["wave-1-dev", "wave-2-prod"]) {
-      for (const job of [`${name}-plan`, name]) {
-        expect(doc.jobs[job]!["runs-on"]).toEqual(push.jobs[name]!["runs-on"]);
-        expect(doc.jobs[job]!.environment).toEqual(push.jobs[name]!.environment);
-      }
+      for (const job of [`${name}-plan`, name]) expect(doc.jobs[job]!["runs-on"]).toEqual(push.jobs[name]!["runs-on"]);
+      // #4992: the applying job is the deployment; the plan job names no environment, so its reviewers are asked once.
+      expect(doc.jobs[name]!.environment).toEqual(push.jobs[name]!.environment);
+      expect(doc.jobs[`${name}-plan`]!.environment).toBeUndefined();
       // The gate and record jobs run on the spec's runner, in no environment.
       for (const job of [`${name}-gate`, `${name}-record`]) {
         expect(doc.jobs[job]!["runs-on"]).toBe("ubuntu-latest");
