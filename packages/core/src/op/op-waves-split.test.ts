@@ -76,9 +76,9 @@ describe("the split jobs of a before-merge pipeline (#4987)", () => {
     expect(opWaveSplitLastJobs(spec)).toEqual(["wave-2-prod-record"]);
   });
 
-  test("a step spec splits (#4992); a rest wave cannot", () => {
+  test("a step spec and a rest wave split (#4992)", () => {
     expect(() => assertOpWavesSplit({ ...spec, step: { kind: "terraform-apply", root: "{target}" } } as OpWavesSpec)).not.toThrow();
-    expect(() => assertOpWavesSplit({ ...spec, waves: [{ ...spec.waves[1]!, rest: true }] })).toThrow('wave "prod" has `rest`');
+    expect(() => assertOpWavesSplit({ ...spec, waves: [{ ...spec.waves[1]!, rest: true }] })).not.toThrow();
   });
 });
 
