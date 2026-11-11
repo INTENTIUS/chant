@@ -202,7 +202,6 @@ export type { OpWaveSavedStep, OpWaveSplitHandoff, OpWaveSplitLease } from "./op
  */
 export const WAVES_PRODUCT_HOOKS_FLOOR = NEXT_RELEASE;
 export type { OpWaveHandedFinished, OpWaveInProcessHook, OpWaveInProcessHookCall } from "./op/op-waves-run";
-export type { ProductWaveHook } from "./op/op-waves-after-plan";
 export { opWaveProductStateDir } from "./op/op-waves-split";
 
 /**
