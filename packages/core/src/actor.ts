@@ -30,7 +30,7 @@ export function actorFromEnv(env: Record<string, string | undefined> = process.e
 
 /** Which of the places {@link actorOf} reads, and the answer when none is set. */
 export interface ActorOptions {
-  /** The variables. Default `process.env`. */
+  /** The variables, and the environment the `git config` for `repo` runs with (#5005). Default `process.env`. */
   env?: Record<string, string | undefined>;
   /** Read `GITHUB_TRIGGERING_ACTOR` first: who re-ran the job, ahead of who started the run. Default false. */
   triggering?: boolean;
@@ -56,8 +56,8 @@ export function actorOrder(options: Omit<ActorOptions, "env" | "fallback"> = {})
   ];
 }
 
-function gitConfig(repo: string, key: string): string | undefined {
-  const r = spawnSync("git", ["-C", repo, "config", key], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] });
+function gitConfig(repo: string, key: string, env: Record<string, string | undefined>): string | undefined {
+  const r = spawnSync("git", ["-C", repo, "config", key], { encoding: "utf-8", env, stdio: ["ignore", "pipe", "ignore"] });
   return r.status === 0 ? r.stdout.trim() : undefined;
 }
 
@@ -65,15 +65,17 @@ function gitConfig(repo: string, key: string): string | undefined {
  * The first place of {@link actorOrder} set to something other than blanks,
  * else `fallback` (#4966). With no options it answers as
  * {@link actorFromEnv}. A git config key is read only when every place
- * before it is empty, so a job with a forge actor runs no git.
+ * before it is empty, so a job with a forge actor runs no git. git runs
+ * with `env`, so a job's `GIT_CONFIG_GLOBAL` or `HOME` picks the config it
+ * reads, not the process's (#5005).
  */
 export function actorOf(options: ActorOptions = {}): string {
   const env = options.env ?? process.env;
   for (const place of actorOrder(options)) {
-    const v = (place.startsWith("git:") ? gitConfig(options.repo!, place.slice(4)) : env[place])?.trim();
+    const v = (place.startsWith("git:") ? gitConfig(options.repo!, place.slice(4), env) : env[place])?.trim();
     if (v) return v;
   }
   return options.fallback ?? "unknown";
 }
 
-export { ACTOR_ORDER_FLOOR } from "./release-floors";
+export { ACTOR_GIT_ENV_FLOOR, ACTOR_ORDER_FLOOR } from "./release-floors";
