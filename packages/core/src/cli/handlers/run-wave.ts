@@ -73,6 +73,13 @@ async function runOpWaveJobCommand(ctx: CommandContext): Promise<number> {
       const { opWaveOutcomeDir } = await import("../../op/op-waves");
       const { earlierWaveOutcomes } = await import("../../wave-blocked");
       const { applyOutcomeOf } = await import("../../control/applied");
+      // #4992: a run that started a follow-on is not the last; the follow-on's control job tells the control repo.
+      const { readOpWaveRestNote } = await import("../../op/op-waves-follow-on");
+      const note = readOpWaveRestNote([resolve(opWaveOutcomeDir(spec))]);
+      if (note?.next !== undefined) {
+        console.error(`${spec.name}: wave ${note.wave} started a follow-on run for wave ${note.next}, so this run's outcome is not the waves'; that run sends it`);
+        return 0;
+      }
       const summary = applyOutcomeOf(earlierWaveOutcomes([resolve(opWaveOutcomeDir(spec))], Number.MAX_SAFE_INTEGER).members);
       if (args.json) console.log(JSON.stringify(summary, null, 2));
       else {
@@ -167,6 +174,8 @@ async function runOpWaveJobCommand(ctx: CommandContext): Promise<number> {
       ...(phase ? { phase } : {}),
       ...(decidedHead ? { head: decidedHead } : {}),
     });
+    // #4992: the rest wave's record job starts the follow-on run for the next wave its plan found.
+    if (phase === "record") result.exitCode = await (await import("../../op/op-waves-follow-on")).followOnAfterRecord({ spec, wave: args.wave, exitCode: result.exitCode });
     if (args.json) console.log(JSON.stringify(result, null, 2));
     // #4926: the policy step applied nothing; the wave's own step tells people how it went.
     if (args.policyOnly) return result.exitCode;
@@ -226,6 +235,9 @@ async function runBeforeMergeDone(ctx: CommandContext): Promise<number> {
     const { activeProductWords } = await import("../../ci-product-words");
     const record = run.head ? await beforeMergeRecordAt(op, run.head) : undefined;
     const outcome = applyOutcomeOf(earlierWaveOutcomes([resolve(opWaveOutcomeDir({ name: op }))], Number.MAX_SAFE_INTEGER).members);
+    // #4992: a run whose rest wave started a follow-on leaves the merge to that run.
+    const { readOpWaveRestNote } = await import("../../op/op-waves-follow-on");
+    const note = readOpWaveRestNote([resolve(opWaveOutcomeDir({ name: op }))]);
     let merger;
     if (args.merge === "auto" && args.mergeTokenEnv) {
       const env = mergeTokenEnv(args.mergeTokenEnv);
@@ -239,6 +251,7 @@ async function runBeforeMergeDone(ctx: CommandContext): Promise<number> {
       run,
       record,
       outcome,
+      ...(note?.next !== undefined ? { followOn: { wave: note.wave, next: note.next, found: note.found } } : {}),
       merge: args.merge,
       forge: forgeFromJobEnv(kind),
       ...(merger ? { merger } : {}),

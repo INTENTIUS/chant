@@ -22,6 +22,11 @@
  * waves stopped before it) gets no status: the one before it stands, and
  * the run's own jobs say what stopped.
  *
+ * A `rest` wave's status job (#4992) posts for the wave its run ran, which
+ * a follow-on run names in `CHANT_WAVES_WAVE`, counted out of the waves the
+ * plan found, from the rest wave's note (./op-waves-follow-on.ts): a run
+ * that started a follow-on is not the last, so its status stays pending.
+ *
  * Kept free of the forge client and git, so the generators import the
  * names and the command line alone.
  */
@@ -29,6 +34,7 @@
 import { applyOutcomeOf } from "../control/applied";
 import { earlierWaveOutcomes, passesThrough, type WaveMemberOutcome } from "../wave-blocked";
 import type { ForgeStatusState, PrForge } from "../pr-forge";
+import { readOpWaveRestNote } from "./op-waves-follow-on";
 
 /** The apply statuses option of an Op waves pipeline (#4987), `OpWavesPipelineOptions.applyStatus`. */
 export interface OpWavesApplyStatus {
@@ -52,7 +58,7 @@ export function assertApplyStatusContext(context: string): void {
  * <forge>`. It names the op and the wave count rather than the spec file,
  * which a spec rendered at run time (#4982) leaves uncommitted.
  */
-export function applyStatusCommand(spec: { name: string; waves: readonly unknown[] }, wave: number, context: string, forge: "github" | "forgejo" | "gitlab", at: string, bin?: string): string {
+export function applyStatusCommand(spec: { name: string; waves: readonly unknown[] }, wave: number | string, context: string, forge: "github" | "forgejo" | "gitlab", at: string, bin?: string): string {
   const words = (bin ?? "").split(/\s+/).filter(Boolean);
   return [
     ...(words.length > 0 ? words : ["chant"]),
@@ -109,10 +115,15 @@ export interface PostApplyStatusInput {
  */
 export async function postOpWaveApplyStatus(i: PostApplyStatusInput): Promise<string> {
   if (!/^[0-9a-f]{40,64}$/.test(i.at)) throw new Error(`--at names the commit the waves applied, a full sha, not ${JSON.stringify(i.at)}`);
-  if (i.wave > i.of) throw new Error(`--wave ${i.wave} is past the run's ${i.of} waves`);
+  // #4992: the rest wave's note counts the waves its plan found, past the spec's. A follow-on's wave past them that
+  // wrote an outcome and whose record job left no note (its gate waits) is counted as the last one known.
+  const note = readOpWaveRestNote(i.dirs);
+  const ran = i.wave > i.of && [...earlierWaveOutcomes(i.dirs, i.wave + 1).members.values()].some((m) => m.wave === i.wave);
+  const of = note && note.wave === i.wave ? Math.max(i.of, note.found, note.wave) : ran ? i.wave : i.of;
+  if (i.wave > of) throw new Error(`--wave ${i.wave} is past the run's ${of} waves`);
   assertApplyStatusContext(i.context);
-  const status = opWaveApplyStatus(i.dirs, i.wave, i.of, i.forge.kind);
-  if (!status) return `wave ${i.wave} of ${i.of} wrote no outcome, so ${i.context} stays as the wave before it left it`;
+  const status = opWaveApplyStatus(i.dirs, i.wave, of, i.forge.kind);
+  if (!status) return `wave ${i.wave} of ${of} wrote no outcome, so ${i.context} stays as the wave before it left it`;
   await i.forge.setStatus(i.at, { context: i.context, state: status.state, description: status.description, ...(i.forge.runUrl ? { url: i.forge.runUrl } : {}), ...(i.pipelineId !== undefined ? { pipelineId: i.pipelineId } : {}) });
   return `${i.context} on ${i.at.slice(0, 12)}: ${status.state}: ${status.description}`;
 }

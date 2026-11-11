@@ -52,6 +52,14 @@
  * and admits the run only when the pull request and the digest are the
  * decision's and the decision's fields still give its digest. A job of a
  * workflow without the mode refuses any run that names a head.
+ *
+ * A follow-on run (#4992, ./op/follow-on-run.ts): a job of a `rest` wave
+ * carries `rest: <its wave number>`. A run the rest wave's record job
+ * started names a later wave in `CHANT_WAVES_WAVE`, with the same decision
+ * (admitted as above, so a follow-on for another head or digest is refused)
+ * or, for a push, the pushed commit in `CHANT_WAVES_COMMIT`. The guard
+ * admits it only in a job of the rest wave and only for a wave after it; any
+ * other job refuses a run that names either variable.
  */
 import { spawnSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
@@ -60,6 +68,7 @@ import { join } from "node:path";
 import { isRunnerGroup, type CiRunner } from "./ci-jobs";
 import { CHANT_EXIT } from "./exit-codes";
 import { BEFORE_MERGE_DIGEST_ENV, BEFORE_MERGE_HEAD_ENV, BEFORE_MERGE_PR_ENV, beforeMergePath, beforeMergeProblems, beforeMergeRunFromEnv, isBeforeMergeRun, parseBeforeMerge, type BeforeMergeRecord, type BeforeMergeRun } from "./op/before-merge";
+import { followOnProblems, followOnRunFromEnv, OP_WAVES_COMMIT_ENV, OP_WAVES_WAVE_ENV, type FollowOnRun } from "./op/follow-on-run";
 
 /** The variable the generated step carries its expectation in. */
 export const JOB_GUARD_ENV = "CHANT_JOB_GUARD";
@@ -86,6 +95,8 @@ export interface JobGuardSpec {
   selfHosted?: boolean;
   /** The waves have a before-merge mode (#4984): a run that names a head runs only as op `op`'s recorded decision. */
   beforeMerge?: { op: string };
+  /** The job is one of the `rest` wave's (#4992), rendered as this wave: a follow-on run may name a later one. */
+  rest?: number;
 }
 
 /** What the job sees. Undefined: the forge did not say. */
@@ -104,6 +115,8 @@ export interface JobSeen {
   beforeMergeRecord?: BeforeMergeRecord | null;
   /** Why the decisions could not be read, when they could not. */
   beforeMergeError?: string;
+  /** The follow-on variables the run names (#4992). */
+  followOn?: FollowOnRun;
 }
 
 export interface JobGuardResult {
@@ -130,6 +143,8 @@ export interface JobGuardInput {
   idToken?: boolean;
   /** The waves' before-merge mode (#4984), with the op its decisions are recorded under. */
   beforeMerge?: { op: string };
+  /** The job is one of the `rest` wave's (#4992), whose number this is. */
+  rest?: number;
 }
 
 /**
@@ -148,6 +163,7 @@ export function jobGuardSpec(input: JobGuardInput): JobGuardSpec {
     ...(input.forge === "gitlab" && labels.length > 0 ? { runnerTags: labels } : {}),
     ...(input.forge !== "gitlab" && labels.includes("self-hosted") ? { selfHosted: true } : {}),
     ...(input.beforeMerge ? { beforeMerge: { op: input.beforeMerge.op } } : {}),
+    ...(input.rest !== undefined ? { rest: input.rest } : {}),
   };
 }
 
@@ -168,6 +184,7 @@ export function parseJobGuardSpec(raw: string | undefined): JobGuardSpec {
   if (o.forgeEnvironment !== undefined && typeof o.forgeEnvironment !== "string") throw new Error(`${JOB_GUARD_ENV}.forgeEnvironment is not a name`);
   if (o.runnerTags !== undefined && (!Array.isArray(o.runnerTags) || o.runnerTags.some((t) => typeof t !== "string"))) throw new Error(`${JOB_GUARD_ENV}.runnerTags is not a list of tags`);
   if (o.beforeMerge !== undefined && (typeof o.beforeMerge !== "object" || o.beforeMerge === null || typeof o.beforeMerge.op !== "string")) throw new Error(`${JOB_GUARD_ENV}.beforeMerge is { op }`);
+  if (o.rest !== undefined && (!Number.isInteger(o.rest) || o.rest < 1)) throw new Error(`${JOB_GUARD_ENV}.rest is the rest wave's number`);
   return o as JobGuardSpec;
 }
 
@@ -234,6 +251,11 @@ export function checkJob(expect: JobGuardSpec, seen: JobSeen): JobGuardResult {
     }
   }
 
+  // #4992: a follow-on run of the rest wave, admitted in the rest wave's jobs alone and for a later wave.
+  const follow = followOnProblems(expect.rest, seen.followOn ?? {}, run !== undefined && isBeforeMergeRun(run));
+  out.problems.push(...follow.problems);
+  if (follow.checked) out.checked.push(follow.checked);
+
   if (expect.forge === "gitlab") {
     const want = expect.runnerTags ?? [];
     if (want.length > 0) {
@@ -266,6 +288,9 @@ async function githubClaims(env: NodeJS.ProcessEnv, fetchFn: typeof fetch): Prom
 /** What the job sees, from the forge's variables, and on GitHub from its token's claims when the forge environment is to be checked. */
 export async function jobSeen(expect: JobGuardSpec, env: NodeJS.ProcessEnv = process.env, fetchFn: typeof fetch = fetch, readLifecycle: LifecycleFileReader = lifecycleFileByGit): Promise<JobSeen> {
   const seen = await forgeSeen(expect, env, fetchFn);
+  // #4992: the follow-on variables, whatever else the run names.
+  const follow = followOnRunFromEnv(env);
+  if (follow.wave !== undefined || follow.commit !== undefined) seen.followOn = follow;
   // #4984: the decision a run names, read only when the spec has a before-merge mode.
   const run = beforeMergeRunFromEnv(env);
   if (!isBeforeMergeRun(run)) return seen;
@@ -388,6 +413,18 @@ const BEFORE_MERGE_JS = [
   String.raw`if(dg!==rec.digest)p.push("before merge: the decision for head "+h+" was changed after it was made: its fields give another digest");return p};`,
 ].map(noQuote);
 
+/** The follow-on part of the program (#4992): the run's two variables and the lines of {@link followOnProblems}. After {@link BEFORE_MERGE_JS}, whose `SHA` it reads. */
+const FOLLOW_ON_JS = [
+  `const foV=[${JSON.stringify(OP_WAVES_WAVE_ENV)},${JSON.stringify(OP_WAVES_COMMIT_ENV)}].map((k)=>String(E[k]||"").trim());const foRun={};if(foV[0])foRun.wave=foV[0];if(foV[1])foRun.commit=foV[1];`,
+  String.raw`const foProblems=(rest,r,bm)=>{const w=r.wave,c=r.commit;`,
+  String.raw`if(rest===undefined){if(w===undefined&&c===undefined)return{p:[]};return{p:["follow-on: the run names wave "+(w===undefined?"none":w)+" and commit "+(c===undefined?"none":c)+", and this job is none of the rest wave's, which alone runs in a follow-on"]}}`,
+  String.raw`if(w===undefined||w===String(rest)){if(c===undefined)return{p:[]};return{p:["follow-on: the run names the commit "+c+" and no wave after wave "+rest+", so it is no follow-on"]}}`,
+  String.raw`if(!/^[1-9][0-9]{0,5}$/.test(w)||Number(w)<=rest)return{p:["follow-on: the run's wave "+JSON.stringify(w)+" is no wave after wave "+rest]};`,
+  String.raw`if(bm){if(c!==undefined)return{p:["follow-on: a follow-on of a decided head checks out that head, and the run names the commit "+c+" too"]};return{p:[],c:"follow-on wave "+w}}`,
+  String.raw`if(c===undefined||!SHA.test(c))return{p:["follow-on: a push's follow-on names the commit it goes on with, and the run's "+(c===undefined?"none":JSON.stringify(c))+" is not a commit sha"]};`,
+  String.raw`return{p:[],c:"follow-on wave "+w+" at "+c.slice(0,12)}};`,
+].map(noQuote);
+
 /**
  * The guard as one `node -e` program: the same checks as {@link checkJob},
  * {@link jobSeen} and {@link describeJobGuard}, reading {@link JOB_GUARD_ENV}.
@@ -405,6 +442,7 @@ export const JOB_GUARD_JS = [
   'const tags=(r)=>{if(r===undefined)return undefined;const t=r.trim();if(t.startsWith("[")){try{const v=JSON.parse(t);if(Array.isArray(v))return v.map(String)}catch(e){}}return t===""?[]:t.split(",").map((s)=>s.trim()).filter((s)=>s!=="")};',
   'const claimsOf=(tok)=>{const p=tok.split(".")[1];if(!p)throw new Error("the forge\\u0027s OIDC token is not a JWT");const c=JSON.parse(Buffer.from(p.replace(/-/g,"+").replace(/_/g,"/"),"base64").toString("utf-8"));if(!c||typeof c!=="object")throw new Error("the forge\\u0027s OIDC token has no claims");return c};',
   ...BEFORE_MERGE_JS,
+  ...FOLLOW_ON_JS,
   "async function seenOf(){",
   'if(x.forge==="gitlab")return bmSeen({forgeEnvironment:E.CI_ENVIRONMENT_NAME||null,ref:E.CI_COMMIT_REF_NAME,refProtected:E.CI_COMMIT_REF_PROTECTED,runnerTags:tags(E.CI_RUNNER_TAGS)});',
   "const s={ref:E.GITHUB_REF};let c;",
@@ -427,6 +465,7 @@ export const JOB_GUARD_JS = [
     String.raw`else if(s.bmErr!==undefined)P.push("before merge: the decisions on chant/lifecycle could not be read: "+s.bmErr);`,
     String.raw`else{const Q=bmProblems(x.beforeMerge.op,r,s.rec||undefined);if(Q.length)P.push(...Q);else C.push("before merge: pull request "+r.pr+"'s decided head "+r.head.slice(0,12))}}`,
   ].map(noQuote),
+  "{const F=foProblems(x.rest,foRun,bmOn);P.push(...F.p);if(F.c)C.push(F.c)}",
   'if(x.forge==="gitlab"){const w=x.runnerTags||[];if(w.length>0){const h=s.runnerTags;const miss=w.filter((t)=>!(h||[]).includes(t));',
   'if(h===undefined)P.push("runner: expected tags "+w.join(", ")+", and the job has no CI_RUNNER_TAGS");else if(miss.length>0)P.push("runner: expected tags "+w.join(", ")+", found "+(h.length?h.join(", "):"none"));else C.push("runner tags "+w.join(", "))}}',
   'else if(x.selfHosted){if(s.runnerEnvironment===undefined)S.push("runner (the runner says nothing about itself: no RUNNER_ENVIRONMENT)");else if(s.runnerEnvironment!=="self-hosted")P.push("runner: expected self-hosted, found "+s.runnerEnvironment);else C.push("self-hosted runner")}',

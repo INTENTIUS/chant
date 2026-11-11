@@ -1538,6 +1538,12 @@ export function opWaveGroupOf(spec: OpWavesSpec, job: Pick<OpWaveJob, "wave" | "
   return job.group === undefined ? undefined : spec.waves[job.wave - 1]?.jobs?.find((g) => g.name === job.group);
 }
 
+/** Wave `k` of the spec, or past its waves the `rest` wave, which stands for each wave its plan found (#3821, #4992); undefined when there is none. */
+export function opWaveAt(spec: Pick<OpWavesSpec, "waves">, k: number): OpWave | undefined {
+  const last = spec.waves[spec.waves.length - 1];
+  return spec.waves[k - 1] ?? (k > spec.waves.length && last?.rest === true ? last : undefined);
+}
+
 /** The wave a job belongs to. */
 export function opWaveOf(spec: OpWavesSpec, job: Pick<OpWaveJob, "wave">): OpWave {
   return spec.waves[job.wave - 1]!;

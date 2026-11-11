@@ -169,9 +169,11 @@ describe("a split wave before merge on GitHub (#4987)", () => {
     expect(gate.env?.CHANT_LOCK_WAIT).toBe(split.jobs["wave-1-dev"]!.env?.CHANT_LOCK_WAIT);
   });
 
-  test("a rest wave cannot split, and is refused with beforeMerge alone", () => {
+  test("a rest wave splits (#4992): its four jobs run one wave per run (generate-op-waves-pipeline.follow-on.test.ts)", () => {
     const rest = { ...splitSpec, plan: undefined, planWave: ["terragucci", "plan-wave", "{runs}", "{plans}"], waves: [...splitSpec.waves.slice(0, 2), { ...splitSpec.waves[2]!, rest: true, discover: true, runs: [] }] } as never;
-    expect(() => generateGithubOpWavesPipeline(rest, splitOptions as never)).toThrow('wave "prod" has `rest`');
+    const split = parseYAML(generateGithubOpWavesPipeline(rest, splitOptions as never).files[0]!.yaml) as Doc;
+    expect(Object.keys(split.jobs).filter((j) => j.startsWith("wave-3-") && !j.endsWith("-evidence"))).toEqual(["wave-3-prod-plan", "wave-3-prod-gate", "wave-3-prod", "wave-3-prod-record"]);
+    expectNoWriteTokenBesideTheChange(split, "github");
   });
 
   test("without beforeMerge each wave keeps its one job", () => {

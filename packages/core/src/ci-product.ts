@@ -192,7 +192,7 @@ export const WAVES_BEFORE_MERGE_SPLIT_FLOOR = NEXT_RELEASE;
 export { opWaveSplitJobs, type OpWavePhase, type OpWaveSplitJob } from "./op/op-waves-split";
 
 /**
- * The first chant whose split before-merge waves take a `step` spec, Forgejo's hand-off, holds on other gates and one approval per wave (#4992): the plan job saves each run's step plan, the gate job leases the rows they change (no heartbeat; the decision names the lease) before it spends the approval, the applying job plans its runs again through the step and applies each whose digest the decision holds, and the record job writes the release records and lets go of the rows; a hook in the plan or apply job that holds the wave on another gate reads it with no write token and leaves its pending fact to the gate or record job; on Forgejo the plan and applying jobs hand their files on as job outputs (`packJs`), never through the artifact upload, and the gate and record jobs keep them as the artifacts; the plan job names no environment on GitHub (a wave's `planEnvironment` when set; on GitLab it prepares it), so the environment's reviewers are asked once. A `rest` wave is still refused.
+ * The first chant whose split before-merge waves take a `step` spec, Forgejo's hand-off, holds on other gates and one approval per wave (#4992): the plan job saves each run's step plan, the gate job leases the rows they change (no heartbeat; the decision names the lease) before it spends the approval, the applying job plans its runs again through the step and applies each whose digest the decision holds, and the record job writes the release records and lets go of the rows; a hook in the plan or apply job that holds the wave on another gate reads it with no write token and leaves its pending fact to the gate or record job; on Forgejo the plan and applying jobs hand their files on as job outputs (`packJs`), never through the artifact upload, and the gate and record jobs keep them as the artifacts; the plan job names no environment on GitHub (a wave's `planEnvironment` when set; on GitLab it prepares it), so the environment's reviewers are asked once. A `rest` wave splits from {@link WAVES_BEFORE_MERGE_REST_FLOOR} on.
  */
 export const WAVES_BEFORE_MERGE_STEP_FLOOR = NEXT_RELEASE;
 export type { OpWaveSavedStep, OpWaveSplitHandoff, OpWaveSplitLease } from "./op/op-waves-run";
@@ -204,6 +204,11 @@ export const WAVES_PRODUCT_HOOKS_FLOOR = NEXT_RELEASE;
 export type { OpWaveHandedFinished, OpWaveInProcessHook, OpWaveInProcessHookCall } from "./op/op-waves-run";
 export type { ProductWaveHook } from "./op/op-waves-after-plan";
 export { opWaveProductStateDir } from "./op/op-waves-split";
+
+/**
+ * The first chant whose split before-merge waves take a `rest` wave (#4992): its four jobs run one wave per run, the wave `CHANT_WAVES_WAVE` names (their own by default), and its record job, once the run applied and the plan found another wave, starts the waves workflow again for it (GitHub and Forgejo: a dispatch with the inputs `wave` and the decision's `pr`, `head` and `digest`, or a push's `commit`; GitLab: a pipeline with the same variables, with `CHANT_FORGE_TOKEN`), whose guard admits it as the same decided head; the jobs of the waves before it do not run in that follow-on; the record job's note (`rest-wave.json` beside the outcomes, `@intentius/chant/op/op-waves-follow-on`) tells `before-merge-done`, the control dispatch and the apply status that a run which started a follow-on is not the last.
+ */
+export const WAVES_BEFORE_MERGE_REST_FLOOR = NEXT_RELEASE;
 
 /**
  * The first chant whose product plan takes `watches`, the product's own scheduled jobs the note job's `pr-post` checks for having stopped with the job's token (#4888), and whose `checkOverdueOps` and `overdueOpsAt` take a product's `logPrefix` and `label`.
