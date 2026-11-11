@@ -1205,7 +1205,11 @@ export interface OpWavesPipelineOptions
    * the checkout, keeping the wave's runners, trades and environment, and a
    * gate job and a record job at the default branch's code that write
    * `chant/lifecycle`. The evidence job signs the plan job's checks. A
-   * `step` spec or a `rest` wave is refused.
+   * `rest` wave is refused. #4992: a `step` spec splits (the gate job
+   * leases its rows, the record job lets go of them), a hold on another
+   * gate is recorded by the gate or record job, Forgejo's plan and applying
+   * jobs hand their files on as job outputs, and the wave's environment is
+   * on the applying job alone (`planEnvironment` for the plan job).
    */
   beforeMerge?: import("./op/before-merge").OpWavesBeforeMerge;
   /**

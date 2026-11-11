@@ -209,7 +209,10 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
   const waveRules = [...rules, ...bmRules];
   // The setup and environment each wave's jobs carry, checked as an Op's are.
   const setupOf = spec.waves.map((wave) => gitlabSetupScript(`${subject} wave "${wave.name}"`, wave.setup));
-  for (const wave of spec.waves) if (wave.environment) assertGitlabEnvironment(`${spec.name}/${wave.name}`, wave.environment);
+  for (const wave of spec.waves) {
+    if (wave.environment) assertGitlabEnvironment(`${spec.name}/${wave.name}`, wave.environment);
+    if (wave.planEnvironment) assertGitlabEnvironment(`${spec.name}/${wave.name} plan`, wave.planEnvironment);
+  }
   // #3914: GitLab picks a runner by tags, and each job group carries its own setup and environment.
   assertRunnerLabels(subject, "runner", spec.runner, "GitLab");
   const groupSetup = new Map<string, string[]>();
@@ -597,8 +600,11 @@ function gitlabSplitEntries(input: GitlabSplitInput): Array<readonly [string, un
           stage,
           image,
           ...(specTags ? { tags: specTags } : {}),
-          variables: { ...GITLAB_FULL_HISTORY, ...renderEnv, ...(wave.variables ?? {}), [JOB_GUARD_ENV]: JSON.stringify(guard) },
+          // #4992: the gate job of a step spec waits for its rows on the ledger, up to the job's timeout.
+          ...(gate ? { timeout: `${timeout.minutes} minutes` } : {}),
+          variables: { ...GITLAB_FULL_HISTORY, ...(gate ? timeout.env : {}), ...renderEnv, ...(wave.variables ?? {}), [JOB_GUARD_ENV]: JSON.stringify(guard) },
           rules: waveRules,
+          // The record job needs the gate job too, whose decision names the rows it leased (#4992).
           needs: job.needs,
           // The gate reads the head's commit, notes and wave stop; the record job writes what ran, whatever the merge request did since.
           script: [jobGuardLine(), ...(gate ? [beforeMergeCheckoutScript("gitlab", product, { checkout: false })] : []), ...dropControl, ...setupOf[k - 1]!, ...(options.beforeScript ?? []), job.command.join(" ")],
@@ -613,7 +619,9 @@ function gitlabSplitEntries(input: GitlabSplitInput): Array<readonly [string, un
     const group = opWaveGroupOf(spec, job);
     const setup = [...setupOf[k - 1]!, ...(group ? groupSetup.get(`${wave.name}/${group.name}`)! : [])];
     const tags = gitlabTags(group?.runner ?? wave.runner ?? spec.runner);
-    const environment = group?.environment ?? wave.environment;
+    // #4992: the plan job names the wave's planEnvironment when it has one, else its environment, with `action: prepare`
+    // below either way: it deploys nothing, so the environment's approval is asked of the applying job alone.
+    const environment = job.phase === "plan" ? (wave.planEnvironment ?? wave.environment) : (group?.environment ?? wave.environment);
     const cloud = group?.cloud ?? wave.cloud;
     const declared = gitlabIdTokensDoc(group?.idTokens ?? wave.idTokens);
     const idTokens = cloud ? { ...declared, ...gitlabTradeIdTokens(cloud) } : declared;

@@ -27,9 +27,24 @@
  * without `beforeMerge` keeps one job per wave (or a deciding job and its
  * shares), since a push runs merged code.
  *
- * A `step` spec plans in the job's own process and leases its rows on the
- * ledger while it applies, and a `rest` wave runs the waves it finds in one
- * job; neither splits, so {@link assertOpWavesSplit} refuses them.
+ * A `step` spec (#4992) plans in the plan job's process; the saved plan
+ * keeps each run's step plan (its digest, effects and lock rows) without the
+ * engine's artifact. The gate job leases the rows the runs wait for and
+ * change, with no heartbeat, before it spends the approval, and the
+ * decision names the lease. The applying job plans its runs again through
+ * the step, as a share job does, and applies each whose plan digest the
+ * decision holds; it hands the release records to the record job, which
+ * writes them and lets go of the lease. A run whose plan moved is exit 4.
+ *
+ * A hook that holds the wave on another gate (#4992) in the plan or apply
+ * job reads that gate with no write token: approved, the wave goes on; still
+ * waiting, the job leaves the gate's pending fact to the gate job (a plan
+ * job's hold) or the record job (an apply job's), which records it, and the
+ * wave waits. A hold that asks chant to `record` the gate is spent before
+ * its hook runs again, so it fails in those jobs once approved.
+ *
+ * A `rest` wave runs the waves its plan finds in one job; before merge each
+ * wave needs jobs of its own, so {@link assertOpWavesSplit} refuses it.
  */
 
 import { opWaveOutcomePath, opWaveRecordPath, type OpWaveJob, type OpWavesSpec } from "./op-waves";
@@ -66,12 +81,9 @@ export function opWaveRunRecordFileName(wave: number, part: { group?: string; sh
 /** A run record file's name, as {@link opWaveRunRecordFileName} gives it; group 1 is the wave. */
 export const OP_WAVE_RUN_RECORD_FILE = /^run-record-wave-(\d+)(?:-group-[A-Za-z0-9._-]+)?(?:-share-\d+)?\.json$/;
 
-/** Refuse a spec whose waves cannot run as four jobs each, naming why. */
-export function assertOpWavesSplit(spec: Pick<OpWavesSpec, "name" | "step" | "waves">): void {
+/** Refuse a spec whose waves cannot run as four jobs each, naming why. A `step` spec splits (#4992). */
+export function assertOpWavesSplit(spec: Pick<OpWavesSpec, "name" | "waves">): void {
   const where = `Op waves "${spec.name}" with beforeMerge`;
-  if (spec.step) {
-    throw new Error(`${where}: a spec with \`step\` plans in the job's own process and leases its rows on chant/lifecycle while it applies, so its waves cannot split into a plan job and an apply job that hold no write token. Plan and apply with commands (\`plan\`, \`apply\`), or leave beforeMerge off.`);
-  }
   const rest = spec.waves.find((w) => w.rest === true);
   if (rest) {
     throw new Error(`${where}: wave "${rest.name}" has \`rest\`, which runs the waves its plan finds in one job; before merge each wave is a plan, a gate, an apply and a record job, so the pipeline needs a job for every wave it runs.`);
@@ -94,7 +106,8 @@ export function opWaveRecordJobName(spec: Pick<OpWavesSpec, "waves">, k: number)
  * wave's own job, or each share and job group's job) and its record job.
  * The plan job of each wave after the first needs the record job of the
  * wave before; the gate needs the plan, each applying job the gate, and the
- * record job every applying job.
+ * record job every applying job and the gate, whose decision names the rows
+ * it leased (#4992).
  */
 export function opWaveSplitJobs(spec: OpWavesSpec, jobs: readonly OpWaveJob[]): OpWaveSplitJob[] {
   assertOpWavesSplit(spec);
@@ -115,7 +128,7 @@ export function opWaveSplitJobs(spec: OpWavesSpec, jobs: readonly OpWaveJob[]): 
       const outcome = job.kind === "wave" ? opWaveOutcomePath(spec, k, { apply: true }) : job.outcome;
       out.push({ ...job, kind: "share", needs: [gate], command: [...baseCommand(job), "--phase", "apply"], record: opWaveRecordPath(spec, k), outcome, phase: "apply", runsChange: true });
     }
-    out.push({ jobName: opWaveRecordJobName(spec, k), wave: k, waveName: first.waveName, kind: "wave", needs: applying.map((j) => j.jobName), command: [...base, "--phase", "record"], outcome: opWaveOutcomePath(spec, k), phase: "record", runsChange: false });
+    out.push({ jobName: opWaveRecordJobName(spec, k), wave: k, waveName: first.waveName, kind: "wave", needs: [...applying.map((j) => j.jobName), gate], record: opWaveRecordPath(spec, k), command: [...base, "--phase", "record"], outcome: opWaveOutcomePath(spec, k), phase: "record", runsChange: false });
   }
   return out;
 }

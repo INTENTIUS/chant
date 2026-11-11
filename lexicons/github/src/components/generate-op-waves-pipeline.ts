@@ -192,8 +192,8 @@ import {
 } from "@intentius/chant/op/before-merge";
 import { applyStatusCommand, applyStatusJobName, assertApplyStatusContext, type OpWavesApplyStatus } from "@intentius/chant/op/apply-status";
 import { PR_STALE_JOB } from "@intentius/chant/components/pr-pipeline";
-import { opWaveRunRecordFileName, opWaveSavedPlanDir, opWaveSplitJobLabel, opWaveSplitJobs, opWaveSplitLastJobs, type OpWaveSplitJob } from "@intentius/chant/op/op-waves-split";
-import { CHECKOUT_TOKEN_ENV, checkoutScript, dropForgeTokens } from "@intentius/chant/ci-handover";
+import { opWaveRunRecordFileName, opWaveSavedPlanDir, opWaveSavedPlanPath, opWaveSplitJobLabel, opWaveSplitJobs, opWaveSplitLastJobs, type OpWaveSplitJob } from "@intentius/chant/op/op-waves-split";
+import { CHECKOUT_TOKEN_ENV, checkoutScript, dropForgeTokens, handoverOutputs, packJs, takeOverScript } from "@intentius/chant/ci-handover";
 import { checkoutStep, concurrency, DOWNLOAD_ARTIFACT, downloadArtifactStep, keepRecordStep, runSteps } from "./ci-jobs";
 import { emitOpPipelineYAML, type GithubOpPipelineDoc } from "./generate-op-pipeline";
 
@@ -236,6 +236,7 @@ export function buildGithubOpWavesDoc(
   for (const wave of spec.waves) {
     assertSetupSteps(`${spec.name}/${wave.name}`, wave.setup ?? []);
     if (wave.environment) assertEnvironment(`${spec.name}/${wave.name}`, wave.environment);
+    if (wave.planEnvironment) assertEnvironment(`${spec.name}/${wave.name} plan`, wave.planEnvironment);
     for (const group of wave.jobs ?? []) {
       assertSetupSteps(`${spec.name}/${wave.name}/${group.name}`, group.setup ?? []);
       if (group.environment) assertEnvironment(`${spec.name}/${wave.name}/${group.name}`, group.environment);
@@ -433,6 +434,8 @@ interface SplitJobsInput {
  */
 function githubSplitJobsDoc(input: SplitJobsInput): Record<string, unknown> {
   const { spec, options, forge, product, image, byReview, timeout, inputs, renderEnv, bmEnv, notifyEnv, split } = input;
+  // #4992: Forgejo's plan and applying jobs hand their files on as job outputs, never through the artifact upload.
+  const handover = forge === "forgejo";
   const evidenceOf = (job: OpWaveSplitJob) => (job.phase === "plan" && options.evidence !== undefined ? opWaveEvidencePlan(spec, job, { signs: true, keylessCloud: false, keyOutOfWave: true }) : undefined);
   const evidenceNeeds = opWaveEvidenceNeeds(spec, split.map((job) => ({ wave: job.wave, plan: evidenceOf(job) })));
   const branches = pushBranches(spec.branches);
@@ -440,9 +443,13 @@ function githubSplitJobsDoc(input: SplitJobsInput): Record<string, unknown> {
   for (const job of split) {
     const k = job.wave;
     const wave = spec.waves[k - 1]!;
+    const add = inputs[k - 1];
     if (!job.runsChange) {
       // The gate and record jobs: the default branch's code, with the token.
       const gate = job.phase === "gate";
+      // #4992: on Forgejo the plan and applying jobs hand their files on as job outputs; these jobs take them back and keep them as artifacts.
+      const from = gate ? split.filter((j) => j.jobName === job.needs[0]) : split.filter((j) => j.phase === "apply" && job.needs.includes(j.jobName));
+      const takeOver = handover ? from.map((j) => takeOverStep(spec, j, handedPaths(spec, j, add))) : [];
       const steps: Array<Record<string, unknown>> = [
         guardStep({ forge, job: opWaveSplitJobLabel(spec.name, job), product, branches, ...(spec.runner !== undefined ? { runner: spec.runner } : {}), idToken: false, beforeMerge: { op: spec.name } }),
         checkoutStep(true),
@@ -451,9 +458,14 @@ function githubSplitJobsDoc(input: SplitJobsInput): Record<string, unknown> {
         ...(gate
           ? [
               { name: "Fetch the pull request's decided head without checking it out", run: beforeMergeCheckoutScript(forge, product, { checkout: false }) },
-              downloadArtifactStep(`Download wave ${k}'s saved plan`, opWavePlanArtifact(spec, k), opWaveSavedPlanDir(spec, k)),
+              ...(handover ? takeOver : [downloadArtifactStep(`Download wave ${k}'s saved plan`, opWavePlanArtifact(spec, k), opWaveSavedPlanDir(spec, k))]),
             ]
-          : [{ name: "Download the waves' outcomes and run records", uses: DOWNLOAD_ARTIFACT, with: { path: opWaveOutcomeDir(spec) } }]),
+          : [
+              { name: "Download the waves' outcomes and run records", uses: DOWNLOAD_ARTIFACT, with: { path: opWaveOutcomeDir(spec) } },
+              ...takeOver,
+              // #4992: the decision names the rows the gate job leased, which this job lets go of.
+              downloadArtifactStep(`Download wave ${k}'s decision`, opWaveRecordArtifact(spec, k), dirnameOf(job.record!)),
+            ]),
         ...(wave.setup ?? []).map(setupStepDoc),
         ...runSteps(options.beforeScript ?? []),
         { name: splitStepName(job), run: job.command.join(" ") },
@@ -462,6 +474,8 @@ function githubSplitJobsDoc(input: SplitJobsInput): Record<string, unknown> {
         steps.push(keepRecordStep(`Keep wave ${k}'s decision`, opWaveRecordArtifact(spec, k), job.record!));
         steps.push(keepRecordStep(`Keep the job's outcome`, opWaveOutcomeArtifact(spec, job.jobName), job.outcome));
       }
+      // What the plan or applying jobs handed on, kept as the artifacts they keep on GitHub.
+      if (handover) for (const j of from) steps.push(...keptHandedSteps(spec, j, add));
       out[job.jobName] = {
         "runs-on": githubRunsOn(spec.runner),
         needs: job.needs,
@@ -469,7 +483,9 @@ function githubSplitJobsDoc(input: SplitJobsInput): Record<string, unknown> {
         if: gate ? "${{ !cancelled() }}" : "${{ !cancelled() && !contains(needs.*.result, 'skipped') }}",
         container: image,
         permissions: { contents: "write", ...(gate && byReview ? { "pull-requests": "read" } : {}) },
-        env: { ...renderEnv, ...bmEnv, ...notifyEnv, ...(wave.variables ?? {}) },
+        // #4992: the gate job of a step spec waits for its rows on the ledger, up to the job's timeout.
+        ...(gate ? { "timeout-minutes": timeout.minutes } : {}),
+        env: { ...(gate ? timeout.env : {}), ...renderEnv, ...bmEnv, ...notifyEnv, ...(wave.variables ?? {}) },
         steps,
       };
       continue;
@@ -477,12 +493,13 @@ function githubSplitJobsDoc(input: SplitJobsInput): Record<string, unknown> {
     // The plan and apply jobs: the change's code, with no write token.
     const group = opWaveGroupOf(spec, job);
     const cloud = group?.cloud ?? wave.cloud;
-    const environment = group?.environment ?? wave.environment;
+    // #4992: the applying job is the deployment, so the wave's environment (and its reviewers) is on it alone; the plan
+    // job names the wave's `planEnvironment`, one with no reviewers, when the plan needs an environment's secrets or claim.
+    const environment = job.phase === "plan" ? wave.planEnvironment : (group?.environment ?? wave.environment);
     const idTokens = group?.idTokens ?? wave.idTokens;
     const idToken = idTokens !== undefined || cloud !== undefined;
     const runner = group?.runner ?? wave.runner ?? spec.runner;
     const evidence = evidenceOf(job);
-    const add = inputs[k - 1];
     const noToken = (step: Record<string, unknown>): Record<string, unknown> =>
       typeof step.run === "string" ? { ...step, run: `${dropForgeTokens("sh", cloud ? OIDC_REQUEST_VARS : [])}\n${step.run}` } : step;
     const checkout = {
@@ -512,12 +529,18 @@ function githubSplitJobsDoc(input: SplitJobsInput): Record<string, unknown> {
     });
     later.push(...runSteps(options.extraScript ?? []));
     steps.push(...later.map(noToken));
-    if (job.phase === "plan") steps.push(keepRecordStep(`Keep wave ${k}'s saved plan`, opWavePlanArtifact(spec, k), opWaveSavedPlanDir(spec, k)));
-    const part = { ...(job.group !== undefined ? { group: job.group } : {}), ...(job.share !== undefined ? { share: job.share } : {}) };
-    const kept = job.phase === "apply" ? `${job.outcome}\n${opWaveOutcomeDir(spec)}/${opWaveRunRecordFileName(k, part)}` : job.outcome;
-    steps.push(keepRecordStep(job.phase === "apply" ? "Keep the job's outcome and run record" : "Keep the job's outcome", opWaveOutcomeArtifact(spec, job.jobName), kept));
-    if (evidence?.evidenceJob) steps.push(keepRecordStep(`Keep the job's check claims`, opWaveChecksArtifact(spec, job.jobName), opWaveChecksDir(spec)));
-    steps.push(...reportSteps(add, job.jobName).map(noToken));
+    if (handover) {
+      // #4992: Forgejo's artifact upload takes the runner's token, which no setting limits, beside whatever the change's
+      // code left running. The job's report runs as on GitHub; its files go on as the job's outputs, from a last step
+      // with no token, and the gate or record job keeps them as the artifacts.
+      steps.push(...(add?.report ? [noToken({ name: add.report.name, if: "always()", run: add.report.run.join("\n") })] : []));
+      steps.push(noToken(handOverStep(spec, job, handedPaths(spec, job, add))));
+    } else {
+      if (job.phase === "plan") steps.push(keepRecordStep(`Keep wave ${k}'s saved plan`, opWavePlanArtifact(spec, k), opWaveSavedPlanDir(spec, k)));
+      steps.push(keepRecordStep(job.phase === "apply" ? "Keep the job's outcome and run record" : "Keep the job's outcome", opWaveOutcomeArtifact(spec, job.jobName), keptOutcome(spec, job)));
+      if (evidence?.evidenceJob) steps.push(keepRecordStep(`Keep the job's check claims`, opWaveChecksArtifact(spec, job.jobName), opWaveChecksDir(spec)));
+      steps.push(...reportSteps(add, job.jobName).map(noToken));
+    }
     const needs = [...job.needs, ...(job.phase === "plan" ? evidenceNeeds(k) : [])];
     out[job.jobName] = {
       "runs-on": githubRunsOn(runner),
@@ -530,10 +553,106 @@ function githubSplitJobsDoc(input: SplitJobsInput): Record<string, unknown> {
       permissions: { contents: "read", ...(idToken ? { "id-token": "write" } : {}) },
       "timeout-minutes": timeout.minutes,
       env: { ...timeout.env, ...renderEnv, ...bmEnv, ...(group || idTokens ? { ...wave.variables, ...group?.variables, ...idTokenAudienceEnv(idTokens) } : wave.variables) },
+      ...(handover ? { outputs: handoverOutputs(SPLIT_HANDOVER_STEP, "forgejo") } : {}),
       steps,
     };
-    if (evidence?.evidenceJob) out[evidence.evidenceJob.name] = evidenceJob(spec, options, forge, job, evidence, commandStep, image, { contents: "write", ...(byReview ? { "pull-requests": "read" } : {}) }, bmEnv);
+    if (evidence?.evidenceJob) {
+      // #4992: on Forgejo the evidence job takes the claims back from the plan job's outputs.
+      const claims = handover ? takeOverStep(spec, job, [opWaveChecksDir(spec)], "Take the plan job's check claims from its outputs") : undefined;
+      out[evidence.evidenceJob.name] = evidenceJob(spec, options, forge, job, evidence, commandStep, image, { contents: "write", ...(byReview ? { "pull-requests": "read" } : {}) }, bmEnv, claims);
+    }
   }
+  return out;
+}
+
+/** The step a Forgejo plan or applying job hands its files on from (#4992), whose outputs the job's are. */
+export const SPLIT_HANDOVER_STEP = "chant-handover";
+
+/** Where a split job's handed files are gathered, and taken back into, by the job that handed them (#4992). */
+export function splitHandoverDir(spec: Pick<OpWavesSpec, "name">, jobName: string): string {
+  return `.chant/op-waves/${spec.name}/handover/${jobName}`;
+}
+
+/** What a plan or applying job keeps as its outcome artifact: its outcome file, and an applying job's run record. */
+function keptOutcome(spec: OpWavesSpec, job: OpWaveSplitJob): string {
+  return job.phase === "apply" ? `${job.outcome}\n${runRecordPath(spec, job)}` : job.outcome;
+}
+
+/** The file an applying job leaves its run record in (#4987). */
+function runRecordPath(spec: OpWavesSpec, job: OpWaveSplitJob): string {
+  return `${opWaveOutcomeDir(spec)}/${opWaveRunRecordFileName(job.wave, { ...(job.group !== undefined ? { group: job.group } : {}), ...(job.share !== undefined ? { share: job.share } : {}) })}`;
+}
+
+/**
+ * The files a Forgejo plan or applying job hands on (#4992), relative to
+ * the job's directory: the plan job's saved plan and plan files, its outcome
+ * and its check claims; an applying job's outcome and run record; and the
+ * product's artifact path either keeps.
+ */
+function handedPaths(spec: OpWavesSpec, job: OpWaveSplitJob, add: OpWaveJobInputs | undefined): string[] {
+  const own = job.phase === "plan" ? [opWaveSavedPlanDir(spec, job.wave), job.outcome, opWaveChecksDir(spec)] : [job.outcome, runRecordPath(spec, job)];
+  return [...own, ...(add?.artifact ? [add.artifact.path] : [])];
+}
+
+/** The files a too large hand-off is cut to (#4992): the saved plan or run record, and the outcome. */
+function handedCore(spec: OpWavesSpec, job: OpWaveSplitJob): string[] {
+  return job.phase === "plan" ? [opWaveSavedPlanPath(spec, job.wave), job.outcome] : [runRecordPath(spec, job), job.outcome];
+}
+
+/** A word in single quotes, for a shell line. */
+function shellWord(word: string): string {
+  return `'${word.replaceAll("'", `'\\''`)}'`;
+}
+
+/**
+ * The last step of a Forgejo plan or applying job (#4992): copy the files
+ * the job hands on into {@link splitHandoverDir}, at their own paths, and
+ * pack that directory into the step's outputs (`packJs`), as the plan-note
+ * handover does. It runs whatever the job ended, and the caller starts it
+ * without the token variables.
+ */
+function handOverStep(spec: OpWavesSpec, job: OpWaveSplitJob, paths: readonly string[]): Record<string, unknown> {
+  const stage = splitHandoverDir(spec, job.jobName);
+  return {
+    name: "Hand the job's files to the next job as its outputs",
+    id: SPLIT_HANDOVER_STEP,
+    if: "always()",
+    run: [
+      `chant_stage="$PWD/${stage}"`,
+      'mkdir -p "$chant_stage"',
+      `for p in ${paths.map(shellWord).join(" ")}; do if [ -e "$p" ]; then mkdir -p "$chant_stage/$(dirname "$p")" && cp -R "$p" "$chant_stage/$(dirname "$p")/"; fi; done`,
+      `node -e '${packJs("forgejo", { noteFiles: handedCore(spec, job), label: "chant" })}' "$chant_stage" "\${GITHUB_OUTPUT:-/dev/null}"`,
+    ].join("\n"),
+  };
+}
+
+/**
+ * The step that takes back what a Forgejo plan or applying job handed on
+ * (#4992): its outputs unpacked into {@link splitHandoverDir} (a path that
+ * is not plain segments is left out), then only `paths` copied to where the
+ * job left them, so nothing the change's code wrote lands anywhere else in
+ * this job's checkout.
+ */
+function takeOverStep(spec: OpWavesSpec, from: OpWaveSplitJob, paths: readonly string[], name = `Take ${opWaveSplitJobLabel(spec.name, from)}'s files from its outputs`): Record<string, unknown> {
+  const stage = splitHandoverDir(spec, from.jobName);
+  return {
+    name,
+    run: [
+      takeOverScript(from.jobName, stage, "forgejo"),
+      `for p in ${paths.map(shellWord).join(" ")}; do if [ -e "${stage}/$p" ]; then mkdir -p "$(dirname "$p")" && cp -R "${stage}/$p" "$(dirname "$p")/"; fi; done`,
+    ].join("\n"),
+  };
+}
+
+/** The artifacts a gate or record job keeps for what a Forgejo plan or applying job handed on (#4992), as that job keeps them on GitHub. */
+function keptHandedSteps(spec: OpWavesSpec, job: OpWaveSplitJob, add: OpWaveJobInputs | undefined): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = [];
+  if (job.phase === "plan") {
+    out.push(keepRecordStep(`Keep wave ${job.wave}'s saved plan`, opWavePlanArtifact(spec, job.wave), opWaveSavedPlanDir(spec, job.wave)));
+  } else {
+    out.push(keepRecordStep(`Keep ${opWaveSplitJobLabel(spec.name, job)}'s outcome and run record`, opWaveOutcomeArtifact(spec, job.jobName), keptOutcome(spec, job)));
+  }
+  if (add?.artifact) out.push(keepRecordStep(add.artifact.step, opWaveJobArtifactName(add.artifact.name, job.jobName), add.artifact.path));
   return out;
 }
 
@@ -559,6 +678,7 @@ function evidenceJob(
   image: string,
   permissions: Record<string, unknown>,
   bmEnv: Record<string, string> = {},
+  claims?: Record<string, unknown>,
 ): Record<string, unknown> {
   const wave = spec.waves[job.wave - 1]!;
   // #4984: a before-merge run applied the decided head, so its checks are signed at it.
@@ -581,7 +701,8 @@ function evidenceJob(
       ...runSteps(options.beforeScript ?? []),
       // A wave job that stopped before its checks kept no claims, so there is nothing to download. The signing step
       // runs anyway and signs nothing, saying why (Forgejo drops `continue-on-error`, hence the step's own `if:`).
-      { ...downloadArtifactStep("Download the wave job's check claims", opWaveChecksArtifact(spec, job.jobName), opWaveChecksDir(spec)), "continue-on-error": true },
+      // #4992: `claims`, a step that takes them from a Forgejo plan job's outputs.
+      claims ?? { ...downloadArtifactStep("Download the wave job's check claims", opWaveChecksArtifact(spec, job.jobName), opWaveChecksDir(spec)), "continue-on-error": true },
       {
         name: `Sign wave ${job.wave} (${wave.name})'s checks from the job's step results`,
         if: "!cancelled()",

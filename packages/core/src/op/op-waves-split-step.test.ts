@@ -157,19 +157,26 @@ describe("a split wave with a step (#4992)", () => {
     expect(await rowsSeenBy(other)).toEqual({});
   });
 
-  test("a row another run holds ends the wave in the gate job, held, before anything applies; a plan that moved since the gate is not applied", async () => {
+  test("a row another run holds ends the wave in the gate job, held, before anything applies", async () => {
     const [other, job] = writers(2) as [string, string];
     const taken = await leaseLockRows("pr-apply", [{ key: ROW, target: "network", address: "aws_s3_bucket.network" }], { cwd: other, alive, holder: { run: "71", at: new Date().toISOString() } });
     expect(taken.ok).toBe(true);
-    const { registry, ran, plans } = rootCapability();
+    const { registry, ran } = rootCapability();
     const base = { spec: stepSpec, specFile: "waves.json", wave: 1, cwd: job, show: stepShow, gates: memoryGateLedgerPort(), capabilities: registry, lockLiveness: alive, releases: false as const, log: () => {} };
     await runOpWave({ ...base, phase: "plan" });
     const held = await runOpWave({ ...base, phase: "gate" });
     expect(held).toMatchObject({ exitCode: CHANT_EXIT.held, outcome: { outcome: "held", holder: { run: "71" } } });
     expect(existsSync(join(job, opWaveRecordPath(stepSpec, 1)))).toBe(true);
     expect((JSON.parse(readFileSync(join(job, opWaveRecordPath(stepSpec, 1)), "utf-8")) as OpWaveDecision).lease).toBeUndefined();
-    if (taken.ok) await taken.lease.release();
+    expect(ran).toEqual([]);
+    expect(await rowsSeenBy(other)).toEqual({ [ROW]: "71" });
+  });
 
+  test("a plan that moved since the gate is not applied, and the record job lets go of the rows all the same", async () => {
+    const [other, job] = writers(2) as [string, string];
+    const { registry, ran, plans } = rootCapability();
+    const base = { spec: stepSpec, specFile: "waves.json", wave: 1, cwd: job, show: stepShow, gates: memoryGateLedgerPort(), capabilities: registry, lockLiveness: alive, releases: false as const, log: () => {} };
+    await runOpWave({ ...base, phase: "plan" });
     const gated = await runOpWave({ ...base, phase: "gate" });
     expect(gated.exitCode).toBe(CHANT_EXIT.done);
     plans.digest = digest("9");

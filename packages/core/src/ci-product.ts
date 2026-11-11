@@ -186,10 +186,16 @@ export const WAVES_APPLY_STATUS_FLOOR = NEXT_RELEASE;
 export { applyStatusJobName, opWaveApplyStatus, postOpWaveApplyStatus, type OpWaveApplyStatus, type OpWavesApplyStatus } from "./op/apply-status";
 
 /**
- * The first chant whose before-merge waves never run the change's code beside a write token (#4987): with `beforeMerge` each wave is a plan job (the change's code, a checkout with no credentials kept, a read-only token; GitLab drops `CHANT_FORGE_TOKEN` and the job token), a gate job at the default branch with the token, an applying job on the saved plan with no write token, and a record job at the default branch that writes the run records (`chant run wave --phase plan|gate|apply|record`, `@intentius/chant/op/op-waves-split`). A `step` spec or a `rest` wave is refused with `beforeMerge`.
+ * The first chant whose before-merge waves never run the change's code beside a write token (#4987): with `beforeMerge` each wave is a plan job (the change's code, a checkout with no credentials kept, a read-only token; GitLab drops `CHANT_FORGE_TOKEN` and the job token), a gate job at the default branch with the token, an applying job on the saved plan with no write token, and a record job at the default branch that writes the run records (`chant run wave --phase plan|gate|apply|record`, `@intentius/chant/op/op-waves-split`). A `rest` wave is refused with `beforeMerge`.
  */
 export const WAVES_BEFORE_MERGE_SPLIT_FLOOR = NEXT_RELEASE;
 export { opWaveSplitJobs, type OpWavePhase, type OpWaveSplitJob } from "./op/op-waves-split";
+
+/**
+ * The first chant whose split before-merge waves take a `step` spec, Forgejo's hand-off, holds on other gates and one approval per wave (#4992): the plan job saves each run's step plan, the gate job leases the rows they change (no heartbeat; the decision names the lease) before it spends the approval, the applying job plans its runs again through the step and applies each whose digest the decision holds, and the record job writes the release records and lets go of the rows; a hook in the plan or apply job that holds the wave on another gate reads it with no write token and leaves its pending fact to the gate or record job; on Forgejo the plan and applying jobs hand their files on as job outputs (`packJs`), never through the artifact upload, and the gate and record jobs keep them as the artifacts; the plan job names no environment on GitHub (a wave's `planEnvironment` when set; on GitLab it prepares it), so the environment's reviewers are asked once. A `rest` wave is still refused.
+ */
+export const WAVES_BEFORE_MERGE_STEP_FLOOR = NEXT_RELEASE;
+export type { OpWaveSavedStep, OpWaveSplitHandoff, OpWaveSplitLease } from "./op/op-waves-run";
 
 /**
  * The first chant whose product plan takes `watches`, the product's own scheduled jobs the note job's `pr-post` checks for having stopped with the job's token (#4888), and whose `checkOverdueOps` and `overdueOpsAt` take a product's `logPrefix` and `label`.
