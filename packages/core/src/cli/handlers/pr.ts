@@ -120,7 +120,7 @@ import {
 import { prStatusDescription, prStatusState } from "../../pr-status";
 import { FORGE_KINDS, forgeFromEnv, forgePrincipalOf, type ForgeKind, type PrForge } from "../../pr-forge";
 // #4964: a status for a pull_request run's merge preview goes on the pull request's head.
-import { forgeFromJobEnv } from "../../pr-forge-job";
+import { forgeFromJobEnv, plannedForHead } from "../../pr-forge-job";
 import { GITHUB_COMMENT_LIMIT, GITLAB_NOTE_LIMIT } from "../../plan-summary";
 import { upsertPlanNote } from "../../pr-post";
 import { activeProductWords, commandWord, parseProductComment, productContext } from "../../ci-product-words";
@@ -2849,11 +2849,14 @@ export async function runComponentsPrPost(ctx: CommandContext): Promise<number> 
   const context = args.statusContexts?.[0];
   const description = await descriptionCheckOf(ctx, forge);
   if (typeof description === "number") return description;
+  // #5020: --head is the pull request's head; a GitHub plan job checked out the run's merge preview, whose report is the head's.
+  const planned = args.forge === "gitlab" ? undefined : plannedForHead(args.head);
   const posted = await postPlanReport({
     forge,
     dir: resolve(args.output ?? PR_REPORT_DIR),
     pr: args.pr,
     head: args.head,
+    ...(planned ? { planned } : {}),
     env: args.env,
     ...(member ? { member } : {}),
     ...(context ? { context } : {}),

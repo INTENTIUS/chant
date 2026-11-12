@@ -30,6 +30,19 @@ export function pullRequestEventHead(env: Record<string, string | undefined>): s
   }
 }
 
+/**
+ * The commit a GitHub `pull_request` run's plan job checked out for `head`
+ * when it is not `head` (#5020): the run's merge preview, `GITHUB_SHA`, when
+ * `head` is the event's pull request head. The note job names the head, and
+ * takes a report for the merge preview as the head's. Undefined on any other
+ * run, on Forgejo (whose run is of the head) and on GitLab.
+ */
+export function plannedForHead(head: string, env: Record<string, string | undefined> = process.env): string | undefined {
+  const merge = env.GITHUB_SHA;
+  if (!merge || merge === head || !/^[0-9a-f]{40,64}$/.test(merge)) return undefined;
+  return pullRequestEventHead(env) === head ? merge : undefined;
+}
+
 /** {@link forgeFromEnv}, whose statuses for the run's merge preview go on the pull request's head (#4964). */
 export function forgeFromJobEnv(kind: ForgeKind, env: Record<string, string | undefined> = process.env, fetchImpl?: Parameters<typeof forgeFromEnv>[2]): PrForge {
   const forge = forgeFromEnv(kind, env, fetchImpl);

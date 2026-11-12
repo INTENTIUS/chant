@@ -98,7 +98,7 @@ describe("the generated plan job holds no forge token while the change's code ru
     expect(note.steps[0]).toMatchObject({ uses: expect.stringMatching(/^actions\/checkout@/), with: { ref: "${{ github.event.pull_request.base.sha }}" } });
     expect(note.permissions).toEqual({ actions: "read", contents: "read", "pull-requests": "write", statuses: "write" });
     const post = note.steps.at(-1)!;
-    expect(post.env).toMatchObject({ GITHUB_TOKEN: "${{ github.token }}", HEAD_SHA: "${{ github.sha }}", PLAN_RESULT: "${{ needs.plan.result }}" });
+    expect(post.env).toMatchObject({ GITHUB_TOKEN: "${{ github.token }}", HEAD_SHA: "${{ github.event.pull_request.head.sha }}", PLAN_RESULT: "${{ needs.plan.result }}" });
     expect(post.run).toBe('chant components pr-post --pr "$PR_NUMBER" --head "$HEAD_SHA" --env prod --output .chant/pr --forge github --result "$PLAN_RESULT"');
     // The note job runs no build, no lint and no plan: none of the change's code.
     expect(JSON.stringify(note)).not.toMatch(/chant (build|lint|ci run)/);
