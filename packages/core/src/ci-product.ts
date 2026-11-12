@@ -299,6 +299,11 @@ export const OP_WAVES_RESUME_NAMES_FLOOR = NEXT_RELEASE;
  * The first chant whose Op waves before merge take `beforeMerge.environment` (#5037): the forge environment the job after the last wave runs in, so a merge token scoped to it reaches that job alone (GitLab `environment: { name, action: access }`, GitHub `environment: <name>`; Forgejo refuses it), with the product pipeline's `wavesBeforeMerge.environment` carried through `waves.pipeline`. Without it the job is as before.
  */
 export const WAVES_BEFORE_MERGE_ENVIRONMENT_FLOOR = NEXT_RELEASE;
+
+/**
+ * The first chant whose GitLab note poll keeps a product's names (#5038): the product pipeline's `noteCommandsJob` gives its job's name (default `note-commands`), its stage (default the job's name) and the variable and value a pipeline schedule starts it with (default `CHANT_NOTE_COMMANDS=1`), such as terragucci's `comments` job and `TERRAGUCCI_SCHEDULE=comments`, rendered in the job, its stage, its rule, its resource group and the workflow's rules. Refused on GitHub and Forgejo, without `noteCommands`, and on a name another job has. Without it the pipeline is as before.
+ */
+export const NOTE_POLL_NAMES_FLOOR = NEXT_RELEASE;
 export { opWavesArtifacts, opWavesDispatchInputs, opWavesNamer, opWavesResumeWorkflowFile, opWavesWorkflowFile, type OpWavesArtifactNames, type OpWavesDispatchInput, type OpWavesJobNames, type OpWavesJobRef, type OpWavesJobRole, type OpWavesStageNames, type OpWavesStageRef } from "./op/op-waves-names";
 
 /**
