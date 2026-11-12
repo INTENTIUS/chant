@@ -1271,6 +1271,16 @@ export interface OpWavesPipelineOptions
    * (`wavesBeforeMerge.dispatchInputs`). Absent: chant's.
    */
   dispatchInputs?: Partial<Record<import("./op/op-waves-names").OpWavesDispatchInput, string>>;
+  /**
+   * The product's own jobs the first wave's jobs need (#5032), such as
+   * terragucci's `check`, so a push that fails the product's check applies
+   * nothing. They go in `needs:` of wave 1's job (its deciding job for a
+   * wide wave, and before merge its plan job). GitHub and Forgejo: each has
+   * to pass, or, in a dispatched run, not have run. GitLab: each, optional,
+   * has to pass (wave 1's policy job needs them too). The jobs must be in
+   * the same workflow or pipeline, so this goes with `runIf`. Absent: none.
+   */
+  firstWaveNeeds?: string[];
 }
 
 /** A run step a product adds to a generated job (#4791): its name, and its shell lines in order. */
