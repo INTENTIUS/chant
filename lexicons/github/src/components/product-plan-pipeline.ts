@@ -39,7 +39,8 @@
  * the run's own token). A product's own `idTokens`, which its plan verb
  * requests, leave them in the plan step.
  *
- * With `commentJob` (#4946) the `comment` job answers every `/<product>`
+ * With `commentJob` (#4946) the `comment` job (#5027: or the product's
+ * `commentJob.jobName`, such as `apply-comment`) answers every `/<product>`
  * comment no other job takes, and with `locks: "plan"` the lock jobs take
  * what each plan selected, release it on close, and answer the lock and
  * unlock comments (`commentJobsDoc` below).
@@ -310,23 +311,25 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
     };
   }
   // #4946: the comment job, the lock jobs and the comment lock jobs, each at the target branch's commit.
-  Object.assign(jobsDoc, commentJobsDoc(forge, jobs, plans, image, beforeScript));
+  const commentDoc = commentJobsDoc(forge, jobs, plans, image, beforeScript);
+  // #5027: the comment job may take the product's name, which no other job of the workflow may have.
+  if (jobs.comment && jobsDoc[jobs.comment.jobName] !== undefined) throw new Error(`commentJob.jobName ${JSON.stringify(jobs.comment.jobName)} is the name of another job of the workflow`);
+  Object.assign(jobsDoc, commentDoc);
   // #4935: the check job, its evidence job and the ref gate's status job, after the plan note jobs.
-  Object.assign(
-    jobsDoc,
-    githubCheckJobs({
-      forge,
-      image,
-      setup,
-      beforeScript,
-      // The check job holds no credentials, so a fork's pull request runs it too.
-      when: `github.event_name == 'pull_request'${notClosed}`,
-      trustedWhen: `github.event_name == 'pull_request'${notClosed}${fork}`,
-      ...(jobs.check ? { check: jobs.check } : {}),
-      ...(jobs.refGate ? { refGate: jobs.refGate } : {}),
-      refGateNeeds: plans.map((p) => p.noteJobName),
-    }),
-  );
+  const checkDoc: Record<string, unknown> = githubCheckJobs({
+    forge,
+    image,
+    setup,
+    beforeScript,
+    // The check job holds no credentials, so a fork's pull request runs it too.
+    when: `github.event_name == 'pull_request'${notClosed}`,
+    trustedWhen: `github.event_name == 'pull_request'${notClosed}${fork}`,
+    ...(jobs.check ? { check: jobs.check } : {}),
+    ...(jobs.refGate ? { refGate: jobs.refGate } : {}),
+    refGateNeeds: plans.map((p) => p.noteJobName),
+  });
+  if (jobs.comment && checkDoc[jobs.comment.jobName] !== undefined) throw new Error(`commentJob.jobName ${JSON.stringify(jobs.comment.jobName)} is the name of another job of the workflow`);
+  Object.assign(jobsDoc, checkDoc);
   const name = plan.workflow ?? `chant-pr-${env}`;
   // #4963: a dispatch re-plans the pull request its pr input names, the argument from the input the re-plan names.
   const dispatch = replans.find((p) => p.replan!.dispatch)?.replan!.dispatch;
@@ -414,6 +417,9 @@ function commentJobsDoc(forge: "github" | "forgejo", jobs: ProductPipelineJobs, 
   if (!jobs.locks?.length) return out;
   const bin = jobs.words.bin;
   const reach = jobs.reachLock;
+  // #5027: the comment job's name, the product's, is none of the lock jobs'.
+  const lockNames = [...(reach ? [reach.jobName] : plans.map((p) => (p.target ? `${PR_LOCK_JOB}-${p.target}` : PR_LOCK_JOB))), PR_UNLOCK_JOB, ...jobs.locks.map((j) => j.jobName)];
+  if (c && lockNames.includes(c.jobName)) throw new Error(`commentJob.jobName ${JSON.stringify(c.jobName)} is the name of another job of the workflow`);
   // #4979: with reach, one lock job beside the plans locks what the change reaches, read from git at the target branch's commit.
   // A fork's pull request takes no lock: its run holds no token that writes.
   if (reach) {

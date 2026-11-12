@@ -152,7 +152,7 @@ export const COMMENT_LEAVES_COMMIT_FLOOR = "0.124.88";
  * The first chant with the comment job on GitHub and Forgejo and the replies to commands no job runs (#4946): `commentJob` in the product pipeline (`chant components pr-comment`, `answerProductComment` in `@intentius/chant/ci-comment-commands`), which replies to a refusal and to a command the pipeline runs no job for, and with waves on merge starts a merged pull request's apply again; the words' `replies` and an alias's `refuse`, which the GitLab note poll reads too, as `chantNoteRuns`' `members`; `retryApply`; and `locks: "plan"` in GitHub's and Forgejo's product plan, with the lock, unlock and comment lock jobs.
  */
 export const COMMENT_COMMANDS_FLOOR = "0.124.89";
-export { answerProductComment, answeredElsewhere, COMMENT_JOBS_ENV, commentRuns, PR_COMMENT_JOB, RERUN_APPLY_JOBS, type CommentJobs, type CommentOutcome, type CommentRuns, type AnswerCommentOptions } from "./ci-comment-commands";
+export { answerProductComment, answeredElsewhere, COMMENT_JOBS_ENV, commentRuns, PR_COMMENT_JOB, RERUN_APPLY_JOBS, rerunApplyJobs, type CommentJobs, type CommentOutcome, type CommentRuns, type AnswerCommentOptions } from "./ci-comment-commands";
 export { forkReply, memberReply, notRunReply } from "./ci-comment-replies";
 export type { CiProductCommentReplies } from "./ci-product-words";
 export { productCommentJob, type ProductCommentJob } from "./components/product-pipeline";
@@ -269,6 +269,11 @@ export const PR_HEAD_SHA_FLOOR = NEXT_RELEASE;
  * The first chant whose Op waves generators keep a product's own names (#5022): `jobNames` (every job they write: a wave's, deciding, share and job group jobs, a split wave's plan, gate, apply and record jobs, the policy and evidence jobs, the apply status, stale, before-merge done and control jobs; `needs:`, `if:`, `{job}` and `--from-job` follow it), `stageNames` (GitLab), `artifactNames` (the outcome, decision, saved plan and check claims artifacts, and the pattern a wave job downloads the earlier outcomes with), `workflowFile` (the generators' file and the follow-on's dispatch), `runIf` (the jobs go in the product's own workflow, each running on a push it admits or a before-merge or follow-on dispatch, with its own permissions; on GitLab joined to every rule) and `dispatchInputs` (the dispatch inputs' names, which the comment job's dispatch and the follow-on use), with `buildForgejoOpWavesDoc` for the Forgejo jobs, and whose product pipeline's `wavesBeforeMerge` takes `workflowFile` and `dispatchInputs`.
  */
 export const OP_WAVES_NAMES_FLOOR = NEXT_RELEASE;
+
+/**
+ * The first chant whose product pipeline names its comment job and its waves' jobs as the product does (#5027): `commentJob: { jobName }` (default `comment`, such as terragucci's `apply-comment`), refused when another job of the workflow has the name, and `wavesJobNames`, the Op waves generators' `jobNames`, which `waves.pipeline` carries to the generator and `waves.jobs` takes, and under which the comment job's re-run of a merged pull request's apply looks for the waves' jobs (`CHANT_COMMENT_JOBS` `applyJobs`, `rerunApplyJobs`), so terragucci's `apply-wave-<k>`, `-share-<n>`, group jobs and `apply-rest` run again. Without them the job is `comment` and the re-run looks for `RERUN_APPLY_JOBS`, as before.
+ */
+export const PRODUCT_JOB_NAMES_FLOOR = NEXT_RELEASE;
 export { opWavesArtifacts, opWavesDispatchInputs, opWavesNamer, opWavesWorkflowFile, type OpWavesArtifactNames, type OpWavesDispatchInput, type OpWavesJobNames, type OpWavesJobRef, type OpWavesJobRole, type OpWavesStageNames, type OpWavesStageRef } from "./op/op-waves-names";
 
 /**

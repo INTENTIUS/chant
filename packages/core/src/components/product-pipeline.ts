@@ -50,7 +50,8 @@ import { COMMENT_JOBS_ENV, PR_COMMENT_JOB, type CommentJobs } from "../ci-commen
 import { GITHUB_JOB_TOKEN } from "../ci-jobs";
 import type { OpWavesBeforeMerge } from "../op/before-merge";
 import { defaultPipelineFiles, type WavesBeforeMergeJobs } from "../op/before-merge-decide";
-import { opWavesDispatchInputs, opWavesInputsRenamed, opWavesWorkflowFile } from "../op/op-waves-names";
+import { opWavesDispatchInputs, opWavesInputsRenamed, opWavesNamer, opWavesWorkflowFile, type OpWavesJobNames } from "../op/op-waves-names";
+import { opWaveSplitJobs } from "../op/op-waves-split";
 import type { PrApplyRequire } from "../pr-requires";
 import { LOCK_REACH_ENV } from "../lifecycle/reach-locks";
 
@@ -150,9 +151,19 @@ export interface ProductPipelineOptions extends Omit<PrLoopPipelineOptions, "wor
    * chant's), and with waves on merge the re-run of a merged pull request's
    * apply. The jobs it leaves comments to are the ones these options write.
    * On GitLab the note-commands job answers every note already; refused
-   * there.
+   * there. `{ jobName }` (#5027) names the job, such as terragucci's
+   * `apply-comment`. Default `comment`.
    */
-  commentJob?: boolean;
+  commentJob?: boolean | ProductCommentJobOptions;
+  /**
+   * The waves' job names (#5027), the Op waves generators' `jobNames`
+   * (#5022): `waves.pipeline` carries them to the generator, `waves.jobs`
+   * takes them, and the comment job's re-run of a merged pull request's
+   * apply looks for the jobs under them (`CHANT_COMMENT_JOBS`
+   * `applyJobs`). Absent: chant's names, and the re-run looks for
+   * `RERUN_APPLY_JOBS`. Needs `waves` (or `componentWaves`).
+   */
+  wavesJobNames?: OpWavesJobNames;
   /**
    * Waves before merge (#4984, maintainer decision 2026-11-10): `/<product>
    * apply [wave-<n>]` on an open pull request runs the waves on its head.
@@ -206,9 +217,16 @@ export interface ProductWavesBeforeMerge {
   dispatchInputs?: Partial<Record<"pr" | "head" | "digest", string>>;
 }
 
+/** {@link ProductPipelineOptions.commentJob}'s settings (#5027). */
+export interface ProductCommentJobOptions {
+  /** The comment job's name in the workflow, such as `apply-comment`. Default {@link PR_COMMENT_JOB}. */
+  jobName?: string;
+}
+
 /** The comment job (#4946): its command, the values it reads, and the comment prefixes that start it. */
 export interface ProductCommentJob {
-  jobName: typeof PR_COMMENT_JOB;
+  /** {@link PR_COMMENT_JOB}, or the product's `commentJob.jobName` (#5027). */
+  jobName: string;
   /** `<bin> components pr-comment --forge <forge>`. */
   command: string;
   /** `GITHUB_TOKEN` and {@link COMMENT_JOBS_ENV}. */
@@ -259,7 +277,7 @@ export interface ProductPipelineJobs {
      * #5022: with them, `wavesBeforeMerge`'s `workflowFile` and
      * `dispatchInputs`, which the comment job dispatches by.
      */
-    pipeline: Pick<OpWavesPipelineOptions, "beforeMerge" | "applyStatus" | "staleNotes" | "workflowFile" | "dispatchInputs">;
+    pipeline: Pick<OpWavesPipelineOptions, "beforeMerge" | "applyStatus" | "staleNotes" | "workflowFile" | "dispatchInputs" | "jobNames">;
   };
   /**
    * The comment lock and unlock jobs (#4588), under `locks: "plan"`:
@@ -427,7 +445,7 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   // #4946: the comment job answers every command but a commit word (the commit job's) with a reply, so the words may name any.
   const answered: CiProductCommand[] = options.commentJob ? [...new Set<CiProductCommand>([...jobs, ...CI_PRODUCT_COMMANDS.filter((c) => c !== "commit")])] : jobs;
   const words = assertProductWords({ ...options.words, applyMode }, { jobs: answered });
-  const { waves: given, wavesSpecFile, member, agent: _agent, commits: _commits, actions: _actions, componentWaves, productPlan, evidence, commentJob: _commentJob, wavesBeforeMerge, applyStatus: _applyStatus, ...loop } = options;
+  const { waves: given, wavesSpecFile, member, agent: _agent, commits: _commits, actions: _actions, componentWaves, productPlan, evidence, commentJob: _commentJob, wavesBeforeMerge, applyStatus: _applyStatus, wavesJobNames, ...loop } = options;
   if (options.applyStatus && !given && !componentWaves) throw new Error("applyStatus posts the waves' apply statuses, and there are none: give waves (or componentWaves)");
   const { respond } = options;
   // #4629: the pull request loop puts the responses on the apply and note jobs, as `chant build --pr-loop --respond` does.
@@ -536,6 +554,27 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
       },
     };
   }
+  const wavesRespond = respond ? Object.fromEntries(Object.entries(respond).filter(([e]) => e !== "description")) : {};
+  // #4625: the waves run on the apply runner and with the plan's parallelism, unless the spec names its own.
+  const applyRunner = prLoopRunner(options, "apply");
+  const named = spec
+    ? {
+        ...productWavesSpec(
+          {
+            ...spec,
+            ...(spec.runner === undefined && applyRunner !== undefined ? { runner: applyRunner } : {}),
+            ...(spec.parallelism === undefined && options.parallelism !== undefined && spec.step !== undefined ? { parallelism: options.parallelism } : {}),
+          },
+          words,
+        ),
+        ...(Object.keys(wavesRespond).length > 0 ? { respond: { ...(spec.respond ?? {}), ...wavesRespond } } : {}),
+      }
+    : undefined;
+  const specFile = named ? (wavesSpecFile ?? productWavesSpecFile(named.name)) : undefined;
+  if (wavesJobNames !== undefined && !named) throw new Error("wavesJobNames names the waves' jobs, and there are none: give waves (or componentWaves)");
+  // #5027: the waves' jobs under the product's names, the same the generator gives them from the same jobNames.
+  const waveJobs = named && specFile ? opWaveJobs(named, specFile, { bin: words.bin, ...(wavesBeforeMerge ? { beforeMerge: true } : {}) }) : undefined;
+  const namedWaveJobs = waveJobs && wavesJobNames ? opWavesNamer(named!, forge, wavesJobNames).jobs(waveJobs) : waveJobs;
   // #4946: the comment job answers what no other job of the pipeline takes, so it is told which jobs there are.
   if (options.commentJob) {
     // #4963's re-plan reply answers the same stray comments, so one of the two answers them.
@@ -557,42 +596,43 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
       ...(out.agent ? { agent: true } : {}),
       ...(out.commits ? { commits: true } : {}),
       ...(options.actions || options.actionJob ? { actions: true } : {}),
+      // #5027: a re-run looks for the waves' jobs by the product's names; without them, by chant's pattern.
+      ...(namedWaveJobs && wavesJobNames ? { applyJobs: productApplyJobs(named!, waveJobs!, namedWaveJobs, forge, wavesJobNames, wavesBeforeMerge !== undefined) } : {}),
     };
-    const comment = productCommentJob(forge, words, commentJobs);
+    const comment = productCommentJob(forge, words, commentJobs, typeof options.commentJob === "object" ? options.commentJob.jobName : undefined);
     // #4984: the decision before merge locks what the reach line prints, at stage apply.
     if (bmJobs && productPlan?.reach) comment.env = { ...comment.env, [LOCK_REACH_ENV]: productPlan.reach.command };
     out.comment = { ...comment, ...defaultRunner };
   }
-  if (!spec) return { ...out, record: record! };
-  const wavesRespond = respond ? Object.fromEntries(Object.entries(respond).filter(([e]) => e !== "description")) : {};
-  // #4625: the waves run on the apply runner and with the plan's parallelism, unless the spec names its own.
-  const applyRunner = prLoopRunner(options, "apply");
-  const named = {
-    ...productWavesSpec(
-      {
-        ...spec,
-        ...(spec.runner === undefined && applyRunner !== undefined ? { runner: applyRunner } : {}),
-        ...(spec.parallelism === undefined && options.parallelism !== undefined && spec.step !== undefined ? { parallelism: options.parallelism } : {}),
-      },
-      words,
-    ),
-    ...(Object.keys(wavesRespond).length > 0 ? { respond: { ...(spec.respond ?? {}), ...wavesRespond } } : {}),
-  };
-  const specFile = wavesSpecFile ?? productWavesSpecFile(named.name);
+  if (!named || !specFile || !namedWaveJobs) return { ...out, record: record! };
   // #4984: what the generator's before-merge mode takes: the merge after the last wave and the lock file it releases.
   const beforeMerge: OpWavesBeforeMerge | undefined = wavesBeforeMerge
     ? { ...(wavesBeforeMerge.merge ? { merge: wavesBeforeMerge.merge } : {}), ...(wavesBeforeMerge.mergeTokenSecret ? { mergeTokenSecret: wavesBeforeMerge.mergeTokenSecret } : {}), ...(productPlan?.reach?.gate ? { gate: productPlan.reach.gate } : {}) }
     : undefined;
   // #4987: the apply statuses after each wave, and with a product plan the stale marking beside wave 1, one --member per target.
-  const pipeline: Pick<OpWavesPipelineOptions, "beforeMerge" | "applyStatus" | "staleNotes" | "workflowFile" | "dispatchInputs"> = {
+  const pipeline: Pick<OpWavesPipelineOptions, "beforeMerge" | "applyStatus" | "staleNotes" | "workflowFile" | "dispatchInputs" | "jobNames"> = {
     ...(beforeMerge ? { beforeMerge } : {}),
+    // #5027: the same job names the comment job's re-run looks for.
+    ...(wavesJobNames ? { jobNames: wavesJobNames } : {}),
     // #5022: the workflow and input names the comment job dispatches, for the generator.
     ...(wavesBeforeMerge?.workflowFile ? { workflowFile: wavesBeforeMerge.workflowFile } : {}),
     ...(wavesBeforeMerge?.dispatchInputs ? { dispatchInputs: { ...wavesBeforeMerge.dispatchInputs } } : {}),
     ...(options.applyStatus ? { applyStatus: { context: productStatusContext(words, "apply", member) } } : {}),
     ...(planStale ? { staleNotes: planStale } : {}),
   };
-  return { ...out, waves: { spec: named, specFile, jobs: opWaveJobs(named, specFile, { bin: words.bin, ...(beforeMerge ? { beforeMerge: true } : {}) }), ...(beforeMerge ? { beforeMerge } : {}), pipeline } };
+  return { ...out, waves: { spec: named, specFile, jobs: namedWaveJobs, ...(beforeMerge ? { beforeMerge } : {}), pipeline } };
+}
+
+/**
+ * The waves' jobs a re-run looks for, by the product's names (#5027): each
+ * wave's job, its deciding, share and job group jobs, and before merge the
+ * split jobs, named as the Op waves generator names them from the same
+ * `jobNames`.
+ */
+function productApplyJobs(spec: OpWavesSpec, chantJobs: readonly OpWaveJob[], named: readonly OpWaveJob[], forge: ForgeKind, jobNames: OpWavesJobNames, split: boolean): string[] {
+  const out = named.map((j) => j.jobName);
+  if (split) out.push(...opWavesNamer(spec, forge, jobNames).jobs(opWaveSplitJobs(spec, chantJobs)).map((j) => j.jobName));
+  return [...new Set(out)];
 }
 
 /** The capability steps a component waves spec runs (#4545, #4541): argv templates over `{runs}` and `{plans}`. */
@@ -709,13 +749,15 @@ export function componentWavesSpec(
  * --forge <forge>` through the words' bin, the jobs it leaves comments to as
  * {@link COMMENT_JOBS_ENV}, and the comment prefixes the forge's `if:`
  * starts it on. Throws on GitLab, whose note-commands job answers every
- * note.
+ * note. `jobName` is the product's name for the job (#5027), default
+ * {@link PR_COMMENT_JOB}.
  */
-export function productCommentJob(forge: ForgeKind, words: CiProductWords, jobs: CommentJobs): ProductCommentJob {
+export function productCommentJob(forge: ForgeKind, words: CiProductWords, jobs: CommentJobs, jobName: string = PR_COMMENT_JOB): ProductCommentJob {
   if (forge === "gitlab") throw new Error("the comment job answers a GitHub or Forgejo comment; on GitLab the note-commands job (noteCommands) answers every note, so drop commentJob");
   for (const a of words.aliases) if (/['\\]/.test(a.from)) throw new Error(`the alias ${JSON.stringify(a.from)} holds a quote, which the comment job's condition cannot carry`);
+  if (typeof jobName !== "string" || !/^[A-Za-z_][A-Za-z0-9_-]*$/.test(jobName)) throw new Error(`commentJob.jobName ${JSON.stringify(jobName)} is not a job name of letters, digits, _ and -, starting with a letter or _`);
   return {
-    jobName: PR_COMMENT_JOB,
+    jobName,
     command: withProductBin(`chant components pr-comment --forge ${forge}`, words.bin),
     env: { GITHUB_TOKEN: GITHUB_JOB_TOKEN, [COMMENT_JOBS_ENV]: JSON.stringify(jobs) },
     prefixes: [`/${words.product}`, ...words.aliases.map((a) => a.from)],

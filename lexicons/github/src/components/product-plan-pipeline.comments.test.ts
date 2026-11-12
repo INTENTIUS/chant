@@ -85,6 +85,23 @@ describe("the comment job (#4946)", () => {
   });
 });
 
+describe("the comment job under the product's name (#5027)", () => {
+  test("renders as apply-comment, the same job, and the workflow keeps every other job", () => {
+    const named = generateProductPlanPipeline("default", { ...base, commentJob: { jobName: "apply-comment" }, waves: wavesSpec });
+    const chant = generateProductPlanPipeline("default", { ...base, commentJob: true, waves: wavesSpec });
+    expect(named.doc.jobsDoc.comment).toBeUndefined();
+    expect(named.doc.jobsDoc["apply-comment"]).toEqual(chant.doc.jobsDoc.comment);
+    expect(Object.keys(named.doc.jobsDoc)).toEqual(Object.keys(chant.doc.jobsDoc).map((k) => (k === "comment" ? "apply-comment" : k)));
+    const forgejo = generateForgejoProductPlanPipeline("default", { ...base, commentJob: { jobName: "apply-comment" } });
+    expect((forgejo.doc.jobsDoc["apply-comment"] as Job).steps[2]!.run).toBe("npx --no-install terragucci components pr-comment --forge forgejo");
+  });
+
+  test("a name another job of the workflow has is refused", () => {
+    for (const jobName of ["plan", "replan-note"]) expect(() => generateProductPlanPipeline("default", { ...base, commentJob: { jobName } }), jobName).toThrow(/is the name of another job of the workflow/);
+    for (const jobName of ["lock", "unlock", "comment-lock"]) expect(() => generateProductPlanPipeline("default", { ...base, locks: "plan", commentJob: { jobName } }), jobName).toThrow(/is the name of another job of the workflow/);
+  });
+});
+
 describe("the product plan's locks (#4946)", () => {
   const { doc } = generateProductPlanPipeline("default", { ...base, locks: "plan", commentJob: true });
   const job = (name: string) => doc.jobsDoc[name] as Job;
