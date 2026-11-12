@@ -240,6 +240,9 @@ export const RUNTIME_WAVES_SPEC_RUNS_AT_HEAD_FLOOR = NEXT_RELEASE;
 /** The first chant whose Op waves keep the record of an apply under an approval themselves (#5047): with `approvals.spend`, `approvals.remainder` writes each change the approved plans make, the commit and the run on the applied line (a split wave's gate job writes it), the job that applies the whole wave or the record job writes how the apply ended, and a wave run again at that commit applies the rest under the same approval when its plans make only changes the stopped apply did not finish; a wave that plans no change closes a stopped apply, and `approvals.spendStanding` spends an approval of the digest a wave its gate let through applies. */
 export const OP_WAVES_REMAINDER_FLOOR = NEXT_RELEASE;
 
+/** The first chant whose `chant run resume` starts a killed split apply again on GitLab and Forgejo (#5052): under `approvals.remainder` the gate job's applied line names its run there too, GitLab's with the wave's applying and record jobs by name (`retry`), which the resume retries, and Forgejo's with the run's dispatch inputs (`inputs`), which the resume dispatches with, so the new run applies the rest at the same decided head or commit. */
+export const OP_WAVES_SPLIT_RESUME_FLOOR = NEXT_RELEASE;
+
 /** The first chant whose `chant run resume` (`resumeGateRun`) on GitLab retries a wave job's `<wave job>-evidence` with the wave job when the evidence job already ran, and whose `ci evidence sign --from-job` waits for a job it reads to finish, so a resumed wave's evidence job signs from the new try (#4978). */
 export const GITLAB_WAVE_EVIDENCE_RETRY_FLOOR = "0.124.89";
 

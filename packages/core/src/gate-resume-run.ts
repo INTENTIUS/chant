@@ -27,6 +27,13 @@
  * jobs before the gate run again too; they must be safe to repeat (a wave
  * whose runs already applied plans nothing and applies nothing new).
  *
+ * A killed split apply (#5052): a split wave's gate job writes the applied
+ * line, and its applying job is the one killed. On GitLab its locator names
+ * the wave's applying and record jobs (`retry`), and each applying job's
+ * newest try that failed or was cancelled is retried, then the record job.
+ * On Forgejo it carries the run's dispatch inputs (`inputs`), and the
+ * dispatch sends them, so a before-merge run plans the same decided head.
+ *
  * Resuming approves nothing. The resumed job decides the gate again from the
  * ledger, so resuming a run whose approval does not count only makes it wait
  * again. {@link resumeGateRun} skips a run that is still going, that ended
@@ -77,6 +84,8 @@ export function gitlabEvidenceJobOf(job: string): string {
 
 /** The GitLab job statuses of a job that ran and ended; a `skipped` or `created` job GitLab runs again after a retry itself. */
 const GITLAB_FINISHED = new Set(["success", "failed", "canceled"]);
+/** The statuses of a job that is not going and will not start by itself: finished, skipped, or waiting for a person. */
+const GITLAB_ENDED = new Set([...GITLAB_FINISHED, "skipped", "manual"]);
 
 const trimSlash = (s: string): string => s.replace(/\/+$/, "");
 
@@ -131,6 +140,28 @@ export async function resumeGateRun(loc: GateRunLocator, opts: ResumeGateRunOpti
   if (loc.forge === "gitlab") {
     const call = client(loc.api, { "PRIVATE-TOKEN": opts.token }, fetchImpl);
     const project = `/projects/${encodeURIComponent(decodeURIComponent(loc.repo))}`;
+    // #5052: a split wave's applying jobs, by name in the same pipeline, and its record job after them.
+    if (loc.retry?.apply.length) {
+      const listed = await call("GET", `${project}/pipelines/${loc.run}/jobs?per_page=100`);
+      // The list leaves retried jobs out, so the job of a name is its newest try.
+      const jobs = Array.isArray(listed) ? listed.filter(isObject) : [];
+      const newest = (name: string) => jobs.find((j) => j.name === name);
+      const applying = loc.retry.apply.map((name) => ({ name, job: newest(name) }));
+      const going = applying.find((a) => a.job && !GITLAB_ENDED.has(String(a.job.status)));
+      if (going) return skip(`job ${String(going.job!.id)} (${going.name}) is ${String(going.job!.status)}, not finished`);
+      const stopped = applying.filter((a) => a.job && (a.job.status === "failed" || a.job.status === "canceled"));
+      if (stopped.length > 0) {
+        const record = loc.retry.record ? newest(loc.retry.record) : undefined;
+        const after = record && GITLAB_FINISHED.has(String(record.status)) ? record : undefined;
+        const what = [...stopped.map((a) => `job ${String(a.job!.id)} (${a.name})`), ...(after ? [`its record job ${String(after.id)}`] : [])].join(" and ");
+        if (opts.dryRun) return wouldResume(`retry ${what}`);
+        for (const a of stopped) await call("POST", `${project}/jobs/${String(a.job!.id)}/retry`);
+        // It needs the applying jobs, so it waits for their new tries.
+        if (after) await call("POST", `${project}/jobs/${String(after.id)}/retry`);
+        return { status: "resumed", forge: "gitlab", how: `retried ${what}`, ...url };
+      }
+      // No applying job stopped: the gate job's own try says what is left (it succeeded, or stopped before them).
+    }
     const job = await call("GET", `${project}/jobs/${loc.job}`);
     if (!isObject(job)) throw new Error(`GET ${project}/jobs/${loc.job} returned no job`);
     const status = String(job.status);
@@ -172,16 +203,20 @@ export async function resumeGateRun(loc: GateRunLocator, opts: ResumeGateRunOpti
   const runs = isObject(listed) && Array.isArray(listed.workflow_runs) ? listed.workflow_runs : Array.isArray(listed) ? listed : [];
   // Forgejo reports `created` in whole seconds.
   const since = opts.since ? Math.floor(new Date(opts.since).getTime() / 1000) * 1000 : undefined;
+  // #5052: a run that a resume with inputs started is a dispatch; a push or a comment of the branch since is not one.
+  const inputs = loc.inputs && Object.keys(loc.inputs).length > 0 ? loc.inputs : undefined;
   const later = runs.find(
     (r) =>
       isObject(r) && Number(r.id) > Number(loc.run) &&
       (r.prettyref === undefined || r.prettyref === loc.ref) &&
+      (!inputs || r.event === undefined || r.event === "workflow_dispatch") &&
       (since === undefined || (typeof r.created === "string" && new Date(r.created).getTime() >= since)),
   );
   if (isObject(later)) return skip(`run ${String(later.id)} of ${loc.workflow} started after the approval`);
-  if (opts.dryRun) return wouldResume(`dispatch ${loc.workflow} on ${loc.ref}`);
-  await call("POST", `${repo}/actions/workflows/${encodeURIComponent(loc.workflow!)}/dispatches`, { ref: loc.ref });
-  return { status: "resumed", forge: "forgejo", how: `dispatched ${loc.workflow} on ${loc.ref}`, ...url };
+  const with_ = inputs ? ` with ${Object.entries(inputs).map(([k, v]) => `${k}=${v}`).join(", ")}` : "";
+  if (opts.dryRun) return wouldResume(`dispatch ${loc.workflow} on ${loc.ref}${with_}`);
+  await call("POST", `${repo}/actions/workflows/${encodeURIComponent(loc.workflow!)}/dispatches`, { ref: loc.ref, ...(inputs ? { inputs } : {}) });
+  return { status: "resumed", forge: "forgejo", how: `dispatched ${loc.workflow} on ${loc.ref}${with_}`, ...url };
 }
 
 /**

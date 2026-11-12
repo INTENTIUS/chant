@@ -90,6 +90,7 @@ import type { HeadPlans, MergedReview, ReviewSource } from "./gate-review";
 import type { TrustPolicy } from "../workspace/trust/policy";
 import type { GateSigners } from "../lifecycle/gate-seal";
 import { ciRunIdFromEnv, resolveGateRunLocator } from "./gate-run-locator";
+import { opWaveSplitResumeLocator } from "./op-waves-split-resume";
 import { appendRunRecord, DEFAULT_RUN_ENV } from "../lifecycle/run-ledger";
 import { LifecyclePushLostError, pushLifecycleRebasing } from "../lifecycle/git";
 import { opWaveEvidenceRefusal, signOpWaveChecks } from "./op-waves-evidence";
@@ -5188,15 +5189,16 @@ async function spendApproval(options: RunOpWaveOptions, ctx: WaveContext, decisi
  * where the run is, so `chant run resume` starts it again once it is gone.
  * A split wave's gate job writes the line and its applying job is the one
  * that may stop: GitHub re-runs a run's failed jobs, so the gate job's run
- * resumes the applying job; GitLab retries the one job a locator names and
- * Forgejo starts a new run of the branch, so there the line names no run to
- * resume, and the wave is run again by hand.
+ * resumes the applying job. GitLab retries one job by its id and Forgejo
+ * starts a new run of the branch, so there the gate job's locator carries
+ * what the generator told it (#5052): the applying and record jobs' names,
+ * or the run's dispatch inputs. A gate job told neither names no run.
  */
 function remainderFields(options: RunOpWaveOptions, ctx: WaveContext, decision: OpWaveDecision, changes: AppliedGateChange[]): Partial<AppliedGateRecord> {
   const commit = waveHeadOf(options, ctx.cwd);
   const runId = ciRunIdFromEnv();
   const locator = resolveGateRunLocator();
-  const resume = locator && (options.phase !== "gate" || locator.forge === "github") ? locator : undefined;
+  const resume = options.phase === "gate" ? opWaveSplitResumeLocator(locator) : locator;
   return {
     changes,
     ...(decision.extras?.length ? { extras: decision.extras.map((e) => ({ member: e.member, planDigest: e.planDigest })) } : {}),
