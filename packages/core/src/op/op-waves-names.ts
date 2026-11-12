@@ -208,6 +208,43 @@ export function opWavesFirstWaveNeeds(given: readonly string[] | undefined, forg
   return [...given];
 }
 
+/**
+ * The forge token a wave job's command step gets (#5044): with it, the
+ * jobs that run only the default branch's code (a push's wave, deciding,
+ * share and job group jobs; a split wave's gate and record jobs) hand their
+ * command step the job's token as `GITHUB_TOKEN`, so the spec's `respond`
+ * posts and a product's hooks can read the forge, and the job asks for
+ * `permissions` on top of chant's own. A split wave's plan and applying jobs
+ * run the change's code and never get it. GitHub and Forgejo only.
+ */
+export interface OpWavesCommandToken {
+  /** GitHub's permission scopes the jobs ask for beside chant's own, such as `{ "pull-requests": "write", actions: "read" }`. `contents` and `id-token` are chant's. */
+  permissions?: Record<string, "read" | "write">;
+}
+
+/** The GitHub permission scopes a product may add with {@link OpWavesCommandToken}. `contents` and `id-token` stay chant's. */
+const COMMAND_TOKEN_SCOPES = new Set(["actions", "attestations", "checks", "deployments", "discussions", "issues", "packages", "pages", "pull-requests", "repository-projects", "security-events", "statuses"]);
+
+/**
+ * {@link OpWavesCommandToken}'s permissions, checked (#5044): each a scope
+ * GitHub knows that chant does not set itself, `read` or `write`. Undefined
+ * when there is no token to give. GitLab refuses it, since its jobs read
+ * `CHANT_FORGE_TOKEN`, a CI/CD variable.
+ */
+export function opWavesCommandToken(token: OpWavesCommandToken | undefined, forge: "github" | "forgejo" | "gitlab"): Record<string, "read" | "write"> | undefined {
+  if (token === undefined) return undefined;
+  if (forge === "gitlab") throw new Error("commandToken gives a GitHub or Forgejo wave job its token; a GitLab job reads CHANT_FORGE_TOKEN, a CI/CD variable, so leave it out");
+  if (token === null || typeof token !== "object" || Array.isArray(token)) throw new Error("commandToken is { permissions }");
+  const permissions = token.permissions ?? {};
+  if (permissions === null || typeof permissions !== "object" || Array.isArray(permissions)) throw new Error("commandToken.permissions maps a permission scope to read or write");
+  for (const [scope, level] of Object.entries(permissions)) {
+    if (scope === "contents" || scope === "id-token") throw new Error(`commandToken.permissions names ${scope}, which chant sets on the wave jobs itself`);
+    if (!COMMAND_TOKEN_SCOPES.has(scope)) throw new Error(`commandToken.permissions names ${JSON.stringify(scope)}, which is not a GitHub permission scope`);
+    if (level !== "read" && level !== "write") throw new Error(`commandToken.permissions.${scope} is ${JSON.stringify(level)}; give read or write`);
+  }
+  return { ...permissions };
+}
+
 /** Refuse a product job of {@link opWavesFirstWaveNeeds} that is a job the generator writes (#5032). */
 export function assertFirstWaveNeedsOutside(needs: readonly string[], jobs: Iterable<string>): void {
   const mine = new Set(jobs);

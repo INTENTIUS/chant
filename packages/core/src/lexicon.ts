@@ -1288,6 +1288,19 @@ export interface OpWavesPipelineOptions
    * the same workflow or pipeline, so this goes with `runIf`. Absent: none.
    */
   firstWaveNeeds?: string[];
+  /**
+   * GitHub and Forgejo (#5044): the job's token in the command step of the
+   * jobs that run only the default branch's code (a push's wave, deciding,
+   * share and job group jobs; a split wave's gate and record jobs), as
+   * `GITHUB_TOKEN`, so the spec's `respond` posts a refused wave's diff and
+   * a failed apply's triage, and a product's hooks can read the forge. The
+   * jobs ask for `permissions` beside chant's own, such as terragucci's
+   * `pull-requests: write` and, with its review agent, `actions: read`.
+   * A split wave's plan and applying jobs run the change's code and never
+   * get it. GitLab refuses it: its jobs read `CHANT_FORGE_TOKEN`. Absent:
+   * no wave job holds a token, as before.
+   */
+  commandToken?: import("./op/op-waves-names").OpWavesCommandToken;
 }
 
 /** A run step a product adds to a generated job (#4791): its name, and its shell lines in order. */

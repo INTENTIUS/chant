@@ -13,6 +13,7 @@ import type { CiProductWords, CiProductWordsInput } from "./ci-product-words";
 import type { ProductMcpHook } from "./cli/mcp/product-tools";
 import type { ProductWaveHook } from "./op/op-waves-after-plan";
 import { OTLP_EXPORTER_FLOOR } from "./otlp";
+import { NEXT_RELEASE } from "./release-floors";
 
 /**
  * The first chant with the product pipeline (#4550): the words, the
@@ -303,7 +304,12 @@ export const WAVES_BEFORE_MERGE_ENVIRONMENT_FLOOR = "0.124.93";
  * The first chant whose GitLab note poll keeps a product's names (#5038): the product pipeline's `noteCommandsJob` gives its job's name (default `note-commands`), its stage (default the job's name) and the variable and value a pipeline schedule starts it with (default `CHANT_NOTE_COMMANDS=1`), such as terragucci's `comments` job and `TERRAGUCCI_SCHEDULE=comments`, rendered in the job, its stage, its rule, its resource group and the workflow's rules. Refused on GitHub and Forgejo, without `noteCommands`, and on a name another job has. Without it the pipeline is as before.
  */
 export const NOTE_POLL_NAMES_FLOOR = "0.124.93";
-export { opWavesArtifacts, opWavesDispatchInputs, opWavesNamer, opWavesResumeWorkflowFile, opWavesWorkflowFile, type OpWavesArtifactNames, type OpWavesDispatchInput, type OpWavesJobNames, type OpWavesJobRef, type OpWavesJobRole, type OpWavesStageNames, type OpWavesStageRef } from "./op/op-waves-names";
+
+/**
+ * The first chant whose Op waves generators take `commandToken` (#5044), GitHub and Forgejo: the jobs that run only the default branch's code (a push's wave, deciding, share and job group jobs; a split wave's gate and record jobs) hand their command step the job's token as `GITHUB_TOKEN`, so the spec's `respond` posts a refused wave's diff and a failed apply's triage and a product's hooks can read the forge, and ask for `permissions` beside chant's own. A split wave's plan and applying jobs never get it; GitLab refuses it. Without it no wave job holds a token, as before.
+ */
+export const OP_WAVES_COMMAND_TOKEN_FLOOR = NEXT_RELEASE;
+export { opWavesArtifacts, opWavesCommandToken, opWavesDispatchInputs, opWavesNamer, opWavesResumeWorkflowFile, opWavesWorkflowFile, type OpWavesArtifactNames, type OpWavesCommandToken, type OpWavesDispatchInput, type OpWavesJobNames, type OpWavesJobRef, type OpWavesJobRole, type OpWavesStageNames, type OpWavesStageRef } from "./op/op-waves-names";
 
 /**
  * Day-2 actions in the product pipeline (#4654): the `action` comment

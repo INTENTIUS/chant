@@ -162,7 +162,7 @@ import {
 import { CONTROL_DISPATCH_JOB, CONTROL_OUTCOME_VAR, CONTROL_TOKEN_VARS, controlDispatchJob } from "@intentius/chant/control/dispatch";
 import type { OpWaveJobInputs, OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
 import { opWaveSavedPlanDir, opWaveSplitJobLabel, opWaveSplitJobs, type OpWaveSplitJob } from "@intentius/chant/op/op-waves-split";
-import { assertFirstWaveNeedsOutside, opWavesFirstWaveNeeds, opWavesNamer, type OpWavesStageRef } from "@intentius/chant/op/op-waves-names";
+import { assertFirstWaveNeedsOutside, opWavesCommandToken, opWavesFirstWaveNeeds, opWavesNamer, type OpWavesStageRef } from "@intentius/chant/op/op-waves-names";
 import type { OpWaveEvidencePlan } from "@intentius/chant/op/op-waves-evidence-jobs";
 import { GITLAB_DROP_FORGE_TOKENS } from "@intentius/chant/ci-handover";
 import { gitlabTradeIdTokens, gitlabTradeLines, TRADE_SPEC_ENV } from "@intentius/chant/ci-identity";
@@ -235,6 +235,8 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
   if (options.dispatchInputs !== undefined) throw new Error("dispatchInputs names a GitHub or Forgejo workflow's inputs; a GitLab pipeline carries the decision in variables");
   if (options.resumeWorkflowFile !== undefined) throw new Error("resumeWorkflowFile names a GitHub or Forgejo workflow; GitLab's resume job is in the pipeline, and jobNames names it (role resume)");
   if (options.artifactNames !== undefined) throw new Error("artifactNames names GitHub and Forgejo artifacts; a GitLab job hands its files on through needs, and waveJobs' artifact names the product's");
+  // #5044: GitLab's jobs read CHANT_FORGE_TOKEN, a CI/CD variable; there is no job token to hand on.
+  opWavesCommandToken(options.commandToken, "gitlab");
   const runIf = options.runIf;
   if (runIf !== undefined && (typeof runIf !== "string" || runIf.trim() === "" || /[\r\n]/.test(runIf))) throw new Error(`runIf ${JSON.stringify(runIf)} is one rule condition`);
   const namer = opWavesNamer(spec, "gitlab", options.jobNames);
