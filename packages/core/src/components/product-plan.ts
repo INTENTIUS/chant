@@ -441,17 +441,24 @@ export interface ProductPlanReachLock {
  * --reach` through the words' bin, with the reach line as
  * {@link LOCK_REACH_ENV}. On GitHub and Forgejo it locks the pull request of
  * the event; on GitLab every open merge request into the branch.
+ *
+ * With `beforeMerge` (#5061, the product pipeline's `wavesBeforeMerge`) the
+ * reach line is also what the comment job (the note poll on GitLab) locks
+ * when it decides an apply or answers `/<product> lock`, so without
+ * `locks: "plan"` the reach is checked and no lock job is written.
  */
-export function productPlanReachLock(forge: ForgeKind, loop: Pick<PrLoopPipelineOptions, "locks" | "runners"> & { plan: Pick<ProductPlanOptions, "reach"> }, words: CiProductWords): ProductPlanReachLock | undefined {
+export function productPlanReachLock(forge: ForgeKind, loop: Pick<PrLoopPipelineOptions, "locks" | "runners"> & { plan: Pick<ProductPlanOptions, "reach">; beforeMerge?: boolean }, words: CiProductWords): ProductPlanReachLock | undefined {
   const reach = loop.plan.reach;
   if (!reach) return undefined;
-  if (loop.locks !== "plan") throw new Error("the product plan's reach says what the lock job locks, and there is none without locks: \"plan\"; set locks: \"plan\", or drop reach");
+  if (loop.locks !== "plan" && !loop.beforeMerge) throw new Error("the product plan's reach says what the lock job locks, and there is none without locks: \"plan\"; set locks: \"plan\", or drop reach");
   if (!reach.command.trim()) throw new Error("the product plan's reach.command is empty; give the line that prints the targets a change reaches");
   if (/[\r\n]/.test(reach.command)) throw new Error("the product plan's reach.command is one shell line");
   if (reach.gate !== undefined) {
     // The lock file's name, as ../lifecycle/target-lock.ts takes it.
     if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(reach.gate)) throw new Error(`the product plan's reach.gate ${JSON.stringify(reach.gate)} is not a lock file name: letters, digits, '.', '_' and '-', starting with a letter or digit`);
   }
+  // #5061: the waves before merge lock by the reach line themselves; there is no plan lock job to write.
+  if (loop.locks !== "plan") return undefined;
   const gate = reach.gate !== undefined ? ["--gate", reach.gate] : [];
   const github = forge !== "gitlab";
   const line = github

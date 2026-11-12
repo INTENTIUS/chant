@@ -451,3 +451,150 @@ describe("the comment job's apply before merge on the waves (#4984)", () => {
     expect(() => commentJobsFromEnv(JSON.stringify({ ...jobs, wavesBeforeMerge: { ...bm, requires: ["green"] } }))).toThrow("requires is a list of approved, mergeable, undiverged, checks");
   });
 });
+
+describe("lock and unlock before merge, by the reach line (#5061)", () => {
+  const bm = { workflow: "tf-apply.yml", plan: ["terragucci/plan"], pipelineFiles: [".github/workflows/"], locks: { gate: "tf-apply" } };
+  const jobs: CommentJobs = { applyOnMerge: true, waves: { op: "tf-apply", count: 2 }, wavesBeforeMerge: bm };
+
+  /** A checkout of the default branch whose origin is itself, so the base fetch works. */
+  async function checkout() {
+    const { spawnSync } = await import("node:child_process");
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = mkdtempSync(join(tmpdir(), "chant-cc-locks-"));
+    const git = (...args: string[]) => {
+      const r = spawnSync("git", args, { cwd: dir, encoding: "utf-8", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } });
+      if (r.status !== 0) throw new Error(r.stderr);
+      return r.stdout.trim();
+    };
+    git("init", "-q", "-b", "main");
+    writeFileSync(join(dir, "main.tf"), "1");
+    git("add", ".");
+    git("commit", "-q", "-m", "base");
+    git("remote", "add", "origin", dir);
+    const run: NonNullable<AnswerCommentOptions["beforeMerge"]>["git"] = (argv, o) => {
+      const r = spawnSync(argv[0]!, argv.slice(1), { encoding: "utf8", ...(o.cwd ? { cwd: o.cwd } : {}) });
+      return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+    };
+    return { dir, baseSha: git("rev-parse", "HEAD"), git: run };
+  }
+
+  /** The comment job with the lock and unlock the handler gives it, each call kept. */
+  async function locking(body: string, o: { forge?: "github" | "forgejo"; pr?: Partial<PullRequestDetail>; jobs?: CommentJobs; held?: string; released?: string[]; reached?: string[]; permission?: string; event?: Record<string, unknown> } = {}) {
+    const c = await checkout();
+    const head = "c".repeat(40);
+    const s = setup({ pr: { state: "open", headSha: head, mergeCommit: undefined, ...o.pr }, ...(o.permission ? { permission: o.permission } : {}) }, o.jobs ?? jobs, body, { ...(o.forge ? { forge: o.forge } : {}), ...(o.event ? { event: o.event } : {}) });
+    const locked: Array<[number, string, string, string, string | undefined]> = [];
+    const unlocked: number[] = [];
+    const got = await answerProductComment({
+      ...s.opts,
+      beforeMerge: {
+        requires: async () => null,
+        statuses: async () => [],
+        git: c.git,
+        cwd: c.dir,
+        lock: async (pr, h, base, by, asked) => {
+          locked.push([pr, h, base, by, asked]);
+          return o.held ? { ok: false, text: o.held } : { ok: true, targets: o.reached ?? ["envs/dev", "envs/prod"] };
+        },
+        unlock: async (pr) => (unlocked.push(pr), o.released ?? ["envs/dev"]),
+        record: async () => {
+          throw new Error("a lock records no decision");
+        },
+        stop: async () => {
+          throw new Error("a lock writes no wave stop");
+        },
+      },
+    });
+    return { got, posted: s.posted, locked, unlocked, dispatched: s.dispatched, head, baseSha: c.baseSha };
+  }
+
+  for (const forge of ["github", "forgejo"] as const) {
+    test(`${forge}: /terragucci lock takes the locks of what the reach line prints, measured from the default branch, and applies nothing`, async () => {
+      const r = await locking("/terragucci lock", { forge });
+      expect(r.locked).toEqual([[12, r.head, r.baseSha, "alice", "lock"]]);
+      expect(r.dispatched).toEqual([]);
+      expect(r.got).toMatchObject({ command: "lock", ran: false, replied: true });
+      expect(r.posted).toEqual([`terragucci: locked \`envs/dev\`, \`envs/prod\` for pull request 12 at ${r.head.slice(0, 8)} for alice, and nothing is applied; the locks hold until it merges or closes, or \`/terragucci unlock\` releases them`]);
+    });
+
+    test(`${forge}: a lock another open pull request holds is refused with its holder named`, async () => {
+      const held = "`envs/dev` is locked by pull request 9 (alice, apply), so pull request 12 takes no lock. It can once that pull request merges or closes, or someone with write access unlocks it";
+      const r = await locking("/terragucci lock", { forge, held });
+      expect(r.posted).toEqual([`terragucci: ${held}`]);
+      expect(r.got.fail).toBeUndefined();
+    });
+
+    test(`${forge}: /terragucci unlock releases the pull request's locks`, async () => {
+      const r = await locking("/terragucci unlock", { forge });
+      expect(r.unlocked).toEqual([12]);
+      expect(r.locked).toEqual([]);
+      expect(r.posted).toEqual(["terragucci: released `envs/dev`, which pull request 12 held, for alice"]);
+      const none = await locking("/terragucci unlock", { forge, released: [] });
+      expect(none.posted).toEqual(["terragucci: pull request 12 holds no lock, so there is nothing to unlock"]);
+    });
+
+    test(`${forge}: a fork is refused, and someone without write access gets nothing`, async () => {
+      const fork = await locking("/terragucci lock", { forge, pr: { sameRepo: false } });
+      expect(fork.locked).toEqual([]);
+      expect(fork.posted).toEqual([`terragucci: ${tgInput.replies!.fork}`]);
+      const forkUnlock = await locking("/terragucci unlock", { forge, pr: { sameRepo: false } });
+      expect(forkUnlock.unlocked).toEqual([]);
+      const reader = await locking("/terragucci lock", forge === "github" ? { forge, permission: "read" } : { forge, event: { repository: { full_name: "acme/infra", default_branch: "main", permissions: { push: false } } } });
+      expect(reader.locked).toEqual([]);
+      expect(reader.posted).toEqual([]);
+      expect(reader.got.replied).toBe(false);
+    });
+  }
+
+  test("a closed pull request takes no lock, one into another branch neither, and reaching nothing locks nothing", async () => {
+    expect((await locking("/terragucci lock", { pr: { state: "closed" } })).posted).toEqual(["terragucci: pull request 12 is not open, so it takes no lock"]);
+    expect((await locking("/terragucci lock", { pr: { base: "release" } })).posted).toEqual(["terragucci: pull request 12 targets release, not the default branch main, so it takes no lock"]);
+    const r = await locking("/terragucci lock", { reached: [] });
+    expect(r.posted).toEqual([`terragucci: pull request 12 reaches nothing at ${r.head.slice(0, 8)}, so it takes no lock`]);
+  });
+
+  test("with the comment lock jobs of locks: \"plan\", or without the reach line, nothing changes", async () => {
+    const planLocks = await locking("/terragucci lock", { jobs: { ...jobs, locks: true } });
+    expect(planLocks.got).toMatchObject({ replied: false, reason: "another job answers this comment" });
+    expect(planLocks.locked).toEqual([]);
+    const { locks: _l, ...noReach } = bm;
+    const without = await locking("/terragucci unlock", { jobs: { ...jobs, wavesBeforeMerge: noReach } });
+    expect(without.unlocked).toEqual([]);
+    expect(without.posted).toEqual([`terragucci: ${tgInput.replies!.unlock}`]);
+  });
+
+  test("GitLab's note poll locks and unlocks the same way through chantNoteRuns", async () => {
+    const c = await checkout();
+    const head = "d".repeat(40);
+    const mr: PullRequestDetail = { number: 3, title: "", body: "", state: "open", head: "feature", headSha: head, base: "main", sameRepo: true };
+    const locked: unknown[] = [];
+    const unlocked: number[] = [];
+    const deps = {
+      requires: async () => null,
+      statuses: async () => [],
+      git: c.git,
+      cwd: c.dir,
+      lock: async (pr: number, h: string, base: string, by: string, asked?: "apply" | "lock") => (locked.push([pr, h, base, by, asked]), { ok: true as const, targets: ["envs/dev"] }),
+      unlock: async (pr: number) => (unlocked.push(pr), ["envs/dev"]),
+      record: async () => {
+        throw new Error("no decision");
+      },
+      stop: async () => {},
+    };
+    const glJobs = { applyOnMerge: true, waves: { op: "tf-apply", count: 2 }, wavesBeforeMerge: { plan: ["terragucci/plan"], pipelineFiles: [".gitlab-ci.yml"], locks: { gate: "tf-apply" } } };
+    const runs = chantNoteRuns(glJobs, { beforeMerge: deps });
+    const ask = (body: string, m = mr): Omit<NoteCommand, "parsed"> => ({ mr: m, note: { id: 41, body, system: false, author: "bob" }, role: "developer", base: "main", words: tg });
+    expect(await runs({ ...ask("/terragucci lock"), parsed: { kind: "lock" } })).toEqual({ kind: "reply", text: `locked \`envs/dev\` for !3 at ${head.slice(0, 8)} for bob, and nothing is applied; the locks hold until it merges or closes, or \`/terragucci unlock\` releases them` });
+    expect(locked).toEqual([[3, head, c.baseSha, "bob", "lock"]]);
+    expect(await runs({ ...ask("/terragucci unlock"), parsed: { kind: "unlock" } })).toEqual({ kind: "reply", text: "released `envs/dev`, which !3 held, for bob" });
+    expect(unlocked).toEqual([3]);
+    expect(await runs({ ...ask("/terragucci lock", { ...mr, sameRepo: false }), parsed: { kind: "lock" } })).toEqual({ kind: "reply", text: tgInput.replies!.fork });
+    // With locks: "plan" the lock job runs, as before; without the reach line the product's sentence.
+    expect((await chantNoteRuns({ ...glJobs, locks: true }, { beforeMerge: deps })({ ...ask("/terragucci lock"), parsed: { kind: "lock" } })).kind).toBe("pipeline");
+    const { lock: _lock, unlock: _unlock, ...noReach } = deps;
+    expect(await chantNoteRuns(glJobs, { beforeMerge: noReach })({ ...ask("/terragucci lock"), parsed: { kind: "lock" } })).toEqual({ kind: "reply", text: tgInput.replies!.lock });
+    expect(locked).toHaveLength(1);
+  });
+});

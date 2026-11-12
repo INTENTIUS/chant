@@ -249,6 +249,9 @@ export const OP_WAVES_REMAINDER_PARITY_FLOOR = "0.124.94";
 /** The first chant whose Op waves generators, in a product's workflow (`runIf`) with `beforeMerge` and a spec `control`, run the control job on the default branch's push, outside the product's `runIf` and after its `firstWaveNeeds` jobs, and tell the control repo the waves applied at the pushed commit without adding up outcomes, on GitHub, Forgejo and GitLab (#5060). */
 export const OP_WAVES_CONTROL_BEFORE_MERGE_FLOOR = NEXT_RELEASE;
 
+/** The first chant whose waves before merge lock and unlock on a comment by the product plan's reach line (#5061): with `wavesBeforeMerge` and `productPlan.reach`, and no `locks: "plan"`, the comment job (GitHub, Forgejo) and the note poll (GitLab, `chantNoteRuns`) answer `/<product> lock` on an open pull request by taking the locks of what the reach line prints at stage `apply` in `_locks/<reach.gate>.json` without applying (`decideLocksBeforeMerge`), refused with the holder named, and `/<product> unlock` by releasing the pull request's locks; and the product plan takes `reach` without `locks: "plan"` under `wavesBeforeMerge`, writing no reach lock job. */
+export const WAVES_BEFORE_MERGE_LOCKS_FLOOR = NEXT_RELEASE;
+
 /** The first chant whose `chant run resume` (`resumeGateRun`) on GitLab retries a wave job's `<wave job>-evidence` with the wave job when the evidence job already ran, and whose `ci evidence sign --from-job` waits for a job it reads to finish, so a resumed wave's evidence job signs from the new try (#4978). */
 export const GITLAB_WAVE_EVIDENCE_RETRY_FLOOR = "0.124.89";
 

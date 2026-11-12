@@ -36,6 +36,10 @@
  *   open pull request: the decision before merge
  *   (./op/before-merge-decide.ts) records the head on `chant/lifecycle`
  *   and dispatches the waves workflow on the default branch for it.
+ * - with `wavesBeforeMerge`, the product plan's reach line and no comment
+ *   lock jobs (#5061), `/<product> lock` and `/<product> unlock`: the lock
+ *   takes the locks of what the reach line prints at stage apply without
+ *   applying, and the unlock releases the pull request's locks.
  *
  * Who asked comes first. On GitHub the commenter's permission is read from
  * the forge; Forgejo answers 403 when a job's token asks for another user's
@@ -113,7 +117,17 @@ export interface CommentJobs extends Omit<ChantNoteJobs, "members"> {
 }
 
 /** What the decision before merge reads and writes with (#4984), the comment job's handler's. */
-export type CommentBeforeMerge = Pick<DecideBeforeMergeInput, "requires" | "statuses" | "git" | "cwd" | "lock" | "record" | "stop" | "now">;
+export type CommentBeforeMerge = Pick<DecideBeforeMergeInput, "requires" | "statuses" | "git" | "cwd" | "lock" | "unlock" | "record" | "stop" | "now">;
+
+/**
+ * Whether `/<product> lock` and `/<product> unlock` are the comment job's
+ * (the note poll's on GitLab) under the waves before merge (#5061): the
+ * pipeline has the product plan's reach line and no comment lock jobs of
+ * `locks: "plan"`, and the job has the lock and unlock to answer with.
+ */
+export function locksBeforeMerge(jobs: Pick<CommentJobs, "locks" | "wavesBeforeMerge">, deps: Pick<CommentBeforeMerge, "lock" | "unlock"> | undefined): deps is Required<Pick<CommentBeforeMerge, "lock" | "unlock">> {
+  return !jobs.locks && jobs.wavesBeforeMerge?.locks !== undefined && deps?.lock !== undefined && deps.unlock !== undefined;
+}
 
 /** Writes a wave stop for op `op` at `sha` on `chant/lifecycle`, or clears it (#4979). */
 export type CommentWaveStops = (op: string, sha: string, stop: { through: number; at: string; by?: string; pr?: number } | null) => Promise<void>;
@@ -298,6 +312,20 @@ export async function answerProductComment(o: AnswerCommentOptions): Promise<Com
   }
   // A command another job answers starts that job on this same comment.
   if (parsed.kind !== "apply" && answeredElsewhere(parsed, o.jobs, true)) return silent("another job answers this comment", command);
+  // #5061: the waves before merge with the reach line and no plan locks: the lock and unlock are this job's.
+  if ((parsed.kind === "lock" || parsed.kind === "unlock") && o.beforeMerge && locksBeforeMerge(o.jobs, o.beforeMerge)) {
+    let pr: PullRequestDetail | undefined;
+    try {
+      pr = await o.reads.pullRequest(n);
+    } catch (err) {
+      return broke(`could not read ${t.at(n)} (${message(err)})`, command);
+    }
+    if (!pr) return broke(`the forge has no ${t.at(n)}`, command);
+    const { decideLocksBeforeMerge } = await import("./op/before-merge-decide");
+    const bm = o.beforeMerge;
+    const done = await decideLocksBeforeMerge({ forge: o.forge, pr, user, base: o.base, kind: parsed.kind, words: o.words, git: bm.git, ...(bm.cwd ? { cwd: bm.cwd } : {}), lock: bm.lock!, unlock: bm.unlock! });
+    return done.kind === "fail" ? broke(done.reason, command) : reply(done.text);
+  }
   switch (parsed.kind) {
     case "plan":
     case "lock":

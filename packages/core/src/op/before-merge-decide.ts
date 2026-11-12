@@ -84,8 +84,15 @@ export interface DecideBeforeMergeInput {
   /** Git in the job's checkout of the default branch. */
   git: ReachRun;
   cwd?: string;
-  /** Take the locks of what the change reaches at stage apply, for `by`; a refusal is the reply. Absent: the pipeline has no reach line, so nothing is locked. */
-  lock?(pr: number, head: string, base: string, by: string): Promise<{ ok: true; targets: string[] } | { ok: false; text: string }>;
+  /**
+   * Take the locks of what the change reaches at stage apply, for `by`; a
+   * refusal is the reply, worded for an apply, or for `/<product> lock` when
+   * `asked` is `lock` (#5061). Absent: the pipeline has no reach line, so
+   * nothing is locked.
+   */
+  lock?(pr: number, head: string, base: string, by: string, asked?: "apply" | "lock"): Promise<{ ok: true; targets: string[] } | { ok: false; text: string }>;
+  /** With `lock` (#5061): release every lock pull request `pr` holds in the reach line's lock file, answering the targets released. Not read by the apply's decision. */
+  unlock?(pr: number): Promise<string[]>;
   /** Write the decision on chant/lifecycle. */
   record(d: BeforeMergeDecision): Promise<BeforeMergeRecord>;
   /** Write the head's wave stop, or clear it (null). */
@@ -189,4 +196,69 @@ export async function decideWavesBeforeMerge(i: DecideBeforeMergeInput): Promise
   const locks = locked.length > 0 ? `, holding ${locked.map((x) => `\`${x}\``).join(", ")}` : "";
   const link = started.url ? ` (${started.url})` : "";
   return { kind: "ran", text: `started the waves of ${i.op}${link} on ${at}'s head ${short(head)}${through} for ${i.user}${locks}; each wave's gate decides, and the run says when the head applied`, ...(started.url ? { url: started.url } : {}) };
+}
+
+/** What {@link decideLocksBeforeMerge} takes (#5061): the comment, and the lock and unlock of the reach line. */
+export interface LocksBeforeMergeInput {
+  forge: ForgeKind;
+  pr: PullRequestDetail;
+  user: string;
+  /** The default branch. */
+  base: string;
+  kind: "lock" | "unlock";
+  words: CiProductWords;
+  git: ReachRun;
+  cwd?: string;
+  lock: NonNullable<DecideBeforeMergeInput["lock"]>;
+  unlock: NonNullable<DecideBeforeMergeInput["unlock"]>;
+}
+
+/**
+ * `/<product> lock` and `/<product> unlock` on a pull request whose waves
+ * run before merge with the product plan's reach line and no plan locks
+ * (#5061), moved from terragucci's own comment job. `lock` takes the locks
+ * of what the reach line prints at stage apply, as an apply would, without
+ * applying; `unlock` releases every lock the pull request holds. The reach
+ * line runs in the job's checkout of the default branch, so none of the
+ * change's code runs.
+ */
+export async function decideLocksBeforeMerge(i: LocksBeforeMergeInput): Promise<{ kind: "reply"; text: string } | { kind: "fail"; reason: string }> {
+  const t = commentTerms(i.forge);
+  const at = t.at(i.pr.number);
+  const typed = (kind: "lock" | "unlock") => `/${i.words.product} ${Object.entries(i.words.commands).find(([, c]) => c === kind)?.[0] ?? kind}`;
+  const reply = (text: string) => ({ kind: "reply" as const, text });
+  const fail = (reason: string) => ({ kind: "fail" as const, reason });
+  const list = (xs: readonly string[]) => xs.map((x) => `\`${x}\``).join(", ");
+
+  if (!i.pr.sameRepo) return reply(forkReply(i.words, i.forge));
+  if (i.kind === "unlock") {
+    let released: string[];
+    try {
+      released = await i.unlock(i.pr.number);
+    } catch (e) {
+      return fail(`could not release the locks of ${at} (${message(e)})`);
+    }
+    return reply(released.length > 0 ? `released ${list(released)}, which ${at} held, for ${i.user}` : `${at} holds no lock, so there is nothing to unlock`);
+  }
+  if (i.pr.state !== "open") return reply(`${at} is not open, so it takes no lock`);
+  if (i.pr.base !== undefined && i.pr.base !== i.base) return reply(`${at} targets ${i.pr.base}, not the default branch ${i.base}, so it takes no lock`);
+  const head = i.pr.headSha;
+  if (!head || !SHA.test(head)) return fail(`${at} names no head commit`);
+  if (!BRANCH.test(i.base) || i.base.split("/").some((s) => s === ".." || s === "")) return fail(`the default branch ${JSON.stringify(i.base)} is not a branch name this job passes on`);
+  // The default branch's commit the change is measured from; the reach line fetches the head itself.
+  const baseRef = `refs/remotes/origin/${i.base}`;
+  const run = (args: string[]) => i.git(["git", ...args], { ...(i.cwd ? { cwd: i.cwd } : {}) });
+  const fetched = run(["fetch", "-q", "--no-tags", "origin", `+refs/heads/${i.base}:${baseRef}`]);
+  if (fetched.status !== 0) return fail(`could not fetch ${i.base} (${fetched.stderr.trim() || `git exited ${fetched.status}`})`);
+  const baseSha = run(["rev-parse", baseRef]).stdout.trim();
+  if (!SHA.test(baseSha)) return fail(`could not read the commit of ${i.base}`);
+  let l;
+  try {
+    l = await i.lock(i.pr.number, head, baseSha, i.user, "lock");
+  } catch (e) {
+    return fail(`could not take the locks of ${at} (${message(e)})`);
+  }
+  if (!l.ok) return reply(l.text);
+  if (l.targets.length === 0) return reply(`${at} reaches nothing at ${short(head)}, so it takes no lock`);
+  return reply(`locked ${list(l.targets)} for ${at} at ${short(head)} for ${i.user}, and nothing is ${i.words.verbs.apply[1]}; the locks hold until it merges or closes, or \`${typed("unlock")}\` releases them`);
 }

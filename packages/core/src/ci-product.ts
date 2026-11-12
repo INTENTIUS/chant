@@ -535,6 +535,8 @@ export { MCP_TOOL_ANNOTATIONS_FLOOR, PRODUCT_MCP_PROPOSE_FLOOR, PRODUCT_TOOL_PRO
 export { OP_WAVES_REMAINDER_FLOOR } from "./release-floors";
 export { OP_WAVES_SPLIT_RESUME_FLOOR } from "./release-floors";
 export { OP_WAVES_REMAINDER_PARITY_FLOOR } from "./release-floors";
+/** #5061: the waves before merge lock and unlock on a comment by the reach line. */
+export { WAVES_BEFORE_MERGE_LOCKS_FLOOR } from "./release-floors";
 export type { McpToolContribution, ToolAnnotations } from "./mcp/types";
 export {
   activeOtlp,

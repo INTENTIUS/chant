@@ -44,6 +44,29 @@ describe("the waves before merge in the product pipeline (#4984)", () => {
     expect(JSON.parse(productPipelineJobs("gitlab", "default", { ...base, noteCommands: true }).noteCommands!.env!.CHANT_COMMENT_JOBS!)).toEqual({ waves: { op: "tf-apply", count: 2 } });
   });
 
+  test("#5061: the reach without locks: \"plan\" is the comment job's and the note poll's, and writes no lock job", () => {
+    const { locks: _locks, ...noLocks } = base;
+    for (const forge of ["github", "forgejo"] as const) {
+      const jobs = productPipelineJobs(forge, "default", { ...noLocks, commentJob: { jobName: "apply-comment" }, wavesBeforeMerge: {} });
+      expect(jobs.reachLock, forge).toBeUndefined();
+      expect(jobs.locks, forge).toBeUndefined();
+      expect(jobs.comment!.jobName).toBe("apply-comment");
+      expect(jobs.comment!.env.CHANT_LOCK_REACH, forge).toBe("terragucci reached");
+      const told = JSON.parse(jobs.comment!.env.CHANT_COMMENT_JOBS!);
+      expect(told.locks, forge).toBeUndefined();
+      expect(told.wavesBeforeMerge.locks, forge).toEqual({ gate: "tf-apply" });
+      expect(jobs.waves!.beforeMerge, forge).toEqual({ gate: "tf-apply" });
+    }
+    const gitlab = productPipelineJobs("gitlab", "default", { ...noLocks, noteCommands: true, wavesBeforeMerge: {} });
+    expect(gitlab.reachLock).toBeUndefined();
+    expect(gitlab.noteCommands!.env!.CHANT_LOCK_REACH).toBe("terragucci reached");
+    expect(JSON.parse(gitlab.noteCommands!.env!.CHANT_COMMENT_JOBS!).wavesBeforeMerge.locks).toEqual({ gate: "tf-apply" });
+    expect(gitlab.waves!.beforeMerge).toEqual({ gate: "tf-apply" });
+    // Without the waves before merge the reach still needs locks: "plan", and the reach line is still checked.
+    expect(() => productPipelineJobs("github", "default", { ...noLocks, commentJob: true })).toThrow('there is none without locks: "plan"');
+    expect(() => productPipelineJobs("github", "default", { ...noLocks, productPlan: { ...noLocks.productPlan, reach: { command: "a\nb" } }, commentJob: true, wavesBeforeMerge: {} })).toThrow("reach.command is one shell line");
+  });
+
   test("refused without waves, beside applyBeforeMerge, and without the job that decides it", () => {
     expect(() => productPipelineJobs("github", "default", { ...base, waves: undefined, commentJob: true, wavesBeforeMerge: {} })).toThrow("wavesBeforeMerge runs the waves on an open pull request's head, and there are none");
     expect(() => productPipelineJobs("github", "default", { ...base, wavesBeforeMerge: {} })).toThrow("wavesBeforeMerge is decided by the comment job: set commentJob");
