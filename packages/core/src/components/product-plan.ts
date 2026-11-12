@@ -512,6 +512,13 @@ export interface ProductPlanJob {
   login?: OpWaveRunStep[];
   /** The OIDC tokens the plan job requests (#4931), `{ <variable>: <audience> }`: the login's and the product's own. */
   idTokens?: Record<string, string>;
+  /**
+   * With the product's own `idTokens` (#5021): the plan verb asks the forge
+   * for them by audience, so on GitHub and Forgejo the plan step keeps the
+   * variables a token is requested with. Without it, every step after the
+   * checkout but the login's starts without them.
+   */
+  ownIdTokens?: true;
   /** The pending status posted before the checkout (#4899), on GitHub and Forgejo. */
   pending?: { context: string; description: string };
   /** The control repo read after the checkout (#4899). */
@@ -769,6 +776,7 @@ export function productPlanJobs(forge: ForgeKind, env: string, loop: PrLoopPipel
       ...(Object.keys(jobEnv).length > 0 ? { jobEnv } : {}),
       ...(login && login.steps.length > 0 ? { login: login.steps } : {}),
       ...(Object.keys(idTokens).length > 0 ? { idTokens } : {}),
+      ...(Object.keys(ownTokens ?? {}).length > 0 ? { ownIdTokens: true as const } : {}),
       ...(plan.pending && github ? { pending: { context: context ?? productStatusContext(words, "plan", name), description: "planning" } } : {}),
       ...(control ? { control } : {}),
       ...(plan.setup?.length ? { setup: plan.setup } : {}),
