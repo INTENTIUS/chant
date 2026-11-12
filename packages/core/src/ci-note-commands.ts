@@ -498,7 +498,7 @@ export interface ChantNoteJobs {
 /** What {@link chantNoteRuns} reads and writes with besides the jobs (#4984). */
 export interface ChantNoteRunsOptions {
   /** With `jobs.wavesBeforeMerge`: what the decision before merge reads and writes with. */
-  beforeMerge?: Pick<DecideBeforeMergeInput, "requires" | "statuses" | "git" | "cwd" | "lock" | "record" | "stop" | "now">;
+  beforeMerge?: Pick<DecideBeforeMergeInput, "requires" | "statuses" | "git" | "cwd" | "lock" | "unlock" | "record" | "stop" | "now">;
 }
 
 /**
@@ -543,10 +543,20 @@ export function chantNoteRuns(jobs: ChantNoteJobs, opts: ChantNoteRunsOptions = 
         if (!mr.mergeCommit) return { kind: "fail", reason: `${at} has no merge commit` };
         return { kind: "retry", sha: mr.mergeCommit, ...(jobs.waves ? { stop: { op: jobs.waves.op, through: parsed.wave !== undefined && parsed.wave < jobs.waves.count ? parsed.wave : null } } : {}) };
       case "lock":
-      case "unlock":
+      case "unlock": {
+        // #5061: the waves before merge with the reach line and no plan locks: the poll locks and unlocks here.
+        const bm = opts.beforeMerge;
+        if (!jobs.locks && jobs.wavesBeforeMerge?.locks !== undefined && bm?.lock && bm.unlock) {
+          const { lock, unlock } = bm;
+          return import("./op/before-merge-decide").then(async ({ decideLocksBeforeMerge }) => {
+            const done = await decideLocksBeforeMerge({ forge: "gitlab", pr: mr, user: note.author ?? "", base, kind: parsed.kind as "lock" | "unlock", words, git: bm.git, ...(bm.cwd ? { cwd: bm.cwd } : {}), lock, unlock });
+            return done.kind === "fail" ? { kind: "fail" as const, reason: done.reason } : { kind: "reply" as const, text: done.text };
+          });
+        }
         if (!jobs.locks) return { kind: "reply", text: notRunReply(words, parsed.kind, "gitlab") };
         if (parsed.kind === "lock" && !open) return { kind: "reply", text: `${at} is not open, so it takes no lock` };
         return { kind: "pipeline", ref: base, variables: { [parsed.kind === "lock" ? GITLAB_LOCK_PR_VAR : GITLAB_UNLOCK_PR_VAR]: iid }, doing: `${parsed.kind} the ${words.noun[1]} of ${at}` };
+      }
       case "agent":
         if (!jobs.agent) return { kind: "reply", text: notRunReply(words, "agent", "gitlab") };
         if (!open) return { kind: "reply", text: `${at} is not open, so the agent does not run` };

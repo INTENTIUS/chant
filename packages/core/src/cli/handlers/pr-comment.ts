@@ -106,13 +106,14 @@ export async function beforeMergeDeps(forge: PrForge, jobs: CommentJobs, env: No
   const { checkPrRequires, unmetRequires } = await import("../../pr-requires");
   const { productStatusContext, activeProductWords } = await import("../../ci-product-words");
   const { LOCK_REACH_ENV, reachedTargets } = await import("../../lifecycle/reach-locks");
-  const { takeTargetLocks, describeHeldTargetLocks } = await import("../../lifecycle/target-lock");
+  const { takeTargetLocks, releaseTargetLocks, describeHeldTargetLocks } = await import("../../lifecycle/target-lock");
   const { recordBeforeMerge } = await import("../../op/before-merge-store");
   const { setWaveStop } = await import("../../op/wave-stop");
   const { PR_APPLY_GATE } = await import("../../pr-loop");
   const words = activeProductWords();
   const line = env[LOCK_REACH_ENV];
   const name = (n: number) => (forge.kind === "gitlab" ? `!${n}` : `pull request ${n}`);
+  const gate = bm.locks?.gate ?? PR_APPLY_GATE;
   return {
     // The plan and apply statuses never hold the apply back: the plan status is asked for by name (#5003: the product plan's own names too).
     requires: async (pr, head) => unmetRequires(await checkPrRequires(forge, pr, head, { ignore: [...new Set([productStatusContext(words, "apply"), productStatusContext(words, "plan"), `${productStatusContext(words, "plan")}/`, ...bm.plan])], ...(bm.requires ? { only: bm.requires } : {}) })),
@@ -124,18 +125,23 @@ export async function beforeMergeDeps(forge: PrForge, jobs: CommentJobs, env: No
     // #4979's reach line says what the change reaches; the locks go up at stage apply, refused while another holds one.
     ...(line && line.trim()
       ? {
-          lock: async (pr: number, head: string, base: string, by: string) => {
+          lock: async (pr: number, head: string, base: string, by: string, asked: "apply" | "lock" = "apply") => {
             const reached = reachedTargets({ forge: forge.kind, pr, head, base, line });
             if ("error" in reached) throw new Error(reached.error);
-            if ("moved" in reached) return { ok: false as const, text: `${name(pr)} moved while this comment was read, so nothing is ${words.verbs.apply[1]}; comment again once its checks pass` };
+            const nothing = asked === "lock" ? "nothing is locked" : `nothing is ${words.verbs.apply[1]}`;
+            if ("moved" in reached) return { ok: false as const, text: `${name(pr)} moved while this comment was read, so ${nothing}; comment again once its checks pass` };
             const isOpen = forge.pullRequestOpen?.bind(forge);
-            const r = await takeTargetLocks(bm.locks?.gate ?? PR_APPLY_GATE, reached.targets, { pr, by, at: new Date().toISOString(), stage: "apply", head }, { ...(isOpen ? { isOpen } : {}) });
+            const r = await takeTargetLocks(gate, reached.targets, { pr, by, at: new Date().toISOString(), stage: "apply", head }, { ...(isOpen ? { isOpen } : {}) });
             if (!r.ok) {
               const request = forge.kind === "gitlab" ? "merge request" : "pull request";
+              // #5061: a lock comment is refused as an apply is, with the holder named.
+              if (asked === "lock") return { ok: false as const, text: `${describeHeldTargetLocks(r.held, name)}, so ${name(pr)} takes no lock. It can once that ${request} merges or closes, or someone with write access unlocks it` };
               return { ok: false as const, text: `${describeHeldTargetLocks(r.held, name)}, so ${name(pr)} is not ${words.verbs.apply[1]}. It ${words.verbs.apply[0]}s once that ${request} merges or closes, or someone with write access unlocks it` };
             }
             return { ok: true as const, targets: r.taken };
           },
+          // #5061: `/<product> unlock` releases every lock the pull request holds in the reach line's lock file.
+          unlock: async (pr: number) => (await releaseTargetLocks(gate, pr)).released,
         }
       : {}),
     record: (d) => recordBeforeMerge(op, d),

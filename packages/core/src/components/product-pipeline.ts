@@ -455,7 +455,8 @@ export function productWavesSpec(spec: OpWavesSpec, wordsIn: CiProductWordsInput
 export function productPipelineJobs(forge: ForgeKind, env: string, options: ProductPipelineOptions): ProductPipelineJobs {
   const jobs: CiProductCommand[] = ["plan"];
   if (options.applyBeforeMerge || options.waves || options.componentWaves) jobs.push("apply");
-  if (options.locks === "plan") jobs.push("lock", "unlock");
+  // #5061: the waves before merge with the reach line lock and unlock on a comment, in the comment job or the note poll.
+  if (options.locks === "plan" || (options.wavesBeforeMerge && options.productPlan?.reach)) jobs.push("lock", "unlock");
   if (options.agent) jobs.push("agent");
   if (options.commits?.length) jobs.push("commit");
   // #4654: the action command, answered by the product's own workflow (`actions`) or by the pipeline's action job.
@@ -507,7 +508,8 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   const locks = prCommentLockJobs(forge, { locks: options.locks, words });
   if (locks.length > 0) out.locks = locks.map((job) => ({ ...job, ...defaultRunner }));
   // #4979: the product plan's reach says what the lock job locks.
-  const reachLock = productPlan ? productPlanReachLock(forge, { ...prLoop, plan: productPlan }, words) : undefined;
+  // #5061: with the waves before merge the reach line is the comment job's (the note poll's), so it needs no locks: "plan".
+  const reachLock = productPlan ? productPlanReachLock(forge, { ...prLoop, plan: productPlan, ...(wavesBeforeMerge ? { beforeMerge: true } : {}) }, words) : undefined;
   if (reachLock) out.reachLock = reachLock;
   const action = prActionJob(forge, prLoop);
   if (action) out.action = { ...action, ...(prLoopRunner(options, "apply") !== undefined ? { runner: prLoopRunner(options, "apply")! } : {}) };
