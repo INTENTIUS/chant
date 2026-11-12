@@ -1315,6 +1315,25 @@ export interface OpWavesPipelineOptions
    * Absent: no cache, as before.
    */
   cache?: Record<string, unknown> | Array<Record<string, unknown>>;
+  /**
+   * The control job's group (#5053), so the control repo gets one send per
+   * commit when a push's run and a resume's run both reach it: GitHub and
+   * Forgejo `concurrency: { group, cancel-in-progress: false }`, GitLab
+   * `resource_group`. `{commit}` in it stands for the commit the job tells
+   * the control repo about (`${{ github.sha }}`, or a follow-on run's commit
+   * input; GitLab `$CI_COMMIT_SHA` or `CHANT_WAVES_COMMIT`), such as
+   * terragucci's `terragucci-control-${{ github.repository }}-{commit}`.
+   * Needs `control` on the spec. Absent: no group, as before.
+   */
+  controlGroup?: string;
+  /**
+   * GitLab (#5053): the resume job's `resource_group`, such as terragucci's
+   * `terragucci-resume`, so two resume pipelines that overlap do not both
+   * retry the same waiting job. GitHub and Forgejo refuse it: their resume
+   * workflow has its own group, `<spec>-resume`. Needs `resume` on the
+   * spec. Absent: no resource group, as before.
+   */
+  resumeGroup?: string;
 }
 
 /** A run step a product adds to a generated job (#4791): its name, and its shell lines in order. */

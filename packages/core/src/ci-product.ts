@@ -314,7 +314,12 @@ export const OP_WAVES_COMMAND_TOKEN_FLOOR = NEXT_RELEASE;
  * The first chant whose GitLab Op waves generator takes `cache` (#5045): the `cache:` entry or entries of each job that runs the wave's command (the wave's own, deciding, share and job group jobs, the policy job, a split wave's plan and applying jobs), such as terragucci's Terragrunt sources and providers cache. The gate and record jobs take none; GitHub and Forgejo refuse it, since a wave's `setup` step does this there. Without it no wave job has a cache, as before.
  */
 export const OP_WAVES_GITLAB_CACHE_FLOOR = NEXT_RELEASE;
-export { opWavesArtifacts, opWavesCommandToken, opWavesDispatchInputs, opWavesGitlabCache, opWavesNamer, opWavesResumeWorkflowFile, opWavesWorkflowFile, type OpWavesArtifactNames, type OpWavesCommandToken, type OpWavesDispatchInput, type OpWavesJobNames, type OpWavesJobRef, type OpWavesJobRole, type OpWavesStageNames, type OpWavesStageRef } from "./op/op-waves-names";
+
+/**
+ * The first chant whose Op waves generators take `controlGroup` and `resumeGroup` (#5053): the control job's group (GitHub and Forgejo `concurrency` with `cancel-in-progress: false`, GitLab `resource_group`), with `{commit}` standing for the commit it tells the control repo about, so a push's run and a resume's run send one dispatch per commit; and the GitLab resume job's `resource_group`. Without them neither job has a group, as before.
+ */
+export const OP_WAVES_GROUPS_FLOOR = NEXT_RELEASE;
+export { opWavesArtifacts, opWavesCommandToken, opWavesControlGroup, opWavesDispatchInputs, opWavesGitlabCache, opWavesNamer, opWavesResumeGroup, opWavesResumeWorkflowFile, opWavesWorkflowFile, type OpWavesArtifactNames, type OpWavesCommandToken, type OpWavesDispatchInput, type OpWavesJobNames, type OpWavesJobRef, type OpWavesJobRole, type OpWavesStageNames, type OpWavesStageRef } from "./op/op-waves-names";
 
 /**
  * Day-2 actions in the product pipeline (#4654): the `action` comment

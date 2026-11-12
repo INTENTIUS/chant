@@ -162,7 +162,7 @@ import {
 import { CONTROL_DISPATCH_JOB, CONTROL_OUTCOME_VAR, CONTROL_TOKEN_VARS, controlDispatchJob } from "@intentius/chant/control/dispatch";
 import type { OpWaveJobInputs, OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
 import { opWaveSavedPlanDir, opWaveSplitJobLabel, opWaveSplitJobs, type OpWaveSplitJob } from "@intentius/chant/op/op-waves-split";
-import { assertFirstWaveNeedsOutside, opWavesCommandToken, opWavesFirstWaveNeeds, opWavesGitlabCache, opWavesNamer, type OpWavesStageRef } from "@intentius/chant/op/op-waves-names";
+import { assertFirstWaveNeedsOutside, opWavesCommandToken, opWavesControlGroup, opWavesFirstWaveNeeds, opWavesGitlabCache, opWavesNamer, opWavesResumeGroup, type OpWavesStageRef } from "@intentius/chant/op/op-waves-names";
 import type { OpWaveEvidencePlan } from "@intentius/chant/op/op-waves-evidence-jobs";
 import { GITLAB_DROP_FORGE_TOKENS } from "@intentius/chant/ci-handover";
 import { gitlabTradeIdTokens, gitlabTradeLines, TRADE_SPEC_ENV } from "@intentius/chant/ci-identity";
@@ -240,6 +240,9 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
   // #5045: the product's cache on each job that runs the wave's command.
   const cache = opWavesGitlabCache(options.cache);
   const cached = cache !== undefined ? { cache } : {};
+  // #5053: the product's resource groups on the control and resume jobs (checked here; the control's is put in with its commit below).
+  opWavesControlGroup(options.controlGroup, spec.control !== undefined, "");
+  const resumeGroup = opWavesResumeGroup(options.resumeGroup, spec.resume !== undefined, "gitlab");
   const runIf = options.runIf;
   if (runIf !== undefined && (typeof runIf !== "string" || runIf.trim() === "" || /[\r\n]/.test(runIf))) throw new Error(`runIf ${JSON.stringify(runIf)} is one rule condition`);
   const namer = opWavesNamer(spec, "gitlab", options.jobNames);
@@ -565,6 +568,8 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
   }
   if (control) {
     // #4992: a push's follow-on pipeline tells the control repo about the commit the waves went on with.
+    // #5053: a resource_group expands variables but not a shell default, so a follow-on's group names CHANT_WAVES_COMMIT.
+    const controlGroup = opWavesControlGroup(options.controlGroup, true, restWave !== undefined ? `$${OP_WAVES_COMMIT_ENV}` : "$CI_COMMIT_SHA");
     const dispatch = controlDispatchJob("gitlab", control, restWave !== undefined ? `\${${OP_WAVES_COMMIT_ENV}:-$CI_COMMIT_SHA}` : "$CI_COMMIT_SHA", {
       ...(options.words ? { words: options.words } : {}),
       ...(spec.control!.sentCheck ? { sentCheck: spec.control!.sentCheck } : {}),
@@ -580,6 +585,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
         rules: [...rules, ...followRules],
         // The last wave's jobs hand on every job's outcome file through their artifacts.
         needs: last,
+        ...(controlGroup !== undefined ? { resource_group: controlGroup } : {}),
         // The setup and the outcome run in a subshell without the control token, and only the outcome reaches stdout.
         script: [
           [
@@ -610,6 +616,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
         image,
         ...(specTags ? { tags: specTags } : {}),
         rules: [{ if: GITLAB_SCHEDULE_SOURCE }],
+        ...(resumeGroup !== undefined ? { resource_group: resumeGroup } : {}),
         script: [...dropControl, ...(options.beforeScript ?? []), opWavesResumeCommand(spec, options.bin).join(" ")],
       },
     ]);

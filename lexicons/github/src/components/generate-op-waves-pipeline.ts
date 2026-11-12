@@ -227,7 +227,7 @@ import {
   opWavesFollowOnEnv,
   opWavesRestWave,
 } from "@intentius/chant/op/op-waves-follow-on";
-import { assertFirstWaveNeedsOutside, githubFirstWaveIf, opWavesArtifacts, opWavesCommandToken, opWavesDispatchInputs, opWavesFirstWaveNeeds, opWavesInputsRenamed, opWavesNamer, opWavesResumeWorkflowFile, opWavesWorkflowFile, type OpWavesDispatchInput } from "@intentius/chant/op/op-waves-names";
+import { assertFirstWaveNeedsOutside, githubFirstWaveIf, opWavesArtifacts, opWavesCommandToken, opWavesControlGroup, opWavesDispatchInputs, opWavesResumeGroup, opWavesFirstWaveNeeds, opWavesInputsRenamed, opWavesNamer, opWavesResumeWorkflowFile, opWavesWorkflowFile, type OpWavesDispatchInput } from "@intentius/chant/op/op-waves-names";
 import { checkoutStep, concurrency, DOWNLOAD_ARTIFACT, downloadArtifactStep, keepRecordStep, runSteps } from "./ci-jobs";
 import { emitOpPipelineYAML, type GithubOpPipelineDoc } from "./generate-op-pipeline";
 
@@ -333,6 +333,9 @@ export function buildGithubOpWavesDoc(
   const firstNeeds = opWavesFirstWaveNeeds(options.firstWaveNeeds, forge);
   // #5045: GitLab's `cache:`; here a wave's setup step restores and saves one.
   if (options.cache !== undefined) throw new Error("cache is a GitLab job's cache:; on GitHub and Forgejo give the wave a setup step that uses actions/cache");
+  // #5053: the control job's group is checked here and put in by controlJob; the resume workflow keeps its own group.
+  opWavesControlGroup(options.controlGroup, spec.control !== undefined, "");
+  opWavesResumeGroup(options.resumeGroup, spec.resume !== undefined, forge);
   // #5044: the job's token in the command step of the jobs that run the default branch's code alone, with the product's permissions.
   const tokenScopes = opWavesCommandToken(options.commandToken, forge);
   const commandToken = tokenScopes !== undefined ? { scopes: tokenScopes, env: { GITHUB_TOKEN: GITHUB_JOB_TOKEN } } : undefined;
@@ -968,7 +971,10 @@ function controlJob(
 ): [string, Record<string, unknown>] {
   const control = spec.control!;
   // #4992: a push's follow-on run tells the control repo about the commit the waves went on with.
-  const dispatch = controlDispatchJob("github", opWavesControlTarget(control), restProduct !== undefined ? `\${{ ${names.input("commit")} || github.sha }}` : "${{ github.sha }}", {
+  const commit = restProduct !== undefined ? `\${{ ${names.input("commit")} || github.sha }}` : "${{ github.sha }}";
+  // #5053: the product's group, one send per commit.
+  const group = opWavesControlGroup(options.controlGroup, true, commit);
+  const dispatch = controlDispatchJob("github", opWavesControlTarget(control), commit, {
     ...(options.words ? { words: options.words } : {}),
     ...(control.sentCheck ? { sentCheck: control.sentCheck } : {}),
     ...(control.markSent ? { markSent: control.markSent } : {}),
@@ -997,6 +1003,7 @@ function controlJob(
       container: image,
       // markSent sets a commit status; the rest reads the repository and the run's artifacts.
       permissions: marks ? { ...permissions, statuses: "write" } : permissions,
+      ...(group !== undefined ? { concurrency: { group, "cancel-in-progress": false } } : {}),
       steps,
     },
   ];
