@@ -764,6 +764,8 @@ With `"resume": { "schedule": "*/10 * * * *" }` in the spec, the rendered pipeli
 | GitLab | `<name>-resume` in the same file, run only in scheduled pipelines. Create a pipeline schedule with the cron, and set `CHANT_FORGE_TOKEN` to a project access token as in the table above |
 | Forgejo | `<name>-resume.yml`, on the cron, with the `CHANT_FORGE_TOKEN` secret |
 
+On GitHub and Forgejo the resume workflow has its own concurrency group, `<name>-resume`, so two scheduled runs queue. On GitLab the resume job has no `resource_group` unless the product names one with `resumeGroup`, such as terragucci's `terragucci-resume` ([#5053](https://github.com/INTENTIUS/chant/issues/5053)); then two scheduled pipelines that overlap do not both retry the same waiting job. GitHub and Forgejo refuse `resumeGroup`. Floor: `OP_WAVES_GROUPS_FLOOR`.
+
 ### A spent approval and a stopped apply
 
 Under [`approvals.spend`](#spend-an-approval), an approval a wave already applied under is spent. `chant run resume` reads `_gates/<op>/applied.jsonl` beside the ledger and resumes nothing for a pending fact whose answering approval is spent: that apply ran, and a resumed job would only wait again. Its report says `spent` and names the apply ([#3858](https://github.com/INTENTIUS/chant/issues/3858)).
@@ -1274,6 +1276,8 @@ The `control-dispatch` job needs the last wave's jobs. On GitHub and Forgejo it 
 | `failed` | Nothing applied, and a run failed, was refused or blocked, or no wave wrote an outcome |
 
 The dispatch carries that outcome with the member, the Op and the pushed commit. Only its step holds the token: the `tokenSecret` secret, mapped into `CHANT_CONTROL_TOKEN` and handed to curl on its stdin. On GitLab a CI/CD variable reaches every job, so each wave job, the resume job and the record-plans job unset the control repo's token variables first, and the job adds up the outcome in a subshell without them.
+
+The job has no group by default, and `sentCheck` keeps a second send for a commit from going out. A product that wants one send per commit even when two runs reach the job at once (a push's run and a resume's run of the same commit, which on Forgejo is a new run) names a group with `controlGroup` ([#5053](https://github.com/INTENTIUS/chant/issues/5053)). On GitHub and Forgejo it becomes the job's `concurrency: { group, cancel-in-progress: false }`, so the second run waits and then finds the first's mark; on GitLab it is the job's `resource_group`. `{commit}` in it stands for the commit the job tells the control repo about: `${{ github.sha }}`, or `${{ <commit input> || github.sha }}` in a pipeline with a rest wave, and on GitLab `$CI_COMMIT_SHA`, or `$CHANT_WAVES_COMMIT` with a rest wave (a `resource_group` expands variables but not a shell default). terragucci passes `terragucci-control-${{ github.repository }}-{commit}` on GitHub and Forgejo and `terragucci-control` on GitLab. A spec without `control` refuses it. Floor: `OP_WAVES_GROUPS_FLOOR`.
 
 The control repo records each dispatch that carries an outcome as a `control-applied` line of `_control/applied.jsonl` on its `chant/lifecycle`, and runs the dependents only after `applied` or `partial`. A pull request note reads those records to mark a stack another repository applies as stale, current or unknown ([Cross-stack edges](/chant/concepts/ci-products/#cross-stack-edges)).
 

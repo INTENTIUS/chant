@@ -246,6 +246,32 @@ export function opWavesCommandToken(token: OpWavesCommandToken | undefined, forg
 }
 
 /**
+ * The control job's group a product names (#5053), checked, with `{commit}`
+ * put in as `commit`, the forge's expression of the commit the job tells the
+ * control repo about. Undefined when none. One line; a spec without
+ * `control` has no job to put it on.
+ */
+export function opWavesControlGroup(group: string | undefined, hasControl: boolean, commit: string): string | undefined {
+  if (group === undefined) return undefined;
+  if (typeof group !== "string" || group.trim() === "" || /[\r\n]/.test(group)) throw new Error(`controlGroup ${JSON.stringify(group)} is one line naming the control job's group`);
+  if (!hasControl) throw new Error("controlGroup names the control job's group, and the spec has no control");
+  return group.split("{commit}").join(commit);
+}
+
+/**
+ * GitLab (#5053): the resume job's `resource_group` a product names, checked.
+ * Undefined when none. GitHub and Forgejo refuse it, since their resume
+ * workflow has its own group, `<spec>-resume`.
+ */
+export function opWavesResumeGroup(group: string | undefined, hasResume: boolean, forge: "github" | "forgejo" | "gitlab"): string | undefined {
+  if (group === undefined) return undefined;
+  if (forge !== "gitlab") throw new Error("resumeGroup is the GitLab resume job's resource_group; the GitHub and Forgejo resume workflow has its own concurrency group, <spec>-resume");
+  if (typeof group !== "string" || group.trim() === "" || /[\r\n]/.test(group)) throw new Error(`resumeGroup ${JSON.stringify(group)} is one line naming the resume job's resource_group`);
+  if (!hasResume) throw new Error("resumeGroup names the resume job's resource_group, and the spec has no resume");
+  return group;
+}
+
+/**
  * GitLab (#5045): the `cache:` a product gives the wave jobs that run the
  * wave's command, one entry or a list of them as GitLab takes them, such as
  * terragucci's `{ key: terragucci-terragrunt, paths: [.terragrunt-cache/] }`.
