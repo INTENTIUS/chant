@@ -41,24 +41,35 @@
 import { buildGithubOpWavesDoc } from "@intentius/chant-lexicon-github/components/generate-op-waves-pipeline";
 import { emitOpPipelineYAML } from "@intentius/chant-lexicon-github/components/generate-op-pipeline";
 import type { OpWavesSpec } from "@intentius/chant/op/op-waves";
+import { opWavesWorkflowFile } from "@intentius/chant/op/op-waves-names";
 import { assertRunnerLabels } from "@intentius/chant/ci-jobs";
 import type { OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
 import type { ForgejoDialectOptions } from "../dialect";
 import { droppedWaveEnvironmentsHeader, FORGE_TOKEN_ENV, forgejoWorkflowDoc, withRunGroup } from "./ci-jobs";
 
-/** Render an Op waves spec as one Forgejo Actions workflow, `<name>.yml`. */
+/**
+ * The Forgejo workflow document, before emission, and the jobs it holds
+ * (#5022): {@link buildGithubOpWavesDoc} under the Forgejo dialect, for a
+ * product that renders the jobs into its own workflow (`runIf`).
+ */
+export function buildForgejoOpWavesDoc(spec: OpWavesSpec, options: OpWavesPipelineOptions, dialectOptions: ForgejoDialectOptions = {}): ReturnType<typeof buildGithubOpWavesDoc> & { header?: string[] } {
+  assertForgejoWaves(spec);
+  const built = buildGithubOpWavesDoc(spec, options, { forge: "forgejo" });
+  const dropped = spec.waves.filter((w) => w.environment).map((w) => `${w.name} -> ${w.environment!.name}`);
+  const header = dropped.length > 0 ? droppedWaveEnvironmentsHeader(dropped) : undefined;
+  return { ...built, doc: forgejoWorkflowDoc(built.doc, dialectOptions, header), ...(header ? { header } : {}) };
+}
+
+/** Render an Op waves spec as one Forgejo Actions workflow, `<name>.yml` (#5022: or `workflowFile`). */
 export function generateForgejoOpWavesPipeline(
   spec: OpWavesSpec,
   options: OpWavesPipelineOptions,
   dialectOptions: ForgejoDialectOptions = {},
 ): OpWavesPipelineResult {
-  assertForgejoWaves(spec);
-  const { doc, jobs, resumeDoc, plansDoc } = buildGithubOpWavesDoc(spec, options, { forge: "forgejo" });
-  const dropped = spec.waves.filter((w) => w.environment).map((w) => `${w.name} -> ${w.environment!.name}`);
-  const header = dropped.length > 0 ? droppedWaveEnvironmentsHeader(dropped) : undefined;
+  const { doc, jobs, resumeDoc, plansDoc } = buildForgejoOpWavesDoc(spec, options, dialectOptions);
   // #4771: the run group a product asks for, on each of the spec's workflows.
   const grouped = (d: ReturnType<typeof forgejoWorkflowDoc>) => withRunGroup(d, options.runGroup, spec.name);
-  const files = [{ name: `${spec.name}.yml`, yaml: emitOpPipelineYAML(grouped(forgejoWorkflowDoc(doc, dialectOptions, header))) }];
+  const files = [{ name: opWavesWorkflowFile(spec, options.workflowFile), yaml: emitOpPipelineYAML(grouped(doc)) }];
   if (resumeDoc) {
     // Forgejo has no API to re-run a run, so resume dispatches the workflow
     // again, with a token that may.

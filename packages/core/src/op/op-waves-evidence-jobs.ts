@@ -87,12 +87,13 @@ export function opWavePolicyStepName(wave: number, name: string): string {
 /**
  * The evidence job's `CHANT_EVIDENCE_SOURCES`: on GitHub and Forgejo the
  * command step for `plan:<wave>` and the policy step for `policy:<wave>`, by
- * name; on GitLab the wave job and its policy job.
+ * name; on GitLab the wave job and its policy job (`policyJob`, a
+ * product's name for it, #5022).
  */
-export function opWaveEvidenceSources(forge: "github" | "forgejo" | "gitlab", plan: OpWaveEvidencePlan, job: Pick<OpWaveJob, "jobName" | "wave">, waveName: string, commandStep: string): Record<string, EvidenceSourceSpec> {
+export function opWaveEvidenceSources(forge: "github" | "forgejo" | "gitlab", plan: OpWaveEvidencePlan, job: Pick<OpWaveJob, "jobName" | "wave">, waveName: string, commandStep: string, policyJob = opWavePolicyJobName(job)): Record<string, EvidenceSourceSpec> {
   const out: Record<string, EvidenceSourceSpec> = {};
   for (const check of plan.evidenceJob?.checks ?? []) {
-    if (forge === "gitlab") out[check] = check === plan.policy ? { job: opWavePolicyJobName(job) } : {};
+    if (forge === "gitlab") out[check] = check === plan.policy ? { job: policyJob } : {};
     else out[check] = { step: check === plan.policy ? opWavePolicyStepName(job.wave, waveName) : commandStep };
   }
   return out;

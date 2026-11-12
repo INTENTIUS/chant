@@ -74,6 +74,8 @@ export interface OpWavesFollowOnTarget {
   forge: "github" | "forgejo" | "gitlab";
   /** GitHub and Forgejo: the waves workflow's file name, which the record job dispatches. */
   workflow?: string;
+  /** GitHub and Forgejo (#5022): the product's names of the dispatch inputs `pr`, `head`, `digest`, `wave` and `commit`, when it renamed any. */
+  inputs?: Partial<Record<"pr" | "head" | "digest" | "wave" | "commit", string>>;
 }
 
 /** The rest wave's number when the spec's last wave has `rest`, else undefined. */
@@ -107,7 +109,11 @@ export function parseFollowOnTarget(raw: string | undefined): OpWavesFollowOnTar
   const o = v as Partial<OpWavesFollowOnTarget> | null;
   if (!o || (o.forge !== "github" && o.forge !== "forgejo" && o.forge !== "gitlab")) throw new Error(`${OP_WAVES_FOLLOW_ON_ENV}.forge is github, forgejo or gitlab`);
   if (o.forge !== "gitlab" && (typeof o.workflow !== "string" || !/^[A-Za-z0-9._-]+\.ya?ml$/.test(o.workflow))) throw new Error(`${OP_WAVES_FOLLOW_ON_ENV}.workflow names the waves workflow's file`);
-  return { forge: o.forge, ...(o.workflow ? { workflow: o.workflow } : {}) };
+  const inputs = o.inputs;
+  if (inputs !== undefined && (typeof inputs !== "object" || inputs === null || Object.entries(inputs).some(([k, n]) => !["pr", "head", "digest", "wave", "commit"].includes(k) || typeof n !== "string" || !/^[A-Za-z_][A-Za-z0-9_-]*$/.test(n)))) {
+    throw new Error(`${OP_WAVES_FOLLOW_ON_ENV}.inputs names the dispatch inputs pr, head, digest, wave and commit`);
+  }
+  return { forge: o.forge, ...(o.workflow ? { workflow: o.workflow } : {}), ...(inputs ? { inputs: { ...inputs } } : {}) };
 }
 
 /**
@@ -380,6 +386,8 @@ export async function startFollowOn(target: OpWavesFollowOnTarget, wave: number,
   }
   const ref = env.GITHUB_REF_NAME?.trim() || env.GITHUB_REF?.replace(/^refs\/heads\//, "");
   if (!ref) throw new Error("the job names no branch (no GITHUB_REF_NAME)");
-  await post(`${t.apiBase}/repos/${t.repo}/actions/workflows/${encodeURIComponent(target.workflow!)}/dispatches`, { Authorization: `token ${t.token}` }, { ref, inputs: values });
+  // #5022: the inputs under the product's names, when it renamed them.
+  const inputs = Object.fromEntries(Object.entries(values).map(([k, v]) => [target.inputs?.[k as keyof NonNullable<OpWavesFollowOnTarget["inputs"]>] ?? k, v]));
+  await post(`${t.apiBase}/repos/${t.repo}/actions/workflows/${encodeURIComponent(target.workflow!)}/dispatches`, { Authorization: `token ${t.token}` }, { ref, inputs });
   return {};
 }

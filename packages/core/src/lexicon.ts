@@ -1231,6 +1231,46 @@ export interface OpWavesPipelineOptions
    * target. On GitLab it posts with `CHANT_FORGE_TOKEN`.
    */
   staleNotes?: { command: string; env: Record<string, string> };
+  /**
+   * A product's job names (#5022, `@intentius/chant/op/op-waves-names`): a
+   * function that gives each job the generator writes (a wave's job, its
+   * deciding, share and job group jobs, a split wave's plan, gate, apply
+   * and record jobs, the policy and evidence jobs, the apply status, stale,
+   * before-merge done and control jobs) the product's name, or undefined
+   * for chant's. Every `needs:`, `if:`, `{job}` and `--from-job` follows
+   * it. A name the forge cannot take, and two jobs that share one, are
+   * refused. Absent: chant's names.
+   */
+  jobNames?: import("./op/op-waves-names").OpWavesJobNames;
+  /** GitLab (#5022): a product's stage names, as {@link jobNames}. Two stages may share one, such as terragucci's `apply`. Absent: chant's. */
+  stageNames?: import("./op/op-waves-names").OpWavesStageNames;
+  /** GitHub and Forgejo (#5022): the outcome, decision, saved plan and check claims artifacts' names, and the pattern a wave job downloads the earlier outcomes with. Absent: chant's. */
+  artifactNames?: import("./op/op-waves-names").OpWavesArtifactNames;
+  /**
+   * GitHub and Forgejo (#5022): the workflow file the jobs go in, such as
+   * `terragucci.yml`: the generator's file, and the one a rest wave's
+   * record job dispatches. GitLab takes `opsFileName`. Absent: `<spec>.yml`.
+   */
+  workflowFile?: string;
+  /**
+   * The jobs go in a product's own workflow or pipeline beside its other
+   * jobs (#5022). GitHub and Forgejo: an expression (without `${{ }}`)
+   * for the push the waves run on, such as `github.ref ==
+   * format('refs/heads/{0}', github.event.repository.default_branch)`;
+   * each job runs only on such a push, or a before-merge or follow-on
+   * dispatch of its own inputs, and carries its permissions itself. GitLab:
+   * a condition joined with `&&` to every rule of every job. Absent: the
+   * jobs are the workflow's own, as before.
+   */
+  runIf?: string;
+  /**
+   * GitHub and Forgejo (#5022): the names of the `workflow_dispatch`
+   * inputs `pr`, `head`, `digest` (before merge) and `wave`, `commit` (a
+   * rest wave's follow-on), so they never meet the product's own, such as
+   * a re-plan's `pr`. The comment job dispatches them by the same names
+   * (`wavesBeforeMerge.dispatchInputs`). Absent: chant's.
+   */
+  dispatchInputs?: Partial<Record<import("./op/op-waves-names").OpWavesDispatchInput, string>>;
 }
 
 /** A run step a product adds to a generated job (#4791): its name, and its shell lines in order. */
@@ -1264,7 +1304,8 @@ export interface OpWaveJobInputs {
   report?: OpWaveRunStep;
   /**
    * Files the job keeps as an artifact whatever its exit. `{job}` in
-   * `name` is the job's name, so a wide wave's jobs keep one each. GitHub
+   * `name` is the job's name (#5022: the product's, under `jobNames`), so
+   * a wide wave's jobs keep one each. GitHub
    * and Forgejo: an upload step named `step` after the report. GitLab: the
    * path joins the job's `artifacts:`, which keep the outcome files too,
    * under `name`.

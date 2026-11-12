@@ -66,15 +66,19 @@ export function commentJobsFromEnv(raw: string | undefined): CommentJobs {
 export function wavesBeforeMergeOf(x: unknown): WavesBeforeMergeJobs {
   const what = `${COMMENT_JOBS_ENV}.wavesBeforeMerge`;
   const o = x as Partial<WavesBeforeMergeJobs> | null;
-  if (!o || typeof o !== "object" || Array.isArray(o)) throw new Error(`${what} is { workflow?, requires?, plan, pipelineFiles, locks? }`);
+  if (!o || typeof o !== "object" || Array.isArray(o)) throw new Error(`${what} is { workflow?, inputs?, requires?, plan, pipelineFiles, locks? }`);
   const strings = (v: unknown): v is string[] => Array.isArray(v) && v.every((s) => typeof s === "string" && s.trim() !== "" && !/[\r\n]/.test(s));
   if (o.workflow !== undefined && (typeof o.workflow !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*\.ya?ml$/.test(o.workflow))) throw new Error(`${what}.workflow is a workflow file name, like deploy.yml`);
   if (o.requires !== undefined && (!Array.isArray(o.requires) || o.requires.some((r) => !(PR_APPLY_REQUIRES as readonly string[]).includes(r)))) throw new Error(`${what}.requires is a list of ${PR_APPLY_REQUIRES.join(", ")}`);
   if (!strings(o.plan)) throw new Error(`${what}.plan is the list of plan statuses that must pass on the head`);
   if (!strings(o.pipelineFiles)) throw new Error(`${what}.pipelineFiles is the list of paths a change may not touch`);
   if (o.locks !== undefined && (typeof o.locks !== "object" || o.locks === null || (o.locks.gate !== undefined && (typeof o.locks.gate !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(o.locks.gate))))) throw new Error(`${what}.locks is { gate? }`);
+  // #5022: the waves workflow's input names, the product's.
+  const inputs = o.inputs;
+  if (inputs !== undefined && (typeof inputs !== "object" || inputs === null || Object.entries(inputs).some(([k, n]) => !["pr", "head", "digest"].includes(k) || typeof n !== "string" || !/^[A-Za-z_][A-Za-z0-9_-]*$/.test(n)))) throw new Error(`${what}.inputs names the inputs pr, head and digest`);
   return {
     ...(o.workflow ? { workflow: o.workflow } : {}),
+    ...(inputs ? { inputs: { ...inputs } } : {}),
     ...(o.requires ? { requires: [...o.requires] } : {}),
     plan: [...o.plan],
     pipelineFiles: [...o.pipelineFiles],

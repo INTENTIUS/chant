@@ -45,6 +45,8 @@ import type { BeforeMergeDecision, BeforeMergeRecord } from "./before-merge";
 export interface WavesBeforeMergeJobs {
   /** GitHub and Forgejo: the waves workflow's file, which the comment job dispatches. */
   workflow?: string;
+  /** GitHub and Forgejo (#5022): the product's names of the dispatch inputs `pr`, `head` and `digest`, as the waves workflow takes them. Default chant's. */
+  inputs?: Partial<Record<"pr" | "head" | "digest", string>>;
   /** The requires the forge is asked (`apply.requires`). Default every one. */
   requires?: PrApplyRequire[];
   /** The statuses that must have passed on the head: the product plan's `<product>/plan`, or one per target. */
