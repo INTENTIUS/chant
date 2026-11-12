@@ -245,6 +245,23 @@ export function opWavesCommandToken(token: OpWavesCommandToken | undefined, forg
   return { ...permissions };
 }
 
+/**
+ * GitLab (#5045): the `cache:` a product gives the wave jobs that run the
+ * wave's command, one entry or a list of them as GitLab takes them, such as
+ * terragucci's `{ key: terragucci-terragrunt, paths: [.terragrunt-cache/] }`.
+ * Each entry is a mapping with `paths` or `key`. Undefined when none.
+ */
+export function opWavesGitlabCache(cache: Record<string, unknown> | Array<Record<string, unknown>> | undefined): Record<string, unknown> | Array<Record<string, unknown>> | undefined {
+  if (cache === undefined) return undefined;
+  const entries = Array.isArray(cache) ? cache : [cache];
+  if (entries.length === 0) throw new Error("cache is a GitLab cache entry or a list of them; leave it out for none");
+  for (const entry of entries) {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) throw new Error("cache holds GitLab cache entries, each a mapping such as { key, paths }");
+    if (entry.paths === undefined && entry.key === undefined) throw new Error("a cache entry names its paths or its key");
+  }
+  return cache;
+}
+
 /** Refuse a product job of {@link opWavesFirstWaveNeeds} that is a job the generator writes (#5032). */
 export function assertFirstWaveNeedsOutside(needs: readonly string[], jobs: Iterable<string>): void {
   const mine = new Set(jobs);

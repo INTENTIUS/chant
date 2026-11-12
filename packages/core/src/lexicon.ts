@@ -1301,6 +1301,16 @@ export interface OpWavesPipelineOptions
    * no wave job holds a token, as before.
    */
   commandToken?: import("./op/op-waves-names").OpWavesCommandToken;
+  /**
+   * GitLab (#5045): the `cache:` of each job that runs the wave's command
+   * (the wave's own, deciding, share and job group jobs, the policy job, and
+   * a split wave's plan and applying jobs), one entry or a list as GitLab
+   * takes them, such as terragucci's Terragrunt sources and providers cache.
+   * The gate and record jobs plan and apply nothing, so they take none.
+   * GitHub and Forgejo refuse it: a wave's `setup` step does this there.
+   * Absent: no cache, as before.
+   */
+  cache?: Record<string, unknown> | Array<Record<string, unknown>>;
 }
 
 /** A run step a product adds to a generated job (#4791): its name, and its shell lines in order. */
