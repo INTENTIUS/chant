@@ -110,7 +110,11 @@
  * `CHANT_WAVES_BASE` for the command's `--base`, and checks the head out,
  * before the wave's setup. The evidence job signs at the head. The control
  * job runs for a push alone, and `before-merge-done` after the last wave
- * merges and releases the locks (`chant run wave --merge`).
+ * merges and releases the locks (`chant run wave --merge`). #5060: in a
+ * product's workflow (`runIf`) the control job runs on the default
+ * branch's push run, the merge commit's, after the product's
+ * `firstWaveNeeds` jobs and outside its `runIf`, and tells the control
+ * repo that the waves applied at `github.sha`.
  *
  * #4987: with `beforeMerge` each wave, on a push as well, is four jobs
  * ({@link githubSplitJobsDoc}, `@intentius/chant/op/op-waves-split`), so the
@@ -475,9 +479,13 @@ export function buildGithubOpWavesDoc(
   // #4617: once the last wave ran, one job tells the control repo how the waves ended. #4984: a push's run only.
   // #4987: a split pipeline's waves end with the last wave's record job.
   const last = split ? split.filter((j) => j.phase === "record" && j.wave === spec.waves.length).map((j) => j.jobName) : opWavesLastJobs(jobs);
+  // #5060: in a product's workflow before merge the waves applied before the merge, so the control job runs on the merge commit's push.
+  const controlOnMerge = bm !== undefined && options.runIf !== undefined;
+  let controlName: string | undefined;
   if (spec.control) {
-    const [name, job] = controlJob(spec, options, last, image, permissions, names, restWave !== undefined ? product : undefined);
-    jobsDoc[names.job({ role: "control", name })] = bm ? { ...job, if: `\${{ !cancelled() && ${names.input("head")} == '' }}` } : job;
+    const [name, job] = controlJob(spec, options, last, image, permissions, names, restWave !== undefined ? product : undefined, controlOnMerge ? { firstNeeds } : undefined);
+    controlName = names.job({ role: "control", name });
+    jobsDoc[controlName] = bm && !controlOnMerge ? { ...job, if: `\${{ !cancelled() && ${names.input("head")} == '' }}` } : job;
   }
   // #4984: after a before-merge run's last wave, the merge and the release of the change's locks.
   if (bm) jobsDoc[names.job({ role: "before-merge-done", name: BEFORE_MERGE_DONE_JOB })] = beforeMergeDoneJob(spec, options, bm, forge, last, image, bmEnv, names, restWave !== undefined);
@@ -497,7 +505,8 @@ export function buildGithubOpWavesDoc(
   // #5022: in a product's workflow each job runs on the waves' own events, with its own permissions.
   if (names.runIf !== undefined) {
     const when = names.when(bm !== undefined, restWave !== undefined);
-    for (const [name, job] of Object.entries(jobsDoc)) jobsDoc[name] = inProductWorkflow(job as Record<string, unknown>, when, permissions);
+    // #5060: a before-merge control job runs on the push the product's runIf leaves out.
+    for (const [name, job] of Object.entries(jobsDoc)) if (!(controlOnMerge && name === controlName)) jobsDoc[name] = inProductWorkflow(job as Record<string, unknown>, when, permissions);
   }
 
   // #3761: the notify variables come from the secrets of the same name; #4987: a split pipeline's gate and record jobs carry them.
@@ -973,8 +982,10 @@ function controlJob(
   permissions: Record<string, unknown>,
   names: Pick<GithubNames, "input">,
   restProduct?: string,
+  beforeMerge?: { firstNeeds: string[] },
 ): [string, Record<string, unknown>] {
   const control = spec.control!;
+  if (beforeMerge) return controlJobBeforeMerge(spec, options, beforeMerge.firstNeeds, image, permissions);
   // #4992: a push's follow-on run tells the control repo about the commit the waves went on with.
   const commit = restProduct !== undefined ? `\${{ ${names.input("commit")} || github.sha }}` : "${{ github.sha }}";
   // #5053: the product's group, one send per commit.
@@ -1007,6 +1018,53 @@ function controlJob(
       if: "!cancelled()",
       container: image,
       // markSent sets a commit status; the rest reads the repository and the run's artifacts.
+      permissions: marks ? { ...permissions, statuses: "write" } : permissions,
+      ...(group !== undefined ? { concurrency: { group, "cancel-in-progress": false } } : {}),
+      steps,
+    },
+  ];
+}
+
+/** #5060: on the default branch's push run before merge, the control job's condition. */
+export const GITHUB_CONTROL_BEFORE_MERGE_IF = "github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)";
+
+/**
+ * The control job of a before-merge pipeline (#5060). The waves applied the
+ * change before its merge, so the job runs on the push of the default
+ * branch, the merge commit's, after the product's jobs the first wave
+ * needs (`firstWaveNeeds`) and none of the waves' own, and tells the
+ * control repo that the waves applied at `github.sha`, adding up no
+ * outcomes. It stays out of the product's push `runIf`, which before merge
+ * runs no wave on that push.
+ */
+function controlJobBeforeMerge(spec: OpWavesSpec, options: OpWavesPipelineOptions, firstNeeds: string[], image: string, permissions: Record<string, unknown>): [string, Record<string, unknown>] {
+  const control = spec.control!;
+  const commit = "${{ github.sha }}";
+  const group = opWavesControlGroup(options.controlGroup, true, commit);
+  const dispatch = controlDispatchJob("github", opWavesControlTarget(control), commit, {
+    ...(options.words ? { words: options.words } : {}),
+    ...(control.sentCheck ? { sentCheck: control.sentCheck } : {}),
+    ...(control.markSent ? { markSent: control.markSent } : {}),
+    outcome: true,
+  });
+  const marks = control.sentCheck !== undefined || control.markSent !== undefined;
+  const steps: Array<Record<string, unknown>> = [
+    checkoutStep(true),
+    ...(spec.waves[0]?.setup ?? []).map(setupStepDoc),
+    ...runSteps(options.beforeScript ?? []),
+    {
+      name: `Tell the control repo ${control.repo} that ${control.member}'s waves applied`,
+      env: { ...dispatch.env, [CONTROL_OUTCOME_VAR]: "applied", ...(marks ? { GITHUB_TOKEN: GITHUB_JOB_TOKEN } : {}) },
+      run: dispatch.script,
+    },
+  ];
+  return [
+    dispatch.name,
+    {
+      "runs-on": githubRunsOn(spec.runner),
+      ...(firstNeeds.length > 0 ? { needs: firstNeeds } : {}),
+      if: `\${{ ${GITHUB_CONTROL_BEFORE_MERGE_IF} }}`,
+      container: image,
       permissions: marks ? { ...permissions, statuses: "write" } : permissions,
       ...(group !== undefined ? { concurrency: { group, "cancel-in-progress": false } } : {}),
       steps,

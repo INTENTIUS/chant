@@ -93,7 +93,9 @@ describe("Op waves from the default branch on GitHub (#5032)", () => {
 
   test("in a product's workflow, the product's runIf decides the push, and the guards still admit the default branch", () => {
     const jobs = jobsOf(spec, { ...beforeMerge, runIf: "github.ref_name == 'never'" });
-    for (const [name, job] of Object.entries(jobs)) expect(job.if, name).toContain("(github.event_name == 'push' && (github.ref_name == 'never'))");
+    // #5060: the control job runs on the default branch's push, which the product's runIf leaves out before merge.
+    for (const [name, job] of Object.entries(jobs)) if (name !== "control-dispatch") expect(job.if, name).toContain("(github.event_name == 'push' && (github.ref_name == 'never'))");
+    expect(jobs["control-dispatch"]!.if).toBe("${{ github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}");
     expect(JSON.parse(guardOf(jobs["wave-1-canary-plan"]!)!.env![JOB_GUARD_ENV]!)).toMatchObject({ defaultBranch: true });
   });
 

@@ -88,7 +88,12 @@
  * on. A CI/CD variable reaches every job, so every other job starts by
  * unsetting the control repo's token variables and the product's two
  * secret names; the dispatch step reads the token from the product's
- * variable alone and hands it to curl on its stdin (#4568).
+ * variable alone and hands it to curl on its stdin (#4568). #5060: in a
+ * product's pipeline (`runIf`) with `beforeMerge` the waves applied before
+ * the merge, so the job runs in the
+ * default branch's push pipeline, outside the product's `runIf`, needing
+ * only the product's `firstWaveNeeds` jobs, and tells the control repo that
+ * the waves applied at `$CI_COMMIT_SHA`.
  *
  * Each wave job's script starts with the apply-job guard (#4624,
  * `@intentius/chant/ci-job-guard`), before the trade: it stops the job
@@ -220,6 +225,9 @@ function withRunIf(job: Record<string, unknown>, runIf: string): Record<string, 
 export function gitlabBeforeMergeRule(branch: string): string {
   return `$CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/ && $${BEFORE_MERGE_HEAD_ENV} =~ /^[0-9a-f]{40,64}$/ && $CI_COMMIT_BRANCH == ${branch}`;
 }
+
+/** #5060: on the default branch's push pipeline before merge, the control job's rule. */
+export const GITLAB_CONTROL_BEFORE_MERGE_RULE = '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH';
 
 /** The one exit an op-wave job allows as a failure (#4322): a run that failed. The guard's refusal (9) is outside it. */
 export const OP_WAVE_ALLOWED_EXIT = CHANT_EXIT.failed;
@@ -567,7 +575,36 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
       },
     ]);
   }
-  if (control) {
+  // #5060: in a product's pipeline before merge the waves applied before the merge, so the merge commit's push tells the control repo they applied, adding up no outcomes.
+  const controlOnMerge = bm !== undefined && runIf !== undefined;
+  if (control && controlOnMerge) {
+    const controlGroup = opWavesControlGroup(options.controlGroup, true, "$CI_COMMIT_SHA");
+    const dispatch = controlDispatchJob("gitlab", control, "$CI_COMMIT_SHA", {
+      ...(options.words ? { words: options.words } : {}),
+      ...(spec.control!.sentCheck ? { sentCheck: spec.control!.sentCheck } : {}),
+      ...(spec.control!.markSent ? { markSent: spec.control!.markSent } : {}),
+      outcome: true,
+    });
+    entries.push([
+      namer.name({ role: "control", name: dispatch.name }),
+      {
+        stage: controlStage,
+        image,
+        ...(specTags ? { tags: specTags } : {}),
+        rules: [{ if: GITLAB_CONTROL_BEFORE_MERGE_RULE }],
+        // The product's jobs the first wave needs, and none of the waves', which ran before the merge.
+        needs: firstNeeds,
+        ...(controlGroup !== undefined ? { resource_group: controlGroup } : {}),
+        // The setup, if any, runs in a subshell without the control token.
+        script: [
+          ...(setupOf[0]!.length > 0 || (options.beforeScript ?? []).length > 0 ? [["(", ...dropControl, ...setupOf[0]!, ...(options.beforeScript ?? []), ") 1>&2 || exit 1"].join("\n")] : []),
+          `export ${CONTROL_OUTCOME_VAR}="applied"`,
+          ...Object.entries(dispatch.env).map(([k, v]) => `export ${k}="${v}"`),
+          `bash <<'CONTROL_DISPATCH' || exit $?\n${dispatch.script}\nCONTROL_DISPATCH`,
+        ],
+      },
+    ]);
+  } else if (control) {
     // #4992: a push's follow-on pipeline tells the control repo about the commit the waves went on with.
     // #5053: a resource_group expands variables but not a shell default, so a follow-on's group names CHANT_WAVES_COMMIT.
     const controlGroup = opWavesControlGroup(options.controlGroup, true, restWave !== undefined ? `$${OP_WAVES_COMMIT_ENV}` : "$CI_COMMIT_SHA");
@@ -635,12 +672,15 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
     ...(byReview
       ? [`# The ${spec.name}-approval-status job posts each open merge request's approval status from a pipeline schedule that sets ${OP_WAVES_APPROVAL_STATUS_VAR}=1.`]
       : []),
-    ...(control ? [`# After the last wave, the ${namer.name({ role: "control", name: CONTROL_DISPATCH_JOB })} job tells ${control.repo} how the waves ended.`] : []),
+    ...(control && controlOnMerge ? [`# On the default branch's push, the ${namer.name({ role: "control", name: CONTROL_DISPATCH_JOB })} job tells ${control.repo} that the waves applied before the merge.`] : []),
+    ...(control && !controlOnMerge ? [`# After the last wave, the ${namer.name({ role: "control", name: CONTROL_DISPATCH_JOB })} job tells ${control.repo} how the waves ended.`] : []),
   ];
+  // #5060: a before-merge control job runs on the push the product's runIf leaves out.
+  const controlKey = control && controlOnMerge ? namer.name({ role: "control", name: CONTROL_DISPATCH_JOB }) : undefined;
   assertFirstWaveNeedsOutside(firstNeedNames, entries.map(([key]) => key));
   const name = options.opsFileName ?? `${spec.name}.gitlab-ci.yml`;
   // #5022: in a product's pipeline every rule of every job also needs the product's condition; a rule that leaves a job out stays as it is.
-  const placed = runIf === undefined ? entries : entries.map(([key, job]) => [key, key === "stages" || key === "variables" ? job : withRunIf(job as Record<string, unknown>, runIf)] as const);
+  const placed = runIf === undefined ? entries : entries.map(([key, job]) => [key, key === "stages" || key === "variables" || key === controlKey ? job : withRunIf(job as Record<string, unknown>, runIf)] as const);
   return { files: [{ name, yaml: emitGitlabFile(placed, header) }], jobs: split ?? jobs };
 }
 

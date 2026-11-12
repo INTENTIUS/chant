@@ -246,6 +246,9 @@ export const OP_WAVES_SPLIT_RESUME_FLOOR = "0.124.94";
 /** The first chant whose `approvals.remainder` resumes the waves terragucci's own records resume (#5056): the terraform step gives a live choudoufu root's plan (`live-plan-set`) its `resourceDigests`, so its applied line names the changes, and the cover leaves out the cost member `(monthly cost)`, whose digest follows from the plans, on both sides. */
 export const OP_WAVES_REMAINDER_PARITY_FLOOR = "0.124.94";
 
+/** The first chant whose Op waves generators, in a product's workflow (`runIf`) with `beforeMerge` and a spec `control`, run the control job on the default branch's push, outside the product's `runIf` and after its `firstWaveNeeds` jobs, and tell the control repo the waves applied at the pushed commit without adding up outcomes, on GitHub, Forgejo and GitLab (#5060). */
+export const OP_WAVES_CONTROL_BEFORE_MERGE_FLOOR = NEXT_RELEASE;
+
 /** The first chant whose `chant run resume` (`resumeGateRun`) on GitLab retries a wave job's `<wave job>-evidence` with the wave job when the evidence job already ran, and whose `ci evidence sign --from-job` waits for a job it reads to finish, so a resumed wave's evidence job signs from the new try (#4978). */
 export const GITLAB_WAVE_EVIDENCE_RETRY_FLOOR = "0.124.89";
 
