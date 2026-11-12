@@ -1125,6 +1125,8 @@ function beforeMergeDoneJob(
     // waves before the rest wave were skipped, which success() counts against it, so it reads the last wave's own result.
     if: rest ? `\${{ !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'skipped') && ${head} != '' }}` : `\${{ success() && ${head} != '' }}`,
     container: image,
+    // #5037: the environment a merge token is scoped to.
+    ...(bm.environment !== undefined ? { environment: bm.environment } : {}),
     // contents: write releases the locks on chant/lifecycle; pull-requests: write merges and replies.
     permissions: { contents: "write", "pull-requests": "write", statuses: "read", checks: "read" },
     env: bmEnv,

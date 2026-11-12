@@ -199,6 +199,8 @@ export interface ProductWavesBeforeMerge {
   merge?: "auto" | "manual";
   /** The merge token's secret or CI/CD variable, with `merge: "auto"` (needed on Forgejo and GitLab). */
   mergeTokenSecret?: string;
+  /** The forge environment the merge job runs in, which the merge token is scoped to (#5037; GitHub and GitLab). `waves.pipeline` carries it as the generator's `beforeMerge.environment`. */
+  environment?: string;
   /** Paths a change may not touch to apply before merge; one ending in `/` is a directory. Default the forge's workflow directory and `.chant/op-waves/`. */
   pipelineFiles?: string[];
   /**
@@ -607,7 +609,7 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   if (!named || !specFile || !namedWaveJobs) return { ...out, record: record! };
   // #4984: what the generator's before-merge mode takes: the merge after the last wave and the lock file it releases.
   const beforeMerge: OpWavesBeforeMerge | undefined = wavesBeforeMerge
-    ? { ...(wavesBeforeMerge.merge ? { merge: wavesBeforeMerge.merge } : {}), ...(wavesBeforeMerge.mergeTokenSecret ? { mergeTokenSecret: wavesBeforeMerge.mergeTokenSecret } : {}), ...(productPlan?.reach?.gate ? { gate: productPlan.reach.gate } : {}) }
+    ? { ...(wavesBeforeMerge.merge ? { merge: wavesBeforeMerge.merge } : {}), ...(wavesBeforeMerge.mergeTokenSecret ? { mergeTokenSecret: wavesBeforeMerge.mergeTokenSecret } : {}), ...(wavesBeforeMerge.environment !== undefined ? { environment: wavesBeforeMerge.environment } : {}), ...(productPlan?.reach?.gate ? { gate: productPlan.reach.gate } : {}) }
     : undefined;
   // #4987: the apply statuses after each wave, and with a product plan the stale marking beside wave 1, one --member per target.
   const pipeline: Pick<OpWavesPipelineOptions, "beforeMerge" | "applyStatus" | "staleNotes" | "workflowFile" | "dispatchInputs" | "jobNames"> = {

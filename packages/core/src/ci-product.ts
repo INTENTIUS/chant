@@ -294,6 +294,11 @@ export const NOTIFY_RELAY_NAME_FLOOR = NEXT_RELEASE;
  * The first chant whose Op waves resume keeps a product's names (#5034): `resumeWorkflowFile` names the GitHub and Forgejo resume workflow's file (such as terragucci's `terragucci-resume.yml`; default `<spec>-resume.yml`, refused on GitLab and when it is the waves' own file), and `jobNames` is called for the resume job with the role `resume` (GitHub and Forgejo `resume`, GitLab `<spec>-resume` by default). Without them the files render as before.
  */
 export const OP_WAVES_RESUME_NAMES_FLOOR = NEXT_RELEASE;
+
+/**
+ * The first chant whose Op waves before merge take `beforeMerge.environment` (#5037): the forge environment the job after the last wave runs in, so a merge token scoped to it reaches that job alone (GitLab `environment: { name, action: access }`, GitHub `environment: <name>`; Forgejo refuses it), with the product pipeline's `wavesBeforeMerge.environment` carried through `waves.pipeline`. Without it the job is as before.
+ */
+export const WAVES_BEFORE_MERGE_ENVIRONMENT_FLOOR = NEXT_RELEASE;
 export { opWavesArtifacts, opWavesDispatchInputs, opWavesNamer, opWavesResumeWorkflowFile, opWavesWorkflowFile, type OpWavesArtifactNames, type OpWavesDispatchInput, type OpWavesJobNames, type OpWavesJobRef, type OpWavesJobRole, type OpWavesStageNames, type OpWavesStageRef } from "./op/op-waves-names";
 
 /**

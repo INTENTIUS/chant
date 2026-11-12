@@ -195,6 +195,14 @@ export interface OpWavesBeforeMerge {
   mergeTokenSecret?: string;
   /** The lock file the change's locks are in, `_locks/<gate>.json`, which `merge: "auto"` releases. Default the pull request loop's. */
   gate?: string;
+  /**
+   * The forge environment the job after the last wave runs in (#5037), so
+   * a merge token scoped to it reaches that job alone, such as terragucci's
+   * `terragucci-merge`. GitLab: `environment: { name, action: access }`,
+   * which deploys nothing. GitHub: `environment: <name>`, whose secrets the
+   * job reads. Forgejo has no environments and refuses it. Absent: none.
+   */
+  environment?: string;
 }
 
 /** The job after the last wave of a before-merge run (#4984). */
@@ -208,6 +216,10 @@ export function assertOpWavesBeforeMerge(forge: "github" | "forgejo" | "gitlab",
   if (bm.merge !== undefined && bm.merge !== "auto" && bm.merge !== "manual") throw new Error(`beforeMerge.merge is auto or manual, not ${JSON.stringify(bm.merge)}`);
   if (bm.mergeTokenSecret !== undefined && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(bm.mergeTokenSecret)) throw new Error(`beforeMerge.mergeTokenSecret ${JSON.stringify(bm.mergeTokenSecret)} is not a variable name`);
   if (bm.gate !== undefined && !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(bm.gate)) throw new Error(`beforeMerge.gate ${JSON.stringify(bm.gate)} is not a lock file name`);
+  if (bm.environment !== undefined) {
+    if (forge === "forgejo") throw new Error("beforeMerge.environment names a forge environment, and Forgejo Actions has none; scope the merge token another way, or leave it out");
+    if (typeof bm.environment !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.\/-]{0,254}$/.test(bm.environment)) throw new Error(`beforeMerge.environment ${JSON.stringify(bm.environment)} is not an environment name`);
+  }
   if (bm.merge === "auto" && forge !== "github" && !bm.mergeTokenSecret) {
     throw new Error(`beforeMerge.merge auto on ${forge} needs mergeTokenSecret: ${forge === "forgejo" ? "Forgejo refuses a merge made with the job's own token" : "GitLab's job token cannot merge"}`);
   }

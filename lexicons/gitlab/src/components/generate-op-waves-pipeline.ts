@@ -504,6 +504,8 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
         ...(specTags ? { tags: specTags } : {}),
         variables: { ...GITLAB_FULL_HISTORY, ...(bm.merge === "auto" && bm.mergeTokenSecret ? { [BEFORE_MERGE_TOKEN_ENV]: `$${bm.mergeTokenSecret}` } : {}) },
         rules: bmRules,
+        // #5037: the environment a merge token is scoped to; the job deploys nothing.
+        ...(bm.environment !== undefined ? { environment: { name: bm.environment, action: "access" } } : {}),
         needs: last,
         script: [...dropControl, ...setupOf[0]!, ...(options.beforeScript ?? []), beforeMergeDoneCommand(spec, "gitlab", bm, options.bin)],
       },
