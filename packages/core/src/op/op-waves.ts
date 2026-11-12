@@ -483,8 +483,19 @@ export interface OpWavesSpec {
    * so a change cannot drop the rule for its own gates.
    */
   neverOverMcp?: boolean;
-  /** Branches whose pushes run the waves. Default `["main"]`. */
+  /** Branches whose pushes run the waves. Default `["main"]`, or none beside the default branch with `defaultBranch`. */
   branches?: string[];
+  /**
+   * The pushes to the repository's default branch run the waves, by the
+   * name the forge gives it at run time (#5032): GitHub and Forgejo
+   * `github.event.repository.default_branch`, GitLab `$CI_DEFAULT_BRANCH`.
+   * `branches` names more beside it, and `main` is no longer the default.
+   * The job guard admits the default branch and those, the GitLab rules
+   * match the same, and the stand-down counts a newer commit on it. A
+   * product that renders the waves into a workflow of its own sets this
+   * when it never learns the branch's name. Default false.
+   */
+  defaultBranch?: boolean;
   /**
    * An apply stands down when a newer commit on the branch will apply the
    * same targets (#4581): its wave applies nothing, the job exits 6
@@ -996,6 +1007,7 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
   }
   assertOpWaveHooks(where, spec.hooks);
   if (spec.standDown !== undefined && typeof spec.standDown !== "boolean") throw new Error(`${where}: \`standDown\` must be true or false.`);
+  if (spec.defaultBranch !== undefined && typeof spec.defaultBranch !== "boolean") throw new Error(`${where}: \`defaultBranch\` must be true or false.`);
   {
     const problems = opWaveReleaseProblems(spec);
     if (problems.length > 0) throw new Error(`${where}: ${problems.join("; ")}.`);

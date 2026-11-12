@@ -150,7 +150,7 @@ export {
   opWavesRenderSpecProblems,
 } from "./op-waves-render-spec";
 export type { OpWavesRenderSpec } from "./op-waves-render-spec";
-export { OP_WAVE_STAND_DOWN_FLOOR, gitOpWaveNewerCommit, newerCommitOnBranch, opWaveRunBranch, opWaveStandDownReason, tipAppliesTargets } from "./op-waves-stand-down";
+export { OP_WAVE_STAND_DOWN_FLOOR, gitOpWaveNewerCommit, newerCommitOnBranch, opWaveDefaultBranch, opWaveRunBranch, opWaveStandDownReason, tipAppliesTargets } from "./op-waves-stand-down";
 export type { OpWaveNewerCommit, OpWaveNewerCommitPort } from "./op-waves-stand-down";
 export { OP_WAVE_RELEASE_RECORD_FLOOR, opWaveReleaseNames, opWaveReleaseProblems, releaseOfCommit } from "./op-waves-release";
 export { gitOpWaveReleasePort } from "./op-waves-release-port";

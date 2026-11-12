@@ -17,7 +17,12 @@
  *   ref                GitHub and Forgejo: GITHUB_REF is refs/heads/<branch>
  *                      for one of the branches the waves apply from. GitLab:
  *                      CI_COMMIT_REF_NAME is one of them, and
- *                      CI_COMMIT_REF_PROTECTED is "true".
+ *                      CI_COMMIT_REF_PROTECTED is "true". With
+ *                      `defaultBranch` (#5032) the repository's default
+ *                      branch is one of them, by the name the forge gives
+ *                      at run time: GitLab's CI_DEFAULT_BRANCH, and on
+ *                      GitHub and Forgejo CHANT_DEFAULT_BRANCH, which the
+ *                      job sets from github.event.repository.default_branch.
  *   runner             GitLab: CI_RUNNER_TAGS holds each of the job's tags.
  *                      GitHub and Forgejo expose no labels, only whether the
  *                      runner is self-hosted: when the job's labels include
@@ -80,6 +85,16 @@ import { followOnPath, followOnProblems, followOnRecordProblems, followOnRunFrom
 /** The variable the generated step carries its expectation in. */
 export const JOB_GUARD_ENV = "CHANT_JOB_GUARD";
 
+/**
+ * The variable a GitHub or Forgejo job carries the repository's default
+ * branch in (#5032), from `github.event.repository.default_branch`. GitLab
+ * sets `CI_DEFAULT_BRANCH` itself.
+ */
+export const JOB_DEFAULT_BRANCH_ENV = "CHANT_DEFAULT_BRANCH";
+
+/** The job variable that sets {@link JOB_DEFAULT_BRANCH_ENV} on GitHub and Forgejo (#5032). */
+export const GITHUB_DEFAULT_BRANCH_ENV: Record<string, string> = { [JOB_DEFAULT_BRANCH_ENV]: "${{ github.event.repository.default_branch }}" };
+
 /** The audience of the token the guard requests on GitHub, which no cloud role should trust. */
 export const JOB_GUARD_AUDIENCE = "chant-check-job";
 
@@ -96,6 +111,8 @@ export interface JobGuardSpec {
   forgeEnvironment?: string;
   /** The branches the job may run from. */
   branches: string[];
+  /** The job may also run from the repository's default branch, by the name the forge gives at run time (#5032). */
+  defaultBranch?: true;
   /** GitLab: the tags the job's runner must carry. */
   runnerTags?: string[];
   /** GitHub and Forgejo: the runner must be self-hosted. */
@@ -114,6 +131,8 @@ export interface JobSeen {
   forgeEnvironmentError?: string;
   ref?: string;
   refProtected?: string;
+  /** The repository's default branch, as the forge names it (#5032). Read only when the spec has `defaultBranch`. */
+  defaultBranch?: string;
   runnerTags?: string[];
   runnerEnvironment?: string;
   /** The decision the run names (#4984), from its variables. */
@@ -148,6 +167,8 @@ export interface JobGuardInput {
   environment?: string;
   /** The branches the job runs from. */
   branches: readonly string[];
+  /** The job also runs from the repository's default branch, whatever the forge calls it (#5032). */
+  defaultBranch?: boolean;
   /** The job's runner, as the spec gives it. */
   runner?: CiRunner;
   /** GitHub: the job may request an OIDC token (`id-token: write`), so the guard can read its environment. */
@@ -171,6 +192,7 @@ export function jobGuardSpec(input: JobGuardInput): JobGuardSpec {
     ...(input.product && input.product !== "chant" ? { product: input.product } : {}),
     ...(input.environment !== undefined && readsEnvironment ? { forgeEnvironment: input.environment } : {}),
     branches: [...input.branches],
+    ...(input.defaultBranch === true ? { defaultBranch: true as const } : {}),
     ...(input.forge === "gitlab" && labels.length > 0 ? { runnerTags: labels } : {}),
     ...(input.forge !== "gitlab" && labels.includes("self-hosted") ? { selfHosted: true } : {}),
     ...(input.beforeMerge ? { beforeMerge: { op: input.beforeMerge.op } } : {}),
@@ -192,6 +214,7 @@ export function parseJobGuardSpec(raw: string | undefined): JobGuardSpec {
   if (o.forge !== "github" && o.forge !== "gitlab" && o.forge !== "forgejo") throw new Error(`${JOB_GUARD_ENV}.forge is ${JSON.stringify(o.forge)}; give github, gitlab or forgejo`);
   if (typeof o.job !== "string" || o.job === "") throw new Error(`${JOB_GUARD_ENV}.job names no job`);
   if (!Array.isArray(o.branches) || o.branches.some((b) => typeof b !== "string")) throw new Error(`${JOB_GUARD_ENV}.branches is not a list of branches`);
+  if (o.defaultBranch !== undefined && o.defaultBranch !== true) throw new Error(`${JOB_GUARD_ENV}.defaultBranch is true or absent`);
   if (o.forgeEnvironment !== undefined && typeof o.forgeEnvironment !== "string") throw new Error(`${JOB_GUARD_ENV}.forgeEnvironment is not a name`);
   if (o.runnerTags !== undefined && (!Array.isArray(o.runnerTags) || o.runnerTags.some((t) => typeof t !== "string"))) throw new Error(`${JOB_GUARD_ENV}.runnerTags is not a list of tags`);
   if (o.beforeMerge !== undefined && (typeof o.beforeMerge !== "object" || o.beforeMerge === null || typeof o.beforeMerge.op !== "string")) throw new Error(`${JOB_GUARD_ENV}.beforeMerge is { op }`);
@@ -200,6 +223,9 @@ export function parseJobGuardSpec(raw: string | undefined): JobGuardSpec {
 }
 
 const shown = (v: string | null | undefined): string => (v === undefined || v === null || v === "" ? "none" : v);
+
+/** The variable the guard reads the default branch from (#5032). */
+const defaultBranchVar = (forge: JobGuardForge): string => (forge === "gitlab" ? "CI_DEFAULT_BRANCH" : JOB_DEFAULT_BRANCH_ENV);
 
 /** The tags CI_RUNNER_TAGS lists: a JSON array, or a comma-separated list. */
 export function runnerTagsOf(raw: string | undefined): string[] | undefined {
@@ -237,8 +263,11 @@ export function checkJob(expect: JobGuardSpec, seen: JobSeen): JobGuardResult {
     else out.checked.push(`forge environment ${fe}`);
   }
 
-  const branches = expect.branches.filter((b) => b !== "");
-  if (branches.length === 0) out.problems.push("ref: the job names no branch to run from");
+  // #5032: the repository's default branch, by the name the forge gives this run, beside the named ones.
+  const named = expect.branches.filter((b) => b !== "");
+  const def = expect.defaultBranch ? (seen.defaultBranch ?? "").trim() : "";
+  const branches = def !== "" && !named.includes(def) ? [def, ...named] : named;
+  if (branches.length === 0) out.problems.push(expect.defaultBranch ? `ref: the job runs from the default branch, and the forge names none (no ${defaultBranchVar(expect.forge)})` : "ref: the job names no branch to run from");
   else if (expect.forge === "gitlab") {
     if (!seen.ref || !branches.includes(seen.ref)) out.problems.push(`ref: expected ${branches.join(" or ")}, found ${shown(seen.ref)}`);
     else out.checked.push(`ref ${seen.ref}`);
@@ -373,15 +402,19 @@ export const lifecycleFileByGit: LifecycleFileReader = (forge, env, path) => {
 
 /** What the forge's own variables and token say, before the decision is read. */
 async function forgeSeen(expect: JobGuardSpec, env: NodeJS.ProcessEnv, fetchFn: typeof fetch): Promise<JobSeen> {
+  // #5032: the default branch, read only when the spec runs from it.
+  const def = expect.defaultBranch ? env[defaultBranchVar(expect.forge)] : undefined;
+  const defaultBranch = def !== undefined && def.trim() !== "" ? { defaultBranch: def.trim() } : {};
   if (expect.forge === "gitlab") {
     return {
+      ...defaultBranch,
       forgeEnvironment: env.CI_ENVIRONMENT_NAME || null,
       ...(env.CI_COMMIT_REF_NAME !== undefined ? { ref: env.CI_COMMIT_REF_NAME } : {}),
       ...(env.CI_COMMIT_REF_PROTECTED !== undefined ? { refProtected: env.CI_COMMIT_REF_PROTECTED } : {}),
       ...(env.CI_RUNNER_TAGS !== undefined ? { runnerTags: runnerTagsOf(env.CI_RUNNER_TAGS) } : {}),
     };
   }
-  const seen: JobSeen = { ...(env.GITHUB_REF !== undefined ? { ref: env.GITHUB_REF } : {}) };
+  const seen: JobSeen = { ...(env.GITHUB_REF !== undefined ? { ref: env.GITHUB_REF } : {}), ...defaultBranch };
   let claims: Record<string, unknown> | undefined;
   if (expect.forge === "github" && expect.forgeEnvironment !== undefined) {
     try {
@@ -478,8 +511,19 @@ const FOLLOW_ON_JS = [
  * Exits chant's `misplaced` (9) with one line per value that differs, and
  * when the variable holds no spec it can read. A test runs it against
  * {@link checkJob} so the two stay the same.
+ *
+ * `defaultBranch` (#5032) gives the program that also reads the default
+ * branch, for a spec with `defaultBranch`; a job without it carries the
+ * program as it was.
  */
-export const JOB_GUARD_JS = [
+function jobGuardProgram(defaultBranch: boolean): string {
+  const branchLines = defaultBranch
+    ? [
+        `const b=x.branches.filter((v)=>v!=="");const DV=x.forge==="gitlab"?"CI_DEFAULT_BRANCH":${JSON.stringify(JOB_DEFAULT_BRANCH_ENV)};const D=x.defaultBranch?String(E[DV]||"").trim():"";if(D!==""&&!b.includes(D))b.unshift(D);`,
+        'if(b.length===0)P.push(x.defaultBranch?"ref: the job runs from the default branch, and the forge names none (no "+DV+")":"ref: the job names no branch to run from");',
+      ]
+    : ['const b=x.branches.filter((v)=>v!=="");', 'if(b.length===0)P.push("ref: the job names no branch to run from");'];
+  return [
   '"use strict";',
   `const E=process.env,A=${JSON.stringify(JOB_GUARD_AUDIENCE)};`,
   "const shown=(v)=>v===undefined||v===null||v===\"\"?\"none\":v;",
@@ -502,8 +546,7 @@ export const JOB_GUARD_JS = [
   "seenOf().then((s)=>{const P=[],C=[],S=[];const fe=x.forgeEnvironment;",
   'if(x.forge==="forgejo")S.push("forge environment (Forgejo has none)");',
   'else if(fe!==undefined){if(s.forgeEnvironmentError!==undefined)P.push("forge environment: expected "+fe+", and it could not be read: "+s.forgeEnvironmentError);else if(s.forgeEnvironment!==fe)P.push("forge environment: expected "+fe+", found "+shown(s.forgeEnvironment));else C.push("forge environment "+fe)}',
-  'const b=x.branches.filter((v)=>v!=="");',
-  'if(b.length===0)P.push("ref: the job names no branch to run from");',
+  ...branchLines,
   'else if(x.forge==="gitlab"){if(!s.ref||!b.includes(s.ref))P.push("ref: expected "+b.join(" or ")+", found "+shown(s.ref));else C.push("ref "+s.ref);',
   'if(s.refProtected!=="true")P.push("ref: expected a protected ref (CI_COMMIT_REF_PROTECTED true), found "+shown(s.refProtected));else C.push("protected ref")}',
   'else{const refs=b.map((v)=>"refs/heads/"+v);if(!s.ref||!refs.includes(s.ref))P.push("ref: expected "+refs.join(" or ")+", found "+shown(s.ref));else C.push("ref "+s.ref)}',
@@ -521,10 +564,21 @@ export const JOB_GUARD_JS = [
   'console.log(at+": "+(C.length?C.join(", "):"nothing to check")+(S.length?"; not checked: "+S.join(", "):""))',
   "}).catch((e)=>fail(e&&e.message?e.message:String(e)));",
 ].join("");
+}
 
-/** The shell line of the guard step: `node -e` from `/`, so no file of the checkout is in reach. */
-export function jobGuardLine(): string {
-  return `(cd / && node -e '${JOB_GUARD_JS}')`;
+/** The guard as one `node -e` program; see {@link jobGuardProgram}. */
+export const JOB_GUARD_JS = jobGuardProgram(false);
+
+/** The same program for a spec with `defaultBranch` (#5032), which also reads the default branch. */
+export const JOB_GUARD_DEFAULT_BRANCH_JS = jobGuardProgram(true);
+
+/**
+ * The shell line of the guard step: `node -e` from `/`, so no file of the
+ * checkout is in reach. #5032: a spec with `defaultBranch` gets the program
+ * that reads the default branch.
+ */
+export function jobGuardLine(spec?: Pick<JobGuardSpec, "defaultBranch">): string {
+  return `(cd / && node -e '${spec?.defaultBranch ? JOB_GUARD_DEFAULT_BRANCH_JS : JOB_GUARD_JS}')`;
 }
 
 /** How the guard's lines name an op-wave job: `wave 2 (prod) of deploy`, `share 1 of job group eu of wave 2 (prod) of deploy`. */
