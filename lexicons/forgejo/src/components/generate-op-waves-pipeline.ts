@@ -41,7 +41,7 @@
 import { buildGithubOpWavesDoc } from "@intentius/chant-lexicon-github/components/generate-op-waves-pipeline";
 import { emitOpPipelineYAML } from "@intentius/chant-lexicon-github/components/generate-op-pipeline";
 import type { OpWavesSpec } from "@intentius/chant/op/op-waves";
-import { opWavesWorkflowFile } from "@intentius/chant/op/op-waves-names";
+import { opWavesResumeWorkflowFile, opWavesWorkflowFile } from "@intentius/chant/op/op-waves-names";
 import { assertRunnerLabels } from "@intentius/chant/ci-jobs";
 import type { OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
 import type { ForgejoDialectOptions } from "../dialect";
@@ -77,7 +77,8 @@ export function generateForgejoOpWavesPipeline(
     for (const job of Object.values(resume.jobsDoc) as Array<{ steps: Array<Record<string, unknown>> }>) {
       for (const step of job.steps) if (step.env) step.env = { ...FORGE_TOKEN_ENV };
     }
-    files.push({ name: `${spec.name}-resume.yml`, yaml: emitOpPipelineYAML(grouped(resume)) });
+    // #5034: in the product's file.
+    files.push({ name: opWavesResumeWorkflowFile(spec, options.resumeWorkflowFile, files[0]!.name), yaml: emitOpPipelineYAML(grouped(resume)) });
   }
   if (plansDoc) files.push({ name: `${spec.name}-plans.yml`, yaml: emitOpPipelineYAML(grouped(forgejoWorkflowDoc(plansDoc, dialectOptions))) });
   return { files, jobs };

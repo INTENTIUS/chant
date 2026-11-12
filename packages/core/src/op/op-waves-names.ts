@@ -43,7 +43,8 @@ export type OpWavesJobRole =
   | "apply-status"
   | "stale-notes"
   | "before-merge-done"
-  | "control";
+  | "control"
+  | "resume";
 
 /** One job the generator names (#5022). */
 export interface OpWavesJobRef {
@@ -55,7 +56,9 @@ export interface OpWavesJobRef {
    * job. `plan`, `gate`, `apply`, `record`: a split wave's jobs before merge
    * (`apply` with `share` or `group` for a wide wave's). `policy` (GitLab),
    * `evidence`: the jobs of a wave's checks. The rest are the jobs after
-   * or beside the waves.
+   * or beside the waves; `resume` (#5034) is the scheduled job that starts
+   * a waiting wave's job again, `resume` in its own workflow on GitHub and
+   * Forgejo and `<spec>-resume` on GitLab.
    */
   role: OpWavesJobRole;
   /** The wave's number from 1, and its name, on every job but the stale and control jobs and the before-merge done job. */
@@ -173,6 +176,18 @@ export function opWavesArtifacts(spec: Pick<OpWavesSpec, "name">, given: OpWaves
 export function opWavesWorkflowFile(spec: Pick<OpWavesSpec, "name">, file: string | undefined): string {
   if (file === undefined) return `${spec.name}.yml`;
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\.ya?ml$/.test(file)) throw new Error(`workflowFile ${JSON.stringify(file)} is a workflow file's name, like terragucci.yml, in the forge's workflow directory`);
+  return file;
+}
+
+/**
+ * The file the resume workflow goes in (#5034, GitHub and Forgejo):
+ * `resumeWorkflowFile`, such as terragucci's `terragucci-resume.yml`, else
+ * `<spec>-resume.yml`. Refused when it is the waves' own file.
+ */
+export function opWavesResumeWorkflowFile(spec: Pick<OpWavesSpec, "name">, file: string | undefined, wavesFile: string): string {
+  if (file === undefined) return `${spec.name}-resume.yml`;
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\.ya?ml$/.test(file)) throw new Error(`resumeWorkflowFile ${JSON.stringify(file)} is a workflow file's name, like terragucci-resume.yml, in the forge's workflow directory`);
+  if (file === wavesFile) throw new Error(`resumeWorkflowFile ${JSON.stringify(file)} is the waves' own workflow; the resume runs on a schedule of its own`);
   return file;
 }
 

@@ -289,7 +289,12 @@ export const OP_WAVES_FIRST_WAVE_NEEDS_FLOOR = NEXT_RELEASE;
  * The first chant whose notify config takes `relayName` (#5033): the relay's name as people mention it in Teams, a plain value, which `sendNotify` (and so a wave's and a drift notice's messages) passes to the Teams card over the product's words' own, so a waiting wave's card spells out `reply @<name> approve <token>`. Without it the messages are as before.
  */
 export const NOTIFY_RELAY_NAME_FLOOR = NEXT_RELEASE;
-export { opWavesArtifacts, opWavesDispatchInputs, opWavesNamer, opWavesWorkflowFile, type OpWavesArtifactNames, type OpWavesDispatchInput, type OpWavesJobNames, type OpWavesJobRef, type OpWavesJobRole, type OpWavesStageNames, type OpWavesStageRef } from "./op/op-waves-names";
+
+/**
+ * The first chant whose Op waves resume keeps a product's names (#5034): `resumeWorkflowFile` names the GitHub and Forgejo resume workflow's file (such as terragucci's `terragucci-resume.yml`; default `<spec>-resume.yml`, refused on GitLab and when it is the waves' own file), and `jobNames` is called for the resume job with the role `resume` (GitHub and Forgejo `resume`, GitLab `<spec>-resume` by default). Without them the files render as before.
+ */
+export const OP_WAVES_RESUME_NAMES_FLOOR = NEXT_RELEASE;
+export { opWavesArtifacts, opWavesDispatchInputs, opWavesNamer, opWavesResumeWorkflowFile, opWavesWorkflowFile, type OpWavesArtifactNames, type OpWavesDispatchInput, type OpWavesJobNames, type OpWavesJobRef, type OpWavesJobRole, type OpWavesStageNames, type OpWavesStageRef } from "./op/op-waves-names";
 
 /**
  * Day-2 actions in the product pipeline (#4654): the `action` comment

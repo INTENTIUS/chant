@@ -1253,6 +1253,13 @@ export interface OpWavesPipelineOptions
    */
   workflowFile?: string;
   /**
+   * GitHub and Forgejo (#5034): the file the spec's `resume` workflow goes
+   * in, such as terragucci's `terragucci-resume.yml`. GitLab refuses it
+   * (its resume job is in the pipeline; `jobNames` names it with the role
+   * `resume`). Absent: `<spec>-resume.yml`.
+   */
+  resumeWorkflowFile?: string;
+  /**
    * The jobs go in a product's own workflow or pipeline beside its other
    * jobs (#5022). GitHub and Forgejo: an expression (without `${{ }}`)
    * for the push the waves run on, such as `github.ref ==
