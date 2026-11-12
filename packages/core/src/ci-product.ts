@@ -13,7 +13,6 @@ import type { CiProductWords, CiProductWordsInput } from "./ci-product-words";
 import type { ProductMcpHook } from "./cli/mcp/product-tools";
 import type { ProductWaveHook } from "./op/op-waves-after-plan";
 import { OTLP_EXPORTER_FLOOR } from "./otlp";
-import { NEXT_RELEASE } from "./release-floors";
 
 /**
  * The first chant with the product pipeline (#4550): the words, the
@@ -278,32 +277,32 @@ export const PRODUCT_JOB_NAMES_FLOOR = "0.124.92";
 /**
  * The first chant whose Op waves run from the repository's default branch by the name the forge gives it at run time (#5032): the spec's `defaultBranch: true`, with or without `branches` beside it. Every job's guard admits the default branch (GitLab's `CI_DEFAULT_BRANCH`; on GitHub and Forgejo `CHANT_DEFAULT_BRANCH`, which each guarded job sets from `github.event.repository.default_branch`) and the named branches, every GitLab rule matches `$CI_DEFAULT_BRANCH` (the push's, the before-merge and the follow-on pipelines', the evidence, status, control and stale-notes jobs'), the GitHub and Forgejo jobs' `if:` names it when the product gives no `runIf`, and the stand-down counts a newer commit on it. Without it the waves run from `branches`, default `main`, as before.
  */
-export const OP_WAVES_DEFAULT_BRANCH_FLOOR = NEXT_RELEASE;
+export const OP_WAVES_DEFAULT_BRANCH_FLOOR = "0.124.93";
 
 /**
  * The first chant whose Op waves generators take `firstWaveNeeds` (#5032): the product's own jobs, such as terragucci's `check`, that the first wave's own or deciding job (and before merge its plan job, and on GitLab its policy job) needs, so a push that fails the product's check applies nothing. GitHub and Forgejo: each must pass, or, in a dispatched run, not have run, and it goes with `runIf`; GitLab: optional needs, each to pass. Absent, the jobs render as before.
  */
-export const OP_WAVES_FIRST_WAVE_NEEDS_FLOOR = NEXT_RELEASE;
+export const OP_WAVES_FIRST_WAVE_NEEDS_FLOOR = "0.124.93";
 
 /**
  * The first chant whose notify config takes `relayName` (#5033): the relay's name as people mention it in Teams, a plain value, which `sendNotify` (and so a wave's and a drift notice's messages) passes to the Teams card over the product's words' own, so a waiting wave's card spells out `reply @<name> approve <token>`. Without it the messages are as before.
  */
-export const NOTIFY_RELAY_NAME_FLOOR = NEXT_RELEASE;
+export const NOTIFY_RELAY_NAME_FLOOR = "0.124.93";
 
 /**
  * The first chant whose Op waves resume keeps a product's names (#5034): `resumeWorkflowFile` names the GitHub and Forgejo resume workflow's file (such as terragucci's `terragucci-resume.yml`; default `<spec>-resume.yml`, refused on GitLab and when it is the waves' own file), and `jobNames` is called for the resume job with the role `resume` (GitHub and Forgejo `resume`, GitLab `<spec>-resume` by default). Without them the files render as before.
  */
-export const OP_WAVES_RESUME_NAMES_FLOOR = NEXT_RELEASE;
+export const OP_WAVES_RESUME_NAMES_FLOOR = "0.124.93";
 
 /**
  * The first chant whose Op waves before merge take `beforeMerge.environment` (#5037): the forge environment the job after the last wave runs in, so a merge token scoped to it reaches that job alone (GitLab `environment: { name, action: access }`, GitHub `environment: <name>`; Forgejo refuses it), with the product pipeline's `wavesBeforeMerge.environment` carried through `waves.pipeline`. Without it the job is as before.
  */
-export const WAVES_BEFORE_MERGE_ENVIRONMENT_FLOOR = NEXT_RELEASE;
+export const WAVES_BEFORE_MERGE_ENVIRONMENT_FLOOR = "0.124.93";
 
 /**
  * The first chant whose GitLab note poll keeps a product's names (#5038): the product pipeline's `noteCommandsJob` gives its job's name (default `note-commands`), its stage (default the job's name) and the variable and value a pipeline schedule starts it with (default `CHANT_NOTE_COMMANDS=1`), such as terragucci's `comments` job and `TERRAGUCCI_SCHEDULE=comments`, rendered in the job, its stage, its rule, its resource group and the workflow's rules. Refused on GitHub and Forgejo, without `noteCommands`, and on a name another job has. Without it the pipeline is as before.
  */
-export const NOTE_POLL_NAMES_FLOOR = NEXT_RELEASE;
+export const NOTE_POLL_NAMES_FLOOR = "0.124.93";
 export { opWavesArtifacts, opWavesDispatchInputs, opWavesNamer, opWavesResumeWorkflowFile, opWavesWorkflowFile, type OpWavesArtifactNames, type OpWavesDispatchInput, type OpWavesJobNames, type OpWavesJobRef, type OpWavesJobRole, type OpWavesStageNames, type OpWavesStageRef } from "./op/op-waves-names";
 
 /**
