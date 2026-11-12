@@ -618,7 +618,10 @@ Ops:
                         --render-spec runs the command CHANT_WAVES_SPEC_COMMAND
                         names (a JSON argv) with CHANT_WAVES_SPEC_AT set to
                         the base, writes the spec it prints over --spec, and
-                        reads the rules at base from it (#4982).
+                        reads the rules at base from it (#4982). With
+                        CHANT_WAVES_SPEC_RUNS=head the spec it writes is
+                        printed at HEAD, with CHANT_WAVES_SPEC_BASE set to
+                        the base, and the rules still come from base (#5046).
                         --phase plan|gate|apply|record: one of a wave's four
                         jobs before merge (#4987). plan saves the plan and
                         writes nothing to chant/lifecycle; gate decides the

@@ -1490,7 +1490,8 @@ export function opWaveShare<T extends { target: string }>(runs: readonly T[], sh
  * product's command in place of `chant` (#4607, {@link opWaveBinArgv}).
  * With `renderSpec` (#4982) every command passes `--render-spec`: the job
  * renders the spec at base through the product's command
- * (`./op-waves-render-spec.ts`), and `spec` is the pipeline's shape.
+ * (`./op-waves-render-spec.ts`; with `runsAtHead` the runs at the applied
+ * commit, #5046), and `spec` is the pipeline's shape.
  * With `beforeMerge` (#4984) every command reads its base from
  * `CHANT_WAVES_BASE` when the run checked out a pull request's decided
  * head, else from the spec's `base` (or `HEAD^1`), as a push run does.

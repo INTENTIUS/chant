@@ -143,9 +143,12 @@ export { notifyOpWave, opWaveNotifyFields } from "./op-waves-notify";
 export {
   OP_WAVES_RENDER_SPEC_FLAG,
   OP_WAVES_SPEC_AT_ENV,
+  OP_WAVES_SPEC_BASE_ENV,
   OP_WAVES_SPEC_COMMAND_ENV,
   OP_WAVES_SPEC_FILE_ENV,
+  OP_WAVES_SPEC_RUNS_ENV,
   RUNTIME_WAVES_SPEC_FLOOR,
+  RUNTIME_WAVES_SPEC_RUNS_AT_HEAD_FLOOR,
   opWavesRenderSpecEnv,
   opWavesRenderSpecProblems,
 } from "./op-waves-render-spec";

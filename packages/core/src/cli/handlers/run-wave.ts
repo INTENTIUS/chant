@@ -131,9 +131,22 @@ async function runOpWaveJobCommand(ctx: CommandContext): Promise<number> {
     if (args.renderSpec) {
       const at = await import("../../op/op-waves-render-spec");
       const file = relative(process.cwd(), path);
-      show = at.renderedSpecShow(file, at.commandSpecRender(at.opWavesSpecCommandFromEnv(), file, process.cwd()), gitShowAtBase);
-      spec = at.renderOpWavesSpecFile({ specFile: file, base: args.base ?? "HEAD^1", cwd: process.cwd(), show, parse: parseOpWavesSpec }).spec;
-      const missing = at.renderedJobMissing(spec, args.wave, job);
+      const command = at.opWavesSpecCommandFromEnv();
+      // #5046: with CHANT_WAVES_SPEC_RUNS=head the runs come from the applied commit; the gate and record jobs take them from the saved plan.
+      const runsAtHead = at.opWavesSpecRunsAtHead() && phase !== "gate" && phase !== "record";
+      const rendered = at.renderOpWavesJobSpec({
+        specFile: file,
+        base: args.base ?? "HEAD^1",
+        cwd: process.cwd(),
+        render: at.commandSpecRender(command, file, process.cwd()),
+        fallback: gitShowAtBase,
+        parse: parseOpWavesSpec,
+        ...(runsAtHead ? { runsAtHead, headRender: (baseSha: string) => at.commandSpecRender(command, file, process.cwd(), { [at.OP_WAVES_SPEC_BASE_ENV]: baseSha }) } : {}),
+      });
+      show = rendered.show;
+      spec = rendered.spec;
+      if (runsAtHead) console.error(`${spec.name}: the runs come from the spec rendered at ${rendered.sha.slice(0, 12)}, the applied commit; the rules from the one rendered at base`);
+      const missing = at.renderedJobMissing(spec, args.wave, job, rendered.at);
       if (missing) {
         console.error(`${missing}, so this job has nothing to apply`);
         return 0;

@@ -35,6 +35,13 @@ describe("a spec the job renders at run time on GitLab (#4982)", () => {
     expect(ev.variables!.CHANT_WAVES_SPEC_COMMAND).toBeUndefined();
   });
 
+  test("runsAtHead: the wave job and its policy job carry CHANT_WAVES_SPEC_RUNS=head (#5046)", () => {
+    const jobs = jobsOf({ renderSpec: { command: ["terragucci", "waves-spec"], runsAtHead: true } });
+    for (const name of ["wave-1-wave-1", "wave-1-wave-1-policy"]) expect(jobs[name]!.variables!.CHANT_WAVES_SPEC_RUNS).toBe("head");
+    expect(jobs["wave-1-wave-1-evidence"]!.variables!.CHANT_WAVES_SPEC_RUNS).toBeUndefined();
+    expect(jobsOf({ renderSpec: { command: ["terragucci", "waves-spec"] } })["wave-1-wave-1"]!.variables!.CHANT_WAVES_SPEC_RUNS).toBeUndefined();
+  });
+
   test("without renderSpec the jobs read the committed spec as before", () => {
     const jobs = jobsOf({});
     expect(jobs["wave-1-wave-1"]!.variables!.CHANT_WAVES_SPEC_COMMAND).toBeUndefined();

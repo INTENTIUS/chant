@@ -1182,7 +1182,11 @@ export interface OpWavesPipelineOptions
    * the commit in `CHANT_WAVES_SPEC_AT`. The spec handed to the generator
    * is the pipeline's shape (its waves, shares, job groups, `cloud`,
    * runners, environments and `holds.policy`); the rendered one sets the
-   * rules. Absent: the jobs read the committed spec as before.
+   * rules. Absent: the jobs read the committed spec as before. With
+   * `runsAtHead: true` (#5046) the jobs also carry
+   * `CHANT_WAVES_SPEC_RUNS=head`: the job's own spec, its runs, is rendered
+   * at the applied commit with `CHANT_WAVES_SPEC_BASE` set to the base, and
+   * the rules still come from the render at base.
    */
   renderSpec?: import("./op/op-waves-render-spec").OpWavesRenderSpec;
   /**

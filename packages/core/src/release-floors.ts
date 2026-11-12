@@ -234,6 +234,9 @@ export const TARGET_SIGNED_CHECKS_FLOOR = "0.124.89";
 /** The first chant whose Op waves generators take `renderSpec` (the wave jobs run `chant run wave --render-spec`, and `CHANT_WAVES_SPEC_COMMAND` names the product command that prints the spec at the commit in `CHANT_WAVES_SPEC_AT`), so a product whose spec is built from its config at base renders its wave jobs, policy step, evidence job and cloud trade through chant (#4982). */
 export const RUNTIME_WAVES_SPEC_FLOOR = "0.124.89";
 
+/** The first chant whose Op waves `renderSpec` takes `runsAtHead` (the jobs carry `CHANT_WAVES_SPEC_RUNS=head`): the job's own spec is rendered at the applied commit, with `CHANT_WAVES_SPEC_BASE` set to the base commit beside `CHANT_WAVES_SPEC_AT`, so the runs a change adds apply at its merge, while the gate policy, holds, hooks and evidence rules still come from the render at base (#5046). */
+export const RUNTIME_WAVES_SPEC_RUNS_AT_HEAD_FLOOR = NEXT_RELEASE;
+
 /** The first chant whose `chant run resume` (`resumeGateRun`) on GitLab retries a wave job's `<wave job>-evidence` with the wave job when the evidence job already ran, and whose `ci evidence sign --from-job` waits for a job it reads to finish, so a resumed wave's evidence job signs from the new try (#4978). */
 export const GITLAB_WAVE_EVIDENCE_RETRY_FLOOR = "0.124.89";
 
