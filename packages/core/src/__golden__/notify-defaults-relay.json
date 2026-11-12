@@ -1,0 +1,92 @@
+[
+  {
+    "text": "*terragucci: wave 1 (wave-1) of tf-apply waits for an approval*\nTargets: network\nDigest: `jcs1-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\nApprove: `terragucci approve tf-apply wave-1 --plan jcs1-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\nRun: <https://github.com/acme/db/actions/runs/42>",
+    "blocks": [
+      {
+        "type": "section",
+        "text": {
+          "type": "mrkdwn",
+          "text": "*terragucci: wave 1 (wave-1) of tf-apply waits for an approval*\nTargets: network\nDigest: `jcs1-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\nApprove: `terragucci approve tf-apply wave-1 --plan jcs1-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\nRun: <https://github.com/acme/db/actions/runs/42>"
+        }
+      },
+      {
+        "type": "actions",
+        "elements": [
+          {
+            "type": "button",
+            "text": {
+              "type": "plain_text",
+              "text": "Approve"
+            },
+            "action_id": "chant-approve",
+            "value": "eyJ2IjoxLCJpZCI6ImQ0MDM4OWRjOWM2ZDAzZDUxYTU3MDE5NzQ4OTMyMWU5N2Q0NWNjMGJkODg0NmExMGM1N2I5MDQ2YTMxMmI4YjIiLCJzb3VyY2UiOiJ0ZXJyYWd1Y2NpIiwiYXQiOiIyMDI2LTEwLTExVDEyOjAwOjAwLjAwMFoiLCJnYXRlIjoid2F2ZS0xIiwiZGlnZXN0IjoiamNzMS1zaGEyNTY6YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSJ9.6122dfab74cb9b2729f23dae8546cf5948d4b01cc34fdb33dfa128c1a6772437",
+            "style": "primary"
+          },
+          {
+            "type": "button",
+            "text": {
+              "type": "plain_text",
+              "text": "Decline"
+            },
+            "action_id": "chant-decline",
+            "value": "eyJ2IjoxLCJpZCI6ImQ0MDM4OWRjOWM2ZDAzZDUxYTU3MDE5NzQ4OTMyMWU5N2Q0NWNjMGJkODg0NmExMGM1N2I5MDQ2YTMxMmI4YjIiLCJzb3VyY2UiOiJ0ZXJyYWd1Y2NpIiwiYXQiOiIyMDI2LTEwLTExVDEyOjAwOjAwLjAwMFoiLCJnYXRlIjoid2F2ZS0xIiwiZGlnZXN0IjoiamNzMS1zaGEyNTY6YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSJ9.6122dfab74cb9b2729f23dae8546cf5948d4b01cc34fdb33dfa128c1a6772437"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "type": "message",
+    "attachments": [
+      {
+        "contentType": "application/vnd.microsoft.card.adaptive",
+        "contentUrl": null,
+        "content": {
+          "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+          "type": "AdaptiveCard",
+          "version": "1.4",
+          "body": [
+            {
+              "type": "TextBlock",
+              "text": "terragucci: wave 1 (wave-1) of tf-apply waits for an approval",
+              "weight": "Bolder",
+              "wrap": true
+            },
+            {
+              "type": "FactSet",
+              "facts": [
+                {
+                  "title": "Targets",
+                  "value": "network"
+                },
+                {
+                  "title": "Digest",
+                  "value": "jcs1-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                },
+                {
+                  "title": "Approve",
+                  "value": "terragucci approve tf-apply wave-1 --plan jcs1-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                },
+                {
+                  "title": "Run",
+                  "value": "https://github.com/acme/db/actions/runs/42"
+                },
+                {
+                  "title": "Approve in chat",
+                  "value": "mention the relay and reply: approve eyJ2IjoxLCJpZCI6ImQ0MDM4OWRjOWM2ZDAzZDUxYTU3MDE5NzQ4OTMyMWU5N2Q0NWNjMGJkODg0NmExMGM1N2I5MDQ2YTMxMmI4YjIiLCJzb3VyY2UiOiJ0ZXJyYWd1Y2NpIiwiYXQiOiIyMDI2LTEwLTExVDEyOjAwOjAwLjAwMFoiLCJnYXRlIjoid2F2ZS0xIiwiZGlnZXN0IjoiamNzMS1zaGEyNTY6YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSJ9.6122dfab74cb9b2729f23dae8546cf5948d4b01cc34fdb33dfa128c1a6772437"
+                }
+              ]
+            }
+          ],
+          "actions": [
+            {
+              "type": "Action.OpenUrl",
+              "title": "Open the run",
+              "url": "https://github.com/acme/db/actions/runs/42"
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

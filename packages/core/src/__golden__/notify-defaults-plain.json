@@ -1,0 +1,52 @@
+[
+  {
+    "type": "message",
+    "attachments": [
+      {
+        "contentType": "application/vnd.microsoft.card.adaptive",
+        "contentUrl": null,
+        "content": {
+          "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+          "type": "AdaptiveCard",
+          "version": "1.4",
+          "body": [
+            {
+              "type": "TextBlock",
+              "text": "terragucci: wave 1 (wave-1) of tf-apply waits for an approval",
+              "weight": "Bolder",
+              "wrap": true
+            },
+            {
+              "type": "FactSet",
+              "facts": [
+                {
+                  "title": "Targets",
+                  "value": "network"
+                },
+                {
+                  "title": "Digest",
+                  "value": "jcs1-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                },
+                {
+                  "title": "Approve",
+                  "value": "terragucci approve tf-apply wave-1 --plan jcs1-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                },
+                {
+                  "title": "Run",
+                  "value": "https://github.com/acme/db/actions/runs/42"
+                }
+              ]
+            }
+          ],
+          "actions": [
+            {
+              "type": "Action.OpenUrl",
+              "title": "Open the run",
+              "url": "https://github.com/acme/db/actions/runs/42"
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

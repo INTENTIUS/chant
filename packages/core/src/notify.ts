@@ -403,10 +403,18 @@ export interface NotifyConfig {
    * Decline buttons, and its Teams card the reply that approves.
    */
   relay?: string;
+  /**
+   * The relay's name as people mention it in Teams (#5033), such as a
+   * product's `notify.relay`: a waiting event's Teams card then says the
+   * whole reply, `reply @<name> approve <token>`. A plain value, not a
+   * variable, since it is no secret. Over the product's words' own
+   * `relayName`. Absent: the card says to mention the relay.
+   */
+  relayName?: string;
 }
 
 const VARIABLE = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const SETTINGS = ["webhook", "key", "slack", "teams", "events", "relay"];
+const SETTINGS = ["webhook", "key", "slack", "teams", "events", "relay", "relayName"];
 
 /** The first problem with a {@link NotifyConfig}, or undefined. `where` prefixes the message. */
 export function notifyConfigProblem(value: unknown, where = "notify"): string | undefined {
@@ -423,6 +431,9 @@ export function notifyConfigProblem(value: unknown, where = "notify"): string | 
   }
   if (v.webhook !== undefined && v.key === undefined) return `${where}.key: a webhook needs a signing key; name the variable that holds it`;
   if (v.key !== undefined && v.webhook === undefined) return `${where}.webhook: a key is for a webhook; name the variable that holds its URL`;
+  if (v.relayName !== undefined && (typeof v.relayName !== "string" || !/^[^\s@<>][^\r\n@<>]{0,79}$/.test(v.relayName) || v.relayName.trim() !== v.relayName)) {
+    return `${where}.relayName: the relay's name as Teams mentions it, one line of at most 80 characters without @, < or >`;
+  }
   if (v.webhook === undefined && v.slack === undefined && v.teams === undefined) return `${where}: name a webhook (with its key), a slack or a teams URL variable`;
   if (v.events !== undefined && !(Array.isArray(v.events) && v.events.every((e) => (NOTIFY_EVENTS as readonly unknown[]).includes(e)))) {
     return `${where}.events: a list of ${NOTIFY_EVENTS.join(", ")}`;
@@ -571,7 +582,9 @@ export async function sendNotify(config: NotifyConfig | undefined, event: Notify
   const relayKey = config.relay ? env[config.relay] : undefined;
   if (config.relay && ref && !relayKey) log(`notify: ${config.relay} is not set, so the message carries no relay buttons`);
   const buttons = ref && relayKey ? { token: relayToken(relayKey, ref) } : undefined;
-  if (config.slack) await deliver("slack", config.slack, () => json(options.render?.slack ? options.render.slack(event, buttons) : slackMessage(event, buttons, options.message)));
-  if (config.teams) await deliver("teams", config.teams, () => json(options.render?.teams ? options.render.teams(event, buttons) : teamsMessage(event, buttons, options.message)));
+  // #5033: the config's relay name, over the product's words'.
+  const message = config.relayName ? { ...options.message, relayName: config.relayName } : options.message;
+  if (config.slack) await deliver("slack", config.slack, () => json(options.render?.slack ? options.render.slack(event, buttons) : slackMessage(event, buttons, message)));
+  if (config.teams) await deliver("teams", config.teams, () => json(options.render?.teams ? options.render.teams(event, buttons) : teamsMessage(event, buttons, message)));
   return out;
 }
