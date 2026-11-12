@@ -109,7 +109,7 @@ import { gitOpWaveReleasePort } from "./op-waves-release-port";
 import type { LockGrain } from "../lifecycle/lock-rows";
 import type { LockLiveness, LockRowsLease } from "../lifecycle/resource-lock";
 import type { GatePolicyExec } from "../gate-policy";
-import { gitOpWaveNewerCommit, opWaveStandDownReason, tipAppliesTargets, type OpWaveNewerCommitPort } from "./op-waves-stand-down";
+import { gitOpWaveNewerCommit, opWaveDefaultBranch, opWaveStandDownReason, tipAppliesTargets, type OpWaveNewerCommitPort } from "./op-waves-stand-down";
 import { keyedSerial, mapLimited, type SerialSection } from "../parallelism";
 import {
   applyOpWaveStep,
@@ -936,6 +936,8 @@ export interface RunOpWaveOptions {
   standDown?: boolean;
   /** How the job finds a newer commit on its branch (#4581). Default: fetch the branch from `origin` ({@link gitOpWaveNewerCommit}). */
   newerCommit?: OpWaveNewerCommitPort;
+  /** The repository's default branch, for a spec with `defaultBranch` (#5032). Default {@link opWaveDefaultBranch} of the job's environment. */
+  defaultBranch?: string;
   /**
    * Where the job's run events go (#4555), on the run-event contract: a
    * phase `wave-<k>` per wave and a step per run target, settled as the
@@ -4726,7 +4728,7 @@ async function standDownForNewer(options: RunOpWaveOptions, ctx: WaveContext, de
     log(`wave ${k} (${wave.name}): ${newer.branch} has a newer commit ${newer.tip.slice(0, 12)}, and its spec cannot be read (${err instanceof Error ? err.message : String(err)}), so this job applies`);
     return false;
   }
-  if (!tipAppliesTargets(atTip, newer.branch, wave.name, targets)) {
+  if (!tipAppliesTargets(atTip, newer.branch, wave.name, targets, options.defaultBranch ?? opWaveDefaultBranch())) {
     log(`wave ${k} (${wave.name}): ${newer.branch} has a newer commit ${newer.tip.slice(0, 12)}, and its wave does not apply every target of this job, so this job applies`);
     return false;
   }

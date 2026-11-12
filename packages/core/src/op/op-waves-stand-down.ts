@@ -87,12 +87,25 @@ export async function newerCommitOnBranch(cwd: string, env: NodeJS.ProcessEnv = 
 export const gitOpWaveNewerCommit: OpWaveNewerCommitPort = (cwd, head) => newerCommitOnBranch(cwd, process.env, head);
 
 /**
+ * The repository's default branch as the job's forge names it (#5032):
+ * `CHANT_DEFAULT_BRANCH` (a GitHub or Forgejo waves job sets it from the
+ * event), else GitLab's `CI_DEFAULT_BRANCH`. Undefined when neither is set.
+ */
+export function opWaveDefaultBranch(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const named = (env.CHANT_DEFAULT_BRANCH || env.CI_DEFAULT_BRANCH || "").trim();
+  return named === "" ? undefined : named;
+}
+
+/**
  * Whether the spec at the newer commit (`atTip`, null when the file is gone
  * there) applies every one of `targets` in wave `waveName` on `branch`.
+ * #5032: a spec with `defaultBranch` runs on `defaultBranch`, the name the
+ * forge gives the repository's default branch, beside its `branches`.
  */
-export function tipAppliesTargets(atTip: OpWavesSpec | null, branch: string, waveName: string, targets: readonly string[]): boolean {
+export function tipAppliesTargets(atTip: OpWavesSpec | null, branch: string, waveName: string, targets: readonly string[], defaultBranch?: string): boolean {
   if (!atTip || !Array.isArray(atTip.waves)) return false;
-  if (!(atTip.branches ?? ["main"]).includes(branch)) return false;
+  const onDefault = atTip.defaultBranch === true && defaultBranch !== undefined && branch === defaultBranch;
+  if (!onDefault && !(atTip.branches ?? (atTip.defaultBranch === true ? [] : ["main"])).includes(branch)) return false;
   const wave = atTip.waves.find((w) => w?.name === waveName);
   if (!wave) return false;
   if (wave.discover === true) return true;

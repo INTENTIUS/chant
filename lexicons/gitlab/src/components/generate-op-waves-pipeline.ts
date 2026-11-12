@@ -136,8 +136,9 @@ import {
   gitlabPushRule,
   gitlabSetupScript,
   gitlabTags,
+  gitlabWavesBranches,
   nonEmpty,
-  pushBranches,
+  wavesNamedBranches,
 } from "@intentius/chant/ci-jobs";
 import {
   opWaveChecksDir,
@@ -250,15 +251,19 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
   assertPipelineEvidence(options.evidence);
   const image = options.image ?? CI_IMAGE;
   const subject = `Op waves "${spec.name}"`;
-  const rules = pushBranches(spec.branches).map((branch) => {
-    assertGitlabBranch(subject, branch);
-    return { if: gitlabPushRule(JSON.stringify(branch)) };
+  // #5032: `$CI_DEFAULT_BRANCH` with defaultBranch, then each named branch.
+  const branches = gitlabWavesBranches(spec);
+  const rules = branches.map(({ branch, operand }) => {
+    if (branch !== "") assertGitlabBranch(subject, branch);
+    return { if: gitlabPushRule(operand) };
   });
   // #4984: the wave jobs also run in a pipeline started for a decided head; the guard decides whether it is the recorded one.
-  const bmRules = bm ? pushBranches(spec.branches).map((branch) => ({ if: gitlabBeforeMergeRule(JSON.stringify(branch)) })) : [];
+  const bmRules = bm ? branches.map(({ operand }) => ({ if: gitlabBeforeMergeRule(operand) })) : [];
   const waveRules = [...rules, ...bmRules];
   // #4992: a push's follow-on pipeline, which the rest wave's jobs, its status job and the control job run in.
-  const followRules = restWave !== undefined ? pushBranches(spec.branches).map((branch) => ({ if: gitlabFollowOnRule(JSON.stringify(branch)) })) : [];
+  const followRules = restWave !== undefined ? branches.map(({ operand }) => ({ if: gitlabFollowOnRule(operand) })) : [];
+  // #5032: what each guard expects of the ref.
+  const guardBranches = { branches: wavesNamedBranches(spec), ...(spec.defaultBranch === true ? { defaultBranch: true } : {}) };
   // The setup and environment each wave's jobs carry, checked as an Op's are.
   const setupOf = spec.waves.map((wave) => gitlabSetupScript(`${subject} wave "${wave.name}"`, wave.setup));
   for (const wave of spec.waves) {
@@ -349,7 +354,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
   };
   const evidenceNeeds = split ? () => [] : opWaveEvidenceNeeds(spec, jobs.map((job) => ({ wave: job.wave, plan: evidenceOf(job) })));
   if (split) {
-    entries.push(...gitlabSplitEntries({ spec, options, product, image, timeout, inputs, renderEnv, split, setupOf, groupSetup, dropControl, waveRules, followRules, ...(restWave !== undefined ? { restWave } : {}), stageOf: stageOfWave, evidenceNamed, policyNamed }));
+    entries.push(...gitlabSplitEntries({ spec, options, product, image, timeout, inputs, renderEnv, split, setupOf, groupSetup, dropControl, waveRules, followRules, ...(restWave !== undefined ? { restWave } : {}), stageOf: stageOfWave, evidenceNamed, policyNamed, guardBranches }));
   }
   for (const job of split ? [] : jobs) {
     const wave = spec.waves[job.wave - 1]!;
@@ -376,7 +381,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
       job: opWaveJobLabel(spec.name, job),
       product,
       ...(environment ? { environment: environment.name } : {}),
-      branches: pushBranches(spec.branches),
+      ...guardBranches,
       ...(runner !== undefined ? { runner } : {}),
       ...(bm ? { beforeMerge: { op: spec.name } } : {}),
     });
@@ -400,7 +405,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
           variables: { ...GITLAB_FULL_HISTORY, ...timeout.env, ...renderEnv, ...(wave.variables ?? {}), ...(cloud ? { [TRADE_SPEC_ENV]: JSON.stringify(cloud) } : {}), [JOB_GUARD_ENV]: JSON.stringify(guard) },
           rules: waveRules,
           ...(job.needs.length > 0 ? { needs: job.needs } : {}),
-          script: [jobGuardLine(), ...(cloud ? gitlabTradeLines() : []), ...headLines, ...dropControl, ...setup, ...(options.beforeScript ?? []), ...(add?.before ?? []).flatMap((st) => st.run), ...(add?.prelude ?? []), opWavePolicyCommand(job).join(" ")],
+          script: [jobGuardLine(guard), ...(cloud ? gitlabTradeLines() : []), ...headLines, ...dropControl, ...setup, ...(options.beforeScript ?? []), ...(add?.before ?? []).flatMap((st) => st.run), ...(add?.prelude ?? []), opWavePolicyCommand(job).join(" ")],
           allow_failure: true,
           artifacts: { when: "always", paths: [checksDir], expire_in: "30 days" },
         },
@@ -431,7 +436,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
         rules: waveRules,
         ...(needs.length > 0 ? { needs } : {}),
         script: [
-          jobGuardLine(),
+          jobGuardLine(guard),
           ...(cloud ? gitlabTradeLines() : []),
           ...headLines,
           ...dropControl,
@@ -645,6 +650,8 @@ interface GitlabSplitInput {
   evidenceNamed: <P extends OpWaveEvidencePlan | undefined>(job: { jobName: string; wave: number; waveName: string }, plan: P) => P;
   /** A wave job's policy job, under the product's name (#5022). */
   policyNamed: (job: { jobName: string; wave: number; waveName: string }) => string;
+  /** What each guard expects of the ref (#5032): the named branches, and the default branch with defaultBranch. */
+  guardBranches: { branches: string[]; defaultBranch?: boolean };
 }
 
 /**
@@ -671,7 +678,7 @@ interface GitlabSplitInput {
  * with `CHANT_FORGE_TOKEN`.
  */
 function gitlabSplitEntries(input: GitlabSplitInput): Array<readonly [string, unknown]> {
-  const { spec, options, product, image, timeout, inputs, renderEnv, split, setupOf, groupSetup, dropControl, waveRules, followRules, restWave, stageOf, evidenceNamed, policyNamed } = input;
+  const { spec, options, product, image, timeout, inputs, renderEnv, split, setupOf, groupSetup, dropControl, waveRules, followRules, restWave, stageOf, evidenceNamed, policyNamed, guardBranches } = input;
   const evidenceOf = (job: OpWaveSplitJob) => (job.phase === "plan" && options.evidence !== undefined ? evidenceNamed(job, opWaveEvidencePlan(spec, job, { signs: true, keylessCloud: false, keyOutOfWave: true })) : undefined);
   const evidenceNeeds = opWaveEvidenceNeeds(spec, split.map((job) => ({ wave: job.wave, plan: evidenceOf(job) })));
   const specTags = gitlabTags(spec.runner);
@@ -700,7 +707,7 @@ function gitlabSplitEntries(input: GitlabSplitInput): Array<readonly [string, un
       const gate = job.phase === "gate";
       // #4994: the product's report of the decision its after-gate hooks wrote, and the files it keeps.
       const own = gate ? inputs[k - 1]?.gate : undefined;
-      const guard = jobGuardSpec({ forge: "gitlab", job: opWaveSplitJobLabel(spec.name, job), product, branches: pushBranches(spec.branches), ...(spec.runner !== undefined ? { runner: spec.runner } : {}), beforeMerge: { op: spec.name }, ...(rest ? { rest: k } : {}) });
+      const guard = jobGuardSpec({ forge: "gitlab", job: opWaveSplitJobLabel(spec.name, job), product, ...guardBranches, ...(spec.runner !== undefined ? { runner: spec.runner } : {}), beforeMerge: { op: spec.name }, ...(rest ? { rest: k } : {}) });
       // #4992: the rest wave's record job starts the follow-on pipeline, with CHANT_FORGE_TOKEN.
       const starts = rest && !gate ? { [OP_WAVES_FOLLOW_ON_ENV]: opWavesFollowOnEnv({ forge: "gitlab" }) } : {};
       place(job.jobName, {
@@ -714,7 +721,7 @@ function gitlabSplitEntries(input: GitlabSplitInput): Array<readonly [string, un
         // The record job needs the gate job too, whose decision names the rows it leased (#4992).
         needs: needsOf(job.needs),
         // The gate reads the head's commit, notes and wave stop; the record job writes what ran, whatever the merge request did since.
-        script: [jobGuardLine(), ...followCommit, ...(gate ? [beforeMergeCheckoutScript("gitlab", product, { checkout: false })] : []), ...dropControl, ...setupOf[k - 1]!, ...(options.beforeScript ?? []), job.command.join(" ")],
+        script: [jobGuardLine(guard), ...followCommit, ...(gate ? [beforeMergeCheckoutScript("gitlab", product, { checkout: false })] : []), ...dropControl, ...setupOf[k - 1]!, ...(options.beforeScript ?? []), job.command.join(" ")],
         // A gate that fails as a run fails (its plan job's end) lets the applying job record the wave's outcome; one that waits stops here.
         ...(own?.report ? { after_script: own.report.run } : {}),
         allow_failure: { exit_codes: [OP_WAVE_ALLOWED_EXIT] },
@@ -741,8 +748,8 @@ function gitlabSplitEntries(input: GitlabSplitInput): Array<readonly [string, un
     const runner = group?.runner ?? wave.runner ?? spec.runner;
     const add = inputs[k - 1];
     const evidence = evidenceOf(job);
-    const guard = jobGuardSpec({ forge: "gitlab", job: opWaveSplitJobLabel(spec.name, job), product, ...(environment ? { environment: environment.name } : {}), branches: pushBranches(spec.branches), ...(runner !== undefined ? { runner } : {}), beforeMerge: { op: spec.name }, ...(rest ? { rest: k } : {}) });
-    const head = [jobGuardLine(), ...(cloud ? gitlabTradeLines() : []), beforeMergeCheckoutScript("gitlab", product), ...followCommit, GITLAB_SCRUB_ORIGIN, GITLAB_DROP_FORGE_TOKENS];
+    const guard = jobGuardSpec({ forge: "gitlab", job: opWaveSplitJobLabel(spec.name, job), product, ...(environment ? { environment: environment.name } : {}), ...guardBranches, ...(runner !== undefined ? { runner } : {}), beforeMerge: { op: spec.name }, ...(rest ? { rest: k } : {}) });
+    const head = [jobGuardLine(guard),...(cloud ? gitlabTradeLines() : []), beforeMergeCheckoutScript("gitlab", product), ...followCommit, GITLAB_SCRUB_ORIGIN, GITLAB_DROP_FORGE_TOKENS];
     const variables = {
       ...GITLAB_FULL_HISTORY,
       ...timeout.env,

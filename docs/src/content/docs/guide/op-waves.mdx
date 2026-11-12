@@ -48,7 +48,8 @@ The spec is a JSON file committed to the repository. Its jobs read it at run tim
 | `override` | `{ "overriders": "<file>" }`: who may override a run the product's policy denied, read at the base commit. Default `.chant/overriders` ([Policy denials](#policy-denials)) |
 | `point` | A decision point every wave's gate asks in place of the ledger, read at the base commit ([Ask a decision point](#ask-a-decision-point)) |
 | `neverOverMcp` | The waves' pending facts carry `neverOverMcp`, so their gates are never approved over MCP or ACP. Read at the base commit too |
-| `branches` | Pushes to these branches run the waves. Default `["main"]` |
+| `branches` | Pushes to these branches run the waves. Default `["main"]`, or none beside the default branch with `defaultBranch` |
+| `defaultBranch` | `true`: pushes to the repository's default branch run the waves, by the name the forge gives it at run time, beside any `branches` ([Run from the default branch](#run-from-the-default-branch)). Default `false` |
 | `base` | The commit the gate policy is read from. Default `HEAD^1` |
 | `waves[].runs` | One entry per target. A target appears once per wave |
 | `waves[].discover` | The runs come from `planWave`, or the step's capability, at plan time, not the spec ([Runs found at plan time](#runs-found-at-plan-time)) |
@@ -129,6 +130,19 @@ A product whose apply jobs already have names that branch protection, readers an
 `buildGithubOpWavesDoc` and `buildForgejoOpWavesDoc` give the jobs as a document, for a product that writes them into its workflow beside its own. `OP_WAVES_NAMES_FLOOR` (`@intentius/chant/ci-product`) is the first chant with these options.
 
 The product pipeline takes the same function as `wavesJobNames` ([#5027](https://github.com/INTENTIUS/chant/issues/5027)) and hands it on in `waves.pipeline.jobNames`, so the comment job's re-run of a merged pull request's apply looks for the jobs under the names the generator rendered. `commentJob: { jobName }` names the comment job, such as `apply-comment`. Floor: `PRODUCT_JOB_NAMES_FLOOR`.
+
+### Run from the default branch
+
+A product that never learns the name of the repository's default branch, such as terragucci, whose apply runs on whatever branch is the default, sets `"defaultBranch": true` on the spec ([#5032](https://github.com/INTENTIUS/chant/issues/5032)). Writing the name in when the pipeline is rendered would break it the day the branch is renamed. `branches` then names more branches beside it, and `main` is no longer assumed:
+
+| Where | What reads the default branch |
+| --- | --- |
+| The job guard | It admits a run on the default branch and on each of `branches`, and refuses any other ref with exit 9. GitLab names the branch in `CI_DEFAULT_BRANCH`. On GitHub and Forgejo every guarded job sets `CHANT_DEFAULT_BRANCH` from `github.event.repository.default_branch`, and a run where it is empty is refused. Forgejo's push payload carries `repository.default_branch` as GitHub's does. |
+| GitLab rules | Each rule that matched a named branch matches `$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH` too: the push's, the before-merge and follow-on pipelines', and the evidence, apply status, control and stale-notes jobs'. |
+| GitHub and Forgejo triggers | A push filter cannot name the default branch, so the push trigger is every branch (`'**'`) and every job's `if:` names the refs, as with `runIf`. With the product's own `runIf`, that decides the push. A `pr-review` wave's plans workflow runs on every pull request. |
+| The stand-down | A newer commit on the default branch counts, by `CHANT_DEFAULT_BRANCH` or `CI_DEFAULT_BRANCH`. |
+
+A spec without `defaultBranch` renders byte for byte as before. Floor: `OP_WAVES_DEFAULT_BRANCH_FLOOR` (`@intentius/chant/ci-product`).
 
 ## Keep going past a failed run
 
@@ -1211,7 +1225,7 @@ With `"standDown": true` on the spec, an apply steps aside when a newer commit o
 { "name": "migrate", "op": "migrate", "standDown": true, "step": { "kind": "sql-migrate", "environment": "{target}", "spec": "yodel-waves.json" }, "waves": [...] }
 ```
 
-The branch is `GITHUB_REF_NAME` on GitHub and Forgejo, `CI_COMMIT_BRANCH` on GitLab, else the checked-out branch. chant fetches its tip from `origin`. A tip that is another commit and contains this one is newer. chant then reads the spec file at that tip. The apply stands down only when that spec still runs on the branch and has a wave of this one's name listing every target here. A `discover` wave counts for any target. Anything chant cannot tell goes ahead and applies. That covers a missing branch or `origin` and a failed fetch. So does a tip that does not contain this commit, as after a force-push, or a spec at the tip that drops a target.
+The branch is `GITHUB_REF_NAME` on GitHub and Forgejo, `CI_COMMIT_BRANCH` on GitLab, else the checked-out branch. chant fetches its tip from `origin`. A tip that is another commit and contains this one is newer. chant then reads the spec file at that tip. The apply stands down only when that spec still runs on the branch (with `defaultBranch`, the default branch counts by its run-time name) and has a wave of this one's name listing every target here. A `discover` wave counts for any target. Anything chant cannot tell goes ahead and applies. That covers a missing branch or `origin` and a failed fetch. So does a tip that does not contain this commit, as after a force-push, or a spec at the tip that drops a target.
 
 The check comes after the wave's holds are settled and its lock grain's lease is taken, and before its approval is spent. A wave on the resource grain lets go of its rows before it exits. The job's run record has `wave.outcome` `stood-down`, with the newer commit and its branch in `wave.supersededBy`, and its status is `ok`. No notification goes out. An apply command can still write `stood-down` to `CHANT_APPLY_OUTCOME` itself. SQL Yodeler's `YODEL_STAND_DOWN` and terragucci's `newerPush` do this today, and either can leave it to chant once its chant has `OP_WAVE_STAND_DOWN_FLOOR`.
 

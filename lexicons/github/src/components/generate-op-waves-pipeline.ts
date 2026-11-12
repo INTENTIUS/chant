@@ -177,11 +177,13 @@ import {
   githubSecretEnv,
   idTokenAudienceEnv,
   nonEmpty,
+  githubWavesBranchIf,
   pushBranches,
   setupStepDoc,
+  wavesNamedBranches,
 } from "@intentius/chant/ci-jobs";
 import { OIDC_REQUEST_VARS, TRADE_SPEC_ENV, tradeLine, type CloudTradeSpec } from "@intentius/chant/ci-identity";
-import { JOB_GUARD_ENV, jobGuardLine, jobGuardSpec, opWaveJobLabel } from "@intentius/chant/ci-job-guard";
+import { GITHUB_DEFAULT_BRANCH_ENV, JOB_GUARD_ENV, jobGuardLine, jobGuardSpec, opWaveJobLabel } from "@intentius/chant/ci-job-guard";
 import { resolveProductWords } from "@intentius/chant/ci-product-words";
 import { assertPipelineEvidence, evidenceKeyEnv, evidenceKeyless } from "@intentius/chant/ci-evidence-jobs";
 import {
@@ -268,8 +270,10 @@ function githubNames(spec: OpWavesSpec, options: OpWavesPipelineOptions, forge: 
   const art = opWavesArtifacts(spec, options.artifactNames);
   const inputs = opWavesDispatchInputs(options.dispatchInputs);
   const input = (key: OpWavesDispatchInput): string => `github.event.inputs.${inputs[key]}`;
-  const runIf = options.runIf;
-  if (runIf !== undefined && (typeof runIf !== "string" || runIf.trim() === "" || /\$\{\{|\}\}|[\r\n]/.test(runIf))) throw new Error(`runIf ${JSON.stringify(runIf)} is one expression, without \${{ }}`);
+  const own = options.runIf;
+  if (own !== undefined && (typeof own !== "string" || own.trim() === "" || /\$\{\{|\}\}|[\r\n]/.test(own))) throw new Error(`runIf ${JSON.stringify(own)} is one expression, without \${{ }}`);
+  // #5032: a push trigger cannot name the default branch, so without the product's runIf the jobs say which refs they run on.
+  const runIf = own ?? (spec.defaultBranch === true ? githubWavesBranchIf(spec) : undefined);
   const restWave = spec.waves.length;
   return {
     job: namer.name,
@@ -317,7 +321,8 @@ export function buildGithubOpWavesDoc(
   dialect: { forge?: "github" | "forgejo" } = {},
 ): { doc: GithubOpPipelineDoc; jobs: OpWavesPipelineResult["jobs"]; resumeDoc?: GithubOpPipelineDoc; plansDoc?: GithubOpPipelineDoc } {
   // #4982: with renderSpec each wave job renders the spec at base through the product's command; `spec` is the jobs' shape.
-  const renderEnv = opWavesRenderSpecEnv(options.renderSpec);
+  // #5032: with defaultBranch, every guarded job carries the default branch's name, for the guard and the stand-down.
+  const renderEnv = { ...opWavesRenderSpecEnv(options.renderSpec), ...(spec.defaultBranch === true ? GITHUB_DEFAULT_BRANCH_ENV : {}) };
   const forge = dialect.forge ?? "github";
   // #4984: the before-merge mode, a dispatch for a pull request's decided head, its three inputs on every job that reads them.
   const bm = options.beforeMerge;
@@ -388,7 +393,8 @@ export function buildGithubOpWavesDoc(
       job: opWaveJobLabel(spec.name, job),
       product,
       ...(environment && forge === "github" ? { environment: environment.name } : {}),
-      branches: pushBranches(spec.branches),
+      branches: wavesNamedBranches(spec),
+      ...(spec.defaultBranch === true ? { defaultBranch: true } : {}),
       ...(runner !== undefined ? { runner } : {}),
       idToken,
       ...(bm ? { beforeMerge: { op: spec.name } } : {}),
@@ -483,7 +489,8 @@ export function buildGithubOpWavesDoc(
   const dispatchInputs = { ...BEFORE_MERGE_DISPATCH_INPUTS, ...(restWave !== undefined ? FOLLOW_ON_DISPATCH_INPUTS : {}) };
   const doc: GithubOpPipelineDoc = {
     name: spec.name,
-    on: { push: { branches: pushBranches(spec.branches) }, workflow_dispatch: bm ? { inputs: Object.fromEntries(Object.entries(dispatchInputs).map(([k, v]) => [names.inputs[k as OpWavesDispatchInput], v])) } : {} },
+    // #5032: a push filter cannot name the default branch; the jobs' `if:` and guard keep to it.
+    on: { push: { branches: spec.defaultBranch === true ? ["**"] : pushBranches(spec.branches) }, workflow_dispatch: bm ? { inputs: Object.fromEntries(Object.entries(dispatchInputs).map(([k, v]) => [names.inputs[k as OpWavesDispatchInput], v])) } : {} },
     ...nonEmpty("env", env),
     // The ruling for ci-products (2026-10-28): no workflow-level concurrency group. Runs on the target and repo grains wait for
     // their rows on chant's ledger, oldest commit first; plunge stacks on the resource grain lease their resource rows and run.
@@ -608,7 +615,9 @@ function githubSplitJobsDoc(input: SplitJobsInput): Record<string, unknown> {
   const handover = forge === "forgejo";
   const evidenceOf = (job: OpWaveSplitJob) => (job.phase === "plan" && options.evidence !== undefined ? names.evidence(job, opWaveEvidencePlan(spec, job, { signs: true, keylessCloud: false, keyOutOfWave: true })) : undefined);
   const evidenceNeeds = opWaveEvidenceNeeds(spec, split.map((job) => ({ wave: job.wave, plan: evidenceOf(job) })));
-  const branches = pushBranches(spec.branches);
+  // #5032: the named branches, and the default branch by its run-time name with defaultBranch.
+  const branches = wavesNamedBranches(spec);
+  const onDefault = spec.defaultBranch === true ? { defaultBranch: true } : {};
   const out: Record<string, unknown> = {};
   for (const job of split) {
     const k = job.wave;
@@ -636,7 +645,7 @@ function githubSplitJobsDoc(input: SplitJobsInput): Record<string, unknown> {
         ? { [OP_WAVES_FOLLOW_ON_ENV]: opWavesFollowOnEnv(target), [FOLLOW_ON_TOKEN_ENV]: forge === "github" ? GITHUB_JOB_TOKEN : `\${{ secrets.${FORGE_TOKEN_VAR} }}` }
         : undefined;
       const steps: Array<Record<string, unknown>> = [
-        guardStep({ forge, job: opWaveSplitJobLabel(spec.name, job), product, branches, ...(spec.runner !== undefined ? { runner: spec.runner } : {}), idToken: false, beforeMerge: { op: spec.name }, ...(rest ? { rest: k } : {}) }),
+        guardStep({ forge, job: opWaveSplitJobLabel(spec.name, job), product, branches, ...onDefault, ...(spec.runner !== undefined ? { runner: spec.runner } : {}), idToken: false, beforeMerge: { op: spec.name }, ...(rest ? { rest: k } : {}) }),
         checkoutStep(true),
         ...followCommit,
         // The gate reads the head's commit, its notes and its wave stop, and stops when the pull request moved; the
@@ -702,7 +711,7 @@ function githubSplitJobsDoc(input: SplitJobsInput): Record<string, unknown> {
       run: [checkoutScript(true), beforeMergeCheckoutScript(forge, product), ...(rest ? [followOnCommitScript(product)] : [])].join("\n"),
     };
     const steps: Array<Record<string, unknown>> = [
-      guardStep({ forge, job: opWaveSplitJobLabel(spec.name, job), product, ...(environment && forge === "github" ? { environment: environment.name } : {}), branches, ...(runner !== undefined ? { runner } : {}), idToken, beforeMerge: { op: spec.name }, ...(rest ? { rest: k } : {}) }),
+      guardStep({ forge, job: opWaveSplitJobLabel(spec.name, job), product, ...(environment && forge === "github" ? { environment: environment.name } : {}), branches, ...onDefault, ...(runner !== undefined ? { runner } : {}), idToken, beforeMerge: { op: spec.name }, ...(rest ? { rest: k } : {}) }),
       ...(cloud ? [tradeStep(cloud)] : []),
       cloud ? withoutTokenRequest(checkout) : checkout,
     ];
@@ -1021,7 +1030,8 @@ function buildPlansDoc(spec: OpWavesSpec, options: OpWavesPipelineOptions, forge
   });
   return {
     name: `${spec.name}-plans`,
-    on: { pull_request: { branches: pushBranches(spec.branches) }, pull_request_review: { types: ["submitted", "dismissed"] } },
+    // #5032: a pull_request filter cannot name the default branch, so with defaultBranch the plans run on every pull request.
+    on: { pull_request: spec.defaultBranch === true ? {} : { branches: pushBranches(spec.branches) }, pull_request_review: { types: ["submitted", "dismissed"] } },
     ...nonEmpty("env", options.variables),
     concurrency: concurrency(spec.name + "-plans-${{ github.event_name }}-${{ github.event.pull_request.number }}", true),
     // contents: write pushes the record to chant/lifecycle.
@@ -1064,7 +1074,8 @@ function reportSteps(add: Pick<OpWaveJobInputs, "report" | "artifact"> | undefin
 /** The apply-job guard step (#4624): the job's expectation in CHANT_JOB_GUARD, checked by `node -e` from `/`. */
 function guardStep(input: Parameters<typeof jobGuardSpec>[0]): Record<string, unknown> {
   // #4984: before merge the guard reads the decision from chant/lifecycle with the job's token, in this step alone.
-  return { name: "Check the job runs where the spec set it to run", env: { [JOB_GUARD_ENV]: JSON.stringify(jobGuardSpec(input)), ...(input.beforeMerge ? { GITHUB_TOKEN: GITHUB_JOB_TOKEN } : {}) }, run: jobGuardLine() };
+  const guard = jobGuardSpec(input);
+  return { name: "Check the job runs where the spec set it to run", env: { [JOB_GUARD_ENV]: JSON.stringify(guard), ...(input.beforeMerge ? { GITHUB_TOKEN: GITHUB_JOB_TOKEN } : {}) }, run: jobGuardLine(guard) };
 }
 
 /** The `workflow_dispatch` inputs of the before-merge mode (#4984), which the comment job fills. */

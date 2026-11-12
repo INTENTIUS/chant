@@ -13,6 +13,7 @@ import type { CiProductWords, CiProductWordsInput } from "./ci-product-words";
 import type { ProductMcpHook } from "./cli/mcp/product-tools";
 import type { ProductWaveHook } from "./op/op-waves-after-plan";
 import { OTLP_EXPORTER_FLOOR } from "./otlp";
+import { NEXT_RELEASE } from "./release-floors";
 
 /**
  * The first chant with the product pipeline (#4550): the words, the
@@ -273,6 +274,11 @@ export const OP_WAVES_NAMES_FLOOR = "0.124.92";
  * The first chant whose product pipeline names its comment job and its waves' jobs as the product does (#5027): `commentJob: { jobName }` (default `comment`, such as terragucci's `apply-comment`), refused when another job of the workflow has the name, and `wavesJobNames`, the Op waves generators' `jobNames`, which `waves.pipeline` carries to the generator and `waves.jobs` takes, and under which the comment job's re-run of a merged pull request's apply looks for the waves' jobs (`CHANT_COMMENT_JOBS` `applyJobs`, `rerunApplyJobs`), so terragucci's `apply-wave-<k>`, `-share-<n>`, group jobs and `apply-rest` run again. Without them the job is `comment` and the re-run looks for `RERUN_APPLY_JOBS`, as before.
  */
 export const PRODUCT_JOB_NAMES_FLOOR = "0.124.92";
+
+/**
+ * The first chant whose Op waves run from the repository's default branch by the name the forge gives it at run time (#5032): the spec's `defaultBranch: true`, with or without `branches` beside it. Every job's guard admits the default branch (GitLab's `CI_DEFAULT_BRANCH`; on GitHub and Forgejo `CHANT_DEFAULT_BRANCH`, which each guarded job sets from `github.event.repository.default_branch`) and the named branches, every GitLab rule matches `$CI_DEFAULT_BRANCH` (the push's, the before-merge and the follow-on pipelines', the evidence, status, control and stale-notes jobs'), the GitHub and Forgejo jobs' `if:` names it when the product gives no `runIf`, and the stand-down counts a newer commit on it. Without it the waves run from `branches`, default `main`, as before.
+ */
+export const OP_WAVES_DEFAULT_BRANCH_FLOOR = NEXT_RELEASE;
 export { opWavesArtifacts, opWavesDispatchInputs, opWavesNamer, opWavesWorkflowFile, type OpWavesArtifactNames, type OpWavesDispatchInput, type OpWavesJobNames, type OpWavesJobRef, type OpWavesJobRole, type OpWavesStageNames, type OpWavesStageRef } from "./op/op-waves-names";
 
 /**

@@ -61,6 +61,32 @@ export function pushBranches(branches: readonly string[] | undefined): string[] 
 }
 
 /**
+ * The branches an Op waves spec names (#5032): with `defaultBranch` its
+ * `branches` alone, beside the repository's default branch that the forge
+ * names at run time; without it {@link pushBranches}'.
+ */
+export function wavesNamedBranches(spec: { branches?: readonly string[]; defaultBranch?: boolean }): string[] {
+  return spec.defaultBranch === true ? [...(spec.branches ?? [])] : pushBranches(spec.branches);
+}
+
+/** GitHub and Forgejo: the `if:` expression for a ref the waves run from (#5032), the default branch first. */
+export function githubWavesBranchIf(spec: { branches?: readonly string[]; defaultBranch?: boolean }): string {
+  const quoted = (b: string): string => `'refs/heads/${b.replace(/'/g, "''")}'`;
+  return [
+    ...(spec.defaultBranch === true ? ["github.ref == format('refs/heads/{0}', github.event.repository.default_branch)"] : []),
+    ...wavesNamedBranches(spec).map((b) => `github.ref == ${quoted(b)}`),
+  ].join(" || ");
+}
+
+/** GitLab: each branch a waves spec runs from as a rule's operand (#5032): `$CI_DEFAULT_BRANCH`, then each named one quoted. */
+export function gitlabWavesBranches(spec: { branches?: readonly string[]; defaultBranch?: boolean }): Array<{ branch: string; operand: string }> {
+  return [
+    ...(spec.defaultBranch === true ? [{ branch: "", operand: "$CI_DEFAULT_BRANCH" }] : []),
+    ...wavesNamedBranches(spec).map((b) => ({ branch: b, operand: JSON.stringify(b) })),
+  ];
+}
+
+/**
  * The branches a trigger filters on: a `pull_request` trigger's list, or
  * undefined for every branch; a `push` trigger's, with {@link pushBranches}'
  * default; none for `cron`.
