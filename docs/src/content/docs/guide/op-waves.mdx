@@ -128,6 +128,8 @@ A product whose apply jobs already have names that branch protection, readers an
 
 `buildGithubOpWavesDoc` and `buildForgejoOpWavesDoc` give the jobs as a document, for a product that writes them into its workflow beside its own. `OP_WAVES_NAMES_FLOOR` (`@intentius/chant/ci-product`) is the first chant with these options.
 
+The product pipeline takes the same function as `wavesJobNames` ([#5027](https://github.com/INTENTIUS/chant/issues/5027)) and hands it on in `waves.pipeline.jobNames`, so the comment job's re-run of a merged pull request's apply looks for the jobs under the names the generator rendered. `commentJob: { jobName }` names the comment job, such as `apply-comment`. Floor: `PRODUCT_JOB_NAMES_FLOOR`.
+
 ## Keep going past a failed run
 
 A run can list the runs it needs applied first:

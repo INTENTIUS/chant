@@ -57,7 +57,7 @@ import { ForgeApiError, type ForgeFetch, type PrForge } from "./pr-forge";
 import type { ForgeReads, PullRequestDetail } from "./pr-forge-reads";
 import type { DecideBeforeMergeInput, WavesBeforeMergeJobs } from "./op/before-merge-decide";
 
-/** The comment job's name in a generated workflow (#4946). */
+/** The comment job's name in a generated workflow (#4946), unless the product names it (#5027: the product pipeline's `commentJob.jobName`, such as terragucci's `apply-comment`). */
 export const PR_COMMENT_JOB = "comment";
 
 /** The variable the comment job reads the pipeline's jobs from, as JSON ({@link CommentJobs}), written by the generator (#4946). */
@@ -102,6 +102,14 @@ export interface CommentJobs extends Omit<ChantNoteJobs, "members"> {
    * `chant/lifecycle`, and dispatches the waves workflow for it.
    */
   wavesBeforeMerge?: WavesBeforeMergeJobs;
+  /**
+   * The waves' apply jobs by the names the product gave them (#5027, the
+   * Op waves generator's `jobNames`, such as terragucci's `apply-wave-<k>`,
+   * `apply-wave-<k>-share-<n>`, its group jobs and `apply-rest`). A re-run
+   * of a merged pull request's apply looks for these. Absent:
+   * {@link RERUN_APPLY_JOBS}.
+   */
+  applyJobs?: readonly string[];
 }
 
 /** What the decision before merge reads and writes with (#4984), the comment job's handler's. */
@@ -116,6 +124,12 @@ export type CommentWaveStops = (op: string, sha: string, stop: { through: number
  * terragucci's pull request loop jobs (`apply`, `apply-wave-<k>`).
  */
 export const RERUN_APPLY_JOBS = /^(?:wave-([1-9][0-9]*)-[a-z0-9][a-z0-9_-]*|(?:[a-z0-9][a-z0-9-]*-)?apply(?:-wave-([1-9][0-9]*)(?:-share-[1-9][0-9]*)?)?)$/;
+
+/** The apply jobs a re-run looks for (#5027): exactly `jobs.applyJobs` when the product named them, else {@link RERUN_APPLY_JOBS}. */
+export function rerunApplyJobs(jobs: Pick<CommentJobs, "applyJobs">): RegExp {
+  if (!jobs.applyJobs?.length) return RERUN_APPLY_JOBS;
+  return new RegExp(`^(?:${jobs.applyJobs.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})$`);
+}
 
 /** The writes a re-run makes, with the job's token. */
 export interface CommentRuns {
@@ -360,7 +374,7 @@ export async function answerProductComment(o: AnswerCommentOptions): Promise<Com
         return start(run, jobs, ctx);
       }
     : start;
-  const done = await retryApply({ reads: o.reads, forge: o.poster, words: o.words, base: o.base }, o.forge, pr, user, { kind: "retry", sha: mergeCommit, jobs: RERUN_APPLY_JOBS }, rerun);
+  const done = await retryApply({ reads: o.reads, forge: o.poster, words: o.words, base: o.base }, o.forge, pr, user, { kind: "retry", sha: mergeCommit, jobs: rerunApplyJobs(o.jobs) }, rerun);
   if (done.kind === "fail") return broke(done.reason, command);
   const stopped = done.kind === "ran" && wave !== undefined && waves && wave < waves.count ? `; it stops after \`wave-${wave}\`, and the waves after it wait until \`/${o.words.product} ${typedApply(o.words)}\` runs it again` : "";
   return reply(`${done.text}${stopped}`, done.kind === "ran", done.kind === "ran" ? done.url : undefined);

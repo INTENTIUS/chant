@@ -34,7 +34,7 @@ export function commentJobsFromEnv(raw: string | undefined): CommentJobs {
   if (raw === undefined || raw.trim() === "") return {};
   const v: unknown = JSON.parse(raw);
   if (typeof v !== "object" || v === null || Array.isArray(v)) throw new Error(`${COMMENT_JOBS_ENV} is a JSON object of the jobs the pipeline has`);
-  const known = new Set(["preview", "applyBeforeMerge", "applyOnMerge", "locks", "agent", "commits", "actions", "skipForks", "targets", "noPlanFlags", "waves", "wavesBeforeMerge"]);
+  const known = new Set(["preview", "applyBeforeMerge", "applyOnMerge", "locks", "agent", "commits", "actions", "skipForks", "targets", "noPlanFlags", "waves", "wavesBeforeMerge", "applyJobs"]);
   const jobs: Record<string, unknown> = {};
   for (const [k, x] of Object.entries(v)) {
     if (!known.has(k)) throw new Error(`${COMMENT_JOBS_ENV} names ${JSON.stringify(k)}, which is not one of ${[...known].join(", ")}`);
@@ -53,6 +53,12 @@ export function commentJobsFromEnv(raw: string | undefined): CommentJobs {
     if (k === "targets") {
       if (!Array.isArray(x) || x.some((t) => typeof t !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(t))) throw new Error(`${COMMENT_JOBS_ENV}.targets is a list of target names`);
       if (x.length > 0) jobs.targets = x;
+      continue;
+    }
+    // #5027: the waves' apply jobs by the product's names, which a re-run looks for.
+    if (k === "applyJobs") {
+      if (!Array.isArray(x) || x.some((t) => typeof t !== "string" || !/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(t))) throw new Error(`${COMMENT_JOBS_ENV}.applyJobs is a list of job names`);
+      if (x.length > 0) jobs.applyJobs = x;
       continue;
     }
     if (typeof x !== "boolean") throw new Error(`${COMMENT_JOBS_ENV}.${k} is true or false`);
