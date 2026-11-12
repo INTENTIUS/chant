@@ -279,6 +279,11 @@ export const PRODUCT_JOB_NAMES_FLOOR = "0.124.92";
  * The first chant whose Op waves run from the repository's default branch by the name the forge gives it at run time (#5032): the spec's `defaultBranch: true`, with or without `branches` beside it. Every job's guard admits the default branch (GitLab's `CI_DEFAULT_BRANCH`; on GitHub and Forgejo `CHANT_DEFAULT_BRANCH`, which each guarded job sets from `github.event.repository.default_branch`) and the named branches, every GitLab rule matches `$CI_DEFAULT_BRANCH` (the push's, the before-merge and the follow-on pipelines', the evidence, status, control and stale-notes jobs'), the GitHub and Forgejo jobs' `if:` names it when the product gives no `runIf`, and the stand-down counts a newer commit on it. Without it the waves run from `branches`, default `main`, as before.
  */
 export const OP_WAVES_DEFAULT_BRANCH_FLOOR = NEXT_RELEASE;
+
+/**
+ * The first chant whose Op waves generators take `firstWaveNeeds` (#5032): the product's own jobs, such as terragucci's `check`, that the first wave's own or deciding job (and before merge its plan job, and on GitLab its policy job) needs, so a push that fails the product's check applies nothing. GitHub and Forgejo: each must pass, or, in a dispatched run, not have run, and it goes with `runIf`; GitLab: optional needs, each to pass. Absent, the jobs render as before.
+ */
+export const OP_WAVES_FIRST_WAVE_NEEDS_FLOOR = NEXT_RELEASE;
 export { opWavesArtifacts, opWavesDispatchInputs, opWavesNamer, opWavesWorkflowFile, type OpWavesArtifactNames, type OpWavesDispatchInput, type OpWavesJobNames, type OpWavesJobRef, type OpWavesJobRole, type OpWavesStageNames, type OpWavesStageRef } from "./op/op-waves-names";
 
 /**

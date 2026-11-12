@@ -176,6 +176,39 @@ export function opWavesWorkflowFile(spec: Pick<OpWavesSpec, "name">, file: strin
   return file;
 }
 
+/**
+ * The product's own jobs the first wave's jobs need (#5032), such as
+ * terragucci's `check`: checked as job names of the forge, each once.
+ * Absent or empty: none, and the jobs render as before.
+ */
+export function opWavesFirstWaveNeeds(given: readonly string[] | undefined, forge: "github" | "forgejo" | "gitlab"): string[] {
+  if (given === undefined) return [];
+  if (!Array.isArray(given)) throw new Error("firstWaveNeeds is a list of the product's job names");
+  const github = forge !== "gitlab";
+  for (const n of given) {
+    const ok = typeof n === "string" && (github ? /^[A-Za-z_][A-Za-z0-9_-]*$/.test(n) : /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(n) && !GITLAB_KEYWORDS.has(n));
+    if (!ok) throw new Error(`firstWaveNeeds names ${JSON.stringify(n)}, which is not a job name of letters, digits, _ and -${github ? ", starting with a letter or _" : ", and no GitLab keyword"}`);
+  }
+  if (new Set(given).size !== given.length) throw new Error(`firstWaveNeeds names a job twice: ${given.join(", ")}`);
+  return [...given];
+}
+
+/** Refuse a product job of {@link opWavesFirstWaveNeeds} that is a job the generator writes (#5032). */
+export function assertFirstWaveNeedsOutside(needs: readonly string[], jobs: Iterable<string>): void {
+  const mine = new Set(jobs);
+  for (const n of needs) if (mine.has(n)) throw new Error(`firstWaveNeeds names ${n}, a job of the waves themselves; name the product's own jobs, such as its check`);
+}
+
+/**
+ * GitHub and Forgejo: the condition a first-wave job runs under with
+ * {@link opWavesFirstWaveNeeds} (#5032). Each product job passed; in a
+ * dispatched run (before merge), one that did not run is no hold, since a
+ * product's check runs on its pushes and pull requests.
+ */
+export function githubFirstWaveIf(needs: readonly string[]): string {
+  return ["!cancelled()", ...needs.map((n) => `(needs.${n}.result == 'success' || (github.event_name == 'workflow_dispatch' && needs.${n}.result == 'skipped'))`)].join(" && ");
+}
+
 const GITLAB_KEYWORDS = new Set(["default", "include", "stages", "variables", "workflow", "image", "services", "cache", "before_script", "after_script", "spec", "pages"]);
 
 /** A job of a pipeline as {@link opWavesNamer} reads it: an `opWaveJobs` job, or a split one with its phase. */

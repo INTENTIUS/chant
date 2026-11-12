@@ -162,7 +162,7 @@ import {
 import { CONTROL_DISPATCH_JOB, CONTROL_OUTCOME_VAR, CONTROL_TOKEN_VARS, controlDispatchJob } from "@intentius/chant/control/dispatch";
 import type { OpWaveJobInputs, OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
 import { opWaveSavedPlanDir, opWaveSplitJobLabel, opWaveSplitJobs, type OpWaveSplitJob } from "@intentius/chant/op/op-waves-split";
-import { opWavesNamer, type OpWavesStageRef } from "@intentius/chant/op/op-waves-names";
+import { assertFirstWaveNeedsOutside, opWavesFirstWaveNeeds, opWavesNamer, type OpWavesStageRef } from "@intentius/chant/op/op-waves-names";
 import type { OpWaveEvidencePlan } from "@intentius/chant/op/op-waves-evidence-jobs";
 import { GITLAB_DROP_FORGE_TOKENS } from "@intentius/chant/ci-handover";
 import { gitlabTradeIdTokens, gitlabTradeLines, TRADE_SPEC_ENV } from "@intentius/chant/ci-identity";
@@ -237,6 +237,9 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
   const runIf = options.runIf;
   if (runIf !== undefined && (typeof runIf !== "string" || runIf.trim() === "" || /[\r\n]/.test(runIf))) throw new Error(`runIf ${JSON.stringify(runIf)} is one rule condition`);
   const namer = opWavesNamer(spec, "gitlab", options.jobNames);
+  // #5032: the product's jobs the first wave needs, optional, so a pipeline without one still runs the waves.
+  const firstNeedNames = opWavesFirstWaveNeeds(options.firstWaveNeeds, "gitlab");
+  const firstNeeds = firstNeedNames.map((job) => ({ job, optional: true as const }));
   const chantJobs = opWaveJobs(spec, options.specFile, { bin: options.bin, ...(options.renderSpec ? { renderSpec: true } : {}), ...(bm ? { beforeMerge: true } : {}) });
   // #4987: before merge each wave is a plan, a gate, an apply and a record job, so the change's code never runs beside CHANT_FORGE_TOKEN.
   const split = bm ? namer.jobs(opWaveSplitJobs(spec, chantJobs)) : undefined;
@@ -354,7 +357,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
   };
   const evidenceNeeds = split ? () => [] : opWaveEvidenceNeeds(spec, jobs.map((job) => ({ wave: job.wave, plan: evidenceOf(job) })));
   if (split) {
-    entries.push(...gitlabSplitEntries({ spec, options, product, image, timeout, inputs, renderEnv, split, setupOf, groupSetup, dropControl, waveRules, followRules, ...(restWave !== undefined ? { restWave } : {}), stageOf: stageOfWave, evidenceNamed, policyNamed, guardBranches }));
+    entries.push(...gitlabSplitEntries({ spec, options, product, image, timeout, inputs, renderEnv, split, setupOf, groupSetup, dropControl, waveRules, followRules, ...(restWave !== undefined ? { restWave } : {}), stageOf: stageOfWave, evidenceNamed, policyNamed, guardBranches, firstNeeds }));
   }
   for (const job of split ? [] : jobs) {
     const wave = spec.waves[job.wave - 1]!;
@@ -404,14 +407,15 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
           ...(traded && Object.keys(traded).length > 0 ? { id_tokens: traded } : {}),
           variables: { ...GITLAB_FULL_HISTORY, ...timeout.env, ...renderEnv, ...(wave.variables ?? {}), ...(cloud ? { [TRADE_SPEC_ENV]: JSON.stringify(cloud) } : {}), [JOB_GUARD_ENV]: JSON.stringify(guard) },
           rules: waveRules,
-          ...(job.needs.length > 0 ? { needs: job.needs } : {}),
+          ...(job.needs.length > 0 ? { needs: job.needs } : firstNeeds.length > 0 ? { needs: firstNeeds } : {}),
           script: [jobGuardLine(guard), ...(cloud ? gitlabTradeLines() : []), ...headLines, ...dropControl, ...setup, ...(options.beforeScript ?? []), ...(add?.before ?? []).flatMap((st) => st.run), ...(add?.prelude ?? []), opWavePolicyCommand(job).join(" ")],
           allow_failure: true,
           artifacts: { when: "always", paths: [checksDir], expire_in: "30 days" },
         },
       ]);
     }
-    const needs = [...job.needs, ...(policyJob ? [policyJob] : []), ...(job.kind === "share" ? [] : evidenceNeeds(job.wave))];
+    // #5032: the first wave's own or deciding job needs the product's jobs too, such as its check.
+    const needs = [...(job.needs.length === 0 ? firstNeeds : []), ...job.needs, ...(policyJob ? [policyJob] : []), ...(job.kind === "share" ? [] : evidenceNeeds(job.wave))];
     entries.push([
       job.jobName,
       {
@@ -612,6 +616,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
       : []),
     ...(control ? [`# After the last wave, the ${namer.name({ role: "control", name: CONTROL_DISPATCH_JOB })} job tells ${control.repo} how the waves ended.`] : []),
   ];
+  assertFirstWaveNeedsOutside(firstNeedNames, entries.map(([key]) => key));
   const name = options.opsFileName ?? `${spec.name}.gitlab-ci.yml`;
   // #5022: in a product's pipeline every rule of every job also needs the product's condition; a rule that leaves a job out stays as it is.
   const placed = runIf === undefined ? entries : entries.map(([key, job]) => [key, key === "stages" || key === "variables" ? job : withRunIf(job as Record<string, unknown>, runIf)] as const);
@@ -652,6 +657,8 @@ interface GitlabSplitInput {
   policyNamed: (job: { jobName: string; wave: number; waveName: string }) => string;
   /** What each guard expects of the ref (#5032): the named branches, and the default branch with defaultBranch. */
   guardBranches: { branches: string[]; defaultBranch?: boolean };
+  /** The product's jobs the first wave's jobs need (#5032), each optional. */
+  firstNeeds: Array<{ job: string; optional: true }>;
 }
 
 /**
@@ -678,7 +685,7 @@ interface GitlabSplitInput {
  * with `CHANT_FORGE_TOKEN`.
  */
 function gitlabSplitEntries(input: GitlabSplitInput): Array<readonly [string, unknown]> {
-  const { spec, options, product, image, timeout, inputs, renderEnv, split, setupOf, groupSetup, dropControl, waveRules, followRules, restWave, stageOf, evidenceNamed, policyNamed, guardBranches } = input;
+  const { spec, options, product, image, timeout, inputs, renderEnv, split, setupOf, groupSetup, dropControl, waveRules, followRules, restWave, stageOf, evidenceNamed, policyNamed, guardBranches, firstNeeds } = input;
   const evidenceOf = (job: OpWaveSplitJob) => (job.phase === "plan" && options.evidence !== undefined ? evidenceNamed(job, opWaveEvidencePlan(spec, job, { signs: true, keylessCloud: false, keyOutOfWave: true })) : undefined);
   const evidenceNeeds = opWaveEvidenceNeeds(spec, split.map((job) => ({ wave: job.wave, plan: evidenceOf(job) })));
   const specTags = gitlabTags(spec.runner);
@@ -771,14 +778,15 @@ function gitlabSplitEntries(input: GitlabSplitInput): Array<readonly [string, un
         ...(idTokens && Object.keys(idTokens).length > 0 ? { id_tokens: idTokens } : {}),
         variables,
         rules: restRules,
-        ...(job.needs.length > 0 ? { needs: needsOf(job.needs) } : {}),
+        ...(job.needs.length > 0 ? { needs: needsOf(job.needs) } : firstNeeds.length > 0 ? { needs: firstNeeds } : {}),
         script: [...head, ...dropControl, ...setup, ...(options.beforeScript ?? []), ...(add?.before ?? []).flatMap((st) => st.run), ...(add?.prelude ?? []), opWavePolicyCommand(job).join(" ")],
         allow_failure: true,
         artifacts: { when: "always", paths: [checksDir], expire_in: "30 days" },
       });
     }
     const plan = job.phase === "plan";
-    const needs = needsOf([...job.needs, ...(policyJob ? [policyJob] : []), ...(plan ? evidenceNeeds(k) : [])]);
+    // #5032: the first wave's plan job needs the product's jobs too, such as its check.
+    const needs = [...(plan && job.needs.length === 0 ? firstNeeds : []), ...needsOf([...job.needs, ...(policyJob ? [policyJob] : []), ...(plan ? evidenceNeeds(k) : [])])];
     place(job.jobName, {
       stage,
       image,

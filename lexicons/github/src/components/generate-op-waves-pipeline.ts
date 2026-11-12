@@ -227,7 +227,7 @@ import {
   opWavesFollowOnEnv,
   opWavesRestWave,
 } from "@intentius/chant/op/op-waves-follow-on";
-import { opWavesArtifacts, opWavesDispatchInputs, opWavesInputsRenamed, opWavesNamer, opWavesWorkflowFile, type OpWavesDispatchInput } from "@intentius/chant/op/op-waves-names";
+import { assertFirstWaveNeedsOutside, githubFirstWaveIf, opWavesArtifacts, opWavesDispatchInputs, opWavesFirstWaveNeeds, opWavesInputsRenamed, opWavesNamer, opWavesWorkflowFile, type OpWavesDispatchInput } from "@intentius/chant/op/op-waves-names";
 import { checkoutStep, concurrency, DOWNLOAD_ARTIFACT, downloadArtifactStep, keepRecordStep, runSteps } from "./ci-jobs";
 import { emitOpPipelineYAML, type GithubOpPipelineDoc } from "./generate-op-pipeline";
 
@@ -329,6 +329,9 @@ export function buildGithubOpWavesDoc(
   if (bm) assertOpWavesBeforeMerge(forge, bm);
   // #5022: the product's names of the jobs, artifacts and dispatch inputs, else chant's.
   const names = githubNames(spec, options, forge);
+  // #5032: the product's jobs the first wave waits for.
+  const firstNeeds = opWavesFirstWaveNeeds(options.firstWaveNeeds, forge);
+  if (firstNeeds.length > 0 && options.runIf === undefined) throw new Error("firstWaveNeeds names jobs of the product's own workflow, so it goes with runIf, which puts the waves' jobs there");
   const bmEnv: Record<string, string> = bm ? Object.fromEntries(Object.entries(BEFORE_MERGE_INPUTS).map(([input, v]) => [v, `\${{ ${names.input(input as OpWavesDispatchInput)} }}`])) : {};
   const chantJobs = opWaveJobs(spec, options.specFile, { bin: options.bin, ...(options.renderSpec ? { renderSpec: true } : {}), ...(bm ? { beforeMerge: true } : {}) });
   // #4987: before merge each wave is a plan, a gate, an apply and a record job, so the change's code never runs beside a write token.
@@ -370,7 +373,7 @@ export function buildGithubOpWavesDoc(
   const jobsDoc: Record<string, unknown> = {};
   // #3761: the notify variables come from the secrets of the same name. #4987: before merge, on the jobs that run the default branch's code alone.
   const notifyEnv = githubSecretEnv(notifyVariables(spec.notify));
-  if (split) Object.assign(jobsDoc, githubSplitJobsDoc({ spec, options, forge, product, image, byReview, timeout, inputs, renderEnv, bmEnv, notifyEnv, split, names, ...(restWave !== undefined ? { restWave } : {}) }));
+  if (split) Object.assign(jobsDoc, githubSplitJobsDoc({ spec, options, forge, product, image, byReview, timeout, inputs, renderEnv, bmEnv, notifyEnv, split, names, ...(restWave !== undefined ? { restWave } : {}), ...(firstNeeds.length > 0 ? { firstNeeds } : {}) }));
   for (const job of split ? [] : jobs) {
     const wave = spec.waves[job.wave - 1]!;
     // #3914: a job group's job runs with the group's settings over the wave's.
@@ -440,12 +443,14 @@ export function buildGithubOpWavesDoc(
     if (evidence?.evidenceJob) steps.push(keepRecordStep(`Keep the job's check claims`, names.art.checks(job.jobName), opWaveChecksDir(spec)));
     const report = reportSteps(add, job.jobName);
     steps.push(...(cloud ? report.map(withoutTokenRequest) : report));
-    const needs = [...job.needs, ...(job.kind === "share" ? [] : evidenceNeeds(job.wave))];
+    // #5032: the first wave's own or deciding job waits for the product's jobs, such as its check.
+    const own = job.needs.length === 0 ? firstNeeds : [];
+    const needs = [...own, ...job.needs, ...(job.kind === "share" ? [] : evidenceNeeds(job.wave))];
     jobsDoc[job.jobName] = {
       "runs-on": githubRunsOn(runner),
       ...(needs.length > 0 ? { needs } : {}),
       // #4322: a wave's jobs run after a failure in the wave before; a share job runs only on its deciding job's success.
-      ...(job.needs.length > 0 && job.kind !== "share" ? { if: "!cancelled()" } : {}),
+      ...(own.length > 0 ? { if: githubFirstWaveIf(own) } : job.needs.length > 0 && job.kind !== "share" ? { if: "!cancelled()" } : {}),
       container: image,
       ...(environment ? { environment: environmentDoc(environment) } : {}),
       // #3914: a job's own permissions replace the workflow's, so they repeat them.
@@ -478,6 +483,8 @@ export function buildGithubOpWavesDoc(
   }
   // #4987: a push marks the open pull requests' plan notes stale, beside wave 1.
   if (options.staleNotes) jobsDoc[names.job({ role: "stale-notes", name: PR_STALE_JOB })] = staleNotesJob(spec, options, options.staleNotes, image);
+  // #5032: the product's jobs the first wave needs are none of these.
+  assertFirstWaveNeedsOutside(firstNeeds, Object.keys(jobsDoc));
   // #5022: in a product's workflow each job runs on the waves' own events, with its own permissions.
   if (names.runIf !== undefined) {
     const when = names.when(bm !== undefined, restWave !== undefined);
@@ -538,6 +545,8 @@ interface SplitJobsInput {
   names: GithubNames;
   /** The rest wave's number (#4992), when the last wave has `rest`. */
   restWave?: number;
+  /** The product's jobs the first wave's plan job needs (#5032). */
+  firstNeeds?: string[];
 }
 
 /**
@@ -744,13 +753,15 @@ function githubSplitJobsDoc(input: SplitJobsInput): Record<string, unknown> {
       if (evidence?.evidenceJob) steps.push(keepRecordStep(`Keep the job's check claims`, art.checks(job.jobName), opWaveChecksDir(spec)));
       steps.push(...reportSteps(add, job.jobName).map(noToken));
     }
-    const needs = [...job.needs, ...(job.phase === "plan" ? evidenceNeeds(k) : [])];
+    // #5032: the first wave's plan job waits for the product's jobs, such as its check.
+    const own = job.phase === "plan" && job.needs.length === 0 ? (input.firstNeeds ?? []) : [];
+    const needs = [...own, ...job.needs, ...(job.phase === "plan" ? evidenceNeeds(k) : [])];
     out[job.jobName] = finish(
       {
         "runs-on": githubRunsOn(runner),
         ...(needs.length > 0 ? { needs } : {}),
         // An applying job applies what its gate job decided; a plan job after the first wave runs after a failure in the wave before.
-        ...(job.phase === "apply" ? { if: `\${{ !cancelled() && needs.${job.needs[0]}.result == 'success' }}` } : job.needs.length > 0 ? { if: "!cancelled()" } : {}),
+        ...(job.phase === "apply" ? { if: `\${{ !cancelled() && needs.${job.needs[0]}.result == 'success' }}` } : own.length > 0 ? { if: githubFirstWaveIf(own) } : job.needs.length > 0 ? { if: "!cancelled()" } : {}),
         container: image,
         ...(environment ? { environment: environmentDoc(environment) } : {}),
         // The job's token reads; the checkout step alone holds it.
