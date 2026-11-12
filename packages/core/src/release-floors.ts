@@ -237,6 +237,9 @@ export const RUNTIME_WAVES_SPEC_FLOOR = "0.124.89";
 /** The first chant whose Op waves `renderSpec` takes `runsAtHead` (the jobs carry `CHANT_WAVES_SPEC_RUNS=head`): the job's own spec is rendered at the applied commit, with `CHANT_WAVES_SPEC_BASE` set to the base commit beside `CHANT_WAVES_SPEC_AT`, so the runs a change adds apply at its merge, while the gate policy, holds, hooks and evidence rules still come from the render at base (#5046). */
 export const RUNTIME_WAVES_SPEC_RUNS_AT_HEAD_FLOOR = NEXT_RELEASE;
 
+/** The first chant whose Op waves keep the record of an apply under an approval themselves (#5047): with `approvals.spend`, `approvals.remainder` writes each change the approved plans make, the commit and the run on the applied line (a split wave's gate job writes it), the job that applies the whole wave or the record job writes how the apply ended, and a wave run again at that commit applies the rest under the same approval when its plans make only changes the stopped apply did not finish; a wave that plans no change closes a stopped apply, and `approvals.spendStanding` spends an approval of the digest a wave its gate let through applies. */
+export const OP_WAVES_REMAINDER_FLOOR = NEXT_RELEASE;
+
 /** The first chant whose `chant run resume` (`resumeGateRun`) on GitLab retries a wave job's `<wave job>-evidence` with the wave job when the evidence job already ran, and whose `ci evidence sign --from-job` waits for a job it reads to finish, so a resumed wave's evidence job signs from the new try (#4978). */
 export const GITLAB_WAVE_EVIDENCE_RETRY_FLOOR = "0.124.89";
 

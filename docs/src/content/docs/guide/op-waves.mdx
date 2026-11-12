@@ -775,7 +775,7 @@ An apply under an approval can also stop half way, when its job is killed. A wav
 {"version":1,"kind":"finished","op":"tf-apply","gate":"wave-2","planDigest":"...","applied":"2026-10-01T02:00:01Z","result":"applied","timestamp":"2026-10-01T02:09:00Z"}
 ```
 
-A gate whose newest applied line carries a run, with no `finished` line for it and no pending fact recorded since, is a stopped apply. `chant run resume` asks the forge about that run and starts it again once it is gone (finished without success, and not already re-run), so the wave applies the rest under the same approval. A run that still goes is left alone. chant's own wave jobs write no run on their `applied` line, so this applies only to a product that writes one and resumes under the approval it applied under.
+A gate whose newest applied line carries a run, with no `finished` line for it and no pending fact recorded since, is a stopped apply. `chant run resume` asks the forge about that run and starts it again once it is gone (finished without success, and not already re-run), so the wave applies the rest under the same approval. A run that still goes is left alone. chant's own wave jobs write a run on their `applied` line under `approvals.remainder` ([The rest of a stopped apply](#the-rest-of-a-stopped-apply)); without it, this applies only to a product that writes one and resumes under the approval it applied under.
 
 ### Resume in the product's own job
 
@@ -967,6 +967,22 @@ From then on every approval of that gate and digest made at or before `approvedA
 A wide wave's deciding job writes the line once, before its share jobs apply. The line is written before the apply starts, so an apply that fails has still spent its approval and needs a new one to run again. If the line cannot be written, the wave applies nothing and exits 1.
 
 The rule is read at the base commit with the policy, so a change that turns `spend` off still has its own apply judged with it on. A change that turns it on records the approval its own apply runs under, and the rule decides from the next change on. The file sits in a directory under `_gates/`, so `chant approve` and the gate ledger readers never see its lines. `@intentius/chant/lifecycle/gate-audit` reads them as applies. Calling `appliedGateApplies(parseAppliedGateLines(text))` from `@intentius/chant/gate-decision` gives the `applies` that `deriveGateAudit` ties to the approval each ran under.
+
+### The rest of a stopped apply
+
+An apply that stops halfway (its job was killed, or one of its resources failed) has spent its approval, and its next plan makes only what it did not apply, under another digest. With `approvals.remainder` beside `approvals.spend` the wave applies that rest under the approval it stopped under ([#5047](https://github.com/INTENTIUS/chant/issues/5047)):
+
+```json
+{ "name": "tf-apply", "op": "tf-apply", "approvals": { "spend": true, "remainder": true }, "step": { "kind": "terraform-apply", "root": "{target}" }, "waves": ["..."] }
+```
+
+- The applied line names each change the approved plans make (the run, the resource's address in the engine and its digest, from the step's `resourceDigests`), the commit, the run, and where the run is, so `chant run resume` starts it again once it is gone. Only an engine that records each resource as its apply returns plans exactly what it did not apply after a stop, so the line names changes only when every run that changes something plans through the step on the `resource` lock grain (choudoufu's). A wave on any other grain, or split across share jobs or job groups, writes the line as before.
+- The job that applies the whole wave writes how its apply ended, a `finished` line: `applied`, or `failed` when a run failed. A split wave's record job writes it from the applying job's run record; an applying job that left none was stopped, and nothing is written. A killed one-job wave writes none either.
+- Run again at the same commit, the wave takes up the newest applied line of its gate when it names changes, was written at that commit, and has no `applied` finished line. When every change its plans make is one the line names, with the same digest, and every digest member that is no run is one the approved set held, it applies under that line's approval: the changes it no longer makes are done, since the config is the same and the engine recorded them. It writes no applied line of its own, and the finished line it writes names the stopped one. Any other change, or another commit, waits for an approval of its own, and the log says why.
+- A split wave's applying job run again (GitHub re-runs a run's failed jobs) re-plans its runs through the step. A run whose plan moved since the gate job decided applies when its plan makes only changes the decision recorded for it, with the same digests; one that changes nothing now is done. On GitLab and Forgejo the gate job's line names no run to resume, since a retry of the gate job or a new run of the branch does not run the stopped applying job again; run the wave again from its plan job.
+- A wave whose plans change nothing closes the newest applied line of its gate that names changes and has no finished line, as `applied`: something applied the rest, and the resume leaves the wave alone.
+
+With `approvals.spendStanding` beside `approvals.spend`, a wave its gate lets through (`not-required`) spends an approval of its digest that stands, with an applied line, as it applies. Such an approval would otherwise stand for the next plans and name them as other plans. Both rules are read at the base commit, and each needs `approvals.spend`. `OP_WAVES_REMAINDER_FLOOR` (`@intentius/chant/ci-product`, `@intentius/chant/op`) is the first chant with them; the rules themselves are in `@intentius/chant/op/op-waves-remainder`.
 
 ## Policy denials
 
