@@ -15,14 +15,20 @@ import { gitShowAtBase, parseOpWavesSpec, readOpWavePolicy, runOpWave, type OpWa
 import { memoryGateLedgerPort } from "./gate";
 import {
   commandSpecRender,
+  OP_WAVES_SPEC_BASE_ENV,
   OP_WAVES_SPEC_COMMAND_ENV,
+  OP_WAVES_SPEC_RUNS_ENV,
   opWavesRenderSpecEnv,
   opWavesSpecCommandFromEnv,
+  opWavesSpecRunsAtHead,
   renderedJobMissing,
   renderedSpecShow,
+  renderOpWavesJobSpec,
   renderOpWavesSpecFile,
   RUNTIME_WAVES_SPEC_FLOOR,
+  RUNTIME_WAVES_SPEC_RUNS_AT_HEAD_FLOOR,
 } from "./op-waves-render-spec";
+import { NEXT_RELEASE } from "../release-floors";
 import type { OpWavesSpec } from "./op-waves";
 import { parseArgs } from "../cli/parse-args";
 import { runOpWaveCommand } from "../cli/handlers/run-wave";
@@ -41,6 +47,21 @@ process.stdout.write(JSON.stringify({
   name: "tf-apply", op: "tf-apply",
   plan: ["tool", "plan", "{target}", "--out", "{plan}"], apply: ["tool", "apply", "{target}", "--plan", "{plan}"],
   waves: [{ name: "dev", gate: config.gate, shares: config.shares, runs: [{ target: "a" }, { target: "b" }] }],
+}));
+`;
+
+/** #5046: a product whose runs are in its config too; it logs each commit it is handed and the base beside it. */
+const RUNS_JS = `
+const { execFileSync } = require("node:child_process");
+const { appendFileSync } = require("node:fs");
+const at = process.env.CHANT_WAVES_SPEC_AT;
+if (process.env.RENDER_LOG) appendFileSync(process.env.RENDER_LOG, at + " base=" + (process.env.CHANT_WAVES_SPEC_BASE ?? "") + "\\n");
+let config;
+try { config = JSON.parse(execFileSync("git", ["show", at + ":config.json"], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] })); } catch { process.exit(0); }
+process.stdout.write(JSON.stringify({
+  name: "tf-apply", op: "tf-apply",
+  plan: ["tool", "plan", "{target}", "--out", "{plan}"], apply: ["tool", "apply", "{target}", "--plan", "{plan}"],
+  waves: [{ name: "dev", gate: config.gate, shares: 2, runs: config.runs.map((target) => ({ target })) }],
 }));
 `;
 
@@ -128,6 +149,7 @@ describe("a waves spec the job renders at run time (#4982)", () => {
     expect(renderedJobMissing(spec, 2, { group: "us" })).toBe('wave 2 (g) has no job group "us" in the spec rendered at base');
     expect(renderedJobMissing(spec, 2, { group: "eu", share: 3 })).toBe('job group "eu" of wave 2 (g) has 2 shares in the spec rendered at base');
     expect(renderedJobMissing(spec, 2, { group: "eu", share: 1 })).toBeUndefined();
+    expect(renderedJobMissing(spec, 1, { share: 3 }, "head")).toBe("wave 1 (w) has 2 shares in the spec rendered at head");
   });
 
   test("the command comes from CHANT_WAVES_SPEC_COMMAND as a JSON list of words", () => {
@@ -138,6 +160,91 @@ describe("a waves spec the job renders at run time (#4982)", () => {
     expect(opWavesRenderSpecEnv(undefined)).toEqual({});
     expect(() => opWavesRenderSpecEnv({ command: [] })).toThrow(/renderSpec.command must be/);
     expect(RUNTIME_WAVES_SPEC_FLOOR).toBe("0.124.89");
+  });
+
+  test("runsAtHead (#5046): the job's runs come from the render at the applied commit, the gate from the render at base", async () => {
+    // The product's runs are in its config too: the change adds root c and loosens the gate.
+    writeFileSync(join(tools, "runs.cjs"), RUNS_JS);
+    const runs = [process.execPath, join(tools, "runs.cjs")];
+    const log = join(tools, "renders.log");
+    git("checkout", "-q", "HEAD^1");
+    writeFileSync(join(repo, "config.json"), JSON.stringify({ gate: "always", runs: ["a", "b"] }));
+    git("commit", "-q", "-am", "runs at base");
+    const baseSha = git("rev-parse", "HEAD");
+    writeFileSync(join(repo, "config.json"), JSON.stringify({ gate: "never", runs: ["a", "b", "c"] }));
+    git("commit", "-q", "-am", "add c and loosen");
+    const headSha = git("rev-parse", "HEAD");
+    process.env.RENDER_LOG = log;
+    try {
+      const rendered = renderOpWavesJobSpec({
+        specFile: SPEC_FILE,
+        base: "HEAD^1",
+        cwd: repo,
+        render: commandSpecRender(runs, SPEC_FILE, repo),
+        fallback: gitShowAtBase,
+        parse: parseOpWavesSpec,
+        runsAtHead: true,
+        headRender: (sha) => commandSpecRender(runs, SPEC_FILE, repo, { [OP_WAVES_SPEC_BASE_ENV]: sha }),
+      });
+      expect(rendered).toMatchObject({ at: "head", sha: headSha });
+      expect(rendered.spec.waves[0]!.runs.map((r) => r.target)).toEqual(["a", "b", "c"]);
+      expect(parseOpWavesSpec(readFileSync(join(repo, SPEC_FILE), "utf-8"), "file").waves[0]!.runs).toHaveLength(3);
+      const rules = readOpWavePolicy(SPEC_FILE, "dev", "HEAD^1", repo, rendered.show);
+      expect(rules).toMatchObject({ policy: "always", source: "base", base: baseSha });
+      // The head render alone is handed the base; the rules render is the base's own.
+      expect(readFileSync(log, "utf-8").trim().split("\n")).toEqual([`${headSha} base=${baseSha}`, `${baseSha} base=`]);
+      const applied: string[] = [];
+      const exec: OpWaveExec = (argv, dir) => {
+        if (argv[1] === "plan") writeFileSync(join(dir, argv[4]!), JSON.stringify({ planDigest: `sha256:${"1".repeat(64)}`, changes: { create: 1 } }));
+        if (argv[1] === "apply") applied.push(argv[2]!);
+        return 0;
+      };
+      const result = await runOpWave({ spec: rendered.spec, specFile: SPEC_FILE, wave: 1, cwd: repo, exec, show: rendered.show, gates: memoryGateLedgerPort(), head: headSha });
+      expect(result.exitCode).toBe(3);
+      expect(result.decision).toMatchObject({ status: "waiting", policy: "always" });
+      expect(result.decision!.members.map((m) => m.member).sort()).toEqual(["a", "b", "c"]);
+      expect(applied).toEqual([]);
+      // Off by default: the runs are the base's.
+      const off = renderOpWavesJobSpec({ specFile: SPEC_FILE, base: "HEAD^1", cwd: repo, render: commandSpecRender(runs, SPEC_FILE, repo), fallback: gitShowAtBase, parse: parseOpWavesSpec });
+      expect(off).toMatchObject({ at: "base", sha: baseSha });
+      expect(off.spec.waves[0]!.runs.map((r) => r.target)).toEqual(["a", "b"]);
+    } finally {
+      delete process.env.RENDER_LOG;
+    }
+  });
+
+  test("CHANT_WAVES_SPEC_RUNS is head or unset", () => {
+    expect(opWavesSpecRunsAtHead({})).toBe(false);
+    expect(opWavesSpecRunsAtHead({ [OP_WAVES_SPEC_RUNS_ENV]: "head" })).toBe(true);
+    expect(() => opWavesSpecRunsAtHead({ [OP_WAVES_SPEC_RUNS_ENV]: "base" })).toThrow(/CHANT_WAVES_SPEC_RUNS is head or unset/);
+    expect(opWavesRenderSpecEnv({ command: ["terragucci", "waves-spec"], runsAtHead: true })).toEqual({ CHANT_WAVES_SPEC_COMMAND: '["terragucci","waves-spec"]', CHANT_WAVES_SPEC_RUNS: "head" });
+    expect(opWavesRenderSpecEnv({ command: ["terragucci", "waves-spec"], runsAtHead: false })).toEqual({ CHANT_WAVES_SPEC_COMMAND: '["terragucci","waves-spec"]' });
+    expect(RUNTIME_WAVES_SPEC_RUNS_AT_HEAD_FLOOR).toBe(NEXT_RELEASE);
+  });
+
+  test("chant run wave --render-spec with CHANT_WAVES_SPEC_RUNS=head writes the spec rendered at HEAD (#5046)", async () => {
+    writeFileSync(join(tools, "runs.cjs"), RUNS_JS);
+    git("checkout", "-q", "HEAD^1");
+    writeFileSync(join(repo, "config.json"), JSON.stringify({ gate: "always", runs: ["a"] }));
+    git("commit", "-q", "-am", "runs at base");
+    writeFileSync(join(repo, "config.json"), JSON.stringify({ gate: "always", runs: ["a", "b"] }));
+    git("commit", "-q", "-am", "add b");
+    const was = process.cwd();
+    const saved = { command: process.env[OP_WAVES_SPEC_COMMAND_ENV], runs: process.env[OP_WAVES_SPEC_RUNS_ENV] };
+    process.env[OP_WAVES_SPEC_COMMAND_ENV] = JSON.stringify([process.execPath, join(tools, "runs.cjs")]);
+    process.env[OP_WAVES_SPEC_RUNS_ENV] = "head";
+    process.chdir(repo);
+    try {
+      const ctx = { args: parseArgs(["run", "wave", "--spec", SPEC_FILE, "--wave", "1", "--share", "3", "--render-spec"]), plugins: [], serializers: [] } as unknown as CommandContext;
+      expect(await runOpWaveCommand(ctx)).toBe(0);
+      expect(parseOpWavesSpec(readFileSync(join(repo, SPEC_FILE), "utf-8"), "file").waves[0]!.runs.map((r) => r.target)).toEqual(["a", "b"]);
+    } finally {
+      process.chdir(was);
+      for (const [k, v] of [[OP_WAVES_SPEC_COMMAND_ENV, saved.command], [OP_WAVES_SPEC_RUNS_ENV, saved.runs]] as const) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
   });
 
   test("chant run wave --render-spec writes the rendered spec, and a share it does not have exits 0", async () => {

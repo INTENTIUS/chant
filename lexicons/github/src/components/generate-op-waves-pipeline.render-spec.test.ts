@@ -66,5 +66,18 @@ describe("a spec the job renders at run time on github (#4982)", () => {
 
   test("a renderSpec with no command is refused", () => {
     expect(() => jobsOf(shape, { renderSpec: { command: [] } })).toThrow(/renderSpec.command must be the product command/);
+    expect(() => jobsOf(shape, { renderSpec: { command: ["terragucci", "waves-spec"], runsAtHead: "yes" } })).toThrow(/renderSpec.runsAtHead must be true or false/);
+  });
+
+  test("runsAtHead: the jobs that render the spec carry CHANT_WAVES_SPEC_RUNS=head, and nothing else changes (#5046)", () => {
+    const head = jobsOf(shape, { ...options, renderSpec: { command: ["terragucci", "waves-spec"], runsAtHead: true } });
+    const plain = jobsOf(shape, options);
+    expect(head["wave-1-wave-1"]!.env!.CHANT_WAVES_SPEC_RUNS).toBe("head");
+    expect(head["wave-2-wave-2"]!.env!.CHANT_WAVES_SPEC_RUNS).toBe("head");
+    expect(head["wave-1-wave-1-evidence"]!.env?.CHANT_WAVES_SPEC_RUNS).toBeUndefined();
+    expect(plain["wave-1-wave-1"]!.env!.CHANT_WAVES_SPEC_RUNS).toBeUndefined();
+    const { CHANT_WAVES_SPEC_RUNS: _runs, ...rest } = head["wave-1-wave-1"]!.env!;
+    expect({ ...head["wave-1-wave-1"], env: rest }).toEqual(plain["wave-1-wave-1"]);
+    expect(jobsOf(shape, { ...options, renderSpec: { command: ["terragucci", "waves-spec"], runsAtHead: false } })).toEqual(plain);
   });
 });
