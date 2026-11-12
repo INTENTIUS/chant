@@ -983,9 +983,11 @@ export const PR_PLAN_NOTE_JOB = "plan-note";
  * and Forgejo it runs in a fresh job after the plan, at the target branch's
  * commit, and posts the note and the `chant/plan` status from the report
  * the plan job handed on, with the forge token the plan job never held.
- * `HEAD_SHA` is the commit the plan job checked out, `PR_NUMBER` the pull
+ * `HEAD_SHA` is the pull request's head (#5020), `PR_NUMBER` the pull
  * request, and `PLAN_RESULT` the plan job's result, which fails the status
- * when the plan job failed.
+ * when the plan job failed. A GitHub plan job checks out the merge preview
+ * (`github.sha`), and `pr-post` takes a report for it as the head's
+ * (`pullRequestHeads` in ../pr-forge-job.ts).
  *
  * On GitLab (#4328) it runs `pr-post --open` in a pipeline of the target
  * branch, which GitLab builds from that branch's files and gives the
@@ -1026,7 +1028,8 @@ function prLoopPostJobBase(forge: ForgeKind, env: string, member: string | undef
     command: withProductBin(command, words?.bin),
     env: {
       PR_NUMBER: "${{ github.event.pull_request.number }}",
-      HEAD_SHA: "${{ github.sha }}",
+      // #5020: the head, where the forge shows and requires the status; GitHub's github.sha is the merge preview.
+      HEAD_SHA: "${{ github.event.pull_request.head.sha }}",
       PLAN_RESULT: "${{ needs.plan.result }}",
       ...(opts.staleNotes ? { TIP_SHA: "${{ github.event.pull_request.base.sha }}" } : {}),
       GITHUB_TOKEN: GITHUB_JOB_TOKEN,
@@ -1328,7 +1331,7 @@ export function prEnvJobs(forge: ForgeKind, options: PrLoopPipelineOptions = {},
       jobName: PR_ENV_POST_JOB,
       command: ["chant", "components", "pr-env", "post", "--pr", '"$PR_NUMBER"', "--head", '"$HEAD_SHA"', ...common, ...(github ? ["--result", '"$UP_RESULT"'] : [])].join(" "),
       env: github
-        ? { PR_NUMBER: prNumber, HEAD_SHA: "${{ github.sha }}", UP_RESULT: "${{ needs.env-up.result }}", ...token }
+        ? { PR_NUMBER: prNumber, HEAD_SHA: "${{ github.event.pull_request.head.sha }}", UP_RESULT: "${{ needs.env-up.result }}", ...token }
         : { PR_NUMBER: prNumber, HEAD_SHA: "$CI_COMMIT_SHA", BASE_SHA: "$CI_MERGE_REQUEST_DIFF_BASE_SHA" },
     },
     {

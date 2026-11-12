@@ -25,7 +25,7 @@ jobs:
       - name: Say on the head that the plan started
         env:
           CHANT_PENDING_TOKEN: '${{ github.token }}'
-          CHANT_PENDING_SHA: '${{ github.sha }}'
+          CHANT_PENDING_SHA: '${{ github.event.pull_request.head.sha }}'
           CHANT_PENDING_CONTEXT: yodel/plan/staging
           CHANT_PENDING_DESCRIPTION: planning
         run: '(cd / && node -e ''const api=String(process.env.GITHUB_API_URL||"").replace(/\/+$/,""),repo=process.env.GITHUB_REPOSITORY,sha=process.env.CHANT_PENDING_SHA||"";if(!/^[0-9a-f]{40}$/.test(sha)){console.log("chant: no commit to say the plan started on");process.exit(0)}const run=process.env.GITHUB_SERVER_URL&&process.env.GITHUB_RUN_ID?process.env.GITHUB_SERVER_URL+"/"+repo+"/actions/runs/"+process.env.GITHUB_RUN_ID:undefined;fetch(api+"/repos/"+repo+"/statuses/"+sha,{method:"POST",headers:{authorization:"token "+process.env.CHANT_PENDING_TOKEN,accept:"application/json","content-type":"application/json"},body:JSON.stringify({state:"pending",context:process.env.CHANT_PENDING_CONTEXT,description:process.env.CHANT_PENDING_DESCRIPTION,...(run?{target_url:run}:{})})}).then((r)=>console.log(r.ok?"chant: "+process.env.CHANT_PENDING_CONTEXT+" is pending":"chant: the forge answered "+r.status+" to the pending status"),(err)=>console.log("chant: the pending status was not posted: "+err.message));'')'
@@ -115,7 +115,7 @@ jobs:
         if: always()
         env:
           PR_NUMBER: '${{ github.event.pull_request.number }}'
-          HEAD_SHA: '${{ github.sha }}'
+          HEAD_SHA: '${{ github.event.pull_request.head.sha }}'
           PLAN_RESULT: '${{ needs.plan-staging.result }}'
           GITHUB_TOKEN: '${{ github.token }}'
         run: yodel chant components pr-post --pr "$PR_NUMBER" --head "$HEAD_SHA" --env default --output .chant/pr --forge github --member staging --result "$PLAN_RESULT"
@@ -132,7 +132,7 @@ jobs:
       - name: Say on the head that the plan started
         env:
           CHANT_PENDING_TOKEN: '${{ github.token }}'
-          CHANT_PENDING_SHA: '${{ github.sha }}'
+          CHANT_PENDING_SHA: '${{ github.event.pull_request.head.sha }}'
           CHANT_PENDING_CONTEXT: yodel/plan/prod
           CHANT_PENDING_DESCRIPTION: planning
         run: '(cd / && node -e ''const api=String(process.env.GITHUB_API_URL||"").replace(/\/+$/,""),repo=process.env.GITHUB_REPOSITORY,sha=process.env.CHANT_PENDING_SHA||"";if(!/^[0-9a-f]{40}$/.test(sha)){console.log("chant: no commit to say the plan started on");process.exit(0)}const run=process.env.GITHUB_SERVER_URL&&process.env.GITHUB_RUN_ID?process.env.GITHUB_SERVER_URL+"/"+repo+"/actions/runs/"+process.env.GITHUB_RUN_ID:undefined;fetch(api+"/repos/"+repo+"/statuses/"+sha,{method:"POST",headers:{authorization:"token "+process.env.CHANT_PENDING_TOKEN,accept:"application/json","content-type":"application/json"},body:JSON.stringify({state:"pending",context:process.env.CHANT_PENDING_CONTEXT,description:process.env.CHANT_PENDING_DESCRIPTION,...(run?{target_url:run}:{})})}).then((r)=>console.log(r.ok?"chant: "+process.env.CHANT_PENDING_CONTEXT+" is pending":"chant: the forge answered "+r.status+" to the pending status"),(err)=>console.log("chant: the pending status was not posted: "+err.message));'')'
@@ -222,7 +222,7 @@ jobs:
         if: always()
         env:
           PR_NUMBER: '${{ github.event.pull_request.number }}'
-          HEAD_SHA: '${{ github.sha }}'
+          HEAD_SHA: '${{ github.event.pull_request.head.sha }}'
           PLAN_RESULT: '${{ needs.plan-prod.result }}'
           GITHUB_TOKEN: '${{ github.token }}'
         run: yodel chant components pr-post --pr "$PR_NUMBER" --head "$HEAD_SHA" --env default --output .chant/pr --forge github --member prod --result "$PLAN_RESULT"

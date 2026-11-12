@@ -261,6 +261,11 @@ export const PRODUCT_PLAN_ARTIFACTS_FLOOR = "0.124.91";
 export const PRODUCT_PLAN_LOGIN_TOKENS_FLOOR = NEXT_RELEASE;
 
 /**
+ * The first chant whose pull request jobs on GitHub and Forgejo name the pull request's head, `github.event.pull_request.head.sha`, where `github.sha` named the merge preview (#5020): the product plan's pending step (`CHANT_PENDING_SHA`), the note job's `HEAD_SHA` (the product plan's, the pull request loop's and the product pipeline's) and the `env-post` job's. `pr-post --head <head>` takes a report, a plan note hand-off or a run record for the head or for the run's merge preview the plan job checked out (`plannedForHead`), so a product's plan verb may write its hand-off for either.
+ */
+export const PR_HEAD_SHA_FLOOR = NEXT_RELEASE;
+
+/**
  * Day-2 actions in the product pipeline (#4654): the `action` comment
  * command counted as answered by the product's own workflow
  * (`productPipelineJobs(forge, env, { words, actions: true })`), or the

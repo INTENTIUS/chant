@@ -123,7 +123,7 @@ describe("the product plan's steps beside the plan verb on GitHub (#4899, #4931)
   test("the pending status is the first step, before the checkout, and the one that holds the token for it", () => {
     const staging = job("plan-staging");
     expect(staging.steps[0]!.name).toBe("Say on the head that the plan started");
-    expect(staging.steps[0]!.env).toMatchObject({ CHANT_PENDING_TOKEN: "${{ github.token }}", CHANT_PENDING_SHA: "${{ github.sha }}", CHANT_PENDING_CONTEXT: "yodel/plan/staging" });
+    expect(staging.steps[0]!.env).toMatchObject({ CHANT_PENDING_TOKEN: "${{ github.token }}", CHANT_PENDING_SHA: "${{ github.event.pull_request.head.sha }}", CHANT_PENDING_CONTEXT: "yodel/plan/staging" });
     expect(staging.steps[1]!.name).toBe("Check out the change");
     expect(staging.permissions).toEqual({ contents: "read", statuses: "write", "id-token": "write" });
     expect(job("plan-prod").permissions).toEqual({ contents: "read", statuses: "write" });

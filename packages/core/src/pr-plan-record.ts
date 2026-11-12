@@ -32,8 +32,10 @@ export const PLAN_RUN_OP = "pr-plan";
 export interface PlanRunExpect {
   /** The pipeline's environment, `--env`. */
   env: string;
-  /** The commit the plan job checked out, `--head`. */
+  /** The pull request's head, `--head`. */
   head: string;
+  /** The commit the plan job checked out when it is not `head` (#5020): a GitHub `pull_request` run's merge preview. */
+  planned?: string;
   /** The target, `--member`. */
   target?: string;
   /** The plan job's result as the forge says it (`needs.<job>.result`, GitLab's job status). */
@@ -69,7 +71,7 @@ export function readPlanRunRecord(dir: string, expect: PlanRunExpect): { record:
   if (r.env !== expect.env) return { refused: `the run record is for environment ${JSON.stringify(r.env)}, not ${expect.env}` };
   const labels = r.labels && typeof r.labels === "object" && !Array.isArray(r.labels) ? (r.labels as Record<string, unknown>) : {};
   if ((labels.Target ?? undefined) !== expect.target) return { refused: `the run record is for target ${JSON.stringify(labels.Target ?? null)}, not ${JSON.stringify(expect.target ?? null)}` };
-  if (r.gitSha !== undefined && r.gitSha !== expect.head) return { refused: `the run record is for commit ${JSON.stringify(r.gitSha)}, not ${expect.head}` };
+  if (r.gitSha !== undefined && r.gitSha !== expect.head && r.gitSha !== expect.planned) return { refused: `the run record is for commit ${JSON.stringify(r.gitSha)}, not ${expect.head}` };
   if (!SHA.test(expect.head)) return { refused: `the head ${JSON.stringify(expect.head)} is not a full commit` };
   const started = instant(r.started);
   const ended = instant(r.ended);

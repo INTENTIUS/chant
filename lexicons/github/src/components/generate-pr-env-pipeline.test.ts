@@ -144,7 +144,7 @@ describe("env-up holds no forge token while the pull request's code runs (#4295)
     expect(post.steps[0]).toMatchObject({ uses: expect.stringMatching(/^actions\/checkout@/), with: { ref: "${{ github.event.pull_request.base.sha }}" } });
     expect(post.permissions).toEqual({ contents: "write", "pull-requests": "write", statuses: "write" });
     const last = post.steps.at(-1)!;
-    expect(last.env).toMatchObject({ GITHUB_TOKEN: "${{ github.token }}", HEAD_SHA: "${{ github.sha }}", UP_RESULT: "${{ needs.env-up.result }}" });
+    expect(last.env).toMatchObject({ GITHUB_TOKEN: "${{ github.token }}", HEAD_SHA: "${{ github.event.pull_request.head.sha }}", UP_RESULT: "${{ needs.env-up.result }}" });
     expect(last.run).toBe('chant components pr-env post --pr "$PR_NUMBER" --head "$HEAD_SHA" --forge github --output .chant/pr-env --result "$UP_RESULT"');
     // The post job runs no build, no lint and no pr-env up: none of the change's code.
     expect(JSON.stringify(post)).not.toMatch(/chant (build|lint)|pr-env up/);

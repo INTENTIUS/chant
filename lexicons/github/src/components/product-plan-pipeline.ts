@@ -185,7 +185,8 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
       outputs: handoverOutputs(PLAN_STEP_ID, forge),
       steps: [
         // #4899: before the checkout, the one step that holds the token for the status.
-        ...pendingStep(p, "${{ github.sha }}"),
+        // #5020: on the pull request's head, where the forge shows and requires it; GitHub's github.sha is the merge preview.
+        ...pendingStep(p, "${{ github.event.pull_request.head.sha }}"),
         // #4963: the previous note's marker and the trade, before any of the change's code is here.
         ...previousStep(p, "${{ github.event.pull_request.number }}"),
         ...tradeStep(p),

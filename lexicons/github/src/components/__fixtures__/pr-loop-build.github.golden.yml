@@ -111,7 +111,7 @@ jobs:
         if: always()
         env:
           PR_NUMBER: '${{ github.event.pull_request.number }}'
-          HEAD_SHA: '${{ github.sha }}'
+          HEAD_SHA: '${{ github.event.pull_request.head.sha }}'
           PLAN_RESULT: '${{ needs.plan.result }}'
           GITHUB_TOKEN: '${{ github.token }}'
         run: chant components pr-post --pr "$PR_NUMBER" --head "$HEAD_SHA" --env prod --output .chant/pr --forge github --result "$PLAN_RESULT"

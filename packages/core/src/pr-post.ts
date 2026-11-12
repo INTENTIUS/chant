@@ -54,8 +54,14 @@ export interface PlanPostInput {
   dir: string;
   /** The pull request, from the forge's event. */
   pr: number;
-  /** The commit the plan job checked out, from the forge's event. */
+  /** The pull request's head, from the forge's event: the commit the statuses go on. */
   head: string;
+  /**
+   * The commit the plan job checked out when it is not `head` (#5020): a
+   * GitHub `pull_request` run's merge preview (`GITHUB_SHA`). A report, plan
+   * note or run record for it counts as the head's.
+   */
+  planned?: string;
   env: string;
   member?: string;
   /** The plan status's context (#5003, a product plan's `statusContext`), in place of {@link prStatusContext}'s. */
@@ -142,12 +148,15 @@ export interface PlanPostResult {
 
 const SHA = /^[0-9a-f]{40}$/;
 
+/** Whether `sha` is the head a caller posts for, or the merge preview its plan job checked out for it (#5020). */
+const isPlannedHead = (sha: string, input: Pick<PlanPostInput, "head" | "planned">): boolean => sha === input.head || (input.planned !== undefined && sha === input.planned);
+
 /**
  * Read the plan report under `dir` and check it is the one the caller ran:
  * a plan report for the same pull request, head, environment and member.
  * Returns the report, or why it is not used.
  */
-export function readPlanReport(input: Pick<PlanPostInput, "dir" | "pr" | "head" | "env" | "member">): { report: PrReport } | { refused: string } {
+export function readPlanReport(input: Pick<PlanPostInput, "dir" | "pr" | "head" | "planned" | "env" | "member">): { report: PrReport } | { refused: string } {
   const file = join(input.dir, PR_PLAN_REPORT_FILE);
   if (!existsSync(file)) return { refused: "the plan job wrote no report" };
   let doc: unknown;
@@ -160,7 +169,7 @@ export function readPlanReport(input: Pick<PlanPostInput, "dir" | "pr" | "head" 
   const r = doc as Record<string, unknown>;
   if (r.stage !== "plan") return { refused: `the report is not a plan report (stage ${JSON.stringify(r.stage)})` };
   if (r.pr !== input.pr) return { refused: `the report is for pull request ${JSON.stringify(r.pr)}, not ${input.pr}` };
-  if (typeof r.head !== "string" || !SHA.test(r.head) || r.head !== input.head) return { refused: `the report is for head ${JSON.stringify(r.head)}, not ${input.head}` };
+  if (typeof r.head !== "string" || !SHA.test(r.head) || !isPlannedHead(r.head, input)) return { refused: `the report is for head ${JSON.stringify(r.head)}, not ${input.head}` };
   if (r.env !== input.env) return { refused: `the report is for environment ${JSON.stringify(r.env)}, not ${input.env}` };
   if ((r.member ?? undefined) !== input.member) return { refused: `the report is for member ${JSON.stringify(r.member ?? null)}, not ${JSON.stringify(input.member ?? null)}` };
   if (!Array.isArray(r.members) || !r.changeSet || typeof r.changeSet !== "object" || !r.selection || typeof r.selection !== "object" || !r.approval || typeof r.approval !== "object") {
@@ -370,6 +379,7 @@ async function keepRunRecord(input: PlanPostInput, warnings: string[]): Promise<
   const read = readPlanRunRecord(input.dir, {
     env: input.env,
     head: input.head,
+    ...(input.planned ? { planned: input.planned } : {}),
     ...(input.member ? { target: input.member } : {}),
     ...(input.result ? { result: input.result } : {}),
     ...(input.recordRun.origin ? { origin: input.recordRun.origin } : {}),
@@ -437,7 +447,7 @@ async function postOutcome(
  * Read a product's plan note hand-off under `dir` (#4799) and check it is the
  * one the caller ran, as {@link readPlanReport} checks a report.
  */
-export function readPlanNoteHandoff(input: Pick<PlanPostInput, "dir" | "pr" | "head" | "env" | "member">): { handoff: PrPlanNoteHandoff | PrPlanBodyHandoff } | { refused: string } {
+export function readPlanNoteHandoff(input: Pick<PlanPostInput, "dir" | "pr" | "head" | "planned" | "env" | "member">): { handoff: PrPlanNoteHandoff | PrPlanBodyHandoff } | { refused: string } {
   let doc: unknown;
   try {
     doc = JSON.parse(readFileSync(join(input.dir, PR_PLAN_NOTE_FILE), "utf-8"));
@@ -449,7 +459,7 @@ export function readPlanNoteHandoff(input: Pick<PlanPostInput, "dir" | "pr" | "h
   if (r.kind !== "plan-note-handoff") return { refused: `the file is not a plan note hand-off (kind ${JSON.stringify(r.kind)})` };
   if (r.contract !== PR_PLAN_NOTE_CONTRACT) return { refused: `the plan note follows contract ${JSON.stringify(r.contract)}, and this chant reads ${PR_PLAN_NOTE_CONTRACT}` };
   if (r.pr !== input.pr) return { refused: `the plan note is for pull request ${JSON.stringify(r.pr)}, not ${input.pr}` };
-  if (typeof r.head !== "string" || !SHA.test(r.head) || r.head !== input.head) return { refused: `the plan note is for head ${JSON.stringify(r.head)}, not ${input.head}` };
+  if (typeof r.head !== "string" || !SHA.test(r.head) || !isPlannedHead(r.head, input)) return { refused: `the plan note is for head ${JSON.stringify(r.head)}, not ${input.head}` };
   if (r.env !== input.env) return { refused: `the plan note is for environment ${JSON.stringify(r.env)}, not ${input.env}` };
   if ((r.member ?? undefined) !== input.member) return { refused: `the plan note is for ${JSON.stringify(r.member ?? null)}, not ${JSON.stringify(input.member ?? null)}` };
   if (r.state !== "success" && r.state !== "failure" && r.state !== "pending") return { refused: `the plan note's state ${JSON.stringify(r.state)} is not success, failure or pending` };
