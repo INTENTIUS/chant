@@ -4,7 +4,7 @@
 # failure, and the waves after it run what does not depend on those runs. A job
 # whose guard finds it running where the spec did not set it to run exits 9 and
 # stops the waves after it.
-# After the last wave, the control job tells gitlab.com/acme/control how the waves ended.
+# On the default branch's push, the control job tells gitlab.com/acme/control that the waves applied before the merge.
 
 stages:
   - apply
@@ -1174,21 +1174,11 @@ control:
   stage: control
   image: node:22
   rules:
-    - if: ($CI_PIPELINE_SOURCE != "schedule" && $TERRAGUCCI_PLAN_NOTES == null) && ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main")
-    - if: ($CI_PIPELINE_SOURCE != "schedule" && $TERRAGUCCI_PLAN_NOTES == null) && ($CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/ && $CHANT_WAVES_COMMIT =~ /^[0-9a-f]{40,64}$/ && $CI_COMMIT_BRANCH == "main")
-  needs:
-    - apply-rest-record
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  needs: []
   script:
-    - |
-      outcome="$(
-      unset CHANT_CONTROL_TOKEN CHANT_CONTROL_READ_TOKEN TG_CONTROL_TOKEN
-      { :
-      } 1>&2
-      terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --waves-outcome
-      )" || exit 1
-    - export CHANT_CONTROL_OUTCOME="$outcome"
-    - 'if [ -z "${CHANT_CONTROL_OUTCOME:-}" ]; then echo "chant: this run started a follow-on run for the next wave, which tells the control repo how the waves ended"; exit 0; fi'
-    - export CHANT_CONTROL_SHA="${CHANT_WAVES_COMMIT:-$CI_COMMIT_SHA}"
+    - export CHANT_CONTROL_OUTCOME="applied"
+    - export CHANT_CONTROL_SHA="$CI_COMMIT_SHA"
     - |
       bash <<'CONTROL_DISPATCH' || exit $?
       CHANT_CONTROL_TOKEN="${TG_CONTROL_TOKEN:-}"

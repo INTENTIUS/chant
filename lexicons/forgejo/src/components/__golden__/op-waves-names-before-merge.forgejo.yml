@@ -1788,28 +1788,18 @@ jobs:
           if-no-files-found: ignore
   control:
     runs-on: docker
-    needs:
-      - apply-rest-record
-    if: '${{ ((github.event_name == ''push'' && (github.ref == format(''refs/heads/{0}'', github.event.repository.default_branch))) || (github.event_name == ''workflow_dispatch'' && github.event.inputs.apply_head != '''') || (github.event_name == ''workflow_dispatch'' && github.event.inputs.apply_wave != '''')) && (!cancelled() && github.event.inputs.apply_head == '''') }}'
+    if: '${{ github.event_name == ''push'' && github.ref == format(''refs/heads/{0}'', github.event.repository.default_branch) }}'
     container: node:22
     steps:
       - uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - name: Download the waves' outcomes
-        uses: https://code.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3.0.2
-        with:
-          path: .chant/op-waves/tf-apply/outcomes
-      - name: Add up the waves' outcomes
-        run: |
-          outcome="$(terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --waves-outcome)" || exit 1
-          echo "CHANT_CONTROL_OUTCOME=$outcome" >> "$GITHUB_ENV"
-      - name: Tell the control repo codeberg.org/acme/control how network's waves ended
+      - name: Tell the control repo codeberg.org/acme/control that network's waves applied
         env:
           CHANT_CONTROL_TOKEN: '${{ secrets.TG_CONTROL_TOKEN }}'
-          CHANT_CONTROL_SHA: '${{ github.event.inputs.apply_commit || github.sha }}'
+          CHANT_CONTROL_SHA: '${{ github.sha }}'
+          CHANT_CONTROL_OUTCOME: applied
         run: |
-          if [ -z "${CHANT_CONTROL_OUTCOME:-}" ]; then echo "chant: this run started a follow-on run for the next wave, which tells the control repo how the waves ended"; exit 0; fi
           set -u
           member='network'
           op='deploy'

@@ -178,7 +178,8 @@ describe("the Op waves workflow's names on GitHub (#5022)", () => {
     expect(jobs["apply-rest"]!.env).toMatchObject({ CHANT_WAVES_WAVE: "${{ github.event.inputs.apply_wave || '4' }}", CHANT_WAVES_COMMIT: "${{ github.event.inputs.apply_commit }}" });
     const when = `(github.event_name == 'push' && (${DEFAULT_BRANCH})) || (github.event_name == 'workflow_dispatch' && github.event.inputs.apply_head != '') || (github.event_name == 'workflow_dispatch' && github.event.inputs.apply_wave != '')`;
     expect(jobs["apply-wave-1-plan"]!.if).toBe(`\${{ (${when}) && (github.event.inputs.apply_wave == '') }}`);
-    expect(jobs["control"]!.if).toBe(`\${{ (${when}) && (!cancelled() && github.event.inputs.apply_head == '') }}`);
+    // #5060: the control job runs on the merge commit's push, outside the product's runIf.
+    expect(jobs["control"]!.if).toBe(`\${{ github.event_name == 'push' && ${DEFAULT_BRANCH} }}`);
     // The rest wave's record job dispatches terragucci.yml with terragucci's inputs.
     const start = jobs["apply-rest-record"]!.steps.find((s) => s.env?.CHANT_WAVES_FOLLOW_ON)!;
     expect(JSON.parse(start.env!.CHANT_WAVES_FOLLOW_ON!)).toEqual({ forge: "github", workflow: "terragucci.yml", inputs: names.dispatchInputs });
