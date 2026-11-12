@@ -233,6 +233,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
   // #5022: the product's job and stage names, else chant's.
   if (options.workflowFile !== undefined) throw new Error("workflowFile names a GitHub or Forgejo workflow; on GitLab the file is opsFileName");
   if (options.dispatchInputs !== undefined) throw new Error("dispatchInputs names a GitHub or Forgejo workflow's inputs; a GitLab pipeline carries the decision in variables");
+  if (options.resumeWorkflowFile !== undefined) throw new Error("resumeWorkflowFile names a GitHub or Forgejo workflow; GitLab's resume job is in the pipeline, and jobNames names it (role resume)");
   if (options.artifactNames !== undefined) throw new Error("artifactNames names GitHub and Forgejo artifacts; a GitLab job hands its files on through needs, and waveJobs' artifact names the product's");
   const runIf = options.runIf;
   if (runIf !== undefined && (typeof runIf !== "string" || runIf.trim() === "" || /[\r\n]/.test(runIf))) throw new Error(`runIf ${JSON.stringify(runIf)} is one rule condition`);
@@ -301,6 +302,8 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
   const doneStage = stageName({ name: BEFORE_MERGE_DONE_JOB, role: "before-merge-done" });
   const controlStage = stageName({ name: "control", role: "control" });
   const resumeStage = stageName({ name: "resume", role: "resume" });
+  // #5034: the resume job's name, the product's by the role `resume`, else `<spec>-resume`.
+  const resumeJob = spec.resume ? namer.name({ role: "resume", name: `${spec.name}-resume` }) : `${spec.name}-resume`;
   const stages = [...(byReview ? [plansStage] : []), ...waveStages];
   // #4617: the control repo's token variables, which every job but the dispatch drops first.
   const control = spec.control ? opWavesControlTarget(spec.control) : undefined;
@@ -591,7 +594,8 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
   }
   if (spec.resume) {
     entries.push([
-      namer.claim(`${spec.name}-resume`),
+      // #5034: under the product's name, by the role `resume`.
+      resumeJob,
       {
         stage: resumeStage,
         image,
@@ -609,7 +613,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
     "# whose guard finds it running where the spec did not set it to run exits 9 and",
     "# stops the waves after it.",
     ...(spec.resume
-      ? [`# The ${spec.name}-resume job retries it for you in a pipeline schedule; give the schedule the cron "${spec.resume.schedule}".`]
+      ? [`# The ${resumeJob} job retries it for you in a pipeline schedule; give the schedule the cron "${spec.resume.schedule}".`]
       : []),
     ...(byReview
       ? [`# The ${spec.name}-approval-status job posts each open merge request's approval status from a pipeline schedule that sets ${OP_WAVES_APPROVAL_STATUS_VAR}=1.`]

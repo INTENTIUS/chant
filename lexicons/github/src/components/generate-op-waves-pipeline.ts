@@ -227,7 +227,7 @@ import {
   opWavesFollowOnEnv,
   opWavesRestWave,
 } from "@intentius/chant/op/op-waves-follow-on";
-import { assertFirstWaveNeedsOutside, githubFirstWaveIf, opWavesArtifacts, opWavesDispatchInputs, opWavesFirstWaveNeeds, opWavesInputsRenamed, opWavesNamer, opWavesWorkflowFile, type OpWavesDispatchInput } from "@intentius/chant/op/op-waves-names";
+import { assertFirstWaveNeedsOutside, githubFirstWaveIf, opWavesArtifacts, opWavesDispatchInputs, opWavesFirstWaveNeeds, opWavesInputsRenamed, opWavesNamer, opWavesResumeWorkflowFile, opWavesWorkflowFile, type OpWavesDispatchInput } from "@intentius/chant/op/op-waves-names";
 import { checkoutStep, concurrency, DOWNLOAD_ARTIFACT, downloadArtifactStep, keepRecordStep, runSteps } from "./ci-jobs";
 import { emitOpPipelineYAML, type GithubOpPipelineDoc } from "./generate-op-pipeline";
 
@@ -507,7 +507,7 @@ export function buildGithubOpWavesDoc(
   return {
     doc,
     jobs: split ?? jobs,
-    ...(spec.resume ? { resumeDoc: buildResumeDoc(spec, options) } : {}),
+    ...(spec.resume ? { resumeDoc: buildResumeDoc(spec, options, names) } : {}),
     ...(statusBeforeMerge ? { plansDoc: buildPlansDoc(spec, options, forge) } : {}),
   };
 }
@@ -995,7 +995,7 @@ function controlJob(
 }
 
 /** The scheduled resume workflow (#3683). */
-function buildResumeDoc(spec: OpWavesSpec, options: OpWavesPipelineOptions): GithubOpPipelineDoc {
+function buildResumeDoc(spec: OpWavesSpec, options: OpWavesPipelineOptions, names: Pick<GithubNames, "job">): GithubOpPipelineDoc {
   const steps: Array<Record<string, unknown>> = [checkoutStep(), ...runSteps(options.beforeScript ?? [])];
   steps.push({
     name: `Resume the waves of ${spec.name} whose approval arrived`,
@@ -1008,7 +1008,8 @@ function buildResumeDoc(spec: OpWavesSpec, options: OpWavesPipelineOptions): Git
     concurrency: concurrency(`${spec.name}-resume`, true),
     // contents: read fetches chant/lifecycle; actions: write re-runs a waiting run.
     permissions: { contents: "read", actions: "write" },
-    jobsDoc: { resume: { "runs-on": githubRunsOn(spec.runner), container: options.image ?? OP_WAVES_IMAGE, steps } },
+    // #5034: the job under the product's name, by the role `resume`.
+    jobsDoc: { [names.job({ role: "resume", name: "resume" })]: { "runs-on": githubRunsOn(spec.runner), container: options.image ?? OP_WAVES_IMAGE, steps } },
   };
 }
 
@@ -1219,7 +1220,8 @@ function describeJob(kind: "wave" | "decide" | "share", wave: number, name: stri
 export function generateGithubOpWavesPipeline(spec: OpWavesSpec, options: OpWavesPipelineOptions): OpWavesPipelineResult {
   const { doc, jobs, resumeDoc, plansDoc } = buildGithubOpWavesDoc(spec, options);
   const files = [{ name: opWavesWorkflowFile(spec, options.workflowFile), yaml: emitOpPipelineYAML(doc) }];
-  if (resumeDoc) files.push({ name: `${spec.name}-resume.yml`, yaml: emitOpPipelineYAML(resumeDoc) });
+  // #5034: the resume workflow in the product's file.
+  if (resumeDoc) files.push({ name: opWavesResumeWorkflowFile(spec, options.resumeWorkflowFile, files[0]!.name), yaml: emitOpPipelineYAML(resumeDoc) });
   if (plansDoc) files.push({ name: `${spec.name}-plans.yml`, yaml: emitOpPipelineYAML(plansDoc) });
   return { files, jobs };
 }
