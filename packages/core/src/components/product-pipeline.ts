@@ -156,6 +156,16 @@ export interface ProductPipelineOptions extends Omit<PrLoopPipelineOptions, "wor
    */
   commentJob?: boolean | ProductCommentJobOptions;
   /**
+   * GitLab's note poll under the product's names (#5038), with
+   * `noteCommands`: its job's name (default `note-commands`), its stage
+   * (default the job's name), and the variable and value a pipeline
+   * schedule starts it with (default `CHANT_NOTE_COMMANDS` and `1`), such
+   * as terragucci's `comments` job, which `TERRAGUCCI_SCHEDULE=comments`
+   * starts. Its resource group is its name. Refused on GitHub and Forgejo,
+   * whose comment job is `commentJob`.
+   */
+  noteCommandsJob?: ProductNoteCommandsJobOptions;
+  /**
    * The waves' job names (#5027), the Op waves generators' `jobNames`
    * (#5022): `waves.pipeline` carries them to the generator, `waves.jobs`
    * takes them, and the comment job's re-run of a merged pull request's
@@ -217,6 +227,16 @@ export interface ProductWavesBeforeMerge {
    * the generator's `dispatchInputs`. Default chant's.
    */
   dispatchInputs?: Partial<Record<"pr" | "head" | "digest", string>>;
+}
+
+/** {@link ProductPipelineOptions.noteCommandsJob} (#5038). */
+export interface ProductNoteCommandsJobOptions {
+  /** The job's name, such as `comments`. Default `note-commands`. */
+  jobName?: string;
+  /** Its stage. Default the job's name. */
+  stage?: string;
+  /** The variable and value a pipeline schedule starts it with, such as `{ variable: "TERRAGUCCI_SCHEDULE", value: "comments" }`. Default `CHANT_NOTE_COMMANDS` and `1`. */
+  schedule?: { variable: string; value: string };
 }
 
 /** {@link ProductPipelineOptions.commentJob}'s settings (#5027). */
@@ -308,7 +328,7 @@ export interface ProductPipelineJobs {
    * lexicon renders the same job from `chant build --pr-loop
    * --note-commands`. Refused on GitHub and Forgejo.
    */
-  noteCommands?: { command: string; runner?: CiRunner; env?: Record<string, string> };
+  noteCommands?: { command: string; runner?: CiRunner; env?: Record<string, string>; jobName?: string; stage?: string; schedule?: { variable: string; value: string } };
   /**
    * The agent (#4616), with `agent`: the comment it answers, `/<product>
    * agent <ask>`, and the scheduled Op spec whose generated workflow runs
@@ -447,7 +467,7 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   // #4946: the comment job answers every command but a commit word (the commit job's) with a reply, so the words may name any.
   const answered: CiProductCommand[] = options.commentJob ? [...new Set<CiProductCommand>([...jobs, ...CI_PRODUCT_COMMANDS.filter((c) => c !== "commit")])] : jobs;
   const words = assertProductWords({ ...options.words, applyMode }, { jobs: answered });
-  const { waves: given, wavesSpecFile, member, agent: _agent, commits: _commits, actions: _actions, componentWaves, productPlan, evidence, commentJob: _commentJob, wavesBeforeMerge, applyStatus: _applyStatus, wavesJobNames, ...loop } = options;
+  const { waves: given, wavesSpecFile, member, agent: _agent, commits: _commits, actions: _actions, componentWaves, productPlan, evidence, commentJob: _commentJob, wavesBeforeMerge, applyStatus: _applyStatus, wavesJobNames, noteCommandsJob, ...loop } = options;
   if (options.applyStatus && !given && !componentWaves) throw new Error("applyStatus posts the waves' apply statuses, and there are none: give waves (or componentWaves)");
   const { respond } = options;
   // #4629: the pull request loop puts the responses on the apply and note jobs, as `chant build --pr-loop --respond` does.
@@ -503,7 +523,8 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   // #4785: GitLab's comment commands, polled from the notes; waves on merge are retried by an apply on a merged merge request.
   // #4899: the product plan's comment re-plan runs in the preview's pipeline, so the poll starts it as it starts a preview.
   const notes = prNoteCommandsJob(forge, { ...prLoop, ...(options.waves || options.componentWaves ? { applyOnMerge: true } : {}), ...(productPlan?.replan ? { previewComment: true } : {}) });
-  if (notes) out.noteCommands = { ...notes, ...defaultRunner };
+  if (notes) out.noteCommands = { ...notes, ...defaultRunner, ...noteCommandsNames(forge, noteCommandsJob) };
+  else if (noteCommandsJob !== undefined) throw new Error(forge === "gitlab" ? "noteCommandsJob names the note poll, and there is none: set noteCommands" : `noteCommandsJob names GitLab's note poll; on ${forge} the comment job (commentJob) answers comments`);
   const preview = prCommentPreviewJob(forge, env, prLoop, member);
   if (preview) out.preview = { ...preview, ...(defaultRunner.runner !== undefined ? { noteRunner: defaultRunner.runner } : {}) };
   // #4616: the agent answers its comment from a workflow of its own, generated from this spec.
@@ -743,6 +764,28 @@ export function componentWavesSpec(
     op: options.op,
     waves: named.waves.map((w) => ({ ...w, approval: "pull-request" as const })),
     approvals: { ...(named.approvals ?? {}), pullRequest: { gate: options.prGate ?? words.prGate } },
+  };
+}
+
+/** GitLab's reserved top-level keys, which no job may be named. */
+const GITLAB_RESERVED = new Set(["default", "include", "stages", "variables", "workflow", "image", "services", "cache", "before_script", "after_script", "spec", "pages"]);
+
+/** The note poll's names (#5038), checked: only those the product gave, so a pipeline without them renders as before. */
+function noteCommandsNames(forge: ForgeKind, given: ProductNoteCommandsJobOptions | undefined): Pick<NonNullable<ProductPipelineJobs["noteCommands"]>, "jobName" | "stage" | "schedule"> {
+  if (given === undefined) return {};
+  if (forge !== "gitlab") throw new Error(`noteCommandsJob names GitLab's note poll; on ${forge} the comment job (commentJob) answers comments`);
+  const name = (what: string, v: unknown): string => {
+    if (typeof v !== "string" || !/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(v) || GITLAB_RESERVED.has(v)) throw new Error(`noteCommandsJob.${what} ${JSON.stringify(v)} is not a GitLab ${what === "stage" ? "stage" : "job"} name of letters, digits, _, . and -, and no GitLab keyword`);
+    return v;
+  };
+  const s = given.schedule;
+  if (s !== undefined && (typeof s.variable !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(s.variable) || typeof s.value !== "string" || !/^[A-Za-z0-9_.-]+$/.test(s.value))) {
+    throw new Error(`noteCommandsJob.schedule ${JSON.stringify(s)} is a variable name and a value of letters, digits, _, . and -, such as { variable: "TERRAGUCCI_SCHEDULE", value: "comments" }`);
+  }
+  return {
+    ...(given.jobName !== undefined ? { jobName: name("jobName", given.jobName) } : {}),
+    ...(given.stage !== undefined ? { stage: name("stage", given.stage) } : {}),
+    ...(s !== undefined ? { schedule: { variable: s.variable, value: s.value } } : {}),
   };
 }
 

@@ -131,7 +131,11 @@ export function generateGitlabProductPlanPipeline(env: string, options: GitlabPr
   const replans = plans.filter((p) => p.replan);
   const onReplan = replans.length > 0 ? `$CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/ && $${GITLAB_REPLAN_PR_VAR} =~ /^[0-9]+$/ && $CI_COMMIT_BRANCH == ${target}` : undefined;
   const notes = jobs.noteCommands;
-  const onNotes = notes ? `$CI_PIPELINE_SOURCE =~ /^(schedule|web|api|trigger)$/ && $${GITLAB_NOTE_COMMANDS_VAR} == "1" && $CI_COMMIT_BRANCH == ${target}` : undefined;
+  // #5038: the poll's job, stage and schedule, the product's or chant's.
+  const notesJob = notes?.jobName ?? PR_NOTE_COMMANDS_JOB;
+  const notesStage = notes?.stage ?? notesJob;
+  const notesWhen = notes?.schedule ?? { variable: GITLAB_NOTE_COMMANDS_VAR, value: "1" };
+  const onNotes = notes ? `$CI_PIPELINE_SOURCE =~ /^(schedule|web|api|trigger)$/ && $${notesWhen.variable} == ${JSON.stringify(notesWhen.value)} && $CI_COMMIT_BRANCH == ${target}` : undefined;
   const tags = (runner: (typeof plans)[number]["runner"]): Record<string, unknown> => {
     const t = gitlabTags(runner);
     return t ? { tags: t } : {};
@@ -171,7 +175,7 @@ export function generateGitlabProductPlanPipeline(env: string, options: GitlabPr
   const stagesBefore = [
     ...(plans.some((p) => p.evidence) ? ["plan", "evidence", PR_PLAN_NOTE_JOB] : ["plan", PR_PLAN_NOTE_JOB]),
     ...(reach ? [reach.jobName] : []),
-    ...(notes ? [PR_NOTE_COMMANDS_JOB] : []),
+    ...(notes ? [notesStage] : []),
     ...commentLocks.map((c) => c.job.jobName),
     ...(replans.length > 0 ? [REPLAN_JOB, REPLAN_NOTE_JOB] : []),
   ];
@@ -233,7 +237,7 @@ export function generateGitlabProductPlanPipeline(env: string, options: GitlabPr
   if (notes && onNotes) {
     // The target branch's commit: the job reads the notes as data through the API and runs none of a merge request's code. One poll at a time.
     // #4984: with waves, the poll is told their op and count (a wave stop on a retry) and the waves before merge, in CHANT_COMMENT_JOBS.
-    entries.push([PR_NOTE_COMMANDS_JOB, { stage: PR_NOTE_COMMANDS_JOB, image, ...tags(notes.runner), resource_group: PR_NOTE_COMMANDS_JOB, ...(notes.env ? { variables: gitlabUnexpandedReach(notes.env) } : {}), rules: [{ if: onNotes }], script: [...beforeScript, notes.command] }]);
+    entries.push([notesJob, { stage: notesStage, image, ...tags(notes.runner), resource_group: notesJob, ...(notes.env ? { variables: gitlabUnexpandedReach(notes.env) } : {}), rules: [{ if: onNotes }], script: [...beforeScript, notes.command] }]);
   }
   // #4979: `/<product> lock` keeps the locks the lock job took, `/<product> unlock` releases them, each at the target branch's commit.
   for (const { job, rule } of commentLocks) {
@@ -290,5 +294,7 @@ export function generateGitlabProductPlanPipeline(env: string, options: GitlabPr
       },
     ]);
   }
+  // #5038: the note poll's name, the product's, is no other job's.
+  if (notes && entries.filter(([k]) => k === notesJob).length > 1) throw new Error(`noteCommandsJob.jobName ${JSON.stringify(notesJob)} is another job's name in the pipeline`);
   return { yaml: emitGitlabFile(entries, header), entries, jobs, path: productPlanWorkflowFile("gitlab", env, plan) };
 }
