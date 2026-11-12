@@ -24,6 +24,8 @@ import { CHANT_EXIT } from "../exit-codes";
 import { NEXT_RELEASE } from "../release-floors";
 import {
   OP_WAVES_REMAINDER_FLOOR,
+  OP_WAVES_REMAINDER_PARITY_FLOOR,
+  OP_WAVE_REMAINDER_FOLLOWS,
   opWaveApprovedChanges,
   opWaveCoverRemainder,
   opWaveStoppedApply,
@@ -31,6 +33,7 @@ import {
   type AppliedGateChange,
 } from "./op-waves-remainder";
 import type { AppliedGateRecord, FinishedGateRecord } from "../lifecycle/gate-applied";
+import { OP_WAVE_COST_MEMBER } from "./op-waves-capability-spec";
 
 const dirs: string[] = [];
 afterAll(() => {
@@ -169,6 +172,19 @@ describe("the stopped-apply record (#5047)", () => {
     expect(opWaveUnfinishedApply([first], [], "g")).toBe(first);
     expect(opWaveUnfinishedApply([first], [fin(first, "failed")], "g")).toBeUndefined();
     expect(OP_WAVES_REMAINDER_FLOOR).toBe(NEXT_RELEASE);
+  });
+
+  test("#5056: the cost member's digest follows from the plans, so the rest covers it moved; any other extra still has to match", () => {
+    const approved: AppliedGateChange[] = [{ target: "network", address: "a", digest: "1" }, { target: "network", address: "b", digest: "2" }];
+    const cost = (d: string) => ({ member: OP_WAVE_COST_MEMBER, planDigest: d });
+    expect(OP_WAVE_REMAINDER_FOLLOWS).toEqual(["(monthly cost)"]);
+    // Part of the wave applied, so the rest costs less: the cost member moved, and every change is an approved one.
+    expect(opWaveCoverRemainder(approved, [approved[1]!], { now: [cost("sha256:less")], approved: [cost("sha256:all")] })).toEqual({ covered: true, remaining: [approved[1]], done: [approved[0]] });
+    expect(opWaveCoverRemainder(approved, [approved[1]!], { now: [cost("sha256:less")] })).toMatchObject({ covered: true });
+    // A change is still compared, and another extra still has to be the approved one.
+    expect(opWaveCoverRemainder(approved, [{ ...approved[1]!, digest: "9" }], { now: [cost("sha256:less")], approved: [cost("sha256:all")] })).toMatchObject({ covered: false });
+    expect(opWaveCoverRemainder(approved, [approved[1]!], { now: [cost("sha256:less"), { member: "migrate:m1", planDigest: "m" }], approved: [cost("sha256:all")] })).toMatchObject({ covered: false, why: "migrate:m1 is not as the approved set held it" });
+    expect(OP_WAVES_REMAINDER_PARITY_FLOOR).toBe(NEXT_RELEASE);
   });
 
   test("the spec takes approvals.remainder and approvals.spendStanding beside approvals.spend alone", () => {
