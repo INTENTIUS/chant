@@ -534,6 +534,7 @@ export type { ProductMcpContext, ProductMcpHook } from "./cli/mcp/product-tools"
 export { MCP_TOOL_ANNOTATIONS_FLOOR, PRODUCT_MCP_PROPOSE_FLOOR, PRODUCT_TOOL_PROPOSE_WORDS } from "./cli/mcp/product-tools";
 /** #5047: the Op waves keep the stopped-apply record (`approvals.remainder`, `approvals.spendStanding`), in place of a product's own. */
 export { OP_WAVES_REMAINDER_FLOOR } from "./release-floors";
+export { OP_WAVES_SPLIT_RESUME_FLOOR } from "./release-floors";
 export type { McpToolContribution, ToolAnnotations } from "./mcp/types";
 export {
   activeOtlp,

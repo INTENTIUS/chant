@@ -9,7 +9,8 @@
  * apply; `approvals.spendStanding` spends an approval of the digest a wave
  * its gate let through applies.
  */
-import { afterAll, describe, expect, test } from "vitest";
+import { afterAll, describe, expect, test, vi } from "vitest";
+import { OP_WAVES_RESUME_ENV } from "./op-waves-split-resume";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -286,5 +287,40 @@ describe("the stopped-apply record (#5047)", () => {
     expect(cdf.ran.at(-1)).toEqual(["aws_s3_bucket.b"]);
     expect((await runOpWave({ ...base, phase: "record" })).exitCode).toBe(0);
     expect(gates.finished).toEqual([expect.objectContaining({ planDigest: waited.decision!.digest, applied: gates.applied[0]!.timestamp, result: "applied" })]);
+  });
+
+  test("#5052: on GitLab the gate job's line names the applying and record jobs; a new run of the same commit (Forgejo's resume) applies the rest", async () => {
+    vi.stubEnv("GITLAB_CI", "true");
+    vi.stubEnv("CI_API_V4_URL", "https://gl/api/v4");
+    vi.stubEnv("CI_PROJECT_ID", "7");
+    vi.stubEnv("CI_PIPELINE_ID", "100");
+    vi.stubEnv("CI_JOB_ID", "555");
+    vi.stubEnv("CI_JOB_NAME", "wave-1-dev-gate");
+    vi.stubEnv(OP_WAVES_RESUME_ENV, JSON.stringify({ apply: ["wave-1-dev"], record: "wave-1-dev-record" }));
+    try {
+      const { cdf, gates, base, approve } = harness({ spend: true, remainder: true });
+      await runOpWave({ ...base, phase: "plan" });
+      const waited = await runOpWave({ ...base, phase: "gate" });
+      await approve(waited.decision!.digest);
+      await runOpWave({ ...base, phase: "plan" });
+      expect((await runOpWave({ ...base, phase: "gate" })).exitCode).toBe(CHANT_EXIT.done);
+      expect(gates.applied[0]!.resume).toMatchObject({ forge: "gitlab", run: "100", job: "555", retry: { apply: ["wave-1-dev"], record: "wave-1-dev-record" } });
+      cdf.at.stopAfter = 1;
+      await runOpWave({ ...base, phase: "apply" });
+      unlinkSync(join(base.cwd, opWaveOutcomeDir(base.spec), opWaveRunRecordFileName(1)));
+      expect((await runOpWave({ ...base, phase: "record" })).exitCode).toBe(CHANT_EXIT.failed);
+      // A new run at the same commit, from its plan job: the gate job takes up the stopped apply, and writes no line of its own.
+      await runOpWave({ ...base, phase: "plan" });
+      const gate = await runOpWave({ ...base, phase: "gate" });
+      expect(gate.exitCode).toBe(CHANT_EXIT.done);
+      expect(gate.decision?.resumes).toMatchObject({ planDigest: waited.decision!.digest, appliedAt: gates.applied[0]!.timestamp });
+      expect(gates.applied).toHaveLength(1);
+      expect(await runOpWave({ ...base, phase: "apply" })).toMatchObject({ exitCode: 0, applied: ["network"] });
+      expect(cdf.ran.at(-1)).toEqual(["aws_s3_bucket.b"]);
+      expect((await runOpWave({ ...base, phase: "record" })).exitCode).toBe(0);
+      expect(gates.finished).toEqual([expect.objectContaining({ planDigest: waited.decision!.digest, applied: gates.applied[0]!.timestamp, result: "applied" })]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });

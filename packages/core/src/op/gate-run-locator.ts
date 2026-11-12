@@ -28,6 +28,20 @@ export interface GateRunLocator {
   workflow?: string;
   /** Forgejo: the branch a dispatch runs on. */
   ref?: string;
+  /**
+   * GitLab (#5052): the jobs of the same pipeline a resume retries, by name,
+   * in place of `job`: a split wave's applying jobs, each retried when its
+   * newest try failed or was cancelled, and its record job, retried after
+   * them when it ran. The gate job that writes the applied line knows their
+   * names, not their ids.
+   */
+  retry?: { apply: string[]; record?: string };
+  /**
+   * Forgejo (#5052): the `workflow_dispatch` inputs a resume dispatches
+   * with, so a before-merge run or a follow-on is started again for the
+   * same decided head or commit instead of the branch's head.
+   */
+  inputs?: Record<string, string>;
   /** The run's page, for a person. */
   url?: string;
 }

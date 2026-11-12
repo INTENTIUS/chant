@@ -213,6 +213,7 @@ import {
 import { applyStatusCommand, applyStatusJobName, assertApplyStatusContext, type OpWavesApplyStatus } from "@intentius/chant/op/apply-status";
 import { PR_STALE_JOB } from "@intentius/chant/components/pr-pipeline";
 import { opWaveRunRecordFileName, opWaveSavedPlanDir, opWaveSavedPlanPath, opWaveSplitJobLabel, opWaveSplitJobs, type OpWaveSplitJob } from "@intentius/chant/op/op-waves-split";
+import { opWaveSplitResumeEnv } from "@intentius/chant/op/op-waves-split-resume";
 import { CHECKOUT_TOKEN_ENV, checkoutScript, dropForgeTokens, handoverOutputs, packJs, takeOverScript } from "@intentius/chant/ci-handover";
 import {
   FOLLOW_ON_TOKEN_ENV,
@@ -637,6 +638,10 @@ function githubSplitJobsDoc(input: SplitJobsInput): Record<string, unknown> {
   // #5032: the named branches, and the default branch by its run-time name with defaultBranch.
   const branches = wavesNamedBranches(spec);
   const onDefault = spec.defaultBranch === true ? { defaultBranch: true } : {};
+  // #5052: under approvals.remainder a Forgejo gate job's applied line names the run's dispatch inputs, so a resume
+  // starts the same decided head or commit again; GitHub's re-run of the gate job's run needs nothing.
+  const resumeEnv = (job: OpWaveSplitJob): Record<string, string> =>
+    spec.approvals?.remainder === true ? opWaveSplitResumeEnv(split, job, forge, opWavesInputsRenamed(names.inputs) ? names.inputs : undefined) : {};
   const out: Record<string, unknown> = {};
   for (const job of split) {
     const k = job.wave;
@@ -706,7 +711,7 @@ function githubSplitJobsDoc(input: SplitJobsInput): Record<string, unknown> {
           permissions: { contents: "write", ...(gate && byReview ? { "pull-requests": "read" } : {}), ...(commandToken?.scopes ?? {}), ...(starts ? { actions: "write" } : {}) },
           // #4992: the gate job of a step spec waits for its rows on the ledger, up to the job's timeout.
           ...(gate ? { "timeout-minutes": timeout.minutes } : {}),
-          env: { ...(gate ? timeout.env : {}), ...renderEnv, ...bmEnv, ...restEnv, ...notifyEnv, ...(wave.variables ?? {}) },
+          env: { ...(gate ? timeout.env : {}), ...renderEnv, ...bmEnv, ...restEnv, ...notifyEnv, ...(wave.variables ?? {}), ...(gate ? resumeEnv(job) : {}) },
         },
         steps,
       );

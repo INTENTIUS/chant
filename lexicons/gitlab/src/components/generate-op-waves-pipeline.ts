@@ -162,6 +162,7 @@ import {
 import { CONTROL_DISPATCH_JOB, CONTROL_OUTCOME_VAR, CONTROL_TOKEN_VARS, controlDispatchJob } from "@intentius/chant/control/dispatch";
 import type { OpWaveJobInputs, OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
 import { opWaveSavedPlanDir, opWaveSplitJobLabel, opWaveSplitJobs, type OpWaveSplitJob } from "@intentius/chant/op/op-waves-split";
+import { opWaveSplitResumeEnv } from "@intentius/chant/op/op-waves-split-resume";
 import { assertFirstWaveNeedsOutside, opWavesCommandToken, opWavesControlGroup, opWavesFirstWaveNeeds, opWavesGitlabCache, opWavesNamer, opWavesResumeGroup, type OpWavesStageRef } from "@intentius/chant/op/op-waves-names";
 import type { OpWaveEvidencePlan } from "@intentius/chant/op/op-waves-evidence-jobs";
 import { GITLAB_DROP_FORGE_TOKENS } from "@intentius/chant/ci-handover";
@@ -739,13 +740,15 @@ function gitlabSplitEntries(input: GitlabSplitInput): Array<readonly [string, un
       const guard = jobGuardSpec({ forge: "gitlab", job: opWaveSplitJobLabel(spec.name, job), product, ...guardBranches, ...(spec.runner !== undefined ? { runner: spec.runner } : {}), beforeMerge: { op: spec.name }, ...(rest ? { rest: k } : {}) });
       // #4992: the rest wave's record job starts the follow-on pipeline, with CHANT_FORGE_TOKEN.
       const starts = rest && !gate ? { [OP_WAVES_FOLLOW_ON_ENV]: opWavesFollowOnEnv({ forge: "gitlab" }) } : {};
+      // #5052: under approvals.remainder the gate job's applied line names the wave's applying and record jobs, which a resume retries.
+      const resume = gate && spec.approvals?.remainder === true ? opWaveSplitResumeEnv(split, job, "gitlab") : {};
       place(job.jobName, {
         stage,
         image,
         ...(specTags ? { tags: specTags } : {}),
         // #4992: the gate job of a step spec waits for its rows on the ledger, up to the job's timeout.
         ...(gate ? { timeout: `${timeout.minutes} minutes` } : {}),
-        variables: { ...GITLAB_FULL_HISTORY, ...(gate ? timeout.env : {}), ...renderEnv, ...(wave.variables ?? {}), ...restVariables, ...starts, [JOB_GUARD_ENV]: JSON.stringify(guard) },
+        variables: { ...GITLAB_FULL_HISTORY, ...(gate ? timeout.env : {}), ...renderEnv, ...(wave.variables ?? {}), ...restVariables, ...starts, ...resume, [JOB_GUARD_ENV]: JSON.stringify(guard) },
         rules: restRules,
         // The record job needs the gate job too, whose decision names the rows it leased (#4992).
         needs: needsOf(job.needs),
