@@ -765,6 +765,30 @@ export interface OpWavesApprovals {
    */
   spend?: boolean;
   /**
+   * An apply that stopped applies the rest under its approval (#5047). With
+   * `spend`, read at the base commit. The applied line a wave writes before
+   * it applies under an approval carries each change its plans make (a run's
+   * resource and its digest), the commit and the run, when every run that
+   * changes something plans through the step on the `resource` lock grain
+   * (an engine that records each resource as it applies it). The job that
+   * applies the whole wave, or a split wave's record job, writes how the
+   * apply ended. A wave run again at the same commit whose plans make only
+   * changes of the newest such apply that did not finish (no finished line,
+   * or a failed one), with the same digests, applies them under that
+   * approval: the changes it no longer makes are done. A split wave's
+   * applying job applies a run whose plan moved the same way. A wave whose
+   * plans change nothing closes an apply that stopped as applied. Default
+   * false. See `./op-waves-remainder.ts`.
+   */
+  remainder?: boolean;
+  /**
+   * With `spend` (#5047), read at the base commit: a wave its gate lets
+   * through (`not-required`) spends an approval of its digest that stands,
+   * so it does not stand for the next plans. Default false: only a wave that
+   * applies under an approval spends it.
+   */
+  spendStanding?: boolean;
+  /**
    * Approval rules (#4290): a wave takes each rule whose `targets` glob
    * matches one of its runs' targets (a rule with no `targets` covers every
    * wave), and applies once each is met by distinct human approvers of its
@@ -1064,7 +1088,13 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
         if (typeof value !== "boolean") throw new Error(`${where}: approvals.preview must be true or false.`);
         continue;
       }
-      if (key !== "spend") throw new Error(`${where}: approvals.${key} is not a setting; the ones there are approvals.spend, approvals.preview, approvals.quorum, approvals.reviewLedger, approvals.involved and approvals.pullRequest.`);
+      if (key === "remainder" || key === "spendStanding") {
+        // #5047: a stopped apply's rest, and an approval left standing, both under the spend rule.
+        if (typeof value !== "boolean") throw new Error(`${where}: approvals.${key} must be true or false.`);
+        if (value && (a as OpWavesApprovals).spend !== true) throw new Error(`${where}: approvals.${key} works on the lines approvals.spend writes, so it needs approvals.spend: true.`);
+        continue;
+      }
+      if (key !== "spend") throw new Error(`${where}: approvals.${key} is not a setting; the ones there are approvals.spend, approvals.remainder, approvals.spendStanding, approvals.preview, approvals.quorum, approvals.reviewLedger, approvals.involved and approvals.pullRequest.`);
       if (typeof value !== "boolean") throw new Error(`${where}: approvals.spend must be true or false.`);
     }
     if ((a as OpWavesApprovals).quorum?.length && (spec.point !== undefined || spec.waves.some((w) => w.point !== undefined))) {

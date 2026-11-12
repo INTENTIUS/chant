@@ -53,6 +53,22 @@ export interface AppliedGateRecord {
    * hook again under it; any other job reads it as spent.
    */
   rerun?: { head: string };
+  /**
+   * Under `approvals.remainder` (#5047): each change the approved plans
+   * make, a run's resource and its digest, sorted. A wave run again at
+   * `commit` whose plans make only some of them applies those under this
+   * line's approval while no finished line says the apply applied.
+   */
+  changes?: AppliedGateChange[];
+  /** With `changes` (#5047): the digest members that are no run (the wave's cost), as the approved set held them. */
+  extras?: { member: string; planDigest: string }[];
+}
+
+/** One change an approved plan makes (#5047): a run's resource, by the engine's address, and its digest. */
+export interface AppliedGateChange {
+  target: string;
+  address: string;
+  digest: string;
 }
 
 /**

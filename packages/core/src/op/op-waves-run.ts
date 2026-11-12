@@ -81,14 +81,15 @@ import { approveCommand, evaluateGate, gitGateLedgerPort, type GateCheck, type G
 import type { GateAnswerRef, PendingGateInput, PendingGateRecord } from "../lifecycle/gate-ledger";
 import type { GatePointAsker } from "../point-decision";
 import type { WaitingPoint } from "./steward-points";
-import { finishedApply, isApprovalSpent, type AppliedGateRecord, type FinishedGateRecord } from "../lifecycle/gate-applied";
+import { finishedApply, isApprovalSpent, type AppliedGateChange, type AppliedGateRecord, type FinishedGateRecord } from "../lifecycle/gate-applied";
+import { opWaveApprovedChanges, opWaveCoverRemainder, opWaveRunCovered, opWaveStoppedApply, opWaveUnfinishedApply } from "./op-waves-remainder";
 import { samePlanDigest } from "../lifecycle/plan-digest";
 import { movedSincePreview } from "./op-waves-preview";
 import { isLifecycleLocalNote } from "../lifecycle/local-note";
 import type { HeadPlans, MergedReview, ReviewSource } from "./gate-review";
 import type { TrustPolicy } from "../workspace/trust/policy";
 import type { GateSigners } from "../lifecycle/gate-seal";
-import { ciRunIdFromEnv } from "./gate-run-locator";
+import { ciRunIdFromEnv, resolveGateRunLocator } from "./gate-run-locator";
 import { appendRunRecord, DEFAULT_RUN_ENV } from "../lifecycle/run-ledger";
 import { LifecyclePushLostError, pushLifecycleRebasing } from "../lifecycle/git";
 import { opWaveEvidenceRefusal, signOpWaveChecks } from "./op-waves-evidence";
@@ -366,6 +367,23 @@ export interface OpWaveDecision {
   approvedAt?: string;
   /** When the wave recorded that it applies under the approval, which spent it. */
   spentAt?: string;
+  /** `approvals.remainder` at base, beside `approvals.spend` (#5047): the applied line names the changes, and the apply's end is recorded. */
+  remainder?: true;
+  /** `approvals.spendStanding` at base (#5047): a wave its gate lets through spends an approval of its digest that stands. */
+  spendStanding?: true;
+  /**
+   * Under `remainder` (#5047): each change the plans make, a run's resource
+   * and its digest, which the applied line names. Absent when a run that
+   * changes something plans on no resource grain: the apply cannot resume
+   * as a remainder.
+   */
+  changes?: AppliedGateChange[];
+  /**
+   * Under `remainder` (#5047): the stopped apply this wave applies the rest
+   * of, under its approval. The wave writes no applied line of its own; the
+   * finished line names this one.
+   */
+  resumes?: { planDigest: string; appliedAt: string; approvedAt: string; approvedBy: string };
   /** `apply`: the apply command runs the apply-stage hooks under its own lock (#3804), as read at base. Absent: chant runs them. */
   applyHooksRunBy?: "apply";
   /** Every hook's outcome so far in the job that wrote the record (#3804). */
@@ -657,6 +675,10 @@ export interface OpWaveBaseRules {
   hooksRefused?: string;
   /** The spec at base sets `approvals.spend` (#3784). */
   spend: boolean;
+  /** The spec at base sets `approvals.remainder` beside `approvals.spend` (#5047). */
+  remainder?: boolean;
+  /** The spec at base sets `approvals.spendStanding` beside `approvals.spend` (#5047). */
+  spendStanding?: boolean;
   /** Who runs the apply-stage hooks, as read at base (#3804). `chant` when the file, the wave or the hooks are missing there. */
   applyHooksRunBy: OpWaveApplyHooksRunner;
   /** The spec at base sets `neverOverMcp` (#3821). */
@@ -725,15 +747,18 @@ export function readOpWavePolicy(
   }
   // The spend rule is the spec's, so it holds for a wave the base does not have yet.
   const spend = (spec as { approvals?: { spend?: unknown } }).approvals?.spend === true;
+  // #5047: the rest of a stopped apply, and an approval left standing, both work on the spend rule's lines.
+  const settings = (spec as { approvals?: { remainder?: unknown; spendStanding?: unknown } }).approvals;
+  const spendRules = { ...(spend && settings?.remainder === true ? { remainder: true } : {}), ...(spend && settings?.spendStanding === true ? { spendStanding: true } : {}) };
   const neverOverMcp = (spec as { neverOverMcp?: unknown }).neverOverMcp === true;
   // #3836: the gate's decision point, the spec's for a wave the base does not have yet.
   const asks = { ...pointAtBase(spec, name, `${specFile} at ${sha.slice(0, 12)}`), ...quorumAtBase(spec, `${specFile} at ${sha.slice(0, 12)}`), ...holdsAtBase(spec, `${specFile} at ${sha.slice(0, 12)}`), ...evidenceAtBase(spec, `${specFile} at ${sha.slice(0, 12)}`), ...pullRequestGateAtBase(spec), ...(spec.approvals?.preview === true ? { preview: true } : {}) };
   const wave = spec.waves.find((w) => w.name === name);
-  if (!wave) return { ...absent, spend, neverOverMcp, ...asks };
+  if (!wave) return { ...absent, spend, ...spendRules, neverOverMcp, ...asks };
   const policy = wave.gate ?? "always";
   // An approval mode this chant does not know reads as sealed: the strictest, so an unknown rule never loosens a gate.
   const approval = wave.approval === undefined ? "ledger" : GATE_APPROVAL_SOURCES.includes(wave.approval) ? wave.approval : "sealed";
-  const rules: OpWaveBaseRules = { policy: OP_WAVE_GATE_POLICIES.includes(policy) ? policy : "always", approval, source: "base", base: sha, hooks: noHooks(), spend, applyHooksRunBy: "chant", neverOverMcp, ...asks };
+  const rules: OpWaveBaseRules = { policy: OP_WAVE_GATE_POLICIES.includes(policy) ? policy : "always", approval, source: "base", base: sha, hooks: noHooks(), spend, ...spendRules, applyHooksRunBy: "chant", neverOverMcp, ...asks };
   try {
     assertOpWaveHooks(`${specFile} at ${sha.slice(0, 12)}`, spec.hooks);
     assertOpWaveHooks(`${specFile} at ${sha.slice(0, 12)}, wave "${name}"`, wave.hooks);
@@ -3162,6 +3187,12 @@ async function writeOpWaveRecords(
   }
   result.exitCode = codes.every((c) => c === CHANT_EXIT.done) ? CHANT_EXIT.done : (codes.find((c) => c !== CHANT_EXIT.done && c !== CHANT_EXIT.failed) ?? CHANT_EXIT.failed);
   if (lost && result.exitCode === CHANT_EXIT.done) result.exitCode = CHANT_EXIT.failed;
+  // #5047: how the apply under the gate job's applied line ended; an applying job that left no run record stopped, and says nothing.
+  const line = decision ? remainderLine(decision) : undefined;
+  if (line && !codes.includes(CHANT_EXIT.waiting)) {
+    const applied = codes.every((c) => c === CHANT_EXIT.done) && result.failed.length === 0;
+    await writeApplyFinished(options, { spec: options.spec, k, wave: { name: decision!.name }, cwd, log }, line, applied ? "applied" : "failed");
+  }
   log(`wave ${k}: wrote the run record${records.length === 1 ? "" : "s"} of ${records.length} applying job${records.length === 1 ? "" : "s"}; the wave ends with exit ${result.exitCode}`);
   return result;
 }
@@ -3428,6 +3459,8 @@ async function openWaveDecision(
     status: "not-required",
     ...(Object.keys(hooks).length > 0 ? { hooks } : {}),
     ...(rules.spend ? { spend: "base" as const } : spec.approvals?.spend === true ? { spend: "change" as const } : {}),
+    ...(rules.remainder ? { remainder: true as const } : {}),
+    ...(rules.spendStanding ? { spendStanding: true as const } : {}),
     ...(rules.applyHooksRunBy === "apply" ? { applyHooksRunBy: "apply" as const } : {}),
     ...(spec.digest?.over === "changing" ? { digestOver: "changing" as const } : {}),
     ...(neverOverMcp ? { neverOverMcp: true as const } : {}),
@@ -3630,6 +3663,20 @@ async function shareUnmoved(planned: Extract<OpWavePlanned, { kind: "share" }>):
   const unmoved: OpWaveRun[] = [];
   for (const run of slice) {
     const now = planned.planned.get(run.target)!;
+    if (decidedDigests.get(run.target) !== now.planDigest && ctx.options.phase === "apply" && decision.remainder && decision.changes) {
+      // #5047: a split wave's applying job run again after it stopped: a plan that makes only changes the decision recorded is their rest.
+      const cover = opWaveRunCovered(decision.changes, run.target, now, ctx.steps);
+      if (cover.covered && now.empty === true) {
+        ctx.log(`${run.target}: its plan moved since wave ${ctx.k} was decided and changes nothing now, so every change the decision recorded for it is done`);
+        continue;
+      }
+      if (cover.covered) {
+        ctx.log(`${run.target}: its plan moved since wave ${ctx.k} was decided; ${cover.done.length} of the changes the decision recorded for it are done and it makes the other ${cover.remaining.length}, so it applies under the decision's approval`);
+        unmoved.push(run);
+        continue;
+      }
+      ctx.log(`${run.target}: its plan moved since wave ${ctx.k} was decided, and ${cover.why}`);
+    }
     if (decidedDigests.get(run.target) !== now.planDigest) {
       ctx.log(
         `${run.target}: its plan moved since wave ${ctx.k} was decided, so it was not applied. ` +
@@ -3702,11 +3749,20 @@ async function decideOpWave(
     if (!unseen) log(`wave ${k} (${wave.name}): the plans are the ones pull request #${seen.preview.pr} previewed at ${seen.preview.head?.slice(0, 12)} (${seen.preview.compared === "resources" ? `${seen.preview.recorded}, compared resource by resource; the wave now plans ${digest}` : digest})`);
     else log(`wave ${k} (${wave.name}): ${seen.preview.reason}`);
   }
+  // #5047: under approvals.remainder at base, the changes the applied line names, and the stopped apply these plans are the rest of.
+  if (decision.remainder && !kept && decision.status !== "refused" && !unseen) await remainderOf(options, ctx, decision, members, extras);
   if (kept && was.status === "approved" && decision.status !== "refused") {
     // #3821: planned again after the apply asked to, to the same digest: the approval this job found still holds, and is not spent twice.
-    for (const key of ["via", "approvedBy", "approvedAt", "review", "spentAt"] as const) if (was[key] !== undefined) (decision as unknown as Record<string, unknown>)[key] = was[key];
+    for (const key of ["via", "approvedBy", "approvedAt", "review", "spentAt", "changes", "resumes"] as const) if (was[key] !== undefined) (decision as unknown as Record<string, unknown>)[key] = was[key];
     decision.status = "approved";
     log(`wave ${k} (${wave.name}): planned again to the same digest, so the approval by ${was.approvedBy} still holds`);
+  } else if (decision.resumes && decision.status !== "refused" && (opWaveNeedsApproval(policy, members) || holds.length > 0)) {
+    // #5047: the rest of a stopped apply goes out under the approval it applied under, which its applied line already spent.
+    decision.status = "approved";
+    decision.via = "ledger";
+    decision.approvedBy = decision.resumes.approvedBy;
+    decision.approvedAt = decision.resumes.approvedAt;
+    decision.spentAt = decision.resumes.appliedAt;
   } else if (decision.status !== "refused" && (unseen || opWaveNeedsApproval(policy, members) || holds.length > 0)) {
     // terragucci issue 1303: what the product settled before the gate, recorded at it for these plans first.
     if (ctx.answerApprovals?.length) await recordAnswerApprovals(options, ctx, decision);
@@ -3868,6 +3924,9 @@ async function applyOpWave(options: RunOpWaveOptions, planned: OpWavePlanned, de
   const { ctx, decision } = planned;
   await applyStage(options, ctx, decision, decidedWave.runs, planned.planned, decidedWave.earlierHolds, decidedWave.recordPath);
   if (planned.kind === "share" && ctx.result.exitCode === 0 && ctx.result.moved.length > 0) ctx.result.exitCode = CHANT_EXIT.moved;
+  // #5047: the job that applied the whole wave under an approval its applied line names says how the apply ended.
+  const line = planned.kind === "share" ? undefined : remainderLine(decision);
+  if (line && ctx.result.exitCode !== CHANT_EXIT.waiting) await writeApplyFinished(options, ctx, line, ctx.result.exitCode === 0 && ctx.result.failed.length === 0 ? "applied" : "failed");
   return ctx.result;
 }
 
@@ -5086,11 +5145,17 @@ async function submitStepReleases(port: OpWaveReleasePort, requests: readonly Op
  * ledger, so a line recorded there is spent.
  */
 async function spendApproval(options: RunOpWaveOptions, ctx: WaveContext, decision: OpWaveDecision): Promise<boolean> {
+  // #5047: an approval of these very plans left standing while the gate let them through is spent as they apply.
+  if (decision.spendStanding && decision.spend === "base" && decision.status === "not-required" && !decision.spentAt && options.phase !== "apply") {
+    await spendStanding(options, ctx, decision);
+    return true;
+  }
   if (!decision.spend || decision.status !== "approved" || decision.spentAt || !decision.approvedAt) return true;
   const { spec, k, wave, cwd, log } = ctx;
   const port = options.gates ?? gitGateLedgerPort({ cwd });
   const now = options.now ?? new Date().toISOString();
   const record: AppliedGateRecord = {
+    ...(decision.remainder && decision.changes ? remainderFields(options, ctx, decision, decision.changes) : {}),
     version: 1,
     kind: "applied",
     op: spec.name,
@@ -5113,7 +5178,135 @@ async function spendApproval(options: RunOpWaveOptions, ctx: WaveContext, decisi
   }
   decision.spentAt = now;
   log(`wave ${k} (${wave.name}) applies under the approval by ${record.approvedBy} at ${record.approvedAt}, which is now spent`);
+  if (record.changes) log(`wave ${k} (${wave.name}): ${record.changes.length} change${record.changes.length === 1 ? "" : "s"} recorded on the applied line, so an apply that stops applies the rest under this approval`);
   return true;
+}
+
+/**
+ * What an applied line carries under `approvals.remainder` (#5047): the
+ * changes, the digest members that are no run, the commit, the run, and
+ * where the run is, so `chant run resume` starts it again once it is gone.
+ * A split wave's gate job writes the line and its applying job is the one
+ * that may stop: GitHub re-runs a run's failed jobs, so the gate job's run
+ * resumes the applying job; GitLab retries the one job a locator names and
+ * Forgejo starts a new run of the branch, so there the line names no run to
+ * resume, and the wave is run again by hand.
+ */
+function remainderFields(options: RunOpWaveOptions, ctx: WaveContext, decision: OpWaveDecision, changes: AppliedGateChange[]): Partial<AppliedGateRecord> {
+  const commit = waveHeadOf(options, ctx.cwd);
+  const runId = ciRunIdFromEnv();
+  const locator = resolveGateRunLocator();
+  const resume = locator && (options.phase !== "gate" || locator.forge === "github") ? locator : undefined;
+  return {
+    changes,
+    ...(decision.extras?.length ? { extras: decision.extras.map((e) => ({ member: e.member, planDigest: e.planDigest })) } : {}),
+    ...(commit ? { commit } : {}),
+    ...(runId ? { runId } : {}),
+    ...(resume ? { resume } : {}),
+  };
+}
+
+/**
+ * Under `approvals.remainder` (#5047), in a job with the token that decides
+ * a whole wave (its own job, or a split wave's gate job): the changes the
+ * plans make, kept on the decision for the applied line and the applying
+ * job; with plans that change nothing, the close of a stopped apply; else
+ * the stopped apply at this commit whose rest these plans are, which the
+ * decision then `resumes`. A ledger that cannot be read resumes nothing.
+ */
+async function remainderOf(options: RunOpWaveOptions, ctx: WaveContext, decision: OpWaveDecision, members: readonly OpWaveMember[], extras: readonly WaveMember[] | undefined): Promise<void> {
+  const { spec, k, wave, cwd, log } = ctx;
+  const label = `wave ${k} (${wave.name})`;
+  // Only a wave one job applies says how its apply ended.
+  if ((wave.shares ?? 1) > 1 || wave.jobs !== undefined) return;
+  const changes = opWaveApprovedChanges(members, ctx.steps);
+  if (changes) decision.changes = changes;
+  const changing = members.some((m) => m.empty !== true) || (extras?.length ?? 0) > 0;
+  if (changing && !changes) log(`${label}: a run that changes something plans on no resource grain, or gave no resource digests, so an apply of it that stops cannot apply the rest under its approval`);
+  const port = options.gates ?? gitGateLedgerPort({ cwd });
+  if (!port.readApplied || !port.readFinished) return;
+  let applied: AppliedGateRecord[];
+  let finished: FinishedGateRecord[];
+  try {
+    applied = await port.readApplied(spec.name);
+    finished = await port.readFinished(spec.name);
+  } catch (err) {
+    log(`${label}: the applied lines could not be read (${err instanceof Error ? err.message : String(err)}), so no stopped apply is taken up`);
+    return;
+  }
+  if (!changing) {
+    // Nothing is left to change: something applied the rest of a stopped apply, which is closed as applied.
+    const open = opWaveUnfinishedApply(applied, finished, decision.gate);
+    if (open) await writeApplyFinished(options, ctx, { gate: open.gate, planDigest: open.planDigest, applied: open.timestamp }, "applied", `the apply of ${open.planDigest} stopped before it finished, and nothing of it is left to apply`);
+    return;
+  }
+  const stopped = opWaveStoppedApply(applied, finished, decision.gate, waveHeadOf(options, cwd));
+  if (!stopped?.changes) return;
+  const cover = opWaveCoverRemainder(stopped.changes, changes, { now: extras, approved: stopped.extras });
+  if (!cover.covered) {
+    log(`${label}: the apply of ${stopped.planDigest}, approved by ${stopped.approvedBy}, stopped before it finished, but ${cover.why}, so these plans need an approval of their own`);
+    return;
+  }
+  decision.resumes = { planDigest: stopped.planDigest, appliedAt: stopped.timestamp, approvedAt: stopped.approvedAt, approvedBy: stopped.approvedBy };
+  log(
+    `${label}: the apply of ${stopped.planDigest}, approved by ${stopped.approvedBy}, stopped before it finished; ${cover.done.length} of its ${stopped.changes.length} change${stopped.changes.length === 1 ? "" : "s"} ` +
+      `are done, and these plans make the other ${cover.remaining.length}, so that approval covers them`,
+  );
+}
+
+/**
+ * Write how an apply under an approval ended (#5047): the finished line
+ * that names the applied line. Never fails the wave; a line that cannot be
+ * written is logged, and a resume may apply what is left again, each change
+ * of which the approval covered.
+ */
+async function writeApplyFinished(options: RunOpWaveOptions, ctx: { spec: Pick<OpWavesSpec, "name">; k: number; wave: { name: string }; cwd: string; log: (line: string) => void }, line: { gate: string; planDigest: string; applied: string }, result: FinishedGateRecord["result"], why?: string): Promise<void> {
+  const { spec, k, cwd, log } = ctx;
+  const label = `wave ${k} (${ctx.wave.name})`;
+  const port = options.gates ?? gitGateLedgerPort({ cwd });
+  try {
+    if (!port.appendFinished) throw new Error("this gate ledger keeps no finished lines");
+    const pushed = await port.appendFinished({ version: 1, kind: "finished", op: spec.name, gate: line.gate, planDigest: line.planDigest, applied: line.applied, result, timestamp: options.now ?? new Date().toISOString() });
+    if (!pushed.pushed && pushed.pushWarning && !isLifecycleLocalNote(pushed.pushWarning)) log(`${label}: the finished line of its apply was written and not pushed: ${pushed.pushWarning}`);
+    log(`${label}: ${why ?? `its apply under the approval ${result === "applied" ? "applied" : "failed"}`}; recorded on the finished line`);
+  } catch (err) {
+    log(`${label}: how its apply ended was not recorded (${err instanceof Error ? err.message : String(err)}); a resume may apply what is left again, and each change it makes is one the approval covered`);
+  }
+}
+
+/** The applied line a decision's apply wrote or took up (#5047), when it names changes; what its finished line names. */
+function remainderLine(decision: Pick<OpWaveDecision, "remainder" | "changes" | "resumes" | "spentAt" | "gate" | "digest">): { gate: string; planDigest: string; applied: string } | undefined {
+  if (!decision.remainder || !decision.spentAt) return undefined;
+  if (decision.resumes) return { gate: decision.gate, planDigest: decision.resumes.planDigest, applied: decision.resumes.appliedAt };
+  return decision.changes ? { gate: decision.gate, planDigest: decision.digest, applied: decision.spentAt } : undefined;
+}
+
+/**
+ * Under `approvals.spendStanding` (#5047): the wave's gate let its plans
+ * through, and an approval of their digest that no wave applied under
+ * stands. It is spent now, as they apply, so it does not stand for the next
+ * plans. Never fails the wave.
+ */
+async function spendStanding(options: RunOpWaveOptions, ctx: WaveContext, decision: OpWaveDecision): Promise<void> {
+  const { spec, k, wave, cwd, log } = ctx;
+  if (!decision.digest) return;
+  const port = options.gates ?? gitGateLedgerPort({ cwd });
+  if (!port.appendApplied || !port.readApplied) return;
+  const label = `wave ${k} (${wave.name})`;
+  try {
+    const applied = (await port.readApplied(spec.name)).filter((a) => a.gate === decision.gate);
+    const { resolutions } = await port.read(spec.name);
+    const standing = resolutions
+      .filter((r) => r.gate === decision.gate && samePlanDigest(r.planDigest, decision.digest) && !isApprovalSpent(applied, { gate: decision.gate, planDigest: decision.digest, timestamp: r.timestamp }))
+      .reduce<(typeof resolutions)[number] | undefined>((n, r) => (!n || new Date(r.timestamp).getTime() >= new Date(n.timestamp).getTime() ? r : n), undefined);
+    if (!standing) return;
+    const now = options.now ?? new Date().toISOString();
+    const pushed = await port.appendApplied({ version: 1, kind: "applied", op: spec.name, gate: decision.gate, planDigest: decision.digest, approvedAt: standing.timestamp, approvedBy: standing.resolvedBy, timestamp: now, wave: { number: k, name: wave.name } });
+    if (!pushed.pushed && pushed.pushWarning && !isLifecycleLocalNote(pushed.pushWarning)) log(`${label}: ${pushed.pushWarning}`);
+    log(`${label}: its gate let these plans through, and the approval of ${decision.digest} by ${standing.resolvedBy} at ${standing.timestamp} stood; it is now spent, so it does not stand for the next plans`);
+  } catch (err) {
+    log(`${label}: the approval of these plans that stands was not spent: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 /** What {@link approveByReview} found. */
