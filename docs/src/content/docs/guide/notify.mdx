@@ -41,6 +41,7 @@ Add `notify` to the [Op waves](/chant/guide/op-waves/) spec. Each value is the n
 | `webhook` | Your own receiver's URL. It needs `key` |
 | `key` | The shared secret the webhook's events are signed with |
 | `relay` | The key `chant notify relay` checks buttons with. Set, a waiting wave's Slack message has Approve and Decline buttons, and its Teams card the reply that approves |
+| `relayName` | The relay's name as people mention it in Teams, a plain value rather than a variable, such as a product's `notify.relay` ([#5033](https://github.com/INTENTIUS/chant/issues/5033)). With `relay` set, a waiting wave's Teams card spells out the whole reply, `reply @<name> approve <token>`, over the product's words' own `relayName`. One line of at most 80 characters, without `@`, `<` or `>`. Floor: `NOTIFY_RELAY_NAME_FLOOR` (`@intentius/chant/ci-product`) |
 | `events` | Not a variable: the events to send. Default: all of them |
 
 A value that looks like a URL, a webhook without a key, or an unknown setting fails the spec before any wave runs.

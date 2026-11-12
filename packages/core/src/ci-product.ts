@@ -284,6 +284,11 @@ export const OP_WAVES_DEFAULT_BRANCH_FLOOR = NEXT_RELEASE;
  * The first chant whose Op waves generators take `firstWaveNeeds` (#5032): the product's own jobs, such as terragucci's `check`, that the first wave's own or deciding job (and before merge its plan job, and on GitLab its policy job) needs, so a push that fails the product's check applies nothing. GitHub and Forgejo: each must pass, or, in a dispatched run, not have run, and it goes with `runIf`; GitLab: optional needs, each to pass. Absent, the jobs render as before.
  */
 export const OP_WAVES_FIRST_WAVE_NEEDS_FLOOR = NEXT_RELEASE;
+
+/**
+ * The first chant whose notify config takes `relayName` (#5033): the relay's name as people mention it in Teams, a plain value, which `sendNotify` (and so a wave's and a drift notice's messages) passes to the Teams card over the product's words' own, so a waiting wave's card spells out `reply @<name> approve <token>`. Without it the messages are as before.
+ */
+export const NOTIFY_RELAY_NAME_FLOOR = NEXT_RELEASE;
 export { opWavesArtifacts, opWavesDispatchInputs, opWavesNamer, opWavesWorkflowFile, type OpWavesArtifactNames, type OpWavesDispatchInput, type OpWavesJobNames, type OpWavesJobRef, type OpWavesJobRole, type OpWavesStageNames, type OpWavesStageRef } from "./op/op-waves-names";
 
 /**
