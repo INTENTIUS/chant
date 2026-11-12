@@ -13,7 +13,6 @@ import type { CiProductWords, CiProductWordsInput } from "./ci-product-words";
 import type { ProductMcpHook } from "./cli/mcp/product-tools";
 import type { ProductWaveHook } from "./op/op-waves-after-plan";
 import { OTLP_EXPORTER_FLOOR } from "./otlp";
-import { NEXT_RELEASE } from "./release-floors";
 
 /**
  * The first chant with the product pipeline (#4550): the words, the
@@ -258,22 +257,22 @@ export const PRODUCT_PLAN_ARTIFACTS_FLOOR = "0.124.91";
 /**
  * The first chant whose GitHub and Forgejo product plan, after a `login` or with `idTokens`, starts every step after the checkout but the login's without `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN` (#5021), as after a `trade`: the setup, the probe and the plan step, in the plan and the re-plan job, so the change's code can request no token. A product's own `idTokens` leave them in the plan step, whose verb requests them.
  */
-export const PRODUCT_PLAN_LOGIN_TOKENS_FLOOR = NEXT_RELEASE;
+export const PRODUCT_PLAN_LOGIN_TOKENS_FLOOR = "0.124.92";
 
 /**
  * The first chant whose pull request jobs on GitHub and Forgejo name the pull request's head, `github.event.pull_request.head.sha`, where `github.sha` named the merge preview (#5020): the product plan's pending step (`CHANT_PENDING_SHA`), the note job's `HEAD_SHA` (the product plan's, the pull request loop's and the product pipeline's) and the `env-post` job's. `pr-post --head <head>` takes a report, a plan note hand-off or a run record for the head or for the run's merge preview the plan job checked out (`plannedForHead`), so a product's plan verb may write its hand-off for either.
  */
-export const PR_HEAD_SHA_FLOOR = NEXT_RELEASE;
+export const PR_HEAD_SHA_FLOOR = "0.124.92";
 
 /**
  * The first chant whose Op waves generators keep a product's own names (#5022): `jobNames` (every job they write: a wave's, deciding, share and job group jobs, a split wave's plan, gate, apply and record jobs, the policy and evidence jobs, the apply status, stale, before-merge done and control jobs; `needs:`, `if:`, `{job}` and `--from-job` follow it), `stageNames` (GitLab), `artifactNames` (the outcome, decision, saved plan and check claims artifacts, and the pattern a wave job downloads the earlier outcomes with), `workflowFile` (the generators' file and the follow-on's dispatch), `runIf` (the jobs go in the product's own workflow, each running on a push it admits or a before-merge or follow-on dispatch, with its own permissions; on GitLab joined to every rule) and `dispatchInputs` (the dispatch inputs' names, which the comment job's dispatch and the follow-on use), with `buildForgejoOpWavesDoc` for the Forgejo jobs, and whose product pipeline's `wavesBeforeMerge` takes `workflowFile` and `dispatchInputs`.
  */
-export const OP_WAVES_NAMES_FLOOR = NEXT_RELEASE;
+export const OP_WAVES_NAMES_FLOOR = "0.124.92";
 
 /**
  * The first chant whose product pipeline names its comment job and its waves' jobs as the product does (#5027): `commentJob: { jobName }` (default `comment`, such as terragucci's `apply-comment`), refused when another job of the workflow has the name, and `wavesJobNames`, the Op waves generators' `jobNames`, which `waves.pipeline` carries to the generator and `waves.jobs` takes, and under which the comment job's re-run of a merged pull request's apply looks for the waves' jobs (`CHANT_COMMENT_JOBS` `applyJobs`, `rerunApplyJobs`), so terragucci's `apply-wave-<k>`, `-share-<n>`, group jobs and `apply-rest` run again. Without them the job is `comment` and the re-run looks for `RERUN_APPLY_JOBS`, as before.
  */
-export const PRODUCT_JOB_NAMES_FLOOR = NEXT_RELEASE;
+export const PRODUCT_JOB_NAMES_FLOOR = "0.124.92";
 export { opWavesArtifacts, opWavesDispatchInputs, opWavesNamer, opWavesWorkflowFile, type OpWavesArtifactNames, type OpWavesDispatchInput, type OpWavesJobNames, type OpWavesJobRef, type OpWavesJobRole, type OpWavesStageNames, type OpWavesStageRef } from "./op/op-waves-names";
 
 /**
