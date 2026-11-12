@@ -77,6 +77,10 @@ describe("the wave jobs' command token on GitHub (#5044)", () => {
     expect(bare["wave-2-wide-decide"]!.permissions).toEqual({ contents: "write" });
   });
 
+  test("GitLab's cache is refused here (#5045): a wave's setup step restores one", () => {
+    expect(() => jobsOf({ ...base, cache: { key: "k", paths: ["p/"] } })).toThrow(/setup step that uses actions\/cache/);
+  });
+
   test("refused: chant's own scopes, a scope GitHub does not know, a level that is not read or write", () => {
     expect(() => jobsOf({ ...base, commandToken: { permissions: { contents: "write" } } })).toThrow(/chant sets on the wave jobs itself/);
     expect(() => jobsOf({ ...base, commandToken: { permissions: { "id-token": "write" } } })).toThrow(/chant sets on the wave jobs itself/);

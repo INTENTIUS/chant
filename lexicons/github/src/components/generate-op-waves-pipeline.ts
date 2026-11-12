@@ -331,6 +331,8 @@ export function buildGithubOpWavesDoc(
   const names = githubNames(spec, options, forge);
   // #5032: the product's jobs the first wave waits for.
   const firstNeeds = opWavesFirstWaveNeeds(options.firstWaveNeeds, forge);
+  // #5045: GitLab's `cache:`; here a wave's setup step restores and saves one.
+  if (options.cache !== undefined) throw new Error("cache is a GitLab job's cache:; on GitHub and Forgejo give the wave a setup step that uses actions/cache");
   // #5044: the job's token in the command step of the jobs that run the default branch's code alone, with the product's permissions.
   const tokenScopes = opWavesCommandToken(options.commandToken, forge);
   const commandToken = tokenScopes !== undefined ? { scopes: tokenScopes, env: { GITHUB_TOKEN: GITHUB_JOB_TOKEN } } : undefined;

@@ -162,7 +162,7 @@ import {
 import { CONTROL_DISPATCH_JOB, CONTROL_OUTCOME_VAR, CONTROL_TOKEN_VARS, controlDispatchJob } from "@intentius/chant/control/dispatch";
 import type { OpWaveJobInputs, OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
 import { opWaveSavedPlanDir, opWaveSplitJobLabel, opWaveSplitJobs, type OpWaveSplitJob } from "@intentius/chant/op/op-waves-split";
-import { assertFirstWaveNeedsOutside, opWavesCommandToken, opWavesFirstWaveNeeds, opWavesNamer, type OpWavesStageRef } from "@intentius/chant/op/op-waves-names";
+import { assertFirstWaveNeedsOutside, opWavesCommandToken, opWavesFirstWaveNeeds, opWavesGitlabCache, opWavesNamer, type OpWavesStageRef } from "@intentius/chant/op/op-waves-names";
 import type { OpWaveEvidencePlan } from "@intentius/chant/op/op-waves-evidence-jobs";
 import { GITLAB_DROP_FORGE_TOKENS } from "@intentius/chant/ci-handover";
 import { gitlabTradeIdTokens, gitlabTradeLines, TRADE_SPEC_ENV } from "@intentius/chant/ci-identity";
@@ -237,6 +237,9 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
   if (options.artifactNames !== undefined) throw new Error("artifactNames names GitHub and Forgejo artifacts; a GitLab job hands its files on through needs, and waveJobs' artifact names the product's");
   // #5044: GitLab's jobs read CHANT_FORGE_TOKEN, a CI/CD variable; there is no job token to hand on.
   opWavesCommandToken(options.commandToken, "gitlab");
+  // #5045: the product's cache on each job that runs the wave's command.
+  const cache = opWavesGitlabCache(options.cache);
+  const cached = cache !== undefined ? { cache } : {};
   const runIf = options.runIf;
   if (runIf !== undefined && (typeof runIf !== "string" || runIf.trim() === "" || /[\r\n]/.test(runIf))) throw new Error(`runIf ${JSON.stringify(runIf)} is one rule condition`);
   const namer = opWavesNamer(spec, "gitlab", options.jobNames);
@@ -362,7 +365,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
   };
   const evidenceNeeds = split ? () => [] : opWaveEvidenceNeeds(spec, jobs.map((job) => ({ wave: job.wave, plan: evidenceOf(job) })));
   if (split) {
-    entries.push(...gitlabSplitEntries({ spec, options, product, image, timeout, inputs, renderEnv, split, setupOf, groupSetup, dropControl, waveRules, followRules, ...(restWave !== undefined ? { restWave } : {}), stageOf: stageOfWave, evidenceNamed, policyNamed, guardBranches, firstNeeds }));
+    entries.push(...gitlabSplitEntries({ spec, options, product, image, timeout, inputs, renderEnv, split, setupOf, groupSetup, dropControl, waveRules, followRules, ...(restWave !== undefined ? { restWave } : {}), stageOf: stageOfWave, evidenceNamed, policyNamed, guardBranches, firstNeeds, cached }));
   }
   for (const job of split ? [] : jobs) {
     const wave = spec.waves[job.wave - 1]!;
@@ -410,6 +413,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
           timeout: `${timeout.minutes} minutes`,
           ...(environment ? { environment: { ...environmentDoc(environment), action: "prepare" } } : {}),
           ...(traded && Object.keys(traded).length > 0 ? { id_tokens: traded } : {}),
+          ...cached,
           variables: { ...GITLAB_FULL_HISTORY, ...timeout.env, ...renderEnv, ...(wave.variables ?? {}), ...(cloud ? { [TRADE_SPEC_ENV]: JSON.stringify(cloud) } : {}), [JOB_GUARD_ENV]: JSON.stringify(guard) },
           rules: waveRules,
           ...(job.needs.length > 0 ? { needs: job.needs } : firstNeeds.length > 0 ? { needs: firstNeeds } : {}),
@@ -430,6 +434,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
         timeout: `${timeout.minutes} minutes`,
         ...(environment ? { environment: environmentDoc(environment) } : {}),
         ...(idTokens ? { id_tokens: idTokens } : {}),
+        ...cached,
         // #4870: the deciding job signs the wave's checks with the runner key from the named variable, or (#4869) keyless.
         variables: {
           ...GITLAB_FULL_HISTORY,
@@ -667,6 +672,8 @@ interface GitlabSplitInput {
   guardBranches: { branches: string[]; defaultBranch?: boolean };
   /** The product's jobs the first wave's jobs need (#5032), each optional. */
   firstNeeds: Array<{ job: string; optional: true }>;
+  /** #5045: the product's `cache:` for the plan, applying and policy jobs, or none. */
+  cached: { cache?: unknown };
 }
 
 /**
@@ -693,7 +700,7 @@ interface GitlabSplitInput {
  * with `CHANT_FORGE_TOKEN`.
  */
 function gitlabSplitEntries(input: GitlabSplitInput): Array<readonly [string, unknown]> {
-  const { spec, options, product, image, timeout, inputs, renderEnv, split, setupOf, groupSetup, dropControl, waveRules, followRules, restWave, stageOf, evidenceNamed, policyNamed, guardBranches, firstNeeds } = input;
+  const { spec, options, product, image, timeout, inputs, renderEnv, split, setupOf, groupSetup, dropControl, waveRules, followRules, restWave, stageOf, evidenceNamed, policyNamed, guardBranches, firstNeeds, cached } = input;
   const evidenceOf = (job: OpWaveSplitJob) => (job.phase === "plan" && options.evidence !== undefined ? evidenceNamed(job, opWaveEvidencePlan(spec, job, { signs: true, keylessCloud: false, keyOutOfWave: true })) : undefined);
   const evidenceNeeds = opWaveEvidenceNeeds(spec, split.map((job) => ({ wave: job.wave, plan: evidenceOf(job) })));
   const specTags = gitlabTags(spec.runner);
@@ -784,6 +791,7 @@ function gitlabSplitEntries(input: GitlabSplitInput): Array<readonly [string, un
         timeout: `${timeout.minutes} minutes`,
         ...(environment ? { environment: { ...environmentDoc(environment), action: "prepare" } } : {}),
         ...(idTokens && Object.keys(idTokens).length > 0 ? { id_tokens: idTokens } : {}),
+        ...cached,
         variables,
         rules: restRules,
         ...(job.needs.length > 0 ? { needs: needsOf(job.needs) } : firstNeeds.length > 0 ? { needs: firstNeeds } : {}),
@@ -803,6 +811,7 @@ function gitlabSplitEntries(input: GitlabSplitInput): Array<readonly [string, un
       // The plan job deploys nothing; the applying job is the deployment.
       ...(environment ? { environment: plan ? { ...environmentDoc(environment), action: "prepare" } : environmentDoc(environment) } : {}),
       ...(idTokens && Object.keys(idTokens).length > 0 ? { id_tokens: idTokens } : {}),
+      ...cached,
       variables: { ...variables, ...(evidence?.commandMode ? { [WAVE_EVIDENCE_ENV]: evidence.commandMode } : {}) },
       rules: restRules,
       ...(needs.length > 0 ? { needs } : {}),

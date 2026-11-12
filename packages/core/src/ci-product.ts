@@ -309,7 +309,12 @@ export const NOTE_POLL_NAMES_FLOOR = "0.124.93";
  * The first chant whose Op waves generators take `commandToken` (#5044), GitHub and Forgejo: the jobs that run only the default branch's code (a push's wave, deciding, share and job group jobs; a split wave's gate and record jobs) hand their command step the job's token as `GITHUB_TOKEN`, so the spec's `respond` posts a refused wave's diff and a failed apply's triage and a product's hooks can read the forge, and ask for `permissions` beside chant's own. A split wave's plan and applying jobs never get it; GitLab refuses it. Without it no wave job holds a token, as before.
  */
 export const OP_WAVES_COMMAND_TOKEN_FLOOR = NEXT_RELEASE;
-export { opWavesArtifacts, opWavesCommandToken, opWavesDispatchInputs, opWavesNamer, opWavesResumeWorkflowFile, opWavesWorkflowFile, type OpWavesArtifactNames, type OpWavesCommandToken, type OpWavesDispatchInput, type OpWavesJobNames, type OpWavesJobRef, type OpWavesJobRole, type OpWavesStageNames, type OpWavesStageRef } from "./op/op-waves-names";
+
+/**
+ * The first chant whose GitLab Op waves generator takes `cache` (#5045): the `cache:` entry or entries of each job that runs the wave's command (the wave's own, deciding, share and job group jobs, the policy job, a split wave's plan and applying jobs), such as terragucci's Terragrunt sources and providers cache. The gate and record jobs take none; GitHub and Forgejo refuse it, since a wave's `setup` step does this there. Without it no wave job has a cache, as before.
+ */
+export const OP_WAVES_GITLAB_CACHE_FLOOR = NEXT_RELEASE;
+export { opWavesArtifacts, opWavesCommandToken, opWavesDispatchInputs, opWavesGitlabCache, opWavesNamer, opWavesResumeWorkflowFile, opWavesWorkflowFile, type OpWavesArtifactNames, type OpWavesCommandToken, type OpWavesDispatchInput, type OpWavesJobNames, type OpWavesJobRef, type OpWavesJobRole, type OpWavesStageNames, type OpWavesStageRef } from "./op/op-waves-names";
 
 /**
  * Day-2 actions in the product pipeline (#4654): the `action` comment
