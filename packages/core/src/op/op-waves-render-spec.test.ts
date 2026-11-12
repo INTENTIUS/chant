@@ -28,7 +28,6 @@ import {
   RUNTIME_WAVES_SPEC_FLOOR,
   RUNTIME_WAVES_SPEC_RUNS_AT_HEAD_FLOOR,
 } from "./op-waves-render-spec";
-import { NEXT_RELEASE } from "../release-floors";
 import type { OpWavesSpec } from "./op-waves";
 import { parseArgs } from "../cli/parse-args";
 import { runOpWaveCommand } from "../cli/handlers/run-wave";
@@ -219,7 +218,7 @@ describe("a waves spec the job renders at run time (#4982)", () => {
     expect(() => opWavesSpecRunsAtHead({ [OP_WAVES_SPEC_RUNS_ENV]: "base" })).toThrow(/CHANT_WAVES_SPEC_RUNS is head or unset/);
     expect(opWavesRenderSpecEnv({ command: ["terragucci", "waves-spec"], runsAtHead: true })).toEqual({ CHANT_WAVES_SPEC_COMMAND: '["terragucci","waves-spec"]', CHANT_WAVES_SPEC_RUNS: "head" });
     expect(opWavesRenderSpecEnv({ command: ["terragucci", "waves-spec"], runsAtHead: false })).toEqual({ CHANT_WAVES_SPEC_COMMAND: '["terragucci","waves-spec"]' });
-    expect(RUNTIME_WAVES_SPEC_RUNS_AT_HEAD_FLOOR).toBe(NEXT_RELEASE);
+    expect(RUNTIME_WAVES_SPEC_RUNS_AT_HEAD_FLOOR).toBe("0.124.94");
   });
 
   test("chant run wave --render-spec with CHANT_WAVES_SPEC_RUNS=head writes the spec rendered at HEAD (#5046)", async () => {

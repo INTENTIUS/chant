@@ -7,7 +7,6 @@
 import { describe, expect, test } from "vitest";
 import type { ForgeFetch } from "../pr-forge";
 import { resumeGateRun, type GateRunLocator } from "../gate-resume-run";
-import { NEXT_RELEASE } from "../release-floors";
 import { OP_WAVES_RESUME_ENV, OP_WAVES_SPLIT_RESUME_FLOOR, opWaveSplitResumeEnv, opWaveSplitResumeLocator, parseOpWaveSplitResume } from "./op-waves-split-resume";
 
 function fakeForge(routes: Record<string, unknown>) {
@@ -42,8 +41,8 @@ const FORGEJO_ENV = {
 };
 
 describe("the gate job's resume target (#5052)", () => {
-  test("the floor is NEXT_RELEASE", () => {
-    expect(OP_WAVES_SPLIT_RESUME_FLOOR).toBe(NEXT_RELEASE);
+  test("the floor is the release that shipped it", () => {
+    expect(OP_WAVES_SPLIT_RESUME_FLOOR).toBe("0.124.94");
   });
 
   test("GitLab: the wave's applying and record jobs; Forgejo: the product's input names; GitHub and other jobs: nothing", () => {
