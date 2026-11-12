@@ -243,6 +243,9 @@ export const OP_WAVES_REMAINDER_FLOOR = NEXT_RELEASE;
 /** The first chant whose `chant run resume` starts a killed split apply again on GitLab and Forgejo (#5052): under `approvals.remainder` the gate job's applied line names its run there too, GitLab's with the wave's applying and record jobs by name (`retry`), which the resume retries, and Forgejo's with the run's dispatch inputs (`inputs`), which the resume dispatches with, so the new run applies the rest at the same decided head or commit. */
 export const OP_WAVES_SPLIT_RESUME_FLOOR = NEXT_RELEASE;
 
+/** The first chant whose `approvals.remainder` resumes the waves terragucci's own records resume (#5056): the terraform step gives a live choudoufu root's plan (`live-plan-set`) its `resourceDigests`, so its applied line names the changes, and the cover leaves out the cost member `(monthly cost)`, whose digest follows from the plans, on both sides. */
+export const OP_WAVES_REMAINDER_PARITY_FLOOR = NEXT_RELEASE;
+
 /** The first chant whose `chant run resume` (`resumeGateRun`) on GitLab retries a wave job's `<wave job>-evidence` with the wave job when the evidence job already ran, and whose `ci evidence sign --from-job` waits for a job it reads to finish, so a resumed wave's evidence job signs from the new try (#4978). */
 export const GITLAB_WAVE_EVIDENCE_RETRY_FLOOR = "0.124.89";
 

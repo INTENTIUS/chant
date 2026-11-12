@@ -775,7 +775,16 @@ function terraformApplyMethods(deps: TerraformApplyDeps): Capability<TerraformAp
           choudoufu: { planSetFile: set.planSetFile, setDigest: set.setDigest },
           lockRows: terraformLockRows(input.root, set.changeSet.member.scope, set.json),
         };
-        return { member: input.root, planDigest: set.planDigest, artifact, changeSet: set.changeSet, outputs: terraformPlannedOutputs(set.json), shape: terraformPlanShape(set.json, input.root) };
+        return {
+          member: input.root,
+          planDigest: set.planDigest,
+          artifact,
+          changeSet: set.changeSet,
+          // #5056: each changed resource's digest from the set's plan, as the `plan -out` path gives them, so a stopped apply of a live root resumes as a remainder.
+          resourceDigests: terraformResourceDigests(set.json),
+          outputs: terraformPlannedOutputs(set.json),
+          shape: terraformPlanShape(set.json, input.root),
+        };
       }
       const { changeSet, json, ...planned } = await planRoot(input, targets, { env, ...(ctx.afterInit ? { afterInit: ctx.afterInit } : {}), ...(ctx.serial ? { serial: ctx.serial } : {}) });
       // #4552: a choudoufu root's rows, keyed from the plan document while it is at hand.

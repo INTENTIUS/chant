@@ -179,6 +179,8 @@ describe("terraform-apply on a choudoufu root in a gated wave (#3459)", () => {
     // #4552: the set path keeps the root's lock rows beside the plan (none here: the fake set's plan has no changes).
     expect(planned.artifact).toEqual({ ...wavePlan, lockRows: [] });
     expect(planned.changeSet).toEqual({ member: { member: "e01", nativeDigest: "sha256:root-e01" }, entries: [] });
+    // #5056: each changed resource's digest, from the set's plan (none here), as the plan -out path gives them.
+    expect(planned.resourceDigests).toEqual({});
   });
 
   test("a choudoufu root live-plan-set cannot plan as chant would keeps plan -out", async () => {
@@ -280,6 +282,9 @@ describe("terraform-apply", () => {
     waveRoot = { wave: true, root: "estates/app" };
     const set = await terraformApplyCapability.plan!({ env: "test", component: "app" }, { root: "app" });
     expect(set.shape).toEqual(expected);
+    // #5056: the set path gives each changed resource's digest too, the same as the plain path, so a live root's stopped apply resumes as a remainder.
+    expect(Object.keys(set.resourceDigests ?? {})).toEqual(["terraform_data.web"]);
+    expect(set.resourceDigests).toEqual(plain.resourceDigests);
   });
 
   test("a root waiting on unknown outputs that cannot be previewed returns no shape, so it stays uncovered (#4436)", async () => {

@@ -41,10 +41,11 @@
 import type { AppliedGateChange, AppliedGateRecord, FinishedGateRecord } from "../lifecycle/gate-applied";
 import { finishedApply } from "../lifecycle/gate-applied";
 import { samePlanDigest } from "../lifecycle/plan-digest";
+import { OP_WAVE_COST_MEMBER } from "./op-waves-capability-spec";
 
 export type { AppliedGateChange } from "../lifecycle/gate-applied";
 
-export { OP_WAVES_REMAINDER_FLOOR } from "../release-floors";
+export { OP_WAVES_REMAINDER_FLOOR, OP_WAVES_REMAINDER_PARITY_FLOOR } from "../release-floors";
 
 /** A planned run, as the remainder reads it: its member, whether its plan is empty, and its resources' digests. */
 export interface OpWaveRemainderMember {
@@ -104,10 +105,20 @@ export type OpWaveCover =
 const key = (c: Pick<AppliedGateChange, "target" | "address">): string => `${c.target} ${c.address}`;
 
 /**
+ * The digest members that are no run whose digest follows from the plans
+ * (#5056): the cost member, `(monthly cost)`, chant's `holds.cost` and
+ * terragucci's alike, which digests the wave's monthly change. Part of the
+ * wave applied, so the rest costs less and the digest moves; every change is
+ * still compared, so the cover leaves it out on both sides.
+ */
+export const OP_WAVE_REMAINDER_FOLLOWS: readonly string[] = [OP_WAVE_COST_MEMBER];
+
+/**
  * Whether `now`, the changes the plans make, are the rest of `approved`:
  * each one approved with the same digest. The approved ones it no longer
  * makes are done. `extras` are the digest members that are no run, now and
- * as approved: each one now must be approved with the same digest.
+ * as approved: each one now must be approved with the same digest, except
+ * the ones whose digest follows from the plans ({@link OP_WAVE_REMAINDER_FOLLOWS}).
  */
 export function opWaveCoverRemainder(
   approved: readonly AppliedGateChange[],
@@ -118,7 +129,7 @@ export function opWaveCoverRemainder(
   const was = new Map(approved.map((c) => [key(c), c]));
   const moved = now.filter((c) => was.get(key(c))?.digest !== c.digest).map(key);
   if (moved.length > 0) return { covered: false, why: `${moved.join(", ")} ${moved.length === 1 ? "is a change" : "are changes"} the approved plans did not make` };
-  const extra = (extras.now ?? []).filter((e) => !(extras.approved ?? []).some((a) => a.member === e.member && samePlanDigest(a.planDigest, e.planDigest))).map((e) => e.member);
+  const extra = (extras.now ?? []).filter((e) => !OP_WAVE_REMAINDER_FOLLOWS.includes(e.member) && !(extras.approved ?? []).some((a) => a.member === e.member && samePlanDigest(a.planDigest, e.planDigest))).map((e) => e.member);
   if (extra.length > 0) return { covered: false, why: `${extra.join(", ")} ${extra.length === 1 ? "is" : "are"} not as the approved set held ${extra.length === 1 ? "it" : "them"}` };
   const planned = new Set(now.map(key));
   return { covered: true, remaining: [...now], done: approved.filter((c) => !planned.has(key(c))) };
