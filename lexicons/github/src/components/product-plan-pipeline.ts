@@ -33,6 +33,11 @@
  * marker before the checkout; `replan: { dispatch, reply, notAffected }`
  * re-plans from `workflow_dispatch`, replies to the `/<product>` comments
  * no other job takes, and answers "not affected" for a narrowed re-plan.
+ * With a `login` or `idTokens` (#5021) the login's steps alone keep those
+ * variables: the setup, the probe and the plan step start without them, so
+ * the change's code cannot request another token (on Forgejo, cannot hold
+ * the run's own token). A product's own `idTokens`, which its plan verb
+ * requests, leave them in the plan step.
  *
  * With `commentJob` (#4946) the `comment` job answers every `/<product>`
  * comment no other job takes, and with `locks: "plan"` the lock jobs take
@@ -108,7 +113,10 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
   const branch = options.branch ?? "main";
   const fork = plan.forks === "skip" ? ` && ${SAME_REPOSITORY_IF}` : "";
   // #4963: after a trade, every later step also starts without the variables a token is requested with.
-  const dropOf = (p: ProductPlanJob): string => (p.trade ? dropForgeTokens("sh", OIDC_REQUEST_VARS) : dropForgeTokens("sh"));
+  // #5021: so does every step of a job that logs in or requests a token, bar the login's own steps, and the plan step
+  // bar a product's own idTokens, which its plan verb asks the forge for.
+  const requests = (p: ProductPlanJob): boolean => p.trade !== undefined || p.login !== undefined || p.idTokens !== undefined;
+  const dropOf = (p: ProductPlanJob, keep = false): string => (requests(p) && !keep ? dropForgeTokens("sh", OIDC_REQUEST_VARS) : dropForgeTokens("sh"));
   // #4946: with `locks: "plan"` a closed pull request starts the unlock job alone.
   const locks = (jobs.locks?.length ?? 0) > 0;
   const notClosed = locks ? " && github.event.action != 'closed'" : "";
@@ -125,14 +133,15 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
           : { ...(cond ? { if: cond } : {}), ...(s.name ? { name: s.name } : {}), ...(s.env ? { env: s.env } : {}), run: `${drop}\n${s.run}` },
       ),
       ...setup.map((line) => ({ ...(cond ? { if: cond } : {}), run: `${drop}\n${line}` })),
-      ...(p.login ?? []).map((st) => ({ ...(cond ? { if: cond } : {}), name: st.name, run: `${drop}\n${st.run.join("\n")}` })),
+      // The login alone asks the forge for the token.
+      ...(p.login ?? []).map((st) => ({ ...(cond ? { if: cond } : {}), name: st.name, run: `${dropOf(p, true)}\n${st.run.join("\n")}` })),
       ...(p.writeProbe ? [{ ...(cond ? { if: cond } : {}), name: "This job cannot write", env, run: `${drop}\n${p.writeProbe}` }] : []),
     ];
   };
   // #5003: each job's report directory and status context, the product's or chant's.
   const dirOf = productPlanReportDir;
   const contextOf = (p: ProductPlanJob): string => productPlanContext(p, jobs.words);
-  const planRun = (p: ProductPlanJob, before: string[] = []): string => [dropOf(p), ...handoverTrap(dirOf(p), forge), ...before, ...planVerbLines(p), ...extraScript].join("\n");
+  const planRun = (p: ProductPlanJob, before: string[] = []): string => [dropOf(p, p.ownIdTokens === true), ...handoverTrap(dirOf(p), forge), ...before, ...planVerbLines(p), ...extraScript].join("\n");
   // #4963: the trade, before the checkout, for the plan identities' own credentials; the later steps hold no OIDC token.
   const tradeStep = (p: ProductPlanJob, cond?: string): Record<string, unknown>[] =>
     p.trade ? [{ ...(cond ? { if: cond } : {}), name: "Trade the job's OIDC token for the plan identities", env: { [TRADE_SPEC_ENV]: JSON.stringify(p.trade) }, run: tradeLine("$GITHUB_ENV", "github-env") }] : [];

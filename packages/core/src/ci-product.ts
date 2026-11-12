@@ -13,6 +13,7 @@ import type { CiProductWords, CiProductWordsInput } from "./ci-product-words";
 import type { ProductMcpHook } from "./cli/mcp/product-tools";
 import type { ProductWaveHook } from "./op/op-waves-after-plan";
 import { OTLP_EXPORTER_FLOOR } from "./otlp";
+import { NEXT_RELEASE } from "./release-floors";
 
 /**
  * The first chant with the product pipeline (#4550): the words, the
@@ -253,6 +254,11 @@ export { productPlanContext, productPlanReportDir, productPlanWorkflowFile } fro
  * The first chant whose GitLab product plan job keeps a product's own artifacts beside the report directory (#5004): `productPlan.artifacts: { paths, reports }`, as `artifacts:paths` and `artifacts:reports`, such as terragucci's `terraform` report for the merge request's widget, with `{target}` and `{output}` filled. GitHub and Forgejo refuse it.
  */
 export const PRODUCT_PLAN_ARTIFACTS_FLOOR = "0.124.91";
+
+/**
+ * The first chant whose GitHub and Forgejo product plan, after a `login` or with `idTokens`, starts every step after the checkout but the login's without `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN` (#5021), as after a `trade`: the setup, the probe and the plan step, in the plan and the re-plan job, so the change's code can request no token. A product's own `idTokens` leave them in the plan step, whose verb requests them.
+ */
+export const PRODUCT_PLAN_LOGIN_TOKENS_FLOOR = NEXT_RELEASE;
 
 /**
  * Day-2 actions in the product pipeline (#4654): the `action` comment
