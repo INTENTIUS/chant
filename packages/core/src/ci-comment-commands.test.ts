@@ -380,6 +380,23 @@ describe("the comment job's apply before merge on the waves (#4984)", () => {
   const jobs: CommentJobs = { applyOnMerge: true, waves: { op: "tf-apply", count: 2 }, wavesBeforeMerge: bm };
 
   test("an open pull request's apply is decided, and the waves workflow dispatched on the default branch with the decided head", async () => {
+    const { sent, stops, got, posted, head, digest } = await decideAndDispatch(jobs);
+    expect(sent).toEqual([["tf-apply.yml", "main", { pr: "12", head, digest }]]);
+    expect(stops).toEqual([[head, 1]]);
+    expect(got).toMatchObject({ command: "apply", ran: true, replied: true });
+    expect(posted).toEqual([`terragucci: started the waves of tf-apply on pull request 12's head ${head.slice(0, 8)} through wave 1 for alice; each wave's gate decides, and the run says when the head applied`]);
+  });
+
+  test("#5022: a product's workflow is dispatched with the product's input names", async () => {
+    const named: CommentJobs = { ...jobs, wavesBeforeMerge: { ...bm, workflow: "terragucci.yml", inputs: { pr: "apply_pr", head: "apply_head", digest: "apply_digest" } } };
+    expect(commentJobsFromEnv(JSON.stringify(named))).toEqual(named);
+    expect(() => commentJobsFromEnv(JSON.stringify({ ...jobs, wavesBeforeMerge: { ...bm, inputs: { wave: "w" } } }))).toThrow("inputs names the inputs pr, head and digest");
+    expect(() => commentJobsFromEnv(JSON.stringify({ ...jobs, wavesBeforeMerge: { ...bm, inputs: { pr: "a b" } } }))).toThrow("inputs names the inputs pr, head and digest");
+    const { sent, head, digest } = await decideAndDispatch(named);
+    expect(sent).toEqual([["terragucci.yml", "main", { apply_pr: "12", apply_head: head, apply_digest: digest }]]);
+  });
+
+  async function decideAndDispatch(jobs: CommentJobs) {
     const { spawnSync } = await import("node:child_process");
     const { mkdtempSync, writeFileSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
@@ -424,11 +441,8 @@ describe("the comment job's apply before merge on the waves (#4984)", () => {
       },
     });
     const digest = beforeMergeDigest("tf-apply", { pr: 12, head, base: baseSha, through: 1, at, by: "alice" });
-    expect(sent).toEqual([["tf-apply.yml", "main", { pr: "12", head, digest }]]);
-    expect(stops).toEqual([[head, 1]]);
-    expect(got).toMatchObject({ command: "apply", ran: true, replied: true });
-    expect(s.posted).toEqual([`terragucci: started the waves of tf-apply on pull request 12's head ${head.slice(0, 8)} through wave 1 for alice; each wave's gate decides, and the run says when the head applied`]);
-  });
+    return { sent, stops, got, posted: s.posted, head, digest };
+  }
 
   test("CHANT_COMMENT_JOBS carries the waves before merge, each field checked", () => {
     expect(commentJobsFromEnv(JSON.stringify(jobs))).toEqual(jobs);

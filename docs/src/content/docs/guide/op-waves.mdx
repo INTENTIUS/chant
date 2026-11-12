@@ -113,6 +113,21 @@ await generateOpWavesPipeline(spec, "github", {
 }, process.cwd());
 ```
 
+### Keep a product's job names
+
+A product whose apply jobs already have names that branch protection, readers and its own docs use keeps them ([#5022](https://github.com/INTENTIUS/chant/issues/5022), the maintainer's decision of 2026-11-11 that chant keeps a product's names). Its waves can also go in its own workflow, beside its plan jobs. Each option is off until the product sets it, and a pipeline without them renders byte for byte as before:
+
+| Option | What it names |
+| --- | --- |
+| `jobNames` | A function that gives a job the product's name, or `undefined` for chant's. It is called with the job's `role` (`wave`, `decide`, `share`, `group`, `plan`, `gate`, `apply`, `record`, `policy`, `evidence`, `apply-status`, `stale-notes`, `before-merge-done`, `control`), its `wave` and `waveName`, `share`, `group`, `rest` on the rest wave's jobs, `of` (the job a policy or evidence job belongs to) and chant's `name`. Every `needs:`, `if:`, `{job}` in a `waveJobs` artifact name and `--from-job` follows it. A name the forge cannot take, and two jobs that share one, are refused. |
+| `stageNames` | GitLab: a function that names each stage (`role` `plans`, `wave`, `before-merge-done`, `control` or `resume`). Two stages may share a name, such as one `apply` stage for every wave. |
+| `artifactNames` | GitHub and Forgejo: `outcome` and `checks` (with `{job}`), `decision` and `plan` (with `{wave}`), and `earlier`, the pattern a wave job downloads the earlier jobs' outcomes with on GitHub. The pattern has to match every earlier outcome artifact. The jobs after the waves, and every Forgejo job, download every artifact of the run. Defaults `<spec>-{job}-outcome`, `<spec>-{job}-checks`, `<spec>-wave-{wave}-decision`, `<spec>-wave-{wave}-plan`. |
+| `workflowFile` | GitHub and Forgejo: the workflow's file name, such as `terragucci.yml`. It is the generator's file, and the one the rest wave's record job dispatches for a follow-on. GitLab takes `opsFileName`. Default `<spec>.yml`. |
+| `runIf` | The jobs go in a product's own workflow. On GitHub and Forgejo it is an expression without `${{ }}` for the push the waves run on, such as ``github.ref == format('refs/heads/{0}', github.event.repository.default_branch)``. Each job then runs only on such a push, or on a before-merge or follow-on dispatch of its own inputs, as well as under its own `if:`. Each job also carries its own permissions, and the notify secrets go on the wave jobs rather than the workflow. On GitLab it is a condition joined with `&&` to every rule of every job, beside a rule that leaves a job out. |
+| `dispatchInputs` | GitHub and Forgejo: the names of the `workflow_dispatch` inputs `pr`, `head`, `digest`, `wave` and `commit`, so they never meet the product's own, such as a re-plan's `pr`. The follow-on dispatches with them, and the product pipeline's `wavesBeforeMerge.dispatchInputs` has the comment job dispatch with them too. |
+
+`buildGithubOpWavesDoc` and `buildForgejoOpWavesDoc` give the jobs as a document, for a product that writes them into its workflow beside its own. `OP_WAVES_NAMES_FLOOR` (`@intentius/chant/ci-product`) is the first chant with these options.
+
 ## Keep going past a failed run
 
 A run can list the runs it needs applied first:

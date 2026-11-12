@@ -50,6 +50,7 @@ import { COMMENT_JOBS_ENV, PR_COMMENT_JOB, type CommentJobs } from "../ci-commen
 import { GITHUB_JOB_TOKEN } from "../ci-jobs";
 import type { OpWavesBeforeMerge } from "../op/before-merge";
 import { defaultPipelineFiles, type WavesBeforeMergeJobs } from "../op/before-merge-decide";
+import { opWavesDispatchInputs, opWavesInputsRenamed, opWavesWorkflowFile } from "../op/op-waves-names";
 import type { PrApplyRequire } from "../pr-requires";
 import { LOCK_REACH_ENV } from "../lifecycle/reach-locks";
 
@@ -189,6 +190,20 @@ export interface ProductWavesBeforeMerge {
   mergeTokenSecret?: string;
   /** Paths a change may not touch to apply before merge; one ending in `/` is a directory. Default the forge's workflow directory and `.chant/op-waves/`. */
   pipelineFiles?: string[];
+  /**
+   * GitHub and Forgejo (#5022): the workflow the waves are in, which the
+   * comment job dispatches, such as `terragucci.yml`. Default `<op>.yml`.
+   * The product passes `waves.pipeline` on, which carries it as the
+   * generator's `workflowFile`.
+   */
+  workflowFile?: string;
+  /**
+   * GitHub and Forgejo (#5022): the waves workflow's names of the inputs
+   * `pr`, `head` and `digest`, which the comment job dispatches with, so
+   * they never meet the product's own. `waves.pipeline` carries them as
+   * the generator's `dispatchInputs`. Default chant's.
+   */
+  dispatchInputs?: Partial<Record<"pr" | "head" | "digest", string>>;
 }
 
 /** The comment job (#4946): its command, the values it reads, and the comment prefixes that start it. */
@@ -241,8 +256,10 @@ export interface ProductPipelineJobs {
      * `applyStatus` and, with `staleNotes`, the stale marking job that runs
      * beside wave 1 on a push (one `--member` per product plan target). The
      * product spreads it into the `OpWavesPipelineOptions` it renders with.
+     * #5022: with them, `wavesBeforeMerge`'s `workflowFile` and
+     * `dispatchInputs`, which the comment job dispatches by.
      */
-    pipeline: Pick<OpWavesPipelineOptions, "beforeMerge" | "applyStatus" | "staleNotes">;
+    pipeline: Pick<OpWavesPipelineOptions, "beforeMerge" | "applyStatus" | "staleNotes" | "workflowFile" | "dispatchInputs">;
   };
   /**
    * The comment lock and unlock jobs (#4588), under `locks: "plan"`:
@@ -495,8 +512,13 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
     if (options.applyBeforeMerge) throw new Error("wavesBeforeMerge and applyBeforeMerge both answer an open pull request's apply; give one");
     if (forge === "gitlab" ? !options.noteCommands : !options.commentJob) throw new Error(`wavesBeforeMerge is decided by ${forge === "gitlab" ? "the note poll: set noteCommands" : "the comment job: set commentJob"}`);
     const targets = productPlan?.targets?.map((t) => t.name);
+    if (forge === "gitlab" && (wavesBeforeMerge.workflowFile !== undefined || wavesBeforeMerge.dispatchInputs !== undefined)) throw new Error("wavesBeforeMerge.workflowFile and dispatchInputs name a GitHub or Forgejo workflow; GitLab's note poll starts a pipeline with variables");
+    // #5022: the product's workflow and input names, checked as the generator checks them.
+    const workflowFile = opWavesWorkflowFile({ name: wavesOp }, wavesBeforeMerge.workflowFile);
+    const dispatchInputs = wavesBeforeMerge.dispatchInputs ? opWavesDispatchInputs(wavesBeforeMerge.dispatchInputs) : undefined;
     bmJobs = {
-      ...(forge !== "gitlab" ? { workflow: `${wavesOp}.yml` } : {}),
+      ...(forge !== "gitlab" ? { workflow: workflowFile } : {}),
+      ...(dispatchInputs && opWavesInputsRenamed(dispatchInputs) ? { inputs: { pr: dispatchInputs.pr, head: dispatchInputs.head, digest: dispatchInputs.digest } } : {}),
       ...(wavesBeforeMerge.requires ? { requires: [...wavesBeforeMerge.requires] } : {}),
       // #5003: the product's own status contexts, when it named them.
       plan: planContexts ?? (targets?.length ? targets.map((t) => productStatusContext(words, "plan", t)) : [productStatusContext(words, "plan", member)]),
@@ -562,8 +584,11 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
     ? { ...(wavesBeforeMerge.merge ? { merge: wavesBeforeMerge.merge } : {}), ...(wavesBeforeMerge.mergeTokenSecret ? { mergeTokenSecret: wavesBeforeMerge.mergeTokenSecret } : {}), ...(productPlan?.reach?.gate ? { gate: productPlan.reach.gate } : {}) }
     : undefined;
   // #4987: the apply statuses after each wave, and with a product plan the stale marking beside wave 1, one --member per target.
-  const pipeline: Pick<OpWavesPipelineOptions, "beforeMerge" | "applyStatus" | "staleNotes"> = {
+  const pipeline: Pick<OpWavesPipelineOptions, "beforeMerge" | "applyStatus" | "staleNotes" | "workflowFile" | "dispatchInputs"> = {
     ...(beforeMerge ? { beforeMerge } : {}),
+    // #5022: the workflow and input names the comment job dispatches, for the generator.
+    ...(wavesBeforeMerge?.workflowFile ? { workflowFile: wavesBeforeMerge.workflowFile } : {}),
+    ...(wavesBeforeMerge?.dispatchInputs ? { dispatchInputs: { ...wavesBeforeMerge.dispatchInputs } } : {}),
     ...(options.applyStatus ? { applyStatus: { context: productStatusContext(words, "apply", member) } } : {}),
     ...(planStale ? { staleNotes: planStale } : {}),
   };

@@ -327,7 +327,8 @@ export async function answerProductComment(o: AnswerCommentOptions): Promise<Com
         count: o.jobs.waves.count,
         jobs: bm,
         words: o.words,
-        start: (r) => o.runs.dispatch(workflow, o.base, { pr: String(r.pr), head: r.head, digest: r.digest }),
+        // #5022: under the waves workflow's input names, the product's when it renamed them.
+        start: (r) => o.runs.dispatch(workflow, o.base, { [bm.inputs?.pr ?? "pr"]: String(r.pr), [bm.inputs?.head ?? "head"]: r.head, [bm.inputs?.digest ?? "digest"]: r.digest }),
       });
       if (done.kind === "fail") return broke(done.reason, command);
       return reply(done.text, done.kind === "ran", done.kind === "ran" ? done.url : undefined);

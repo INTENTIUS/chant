@@ -266,6 +266,12 @@ export const PRODUCT_PLAN_LOGIN_TOKENS_FLOOR = NEXT_RELEASE;
 export const PR_HEAD_SHA_FLOOR = NEXT_RELEASE;
 
 /**
+ * The first chant whose Op waves generators keep a product's own names (#5022): `jobNames` (every job they write: a wave's, deciding, share and job group jobs, a split wave's plan, gate, apply and record jobs, the policy and evidence jobs, the apply status, stale, before-merge done and control jobs; `needs:`, `if:`, `{job}` and `--from-job` follow it), `stageNames` (GitLab), `artifactNames` (the outcome, decision, saved plan and check claims artifacts, and the pattern a wave job downloads the earlier outcomes with), `workflowFile` (the generators' file and the follow-on's dispatch), `runIf` (the jobs go in the product's own workflow, each running on a push it admits or a before-merge or follow-on dispatch, with its own permissions; on GitLab joined to every rule) and `dispatchInputs` (the dispatch inputs' names, which the comment job's dispatch and the follow-on use), with `buildForgejoOpWavesDoc` for the Forgejo jobs, and whose product pipeline's `wavesBeforeMerge` takes `workflowFile` and `dispatchInputs`.
+ */
+export const OP_WAVES_NAMES_FLOOR = NEXT_RELEASE;
+export { opWavesArtifacts, opWavesDispatchInputs, opWavesNamer, opWavesWorkflowFile, type OpWavesArtifactNames, type OpWavesDispatchInput, type OpWavesJobNames, type OpWavesJobRef, type OpWavesJobRole, type OpWavesStageNames, type OpWavesStageRef } from "./op/op-waves-names";
+
+/**
  * Day-2 actions in the product pipeline (#4654): the `action` comment
  * command counted as answered by the product's own workflow
  * (`productPipelineJobs(forge, env, { words, actions: true })`), or the

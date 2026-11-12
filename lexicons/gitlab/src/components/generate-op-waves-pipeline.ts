@@ -158,9 +158,11 @@ import {
   opWavesResumeCommand,
   type OpWavesSpec,
 } from "@intentius/chant/op/op-waves";
-import { CONTROL_OUTCOME_VAR, CONTROL_TOKEN_VARS, controlDispatchJob } from "@intentius/chant/control/dispatch";
+import { CONTROL_DISPATCH_JOB, CONTROL_OUTCOME_VAR, CONTROL_TOKEN_VARS, controlDispatchJob } from "@intentius/chant/control/dispatch";
 import type { OpWaveJobInputs, OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
-import { opWaveSavedPlanDir, opWaveSplitJobLabel, opWaveSplitJobs, opWaveSplitLastJobs, type OpWaveSplitJob } from "@intentius/chant/op/op-waves-split";
+import { opWaveSavedPlanDir, opWaveSplitJobLabel, opWaveSplitJobs, type OpWaveSplitJob } from "@intentius/chant/op/op-waves-split";
+import { opWavesNamer, type OpWavesStageRef } from "@intentius/chant/op/op-waves-names";
+import type { OpWaveEvidencePlan } from "@intentius/chant/op/op-waves-evidence-jobs";
 import { GITLAB_DROP_FORGE_TOKENS } from "@intentius/chant/ci-handover";
 import { gitlabTradeIdTokens, gitlabTradeLines, TRADE_SPEC_ENV } from "@intentius/chant/ci-identity";
 import { JOB_GUARD_ENV, jobGuardLine, jobGuardSpec, opWaveJobLabel } from "@intentius/chant/ci-job-guard";
@@ -202,6 +204,12 @@ function beforeFollowOn(job: Record<string, unknown>): Record<string, unknown> {
   return { ...job, rules: [GITLAB_NOT_IN_FOLLOW_ON, ...((job.rules as unknown[]) ?? [])] };
 }
 
+/** A job of a product's pipeline (#5022): each rule that runs it also needs `runIf`; one that leaves it out (`when: never`) stays as it is. */
+function withRunIf(job: Record<string, unknown>, runIf: string): Record<string, unknown> {
+  if (!Array.isArray(job.rules)) return job;
+  return { ...job, rules: (job.rules as Array<{ if?: string; when?: string }>).map((r) => (r.when === "never" || r.if === undefined ? r : { ...r, if: `(${runIf}) && (${r.if})` })) };
+}
+
 /**
  * The rule of a pipeline the note poll starts for a merge request's decided
  * head (#4984): an API, web or trigger pipeline of `branch` (a JSON string)
@@ -221,9 +229,22 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
   // #4984: the before-merge mode, a pipeline of the default branch the note poll starts for a merge request's decided head.
   const bm = options.beforeMerge;
   if (bm) assertOpWavesBeforeMerge("gitlab", bm);
-  const jobs = opWaveJobs(spec, options.specFile, { bin: options.bin, ...(options.renderSpec ? { renderSpec: true } : {}), ...(bm ? { beforeMerge: true } : {}) });
+  // #5022: the product's job and stage names, else chant's.
+  if (options.workflowFile !== undefined) throw new Error("workflowFile names a GitHub or Forgejo workflow; on GitLab the file is opsFileName");
+  if (options.dispatchInputs !== undefined) throw new Error("dispatchInputs names a GitHub or Forgejo workflow's inputs; a GitLab pipeline carries the decision in variables");
+  if (options.artifactNames !== undefined) throw new Error("artifactNames names GitHub and Forgejo artifacts; a GitLab job hands its files on through needs, and waveJobs' artifact names the product's");
+  const runIf = options.runIf;
+  if (runIf !== undefined && (typeof runIf !== "string" || runIf.trim() === "" || /[\r\n]/.test(runIf))) throw new Error(`runIf ${JSON.stringify(runIf)} is one rule condition`);
+  const namer = opWavesNamer(spec, "gitlab", options.jobNames);
+  const chantJobs = opWaveJobs(spec, options.specFile, { bin: options.bin, ...(options.renderSpec ? { renderSpec: true } : {}), ...(bm ? { beforeMerge: true } : {}) });
   // #4987: before merge each wave is a plan, a gate, an apply and a record job, so the change's code never runs beside CHANT_FORGE_TOKEN.
-  const split = bm ? opWaveSplitJobs(spec, jobs) : undefined;
+  const split = bm ? namer.jobs(opWaveSplitJobs(spec, chantJobs)) : undefined;
+  const jobs = split ? chantJobs : namer.jobs(chantJobs);
+  // #5022: a wave job's evidence and policy jobs, under the product's names.
+  const restOf = (wave: number) => (spec.waves[wave - 1]?.rest ? { rest: true as const } : {});
+  const evidenceNamed = <P extends OpWaveEvidencePlan | undefined>(job: { jobName: string; wave: number; waveName: string }, plan: P): P =>
+    plan?.evidenceJob ? ({ ...plan, evidenceJob: { ...plan.evidenceJob, name: namer.name({ role: "evidence", name: plan.evidenceJob.name, of: job.jobName, wave: job.wave, waveName: job.waveName, ...restOf(job.wave) }) } } as P) : plan;
+  const policyNamed = (job: { jobName: string; wave: number; waveName: string }): string => namer.name({ role: "policy", name: opWavePolicyJobName(job), of: job.jobName, wave: job.wave, waveName: job.waveName, ...restOf(job.wave) });
   // #4992: a split pipeline's rest wave runs one wave per pipeline, each record job starting the next.
   const restWave = split ? opWavesRestWave(spec) : undefined;
   assertPipelineEvidence(options.evidence);
@@ -260,14 +281,26 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
 
   // #4630: a pr-review or pull-request wave records each head's plans and posts the approval status.
   const byReview = opWavesPostsApprovalStatus(spec);
-  const stages = [...(byReview ? ["plans"] : []), ...spec.waves.map((wave, i) => `wave-${i + 1}-${wave.name}`)];
+  // #5022: each stage under the product's name; two of them may share one.
+  const stageName = (ref: OpWavesStageRef): string => {
+    const mine = options.stageNames?.(ref);
+    if (mine !== undefined && (typeof mine !== "string" || !/^[A-Za-z0-9_][A-Za-z0-9_. -]*$/.test(mine))) throw new Error(`stageNames gives the stage ${ref.name} the name ${JSON.stringify(mine)}, which is not a stage name`);
+    return mine ?? ref.name;
+  };
+  const waveStages = spec.waves.map((wave, i) => stageName({ name: `wave-${i + 1}-${wave.name}`, role: "wave", wave: i + 1, waveName: wave.name }));
+  const stageOfWave = (k: number): string => waveStages[k - 1]!;
+  const plansStage = stageName({ name: "plans", role: "plans" });
+  const doneStage = stageName({ name: BEFORE_MERGE_DONE_JOB, role: "before-merge-done" });
+  const controlStage = stageName({ name: "control", role: "control" });
+  const resumeStage = stageName({ name: "resume", role: "resume" });
+  const stages = [...(byReview ? [plansStage] : []), ...waveStages];
   // #4617: the control repo's token variables, which every job but the dispatch drops first.
   const control = spec.control ? opWavesControlTarget(spec.control) : undefined;
   const dropControl = control ? [`unset ${[...new Set([...CONTROL_TOKEN_VARS, control.tokenSecret, control.readTokenSecret])].join(" ")}`] : [];
-  if (bm) stages.push(BEFORE_MERGE_DONE_JOB);
-  if (control) stages.push("control");
-  if (spec.resume) stages.push("resume");
-  const entries: Array<readonly [string, unknown]> = [["stages", stages]];
+  if (bm) stages.push(doneStage);
+  if (control) stages.push(controlStage);
+  if (spec.resume) stages.push(resumeStage);
+  const entries: Array<readonly [string, unknown]> = [["stages", [...new Set(stages)]]];
   // The ruling for ci-products (2026-10-28): each wave job's timeout, and the lock wait five minutes under it.
   const timeout = opWaveJobTimeout(options.jobTimeoutMinutes);
   // #4791: what the product adds to each wave's jobs, and to the plans job.
@@ -278,9 +311,9 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
   if (variables) entries.push(["variables", variables]);
   if (byReview) {
     entries.push([
-      `${spec.name}-record-plans`,
+      namer.claim(`${spec.name}-record-plans`),
       {
-        stage: "plans",
+        stage: plansStage,
         image,
         ...(specTags ? { tags: specTags } : {}),
         ...(plansIdTokens ? { id_tokens: plansIdTokens } : {}),
@@ -296,9 +329,9 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
     ]);
     // #4630: a GitLab approval starts no pipeline, so a schedule of the target branch posts every open merge request's status.
     entries.push([
-      `${spec.name}-approval-status`,
+      namer.claim(`${spec.name}-approval-status`),
       {
-        stage: "plans",
+        stage: plansStage,
         image,
         ...(specTags ? { tags: specTags } : {}),
         variables: { ...GITLAB_FULL_HISTORY },
@@ -312,11 +345,11 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
     const cloud = opWaveGroupOf(spec, job)?.cloud ?? spec.waves[job.wave - 1]!.cloud;
     const signs = options.evidence !== undefined && (job.kind === "wave" || job.kind === "decide");
     // #4964: with a runner key, no wave job holds it; each wave's evidence job, in the chant-evidence environment, signs.
-    return opWaveEvidencePlan(spec, job, { signs, keylessCloud: signs && evidenceKeyless(options.evidence) && cloud !== undefined, keyOutOfWave: signs && !evidenceKeyless(options.evidence) });
+    return evidenceNamed(job, opWaveEvidencePlan(spec, job, { signs, keylessCloud: signs && evidenceKeyless(options.evidence) && cloud !== undefined, keyOutOfWave: signs && !evidenceKeyless(options.evidence) }));
   };
-  const evidenceNeeds = opWaveEvidenceNeeds(spec, jobs.map((job) => ({ wave: job.wave, plan: evidenceOf(job) })));
+  const evidenceNeeds = split ? () => [] : opWaveEvidenceNeeds(spec, jobs.map((job) => ({ wave: job.wave, plan: evidenceOf(job) })));
   if (split) {
-    entries.push(...gitlabSplitEntries({ spec, options, product, image, timeout, inputs, renderEnv, split, setupOf, groupSetup, dropControl, waveRules, followRules, ...(restWave !== undefined ? { restWave } : {}), stageOf: (k) => stages[k - 1 + (byReview ? 1 : 0)]! }));
+    entries.push(...gitlabSplitEntries({ spec, options, product, image, timeout, inputs, renderEnv, split, setupOf, groupSetup, dropControl, waveRules, followRules, ...(restWave !== undefined ? { restWave } : {}), stageOf: stageOfWave, evidenceNamed, policyNamed }));
   }
   for (const job of split ? [] : jobs) {
     const wave = spec.waves[job.wave - 1]!;
@@ -349,9 +382,9 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
     });
     // #4984: a pipeline for a decided head checks it out after the guard and the trade, before any of the change's code.
     const headLines = bm ? [beforeMergeCheckoutScript("gitlab", product)] : [];
-    const stage = stages[job.wave - 1 + (byReview ? 1 : 0)];
+    const stage = stageOfWave(job.wave);
     const checksDir = `${opWaveChecksDir(spec)}/`;
-    const policyJob = evidence?.policyStep ? opWavePolicyJobName(job) : undefined;
+    const policyJob = evidence?.policyStep ? policyNamed(job) : undefined;
     if (policyJob) {
       // #4926: the wave's policy, planned in a job of its own whose status GitLab reports. The wave job runs after it
       // whatever it ended (a denied run may still apply under an override); it deploys nothing, so its environment is `prepare`.
@@ -436,7 +469,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
           // #4964: the runner key's variable is scoped to this environment and protected, so no wave job is handed it.
           ...(evidenceKeyless(options.evidence) ? {} : { environment: { name: GITLAB_EVIDENCE_ENVIRONMENT, action: "access" } }),
           ...(Object.keys(signingTokens).length > 0 ? { id_tokens: signingTokens } : {}),
-          variables: { ...GITLAB_FULL_HISTORY, [EVIDENCE_SOURCES_ENV]: JSON.stringify(opWaveEvidenceSources("gitlab", evidence, job, wave.name, "")), ...evidenceKeyEnv("gitlab", options.evidence!) },
+          variables: { ...GITLAB_FULL_HISTORY, [EVIDENCE_SOURCES_ENV]: JSON.stringify(opWaveEvidenceSources("gitlab", evidence, job, wave.name, "", policyJob)), ...evidenceKeyEnv("gitlab", options.evidence!) },
           rules: waveRules,
           needs: [job.jobName, ...(policyJob ? [policyJob] : [])],
           script: [...dropControl, ...lines.checkout, ...setupOf[job.wave - 1]!, ...(options.beforeScript ?? []), ...lines.sign],
@@ -447,14 +480,14 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
     }
   }
   // #4987: a split pipeline's waves end with the last wave's record job.
-  const last = split ? opWaveSplitLastJobs(spec) : opWavesLastJobs(jobs);
+  const last = split ? split.filter((j) => j.phase === "record" && j.wave === spec.waves.length).map((j) => j.jobName) : opWavesLastJobs(jobs);
   if (bm) {
     // #4984: after a before-merge pipeline's last wave, at the default branch's commit: the merge and the release of the locks.
     // Its needs hand on every outcome file; a wave that failed as allowed still lets it run, and it reads the outcomes itself.
     entries.push([
-      BEFORE_MERGE_DONE_JOB,
+      namer.name({ role: "before-merge-done", name: BEFORE_MERGE_DONE_JOB }),
       {
-        stage: BEFORE_MERGE_DONE_JOB,
+        stage: doneStage,
         image,
         ...(specTags ? { tags: specTags } : {}),
         variables: { ...GITLAB_FULL_HISTORY, ...(bm.merge === "auto" && bm.mergeTokenSecret ? { [BEFORE_MERGE_TOKEN_ENV]: `$${bm.mergeTokenSecret}` } : {}) },
@@ -474,7 +507,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
       // #4992: the rest wave's status job posts for the wave its pipeline ran, on the commit a push's follow-on went on with.
       const rest = restWave === k;
       const job = {
-        stage: stages[k - 1 + (byReview ? 1 : 0)],
+        stage: stageOfWave(k),
         image,
         ...(specTags ? { tags: specTags } : {}),
         variables: { ...GITLAB_FULL_HISTORY, ...(rest ? { [OP_WAVES_WAVE_ENV]: String(k) } : {}) },
@@ -490,15 +523,16 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
         ],
         allow_failure: true,
       };
-      entries.push([applyStatusJobName(k), restWave !== undefined && k < restWave ? beforeFollowOn(job) : job]);
+      const name = namer.name({ role: "apply-status", name: applyStatusJobName(k), wave: k, waveName: spec.waves[k - 1]!.name, ...restOf(k) });
+      entries.push([name, restWave !== undefined && k < restWave ? beforeFollowOn(job) : job]);
     }
   }
   // #4987: a push marks the open merge requests' plan notes stale, beside wave 1; a before-merge pipeline moves no branch.
   if (options.staleNotes) {
     entries.push([
-      PR_STALE_JOB,
+      namer.name({ role: "stale-notes", name: PR_STALE_JOB }),
       {
-        stage: stages[byReview ? 1 : 0],
+        stage: stageOfWave(1),
         image,
         ...(specTags ? { tags: specTags } : {}),
         ...(Object.keys(options.staleNotes.env).length > 0 ? { variables: { ...options.staleNotes.env } } : {}),
@@ -517,9 +551,9 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
       outcome: true,
     });
     entries.push([
-      dispatch.name,
+      namer.name({ role: "control", name: dispatch.name }),
       {
-        stage: "control",
+        stage: controlStage,
         image,
         ...(specTags ? { tags: specTags } : {}),
         rules: [...rules, ...followRules],
@@ -548,9 +582,9 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
   }
   if (spec.resume) {
     entries.push([
-      `${spec.name}-resume`,
+      namer.claim(`${spec.name}-resume`),
       {
-        stage: "resume",
+        stage: resumeStage,
         image,
         ...(specTags ? { tags: specTags } : {}),
         rules: [{ if: GITLAB_SCHEDULE_SOURCE }],
@@ -571,10 +605,12 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
     ...(byReview
       ? [`# The ${spec.name}-approval-status job posts each open merge request's approval status from a pipeline schedule that sets ${OP_WAVES_APPROVAL_STATUS_VAR}=1.`]
       : []),
-    ...(control ? [`# After the last wave, the control-dispatch job tells ${control.repo} how the waves ended.`] : []),
+    ...(control ? [`# After the last wave, the ${namer.name({ role: "control", name: CONTROL_DISPATCH_JOB })} job tells ${control.repo} how the waves ended.`] : []),
   ];
   const name = options.opsFileName ?? `${spec.name}.gitlab-ci.yml`;
-  return { files: [{ name, yaml: emitGitlabFile(entries, header) }], jobs: split ?? jobs };
+  // #5022: in a product's pipeline every rule of every job also needs the product's condition; a rule that leaves a job out stays as it is.
+  const placed = runIf === undefined ? entries : entries.map(([key, job]) => [key, key === "stages" || key === "variables" ? job : withRunIf(job as Record<string, unknown>, runIf)] as const);
+  return { files: [{ name, yaml: emitGitlabFile(placed, header) }], jobs: split ?? jobs };
 }
 
 /** The exits of a split wave's applying job that let its record job run (#4987): a failed run, a moved plan, a held or stood-down apply. The record job ends with them. */
@@ -605,6 +641,10 @@ interface GitlabSplitInput {
   /** The rest wave's number (#4992), when the last wave has `rest`. */
   restWave?: number;
   stageOf: (k: number) => string;
+  /** A wave job's evidence plan, its evidence job under the product's name (#5022). */
+  evidenceNamed: <P extends OpWaveEvidencePlan | undefined>(job: { jobName: string; wave: number; waveName: string }, plan: P) => P;
+  /** A wave job's policy job, under the product's name (#5022). */
+  policyNamed: (job: { jobName: string; wave: number; waveName: string }) => string;
 }
 
 /**
@@ -631,8 +671,8 @@ interface GitlabSplitInput {
  * with `CHANT_FORGE_TOKEN`.
  */
 function gitlabSplitEntries(input: GitlabSplitInput): Array<readonly [string, unknown]> {
-  const { spec, options, product, image, timeout, inputs, renderEnv, split, setupOf, groupSetup, dropControl, waveRules, followRules, restWave, stageOf } = input;
-  const evidenceOf = (job: OpWaveSplitJob) => (job.phase === "plan" && options.evidence !== undefined ? opWaveEvidencePlan(spec, job, { signs: true, keylessCloud: false, keyOutOfWave: true }) : undefined);
+  const { spec, options, product, image, timeout, inputs, renderEnv, split, setupOf, groupSetup, dropControl, waveRules, followRules, restWave, stageOf, evidenceNamed, policyNamed } = input;
+  const evidenceOf = (job: OpWaveSplitJob) => (job.phase === "plan" && options.evidence !== undefined ? evidenceNamed(job, opWaveEvidencePlan(spec, job, { signs: true, keylessCloud: false, keyOutOfWave: true })) : undefined);
   const evidenceNeeds = opWaveEvidenceNeeds(spec, split.map((job) => ({ wave: job.wave, plan: evidenceOf(job) })));
   const specTags = gitlabTags(spec.runner);
   const outcomes = `${opWaveOutcomeDir(spec)}/`;
@@ -713,7 +753,7 @@ function gitlabSplitEntries(input: GitlabSplitInput): Array<readonly [string, un
       ...restVariables,
       [JOB_GUARD_ENV]: JSON.stringify(guard),
     };
-    const policyJob = evidence?.policyStep ? opWavePolicyJobName(job) : undefined;
+    const policyJob = evidence?.policyStep ? policyNamed(job) : undefined;
     if (policyJob) {
       place(policyJob, {
         stage,
@@ -765,7 +805,7 @@ function gitlabSplitEntries(input: GitlabSplitInput): Array<readonly [string, un
         ...(specTags ? { tags: specTags } : {}),
         ...(evidenceKeyless(options.evidence) ? {} : { environment: { name: GITLAB_EVIDENCE_ENVIRONMENT, action: "access" } }),
         ...(Object.keys(signingTokens).length > 0 ? { id_tokens: signingTokens } : {}),
-        variables: { ...GITLAB_FULL_HISTORY, [EVIDENCE_SOURCES_ENV]: JSON.stringify(opWaveEvidenceSources("gitlab", evidence, job, wave.name, "")), ...evidenceKeyEnv("gitlab", options.evidence!), ...restVariables },
+        variables: { ...GITLAB_FULL_HISTORY, [EVIDENCE_SOURCES_ENV]: JSON.stringify(opWaveEvidenceSources("gitlab", evidence, job, wave.name, "", policyJob)), ...evidenceKeyEnv("gitlab", options.evidence!), ...restVariables },
         rules: restRules,
         needs: [job.jobName, ...(policyJob ? [policyJob] : [])],
         script: [...dropControl, ...followCommit, ...lines.checkout, ...setupOf[k - 1]!, ...(options.beforeScript ?? []), ...lines.sign],
