@@ -227,7 +227,7 @@ import {
   opWavesFollowOnEnv,
   opWavesRestWave,
 } from "@intentius/chant/op/op-waves-follow-on";
-import { assertFirstWaveNeedsOutside, githubFirstWaveIf, opWavesArtifacts, opWavesDispatchInputs, opWavesFirstWaveNeeds, opWavesInputsRenamed, opWavesNamer, opWavesResumeWorkflowFile, opWavesWorkflowFile, type OpWavesDispatchInput } from "@intentius/chant/op/op-waves-names";
+import { assertFirstWaveNeedsOutside, githubFirstWaveIf, opWavesArtifacts, opWavesCommandToken, opWavesDispatchInputs, opWavesFirstWaveNeeds, opWavesInputsRenamed, opWavesNamer, opWavesResumeWorkflowFile, opWavesWorkflowFile, type OpWavesDispatchInput } from "@intentius/chant/op/op-waves-names";
 import { checkoutStep, concurrency, DOWNLOAD_ARTIFACT, downloadArtifactStep, keepRecordStep, runSteps } from "./ci-jobs";
 import { emitOpPipelineYAML, type GithubOpPipelineDoc } from "./generate-op-pipeline";
 
@@ -331,6 +331,9 @@ export function buildGithubOpWavesDoc(
   const names = githubNames(spec, options, forge);
   // #5032: the product's jobs the first wave waits for.
   const firstNeeds = opWavesFirstWaveNeeds(options.firstWaveNeeds, forge);
+  // #5044: the job's token in the command step of the jobs that run the default branch's code alone, with the product's permissions.
+  const tokenScopes = opWavesCommandToken(options.commandToken, forge);
+  const commandToken = tokenScopes !== undefined ? { scopes: tokenScopes, env: { GITHUB_TOKEN: GITHUB_JOB_TOKEN } } : undefined;
   if (firstNeeds.length > 0 && options.runIf === undefined) throw new Error("firstWaveNeeds names jobs of the product's own workflow, so it goes with runIf, which puts the waves' jobs there");
   const bmEnv: Record<string, string> = bm ? Object.fromEntries(Object.entries(BEFORE_MERGE_INPUTS).map(([input, v]) => [v, `\${{ ${names.input(input as OpWavesDispatchInput)} }}`])) : {};
   const chantJobs = opWaveJobs(spec, options.specFile, { bin: options.bin, ...(options.renderSpec ? { renderSpec: true } : {}), ...(bm ? { beforeMerge: true } : {}) });
@@ -373,7 +376,7 @@ export function buildGithubOpWavesDoc(
   const jobsDoc: Record<string, unknown> = {};
   // #3761: the notify variables come from the secrets of the same name. #4987: before merge, on the jobs that run the default branch's code alone.
   const notifyEnv = githubSecretEnv(notifyVariables(spec.notify));
-  if (split) Object.assign(jobsDoc, githubSplitJobsDoc({ spec, options, forge, product, image, byReview, timeout, inputs, renderEnv, bmEnv, notifyEnv, split, names, ...(restWave !== undefined ? { restWave } : {}), ...(firstNeeds.length > 0 ? { firstNeeds } : {}) }));
+  if (split) Object.assign(jobsDoc, githubSplitJobsDoc({ spec, options, forge, product, image, byReview, timeout, inputs, renderEnv, bmEnv, notifyEnv, split, names, ...(restWave !== undefined ? { restWave } : {}), ...(firstNeeds.length > 0 ? { firstNeeds } : {}), ...(commandToken ? { commandToken } : {}) }));
   for (const job of split ? [] : jobs) {
     const wave = spec.waves[job.wave - 1]!;
     // #3914: a job group's job runs with the group's settings over the wave's.
@@ -425,7 +428,7 @@ export function buildGithubOpWavesDoc(
     if (policyStep) later.push({ name: opWavePolicyStepName(job.wave, wave.name), id: OP_WAVE_POLICY_STEP_ID, run: [...(add?.prelude ?? []), opWavePolicyCommand(job).join(" ")].join("\n") });
     // #4870: the key (or #4869 the keyless signing) on that step alone.
     const commandStep = describeJob(job.kind, job.wave, wave.name, job.share, job.group);
-    const commandEnv = { ...(signs ? evidenceKeyEnv(forge, options.evidence!) : {}), ...(evidence?.commandMode ? { [WAVE_EVIDENCE_ENV]: evidence.commandMode } : {}) };
+    const commandEnv = { ...(signs ? evidenceKeyEnv(forge, options.evidence!) : {}), ...(evidence?.commandMode ? { [WAVE_EVIDENCE_ENV]: evidence.commandMode } : {}), ...(commandToken?.env ?? {}) };
     later.push({
       name: commandStep,
       ...(policyStep ? { if: `\${{ !cancelled() && (success() || steps.${OP_WAVE_POLICY_STEP_ID}.outcome == 'failure') }}` } : {}),
@@ -453,8 +456,8 @@ export function buildGithubOpWavesDoc(
       ...(own.length > 0 ? { if: githubFirstWaveIf(own) } : job.needs.length > 0 && job.kind !== "share" ? { if: "!cancelled()" } : {}),
       container: image,
       ...(environment ? { environment: environmentDoc(environment) } : {}),
-      // #3914: a job's own permissions replace the workflow's, so they repeat them.
-      ...(idToken ? { permissions: { ...permissions, "id-token": "write" } } : {}),
+      // #3914: a job's own permissions replace the workflow's, so they repeat them. #5044: with the product's beside chant's.
+      ...(idToken || commandToken ? { permissions: { ...permissions, ...(commandToken?.scopes ?? {}), ...(idToken ? { "id-token": "write" } : {}) } } : {}),
       "timeout-minutes": timeout.minutes,
       // #5022: in a product's workflow the notify variables are the wave jobs' own, not its every job's.
       env: { ...(names.runIf !== undefined ? notifyEnv : {}), ...timeout.env, ...renderEnv, ...bmEnv, ...(group || idTokens ? { ...wave.variables, ...group?.variables, ...idTokenAudienceEnv(idTokens) } : wave.variables) },
@@ -547,6 +550,8 @@ interface SplitJobsInput {
   restWave?: number;
   /** The product's jobs the first wave's plan job needs (#5032). */
   firstNeeds?: string[];
+  /** #5044: the gate and record jobs' command step gets the job's token, and the jobs these permissions. */
+  commandToken?: { scopes: Record<string, "read" | "write">; env: Record<string, string> };
 }
 
 /**
@@ -617,7 +622,7 @@ export const FOLLOW_ON_DISPATCH_INPUTS: Record<string, { description: string; re
  * note. The jobs of the waves before it do not run in a follow-on.
  */
 function githubSplitJobsDoc(input: SplitJobsInput): Record<string, unknown> {
-  const { spec, options, forge, product, image, byReview, timeout, inputs, renderEnv, bmEnv, notifyEnv, split, names, restWave } = input;
+  const { spec, options, forge, product, image, byReview, timeout, inputs, renderEnv, bmEnv, notifyEnv, split, names, restWave, commandToken } = input;
   const follow = restWave !== undefined ? followOnEnv(restWave, names) : {};
   const art = names.art;
   // #4992: Forgejo's plan and applying jobs hand their files on as job outputs, never through the artifact upload.
@@ -672,7 +677,8 @@ function githubSplitJobsDoc(input: SplitJobsInput): Record<string, unknown> {
             ]),
         ...(wave.setup ?? []).map(setupStepDoc),
         ...runSteps(options.beforeScript ?? []),
-        { name: splitStepName(job), ...(startEnv ? { env: startEnv } : {}), run: job.command.join(" ") },
+        // #5044: the job's token, so the gate job's and the record job's responses post.
+        { name: splitStepName(job), ...(startEnv || commandToken ? { env: { ...(startEnv ?? {}), ...(commandToken?.env ?? {}) } } : {}), run: job.command.join(" ") },
       ];
       if (gate) {
         steps.push(keepRecordStep(`Keep wave ${k}'s decision`, art.decision(k), restAt(job, job.record!)));
@@ -692,7 +698,7 @@ function githubSplitJobsDoc(input: SplitJobsInput): Record<string, unknown> {
           if: gate ? "${{ !cancelled() }}" : "${{ !cancelled() && !contains(needs.*.result, 'skipped') }}",
           container: image,
           // #4992: the rest wave's record job dispatches the follow-on run.
-          permissions: { contents: "write", ...(gate && byReview ? { "pull-requests": "read" } : {}), ...(starts ? { actions: "write" } : {}) },
+          permissions: { contents: "write", ...(gate && byReview ? { "pull-requests": "read" } : {}), ...(commandToken?.scopes ?? {}), ...(starts ? { actions: "write" } : {}) },
           // #4992: the gate job of a step spec waits for its rows on the ledger, up to the job's timeout.
           ...(gate ? { "timeout-minutes": timeout.minutes } : {}),
           env: { ...(gate ? timeout.env : {}), ...renderEnv, ...bmEnv, ...restEnv, ...notifyEnv, ...(wave.variables ?? {}) },
