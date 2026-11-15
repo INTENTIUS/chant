@@ -10,7 +10,11 @@
  * redacted form.
  *
  * `body` keeps its `default` key: TF006 asks whether a sensitive variable
- * declares a default, and that fact survives. Only the value goes.
+ * declares a default, and that fact survives. Only the value goes. A
+ * `default = null` is the exception (#5081): it holds no value, so there is
+ * nothing to leave out, and it is the way to say "optional, nothing committed".
+ * Replacing it would make it look like a committed default to the rules that
+ * read the body.
  *
  * The source scanner skips strings (with `${}`), heredocs and comments, finds
  * each top-level `variable` block, and inside it the `sensitive` and `default`
@@ -154,7 +158,7 @@ export function redactSensitiveSource(source: string): string {
       if (variable) {
         const attrs = attributes(source, i + 1, end - 1);
         const sensitive = attrs.some((a) => a.name === "sensitive" && source.slice(a.from, a.to) === "true");
-        if (sensitive) for (const a of attrs) if (a.name === "default") spans.push([a.from, a.to]);
+        if (sensitive) for (const a of attrs) if (a.name === "default" && source.slice(a.from, a.to) !== "null") spans.push([a.from, a.to]);
       }
       variable = false;
       i = end;
@@ -176,6 +180,6 @@ export function redactSensitiveSource(source: string): string {
 
 /** A variable body with its `default` replaced, when the variable is a literal `sensitive = true` with a default. Otherwise the body itself. */
 export function redactSensitiveBody<T extends Record<string, unknown>>(body: T): T {
-  if (body.sensitive !== true || !("default" in body)) return body;
+  if (body.sensitive !== true || !("default" in body) || body.default === null) return body;
   return { ...body, default: SENSITIVE_PLACEHOLDER };
 }

@@ -72,6 +72,52 @@ export function isSecretReferenceArgument(blockType: string, path: string): bool
   return SECRET_REFERENCE_ARGUMENTS.some((r) => r.type.test(blockType) && r.path.test(path));
 }
 
+/**
+ * Shapes of values that are public names for a kind of object, and that the
+ * generic high-entropy test would otherwise read as random: a machine type
+ * (`db-custom-1-3840`, `n2-standard-4`, `bx2-4x16`), an image name
+ * (`ibm-ubuntu-24-04-3-minimal-s390x-2`, `debian-12-bookworm-v20240110`) and
+ * an Azure size (`Standard_D16ads_v5`). Each is matched on the shape of the
+ * whole value, a table of shapes and not of attribute names, so a secret that
+ * happens to sit in a variable called `image_name` is still judged by its
+ * value (#5081).
+ *
+ * The hyphenated shape is deliberately strict, so that a real token is not
+ * waved through: every segment is a lowercase word, a number, or a short
+ * letters-and-digits tag (`s390x`, `e2`, `4x16`, `v20240110`); there are at
+ * least three segments, and at least one is a word of three or more letters
+ * with a vowel. A UUID, a hex string, a base64 token and an `ami-` id all have
+ * a segment that is none of those, so they still reach the entropy test.
+ */
+const NAMED_SHAPES: ReadonlyArray<{ name: string; test: (value: string) => boolean }> = [
+  {
+    name: "hyphenated machine type or image name",
+    test(value) {
+      if (!/^[a-z0-9]+(-[a-z0-9]+)+$/.test(value)) return false;
+      const segments = value.split("-");
+      if (segments.length < 3) return false;
+      let hasWord = false;
+      for (const seg of segments) {
+        if (/^[a-z]{2,16}$/.test(seg)) {
+          if (seg.length >= 3 && /[aeiouy]/.test(seg)) hasWord = true;
+        } else if (!/^(\d+|[a-z]{1,2}\d+[a-z]{0,2}|\d+[a-z]{1,2}\d*)$/.test(seg)) {
+          return false;
+        }
+      }
+      return hasWord;
+    },
+  },
+  {
+    name: "Azure size",
+    test: (value) => /^(Standard|Basic|Premium)_[A-Za-z0-9]+(_[A-Za-z0-9]+)*$/.test(value),
+  },
+];
+
+/** Is this value one of the public-name shapes in {@link NAMED_SHAPES}? */
+export function isPublicNameShape(value: string): boolean {
+  return NAMED_SHAPES.some((s) => s.test(value));
+}
+
 /** Minimum length for a value to be worth judging at all. */
 export const MIN_SECRET_LENGTH = 8;
 
@@ -139,6 +185,7 @@ function isHighEntropyToken(value: string): boolean {
   if (!/^[A-Za-z0-9+/=_-]+$/.test(value)) return false;
   if (!hasClassDiversity(value)) return false;
   if (looksLikeIdentifierSlug(value)) return false;
+  if (isPublicNameShape(value)) return false;
   return shannonEntropy(value) >= ENTROPY_THRESHOLD;
 }
 

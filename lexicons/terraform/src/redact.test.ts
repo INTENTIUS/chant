@@ -102,6 +102,14 @@ variable "open" {
     }
   });
 
+  it("keeps a null default as null, since it holds no value to leave out (#5081)", async () => {
+    const nullSource = 'variable "k" {\n  type      = string\n  default   = null\n  sensitive = true\n}\n';
+    expect(redactSensitiveSource(nullSource)).toBe(nullSource);
+    const entities = await blocksToEntities([{ name: "main.tf", source: nullSource }], "app");
+    const e = entities.get("app/var.k") as TerraformEntity;
+    expect(e.props.body.default).toBeNull();
+  });
+
   it("leaves a non-sensitive default alone, in body and source", async () => {
     const entities = await blocksToEntities([{ name: "main.tf", source }], "app");
     const e = entities.get("app/var.open") as TerraformEntity;

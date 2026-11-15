@@ -8,9 +8,13 @@
  * survives longest, because every environment that forgets to pass the variable
  * silently gets the committed one.
  *
- * Any default counts, not only a secret-shaped one. `default = ""` and
- * `default = null` are the two that look harmless, and both make a required
- * secret optional, which is the other half of the failure.
+ * Any default counts, not only a secret-shaped one. `default = ""` looks
+ * harmless and makes a required secret optional, which is the other half of
+ * the failure. `default = null` is the one exception (#5081): it commits no
+ * value, so nothing is in git, and it is how a variable is declared optional
+ * on purpose (a module that takes a credential only when a feature is on).
+ * The IR keeps a null default as null (see `../hcl/redact.ts`) so the rule can
+ * tell it apart from a literal that was redacted.
  *
  * Scope: root and child modules alike (#2112). The condition is a property
  * of the block itself, so a descended module's block is read exactly as a
@@ -35,6 +39,7 @@ export const tf006: PostSynthCheck = {
     for (const block of blocksOfType(ctx, VARIABLE_TYPE)) {
       if (block.body.sensitive !== true) continue;
       if (!("default" in block.body)) continue;
+      if (block.body.default === null) continue;
 
       diagnostics.push({
         checkId: "TF006",

@@ -85,6 +85,36 @@ describe("the value heuristic", () => {
     expect(isCredentialShapedValue("registry.example.com/team/app-server")).toBe(false);
   });
 
+  test.each([
+    "db-custom-1-3840",
+    "n2-standard-4",
+    "e2-custom-medium-8192",
+    "bx2d-metal-96x384",
+    "ibm-ubuntu-24-04-3-minimal-s390x-2",
+    "debian-12-bookworm-v20240110",
+    "ubuntu-2204-jammy-v20240112",
+    "Standard_D16ads_v5",
+    "Standard_NC24ads_A100_v4",
+  ])("the machine type or image name %s is not", (value) => {
+    expect(isCredentialShapedValue(value)).toBe(false);
+  });
+
+  // The narrowing is a table of shapes, so these stay findings: a token that
+  // only resembles a name, and a UUID, which can be a real credential.
+  test.each([
+    "k9q2-x7m4-p3w8-z1v6-a5b3",
+    "46678f10-4bbb-447e-98e8-d2829589f2d8",
+    "8jd0hvn2xqb7sltr-4mycez1pgwfka5u",
+    "n2-standard-4-Zq9Xw3Lk8TmV2bRp",
+  ])("%s is still credential-shaped", (value) => {
+    expect(isCredentialShapedValue(value)).toBe(true);
+  });
+
+  test("a name-shaped value under a credential name is still judged by the name", () => {
+    expect(secretShapedAssignment("db_password", "ibm-ubuntu-24-04-3-minimal-s390x-2")?.reason).toBe("name");
+    expect(secretShapedAssignment("image_name", "ibm-ubuntu-24-04-3-minimal-s390x-2")).toBeUndefined();
+  });
+
   test("a value shorter than eight characters is never judged", () => {
     expect(isCredentialShapedValue("aB3$xY")).toBe(false);
   });
