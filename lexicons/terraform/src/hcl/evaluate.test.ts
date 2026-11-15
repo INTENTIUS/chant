@@ -153,6 +153,30 @@ describe("RootEvaluator", () => {
     expect((ev.value("${module.c.secret}", { place }) as { ref: string }).ref).toBe("module.c.output.secret");
   });
 
+  it("gives a variable the value its call passes, per count and for_each instance and through a nested call (#5094)", () => {
+    const entities = new Map<string, Declarable>([
+      entity("r/locals", LOCALS_TYPE, "locals", { envs: { prod: { zone: "a" }, test: { zone: "b" } } }),
+      entity("r/module.n", MODULE_TYPE, "module.n", { source: "./n", count: 2, name: "pool-${count.index}" }),
+      entity("r/module.n/var.name", VARIABLE_TYPE, "var.name", {}),
+      entity("r/module.e", MODULE_TYPE, "module.e", { source: "./e", for_each: "${local.envs}", cluster_name: "${each.key}-${each.value.zone}" }),
+      entity("r/module.e/var.cluster_name", VARIABLE_TYPE, "var.cluster_name", {}),
+      entity("r/module.e/module.inner", MODULE_TYPE, "module.inner", { source: "./inner", name: "${var.cluster_name}" }),
+      entity("r/module.e/module.inner/var.name", VARIABLE_TYPE, "var.name", { default: "unused" }),
+    ]);
+    const ev = new RootEvaluator(entities, "r");
+    const at = (scope: string) => {
+      const place = ev.placeOfInstanceScope(scope);
+      expect(place, scope).toBeDefined();
+      return place!;
+    };
+    expect(ev.value("${var.name}", { place: at("module.n[0]") })).toBe("pool-0");
+    expect(ev.value("${var.name}", { place: at("module.n[1]") })).toBe("pool-1");
+    expect(ev.value("${var.cluster_name}", { place: at('module.e["prod"]') })).toBe("prod-a");
+    expect(ev.value("${var.name}", { place: at('module.e["test"].module.inner') })).toBe("test-b");
+    // A block-level read stands for every instance, so the key stays unknown and is named.
+    expect((ev.value("${var.cluster_name}", { place: ev.placeOfScope("r/module.e")! }) as { ref: string }).ref).toBe("each.key");
+  });
+
   it("keeps a map's known entries beside an unknown one, and reports the first unknown", () => {
     const ev = new RootEvaluator(new Map(), "r");
     const out = evaluateArguments({ tags: { a: "x", b: "${data.d.e.f}" }, plain: "${var.nope}" }, (raw) => ev.value(raw, { place: ev.rootPlace() }));
