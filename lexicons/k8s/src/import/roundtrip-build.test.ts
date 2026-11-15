@@ -221,4 +221,25 @@ describe("k8s import round trip", () => {
       removeDir(imported.dir);
     }
   });
+
+  test("a key written beside metadata imports with a warning and builds back where the file had it (#5111)", async () => {
+    const yaml = [
+      "apiVersion: v1",
+      "kind: ConfigMap",
+      "metadata:",
+      "  name: dash",
+      "labels:",
+      "  grafana_dashboard: '1'",
+      "data:",
+      "  a: b",
+    ].join("\n");
+    const imported = await importManifest(yaml);
+    try {
+      expect(imported.result.warnings.some((w) => w.includes('ConfigMap dash (v1): the top-level key "labels"'))).toBe(true);
+      expect(Object.values(imported.files).join("\n")).toContain("k8sManifest(");
+    } finally {
+      removeDir(imported.dir);
+    }
+    expect(await roundTrip(yaml)).toEqual(loadAll(yaml));
+  });
 });

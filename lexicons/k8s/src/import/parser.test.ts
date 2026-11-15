@@ -230,4 +230,84 @@ metadata:
     expect(ir.resources[0].logicalId).toBe("namespace");
     expect(ir.warnings![0]).toContain("metadata.name is a number, not a string");
   });
+
+  describe("a top-level key the kind does not declare (#5111)", () => {
+    const configMap = (extra: string) => `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dash
+${extra}
+data:
+  a: b
+`;
+
+    test("warns, naming the object and the key, and keeps the key", () => {
+      const ir = parser.parse(configMap("labels:\n  grafana_dashboard: \"1\""));
+      expect(ir.warnings).toEqual([
+        'ConfigMap dash (v1): the top-level key "labels" is not a field of ConfigMap; kubectl apply rejects it, and with validation off the API server drops it. ' +
+          "It is written as an untyped k8sManifest that keeps the key from the file.",
+      ]);
+      expect(ir.resources[0].properties.labels).toEqual({ grafana_dashboard: "1" });
+    });
+
+    test("says so when metadata has a field of that name", () => {
+      const yaml = `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dash
+  labels:
+    a: b
+labels:
+  a: b
+`;
+      expect(parser.parse(yaml).warnings?.[0]).toContain('metadata has a field named "labels", so it may belong there');
+    });
+
+    test("warns once for each unknown key", () => {
+      const ir = parser.parse(configMap("labels: {}\nannotations: {}"));
+      expect(ir.warnings).toHaveLength(2);
+    });
+
+    test("a document whose keys are all declared gets no warning", () => {
+      const ir = parser.parse(configMap("immutable: true"));
+      expect(ir.warnings).toBeUndefined();
+    });
+
+    test("status on a kind that declares it gets no warning", () => {
+      const ir = parser.parse("apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: a\nspec: {}\nstatus: {}\n");
+      expect(ir.warnings).toBeUndefined();
+    });
+
+    test("a custom resource kind with no schema in the lexicon is left alone, apart from the untyped-kind warning", () => {
+      const ir = parser.parse("apiVersion: example.com/v1\nkind: Widget\nmetadata:\n  name: w\nextra: 1\n");
+      expect(ir.warnings).toHaveLength(1);
+      expect(ir.warnings?.[0]).toContain("has no class");
+    });
+
+    test("an object kept at another apiVersion warns for the version and for the key", () => {
+      const yaml = "apiVersion: rbac.authorization.k8s.io/v1beta1\nkind: Role\nmetadata:\n  name: r\nlabels: {}\n";
+      const ir = parser.parse(yaml);
+      expect(ir.warnings).toHaveLength(1 + 1);
+      expect(ir.warnings?.[0]).toContain("builds");
+      expect(ir.warnings?.[1]).toContain('"labels"');
+    });
+  });
+
+  describe("identifiers (#5115)", () => {
+    const cm = (name: string, ns?: string) => `apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: ${JSON.stringify(name)}\n${ns ? `  namespace: ${ns}\n` : ""}`;
+
+    test("names that collapse to one identifier, and one name in two namespaces, get distinct ones", () => {
+      const ir = parser.parse([cm("a:b"), cm("a-b"), cm("a-b", "prod"), cm("a-b", "prod")].join("---\n"));
+      expect(ir.resources.map((r) => r.logicalId)).toEqual(["configMapAB", "configMapAB2", "configMapABProd", "configMapABProd2"]);
+    });
+
+    test("identifiers already taken by another file are avoided, and the ones used are added", () => {
+      const identifiers = new Set(["configMapAB"]);
+      const ir = parser.parse(cm("a-b"), { identifiers });
+      expect(ir.resources[0].logicalId).toBe("configMapAB2");
+      expect([...identifiers].sort()).toEqual(["configMapAB", "configMapAB2"]);
+    });
+  });
 });

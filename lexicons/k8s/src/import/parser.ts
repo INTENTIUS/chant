@@ -11,7 +11,7 @@ import type { EmbeddedContentResolver } from "@intentius/chant/import/embedded";
 import { parseYAML, splitYAMLDocuments } from "@intentius/chant/yaml";
 import { namespaceSegmentForGroup } from "../group-namespace";
 import { delegateEmbedded } from "./embedded";
-import { importClassFor, keptApiVersionWarning, untypedKindWarning } from "./typed-classes";
+import { importClassFor, keptApiVersionWarning, unknownTopLevelKeyWarnings, untypedKindWarning } from "./typed-classes";
 
 // ── GVK to type name mapping ───────────────────────────────────────
 
@@ -147,6 +147,27 @@ function toLogicalId(kind: string, name: string | undefined): string {
   return `${prefix}${pascalName}`;
 }
 
+/**
+ * `base`, or the first of `base` plus the namespace and `base` plus a number
+ * that is not in `taken`, added to it. Two objects get the same base when
+ * they share a kind and name in different namespaces, or when names differ
+ * only in characters {@link toLogicalId} drops (`a:b` and `a-b`).
+ */
+function uniqueLogicalId(base: string, namespace: unknown, taken: Set<string>): string {
+  let id = base;
+  if (taken.has(id) && typeof namespace === "string" && namespace) {
+    const suffix = namespace
+      .split(/[^A-Za-z0-9]+/)
+      .map((seg) => seg.charAt(0).toUpperCase() + seg.slice(1))
+      .join("");
+    id = `${base}${suffix}`;
+  }
+  const stem = id;
+  for (let n = 2; taken.has(id); n++) id = `${stem}${n}`;
+  taken.add(id);
+  return id;
+}
+
 // ── Parser ──────────────────────────────────────────────────────────
 
 /**
@@ -166,6 +187,8 @@ export class K8sParser implements TemplateParser {
     const resources: ResourceIR[] = [];
     const parseWarnings: string[] = [];
     const namespaces = new Set<string>();
+    // Identifiers stay unique across the objects read, and across the files of a directory import (#5115).
+    const identifiers = context?.identifiers ?? new Set<string>();
 
     // Split into documents on `---` / `...` markers (a trailing `# comment`
     // allowed); empty and comment-only documents are dropped (#2965).
@@ -175,7 +198,7 @@ export class K8sParser implements TemplateParser {
       const doc = parseYAML(docStr);
       if (!doc || typeof doc !== "object") continue;
 
-      const resource = this.parseDocument(doc as Record<string, unknown>, context?.embedded, parseWarnings);
+      const resource = this.parseDocument(doc as Record<string, unknown>, context?.embedded, parseWarnings, identifiers);
       if (resource) {
         resources.push(resource);
 
@@ -187,8 +210,9 @@ export class K8sParser implements TemplateParser {
       }
     }
 
-    // One warning per kind the lexicon has no class for (#5070), and one per
-    // object kept at an apiVersion its class does not build (#5075).
+    // One warning per kind the lexicon has no class for (#5070), one per
+    // object kept at an apiVersion its class does not build (#5075), and one
+    // per top-level key its kind does not declare (#5111).
     const warnings: string[] = [...parseWarnings];
     const warned = new Set<string>();
     for (const r of resources) {
@@ -197,8 +221,9 @@ export class K8sParser implements TemplateParser {
         warnings.push(
           keptApiVersionWarning(String(r.metadata?.kind), r.metadata?.originalName as string | undefined, choice.apiVersion!, choice.builtApiVersion!),
         );
-        continue;
       }
+      if (choice.unknownKeys) warnings.push(...unknownTopLevelKeyWarnings(r, choice.unknownKeys));
+      if (choice.reason === "other-apiVersion" || choice.reason === "unknown-key") continue;
       if (choice.cls || warned.has(r.type)) continue;
       warned.add(r.type);
       warnings.push(untypedKindWarning(String(r.metadata?.apiVersion), String(r.metadata?.kind)));
@@ -217,7 +242,7 @@ export class K8sParser implements TemplateParser {
     };
   }
 
-  private parseDocument(doc: Record<string, unknown>, embedded?: EmbeddedContentResolver, warnings: string[] = []): ResourceIR | null {
+  private parseDocument(doc: Record<string, unknown>, embedded: EmbeddedContentResolver | undefined, warnings: string[], identifiers: Set<string>): ResourceIR | null {
     const apiVersion = doc.apiVersion as string | undefined;
     const kind = doc.kind as string | undefined;
 
@@ -236,7 +261,7 @@ export class K8sParser implements TemplateParser {
     }
     const name = typeof rawName === "string" ? rawName : undefined;
     const type = resolveTypeName(apiVersion, kind);
-    const logicalId = toLogicalId(kind, name);
+    const logicalId = uniqueLogicalId(toLogicalId(kind, name), metadata.namespace, identifiers);
 
     // Extract the user-configurable properties (skip apiVersion, kind)
     const properties: Record<string, unknown> = {};

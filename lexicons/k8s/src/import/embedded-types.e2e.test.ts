@@ -33,6 +33,7 @@ describe("the source generated for embedded content type-checks", () => {
     "grafana-dashboard-configmap.yaml",
     "agent-observability.yaml",
     "alertmanager-configmap.yaml",
+    "alertmanagerconfig.yaml",
   ])("%s", async (fixture) => {
     const imported = await importManifest(read(fixture));
     try {

@@ -5,6 +5,7 @@
  * lint rules, and LSP/MCP integration for Kubernetes manifests.
  */
 
+import { selectManifestFiles } from "./import/directory";
 import { compositeCatalog } from "./composites/catalog";
 import type { LexiconPlugin, InitTemplateSet, ResourceMetadata } from "@intentius/chant/lexicon";
 import { k8sBehaviourKinds } from "./behaviour-kinds";
@@ -321,6 +322,8 @@ export const service = new Service({
   templateGenerator() {
     return new K8sGenerator();
   },
+
+  importFiles: selectManifestFiles,
 
   async docs(options?: { verbose?: boolean }): Promise<void> {
     const { generateDocs } = await import("./codegen/docs");

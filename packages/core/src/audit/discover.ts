@@ -146,8 +146,18 @@ function isYaml(name: string): boolean {
   return name.endsWith(".yml") || name.endsWith(".yaml");
 }
 
+/**
+ * A build file docker or a tool around it reads: `Dockerfile` and
+ * `Containerfile` (podman, buildah), either followed by `.`, `-` or `_` and a
+ * suffix (`Dockerfile.dev`, `Dockerfile-test`, `Dockerfile_prod`), or as a
+ * suffix itself (`app.Dockerfile`, the buildx convention). The lowercase
+ * `dockerfile` and `containerfile` are accepted too: BuildKit falls back to
+ * them.
+ */
+const DOCKERFILE_NAME = /^(dockerfile|containerfile)([._-].+)?$|\.(dockerfile|containerfile)$/i;
+
 function isDockerfileName(name: string): boolean {
-  return name === "Dockerfile" || name.startsWith("Dockerfile.") || name.endsWith(".Dockerfile") || name.endsWith(".dockerfile");
+  return DOCKERFILE_NAME.test(name);
 }
 
 function isTerraformFileName(name: string): boolean {

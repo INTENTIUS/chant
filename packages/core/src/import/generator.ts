@@ -11,13 +11,25 @@ export interface GeneratedFile {
 /**
  * Interface for TypeScript code generators that convert IR to TypeScript
  */
+/**
+ * What `chant import <directory>` tells a generator about the one input file
+ * it is generating a module for (#5115).
+ */
+export interface DirectoryGenerateOptions {
+  /** The directory the module is written to, relative to the output directory (`""` for its top). Paths of other modules it imports are relative to the output directory. */
+  readonly directory?: string;
+  /** The input file the objects were read from, relative to the imported directory. */
+  readonly sourcePath?: string;
+}
+
 export interface TypeScriptGenerator {
   /**
    * Generate TypeScript files from intermediate representation
    * @param ir - Intermediate representation of the template
+   * @param options - Where the files go, when the import writes one module per input file
    * @returns Array of generated TypeScript files
    */
-  generate(ir: TemplateIR): GeneratedFile[];
+  generate(ir: TemplateIR, options?: DirectoryGenerateOptions): GeneratedFile[];
 
   /**
    * True when the generator places its own files (#2964). Core then calls

@@ -1,6 +1,6 @@
 import { getProvenance } from "../../provenance";
 import { markImportedSource } from "../../lint/rules/imported-source";
-import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, realpathSync } from "fs";
+import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, realpathSync, statSync } from "fs";
 import { join, resolve, basename, dirname } from "path";
 import { formatSuccess, formatWarning, formatError } from "../format";
 import type { TemplateIR, ResourceIR, ParameterIR, ParseContext, ImportDiagnostic } from "../../import/parser";
@@ -17,7 +17,7 @@ import { EmbeddedImports, type EmbeddedContent, type RegisteredEmbeddedImporter 
  * Import command options
  */
 export interface ImportOptions {
-  /** Path to template file */
+  /** Path to a template file, or to a directory of them (#5115) */
   templatePath: string;
   /** Output directory (defaults to ./infra/) */
   output?: string;
@@ -237,7 +237,7 @@ export interface OrganizedFiles {
  * rather than dropped silently; a call that returned nothing is skipped with
  * a warning rather than failing on `generated[0]`.
  */
-function firstFileOf(generated: GeneratedFile[], fileName: string, warnings: string[]): string | undefined {
+export function firstFileOf(generated: GeneratedFile[], fileName: string, warnings: string[]): string | undefined {
   if (generated.length === 0) {
     warnings.push(`The generator returned no file for ${fileName}; it was not written.`);
     return undefined;
@@ -340,6 +340,12 @@ export async function importCommand(options: ImportOptions): Promise<ImportResul
       warnings: [],
       error: `Template file not found: ${templatePath}`,
     };
+  }
+
+  // A directory is one project of every template under it (#5115).
+  if (statSync(templatePath).isDirectory()) {
+    const { importDirectory } = await import("./import-directory");
+    return importDirectory(options);
   }
 
   // Read template content
@@ -521,7 +527,7 @@ async function embeddedImportersFor(
  * that offer nothing are parsed once, and nothing is loaded. `loaded` are
  * plugins already loaded, reused when one of them owns content.
  */
-async function parseWithEmbedded(
+export async function parseWithEmbedded(
   parses: ReadonlyArray<(context: ParseContext) => TemplateIR>,
   loaded: readonly LexiconPlugin[],
   projectDir: string,

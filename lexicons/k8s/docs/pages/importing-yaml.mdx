@@ -20,11 +20,23 @@ Input YAML → parse → generate TypeScript → export typed resources
 
 The importer reads multi-document YAML, identifies each resource’s `apiVersion` and `kind`, and generates the corresponding typed constructor call. The output is a valid `.k8s.ts` file you can immediately build with `chant build`.
 
+## Importing a directory of manifests
+
+`chant import <directory> --lexicon k8s --output src` imports every `.yaml` and `.yml` file under the directory as one project. The rules that look across objects then run over all of them: WK8503 (a Secret that is consumed and not produced), FLUX002 (a Kustomization naming a GitRepository), ARGO003 (an Application naming a cluster that is not registered) and the selector rules. Imported one file at a time, each reports what another file supplies.
+
+Each file is written to its own path with a `.ts` extension, with a `// Source:` comment naming the YAML file. Findings from the build name the object (`metadata.name`), and the module that declares it sits at the path of the file it came from. A file that is not a manifest is skipped with a warning that names it. That covers a chart template (a `{{ ... }}` where a YAML key should be), a values file, and a `kustomization.yaml`. In a directory with a kustomization, only the files it lists in `resources` are read. Patches and values files beside it are not whole objects, and the import cannot apply them, so a warning names each. To import what a kustomization builds, use `chant import --kustomize <dir>`.
+
+The directory rule for a kustomization elsewhere that lists the directory is different from the `manifests` workspace member's. The member skips a directory that a kustomization lists, because the kustomize member renders that directory and its objects would be counted twice. An import renders nothing, so every file is read once and a listed directory is read like any other. The two share the rest: the same test for a chart template and the same list of kustomization file names.
+
+An identifier is the kind and the name (`deploymentApp`). When two objects would take the same one, because they share a kind and name in different namespaces or because their names differ only in characters an identifier cannot hold (`a:b` and `a-b`), the second one's namespace is added, then a number (`configMapABOther`, `configMapAB2`).
+
 ## Kinds the lexicon has no class for
 
 The importer writes a typed class only when `@intentius/chant-lexicon-k8s` exports one for that group and kind. For any other kind, such as the custom resources of an operator whose CRD the lexicon does not ship, it writes the manifest as `k8sManifest({ apiVersion, kind, ... })`. That source builds, and the build writes the manifest back as it was. The import prints one warning per kind. To get a typed class, list the CRD under `k8s.crds` in `chant.config.ts` and run `chant generate`, as described in [CRD-generated classes](/chant/lexicons/k8s/crd-classes/).
 
 A class builds with the apiVersion the lexicon ships for it. An object whose file names another one, such as `rbac.authorization.k8s.io/v1beta1` where the class writes `v1`, is written as `k8sManifest` too, so the build keeps the apiVersion from the file. The import prints one warning for each such object, naming it, the apiVersion in the file and the one the class would have written.
+
+A top-level key the kind does not declare, such as `labels:` written beside `metadata` instead of under it, is not a field of the class either. The object is written as `k8sManifest` and the build writes the key back where the file had it. The import prints one warning for each such key, naming the object and the key, and says when `metadata` has a field of the same name. `kubectl apply` rejects the object by default (`strict decoding error: unknown field "labels"`), and with `--validate=ignore` the API server drops the key, so a `grafana_dashboard` label written this way never reaches the ConfigMap. Move the key to where it belongs in the generated source. The WK8506 check reports the same on `chant build` and `chant audit`. A custom resource whose CRD the lexicon has no schema for is not checked.
 
 ## Collector configs, rule groups, Alertmanager configs and dashboards inside manifests
 
@@ -36,11 +48,14 @@ A class builds with the apiVersion the lexicon ships for it. An object whose fil
 | A ConfigMap value holding a Prometheus rule file | prometheus `RuleGroup`s (an `Slo`'s group as that `Slo`), and `ruleFileYaml([...])` in the ConfigMap |
 | A `PrometheusRule`'s `spec.groups` | prometheus `RuleGroup`s, listed in `spec.groups` |
 | A ConfigMap value holding an `alertmanager.yml`, such as the one the alertmanager Helm chart renders | prometheus receivers, time intervals, the root `Route`, inhibit rules and `AlertmanagerSettings`, and `alertmanagerYaml([...])` in the ConfigMap |
+| A Prometheus Operator `AlertmanagerConfig`'s `spec.route`, `spec.receivers`, `spec.inhibitRules` and `spec.muteTimeIntervals` | prometheus `Route`, `Receiver`s, `InhibitRule`s and `TimeInterval`s, and `alertmanagerConfigRoute(root)` and the like from `@intentius/chant-lexicon-prometheus/k8s` in each field |
 | A ConfigMap value holding a `prometheus.yml`, such as the one the Prometheus Helm chart renders | prometheus `ScrapeConfig`s and `PrometheusConfig`, and `prometheusConfigYaml([...])` in the ConfigMap |
 | A ConfigMap value holding classic Grafana dashboard JSON, such as a dashboard labelled `grafana_dashboard` for the Grafana sidecar | a grafana `Dashboard`, and `dashboardJson(dashboard)` in the ConfigMap |
 | A Grafana Operator `GrafanaDashboard`'s `spec.json` | a grafana `Dashboard`, and `dashboardJson(dashboard)` in `spec.json` |
 
 Each is written in a directory named after the resource (and the key, when the ConfigMap has several), with the owner's usual modules, and the k8s module imports what it references. The workload still mounts the ConfigMap by name, and `chant build` renders the same content back into it. The content comes back as the owner's serializer writes it: an `alertmanager.yml` has its receivers sorted by name, a `prometheus.yml` has its scrape jobs sorted by name, and Alertmanager's deprecated `match` spellings rewritten as matchers, as a standalone `chant import alertmanager.yml` does.
+
+An `AlertmanagerConfig` is read in the operator's spelling (`groupBy`, `slackConfigs`, a matcher as `{ name, value, matchType }`) and written back the same way, so the built object equals the one imported. Each of the four fields is imported on its own. A field the prometheus lexicon cannot hold stays as written, with a warning that names the reason: a matcher without `matchType`, the deprecated `regex`, or a field the CRD route does not have. In a receiver, what a declaration cannot hold stays in a small `crd-receivers.ts` module beside the declarations and is named in a warning: a Secret reference such as `apiURL: { name, key }` (carried, never read), `httpConfig`, and the notifiers the lexicon does not convert (everything except Slack, webhook, PagerDuty, email, Opsgenie, Pushover, Telegram, Webex and Discord). The declarations are not exported one by one, so building the project does not also write an `alertmanager.yml` from them.
 
 A v2 Grafana dashboard (`dashboard.grafana.app/v2`, Grafana 13's default export) in a ConfigMap stays a string, with a warning. The grafana lexicon reads v2, but it builds classic (v1) JSON, so importing it would turn the ConfigMap's v2 dashboard into a v1 one on the next build. To manage it as a typed dashboard, import the JSON on its own with the grafana lexicon (see its [v2 dashboards](/chant/lexicons/grafana/importing/#v2-dashboards)) and put `dashboardJson(dashboard)` in the ConfigMap yourself.
 

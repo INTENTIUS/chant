@@ -5,7 +5,7 @@
  * source code using the @intentius/chant-lexicon-k8s constructors.
  */
 
-import type { TypeScriptGenerator, GeneratedFile } from "@intentius/chant/import/generator";
+import type { TypeScriptGenerator, GeneratedFile, DirectoryGenerateOptions } from "@intentius/chant/import/generator";
 import type { TemplateIR, ResourceIR } from "@intentius/chant/import/parser";
 import {
   EmbeddedImportScope,
@@ -89,7 +89,7 @@ export class K8sGenerator implements TypeScriptGenerator {
   /** Whether the current `generate()` call wrote a `maskedValue(...)` (chant import --index, #4538). */
   private usesMaskedValue = false;
 
-  generate(ir: TemplateIR): GeneratedFile[] {
+  generate(ir: TemplateIR, options?: DirectoryGenerateOptions): GeneratedFile[] {
     const lines: string[] = [];
     this.usesMaskedValue = false;
     let usesDeclareSecret = false;
@@ -107,13 +107,18 @@ export class K8sGenerator implements TypeScriptGenerator {
     }
 
     // Names the embedded content's imports must not take: every constructor this file may use, and its exports.
-    this.scope = new EmbeddedImportScope("", [
+    this.scope = new EmbeddedImportScope(options?.directory ?? "", [
       ...usedConstructors,
       ...Object.values(PROPERTY_CONSTRUCTORS),
       "ServicePort",
       "PolicyRule",
       ...ir.resources.map((r) => r.logicalId),
     ]);
+
+    if (options?.sourcePath) {
+      lines.push(`// Source: ${options.sourcePath}`);
+      lines.push("");
+    }
 
     // Emit namespaces as comments
     if (ir.metadata?.namespaces && Array.isArray(ir.metadata.namespaces)) {

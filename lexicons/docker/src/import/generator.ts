@@ -140,6 +140,31 @@ const STEP_KEYS = new Set([
 ]);
 
 /**
+ * The warning for an instruction the import keeps as a comment: it names the
+ * Dockerfile and stage, the instruction and its value, and says the build
+ * will not contain it.
+ */
+export function commentedInstructionWarning(name: string, from: string, instruction: string, value: string): string {
+  const kept = value.replace(/\s+/g, " ").trim();
+  const hint = instruction.toUpperCase() === "MAINTAINER" ? " MAINTAINER is deprecated; a label step (org.opencontainers.image.authors) replaces it." : "";
+  return (
+    `Dockerfile ${name} (stage from ${from}): ${instruction.toUpperCase()} ${kept} was kept as a comment in steps, ` +
+    `because the Dockerfile class has no ${instruction.toLowerCase()} step. The built Dockerfile will not contain it.${hint}`
+  );
+}
+
+/** The warnings for every instruction of a Dockerfile that imports as a comment. */
+export function dockerfileImportWarnings(df: DockerfileIR): string[] {
+  const out: string[] = [];
+  for (const stage of df.stages) {
+    for (const { instruction, value } of stage.instructions) {
+      if (!STEP_KEYS.has(instruction.toLowerCase())) out.push(commentedInstructionWarning(df.name, stage.from, instruction, value));
+    }
+  }
+  return out;
+}
+
+/**
  * A Dockerfile always imports as `steps`, one per instruction in source
  * order, so building the import gives the same instructions in the same
  * order (the per-kind fields would reorder them).
@@ -155,7 +180,7 @@ function generateDockerfile(df: DockerfileIR, warnings: string[]): string {
       if (STEP_KEYS.has(key)) {
         out.push(`${indent}  { ${key}: ${quote(value)} },`);
       } else {
-        warnings.push(`Dockerfile ${df.name}: ${instruction} has no step and was left as a comment`);
+        warnings.push(commentedInstructionWarning(df.name, stage.from, instruction, value));
         out.push(`${indent}  // ${instruction} ${value.replace(/\n/g, " ")}`);
       }
     }

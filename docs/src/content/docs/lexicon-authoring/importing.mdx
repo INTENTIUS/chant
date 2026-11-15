@@ -31,7 +31,7 @@ Two interfaces in `packages/core/src/import/` are the whole contract between a l
 
 ```typescript
 interface TemplateParser    { parse(content: string, context?: ParseContext): TemplateIR; }
-interface TypeScriptGenerator { generate(ir: TemplateIR): GeneratedFile[]; readonly ownsLayout?: boolean; }
+interface TypeScriptGenerator { generate(ir: TemplateIR, options?: DirectoryGenerateOptions): GeneratedFile[]; readonly ownsLayout?: boolean; }
 interface GeneratedFile     { readonly path: string; readonly content: string; }
 ```
 
@@ -80,6 +80,12 @@ export class MyGenerator implements TypeScriptGenerator {
   }
 }
 ```
+
+## Importing a directory
+
+`chant import <directory>` parses every `.yaml` and `.yml` file under it with your parser and calls `generate(ir, { directory, sourcePath })` once per file, so each input file becomes one module at its own path. `directory` is where the module is written, relative to the output directory, for the relative imports of other modules (embedded content is written once at the top, not beside each file). `sourcePath` is the input file. The generator keeps returning its module as the first file, and core writes it at the input's path.
+
+Two optional hooks let a lexicon take part. `ParseContext.identifiers` is a set of the identifiers the directory's other files already declared. A parser whose identifiers must be unique across the project adds each one it uses and avoids those present (the k8s parser adds the namespace, then a number). `LexiconPlugin.importFiles({ directory, files })` returns the files to import and a warning for each one it leaves out, for files that match the lexicon's detection and are still not templates, such as a kustomization or a chart template. A lexicon without it has every file that `detectTemplate` recognizes imported.
 
 ## Embedded content
 

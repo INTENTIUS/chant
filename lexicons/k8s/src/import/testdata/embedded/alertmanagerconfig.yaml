@@ -1,0 +1,97 @@
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: main
+  namespace: monitoring
+  labels:
+    alertmanagerConfig: main
+spec:
+  route:
+    receiver: slack
+    groupBy: [alertname, cluster]
+    groupWait: 30s
+    groupInterval: 5m
+    repeatInterval: 24h
+    matchers:
+      - name: prometheus
+        value: ""
+        matchType: "="
+    routes:
+      - receiver: pager
+        matchers:
+          - name: severity
+            value: critical
+            matchType: "="
+          - name: team
+            value: db|infra
+            matchType: "=~"
+        continue: true
+        routes:
+          - receiver: slack
+            matchers:
+              - name: env
+                value: dev
+                matchType: "!="
+              - name: job
+                value: 'test-.*"x'
+                matchType: "!~"
+            muteTimeIntervals: [weekends]
+  receivers:
+    - name: slack
+      slackConfigs:
+        - apiURL:
+            name: slack-alerts-token
+            key: url
+          channel: "#alerts"
+          sendResolved: true
+          title: ":warning: {{ .CommonLabels.alertname }}"
+          text: "{{ range .Alerts }}{{ .Annotations.description }}{{ end }}"
+          iconURL: https://example.com/icon.png
+          fields:
+            - title: Cluster
+              value: "{{ .CommonLabels.cluster }}"
+              short: true
+          actions:
+            - type: button
+              text: Runbook
+              url: https://example.com/runbook
+              confirm:
+                text: Open it?
+                okText: Yes
+    - name: pager
+      pagerdutyConfigs:
+        - routingKey:
+            name: pagerduty
+            key: routing-key
+          severity: critical
+          clientURL: https://example.com
+      webhookConfigs:
+        - url: https://example.com/hook
+          maxAlerts: 5
+          httpConfig:
+            authorization:
+              credentials:
+                name: hook-token
+                key: token
+  inhibitRules:
+    - sourceMatch:
+        - name: severity
+          value: critical
+          matchType: "="
+      targetMatch:
+        - name: severity
+          value: warning
+          matchType: "="
+      equal: [alertname, cluster]
+  muteTimeIntervals:
+    - name: weekends
+      timeIntervals:
+        - weekdays: [saturday, sunday]
+          daysOfMonth:
+            - start: 1
+              end: 5
+          times:
+            - startTime: "00:00"
+              endTime: "06:00"
+          months: [january]
+          years: ["2026"]

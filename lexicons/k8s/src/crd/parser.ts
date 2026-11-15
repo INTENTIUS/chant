@@ -92,6 +92,9 @@ export function parseCRDSpec(spec: CRDSpec): K8sParseResult[] {
       properties,
       attributes,
       deprecatedProperties: [],
+      // The API server accepts the object meta fields on every custom
+      // resource and prunes or rejects anything else the schema omits.
+      ...(schema ? { topLevelFields: [...new Set(["apiVersion", "kind", "metadata", ...Object.keys(schema.properties ?? {})])].sort() } : {}),
     },
     propertyTypes: status.propertyType ? [...propertyTypes, status.propertyType] : propertyTypes,
     enums: [],

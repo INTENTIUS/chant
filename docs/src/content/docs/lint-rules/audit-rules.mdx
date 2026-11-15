@@ -1310,6 +1310,12 @@ Add decryption: "sops" to the FluxAppFor reconciling the path that carries the c
 |---|---|
 | Prior art | [Flux Kustomization API reference `.spec.decryption`](https://fluxcd.io/flux/components/kustomize/kustomizations/#decryption) (overlaps) |
 
+### WK8506
+
+**Object has a top-level key its kind does not declare** (merge-worthy · guidance)
+
+Move the key under the field that holds it (a labels key belongs under metadata) or remove it; kubectl apply rejects it, and the API server drops it when validation is off.
+
 ### WK8601
 
 **OpenTelemetry Collector runs tail_sampling on every node** (merge-worthy · guidance)
