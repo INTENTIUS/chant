@@ -48,7 +48,7 @@ describe("a rest wave before merge on Forgejo runs one wave per run (#4992)", ()
     expect(record.steps.find((s) => s.name === "Keep the rest wave's note")!.with).toMatchObject({ path: ".chant/op-waves/tf-apply/outcomes/rest-wave.json" });
     // The record job keeps the applying job's handed files at the wave's paths.
     expect(record.steps.find((s) => s.name === "Keep the apply job of wave 2 (rest) of tf-apply's outcome and run record")!.with).toMatchObject({
-      path: ".chant/op-waves/tf-apply/outcomes/outcome-wave-${{ env.CHANT_WAVES_WAVE }}-apply.json\n.chant/op-waves/tf-apply/outcomes/run-record-wave-${{ env.CHANT_WAVES_WAVE }}.json\n",
+      path: ".chant/op-waves/tf-apply/outcomes/outcome-wave-${{ env.CHANT_WAVES_WAVE }}-apply.json\n.chant/op-waves/tf-apply/outcomes/run-record-wave-${{ env.CHANT_WAVES_WAVE }}.json",
     });
   });
 

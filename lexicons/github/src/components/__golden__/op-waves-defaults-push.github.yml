@@ -89,7 +89,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Check out the base, so none of the change's code runs here
-        run: |
+        run: |-
           CHANT_EVIDENCE_BASE="$(git rev-parse --verify 'HEAD^1'^{commit})" || exit 1
           git checkout --quiet --detach "$CHANT_EVIDENCE_BASE" || exit 1
           echo "CHANT_EVIDENCE_BASE=$CHANT_EVIDENCE_BASE" >> "$GITHUB_ENV"
@@ -194,7 +194,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Check out the base, so none of the change's code runs here
-        run: |
+        run: |-
           CHANT_EVIDENCE_BASE="$(git rev-parse --verify 'HEAD^1'^{commit})" || exit 1
           git checkout --quiet --detach "$CHANT_EVIDENCE_BASE" || exit 1
           echo "CHANT_EVIDENCE_BASE=$CHANT_EVIDENCE_BASE" >> "$GITHUB_ENV"
@@ -398,7 +398,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Check out the base, so none of the change's code runs here
-        run: |
+        run: |-
           CHANT_EVIDENCE_BASE="$(git rev-parse --verify 'HEAD^1'^{commit})" || exit 1
           git checkout --quiet --detach "$CHANT_EVIDENCE_BASE" || exit 1
           echo "CHANT_EVIDENCE_BASE=$CHANT_EVIDENCE_BASE" >> "$GITHUB_ENV"
@@ -643,7 +643,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Check out the base, so none of the change's code runs here
-        run: |
+        run: |-
           CHANT_EVIDENCE_BASE="$(git rev-parse --verify 'HEAD^1'^{commit})" || exit 1
           git checkout --quiet --detach "$CHANT_EVIDENCE_BASE" || exit 1
           echo "CHANT_EVIDENCE_BASE=$CHANT_EVIDENCE_BASE" >> "$GITHUB_ENV"
@@ -677,14 +677,14 @@ jobs:
         with:
           path: .chant/op-waves/tf-apply/outcomes
       - name: Add up the waves' outcomes
-        run: |
+        run: |-
           outcome="$(terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --waves-outcome)" || exit 1
           echo "CHANT_CONTROL_OUTCOME=$outcome" >> "$GITHUB_ENV"
       - name: Tell the control repo github.com/acme/control how network's waves ended
         env:
           CHANT_CONTROL_TOKEN: '${{ secrets.TG_CONTROL_TOKEN }}'
           CHANT_CONTROL_SHA: '${{ github.sha }}'
-        run: |
+        run: |-
           set -u
           member='network'
           op='deploy'

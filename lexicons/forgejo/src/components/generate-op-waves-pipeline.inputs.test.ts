@@ -63,7 +63,7 @@ describe("generateForgejoOpWavesPipeline: a product's inputs (#4791)", () => {
     const jobs = jobsOf(generateForgejoOpWavesPipeline(spec, inputs).files[0]!.yaml);
     const dev = jobs["wave-1-dev"]!;
     const at = named(dev).indexOf("Log in to the cloud");
-    expect(dev.steps[at]!.run).toBe("export TRADE=dev\ntrade dev\n");
+    expect(dev.steps[at]!.run).toBe("export TRADE=dev\ntrade dev");
     expect(dev.steps[at - 1]!.run).toBe("npm ci");
     expect(dev.steps[at + 1]!.run).toBe("npx --no-install yodel chant run wave --spec waves.json --wave 1");
     expect(dev.steps.slice(-2)).toEqual([

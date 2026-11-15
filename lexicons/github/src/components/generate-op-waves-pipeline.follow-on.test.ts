@@ -63,7 +63,7 @@ describe("a rest wave before merge on GitHub runs one wave per run (#4992)", () 
     expect(step(doc.jobs["wave-3-rest-plan"]!, "Keep wave 3's saved plan").with).toMatchObject({ name: "tf-apply-wave-3-plan", path: `.chant/op-waves/tf-apply/wave-${W}` });
     expect(step(doc.jobs["wave-3-rest-gate"]!, "Keep wave 3's decision").with).toMatchObject({ path: `.chant/op-waves/tf-apply/wave-${W}.json` });
     expect(step(doc.jobs["wave-3-rest-gate"]!, "Keep the job's outcome").with).toMatchObject({ path: `.chant/op-waves/tf-apply/outcomes/outcome-wave-${W}.json` });
-    expect(step(doc.jobs["wave-3-rest"]!, "Keep the job's outcome and run record").with!.path).toBe(`.chant/op-waves/tf-apply/outcomes/outcome-wave-${W}-apply.json\n.chant/op-waves/tf-apply/outcomes/run-record-wave-${W}.json\n`);
+    expect(step(doc.jobs["wave-3-rest"]!, "Keep the job's outcome and run record").with!.path).toBe(`.chant/op-waves/tf-apply/outcomes/outcome-wave-${W}-apply.json\n.chant/op-waves/tf-apply/outcomes/run-record-wave-${W}.json`);
     // The waves before it keep their own paths.
     expect(step(doc.jobs["wave-2-layer-2-plan"]!, "Keep wave 2's saved plan").with).toMatchObject({ path: ".chant/op-waves/tf-apply/wave-2" });
   });

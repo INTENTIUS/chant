@@ -56,9 +56,9 @@ describe("a product's uploads through chant's hand-off on Forgejo (#4994)", () =
     const gate = jobs["wave-1-dev-gate"]!;
     expect(gate.steps.find((s) => s.name === "Take the plan job of wave 1 (dev) of tf-apply's files from its outputs")!.run).toContain("'terragucci-report' 'terragucci-respond'; do");
     // A list of paths is one upload's multi-line `path`.
-    expect(gate.steps.find((s) => s.name === "Keep the apply report")!.with).toMatchObject({ name: "terragucci-report-wave-1-dev-plan", path: "terragucci-report\nterragucci-respond\n" });
+    expect(gate.steps.find((s) => s.name === "Keep the apply report")!.with).toMatchObject({ name: "terragucci-report-wave-1-dev-plan", path: "terragucci-report\nterragucci-respond" });
     const record = jobs["wave-1-dev-record"]!;
-    expect(record.steps.find((s) => s.name === "Keep the apply report")!.with).toMatchObject({ name: "terragucci-report-wave-1-dev", path: "terragucci-report\nterragucci-respond\n" });
+    expect(record.steps.find((s) => s.name === "Keep the apply report")!.with).toMatchObject({ name: "terragucci-report-wave-1-dev", path: "terragucci-report\nterragucci-respond" });
   });
 
   test("the gate job runs the product's report of the decision and keeps what it wrote", () => {

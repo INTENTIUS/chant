@@ -112,25 +112,66 @@ describe("emitYAML", () => {
   });
 
   test("multiline string emits as | block scalar", () => {
-    const result = emitYAML("line1\nline2\nline3", 0);
+    const result = emitYAML("line1\nline2\nline3\n", 0);
     expect(result).toBe("|\nline1\nline2\nline3");
   });
 
-  test("multiline string trims trailing empty line", () => {
-    // Template literals often end with \n producing a trailing empty line
-    const result = emitYAML("line1\nline2\n", 0);
-    expect(result).toBe("|\nline1\nline2");
+  test("a string with exactly one final newline is a clipped block (#5073)", () => {
+    expect(emitYAML("line1\nline2\n", 0)).toBe("|\nline1\nline2");
+  });
+
+  test("a string with no final newline is a stripped block (#5073)", () => {
+    expect(emitYAML("line1\nline2", 0)).toBe("|-\nline1\nline2");
+  });
+
+  test("a string with several final newlines is a kept block (#5073)", () => {
+    expect(emitYAML({ k: "a\n\n\n" }, 0)).toBe("\nk: |+\n  a\n  \n  ");
+  });
+
+  test("a first line that starts with a space gets an indentation indicator (#5073)", () => {
+    expect(emitYAML({ k: "  indented\nnext" }, 0)).toBe("\nk: |2-\n    indented\n  next");
   });
 
   test("multiline string inside object value is properly indented", () => {
-    const result = emitYAML({ config: "line1\nline2\nline3" }, 0);
+    const result = emitYAML({ config: "line1\nline2\nline3\n" }, 0);
     expect(result).toContain("config: |\n  line1\n  line2\n  line3");
   });
 
   test("multiline string inside array item is properly indented", () => {
-    const result = emitYAML([{ data: "a\nb" }], 0);
+    const result = emitYAML([{ data: "a\nb\n" }], 0);
     expect(result).toContain("data: |\n    a\n    b");
   });
+});
+
+describe("emitYAML multi-line strings read back unchanged (#5073)", () => {
+  const values = [
+    "a\nb",
+    "a\nb\n",
+    "a\nb\n\n",
+    "a\nb\n\n\n",
+    "a\n\nb",
+    "\na\nb",
+    "\n\na\n",
+    "  lead\nb",
+    "\n  lead\nb\n",
+    "a  \nb  ",
+    "a\n  b\n",
+    "tab\there\nx",
+    "\n",
+    "\n\n",
+    "a\r\nb",
+    "a\u2028b\nc",
+    "key: value\n# not a comment\n- not a list",
+  ];
+  for (const v of values) {
+    test(`${JSON.stringify(v)} through an object, an array item and the top level`, () => {
+      expect(jsYamlLoad(`k:${emitYAML({ k: v }, 0).slice(3)}\n`)).toEqual({ k: v });
+      expect(jsYamlLoad(emitYAML({ k: v }, 0).trimStart() + "\nz: 1\n")).toEqual({ k: v, z: 1 });
+      expect(jsYamlLoad(emitYAML([{ k: v, z: 1 }], 0).trimStart() + "\n")).toEqual([{ k: v, z: 1 }]);
+      expect(jsYamlLoad(emitYAML([v, "after"], 0).trimStart() + "\n")).toEqual([v, "after"]);
+      expect(parseYAML(emitYAML({ k: v, z: 1 }, 0).trimStart() + "\n")).toEqual({ k: v, z: 1 });
+    });
+  }
 });
 
 // ---------------------------------------------------------------------------
