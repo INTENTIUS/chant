@@ -2,6 +2,7 @@ import { describe, test, expect } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { DockerParser, DockerfileParser } from "./parser";
+import { DockerTemplateParser } from "./adapter";
 
 const testdata = (file: string) =>
   readFileSync(join(import.meta.dirname, "testdata", file), "utf8");
@@ -133,5 +134,20 @@ describe("DockerfileParser", () => {
     const result = new DockerfileParser().parse("test", content);
     expect(result.stages[0].from).toBe("alpine:3.18");
     expect(result.stages[0].instructions).toHaveLength(1);
+  });
+});
+
+describe("Dockerfile import warnings (#5085)", () => {
+  test("an instruction kept as a comment is warned about, naming the file, stage and value", () => {
+    const ir = new DockerTemplateParser().parse("FROM python:3\nMAINTAINER Some One <a@b.example>\nRUN true\n");
+    expect(ir.warnings).toHaveLength(1);
+    expect(ir.warnings![0]).toContain("Dockerfile app (stage from python:3)");
+    expect(ir.warnings![0]).toContain("MAINTAINER Some One <a@b.example>");
+    expect(ir.warnings![0]).toContain("kept as a comment");
+    expect(ir.warnings![0]).toContain("will not contain it");
+  });
+
+  test("a Dockerfile whose instructions all have steps raises no warning", () => {
+    expect(new DockerTemplateParser().parse("FROM alpine\nRUN true\n").warnings).toBeUndefined();
   });
 });
