@@ -252,6 +252,9 @@ export const OP_WAVES_CONTROL_BEFORE_MERGE_FLOOR = "0.124.95";
 /** The first chant whose waves before merge lock and unlock on a comment by the product plan's reach line (#5061): with `wavesBeforeMerge` and `productPlan.reach`, and no `locks: "plan"`, the comment job (GitHub, Forgejo) and the note poll (GitLab, `chantNoteRuns`) answer `/<product> lock` on an open pull request by taking the locks of what the reach line prints at stage `apply` in `_locks/<reach.gate>.json` without applying (`decideLocksBeforeMerge`), refused with the holder named, and `/<product> unlock` by releasing the pull request's locks; and the product plan takes `reach` without `locks: "plan"` under `wavesBeforeMerge`, writing no reach lock job. */
 export const WAVES_BEFORE_MERGE_LOCKS_FLOOR = "0.124.95";
 
+/** The first chant whose kinds file takes `drift: { reader, config }` beside `graph` and whose `chant workspace drift --member` reads a member of such a kind with that module, `(input: { dir, config, member, observedAt, read?, resource?, stack? }) => DriftReaderOutput` from `@intentius/chant/workspace/drift-reader`, checked against `drift-reader.schema.json` (#5068). */
+export const KIND_DRIFT_READER_FLOOR = NEXT_RELEASE;
+
 /** The first chant whose `chant run resume` (`resumeGateRun`) on GitLab retries a wave job's `<wave job>-evidence` with the wave job when the evidence job already ran, and whose `ci evidence sign --from-job` waits for a job it reads to finish, so a resumed wave's evidence job signs from the new try (#4978). */
 export const GITLAB_WAVE_EVIDENCE_RETRY_FLOOR = "0.124.89";
 
