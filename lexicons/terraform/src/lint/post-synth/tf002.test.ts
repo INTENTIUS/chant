@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
 import { tf002 } from "./tf002";
-import { loadFixture } from "./fixtures/load";
+import { loadFixture, loadTreeFixture } from "./fixtures/load";
 import { TERRAFORM_TYPE, PROVIDER_TYPE, RESOURCE_TYPE, terraformEntity } from "../../hcl/parse";
 
 function makeCtx(entities: Record<string, ReturnType<typeof terraformEntity>>): PostSynthContext {
@@ -89,5 +89,49 @@ describe("TF002: provider implied by the root has no required_providers entry", 
       }),
     );
     expect(diags).toHaveLength(0);
+  });
+});
+
+describe("TF002: a version pinned in a called local module (#5108)", () => {
+  test("a root with only source is constrained by the module's version", async () => {
+    const diags = tf002.check(await loadTreeFixture("TF002", "module-pinned"));
+    expect(diags).toHaveLength(0);
+  });
+
+  test("a module that also gives only source leaves the finding", async () => {
+    const diags = tf002.check(await loadTreeFixture("TF002", "module-unpinned"));
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toContain("`version`");
+  });
+
+  test("a version pinned two calls down counts", async () => {
+    const diags = tf002.check(await loadTreeFixture("TF002", "module-nested"));
+    expect(diags).toHaveLength(0);
+  });
+
+  test("a call cycle between modules ends and pins nothing", async () => {
+    const diags = tf002.check(await loadTreeFixture("TF002", "module-cycle"));
+    expect(diags).toHaveLength(1);
+  });
+
+  test("a module's pin for another provider does not constrain this one", async () => {
+    const diags = tf002.check(await loadTreeFixture("TF002", "module-other-provider"));
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toContain('"fastly"');
+  });
+
+  test("the root's own entry wins and a module's entry alone does not make the root imply a provider", () => {
+    const ctx = makeCtx({
+      "app/terraform": terraformEntity(TERRAFORM_TYPE, "terraform", {}, "main.tf", "app"),
+      "app/module.m/terraform": terraformEntity(
+        TERRAFORM_TYPE,
+        "terraform",
+        { required_providers: [{ aws: { source: "hashicorp/aws", version: "~> 5.0" } }] },
+        "main.tf",
+        "app",
+        { callers: ["module.m"] },
+      ),
+    });
+    expect(tf002.check(ctx)).toHaveLength(0);
   });
 });
