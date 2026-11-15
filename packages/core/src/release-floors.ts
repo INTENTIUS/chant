@@ -19,7 +19,7 @@
  * this constant to the next patch (#4501). The check fails while a floor
  * still names this constant after its version shipped.
  */
-export const NEXT_RELEASE = "0.124.96";
+export const NEXT_RELEASE = "0.124.97";
 
 /** The first chant with `chant dev local` and `chant dev bundle-check`, `@intentius/chant/local-chant` and `@intentius/chant/bundle-check` (`chantRuntimeTarget`, `chantExternalPlugin`, `checkBundle`): a product built against a chant checkout, and its bundle checked, without its own scripts (#4787). */
 export const LOCAL_CHANT_FLOOR = "0.124.86";
@@ -253,7 +253,7 @@ export const OP_WAVES_CONTROL_BEFORE_MERGE_FLOOR = "0.124.95";
 export const WAVES_BEFORE_MERGE_LOCKS_FLOOR = "0.124.95";
 
 /** The first chant whose kinds file takes `drift: { reader, config }` beside `graph` and whose `chant workspace drift --member` reads a member of such a kind with that module, `(input: { dir, config, member, observedAt, read?, resource?, stack? }) => DriftReaderOutput` from `@intentius/chant/workspace/drift-reader`, checked against `drift-reader.schema.json` (#5068). */
-export const KIND_DRIFT_READER_FLOOR = NEXT_RELEASE;
+export const KIND_DRIFT_READER_FLOOR = "0.124.96";
 
 /** The first chant whose `chant run resume` (`resumeGateRun`) on GitLab retries a wave job's `<wave job>-evidence` with the wave job when the evidence job already ran, and whose `ci evidence sign --from-job` waits for a job it reads to finish, so a resumed wave's evidence job signs from the new try (#4978). */
 export const GITLAB_WAVE_EVIDENCE_RETRY_FLOOR = "0.124.89";
