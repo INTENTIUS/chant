@@ -1338,6 +1338,12 @@ export function parseArgs(args: string[]): ParsedArgs {
       // #2641 — `chant workspace check --generated` runs each declared
       // generator and compares its output with the file in the tree.
       result.generated = true;
+    } else if (arg === "--runs-on") {
+      // `chant workspace graph --discover --runs-on <member>=<member>/<address>` (#5101): the cluster resource a discovered member runs on. Repeatable.
+      const value = args[++i];
+      const at = value?.indexOf("=") ?? -1;
+      if (!value || at < 1 || at === value.length - 1) throw new Error("--runs-on needs a member and the cluster resource it runs on: --runs-on <member>=<member>/<address>");
+      result.runsOn = { ...(result.runsOn ?? {}), [value.slice(0, at)]: value.slice(at + 1) };
     } else if (arg === "--member") {
       // #2537 — `chant workspace build|lint|audit|graph --member <name>`.
       // Repeatable, and a comma list works too.

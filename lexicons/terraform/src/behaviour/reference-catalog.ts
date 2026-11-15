@@ -157,13 +157,18 @@ export const TERRAFORM_REFERENCE_CATALOG: ReferenceCatalog = {
   declaredNode: terraformDeclaredNode,
   // Every node is indexed by its own id and physical id (`reconstructEdges`
   // does that itself), and a block's body rarely carries a second identifier
-  // for the block. A cloud secret is the exception (#5098): other systems
+  // for the block. Two exceptions. A cloud secret (#5098): other systems
   // name it by the id it is created with, an ExternalSecret's `remoteRef.key`
   // among them. The k8s catalog's rule joins that key to the secret inside
   // the store's project or region, so these only make the secret findable.
+  // A managed Kubernetes cluster is also named by its literal `name`, which
+  // is what an Argo CD cluster Secret carries (#5101).
   identities: [
     { kind: "google_secret_manager_secret", ids: ["secret_id"] },
     { kind: "aws_secretsmanager_secret", ids: ["name"] },
+    { kind: "google_container_cluster", ids: ["name"] },
+    { kind: "aws_eks_cluster", ids: ["name"] },
+    { kind: "azurerm_kubernetes_cluster", ids: ["name"] },
   ],
   refs: [
     // ── containment (→ boundary pairs, and containment edges) ──

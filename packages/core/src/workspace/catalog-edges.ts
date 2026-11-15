@@ -223,3 +223,53 @@ export function placeCatalogPass(graph: WorkspaceGraph, pass: CatalogPass, place
   if (Object.keys(nonLiteral).length > 0) summary.nonLiteral = Object.fromEntries(Object.keys(nonLiteral).sort(byString).map((k) => [k, nonLiteral[k]]));
   graph.catalog = summary;
 }
+
+/** What a member's declared `runsOn` drew (#5101). */
+export interface RunsOnEdges {
+  /** One declared edge from each cluster registration of the member to the node `runsOn` names. */
+  edges: ComposedEdge[];
+  /** The registrations an edge was drawn from, so their unmatched references are not reported. */
+  joined: Set<string>;
+  /** A `runsOn` that drew nothing, and why. */
+  problems: string[];
+}
+
+/**
+ * The declared mapping from a cluster's registration to the cluster resource
+ * (#5101), for a repo whose names do not match: a member's `runsOn`,
+ * `<member>/<address>`, names the node the member runs on, by the member that
+ * holds it and its address (the node's id without the member, or an
+ * `attrs.address`). Each node of the member that its lexicon's
+ * `registersCluster` accepts draws one `declared` edge to it. A target that
+ * matches no node or several, a member with nothing that registers a cluster,
+ * and a target in the member itself are problems that draw no edge.
+ */
+export function runsOnEdges(nodes: readonly ComposedNode[], runsOn: ReadonlyMap<string, string>, catalogs: readonly NamedCatalog[]): RunsOnEdges {
+  const out: RunsOnEdges = { edges: [], joined: new Set(), problems: [] };
+  const registers = new Map(catalogs.map((c) => [c.lexicon, c.catalog.registersCluster]));
+  for (const [member, target] of [...runsOn].sort((a, b) => byString(a[0], b[0]))) {
+    const slash = target.indexOf("/");
+    const targetMember = target.slice(0, slash);
+    const address = target.slice(slash + 1);
+    const matches = nodes.filter((n) => n.member === targetMember && (n.id === `${targetMember}/${address}` || n.id.endsWith(`/${address}`) || n.attrs?.address === address));
+    if (matches.length !== 1) {
+      out.problems.push(
+        matches.length === 0
+          ? `member ${member} runs on ${target}, which matches no node of ${targetMember}; no edge is drawn`
+          : `member ${member} runs on ${target}, which matches ${matches.length} nodes (${matches.map((n) => n.id).join(", ")}); no edge is drawn`,
+      );
+      continue;
+    }
+    const registrations = nodes.filter((n) => n.member === member && registers.get(n.lexicon)?.(n) === true);
+    if (registrations.length === 0) {
+      out.problems.push(`member ${member} runs on ${target}, and holds no cluster registration to join to it; no edge is drawn`);
+      continue;
+    }
+    for (const r of registrations) {
+      if (r.id === matches[0].id) continue;
+      out.joined.add(r.id);
+      out.edges.push({ from: r.id, to: matches[0].id, kind: "ref", viaAttr: "runsOn", origin: "declared", member });
+    }
+  }
+  return out;
+}

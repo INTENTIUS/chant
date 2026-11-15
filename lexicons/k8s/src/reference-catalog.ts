@@ -1,4 +1,5 @@
 import type { IRNode } from "@intentius/chant/graph-ir";
+import { k8sDeclaredNode, registersCluster } from "./cluster-secret";
 import { readPath, type IdentityRule, type JoinedRef, type ReferenceCatalog, type RefRule, type ScopeRule } from "@intentius/chant/graph-refs";
 
 /**
@@ -62,6 +63,16 @@ import { readPath, type IdentityRule, type JoinedRef, type ReferenceCatalog, typ
  * argument that is not literal is not read (the pass counts it), so a secret
  * whose `secret_id` or `project` is a variable matches nothing. An AWS secret
  * matches on its name alone when it sets no literal `region`.
+ *
+ * ## Argo CD clusters (#5101)
+ *
+ * An Application's `spec.destination.name` or `.server` joins the cluster
+ * Secret whose `name` or `server` it is, and a cluster Secret's `name` joins
+ * the managed Kubernetes cluster block of that literal name in the terraform
+ * catalog. The Secret's values are read from `argoCluster` (./cluster-secret.ts),
+ * which only a cluster Secret has, decoded from `data` when it wrote them
+ * there. Application is scoped by `metadata.namespace` like the Secret, but is
+ * not a named kind, so it has no containment rule to a Namespace.
  *
  * ## What this does not do
  *
@@ -140,10 +151,19 @@ const NAMED_KINDS = [
 /** Workloads whose pod template a Service's `app` selector can match. */
 const SELECTED_WORKLOADS = ["K8s::Apps::Deployment", "K8s::Apps::StatefulSet", "K8s::Apps::DaemonSet"];
 
-const identities: IdentityRule[] = NAMED_KINDS.map((kind) => ({
-  kind,
-  ids: SELECTED_WORKLOADS.includes(kind) ? ["metadata.name", "spec.template.metadata.labels.app"] : ["metadata.name"],
-}));
+/**
+ * What else names a kind, beyond `metadata.name`: a workload by its pod
+ * template's `app` label, and a Secret by the `name` and `server` an Argo CD
+ * cluster registration holds (#5101). `k8sDeclaredNode` (./cluster-secret.ts)
+ * puts them under `argoCluster` on a cluster Secret and on no other, so a
+ * Secret with a `stringData.name` of its own is not read as one.
+ */
+const EXTRA_IDS: Record<string, string[]> = {
+  ...Object.fromEntries(SELECTED_WORKLOADS.map((kind) => [kind, ["spec.template.metadata.labels.app"]])),
+  "K8s::Core::Secret": ["argoCluster.name", "argoCluster.server"],
+};
+
+const identities: IdentityRule[] = NAMED_KINDS.map((kind) => ({ kind, ids: ["metadata.name", ...(EXTRA_IDS[kind] ?? [])] }));
 
 type Rel = RefRule["relation"];
 
@@ -244,6 +264,12 @@ const externalSecretRules: RefRule[] = [
     secretRule(path, "aws_secretsmanager_secret", awsRegion, (secret, region) => (first(secret, "region") ?? region) === region),
   ]),
 ];
+/**
+ * The cloud kinds a cluster Secret's `name` can be the literal name of (#5101).
+ * The `registers` rule has one entry per kind under one id, so the Secret
+ * dangles only when no kind matches.
+ */
+const CLUSTER_KINDS = ["google_container_cluster", "aws_eks_cluster", "azurerm_kubernetes_cluster"];
 
 const refs: RefRule[] = [
   // ── containment: the namespace an object is in ──
@@ -264,6 +290,11 @@ const refs: RefRule[] = [
   ref("K8s::Networking::Ingress", "spec.tls[].secretName", "K8s::Core::Secret", "tls"),
   ref("K8s::Networking::Ingress", "spec.ingressClassName", "K8s::Networking::IngressClass", "class"),
 
+  // ── Argo CD (#5101): where an Application deploys, and the cluster a registration names ──
+  ...anyOf("K8s::Argo::Application", "spec.destination.name", ["K8s::Core::Secret"], "deploys to"),
+  ...anyOf("K8s::Argo::Application", "spec.destination.server", ["K8s::Core::Secret"], "deploys to"),
+  ...CLUSTER_KINDS.map((kind) => ref("K8s::Core::Secret", "argoCluster.name", kind, "registers")),
+
   // ── scaling, storage, RBAC ──
   ...anyOf("K8s::Autoscaling::HorizontalPodAutoscaler", "spec.scaleTargetRef.name", ["K8s::Apps::Deployment", "K8s::Apps::StatefulSet", "K8s::Apps::ReplicaSet"], "scales"),
   ref("K8s::Core::PersistentVolumeClaim", "spec.volumeName", "K8s::Core::PersistentVolume", "bound to"),
@@ -281,6 +312,6 @@ const refs: RefRule[] = [
 ];
 
 /** A namespaced object's names are unique inside its namespace (#5097). */
-const scopes: ScopeRule[] = [...NAMESPACED_KINDS, ...SCOPED_KINDS].map((kind) => ({ kind, path: "metadata.namespace" }));
+const scopes: ScopeRule[] = [...NAMESPACED_KINDS, ...SCOPED_KINDS, "K8s::Argo::Application"].map((kind) => ({ kind, path: "metadata.namespace" }));
 
-export const k8sReferenceCatalog: ReferenceCatalog = { identities, refs, scopes };
+export const k8sReferenceCatalog: ReferenceCatalog = { identities, refs, scopes, declaredNode: k8sDeclaredNode, registersCluster };

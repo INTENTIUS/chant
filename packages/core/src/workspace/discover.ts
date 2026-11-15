@@ -254,9 +254,10 @@ function probeOf(k: MemberKind): KindProbe {
 /**
  * Walk `tree` and work out the members a declaration for it would list, the
  * `discovered` entries, and the declaration itself. `name` is the workspace's
- * name. Reads the tree only.
+ * name. `runsOn` sets a discovered member's `runsOn` field by member name
+ * (#5101), as `--runs-on` does. Reads the tree only.
  */
-export function discover(tree: WorkspaceTree, kinds: DiscoveryKinds, name: string): Discovery {
+export function discover(tree: WorkspaceTree, kinds: DiscoveryKinds, name: string, runsOn: Readonly<Record<string, string>> = {}): Discovery {
   const claimed: { dir: string; claims: MemberKind[]; winner: MemberKind | undefined }[] = [];
   const modules = new Map<string, Set<string>>();
   const walk = (dir: string) => {
@@ -322,7 +323,12 @@ export function discover(tree: WorkspaceTree, kinds: DiscoveryKinds, name: strin
 
   const names = discoveredMemberNames(memberDirs.map(shown));
   for (const e of entries) if (e.outcome === "member") e.member = names.get(e.dir)!;
-  const members = entries.filter((e) => e.outcome === "member").map((e) => ({ name: e.member!, dir: e.dir, kind: e.kind! }));
+  const known = [...names.values()].sort();
+  const unknown = Object.keys(runsOn).filter((m) => !known.includes(m));
+  if (unknown.length > 0) {
+    throw new WorkspaceReadError("declaration-invalid", `--runs-on names ${unknown.map((m) => JSON.stringify(m)).join(", ")}, which is not a discovered member${known.length > 0 ? ` (the members are ${known.join(", ")})` : ""}`);
+  }
+  const members = entries.filter((e) => e.outcome === "member").map((e) => ({ name: e.member!, dir: e.dir, kind: e.kind!, ...(runsOn[e.member!] !== undefined ? { runsOn: runsOn[e.member!] } : {}) }));
   const used = new Set(entries.filter((e) => e.outcome === "member").map((e) => e.source));
   const pins = kinds.packages.filter((p) => used.has(p.package)).map((p) => ({ package: p.package, version: p.version }));
   const declaration = { name, schema: 1, ...(pins.length > 0 ? { pins } : {}), members };

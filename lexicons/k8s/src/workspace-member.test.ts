@@ -127,6 +127,21 @@ describe("member kinds with a graph block (#3179)", () => {
     expect(ir.meta?.k8sMember).toEqual({ kind: "argo-app", objects: 2 });
   });
 
+  test("argo-app and manifests: a cluster Secret is a node cut down to its name and server, and no other Secret is read as one (#5101)", async () => {
+    for (const kind of ["argo-app", "manifests"]) {
+      const { ir, err, exit } = await graphOf(kind, join(members, "argo-clusters"), pluginWith(), 3);
+      expect(exit, err.join("\n")).toBe(0);
+      const attrs = (id: string) => ir.nodes.find((n) => n.id === id)?.attrs;
+      expect(attrs("m/secretClusterProd")).toMatchObject({ type: "Opaque", stringData: { name: "prod", server: "https://10.0.0.1" } });
+      // A Secret that holds its name and server in base64 `data` is read decoded.
+      expect(attrs("m/secretClusterStaging")).toMatchObject({ stringData: { name: "staging", server: "https://10.0.0.2" } });
+      const text = JSON.stringify(ir.nodes.filter((n) => n.id.startsWith("m/secretCluster")));
+      expect(text).not.toMatch(/not-a-real|bearerToken|config/);
+      // A Secret with no cluster label is not an Argo member's object, and a manifests member keeps it whole.
+      expect(ids(ir).includes("m/secretDbLogin")).toBe(kind === "manifests");
+    }
+  });
+
   test("flux-kustomization: the Flux Kustomization is a node, the kustomize one beside it is not", async () => {
     const { ir, err, exit } = await graphOf("flux-kustomization", join(members, "flux"), pluginWith());
     expect(exit, err.join("\n")).toBe(0);

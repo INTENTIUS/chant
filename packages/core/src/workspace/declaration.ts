@@ -795,6 +795,8 @@ export interface Member {
   outputs: string[] | null;
   /** The values the entry sets for its kind's fields (#3151), as written, or null when it sets none. Checked against the kind by `resolveMemberFields`. */
   fields: Record<string, unknown> | null;
+  /** The cluster resource the member runs on, `<member>/<address>` (#5101), or null when the entry names none. */
+  runsOn: string | null;
   /** The links this member states as a consumer, in file order (#2539). */
   links: LinkDeclaration[];
   /** The record kinds this member declares, in file order (#2680). */
@@ -1132,6 +1134,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
       generated,
       outputs: e.outputs === undefined ? null : [...(e.outputs as string[])],
       fields: e.fields === undefined ? null : structuredClone(e.fields as Record<string, unknown>),
+      runsOn: (e.runsOn as string | undefined) ?? null,
       links,
       records,
       diagrams,

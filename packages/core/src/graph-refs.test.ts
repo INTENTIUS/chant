@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { reconstructEdges, readPath, parsePath, mergeCatalogs, containmentGroups, type ReferenceCatalog } from "./graph-refs";
+import { reconstructEdges, reconstructIndexedEdges, readPath, parsePath, mergeCatalogs, containmentGroups, type ReferenceCatalog } from "./graph-refs";
 import type { IRNode } from "./graph-ir";
 
 const node = (id: string, kind: string, attrs: Record<string, unknown>, physicalId?: string): IRNode => ({
@@ -262,5 +262,29 @@ describe("containment is traversable without being drawn", () => {
   it("an empty container is reached by nothing, which is the whole question", () => {
     const { containmentEdges } = reconstructEdges(nodes, catalog);
     expect(containmentEdges.some((e) => e.to === "sub-2")).toBe(false);
+  });
+});
+
+describe("rules that share an id (#5101)", () => {
+  const catalog: ReferenceCatalog = {
+    identities: [],
+    refs: ["a_cluster", "b_cluster"].map((targetKind) => ({ from: "holder", path: "cluster", targetKind, relation: "reference" as const })),
+  };
+  const nodes = (...kinds: string[]): IRNode[] => [
+    { id: "h", kind: "holder", lexicon: "x", attrs: { cluster: "prod" } },
+    ...kinds.map((kind, i) => ({ id: `t${i}`, kind, lexicon: "x", attrs: {}, nativeId: "prod" })),
+  ];
+  const run = (n: IRNode[]) => reconstructIndexedEdges(n, [{ lexicon: "x", catalog }], () => ({ account: "w" }));
+
+  it("do not report a value dangling under the kinds that found nothing when another kind found it", () => {
+    const out = run(nodes("b_cluster"));
+    expect(out.edges.map((e) => e.to)).toEqual(["t0"]);
+    expect(out.dangling).toEqual([]);
+  });
+
+  it("report it once when no kind found it, and not as an edge", () => {
+    const out = run(nodes("c_cluster"));
+    expect(out.edges).toEqual([]);
+    expect(out.dangling).toHaveLength(1);
   });
 });

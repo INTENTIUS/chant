@@ -20,6 +20,11 @@
  *   that a kustomization in the workspace lists in `resources` is not read:
  *   the kustomize member has its objects.
  *
+ * An Argo CD cluster Secret (a Secret labelled `argocd.argoproj.io/secret-type:
+ * cluster`) is kept by the `argo-app` and `manifests` kinds, cut down to its
+ * metadata and the `name` and `server` it registers (#5101, ./cluster-secret.ts).
+ * Its other data holds the cluster's credentials, which the graph does not carry.
+ *
  * A YAML file that does not parse, such as a chart template, is a warning that
  * names the file; the member's other files are still read.
  */
@@ -29,6 +34,7 @@ import { loadAll } from "js-yaml";
 import type { Declarable } from "@intentius/chant/declarable";
 import { defaultKustomizeRunner, KustomizeBinaryMissingError, renderKustomizeDocuments, type KustomizeRunner } from "./kustomize/render";
 import { addRenderedEntity, renderedManifestEntity } from "./kustomize/rendered-entity";
+import { clusterSecretView, isClusterSecretDocument } from "./cluster-secret";
 
 export type K8sMemberKind = "kustomize" | "argo-app" | "flux-kustomization" | "manifests";
 
@@ -95,6 +101,11 @@ function manifestDocuments(dir: string, kind: Exclude<K8sMemberKind, "kustomize"
     }
     for (const doc of found) {
       if (typeof doc.apiVersion !== "string" || typeof doc.kind !== "string") continue;
+      // A cluster Secret registers a cluster with Argo CD, so the Argo member reads it too, cut down to its name and server.
+      if (isClusterSecretDocument(doc)) {
+        if (kind === "manifests" || kind === "argo-app") docs.push(clusterSecretView(doc));
+        continue;
+      }
       if (kind === "manifests") {
         docs.push(doc);
         continue;

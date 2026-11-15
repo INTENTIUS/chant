@@ -515,7 +515,7 @@ Eight kinds cover the files a platform repository holds besides Terraform ([#317
 
 | Kind | What the graph holds | Needs |
 |---|---|---|
-| `argo-app` | an `Application`, `ApplicationSet` or `AppProject` per document, as a node | nothing; the manifests are read as data |
+| `argo-app` | an `Application`, `ApplicationSet` or `AppProject` per document, as a node, and an Argo CD cluster Secret cut down to its `name` and `server` | nothing; the manifests are read as data |
 | `flux-kustomization` | a Flux `Kustomization` per document, as a node | nothing |
 | `manifests` | a node per document with an `apiVersion` and a `kind`, including custom resources the k8s lexicon has no class for, with its `spec` at `--detail 3`. A file that does not parse, or holds `{{ ... }}` template syntax, is named in the member's warnings and the other files are still read. A directory that a `kustomization.yaml` in the workspace lists in `resources` is left to the kustomize member (`coveredBy` on `meta.k8sMember`), so its objects are not drawn twice | nothing |
 | `cloudformation` | a node per resource; an edge per `Ref`, `Fn::GetAtt`, `Fn::Sub` reference and `DependsOn` between resources of the template | nothing |

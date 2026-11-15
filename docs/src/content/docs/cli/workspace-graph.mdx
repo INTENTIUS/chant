@@ -9,7 +9,7 @@ title: "chant workspace graph"
 ```
 chant workspace graph [dir] [--at <rev>] [--detail 0..3] [-o <file>] [--member <name>] [--kind <kind file>] [--env <name>] [--capability-view] [--no-cache] [--dry-run]
 chant workspace graph [dir] --live --env <name> [--overlay] [--traffic <level>] [--detail 0..3] [-o <file>] [--member <name>] [--kind <kind file>]
-chant workspace graph <dir> --discover [--at <rev>] [--detail 0..3] [-o <file>] [--member <name>] [--env <name>] [--no-cache] [--dry-run]
+chant workspace graph <dir> --discover [--runs-on <member>=<member>/<address>]... [--at <rev>] [--detail 0..3] [-o <file>] [--member <name>] [--env <name>] [--no-cache] [--dry-run]
 chant workspace graph [dir] --composites [--at <rev>] [-o <file>] [--member <name>] [--env <name>]
 chant workspace graph [dir] --intent <path[:start-end]|path#symbol|member/node|sha> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--forge-issues] [--json]
 chant workspace graph [dir] --intent --record <id> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--forge-issues] [--json]
@@ -125,6 +125,23 @@ An `ExternalSecret` draws two edges ([#5098](https://github.com/INTENTIUS/chant/
 | `spec.provider.aws` with `service: SecretsManager` | `aws_secretsmanager_secret` | `name` equal to the key, and `region` equal to the store's when the resource sets one |
 
 A store that is not found is dangling and its keys are not read. A key that no secret in the store's scope has is dangling under the secret rule, with the store's node as `through`. A secret whose `secret_id`, `name` or `project` is not literal is counted in `catalog.nonLiteral` and matches nothing. An IBM or Vault store gets the store edge and no secret edge.
+
+### Cluster join
+
+The Kubernetes objects in a repo do not say which cluster they run on, and the Terraform that creates the cluster is often in another directory. Argo CD records the link in a cluster Secret, a Secret labelled `argocd.argoproj.io/secret-type: cluster` with a `name` and a `server` ([#5101](https://github.com/INTENTIUS/chant/issues/5101)). Two catalog rules join it:
+
+| Rule | Joins |
+|---|---|
+| `k8s:K8s::Argo::Application:spec.destination.name` and `...:spec.destination.server` | an Application to the cluster Secret in its namespace whose `name` or `server` is that value. A destination that no Secret in the graph names, such as `https://kubernetes.default.svc`, is not reported as dangling. |
+| `k8s:K8s::Core::Secret:argoCluster.name` | a cluster Secret to the `google_container_cluster`, `aws_eks_cluster` or `azurerm_kubernetes_cluster` whose literal `name` is the Secret's `name`. A `data` value is decoded from base64 first. |
+
+A Secret whose name no cluster resource has is listed once in `dangling`, whichever of the three kinds were looked for, and two cluster resources of one name in two roots draw no edge and are listed in `ambiguous`. A cluster name that Terraform builds from a variable or a local is not a literal, so it is counted in `catalog.nonLiteral` and does not join. `argoCluster` is a path the pass adds to a cluster Secret only: it holds the decoded `name` and `server`, so another Secret that has a `name` of its own is not read as a cluster registration. The `argo-app` and `manifests` kinds read a cluster Secret cut down to its metadata and that `name` and `server`; its `config`, with the cluster's token or CA bundle, is not read into the graph.
+
+Where the names do not match, a member's `runsOn` says which cluster resource it runs on. It is `<member>/<address>`, the member that holds the resource and its address, and it draws a declared edge (`origin: "declared"`, `viaAttr: "runsOn"`) from each cluster Secret in the member to that resource. A Secret it joins is no longer in `dangling`. A `runsOn` that matches no node or several, or that names a member with no cluster Secret, prints a warning and draws nothing. With `--discover` there is no declaration, so `--runs-on <member>=<member>/<address>` sets it for a discovered member, by the member's discovered name, and may be given more than once.
+
+```bash
+chant workspace graph . --discover --runs-on argo=infra/google_container_cluster.prod
+```
 
 ## Nested workspaces
 
@@ -617,6 +634,7 @@ A trace over one region may take at most twice as long as [`chant workspace stat
 | Option | Effect |
 |---|---|
 | `dir` | Where the walk up to the declaration starts. With `--discover`, the directory whose members are discovered. |
+| `--runs-on <member>=<target>` | With `--discover`, set a discovered member's [`runsOn`](#cluster-join), the cluster resource it runs on as `<member>/<address>`. Repeatable. |
 | `--discover` | Find the members by the kinds' probes when `dir` has no declaration, and write nothing inside it. See [discovering members](#discovering-members). |
 | `--at <rev>` | Read the declaration at a commit, and each member's graph from its source at that commit. The tree is exported to a temporary directory and each member runs there under the toolchain installed now. See [what `--at` reads](/chant/reference/workspace-read-contract/#identity-and-revisions). |
 | `-o, --output <file>` | Write the document to a file. |

@@ -162,6 +162,13 @@ export interface ReferenceCatalog {
    * undefined to read the node as it is (#5097). Pure.
    */
   declaredNode?(node: IRNode): DeclaredCatalogNode | undefined;
+  /**
+   * True for a node of this lexicon that registers a cluster, the one a
+   * workspace member runs on (an Argo CD cluster Secret, #5101). A member's
+   * `runsOn` draws a declared edge from each such node to the cluster
+   * resource it names. Reads the node as the document holds it. Pure.
+   */
+  registersCluster?(node: IRNode): boolean;
 }
 
 /** `child` is contained by `parent` (subnet ∈ VPC). For #779's boundary boxes. */
@@ -547,6 +554,10 @@ export function reconstructIndexedEdges(
   // and template-shape rules for the same path) report a reference once.
   const dangling = new Map<string, IndexedDanglingRef>();
   const ambiguous = new Map<string, AmbiguousRef>();
+  // A value some rule of an id found a node for. Rules of one id and different
+  // target kinds are alternatives (a cluster Secret's name is a GKE, an EKS or
+  // an AKS cluster), so the kinds that found nothing do not report it dangling.
+  const found = new Set<string>();
 
   const resolve = (
     holder: IRNode,
@@ -569,6 +580,7 @@ export function reconstructIndexedEdges(
       dangling.set(`${holder.id}|${rule.id}|${value}|${through.through ?? ""}`, { from: holder.id, path: rule.path, value, rule: rule.id, ...(rule.targetKind ? { targetKind: rule.targetKind } : {}), ...through });
       return;
     }
+    found.add(`${holder.id}|${rule.id}|${value}`);
     if (candidates.length > 1) {
       ambiguous.set(`${holder.id}|${rule.id}|${value}`, { from: holder.id, rule: rule.id, path: rule.path, value, candidates });
       return;
@@ -648,7 +660,7 @@ export function reconstructIndexedEdges(
   return {
     edges: [...edges.values()].sort((a, b) => byString(edgeKey(a), edgeKey(b))),
     containment: [...containment.values()].sort((a, b) => byString(`${a.child}|${a.parent}`, `${b.child}|${b.parent}`)),
-    dangling: [...dangling.values()].sort((a, b) => byString(`${a.from}|${a.rule}|${a.value}|${a.through ?? ""}`, `${b.from}|${b.rule}|${b.value}|${b.through ?? ""}`)),
+    dangling: [...dangling.entries()].filter(([key]) => !found.has(key)).map(([, d]) => d).sort((a, b) => byString(`${a.from}|${a.rule}|${a.value}|${a.through ?? ""}`, `${b.from}|${b.rule}|${b.value}|${b.through ?? ""}`)),
     ambiguous: [...ambiguous.values()].sort((a, b) => byString(`${a.from}|${a.rule}|${a.value}`, `${b.from}|${b.rule}|${b.value}`)),
   };
 }

@@ -4,7 +4,7 @@
   "kinds": [
     {
       "name": "argo-app",
-      "description": "an Argo CD Application, ApplicationSet or AppProject, a manifest with apiVersion argoproj.io/* and one of those kinds",
+      "description": "an Argo CD Application, ApplicationSet or AppProject, a manifest with apiVersion argoproj.io/* and one of those kinds; the member also reads an Argo CD cluster Secret, cut down to its name and server",
       "precedence": 360,
       "probe": {
         "anyDocument": {

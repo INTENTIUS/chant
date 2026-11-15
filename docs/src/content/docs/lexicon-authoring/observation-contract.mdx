@@ -555,6 +555,7 @@ A path step is a key. `[]` after a step reads every element of a list, and a key
 
 - `scopes`, a list of `{ kind, path }`: a node of `kind` has names unique only inside the scope the value at `path` names. The k8s catalog lists each namespaced kind with `metadata.namespace`.
 - `declaredNode(node)`, a pure function giving the node the rules read when the declared node is not shaped like them, as `{ kind, attrs, nonLiteral }`. The terraform catalog gives a `Terraform::Resource` its provider type as `kind` and its literal arguments as `attrs`, and counts the arguments it left out.
+- `registersCluster(node)`, a pure function that is true for a node that registers a cluster, which a workspace member's [`runsOn`](/chant/cli/workspace-graph/#cluster-join) joins to the cluster resource it names. The k8s catalog accepts a Secret labelled `argocd.argoproj.io/secret-type: cluster`.
 
 ### Adding a rule
 
