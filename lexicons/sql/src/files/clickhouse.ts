@@ -21,7 +21,7 @@ import { isAccessStatement, parseAccess, type AccessNode } from "../clickhouse/a
 import type { Token } from "../clickhouse/tokens";
 import { CLICKHOUSE_TAG_OF } from "../clickhouse/import/generator";
 import { describeStatement, type ImportedObject } from "../clickhouse/import/ir";
-import { fileUnparsed, firstLine, lineAt, quoteBare, referencedStatement, splitTokens, tokensText, undeclarableStatement, type FileLine, type ReadOptions } from "./common";
+import { fileUnparsed, firstLine, lineAt, quoteBare, referencedStatement, splitTokens, tokensText, undeclarableStatement, declaresNothing, type FileLine, type ReadOptions } from "./common";
 import { createdCollectionName } from "../clickhouse/named-collections";
 import { templateSafe, templateStrings } from "./postgres";
 
@@ -118,7 +118,8 @@ export function readClickHouse(ddl: string, options: ReadOptions, problems: stri
       continue;
     }
     if (!/^CREATE\b/i.test(sql)) {
-      problems.push(`not a CREATE statement: ${firstLine(sql)}`);
+      if (options.undeclarable) options.undeclarable.push(declaresNothing(sql, line));
+      else problems.push(`not a CREATE statement: ${firstLine(sql)}`);
       continue;
     }
     try {

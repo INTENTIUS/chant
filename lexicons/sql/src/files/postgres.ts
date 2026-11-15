@@ -11,7 +11,13 @@
  *
  * `BEGIN` and `COMMIT` are skipped. Any other statement, and any statement
  * the parser or its tag refuses, is a problem naming it: a statement left
- * out would be a schema change nobody declared.
+ * out would be a schema change nobody declared. With `options.undeclarable`
+ * (`skipUndeclarable`), a statement that is not a `CREATE`, `COMMENT`,
+ * `GRANT`, `REVOKE` or `ALTER` (a `COPY`, an `UPDATE`, a `SELECT`) is listed
+ * there with its line instead.
+ *
+ * With `options.warnings`, an unnamed `CREATE INDEX` is given the name
+ * Postgres gives it and noted there.
  *
  * With `schema`, the names the DDL leaves unqualified are qualified with it,
  * as an ORM's connection would: an object's own name, an index's, trigger's
@@ -20,13 +26,14 @@
  */
 
 import type { Declarable } from "@intentius/chant/declarable";
+import { deriveIndexName, indexExpressionColumnName } from "../postgres/constraint-names";
 import { isTrivia, tokenizeText, type Token } from "../postgres/tokens";
 import { identValue, parseStatements, type NameNode, type Span, type StatementNode } from "../postgres/parser";
 import * as tags from "../postgres/entities";
 import { POSTGRES_ENTITY_TYPES, type PostgresEntityType } from "../postgres/entity-types";
 import { POSTGRES_TAG_OF } from "../postgres/import/generator";
 import type { ImportedPgObject } from "../postgres/import/ir";
-import { fileUnparsed, firstLine, lineAt, quoteBare, splitTokens, tokensText, undeclarableStatement, type FileLine, type ReadOptions } from "./common";
+import { fileUnparsed, firstLine, lineAt, quoteBare, splitTokens, tokensText, undeclarableStatement, declaresNothing, type FileLine, type ReadOptions } from "./common";
 
 type Tag = (strings: TemplateStringsArray, ...values: unknown[]) => Declarable;
 
@@ -60,6 +67,9 @@ interface PgFileObject {
   unparsed: FileLine["unparsed"];
 }
 
+/** Statements whose name is not a name in the schema's relation namespace of its own: they are marked another way, or have none. */
+const NOT_OWN_NAME: readonly string[] = ["schema", "extension", "index", "trigger", "policy", "role", "grant", "cast", "eventTrigger", "foreignDataWrapper", "foreignServer", "publication"];
+
 /** Transaction control, which declares nothing. */
 function isTransactionControl(sig: readonly Token[]): boolean {
   const words = sig.map((t) => (t.kind === "ident" ? t.text.toUpperCase() : ""));
@@ -88,7 +98,8 @@ export function readPostgres(ddl: string, options: ReadOptions, problems: string
       }
     }
     if (!word(sig[0], "CREATE", "COMMENT", "GRANT", "REVOKE", "ALTER")) {
-      problems.push(`not a statement that declares an object: ${firstLine(sql)}`);
+      if (options.undeclarable) options.undeclarable.push(declaresNothing(sql, lineAt(ddl, stmt[0]!.start)));
+      else problems.push(`not a statement that declares an object: ${firstLine(sql)}`);
       continue;
     }
     const undeclarable = undeclarableStatement("postgres", sql);
@@ -122,6 +133,8 @@ export function readPostgres(ddl: string, options: ReadOptions, problems: string
       if (pieces.length === 1) fileTypes.add(pieces[0]!);
     }
   }
+
+  nameUnnamedIndexes(parsed, options, problems, nameOf, qualify);
 
   const objects: PgFileObject[] = [];
   /** Objects by namespace and name: `rel` (anything in a schema), `index`, `schema`, `extension`, `role`, and `trigger`/`policy` with their table. */
@@ -181,7 +194,7 @@ export function readPostgres(ddl: string, options: ReadOptions, problems: string
       problems.push(`an index with no name (its declaration needs one): ${firstLine(tokensText(tokens))}`);
       continue;
     }
-    const ownName = !["schema", "extension", "index", "trigger", "policy", "role", "grant", "cast", "eventTrigger", "foreignDataWrapper", "foreignServer", "publication"].includes(node.statement);
+    const ownName = !NOT_OWN_NAME.includes(node.statement);
     if (ownName && "name" in node) mark(node.name);
     const object: PgFileObject = { node, statements: [rewrite(tokens, inserts, options.schema)], constraints: [], line, unparsed: fileUnparsed("unknown" in node ? node.unknown : undefined, tokens, tokensText(tokens), line) };
     objects.push(object);
@@ -221,6 +234,62 @@ export function readPostgres(ddl: string, options: ReadOptions, problems: string
     out.push({ ...identity, ddl: ddlText, line: o.line, ...(o.unparsed ? { unparsed: o.unparsed } : {}) });
   }
   return out;
+}
+
+
+/**
+ * Gives each unnamed `CREATE INDEX` the name Postgres would choose, as
+ * `<table>_<columns>_idx` (`./postgres/constraint-names.ts`), and notes it in
+ * `options.warnings`. The name is written into the statement, so the
+ * declaration is the one the server holds and a plan against a live database
+ * shows no rename. A name already taken in the file's schema gets a number
+ * after `idx`, as on the server; a name taken only in the live database is not
+ * known here. An index whose element Postgres names by rules not modelled
+ * (a cast, a `CASE`) is left unnamed, for the caller to refuse. Without
+ * `options.warnings` the caller wants every name written, so nothing is derived.
+ */
+function nameUnnamedIndexes(
+  parsed: Array<{ tokens: Token[]; node: StatementNode; line: number }>,
+  options: ReadOptions,
+  problems: string[],
+  nameOf: (tokens: Token[], n: NameNode) => string[],
+  qualify: (pieces: readonly string[]) => { schema?: string; name: string },
+): void {
+  const warnings = options.warnings;
+  if (!warnings || !parsed.some((p) => p.node.statement === "index" && !p.node.name)) return;
+  const taken = new Map<string, Set<string>>();
+  const take = (q: { schema?: string; name: string }) => {
+    const set = taken.get(q.schema ?? "") ?? new Set<string>();
+    set.add(q.name);
+    taken.set(q.schema ?? "", set);
+  };
+  for (const { tokens, node } of parsed) {
+    if (node.statement === "index" && node.name) take(qualify([...nameOf(tokens, node.table).slice(0, -1), nameOf(tokens, node.name).at(-1) ?? ""]));
+    else if (!NOT_OWN_NAME.includes(node.statement) && "name" in node && node.name) take(qualify(nameOf(tokens, node.name)));
+  }
+  for (const entry of parsed) {
+    const { tokens, node, line } = entry;
+    if (node.statement !== "index" || node.name) continue;
+    const table = nameOf(tokens, node.table);
+    const schema = qualify(table).schema;
+    // The INCLUDE columns follow the key's in the name, as on the server.
+    const included = node.include ? tokens.slice(node.include.from, node.include.to).filter((t) => isName(t)).map((t) => identValue(t)) : [];
+    const elements = [...node.elements.map((e) => e.column ?? indexExpressionColumnName(tokens.slice(e.span.from, e.span.to).filter((t) => !isTrivia(t)))), ...included];
+    const name = deriveIndexName(table.at(-1) ?? "", elements, taken.get(schema ?? "") ?? new Set());
+    const sql = tokensText(tokens);
+    if (name === undefined) {
+      problems.push(`an index with no name, and the name Postgres gives it depends on an expression chant does not model (name the index in the DDL): ${firstLine(sql)}`);
+      continue;
+    }
+    take({ ...(schema ? { schema } : {}), name });
+    const on = tokens.findIndex((t) => t.kind === "ident" && t.text.toUpperCase() === "ON");
+    const named = [...tokens.slice(0, on), { kind: "ident" as const, text: `${quoteBare(name)} `, part: 0, start: 0, end: 0 }, ...tokens.slice(on)];
+    const text = tokensText(named);
+    const retokenized = tokenizeText(text, 0);
+    entry.tokens = retokenized;
+    entry.node = parseStatements(retokenized)[0]!;
+    warnings.push(`index on ${table.join(".")} at line ${String(line)} has no name: ${sql.replace(/\s+/g, " ").slice(0, 100)}. It is declared as ${name}, the name Postgres gives an unnamed index.`);
+  }
 }
 
 /** An object's entity type, schema and name, read by declaring it with its tag; a string is the tag's refusal. */

@@ -69,3 +69,94 @@ export function checkName(table: string, expr: string, columns: readonly string[
   const refs = referencedColumns(expr, columns);
   return chooseName(table, refs.length === 1 ? refs[0] : undefined, "check", taken);
 }
+
+/**
+ * Words that start a function-like form with its own grammar. Postgres names
+ * an index column after such a form by rules that differ from a plain call's
+ * (`COALESCE(a, b)` is `coalesce`, `CAST(a AS t)` is the name of `a`), so an
+ * index on one is not named here.
+ */
+const SPECIAL_FORMS = new Set([
+  "cast", "coalesce", "collation", "current_catalog", "current_date", "current_role", "current_schema", "current_time", "current_timestamp", "current_user",
+  "extract", "greatest", "json", "json_array", "json_arrayagg", "json_exists", "json_object", "json_objectagg", "json_query", "json_scalar", "json_serialize", "json_value",
+  "least", "localtime", "localtimestamp", "merge_action", "normalize", "nullif", "overlay", "position", "row", "session_user", "substring", "system_user", "treat", "trim", "user",
+  "xmlconcat", "xmlelement", "xmlexists", "xmlforest", "xmlparse", "xmlpi", "xmlroot", "xmlserialize",
+]);
+const NON_OPERATOR_WORDS = new Set(["array", "case", "cast", "collate", "exists", "select", "at", "interval", "any", "all", "some", "row", "values"]);
+
+/**
+ * The name Postgres gives an index column for an expression in `CREATE INDEX`
+ * (`FigureColname`): a plain function call is its function, a bare column in
+ * parentheses is the column, and an operator expression is `expr`. Undefined
+ * for the forms whose name depends on grammar this does not model (a cast, a
+ * `CASE`, a qualified or indexed name, a special form), where the caller should
+ * ask for a name instead of guessing.
+ */
+export function indexExpressionColumnName(sig: ReadonlyArray<{ text: string; kind: string }>): string | undefined {
+  const isWord = (t: { kind: string }) => t.kind === "ident" || t.kind === "qident";
+  const fold = (t: { text: string; kind: string }) => (t.kind === "qident" ? t.text.slice(1, -1).replace(/""/g, '"') : t.text.toLowerCase());
+  const closeOf = (open: number): number => {
+    let depth = 0;
+    for (let i = open; i < sig.length; i++) {
+      if (sig[i]!.text === "(" && sig[i]!.kind === "punct") depth++;
+      else if (sig[i]!.text === ")" && sig[i]!.kind === "punct" && --depth === 0) return i;
+    }
+    return -1;
+  };
+  /** The tokens after the expression are an operator class, collation or ordering: words only. */
+  const onlyWords = (from: number) => sig.slice(from).every(isWord);
+  const call = (list: typeof sig): string | undefined => {
+    const [head, open] = list;
+    if (!head || !isWord(head) || open?.text !== "(" || open.kind !== "punct") return undefined;
+    const name = fold(head);
+    if (head.kind === "ident" && SPECIAL_FORMS.has(name)) return undefined;
+    return name;
+  };
+  const first = sig[0];
+  if (!first) return undefined;
+  const fn = call(sig);
+  if (fn !== undefined) {
+    const close = closeOf(1);
+    return close > 0 && onlyWords(close + 1) ? fn : undefined;
+  }
+  if (first.text !== "(" || first.kind !== "punct") return undefined;
+  const close = closeOf(0);
+  if (close < 0 || !onlyWords(close + 1)) return undefined;
+  const inner = sig.slice(1, close);
+  if (inner.length === 1 && isWord(inner[0]!)) return fold(inner[0]!);
+  const innerCall = call(inner);
+  if (innerCall !== undefined) {
+    const innerClose = (() => {
+      let depth = 0;
+      for (let i = 1; i < inner.length; i++) {
+        if (inner[i]!.text === "(" && inner[i]!.kind === "punct") depth++;
+        else if (inner[i]!.text === ")" && inner[i]!.kind === "punct" && --depth === 0) return i;
+      }
+      return -1;
+    })();
+    if (innerClose === inner.length - 1) return innerCall;
+  } else if (inner[0] && isWord(inner[0]) && inner[0].kind === "ident" && SPECIAL_FORMS.has(inner[0].text.toLowerCase()) && inner[1]?.text === "(") return undefined;
+  const risky = inner.some((t) => ((t.kind === "punct" || t.kind === "op") && (t.text.includes("::") || t.text.includes("[") || t.text === ".")) || (t.kind === "ident" && NON_OPERATOR_WORDS.has(t.text.toLowerCase())));
+  return risky ? undefined : "expr";
+}
+
+/**
+ * The name `CREATE INDEX ON <table> (<elements>)` is given when it names no
+ * index (`ChooseIndexName`): the table, the column names joined by `_`, and
+ * `idx`, with a number after the label when the schema already has that name.
+ * An element is a column name, or the name of an expression
+ * (`indexExpressionColumnName`); within one index a repeated column name gets
+ * a number (`a`, `a1`), as Postgres does. Undefined when an element's name is
+ * not known.
+ */
+export function deriveIndexName(table: string, elements: ReadonlyArray<string | undefined>, taken: ReadonlySet<string>): string | undefined {
+  const used: string[] = [];
+  for (const el of elements) {
+    if (el === undefined) return undefined;
+    let name = el;
+    for (let i = 1; used.includes(name); i++) name = `${el}${i}`;
+    used.push(name);
+  }
+  if (used.length === 0) return undefined;
+  return chooseName(table, columnsAddition(used), "idx", taken);
+}
