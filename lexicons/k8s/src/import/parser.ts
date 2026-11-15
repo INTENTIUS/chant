@@ -11,7 +11,7 @@ import type { EmbeddedContentResolver } from "@intentius/chant/import/embedded";
 import { parseYAML, splitYAMLDocuments } from "@intentius/chant/yaml";
 import { namespaceSegmentForGroup } from "../group-namespace";
 import { delegateEmbedded } from "./embedded";
-import { exportedClassFor, untypedKindWarning } from "./typed-classes";
+import { importClassFor, keptApiVersionWarning, untypedKindWarning } from "./typed-classes";
 
 // ── GVK to type name mapping ───────────────────────────────────────
 
@@ -186,11 +186,19 @@ export class K8sParser implements TemplateParser {
       }
     }
 
-    // One warning per kind the lexicon has no class for (#5070).
+    // One warning per kind the lexicon has no class for (#5070), and one per
+    // object kept at an apiVersion its class does not build (#5075).
     const warnings: string[] = [];
     const warned = new Set<string>();
     for (const r of resources) {
-      if (exportedClassFor(r.type) || warned.has(r.type)) continue;
+      const choice = importClassFor(r);
+      if (choice.reason === "other-apiVersion") {
+        warnings.push(
+          keptApiVersionWarning(String(r.metadata?.kind), r.metadata?.originalName as string | undefined, choice.apiVersion!, choice.builtApiVersion!),
+        );
+        continue;
+      }
+      if (choice.cls || warned.has(r.type)) continue;
       warned.add(r.type);
       warnings.push(untypedKindWarning(String(r.metadata?.apiVersion), String(r.metadata?.kind)));
     }

@@ -197,6 +197,21 @@ metadata:
     expect(ir.warnings![0]).toContain("chant generate");
   });
 
+  test("an object at an apiVersion its class does not build is warned about by name (#5075)", () => {
+    const ir = parser.parse(
+      "apiVersion: rbac.authorization.k8s.io/v1beta1\nkind: ClusterRole\nmetadata:\n  name: old\nrules: []\n",
+    );
+    expect(ir.warnings).toHaveLength(1);
+    expect(ir.warnings![0]).toContain("ClusterRole old");
+    expect(ir.warnings![0]).toContain("rbac.authorization.k8s.io/v1beta1");
+    expect(ir.warnings![0]).toContain("builds rbac.authorization.k8s.io/v1,");
+  });
+
+  test("an autoscaling/v1 HorizontalPodAutoscaler keeps its class and raises no warning (#5075)", () => {
+    const ir = parser.parse("apiVersion: autoscaling/v1\nkind: HorizontalPodAutoscaler\nmetadata:\n  name: h\n");
+    expect(ir.warnings).toBeUndefined();
+  });
+
   test("a kind with a class raises no warning", () => {
     expect(parser.parse("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: c\n").warnings).toBeUndefined();
   });
