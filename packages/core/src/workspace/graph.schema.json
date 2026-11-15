@@ -763,6 +763,10 @@
         "targetKind": {
           "type": "string",
           "description": "Added in contract 1 by #5097, written by chant 0.124.98 and newer. The kind the rule looks for, when it names one."
+        },
+        "through": {
+          "type": "string",
+          "description": "Added in contract 1 by #5098. For a reference read through another node, the id of that node: the store a key is read from."
         }
       }
     },

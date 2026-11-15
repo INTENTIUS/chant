@@ -151,6 +151,7 @@ export function runCatalogPass(nodes: readonly ComposedNode[], catalogs: readonl
       member: memberOf(d.from),
       rule: d.rule,
       ...(d.targetKind ? { targetKind: d.targetKind } : {}),
+      ...(d.through ? { through: d.through } : {}),
     })),
     ambiguous: found.ambiguous.map((a) => ({ from: a.from, member: memberOf(a.from), rule: a.rule, path: a.path, value: a.value, candidates: a.candidates })),
     nonLiteral,
@@ -184,13 +185,13 @@ export function placeCatalogPass(graph: WorkspaceGraph, pass: CatalogPass, place
   graph.edges = [...graph.edges, ...edges.values()].sort((a, b) => edgeKey(a).localeCompare(edgeKey(b)));
 
   const dangling = new Map<string, ComposedDangling>();
-  for (const d of graph.dangling ?? []) dangling.set(`${danglingKey(d)}\u0000${d.rule ?? ""}`, d);
+  for (const d of graph.dangling ?? []) dangling.set(`${danglingKey(d)}\u0000${d.rule ?? ""}\u0000${d.through ?? ""}`, d);
   for (const d of pass.dangling) {
-    const moved = { ...d, from: at(d.from) };
-    dangling.set(`${danglingKey(moved)}\u0000${moved.rule ?? ""}`, moved);
+    const moved = { ...d, from: at(d.from), ...(d.through ? { through: at(d.through) } : {}) };
+    dangling.set(`${danglingKey(moved)}\u0000${moved.rule ?? ""}\u0000${moved.through ?? ""}`, moved);
     named.add(d.rule!);
   }
-  if (dangling.size > 0) graph.dangling = [...dangling.values()].sort((a, b) => danglingKey(a).localeCompare(danglingKey(b)) || byString(a.rule ?? "", b.rule ?? ""));
+  if (dangling.size > 0) graph.dangling = [...dangling.values()].sort((a, b) => danglingKey(a).localeCompare(danglingKey(b)) || byString(a.rule ?? "", b.rule ?? "") || byString(a.through ?? "", b.through ?? ""));
 
   const ambiguous = new Map<string, ComposedAmbiguous>();
   for (const a of pass.ambiguous) {

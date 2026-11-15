@@ -156,9 +156,15 @@ export function terraformDeclaredNode(node: IRNode): DeclaredCatalogNode | undef
 export const TERRAFORM_REFERENCE_CATALOG: ReferenceCatalog = {
   declaredNode: terraformDeclaredNode,
   // Every node is indexed by its own id and physical id (`reconstructEdges`
-  // does that itself), and a block's body never carries a second identifier
-  // for the block, so there are no identity rules to declare.
-  identities: [],
+  // does that itself), and a block's body rarely carries a second identifier
+  // for the block. A cloud secret is the exception (#5098): other systems
+  // name it by the id it is created with, an ExternalSecret's `remoteRef.key`
+  // among them. The k8s catalog's rule joins that key to the secret inside
+  // the store's project or region, so these only make the secret findable.
+  identities: [
+    { kind: "google_secret_manager_secret", ids: ["secret_id"] },
+    { kind: "aws_secretsmanager_secret", ids: ["name"] },
+  ],
   refs: [
     // ── containment (→ boundary pairs, and containment edges) ──
     { from: "aws_subnet", path: "vpc_id", targetKind: "aws_vpc", relation: "containment", label: "in VPC" },

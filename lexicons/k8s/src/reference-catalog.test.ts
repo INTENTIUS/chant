@@ -57,7 +57,9 @@ describe("k8s reference catalog", () => {
   });
 
   describe("each rule draws its edge", () => {
+    // A rule with a `join` spans two nodes and has its own fixtures (./external-secret-catalog.test.ts).
     for (const [i, rule] of k8sReferenceCatalog.refs.entries()) {
+      if (rule.join) continue;
       const to = rule.targetKind ?? rule.indexedTargetKind!;
       it(`${rule.from} ${rule.path} -> ${to}`, () => {
         const value = `target-name-${i}`;

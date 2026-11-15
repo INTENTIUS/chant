@@ -1,4 +1,5 @@
-import type { IdentityRule, ReferenceCatalog, RefRule, ScopeRule } from "@intentius/chant/graph-refs";
+import type { IRNode } from "@intentius/chant/graph-ir";
+import { readPath, type IdentityRule, type JoinedRef, type ReferenceCatalog, type RefRule, type ScopeRule } from "@intentius/chant/graph-refs";
 
 /**
  * Kubernetes reference catalog (#4535): how Kubernetes objects name each
@@ -41,8 +42,32 @@ import type { IdentityRule, ReferenceCatalog, RefRule, ScopeRule } from "@intent
  * declared graph, where a cloud resource sits in the scope every namespace
  * reaches, which is where behold's matcher drew it.
  *
+ * ## External Secrets (#5098)
+ *
+ * An `ExternalSecret` names a store, and through it a secret in a cloud
+ * secret manager. Both are rules with a `join`, since neither is one value
+ * naming one node. The store rule reads `spec.secretStoreRef.name` as a
+ * `SecretStore` in the holder's namespace or a cluster-scoped
+ * `ClusterSecretStore`, as `spec.secretStoreRef.kind` says (absent is
+ * `SecretStore`, the operator's default): one rule per kind, each reading
+ * only the references of its own. The secret rule reads
+ * `spec.data[].remoteRef.key` and `spec.dataFrom[].extract.key` and joins
+ * the key to the cloud secret inside the scope the store names: a GCP store's
+ * `projectID` with a `google_secret_manager_secret`'s `secret_id` and
+ * `project`, an AWS Secrets Manager store's `region` with an
+ * `aws_secretsmanager_secret`'s `name`. The edge's `viaAttr` is
+ * `remoteRef.key via <store name>`, and a key that names no secret is
+ * dangling with the store's node as `through`. A store that is not found
+ * is dangling under the store rule, and its keys are not read. A Terraform
+ * argument that is not literal is not read (the pass counts it), so a secret
+ * whose `secret_id` or `project` is a variable matches nothing. An AWS secret
+ * matches on its name alone when it sets no literal `region`.
+ *
  * ## What this does not do
  *
+ * - Stores other than GCP and AWS Secrets Manager (IBM, Vault), the legacy
+ *   `kubernetes-client.io` ExternalSecret, and the Secret an ExternalSecret
+ *   writes (`spec.target.name`).
  * - Label selectors. A Service selects pods by a set of labels, and a rule
  *   matches one value at one path, so a selector on the standard keys
  *   (`app.kubernetes.io/name`) is not read. Only the bare `app` label is
@@ -92,14 +117,24 @@ const NAMESPACED_KINDS = [
   "K8s::Rbac::RoleBinding",
 ];
 
+/**
+ * Namespaced kinds that are scoped and named but draw no `in namespace`
+ * containment (#5098): an ExternalSecret and a SecretStore reach a store by
+ * name inside their namespace, and a report of every one whose Namespace is
+ * declared nowhere would bury the references this catalog is for.
+ */
+const SCOPED_KINDS = ["K8s::ExternalSecrets::ExternalSecret", "K8s::ExternalSecrets::SecretStore"];
+
 /** Kinds other objects name by `metadata.name`. */
 const NAMED_KINDS = [
   ...NAMESPACED_KINDS,
+  ...SCOPED_KINDS,
   "K8s::Core::Namespace",
   "K8s::Core::PersistentVolume",
   "K8s::Networking::IngressClass",
   "K8s::Storage::StorageClass",
   "K8s::Rbac::ClusterRole",
+  "K8s::ExternalSecrets::ClusterSecretStore",
 ];
 
 /** Workloads whose pod template a Service's `app` selector can match. */
@@ -139,6 +174,77 @@ function podSpecRules(kind: string, p: string): RefRule[] {
   ];
 }
 
+const EXTERNAL_SECRET = "K8s::ExternalSecrets::ExternalSecret";
+const STORE_KINDS = ["K8s::ExternalSecrets::SecretStore", "K8s::ExternalSecrets::ClusterSecretStore"] as const;
+const SECRET_KEY_PATHS = ["spec.data[].remoteRef.key", "spec.dataFrom[].extract.key"] as const;
+
+const first = (node: IRNode, path: string): string | undefined => readPath(node.attrs, path).find((v) => v !== "");
+
+/** The store kind an ExternalSecret names: `SecretStore` unless it says otherwise. */
+const storeKindOf = (holder: IRNode): string => `K8s::ExternalSecrets::${first(holder, "spec.secretStoreRef.kind") ?? "SecretStore"}`;
+
+/** The store rule for one store kind: reads only the ExternalSecrets that name a store of that kind. */
+function storeRule(targetKind: (typeof STORE_KINDS)[number]): RefRule {
+  return {
+    from: EXTERNAL_SECRET,
+    path: "spec.secretStoreRef.name",
+    targetKind,
+    relation: "reference",
+    label: "reads through",
+    join(holder, find) {
+      const name = first(holder, "spec.secretStoreRef.name");
+      if (name === undefined || storeKindOf(holder) !== targetKind) return [];
+      return [{ value: name, targets: find(name).filter((n) => n.kind === targetKind), via: "secretStoreRef" }];
+    },
+  };
+}
+
+/** The one store an ExternalSecret reads through, or undefined when it is missing or ambiguous (the store rule reports that). */
+function storeOf(holder: IRNode, find: (value: string) => readonly IRNode[]): IRNode | undefined {
+  const name = first(holder, "spec.secretStoreRef.name");
+  if (name === undefined) return undefined;
+  const stores = find(name).filter((n) => n.kind === storeKindOf(holder));
+  return stores.length === 1 ? stores[0] : undefined;
+}
+
+/**
+ * The secret rule for one key path and one secret manager: the cloud secret a
+ * key names inside the scope its store names, `inScope` deciding what counts
+ * as inside. Reads only the ExternalSecrets whose store is of `provider`.
+ */
+function secretRule(path: string, targetKind: string, provider: (store: IRNode) => string | undefined, inScope: (secret: IRNode, scope: string) => boolean): RefRule {
+  return {
+    from: EXTERNAL_SECRET,
+    path,
+    targetKind,
+    relation: "reference",
+    label: "reads secret",
+    join(holder, find) {
+      const store = storeOf(holder, find);
+      const scope = store && provider(store);
+      if (!store || scope === undefined) return [];
+      const refs: JoinedRef[] = [];
+      for (const key of new Set(readPath(holder.attrs, path))) {
+        const targets = find(key).filter((n) => n.kind === targetKind && inScope(n, scope));
+        refs.push({ value: key, targets, via: `remoteRef.key via ${first(store, "metadata.name") ?? store.id}`, through: store });
+      }
+      return refs;
+    },
+  };
+}
+
+const gcpProject = (store: IRNode) => first(store, "spec.provider.gcpsm.projectID");
+const awsRegion = (store: IRNode) => (first(store, "spec.provider.aws.service") === "SecretsManager" ? first(store, "spec.provider.aws.region") : undefined);
+
+const externalSecretRules: RefRule[] = [
+  ...STORE_KINDS.map(storeRule),
+  ...SECRET_KEY_PATHS.flatMap((path) => [
+    secretRule(path, "google_secret_manager_secret", gcpProject, (secret, project) => first(secret, "project") === project),
+    // The resource sets `region` only when it is not the provider's, so an AWS secret without one matches on its name.
+    secretRule(path, "aws_secretsmanager_secret", awsRegion, (secret, region) => (first(secret, "region") ?? region) === region),
+  ]),
+];
+
 const refs: RefRule[] = [
   // ── containment: the namespace an object is in ──
   ...NAMESPACED_KINDS.map((kind) => ref(kind, "metadata.namespace", "K8s::Core::Namespace", "in namespace", "containment")),
@@ -169,9 +275,12 @@ const refs: RefRule[] = [
   ...anyOf("K8s::Rbac::ClusterRoleBinding", "subjects[].name", ["K8s::Core::ServiceAccount"], "grants"),
   ref("K8s::Core::ServiceAccount", "secrets[].name", "K8s::Core::Secret", "token"),
   ref("K8s::Core::ServiceAccount", "imagePullSecrets[].name", "K8s::Core::Secret", "pulls with"),
+
+  // ── External Secrets: the store, and the cloud secret through it ──
+  ...externalSecretRules,
 ];
 
 /** A namespaced object's names are unique inside its namespace (#5097). */
-const scopes: ScopeRule[] = NAMESPACED_KINDS.map((kind) => ({ kind, path: "metadata.namespace" }));
+const scopes: ScopeRule[] = [...NAMESPACED_KINDS, ...SCOPED_KINDS].map((kind) => ({ kind, path: "metadata.namespace" }));
 
 export const k8sReferenceCatalog: ReferenceCatalog = { identities, refs, scopes };

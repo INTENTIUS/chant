@@ -77,6 +77,33 @@ export interface RefRule {
    * reference and drawing the line twice.
    */
   viaAttr?: string;
+  /**
+   * Reads the references itself, for a rule whose value does not name its
+   * target by one identifier (#5098): an ExternalSecret's key names a cloud
+   * secret only inside the project of the store it reads through, so the
+   * match spans the holder, a second node and the target. `path` and
+   * `targetKind` still name the rule (its id, its entry in a document's
+   * `catalog.rules`, the kind a dangling entry looks for), but the pass does
+   * not read `path` itself: it calls `join` with the holder and `find`, which
+   * returns the nodes a value names from the holder's scope, the way the
+   * pass's own lookup would. Each {@link JoinedRef} it returns is then
+   * resolved like a value read from `path`: no target is dangling (unless
+   * `optional`), two are ambiguous, one is an edge. Only the catalog pass
+   * over indexed nodes and declared graphs calls it. Pure.
+   */
+  join?(holder: IRNode, find: (value: string) => readonly IRNode[]): JoinedRef[];
+}
+
+/** One reference a {@link RefRule.join} found on a holder. */
+export interface JoinedRef {
+  /** What the holder wrote, as a dangling or ambiguous entry reports it. */
+  value: string;
+  /** The nodes it names, from `find`; none is dangling. */
+  targets: readonly IRNode[];
+  /** The edge's `viaAttr`, when the first step of the rule's path does not say enough. */
+  via?: string;
+  /** A node the value was read through, named on a dangling entry (the store a key is read from). */
+  through?: IRNode;
 }
 
 /**
@@ -151,6 +178,8 @@ export interface DanglingRef {
   path: string;
   value: string;
   targetKind?: string;
+  /** The id of the node the value was read through (#5098): the store whose cloud secret a key names. */
+  through?: string;
 }
 
 export interface ReconstructedEdges {
@@ -325,7 +354,7 @@ export function reconstructEdges(nodes: IRNode[], catalog: ReferenceCatalog): Re
 
   for (const node of nodes) {
     for (const rule of catalog.refs) {
-      if (rule.from !== node.kind) continue;
+      if (rule.from !== node.kind || rule.join) continue;
       for (const value of readPath(node.attrs, rule.path)) {
         const candidates = index.get(value) ?? [];
         // `chant graph --live` keeps its first-candidate pick: its values are
@@ -503,6 +532,7 @@ export function reconstructIndexedEdges(
     }
   }
 
+  const byId = new Map(sorted.map((n) => [n.id, n]));
   const lookup = (holder: IRNode, value: string): Map<string, string> => {
     const scope = scopeOf(holder);
     const out = new Map<string, string>();
@@ -522,10 +552,13 @@ export function reconstructIndexedEdges(
     holder: IRNode,
     value: string,
     rule: { id: string; path: string; targetKind?: string; relation: "reference" | "containment"; via: string; label?: string; optional?: boolean },
+    joined?: { targets: readonly IRNode[]; through?: IRNode },
   ): void => {
     if (PLACEHOLDER_VALUES.has(value)) return;
-    const found = lookup(holder, value);
-    let candidates = [...found.entries()].filter(([, kind]) => rule.targetKind === undefined || kind === rule.targetKind).map(([id]) => id);
+    let candidates = joined
+      ? joined.targets.map((t) => t.id)
+      : [...lookup(holder, value).entries()].filter(([, kind]) => rule.targetKind === undefined || kind === rule.targetKind).map(([id]) => id);
+    const through = joined?.through ? { through: joined.through.id } : {};
     if (candidates.includes(holder.id)) {
       if (candidates.length === 1) return; // a self-reference (an SG rule to its own group)
       candidates = candidates.filter((id) => id !== holder.id);
@@ -533,7 +566,7 @@ export function reconstructIndexedEdges(
     candidates.sort(byString);
     if (candidates.length === 0) {
       if (rule.optional) return;
-      dangling.set(`${holder.id}|${rule.id}|${value}`, { from: holder.id, path: rule.path, value, rule: rule.id, ...(rule.targetKind ? { targetKind: rule.targetKind } : {}) });
+      dangling.set(`${holder.id}|${rule.id}|${value}|${through.through ?? ""}`, { from: holder.id, path: rule.path, value, rule: rule.id, ...(rule.targetKind ? { targetKind: rule.targetKind } : {}), ...through });
       return;
     }
     if (candidates.length > 1) {
@@ -581,6 +614,11 @@ export function reconstructIndexedEdges(
           ...(rule.label ? { label: rule.label } : {}),
           ...(rule.optional ? { optional: true } : {}),
         };
+        if (rule.join) {
+          const find = (value: string): IRNode[] => [...lookup(node, value).keys()].map((id) => byId.get(id)!);
+          for (const j of rule.join(node, find)) resolve(node, j.value, { ...spec, via: j.via ?? spec.via }, j);
+          continue;
+        }
         for (const value of new Set(readPath(node.attrs, rule.path))) resolve(node, value, spec);
       }
       for (const rule of catalog.tagRefs ?? []) {
@@ -610,7 +648,7 @@ export function reconstructIndexedEdges(
   return {
     edges: [...edges.values()].sort((a, b) => byString(edgeKey(a), edgeKey(b))),
     containment: [...containment.values()].sort((a, b) => byString(`${a.child}|${a.parent}`, `${b.child}|${b.parent}`)),
-    dangling: [...dangling.values()].sort((a, b) => byString(`${a.from}|${a.rule}|${a.value}`, `${b.from}|${b.rule}|${b.value}`)),
+    dangling: [...dangling.values()].sort((a, b) => byString(`${a.from}|${a.rule}|${a.value}|${a.through ?? ""}`, `${b.from}|${b.rule}|${b.value}|${b.through ?? ""}`)),
     ambiguous: [...ambiguous.values()].sort((a, b) => byString(`${a.from}|${a.rule}|${a.value}`, `${b.from}|${b.rule}|${b.value}`)),
   };
 }
