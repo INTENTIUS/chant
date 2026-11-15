@@ -88,9 +88,6 @@ const FLOOR_RE = /export const ([A-Z0-9_]+_FLOOR) = (?:"(\d+\.\d+\.\d+)"|(NEXT_R
  */
 const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: string }[] = [
   // --freeze empties this list after a release ships (#4501); each entry is one line.
-  { file: "docs/src/content/docs/reference/workspace-kinds.mdx", text: "See [A drift reader](#a-drift-reader). Added in chant {v} |", count: 1, floor: "KIND_DRIFT_READER_FLOOR" },
-  { file: "docs/src/content/docs/reference/workspace-kinds.mdx", text: "A chant before {v} can't read a kinds file that uses the field.", count: 1, floor: "KIND_DRIFT_READER_FLOOR" },
-  { file: "packages/core/src/workspace/drift-reader.schema.json", text: "First read by chant {v}.", count: 1, floor: "KIND_DRIFT_READER_FLOOR" },
 ];
 
 interface Args {

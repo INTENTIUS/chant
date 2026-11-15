@@ -10,7 +10,7 @@ import Ajv2020 from "ajv/dist/2020";
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
 import { driftRecord, driftRecordLine, driftSettle, driftStart } from "../drift-record";
-import { KIND_DRIFT_READER_FLOOR, NEXT_RELEASE } from "../release-floors";
+import { KIND_DRIFT_READER_FLOOR } from "../release-floors";
 import { cleanScratch, declaration, repo } from "./__fixtures__/contract-repo";
 import { driftReadDocument, readWorkspaceDrift } from "./drift-cli";
 import { checkDriftReaderOutput, DRIFT_READER_SCHEMA_ID } from "./drift-reader";
@@ -107,9 +107,9 @@ describe("the drift reader's output schema", () => {
   ajv.addSchema(driftSchema);
   const validate = ajv.compile(driftReaderSchema);
 
-  test("names its $id, and the floor is the next release", () => {
+  test("names its $id, and the floor is the release that shipped it", () => {
     expect(driftReaderSchema.$id).toBe(DRIFT_READER_SCHEMA_ID);
-    expect(KIND_DRIFT_READER_FLOOR).toBe(NEXT_RELEASE);
+    expect(KIND_DRIFT_READER_FLOOR).toBe("0.124.96");
   });
 
   test("takes the lines of a read and a refusal, and nothing else", () => {
