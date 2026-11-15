@@ -44,6 +44,34 @@ const SECRET_NAME_RE = /(^|_)(password|passwd|secret|token|api_key|private_key|a
  */
 const LOCATOR_SUFFIX_RE = /_(file|path|arn|id|name)$/;
 
+/**
+ * Arguments that name a secret rather than hold one, where the name alone
+ * would read as a credential. `secret` on a Secret Manager version data
+ * source is the id of the secret to read, so a literal there is the remedy the
+ * rules ask for (read the value at apply time), not a committed value (#5080).
+ * Keyed by resource or data source type, then by the dotted attribute path, so
+ * a bare `secret` on some other type is still judged by name.
+ */
+const SECRET_REFERENCE_ARGUMENTS: ReadonlyArray<{ type: RegExp; path: RegExp }> = [
+  // data "google_secret_manager_secret_version_access" / _version, and the
+  // regional variants and the resource form: `secret` is the parent secret.
+  { type: /^google_secret_manager_(regional_)?secret_version(_access)?$/, path: /^secret$/ },
+  // Cloud Functions and Cloud Run mount a secret by id, never by value.
+  {
+    type: /^google_(cloudfunctions2?_function|cloud_run(_v2)?_(service|job))$/,
+    path: /(^|\.)(secret_environment_variables|secret_volumes|secret_key_ref)\.secret$/,
+  },
+];
+
+/**
+ * Is this attribute, on a block of this resource or data source type, a
+ * reference to a secret (an id, a name or a resource path) instead of a
+ * secret value? `path` is the dotted path from the block body.
+ */
+export function isSecretReferenceArgument(blockType: string, path: string): boolean {
+  return SECRET_REFERENCE_ARGUMENTS.some((r) => r.type.test(blockType) && r.path.test(path));
+}
+
 /** Minimum length for a value to be worth judging at all. */
 export const MIN_SECRET_LENGTH = 8;
 

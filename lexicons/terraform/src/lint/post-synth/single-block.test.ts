@@ -262,4 +262,17 @@ describe("TF022: credential-named resource attribute holding a literal", () => {
   test("a locator attribute is the remediation, not the finding", async () => {
     expect(tf022.check(await loadFixture("TF022", "negative-locator"))).toHaveLength(0);
   });
+
+  test("the secret id of a Secret Manager reader is a reference, not a credential (#5080)", async () => {
+    expect(tf022.check(await loadFixture("TF022", "negative-secret-reference"))).toHaveLength(0);
+  });
+
+  test("secret_data and a bare secret on another type are still judged", async () => {
+    const diags = tf022.check(await loadFixture("TF022", "positive-secret-data"));
+    expect(diags.map((d) => d.entity).sort()).toEqual([
+      "TF022/example_widget.w",
+      "TF022/google_secret_manager_secret_version.app",
+    ]);
+    expect(diags.find((d) => d.entity.endsWith("version.app"))?.message).toContain("`secret_data`");
+  });
 });
