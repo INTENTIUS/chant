@@ -96,6 +96,8 @@ export interface AuditFinding {
   fingerprint?: string;
   /** Carried verbatim from the producing `PostSynthDiagnostic.missing` (chant #2113) — see its doc comment. */
   missing?: { kind: string; scope: string };
+  /** Carried verbatim from the producing `PostSynthDiagnostic.locator` (#5106); one input of the finding's identity. */
+  locator?: string;
 }
 
 /**
@@ -316,8 +318,8 @@ function runChecks(
   return applyInlineSuppressions(diags, entities);
 }
 
-function diagKey(d: { checkId: string; entity?: string; message: string }): string {
-  return `${d.checkId}\u0000${d.entity ?? ""}\u0000${d.message}`;
+function diagKey(d: { checkId: string; entity?: string; locator?: string; message: string }): string {
+  return `${d.checkId}\u0000${d.entity ?? ""}\u0000${d.locator ?? ""}\u0000${d.message}`;
 }
 
 /**
@@ -396,7 +398,7 @@ async function auditLexicon(
       metaFindings.push({ checkId: m.checkId, severity: m.severity, message: m.message, file: m.file, lexicon, line: m.line });
     }
     for (const d of diags) {
-      perFindings.push({ checkId: d.checkId, severity: d.severity, message: d.message, file: file.path, lexicon: d.lexicon ?? lexicon, entity: d.entity, missing: d.missing });
+      perFindings.push({ checkId: d.checkId, severity: d.severity, message: d.message, file: file.path, lexicon: d.lexicon ?? lexicon, entity: d.entity, missing: d.missing, ...(d.locator !== undefined ? { locator: d.locator } : {}) });
       perKeys.add(diagKey(d));
     }
   }
@@ -408,7 +410,7 @@ async function auditLexicon(
   const out: AuditFinding[] = perFindings.filter((f) => allKeys.has(diagKey(f)));
   for (const d of allDiags) {
     if (!perKeys.has(diagKey(d))) {
-      out.push({ checkId: d.checkId, severity: d.severity, message: d.message, file: CROSS_FILE, lexicon: d.lexicon ?? lexicon, entity: d.entity, missing: d.missing });
+      out.push({ checkId: d.checkId, severity: d.severity, message: d.message, file: CROSS_FILE, lexicon: d.lexicon ?? lexicon, entity: d.entity, missing: d.missing, ...(d.locator !== undefined ? { locator: d.locator } : {}) });
     }
   }
   return [...out, ...metaFindings];

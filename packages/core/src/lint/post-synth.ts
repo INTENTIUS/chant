@@ -193,6 +193,16 @@ export interface PostSynthDiagnostic {
     scope: string;
   };
   /**
+   * Where in the entity the finding sits, as a path that does not depend on
+   * any display name: `Deployment/containers[1]`, `resource.rules[0]`. The
+   * audit builds a finding's `identity` from the check id, the file, `entity`
+   * and this locator, never from `message`. A check that reports several
+   * findings against one entity, and whose message names a part of it (a
+   * container, a port), sets this so renaming that part, or fixing an earlier
+   * one, leaves the identity of the rest alone. Optional.
+   */
+  locator?: string;
+  /**
    * The build root the finding is about, set by a {@link CrossRootCheck}
    * (chant #1939). Absent from a per-build finding.
    */

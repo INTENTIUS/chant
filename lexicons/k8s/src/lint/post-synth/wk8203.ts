@@ -7,7 +7,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { docsToManifests, extractContainers, WORKLOAD_KINDS } from "./k8s-helpers";
+import { docsToManifests, extractContainers, containerLocator, WORKLOAD_KINDS } from "./k8s-helpers";
 
 export const wk8203: PostSynthCheck = {
   id: "WK8203",
@@ -30,6 +30,7 @@ export const wk8203: PostSynthCheck = {
             severity: "warning",
             message: `Container "${container.name ?? "(unnamed)"}" in ${manifest.kind} "${resourceName}" does not set readOnlyRootFilesystem: true — set it to reduce the attack surface`,
             entity: resourceName,
+            locator: containerLocator(manifest, container),
             lexicon: "k8s",
           });
         }

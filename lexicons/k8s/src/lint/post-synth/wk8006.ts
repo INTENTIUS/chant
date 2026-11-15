@@ -6,7 +6,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { docsToManifests, extractContainers, WORKLOAD_KINDS } from "./k8s-helpers";
+import { docsToManifests, extractContainers, containerLocator, WORKLOAD_KINDS } from "./k8s-helpers";
 
 export const wk8006: PostSynthCheck = {
   id: "WK8006",
@@ -41,6 +41,7 @@ export const wk8006: PostSynthCheck = {
             severity: "warning",
             message: `Container "${container.name ?? "(unnamed)"}" in ${manifest.kind} "${resourceName}" uses untagged image "${image}" — specify an explicit version tag`,
             entity: resourceName,
+            locator: containerLocator(manifest, container),
             lexicon: "k8s",
           });
         } else {
@@ -51,6 +52,7 @@ export const wk8006: PostSynthCheck = {
               severity: "warning",
               message: `Container "${container.name ?? "(unnamed)"}" in ${manifest.kind} "${resourceName}" uses :latest tag on image "${image}" — use a specific version tag`,
               entity: resourceName,
+              locator: containerLocator(manifest, container),
               lexicon: "k8s",
             });
           }

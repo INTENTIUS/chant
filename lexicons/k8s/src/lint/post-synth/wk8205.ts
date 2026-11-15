@@ -7,7 +7,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { docsToManifests, extractContainers, WORKLOAD_KINDS } from "./k8s-helpers";
+import { docsToManifests, extractContainers, containerLocator, WORKLOAD_KINDS } from "./k8s-helpers";
 
 export const wk8205: PostSynthCheck = {
   id: "WK8205",
@@ -40,6 +40,7 @@ export const wk8205: PostSynthCheck = {
             severity: "warning",
             message: `Container "${container.name ?? "(unnamed)"}" in ${manifest.kind} "${resourceName}" does not drop ALL capabilities — add securityContext.capabilities.drop: ["ALL"]`,
             entity: resourceName,
+            locator: containerLocator(manifest, container),
             lexicon: "k8s",
           });
         }

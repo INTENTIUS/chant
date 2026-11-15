@@ -495,7 +495,8 @@ export const LOCK_FILENAME = ".terraform.lock.hcl";
 /**
  * Parse a set of files into entities keyed `<root>/<address>`. Two blocks that
  * genuinely share an address (two `locals` blocks, or the same address in two
- * files of one root) are numbered `~2`, `~3` rather than overwriting.
+ * files of one root) are numbered `~2`, `~3` rather than overwriting. An aliased
+ * `provider` block is keyed `provider.<name>~<alias>` instead of by number.
  *
  * Recognises both ways an estate is declared: a `live { }` block nested in a
  * `terraform { }` block of any file here, and, when `sidecar` is given, the
@@ -559,8 +560,13 @@ export async function blocksToEntities(
       line,
       suppressions,
     );
-    let key = `${prefix}/${address}`;
-    for (let n = 2; entities.has(key); n++) key = `${prefix}/${address}~${n}`;
+    // An aliased provider shares its address with the other blocks of that
+    // provider, so it is keyed by its alias, not by its place among them: a
+    // block added elsewhere in the root no longer renumbers it (#5106).
+    const alias = entityType === PROVIDER_TYPE && typeof plain.alias === "string" && plain.alias.trim() !== "" ? plain.alias.trim() : undefined;
+    const base = alias !== undefined ? `${address}~${alias}` : address;
+    let key = `${prefix}/${base}`;
+    for (let n = 2; entities.has(key); n++) key = `${prefix}/${base}~${n}`;
     entities.set(key, entity);
   };
 
