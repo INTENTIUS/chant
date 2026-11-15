@@ -171,4 +171,18 @@ metadata:
     const ir = parser.parse(yaml);
     expect(ir.metadata?.namespaces).toContain("production");
   });
+
+  test("one warning per kind the lexicon has no class for (#5070)", () => {
+    const doc = (name: string) =>
+      `apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata:\n  name: ${name}\n`;
+    const ir = parser.parse(`${doc("a")}---\n${doc("b")}---\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: c\n`);
+    expect(ir.warnings).toHaveLength(1);
+    expect(ir.warnings![0]).toContain("ExternalSecret");
+    expect(ir.warnings![0]).toContain("k8s.crds");
+    expect(ir.warnings![0]).toContain("chant generate");
+  });
+
+  test("a kind with a class raises no warning", () => {
+    expect(parser.parse("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: c\n").warnings).toBeUndefined();
+  });
 });

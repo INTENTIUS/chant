@@ -14,6 +14,7 @@ import {
 } from "@intentius/chant/import/embedded";
 import { SECRET_DECLARATION_ENTITY_TYPE } from "@intentius/chant/secret-provenance";
 import { isMaskedValueRef } from "../index-import";
+import { exportedClassFor } from "./typed-classes";
 
 const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 
@@ -21,54 +22,6 @@ const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 function propertyKey(key: string): string {
   return IDENT.test(key) ? key : JSON.stringify(key);
 }
-
-/**
- * Map K8s entity types to their constructor class names.
- */
-const TYPE_TO_CLASS: Record<string, string> = {
-  // Core
-  "K8s::Core::Pod": "Pod",
-  "K8s::Core::Service": "Service",
-  "K8s::Core::ConfigMap": "ConfigMap",
-  "K8s::Core::Secret": "Secret",
-  "K8s::Core::Namespace": "Namespace",
-  "K8s::Core::ServiceAccount": "ServiceAccount",
-  "K8s::Core::PersistentVolume": "PersistentVolume",
-  "K8s::Core::PersistentVolumeClaim": "PersistentVolumeClaim",
-  "K8s::Core::Endpoints": "Endpoints",
-  "K8s::Core::LimitRange": "LimitRange",
-  "K8s::Core::ResourceQuota": "ResourceQuota",
-
-  // Apps
-  "K8s::Apps::Deployment": "Deployment",
-  "K8s::Apps::StatefulSet": "StatefulSet",
-  "K8s::Apps::DaemonSet": "DaemonSet",
-  "K8s::Apps::ReplicaSet": "ReplicaSet",
-
-  // Batch
-  "K8s::Batch::Job": "Job",
-  "K8s::Batch::CronJob": "CronJob",
-
-  // Networking
-  "K8s::Networking::Ingress": "Ingress",
-  "K8s::Networking::NetworkPolicy": "NetworkPolicy",
-  "K8s::Networking::IngressClass": "IngressClass",
-
-  // RBAC
-  "K8s::Rbac::Role": "Role",
-  "K8s::Rbac::ClusterRole": "ClusterRole",
-  "K8s::Rbac::RoleBinding": "RoleBinding",
-  "K8s::Rbac::ClusterRoleBinding": "ClusterRoleBinding",
-
-  // Autoscaling
-  "K8s::Autoscaling::HorizontalPodAutoscaler": "HorizontalPodAutoscaler",
-
-  // Policy
-  "K8s::Policy::PodDisruptionBudget": "PodDisruptionBudget",
-
-  // Storage
-  "K8s::Storage::StorageClass": "StorageClass",
-};
 
 /**
  * Properties that reference known property entity constructors.
@@ -140,12 +93,14 @@ export class K8sGenerator implements TypeScriptGenerator {
     const lines: string[] = [];
     this.usesMaskedValue = false;
     let usesDeclareSecret = false;
+    let usesManifest = false;
 
     // Collect which constructors are needed
     const usedConstructors = new Set<string>();
     for (const resource of ir.resources) {
       const cls = this.resolveClass(resource.type);
-      if (cls) usedConstructors.add(cls);
+      if (!cls) continue;
+      usedConstructors.add(cls);
 
       // Check properties for nested constructors
       this.collectNestedConstructors(resource.properties, usedConstructors, resource.type);
@@ -177,6 +132,13 @@ export class K8sGenerator implements TypeScriptGenerator {
       }
       const cls = this.resolveClass(resource.type);
       if (!cls) {
+        const manifest = this.emitManifest(resource);
+        if (manifest) {
+          usesManifest = true;
+          lines.push(`export const ${resource.logicalId} = ${manifest};`);
+          lines.push("");
+          continue;
+        }
         lines.push(`// TODO: unsupported type ${resource.type} (${resource.logicalId})`);
         lines.push("");
         continue;
@@ -195,7 +157,7 @@ export class K8sGenerator implements TypeScriptGenerator {
     // container's env) is imported too.
     const code = lines.join("\n").replace(/"(?:[^"\\\n]|\\.)*"/g, '""');
     for (const m of code.matchAll(/\bnew ([A-Z][A-Za-z0-9_]*)\(/g)) usedConstructors.add(m[1]);
-    const imports = [...usedConstructors].sort().join(", ");
+    const imports = [...(usesManifest ? ["k8sManifest"] : []), ...[...usedConstructors].sort()].join(", ");
     const head = [
       ...(usesDeclareSecret ? [`import { declareSecret } from "@intentius/chant";`] : []),
       ...(imports ? [`import { ${imports} } from "@intentius/chant-lexicon-k8s";`] : []),
@@ -224,17 +186,27 @@ export class K8sGenerator implements TypeScriptGenerator {
   }
 
   /**
-   * Resolve a K8s type name to a constructor class name.
-   * Falls back to extracting the last segment of the type.
+   * Resolve a K8s type name to a constructor class name, or undefined when
+   * the lexicon exports none (the resource is written as a `k8sManifest`).
    */
   private resolveClass(type: string): string | undefined {
-    if (TYPE_TO_CLASS[type]) return TYPE_TO_CLASS[type];
+    return exportedClassFor(type);
+  }
 
-    // Fallback: extract Kind from "K8s::Group::Kind"
-    const parts = type.split("::");
-    if (parts.length === 3 && parts[0] === "K8s") return parts[2];
-
-    return undefined;
+  /**
+   * An untyped resource: the whole manifest handed to `k8sManifest`, which
+   * the serializer writes as given. Property constructors do not apply, the
+   * kind's schema is unknown. Undefined when the apiVersion or kind cannot
+   * be found.
+   */
+  private emitManifest(resource: ResourceIR): string | undefined {
+    const meta = resource.metadata ?? {};
+    const apiVersion = meta.apiVersion ?? resource.properties.apiVersion;
+    const kind = meta.kind ?? resource.type.split("::").pop();
+    if (typeof apiVersion !== "string" || typeof kind !== "string") return undefined;
+    const rest = { ...resource.properties };
+    delete rest.apiVersion;
+    return `k8sManifest(${this.emitLiteral({ apiVersion, kind, ...rest }, 0, resource.type)})`;
   }
 
   private collectNestedConstructors(
