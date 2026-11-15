@@ -12,6 +12,9 @@
  * - an OpenTelemetry Operator `OpenTelemetryCollector`'s `spec.config` (v1beta1,
  *   a structured object), offered as `{ config, header }` with the `# chant:`
  *   header lines kept in the `otel.chant.dev/header` annotation (#3367);
+ * - a Prometheus Operator `AlertmanagerConfig`'s `spec.route`, `spec.receivers`,
+ *   `spec.inhibitRules` and `spec.muteTimeIntervals`, each with the whole `spec`
+ *   as the document (#5113);
  * - a Grafana Operator `GrafanaDashboard`'s `spec.json`, as text (#3015);
  * - the alerting content of the Grafana Operator's `GrafanaAlertRuleGroup`
  *   (`spec.rules`), `GrafanaContactPoint` (`spec.receivers`),
@@ -47,6 +50,14 @@ const GRAFANA_ALERTING_FIELDS: Record<string, { field: string; what: string }> =
   "K8s::Grafana::GrafanaNotificationPolicy": { field: "route", what: "a Grafana notification policy" },
   "K8s::Grafana::GrafanaMuteTiming": { field: "time_intervals", what: "Grafana mute timing intervals" },
   "K8s::Grafana::GrafanaNotificationTemplate": { field: "template", what: "a Grafana notification template" },
+};
+
+/** The `spec` fields of an AlertmanagerConfig the prometheus lexicon imports, and what each is. */
+const ALERTMANAGER_CONFIG_FIELDS: Record<string, string> = {
+  route: "an Alertmanager routing tree",
+  receivers: "Alertmanager receivers",
+  inhibitRules: "Alertmanager inhibit rules",
+  muteTimeIntervals: "Alertmanager time intervals",
 };
 
 function looksLikeRuleGroups(groups: unknown): boolean {
@@ -135,6 +146,29 @@ export function delegateEmbedded(
       expectedOwner: { lexicon: "grafana", what: "a Grafana dashboard" },
     });
     if (ref) properties.spec = { ...properties.spec, json: ref };
+    return;
+  }
+
+  // Each field is offered on its own with the whole spec beside it, so one the owner cannot read stays as written
+  // while the others are imported.
+  if (type === "K8s::Monitoring::AlertmanagerConfig" && isObject(properties.spec)) {
+    const original = properties.spec;
+    let spec = original;
+    for (const [field, what] of Object.entries(ALERTMANAGER_CONFIG_FIELDS)) {
+      if (original[field] === undefined) continue;
+      const ref = embedded.resolve({
+        host: "k8s",
+        hostType: type,
+        location: `${kind} ${name} spec.${field}`,
+        directory: `${name}-${field.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase()}`,
+        document: original,
+        select: field,
+        labels,
+        expectedOwner: { lexicon: "prometheus", what },
+      });
+      if (ref) spec = { ...spec, [field]: ref };
+    }
+    properties.spec = spec;
     return;
   }
 

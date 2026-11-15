@@ -12,6 +12,7 @@ import { detectTemplate } from "./detect";
 import { PrometheusParser } from "./import/parser";
 import { PrometheusGenerator } from "./import/generator";
 import { alertmanagerImporter, prometheusConfigImporter, ruleGroupsImporter } from "./import/embedded";
+import { alertmanagerConfigImporter } from "./import/alertmanager-config";
 import { DEFAULT_TEMPLATE, RULES_TEMPLATE, SLO_STYLE_TEMPLATE, SLO_TEMPLATE } from "./init-templates";
 import { prometheusSkills } from "./skill-defs";
 import { CATALOG } from "./catalog";
@@ -136,7 +137,7 @@ export const prometheusPlugin: LexiconPlugin = {
   },
 
   embeddedImporters() {
-    return [ruleGroupsImporter, alertmanagerImporter, prometheusConfigImporter];
+    return [ruleGroupsImporter, alertmanagerImporter, prometheusConfigImporter, alertmanagerConfigImporter];
   },
 
   // `chant init --lexicon prometheus [--template rules|slo-style|slo]`; see ./init-templates.ts.

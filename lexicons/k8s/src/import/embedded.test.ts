@@ -173,6 +173,54 @@ data:
   });
 });
 
+describe("an AlertmanagerConfig's fields are offered one by one (#5113)", () => {
+  const MANIFEST = `
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: main
+spec:
+  route:
+    receiver: slack
+  receivers:
+    - name: slack
+  inhibitRules:
+    - equal: [alertname]
+---
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: empty
+spec: {}
+`;
+
+  test("each present field is offered with the whole spec as the document, and replaced by the owner's reference", () => {
+    const seen: EmbeddedContent[] = [];
+    const embedded = new EmbeddedImports([{ lexicon: "acme", importer: claimAll(seen) }]);
+    const ir = new K8sParser().parse(MANIFEST, { embedded });
+    expect(seen.map((c) => [c.location, c.directory, c.select, c.expectedOwner?.lexicon])).toEqual([
+      ["AlertmanagerConfig main spec.route", "main-route", "route", "prometheus"],
+      ["AlertmanagerConfig main spec.receivers", "main-receivers", "receivers", "prometheus"],
+      ["AlertmanagerConfig main spec.inhibitRules", "main-inhibit-rules", "inhibitRules", "prometheus"],
+    ]);
+    // Every offer carries the spec as it was read, so an owner can see the fields beside the one it imports.
+    for (const c of seen) expect(Object.keys(c.document as object)).toEqual(["route", "receivers", "inhibitRules"]);
+    const [main] = new K8sGenerator().generate(ir);
+    expect(main.content).toContain("route: render(thing),");
+    expect(main.content).toContain("receivers: render(thing2),");
+    expect(main.content).toContain("inhibitRules: render(thing3),");
+  });
+
+  test("with no owner installed, the spec is kept and the warning names the prometheus lexicon", () => {
+    const embedded = new EmbeddedImports([]);
+    const ir = new K8sParser().parse(MANIFEST, { embedded });
+    expect(embedded.warnings).toHaveLength(3);
+    expect(embedded.warnings[0]).toMatch(/^AlertmanagerConfig main spec.route looks like an Alertmanager routing tree/);
+    expect(embedded.warnings[0]).toContain("@intentius/chant-lexicon-prometheus");
+    expect((ir.resources[0].properties.spec as Record<string, unknown>).route).toEqual({ receiver: "slack" });
+  });
+});
+
 describe("the k8s generator's imports", () => {
   test("a constructor named inside a string value is not imported", () => {
     const ir = new K8sParser().parse(`

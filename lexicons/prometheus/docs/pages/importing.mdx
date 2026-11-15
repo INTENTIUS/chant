@@ -136,7 +136,7 @@ A few things have no place in the lexicon, and `chant import` prints a warning f
 - a key in a rule group, rule, route or inhibit rule that Prometheus or Alertmanager doesn't define, which neither would load anyway;
 - comments, YAML anchors and merge keys (the merged values are imported, each copy written out).
 
-A Prometheus Operator `PrometheusRule` is a Kubernetes manifest, not a rule file, and imports through the k8s lexicon.
+A Prometheus Operator `PrometheusRule` is a Kubernetes manifest, not a rule file, and imports through the k8s lexicon. So does an `AlertmanagerConfig`: its route, receivers, inhibit rules and mute time intervals become `Route`, `Receiver`, `InhibitRule` and `TimeInterval` declarations, and `alertmanagerConfigRoute`, `alertmanagerConfigReceivers`, `alertmanagerConfigInhibitRules` and `alertmanagerConfigMuteTimeIntervals` from `@intentius/chant-lexicon-prometheus/k8s` write the CRD's fields back.
 
 ## Import from a running ruler or Alertmanager
 
