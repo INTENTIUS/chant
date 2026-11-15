@@ -1,5 +1,6 @@
+import { getProvenance } from "../../provenance";
 import { markImportedSource } from "../../lint/rules/imported-source";
-import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from "fs";
+import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, realpathSync } from "fs";
 import { join, resolve, basename, dirname } from "path";
 import { formatSuccess, formatWarning, formatError } from "../format";
 import type { TemplateIR, ResourceIR, ParameterIR, ParseContext, ImportDiagnostic } from "../../import/parser";
@@ -541,8 +542,15 @@ async function parseWithEmbedded(
  * named. When the source does not build here (the lexicon is not installed
  * beside it, or embedded content needs another lexicon's serializer), nothing
  * is said: import reports what build would refuse, not why it cannot run.
+ *
+ * The whole directory is built, so a second import into the same directory
+ * would otherwise repeat the findings about files an earlier import wrote
+ * (#5084). With `written` (the paths this import wrote, relative to
+ * `outputDir`), a finding whose entity was declared in some other file is
+ * left out; one with no entity, or an entity that does not resolve to a
+ * source file, is kept, since nothing says it is about an earlier import.
  */
-export async function buildErrorWarnings(plugin: LexiconPlugin, outputDir: string): Promise<string[]> {
+export async function buildErrorWarnings(plugin: LexiconPlugin, outputDir: string, written?: readonly string[]): Promise<string[]> {
   try {
     const checks = plugin.postSynthChecks?.() ?? [];
     if (checks.length === 0) return [];
@@ -558,8 +566,22 @@ export async function buildErrorWarnings(plugin: LexiconPlugin, outputDir: strin
     const diagnostics = runPostSynthChecks(checks, { ...result, outputs });
     const presetIds = resolvePresetIds(plugin.lintPresets?.(), config.lint?.presets?.[plugin.name] ?? "recommended");
     const afterPreset = applyConfiguredPreset(diagnostics, presetIds, rules).diagnostics;
+    const real = (path: string): string => {
+      try {
+        return realpathSync(path);
+      } catch {
+        return resolve(path);
+      }
+    };
+    const writtenHere = written ? new Set(written.map((file) => real(join(outputDir, file)))) : undefined;
+    const fromThisImport = (entity: string | undefined): boolean => {
+      if (!writtenHere || !entity) return true;
+      const declared = result.entities.get(entity);
+      const file = declared && getProvenance(declared)?.sourceFile;
+      return !file || writtenHere.has(real(file));
+    };
     return applyConfiguredSeverity(afterPreset, rules)
-      .diagnostics.filter((diag) => diag.severity === "error")
+      .diagnostics.filter((diag) => diag.severity === "error" && fromThisImport(diag.entity))
       .map(
         (diag) =>
           `${diag.checkId}: ${diag.message.replace(/\.$/, "")}. chant build stops on this error; ` +
@@ -679,7 +701,7 @@ async function parseAndWrite(
   }
 
   // What `chant build` will refuse, said now rather than at the first build (#3605).
-  warnings.push(...(await buildErrorWarnings(plugin, outputDir)));
+  warnings.push(...(await buildErrorWarnings(plugin, outputDir, generatedFiles)));
 
   return {
     success: true,
