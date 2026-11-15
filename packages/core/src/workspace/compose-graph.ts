@@ -195,7 +195,7 @@ export type ComposedEdge = IREdge & { member: string };
  * A member's dangling reference (#3910, #3922): `from` is prefixed like a node id. `nested` as on {@link ComposedNode}.
  * One the reference catalog recorded (#5097) also names its `rule`, and the `targetKind` that rule looks for.
  */
-export type ComposedDangling = IRDanglingRef & { member: string; nested?: string; rule?: string; targetKind?: string };
+export type ComposedDangling = IRDanglingRef & { member: string; nested?: string; rule?: string; targetKind?: string; through?: string };
 
 /**
  * A reference the catalog pass found more than one node for (#5097): no edge

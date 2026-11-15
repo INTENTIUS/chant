@@ -653,6 +653,8 @@ export interface ParsedArgs {
   noCache?: boolean;
   /** `chant workspace graph <dir> --discover` (#5095): find the members by the kinds' probes, with no declaration and no writes inside <dir>. */
   discover?: boolean;
+  /** `chant workspace graph --discover --runs-on <member>=<member>/<address>` (#5101): the cluster resource a discovered member runs on, by member name. */
+  runsOn?: Record<string, string>;
   /** `chant release images --no-build` (#4657): check the archives already on disk instead of building them. */
   noBuild?: boolean;
   /** `chant workspace graph --composites` (#2662): print each composite instance with the components that can deploy it. */

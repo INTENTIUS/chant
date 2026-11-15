@@ -34,7 +34,7 @@ import type { ReasonCode } from "./reason-codes";
 import type { CommandContext, ParsedArgs } from "../cli/registry";
 import { graphBox, plantability, type Plantable } from "./box-factory";
 import { composedId, composeWorkspaceGraph, readMemberIr, type ComposedMember, type ComposeInput, type WorkspaceGraph } from "./compose-graph";
-import { placeCatalogPass, runCatalogPass } from "./catalog-edges";
+import { placeCatalogPass, runCatalogPass, runsOnEdges } from "./catalog-edges";
 import { detailIdMap, type DetailLevel } from "../graph-detail";
 import type { NamedCatalog } from "../graph-refs";
 import { isViewDocument, prefixView } from "../capabilities/view";
@@ -72,7 +72,7 @@ export const GRAPH_INSTANCE_ROLLUP_CODES = INSTANCE_ROLLUP_CODES satisfies reado
 const LIVE_AT_REVISION = "--live reads the account as it stands now, and --at reads the source at a revision; chant workspace graph takes one of them";
 
 const USAGE =
-  "chant workspace graph [dir] [--discover] [--at <rev>] [--member <name>] [--kind <kind file>] [-o <file>] [--env <env>] [--live [--overlay] [--traffic <level>]] [--no-cache] [--dry-run] | chant workspace graph --composites [--at <rev>] [--member <name>] [-o <file>] | chant workspace graph --intent <path[:start-end]|path#symbol|member/node|sha> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--json]";
+  "chant workspace graph [dir] [--discover [--runs-on <member>=<member>/<address>]...] [--at <rev>] [--member <name>] [--kind <kind file>] [-o <file>] [--env <env>] [--live [--overlay] [--traffic <level>]] [--no-cache] [--dry-run] | chant workspace graph --composites [--at <rev>] [--member <name>] [-o <file>] | chant workspace graph --intent <path[:start-end]|path#symbol|member/node|sha> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--json]";
 
 interface Head {
   $schema: string;
@@ -123,6 +123,8 @@ export interface GraphQuery {
    * When `cwd` holds a declaration itself, that declaration is read instead.
    */
   discover?: boolean;
+  /** With `discover`: the cluster resource a discovered member runs on, by member name (#5101), as a declaration's `runsOn`. */
+  runsOn?: Record<string, string>;
   /**
    * Run the lexicons' reference catalogs over the composed graph (#5097,
    * `./catalog-edges.ts`). A source read only: with `--live` each member's
@@ -261,7 +263,7 @@ function readSource(query: GraphQuery): ReadSource {
     const where = locateDiscovered(query.cwd, query.at);
     if (!declares(where.base)) {
       const kinds = discoveryKinds();
-      const found = discover(where.base, kinds, discoveredWorkspaceName(where.rootOnDisk));
+      const found = discover(where.base, kinds, discoveredWorkspaceName(where.rootOnDisk), query.runsOn);
       const tree = discoveredTree(where.base, found.declaration);
       const declaration = readDeclaration(tree, "", { rootChant: true });
       return {
@@ -397,7 +399,7 @@ export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
     // A kind's link reader (#3932) reads the member's files in the tree read, as check does.
     const graph = composeWorkspaceGraph({ name: declaration.name, root: located.root, repo: repoIdentity(located.rootOnDisk) }, inputs, { declaration, kinds, read: readKindLinks(declaration, located.tree, kinds) });
     // The reference catalogs over the composed graph (#5097), on full attributes whatever --detail asks for.
-    if (query.catalog && !args.live) await addCatalogEdges(graph, query, args, { workspace: graph.workspace, inputs, located });
+    if (query.catalog && !args.live) await addCatalogEdges(graph, query, args, { workspace: graph.workspace, inputs, located, runsOn: runsOnOf(declaration.members) });
     // The box's factory and listing (#3146), from the declaration read, so --at gives them at that revision.
     for (const member of graph.members) member.box = graphBox(declaration.members.find((m) => m.name === member.name)?.box ?? null, located.tree, declaration.members);
     // Nested workspaces (#2551, ws-071): read-only, through their own chant workspace graph.
@@ -457,7 +459,7 @@ async function addCatalogEdges(
   graph: WorkspaceGraph,
   query: GraphQuery,
   args: ParsedArgs,
-  read: { workspace: WorkspaceGraph["workspace"]; inputs: ComposeInput[]; located: LocatedWorkspace },
+  read: { workspace: WorkspaceGraph["workspace"]; inputs: ComposeInput[]; located: LocatedWorkspace; runsOn: ReadonlyMap<string, string> },
 ): Promise<void> {
   const lexicons = [...new Set(graph.nodes.map((n) => n.lexicon))].sort();
   const catalogs = await loadCatalogs(lexicons);
@@ -476,7 +478,18 @@ async function addCatalogEdges(
   for (const { member, ir } of readable) {
     for (const [id, at] of detailIdMap(ir!, level)) placed.set(composedId(member.name, id), composedId(member.name, at));
   }
-  placeCatalogPass(graph, runCatalogPass(nodes, catalogs, catalogs.length > 0 ? readable.map((i) => i.member.name) : []), placed);
+  const pass = runCatalogPass(nodes, catalogs, catalogs.length > 0 ? readable.map((i) => i.member.name) : []);
+  // The declared cluster each member runs on (#5101): its edges are drawn first, so a Secret they join is not also derived or left dangling.
+  const declared = runsOnEdges(nodes, read.runsOn, catalogs);
+  for (const problem of declared.problems) query.onStderr?.(`warning: ${problem}\n`);
+  pass.dangling = pass.dangling.filter((d) => !(declared.joined.has(d.from) && pass.rules[d.rule!]?.relation === "reference"));
+  graph.edges = [...graph.edges, ...declared.edges.map((e) => ({ ...e, from: placed.get(e.from) ?? e.from, to: placed.get(e.to) ?? e.to })).filter((e) => e.from !== e.to)];
+  placeCatalogPass(graph, pass, placed);
+}
+
+/** The `runsOn` each declared member sets, by member name (#5101). */
+function runsOnOf(members: readonly { name: string; runsOn: string | null }[]): Map<string, string> {
+  return new Map(members.filter((m) => m.runsOn !== null).map((m) => [m.name, m.runsOn!]));
 }
 
 /**
@@ -543,6 +556,10 @@ export async function runWorkspaceGraph(ctx: CommandContext): Promise<number> {
     console.error(formatError({ message: `${cwd} does not exist`, hint: USAGE }));
     return 1;
   }
+  if (args.runsOn && !args.discover) {
+    console.error(formatError({ message: "--runs-on sets a discovered member's cluster; with a declaration, set runsOn on the member's entry", hint: USAGE }));
+    return 2;
+  }
   // --discover (#5095) reads one directory with no declaration, as the composed graph only.
   if (args.discover && (args.composites || args.intent !== undefined || args.kind !== undefined)) {
     console.error(formatError({ message: "--discover reads the composed graph, and takes none of --composites, --intent and --kind", hint: USAGE }));
@@ -606,6 +623,7 @@ export async function runWorkspaceGraph(ctx: CommandContext): Promise<number> {
     args,
     ...(args.noCache ? { noCache: true } : {}),
     ...(args.discover ? { discover: true } : {}),
+    ...(args.runsOn ? { runsOn: args.runsOn } : {}),
     ...(args.kind !== undefined ? { kind: resolve(args.kind) } : {}),
     onStderr: (text) => process.stderr.write(text),
     catalog: true,

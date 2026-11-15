@@ -9,7 +9,7 @@ title: "chant workspace graph"
 ```
 chant workspace graph [dir] [--at <rev>] [--detail 0..3] [-o <file>] [--member <name>] [--kind <kind file>] [--env <name>] [--capability-view] [--no-cache] [--dry-run]
 chant workspace graph [dir] --live --env <name> [--overlay] [--traffic <level>] [--detail 0..3] [-o <file>] [--member <name>] [--kind <kind file>]
-chant workspace graph <dir> --discover [--at <rev>] [--detail 0..3] [-o <file>] [--member <name>] [--env <name>] [--no-cache] [--dry-run]
+chant workspace graph <dir> --discover [--runs-on <member>=<member>/<address>]... [--at <rev>] [--detail 0..3] [-o <file>] [--member <name>] [--env <name>] [--no-cache] [--dry-run]
 chant workspace graph [dir] --composites [--at <rev>] [-o <file>] [--member <name>] [--env <name>]
 chant workspace graph [dir] --intent <path[:start-end]|path#symbol|member/node|sha> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--forge-issues] [--json]
 chant workspace graph [dir] --intent --record <id> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--forge-issues] [--json]
@@ -84,7 +84,7 @@ What it finds goes in four places:
 | Field | What it holds |
 |---|---|
 | `edges[]` | An edge with `origin: "derived"`, the `rule` that drew it, `relation` (`reference` or `containment`), `grain: "property"` and `member`, the holder's member. A pair the declared graph already joins gets no second edge. |
-| `dangling[]` | A reference that names no node, as `{ from, kind: "ref", path, value, member, rule, targetKind? }`. A missing edge is never read as no relation. |
+| `dangling[]` | A reference that names no node, as `{ from, kind: "ref", path, value, member, rule, targetKind?, through? }`. `through` is the node a value was read through, the store of an ExternalSecret's key. A missing edge is never read as no relation. |
 | `ambiguous[]` | A reference that names more than one node, as `{ from, member, rule, path, value, candidates }`. No edge is drawn. Absent when there are none. |
 | `catalog` | `lexicons`, whose catalogs ran; `members`, whose nodes the pass read; `rules`, each rule the document names by id with its `lexicon`, `from`, `path`, `relation`, `targetKinds` and `label`; and `nonLiteral`, by node id, the arguments the pass could not read because their value is not literal. |
 
@@ -113,7 +113,59 @@ A rule id is `<lexicon>:<holder kind>:<path>`, such as `k8s:K8s::Apps::Deploymen
 
 Every node sits in one workspace scope, and a node of a kind its catalog scopes also sits in the scope it names. A Kubernetes object's names are unique inside its namespace, so a holder in a namespace matches the nodes of that namespace in any member, and every node with no namespace, such as a cluster-scoped object or a cloud resource. A namespaced object that names no namespace is matched only inside its own member, since chant cannot tell where it will be applied. One Namespace declared by two members makes every object in it ambiguous to its namespace rule, and draws no containment edge.
 
-A terraform block is read as its provider type with its literal arguments ([`declaredNode`](/chant/lexicon-authoring/observation-contract/#live-graph-edges-referencecatalog--enrichliveattrs)). An argument holding an interpolation is left out and counted in `nonLiteral`; one that names another block already draws its declared edge.
+A terraform block is read as its provider type with its literal arguments ([`declaredNode`](/chant/lexicon-authoring/observation-contract/#live-graph-edges-referencecatalog--enrichliveattrs)). Since [#5117](https://github.com/INTENTIUS/chant/issues/5117) an argument holding an expression is read as its value when the files a plan reads determine it. That covers variables (from the module call, tfvars or the default) and locals. It covers `each.key`, `each.value.<attr>`, `count.index` and `lookup()` too. A module output is followed into the child, an argument another block of the module sets is read from that block, and a `"${...}"` string resolves when each of its parts does.
+
+A block with instance nodes is read once per instance with that instance's `each.key`, and its block node reads no arguments. An argument that does not resolve is left out and counted in `nonLiteral`. The member's node names the first reference that stopped it in `attrs.evaluated.stopped`, such as a data source or `timestamp()`. Nothing is planned and no provider is called.
+
+### ExternalSecrets
+
+An `ExternalSecret` draws two edges ([#5098](https://github.com/INTENTIUS/chant/issues/5098)). The first goes to the store its `spec.secretStoreRef` names: a `SecretStore` in its namespace, or a `ClusterSecretStore`, as `secretStoreRef.kind` says (a store with no kind is a `SecretStore`). Its `viaAttr` is `secretStoreRef`. The second joins each `spec.data[].remoteRef.key` and `spec.dataFrom[].extract.key` with the cloud secret that key names inside the store's scope, and its `viaAttr` is `remoteRef.key via <store name>`:
+
+| Store | Terraform resource | Joined on |
+|---|---|---|
+| `spec.provider.gcpsm.projectID` | `google_secret_manager_secret` | `secret_id` equal to the key, `project` equal to the project |
+| `spec.provider.aws` with `service: SecretsManager` | `aws_secretsmanager_secret` | `name` equal to the key, and `region` equal to the store's when the resource sets one |
+
+A store that is not found is dangling and its keys are not read. A key that no secret in the store's scope has is dangling under the secret rule, with the store's node as `through`. A secret whose `secret_id`, `name` or `project` is not literal is counted in `catalog.nonLiteral` and matches nothing. An IBM or Vault store gets the store edge and no secret edge.
+
+### Cluster join
+
+The Kubernetes objects in a repo do not say which cluster they run on, and the Terraform that creates the cluster is often in another directory. Argo CD records the link in a cluster Secret, a Secret labelled `argocd.argoproj.io/secret-type: cluster` with a `name` and a `server` ([#5101](https://github.com/INTENTIUS/chant/issues/5101)). Two catalog rules join it:
+
+| Rule | Joins |
+|---|---|
+| `k8s:K8s::Argo::Application:spec.destination.name` and `...:spec.destination.server` | an Application to the cluster Secret in its namespace whose `name` or `server` is that value. A destination that no Secret in the graph names, such as `https://kubernetes.default.svc`, is not reported as dangling. |
+| `k8s:K8s::Core::Secret:argoCluster.name` | a cluster Secret to the `google_container_cluster`, `aws_eks_cluster` or `azurerm_kubernetes_cluster` whose literal `name` is the Secret's `name`. A `data` value is decoded from base64 first. |
+
+A Secret whose name no cluster resource has is listed once in `dangling`, whichever of the three kinds were looked for, and two cluster resources of one name in two roots draw no edge and are listed in `ambiguous`. A cluster name that Terraform builds from a variable or a local is not a literal, so it is counted in `catalog.nonLiteral` and does not join. `argoCluster` is a path the pass adds to a cluster Secret only: it holds the decoded `name` and `server`, so another Secret that has a `name` of its own is not read as a cluster registration. The `argo-app` and `manifests` kinds read a cluster Secret cut down to its metadata and that `name` and `server`; its `config`, with the cluster's token or CA bundle, is not read into the graph.
+
+Where the names do not match, a member's `runsOn` says which cluster resource it runs on. It is `<member>/<address>`, the member that holds the resource and its address, and it draws a declared edge (`origin: "declared"`, `viaAttr: "runsOn"`) from each cluster Secret in the member to that resource. A Secret it joins is no longer in `dangling`. A `runsOn` that matches no node or several, or that names a member with no cluster Secret, prints a warning and draws nothing. With `--discover` there is no declaration, so `--runs-on <member>=<member>/<address>` sets it for a discovered member, by the member's discovered name, and may be given more than once.
+
+```bash
+chant workspace graph . --discover --runs-on argo=infra/google_container_cluster.prod
+```
+
+### Cloud identity of a ServiceAccount
+
+A ServiceAccount annotation that names a cloud identity draws an edge to it, and a Workload Identity binding draws an edge back ([#5099](https://github.com/INTENTIUS/chant/issues/5099)). The rule ids are `k8s:K8s::Core::ServiceAccount:metadata.annotations["iam.gke.io/gcp-service-account"]`, `k8s:K8s::Core::ServiceAccount:metadata.annotations["eks.amazonaws.com/role-arn"]`, `terraform:google_service_account_iam_member:member` and `terraform:google_service_account_iam_binding:members[]`.
+
+| Annotation or binding | Terraform side | Joined on |
+|---|---|---|
+| `iam.gke.io/gcp-service-account: <id>@<project>.iam.gserviceaccount.com` | `google_service_account` | `account_id` equal to the id, `project` equal to the project |
+| `eks.amazonaws.com/role-arn: arn:aws:iam::<account>:role/<path>/<name>` | `aws_iam_role` | `name` equal to the last segment, `path` equal to the ARN's path when the role sets one, and the account of the role's `arn` when it sets one |
+| `google_service_account_iam_member` or `_binding` with `roles/iam.workloadIdentityUser` | the ServiceAccount | a member `serviceAccount:<project>.svc.id.goog[<namespace>/<name>]`, read as the ServiceAccount `<name>` in `<namespace>` of any member |
+
+An annotation that names no account is dangling, and two accounts it could mean (the same `account_id` and `project` declared twice) are `ambiguous`. A `google_service_account` whose `account_id` or `project` is not literal is counted in `catalog.nonLiteral` and matches nothing, so an estate that builds them from locals or variables draws no annotation edge until those are resolved. Terraform does not hold a role's account id, so a role with no literal `arn` matches on its name and path. A binding whose ServiceAccount is not in the workspace is not reported, since the cluster it names may be one the workspace does not read. The Azure `azure.workload.identity/client-id` annotation and IAM role trust policies are not read.
+
+### Helm charts and values files
+
+Charts are named in a kustomization's `helmCharts`, in the sources of an Argo CD `Application` or `ApplicationSet`, in a Flux `HelmRelease`, and in a Terraform `helm_release` ([#5100](https://github.com/INTENTIUS/chant/issues/5100)). The graph reads those references and the values files as data. It fetches and renders nothing, so no binary has to be on `PATH`. A kustomization with `helmCharts` has its nodes whether or not its render could run.
+
+- A chart is one `Helm::ChartRef` node for each distinct repository URL (without a trailing slash), chart name and version. No member owns it: the pass places it in the member of its first holder, and draws an edge to it from every object that names it, with a rule id of the form `helm:<holder kind>:<attribute>`. A `helm_release` names a chart only through a literal `repository` and `chart`. A Flux release names a `HelmRepository`; its `spec.url` is used when that object is in the graph.
+- A kustomization with `helmCharts` is a node, `K8s::Kustomize::Kustomization`, and so is each values file it names that exists and parses: `Helm::Values`, with its `path` from the workspace root, and its `values` at `--detail 3`. An edge joins the object that names a file to the file, and the file to its chart. A values file that does not exist is in `dangling` with its path as `value`.
+- A values file is one node for each member that names it. The edge to it stays inside the member, so two members naming one file do not make it ambiguous.
+- Objects under a values file's `extraObjects` that have an `apiVersion` and a `kind` are nodes of the member, with the annotation `chant.intentius.io/helm-values` naming the file, so the objects a chart is told to create are in the graph, such as a secret store declared there.
+- A kustomization's `valuesFile` is relative to its directory. An Argo `$<ref>/path` in `helm.valueFiles` is read from the workspace root, whatever the `repoURL` of the source with that `ref` says, so a values file in another repository is dangling. A relative `valueFiles` entry on a source with a `chart` lies inside the chart's package and is not read. A path with `{{ ... }}` is not read; an ApplicationSet's templated paths are the generator expansion's.
 
 ## Nested workspaces
 
@@ -606,6 +658,7 @@ A trace over one region may take at most twice as long as [`chant workspace stat
 | Option | Effect |
 |---|---|
 | `dir` | Where the walk up to the declaration starts. With `--discover`, the directory whose members are discovered. |
+| `--runs-on <member>=<target>` | With `--discover`, set a discovered member's [`runsOn`](#cluster-join), the cluster resource it runs on as `<member>/<address>`. Repeatable. |
 | `--discover` | Find the members by the kinds' probes when `dir` has no declaration, and write nothing inside it. See [discovering members](#discovering-members). |
 | `--at <rev>` | Read the declaration at a commit, and each member's graph from its source at that commit. The tree is exported to a temporary directory and each member runs there under the toolchain installed now. See [what `--at` reads](/chant/reference/workspace-read-contract/#identity-and-revisions). |
 | `-o, --output <file>` | Write the document to a file. |

@@ -89,6 +89,7 @@ const FLOOR_RE = /export const ([A-Z0-9_]+_FLOOR) = (?:"(\d+\.\d+\.\d+)"|(NEXT_R
 const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: string }[] = [
   // --freeze empties this list after a release ships (#4501); each entry is one line.
   { file: "packages/core/src/workspace/graph.schema.json", text: "Added in contract 1 by #5097, written by chant {v} and newer.", count: 5, floor: "WORKSPACE_GRAPH_CATALOG_FLOOR" },
+  { file: "packages/core/src/workspace/declaration.schema.json", text: "Added in schema 1 by chant {v}, so a declaration that uses it sets minReader to {v} or newer.", count: 1, floor: "WORKSPACE_GRAPH_CLUSTER_JOIN_FLOOR" },
 ];
 
 interface Args {

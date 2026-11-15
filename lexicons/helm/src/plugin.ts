@@ -13,6 +13,7 @@ import { detectTemplate } from "./detect";
 import { discoverLintRules } from "@intentius/chant/lint/discover";
 import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
 import { helmAuditCatalog } from "./lint/audit-catalog";
+import { helmReferenceCatalog } from "./reference-catalog";
 import { createSkillsLoader, createDiffTool } from "@intentius/chant/lexicon-plugin-helpers";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -42,6 +43,8 @@ export const helmPlugin: LexiconPlugin = {
   // on the live objects.
   ownershipChannel: { keys: LABEL_OWNERSHIP_KEYS, reads: ["describeResources", "observeResourcesDeep"] },
   auditCatalog: () => helmAuditCatalog,
+  // Chart nodes shared by every member that names a chart, on a declared workspace graph (#5100).
+  referenceCatalog: helmReferenceCatalog,
   serializer: helmSerializer,
 
   // A helm-chart workspace member's reader project (#3179): `helm template`

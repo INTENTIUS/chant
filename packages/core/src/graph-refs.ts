@@ -77,6 +77,43 @@ export interface RefRule {
    * reference and drawing the line twice.
    */
   viaAttr?: string;
+  /**
+   * Reads the references itself, for a rule whose value does not name its
+   * target by one identifier (#5098): an ExternalSecret's key names a cloud
+   * secret only inside the project of the store it reads through, so the
+   * match spans the holder, a second node and the target. `path` and
+   * `targetKind` still name the rule (its id, its entry in a document's
+   * `catalog.rules`, the kind a dangling entry looks for), but the pass does
+   * not read `path` itself: it calls `join` with the holder and `find`, which
+   * returns the nodes a value names from the holder's scope, the way the
+   * pass's own lookup would. Each {@link JoinedRef} it returns is then
+   * resolved like a value read from `path`: no target is dangling (unless
+   * `optional`), two are ambiguous, one is an edge. Only the catalog pass
+   * over indexed nodes and declared graphs calls it. Pure.
+   */
+  join?(holder: IRNode, find: FindNodes): JoinedRef[];
+}
+
+/**
+ * What a {@link RefRule.join} looks nodes up with. `find(value)` returns the
+ * nodes `value` names from the holder's own scope. `find(value, scope)`
+ * returns those named inside the scope called `scope` (a Kubernetes
+ * namespace), whatever scope the holder sits in, for a holder that names its
+ * target's namespace itself (#5099): a cloud IAM binding naming
+ * `<ns>/<name>`.
+ */
+export type FindNodes = (value: string, scope?: string) => readonly IRNode[];
+
+/** One reference a {@link RefRule.join} found on a holder. */
+export interface JoinedRef {
+  /** What the holder wrote, as a dangling or ambiguous entry reports it. */
+  value: string;
+  /** The nodes it names, from `find`; none is dangling. */
+  targets: readonly IRNode[];
+  /** The edge's `viaAttr`, when the first step of the rule's path does not say enough. */
+  via?: string;
+  /** A node the value was read through, named on a dangling entry (the store a key is read from). */
+  through?: IRNode;
 }
 
 /**
@@ -104,8 +141,12 @@ export interface TagRefRule {
  */
 export interface ScopeRule {
   kind: string;
-  /** The attr path whose value names the scope. */
-  path: string;
+  /**
+   * The attr path whose value names the scope. With none (#5100), the kind's
+   * names are unique inside the member that holds the node, which is what a
+   * namespaced kind with no namespace on the node gets.
+   */
+  path?: string;
 }
 
 /**
@@ -122,6 +163,21 @@ export interface DeclaredCatalogNode {
   nonLiteral: number;
 }
 
+/**
+ * A node a lexicon adds to a declared workspace graph because several members
+ * name the same thing (#5100): one Helm chart that a kustomization, an Argo CD
+ * Application and a Terraform `helm_release` all name is one node, owned by
+ * none of them. The catalog pass draws an edge to it from each holder.
+ */
+export interface SharedCatalogNode {
+  /** The node's own id; the pass places it as `<member>/<id>`, in the member of its first holder. */
+  id: string;
+  kind: string;
+  attrs: Record<string, unknown>;
+  /** The nodes that name it, by the id the pass read them under, with the attribute each reads it through. */
+  holders: Array<{ from: string; via: string; label?: string }>;
+}
+
 /** A lexicon's reference knowledge — its identity map and reference rules. */
 export interface ReferenceCatalog {
   identities: IdentityRule[];
@@ -132,9 +188,25 @@ export interface ReferenceCatalog {
   scopes?: ScopeRule[];
   /**
    * The node the catalog reads for a declared node of this lexicon, or
-   * undefined to read the node as it is (#5097). Pure.
+   * undefined to read the node as it is (#5097). An instance node
+   * (`instanceOf`) carries no attrs of its own, so it is handed its block
+   * node as `block` (#5117). Pure.
    */
-  declaredNode?(node: IRNode): DeclaredCatalogNode | undefined;
+  declaredNode?(node: IRNode, block?: IRNode): DeclaredCatalogNode | undefined;
+  /**
+   * True for a node of this lexicon that registers a cluster, the one a
+   * workspace member runs on (an Argo CD cluster Secret, #5101). A member's
+   * `runsOn` draws a declared edge from each such node to the cluster
+   * resource it names. Reads the node as the document holds it. Pure.
+   */
+  registersCluster?(node: IRNode): boolean;
+  /**
+   * Nodes of this catalog's lexicon that the declared graph has none of until
+   * every member is read (#5100), each with the nodes that name it. Called with
+   * every node the pass reads, after `declaredNode`. Pure. An edge from a holder
+   * carries the rule id `<lexicon>:<holder kind>:<via>`.
+   */
+  sharedNodes?(nodes: readonly IRNode[]): SharedCatalogNode[];
 }
 
 /** `child` is contained by `parent` (subnet ∈ VPC). For #779's boundary boxes. */
@@ -151,6 +223,8 @@ export interface DanglingRef {
   path: string;
   value: string;
   targetKind?: string;
+  /** The id of the node the value was read through (#5098): the store whose cloud secret a key names. */
+  through?: string;
 }
 
 export interface ReconstructedEdges {
@@ -325,7 +399,7 @@ export function reconstructEdges(nodes: IRNode[], catalog: ReferenceCatalog): Re
 
   for (const node of nodes) {
     for (const rule of catalog.refs) {
-      if (rule.from !== node.kind) continue;
+      if (rule.from !== node.kind || rule.join) continue;
       for (const value of readPath(node.attrs, rule.path)) {
         const candidates = index.get(value) ?? [];
         // `chant graph --live` keeps its first-candidate pick: its values are
@@ -420,7 +494,17 @@ export interface IndexedNodeScope {
   account: string;
   /** The region or location; undefined for a global type. */
   region?: string;
+  /**
+   * The member that holds the node, on a declared graph (#5100). A holder also
+   * looks in {@link memberRegion} of its own member, whatever its own region, so
+   * a node that names no scope but its member (a values file) is reached by a
+   * holder scoped by namespace.
+   */
+  member?: string;
 }
+
+/** The region of a node held by one member (a `ScopeRule` with no `path`). */
+export const memberRegion = (member: string): string => `member:${member}`;
 
 /** A reference whose value matched several nodes: no edge is drawn (behold#1023 Q3). */
 export interface AmbiguousRef {
@@ -485,10 +569,18 @@ export function reconstructIndexedEdges(
   const sorted = [...nodes].sort((a, b) => byString(a.id, b.id));
   const keyOf = (scope: IndexedNodeScope, value: string) => `${scope.account}\u0000${scope.region ?? ""}\u0000${value}`;
   const index = new Map<string, Map<string, string>>();
+  // The same nodes by the name of the scope they sit in (the text after the
+  // first `:` of a region), for a join that names a scope itself.
+  const named = new Map<string, Map<string, string>>();
   const add = (scope: IndexedNodeScope, value: string | undefined, node: IRNode): void => {
     if (value === undefined || value === "" || PLACEHOLDER_VALUES.has(value)) return;
     const k = keyOf(scope, value);
     (index.get(k) ?? index.set(k, new Map()).get(k)!).set(node.id, node.kind);
+    const colon = scope.region?.indexOf(":") ?? -1;
+    if (scope.region !== undefined && colon > 0) {
+      const nk = `${scope.region.slice(colon + 1)}\u0000${value}`;
+      (named.get(nk) ?? named.set(nk, new Map()).get(nk)!).set(node.id, node.kind);
+    }
   };
   const identities = catalogs.flatMap((c) => c.catalog.identities);
   for (const node of sorted) {
@@ -503,10 +595,12 @@ export function reconstructIndexedEdges(
     }
   }
 
+  const byId = new Map(sorted.map((n) => [n.id, n]));
   const lookup = (holder: IRNode, value: string): Map<string, string> => {
     const scope = scopeOf(holder);
     const out = new Map<string, string>();
     const keys = scope.region !== undefined ? [keyOf(scope, value), keyOf({ account: scope.account }, value)] : [keyOf(scope, value)];
+    if (scope.member !== undefined) keys.push(keyOf({ account: scope.account, region: memberRegion(scope.member) }, value));
     for (const k of keys) for (const [id, kind] of index.get(k) ?? []) out.set(id, kind);
     return out;
   };
@@ -517,15 +611,22 @@ export function reconstructIndexedEdges(
   // and template-shape rules for the same path) report a reference once.
   const dangling = new Map<string, IndexedDanglingRef>();
   const ambiguous = new Map<string, AmbiguousRef>();
+  // A value some rule of an id found a node for. Rules of one id and different
+  // target kinds are alternatives (a cluster Secret's name is a GKE, an EKS or
+  // an AKS cluster), so the kinds that found nothing do not report it dangling.
+  const found = new Set<string>();
 
   const resolve = (
     holder: IRNode,
     value: string,
     rule: { id: string; path: string; targetKind?: string; relation: "reference" | "containment"; via: string; label?: string; optional?: boolean },
+    joined?: { targets: readonly IRNode[]; through?: IRNode },
   ): void => {
     if (PLACEHOLDER_VALUES.has(value)) return;
-    const found = lookup(holder, value);
-    let candidates = [...found.entries()].filter(([, kind]) => rule.targetKind === undefined || kind === rule.targetKind).map(([id]) => id);
+    let candidates = joined
+      ? joined.targets.map((t) => t.id)
+      : [...lookup(holder, value).entries()].filter(([, kind]) => rule.targetKind === undefined || kind === rule.targetKind).map(([id]) => id);
+    const through = joined?.through ? { through: joined.through.id } : {};
     if (candidates.includes(holder.id)) {
       if (candidates.length === 1) return; // a self-reference (an SG rule to its own group)
       candidates = candidates.filter((id) => id !== holder.id);
@@ -533,9 +634,10 @@ export function reconstructIndexedEdges(
     candidates.sort(byString);
     if (candidates.length === 0) {
       if (rule.optional) return;
-      dangling.set(`${holder.id}|${rule.id}|${value}`, { from: holder.id, path: rule.path, value, rule: rule.id, ...(rule.targetKind ? { targetKind: rule.targetKind } : {}) });
+      dangling.set(`${holder.id}|${rule.id}|${value}|${through.through ?? ""}`, { from: holder.id, path: rule.path, value, rule: rule.id, ...(rule.targetKind ? { targetKind: rule.targetKind } : {}), ...through });
       return;
     }
+    found.add(`${holder.id}|${rule.id}|${value}`);
     if (candidates.length > 1) {
       ambiguous.set(`${holder.id}|${rule.id}|${value}`, { from: holder.id, rule: rule.id, path: rule.path, value, candidates });
       return;
@@ -581,6 +683,12 @@ export function reconstructIndexedEdges(
           ...(rule.label ? { label: rule.label } : {}),
           ...(rule.optional ? { optional: true } : {}),
         };
+        if (rule.join) {
+          const find: FindNodes = (value, scope) =>
+            [...(scope === undefined ? lookup(node, value) : named.get(`${scope}\u0000${value}`) ?? new Map<string, string>()).keys()].map((id) => byId.get(id)!);
+          for (const j of rule.join(node, find)) resolve(node, j.value, { ...spec, via: j.via ?? spec.via }, j);
+          continue;
+        }
         for (const value of new Set(readPath(node.attrs, rule.path))) resolve(node, value, spec);
       }
       for (const rule of catalog.tagRefs ?? []) {
@@ -610,7 +718,7 @@ export function reconstructIndexedEdges(
   return {
     edges: [...edges.values()].sort((a, b) => byString(edgeKey(a), edgeKey(b))),
     containment: [...containment.values()].sort((a, b) => byString(`${a.child}|${a.parent}`, `${b.child}|${b.parent}`)),
-    dangling: [...dangling.values()].sort((a, b) => byString(`${a.from}|${a.rule}|${a.value}`, `${b.from}|${b.rule}|${b.value}`)),
+    dangling: [...dangling.values()].filter((d) => !found.has(`${d.from}|${d.rule}|${d.value}`)).sort((a, b) => byString(`${a.from}|${a.rule}|${a.value}|${a.through ?? ""}`, `${b.from}|${b.rule}|${b.value}|${b.through ?? ""}`)),
     ambiguous: [...ambiguous.values()].sort((a, b) => byString(`${a.from}|${a.rule}|${a.value}`, `${b.from}|${b.rule}|${b.value}`)),
   };
 }

@@ -27,6 +27,21 @@ spec:
     expect(r.properties.spec).toEqual({ replicas: 2 });
   });
 
+  test("an object name with characters an identifier cannot hold still gives an identifier", () => {
+    const names: Array<[string, string, string]> = [
+      ["ClusterRole", "system:metrics-server", "clusterRoleSystemMetricsServer"],
+      ["Role", "cert-manager-cainjector:leaderelection", "roleCertManagerCainjectorLeaderelection"],
+      ["ClusterRoleBinding", "system:kube-scheduler", "clusterRoleBindingSystemKubeScheduler"],
+      ["ConfigMap", "a/b@c d", "configMapABCD"],
+    ];
+    for (const [kind, name, id] of names) {
+      const ir = parser.parse(`apiVersion: rbac.authorization.k8s.io/v1\nkind: ${kind}\nmetadata:\n  name: "${name}"\n`);
+      expect(ir.resources[0].logicalId).toBe(id);
+      expect(ir.resources[0].logicalId).toMatch(/^[A-Za-z_$][A-Za-z0-9_$]*$/);
+      expect(ir.resources[0].metadata?.originalName).toBe(name);
+    }
+  });
+
   test("multi-doc YAML produces multiple resources", () => {
     const yaml = `
 apiVersion: apps/v1

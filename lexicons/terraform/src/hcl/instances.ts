@@ -34,6 +34,14 @@
  * rolled up by ruling. A block under an expanded call whose own expansion
  * or whose call's expansion cannot be counted gets no instances at all,
  * since a partial list would name ids the plan never prints.
+ *
+ * Since #5117 an expansion none of those forms counts is read once more with
+ * `./evaluate.ts`, which follows locals that read locals, interpolation,
+ * `lookup()` and module outputs: a `for_each` over a local map whose values
+ * interpolate another local gets its keys, since a map's keys are known when
+ * some of its values are not. The same evaluator then gives each resource
+ * block its `evaluated` arguments, per instance when it has instance nodes,
+ * for the reference catalog.
  */
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -41,6 +49,7 @@ import { join, resolve } from "node:path";
 import { isResourceDeclarable, type Declarable } from "@intentius/chant/declarable";
 import type { InstanceRollup, InstanceRollupCode } from "@intentius/chant/instance-nodes";
 import { loadHcl2json, type Hcl2Json } from "@intentius/chant/terraform/hcl2json";
+import { RootEvaluator, evaluateArguments, instanceKeyValue, isSetValue, isUnknown, type EvaluatedArguments } from "./evaluate";
 import {
   DATA_TYPE,
   LOCALS_TYPE,
@@ -52,6 +61,7 @@ import {
   scopeOfKey,
   type BlockBody,
   type TerraformEntity,
+  type TerraformEvaluated,
 } from "./parse";
 
 /** The most instance nodes one block gets; past it the block draws alone. */
@@ -172,7 +182,11 @@ function rollupCodeOf(value: unknown): InstanceRollupCode {
  * A block's expansion in a scope: its instance keys as Terraform prints them,
  * `null` when the block is not expanded, or why the keys are not known.
  */
-export function expansionIn(body: BlockBody, scope: Scope): { keys: string[] } | { rollup: InstanceRollup } | null {
+export function expansionIn(
+  body: BlockBody,
+  scope: Scope,
+  evaluateFully?: (raw: unknown) => unknown,
+): { keys: string[] } | { rollup: InstanceRollup } | null {
   if (!("count" in body) && !("for_each" in body)) return null;
   const argument = "count" in body ? "count" : "for_each";
   const expr = body[argument];
@@ -193,9 +207,26 @@ export function expansionIn(body: BlockBody, scope: Scope): { keys: string[] } |
       keys = Object.keys(v.value).sort().map((k) => `[${JSON.stringify(k)}]`);
     }
   }
+  if (keys === undefined && evaluateFully) keys = keysOfValue(argument, evaluateFully(expr));
   if (keys === undefined) return rolled(rollupCodeOf(expr));
   if (keys.length > MAX_INSTANCES) return rolled("instances-over-limit");
   return { keys };
+}
+
+/**
+ * The instance keys of an evaluated `count` or `for_each` (#5117): a whole
+ * number, a map (whose keys are known even when some of its values are not),
+ * or a set of strings `toset()` made. Undefined for anything else.
+ */
+function keysOfValue(argument: "count" | "for_each", v: unknown): string[] | undefined {
+  if (isUnknown(v)) return undefined;
+  if (argument === "count") return typeof v === "number" && Number.isInteger(v) && v >= 0 ? Array.from({ length: v }, (_, i) => `[${i}]`) : undefined;
+  if (isSetValue(v)) {
+    const list = v as unknown[];
+    return list.every((s) => typeof s === "string") ? [...new Set(list as string[])].sort().map((k) => `[${JSON.stringify(k)}]`) : undefined;
+  }
+  if (typeof v === "object" && v !== null && !Array.isArray(v)) return Object.keys(v).sort().map((k) => `[${JSON.stringify(k)}]`);
+  return undefined;
 }
 
 /**
@@ -292,6 +323,12 @@ export async function resolveInstanceNodes(
   }
 
   const tfvars = await rootTfvars(opts);
+  const evaluator = new RootEvaluator(entities, root, tfvars);
+  /** The full evaluator over a block-level read of a scope (#5117), where the narrow forms above give no keys. */
+  const evaluateIn = (scope: string) => (raw: unknown): unknown => {
+    const place = evaluator.placeOfScope(scope);
+    return place ? evaluator.value(raw, { place }) : undefined;
+  };
   const scopes = new Map<string, ScopeVars>();
   const localScopes = new Map<string, ScopeVars>();
 
@@ -350,7 +387,7 @@ export async function resolveInstanceNodes(
   const callExpansion = (callKey: string): ReturnType<typeof expansionIn> | undefined => {
     const call = entities.get(callKey) as TerraformEntity | undefined;
     if (!call || call.entityType !== MODULE_TYPE) return undefined;
-    return expansionIn(bodyOf(call), scopeOf(scopeOfKey(callKey)));
+    return expansionIn(bodyOf(call), scopeOf(scopeOfKey(callKey)), evaluateIn(scopeOfKey(callKey)));
   };
   const keysOf = (e: ReturnType<typeof expansionIn> | undefined): string[] | null | undefined =>
     e === undefined ? undefined : e === null ? null : "keys" in e ? e.keys : undefined;
@@ -360,7 +397,7 @@ export async function resolveInstanceNodes(
     const callers = callersOfKey(key);
     const calls = callers.map((_, i) => callExpansion(`${root}/${callers.slice(0, i + 1).join("/")}`));
     const chain: Array<string[] | null | undefined> = calls.map(keysOf);
-    const own = expansionIn(bodyOf(entity), scopeOf(scopeOfKey(key)));
+    const own = expansionIn(bodyOf(entity), scopeOf(scopeOfKey(key)), evaluateIn(scopeOfKey(key)));
     const ownKeys = keysOf(own);
     const ownRollup = own !== null && "rollup" in own ? own.rollup : undefined;
     const expandedChain = chain.some((k) => k !== null);
@@ -419,4 +456,48 @@ export async function resolveInstanceNodes(
     }
     entities.set(key, { ...rest, instances } as TerraformEntity);
   }
+
+  // Each resource block's expressions, per instance when it has instance
+  // nodes (#5117), for the reference catalog.
+  for (const [key] of own) {
+    const entity = entities.get(key) as TerraformEntity | undefined;
+    if (!entity || entity.entityType !== RESOURCE_TYPE) continue;
+    const evaluated = evaluateBlock(evaluator, entity, key);
+    if (evaluated) entities.set(key, { ...entity, props: { ...entity.props, evaluated } } as TerraformEntity);
+  }
+}
+
+const hasAny = (e: EvaluatedArguments): boolean => e.arguments !== undefined || e.stopped !== undefined;
+
+/**
+ * A resource block's evaluated arguments (#5117): one entry per instance node
+ * the graph will list, keyed by the instance address, or the block's own when
+ * it has none. Undefined when nothing in it holds an expression and it has no
+ * instance nodes.
+ */
+function evaluateBlock(evaluator: RootEvaluator, entity: TerraformEntity, key: string): TerraformEvaluated | undefined {
+  const body = bodyOf(entity);
+  const scope = scopeOfKey(key);
+  const address = entity.props.address;
+  const callers = callersOfKey(key);
+  const listed = (entity as { instances?: readonly ListedInstance[] }).instances;
+  const keys = entity.instanceKeys;
+  if ((listed && listed.length > 0) || (keys && keys.length > 0)) {
+    const entries: Array<{ scope?: string; key?: string }> = listed && listed.length > 0 ? [...listed] : keys!.map((k) => ({ key: k }));
+    const instances: Record<string, EvaluatedArguments> = {};
+    for (const inst of entries) {
+      const place = inst.scope !== undefined ? evaluator.placeOfInstanceScope(inst.scope) : evaluator.placeOfScope(scope);
+      if (!place) continue;
+      const k = inst.key !== undefined ? instanceKeyValue(inst.key) : undefined;
+      const iteration = k !== undefined ? evaluator.iterationOf(body, { place }, k) : evaluator.blockIteration(body, place);
+      const path = inst.scope ?? callers.join(".");
+      instances[`${path ? `${path}.` : ""}${address}${inst.key ?? ""}`] = evaluateArguments(body, (raw) => evaluator.value(raw, { place, ...(iteration ? { iteration } : {}) }));
+    }
+    return { instances };
+  }
+  const place = evaluator.placeOfScope(scope);
+  if (!place) return undefined;
+  const iteration = evaluator.blockIteration(body, place);
+  const out = evaluateArguments(body, (raw) => evaluator.value(raw, { place, ...(iteration ? { iteration } : {}) }));
+  return hasAny(out) ? out : undefined;
 }

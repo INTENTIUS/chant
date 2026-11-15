@@ -714,6 +714,12 @@
         "fields": {
           "$ref": "#/$defs/memberFields"
         },
+        "runsOn": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[^/\\s]+/\\S+$",
+          "description": "The cluster resource this member runs on, as `<member>/<address>`: the member that holds it and its address (`infra/google_container_cluster.prod`), or its node id in the graph. chant workspace graph draws a declared edge from each Argo CD cluster Secret this member holds to that node, for a repo where the Secret's name is not the cluster's (#5101). A node it names that the graph does not hold, or more than one, is a warning and draws no edge. Added in schema 1 by chant 0.124.98, so a declaration that uses it sets minReader to 0.124.98 or newer."
+        },
         "links": {
           "type": "array",
           "description": "Member links (#2524 D6, #2539): the outputs of other members this member reads. A link is stated once, here on the consumer, and matched exactly against the producer's outputs. chant workspace check resolves it in source.",

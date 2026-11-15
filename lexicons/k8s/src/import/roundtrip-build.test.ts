@@ -44,6 +44,35 @@ describe("k8s import round trip", () => {
     expect(await roundTrip(yaml)).toEqual(loadAll(yaml));
   });
 
+  test("RBAC objects named with a colon import to valid identifiers and keep their names", async () => {
+    const yaml = [
+      "apiVersion: rbac.authorization.k8s.io/v1",
+      "kind: ClusterRole",
+      "metadata:",
+      "  name: system:metrics-server",
+      "rules:",
+      "- apiGroups: ['']",
+      "  resources: [nodes]",
+      "  verbs: [get]",
+      "---",
+      "apiVersion: rbac.authorization.k8s.io/v1",
+      "kind: ClusterRoleBinding",
+      "metadata:",
+      "  name: system:metrics-server",
+      "roleRef:",
+      "  apiGroup: rbac.authorization.k8s.io",
+      "  kind: ClusterRole",
+      "  name: system:metrics-server",
+      "subjects:",
+      "- kind: ServiceAccount",
+      "  name: metrics-server",
+      "  namespace: kube-system",
+    ].join("\n");
+    // The serializer orders the documents; the names are what this checks.
+    const byKind = (docs: unknown[]) => [...(docs as { kind: string }[])].sort((a, b) => a.kind.localeCompare(b.kind));
+    expect(byKind(await roundTrip(yaml))).toEqual(byKind(loadAll(yaml) as unknown[]));
+  });
+
   test("an autoscaling/v1 HorizontalPodAutoscaler keeps its apiVersion", async () => {
     const yaml = [
       "apiVersion: autoscaling/v1",
