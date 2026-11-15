@@ -132,6 +132,49 @@ describe("WK8005: Hardcoded secrets in env", () => {
     const diags = wk8005.check(ctx);
     expect(diags.length).toBe(0);
   });
+
+  function envCtx(name: string, value: string) {
+    return makeCtx(JSON.stringify({
+      apiVersion: "apps/v1",
+      kind: "Deployment",
+      metadata: { name: "app" },
+      spec: { template: { spec: { containers: [{ name: "app", image: "app:1.0", env: [{ name, value }] }] } } },
+    }));
+  }
+
+  test.each([
+    ["AWS_WEB_IDENTITY_TOKEN_FILE", "/var/run/secrets/aws-iam-token/serviceaccount/token"],
+    ["AZURE_FEDERATED_TOKEN_FILE", "/var/run/secrets/azure-token/serviceaccount/token"],
+    ["TLS_KEY_PATH", "/etc/tls/tls.key"],
+    ["DB_PASSWORD_FILE", "./secrets/db-password"],
+    ["SECRET_DIR", "/etc/secrets"],
+  ])("passes when %s points at a path", (name, value) => {
+    expect(wk8005.check(envCtx(name, value)).length).toBe(0);
+  });
+
+  test.each([
+    ["LOG_MESSAGE_KEY", "msg"],
+    ["PARTITION_KEY", "tenant"],
+    ["SORT_KEY", "created"],
+    ["sortKey", "created"],
+  ])("passes when %s is a field name", (name, value) => {
+    expect(wk8005.check(envCtx(name, value)).length).toBe(0);
+  });
+
+  test.each([
+    ["API_KEY", "abc123"],
+    ["KEY", "abc123"],
+    ["STRIPE_KEY", "sk_live_abc"],
+    ["PRIVATE_KEY", "abc"],
+    ["APIKEY", "abc"],
+    ["DB_PASSWORD", "/hunter2/abc"],
+    ["AUTH_TOKEN_FILE", "ghp_abcdefghijklmnop0123456789"],
+    ["API_TOKEN_PATH", "abc/def+ghi=="],
+    ["SECRET_PARTITION_KEY", "abc123"],
+    ["LOG_MESSAGE_KEY_SECRET", "abc123"],
+  ])("still flags %s", (name, value) => {
+    expect(wk8005.check(envCtx(name, value)).length).toBe(1);
+  });
 });
 
 // ── WK8006: Latest tag ──────────────────────────────────────────────
