@@ -84,6 +84,26 @@ For `helm.charts`, `src/generated/helm/index.ts` holds a values type and a rende
 chart, named after the chart's key in the config. The factory accepts the same props as `HelmRender`
 apart from the repository, chart name and version, which come from the config.
 
+With a `values.schema.json` the values type comes from the schema. Without one it is inferred from
+`values.yaml`, with every member optional, and an object takes the keys `values.yaml` lists and no
+others. The inference is wider where a valid values file would otherwise be rejected.
+
+Maps that Kubernetes lets take any key are open: `nodeSelector`, keys ending in `Labels` or
+`Annotations`, and `limits` and `requests`. A `resources` block takes both `limits` and `requests`.
+Quantities (`cpu`, `memory`, `storage`, or a string such as `100m`) take a number or a string.
+Settings a chart embeds as a file (`grafana.ini`, `meshConfig`) take any key, and so do Kubernetes
+objects a default fills in only in part, such as `strategy` and the elements of `tolerations`.
+
+A key that `values.yaml` lists only in a comment (`# storageClass: ""`) is an optional member of
+type `unknown` in the object the comment sits in. The values of the subcharts a chart bundles under
+`charts/`, as directories or `.tgz` archives, are merged in under the dependency's name or `alias`.
+A dependency that is not bundled is an open map, and `global` is open when the chart has any
+dependency.
+
+Istio's charts nest their defaults under `_internal_defaults_do_not_set`, and that key's members are
+read as top-level values. For another chart that does the same, set `valuesRoot` on its
+`helm.charts` entry to the key's name, as a dotted path.
+
 Every lexicon directory also gets `chant-codegen.json`. It records a digest of the declared sources
 and the list of files the last run wrote. A later run deletes files that this list names and the new
 run no longer writes. Files you add to the directory yourself are never touched, though keeping
