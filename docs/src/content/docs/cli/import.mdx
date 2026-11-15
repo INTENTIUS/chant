@@ -8,6 +8,7 @@ diataxis: reference
 
 ```
 chant import <template-file> [flags]
+chant import <directory> [flags]
 chant import --from <env> [flags]
 chant import --kustomize <dir> [flags]
 chant import --agents [flags]
@@ -41,6 +42,14 @@ Detection asks the project's lexicons first. These come from `chant.config.ts` o
 The output names the lexicon: `Detected lexicon: <name>` when detection chose it, `Lexicon: <name>` when you named it with `--lexicon` (or `--kustomize`, which implies `k8s`).
 
 Pass `--lexicon <name>` to skip detection, for example when no lexicon recognizes the template. The raw file content then goes to that lexicon's parser, which decides what it accepts. Without `--lexicon`, a file that is neither JSON nor YAML fails with `Template is neither valid JSON nor YAML.`
+
+## Importing a directory
+
+`chant import <directory>` reads every `.yaml` and `.yml` file under the directory into one project, so the checks that look across objects see all of them. A RoleBinding that names a Role in another file, a workload that consumes a Secret another file declares, and a Flux Kustomization that names a GitRepository in a sibling file all resolve, where one project per file reports each as missing. Each input file becomes one module at the same relative path with a `.ts` extension (`rbac/binding.yaml` is written to `rbac/binding.ts`), and a `// Source:` comment at its top names the file. Two files that would share a module path (`a.yaml` and `a.yml`) get a numeric suffix.
+
+The lexicon is named with `--lexicon` or detected from the directory's documents, as for a file. A file the lexicon does not read as a template is skipped with a warning that names it, and the other files are imported. The lexicon can also drop files by rule through `importFiles()`. For k8s a chart template is skipped, and a `kustomization.yaml` is not an object and is skipped too. In a directory that has a kustomization, only the files it lists in `resources` are read, and a warning names the rest (patches and values files). A kustomization applies patches, generators and transformers, which an import of its files cannot do. `chant import --kustomize <dir>` imports the rendered result instead.
+
+Declared names stay unique across the files: a second object that would take a name already used gets its namespace added to it, then a number. Content another lexicon owns is written once for the whole directory, in directories named after the resource, so two Alertmanager configs stay two. `--report`, `--strict`, `--validate` and `--parser-option` apply to the directory as a whole.
 
 ## Parser options
 

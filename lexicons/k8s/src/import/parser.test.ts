@@ -294,4 +294,20 @@ labels:
       expect(ir.warnings?.[1]).toContain('"labels"');
     });
   });
+
+  describe("identifiers (#5115)", () => {
+    const cm = (name: string, ns?: string) => `apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: ${JSON.stringify(name)}\n${ns ? `  namespace: ${ns}\n` : ""}`;
+
+    test("names that collapse to one identifier, and one name in two namespaces, get distinct ones", () => {
+      const ir = parser.parse([cm("a:b"), cm("a-b"), cm("a-b", "prod"), cm("a-b", "prod")].join("---\n"));
+      expect(ir.resources.map((r) => r.logicalId)).toEqual(["configMapAB", "configMapAB2", "configMapABProd", "configMapABProd2"]);
+    });
+
+    test("identifiers already taken by another file are avoided, and the ones used are added", () => {
+      const identifiers = new Set(["configMapAB"]);
+      const ir = parser.parse(cm("a-b"), { identifiers });
+      expect(ir.resources[0].logicalId).toBe("configMapAB2");
+      expect([...identifiers].sort()).toEqual(["configMapAB", "configMapAB2"]);
+    });
+  });
 });

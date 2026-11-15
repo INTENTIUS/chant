@@ -42,6 +42,7 @@ import {
   type KustomizeRunner,
 } from "./kustomize/render";
 import { addRenderedEntity, renderedManifestEntity } from "./kustomize/rendered-entity";
+import { hasMappingKey, KUSTOMIZATION_FILES } from "./manifest-files";
 import { clusterSecretView, isClusterSecretDocument } from "./cluster-secret";
 import { kustomizationDocument, readHelmReferences } from "./helm-references";
 
@@ -88,13 +89,6 @@ function objectDocuments(text: string): Array<Record<string, unknown>> {
   return out;
 }
 
-/** Whether a mapping anywhere in `value` has a mapping for a key, which js-yaml spells "[object Object]". */
-function hasMappingKey(value: unknown): boolean {
-  if (Array.isArray(value)) return value.some(hasMappingKey);
-  if (value === null || typeof value !== "object") return false;
-  return Object.entries(value).some(([k, v]) => k === "[object Object]" || hasMappingKey(v));
-}
-
 /** The documents of a manifest member's YAML files directly in `dir`, in file-name order, and a warning for each file that does not parse. */
 function manifestDocuments(dir: string, kind: Exclude<K8sMemberKind, "kustomize">, label: string): { docs: Array<Record<string, unknown>>; warnings: string[] } {
   const files = readdirSync(dir).filter((f) => /\.ya?ml$/.test(f)).sort();
@@ -133,7 +127,6 @@ function manifestDocuments(dir: string, kind: Exclude<K8sMemberKind, "kustomize"
 }
 
 const SCAN_SKIP = new Set(["node_modules", ".git"]);
-const KUSTOMIZATION_FILES = ["kustomization.yaml", "kustomization.yml", "Kustomization"];
 
 /** Directories each kustomization under `root` lists in `resources` (or `bases`), absolute, mapped to the kustomization's directory. One scan per root per process. */
 const listedCache = new Map<string, Map<string, string>>();

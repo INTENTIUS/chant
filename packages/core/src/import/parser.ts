@@ -104,6 +104,13 @@ export interface ParseContext {
    * embedded content as written.
    */
   readonly embedded?: EmbeddedContentResolver;
+  /**
+   * Identifiers already taken by the other files of one `chant import
+   * <directory>` (#5115). A parser whose identifiers must be unique across
+   * the project adds each one it uses and avoids those present. Absent for a
+   * single file, where the parser keeps a set of its own.
+   */
+  readonly identifiers?: Set<string>;
 }
 
 /** A value a parser option takes. */
