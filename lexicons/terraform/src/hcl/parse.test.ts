@@ -186,6 +186,24 @@ describe("configuration files beyond `.tf` (chant#4457)", () => {
   });
 });
 
+describe("blocksToEntities: aliased providers (#5106)", () => {
+  const provider = (alias: string) => `provider "ibm" {\n  alias = "${alias}"\n  region = "${alias}"\n}\n`;
+
+  test("an aliased provider is keyed by its alias, so a block added before it does not renumber it", async () => {
+    const files = (sources: string[]) => sources.map((source, i) => ({ name: `f${i}.tf`, source }));
+    const before = await blocksToEntities(files([provider("eu"), provider("us")]), "app");
+    const after = await blocksToEntities(files([provider("ap"), provider("eu"), provider("us")]), "app");
+    expect([...before.keys()].sort()).toEqual(["app/provider.ibm~eu", "app/provider.ibm~us"]);
+    expect([...after.keys()].sort()).toEqual(["app/provider.ibm~ap", "app/provider.ibm~eu", "app/provider.ibm~us"]);
+    expect((after.get("app/provider.ibm~eu") as TerraformEntity).props.address).toBe("provider.ibm");
+  });
+
+  test("an unaliased provider keeps the plain key", async () => {
+    const entities = await blocksToEntities([{ name: "main.tf", source: `provider "ibm" {}\n${provider("eu")}` }], "app");
+    expect([...entities.keys()].sort()).toEqual(["app/provider.ibm", "app/provider.ibm~eu"]);
+  });
+});
+
 describe("jsonConfigTree: Terraform's JSON syntax in hcl2json's shape (chant#4457)", () => {
   test("wraps each block body in an array, one object level per label", () => {
     const tree = jsonConfigTree(

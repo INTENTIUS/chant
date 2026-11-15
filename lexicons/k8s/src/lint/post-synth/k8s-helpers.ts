@@ -124,6 +124,9 @@ export function extractPodSpec(
   }
 }
 
+/** Where each container extracted by {@link extractContainers} sits in its pod spec, e.g. `containers[1]`. */
+const containerPaths = new WeakMap<object, string>();
+
 /**
  * Extract all containers (including init containers) from a workload manifest.
  */
@@ -133,23 +136,28 @@ export function extractContainers(manifest: K8sManifest): K8sContainer[] {
 
   const containers: K8sContainer[] = [];
 
-  if (Array.isArray(podSpec.containers)) {
-    for (const c of podSpec.containers) {
+  for (const field of ["containers", "initContainers"] as const) {
+    const list = podSpec[field];
+    if (!Array.isArray(list)) continue;
+    list.forEach((c, i) => {
       if (typeof c === "object" && c !== null) {
+        containerPaths.set(c, `${field}[${i}]`);
         containers.push(c as K8sContainer);
       }
-    }
-  }
-
-  if (Array.isArray(podSpec.initContainers)) {
-    for (const c of podSpec.initContainers) {
-      if (typeof c === "object" && c !== null) {
-        containers.push(c as K8sContainer);
-      }
-    }
+    });
   }
 
   return containers;
+}
+
+/**
+ * The place of a container in its workload, `<kind>/<field>[<index>]`, for a
+ * diagnostic's `locator`. It names the position, not the container, so a
+ * finding keeps its audit identity when the container is renamed. Pass a
+ * container that {@link extractContainers} returned.
+ */
+export function containerLocator(manifest: K8sManifest, container: K8sContainer): string {
+  return `${manifest.kind ?? ""}/${containerPaths.get(container) ?? "containers"}`;
 }
 
 /**

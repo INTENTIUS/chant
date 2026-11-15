@@ -7,7 +7,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { docsToManifests, extractContainers, WORKLOAD_KINDS } from "./k8s-helpers";
+import { docsToManifests, extractContainers, containerLocator, WORKLOAD_KINDS } from "./k8s-helpers";
 
 const SENSITIVE_NAME_PATTERN = /password|token|key|secret/i;
 
@@ -42,6 +42,7 @@ export const wk8005: PostSynthCheck = {
               severity: "error",
               message: `Container "${container.name ?? "(unnamed)"}" in ${manifest.kind} "${resourceName}" has hardcoded value for sensitive env var "${envVar.name}" — use secretKeyRef instead`,
               entity: resourceName,
+              locator: containerLocator(manifest, container),
               lexicon: "k8s",
             });
           }

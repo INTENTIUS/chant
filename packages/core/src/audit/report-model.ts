@@ -8,6 +8,7 @@
 import type { AuditFinding } from "./core";
 import type { UnclaimedFile } from "./discover";
 import { RULE_CATALOG, ruleDocUrl, type Authority, type Category, type FixKind, type Lineage, type RuleMeta, type Tier } from "./catalog";
+import { findingIdentities } from "./identity";
 import { proveFix, unifiedDiff, type ProveOptions } from "./proof";
 import type { Severity } from "../lint/rule";
 
@@ -30,6 +31,8 @@ const SUPERSEDED_BY: Record<string, string[]> = {
 
 export interface EnrichedFinding extends AuditFinding {
   meta: RuleMeta;
+  /** Stable across runs while the defect is the same; see `identity.ts` (#5106). */
+  identity: string;
 }
 
 /** A per-file quick-win: a combined patch plus any findings still needing input. */
@@ -98,6 +101,12 @@ export interface SerializedFinding {
   line?: number;
   /** Redaction-safe fingerprint of a flagged value, when applicable (see `secrets.ts`). */
   fingerprint?: string;
+  /**
+   * Names the finding across runs (#5106): the same value while the rule, file,
+   * object and place in the object stay the same, whatever the message says
+   * and wherever the finding sits among others. See `identity.ts`.
+   */
+  identity: string;
   /** Set when the finding is an absence rather than a defect — see `PostSynthDiagnostic.missing` (chant #2113). */
   missing?: { kind: string; scope: string };
   lexicon: string;
@@ -252,7 +261,8 @@ export interface BuildModelOptions {
 /** Build the structured report model from raw findings. */
 export function buildReportModel(findings: AuditFinding[], opts: BuildModelOptions = {}): ReportModel {
   const catalog = opts.catalog ?? RULE_CATALOG;
-  const enriched: EnrichedFinding[] = findings.map((f) => ({ ...f, meta: metaFor(f.checkId, catalog) }));
+  const identities = findingIdentities(findings);
+  const enriched: EnrichedFinding[] = findings.map((f, i) => ({ ...f, identity: identities[i], meta: metaFor(f.checkId, catalog) }));
   const contents = new Map((opts.files ?? []).map((f) => [f.path, f.content]));
 
   const mergeWorthy = enriched.filter((f) => f.meta.tier === "merge-worthy");
@@ -328,6 +338,7 @@ export function buildReportJson(
       entity: f.entity,
       line: f.line,
       fingerprint: f.fingerprint,
+      identity: f.identity,
       missing: f.missing,
       lexicon: f.lexicon,
       tier: f.meta.tier,

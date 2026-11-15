@@ -10,6 +10,7 @@ import { dirname, join, resolve } from "path";
 import { auditFiles, type AuditInput, type AuditFinding, type ChecksProvider, type SuppressionStats } from "../../audit/core";
 import { AUDIT_LEXICONS, classifyFiles, loadAuditPlugins, unclaimedFiles, walkCandidates, type CandidateWalk, type DetectPlugin, type RepoFile, type UnclaimedFile } from "../../audit/discover";
 import { RULE_CATALOG, resolveAuditCatalog, type RuleMeta } from "../../audit/catalog";
+import { findingIdentities, IDENTITY_FINGERPRINT_KEY } from "../../audit/identity";
 import { scanForSecrets, parseSecretsConfig, type SecretsScanOptions } from "../../audit/secrets";
 import { auditWranglerConfigs } from "../../audit/wrangler";
 import { auditNginxConfigs } from "../../audit/nginx";
@@ -398,13 +399,15 @@ function renderSarif(findings: AuditFinding[], catalog: Record<string, RuleMeta>
         : {}),
     };
   });
-  const results = findings.map((f) => {
+  const identities = findingIdentities(findings);
+  const results = findings.map((f, i) => {
     const tier = catalog[f.checkId]?.tier;
     const properties = { ...(tier ? { tier } : {}), ...(f.missing ? { missing: f.missing } : {}) };
     return {
       ruleId: f.checkId,
       level: sarifLevel(f.severity),
       message: { text: f.message },
+      partialFingerprints: { [IDENTITY_FINGERPRINT_KEY]: identities[i] },
       locations: [
         {
           physicalLocation: {

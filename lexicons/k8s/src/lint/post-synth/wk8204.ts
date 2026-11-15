@@ -11,7 +11,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { docsToManifests, extractContainers, extractPodSpec, WORKLOAD_KINDS } from "./k8s-helpers";
+import { docsToManifests, extractContainers, containerLocator, extractPodSpec, WORKLOAD_KINDS } from "./k8s-helpers";
 
 export const wk8204: PostSynthCheck = {
   id: "WK8204",
@@ -46,6 +46,7 @@ export const wk8204: PostSynthCheck = {
             severity: "warning",
             message: `Container "${container.name ?? "(unnamed)"}" in ${manifest.kind} "${resourceName}" does not set runAsNonRoot: true — set it at container or pod level`,
             entity: resourceName,
+            locator: containerLocator(manifest, container),
             lexicon: "k8s",
           });
           continue;
@@ -61,6 +62,7 @@ export const wk8204: PostSynthCheck = {
             severity: "warning",
             message: `Container "${container.name ?? "(unnamed)"}" in ${manifest.kind} "${resourceName}" has runAsNonRoot: true but runAsUser: 0 — these settings are contradictory and the container will fail to start`,
             entity: resourceName,
+            locator: containerLocator(manifest, container),
             lexicon: "k8s",
           });
         } else if (effectiveRunAsUser === undefined || effectiveRunAsUser === null) {
@@ -70,6 +72,7 @@ export const wk8204: PostSynthCheck = {
             severity: "warning",
             message: `Container "${container.name ?? "(unnamed)"}" in ${manifest.kind} "${resourceName}" has runAsNonRoot: true but no explicit runAsUser — set a numeric UID to ensure the container doesn't run as root`,
             entity: resourceName,
+            locator: containerLocator(manifest, container),
             lexicon: "k8s",
           });
         }
