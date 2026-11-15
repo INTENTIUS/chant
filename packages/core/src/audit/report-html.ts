@@ -8,7 +8,7 @@
  * via `template`, plus theme knobs (title, logo, accent, footer).
  */
 
-import type { AuditFinding } from "./core";
+import type { AuditFinding, AuditSkip } from "./core";
 import { ruleDocUrl, type RuleMeta, lineageLabel } from "./catalog";
 import { buildReportModel, buildReportJson, type AuditSnapshot, type BuildModelOptions, type EnrichedFinding, type GuidanceCluster, type QuickWinFile, type ReportCounts } from "./report-model";
 
@@ -33,6 +33,8 @@ export interface RenderHtmlOptions extends BuildModelOptions {
   notes?: string[];
   /** A truncated local walk (#2528), carried into the embedded JSON report. */
   truncated?: { limit: number; flag: string };
+  /** Lexicons skipped for want of a parser (#5083), carried into the embedded JSON report. */
+  skipped?: AuditSkip[];
 }
 
 const DEFAULT_ACCENT = "#7c3aed";
@@ -196,7 +198,7 @@ export function renderHtml(findings: AuditFinding[], opts: RenderHtmlOptions = {
 
   // Machine-readable data embedded so the HTML report is also parseable.
   // `<` escaped so the JSON can't break out of the <script> element.
-  const dataJson = JSON.stringify(buildReportJson(findings, { snapshot: opts.snapshot, truncated: opts.truncated }), null, 0).replace(/</g, "\\u003c");
+  const dataJson = JSON.stringify(buildReportJson(findings, { snapshot: opts.snapshot, truncated: opts.truncated, skipped: opts.skipped }), null, 0).replace(/</g, "\\u003c");
   const dataScript = `<script type="application/json" id="chant-audit-report">${dataJson}</script>`;
 
   let body: string;
