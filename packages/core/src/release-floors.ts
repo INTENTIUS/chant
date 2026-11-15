@@ -255,6 +255,9 @@ export const WAVES_BEFORE_MERGE_LOCKS_FLOOR = "0.124.95";
 /** The first chant whose kinds file takes `drift: { reader, config }` beside `graph` and whose `chant workspace drift --member` reads a member of such a kind with that module, `(input: { dir, config, member, observedAt, read?, resource?, stack? }) => DriftReaderOutput` from `@intentius/chant/workspace/drift-reader`, checked against `drift-reader.schema.json` (#5068). */
 export const KIND_DRIFT_READER_FLOOR = "0.124.96";
 
+/** The first chant whose `chant workspace graph` runs each lexicon's reference catalog over the composed declared graph, across members, on full attributes at every `--detail` (#5097): derived edges in `edges` with `origin: "derived"`, `rule` and `relation`, references to no node in `dangling` with their `rule` and `targetKind`, references to several nodes in `ambiguous` with every candidate, and `catalog` naming the lexicons and members read, each rule named, and per node the arguments not read because not literal; a catalog path takes a quoted key, `metadata.annotations["iam.gke.io/gcp-service-account"]`; and a catalog takes `scopes` and `declaredNode`. */
+export const WORKSPACE_GRAPH_CATALOG_FLOOR = NEXT_RELEASE;
+
 /** The first chant whose `chant run resume` (`resumeGateRun`) on GitLab retries a wave job's `<wave job>-evidence` with the wave job when the evidence job already ran, and whose `ci evidence sign --from-job` waits for a job it reads to finish, so a resumed wave's evidence job signs from the new try (#4978). */
 export const GITLAB_WAVE_EVIDENCE_RETRY_FLOOR = "0.124.89";
 

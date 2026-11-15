@@ -14,7 +14,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { IRNode } from "@intentius/chant/graph-ir";
 import { reconstructIndexedEdges, refRuleId } from "@intentius/chant/graph-refs";
-import { TERRAFORM_REFERENCE_CATALOG } from "./reference-catalog";
+import { literalArguments, TERRAFORM_REFERENCE_CATALOG, terraformDeclaredNode } from "./reference-catalog";
+import { runCatalogPass } from "@intentius/chant/workspace/catalog-edges";
 import { terraformPlugin } from "../plugin";
 
 const LEXICON = "terraform";
@@ -61,5 +62,48 @@ describe("terraform reference catalog on the plugin", () => {
       expect(out.ambiguous).toEqual([]);
       expect(out.dangling).toEqual([]);
     });
+  });
+});
+
+describe("a declared block, as chant workspace graph's catalog pass reads it (#5097)", () => {
+  const block = (member: string, address: string, body: Record<string, unknown>) => ({
+    id: `${member}/r/${address}`,
+    kind: "Terraform::Resource",
+    lexicon: LEXICON,
+    member,
+    attrs: { address, type: address.split(".")[0], name: address.split(".")[1], body, source: "..." },
+  });
+
+  it("has the provider type as its kind and its literal arguments as attrs, counting the rest", () => {
+    const view = terraformDeclaredNode(block("net", "aws_subnet.a", {
+      vpc_id: "vpc-1",
+      cidr_block: "${var.cidr}",
+      tags: { Name: "a", Env: "${var.env}" },
+      ids: ["sg-1", "${aws_security_group.x.id}"],
+      ebs_block_device: [{ volume_size: 8, kms_key_id: "${aws_kms_key.k.arn}" }],
+    }));
+    expect(view).toEqual({
+      kind: "aws_subnet",
+      attrs: { vpc_id: "vpc-1", tags: { Name: "a" }, ids: ["sg-1"], ebs_block_device: [{ volume_size: 8 }] },
+      nonLiteral: 4,
+    });
+    expect(literalArguments({}).nonLiteral).toBe(0);
+    expect(terraformDeclaredNode({ id: "x", kind: "Terraform::Variable", lexicon: LEXICON, attrs: {} })).toBeUndefined();
+  });
+
+  it("reads a literal argument with the provider type's rules across members, and counts what it could not read", () => {
+    const rule = refRuleId(LEXICON, "aws_subnet", "vpc_id");
+    const out = runCatalogPass(
+      [
+        // The catalog has no identity rules yet, so a node is named by its id here.
+        block("net", "aws_subnet.a", { vpc_id: "core/r/aws_vpc.main", cidr_block: "${var.cidr}" }),
+        block("net", "aws_subnet.b", { vpc_id: "vpc-0abc" }),
+        block("core", "aws_vpc.main", {}),
+      ],
+      [{ lexicon: LEXICON, catalog: TERRAFORM_REFERENCE_CATALOG }],
+    );
+    expect(out.edges).toEqual([expect.objectContaining({ from: "net/r/aws_subnet.a", to: "core/r/aws_vpc.main", rule, relation: "containment", member: "net" })]);
+    expect(out.dangling).toEqual([expect.objectContaining({ from: "net/r/aws_subnet.b", rule, value: "vpc-0abc", targetKind: "aws_vpc" })]);
+    expect(out.nonLiteral).toEqual({ "net/r/aws_subnet.a": 1 });
   });
 });

@@ -20,7 +20,7 @@ chant workspace graph [dir] --intent --record <id> [--at <rev>] [--kind <kind fi
 
 A member of a kind from a pinned package is read too when the package's kinds file says how, in the kind's [`graph` block](/chant/reference/workspace-kinds/#reading-a-member-in-the-graph) ([#2874](https://github.com/INTENTIUS/chant/issues/2874)). The `terraform` and `choudoufu` kinds of the terraform lexicon have one. chant writes a reader project for each such member in a temporary directory outside the workspace, with a `chant.config.json` that declares the lexicon, and runs the member's `chant graph` there under the member's toolchain. The reader project sets [`graph.lint: "report"`](/chant/cli/graph/), so a member whose HCL fails one of the lexicon's error rules (a database with `storage_encrypted = false`, say) is still composed, and the findings are on the member's `meta.lint` ([behold#919](https://github.com/INTENTIUS/behold/issues/919)). Under a member toolchain older than 0.124.46 the key is ignored and such a member fails with `command-failed`, as before. `--env` isn't passed to it, since the reader project declares no environments. The project is removed when the read ends. A member of a package kind without a `graph` block is listed with `kind-not-run`, and `build`, `lint` and `audit` skip every package kind. A kind that neither a built-in nor a loaded pin supplies fails the member with `unknown-kind`. That happens to `terraform` when the pinned lexicon isn't installed, or another version is. The message names the pin's problem ([#4380](https://github.com/INTENTIUS/chant/issues/4380)). Before, such a member was listed with `kind-not-run`.
 
-Each member reads its graph at the `--detail` tier given, `2` when none is ([#4228](https://github.com/INTENTIUS/chant/issues/4228)). At `--detail 1` a member's composites arrive collapsed, as [`chant graph`](/chant/cli/graph/) collapses them, and a member's cached read at one tier is never served for another, since the tier is part of the member's command line.
+Each member reads its graph at the `--detail` tier given, `2` when none is ([#4228](https://github.com/INTENTIUS/chant/issues/4228)). At `--detail 1` a member's composites arrive collapsed, as [`chant graph`](/chant/cli/graph/) collapses them, and a member's cached read at one tier is never served for another, since the tier is part of the member's command line. The [reference catalog](#derived-edges) reads every member at `--detail 3` as well, so at any other tier each member runs twice.
 
 The document is part of the workspace [read contract](/chant/reference/workspace-read-contract/), with its own schema and reason codes.
 
@@ -32,9 +32,51 @@ Every node id becomes `<member>/<id>`. Member names can't contain `/`, and `::` 
 
 `groups.byMember` maps each member to its node ids. A lexicon or a composite type means the same thing in every member, so `byLexicon` and `byComposite` keep their keys and merge the ids across members. The keys of `byStack`, `byContainer`, `byWave` and `byPipeline` name things inside one member, and they are prefixed with the member too.
 
-CI members keep what [`chant graph`](/chant/cli/graph/) reports for them ([#3910](https://github.com/INTENTIUS/chant/issues/3910), [#3922](https://github.com/INTENTIUS/chant/issues/3922)). An edge keeps its `kind` (`ref`, `needs`, `calls`, `triggers`, `includes` or `extends`) and its `crossPipeline` flag. `groups.byPipeline` maps each workflow or pipeline, as `<member>/<name>`, to the prefixed ids of the nodes it runs. A member's references that name no node of its graph, such as a `needs:` on a job no workflow declares or a `uses:` of another repository's workflow, go on the top-level `dangling` list. Each entry is the member's own `{ from, kind, path, value, crossPipeline? }` with `from` prefixed and a `member` field, sorted by `from`, `path` and `value`. The list is absent when no member has one. Edges between members are still drawn only through [links](#links).
+CI members keep what [`chant graph`](/chant/cli/graph/) reports for them ([#3910](https://github.com/INTENTIUS/chant/issues/3910), [#3922](https://github.com/INTENTIUS/chant/issues/3922)). An edge keeps its `kind` (`ref`, `needs`, `calls`, `triggers`, `includes` or `extends`) and its `crossPipeline` flag. `groups.byPipeline` maps each workflow or pipeline, as `<member>/<name>`, to the prefixed ids of the nodes it runs. A member's references that name no node of its graph, such as a `needs:` on a job no workflow declares or a `uses:` of another repository's workflow, go on the top-level `dangling` list. Each entry is the member's own `{ from, kind, path, value, crossPipeline? }` with `from` prefixed and a `member` field, sorted by `from`, `path` and `value`. The list is absent when no member has one. Edges between members are drawn through [links](#links) and by the [reference catalog](#derived-edges).
 
 The `links` section holds the [member links](#links), followed by the [record links](#record-links) when `--kind` names a record kind. The `records` section lists the records of that kind, and it is empty without `--kind`.
+
+## Derived edges
+
+Each lexicon's reference catalog says how its resources name each other: a Deployment's `serviceAccountName` names a ServiceAccount, a subnet's `vpc_id` names a VPC. `chant workspace graph` runs the catalog of every lexicon in the graph over the composed nodes, so a reference joins nodes of two members ([#5097](https://github.com/INTENTIUS/chant/issues/5097)). It is the pass `chant graph --live` and cloud indexes run (`reconstructIndexedEdges`, [#4522](https://github.com/INTENTIUS/chant/issues/4522)), and every join is exact: a value is matched against the values that identify a node of the kind the rule names, never against a near name.
+
+The rules read nested attributes (`spec`, `metadata`, a terraform block's arguments), which only `--detail 3` prints, so the pass reads each member at `--detail 3` whatever tier the document is printed at. At `--detail 1` and `0` each edge, dangling holder and candidate moves to the node it is drawn as, its composite or its member's stack node, and an edge that falls inside one node is dropped. The pass does not run with `--live`, where each member's own chant runs its catalog on the account it read.
+
+What it finds goes in four places:
+
+| Field | What it holds |
+|---|---|
+| `edges[]` | An edge with `origin: "derived"`, the `rule` that drew it, `relation` (`reference` or `containment`), `grain: "property"` and `member`, the holder's member. A pair the declared graph already joins gets no second edge. |
+| `dangling[]` | A reference that names no node, as `{ from, kind: "ref", path, value, member, rule, targetKind? }`. A missing edge is never read as no relation. |
+| `ambiguous[]` | A reference that names more than one node, as `{ from, member, rule, path, value, candidates }`. No edge is drawn. Absent when there are none. |
+| `catalog` | `lexicons`, whose catalogs ran; `members`, whose nodes the pass read; `rules`, each rule the document names by id with its `lexicon`, `from`, `path`, `relation`, `targetKinds` and `label`; and `nonLiteral`, by node id, the arguments the pass could not read because their value is not literal. |
+
+A rule id is `<lexicon>:<holder kind>:<path>`, such as `k8s:K8s::Apps::Deployment:spec.template.spec.serviceAccountName`. One id can stand for several rules of one path, one per target kind, which is why `targetKinds` is a list.
+
+```json
+{
+  "edges": [
+    { "from": "app/web", "to": "rbac/runner", "kind": "ref", "viaAttr": "spec", "grain": "property",
+      "origin": "derived", "rule": "k8s:K8s::Apps::Deployment:spec.template.spec.serviceAccountName",
+      "relation": "reference", "member": "app" }
+  ],
+  "catalog": {
+    "lexicons": ["k8s", "terraform"],
+    "members": ["app", "infra", "rbac"],
+    "rules": {
+      "k8s:K8s::Apps::Deployment:spec.template.spec.serviceAccountName": {
+        "lexicon": "k8s", "from": "K8s::Apps::Deployment", "path": "spec.template.spec.serviceAccountName",
+        "relation": "reference", "targetKinds": ["K8s::Core::ServiceAccount"], "label": "runs as"
+      }
+    },
+    "nonLiteral": { "infra/infra/google_service_account.runner": 1 }
+  }
+}
+```
+
+Every node sits in one workspace scope, and a node of a kind its catalog scopes also sits in the scope it names. A Kubernetes object's names are unique inside its namespace, so a holder in a namespace matches the nodes of that namespace in any member, and every node with no namespace, such as a cluster-scoped object or a cloud resource. A namespaced object that names no namespace is matched only inside its own member, since chant cannot tell where it will be applied. One Namespace declared by two members makes every object in it ambiguous to its namespace rule, and draws no containment edge.
+
+A terraform block is read as its provider type with its literal arguments ([`declaredNode`](/chant/lexicon-authoring/observation-contract/#live-graph-edges-referencecatalog--enrichliveattrs)). An argument holding an interpolation is left out and counted in `nonLiteral`; one that names another block already draws its declared edge.
 
 ## Nested workspaces
 

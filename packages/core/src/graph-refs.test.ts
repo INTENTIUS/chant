@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { reconstructEdges, readPath, mergeCatalogs, containmentGroups, type ReferenceCatalog } from "./graph-refs";
+import { reconstructEdges, readPath, parsePath, mergeCatalogs, containmentGroups, type ReferenceCatalog } from "./graph-refs";
 import type { IRNode } from "./graph-ir";
 
 const node = (id: string, kind: string, attrs: Record<string, unknown>, physicalId?: string): IRNode => ({
@@ -11,6 +11,26 @@ const node = (id: string, kind: string, attrs: Record<string, unknown>, physical
 });
 
 describe("readPath", () => {
+  it("reads a quoted key that holds dots and a slash (#5097)", () => {
+    const sa = { metadata: { annotations: { "iam.gke.io/gcp-service-account": "x", iam: { "gke.io/gcp-service-account": "wrong" } } } };
+    expect(readPath(sa, 'metadata.annotations["iam.gke.io/gcp-service-account"]')).toEqual(["x"]);
+  });
+
+  it("fans a quoted key out over a list, and escapes a quote as JSON does", () => {
+    expect(readPath({ m: { "a.b": [{ id: "1" }, { id: "2" }] } }, 'm["a.b"][].id')).toEqual(["1", "2"]);
+    expect(readPath({ 'say "hi"': "y" }, '["say \\"hi\\""]')).toEqual(["y"]);
+  });
+
+  it("parses steps, and keeps a bracket that opens no quoted key as part of the key", () => {
+    expect(parsePath('a.b[]["c.d"].e')).toEqual([
+      { key: "a", fanOut: false },
+      { key: "b", fanOut: true },
+      { key: "c.d", fanOut: false },
+      { key: "e", fanOut: false },
+    ]);
+    expect(parsePath('a["open')).toEqual([{ key: 'a["open', fanOut: false }]);
+  });
+
   it("reads nested keys", () => {
     expect(readPath({ a: { b: "x" } }, "a.b")).toEqual(["x"]);
   });

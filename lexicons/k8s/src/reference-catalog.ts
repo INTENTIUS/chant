@@ -1,4 +1,4 @@
-import type { IdentityRule, ReferenceCatalog, RefRule } from "@intentius/chant/graph-refs";
+import type { IdentityRule, ReferenceCatalog, RefRule, ScopeRule } from "@intentius/chant/graph-refs";
 
 /**
  * Kubernetes reference catalog (#4535): how Kubernetes objects name each
@@ -17,9 +17,12 @@ import type { IdentityRule, ReferenceCatalog, RefRule } from "@intentius/chant/g
  * object's location is its namespace (behold#1025), so the scoped join key
  * (behold#1023's ruling) keeps a `serviceAccountName: default` inside its own
  * namespace, and a namespaced holder also reaches cluster-scoped objects (a
- * `Namespace`, a `ClusterRole`, a `StorageClass`). A declared graph is one
- * scope, so two `default` service accounts in two namespaces make that
- * reference ambiguous there, and it draws no edge.
+ * `Namespace`, a `ClusterRole`, a `StorageClass`). On a declared graph,
+ * `chant workspace graph`'s catalog pass (#5097) reads the namespace from
+ * `metadata.namespace` through `scopes`, so a name joins across members
+ * inside one namespace, and a namespaced object that names none stays inside
+ * its own member. Two objects that match one name in one namespace make the
+ * reference ambiguous, and it draws no edge.
  *
  * ## Multi-kind fields
  *
@@ -35,17 +38,31 @@ import type { IdentityRule, ReferenceCatalog, RefRule } from "@intentius/chant/g
  * env-value rules join such a value to an `AWS::S3::Bucket` of that name, and
  * are `optional`, since most env values name nothing. Over an index the
  * cluster and the AWS account are two scopes, so the join only draws on a
- * declared graph (one scope), which is where behold's matcher drew it.
+ * declared graph, where a cloud resource sits in the scope every namespace
+ * reaches, which is where behold's matcher drew it.
  *
  * ## What this does not do
  *
- * - Label selectors. A Service selects pods by labels, and the standard keys
- *   (`app.kubernetes.io/name`) contain dots, which `readPath` reads as path
- *   separators. Only the bare `app` label is matched: a Service's
- *   `spec.selector.app` to a workload whose pod template carries the same
- *   `app` label. behold's own k8s pass (src/k8s-edges.ts) still joins full
+ * - Label selectors. A Service selects pods by a set of labels, and a rule
+ *   matches one value at one path, so a selector on the standard keys
+ *   (`app.kubernetes.io/name`) is not read. Only the bare `app` label is
+ *   matched: a Service's `spec.selector.app` to a workload whose pod
+ *   template carries the same `app` label. behold's own k8s pass (src/k8s-edges.ts) still joins full
  *   selectors on behold's side.
- * - Annotations, for the same reason (`eks.amazonaws.com/role-arn`).
+ *
+ * Annotation keys are reachable since #5097, as a quoted step:
+ * `metadata.annotations["eks.amazonaws.com/role-arn"]`. Rules that read them
+ * come with the issues that need them.
+ *
+ * ## Adding a rule
+ *
+ * A rule is one entry in `refs`: the holder kind, the path, the target kind
+ * and a label, through `ref` (or `anyOf` for a field that can name several
+ * kinds). Its id is `k8s:<holder kind>:<path>`, which every edge, dangling
+ * entry and ambiguous entry it makes carries as `rule`. A target kind that
+ * other objects name by `metadata.name` goes in `NAMED_KINDS`, and a
+ * namespaced one in `NAMESPACED_KINDS` too. The test "each rule draws its
+ * edge" covers a new rule with no test of its own.
  */
 
 /** Workload kinds and the path to their pod spec. */
@@ -154,4 +171,7 @@ const refs: RefRule[] = [
   ref("K8s::Core::ServiceAccount", "imagePullSecrets[].name", "K8s::Core::Secret", "pulls with"),
 ];
 
-export const k8sReferenceCatalog: ReferenceCatalog = { identities, refs };
+/** A namespaced object's names are unique inside its namespace (#5097). */
+const scopes: ScopeRule[] = NAMESPACED_KINDS.map((kind) => ({ kind, path: "metadata.namespace" }));
+
+export const k8sReferenceCatalog: ReferenceCatalog = { identities, refs, scopes };

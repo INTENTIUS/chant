@@ -24,12 +24,14 @@
  * asks every lexicon of a graph for its catalog (behold#1030's gate, before
  * behold#1005 retires behold's name matcher) finds terraform's. What it
  * matches depends on the nodes. A declared or live `chant graph` node is
- * `Terraform::Resource`, with its provider type in `attrs.type` and no
- * arguments in `attrs`, so no rule here reads it: those graphs keep the edges
- * the HCL references and the state dependencies give them, and gain none. A
- * node whose `kind` is the provider type and whose `attrs` are the block's
+ * `Terraform::Resource`, with its provider type in `attrs.type` and its
+ * arguments under `attrs.body`, so no rule here reads it as it is. A node
+ * whose `kind` is the provider type and whose `attrs` are the block's
  * arguments (`./request.ts`'s, an engine's instance roster) is what the rules
- * are for. `chant graph --live` merges a catalog's edges with the
+ * are for. `chant workspace graph` reads a declared block that way since
+ * #5097, through {@link terraformDeclaredNode}, with only the literal
+ * arguments, so a rule matches a value written in the HCL and an
+ * interpolation is counted as not read. `chant graph --live` merges a catalog's edges with the
  * observation's own since #4535; before, any catalog replaced them, which is
  * what kept this one off the plugin.
  *
@@ -68,7 +70,9 @@
  * in it is not `complete` by omission.
  */
 
-import type { ReferenceCatalog } from "@intentius/chant/graph-refs";
+import type { DeclaredCatalogNode, ReferenceCatalog } from "@intentius/chant/graph-refs";
+import type { IRNode } from "@intentius/chant/graph-ir";
+import { RESOURCE_TYPE } from "../hcl/parse";
 
 /**
  * Provider types this catalog has looked at and found to hold no argument
@@ -87,8 +91,70 @@ export const REFERENCES_NOTHING: ReadonlySet<string> = new Set([
   "aws_route53_zone",
 ]);
 
+/** True when a value holds an interpolation, `${...}`, anywhere in it. */
+function interpolated(value: unknown, depth = 0): boolean {
+  if (depth > 12) return false;
+  if (typeof value === "string") return value.includes("${");
+  if (Array.isArray(value)) return value.some((v) => interpolated(v, depth + 1));
+  if (typeof value === "object" && value !== null) return Object.values(value as Record<string, unknown>).some((v) => interpolated(v, depth + 1));
+  return false;
+}
+
+const isBlock = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/**
+ * A block body with only its literal arguments, and how many it left out.
+ * A nested block (hcl2json writes it as an object, or a list of objects) and a
+ * map are descended, so each of their arguments counts on its own. A list of
+ * values keeps its literal elements and counts once when any element is not.
+ */
+export function literalArguments(body: Record<string, unknown>): { attrs: Record<string, unknown>; nonLiteral: number } {
+  let nonLiteral = 0;
+  const walk = (obj: Record<string, unknown>, depth: number): Record<string, unknown> => {
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(obj)) {
+      if (depth > 12) break;
+      if (isBlock(value)) {
+        out[key] = walk(value, depth + 1);
+      } else if (Array.isArray(value) && value.length > 0 && value.every(isBlock)) {
+        out[key] = value.map((b) => walk(b, depth + 1));
+      } else if (Array.isArray(value)) {
+        const kept = value.filter((v) => !interpolated(v));
+        if (kept.length < value.length) nonLiteral++;
+        out[key] = kept;
+      } else if (interpolated(value)) {
+        nonLiteral++;
+      } else {
+        out[key] = value;
+      }
+    }
+    return out;
+  };
+  return { attrs: walk(body, 0), nonLiteral };
+}
+
+/**
+ * The node the catalog reads for a declared terraform block (#5097): its
+ * provider type as `kind`, as `./request.ts` gives the behaviour engine, and
+ * its literal arguments as `attrs`. An argument whose value is an
+ * interpolation is left out and counted: it already draws its declared edge
+ * when it names another block, and a local, a variable or a composed string
+ * is not a value the catalog can match. Any block but a `resource` is read as
+ * it is.
+ */
+export function terraformDeclaredNode(node: IRNode): DeclaredCatalogNode | undefined {
+  if (node.kind !== RESOURCE_TYPE) return undefined;
+  const attrs = node.attrs ?? {};
+  const address = typeof attrs.address === "string" ? attrs.address : "";
+  const type = typeof attrs.type === "string" && attrs.type !== "" ? attrs.type : address.includes(".") ? address.split(".").slice(-2)[0] : undefined;
+  if (type === undefined) return undefined;
+  const body = isBlock(attrs.body) ? attrs.body : {};
+  return { kind: type, ...literalArguments(body) };
+}
+
 /** The catalog. Rules are grouped by the relation they produce. */
 export const TERRAFORM_REFERENCE_CATALOG: ReferenceCatalog = {
+  declaredNode: terraformDeclaredNode,
   // Every node is indexed by its own id and physical id (`reconstructEdges`
   // does that itself), and a block's body never carries a second identifier
   // for the block, so there are no identity rules to declare.

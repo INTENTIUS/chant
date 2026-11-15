@@ -34,6 +34,9 @@ import type { ReasonCode } from "./reason-codes";
 import type { CommandContext, ParsedArgs } from "../cli/registry";
 import { graphBox, plantability, type Plantable } from "./box-factory";
 import { composedId, composeWorkspaceGraph, readMemberIr, type ComposedMember, type ComposeInput, type WorkspaceGraph } from "./compose-graph";
+import { placeCatalogPass, runCatalogPass } from "./catalog-edges";
+import { detailIdMap, type DetailLevel } from "../graph-detail";
+import type { NamedCatalog } from "../graph-refs";
 import { isViewDocument, prefixView } from "../capabilities/view";
 import { refusedCapabilityView } from "./nested-graph";
 import { openGraphCache, planStamps, splitCached, storeReads, withoutUnits } from "./graph-cache";
@@ -113,6 +116,12 @@ export interface GraphQuery {
   inTree?: (root: string, members: readonly { name: string; dir: string; kind: string }[]) => Promise<void>;
   /** Read every member, leaving the per-member cache unread and unwritten (`--no-cache`, #2876). */
   noCache?: boolean;
+  /**
+   * Run the lexicons' reference catalogs over the composed graph (#5097,
+   * `./catalog-edges.ts`). A source read only: with `--live` each member's
+   * own chant has run its catalog already. `chant workspace graph` sets it.
+   */
+  catalog?: boolean;
 }
 
 export interface GraphResult {
@@ -342,6 +351,8 @@ export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
     // Links (#2539) resolve against the declaration that was read, the revision's for --at, and the kinds installed now.
     // A kind's link reader (#3932) reads the member's files in the tree read, as check does.
     const graph = composeWorkspaceGraph({ name: declaration.name, root: located.root, repo: repoIdentity(located.rootOnDisk) }, inputs, { declaration, kinds, read: readKindLinks(declaration, located.tree, kinds) });
+    // The reference catalogs over the composed graph (#5097), on full attributes whatever --detail asks for.
+    if (query.catalog && !args.live) await addCatalogEdges(graph, query, args, { workspace: graph.workspace, inputs, located });
     // The box's factory and listing (#3146), from the declaration read, so --at gives them at that revision.
     for (const member of graph.members) member.box = graphBox(declaration.members.find((m) => m.name === member.name)?.box ?? null, located.tree, declaration.members);
     // Nested workspaces (#2551, ws-071): read-only, through their own chant workspace graph.
@@ -368,6 +379,54 @@ export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
     if (!(err instanceof WorkspaceReadError)) throw err;
     return { doc: { ...head, error: { code: err.code, message: err.message, location: err.location ?? null } }, failed: true };
   }
+}
+
+/** The reference catalog of each lexicon that has one, best effort: a lexicon that does not load has none. */
+async function loadCatalogs(lexicons: readonly string[]): Promise<NamedCatalog[]> {
+  const { loadPlugin } = await import("../cli/plugins");
+  const out: NamedCatalog[] = [];
+  for (const lexicon of lexicons) {
+    try {
+      const catalog = (await loadPlugin(lexicon)).referenceCatalog;
+      if (catalog) out.push({ lexicon, catalog });
+    } catch {
+      // Not installed where this chant can load it: its nodes get no derived edges.
+    }
+  }
+  return out;
+}
+
+/**
+ * The catalog pass (#5097): load the catalogs of the lexicons the graph
+ * holds, read the members again at `--detail 3` when the document is printed
+ * at another tier, since the rules read nested attributes (`spec`,
+ * `metadata`) that the lower tiers leave out, run the pass over those nodes
+ * and place what it finds on the document's nodes.
+ */
+async function addCatalogEdges(
+  graph: WorkspaceGraph,
+  query: GraphQuery,
+  args: ParsedArgs,
+  read: { workspace: WorkspaceGraph["workspace"]; inputs: ComposeInput[]; located: LocatedWorkspace },
+): Promise<void> {
+  const lexicons = [...new Set(graph.nodes.map((n) => n.lexicon))].sort();
+  const catalogs = await loadCatalogs(lexicons);
+  const level = (args.detail ?? 2) as DetailLevel;
+  let full = read.inputs;
+  if (catalogs.length > 0 && level !== 3) {
+    // With no stderr and no capability view: the document's own read has
+    // passed on what the members said already.
+    const again = await readMembers({ ...query, args: { ...args, detail: 3, capabilityView: false }, onStderr: undefined, inTree: undefined, components: false }, { cache: true });
+    full = compose(again.plan, again.results, query.members, again.declaration.members).inputs;
+  }
+  const printed = new Set(read.inputs.filter((i) => i.ir).map((i) => i.member.name));
+  const readable = full.filter((i) => i.ir && printed.has(i.member.name)).map((i) => ({ member: { ...i.member }, ir: i.ir }));
+  const nodes = catalogs.length > 0 ? composeWorkspaceGraph(read.workspace, readable).nodes : [];
+  const placed = new Map<string, string>();
+  for (const { member, ir } of readable) {
+    for (const [id, at] of detailIdMap(ir!, level)) placed.set(composedId(member.name, id), composedId(member.name, at));
+  }
+  placeCatalogPass(graph, runCatalogPass(nodes, catalogs, catalogs.length > 0 ? readable.map((i) => i.member.name) : []), placed);
 }
 
 /**
@@ -490,6 +549,7 @@ export async function runWorkspaceGraph(ctx: CommandContext): Promise<number> {
     ...(args.noCache ? { noCache: true } : {}),
     ...(args.kind !== undefined ? { kind: resolve(args.kind) } : {}),
     onStderr: (text) => process.stderr.write(text),
+    catalog: true,
   });
   emitDocument(doc, args.output);
   if ("error" in doc) {

@@ -7,6 +7,8 @@
 import { describe, expect, it } from "vitest";
 import type { IRNode } from "@intentius/chant/graph-ir";
 import { reconstructIndexedEdges, refRuleId, type ReferenceCatalog } from "@intentius/chant/graph-refs";
+import type { ComposedNode, WorkspaceGraph } from "@intentius/chant/workspace/compose-graph";
+import { placeCatalogPass, runCatalogPass } from "@intentius/chant/workspace/catalog-edges";
 import { k8sReferenceCatalog } from "./reference-catalog";
 import { k8sPlugin } from "./plugin";
 
@@ -169,5 +171,79 @@ describe("k8s reference catalog", () => {
       ]);
       expect(scoped.edges).toEqual([]);
     });
+  });
+});
+
+describe("on a composed workspace graph (#5097)", () => {
+  const RULE = "k8s:K8s::Apps::Deployment:spec.template.spec.serviceAccountName";
+  const composed = (member: string, id: string, kind: string, attrs: Record<string, unknown>): ComposedNode => ({ id: `${member}/${id}`, kind, lexicon: LEXICON, attrs, member });
+  const deployment = (sa: string, namespace: string | null = "shop") =>
+    composed("app", "web", "K8s::Apps::Deployment", { metadata: { name: "web", ...(namespace ? { namespace } : {}) }, spec: { template: { spec: { serviceAccountName: sa } } } });
+  const account = (member: string, namespace: string | null = "shop") =>
+    composed(member, "runner", "K8s::Core::ServiceAccount", { metadata: { name: "runner", ...(namespace ? { namespace } : {}) } });
+  const pass = (nodes: ComposedNode[]) => runCatalogPass(nodes, [{ lexicon: LEXICON, catalog: k8sReferenceCatalog }]);
+  const graphOf = (nodes: ComposedNode[]): WorkspaceGraph => ({
+    version: 1,
+    workspace: { name: "w", root: "." },
+    members: [],
+    nodes,
+    edges: [],
+    groups: { byMember: {} },
+    exports: [],
+    imports: [],
+    links: [],
+    collectors: [],
+    records: [],
+  });
+
+  it("joins a Deployment in one member to the ServiceAccount another member holds in the same namespace", () => {
+    const out = pass([deployment("runner"), account("rbac")]);
+    expect(out.edges).toEqual([
+      expect.objectContaining({ from: "app/web", to: "rbac/runner", rule: RULE, origin: "derived", relation: "reference", member: "app" }),
+    ]);
+    expect(out.dangling.filter((d) => d.rule === RULE)).toEqual([]);
+  });
+
+  it("lists a name no node holds in dangling with its rule", () => {
+    const out = pass([deployment("missing"), account("rbac")]);
+    expect(out.edges.filter((e) => e.rule === RULE)).toEqual([]);
+    expect(out.dangling.filter((d) => d.rule === RULE)).toEqual([
+      { from: "app/web", kind: "ref", path: "spec.template.spec.serviceAccountName", value: "missing", member: "app", rule: RULE, targetKind: "K8s::Core::ServiceAccount" },
+    ]);
+  });
+
+  it("draws no edge when two members hold the name there, and records both candidates", () => {
+    const out = pass([deployment("runner"), account("rbac"), account("rbac2")]);
+    expect(out.edges.filter((e) => e.rule === RULE)).toEqual([]);
+    expect(out.ambiguous).toEqual([
+      { from: "app/web", member: "app", rule: RULE, path: "spec.template.spec.serviceAccountName", value: "runner", candidates: ["rbac/runner", "rbac2/runner"] },
+    ]);
+  });
+
+  it("keeps a name inside its namespace, and a namespace-less object inside its member", () => {
+    const missing = (nodes: ComposedNode[]) => pass(nodes).dangling.filter((d) => d.rule === RULE).map((d) => d.value);
+    expect(missing([deployment("runner"), account("rbac", "other")])).toEqual(["runner"]);
+    expect(missing([deployment("runner", null), account("rbac", null)])).toEqual(["runner"]);
+    const same = [deployment("runner", null), { ...account("app", null), id: "app/runner" }];
+    expect(pass(same).edges.map((e) => e.to)).toEqual(["app/runner"]);
+    // The namespace is a node too: a Namespace any member declares contains the objects in it.
+    const ns = composed("base", "shop", "K8s::Core::Namespace", { metadata: { name: "shop" } });
+    expect(pass([deployment("runner"), account("rbac"), ns]).edges.filter((e) => e.relation === "containment").map((e) => `${e.from}>${e.to}`)).toEqual(["app/web>base/shop", "rbac/runner>base/shop"]);
+  });
+
+  it("places the pass on the document's nodes at --detail 0, and names the rule", () => {
+    const graph = graphOf([]);
+    placeCatalogPass(graph, pass([deployment("runner"), account("rbac")]), new Map([["app/web", "app/k8s"], ["rbac/runner", "rbac/k8s"]]));
+    expect(graph.edges).toEqual([expect.objectContaining({ from: "app/k8s", to: "rbac/k8s", rule: RULE, member: "app" })]);
+    expect(graph.catalog?.rules[RULE]).toEqual({ lexicon: LEXICON, from: "K8s::Apps::Deployment", path: "spec.template.spec.serviceAccountName", relation: "reference", targetKinds: ["K8s::Core::ServiceAccount"], label: "runs as" });
+    expect(graph.catalog?.lexicons).toEqual([LEXICON]);
+  });
+
+  it("gives a pair the declared graph already joins no second edge", () => {
+    const graph = graphOf([]);
+    graph.edges = [{ from: "app/web", to: "rbac/runner", kind: "ref", member: "app" }];
+    placeCatalogPass(graph, pass([deployment("runner"), account("rbac")]));
+    expect(graph.edges).toHaveLength(1);
+    expect(graph.edges[0].origin).toBeUndefined();
   });
 });
