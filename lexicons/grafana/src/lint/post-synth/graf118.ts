@@ -6,7 +6,7 @@
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import { buildCollectorConfigs, collectorMetricIssues, collectorMetrics } from "@intentius/chant-lexicon-prometheus/collector-metrics";
-import { grafanaArtifacts } from "./grafana-helpers";
+import { declaredKeys, grafanaArtifacts } from "./grafana-helpers";
 import { knownDatasourcesOf } from "../../validate-output";
 import { prometheusQueries, substituteTemplateVariables } from "../../promql-check";
 
@@ -20,6 +20,7 @@ export const graf118: PostSynthCheck = {
     const emitted = collectorMetrics(buildCollectorConfigs(ctx));
     if (!emitted) return [];
     const known = knownDatasourcesOf(artifacts);
+    const keys = declaredKeys(ctx.entities);
     const out: PostSynthDiagnostic[] = [];
     for (const { json: d } of artifacts.dashboards) {
       for (const { where, expr } of prometheusQueries(d, known)) {
@@ -28,7 +29,7 @@ export const graf118: PostSynthCheck = {
             checkId: "GRAF118",
             severity: "warning",
             message: `Dashboard "${String(d.title ?? d.uid ?? "?")}" ${where} ${issue.message}.`,
-            entity: String(d.uid ?? ""),
+            entity: keys.get(String(d.uid ?? "")) ?? String(d.uid ?? ""),
             lexicon: "grafana",
           });
         }
