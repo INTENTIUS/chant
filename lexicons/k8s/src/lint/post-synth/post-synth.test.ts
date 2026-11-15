@@ -1872,6 +1872,18 @@ describe("ARGO003: Application destination references a registered cluster", () 
     const ctx = manifestsCtx(argoApp("api", { project: "default", destination: { namespace: "demo" } }));
     expect(argo003.check(ctx).length).toBe(1);
   });
+
+  test("a cluster Secret whose fields a live read masked registers nothing under the masked value", () => {
+    for (const mask of ["<masked>", "[REDACTED]"]) {
+      const masked = { ...clusterSecret("prod", "https://prod.example.com"), stringData: { name: mask, server: mask } };
+      const byServer = manifestsCtx(masked, argoApp("api", { project: "default", destination: { server: mask, namespace: "demo" } }));
+      expect(argo003.check(byServer).length).toBe(1);
+      const byName = manifestsCtx(masked, argoApp("api", { project: "default", destination: { name: mask } }));
+      expect(argo003.check(byName).length).toBe(1);
+      const byMetadataName = manifestsCtx(masked, argoApp("api", { project: "default", destination: { name: "prod" } }));
+      expect(argo003.check(byMetadataName).length).toBe(0);
+    }
+  });
 });
 
 // ── ARGO005: Application source.path resolves to an existing directory ────────
