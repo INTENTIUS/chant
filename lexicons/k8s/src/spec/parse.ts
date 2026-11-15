@@ -73,6 +73,12 @@ export interface ParsedResource {
   properties: ParsedProperty[];
   attributes: Array<{ name: string; tsType: string }>;
   deprecatedProperties: string[];
+  /**
+   * Every top-level key the API accepts on an object of this kind, `status`
+   * included when the schema declares it (the class leaves `status` out).
+   * Absent when the schema is not known (a CRD with no `openAPIV3Schema`).
+   */
+  topLevelFields?: string[];
 }
 
 export interface GroupVersionKind {
@@ -682,6 +688,7 @@ function extractResource(
         { name: "uid", tsType: "string" },
       ],
       deprecatedProperties: [],
+      topLevelFields: [...new Set(["apiVersion", "kind", ...Object.keys(def.properties)])].sort(),
     },
     propertyTypes: [],
     enums: [],

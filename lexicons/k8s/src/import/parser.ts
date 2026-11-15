@@ -11,7 +11,7 @@ import type { EmbeddedContentResolver } from "@intentius/chant/import/embedded";
 import { parseYAML, splitYAMLDocuments } from "@intentius/chant/yaml";
 import { namespaceSegmentForGroup } from "../group-namespace";
 import { delegateEmbedded } from "./embedded";
-import { importClassFor, keptApiVersionWarning, untypedKindWarning } from "./typed-classes";
+import { importClassFor, keptApiVersionWarning, unknownTopLevelKeyWarnings, untypedKindWarning } from "./typed-classes";
 
 // ── GVK to type name mapping ───────────────────────────────────────
 
@@ -187,8 +187,9 @@ export class K8sParser implements TemplateParser {
       }
     }
 
-    // One warning per kind the lexicon has no class for (#5070), and one per
-    // object kept at an apiVersion its class does not build (#5075).
+    // One warning per kind the lexicon has no class for (#5070), one per
+    // object kept at an apiVersion its class does not build (#5075), and one
+    // per top-level key its kind does not declare (#5111).
     const warnings: string[] = [...parseWarnings];
     const warned = new Set<string>();
     for (const r of resources) {
@@ -197,8 +198,9 @@ export class K8sParser implements TemplateParser {
         warnings.push(
           keptApiVersionWarning(String(r.metadata?.kind), r.metadata?.originalName as string | undefined, choice.apiVersion!, choice.builtApiVersion!),
         );
-        continue;
       }
+      if (choice.unknownKeys) warnings.push(...unknownTopLevelKeyWarnings(r, choice.unknownKeys));
+      if (choice.reason === "other-apiVersion" || choice.reason === "unknown-key") continue;
       if (choice.cls || warned.has(r.type)) continue;
       warned.add(r.type);
       warnings.push(untypedKindWarning(String(r.metadata?.apiVersion), String(r.metadata?.kind)));
