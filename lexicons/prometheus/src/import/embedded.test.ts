@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import { embeddedDocument, type EmbeddedContent } from "@intentius/chant/import/embedded";
 import { prometheusPlugin } from "../plugin";
 import { alertmanagerImporter, prometheusConfigImporter, ruleGroupsImporter } from "./embedded";
+import { alertmanagerConfigImporter } from "./alertmanager-config";
 
 const GROUPS = [
   { name: "api", rules: [{ alert: "ApiDown", expr: "up{job=\"api\"} == 0", for: "5m" }] },
@@ -26,7 +27,7 @@ const site = (over: Partial<EmbeddedContent>): EmbeddedContent => ({
 
 describe("rule groups embedded in another lexicon's resource (#2962)", () => {
   test("the plugin registers the importers", () => {
-    expect(prometheusPlugin.embeddedImporters?.()).toEqual([ruleGroupsImporter, alertmanagerImporter, prometheusConfigImporter]);
+    expect(prometheusPlugin.embeddedImporters?.()).toEqual([ruleGroupsImporter, alertmanagerImporter, prometheusConfigImporter, alertmanagerConfigImporter]);
   });
 
   test("matches a PrometheusRule's groups and a rule file held as text; not an alertmanager.yml", () => {
