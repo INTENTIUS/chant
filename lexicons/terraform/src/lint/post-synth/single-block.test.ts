@@ -41,9 +41,13 @@ describe("TF006: sensitive variable with a default", () => {
     expect(tf006.check(await loadFixture("TF006", "negative"))).toHaveLength(0);
   });
 
-  test("an empty or null default still counts", async () => {
+  test("an empty default still counts", async () => {
     const diags = tf006.check(await loadFixture("TF006", "positive-empty-default"));
-    expect(diags.map((d) => d.entity).sort()).toEqual(["TF006/var.blank_token", "TF006/var.null_token"]);
+    expect(diags.map((d) => d.entity)).toEqual(["TF006/var.blank_token"]);
+  });
+
+  test("a null default does not, because it commits no value (#5081)", async () => {
+    expect(tf006.check(await loadFixture("TF006", "negative-null-default"))).toHaveLength(0);
   });
 });
 
@@ -64,6 +68,10 @@ describe("TF007: secret-shaped literal in a variable default or a locals value",
 
   test("passes a sensitive variable with no default and a local that references one", async () => {
     expect(tf007.check(await loadFixture("TF007", "negative"))).toHaveLength(0);
+  });
+
+  test("passes a null default and machine type and image names (#5081)", async () => {
+    expect(tf007.check(await loadFixture("TF007", "negative-names"))).toHaveLength(0);
   });
 });
 
@@ -261,5 +269,18 @@ describe("TF022: credential-named resource attribute holding a literal", () => {
 
   test("a locator attribute is the remediation, not the finding", async () => {
     expect(tf022.check(await loadFixture("TF022", "negative-locator"))).toHaveLength(0);
+  });
+
+  test("the secret id of a Secret Manager reader is a reference, not a credential (#5080)", async () => {
+    expect(tf022.check(await loadFixture("TF022", "negative-secret-reference"))).toHaveLength(0);
+  });
+
+  test("secret_data and a bare secret on another type are still judged", async () => {
+    const diags = tf022.check(await loadFixture("TF022", "positive-secret-data"));
+    expect(diags.map((d) => d.entity).sort()).toEqual([
+      "TF022/example_widget.w",
+      "TF022/google_secret_manager_secret_version.app",
+    ]);
+    expect(diags.find((d) => d.entity?.endsWith("version.app"))?.message).toContain("`secret_data`");
   });
 });

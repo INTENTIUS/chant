@@ -202,7 +202,7 @@ export type WorkspaceRunOutcome =
   | { kind: "planned"; id: string; targets: string[]; skipped: WorkspaceRunSkip[] }
   | { kind: "ran"; record: WorkspaceRunRecord; skipped: WorkspaceRunSkip[]; pending: WorkspaceGatePending | null; ledgerError: string | null };
 
-async function defaultReadGraph(cwd: string): Promise<{ graph: WorkspaceGraph; failed: boolean } | { error: string }> {
+export async function defaultReadGraph(cwd: string): Promise<{ graph: WorkspaceGraph; failed: boolean } | { error: string }> {
   const { workspaceGraph } = await import("./graph-cli");
   const { doc, failed } = await workspaceGraph({ cwd, onStderr: (t) => process.stderr.write(t) });
   if ("error" in doc) return { error: `${doc.error.code}: ${doc.error.message}` };
@@ -213,7 +213,7 @@ async function defaultReadGraph(cwd: string): Promise<{ graph: WorkspaceGraph; f
  * Run one member's `chant run`, under the member's own toolchain (the one
  * `chant workspace graph` reads it with), from inside its directory.
  */
-async function defaultRunMember(cwd: string, member: { name: string; dir: string }, argv: string[], env: Record<string, string>): Promise<MemberOpResult> {
+export async function defaultRunMember(cwd: string, member: { name: string; dir: string }, argv: string[], env: Record<string, string>): Promise<MemberOpResult> {
   const located = locateWorkspace(cwd);
   const declaration = readDeclaration(located.tree, "", { rootChant: true });
   const { registry: kinds } = loadKindRegistry(declaration.pins, located.rootOnDisk);

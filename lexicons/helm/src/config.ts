@@ -122,10 +122,15 @@ export interface HelmChantConfig {
  * One `helm.charts` entry: a chart in a classic repository (`repo` + `chart`),
  * an `oci://` chart reference (no `repo`), each pinned by `version`, or a
  * chart directory in the project (`path`, relative to the project root).
+ *
+ * `valuesRoot` names a values key (a dotted path) whose members the chart
+ * reads as top-level values, for a chart that nests its defaults under one
+ * key. The type generated from `values.yaml` takes that key's members as
+ * the root's. Istio's `_internal_defaults_do_not_set` is unwrapped without it.
  */
 export type HelmProjectChart =
-  | { repo?: string; chart: string; version: string; digest?: string }
-  | { path: string };
+  | { repo?: string; chart: string; version: string; digest?: string; valuesRoot?: string }
+  | { path: string; valuesRoot?: string };
 
 export const helmCapabilityProfileSchema = z.strictObject({
   kubeVersion: z
@@ -143,8 +148,9 @@ export const helmProjectChartSchema = z.union([
     chart: z.string().min(1),
     version: z.string().min(1),
     digest: z.string().optional(),
+    valuesRoot: z.string().min(1).optional(),
   }),
-  z.strictObject({ path: z.string().min(1) }),
+  z.strictObject({ path: z.string().min(1), valuesRoot: z.string().min(1).optional() }),
 ]);
 
 export const helmConfigSchema = z.strictObject({

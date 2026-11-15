@@ -19,7 +19,9 @@ import { loadPlugins } from "@intentius/chant/cli";
 import { loadChantConfig } from "@intentius/chant/config";
 import { checkProjectCodegen, generateProjectCode } from "@intentius/chant/project-codegen";
 import { helmPlugin } from "./plugin";
-import { factoryBase, helmProjectCodegen } from "./project-codegen";
+import { readTarGz } from "@intentius/chant-lexicon-k8s/crd/oci-chart";
+import { typecheckValues } from "./codegen/values-check";
+import { chartFilesFromArchive, factoryBase, helmProjectCodegen } from "./project-codegen";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const made: string[] = [];
@@ -249,6 +251,71 @@ export const x = ${values.startsWith("plain:") ? `PlainAppRender({ name: "p", va
     writeFileSync(schemaPath, readFileSync(schemaPath, "utf8").replace('"error"', '"warn"'));
     const check = await checkProjectCodegen(helmPlugin, root, await config(root));
     expect(check.status).toBe("drift");
+  });
+
+  test("a chart's bundled subcharts, commented keys and values root shape its inferred type", async () => {
+    const root = mkdtempSync(join(tmpdir(), "chant-helm-subcharts-"));
+    made.push(root);
+    const parent = join(root, "charts", "stack");
+    mkdirSync(join(parent, "charts", "grafana"), { recursive: true });
+    writeFileSync(
+      join(parent, "Chart.yaml"),
+      "apiVersion: v2\nname: stack\nversion: 1.0.0\ndependencies:\n  - name: grafana\n    condition: grafana.enabled\n  - name: ksm\n    alias: metrics\n",
+    );
+    writeFileSync(join(parent, "values.yaml"), "replicas: 1\nresources:\n  limits:\n    cpu: 100m\n  # requests: {}\nnodeSelector:\n  role: build\n");
+    writeFileSync(join(parent, "charts", "grafana", "Chart.yaml"), "apiVersion: v2\nname: grafana\nversion: 9.0.0\n");
+    writeFileSync(join(parent, "charts", "grafana", "values.yaml"), "persistence:\n  enabled: false\n  # storageClass: fast\n");
+    // A packed subchart, as `helm dependency update` leaves it.
+    writeFileSync(
+      join(parent, "charts", "ksm-1.0.0.tgz"),
+      tarGz([
+        { name: "ksm/Chart.yaml", body: "apiVersion: v2\nname: ksm\nversion: 1.0.0\n" },
+        { name: "ksm/values.yaml", body: "metricLabelsAllowlist: []\n" },
+      ]),
+    );
+    const istio = join(root, "charts", "istiod");
+    mkdirSync(istio, { recursive: true });
+    writeFileSync(join(istio, "Chart.yaml"), "apiVersion: v2\nname: istiod\nversion: 1.28.0\n");
+    writeFileSync(join(istio, "values.yaml"), "_internal_defaults_do_not_set:\n  global:\n    hub: gcr.io\n  pilot:\n    replicaCount: 1\n");
+
+    const remote = tarGz([
+      { name: "r/Chart.yaml", body: "apiVersion: v2\nname: r\nversion: 2.0.0\ndependencies:\n  - name: inner\n" },
+      { name: "r/values.yaml", body: "top: 1\n" },
+      { name: "r/charts/inner/Chart.yaml", body: "apiVersion: v2\nname: inner\nversion: 0.1.0\n" },
+      { name: "r/charts/inner/values.yaml", body: "depth: 2\n" },
+    ]);
+    const codegen = helmProjectCodegen({ pull: async () => chartFilesFromArchive(readTarGz(remote), "r") });
+    const ctx = {
+      projectRoot: root,
+      outDir: join(root, "src", "generated", "helm"),
+      config: {
+        helm: {
+          charts: {
+            stack: { path: "charts/stack" },
+            istiod: { path: "charts/istiod" },
+            wrapped: { path: "charts/istiod", valuesRoot: "pilot" },
+            r: { repo: "https://r.test", chart: "r", version: "2.0.0" },
+          },
+        },
+      },
+    };
+    const first = (await codegen.generate(ctx)).files["index.ts"];
+    const typeOf = (name: string) => new RegExp(`export type ${name}Values = ([\\s\\S]*?\\n\\}|[^\\n]*);\\n`).exec(first)![1];
+
+    const stack = typeOf("Stack");
+    expect(typecheckValues(stack, { nodeSelector: { zone: "a" }, resources: { limits: { cpu: 2 }, requests: { memory: "1Gi" } } })).toEqual([]);
+    expect(typecheckValues(stack, { grafana: { enabled: true, persistence: { storageClass: "x" } }, metrics: { metricLabelsAllowlist: ["a"] }, global: { a: 1 } })).toEqual([]);
+    expect(typecheckValues(stack, { grafana: { persistance: {} } }).join("\n")).toMatch(/persistance/);
+    expect(typecheckValues(typeOf("Istiod"), { global: { hub: "x" }, pilot: { replicaCount: 2 } })).toEqual([]);
+    expect(typecheckValues(typeOf("Wrapped"), { replicaCount: 2 })).toEqual([]);
+    expect(typecheckValues(typeOf("R"), { top: 2, inner: { depth: 3 } })).toEqual([]);
+    expect(typecheckValues(typeOf("R"), { inner: { dpeth: 3 } }).join("\n")).toMatch(/dpeth/);
+
+    // Editing a bundled subchart's values is drift, as editing the chart's own values is.
+    const digest = (c: typeof ctx) => JSON.stringify(codegen.inputs(c));
+    const before = digest(ctx);
+    writeFileSync(join(parent, "charts", "grafana", "values.yaml"), "persistence:\n  enabled: true\n");
+    expect(digest(ctx)).not.toBe(before);
   });
 
   test("a remote chart needs a version and a repo or an oci reference", () => {

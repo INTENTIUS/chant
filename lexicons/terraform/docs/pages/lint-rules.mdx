@@ -262,15 +262,17 @@ module "vpc" {
 ## TF006: a sensitive variable declares a default
 
 A `variable` marked `sensitive = true` that also has a `default`, whatever the
-default's value is.
+default's value is, except `null`.
 
 **Why it matters.** `sensitive = true` says the value must not be seen, and a
 default is a value committed to the repository, so the two together contradict
 each other: the secret is already in git, and the flag only hides it from plan
-output, which was never where the exposure was. An empty or `null` default is
-the same finding for a second reason, because it turns a required secret into
-an optional one and every environment that forgets to pass the variable
-silently gets the committed value.
+output, which was never where the exposure was. An empty default is the same
+finding for a second reason, because it turns a required secret into an
+optional one and every environment that forgets to pass the variable silently
+gets the committed value. `default = null` is not reported: it commits no
+value, and it is how a module declares a credential it only reads when a
+feature is on.
 
 **The fix.** Delete the `default`. Pass the value in at apply time, from a
 tfvars file kept out of git, a `TF_VAR_` environment variable, or a workspace
@@ -299,7 +301,15 @@ reads like a credential (`password`, `passwd`, `secret`, `token`, `api_key`,
 `_file`, `_path`, `_arn`, `_id` and `_name` locator suffixes excluded), or the
 value matches a credential shape (an AWS key id, a JWT, a PEM header, a
 high-entropy token). Placeholders such as `changeme` and `CHANGE_ME` are
-excluded, and so is anything that is a reference rather than a constant.
+excluded, and so is anything that is a reference rather than a constant. A
+`null` default is not a literal and is never reported. Values that are public
+names for a kind of object are not credential-shaped either: machine types
+(`db-custom-1-3840`, `n2-standard-4`), image names
+(`ibm-ubuntu-24-04-3-minimal-s390x-2`) and Azure sizes (`Standard_D16ads_v5`).
+They are matched by the shape of the whole value, in a table in
+`src/lint/secret-shape.ts`, so a credential-named variable that holds one is
+still judged by its name, and a UUID or a hex string is still judged by its
+entropy.
 
 **Why it matters.** A committed credential is in git history, which no later
 edit removes, and Terraform copies it into state and into plan output on every

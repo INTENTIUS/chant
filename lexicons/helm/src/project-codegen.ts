@@ -20,7 +20,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import yaml from "js-yaml";
 import { GENERATED_TS_HEADER, type ProjectCodegen, type ProjectCodegenContext } from "@intentius/chant/project-codegen";
@@ -28,13 +28,15 @@ import { jsdocLines, schemaToTypeScript } from "@intentius/chant/codegen/json-sc
 import { fetchWithRetry } from "@intentius/chant/codegen/fetch";
 import { pullOciChart, readTarGz } from "@intentius/chant-lexicon-k8s/crd/oci-chart";
 import { CHART_KEY_PATTERN, type HelmProjectChart } from "./config";
-import { inferValuesType } from "./codegen/values-type";
+import { inferValuesType, type SubchartValues } from "./codegen/values-type";
 
 /** The chart files generation reads. */
 export interface ChartFiles {
   chartYaml: string;
   valuesYaml?: string;
   valuesSchema?: string;
+  /** The subcharts bundled under `charts/`. */
+  subcharts?: ChartFiles[];
 }
 
 type RemoteChart = Extract<HelmProjectChart, { chart: string }>;
@@ -93,7 +95,12 @@ function describeChart(key: string, chart: HelmProjectChart, projectRoot: string
       const path = join(dir, file);
       if (existsSync(path)) hashes[file] = createHash("sha256").update(readFileSync(path)).digest("hex");
     }
-    return { path: chart.path, files: hashes };
+    const charts = join(dir, "charts");
+    if (existsSync(charts)) {
+      // Bundled subcharts shape the generated type, so their files are in the digest too.
+      for (const file of subchartFiles(charts)) hashes[relative(dir, file).split(sep).join("/")] = createHash("sha256").update(readFileSync(file)).digest("hex");
+    }
+    return { path: chart.path, files: hashes, ...(chart.valuesRoot ? { valuesRoot: chart.valuesRoot } : {}) };
   }
   if (!chart.version) {
     throw new Error(`helm.charts.${key}: ${chart.chart} needs a version. An unpinned chart makes the generated types depend on when they were generated.`);
@@ -106,21 +113,110 @@ function describeChart(key: string, chart: HelmProjectChart, projectRoot: string
     chart: chart.chart,
     version: chart.version,
     ...(chart.digest ? { digest: chart.digest } : {}),
+    ...(chart.valuesRoot ? { valuesRoot: chart.valuesRoot } : {}),
   };
+}
+
+/** The files under a `charts/` directory that generation reads: archives, Chart.yaml and values.yaml. */
+function subchartFiles(dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir).sort()) {
+    const path = join(dir, entry);
+    if (statSync(path).isDirectory()) out.push(...subchartFiles(path));
+    else if (entry.endsWith(".tgz") || entry === "Chart.yaml" || entry === "values.yaml") out.push(path);
+  }
+  return out;
 }
 
 function readLocalChart(dir: string): ChartFiles {
   const read = (f: string) => (existsSync(join(dir, f)) ? readFileSync(join(dir, f), "utf8") : undefined);
-  return { chartYaml: read("Chart.yaml")!, valuesYaml: read("values.yaml"), valuesSchema: read("values.schema.json") };
+  const subcharts: ChartFiles[] = [];
+  const chartsDir = join(dir, "charts");
+  if (existsSync(chartsDir) && statSync(chartsDir).isDirectory()) {
+    for (const entry of readdirSync(chartsDir).sort()) {
+      const path = join(chartsDir, entry);
+      if (entry.endsWith(".tgz") && statSync(path).isFile()) {
+        try {
+          subcharts.push(chartFilesFromArchive(readTarGz(readFileSync(path)), path));
+        } catch {
+          // an archive that does not read leaves that dependency's keys open
+        }
+      } else if (statSync(path).isDirectory() && existsSync(join(path, "Chart.yaml"))) {
+        subcharts.push(readLocalChart(path));
+      }
+    }
+  }
+  return { chartYaml: read("Chart.yaml")!, valuesYaml: read("values.yaml"), valuesSchema: read("values.schema.json"), ...(subcharts.length ? { subcharts } : {}) };
 }
 
-/** The top-level chart's files out of a chart archive (subcharts are ignored). */
+/** The top-level chart's files out of a chart archive, with the subcharts it bundles. */
 export function chartFilesFromArchive(files: Map<string, Buffer>, label: string): ChartFiles {
   const chartYamlPath = [...files.keys()].find((p) => p.split("/").length === 2 && p.endsWith("/Chart.yaml"));
   if (!chartYamlPath) throw new Error(`${label}: the archive has no top-level Chart.yaml`);
-  const dir = chartYamlPath.split("/")[0];
+  return chartFilesAt(files, chartYamlPath.split("/")[0]);
+}
+
+function chartFilesAt(files: Map<string, Buffer>, dir: string): ChartFiles {
   const read = (f: string) => files.get(`${dir}/${f}`)?.toString("utf8");
-  return { chartYaml: read("Chart.yaml")!, valuesYaml: read("values.yaml"), valuesSchema: read("values.schema.json") };
+  const subcharts: ChartFiles[] = [];
+  const dirs = new Set<string>();
+  for (const path of [...files.keys()].sort()) {
+    if (!path.startsWith(`${dir}/charts/`)) continue;
+    const rest = path.slice(`${dir}/charts/`.length);
+    if (!rest.includes("/") && rest.endsWith(".tgz")) {
+      try {
+        subcharts.push(chartFilesFromArchive(readTarGz(files.get(path)!), `${dir}/charts/${rest}`));
+      } catch {
+        // an archive that does not read leaves that dependency's keys open
+      }
+    } else if (rest.includes("/")) dirs.add(rest.split("/")[0]);
+  }
+  for (const name of dirs) {
+    if (files.has(`${dir}/charts/${name}/Chart.yaml`)) subcharts.push(chartFilesAt(files, `${dir}/charts/${name}`));
+  }
+  return { chartYaml: read("Chart.yaml")!, valuesYaml: read("values.yaml"), valuesSchema: read("values.schema.json"), ...(subcharts.length ? { subcharts } : {}) };
+}
+
+/**
+ * The chart's dependencies out of its `Chart.yaml`, each with the values of
+ * the bundled subchart it names. A dependency with no bundled subchart has
+ * no values here, and its keys stay open.
+ */
+export function dependenciesOf(files: ChartFiles): SubchartValues[] {
+  let meta: { dependencies?: unknown } | undefined;
+  try {
+    meta = yaml.load(files.chartYaml) as typeof meta;
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(meta?.dependencies)) return [];
+  const out: SubchartValues[] = [];
+  for (const dep of meta.dependencies as Array<{ name?: string; alias?: string; condition?: string; tags?: unknown[] }>) {
+    if (!dep || typeof dep.name !== "string") continue;
+    const bundled = (files.subcharts ?? []).find((c) => {
+      try {
+        return (yaml.load(c.chartYaml) as { name?: string } | undefined)?.name === dep.name;
+      } catch {
+        return false;
+      }
+    });
+    let values: unknown;
+    if (bundled?.valuesYaml) {
+      try {
+        values = yaml.load(bundled.valuesYaml) ?? {};
+      } catch {
+        values = undefined;
+      }
+    } else if (bundled) values = {};
+    out.push({
+      name: dep.name,
+      ...(typeof dep.alias === "string" ? { alias: dep.alias } : {}),
+      ...(typeof dep.condition === "string" ? { condition: dep.condition } : {}),
+      ...(Array.isArray(dep.tags) && dep.tags.length ? { tags: true } : {}),
+      ...(values !== undefined ? { values, text: bundled?.valuesYaml, dependencies: bundled ? dependenciesOf(bundled) : undefined } : {}),
+    });
+  }
+  return out;
 }
 
 /** Download a remote chart: OCI through the registry API, a classic repository through its index. */
@@ -208,7 +304,7 @@ function renderChart(
     } catch (err) {
       throw new Error(`helm.charts.${key}: values.yaml does not parse: ${err instanceof Error ? err.message : String(err)}`);
     }
-    lines.push(`/** Values for ${from}, inferred from its values.yaml defaults. */`, `export type ${valuesName} = ${inferValuesType(values)};`);
+    lines.push(`/** Values for ${from}, inferred from its values.yaml defaults. */`, `export type ${valuesName} = ${inferValuesType(values, { text: files.valuesYaml, dependencies: dependenciesOf(files), valuesRoot: chart.valuesRoot ? [chart.valuesRoot] : undefined })};`);
     source = files.valuesYaml ? "values.yaml" : "no values file";
   }
 

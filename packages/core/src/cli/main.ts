@@ -1284,7 +1284,14 @@ Workspace (level 1, #2524):
                         under _members/_workspace/<env>/trains.jsonl. Refuses
                         when a member has no release
   workspace train list <env> [--json]
-                        The release trains recorded for <env>, oldest first
+                        The release trains recorded for <env>, oldest first,
+                        each with its digest and the runs that promoted it
+  workspace train promote <env> [<train id|digest>] [--gate <name>] [--dry-run] [--json]
+                        Promote a train (the newest for <env> unless named):
+                        each member's components promote --release, producers
+                        first. --gate plans every member first and records one
+                        workspace gate fact over their release gates; nothing
+                        deploys until run approve approves it (#4037)
 
 Lifecycle (alias: lc):
   lifecycle snapshot <env>  Query API, save metadata to orphan branch
@@ -1483,7 +1490,7 @@ Component release ledger + status:
   components promote        Deploy the digests one environment's release
                             ledger records to another, without a build
                             (--to <env> [--from <env>] [--allow-skip]
-                             [--release <label|digest>]
+                             [--release <label|digest> [--plan-only]]
                              [--component <name> [--digest <sha256:...>]];
                              --from defaults to the environment before --to
                              in the config's environments; --dry-run prints
@@ -1491,7 +1498,9 @@ Component release ledger + status:
                              --release a dependent plans against its
                              upstream's planned outputs and plans again once
                              it applies; --wave-gate <gate> checks each wave
-                             at <gate>-wave-<k>; a stop writes --resume <file>)
+                             at <gate>-wave-<k>; a stop writes --resume <file>;
+                             --plan-only plans and stores the release's change
+                             set and deploys nothing, #4037)
   components rollback <env> Redeploy an earlier release of an environment
                             from its recorded digest (--component <name>
                             [--digest <sha256:...>]; defaults to the release

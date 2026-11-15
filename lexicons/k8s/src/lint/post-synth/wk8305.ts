@@ -6,7 +6,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { docsToManifests } from "./k8s-helpers";
+import { docsToManifests, nameOf } from "./k8s-helpers";
 import type { K8sManifest } from "./k8s-helpers";
 
 export const wk8305: PostSynthCheck = {
@@ -24,7 +24,7 @@ export const wk8305: PostSynthCheck = {
     for (const manifest of manifests) {
       if (manifest.kind !== "Ingress") continue;
 
-      const ingressName = manifest.metadata?.name ?? "Ingress";
+      const ingressName = nameOf(manifest, "Ingress");
       const ingressNamespace = manifest.metadata?.namespace ?? "default";
       const spec = manifest.spec;
       if (!spec) continue;

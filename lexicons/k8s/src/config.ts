@@ -105,6 +105,17 @@ export interface K8sChantConfig {
    * An entry may also be `{ path, patches }`: the patches apply to the
    * rendered documents before they become entities (see `RenderedPatch`).
    *
+   * A kustomization with `helmCharts` renders only when asked (#5112).
+   * `enableHelm: true` passes `--enable-helm` to kustomize (and to `kubectl
+   * kustomize`), and `helmCommand` names the `helm` binary for
+   * `--helm-command`. Without `enableHelm` the root fails with a message that
+   * names the charts and this option. kustomize pulls a chart that is not
+   * already in the root's chart home (`helmGlobals.chartHome`, default
+   * `charts/`), which reaches the network, so that is its own switch:
+   * `fetchCharts: true` allows the pull, and without it a chart that is not in
+   * the chart home fails naming the chart, with no network used. A pull writes
+   * the chart into the root's directory.
+   *
    * ```ts
    * k8s: {
    *   kustomize: {
@@ -118,7 +129,7 @@ export interface K8sChantConfig {
    */
   kustomize?: {
     /** Kustomization directories to render into the build, optionally with patches. */
-    roots?: Array<string | { path: string; patches?: RenderedPatch[] }>;
+    roots?: Array<string | { path: string; patches?: RenderedPatch[]; enableHelm?: boolean; helmCommand?: string; fetchCharts?: boolean }>;
   };
 
   /**
@@ -139,6 +150,12 @@ export interface K8sChantConfig {
     kind: "kustomize" | "argo-app" | "flux-kustomization" | "manifests";
     dir: string;
     label?: string;
+    /** Kustomize only: pass `--enable-helm` (#5112). Also read from the environment as `CHANT_K8S_ENABLE_HELM=1`, which is how `chant workspace graph` is told, since it writes this config itself. */
+    enableHelm?: boolean;
+    /** Kustomize only: the `helm` binary for `--helm-command`. Environment: `CHANT_K8S_HELM_COMMAND`. */
+    helmCommand?: string;
+    /** Kustomize only: let kustomize pull a chart that is not in the chart home, which uses the network. Environment: `CHANT_K8S_FETCH_CHARTS=1`. */
+    fetchCharts?: boolean;
     /** The workspace root, absolute. A `manifests` member leaves out a directory a kustomization under it lists in `resources`. */
     workspace?: string;
   };

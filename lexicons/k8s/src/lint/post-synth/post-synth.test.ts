@@ -1,3 +1,6 @@
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { describe, test, expect } from "vitest";
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
 
@@ -131,6 +134,49 @@ describe("WK8005: Hardcoded secrets in env", () => {
     }));
     const diags = wk8005.check(ctx);
     expect(diags.length).toBe(0);
+  });
+
+  function envCtx(name: string, value: string) {
+    return makeCtx(JSON.stringify({
+      apiVersion: "apps/v1",
+      kind: "Deployment",
+      metadata: { name: "app" },
+      spec: { template: { spec: { containers: [{ name: "app", image: "app:1.0", env: [{ name, value }] }] } } },
+    }));
+  }
+
+  test.each([
+    ["AWS_WEB_IDENTITY_TOKEN_FILE", "/var/run/secrets/aws-iam-token/serviceaccount/token"],
+    ["AZURE_FEDERATED_TOKEN_FILE", "/var/run/secrets/azure-token/serviceaccount/token"],
+    ["TLS_KEY_PATH", "/etc/tls/tls.key"],
+    ["DB_PASSWORD_FILE", "./secrets/db-password"],
+    ["SECRET_DIR", "/etc/secrets"],
+  ])("passes when %s points at a path", (name, value) => {
+    expect(wk8005.check(envCtx(name, value)).length).toBe(0);
+  });
+
+  test.each([
+    ["LOG_MESSAGE_KEY", "msg"],
+    ["PARTITION_KEY", "tenant"],
+    ["SORT_KEY", "created"],
+    ["sortKey", "created"],
+  ])("passes when %s is a field name", (name, value) => {
+    expect(wk8005.check(envCtx(name, value)).length).toBe(0);
+  });
+
+  test.each([
+    ["API_KEY", "abc123"],
+    ["KEY", "abc123"],
+    ["STRIPE_KEY", "sk_live_abc"],
+    ["PRIVATE_KEY", "abc"],
+    ["APIKEY", "abc"],
+    ["DB_PASSWORD", "/hunter2/abc"],
+    ["AUTH_TOKEN_FILE", "ghp_abcdefghijklmnop0123456789"],
+    ["API_TOKEN_PATH", "abc/def+ghi=="],
+    ["SECRET_PARTITION_KEY", "abc123"],
+    ["LOG_MESSAGE_KEY_SECRET", "abc123"],
+  ])("still flags %s", (name, value) => {
+    expect(wk8005.check(envCtx(name, value)).length).toBe(1);
   });
 });
 
@@ -351,6 +397,42 @@ spec:
 `);
     const diags = wk8102.check(ctx);
     expect(diags.length).toBe(0);
+  });
+
+  test("a metadata.name that is a map is described, not printed as [object Object]", () => {
+    const ctx = makeCtx(`
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{name}}
+`);
+    const diags = wk8102.check(ctx);
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toContain("metadata.name is a map");
+    expect(diags[0].message).toContain("template");
+    expect(diags[0].message).not.toContain("[object Object]");
+    expect(diags[0].entity).toBe("Namespace");
+  });
+
+  test("other name-formatting rules fall back to the kind for a non-string name", () => {
+    const ctx = makeCtx(`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{name}}
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          image: app
+`);
+    const diags = [...wk8006.check(ctx), ...wk8201.check(ctx), ...wk8102.check(ctx)];
+    expect(diags.length).toBeGreaterThanOrEqual(3);
+    for (const d of diags) {
+      expect(d.message).not.toContain("[object Object]");
+      expect(typeof d.entity).toBe("string");
+    }
   });
 });
 
@@ -1872,6 +1954,18 @@ describe("ARGO003: Application destination references a registered cluster", () 
     const ctx = manifestsCtx(argoApp("api", { project: "default", destination: { namespace: "demo" } }));
     expect(argo003.check(ctx).length).toBe(1);
   });
+
+  test("a cluster Secret whose fields a live read masked registers nothing under the masked value", () => {
+    for (const mask of ["<masked>", "[REDACTED]"]) {
+      const masked = { ...clusterSecret("prod", "https://prod.example.com"), stringData: { name: mask, server: mask } };
+      const byServer = manifestsCtx(masked, argoApp("api", { project: "default", destination: { server: mask, namespace: "demo" } }));
+      expect(argo003.check(byServer).length).toBe(1);
+      const byName = manifestsCtx(masked, argoApp("api", { project: "default", destination: { name: mask } }));
+      expect(argo003.check(byName).length).toBe(1);
+      const byMetadataName = manifestsCtx(masked, argoApp("api", { project: "default", destination: { name: "prod" } }));
+      expect(argo003.check(byMetadataName).length).toBe(0);
+    }
+  });
 });
 
 // ── ARGO005: Application source.path resolves to an existing directory ────────
@@ -1904,6 +1998,56 @@ describe("ARGO005: Application source path exists", () => {
       argoApp("api", { project: "default", destination: inClusterDest, source: { repoURL: "x", chart: "redis" } }),
     );
     expect(argo005.check(ctx).length).toBe(0);
+  });
+
+  // #5109: under `chant audit` the path resolves against the audited tree, not the working directory.
+  describe("under chant audit", () => {
+    const repo = "https://github.com/acme/infra";
+    function tree(origin?: string): string {
+      const dir = mkdtempSync(join(tmpdir(), "chant-argo005-"));
+      execFileSync("git", ["init", "-q"], { cwd: dir });
+      if (origin) execFileSync("git", ["remote", "add", "origin", origin], { cwd: dir });
+      mkdirSync(join(dir, "kubernetes/app"), { recursive: true });
+      return dir;
+    }
+    function auditCtx(root: string | undefined, path: string, repoURL = repo): PostSynthContext {
+      const ctx = manifestsCtx(argoApp("api", { project: "default", destination: inClusterDest, source: { repoURL, path } }));
+      return { ...ctx, audit: root === undefined ? {} : { root } };
+    }
+
+    test("a path that exists in the audited tree is not flagged, whatever the working directory", () => {
+      const dir = tree(`${repo}.git`);
+      expect(process.cwd()).not.toBe(dir);
+      expect(argo005.check(auditCtx(dir, "kubernetes/app")).length).toBe(0);
+    });
+
+    test("a path missing from the audited tree is flagged, with the path it looked for", () => {
+      const dir = tree(`${repo}.git`);
+      const diags = argo005.check(auditCtx(dir, "kubernetes/gone"));
+      expect(diags.length).toBe(1);
+      expect(diags[0].message).toContain('"kubernetes/gone"');
+      expect(diags[0].message).toContain("audited repository");
+    });
+
+    test("a path that exists only in the working directory is flagged", () => {
+      const dir = tree(`${repo}.git`);
+      expect(argo005.check(auditCtx(dir, "lexicons")).length).toBe(1);
+    });
+
+    test("an Application of another repository is left alone", () => {
+      const dir = tree(`${repo}.git`);
+      expect(argo005.check(auditCtx(dir, "kubernetes/gone", "https://github.com/acme/other")).length).toBe(0);
+    });
+
+    test("a tree with no origin is checked against the directory", () => {
+      const dir = tree();
+      expect(argo005.check(auditCtx(dir, "kubernetes/app")).length).toBe(0);
+      expect(argo005.check(auditCtx(dir, "kubernetes/gone")).length).toBe(1);
+    });
+
+    test("a tree with nothing on disk gets no finding", () => {
+      expect(argo005.check(auditCtx(undefined, "kubernetes/gone")).length).toBe(0);
+    });
   });
 });
 

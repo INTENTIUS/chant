@@ -77,35 +77,51 @@ export function providerReference(value: unknown): string | undefined {
   return m ? `provider.${m[1]}.${m[2]}` : undefined;
 }
 
-/** Every reference in one block body, provider meta-arguments included. */
+/**
+ * Every reference in one block body, provider meta-arguments included.
+ *
+ * The walk reaches every string in the body at any depth. hcl2json wraps each
+ * nested block in an array, so a provider's `rule { match { expr { ... } } }`
+ * is already six levels down before its attribute, and real providers nest
+ * further; a depth cap would have to be guessed and would still miss someone's
+ * block. Instead the walk is iterative, so a deeply nested body cannot
+ * overflow the call stack, and it marks each container it has opened, so a
+ * body that shares a sub-object or points back at an ancestor is read once and
+ * cannot loop. Cost is linear in the number of values in the body.
+ */
 export function referencesInBody(body: BlockBody): string[] {
   const found = new Set<string>();
+  const opened = new Set<object>();
+  const stack: Array<[unknown, string]> = [[body, ""]];
 
-  const visit = (value: unknown, key: string, depth: number): void => {
-    if (depth > 6) return;
+  while (stack.length > 0) {
+    const [value, key] = stack.pop()!;
     if (typeof value === "string") {
       for (const ref of collectReferences(value)) found.add(ref);
       if (key === "provider") {
         const provider = providerReference(value);
         if (provider) found.add(provider);
       }
-      return;
+      continue;
     }
+    if (typeof value !== "object" || value === null) continue;
+    // A key is passed down unchanged through arrays, so the same container
+    // reached under two different keys could in principle matter. A body is a
+    // tree, so it is not, and a repeat visit only repeats what was found.
+    if (opened.has(value)) continue;
+    opened.add(value);
     if (Array.isArray(value)) {
-      for (const item of value) visit(item, key, depth + 1);
-      return;
+      for (const item of value) stack.push([item, key]);
+      continue;
     }
-    if (typeof value === "object" && value !== null) {
-      for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-        // `providers = { aws = aws.west }` maps a child module's provider name
-        // to the caller's block, so every VALUE under `providers` is a
-        // provider reference, whatever its key.
-        visit(v, key === "providers" ? "provider" : k, depth + 1);
-      }
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      // `providers = { aws = aws.west }` maps a child module's provider name
+      // to the caller's block, so every VALUE under `providers` is a
+      // provider reference, whatever its key.
+      stack.push([v, key === "providers" ? "provider" : k]);
     }
-  };
+  }
 
-  visit(body, "", 0);
   return [...found];
 }
 

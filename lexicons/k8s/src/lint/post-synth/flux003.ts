@@ -15,6 +15,7 @@
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import { allManifests, manifestsOfKind } from "./argo-helpers";
 import type { K8sManifest } from "./k8s-helpers";
+import { nameOf } from "./k8s-helpers";
 
 /** Flux Kustomizations only — the kustomize.config.k8s.io kind shares the name. */
 function fluxKustomizations(manifests: K8sManifest[]): K8sManifest[] {
@@ -39,7 +40,7 @@ export const flux003: PostSynthCheck = {
     );
 
     for (const kustomization of kustomizations) {
-      const name = kustomization.metadata?.name ?? "Kustomization";
+      const name = nameOf(kustomization, "Kustomization");
       const dependsOn = kustomization.spec?.dependsOn;
       if (!Array.isArray(dependsOn)) continue;
 

@@ -207,6 +207,86 @@ export interface ReferenceCatalog {
    * carries the rule id `<lexicon>:<holder kind>:<via>`.
    */
   sharedNodes?(nodes: readonly IRNode[]): SharedCatalogNode[];
+  /** Nodes a node of this lexicon makes, on a declared graph (#5102): the Applications an ApplicationSet generates. */
+  generates?: GenerateRule[];
+  /** Paths in the repository a node of this lexicon names, on a declared graph (#5102): an Application's source path. */
+  pathRefs?: PathRule[];
+}
+
+/**
+ * A node that stands for several the system it declares will make (#5102):
+ * an Argo CD ApplicationSet, whose generators yield parameter sets that its
+ * template turns into Applications. `from`, `path`, `targetKind` and `label`
+ * name the rule as a {@link RefRule}'s do, and the edge from the holder to
+ * each node it makes carries its id. `generate` is handed the holder and
+ * every node the pass reads (as `declaredNode` gives them), so a generator
+ * can select from nodes of any member. Only the catalog pass over a declared
+ * graph calls it. Pure.
+ */
+export interface GenerateRule {
+  from: string;
+  path: string;
+  targetKind: string;
+  label?: string;
+  generate(holder: IRNode, nodes: readonly IRNode[]): Generated;
+  /**
+   * The rule of the edge from a generated node to the cluster registration
+   * its generator selected it for ({@link GeneratedNode.cluster}): its id is
+   * `<lexicon>:<from>:<path>`. The selection names the registration, so the
+   * edge is drawn whatever the node's own references say, and an edge another
+   * rule draws for the same pair is left out.
+   */
+  cluster?: { path: string; targetKind: string; label?: string };
+}
+
+/** What a {@link GenerateRule} made of one holder. */
+export interface Generated {
+  nodes: GeneratedNode[];
+  /** What the rule left unexpanded and why, one line each: a generator it does not read, a template function it does not know. */
+  notExpanded: string[];
+}
+
+/**
+ * One node a {@link GenerateRule} made. The pass gives it the id
+ * `<holder id>/<key>`, the holder's lexicon and member, and reads it with the
+ * other nodes, so the catalog's rules join it as they join a declared node
+ * of its kind.
+ */
+export interface GeneratedNode {
+  /** Unique among the holder's nodes: a generated Application's name. */
+  key: string;
+  kind: string;
+  attrs: Record<string, unknown>;
+  /** The generator that yielded it, such as `clusters` or `list`. */
+  generator: string;
+  /** The parameters it was made with, flattened to `a.b.c` keys. */
+  params: Record<string, string>;
+  /** With a generator that reads cluster registrations: the node it was made for, when there is one. */
+  cluster?: IRNode;
+}
+
+/**
+ * A path in a repository that a node names (#5102): an Argo CD Application's
+ * `spec.source.path`, a values file. `from` and `path` name the rule as a
+ * {@link RefRule}'s do. `read` returns each path the holder names; the pass
+ * looks for it in the workspace's repository and reports one that is not
+ * there as dangling. Pure.
+ */
+export interface PathRule {
+  from: string;
+  path: string;
+  label?: string;
+  read(holder: IRNode): RepoPathRef[];
+}
+
+/** One path a {@link PathRule} read. */
+export interface RepoPathRef {
+  /** The path from the repository's root, as the holder resolves it. */
+  value: string;
+  /** The repository the path is in, as the holder writes it (`repoURL`). */
+  repo: string;
+  /** Whether the path names a directory or a file. */
+  type: "dir" | "file";
 }
 
 /** `child` is contained by `parent` (subnet ∈ VPC). For #779's boundary boxes. */

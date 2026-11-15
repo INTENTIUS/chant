@@ -594,6 +594,7 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
         checksProvider: options.checksProvider,
         suppressionStats,
         skips,
+        ...(isUrl ? {} : { root: options.path }),
         ...(isUrl ? {} : { enabledRules: readEnabledRules(options.path) }),
       });
     } catch (err) {

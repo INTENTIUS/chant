@@ -51,7 +51,7 @@ import { isLockRowsHeldError, leaseCapabilityStep, type RowLease, type RowLeaseP
 import { topoSort } from "../codegen/topo-sort";
 import { CHANT_EXIT } from "../exit-codes";
 import { kahnLayers } from "./layers";
-import { evaluateGate, gitGateLedgerPort, type GateDigestMismatch, type GateLedgerPort } from "../op/gate";
+import { evaluateGate, gitGateLedgerPort, type GateDigestMismatch, type GateLedgerPort, type WorkspaceGateStandIn } from "../op/gate";
 import { gateName } from "../op/gate-name";
 import { GateNotRecordableError } from "../lifecycle/no-record";
 import { componentPlanDigest } from "./gate-plan";
@@ -577,6 +577,13 @@ export interface ReleaseGateBinding {
   releaseDigest: string;
   /** Reads the document stored under a digest and says whether it is empty (`evaluateGate`'s `verifyEmpty`). */
   verifyEmpty?: (planDigest: string) => Promise<boolean>;
+  /**
+   * The workspace gate a release train's promote started this run under
+   * (#4037, ws-039): it stands in for the release gate only when its approval
+   * covers this member's gate, change set, environment and release, and the
+   * member opts in at base.
+   */
+  workspace?: WorkspaceGateStandIn;
 }
 
 /** Run a single capability step. Never throws for a capability-run failure; returns a fail record instead. */
@@ -689,6 +696,7 @@ async function runPhase(
           // #4551: a release gate's plan digest is its change set's, so the fact cites it.
           ...(gates.releaseGate && gates.planDigest !== undefined ? { fields: { changeSet: gates.planDigest } } : {}),
           ...(gates.releaseGate?.verifyEmpty ? { verifyEmpty: gates.releaseGate.verifyEmpty } : {}),
+          ...(gates.releaseGate?.workspace ? { workspace: gates.releaseGate.workspace } : {}),
           ...(gate.description ? { description: gate.description } : {}),
           ...(gate.timeout ? { timeout: gate.timeout } : {}),
           ...(gates.now ? { now: gates.now } : {}),

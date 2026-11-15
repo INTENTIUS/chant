@@ -15,7 +15,7 @@ import { createRequire } from "module";
 import { moduleSourceUrl } from "@intentius/chant/module-source";
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
 import type { CrdFieldSchema } from "../../spec/parse";
-import { docsToManifests, type K8sManifest } from "./k8s-helpers";
+import { docsToManifests, nameOf, type K8sManifest } from "./k8s-helpers";
 import { projectSpecSchema } from "../../project-kinds";
 
 export type { CrdFieldSchema };
@@ -229,7 +229,7 @@ export function suggestField(unknown: string, known: string[]): string | undefin
   return best;
 }
 
-/** `metadata.name` or the kind, for diagnostics. */
+/** `metadata.name` when it is a string, else the kind, for diagnostics. */
 export function resourceLabel(manifest: K8sManifest): string {
-  return manifest.metadata?.name ?? manifest.kind ?? "resource";
+  return nameOf(manifest, manifest.kind ?? "resource");
 }

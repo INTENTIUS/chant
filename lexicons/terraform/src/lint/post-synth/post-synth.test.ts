@@ -70,6 +70,45 @@ describe("TF001: root module declares no remote backend", () => {
     expect(diags).toHaveLength(0);
   });
 
+  // #5079: Terraform merges terraform blocks, so a backend in any of them counts,
+  // whichever order the blocks are read in.
+  test("passes a root whose backend is in a second terraform block", async () => {
+    const diags = tf001.check(await loadFixture("TF001", "negative-second-block"));
+    expect(diags).toHaveLength(0);
+  });
+
+  test("passes when the backend block comes first and a later block has none", () => {
+    const diags = tf001.check(
+      makeCtx({
+        "app/terraform": terraformBlock("app", { backend: { s3: [{ bucket: "tfstate" }] } }),
+        "app/terraform~2": terraformBlock("app", { required_version: ">= 1.5.0" }),
+      }),
+    );
+    expect(diags).toHaveLength(0);
+  });
+
+  test("passes when a cloud block is in a later terraform block", () => {
+    const diags = tf001.check(
+      makeCtx({
+        "app/terraform": terraformBlock("app", { required_version: ">= 1.5.0" }),
+        "app/terraform~2": terraformBlock("app", { cloud: [{ organization: "acme" }] }),
+      }),
+    );
+    expect(diags).toHaveLength(0);
+  });
+
+  test("still flags a root when no terraform block has a remote backend, naming a local one in any block", () => {
+    const diags = tf001.check(
+      makeCtx({
+        "app/terraform": terraformBlock("app", { required_version: ">= 1.5.0" }),
+        "app/terraform~2": terraformBlock("app", { backend: { local: [{}] } }),
+      }),
+    );
+    expect(diags).toHaveLength(1);
+    expect(diags[0].entity).toBe("app/terraform");
+    expect(diags[0].message).toContain('the backend it declares is `backend "local"`');
+  });
+
   test("fires once per root, not once per terraform block", () => {
     const diags = tf001.check(
       makeCtx({

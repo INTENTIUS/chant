@@ -36,7 +36,7 @@
  */
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import { collectSecretDeclarations } from "@intentius/chant/secret-provenance";
-import { extractPodSpec, type K8sManifest } from "./k8s-helpers";
+import { extractPodSpec, type K8sManifest, nameOf } from "./k8s-helpers";
 import { allManifests } from "./argo-helpers";
 import { resolveEncryptedSecretClaims } from "./sops-helpers";
 
@@ -192,7 +192,7 @@ export const wk8503: PostSynthCheck = {
     for (const manifest of manifests) {
       const podSpec = extractPodSpec(manifest);
       if (!podSpec) continue;
-      const workload = manifest.metadata?.name ?? manifest.kind ?? "workload";
+      const workload = nameOf(manifest, manifest.kind ?? "workload");
       const namespace = manifest.metadata?.namespace;
 
       const reported = new Set<string>();

@@ -15,7 +15,7 @@
  *  - any tag or label whose key matches the patterns.
  */
 
-import { isSensitiveKey, SENSITIVE_KEY_PATTERNS } from "../sensitive-key";
+import { isReferenceField, isSensitiveKey, SENSITIVE_KEY_PATTERNS } from "../sensitive-key";
 
 export { isSensitiveKey, SENSITIVE_KEY_PATTERNS };
 
@@ -34,7 +34,7 @@ export function maskValue(value: unknown): unknown {
   const pairKey = typeof obj.Key === "string" ? obj.Key : typeof obj.key === "string" ? obj.key : undefined;
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(obj)) {
-    if (isSensitiveKey(k)) {
+    if (isSensitiveKey(k) && !isReferenceField(k, v)) {
       out[k] = MASKED;
     } else if (pairKey !== undefined && isSensitiveKey(pairKey) && (k === "Value" || k === "value")) {
       out[k] = MASKED;
@@ -57,8 +57,66 @@ export function maskTags(tags: Record<string, string>): Record<string, string> {
 
 const LAST_APPLIED = "kubectl.kubernetes.io/last-applied-configuration";
 
+/**
+ * The maintainer's ruling on chant#5116, as a switch. An Argo CD cluster
+ * Secret (label `argocd.argoproj.io/secret-type: cluster`) keeps its `name`
+ * and `server` in `data` beside `config`, which holds credentials.
+ *
+ * - `false` (the default): the whole payload is masked, `name` and `server`
+ *   included. A live read cannot join an Application to a cluster by name or
+ *   server, and `argoCluster` is never emitted.
+ * - `true`: the payload stays masked key by key, and the object gains an
+ *   `argoCluster: { name, server }` view with those two values decoded.
+ *   `config` and every other `data` key stay masked. A `server` that carries
+ *   a user name or password in its URL is left out.
+ *
+ * Flip this one constant to apply the ruling. Tests pass the option
+ * explicitly, so they hold whichever way it is set.
+ */
+export const EXPOSE_ARGO_CLUSTER_IDENTITY = false;
+
+const ARGO_CLUSTER_LABEL = "argocd.argoproj.io/secret-type";
+
+export interface MaskKubernetesOptions {
+  /** Overrides {@link EXPOSE_ARGO_CLUSTER_IDENTITY}. */
+  exposeArgoClusterIdentity?: boolean;
+}
+
+function isArgoClusterSecret(obj: Record<string, unknown>): boolean {
+  if (obj.kind !== "Secret") return false;
+  const labels = (obj.metadata as { labels?: Record<string, unknown> } | undefined)?.labels;
+  return labels?.[ARGO_CLUSTER_LABEL] === "cluster";
+}
+
+/** One field of a Secret's `stringData` (plain) or `data` (base64), as text. */
+function secretText(obj: Record<string, unknown>, key: string): string | undefined {
+  const plain = (obj.stringData as Record<string, unknown> | undefined)?.[key];
+  if (typeof plain === "string") return plain;
+  const encoded = (obj.data as Record<string, unknown> | undefined)?.[key];
+  if (typeof encoded !== "string") return undefined;
+  return Buffer.from(encoded, "base64").toString("utf8");
+}
+
+/** The `argoCluster` view of a cluster Secret: its name and server, never `config`. */
+export function argoClusterView(obj: Record<string, unknown>): { name?: string; server?: string } | undefined {
+  if (!isArgoClusterSecret(obj)) return undefined;
+  const view: { name?: string; server?: string } = {};
+  const name = secretText(obj, "name");
+  if (name && !/[\u0000-\u001f]/.test(name)) view.name = name;
+  const server = secretText(obj, "server");
+  if (server) {
+    try {
+      const url = new URL(server);
+      if (!url.username && !url.password) view.server = server;
+    } catch {
+      // not a URL: left out
+    }
+  }
+  return view;
+}
+
 /** A Kubernetes object, masked: key names everywhere, and a Secret's payload whole. */
-export function maskKubernetesObject(obj: Record<string, unknown>): Record<string, unknown> {
+export function maskKubernetesObject(obj: Record<string, unknown>, options: MaskKubernetesOptions = {}): Record<string, unknown> {
   const masked = maskProperties(obj);
   if (obj.kind === "Secret") {
     for (const field of ["data", "stringData"]) {
@@ -72,6 +130,10 @@ export function maskKubernetesObject(obj: Record<string, unknown>): Record<strin
   const annotations = metadata?.annotations as Record<string, unknown> | undefined;
   if (annotations && LAST_APPLIED in annotations && obj.kind === "Secret") {
     annotations[LAST_APPLIED] = MASKED;
+  }
+  if (options.exposeArgoClusterIdentity ?? EXPOSE_ARGO_CLUSTER_IDENTITY) {
+    const view = argoClusterView(obj);
+    if (view) masked.argoCluster = view;
   }
   return masked;
 }

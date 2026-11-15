@@ -7,7 +7,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { docsToManifests, extractPodSpec, WORKLOAD_KINDS } from "./k8s-helpers";
+import { docsToManifests, extractPodSpec, WORKLOAD_KINDS, nameOf } from "./k8s-helpers";
 
 export const wk8208: PostSynthCheck = {
   id: "WK8208",
@@ -22,7 +22,7 @@ export const wk8208: PostSynthCheck = {
       const podSpec = extractPodSpec(manifest);
       if (!podSpec) continue;
 
-      const resourceName = manifest.metadata?.name ?? manifest.kind;
+      const resourceName = nameOf(manifest, manifest.kind);
 
       if (podSpec.hostPID === true) {
         diagnostics.push({

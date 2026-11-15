@@ -6,7 +6,11 @@
  * Excluded from check auto-discovery by the "helper" filename filter.
  */
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
+import { MASKED } from "@intentius/chant/deep-observation";
 import { docsToManifests, type K8sManifest } from "./k8s-helpers";
+
+/** What the live lister (`<masked>`) and the deep observation (`[REDACTED]`) leave where a value was. */
+const MASKED_VALUES: ReadonlySet<string> = new Set([MASKED, "<masked>"]);
 
 /** The always-present, in-cluster Argo destination. */
 export const IN_CLUSTER_SERVER = "https://kubernetes.default.svc";
@@ -28,14 +32,17 @@ export function manifestsOfKind(manifests: K8sManifest[], kind: string): K8sMani
 /**
  * Read a string field from a Secret's stringData or data block.
  * (Argo cluster Secrets conventionally use stringData.)
+ *
+ * A value the live reader masked is not a value: it reads as absent, so a
+ * masked `name` or `server` never registers a cluster called "<masked>" or "[REDACTED]".
  */
 export function secretField(manifest: K8sManifest, key: string): string | undefined {
   const stringData = manifest.stringData as Record<string, unknown> | undefined;
   const data = manifest.data as Record<string, unknown> | undefined;
   const fromStringData = stringData?.[key];
-  if (typeof fromStringData === "string") return fromStringData;
+  if (typeof fromStringData === "string" && !MASKED_VALUES.has(fromStringData)) return fromStringData;
   const fromData = data?.[key];
-  if (typeof fromData === "string") return fromData;
+  if (typeof fromData === "string" && !MASKED_VALUES.has(fromData)) return fromData;
   return undefined;
 }
 

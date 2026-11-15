@@ -45,6 +45,7 @@ chant components pr-env down --pr <n> [--reason closed|expired] [--forge <kind>]
                                 [--member <name>] [--output <dir>] [--no-push] [--json]
 chant components pr-env sweep [--forge <kind>] [--member <name>] [--output <dir>] [--no-push]
 chant components promote --to <env> [--from <env>] [--allow-skip]
+                                [--release <label|digest> [--plan-only]]
                                 [--component <name> [--digest <sha256:...>]
                                  | --digest <component>=<sha256:...> ...]
                                 [--dry-run] [--json] [--seed-outputs <file>]
@@ -614,6 +615,29 @@ chant approve release prod-release-wave-2 --env prod
 ```
 
 `--wave-gate` needs `--release` and a composition that declares a gate.
+
+#### Planning only (`--plan-only`)
+
+`--plan-only` plans the release's change set for `--to` and stores it as a real promote does, then prints it and stops ([#4037](https://github.com/INTENTIUS/chant/issues/4037)). Nothing is deployed. The gate ledger gets no pending fact and no empty pass, and the environment's ledger gets no deploy record. The `--json` form looks like this.
+
+```json
+{
+  "env": "prod",
+  "releaseDigest": "jcs1-sha256:3f…",
+  "label": "v1.4.0",
+  "op": "release",
+  "gates": ["prod-release"],
+  "changeSet": "jcs1-sha256:9b…",
+  "empty": false,
+  "components": ["api", "web"]
+}
+```
+
+`changeSet` and `empty` are null, and `gates` is empty, when no promoted composition declares a gate. A promote that follows binds the same change set unless what it plans against has moved. [`chant workspace train promote --gate`](/chant/cli/workspace-train/#promote) uses this to gather every member's change set before any member deploys. `--plan-only` needs `--release`.
+
+#### Under a train's workspace gate
+
+When `chant workspace train promote --gate <name>` starts the promote, `CHANT_WORKSPACE_GATE` names that workspace gate. A release gate the member's own approvals don't pass then counts the workspace gate's approval, but only under three conditions. The approval must cover this member's gate with the change set this promote planned, the environment and the release digest. Its covers must still hash to the approved digest. The member must set `acceptWorkspaceGates: true` in `chant.workspace.json` at base. Nothing is written to the member's gate ledger. The deploy record names the workspace approver as the gate's approver.
 
 #### Resuming
 

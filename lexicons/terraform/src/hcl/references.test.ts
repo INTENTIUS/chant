@@ -75,6 +75,74 @@ describe("referencesInBody", () => {
   it("descends through nested blocks", () => {
     expect(referencesInBody({ tags: { Name: "${var.name}" } })).toContain("var.name");
   });
+
+  it("reaches the expression of a Cloud Armor rule, seven levels down", () => {
+    // hcl2json shape of `rule { match { expr { expression = "..." } } }`.
+    const body = {
+      name: "p",
+      rule: [{ match: [{ expr: [{ expression: "${\"!request.path.matches('${join(\"|\", local.deep)}')\"}" }] }] }],
+    } as never;
+    expect(referencesInBody(body)).toContain("local.deep");
+  });
+
+  it("reaches a reference at any depth and keeps the providers rule there", () => {
+    let deep: unknown = { x: "${var.bottom}", provider: "${aws.west}" };
+    for (let i = 0; i < 200; i++) deep = { block: [deep] };
+    const refs = referencesInBody(deep as never);
+    expect(refs).toContain("var.bottom");
+    expect(refs).toContain("provider.aws.west");
+    let mapped: unknown = { providers: { aws: "${aws.east}" } };
+    for (let i = 0; i < 50; i++) mapped = { block: [mapped] };
+    expect(referencesInBody(mapped as never)).toContain("provider.aws.east");
+  });
+
+  it("survives a pathological body: 100000 levels, a cycle, a shared sub-object, a wide block", () => {
+    let deep: unknown = { x: "${local.bottom}" };
+    for (let i = 0; i < 100_000; i++) deep = { block: [deep] };
+    expect(referencesInBody(deep as never)).toEqual(["local.bottom"]);
+
+    const cyclic: Record<string, unknown> = { a: "${var.a}" };
+    cyclic.self = cyclic;
+    cyclic.list = [cyclic, { back: cyclic, b: "${var.b}" }];
+    expect(referencesInBody(cyclic as never).sort()).toEqual(["var.a", "var.b"]);
+
+    const shared = { s: "${local.shared}" };
+    expect(referencesInBody({ one: shared, two: [shared, shared] } as never)).toEqual(["local.shared"]);
+
+    const wide: Record<string, unknown> = {};
+    for (let i = 0; i < 50_000; i++) wide[`k${i}`] = [{ v: `\${var.v${i % 100}}` }];
+    const start = performance.now();
+    expect(referencesInBody(wide as never)).toHaveLength(100);
+    expect(performance.now() - start).toBeLessThan(2000);
+  });
+});
+
+describe("a reference inside a nested block, parsed from HCL", () => {
+  it("is found for the Cloud Armor rule shape", async () => {
+    const source = [
+      'locals {',
+      '  shallow = ["a", "b"]',
+      '  deep    = ["/", "/v2/.*"]',
+      '}',
+      'resource "google_compute_security_policy" "p" {',
+      '  name = "p-${join("-", local.shallow)}"',
+      '  rule {',
+      '    action   = "deny(404)"',
+      '    priority = "1"',
+      '    match {',
+      '      expr {',
+      '        expression = "!request.path.matches(\'${join("|", local.deep)}\')"',
+      '      }',
+      '    }',
+      '  }',
+      '}',
+      '',
+    ].join("\n");
+    const ents = await blocksToEntities([{ name: "main.tf", source }], "app");
+    const idx = buildReferenceIndex(ents);
+    expect(isReferenced(idx, "app", "local.deep", "app/locals")).toBe(true);
+    expect(isReferenced(idx, "app", "local.shallow", "app/locals")).toBe(true);
+  });
 });
 
 describe("buildReferenceIndex over the fixture", () => {

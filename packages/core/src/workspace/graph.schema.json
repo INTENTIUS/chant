@@ -637,6 +637,28 @@
             }
           }
         },
+        "generatedBy": {
+          "type": "object",
+          "description": "Added in contract 1 by #5102. On a node the reference catalog generated from another, an Application an ApplicationSet's list or clusters generator yields: the generating node's id, the rule, the generator, the parameters it was made with (flattened to a.b.c keys) and, for a clusters generator, the cluster Secret it was made for. Its id is the generating node's id, a slash and its name.",
+          "required": ["node", "rule", "generator", "params"],
+          "properties": {
+            "node": { "type": "string" },
+            "rule": { "type": "string" },
+            "generator": { "type": "string" },
+            "params": { "type": "object", "additionalProperties": { "type": "string" } },
+            "cluster": { "type": "string" }
+          }
+        },
+        "expansion": {
+          "type": "object",
+          "description": "Added in contract 1 by #5102. On a node a catalog rule generates nodes from, an ApplicationSet: the rule, how many nodes it generated, and one line for each thing it did not expand, such as another generator, templatePatch or a template function it does not read.",
+          "required": ["rule", "generated", "notExpanded"],
+          "properties": {
+            "rule": { "type": "string" },
+            "generated": { "type": "integer", "minimum": 0 },
+            "notExpanded": { "type": "array", "items": { "type": "string" } }
+          }
+        },
         "facts": {
           "type": "object",
           "description": "Added in contract 1 by #4529, written by chant 0.124.54 and newer. What an ownership engine observed about the node: ownership, markers, ownedBy, cloudIds, recordVersions and observedAt, each optional, in the shape of EngineFacts (packages/core/src/graph-schema/graph.schema.json). Set on a Pulumi member on plunge from its checked-in engine-graph.json. Never read for a decision."
@@ -766,7 +788,11 @@
         },
         "through": {
           "type": "string",
-          "description": "Added in contract 1 by #5098. For a reference read through another node, the id of that node: the store a key is read from."
+          "description": "Added in contract 1 by #5098. For a reference read through another node, the id of that node: the store a key is read from, or (#5102) the ApplicationSet that generated the Application whose path is missing."
+        },
+        "cluster": {
+          "type": "string",
+          "description": "Added in contract 1 by #5102. For a path a generated Application names: the cluster Secret it was generated for."
         }
       }
     },

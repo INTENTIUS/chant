@@ -32,7 +32,15 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
 import { loadAll } from "js-yaml";
 import type { Declarable } from "@intentius/chant/declarable";
-import { defaultKustomizeRunner, KustomizeBinaryMissingError, renderKustomizeDocuments, type KustomizeRunner } from "./kustomize/render";
+import {
+  defaultKustomizeRunner,
+  KustomizeBinaryMissingError,
+  KustomizeHelmDisabledError,
+  KustomizeHelmRenderError,
+  renderKustomizeDocuments,
+  type KustomizeHelmOptions,
+  type KustomizeRunner,
+} from "./kustomize/render";
 import { addRenderedEntity, renderedManifestEntity } from "./kustomize/rendered-entity";
 import { clusterSecretView, isClusterSecretDocument } from "./cluster-secret";
 import { kustomizationDocument, readHelmReferences } from "./helm-references";
@@ -43,6 +51,12 @@ export interface K8sMemberConfig {
   kind: K8sMemberKind;
   dir: string;
   label?: string;
+  /** Kustomize only: pass `--enable-helm` (#5112). Also set by `CHANT_K8S_ENABLE_HELM=1` in the environment, which is how `chant workspace graph` is told, since it writes this config itself. */
+  enableHelm?: boolean;
+  /** Kustomize only: the `helm` binary for `--helm-command`. Environment: `CHANT_K8S_HELM_COMMAND`. */
+  helmCommand?: string;
+  /** Kustomize only: let kustomize pull a chart that is not in the chart home, which uses the network. Environment: `CHANT_K8S_FETCH_CHARTS=1`. */
+  fetchCharts?: boolean;
   /** The workspace root, absolute. `manifests` uses it to find the kustomizations that list its directory, and every kind reads the values files a chart reference names from it (#5100). */
   workspace?: string;
 }
@@ -158,6 +172,17 @@ function listedDirectories(root: string): Map<string, string> {
   return listed;
 }
 
+const truthy = (v: string | undefined): boolean => v !== undefined && /^(1|true|yes)$/i.test(v.trim());
+
+/** The Helm settings of a kustomize member: its config, or the environment when the config sets none. */
+export function memberHelmOptions(member: K8sMemberConfig, env: NodeJS.ProcessEnv = process.env): KustomizeHelmOptions {
+  return {
+    enableHelm: member.enableHelm ?? truthy(env.CHANT_K8S_ENABLE_HELM),
+    helmCommand: member.helmCommand ?? (env.CHANT_K8S_HELM_COMMAND || undefined),
+    fetchCharts: member.fetchCharts ?? truthy(env.CHANT_K8S_FETCH_CHARTS),
+  };
+}
+
 export async function readK8sMember(opts: {
   member: K8sMemberConfig;
   /** Injectable renderer (tests); defaults to the real subprocess runner. */
@@ -173,10 +198,11 @@ export async function readK8sMember(opts: {
   let reason: string | undefined;
   if (member.kind === "kustomize") {
     try {
-      documents = await renderKustomizeDocuments(member.dir, opts.run ?? defaultKustomizeRunner);
+      documents = await renderKustomizeDocuments(member.dir, opts.run ?? defaultKustomizeRunner, memberHelmOptions(member));
       rendered = true;
     } catch (err) {
-      if (!(err instanceof KustomizeBinaryMissingError)) throw err;
+      // A render Helm kept from happening leaves the member unrendered, not lost: the chart and values nodes read as data below still stand.
+      if (!(err instanceof KustomizeBinaryMissingError || err instanceof KustomizeHelmDisabledError || err instanceof KustomizeHelmRenderError)) throw err;
       documents = [];
       rendered = false;
       reason = err.message;

@@ -20,7 +20,8 @@
  * audit too, with no output-reading rule variants to drift.
  */
 
-import { basename } from "path";
+import { statSync } from "fs";
+import { basename, dirname, resolve } from "path";
 import type { Severity } from "../lint/rule";
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "../lint/post-synth";
 import { applyInlineSuppressions, type SuppressionMetaFinding } from "../lint/suppressions";
@@ -276,6 +277,16 @@ export interface SuppressionStats {
   count: number;
 }
 
+/** The directory an audit target reads from: the target itself, or the directory of a single file. */
+function auditRootDir(target: string): string {
+  const abs = resolve(target);
+  try {
+    return statSync(abs).isFile() ? dirname(abs) : abs;
+  } catch {
+    return abs;
+  }
+}
+
 /**
  * Audit a set of CI files and return all findings. Pure with respect to the
  * filesystem and network — callers supply file contents.
@@ -290,6 +301,8 @@ export async function auditFiles(
     skips?: AuditSkip[];
     /** Check ids the project enabled with `lint.rules`; a check marked `auditOptIn` runs only when listed here (#3190). */
     enabledRules?: ReadonlySet<string>;
+    /** The directory the audit walked, absolute; absent for a remote tree. Reaches a check as `ctx.audit.root` (#5109). */
+    root?: string;
   } = {},
 ): Promise<AuditFinding[]> {
   const provider = opts.checksProvider ?? defaultChecksProvider;
@@ -308,7 +321,7 @@ export async function auditFiles(
     const checks = (await provider(lexicon)).filter((c) => !c.auditOptIn || opts.enabledRules?.has(c.id));
     if (checks.length === 0) continue;
     const parseEntities = await entitiesProvider(lexicon);
-    findings.push(...(await auditLexicon(lexicon, files, checks, parseEntities, opts.suppressionStats, opts.skips)));
+    findings.push(...(await auditLexicon(lexicon, files, checks, parseEntities, opts.suppressionStats, opts.skips, { ...(opts.root !== undefined ? { root: auditRootDir(opts.root) } : {}) })));
   }
 
   return findings;
@@ -339,9 +352,10 @@ function runChecks(
   checks: PostSynthCheck[],
   outputs: Map<string, string | SerializerResult>,
   entities: Map<string, Declarable> = new Map(),
+  audit?: { root?: string },
 ): CheckRunResult {
   const buildResult: PostSynthContext["buildResult"] = { outputs, entities, warnings: [], errors: [], sourceFileCount: outputs.size };
-  const ctx: PostSynthContext = { outputs, entities: buildResult.entities, buildResult };
+  const ctx: PostSynthContext = { outputs, entities: buildResult.entities, buildResult, ...(audit ? { audit } : {}) };
   const diags: PostSynthDiagnostic[] = [];
   for (const check of checks) {
     try {
@@ -407,6 +421,7 @@ async function auditLexicon(
   parseEntities?: EntitiesParser,
   suppressionStats?: SuppressionStats,
   skips?: AuditSkip[],
+  audit?: { root?: string },
 ): Promise<AuditFinding[]> {
   const unread = new Map<string, string[]>();
   const entitiesFor = async (file: AuditInput): Promise<Map<string, Declarable>> => {
@@ -440,7 +455,7 @@ async function auditLexicon(
   // directive again. Counted the same way, once, here too.
   const metaFindings: AuditFinding[] = [];
   for (const file of files) {
-    const { diagnostics: diags, suppressed, meta } = runChecks(checks, new Map([[file.path, toOutput(file)]]), perEntities.get(file.path));
+    const { diagnostics: diags, suppressed, meta } = runChecks(checks, new Map([[file.path, toOutput(file)]]), perEntities.get(file.path), audit);
     if (suppressionStats) suppressionStats.count += suppressed.length;
     for (const m of meta) {
       metaFindings.push({ checkId: m.checkId, severity: m.severity, message: m.message, file: m.file, lexicon, line: m.line });
@@ -452,7 +467,7 @@ async function auditLexicon(
   }
 
   const allOutputs = new Map<string, string | SerializerResult>(files.map((f) => [f.path, toOutput(f)]));
-  const { diagnostics: allDiags } = runChecks(checks, allOutputs, mergeEntities([...perEntities.values()]));
+  const { diagnostics: allDiags } = runChecks(checks, allOutputs, mergeEntities([...perEntities.values()]), audit);
   const allKeys = new Set(allDiags.map(diagKey));
 
   const out: AuditFinding[] = perFindings.filter((f) => allKeys.has(diagKey(f)));

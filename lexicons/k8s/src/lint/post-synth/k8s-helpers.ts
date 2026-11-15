@@ -78,6 +78,43 @@ export function docsToManifests(ctx: PostSynthContext): K8sManifest[] {
 }
 
 /**
+ * What a `metadata.name` that is not a string is, in words a finding can use.
+ * Undefined when the name is absent or a string.
+ *
+ * The usual cause is a template placeholder: `name: {{name}}` is a YAML flow
+ * mapping whose key is another mapping, so the parser hands back a map whose
+ * only key is the stringified inner map. A shell script or a templating step
+ * fills those files in; the file is not a manifest until it has run.
+ */
+export function describeNonStringName(manifest: { metadata?: { name?: unknown } }): string | undefined {
+  const name = manifest.metadata?.name;
+  if (name === undefined || name === null || typeof name === "string") return undefined;
+  if (Array.isArray(name)) return "a list";
+  if (typeof name === "object") {
+    const keys = Object.keys(name);
+    if (keys.length === 1 && keys[0] === "[object Object]") {
+      return "a map, which is what YAML makes of a {{placeholder}}";
+    }
+    const shown = keys.slice(0, 3).map((k) => JSON.stringify(k)).join(", ");
+    return keys.length === 0 ? "an empty map" : `a map with the key${keys.length > 1 ? "s" : ""} ${shown}${keys.length > 3 ? ", ..." : ""}`;
+  }
+  return `${typeof name} ${String(name)}`;
+}
+
+/**
+ * The name a diagnostic prints and uses as its `entity`: `metadata.name` when
+ * it is a string, otherwise `fallback`. A name that is a map or a list would
+ * print as `[object Object]` and break the report's string `entity`, so it
+ * never gets through; {@link describeNonStringName} says what it was.
+ */
+export function nameOf<F extends string | undefined>(manifest: { metadata?: { name?: unknown } }, fallback: F): string | F {
+  const name = manifest.metadata?.name;
+  if (typeof name === "string") return name;
+  if (typeof name === "number" || typeof name === "boolean") return String(name);
+  return fallback;
+}
+
+/**
  * Extract the pod spec from any workload manifest.
  *
  * Handles:

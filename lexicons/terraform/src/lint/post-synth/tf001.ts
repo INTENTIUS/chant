@@ -21,7 +21,10 @@
  * `# chant-ignore-block: TF001` on the line above its `terraform` block
  * (chant #2111), which is what the three shipped examples do.
  *
- * One diagnostic per root, fired from the root's `terraform` block. A root
+ * One diagnostic per root, fired from the root's first `terraform` block. The
+ * verdict reads every `terraform` block of the root, because Terraform merges
+ * them and a backend often sits in `backend.tf` or `provider.tf` beside a
+ * `versions.tf` block of its own (#5079). A root
  * with no `terraform` block at all is not flagged: it declares no version
  * constraints either, and the missing block is a different finding.
  *
@@ -98,8 +101,14 @@ export const tf001: PostSynthCheck = {
 
   check(ctx: PostSynthContext): PostSynthDiagnostic[] {
     const diagnostics: PostSynthDiagnostic[] = [];
-    /** Root name to the entity key of the first `terraform` block seen for it. */
-    const flagged = new Set<string>();
+    /**
+     * Per root: the entity key of the first `terraform` block seen, whether any
+     * block of the root configures remote state, and whether any block names
+     * `backend "local"`. Terraform merges the `terraform` blocks of a module,
+     * so the verdict belongs to the root, not to whichever block is read first
+     * (#5079).
+     */
+    const roots = new Map<string, { entity: string; remote: boolean; local: boolean }>();
 
     for (const [name, entity] of ctx.entities) {
       if (entity.entityType !== TERRAFORM_TYPE) continue;
@@ -107,18 +116,23 @@ export const tf001: PostSynthCheck = {
       const props = entity.props as { root?: unknown; body?: unknown; mode?: unknown };
       if (props.mode === "live") continue;
       const root = typeof props.root === "string" ? props.root : "";
-      if (flagged.has(root)) continue;
 
       const body = (typeof props.body === "object" && props.body !== null ? props.body : {}) as BlockBody;
-      if (hasRemoteBackend(body)) continue;
+      const seen = roots.get(root) ?? { entity: name, remote: false, local: false };
+      seen.remote ||= hasRemoteBackend(body);
+      seen.local ||= backendTypes(body).includes(LOCAL_BACKEND);
+      roots.set(root, seen);
+    }
+
+    for (const [root, { entity: name, remote, local }] of roots) {
+      if (remote) continue;
 
       // What the root actually declares, so the message names it rather than
       // saying "no remote backend" over a block the reader can see.
-      const found = backendTypes(body).includes(LOCAL_BACKEND)
+      const found = local
         ? 'the backend it declares is `backend "local"`'
         : "there is no backend block at all";
 
-      flagged.add(root);
       diagnostics.push({
         checkId: "TF001",
         severity: "warning",

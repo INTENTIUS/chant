@@ -910,6 +910,9 @@ describe("workspace init and ls (#2534)", () => {
     expect(train).toMatchObject({ positionals: ["train", "prod"], pins: ["api=v2", "web=v1"] });
     expect(resolveCommand(train, commandRegistry)?.def.name).toBe("workspace train");
     expect(() => parseArgs(["workspace", "train", "prod", "--pin", "api"])).toThrow(/--pin needs a member and a release/);
+    // #4037: a train's promote, and a member's promote that only plans.
+    expect(parseArgs(["workspace", "train", "promote", "prod", "train-1", "--gate", "train-prod"])).toMatchObject({ positionals: ["train", "promote", "prod", "train-1"], gate: "train-prod" });
+    expect(parseArgs(["components", "promote", "--to", "prod", "--release", "v1", "--plan-only"])).toMatchObject({ release: "v1", planOnly: true });
     expect(parseArgs(["workspace", "lint", "--cross-root", "--format", "json"])).toMatchObject({ path: "lint", crossRoot: true, format: "json" });
   });
 

@@ -13,7 +13,8 @@
  *   Each names the member plans it covers and their digest
  *   (`./workspace-gates.ts`).
  * - `<env>/trains.jsonl`: release trains, each pinning one release of every
- *   `chant` member (`./release-train.ts`).
+ *   `chant` member, with a digest over those releases (`./release-train.ts`).
+ *   A train's promote is a run in `<env>/runs.jsonl` that names the train.
  *
  * A malformed line is skipped and counted, never thrown on.
  */
@@ -112,6 +113,12 @@ export interface WorkspaceRunRecord {
   /** `--dependents-of`, the member whose dependents the run ran, or null. */
   dependentsOf: string | null;
   steps: WorkspaceRunStep[];
+  /**
+   * The release train the run promoted (#4037), by id and digest: a run of
+   * `chant workspace train promote`, whose steps are each member's
+   * `components promote` of its release in the train. Absent on every other run.
+   */
+  train?: { id: string; digest: string };
 }
 
 const RUNS_FILE = "runs.jsonl";
