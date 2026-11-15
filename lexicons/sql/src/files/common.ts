@@ -20,6 +20,13 @@ export interface ReadOptions {
    */
   undeclarable?: string[];
   /**
+   * Where a note about something the reader decided goes, as a line: an
+   * unnamed index given the name Postgres would give it. `chant import` lists
+   * them as warnings. Without it, such an object is a problem, as in a
+   * build's `.sql` file, which declares every name itself.
+   */
+  warnings?: string[];
+  /**
    * Where a statement of a referenced kind goes (#4395), as the name it
    * creates: `chant import` lists a named collection's `CREATE` as an
    * environment prerequisite. Without it, such a statement is a problem, as
@@ -100,6 +107,16 @@ export function fileUnparsed(
 
 /** The line, from 1, that offset `at` of `text` is on. */
 export const lineAt = (text: string, at: number): number => text.slice(0, at).split("\n").length;
+
+/**
+ * The line for a statement that declares no object (`COPY`, `UPDATE`,
+ * `SELECT`, ...), left out under `skipUndeclarable`: its first word, its line
+ * in the file, and its start on one line.
+ */
+export function declaresNothing(sql: string, line: number): string {
+  const word = /^[A-Za-z_]+/.exec(sql)?.[0]?.toUpperCase() ?? "statement";
+  return `${word} at line ${String(line)} declares no object: ${sql.replace(/\s+/g, " ").slice(0, 100)}`;
+}
 
 /** A statement's first line, for a message. */
 export const firstLine = (s: string): string => (s.split("\n")[0] ?? "").slice(0, 100);

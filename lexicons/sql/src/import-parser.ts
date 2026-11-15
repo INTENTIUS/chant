@@ -21,7 +21,10 @@
  * A statement that declares nothing, or does not parse, is an error naming
  * it (`./sql-files.ts`); none is left out. So is a `CREATE` of a kind chant
  * cannot declare (#3911, `./coverage.ts`): `--parser-option
- * skipUndeclarable` imports the rest and lists those as warnings. A clause the parser does not know
+ * skipUndeclarable` imports the rest and lists those as warnings, and so a
+ * statement that is no `CREATE` (a `COPY`, an `UPDATE`, a `SELECT`). An
+ * unnamed Postgres `CREATE INDEX` is named as the server would name it, with a
+ * warning. A clause the parser does not know
  * (#3872) is kept in the template as written.
  */
 
@@ -116,7 +119,8 @@ export class SqlFileParser implements TemplateParser {
     const problems: string[] = [];
     const skipped: string[] = [];
     const prerequisites: Array<{ kind: string; name: string }> = [];
-    const read = { origin: "the DDL", prerequisites, ...(this.options.skipUndeclarable ? { undeclarable: skipped } : {}) };
+    const notes: string[] = [];
+    const read = { origin: "the DDL", prerequisites, warnings: notes, ...(this.options.skipUndeclarable ? { undeclarable: skipped } : {}) };
     const ir = dialect === "postgres" ? pgObjectsToIR(readPostgres(content, read, problems)) : chObjectsToIR(readClickHouse(content, read, problems));
     if (problems.length > 0) throw new SqlFileError(`the ${dialect === "postgres" ? "Postgres" : "ClickHouse"} DDL`, problems);
     // A named collection is the environment's (#4395): its CREATE, or a declaration naming one, is a prerequisite, its values never imported.
@@ -125,7 +129,7 @@ export class SqlFileParser implements TemplateParser {
       dialect === "clickhouse"
         ? namedCollectionPrerequisites(prerequisites, objects, { found: "the DDL creates it", unseen: "the DDL does not create it" })
         : { prerequisites: [], warnings: [] };
-    const warnings = [...(ir.warnings ?? []), ...prereq.warnings, ...skipped.map((s) => `left out (skipUndeclarable): ${s}`)];
+    const warnings = [...(ir.warnings ?? []), ...prereq.warnings, ...notes, ...skipped.map((s) => `left out (skipUndeclarable): ${s}`)];
     const out = prereq.prerequisites.length > 0 ? { ...ir, metadata: { ...ir.metadata, prerequisites: prereq.prerequisites } } : ir;
     return warnings.length > 0 ? { ...out, warnings } : out;
   }
