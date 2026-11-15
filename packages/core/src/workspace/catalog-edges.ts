@@ -37,8 +37,9 @@
  *
  * A catalog's `declaredNode` gives the node the rules read, for a lexicon
  * whose declared nodes are not shaped like its rules: terraform's are all
- * `Terraform::Resource`, with their arguments under `body`. The view is read
- * for this pass only; the document's nodes are unchanged.
+ * `Terraform::Resource`, with their arguments under `body`. An instance node
+ * is handed its block node too, since its attrs stay on the block (#5117).
+ * The view is read for this pass only; the document's nodes are unchanged.
  *
  * ## Detail tiers
  *
@@ -120,8 +121,9 @@ export function catalogRules(catalogs: readonly NamedCatalog[]): Record<string, 
 export function runCatalogPass(nodes: readonly ComposedNode[], catalogs: readonly NamedCatalog[], members?: readonly string[]): CatalogPass {
   const byLexicon = new Map(catalogs.map((c) => [c.lexicon, c.catalog]));
   const nonLiteral: Record<string, number> = {};
+  const byId = new Map(nodes.map((n) => [n.id, n]));
   const read: ComposedNode[] = nodes.map((n) => {
-    const view = byLexicon.get(n.lexicon)?.declaredNode?.(n);
+    const view = byLexicon.get(n.lexicon)?.declaredNode?.(n, n.instanceOf !== undefined ? byId.get(n.instanceOf) : undefined);
     if (!view) return n;
     if (view.nonLiteral > 0) nonLiteral[n.id] = view.nonLiteral;
     return { ...n, kind: view.kind, attrs: view.attrs };

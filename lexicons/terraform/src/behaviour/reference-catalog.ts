@@ -31,7 +31,9 @@
  * are for. `chant workspace graph` reads a declared block that way since
  * #5097, through {@link terraformDeclaredNode}, with only the literal
  * arguments, so a rule matches a value written in the HCL and an
- * interpolation is counted as not read. `chant graph --live` merges a catalog's edges with the
+ * interpolation is counted as not read. Since #5117 an expression the files
+ * determine (a variable, a local, `each.key`, a module output) reads as its
+ * value, per instance node when the block has them. `chant graph --live` merges a catalog's edges with the
  * observation's own since #4535; before, any catalog replaced them, which is
  * what kept this one off the plugin.
  *
@@ -72,7 +74,8 @@
 
 import type { DeclaredCatalogNode, ReferenceCatalog } from "@intentius/chant/graph-refs";
 import type { IRNode } from "@intentius/chant/graph-ir";
-import { RESOURCE_TYPE } from "../hcl/parse";
+import { RESOURCE_TYPE, type TerraformEvaluated } from "../hcl/parse";
+import { interpolated } from "../hcl/evaluate";
 
 /**
  * Provider types this catalog has looked at and found to hold no argument
@@ -91,15 +94,6 @@ export const REFERENCES_NOTHING: ReadonlySet<string> = new Set([
   "aws_route53_zone",
 ]);
 
-/** True when a value holds an interpolation, `${...}`, anywhere in it. */
-function interpolated(value: unknown, depth = 0): boolean {
-  if (depth > 12) return false;
-  if (typeof value === "string") return value.includes("${");
-  if (Array.isArray(value)) return value.some((v) => interpolated(v, depth + 1));
-  if (typeof value === "object" && value !== null) return Object.values(value as Record<string, unknown>).some((v) => interpolated(v, depth + 1));
-  return false;
-}
-
 const isBlock = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 /**
@@ -107,17 +101,24 @@ const isBlock = (v: unknown): v is Record<string, unknown> => typeof v === "obje
  * A nested block (hcl2json writes it as an object, or a list of objects) and a
  * map are descended, so each of their arguments counts on its own. A list of
  * values keeps its literal elements and counts once when any element is not.
+ *
+ * `resolved` is the block's evaluated arguments (#5117, `../hcl/evaluate.ts`),
+ * shaped like the body: an argument that holds an expression and has a value
+ * there takes that value and is not counted.
  */
-export function literalArguments(body: Record<string, unknown>): { attrs: Record<string, unknown>; nonLiteral: number } {
+export function literalArguments(body: Record<string, unknown>, resolved?: Record<string, unknown>): { attrs: Record<string, unknown>; nonLiteral: number } {
   let nonLiteral = 0;
-  const walk = (obj: Record<string, unknown>, depth: number): Record<string, unknown> => {
+  const walk = (obj: Record<string, unknown>, over: Record<string, unknown> | undefined, depth: number): Record<string, unknown> => {
     const out: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(obj)) {
       if (depth > 12) break;
+      const with_ = over?.[key];
       if (isBlock(value)) {
-        out[key] = walk(value, depth + 1);
+        out[key] = walk(value, isBlock(with_) ? with_ : undefined, depth + 1);
       } else if (Array.isArray(value) && value.length > 0 && value.every(isBlock)) {
-        out[key] = value.map((b) => walk(b, depth + 1));
+        out[key] = value.map((b, i) => walk(b, Array.isArray(with_) && isBlock(with_[i]) ? with_[i] : undefined, depth + 1));
+      } else if (interpolated(value) && over !== undefined && key in over) {
+        out[key] = with_;
       } else if (Array.isArray(value)) {
         const kept = value.filter((v) => !interpolated(v));
         if (kept.length < value.length) nonLiteral++;
@@ -130,26 +131,58 @@ export function literalArguments(body: Record<string, unknown>): { attrs: Record
     }
     return out;
   };
-  return { attrs: walk(body, 0), nonLiteral };
+  return { attrs: walk(body, resolved, 0), nonLiteral };
+}
+
+/** A block node's `evaluated` attr (`TerraformEvaluated` in `../hcl/parse.ts`), when it has one. */
+function evaluatedOf(attrs: Record<string, unknown>): TerraformEvaluated | undefined {
+  return isBlock(attrs.evaluated) ? (attrs.evaluated as TerraformEvaluated) : undefined;
+}
+
+/** A declared resource node's provider type, from its `type` or its address. */
+function providerType(attrs: Record<string, unknown>): string | undefined {
+  const address = typeof attrs.address === "string" ? attrs.address : "";
+  return typeof attrs.type === "string" && attrs.type !== "" ? attrs.type : address.includes(".") ? address.split(".").slice(-2)[0] : undefined;
 }
 
 /**
  * The node the catalog reads for a declared terraform block (#5097): its
  * provider type as `kind`, as `./request.ts` gives the behaviour engine, and
  * its literal arguments as `attrs`. An argument whose value is an
- * interpolation is left out and counted: it already draws its declared edge
- * when it names another block, and a local, a variable or a composed string
- * is not a value the catalog can match. Any block but a `resource` is read as
- * it is.
+ * expression takes the value `../hcl/evaluate.ts` resolved for it (#5117):
+ * a variable, a local, `each.key`, a module output or a composed string the
+ * files determine. One that did not resolve is left out and counted; the
+ * reference that stopped it is in the node's `evaluated.stopped`. Any block
+ * but a `resource` is read as it is.
+ *
+ * A block with instance nodes is read per instance (#5117): each instance
+ * node, handed its block node, reads the block's arguments with that
+ * instance's values (`evaluated.instances`), and the block node itself reads
+ * no arguments, so a value is matched on the instance it belongs to and not
+ * a second time on the block.
  */
-export function terraformDeclaredNode(node: IRNode): DeclaredCatalogNode | undefined {
+export function terraformDeclaredNode(node: IRNode, block?: IRNode): DeclaredCatalogNode | undefined {
+  if (node.instanceOf !== undefined) {
+    if (!block || block.kind !== RESOURCE_TYPE) return undefined;
+    const attrs = block.attrs ?? {};
+    const instances = evaluatedOf(attrs)?.instances;
+    const type = providerType(attrs);
+    if (!instances || type === undefined) return undefined;
+    const callers = Array.isArray(attrs.callers) ? (attrs.callers as string[]).join(".") : "";
+    const path = node.instanceScope ?? callers;
+    const at = instances[`${path ? `${path}.` : ""}${String(attrs.address)}${node.instanceKey ?? ""}`];
+    if (!at) return undefined;
+    const body = isBlock(attrs.body) ? attrs.body : {};
+    return { kind: type, ...literalArguments(body, at.arguments ?? {}) };
+  }
   if (node.kind !== RESOURCE_TYPE) return undefined;
   const attrs = node.attrs ?? {};
-  const address = typeof attrs.address === "string" ? attrs.address : "";
-  const type = typeof attrs.type === "string" && attrs.type !== "" ? attrs.type : address.includes(".") ? address.split(".").slice(-2)[0] : undefined;
+  const type = providerType(attrs);
   if (type === undefined) return undefined;
+  const evaluated = evaluatedOf(attrs);
+  if (evaluated?.instances) return { kind: type, attrs: {}, nonLiteral: 0 };
   const body = isBlock(attrs.body) ? attrs.body : {};
-  return { kind: type, ...literalArguments(body) };
+  return { kind: type, ...literalArguments(body, evaluated?.arguments) };
 }
 
 /** The catalog. Rules are grouped by the relation they produce. */

@@ -66,6 +66,13 @@ export type TerraformExpansion = "count" | "for_each";
 /** Whether a root runs under choudoufu with a declared estate (#2103). */
 export type TerraformRootMode = "live" | "state";
 
+/** What `./evaluate.ts` made of a block's expressions (chant #5117). */
+export interface TerraformEvaluated {
+  readonly arguments?: Record<string, unknown>;
+  readonly stopped?: Record<string, string>;
+  readonly instances?: Record<string, { readonly arguments?: Record<string, unknown>; readonly stopped?: Record<string, string> }>;
+}
+
 /** The entity every block becomes. `props` is what post-synth checks read. */
 export interface TerraformEntity extends Declarable {
   readonly lexicon: "terraform";
@@ -156,6 +163,18 @@ export interface TerraformEntity extends Declarable {
      * expansion.
      */
     readonly expansion?: TerraformExpansion;
+    /**
+     * A `resource` block's arguments that hold an expression, evaluated from
+     * the files a plan reads (chant #5117, `./evaluate.ts`): `arguments` has
+     * the ones that resolved, shaped like `body`, and `stopped` names, per
+     * argument that did not, the first reference that stopped it. A block
+     * with instance nodes has one such pair per instance instead, under
+     * `instances`, keyed by the instance's address as Terraform prints it
+     * (`module.sa["a"].google_service_account.this`). The reference catalog
+     * reads it through `terraformDeclaredNode`. Set by `./instances.ts`;
+     * absent when no argument holds an expression.
+     */
+    readonly evaluated?: TerraformEvaluated;
   };
   /**
    * The deployable unit this entity belongs to: the root name, which is what

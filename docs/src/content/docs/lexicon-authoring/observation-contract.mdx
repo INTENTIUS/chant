@@ -554,7 +554,7 @@ A path step is a key. `[]` after a step reads every element of a list, and a key
 [`chant workspace graph`](/chant/cli/workspace-graph/#derived-edges) runs the same catalog over the composed declared graph, across members ([#5097](https://github.com/INTENTIUS/chant/issues/5097)). Two optional fields shape what it reads there:
 
 - `scopes`, a list of `{ kind, path }`: a node of `kind` has names unique only inside the scope the value at `path` names. The k8s catalog lists each namespaced kind with `metadata.namespace`.
-- `declaredNode(node)`, a pure function giving the node the rules read when the declared node is not shaped like them, as `{ kind, attrs, nonLiteral }`. The terraform catalog gives a `Terraform::Resource` its provider type as `kind` and its literal arguments as `attrs`, and counts the arguments it left out.
+- `declaredNode(node, block)`, a pure function giving the node the rules read when the declared node is not shaped like them, as `{ kind, attrs, nonLiteral }`. An instance node carries no attrs of its own, so it is handed its block node as `block` ([#5117](https://github.com/INTENTIUS/chant/issues/5117)). The terraform catalog gives a `Terraform::Resource` its provider type as `kind` and as `attrs` its literal arguments plus the ones the lexicon evaluated from the files a plan reads, per instance node when the block has them, and counts the arguments it left out.
 - `registersCluster(node)`, a pure function that is true for a node that registers a cluster, which a workspace member's [`runsOn`](/chant/cli/workspace-graph/#cluster-join) joins to the cluster resource it names. The k8s catalog accepts a Secret labelled `argocd.argoproj.io/secret-type: cluster`.
 
 ### Adding a rule

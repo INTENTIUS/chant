@@ -159,9 +159,11 @@ export interface ReferenceCatalog {
   scopes?: ScopeRule[];
   /**
    * The node the catalog reads for a declared node of this lexicon, or
-   * undefined to read the node as it is (#5097). Pure.
+   * undefined to read the node as it is (#5097). An instance node
+   * (`instanceOf`) carries no attrs of its own, so it is handed its block
+   * node as `block` (#5117). Pure.
    */
-  declaredNode?(node: IRNode): DeclaredCatalogNode | undefined;
+  declaredNode?(node: IRNode, block?: IRNode): DeclaredCatalogNode | undefined;
   /**
    * True for a node of this lexicon that registers a cluster, the one a
    * workspace member runs on (an Argo CD cluster Secret, #5101). A member's

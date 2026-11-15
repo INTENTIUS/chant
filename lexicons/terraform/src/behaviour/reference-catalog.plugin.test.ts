@@ -107,3 +107,56 @@ describe("a declared block, as chant workspace graph's catalog pass reads it (#5
     expect(out.nonLiteral).toEqual({ "net/r/aws_subnet.a": 1 });
   });
 });
+
+describe("evaluated arguments in the catalog pass (#5117)", () => {
+  // Stand-ins for the rules #5099 and #5101 add: an identity that names a
+  // cluster and a service account by an argument, and a rule from an Argo CD
+  // cluster Secret's name. Only the values come from this lexicon.
+  const withIdentities = {
+    ...TERRAFORM_REFERENCE_CATALOG,
+    identities: [
+      { kind: "google_container_cluster", ids: ["name"] },
+      { kind: "google_service_account", ids: ["account_id"] },
+    ],
+  };
+  const standIn = {
+    identities: [],
+    refs: [
+      { from: "Secret", path: "stringData.name", targetKind: "google_container_cluster", relation: "reference" as const, label: "cluster" },
+      { from: "ConfigMap", path: "data.account", targetKind: "google_service_account", relation: "reference" as const, label: "as" },
+    ],
+  };
+
+  it("joins a cluster Secret to the cluster by its resolved name, and an instance by its resolved account_id", async () => {
+    const { renderTerraformRoots } = await import("../hcl/roots");
+    const { buildGraphIr, withInstanceNodes } = await import("@intentius/chant/graph-ir");
+    const rendered = await renderTerraformRoots({ projectRoot: join(import.meta.dirname, "..", "__fixtures__", "resolved-arguments"), roots: { bt: { dir: "./build-trusted" } } });
+    const ir = withInstanceNodes(buildGraphIr(rendered.entities), rendered.entities);
+    const prefix = (id: string) => `infra/${id}`;
+    const nodes = [
+      ...ir.nodes.map((n) => ({ ...n, id: prefix(n.id), member: "infra", ...(n.instanceOf ? { instanceOf: prefix(n.instanceOf) } : {}) })),
+      { id: "apps/Secret/gke-prow-build-trusted", kind: "Secret", lexicon: "k8s", member: "apps", attrs: { stringData: { name: "prow-build-trusted" } } },
+      { id: "apps/ConfigMap/sa", kind: "ConfigMap", lexicon: "k8s", member: "apps", attrs: { data: { account: "gcb-builder" } } },
+    ];
+    const out = runCatalogPass(nodes, [
+      { lexicon: LEXICON, catalog: withIdentities },
+      { lexicon: "k8s", catalog: standIn },
+    ]);
+    expect(out.ambiguous).toEqual([]);
+    expect(out.edges.map((e) => [e.from, e.to])).toEqual(expect.arrayContaining([
+      ["apps/Secret/gke-prow-build-trusted", "infra/bt/module.prow_build_cluster/google_container_cluster.prod_cluster"],
+      ["apps/ConfigMap/sa", 'infra/bt/module.workload_identity_service_accounts["gcb-builder"]/google_service_account.serviceaccount'],
+    ]));
+    // What stays unread: the data source, timestamp() and the computed email in extras.tf among them.
+    expect(out.nonLiteral["infra/bt/google_storage_bucket.from_data"]).toBe(1);
+    expect(out.nonLiteral["infra/bt/google_storage_bucket.dated"]).toBe(1);
+    expect(out.nonLiteral["infra/bt/google_project_iam_member.computed"]).toBe(1);
+  });
+
+  it("reads an instance node with no evaluated entry on its block as it is", () => {
+    const blockNode: IRNode = { id: "m/r/aws_eip.pool", kind: "Terraform::Resource", lexicon: LEXICON, attrs: { address: "aws_eip.pool", type: "aws_eip", body: { domain: "vpc" } } };
+    const inst: IRNode = { id: "m/r/aws_eip.pool[0]", kind: "Terraform::Resource", lexicon: LEXICON, attrs: {}, instanceOf: blockNode.id, instanceKey: "[0]" };
+    expect(terraformDeclaredNode(inst, blockNode)).toBeUndefined();
+    expect(terraformDeclaredNode(blockNode)).toEqual({ kind: "aws_eip", attrs: { domain: "vpc" }, nonLiteral: 0 });
+  });
+});
