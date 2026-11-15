@@ -206,6 +206,8 @@ Path rules read the paths that both kinds of Application name:
 | `k8s:K8s::Argo::Application:spec.source.path` and `...:spec.sources[].path` | a directory from the root of the source's `repoURL`. A source with a `chart` has none. |
 | `k8s:K8s::Argo::Application:spec.source.helm.valueFiles[]` and `...:spec.sources[].helm.valueFiles[]` | a file. `$<ref>/<path>` is in the repository of the source whose `ref` is `<ref>`; any other relative value is inside the source's `path`. A URL is not read, and neither is a source with `ignoreMissingValueFiles: true`. |
 
+The [Helm rule](#helm-charts-and-values-files) owns the values files of an Application the reader stamped with `helmReferences`, `$<ref>/` paths included, so the path rules skip them and a missing one is dangling once, under `k8s:K8s::Argo::Application:helmReferences.valuesFiles[]`. A generated Application is made after the read and has no `helmReferences`, so the path rules read its values files.
+
 A path is looked for only under the workspace root, and only when its repository is the workspace's `origin` remote. The two URLs are compared without their scheme, credentials, case and `.git`. A path that is not there goes in `dangling`. For a generated Application the entry has the ApplicationSet as `through` and its cluster Secret as `cluster`. A workspace with no `origin` reads no paths.
 
 ## Nested workspaces

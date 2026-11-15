@@ -117,6 +117,12 @@ describe("applicationPathRules (#5102)", () => {
     ).toEqual({ "spec.sources[].helm.valueFiles[]": [{ value: "k/helm/c.yaml", repo: "R", type: "file" }] });
   });
 
+  test("an Application the reader stamped for the helm rule has its values files read there, not here", () => {
+    const n = app({ source: { repoURL: "R", path: "apps/web", helm: { valueFiles: ["values.yaml"] } } });
+    n.attrs.helmReferences = { charts: [], valuesFiles: ["apps/web/values.yaml"] };
+    expect(read(n)).toEqual({ "spec.source.path": [{ value: "apps/web", repo: "R", type: "dir" }] });
+  });
+
   test("ignoreMissingValueFiles, an absolute path and an escape are not read", () => {
     expect(read(app({ source: { repoURL: "R", path: "../up", helm: { ignoreMissingValueFiles: true, valueFiles: ["v.yaml"] } } }))).toEqual({});
     expect(read(app({ source: { repoURL: "R", path: "/abs" } }))).toEqual({});

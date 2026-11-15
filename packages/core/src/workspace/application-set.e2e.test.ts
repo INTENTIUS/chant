@@ -188,6 +188,63 @@ spec:
   );
 
   test(
+    "a missing $values file is dangling once: under the helm rule on a hand-written Application, under the path rule on a generated one",
+    async () => {
+      const sources = (name: string) => `    - chart: c
+      repoURL: https://charts.example.com
+      targetRevision: 1.0.0
+      helm:
+        valueFiles:
+          - $values/helm/${name}.yaml
+    - repoURL: ${ORIGIN}
+      targetRevision: main
+      ref: values
+`;
+      const hand = `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: web
+  namespace: argocd
+spec:
+  project: default
+  sources:
+${sources("x")}  destination:
+    name: a
+    namespace: web
+`;
+      const set = `apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: vals
+  namespace: argocd
+spec:
+  goTemplate: true
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            cloud: gke
+  template:
+    metadata:
+      name: "vals-{{ .name }}"
+    spec:
+      project: default
+      sources:
+${sources("{{ .name }}").replace(/^(?=.)/gm, "    ")}      destination:
+        server: "{{ .server }}"
+        namespace: vals
+`;
+      const g = await read({ "argo/clusters.yaml": secret("a", "gke"), "argo/web.yaml": hand, "argo/vals.yaml": set });
+      const values = (g.dangling ?? []).filter((d) => d.value.includes("helm/")).map((d) => `${d.from} ${d.rule} ${d.value}`);
+      expect(values).toEqual([
+        "argo/argo/applicationSetVals/vals-a k8s:K8s::Argo::Application:spec.sources[].helm.valueFiles[] helm/a.yaml",
+        "argo/argo/applicationWeb k8s:K8s::Argo::Application:helmReferences.valuesFiles[] helm/x.yaml",
+      ]);
+    },
+    TIMEOUT,
+  );
+
+  test(
     "a two-element list generator makes two Applications",
     async () => {
       const g = await read({ "argo/clusters.yaml": secret("a", "gke") + secret("b", "eks"), "argo/tools.yaml": LIST_SET, "tools/lint/x.yaml": "", "tools/docs/x.yaml": "" });

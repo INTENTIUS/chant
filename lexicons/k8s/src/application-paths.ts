@@ -14,6 +14,12 @@
  *   names one. A URL is not read, and a source with
  *   `helm.ignoreMissingValueFiles: true` has none read.
  *
+ *   The helm rule (#5100, `helmReferences.valuesFiles[]`) owns the values
+ *   files of every Application the k8s reader stamped with `helmReferences`,
+ *   so they are not read here and a missing one is dangling once, under that
+ *   rule. A generated Application is made after the read and carries no
+ *   stamp, so its values files are read here.
+ *
  * A path that is absolute or climbs out of the repository's root is not
  * read. Pure.
  */
@@ -21,6 +27,7 @@ import { posix } from "node:path";
 import type { IRNode } from "@intentius/chant/graph-ir";
 import type { PathRule, RepoPathRef } from "@intentius/chant/graph-refs";
 import { APPLICATION } from "./application-set";
+import { HELM_REFERENCES_KEY } from "./helm-references";
 
 type Doc = Record<string, unknown>;
 
@@ -36,8 +43,9 @@ function repoPath(path: string): string | undefined {
 }
 
 /** The value files of one source, as repository paths. */
-function valueFiles(source: Doc, sources: readonly Doc[]): RepoPathRef[] {
+function valueFiles(source: Doc, sources: readonly Doc[], stamped: boolean): RepoPathRef[] {
   const helm = isObject(source.helm) ? source.helm : undefined;
+  if (stamped) return [];
   if (!helm || helm.ignoreMissingValueFiles === true || !Array.isArray(helm.valueFiles)) return [];
   const out: RepoPathRef[] = [];
   for (const raw of helm.valueFiles) {
@@ -76,10 +84,13 @@ const multi = (node: IRNode): Doc[] => {
 };
 const single = (node: IRNode): Doc[] => (isObject(specOf(node).source) ? [specOf(node).source as Doc] : []);
 
+/** Whether the k8s reader stamped the node's charts and values files for the helm rule (#5100). */
+const stampedByHelm = (node: IRNode): boolean => isObject(node.attrs[HELM_REFERENCES_KEY]);
+
 /** The path rules of an Application, one per field. */
 export const applicationPathRules: PathRule[] = [
   { from: APPLICATION, path: "spec.source.path", label: "deploys from", read: (n) => single(n).flatMap(sourcePath) },
   { from: APPLICATION, path: "spec.sources[].path", label: "deploys from", read: (n) => multi(n).flatMap(sourcePath) },
-  { from: APPLICATION, path: "spec.source.helm.valueFiles[]", label: "values from", read: (n) => single(n).flatMap((s) => valueFiles(s, [s])) },
-  { from: APPLICATION, path: "spec.sources[].helm.valueFiles[]", label: "values from", read: (n) => multi(n).flatMap((s, _i, all) => valueFiles(s, all)) },
+  { from: APPLICATION, path: "spec.source.helm.valueFiles[]", label: "values from", read: (n) => single(n).flatMap((s) => valueFiles(s, [s], stampedByHelm(n))) },
+  { from: APPLICATION, path: "spec.sources[].helm.valueFiles[]", label: "values from", read: (n) => multi(n).flatMap((s, _i, all) => valueFiles(s, all, stampedByHelm(n))) },
 ];
