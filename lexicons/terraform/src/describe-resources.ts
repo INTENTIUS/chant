@@ -1454,7 +1454,7 @@ function fromEntityName(name: string): { root: string; address: string; callers:
   const last = name.lastIndexOf("/");
   return {
     root: name.slice(0, slash),
-    address: name.slice(last + 1).replace(/~\d+$/, ""),
+    address: name.slice(last + 1).replace(/(~[^/~]+)+$/, ""),
     callers: callersOfKey(name),
   };
 }

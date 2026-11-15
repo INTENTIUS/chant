@@ -166,6 +166,18 @@ describe("auditCommand", () => {
     expect(md.output).toContain("FTN014");
   });
 
+  test("json and sarif give each finding the same identity (#5106)", async () => {
+    const repo = fileURLToPath(new URL("./__fixtures__/audit-fountain", import.meta.url));
+    const json = JSON.parse((await auditCommand({ path: repo, format: "json" })).output) as { findings: Array<{ identity: string }> };
+    const sarif = JSON.parse((await auditCommand({ path: repo, format: "sarif" })).output) as {
+      runs: Array<{ results: Array<{ partialFingerprints: Record<string, string> }> }>;
+    };
+    const fromSarif = sarif.runs[0].results.map((r) => r.partialFingerprints["chantFindingIdentity/v1"]);
+    expect(json.findings.length).toBeGreaterThan(0);
+    expect(json.findings.every((f) => /^[0-9a-f]{32}$/.test(f.identity))).toBe(true);
+    expect([...fromSarif].sort()).toEqual(json.findings.map((f) => f.identity).sort());
+  });
+
   test("a clean fountain manifest set audits quiet", async () => {
     const repo = fileURLToPath(new URL("./__fixtures__/audit-fountain-clean", import.meta.url));
     const result = await auditCommand({ path: repo, format: "stylish" });

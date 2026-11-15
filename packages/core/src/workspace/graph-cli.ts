@@ -34,10 +34,13 @@ import type { ReasonCode } from "./reason-codes";
 import type { CommandContext, ParsedArgs } from "../cli/registry";
 import { graphBox, plantability, type Plantable } from "./box-factory";
 import { composedId, composeWorkspaceGraph, readMemberIr, type ComposedMember, type ComposeInput, type WorkspaceGraph } from "./compose-graph";
+import { placeCatalogPass, runCatalogPass } from "./catalog-edges";
+import { detailIdMap, type DetailLevel } from "../graph-detail";
+import type { NamedCatalog } from "../graph-refs";
 import { isViewDocument, prefixView } from "../capabilities/view";
 import { refusedCapabilityView } from "./nested-graph";
 import { openGraphCache, planStamps, splitCached, storeReads, withoutUnits } from "./graph-cache";
-import { readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError, type Declaration, type ErrorLocation, type RepoRef } from "./declaration";
+import { DECLARATION_FILES, readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError, type Declaration, type ErrorLocation, type RepoRef } from "./declaration";
 import { describePlan, emitDocument, executePlan, memberStatus, planJson, planMembers, type MemberArgv, type MemberPlan, type Toolchain, type UnitResult } from "./member-commands";
 import { loadKindRegistry, REPO_KIND, type KindRegistry } from "./kinds";
 import { repoIdentity } from "./repo-ref";
@@ -45,7 +48,8 @@ import { readKindLinks } from "./kind-link-readers";
 import { prepareKindReaders, type PreparedReaders } from "./kind-readers";
 import { recordLinkRows } from "./record-assets";
 import { RecordReadError } from "./records";
-import { workingTree } from "./tree";
+import { workingTree, type WorkspaceTree } from "./tree";
+import { declares, discover, discoveredTree, discoveredWorkspaceName, discoveryKinds, locateDiscovered, type DiscoveredEntry } from "./discover";
 import { handToRootChant, locateWorkspace, type LocatedWorkspace } from "./which-chant";
 
 /** The version of the `graph` document this chant writes. */
@@ -68,7 +72,7 @@ export const GRAPH_INSTANCE_ROLLUP_CODES = INSTANCE_ROLLUP_CODES satisfies reado
 const LIVE_AT_REVISION = "--live reads the account as it stands now, and --at reads the source at a revision; chant workspace graph takes one of them";
 
 const USAGE =
-  "chant workspace graph [dir] [--at <rev>] [--member <name>] [--kind <kind file>] [-o <file>] [--env <env>] [--live [--overlay] [--traffic <level>]] [--no-cache] [--dry-run] | chant workspace graph --composites [--at <rev>] [--member <name>] [-o <file>] | chant workspace graph --intent <path[:start-end]|path#symbol|member/node|sha> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--json]";
+  "chant workspace graph [dir] [--discover] [--at <rev>] [--member <name>] [--kind <kind file>] [-o <file>] [--env <env>] [--live [--overlay] [--traffic <level>]] [--no-cache] [--dry-run] | chant workspace graph --composites [--at <rev>] [--member <name>] [-o <file>] | chant workspace graph --intent <path[:start-end]|path#symbol|member/node|sha> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--json]";
 
 interface Head {
   $schema: string;
@@ -77,7 +81,7 @@ interface Head {
 }
 
 export type GraphDocument =
-  | (Head & { at: string | null; plantable: Plantable } & WorkspaceGraph)
+  | (Head & { at: string | null; plantable: Plantable; discovered?: DiscoveredEntry[] } & WorkspaceGraph)
   | (Head & { error: { code: GraphErrorCode; message: string; location: ErrorLocation | null } });
 
 export interface GraphQuery {
@@ -113,6 +117,18 @@ export interface GraphQuery {
   inTree?: (root: string, members: readonly { name: string; dir: string; kind: string }[]) => Promise<void>;
   /** Read every member, leaving the per-member cache unread and unwritten (`--no-cache`, #2876). */
   noCache?: boolean;
+  /**
+   * Read `cwd` with no declaration (#5095): the kinds' probes find the
+   * members, as `discover.ts` describes, and nothing is written inside it.
+   * When `cwd` holds a declaration itself, that declaration is read instead.
+   */
+  discover?: boolean;
+  /**
+   * Run the lexicons' reference catalogs over the composed graph (#5097,
+   * `./catalog-edges.ts`). A source read only: with `--live` each member's
+   * own chant has run its catalog already. `chant workspace graph` sets it.
+   */
+  catalog?: boolean;
 }
 
 export interface GraphResult {
@@ -223,12 +239,52 @@ function compose(
   return { inputs, failed };
 }
 
-/** Plan a graph read without running anything, for `--dry-run`. Throws a {@link WorkspaceReadError}. */
-export function planGraph(query: GraphQuery): MemberPlan {
+/** Where a read's members come from: a declaration, or a discovery (#5095). */
+interface ReadSource {
+  located: LocatedWorkspace;
+  declaration: Declaration;
+  kinds: KindRegistry;
+  kindProblems: string[];
+  /** The tree to plan from in a directory the revision was exported to (`--at`). */
+  treeAt(dir: string): WorkspaceTree;
+  /** For a discovered read, every directory a kind claims. */
+  discovered?: DiscoveredEntry[];
+}
+
+/**
+ * The declaration a read covers and the kinds it reads with. With
+ * `discover`, and no declaration in `cwd` itself, the members are found by
+ * probe and the declaration is held in memory. Throws a {@link WorkspaceReadError}.
+ */
+function readSource(query: GraphQuery): ReadSource {
+  if (query.discover) {
+    const where = locateDiscovered(query.cwd, query.at);
+    if (!declares(where.base)) {
+      const kinds = discoveryKinds();
+      const found = discover(where.base, kinds, discoveredWorkspaceName(where.rootOnDisk));
+      const tree = discoveredTree(where.base, found.declaration);
+      const declaration = readDeclaration(tree, "", { rootChant: true });
+      return {
+        located: { ...where, tree },
+        declaration,
+        kinds: kinds.registry,
+        kindProblems: kinds.problems,
+        treeAt: (dir) => discoveredTree(workingTree(dir), found.declaration),
+        discovered: found.entries,
+      };
+    }
+  }
   const located = locateWorkspace(query.cwd, query.at);
   const declaration = readDeclaration(located.tree, "", { rootChant: true });
+  // Kinds are read before planning: a package kind with a graph block runs (#2874).
   const { registry: kinds, problems } = loadKindRegistry(declaration.pins, located.rootOnDisk);
-  return planMembers("graph", located.rootOnDisk, { only: query.members, reader: query.reader, tree: located.tree, kinds, kindProblems: problems.map((p) => p.message) });
+  return { located, declaration, kinds, kindProblems: problems.map((p) => p.message), treeAt: workingTree };
+}
+
+/** Plan a graph read without running anything, for `--dry-run`. Throws a {@link WorkspaceReadError}. */
+export function planGraph(query: GraphQuery): MemberPlan {
+  const { located, kinds, kindProblems } = readSource(query);
+  return planMembers("graph", located.rootOnDisk, { only: query.members, reader: query.reader, tree: located.tree, kinds, kindProblems });
 }
 
 /** The members of a workspace read, each read under its own toolchain: what graph and search compose (#4374). */
@@ -246,6 +302,8 @@ export interface MemberReads {
   stamps: ReadonlyMap<string, string>;
   /** With {@link GraphQuery.components}: each member's component graph run. */
   components?: UnitResult[];
+  /** For a discovered read (#5095), every directory a kind claims. */
+  discovered?: DiscoveredEntry[];
 }
 
 export interface MemberReadOptions {
@@ -272,11 +330,7 @@ export async function readMembers(query: GraphQuery, options: MemberReadOptions)
   let exported: string | undefined;
   let readers: PreparedReaders | undefined;
   try {
-    const located = locateWorkspace(query.cwd, query.at);
-    const declaration = readDeclaration(located.tree, "", { rootChant: true });
-    // Kinds are read before planning: a package kind with a graph block runs (#2874).
-    const { registry: kinds, problems } = loadKindRegistry(declaration.pins, located.rootOnDisk);
-    const kindProblems = problems.map((p) => p.message);
+    const { located, declaration, kinds, kindProblems, treeAt, discovered } = readSource(query);
     let plan = planMembers("graph", located.rootOnDisk, { only: query.members, reader: query.reader, tree: located.tree, kinds, kindProblems });
     const args = (query.args ?? {}) as ParsedArgs;
     // Members whose last source read still stands are answered from the cache (#2876).
@@ -287,7 +341,7 @@ export async function readMembers(query: GraphQuery, options: MemberReadOptions)
     const served = new Set(split?.hits.map((h) => h.id));
     if (located.at !== null && withoutUnits(plan, served).groups.length > 0) {
       exported = exportRevision(located, withoutUnits(plan, served).groups.flatMap((g) => g.units.map((u) => u.dir)));
-      plan = planMembers("graph", exported, { only: query.members, reader: query.reader, tree: workingTree(exported), kinds, kindProblems });
+      plan = planMembers("graph", exported, { only: query.members, reader: query.reader, tree: treeAt(exported), kinds, kindProblems });
     }
     // Only the members that run get a reader project; a served member needs none.
     const toRun = withoutUnits(plan, served);
@@ -302,7 +356,7 @@ export async function readMembers(query: GraphQuery, options: MemberReadOptions)
     if (query.inTree) await query.inTree(exported ?? located.rootOnDisk, declaration.members.filter((m) => !query.members?.length || query.members.includes(m.name)));
     for (const r of components ?? []) if (r.stderr.trim() && query.onStderr) query.onStderr(r.stderr.endsWith("\n") ? r.stderr : `${r.stderr}\n`);
     for (const r of results) if (r.stderr.trim() && query.onStderr) query.onStderr(r.stderr.endsWith("\n") ? r.stderr : `${r.stderr}\n`);
-    return { located, declaration, kinds, plan, results, served, stamps, ...(components ? { components } : {}) };
+    return { located, declaration, kinds, plan, results, served, stamps, ...(components ? { components } : {}), ...(discovered ? { discovered } : {}) };
   } finally {
     readers?.cleanup();
     if (exported) rmSync(dirname(exported), { recursive: true, force: true });
@@ -331,7 +385,7 @@ export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
     return { doc: { ...head, error: { code: "live-at-revision", message: LIVE_AT_REVISION, location: null } }, failed: true };
   }
   try {
-    const { located, declaration, kinds, plan, results, served, stamps, components } = await readMembers(query, { cache: true });
+    const { located, declaration, kinds, plan, results, served, stamps, components, discovered } = await readMembers(query, { cache: true });
     const args = (query.args ?? {}) as ParsedArgs;
     const { inputs, failed } = compose(plan, results, query.members, declaration.members, !!args.live, !!args.capabilityView);
     for (const { member } of inputs) {
@@ -342,6 +396,8 @@ export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
     // Links (#2539) resolve against the declaration that was read, the revision's for --at, and the kinds installed now.
     // A kind's link reader (#3932) reads the member's files in the tree read, as check does.
     const graph = composeWorkspaceGraph({ name: declaration.name, root: located.root, repo: repoIdentity(located.rootOnDisk) }, inputs, { declaration, kinds, read: readKindLinks(declaration, located.tree, kinds) });
+    // The reference catalogs over the composed graph (#5097), on full attributes whatever --detail asks for.
+    if (query.catalog && !args.live) await addCatalogEdges(graph, query, args, { workspace: graph.workspace, inputs, located });
     // The box's factory and listing (#3146), from the declaration read, so --at gives them at that revision.
     for (const member of graph.members) member.box = graphBox(declaration.members.find((m) => m.name === member.name)?.box ?? null, located.tree, declaration.members);
     // Nested workspaces (#2551, ws-071): read-only, through their own chant workspace graph.
@@ -363,11 +419,64 @@ export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
         query.onStderr?.(`${formatError({ message: `--kind ${query.kind}: ${err.code}: ${err.message}`, hint: USAGE })}\n`);
       }
     }
-    return { doc: { ...head, at: located.at, plantable: plantability(declaration), ...graph }, failed: failed || recordsFailed || nestedFailed, ...(components ? { components } : {}) };
+    // A discovered read lists every directory a kind claims (#5095), the ones that are not members included.
+    return {
+      doc: { ...head, at: located.at, plantable: plantability(declaration), ...graph, ...(discovered ? { discovered } : {}) },
+      failed: failed || recordsFailed || nestedFailed,
+      ...(components ? { components } : {}),
+    };
   } catch (err) {
     if (!(err instanceof WorkspaceReadError)) throw err;
     return { doc: { ...head, error: { code: err.code, message: err.message, location: err.location ?? null } }, failed: true };
   }
+}
+
+/** The reference catalog of each lexicon that has one, best effort: a lexicon that does not load has none. */
+async function loadCatalogs(lexicons: readonly string[]): Promise<NamedCatalog[]> {
+  const { loadPlugin } = await import("../cli/plugins");
+  const out: NamedCatalog[] = [];
+  for (const lexicon of lexicons) {
+    try {
+      const catalog = (await loadPlugin(lexicon)).referenceCatalog;
+      if (catalog) out.push({ lexicon, catalog });
+    } catch {
+      // Not installed where this chant can load it: its nodes get no derived edges.
+    }
+  }
+  return out;
+}
+
+/**
+ * The catalog pass (#5097): load the catalogs of the lexicons the graph
+ * holds, read the members again at `--detail 3` when the document is printed
+ * at another tier, since the rules read nested attributes (`spec`,
+ * `metadata`) that the lower tiers leave out, run the pass over those nodes
+ * and place what it finds on the document's nodes.
+ */
+async function addCatalogEdges(
+  graph: WorkspaceGraph,
+  query: GraphQuery,
+  args: ParsedArgs,
+  read: { workspace: WorkspaceGraph["workspace"]; inputs: ComposeInput[]; located: LocatedWorkspace },
+): Promise<void> {
+  const lexicons = [...new Set(graph.nodes.map((n) => n.lexicon))].sort();
+  const catalogs = await loadCatalogs(lexicons);
+  const level = (args.detail ?? 2) as DetailLevel;
+  let full = read.inputs;
+  if (catalogs.length > 0 && level !== 3) {
+    // With no stderr and no capability view: the document's own read has
+    // passed on what the members said already.
+    const again = await readMembers({ ...query, args: { ...args, detail: 3, capabilityView: false }, onStderr: undefined, inTree: undefined, components: false }, { cache: true });
+    full = compose(again.plan, again.results, query.members, again.declaration.members).inputs;
+  }
+  const printed = new Set(read.inputs.filter((i) => i.ir).map((i) => i.member.name));
+  const readable = full.filter((i) => i.ir && printed.has(i.member.name)).map((i) => ({ member: { ...i.member }, ir: i.ir }));
+  const nodes = catalogs.length > 0 ? composeWorkspaceGraph(read.workspace, readable).nodes : [];
+  const placed = new Map<string, string>();
+  for (const { member, ir } of readable) {
+    for (const [id, at] of detailIdMap(ir!, level)) placed.set(composedId(member.name, id), composedId(member.name, at));
+  }
+  placeCatalogPass(graph, runCatalogPass(nodes, catalogs, catalogs.length > 0 ? readable.map((i) => i.member.name) : []), placed);
 }
 
 /**
@@ -434,9 +543,17 @@ export async function runWorkspaceGraph(ctx: CommandContext): Promise<number> {
     console.error(formatError({ message: `${cwd} does not exist`, hint: USAGE }));
     return 1;
   }
-  // The root's chant reads the declaration (ws-021).
-  const handed = await handToRootChant(cwd, args.at);
-  if (handed !== undefined) return handed;
+  // --discover (#5095) reads one directory with no declaration, as the composed graph only.
+  if (args.discover && (args.composites || args.intent !== undefined || args.kind !== undefined)) {
+    console.error(formatError({ message: "--discover reads the composed graph, and takes none of --composites, --intent and --kind", hint: USAGE }));
+    return 1;
+  }
+  // The root's chant reads the declaration (ws-021). A discovered read has
+  // none to hand over, unless <dir> holds one itself, which is then read.
+  if (!args.discover || DECLARATION_FILES.some((f) => existsSync(join(cwd, f)))) {
+    const handed = await handToRootChant(cwd, args.at);
+    if (handed !== undefined) return handed;
+  }
 
   // Composite instances joined to components (#2662) are their own document.
   if (args.composites) {
@@ -472,7 +589,7 @@ export async function runWorkspaceGraph(ctx: CommandContext): Promise<number> {
   if (args.dryRun) {
     let plan: MemberPlan;
     try {
-      plan = planGraph({ cwd, at: args.at, members: args.members });
+      plan = planGraph({ cwd, at: args.at, members: args.members, ...(args.discover ? { discover: true } : {}) });
     } catch (err) {
       if (!(err instanceof WorkspaceReadError)) throw err;
       console.error(formatError({ message: `${err.code}: ${err.describe()}`, hint: USAGE }));
@@ -488,8 +605,10 @@ export async function runWorkspaceGraph(ctx: CommandContext): Promise<number> {
     members: args.members,
     args,
     ...(args.noCache ? { noCache: true } : {}),
+    ...(args.discover ? { discover: true } : {}),
     ...(args.kind !== undefined ? { kind: resolve(args.kind) } : {}),
     onStderr: (text) => process.stderr.write(text),
+    catalog: true,
   });
   emitDocument(doc, args.output);
   if ("error" in doc) {

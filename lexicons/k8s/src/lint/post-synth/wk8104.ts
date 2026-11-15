@@ -7,7 +7,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { docsToManifests, extractContainers, WORKLOAD_KINDS } from "./k8s-helpers";
+import { docsToManifests, extractContainers, containerLocator, WORKLOAD_KINDS } from "./k8s-helpers";
 
 export const wk8104: PostSynthCheck = {
   id: "WK8104",
@@ -31,6 +31,7 @@ export const wk8104: PostSynthCheck = {
                 severity: "warning",
                 message: `Container "${container.name ?? "(unnamed)"}" in ${manifest.kind} "${resourceName}" has an unnamed port (containerPort: ${port.containerPort ?? "?"}) — add a name for clarity`,
                 entity: resourceName,
+                locator: containerLocator(manifest, container),
                 lexicon: "k8s",
               });
             }

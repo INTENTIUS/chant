@@ -205,7 +205,7 @@ For tooling, `--format json` emits a **versioned** envelope (stable contract). T
   "snapshot": { "target": "...", "host": "github.com", "repo": "owner/repo", "commit": "…", "files": ["..."], "generatedAt": "…", "toolVersion": "0.7.0" },
   "summary": { "total": 0, "quickWin": 0, "needsReview": 0, "reportOnly": 0, "errors": 0, "warnings": 0, "infos": 0, "security": 0, "correctness": 0, "bestPractice": 0 },
   "findings": [
-    { "checkId": "GHA033", "severity": "warning", "message": "…", "file": "…", "entity": "…", "lexicon": "github",
+    { "checkId": "GHA033", "severity": "warning", "message": "…", "file": "…", "entity": "…", "identity": "…", "lexicon": "github",
       "tier": "merge-worthy", "fixKind": "deterministic", "category": "security", "title": "…", "remediation": "…",
       "authority": [{ "name": "…", "url": "…" }],
       "lineage": [{ "tool": "zizmor", "rule": "excessive-permissions", "url": "…", "relation": "equivalent" }],
@@ -221,6 +221,8 @@ For tooling, `--format json` emits a **versioned** envelope (stable contract). T
 - The `snapshot` anchors findings to an exact commit for reproducibility.
 - `status` is `"ok"` when at least one lexicon ran, `"no-lexicons"` when none could (see [Prerequisites](#prerequisites)). Check it before trusting an empty `findings`. An optional `unclaimed` list names files that wanted a lexicon that is not installed.
 - An optional `truncated` object (`limit`, `flag`) means the local walk stopped at its file limit, so `findings` covers only part of the tree (see [Scan limits](#scan-limits)).
+- An optional `skipped` list names each lexicon whose files were found but not read because an optional parser is not installed (today, `@cdktn/hcl2json` for Terraform). Each entry has `lexicon`, `reason` (`"parser-not-installed"`), `package`, `install` and `paths`, the audited directories it could not read. A lexicon in `skipped` has no findings because it was not read, not because it is clean, so a consumer that treats an empty lexicon as clean should check this list first. The same sentence is printed on stderr, and text reports lead with it as a note.
+- `identity` names a finding across runs, so a base and a head can be compared without reading messages. It is built from the rule, the file, the object's name or address, the finding's place in the object (for a container finding, the kind and the container's index) and, for a secret, the value's fingerprint. It does not use the message or the line. Renaming a container inside a Deployment leaves the identity alone; renaming the Deployment changes it. A finding with no further locator is told apart from others on the same object by its order. An aliased Terraform provider is keyed by its alias.
 - `lineage` credits the open-source tools whose rules check the same condition, with the upstream rule id and how the two relate. It is credit, not authority, and is empty for a rule with no known counterpart. The [audit rules reference](/chant/lint-rules/audit-rules/#prior-art) lists every tool credited.
 - For maximum stability, use `--format sarif`, an industry-standard format versioned independently of chant.
 
@@ -229,6 +231,7 @@ For tooling, `--format json` emits a **versioned** envelope (stable contract). T
 `--format sarif` emits a [SARIF 2.1.0](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html) document, the interchange format most CI platforms and code-review surfaces (GitHub code scanning, GitLab, Azure DevOps, many SAST/IDE viewers) render as inline, file-and-line annotations instead of scraped text:
 
 - Each `run.tool.driver.rules[]` entry carries the finding's `helpUri` (the same authority citation as the other formats) plus a `help.text` with the catalog's remediation guidance, and a `properties.category`/`properties.dimension` pair (`security`, `correctness`, or `best-practice`) for rule-level triage. A rule with prior art also carries `properties.priorArt`, the same `lineage` entries the JSON report emits.
+- Each `run.results[]` entry carries the same `identity` as the JSON report, as `partialFingerprints["chantFindingIdentity/v1"]`.
 - Each `run.results[]` entry carries `properties.tier` (`merge-worthy` or `report-only`) alongside the standard `ruleId`, `level`, `message`, and `locations` (file + line, when known).
 - Secrets findings (`SEC001`–`SEC010`) redact the same as every other format — a result's `message.text` never carries the matched value, only the rule id, kind, location, and fingerprint.
 - `--agents` emits the same property bag under a `chant audit --agents` driver name, so one consumer can triage both. Its rules' `helpUri` points at the rule's own entry in the audit rules reference rather than an external authority, since an `AGT` finding is about a local file.

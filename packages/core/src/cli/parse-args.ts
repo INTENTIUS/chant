@@ -70,6 +70,7 @@ const BOOLEAN_FLAGS = new Set([
   "--fold",
   "--no-fold",
   "--no-cache",
+  "--discover",
   "--no-build",
   "--sandbox",
   "--yes",
@@ -1157,6 +1158,9 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--no-cache") {
       // `chant workspace graph --no-cache` (#2876): read every member.
       result.noCache = true;
+    } else if (arg === "--discover") {
+      // `chant workspace graph <dir> --discover` (#5095): find the members by probe, with no declaration.
+      result.discover = true;
     } else if (arg === "--no-fold") {
       // chant #1134 — fold is the default build path; this is the explicit
       // opt-out, and like --fold it beats chant.config.ts's build.fold.

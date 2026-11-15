@@ -11,6 +11,7 @@ import type { EmbeddedContentResolver } from "@intentius/chant/import/embedded";
 import { parseYAML, splitYAMLDocuments } from "@intentius/chant/yaml";
 import { namespaceSegmentForGroup } from "../group-namespace";
 import { delegateEmbedded } from "./embedded";
+import { exportedClassFor, untypedKindWarning } from "./typed-classes";
 
 // ── GVK to type name mapping ───────────────────────────────────────
 
@@ -182,6 +183,15 @@ export class K8sParser implements TemplateParser {
       }
     }
 
+    // One warning per kind the lexicon has no class for (#5070).
+    const warnings: string[] = [];
+    const warned = new Set<string>();
+    for (const r of resources) {
+      if (exportedClassFor(r.type) || warned.has(r.type)) continue;
+      warned.add(r.type);
+      warnings.push(untypedKindWarning(String(r.metadata?.apiVersion), String(r.metadata?.kind)));
+    }
+
     const metadata: Record<string, unknown> = {};
     if (namespaces.size > 0) {
       metadata.namespaces = [...namespaces];
@@ -191,6 +201,7 @@ export class K8sParser implements TemplateParser {
       resources,
       parameters: [],
       metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+      ...(warnings.length > 0 ? { warnings } : {}),
     };
   }
 

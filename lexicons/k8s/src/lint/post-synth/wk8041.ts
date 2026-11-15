@@ -7,7 +7,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { docsToManifests, extractContainers, WORKLOAD_KINDS } from "./k8s-helpers";
+import { docsToManifests, extractContainers, containerLocator, WORKLOAD_KINDS } from "./k8s-helpers";
 
 /**
  * Known API key patterns and their descriptions.
@@ -54,6 +54,7 @@ export const wk8041: PostSynthCheck = {
                 severity: "error",
                 message: `Container "${container.name ?? "(unnamed)"}" in ${manifest.kind} "${resourceName}" has a ${label} hardcoded in env var "${envVar.name ?? "(unnamed)"}" — use a Secret reference instead`,
                 entity: resourceName,
+                locator: containerLocator(manifest, container),
                 lexicon: "k8s",
               });
               break; // One match per env var is sufficient

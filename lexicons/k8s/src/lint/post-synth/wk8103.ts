@@ -6,7 +6,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { docsToManifests, extractContainers, WORKLOAD_KINDS } from "./k8s-helpers";
+import { docsToManifests, extractContainers, containerLocator, WORKLOAD_KINDS } from "./k8s-helpers";
 
 export const wk8103: PostSynthCheck = {
   id: "WK8103",
@@ -29,6 +29,7 @@ export const wk8103: PostSynthCheck = {
             severity: "error",
             message: `${manifest.kind} "${resourceName}" has a container at index ${i} without a name — the name field is required`,
             entity: resourceName,
+            locator: containerLocator(manifest, container),
             lexicon: "k8s",
           });
         }

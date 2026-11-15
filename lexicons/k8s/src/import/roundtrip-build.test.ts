@@ -130,4 +130,52 @@ describe("k8s import round trip", () => {
       removeDir(imported.dir);
     }
   });
+
+  test("a kind the lexicon has no class for is written untyped, builds, and comes back (#5070)", async () => {
+    const yaml = [
+      "apiVersion: external-secrets.io/v1",
+      "kind: ExternalSecret",
+      "metadata:",
+      "  name: db",
+      "  namespace: apps",
+      "spec:",
+      "  refreshInterval: 1h",
+      "  secretStoreRef:",
+      "    kind: ClusterSecretStore",
+      "    name: vault",
+      "  data:",
+      "  - secretKey: password",
+      "    remoteRef:",
+      "      key: db/password",
+      "---",
+      "apiVersion: networking.gke.io/v1beta1",
+      "kind: ManagedCertificate",
+      "metadata:",
+      "  name: cert",
+      "spec:",
+      "  domains:",
+      "  - example.org",
+      "---",
+      "apiVersion: networking.gke.io/v1beta1",
+      "kind: ManagedCertificate",
+      "metadata:",
+      "  name: cert-two",
+      "spec:",
+      "  domains:",
+      "  - example.com",
+    ].join("\n");
+    const imported = await importManifest(yaml);
+    try {
+      expect(imported.result.error).toBeUndefined();
+      const warned = imported.result.warnings.filter((w) => w.includes("k8s.crds"));
+      expect(warned.length).toBe(2);
+      expect(warned.join("\n")).toContain("chant generate");
+      const result = await build(imported.srcDir, [k8sSerializer]);
+      expect(result.errors).toEqual([]);
+      const docs = (loadAll(primary(result.outputs.get("k8s"))) as unknown[]).filter((d) => d);
+      expect(docs).toEqual(loadAll(yaml).filter((d) => d));
+    } finally {
+      removeDir(imported.dir);
+    }
+  });
 });

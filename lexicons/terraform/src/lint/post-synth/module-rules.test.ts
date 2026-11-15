@@ -85,7 +85,7 @@ describe("TF020: a declaration nothing in its scope references", () => {
     expect(diags.map((d) => d.entity).sort()).toEqual([
       "TF020/data.aws_ami.ubuntu",
       "TF020/locals",
-      "TF020/provider.aws",
+      "TF020/provider.aws~replica",
       "TF020/var.retention_days",
     ]);
     expect(diags.find((d) => d.entity === "TF020/locals")?.message).toContain('"local.common_tags"');

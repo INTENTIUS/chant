@@ -96,6 +96,8 @@ export interface AuditFinding {
   fingerprint?: string;
   /** Carried verbatim from the producing `PostSynthDiagnostic.missing` (chant #2113) — see its doc comment. */
   missing?: { kind: string; scope: string };
+  /** Carried verbatim from the producing `PostSynthDiagnostic.locator` (#5106); one input of the finding's identity. */
+  locator?: string;
 }
 
 /**
@@ -226,6 +228,43 @@ async function defaultEntitiesProvider(lexicon: AuditLexicon): Promise<EntitiesP
 }
 
 /**
+ * A lexicon whose files were found but not read, because an optional parser it
+ * needs is not installed (#5083). Without this a missing parser and a clean
+ * repository both produce no findings. `paths` are the audited inputs the
+ * lexicon could not read (for terraform, directories).
+ */
+export interface AuditSkip {
+  lexicon: string;
+  reason: "parser-not-installed";
+  /** The npm package to install. */
+  package: string;
+  /** The command that installs it. */
+  install: string;
+  paths: string[];
+}
+
+/**
+ * The npm package an entities parser reports as missing: any error with a
+ * string `parserPackage` property. A lexicon sets it instead of importing a
+ * class from here, which keeps lexicon packages free of audit internals.
+ */
+export function parserPackageOf(err: unknown): string | undefined {
+  const pkg = (err as { parserPackage?: unknown } | null)?.parserPackage;
+  return typeof pkg === "string" ? pkg : undefined;
+}
+
+/** The sentence `chant audit` prints for a skip, in the log and in text reports. */
+export function describeSkip(skip: AuditSkip): string {
+  const n = skip.paths.length;
+  const shown = skip.paths.slice(0, 10).join(", ") + (n > 10 ? `, and ${n - 10} more` : "");
+  return (
+    `${skip.lexicon} files were found but not read: the parser ${skip.package} is not installed, ` +
+    `so ${n} ${n === 1 ? "input produced" : "inputs produced"} no findings (${shown}). ` +
+    `Install it with: ${skip.install}`
+  );
+}
+
+/**
  * Mutable out-param for the inline (`# chant-ignore*`) suppression count
  * (chant #2111): `auditFiles`'s return type stays `AuditFinding[]` for every
  * existing caller, so a caller that wants the count (`chant audit`'s CLI, for
@@ -247,6 +286,8 @@ export async function auditFiles(
     checksProvider?: ChecksProvider;
     entitiesProvider?: EntitiesProvider;
     suppressionStats?: SuppressionStats;
+    /** Filled in place with each lexicon whose parser is not installed (#5083); stays empty on a full read. */
+    skips?: AuditSkip[];
     /** Check ids the project enabled with `lint.rules`; a check marked `auditOptIn` runs only when listed here (#3190). */
     enabledRules?: ReadonlySet<string>;
   } = {},
@@ -267,7 +308,7 @@ export async function auditFiles(
     const checks = (await provider(lexicon)).filter((c) => !c.auditOptIn || opts.enabledRules?.has(c.id));
     if (checks.length === 0) continue;
     const parseEntities = await entitiesProvider(lexicon);
-    findings.push(...(await auditLexicon(lexicon, files, checks, parseEntities, opts.suppressionStats)));
+    findings.push(...(await auditLexicon(lexicon, files, checks, parseEntities, opts.suppressionStats, opts.skips)));
   }
 
   return findings;
@@ -316,8 +357,8 @@ function runChecks(
   return applyInlineSuppressions(diags, entities);
 }
 
-function diagKey(d: { checkId: string; entity?: string; message: string }): string {
-  return `${d.checkId}\u0000${d.entity ?? ""}\u0000${d.message}`;
+function diagKey(d: { checkId: string; entity?: string; locator?: string; message: string }): string {
+  return `${d.checkId}\u0000${d.entity ?? ""}\u0000${d.locator ?? ""}\u0000${d.message}`;
 }
 
 /**
@@ -365,7 +406,9 @@ async function auditLexicon(
   checks: PostSynthCheck[],
   parseEntities?: EntitiesParser,
   suppressionStats?: SuppressionStats,
+  skips?: AuditSkip[],
 ): Promise<AuditFinding[]> {
+  const unread = new Map<string, string[]>();
   const entitiesFor = async (file: AuditInput): Promise<Map<string, Declarable>> => {
     if (!parseEntities) return new Map();
     try {
@@ -374,13 +417,20 @@ async function auditLexicon(
         ...(file.dir !== undefined ? { dir: file.dir } : {}),
         ...(file.baseDir !== undefined ? { baseDir: file.baseDir } : {}),
       });
-    } catch {
+    } catch (err) {
+      // A missing parser is not unparseable content: the files were never
+      // read, so say so instead of letting them read as clean (#5083).
+      const pkg = parserPackageOf(err);
+      if (pkg !== undefined) unread.set(pkg, [...(unread.get(pkg) ?? []), file.path]);
       // The audit contract is "runs against any repo" — unparseable content
       // contributes no entities, never a crash.
       return new Map();
     }
   };
   const perEntities = new Map(await Promise.all(files.map(async (f) => [f.path, await entitiesFor(f)] as const)));
+  for (const [pkg, paths] of unread) {
+    skips?.push({ lexicon, reason: "parser-not-installed", package: pkg, install: `npm install -D ${pkg}`, paths: paths.sort() });
+  }
 
   const perFindings: AuditFinding[] = [];
   const perKeys = new Set<string>();
@@ -396,7 +446,7 @@ async function auditLexicon(
       metaFindings.push({ checkId: m.checkId, severity: m.severity, message: m.message, file: m.file, lexicon, line: m.line });
     }
     for (const d of diags) {
-      perFindings.push({ checkId: d.checkId, severity: d.severity, message: d.message, file: file.path, lexicon: d.lexicon ?? lexicon, entity: d.entity, missing: d.missing });
+      perFindings.push({ checkId: d.checkId, severity: d.severity, message: d.message, file: file.path, lexicon: d.lexicon ?? lexicon, entity: d.entity, missing: d.missing, ...(d.locator !== undefined ? { locator: d.locator } : {}) });
       perKeys.add(diagKey(d));
     }
   }
@@ -408,7 +458,7 @@ async function auditLexicon(
   const out: AuditFinding[] = perFindings.filter((f) => allKeys.has(diagKey(f)));
   for (const d of allDiags) {
     if (!perKeys.has(diagKey(d))) {
-      out.push({ checkId: d.checkId, severity: d.severity, message: d.message, file: CROSS_FILE, lexicon: d.lexicon ?? lexicon, entity: d.entity, missing: d.missing });
+      out.push({ checkId: d.checkId, severity: d.severity, message: d.message, file: CROSS_FILE, lexicon: d.lexicon ?? lexicon, entity: d.entity, missing: d.missing, ...(d.locator !== undefined ? { locator: d.locator } : {}) });
     }
   }
   return [...out, ...metaFindings];

@@ -124,7 +124,7 @@ export interface K8sChantConfig {
   /**
    * One workspace member read into the graph (#3179). `chant workspace graph`
    * writes this into the reader project it makes for a member of kind
-   * `kustomize`, `argo-app` or `flux-kustomization`; it is not meant to be
+   * `kustomize`, `argo-app`, `flux-kustomization` or `manifests`; it is not meant to be
    * written by hand. `dir` is the member's directory, absolute; `label` names
    * the entities (`<label>/deploymentWeb`), the member's name.
    *
@@ -132,12 +132,15 @@ export interface K8sChantConfig {
    * neither installed the graph carries no objects for it and says why on
    * `meta.k8sMember` (`rendered: false`, `reason`); a render the binary ran
    * and refused still fails. An Argo or Flux member is read from its manifests
-   * and needs no binary.
+   * and needs no binary. A `manifests` member keeps every document with an
+   * `apiVersion` and a `kind`.
    */
   member?: {
-    kind: "kustomize" | "argo-app" | "flux-kustomization";
+    kind: "kustomize" | "argo-app" | "flux-kustomization" | "manifests";
     dir: string;
     label?: string;
+    /** The workspace root, absolute. A `manifests` member leaves out a directory a kustomization under it lists in `resources`. */
+    workspace?: string;
   };
 
   /**

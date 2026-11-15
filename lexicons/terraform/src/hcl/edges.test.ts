@@ -76,7 +76,7 @@ describe("edges out of a parsed estate (#2265)", () => {
       "app/module.cdn/aws_cloudfront_distribution.cdn app/module.cdn/var.bucket origin_id ",
       "app/module.cdn app/aws_s3_bucket.assets bucket id",
       "app/output.cdn_url app/module.cdn value url",
-      "app/provider.aws app/var.region region ",
+      "app/provider.aws~replica app/var.region region ",
       "network/aws_vpc.main network/locals tags ",
       "network/aws_vpc.main network/var.cidr cidr_block ",
       "network/output.vpc_id network/aws_vpc.main value id",

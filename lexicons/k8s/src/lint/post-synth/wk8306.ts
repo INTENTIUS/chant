@@ -8,7 +8,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { docsToManifests, extractContainers, WORKLOAD_KINDS } from "./k8s-helpers";
+import { docsToManifests, extractContainers, containerLocator, WORKLOAD_KINDS } from "./k8s-helpers";
 
 export const wk8306: PostSynthCheck = {
   id: "WK8306",
@@ -34,6 +34,7 @@ export const wk8306: PostSynthCheck = {
             severity: "error",
             message: `Container "${container.name ?? "(unnamed)"}" in ${manifest.kind} "${resourceName}" has command[0]="${firstArg}" which starts with a flag — the first element should be the binary, flags belong in args`,
             entity: resourceName,
+            locator: containerLocator(manifest, container),
             lexicon: "k8s",
           });
         }

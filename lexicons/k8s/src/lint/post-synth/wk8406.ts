@@ -9,7 +9,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { docsToManifests, extractContainers, GPU_POD_KINDS, NVIDIA_GPU_RESOURCE } from "./k8s-helpers";
+import { docsToManifests, extractContainers, containerLocator, GPU_POD_KINDS, NVIDIA_GPU_RESOURCE } from "./k8s-helpers";
 
 export const wk8406: PostSynthCheck = {
   id: "WK8406",
@@ -44,6 +44,7 @@ export const wk8406: PostSynthCheck = {
             severity: "warning",
             message: `GPU container "${container.name ?? "(unnamed)"}" in ${manifest.kind} "${resourceName}" is missing resource limits for ${missing.join(", ")} — a GPU pod without cpu/memory limits can starve its (scarce, expensive) node`,
             entity: resourceName,
+            locator: containerLocator(manifest, container),
             lexicon: "k8s",
           });
         }

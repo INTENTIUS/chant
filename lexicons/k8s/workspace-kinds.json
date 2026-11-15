@@ -1,10 +1,10 @@
 {
-  "$comment": "Member kinds this lexicon supplies to a chant workspace (#3179). chant reads this file as data and never imports the lexicon. The Argo and Flux probes read the manifest's apiVersion and kind, so a Flux Kustomization is told apart from the kustomize one that shares its kind name. Each kind's graph block (#3179) reads the member through the k8s lexicon's member reader (src/workspace-member.ts): a kustomize member is rendered, and says rendered: false on meta.k8sMember when neither kustomize nor kubectl is installed; an Argo or Flux member is read from its manifests.",
+  "$comment": "Member kinds this lexicon supplies to a chant workspace (#3179). chant reads this file as data and never imports the lexicon. The Argo and Flux probes read the manifest's apiVersion and kind, so a Flux Kustomization is told apart from the kustomize one that shares its kind name. Each kind's graph block (#3179) reads the member through the k8s lexicon's member reader (src/workspace-member.ts): a kustomize member is rendered, and says rendered: false on meta.k8sMember when neither kustomize nor kubectl is installed; an Argo, Flux or manifests member is read from its manifests.",
   "schema": 1,
   "kinds": [
     {
       "name": "argo-app",
-      "description": "an Argo CD Application, a manifest with apiVersion argoproj.io/* and kind Application",
+      "description": "an Argo CD Application, ApplicationSet or AppProject, a manifest with apiVersion argoproj.io/* and one of those kinds",
       "precedence": 360,
       "probe": {
         "anyDocument": {
@@ -18,7 +18,9 @@
                 "argoproj.io/*"
               ],
               "/kind": [
-                "Application"
+                "Application",
+                "ApplicationSet",
+                "AppProject"
               ]
             }
           ]
@@ -86,6 +88,40 @@
             "kind": "kustomize",
             "dir": "{dir}",
             "label": "{member}"
+          }
+        }
+      }
+    },
+    {
+      "name": "manifests",
+      "description": "a directory of Kubernetes manifests, YAML files with an apiVersion and a kind; every document is read as data, whatever its kind",
+      "precedence": 305,
+      "probe": {
+        "anyDocument": {
+          "in": [
+            "*.yaml",
+            "*.yml"
+          ],
+          "match": [
+            {
+              "/apiVersion": [
+                "*"
+              ],
+              "/kind": [
+                "*"
+              ]
+            }
+          ]
+        }
+      },
+      "graph": {
+        "lexicon": "k8s",
+        "config": {
+          "member": {
+            "kind": "manifests",
+            "dir": "{dir}",
+            "label": "{member}",
+            "workspace": "{workspace}"
           }
         }
       }

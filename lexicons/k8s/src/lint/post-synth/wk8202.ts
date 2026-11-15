@@ -7,7 +7,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { docsToManifests, extractContainers, WORKLOAD_KINDS } from "./k8s-helpers";
+import { docsToManifests, extractContainers, containerLocator, WORKLOAD_KINDS } from "./k8s-helpers";
 
 export const wk8202: PostSynthCheck = {
   id: "WK8202",
@@ -30,6 +30,7 @@ export const wk8202: PostSynthCheck = {
             severity: "error",
             message: `Container "${container.name ?? "(unnamed)"}" in ${manifest.kind} "${resourceName}" runs in privileged mode — this grants full host access and should be avoided`,
             entity: resourceName,
+            locator: containerLocator(manifest, container),
             lexicon: "k8s",
           });
         }
