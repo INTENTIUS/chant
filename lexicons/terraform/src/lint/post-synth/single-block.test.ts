@@ -273,6 +273,6 @@ describe("TF022: credential-named resource attribute holding a literal", () => {
       "TF022/example_widget.w",
       "TF022/google_secret_manager_secret_version.app",
     ]);
-    expect(diags.find((d) => d.entity.endsWith("version.app"))?.message).toContain("`secret_data`");
+    expect(diags.find((d) => d.entity?.endsWith("version.app"))?.message).toContain("`secret_data`");
   });
 });
