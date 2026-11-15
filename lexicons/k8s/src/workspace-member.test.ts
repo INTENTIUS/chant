@@ -11,7 +11,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import type { GraphIR } from "@intentius/chant/graph-ir";
 import type { LexiconPlugin } from "@intentius/chant/lexicon";
@@ -69,7 +69,7 @@ afterEach(async () => {
 });
 
 /** chant graph over the reader project the kind's graph block describes for a member at `dir`. */
-async function graphOf(kind: string, dir: string, plugin: LexiconPlugin): Promise<{ ir: GraphIR; err: string[]; exit: number }> {
+async function graphOf(kind: string, dir: string, plugin: LexiconPlugin, detail?: number): Promise<{ ir: GraphIR; err: string[]; exit: number }> {
   const graph = readPackageKinds(packageDir).kinds.find((k) => k.name === kind)!.graph!;
   expect(graph.lexicon).toBe("k8s");
   const config = substituteGraphConfig(graph.config, { member: "m", dir, workspace: dirname(dir) });
@@ -83,7 +83,7 @@ async function graphOf(kind: string, dir: string, plugin: LexiconPlugin): Promis
   const cwd = process.cwd();
   process.chdir(project);
   try {
-    const exit = await runGraph({ args: { command: "graph", path: ".", format: "ir" } as never, plugins: [plugin], serializers: [] });
+    const exit = await runGraph({ args: { command: "graph", path: ".", format: "ir", ...(detail === undefined ? {} : { detail }) } as never, plugins: [plugin], serializers: [] });
     return { ir: exit === 0 ? (JSON.parse(out.join("\n")) as GraphIR) : { nodes: [], edges: [], groups: {} }, err, exit };
   } finally {
     process.chdir(cwd);
@@ -131,6 +131,57 @@ describe("member kinds with a graph block (#3179)", () => {
     const { ir, err, exit } = await graphOf("flux-kustomization", join(members, "flux"), pluginWith());
     expect(exit, err.join("\n")).toBe(0);
     expect(ids(ir)).toEqual(["m/kustomizationApps"]);
+  });
+
+  test("argo-app: an ApplicationSet and an AppProject are nodes beside the Application (#5096)", async () => {
+    const { ir, err, exit } = await graphOf("argo-app", join(members, "argo-set"), pluginWith());
+    expect(exit, err.join("\n")).toBe(0);
+    expect(ids(ir)).toEqual(["m/appProjectTeamA", "m/applicationGuestbook", "m/applicationSetServices"]);
+    expect(ir.meta?.k8sMember).toEqual({ kind: "argo-app", objects: 3 });
+  });
+
+  test("manifests: every document with an apiVersion and a kind is a node, and a custom resource carries its spec (#5096)", async () => {
+    const { ir, err, exit } = await graphOf("manifests", join(members, "plain"), pluginWith(), 3);
+    expect(exit, err.join("\n")).toBe(0);
+    expect(ids(ir)).toEqual(["m/deploymentWeb", "m/externalSecretWebCreds", "m/serviceWeb"]);
+    expect(ir.meta?.k8sMember).toEqual({ kind: "manifests", objects: 3 });
+    const es = ir.nodes.find((n) => n.id === "m/externalSecretWebCreds")!;
+    expect(JSON.stringify(es)).toContain("main-store");
+    expect(JSON.stringify(es)).toContain("web/password");
+  });
+
+  test("manifests: a file that does not parse is named in a warning and the other files still print (#5096)", async () => {
+    const { ir, err, exit } = await graphOf("manifests", join(members, "templated"), pluginWith());
+    expect(exit, err.join("\n")).toBe(0);
+    expect(ids(ir)).toEqual(["m/configMapSettings"]);
+    expect(err.join("\n")).toMatch(/chart-cm\.yaml holds template syntax/);
+    expect(err.join("\n")).toMatch(/block\.yaml is not valid YAML/);
+  });
+
+  test("manifests: the reader returns one warning per file (#5096)", async () => {
+    const { warnings, entities } = await readK8sMember({ member: { kind: "manifests", dir: join(members, "templated"), label: "t" } });
+    expect(warnings).toHaveLength(2);
+    expect(warnings.join("\n")).toContain("chart-cm.yaml");
+    expect(warnings.join("\n")).toContain("block.yaml");
+    expect([...entities.keys()]).toEqual(["t/configMapSettings"]);
+  });
+
+  test("manifests: a directory a kustomization lists in resources is left to the kustomize member (#5096)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "chant-k8s-listed-"));
+    scratch.push(root);
+    await mkdir(join(root, "base"));
+    await mkdir(join(root, "other"));
+    await mkdir(join(root, "overlays", "prod"), { recursive: true });
+    const cm = "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: c\n";
+    await writeFile(join(root, "base", "cm.yaml"), cm);
+    await writeFile(join(root, "other", "cm.yaml"), cm);
+    await writeFile(join(root, "overlays", "prod", "kustomization.yaml"), "resources:\n  - ../../base\n  - https://example.com/x.yaml\n");
+    const listed = await readK8sMember({ member: { kind: "manifests", dir: join(root, "base"), label: "base", workspace: root } });
+    expect([...listed.entities.keys()]).toEqual([]);
+    expect(listed.report).toMatchObject({ kind: "manifests", coveredBy: "overlays/prod", objects: 0 });
+    const unlisted = await readK8sMember({ member: { kind: "manifests", dir: join(root, "other"), label: "other", workspace: root } });
+    expect([...unlisted.entities.keys()]).toEqual(["other/configMapC"]);
+    expect(unlisted.report.coveredBy).toBeUndefined();
   });
 
   const haveBinary = (() => {

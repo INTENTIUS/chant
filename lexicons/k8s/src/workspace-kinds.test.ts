@@ -1,5 +1,5 @@
 /**
- * The kustomize, argo-app and flux-kustomization member kinds this lexicon
+ * The kustomize, argo-app, flux-kustomization and manifests member kinds this lexicon
  * supplies to a chant workspace (#3179): data in `workspace-kinds.json`,
  * exported at `./workspace-kinds`.
  */
@@ -28,6 +28,14 @@ describeWorkspaceKindConformance({
     { name: "an Argo Application beside a kustomization.yaml", kind: "argo-app", files: { "kustomization.yaml": kustomization, "app.yaml": argo }, claims: true },
     { name: "a Deployment", kind: "argo-app", files: { "deploy.yaml": "apiVersion: apps/v1\nkind: Deployment\n" }, claims: false },
     { name: "an Application of another group", kind: "argo-app", files: { "app.yaml": "apiVersion: app.k8s.io/v1beta1\nkind: Application\n" }, claims: false },
+    { name: "an ApplicationSet alone", kind: "argo-app", files: { "set.yaml": "apiVersion: argoproj.io/v1alpha1\nkind: ApplicationSet\nmetadata:\n  name: s\n" }, claims: true },
+    { name: "an AppProject alone", kind: "argo-app", files: { "project.yaml": "apiVersion: argoproj.io/v1alpha1\nkind: AppProject\nmetadata:\n  name: p\n" }, claims: true },
+    // Plain manifests (305) rank below every other kind that reads YAML.
+    { name: "a Deployment", kind: "manifests", files: { "deploy.yaml": "apiVersion: apps/v1\nkind: Deployment\n" }, claims: true },
+    { name: "a custom resource", kind: "manifests", files: { "es.yml": "apiVersion: external-secrets.io/v1\nkind: ExternalSecret\n" }, claims: true },
+    { name: "a values file", kind: "manifests", files: { "values.yaml": "replicas: 2\nimage: web\n" }, claims: false },
+    { name: "a chart template with a block action", kind: "manifests", files: { "cm.yaml": "{{- if .Values.x }}\napiVersion: v1\nkind: ConfigMap\n{{- end }}\n" }, claims: false },
+    { name: "manifests beside a kustomization.yaml are claimed by kustomize", kind: "kustomize", files: { "kustomization.yaml": kustomization, "deploy.yaml": "apiVersion: apps/v1\nkind: Deployment\n" }, claims: true },
     { name: "a Flux Kustomization", kind: "flux-kustomization", files: { "sync.yaml": flux }, claims: true },
     { name: "kustomize's own kustomization.yaml is not a Flux one", kind: "flux-kustomization", files: { "kustomization.yaml": kustomization }, claims: false },
     { name: "a manifest that is not YAML", kind: "flux-kustomization", files: { "sync.yaml": "{{ not: [yaml" }, claims: false },

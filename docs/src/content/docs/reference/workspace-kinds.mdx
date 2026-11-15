@@ -496,17 +496,18 @@ The file also holds a SHA-256 digest of the migration files it ran, and for Flyw
 
 ## Platform kinds
 
-Seven kinds cover the files a platform repository holds besides Terraform ([#3179](https://github.com/INTENTIUS/chant/issues/3179)). Each is data in the kinds file of the package that knows the substrate. All seven have a `graph` block, so [`chant workspace graph`](/chant/cli/workspace-graph/) draws their members (see [below](#how-the-platform-kinds-are-read)).
+Eight kinds cover the files a platform repository holds besides Terraform ([#3179](https://github.com/INTENTIUS/chant/issues/3179)). Each is data in the kinds file of the package that knows the substrate. All eight have a `graph` block, so [`chant workspace graph`](/chant/cli/workspace-graph/) draws their members (see [below](#how-the-platform-kinds-are-read)).
 
 | Kind | Package | Precedence | Probe |
 |---|---|---|---|
-| `argo-app` | `@intentius/chant-lexicon-k8s` | 360 | a YAML file with `apiVersion: argoproj.io/*` and `kind: Application` |
+| `argo-app` | `@intentius/chant-lexicon-k8s` | 360 | a YAML file with `apiVersion: argoproj.io/*` and `kind: Application`, `ApplicationSet` or `AppProject` |
 | `flux-kustomization` | `@intentius/chant-lexicon-k8s` | 350 | a YAML file with `apiVersion: kustomize.toolkit.fluxcd.io/*` and `kind: Kustomization`. kustomize's own `kustomization.yaml` uses another apiVersion and isn't claimed |
 | `kustomize` | `@intentius/chant-lexicon-k8s` | 340 | `kustomization.yaml`, `kustomization.yml` or `Kustomization` |
 | `helm-chart` | `@intentius/chant-lexicon-helm` | 330 | `Chart.yaml`, which the kind also checks (`apiVersion`, `name`, `version`) |
 | `cloudformation` | `@intentius/chant-lexicon-aws` | 320 | a `.yaml`, `.yml`, `.json` or `.template` file with `AWSTemplateFormatVersion` or `Resources` at its top. YAML short-form tags such as `!Ref` are allowed |
 | `cdk` | `@intentius/chant-lexicon-aws` | 315 | `cdk.json`, which the kind also checks (`app`) |
 | `pulumi` | `@intentius/chant-lexicon-pulumi` | 310 | `Pulumi.yaml`, which the kind also checks (`name`, `runtime`). The kind was in `@intentius/chant-lexicon-terraform` until [#4453](https://github.com/INTENTIUS/chant/issues/4453); a workspace that reads Pulumi members pins the pulumi lexicon |
+| `manifests` | `@intentius/chant-lexicon-k8s` | 305 | a YAML file with an `apiVersion` and a `kind`, whatever their values. Every kind above outranks it, so a directory with a `kustomization.yaml`, a `Chart.yaml` or an Argo CD document goes to that kind |
 
 [`chant workspace init`](/chant/cli/workspace-init/) proposes these kinds, and pins the packages, when the packages are installed at the root.
 
@@ -514,8 +515,9 @@ Seven kinds cover the files a platform repository holds besides Terraform ([#317
 
 | Kind | What the graph holds | Needs |
 |---|---|---|
-| `argo-app` | an `Application` per document, as a node | nothing; the manifests are read as data |
+| `argo-app` | an `Application`, `ApplicationSet` or `AppProject` per document, as a node | nothing; the manifests are read as data |
 | `flux-kustomization` | a Flux `Kustomization` per document, as a node | nothing |
+| `manifests` | a node per document with an `apiVersion` and a `kind`, including custom resources the k8s lexicon has no class for, with its `spec` at `--detail 3`. A file that does not parse, or holds `{{ ... }}` template syntax, is named in the member's warnings and the other files are still read. A directory that a `kustomization.yaml` in the workspace lists in `resources` is left to the kustomize member (`coveredBy` on `meta.k8sMember`), so its objects are not drawn twice | nothing |
 | `cloudformation` | a node per resource; an edge per `Ref`, `Fn::GetAtt`, `Fn::Sub` reference and `DependsOn` between resources of the template | nothing |
 | `kustomize` | the objects `kustomize build` renders, as nodes | `kustomize`, or `kubectl` |
 | `helm-chart` | the objects `helm template` renders, as nodes | `helm` |

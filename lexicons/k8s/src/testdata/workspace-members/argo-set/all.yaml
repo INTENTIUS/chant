@@ -1,0 +1,43 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: guestbook
+  namespace: argocd
+spec:
+  project: team-a
+  source:
+    repoURL: https://github.com/example/guestbook
+    path: deploy
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: guestbook
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: services
+  namespace: argocd
+spec:
+  generators:
+    - list:
+        elements:
+          - name: payments
+  template:
+    metadata:
+      name: "{{name}}"
+    spec:
+      project: team-a
+      source:
+        repoURL: https://github.com/example/services
+        path: "services/{{name}}"
+      destination:
+        server: https://kubernetes.default.svc
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: team-a
+  namespace: argocd
+spec:
+  sourceRepos:
+    - "*"

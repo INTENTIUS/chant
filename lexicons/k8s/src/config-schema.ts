@@ -75,9 +75,10 @@ export const k8sConfigSchema = z.strictObject({
     .optional(),
   member: z
     .strictObject({
-      kind: z.enum(["kustomize", "argo-app", "flux-kustomization"]),
+      kind: z.enum(["kustomize", "argo-app", "flux-kustomization", "manifests"]),
       dir: z.string().min(1),
       label: z.string().optional(),
+      workspace: z.string().optional(),
     })
     .optional(),
   receipts: z
