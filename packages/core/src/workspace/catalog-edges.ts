@@ -54,6 +54,7 @@
 
 import {
   containmentGroups,
+  memberRegion,
   reconstructIndexedEdges,
   readPath,
   refRuleId,
@@ -71,7 +72,7 @@ import type {
   ComposedNode,
   WorkspaceGraph,
 } from "./compose-graph";
-import { danglingKey } from "./compose-graph";
+import { composedId, danglingKey } from "./compose-graph";
 
 /** The scope every node of a declared workspace graph sits in. */
 export const WORKSPACE_SCOPE = "workspace";
@@ -88,6 +89,8 @@ export interface CatalogPass {
   rules: Record<string, CatalogRuleEntry>;
   lexicons: string[];
   members: string[];
+  /** Nodes a catalog's `sharedNodes` added (#5100), with their ids as the document gives them. */
+  shared: ComposedNode[];
 }
 
 const byString = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -130,20 +133,58 @@ export function runCatalogPass(nodes: readonly ComposedNode[], catalogs: readonl
   });
   const member = new Map(read.map((n) => [n.id, n.member]));
 
-  const scopePath = new Map<string, string>();
-  for (const { lexicon, catalog } of catalogs) for (const r of catalog.scopes ?? []) scopePath.set(`${lexicon}\u0000${r.kind}`, r.path);
+  // A kind a catalog scopes is looked up by its own kind alone: the lexicon that wrote the node is not the catalog's (a values file read by the k8s reader is a helm node).
+  const scopePath = new Map<string, string | null>();
+  for (const { catalog } of catalogs) for (const r of catalog.scopes ?? []) scopePath.set(r.kind, r.path ?? null);
   const scopeOf = (n: ComposedNode): IndexedNodeScope => {
-    const path = scopePath.get(`${n.lexicon}\u0000${n.kind}`);
-    if (path === undefined) return { account: WORKSPACE_SCOPE };
-    const named = readPath(n.attrs, path).find((v) => v !== "");
-    return { account: WORKSPACE_SCOPE, region: named !== undefined ? `${n.lexicon}:${named}` : `${n.lexicon}@${n.member}` };
+    // Every holder also reaches the nodes its own member holds with no other scope (`member`).
+    if (!scopePath.has(n.kind)) return { account: WORKSPACE_SCOPE, member: n.member };
+    const path = scopePath.get(n.kind);
+    // A kind scoped with no path is held by its member alone, whichever lexicon the member's other nodes are of.
+    if (path === null) return { account: WORKSPACE_SCOPE, region: memberRegion(n.member), member: n.member };
+    const named = readPath(n.attrs, path!).find((v) => v !== "");
+    return { account: WORKSPACE_SCOPE, region: named !== undefined ? `${n.lexicon}:${named}` : `${n.lexicon}@${n.member}`, member: n.member };
   };
   const scopes = new Map(read.map((n) => [n.id, scopeOf(n)]));
 
-  const found = reconstructIndexedEdges(read, catalogs, (n) => scopes.get(n.id)!);
+  // Nodes that no member owns (#5100): placed in the member of the first holder, with an edge to each from every holder.
+  const shared: ComposedNode[] = [];
+  const sharedEdges: ComposedEdge[] = [];
+  const sharedRules: Record<string, CatalogRuleEntry> = {};
+  const kindOf = new Map(read.map((n) => [n.id, n.kind]));
+  for (const { lexicon, catalog } of catalogs) {
+    for (const s of catalog.sharedNodes?.(read) ?? []) {
+      const holders = [...s.holders].sort((a, b) => byString(a.from, b.from));
+      if (holders.length === 0) continue;
+      const owner = member.get(holders[0].from);
+      if (owner === undefined) continue;
+      const id = composedId(owner, s.id);
+      shared.push({ id, kind: s.kind, lexicon, attrs: s.attrs, member: owner });
+      member.set(id, owner);
+      for (const h of holders) {
+        const from = kindOf.get(h.from);
+        if (from === undefined || h.from === id) continue;
+        const rule = refRuleId(lexicon, from, h.via);
+        const prev = sharedRules[rule];
+        const label = h.label ?? prev?.label;
+        sharedRules[rule] = {
+          lexicon,
+          from,
+          path: h.via,
+          relation: "reference",
+          targetKinds: [...new Set([...(prev?.targetKinds ?? []), s.kind])].sort(byString),
+          ...(label ? { label } : {}),
+        };
+        sharedEdges.push({ from: h.from, to: id, kind: "ref", viaAttr: h.via, grain: "property", origin: "derived", rule, relation: "reference", member: member.get(h.from)! });
+      }
+    }
+  }
+
+  const found = reconstructIndexedEdges([...read, ...shared], catalogs, (n) => scopes.get(n.id) ?? { account: WORKSPACE_SCOPE, member: member.get(n.id) });
   const memberOf = (id: string) => member.get(id)!;
   return {
-    edges: found.edges.map((e) => ({ ...e, member: memberOf(e.from) })),
+    shared,
+    edges: [...found.edges.map((e) => ({ ...e, member: memberOf(e.from) })), ...sharedEdges],
     containment: found.containment,
     dangling: found.dangling.map((d) => ({
       from: d.from,
@@ -157,7 +198,7 @@ export function runCatalogPass(nodes: readonly ComposedNode[], catalogs: readonl
     })),
     ambiguous: found.ambiguous.map((a) => ({ from: a.from, member: memberOf(a.from), rule: a.rule, path: a.path, value: a.value, candidates: a.candidates })),
     nonLiteral,
-    rules: catalogRules(catalogs),
+    rules: { ...catalogRules(catalogs), ...sharedRules },
     lexicons: catalogs.map((c) => c.lexicon).sort(byString),
     members: [...new Set(members ?? read.map((n) => n.member))].sort(byString),
   };
@@ -170,6 +211,19 @@ export function runCatalogPass(nodes: readonly ComposedNode[], catalogs: readonl
  */
 export function placeCatalogPass(graph: WorkspaceGraph, pass: CatalogPass, placed: ReadonlyMap<string, string> = new Map()): void {
   const at = (id: string) => placed.get(id) ?? id;
+  if (pass.shared.length > 0) {
+    const have = new Set(graph.nodes.map((n) => n.id));
+    const added = pass.shared.filter((n) => !have.has(n.id));
+    graph.nodes = [...graph.nodes, ...added].sort((a, b) => byString(a.id, b.id));
+    for (const n of added) {
+      const m = (graph.groups.byMember[n.member] ??= []);
+      m.push(n.id);
+      m.sort(byString);
+      const l = ((graph.groups.byLexicon ??= {})[n.lexicon] ??= []);
+      l.push(n.id);
+      l.sort(byString);
+    }
+  }
   const joined = new Set(graph.edges.map((e) => `${e.from}\u0000${e.to}`));
   const named = new Set<string>();
 

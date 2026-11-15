@@ -90,6 +90,16 @@ import { readPath, type IdentityRule, type JoinedRef, type ReferenceCatalog, typ
  * `metadata.annotations["eks.amazonaws.com/role-arn"]`. Rules that read them
  * come with the issues that need them.
  *
+ * ## Helm values files (#5100)
+ *
+ * An Argo CD Application or ApplicationSet and a kustomization with
+ * `helmCharts` name their values files in `helmReferences.valuesFiles[]`, a
+ * key the reader stamps with each file's workspace-relative path
+ * (./helm-references.ts). A file that exists and parses is a `Helm::Values`
+ * node identified by that path, so a name with no node is dangling with the
+ * path. The edges to the charts are not rules here: a chart is shared by every
+ * member that names it, so the helm lexicon's catalog makes the node.
+ *
  * ## Adding a rule
  *
  * A rule is one entry in `refs`: the holder kind, the path, the target kind
@@ -163,7 +173,14 @@ const EXTRA_IDS: Record<string, string[]> = {
   "K8s::Core::Secret": ["argoCluster.name", "argoCluster.server"],
 };
 
-const identities: IdentityRule[] = NAMED_KINDS.map((kind) => ({ kind, ids: ["metadata.name", ...(EXTRA_IDS[kind] ?? [])] }));
+/** Objects that can name a chart and the values files for it (#5100); the reader stamps `helmReferences` on them (./helm-references.ts). */
+const HELM_HOLDERS = ["K8s::Argo::Application", "K8s::Argo::ApplicationSet", "K8s::Kustomize::Kustomization"];
+
+const identities: IdentityRule[] = [
+  ...NAMED_KINDS.map((kind) => ({ kind, ids: ["metadata.name", ...(EXTRA_IDS[kind] ?? [])] })),
+  // A values file is the helm lexicon's node, read by this lexicon's reader and named by its workspace-relative path (#5100).
+  { kind: "Helm::Values", ids: ["path"] },
+];
 
 type Rel = RefRule["relation"];
 
@@ -376,9 +393,16 @@ const refs: RefRule[] = [
 
   // ── cloud identity: the account a ServiceAccount acts as ──
   ...identityRules,
+
+  // ── Helm values files (#5100): a path that names no file is dangling ──
+  ...HELM_HOLDERS.map((kind) => ref(kind, "helmReferences.valuesFiles[]", "Helm::Values", "values")),
 ];
 
 /** A namespaced object's names are unique inside its namespace (#5097). */
-const scopes: ScopeRule[] = [...NAMESPACED_KINDS, ...SCOPED_KINDS, "K8s::Argo::Application"].map((kind) => ({ kind, path: "metadata.namespace" }));
+const scopes: ScopeRule[] = [
+  ...[...NAMESPACED_KINDS, ...SCOPED_KINDS, "K8s::Argo::Application"].map((kind) => ({ kind, path: "metadata.namespace" })),
+  // A values file is read once per member that names it, and is held by that member alone: every holder reaches the one in its own member (#5100).
+  { kind: "Helm::Values" },
+];
 
 export const k8sReferenceCatalog: ReferenceCatalog = { identities, refs, scopes, declaredNode: k8sDeclaredNode, registersCluster };

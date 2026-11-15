@@ -35,6 +35,7 @@ import type { Declarable } from "@intentius/chant/declarable";
 import { defaultKustomizeRunner, KustomizeBinaryMissingError, renderKustomizeDocuments, type KustomizeRunner } from "./kustomize/render";
 import { addRenderedEntity, renderedManifestEntity } from "./kustomize/rendered-entity";
 import { clusterSecretView, isClusterSecretDocument } from "./cluster-secret";
+import { kustomizationDocument, readHelmReferences } from "./helm-references";
 
 export type K8sMemberKind = "kustomize" | "argo-app" | "flux-kustomization" | "manifests";
 
@@ -42,7 +43,7 @@ export interface K8sMemberConfig {
   kind: K8sMemberKind;
   dir: string;
   label?: string;
-  /** The workspace root, absolute. `manifests` uses it to find the kustomizations that list its directory. */
+  /** The workspace root, absolute. `manifests` uses it to find the kustomizations that list its directory, and every kind reads the values files a chart reference names from it (#5100). */
   workspace?: string;
 }
 
@@ -195,6 +196,20 @@ export async function readK8sMember(opts: {
     documents = read.docs;
     warnings.push(...read.warnings);
   }
+
+  // Charts and values files, read as data (#5100), whether or not the member rendered.
+  if (member.kind === "kustomize") {
+    const own = kustomizationDocument(member.dir, label);
+    if (own) documents = [own, ...documents];
+  }
+  documents = readHelmReferences({
+    documents,
+    ctx: { workspace: resolve(member.workspace ?? member.dir), dir: resolve(member.dir) },
+    label,
+    entities,
+    warnings,
+    memberKind: member.kind,
+  });
 
   for (const doc of documents) {
     const entity = renderedManifestEntity(doc, label);

@@ -551,11 +551,13 @@ A path step is a key. `[]` after a step reads every element of a list, and a key
 
 ### On a declared workspace graph
 
-[`chant workspace graph`](/chant/cli/workspace-graph/#derived-edges) runs the same catalog over the composed declared graph, across members ([#5097](https://github.com/INTENTIUS/chant/issues/5097)). Two optional fields shape what it reads there:
+[`chant workspace graph`](/chant/cli/workspace-graph/#derived-edges) runs the same catalog over the composed declared graph, across members ([#5097](https://github.com/INTENTIUS/chant/issues/5097)). Two optional fields shape what it reads there, and a third adds nodes:
 
-- `scopes`, a list of `{ kind, path }`: a node of `kind` has names unique only inside the scope the value at `path` names. The k8s catalog lists each namespaced kind with `metadata.namespace`.
+- `scopes`, a list of `{ kind, path }`: a node of `kind` has names unique only inside the scope the value at `path` names. The k8s catalog lists each namespaced kind with `metadata.namespace`. With no `path`, the names are unique inside the member that holds the node.
 - `declaredNode(node, block)`, a pure function giving the node the rules read when the declared node is not shaped like them, as `{ kind, attrs, nonLiteral }`. An instance node carries no attrs of its own, so it is handed its block node as `block` ([#5117](https://github.com/INTENTIUS/chant/issues/5117)). The terraform catalog gives a `Terraform::Resource` its provider type as `kind` and as `attrs` its literal arguments plus the ones the lexicon evaluated from the files a plan reads, per instance node when the block has them, and counts the arguments it left out.
 - `registersCluster(node)`, a pure function that is true for a node that registers a cluster, which a workspace member's [`runsOn`](/chant/cli/workspace-graph/#cluster-join) joins to the cluster resource it names. The k8s catalog accepts a Secret labelled `argocd.argoproj.io/secret-type: cluster`.
+
+A catalog can also give `sharedNodes(nodes)`, a pure function for nodes that no member owns because several members name the same thing ([#5100](https://github.com/INTENTIUS/chant/issues/5100)). It returns `{ id, kind, attrs, holders: [{ from, via, label? }] }` and is called with every node the pass reads. The pass places each node in the member of its first holder, as `<member>/<id>`, and draws an edge to it from every holder with the rule id `<lexicon>:<holder kind>:<via>`. The helm catalog gives one `Helm::ChartRef` for each chart the members name, whatever kind of object names it.
 
 ### Adding a rule
 

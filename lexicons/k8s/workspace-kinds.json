@@ -32,7 +32,8 @@
           "member": {
             "kind": "argo-app",
             "dir": "{dir}",
-            "label": "{member}"
+            "label": "{member}",
+            "workspace": "{workspace}"
           }
         }
       }
@@ -65,7 +66,8 @@
           "member": {
             "kind": "flux-kustomization",
             "dir": "{dir}",
-            "label": "{member}"
+            "label": "{member}",
+            "workspace": "{workspace}"
           }
         }
       }
@@ -87,7 +89,8 @@
           "member": {
             "kind": "kustomize",
             "dir": "{dir}",
-            "label": "{member}"
+            "label": "{member}",
+            "workspace": "{workspace}"
           }
         }
       }

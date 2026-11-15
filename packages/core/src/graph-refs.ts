@@ -141,8 +141,12 @@ export interface TagRefRule {
  */
 export interface ScopeRule {
   kind: string;
-  /** The attr path whose value names the scope. */
-  path: string;
+  /**
+   * The attr path whose value names the scope. With none (#5100), the kind's
+   * names are unique inside the member that holds the node, which is what a
+   * namespaced kind with no namespace on the node gets.
+   */
+  path?: string;
 }
 
 /**
@@ -157,6 +161,21 @@ export interface DeclaredCatalogNode {
   attrs: Record<string, unknown>;
   /** Arguments left out of `attrs` because their value is not literal (an interpolation, a reference). */
   nonLiteral: number;
+}
+
+/**
+ * A node a lexicon adds to a declared workspace graph because several members
+ * name the same thing (#5100): one Helm chart that a kustomization, an Argo CD
+ * Application and a Terraform `helm_release` all name is one node, owned by
+ * none of them. The catalog pass draws an edge to it from each holder.
+ */
+export interface SharedCatalogNode {
+  /** The node's own id; the pass places it as `<member>/<id>`, in the member of its first holder. */
+  id: string;
+  kind: string;
+  attrs: Record<string, unknown>;
+  /** The nodes that name it, by the id the pass read them under, with the attribute each reads it through. */
+  holders: Array<{ from: string; via: string; label?: string }>;
 }
 
 /** A lexicon's reference knowledge — its identity map and reference rules. */
@@ -181,6 +200,13 @@ export interface ReferenceCatalog {
    * resource it names. Reads the node as the document holds it. Pure.
    */
   registersCluster?(node: IRNode): boolean;
+  /**
+   * Nodes of this catalog's lexicon that the declared graph has none of until
+   * every member is read (#5100), each with the nodes that name it. Called with
+   * every node the pass reads, after `declaredNode`. Pure. An edge from a holder
+   * carries the rule id `<lexicon>:<holder kind>:<via>`.
+   */
+  sharedNodes?(nodes: readonly IRNode[]): SharedCatalogNode[];
 }
 
 /** `child` is contained by `parent` (subnet ∈ VPC). For #779's boundary boxes. */
@@ -468,7 +494,17 @@ export interface IndexedNodeScope {
   account: string;
   /** The region or location; undefined for a global type. */
   region?: string;
+  /**
+   * The member that holds the node, on a declared graph (#5100). A holder also
+   * looks in {@link memberRegion} of its own member, whatever its own region, so
+   * a node that names no scope but its member (a values file) is reached by a
+   * holder scoped by namespace.
+   */
+  member?: string;
 }
+
+/** The region of a node held by one member (a `ScopeRule` with no `path`). */
+export const memberRegion = (member: string): string => `member:${member}`;
 
 /** A reference whose value matched several nodes: no edge is drawn (behold#1023 Q3). */
 export interface AmbiguousRef {
@@ -564,6 +600,7 @@ export function reconstructIndexedEdges(
     const scope = scopeOf(holder);
     const out = new Map<string, string>();
     const keys = scope.region !== undefined ? [keyOf(scope, value), keyOf({ account: scope.account }, value)] : [keyOf(scope, value)];
+    if (scope.member !== undefined) keys.push(keyOf({ account: scope.account, region: memberRegion(scope.member) }, value));
     for (const k of keys) for (const [id, kind] of index.get(k) ?? []) out.set(id, kind);
     return out;
   };
@@ -681,7 +718,7 @@ export function reconstructIndexedEdges(
   return {
     edges: [...edges.values()].sort((a, b) => byString(edgeKey(a), edgeKey(b))),
     containment: [...containment.values()].sort((a, b) => byString(`${a.child}|${a.parent}`, `${b.child}|${b.parent}`)),
-    dangling: [...dangling.entries()].filter(([key]) => !found.has(key)).map(([, d]) => d).sort((a, b) => byString(`${a.from}|${a.rule}|${a.value}|${a.through ?? ""}`, `${b.from}|${b.rule}|${b.value}|${b.through ?? ""}`)),
+    dangling: [...dangling.values()].filter((d) => !found.has(`${d.from}|${d.rule}|${d.value}`)).sort((a, b) => byString(`${a.from}|${a.rule}|${a.value}|${a.through ?? ""}`, `${b.from}|${b.rule}|${b.value}|${b.through ?? ""}`)),
     ambiguous: [...ambiguous.values()].sort((a, b) => byString(`${a.from}|${a.rule}|${a.value}`, `${b.from}|${b.rule}|${b.value}`)),
   };
 }
