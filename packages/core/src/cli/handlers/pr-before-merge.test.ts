@@ -47,6 +47,20 @@ vi.mock("../../lifecycle/target-lock", async (original) => ({
 /** The ci.workflow pr-apply --before-merge reads at base (#4301). */
 let workflowAtBase: string | null = "apply-before-merge";
 vi.mock("../../workspace/ci-workflow-at", () => ({ ciWorkflowAt: () => workflowAtBase }));
+/**
+ * The ref gate's rules pr-apply --before-merge reads at base (#4966): no rule
+ * for the target branch. #5088: unmocked, this read resolved --base main in
+ * the chant checkout itself, which a pull_request run's detached merge
+ * checkout has no `main` in, so the apply refused there and passed elsewhere.
+ */
+let refGateReads: Array<{ ref: string; base?: string }> = [];
+vi.mock("../../ref-gate-rules", async (original) => ({
+  ...(await original<typeof import("../../ref-gate-rules")>()),
+  refGateRulesAt: (_repo: string, opts: { ref: string; base?: string }) => {
+    refGateReads.push(opts);
+    return { ref: opts.ref, base: BASE, matched: false, status: null, checks: [], problems: [] };
+  },
+}));
 /** Whether the head's code was loaded: the config read and the derivation. */
 let loaded: string[] = [];
 
@@ -164,6 +178,7 @@ const ctx = (a: Partial<ParsedArgs>) =>
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "pr-before-merge-"));
   taken = [];
+  refGateReads = [];
   workflowAtBase = "apply-before-merge";
   loaded = [];
   out = [];
@@ -202,6 +217,8 @@ function serveGithub(over: { head?: string; reviews?: unknown[]; mergeable?: boo
   vi.stubEnv("GITHUB_TOKEN", "t0k");
   vi.stubEnv("GITHUB_API_URL", "https://api.github.test");
   vi.stubEnv("GITHUB_SERVER_URL", "https://github.com");
+  // #5088: the target branch a pull_request run names, set here so the ref gate is read on every runner, not only in CI.
+  vi.stubEnv("GITHUB_BASE_REF", "main");
   vi.stubGlobal("fetch", async (url: string, init: { method: string }) => {
     const { pathname } = new URL(url);
     if (init.method !== "GET") return ok({ id: 1 });
@@ -255,6 +272,7 @@ describe("pr-apply --before-merge (#4301)", () => {
     const report = await applyReport();
     expect(report).toMatchObject({ status: "refused", refusal: "not-approved", op: "pr-12" });
     expect(report.beforeMerge!.requires.every((r) => r.passed)).toBe(true);
+    expect(refGateReads).toEqual([{ ref: "refs/heads/main", base: "main" }]);
   });
 
   test("approved: it applies at the head, and under ci.locks holds apply locks on what it reaches", async () => {
