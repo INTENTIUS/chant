@@ -19,7 +19,7 @@
  * this constant to the next patch (#4501). The check fails while a floor
  * still names this constant after its version shipped.
  */
-export const NEXT_RELEASE = "0.124.98";
+export const NEXT_RELEASE = "0.124.99";
 
 /** The first chant with `chant dev local` and `chant dev bundle-check`, `@intentius/chant/local-chant` and `@intentius/chant/bundle-check` (`chantRuntimeTarget`, `chantExternalPlugin`, `checkBundle`): a product built against a chant checkout, and its bundle checked, without its own scripts (#4787). */
 export const LOCAL_CHANT_FLOOR = "0.124.86";
@@ -256,13 +256,13 @@ export const WAVES_BEFORE_MERGE_LOCKS_FLOOR = "0.124.95";
 export const KIND_DRIFT_READER_FLOOR = "0.124.96";
 
 /** The first chant whose `chant workspace graph` runs each lexicon's reference catalog over the composed declared graph, across members, on full attributes at every `--detail` (#5097): derived edges in `edges` with `origin: "derived"`, `rule` and `relation`, references to no node in `dangling` with their `rule` and `targetKind`, references to several nodes in `ambiguous` with every candidate, and `catalog` naming the lexicons and members read, each rule named, and per node the arguments not read because not literal; a catalog path takes a quoted key, `metadata.annotations["iam.gke.io/gcp-service-account"]`; and a catalog takes `scopes` and `declaredNode`. */
-export const WORKSPACE_GRAPH_CATALOG_FLOOR = NEXT_RELEASE;
+export const WORKSPACE_GRAPH_CATALOG_FLOOR = "0.124.98";
 
 /** The first chant whose reference catalogs join an Argo CD cluster Secret to the cluster resource (#5101): an Application's `spec.destination.name` and `spec.destination.server` to the Secret whose `name` and `server` match, and the Secret's `name` (base64 `data` decoded) to a `google_container_cluster`, `aws_eks_cluster` or `azurerm_kubernetes_cluster` of that literal name, with a reference no rule of its id matched listed once in `dangling`; a member of kind `argo-app` or `manifests` reads a cluster Secret cut down to its `name` and `server`; and a workspace member entry takes `runsOn`, `<member>/<address>`, with `chant workspace graph --discover --runs-on <member>=<member>/<address>`, which draws a declared edge from each of the member's cluster Secrets to that node. */
-export const WORKSPACE_GRAPH_CLUSTER_JOIN_FLOOR = NEXT_RELEASE;
+export const WORKSPACE_GRAPH_CLUSTER_JOIN_FLOOR = "0.124.98";
 
 /** The first chant whose `chant workspace graph` expands an Argo CD ApplicationSet's `list` and `clusters` generators (#5102): one node per generated Application, with `generatedBy` naming the ApplicationSet, the rule, the generator, the parameters and the cluster Secret it was made for, a derived edge from the ApplicationSet to it under `k8s:K8s::Argo::ApplicationSet:spec.generators` and from it to the cluster Secret a clusters generator selected under `k8s:K8s::Argo::ApplicationSet:generators[].clusters`, and `expansion` on the ApplicationSet with the count and what was not expanded; and whose catalogs read an Application's `spec.source.path`, `spec.sources[].path` and `helm.valueFiles`, listing a path the workspace's own repository does not have in `dangling`, with `through` and `cluster` on a generated one. */
-export const WORKSPACE_GRAPH_APPLICATION_SET_FLOOR = NEXT_RELEASE;
+export const WORKSPACE_GRAPH_APPLICATION_SET_FLOOR = "0.124.98";
 
 /** The first chant whose `chant run resume` (`resumeGateRun`) on GitLab retries a wave job's `<wave job>-evidence` with the wave job when the evidence job already ran, and whose `ci evidence sign --from-job` waits for a job it reads to finish, so a resumed wave's evidence job signs from the new try (#4978). */
 export const GITLAB_WAVE_EVIDENCE_RETRY_FLOOR = "0.124.89";
@@ -271,4 +271,4 @@ export const GITLAB_WAVE_EVIDENCE_RETRY_FLOOR = "0.124.89";
 export const TERRAFORM_COMMAND_TRACE_FLOOR = "0.124.91";
 
 /** The first chant whose product pipeline limits comment commands to logins and teams on GitHub and Forgejo (INTENTIUS/terragucci#1461): `commentAllow: { allow, tokenSecret? }` in `productPipelineJobs`, where `allow` maps `plan`, `apply`, `lock`, `unlock`, `agent` and `default` to logins and `team:<org>/<team>` entries. The map is written as `CHANT_COMMENT_ALLOW` into the comment job, the product plan's re-plan decision and the agent's jobs (a spec's `agent.commentAllow`), so it is read from the workflow on the default branch. `answerProductComment` takes `allow` and replies to a commenter the list leaves out, `ForgeReads.teamMember` reads a team on GitHub and Forgejo, `CHANT_COMMENT_ALLOW_TOKEN` (`tokenSecret`) carries a token that can read teams, and a team the forge cannot answer for fails closed with a message. */
-export const COMMENT_ALLOW_FLOOR = NEXT_RELEASE;
+export const COMMENT_ALLOW_FLOOR = "0.124.98";

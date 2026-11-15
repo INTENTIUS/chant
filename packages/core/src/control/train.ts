@@ -27,7 +27,6 @@
 
 import type { ForgeFetch, ForgeKind } from "../pr-forge";
 import { resolveProductWords, type CiProductWords, type CiProductWordsInput } from "../ci-product-words";
-import { NEXT_RELEASE } from "../release-floors";
 import {
   CONTROL_CHANT_COMMAND,
   CONTROL_ENV_VAR,
@@ -57,7 +56,7 @@ import {
 export { trainTokenEnv, trainTokenEnvOf };
 
 /** The first chant with release trains across repositories (#5119). `trainControlJobSpec` present means the rest is too. */
-export const CONTROL_TRAIN_FLOOR = NEXT_RELEASE;
+export const CONTROL_TRAIN_FLOOR = "0.124.98";
 
 /** The variables the member's train job reads the dispatch from. */
 export const TRAIN_ENV_VAR = "CHANT_TRAIN_ENV";
