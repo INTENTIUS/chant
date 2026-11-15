@@ -48,6 +48,27 @@ describe("TF024: live root declares a backend or cloud block", () => {
     expect(diags[0].message).toContain("no record store is derived");
   });
 
+  test("finds a backend in a second terraform block, beside a versions.tf block", async () => {
+    const diags = tf024.check(await ctxFor("live-backend-second-block"));
+    expect(diags).toHaveLength(1);
+    expect(diags[0].severity).toBe("info");
+    expect(diags[0].message).toContain('backend "s3"');
+    expect(diags[0].message).toContain("derives the record store");
+  });
+
+  test("finds a backend in a second terraform block of a sidecar root", async () => {
+    const diags = tf024.check(await ctxFor("sidecar-backend-second-block"));
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toContain('backend "gcs"');
+  });
+
+  test("finds a cloud block in a second terraform block", async () => {
+    const diags = tf024.check(await ctxFor("live-cloud-second-block"));
+    expect(diags).toHaveLength(1);
+    expect(diags[0].severity).toBe("warning");
+    expect(diags[0].message).toContain("cloud block");
+  });
+
   test("passes a live root with neither block", async () => {
     const diags = tf024.check(await ctxFor("live-clean"));
     expect(diags).toHaveLength(0);
