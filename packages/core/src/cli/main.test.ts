@@ -913,6 +913,8 @@ describe("workspace init and ls (#2534)", () => {
     // #4037: a train's promote, and a member's promote that only plans.
     expect(parseArgs(["workspace", "train", "promote", "prod", "train-1", "--gate", "train-prod"])).toMatchObject({ positionals: ["train", "promote", "prod", "train-1"], gate: "train-prod" });
     expect(parseArgs(["components", "promote", "--to", "prod", "--release", "v1", "--plan-only"])).toMatchObject({ release: "v1", planOnly: true });
+    // #5119: a train's promote across repositories, moved on from a member's answer.
+    expect(parseArgs(["workspace", "train", "promote", "prod", "train-1", "--continue", "--json"])).toMatchObject({ positionals: ["train", "promote", "prod", "train-1"], continueTrain: true, json: true });
     expect(parseArgs(["workspace", "lint", "--cross-root", "--format", "json"])).toMatchObject({ path: "lint", crossRoot: true, format: "json" });
   });
 

@@ -11,6 +11,10 @@
  * - The control repo's projects and defaults as `control-entry` records on
  *   its workspace ledger (./control/records.ts).
  * - Reconcile over the product's generator (./control/reconcile.ts).
+ * - A release train across repositories (./control/train.ts, #5119): the
+ *   control repo's dispatch into each member repository, the member's train
+ *   job that runs the release and answers with its applied dispatch, and the
+ *   control repo's job that starts the promote.
  * - Each project's `consumers.json` joined into one consumer list per
  *   release version, for the release catalog (./control/consumers.ts, #4600).
  * - The apply outcome an op waves pipeline's dispatch carries, and the
@@ -58,6 +62,15 @@ export {
   CONTROL_TOKEN_ENV,
   CONTROL_TOKEN_SECRET,
   CONTROL_TOKEN_VARS,
+  CONTROL_TRAIN_VAR,
+  CONTROL_RUN_VAR,
+  CONTROL_ENV_VAR,
+  CONTROL_RELEASE_VAR,
+  CONTROL_TRAIN_ID,
+  CONTROL_RUN_ID,
+  CONTROL_RELEASE_DIGEST,
+  controlTrainProblems,
+  type ControlTrainAnswer,
   ControlConfigError,
   ControlDispatchError,
   controlDependentsScript,
@@ -172,3 +185,32 @@ export {
   type CrossStackEdge,
   type CrossStackRead,
 } from "./control/edges";
+export {
+  CONTROL_TRAIN_FLOOR,
+  TRAIN_COMMIT_VAR,
+  TRAIN_ENV_VAR,
+  TRAIN_ID_VAR,
+  TRAIN_PRODUCT_VAR,
+  TRAIN_RELEASE_VAR,
+  TRAIN_RUN_VAR,
+  dispatchTrainMember,
+  trainControlJobSpec,
+  trainDispatchEvent,
+  trainDispatchProblems,
+  trainDispatchRequest,
+  trainMemberJobSpec,
+  trainMemberTarget,
+  trainPipelineFileName,
+  trainPipelinePath,
+  trainProductOf,
+  trainTokenEnv,
+  trainTokenEnvOf,
+  type DispatchTrainOptions,
+  type TrainControlJobSpec,
+  type TrainDispatch,
+  type TrainDispatchRequest,
+  type TrainForge,
+  type TrainMemberJobOptions,
+  type TrainMemberJobSpec,
+  type TrainMemberTarget,
+} from "./control/train";

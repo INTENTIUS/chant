@@ -1280,18 +1280,24 @@ Workspace (level 1, #2524):
                         plan and the member sets acceptWorkspaceGates at base
   workspace train <env> [--pin <member>=<label|digest>]... [--dry-run] [--json]
                         Record a release train: one cut release of every
-                        chant member (the newest, unless --pin picks one),
-                        under _members/_workspace/<env>/trains.jsonl. Refuses
-                        when a member has no release
+                        chant and repo member (the newest, unless --pin picks
+                        one), under _members/_workspace/<env>/trains.jsonl. A
+                        repo member's releases are read at its pinned rev with
+                        its own chant release list (#5119). Refuses when a
+                        member has no release
   workspace train list <env> [--json]
                         The release trains recorded for <env>, oldest first,
                         each with its digest and the runs that promoted it
-  workspace train promote <env> [<train id|digest>] [--gate <name>] [--dry-run] [--json]
+  workspace train promote <env> [<train id|digest>] [--gate <name>] [--continue] [--dry-run] [--json]
                         Promote a train (the newest for <env> unless named):
                         each member's components promote --release, producers
                         first. --gate plans every member first and records one
                         workspace gate fact over their release gates; nothing
-                        deploys until run approve approves it (#4037)
+                        deploys until run approve approves it (#4037). A train
+                        of repo members dispatches the first member repository
+                        instead; --continue moves on from the member's answer
+                        in _control/applied.jsonl, after applied or unchanged
+                        (#5119)
 
 Lifecycle (alias: lc):
   lifecycle snapshot <env>  Query API, save metadata to orphan branch

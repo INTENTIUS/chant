@@ -82,8 +82,12 @@ export function canonicalDigest(value: unknown): string {
 
 // ── Runs ─────────────────────────────────────────────────────────────────────
 
-/** How one `<member>/<op>` step of a workspace run ended. */
-export type WorkspaceStepStatus = "ok" | "fail" | "gated" | "not-run";
+/**
+ * How one `<member>/<op>` step of a workspace run ended. `dispatched` is a
+ * step of a train's promote across repositories (#5119) whose member
+ * repository was dispatched and has not answered yet.
+ */
+export type WorkspaceStepStatus = "ok" | "fail" | "gated" | "not-run" | "dispatched";
 
 export interface WorkspaceRunStep {
   /** `<member>/<op>`. */
@@ -97,6 +101,12 @@ export interface WorkspaceRunStep {
   memberRun: string | null;
   /** For a gated step: the member gate it stopped at and the plan it waits on. */
   gate?: { op: string; name: string; planDigest: string | null; environment: string | null };
+  /** For a step run in another repository (#5119): that repository's URL. */
+  repo?: string;
+  /** For a step run in another repository: what its applied dispatch said, once it answered. */
+  outcome?: string;
+  /** For a step run in another repository: a step that did not pass, in a sentence. */
+  reason?: string;
 }
 
 export interface WorkspaceRunRecord {
@@ -104,8 +114,14 @@ export interface WorkspaceRunRecord {
   id: string;
   started: string;
   ended: string;
-  /** `gated` when a step stopped at a gate; `fail` when a step failed. A run stops at the first step that does not pass. */
-  status: "ok" | "fail" | "gated";
+  /**
+   * `gated` when a step stopped at a gate; `fail` when a step failed. A run
+   * stops at the first step that does not pass. `dispatched` is a train's
+   * promote across repositories (#5119) waiting on a member repository's
+   * answer: it is appended again, under the same id, as each member answers,
+   * and the newest line of an id is the run.
+   */
+  status: "ok" | "fail" | "gated" | "dispatched";
   /** `--env`, or null. */
   env: string | null;
   /** The workspace gate the run was started under (`--gate`), or null. */

@@ -49,7 +49,7 @@ describe("the train digest", () => {
   });
 
   test("an empty train is refused", () => {
-    expect(pickTrain([])).toEqual({ problems: ["the workspace declares no chant member, so a train has nothing to pin"] });
+    expect(pickTrain([])).toEqual({ problems: ["the workspace declares no chant or repo member, so a train has nothing to pin"] });
   });
 
   test("a train is found by id or digest, else the newest is taken", () => {

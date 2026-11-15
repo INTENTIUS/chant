@@ -898,6 +898,8 @@ export interface ParsedArgs {
   deployUnchanged?: boolean;
   /** `chant components promote --release <label|digest> --plan-only` (#4037): plan the release's change set for `--to`, store it and print it, and deploy nothing. `chant workspace train promote --gate` asks each member for it before any member deploys. */
   planOnly?: boolean;
+  /** `chant workspace train promote <env> <train> --continue` (#5119): advance the promote in flight of a train of repo members from the answers the control repo recorded, and start nothing new. */
+  continueTrain?: boolean;
   /** `chant release cut --build <command>` (#4026): the shell command run in the member's directory before each environment's templates are read, with `CHANT_ENV` set to the environment. */
   buildCommand?: string;
   /** `chant release compile --artifacts` (#4026, internal): build the artifacts of `--component` instead of compiling the environment. */

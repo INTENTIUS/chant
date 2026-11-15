@@ -321,11 +321,11 @@ export const NETWORK_SHELL_OUTS: readonly NetworkShellOut[] = [
   {
     binary: "git",
     subcommand: "fetch",
-    command: "chant workspace graph, for a member of kind repo",
+    command: "chant workspace graph and chant workspace train, for a member of kind repo",
     file: "packages/core/src/workspace/repo-ref.ts",
     phase: "org",
     destination: "the URL the repo member names, a forge or any git remote. A local path reaches nothing",
-    why: "`git fetch origin <rev>` into a clone in the user's cache directory, and a fetch of every branch and tag when the server refuses a commit by id, so the member's pinned revision can be read through that repository's own `chant workspace graph` (#3168). Only when the cache lacks the revision. Credentials are git's own, `GIT_TERMINAL_PROMPT=0` stops it asking for any, and each fetch times out after two minutes.",
+    why: "`git fetch origin <rev>` into a clone in the user's cache directory, and a fetch of every branch and tag when the server refuses a commit by id, so the member's pinned revision can be read through that repository's own `chant workspace graph` (#3168). Only when the cache lacks the revision. `chant workspace train` also runs `git fetch --no-tags origin +refs/heads/chant/lifecycle:refs/heads/chant/lifecycle` into the same clone on every read, so that repository's own `chant release list` reads its releases there (#5119). Credentials are git's own, `GIT_TERMINAL_PROMPT=0` stops it asking for any, and each fetch times out after two minutes.",
   },
   {
     binary: "git",

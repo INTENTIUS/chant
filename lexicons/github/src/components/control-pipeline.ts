@@ -27,11 +27,13 @@ export interface ControlPipelineOptions {
   image?: string;
   /** The command the job runs chant with. Default `npx --no-install chant`. */
   command?: string;
+  /** The `repo` members a release train dispatches into (#5119): the job maps each one's dispatch token, so a member's answer moves the train on. */
+  trainMembers?: readonly string[];
 }
 
 /** The control repo's workflow document for a GitHub-shaped forge, before emission. Forgejo transforms it first. */
 export function controlGithubDoc(forge: "github" | "forgejo", options: ControlPipelineOptions = {}): { doc: GithubWorkflowDoc; path: string; notes: string[] } {
-  const spec = controlPipelineSpec(forge, options.words ?? {}, options.command ? { command: options.command } : {});
+  const spec = controlPipelineSpec(forge, options.words ?? {}, { ...(options.command ? { command: options.command } : {}), ...(options.trainMembers ? { trainMembers: options.trainMembers } : {}) });
   const doc: GithubWorkflowDoc = {
     header: spec.header,
     name: spec.path.split("/").pop()!.replace(/\.yml$/, ""),
