@@ -1,0 +1,15 @@
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: web-creds
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: main-store
+  target:
+    name: web-creds
+  data:
+    - secretKey: password
+      remoteRef:
+        key: web/password
