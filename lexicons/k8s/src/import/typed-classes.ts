@@ -8,6 +8,7 @@
 import { createRequire } from "module";
 import { moduleSourceUrl } from "@intentius/chant/module-source";
 import type { ResourceIR } from "@intentius/chant/import/parser";
+import { metadataHasKey, unknownKeyReason, unknownTopLevelKeys } from "../top-level-fields";
 
 // `require` is not defined where this runs as an ES module; the serializer
 // reads the same file the same way.
@@ -62,7 +63,7 @@ export const TYPE_TO_CLASS: Record<string, string> = {
 };
 
 
-type LexiconEntry = { resourceType?: string; apiVersion?: string };
+type LexiconEntry = { resourceType?: string; apiVersion?: string; topLevelFields?: string[] };
 
 let cachedEntries: Record<string, LexiconEntry> | null | undefined;
 
@@ -123,6 +124,24 @@ export function builtApiVersionFor(type: string): string | undefined {
   return cachedBuiltVersions.get(type);
 }
 
+let cachedTopLevelFields: Map<string, string[]> | undefined;
+
+/**
+ * The top-level keys the packaged lexicon says an object of this entity type
+ * may carry (#5111), or undefined when the lexicon has no list for it.
+ */
+export function topLevelFieldsFor(type: string): string[] | undefined {
+  if (!cachedTopLevelFields) {
+    cachedTopLevelFields = new Map();
+    for (const entry of Object.values(lexiconEntries() ?? {})) {
+      if (entry.resourceType && entry.topLevelFields && !cachedTopLevelFields.has(entry.resourceType)) {
+        cachedTopLevelFields.set(entry.resourceType, entry.topLevelFields);
+      }
+    }
+  }
+  return cachedTopLevelFields.get(type);
+}
+
 /**
  * How `chant import` writes one parsed object: the one place that decides it.
  * `cls` is set when the object is written as `new <cls>(...)`; otherwise it
@@ -136,12 +155,19 @@ export function builtApiVersionFor(type: string): string | undefined {
  * class would have written. A document that carries its apiVersion as a
  * property (see `ALIASED_GVKS` in ./parser.ts) builds with it, so it keeps
  * its class.
+ *
+ * A top-level key the kind does not declare (`labels` written beside
+ * `metadata`) is not a property of the class either, so the object is
+ * written untyped too, which keeps the key in the build exactly as the file
+ * had it (#5111). `unknownKeys` lists them; it is set alongside
+ * `other-apiVersion` when both apply.
  */
 export interface ImportClass {
   cls?: string;
-  reason?: "no-class" | "other-apiVersion";
+  reason?: "no-class" | "other-apiVersion" | "unknown-key";
   apiVersion?: string;
   builtApiVersion?: string;
+  unknownKeys?: string[];
 }
 
 export function importClassFor(resource: Pick<ResourceIR, "type" | "properties" | "metadata">): ImportClass {
@@ -150,9 +176,17 @@ export function importClassFor(resource: Pick<ResourceIR, "type" | "properties" 
   if (!cls) return { reason: "no-class", ...(typeof apiVersion === "string" ? { apiVersion } : {}) };
   if (typeof apiVersion !== "string") return { cls };
 
+  // The document's own keys: its properties, plus the `kind` and `apiVersion` the parser holds in metadata.
+  const doc = { ...resource.properties, kind: resource.metadata?.kind, apiVersion };
+  const unknownKeys = unknownTopLevelKeys(doc, topLevelFieldsFor(resource.type));
+  const unknown = unknownKeys.length > 0 ? { unknownKeys } : {};
+
   const written = resource.properties?.apiVersion ?? builtApiVersionFor(resource.type);
-  if (written === undefined || written === apiVersion) return { cls };
-  return { reason: "other-apiVersion", apiVersion, builtApiVersion: String(written) };
+  if (written !== undefined && written !== apiVersion) {
+    return { reason: "other-apiVersion", apiVersion, builtApiVersion: String(written), ...unknown };
+  }
+  if (unknownKeys.length > 0) return { reason: "unknown-key", apiVersion, ...unknown };
+  return { cls };
 }
 
 /**
@@ -164,5 +198,31 @@ export function keptApiVersionWarning(kind: string, name: string | undefined, ap
   return (
     `${kind}${name ? ` ${name}` : ""} (${apiVersion}): the class in @intentius/chant-lexicon-k8s builds ${builtApiVersion}, ` +
     "so it is written as an untyped k8sManifest that keeps the apiVersion from the file."
+  );
+}
+
+/**
+ * The warning for an object written untyped because its file has a top-level
+ * key its kind does not declare: names the object and the key, says what is
+ * kept, and why the key matters.
+ */
+export function unknownTopLevelKeyWarning(kind: string, name: string | undefined, apiVersion: string, key: string, alsoInMetadata: boolean): string {
+  return (
+    `${kind}${name ? ` ${name}` : ""} (${apiVersion}): ${unknownKeyReason(kind, key, alsoInMetadata)}. ` +
+    "It is written as an untyped k8sManifest that keeps the key from the file."
+  );
+}
+
+/** The warnings for every unknown top-level key of one parsed object, in document order. */
+export function unknownTopLevelKeyWarnings(resource: Pick<ResourceIR, "properties" | "metadata">, keys: readonly string[]): string[] {
+  const properties = resource.properties as Record<string, unknown>;
+  return keys.map((key) =>
+    unknownTopLevelKeyWarning(
+      String(resource.metadata?.kind),
+      resource.metadata?.originalName as string | undefined,
+      String(resource.metadata?.apiVersion),
+      key,
+      metadataHasKey(properties, key),
+    ),
   );
 }

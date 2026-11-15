@@ -20,6 +20,13 @@ export interface K8sLexiconEntry {
   apiVersion?: string;
   gvkKind?: string;
   deprecatedProperties?: string[];
+  /**
+   * Every top-level key the API accepts on an object of this kind
+   * (`apiVersion`, `kind`, `metadata`, `spec`, `data`, `status` where the
+   * schema declares it, ...), sorted. `chant import` and WK8506 compare a
+   * document's keys against it (#5111). Absent when the schema is not known.
+   */
+  topLevelFields?: string[];
   constraints?: Record<string, PropertyConstraints>;
   /**
    * Field schema of a custom resource's `spec` (chant #1372). Only CRD-derived
@@ -55,6 +62,7 @@ export function generateLexiconJSON(
       if (r && !r.isProperty) {
         entry.apiVersion = gvkToApiVersion(r.gvk);
         entry.gvkKind = r.gvk.kind;
+        if (r.resource.topLevelFields) entry.topLevelFields = r.resource.topLevelFields;
       }
       if (r?.resource.deprecatedProperties?.length) {
         entry.deprecatedProperties = r.resource.deprecatedProperties;

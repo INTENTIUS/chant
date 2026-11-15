@@ -26,6 +26,8 @@ The importer writes a typed class only when `@intentius/chant-lexicon-k8s` expor
 
 A class builds with the apiVersion the lexicon ships for it. An object whose file names another one, such as `rbac.authorization.k8s.io/v1beta1` where the class writes `v1`, is written as `k8sManifest` too, so the build keeps the apiVersion from the file. The import prints one warning for each such object, naming it, the apiVersion in the file and the one the class would have written.
 
+A top-level key the kind does not declare, such as `labels:` written beside `metadata` instead of under it, is not a field of the class either. The object is written as `k8sManifest` and the build writes the key back where the file had it. The import prints one warning for each such key, naming the object and the key, and says when `metadata` has a field of the same name. `kubectl apply` rejects the object by default (`strict decoding error: unknown field "labels"`), and with `--validate=ignore` the API server drops the key, so a `grafana_dashboard` label written this way never reaches the ConfigMap. Move the key to where it belongs in the generated source. The WK8506 check reports the same on `chant build` and `chant audit`. A custom resource whose CRD the lexicon has no schema for is not checked.
+
 ## Collector configs, rule groups, Alertmanager configs and dashboards inside manifests
 
 `chant import` hands content that another lexicon owns to that lexicon, when it is installed:
