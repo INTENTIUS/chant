@@ -173,8 +173,9 @@ export interface ProductPipelineOptions extends Omit<PrLoopPipelineOptions, "wor
    * comment job, the product plan's re-plan decision and the agent's jobs, so
    * it is read from the default branch's copy of the workflow and a pull
    * request cannot add its author. It limits the commands those jobs run:
-   * the comment job replies to a commenter the list leaves out, the other
-   * two stay silent. Refused on GitLab, and when a list covers a command that
+   * the comment job replies to a commenter the list leaves out, the re-plan
+   * replies when it has `replan.reply` and else stays silent, and the agent's
+   * push job answers its refusal. Refused on GitLab, and when a list covers a command that
    * a job without the check answers: the apply before merge
    * (`applyBeforeMerge`) and chant's comment lock jobs (`locks: "plan"`).
    */

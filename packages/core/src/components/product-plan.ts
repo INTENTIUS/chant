@@ -124,7 +124,8 @@ export interface ProductPlanReplanOptions {
    * `../ci-comment-allow.ts`), on GitHub and Forgejo: the decision step makes
    * the check before anything is checked out, from the list the generator
    * wrote into the workflow on the default branch. A commenter the list
-   * leaves out plans nothing; the comment job replies. A dispatch asks no
+   * leaves out plans nothing; the comment job replies, or the re-plan itself
+   * with `reply`. A dispatch asks no
    * list, as it asks no permission. `productPipelineJobs` sets it from its
    * `commentAllow`.
    */
@@ -973,8 +974,9 @@ export const REPLAN_DECIDE_JS = replanDecideJs();
 export function replanDecideJs(opts: { dispatch?: boolean; reply?: boolean; allow?: boolean } = {}): string {
   const { dispatch = false, reply = false, allow = false } = opts;
   // INTENTIUS/terragucci#1461: the pipeline's list for the plan comment, after the permission check; a dispatch asks none.
+  // With `reply` the re-plan speaks for itself (the comment job cannot be there beside it); without, it says nothing and the comment job replies.
   const allowLine = allow
-    ? `${dispatch ? "if(!dispatch)" : ""}{const asker=e.comment&&e.comment.user&&e.comment.user.login;if(!asker){say("the comment has no author, so nothing is planned again");return}const no=await commentAllowRefusal(asker,"plan");if(no){say(no+", so nothing is planned again");return}}`
+    ? `${dispatch ? "if(!dispatch)" : ""}{const asker=e.comment&&e.comment.user&&e.comment.user.login;if(!asker){say("the comment has no author, so nothing is planned again");return}const no=await commentAllowRefusal(asker,"plan");if(no){${reply ? 'await post(no+", so nothing is planned again")' : 'say(no+", so nothing is planned again")'};return}}`
     : undefined;
   const replyLine = reply
     ? [

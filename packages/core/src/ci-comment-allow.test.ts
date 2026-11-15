@@ -21,13 +21,18 @@ type Answer = { status: number; body?: unknown };
 /** A fetch that answers from a table of `METHOD path` and records every request, with its Authorization header. */
 function recorded(table: Record<string, Answer>) {
   const seen: Array<{ url: string; auth: string | undefined }> = [];
-  const fetch = (async (url: string, init?: { headers?: Record<string, string> }) => {
+  const posts: string[] = [];
+  const fetch = (async (url: string, init?: { method?: string; body?: string; headers?: Record<string, string> }) => {
     const path = url.replace(/^https?:\/\/[^/]+(?=\/)/, "");
+    if (init?.method === "POST") {
+      posts.push(JSON.parse(init.body ?? "{}").body);
+      return { ok: true, status: 201, text: async () => "{}", json: async () => ({}) };
+    }
     seen.push({ url: path, auth: init?.headers?.Authorization ?? init?.headers?.authorization });
     const a = table[path] ?? { status: 404 };
     return { ok: a.status >= 200 && a.status < 300, status: a.status, text: async () => (a.body === undefined ? "" : JSON.stringify(a.body)), json: async () => a.body };
   }) as unknown as ForgeFetch;
-  return { fetch, seen };
+  return { fetch, seen, posts };
 }
 
 /** A table whose paths sit under a prefix, as Forgejo's API root does. */
@@ -286,7 +291,7 @@ describe("the re-plan's decision with a list", () => {
     const run = new Function("process", "fetch", "require", "console", replanDecideJs(opts));
     run(proc, t.fetch, (m: string) => (m === "fs" ? { readFileSync, appendFileSync: (f: string, d: string) => writeFileSync(f, readFileSync(f, "utf8") + d) } : undefined), { log: (m: string) => logs.push(m), error: (m: string) => logs.push(m) });
     for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
-    return { output: readFileSync(out, "utf8"), logs, exit, seen: t.seen };
+    return { output: readFileSync(out, "utf8"), logs, exit, seen: t.seen, posts: t.posts };
   }
   const SHA = "c".repeat(40);
   const pr = { "/repos/acme/infra/pulls/12": { status: 200, body: { state: "open", head: { sha: SHA, repo: { full_name: "acme/infra" } }, base: { sha: SHA } } } };
@@ -302,6 +307,16 @@ describe("the re-plan's decision with a list", () => {
     const plain = await decide({}, env, "bob", pr);
     expect(plain.output).toMatch(/^go=1/);
     expect(plain.seen.every((s) => !s.url.startsWith("/orgs"))).toBe(true);
+  });
+
+  test("with reply, the re-plan posts the refusal itself, once, as the product", async () => {
+    const forgejoEnv = { ...env, CHANT_REPLAN_PERMISSION: "1", CHANT_REPLAN_PRODUCT: "/terragucci" };
+    const perm = { "/repos/acme/infra/collaborators/bob/permission": { status: 200, body: { permission: "write" } } };
+    const got = await decide({ allow: true, reply: true }, forgejoEnv, "bob", { ...pr, ...team, ...perm });
+    expect(got.output).toBe("");
+    expect(got.posts).toEqual([expect.stringMatching(/^terragucci: bob may not run `plan` here: it is limited to `team:acme\/release`.*, so nothing is planned again$/)]);
+    const quiet = await decide({ allow: true }, env, "bob", { ...pr, ...team });
+    expect(quiet.output).toBe("");
   });
 
   test("with reply, the check comes after the permission and holds the same", async () => {

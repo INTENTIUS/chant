@@ -25,7 +25,9 @@
  *   that other jobs run. It posts the reply, so one job speaks;
  * - the product plan's re-plan decision (`replanDecideJs({ allow })`), which
  *   runs before the checkout with the token alone, in a script of its own
- *   ({@link COMMENT_ALLOW_GATE_JS}) that makes the same requests;
+ *   ({@link COMMENT_ALLOW_GATE_JS}) that makes the same requests. It posts the
+ *   refusal itself when the re-plan has `reply` (the comment job cannot be
+ *   there beside it) and says nothing otherwise;
  * - the agent's prepare step (`prepareAgentRun`).
  *
  * The apply before merge of the plain pull request loop and chant's comment

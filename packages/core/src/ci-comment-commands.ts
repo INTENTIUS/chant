@@ -44,8 +44,9 @@
  * - with `allow` (INTENTIUS/terragucci#1461, ./ci-comment-allow.ts), a commenter
  *   a `plan`, `apply`, `lock`, `unlock` or `agent` list leaves out gets a
  *   reply that names the list, whichever job runs the command. The jobs that
- *   run `plan` and `agent` make the same check and stay silent, so this job
- *   speaks once. A team the forge cannot read fails the job, with a reply.
+ *   run `plan` and `agent` make the same check and stay silent (a re-plan
+ *   with `reply` speaks for itself, and there is no comment job beside it),
+ *   so one job speaks. A team the forge cannot read fails the job, with a reply.
  *
  * Who asked comes first. On GitHub the commenter's permission is read from
  * the forge; Forgejo answers 403 when a job's token asks for another user's
