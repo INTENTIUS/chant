@@ -132,13 +132,16 @@ function apiVersionToGroup(apiVersion: string): string {
  * Combines kind (lowercased first char) with the object name (PascalCased).
  *
  * E.g., kind="Deployment", name="my-app" → "deploymentMyApp"
+ * and kind="ClusterRole", name="system:node" gives "clusterRoleSystemNode".
  */
 function toLogicalId(kind: string, name: string | undefined): string {
   const prefix = kind.charAt(0).toLowerCase() + kind.slice(1);
   if (!name) return prefix;
 
+  // Split on every character an identifier cannot hold (`:` in `system:node`,
+  // `/`, `@`, spaces), not only the `-_.` of DNS names.
   const pascalName = name
-    .split(/[-_.]/)
+    .split(/[^A-Za-z0-9]+/)
     .map((seg) => seg.charAt(0).toUpperCase() + seg.slice(1))
     .join("");
   return `${prefix}${pascalName}`;
