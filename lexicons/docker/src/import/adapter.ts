@@ -15,7 +15,7 @@ import type { TemplateIR, TemplateParser, ResourceIR, ParseContext } from "@inte
 import type { GeneratedFile, TypeScriptGenerator } from "@intentius/chant/import/generator";
 import { DockerParser, DockerfileParser, looksLikeDockerfile } from "./parser";
 import type { DockerIR, DockerfileStage, ParseResult } from "./parser";
-import { DockerGenerator } from "./generator";
+import { DockerGenerator, dockerfileImportWarnings } from "./generator";
 
 /** Convert a DockerIR into the core ResourceIR shape. */
 function dockerIrToResource(entity: DockerIR): ResourceIR {
@@ -71,7 +71,9 @@ export class DockerTemplateParser implements TemplateParser {
     // A Dockerfile has no name of its own; it imports as `app`
     // (Dockerfile.app). Rename the export to choose the file name.
     if (looksLikeDockerfile(content)) {
-      return { resources: [dockerIrToResource(new DockerfileParser().parse("app", content))], parameters: [] };
+      const df = new DockerfileParser().parse("app", content);
+      const warnings = dockerfileImportWarnings(df);
+      return { resources: [dockerIrToResource(df)], parameters: [], ...(warnings.length > 0 ? { warnings } : {}) };
     }
     return dockerResultToTemplate(new DockerParser().parse(content, context));
   }
