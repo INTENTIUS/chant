@@ -19,7 +19,9 @@
  * - `<type>.<name>.<arg>` in the same module, when the block sets `<arg>`;
  * - `"${...}"` interpolation whose every part resolves;
  * - `lookup(map, key, default)`, `toset()`, `length()` and `cond ? a : b`
- *   over a known bool, plus list and object constructors and index steps.
+ *   over a known bool, plus list and object constructors and index steps;
+ * - `a == b` and `a != b` over two known values (#5094), so
+ *   `count = var.is_prod_cluster == "true" ? 1 : 0` picks its count.
  *
  * Anything else is unknown, and an unknown value carries the first
  * reference that stopped it: a data source (`data.google_organization.org.org_id`),
@@ -89,6 +91,7 @@ type Expr =
   | { t: "post"; of: Expr; steps: Step[]; text: string }
   | { t: "call"; name: string; args: Expr[]; text: string }
   | { t: "cond"; c: Expr; a: Expr; b: Expr }
+  | { t: "eq"; negate: boolean; l: Expr; r: Expr }
   | { t: "tuple"; items: Expr[] }
   | { t: "object"; entries: Array<[Expr, Expr]> };
 
@@ -330,8 +333,20 @@ function parseExpression(src: string): Expr {
     return s.length === 0 ? p : { t: "post", of: p, steps: s, text: textFrom(start) };
   };
 
+  // `==` and `!=` (#5094) bind looser than a traversal and tighter than `? :`.
+  // Arithmetic and `&&`/`||` are not read, so an operand followed by one is unsupported.
+  const equality = (): Expr => {
+    let l = postfix();
+    while (peek("==") || peek("!=")) {
+      const negate = toks[pos]!.v === "!=";
+      pos++;
+      l = { t: "eq", negate, l, r: postfix() };
+    }
+    return l;
+  };
+
   const expr = (): Expr => {
-    const c = postfix();
+    const c = equality();
     const next = toks[pos];
     if (next?.k === "p" && next.v === "?") {
       pos++;
@@ -607,6 +622,13 @@ export class RootEvaluator {
         if (typeof c !== "boolean") return new Unknown(prefixed(env.place, "(condition)"));
         return this.expr(c ? e.a : e.b, env);
       }
+      case "eq": {
+        const l = this.expr(e.l, env);
+        const r = this.expr(e.r, env);
+        const u = firstUnknown(l) ?? firstUnknown(r);
+        if (u) return u;
+        return sameValue(l, r) !== e.negate;
+      }
       case "call":
         return this.call(e, env);
       case "post":
@@ -790,6 +812,23 @@ export class RootEvaluator {
       this.visiting.delete(key);
     }
   }
+}
+
+/**
+ * Terraform's `==` over two known values: the same type and the same value,
+ * with no conversion, so `"1" == 1` is false. Lists compare element by
+ * element and maps key by key.
+ */
+function sameValue(a: unknown, b: unknown): boolean {
+  if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return a === b;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  if (Array.isArray(a)) {
+    const bl = b as unknown[];
+    return a.length === bl.length && a.every((x, i) => sameValue(x, bl[i]));
+  }
+  const ak = Object.keys(a as object);
+  const bo = b as Record<string, unknown>;
+  return ak.length === Object.keys(bo).length && ak.every((k) => k in bo && sameValue((a as Record<string, unknown>)[k], bo[k]));
 }
 
 /** A reference named as Terraform prints it from the root: the module path in front. */

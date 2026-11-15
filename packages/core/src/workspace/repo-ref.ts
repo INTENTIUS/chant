@@ -70,6 +70,11 @@ export type RepoFetch = { ok: true; dir: string; worktree: string } | { ok: fals
 
 const GIT_ENV = { ...process.env, GIT_TERMINAL_PROMPT: "0" };
 
+/** The cache clone of one URL, as git is handed it. */
+function cloneDirOf(url: string, env: NodeJS.ProcessEnv): string {
+  return join(repoCacheDir(env), createHash("sha256").update(url).digest("hex").slice(0, 24));
+}
+
 function git(args: string[], cwd?: string): { ok: boolean; out: string } {
   try {
     const out = execFileSync("git", args, { cwd, encoding: "utf-8", env: GIT_ENV, stdio: ["ignore", "pipe", "pipe"], timeout: 120_000 });
@@ -88,7 +93,7 @@ function git(args: string[], cwd?: string): { ok: boolean; out: string } {
 export function fetchRepoAt(ref: RepoRef, workspaceRoot: string, env: NodeJS.ProcessEnv = process.env): RepoFetch {
   if (urlCredential(ref.url)) return { ok: false, message: `the repo url carries a credential, which chant refuses to use (WSP016)` };
   const url = fetchUrl(ref.url, workspaceRoot);
-  const clone = join(repoCacheDir(env), createHash("sha256").update(url).digest("hex").slice(0, 24));
+  const clone = cloneDirOf(url, env);
   const worktree = join(clone, "at", ref.rev);
   const dir = ref.workspace === "." ? worktree : join(worktree, ...ref.workspace.split("/"));
   if (existsSync(join(worktree, ".git"))) return { ok: true, dir, worktree };
@@ -110,4 +115,24 @@ export function fetchRepoAt(ref: RepoRef, workspaceRoot: string, env: NodeJS.Pro
   const add = git(["-C", clone, "worktree", "add", "-q", "--detach", worktree, ref.rev]);
   if (!add.ok && !existsSync(join(worktree, ".git"))) return { ok: false, message: `could not check out ${ref.rev} in the cache: ${add.out}` };
   return { ok: true, dir, worktree };
+}
+
+/** The ledger branch a repository's releases are read from. */
+const LIFECYCLE_BRANCH = "refs/heads/chant/lifecycle";
+
+/**
+ * Bring the repository's `chant/lifecycle` into the cache clone (#5119), so
+ * `chant release list` in a revision's worktree there reads that
+ * repository's releases. The ledger moves on its own, apart from the pinned
+ * revision, so it is fetched again on every call, forced, and only that
+ * branch. Run after {@link fetchRepoAt}, which makes the clone. Never
+ * throws; a failure says why.
+ */
+export function fetchRepoLifecycle(ref: RepoRef, workspaceRoot: string, env: NodeJS.ProcessEnv = process.env): { ok: true } | { ok: false; message: string } {
+  if (urlCredential(ref.url)) return { ok: false, message: `the repo url carries a credential, which chant refuses to use (WSP016)` };
+  const clone = cloneDirOf(fetchUrl(ref.url, workspaceRoot), env);
+  if (!existsSync(join(clone, ".git"))) return { ok: false, message: `${redactUrl(ref.url)} has no cache clone yet` };
+  const got = git(["-C", clone, "fetch", "-q", "--no-tags", "origin", `+${LIFECYCLE_BRANCH}:${LIFECYCLE_BRANCH}`]);
+  if (!got.ok) return { ok: false, message: `could not fetch chant/lifecycle from ${redactUrl(ref.url)}: ${got.out}` };
+  return { ok: true };
 }

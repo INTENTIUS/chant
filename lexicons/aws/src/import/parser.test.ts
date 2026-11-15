@@ -292,4 +292,39 @@ describe("CFParser conditions and outputs (#2069)", () => {
     const ir = parser.parse(template);
     expect(ir.warnings).toBeUndefined();
   });
+
+  describe("YAML dates (#5076)", () => {
+    const read = (yamlText: string) => parser.parse(yamlText);
+
+    test("an unquoted date reads as the string it was written as", () => {
+      const ir = read("AWSTemplateFormatVersion: 2010-09-09\nResources:\n  Q:\n    Type: AWS::SQS::Queue\n    Properties:\n      Doc:\n        Version: 2012-10-17\n");
+      expect(ir.metadata?.version).toBe("2010-09-09");
+      expect(ir.resources[0].properties.Doc).toEqual({ Version: "2012-10-17" });
+    });
+
+    test("a date-like string in a list, a tag argument and a nested map stays a string", () => {
+      const ir = read(`Resources:
+  Q:
+    Type: AWS::SQS::Queue
+    Properties:
+      Dates: [2012-10-17, 2024-02-29]
+      Name: !Sub "x-\${A}"
+      Nested:
+        Join: !Join ["-", [a, 2012-10-17]]
+`);
+      const props = ir.resources[0].properties as any;
+      expect(props.Dates).toEqual(["2012-10-17", "2024-02-29"]);
+      expect(props.Nested.Join).toMatchObject({ delimiter: "-", values: ["a", "2012-10-17"] });
+    });
+
+    test("a full timestamp stays a string, with its time and zone as written", () => {
+      const ir = read("Resources:\n  Q:\n    Type: AWS::SQS::Queue\n    Properties:\n      A: 2001-12-14T21:59:43.10-05:00\n      B: 2001-12-14 21:59:43\n      C: 2002-12-14T00:00:00Z\n");
+      expect(ir.resources[0].properties).toEqual({ A: "2001-12-14T21:59:43.10-05:00", B: "2001-12-14 21:59:43", C: "2002-12-14T00:00:00Z" });
+    });
+
+    test("merge keys and anchors still resolve", () => {
+      const ir = read("Resources:\n  Q:\n    Type: AWS::SQS::Queue\n    Properties:\n      A: &a {X: 1}\n      B:\n        <<: *a\n        Y: 2\n");
+      expect((ir.resources[0].properties as any).B).toEqual({ X: 1, Y: 2 });
+    });
+  });
 });

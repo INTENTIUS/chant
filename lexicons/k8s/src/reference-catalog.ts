@@ -2,6 +2,7 @@ import type { IRNode } from "@intentius/chant/graph-ir";
 import { k8sDeclaredNode, registersCluster } from "./cluster-secret";
 import { APPLICATION, APPLICATION_SET, generateApplications } from "./application-set";
 import { applicationPathRules } from "./application-paths";
+import { generatedValuesNodes } from "./helm-references";
 import { readPath, type GenerateRule, type IdentityRule, type JoinedRef, type ReferenceCatalog, type RefRule, type ScopeRule } from "@intentius/chant/graph-refs";
 
 /**
@@ -429,6 +430,8 @@ const generates: GenerateRule[] = [
     generate: generateApplications,
     // A clusters generator selected the Secret, so the generated Application deploys to it whatever namespace either sits in.
     cluster: { path: "generators[].clusters", targetKind: "K8s::Core::Secret", label: "deploys to" },
+    // A generated Application is stamped as the reader stamps one written by hand, so its values files and their extraObjects are nodes too (#5094).
+    files: generatedValuesNodes,
   },
 ];
 

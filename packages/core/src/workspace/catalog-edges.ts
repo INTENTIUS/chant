@@ -52,6 +52,14 @@
  * it to `nodes` with `generatedBy`, and marks the holder with `expansion`:
  * how many it generated and what it did not expand.
  *
+ * A generate rule's `files` reads the files a generated node names, when the
+ * caller hands the pass `readFile` (#5094): a generated Application's Helm
+ * values files become nodes, with the objects under their `extraObjects`,
+ * as they do for an Application written by hand. Each is `<holder
+ * id>/<key>`, in the holder's member, with `generatedBy` naming the
+ * generated node and `generator: "file"`, and the rules read it with the
+ * rest.
+ *
  * A catalog's `pathRefs` rules read the paths in a repository a node names.
  * The caller says, through `lookPath`, whether each is in the workspace's
  * repository; one that is not there, or is a file where a directory is
@@ -77,6 +85,7 @@ import {
   readPath,
   refRuleId,
   type ContainmentPair,
+  type GenerateRule,
   type RepoPathRef,
   type IndexedNodeScope,
   type NamedCatalog,
@@ -118,6 +127,9 @@ export interface CatalogPass {
   expansions: Record<string, NodeExpansion>;
 }
 
+/** The text of a workspace-relative file in the workspace's repository, or undefined when it is not there (#5094). */
+export type ReadFile = (path: string) => string | undefined;
+
 /** Whether a repository path is in the workspace's repository: what it is there, `missing`, or undefined when the path is in another repository and is not read. */
 export type LookPath = (ref: RepoPathRef) => "dir" | "file" | "missing" | undefined;
 
@@ -156,9 +168,10 @@ export function catalogRules(catalogs: readonly NamedCatalog[]): Record<string, 
  * Rules apply to nodes of their own lexicon; targets can be any node.
  * `members` names the members read, the nodes' own members by default.
  * `lookPath` finds a path rule's paths in the repository; without it no path
- * is read.
+ * is read. `readFile` reads a file a generated node names (#5094); without
+ * it no such file is read.
  */
-export function runCatalogPass(nodes: readonly ComposedNode[], catalogs: readonly NamedCatalog[], members?: readonly string[], lookPath?: LookPath): CatalogPass {
+export function runCatalogPass(nodes: readonly ComposedNode[], catalogs: readonly NamedCatalog[], members?: readonly string[], lookPath?: LookPath, readFile?: ReadFile): CatalogPass {
   const byLexicon = new Map(catalogs.map((c) => [c.lexicon, c.catalog]));
   const nonLiteral: Record<string, number> = {};
   const byId = new Map(nodes.map((n) => [n.id, n]));
@@ -175,6 +188,7 @@ export function runCatalogPass(nodes: readonly ComposedNode[], catalogs: readonl
   const generatedEdges: ComposedEdge[] = [];
   // A generated node's cluster registration, when its generator selected one: another rule's edge to it is left out.
   const selectedFor = new Map<string, string>();
+  const withFiles: Array<{ rule: GenerateRule; ruleId: string; holder: ComposedNode; node: ComposedNode }> = [];
   for (const holder of read) {
     for (const rule of byLexicon.get(holder.lexicon)?.generates ?? []) {
       if (rule.from !== holder.kind) continue;
@@ -185,7 +199,7 @@ export function runCatalogPass(nodes: readonly ComposedNode[], catalogs: readonl
         const nodeId = `${holder.id}/${g.key}`;
         if (byId.has(nodeId) || generated.some((n) => n.id === nodeId)) continue;
         count++;
-        generated.push({
+        const node: ComposedNode = {
           id: nodeId,
           kind: g.kind,
           lexicon: holder.lexicon,
@@ -193,7 +207,9 @@ export function runCatalogPass(nodes: readonly ComposedNode[], catalogs: readonl
           member: holder.member,
           ...(holder.nested !== undefined ? { nested: holder.nested } : {}),
           generatedBy: { node: holder.id, rule: id, generator: g.generator, params: g.params, ...(g.cluster ? { cluster: g.cluster.id } : {}) },
-        });
+        };
+        generated.push(node);
+        if (rule.files && readFile) withFiles.push({ rule, ruleId: id, holder, node });
         generatedEdges.push({ from: holder.id, to: nodeId, kind: "ref", viaAttr: refViaAttr(rule.path), grain: "property", origin: "derived", rule: id, relation: "reference", member: holder.member });
         if (g.cluster && rule.cluster) {
           const clusterRule = refRuleId(holder.lexicon, rule.from, rule.cluster.path);
@@ -205,6 +221,28 @@ export function runCatalogPass(nodes: readonly ComposedNode[], catalogs: readonl
     }
   }
   read.push(...generated);
+
+  // The files a generated node names (#5094): its values files and their objects, one node per file under the holder.
+  const fromFiles: ComposedNode[] = [];
+  const fileIds = new Set<string>();
+  for (const { rule, ruleId, holder, node } of withFiles) {
+    for (const f of rule.files!(node, readFile!, read)) {
+      const id = `${holder.id}/${f.key}`;
+      if (byId.has(id) || fileIds.has(id)) continue;
+      fileIds.add(id);
+      fromFiles.push({
+        id,
+        kind: f.kind,
+        lexicon: f.lexicon,
+        attrs: f.attrs,
+        member: holder.member,
+        ...(holder.nested !== undefined ? { nested: holder.nested } : {}),
+        generatedBy: { node: node.id, rule: ruleId, generator: "file", params: {} },
+      });
+    }
+  }
+  generated.push(...fromFiles);
+  read.push(...fromFiles);
   const member = new Map(read.map((n) => [n.id, n.member]));
 
   // A kind a catalog scopes is looked up by its own kind alone: the lexicon that wrote the node is not the catalog's (a values file read by the k8s reader is a helm node).
@@ -314,15 +352,16 @@ function pathDangling(nodes: readonly ComposedNode[], byLexicon: ReadonlyMap<str
  * Write a pass into the document. `placed` maps an id the pass read to the
  * id of the node the document draws it as at its detail tier; an id it does
  * not hold is kept as it is, except a generated node's, which is drawn where
- * its holder is. A generated node goes in `nodes` when its holder is drawn
+ * its holder is (a node read from a generated node's file, where that node is). A generated node goes in `nodes` when its holder is drawn
  * as itself, with its attrs as `level` prints them.
  */
 export function placeCatalogPass(graph: WorkspaceGraph, pass: CatalogPass, placed: ReadonlyMap<string, string> = new Map(), level: DetailLevel = 3): void {
   const holderOf = new Map(pass.generated.map((n) => [n.id, n.generatedBy!.node]));
-  const at = (id: string): string => {
+  // A node read from a generated node's file (#5094) has that node as its holder, so the walk goes up to a node the document holds.
+  const at = (id: string, depth = 0): string => {
     const holder = holderOf.get(id);
-    if (holder === undefined) return placed.get(id) ?? id;
-    const drawn = placed.get(holder) ?? holder;
+    if (holder === undefined || depth > 4) return placed.get(id) ?? id;
+    const drawn = at(holder, depth + 1);
     return drawn === holder ? id : drawn;
   };
   addGenerated(graph, pass, at, level);

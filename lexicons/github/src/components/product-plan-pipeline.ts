@@ -57,6 +57,7 @@
  */
 
 import { CI_IMAGE, GITHUB_JOB_TOKEN, githubRunsOn } from "@intentius/chant/ci-jobs";
+import { COMMENT_ALLOW_ENV, COMMENT_ALLOW_FORGE_ENV, COMMENT_ALLOW_TOKEN_ENV } from "@intentius/chant/ci-comment-allow";
 import { CHECKOUT_TOKEN_ENV, checkoutScript, dropForgeTokens, handoverOutputs, handoverTrap, takeOverScript } from "@intentius/chant/ci-handover";
 import { PR_LOCK_JOB, PR_UNLOCK_JOB, prLockCommand, prLoopSetup, prUnlockCommand } from "@intentius/chant/components/pr-pipeline";
 import { productPipelineJobs, type ProductPipelineJobs, type ProductPipelineOptions } from "@intentius/chant/components/product-pipeline";
@@ -274,8 +275,10 @@ export function buildProductPlanGithubDoc(forge: "github" | "forgejo", env: stri
             ...(github ? {} : { CHANT_REPLAN_PERMISSION: "1" }),
             ...(r.dispatch ? { CHANT_REPLAN_DISPATCH_ARGUMENT: r.dispatch.argument } : {}),
             ...(r.reply ? { CHANT_REPLAN_PRODUCT: r.reply.prefix, ...(r.reply.others.length > 0 ? { CHANT_REPLAN_OTHERS: JSON.stringify(r.reply.others) } : {}) } : {}),
+            // INTENTIUS/terragucci#1461: the pipeline's list for the plan comment, read from this workflow on the default branch.
+            ...(r.allow ? { [COMMENT_ALLOW_ENV]: JSON.stringify(r.allow.list), [COMMENT_ALLOW_FORGE_ENV]: forge, ...(r.allow.tokenSecret ? { [COMMENT_ALLOW_TOKEN_ENV]: `\${{ secrets.${r.allow.tokenSecret} }}` } : {}) } : {}),
           },
-          run: `(cd / && node -e '${r.dispatch || r.reply ? replanDecideJs({ dispatch: Boolean(r.dispatch), reply: Boolean(r.reply) }) : REPLAN_DECIDE_JS}')`,
+          run: `(cd / && node -e '${r.dispatch || r.reply || r.allow ? replanDecideJs({ dispatch: Boolean(r.dispatch), reply: Boolean(r.reply), allow: Boolean(r.allow) }) : REPLAN_DECIDE_JS}')`,
         },
         ...pendingStep(p, "${{ steps.decide.outputs.head }}", go),
         // #4963: the previous note's marker and the trade, before the head is checked out.

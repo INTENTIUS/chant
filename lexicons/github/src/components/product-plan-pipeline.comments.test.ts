@@ -130,3 +130,47 @@ describe("the product plan's locks (#4946)", () => {
     expect(JSON.parse(job("comment").steps[2]!.env!.CHANT_COMMENT_JOBS!)).toEqual({ preview: true, locks: true, noPlanFlags: true });
   });
 });
+
+describe("comment limits (INTENTIUS/terragucci#1461)", () => {
+  const commentAllow = { allow: { apply: ["team:acme/release"], plan: ["team:acme/release", "alice"], agent: ["alice"] }, tokenSecret: "TG_TEAM_TOKEN" };
+  type Step = { id?: string; name?: string; env?: Record<string, string>; run?: string };
+
+  test("the comment job and the re-plan's decision carry the list and the team token, from the workflow on the default branch", () => {
+    for (const gen of [generateProductPlanPipeline, generateForgejoProductPlanPipeline] as const) {
+      const forge = gen === generateProductPlanPipeline ? "github" : "forgejo";
+      const { doc } = gen("default", { ...base, commentJob: true, waves: wavesSpec, productPlan: { ...base.productPlan, replan: { reply: false } }, commentAllow });
+      const answer = (doc.jobsDoc.comment as Job).steps[2]!;
+      expect(JSON.parse(answer.env!.CHANT_COMMENT_ALLOW!)).toEqual(commentAllow.allow);
+      expect(answer.env!.CHANT_COMMENT_ALLOW_TOKEN).toBe("${{ secrets.TG_TEAM_TOKEN }}");
+      const decide = (doc.jobsDoc.replan as Job).steps.find((s: Step) => s.id === "decide")! as Step;
+      expect(JSON.parse(decide.env!.CHANT_COMMENT_ALLOW!)).toEqual(commentAllow.allow);
+      expect(decide.env!.CHANT_COMMENT_ALLOW_FORGE).toBe(forge);
+      expect(decide.env!.CHANT_COMMENT_ALLOW_TOKEN).toBe("${{ secrets.TG_TEAM_TOKEN }}");
+      expect(decide.run).toContain("commentAllowRefusal(asker,\"plan\")");
+      // The decision runs under single quotes in a shell, so the script holds none of its own.
+      expect(decide.run!.slice("(cd / && node -e '".length, -2)).not.toContain("'");
+    }
+  });
+
+  test("without a list the decision step is the one chant wrote before, and a token secret is optional", () => {
+    const { doc } = generateProductPlanPipeline("default", { ...base, commentJob: true, waves: wavesSpec });
+    const decide = (doc.jobsDoc.replan as Job).steps.find((s: Step) => s.id === "decide")! as Step;
+    expect(decide.env).not.toHaveProperty("CHANT_COMMENT_ALLOW");
+    expect(decide.run).not.toContain("commentAllowRefusal");
+    const bare = generateProductPlanPipeline("default", { ...base, commentJob: true, waves: wavesSpec, commentAllow: { allow: { plan: ["alice"] } } });
+    expect(((bare.doc.jobsDoc.replan as Job).steps.find((s: Step) => s.id === "decide")! as Step).env).not.toHaveProperty("CHANT_COMMENT_ALLOW_TOKEN");
+  });
+
+  test("the agent's prepare step reads teams with the team secret, and its job carries the list", async () => {
+    const { githubAgentJobs } = await import("./agent-jobs");
+    const { resolveAgentSpec, agentSettingsEnv } = await import("@intentius/chant/ci-agent");
+    const settings = resolveAgentSpec("terragucci-agent", { on: "comment", comment: "/terragucci agent", commentAllow: commentAllow.allow, commentAllowTokenEnv: "TG_TEAM_TOKEN" }, "terragucci");
+    const { agent } = githubAgentJobs({ forge: "github", jobName: "agent", image: "img", settings, setup: [], beforeScript: [] });
+    const prepare = (agent.steps as Step[]).find((s) => s.name === "Decide whether the agent runs")!;
+    expect(prepare.env).toEqual({ GITHUB_TOKEN: "${{ github.token }}", CHANT_COMMENT_ALLOW_TOKEN: "${{ secrets.TG_TEAM_TOKEN }}" });
+    expect(JSON.parse((agent.env as Record<string, string>).CHANT_COMMENT_ALLOW!)).toEqual(commentAllow.allow);
+    expect(agentSettingsEnv(settings).CHANT_COMMENT_ALLOW).toBeDefined();
+    const plain = githubAgentJobs({ forge: "github", jobName: "agent", image: "img", settings: resolveAgentSpec("terragucci-agent", { on: "comment", comment: "/terragucci agent" }, "terragucci"), setup: [], beforeScript: [] });
+    expect((plain.agent.steps as Step[]).find((s) => s.name === "Decide whether the agent runs")!.env).toEqual({ GITHUB_TOKEN: "${{ github.token }}" });
+  });
+});

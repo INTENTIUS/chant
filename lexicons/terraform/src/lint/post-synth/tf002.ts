@@ -21,11 +21,17 @@
  * A root with no `terraform` block at all is out of scope, same as TF001:
  * the missing block is that rule's finding, not this one's.
  *
- * Scope: root modules only (#2112). A child module's own `required_providers`
- * are the child's business, and its resources are constrained by the root's
- * block at plan time, so folding a descended module's blocks into this pass
- * would both credit the root with requirements it never declared and judge it
- * on providers it never named.
+ * Scope: the providers a root implies come from the root's own blocks (#2112);
+ * a child module's resources and provider blocks are not judged here. The
+ * constraints, though, come from the whole local module tree (#5108).
+ * Terraform combines the `required_providers` of every module in a
+ * configuration, so a root that gives only `source` is constrained when a
+ * local module it calls pins the `version`, and the reverse. A field the root
+ * entry lacks is taken from a descended module's entry for the same provider
+ * name; the root's own value always wins. A root entry in the legacy bare
+ * string form stays a finding. Registry and git modules are never fetched, so
+ * only the local modules `descend.ts` already read can contribute, and its
+ * cycle guard is what bounds the tree.
  */
 
 import type {
@@ -105,6 +111,25 @@ function entryProblem(entry: unknown): string | undefined {
   return missing.length > 0 ? `an entry missing ${missing.join(" and ")}` : undefined;
 }
 
+/** The entries the descended modules of a root hold for each provider name, . */
+type ModuleEntries = Map<string, Array<Record<string, unknown>>>;
+
+/** Fill what a root entry lacks from the called modules' entries, or return `entry` unchanged. */
+function withModuleFields(
+  entry: unknown,
+  fromModules: Array<Record<string, unknown>> | undefined,
+): unknown {
+  if (!fromModules || fromModules.length === 0) return entry;
+  if (entry !== undefined && (typeof entry !== "object" || entry === null)) return entry;
+  const merged: Record<string, unknown> = { ...((entry as Record<string, unknown> | undefined) ?? {}) };
+  for (const field of ["source", "version"]) {
+    if (typeof merged[field] === "string" && merged[field] !== "") continue;
+    const found = fromModules.find((m) => typeof m[field] === "string" && m[field] !== "");
+    if (found) merged[field] = found[field];
+  }
+  return Object.keys(merged).length === 0 ? entry : merged;
+}
+
 export const tf002: PostSynthCheck = {
   id: "TF002",
   description: "A provider the root implies has no required_providers entry, or an incomplete one",
@@ -113,12 +138,24 @@ export const tf002: PostSynthCheck = {
     const diagnostics: PostSynthDiagnostic[] = [];
     const roots = new Set<string>();
     const requiredByRoot = new Map<string, Record<string, unknown>>();
+    const moduleEntriesByRoot = new Map<string, ModuleEntries>();
 
     for (const entity of ctx.entities.values()) {
       if (entity.entityType !== TERRAFORM_TYPE || !isResourceDeclarable(entity)) continue;
-      if (!isRootScoped(entity)) continue;
       const props = entity.props as { root?: unknown; body?: unknown };
       const root = typeof props.root === "string" ? props.root : "";
+      if (!isRootScoped(entity)) {
+        const childBody = (typeof props.body === "object" && props.body !== null ? props.body : {}) as BlockBody;
+        const byName: ModuleEntries = moduleEntriesByRoot.get(root) ?? new Map();
+        for (const [name, entry] of Object.entries(requiredProvidersMap(childBody))) {
+          if (typeof entry !== "object" || entry === null) continue;
+          const list = byName.get(name) ?? [];
+          list.push(entry as Record<string, unknown>);
+          byName.set(name, list);
+        }
+        moduleEntriesByRoot.set(root, byName);
+        continue;
+      }
       roots.add(root);
       const body = (typeof props.body === "object" && props.body !== null ? props.body : {}) as BlockBody;
       const merged = requiredByRoot.get(root) ?? {};
@@ -131,7 +168,7 @@ export const tf002: PostSynthCheck = {
       const implied = impliedProviders(ctx.entities, root);
 
       for (const name of [...implied.keys()].sort()) {
-        const problem = entryProblem(required[name]);
+        const problem = entryProblem(withModuleFields(required[name], moduleEntriesByRoot.get(root)?.get(name)));
         if (!problem) continue;
         diagnostics.push({
           checkId: "TF002",

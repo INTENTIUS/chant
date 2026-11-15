@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { spawnSync } from "node:child_process";
 import { load as jsYamlLoad } from "js-yaml";
 import { emitYAML, emitYAMLEntry, parseYAML, parseYAMLDocument, parseScalar, splitYAMLDocuments, YAMLParseError } from "./yaml";
 
@@ -112,24 +113,111 @@ describe("emitYAML", () => {
   });
 
   test("multiline string emits as | block scalar", () => {
-    const result = emitYAML("line1\nline2\nline3", 0);
+    const result = emitYAML("line1\nline2\nline3\n", 0);
     expect(result).toBe("|\nline1\nline2\nline3");
   });
 
-  test("multiline string trims trailing empty line", () => {
-    // Template literals often end with \n producing a trailing empty line
-    const result = emitYAML("line1\nline2\n", 0);
-    expect(result).toBe("|\nline1\nline2");
+  test("a string with exactly one final newline is a clipped block (#5073)", () => {
+    expect(emitYAML("line1\nline2\n", 0)).toBe("|\nline1\nline2");
+  });
+
+  test("a string with no final newline is a stripped block (#5073)", () => {
+    expect(emitYAML("line1\nline2", 0)).toBe("|-\nline1\nline2");
+  });
+
+  test("a string with several final newlines is a kept block (#5073)", () => {
+    expect(emitYAML({ k: "a\n\n\n" }, 0)).toBe("\nk: |+\n  a\n  \n  ");
+  });
+
+  test("a first line that starts with a space gets an indentation indicator (#5073)", () => {
+    expect(emitYAML({ k: "  indented\nnext" }, 0)).toBe("\nk: |2-\n    indented\n  next");
   });
 
   test("multiline string inside object value is properly indented", () => {
-    const result = emitYAML({ config: "line1\nline2\nline3" }, 0);
+    const result = emitYAML({ config: "line1\nline2\nline3\n" }, 0);
     expect(result).toContain("config: |\n  line1\n  line2\n  line3");
   });
 
   test("multiline string inside array item is properly indented", () => {
-    const result = emitYAML([{ data: "a\nb" }], 0);
+    const result = emitYAML([{ data: "a\nb\n" }], 0);
     expect(result).toContain("data: |\n    a\n    b");
+  });
+});
+
+describe("emitYAML multi-line strings read back unchanged (#5073)", () => {
+  const values = [
+    "a\nb",
+    "a\nb\n",
+    "a\nb\n\n",
+    "a\nb\n\n\n",
+    "a\n\nb",
+    "\na\nb",
+    "\n\na\n",
+    "  lead\nb",
+    "\n  lead\nb\n",
+    "a  \nb  ",
+    "a\n  b\n",
+    "tab\there\nx",
+    "\n",
+    "\n\n",
+    "a\r\nb",
+    "a\u2028b\nc",
+    "key: value\n# not a comment\n- not a list",
+  ];
+  for (const v of values) {
+    test(`${JSON.stringify(v)} through an object, an array item and the top level`, () => {
+      expect(jsYamlLoad(`k:${emitYAML({ k: v }, 0).slice(3)}\n`)).toEqual({ k: v });
+      expect(jsYamlLoad(emitYAML({ k: v }, 0).trimStart() + "\nz: 1\n")).toEqual({ k: v, z: 1 });
+      expect(jsYamlLoad(emitYAML([{ k: v, z: 1 }], 0).trimStart() + "\n")).toEqual([{ k: v, z: 1 }]);
+      expect(jsYamlLoad(emitYAML([v, "after"], 0).trimStart() + "\n")).toEqual([v, "after"]);
+      expect(parseYAML(emitYAML({ k: v, z: 1 }, 0).trimStart() + "\n")).toEqual({ k: v, z: 1 });
+    });
+  }
+});
+
+// Strings a YAML 1.1 parser reads as something else (#5074). A 1.2 parser (js-yaml)
+// and a 1.1 parser (PyYAML, when python3 has it) must both give the string back.
+const YAML_11_STRINGS = [
+  "=", "<<", "~", "y", "Y", "n", "N", "yes", "Yes", "YES", "no", "No", "NO",
+  "on", "On", "ON", "off", "Off", "OFF", "true", "True", "false", "False", "null", "Null",
+  "0755", "0o755", "0x1F", "0b101", "1:30", "190:20:30", "-1:30", "+1:30", "1_000", "1e3", "12", "1.5", ".5", "-.5",
+  ".inf", "-.INF", ".nan", "2001-12-14", "2001-12-14 21:59:43.10 -5", "-", "?", ":", "- a", "? a", ": a",
+  "a: b", "a #b", "yes please", "on call", "=x", "<<x", "ok", "maybe", "nope", "o", "",
+];
+
+describe("emitYAML quotes the YAML 1.1 special scalars (#5074)", () => {
+  for (const v of YAML_11_STRINGS) {
+    test(`${JSON.stringify(v)} reads back as the same string under a 1.2 parser, in a mapping, a list and at the top`, () => {
+      expect(jsYamlLoad(`k: ${emitYAML(v, 0)}\n`)).toEqual({ k: v });
+      expect(jsYamlLoad(emitYAML([v], 0).trimStart() + "\n")).toEqual([v]);
+      expect(jsYamlLoad(emitYAML({ a: [{ k: v }] }, 0).trimStart() + "\n")).toEqual({ a: [{ k: v }] });
+      expect(parseYAML(`k: ${emitYAML(v, 0)}\n`).k).toBe(v);
+    });
+  }
+
+  for (const v of ["=", "<<", "y", "n", "yes", "no", "on", "off", "0755", "1:30", "~"]) {
+    test(`${JSON.stringify(v)} is quoted`, () => {
+      expect(emitYAML(v, 0)).toBe(`'${v}'`);
+    });
+  }
+
+  test("plain words that only look close stay plain", () => {
+    for (const v of ["ok", "yesterday", "online", "none", "o", "ny", "a=b", "x<<y"]) expect(emitYAML(v, 0)).toBe(v);
+  });
+
+  const py = spawnSync("python3", ["-I", "-c", "import yaml"], { encoding: "utf8" });
+  test.skipIf(py.status !== 0)("a YAML 1.1 parser (PyYAML) reads every one of them back unchanged", () => {
+    const doc = emitYAML(
+      Object.fromEntries(YAML_11_STRINGS.map((v, i) => [`k${i}`, v])) as Record<string, unknown>,
+      0,
+    ).trimStart();
+    const out = spawnSync(
+      "python3",
+      ["-I", "-c", "import sys, json, yaml; print(json.dumps(yaml.safe_load(sys.stdin.read())))"],
+      { input: doc + "\n", encoding: "utf8" },
+    );
+    expect(out.stderr).toBe("");
+    expect(Object.values(JSON.parse(out.stdout))).toEqual(YAML_11_STRINGS);
   });
 });
 
@@ -894,6 +982,6 @@ describe("emitYAML quotes strings a parser would read as something else (#3006)"
   }
 
   test("strings that were safe stay plain", () => {
-    for (const v of ["--flag", "-x", "a:b", "http://a/b", "on"]) expect(emitYAML(v, 0)).toBe(v);
+    for (const v of ["--flag", "-x", "a:b", "http://a/b"]) expect(emitYAML(v, 0)).toBe(v);
   });
 });

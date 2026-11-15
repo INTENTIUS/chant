@@ -24,6 +24,8 @@ The importer reads multi-document YAML, identifies each resource’s `apiVersion
 
 The importer writes a typed class only when `@intentius/chant-lexicon-k8s` exports one for that group and kind. For any other kind, such as the custom resources of an operator whose CRD the lexicon does not ship, it writes the manifest as `k8sManifest({ apiVersion, kind, ... })`. That source builds, and the build writes the manifest back as it was. The import prints one warning per kind. To get a typed class, list the CRD under `k8s.crds` in `chant.config.ts` and run `chant generate`, as described in [CRD-generated classes](/chant/lexicons/k8s/crd-classes/).
 
+A class builds with the apiVersion the lexicon ships for it. An object whose file names another one, such as `rbac.authorization.k8s.io/v1beta1` where the class writes `v1`, is written as `k8sManifest` too, so the build keeps the apiVersion from the file. The import prints one warning for each such object, naming it, the apiVersion in the file and the one the class would have written.
+
 ## Collector configs, rule groups, Alertmanager configs and dashboards inside manifests
 
 `chant import` hands content that another lexicon owns to that lexicon, when it is installed:

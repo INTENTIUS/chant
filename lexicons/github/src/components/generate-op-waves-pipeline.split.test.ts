@@ -130,7 +130,7 @@ describe("a split wave before merge on GitHub (#4987)", () => {
     const apply = doc.jobs["wave-1-dev"]!;
     expect(apply.if).toBe("${{ !cancelled() && needs.wave-1-dev-gate.result == 'success' }}");
     expect(apply.steps.map((s) => s.name)).toEqual(expect.arrayContaining(["Download wave 1's decision", "Download wave 1's saved plan", "Apply wave 1 (dev)'s saved plan"]));
-    expect(apply.steps.find((s) => s.name === "Keep the job's outcome and run record")!.with!.path).toBe(".chant/op-waves/tf-apply/outcomes/outcome-wave-1-apply.json\n.chant/op-waves/tf-apply/outcomes/run-record-wave-1.json\n");
+    expect(apply.steps.find((s) => s.name === "Keep the job's outcome and run record")!.with!.path).toBe(".chant/op-waves/tf-apply/outcomes/outcome-wave-1-apply.json\n.chant/op-waves/tf-apply/outcomes/run-record-wave-1.json");
     expect(doc.jobs["wave-1-dev-record"]!.if).toBe("${{ !cancelled() && !contains(needs.*.result, 'skipped') }}");
   });
 

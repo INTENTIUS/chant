@@ -11,6 +11,8 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, wr
 import { join, relative, resolve } from "path";
 import { load } from "js-yaml";
 import { importCommand, liveImportFromPlugins } from "@intentius/chant/cli/commands/import";
+// chant import marks each file it writes (#5078); the expected files carry the same first line.
+import { markImportedSource } from "@intentius/chant/lint/rules/imported-source";
 import type { LexiconPlugin } from "@intentius/chant/lexicon";
 import { build } from "@intentius/chant/build";
 import { EmbeddedImports } from "@intentius/chant/import/embedded";
@@ -92,7 +94,7 @@ function collector(doc: Json): { service: string; config: string } {
 
 /** `chant import config.yaml`: the otel modules for the config alone. */
 function standalone(text: string): Record<string, string> {
-  return Object.fromEntries(new OtelCollectorGenerator().generate(new OtelCollectorParser().parse(text)).map((f) => [f.path, f.content]));
+  return Object.fromEntries(new OtelCollectorGenerator().generate(new OtelCollectorParser().parse(text)).map((f) => [f.path, markImportedSource(f.path, f.content)]));
 }
 
 /** The modules under `dir/`, keyed by their path inside it. */

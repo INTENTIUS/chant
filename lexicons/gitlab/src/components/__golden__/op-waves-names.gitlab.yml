@@ -567,7 +567,7 @@ control:
   needs:
     - apply-rest
   script:
-    - |
+    - |-
       outcome="$(
       unset CHANT_CONTROL_TOKEN CHANT_CONTROL_READ_TOKEN TG_CONTROL_TOKEN
       { :
@@ -576,7 +576,7 @@ control:
       )" || exit 1
     - export CHANT_CONTROL_OUTCOME="$outcome"
     - export CHANT_CONTROL_SHA="$CI_COMMIT_SHA"
-    - |
+    - |-
       bash <<'CONTROL_DISPATCH' || exit $?
       CHANT_CONTROL_TOKEN="${TG_CONTROL_TOKEN:-}"
       set -u

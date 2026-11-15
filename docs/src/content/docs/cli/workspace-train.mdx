@@ -1,6 +1,6 @@
 ---
 title: "chant workspace train"
-description: Record a release train that pins one release of every chant member, list the trains recorded for an environment, and promote one
+description: Record a release train that pins one release of every chant and repo member, list the trains recorded for an environment, and promote one, within this repository or across repositories
 diataxis: reference
 ---
 
@@ -9,14 +9,16 @@ diataxis: reference
 ```
 chant workspace train <env> [--pin <member>=<label|digest>]... [--dry-run] [--json]
 chant workspace train list <env> [--json]
-chant workspace train promote <env> [<train id|digest>] [--gate <name>] [--dry-run] [--json]
+chant workspace train promote <env> [<train id|digest>] [--gate <name>] [--continue] [--dry-run] [--json]
 ```
 
 ## Description
 
 Releases stay per member. Each one is a digest over its artifacts and a git commit, cut with [`chant release cut`](/chant/cli/release/) in the member's directory and kept in its own ledger (ws-043). A release train is one record that pins a release of every `chant` member, so several members can move together ([#2554](https://github.com/INTENTIUS/chant/issues/2554), [#4037](https://github.com/INTENTIUS/chant/issues/4037)). It names each one by digest and never changes it.
 
-`chant workspace train <env>` picks each `chant` member's newest cut, or the one `--pin <member>=<label|digest>` names, and appends the record to `_members/_workspace/<env>/trains.jsonl` on `chant/lifecycle`. It refuses and writes nothing when a `chant` member has nothing cut or a pin names nothing. A workspace with no `chant` member is refused too, so the record never leaves a member out and never pins nothing.
+`chant workspace train <env>` picks each `chant` member's newest cut, or the one `--pin <member>=<label|digest>` names, and appends the record to `_members/_workspace/<env>/trains.jsonl` on `chant/lifecycle`. It refuses and writes nothing when a member has nothing cut or a pin names nothing. A workspace with no `chant` or `repo` member is refused too, so the record never leaves a member out and never pins nothing.
+
+A [`repo` member](/chant/cli/workspace-graph/) names another repository by URL and pinned `rev` ([#5119](https://github.com/INTENTIUS/chant/issues/5119)). Its releases are read the way its graph is: chant fetches the revision into the user's cache, fetches that repository's `chant/lifecycle` into the same cache clone, and runs `chant release list --json` in the workspace root at the revision. Nothing is written in the other repository. The ledger is fetched again on every read, since releases are cut after the revision a declaration pins. A member whose repository can't be read refuses the train with the reason. The pinned member also carries `repo: { url, rev }`, the URL with any credential removed. An org workspace, which holds only `repo` members, records its trains this way.
 
 ```
 $ chant workspace train prod --pin api=v1.4.0
@@ -29,7 +31,7 @@ Each pinned member carries `member`, `releaseDigest`, `commit` and `label`. Besi
 
 `trainDigest` is `computePlanDigest("release-train", { members })` over each member's `member` and `releaseDigest`, sorted by member. Each `releaseDigest` already covers its commit, and the label is the cut's own, so neither is hashed again. Nor is anything about when, where or by whom the record was made. The same picks therefore always give the same digest, and a staging record and a prod record with the same picks share it. A line written by an older chant has no `trainDigest`, and the reader computes it.
 
-`chant workspace train list <env>` prints what is recorded for `<env>`, oldest first. With `--json`, each entry also carries `promotions`: every [`train promote`](#promote) run for it, oldest first, as `{ run, started, ended, status, gate, members[{ member, status, memberRun }] }`. That is enough for a lane to draw one row per train that opens to its members.
+`chant workspace train list <env>` prints what is recorded for `<env>`, oldest first. With `--json`, each entry also carries `promotions`: every [`train promote`](#promote) run for it, oldest first, as `{ run, started, ended, status, gate, members[{ member, status, memberRun }] }`. That is enough for a lane to draw one row per train that opens to its members. A step of a promote across repositories also carries `repo`, the member's `outcome` once it answered, and a `reason` when it did not pass. A run of that kind is written again as each member answers, and `promotions` lists the newest line of each run.
 
 ## Promote
 
@@ -61,14 +63,25 @@ release train train-8a2c… to prod: ok (workspace gate "train-prod" approved sh
 
 Each promote is recorded as a workspace run in `_members/_workspace/<env>/runs.jsonl`, with `train: { id, digest }`. It has one step per member, `<member>/components promote`, which keeps the step's status and exit code and the member's run id. The deploy records each member writes name its release as usual. The command exits 0 when every member promoted and 3 when it waits on a gate. Any other stop exits 1.
 
-Promoting across repositories through a control repository is [#5119](https://github.com/INTENTIUS/chant/issues/5119).
+## Promote across repositories
+
+A train whose members are `repo` members is promoted from the control repository, one member repository at a time ([#5119](https://github.com/INTENTIUS/chant/issues/5119)). Each member repository runs its own release under its own identity. The control repository holds one dispatch-only token per member repository, in the secret `CHANT_TRAIN_TOKEN_<MEMBER>` (the member's name upper-cased, every other character `_`), and no cloud credentials.
+
+1. `chant workspace train promote <env>` writes a workspace run citing the train. It sends one `<product>-train` dispatch into the first member repository in link order, producers first, and marks that step `dispatched`. The dispatch carries the member, `env`, the train id, the run id, the release digest and the release's commit. The order comes from the links the declaration states.
+2. The member repository's `<product>-train.yml` checks out the release's commit and runs `chant run --components all --env <env> --release <digest>`. Each deploy record it writes names the release. Its last step tells the control repository how the run ended with the member's usual `<product>-applied` dispatch. That dispatch also carries `train`, `run`, `env` and `release`. The outcome is `applied`, `waiting` when the run stopped at the member's own gate, or `failed`.
+3. The control repository's `<product>-dependents.yml` records the answer in `_control/applied.jsonl` with its train fields. In place of the member's dependents, it runs `chant workspace train promote <env> <train> --continue` and pushes `chant/lifecycle`. `--continue` reads the answer for the member the run waits on. After `applied` or `unchanged`, that step is `ok` and the next member is dispatched, or the run ends `ok`. `waiting` ends the run `gated` at that member, and `failed` or `partial` ends it `fail`. The step says why. An answer for another release digest or environment fails the step. Until the member answers, `--continue` writes nothing.
+
+Each member keeps its own gate. A workspace gate covers members of one repository only, so `--gate` is refused for such a train. A promote is refused while another promote of the same train is in flight. Once the run has stopped, promote the train again: the new run starts from the first member, and a member whose release is already deployed runs nothing new. A train that pins both `chant` and `repo` members is refused at promote.
+
+The two `<product>-train.yml` workflows are written by the GitHub lexicon (`generateTrainMemberPipeline` and `generateTrainControlPipeline` in `@intentius/chant-lexicon-github/components/train-pipeline`). The pieces come from `@intentius/chant/control/train`. The member's workflow takes the product's cloud login steps before the run. The control repository's job has one step after the checkout, which holds the dispatch tokens and nothing else. `generateControlPipeline({ trainMembers })` maps the same tokens into the dependents workflow, so an answer can dispatch the next member. A GitLab member repository takes no train dispatch yet.
 
 ## Options
 
 | Option | Effect |
 |---|---|
 | `--pin <member>=<label\|digest>` | The release to pin for that member instead of its newest. Repeatable. |
-| `--gate <name>` | (`promote`) Plan every member first and wait on one workspace gate over their release gates. |
+| `--gate <name>` | (`promote`) Plan every member first and wait on one workspace gate over their release gates. Refused for a train of `repo` members. |
+| `--continue` | (`promote`) For a train of `repo` members: move the promote in flight on from the answer the control repository recorded, and start nothing new. |
 | `--dry-run` | Pick the releases and print the train without writing it. With `promote`, print the order and run nothing. |
 | `--json` | Print the train, or the list, as JSON. |
 | `--actor <principal>` | Who records the train; else the CI or shell identity. |

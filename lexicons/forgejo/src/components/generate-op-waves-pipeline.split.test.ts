@@ -116,7 +116,7 @@ describe("a split wave hands its plan on without the runner's token on Forgejo (
     for (const share of [1, 2]) {
       expect(record.steps.find((s) => s.name === `Take share ${share} of wave 2 (prod) of tf-apply's files from its outputs`)!.run).toContain(`needs.wave-2-prod-share-${share}.outputs.report_0`);
       const kept = record.steps.find((s) => s.name === `Keep share ${share} of wave 2 (prod) of tf-apply's outcome and run record`)! as Step & { with?: Record<string, unknown> };
-      expect(kept.with).toMatchObject({ name: `tf-apply-wave-2-prod-share-${share}-outcome`, path: `.chant/op-waves/tf-apply/outcomes/outcome-wave-2-share-${share}.json\n.chant/op-waves/tf-apply/outcomes/run-record-wave-2-share-${share}.json\n` });
+      expect(kept.with).toMatchObject({ name: `tf-apply-wave-2-prod-share-${share}-outcome`, path: `.chant/op-waves/tf-apply/outcomes/outcome-wave-2-share-${share}.json\n.chant/op-waves/tf-apply/outcomes/run-record-wave-2-share-${share}.json` });
     }
     expect(record.steps.some((s) => s.name === "Download wave 2's decision")).toBe(true);
   });

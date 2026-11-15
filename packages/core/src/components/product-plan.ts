@@ -50,6 +50,7 @@ import { PLAN_WATCHES_ENV, scheduledWatchProblem, type ScheduledWatch } from "..
 import { PLAN_RUN_OP, PLAN_RUN_RECORD_FILE } from "../pr-plan-record";
 import { idTokenVar, tradedClouds, type CloudTradeSpec } from "../ci-identity";
 import { prNoteMarker } from "../pr-loop";
+import { COMMENT_ALLOW_GATE_JS, commentAllowList, type CommentAllow } from "../ci-comment-allow";
 import { PRODUCT_MARKER_NAME } from "../pr-plan-note";
 import { gitlabJobArtifacts, type PrCheckArtifacts } from "./pr-checks";
 
@@ -118,6 +119,19 @@ export interface ProductPlanReplanOptions {
    * (`pr-post --not-affected <argument>`).
    */
   notAffected?: boolean;
+  /**
+   * Limit the plan comment to logins and teams (INTENTIUS/terragucci#1461,
+   * `../ci-comment-allow.ts`), on GitHub and Forgejo: the decision step makes
+   * the check before anything is checked out, from the list the generator
+   * wrote into the workflow on the default branch. A commenter the list
+   * leaves out plans nothing; the comment job replies, or the re-plan itself
+   * with `reply`. A dispatch asks no
+   * list, as it asks no permission. `productPipelineJobs` sets it from its
+   * `commentAllow`.
+   */
+  commentAllow?: CommentAllow;
+  /** The secret that holds the token team membership is read with, for `commentAllow`. Default: the job's token. */
+  commentAllowTokenSecret?: string;
 }
 
 /**
@@ -162,6 +176,8 @@ export interface ProductPlanReplanJob {
   reply?: { prefix: string; others: string[] };
   /** With `notAffected` (#4963): the note job's command carries `--not-affected`, and reads the argument as {@link PLAN_ARGUMENT_ENV}. */
   notAffected?: true;
+  /** With `commentAllow`, GitHub and Forgejo: the list the decision step checks the commenter against, and the secret the team read uses. */
+  allow?: { list: CommentAllow; tokenSecret?: string };
 }
 
 /**
@@ -761,6 +777,7 @@ export function productPlanJobs(forge: ForgeKind, env: string, loop: PrLoopPipel
           ...(github && dispatchArg !== undefined ? { dispatch: { argument: dispatchArg } } : {}),
           ...(replies ? { reply: { prefix: `/${words.product}`, others } } : {}),
           ...(replanOpts.notAffected ? { notAffected: true as const } : {}),
+          ...(github && replanOpts.commentAllow && commentAllowList(replanOpts.commentAllow, "plan") ? { allow: { list: replanOpts.commentAllow, ...(replanOpts.commentAllowTokenSecret ? { tokenSecret: replanOpts.commentAllowTokenSecret } : {}) } } : {}),
         }
       : undefined;
     const replan = replan0 && plan.record ? { ...replan0, post: { ...replan0.post, command: `${replan0.post.command} --record-run ${replan0.jobName}` } } : replan0;
@@ -954,8 +971,13 @@ export const REPLAN_DECIDE_JS = replanDecideJs();
  *   get a reply comment with the reason, once the commenter's permission
  *   is known (Forgejo). A dispatch's reason goes to the log alone.
  */
-export function replanDecideJs(opts: { dispatch?: boolean; reply?: boolean } = {}): string {
-  const { dispatch = false, reply = false } = opts;
+export function replanDecideJs(opts: { dispatch?: boolean; reply?: boolean; allow?: boolean } = {}): string {
+  const { dispatch = false, reply = false, allow = false } = opts;
+  // INTENTIUS/terragucci#1461: the pipeline's list for the plan comment, after the permission check; a dispatch asks none.
+  // With `reply` the re-plan speaks for itself (the comment job cannot be there beside it); without, it says nothing and the comment job replies.
+  const allowLine = allow
+    ? `${dispatch ? "if(!dispatch)" : ""}{const asker=e.comment&&e.comment.user&&e.comment.user.login;if(!asker){say("the comment has no author, so nothing is planned again");return}const no=await commentAllowRefusal(asker,"plan");if(no){${reply ? 'await post(no+", so nothing is planned again")' : 'say(no+", so nothing is planned again")'};return}}`
+    : undefined;
   const replyLine = reply
     ? [
         // The reply, as the product: on a dispatch the log alone.
@@ -997,6 +1019,7 @@ export function replanDecideJs(opts: { dispatch?: boolean; reply?: boolean } = {
       : 'const n=e.issue&&e.issue.number;if(!Number.isInteger(n)||!(e.issue.pull_request||e.is_pull)){say("the comment is not on a pull request");process.exit(0)}',
     'const api=String(process.env.GITHUB_API_URL||"").replace(/\\/+$/,""),repo=process.env.GITHUB_REPOSITORY;',
     'const get=async(p)=>{const r=await fetch(api+"/repos/"+repo+p,{headers:{authorization:"token "+process.env.CHANT_REPLAN_TOKEN,accept:"application/json"}});if(!r.ok)throw new Error(p+" answered "+r.status);return r.json()};',
+    ...(allow ? [COMMENT_ALLOW_GATE_JS] : []),
     ...replyLine,
     "(async()=>{",
     ...(reply
@@ -1004,6 +1027,7 @@ export function replanDecideJs(opts: { dispatch?: boolean; reply?: boolean } = {
           // Who asked comes first: a commenter who cannot write gets no reply.
           `if(process.env.CHANT_REPLAN_PERMISSION${dispatch ? "&&!dispatch" : ""}){const who=e.comment&&e.comment.user&&e.comment.user.login;const p=who?await get("/collaborators/"+encodeURIComponent(who)+"/permission"):{};`,
           'if(!["owner","admin","maintain","write"].includes(p.permission)){say((who||"the commenter")+" cannot write to "+repo+", so nothing is planned again");return}}',
+          ...(allowLine ? [`if(!refusal)${allowLine}`] : []),
           "if(refusal){await post(refusal);return}",
           'const pr=await get("/pulls/"+n);',
           'if(pr.state!=="open"){say("pull request "+n+" is not open, so it is not planned again");return}',
@@ -1017,6 +1041,7 @@ export function replanDecideJs(opts: { dispatch?: boolean; reply?: boolean } = {
           'if(!same&&process.env.CHANT_REPLAN_FORKS==="skip"){say("pull request "+n+" is from a fork, and its code never runs with this repository\\u0027s credentials");return}',
           `if(process.env.CHANT_REPLAN_PERMISSION${dispatch ? "&&!dispatch" : ""}){const who=e.comment&&e.comment.user&&e.comment.user.login;const p=who?await get("/collaborators/"+encodeURIComponent(who)+"/permission"):{};`,
           'if(!["owner","admin","maintain","write"].includes(p.permission)){say((who||"the commenter")+" cannot write to "+repo+", so nothing is planned again");return}}',
+          ...(allowLine ? [allowLine] : []),
         ]),
     'const sha=/^[0-9a-f]{40}$/;if(!sha.test(String(pr.head&&pr.head.sha))||!sha.test(String(pr.base&&pr.base.sha)))throw new Error("the pull request names no head or base commit");',
     'out("go","1");out("pr",String(n));out("head",pr.head.sha);out("base",pr.base.sha);out("argument",arg);',

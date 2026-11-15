@@ -249,3 +249,117 @@ describe("EXT001: Extension Constraint Violation", () => {
     expect(diags).toHaveLength(0);
   });
 });
+
+describe("EXT001: schema keywords in a condition", () => {
+  // The S3 constraint as the generated lexicon carries it: OwnershipControls is
+  // required unless AccessControl is one of the three private canned ACLs.
+  const s3Constraint: ExtensionConstraint = {
+    name: "ownershipcontrols",
+    type: "if_then",
+    condition: {
+      properties: {
+        AccessControl: { not: { enum: ["Private", "BucketOwnerFullControl", "BucketOwnerRead"] }, type: "string" },
+      },
+      required: ["AccessControl"],
+    },
+    requirement: { properties: { OwnershipControls: { required: ["Rules"] } }, required: ["OwnershipControls"] },
+  };
+  const s3 = new Map([["AWS::S3::Bucket", [s3Constraint]]]);
+  const bucket = (props: Record<string, unknown>) =>
+    makeCtx({ Resources: { B: { Type: "AWS::S3::Bucket", Properties: props } } });
+
+  test.each(["Private", "BucketOwnerFullControl", "BucketOwnerRead"])(
+    "not enum: AccessControl %s is exempt",
+    (acl) => {
+      expect(checkExtensionConstraints(bucket({ AccessControl: acl }), s3)).toHaveLength(0);
+    },
+  );
+
+  test.each(["PublicRead", "PublicReadWrite", "AuthenticatedRead", "LogDeliveryWrite"])(
+    "still flags: AccessControl %s without OwnershipControls",
+    (acl) => {
+      const diags = checkExtensionConstraints(bucket({ AccessControl: acl }), s3);
+      expect(diags).toHaveLength(1);
+      expect(diags[0].message).toContain("OwnershipControls");
+    },
+  );
+
+  test("still satisfied: public ACL with OwnershipControls", () => {
+    const ctx = bucket({ AccessControl: "PublicRead", OwnershipControls: { Rules: [{ ObjectOwnership: "BucketOwnerPreferred" }] } });
+    expect(checkExtensionConstraints(ctx, s3)).toHaveLength(0);
+  });
+
+  test("no finding without AccessControl", () => {
+    expect(checkExtensionConstraints(bucket({ BucketName: "x" }), s3)).toHaveLength(0);
+  });
+
+  test("undecidable value stays silent: Ref and Fn::If", () => {
+    expect(checkExtensionConstraints(bucket({ AccessControl: { Ref: "Acl" } }), s3)).toHaveLength(0);
+    const cond = { "Fn::If": ["Public", "PublicRead", "Private"] };
+    expect(checkExtensionConstraints(bucket({ AccessControl: cond }), s3)).toHaveLength(0);
+  });
+
+  test("a keyword the check does not evaluate keeps the finding silent", () => {
+    const map = new Map<string, ExtensionConstraint[]>([
+      ["AWS::S3::Bucket", [{
+        name: "unknown-keyword",
+        type: "if_then",
+        condition: { properties: { AccessControl: { format: "something" } }, required: ["AccessControl"] },
+        requirement: { required: ["OwnershipControls"] },
+      }]],
+    ]);
+    expect(checkExtensionConstraints(bucket({ AccessControl: "PublicRead" }), map)).toHaveLength(0);
+  });
+
+  test("type narrows a condition", () => {
+    const map = new Map<string, ExtensionConstraint[]>([
+      ["AWS::S3::Bucket", [{
+        name: "typed",
+        type: "if_then",
+        condition: { properties: { AccessControl: { type: "string" } }, required: ["AccessControl"] },
+        requirement: { required: ["OwnershipControls"] },
+      }]],
+    ]);
+    expect(checkExtensionConstraints(bucket({ AccessControl: "PublicRead" }), map)).toHaveLength(1);
+    expect(checkExtensionConstraints(bucket({ AccessControl: ["x"] }), map)).toHaveLength(0);
+  });
+
+  test("anyOf, oneOf, allOf and a false property schema", () => {
+    const rule = (condition: unknown) =>
+      new Map<string, ExtensionConstraint[]>([
+        ["AWS::ElasticLoadBalancingV2::LoadBalancer", [{
+          name: "c", type: "if_then", condition, requirement: { required: ["Subnets"] },
+        }]],
+      ]);
+    const lb = (props: Record<string, unknown>) =>
+      makeCtx({ Resources: { L: { Type: "AWS::ElasticLoadBalancingV2::LoadBalancer", Properties: props } } });
+    // The generated shape: type is application, or absent.
+    const oneOf = rule({
+      oneOf: [
+        { properties: { Type: { const: "application" } }, required: ["Type"] },
+        { properties: { Type: false } },
+      ],
+    });
+    expect(checkExtensionConstraints(lb({ Type: "application" }), oneOf)).toHaveLength(1);
+    expect(checkExtensionConstraints(lb({ Name: "n" }), oneOf)).toHaveLength(1);
+    expect(checkExtensionConstraints(lb({ Type: "network" }), oneOf)).toHaveLength(0);
+
+    const anyOf = rule({ anyOf: [{ required: ["A"] }, { required: ["B"] }] });
+    expect(checkExtensionConstraints(lb({ B: 1 }), anyOf)).toHaveLength(1);
+    expect(checkExtensionConstraints(lb({ C: 1 }), anyOf)).toHaveLength(0);
+
+    const allOf = rule({ allOf: [{ required: ["A"] }, { not: { required: ["B"] } }] });
+    expect(checkExtensionConstraints(lb({ A: 1 }), allOf)).toHaveLength(1);
+    expect(checkExtensionConstraints(lb({ A: 1, B: 1 }), allOf)).toHaveLength(0);
+  });
+});
+
+describe("EXT001: generated lexicon constraints", () => {
+  const bucket = (props: Record<string, unknown>) =>
+    makeCtx({ Resources: { B: { Type: "AWS::S3::Bucket", Properties: props } } });
+
+  test("AccessControl Private is not flagged; PublicRead without OwnershipControls is", () => {
+    expect(ext001.check(bucket({ AccessControl: "Private" }))).toHaveLength(0);
+    expect(ext001.check(bucket({ AccessControl: "PublicRead" }))).toHaveLength(1);
+  });
+});

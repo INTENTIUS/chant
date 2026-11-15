@@ -188,7 +188,7 @@ spec:
   );
 
   test(
-    "a missing $values file is dangling once: under the helm rule on a hand-written Application, under the path rule on a generated one",
+    "a missing $values file is dangling once, under the helm rule, on a hand-written Application and on a generated one (#5094)",
     async () => {
       const sources = (name: string) => `    - chart: c
       repoURL: https://charts.example.com
@@ -237,9 +237,112 @@ ${sources("{{ .name }}").replace(/^(?=.)/gm, "    ")}      destination:
       const g = await read({ "argo/clusters.yaml": secret("a", "gke"), "argo/web.yaml": hand, "argo/vals.yaml": set });
       const values = (g.dangling ?? []).filter((d) => d.value.includes("helm/")).map((d) => `${d.from} ${d.rule} ${d.value}`);
       expect(values).toEqual([
-        "argo/argo/applicationSetVals/vals-a k8s:K8s::Argo::Application:spec.sources[].helm.valueFiles[] helm/a.yaml",
+        "argo/argo/applicationSetVals/vals-a k8s:K8s::Argo::Application:helmReferences.valuesFiles[] helm/a.yaml",
         "argo/argo/applicationWeb k8s:K8s::Argo::Application:helmReferences.valuesFiles[] helm/x.yaml",
       ]);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "a generated Application's chart and values file join the Helm graph, and the file's extraObjects are nodes other objects join (#5094)",
+    async () => {
+      const set = `apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: eso
+  namespace: argocd
+spec:
+  goTemplate: true
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            cloud: gke
+  template:
+    metadata:
+      name: "eso-{{ .name }}"
+    spec:
+      project: default
+      sources:
+        - chart: external-secrets
+          repoURL: https://charts.example.com
+          targetRevision: 2.0.0
+          helm:
+            valueFiles:
+              - $values/clusters/{{ .name }}/helm/eso.yaml
+        - repoURL: ${ORIGIN}
+          targetRevision: main
+          ref: values
+      destination:
+        server: "{{ .server }}"
+        namespace: external-secrets
+`;
+      const values = `extraObjects:
+  - apiVersion: external-secrets.io/v1
+    kind: ClusterSecretStore
+    metadata:
+      name: store-a
+    spec:
+      provider:
+        gcpsm:
+          projectID: project-a
+`;
+      const externalSecret = `apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: token
+  namespace: web
+spec:
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: store-a
+  data:
+    - secretKey: token
+      remoteRef:
+        key: token
+`;
+      // A hand-written Application with a values file puts a helm node in the graph, so the helm lexicon's catalog, which makes chart nodes, is loaded.
+      const hand = `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: web
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - chart: web
+      repoURL: https://charts.example.com
+      targetRevision: 1.0.0
+      helm:
+        valueFiles:
+          - $values/helm/web.yaml
+    - repoURL: ${ORIGIN}
+      targetRevision: main
+      ref: values
+  destination:
+    name: a
+    namespace: web
+`;
+      const g = await read({ "argo/clusters.yaml": secret("a", "gke"), "argo/eso.yaml": set, "argo/web.yaml": hand, "helm/web.yaml": "replicas: 1\n", "clusters/a/helm/eso.yaml": values, "web/es.yaml": externalSecret });
+      const app = "argo/argo/applicationSetEso/eso-a";
+      const valuesNode = `argo/argo/applicationSetEso/values/clusters/a/helm/eso.yaml`;
+      const store = `${valuesNode}/clusterSecretStoreStoreA`;
+      expect((g.nodes.find((n) => n.id === app)?.attrs as { helmReferences?: unknown }).helmReferences).toEqual({
+        charts: [{ repo: "https://charts.example.com", chart: "external-secrets", version: "2.0.0", valuesFiles: ["clusters/a/helm/eso.yaml"] }],
+        valuesFiles: ["clusters/a/helm/eso.yaml"],
+      });
+      const values_ = g.nodes.find((n) => n.id === valuesNode);
+      expect(values_).toMatchObject({ kind: "Helm::Values", lexicon: "helm", member: "argo", generatedBy: { node: app, generator: "file" } });
+      expect(values_?.attrs).toMatchObject({ path: "clusters/a/helm/eso.yaml", charts: [{ repo: "https://charts.example.com", chart: "external-secrets", version: "2.0.0" }] });
+      expect(g.nodes.find((n) => n.id === store)).toMatchObject({ kind: "K8s::ExternalSecrets::ClusterSecretStore", lexicon: "k8s", member: "argo" });
+      const edges = g.edges.map((e) => `${e.from} > ${e.to} ${e.rule ?? ""}`);
+      expect(edges).toContain(`${app} > ${valuesNode} k8s:K8s::Argo::Application:helmReferences.valuesFiles[]`);
+      expect(edges.some((e) => e.startsWith(`${app} > `) && e.includes("chart:charts.example.com/external-secrets@2.0.0"))).toBe(true);
+      expect(edges.some((e) => e.startsWith(`${valuesNode} > `) && e.endsWith("helm:Helm::Values:charts"))).toBe(true);
+      expect(edges.filter((e) => e.startsWith("web/web/externalSecretToken > ") && e.includes(store))).toHaveLength(1);
+      expect((g.dangling ?? []).filter((d) => d.value.includes("eso.yaml"))).toEqual([]);
+      expectValid(g);
     },
     TIMEOUT,
   );

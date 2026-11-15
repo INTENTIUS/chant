@@ -18,7 +18,18 @@
 import { createHash } from "node:crypto";
 import { passesThrough, type WaveMemberOutcome } from "../wave-blocked";
 import { CONTROL_LEDGER_DIR, type ControlLedgerPort } from "./records";
-import { CONTROL_APPLY_OUTCOMES, CONTROL_OUTCOME_VAR, CONTROL_RUNS_DEPENDENTS, type ControlApplyOutcome } from "./dispatch";
+import {
+  CONTROL_APPLY_OUTCOMES,
+  CONTROL_ENV_VAR,
+  CONTROL_OUTCOME_VAR,
+  CONTROL_RELEASE_VAR,
+  CONTROL_RUN_VAR,
+  CONTROL_RUNS_DEPENDENTS,
+  CONTROL_TRAIN_VAR,
+  controlTrainProblems,
+  type ControlApplyOutcome,
+  type ControlTrainAnswer,
+} from "./dispatch";
 
 export { CONTROL_APPLY_OUTCOMES, CONTROL_OUTCOME_VAR, CONTROL_RUNS_DEPENDENTS, type ControlApplyOutcome };
 
@@ -69,6 +80,12 @@ export interface ControlAppliedRecord {
   outcome: ControlApplyOutcome;
   /** When the control repo took the dispatch, ISO 8601. */
   at: string;
+  /**
+   * The release train the apply answers (#5119): the train, the control
+   * repo's run of its promote, the environment and the release the member
+   * ran. Absent on every other dispatch; a record without it hashes as it did before.
+   */
+  train?: ControlTrainAnswer;
   /** sha256 over the canonical JSON of every other field. */
   digest: string;
 }
@@ -93,6 +110,10 @@ export function controlAppliedProblems(v: unknown): string[] {
   if (!(typeof r.sha === "string" && SHA.test(r.sha))) out.push("sha must be a commit sha");
   if (!CONTROL_APPLY_OUTCOMES.includes(r.outcome as ControlApplyOutcome)) out.push(`outcome must be one of ${CONTROL_APPLY_OUTCOMES.join(", ")}`);
   if (!(typeof r.at === "string" && !Number.isNaN(Date.parse(r.at)))) out.push("at must be a time");
+  if (r.train !== undefined) {
+    if (typeof r.train !== "object" || r.train === null || Array.isArray(r.train)) out.push("train must be a train's answer");
+    else out.push(...controlTrainProblems(r.train as Record<string, unknown>).map((p) => `train.${p}`));
+  }
   if (typeof r.digest !== "string") out.push("digest is missing");
   else if (out.length === 0) {
     const { digest: _d, ...rest } = r as unknown as ControlAppliedRecord;
@@ -148,7 +169,7 @@ export function gitControlAppliedLedger(opts: { cwd?: string } = {}): ControlLed
 /** Appends one record of a dispatch the control repo took. Does not push. */
 export async function recordControlApplied(
   port: ControlLedgerPort,
-  d: { member: string; op: string; sha: string; outcome: ControlApplyOutcome },
+  d: { member: string; op: string; sha: string; outcome: ControlApplyOutcome; train?: ControlTrainAnswer },
   opts: { now?: () => Date } = {},
 ): Promise<{ record: ControlAppliedRecord; commit: string }> {
   const fields: Omit<ControlAppliedRecord, "digest"> = {
@@ -159,6 +180,7 @@ export async function recordControlApplied(
     sha: d.sha,
     outcome: d.outcome,
     at: (opts.now ?? (() => new Date()))().toISOString(),
+    ...(d.train ? { train: { train: d.train.train, run: d.train.run, env: d.train.env, releaseDigest: d.train.releaseDigest } } : {}),
   };
   const record: ControlAppliedRecord = { ...fields, digest: digestOf(fields) };
   const problems = controlAppliedProblems(record);
@@ -184,7 +206,15 @@ export async function recordControlAppliedFromEnv(
   if (!outcome) return { skipped: "the dispatch carries no outcome" };
   if (!CONTROL_APPLY_OUTCOMES.includes(outcome as ControlApplyOutcome)) return { skipped: `the dispatch's outcome "${outcome}" is not one chant knows` };
   if (!SHA.test(sha)) return { skipped: "the dispatch names no commit sha" };
-  const { record } = await recordControlApplied(gitControlAppliedLedger({ cwd: opts.cwd }), { member, op, sha, outcome: outcome as ControlApplyOutcome }, opts.now ? { now: opts.now } : {});
+  // #5119: a train's answer is kept with the train it answers, or not at all.
+  let train: ControlTrainAnswer | undefined;
+  if (env[CONTROL_TRAIN_VAR]) {
+    const t = { train: env[CONTROL_TRAIN_VAR], run: env[CONTROL_RUN_VAR] ?? "", env: env[CONTROL_ENV_VAR] ?? "", releaseDigest: env[CONTROL_RELEASE_VAR] ?? "" };
+    const problems = controlTrainProblems(t);
+    if (problems.length > 0) return { skipped: `the dispatch's train fields are not usable: ${problems.join(", ")}` };
+    train = t as ControlTrainAnswer;
+  }
+  const { record } = await recordControlApplied(gitControlAppliedLedger({ cwd: opts.cwd }), { member, op, sha, outcome: outcome as ControlApplyOutcome, ...(train ? { train } : {}) }, opts.now ? { now: opts.now } : {});
   const { pushLifecycleReport } = await import("../lifecycle/git");
   const pushed = await pushLifecycleReport({ ...(opts.cwd ? { cwd: opts.cwd } : {}) });
   return { recorded: record, ...(pushed.pushWarning ? { pushWarning: pushed.pushWarning } : {}) };

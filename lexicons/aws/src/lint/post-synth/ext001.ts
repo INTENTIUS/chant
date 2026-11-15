@@ -15,7 +15,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { moduleSourceDir } from "@intentius/chant/module-source";
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { parseCFTemplate, type CFResource } from "./cf-refs";
+import { isIntrinsic, parseCFTemplate, type CFResource } from "./cf-refs";
 
 export interface ExtensionConstraint {
   name: string;
@@ -54,40 +54,195 @@ function loadLexiconConstraints(): Map<string, ExtensionConstraint[]> {
 }
 
 /**
- * Check if a JSON schema "if" condition matches resource properties.
+ * Three-valued result of evaluating a JSON schema against a value: true (the
+ * schema holds), false (it does not), undefined (it cannot be decided from the
+ * template alone). A condition fires a finding only on `true`, so an
+ * undecidable one stays silent. A wrong finding costs more than a missed one
+ * here, and an error-severity rule stops the build.
+ */
+type Verdict = boolean | undefined;
+
+/** Keywords that describe a schema and never change what it accepts. */
+const ANNOTATION_KEYWORDS = new Set([
+  "title", "description", "$comment", "$schema", "$id", "examples", "default", "deprecated",
+]);
+
+function sameJson(a: unknown, b: unknown): boolean {
+  return a === b || JSON.stringify(a) === JSON.stringify(b);
+}
+
+/** Combine the verdicts of keywords that must all hold. */
+function all(verdicts: Verdict[]): Verdict {
+  if (verdicts.includes(false)) return false;
+  if (verdicts.includes(undefined)) return undefined;
+  return true;
+}
+
+function matchesType(type: string, value: unknown): Verdict {
+  switch (type) {
+    case "string": return typeof value === "string";
+    case "boolean": return typeof value === "boolean";
+    case "null": return value === null;
+    case "array": return Array.isArray(value);
+    case "object": return typeof value === "object" && value !== null && !Array.isArray(value);
+    case "number": return typeof value === "number" ? true : typeof value === "string" ? undefined : false;
+    case "integer":
+      if (typeof value === "number") return Number.isInteger(value);
+      return typeof value === "string" ? undefined : false;
+    default: return undefined;
+  }
+}
+
+/**
+ * Evaluate a JSON schema against a present value. Supports the keywords the
+ * generated extension constraints use. Any other keyword makes the answer
+ * undecidable, and so does a value that is a CloudFormation intrinsic
+ * (Ref, Fn::*) where the keyword needs the concrete value.
+ *
+ * `topLevel` is set for the resource's own Properties object. There a property
+ * named by a schema but absent from the resource does not satisfy it, which is
+ * how this check has always read conditions (cfn-lint pairs them with
+ * `required`); a `false` schema is the one exception and means "absent".
+ */
+function evalSchema(schema: unknown, value: unknown, topLevel = false): Verdict {
+  if (schema === true) return true;
+  if (schema === false) return false;
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)) return undefined;
+  const s = schema as Record<string, unknown>;
+  const concrete = !isIntrinsic(value);
+  const verdicts: Verdict[] = [];
+
+  for (const [keyword, arg] of Object.entries(s)) {
+    if (ANNOTATION_KEYWORDS.has(keyword)) continue;
+    switch (keyword) {
+      case "const":
+        verdicts.push(concrete ? sameJson(value, arg) : undefined);
+        break;
+      case "enum":
+        verdicts.push(!Array.isArray(arg) ? undefined : concrete ? arg.some((e) => sameJson(value, e)) : undefined);
+        break;
+      case "pattern": {
+        if (typeof arg !== "string" || !concrete || typeof value !== "string") {
+          verdicts.push(undefined);
+          break;
+        }
+        try {
+          verdicts.push(new RegExp(arg).test(value));
+        } catch {
+          verdicts.push(undefined); // not a JavaScript regular expression
+        }
+        break;
+      }
+      case "type": {
+        if (!concrete) {
+          verdicts.push(undefined);
+          break;
+        }
+        const types = Array.isArray(arg) ? arg : [arg];
+        const results = types.map((t) => (typeof t === "string" ? matchesType(t, value) : undefined));
+        verdicts.push(results.includes(true) ? true : results.includes(undefined) ? undefined : false);
+        break;
+      }
+      case "not": {
+        const v = evalSchema(arg, value);
+        verdicts.push(v === undefined ? undefined : !v);
+        break;
+      }
+      case "allOf":
+        verdicts.push(Array.isArray(arg) ? all(arg.map((a) => evalSchema(a, value))) : undefined);
+        break;
+      case "anyOf": {
+        if (!Array.isArray(arg)) {
+          verdicts.push(undefined);
+          break;
+        }
+        const results = arg.map((a) => evalSchema(a, value));
+        verdicts.push(results.includes(true) ? true : results.includes(undefined) ? undefined : false);
+        break;
+      }
+      case "oneOf": {
+        if (!Array.isArray(arg)) {
+          verdicts.push(undefined);
+          break;
+        }
+        const results = arg.map((a) => evalSchema(a, value));
+        const yes = results.filter((r) => r === true).length;
+        const unknown = results.filter((r) => r === undefined).length;
+        verdicts.push(yes > 1 ? false : unknown === 0 ? yes === 1 : undefined);
+        break;
+      }
+      case "required": {
+        if (!Array.isArray(arg)) {
+          verdicts.push(undefined);
+          break;
+        }
+        if (typeof value !== "object" || value === null || Array.isArray(value)) {
+          verdicts.push(concrete ? true : undefined);
+          break;
+        }
+        verdicts.push(arg.every((r) => r in (value as Record<string, unknown>)));
+        break;
+      }
+      case "properties": {
+        if (!arg || typeof arg !== "object" || Array.isArray(arg)) {
+          verdicts.push(undefined);
+          break;
+        }
+        if (typeof value !== "object" || value === null || Array.isArray(value)) {
+          verdicts.push(concrete ? true : undefined);
+          break;
+        }
+        const obj = value as Record<string, unknown>;
+        for (const [name, sub] of Object.entries(arg as Record<string, unknown>)) {
+          const present = name in obj;
+          if (sub === false) verdicts.push(!present);
+          else if (!present) verdicts.push(topLevel ? false : true);
+          else verdicts.push(evalSchema(sub, obj[name]));
+        }
+        break;
+      }
+      case "minItems":
+      case "maxItems": {
+        if (typeof arg !== "number" || !concrete) {
+          verdicts.push(undefined);
+          break;
+        }
+        if (!Array.isArray(value)) {
+          verdicts.push(true);
+          break;
+        }
+        verdicts.push(keyword === "minItems" ? value.length >= arg : value.length <= arg);
+        break;
+      }
+      case "contains": {
+        if (!concrete) {
+          verdicts.push(undefined);
+          break;
+        }
+        if (!Array.isArray(value)) {
+          verdicts.push(true);
+          break;
+        }
+        const results = value.map((item) => evalSchema(arg, item));
+        verdicts.push(results.includes(true) ? true : results.includes(undefined) ? undefined : false);
+        break;
+      }
+      case "additionalProperties":
+        verdicts.push(arg === true ? true : undefined);
+        break;
+      default:
+        verdicts.push(undefined); // a keyword this check does not evaluate
+    }
+  }
+  return all(verdicts);
+}
+
+/**
+ * Check if a JSON schema "if" condition matches resource properties. A
+ * condition that cannot be decided does not match.
  */
 function matchesCondition(condition: unknown, properties: Record<string, unknown>): boolean {
-  if (!condition || typeof condition !== "object") return false;
-  const cond = condition as Record<string, unknown>;
-
-  // { properties: { PropName: { const: value } } }
-  if (cond.properties && typeof cond.properties === "object") {
-    const condProps = cond.properties as Record<string, unknown>;
-    for (const [propName, schema] of Object.entries(condProps)) {
-      if (!schema || typeof schema !== "object") continue;
-      const s = schema as Record<string, unknown>;
-
-      if ("const" in s) {
-        if (properties[propName] !== s.const) return false;
-      }
-      if ("enum" in s && Array.isArray(s.enum)) {
-        if (!s.enum.includes(properties[propName])) return false;
-      }
-      if ("pattern" in s && typeof s.pattern === "string") {
-        const val = properties[propName];
-        if (typeof val !== "string" || !new RegExp(s.pattern).test(val)) return false;
-      }
-    }
-  }
-
-  // { required: ["PropName"] } — check the properties exist
-  if (Array.isArray(cond.required)) {
-    for (const req of cond.required) {
-      if (!(req in properties)) return false;
-    }
-  }
-
-  return true;
+  return evalSchema(condition, properties, true) === true;
 }
 
 /**

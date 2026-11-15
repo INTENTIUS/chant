@@ -90,6 +90,20 @@ describe("k8s import round trip", () => {
     expect(await roundTrip(yaml)).toEqual(loadAll(yaml));
   });
 
+  test("an rbac v1beta1 Role keeps its apiVersion (#5075)", async () => {
+    const yaml = [
+      "apiVersion: rbac.authorization.k8s.io/v1beta1",
+      "kind: Role",
+      "metadata:",
+      "  name: reader",
+      "rules:",
+      "- apiGroups: ['']",
+      "  resources: [pods]",
+      "  verbs: [get]",
+    ].join("\n");
+    expect(await roundTrip(yaml)).toEqual(loadAll(yaml));
+  });
+
   test("an autoscaling/v2 HorizontalPodAutoscaler is generated without an apiVersion property", async () => {
     const yaml = [
       "apiVersion: autoscaling/v2",

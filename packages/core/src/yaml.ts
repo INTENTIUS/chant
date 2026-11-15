@@ -43,6 +43,14 @@ function definedEntries(obj: Record<string, unknown>): [string, unknown][] {
   return Object.entries(obj).filter(([, val]) => val !== undefined);
 }
 
+/** A double-quoted scalar. JSON escapes are YAML escapes; the characters JSON leaves raw are escaped too. */
+function doubleQuote(value: string): string {
+  return JSON.stringify(value).replace(
+    /[\x7f\x85\u2028\u2029\ufeff]/g,
+    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
+}
+
 export function emitYAML(value: unknown, indent: number): string {
   const prefix = "  ".repeat(indent);
 
@@ -64,12 +72,26 @@ export function emitYAML(value: unknown, indent: number): string {
   }
 
   if (typeof value === "string") {
-    // Multiline strings use YAML literal block scalar (|)
+    // Multiline strings use a YAML literal block scalar. The chomping
+    // indicator carries the string's own ending (#5073): `|-` when it has no
+    // final newline, `|` for exactly one, `|+` for more.
     if (value.includes("\n")) {
-      const lines = value.split("\n");
-      // Trim trailing empty line if present (common for template strings)
-      const trimmed = lines[lines.length - 1] === "" ? lines.slice(0, -1) : lines;
-      return "|\n" + trimmed.map((l) => `${prefix}${l}`).join("\n");
+      const body = value.replace(/\n+$/, "");
+      const finalNewlines = value.length - body.length;
+      // Text a literal block cannot carry faithfully (a string of only
+      // newlines, carriage returns, control characters, the Unicode line
+      // separators) is written double-quoted instead.
+      if (body.trim() === "" || /[\r\x00-\x08\x0b\x0c\x0e-\x1f\x7f\x85\u2028\u2029\ufeff]/.test(value)) {
+        return doubleQuote(value);
+      }
+      const chomp = finalNewlines === 0 ? "-" : finalNewlines === 1 ? "" : "+";
+      // A first line that starts with a space needs an explicit indentation
+      // indicator, relative to the parent node, which is always two columns.
+      const firstText = body.split("\n").find((l) => l !== "");
+      const indicator = firstText !== undefined && firstText.startsWith(" ") ? "2" : "";
+      const lines = body.split("\n");
+      for (let i = 1; i < finalNewlines; i++) lines.push("");
+      return `|${indicator}${chomp}\n` + lines.map((l) => `${prefix}${l}`).join("\n");
     }
     // Quote strings that could be misinterpreted
     if (
@@ -77,8 +99,6 @@ export function emitYAML(value: unknown, indent: number): string {
       value === "true" ||
       value === "false" ||
       value === "null" ||
-      value === "yes" ||
-      value === "no" ||
       value.includes(": ") ||
       value.includes("#") ||
       value.startsWith("*") ||
@@ -95,7 +115,15 @@ export function emitYAML(value: unknown, indent: number): string {
       // whitespace, a signed or dotted number, and the other spellings of
       // booleans, null and the float constants (#3006).
       /^[-?:](?:\s|$)|^[,\]}|>%@`]|:$|^\s|\s$|^[-+.]\d/.test(value) ||
-      /^(?:true|false|null|~|yes|no|[-+]?\.(?:inf|nan))$/i.test(value)
+      /^(?:true|false|null|~|[-+]?\.(?:inf|nan))$/i.test(value) ||
+      // YAML 1.1 reads these as other types: its booleans `y`, `n`, `yes`,
+      // `no`, `on` and `off` in any case, the value indicator `=` (which a 1.1
+      // parser refuses outright), and the merge key `<<` (#5074). Octal-looking
+      // and sexagesimal numbers (`0755`, `1:30`) start with a digit and are
+      // quoted above.
+      /^(?:y|n|yes|no|on|off)$/i.test(value) ||
+      value === "=" ||
+      value === "<<"
     ) {
       // Use single quotes, escaping internal single quotes
       return `'${value.replace(/'/g, "''")}'`;

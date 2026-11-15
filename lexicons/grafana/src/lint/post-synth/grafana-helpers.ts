@@ -14,8 +14,12 @@ import type { PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lin
 import type { SerializerResult } from "@intentius/chant/serializer";
 import { loadAll } from "js-yaml";
 import { looksLikeAlertingProvisioning, looksLikeDashboard, looksLikeDashboardProvisioning, looksLikeDatasourceProvisioning } from "../../detect";
-import { externalDatasourceRecord, type ProvisionedDatasource } from "../../build";
-import { isExternalDatasource } from "../../datasource";
+import { dashboardUid, externalDatasourceRecord, type ProvisionedDatasource } from "../../build";
+import { isAlertRuleEntity, isAlertRuleGroupEntity } from "../../alerting";
+import { isDashboardEntity } from "../../dashboard";
+import { isDatasourceDeclaration, isExternalDatasource } from "../../datasource";
+import { isFolderEntity } from "../../folder";
+import { slugUid } from "../../util";
 import { issuesFor, type GrafanaArtifacts, type GrafanaIssueCode } from "../../validate-output";
 
 function parse(text: string, name: string): unknown[] {
@@ -73,13 +77,42 @@ export function grafanaArtifacts(ctx: PostSynthContext): GrafanaArtifacts {
   return out;
 }
 
+/**
+ * The entities-map key (the export name, which names the declaring file in
+ * provenance) for each name a grafana finding carries as its `entity`: a
+ * dashboard's, folder's or alert rule's uid, a datasource's uid or name. The
+ * build output has no export names, so a finding that names the uid alone
+ * would not resolve to a source file and would be reported at chant.config.ts.
+ * An alert rule declared only inside a rule group resolves to the group.
+ * A name that is not declared in the build is left out.
+ */
+export function declaredKeys(entities: ReadonlyMap<string, unknown> | undefined): Map<string, string> {
+  const own = new Map<string, string>();
+  const viaGroup = new Map<string, string>();
+  for (const [key, e] of entities ?? []) {
+    if (isDashboardEntity(e)) own.set(dashboardUid(e, key), key);
+    else if (isFolderEntity(e)) own.set(e.uid, key);
+    else if (isDatasourceDeclaration(e)) {
+      own.set(e.uid, key);
+      const name = (e.props as { name?: unknown }).name;
+      if (typeof name === "string" && !own.has(name)) own.set(name, key);
+    } else if (isAlertRuleEntity(e)) own.set(e.props.uid ?? slugUid(e.props.title), key);
+    else if (isAlertRuleGroupEntity(e)) {
+      for (const rule of e.props.rules) if (isAlertRuleEntity(rule)) viaGroup.set(rule.props.uid ?? slugUid(rule.props.title), key);
+    }
+  }
+  for (const [name, key] of viaGroup) if (!own.has(name)) own.set(name, key);
+  return own;
+}
+
 /** Diagnostics for one check across the build's output. */
 export function grafanaDiagnostics(ctx: PostSynthContext, code: GrafanaIssueCode): PostSynthDiagnostic[] {
+  const keys = declaredKeys(ctx.entities);
   return issuesFor(code, grafanaArtifacts(ctx)).map((i) => ({
     checkId: i.code,
     severity: i.severity,
     message: i.message,
-    ...(i.entity ? { entity: i.entity } : {}),
+    ...(i.entity ? { entity: keys.get(i.entity) ?? i.entity } : {}),
     lexicon: "grafana",
   }));
 }

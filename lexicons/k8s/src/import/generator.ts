@@ -14,7 +14,7 @@ import {
 } from "@intentius/chant/import/embedded";
 import { SECRET_DECLARATION_ENTITY_TYPE } from "@intentius/chant/secret-provenance";
 import { isMaskedValueRef } from "../index-import";
-import { exportedClassFor } from "./typed-classes";
+import { importClassFor } from "./typed-classes";
 
 const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 
@@ -98,7 +98,7 @@ export class K8sGenerator implements TypeScriptGenerator {
     // Collect which constructors are needed
     const usedConstructors = new Set<string>();
     for (const resource of ir.resources) {
-      const cls = this.resolveClass(resource.type);
+      const cls = this.resolveClass(resource);
       if (!cls) continue;
       usedConstructors.add(cls);
 
@@ -130,7 +130,7 @@ export class K8sGenerator implements TypeScriptGenerator {
         lines.push("");
         continue;
       }
-      const cls = this.resolveClass(resource.type);
+      const cls = this.resolveClass(resource);
       if (!cls) {
         const manifest = this.emitManifest(resource);
         if (manifest) {
@@ -186,11 +186,13 @@ export class K8sGenerator implements TypeScriptGenerator {
   }
 
   /**
-   * Resolve a K8s type name to a constructor class name, or undefined when
-   * the lexicon exports none (the resource is written as a `k8sManifest`).
+   * Resolve a resource to a constructor class name, or undefined when the
+   * lexicon exports none or the class builds another apiVersion than the
+   * resource has (the resource is written as a `k8sManifest`, see
+   * `importClassFor`).
    */
-  private resolveClass(type: string): string | undefined {
-    return exportedClassFor(type);
+  private resolveClass(resource: ResourceIR): string | undefined {
+    return importClassFor(resource).cls;
   }
 
   /**

@@ -32,7 +32,8 @@ import { CHANT_EXIT } from "../../exit-codes";
 import { appendRunRecord, readRunLedger } from "../../lifecycle/run-ledger";
 import { pushLifecycle } from "../../lifecycle/git";
 import { resolveCiRun } from "../../lifecycle/release-ledger";
-import { FORGE_KINDS, forgeFromEnv, type ForgeKind, type PrForge } from "../../pr-forge";
+import { COMMENT_ALLOW_TOKEN_ENV, type CommentAllowReads } from "../../ci-comment-allow";
+import { FORGE_KINDS, forgeFromEnv, forgeTargetFromEnv, type ForgeKind, type PrForge } from "../../pr-forge";
 import { formatError, formatInfo } from "../format";
 import type { CommandContext } from "../registry";
 
@@ -64,6 +65,14 @@ function eventOf(): unknown {
   }
 }
 
+/** The reads that answer team membership for `comment_allow`: the pipeline's team token when it has one, else the job's own. */
+async function teamReadsFor(kind: "github" | "forgejo"): Promise<CommentAllowReads> {
+  const { forgeReadsFor } = await import("../../pr-forge-reads");
+  const target = forgeTargetFromEnv(process.env, { kind });
+  const token = process.env[COMMENT_ALLOW_TOKEN_ENV];
+  return forgeReadsFor(token ? { ...target, token } : target);
+}
+
 function workDir(name: string): string {
   return join(process.env.RUNNER_TEMP || process.env.TMPDIR || tmpdir(), name);
 }
@@ -86,7 +95,9 @@ export async function runAgentCommandLine(ctx: CommandContext): Promise<number> 
 
   try {
     if (action === "prepare") {
-      const d = await prepareAgentRun({ settings, words, dir, env: process.env, event: eventOf(), forge: settings.on === "comment" && kind !== "gitlab" ? forge() : undefined, readRuns, git, now: new Date() });
+      // INTENTIUS/terragucci#1461: team membership is read with the pipeline's team token when it has one, else the job's.
+      const teams = settings.commentAllow && settings.on === "comment" && kind !== "gitlab" ? await teamReadsFor(kind as "github" | "forgejo") : undefined;
+      const d = await prepareAgentRun({ settings, words, dir, env: process.env, event: eventOf(), forge: settings.on === "comment" && kind !== "gitlab" ? forge() : undefined, ...(teams ? { teams } : {}), readRuns, git, now: new Date() });
       console.error(formatInfo(d.go ? `${words.product} agent: runs on ${d.sha?.slice(0, 12)}${d.pr ? ` for #${d.pr}` : ""}` : `${words.product} agent: does not run: ${d.reason}`));
       return CHANT_EXIT.done;
     }

@@ -23,6 +23,7 @@
  */
 
 import { CHECKOUT_TOKEN_ENV, checkoutScript, dropForgeTokens, handoverOutputs, handoverTrap, takeOverScript } from "@intentius/chant/ci-handover";
+import { COMMENT_ALLOW_TOKEN_ENV } from "@intentius/chant/ci-comment-allow";
 import { githubRunsOn, GITHUB_JOB_TOKEN, githubSecret, githubSecretOrJobToken, type CiRunner } from "@intentius/chant/ci-jobs";
 import {
   AGENT_DECISION_FILE,
@@ -146,7 +147,7 @@ export function githubAgentJobs(i: GithubAgentJobsInput): { agent: Record<string
       ...i.setup,
       ...before,
       // Reads only: the comment, the commenter's access, the pull request's head and the ledger.
-      { name: "Decide whether the agent runs", env: { GITHUB_TOKEN: GITHUB_JOB_TOKEN }, run: lines.prepare },
+      { name: "Decide whether the agent runs", env: { GITHUB_TOKEN: GITHUB_JOB_TOKEN, ...(comment && s.commentAllow && s.commentAllowTokenEnv ? { [COMMENT_ALLOW_TOKEN_ENV]: githubSecret(s.commentAllowTokenEnv) } : {}) }, run: lines.prepare },
       // The job's last step: the model's key and no forge token, and the agent directory handed on however it ends.
       {
         id: AGENT_STEP_ID,

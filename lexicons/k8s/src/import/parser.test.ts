@@ -197,7 +197,37 @@ metadata:
     expect(ir.warnings![0]).toContain("chant generate");
   });
 
+  test("an object at an apiVersion its class does not build is warned about by name (#5075)", () => {
+    const ir = parser.parse(
+      "apiVersion: rbac.authorization.k8s.io/v1beta1\nkind: ClusterRole\nmetadata:\n  name: old\nrules: []\n",
+    );
+    expect(ir.warnings).toHaveLength(1);
+    expect(ir.warnings![0]).toContain("ClusterRole old");
+    expect(ir.warnings![0]).toContain("rbac.authorization.k8s.io/v1beta1");
+    expect(ir.warnings![0]).toContain("builds rbac.authorization.k8s.io/v1,");
+  });
+
+  test("an autoscaling/v1 HorizontalPodAutoscaler keeps its class and raises no warning (#5075)", () => {
+    const ir = parser.parse("apiVersion: autoscaling/v1\nkind: HorizontalPodAutoscaler\nmetadata:\n  name: h\n");
+    expect(ir.warnings).toBeUndefined();
+  });
+
   test("a kind with a class raises no warning", () => {
     expect(parser.parse("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: c\n").warnings).toBeUndefined();
+  });
+
+  test("a metadata.name that is not a string (a {{name}} placeholder) is a warning, not a crash", () => {
+    const ir = parser.parse("apiVersion: v1\nkind: Namespace\nmetadata:\n  name: {{name}}\n");
+    expect(ir.resources).toHaveLength(1);
+    expect(ir.resources[0].logicalId).toBe("namespace");
+    expect(ir.warnings).toHaveLength(1);
+    expect(ir.warnings![0]).toContain("Namespace (v1): metadata.name is a mapping, not a string");
+    expect(ir.warnings![0]).toContain("{{name}}");
+  });
+
+  test("a numeric metadata.name is named in the warning", () => {
+    const ir = parser.parse("apiVersion: v1\nkind: Namespace\nmetadata:\n  name: 123\n");
+    expect(ir.resources[0].logicalId).toBe("namespace");
+    expect(ir.warnings![0]).toContain("metadata.name is a number, not a string");
   });
 });

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Declarable } from "@intentius/chant/declarable";
-import { helmChartKey, kustomizationDocument, readHelmReferences, stampHelmReferences } from "./helm-references";
+import { generatedValuesNodes, helmChartKey, kustomizationDocument, readHelmReferences, stampGeneratedApplication, stampHelmReferences } from "./helm-references";
 
 const dirs: string[] = [];
 function workspace(files: Record<string, string>): string {
@@ -107,4 +107,43 @@ describe("readHelmReferences", () => {
 
 test("helmChartKey drops the scheme and ends at the version", () => {
   expect(helmChartKey({ repo: "https://h.example.com", chart: "c", version: "1" })).toBe("h.example.com/c@1");
+});
+
+describe("a generated Application (#5094)", () => {
+  const generated = stampGeneratedApplication(
+    app({
+      sources: [
+        { repoURL: "https://charts.example.com", chart: "eso", targetRevision: "2.0.0", helm: { valueFiles: ["$values/clusters/a/eso.yaml", "$values/../outside.yaml"] } },
+        { repoURL: "https://example.com/repo.git", path: "clusters/a/app", helm: { valueFiles: ["local.yaml"] } },
+        { repoURL: "https://example.com/repo.git", ref: "values" },
+      ],
+    }),
+  );
+
+  test("gets the stamp the reader gives one written by hand, with no directory read", () => {
+    expect(generated.helmReferences).toEqual({
+      charts: [{ repo: "https://charts.example.com", chart: "eso", version: "2.0.0", valuesFiles: ["clusters/a/eso.yaml"] }],
+      valuesFiles: ["clusters/a/app/local.yaml", "clusters/a/eso.yaml", "$values/../outside.yaml"],
+    });
+  });
+
+  test("its values files that exist are Helm::Values nodes with their extraObjects, and one its member holds is not read again", () => {
+    const files: Record<string, string> = {
+      "clusters/a/eso.yaml": "extraObjects:\n  - apiVersion: external-secrets.io/v1\n    kind: ClusterSecretStore\n    metadata:\n      name: s\n  - apiVersion: external-secrets.io/v1\n    kind: ClusterSecretStore\n    metadata:\n      name: s\n",
+      "clusters/a/app/local.yaml": "a: 1\n",
+    };
+    const reads: string[] = [];
+    const readFile = (p: string) => (reads.push(p), files[p]);
+    const node = { id: "m/m/applicationSetX/a", kind: "K8s::Argo::Application", lexicon: "k8s", member: "m", attrs: generated } as never;
+    const held = { id: "m/m/values/clusters/a/app/local.yaml", kind: "Helm::Values", lexicon: "helm", member: "m", attrs: { path: "clusters/a/app/local.yaml" } } as never;
+    const out = generatedValuesNodes(node, readFile, [held]);
+    expect(out.map((f) => [f.key, f.kind, f.lexicon])).toEqual([
+      ["values/clusters/a/eso.yaml", "Helm::Values", "helm"],
+      ["values/clusters/a/eso.yaml/clusterSecretStoreS", "K8s::ExternalSecrets::ClusterSecretStore", "k8s"],
+      ["values/clusters/a/eso.yaml/clusterSecretStoreS~2", "K8s::ExternalSecrets::ClusterSecretStore", "k8s"],
+    ]);
+    expect(out[0]!.attrs).toMatchObject({ path: "clusters/a/eso.yaml", charts: [{ repo: "https://charts.example.com", chart: "eso", version: "2.0.0" }] });
+    expect((out[1]!.attrs.metadata as { annotations: Record<string, string> }).annotations["chant.intentius.io/helm-values"]).toBe("clusters/a/eso.yaml");
+    expect(reads).toEqual(["clusters/a/eso.yaml"]);
+  });
 });

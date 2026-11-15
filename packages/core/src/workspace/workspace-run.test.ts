@@ -298,7 +298,7 @@ describe("release trains", () => {
 
   test("refuses when any member has no release, so a train never leaves one out", () => {
     const picked = pickTrain([{ member: "api", releases: [rel("api", "sha256:2", "v2")] }, { member: "web", releases: [] }], new Map([["ghost", "v1"]]));
-    expect(picked).toEqual({ problems: ["--pin ghost: not a chant member of the workspace", "member web has no release; cut one with chant release cut in its directory"] });
+    expect(picked).toEqual({ problems: ["--pin ghost: not a chant or repo member of the workspace", "member web has no release; cut one with chant release cut in its directory"] });
   });
 });
 

@@ -112,7 +112,21 @@ const cfnYamlTypes = [
   }),
 ];
 
-export const CF_SCHEMA = yaml.DEFAULT_SCHEMA.extend(cfnYamlTypes);
+/**
+ * js-yaml's default schema without the YAML 1.1 timestamp type. With it, an
+ * unquoted `Version: 2012-10-17` is read as a `Date`, which the generator then
+ * writes as `{}` (#5076). CloudFormation reads such a value as the string it
+ * was written as, so the schema has no implicit timestamp resolver and a
+ * date-like scalar (or a full ISO timestamp) stays a string. Merge keys and
+ * the other default types are kept.
+ */
+// js-yaml exports its built-in types at runtime; @types/js-yaml does not declare them.
+const builtin = (yaml as unknown as { types: Record<"merge" | "binary" | "omap" | "pairs" | "set", yaml.Type> }).types;
+
+export const CF_SCHEMA = yaml.CORE_SCHEMA.extend({
+  implicit: [builtin.merge],
+  explicit: [builtin.binary, builtin.omap, builtin.pairs, builtin.set, ...cfnYamlTypes],
+});
 
 /**
  * CloudFormation template structure

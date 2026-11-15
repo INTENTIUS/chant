@@ -1,0 +1,3 @@
+module "edge" {
+  source = "./edge"
+}

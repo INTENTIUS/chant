@@ -66,6 +66,42 @@ export const CONTROL_SHA_VAR = "CHANT_CONTROL_SHA";
 export const CONTROL_OUTCOME_VAR = "CHANT_CONTROL_OUTCOME";
 
 /**
+ * The variables a train's answer travels in (#5119): the release train and
+ * the control repo's run of its promote, the environment, and the release
+ * the member ran. A member's train job sets them; its dispatch step reads
+ * them; the control repo's step reads them back.
+ */
+export const CONTROL_TRAIN_VAR = "CHANT_CONTROL_TRAIN";
+export const CONTROL_RUN_VAR = "CHANT_CONTROL_RUN";
+export const CONTROL_ENV_VAR = "CHANT_CONTROL_ENV";
+export const CONTROL_RELEASE_VAR = "CHANT_CONTROL_RELEASE";
+
+/** A release train's id, as `chant workspace train` writes it. */
+export const CONTROL_TRAIN_ID = /^train-[A-Za-z0-9-]{1,64}$/;
+/** A workspace run's id, as `chant workspace train promote` writes it. */
+export const CONTROL_RUN_ID = /^ws-[A-Za-z0-9-]{1,64}$/;
+/** A release digest: `<scheme>:<64 hex digits>`, such as `jcs1-sha256:...`. */
+export const CONTROL_RELEASE_DIGEST = /^[a-z0-9]+(-[a-z0-9]+)*:[0-9a-f]{64}$/;
+
+/** What a member's answer to a train's dispatch carries besides the apply (#5119). */
+export interface ControlTrainAnswer {
+  train: string;
+  run: string;
+  env: string;
+  releaseDigest: string;
+}
+
+/** The problems with a train's answer, or [] when it is usable. */
+export function controlTrainProblems(t: Partial<Record<keyof ControlTrainAnswer, unknown>>): string[] {
+  const out: string[] = [];
+  if (!(typeof t.train === "string" && CONTROL_TRAIN_ID.test(t.train))) out.push("train must be a release train's id");
+  if (!(typeof t.run === "string" && CONTROL_RUN_ID.test(t.run))) out.push("run must be a workspace run's id");
+  if (!(typeof t.env === "string" && CONTROL_NAME.test(t.env))) out.push("env must be an environment's name");
+  if (!(typeof t.releaseDigest === "string" && CONTROL_RELEASE_DIGEST.test(t.releaseDigest))) out.push("releaseDigest must be a release digest");
+  return out;
+}
+
+/**
  * What a member's op waves did, as its dispatch says it (#4617, `applyOutcomeOf` in ./applied.ts):
  * - `applied`: at least one run applied, and every other run applied or had nothing to apply.
  * - `partial`: some runs applied, and others failed, were blocked, refused or wait.
@@ -247,6 +283,8 @@ export interface ControlDispatch {
   sha: string;
   /** What the member's op waves did (#4617). Absent from the pull request loop's dispatch, which is sent on green only. */
   outcome?: ControlApplyOutcome;
+  /** The train the apply answers (#5119), when the member ran for one. */
+  train?: ControlTrainAnswer;
 }
 
 /** Where the token goes in a {@link ControlDispatchRequest}. */
@@ -270,6 +308,16 @@ function checkDispatch(d: ControlDispatch): void {
   if (!CONTROL_NAME.test(d.op)) throw new ControlConfigError(`the dispatch's op "${d.op}" is not an Op name`);
   if (!SHA.test(d.sha)) throw new ControlConfigError(`the dispatch names no commit sha ("${d.sha}")`);
   if (d.outcome !== undefined && !CONTROL_APPLY_OUTCOMES.includes(d.outcome)) throw new ControlConfigError(`the dispatch's outcome "${d.outcome}" is not one of ${CONTROL_APPLY_OUTCOMES.join(", ")}`);
+  if (d.train !== undefined) {
+    if (d.outcome === undefined) throw new ControlConfigError("a train's answer carries the outcome of the member's run");
+    const problems = controlTrainProblems(d.train);
+    if (problems.length > 0) throw new ControlConfigError(`the dispatch's train fields: ${problems.join(", ")}`);
+  }
+}
+
+/** A train's answer as payload fields (#5119): the same names in a GitHub `client_payload` and Forgejo `inputs`. */
+function trainFields(d: ControlDispatch): Record<string, string> {
+  return d.train ? { train: d.train.train, run: d.train.run, env: d.train.env, release: d.train.releaseDigest } : {};
 }
 
 /**
@@ -286,7 +334,7 @@ export function controlDispatchRequest(target: ControlTarget, d: ControlDispatch
       url: `${target.apiBase}/repos/${target.path}/dispatches`,
       method: "POST",
       headers: { Accept: "application/vnd.github+json", "Content-Type": "application/json" },
-      body: { json: { event_type: controlDispatchEvent(wordsIn), client_payload: { member: d.member, op: d.op, sha: d.sha, ...(d.outcome ? { outcome: d.outcome } : {}) } } },
+      body: { json: { event_type: controlDispatchEvent(wordsIn), client_payload: { member: d.member, op: d.op, sha: d.sha, ...(d.outcome ? { outcome: d.outcome } : {}), ...trainFields(d) } } },
       token: { in: "header", name: "Authorization", scheme: "Bearer" },
     };
   }
@@ -302,6 +350,14 @@ export function controlDispatchRequest(target: ControlTarget, d: ControlDispatch
           [`variables[${CONTROL_OP_VAR}]`, d.op],
           [`variables[${CONTROL_SHA_VAR}]`, d.sha],
           ...(d.outcome ? ([[`variables[${CONTROL_OUTCOME_VAR}]`, d.outcome]] as Array<[string, string]>) : []),
+          ...(d.train
+            ? ([
+                [`variables[${CONTROL_TRAIN_VAR}]`, d.train.train],
+                [`variables[${CONTROL_RUN_VAR}]`, d.train.run],
+                [`variables[${CONTROL_ENV_VAR}]`, d.train.env],
+                [`variables[${CONTROL_RELEASE_VAR}]`, d.train.releaseDigest],
+              ] as Array<[string, string]>)
+            : []),
         ],
       },
       token: { in: "form", field: "token" },
@@ -311,7 +367,7 @@ export function controlDispatchRequest(target: ControlTarget, d: ControlDispatch
     url: `${target.apiBase}/repos/${target.path}/actions/workflows/${controlPipelineFileName(wordsIn)}/dispatches`,
     method: "POST",
     headers: { Accept: "application/json", "Content-Type": "application/json" },
-    body: { json: { ref: target.ref, inputs: { member: d.member, op: d.op, sha: d.sha, ...(d.outcome ? { outcome: d.outcome } : {}) } } },
+    body: { json: { ref: target.ref, inputs: { member: d.member, op: d.op, sha: d.sha, ...(d.outcome ? { outcome: d.outcome } : {}), ...trainFields(d) } } },
     token: { in: "header", name: "Authorization", scheme: "token" },
   };
 }
@@ -371,6 +427,19 @@ export async function dispatchControl(target: ControlTarget, d: ControlDispatch,
   return { status: res.status };
 }
 
+/**
+ * Shell lines that set each pattern into a variable, `<name>_re`. Bash's
+ * `=~` matches a quoted pattern as a plain string, so a script quotes it
+ * once here and matches against the variable unquoted. The patterns here
+ * hold no quote.
+ */
+export function shellPatterns(patterns: Record<string, RegExp>): string[] {
+  return Object.entries(patterns).map(([name, re]) => {
+    if (re.source.includes("'")) throw new ControlConfigError(`not a pattern a shell word can hold: ${re.source}`);
+    return `${name}_re='${re.source}'`;
+  });
+}
+
 /** A value that passed {@link CONTROL_NAME} or {@link CONTROL_REF} is safe in a single-quoted shell word. */
 function sq(v: string, re: RegExp): string {
   if (!re.test(v)) throw new ControlConfigError(`not a safe name: ${v}`);
@@ -404,6 +473,14 @@ export interface ControlDispatchScriptOptions {
    * repo records it and runs the dependents only when something applied.
    */
   outcome?: boolean;
+  /**
+   * Carry a train's answer (#5119): the step reads the train, the run, the
+   * environment and the release from {@link CONTROL_TRAIN_VAR},
+   * {@link CONTROL_RUN_VAR}, {@link CONTROL_ENV_VAR} and
+   * {@link CONTROL_RELEASE_VAR}, refuses any that is not usable, and sends
+   * them with the outcome. Needs `outcome`.
+   */
+  train?: boolean;
 }
 
 /**
@@ -431,13 +508,24 @@ export function controlDispatchScript(target: ControlTarget, opts: ControlDispat
           `case "$outcome" in ${CONTROL_APPLY_OUTCOMES.join("|")}) ;; *) echo "${label}: the waves' outcome (\\"$outcome\\") is not one of ${CONTROL_APPLY_OUTCOMES.join(", ")}, so ${target.repo} was not told" >&2; exit 1 ;; esac`,
         ]
       : []),
+    ...(opts.train
+      ? [
+          `train="\${${CONTROL_TRAIN_VAR}:-}"`,
+          `run="\${${CONTROL_RUN_VAR}:-}"`,
+          `tenv="\${${CONTROL_ENV_VAR}:-}"`,
+          `release="\${${CONTROL_RELEASE_VAR}:-}"`,
+          ...shellPatterns({ train: CONTROL_TRAIN_ID, run: CONTROL_RUN_ID, name: CONTROL_NAME, release: CONTROL_RELEASE_DIGEST }),
+          `[[ $train =~ $train_re && $run =~ $run_re && $tenv =~ $name_re && $release =~ $release_re ]] || { echo "${label}: the train's fields are not usable (train=\\"$train\\", run=\\"$run\\", env=\\"$tenv\\", release=\\"$release\\"), so ${target.repo} was not told" >&2; exit 1; }`,
+        ]
+      : []),
     `[ -n "\${${tok}:-}" ] || { echo "${label}: ${tok} is empty; map the ${target.tokenSecret} secret into it, so ${target.repo} can be told" >&2; exit 1; }`,
     ...(opts.sentCheck ? [`if [ "$(${opts.sentCheck} 2>/dev/null)" = 1 ]; then echo "${label}: ${target.repo} was told about \${sha:0:8} already"; exit 0; fi`] : []),
     'answer="$(mktemp)"',
   ];
   let send: string;
+  if (opts.train && !opts.outcome) throw new ControlConfigError("a train's answer carries the outcome of the member's run; set outcome too");
   if ("json" in req.body) {
-    const carried = opts.outcome ? `,"outcome":"'"$outcome"'"` : "";
+    const carried = `${opts.outcome ? `,"outcome":"'"$outcome"'"` : ""}${opts.train ? `,"train":"'"$train"'","run":"'"$run"'","env":"'"$tenv"'","release":"'"$release"'"` : ""}`;
     const json =
       target.forge === "github"
         ? `{"event_type":"${controlDispatchEvent(words)}","client_payload":{"member":"'"$member"'","op":"'"$op"'","sha":"'"$sha"'"${carried}}}`
@@ -453,6 +541,14 @@ export function controlDispatchScript(target: ControlTarget, opts: ControlDispat
       `--form "variables[${CONTROL_OP_VAR}]=$op"`,
       `--form "variables[${CONTROL_SHA_VAR}]=$sha"`,
       ...(opts.outcome ? [`--form "variables[${CONTROL_OUTCOME_VAR}]=$outcome"`] : []),
+      ...(opts.train
+        ? [
+            `--form "variables[${CONTROL_TRAIN_VAR}]=$train"`,
+            `--form "variables[${CONTROL_RUN_VAR}]=$run"`,
+            `--form "variables[${CONTROL_ENV_VAR}]=$tenv"`,
+            `--form "variables[${CONTROL_RELEASE_VAR}]=$release"`,
+          ]
+        : []),
     ];
     send = `code="$(printf '%s' "$${tok}" | curl -sS -o "$answer" -w '%{http_code}' -X POST --form 'token=<-' ${fields.join(" ")} ${sqUrl(req.url)})"`;
   }
@@ -489,6 +585,11 @@ function recordAppliedLine(label: string): string {
  * and {@link CONTROL_APPLY_OUTCOMES} before they reach a command line. A
  * dispatch that carries an outcome is recorded first (#4617), and its
  * dependents run only when something applied ({@link CONTROL_RUNS_DEPENDENTS}).
+ *
+ * A dispatch that answers a release train (#5119) runs no dependents: once
+ * it is recorded, the train's promote continues from it (`chant workspace
+ * train promote <env> <train> --continue`), which dispatches the next member
+ * or stops the train, and the job pushes what that wrote.
  */
 export function controlDependentsScript(opts: { command?: string; label?: string } = {}): string {
   const label = opts.label ?? "chant";
@@ -501,8 +602,18 @@ export function controlDependentsScript(opts: { command?: string; label?: string
     `re='${CONTROL_NAME.source}'`,
     `[[ $member =~ $re && $op =~ $re ]] || { echo "${label}: the dispatch names no usable member and Op (member=\\"$member\\", op=\\"$op\\")" >&2; exit 2; }`,
     `case "$outcome" in ""|${CONTROL_APPLY_OUTCOMES.join("|")}) ;; *) echo "${label}: the dispatch's outcome (\\"$outcome\\") is not one of ${CONTROL_APPLY_OUTCOMES.join(", ")}" >&2; exit 2 ;; esac`,
+    `train="\${${CONTROL_TRAIN_VAR}:-}"`,
+    `tenv="\${${CONTROL_ENV_VAR}:-}"`,
+    ...shellPatterns({ train: CONTROL_TRAIN_ID }),
+    `[ -z "$train" ] || [[ $train =~ $train_re && $tenv =~ $re ]] || { echo "${label}: the dispatch names no usable train and environment (train=\\"$train\\", env=\\"$tenv\\")" >&2; exit 2; }`,
     "npm ci",
     recordAppliedLine(label),
+    // #5119: a train's answer moves the train on; the member's dependents are not this dispatch's to run.
+    `if [ -n "$train" ]; then`,
+    `  code=0; ${chant} workspace train promote "$tenv" "$train" --continue --json || code=$?`,
+    `  git push -q origin refs/heads/chant/lifecycle:refs/heads/chant/lifecycle || echo "${label}: the train's records were not pushed to chant/lifecycle" >&2`,
+    `  exit "$code"`,
+    "fi",
     `case "$outcome" in ""|${CONTROL_RUNS_DEPENDENTS.join("|")}) ;; *) echo "${label}: $member's waves ended $outcome and applied nothing, so its dependents do not run"; exit 0 ;; esac`,
     `${chant} workspace run --dependents-of "$member" --op "$op" --json`,
   ].join("\n");
@@ -531,11 +642,31 @@ export interface ControlPipelineSpec {
   notes: string[];
 }
 
+/** The variable a train's promote reads one member repository's dispatch token from, and the secret it is kept in (#5119): `CHANT_TRAIN_TOKEN_<MEMBER>`. */
+export function trainTokenEnv(member: string): string {
+  return `CHANT_TRAIN_TOKEN_${member.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`;
+}
+
+/** Each member's dispatch token variable mapped from the secret of the same name, refusing two members that would share one. */
+export function trainTokenEnvOf(members: readonly string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  const owner = new Map<string, string>();
+  for (const m of members) {
+    if (!CONTROL_NAME.test(m)) throw new ControlConfigError(`train member "${m}" is not a name the control repo's workspace can hold`);
+    const name = trainTokenEnv(m);
+    const had = owner.get(name);
+    if (had !== undefined && had !== m) throw new ControlConfigError(`members ${had} and ${m} would share the dispatch token ${name}; rename one`);
+    owner.set(name, m);
+    out[name] = `\${{ secrets.${name} }}`;
+  }
+  return out;
+}
+
 /** The first chant with `chant workspace run --dependents-of`, which the control repo's package.json pins. terragucci's `CONTROL_CHANT_FLOOR`. */
 export const CONTROL_DEPENDENTS_FLOOR = "0.124.47";
 
 /** The control repo's pipeline for `forge`, in the product's words. */
-export function controlPipelineSpec(forge: ForgeKind, wordsIn: CiProductWordsInput | CiProductWords = {}, opts: { command?: string } = {}): ControlPipelineSpec {
+export function controlPipelineSpec(forge: ForgeKind, wordsIn: CiProductWordsInput | CiProductWords = {}, opts: { command?: string; trainMembers?: readonly string[] } = {}): ControlPipelineSpec {
   const words = resolveProductWords(wordsIn);
   const product = words.product;
   const gitlab = forge === "gitlab";
@@ -543,6 +674,7 @@ export function controlPipelineSpec(forge: ForgeKind, wordsIn: CiProductWordsInp
   const op = gitlab ? `$${CONTROL_OP_VAR}` : "${{ github.event.client_payload.op || inputs.op }}";
   const sha = gitlab ? `$${CONTROL_SHA_VAR}` : "${{ github.event.client_payload.sha || inputs.sha }}";
   const outcome = "${{ github.event.client_payload.outcome || inputs.outcome }}";
+  const payload = (key: string) => `\${{ github.event.client_payload.${key} || inputs.${key} }}`;
   const bin = words.bin ?? product;
   const notes = [
     `the repo's package.json must pin @intentius/chant at ${CONTROL_DEPENDENTS_FLOOR} or later, which has \`chant workspace run --dependents-of\``,
@@ -569,8 +701,27 @@ export function controlPipelineSpec(forge: ForgeKind, wordsIn: CiProductWordsInp
       op: { description: "The Op to run on them", required: true, type: "string" },
       sha: { description: "The member's commit that applied", required: false, type: "string" },
       outcome: { description: `What the member's waves did: ${CONTROL_APPLY_OUTCOMES.join(", ")}`, required: false, type: "string" },
+      train: { description: "The release train the member's run answers, when it ran for one", required: false, type: "string" },
+      run: { description: "The run of the train's promote", required: false, type: "string" },
+      env: { description: "The environment the train promotes to", required: false, type: "string" },
+      release: { description: "The release digest the member ran", required: false, type: "string" },
     },
-    env: gitlab ? {} : { [CONTROL_MEMBER_VAR]: member, [CONTROL_OP_VAR]: op, [CONTROL_SHA_VAR]: sha, [CONTROL_OUTCOME_VAR]: outcome },
+    env: {
+      ...(gitlab
+        ? {}
+        : {
+            [CONTROL_MEMBER_VAR]: member,
+            [CONTROL_OP_VAR]: op,
+            [CONTROL_SHA_VAR]: sha,
+            [CONTROL_OUTCOME_VAR]: outcome,
+            [CONTROL_TRAIN_VAR]: payload("train"),
+            [CONTROL_RUN_VAR]: payload("run"),
+            [CONTROL_ENV_VAR]: payload("env"),
+            [CONTROL_RELEASE_VAR]: payload("release"),
+          }),
+      // #5119: a train's promote dispatches the next member with that repository's dispatch token.
+      ...(gitlab || !opts.trainMembers?.length ? {} : { CHANT_TRAIN_PRODUCT: product, ...trainTokenEnvOf(opts.trainMembers) }),
+    },
     script: controlDependentsScript({ label: product, ...(opts.command ? { command: opts.command } : {}) }),
     group: `${product}-dependents-${member}`,
     rule: `$CI_PIPELINE_SOURCE == "trigger" && $${CONTROL_MEMBER_VAR} && $${CONTROL_OP_VAR}`,

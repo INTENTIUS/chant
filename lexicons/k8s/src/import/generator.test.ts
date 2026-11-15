@@ -158,6 +158,28 @@ describe("K8sGenerator", () => {
     expect(content).not.toContain("new LabelSelector");
   });
 
+  test("an object at another apiVersion than its class builds is untyped and keeps the version (#5075)", () => {
+    const content = generator.generate(
+      makeIR([
+        {
+          logicalId: "clusterRoleOld",
+          type: "K8s::Rbac::ClusterRole",
+          properties: { metadata: { name: "old" }, rules: [] },
+          metadata: { apiVersion: "rbac.authorization.k8s.io/v1beta1", kind: "ClusterRole" },
+        },
+        {
+          logicalId: "clusterRoleNew",
+          type: "K8s::Rbac::ClusterRole",
+          properties: { metadata: { name: "new" }, rules: [] },
+          metadata: { apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRole" },
+        },
+      ]),
+    )[0].content;
+    expect(content).toContain("export const clusterRoleOld = k8sManifest({");
+    expect(content).toContain('apiVersion: "rbac.authorization.k8s.io/v1beta1"');
+    expect(content).toContain("export const clusterRoleNew = new ClusterRole(");
+  });
+
   test("a kind that shares its name with a class of another group is untyped", () => {
     const content = generator.generate(
       makeIR([

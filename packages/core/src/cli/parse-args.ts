@@ -67,6 +67,7 @@ const BOOLEAN_FLAGS = new Set([
   "--no-release-record",
   "--deploy-unchanged",
   "--plan-only",
+  "--continue",
   "--no-record",
   "--fold",
   "--no-fold",
@@ -1112,6 +1113,9 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--deploy-unchanged") {
       // `chant run --components --release --deploy-unchanged` (#4695): deploy a component whose inputs did not change.
       result.deployUnchanged = true;
+    } else if (arg === "--continue") {
+      // `chant workspace train promote --continue` (#5119): advance a train's promote across repositories from the answers recorded.
+      result.continueTrain = true;
     } else if (arg === "--plan-only") {
       // `chant components promote --release --plan-only` (#4037): plan and store the release's change set, deploy nothing.
       result.planOnly = true;

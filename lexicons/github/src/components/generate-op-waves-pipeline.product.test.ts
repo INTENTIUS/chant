@@ -35,9 +35,9 @@ const step = (doc: Doc, job: string, name: string) => doc.jobs[job]!.steps.find(
 
 describe("a product's artifact and gate report on GitHub (#4994)", () => {
   test("one upload keeps each of the artifact's paths", () => {
-    expect(step(docOf(false), "wave-1-dev", "Keep the apply report")!.with).toMatchObject({ name: "terragucci-report-wave-1-dev", path: "terragucci-report/\nterragucci-respond/\n" });
+    expect(step(docOf(false), "wave-1-dev", "Keep the apply report")!.with).toMatchObject({ name: "terragucci-report-wave-1-dev", path: "terragucci-report/\nterragucci-respond/" });
     const split = docOf(true);
-    for (const job of ["wave-1-dev-plan", "wave-1-dev"]) expect(step(split, job, "Keep the apply report")!.with, job).toMatchObject({ name: `terragucci-report-${job}`, path: "terragucci-report/\nterragucci-respond/\n" });
+    for (const job of ["wave-1-dev-plan", "wave-1-dev"]) expect(step(split, job, "Keep the apply report")!.with, job).toMatchObject({ name: `terragucci-report-${job}`, path: "terragucci-report/\nterragucci-respond/" });
   });
 
   test("the gate job runs the product's report and keeps it; without beforeMerge nothing of `gate` renders", () => {

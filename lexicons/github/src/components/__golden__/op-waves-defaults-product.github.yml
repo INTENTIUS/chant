@@ -55,7 +55,7 @@ jobs:
       - name: Check out the default branch and the pull request's decided head, with the token in this step alone
         env:
           CHANT_CHECKOUT_TOKEN: '${{ github.token }}'
-        run: |
+        run: |-
           set -eu
           git config --global --add safe.directory "$PWD" 2>/dev/null || true
           [ -d .git ] || git init -q .
@@ -88,14 +88,14 @@ jobs:
           fi
       - name: Check wave 1 (canary)'s plans against the policy
         id: chant-policy
-        run: |
+        run: |-
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
           terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --wave 1 --base "${CHANT_WAVES_BASE:-HEAD^1}" --render-spec --phase plan --policy-only
       - name: Plan wave 1 (canary) and save the plan
         if: '${{ !cancelled() && (success() || steps.chant-policy.outcome == ''failure'') }}'
         env:
           CHANT_WAVE_EVIDENCE: job
-        run: |
+        run: |-
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
           terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --wave 1 --base "${CHANT_WAVES_BASE:-HEAD^1}" --render-spec --phase plan
       - name: Keep wave 1's saved plan
@@ -127,7 +127,7 @@ jobs:
           overwrite: true
       - name: Write the apply report
         if: always()
-        run: |
+        run: |-
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
           terragucci report canary
       - name: Keep the apply report
@@ -158,7 +158,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Check out the base, so none of the change's code runs here
-        run: |
+        run: |-
           if [ -n "${CHANT_BEFORE_MERGE_HEAD:-}" ]; then CHANT_EVIDENCE_BASE="$(git rev-parse --verify HEAD^{commit})" || exit 1; else CHANT_EVIDENCE_BASE="$(git rev-parse --verify 'HEAD^1'^{commit})" || exit 1; fi
           git checkout --quiet --detach "$CHANT_EVIDENCE_BASE" || exit 1
           echo "CHANT_EVIDENCE_BASE=$CHANT_EVIDENCE_BASE" >> "$GITHUB_ENV"
@@ -203,7 +203,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Fetch the pull request's decided head without checking it out
-        run: |
+        run: |-
           if [ -n "${CHANT_BEFORE_MERGE_HEAD:-}" ]; then
             git fetch -q --no-tags origin "+refs/pull/${CHANT_BEFORE_MERGE_PR}/head:refs/remotes/chant/before-merge-head" || { echo "chant: could not fetch the head of pull request $CHANT_BEFORE_MERGE_PR" >&2; exit 1; }
             now="$(git rev-parse refs/remotes/chant/before-merge-head)"
@@ -259,7 +259,7 @@ jobs:
       - name: Check out the default branch and the pull request's decided head, with the token in this step alone
         env:
           CHANT_CHECKOUT_TOKEN: '${{ github.token }}'
-        run: |
+        run: |-
           set -eu
           git config --global --add safe.directory "$PWD" 2>/dev/null || true
           [ -d .git ] || git init -q .
@@ -305,7 +305,7 @@ jobs:
         with:
           path: .chant/op-waves/tf-apply/outcomes
       - name: Apply wave 1 (canary)'s saved plan
-        run: |
+        run: |-
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
           terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --wave 1 --base "${CHANT_WAVES_BASE:-HEAD^1}" --render-spec --phase apply
       - name: Keep the job's outcome and run record
@@ -313,7 +313,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: tf-apply-wave-1-canary-outcome
-          path: |
+          path: |-
             .chant/op-waves/tf-apply/outcomes/outcome-wave-1-apply.json
             .chant/op-waves/tf-apply/outcomes/run-record-wave-1.json
           if-no-files-found: ignore
@@ -321,7 +321,7 @@ jobs:
           overwrite: true
       - name: Write the apply report
         if: always()
-        run: |
+        run: |-
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
           terragucci report canary
       - name: Keep the apply report
@@ -394,7 +394,7 @@ jobs:
       - name: Check out the default branch and the pull request's decided head, with the token in this step alone
         env:
           CHANT_CHECKOUT_TOKEN: '${{ github.token }}'
-        run: |
+        run: |-
           set -eu
           git config --global --add safe.directory "$PWD" 2>/dev/null || true
           [ -d .git ] || git init -q .
@@ -431,14 +431,14 @@ jobs:
           path: .chant/op-waves/tf-apply/outcomes
       - name: Check wave 2 (wide)'s plans against the policy
         id: chant-policy
-        run: |
+        run: |-
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
           terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --wave 2 --base "${CHANT_WAVES_BASE:-HEAD^1}" --render-spec --phase plan --policy-only
       - name: Plan wave 2 (wide) and save the plan
         if: '${{ !cancelled() && (success() || steps.chant-policy.outcome == ''failure'') }}'
         env:
           CHANT_WAVE_EVIDENCE: job
-        run: |
+        run: |-
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
           terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --wave 2 --base "${CHANT_WAVES_BASE:-HEAD^1}" --render-spec --phase plan
       - name: Keep wave 2's saved plan
@@ -470,7 +470,7 @@ jobs:
           overwrite: true
       - name: Write the apply report
         if: always()
-        run: |
+        run: |-
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
           terragucci report wide
       - name: Keep the apply report
@@ -501,7 +501,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Check out the base, so none of the change's code runs here
-        run: |
+        run: |-
           if [ -n "${CHANT_BEFORE_MERGE_HEAD:-}" ]; then CHANT_EVIDENCE_BASE="$(git rev-parse --verify HEAD^{commit})" || exit 1; else CHANT_EVIDENCE_BASE="$(git rev-parse --verify 'HEAD^1'^{commit})" || exit 1; fi
           git checkout --quiet --detach "$CHANT_EVIDENCE_BASE" || exit 1
           echo "CHANT_EVIDENCE_BASE=$CHANT_EVIDENCE_BASE" >> "$GITHUB_ENV"
@@ -546,7 +546,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Fetch the pull request's decided head without checking it out
-        run: |
+        run: |-
           if [ -n "${CHANT_BEFORE_MERGE_HEAD:-}" ]; then
             git fetch -q --no-tags origin "+refs/pull/${CHANT_BEFORE_MERGE_PR}/head:refs/remotes/chant/before-merge-head" || { echo "chant: could not fetch the head of pull request $CHANT_BEFORE_MERGE_PR" >&2; exit 1; }
             now="$(git rev-parse refs/remotes/chant/before-merge-head)"
@@ -602,7 +602,7 @@ jobs:
       - name: Check out the default branch and the pull request's decided head, with the token in this step alone
         env:
           CHANT_CHECKOUT_TOKEN: '${{ github.token }}'
-        run: |
+        run: |-
           set -eu
           git config --global --add safe.directory "$PWD" 2>/dev/null || true
           [ -d .git ] || git init -q .
@@ -648,7 +648,7 @@ jobs:
         with:
           path: .chant/op-waves/tf-apply/outcomes
       - name: Apply share 1 of wave 2 (wide) from the saved plan
-        run: |
+        run: |-
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
           terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --wave 2 --base "${CHANT_WAVES_BASE:-HEAD^1}" --render-spec --share 1 --phase apply
       - name: Keep the job's outcome and run record
@@ -656,7 +656,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: tf-apply-wave-2-wide-share-1-outcome
-          path: |
+          path: |-
             .chant/op-waves/tf-apply/outcomes/outcome-wave-2-share-1.json
             .chant/op-waves/tf-apply/outcomes/run-record-wave-2-share-1.json
           if-no-files-found: ignore
@@ -664,7 +664,7 @@ jobs:
           overwrite: true
       - name: Write the apply report
         if: always()
-        run: |
+        run: |-
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
           terragucci report wide
       - name: Keep the apply report
@@ -700,7 +700,7 @@ jobs:
       - name: Check out the default branch and the pull request's decided head, with the token in this step alone
         env:
           CHANT_CHECKOUT_TOKEN: '${{ github.token }}'
-        run: |
+        run: |-
           set -eu
           git config --global --add safe.directory "$PWD" 2>/dev/null || true
           [ -d .git ] || git init -q .
@@ -746,7 +746,7 @@ jobs:
         with:
           path: .chant/op-waves/tf-apply/outcomes
       - name: Apply share 2 of wave 2 (wide) from the saved plan
-        run: |
+        run: |-
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
           terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --wave 2 --base "${CHANT_WAVES_BASE:-HEAD^1}" --render-spec --share 2 --phase apply
       - name: Keep the job's outcome and run record
@@ -754,7 +754,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: tf-apply-wave-2-wide-share-2-outcome
-          path: |
+          path: |-
             .chant/op-waves/tf-apply/outcomes/outcome-wave-2-share-2.json
             .chant/op-waves/tf-apply/outcomes/run-record-wave-2-share-2.json
           if-no-files-found: ignore
@@ -762,7 +762,7 @@ jobs:
           overwrite: true
       - name: Write the apply report
         if: always()
-        run: |
+        run: |-
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
           terragucci report wide
       - name: Keep the apply report
@@ -836,7 +836,7 @@ jobs:
       - name: Check out the default branch and the pull request's decided head, with the token in this step alone
         env:
           CHANT_CHECKOUT_TOKEN: '${{ github.token }}'
-        run: |
+        run: |-
           set -eu
           git config --global --add safe.directory "$PWD" 2>/dev/null || true
           [ -d .git ] || git init -q .
@@ -873,14 +873,14 @@ jobs:
           path: .chant/op-waves/tf-apply/outcomes
       - name: Check wave 3 (regions)'s plans against the policy
         id: chant-policy
-        run: |
+        run: |-
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
           terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --wave 3 --base "${CHANT_WAVES_BASE:-HEAD^1}" --render-spec --phase plan --policy-only
       - name: Plan wave 3 (regions) and save the plan
         if: '${{ !cancelled() && (success() || steps.chant-policy.outcome == ''failure'') }}'
         env:
           CHANT_WAVE_EVIDENCE: job
-        run: |
+        run: |-
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
           terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --wave 3 --base "${CHANT_WAVES_BASE:-HEAD^1}" --render-spec --phase plan
       - name: Keep wave 3's saved plan
@@ -912,7 +912,7 @@ jobs:
           overwrite: true
       - name: Write the apply report
         if: always()
-        run: |
+        run: |-
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
           terragucci report regions
       - name: Keep the apply report
@@ -943,7 +943,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Check out the base, so none of the change's code runs here
-        run: |
+        run: |-
           if [ -n "${CHANT_BEFORE_MERGE_HEAD:-}" ]; then CHANT_EVIDENCE_BASE="$(git rev-parse --verify HEAD^{commit})" || exit 1; else CHANT_EVIDENCE_BASE="$(git rev-parse --verify 'HEAD^1'^{commit})" || exit 1; fi
           git checkout --quiet --detach "$CHANT_EVIDENCE_BASE" || exit 1
           echo "CHANT_EVIDENCE_BASE=$CHANT_EVIDENCE_BASE" >> "$GITHUB_ENV"
@@ -988,7 +988,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Fetch the pull request's decided head without checking it out
-        run: |
+        run: |-
           if [ -n "${CHANT_BEFORE_MERGE_HEAD:-}" ]; then
             git fetch -q --no-tags origin "+refs/pull/${CHANT_BEFORE_MERGE_PR}/head:refs/remotes/chant/before-merge-head" || { echo "chant: could not fetch the head of pull request $CHANT_BEFORE_MERGE_PR" >&2; exit 1; }
             now="$(git rev-parse refs/remotes/chant/before-merge-head)"
@@ -1044,7 +1044,7 @@ jobs:
       - name: Check out the default branch and the pull request's decided head, with the token in this step alone
         env:
           CHANT_CHECKOUT_TOKEN: '${{ github.token }}'
-        run: |
+        run: |-
           set -eu
           git config --global --add safe.directory "$PWD" 2>/dev/null || true
           [ -d .git ] || git init -q .
@@ -1090,7 +1090,7 @@ jobs:
         with:
           path: .chant/op-waves/tf-apply/outcomes
       - name: Apply job group east of wave 3 (regions) from the saved plan
-        run: |
+        run: |-
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
           terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --wave 3 --base "${CHANT_WAVES_BASE:-HEAD^1}" --render-spec --group east --phase apply
       - name: Keep the job's outcome and run record
@@ -1098,7 +1098,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: tf-apply-wave-3-regions-east-outcome
-          path: |
+          path: |-
             .chant/op-waves/tf-apply/outcomes/outcome-wave-3-group-east.json
             .chant/op-waves/tf-apply/outcomes/run-record-wave-3-group-east.json
           if-no-files-found: ignore
@@ -1106,7 +1106,7 @@ jobs:
           overwrite: true
       - name: Write the apply report
         if: always()
-        run: |
+        run: |-
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
           terragucci report regions
       - name: Keep the apply report
@@ -1142,7 +1142,7 @@ jobs:
       - name: Check out the default branch and the pull request's decided head, with the token in this step alone
         env:
           CHANT_CHECKOUT_TOKEN: '${{ github.token }}'
-        run: |
+        run: |-
           set -eu
           git config --global --add safe.directory "$PWD" 2>/dev/null || true
           [ -d .git ] || git init -q .
@@ -1188,7 +1188,7 @@ jobs:
         with:
           path: .chant/op-waves/tf-apply/outcomes
       - name: Apply share 1 of job group west of wave 3 (regions) from the saved plan
-        run: |
+        run: |-
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
           terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --wave 3 --base "${CHANT_WAVES_BASE:-HEAD^1}" --render-spec --group west --share 1 --phase apply
       - name: Keep the job's outcome and run record
@@ -1196,7 +1196,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: tf-apply-wave-3-regions-west-share-1-outcome
-          path: |
+          path: |-
             .chant/op-waves/tf-apply/outcomes/outcome-wave-3-group-west-share-1.json
             .chant/op-waves/tf-apply/outcomes/run-record-wave-3-group-west-share-1.json
           if-no-files-found: ignore
@@ -1204,7 +1204,7 @@ jobs:
           overwrite: true
       - name: Write the apply report
         if: always()
-        run: |
+        run: |-
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
           terragucci report regions
       - name: Keep the apply report
@@ -1240,7 +1240,7 @@ jobs:
       - name: Check out the default branch and the pull request's decided head, with the token in this step alone
         env:
           CHANT_CHECKOUT_TOKEN: '${{ github.token }}'
-        run: |
+        run: |-
           set -eu
           git config --global --add safe.directory "$PWD" 2>/dev/null || true
           [ -d .git ] || git init -q .
@@ -1286,7 +1286,7 @@ jobs:
         with:
           path: .chant/op-waves/tf-apply/outcomes
       - name: Apply share 2 of job group west of wave 3 (regions) from the saved plan
-        run: |
+        run: |-
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
           terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --wave 3 --base "${CHANT_WAVES_BASE:-HEAD^1}" --render-spec --group west --share 2 --phase apply
       - name: Keep the job's outcome and run record
@@ -1294,7 +1294,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: tf-apply-wave-3-regions-west-share-2-outcome
-          path: |
+          path: |-
             .chant/op-waves/tf-apply/outcomes/outcome-wave-3-group-west-share-2.json
             .chant/op-waves/tf-apply/outcomes/run-record-wave-3-group-west-share-2.json
           if-no-files-found: ignore
@@ -1302,7 +1302,7 @@ jobs:
           overwrite: true
       - name: Write the apply report
         if: always()
-        run: |
+        run: |-
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
           terragucci report regions
       - name: Keep the apply report
@@ -1379,7 +1379,7 @@ jobs:
       - name: Check out the default branch and the pull request's decided head, with the token in this step alone
         env:
           CHANT_CHECKOUT_TOKEN: '${{ github.token }}'
-        run: |
+        run: |-
           set -eu
           git config --global --add safe.directory "$PWD" 2>/dev/null || true
           [ -d .git ] || git init -q .
@@ -1420,14 +1420,14 @@ jobs:
           path: .chant/op-waves/tf-apply/outcomes
       - name: Check wave 4 (rest)'s plans against the policy
         id: chant-policy
-        run: |
+        run: |-
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
           terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --wave "${CHANT_WAVES_WAVE:-4}" --base "${CHANT_WAVES_BASE:-HEAD^1}" --render-spec --phase plan --policy-only
       - name: Plan wave 4 (rest) and save the plan
         if: '${{ !cancelled() && (success() || steps.chant-policy.outcome == ''failure'') }}'
         env:
           CHANT_WAVE_EVIDENCE: job
-        run: |
+        run: |-
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
           terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --wave "${CHANT_WAVES_WAVE:-4}" --base "${CHANT_WAVES_BASE:-HEAD^1}" --render-spec --phase plan
       - name: Keep wave 4's saved plan
@@ -1459,7 +1459,7 @@ jobs:
           overwrite: true
       - name: Write the apply report
         if: always()
-        run: |
+        run: |-
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
           terragucci report rest
       - name: Keep the apply report
@@ -1492,7 +1492,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Check out the base, so none of the change's code runs here
-        run: |
+        run: |-
           if [ -n "${CHANT_WAVES_COMMIT:-}" ]; then
             git merge-base --is-ancestor "$CHANT_WAVES_COMMIT" HEAD || { echo "chant: the follow-on's commit $(printf %.12s "$CHANT_WAVES_COMMIT") is not on the branch this run checked out, so nothing is applied" >&2; exit 9; }
             git checkout -q --detach "$CHANT_WAVES_COMMIT" || exit 1
@@ -1543,13 +1543,13 @@ jobs:
         with:
           fetch-depth: 0
       - name: Check out the commit a push's follow-on goes on with
-        run: |
+        run: |-
           if [ -n "${CHANT_WAVES_COMMIT:-}" ]; then
             git merge-base --is-ancestor "$CHANT_WAVES_COMMIT" HEAD || { echo "chant: the follow-on's commit $(printf %.12s "$CHANT_WAVES_COMMIT") is not on the branch this run checked out, so nothing is applied" >&2; exit 9; }
             git checkout -q --detach "$CHANT_WAVES_COMMIT" || exit 1
           fi
       - name: Fetch the pull request's decided head without checking it out
-        run: |
+        run: |-
           if [ -n "${CHANT_BEFORE_MERGE_HEAD:-}" ]; then
             git fetch -q --no-tags origin "+refs/pull/${CHANT_BEFORE_MERGE_PR}/head:refs/remotes/chant/before-merge-head" || { echo "chant: could not fetch the head of pull request $CHANT_BEFORE_MERGE_PR" >&2; exit 1; }
             now="$(git rev-parse refs/remotes/chant/before-merge-head)"
@@ -1607,7 +1607,7 @@ jobs:
       - name: Check out the default branch and the pull request's decided head, with the token in this step alone
         env:
           CHANT_CHECKOUT_TOKEN: '${{ github.token }}'
-        run: |
+        run: |-
           set -eu
           git config --global --add safe.directory "$PWD" 2>/dev/null || true
           [ -d .git ] || git init -q .
@@ -1657,7 +1657,7 @@ jobs:
         with:
           path: .chant/op-waves/tf-apply/outcomes
       - name: Apply wave 4 (rest)'s saved plan
-        run: |
+        run: |-
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
           terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --wave "${CHANT_WAVES_WAVE:-4}" --base "${CHANT_WAVES_BASE:-HEAD^1}" --render-spec --phase apply
       - name: Keep the job's outcome and run record
@@ -1665,7 +1665,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: tf-apply-wave-4-rest-outcome
-          path: |
+          path: |-
             .chant/op-waves/tf-apply/outcomes/outcome-wave-${{ env.CHANT_WAVES_WAVE }}-apply.json
             .chant/op-waves/tf-apply/outcomes/run-record-wave-${{ env.CHANT_WAVES_WAVE }}.json
           if-no-files-found: ignore
@@ -1673,7 +1673,7 @@ jobs:
           overwrite: true
       - name: Write the apply report
         if: always()
-        run: |
+        run: |-
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
           terragucci report rest
       - name: Keep the apply report
@@ -1715,7 +1715,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Check out the commit a push's follow-on goes on with
-        run: |
+        run: |-
           if [ -n "${CHANT_WAVES_COMMIT:-}" ]; then
             git merge-base --is-ancestor "$CHANT_WAVES_COMMIT" HEAD || { echo "chant: the follow-on's commit $(printf %.12s "$CHANT_WAVES_COMMIT") is not on the branch this run checked out, so nothing is applied" >&2; exit 9; }
             git checkout -q --detach "$CHANT_WAVES_COMMIT" || exit 1
@@ -1758,7 +1758,7 @@ jobs:
           CHANT_CONTROL_TOKEN: '${{ secrets.TG_CONTROL_TOKEN }}'
           CHANT_CONTROL_SHA: '${{ github.sha }}'
           CHANT_CONTROL_OUTCOME: applied
-        run: |
+        run: |-
           set -u
           member='network'
           op='deploy'

@@ -639,7 +639,7 @@
         },
         "generatedBy": {
           "type": "object",
-          "description": "Added in contract 1 by #5102. On a node the reference catalog generated from another, an Application an ApplicationSet's list or clusters generator yields: the generating node's id, the rule, the generator, the parameters it was made with (flattened to a.b.c keys) and, for a clusters generator, the cluster Secret it was made for. Its id is the generating node's id, a slash and its name.",
+          "description": "Added in contract 1 by #5102. On a node the reference catalog generated from another, an Application an ApplicationSet's list or clusters generator yields: the generating node's id, the rule, the generator, the parameters it was made with (flattened to a.b.c keys) and, for a clusters generator, the cluster Secret it was made for. Its id is the generating node's id, a slash and its name. Since #5094 a node read from a file a generated node names (a generated Application's Helm values file, or an object under its extraObjects) has generatedBy too, naming that generated node, the generate rule and generator \"file\", with empty params.",
           "required": ["node", "rule", "generator", "params"],
           "properties": {
             "node": { "type": "string" },
