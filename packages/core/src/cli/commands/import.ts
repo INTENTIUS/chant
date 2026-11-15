@@ -1,3 +1,4 @@
+import { markImportedSource } from "../../lint/rules/imported-source";
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from "fs";
 import { join, resolve, basename, dirname } from "path";
 import { formatSuccess, formatWarning, formatError } from "../format";
@@ -673,7 +674,7 @@ async function parseAndWrite(
       continue;
     }
 
-    writeFileSync(filePath, file.content);
+    writeFileSync(filePath, markImportedSource(file.path, file.content));
     generatedFiles.push(file.path);
   }
 
@@ -890,7 +891,7 @@ export async function liveImportFromPlugins(
       warnings.push(`File ${file.path} already exists, skipping`);
       continue;
     }
-    writeFileSync(filePath, file.content);
+    writeFileSync(filePath, markImportedSource(file.path, file.content));
     generatedFiles.push(file.path);
   }
 

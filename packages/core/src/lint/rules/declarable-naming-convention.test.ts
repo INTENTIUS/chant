@@ -1,6 +1,7 @@
 import { describe, test, expect } from "vitest";
 import * as ts from "typescript";
-import { declarableNamingConventionRule } from "./declarable-naming-convention";
+import { declarableNamingConventionRule, toCamelCase } from "./declarable-naming-convention";
+import { IMPORTED_SOURCE_HEADER, IMPORTED_SOURCE_MARKER } from "./imported-source";
 import type { LintContext } from "../rule";
 
 function createContext(code: string, filePath = "test.ts"): LintContext {
@@ -65,5 +66,38 @@ describe("COR005: declarable-naming-convention", () => {
     expect(diags).toHaveLength(1);
     expect(diags[0].line).toBe(1);
     expect(diags[0].column).toBeGreaterThan(0);
+  });
+
+  test.each([
+    ["TFStateBucket", "tfStateBucket"],
+    ["OBSAdminUser", "obsAdminUser"],
+    ["HTTPServer", "httpServer"],
+    ["S3Bucket", "s3Bucket"],
+    ["TF2State", "tf2State"],
+    ["URL", "url"],
+    ["DataBucket", "dataBucket"],
+    ["DATA_BUCKET", "dataBucket"],
+    ["MAX_RETRY_COUNT", "maxRetryCount"],
+    ["Data_Bucket", "dataBucket"],
+  ])("suggests %s as %s", (name, expected) => {
+    expect(toCamelCase(name)).toBe(expected);
+    const diags = declarableNamingConventionRule.check(createContext(`export const ${name} = new Bucket({});`));
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toContain(`rename to '${expected}'`);
+  });
+
+  test("skips a file that opens with the import marker", () => {
+    const code = `${IMPORTED_SOURCE_HEADER}import { Bucket } from "@intentius/chant-lexicon-aws";\nexport const TFStateBucket = new Bucket({});`;
+    expect(declarableNamingConventionRule.check(createContext(code))).toHaveLength(0);
+  });
+
+  test("still flags when the marker sits below code, not in the opening comments", () => {
+    const code = `export const TFStateBucket = new Bucket({});\n${IMPORTED_SOURCE_MARKER}\n`;
+    expect(declarableNamingConventionRule.check(createContext(code))).toHaveLength(1);
+  });
+
+  test("still flags a file whose opening comment is not the marker", () => {
+    const code = `// hand written\nexport const TFStateBucket = new Bucket({});`;
+    expect(declarableNamingConventionRule.check(createContext(code))).toHaveLength(1);
   });
 });

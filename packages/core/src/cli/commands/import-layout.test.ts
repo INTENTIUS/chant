@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import type { LexiconPlugin } from "../../lexicon";
 import type { GeneratedFile, TypeScriptGenerator } from "../../import/generator";
 import type { TemplateIR } from "../../import/parser";
+import { IMPORTED_SOURCE_HEADER } from "../../lint/rules/imported-source";
 import { generateOrganizedFiles, importCommand } from "./import";
 
 // A generator that writes one module per resource plus a barrel, the shape
@@ -127,7 +128,7 @@ describe("chant import writes a placing generator's files (#2964)", () => {
     expect(result.success).toBe(true);
     expect(result.warnings).toEqual([]);
     expect(result.generatedFiles).toEqual(perResourceFiles(fiveIR).map((f) => f.path));
-    expect(await readFile(join(outputDir, "pipeline.ts"), "utf-8")).toBe("export const pipeline = {};\n");
+    expect(await readFile(join(outputDir, "pipeline.ts"), "utf-8")).toBe(IMPORTED_SOURCE_HEADER + "export const pipeline = {};\n");
     expect(existsSync(join(outputDir, "other.ts"))).toBe(false);
   });
 

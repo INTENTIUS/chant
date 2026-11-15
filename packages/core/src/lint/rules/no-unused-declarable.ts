@@ -1,6 +1,7 @@
 import * as ts from "typescript";
 import type { LintRule, LintContext, LintDiagnostic } from "../rule";
 import { isPropertyKindNew } from "./property-kind";
+import { isImportedSource } from "./imported-source";
 
 /**
  * COR004: no-unused-declarable
@@ -18,6 +19,11 @@ import { isPropertyKindNew } from "./property-kind";
  * resource from another file. A resource that holds one, inline or through
  * a const declared in this file, is the root that emits it, so it is not
  * flagged either: nothing ever references a dashboard, and that is fine.
+ *
+ * A file written by `chant import` is skipped (imported-source.ts). Its
+ * declarations are the template's resources, and CloudFormation attaches
+ * some of them, a ManagedPolicy for one, through their own properties
+ * rather than through a reference in the file.
  */
 
 interface DeclarableInfo {
@@ -155,6 +161,7 @@ export const noUnusedDeclarableRule: LintRule = {
   description: "Detects exported declarables that are never referenced in the same file",
   check(context: LintContext): LintDiagnostic[] {
     const diagnostics: LintDiagnostic[] = [];
+    if (isImportedSource(context.sourceFile)) return diagnostics;
     const declarables = collectExportedDeclarables(context);
 
     for (const decl of declarables) {

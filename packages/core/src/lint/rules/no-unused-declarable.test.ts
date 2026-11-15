@@ -2,6 +2,7 @@ import { describe, test, expect } from "vitest";
 import * as ts from "typescript";
 import { noUnusedDeclarableRule } from "./no-unused-declarable";
 import type { LintContext } from "../rule";
+import { IMPORTED_SOURCE_HEADER, IMPORTED_SOURCE_MARKER } from "./imported-source";
 
 function createContext(code: string, filePath = "test.ts"): LintContext {
   const sourceFile = ts.createSourceFile(filePath, code, ts.ScriptTarget.Latest, true);
@@ -138,5 +139,20 @@ describe("COR004: no-unused-declarable", () => {
     );
     const diags = noUnusedDeclarableRule.check(ctx);
     expect(diags).toHaveLength(0);
+  });
+
+  test("skips a file that opens with the import marker", () => {
+    const code = `${IMPORTED_SOURCE_HEADER}export const ManagedPolicy1 = new ManagedPolicy({});`;
+    expect(noUnusedDeclarableRule.check(createContext(code))).toHaveLength(0);
+  });
+
+  test("still flags when the marker sits below code, not in the opening comments", () => {
+    const code = `export const bucket = new Bucket({});\n${IMPORTED_SOURCE_MARKER}\n`;
+    expect(noUnusedDeclarableRule.check(createContext(code))).toHaveLength(1);
+  });
+
+  test("still flags an unreferenced declarable in a hand-written file with a header comment", () => {
+    const code = `// hand written\nexport const bucket = new Bucket({});`;
+    expect(noUnusedDeclarableRule.check(createContext(code))).toHaveLength(1);
   });
 });
