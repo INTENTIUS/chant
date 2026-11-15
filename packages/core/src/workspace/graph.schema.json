@@ -101,11 +101,21 @@
           }
         },
         "dangling": {
-          "description": "Added in contract 1 by #3922. The members' references whose target is no node of their graph (#3910): a job `needs` a job no workflow declares, a `uses:` names another repository's workflow, a GitLab `include:` names a file chant did not generate. Each member's `ir.dangling` entry with `from` prefixed by its member and a `member` field, sorted by `from`, `path` and `value`. Absent when no member has one.",
+          "description": "Added in contract 1 by #3922. The members' references whose target is no node of their graph (#3910): a job `needs` a job no workflow declares, a `uses:` names another repository's workflow, a GitLab `include:` names a file chant did not generate. Each member's `ir.dangling` entry with `from` prefixed by its member and a `member` field, then (#5097) each reference the reference catalog found no node for, with its `rule`. Sorted by `from`, `path` and `value`. Absent when there is none.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/dangling"
           }
+        },
+        "ambiguous": {
+          "description": "Added in contract 1 by #5097, written by chant 0.124.98 and newer. References the reference catalog matched to more than one node: no edge is drawn, and every candidate is listed. Sorted by `from`, `rule` and `value`. Absent when there are none.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ambiguous"
+          }
+        },
+        "catalog": {
+          "$ref": "#/$defs/catalog"
         },
         "groups": {
           "type": "object",
@@ -692,8 +702,21 @@
           "enum": ["block", "instance", "property"],
           "description": "Added in contract 1 by #4529, written by chant 0.124.54 and newer. What the edge joins: two blocks, two instances, or a property of one instance to another. A Pulumi member's dependencies and parent edges are instance; a plunge member's property edges are property. Absent when the source does not say."
         },
+        "origin": {
+          "enum": ["declared", "observed", "derived"],
+          "description": "Where the edge came from, as on a member's IR: `derived` for an edge a reference catalog rule drew. Added in contract 1 by #5097, written by chant 0.124.98 and newer. The composed graph draws derived edges between members too. Absent reads as `declared` on a source read and `observed` on a live one."
+        },
+        "rule": {
+          "type": "string",
+          "description": "With `origin: \"derived\"`: the rule that drew the edge, `<lexicon>:<holder kind>:<path>`. `catalog.rules` describes it."
+        },
+        "relation": {
+          "enum": ["reference", "containment"],
+          "description": "`reference` (the default when absent) or `containment`: the holder sits inside the target, and is in `groups.byContainer` too."
+        },
         "member": {
-          "type": "string"
+          "type": "string",
+          "description": "The member the edge was read in. For a derived edge, the holder's member; the edge's ends carry their own."
         }
       }
     },
@@ -732,6 +755,109 @@
         "nested": {
           "type": "string",
           "description": "For a member of kind `workspace`: the nested workspace's member the reference was read through, as on a node."
+        },
+        "rule": {
+          "type": "string",
+          "description": "Added in contract 1 by #5097, written by chant 0.124.98 and newer. For a reference the reference catalog read: the rule that read it, as on an edge. Absent on a member's own dangling references."
+        },
+        "targetKind": {
+          "type": "string",
+          "description": "Added in contract 1 by #5097, written by chant 0.124.98 and newer. The kind the rule looks for, when it names one."
+        }
+      }
+    },
+    "ambiguous": {
+      "type": "object",
+      "required": ["from", "member", "rule", "path", "value", "candidates"],
+      "properties": {
+        "from": {
+          "type": "string",
+          "description": "The node holding the reference."
+        },
+        "member": {
+          "type": "string",
+          "description": "The holder's member."
+        },
+        "rule": {
+          "type": "string",
+          "description": "The rule that read the reference, as on an edge."
+        },
+        "path": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Every node the value matched, sorted. At `--detail` 0 and 1, the nodes they are drawn as."
+        }
+      }
+    },
+    "catalog": {
+      "description": "Added in contract 1 by #5097, written by chant 0.124.98 and newer. What the reference catalog pass read. Absent with `--live`, where each member's own chant runs its catalog.",
+      "type": "object",
+      "required": ["lexicons", "members", "rules"],
+      "properties": {
+        "lexicons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The lexicons whose reference catalog ran, sorted. A lexicon of the graph that is not listed has no catalog, or did not load, and its nodes hold no derived references."
+        },
+        "members": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The members whose nodes the pass read, sorted."
+        },
+        "rules": {
+          "type": "object",
+          "description": "Every rule an edge, a dangling entry or an ambiguous entry names, by rule id.",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["lexicon", "from", "path", "relation", "targetKinds"],
+            "properties": {
+              "lexicon": {
+                "type": "string"
+              },
+              "from": {
+                "type": "string",
+                "description": "The holder kind the rule reads."
+              },
+              "path": {
+                "type": "string",
+                "description": "The attribute path, with `[]` for each element of a list and `[\"key\"]` for a key that holds dots or slashes."
+              },
+              "relation": {
+                "enum": ["reference", "containment"]
+              },
+              "targetKinds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The kinds the target can be. One id can stand for several rules, one per kind. Empty when the rule takes any kind."
+              },
+              "label": {
+                "type": "string",
+                "description": "The rule's human-facing name for the relation, such as `runs as`."
+              }
+            }
+          }
+        },
+        "nonLiteral": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "description": "By node id: arguments the pass did not read because their value is not literal, such as a terraform interpolation. Absent when there are none."
         }
       }
     },

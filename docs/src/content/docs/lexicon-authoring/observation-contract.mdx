@@ -547,6 +547,26 @@ export const myReferenceCatalog: ReferenceCatalog = {
 
 A reference whose target isn't in the observed set is reported as dangling and never drawn as a wrong edge.
 
+A path step is a key. `[]` after a step reads every element of a list, and a key that holds dots or slashes is quoted as a JSON string in brackets: `metadata.annotations["eks.amazonaws.com/role-arn"]`, `spec.selector["app.kubernetes.io/name"]` ([#5097](https://github.com/INTENTIUS/chant/issues/5097)).
+
+### On a declared workspace graph
+
+[`chant workspace graph`](/chant/cli/workspace-graph/#derived-edges) runs the same catalog over the composed declared graph, across members ([#5097](https://github.com/INTENTIUS/chant/issues/5097)). Two optional fields shape what it reads there:
+
+- `scopes`, a list of `{ kind, path }`: a node of `kind` has names unique only inside the scope the value at `path` names. The k8s catalog lists each namespaced kind with `metadata.namespace`.
+- `declaredNode(node)`, a pure function giving the node the rules read when the declared node is not shaped like them, as `{ kind, attrs, nonLiteral }`. The terraform catalog gives a `Terraform::Resource` its provider type as `kind` and its literal arguments as `attrs`, and counts the arguments it left out.
+
+### Adding a rule
+
+A rule is one entry in `refs`, in the lexicon's `reference-catalog.ts`:
+
+```typescript
+{ from: "K8s::Core::ServiceAccount", path: 'metadata.annotations["iam.gke.io/gcp-service-account"]',
+  targetKind: "google_service_account", relation: "reference", label: "acts as" }
+```
+
+Its id, `<lexicon>:<from>:<path>`, is what each edge it draws and each dangling or ambiguous entry it records carries as `rule`, and what `catalog.rules` describes, so a reader picks it up with no change on its side. The target kind needs an identity rule for the value the path holds, unless the value is a node id. A field that can name one of several kinds gets one rule per kind, each `optional`, so a value naming a node of one kind is not dangling under the others. A rule whose path is a value that is only sometimes a reference (an env var) is `optional` too. Each catalog's test suite checks that every rule draws its edge on a fixture of its own.
+
 ### When `describeResources` is too thin: `enrichLiveAttrs`
 
 Edge reconstruction only works if the observed nodes actually carry those reference attributes. Some observation APIs return thin metadata; AWS `describe-stack-resources` gives stack outputs and no per-resource references. Then implement `enrichLiveAttrs` to source richer attributes for graphing:

@@ -191,8 +191,50 @@ export const COLLECTOR_META_KEY = "collector";
 /** `nested` names the nested workspace's member a node was read through (#2551); absent for the outer workspace's own nodes. */
 export type ComposedNode = IRNode & { member: string; nested?: string };
 export type ComposedEdge = IREdge & { member: string };
-/** A member's dangling reference (#3910, #3922): `from` is prefixed like a node id. `nested` as on {@link ComposedNode}. */
-export type ComposedDangling = IRDanglingRef & { member: string; nested?: string };
+/**
+ * A member's dangling reference (#3910, #3922): `from` is prefixed like a node id. `nested` as on {@link ComposedNode}.
+ * One the reference catalog recorded (#5097) also names its `rule`, and the `targetKind` that rule looks for.
+ */
+export type ComposedDangling = IRDanglingRef & { member: string; nested?: string; rule?: string; targetKind?: string };
+
+/**
+ * A reference the catalog pass found more than one node for (#5097): no edge
+ * is drawn, and every candidate is listed. `from` and the candidates are
+ * node ids of the document; `member` is the holder's member.
+ */
+export interface ComposedAmbiguous {
+  from: string;
+  member: string;
+  rule: string;
+  path: string;
+  value: string;
+  /** Every node the value matched, sorted. */
+  candidates: string[];
+}
+
+/** One catalog rule as the document names it (#5097): what {@link IREdge.rule} and a dangling or ambiguous entry's `rule` refer to. */
+export interface CatalogRuleEntry {
+  lexicon: string;
+  /** The holder kind the rule reads. */
+  from: string;
+  path: string;
+  relation: "reference" | "containment";
+  /** The kinds the rule's target can be: one rule id can stand for several rules, one per kind. Empty when a rule takes any kind. */
+  targetKinds: string[];
+  label?: string;
+}
+
+/** What the catalog pass over the declared graph read (#5097, `./catalog-edges.ts`). */
+export interface CatalogSummary {
+  /** The lexicons whose reference catalog ran, sorted. */
+  lexicons: string[];
+  /** The members whose nodes the pass read, sorted. */
+  members: string[];
+  /** Every rule an edge, a dangling entry or an ambiguous entry names, by rule id. */
+  rules: Record<string, CatalogRuleEntry>;
+  /** By node id: arguments the pass did not read because their value is not literal. Absent when there are none. */
+  nonLiteral?: Record<string, number>;
+}
 
 export interface WorkspaceGraph {
   version: number;
@@ -207,10 +249,15 @@ export interface WorkspaceGraph {
   derivedAttrs?: Record<string, string[]>;
   /**
    * The members' dangling CI references (#3910, #3922): each `ir.dangling`
-   * entry with `from` prefixed by its member and a `member` field, sorted by
-   * `from`, `path` and `value`. Absent when no member has one.
+   * entry with `from` prefixed by its member and a `member` field, then the
+   * references the catalog pass found no node for, with their `rule`
+   * (#5097). Sorted by `from`, `path` and `value`. Absent when there is none.
    */
   dangling?: ComposedDangling[];
+  /** References the catalog pass matched to more than one node (#5097), sorted by `from`, `rule` and `value`. Absent when there are none. */
+  ambiguous?: ComposedAmbiguous[];
+  /** What the catalog pass read (#5097). Absent when it did not run: a live read, or a caller that did not ask for it. */
+  catalog?: CatalogSummary;
   /**
    * Member links (#2524 D6, #2539), declared and inferred, then the links of
    * the records read with `--kind` (#2549). Empty when no declaration is given.

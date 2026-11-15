@@ -153,25 +153,24 @@ function rollupStatus(members: IRNode[]): Record<string, unknown> {
   return { _status: worst, ...(Object.keys(notGood).length > 0 ? { _memberStatus: notGood } : {}) };
 }
 
-/** T1 — collapse each composite instance to one node; internal edges disappear.
- * Topology view: surviving plain nodes keep only overlay paint, not properties. */
-function toComposites(ir: GraphIR): GraphIR {
+/**
+ * The composite instances of a graph, and the node each node is drawn as at
+ * T1: a member of an instance is drawn as the instance, any other node as
+ * itself.
+ */
+function compositeCollapse(ir: GraphIR): { instances: Map<string, IRNode[]>; collapsedId: Map<string, string>; idMap: Map<string, string> } {
   // A composite instance is its export name plus the composite that made it:
   // an AWS FargateAlb and a GCP CloudRunServiceComposite both exported as
   // `web` are two instances (#4178). One composite whose members span
   // lexicons stays one instance.
   const instanceKey = (n: IRNode) => `${n.compositeInstance}\0${n.compositeParent ?? ""}`;
   const instances = new Map<string, IRNode[]>();
-  const plain: IRNode[] = [];
   for (const n of ir.nodes) {
-    if (n.compositeInstance) {
-      const key = instanceKey(n);
-      const arr = instances.get(key) ?? [];
-      arr.push(n);
-      instances.set(key, arr);
-    } else {
-      plain.push({ ...n, attrs: paintAttrs(n.attrs) });
-    }
+    if (!n.compositeInstance) continue;
+    const key = instanceKey(n);
+    const arr = instances.get(key) ?? [];
+    arr.push(n);
+    instances.set(key, arr);
   }
 
   // The collapsed id is the instance name, or `<instance>@<composite>` when
@@ -189,6 +188,26 @@ function toComposites(ir: GraphIR): GraphIR {
 
   const idMap = new Map<string, string>();
   for (const n of ir.nodes) idMap.set(n.id, n.compositeInstance ? collapsedId.get(instanceKey(n))! : n.id);
+  return { instances, collapsedId, idMap };
+}
+
+/**
+ * The node each node of the base IR is drawn as at a detail tier (#5097): at
+ * T0 its lexicon's stack node, at T1 the composite instance it belongs to,
+ * and itself at T2 and T3. A reader that derives edges from the base IR maps
+ * them through this to put them on the tier's nodes.
+ */
+export function detailIdMap(ir: GraphIR, level: DetailLevel): Map<string, string> {
+  if (level === 0) return new Map(ir.nodes.map((n) => [n.id, n.lexicon]));
+  if (level === 1) return compositeCollapse(ir).idMap;
+  return new Map(ir.nodes.map((n) => [n.id, n.id]));
+}
+
+/** T1 — collapse each composite instance to one node; internal edges disappear.
+ * Topology view: surviving plain nodes keep only overlay paint, not properties. */
+function toComposites(ir: GraphIR): GraphIR {
+  const { instances, collapsedId, idMap } = compositeCollapse(ir);
+  const plain: IRNode[] = ir.nodes.filter((n) => !n.compositeInstance).map((n) => ({ ...n, attrs: paintAttrs(n.attrs) }));
 
   const nodes: IRNode[] = [...plain];
   for (const [key, members] of instances) {

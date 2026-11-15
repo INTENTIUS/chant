@@ -439,3 +439,95 @@ describe("the live read (#2875)", () => {
     expect(existsSync(join(root, "argv.txt"))).toBe(false);
   });
 });
+
+/** A chant that prints full.json for `--detail 3`, stacks.json for `--detail 0` and ir.json otherwise. */
+const FAKE_DETAIL_CHANT = `#!/bin/sh
+[ "$1" = graph ] || { echo "Error: Unknown command: $1" >&2; exit 1; }
+case " $* " in
+  *" --detail 3 "*) cat full.json ;;
+  *" --detail 0 "*) cat stacks.json ;;
+  *) cat ir.json ;;
+esac
+`;
+
+describe("the reference catalog across members (#5097)", () => {
+  const RULE = "k8s:K8s::Apps::Deployment:spec.template.spec.serviceAccountName";
+  const ir = (nodes: GraphIR["nodes"]): string => JSON.stringify({ version: 1, nodes, edges: [], groups: {} });
+  /** A k8s member: its full read, its T2 read (no nested trees) and its T0 read. */
+  const k8sMember = (dir: string, nodes: GraphIR["nodes"]) => ({
+    [`${dir}/chant.config.ts`]: "export default {};\n",
+    [`${dir}/full.json`]: ir(nodes),
+    [`${dir}/ir.json`]: ir(nodes.map((n) => ({ ...n, attrs: {} }))),
+    [`${dir}/stacks.json`]: ir([{ id: "k8s", kind: "stack", lexicon: "k8s", attrs: {} }]),
+  });
+  const deployment = (sa: string) => ({
+    id: "web",
+    kind: "K8s::Apps::Deployment",
+    lexicon: "k8s",
+    attrs: { metadata: { name: "web", namespace: "shop" }, spec: { template: { spec: { serviceAccountName: sa } } } },
+  });
+  const account = { id: "runner", kind: "K8s::Core::ServiceAccount", lexicon: "k8s", attrs: { metadata: { name: "runner", namespace: "shop" } } };
+  const namespace = { id: "shop", kind: "K8s::Core::Namespace", lexicon: "k8s", attrs: { metadata: { name: "shop" } } };
+  const workspace = (sa: string, extra: Record<string, string> = {}, members: unknown[] = []) =>
+    repo({
+      "chant.workspace.json": declaration([
+        { name: "app", dir: "app", kind: "chant" },
+        { name: "rbac", dir: "rbac", kind: "chant" },
+        ...members,
+      ]),
+      ...k8sMember("app", [deployment(sa), namespace]),
+      ...k8sMember("rbac", [account]),
+      ...extra,
+      ".gitignore": "node_modules\n",
+      "node_modules/.bin/chant": { text: FAKE_DETAIL_CHANT, mode: 0o755 },
+    });
+
+  test("draws the edge from one member's Deployment to another's ServiceAccount, with its rule", async () => {
+    const g = result((await workspaceGraph({ cwd: workspace("runner"), catalog: true })).doc);
+    expectValid(g);
+    expect(g.edges.filter((e) => e.origin === "derived").map((e) => [e.from, e.to, e.rule, e.member])).toEqual([
+      ["app/web", "app/shop", "k8s:K8s::Apps::Deployment:metadata.namespace", "app"],
+      ["app/web", "rbac/runner", RULE, "app"],
+      ["rbac/runner", "app/shop", "k8s:K8s::Core::ServiceAccount:metadata.namespace", "rbac"],
+    ]);
+    expect(g.catalog).toMatchObject({ lexicons: ["k8s"], members: ["app", "rbac"], rules: { [RULE]: { label: "runs as", targetKinds: ["K8s::Core::ServiceAccount"] } } });
+    expect(g.groups.byContainer).toEqual({ "app/shop": ["app/web", "rbac/runner"] });
+    // The document is still printed at T2: the nested trees the rules read are not on its nodes.
+    expect(g.nodes.find((n) => n.id === "app/web")?.attrs).toEqual({});
+  });
+
+  test("lists a reference to no node in dangling with its rule", async () => {
+    const g = result((await workspaceGraph({ cwd: workspace("missing"), catalog: true })).doc);
+    expectValid(g);
+    expect(g.edges.filter((e) => e.rule === RULE)).toEqual([]);
+    expect(g.dangling).toEqual([
+      { from: "app/web", kind: "ref", path: "spec.template.spec.serviceAccountName", value: "missing", member: "app", rule: RULE, targetKind: "K8s::Core::ServiceAccount" },
+    ]);
+  });
+
+  test("draws no edge when two members hold the name, and records both candidates", async () => {
+    const root = workspace("runner", k8sMember("rbac2", [account]), [{ name: "rbac2", dir: "rbac2", kind: "chant" }]);
+    const g = result((await workspaceGraph({ cwd: root, catalog: true })).doc);
+    expectValid(g);
+    expect(g.edges.filter((e) => e.rule === RULE)).toEqual([]);
+    expect(g.ambiguous).toEqual([
+      { from: "app/web", member: "app", rule: RULE, path: "spec.template.spec.serviceAccountName", value: "runner", candidates: ["rbac/runner", "rbac2/runner"] },
+    ]);
+  });
+
+  test("keeps the derived edges at --detail 0, on the members' stack nodes", async () => {
+    const g = result((await workspaceGraph({ cwd: workspace("runner"), args: { detail: 0 }, catalog: true })).doc);
+    expectValid(g);
+    expect(g.nodes.map((n) => n.id)).toEqual(["app/k8s", "rbac/k8s"]);
+    expect(g.edges.map((e) => [e.from, e.to, e.origin, e.rule])).toEqual([
+      ["app/k8s", "rbac/k8s", "derived", RULE],
+      ["rbac/k8s", "app/k8s", "derived", "k8s:K8s::Core::ServiceAccount:metadata.namespace"],
+    ]);
+  });
+
+  test("leaves the document as it was when not asked for", async () => {
+    const g = result((await workspaceGraph({ cwd: workspace("runner") })).doc);
+    expect(g.edges).toEqual([]);
+    expect(g.catalog).toBeUndefined();
+  });
+});

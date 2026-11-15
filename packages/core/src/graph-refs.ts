@@ -96,12 +96,45 @@ export interface TagRefRule {
   label?: string;
 }
 
+/**
+ * A kind whose names are unique only inside a scope the node names itself
+ * (#5097): a namespaced Kubernetes kind, whose scope is the value at
+ * `metadata.namespace`. Read on a declared graph, where nothing else says
+ * where a node sits. Over an index the node's location says it instead.
+ */
+export interface ScopeRule {
+  kind: string;
+  /** The attr path whose value names the scope. */
+  path: string;
+}
+
+/**
+ * What the catalog pass on a declared graph reads for one node, when the
+ * node as printed is not what the rules are written against (#5097). A
+ * declared terraform block is `Terraform::Resource` with its arguments under
+ * `body`; its view has the provider type as `kind` and the literal arguments
+ * as `attrs`.
+ */
+export interface DeclaredCatalogNode {
+  kind: string;
+  attrs: Record<string, unknown>;
+  /** Arguments left out of `attrs` because their value is not literal (an interpolation, a reference). */
+  nonLiteral: number;
+}
+
 /** A lexicon's reference knowledge — its identity map and reference rules. */
 export interface ReferenceCatalog {
   identities: IdentityRule[];
   refs: RefRule[];
   /** Typed tag rules, used over indexed nodes only (#4522). */
   tagRefs?: TagRefRule[];
+  /** Kinds whose names are scoped by a value on the node, on a declared graph (#5097). */
+  scopes?: ScopeRule[];
+  /**
+   * The node the catalog reads for a declared node of this lexicon, or
+   * undefined to read the node as it is (#5097). Pure.
+   */
+  declaredNode?(node: IRNode): DeclaredCatalogNode | undefined;
 }
 
 /** `child` is contained by `parent` (subnet ∈ VPC). For #779's boundary boxes. */
@@ -156,21 +189,86 @@ function toStr(v: unknown): string | undefined {
   return undefined;
 }
 
+/** One step of an attr path: a key, and whether the value under it fans out as an array. */
+export interface PathStep {
+  key: string;
+  fanOut: boolean;
+}
+
+/** Catalog paths, parsed once: a catalog is a fixed list, so this stays small. */
+const parsedPaths = new Map<string, PathStep[]>();
+
+/** The index of the closing quote of the quoted key opened at `i`, when `"]` closes it and it parses as JSON. */
+function quotedEnd(path: string, i: number): number | undefined {
+  let j = i + 2;
+  while (j < path.length && path[j] !== '"') j += path[j] === "\\" ? 2 : 1;
+  if (path[j] !== '"' || path[j + 1] !== "]") return undefined;
+  try {
+    return typeof JSON.parse(path.slice(i + 1, j + 1)) === "string" ? j : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
- * Read all scalar values at an attr path. Supports nested keys (`a.b`) and array
- * fan-out (`arr[]`, `arr[].id`). Returns every scalar found — a path through an
- * array yields one value per element.
+ * Split an attr path into its steps. A bare step runs to the next `.`, `[]`
+ * or quoted step; `[]` after a step fans it out over an array. A quoted step,
+ * `["iam.gke.io/gcp-service-account"]`, is one key whatever it holds (#5097):
+ * a JSON string in brackets, so `\"` and `\\` escape as they do in JSON. It
+ * follows the step before it with no `.`, and can fan out too (`["a.b"][]`).
+ */
+export function parsePath(path: string): PathStep[] {
+  const steps: PathStep[] = [];
+  let bare = "";
+  let inBare = false;
+  const endBare = (): void => {
+    if (inBare) steps.push({ key: bare, fanOut: false });
+    bare = "";
+    inBare = false;
+  };
+  let i = 0;
+  while (i < path.length) {
+    const c = path[i];
+    if (c === ".") {
+      endBare();
+      i++;
+    } else if (c === "[" && path[i + 1] === "]") {
+      endBare();
+      if (steps.length > 0) steps[steps.length - 1].fanOut = true;
+      else steps.push({ key: "", fanOut: true });
+      i += 2;
+    } else if (c === "[" && path[i + 1] === '"' && quotedEnd(path, i) !== undefined) {
+      endBare();
+      const j = quotedEnd(path, i)!;
+      steps.push({ key: JSON.parse(path.slice(i + 1, j + 1)) as string, fanOut: false });
+      i = j + 2;
+    } else {
+      bare += c;
+      inBare = true;
+      i++;
+    }
+  }
+  endBare();
+  return steps;
+}
+
+/**
+ * Read all scalar values at an attr path. Supports nested keys (`a.b`), array
+ * fan-out (`arr[]`, `arr[].id`) and quoted keys for a key that holds dots or
+ * slashes (`metadata.annotations["eks.amazonaws.com/role-arn"]`, #5097).
+ * Returns every scalar found: a path through an array yields one value per
+ * element.
  */
 export function readPath(obj: unknown, path: string): string[] {
+  let steps = parsedPaths.get(path);
+  if (!steps) parsedPaths.set(path, (steps = parsePath(path)));
   let cur: unknown[] = [obj];
-  for (const part of path.split(".")) {
-    const isArr = part.endsWith("[]");
-    const key = isArr ? part.slice(0, -2) : part;
+  for (const { key, fanOut } of steps) {
     const next: unknown[] = [];
     for (const c of cur) {
       if (c == null || typeof c !== "object") continue;
       const val = (c as Record<string, unknown>)[key];
-      if (isArr) {
+      if (fanOut) {
         if (Array.isArray(val)) next.push(...val);
       } else if (val !== undefined) {
         next.push(val);
@@ -352,8 +450,7 @@ const PLACEHOLDER_VALUES: ReadonlySet<string> = new Set(["[REDACTED]", "<chant:u
 
 /** The attribute a rule reads through, as a declared graph's `viaAttr` names it: `SecurityGroupIds[]` is `SecurityGroupIds`. */
 function topAttr(path: string): string {
-  const first = path.split(".")[0];
-  return first.endsWith("[]") ? first.slice(0, -2) : first;
+  return parsePath(path)[0]?.key ?? path;
 }
 
 /** `<lexicon>:<from kind>:<path>`, the id a derived edge carries. */
