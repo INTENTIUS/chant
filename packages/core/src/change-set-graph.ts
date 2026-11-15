@@ -117,7 +117,9 @@ export function terraformBlockKey(address: string): string | undefined {
  * - `chant`: the address, which is the entity name the IR uses as its id.
  * - `terraform`, `tofu`, `choudoufu`: `<root>/<block key>`, the root being
  *   the change-set member (`terraformBlockKey`), then the address.
- * - `warden`, `sql`: the address.
+ * - `warden`: the address, then, for `<node id>#<resourceType>[<key>]` (a
+ *   change under a node, #5089), the node id before the first `#`.
+ * - `sql`: the address.
  * - `pulumi`: the address is a URN, and the id is `<member>/<key>` by the
  *   one URN rule (`pulumiNodeCandidates`, `./pulumi-urn.ts`, #4456); none
  *   for a provider or the root stack.
@@ -131,6 +133,10 @@ export function changeSetNodeCandidates(entry: Pick<ChangeSetEntry, "member" | "
     case "choudoufu": {
       const key = terraformBlockKey(entry.address);
       return key === undefined ? [entry.address] : [`${entry.member}/${key}`, entry.address];
+    }
+    case "warden": {
+      const hash = entry.address.indexOf("#");
+      return hash > 0 ? [entry.address, entry.address.slice(0, hash)] : [entry.address];
     }
     default:
       return [entry.address];
