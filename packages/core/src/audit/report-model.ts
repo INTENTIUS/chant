@@ -110,6 +110,8 @@ export interface SerializedFinding {
   identity: string;
   /** Set when the finding is an absence rather than a defect — see `PostSynthDiagnostic.missing` (chant #2113). */
   missing?: { kind: string; scope: string };
+  /** On a `--preset` run (#5118): `merge-blocking` fails the run, `report-only` does not. */
+  gate?: "merge-blocking" | "report-only" | "notice";
   lexicon: string;
   tier: Tier;
   fixKind: FixKind;
@@ -269,7 +271,7 @@ export interface BuildModelOptions {
 export function buildReportModel(findings: AuditFinding[], opts: BuildModelOptions = {}): ReportModel {
   const catalog = opts.catalog ?? RULE_CATALOG;
   const identities = findingIdentities(findings);
-  const enriched: EnrichedFinding[] = findings.map((f, i) => ({ ...f, identity: identities[i], meta: metaFor(f.checkId, catalog) }));
+  const enriched: EnrichedFinding[] = findings.map((f, i) => ({ ...f, identity: f.identity ?? identities[i], meta: metaFor(f.checkId, catalog) }));
   const contents = new Map((opts.files ?? []).map((f) => [f.path, f.content]));
 
   const mergeWorthy = enriched.filter((f) => f.meta.tier === "merge-worthy");
@@ -348,6 +350,7 @@ export function buildReportJson(
       fingerprint: f.fingerprint,
       identity: f.identity,
       missing: f.missing,
+      gate: f.gate,
       lexicon: f.lexicon,
       tier: f.meta.tier,
       fixKind: f.meta.fixKind,

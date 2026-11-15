@@ -15,6 +15,7 @@ import { formatError, formatSuccess, formatWarning, formatBold } from "../format
 import type { CommandContext } from "../registry";
 import { listComponents, describeComponent } from "../../components/cli-support";
 import { CHANT_VERSION } from "../version";
+import { resolvePresetArgs } from "../preset-args";
 
 const AUDIT_FORMATS: AuditFormat[] = ["stylish", "json", "sarif", "markdown", "html"];
 const AUDIT_TIERS: AuditTier[] = ["merge-worthy", "all"];
@@ -71,9 +72,16 @@ export async function runAudit(ctx: CommandContext): Promise<number> {
     console.error(formatError({ message: `Invalid --tier: ${tier}. Expected one of ${AUDIT_TIERS.join(", ")}.` }));
     return 1;
   }
-  const failOn = (args.failOn ?? "none") as AuditFailOn;
-  if (!AUDIT_FAIL_ON.includes(failOn)) {
+  // #5118: a preset run with no --fail-on fails on its merge-blocking findings.
+  const failOn = (args.failOn ?? (args.preset !== undefined ? undefined : "none")) as AuditFailOn | undefined;
+  if (failOn !== undefined && !AUDIT_FAIL_ON.includes(failOn)) {
     console.error(formatError({ message: `Invalid --fail-on: ${failOn}. Expected one of ${AUDIT_FAIL_ON.join(", ")}.` }));
+    return 1;
+  }
+
+  const presetArgs = resolvePresetArgs(args);
+  if (presetArgs instanceof Error) {
+    console.error(formatError({ message: presetArgs.message }));
     return 1;
   }
 
@@ -95,7 +103,7 @@ export async function runAudit(ctx: CommandContext): Promise<number> {
     const result = auditAgentsCommand({
       format,
       tier,
-      failOn,
+      failOn: failOn ?? "none",
       scopes,
       runtimes,
       projectRoots: resolveProjectRoots(args),
@@ -156,6 +164,7 @@ export async function runAudit(ctx: CommandContext): Promise<number> {
     theme,
     toolVersion: CHANT_VERSION,
     maxFiles,
+    ...presetArgs,
   });
   printAuditResult(result);
   return result.exitCode;
