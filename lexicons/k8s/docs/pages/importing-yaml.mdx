@@ -20,6 +20,16 @@ Input YAML → parse → generate TypeScript → export typed resources
 
 The importer reads multi-document YAML, identifies each resource’s `apiVersion` and `kind`, and generates the corresponding typed constructor call. The output is a valid `.k8s.ts` file you can immediately build with `chant build`.
 
+## Importing a directory of manifests
+
+`chant import <directory> --lexicon k8s --output src` imports every `.yaml` and `.yml` file under the directory as one project. The rules that look across objects then run over all of them: WK8503 (a Secret that is consumed and not produced), FLUX002 (a Kustomization naming a GitRepository), ARGO003 (an Application naming a cluster that is not registered) and the selector rules. Imported one file at a time, each reports what another file supplies.
+
+Each file is written to its own path with a `.ts` extension, with a `// Source:` comment naming the YAML file. Findings from the build name the object (`metadata.name`), and the module that declares it sits at the path of the file it came from. A file that is not a manifest is skipped with a warning that names it. That covers a chart template (a `{{ ... }}` where a YAML key should be), a values file, and a `kustomization.yaml`. In a directory with a kustomization, only the files it lists in `resources` are read. Patches and values files beside it are not whole objects, and the import cannot apply them, so a warning names each. To import what a kustomization builds, use `chant import --kustomize <dir>`.
+
+The directory rule for a kustomization elsewhere that lists the directory is different from the `manifests` workspace member's. The member skips a directory that a kustomization lists, because the kustomize member renders that directory and its objects would be counted twice. An import renders nothing, so every file is read once and a listed directory is read like any other. The two share the rest: the same test for a chart template and the same list of kustomization file names.
+
+An identifier is the kind and the name (`deploymentApp`). When two objects would take the same one, because they share a kind and name in different namespaces or because their names differ only in characters an identifier cannot hold (`a:b` and `a-b`), the second one's namespace is added, then a number (`configMapABOther`, `configMapAB2`).
+
 ## Kinds the lexicon has no class for
 
 The importer writes a typed class only when `@intentius/chant-lexicon-k8s` exports one for that group and kind. For any other kind, such as the custom resources of an operator whose CRD the lexicon does not ship, it writes the manifest as `k8sManifest({ apiVersion, kind, ... })`. That source builds, and the build writes the manifest back as it was. The import prints one warning per kind. To get a typed class, list the CRD under `k8s.crds` in `chant.config.ts` and run `chant generate`, as described in [CRD-generated classes](/chant/lexicons/k8s/crd-classes/).

@@ -1812,6 +1812,17 @@ export interface LexiconPlugin {
   templateGenerator?(): TypeScriptGenerator;
 
   /**
+   * `chant import <directory>` (#5115): choose which of the directory's YAML
+   * files are templates of this lexicon. Core lists every `.yaml`
+   * and `.yml` file under the directory (not `node_modules` or
+   * `.git`) and hands the paths here; the lexicon returns the ones to import
+   * and a warning for each it leaves out, naming the file and why (a chart
+   * template, a kustomization). Left out, every file that parses as a
+   * template of this lexicon is imported.
+   */
+  importFiles?(input: { directory: string; files: string[] }): { files: string[]; warnings: string[] };
+
+  /**
    * Importers for this lexicon's content when it is embedded in another
    * lexicon's resources (#2962): a collector config in a k8s ConfigMap, rule
    * groups in a `PrometheusRule`, dashboard JSON in a ConfigMap. The host's
