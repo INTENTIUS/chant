@@ -297,7 +297,10 @@ export const terraformPlugin: LexiconPlugin = {
    * audited tree, a cycle) are warnings on a build; this hook returns
    * entities only, so on the audit path they are dropped rather than printed.
    *
-   * Never throws: malformed HCL yields an empty map.
+   * Malformed HCL yields an empty map. The one error it lets through is a
+   * missing HCL parser (an error carrying `parserPackage`): returning an empty
+   * map for that would read as a clean directory, so `chant audit` catches it
+   * and reports the directories it could not read (#5083).
    */
   async auditEntities(content: string, input?: AuditEntitiesInput): Promise<Map<string, Declarable>> {
     try {
@@ -323,7 +326,8 @@ export const terraformPlugin: LexiconPlugin = {
       });
       for (const [key, entity] of children) entities.set(key, entity);
       return entities;
-    } catch {
+    } catch (err) {
+      if (typeof (err as { parserPackage?: unknown } | null)?.parserPackage === "string") throw err;
       return new Map();
     }
   },

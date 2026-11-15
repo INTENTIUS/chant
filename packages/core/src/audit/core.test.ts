@@ -1,5 +1,5 @@
 import { beforeAll, describe, test, expect } from "vitest";
-import { auditFiles, CROSS_FILE, type AuditInput } from "./core";
+import { auditFiles, CROSS_FILE, describeSkip, parserPackageOf, type AuditInput, type AuditSkip } from "./core";
 import type { PostSynthCheck } from "../lint/post-synth";
 
 const ARGO_APP = `apiVersion: argoproj.io/v1alpha1
@@ -291,5 +291,52 @@ describe("auditFiles", () => {
       },
     });
     expect(findings).toEqual([]);
+  });
+});
+
+describe("a parser that is not installed (#5083)", () => {
+  const input = (path: string): AuditInput => ({ path, lexicon: "terraform", content: "resource \"x\" \"y\" {}" });
+  const check: PostSynthCheck = { id: "T001", description: "d", check: () => [] };
+  const missing = (): never => {
+    throw Object.assign(new Error("Cannot find package"), { parserPackage: "@cdktn/hcl2json" });
+  };
+
+  test("records the inputs it could not read, once per package", async () => {
+    const skips: AuditSkip[] = [];
+    const findings = await auditFiles([input("envs/prod"), input("envs/dev")], {
+      checksProvider: async () => [check],
+      entitiesProvider: async () => missing,
+      skips,
+    });
+    expect(findings).toEqual([]);
+    expect(skips).toEqual([
+      { lexicon: "terraform", reason: "parser-not-installed", package: "@cdktn/hcl2json", install: "npm install -D @cdktn/hcl2json", paths: ["envs/dev", "envs/prod"] },
+    ]);
+    expect(describeSkip(skips[0]!)).toContain("npm install -D @cdktn/hcl2json");
+    expect(describeSkip(skips[0]!)).toContain("envs/dev, envs/prod");
+  });
+
+  test("an unparseable file is not a skip", async () => {
+    const skips: AuditSkip[] = [];
+    await auditFiles([input("a")], {
+      checksProvider: async () => [check],
+      entitiesProvider: async () => () => {
+        throw new Error("syntax error");
+      },
+      skips,
+    });
+    expect(skips).toEqual([]);
+  });
+
+  test("an installed parser records nothing", async () => {
+    const skips: AuditSkip[] = [];
+    await auditFiles([input("a")], { checksProvider: async () => [check], entitiesProvider: async () => () => new Map(), skips });
+    expect(skips).toEqual([]);
+  });
+
+  test("parserPackageOf reads only a string property", () => {
+    expect(parserPackageOf({ parserPackage: "p" })).toBe("p");
+    expect(parserPackageOf({ parserPackage: 3 })).toBeUndefined();
+    expect(parserPackageOf(null)).toBeUndefined();
   });
 });

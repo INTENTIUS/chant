@@ -8,6 +8,7 @@
 import type { AuditFinding } from "./core";
 import type { UnclaimedFile } from "./discover";
 import { RULE_CATALOG, ruleDocUrl, type Authority, type Category, type FixKind, type Lineage, type RuleMeta, type Tier } from "./catalog";
+import type { AuditSkip } from "./core";
 import { findingIdentities } from "./identity";
 import { proveFix, unifiedDiff, type ProveOptions } from "./proof";
 import type { Severity } from "../lint/rule";
@@ -144,6 +145,12 @@ export interface AuditReportJson {
    * scan and for a repository URL.
    */
   truncated?: { limit: number; flag: string };
+  /**
+   * Lexicons whose files were found but not read, because an optional parser
+   * is not installed (#5083). A lexicon listed here has no findings because it
+   * was skipped, not because it is clean. Absent when every lexicon was read.
+   */
+  skipped?: AuditSkip[];
 }
 
 export function metaFor(id: string, catalog: Record<string, RuleMeta> = RULE_CATALOG): RuleMeta {
@@ -320,6 +327,7 @@ export function buildReportJson(
     catalog?: Record<string, RuleMeta>;
     unclaimed?: UnclaimedFile[];
     truncated?: { limit: number; flag: string };
+    skipped?: AuditSkip[];
   } = {},
 ): AuditReportJson {
   const model = buildReportModel(findings, { catalog: opts.catalog });
@@ -352,5 +360,6 @@ export function buildReportJson(
     })),
     unclaimed: opts.unclaimed && opts.unclaimed.length > 0 ? opts.unclaimed : undefined,
     truncated: opts.truncated,
+    skipped: opts.skipped && opts.skipped.length > 0 ? opts.skipped : undefined,
   };
 }

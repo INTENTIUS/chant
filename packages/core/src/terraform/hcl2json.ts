@@ -19,6 +19,14 @@ export interface Hcl2Json {
 }
 
 export class Hcl2JsonNotInstalled extends Error {
+  /**
+   * The npm package that is missing. `chant audit` reads this property on any
+   * error an entities parser throws (see `parserPackageOf` in `audit/core`),
+   * so a lexicon reports a missing optional parser by setting it, with no
+   * import of this class.
+   */
+  readonly parserPackage = "@cdktn/hcl2json";
+
   constructor(cause: unknown) {
     super(
       "Terraform carve-out needs the HCL parser, which is not installed.\n" +

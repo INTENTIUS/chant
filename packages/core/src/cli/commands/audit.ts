@@ -7,7 +7,7 @@
 
 import { existsSync, readFileSync, statSync, writeFileSync } from "fs";
 import { dirname, join, resolve } from "path";
-import { auditFiles, type AuditInput, type AuditFinding, type ChecksProvider, type SuppressionStats } from "../../audit/core";
+import { auditFiles, describeSkip, type AuditSkip, type AuditInput, type AuditFinding, type ChecksProvider, type SuppressionStats } from "../../audit/core";
 import { AUDIT_LEXICONS, classifyFiles, loadAuditPlugins, unclaimedFiles, walkCandidates, type CandidateWalk, type DetectPlugin, type RepoFile, type UnclaimedFile } from "../../audit/discover";
 import { RULE_CATALOG, resolveAuditCatalog, type RuleMeta } from "../../audit/catalog";
 import { findingIdentities, IDENTITY_FINGERPRINT_KEY } from "../../audit/identity";
@@ -120,6 +120,8 @@ export interface AuditCommandResult {
    * summary line.
    */
   suppressedCount?: number;
+  /** Lexicons found but not read for want of an optional parser (#5083); also in the JSON report as `skipped`. */
+  skipped?: AuditSkip[];
   /** Run diagnostics for stderr: a truncated scan in a format that cannot carry it (#2528). */
   warnings?: AuditWarning[];
 }
@@ -535,7 +537,7 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
     truncated && format === "sarif" ? [{ message: truncationNote(truncated, options.path) }] : [];
   if (pathLexicons.notice !== undefined) warnings.push({ message: pathLexicons.notice });
   const withWarnings = warnings.length > 0 ? { warnings } : {};
-  // A local target hands its directory to the classifier, so an input whose
+    // A local target hands its directory to the classifier, so an input whose
   // path names a directory carries the directory itself (#2217): terraform's
   // parse-to-graph follows a root module's local `module` calls from there. A
   // URL target has no local tree, and never fetches `.tf` in the first place.
@@ -585,11 +587,13 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   // ignore*`) suppressed count reaches the summary without changing
   // `auditFiles`'s `AuditFinding[]` return type; see `SuppressionStats`'s doc.
   const suppressionStats: SuppressionStats = { count: 0 };
+  const skips: AuditSkip[] = [];
   if (inputs.length > 0) {
     try {
       findings = await auditFiles(inputs, {
         checksProvider: options.checksProvider,
         suppressionStats,
+        skips,
         ...(isUrl ? {} : { enabledRules: readEnabledRules(options.path) }),
       });
     } catch (err) {
@@ -609,6 +613,16 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   const notes = coverageNotes(inputs);
   if (truncated) notes.unshift(truncationNote(truncated, options.path));
   if (missingLexiconNote) notes.push(missingLexiconNote);
+  // A skipped lexicon is stated in the report when the report is read as text
+  // (the stylish, markdown and html renderers print notes) and always in the
+  // log, so a pipe or a file never hides it (#5083). The JSON report carries
+  // it as `skipped`, which SARIF has no slot for.
+  const textReport = (format === "stylish" || format === "markdown" || format === "html") && !options.output;
+  for (const skip of skips) {
+    notes.push(describeSkip(skip));
+    if (!textReport) warnings.push({ message: describeSkip(skip) });
+  }
+  const finalWarnings = warnings.length > 0 ? { warnings } : {};
   if (suppressionStats.count > 0) {
     notes.push(
       `${suppressionStats.count} finding${suppressionStats.count === 1 ? "" : "s"} suppressed via inline chant-ignore comments.`,
@@ -656,7 +670,7 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   switch (format) {
     case "json": {
       const snapshot = await buildSnapshot(options, scanned, isUrl);
-      output = JSON.stringify(buildReportJson(findings, { snapshot, toolVersion: options.toolVersion, catalog, unclaimed, truncated }), null, 2);
+      output = JSON.stringify(buildReportJson(findings, { snapshot, toolVersion: options.toolVersion, catalog, unclaimed, truncated, skipped: skips }), null, 2);
       break;
     }
     case "sarif":
@@ -667,7 +681,7 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
       break;
     case "html": {
       const snapshot = await buildSnapshot(options, scanned, isUrl);
-      output = renderHtml(findings, { files, resolveSha, resolveDigest, notes, snapshot, theme: options.theme, template: options.template, catalog, truncated });
+      output = renderHtml(findings, { files, resolveSha, resolveDigest, notes, snapshot, theme: options.theme, template: options.template, catalog, truncated, skipped: skips });
       break;
     }
     default:
@@ -681,10 +695,10 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
     } catch (err) {
       return { success: false, output, findings, scanned, exitCode: 1, error: `Failed to write ${options.output}: ${err instanceof Error ? err.message : String(err)}` };
     }
-    return { success: true, status: "ok", output, findings, scanned, unclaimed, exitCode, wroteTo: options.output, suppressedCount: suppressionStats.count, ...withWarnings };
+    return { success: true, status: "ok", output, findings, scanned, unclaimed, exitCode, wroteTo: options.output, suppressedCount: suppressionStats.count, ...(skips.length > 0 ? { skipped: skips } : {}), ...finalWarnings };
   }
 
-  return { success: true, status: "ok", output, findings, scanned, unclaimed, exitCode, suppressedCount: suppressionStats.count, ...withWarnings };
+  return { success: true, status: "ok", output, findings, scanned, unclaimed, exitCode, suppressedCount: suppressionStats.count, ...(skips.length > 0 ? { skipped: skips } : {}), ...finalWarnings };
 }
 
 /** Print an audit result to stdout, and its warnings to stderr. */
