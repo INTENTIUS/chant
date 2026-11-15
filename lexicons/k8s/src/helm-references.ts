@@ -44,9 +44,11 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { loadAll } from "js-yaml";
 import type { Declarable } from "@intentius/chant/declarable";
+import type { IRNode } from "@intentius/chant/graph-ir";
+import type { FileNode } from "@intentius/chant/graph-refs";
 import { DECLARABLE_MARKER } from "@intentius/chant/declarable";
 import type { RenderedManifestEntity } from "./manifest-entity";
-import { addRenderedEntity, renderedManifestEntity } from "./kustomize/rendered-entity";
+import { addRenderedEntity, renderedLogicalId, renderedManifestEntity } from "./kustomize/rendered-entity";
 
 /** The key the stamp is written under on the object that names a chart. */
 export const HELM_REFERENCES_KEY = "helmReferences";
@@ -275,8 +277,13 @@ export interface HelmValuesRead {
 export function readValuesFile(workspace: string, path: string, warn: (message: string) => void): HelmValuesRead | undefined {
   const abs = resolve(workspace, path);
   if (!existsSync(abs) || !statSync(abs).isFile()) return undefined;
+  return parseValuesFile(path, readFileSync(abs, "utf-8"), warn);
+}
+
+/** A values file's text read as YAML, as {@link readValuesFile} reads it: undefined, with a warning, when it does not parse or is not a mapping. */
+export function parseValuesFile(path: string, text: string, warn: (message: string) => void): HelmValuesRead | undefined {
   try {
-    const doc = loadAll(readFileSync(abs, "utf-8"))[0];
+    const doc = loadAll(text)[0];
     if (doc === undefined || doc === null) return { path, values: {} };
     if (!isMap(doc)) {
       warn(`values file ${path} is not a mapping and was skipped`);
@@ -337,14 +344,82 @@ export function readHelmReferences(opts: {
     const read = readValuesFile(ctx.workspace, path, (m) => warnings.push(`${opts.memberKind} member "${label}": ${m}`));
     if (!read) continue;
     entities.set(`${label}/values/${path}`, helmValuesEntity(read, files.get(path)!));
-    const extra = read.values.extraObjects;
-    for (const object of Array.isArray(extra) ? extra : []) {
-      if (!isMap(object)) continue;
-      if (typeof object.apiVersion !== "string" || typeof object.kind !== "string") continue;
-      const entity: RenderedManifestEntity | null = renderedManifestEntity(object, path, HELM_VALUES_ANNOTATION);
-      if (!entity) continue;
-      addRenderedEntity(entities, label, entity);
-    }
+    for (const entity of extraObjectEntities(read)) addRenderedEntity(entities, label, entity);
   }
   return stamped;
+}
+
+/** The manifest entities of a values file's `extraObjects`, each annotated with the file's path. */
+function extraObjectEntities(read: HelmValuesRead): RenderedManifestEntity[] {
+  const extra = read.values.extraObjects;
+  const out: RenderedManifestEntity[] = [];
+  for (const object of Array.isArray(extra) ? extra : []) {
+    if (!isMap(object)) continue;
+    if (typeof object.apiVersion !== "string" || typeof object.kind !== "string") continue;
+    const entity = renderedManifestEntity(object, read.path, HELM_VALUES_ANNOTATION);
+    if (entity) out.push(entity);
+  }
+  return out;
+}
+
+/**
+ * The root a generated Application's stamp is resolved against (#5094). The
+ * stamp holds workspace-relative paths, and resolving under a fixed root
+ * gives the same paths the reader gives, with no directory read.
+ */
+const GENERATED_ROOT = resolve(sep, "chant-workspace");
+
+/**
+ * A generated Application (./application-set.ts) with the `helmReferences`
+ * stamp the reader gives one written by hand (#5094): the charts its
+ * sources name and its `$<ref>/` and source-relative values files, as
+ * workspace-relative paths. The graph makes it after every member is read,
+ * so the stamp is made here. Pure.
+ */
+export function stampGeneratedApplication(doc: Doc): Doc {
+  return stampHelmReferences(doc, { workspace: GENERATED_ROOT, dir: GENERATED_ROOT }).doc;
+}
+
+/**
+ * The nodes the values files of a stamped generated Application make
+ * (#5094), as the reader makes them for one written by hand: a
+ * `Helm::Values` node for each file that exists and parses, keyed
+ * `values/<path>`, and a manifest node for each of its `extraObjects`,
+ * keyed `values/<path>/<kindName>`. A file a `Helm::Values` node of the
+ * Application's member already holds is not read again. `readFile` returns
+ * a workspace-relative file's text, or undefined when it is not there.
+ */
+export function generatedValuesNodes(node: IRNode, readFile: (path: string) => string | undefined, nodes: readonly IRNode[]): FileNode[] {
+  const refs = node.attrs[HELM_REFERENCES_KEY];
+  if (!isMap(refs) || !Array.isArray(refs.valuesFiles)) return [];
+  const member = (node as IRNode & { member?: string }).member;
+  const held = new Set(
+    nodes
+      .filter((n) => n.kind === HELM_VALUES_KIND && (n as IRNode & { member?: string }).member === member)
+      .map((n) => n.attrs.path)
+      .filter((p): p is string => typeof p === "string"),
+  );
+  const charts = Array.isArray(refs.charts) ? (refs.charts as Array<HelmChartRef & { valuesFiles?: string[] }>) : [];
+  const out: FileNode[] = [];
+  for (const path of refs.valuesFiles) {
+    // A path that left the workspace stays in the stamp as written, to be dangling, and is not read.
+    if (typeof path !== "string" || held.has(path) || path.startsWith("$") || path.startsWith("/") || path.split("/").includes("..")) continue;
+    const text = readFile(path);
+    if (text === undefined) continue;
+    const read = parseValuesFile(path, text, () => {});
+    if (!read) continue;
+    const named = charts.filter((c) => c.valuesFiles?.includes(path)).map((c) => ({ repo: c.repo, chart: c.chart, version: c.version }));
+    out.push({ key: `values/${path}`, kind: HELM_VALUES_KIND, lexicon: "helm", attrs: { path, ...(named.length > 0 ? { charts: named } : {}), values: read.values } });
+    const keys = new Set<string>();
+    for (const entity of extraObjectEntities(read)) {
+      const metadata = entity.props.metadata as Doc;
+      const base = `values/${path}/${renderedLogicalId(entity.props.kind as string, str(metadata.name))}`;
+      let key = base;
+      if (keys.has(key) && str(metadata.namespace)) key = `${base}.${str(metadata.namespace)}`;
+      for (let n = 2; keys.has(key); n++) key = `${base}~${n}`;
+      keys.add(key);
+      out.push({ key, kind: entity.entityType, lexicon: "k8s", attrs: entity.props as Doc });
+    }
+  }
+  return out;
 }

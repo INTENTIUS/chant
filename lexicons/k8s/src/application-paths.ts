@@ -15,10 +15,10 @@
  *   `helm.ignoreMissingValueFiles: true` has none read.
  *
  *   The helm rule (#5100, `helmReferences.valuesFiles[]`) owns the values
- *   files of every Application the k8s reader stamped with `helmReferences`,
- *   so they are not read here and a missing one is dangling once, under that
- *   rule. A generated Application is made after the read and carries no
- *   stamp, so its values files are read here.
+ *   files of every Application stamped with `helmReferences`, so they are
+ *   not read here and a missing one is dangling once, under that rule. The
+ *   k8s reader stamps an Application written by hand, and since #5094 the
+ *   generate rule stamps a generated one the same way.
  *
  * A path that is absolute or climbs out of the repository's root is not
  * read. Pure.

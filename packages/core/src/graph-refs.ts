@@ -237,6 +237,28 @@ export interface GenerateRule {
    * rule draws for the same pair is left out.
    */
   cluster?: { path: string; targetKind: string; label?: string };
+  /**
+   * The nodes the files a generated node names make (#5094): a generated
+   * Application's Helm values file and the objects under its `extraObjects`,
+   * as the reader makes them for one written by hand. `readFile` returns a
+   * workspace-relative file's text, or undefined when it is not in the
+   * workspace's repository; `nodes` are every node the pass reads, so a file
+   * a node already holds is not read twice. The pass gives each the id
+   * `<holder id>/<key>`, so one file named by several of a holder's
+   * generated nodes is one node. Only the catalog pass over a declared graph
+   * calls it, and only when its caller can read the repository.
+   */
+  files?(node: IRNode, readFile: (path: string) => string | undefined, nodes: readonly IRNode[]): FileNode[];
+}
+
+/** One node a {@link GenerateRule.files} read from a file. */
+export interface FileNode {
+  /** Unique among the holder's file nodes: `values/<path>`, and `values/<path>/<object>` for an object in it. */
+  key: string;
+  kind: string;
+  /** The lexicon whose node it is: a values file is the helm lexicon's, the objects in it the holder's. */
+  lexicon: string;
+  attrs: Record<string, unknown>;
 }
 
 /** What a {@link GenerateRule} made of one holder. */

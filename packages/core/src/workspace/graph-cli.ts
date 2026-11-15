@@ -34,7 +34,7 @@ import type { ReasonCode } from "./reason-codes";
 import type { CommandContext, ParsedArgs } from "../cli/registry";
 import { graphBox, plantability, type Plantable } from "./box-factory";
 import { composedId, composeWorkspaceGraph, readMemberIr, type ComposedMember, type ComposeInput, type WorkspaceGraph } from "./compose-graph";
-import { placeCatalogPass, runCatalogPass, runsOnEdges, type LookPath } from "./catalog-edges";
+import { placeCatalogPass, runCatalogPass, runsOnEdges, type LookPath, type ReadFile } from "./catalog-edges";
 import { detailIdMap, type DetailLevel } from "../graph-detail";
 import type { NamedCatalog } from "../graph-refs";
 import { isViewDocument, prefixView } from "../capabilities/view";
@@ -478,7 +478,7 @@ async function addCatalogEdges(
   for (const { member, ir } of readable) {
     for (const [id, at] of detailIdMap(ir!, level)) placed.set(composedId(member.name, id), composedId(member.name, at));
   }
-  const pass = runCatalogPass(nodes, catalogs, catalogs.length > 0 ? readable.map((i) => i.member.name) : [], repoPathLookup(read.located, read.workspace.repo ?? null));
+  const pass = runCatalogPass(nodes, catalogs, catalogs.length > 0 ? readable.map((i) => i.member.name) : [], repoPathLookup(read.located, read.workspace.repo ?? null), treeFileReader(read.located));
   // The declared cluster each member runs on (#5101): its edges are drawn first, so a Secret they join is not also derived or left dangling.
   const declared = runsOnEdges(nodes, read.runsOn, catalogs);
   for (const problem of declared.problems) query.onStderr?.(`warning: ${problem}\n`);
@@ -516,6 +516,23 @@ function repoPathLookup(located: LocatedWorkspace, repo: string | null): LookPat
     }
     if (path === "") return "dir";
     return located.tree.stat(path) ?? "missing";
+  };
+}
+
+/**
+ * A workspace-relative file's text from the tree the workspace is read from,
+ * for the files a generated node names (#5094), or undefined when it is not
+ * a file there or cannot be read.
+ */
+function treeFileReader(located: LocatedWorkspace): ReadFile {
+  return (path) => {
+    if (path === "" || path.startsWith("/") || path.split("/").includes("..")) return undefined;
+    if (located.tree.stat(path) !== "file") return undefined;
+    try {
+      return located.tree.read(path);
+    } catch {
+      return undefined;
+    }
   };
 }
 

@@ -30,6 +30,7 @@
  */
 import type { IRNode } from "@intentius/chant/graph-ir";
 import type { Generated, GeneratedNode } from "@intentius/chant/graph-refs";
+import { stampGeneratedApplication } from "./helm-references";
 
 type Doc = Record<string, unknown>;
 
@@ -322,7 +323,8 @@ export function generateApplications(holder: IRNode, nodes: readonly IRNode[]): 
       const node: GeneratedNode = {
         key: name,
         kind: APPLICATION,
-        attrs: { apiVersion: str(holder.attrs.apiVersion) ?? "argoproj.io/v1alpha1", kind: "Application", metadata, spec: isObject(app.spec) ? app.spec : {} },
+        // Stamped as the reader stamps an Application written by hand, so its charts and values files join the Helm graph (#5094).
+        attrs: stampGeneratedApplication({ apiVersion: str(holder.attrs.apiVersion) ?? "argoproj.io/v1alpha1", kind: "Application", metadata, spec: isObject(app.spec) ? app.spec : {} }),
         generator: type,
         params: flat,
         ...(set.node ? { cluster: set.node } : {}),
