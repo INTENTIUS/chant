@@ -49,7 +49,6 @@ import type { MemberOpResult } from "./workspace-run";
 import type { ControlAppliedRecord } from "../control/applied";
 import type { TrainDispatch } from "../control/train";
 import { actorFromEnv } from "../actor";
-import { NEXT_RELEASE } from "../release-floors";
 
 export interface TrainMember {
   member: string;
@@ -248,7 +247,7 @@ export async function appendReleaseTrain(cwd: string, record: ReleaseTrainRecord
 }
 
 /** The first chant that writes {@link ReleaseTrainRecord.trainDigest} and has `chant workspace train promote` (#4037). */
-export const TRAIN_PROMOTE_FLOOR = NEXT_RELEASE;
+export const TRAIN_PROMOTE_FLOOR = "0.124.98";
 
 // ── Promote ──────────────────────────────────────────────────────────────────
 
