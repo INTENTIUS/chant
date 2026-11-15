@@ -72,6 +72,16 @@ export interface PostSynthContext {
    */
   readonly projectDir?: string;
   /**
+   * Set when the checks run under `chant audit` (#5109), which reads a tree
+   * rather than building a project. `root` is the directory the audit walked,
+   * and is absent when the tree is a remote fetch with nothing on disk. A
+   * check that reads the disk looks there, never in the working directory the
+   * command happened to start from, and stays silent when there is no `root`.
+   * Absent from `chant build` and `chant lint` (which set `projectDir`) and
+   * from a hand-built context.
+   */
+  readonly audit?: { root?: string };
+  /**
    * The project config the build loaded (#3751), as source lint rules get it
    * in `LintContext.projectConfig`. A check that renders output again, as the
    * sql lexicon's does for `sql-types.d.ts`, needs the settings the build ran

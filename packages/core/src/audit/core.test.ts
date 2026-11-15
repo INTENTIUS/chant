@@ -135,6 +135,22 @@ describe("auditFiles", () => {
     expect(findings.map((f) => f.file).sort()).toEqual(["a.yml", "b.yml"]);
   });
 
+  test("hands a check the audited root, and none for a remote tree (#5109)", async () => {
+    const seen: Array<{ root?: string } | undefined> = [];
+    const probe: PostSynthCheck = {
+      id: "PROBE001",
+      description: "probe",
+      check: (ctx) => {
+        seen.push(ctx.audit);
+        return [];
+      },
+    };
+    const input: AuditInput[] = [{ path: "a.yml", content: "x", lexicon: "github" }];
+    await auditFiles(input, { checksProvider: async () => [probe], root: "/tmp/some-tree" });
+    await auditFiles(input, { checksProvider: async () => [probe] });
+    expect(seen).toEqual([{ root: "/tmp/some-tree" }, { root: "/tmp/some-tree" }, {}, {}]);
+  });
+
   test("skips an auditOptIn check unless enabledRules names it (#3190)", async () => {
     const optIn: PostSynthCheck = {
       id: "OPT001",

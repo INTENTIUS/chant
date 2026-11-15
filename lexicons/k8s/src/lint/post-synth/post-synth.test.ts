@@ -1,3 +1,6 @@
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { describe, test, expect } from "vitest";
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
 
@@ -1959,6 +1962,56 @@ describe("ARGO005: Application source path exists", () => {
       argoApp("api", { project: "default", destination: inClusterDest, source: { repoURL: "x", chart: "redis" } }),
     );
     expect(argo005.check(ctx).length).toBe(0);
+  });
+
+  // #5109: under `chant audit` the path resolves against the audited tree, not the working directory.
+  describe("under chant audit", () => {
+    const repo = "https://github.com/acme/infra";
+    function tree(origin?: string): string {
+      const dir = mkdtempSync(join(tmpdir(), "chant-argo005-"));
+      execFileSync("git", ["init", "-q"], { cwd: dir });
+      if (origin) execFileSync("git", ["remote", "add", "origin", origin], { cwd: dir });
+      mkdirSync(join(dir, "kubernetes/app"), { recursive: true });
+      return dir;
+    }
+    function auditCtx(root: string | undefined, path: string, repoURL = repo): PostSynthContext {
+      const ctx = manifestsCtx(argoApp("api", { project: "default", destination: inClusterDest, source: { repoURL, path } }));
+      return { ...ctx, audit: root === undefined ? {} : { root } };
+    }
+
+    test("a path that exists in the audited tree is not flagged, whatever the working directory", () => {
+      const dir = tree(`${repo}.git`);
+      expect(process.cwd()).not.toBe(dir);
+      expect(argo005.check(auditCtx(dir, "kubernetes/app")).length).toBe(0);
+    });
+
+    test("a path missing from the audited tree is flagged, with the path it looked for", () => {
+      const dir = tree(`${repo}.git`);
+      const diags = argo005.check(auditCtx(dir, "kubernetes/gone"));
+      expect(diags.length).toBe(1);
+      expect(diags[0].message).toContain('"kubernetes/gone"');
+      expect(diags[0].message).toContain("audited repository");
+    });
+
+    test("a path that exists only in the working directory is flagged", () => {
+      const dir = tree(`${repo}.git`);
+      expect(argo005.check(auditCtx(dir, "lexicons")).length).toBe(1);
+    });
+
+    test("an Application of another repository is left alone", () => {
+      const dir = tree(`${repo}.git`);
+      expect(argo005.check(auditCtx(dir, "kubernetes/gone", "https://github.com/acme/other")).length).toBe(0);
+    });
+
+    test("a tree with no origin is checked against the directory", () => {
+      const dir = tree();
+      expect(argo005.check(auditCtx(dir, "kubernetes/app")).length).toBe(0);
+      expect(argo005.check(auditCtx(dir, "kubernetes/gone")).length).toBe(1);
+    });
+
+    test("a tree with nothing on disk gets no finding", () => {
+      expect(argo005.check(auditCtx(undefined, "kubernetes/gone")).length).toBe(0);
+    });
   });
 });
 
