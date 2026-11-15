@@ -3,7 +3,7 @@
  * a pull request can run on a values file without rendering the chart.
  */
 
-import ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 
 /** The compiler's messages for `const v: <type> = <values>`; none means the values fit. */
 export function typecheckValues(type: string, values: unknown): string[] {
