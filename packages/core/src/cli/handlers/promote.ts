@@ -75,7 +75,7 @@ import { redeployLine, releaseRollbackLine, rollbackTarget, unsettledComponents 
 import { actorFromEnv } from "../../actor";
 
 const PROMOTE_USAGE =
-  "chant components promote --to <env> [--from <env>] [--allow-skip] [--release <label|digest>] [--component <name> [--digest <sha256:...>] | --digest <component>=<sha256:...> ...] [--wave-gate <gate>] [--resume <file>] [--dry-run] [--json]";
+  "chant components promote --to <env> [--from <env>] [--allow-skip] [--release <label|digest> [--plan-only]] [--component <name> [--digest <sha256:...>] | --digest <component>=<sha256:...> ...] [--wave-gate <gate>] [--resume <file>] [--dry-run] [--json]";
 const ROLLBACK_USAGE =
   "chant components rollback <env> (--component <name> [--digest <sha256:...>] | --release <label|digest>) [--dry-run] [--json]";
 const REDEPLOY_USAGE =
@@ -209,6 +209,8 @@ async function bindReleaseGate(input: {
   grouped?: import("../../components/fan-out").FanOutPlan;
   /** Each group plan this binding makes is added here, the newest first, for the run to apply. */
   groupRuns: import("../../components/capability").GroupRun[];
+  /** `--plan-only` (#4037): plan and store the change set, and record nothing in the gate ledger, an empty pass included. */
+  planOnly?: boolean;
 }): Promise<BoundReleaseGate | number | undefined> {
   const { plan, under, port } = input;
   const gate = await import("../../components/release-gate");
@@ -262,6 +264,10 @@ async function bindReleaseGate(input: {
   const { readStoredChangeSet } = await import("../../lifecycle/change-set-store");
   const { isEmptyChangeSet } = await import("../../change-set");
   const verifyEmpty = gate.emptyVerifier((digest) => readStoredChangeSet(digest, { cwd: input.projectPath }), { releaseDigest, environment: env });
+  // #4037: a promote a train started under a workspace gate may take that gate's approval in place of its own.
+  const { resolveWorkspaceRun } = await import("../../op/workspace-run-env");
+  const underWorkspace = resolveWorkspaceRun();
+  const workspace = underWorkspace?.gate ? { workspace: releaseWorkspaceGate(input.projectPath, underWorkspace.gate) } : {};
 
   /** Refuse, store, and pass the gates of an empty plan; the binding, or the exit code of a refusal already printed. */
   const bindDoc = async (doc: ChangeSetDocument, names: readonly string[], what: string): Promise<{ binding: ReleaseGateBinding; empty: boolean } | number> => {
@@ -293,7 +299,7 @@ async function bindReleaseGate(input: {
         (empty ? ", empty: its gates pass without an approval" : `, ${doc.summary.entries} entr${doc.summary.entries === 1 ? "y" : "ies"}, ${doc.summary.holes} hole(s)`) +
         ` (chant change-set show ${doc.digest})`,
     ));
-    if (empty) {
+    if (empty && !input.planOnly) {
       if (!port.appendResolution) throw new Error("the gate ledger can't record a resolution, so an empty change set can't pass its gates");
       const { resolutions } = await port.read(gate.RELEASE_GATE_OP);
       const timestamp = new Date().toISOString();
@@ -308,7 +314,7 @@ async function bindReleaseGate(input: {
         );
       }
     }
-    return { binding: { op: gate.RELEASE_GATE_OP, planDigest: doc.digest, releaseDigest, verifyEmpty }, empty };
+    return { binding: { op: gate.RELEASE_GATE_OP, planDigest: doc.digest, releaseDigest, verifyEmpty, ...workspace }, empty };
   };
 
   const later = {
@@ -334,7 +340,7 @@ async function bindReleaseGate(input: {
         return {
           doc: stored.document,
           empty: isEmptyChangeSet(stored.document),
-          binding: { op: gate.RELEASE_GATE_OP, planDigest: stored.document.digest, releaseDigest, verifyEmpty },
+          binding: { op: gate.RELEASE_GATE_OP, planDigest: stored.document.digest, releaseDigest, verifyEmpty, ...workspace },
           reads: fresh.reads,
           resumedFrom: stored.document.digest,
           ...groupsOf(fresh),
@@ -357,6 +363,20 @@ async function bindReleaseGate(input: {
     console.error(formatInfo(`${component} reads ${refs.join(", ")}, known only once its upstream applies; it is planned again then, and needs its own approval if its plan moves`));
   }
   return { doc: first.doc, ...bound, reads: first.reads, ...groupsOf(first), ...(first.plannedOutputs ? { plannedOutputs: first.plannedOutputs } : {}), ...(first.unknownInputs ? { unknownInputs: first.unknownInputs } : {}), ...later };
+}
+
+/**
+ * The workspace gate stand-in for a release gate (#4037, ws-039), loading the
+ * workspace code only when a gate is asked about it. The approval must cover
+ * this member's gate, change set, environment and release.
+ */
+function releaseWorkspaceGate(cwd: string, gate: string): import("../../op/gate").WorkspaceGateStandIn {
+  return {
+    async standIn(q) {
+      const { memberGateStandIn } = await import("../../workspace/workspace-gates");
+      return memberGateStandIn(cwd, gate, q);
+    },
+  };
 }
 
 /** A later round's or wave's plan was refused (provisional or failed members); the refusal is already printed. */
@@ -603,15 +623,18 @@ async function deployPlanIn(
         actor: actor!,
         projectPath: project.projectPath,
         head,
-        ...(resume ? { resume } : {}),
+        ...(resume && !args.planOnly ? { resume } : {}),
         ...(grouped ? { grouped } : {}),
         groupRuns,
+        ...(args.planOnly ? { planOnly: true } : {}),
       });
       if (typeof result === "number") {
         tidy();
         return result;
       }
-      if (result) {
+      if (result && args.planOnly) {
+        bound = result;
+      } else if (result) {
         bound = result;
         releaseGate = result.binding;
         changeSetJson = { changeSet: result.doc.digest, empty: result.empty };
@@ -627,6 +650,25 @@ async function deployPlanIn(
       tidy();
       throw err;
     }
+  }
+  // #4037: --plan-only stops here, with the change set planned and stored, and nothing deployed.
+  if (args.planOnly && under) {
+    tidy();
+    const { gateNamesOf, RELEASE_GATE_OP: op } = await import("../../components/release-gate");
+    const planned = {
+      env: plan.to,
+      releaseDigest: under.release.releaseDigest,
+      label: under.label,
+      op,
+      gates: bound ? gateNamesOf(prepared) : [],
+      changeSet: bound?.doc.digest ?? null,
+      empty: bound?.empty ?? null,
+      components: plan.items.map((i) => i.component),
+    };
+    if (args.json) console.log(JSON.stringify(planned, null, 2));
+    else if (!bound) console.error(formatInfo(`release ${under.label ?? under.release.releaseDigest} for "${plan.to}": no promoted composition declares a gate, so there is no change set to approve; nothing was deployed`));
+    else console.error(formatInfo(`release ${under.label ?? under.release.releaseDigest} for "${plan.to}": change set ${planned.changeSet}${planned.empty ? ", empty" : ""}, gates ${planned.gates.join(", ")}; nothing was deployed`));
+    return 0;
   }
   if (args.waveGate && !bound) {
     console.error(formatError({ message: "--wave-gate needs a promote under --release whose compositions declare a gate", hint: PROMOTE_USAGE }));
@@ -990,6 +1032,10 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
       console.error(formatError({ message: refusal }));
       return 1;
     }
+  }
+  if (args.planOnly && !args.release) {
+    console.error(formatError({ message: "--plan-only plans a release's change set: it needs --release <label|digest>", hint: PROMOTE_USAGE }));
+    return 1;
   }
   const who = actorOrRefuse(ctx);
   if (typeof who === "number") return who;

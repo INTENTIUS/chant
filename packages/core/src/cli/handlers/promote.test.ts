@@ -175,6 +175,16 @@ let verification: { status: "verified" | "unsigned" | "unverified"; digestMatche
 vi.mock("../../workspace/security", async (original) => ({ ...(await original<typeof import("../../workspace/security")>()), securityGroupsAt: () => new Set(groups) }));
 vi.mock("../../lifecycle/release-verify", async (original) => ({ ...(await original<typeof import("../../lifecycle/release-verify")>()), verifyRelease: async () => verification }));
 
+// #4037: the workspace gate a train's promote runs under answers from a list, not the workspace ledger.
+const standInAsked: Array<{ cwd: string; gate: string; q: Record<string, unknown> }> = [];
+let standInAnswers: (q: Record<string, unknown>) => boolean = () => false;
+vi.mock("../../workspace/workspace-gates", () => ({
+  memberGateStandIn: async (cwd: string, gate: string, q: Record<string, unknown>) => {
+    standInAsked.push({ cwd, gate, q });
+    return standInAnswers(q) ? { gate, digest: "sha256:" + "7".repeat(64), approvedBy: "carol", timestamp: "2026-01-04T00:00:00.000Z" } : null;
+  },
+}));
+
 // The run handler pulls in every runtime; the promote needs only its exit code.
 vi.mock("./run", () => ({ GATED_EXIT_CODE: 3 }));
 
@@ -699,6 +709,64 @@ describe("chant components promote --release binds its gate (#4045)", () => {
     expect(ran).not.toContain("prod:apply");
     expect(releaseGatePort!.appended.at(-1)).toMatchObject({ releaseDigest: r2.releaseDigest });
     expect(appendReleaseRecordMock).not.toHaveBeenCalled();
+  });
+
+  test("--plan-only plans and stores the change set, prints it, and deploys and records nothing (#4037)", async () => {
+    expect(await runComponentsPromote(ctx({ release: "v1.0.0", planOnly: true, json: true }))).toBe(0);
+    const [doc] = onlyStored();
+    expect(JSON.parse(logs.join("\n"))).toEqual({
+      env: "prod",
+      releaseDigest: r1.releaseDigest,
+      label: "v1.0.0",
+      op: "release",
+      gates: ["prod-release"],
+      changeSet: doc!.digest,
+      empty: false,
+      components: ["api"],
+    });
+    expect(ran).toEqual([]);
+    expect(releaseGatePort!.appended).toEqual([]);
+    expect(releaseGatePort!.resolved).toEqual([]);
+    expect(appendReleaseRecordMock).not.toHaveBeenCalled();
+    expect(removedTemplates).toHaveLength(1);
+    // The promote that follows binds the same change set.
+    expect(await runComponentsPromote(ctx({ release: "v1.0.0" }))).toBe(3);
+    expect(releaseGatePort!.appended[0]).toMatchObject({ planDigest: doc!.digest, releaseDigest: r1.releaseDigest });
+  });
+
+  test("--plan-only of an empty change set writes no empty pass, and --plan-only needs --release (#4037)", async () => {
+    ledgers.prod = [{ ...staging, env: "prod", releaseDigest: r1.releaseDigest, timestamp: "2026-01-03T00:00:00.000Z" }];
+    expect(await runComponentsPromote(ctx({ release: "v1.0.0", planOnly: true, json: true }))).toBe(0);
+    expect(JSON.parse(logs.join("\n"))).toMatchObject({ empty: true, gates: ["prod-release"] });
+    expect(releaseGatePort!.resolved).toEqual([]);
+    errors.length = 0;
+    expect(await runComponentsPromote(ctx({ planOnly: true }))).toBe(1);
+    expect(errors.join("\n")).toMatch(/--plan-only plans a release's change set: it needs --release/);
+  });
+
+  test("under a train's workspace gate, the release gate takes the workspace approval only for its release, environment and change set (#4037)", async () => {
+    const saved = { run: process.env.CHANT_WORKSPACE_RUN, gate: process.env.CHANT_WORKSPACE_GATE };
+    process.env.CHANT_WORKSPACE_RUN = "ws-1";
+    process.env.CHANT_WORKSPACE_GATE = "train-prod";
+    standInAsked.length = 0;
+    try {
+      standInAnswers = (q) => q.releaseDigest === r2.releaseDigest;
+      expect(await runComponentsPromote(ctx({ release: "v1.0.0" }))).toBe(3);
+      const [doc] = onlyStored();
+      expect(standInAsked.at(-1)).toMatchObject({ gate: "train-prod", q: { op: "release", gate: "prod-release", planDigest: doc!.digest, environment: "prod", releaseDigest: r1.releaseDigest } });
+      expect(ran).not.toContain("prod:apply");
+
+      standInAnswers = (q) => q.releaseDigest === r1.releaseDigest && q.planDigest === doc!.digest && q.environment === "prod";
+      expect(await runComponentsPromote(ctx({ release: "v1.0.0" }))).toBe(0);
+      expect(ran).toContain("prod:apply");
+      expect(appendReleaseRecordMock.mock.calls[0][0]).toMatchObject({ releaseDigest: r1.releaseDigest, approver: "carol" });
+    } finally {
+      for (const [k, v] of [["CHANT_WORKSPACE_RUN", saved.run], ["CHANT_WORKSPACE_GATE", saved.gate]] as const) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+      standInAnswers = () => false;
+    }
   });
 
   test("an approval for one environment can't be used for another", async () => {

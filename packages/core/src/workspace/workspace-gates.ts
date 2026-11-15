@@ -19,6 +19,12 @@
  *    `acceptWorkspaceGates: true`. A declaration read only from the working
  *    tree never opts a member in.
  *
+ * A release train's promote (`chant workspace train promote --gate`, #4037)
+ * gathers each member's release gates before any member deploys: a cover
+ * then also names the member's `releaseDigest`, and its `planDigest` is the
+ * member's change set for the environment. The member's promote, started
+ * under the gate, asks the same rule from the release gate.
+ *
  * A member run started under the gate (`CHANT_WORKSPACE_GATE`) asks this
  * module through `GateCheckInput.workspace` after its own approvals have
  * not passed the gate. Nothing is written to the member's gate ledger: the
@@ -38,6 +44,19 @@ export interface WorkspaceGateCover {
   planDigest: string;
   /** The member gate's environment, when it is bound to one. */
   environment?: string;
+  /**
+   * The release a member's release gate binds (#4037): set on the covers a
+   * release train's promote gathers, whose `planDigest` is that member's
+   * change set for the environment. A cover with it stands in only for a
+   * gate bound to the same release.
+   */
+  releaseDigest?: string;
+}
+
+/** The release train a workspace gate's fact was gathered for (#4037). */
+export interface WorkspaceGateTrain {
+  id: string;
+  digest: string;
 }
 
 export interface WorkspaceGatePending {
@@ -49,6 +68,8 @@ export interface WorkspaceGatePending {
   timestamp: string;
   digest: string;
   covers: WorkspaceGateCover[];
+  /** The train `chant workspace train promote --gate` gathered the covers for, or absent. */
+  train?: WorkspaceGateTrain;
 }
 
 export interface WorkspaceGateApproval {
@@ -60,15 +81,24 @@ export interface WorkspaceGateApproval {
   approvedBy: string;
   timestamp: string;
   note?: string;
+  /** Copied from the pending fact it approves. */
+  train?: WorkspaceGateTrain;
 }
 
 export type WorkspaceGateLine = WorkspaceGatePending | WorkspaceGateApproval;
 
 /** Covers in one order, so the same set always has the same digest. */
 export function sortCovers(covers: readonly WorkspaceGateCover[]): WorkspaceGateCover[] {
-  const key = (c: WorkspaceGateCover) => `${c.member}\u0000${c.op}\u0000${c.gate}\u0000${c.environment ?? ""}\u0000${c.planDigest}`;
+  const key = (c: WorkspaceGateCover) => `${c.member}\u0000${c.op}\u0000${c.gate}\u0000${c.environment ?? ""}\u0000${c.planDigest}\u0000${c.releaseDigest ?? ""}`;
   return [...covers]
-    .map((c) => ({ member: c.member, op: c.op, gate: c.gate, planDigest: c.planDigest, ...(c.environment !== undefined ? { environment: c.environment } : {}) }))
+    .map((c) => ({
+      member: c.member,
+      op: c.op,
+      gate: c.gate,
+      planDigest: c.planDigest,
+      ...(c.environment !== undefined ? { environment: c.environment } : {}),
+      ...(c.releaseDigest !== undefined ? { releaseDigest: c.releaseDigest } : {}),
+    }))
     .sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
 }
 
@@ -83,6 +113,8 @@ export interface MemberGateQuery {
   gate: string;
   planDigest: string;
   environment?: string;
+  /** Set on a release gate (#4037). */
+  releaseDigest?: string;
 }
 
 /**
@@ -102,7 +134,8 @@ export function workspaceGateStandsIn(
         (c) =>
           c.member === ctx.member && c.op === q.op && c.gate === q.gate &&
           samePlanDigest(c.planDigest, q.planDigest) &&
-          (c.environment ?? null) === (q.environment ?? null),
+          (c.environment ?? null) === (q.environment ?? null) &&
+          (c.releaseDigest ?? null) === (q.releaseDigest ?? null),
       ),
   );
   return covering.sort((a, b) => (a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0)).at(-1) ?? null;
@@ -136,7 +169,16 @@ export async function readWorkspaceGate(cwd: string, gate: string): Promise<{ pe
 
 export async function appendWorkspaceGatePending(cwd: string, input: Omit<WorkspaceGatePending, "version" | "kind" | "digest" | "covers"> & { covers: readonly WorkspaceGateCover[] }): Promise<WorkspaceGatePending> {
   const covers = sortCovers(input.covers);
-  const record: WorkspaceGatePending = { version: 1, kind: "pending", gate: input.gate, run: input.run, timestamp: input.timestamp, digest: workspaceGateDigest(covers), covers };
+  const record: WorkspaceGatePending = {
+    version: 1,
+    kind: "pending",
+    gate: input.gate,
+    run: input.run,
+    timestamp: input.timestamp,
+    digest: workspaceGateDigest(covers),
+    covers,
+    ...(input.train ? { train: input.train } : {}),
+  };
   await appendWorkspaceLine(cwd, WORKSPACE_GATES_DIR, fileFor(input.gate), record, `Workspace gate pending: ${input.gate}`);
   return record;
 }
@@ -156,7 +198,7 @@ export async function approveWorkspaceGate(
   if (!fact) {
     throw new Error(
       input.digest === undefined
-        ? `workspace gate "${input.gate}" has no pending fact to approve; a chant workspace run --gate ${input.gate} whose members stop at their gates records one`
+        ? `workspace gate "${input.gate}" has no pending fact to approve; a chant workspace run --gate ${input.gate} whose members stop at their gates records one, as does a chant workspace train promote --gate ${input.gate}`
         : `workspace gate "${input.gate}" has no pending fact with digest ${input.digest}`,
     );
   }
@@ -169,6 +211,7 @@ export async function approveWorkspaceGate(
     approvedBy: input.approvedBy,
     timestamp: input.timestamp,
     ...(input.note ? { note: input.note } : {}),
+    ...(fact.train ? { train: fact.train } : {}),
   };
   await appendWorkspaceLine(cwd, WORKSPACE_GATES_DIR, fileFor(input.gate), record, `Workspace gate approval: ${input.gate}`);
   return record;

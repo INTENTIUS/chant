@@ -1,6 +1,6 @@
 ---
 title: "chant workspace train"
-description: Record a release train that pins one release of every chant member, and list the trains recorded for an environment
+description: Record a release train that pins one release of every chant member, list the trains recorded for an environment, and promote one
 diataxis: reference
 ---
 
@@ -9,30 +9,66 @@ diataxis: reference
 ```
 chant workspace train <env> [--pin <member>=<label|digest>]... [--dry-run] [--json]
 chant workspace train list <env> [--json]
+chant workspace train promote <env> [<train id|digest>] [--gate <name>] [--dry-run] [--json]
 ```
 
 ## Description
 
-Releases stay per member: each is a digest over its artifacts and a git commit, cut with [`chant release cut`](/chant/cli/release/) in the member's directory and kept in its own ledger (ws-043). A release train is one record that pins a release of every `chant` member, so several members can move together ([#2554](https://github.com/INTENTIUS/chant/issues/2554)).
+Releases stay per member. Each one is a digest over its artifacts and a git commit, cut with [`chant release cut`](/chant/cli/release/) in the member's directory and kept in its own ledger (ws-043). A release train is one record that pins a release of every `chant` member, so several members can move together ([#2554](https://github.com/INTENTIUS/chant/issues/2554), [#4037](https://github.com/INTENTIUS/chant/issues/4037)). It names each one by digest and never changes it.
 
-`chant workspace train <env>` picks each `chant` member's newest cut release, or the one `--pin <member>=<label|digest>` names, and appends the train to `_members/_workspace/<env>/trains.jsonl` on `chant/lifecycle`. It refuses, and writes nothing, when any `chant` member has no release or a pin names no release, so a train never leaves a member out.
+`chant workspace train <env>` picks each `chant` member's newest cut, or the one `--pin <member>=<label|digest>` names, and appends the record to `_members/_workspace/<env>/trains.jsonl` on `chant/lifecycle`. It refuses and writes nothing when a `chant` member has nothing cut or a pin names nothing. A workspace with no `chant` member is refused too, so the record never leaves a member out and never pins nothing.
 
 ```
 $ chant workspace train prod --pin api=v1.4.0
-Recorded release train train-8a2c… for prod:
+Recorded release train train-8a2c… for prod, digest jcs1-sha256:5d1e…:
   api                      v1.4.0  sha256:3f…  9b1c0d2e4f6a
   web                      v2.0.1  sha256:c7…  9b1c0d2e4f6a
 ```
 
-Each pinned member carries `member`, `releaseDigest`, `commit` and `label`. The train also records its `env`, `timestamp` and `actor`.
+Each pinned member carries `member`, `releaseDigest`, `commit` and `label`. Beside them sit `env`, `timestamp`, `actor` and `trainDigest`.
 
-`chant workspace train list <env>` prints the trains recorded for `<env>`, oldest first.
+`trainDigest` is `computePlanDigest("release-train", { members })` over each member's `member` and `releaseDigest`, sorted by member. Each `releaseDigest` already covers its commit, and the label is the cut's own, so neither is hashed again. Nor is anything about when, where or by whom the record was made. The same picks therefore always give the same digest, and a staging record and a prod record with the same picks share it. A line written by an older chant has no `trainDigest`, and the reader computes it.
+
+`chant workspace train list <env>` prints what is recorded for `<env>`, oldest first. With `--json`, each entry also carries `promotions`: every [`train promote`](#promote) run for it, oldest first, as `{ run, started, ended, status, gate, members[{ member, status, memberRun }] }`. That is enough for a lane to draw one row per train that opens to its members.
+
+## Promote
+
+`chant workspace train promote <env>` takes the newest record for `<env>`, or the one named by id or digest. It runs [`chant components promote --to <env> --release <releaseDigest>`](/chant/cli/components/#components-promote) in each member's directory under the member's own chant, one member at a time. The composed graph's member links set the order, so a producer goes before the members that read it. Unlinked members keep the order they were pinned in. The first member that fails or stops at a gate stops the rest. `--dry-run` prints the order and runs nothing.
+
+A member's promote binds its own gate to what it deploys and to its change set for `<env>`. Without `--gate`, those gates apply as they would to a promote run by hand.
+
+With `--gate <name>`, one approval covers every member:
+
+1. Every member plans first with `components promote --plan-only` and deploys nothing. The workspace gate `<name>` records one pending fact under `_members/_workspace/_gates/<name>.jsonl`. It holds one cover per member release gate, naming the gate, the environment and `releaseDigest`, with the member's change set as `planDigest`. The fact also names the train as `train: { id, digest }`. A member whose change set is empty needs no cover, since its gate passes without an approval. The command exits 3.
+2. `chant workspace run approve <name> --plan <digest>` approves the fact. The approval copies the covers and the train.
+3. Run the same command again. Now an approval of exactly those covers stands, so each member is promoted in turn under `CHANT_WORKSPACE_GATE`. A member's gate counts the workspace approval only when a cover names that gate with the member's `releaseDigest` and change set for `<env>`. The member must also set `acceptWorkspaceGates: true` at base. A member that doesn't opt in still needs its own approval.
+
+A member's plan can move between the approval and the promote, for example when a producer's apply changed what the member reads. Its change set then differs from the approved one. If the move shows up while every member plans, the covers hash to a new digest and a new fact is recorded before anything deploys. If it shows up only during the deploy, that member stops at its own gate.
+
+```
+$ chant workspace train promote prod --gate train-prod
+release train train-8a2c… to prod: gated
+  api                      gated  gate prod-release
+  web                      gated  gate prod-release
+Workspace gate "train-prod" is pending over 2 release gate(s) of 2 member(s), digest sha256:41c0…. Nothing was deployed.
+  Approve: chant workspace run approve train-prod --plan sha256:41c0…
+$ chant workspace run approve train-prod --plan sha256:41c0…
+$ chant workspace train promote prod --gate train-prod
+release train train-8a2c… to prod: ok (workspace gate "train-prod" approved sha256:41c0…)
+  api                      ok  (run 9001)
+  web                      ok  (run 9001)
+```
+
+Each promote is recorded as a workspace run in `_members/_workspace/<env>/runs.jsonl`, with `train: { id, digest }`. It has one step per member, `<member>/components promote`, which keeps the step's status and exit code and the member's run id. The deploy records each member writes name its release as usual. The command exits 0 when every member promoted and 3 when it waits on a gate. Any other stop exits 1.
+
+Promoting across repositories through a control repository is [#5119](https://github.com/INTENTIUS/chant/issues/5119).
 
 ## Options
 
 | Option | Effect |
 |---|---|
 | `--pin <member>=<label\|digest>` | The release to pin for that member instead of its newest. Repeatable. |
-| `--dry-run` | Pick the releases and print the train without writing it. |
+| `--gate <name>` | (`promote`) Plan every member first and wait on one workspace gate over their release gates. |
+| `--dry-run` | Pick the releases and print the train without writing it. With `promote`, print the order and run nothing. |
 | `--json` | Print the train, or the list, as JSON. |
 | `--actor <principal>` | Who records the train; else the CI or shell identity. |

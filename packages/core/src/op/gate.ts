@@ -524,7 +524,8 @@ export interface WorkspaceGateStood {
 
 /** See {@link GateCheckInput.workspace}. */
 export interface WorkspaceGateStandIn {
-  standIn(q: { op: string; gate: string; planDigest: string; environment?: string }): Promise<WorkspaceGateStood | null>;
+  /** `releaseDigest` is set on a release gate (#4037): the approval must cover that release too. */
+  standIn(q: { op: string; gate: string; planDigest: string; environment?: string; releaseDigest?: string }): Promise<WorkspaceGateStood | null>;
 }
 
 /**
@@ -1045,7 +1046,13 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
   // #2554, ws-039: a workspace gate stands in only when the member opted in
   // at base and the workspace approval's digest covers this plan.
   if (input.workspace && input.planDigest !== undefined) {
-    const stood = await input.workspace.standIn({ op: input.op, gate: input.gate, planDigest: input.planDigest, ...(env !== undefined ? { environment: env } : {}) });
+    const stood = await input.workspace.standIn({
+      op: input.op,
+      gate: input.gate,
+      planDigest: input.planDigest,
+      ...(env !== undefined ? { environment: env } : {}),
+      ...(input.releaseDigest !== undefined ? { releaseDigest: input.releaseDigest } : {}),
+    });
     if (stood) {
       return {
         satisfied: true,
@@ -1059,6 +1066,7 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
           timestamp: stood.timestamp,
           planDigest: input.planDigest,
           ...(env !== undefined ? { environment: env } : {}),
+          ...(input.releaseDigest !== undefined ? { releaseDigest: input.releaseDigest } : {}),
           workspaceGate: { gate: stood.gate, digest: stood.digest },
         },
       };
