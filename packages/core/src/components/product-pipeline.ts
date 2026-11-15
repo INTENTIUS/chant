@@ -47,7 +47,8 @@ import { planEvidenceOf, productPlanContext, productPlanJobs, productPlanReachLo
 import { gitlabOpenEvidenceDir, type PipelineEvidence } from "../ci-evidence-jobs";
 import { prCheckJob, prRefGateJob, type PrCheckJob, type PrRefGateJob } from "./pr-checks";
 import { COMMENT_JOBS_ENV, PR_COMMENT_JOB, type CommentJobs } from "../ci-comment-commands";
-import { GITHUB_JOB_TOKEN } from "../ci-jobs";
+import { COMMENT_ALLOW_ENV, COMMENT_ALLOW_TOKEN_ENV, commentAllowCovers, commentAllowList, commentAllowProblems, type CommentAllow } from "../ci-comment-allow";
+import { GITHUB_JOB_TOKEN, githubSecret } from "../ci-jobs";
 import type { OpWavesBeforeMerge } from "../op/before-merge";
 import { defaultPipelineFiles, type WavesBeforeMergeJobs } from "../op/before-merge-decide";
 import { opWavesDispatchInputs, opWavesInputsRenamed, opWavesNamer, opWavesWorkflowFile, type OpWavesJobNames } from "../op/op-waves-names";
@@ -166,6 +167,19 @@ export interface ProductPipelineOptions extends Omit<PrLoopPipelineOptions, "wor
    */
   noteCommandsJob?: ProductNoteCommandsJobOptions;
   /**
+   * Limit `plan`, `apply`, `lock`, `unlock` and `agent` to logins and teams
+   * on GitHub and Forgejo (INTENTIUS/terragucci#1461, `../ci-comment-allow.ts`).
+   * The map is written into the workflow as `CHANT_COMMENT_ALLOW` in the
+   * comment job, the product plan's re-plan decision and the agent's jobs, so
+   * it is read from the default branch's copy of the workflow and a pull
+   * request cannot add its author. It limits the commands those jobs run:
+   * the comment job replies to a commenter the list leaves out, the other
+   * two stay silent. Refused on GitLab, and when a list covers a command that
+   * a job without the check answers: the apply before merge
+   * (`applyBeforeMerge`) and chant's comment lock jobs (`locks: "plan"`).
+   */
+  commentAllow?: ProductCommentAllow;
+  /**
    * The waves' job names (#5027), the Op waves generators' `jobNames`
    * (#5022): `waves.pipeline` carries them to the generator, `waves.jobs`
    * takes them, and the comment job's re-run of a merged pull request's
@@ -227,6 +241,14 @@ export interface ProductWavesBeforeMerge {
    * the generator's `dispatchInputs`. Default chant's.
    */
   dispatchInputs?: Partial<Record<"pr" | "head" | "digest", string>>;
+}
+
+/** The comment limits the pipeline writes into its jobs (INTENTIUS/terragucci#1461): {@link ProductPipelineOptions.commentAllow}, with the secret team membership is read with. */
+export interface ProductCommentAllow {
+  /** Command to logins and `team:<org>/<team>` entries, and `default` for the five commands it does not name. */
+  allow: CommentAllow;
+  /** The secret that holds a token that can read the teams' members (GitHub: `read:org`, or Members: read; Forgejo: `read:organization`). Default: the job's own token, which GitHub's cannot do. */
+  tokenSecret?: string;
 }
 
 /** {@link ProductPipelineOptions.noteCommandsJob} (#5038). */
@@ -468,7 +490,8 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   // #4946: the comment job answers every command but a commit word (the commit job's) with a reply, so the words may name any.
   const answered: CiProductCommand[] = options.commentJob ? [...new Set<CiProductCommand>([...jobs, ...CI_PRODUCT_COMMANDS.filter((c) => c !== "commit")])] : jobs;
   const words = assertProductWords({ ...options.words, applyMode }, { jobs: answered });
-  const { waves: given, wavesSpecFile, member, agent: _agent, commits: _commits, actions: _actions, componentWaves, productPlan, evidence, commentJob: _commentJob, wavesBeforeMerge, applyStatus: _applyStatus, wavesJobNames, noteCommandsJob, ...loop } = options;
+  const { waves: given, wavesSpecFile, member, agent: _agent, commits: _commits, actions: _actions, componentWaves, productPlan, evidence, commentJob: _commentJob, commentAllow, wavesBeforeMerge, applyStatus: _applyStatus, wavesJobNames, noteCommandsJob, ...loop } = options;
+  if (commentAllow) commentAllowRefusals(forge, commentAllow, options);
   if (options.applyStatus && !given && !componentWaves) throw new Error("applyStatus posts the waves' apply statuses, and there are none: give waves (or componentWaves)");
   const { respond } = options;
   // #4629: the pull request loop puts the responses on the apply and note jobs, as `chant build --pr-loop --respond` does.
@@ -495,7 +518,7 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
     comments,
     ...(options.applyBeforeMerge ? { applyBeforeMerge: apply! } : {}),
     // #4799: the product's plan verb, a plan job and a note job per target.
-    ...(productPlan ? { productPlan: productPlanJobs(forge, env, { ...prLoop, plan: productPlan }, words, evidence) } : {}),
+    ...(productPlan ? { productPlan: productPlanJobs(forge, env, { ...prLoop, plan: withReplanAllow(productPlan, commentAllow) }, words, evidence) } : {}),
   };
   // #4935: the check job runs the change's code on the plan runner; the signing and the status run on the default one.
   // #4964: with the product's own services, variables, lines and report directory.
@@ -532,7 +555,10 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   // #4616: the agent answers its comment from a workflow of its own, generated from this spec.
   const agentComment = options.agent ? comments.agent : undefined;
   if (options.agent && agentComment) {
-    const spec = productAgentSpec(words, agentComment, options.agent === true ? {} : options.agent);
+    const agentOptions = options.agent === true ? {} : options.agent;
+    // INTENTIUS/terragucci#1461: the pipeline's list for the agent command, which the agent's prepare step checks.
+    const allowed = commentAllow && commentAllowList(commentAllow.allow, "agent") ? { commentAllow: commentAllow.allow, ...(commentAllow.tokenSecret ? { commentAllowTokenEnv: commentAllow.tokenSecret } : {}) } : {};
+    const spec = productAgentSpec(words, agentComment, { ...agentOptions, ...allowed });
     out.agent = { comment: agentComment, name: spec.name, spec };
   }
   // #4722: each comment commit job answers its own word from a workflow of its own.
@@ -624,7 +650,7 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
       // #5027: a re-run looks for the waves' jobs by the product's names; without them, by chant's pattern.
       ...(namedWaveJobs && wavesJobNames ? { applyJobs: productApplyJobs(named!, waveJobs!, namedWaveJobs, forge, wavesJobNames, wavesBeforeMerge !== undefined) } : {}),
     };
-    const comment = productCommentJob(forge, words, commentJobs, typeof options.commentJob === "object" ? options.commentJob.jobName : undefined);
+    const comment = productCommentJob(forge, words, commentJobs, typeof options.commentJob === "object" ? options.commentJob.jobName : undefined, commentAllow);
     // #4984: the decision before merge locks what the reach line prints, at stage apply.
     if (bmJobs && productPlan?.reach) comment.env = { ...comment.env, [LOCK_REACH_ENV]: productPlan.reach.command };
     out.comment = { ...comment, ...defaultRunner };
@@ -799,17 +825,40 @@ function noteCommandsNames(forge: ForgeKind, given: ProductNoteCommandsJobOption
  * note. `jobName` is the product's name for the job (#5027), default
  * {@link PR_COMMENT_JOB}.
  */
-export function productCommentJob(forge: ForgeKind, words: CiProductWords, jobs: CommentJobs, jobName: string = PR_COMMENT_JOB): ProductCommentJob {
+export function productCommentJob(forge: ForgeKind, words: CiProductWords, jobs: CommentJobs, jobName: string = PR_COMMENT_JOB, allow?: ProductCommentAllow): ProductCommentJob {
   if (forge === "gitlab") throw new Error("the comment job answers a GitHub or Forgejo comment; on GitLab the note-commands job (noteCommands) answers every note, so drop commentJob");
   for (const a of words.aliases) if (/['\\]/.test(a.from)) throw new Error(`the alias ${JSON.stringify(a.from)} holds a quote, which the comment job's condition cannot carry`);
   if (typeof jobName !== "string" || !/^[A-Za-z_][A-Za-z0-9_-]*$/.test(jobName)) throw new Error(`commentJob.jobName ${JSON.stringify(jobName)} is not a job name of letters, digits, _ and -, starting with a letter or _`);
   return {
     jobName,
     command: withProductBin(`chant components pr-comment --forge ${forge}`, words.bin),
-    env: { GITHUB_TOKEN: GITHUB_JOB_TOKEN, [COMMENT_JOBS_ENV]: JSON.stringify(jobs) },
+    env: {
+      GITHUB_TOKEN: GITHUB_JOB_TOKEN,
+      [COMMENT_JOBS_ENV]: JSON.stringify(jobs),
+      // INTENTIUS/terragucci#1461: the comment limits, and the secret teams are read with.
+      ...(allow ? { [COMMENT_ALLOW_ENV]: JSON.stringify(allow.allow), ...(allow.tokenSecret ? { [COMMENT_ALLOW_TOKEN_ENV]: githubSecret(allow.tokenSecret) } : {}) } : {}),
+    },
     prefixes: [`/${words.product}`, ...words.aliases.map((a) => a.from)],
     jobs,
   };
+}
+
+/** The product plan with the comment limits in its re-plan (INTENTIUS/terragucci#1461), when the plan comment has a list. */
+function withReplanAllow(plan: ProductPlanOptions, allow: ProductCommentAllow | undefined): ProductPlanOptions {
+  if (!allow || !plan.replan || !commentAllowList(allow.allow, "plan")) return plan;
+  const replan = typeof plan.replan === "object" ? plan.replan : {};
+  return { ...plan, replan: { ...replan, commentAllow: allow.allow, ...(allow.tokenSecret ? { commentAllowTokenSecret: allow.tokenSecret } : {}) } };
+}
+
+/** What `commentAllow` is refused for: a forge it does not cover, a bad map, a secret name, and a command a job without the check answers. */
+function commentAllowRefusals(forge: ForgeKind, given: ProductCommentAllow, options: Pick<ProductPipelineOptions, "applyBeforeMerge" | "locks">): void {
+  if (forge === "gitlab") throw new Error("commentAllow limits the comment jobs of GitHub and Forgejo; GitLab's note poll is the product's own to limit");
+  const problems = commentAllowProblems(given.allow, "commentAllow.allow");
+  if (given.tokenSecret !== undefined && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(given.tokenSecret)) problems.push("commentAllow.tokenSecret is a secret's name");
+  if (problems.length > 0) throw new Error(problems.join("; "));
+  const covered = commentAllowCovers(given.allow);
+  if (covered.includes("apply") && options.applyBeforeMerge) throw new Error("commentAllow lists who may apply, and the apply before merge (applyBeforeMerge) checks write access alone; use wavesBeforeMerge, whose apply the comment job decides");
+  if ((covered.includes("lock") || covered.includes("unlock")) && options.locks === "plan") throw new Error("commentAllow lists who may lock or unlock, and the comment lock jobs of locks: \"plan\" check write access alone; name the commands that are not theirs (plan, apply, agent), or use wavesBeforeMerge with the reach line, whose lock the comment job answers");
 }
 
 /** A shell line with the product's bin in place of `chant`, for a product's own jobs beside these. */

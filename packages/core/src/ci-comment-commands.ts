@@ -41,6 +41,12 @@
  *   takes the locks of what the reach line prints at stage apply without
  *   applying, and the unlock releases the pull request's locks.
  *
+ * - with `allow` (INTENTIUS/terragucci#1461, ./ci-comment-allow.ts), a commenter
+ *   a `plan`, `apply`, `lock`, `unlock` or `agent` list leaves out gets a
+ *   reply that names the list, whichever job runs the command. The jobs that
+ *   run `plan` and `agent` make the same check and stay silent, so this job
+ *   speaks once. A team the forge cannot read fails the job, with a reply.
+ *
  * Who asked comes first. On GitHub the commenter's permission is read from
  * the forge; Forgejo answers 403 when a job's token asks for another user's
  * permission, so there the event's `repository.permissions`, computed for
@@ -54,6 +60,7 @@
  * runs here.
  */
 
+import { decideCommentAllow, COMMENT_ALLOW_COMMANDS, type CommentAllow, type CommentAllowCommand, type CommentAllowReads } from "./ci-comment-allow";
 import { commentTerms, forkReply, memberReply, notRunReply } from "./ci-comment-replies";
 import { retryApply, type ApplyRerun, type ApplyRetried, type ChantNoteJobs, type StartedRun } from "./ci-note-commands";
 import { parseProductComment, type CiProductWords, type ParsedProductComment } from "./ci-product-words";
@@ -195,6 +202,10 @@ export interface AnswerCommentOptions {
   now?: () => string;
   /** With `jobs.wavesBeforeMerge` (#4984): what the decision reads and writes with. Absent: an open pull request's apply is refused, as before. */
   beforeMerge?: CommentBeforeMerge;
+  /** The pipeline's comment limits (INTENTIUS/terragucci#1461), read from the workflow on the default branch. Absent: write access alone. */
+  allow?: CommentAllow;
+  /** What team membership is read with when `allow` names a team: the reads of a token that can read teams. Default `reads`. */
+  teams?: CommentAllowReads;
 }
 
 /** What the comment job did. */
@@ -295,6 +306,19 @@ export async function answerProductComment(o: AnswerCommentOptions): Promise<Com
   };
 
   if (parsed.kind === "refused") return reply(parsed.reason);
+  // INTENTIUS/terragucci#1461: the pipeline's list for the command, after the write-access check above.
+  if (o.allow && (COMMENT_ALLOW_COMMANDS as readonly string[]).includes(parsed.kind)) {
+    let decision;
+    try {
+      decision = await decideCommentAllow(o.allow, parsed.kind as CommentAllowCommand, user, o.teams ?? o.reads);
+    } catch (err) {
+      return broke(`could not check who may run \`${parsed.kind}\` (${message(err)}), so nothing runs`, command);
+    }
+    if (!decision.ok) {
+      const done = await reply(decision.reason);
+      return decision.fail ? { ...done, fail: true } : done;
+    }
+  }
   // The product plan's re-plan skips these without a word: a target that is none of its own, and a fork with forks: "skip".
   if (parsed.kind === "plan" && o.jobs.preview) {
     // #4979: the product plan's re-plan plans what its verb plans, and takes no flag the grammar reads.

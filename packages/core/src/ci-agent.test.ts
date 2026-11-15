@@ -34,6 +34,7 @@ import {
   type AgentSettings,
   type LandInput,
 } from "./ci-agent";
+import { TeamReadError } from "./ci-comment-allow";
 import { assertProductWords } from "./ci-product-words";
 import { PLYWOOD } from "./__fixtures__/product-words";
 import type { OpRunRecord, OpRunRecordInput } from "./op/runtime";
@@ -188,6 +189,37 @@ describe("agent prepare", () => {
     const over = await prepare({ runs: [run("2026-10-27T10:00:00Z"), run("2026-10-27T11:00:00Z")] });
     expect(over.decision).toMatchObject({ go: false, stop: "stopped" });
     expect((await prepare({ body: "/plywood agent" })).decision.reason).toMatch(/needs an ask/);
+  });
+
+  test("a list for the agent command (INTENTIUS/terragucci#1461) lets a listed login and a team member ask, and refuses another writer", async () => {
+    const asked = (settings: AgentSettings, user: string, teams?: { teamMember?: (t: string, l: string) => Promise<boolean> }) =>
+      prepareAgentRun({ settings, words, dir: dir(), env: {}, event: event("/plywood agent add a tag", user), forge: { pullRequestHead: async () => head(), userCanWrite: async () => true }, ...(teams ? { teams } : {}), readRuns: async () => [], git: fakeGit(), now: NOW });
+    const login = commentSettings({ commentAllow: { agent: ["ana"] } });
+    expect(await asked(login, "ana")).toMatchObject({ go: true });
+    const other = await asked(login, "ben");
+    expect(other).toMatchObject({ go: false, stop: "refused", pr: 7 });
+    expect(other.reason).toMatch(/ben may not run `agent` here: it is limited to `ana`/);
+    const team = commentSettings({ commentAllow: { default: ["team:acme/ai"] } });
+    expect(await asked(team, "ben", { teamMember: async (t, l) => t === "acme/ai" && l === "ben" })).toMatchObject({ go: true });
+    expect(await asked(team, "cy", { teamMember: async () => false })).toMatchObject({ go: false });
+    // A team no read can answer for, and one the token cannot read, run nothing.
+    expect((await asked(team, "ben")).reason).toMatch(/so nothing runs/);
+    const unreadable = await asked(team, "ben", { teamMember: async () => { throw new TeamReadError("GitHub team acme/ai answered 403"); } });
+    expect(unreadable).toMatchObject({ go: false, stop: "refused" });
+    expect(unreadable.reason).toMatch(/answered 403/);
+    // No list: write access alone, as before.
+    expect(await asked(commentSettings(), "ben")).toMatchObject({ go: true });
+  });
+
+  test("the list round-trips through the job's variables, and a broken one is refused", () => {
+    const s = commentSettings({ commentAllow: { agent: ["team:acme/ai", "ana"] }, commentAllowTokenEnv: "TG_TEAM_TOKEN" });
+    const env = agentSettingsEnv(s);
+    expect(JSON.parse(env.CHANT_COMMENT_ALLOW!)).toEqual({ agent: ["team:acme/ai", "ana"] });
+    expect(agentSettingsFromEnv(env, "plywood").commentAllow).toEqual({ agent: ["team:acme/ai", "ana"] });
+    expect(agentSettingsEnv(commentSettings())).not.toHaveProperty("CHANT_COMMENT_ALLOW");
+    expect(() => agentSettingsFromEnv({ ...env, CHANT_COMMENT_ALLOW: "{" }, "plywood")).toThrow(/CHANT_COMMENT_ALLOW is JSON/);
+    expect(() => resolveAgentSpec("x", { on: "comment", comment: "/plywood agent", commentAllow: { agent: [] } }, "plywood")).toThrow(/at least one entry/);
+    expect(() => resolveAgentSpec("x", { on: "comment", comment: "/plywood agent", commentAllowTokenEnv: "a b" }, "plywood")).toThrow(/commentAllowTokenEnv/);
   });
 
   test("stops a run once the recorded costs reach the money limit, and refuses when the ledger cannot be read", async () => {

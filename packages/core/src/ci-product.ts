@@ -163,6 +163,9 @@ export const PRODUCT_PLAN_REACH_LOCKS_FLOOR = "0.124.89";
 export { LOCK_REACH_ENV, reachedTargets, reachOpen, type Reached, type ReachInput } from "./lifecycle/reach-locks";
 export { productPlanReachLock, type ProductPlanReachLock } from "./components/product-plan";
 export { planFlagsReply } from "./ci-comment-commands";
+/** INTENTIUS/terragucci#1461: comment commands limited to logins and teams on GitHub and Forgejo. */
+export { COMMENT_ALLOW_COMMANDS, COMMENT_ALLOW_ENV, COMMENT_ALLOW_TOKEN_ENV, TeamReadError, commentAllowProblems, decideCommentAllow, type CommentAllow, type CommentAllowCommand, type CommentAllowDecision, type CommentAllowReads } from "./ci-comment-allow";
+export { COMMENT_ALLOW_FLOOR } from "./release-floors";
 
 /**
  * The first chant whose comment job stops a merged pull request's re-run at a wave (#4979): `/<product> apply wave-<n>` writes a stop for the merge commit on `chant/lifecycle` (`_waves/<op>.stops.json`, `@intentius/chant/op/wave-stop`) before GitHub's re-run or Forgejo's dispatch, and `chant run wave` leaves each wave after n waiting (exit 3).

@@ -19,6 +19,7 @@
  * `./review-agent-bundle.test.ts`).
  */
 
+import { TeamReadError } from "./ci-comment-allow";
 import {
   ForgeApiError,
   type ForgeFetch,
@@ -28,6 +29,8 @@ import {
   type GitlabForgeOptions,
   type OpenPullRequest,
 } from "./pr-forge";
+
+export { TeamReadError };
 
 /** The user a token acts as: GitHub's and Forgejo's `login`, GitLab's `username`, and the forge's numeric id. */
 export interface ForgeUser {
@@ -270,6 +273,21 @@ export interface ForgeReads {
    * when the forge knows no such user or member.
    */
   permission(login: string): Promise<string | undefined>;
+  /**
+   * Whether `login` is an active member of `team`, written `<org>/<team>` (a
+   * team's slug on GitHub, its name on Forgejo), for `comment_allow` lists
+   * (INTENTIUS/terragucci#1461). GitHub and Forgejo only: GitLab's reads leave it out. The team is
+   * looked up first, since GitHub answers 404 both for a team the token cannot
+   * see and for one that does not exist; if that lookup fails the read throws
+   * {@link TeamReadError}, and a 404 on the membership afterwards means the
+   * login is not in the team. A pending invitation is not membership.
+   *
+   * GitHub needs a token that can read the organization's members: a classic
+   * token with `read:org`, or a fine-grained token or app with the
+   * organization permission Members: read. The workflow's own token cannot.
+   * Forgejo needs `read:organization`.
+   */
+  teamMember?(team: string, login: string): Promise<boolean>;
   /** Every open pull request in the repository, into any base, ascending by number. */
   openPullRequests(): Promise<OpenPullRequest[]>;
   /** The workflow runs (GitLab's pipelines) on commit `sha`, newest first (#4846). */
@@ -551,6 +569,50 @@ function githubShapedReads(kind: "github" | "forgejo", opts: GithubForgeOptions)
         throw err;
       }
       return isObject(got) ? str(got.permission) : undefined;
+    },
+    async teamMember(team, login) {
+      const cut = team.lastIndexOf("/");
+      if (cut < 1 || cut === team.length - 1) throw new TeamReadError(`${JSON.stringify(team)} is not a team: write <org>/<team>`);
+      const rawOrg = team.slice(0, cut);
+      const org = encodeURIComponent(rawOrg);
+      const name = team.slice(cut + 1);
+      const unreadable = (what: string, err: unknown): Error => {
+        if (!(err instanceof ForgeApiError)) return err instanceof Error ? err : new Error(String(err));
+        return new TeamReadError(`${what} answered ${err.status}${err.status === 404 ? ": the team does not exist, or the token cannot see it" : ""}`);
+      };
+      if (kind === "forgejo") {
+        let found: unknown;
+        try {
+          found = await get(`/orgs/${org}/teams/search?q=${encodeURIComponent(name)}&limit=50`);
+        } catch (err) {
+          throw unreadable(`searching ${rawOrg}'s teams`, err);
+        }
+        const rows = isObject(found) && Array.isArray(found.data) ? found.data.filter(isObject) : [];
+        const hit = rows.find((t) => String(t.name).toLowerCase() === name.toLowerCase());
+        const id = hit ? num(hit.id) : undefined;
+        if (id === undefined) throw new TeamReadError(`${rawOrg} has no team named ${name}, or the token cannot see it`);
+        try {
+          await get(`/teams/${id}/members/${encodeURIComponent(login)}`);
+          return true;
+        } catch (err) {
+          if (notFound(err)) return false;
+          throw unreadable(`team ${team}'s member list`, err);
+        }
+      }
+      try {
+        await get(`/orgs/${org}/teams/${encodeURIComponent(name)}`);
+      } catch (err) {
+        throw unreadable(`GitHub team ${team}`, err);
+      }
+      let got: unknown;
+      try {
+        got = await get(`/orgs/${org}/teams/${encodeURIComponent(name)}/memberships/${encodeURIComponent(login)}`);
+      } catch (err) {
+        if (notFound(err)) return false;
+        throw unreadable(`team ${team}'s membership of ${login}`, err);
+      }
+      // A pending invitation is not membership.
+      return isObject(got) && got.state === "active";
     },
     async openPullRequests() {
       const out: OpenPullRequest[] = [];

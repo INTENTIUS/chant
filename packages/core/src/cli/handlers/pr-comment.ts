@@ -9,6 +9,12 @@
  * or the re-run of a merged pull request's apply. The words are the
  * product's, as its bin set them.
  *
+ * With `CHANT_COMMENT_ALLOW` (JSON, written by the generator, see
+ * `../../ci-comment-allow.ts`) it also limits `plan`, `apply`, `lock`,
+ * `unlock` and `agent` to the logins and teams it names. Teams are read with
+ * `CHANT_COMMENT_ALLOW_TOKEN` when the pipeline names a secret for it, else
+ * the job's token.
+ *
  * It runs at the target branch's commit with the job's token
  * (`GITHUB_TOKEN`), so none of the change's code runs here, and it loads no
  * plugins.
@@ -16,6 +22,7 @@
 
 import { readFileSync } from "node:fs";
 import { activeProductWords } from "../../ci-product-words";
+import { COMMENT_ALLOW_ENV, COMMENT_ALLOW_TOKEN_ENV, commentAllowFromEnv, type CommentAllow } from "../../ci-comment-allow";
 import { answerProductComment, COMMENT_JOBS_ENV, commentRuns, type CommentBeforeMerge, type CommentJobs } from "../../ci-comment-commands";
 import type { WavesBeforeMergeJobs } from "../../op/before-merge-decide";
 import { PR_APPLY_REQUIRES } from "../../pr-requires";
@@ -161,8 +168,10 @@ export async function runComponentsPrComment(ctx: CommandContext): Promise<numbe
   let event: unknown;
   let jobs: CommentJobs;
   let poster: PrForge;
+  let allow: CommentAllow | undefined;
   let target: ReturnType<typeof forgeTargetFromEnv>;
   try {
+    allow = commentAllowFromEnv(env[COMMENT_ALLOW_ENV]);
     event = JSON.parse(readFileSync(eventPath, "utf8"));
     jobs = commentJobsFromEnv(env[COMMENT_JOBS_ENV]);
     poster = forgeFromEnv(kind, env);
@@ -173,11 +182,14 @@ export async function runComponentsPrComment(ctx: CommandContext): Promise<numbe
   const repository = (event as { repository?: { default_branch?: unknown } } | null)?.repository;
   const base = args.branch ?? (typeof repository?.default_branch === "string" ? repository.default_branch : undefined);
   if (!base) return fail("pr-comment needs the default branch: --branch <name>, or repository.default_branch in the event");
+  // INTENTIUS/terragucci#1461: teams are read with the pipeline's team token when it has one.
+  const teamToken = env[COMMENT_ALLOW_TOKEN_ENV];
   const outcome = await answerProductComment({
     forge: kind,
     event,
     repo: target.repo,
     reads: forgeReadsFor(target),
+    ...(allow ? { allow, ...(teamToken ? { teams: forgeReadsFor({ ...target, token: teamToken }) } : {}) } : {}),
     poster,
     runs: commentRuns({ apiBase: target.apiBase, repo: target.repo, token: target.token }),
     words: activeProductWords(),

@@ -38,6 +38,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CHANT_EXIT } from "./exit-codes";
+import { COMMENT_ALLOW_ENV, commentAllowFromEnv, commentAllowProblems, decideCommentAllow, type CommentAllow, type CommentAllowReads } from "./ci-comment-allow";
 import { parseProductComment, type CiProductWords } from "./ci-product-words";
 import { quoted } from "./op/activities/review-agent";
 import type { OpRunRecord, OpRunRecordInput } from "./op/runtime";
@@ -96,6 +97,16 @@ export interface OpAgentSpec {
   branch?: string;
   /** The ledger environment the runs are recorded under. Default `local`, the rule every Op follows (#4551 ruling A). */
   env?: string;
+  /**
+   * Who may ask, beyond write access, for `on: "comment"` (INTENTIUS/terragucci#1461,
+   * `./ci-comment-allow.ts`): the map's `agent` list, else its `default`. The
+   * generated job carries it as `CHANT_COMMENT_ALLOW`, so it is read from the
+   * workflow on the default branch. GitHub and Forgejo only; a team on
+   * another forge fails closed.
+   */
+  commentAllow?: CommentAllow;
+  /** The secret that holds the token team membership is read with, for `commentAllow`. Default: the job's token. */
+  commentAllowTokenEnv?: string;
 }
 
 /** An agent's settings, every default filled and checked. */
@@ -112,6 +123,10 @@ export interface AgentSettings {
   guarded: string[];
   branch?: string;
   env: string;
+  /** See {@link OpAgentSpec.commentAllow}. */
+  commentAllow?: CommentAllow;
+  /** See {@link OpAgentSpec.commentAllowTokenEnv}. */
+  commentAllowTokenEnv?: string;
 }
 
 /** The Claude Code release the default agent command runs (terragucci's pin, as the review agent's). */
@@ -239,6 +254,11 @@ export function resolveAgentSpec(name: string, spec: OpAgentSpec, product = "cha
   }
   const env = spec.env ?? "local";
   if (!NAME.test(env)) throw new AgentError(`${where}: env is a ledger environment name`);
+  if (spec.commentAllow !== undefined) {
+    const problems = commentAllowProblems(spec.commentAllow, `${where}: commentAllow`);
+    if (problems.length > 0) throw new AgentError(problems.join("; "));
+  }
+  if (spec.commentAllowTokenEnv !== undefined && !VAR.test(spec.commentAllowTokenEnv)) throw new AgentError(`${where}: commentAllowTokenEnv is a variable name`);
   return {
     name,
     on: spec.on,
@@ -252,6 +272,8 @@ export function resolveAgentSpec(name: string, spec: OpAgentSpec, product = "cha
     guarded: [...guarded],
     ...(branch !== undefined ? { branch } : {}),
     env,
+    ...(spec.commentAllow !== undefined ? { commentAllow: spec.commentAllow } : {}),
+    ...(spec.commentAllowTokenEnv !== undefined ? { commentAllowTokenEnv: spec.commentAllowTokenEnv } : {}),
   };
 }
 
@@ -270,6 +292,7 @@ export function agentSettingsEnv(s: AgentSettings): Record<string, string> {
     ...(s.guarded.length > 0 ? { [AGENT_ENV.guarded]: JSON.stringify(s.guarded) } : {}),
     ...(s.branch ? { [AGENT_ENV.branch]: s.branch } : {}),
     [AGENT_ENV.env]: s.env,
+    ...(s.commentAllow ? { [COMMENT_ALLOW_ENV]: JSON.stringify(s.commentAllow) } : {}),
   };
 }
 
@@ -313,6 +336,13 @@ export function agentSettingsFromEnv(env: Record<string, string | undefined>, pr
     ...(env[AGENT_ENV.branch] ? { branch: env[AGENT_ENV.branch] } : {}),
     ...(env[AGENT_ENV.env] ? { env: env[AGENT_ENV.env] } : {}),
   };
+  let commentAllow: CommentAllow | undefined;
+  try {
+    commentAllow = commentAllowFromEnv(env[COMMENT_ALLOW_ENV]);
+  } catch (e) {
+    throw new AgentError((e as Error).message);
+  }
+  if (commentAllow) spec.commentAllow = commentAllow;
   return resolveAgentSpec(name, spec, product);
 }
 
@@ -617,6 +647,8 @@ export interface PrepareInput {
   event?: unknown;
   /** A read client: who may write, and the pull request's head. */
   forge?: Pick<PrForge, "pullRequestHead" | "userCanWrite">;
+  /** With `settings.commentAllow` (INTENTIUS/terragucci#1461): the reads of a token that can read teams. Absent: a list that names a team fails closed. */
+  teams?: CommentAllowReads;
   /** The agent's earlier run records on the ledger. */
   readRuns: () => Promise<OpRunRecord[]>;
   git: AgentGit;
@@ -644,6 +676,16 @@ export async function prepareAgentRun(i: PrepareInput): Promise<AgentDecision> {
     ask = got;
     // GitHub's job condition already asks for a writer; Forgejo's runner has no author association, so the forge is asked.
     if (i.forge?.userCanWrite && !(await i.forge.userCanWrite(ask.user))) return no(`${ask.user} cannot write to the repository, so the agent does not run for them`, { pr: ask.pr });
+    // INTENTIUS/terragucci#1461: the pipeline's list, from the workflow on the default branch.
+    if (i.settings.commentAllow) {
+      let decision;
+      try {
+        decision = await decideCommentAllow(i.settings.commentAllow, "agent", ask.user, i.teams);
+      } catch (e) {
+        return no(`could not check who may ask the agent (${errText(e)}), so it does not run`, { pr: ask.pr });
+      }
+      if (!decision.ok) return no(decision.reason, { pr: ask.pr });
+    }
   }
 
   let records: OpRunRecord[] = [];
