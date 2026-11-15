@@ -27,14 +27,14 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { formatError } from "../cli/format";
 import { INSTANCE_ROLLUP_CODES } from "../instance-nodes";
 import type { ReasonCode } from "./reason-codes";
 import type { CommandContext, ParsedArgs } from "../cli/registry";
 import { graphBox, plantability, type Plantable } from "./box-factory";
 import { composedId, composeWorkspaceGraph, readMemberIr, type ComposedMember, type ComposeInput, type WorkspaceGraph } from "./compose-graph";
-import { placeCatalogPass, runCatalogPass, runsOnEdges } from "./catalog-edges";
+import { placeCatalogPass, runCatalogPass, runsOnEdges, type LookPath } from "./catalog-edges";
 import { detailIdMap, type DetailLevel } from "../graph-detail";
 import type { NamedCatalog } from "../graph-refs";
 import { isViewDocument, prefixView } from "../capabilities/view";
@@ -478,13 +478,45 @@ async function addCatalogEdges(
   for (const { member, ir } of readable) {
     for (const [id, at] of detailIdMap(ir!, level)) placed.set(composedId(member.name, id), composedId(member.name, at));
   }
-  const pass = runCatalogPass(nodes, catalogs, catalogs.length > 0 ? readable.map((i) => i.member.name) : []);
+  const pass = runCatalogPass(nodes, catalogs, catalogs.length > 0 ? readable.map((i) => i.member.name) : [], repoPathLookup(read.located, read.workspace.repo ?? null));
   // The declared cluster each member runs on (#5101): its edges are drawn first, so a Secret they join is not also derived or left dangling.
   const declared = runsOnEdges(nodes, read.runsOn, catalogs);
   for (const problem of declared.problems) query.onStderr?.(`warning: ${problem}\n`);
   pass.dangling = pass.dangling.filter((d) => !(declared.joined.has(d.from) && pass.rules[d.rule!]?.relation === "reference"));
   graph.edges = [...graph.edges, ...declared.edges.map((e) => ({ ...e, from: placed.get(e.from) ?? e.from, to: placed.get(e.to) ?? e.to })).filter((e) => e.from !== e.to)];
-  placeCatalogPass(graph, pass, placed);
+  placeCatalogPass(graph, pass, placed, level);
+}
+
+/** A repository URL with its scheme, credentials, `.git` and case taken off, so two spellings of one repository compare equal. */
+export function repoKey(url: string): string {
+  let u = url.trim().toLowerCase();
+  u = u.replace(/^[a-z][a-z0-9+.-]*:\/\//, "").replace(/^[^@/]+@/, "");
+  // scp-like `host:owner/repo` is `host/owner/repo`.
+  u = u.replace(/^([^/:]+):(?!\d+\/)/, "$1/").replace(/^([^/:]+):\d+\//, "$1/");
+  return u.replace(/\/+$/, "").replace(/\.git$/, "");
+}
+
+/**
+ * Where a path rule's path is (#5102): read in the tree the workspace was
+ * read from, when the path's repository is the workspace's own (its origin)
+ * and the path is under the workspace root. A path in any other repository,
+ * or with no origin to compare with, is not read.
+ */
+function repoPathLookup(located: LocatedWorkspace, repo: string | null): LookPath | undefined {
+  if (repo === null) return undefined;
+  const own = repoKey(repo);
+  const root = located.root;
+  if (isAbsolute(root)) return undefined;
+  return (ref) => {
+    if (repoKey(ref.repo) !== own) return undefined;
+    let path = ref.value;
+    if (root !== "." && root !== "") {
+      if (path !== root && !path.startsWith(`${root}/`)) return undefined;
+      path = path.slice(root.length + 1);
+    }
+    if (path === "") return "dir";
+    return located.tree.stat(path) ?? "missing";
+  };
 }
 
 /** The `runsOn` each declared member sets, by member name (#5101). */

@@ -189,13 +189,35 @@ export interface MemberCollector {
 export const COLLECTOR_META_KEY = "collector";
 
 /** `nested` names the nested workspace's member a node was read through (#2551); absent for the outer workspace's own nodes. */
-export type ComposedNode = IRNode & { member: string; nested?: string };
+export type ComposedNode = IRNode & { member: string; nested?: string; generatedBy?: GeneratedBy; expansion?: NodeExpansion };
+
+/**
+ * On a node the catalog pass generated from another (#5102), an Application
+ * an ApplicationSet's generator yields: the node that generated it, the rule,
+ * the generator, the parameters it was made with and, for a generator that
+ * reads cluster registrations, the registration it was made for.
+ */
+export interface GeneratedBy {
+  node: string;
+  rule: string;
+  generator: string;
+  params: Record<string, string>;
+  cluster?: string;
+}
+
+/** On a node whose rule generates nodes (#5102): how many it generated, and what it did not expand. */
+export interface NodeExpansion {
+  rule: string;
+  generated: number;
+  notExpanded: string[];
+}
 export type ComposedEdge = IREdge & { member: string };
 /**
  * A member's dangling reference (#3910, #3922): `from` is prefixed like a node id. `nested` as on {@link ComposedNode}.
  * One the reference catalog recorded (#5097) also names its `rule`, and the `targetKind` that rule looks for.
+ * A path a generated node names (#5102) has the generating node as `through`, and the cluster registration it was made for as `cluster`.
  */
-export type ComposedDangling = IRDanglingRef & { member: string; nested?: string; rule?: string; targetKind?: string; through?: string };
+export type ComposedDangling = IRDanglingRef & { member: string; nested?: string; rule?: string; targetKind?: string; through?: string; cluster?: string };
 
 /**
  * A reference the catalog pass found more than one node for (#5097): no edge

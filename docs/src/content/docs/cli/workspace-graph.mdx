@@ -84,7 +84,7 @@ What it finds goes in four places:
 | Field | What it holds |
 |---|---|
 | `edges[]` | An edge with `origin: "derived"`, the `rule` that drew it, `relation` (`reference` or `containment`), `grain: "property"` and `member`, the holder's member. A pair the declared graph already joins gets no second edge. |
-| `dangling[]` | A reference that names no node, as `{ from, kind: "ref", path, value, member, rule, targetKind?, through? }`. `through` is the node a value was read through, the store of an ExternalSecret's key. A missing edge is never read as no relation. |
+| `dangling[]` | A reference that names no node, or a repository path that is not there, as `{ from, kind: "ref", path, value, member, rule, targetKind?, through?, cluster? }`. `through` is the node a value was read through, the store of an ExternalSecret's key or the ApplicationSet that generated an Application. `cluster` is the cluster Secret a generated Application was made for. A missing edge is never read as no relation. |
 | `ambiguous[]` | A reference that names more than one node, as `{ from, member, rule, path, value, candidates }`. No edge is drawn. Absent when there are none. |
 | `catalog` | `lexicons`, whose catalogs ran; `members`, whose nodes the pass read; `rules`, each rule the document names by id with its `lexicon`, `from`, `path`, `relation`, `targetKinds` and `label`; and `nonLiteral`, by node id, the arguments the pass could not read because their value is not literal. |
 
@@ -137,6 +137,8 @@ The Kubernetes objects in a repo do not say which cluster they run on, and the T
 | `k8s:K8s::Argo::Application:spec.destination.name` and `...:spec.destination.server` | an Application to the cluster Secret in its namespace whose `name` or `server` is that value. A destination that no Secret in the graph names, such as `https://kubernetes.default.svc`, is not reported as dangling. |
 | `k8s:K8s::Core::Secret:argoCluster.name` | a cluster Secret to the `google_container_cluster`, `aws_eks_cluster` or `azurerm_kubernetes_cluster` whose literal `name` is the Secret's `name`. A `data` value is decoded from base64 first. |
 
+A hand-written Application with no `metadata.namespace` joins a cluster Secret only when the Secret has no namespace either, or when both are read in one member: a namespaced object that names no namespace is matched only inside its own member. A generated Application does not depend on this (see [ApplicationSets](#applicationsets)).
+
 A Secret whose name no cluster resource has is listed once in `dangling`, whichever of the three kinds were looked for, and two cluster resources of one name in two roots draw no edge and are listed in `ambiguous`. A cluster name that Terraform builds from a variable or a local is not a literal, so it is counted in `catalog.nonLiteral` and does not join. `argoCluster` is a path the pass adds to a cluster Secret only: it holds the decoded `name` and `server`, so another Secret that has a `name` of its own is not read as a cluster registration. The `argo-app` and `manifests` kinds read a cluster Secret cut down to its metadata and that `name` and `server`; its `config`, with the cluster's token or CA bundle, is not read into the graph.
 
 Where the names do not match, a member's `runsOn` says which cluster resource it runs on. It is `<member>/<address>`, the member that holds the resource and its address, and it draws a declared edge (`origin: "declared"`, `viaAttr: "runsOn"`) from each cluster Secret in the member to that resource. A Secret it joins is no longer in `dangling`. A `runsOn` that matches no node or several, or that names a member with no cluster Secret, prints a warning and draws nothing. With `--discover` there is no declaration, so `--runs-on <member>=<member>/<address>` sets it for a discovered member, by the member's discovered name, and may be given more than once.
@@ -166,6 +168,45 @@ Charts are named in a kustomization's `helmCharts`, in the sources of an Argo CD
 - A values file is one node for each member that names it. The edge to it stays inside the member, so two members naming one file do not make it ambiguous.
 - Objects under a values file's `extraObjects` that have an `apiVersion` and a `kind` are nodes of the member, with the annotation `chant.intentius.io/helm-values` naming the file, so the objects a chart is told to create are in the graph, such as a secret store declared there.
 - A kustomization's `valuesFile` is relative to its directory. An Argo `$<ref>/path` in `helm.valueFiles` is read from the workspace root, whatever the `repoURL` of the source with that `ref` says, so a values file in another repository is dangling. A relative `valueFiles` entry on a source with a `chart` lies inside the chart's package and is not read. A path with `{{ ... }}` is not read; an ApplicationSet's templated paths are the generator expansion's.
+
+### ApplicationSets
+
+An Argo CD ApplicationSet names no paths or clusters itself. Its generators yield parameter sets, and its template turns each one into an Application. The pass expands the `list` and `clusters` generators, whose inputs are in the repo, into one node per Application they generate ([#5102](https://github.com/INTENTIUS/chant/issues/5102)).
+
+| Generator | Yields |
+|---|---|
+| `list` | one parameter set per entry of `elements`. |
+| `clusters` | one parameter set per cluster Secret its `selector` selects in any member. `matchLabels` is read, and so are `matchExpressions` with the four set operators. A generator with no selector also yields `in-cluster` when no Secret registers `https://kubernetes.default.svc`. |
+
+A `clusters` generator gives each set these parameters.
+
+| Parameter | Value |
+|---|---|
+| `name`, `nameNormalized`, `server` | from the Secret |
+| `metadata.labels.<key>`, `metadata.annotations.<key>` | the Secret's labels and annotations |
+| `values.<key>` | the generator's `values`, with the cluster's parameters put in |
+
+Each parameter set is put into the template, with a generator's own `template` merged over it. The default form is `{{name}}`, and `goTemplate: true` takes `{{ .name }}`. The Go form reads fields and `index` with literal keys. A template that needs anything else leaves that one Application out and says why on the ApplicationSet. So does a field the parameters do not have.
+
+A generated Application's id is the ApplicationSet's id followed by a slash and the Application's name. It sits in the ApplicationSet's namespace. Its `generatedBy` names the ApplicationSet and the generator with its rule. `generatedBy` also holds the parameters, and for `clusters` the cluster Secret. An edge under `k8s:K8s::Argo::ApplicationSet:spec.generators` goes from the ApplicationSet to it. An Application a `clusters` generator made for a Secret has an edge to that Secret under `k8s:K8s::Argo::ApplicationSet:generators[].clusters`, labelled `deploys to`, since the generator selected it. The edge does not depend on either one's namespace, and the destination rules draw no second edge for the pair. Any other generated Application joins a cluster Secret through its `destination`, as a hand-written one does. At `--detail 0` a generated Application is drawn as its ApplicationSet's node.
+
+The ApplicationSet carries `expansion` with the rule and the number generated. Its `notExpanded` has one line for each thing the pass did not expand:
+
+| Not expanded | Lines |
+|---|---|
+| other generators | `git`, `matrix`, `merge`, `scmProvider`, `pullRequest`, `clusterDecisionResource`, `plugin` |
+| parts of `list` and `clusters` | `elementsYaml`, `flatList`, a generator's post-selector |
+| `templatePatch` | the ApplicationSet generates nothing |
+| one Application | a template function, a missing field, a name generated twice |
+
+Path rules read the paths that both kinds of Application name:
+
+| Rule | Reads |
+|---|---|
+| `k8s:K8s::Argo::Application:spec.source.path` and `...:spec.sources[].path` | a directory from the root of the source's `repoURL`. A source with a `chart` has none. |
+| `k8s:K8s::Argo::Application:spec.source.helm.valueFiles[]` and `...:spec.sources[].helm.valueFiles[]` | a file. `$<ref>/<path>` is in the repository of the source whose `ref` is `<ref>`; any other relative value is inside the source's `path`. A URL is not read, and neither is a source with `ignoreMissingValueFiles: true`. |
+
+A path is looked for only under the workspace root, and only when its repository is the workspace's `origin` remote. The two URLs are compared without their scheme, credentials, case and `.git`. A path that is not there goes in `dangling`. For a generated Application the entry has the ApplicationSet as `through` and its cluster Secret as `cluster`. A workspace with no `origin` reads no paths.
 
 ## Nested workspaces
 

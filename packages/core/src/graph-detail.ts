@@ -119,6 +119,12 @@ function toStacks(ir: GraphIR): GraphIR {
   return { nodes, edges: sortEdges([...seen.values()]), groups: {} };
 }
 
+/** A node's attrs as a tier prints them: all of them at T3, the resource view at T2, overlay paint below. */
+export function nodeAttrsAt(attrs: Record<string, unknown>, level: DetailLevel): Record<string, unknown> {
+  if (level === 3) return attrs;
+  return level === 2 ? resourceAttrs(attrs) : paintAttrs(attrs);
+}
+
 /** T2 — every resource, each carrying the resource view of its attrs (the
  * scalar/reference projection; the full property tree is T3's addition). */
 function toDeclarables(ir: GraphIR): GraphIR {

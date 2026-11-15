@@ -1,6 +1,8 @@
 import type { IRNode } from "@intentius/chant/graph-ir";
 import { k8sDeclaredNode, registersCluster } from "./cluster-secret";
-import { readPath, type IdentityRule, type JoinedRef, type ReferenceCatalog, type RefRule, type ScopeRule } from "@intentius/chant/graph-refs";
+import { APPLICATION, APPLICATION_SET, generateApplications } from "./application-set";
+import { applicationPathRules } from "./application-paths";
+import { readPath, type GenerateRule, type IdentityRule, type JoinedRef, type ReferenceCatalog, type RefRule, type ScopeRule } from "@intentius/chant/graph-refs";
 
 /**
  * Kubernetes reference catalog (#4535): how Kubernetes objects name each
@@ -73,6 +75,18 @@ import { readPath, type IdentityRule, type JoinedRef, type ReferenceCatalog, typ
  * which only a cluster Secret has, decoded from `data` when it wrote them
  * there. Application is scoped by `metadata.namespace` like the Secret, but is
  * not a named kind, so it has no containment rule to a Namespace.
+ *
+ * ## ApplicationSets (#5102)
+ *
+ * An ApplicationSet's `list` and `clusters` generators are expanded into the
+ * Applications they generate (./application-set.ts), one node each, under the
+ * `generates` rule. An Application a `clusters` generator made for a cluster
+ * Secret joins that Secret under `generators[].clusters`, since the
+ * generator selected it; the destination rules draw no second edge for the
+ * pair. The other rules read a generated Application as one written by hand. The path rules
+ * (./application-paths.ts) read the directories and values files every
+ * Application names, and the pass lists one the repository does not have as
+ * dangling.
  *
  * ## What this does not do
  *
@@ -405,4 +419,17 @@ const scopes: ScopeRule[] = [
   { kind: "Helm::Values" },
 ];
 
-export const k8sReferenceCatalog: ReferenceCatalog = { identities, refs, scopes, declaredNode: k8sDeclaredNode, registersCluster };
+/** An ApplicationSet's generated Applications (#5102). */
+const generates: GenerateRule[] = [
+  {
+    from: APPLICATION_SET,
+    path: "spec.generators",
+    targetKind: APPLICATION,
+    label: "generates",
+    generate: generateApplications,
+    // A clusters generator selected the Secret, so the generated Application deploys to it whatever namespace either sits in.
+    cluster: { path: "generators[].clusters", targetKind: "K8s::Core::Secret", label: "deploys to" },
+  },
+];
+
+export const k8sReferenceCatalog: ReferenceCatalog = { identities, refs, scopes, declaredNode: k8sDeclaredNode, registersCluster, generates, pathRefs: applicationPathRules };
