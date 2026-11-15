@@ -32,7 +32,7 @@ await fly.close(); // stops every Machine's process
 Or as a command, for a smoke that runs the release in another process:
 
 ```bash
-tsx node_modules/@intentius/chant-lexicon-fly/src/op/activities/machines-local-cli.ts \
+node node_modules/@intentius/chant-lexicon-fly/dist/op/activities/machines-local-cli.js \
   --listen 4280 --root /tmp/fly --publish web=8080
 ```
 

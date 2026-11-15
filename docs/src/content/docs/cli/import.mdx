@@ -17,7 +17,7 @@ chant import --index <ref> [selection] [flags]
 
 ## Description
 
-`chant import` reads an existing infrastructure template (e.g. a CloudFormation JSON template), detects which lexicon handles it, and generates TypeScript resource definitions. Use it to adopt chant one template at a time.
+`chant import` reads an existing infrastructure template (e.g. a CloudFormation JSON template), detects which lexicon handles it, and generates TypeScript resource definitions. Use it to adopt chant one template at a time. It runs without `tsx` or `esbuild`, the optional peers that commands reading a project's TypeScript need (see [Installation](/chant/getting-started/installation/#tsx-and-esbuild)).
 
 With `--from <env>` it reads the **live** cloud/cluster instead of a file: it resolves the environment, calls each project lexicon's `exportResources()` for full-fidelity config, and generates TypeScript from that. Use it to bring an orphaned resource back into source.
 

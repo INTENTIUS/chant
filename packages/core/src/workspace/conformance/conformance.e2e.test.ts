@@ -23,7 +23,6 @@ import {
   type ConformanceWorkspace,
   type ReadContractCommand,
 } from "./index";
-import * as suite from "./index";
 
 const coreRoot = resolve(import.meta.dirname, "..", "..", "..");
 const repoRoot = resolve(coreRoot, "..", "..");
@@ -173,19 +172,16 @@ describe("what the package ships (#2679)", () => {
   const pkg = JSON.parse(readFileSync(join(coreRoot, "package.json"), "utf-8")) as { files: string[]; exports: Record<string, Record<string, string>> };
 
   test("the fixture and both entries are in the package's files and exports", () => {
-    expect(pkg.files).toContain("src/");
+    // The package publishes dist/ only: the fixture is copied there by scripts/copy-assets.mjs.
+    expect(pkg.files).toContain("dist/");
+    expect(pkg.files).not.toContain("src/");
     for (const key of ["./workspace/conformance", "./workspace/conformance/vitest"]) {
       const entry = pkg.exports[key];
-      for (const cond of ["development", "default"]) expect(existsSync(join(coreRoot, entry[cond])), `${key} ${cond}`).toBe(true);
+      expect(existsSync(join(coreRoot, entry.development)), `${key} development`).toBe(true);
+      expect(entry.default, `${key} default`).toBe(entry.import);
       expect(entry.types).toMatch(/^\.\/dist\/workspace\/conformance\/.+\.d\.ts$/);
     }
     expect(CONFORMANCE_FIXTURE_DIR).toBe(join(coreRoot, "src", "workspace", "conformance", "__fixture__"));
-  });
-
-  test("the plain-Node entry re-exports every runtime export of the suite", () => {
-    const text = readFileSync(join(import.meta.dirname, "index.mjs"), "utf-8");
-    const listed = [.../export const \{([^}]+)\}/.exec(text)![1].matchAll(/[A-Za-z_]+/g)].map((m) => m[0]).sort();
-    expect(listed).toEqual(Object.keys(suite).sort());
   });
 
   test("the fixture's decision kind and schema are the reference workspace's", () => {

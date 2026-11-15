@@ -14,10 +14,22 @@ prompt: setup
 A **lexicon** is the plugin that generates output for one platform, such as AWS or Kubernetes. Install the lexicon for your platform, which also installs the chant CLI:
 
 ```bash
-npm install --save-dev @intentius/chant-lexicon-aws
+npm install --save-dev @intentius/chant-lexicon-aws tsx
 ```
 
 See the [AWS lexicon reference](/chant/lexicons/aws/) for intrinsic functions, composites, and examples.
+
+### tsx and esbuild
+
+`tsx` and `esbuild` are optional peer dependencies of `@intentius/chant`, so installing a lexicon does not install them. chant loads a project's own TypeScript (`chant.config.ts` and the files under `src/`) through `tsx`, so every command that reads a project needs it: `chant build`, `chant lint`, `chant list`, `chant graph`, `chant audit` and `chant update`, among others. `chant build --sandbox` and `chant lint --sandbox` also bundle the project with `esbuild`, which `tsx` installs for itself. Commands that read no project TypeScript, such as `chant --version` and `chant import`, run without either.
+
+When one is missing, the command stops with a single line that names the install, for example:
+
+```text
+chant needs tsx to run TypeScript; install it with: npm i -D tsx
+```
+
+Install `esbuild` on its own with `npm i -D esbuild` if you use the sandbox and keep `tsx` out of the project.
 
 ## Verify the Installation
 

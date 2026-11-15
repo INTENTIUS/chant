@@ -5,15 +5,19 @@
  * A package compiles `src/` to `dist/` with the same layout (`rootDir: src`,
  * `outDir: dist`), so a compiled module sits at the same relative path under
  * `dist/` as its source does under `src/`. tsc compiles only the modules: a
- * file a module reads beside itself (generated JSON, skills markdown,
- * snapshots) stays under `src/`, which every package publishes. A module that
- * reads such a file names it from {@link moduleSourceDir}, not from its own
- * directory, and finds it from either layout.
+ * file a module reads beside itself (generated JSON, vendored schemas) is
+ * copied from `src/` to the same place under `dist/` by the package's build,
+ * and a package publishes `dist/` and not `src/`. A module that reads such a
+ * file names it from {@link moduleSourceDir}, not from its own directory, and
+ * finds it from either layout: under `src/` in a checkout, which has the
+ * newest copy, and beside the compiled module when there is no `src/` to
+ * find (an installed package).
  *
- * String arithmetic only, no filesystem access, so it is safe in a sandboxed
- * child and costs nothing at module scope.
+ * String arithmetic and one `existsSync` per call, which is false inside a
+ * sandboxed child that may not read the path, so it stays safe there.
  */
 
+import { existsSync } from "node:fs";
 import { dirname, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -48,7 +52,9 @@ export function compiledModuleSource(path: string): string | undefined {
  * runs compiled from `<package>/dist`.
  */
 export function moduleSourceDir(moduleUrl: string): string {
-  return dirname(sourcePathOf(fileURLToPath(moduleUrl)));
+  const path = fileURLToPath(moduleUrl);
+  const source = dirname(sourcePathOf(path));
+  return source === dirname(path) || existsSync(source) ? source : dirname(path);
 }
 
 /**
@@ -58,7 +64,8 @@ export function moduleSourceDir(moduleUrl: string): string {
  * `createRequire`.
  */
 export function moduleSourceUrl(moduleUrl: string): string {
-  return pathToFileURL(sourcePathOf(fileURLToPath(moduleUrl))).href;
+  const path = fileURLToPath(moduleUrl);
+  return pathToFileURL(existsSync(dirname(sourcePathOf(path))) ? sourcePathOf(path) : path).href;
 }
 
 /**

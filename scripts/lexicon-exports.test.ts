@@ -7,9 +7,10 @@
  * would fail under plain node, so the check covers all of them at once.
  *
  * The build has to keep the JS tsc emits (#433 deleted it), the prepack has
- * to run that build, and `files` has to publish `dist/` and `src/`: a compiled
- * module reads its generated JSON, skills and snapshots from `src/` through
- * `moduleSourceDir`.
+ * to run that build, and `files` has to publish `dist/` and not `src/`: the
+ * build copies the JSON a compiled module reads (generated lexicon data,
+ * vendored schemas) from `src/` to `dist/` (scripts/copy-lexicon-assets.mjs),
+ * and `moduleSourceDir` finds it there when the package has no `src/`.
  *
  * Reads package.json and tsconfig.build.json files only.
  */
@@ -80,7 +81,7 @@ describe("lexicon packages ship compiled JS (#3981)", () => {
     expect(scripts.prepack?.split("&&").map((s) => s.trim()), "prepack").toContain("npm run build");
   });
 
-  test.each(LEXICONS)("%s: tsc compiles src/ to dist/ and the package publishes both", (name) => {
+  test.each(LEXICONS)("%s: tsc compiles src/ to dist/ and the package publishes dist/ only", (name) => {
     const tsconfig = JSON.parse(readFileSync(join(ROOT, "lexicons", name, "tsconfig.build.json"), "utf-8")) as {
       compilerOptions: { outDir?: string; rootDir?: string; noEmit?: boolean; customConditions?: string[] };
     };
@@ -89,7 +90,8 @@ describe("lexicon packages ship compiled JS (#3981)", () => {
     expect(tsconfig.compilerOptions.customConditions).toContain("development");
     const files = manifest(name).files ?? [];
     expect(files).toContain("dist/");
-    expect(files).toContain("src/");
+    expect(files).not.toContain("src/");
+    expect(manifest(name).scripts?.build, "build").toContain("copy-lexicon-assets.mjs");
   });
 });
 

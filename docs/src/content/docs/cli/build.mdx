@@ -15,6 +15,8 @@ chant build [path] --components --generate <lexicon> [--env <name>] [--promote-t
 
 `chant build` loads the project at the given path, parses all TypeScript source files, evaluates resource definitions, and serializes the output.
 
+It loads the project's TypeScript through `tsx`, an optional peer dependency of `@intentius/chant`: install it with `npm i -D tsx`. Without it the command stops with `chant needs tsx to run TypeScript; install it with: npm i -D tsx`. See [Installation](/chant/getting-started/installation/#tsx-and-esbuild). `--sandbox` also needs `esbuild` (`tsx` installs it; `npm i -D esbuild` adds it alone).
+
 ### Source directory
 
 With a path, `chant build` builds that directory. With none, run at the root of a project, it builds the config's `sourceDir`, else the project root. Run below the root with no path, it builds the directory it runs in. This is the rule every command that picks a source directory shares ([#4794](https://github.com/INTENTIUS/chant/issues/4794)): `chant lifecycle`'s `--src`, `chant release compile`, `chant graph`, `chant search`, `chant components status` and the lexicon commands all take an explicit directory first, then `sourceDir`, then the project root. There is no `src` fallback; a project whose declarations live in `src/` beside other code sets `sourceDir: "src"`.

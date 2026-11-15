@@ -210,7 +210,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(here, "..", "..", "..");
 const workspaceSrc = resolve(here, "..");
 /**
- * The fixture the generated workspace is copied from, shipped under `src/`.
+ * The fixture the generated workspace is copied from, shipped in `dist/` (and `src/`, in the repository).
  * Its `__fixture__` name keeps `chant workspace init` on the chant repository
  * from proposing its projects as members.
  */

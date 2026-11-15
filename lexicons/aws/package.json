@@ -22,7 +22,6 @@
   ],
   "type": "module",
   "files": [
-    "src/",
     "dist/",
     "schemas/",
     "workspace-kinds.json"
@@ -72,7 +71,7 @@
     "validate": "tsx src/validate-cli.ts",
     "docs": "tsx src/codegen/docs-cli.ts",
     "prepack": "npm run generate && npm run bundle && npm run validate && npm run build",
-    "build": "../../scripts/tsc7.sh -p tsconfig.build.json --sourceMap false && tsc-alias -p tsconfig.build.json"
+    "build": "../../scripts/tsc7.sh -p tsconfig.build.json --sourceMap false && tsc-alias -p tsconfig.build.json && node ../../scripts/copy-lexicon-assets.mjs"
   },
   "dependencies": {
     "fflate": "^0.8.2",

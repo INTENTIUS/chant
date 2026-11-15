@@ -1,4 +1,5 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, test } from "vitest";
@@ -9,7 +10,17 @@ describe("module-source (#3981)", () => {
     expect(SOURCE_EXPORT_CONDITIONS).toEqual(["development"]);
   });
 
-  const pkg = join(sep, "x", "node_modules", "@intentius", "chant-lexicon-aws");
+  // A package with a src/ tree beside its dist/, as in a checkout.
+  const root = mkdtempSync(join(tmpdir(), "module-source-"));
+  const pkg = join(root, "node_modules", "@intentius", "chant-lexicon-aws");
+  for (const dir of ["src", join("src", "lsp"), join("src", "lint", "post-synth"), "dist"]) mkdirSync(join(pkg, dir), { recursive: true });
+
+  test("an installed package has no src/: the directory is the compiled module's own", () => {
+    const installed = join(root, "node_modules", "@intentius", "chant-lexicon-gcp");
+    const hover = pathToFileURL(join(installed, "dist", "lsp", "hover.js")).href;
+    expect(moduleSourceDir(hover)).toBe(join(installed, "dist", "lsp"));
+    expect(moduleSourceUrl(hover)).toBe(hover);
+  });
 
   test("moduleSourceDir maps a compiled module's directory to the source directory", () => {
     expect(moduleSourceDir(pathToFileURL(join(pkg, "dist", "lint", "post-synth", "ext001.js")).href)).toBe(join(pkg, "src", "lint", "post-synth"));

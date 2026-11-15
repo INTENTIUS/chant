@@ -1,6 +1,6 @@
 import { dirname, join } from "node:path";
 import { params as currentBuildParams } from "../../params";
-import { chantSourceDir } from "../../ts-loader";
+import { chantModule, chantSourceDir } from "../../ts-loader";
 
 /**
  * chant #1045 Phase 2 — generates the source of the "driver" module that runs
@@ -36,19 +36,19 @@ const HERE = chantSourceDir(import.meta.url);
 const DISCOVERY_DIR = join(HERE, "..");
 
 /** Absolute paths to chant's OWN trusted modules the generated driver imports — always resolved relative to THIS file's own location on disk, so this works whether chant is running from the monorepo or from a consumer's `node_modules` (both route runtime resolution at `src/*.ts` — see `packages/core/package.json`'s `development`/`default` export conditions). */
-const COLLECT_MODULE = join(DISCOVERY_DIR, "collect.ts");
-const RESOLVE_MODULE = join(DISCOVERY_DIR, "resolve.ts");
+const COLLECT_MODULE = chantModule(join(DISCOVERY_DIR, "collect.ts"));
+const RESOLVE_MODULE = chantModule(join(DISCOVERY_DIR, "resolve.ts"));
 // The pure codec, NOT `entity-wire.ts` — that file also exports
 // `discoverEntitySetJson`, which pulls in `discover()` → `fold-import` →
 // the `typescript` compiler package. See `../entity-wire.ts`'s module doc.
-const ENTITY_WIRE_CODEC_MODULE = join(DISCOVERY_DIR, "entity-wire-codec.ts");
-const CHILD_ERRORS_MODULE = join(HERE, "child-errors.ts");
-const PROVENANCE_MODULE = join(dirname(DISCOVERY_DIR), "provenance.ts");
+const ENTITY_WIRE_CODEC_MODULE = chantModule(join(DISCOVERY_DIR, "entity-wire-codec.ts"));
+const CHILD_ERRORS_MODULE = chantModule(join(HERE, "child-errors.ts"));
+const PROVENANCE_MODULE = chantModule(join(dirname(DISCOVERY_DIR), "provenance.ts"));
 // chant #1113 — the config driver's serializability contract (see ./config-wire.ts).
-const CONFIG_WIRE_MODULE = join(HERE, "config-wire.ts");
+const CONFIG_WIRE_MODULE = chantModule(join(HERE, "config-wire.ts"));
 // chant #1131 — the policy driver's build-result decoding + diagnostics contract.
-const POLICY_WIRE_MODULE = join(HERE, "policy-wire.ts");
-const POST_SYNTH_MODULE = join(dirname(DISCOVERY_DIR), "lint", "post-synth.ts");
+const POLICY_WIRE_MODULE = chantModule(join(HERE, "policy-wire.ts"));
+const POST_SYNTH_MODULE = chantModule(join(dirname(DISCOVERY_DIR), "lint", "post-synth.ts"));
 // chant #1108 — the shared build-time params module (../params.ts). The child
 // process starts with its own, EMPTY copy of that module's `params` object;
 // without re-binding, every run-fallback file imported in the child would see
@@ -58,9 +58,9 @@ const POST_SYNTH_MODULE = join(dirname(DISCOVERY_DIR), "lint", "post-synth.ts");
 // `import { params } from "@intentius/chant/params"` to this same absolute
 // file, so the driver's `setBuildParams` call below mutates the one object
 // every bundled import observes.
-const PARAMS_MODULE = join(dirname(DISCOVERY_DIR), "params.ts");
+const PARAMS_MODULE = chantModule(join(dirname(DISCOVERY_DIR), "params.ts"));
 // #3897: a project file tsx compiled as CommonJS reads as its own namespace.
-const INTEROP_MODULE = join(dirname(DISCOVERY_DIR), "module-interop.ts");
+const INTEROP_MODULE = chantModule(join(dirname(DISCOVERY_DIR), "module-interop.ts"));
 
 export interface GenerateDriverOptions {
   /** Absolute paths to the run-fallback files this build decided NOT to fold — see `discover()`'s fold/taint loop in `../index.ts`. */

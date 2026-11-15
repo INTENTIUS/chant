@@ -70,9 +70,12 @@ export interface InitResult {
  * The devDependencies a scaffolded project gets, from `chant init` and from
  * `chant carve` (#3233). The project's TypeScript is for its editor and `tsc`
  * only; chant parses with its own copy, so any 5.9+ or 7 release works (#3089).
+ * tsx is how chant loads the project's own TypeScript: it is an optional peer
+ * of `@intentius/chant`, so a project that builds or lints installs it.
  */
 export const SCAFFOLD_DEV_DEPENDENCIES = {
   "@types/node": "^24.0.0",
+  tsx: "^4.0.0",
   typescript: "^5.9.3 || ^7.0.0",
 } as const;
 
