@@ -596,8 +596,11 @@ function topLevelKeys(value: unknown): string[] {
 
 /**
  * A warden member's part, from the reconcile `ChangeSet`s it planned
- * (`./reconcile.ts`). The address is `<resourceType>.<key>`, unique within
- * one org, and the scope is the org. An update's disruption is `unknown`:
+ * (`./reconcile.ts`). The address is the entry's own `address` when the
+ * warden set one (#5089): its graph node id, or `<node id>#<resourceType>[<key>]`
+ * for a change under that node, which places it on the node
+ * (`./change-set-graph.ts`). Otherwise it is `<resourceType>.<key>`, unique
+ * within one org. The scope is the org. An update's disruption is `unknown`:
  * the reconcile model says nothing about it.
  *
  * The plan digest covers each change set's org and entries, and leaves out
@@ -621,7 +624,7 @@ export function reconcilePlanPart(input: ReconcilePlanPartInput): ChangeSetPart 
         member: input.member,
         lexicon,
         planner: "warden",
-        address: `${e.resourceType}.${e.key}`,
+        address: e.address ?? `${e.resourceType}.${e.key}`,
         type: e.resourceType,
         name: e.key,
         action: e.kind,

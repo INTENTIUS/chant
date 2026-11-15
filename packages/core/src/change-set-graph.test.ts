@@ -9,7 +9,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { composeChangeSet, lifecyclePlanPart, verifyChangeSetDigest, type ChangeSetEntry } from "./change-set";
+import { composeChangeSet, lifecyclePlanPart, reconcilePlanPart, verifyChangeSetDigest, type ChangeSetEntry } from "./change-set";
 import { changeSetNodeCandidates, mapChangeSetToGraph, terraformBlockKey } from "./change-set-graph";
 import type { ChangeSet as LifecycleChangeSet } from "./lifecycle/change-set";
 
@@ -31,6 +31,38 @@ describe("terraformBlockKey", () => {
     ]);
     expect(changeSetNodeCandidates({ member: "delivery", planner: "chant", address: "jobs" })).toEqual(["jobs"]);
     expect(changeSetNodeCandidates({ member: "org", planner: "warden", address: "team.platform" })).toEqual(["team.platform"]);
+  });
+
+  test("a warden change under a node tries its address, then the node id before the # (#5089)", () => {
+    expect(changeSetNodeCandidates({ member: "forge", planner: "warden", address: "repo/acme/api#approval-rule[#review]" })).toEqual([
+      "repo/acme/api#approval-rule[#review]",
+      "repo/acme/api",
+    ]);
+    expect(changeSetNodeCandidates({ member: "forge", planner: "warden", address: "repo/acme/api" })).toEqual(["repo/acme/api"]);
+  });
+});
+
+describe("a warden's plan on its forge-governance graph (#5089)", () => {
+  test("entries with graph-node addresses sit on the nodes, and two orgs' same-named repos stay apart", () => {
+    const part = reconcilePlanPart({
+      member: "forge",
+      plan: [
+        { org: "acme", entries: [
+          { kind: "update", resourceType: "repo", key: "api", address: "repo/acme/api", fields: [{ field: "hasWiki", before: true, after: false }] },
+          { kind: "create", resourceType: "repo-secret", key: "api/TOKEN", address: "repo/acme/api#repo-secret[#api/TOKEN]", after: { name: "TOKEN" } },
+        ] },
+        { org: "beta", entries: [{ kind: "update", resourceType: "repo", key: "api", address: "repo/beta/api", fields: [{ field: "hasWiki", before: true, after: false }] }] },
+        { org: "beta", entries: [{ kind: "delete", resourceType: "team", key: "old", before: { slug: "old" } }] },
+      ],
+    });
+    expect(part.entries.map((e) => e.address)).toEqual(["repo/acme/api", "repo/acme/api#repo-secret[#api/TOKEN]", "repo/beta/api", "team.old"]);
+    const mapped = mapChangeSetToGraph(composeChangeSet([part]), { member: "forge", at: null, ids: ["org/acme", "repo/acme/api", "org/beta", "repo/beta/api"] });
+    expect(mapped.entries.map((e) => [e.address, e.node])).toEqual([
+      ["repo/acme/api", "forge/repo/acme/api"],
+      ["repo/acme/api#repo-secret[#api/TOKEN]", "forge/repo/acme/api"],
+      ["repo/beta/api", "forge/repo/beta/api"],
+      ["team.old", null],
+    ]);
   });
 });
 

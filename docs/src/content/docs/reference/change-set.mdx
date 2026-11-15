@@ -129,6 +129,8 @@ Each adapter returns a part: `{ member, entries }`. `composeChangeSet(parts)` jo
 
 The chant adapter maps `create`, `update`, `delete` and `noop` across. An `update` whose lexicon classifies it `replace` or `destroy` becomes a `replace`. An `effect` entry becomes the receipt write its effect step makes: a `create` when the receipt is absent, else an `update`. An `unobserved` entry becomes a hole. `adopt` and `runtime` entries propose nothing and are left out.
 
+For a warden plan, each entry's `address` is the one the warden set on it, or `<resourceType>.<key>` when it set none. A warden whose kind draws a graph sets its graph node id, `repo/<org>/<name>`, on a change to that node, and `<node id>#<resourceType>[<key>]` on a change under it, such as a repo's secret ([#5089](https://github.com/INTENTIUS/chant/issues/5089)). Such an entry sits on that node, the same node as the member's drift records, and two orgs with a repo of the same name keep apart. Without that address, a warden entry lands on no node.
+
 ### Pulumi plans
 
 The pulumi adapter ([#4453](https://github.com/INTENTIUS/chant/issues/4453)) keeps one entry per URN, at the URN. A replace is one `replace` entry, with disruption `destroy` when the delete comes first. The recorded previews print a replace as one `replace` step; the adapter also folds `create-replacement` and `delete-replaced` steps on the same URN into that entry, should a preview print them. The other ops map as follows, and an op outside this table is a hole.

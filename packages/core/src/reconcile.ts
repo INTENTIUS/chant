@@ -58,6 +58,15 @@ export interface ChangeSetEntry {
   after?: unknown;
   /** Field-level diff, populated for `update` entries. */
   fields?: FieldChange[];
+  /**
+   * The entry's address in a change set (`reconcilePlanPart`, #5089): the id
+   * of the graph node it changes, as the warden's `graph.reader` names it
+   * (`repo/<org>/<name>`), or `<node id>#<resourceType>[<key>]` for a change
+   * under that node. Set by a warden whose kind draws a graph, so plan
+   * entries sit on the same nodes as its drift records and two orgs never
+   * share an address. Absent, the address is `<resourceType>.<key>`.
+   */
+  address?: string;
 }
 
 /** The full set of changes to reconcile for one scope (e.g. one org). */
