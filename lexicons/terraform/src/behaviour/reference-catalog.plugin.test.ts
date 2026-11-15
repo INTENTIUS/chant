@@ -39,7 +39,8 @@ describe("terraform reference catalog on the plugin", () => {
 
   describe("each targeted rule draws its edge on provider-typed nodes", () => {
     for (const [i, rule] of TERRAFORM_REFERENCE_CATALOG.refs.entries()) {
-      if (!rule.targetKind) continue;
+      // A rule with a `join` spans two values and has its own fixtures (packages/core/src/workspace/identity-annotation-catalog.test.ts).
+      if (!rule.targetKind || rule.join) continue;
       it(`${rule.from} ${rule.path} -> ${rule.targetKind}`, () => {
         const value = `id-${i}`;
         const nodes: IRNode[] = [

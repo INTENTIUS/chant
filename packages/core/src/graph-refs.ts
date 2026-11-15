@@ -91,8 +91,18 @@ export interface RefRule {
    * `optional`), two are ambiguous, one is an edge. Only the catalog pass
    * over indexed nodes and declared graphs calls it. Pure.
    */
-  join?(holder: IRNode, find: (value: string) => readonly IRNode[]): JoinedRef[];
+  join?(holder: IRNode, find: FindNodes): JoinedRef[];
 }
+
+/**
+ * What a {@link RefRule.join} looks nodes up with. `find(value)` returns the
+ * nodes `value` names from the holder's own scope. `find(value, scope)`
+ * returns those named inside the scope called `scope` (a Kubernetes
+ * namespace), whatever scope the holder sits in, for a holder that names its
+ * target's namespace itself (#5099): a cloud IAM binding naming
+ * `<ns>/<name>`.
+ */
+export type FindNodes = (value: string, scope?: string) => readonly IRNode[];
 
 /** One reference a {@link RefRule.join} found on a holder. */
 export interface JoinedRef {
@@ -523,10 +533,18 @@ export function reconstructIndexedEdges(
   const sorted = [...nodes].sort((a, b) => byString(a.id, b.id));
   const keyOf = (scope: IndexedNodeScope, value: string) => `${scope.account}\u0000${scope.region ?? ""}\u0000${value}`;
   const index = new Map<string, Map<string, string>>();
+  // The same nodes by the name of the scope they sit in (the text after the
+  // first `:` of a region), for a join that names a scope itself.
+  const named = new Map<string, Map<string, string>>();
   const add = (scope: IndexedNodeScope, value: string | undefined, node: IRNode): void => {
     if (value === undefined || value === "" || PLACEHOLDER_VALUES.has(value)) return;
     const k = keyOf(scope, value);
     (index.get(k) ?? index.set(k, new Map()).get(k)!).set(node.id, node.kind);
+    const colon = scope.region?.indexOf(":") ?? -1;
+    if (scope.region !== undefined && colon > 0) {
+      const nk = `${scope.region.slice(colon + 1)}\u0000${value}`;
+      (named.get(nk) ?? named.set(nk, new Map()).get(nk)!).set(node.id, node.kind);
+    }
   };
   const identities = catalogs.flatMap((c) => c.catalog.identities);
   for (const node of sorted) {
@@ -629,7 +647,8 @@ export function reconstructIndexedEdges(
           ...(rule.optional ? { optional: true } : {}),
         };
         if (rule.join) {
-          const find = (value: string): IRNode[] => [...lookup(node, value).keys()].map((id) => byId.get(id)!);
+          const find: FindNodes = (value, scope) =>
+            [...(scope === undefined ? lookup(node, value) : named.get(`${scope}\u0000${value}`) ?? new Map<string, string>()).keys()].map((id) => byId.get(id)!);
           for (const j of rule.join(node, find)) resolve(node, j.value, { ...spec, via: j.via ?? spec.via }, j);
           continue;
         }

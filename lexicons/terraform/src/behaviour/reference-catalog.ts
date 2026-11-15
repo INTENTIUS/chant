@@ -72,7 +72,7 @@
  * in it is not `complete` by omission.
  */
 
-import type { DeclaredCatalogNode, ReferenceCatalog } from "@intentius/chant/graph-refs";
+import { readPath, type DeclaredCatalogNode, type JoinedRef, type ReferenceCatalog, type RefRule } from "@intentius/chant/graph-refs";
 import type { IRNode } from "@intentius/chant/graph-ir";
 import { RESOURCE_TYPE, type TerraformEvaluated } from "../hcl/parse";
 import { interpolated } from "../hcl/evaluate";
@@ -185,6 +185,42 @@ export function terraformDeclaredNode(node: IRNode, block?: IRNode): DeclaredCat
   return { kind: type, ...literalArguments(body, evaluated?.arguments) };
 }
 
+const WORKLOAD_IDENTITY_USER = "roles/iam.workloadIdentityUser";
+const WORKLOAD_MEMBER = /^serviceAccount:[^.]+\.svc\.id\.goog\[([^/\]]+)\/([^\]]+)\]$/;
+
+/**
+ * A binding that lets a Kubernetes ServiceAccount act as a GCP service
+ * account (#5099): a `google_service_account_iam_member` or
+ * `google_service_account_iam_binding` with `role =
+ * "roles/iam.workloadIdentityUser"` and a literal member
+ * `serviceAccount:<project>.svc.id.goog[<namespace>/<name>]`. The edge goes
+ * to the ServiceAccount of that name in that namespace, found in any member.
+ * A binding for a cluster whose manifests are not in the workspace names no
+ * node, and that is not reported: the pool is the cluster's, not this
+ * workspace's. A member built with a local or a variable is not literal, so
+ * it is not read.
+ */
+function workloadBindingRule(from: string, path: string): RefRule {
+  return {
+    from,
+    path,
+    targetKind: "K8s::Core::ServiceAccount",
+    relation: "reference",
+    label: "lets act as",
+    optional: true,
+    join(holder, find) {
+      if (!readPath(holder.attrs, "role").includes(WORKLOAD_IDENTITY_USER)) return [];
+      const refs: JoinedRef[] = [];
+      for (const member of new Set(readPath(holder.attrs, path))) {
+        const m = WORKLOAD_MEMBER.exec(member);
+        if (!m) continue;
+        refs.push({ value: member, targets: find(m[2], m[1]).filter((n) => n.kind === "K8s::Core::ServiceAccount"), via: "workload identity member" });
+      }
+      return refs;
+    },
+  };
+}
+
 /** The catalog. Rules are grouped by the relation they produce. */
 export const TERRAFORM_REFERENCE_CATALOG: ReferenceCatalog = {
   declaredNode: terraformDeclaredNode,
@@ -202,6 +238,11 @@ export const TERRAFORM_REFERENCE_CATALOG: ReferenceCatalog = {
     { kind: "google_container_cluster", ids: ["name"] },
     { kind: "aws_eks_cluster", ids: ["name"] },
     { kind: "azurerm_kubernetes_cluster", ids: ["name"] },
+    // A ServiceAccount's annotation names a cloud identity by a value built
+    // from these (#5099): the k8s catalog's rule joins the email's account id
+    // and project, or the ARN's role name, so these only make them findable.
+    { kind: "google_service_account", ids: ["account_id"] },
+    { kind: "aws_iam_role", ids: ["name"] },
   ],
   refs: [
     // ── containment (→ boundary pairs, and containment edges) ──
@@ -288,6 +329,8 @@ export const TERRAFORM_REFERENCE_CATALOG: ReferenceCatalog = {
     { from: "aws_iam_role_policy_attachment", path: "policy_arn", targetKind: "aws_iam_policy", relation: "reference", label: "attaches" },
     { from: "aws_iam_role_policy", path: "role", targetKind: "aws_iam_role", relation: "reference", label: "on" },
     { from: "aws_iam_instance_profile", path: "role", targetKind: "aws_iam_role", relation: "reference", label: "holds" },
+    workloadBindingRule("google_service_account_iam_member", "member"),
+    workloadBindingRule("google_service_account_iam_binding", "members[]"),
     { from: "aws_route53_record", path: "zone_id", targetKind: "aws_route53_zone", relation: "reference", label: "in zone" },
     // A bucket's regional domain name or a load balancer's DNS name; no `targetKind`.
     { from: "aws_cloudfront_distribution", path: "origin[].domain_name", relation: "reference", label: "origin" },

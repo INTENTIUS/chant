@@ -271,6 +271,70 @@ const externalSecretRules: RefRule[] = [
  */
 const CLUSTER_KINDS = ["google_container_cluster", "aws_eks_cluster", "azurerm_kubernetes_cluster"];
 
+const SERVICE_ACCOUNT = "K8s::Core::ServiceAccount";
+export const GKE_ANNOTATION = 'metadata.annotations["iam.gke.io/gcp-service-account"]';
+export const EKS_ANNOTATION = 'metadata.annotations["eks.amazonaws.com/role-arn"]';
+
+const GCP_EMAIL = /^([a-z][a-z0-9-]*)@([a-z][a-z0-9-]*)\.iam\.gserviceaccount\.com$/i;
+const AWS_ROLE_ARN = /^arn:aws[a-z-]*:iam::(\d{12}):role\/(?:(.*)\/)?([^/]+)$/;
+
+/**
+ * The cloud identity a ServiceAccount's annotation names (#5099). Neither
+ * value is one identifier a target carries, so both are rules with a `join`:
+ *
+ * - GKE Workload Identity, `iam.gke.io/gcp-service-account`. The email is
+ *   `<account_id>@<project>.iam.gserviceaccount.com`, and a
+ *   `google_service_account` declares those two arguments while its email is
+ *   computed. The rule finds the account by `account_id` and keeps the ones
+ *   whose literal `project` is the email's, so two accounts of one id in
+ *   different projects are told apart.
+ * - EKS IRSA, `eks.amazonaws.com/role-arn`. The role is found by the last
+ *   segment of the ARN, kept when its literal `path` agrees with the ARN's
+ *   and, if its literal `arn` is set, the account id agrees too. Terraform
+ *   does not hold the account id otherwise, so a role with no `arn` argument
+ *   is matched on its name and path.
+ *
+ * A value of another shape names no node, so it is dangling.
+ */
+const identityRules: RefRule[] = [
+  {
+    from: SERVICE_ACCOUNT,
+    path: GKE_ANNOTATION,
+    targetKind: "google_service_account",
+    relation: "reference",
+    label: "acts as",
+    join(holder, find) {
+      const email = first(holder, GKE_ANNOTATION);
+      if (email === undefined) return [];
+      const m = GCP_EMAIL.exec(email);
+      const targets = m ? find(m[1]).filter((n) => n.kind === "google_service_account" && first(n, "account_id") === m[1] && first(n, "project") === m[2]) : [];
+      return [{ value: email, targets, via: "iam.gke.io/gcp-service-account" }];
+    },
+  },
+  {
+    from: SERVICE_ACCOUNT,
+    path: EKS_ANNOTATION,
+    targetKind: "aws_iam_role",
+    relation: "reference",
+    label: "acts as",
+    join(holder, find) {
+      const arn = first(holder, EKS_ANNOTATION);
+      if (arn === undefined) return [];
+      const m = AWS_ROLE_ARN.exec(arn);
+      const targets = m
+        ? find(m[3]).filter((n) => {
+            if (n.kind !== "aws_iam_role" || first(n, "name") !== m[3]) return false;
+            const path = first(n, "path");
+            if (path !== undefined && path.replace(/^\/|\/$/g, "") !== (m[2] ?? "")) return false;
+            const own = first(n, "arn")?.match(/^arn:aws[a-z-]*:iam::(\d{12}):/);
+            return own === null || own === undefined || own[1] === m[1];
+          })
+        : [];
+      return [{ value: arn, targets, via: "eks.amazonaws.com/role-arn" }];
+    },
+  },
+];
+
 const refs: RefRule[] = [
   // ── containment: the namespace an object is in ──
   ...NAMESPACED_KINDS.map((kind) => ref(kind, "metadata.namespace", "K8s::Core::Namespace", "in namespace", "containment")),
@@ -309,6 +373,9 @@ const refs: RefRule[] = [
 
   // ── External Secrets: the store, and the cloud secret through it ──
   ...externalSecretRules,
+
+  // ── cloud identity: the account a ServiceAccount acts as ──
+  ...identityRules,
 ];
 
 /** A namespaced object's names are unique inside its namespace (#5097). */

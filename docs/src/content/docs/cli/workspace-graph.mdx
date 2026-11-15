@@ -145,6 +145,18 @@ Where the names do not match, a member's `runsOn` says which cluster resource it
 chant workspace graph . --discover --runs-on argo=infra/google_container_cluster.prod
 ```
 
+### Cloud identity of a ServiceAccount
+
+A ServiceAccount annotation that names a cloud identity draws an edge to it, and a Workload Identity binding draws an edge back ([#5099](https://github.com/INTENTIUS/chant/issues/5099)). The rule ids are `k8s:K8s::Core::ServiceAccount:metadata.annotations["iam.gke.io/gcp-service-account"]`, `k8s:K8s::Core::ServiceAccount:metadata.annotations["eks.amazonaws.com/role-arn"]`, `terraform:google_service_account_iam_member:member` and `terraform:google_service_account_iam_binding:members[]`.
+
+| Annotation or binding | Terraform side | Joined on |
+|---|---|---|
+| `iam.gke.io/gcp-service-account: <id>@<project>.iam.gserviceaccount.com` | `google_service_account` | `account_id` equal to the id, `project` equal to the project |
+| `eks.amazonaws.com/role-arn: arn:aws:iam::<account>:role/<path>/<name>` | `aws_iam_role` | `name` equal to the last segment, `path` equal to the ARN's path when the role sets one, and the account of the role's `arn` when it sets one |
+| `google_service_account_iam_member` or `_binding` with `roles/iam.workloadIdentityUser` | the ServiceAccount | a member `serviceAccount:<project>.svc.id.goog[<namespace>/<name>]`, read as the ServiceAccount `<name>` in `<namespace>` of any member |
+
+An annotation that names no account is dangling, and two accounts it could mean (the same `account_id` and `project` declared twice) are `ambiguous`. A `google_service_account` whose `account_id` or `project` is not literal is counted in `catalog.nonLiteral` and matches nothing, so an estate that builds them from locals or variables draws no annotation edge until those are resolved. Terraform does not hold a role's account id, so a role with no literal `arn` matches on its name and path. A binding whose ServiceAccount is not in the workspace is not reported, since the cluster it names may be one the workspace does not read. The Azure `azure.workload.identity/client-id` annotation and IAM role trust policies are not read.
+
 ## Nested workspaces
 
 A member of kind `workspace` holds its own declaration. The outer workspace reads it read-only, through the nested workspace's own command ([#2551](https://github.com/INTENTIUS/chant/issues/2551), [ws-007](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-007-nesting.md), [ws-071](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-071-nested-reads.md)). chant runs `chant workspace graph` in the nested root, which hands itself to the nested workspace's own chant when it has one, as at any root. The outer read passes on `--at`, `--env`, `--live`, `--overlay`, `--traffic`, `--detail` and `--no-cache`, and nothing that writes. The answer must be a graph document of a contract this chant reads.
