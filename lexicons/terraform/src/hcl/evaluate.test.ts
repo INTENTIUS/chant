@@ -5,8 +5,10 @@
  * from kubernetes/k8s.io (Apache-2.0): a Workload Identity service account
  * made through a `for_each` module call over a local map, whose project id
  * comes through another module's output, and a GKE cluster named through a
- * local and a module variable. `build-trusted/extras.tf` is not from that
- * repository; it holds arguments that must stay unresolved.
+ * local and a module variable, whose `count` compares a variable with `==`
+ * to pick the prod or the test block. `build-trusted/extras.tf` is not from
+ * that repository; it holds a second call of the cluster module and
+ * arguments that must stay unresolved.
  */
 
 import { join } from "node:path";
@@ -22,6 +24,8 @@ const TREE = join(import.meta.dirname, "..", "__fixtures__", "resolved-arguments
 const SA_BLOCK = "bt/module.workload_identity_service_accounts/google_service_account.serviceaccount";
 const SA = (key: string) => `bt/module.workload_identity_service_accounts["${key}"]/google_service_account.serviceaccount`;
 const CLUSTER = "bt/module.prow_build_cluster/google_container_cluster.prod_cluster";
+const TEST_CLUSTER = "bt/module.prow_build_cluster/google_container_cluster.test_cluster";
+const CANARY = (block: string) => `bt/module.canary_cluster/google_container_cluster.${block}`;
 
 let ir: GraphIR;
 let byId: Map<string, IRNode>;
@@ -52,31 +56,43 @@ describe("the Workload Identity service account", () => {
   it("resolves account_id from each.key and project through the gke-project module's output", () => {
     expect(view(SA("prow-build-trusted"))).toEqual({
       kind: "google_service_account",
-      attrs: { account_id: "prow-build-trusted", project: "k8s-infra-prow-build-trusted" },
-      nonLiteral: 1,
+      attrs: { account_id: "prow-build-trusted", project: "k8s-infra-prow-build-trusted", display_name: "default service account for pods in prow-build-trusted" },
+      nonLiteral: 0,
     });
-    expect(view(SA("gcb-builder"))?.attrs).toEqual({ account_id: "gcb-builder", project: "k8s-infra-prow-build-trusted" });
+    expect(view(SA("gcb-builder"))?.attrs).toEqual({ account_id: "gcb-builder", project: "k8s-infra-prow-build-trusted", display_name: "trigger GCB builds in all k8s-staging projects" });
   });
 
   it("reads no arguments on the block node, so a value is matched once, on its instance", () => {
     expect(view(SA_BLOCK)).toEqual({ kind: "google_service_account", attrs: {}, nonLiteral: 0 });
   });
 
-  it("names what stopped display_name: a comparison this reader does not evaluate", () => {
-    const at = (evaluatedOf(SA_BLOCK)!.instances as Record<string, { stopped?: Record<string, string> }>)[
+  it("resolves display_name through a local that compares the variable with != (#5094)", () => {
+    const at = (evaluatedOf(SA_BLOCK)!.instances as Record<string, { arguments?: Record<string, unknown> }>)[
       'module.workload_identity_service_accounts["prow-build-trusted"].google_service_account.serviceaccount'
     ];
-    expect(at?.stopped?.display_name).toMatch(/^module\.workload_identity_service_accounts\["prow-build-trusted"\]\.var\.description != ""/);
+    expect(at?.arguments?.display_name).toBe("default service account for pods in prow-build-trusted");
   });
 });
 
 describe("the GKE cluster", () => {
-  it("resolves name from a local through the gke-cluster module's variable", () => {
-    expect(view(CLUSTER)).toEqual({
+  it("resolves name from a local through the gke-cluster module's variable, on the one instance its count picks", () => {
+    expect(view(`${CLUSTER}[0]`)).toEqual({
       kind: "google_container_cluster",
-      attrs: { name: "prow-build-trusted", location: "us-central1", project: "k8s-infra-prow-build-trusted" },
-      nonLiteral: 1,
+      attrs: { count: 1, name: "prow-build-trusted", location: "us-central1", project: "k8s-infra-prow-build-trusted" },
+      nonLiteral: 0,
     });
+    expect(view(CLUSTER)).toEqual({ kind: "google_container_cluster", attrs: {}, nonLiteral: 0 });
+  });
+
+  it("gives the block whose count compares to zero no instance and nothing to match (#5094)", () => {
+    expect(ir.nodes.filter((n) => n.instanceOf === TEST_CLUSTER)).toEqual([]);
+    expect(byId.get(TEST_CLUSTER)?.attrs.evaluated).toEqual({ instances: {} });
+    expect(view(TEST_CLUSTER)).toEqual({ kind: "google_container_cluster", attrs: {}, nonLiteral: 0 });
+  });
+
+  it("picks per call: a second call with is_prod_cluster = \"false\" plans the test block", () => {
+    expect(ir.nodes.filter((n) => n.instanceOf === CANARY("prod_cluster"))).toEqual([]);
+    expect(view(`${CANARY("test_cluster")}[0]`)?.attrs).toEqual({ count: 1, name: "prow-build-trusted-canary", location: "us-central1", project: "k8s-infra-prow-build-trusted" });
   });
 });
 
@@ -84,6 +100,12 @@ describe("arguments that stay not literal", () => {
   it("names a data source", () => {
     expect(view("bt/google_storage_bucket.from_data")).toEqual({ kind: "google_storage_bucket", attrs: { location: "US" }, nonLiteral: 1 });
     expect(evaluatedOf("bt/google_storage_bucket.from_data")).toEqual({ stopped: { name: "data.google_organization.org.org_id" } });
+  });
+
+  it("names the reference that stops a comparison, and counts a block whose comparison is known (#5094)", () => {
+    expect(ir.nodes.filter((n) => n.instanceOf === "bt/google_storage_bucket.compared").map((n) => n.id)).toEqual(["bt/google_storage_bucket.compared[0]"]);
+    const at = (evaluatedOf("bt/google_storage_bucket.compared")!.instances as Record<string, { stopped?: Record<string, string> }>)["google_storage_bucket.compared[0]"];
+    expect(at?.stopped).toEqual({ name: "data.google_organization.org.org_id" });
   });
 
   it("names timestamp()", () => {
@@ -132,6 +154,13 @@ describe("RootEvaluator", () => {
     expect(ev.value('${lookup(local.m.a, "n", "d")}', { place })).toBe("x");
     expect(ev.value('${lookup(local.m.a, "z", "d")}', { place })).toBe("d");
     expect(ev.value("${var.on ? 1 : 0}", { place })).toBe(1);
+    expect(ev.value('${local.m.a.n == "x" ? 1 : 0}', { place })).toBe(1);
+    expect(ev.value('${local.m.a.n != "x"}', { place })).toBe(false);
+    expect(ev.value('${"1" == 1}', { place })).toBe(false);
+    expect(ev.value("${local.l == [\"b\", \"a\", \"b\"]}", { place })).toBe(true);
+    expect(ev.value('${local.m == { a = { n = "x" } }}', { place })).toBe(true);
+    expect((ev.value('${var.nope == "x" ? 1 : 0}', { place }) as { ref: string }).ref).toBe("var.nope");
+    expect((ev.value("${local.l[0] == local.l[1] + 1}", { place }) as { ref: string }).ref).toBe("local.l[0] == local.l[1] + 1");
     expect(ev.value("${toset(local.l)}", { place })).toEqual(["a", "b"]);
     expect(ev.value("${length(local.l)}", { place })).toBe(3);
     expect(ev.value('${local.m["a"].n}', { place })).toBe("x");

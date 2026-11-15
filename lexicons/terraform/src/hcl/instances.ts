@@ -41,7 +41,9 @@
  * interpolate another local gets its keys, since a map's keys are known when
  * some of its values are not. The same evaluator then gives each resource
  * block its `evaluated` arguments, per instance when it has instance nodes,
- * for the reference catalog.
+ * for the reference catalog. Since #5094 that reading includes `==` and
+ * `!=`, and a block whose expansion comes to zero instances gets
+ * `{ instances: {} }`, so the catalog reads nothing on it.
  */
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -482,6 +484,9 @@ function evaluateBlock(evaluator: RootEvaluator, entity: TerraformEntity, key: s
   const callers = callersOfKey(key);
   const listed = (entity as { instances?: readonly ListedInstance[] }).instances;
   const keys = entity.instanceKeys;
+  // A count or for_each the files settle at zero (`count = var.on == "true" ? 1 : 0` with it off, #5094)
+  // plans no instance, so nothing is read for the catalog to match.
+  if ((listed && listed.length === 0) || (!listed && keys && keys.length === 0 && ("count" in body || "for_each" in body))) return { instances: {} };
   if ((listed && listed.length > 0) || (keys && keys.length > 0)) {
     const entries: Array<{ scope?: string; key?: string }> = listed && listed.length > 0 ? [...listed] : keys!.map((k) => ({ key: k }));
     const instances: Record<string, EvaluatedArguments> = {};

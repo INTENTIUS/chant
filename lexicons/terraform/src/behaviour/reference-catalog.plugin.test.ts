@@ -128,7 +128,7 @@ describe("evaluated arguments in the catalog pass (#5117)", () => {
     ],
   };
 
-  it("joins a cluster Secret to the cluster by its resolved name, and an instance by its resolved account_id", async () => {
+  it("joins a cluster Secret to the cluster instance its count picks by its resolved name, and an instance by its resolved account_id", async () => {
     const { renderTerraformRoots } = await import("../hcl/roots");
     const { buildGraphIr, withInstanceNodes } = await import("@intentius/chant/graph-ir");
     const rendered = await renderTerraformRoots({ projectRoot: join(import.meta.dirname, "..", "__fixtures__", "resolved-arguments"), roots: { bt: { dir: "./build-trusted" } } });
@@ -143,9 +143,10 @@ describe("evaluated arguments in the catalog pass (#5117)", () => {
       { lexicon: LEXICON, catalog: withIdentities },
       { lexicon: "k8s", catalog: standIn },
     ]);
+    // The module's prod and test blocks share a name; `count = var.is_prod_cluster == "true" ? 1 : 0` plans only the prod one (#5094).
     expect(out.ambiguous).toEqual([]);
     expect(out.edges.map((e) => [e.from, e.to])).toEqual(expect.arrayContaining([
-      ["apps/Secret/gke-prow-build-trusted", "infra/bt/module.prow_build_cluster/google_container_cluster.prod_cluster"],
+      ["apps/Secret/gke-prow-build-trusted", "infra/bt/module.prow_build_cluster/google_container_cluster.prod_cluster[0]"],
       ["apps/ConfigMap/sa", 'infra/bt/module.workload_identity_service_accounts["gcb-builder"]/google_service_account.serviceaccount'],
     ]));
     // What stays unread: the data source, timestamp() and the computed email in extras.tf among them.
