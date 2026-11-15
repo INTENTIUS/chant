@@ -454,8 +454,8 @@ describe("the triggers of a phase that sets build (#4169)", () => {
   });
 
   test("writeTopLevel replaces a block up to the next top-level line, or adds one before jobs", () => {
-    expect(writeTopLevel("a: 1\nconcurrency:\n  group: x\n\njobs: {}\n", "concurrency", { group: "y" })).toBe(`a: 1\n${BUILD_BLOCK_MARKER}\nconcurrency:\n  group: y\n\njobs: {}\n`);
-    expect(writeTopLevel("a: 1\njobs: {}\n", "concurrency", { group: "y" })).toBe(`a: 1\n${BUILD_BLOCK_MARKER}\nconcurrency:\n  group: y\n\njobs: {}\n`);
+    expect(writeTopLevel("a: 1\nconcurrency:\n  group: x\n\njobs: {}\n", "concurrency", { group: "z" })).toBe(`a: 1\n${BUILD_BLOCK_MARKER}\nconcurrency:\n  group: z\n\njobs: {}\n`);
+    expect(writeTopLevel("a: 1\njobs: {}\n", "concurrency", { group: "z" })).toBe(`a: 1\n${BUILD_BLOCK_MARKER}\nconcurrency:\n  group: z\n\njobs: {}\n`);
   });
 
   test("the tick may re-run jobs and start workflows, and ticks on a build tag's runs, only when a phase sets build", () => {

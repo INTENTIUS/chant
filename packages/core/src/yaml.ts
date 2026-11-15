@@ -99,8 +99,6 @@ export function emitYAML(value: unknown, indent: number): string {
       value === "true" ||
       value === "false" ||
       value === "null" ||
-      value === "yes" ||
-      value === "no" ||
       value.includes(": ") ||
       value.includes("#") ||
       value.startsWith("*") ||
@@ -117,7 +115,15 @@ export function emitYAML(value: unknown, indent: number): string {
       // whitespace, a signed or dotted number, and the other spellings of
       // booleans, null and the float constants (#3006).
       /^[-?:](?:\s|$)|^[,\]}|>%@`]|:$|^\s|\s$|^[-+.]\d/.test(value) ||
-      /^(?:true|false|null|~|yes|no|[-+]?\.(?:inf|nan))$/i.test(value)
+      /^(?:true|false|null|~|[-+]?\.(?:inf|nan))$/i.test(value) ||
+      // YAML 1.1 reads these as other types: its booleans `y`, `n`, `yes`,
+      // `no`, `on` and `off` in any case, the value indicator `=` (which a 1.1
+      // parser refuses outright), and the merge key `<<` (#5074). Octal-looking
+      // and sexagesimal numbers (`0755`, `1:30`) start with a digit and are
+      // quoted above.
+      /^(?:y|n|yes|no|on|off)$/i.test(value) ||
+      value === "=" ||
+      value === "<<"
     ) {
       // Use single quotes, escaping internal single quotes
       return `'${value.replace(/'/g, "''")}'`;
