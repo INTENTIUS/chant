@@ -531,6 +531,10 @@ export interface ParsedArgs {
   failOn?: string;
   /** `chant audit --max-files <n>` (#2528) — files the local walk takes before it stops (default 1000). */
   maxFiles?: number;
+  /** `chant audit|lint --preset <name>` (#5118) — a named rule set and severity floor, `pull-request` today. */
+  preset?: string;
+  /** `chant audit|lint --baseline <file>` (#5118) — the same command's JSON or SARIF report on the base; only new findings are reported. */
+  baseline?: string;
   /** `chant audit --theme <file>` — JSON theme knobs for the HTML report */
   theme?: string;
   /** `chant dev surface-diff --update-snapshot` — write the fresh snapshot as the new baseline */

@@ -11,6 +11,7 @@ import { auditFiles, describeSkip, type AuditSkip, type AuditInput, type AuditFi
 import { AUDIT_LEXICONS, classifyFiles, loadAuditPlugins, unclaimedFiles, walkCandidates, type CandidateWalk, type DetectPlugin, type RepoFile, type UnclaimedFile } from "../../audit/discover";
 import { RULE_CATALOG, resolveAuditCatalog, type RuleMeta } from "../../audit/catalog";
 import { findingIdentities, IDENTITY_FINGERPRINT_KEY } from "../../audit/identity";
+import { applyRulePreset, presetSummary, type RulePreset } from "../../audit/pull-request-preset";
 import { scanForSecrets, parseSecretsConfig, type SecretsScanOptions } from "../../audit/secrets";
 import { auditWranglerConfigs } from "../../audit/wrangler";
 import { auditNginxConfigs } from "../../audit/nginx";
@@ -80,6 +81,18 @@ export interface AuditCommandOptions {
    * (`--max-files`, #2528). Defaults to 1000. Local paths only.
    */
   maxFiles?: number;
+  /**
+   * A named rule set and severity floor (`--preset`, #5118). Findings outside
+   * it are left out, and the run fails on a merge-blocking finding unless
+   * `failOn` says otherwise.
+   */
+  preset?: RulePreset;
+  /**
+   * Finding identities from the same audit on the pull request's base
+   * (`--baseline`, #5118). Only findings not among them are reported.
+   * Applies with `preset`.
+   */
+  baseline?: ReadonlySet<string>;
 }
 
 /**
@@ -292,7 +305,9 @@ function isMergeWorthy(f: AuditFinding, catalog: Record<string, RuleMeta> = RULE
   return catalog[f.checkId]?.tier === "merge-worthy";
 }
 
-function exitCodeFor(findings: AuditFinding[], failOn: AuditFailOn, catalog: Record<string, RuleMeta> = RULE_CATALOG): number {
+function exitCodeFor(findings: AuditFinding[], failOn: AuditFailOn | undefined, catalog: Record<string, RuleMeta> = RULE_CATALOG, preset?: RulePreset): number {
+  // A preset run with no --fail-on fails on its merge-blocking findings (#5118).
+  if (failOn === undefined) return preset && findings.some((f) => f.gate === "merge-blocking") ? 1 : 0;
   if (failOn === "merge-worthy") return findings.some((f) => isMergeWorthy(f, catalog)) ? 1 : 0;
   if (failOn === "warning") {
     return findings.some((f) => f.severity === "error" || f.severity === "warning") ? 1 : 0;
@@ -337,16 +352,19 @@ export function coverageNotes(inputs: AuditInput[]): string[] {
   return notes;
 }
 
-function renderStylish(findings: AuditFinding[], scanned: string[], notes: string[], catalog: Record<string, RuleMeta> = RULE_CATALOG): string {
+function renderStylish(findings: AuditFinding[], scanned: string[], notes: string[], catalog: Record<string, RuleMeta> = RULE_CATALOG, preset?: RulePreset): string {
   const lines: string[] = [];
   for (const note of notes) lines.push(`Note: ${note}`);
   if (notes.length > 0) lines.push("");
-  const mw = findings.filter((f) => isMergeWorthy(f, catalog));
-  const ro = findings.filter((f) => !isMergeWorthy(f, catalog));
+  // Under a preset (#5118) the split is the preset's, not the catalog tier's.
+  const blocks = (f: AuditFinding) => (preset ? f.gate === "merge-blocking" : isMergeWorthy(f, catalog));
+  const mw = findings.filter(blocks);
+  const ro = findings.filter((f) => !blocks(f));
+  const blockWord = preset ? "merge-blocking" : "merge-worthy";
   lines.push(
     `Audited ${scanned.length} file${scanned.length === 1 ? "" : "s"} — ` +
       `${findings.length} finding${findings.length === 1 ? "" : "s"} ` +
-      `(${mw.length} merge-worthy, ${ro.length} report-only).`,
+      `(${mw.length} ${blockWord}, ${ro.length} report-only).`,
   );
   const section = (title: string, list: AuditFinding[]) => {
     if (list.length === 0) return;
@@ -366,7 +384,7 @@ function renderStylish(findings: AuditFinding[], scanned: string[], notes: strin
       lines.push(`  [${f.checkId}] ${f.severity}  ${where}  — ${title}`);
     }
   };
-  section("Merge-worthy:", mw);
+  section(preset ? "Merge-blocking:" : "Merge-worthy:", mw);
   section("Report-only:", ro);
   return lines.join("\n");
 }
@@ -404,12 +422,12 @@ function renderSarif(findings: AuditFinding[], catalog: Record<string, RuleMeta>
   const identities = findingIdentities(findings);
   const results = findings.map((f, i) => {
     const tier = catalog[f.checkId]?.tier;
-    const properties = { ...(tier ? { tier } : {}), ...(f.missing ? { missing: f.missing } : {}) };
+    const properties = { ...(tier ? { tier } : {}), ...(f.gate ? { gate: f.gate } : {}), ...(f.missing ? { missing: f.missing } : {}) };
     return {
       ruleId: f.checkId,
       level: sarifLevel(f.severity),
       message: { text: f.message },
-      partialFingerprints: { [IDENTITY_FINGERPRINT_KEY]: identities[i] },
+      partialFingerprints: { [IDENTITY_FINGERPRINT_KEY]: f.identity ?? identities[i] },
       locations: [
         {
           physicalLocation: {
@@ -491,7 +509,7 @@ export function truncationNote(t: AuditTruncation, target: string): string {
 export async function auditCommand(options: AuditCommandOptions): Promise<AuditCommandResult> {
   const format = options.format ?? "stylish";
   const tier = options.tier ?? "all";
-  const failOn = options.failOn ?? "none";
+  const failOn = options.failOn ?? (options.preset ? undefined : "none");
 
   const isUrl = /^https?:\/\//.test(options.path);
   // chant#2589 — path lexicons the target declares, read without running its config.
@@ -612,6 +630,15 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
 
   if (tier === "merge-worthy") findings = findings.filter((f) => isMergeWorthy(f, catalog));
   const notes = coverageNotes(inputs);
+  // #5118: the preset places every finding of the run, then the baseline drops
+  // the ones the base already had. Identities are computed before anything is
+  // left out, so they match a whole run's.
+  if (options.preset) {
+    const placed = applyRulePreset(options.preset, findings, options.baseline);
+    findings = [...placed.mergeBlocking, ...placed.reportOnly];
+    for (const n of placed.notices) notes.push(`Tool notice ${n.checkId} in ${n.file}: ${n.message}`);
+    notes.push(presetSummary(options.preset, placed, options.baseline !== undefined));
+  }
   if (truncated) notes.unshift(truncationNote(truncated, options.path));
   if (missingLexiconNote) notes.push(missingLexiconNote);
   // A skipped lexicon is stated in the report when the report is read as text
@@ -686,10 +713,10 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
       break;
     }
     default:
-      output = renderStylish(findings, scanned, notes, catalog);
+      output = renderStylish(findings, scanned, notes, catalog, options.preset);
   }
 
-  const exitCode = exitCodeFor(findings, failOn, catalog);
+  const exitCode = exitCodeFor(findings, failOn, catalog, options.preset);
   if (options.output) {
     try {
       writeFileSync(options.output, output);

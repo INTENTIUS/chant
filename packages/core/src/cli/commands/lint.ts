@@ -35,6 +35,7 @@ import { runLexiconPostSynthChecks } from "./build";
 import { armSandboxPolicyExecution, runProjectPolicies } from "../../lint/policy-sandbox";
 import { ensureTypeScriptLoader } from "../../ts-loader";
 import { esModuleNamespace } from "../../module-interop";
+import { applyRulePreset, presetSummary, type RulePreset } from "../../audit/pull-request-preset";
 
 // Import config loader
 import { loadConfig, resolveRulesForFile, resolveConfiguredSeverity, findProjectRoot } from "../../lint/config";
@@ -324,6 +325,13 @@ export interface LintOptions {
    * example's source rules, not for hiding findings from a user.
    */
   postSynth?: boolean;
+  /**
+   * A named rule set and severity floor (`--preset`, #5118). Diagnostics
+   * outside it are left out, and lint fails only on a merge-blocking one.
+   */
+  preset?: RulePreset;
+  /** Finding identities from the same lint on the pull request's base (`--baseline`, #5118). */
+  baseline?: ReadonlySet<string>;
 }
 
 /**
@@ -780,7 +788,7 @@ async function runLexiconPostSynthDiagnostics(
     const declared = entity ? result.entities.get(entity) : undefined;
     return (declared && getProvenance(declared)?.sourceFile) || fallbackFile;
   };
-  const toLint = (d: { checkId: string; severity: LintDiagnostic["severity"]; message: string; entity?: string; lexicon?: string }): LintDiagnostic => ({
+  const toLint = (d: { checkId: string; severity: LintDiagnostic["severity"]; message: string; entity?: string; lexicon?: string; locator?: string }): LintDiagnostic => ({
     file: fileOf(d.entity),
     line: 1,
     column: 1,
@@ -788,6 +796,7 @@ async function runLexiconPostSynthDiagnostics(
     severity: d.severity,
     message: `${d.entity ? `[${d.entity}] ` : ""}${d.message}`,
     ...(d.entity ? { entity: d.entity } : {}),
+    ...(d.locator ? { locator: d.locator } : {}),
   });
 
   for (const { plugin, diagnostics: raw } of runLexiconPostSynthChecks(withChecks, result, env, { activityContracts, telemetry, projectDir: configDir, ...(loadedConfig ? { projectConfig: loadedConfig } : {}) })) {
@@ -1025,6 +1034,26 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
     diagnostics.push(lexiconResolutionDiagnostic(projectRoot, loaded.lexiconError));
   }
 
+  // #5118: the preset places every diagnostic, with identities computed over
+  // the whole run and paths relative to the project root, so a run on the
+  // base in another checkout names the same finding the same way.
+  let presetLine: string | undefined;
+  let blocking = 0;
+  if (options.preset) {
+    const inputs = diagnostics.map((d) => ({
+      checkId: d.ruleId,
+      file: relative(projectRoot, d.file) || d.file,
+      severity: d.severity,
+      entity: d.entity,
+      locator: d.locator,
+      diag: d,
+    }));
+    const placed = applyRulePreset(options.preset, inputs, options.baseline);
+    blocking = placed.mergeBlocking.length;
+    diagnostics = [...placed.mergeBlocking, ...placed.reportOnly, ...placed.notices].map((p) => ({ ...p.diag, identity: p.identity, gate: p.gate }));
+    presetLine = presetSummary(options.preset, placed, options.baseline !== undefined);
+  }
+
   // Count errors and warnings
   let errorCount = 0;
   let warningCount = 0;
@@ -1054,11 +1083,12 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
     case "stylish":
     default:
       output = formatStylish(diagnostics, suppressed, knowledgeBundle);
+      if (presetLine) output = output ? `${output}\n${presetLine}` : presetLine;
       break;
   }
 
   return {
-    success: errorCount === 0,
+    success: options.preset ? blocking === 0 : errorCount === 0,
     errorCount,
     warningCount,
     diagnostics,

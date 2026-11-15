@@ -5,6 +5,7 @@ import { reportUninstalledDependencies } from "../dependencies";
 import type { CommandContext } from "../registry";
 import { commandBuildParams } from "../build-params-cli";
 import { loadChantConfigUpward, type ChantConfig } from "../../config";
+import { resolvePresetArgs } from "../preset-args";
 
 /**
  * chant #2251 — `chant lint` resolves this invocation's declared build-time
@@ -37,6 +38,12 @@ export async function runLint(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
+  const presetArgs = resolvePresetArgs(args);
+  if (presetArgs instanceof Error) {
+    console.error(formatError({ message: presetArgs.message }));
+    return 1;
+  }
+
   const buildParams = await lintBuildParams(args);
   if (buildParams === undefined) return 1;
 
@@ -62,6 +69,7 @@ export async function runLint(ctx: CommandContext): Promise<number> {
     format: lintFormat,
     sandbox: args.sandbox,
     buildParams,
+    ...presetArgs,
   });
 
   // #4116: errors that are imports of uninstalled packages are led by the dependencies message.

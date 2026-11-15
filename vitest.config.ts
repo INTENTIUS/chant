@@ -132,6 +132,10 @@ export const UNIT_INCLUDE = [
   // or the runner key, over the github, forgejo and gitlab generators at once.
   // Generates YAML in memory only.
   "test/pr-pipeline-secrets.test.ts",
+  // chant #5118 — the pull request preset's bar, scored over the labelled
+  // findings in test/pr-preset-replay/corpus.json. Reads that file only; the
+  // replay that reruns chant over the saved corpus is its e2e sibling.
+  "test/pr-preset-replay/bar.test.ts",
 ];
 
 /**

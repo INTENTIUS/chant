@@ -23,6 +23,8 @@ chant lint [path] [flags]
 | `-w, --watch` | `bool` | `false` | Watch for file changes and re-lint |
 | `--root-only` | `bool` | `false` | At the root of a declared workspace, lint the root project alone instead of refusing. See [At a workspace root](#at-a-workspace-root) |
 | `--sandbox` | `bool` | `false` | Run any project source the lint has to execute in one isolated child process rather than in the chant process. The same boundary as [`chant build --sandbox`](/chant/cli/build/#sandboxed-execution); composes with `--watch` |
+| `--preset <name>` | `string` | | Report only the rules of a named preset, each as merge-blocking or report-only. `pull-request` is the one preset. See [Check every pull request](/chant/guide/pull-request-check/) |
+| `--baseline <file>` | `string` | | With `--preset`: the JSON or SARIF report of the same command on the pull request's base. Only findings whose identity is not in it are reported |
 
 ## Usage
 
@@ -69,4 +71,4 @@ At the root of a [declared workspace](/chant/reference/workspace-declaration/), 
 | Code | Meaning |
 |------|---------|
 | 0 | No errors found |
-| 1 | Lint errors found, including a lexicon post-synth error, a declared lexicon that could not be resolved, a lint path that does not build (`LEX002`), or `WSP000` at a workspace root |
+| 1 | Lint errors found, including a lexicon post-synth error, a declared lexicon that could not be resolved, a lint path that does not build (`LEX002`), or `WSP000` at a workspace root. With `--preset`, only a merge-blocking finding exits 1, and `LEX002` is a tool notice |

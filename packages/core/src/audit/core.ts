@@ -99,6 +99,14 @@ export interface AuditFinding {
   missing?: { kind: string; scope: string };
   /** Carried verbatim from the producing `PostSynthDiagnostic.locator` (#5106); one input of the finding's identity. */
   locator?: string;
+  /**
+   * Set by a `--preset` run (#5118), which computes identities over every
+   * finding of the run before it leaves any out, so a report holding only the
+   * new findings still names each one as a whole run would.
+   */
+  identity?: string;
+  /** The preset set the finding is in, on a `--preset` run (#5118). */
+  gate?: "merge-blocking" | "report-only" | "notice";
 }
 
 /**

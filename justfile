@@ -115,6 +115,14 @@ fold-differential: _ensure-gen
 sandbox-differential: _ensure-gen
     npx vitest run examples/sandbox-differential.e2e.test.ts --reporter=verbose
 
+# chant #5118 — the pull request preset replay. Reruns chant audit, per-file
+# chant lint and chant helm localize over a saved corpus of merged changes,
+# on both sides of each, and fails when the preset's merge-blocking findings
+# miss the bar in test/pr-preset-replay/score.ts. On demand; the corpus lives
+# outside the repo. `work` keeps the per-commit reports between runs.
+replay-pr-preset corpus work="" *args: _ensure-gen
+    npx tsx test/pr-preset-replay/replay.ts --corpus {{corpus}} {{ if work != "" { "--work " + work } else { "" } }} {{args}}
+
 # chant #1067 — the lexicon completeness contract, actually enforced. Runs
 # each lexicon's own tsconfig.build.json build, then `chant dev check-lexicon`
 # (all tier-1 checks, including intrinsic-foldability validation and "every

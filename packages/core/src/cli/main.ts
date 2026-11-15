@@ -163,7 +163,9 @@ Commands:
                         At a declared workspace root it refuses with WSP000;
                         --root-only builds the root project alone
   lint                  Check specifications for issues
-                        (at a declared workspace root: WSP000 unless --root-only)
+                        (at a declared workspace root: WSP000 unless --root-only;
+                         --preset pull-request --baseline <base.json> reports
+                         only new findings of the pull request preset)
   list                  List discovered entities
   describe              Show the effective config for one component
   explain               Summarize discovered entities (--format markdown|json|okf;
@@ -219,7 +221,10 @@ Commands:
                         (--format stylish|json|sarif|markdown|html, -o <file>,
                          --tier merge-worthy|all, --fail-on merge-worthy|warning|error|none,
                          --template <file> / --theme <file> for the html report,
-                         --max-files <n> to walk more than 1000 files)
+                         --max-files <n> to walk more than 1000 files,
+                         --preset pull-request --baseline <base.json> to report
+                         only the findings a pull request adds, failing on the
+                         merge-blocking ones)
                         --agents audits this machine's agent configuration —
                         instruction files, MCP servers, skills, plugins,
                         permissions — instead of a repository

@@ -1,4 +1,5 @@
 import type { LintDiagnostic, LintRule, Severity } from "../../lint/rule";
+import { IDENTITY_FINGERPRINT_KEY } from "../../audit/identity";
 import type { OkfBundle } from "../../okf-read";
 import { pathToFileURL } from "node:url";
 
@@ -287,6 +288,10 @@ function buildSarifResult(diag: LintDiagnostic, ruleIndex: Map<string, number>) 
     fingerprints: {
       "chant/v1": `${diag.ruleId}:${diag.file}:${diag.line}:${diag.column}`,
     },
+    // #5118: a `--preset` run names each finding as `chant audit` does, so a
+    // base run's SARIF can be the next run's `--baseline`.
+    ...(diag.identity ? { partialFingerprints: { [IDENTITY_FINGERPRINT_KEY]: diag.identity } } : {}),
+    ...(diag.gate ? { properties: { gate: diag.gate } } : {}),
   };
   return result;
 }

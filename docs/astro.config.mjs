@@ -194,6 +194,7 @@ export default defineConfig({
 							collapsed: true,
 							items: [
 								{ label: 'Linting & Type-Checking', slug: 'guide/linting' },
+								{ label: 'Check Every Pull Request', slug: 'guide/pull-request-check' },
 								{ label: 'Organizational Policy', slug: 'guide/organizational-policy' },
 								{ label: 'Custom Rules', slug: 'lint-rules/custom-rules' },
 								{ label: 'Auto-Fix', slug: 'lint-rules/auto-fix' },

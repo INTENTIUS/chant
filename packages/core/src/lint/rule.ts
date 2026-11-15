@@ -51,6 +51,16 @@ export interface LintDiagnostic {
    * (behold#919). Absent for a source-file rule.
    */
   entity?: string;
+  /**
+   * Where inside the entity a post-synth check placed the finding (its
+   * `PostSynthDiagnostic.locator`), carried so `chant lint --preset` can
+   * compute the same finding identity `chant audit` does (#5106, #5118).
+   */
+  locator?: string;
+  /** On a `chant lint --preset` run (#5118): the finding's identity, as `chant audit` computes it. */
+  identity?: string;
+  /** On a `chant lint --preset` run (#5118): which set of the preset the finding is in. */
+  gate?: "merge-blocking" | "report-only" | "notice";
   /** Optional fix that can be applied */
   fix?: LintFix;
 }

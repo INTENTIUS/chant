@@ -412,6 +412,12 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.runtime = args[++i];
     } else if (arg === "--fail-on") {
       result.failOn = args[++i];
+    } else if (arg === "--preset") {
+      result.preset = args[++i];
+      if (!result.preset || result.preset.startsWith("-")) throw new Error("--preset needs a name: --preset pull-request");
+    } else if (arg === "--baseline") {
+      result.baseline = args[++i];
+      if (!result.baseline || result.baseline.startsWith("-")) throw new Error("--baseline needs a file: --baseline <report.json>");
     } else if (arg === "--max-files") {
       // Validated by the audit handler, like `--limit` below.
       result.maxFiles = Number(args[++i]);

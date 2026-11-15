@@ -91,6 +91,8 @@ The **expanded** (HTML) report renders the same findings with badges, cards, and
 | `--template <file>` | `html` only: a full HTML template override (see below) |
 | `--theme <file>` | `html` only: a JSON file of theme knobs (`title`, `logo`, `accent`, `footer`) |
 | `--max-files <n>` | Local path only: how many files the walk takes before it stops (default `1000`). See [Scan limits](#scan-limits) |
+| `--preset <name>` | Report only the rules of a named preset, each as merge-blocking or report-only, and exit 1 on a merge-blocking finding unless `--fail-on` says otherwise. `pull-request` is the one preset. See [Check every pull request](/chant/guide/pull-request-check/) |
+| `--baseline <file>` | With `--preset`: the JSON or SARIF report of the same audit on the pull request's base. Only findings whose `identity` is not in it are reported |
 | `--agents` | Audit this machine's **agent configuration** instead of a repository (see below) |
 | `--scope <list>` | `--agents` only: comma-separated `system`, `user`, `project` (default: all) |
 | `--runtime <list>` | `--agents` only: comma-separated `claude`, `codex`, `gemini`, `opencode`, `cursor` (default: all) |
@@ -387,6 +389,10 @@ chant audit https://github.com/owner/repo -f html --theme theme.json -o report.h
 
 # Only the PR-worthy findings, as JSON, failing CI if any exist
 chant audit . --tier merge-worthy --json --fail-on merge-worthy
+
+# Only what a pull request added, under the pull request preset
+chant audit ../base --preset pull-request --json -o base.json --fail-on none
+chant audit . --preset pull-request --baseline base.json
 ```
 
 ## Exit codes
@@ -394,6 +400,7 @@ chant audit . --tier merge-worthy --json --fail-on merge-worthy
 | `--fail-on` | Exit 1 when… |
 |-------------|--------------|
 | `none` (default) | never (read-only) |
+| not given, with `--preset` | any merge-blocking finding of the preset exists |
 | `merge-worthy` | any merge-worthy finding exists |
 | `warning` | any error- or warning-severity finding exists |
 | `error` | any error-severity finding exists (chant #2113) |

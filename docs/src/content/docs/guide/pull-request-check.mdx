@@ -1,0 +1,80 @@
+---
+title: Check Every Pull Request
+description: Run chant audit and chant lint under the pull-request preset on a pull request's base and head, and report only the findings the change added
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/pull-request-check/.
+  Add a pull request job that runs `chant audit` on the base with `--preset pull-request --json -o base.json --fail-on none`, then on the head with `--preset pull-request --baseline base.json --format sarif -o chant.sarif`, and uploads the SARIF.
+  Show me the job and one run's output before you open the pull request.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+`chant audit` runs every rule it has, and on a repository that chant did not write most of what it reports was there before any one pull request. The `pull-request` preset ([#5118](https://github.com/INTENTIUS/chant/issues/5118)) is a named rule set and a severity floor for a check that runs on every pull request. With a baseline from the pull request's base, it reports only the findings the change added, and it fails only on the rules that were right most of the time on a replay of real history.
+
+## What the preset reports
+
+The preset puts each rule in one of three sets ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/audit/pull-request-preset.ts)). A rule in no set is off, so a rule added to chant later stays off here until a replay shows it meets the bar.
+
+| Set | Rules | Effect |
+|---|---|---|
+| Merge-blocking | `WK8501` (fields the API server prunes), `GRAF103` (a dashboard variable the dashboard does not define), `SEC001` to `SEC009` (secrets in a known format) | Reported, and the run exits 1 |
+| Report-only | `WK8203`, `WK8204`, `WK8205` (container security context), `GRAF104`, `GRAF105` (duplicate and overlapping panels), `TF002` (provider pins), `WK8102`, `WK8104`, `WK8105`, `WK8201`, `WK8301`, `WK8302`, `WK8003`, `TF006`, `TF010`, `TF011`, `TF012`, `TF017`, `TF020`, `TF022`, `TF039`, `PROM217` | Reported, never fails the run |
+| Tool notice | `LEX002`, `EVL001` | Printed apart from the findings: a file chant could not import or build |
+
+The severity floor is `warning`, so an `info` finding is not reported in any set. Each off rule carries its measured reason in the preset's source. `COR001`, for example, had 116 findings on the replay and none was true, since it judges the TypeScript that `chant import` wrote. Each of the 6 `SEC010` findings was a URL or an ARN or a similar name.
+
+## Run it on a pull request
+
+Check out the base beside the head, audit the base, then audit the head against it:
+
+```sh
+git worktree add ../base "$BASE_SHA"
+chant audit ../base --preset pull-request --json -o base.json --fail-on none
+chant audit . --preset pull-request --baseline base.json
+```
+
+The second command prints the findings that are new in the head, split into merge-blocking and report-only, and ends with one line that counts the merge-blocking and report-only findings, the findings already on the base, and the ones the preset left out It exits 1 when there is a merge-blocking finding. `--fail-on none` keeps it read-only, and any other `--fail-on` value works as it does without a preset.
+
+A finding is new when its `identity` is not in the baseline. The identity names the rule and where the finding sits in the object. It leaves out the message, so a finding that only moved lines or changed wording is not reported again ([#5106](https://github.com/INTENTIUS/chant/issues/5106)). `--baseline` reads the JSON report (`findings[].identity`) or the SARIF report (`partialFingerprints`) of the same command. A file that is neither is refused rather than read as an empty baseline.
+
+For a SARIF upload, write the head's report with `--format sarif -o chant.sarif`. Each result carries its set in `properties.gate`.
+
+## Run it on chant source
+
+`chant lint` takes the same two flags:
+
+```sh
+chant lint ../base/src --preset pull-request --format json > base.json
+chant lint src --preset pull-request --baseline base.json
+```
+
+Under the preset, lint exits 1 only on a merge-blocking finding, and `LEX002` (a lint path that does not build) is a tool notice. Paths in the identity are relative to the project root, so the base can be linted in another checkout. A plain `chant lint --format json` has no identities, so the base must be linted with `--preset` too.
+
+## Render stability
+
+On a Helm values change, run `chant helm localize <chart> --values <file>` on both sides. A render that was deterministic on the base and is unstable on the head is a merge-blocking result under the preset: the replay's one true Helm finding was a removed `existingSecret` that made the chart generate a new admin password on every render.
+
+## How the bar was set
+
+The rule lists were measured on a replay of merged changes to a public Kubernetes infrastructure repository, with `chant audit`, per-file `chant lint` and `chant helm localize` run on the parent and the commit of each change ([test/pr-preset-replay](https://github.com/INTENTIUS/chant/tree/main/test/pr-preset-replay)). Each merge-blocking finding was labelled by hand with its reason, and every other finding by its rule.
+
+The bar is at least 35% precision on the merge-blocking findings, every true finding kept, and at most 10 of the 159 changes in the first window blocked. `test/pr-preset-replay/bar.test.ts` scores the labelled findings against the preset in the unit suite, so a change to the rule lists that misses the bar fails there.
+
+| Window | Changes | Every rule on | Merge-blocking as first proposed | Merge-blocking, this preset |
+|---|---|---|---|---|
+| 2026-05-12 to 2026-11-12 | 159 | 17 true of 721 (2.4%) | 17 of 46 (37.0%), 7 changes blocked | 17 of 17, 3 changes blocked |
+| 2025-11-12 to 2026-05-12 | 91 | 0 true of 1020 | 0 of 123, 8 changes blocked | none, no change blocked |
+
+The first proposal on #5118 also made `GRAF104`, `GRAF105`, `WK8203`, `WK8204`, `WK8205` and `TF002` merge-blocking. It met the bar on the first window by a small margin. On the second it blocked 8 changes with nothing true, and none of the 158 findings those six rules raised across both windows was true, so they report and do not block. Most of the second window's were manifests moved to a new path in a Flux-to-Argo CD migration, which identity reads as new because it includes the file, and node DaemonSets that need root by design.
+
+The true findings in the first window are 3 defects. One dashboard's queries used variables it did not define, which gave 14 `GRAF103` findings and was fixed by the next change the same day. An `ApplicationSet` field the API server pruned was found by both audit and lint (`WK8501`) and fixed four months later. The localize result is a values change that made a chart's admin password Secret change on every render. The second window has no true finding with every rule on, so it shows what the preset costs on a quiet half year: nothing blocked. Three defects are a small sample, so a replay of other history is worth running before the preset gates a busy repository.
+
+## Replay another window
+
+The replay harness takes any corpus built the same way: a git bundle with a `c/<commit>` tag for each parent and commit, a `changes.json` listing the changes and their files, and the Helm charts the localize check renders.
+
+```sh
+just replay-pr-preset <corpus dir> <work dir> --labels <labels.json> --record findings.json
+```
+
+A cold run of the first window took about an hour on a busy laptop; `<work dir>` keeps each commit's report, so a second run reads them. `--record` writes every new finding with its label, or `UNLABELLED` where the labels file has none. Label the merge-blocking ones by hand, with the reason, and run again. The harness exits 1 while a merge-blocking finding has no label, when precision is below the bar, or when a true finding is no longer found.
