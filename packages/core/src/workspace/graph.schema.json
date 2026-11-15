@@ -272,7 +272,44 @@
         "plantable": {
           "description": "Added in contract 1 by #3146. Whether a host such as a studio's planter can plant the workspace as one box: exactly one member's box block declares services, read from the declaration at the revision read. Not a check: a records-only or infra workspace is valid and simply not plantable.",
           "$ref": "#/$defs/plantable"
+        },
+        "discovered": {
+          "type": "array",
+          "description": "Added in contract 1 by #5095. Present only for chant workspace graph <dir> --discover when <dir> holds no declaration: every directory a kind's probe claims, sorted by dir, with what became of it. Absent for a declared read.",
+          "items": { "$ref": "#/$defs/discoveredDir" }
         }
+      }
+    },
+    "discoveredDir": {
+      "type": "object",
+      "description": "Added in contract 1 by #5095. One directory a kind's probe claims in a discovered read.",
+      "additionalProperties": false,
+      "required": ["dir", "member", "kind", "source", "probe", "outcome", "claims", "note"],
+      "properties": {
+        "dir": { "type": "string", "description": "The directory, relative to <dir> with / separators; \".\" for <dir> itself." },
+        "member": { "type": ["string", "null"], "description": "The member's name when outcome is member, else null. It depends on dir alone, by the rule the workspace graph page gives." },
+        "kind": { "type": ["string", "null"], "description": "The kind the precedence order picks; null for a tie." },
+        "source": { "type": ["string", "null"], "description": "Where that kind comes from: builtin, or the package that supplies it; null for a tie." },
+        "probe": { "type": ["object", "null"], "description": "That kind's probe, as its kinds file states it; null for a tie." },
+        "outcome": {
+          "enum": ["member", "tie", "module", "inside-member"],
+          "description": "member: read as the member named in member. tie: two or more kinds share the highest precedence, and it is not read. module: a .tf file under <dir> calls it through a local source, so it is read with each root that calls it. inside-member: it sits inside another member's directory, and members don't nest except inside the root member \".\"."
+        },
+        "claims": {
+          "type": "array",
+          "description": "Every kind whose probe claims the directory, highest precedence first.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "precedence", "source"],
+            "properties": {
+              "kind": { "type": "string" },
+              "precedence": { "type": "number" },
+              "source": { "type": "string" }
+            }
+          }
+        },
+        "note": { "type": ["string", "null"], "description": "Why the directory is not a member, in one line; null for a member." }
       }
     },
     "member": {

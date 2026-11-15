@@ -1221,6 +1221,11 @@ Workspace (level 1, #2524):
                         --no-cache reads every member
                         --capability-view: each member's chant adds its
                         capability view, mapped by its own lexicons
+  workspace graph <dir> --discover [--at <rev>] [--member <name>] [--detail 0..3] [--no-cache] [-o <file>]
+                        The same document for a directory with no
+                        declaration: the kinds' probes find the members, a
+                        discovered list says what each claimed directory
+                        became, and nothing is written inside <dir>
   workspace drift --member <name> [--read <state|plan|refresh|live-read|ownership>] [--resource <addr>] [--env <name>] [--stream] [-o <file>]
                         One member's drift, read by its own engine: a chant
                         member through lifecycle diff --live (needs --env), a

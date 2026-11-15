@@ -9,6 +9,7 @@ title: "chant workspace graph"
 ```
 chant workspace graph [dir] [--at <rev>] [--detail 0..3] [-o <file>] [--member <name>] [--kind <kind file>] [--env <name>] [--capability-view] [--no-cache] [--dry-run]
 chant workspace graph [dir] --live --env <name> [--overlay] [--traffic <level>] [--detail 0..3] [-o <file>] [--member <name>] [--kind <kind file>]
+chant workspace graph <dir> --discover [--at <rev>] [--detail 0..3] [-o <file>] [--member <name>] [--env <name>] [--no-cache] [--dry-run]
 chant workspace graph [dir] --composites [--at <rev>] [-o <file>] [--member <name>] [--env <name>]
 chant workspace graph [dir] --intent <path[:start-end]|path#symbol|member/node|sha> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--forge-issues] [--json]
 chant workspace graph [dir] --intent --record <id> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--forge-issues] [--json]
@@ -25,6 +26,42 @@ Each member reads its graph at the `--detail` tier given, `2` when none is ([#42
 The document is part of the workspace [read contract](/chant/reference/workspace-read-contract/), with its own schema and reason codes.
 
 [`chant graph`](/chant/cli/graph/) is unchanged. At a workspace root it still prints the single-project IR of the root project, and this command is the only place members are composed.
+
+## Discovering members
+
+`chant workspace graph <dir> --discover` reads a directory that has no `chant.workspace.json` ([#5095](https://github.com/INTENTIUS/chant/issues/5095)). The kinds' probes find the members, and from there the read is a declared read, with its [reader projects](#description) and [member cache](#the-member-cache), printing the same document. Nothing is written inside `<dir>`.
+
+The walk starts at `<dir>` and visits every directory below it except `node_modules` and those whose names start with a dot, such as `.git`. Symbolic links to directories are not followed. Each directory is resolved by probe and [precedence](/chant/reference/workspace-kinds/#kinds-from-a-package), as a declared member's kind is checked. A directory that some kind claims becomes a member, unless one of these holds:
+
+- Two or more kinds claim it at the same highest precedence. This is a `tie`, and the directory is not read; a declaration that names its kind reads it.
+- A `.tf` file anywhere under `<dir>` calls it through a local `source` in a `module` block, one that starts with `./` or `../`. Such a `module` is read with each root that calls it, since a terraform member's reader project has `<dir>` as its `moduleRoot`. A source that leaves `<dir>` is not followed.
+- The directory sits inside another member's directory. Members don't nest, so this `inside-member` directory is not read, except inside the root member `.` ([placement](/chant/reference/workspace-declaration/#placement)).
+
+The kinds are the built-in ones and those of every `@intentius` package that publishes a `./workspace-kinds` file and is installed beside the running chant: in the `node_modules/@intentius` of chant's own directory or a directory above it, the nearest copy of each package winning. A `node_modules` inside `<dir>` supplies no kinds, so discovery loads no package that the directory carries. To read with the terraform and k8s kinds, install their lexicons next to chant.
+
+Member names are built from each directory's path relative to `<dir>`, so they stay the same from one revision to the next. The path is lowercased and each run of characters a name can't hold becomes one `-`: `infra/net` gives `infra-net`, and `<dir>` itself gives `root`. When the result is longer than 40 characters, or two directories would share it (`a/b` and `a-b`), it is cut short and ends in `-` and the first six hex digits of the SHA-256 of the path, which still depends on the path alone. The workspace takes `<dir>`'s base name, rewritten by the same rule.
+
+`--member`, `--detail`, `--env`, `--live`, `--no-cache`, `-o` and `--dry-run` work as they do for a declared read, and `--member` takes the discovered names. `--at <rev>` discovers the members in the commit's tree under `<dir>`, which must sit in a git repository, and reads them at that commit. `--discover` takes none of `--composites`, `--intent` and `--kind`. When `<dir>` holds a `chant.workspace.json` or `.jsonc` itself, that declaration is read as without `--discover`, and the document has no `discovered` list. A declaration in a directory above `<dir>` is not read.
+
+A discovered document carries one more top-level field, `discovered`. It lists every directory some kind claims, sorted by `dir`, with what became of it:
+
+```json
+"discovered": [
+  { "dir": "argo", "member": "argo", "kind": "argo-app", "source": "@intentius/chant-lexicon-k8s",
+    "probe": { "anyDocument": { "in": ["*.yaml", "*.yml"], "match": [{ "/apiVersion": ["argoproj.io/*"], "/kind": ["Application"] }] } },
+    "outcome": "member", "claims": [{ "kind": "argo-app", "precedence": 360, "source": "@intentius/chant-lexicon-k8s" }], "note": null },
+  { "dir": "db", "member": null, "kind": null, "source": null, "probe": null, "outcome": "tie",
+    "claims": [{ "kind": "flyway", "precedence": 300, "source": "@intentius/chant-lexicon-sql" }, { "kind": "golang-migrate", "precedence": 300, "source": "@intentius/chant-lexicon-sql" }],
+    "note": "kinds flyway and golang-migrate claim it at precedence 300; name its kind in a declaration to read it" },
+  { "dir": "infra/modules/vpc", "member": null, "kind": "terraform", "source": "@intentius/chant-lexicon-terraform", "probe": { "anyFile": ["*.tf"] },
+    "outcome": "module", "claims": [{ "kind": "terraform", "precedence": 400, "source": "@intentius/chant-lexicon-terraform" }],
+    "note": "called as a module through a local source by infra/net" },
+  { "dir": "infra/net", "member": "infra-net", "kind": "terraform", "source": "@intentius/chant-lexicon-terraform", "probe": { "anyFile": ["*.tf"] },
+    "outcome": "member", "claims": [{ "kind": "terraform", "precedence": 400, "source": "@intentius/chant-lexicon-terraform" }], "note": null }
+]
+```
+
+`dir` is relative to `<dir>`, `.` for `<dir>` itself. `member` is the member's name when `outcome` is `member`, and `null` otherwise. `kind`, `source` and `probe` describe the kind the precedence order picks, with the probe as its kinds file states it, and are `null` for a tie. `outcome` is one of `member`, `tie`, `module` and `inside-member`, a closed list. `claims` holds every kind whose probe claims the directory, highest precedence first. `note` says in one line why a directory is not a member. The members themselves are listed in `members` as in any graph document, with the discovered `dir` and `kind`.
 
 ## Composition
 
@@ -526,7 +563,8 @@ A trace over one region may take at most twice as long as [`chant workspace stat
 
 | Option | Effect |
 |---|---|
-| `dir` | Where the walk up to the declaration starts. |
+| `dir` | Where the walk up to the declaration starts. With `--discover`, the directory whose members are discovered. |
+| `--discover` | Find the members by the kinds' probes when `dir` has no declaration, and write nothing inside it. See [discovering members](#discovering-members). |
 | `--at <rev>` | Read the declaration at a commit, and each member's graph from its source at that commit. The tree is exported to a temporary directory and each member runs there under the toolchain installed now. See [what `--at` reads](/chant/reference/workspace-read-contract/#identity-and-revisions). |
 | `-o, --output <file>` | Write the document to a file. |
 | `--member <name>` | Compose only these members. Repeatable, and a comma list works too. |
