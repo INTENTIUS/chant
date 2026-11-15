@@ -215,4 +215,19 @@ metadata:
   test("a kind with a class raises no warning", () => {
     expect(parser.parse("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: c\n").warnings).toBeUndefined();
   });
+
+  test("a metadata.name that is not a string (a {{name}} placeholder) is a warning, not a crash", () => {
+    const ir = parser.parse("apiVersion: v1\nkind: Namespace\nmetadata:\n  name: {{name}}\n");
+    expect(ir.resources).toHaveLength(1);
+    expect(ir.resources[0].logicalId).toBe("namespace");
+    expect(ir.warnings).toHaveLength(1);
+    expect(ir.warnings![0]).toContain("Namespace (v1): metadata.name is a mapping, not a string");
+    expect(ir.warnings![0]).toContain("{{name}}");
+  });
+
+  test("a numeric metadata.name is named in the warning", () => {
+    const ir = parser.parse("apiVersion: v1\nkind: Namespace\nmetadata:\n  name: 123\n");
+    expect(ir.resources[0].logicalId).toBe("namespace");
+    expect(ir.warnings![0]).toContain("metadata.name is a number, not a string");
+  });
 });

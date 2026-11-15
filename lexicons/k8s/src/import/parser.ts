@@ -136,7 +136,7 @@ function apiVersionToGroup(apiVersion: string): string {
  */
 function toLogicalId(kind: string, name: string | undefined): string {
   const prefix = kind.charAt(0).toLowerCase() + kind.slice(1);
-  if (!name) return prefix;
+  if (typeof name !== "string" || !name) return prefix;
 
   // Split on every character an identifier cannot hold (`:` in `system:node`,
   // `/`, `@`, spaces), not only the `-_.` of DNS names.
@@ -164,6 +164,7 @@ export class K8sParser implements TemplateParser {
    */
   parse(content: string, context?: ParseContext): TemplateIR {
     const resources: ResourceIR[] = [];
+    const parseWarnings: string[] = [];
     const namespaces = new Set<string>();
 
     // Split into documents on `---` / `...` markers (a trailing `# comment`
@@ -174,7 +175,7 @@ export class K8sParser implements TemplateParser {
       const doc = parseYAML(docStr);
       if (!doc || typeof doc !== "object") continue;
 
-      const resource = this.parseDocument(doc as Record<string, unknown>, context?.embedded);
+      const resource = this.parseDocument(doc as Record<string, unknown>, context?.embedded, parseWarnings);
       if (resource) {
         resources.push(resource);
 
@@ -188,7 +189,7 @@ export class K8sParser implements TemplateParser {
 
     // One warning per kind the lexicon has no class for (#5070), and one per
     // object kept at an apiVersion its class does not build (#5075).
-    const warnings: string[] = [];
+    const warnings: string[] = [...parseWarnings];
     const warned = new Set<string>();
     for (const r of resources) {
       const choice = importClassFor(r);
@@ -216,14 +217,24 @@ export class K8sParser implements TemplateParser {
     };
   }
 
-  private parseDocument(doc: Record<string, unknown>, embedded?: EmbeddedContentResolver): ResourceIR | null {
+  private parseDocument(doc: Record<string, unknown>, embedded?: EmbeddedContentResolver, warnings: string[] = []): ResourceIR | null {
     const apiVersion = doc.apiVersion as string | undefined;
     const kind = doc.kind as string | undefined;
 
     if (!apiVersion || !kind) return null;
 
     const metadata = (doc.metadata ?? {}) as Record<string, unknown>;
-    const name = metadata.name as string | undefined;
+    // A template placeholder such as `name: {{name}}` is a YAML flow mapping,
+    // not a string. The object keeps its properties as written; the logical
+    // id comes from the kind alone.
+    const rawName = metadata.name;
+    if (rawName !== undefined && rawName !== null && typeof rawName !== "string") {
+      warnings.push(
+        `${kind} (${apiVersion}): metadata.name is ${Array.isArray(rawName) ? "a list" : typeof rawName === "object" ? "a mapping" : `a ${typeof rawName}`}, not a string ` +
+          "(a template placeholder such as {{name}}?). The object is imported with the name as written; render the template first for a usable name.",
+      );
+    }
+    const name = typeof rawName === "string" ? rawName : undefined;
     const type = resolveTypeName(apiVersion, kind);
     const logicalId = toLogicalId(kind, name);
 
