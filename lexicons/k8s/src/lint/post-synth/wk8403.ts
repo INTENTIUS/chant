@@ -7,7 +7,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { docsToManifests, extractRayVersion } from "./k8s-helpers";
+import { docsToManifests, extractRayVersion, nameOf } from "./k8s-helpers";
 
 export const wk8403: PostSynthCheck = {
   id: "WK8403",
@@ -19,7 +19,7 @@ export const wk8403: PostSynthCheck = {
     for (const manifest of docsToManifests(ctx)) {
       if (manifest.kind !== "RayCluster") continue;
 
-      const clusterName = manifest.metadata?.name ?? "RayCluster";
+      const clusterName = nameOf(manifest, "RayCluster");
       const spec = manifest.spec as Record<string, unknown> | undefined;
       if (!spec) continue;
 

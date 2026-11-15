@@ -7,7 +7,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { docsToManifests } from "./k8s-helpers";
+import { docsToManifests, nameOf } from "./k8s-helpers";
 
 export const wk8304: PostSynthCheck = {
   id: "WK8304",
@@ -25,7 +25,7 @@ export const wk8304: PostSynthCheck = {
       const sslRedirect = annotations["alb.ingress.kubernetes.io/ssl-redirect"];
       if (!sslRedirect) continue;
 
-      const resourceName = manifest.metadata?.name ?? "Ingress";
+      const resourceName = nameOf(manifest, "Ingress");
       const certArn = annotations["alb.ingress.kubernetes.io/certificate-arn"];
 
       if (!certArn) {

@@ -7,7 +7,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { docsToManifests } from "./k8s-helpers";
+import { docsToManifests, nameOf } from "./k8s-helpers";
 import type { K8sManifest } from "./k8s-helpers";
 
 export const wk8303: PostSynthCheck = {
@@ -32,7 +32,7 @@ export const wk8303: PostSynthCheck = {
       // Only check HA deployments (replicas >= 2)
       if (typeof replicas !== "number" || replicas < 2) continue;
 
-      const resourceName = manifest.metadata?.name ?? "Deployment";
+      const resourceName = nameOf(manifest, "Deployment");
 
       // Check if any PDB targets this Deployment's labels
       const selector = spec.selector as Record<string, unknown> | undefined;

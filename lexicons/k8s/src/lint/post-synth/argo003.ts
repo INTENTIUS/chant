@@ -18,6 +18,7 @@ import {
   IN_CLUSTER_SERVER,
   IN_CLUSTER_NAME,
 } from "./argo-helpers";
+import { nameOf } from "./k8s-helpers";
 
 export const argo003: PostSynthCheck = {
   id: "ARGO003",
@@ -37,7 +38,7 @@ export const argo003: PostSynthCheck = {
     }
 
     for (const app of manifestsOfKind(manifests, "Application")) {
-      const name = app.metadata?.name ?? "Application";
+      const name = nameOf(app, "Application");
       const destination = app.spec?.destination as
         | { server?: unknown; name?: unknown }
         | undefined;

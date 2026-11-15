@@ -29,6 +29,7 @@ import { isAbsolute, resolve } from "path";
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import { resolveRepoPath } from "@intentius/chant/repo-path";
 import { allManifests, manifestsOfKind } from "./argo-helpers";
+import { nameOf } from "./k8s-helpers";
 
 function dirExists(base: string, path: string): boolean {
   try {
@@ -47,7 +48,7 @@ export const argo005: PostSynthCheck = {
     const diagnostics: PostSynthDiagnostic[] = [];
 
     for (const app of manifestsOfKind(allManifests(ctx), "Application")) {
-      const name = app.metadata?.name ?? "Application";
+      const name = nameOf(app, "Application");
       const source = app.spec?.source as
         | { path?: unknown; chart?: unknown; repoURL?: unknown }
         | undefined;

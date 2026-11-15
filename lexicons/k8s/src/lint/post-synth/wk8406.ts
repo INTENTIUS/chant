@@ -9,7 +9,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { docsToManifests, extractContainers, containerLocator, GPU_POD_KINDS, NVIDIA_GPU_RESOURCE } from "./k8s-helpers";
+import { docsToManifests, extractContainers, containerLocator, GPU_POD_KINDS, NVIDIA_GPU_RESOURCE, nameOf } from "./k8s-helpers";
 
 export const wk8406: PostSynthCheck = {
   id: "WK8406",
@@ -22,7 +22,7 @@ export const wk8406: PostSynthCheck = {
       if (!manifest.kind || !GPU_POD_KINDS.has(manifest.kind)) continue;
 
       const containers = extractContainers(manifest);
-      const resourceName = manifest.metadata?.name ?? manifest.kind;
+      const resourceName = nameOf(manifest, manifest.kind);
 
       for (const container of containers) {
         const requests = container.resources?.requests as Record<string, unknown> | undefined;

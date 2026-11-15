@@ -398,6 +398,42 @@ spec:
     const diags = wk8102.check(ctx);
     expect(diags.length).toBe(0);
   });
+
+  test("a metadata.name that is a map is described, not printed as [object Object]", () => {
+    const ctx = makeCtx(`
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{name}}
+`);
+    const diags = wk8102.check(ctx);
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toContain("metadata.name is a map");
+    expect(diags[0].message).toContain("template");
+    expect(diags[0].message).not.toContain("[object Object]");
+    expect(diags[0].entity).toBe("Namespace");
+  });
+
+  test("other name-formatting rules fall back to the kind for a non-string name", () => {
+    const ctx = makeCtx(`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{name}}
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          image: app
+`);
+    const diags = [...wk8006.check(ctx), ...wk8201.check(ctx), ...wk8102.check(ctx)];
+    expect(diags.length).toBeGreaterThanOrEqual(3);
+    for (const d of diags) {
+      expect(d.message).not.toContain("[object Object]");
+      expect(typeof d.entity).toBe("string");
+    }
+  });
 });
 
 // ── WK8103: Container name ─────────────────────────────────────────

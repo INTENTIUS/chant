@@ -6,7 +6,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { docsToManifests, extractContainers, containerLocator, WORKLOAD_KINDS } from "./k8s-helpers";
+import { docsToManifests, extractContainers, containerLocator, WORKLOAD_KINDS, nameOf } from "./k8s-helpers";
 
 export const wk8006: PostSynthCheck = {
   id: "WK8006",
@@ -19,7 +19,7 @@ export const wk8006: PostSynthCheck = {
       if (!manifest.kind || !WORKLOAD_KINDS.has(manifest.kind)) continue;
 
       const containers = extractContainers(manifest);
-      const resourceName = manifest.metadata?.name ?? manifest.kind;
+      const resourceName = nameOf(manifest, manifest.kind);
 
       for (const container of containers) {
         const image = container.image;

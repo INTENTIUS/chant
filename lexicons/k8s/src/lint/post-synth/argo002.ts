@@ -9,6 +9,7 @@
  */
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import { allManifests, manifestsOfKind } from "./argo-helpers";
+import { nameOf } from "./k8s-helpers";
 
 export const argo002: PostSynthCheck = {
   id: "ARGO002",
@@ -28,7 +29,7 @@ export const argo002: PostSynthCheck = {
 
     for (const app of manifestsOfKind(manifests, "Application")) {
       const project = app.spec?.project;
-      const name = app.metadata?.name ?? "Application";
+      const name = nameOf(app, "Application");
       // No project set → defaults to `default` at sync time; not this check's job.
       if (typeof project !== "string" || project === "") continue;
       if (declaredProjects.has(project)) continue;

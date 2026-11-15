@@ -11,6 +11,7 @@
  */
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import { allManifests, manifestsOfKind } from "./argo-helpers";
+import { nameOf } from "./k8s-helpers";
 
 /** Source kinds the kustomize-controller can reconcile from. */
 const SOURCE_KINDS = ["GitRepository", "OCIRepository", "Bucket"] as const;
@@ -43,7 +44,7 @@ export const flux002: PostSynthCheck = {
       const apiVersion = kustomization.apiVersion;
       if (typeof apiVersion === "string" && !apiVersion.startsWith("kustomize.toolkit.fluxcd.io/")) continue;
 
-      const name = kustomization.metadata?.name ?? "Kustomization";
+      const name = nameOf(kustomization, "Kustomization");
       const sourceRef = kustomization.spec?.sourceRef as
         | { kind?: unknown; name?: unknown }
         | undefined;

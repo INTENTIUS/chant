@@ -7,7 +7,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { docsToManifests } from "./k8s-helpers";
+import { docsToManifests, nameOf } from "./k8s-helpers";
 
 export const wk8101: PostSynthCheck = {
   id: "WK8101",
@@ -19,7 +19,7 @@ export const wk8101: PostSynthCheck = {
     for (const manifest of docsToManifests(ctx)) {
       if (manifest.kind !== "Deployment") continue;
 
-      const resourceName = manifest.metadata?.name ?? "Deployment";
+      const resourceName = nameOf(manifest, "Deployment");
       const spec = manifest.spec;
       if (!spec) continue;
 

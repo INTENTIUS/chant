@@ -7,7 +7,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { docsToManifests } from "./k8s-helpers";
+import { docsToManifests, nameOf } from "./k8s-helpers";
 
 const PRIVATE_KEY_PATTERN = /-----BEGIN\s+[\w\s]*PRIVATE KEY-----/;
 
@@ -21,7 +21,7 @@ export const wk8042: PostSynthCheck = {
     for (const manifest of docsToManifests(ctx)) {
       if (manifest.kind !== "ConfigMap") continue;
 
-      const resourceName = manifest.metadata?.name ?? "ConfigMap";
+      const resourceName = nameOf(manifest, "ConfigMap");
       const data = manifest.data;
       if (typeof data !== "object" || data === null) continue;
 

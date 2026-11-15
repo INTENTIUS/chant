@@ -10,7 +10,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { docsToManifests } from "./k8s-helpers";
+import { docsToManifests, nameOf } from "./k8s-helpers";
 import type { K8sManifest } from "./k8s-helpers";
 
 /** `app.kubernetes.io/component` values this lexicon's composites use for serving workloads. */
@@ -38,7 +38,7 @@ export const wk8405: PostSynthCheck = {
       if (!isServingWorkload(manifest)) continue;
 
       const labels = manifest.metadata?.labels;
-      const resourceName = manifest.metadata?.name ?? manifest.kind ?? "workload";
+      const resourceName = nameOf(manifest, manifest.kind ?? "workload");
 
       if (!labels || !hasCoveringPdb(labels, pdbSelectors)) {
         diagnostics.push({

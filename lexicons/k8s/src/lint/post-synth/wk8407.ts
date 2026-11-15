@@ -12,7 +12,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { docsToManifests } from "./k8s-helpers";
+import { docsToManifests, nameOf } from "./k8s-helpers";
 
 /** Trailing path segments that mean "no explicit version" even though present. */
 const FLOATING_TAGS = new Set(["latest", "main", "master", "head"]);
@@ -50,7 +50,7 @@ export const wk8407: PostSynthCheck = {
       if (!storageUri) continue;
 
       if (!isPinnedStorageUri(storageUri)) {
-        const resourceName = manifest.metadata?.name ?? "InferenceService";
+        const resourceName = nameOf(manifest, "InferenceService");
         diagnostics.push({
           checkId: "WK8407",
           severity: "warning",

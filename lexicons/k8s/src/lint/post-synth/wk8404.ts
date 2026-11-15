@@ -16,6 +16,7 @@ import {
   requestsGpu,
   toleratesGpu,
   GPU_POD_KINDS,
+  nameOf,
 } from "./k8s-helpers";
 
 export const wk8404: PostSynthCheck = {
@@ -34,7 +35,7 @@ export const wk8404: PostSynthCheck = {
       const podSpec = extractPodSpec(manifest);
       if (toleratesGpu(podSpec?.tolerations)) continue;
 
-      const resourceName = manifest.metadata?.name ?? manifest.kind;
+      const resourceName = nameOf(manifest, manifest.kind);
       diagnostics.push({
         checkId: "WK8404",
         severity: "error",
