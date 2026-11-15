@@ -86,8 +86,15 @@ describe("reference fields", () => {
 });
 
 describe("an Argo CD cluster Secret on a live read", () => {
-  it("is masked whole by default: no name, no server, no argoCluster view", () => {
+  it("by default (the #5116 ruling) shows name and server as argoCluster, and config stays masked", () => {
     const out = maskKubernetesObject(clusterSecret());
+    expect(out.data).toEqual({ name: MASKED, server: MASKED, config: MASKED });
+    expect(out.argoCluster).toEqual({ name: "prod", server: "https://prod.example.com" });
+    expect(JSON.stringify(out)).not.toContain("s3cr3t-token");
+  });
+
+  it("with the switch off, is masked whole: no name, no server, no argoCluster view", () => {
+    const out = maskKubernetesObject(clusterSecret(), { exposeArgoClusterIdentity: false });
     expect(out.data).toEqual({ name: MASKED, server: MASKED, config: MASKED });
     expect(out.argoCluster).toBeUndefined();
     const text = JSON.stringify(out);

@@ -70,10 +70,13 @@ const LAST_APPLIED = "kubectl.kubernetes.io/last-applied-configuration";
  *   `config` and every other `data` key stay masked. A `server` that carries
  *   a user name or password in its URL is left out.
  *
- * Flip this one constant to apply the ruling. Tests pass the option
- * explicitly, so they hold whichever way it is set.
+ * Ruled `true` by the maintainer on 2026-11-15 (#5116): a cluster's name and
+ * API server address are identifiers, as in any kubeconfig, not credentials,
+ * and the live read needs them to join an Application to its cluster as the
+ * files read does (#5101). Tests pass the option explicitly, so they hold
+ * whichever way it is set.
  */
-export const EXPOSE_ARGO_CLUSTER_IDENTITY = false;
+export const EXPOSE_ARGO_CLUSTER_IDENTITY = true;
 
 const ARGO_CLUSTER_LABEL = "argocd.argoproj.io/secret-type";
 
