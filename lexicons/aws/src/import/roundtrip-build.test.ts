@@ -320,3 +320,69 @@ describe("Mappings and Fn::FindInMap", () => {
     expect(() => generator.generate(parser.parse(JSON.stringify(original)))).toThrow(/cannot generate Fn::Transform/);
   });
 });
+
+describe("YAML dates (#5076)", () => {
+  const policy = `Resources:
+  Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: read
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub "arn:aws:s3:::\${Bucket}/*"
+  Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub
+        - "logs-\${Day}"
+        - Day: 2024-01-15
+`;
+
+  test("an unquoted Version: 2012-10-17 builds as the string, not {}", async () => {
+    const { template, source } = await roundTrip(policy);
+    expect(source).toContain('Version: "2012-10-17"');
+    const props = template.Resources.Role.Properties;
+    expect(props.AssumeRolePolicyDocument.Version).toBe("2012-10-17");
+    expect(props.Policies[0].PolicyDocument.Version).toBe("2012-10-17");
+  });
+
+  test("a date inside an Fn::Sub variable map is substituted as written", async () => {
+    const { template } = await roundTrip(policy);
+    expect(template.Resources.Bucket.Properties.BucketName).toEqual({ "Fn::Sub": "logs-2024-01-15" });
+  });
+
+  test("a date or timestamp as a parameter default, mapping value and output builds as written", async () => {
+    const { template } = await roundTrip(`AWSTemplateFormatVersion: 2010-09-09
+Parameters:
+  Since:
+    Type: String
+    Default: 2001-12-14t21:59:43.10-05:00
+Mappings:
+  Releases:
+    stable:
+      Date: 2024-01-15
+Resources:
+  Queue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: q
+Outputs:
+  Stamp:
+    Value: 2024-01-15 10:00:00
+`);
+    expect(template.Parameters.Since.Default).toBe("2001-12-14t21:59:43.10-05:00");
+    expect(template.Mappings.Releases.stable.Date).toBe("2024-01-15");
+    expect(template.Outputs.Stamp.Value).toBe("2024-01-15 10:00:00");
+  });
+});
