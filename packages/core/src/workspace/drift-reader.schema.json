@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/drift-reader/v1/drift-reader.schema.json",
+  "title": "drift reader output",
+  "description": "What a kind's drift reader module returns (#5068), the same answer a lexicon's readDrift gives chant lifecycle drift (ReadDriftResult in @intentius/chant/drift-record, DriftReaderOutput in @intentius/chant/workspace/drift-reader). Either the lines of each read the reader ran, in order, as the drift record's NDJSON stream has them (a drift-start, its drift-record lines and a drift-settle per read, each line one of drift.schema.json's $defs/line), or a refusal with a code chant workspace drift prints. A read that ran and failed is not a refusal: its addresses are records with status not-observed. chant workspace drift renames every line's member to the workspace member and places each record on the member's graph. First read by chant 0.124.96.",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["lines"],
+      "properties": {
+        "lines": {
+          "type": "array",
+          "items": {
+            "$ref": "https://intentius.io/chant/schemas/workspace/drift/v1/drift.schema.json#/$defs/line"
+          },
+          "description": "The stream lines, in order. An empty list is a read that found nothing to report."
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["refused"],
+      "properties": {
+        "refused": {
+          "type": "object",
+          "required": ["code", "message"],
+          "properties": {
+            "code": {
+              "enum": ["read-unsupported", "resource-unsupported", "no-drift-read"],
+              "description": "read-unsupported for a --read or --stack the reader has not got, resource-unsupported for --resource on a reader that cannot read one resource on its own, no-drift-read when there is nothing to read (ReadDriftRefusalCode)."
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  ]
+}

@@ -137,6 +137,20 @@ export interface KindGraph {
   config: Record<string, unknown>;
 }
 
+/**
+ * How `chant workspace drift --member` reads a member of a package's kind
+ * (#5068): a drift reader module the package ships, and the config it is
+ * called with. See `./drift-reader.ts` for the contract and
+ * {@link substituteGraphConfig} for the placeholders.
+ */
+export interface KindDrift {
+  /** The drift reader module, as the kinds file names it: a path inside the supplying package. */
+  reader: string;
+  /** The reader module, absolute; set once the package directory is known. */
+  readerFile?: string;
+  config: Record<string, unknown>;
+}
+
 export interface MemberKind {
   name: string;
   /** One line for listings and error messages. */
@@ -158,6 +172,8 @@ export interface MemberKind {
   packageDir?: string;
   /** How `workspace graph` reads a member of this kind (#2874); unset, the member is `kind-not-run`. */
   graph?: KindGraph;
+  /** How `workspace drift` reads a member of this kind (#5068); unset, the member answers `no-drift-read` unless chant reads its kind itself. */
+  drift?: KindDrift;
   /** The fields a member entry of this kind may set, with their defaults (#3151); unset, the kind declares none. */
   fields?: Record<string, KindField>;
   /**
@@ -518,7 +534,7 @@ export function parseKindData(text: string, source: string): KindData {
   const problems: string[] = [];
   const kinds: MemberKind[] = [];
   const seen = new Set<string>();
-  for (const k of (raw as { kinds: { name: string; description: string; precedence: number; probe: FileProbe; outputs?: string[]; graph?: KindGraph; fields?: Record<string, KindField>; reader?: string; memberFile?: { path: string; schema: string } }[] }).kinds) {
+  for (const k of (raw as { kinds: { name: string; description: string; precedence: number; probe: FileProbe; outputs?: string[]; graph?: KindGraph; drift?: { reader: string; config?: Record<string, unknown> }; fields?: Record<string, KindField>; reader?: string; memberFile?: { path: string; schema: string } }[] }).kinds) {
     if (BUILTIN_KIND_NAMES.includes(k.name)) {
       problems.push(`${source}: kind ${k.name} is built in and can't be supplied by a package`);
       continue;
@@ -545,6 +561,7 @@ export function parseKindData(text: string, source: string): KindData {
       ...(k.graph
         ? { graph: { ...(k.graph.lexicon ? { lexicon: k.graph.lexicon } : {}), ...(k.graph.reader ? { reader: k.graph.reader } : {}), config: structuredClone(k.graph.config ?? {}) } }
         : {}),
+      ...(k.drift ? { drift: { reader: k.drift.reader, config: structuredClone(k.drift.config ?? {}) } } : {}),
       ...(k.fields ? { fields: structuredClone(k.fields) } : {}),
       ...(k.reader && (KIND_LINK_READERS as readonly string[]).includes(k.reader) ? { reader: k.reader as KindLinkReaderName } : {}),
       ...(k.memberFile ? { memberFile: { path: k.memberFile.path, schema: k.memberFile.schema } } : {}),
@@ -623,6 +640,20 @@ export function readPackageKinds(packageDir: string, source?: string): PackageKi
           `and this package is ${packageName ?? "unnamed"}; the kind is kept, and workspace graph lists its members with kind-not-run`,
       );
       delete k.graph;
+    }
+    if (k.drift) {
+      // A drift reader module (#5068) is the package's own file, like a graph reader: inside the package and present. Nothing is imported here.
+      const file = resolve(packageDir, ...k.drift.reader.split("/"));
+      const inside = relative(packageDir, file);
+      if (inside.startsWith("..") || isAbsolute(inside)) {
+        data.problems.push(`${name}: kind ${k.name} names drift reader ${k.drift.reader}, which is outside the package; the kind is kept, and workspace drift answers no-drift-read for its members`);
+        delete k.drift;
+      } else if (!existsSync(file)) {
+        data.problems.push(`${name}: kind ${k.name} names drift reader ${k.drift.reader}, which does not exist in the package; the kind is kept, and workspace drift answers no-drift-read for its members`);
+        delete k.drift;
+      } else {
+        k.drift.readerFile = file;
+      }
     }
   }
   return { ...data, file };

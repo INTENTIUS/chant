@@ -21,6 +21,15 @@
  * falls back to another stack's export or the checked-in file. Any other kind
  * answers `read-unsupported`.
  *
+ * A member of a package's kind whose kinds file names a drift reader
+ * (`drift.reader`, #5068) is read by that module instead (`./drift-reader.ts`):
+ * chant imports it in this process, with this process's environment, calls
+ * it with the member's directory, the kind's config (placeholders
+ * substituted), `--read`, `--resource` and `--stack`, and checks each line
+ * it returns with the drift codec. The reader answers for itself, refusals
+ * included; chant makes no forge call for it. A declared drift reader comes
+ * before the table above.
+ *
  * Any other kind has no drift read and answers `no-drift-read`. A member of
  * a package's kind runs in the reader project `workspace graph` writes for it
  * (`./kind-readers.ts`), under the member's own toolchain, so chant core
@@ -42,7 +51,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext, ParsedArgs } from "../cli/registry";
 import { graphNodeFor, type ChangeSetGraphNodes } from "../change-set-graph";
@@ -69,8 +78,10 @@ import {
 } from "../drift-record";
 import type { ComponentStatusRow } from "../lifecycle/status";
 import { readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError } from "./declaration";
+import { readDriftWithModule } from "./drift-reader";
 import { prepareKindReaders } from "./kind-readers";
-import { loadKindRegistry } from "./kinds";
+import { loadKindRegistry, substituteGraphConfig, type KindDrift, type KindRegistry } from "./kinds";
+import { memberReason } from "./ls";
 import { emitDocument, executePlan, planMembers, type UnitResult } from "./member-commands";
 import type { ReasonCode } from "./reason-codes";
 import { handToRootChant, locateWorkspace } from "./which-chant";
@@ -154,6 +165,33 @@ class DriftReadFailure extends Error {
 
 function tail(text: string): string {
   return text.trim().split("\n").slice(-5).join("\n");
+}
+
+/** Read a member through its kind's drift reader module (#5068): the lines it returns, checked, or a failure. */
+async function kindReaderLines(query: DriftQuery, entry: { name: string; dir: string; kind: string }, drift: KindDrift, root: string): Promise<DriftLine[]> {
+  if (query.read !== undefined && !(DRIFT_READS as readonly string[]).includes(query.read)) {
+    throw new DriftReadFailure("read-unsupported", `--read ${query.read} is not a drift read; the reads are ${DRIFT_READS.join(", ")}`);
+  }
+  const abs = entry.dir === "." ? root : join(root, entry.dir);
+  const config = substituteGraphConfig(drift.config, { member: entry.name, dir: abs, workspace: root });
+  const answer = await readDriftWithModule(drift.readerFile!, {
+    dir: typeof config.dir === "string" ? config.dir : abs,
+    config,
+    member: entry.name,
+    observedAt: new Date().toISOString(),
+    ...(query.read !== undefined ? { read: query.read as DriftRead } : {}),
+    ...(query.resource !== undefined ? { resource: query.resource } : {}),
+    ...(query.stack !== undefined ? { stack: query.stack } : {}),
+  });
+  if ("error" in answer) throw new DriftReadFailure("command-failed", `${query.member}: ${answer.error}`);
+  if ("refused" in answer) throw new DriftReadFailure(answer.refused.code, `${query.member}: ${answer.refused.message}`);
+  return answer.lines;
+}
+
+/** The kinds `workspace drift` reads, for the no-drift-read message: the table's, and each loaded kind with a drift reader. */
+function driftKinds(kinds: KindRegistry): string {
+  const readers = kinds.names().filter((k) => kinds.get(k)?.drift?.readerFile && !DRIFT_READS_BY_KIND[k]);
+  return [...Object.keys(DRIFT_READS_BY_KIND), ...readers].join(", ");
 }
 
 /** The member's node ids, without the member in front, from its source graph; null when it can't be read. */
@@ -246,8 +284,20 @@ export async function readWorkspaceDrift(query: DriftQuery): Promise<DriftReadRe
     if (!entry) {
       throw new DriftReadFailure("member-required", `--member ${query.member} is not a member of ${declaration.name}; it declares ${declaration.members.map((m) => m.name).join(", ")}`);
     }
+    const { registry: kinds, problems } = loadKindRegistry(declaration.pins, located.rootOnDisk);
+    const drift = kinds.get(entry.kind)?.drift;
+    if (drift?.readerFile) {
+      // A kind's own drift reader (#5068), imported here: no reader project, and the member's graph places its records as for any member.
+      const reason = memberReason(entry, located.tree, kinds);
+      if (reason) throw new DriftReadFailure("command-failed", `${query.member}: ${reason.code}: ${reason.message}`);
+      const [graph, lines] = await Promise.all([memberGraph(query.cwd, query.member), kindReaderLines(query, entry, drift, located.rootOnDisk)]);
+      return { lines: placeLines(lines, query.member, graph) };
+    }
     const reads = DRIFT_READS_BY_KIND[entry.kind];
-    if (!reads) throw new DriftReadFailure("no-drift-read", `${query.member} is kind ${entry.kind}, and chant workspace drift reads members of kind ${Object.keys(DRIFT_READS_BY_KIND).join(", ")}`);
+    if (!reads) {
+      const problem = problems.find((p) => p.message.includes(`kind ${entry.kind} names drift reader`));
+      throw new DriftReadFailure("no-drift-read", `${query.member} is kind ${entry.kind}, and chant workspace drift reads members of kind ${driftKinds(kinds)}${problem ? `; ${problem.message}` : ""}`);
+    }
     if (query.read !== undefined && !(DRIFT_READS as readonly string[]).includes(query.read)) {
       throw new DriftReadFailure("read-unsupported", `--read ${query.read} is not a drift read; the reads are ${DRIFT_READS.join(", ")}`);
     }
@@ -262,7 +312,6 @@ export async function readWorkspaceDrift(query: DriftQuery): Promise<DriftReadRe
     if (query.stack !== undefined && query.stack.trim() === "") throw new DriftReadFailure("read-unsupported", "--stack needs a stack name");
     if (entry.kind === "chant" && !query.env) throw new DriftReadFailure("env-required", `${query.member} is a chant member, read live through chant lifecycle diff <env> --live: add --env <env>`);
 
-    const { registry: kinds, problems } = loadKindRegistry(declaration.pins, located.rootOnDisk);
     const plan = planMembers("graph", located.rootOnDisk, { only: [query.member], tree: located.tree, kinds, kindProblems: problems.map((p) => p.message) });
     const notRun = [...plan.unreadable, ...plan.skipped].find((s) => s.name === query.member);
     if (notRun) throw new DriftReadFailure(plan.unreadable.includes(notRun) ? "command-failed" : "no-drift-read", `${query.member}: ${notRun.reason.code}: ${notRun.reason.message}`);

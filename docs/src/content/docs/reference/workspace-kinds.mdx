@@ -72,6 +72,7 @@ chant reads the key `./workspace-kinds` literally. A `./*` pattern in `exports` 
 | `kinds[].probe.anyDocument` | `in`, file names as in `anyFile`, and `match`, a list of entries that each map JSON Pointers to the values allowed there. The probe passes when a file directly in the directory whose name matches `in` parses as YAML or JSON, and one of its documents (a YAML file may hold several) has every pointer of one entry at a value matching one of that pointer's patterns. A `*` in a pattern matches any run of characters, so `["*"]` means the pointer has a value. A file that doesn't parse is no evidence either way. Added for [#3179](https://github.com/INTENTIUS/chant/issues/3179) |
 | `kinds[].outputs` | Optional. Output names every member of the kind exposes to [member links](/chant/reference/workspace-declaration/#member-links). A member entry of the kind can list more in its own `outputs` |
 | `kinds[].graph` | Optional. How [`chant workspace graph`](/chant/cli/workspace-graph/) reads a member of the kind. See [below](#reading-a-member-in-the-graph) |
+| `kinds[].drift` | Optional. A drift reader module [`chant workspace drift --member`](/chant/reference/drift-record/#reading-a-member-chant-workspace-drift) runs for a member of the kind. See [A drift reader](#a-drift-reader). Added in chant 0.124.96 |
 | `kinds[].fields` | Optional. The fields a member of the kind may set, each with a type and a default. See [Fields](#fields). Added in chant 0.103.0 |
 | `kinds[].reader` | Optional. The link reader chant runs over a member's own files. See [Links read from a member's files](#links-read-from-a-members-files) |
 | `kinds[].memberFile` | Optional. A file every member has and the JSON Schema it must pass. See [A member's own file](#a-members-own-file) |
@@ -150,6 +151,53 @@ The module is an ES module inside the package, so a path that leaves it, or a fi
 The reader project works as it does for a lexicon. Its `chant.config.json` declares no lexicon and sets `graph.reader` to the module and its config. The module is loaded by the member's own `chant graph --format ir`, so it runs under the member's toolchain. The temporary project is deleted when that finishes. A chant from before the field can't read a kinds file that uses it, and a member's own chant from before it ignores `graph.reader` and has nothing to print, so the member fails.
 
 The reader is code from the package the declaration pins, and the contract is that it reads files and returns data: it takes no forge or network call, and writes nothing. chant enforces the part it can. The module must sit inside the package, it is imported only by `chant graph` and never when the kinds are read or the workspace is listed or checked, and its output is validated as graph IR like any member's. The graph cache keys a reader member on the module's size and modification time, so an edit shows without a new package version.
+
+### A drift reader
+
+A kind can also name a drift reader, so `chant workspace drift --member <name>` reads a member of the kind ([#5068](https://github.com/INTENTIUS/chant/issues/5068)). The `drift` block sits beside `graph` and names a module in the package the same way:
+
+```json
+{
+  "name": "forge-governance",
+  "graph": { "reader": "dist/graph-reader.mjs", "config": { "dir": "{dir}" } },
+  "drift": { "reader": "dist/drift-reader.mjs", "config": { "dir": "{dir}", "file": "governance.yml" } }
+}
+```
+
+| Field | Value |
+|---|---|
+| `drift.reader` | Required. The module, as a path inside the supplying package. A path that leaves the package, or a file that is missing, is a `WSP002` problem, and the kind keeps its probe without a `drift` block |
+| `drift.config` | Optional. The object the module is called with. `{member}`, `{dir}` and `{workspace}` are substituted in every string key and value, as in `graph.config`. Nothing else is interpreted |
+
+The module's default export is a `DriftReader` from `@intentius/chant/workspace/drift-reader`. It may be async, and it is called with one object:
+
+| Input | Value |
+|---|---|
+| `dir` | The member's directory, absolute: `config.dir` when the config sets it as a string, else the member's own directory |
+| `config` | The block's `config`, placeholders substituted |
+| `member` | The workspace member's name |
+| `observedAt` | RFC 3339, for every record the reader builds |
+| `read`, `resource`, `stack` | `--read`, `--resource` and `--stack`, when given |
+
+It returns `DriftReaderOutput`, the answer a lexicon's `readDrift` gives `chant lifecycle drift`. That is either `{ lines }`, the [drift record](/chant/reference/drift-record/) stream lines of each read it ran (a `drift-start`, its records and a `drift-settle`), or `{ refused: { code, message } }` with `read-unsupported`, `resource-unsupported` or `no-drift-read`. A read that ran and failed is not a refusal. Its addresses are records with status `not-observed` and a reason. The schema ships in `@intentius/chant` at `src/workspace/drift-reader.schema.json`, `$id` `https://intentius.io/chant/schemas/workspace/drift-reader/v1/drift-reader.schema.json`. `driftStart`, `driftSettle`, `driftRecord` and `driftRecordLine` from `@intentius/chant/drift-record` build the lines.
+
+```js
+import { driftRecord, driftRecordLine, driftSettle, driftStart } from "@intentius/chant/drift-record";
+
+export default async function readDrift({ dir, config, member, observedAt }) {
+  const found = await readTheForge(dir, config.file);
+  const start = driftStart({ member, engine: "warden", read: "live-read", at: observedAt, expected: found.map((f) => f.address) });
+  const records = found.map((f) =>
+    driftRecord({ member, engine: "warden", address: f.address, node: null, observedAt, read: "live-read", status: f.differs ? "drifted" : "in-sync", evidence: { tool: "github-warden" } }),
+  );
+  const settled = driftSettle(start, records, observedAt);
+  return { lines: [start, ...settled.records.map(driftRecordLine), settled.line] };
+}
+```
+
+`chant workspace drift` imports the module in its own process, which is the workspace root's chant, and calls it once. The reader gets that process's environment, so it reads its own credentials, such as a forge token, from there. chant passes nothing else and makes no forge call for it. Each line it returns is checked with the drift record's codec, so a `state` read that says `in-sync`, or a `not-observed` record with no reason, fails the read with `command-failed`. A module that can't be loaded, has no default export or throws fails the same way. chant then puts the workspace member's name on every line and places each record on the member's graph as it does for any member. Unlike a graph reader, a drift reader may call the forge or the network, since reading live state is its job, and it still writes nothing.
+
+A kind with a `drift` block is read by it ahead of chant's own reads, and a kind with none answers `no-drift-read`, as before. The block is data like the rest of the file: the module is imported only by `chant workspace drift`, never when the kinds are read or the workspace is listed or checked. A chant before 0.124.96 can't read a kinds file that uses the field. The floor is `KIND_DRIFT_READER_FLOOR` in `@intentius/chant/release-floors`.
 
 ### Links read from a member's files
 
@@ -295,7 +343,7 @@ The three wardens, [github-warden](https://github.com/INTENTIUS/github-warden), 
 
 Each package checks its file against a JSON Schema it ships, so `chant workspace check` fails a policy with a misspelled or misplaced field as `WSP012` before the warden reconciles it. `repos` and `teams` are the names a [member link](/chant/reference/workspace-declaration/#member-links) can point at. For gitlab-warden, `repos` stands for projects and `teams` for groups.
 
-Each kind carries a `graph.reader` block ([above](#a-graph-reader-from-any-package)), since a warden is not a lexicon. The reader turns the governance YAML into graph IR with no forge call. The org and its repos and teams are nodes. Rulesets (branch protection on gitlab-warden and forgejo-warden) and apps are nodes too. An edge is a team's access to a repo or a ruleset's reach over a repo. It draws the policy as declared. Coloring a node by drift needs the warden's live read and is not part of it. Binding a reconcile to a gate, and a warden generating or checking the org-level workspace that [repo members](/chant/reference/workspace-declaration/#repo-members-and-org-workspaces) describe, are separate work.
+Each kind carries a `graph.reader` block ([above](#a-graph-reader-from-any-package)), since a warden is not a lexicon. The reader turns the governance YAML into graph IR with no forge call. The org and its repos and teams are nodes. Rulesets (branch protection on gitlab-warden and forgejo-warden) and apps are nodes too. An edge is a team's access to a repo or a ruleset's reach over a repo. It draws the policy as declared. Coloring a node by drift needs the warden's live read, which a kind supplies as a [drift reader](#a-drift-reader); a member whose pinned warden ships none answers `no-drift-read` in `chant workspace drift`. Binding a reconcile to a gate, and a warden generating or checking the org-level workspace that [repo members](/chant/reference/workspace-declaration/#repo-members-and-org-workspaces) describe, are separate work.
 
 ## dbt
 
