@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { fileURLToPath } from "url";
-import { classifyFiles, discoverByDetection, hintLexiconForFile, loadAuditPlugins, unclaimedFiles } from "./discover";
+import { classifyFiles, discoverByDetection, hintLexiconForFile, isCandidatePath, loadAuditPlugins, unclaimedFiles } from "./discover";
 import type { AuditInput } from "./core";
 
 const fixture = (name: string) => fileURLToPath(new URL(`../cli/commands/__fixtures__/${name}`, import.meta.url));
@@ -159,6 +159,19 @@ describe("discoverByDetection (unified, detectTemplate-driven)", () => {
 });
 
 describe("lexicon hints for unclaimed files (#1623)", () => {
+  test("a build file is a Dockerfile under every name docker and its neighbours accept (#5085)", () => {
+    for (const name of [
+      "Dockerfile", "Dockerfile.dev", "Dockerfile-test", "Dockerfile_prod", "app.Dockerfile", "app.dockerfile",
+      "Containerfile", "Containerfile.dev", "Containerfile-x", "app.Containerfile", "dockerfile",
+    ]) {
+      expect(isCandidatePath(`apps/${name}`), name).toBe(true);
+      expect(hintLexiconForFile(`apps/${name}`, ""), name).toBe("docker");
+    }
+    for (const name of ["Dockerfiles", "MyDockerfile", "docker-compose.txt", "Dockerfile2"]) {
+      expect(hintLexiconForFile(`apps/${name}`, ""), name).toBeUndefined();
+    }
+  });
+
   test("hintLexiconForFile guesses by path, name, and cheap content markers", () => {
     expect(hintLexiconForFile(".github/workflows/ci.yml", "on: push\n")).toBe("github");
     expect(hintLexiconForFile(".forgejo/workflows/ci.yml", "on: push\n")).toBe("forgejo");
