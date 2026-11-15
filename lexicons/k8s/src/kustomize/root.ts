@@ -20,6 +20,10 @@
  * - **Deterministic**: entity names derive from the root dir plus each
  *   document's kind/name/namespace, disambiguated in render order — the same
  *   overlay renders the same entity set every build.
+ * - **Helm is opt-in** (#5112): a root with `helmCharts` renders only with
+ *   `enableHelm: true` on its entry, and a chart that is not already in the
+ *   chart home is pulled only with `fetchCharts: true` (the one setting that
+ *   reaches the network).
  * - **Fail loudly, not weirdly**: a root that doesn't exist, or a dir with no
  *   kustomization file, refuses with the path in the message before any
  *   subprocess runs — offline, the failure mode is a sentence, never a
@@ -28,7 +32,7 @@
 import { existsSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { Declarable } from "@intentius/chant/declarable";
-import { defaultKustomizeRunner, renderKustomizeDocuments, type KustomizeRunner } from "./render";
+import { defaultKustomizeRunner, renderKustomizeDocuments, type KustomizeHelmOptions, type KustomizeRunner } from "./render";
 import { addRenderedEntity, renderedManifestEntity } from "./rendered-entity";
 import { applyRenderedPatches, type RenderedPatch } from "../patch/rendered-patch";
 
@@ -36,7 +40,7 @@ import { applyRenderedPatches, type RenderedPatch } from "../patch/rendered-patc
  * One `k8s.kustomize.roots` entry: a directory, or a directory plus patches
  * applied to its rendered documents (#3566).
  */
-export type KustomizeRootEntry = string | { path: string; patches?: RenderedPatch[] };
+export type KustomizeRootEntry = string | ({ path: string; patches?: RenderedPatch[] } & KustomizeHelmOptions);
 
 const KUSTOMIZATION_FILES = ["kustomization.yaml", "kustomization.yml", "Kustomization"];
 
@@ -64,6 +68,7 @@ export async function renderKustomizeRoots(opts: {
   for (const entry of opts.roots) {
     const root = typeof entry === "string" ? entry : entry.path;
     const patches = typeof entry === "string" ? undefined : entry.patches;
+    const helm: KustomizeHelmOptions = typeof entry === "string" ? {} : { enableHelm: entry.enableHelm, helmCommand: entry.helmCommand, fetchCharts: entry.fetchCharts };
     const rootDir = isAbsolute(root) ? root : resolve(opts.projectRoot, root);
     // The label rendered docs carry as provenance: the declared (relative)
     // form when possible, so it names the overlay the way the config does.
@@ -79,7 +84,7 @@ export async function renderKustomizeRoots(opts: {
       );
     }
 
-    const rendered = await renderKustomizeDocuments(rootDir, run);
+    const rendered = await renderKustomizeDocuments(rootDir, run, helm);
     const documents = applyRenderedPatches(rendered, patches, `kustomize root "${rootLabel}"`);
     for (const doc of documents) {
       const entity = renderedManifestEntity(doc, rootLabel);

@@ -138,6 +138,27 @@ export default {
 };
 ```
 
+#### Roots with `helmCharts`
+
+A kustomization with a `helmCharts` entry renders only when kustomize is given `--enable-helm`, so a root that has one fails until its entry asks for it. Write the entry as an object:
+
+```typescript
+export default {
+  lexicons: ["k8s"],
+  k8s: {
+    kustomize: {
+      roots: [{ path: "apps/datadog", enableHelm: true, helmCommand: "/opt/homebrew/bin/helm" }],
+    },
+  },
+};
+```
+
+`enableHelm: true` passes `--enable-helm` to `kustomize build` or `kubectl kustomize`; `helmCommand` is optional and passes `--helm-command`. Without `enableHelm`, the root fails with a message that names its charts and the option.
+
+kustomize pulls a chart that is not already in the root's chart home (`helmGlobals.chartHome`, default `charts/`) with `helm pull`, which reaches the chart repository over the network, and writes the chart into the root's directory. That is a separate switch, `fetchCharts: true`. With it off, which is the default, a chart that is not in the chart home fails naming the chart and the directory it was expected in, and no network is used. The check covers the root's own `helmCharts` and those of the directories it lists in `resources`, `bases` and `components`. To render offline, commit or vendor the charts under the chart home.
+
+The deploy-time `kustomize-apply` step takes the same three fields, and so does a `kustomize` workspace member (`k8s.member`). `chant workspace graph` writes the member's config itself, so it is told through the environment: `CHANT_K8S_ENABLE_HELM=1`, `CHANT_K8S_HELM_COMMAND=<binary>` and `CHANT_K8S_FETCH_CHARTS=1`. A member that is not allowed to render is not lost: it is listed with `rendered: false` and the reason, and its kustomization, chart and values nodes are still read as data.
+
 ## Patching included and rendered documents
 
 A file or chart sometimes has no setting for the field you need. Patches change included and rendered documents before they become entities, so the patched form is what the build emits, what ownership stamping and post-synth checks see, and what `lifecycle diff --live` compares with the cluster.

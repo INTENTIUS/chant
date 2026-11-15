@@ -73,6 +73,12 @@ export interface KustomizeApplyInput {
   context?: string;
   /** Same delete vocabulary as kubectl-apply; default `never`. */
   delete?: "never" | "owned-only";
+  /** Render a kustomization that has `helmCharts` (`--enable-helm`, #5112). Default off. */
+  enableHelm?: boolean;
+  /** The `helm` binary for `--helm-command`. */
+  helmCommand?: string;
+  /** Let kustomize pull a chart that is not in the chart home (network). Default off. */
+  fetchCharts?: boolean;
 }
 
 /** Factory with injectable renderer + applier, so tests assert the render
@@ -87,7 +93,7 @@ export function createKustomizeApplyCapability(
     // undo of its own — same posture as kubectl-apply.
     rollbackPolicy: "needs-opt-out",
     async run(ctx: DeployContext, input: KustomizeApplyInput): Promise<KustomizeApplyOutcome> {
-      const documents = await renderKustomizeDocuments(input.dir, run);
+      const documents = await renderKustomizeDocuments(input.dir, run, { enableHelm: input.enableHelm, helmCommand: input.helmCommand, fetchCharts: input.fetchCharts });
       const applier: Applier = apply ?? ((await import("../op/activities/kubectl")).applyManifest as unknown as Applier);
       return applier({
         manifest: `kustomize:${input.dir}`,

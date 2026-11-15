@@ -69,7 +69,7 @@ export const k8sConfigSchema = z.strictObject({
   kustomize: z
     .strictObject({
       roots: z
-        .array(z.union([z.string(), z.strictObject({ path: z.string(), patches: z.array(renderedPatchSchema).optional() })]))
+        .array(z.union([z.string(), z.strictObject({ path: z.string(), patches: z.array(renderedPatchSchema).optional(), enableHelm: z.boolean().optional(), helmCommand: z.string().optional(), fetchCharts: z.boolean().optional() })]))
         .optional(),
     })
     .optional(),
@@ -78,6 +78,9 @@ export const k8sConfigSchema = z.strictObject({
       kind: z.enum(["kustomize", "argo-app", "flux-kustomization", "manifests"]),
       dir: z.string().min(1),
       label: z.string().optional(),
+      enableHelm: z.boolean().optional(),
+      helmCommand: z.string().optional(),
+      fetchCharts: z.boolean().optional(),
       workspace: z.string().optional(),
     })
     .optional(),
