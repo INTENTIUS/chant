@@ -137,4 +137,39 @@ describe("K8sGenerator", () => {
     expect(files.length).toBe(1);
     // Should still have an import line (even if no resources)
   });
+
+  test("a kind with no exported class is written as k8sManifest, not a class (#5070)", () => {
+    const ir = makeIR([
+      {
+        logicalId: "externalSecretDb",
+        type: "K8s::ExternalSecrets::ExternalSecret",
+        properties: { metadata: { name: "db" }, spec: { refreshInterval: "1h", selector: { a: "b" } } },
+        metadata: { apiVersion: "external-secrets.io/v1", kind: "ExternalSecret" },
+      },
+      { logicalId: "svc", type: "K8s::Core::Service", properties: { metadata: { name: "svc" } } },
+    ]);
+    const content = generator.generate(ir)[0].content;
+    expect(content).not.toMatch(/\bExternalSecret\b(?!")/);
+    expect(content).toContain('import { k8sManifest, Service } from "@intentius/chant-lexicon-k8s"');
+    expect(content).toContain("export const externalSecretDb = k8sManifest({");
+    expect(content).toContain('apiVersion: "external-secrets.io/v1"');
+    expect(content).toContain('kind: "ExternalSecret"');
+    // the kind's schema is unknown, so spec keys stay literals
+    expect(content).not.toContain("new LabelSelector");
+  });
+
+  test("a kind that shares its name with a class of another group is untyped", () => {
+    const content = generator.generate(
+      makeIR([
+        {
+          logicalId: "x",
+          type: "K8s::NoSuchGroup::Service",
+          properties: { metadata: { name: "x" } },
+          metadata: { apiVersion: "nosuch.example.org/v1", kind: "Service" },
+        },
+      ]),
+    )[0].content;
+    expect(content).toContain("k8sManifest({");
+    expect(content).not.toContain("new Service(");
+  });
 });
