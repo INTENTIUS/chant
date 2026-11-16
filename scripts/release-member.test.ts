@@ -9,7 +9,10 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { beforeAll, describe, expect, it } from "vitest";
 import config from "../release/chant.config";
 import { releaseMemberFiles, releasePackages } from "./generate-release-members";
 
@@ -110,10 +113,42 @@ describe("release/<member>/ (#5133)", () => {
     expect(nested.ci.green).toEqual(outer.ci.green);
   });
 
-  it("publishes one tarball per member, straight to latest, with NPM_TOKEN as the fallback", async () => {
+  it("publishes its package directory, stamped from the train, straight to latest, with NPM_TOKEN as the fallback (#5154)", async () => {
     const { default: member } = await import("../release/lexicon-aws/chant.config");
-    expect(member.release.publish).toEqual([
-      { type: "npm", access: "public", stage: false, tokenEnv: "NPM_TOKEN", packages: ["../../.release/packs/lexicons_aws.tgz"] },
-    ]);
+    expect(member.release.publish).toEqual([{ type: "npm", access: "public", stage: false, tokenEnv: "NPM_TOKEN", packages: ["../../lexicons/aws"] }]);
+    expect(member.release.version).toEqual({ packages: ["../../lexicons/aws"], lockfile: false, ranges: "train" });
+    expect(member.release.legacyTags).toEqual(["lexicon-aws-v"]);
+    const { default: core } = await import("../release/core/chant.config");
+    expect(core.release.version).toEqual({ packages: ["../../packages/core"], lockfile: false, ranges: "train" });
+    expect("legacyTags" in core.release).toBe(false);
+  });
+});
+
+/** #5154: release/chant.config.ts declares chant's release train and the workflow that publishes it. */
+describe("release/chant.config.ts's release train (#5154)", () => {
+  it("records trains for npm, cuts the first one together, and reads the lockstep tags as each member's last release", () => {
+    expect(config.release.train).toMatchObject({ env: "npm", first: "together" });
+    expect(config.release.legacyTags).toEqual(["release/npm/", "chant-v"]);
+  });
+
+  it("writes publish.yml, the file the npm trusted-publisher records name, dispatched by hand", () => {
+    expect(config.release.workflow).toMatchObject({ trigger: "dispatch", file: ".github/workflows/publish.yml" });
+    expect(config.release.workflow?.env).toEqual({ CHANT_RELEASE_GATE: "1", NPM_TOKEN: "${{ secrets.NPM_TOKEN }}" });
+  });
+});
+
+/** #5154: .github/workflows/publish.yml is what `chant release workflow` writes from release/chant.config.ts. */
+describe("publish.yml (#5154)", () => {
+  let rendered = "";
+  beforeAll(() => {
+    const out = join(mkdtempSync(join(tmpdir(), "chant-publish-yml-")), "publish.yml");
+    const r = spawnSync(process.execPath, ["--import", "tsx", join(ROOT, "packages/core/src/cli/main.ts"), "release", "workflow", "--output", out], { cwd: join(ROOT, "release"), encoding: "utf-8" });
+    if (r.status !== 0) throw new Error(`chant release workflow failed: ${r.stderr}`);
+    rendered = readFileSync(out, "utf-8");
+  }, 120_000);
+
+  it("is what chant release workflow writes; run it in release/ after changing release.workflow, release.train or a member's targets", () => {
+    const body = (text: string) => text.split("\n").slice(1).join("\n");
+    expect(body(readFileSync(join(ROOT, ".github/workflows/publish.yml"), "utf-8"))).toBe(body(rendered));
   });
 });

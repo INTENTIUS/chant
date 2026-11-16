@@ -61,7 +61,7 @@ case "$1 $2" in
 esac`,
   );
   bin("npm", 'echo "9.9.9"');
-  bin("fake-release", `echo "release $*" >> "${state}/log"; echo "Released train t1 (2 member(s)): publish.yml runs on release-train/npm/t1"`);
+  bin("fake-release", `echo "release $*" >> "${state}/log"; echo "Dispatched publish.yml"`);
 }
 
 function run(...args: string[]) {
@@ -112,9 +112,9 @@ describe("release-when-green (#4218)", () => {
     const r = run();
     expect(r.status, r.stderr).toBe(0);
     expect(log()).not.toContain("workflow run");
-    expect(log()).toContain(`release ${sha}`);
-    expect(log()).toContain("--branch release-train/npm/t1");
-    expect(r.stdout).toContain("published release-train/npm/t1; npm latest is 9.9.9");
+    expect(log()).toContain("release \n");
+    expect(log()).toContain("run list -w publish.yml -e workflow_dispatch");
+    expect(r.stdout).toContain("released (gh run view 42); npm latest is 9.9.9");
   });
 
   it("starts the missing suites, then the tick once every phase passed, then cuts", () => {
@@ -126,7 +126,7 @@ describe("release-when-green (#4218)", () => {
     expect(l).toContain("gh workflow run release-suites.yml --ref main");
     expect(l).toContain("gh workflow run chant-ci-green.yml --ref main");
     expect(l.indexOf("release-suites.yml")).toBeLessThan(l.indexOf("chant-ci-green.yml"));
-    expect(l).toContain(`release minor ${sha}`);
+    expect(l).toContain("release minor\n");
   });
 
   it("starts the tick for a commit whose phases passed but has no green tag", () => {
@@ -187,7 +187,7 @@ describe("release-when-green (#4218)", () => {
     const r = run();
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).not.toContain("already released");
-    expect(log()).toContain(`release ${sha}`);
+    expect(log()).toContain("release \n");
   });
 
   it("stops at a commit a release-train/npm/<id> tag names (#5137)", () => {
@@ -199,23 +199,22 @@ describe("release-when-green (#4218)", () => {
     expect(log()).not.toContain("release ");
   });
 
-  it("passes each member's bump through to the release (#5137)", () => {
+  it("passes each member's level through to the release (#5137, #5154)", () => {
     fakes();
     checks("check|completed|success", "suites|completed|success");
     git(origin, "tag", `ci/green/${sha}`, sha);
     const r = run("minor", "lexicon-aws=major");
     expect(r.status, r.stderr).toBe(0);
-    expect(log()).toContain(`release minor lexicon-aws=major ${sha}`);
+    expect(log()).toContain("release minor lexicon-aws=major\n");
   });
 
-  it("stops when the train has nothing to release", () => {
+  it("fails when the dispatched run fails, naming it", () => {
     fakes();
-    bin("fake-release", `echo "release $*" >> "${state}/log"; echo "Nothing to release at abc: no member changed since its last release."`);
+    bin("gh", `echo "gh $*" >> "${state}/log"; case "$1 $2" in "run list") echo "43|completed|failure" ;; "api "*) cat "${state}/checks" ;; esac`);
     checks("check|completed|success", "suites|completed|success");
     git(origin, "tag", `ci/green/${sha}`, sha);
     const r = run();
-    expect(r.status, r.stderr).toBe(0);
-    expect(r.stdout).toContain("nothing to release at");
-    expect(log()).not.toContain("run list -w publish.yml");
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("publish.yml finished failure: gh run view 43");
   });
 });

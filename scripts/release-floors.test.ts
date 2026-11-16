@@ -1,8 +1,8 @@
 /**
  * The floors check against origin's tag list, which lacks chant-v0.81.0
  * (#4503). MEMBER_LEDGER_FLOOR and READ_CONTRACT_FLOOR name 0.81.0, which npm
- * lists, so the check passes only when it asks npm, and the publish path
- * (scripts/release-pack.sh) and `just release` must ask it.
+ * lists, so the check passes only when it asks npm, and the lockstep publish
+ * path (scripts/release-pack.sh) and the release train's check must ask it.
  */
 
 import { execFileSync } from "node:child_process";
@@ -10,7 +10,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { freezeFloorSource, freezeTextList, listReleaseTags, nextPatch, releaseCommit, releasedVersions, shippedSymbolic, splitFreeze, staleFloorTests, unreleasedFloors } from "./release-floors";
+import config from "../release/chant.config";
+import { coreLabelOfPlan, freezeFloorSource, freezeTextList, listReleaseTags, nextPatch, releaseCommit, releasedVersions, shippedSymbolic, splitFreeze, staleFloorTests, unreleasedFloors } from "./release-floors";
 
 const root = join(import.meta.dirname, "..");
 
@@ -51,12 +52,15 @@ describe("release floors (#4503)", () => {
     expect([...releasedVersions(["release/npm/1.2.3", "chant-v4.5.6", "ci/abc", "release/npm/x", ""])].sort()).toEqual(["1.2.3", "4.5.6"]);
   });
 
-  it("release-pack.sh and just release run the check with --npm", () => {
+  it("release-pack.sh and the release train's check run it with --npm", () => {
     expect(readFileSync(join(root, "scripts/release-pack.sh"), "utf8")).toMatch(/^npx tsx scripts\/release-floors\.ts --npm\b/m);
-    // just release runs scripts/release-train.sh (#5137), which checks core's label when core is in the train.
-    const train = readFileSync(join(root, "scripts/release-train.sh"), "utf8");
-    expect(train).toMatch(/floors="\$\{RELEASE_FLOORS:-npx tsx scripts\/release-floors\.ts\}"/);
-    expect(train).toMatch(/\$floors --npm --rev "\$sha" --release "\$core_label"/);
+    // #5154: `chant workspace train cut npm` runs release.train.check with the plan, before any cut.
+    expect(config.release.train?.check).toEqual(['npx tsx ../scripts/release-floors.ts --npm --rev "$CHANT_RELEASE_COMMIT" --train-plan "$CHANT_TRAIN_PLAN"']);
+  });
+
+  it("reads core's label from a train's plan, and none from a train without core (#5154)", () => {
+    expect(coreLabelOfPlan(JSON.stringify({ env: "npm", commit: "c", members: [{ member: "lexicon-aws", label: "0.125.2" }, { member: "core", label: "0.125.1" }] }))).toBe("0.125.1");
+    expect(coreLabelOfPlan(JSON.stringify({ env: "npm", commit: "c", members: [{ member: "lexicon-aws", label: "0.125.2" }] }))).toBeNull();
   });
 });
 

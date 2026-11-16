@@ -47,7 +47,9 @@ function stepsRunning(job: Job, pattern: RegExp): Step[] {
 }
 
 describe("release gate parity (#1481)", () => {
-  const publish = workflow("publish.yml");
+  // #5154: the lockstep jobs moved to publish-legacy.yml; publish.yml is the generated train workflow.
+  const publish = workflow("publish-legacy.yml");
+  const train = workflow("publish.yml");
   const chant = workflow("chant.yml");
 
   const publishStep = stepsRunning(publish.jobs.publish, /publish-packages\.sh/);
@@ -67,32 +69,34 @@ describe("release gate parity (#1481)", () => {
     expect(publish.jobs.publish.if).toMatch(/needs\.test\.result == 'success'/);
     expect((publish.jobs["release-publish"] as Job).needs).toEqual(["test"]);
     expect((publish.jobs["release-publish"] as Job).if).toMatch(/needs\.test\.result == 'success'/);
-    expect((publish.jobs["release-train"] as Job).needs).toEqual(["test"]);
-    expect((publish.jobs["release-train"] as Job).if).toMatch(/needs\.test\.result == 'success'/);
   });
 
-  // #5137: a release train publishes from its release-train/npm/<id> tag in
-  // this file, so every package keeps its trusted-publisher record, and the
-  // lockstep jobs leave that tag alone.
-  it("a release-train tag runs only the train job, which packs from the train and publishes it", () => {
-    const on = publish.on as { push: { tags: string[] } };
-    expect(on.push.tags).toContain("release-train/npm/*");
-    expect(on.push.tags).toContain("release/npm/*");
-    const train = publish.jobs["release-train"] as Job;
-    expect(train.if).toMatch(/startsWith\(github\.ref, 'refs\/tags\/release-train\/npm\/'\)/);
-    expect(train.permissions?.["id-token"]).toBe("write");
-    expect(train.permissions?.contents).toBe("write");
-    const pack = stepsRunning(train, /scripts\/release-train-pack\.sh/);
-    expect(pack).toHaveLength(1);
-    expect(envOf(train, pack[0], "CHANT_RELEASE_GATE")).toBe("1");
-    const steps = train.steps ?? [];
+  // #5154: a release train publishes from the generated publish.yml, on a
+  // dispatch or its release-train/npm/<id> tag, so every package keeps its
+  // trusted-publisher record; publish-legacy.yml leaves that tag alone. The
+  // train's gate is the newest green commit (ci last-green), which the cut
+  // checks again, and the packages build under the release gate.
+  it("a release-train tag runs only publish.yml, whose train publish runs under the release gate", () => {
+    const legacyTags = (publish.on as { push: { tags: string[] } }).push.tags;
+    const trainTags = (train.on as { push: { tags: string[] } }).push.tags;
+    expect(trainTags).toEqual(["release-train/npm/*"]);
+    expect(legacyTags).toContain("release/npm/*");
+    expect(legacyTags.some((t) => t.startsWith("release-train/"))).toBe(false);
+    expect(stepsRunning(train.jobs.gate, /ci last-green/)).toHaveLength(1);
+    expect(stepsRunning(train.jobs.cut, /workspace train cut npm --at "\$CHANT_RELEASE_COMMIT"/)).toHaveLength(1);
+    const job = train.jobs.publish;
+    const steps = job.steps ?? [];
     const fetchAt = steps.findIndex((s) => /chant\/lifecycle:chant\/lifecycle/.test(s.run ?? ""));
-    expect(fetchAt).toBeGreaterThanOrEqual(0);
-    expect(fetchAt).toBeLessThan(steps.indexOf(pack[0]));
-    const pub = stepsRunning(train, /workspace train publish npm/);
+    const prepare = stepsRunning(job, /workspace train prepare npm/);
+    const pub = stepsRunning(job, /workspace train publish npm/);
+    expect(prepare).toHaveLength(1);
     expect(pub).toHaveLength(1);
-    expect(envOf(train, pub[0], "NPM_TOKEN")).toBe("${{ secrets.NPM_TOKEN }}");
-    for (const name of ["publish", "untag"]) expect(publish.jobs[name].if).toMatch(/!startsWith\(github\.ref, 'refs\/tags\/release-train\/'\)/);
+    expect(fetchAt).toBeGreaterThanOrEqual(0);
+    expect(fetchAt).toBeLessThan(steps.indexOf(prepare[0]));
+    expect(steps.indexOf(prepare[0])).toBeLessThan(steps.indexOf(pub[0]));
+    expect(envOf(job, pub[0], "CHANT_RELEASE_GATE")).toBe("1");
+    expect(envOf(job, pub[0], "NPM_TOKEN")).toBe("${{ secrets.NPM_TOKEN }}");
+    expect((train as unknown as { permissions: Record<string, string> }).permissions["id-token"]).toBe("write");
   });
 
   // #3793: chant.yml no longer runs `npm run prepack` per lexicon. One job
@@ -136,7 +140,7 @@ describe("release gate parity (#1481)", () => {
   // 2026-10-23: the release gates on the unit tests and nothing else. The
   // trusted-publisher audit (#3191) is gone from publish.yml.
   it("publish gates on the unit tests only", () => {
-    expect(Object.keys(publish.jobs).sort()).toEqual(["publish", "release-publish", "release-train", "test", "untag"]);
+    expect(Object.keys(publish.jobs).sort()).toEqual(["publish", "release-publish", "test", "untag"]);
     expect(publish.jobs.test.if).toBeUndefined();
   });
 

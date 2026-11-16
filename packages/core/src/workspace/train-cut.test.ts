@@ -183,6 +183,25 @@ describe("the first train, together", () => {
   });
 });
 
+describe("the first train, together, after lockstep releases of the root", () => {
+  const f = fixture(async () => {
+    const x = setup({ first: "together" });
+    // The root member released every package at one label before the train; those labels are spent.
+    x.r.write("release/chant.config.ts", 'export default { environments: ["npm"], release: { train: { env: "npm", first: "together" } } };\n');
+    x.r.write("release/packages.component.ts", "export const packages = {};\n");
+    const head = x.r.commit("the lockstep root member");
+    x.r.git(["tag", `ci/green/${head}`]);
+    await cutRelease({ cwd: x.nested, compiler, label: "1.4.0", actor: "alice", env: {}, now: () => new Date("2026-11-16T09:00:00.000Z") });
+    return { ...x, head };
+  });
+
+  test("labels every member past the root member's own labels too", async () => {
+    const { nested, head, npm } = f();
+    const plan = await planTrainCut({ cwd: nested, env: "npm", at: head, registry: npmVersions(npm) });
+    expect(plan.members.map((m) => m.label)).toEqual(["1.4.1", "1.4.1"]);
+  });
+});
+
 describe("prepare and publish", () => {
   const f = fixture(async () => {
     const x = setup();

@@ -357,18 +357,39 @@ ext-vscode-build:
 ext-vscode-package:
     cd editors/vscode && npm install && npm run build && npm run package
 
-# Releases chant's npm packages as a train of per-package releases (#5137,
-# design #5132): `chant release changed` at the newest green main commit (or
-# <commit>) names the members under release/ to release, each is cut with
-# `chant release cut --at`, `chant workspace train npm` records the train,
-# and the member tags and one release-train/npm/<id> tag are pushed.
-# publish.yml publishes the train from that tag, core first. A bare level
-# bumps every member; <member>=<level> bumps one. --dry-run runs the cuts
-# without --yes, which cuts, records, tags and pushes nothing. The steps are
-# in scripts/release-train.sh.
-# Cut a release train at the newest green main commit (just release [major|minor|patch] [<member>=major|minor|patch ...] [<commit>] [--dry-run])
+# Releases chant's npm packages as a release train (#5154, design #5132):
+# dispatches .github/workflows/publish.yml, generated from release.workflow in
+# release/chant.config.ts. The run picks the newest green main commit, cuts
+# every member under release/ that `chant release changed` lists with
+# `chant workspace train cut npm`, and publishes the train core first. The
+# levels: auto (each member's commits and intent files decide; the default),
+# one for every member, or <member>=<level>. --dry-run plans the train here
+# at the newest green commit and writes nothing. The same train can be cut
+# from here with `chant workspace train cut npm --levels ... --yes` in
+# release/, which pushes the release-train/npm/<id> tag publish.yml runs on.
+# Release chant's packages as a train (just release [auto|major|minor|patch] [<member>=major|minor|patch ...] [--dry-run])
 release *args:
-    bash scripts/release-train.sh {{args}}
+    #!/usr/bin/env bash
+    set -euo pipefail
+    levels=() dry=0
+    for a in {{args}}; do
+      case "$a" in
+        --dry-run|-n) dry=1 ;;
+        auto|major|minor|patch|*=major|*=minor|*=patch) levels+=("$a") ;;
+        *) echo "release: $a is not a level (auto, major, minor, patch or <member>=<level>) or --dry-run" >&2; exit 2 ;;
+      esac
+    done
+    l="${levels[*]:-auto}"
+    if [ "$dry" = 1 ]; then
+      git fetch --quiet origin main 'refs/tags/ci/*:refs/tags/ci/*'
+      chant="npx tsx $PWD/packages/core/src/cli/main.ts"
+      sha=$($chant ci last-green --from origin/main --json | jq -r '.commit.sha // empty')
+      [ -n "$sha" ] || { echo "release: no green commit on main" >&2; exit 1; }
+      cd release && $chant workspace train cut npm --at "$sha" --levels "$l"
+    else
+      gh workflow run publish.yml --ref main -f levels="$l"
+      echo "Dispatched publish.yml with levels $l: gh run list -w publish.yml -L 1"
+    fi
 
 # Check that every contract floor names a released version or a local build
 # stamp, or set the next release's number (#4480), or after <v> is published
@@ -378,9 +399,10 @@ release *args:
 release-floors *args:
     npx tsx scripts/release-floors.ts {{args}}
 
-# Bring main's head (or <commit>) to green and cut it (#4218): start the missing
-# phases, wait for them and the tick, run `just release`, wait on the publish
-# (just release-when-green [major|minor|patch] [<member>=<level> ...] [<commit>] [--dry-run])
+# Bring main's head (or <commit>) to green and release it (#4218): start the
+# missing phases, wait for them and the tick, dispatch `just release`, wait on
+# the publish.yml run
+# (just release-when-green [auto|major|minor|patch] [<member>=<level> ...] [<commit>] [--dry-run])
 release-when-green *args:
     bash scripts/release-when-green.sh {{args}}
 
