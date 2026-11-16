@@ -55,6 +55,13 @@ const S3StoreSettingsShape = {
  */
 // #5152: a toolchain the release workflow sets up, by name or with its version.
 const RELEASE_TOOLCHAIN_NAMES = ["node", "go", "python", "rust", "java"] as const;
+// #5156: a file release.version stamps: a path whose name gives its format, or a format, field or pattern.
+const ReleaseVersionFileSchema = z.union([
+  z.string().min(1),
+  z.object({ path: z.string().min(1), format: z.enum(["cargo", "cargo-lock", "pyproject", "helm", "mcp-server", "krew", "artifacthub"]).optional(), appVersion: z.boolean().optional(), crates: z.array(z.string().min(1)).min(1).optional() }).strict(),
+  z.object({ path: z.string().min(1), field: z.string().min(1), prefix: z.string().optional() }).strict(),
+  z.object({ path: z.string().min(1), pattern: z.string().min(1), prefix: z.string().optional() }).strict(),
+]);
 const ReleaseToolchainSchema = z.union([z.enum(RELEASE_TOOLCHAIN_NAMES), z.object({ name: z.enum(RELEASE_TOOLCHAIN_NAMES), version: z.string().min(1) }).strict()]);
 
 const EnvironmentEntrySchema = z.union([
@@ -198,11 +205,13 @@ export const ChantConfigSchema = z.object({
       .optional(),
     // #4840: the label stamped into these packages' package.json at the cut and the publish.
     version: z.object({
-      packages: z.array(z.string().min(1)).min(1),
+      packages: z.array(z.string().min(1)).min(1).optional(),
       lockfile: z.union([z.string().min(1), z.literal(false)]).optional(),
       // #5155: what happens to the ranges of workspace dependencies.
       ranges: z.enum(["keep", "exact", "caret", "train"]).optional(),
-    }).strict().optional(),
+      // #5156: other manifests the label goes into, by format, field or pattern.
+      files: z.array(ReleaseVersionFileSchema).min(1).optional(),
+    }).strict().refine((v) => v.packages !== undefined || v.files !== undefined, { message: "release.version names packages, files, or both" }).optional(),
     workflow: z.object({
       trigger: z.enum(["tag", "dispatch"]).optional(),
       gate: z.enum(["last-green", "head"]).optional(),
@@ -567,7 +576,10 @@ export interface ChantConfig {
      * its build. The lockfile's entries for them follow (`lockfile`, default
      * `package-lock.json` when there is one). `ranges` (#5155) sets each
      * workspace dependency's range to the label the release or a train gives
-     * that package. See ./lifecycle/release-version.ts.
+     * that package. `files` (#5156) names other manifests the label goes
+     * into: Cargo.toml, pyproject.toml, Chart.yaml, server.json, krew and
+     * Artifact Hub manifests, a field, or a pattern. See
+     * ./lifecycle/release-version.ts.
      */
     version?: import("./lifecycle/release-version").ReleaseVersionConfig;
     /**
