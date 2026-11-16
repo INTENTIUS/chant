@@ -209,6 +209,14 @@
       },
       "description": "What the workspace's CI decides about its commits (#3573, ws-103). Added in schema 1 by chant 0.108.0, so a declaration that uses it sets minReader to 0.108.0 or newer.",
       "properties": {
+        "forge": {
+          "enum": ["github", "gitlab", "forgejo"],
+          "description": "The forge the repository is on (#5170): where its pull requests, comments and commit statuses live, and whose API chant reads. Absent: the forge system names, else the forge each command reads from its job or its flags. Added in schema 1 by chant 0.124.101, so a declaration that uses it sets minReader to 0.124.101 or newer."
+        },
+        "system": {
+          "enum": ["github", "gitlab", "forgejo", "prow"],
+          "description": "The CI system that runs the repository's jobs and reads the pipeline files chant writes (#5170): github (GitHub Actions), gitlab (GitLab CI), forgejo (Forgejo Actions) or prow. Absent: the forge's own. prow runs jobs for a repository on github only, and a pair that cannot run is refused. Added in schema 1 by chant 0.124.101, so a declaration that uses it sets minReader to 0.124.101 or newer."
+        },
         "green": {
           "$ref": "#/$defs/ciGreen"
         },

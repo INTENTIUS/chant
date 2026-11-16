@@ -21,6 +21,7 @@ export {
   environmentEndpoint,
   environmentExecutor,
   environmentName,
+  EXECUTOR_CI_SYSTEMS,
   EXECUTOR_FORGES,
   environmentNames,
   isEnvironmentPattern,
@@ -32,7 +33,8 @@ export {
   type EnvironmentExecutor,
   type OwnershipEnv,
 } from "./config-environments";
-import { EXECUTOR_FORGES, isOwnershipParamRef, resolveOwnershipStack, type EnvironmentDeclaration, type OwnershipEnv } from "./config-environments";
+import { forgeCiProblem } from "./ci-system";
+import { EXECUTOR_CI_SYSTEMS, EXECUTOR_FORGES, isOwnershipParamRef, resolveOwnershipStack, type EnvironmentDeclaration, type OwnershipEnv } from "./config-environments";
 
 /** An s3 index store's settings (#4519, ./lifecycle/snapshot-store-s3.ts). */
 const S3StoreSettingsShape = {
@@ -63,8 +65,13 @@ const EnvironmentEntrySchema = z.union([
     canary: z.boolean().optional(),
     executor: z.object({
       forge: z.enum(EXECUTOR_FORGES),
+      // #5170: the CI system that runs the workflow, when it is not the forge's own.
+      ci: z.enum(EXECUTOR_CI_SYSTEMS).optional(),
       workflow: z.string().min(1),
-    }).strict().optional(),
+    }).strict().superRefine((e, ctx) => {
+      const problem = e.ci === undefined ? undefined : forgeCiProblem(e.forge, e.ci);
+      if (problem) ctx.addIssue({ code: "custom", message: problem, path: ["ci"] });
+    }).optional(),
   }),
 ]);
 

@@ -85,6 +85,29 @@ list. Point
 Prow's `job_config_path` at it, or copy it into the repository that holds your
 installation's job config.
 
+## Write one repository's jobs from plain data
+
+A product that writes jobs as data, rather than declaring them, can still get
+the file chant would build. `forgeJobConfig` takes the forge and the
+repository's `owner/name`, as a workspace with `ci.forge: github` and
+`ci.system: prow` names them. The presubmits and postsubmits go under that
+repository:
+
+```ts
+import { forgeJobConfig } from "@intentius/chant-lexicon-prow";
+
+const text = forgeJobConfig(
+  { forge: "github", repo: "acme/app" },
+  { presubmits: [{ name: "pull-app-unit", always_run: true, spec }], periodics: [] },
+  { header: "Written by acme's own generator." },
+);
+```
+
+It writes through the same emitter as `chant build`. Prow runs jobs for
+GitHub repositories, so another forge is refused. A repository that is not
+`owner/name` is refused too. It does not turn chant's pipeline jobs into Prow jobs;
+`chant build --components --generate prow` says so and points here.
+
 ## Import an existing job config
 
 ```bash

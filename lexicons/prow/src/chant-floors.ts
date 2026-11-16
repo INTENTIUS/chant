@@ -6,5 +6,5 @@
  */
 import { NEXT_RELEASE } from "@intentius/chant/release-floors";
 
-/** The first prow lexicon release: `Presubmit`, `Postsubmit`, `Periodic` and `JobConfig`, `emitJobConfig` for plain job data, `chant import` of a job config, and the PROW rules (#5169). */
+/** The first prow lexicon release: `Presubmit`, `Postsubmit`, `Periodic` and `JobConfig`, `emitJobConfig` for plain job data, `forgeJobConfig` for one repository's jobs keyed by its owner/name (#5170), `chant import` of a job config, and the PROW rules (#5169). */
 export const PROW_LEXICON_FLOOR = NEXT_RELEASE;

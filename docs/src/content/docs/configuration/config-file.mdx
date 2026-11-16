@@ -189,7 +189,15 @@ environments: [
 ],
 ```
 
-chant doesn't run or dispatch it. [`chant workspace graph --composites`](/chant/cli/workspace-graph/#composites-and-components) prints it on each component's environment, so a reader such as behold knows that a release there goes through CI. Pattern entries take an executor the same way.
+`ci` names the CI system that runs the workflow when it is not the forge's own ([#5170](https://github.com/INTENTIUS/chant/issues/5170)). It takes `github`, `gitlab`, `forgejo` or `prow`. Without it the CI system is the forge's own: GitHub Actions, GitLab CI or Forgejo Actions. A GitHub repository whose jobs run on Prow names `prow`, with the job config file Prow loads as `workflow`. `prow` beside a forge other than `github` is refused when the config loads:
+
+```typescript
+environments: [
+  { name: "prod", executor: { forge: "github", ci: "prow", workflow: "prow/jobs.yaml" } },
+],
+```
+
+chant doesn't run or dispatch it. [`chant workspace graph --composites`](/chant/cli/workspace-graph/#composites-and-components) prints it on each component's environment, so a reader such as behold knows that a release there goes through CI. It prints `ci` only when the entry names one. Pattern entries take an executor the same way.
 
 ### `lint.extends`
 

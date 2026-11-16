@@ -613,6 +613,7 @@
           "required": ["forge", "workflow", "reason"],
           "properties": {
             "forge": { "enum": ["github", "gitlab", "forgejo", null] },
+            "ci": { "enum": ["github", "gitlab", "forgejo", "prow"], "description": "The CI system that runs the workflow, present only when chant.config.ts names one on the executor; absent, the forge's own (GitHub Actions, GitLab CI or Forgejo Actions). prow runs a GitHub repository's jobs, and workflow is then the job config file Prow loads (#5170). Added by chant 0.124.101." },
             "workflow": { "type": ["string", "null"], "description": "The workflow file the forge runs, such as deploy-prod.yml under .github/workflows/, or .gitlab-ci.yml." },
             "reason": {
               "oneOf": [
