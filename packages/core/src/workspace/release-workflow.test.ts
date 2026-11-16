@@ -1058,7 +1058,7 @@ describe("the cut hands the files release.artifacts built to the publish job (#5
 
   test("a helm target on ghcr.io that names no credentials pushes with the job's token (#5233)", () => {
     const doc = parseYAML(renderReleaseWorkflow({ forge: "github", groups: new Set(), pipeline: { trigger: "dispatch" }, publish: [{ type: "helm", oci: { repository: "ghcr.io/acme/charts" } }] })) as GhDoc;
-    expect(doc.permissions).toMatchObject({ packages: "write" });
+    expect(doc.jobs.publish!.permissions).toMatchObject({ packages: "write" });
     expect(doc.jobs.publish!.env).toMatchObject({ OCI_USERNAME: "${{ github.actor }}", OCI_PASSWORD: "${{ github.token }}" });
   });
 

@@ -96,7 +96,7 @@ describe("release gate parity (#1481)", () => {
     expect(steps.indexOf(prepare[0])).toBeLessThan(steps.indexOf(pub[0]));
     expect(envOf(job, pub[0], "CHANT_RELEASE_GATE")).toBe("1");
     expect(envOf(job, pub[0], "NPM_TOKEN")).toBe("${{ secrets.NPM_TOKEN }}");
-    expect((train as unknown as { permissions: Record<string, string> }).permissions["id-token"]).toBe("write");
+    expect(job.permissions?.["id-token"]).toBe("write");
   });
 
   // #3793: chant.yml no longer runs `npm run prepack` per lexicon. One job
