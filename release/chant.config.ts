@@ -1,15 +1,28 @@
 import type { ChantConfig } from "@intentius/chant";
 
-// chant's lockstep npm release (#4040), every package at one label. `just
-// release` no longer cuts it: it cuts a train of the per-package members
-// under release/<member>/ (#5137). It stays so a lockstep release cut before
-// that can be published again on its release/npm/<label> tag with `chant
-// release publish`, until two trains have published (#5132).
+// The root of chant's release workspace. Two things live here.
 //
-// A publish never builds. scripts/release-pack.sh writes the tarballs named
-// here, every package at the release's label, before the publish runs. The
-// order is publish-packages.sh's dependency layers, core first, and
-// release-member.test.ts checks it against them.
+// The release train (#5154): each publishable package is its own release
+// member under release/<member>/, and `release.train` releases every member
+// that changed as one train. `chant release workflow`, run here, writes
+// .github/workflows/publish.yml from `release.workflow`: dispatched with the
+// levels (`just release`), it picks the newest green main commit, runs
+// `chant workspace train cut npm`, and publishes the train core first with
+// `chant workspace train prepare` and `train publish`. The file keeps the
+// name the 25 npm trusted-publisher records name. The first train cuts every
+// member at one label past every version any package has (first:
+// "together"), and `check` refuses a train whose core floors name a version
+// that is neither released nor core's label (#4480). legacyTags are the tags
+// of the releases before the train, read as each member's last release.
+//
+// The lockstep release (#4040), every package at one label: `release.publish`
+// below. `just release` no longer cuts it. It stays so a lockstep release cut
+// before the train can be published again on its release/npm/<label> tag
+// (.github/workflows/publish-legacy.yml), until two trains have published
+// (#5137). A publish never builds: scripts/release-pack.sh writes the
+// tarballs named here, every package at the release's label, before the
+// publish runs. The order is publish-packages.sh's dependency layers, core
+// first, and release-member.test.ts checks it against them.
 //
 // stage: false publishes straight to latest. Moving a dist-tag over trusted
 // publishing needs a per-package setting on npmjs.com that chant's records
@@ -18,6 +31,24 @@ import type { ChantConfig } from "@intentius/chant";
 export default {
   environments: ["npm"],
   release: {
+    legacyTags: ["release/npm/", "chant-v"],
+    train: {
+      env: "npm",
+      first: "together",
+      check: ["npx tsx ../scripts/release-floors.ts --npm --rev \"$CHANT_RELEASE_COMMIT\" --train-plan \"$CHANT_TRAIN_PLAN\""],
+    },
+    workflow: {
+      trigger: "dispatch",
+      file: ".github/workflows/publish.yml",
+      install: "cd .. && npm ci",
+      build: false,
+      chant: "npx tsx ../packages/core/src/cli/main.ts",
+      toolchains: ["node"],
+      env: {
+        CHANT_RELEASE_GATE: "1",
+        NPM_TOKEN: "${{ secrets.NPM_TOKEN }}",
+      },
+    },
     publish: [
       {
         type: "npm",

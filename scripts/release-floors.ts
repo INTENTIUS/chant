@@ -7,6 +7,8 @@
  *   npx tsx scripts/release-floors.ts --rev <sha>      check a commit's tree
  *   npx tsx scripts/release-floors.ts --release <v>    count <v> as a release (the one being cut)
  *   npx tsx scripts/release-floors.ts --npm            also ask npm for the published versions
+ *   npx tsx scripts/release-floors.ts --train-plan <f> count core's label in a release train's plan as a release;
+ *                                                      with core not in the train, check nothing (#5154)
  *   npx tsx scripts/release-floors.ts --set <v>        set the next release's number
  *   npx tsx scripts/release-floors.ts --freeze <v> [--next <n>] [--rev <sha>]
  *                                                      after <v> shipped: its floors become literals
@@ -50,8 +52,12 @@
  * working tree when it differs from the committed one: scripts/release-pack.sh
  * and a local `npm pack` build (install-local-chant.sh) stamp every package
  * at the version they build, uncommitted, so a build stamped at NEXT_RELEASE
- * passes. `--release <v>` counts <v> the same way, for `just release`, which
- * checks the commit it cuts before any stamp exists.
+ * passes. `--release <v>` counts <v> the same way, for a cut, which checks
+ * the commit it cuts before any stamp exists. `--train-plan <file>` reads
+ * <v> from the plan `chant workspace train cut` hands `release.train.check`
+ * (CHANT_TRAIN_PLAN, #5154): the label of the member `core`. A train that
+ * does not release core checks nothing, since its floors ship with the core
+ * already published.
  *
  * After a release ships, its floors stay at the version they shipped with
  * (#4501). `--freeze <v>`, run once <v> is published and while NEXT_RELEASE
@@ -106,6 +112,15 @@ interface Args {
   set?: string;
   freeze?: string;
   next?: string;
+  /** `--train-plan <file>`: a train without core checks nothing. */
+  trainWithoutCore?: boolean;
+}
+
+/** Core's label in a `chant workspace train cut` plan (#5154), or null when the train does not release core. */
+export function coreLabelOfPlan(text: string): string | null {
+  const plan = JSON.parse(text) as { members?: Array<{ member?: unknown; label?: unknown }> };
+  const core = (plan.members ?? []).find((m) => m.member === "core");
+  return typeof core?.label === "string" ? core.label : null;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -120,6 +135,11 @@ function parseArgs(argv: string[]): Args {
     if (a === "--rev") args.rev = value();
     else if (a === "--release") args.release.push(value());
     else if (a === "--npm") args.npm = true;
+    else if (a === "--train-plan") {
+      const label = coreLabelOfPlan(readFileSync(value(), "utf-8"));
+      if (label === null) args.trainWithoutCore = true;
+      else args.release.push(label);
+    }
     else if (a === "--set") args.set = value();
     else if (a === "--freeze") args.freeze = value();
     else if (a === "--next") args.next = value();
@@ -481,5 +501,6 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const args = parseArgs(process.argv.slice(2));
   if (args.set) set(args.set);
   else if (args.freeze) freeze(args.freeze, args.next, args.rev);
+  else if (args.trainWithoutCore) console.log("release floors: the train does not release core, so no core floor ships with it");
   else process.exit(check(args));
 }

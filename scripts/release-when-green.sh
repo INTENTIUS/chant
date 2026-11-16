@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# release-when-green.sh [major|minor|patch] [<member>=<level> ...] [<sha>] [--dry-run] (#4218)
+# release-when-green.sh [auto|major|minor|patch] [<member>=<level> ...] [<sha>] [--dry-run] (#4218)
 #
-# Brings main's head, or <sha>, to ci/green/<sha> and cuts it with
+# Brings main's head, or <sha>, to ci/green/<sha> and releases it with
 # `just release`, then waits on the publish run and prints npm's `latest`:
 #
 #   1. starts each required ci.green phase that has no check run on the
@@ -13,8 +13,10 @@
 #   3. once every phase passed and the commit has no green tag, starts the tick
 #      (chant-ci-green.yml) and waits for the tag; a tick that finishes
 #      without tagging stops it;
-#   4. runs `just release <bumps> <sha>`, which cuts a release train (#5137),
-#      and waits on publish.yml at the release-train/npm/<id> tag it names.
+#   4. runs `just release <levels>`, which dispatches publish.yml (#5154):
+#      its gate takes the newest green commit at or below main's head, which
+#      is <sha> unless a later commit is green too, and the run cuts and
+#      publishes the train. It waits on that run.
 #
 # Only events end a wait: a run finishing, a job failing, a tag appearing.
 # Nothing times out into a verdict. --dry-run says what it would start and
@@ -29,7 +31,7 @@ bumps=() sha="" dry=0
 for a in "$@"; do
   case "$a" in
     "") ;;
-    major|minor|patch|*=major|*=minor|*=patch) bumps+=("$a") ;;
+    auto|major|minor|patch|*=major|*=minor|*=patch) bumps+=("$a") ;;
     --dry-run|-n) dry=1 ;;
     -*) echo "release-when-green: unknown flag $a" >&2; exit 2 ;;
     *) sha="$a" ;;
@@ -125,9 +127,9 @@ fi
 
 if [ "$dry" = 1 ]; then
   if green; then
-    $release_cmd ${bumps[@]+"${bumps[@]}"} "$sha" --dry-run
+    $release_cmd ${bumps[@]+"${bumps[@]}"} --dry-run
   else
-    say "dry run: would wait for the phases on $short, run the tick, then cut with: $release_cmd ${bumps[*]-} $short"
+    say "dry run: would wait for the phases on $short, run the tick, then release with: $release_cmd ${bumps[*]-}"
   fi
   exit 0
 fi
@@ -162,22 +164,18 @@ while ! green; do
 done
 say "$short is tagged ci/green"
 
-# 4. Cut and publish.
-out=$($release_cmd ${bumps[@]+"${bumps[@]}"} "$sha" | tee >(cat >&2))
-if grep -q '^Nothing to release' <<<"$out"; then
-  say "nothing to release at $short"
-  exit 0
-fi
-tag=$(sed -n 's/^Released .*: publish\.yml runs on \([^ ]*\)$/\1/p' <<<"$out")
-[ -n "$tag" ] || die "the release printed no tag"
-say "waiting on publish.yml at $tag"
+# 4. Dispatch the release and wait on its run.
+started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+$release_cmd ${bumps[@]+"${bumps[@]}"}
+say "waiting on the publish.yml run dispatched at $started"
+run=""
 while true; do
-  run=$(gh run list -w publish.yml --branch "$tag" -L 1 --json databaseId,status,conclusion \
-    -q '.[] | "\(.databaseId)|\(.status)|\(.conclusion)"')
+  run=$(gh run list -w publish.yml -e workflow_dispatch -L 5 --json databaseId,status,conclusion,createdAt \
+    -q ".[] | select(.createdAt >= \"$started\") | \"\(.databaseId)|\(.status)|\(.conclusion)\"" | tail -1)
   case "$run" in
     *\|completed\|success) break ;;
-    *\|completed\|*) die "publish.yml for $tag finished ${run##*|}: gh run view ${run%%|*}" ;;
+    *\|completed\|*) die "publish.yml finished ${run##*|}: gh run view ${run%%|*}" ;;
   esac
   sleep "$poll"
 done
-say "published $tag; npm latest is $(npm view @intentius/chant dist-tags.latest)"
+say "released (gh run view ${run%%|*}); npm latest is $(npm view @intentius/chant dist-tags.latest)"

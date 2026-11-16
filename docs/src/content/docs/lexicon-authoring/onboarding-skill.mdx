@@ -163,17 +163,16 @@ is versioned in lockstep with core.
 7. **Release**
 
    ```bash
-   just release patch                  # every package, in lockstep
-   just release-lexicon <name> patch   # this lexicon only
+   just release                        # every package that changed, each at its own version
    ```
 
-   Never hand-roll the tag. `.github/workflows/publish.yml` triggers on
-   `release/npm/*`, `chant-v*` and `lexicon-*-v*` only; a bare `v0.57.0` tag
-   matches nothing and the release silently never happens.
+   Never hand-roll the tag. `.github/workflows/publish.yml` runs on a dispatch
+   and on `release-train/npm/*` tags only; a bare `v0.57.0` tag matches nothing
+   and the release silently never happens.
 
-   `just release` publishes the tarballs `release/chant.config.ts` lists, so a
-   new lexicon adds its line there, after the lexicons it depends on.
-   `scripts/release-member.test.ts` fails until it does (#4040).
+   A new lexicon needs its release member under `release/`: run
+   `npx tsx scripts/generate-release-members.ts` and commit what it writes.
+   `scripts/release-member.test.ts` fails until it does.
 
 8. **Confirm it actually published**
 

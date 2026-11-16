@@ -21,11 +21,14 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
 
+/** The tag triggers of the publish workflows: the generated train workflow and the lockstep one (#5154). */
 function publishTagPatterns(): string[] {
-  const workflow = readFileSync(join(repoRoot, ".github", "workflows", "publish.yml"), "utf-8");
-  const match = workflow.match(/^\s*tags:\s*\[([^\]]+)\]/m);
-  if (!match) throw new Error("publish.yml: `tags: [...]` trigger not found");
-  return match[1].split(",").map((s) => s.trim().replace(/^['"]|['"]$/g, ""));
+  return ["publish.yml", "publish-legacy.yml"].flatMap((file) => {
+    const workflow = readFileSync(join(repoRoot, ".github", "workflows", file), "utf-8");
+    const match = workflow.match(/^\s*tags:\s*\[([^\]]+)\]/m);
+    if (!match) throw new Error(`${file}: \`tags: [...]\` trigger not found`);
+    return match[1].split(",").map((s) => s.trim().replace(/^['"]|['"]$/g, ""));
+  });
 }
 
 /** Tags the justfile actually creates, as literal-prefix + wildcard shapes. */
@@ -44,14 +47,10 @@ function releaseTagShapes(): Array<{ recipe: string; example: string }> {
       .replace(/\$\{?next\}?/g, "9.9.9");
     shapes.push({ recipe: raw, example });
   }
-  // `just release` (#5137) runs scripts/release-train.sh. Each member's cut
-  // makes its own release/npm/<member>/<label> tag, which publishes nothing
-  // by design; the train's tag, `ttag="release-train/npm/$train"`, is what
-  // publish.yml runs on.
-  const train = readFileSync(join(repoRoot, "scripts", "release-train.sh"), "utf-8");
-  for (const m of train.matchAll(/^ttag="([^"]+)"$/gm)) {
-    shapes.push({ recipe: m[1], example: m[1].replace(/\$\{?train\}?/g, "train-x") });
-  }
+  // A release train (#5154): `chant workspace train cut npm` tags the commit
+  // release-train/npm/<id>, which publish.yml runs on. Each member's own
+  // release/npm/<member>/<label> tag publishes nothing by design.
+  shapes.push({ recipe: "release-train/<env>/<id> (chant workspace train cut npm)", example: "release-train/npm/train-x" });
   return shapes;
 }
 
@@ -248,44 +247,29 @@ describe("release wiring: release the newest green commit (#2816)", () => {
 });
 
 /**
- * #4040 — `just release` cuts chant with its own release command: the
- * preflight still picks the green commit, `chant release cut --at` cuts it
- * with no bump commit and no signing, and the recipe pushes the tag the cut
- * made. Its floor reads every tag, since package.json no longer moves.
+ * #5154 — `just release` dispatches the generated publish.yml with the
+ * levels, and --dry-run plans the train at the newest green commit here,
+ * cutting and pushing nothing. The train itself is chant's: release.train in
+ * release/chant.config.ts, and publish.yml is what `chant release workflow`
+ * writes from it.
  */
-describe("release wiring: just release cuts a release train (#5137)", () => {
-  const body = () => readFileSync(join(repoRoot, "scripts", "release-train.sh"), "utf-8");
+describe("release wiring: just release dispatches the release train (#5154)", () => {
+  const body = () => recipeBody("release");
 
-  it("the recipe runs scripts/release-train.sh", () => {
-    expect(recipeBody("release")).toMatch(/bash scripts\/release-train\.sh \{\{args\}\}/);
+  it("dispatches publish.yml on main with the levels", () => {
+    expect(body()).toMatch(/gh workflow run publish\.yml --ref main -f levels="\$l"/);
+    expect(body()).toMatch(/l="\$\{levels\[\*\]:-auto\}"/);
   });
 
-  it("cuts each member at the commit the preflight chose, from its directory under release/", () => {
-    expect(body()).toMatch(/preflight="\$\{RELEASE_PREFLIGHT:-bash scripts\/release-preflight\.sh\}"/);
-    expect(body()).toMatch(/sha=\$\(\$preflight/);
-    expect(body()).toMatch(/cd "release\/\$m" && \$chant release cut "\$l" --at "\$sha"/);
-    expect(body().indexOf("sha=$($preflight")).toBeLessThan(body().indexOf("$chant release cut"));
+  it("a dry run plans the train at the newest green commit without --yes", () => {
+    expect(body()).toMatch(/ci last-green --from origin\/main/);
+    expect(body()).toMatch(/workspace train cut npm --at "\$sha" --levels "\$l"$/m);
+    expect(body()).not.toMatch(/--yes/);
   });
 
-  it("makes no bump commit and signs nothing", () => {
-    expect(body()).not.toMatch(/git commit/);
-    expect(body()).not.toMatch(/--sign/);
-  });
-
-  it("a dry run cuts without --yes and stops before the train, the ledger push and any tag push", () => {
-    expect(body()).toMatch(/\[ "\$dry" = 1 \] \|\| yes=\(--yes\)/);
-    const dry = body().indexOf('if [ "$dry" = 1 ]; then');
-    expect(dry).toBeGreaterThan(-1);
-    for (const later of ["workspace train npm --json", "$push_ledger\n", "git push"]) expect(dry).toBeLessThan(body().indexOf(later));
-  });
-
-  it("records the train and pushes the ledger before it pushes the train's tag", () => {
-    expect(body().indexOf("workspace train npm --json")).toBeLessThan(body().indexOf("$push_ledger\n"));
-    expect(body().indexOf("$push_ledger\n")).toBeLessThan(body().indexOf("git push --atomic"));
-  });
-
-  it("floors each label on every version its package has, and the first train on the lockstep labels", () => {
-    expect(body()).toMatch(/release_member_floor "\$m" "\$sha"/);
-    expect(body()).toMatch(/cd release && \$chant release list --json/);
+  it("publish.yml is generated from release/chant.config.ts", () => {
+    const workflow = readFileSync(join(repoRoot, ".github", "workflows", "publish.yml"), "utf-8");
+    expect(workflow.split("\n")[0]).toMatch(/^# Generated by chant .*Regenerate with: chant release workflow/);
+    expect(workflow).toMatch(/workflow_dispatch:\n {4}inputs:\n {6}levels:/);
   });
 });
