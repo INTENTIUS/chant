@@ -357,7 +357,7 @@ export async function runReleaseStamp(ctx: CommandContext): Promise<number> {
   if (label === null) return fail("release-version-no-label", "release stamp needs the release's label", "chant release stamp <label> [--json]");
   const cwd = resolve(".");
   const config = await releaseVersionOf(cwd);
-  if (!config) return fail("release-version-not-declared", "this member's chant.config.ts has no release.version, so there is nothing to stamp", "Name the package directories: release: { version: { packages: [\"packages/cli\"] } }");
+  if (!config) return fail("release-version-not-declared", "this member's chant.config.ts has no release.version, so there is nothing to stamp", "Name the package directories or the files: release: { version: { packages: [\"packages/cli\"] } } or { version: { files: [\"Cargo.toml\"] } }");
   const { stampReleaseVersion, ReleaseVersionError, ownNames } = await import("../../lifecycle/release-version");
   if (args.train !== undefined && config.ranges !== "train") return fail("release-ranges-not-train", `--train names a train, and this member's release.version.ranges is ${config.ranges ?? "unset"}`, 'Set release.version.ranges to "train", or leave --train out.');
   let files: string[];

@@ -244,6 +244,7 @@ release: {
 | Field | Meaning |
 |---|---|
 | `packages` | Package directories relative to the member, `"."` for the member's own. Each `package.json` gets the label as its `version`. With the default `ranges`, no other field changes |
+| `files` | Other manifests the label goes into, such as `Cargo.toml`, `pyproject.toml` or `Chart.yaml`. See [Other manifests](#other-manifests). A member names `packages`, `files` or both |
 | `lockfile` | The lockfile whose entries for those packages follow, with the root entry and the top-level `version` for `"."`. Default `package-lock.json` when the member has one; `false` for none |
 | `ranges` | What happens to the ranges of workspace dependencies: `keep` (the default), `exact`, `caret` or `train`. See [Workspace dependency ranges](#workspace-dependency-ranges) |
 
@@ -272,11 +273,54 @@ chant release stamp 0.125.3 --train train-2f6c   # in the member's directory
 
 `--train` takes a train's id or digest, found in the environments the member's `chant.config.ts` declares. A member owns the packages its `release.version.packages` names; a member with no `release.version` owns none, so dependencies on it keep their ranges. `chant release publish` takes a tree stamped from a train that pins the release's label as the commit's. A package of a member the train pins with no label is refused with `release-ranges-unpinned`, a train that pins none of the member's packages at the release's label with `release-train-not-pinned`, an unknown train with `release-train-unknown`, and `--train` under any other `ranges` with `release-ranges-not-train`.
 
+#### Other manifests
+
+`files` stamps the label into manifests that are not `package.json`, so a Rust crate, a Python package, a Helm chart or a plugin listing needs no version commit either:
+
+```ts
+release: {
+  version: {
+    files: [
+      "Cargo.toml",
+      "Cargo.lock",
+      { path: "charts/acme/Chart.yaml", appVersion: true },
+      "server.json",
+      { path: "krew/acme.yaml", format: "krew" },
+      { path: "artifacthub-pkg.yml" },
+      { path: "internal/version/version.go", pattern: 'Version = "v([^"]+)"' },
+    ],
+  },
+},
+```
+
+Each file is edited in place. chant finds the version's text and replaces it, so comments, key order, quoting and blank lines stay as committed, and the stamped file differs from the commit's in the version alone. An entry is a path whose file name gives its format, or an object with `path` and one of `format`, `field` or `pattern`:
+
+| Format | Found by name | What takes the label |
+|---|---|---|
+| `cargo` | `Cargo.toml` | `[package] version` and `[workspace.package] version`, and the `version` of each path dependency whose path is inside the member, in `dependencies`, `dev-dependencies`, `build-dependencies`, `workspace.dependencies` and `target.*` tables. The operator stays: `=0.1.0` becomes `=1.4.0`. A crate with `version.workspace = true` is left; name the workspace's `Cargo.toml` |
+| `cargo-lock` | `Cargo.lock` | The `version` of each crate of the Cargo workspace, an entry with no `source`. `crates: ["acme-cli"]` names the crates instead |
+| `pyproject` | `pyproject.toml` | `[project] version` and `[tool.poetry] version` |
+| `helm` | `Chart.yaml` | `version`, and `appVersion` with `appVersion: true` |
+| `mcp-server` | `server.json` | `version` and the `version` of each entry in `packages` that has one |
+| `krew` | (name it) | `spec.version`, written `v1.4.0` as krew wants, and the committed version wherever it appears in each platform's `uri`. `sha256` is left |
+| `artifacthub` | `artifacthub-pkg.yml`, `artifacthub-pkg.yaml` | `version`, and `appVersion` with `appVersion: true` |
+
+For anything else:
+
+| Entry | What takes the label |
+|---|---|
+| `{ path, field: "spec.version" }` | Each string at that dotted path in a `.json`, `.yaml`, `.yml` or `.toml` file. `[]` reaches every item of a list: `packages[].version` |
+| `{ path, pattern: 'Version = "v([^"]+)"' }` | Each capture group of every match of a JavaScript regular expression, read with the `m` flag so `^` and `$` match at each line |
+
+`field` and `pattern` take a `prefix`, such as `v`, written before the label. A field of YAML is found in block style; a version inside a flow collection (`{ version: 1.0.0 }`) is reached with a pattern.
+
+`chant release stamp` stamps these files with the package files, and `chant release publish` takes each as the commit's when it is exactly the commit's file stamped with the release's label. A file that does not exist is refused with `release-version-no-file`, a file name chant can't read a format from with `release-version-format-unknown`, a file with no version where its format looks (a pattern that matches nothing, a `pyproject.toml` whose version is `dynamic`) with `release-version-no-field`, and a file named twice, a pattern with no capture group or a field that is not a string with `release-version-invalid`. A Cargo path dependency outside the member keeps its requirement, since a member released at its own label stamps its own versions, and a `Chart.yaml`'s `dependencies` keep theirs.
+
 #### Files that embed the version
 
-A project on `release.version` follows one rule: the committed tree never holds the version being released. Only the release's build writes that version, from the stamped `package.json` or from `CHANT_RELEASE_LABEL`. In practice:
+A project on `release.version` follows one rule: the committed tree never holds the version being released. Only the release's build writes that version, from the stamped files or from `CHANT_RELEASE_LABEL`. In practice:
 
-- The `version` in each stamped `package.json` stays where it is on the default branch and no longer moves. chant's own packages do the same: their versions are older than the releases on npm.
+- The version in each stamped file stays where it is on the default branch and no longer moves. chant's own packages do the same: their versions are older than the releases on npm.
 - A committed file rendered from the package version, such as a golden, an example pipeline or a generated Dockerfile, is rendered from that committed version. It no longer changes when a release is made, so no release needs a commit to regenerate it.
 - A Dockerfile reads the version from a build argument, never from text rendered into it: `ARG CHANT_RELEASE_LABEL` with `LABEL org.opencontainers.image.version="${CHANT_RELEASE_LABEL}"`, and the same argument for a file name that carries the version, such as the tarball `npm pack` writes. A command entry passes `--build-arg CHANT_RELEASE_LABEL="$CHANT_RELEASE_LABEL"` itself, and a Dockerfile entry gets the argument from chant. A build outside a release passes the committed version.
 - A committed file that must name a published release, such as an example that runs the newest image, pins that release as it would pin a dependency, in a change of its own, not as part of a release.
@@ -917,15 +961,16 @@ With `release.version` (see [The label as the package version](#the-label-as-the
 
 ## release stamp
 
-Writes the label as the `version` of each `package.json` that `release.version` names, and into the lockfile's entries for them, as the cut does before its build ([#4840](https://github.com/INTENTIUS/chant/issues/4840)). It leaves the files stamped. The publish job runs it before its build, and `chant release publish` takes the stamped files as the commit's. `git checkout -- <files>` puts them back on a workstation.
+Writes the label as the `version` of each `package.json` that `release.version` names, into the lockfile's entries for them, and into each of its `files`, as the cut does before its build ([#4840](https://github.com/INTENTIUS/chant/issues/4840)). It leaves the files stamped. The publish job runs it before its build, and `chant release publish` takes the stamped files as the commit's. `git checkout -- <files>` puts them back on a workstation.
 
 ```bash
 chant release stamp 1.4.0   # Stamped 1.4.0 into packages/cli/package.json, package-lock.json
+chant release stamp 1.4.0   # Stamped 1.4.0 into Cargo.toml, Cargo.lock, charts/acme/Chart.yaml
 ```
 
 With `ranges` set, the workspace dependencies' ranges follow the label too. `--train <id|digest>` gives a `ranges: "train"` member the labels of the other members' packages from a recorded train (see [Workspace dependency ranges](#workspace-dependency-ranges)).
 
-It refuses a member with no `release.version` (`release-version-not-declared`), and the label and package problems the cut refuses.
+It refuses a member with no `release.version` (`release-version-not-declared`), and the label, package and file problems the cut refuses.
 
 ## release tag
 

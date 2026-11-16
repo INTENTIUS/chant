@@ -24,7 +24,9 @@
  * packages the release stamps, `train` also for the packages of the other
  * members a release train pins. scripts/release-pack.sh --train does the
  * same for chant itself, and more (the floors, the packing in dependency
- * layers), so chant's own release keeps it for now.
+ * layers), so chant's own release keeps it for now. `files` (#5156) names
+ * other manifests the label goes into, by format, field or pattern, edited
+ * in place (./release-version-formats.ts).
  *
  * This module reaches only Node's built-ins and git.
  */
@@ -32,6 +34,9 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { isAbsolute, posix, relative, resolve } from "node:path";
+import { ManifestStampError, resolveVersionFile, stampVersionFile, versionFilePath, type ReleaseVersionFile } from "./release-version-formats";
+
+export { MANIFEST_FORMATS, type ManifestFormat, type ManifestFile, type FieldFile, type PatternFile, type ReleaseVersionFile } from "./release-version-formats";
 
 /** The first chant with `release.version` and `chant release stamp` (#4840). Products feature-detect on it. */
 export const RELEASE_VERSION_FLOOR = "0.124.79";
@@ -56,11 +61,19 @@ const RANGE_FIELDS = ["dependencies", "peerDependencies", "optionalDependencies"
 /** `release.version` in `chant.config.ts`. */
 export interface ReleaseVersionConfig {
   /** The package directories, relative to the member, whose `package.json` takes the label as its `version`: `"."` for the member's own. */
-  packages: string[];
+  packages?: string[];
   /** The lockfile whose entries for those packages take it too. Default `package-lock.json` when the member has one; `false` for none. */
   lockfile?: string | false;
   /** What happens to the ranges of workspace dependencies: `keep` (default), `exact`, `caret` or `train`. */
   ranges?: ReleaseRanges;
+  /**
+   * Other files the label goes into (#5156): a path whose name says its
+   * format (`Cargo.toml`, `Cargo.lock`, `pyproject.toml`, `Chart.yaml`,
+   * `server.json`, `artifacthub-pkg.yml`), `{ path, format }` for one that
+   * doesn't (`krew`), `{ path, field }` for a field of a JSON, YAML or TOML
+   * file, or `{ path, pattern }` for a regular expression.
+   */
+  files?: ReleaseVersionFile[];
 }
 
 export class ReleaseVersionError extends Error {
@@ -80,12 +93,12 @@ const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[
 /** Refuse a label `package.json` can't carry as its version. */
 export function checkVersionLabel(label: string | null): asserts label is string {
   if (label === null) {
-    throw new ReleaseVersionError("release-version-no-label", "release.version stamps the release's label into package.json, and this release has no label", "Cut it with a label: chant release cut <version>.");
+    throw new ReleaseVersionError("release-version-no-label", "release.version stamps the release's label as the version, and this release has no label", "Cut it with a label: chant release cut <version>.");
   }
   if (!SEMVER.test(label)) {
     throw new ReleaseVersionError(
       "release-version-label-invalid",
-      `release.version stamps the label into package.json, and "${label}" is not a version npm takes`,
+      `release.version stamps the label as the version, and "${label}" is not a version npm takes`,
       `Label the release MAJOR.MINOR.PATCH, such as ${SEMVER.test(label.replace(/^v/, "")) ? label.replace(/^v/, "") : "1.4.0"}${/^v\d/.test(label) ? ", with no v" : ""}.`,
     );
   }
@@ -95,29 +108,47 @@ const norm = (p: string): string => posix.normalize(p.split("\\").join("/")).rep
 
 const outside = (p: string): boolean => isAbsolute(p) || norm(p).split("/").includes("..");
 
-/** Check the declaration's paths: at least one package, every path inside the member. */
+/** Check the declaration: at least one package or file, every path inside the member, each file's format known. */
 export function checkReleaseVersion(config: ReleaseVersionConfig): void {
   if (config.ranges !== undefined && !["keep", "exact", "caret", "train"].includes(config.ranges)) {
     throw new ReleaseVersionError("release-version-invalid", `release.version.ranges is "${String(config.ranges)}", not keep, exact, caret or train`);
   }
-  if (config.packages.length === 0) throw new ReleaseVersionError("release-version-invalid", "release.version.packages names no package directory");
-  for (const p of [...config.packages, ...(typeof config.lockfile === "string" ? [config.lockfile] : [])]) {
+  const files = config.files ?? [];
+  if ((config.packages ?? []).length === 0 && files.length === 0) throw new ReleaseVersionError("release-version-invalid", "release.version names no package directory and no file");
+  for (const p of [...(config.packages ?? []), ...(typeof config.lockfile === "string" ? [config.lockfile] : []), ...files.map(versionFilePath)]) {
     if (outside(p)) throw new ReleaseVersionError("release-version-invalid", `release.version: ${p} is not a path inside the member`);
+  }
+  const seen = new Set<string>();
+  for (const f of files) {
+    const path = norm(versionFilePath(f));
+    if (seen.has(path)) throw new ReleaseVersionError("release-version-invalid", `release.version.files names ${path} twice`, "Stamp a file with one entry: a pattern with several capture groups reaches several places.");
+    seen.add(path);
+    asVersionError(() => resolveVersionFile(f));
+  }
+}
+
+/** Run `fn`, turning a format's refusal into a {@link ReleaseVersionError}. */
+function asVersionError<T>(fn: () => T): T {
+  try {
+    return fn();
+  } catch (err) {
+    if (err instanceof ManifestStampError) throw new ReleaseVersionError(err.code, err.message, err.fix);
+    throw err;
   }
 }
 
 /** The lockfile the declaration names, relative to the member, or null. */
 function lockfileOf(cwd: string, config: ReleaseVersionConfig): string | null {
-  if (config.lockfile === false) return null;
+  if (config.lockfile === false || (config.packages ?? []).length === 0) return null;
   if (typeof config.lockfile === "string") return norm(config.lockfile);
   return existsSync(resolve(cwd, "package-lock.json")) ? "package-lock.json" : null;
 }
 
-/** The files the release stamps, relative to the member: each package's `package.json`, then the lockfile. */
+/** The files the release stamps, relative to the member: each package's `package.json`, then the lockfile, then `files`. */
 export function releaseVersionFiles(cwd: string, config: ReleaseVersionConfig): string[] {
-  const files = config.packages.map((p) => (norm(p) === "." ? "package.json" : `${norm(p)}/package.json`));
+  const files = (config.packages ?? []).map((p) => (norm(p) === "." ? "package.json" : `${norm(p)}/package.json`));
   const lock = lockfileOf(cwd, config);
-  return lock ? [...files, lock] : files;
+  return [...files, ...(lock ? [lock] : []), ...(config.files ?? []).map((f) => norm(versionFilePath(f)))];
 }
 
 /** The indent a JSON file was written with, so the stamped file differs from it in the version alone. */
@@ -191,7 +222,7 @@ export function stampText(text: string, label: string, kind: "package" | "lockfi
 /** The names of the packages `config` stamps, read from their package.json. A file that is missing or has no name is skipped; the stamp refuses it. */
 export function ownNames(cwd: string, config: ReleaseVersionConfig): string[] {
   const names: string[] = [];
-  for (const p of config.packages) {
+  for (const p of config.packages ?? []) {
     try {
       const name = (JSON.parse(readFileSync(resolve(cwd, norm(p) === "." ? "package.json" : `${norm(p)}/package.json`), "utf-8")) as { name?: unknown }).name;
       if (typeof name === "string") names.push(name);
@@ -206,7 +237,8 @@ export function ownNames(cwd: string, config: ReleaseVersionConfig): string[] {
 function stamper(cwd: string, config: ReleaseVersionConfig, label: string, train?: RangeLabels): (file: string, text: string) => string {
   const lock = lockfileOf(cwd, config);
   const lockDir = lock ? posix.dirname(lock) : ".";
-  const dirs = config.packages.map((p) => norm(posix.relative(lockDir, norm(p))) || ".");
+  const dirs = (config.packages ?? []).map((p) => norm(posix.relative(lockDir, norm(p))) || ".");
+  const others = new Map((config.files ?? []).map((f) => [norm(versionFilePath(f)), f] as const));
   const mode = config.ranges ?? "keep";
   let plan: RangePlan | undefined;
   if (mode !== "keep") {
@@ -215,7 +247,11 @@ function stamper(cwd: string, config: ReleaseVersionConfig, label: string, train
     for (const name of ownNames(cwd, config)) table.set(name, label);
     plan = { mode, table };
   }
-  return (file, text) => (file === lock ? stampText(text, label, "lockfile", dirs, plan) : stampText(text, label, "package", [], plan));
+  return (file, text) => {
+    const other = others.get(file);
+    if (other !== undefined) return asVersionError(() => stampVersionFile(other, text, label));
+    return file === lock ? stampText(text, label, "lockfile", dirs, plan) : stampText(text, label, "package", [], plan);
+  };
 }
 
 export interface Stamped {
@@ -235,9 +271,11 @@ export function stampReleaseVersion(i: { cwd: string; config: ReleaseVersionConf
   checkVersionLabel(i.label);
   const stamp = stamper(i.cwd, i.config, i.label, i.train);
   const files = releaseVersionFiles(i.cwd, i.config);
+  const others = new Set((i.config.files ?? []).map((f) => norm(versionFilePath(f))));
   const before = new Map<string, string>();
   for (const f of files) {
     const abs = resolve(i.cwd, f);
+    if (!existsSync(abs) && others.has(f)) throw new ReleaseVersionError("release-version-no-file", `release.version.files names ${f}, which does not exist`, "Name the file by its path relative to the member's chant.config.ts.");
     if (!existsSync(abs)) throw new ReleaseVersionError("release-version-no-package", `release.version names ${f}, which does not exist`, "Name the directory that holds the package.json, as the npm target does.");
     before.set(f, readFileSync(abs, "utf-8"));
   }
@@ -246,6 +284,7 @@ export function stampReleaseVersion(i: { cwd: string; config: ReleaseVersionConf
     try {
       after.set(f, stamp(f, text));
     } catch (err) {
+      if (err instanceof ReleaseVersionError && others.has(f)) throw err;
       if (err instanceof ReleaseVersionError) throw new ReleaseVersionError(err.code, `${f}: ${err.message}`, err.fix);
       throw new ReleaseVersionError("release-version-invalid", `${f} is not JSON: ${(err as Error).message}`);
     }
