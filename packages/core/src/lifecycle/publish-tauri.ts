@@ -52,6 +52,7 @@ import { GitHubRepo, githubApi, type GitHubRelease } from "./publish-github";
 import { fillUrl, releaseVersion } from "./publish-homebrew";
 import { bytesDigest, checkReleaseDigest, memberFile, publishTargetKey } from "./publish-targets";
 import { PublishTargetError, type PublishContext, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget, type StagedTarget } from "./release-publish";
+import { prereleaseOf } from "./release-prerelease";
 
 /** The first chant that publishes a `tauri-updater` target (#4676). */
 export const PUBLISH_TAURI_UPDATER_FLOOR = "0.124.63";
@@ -119,6 +120,7 @@ export function tauriUpdaterTarget(decl: TauriUpdaterPublishDeclaration, deps: P
     const repo = new GitHubRepo(githubApi(decl.api, ctx.env), decl.repo, token, fetchImpl, ctx, "publish-tauri-failed");
     return { version, token, files, repo, draftName: `${decl.tag} ${version}` };
   };
+  const skipNote = (ctx: PublishContext) => `skipped: ${ctx.label} is a prerelease, and the updater feed is what installed apps update from`;
   const where = (name: string) => `github ${decl.repo} release ${decl.tag}, asset ${name}`;
   const itemOf = (f: File, present = false): PublishItem => ({ name: f.path, destination: where(f.name), digest: f.digest, ...(present ? { present: true } : {}) });
   const holdsAll = (rel: GitHubRelease, files: File[]) => rel.assets.size === files.length && files.every((f) => rel.assets.get(f.name) === f.digest);
@@ -130,9 +132,14 @@ export function tauriUpdaterTarget(decl: TauriUpdaterPublishDeclaration, deps: P
     credentialEnv: tokenNames,
     key: publishTargetKey(decl),
     async plan(ctx) {
+      if (prereleaseOf(ctx.label)) return [{ name: decl.tag, destination: target.destination, notes: skipNote(ctx) }];
       return setup(ctx).files.map((f) => itemOf(f));
     },
     async stage(ctx): Promise<StagedTarget> {
+      if (prereleaseOf(ctx.label)) {
+        ctx.log(skipNote(ctx));
+        return { target: target.name, destination: target.destination, items: [], state: { prerelease: "true" } };
+      }
       const { version, token, files, repo, draftName } = setup(ctx);
       ctx.log(`using the token from ${token.from}`);
       const done = (items: PublishItem[], state: Record<string, string>): StagedTarget => ({ target: target.name, destination: target.destination, items, state });
@@ -171,6 +178,7 @@ export function tauriUpdaterTarget(decl: TauriUpdaterPublishDeclaration, deps: P
       return done(items, { releaseId: draft.id });
     },
     async reveal(ctx, staged) {
+      if (staged.state.prerelease === "true") return { target: target.name, destination: target.destination, items: [] };
       const items = staged.items.map((i) => ({ name: i.name, destination: i.destination, ...(i.digest ? { digest: i.digest } : {}) }));
       if (staged.state.published) return { target: target.name, destination: target.destination, items: items.map((i) => ({ ...i, present: true })) };
       const id = staged.state.releaseId;

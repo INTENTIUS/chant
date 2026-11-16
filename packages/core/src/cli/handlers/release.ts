@@ -49,6 +49,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { formatBold, formatError, formatSuccess, formatWarning } from "../format";
 import { parseParamFlags } from "../build-params-cli";
+import { prereleaseNote, prereleaseOf } from "../../lifecycle/release-prerelease";
 import type { CommandContext } from "../registry";
 
 const USAGE =
@@ -534,6 +535,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
         trunk,
         composed: composed ?? null,
         channel: args.channel ?? null,
+        prerelease: prereleaseOf(plan.label) !== null,
         at: args.at !== undefined ? { ref: args.at, commit } : null,
         sign: args.sign !== undefined ? { key: publicKey !== null ? publicKey.split(" ")[0] : null, readable: publicKey !== null } : null,
         tag: tag ? { name: tag.name, exists: tag.state === "present" } : null,
@@ -561,6 +563,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
           : "";
       console.log(`Dry run: cut ${name} from commit ${plan.commit.slice(0, 12)}${where}`);
       if (args.channel) console.log(`  channel ${args.channel}: a publish moves ${args.channel}, not latest`);
+      if (prereleaseOf(plan.label)) console.log(`  prerelease: ${prereleaseNote(plan.label, args.channel)}`);
       if (plan.green) console.log(`  gate: ${describeGreen(plan.green)}`);
       if (plan.green?.source === "none") console.error(formatWarning({ message: GREEN_NONE_WARNING }));
       if (plan.publishes) console.log(`  an artifact release: no environment is compiled, and it records ${plan.publishes.length} publish target(s)`);
@@ -638,7 +641,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     if (args.json) {
       console.log(
         JSON.stringify(
-          { dryRun: false, release: result.release, label: result.label, cut: result.cut, stored: result.stored, reused: result.reused, handed: result.handed, actor, actorSource: who.source, tag: tagged, composed: composed ?? null, channel: args.channel ?? null, lane: lane ?? null, next },
+          { dryRun: false, release: result.release, label: result.label, cut: result.cut, stored: result.stored, reused: result.reused, handed: result.handed, actor, actorSource: who.source, tag: tagged, composed: composed ?? null, channel: args.channel ?? null, prerelease: prereleaseOf(result.label) !== null, lane: lane ?? null, next },
           null,
           2,
         ),
@@ -649,6 +652,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       else console.error(formatSuccess(`Already cut${result.label ? ` as ${formatBold(result.label)}` : ""}: ${result.release.releaseDigest}`));
       console.error(`  commit ${result.release.commit}${composed ? `, composed on ${composed.base.slice(0, 12)} on ${composed.branch}` : ""}${lane !== undefined ? `, green in lane ${lane}` : ""}`);
       if (args.channel) console.error(`  channel ${args.channel}`);
+      if (prereleaseOf(result.label)) console.error(`  prerelease: ${prereleaseNote(result.label, args.channel)}`);
       if (result.cut?.override) console.error(`  not green: cut under the override by ${result.cut.override.by}: ${result.cut.override.reason}`);
       if (result.cut?.green) console.error(`  gate: ${describeGreen(result.cut.green)}`);
       if (result.release.publishes) console.error(`  publishes: ${result.release.publishes.map((p) => `${p.kind} to ${p.destination}`).join("; ") || "nothing"}`);
@@ -761,7 +765,9 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
       ? `  Each environment deploys the files the release recorded: chant release export ${name} --env ${deploySteps[0]}`
       : `  A component's publish steps run in each environment's deploy of the release: chant components promote --release ${name} --to ${deploySteps[0]}`;
   };
-  const base = { releaseDigest: release.releaseDigest, label, commit: release.commit, signature, provenance, warnings: [signatureWarning, warning].filter((w): w is string => w !== null) };
+  const pre = prereleaseOf(label);
+  if (pre && !args.json) say(`  prerelease: ${prereleaseNote(label, prepared.channel ?? undefined)}`);
+  const base = { releaseDigest: release.releaseDigest, label, prerelease: pre !== null, ...(pre ? { distTag: prepared.channel ?? pre.distTag } : {}), commit: release.commit, signature, provenance, warnings: [signatureWarning, warning].filter((w): w is string => w !== null) };
 
   if (dryRun) {
     const next = [sameWithYes(process.argv.slice(2))];

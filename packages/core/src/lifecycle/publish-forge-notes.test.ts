@@ -171,6 +171,19 @@ describe("a forge release's notes (#4658)", () => {
     }
   });
 
+  test("a prerelease label marks the release a prerelease, on GitHub and Forgejo, and GitHub never makes it latest", async () => {
+    const dir = member();
+    for (const forgeName of ["github", "forgejo"] as const) {
+      const api = forgeName === "github" ? "https://api.github.test" : "https://forgejo.test/api/v1";
+      const forge = startFakeForge(forgeName, api, "acme/api");
+      const [t] = await createPublishTargets([decl({ type: "forge", forge: forgeName, repo: "acme/api", api, assets: ["api-linux.tar.gz"], ...(forgeName === "github" ? { latest: true } : {}) })], { fetch: forge.fetch });
+      const ctx = context(dir, { env: { GITHUB_TOKEN: "ghs_x", FORGEJO_TOKEN: "fj" }, label: "v1.4.0-rc.1" });
+      await t!.reveal(ctx, await t!.stage(ctx));
+      expect(forge.releases[0]).toMatchObject({ draft: false, prerelease: true });
+      if (forgeName === "github") expect(forge.releases[0]!.make_latest).toBe("false");
+    }
+  });
+
   test("GitLab: the notes are the release's description", async () => {
     const dir = member();
     const api = "https://gitlab.test/api/v4";

@@ -61,6 +61,7 @@ import type { NpmPublishDeclaration } from "./publish-declaration";
 import { checkReleaseDigest, fileDigest, isDir, memberFile, publishTargetKey } from "./publish-targets";
 import { readPins, unknownPins } from "./release-images";
 import { NPM_STAGE_TAG, PublishTargetError, type PublishContext, type PublishDeps, type PublishItem, type PublishTarget } from "./release-publish";
+import { prereleaseOf } from "./release-prerelease";
 
 /** npm's output when a publish could not authenticate, as publish-packages.sh matches it. */
 const NPM_AUTH_FAILED = /ENEEDAUTH|E401|need auth/;
@@ -296,7 +297,7 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
   const now = deps.now ?? Date.now;
   const registry = decl.registry ?? "the registry npm's config names";
   const shown = (tag: string) => `${registry}, dist-tag ${tag}`;
-  const revealTag = (ctx: PublishContext) => ctx.tag ?? "latest";
+  const revealTag = (ctx: PublishContext) => ctx.tag ?? prereleaseOf(ctx.label)?.distTag ?? "latest";
   // Under `stage: false` a package goes straight to the reveal tag, and the reveal moves no tag (#4040).
   const staging = decl.stage !== false;
   const stageTag = (ctx: PublishContext) => (staging ? NPM_STAGE_TAG : revealTag(ctx));
