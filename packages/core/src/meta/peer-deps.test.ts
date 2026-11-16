@@ -36,6 +36,7 @@ const lexicons = readdirSync(lexiconsDir).filter((name) => existsSync(join(lexic
 const providerDir: Record<string, string> = {
   "@intentius/chant": join("packages", "core"),
   "@intentius/chant-lexicon-github": join("lexicons", "github"),
+  "@intentius/chant-k8s-client": join("packages", "k8s-client"),
 };
 
 function intentiusPeersOf(lexicon: string): [string, string][] {
