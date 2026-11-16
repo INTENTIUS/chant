@@ -75,7 +75,8 @@ describe("chant release verify", () => {
     const v = await checked(r, "v1");
     expect(v.status).toBe("unsigned");
     expect(v.verifiedBy).toBeNull();
-    expect(v.cuts).toEqual([expect.objectContaining({ actor: "alice", signatureCheck: { status: "unsigned", key: null, reason: "the cut carries no signature" } })]);
+    expect(v.cuts).toEqual([expect.objectContaining({ actor: "alice", signatureCheck: { status: "unsigned", key: null, reason: "the cut carries no signature", gate: "unsigned" } })]);
+    expect(v.gate.status).toBe("unsigned");
     expect(verificationCode(v)).toBe("release-unsigned");
   });
 

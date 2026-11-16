@@ -364,7 +364,11 @@
             "string",
             "null"
           ],
-          "description": "Added by #4031, written by chant 0.124.28 and newer. The cut's armored ssh signature (ssh-keygen -Y sign, namespace chant-release) by the actor's key, over the release digest, the label (empty for none), the actor and the timestamp, joined by LF with no final newline. Null for an unsigned cut. A reader checks it against .chant/allowed_signers at base; signatureCheck is chant's own check."
+          "description": "Added by #4031, written by chant 0.124.28 and newer. The cut's armored ssh signature (ssh-keygen -Y sign, namespace chant-release) by the actor's key, over the release digest, the label (empty for none), the actor and the timestamp, joined by LF with no final newline. Null for an unsigned cut. A reader checks it against .chant/allowed_signers at base; signatureCheck is chant's own check. From chant 0.124.101 (#5177) a signed cut also signs its green-gate record: the four lines, then seal:2 and gate:<green, override and lane as JSON with sorted keys>, and the line carries sealVersion 2."
+        },
+        "sealVersion": {
+          "const": 2,
+          "description": "Added by #5177, written by chant 0.124.101 and newer. The signature signs payload version 2, which covers the cut's green, override and lane. Absent on an unsigned cut and on a cut signed over version 1, whose gate record is not signed."
         },
         "signatureCheck": {
           "type": "object",
@@ -392,6 +396,13 @@
             },
             "reason": {
               "type": "string"
+            },
+            "gate": {
+              "enum": [
+                "signed",
+                "unsigned"
+              ],
+              "description": "Added within contract version 1 by #5177, written by chant 0.124.101 and newer. signed: the signature verifies and covers the cut's green-gate record (sealVersion 2). unsigned: it does not verify, the cut has none, or it was signed over version 1 and the gate record could have changed since."
             }
           }
         },

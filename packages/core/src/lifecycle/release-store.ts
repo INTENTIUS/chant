@@ -145,6 +145,9 @@ export interface ReleasePublish {
 /** The first chant that writes and reads a release's `publishes` (#5149). */
 export const RELEASE_PUBLISHES_FLOOR = "0.124.101";
 
+/** The first chant that signs a cut's green-gate record and writes and reads `sealVersion` (#5177). */
+export const RELEASE_GATE_SEAL_FLOOR = "0.124.101";
+
 /** The release file, `_releases/<releaseDigest>.json`. */
 export interface Release {
   version: 1;
@@ -187,10 +190,19 @@ export interface ReleaseCut {
   /**
    * The cut's signature (#4031): an armored ssh signature by the actor's key
    * in the `chant-release` namespace over the release digest, the label, the
-   * actor and the time, one per line (`releaseSealPayload`). Null for an
+   * actor and the time, one per line (`releaseSealPayload`), and since
+   * #5177 the green-gate record (`sealVersion`). Null for an
    * unsigned cut, and on every cut written before 0.124.28.
    */
   signature: string | null;
+  /**
+   * The version of the payload `signature` signs (#5177): 2 when it covers
+   * the green-gate record (`green`, `override` and `lane`) as well
+   * (`releaseGateSealPayload`). Absent on an unsigned cut and on a cut signed
+   * before chant {@link RELEASE_GATE_SEAL_FLOOR}, whose gate record is not
+   * signed.
+   */
+  sealVersion?: 2;
   /**
    * A cut of a composed commit (#4168 4.3): its compose branch, the base it
    * was composed on, and the trunk commits picked onto the base, oldest
@@ -516,6 +528,7 @@ export function parseCuts(text: string | null): { cuts: ReleaseCut[]; malformed:
         typeof c.timestamp === "string" &&
         (c.runOrigin === null || (typeof c.runOrigin === "object" && typeof c.runOrigin?.forge === "string")) &&
         (c.signature === null || c.signature === undefined || typeof c.signature === "string") &&
+        (c.sealVersion === undefined || c.sealVersion === 2) &&
         (c.runId === null || c.runId === undefined || typeof c.runId === "string") &&
         (c.channel === undefined || typeof c.channel === "string") &&
         (c.lane === undefined || typeof c.lane === "string") &&
@@ -602,6 +615,7 @@ export async function appendCut(
       runId: input.runId ?? null,
       runOrigin: input.runOrigin,
       signature: input.signature ?? null,
+      ...(input.signature && input.sealVersion ? { sealVersion: input.sealVersion } : {}),
       ...(input.composed ? { composed: input.composed } : {}),
       ...(input.channel ? { channel: input.channel } : {}),
       ...(input.lane ? { lane: input.lane } : {}),

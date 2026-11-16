@@ -36,7 +36,10 @@
  * in `identity.gates`, a cut must be signed (`--sign`), its signature must
  * verify for the actor against the signers at base, and when the gate names
  * a class the actor must be in it. A cut signed without that gate is signed
- * all the same, and readers report whether the signature verifies. With
+ * all the same, and readers report whether the signature verifies. The
+ * signature covers the gate the cut line records (`green`, `override`,
+ * `lane`) as well as the release digest (#5177), so a reader can trust the
+ * gate a signed cut claims. With
  * `ci.green.signedSince` declared, a green tag counts only with a valid
  * statement (`../workspace/ci-green.ts`), so a hand-pushed tag cuts nothing.
  *
@@ -879,7 +882,16 @@ export async function cutRelease(req: CutRequest): Promise<CutResult> {
     }
   }
   const timestamp = (req.now ?? (() => new Date()))().toISOString();
-  const signed = { releaseDigest: release.releaseDigest, label: req.label, actor: req.actor, timestamp };
+  // #5177: the signature covers the gate the cut line records, beside the digest, which stays the release file's.
+  const signed = {
+    releaseDigest: release.releaseDigest,
+    label: req.label,
+    actor: req.actor,
+    timestamp,
+    ...(p.lane !== null ? { lane: p.lane } : {}),
+    ...(p.override ? { override: p.override } : {}),
+    ...(p.green ? { green: p.green } : {}),
+  };
   let signature: string | null = null;
   if (req.sign !== undefined) {
     const { resolveSigningKey, sealReleaseCut, SealError } = await import("../workspace/trust/seal");
@@ -896,8 +908,8 @@ export async function cutRelease(req: CutRequest): Promise<CutResult> {
     }
   }
   if (releaseRule.requirement) {
-    const { admitReleaseCut } = await import("../workspace/identity-gate-rule");
-    const why = admitReleaseCut(releaseRule.rule, { ...signed, signature });
+    const { admitReleaseCut, RELEASE_CUT_SEAL_VERSION } = await import("../workspace/identity-gate-rule");
+    const why = admitReleaseCut(releaseRule.rule, { ...signed, signature, ...(signature !== null ? { sealVersion: RELEASE_CUT_SEAL_VERSION } : {}) });
     if (why !== null) {
       throw new ReleaseCutError(
         "release-signer-refused",
@@ -926,6 +938,7 @@ export async function cutRelease(req: CutRequest): Promise<CutResult> {
       runId,
       runOrigin: ci?.runOrigin ?? { forge: "local" },
       signature,
+      ...(signature !== null ? { sealVersion: 2 as const } : {}),
       ...(req.composed ? { composed: req.composed } : {}),
       ...(req.channel ? { channel: req.channel } : {}),
       ...(p.lane !== null ? { lane: p.lane } : {}),
