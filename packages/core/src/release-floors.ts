@@ -19,7 +19,7 @@
  * this constant to the next patch (#4501). The check fails while a floor
  * still names this constant after its version shipped.
  */
-export const NEXT_RELEASE = "0.124.100";
+export const NEXT_RELEASE = "0.124.101";
 
 /** The first chant with `chant dev local` and `chant dev bundle-check`, `@intentius/chant/local-chant` and `@intentius/chant/bundle-check` (`chantRuntimeTarget`, `chantExternalPlugin`, `checkBundle`): a product built against a chant checkout, and its bundle checked, without its own scripts (#4787). */
 export const LOCAL_CHANT_FLOOR = "0.124.86";
@@ -274,4 +274,4 @@ export const TERRAFORM_COMMAND_TRACE_FLOOR = "0.124.91";
 export const COMMENT_ALLOW_FLOOR = "0.124.98";
 
 /** The first chant with `chant release changed`, the members to release at a commit with their dependency closure, and `release.legacyTags` in `chant.config.ts` (#5134). */
-export const RELEASE_CHANGED_FLOOR = NEXT_RELEASE;
+export const RELEASE_CHANGED_FLOOR = "0.124.100";
