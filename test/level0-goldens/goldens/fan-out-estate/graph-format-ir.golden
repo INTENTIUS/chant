@@ -16,6 +16,9 @@ exit: 0
         "Arn": {
           "$ref": "app01LogGroup.Arn"
         },
+        "LogGroupName": {
+          "$sub": "/chant/fan-out-estate/app-01/${app01TableName}"
+        },
         "RetentionInDays": 14
       },
       "sourceLoc": {
@@ -59,6 +62,9 @@ exit: 0
       "attrs": {
         "Arn": {
           "$ref": "app02LogGroup.Arn"
+        },
+        "LogGroupName": {
+          "$sub": "/chant/fan-out-estate/app-02/${app02TableName}"
         },
         "RetentionInDays": 14
       },
@@ -104,6 +110,9 @@ exit: 0
         "Arn": {
           "$ref": "app03LogGroup.Arn"
         },
+        "LogGroupName": {
+          "$sub": "/chant/fan-out-estate/app-03/${app03TableName}"
+        },
         "RetentionInDays": 14
       },
       "sourceLoc": {
@@ -147,6 +156,9 @@ exit: 0
       "attrs": {
         "Arn": {
           "$ref": "app04LogGroup.Arn"
+        },
+        "LogGroupName": {
+          "$sub": "/chant/fan-out-estate/app-04/${app04TableName}"
         },
         "RetentionInDays": 14
       },
@@ -192,6 +204,9 @@ exit: 0
         "Arn": {
           "$ref": "app05LogGroup.Arn"
         },
+        "LogGroupName": {
+          "$sub": "/chant/fan-out-estate/app-05/${app05TableName}"
+        },
         "RetentionInDays": 14
       },
       "sourceLoc": {
@@ -235,6 +250,9 @@ exit: 0
       "attrs": {
         "Arn": {
           "$ref": "app06LogGroup.Arn"
+        },
+        "LogGroupName": {
+          "$sub": "/chant/fan-out-estate/app-06/${app06TableName}"
         },
         "RetentionInDays": 14
       },
@@ -280,6 +298,9 @@ exit: 0
         "Arn": {
           "$ref": "app07LogGroup.Arn"
         },
+        "LogGroupName": {
+          "$sub": "/chant/fan-out-estate/app-07/${app07TableName}"
+        },
         "RetentionInDays": 14
       },
       "sourceLoc": {
@@ -323,6 +344,9 @@ exit: 0
       "attrs": {
         "Arn": {
           "$ref": "app08LogGroup.Arn"
+        },
+        "LogGroupName": {
+          "$sub": "/chant/fan-out-estate/app-08/${app08TableName}"
         },
         "RetentionInDays": 14
       },
@@ -368,6 +392,9 @@ exit: 0
         "Arn": {
           "$ref": "app09LogGroup.Arn"
         },
+        "LogGroupName": {
+          "$sub": "/chant/fan-out-estate/app-09/${app09TableName}"
+        },
         "RetentionInDays": 14
       },
       "sourceLoc": {
@@ -411,6 +438,9 @@ exit: 0
       "attrs": {
         "Arn": {
           "$ref": "app10LogGroup.Arn"
+        },
+        "LogGroupName": {
+          "$sub": "/chant/fan-out-estate/app-10/${app10TableName}"
         },
         "RetentionInDays": 14
       },
@@ -456,6 +486,9 @@ exit: 0
         "Arn": {
           "$ref": "app11LogGroup.Arn"
         },
+        "LogGroupName": {
+          "$sub": "/chant/fan-out-estate/app-11/${app11TableName}"
+        },
         "RetentionInDays": 14
       },
       "sourceLoc": {
@@ -499,6 +532,9 @@ exit: 0
       "attrs": {
         "Arn": {
           "$ref": "app12LogGroup.Arn"
+        },
+        "LogGroupName": {
+          "$sub": "/chant/fan-out-estate/app-12/${app12TableName}"
         },
         "RetentionInDays": 14
       },
@@ -691,10 +727,22 @@ exit: 0
   ],
   "edges": [
     {
+      "from": "app01LogGroup",
+      "to": "app01TableName",
+      "kind": "ref",
+      "viaAttr": "LogGroupName"
+    },
+    {
       "from": "app01Queue",
       "to": "app01TableName",
       "kind": "ref",
       "viaAttr": "Tags"
+    },
+    {
+      "from": "app02LogGroup",
+      "to": "app02TableName",
+      "kind": "ref",
+      "viaAttr": "LogGroupName"
     },
     {
       "from": "app02Queue",
@@ -703,10 +751,22 @@ exit: 0
       "viaAttr": "Tags"
     },
     {
+      "from": "app03LogGroup",
+      "to": "app03TableName",
+      "kind": "ref",
+      "viaAttr": "LogGroupName"
+    },
+    {
       "from": "app03Queue",
       "to": "app03TableName",
       "kind": "ref",
       "viaAttr": "Tags"
+    },
+    {
+      "from": "app04LogGroup",
+      "to": "app04TableName",
+      "kind": "ref",
+      "viaAttr": "LogGroupName"
     },
     {
       "from": "app04Queue",
@@ -715,10 +775,22 @@ exit: 0
       "viaAttr": "Tags"
     },
     {
+      "from": "app05LogGroup",
+      "to": "app05TableName",
+      "kind": "ref",
+      "viaAttr": "LogGroupName"
+    },
+    {
       "from": "app05Queue",
       "to": "app05TableName",
       "kind": "ref",
       "viaAttr": "Tags"
+    },
+    {
+      "from": "app06LogGroup",
+      "to": "app06TableName",
+      "kind": "ref",
+      "viaAttr": "LogGroupName"
     },
     {
       "from": "app06Queue",
@@ -727,10 +799,22 @@ exit: 0
       "viaAttr": "Tags"
     },
     {
+      "from": "app07LogGroup",
+      "to": "app07TableName",
+      "kind": "ref",
+      "viaAttr": "LogGroupName"
+    },
+    {
       "from": "app07Queue",
       "to": "app07TableName",
       "kind": "ref",
       "viaAttr": "Tags"
+    },
+    {
+      "from": "app08LogGroup",
+      "to": "app08TableName",
+      "kind": "ref",
+      "viaAttr": "LogGroupName"
     },
     {
       "from": "app08Queue",
@@ -739,10 +823,22 @@ exit: 0
       "viaAttr": "Tags"
     },
     {
+      "from": "app09LogGroup",
+      "to": "app09TableName",
+      "kind": "ref",
+      "viaAttr": "LogGroupName"
+    },
+    {
       "from": "app09Queue",
       "to": "app09TableName",
       "kind": "ref",
       "viaAttr": "Tags"
+    },
+    {
+      "from": "app10LogGroup",
+      "to": "app10TableName",
+      "kind": "ref",
+      "viaAttr": "LogGroupName"
     },
     {
       "from": "app10Queue",
@@ -751,10 +847,22 @@ exit: 0
       "viaAttr": "Tags"
     },
     {
+      "from": "app11LogGroup",
+      "to": "app11TableName",
+      "kind": "ref",
+      "viaAttr": "LogGroupName"
+    },
+    {
       "from": "app11Queue",
       "to": "app11TableName",
       "kind": "ref",
       "viaAttr": "Tags"
+    },
+    {
+      "from": "app12LogGroup",
+      "to": "app12TableName",
+      "kind": "ref",
+      "viaAttr": "LogGroupName"
     },
     {
       "from": "app12Queue",
