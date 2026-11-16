@@ -148,7 +148,7 @@ function readLayout(abs: string): LayoutImage {
 }
 
 /** The credential for `repo`: the declared variables, else the docker config's `auths` entry. */
-function ociCredential(decl: OciPublishDeclaration, repo: OciRepository, ctx: PublishContext): { username: string; password: Credential } | null {
+export function ociCredential(decl: Pick<OciPublishDeclaration, "usernameEnv" | "passwordEnv">, repo: OciRepository, ctx: Pick<PublishContext, "env" | "redactor">): { username: string; password: Credential } | null {
   const password = readCredential(ctx.env, [decl.passwordEnv ?? "OCI_PASSWORD"], ctx.redactor);
   if (password) {
     const user = ctx.env[decl.usernameEnv ?? "OCI_USERNAME"];

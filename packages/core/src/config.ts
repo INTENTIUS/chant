@@ -173,6 +173,8 @@ export const ChantConfigSchema = z.object({
         z.object({ run: z.string().min(1), env: z.record(z.string(), z.string()).optional() }).strict(),
       ])).optional(),
       file: z.string().regex(/^[^/][^\0]*$/, "a path from the repository root").refine((f) => !f.split("/").includes(".."), "a path inside the repository").optional(),
+      // #5161: chant release doctor before the cut (dispatch, default on) or the publish (tag, opt in).
+      doctor: z.boolean().optional(),
     }).strict().optional(),
   }).optional(),
   // Strict: a misspelt key here would leave Ops on the local runtime with

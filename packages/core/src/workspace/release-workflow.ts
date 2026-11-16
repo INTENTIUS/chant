@@ -28,6 +28,10 @@
  * `release.images` (#4657) the publish job builds the images again with
  * `chant release images` before the build. A config with only `publish`
  * renders the tag-triggered file it always did.
+ *
+ * `chant release doctor` (#5161) runs in the cut job before the cut of a
+ * dispatched release, unless `doctor: false`, and in the tag-triggered
+ * publish job before the build under `doctor: true`.
  */
 import { readFileSync } from "node:fs";
 import { ACTION_PINS, tagComments, usesRef } from "../action-pins";
@@ -104,6 +108,14 @@ export interface ReleasePipelineConfig {
   builds?: ReleaseBuildConfig[];
   /** Where the workflow is written, from the repository root, such as `.github/workflows/publish.yml` for an npm trusted publisher that names that file. Default {@link RELEASE_WORKFLOW_FILES}. */
   file?: string;
+  /**
+   * Run `chant release doctor` before anything is published (#5161). With
+   * `trigger: "dispatch"` the cut job runs it before the cut, so a target
+   * that can't publish stops the release before a tag exists; on by default
+   * there, `false` turns it off. With `trigger: "tag"` the cut already
+   * happened, and `true` runs it in the publish job before the build.
+   */
+  doctor?: boolean;
 }
 
 export interface ReleaseWorkflowInput {
@@ -333,12 +345,12 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
     const cutToken = green === "forge-checks" && input.forge !== "gitlab" && p.env?.GITHUB_TOKEN === undefined ? ["      GITHUB_TOKEN: ${{ github.token }}"] : [];
     const buildJobs = builds.map((b) => ({ ...b, setup: toolchainLines(resolveToolchains(b.toolchains !== undefined ? b.toolchains : p.toolchains, files, root, false)) }));
     if (input.forge === "gitlab" && builds.some((b) => b.toolchains && b.toolchains.length > 0)) throw new Error("release.workflow.builds: toolchains: a GitLab job runs in its runner's image, which brings the toolchain; leave toolchains out");
-    const o = { chant, install, chantSetup, fullSetup, builds: buildJobs, build, root, verify, flags, after, images, version, archives, forge: input.forge, extra, forgeToken, cutToken, green, gate: p.gate ?? "last-green", ...(input.lane ? { lane: input.lane } : {}) };
+    const o = { chant, install, chantSetup, fullSetup, builds: buildJobs, build, root, verify, flags, after, images, version, archives, forge: input.forge, extra, forgeToken, cutToken, green, doctor: p.doctor !== false, gate: p.gate ?? "last-green", ...(input.lane ? { lane: input.lane } : {}) };
     return input.forge === "gitlab" ? renderGitlabDispatch(o) : renderGithubDispatch(o);
   }
   // #5150: a release.tag template triggers on its own tags.
   if (input.tags && !input.tags.template.legacy) {
-    return renderTemplatedTagWorkflow(input, { chant, install, fullSetup, build, root, verify, flags, after, images, version, extra, forgeToken, tags: input.tags });
+    return renderTemplatedTagWorkflow(input, { chant, install, fullSetup, build, root, verify, flags, after, images, version, extra, forgeToken, doctor: p.doctor === true, tags: input.tags });
   }
   // #4657: the images are built from the release, so chant/lifecycle is fetched before them and the build after.
   const digests = RELEASE_DIGESTS_PATHS[input.forge];
@@ -358,6 +370,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
       ...(root ? [`    - cd ${root}`] : []),
       ...(install ? [`    - ${install}`] : []),
       ...extra.gitlabScript.map((l) => `    - ${l}`),
+      ...(p.doctor === true ? [`    - ${chant} release doctor`] : []),
       ...(version ? [`    - ${chant} release stamp ${label}`] : []),
       ...(images ? [...fetches, ...imageLines(label, `export CHANT_RELEASE_DIGESTS="${digests}"`).map((l) => `    - ${l}`)] : []),
       ...(build ? [`    - ${build}`] : []),
@@ -401,6 +414,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
     ...githubSetup(undefined, fullSetup),
     ...(install ? [`      - run: ${install}`] : []),
     ...extra.githubSteps,
+    ...(p.doctor === true ? [`      - run: ${chant} release doctor`] : []),
     ...(version ? [`      - run: ${chant} release stamp ${label}`] : []),
     ...(images ? [...fetches, ...imageLines(label, `echo "CHANT_RELEASE_DIGESTS=${digests}" >> "$GITHUB_ENV"`).map((l) => `      - run: ${l}`)] : []),
     ...(build ? [`      - run: ${build}`] : []),
@@ -470,6 +484,8 @@ interface TemplatedInput {
   version: boolean;
   extra: JobExtras;
   forgeToken: string[];
+  /** `chant release doctor` before the stamp and build, under `doctor: true` (#5161). */
+  doctor: boolean;
   tags: MemberTags;
 }
 
@@ -502,6 +518,7 @@ function renderTemplatedTagWorkflow(input: ReleaseWorkflowInput, o: TemplatedInp
       ...(install ? [q(install)] : []),
       ...extra.gitlabScript.map(q),
       ...labelLines.map(q),
+      ...(o.doctor ? [q(`${chant} release doctor`)] : []),
       ...(version ? [q(`${chant} release stamp ${label}`)] : []),
       ...(images ? [ciFetch, `${chant} release images ${label} -o "${digests}"`, `export CHANT_RELEASE_DIGESTS="${digests}"`].map(q) : []),
       ...(build ? [q(build)] : []),
@@ -538,6 +555,7 @@ function renderTemplatedTagWorkflow(input: ReleaseWorkflowInput, o: TemplatedInp
     "      - id: label",
     "        run: |",
     ...[...labelOfRefScript(chant, "$GITHUB_REF_NAME"), 'echo "CHANT_RELEASE_LABEL=$label" >> "$GITHUB_ENV"', 'echo "label=$label" >> "$GITHUB_OUTPUT"'].map((l) => `          ${l}`),
+    ...(o.doctor ? [run(`${chant} release doctor`)] : []),
     ...(version ? [run(`${chant} release stamp ${label}`)] : []),
     ...(images ? [run(ciFetch), run(`${chant} release images ${label} -o "${digests}"`), run(`echo "CHANT_RELEASE_DIGESTS=${digests}" >> "$GITHUB_ENV"`)] : []),
     ...(build ? [run(build)] : []),
@@ -652,6 +670,13 @@ interface DispatchInput {
   cutToken: string[];
   /** The green gate the cut checks (#5149). */
   green: import("../lifecycle/release-green").ReleaseGreenSource;
+  /** The cut job runs `chant release doctor` before the cut (#5161), with the publish job's forge token. */
+  doctor: boolean;
+}
+
+/** The cut job's token lines: `forge-checks`' (#5149) and, when the doctor runs there (#5161), the publish job's forge token, once. */
+function cutEnvToken(o: DispatchInput): string[] {
+  return [...new Set([...o.cutToken, ...(o.doctor ? o.forgeToken : [])])];
 }
 
 /** The workflow artifact the cut job hands its image archives on in. */
@@ -829,11 +854,12 @@ function renderGithubDispatch(o: DispatchInput): string {
     `    needs: ${built.length > 0 ? `[gate, ${built.join(", ")}]` : "gate"}`,
     "    runs-on: ubuntu-latest",
     ...defaults,
-    ...o.extra.githubEnv([`      CHANT_RELEASE_COMMIT: ${commit}`, ...o.cutToken]),
+    ...o.extra.githubEnv([`      CHANT_RELEASE_COMMIT: ${commit}`, ...cutEnvToken(o)]),
     "    steps:",
     ...githubSetup(commit, o.fullSetup),
     ...installLines,
     ...o.extra.githubSteps,
+    ...(o.doctor ? [`      - run: ${o.chant} release doctor`] : []),
     fetches[0]!,
     `      - run: ${LEDGER_FETCH_FIRST}`,
     ...restore(true),
@@ -929,7 +955,7 @@ function renderGitlabDispatch(o: DispatchInput): string {
     ...job(
       "chant-release-cut",
       ["chant-release-gate", ...built],
-      [...checkout, ...cd, ...install, ...o.extra.gitlabScript, fetches[0]!, ...auth, LEDGER_FETCH_FIRST, ...restore(true), ...(o.green === "forge-checks" ? ['export CHANT_GITLAB_TOKEN="${CHANT_GITLAB_TOKEN:-$CHANT_RELEASE_TOKEN}"'] : []), ...cutScript(o, "/tmp/chant-cut.json")],
+      [...checkout, ...cd, ...install, ...o.extra.gitlabScript, fetches[0]!, ...auth, LEDGER_FETCH_FIRST, ...restore(true), ...(o.green === "forge-checks" ? ['export CHANT_GITLAB_TOKEN="${CHANT_GITLAB_TOKEN:-$CHANT_RELEASE_TOKEN}"'] : []), ...(o.doctor ? [`${o.chant} release doctor`] : []), ...cutScript(o, "/tmp/chant-cut.json")],
       o.archives.length > 0 ? ["  artifacts:", "    paths:", ...o.archives.map((a) => `      - ${JSON.stringify(a)}`), "    expire_in: 1 day"] : [],
       o.extra.gitlabVariables,
     ),

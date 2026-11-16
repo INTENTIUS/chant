@@ -242,8 +242,11 @@ describe("the publish job hands GITHUB_TOKEN to a GitHub forge target (#4767)", 
       const doc = parseYAML(renderReleaseWorkflow({ forge: "github", groups: new Set(), publish: [ghForge], pipeline: { trigger } })) as GhDoc;
       expect(doc.jobs.publish!.env, trigger).toEqual({ GITHUB_TOKEN: "${{ github.token }}" });
       if (trigger === "dispatch") {
-        expect(doc.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}" });
+        // #5161: the cut job's release doctor checks the forge token too.
+        expect(doc.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}", GITHUB_TOKEN: "${{ github.token }}" });
         expect(doc.jobs.gate!.env).toBeUndefined();
+        const off = parseYAML(renderReleaseWorkflow({ forge: "github", groups: new Set(), publish: [ghForge], pipeline: { trigger, doctor: false } })) as GhDoc;
+        expect(off.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}" });
       }
     }
   });
@@ -605,6 +608,8 @@ describe("release-only adoption (#5149)", () => {
       expect(doc.jobs.gate!.steps.find((s) => s.id === "green")!.run!).toContain('commit="$GITHUB_SHA"');
       expect(doc.permissions?.checks).toBe("read");
       expect(runs(doc.jobs.publish!)).toContain('npx chant release publish "$CHANT_RELEASE_LABEL" --yes');
+      // #5161: the doctor checks the artifact release's targets before the cut.
+      expect(runs(doc.jobs.cut!).some((r) => r.endsWith(" release doctor"))).toBe(true);
       // No build script in package.json, so no build step that would fail.
       expect(runs(doc.jobs.publish!)).not.toContain("npm run build");
     } finally {
@@ -810,5 +815,80 @@ describe("release.tag templates in the workflow (#5150)", () => {
     const text = renderReleaseWorkflow({ forge: "github", groups: new Set(), tags: tagsOf("v{version}"), pipeline: { trigger: "dispatch" } });
     expect(text).toContain('git push origin "refs/tags/$tag"');
     expect(text).not.toContain("tags: [");
+  });
+});
+
+describe("release doctor in the workflow (#5161)", () => {
+  test("a dispatched release runs it in the cut job before the cut, on every forge, and doctor: false leaves it out", () => {
+    for (const forge of ["github", "forgejo"] as const) {
+      const cut = runs((parseYAML(dispatch(forge)) as GhDoc).jobs.cut!);
+      const at = cut.indexOf("npx chant release doctor");
+      expect(at, forge).toBeGreaterThan(0);
+      expect(at).toBeLessThan(cut.findIndex((r) => r.includes("release cut")));
+      expect(cut.indexOf("npm ci")).toBeLessThan(at);
+      const off = runs((parseYAML(dispatch(forge, { pipeline: { trigger: "dispatch", doctor: false } })) as GhDoc).jobs.cut!);
+      expect(off).not.toContain("npx chant release doctor");
+      // The publish job does not run it again.
+      expect(runs((parseYAML(dispatch(forge)) as GhDoc).jobs.publish!)).not.toContain("npx chant release doctor");
+    }
+    const gl = parseYAML(dispatch("gitlab")) as Record<string, { script: string[] }>;
+    const script = gl["chant-release-cut"]!.script;
+    expect(script.indexOf("npx chant release doctor")).toBeGreaterThan(0);
+    expect(script.indexOf("npx chant release doctor")).toBeLessThan(script.findIndex((l) => l.includes("release cut")));
+    expect((parseYAML(dispatch("gitlab", { pipeline: { trigger: "dispatch", doctor: false } })) as Record<string, { script: string[] }>)["chant-release-cut"]!.script).not.toContain("npx chant release doctor");
+  });
+
+  test("the tag trigger runs it in the publish job before the build only under doctor: true", () => {
+    const on = runs((parseYAML(renderReleaseWorkflow({ forge: "github", groups: new Set(), pipeline: { doctor: true } })) as GhDoc).jobs.publish!);
+    expect(on.slice(0, 3)).toEqual(["npm ci", "npx chant release doctor", "npm run build"]);
+    const gl = parseYAML(renderReleaseWorkflow({ forge: "gitlab", groups: new Set(), pipeline: { doctor: true } })) as Record<string, { script: string[] }>;
+    expect(gl["chant-release-publish"]!.script.slice(0, 3)).toEqual(["npm ci", "npx chant release doctor", "npm run build"]);
+    expect(renderReleaseWorkflow({ forge: "github", groups: new Set(), pipeline: { doctor: false } })).toBe(readFileSync(join(FIXTURES, "github-plain.yml"), "utf-8"));
+  });
+
+  const ghForge = [{ type: "forge" as const, forge: "github" as const, repo: "acme/app", assets: ["dist/acme"] }];
+
+  test("under forge-checks with a GitHub forge target, the cut job gets GITHUB_TOKEN once, and the doctor runs with it", () => {
+    const doc = parseYAML(dispatch("github", { green: "forge-checks", publish: ghForge })) as GhDoc;
+    expect(doc.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}", GITHUB_TOKEN: "${{ github.token }}" });
+    expect(doc.permissions).toMatchObject({ checks: "read", statuses: "read" });
+    expect(runs(doc.jobs.cut!)).toContain("npx chant release doctor");
+    // doctor: false keeps forge-checks' token and drops nothing else.
+    const off = parseYAML(dispatch("github", { green: "forge-checks", publish: ghForge, pipeline: { trigger: "dispatch", doctor: false } })) as GhDoc;
+    expect(off.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}", GITHUB_TOKEN: "${{ github.token }}" });
+    const chant = parseYAML(dispatch("github", { publish: ghForge })) as GhDoc;
+    expect(chant.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}", GITHUB_TOKEN: "${{ github.token }}" });
+  });
+
+  test("GitLab forge-checks: the doctor runs after the cut's token for the pipelines is set, and before the cut", () => {
+    const script = (parseYAML(dispatch("gitlab", { green: "forge-checks" })) as Record<string, { script: string[] }>)["chant-release-cut"]!.script;
+    const at = script.indexOf("npx chant release doctor");
+    expect(at).toBeGreaterThan(script.indexOf('export CHANT_GITLAB_TOKEN="${CHANT_GITLAB_TOKEN:-$CHANT_RELEASE_TOKEN}"'));
+    expect(at).toBeLessThan(script.findIndex((l) => l.includes("release cut")));
+  });
+
+  test("with per-platform builds, the doctor runs once, in the cut job after its toolchains and install and before the cut; the build jobs never run it", () => {
+    const builds = [{ name: "linux-arm64", runner: "ubuntu-24.04-arm", build: "go build -o dist/acme .", outputs: ["dist/acme"] }];
+    const doc = parseYAML(dispatch("github", { projectFiles: ["go.mod", "package.json"], pipeline: { trigger: "dispatch", builds } })) as GhDoc;
+    expect(runs(doc.jobs["build-linux-arm64"]!)).not.toContain("npx chant release doctor");
+    const cut = doc.jobs.cut!;
+    const stepAt = (pred: (s: GhJob["steps"][number]) => boolean) => cut.steps.findIndex(pred);
+    const doctor = stepAt((s) => s.run?.trim() === "npx chant release doctor");
+    expect(doctor).toBeGreaterThan(stepAt((s) => !!s.uses?.startsWith("actions/setup-go@")));
+    expect(doctor).toBeGreaterThan(stepAt((s) => s.run?.trim() === "npm ci"));
+    expect(doctor).toBeLessThan(stepAt((s) => !!s.run?.includes("release cut")));
+    expect(Object.values(doc.jobs).flatMap(runs).filter((r) => r === "npx chant release doctor")).toHaveLength(1);
+  });
+
+  test("a release.tag template's workflow runs it under doctor: true after the label is read and before the stamp", () => {
+    const tags: MemberTags = { place: { member: null, path: null }, template: resolveTagTemplate("v{version}", null) };
+    const doc = parseYAML(renderReleaseWorkflow({ forge: "github", groups: new Set(), tags, version: true, pipeline: { doctor: true } })) as GhDoc;
+    const steps = doc.jobs.publish!.steps;
+    const label = steps.findIndex((s) => s.id === "label");
+    expect(steps[label + 1]!.run?.trim()).toBe("npx chant release doctor");
+    expect(steps[label + 2]!.run?.trim()).toMatch(/^npx chant release stamp/);
+    const gl = (parseYAML(renderReleaseWorkflow({ forge: "gitlab", groups: new Set(), tags, version: true, pipeline: { doctor: true } })) as Record<string, { script: string[] }>)["chant-release-publish"]!.script;
+    expect(gl.indexOf("npx chant release doctor")).toBe(gl.indexOf('export CHANT_RELEASE_LABEL="$label"') + 1);
+    expect(renderReleaseWorkflow({ forge: "github", groups: new Set(), tags })).not.toContain("release doctor");
   });
 });

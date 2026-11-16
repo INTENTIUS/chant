@@ -13,6 +13,7 @@ chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <n
 chant release changed [--at <sha>] [--bump-member <member>=<level>]... [--json]
 chant release candidates [--env <env>] [--branch <branch>] [--lane <name>] [--forge-issues] [--json]
 chant release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json]
+chant release doctor [--json]
 chant release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json]
 chant release verify <label|digest> [--json]
 chant release stamp <label> [--json]
@@ -521,6 +522,45 @@ A release is revoked when the commit it was cut from gets a `ci/revoked/<sha>` t
 | [`chant approve`](/chant/cli/operator/#approve-op-gate) on its release gate | Refuses with `release-revoked`, so a gate pending for it never passes. `chant approve release <gate> --expire` clears the pending fact. |
 | [`chant workspace status`](/chant/cli/workspace-status/#revoked-releases) | Flags each component of an environment that runs it, with the `chant components rollback` line, and reads its pending gate as `superseded`. |
 
+## release doctor
+
+Asks each target `release.publish` declares whether a publish from this environment can succeed, before anything is cut ([#5161](https://github.com/INTENTIUS/chant/issues/5161)). It needs no release and changes nothing on any registry. Run it on a workstation to read what the registries show anyone, and in the release workflow to test what only that workflow can.
+
+```bash
+chant release doctor
+```
+
+```
+Release doctor, from a workstation: OIDC no; the release workflow is .github/workflows/chant-release.yml in acme/app
+npm @acme/core
+  ok          npm-registry: @acme/core is on https://registry.npmjs.org, latest 1.3.0
+  warn        npm-last-publisher: @acme/core@1.3.0 was published by trusted publishing from acme/app, .github/workflows/publish.yml, by its provenance, and this release publishes from acme/app, .github/workflows/chant-release.yml. ...
+              fix: On npmjs.com, the package's Settings, Trusted Publisher, name acme/app and the workflow file chant-release.yml.
+  can't tell  npm-trusted-publisher: whether @acme/core's trusted publisher names this workflow can only be tested by a run of .github/workflows/chant-release.yml ...
+  can't tell  npm-dist-tag: the reveal moves latest with npm dist-tag add; over trusted publishing that needs "Allow npm dist-tag" on @acme/core's record, which npm does not show ...
+1 ok, 1 warning(s), 0 failed, 2 can't be observed from here
+```
+
+Each check ends `ok`, `warn`, `FAIL` or `can't tell`. A credential the publish needs and this environment lacks fails in CI and is a warning on a workstation, where the release job's environment is not the one being checked. `can't tell` is what can't be observed from where the doctor runs, and the line says why. The doctor exits 1 when a check fails and 0 otherwise.
+
+| Target | Checks | What it can't tell |
+|---|---|---|
+| `npm` | Each package's `package.json` names a package that is not `private`. The registry has the package (`npm-registry`). The workflow the latest version was published from, read from its provenance (`npm-last-publisher`). In the release workflow, npm's OIDC exchange for the package (`npm-trusted-publisher`). A token in npm's config, and whether its user may write the package (`npm-token`) | The trusted-publisher record itself, which npm shows only to the package's owners, so `npm-last-publisher` is evidence of the last publish and nothing more. The exchange outside a run of the release workflow, since npm matches the record against the workflow file whose token asks. Whether the record allows `npm dist-tag`, which the reveal needs unless the target says `stage: false` |
+| `oci` | Credentials from the declared variables or the docker config. The registry's token service, asked for `pull,push` on the repository (`oci-push`) | Whether the credentials may push, when the registry's token does not list what it grants, or the registry takes Basic credentials |
+| `forge` | The token is set, and what it may do on the repository: `permissions.push` on GitHub and Forgejo, a classic token's scopes, a GitLab token's `api` scope and Developer role | What a GitHub job token or a GitLab `CI_JOB_TOKEN` may do, which their APIs do not say |
+| `homebrew`, `tauri-updater` | The token is set and may write the repository, as for `forge` | Whether an SSH deploy key has write access, which shows when it pushes |
+| `marketplace` | The extension's publisher and name, from the `.vsix` or the member's `package.json`. Open VSX: the namespace exists, and under `trusted-publishing` the exchange for a publishing token in CI. VS Code Marketplace: `vsce verify-pat` for the token or the Entra identity | Whether an Open VSX token may publish, which has no read-only check |
+
+Under the `forge-checks` [green gate](#the-green-gate), the default without `ci.green`, the doctor also finds the forge and the token the cut would ask, and reads the checks and statuses of the commit checked out (`green-forge-checks`). It fails when no token is set in CI, or when the forge refuses the token, which on GitHub needs `checks: read` and `statuses: read`. Whether the commit's checks passed is the cut's question, and the line only reports it. A member with no `environments`, which releases only what `release.publish` names, is checked the same way.
+
+Two checks hand back a short-lived publishing token, which the doctor masks and drops: npm's OIDC exchange and Open VSX's trusted-publishing exchange. They are the requests a publish makes first. No other check sends a request that changes anything. Every line and the `--json` document go through the publish's redactor.
+
+The release workflow file is `release.workflow.file` in the workspace root's `chant.config.ts`, else the forge's default (`.gitlab-ci.yml` on GitLab, whose trusted publishers name the top-level file). In GitHub Actions, the run's own file comes from `GITHUB_WORKFLOW_REF`.
+
+`--json` prints `environment` (`ci`, `oidc`, `workflow`, `repository`, `releaseWorkflow`), `targets` (each `kind`, `name` and `checks`, each with `check`, `status`, `message` and `fix`) and `counts`. A config that does not load exits 1 with `doctor-config-invalid`.
+
+A dispatched release runs it in the cut job before the cut (see [The whole release from the config](#the-whole-release-from-the-config)).
+
 ## release publish
 
 Publishes a cut release to the targets its member declares under `release.publish` in `chant.config.ts` ([#4027](https://github.com/INTENTIUS/chant/issues/4027), [#4047](https://github.com/INTENTIUS/chant/issues/4047)): npm packages, an image in an OCI registry such as GHCR or Docker Hub, and release assets on GitHub, GitLab or Forgejo. [Publish Targets](/chant/reference/publish-targets/) lists the declaration, each target and its credentials. It is meant to run in CI, where the job's OIDC token gives what it publishes provenance, as npm trusted publishing needs.
@@ -658,6 +698,7 @@ release: {
 | `env` | Variables for the cut and publish jobs. A forge expression stays in the job's `env:` (GitLab: `variables:`), off every `run:` line |
 | `setup` | Steps the cut and publish jobs run after the install: `{ run }`, or `{ uses, with }` on GitHub and Forgejo, such as a newer npm. GitLab refuses `uses` |
 | `file` | Where the workflow is written, from the repository root, such as `.github/workflows/publish.yml` when npm's trusted publisher names that file |
+| `doctor` | [`chant release doctor`](#release-doctor) before anything is published. With `trigger: "dispatch"` the cut job runs it before the cut, unless `doctor: false`. With `trigger: "tag"` the cut already happened, and `doctor: true` runs it in the publish job before the build |
 
 On GitHub the targets in `release.publish` add what they need, so the config names none of it ([#4786](https://github.com/INTENTIUS/chant/issues/4786)). An `oci` target on `ghcr.io` with no `usernameEnv` or `passwordEnv` pushes with the run's token: the workflow gets `packages: write`, and the cut and publish jobs get `OCI_USERNAME: "${{ github.actor }}"` and `OCI_PASSWORD: "${{ github.token }}"`. An `npm` target on npmjs publishes with trusted publishing, which needs npm 11.5.1 or later, so the cut and publish jobs install a newer npm after `setup` when the runner's is older. A scope or variable `release.workflow` sets wins over the one the targets add.
 
@@ -668,7 +709,7 @@ With `trigger: "dispatch"` the file has four jobs, and the label is an input of 
 | Job | What it does |
 |---|---|
 | gate | `chant ci last-green --from <dispatched commit>`, honouring `release.lane`, and hands the commit on. When `release.green` is `forge-checks` or `none`, it hands on the dispatched commit, which the cut then checks |
-| cut | Checks the commit out, runs `chant release cut <label> --at <commit> --yes`, which pushes `chant/lifecycle`, and pushes the tag the cut made; a cut whose record did not land exits 1 and the tag is not pushed |
+| cut | Checks the commit out, runs `chant release doctor` (with the run's `GITHUB_TOKEN` when a GitHub forge target or `forge-checks` needs it), then `chant release cut <label> --at <commit> --yes`, which pushes `chant/lifecycle`, and pushes the tag the cut made; a cut whose record did not land exits 1 and the tag is not pushed |
 | publish | Checks the commit out, builds, and publishes, with the security groups' `--require-provenance` and `release verify` as above |
 | after-release | Runs `after`, when there is any |
 
@@ -676,7 +717,7 @@ No tag exists until the gate has passed and the cut has run. Under `forge-checks
 
 With `release.images` (see [Images the package pins](#images-the-package-pins)), the publish job runs `chant release images <label>` after fetching `chant/lifecycle` and before the build, and exports `CHANT_RELEASE_DIGESTS`. In a dispatched release the cut job hands the archives it built to the publish job as a workflow artifact (`chant-release-images`; on GitLab, the cut job's `artifacts:`), and the publish job checks them with `chant release images <label> --no-build`, which reads the archives on disk and refuses one whose digest is not the recorded one. The images published are then the ones the cut built, even when the package mirror an image installs from moved between the two jobs. This holds for either trigger. `after` with the tag trigger adds an after-release job that follows the publish. A config with only `publish` renders the file it always did.
 
-With `release.tag` (see [The release's tag](#the-releases-tag)), the tag trigger runs on the tags the template makes, with `{member}` and `{path}` filled in: `v{version}` runs on `v*`. A `floating` tag is left out with a negated pattern (`!v[0-9]+`), so moving it starts nothing; on GitLab the rule is a regular expression with the same effect. The publish job fetches `chant/lifecycle` right after the install, reads the label with `chant release tag "$GITHUB_REF_NAME" --json`, and exits 1 for a tag that names no release of the member. Every later step uses `CHANT_RELEASE_LABEL`, and the after-release job gets it from the publish job. A floating tag is pushed by the publish job with git: GitHub and Forgejo jobs can, with `contents: write`; a GitLab job token can't, so `chant release workflow` says so, and a dispatched release on GitLab pushes it with `CHANT_RELEASE_TOKEN`. A dispatched release pushes whatever tag the cut made. A member with no `release.tag` renders the `release/**` file it did.
+With `release.tag` (see [The release's tag](#the-releases-tag)), the tag trigger runs on the tags the template makes, with `{member}` and `{path}` filled in: `v{version}` runs on `v*`. A `floating` tag is left out with a negated pattern (`!v[0-9]+`), so moving it starts nothing; on GitLab the rule is a regular expression with the same effect. The publish job fetches `chant/lifecycle` right after the install, reads the label with `chant release tag "$GITHUB_REF_NAME" --json`, and exits 1 for a tag that names no release of the member. Every later step uses `CHANT_RELEASE_LABEL`, and the after-release job gets it from the publish job. Under `doctor: true` the publish job runs `chant release doctor` once the label is read. A floating tag is pushed by the publish job with git: GitHub and Forgejo jobs can, with `contents: write`; a GitLab job token can't, so `chant release workflow` says so, and a dispatched release on GitLab pushes it with `CHANT_RELEASE_TOKEN`. A dispatched release pushes whatever tag the cut made. A member with no `release.tag` renders the `release/**` file it did.
 
 ### Builds on other runners
 
@@ -706,7 +747,7 @@ release: {
 | `toolchains` | In place of the workflow's toolchains, as above. Node is not added: a build job doesn't run chant |
 | `env` | Variables for this job only |
 
-On GitHub and Forgejo a build job checks out the gate's commit without the job token's credentials, reads with `contents: read` and nothing more, and gets none of the cut and publish jobs' `env`, so a build cannot push, mint an OIDC token or read the publish credentials. On GitLab it gets none of the release file's variables or ID tokens, and the project's CI/CD variables reach it as they reach any job, so keep publish credentials protected and the release on a protected ref. A build job packs its outputs with `tar`, which keeps each file's path and mode, and hands the archive on as a workflow artifact (`chant-release-build-<name>`; on GitLab, the job's `artifacts:`). The cut job waits for every build and unpacks each archive into the project root before `chant release cut` runs, with `tar -k`, so a build cannot replace a file of the commit and two builds cannot write the same path. The cut then finds the files where its own build would have left them. The publish job unpacks them too, before the stamp, the images and the build, so the targets upload the files the runners built, under the same signing, provenance and SBOM checks as any other release. Build outputs belong in `.gitignore`, as for any build, or the publish refuses the tree as changed.
+On GitHub and Forgejo a build job checks out the gate's commit without the job token's credentials, reads with `contents: read` and nothing more, and gets none of the cut and publish jobs' `env`, so a build cannot push, mint an OIDC token or read the publish credentials. On GitLab it gets none of the release file's variables or ID tokens, and the project's CI/CD variables reach it as they reach any job, so keep publish credentials protected and the release on a protected ref. A build job packs its outputs with `tar`, which keeps each file's path and mode, and hands the archive on as a workflow artifact (`chant-release-build-<name>`; on GitLab, the job's `artifacts:`). The cut job waits for every build, so `chant release doctor` runs there after the builds, with the cut job's toolchains and credentials; a build job has neither and never runs it. The cut job unpacks each archive into the project root before `chant release cut` runs, with `tar -k`, so a build cannot replace a file of the commit and two builds cannot write the same path. The cut then finds the files where its own build would have left them. The publish job unpacks them too, before the stamp, the images and the build, so the targets upload the files the runners built, under the same signing, provenance and SBOM checks as any other release. Build outputs belong in `.gitignore`, as for any build, or the publish refuses the tree as changed.
 
 `builds` needs `trigger: "dispatch"`: with the tag trigger the release was cut before the workflow ran, and `chant release workflow` refuses it.
 

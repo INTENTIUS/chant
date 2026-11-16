@@ -422,7 +422,7 @@ Every credential comes from the environment of the run, which is the shell on a 
 | The value of each variable a declaration names | `passwordEnv: "GHCR_PAT"` |
 | A token written in the forms npm and HTTP headers use | `_authToken=...`, `Authorization: Bearer ...`, `PRIVATE-TOKEN: ...` |
 
-A target that needs a credential and finds none stops the publish before anything is sent, with `publish-credentials-missing`.
+A target that needs a credential and finds none stops the publish before anything is sent, with `publish-credentials-missing`. [`chant release doctor`](/chant/cli/release/#release-doctor) checks the same credentials before a cut, and asks each registry what it will say about them.
 
 ## The target contract
 

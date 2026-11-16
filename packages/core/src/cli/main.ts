@@ -559,6 +559,12 @@ Releases:
                         the release's commit, refuse one whose digest is not
                         the recorded one, and write the recorded digests to
                         the file CHANT_RELEASE_DIGESTS names for the build.
+  release doctor [--json]
+                        Before a cut, ask each release.publish target whether
+                        a publish from here can succeed: credentials, OIDC,
+                        npm trusted publishers and dist-tags, registry and
+                        forge access. Says what it can't observe from here.
+                        Exits 1 when a check fails.
   release stamp <label> [--train <id|digest>] [--json]
                         Write the label as the version of each package.json
                         release.version names, and the lockfile's entries for
@@ -2072,6 +2078,7 @@ export const commandRegistry: CommandDef[] = [
   // #4657: build a release's images again in its publish job, checked against the digests it records.
   { name: "release images", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseImages(ctx) },
   // #4840: the label into the package.json files release.version names, in the publish job before its build.
+  { name: "release doctor", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release-doctor")).runReleaseDoctor(ctx) },
   { name: "release stamp", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseStamp(ctx) },
   // #5150: the tag release.tag gives a release, found by label, digest or the tag itself.
   { name: "release tag", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseTag(ctx) },
