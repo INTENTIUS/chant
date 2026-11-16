@@ -134,6 +134,43 @@ export const ChantConfigSchema = z.object({
         ]),
       )
       .optional(),
+    // #5151: files the cut builds once and records, handed to the publish job.
+    artifacts: z
+      .array(
+        z.union([
+          z
+            .object({
+              name: z.string().min(1),
+              build: z.string().min(1),
+              outputs: z.array(z.string().min(1)).min(1),
+              platforms: z.array(z.string().min(1)).min(1).optional(),
+              archive: z
+                .union([
+                  z.literal(true),
+                  z
+                    .object({
+                      name: z.string().min(1).optional(),
+                      dir: z.string().min(1).optional(),
+                      files: z.array(z.string().min(1)).optional(),
+                      format: z.enum(["tar.gz", "zip"]).optional(),
+                    })
+                    .strict(),
+                ])
+                .optional(),
+            })
+            .strict(),
+          z
+            .object({
+              name: z.string().min(1),
+              goreleaser: z
+                .object({ config: z.string().min(1).optional(), dist: z.string().min(1).optional(), types: z.array(z.string().min(1)).min(1).optional() })
+                .strict(),
+            })
+            .strict(),
+          z.object({ name: z.string().min(1), checksums: z.string().min(1), of: z.array(z.string().min(1)).min(1).optional() }).strict(),
+        ]),
+      )
+      .optional(),
     lane: z.string().regex(/^[a-z0-9][a-z0-9-]*$/, "a ci.green lane name: lowercase letters, digits and dashes").optional(),
     // #5149: what says a commit may be released.
     green: z.enum(["chant", "forge-checks", "none"]).optional(),
@@ -455,6 +492,14 @@ export interface ChantConfig {
      * ./lifecycle/release-images.ts.
      */
     images?: import("./lifecycle/release-images").ReleaseImageDeclaration[];
+    /**
+     * Files the cut builds once (#5151): a command's outputs, per platform
+     * and packed into archives when asked, what goreleaser writes in snapshot
+     * mode, and checksums files. The release records each file's digest, and
+     * a publish target refuses a file that differs. See
+     * ./lifecycle/release-artifacts.ts.
+     */
+    artifacts?: import("./lifecycle/release-artifacts").ReleaseArtifactDeclaration[];
     /**
      * The green lane `chant release cut` and `chant release candidates` check
      * when `--lane` is not given (#4692): one `ci.green.lanes` declares in

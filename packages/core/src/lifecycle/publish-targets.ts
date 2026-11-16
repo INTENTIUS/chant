@@ -20,6 +20,8 @@
  * path is checked against the release's digest, and a file that differs is
  * refused (`publish-artifact-digest-mismatch`). Other files are the commit's
  * by the checkout check (`checkCheckoutIsRelease` in ./release-publish.ts).
+ * A forge or homebrew target's `assets` may name `artifact:<name>`, every
+ * file the release records for that `release.artifacts` entry (#5151).
  */
 
 import { createHash } from "node:crypto";
@@ -112,4 +114,28 @@ export function checkReleaseDigest(release: Release, kind: ReleaseArtifact["kind
     `${path} is not the ${kind} release ${release.releaseDigest} built: the release records ${recorded.digest}, and the file here is ${digests[0]}`,
     "Publish the files the cut built. A publish never builds, so restore them from the cut's build, or cut a new release.",
   );
+}
+
+/**
+ * A target's `assets` with each `artifact:<name>` (#5151) made the paths the
+ * release records for that `release.artifacts` entry, in path order. A name
+ * the release records no file for is refused.
+ */
+export function expandArtifactAssets(release: Release, assets: readonly string[]): string[] {
+  return assets.flatMap((a) => {
+    if (!a.startsWith("artifact:")) return [a];
+    const name = a.slice("artifact:".length);
+    const paths = release.artifactDigests
+      .filter((f) => f.kind === "asset" && f.component === name)
+      .map((f) => f.path)
+      .sort();
+    if (paths.length === 0) {
+      throw new PublishTargetError(
+        "publish-artifact-not-recorded",
+        `assets names ${a}, and release ${release.releaseDigest} records no file for an artifact "${name}"`,
+        "Name an entry of release.artifacts the release was cut with, or cut a new release.",
+      );
+    }
+    return paths;
+  });
 }

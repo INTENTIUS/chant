@@ -121,6 +121,17 @@ export type ReleaseCutCode =
   | "release-image-unknown-component"
   | "release-image-name-taken"
   | "release-image-build-failed"
+  /** #5151: `release.artifacts`, as ./release-artifacts.ts refuses it. */
+  | "release-artifact-invalid"
+  | "release-artifact-name-invalid"
+  | "release-artifact-name-taken"
+  | "release-artifact-outside"
+  | "release-artifact-build-failed"
+  | "release-artifact-no-output"
+  | "release-artifact-output-taken"
+  | "release-artifact-no-label"
+  | "release-artifact-version-mismatch"
+  | "release-artifact-checksums-name-taken"
   | "release-version-no-label"
   | "release-version-label-invalid"
   | "release-version-no-package"
@@ -206,6 +217,12 @@ export interface CutRequest {
    * Given the commit being cut; returns each as an image artifact.
    */
   buildImages?: (commit: string) => Promise<ReleaseArtifact[]> | ReleaseArtifact[];
+  /**
+   * Build the files `release.artifacts` declares (#5151), once the images
+   * are built and before the build command. Given the commit being cut;
+   * returns each file as an asset artifact.
+   */
+  buildArtifacts?: (commit: string) => Promise<ReleaseArtifact[]> | ReleaseArtifact[];
   /**
    * Stamp the label into the files `release.version` names (#4840), once the
    * tree is found clean and before the images are built or any environment
@@ -564,7 +581,7 @@ async function prepare(req: CutRequest, record = false): Promise<Prepared> {
   }
   // #5149: with no environments the release is what release.publish publishes and release.images builds, and nothing is compiled.
   const artifactRelease = envs.length === 0;
-  if (artifactRelease && (req.publishes ?? []).length === 0 && !req.buildImages) {
+  if (artifactRelease && (req.publishes ?? []).length === 0 && !req.buildImages && !req.buildArtifacts) {
     throw new ReleaseCutError(
       "release-no-environments",
       "this member's chant.config.ts declares no environments and no release.publish target, so there is nothing to release",
@@ -574,6 +591,8 @@ async function prepare(req: CutRequest, record = false): Promise<Prepared> {
 
   // #4657: the images first, so the build command that packs a package can pin their digests.
   const builtImages = req.buildImages ? await req.buildImages(commit) : [];
+  // #5151: the files, after the images and before the build command.
+  const builtFiles = req.buildArtifacts ? await req.buildArtifacts(commit) : [];
 
   if (artifactRelease) await req.build?.();
   const compiled: CompiledTarget[] = [];
@@ -618,6 +637,11 @@ async function prepare(req: CutRequest, record = false): Promise<Prepared> {
       throw new ReleaseCutError("release-image-name-taken", `release.images names "${image.component}", which is also a component of this member, and a release records one image per name`, "Rename the image in release.images.");
     }
   }
+  for (const name of new Set(builtFiles.map((f) => f.component))) {
+    if (enabled.has(name) || handedTo.has(name)) {
+      throw new ReleaseCutError("release-artifact-name-taken", `release.artifacts names "${name}", which is also a component of this member, and a release records each name once`, "Rename the entry in release.artifacts.");
+    }
+  }
 
   // Which environment each component's artifacts are built in: the first one it is enabled in.
   const firstEnv = new Map<string, CompiledTarget>();
@@ -629,7 +653,7 @@ async function prepare(req: CutRequest, record = false): Promise<Prepared> {
   const realCwd = realpathSync(cwd);
   const previous = firstEnv.size > 0 ? await previousRelease(top, commit, cwd) : undefined;
   const reused: CutResult["reused"] = [];
-  const artifacts: ReleaseArtifact[] = [...handedArtifacts, ...builtImages];
+  const artifacts: ReleaseArtifact[] = [...handedArtifacts, ...builtImages, ...builtFiles];
   const toBuild = new Map<string, string[]>();
   for (const [component, target] of firstEnv) {
     const prior = previous?.artifactDigests.filter((a) => a.component === component) ?? [];

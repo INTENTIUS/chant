@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { parseYAML } from "../yaml";
 import { ACTION_PINS } from "../action-pins";
 import { IMAGE_PINS } from "../image-pins";
+import { GORELEASER_PIN } from "../goreleaser-pin";
 import type { CommandContext } from "../cli/registry";
 import { GENERATED_OUT_ENV, GENERATED_ROOT_ENV } from "../generated-check";
 import { NPM_TRUSTED_PUBLISHING_SETUP, releaseWorkflowHeader, renderReleaseWorkflow, runReleaseWorkflow, RELEASE_DIGESTS_PATHS, RELEASE_WORKFLOW_FILES, type ReleaseWorkflowInput, type ReleaseWorkflowTarget } from "./release-workflow";
@@ -890,5 +891,76 @@ describe("release doctor in the workflow (#5161)", () => {
     const gl = (parseYAML(renderReleaseWorkflow({ forge: "gitlab", groups: new Set(), tags, version: true, pipeline: { doctor: true } })) as Record<string, { script: string[] }>)["chant-release-publish"]!.script;
     expect(gl.indexOf("npx chant release doctor")).toBe(gl.indexOf('export CHANT_RELEASE_LABEL="$label"') + 1);
     expect(renderReleaseWorkflow({ forge: "github", groups: new Set(), tags })).not.toContain("release doctor");
+  });
+});
+
+describe("the cut hands the files release.artifacts built to the publish job (#5151)", () => {
+  type Step = { name?: string; uses?: string; run?: string; with?: Record<string, unknown> };
+  const jobs = (forge: "github" | "forgejo", extra: Partial<ReleaseWorkflowInput> = {}, trigger: "dispatch" | "tag" = "dispatch") =>
+    (parseYAML(renderReleaseWorkflow({ forge, groups: new Set(), artifacts: true, pipeline: { ...(trigger === "dispatch" ? { trigger } : {}), build: "npm run build" }, ...extra })) as { jobs: Record<string, { steps: Step[] }> }).jobs;
+
+  test("GitHub: the cut stages the files and uploads them; the publish job downloads them and checks them before the publish", () => {
+    const { cut, publish } = jobs("github");
+    const stage = cut!.steps.findIndex((s) => s.run?.includes("release artifacts"));
+    expect(cut!.steps[stage]!.run).toBe('npx chant release artifacts "$CHANT_RELEASE_LABEL" --no-build -o "$RUNNER_TEMP/chant-release-artifacts"');
+    expect(cut!.steps[stage + 1]!.uses).toContain(ACTION_PINS.uploadArtifact4.sha);
+    expect(cut!.steps[stage + 1]!.with).toMatchObject({ name: "chant-release-artifacts", path: "${{ runner.temp }}/chant-release-artifacts", "if-no-files-found": "error" });
+    const down = publish!.steps.findIndex((s) => s.uses?.includes("download-artifact") && s.with?.name === "chant-release-artifacts");
+    const check = publish!.steps.findIndex((s) => s.run?.includes("release artifacts"));
+    const publishStep = publish!.steps.findIndex((s) => s.run?.includes("release publish"));
+    expect(publish!.steps[down]!.with!.path).toBe("${{ runner.temp }}/chant-release-artifacts");
+    expect(publish!.steps[check]!.run).toBe('npx chant release artifacts "$CHANT_RELEASE_LABEL" --from "$RUNNER_TEMP/chant-release-artifacts"');
+    expect(down).toBeLessThan(check);
+    expect(check).toBeGreaterThan(publish!.steps.findIndex((s) => s.run === "npm run build"));
+    expect(check).toBeLessThan(publishStep);
+  });
+
+  test("Forgejo takes v3 of the artifact actions", () => {
+    const { cut, publish } = jobs("forgejo");
+    expect(cut!.steps.some((s) => s.uses?.includes(ACTION_PINS.uploadArtifact3.sha))).toBe(true);
+    expect(publish!.steps.some((s) => s.uses?.includes(ACTION_PINS.downloadArtifact3.sha))).toBe(true);
+  });
+
+  test("on a release tag the publish job builds the files again and checks them, after the ledger is fetched", () => {
+    const { publish } = jobs("github", {}, "tag");
+    const fetch = publish!.steps.findIndex((s) => s.run?.includes("chant/lifecycle:chant/lifecycle"));
+    const build = publish!.steps.findIndex((s) => s.run?.includes("release artifacts"));
+    expect(publish!.steps[build]!.run).toBe('npx chant release artifacts "${GITHUB_REF_NAME#release/}"');
+    expect(fetch).toBeLessThan(build);
+  });
+
+  test("GitLab: the cut keeps the staged files, and the publish job moves them out of the checkout before it checks them", () => {
+    const doc = parseYAML(renderReleaseWorkflow({ forge: "gitlab", groups: new Set(), artifacts: true, pipeline: { trigger: "dispatch" } })) as Record<string, { artifacts?: { paths: string[] }; script: string[] }>;
+    expect(doc["chant-release-cut"]!.script).toContain('npx chant release artifacts "$CHANT_RELEASE_LABEL" --no-build -o "$CI_PROJECT_DIR/.chant-release-artifacts"');
+    expect(doc["chant-release-cut"]!.artifacts!.paths).toEqual([".chant-release-artifacts/"]);
+    const script = doc["chant-release-publish"]!.script;
+    expect(script.indexOf('mv "$CI_PROJECT_DIR/.chant-release-artifacts" /tmp/chant-release-artifacts')).toBeLessThan(script.indexOf('npx chant release artifacts "$CHANT_RELEASE_LABEL" --from /tmp/chant-release-artifacts'));
+  });
+
+  test("a goreleaser entry installs Go and the pinned goreleaser, checked by SHA-256, in the job that builds", () => {
+    const { cut, publish } = jobs("github", { goreleaser: true, workspaceRoot: "cli" });
+    const go = cut!.steps.find((s) => s.uses?.startsWith("actions/setup-go@"));
+    expect(go!.uses).toContain(ACTION_PINS.setupGo7.sha);
+    expect(go!.with).toEqual({ "go-version-file": "cli/go.mod" });
+    const install = cut!.steps.find((s) => s.name?.startsWith("goreleaser "))!;
+    expect(install.run).toContain(GORELEASER_PIN.platforms["linux/amd64"]!.sha256);
+    expect(install.run).toContain("sha256sum -c -");
+    expect(install.run).toContain('CHANT_GORELEASER=$RUNNER_TEMP/goreleaser/goreleaser');
+    expect(cut!.steps.indexOf(install)).toBeLessThan(cut!.steps.findIndex((s) => s.run?.includes("release cut")));
+    // The publish job of a dispatched release builds nothing, so it installs nothing.
+    expect(publish!.steps.some((s) => s.name?.startsWith("goreleaser "))).toBe(false);
+    expect(jobs("github", { goreleaser: true }, "tag").publish!.steps.some((s) => s.name?.startsWith("goreleaser "))).toBe(true);
+    // A config that names its own setup-go and goreleaser gets neither.
+    const own = jobs("github", { goreleaser: true, pipeline: { trigger: "dispatch", setup: [{ uses: "actions/setup-go@abc" }], env: { CHANT_GORELEASER: "/usr/bin/goreleaser" } } });
+    expect(own.cut!.steps.filter((s) => s.uses?.startsWith("actions/setup-go@")).map((s) => s.uses)).toEqual(["actions/setup-go@abc"]);
+    expect(own.cut!.steps.some((s) => s.name?.startsWith("goreleaser "))).toBe(false);
+    const gitlab = parseYAML(renderReleaseWorkflow({ forge: "gitlab", groups: new Set(), artifacts: true, goreleaser: true, pipeline: { trigger: "dispatch" } })) as Record<string, { script: string[] }>;
+    expect(gitlab["chant-release-cut"]!.script.some((l) => l.includes(GORELEASER_PIN.platforms["linux/amd64"]!.url) && l.endsWith("export CHANT_GORELEASER=/tmp/goreleaser/goreleaser"))).toBe(true);
+  });
+
+  test("without release.artifacts the files render as before", () => {
+    const plain = renderReleaseWorkflow({ forge: "github", groups: new Set(), pipeline: { trigger: "dispatch" } });
+    expect(plain).not.toContain("chant-release-artifacts");
+    expect(plain).not.toContain("goreleaser");
   });
 });

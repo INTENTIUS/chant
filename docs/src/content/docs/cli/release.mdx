@@ -18,6 +18,7 @@ chant release publish <label|digest> [--yes] [--allow-unsigned] [--require-prove
 chant release verify <label|digest> [--json]
 chant release stamp <label> [--json]
 chant release tag <label|digest|tag> [--json]
+chant release artifacts <label|digest> [--no-build] [--from <dir>] [-o <dir>] [--json]
 chant release workflow [--forge github|gitlab|forgejo] [--install <command>] [--build <command>] [--chant <command>] [--output <file>]
 chant release list [--json]
 chant release export <label|digest> --env <env> [-o <dir>] [--json]
@@ -405,6 +406,47 @@ An npm target's `pins` names the file in the package that carries the digests. T
 
 The archives sit in the checkout when the publish runs: the cut or `chant release images` wrote them there, or the dispatched publish job took the cut's into the same paths. A package directory that an archive the release records lies inside is listed with `npm pack --dry-run --json --ignore-scripts` at the plan, and one that would carry the archive is refused before any target publishes (`publish-npm-carries-image`, [#4934](https://github.com/INTENTIUS/chant/issues/4934)). The message names the file, and the fix names the `files` entry that leaves it out, such as `"!dist/images/app.tar"` for a package whose `files` lists `dist`. `NPM_CARRIES_IMAGE_FLOOR` is the first chant with the check. The cut runs the same check once it has built the images, before it records the release or tags it, and refuses with the same code ([#4941](https://github.com/INTENTIUS/chant/issues/4941), `RELEASE_CUT_CARRIES_IMAGE_FLOOR`), so the label is not spent on a release the publish would refuse.
 
+### Files the release builds
+
+`release.artifacts` lists files the cut builds once and records: binaries, archives of them, a checksums file, or what goreleaser writes. Each entry has a `name` and one of `build`, `goreleaser` and `checksums`, and the cut builds them in order, after the images and before `--build`.
+
+```ts
+export default {
+  release: {
+    artifacts: [
+      {
+        name: "tool",
+        build: 'go build -trimpath -ldflags "-X main.version=$CHANT_RELEASE_LABEL" -o "dist/${CHANT_RELEASE_OS}_${CHANT_RELEASE_ARCH}/tool${CHANT_RELEASE_EXT}" ./cmd/tool',
+        outputs: ["dist/{os}_{arch}/tool{ext}"],
+        platforms: ["linux/amd64", "linux/arm64", "darwin/arm64", "windows/amd64"],
+        archive: { files: ["README.md", "LICENSE"] },
+      },
+      { name: "sums", checksums: "dist/SHA256SUMS" },
+    ],
+    publish: [{ type: "forge", forge: "github", repo: "acme/tool", assets: ["artifact:tool", "artifact:sums"] }],
+  },
+};
+```
+
+A `build` entry runs its command in the member's directory with `SOURCE_DATE_EPOCH` set to the commit's time and `CHANT_RELEASE_LABEL` to the label. With `platforms`, it runs once per platform with `CHANT_RELEASE_OS`, `CHANT_RELEASE_ARCH` and `CHANT_RELEASE_EXT` (`.exe` on Windows, empty otherwise) set; the command passes them to its compiler, as `GOOS=$CHANT_RELEASE_OS GOARCH=$CHANT_RELEASE_ARCH` does for Go. `outputs` names the files it writes, relative to the member. An output may hold `{os}`, `{arch}`, `{ext}`, `{label}` and `{version}` (the label from its first digit), and `*` or `?` within a path segment. An output the build did not write stops the cut (`release-artifact-no-output`), and so does a command that fails (`release-artifact-build-failed`).
+
+With `archive`, each platform's outputs are packed, beside the files `archive.files` names, into one archive per platform, and the release records the archives in place of the outputs. An archive is a tar.gz, or a zip for a Windows platform, unless `archive.format` names one. It is written to `archive.dir` (default `dist`) as `archive.name` (default `{name}_{os}_{arch}`, or `{name}` with no platforms) plus the extension. chant writes the archives itself: every entry is dated `SOURCE_DATE_EPOCH`, owned by root, and mode 0755 when executable, else 0644, so the same files pack to the same bytes. `archive: true` takes every default.
+
+A `checksums` entry writes a file of `<sha256>  <file name>` lines, sorted by name, as `sha256sum` writes them and `sha256sum -c` checks them. It covers the files of the entries `of` names, or of every entry before it. Two covered files with one name are refused (`release-artifact-checksums-name-taken`).
+
+A `goreleaser` entry runs `goreleaser release --snapshot --clean --skip=publish` in the member's directory, with `--config` when `goreleaser.config` names one, so goreleaser builds and publishes nothing. The run is `CHANT_GORELEASER` when set, else `goreleaser` on the `PATH`. The config's snapshot version must be the label chant passes, so the binaries carry the release's version:
+
+```yaml
+snapshot:
+  version_template: "{{ .Env.CHANT_RELEASE_LABEL }}"
+```
+
+chant reads `metadata.json` in goreleaser's `dist` (`goreleaser.dist`, default `dist`) and refuses a version that is neither the label nor the label from its first digit (`release-artifact-version-mismatch`). It records the files `artifacts.json` lists whose `type` is in `goreleaser.types`: by default `Archive`, `Checksum`, `File`, `Linux Package`, `SBOM`, `Source`, and a `Binary` at the top of `dist`, which are the files goreleaser's own release would upload. chant's targets publish them. A goreleaser entry needs a label (`release-artifact-no-label`), and so does an output or archive name that holds `{label}` or `{version}`.
+
+Each file is recorded in the release as an `asset` artifact whose `component` is the entry's name. Two entries, or two platforms, writing one path are refused (`release-artifact-output-taken`), and so is a name that an image or a component also has (`release-artifact-name-taken`). A forge or homebrew target names an entry's files with `artifact:<name>` in its `assets`; a name the release records no file for is refused at the publish (`publish-artifact-not-recorded`). Every target that reads a recorded file refuses one whose digest differs (`publish-artifact-digest-mismatch`), and the signing, provenance and SBOM checks of the security groups apply to these files as to any other. `RELEASE_ARTIFACTS_FLOOR` is the first chant with `release.artifacts`.
+
+The files sit in the checkout when the publish runs, so their directory belongs in `.gitignore`: the publish refuses an untracked file (`release-worktree-dirty`). The publish job of a dispatched release gets them from the cut job (see [release artifacts](#release-artifacts)), and on a release tag it builds them again with `chant release artifacts <label>`, which needs builds that write the same bytes twice, such as `go build -trimpath` and archives dated from `SOURCE_DATE_EPOCH`.
+
 ### A project with no components
 
 A project with no `*.component.ts` file is cut from what `chant build` writes ([#4046](https://github.com/INTENTIUS/chant/issues/4046)). For each environment the child process builds the project as `chant build <src> --env <env> -o <output>` would, with the environment's build parameters, and every file that build writes becomes a template with `component: null`. The target's `params` are the build's resolved parameters, and `artifactDigests` is empty.
@@ -432,7 +474,7 @@ export default {
 };
 ```
 
-With no `environments`, the cut compiles nothing. It records the release as the commit, the artifacts the cut built or was handed (`release.images`, `--image`), and `publishes`: each `release.publish` target's key, type and destination, in the declared order. `targets` is empty. The release digest covers `publishes`, so a release with them is read by chant `RELEASE_PUBLISHES_FLOOR` and newer. A `--build` command runs once the gate has passed and the images are built, with `CHANT_RELEASE_LABEL` set, and a build that fails cuts nothing. No `sourceDir` and no `chant.workspace.json` are needed; without `ci.green`, the [green gate](#the-green-gate) is the forge's checks.
+With no `environments`, the cut compiles nothing. It records the release as the commit, the artifacts the cut built or was handed (`release.images`, `release.artifacts`, `--image`), and `publishes`: each `release.publish` target's key, type and destination, in the declared order. `targets` is empty. The release digest covers `publishes`, so a release with them is read by chant `RELEASE_PUBLISHES_FLOOR` and newer. A `--build` command runs once the gate has passed and the images are built, with `CHANT_RELEASE_LABEL` set, and a build that fails cuts nothing. No `sourceDir` and no `chant.workspace.json` are needed; without `ci.green`, the [green gate](#the-green-gate) is the forge's checks.
 
 The publish is the same as for any release. Each target checks the files it uploads against the artifacts the release records at their paths, and the signature, provenance and SBOM checks of the security groups apply unchanged, see [release publish](#release-publish).
 
@@ -751,6 +793,9 @@ On GitHub and Forgejo a build job checks out the gate's commit without the job t
 
 `builds` needs `trigger: "dispatch"`: with the tag trigger the release was cut before the workflow ran, and `chant release workflow` refuses it.
 
+With `release.artifacts` (see [Files the release builds](#files-the-release-builds)), a dispatched release's cut job stages the files it built with `chant release artifacts <label> --no-build -o <dir>` and hands them to the publish job as the workflow artifact `chant-release-artifacts`, from the runner's temp directory. The publish job downloads them to its temp directory and runs `chant release artifacts <label> --from <dir>` after the build and before the publish, which puts each file at its path and refuses one whose digest is not the recorded one. On GitLab the cut job keeps them as `.chant-release-artifacts/` in its `artifacts:`, and the publish job moves that directory out of the checkout first. With the tag trigger the publish job runs `chant release artifacts <label>` after fetching `chant/lifecycle`, which builds them again and checks them. A `goreleaser` entry adds two steps to the job that builds: `actions/setup-go` with the member's `go.mod` on GitHub and Forgejo, unless `setup` names `actions/setup-go`, and the goreleaser chant pins, downloaded, checked against its SHA-256 and named by `CHANT_GORELEASER`, unless `release.workflow.env` sets `CHANT_GORELEASER`. A GitLab job uses its image's Go.
+
+
 With `release.version` (see [The label as the package version](#the-label-as-the-package-version)), the publish job runs `chant release stamp <label>` after the install and the setup steps and before the images and the build, under either trigger. The cut job is unchanged: the cut stamps on its own. A config without `release.version` renders the file it did.
 
 ## release stamp
@@ -775,6 +820,17 @@ chant release tag v1.4.0 --json    # { "releaseDigest": "sha256:…", "label": "
 ```
 
 `floating` is the floating tag the release would move, or null. It exits 1 with `release-not-found` when no release of the member has that label, digest or tag, `release-no-label` for a release with no label (`--json` prints `tag: null` instead), and `release-tag-template-invalid` as the cut does. The publish job of [`release workflow`](#release-workflow) reads the label of the tag that started it this way.
+
+## release artifacts
+
+Checks the files `release.artifacts` declares against the digests the release records, from the release's commit checked out here ([#5151](https://github.com/INTENTIUS/chant/issues/5151)). With no flag it builds them again, as the cut did. `--no-build` checks the files on disk, and `--from <dir>` first copies them from a directory where a cut job staged them. `-o <dir>` then stages the checked files in `<dir>` at their paths in the member, for the next job.
+
+```bash
+chant release artifacts v1.4.0 --no-build -o "$RUNNER_TEMP/chant-release-artifacts"   # in the cut job
+chant release artifacts v1.4.0 --from "$RUNNER_TEMP/chant-release-artifacts"          # in the publish job
+```
+
+It refuses a checkout at another commit (`release-artifacts-wrong-commit`), a member with no `release.artifacts` (`release-artifacts-not-declared`), an entry the release does not record (`release-artifact-not-recorded`), a file that is not there (`release-artifact-missing`), and a file whose digest is not the recorded one, or a build that writes a file the release does not record (`release-artifact-digest-mismatch`). `--json` prints `releaseDigest`, `label`, `files` (each `name`, `path` and `digest`) and `staged`.
 
 ## release verify
 

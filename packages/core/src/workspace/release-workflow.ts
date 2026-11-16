@@ -36,6 +36,7 @@
 import { readFileSync } from "node:fs";
 import { ACTION_PINS, tagComments, usesRef } from "../action-pins";
 import { IMAGE_PINS, imageRef } from "../image-pins";
+import { GORELEASER_PIN, goreleaserInstallLine } from "../goreleaser-pin";
 import { releaseImagePlatforms, resolveReleaseImages } from "../lifecycle/release-images";
 import { GENERATED_MARKER } from "../discovery/files";
 import { tagShape, type MemberTags } from "../lifecycle/release-tag";
@@ -157,6 +158,22 @@ export interface ReleaseWorkflowInput {
   /** `release.lane` (#4692): the gate's green lane. */
   lane?: string;
   /**
+   * The config declares `release.artifacts` (#5151). In a dispatched release
+   * the cut job stages the files it built (`chant release artifacts --no-build
+   * -o`) and hands them to the publish job as the workflow artifact
+   * {@link RELEASE_ARTIFACTS_ARTIFACT}, which checks them against the record
+   * (`--from`) before the publish. On a release tag the publish job builds
+   * them again and checks them.
+   */
+  artifacts?: boolean;
+  /**
+   * An entry of `release.artifacts` is built by goreleaser (#5151): the job
+   * that builds the files installs the goreleaser {@link GORELEASER_PIN} pins,
+   * checked by SHA-256, and on GitHub and Forgejo sets up Go from the
+   * member's `go.mod`.
+   */
+  goreleaser?: boolean;
+  /**
    * The green gate the cut checks (#5149), `release.green` resolved. Under
    * `forge-checks` or `none` a dispatched release's gate names the
    * dispatched commit, since no `ci/green` tag exists to search, and the cut
@@ -266,6 +283,36 @@ export function qemuSetup(forge: ReleaseWorkflowForge, platforms: readonly strin
   return forge === "gitlab" ? [{ run: `docker run --privileged --rm ${imageRef(IMAGE_PINS.binfmt)} --install ${archs.join(",")}` }] : [{ uses: usesRef(ACTION_PINS.dockerSetupQemu4), with: { platforms: archs.join(",") } }];
 }
 
+/** The workflow artifact the cut job hands the files `release.artifacts` built on in (#5151). */
+export const RELEASE_ARTIFACTS_ARTIFACT = "chant-release-artifacts";
+
+/** Where a job stages, and the publish job finds, the files the cut built (#5151): outside the checkout on GitHub and Forgejo; GitLab keeps job artifacts only inside the project directory, so its publish job moves them out first. */
+export const RELEASE_ARTIFACTS_STAGE: Record<ReleaseWorkflowForge, string> = {
+  github: "$RUNNER_TEMP/chant-release-artifacts",
+  forgejo: "$RUNNER_TEMP/chant-release-artifacts",
+  gitlab: "$CI_PROJECT_DIR/.chant-release-artifacts",
+};
+
+/**
+ * What a job that builds goreleaser entries runs first (#5151): Go from the
+ * member's `go.mod` (GitHub and Forgejo, unless `release.workflow.setup`
+ * names `actions/setup-go`), then the pinned goreleaser, downloaded, checked
+ * by SHA-256 and named by `CHANT_GORELEASER`. A config that sets
+ * `CHANT_GORELEASER` in `release.workflow.env` gets no install. GitLab
+ * jobs run in the project's image, which brings its own Go.
+ */
+export function goreleaserSetup(forge: ReleaseWorkflowForge, root: string | null, p: ReleasePipelineConfig): { github: string[]; gitlab: string[] } {
+  const install = p.env?.CHANT_GORELEASER === undefined;
+  if (forge === "gitlab") {
+    return { github: [], gitlab: install ? [`${goreleaserInstallLine(RELEASE_RUNNER_PLATFORM, "/tmp/goreleaser")} && export CHANT_GORELEASER=/tmp/goreleaser/goreleaser`] : [] };
+  }
+  const go = (p.setup ?? []).some((s) => "uses" in s && /^actions\/setup-go@/.test(s.uses))
+    ? []
+    : [`      - uses: ${usesRef(ACTION_PINS.setupGo7)}`, "        with:", `          go-version-file: ${root ? `${root}/` : ""}go.mod`];
+  const line = `${goreleaserInstallLine(RELEASE_RUNNER_PLATFORM, "$RUNNER_TEMP/goreleaser")} && echo "CHANT_GORELEASER=$RUNNER_TEMP/goreleaser/goreleaser" >> "$GITHUB_ENV"`;
+  return { github: [...go, ...(install ? [`      - name: goreleaser ${GORELEASER_PIN.version}`, `        run: ${JSON.stringify(line)}`] : [])], gitlab: [] };
+}
+
 /** The flags `chant release publish` gets under the groups. */
 export function publishFlags(groups: ReadonlySet<SecurityGroup>): string[] {
   return [...(groups.has("supply-chain") ? ["--require-provenance"] : []), "--yes"];
@@ -316,6 +363,8 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
     if (p.trigger !== "dispatch") throw new Error('release.workflow.builds: the tag trigger publishes a release cut before the workflow ran, so nothing built here would be in it; use trigger: "dispatch"');
     checkBuilds(builds);
   }
+  const artifacts = input.artifacts === true;
+  const goreleaser = artifacts && input.goreleaser === true ? goreleaserSetup(input.forge, root, p) : { github: [], gitlab: [] };
   // #4786: the targets' own needs first, then the config's, so a config that set them by hand renders the same file without them.
   const derived = targetExtras(input.forge, input.publish ?? [], p);
   // #5149: the cut asks the forge for the commit's checks with the run's token.
@@ -345,7 +394,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
     const cutToken = green === "forge-checks" && input.forge !== "gitlab" && p.env?.GITHUB_TOKEN === undefined ? ["      GITHUB_TOKEN: ${{ github.token }}"] : [];
     const buildJobs = builds.map((b) => ({ ...b, setup: toolchainLines(resolveToolchains(b.toolchains !== undefined ? b.toolchains : p.toolchains, files, root, false)) }));
     if (input.forge === "gitlab" && builds.some((b) => b.toolchains && b.toolchains.length > 0)) throw new Error("release.workflow.builds: toolchains: a GitLab job runs in its runner's image, which brings the toolchain; leave toolchains out");
-    const o = { chant, install, chantSetup, fullSetup, builds: buildJobs, build, root, verify, flags, after, images, version, archives, forge: input.forge, extra, forgeToken, cutToken, green, doctor: p.doctor !== false, gate: p.gate ?? "last-green", ...(input.lane ? { lane: input.lane } : {}) };
+    const o = { chant, install, chantSetup, fullSetup, builds: buildJobs, build, root, verify, flags, after, images, version, archives, artifacts, goreleaser, forge: input.forge, extra, forgeToken, cutToken, green, doctor: p.doctor !== false, gate: p.gate ?? "last-green", ...(input.lane ? { lane: input.lane } : {}) };
     return input.forge === "gitlab" ? renderGitlabDispatch(o) : renderGithubDispatch(o);
   }
   // #5150: a release.tag template triggers on its own tags.
@@ -371,10 +420,13 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
       ...(install ? [`    - ${install}`] : []),
       ...extra.gitlabScript.map((l) => `    - ${l}`),
       ...(p.doctor === true ? [`    - ${chant} release doctor`] : []),
+      ...goreleaser.gitlab.map((l) => `    - ${JSON.stringify(l)}`),
       ...(version ? [`    - ${chant} release stamp ${label}`] : []),
-      ...(images ? [...fetches, ...imageLines(label, `export CHANT_RELEASE_DIGESTS="${digests}"`).map((l) => `    - ${l}`)] : []),
+      ...(images || artifacts ? fetches : []),
+      ...(images ? imageLines(label, `export CHANT_RELEASE_DIGESTS="${digests}"`).map((l) => `    - ${l}`) : []),
+      ...(artifacts ? [`    - ${chant} release artifacts ${label}`] : []),
       ...(build ? [`    - ${build}`] : []),
-      ...(images ? [] : fetches),
+      ...(images || artifacts ? [] : fetches),
       ...(verify ? [`    - ${chant} release verify ${label}`] : []),
       `    - ${chant} release publish ${label} ${flags}`,
     ];
@@ -415,10 +467,13 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
     ...(install ? [`      - run: ${install}`] : []),
     ...extra.githubSteps,
     ...(p.doctor === true ? [`      - run: ${chant} release doctor`] : []),
+    ...goreleaser.github,
     ...(version ? [`      - run: ${chant} release stamp ${label}`] : []),
-    ...(images ? [...fetches, ...imageLines(label, `echo "CHANT_RELEASE_DIGESTS=${digests}" >> "$GITHUB_ENV"`).map((l) => `      - run: ${l}`)] : []),
+    ...(images || artifacts ? fetches : []),
+    ...(images ? imageLines(label, `echo "CHANT_RELEASE_DIGESTS=${digests}" >> "$GITHUB_ENV"`).map((l) => `      - run: ${l}`) : []),
+    ...(artifacts ? [`      - run: ${chant} release artifacts ${label}`] : []),
     ...(build ? [`      - run: ${build}`] : []),
-    ...(images ? [] : fetches),
+    ...(images || artifacts ? [] : fetches),
     ...(verify ? [`      - run: ${chant} release verify ${label}`] : []),
     `      - run: ${chant} release publish ${label} ${flags}`,
   ];
@@ -660,6 +715,10 @@ interface DispatchInput {
   version: boolean;
   /** The image archives the cut hands to the publish job, from the repository root. Empty: the publish job builds them again. */
   archives: string[];
+  /** `release.artifacts` (#5151): the cut job stages the files and the publish job checks them. */
+  artifacts: boolean;
+  /** The goreleaser setup of the cut job (#5151), as GitHub steps and GitLab script lines. */
+  goreleaser: { github: string[]; gitlab: string[] };
   forge: ReleaseWorkflowForge;
   gate: "last-green" | "head";
   lane?: string;
@@ -860,10 +919,22 @@ function renderGithubDispatch(o: DispatchInput): string {
     ...installLines,
     ...o.extra.githubSteps,
     ...(o.doctor ? [`      - run: ${o.chant} release doctor`] : []),
+    ...o.goreleaser.github,
     fetches[0]!,
     `      - run: ${LEDGER_FETCH_FIRST}`,
     ...restore(true),
     ...block(cutScript(o, '"$RUNNER_TEMP/chant-cut.json"')),
+    ...(o.artifacts
+      ? [
+          `      - run: ${o.chant} release artifacts "$CHANT_RELEASE_LABEL" --no-build -o "${RELEASE_ARTIFACTS_STAGE[o.forge]}"`,
+          `      - uses: ${usesRef(o.forge === "forgejo" ? ACTION_PINS.uploadArtifact3 : ACTION_PINS.uploadArtifact4)}`,
+          "        with:",
+          `          name: ${RELEASE_ARTIFACTS_ARTIFACT}`,
+          "          path: ${{ runner.temp }}/chant-release-artifacts",
+          "          if-no-files-found: error",
+          "          retention-days: 1",
+        ]
+      : []),
     ...(o.archives.length > 0
       ? [
           `      - uses: ${upload}`,
@@ -889,7 +960,11 @@ function renderGithubDispatch(o: DispatchInput): string {
     ...restore(false),
     ...(o.version ? [`      - run: ${stampLine(o)}`] : []),
     ...(o.images ? [`      - run: ${imagesLine(o)}`, `      - run: echo "CHANT_RELEASE_DIGESTS=${RELEASE_DIGESTS_PATHS[o.forge]}" >> "$GITHUB_ENV"`] : []),
+    ...(o.artifacts
+      ? [`      - uses: ${usesRef(o.forge === "forgejo" ? ACTION_PINS.downloadArtifact3 : ACTION_PINS.downloadArtifact4)}`, "        with:", `          name: ${RELEASE_ARTIFACTS_ARTIFACT}`, "          path: ${{ runner.temp }}/chant-release-artifacts"]
+      : []),
     ...(o.build ? [`      - run: ${o.build}`] : []),
+    ...(o.artifacts ? [`      - run: ${o.chant} release artifacts "$CHANT_RELEASE_LABEL" --from "${RELEASE_ARTIFACTS_STAGE[o.forge]}"`] : []),
     ...(o.verify ? [`      - run: ${o.chant} release verify "$CHANT_RELEASE_LABEL"`] : []),
     `      - run: ${o.chant} release publish "$CHANT_RELEASE_LABEL" ${o.flags}`,
   ];
@@ -955,8 +1030,22 @@ function renderGitlabDispatch(o: DispatchInput): string {
     ...job(
       "chant-release-cut",
       ["chant-release-gate", ...built],
-      [...checkout, ...cd, ...install, ...o.extra.gitlabScript, fetches[0]!, ...auth, LEDGER_FETCH_FIRST, ...restore(true), ...(o.green === "forge-checks" ? ['export CHANT_GITLAB_TOKEN="${CHANT_GITLAB_TOKEN:-$CHANT_RELEASE_TOKEN}"'] : []), ...(o.doctor ? [`${o.chant} release doctor`] : []), ...cutScript(o, "/tmp/chant-cut.json")],
-      o.archives.length > 0 ? ["  artifacts:", "    paths:", ...o.archives.map((a) => `      - ${JSON.stringify(a)}`), "    expire_in: 1 day"] : [],
+      [
+        ...checkout,
+        ...cd,
+        ...install,
+        ...o.extra.gitlabScript,
+        ...o.goreleaser.gitlab,
+        fetches[0]!,
+        ...auth,
+        LEDGER_FETCH_FIRST,
+        ...restore(true),
+        ...(o.green === "forge-checks" ? ['export CHANT_GITLAB_TOKEN="${CHANT_GITLAB_TOKEN:-$CHANT_RELEASE_TOKEN}"'] : []),
+        ...(o.doctor ? [`${o.chant} release doctor`] : []),
+        ...cutScript(o, "/tmp/chant-cut.json"),
+        ...(o.artifacts ? [`${o.chant} release artifacts "$CHANT_RELEASE_LABEL" --no-build -o "${RELEASE_ARTIFACTS_STAGE.gitlab}"`] : []),
+      ],
+      o.archives.length > 0 || o.artifacts ? ["  artifacts:", "    paths:", ...o.archives.map((a) => `      - ${JSON.stringify(a)}`), ...(o.artifacts ? ['      - ".chant-release-artifacts/"'] : []), "    expire_in: 1 day"] : [],
       o.extra.gitlabVariables,
     ),
     "",
@@ -965,6 +1054,8 @@ function renderGitlabDispatch(o: DispatchInput): string {
       ["chant-release-gate", "chant-release-cut", ...built],
       [
         ...checkout,
+        // #5151: the staged files leave the checkout, which the publish finds as the cut left it.
+        ...(o.artifacts ? ['mv "$CI_PROJECT_DIR/.chant-release-artifacts" /tmp/chant-release-artifacts'] : []),
         ...cd,
         ...install,
         ...o.extra.gitlabScript,
@@ -974,6 +1065,7 @@ function renderGitlabDispatch(o: DispatchInput): string {
         ...(o.version ? [stampLine(o)] : []),
         ...(o.images ? [imagesLine(o), `export CHANT_RELEASE_DIGESTS="${RELEASE_DIGESTS_PATHS.gitlab}"`] : []),
         ...(o.build ? [o.build] : []),
+        ...(o.artifacts ? [`${o.chant} release artifacts "$CHANT_RELEASE_LABEL" --from /tmp/chant-release-artifacts`] : []),
         ...(o.verify ? [`${o.chant} release verify "$CHANT_RELEASE_LABEL"`] : []),
         `${o.chant} release publish "$CHANT_RELEASE_LABEL" ${o.flags}`,
       ],
@@ -1080,6 +1172,7 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     tags,
     ...(release?.workflow ? { pipeline: release.workflow } : {}),
     ...((release?.images?.length ?? 0) > 0 ? { images: true, imageArchives: resolveReleaseImages(release!.images!).map((i) => i.archive), imagePlatforms: releaseImagePlatforms(release!.images!) } : {}),
+    ...((release?.artifacts?.length ?? 0) > 0 ? { artifacts: true, ...((await import("../lifecycle/release-artifacts")).usesGoreleaser(release!.artifacts!) ? { goreleaser: true } : {}) } : {}),
     ...(release?.lane ? { lane: release.lane } : {}),
     green: await (async () => {
       const { resolveGreenSource } = await import("../lifecycle/release-green");
@@ -1132,6 +1225,7 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
   if (forge === "gitlab" && others.length > 0 && release?.workflow?.toolchains === undefined) console.log(`The jobs build with ${others.join(", ")}: a GitLab job takes its toolchain from the runner's image, so name an image that has it, and Node for chant, in .gitlab-ci.yml.`);
   if (forge === "gitlab" && release?.workflow?.trigger !== "dispatch" && tags.template.floating)
     console.log(`The publish job moves the floating tag (${tags.template.floating}) with git push, which a GitLab job token can't do: use release.workflow.trigger "dispatch", whose jobs push with CHANT_RELEASE_TOKEN, or move it by hand.`);
+  if (forge === "gitlab" && text.includes("CHANT_GORELEASER=/tmp/goreleaser")) console.log("The job that builds release.artifacts runs goreleaser with the Go of the job's image: give it an image with the Go your go.mod names.");
   if (forge === "gitlab" && release?.workflow?.trigger === "dispatch") console.log("The cut and publish jobs push with CHANT_RELEASE_TOKEN: a project access token with write_repository, as a masked CI/CD variable.");
   return 0;
 }
