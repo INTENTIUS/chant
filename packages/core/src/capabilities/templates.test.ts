@@ -199,7 +199,7 @@ describe("the entry kind", () => {
 describe("the export", () => {
   it("ships templates.json as @intentius/chant/capabilities/templates.json, the data the catalog reads", () => {
     const pkg = JSON.parse(readFileSync(join(import.meta.dirname, "..", "..", "package.json"), "utf-8")) as { exports: Record<string, unknown> };
-    expect(pkg.exports["./capabilities/templates.json"]).toBe("./src/capabilities/templates.json");
+    expect(pkg.exports["./capabilities/templates.json"]).toEqual({ development: "./src/capabilities/templates.json", default: "./dist/capabilities/templates.json" });
     const onDisk = JSON.parse(readFileSync(join(import.meta.dirname, "templates.json"), "utf-8")) as unknown;
     expect(onDisk).toEqual(data);
     expect(parseTemplates(onDisk)).toEqual(investigationTemplates());

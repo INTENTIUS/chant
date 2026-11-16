@@ -3,15 +3,26 @@ import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, test } from "vitest";
-import { chantPackageSourceTarget, chantSourceDir, lexiconCompiledTwin, ensureTypeScriptLoader, ensureTypeScriptLoaderFor, typeScriptLoaderPending } from "./ts-loader";
+import { chantModule, chantPackageSourceTarget, chantSourceDir, lexiconCompiledTwin, ensureTypeScriptLoader, ensureTypeScriptLoaderFor, typeScriptLoaderPending } from "./ts-loader";
 
 describe("ts-loader (#3878)", () => {
-  const pkg = join(sep, "x", "node_modules", "@intentius", "chant");
+  // A package with a src/ tree beside its dist/, as in a checkout.
+  const root = mkdtempSync(join(tmpdir(), "ts-loader-pkg-"));
+  const pkg = join(root, "node_modules", "@intentius", "chant");
+  mkdirSync(join(pkg, "src", "discovery", "sandbox"), { recursive: true });
 
   test("chantSourceDir maps a compiled module's directory to its source directory", () => {
     const url = pathToFileURL(join(pkg, "dist", "discovery", "sandbox", "driver.js")).href;
     expect(chantSourceDir(url)).toBe(join(pkg, "src", "discovery", "sandbox"));
     expect(chantSourceDir(pathToFileURL(join(pkg, "dist", "params.js")).href)).toBe(join(pkg, "src"));
+  });
+
+  test("an installed package has no src/: chantSourceDir is the compiled directory and chantModule names the .js", () => {
+    const installed = join(root, "node_modules", "@intentius", "chant-installed");
+    const dir = chantSourceDir(pathToFileURL(join(installed, "dist", "discovery", "sandbox", "driver.js")).href);
+    expect(dir).toBe(join(installed, "dist", "discovery", "sandbox"));
+    expect(chantModule(join(dir, "child-errors.ts"))).toBe(join(dir, "child-errors.js"));
+    expect(chantModule(join(pkg, "src", "discovery", "sandbox"))).toBe(join(pkg, "src", "discovery", "sandbox"));
   });
 
   test("chantSourceDir leaves a source module's directory alone", () => {

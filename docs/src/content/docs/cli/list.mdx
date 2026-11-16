@@ -14,6 +14,8 @@ chant list [path] [flags]
 
 `chant list` scans all TypeScript source files in the project and lists every exported declaration with its name and kind.
 
+It loads the project's TypeScript through `tsx`, an optional peer dependency of `@intentius/chant`: install it with `npm i -D tsx`. Without it the command stops with `chant needs tsx to run TypeScript; install it with: npm i -D tsx`. See [Installation](/chant/getting-started/installation/#tsx-and-esbuild).
+
 ## Flags
 
 | Flag | Type | Default | Description |

@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // Copies the files chant's compiled modules read next to themselves from src/
 // into dist/ (#3878): the JSON schemas and lint presets, the capability rule
-// files (#4375), the .mjs helpers the
+// files (#4375), the .mjs helpers and .astro components the
 // TypeScript build does not emit, and the conformance suites' runtime
-// fixtures (`__fixture__`, `__writer_fixture__`). Test fixtures
+// fixtures (`__fixture__`, `__writer_fixture__`). The package publishes dist/
+// and not src/, so a file a compiled module reads must be copied here. Test fixtures
 // (`__fixtures__`), snapshots and tests stay in src/.
 import { cpSync, existsSync, mkdirSync, readdirSync, statSync, copyFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
@@ -36,7 +37,7 @@ function walk(dir) {
     }
     if (/\.test\./.test(name)) continue;
     // `.paths`: the capability rule files core reads at run time (#4375).
-    if (name.endsWith(".json") || name.endsWith(".paths")) copy(path, out);
+    if (name.endsWith(".json") || name.endsWith(".paths") || name.endsWith(".astro")) copy(path, out);
     // An .mjs with a .ts beside it is a source-only entry (conformance/index.mjs
     // loads index.ts through tsx); the compiled index.js stands in for it.
     else if (name.endsWith(".mjs") && !existsSync(path.replace(/\.mjs$/, ".ts"))) copy(path, out);

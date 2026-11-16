@@ -1,9 +1,10 @@
-import * as esbuild from "esbuild";
+import type * as esbuild from "esbuild";
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { SOURCE_EXPORT_CONDITIONS } from "../../module-source";
+import { importOptionalPeer } from "../../optional-peer";
 import { chantPackageSourceTarget } from "../../ts-loader";
 
 /**
@@ -233,10 +234,17 @@ export async function bundleDriver(driverSource: string): Promise<BundleResult> 
   const outfile = join(bundleDir, "child.mjs");
 
   const { plugin, readPaths } = externalTrustedPackagesPlugin();
+  let esbuildModule: typeof esbuild;
+  try {
+    esbuildModule = await importOptionalPeer("esbuild", "bundle a TypeScript project", () => import("esbuild"));
+  } catch (err) {
+    rmSync(bundleDir, { recursive: true, force: true });
+    throw err;
+  }
 
   const start = performance.now();
   try {
-    await esbuild.build({
+    await esbuildModule.build({
       entryPoints: [entryPath],
       outfile,
       bundle: true,

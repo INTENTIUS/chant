@@ -23,8 +23,8 @@
   ],
   "type": "module",
   "files": [
-    "src/",
     "dist/",
+    "!dist/**/*.map",
     "bin/"
   ],
   "publishConfig": {
@@ -39,117 +39,138 @@
       "development": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
-      "default": "./src/index.ts"
+      "default": "./dist/index.js"
     },
     "./yaml": {
       "development": "./src/yaml.ts",
       "types": "./dist/yaml.d.ts",
       "import": "./dist/yaml.js",
-      "default": "./src/yaml.ts"
+      "default": "./dist/yaml.js"
     },
     "./cli": {
       "development": "./src/cli/index.ts",
       "types": "./dist/cli/index.d.ts",
       "import": "./dist/cli/index.js",
-      "default": "./src/cli/index.ts"
+      "default": "./dist/cli/index.js"
     },
-    "./workspace/*.schema.json": "./src/workspace/*.schema.json",
-    "./capabilities/templates.json": "./src/capabilities/templates.json",
-    "./notify.schema.json": "./src/notify.schema.json",
-    "./health.schema.json": "./src/health.schema.json",
-    "./gate-statement.schema.json": "./src/gate-statement.schema.json",
+    "./workspace/*.schema.json": {
+      "development": "./src/workspace/*.schema.json",
+      "default": "./dist/workspace/*.schema.json"
+    },
+    "./capabilities/templates.json": {
+      "development": "./src/capabilities/templates.json",
+      "default": "./dist/capabilities/templates.json"
+    },
+    "./notify.schema.json": {
+      "development": "./src/notify.schema.json",
+      "default": "./dist/notify.schema.json"
+    },
+    "./health.schema.json": {
+      "development": "./src/health.schema.json",
+      "default": "./dist/health.schema.json"
+    },
+    "./gate-statement.schema.json": {
+      "development": "./src/gate-statement.schema.json",
+      "default": "./dist/gate-statement.schema.json"
+    },
     "./workspace/factory-rules": {
       "development": "./src/workspace/factory-rules.ts",
       "types": "./dist/workspace/factory-rules.d.ts",
       "import": "./dist/workspace/factory-rules.js",
-      "default": "./src/workspace/factory-rules.ts"
+      "default": "./dist/workspace/factory-rules.js"
     },
     "./workspace/conformance": {
       "development": "./src/workspace/conformance/index.ts",
       "types": "./dist/workspace/conformance/index.d.ts",
       "import": "./dist/workspace/conformance/index.js",
-      "default": "./src/workspace/conformance/index.mjs"
+      "default": "./dist/workspace/conformance/index.js"
     },
     "./workspace/conformance/vitest": {
       "development": "./src/workspace/conformance/vitest.ts",
       "types": "./dist/workspace/conformance/vitest.d.ts",
       "import": "./dist/workspace/conformance/vitest.js",
-      "default": "./src/workspace/conformance/vitest.ts"
+      "default": "./dist/workspace/conformance/vitest.js"
     },
     "./cli/*": {
       "development": "./src/cli/*.ts",
       "types": "./dist/cli/*.d.ts",
       "import": "./dist/cli/*.js",
-      "default": "./src/cli/*.ts"
+      "default": "./dist/cli/*.js"
     },
     "./op": {
       "development": "./src/op/index.ts",
       "types": "./dist/op/index.d.ts",
       "import": "./dist/op/index.js",
-      "default": "./src/op/index.ts"
+      "default": "./dist/op/index.js"
     },
     "./op/activities": {
       "development": "./src/op/activities/index.ts",
       "types": "./dist/op/activities/index.d.ts",
       "import": "./dist/op/activities/index.js",
-      "default": "./src/op/activities/index.ts"
+      "default": "./dist/op/activities/index.js"
     },
     "./template-request": {
       "development": "./src/template-request/index.ts",
       "types": "./dist/template-request/index.d.ts",
       "import": "./dist/template-request/index.js",
-      "default": "./src/template-request/index.ts"
+      "default": "./dist/template-request/index.js"
     },
-    "./template-request/*.schema.json": "./src/template-request/*.schema.json",
+    "./template-request/*.schema.json": {
+      "development": "./src/template-request/*.schema.json",
+      "default": "./dist/template-request/*.schema.json"
+    },
     "./components": {
       "development": "./src/components/index.ts",
       "types": "./dist/components/index.d.ts",
       "import": "./dist/components/index.js",
-      "default": "./src/components/index.ts"
+      "default": "./dist/components/index.js"
     },
     "./testing": {
       "development": "./src/testing.ts",
       "types": "./dist/testing.d.ts",
       "import": "./dist/testing.js",
-      "default": "./src/testing.ts"
+      "default": "./dist/testing.js"
     },
     "./agents": {
       "development": "./src/agents/index.ts",
       "types": "./dist/agents/index.d.ts",
       "import": "./dist/agents/index.js",
-      "default": "./src/agents/index.ts"
+      "default": "./dist/agents/index.js"
     },
     "./notify-verify": {
       "development": "./src/notify-verify.ts",
       "types": "./dist/notify-verify.d.ts",
       "import": "./dist/notify-verify.js",
-      "default": "./src/notify-verify.ts"
+      "default": "./dist/notify-verify.js"
     },
     "./runner-start": {
       "development": "./src/runner-start.ts",
       "types": "./dist/runner-start.d.ts",
       "import": "./dist/runner-start.js",
-      "default": "./src/runner-start.ts"
+      "default": "./dist/runner-start.js"
     },
     "./notify": {
       "development": "./src/notify.ts",
       "types": "./dist/notify.d.ts",
       "import": "./dist/notify.js",
-      "default": "./src/notify.ts"
+      "default": "./dist/notify.js"
     },
     "./wave-runtime.mjs": "./dist/wave-runtime.mjs",
-    "./bucket-check/fixtures/*.json": "./src/bucket-check/fixtures/*.json",
+    "./bucket-check/fixtures/*.json": {
+      "development": "./src/bucket-check/fixtures/*.json",
+      "default": "./dist/bucket-check/fixtures/*.json"
+    },
     "./object-store": {
       "development": "./src/object-store/index.ts",
       "types": "./dist/object-store/index.d.ts",
       "import": "./dist/object-store/index.js",
-      "default": "./src/object-store/index.ts"
+      "default": "./dist/object-store/index.js"
     },
     "./*": {
       "development": "./src/*.ts",
       "types": "./dist/*.d.ts",
       "import": "./dist/*.js",
-      "default": "./src/*.ts"
+      "default": "./dist/*.js"
     }
   },
   "scripts": {
@@ -159,21 +180,23 @@
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",
     "ajv": "^8.20.0",
-    "esbuild": "^0.28.1",
     "fflate": "^0.8.2",
     "js-yaml": "^4.3.1",
     "picomatch": "^4.0.3",
-    "tsx": "^4.0.0",
     "typescript": "^5.5.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@cdktn/hcl2json": "^0.24.0"
+    "@cdktn/hcl2json": "^0.24.0",
+    "esbuild": "^0.28.1",
+    "tsx": "^4.0.0"
   },
   "peerDependencies": {
     "@aws-sdk/credential-providers": "^3.0.0",
     "@azure/identity": "^4.0.0",
+    "esbuild": "^0.28.1",
     "google-auth-library": "^9.0.0 || ^10.0.0",
+    "tsx": "^4.0.0",
     "vitest": ">=2"
   },
   "peerDependenciesMeta": {
@@ -183,7 +206,13 @@
     "@azure/identity": {
       "optional": true
     },
+    "esbuild": {
+      "optional": true
+    },
     "google-auth-library": {
+      "optional": true
+    },
+    "tsx": {
       "optional": true
     },
     "vitest": {

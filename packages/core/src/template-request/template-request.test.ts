@@ -126,7 +126,7 @@ describe("schemas", () => {
   test("the package exports ./template-request and its schemas", () => {
     const exports = pkg.exports as Record<string, unknown>;
     expect(exports["./template-request"]).toMatchObject({ development: "./src/template-request/index.ts", import: "./dist/template-request/index.js" });
-    expect(exports["./template-request/*.schema.json"]).toBe("./src/template-request/*.schema.json");
+    expect(exports["./template-request/*.schema.json"]).toEqual({ development: "./src/template-request/*.schema.json", default: "./dist/template-request/*.schema.json" });
   });
 });
 

@@ -27,6 +27,7 @@ import * as nodeModule from "node:module";
 import { dirname, join, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isJavaScriptModule, moduleSourceDir } from "./module-source";
+import { requireOptionalPeer } from "./optional-peer";
 
 // `module.registerHooks` (Node 22.15+, 24) is newer than the @types/node the
 // repository pins, so its shape is declared here.
@@ -36,8 +37,7 @@ interface ResolveResult {
   shortCircuit?: boolean;
 }
 type NextResolve = (specifier: string, context?: unknown) => ResolveResult;
-const { createRequire, registerHooks } = nodeModule as unknown as {
-  createRequire: typeof nodeModule.createRequire;
+const { registerHooks } = nodeModule as unknown as {
   registerHooks: (hooks: { resolve: (specifier: string, context: unknown, nextResolve: NextResolve) => ResolveResult }) => unknown;
 };
 
@@ -244,10 +244,10 @@ export function ensureTypeScriptLoader(): boolean {
   const state = compiledState();
   if (!state) return false;
   if (state.tsx) return true;
+  const load = (specifier: string) => requireOptionalPeer<{ register: () => unknown }>("tsx", specifier, "run TypeScript", import.meta.url);
+  load("tsx/cjs/api").register();
+  load("tsx/esm/api").register();
   state.tsx = true;
-  const require = createRequire(import.meta.url);
-  (require("tsx/cjs/api") as { register: () => unknown }).register();
-  (require("tsx/esm/api") as { register: () => unknown }).register();
   return true;
 }
 
@@ -281,9 +281,22 @@ export function typeScriptLoaderPending(): boolean {
  * module runs from `<package>/dist`. The sandbox drivers hand chant's own
  * modules to esbuild by path, and must name the TypeScript source the
  * project's own `@intentius/chant/*` imports resolve to. String arithmetic
- * only: no filesystem access, so it is safe inside a sandboxed child. The
- * same mapping as {@link moduleSourceDir}, which lexicons use.
+ * only for the mapping itself, so it is safe inside a sandboxed child. The
+ * same mapping as {@link moduleSourceDir}, which lexicons use. When the
+ * package was installed without `src/`, the compiled directory instead.
  */
 export function chantSourceDir(moduleUrl: string): string {
-  return moduleSourceDir(moduleUrl);
+  const source = moduleSourceDir(moduleUrl);
+  // The package publishes dist/ and not src/: with no source tree beside it,
+  // chant's own modules are the compiled ones in this module's directory.
+  return existsSync(source) ? source : dirname(fileURLToPath(moduleUrl));
+}
+
+/**
+ * The module a sandbox driver imports: `path` (a `<dir>/x.ts` under
+ * {@link chantSourceDir}) when the source tree is there, and the compiled
+ * `x.js` beside it when only dist/ is installed.
+ */
+export function chantModule(path: string): string {
+  return existsSync(path) ? path : path.replace(/\.ts$/, ".js");
 }

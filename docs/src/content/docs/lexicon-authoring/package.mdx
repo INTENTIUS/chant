@@ -140,7 +140,7 @@ sidebar is grouped from, is in [Docs Site](/chant/lexicon-authoring/docs-site/).
 Once the bundle is built:
 
 1. Run `chant dev check-lexicon <dir>` and confirm tier 1 is clean
-2. Set `files` to `["src/", "dist/"]`. tsc compiles modules only, so a compiled module reads the generated files beside its source from `src/` (`moduleSourceDir` in `@intentius/chant/module-source`). Fold reads a composite's source there too. Shipping only `dist/` breaks both
+2. Set `files` to `["dist/"]`. tsc compiles modules only, so the build also copies the JSON a compiled module reads beside itself (the generated lexicon file, vendored schemas) from `src/` to the same path under `dist/`; `scripts/copy-lexicon-assets.mjs` in this repository does it. A module names such a file from `moduleSourceDir` in `@intentius/chant/module-source`, which finds it under `src/` in a checkout and beside the compiled module in an installed package. A lexicon that still lists `src/` in `files` keeps working, with a larger install
 3. Give every module export two conditions: `development` on `./src/*.ts` and `default` on the compiled `./dist/*.js`. The `build` script runs tsc on `tsconfig.build.json` and keeps the `.js` it emits. Both are tier-1 checks, and `scripts/lexicon-exports.test.ts` checks every export of every lexicon in this repository
 4. Chain the bundle step and the build into `prepack`, so `dist/` is rebuilt from the pinned spec at publish time rather than from whatever is on disk
 5. Publish with `npm pack` (for testing) or `npm publish`

@@ -1,7 +1,7 @@
 /**
  * A local Fly Machines API that runs its Machines (#2831), as a command:
  *
- *   tsx node_modules/@intentius/chant-lexicon-fly/src/op/activities/machines-local-cli.ts \
+ *   node node_modules/@intentius/chant-lexicon-fly/dist/op/activities/machines-local-cli.js \
  *     [--listen 4280] [--root <dir>] [--publish <port> | --publish <name>=<port> ...] [--log <file>]
  *
  * Point the release activities at it with `FLY_FLAPS_BASE_URL=http://127.0.0.1:4280`.

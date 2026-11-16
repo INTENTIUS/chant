@@ -70,6 +70,16 @@ function copyTypeFiles(src: string, dest: string): number {
 }
 
 /**
+ * Where a package's declaration files and JSON are: `src/` in a checkout, and
+ * `dist/` in an installed package, which publishes the compiled tree and no
+ * source.
+ */
+function typesSourceDir(pkgPath: string): string {
+  const src = join(pkgPath, "src");
+  return existsSync(src) ? src : join(pkgPath, "dist");
+}
+
+/**
  * Resolve the path to a package in node_modules
  */
 function resolvePackagePath(packageName: string, projectDir: string): string | undefined {
@@ -132,7 +142,7 @@ export async function updateCommand(options: UpdateOptions): Promise<UpdateResul
   const corePkgPath = resolvePackagePath("@intentius/chant", projectDir);
   if (corePkgPath) {
     const coreDestDir = join(typesDir, "core");
-    const srcDir = join(corePkgPath, "src");
+    const srcDir = typesSourceDir(corePkgPath);
     if (existsSync(srcDir)) {
       const count = copyTypeFiles(srcDir, coreDestDir);
       // Also copy package.json
@@ -162,7 +172,7 @@ export async function updateCommand(options: UpdateOptions): Promise<UpdateResul
     }
 
     const lexiconDestDir = join(typesDir, `lexicon-${lexicon}`);
-    const srcDir = join(pkgPath, "src");
+    const srcDir = typesSourceDir(pkgPath);
     if (existsSync(srcDir)) {
       const count = copyTypeFiles(srcDir, lexiconDestDir);
       if (existsSync(join(pkgPath, "package.json"))) {
@@ -170,7 +180,7 @@ export async function updateCommand(options: UpdateOptions): Promise<UpdateResul
       }
       synced.push(`${pkgName} (${count} files)`);
     } else {
-      warnings.push(`${pkgName} has no src/ directory`);
+      warnings.push(`${pkgName} has no src/ or dist/ directory`);
     }
   }
 
